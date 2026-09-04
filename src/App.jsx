@@ -13,7 +13,8 @@ import { AgendaModule } from './components/AppModules/agendaModule';
 import { DashboardModule } from './components/AppModules/dashboardModule';
 import { LibraryModule } from './components/AppModules/libraryModule';
 import { SettingsModule } from './components/AppModules/settingsModule';
-import { BudgetModule } from './components/AppModules/budgetModule';
+import { AdministrationModule } from './administration/adminModule';
+import { isAdministrationKind, createAdministrationSeed, ADMIN_PAGES, adminCanViewPage, hasDefinedSuperuser } from './administration/adminSchema';
 import { StorageModule } from './components/AppModules/storageModuleViews';
 import { TestsModule } from './components/AppModules/testsModule';
 import { ProtocolsModule } from './components/AppModules/protocolsModule';
@@ -874,6 +875,17 @@ if (customType === 'dosy') {
   const [currentProjectId, setCurrentProjectId] = useState(null);
   const [datasetsList, setDatasetsList] = useState([]);
   const [currentDatasetId, setCurrentDatasetId] = useState(null);
+  // Type de la base actuellement ouverte : 'scientific' (par défaut, toute la
+  // pile expériences) ou 'administration' (base d’administration dont tout le
+  // contenu vit dans le document du dataset, sous la clé payload
+  // `administration`). Ce type est persisté sur l’enregistrement du dataset
+  // sous la clé `kind`.
+  const [activeDatasetKind, setActiveDatasetKind] = useState('scientific');
+  // Objet payload de la base d’administration ouverte (listes + settings).
+  const [adminContent, setAdminContent] = useState(null);
+  // Page active de la base d’administration ouverte — pilotée par la barre
+  // latérale (structure identique aux modules d’un dataset scientifique).
+  const [currentAdminPage, setCurrentAdminPage] = useState('overview');
   const [dialog, setDialog] = useState(null);
   const [pendingLoad, setPendingLoad] = useState(null);
   const [appClipboard, setAppClipboard] = useState(null);
@@ -1392,6 +1404,10 @@ if (customType === 'dosy') {
   datasetsListRef.current = datasetsList;
   const currentDatasetIdRef = useRef(currentDatasetId);
   currentDatasetIdRef.current = currentDatasetId;
+  const activeDatasetKindRef = useRef(activeDatasetKind);
+  activeDatasetKindRef.current = activeDatasetKind;
+  const adminContentRef = useRef(adminContent);
+  adminContentRef.current = adminContent;
   const datasetTitleRef = useRef(datasetTitle);
   datasetTitleRef.current = datasetTitle;
   const datasetSubtitleRef = useRef(datasetSubtitle);
@@ -1430,7 +1446,9 @@ if (customType === 'dosy') {
     backupRunningRef.current = true;
     try {
       // Hard rule: experiments may not be backed up / saved without a Project.
-      const backupValidation = validateDatasetExperiments({ tests: latestDataRef.current?.tests || [] });
+      const backupValidation = activeDatasetKindRef.current === 'administration'
+        ? { ok: true }
+        : validateDatasetExperiments({ tests: latestDataRef.current?.tests || [] });
       if (!backupValidation.ok) {
         setBackupStatus({ state: 'error', msg: `${backupValidation.message} Link every experiment to a Project before the weekly backup runs.` });
         return false;
@@ -1447,7 +1465,11 @@ if (customType === 'dosy') {
         try {
           if (!dset || !dset.payload) continue;
           const isCurrent = currentDatasetIdRef.current && String(dset.id) === String(currentDatasetIdRef.current);
-          const payload = isCurrent ? getCompressedPayload() : dset.payload;
+          const payload = isCurrent
+            ? (dset.kind === 'administration'
+                ? LZString.compressToUTF16(JSON.stringify({ administration: adminContentRef.current || createAdministrationSeed() }))
+                : getCompressedPayload())
+            : dset.payload;
           const title = isCurrent
             ? (datasetTitleRef.current || dset.title || 'Untitled Dataset')
             : (dset.title || 'Untitled Dataset');
@@ -1747,6 +1769,10 @@ const compressDatasetForSave = (raw) => {
 };
 useEffect(() => {
   if (!isCloudReady || appView !== 'dataset' || !currentDatasetId) return;
+  // Les bases d’administration sont sauvegardées par leur propre effet
+  // débouncé ci-dessous : le payload scientifique ne doit JAMAIS écrire
+  // par-dessus une base d’administration.
+  if (isAdministrationKind(activeDatasetKind)) return;
   setSaveStatus('saving');
   if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
   saveTimeoutRef.current = setTimeout(async () => {
@@ -1816,19 +1842,88 @@ useEffect(() => {
   customFields, operators, molecules, compoundMeta, calculationEntries,
   cellLineMeta, plasmidMeta, storages, solvents, buffers, additives,
   nmrInstruments, nmrProbes, nmrExperiments, isCloudReady, appView,
-  currentDatasetId, user, authSettings
+  currentDatasetId, activeDatasetKind, user, authSettings
 ]);
+
+
+  useEffect(() => {
+    if (!isCloudReady || appView !== 'dataset' || !currentDatasetId) return;
+    if (!isAdministrationKind(activeDatasetKind) || !adminContent) return;
+    setSaveStatus('saving');
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(async () => {
+      try {
+        const updatedPayload = {
+          kind: 'administration',
+          title: datasetTitle || 'Base d’administration',
+          subtitle: datasetSubtitle || '',
+          date: new Date().toISOString().split('T')[0],
+          updatedAt: window.firebase
+            ? window.firebase.firestore.FieldValue.serverTimestamp()
+            : Date.now(),
+          payload: LZString.compressToUTF16(JSON.stringify({ administration: adminContent })),
+          isCompressed: true
+        };
+        if (db && user) {
+          const docRef = db
+            .collection(`artifacts/${appId}/public/data/datasets`)
+            .doc(currentDatasetId);
+          await docRef
+            .set(updatedPayload, { merge: true })
+            .then(() => {
+              setSaveStatus('saved');
+              setSaveErrorMsg('');
+            })
+            .catch((err) => {
+              setSaveStatus('error');
+              setSaveErrorMsg(err.message);
+              console.error('Firestore administration save error:', err);
+            });
+        } else {
+          let stored = [];
+          try {
+            stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
+          } catch {}
+          const existingIdx = stored.findIndex((e) => e.id === currentDatasetId);
+          if (existingIdx >= 0) {
+            stored[existingIdx] = { ...stored[existingIdx], ...updatedPayload };
+          } else {
+            stored.push({ id: currentDatasetId, ...updatedPayload });
+          }
+          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
+          setDatasetsList(
+            [...stored].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+          );
+          setSaveStatus('saved');
+        }
+      } catch (e) {
+        setSaveStatus('error');
+        setSaveErrorMsg(e.message);
+        console.error('Administration save error:', e);
+      }
+    }, 1500);
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    adminContent, datasetTitle, datasetSubtitle, isCloudReady, appView,
+    currentDatasetId, user, activeDatasetKind
+  ]);
 
 
   const exportHTML = () => {
     try {
+      const isAdmin = isAdministrationKind(activeDatasetKind);
       // Hard rule: experiments may not be saved without a Project.
-      const validation = validateDatasetExperiments({ tests: latestDataRef.current?.tests || [] });
+      const validation = isAdmin ? { ok: true } : validateDatasetExperiments({ tests: latestDataRef.current?.tests || [] });
       if (!validation.ok) {
         setDialog({ type: 'alert', title: 'Experiments must be linked to a Project', message: `${validation.message}\n\nLink every experiment to at least one Project (Projects → open project → “+ Add experiment”, or link existing experiments inside the project), then save again.` });
         return;
       }
-      const payload = getCompressedPayload();
+      const payload = isAdmin
+        ? LZString.compressToUTF16(JSON.stringify({ administration: adminContent || createAdministrationSeed() }))
+        : getCompressedPayload();
 
       const dataBlob = {
         payload,
@@ -2165,17 +2260,25 @@ if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([.
     if (window.innerWidth < 768) setIsSidebarOpen(false);
   };
 
-const createNewDataset = async () => {
+const createNewDataset = async (kind = 'scientific') => {
     const newId = 'ds_' + Date.now();
+    const isAdmin = isAdministrationKind(kind);
     // Experiments must belong to a Project: when a project already exists on
     // this device, the starter experiment is linked to it right away (otherwise
     // the user is asked to create/link a project before any experiment can be
-    // saved or backed up).
-    const existingProjects = loadProjects() || [];
-    const starterProject = String(existingProjects[0] && existingProjects[0].name || '').trim();
-    const starter = createEmptyTest('t1', 1, 'plate-96');
-    if (starterProject) starter.projectNames = [starterProject];
-    const freshTests = [starter];
+    // saved or backed up). An Administration database does NOT need a starter
+    // experiment — it starts with an empty `administration` payload.
+    let freshTests = [];
+    let adminSeed = null;
+    if (isAdmin) {
+      adminSeed = createAdministrationSeed();
+    } else {
+      const existingProjects = loadProjects() || [];
+      const starterProject = String(existingProjects[0] && existingProjects[0].name || '').trim();
+      const starter = createEmptyTest('t1', 1, 'plate-96');
+      if (starterProject) starter.projectNames = [starterProject];
+      freshTests = [starter];
+    }
 
     setReactTests(freshTests);
 
@@ -2183,8 +2286,11 @@ const createNewDataset = async () => {
     setHistoryIndex(0);
     setActiveTestId('t1');
 
-    setDatasetTitle('New Dataset');
+    setDatasetTitle(isAdmin ? 'Base d’administration' : 'New Dataset');
     setDatasetSubtitle('');
+    setAdminContent(isAdmin ? adminSeed : null);
+    setActiveDatasetKind(kind);
+    setCurrentAdminPage('overview');
     setCustomCmpds([]);
     setCustomCellLines([]);
     setCustomConc({});
@@ -2212,12 +2318,14 @@ const createNewDataset = async () => {
 
     setCurrentDatasetId(newId);
     setAppView('dataset');
-    setCurrentModule('dashboard');
+    setCurrentModule(isAdmin ? 'administration' : 'dashboard');
 
     window.history.pushState({}, '', '?dataset=' + newId);
 
     const updatedPayload = {
-      title: 'New Dataset',
+      kind,
+      title: isAdmin ? 'Base d’administration' : 'New Dataset',
+      subtitle: '',
       date: new Date().toISOString().split('T')[0],
       createdAt: window.firebase
         ? window.firebase.firestore.FieldValue.serverTimestamp()
@@ -2225,8 +2333,10 @@ const createNewDataset = async () => {
       updatedAt: window.firebase
         ? window.firebase.firestore.FieldValue.serverTimestamp()
         : Date.now(),
-      payload: JSON.stringify({ tests: freshTests }),
-      isCompressed: false
+      payload: isAdmin
+        ? LZString.compressToUTF16(JSON.stringify({ administration: adminSeed }))
+        : JSON.stringify({ tests: freshTests }),
+      isCompressed: isAdmin
     };
 
     if (db && user) {
@@ -2253,23 +2363,37 @@ const createNewDataset = async () => {
 
 const handleBackToExplorer = async () => {
   if (currentDatasetId) {
+    const isAdmin = isAdministrationKind(activeDatasetKind);
     setSaveStatus('saving');
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     try {
       const rawData = { ...latestDataRef.current, ...cloudProjectsPayload() };
-      const compressedPayload = compressDatasetForSave(rawData);
+      const compressedPayload = isAdmin ? '' : compressDatasetForSave(rawData);
       
-      const updatedPayload = {
-        title: datasetTitle || 'Untitled Dataset',
-        subtitle: datasetSubtitle || '',
-        date: rawData.tests?.[0]?.date || new Date().toISOString().split('T')[0],
-        testCount: rawData.tests?.length || 0,
-        updatedAt: window.firebase
-          ? window.firebase.firestore.FieldValue.serverTimestamp()
-          : Date.now(),
-        payload: compressedPayload,
-        isCompressed: true
-      };
+      const updatedPayload = isAdmin
+        ? {
+            kind: 'administration',
+            title: datasetTitle || 'Base d’administration',
+            subtitle: datasetSubtitle || '',
+            date: new Date().toISOString().split('T')[0],
+            updatedAt: window.firebase
+              ? window.firebase.firestore.FieldValue.serverTimestamp()
+              : Date.now(),
+            payload: LZString.compressToUTF16(JSON.stringify({ administration: adminContent || createAdministrationSeed() })),
+            isCompressed: true
+          }
+        : {
+            title: datasetTitle || 'Untitled Dataset',
+            subtitle: datasetSubtitle || '',
+            date: rawData.tests?.[0]?.date || new Date().toISOString().split('T')[0],
+            testCount: rawData.tests?.length || 0,
+            updatedAt: window.firebase
+              ? window.firebase.firestore.FieldValue.serverTimestamp()
+              : Date.now(),
+            payload: compressedPayload,
+            isCompressed: true,
+            kind: 'scientific'
+          };
       if (db && user) {
         await db
           .collection(`artifacts/${appId}/public/data/datasets`)
@@ -2299,9 +2423,11 @@ const handleBackToExplorer = async () => {
   }
   window.history.pushState({}, '', window.location.pathname);
   setAppView('explorer');
+  setCurrentAdminPage('overview');
 };
 
 const openDataset = (dset) => {
+  const kind = dset && dset.kind === 'administration' ? 'administration' : 'scientific';
   let s = null;
   try {
     // Defensively handle compressed payloads in case parsePayload doesn't already
@@ -2324,6 +2450,28 @@ const openDataset = (dset) => {
     });
     return;
   }
+
+  // ── Base d’administration : tout le contenu vit dans s.administration ──
+  if (kind === 'administration') {
+    const admin = (s && s.administration && typeof s.administration === 'object')
+      ? s.administration
+      : createAdministrationSeed();
+    setAdminContent(admin);
+    setActiveDatasetKind('administration');
+    setDatasetTitle(dset.title && String(dset.title).trim() ? dset.title : 'Base d’administration');
+    setDatasetSubtitle(dset.subtitle || '');
+    setCurrentDatasetId(dset.id);
+    setAppView('dataset');
+    setCurrentModule('administration');
+    setCurrentAdminPage('overview');
+    window.history.pushState({}, '', '?dataset=' + dset.id);
+    if (window.innerWidth < 768) setIsSidebarOpen(false);
+    return;
+  }
+
+  setAdminContent(null);
+  setActiveDatasetKind('scientific');
+  setCurrentAdminPage('overview');
 
   try {
     const migrated = migrateLoadedDataset(s);
@@ -2686,6 +2834,24 @@ const openDataset = (dset) => {
   // operator list lives in another browser's localStorage. In that case skip
   // the gate entirely and open the workspace directly, matching the rest of
   // the app, which already treats an empty operator list as bootstrap.
+  // Navigation d’une base d’administration : les pages du module sont
+  // présentées dans la barre latérale comme les modules scientifiques.
+  const adminNavEntries = isAdministrationKind(activeDatasetKind)
+    ? ADMIN_PAGES.filter((p) => adminCanViewPage(p, currentUser, operators)).map((p) => ({
+        id: p.id, label: p.label, icon: p.icon,
+      }))
+    : [];
+  const handleAdminNav = (navId) => {
+    setCurrentModule('administration');
+    setCurrentAdminPage(navId);
+    if (window.innerWidth < 768) setIsSidebarOpen(false);
+  };
+
+  // Bootstrap de l’équipe : sans superutilisateur défini, la création de
+  // datasets reste possible (la page Paramètres d’une base permet alors de
+  // définir le premier superutilisateur).
+  const teamNoSuperuser = !hasDefinedSuperuser(operators);
+
   const showLoginGate = authSettings.requireLoginOnEntry && !currentUser && !recoveryBypass && operatorNames.length > 0;
 
   return (
@@ -3000,21 +3166,40 @@ const openDataset = (dset) => {
                 environment.
               </p>
 
-          {(currentUser?.role === 'superuser' || operatorNames.length === 0 || recoveryBypass) ? (
-            <button
-              onClick={createNewDataset}
-              disabled={!isCloudReady}
-              className={`font-black py-3 md:py-4 px-6 md:px-10 rounded-full shadow-lg transition-all transform hover:scale-105 flex items-center gap-3 text-base md:text-lg w-full md:w-auto justify-center ${
-                isCloudReady
-                  ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                  : 'bg-slate-300 text-slate-500 cursor-not-allowed'
-              }`}
-            >
-              <span className="text-2xl">+</span> {operatorNames.length === 0 ? 'Initialize Workspace & Create Dataset' : 'Create New Dataset'}
-            </button>
+          {(currentUser?.role === 'superuser' || operatorNames.length === 0 || recoveryBypass || teamNoSuperuser) ? (
+            <div className="flex flex-col items-center gap-3 w-full">
+              <button
+                onClick={() => createNewDataset('scientific')}
+                disabled={!isCloudReady}
+                className={`font-black py-3 md:py-4 px-6 md:px-10 rounded-full shadow-lg transition-all transform hover:scale-105 flex items-center gap-3 text-base md:text-lg w-full md:w-auto justify-center ${
+                  isCloudReady
+                    ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                    : 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                }`}
+              >
+                <span className="text-2xl">+</span> {operatorNames.length === 0 ? 'Initialize Workspace & Create Dataset' : 'Create New Dataset'}
+              </button>
+
+              <div className="flex flex-col items-center gap-1.5">
+                <button
+                  onClick={() => createNewDataset('administration')}
+                  disabled={!isCloudReady}
+                  className={`font-black py-2.5 px-6 md:px-8 rounded-full shadow-lg transition-all transform hover:scale-105 flex items-center gap-2 text-sm md:text-base w-full md:w-auto justify-center ${
+                    isCloudReady
+                      ? 'bg-slate-800 hover:bg-slate-900 text-white'
+                      : 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                  }`}
+                >
+                  🏛️ Créer une base d’administration
+                </button>
+                <span className="text-[11px] font-semibold text-slate-400">
+                  Recettes, fournisseurs, personnel, dépenses, missions… dans un dataset dédié.
+                </span>
+              </div>
+            </div>
           ) : (
             <div className="flex items-center gap-2 text-slate-400 bg-slate-100 border border-slate-200 rounded-full px-5 py-3 text-sm font-semibold">
-              ?? Creating datasets requires superuser access
+              🔒 Creating datasets requires superuser access
             </div>
           )}
 
@@ -3140,7 +3325,11 @@ const openDataset = (dset) => {
 
                         <span className="text-[11px] text-slate-500 mt-1 flex gap-2">
                           <span>📅 {dset.date || 'No Date'}</span>
-                          <span>🧪 {dset.testCount || 1} Tests</span>
+                          {dset.kind === 'administration' ? (
+                            <span>🏛️ Base d’administration</span>
+                          ) : (
+                            <span>🧪 {dset.testCount || 1} Tests</span>
+                          )}
                         </span>
                       </div>
 
@@ -3214,6 +3403,10 @@ const openDataset = (dset) => {
             handlePrint={handlePrint} loadHTML={loadHTML} exportHTML={exportHTML}
             handleUndo={handleUndo} handleRedo={handleRedo}
             historyIndex={historyIndex} historyRef={historyRef}
+            datasetKind={activeDatasetKind}
+            adminNav={adminNavEntries}
+            currentAdminPage={currentAdminPage}
+            onAdminNav={handleAdminNav}
             user={user} onGoogleLogin={handleManualLogin}
             onConnectDrive={connectDrive}
           />
@@ -3343,8 +3536,15 @@ const openDataset = (dset) => {
               operatorNames={operatorNames} tests={tests} currentUser={currentUser} projectId={currentProjectId}
               jumpToTest={jumpToTest}
             />)}
-            {currentModule === 'budget' && (<BudgetModule
-              currentUser={currentUser} operatorNames={operatorNames}
+
+            {currentModule === 'administration' && (<AdministrationModule
+              currentUser={currentUser} user={user}
+              datasetTitle={datasetTitle} saveStatus={saveStatus}
+              content={adminContent} onChange={setAdminContent}
+              pageId={currentAdminPage}
+              operators={operators} setOperators={setOperators}
+              authSettings={authSettings} setAuthSettings={setAuthSettings}
+              onRequestLogin={() => setLoginModal({ isEntryGate: false })}
             />)}
           </div>
         </div>

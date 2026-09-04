@@ -16,12 +16,38 @@ export const AppSidebar = ({
   backupStatus,
   currentUser, setCurrentUser, setUnlockedTestIds, setLoginModal,
   currentModule, setCurrentModule,
+  datasetKind,
+  adminNav,
+  currentAdminPage, onAdminNav,
   handlePrint, loadHTML, exportHTML,
   handleUndo, handleRedo, historyIndex, historyRef,
   user, onGoogleLogin, onConnectDrive
 }) => {
   const [driveConnected, setDriveConnected] = useState(!!getDriveToken());
   const [driveAccount, setDriveAccount] = useState('');
+
+  // Navigation adaptée au type de base ouverte : dans une base
+  // d’administration, seule sa page est proposée ; dans une base scientifique,
+  // le module global « Administration » n’apparaît plus (l’accès se fait
+  // depuis la page d’accueil via les datasets de type administration).
+  const adminOnly = datasetKind === 'administration';
+  const NAV_ITEMS = [
+    { id: 'dashboard', icon: '📊', label: 'Dataset Overview' },
+    { id: 'projects', icon: '📁', label: 'Projects' },
+    { id: 'tests', icon: '🧪', label: 'Experiments' },
+    { id: 'notebook', icon: '📓', label: 'Lab Notebook' },
+    { id: 'library', icon: '📚', label: 'Library' },
+    { id: 'agenda', icon: '🗓️', label: 'Agenda (Timeline)' },
+    { id: 'protocols', icon: '📝', label: 'Protocols' },
+    { id: 'storage', icon: '📦', label: 'Storage & Boxes' },
+    { id: 'calculations', icon: '🧮', label: 'Calculations' },
+    { id: 'publications', icon: '📰', label: 'Publications' },
+    { id: 'administration', icon: '🏛️', label: 'Administration' },
+    { id: 'settings', icon: '⚙️', label: 'Settings' }
+  ];
+  const navItems = adminOnly
+    ? (Array.isArray(adminNav) ? adminNav : [])
+    : NAV_ITEMS.filter((nav) => nav.id !== 'administration');
 
   useEffect(() => {
     const refreshAccount = () => {
@@ -176,42 +202,45 @@ export const AppSidebar = ({
                 </button>
               )}
 
-              {[
-                { id: 'dashboard', icon: '📊', label: 'Dataset Overview' },
-                { id: 'projects', icon: '📁', label: 'Projects' },
-                { id: 'tests', icon: '🧪', label: 'Experiments' },
-                { id: 'notebook', icon: '📓', label: 'Lab Notebook' },
-                { id: 'library', icon: '📚', label: 'Library' },
-                { id: 'agenda', icon: '🗓️', label: 'Agenda (Timeline)' },
-                { id: 'protocols', icon: '📝', label: 'Protocols' },
-                { id: 'storage', icon: '📦', label: 'Storage & Boxes' },
-                { id: 'calculations', icon: '🧮', label: 'Calculations' },
-                { id: 'publications', icon: '📰', label: 'Publications' },
-                { id: 'budget', icon: '💰', label: 'Budget', superuserOnly: true },
-                { id: 'settings', icon: '⚙️', label: 'Settings' }
-              ]
-              // The Budget page is visible/accessible only to the superuser.
-              .filter((nav) => !nav.superuserOnly || currentUser?.role === 'superuser')
-              .map((nav) => (
-                <button
-                  key={nav.id}
-                  onClick={() => {
-                    setCurrentModule(nav.id);
-                    if (window.innerWidth < 768) setIsSidebarOpen(false);
-                  }}
-                  title={!isSidebarOpen ? nav.label : ''}
-                  className={`flex items-center gap-3 py-2 rounded-lg text-sm transition-all text-left ${
-                    isSidebarOpen ? 'px-3 w-full' : 'px-0 w-10 justify-center'
-                  } ${
-                    currentModule === nav.id
-                      ? 'bg-blue-50 text-blue-700 font-bold shadow-sm'
-                      : 'text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  <Icon name={nav.icon} size={18} className="shrink-0" />
-                  {isSidebarOpen && <span>{nav.label}</span>}
-                </button>
-              ))}
+              {adminOnly && isSidebarOpen && (
+                <div className="mb-1 px-3 text-[9px] font-black uppercase tracking-widest text-slate-300">
+                  Base d'administration
+                </div>
+              )}
+
+              {navItems.map((nav) => {
+                const isActive = adminOnly
+                  ? currentModule === 'administration' && currentAdminPage === nav.id
+                  : currentModule === nav.id;
+                return (
+                  <button
+                    key={nav.id}
+                    onClick={() => {
+                      if (adminOnly) {
+                        if (typeof onAdminNav === 'function') onAdminNav(nav.id);
+                      } else {
+                        setCurrentModule(nav.id);
+                      }
+                      if (window.innerWidth < 768) setIsSidebarOpen(false);
+                    }}
+                    title={!isSidebarOpen ? nav.label : ''}
+                    className={`flex items-center gap-3 py-2 rounded-lg text-sm transition-all text-left ${
+                      isSidebarOpen ? 'px-3 w-full' : 'px-0 w-10 justify-center'
+                    } ${
+                      isActive
+                        ? 'bg-blue-50 text-blue-700 font-bold shadow-sm'
+                        : 'text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {adminOnly ? (
+                      <span className="text-base leading-none shrink-0" aria-hidden="true">{nav.icon}</span>
+                    ) : (
+                      <Icon name={nav.icon} size={18} className="shrink-0" />
+                    )}
+                    {isSidebarOpen && <span>{nav.label}</span>}
+                  </button>
+                );
+              })}
             </nav>
 
             <div
