@@ -208,7 +208,7 @@ const depensesColumns = (recettes) => [
   },
 ];
 /* ── Ordres de mission ────────────────────────────────────────────────────── */
-const omColumns = (recettes) => [
+export const omColumns = (recettes) => [
   {
     key: 'description', label: 'Mission', filter: 'text',
     value: (r) => [pick(r, ['description']), pick(r, ['destination', 'ville']), pick(r, ['numOM'])].filter(Boolean).join(' '),

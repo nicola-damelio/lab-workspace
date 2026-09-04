@@ -11,12 +11,16 @@ import { AdminProvider, useAdmin } from './AdminContext';
 import { normalizeOperators } from '../utils/auth';
 import { RecettesPage } from './recettesPage';
 import { CongesPage } from './congesPage';
+import { DepensesPage } from './depensesPage';
+import { LibreriePage } from './libreriePage';
+import { OmPage } from './omPage';
+
 import { PersonnelPage } from './personnelPage';
 import { CollectionPage } from './collectionPages';
 import { SettingsPage } from './settingsPage';
 
 /* Collections disposant d’une page « liste » triable/filtrable (SmartTable). */
-const TABLE_KINDS = new Set(['depenses', 'om', 'desiderate', 'librerie', 'questioni', 'sicurezza']);
+const TABLE_KINDS = new Set(['depenses', 'om', 'desiderate', 'questioni', 'sicurezza']);
 
 /* Garde « accès restreint » : si une page non autorisée est demandée (URL
    directe, historique…), on ne retombe pas silencieusement sur Vue d’ensemble :
@@ -134,12 +138,18 @@ const AdministrationShell = ({
           <PersonnelPage />
         ) : active.id === 'conges' ? (
           <CongesPage />
+        ) : active.id === 'depenses' ? (
+          <DepensesPage />
         ) : active.id === 'settings' ? (
           <SettingsPage
             operators={operators} setOperators={setOperators}
             authSettings={authSettings} setAuthSettings={setAuthSettings}
             currentUser={currentUser}
           />
+        ) : active.id === 'librerie' ? (
+          <LibreriePage />
+        ) : active.id === 'om' ? (
+          <OmPage />
         ) : TABLE_KINDS.has(active.kind) ? (
           <CollectionPage kind={active.kind} />
         ) : active.kind ? (

@@ -96,28 +96,190 @@ export const parseDelimitedText = (raw) => {
   });
 };
 
-/* Classeur Excel (.xlsx/.xls) → liste { name, rows } par onglet. */
+/* ── Hyperliens de cellules (copier-coller & .xlsx) ─────────────────────────
+   Google Sheets n’exporte qu’un TEXTE par cellule. Pour un « lien cliquable »
+   (bleu souligné), ce texte est souvent le nom du fichier : l’adresse (URL)
+   n’existe que dans les métadonnées — HTML du presse-papier quand on copie
+   depuis le navigateur, ou fichier .xlsx téléchargé. On récupère ces URL et on
+   ajoute, pour les feuilles « Dépenses », les colonnes « Lien … » correspondantes
+   (déjà reconnues par buildDepenses et collectLivraisonPhases). */
+
+const DEPENSE_HEADER_HINTS = [
+  'suivi', 'ent', 'description', 'demandeur', 'categorie', 'ligne budgetaire',
+  'montant ht', 'frais de port', 'date demande', 'nom du fournisseur',
+  'n° devis', 'n° sifac', 'date bc', 'n° bc', 'date signature',
+  'date approb fornisseur', 'n° facture', 'livraison complete', 'commentaires', 'classification',
+];
+
+export const isDepensesHeader = (keys) => {
+  const k = (Array.isArray(keys) ? keys : []).map(normalizeKey);
+  return k.filter((x) => DEPENSE_HEADER_HINTS.includes(x)).length >= 2;
+};
+
+/* En-tête de colonne « document » → en-tête « Lien … » attendu par le builder. */
+const docToLinkHeader = (headerText) => {
+  const k = normalizeKey(headerText);
+  if (!k) return null;
+  const words = k.split(/[^a-z0-9]+/).filter(Boolean);
+  const numbered = (prefix) => {
+    const w = words.find((x) => new RegExp(`^${prefix}[0-9]+$`).test(x));
+    return w ? w.slice(prefix.length) : null;
+  };
+  const bl = numbered('bl');
+  if (bl !== null) return `Lien BL${bl}`;
+  const sf = numbered('sf');
+  if (sf !== null) return `Lien SF${sf}`;
+  if (words.includes('bc') || k.includes('bon de commande')) return 'Lien BC';
+  if (words.includes('om')) return 'Lien OM';
+  if (k.includes('devis')) return 'Lien devis';
+  if (k.includes('facture')) return 'Lien facture';
+  return null;
+};
+
+/* Ajoute en fin de grille une colonne « Lien … » pour chaque colonne de
+   document dont au moins une cellule possède une URL d’hyperlien. */
+export const augmentRowsWithCellUrls = (rows, urlAt) => {
+  if (!Array.isArray(rows) || rows.length < 2) return rows;
+  let headerIdx = -1;
+  for (let i = 0; i < Math.min(rows.length, 12) && headerIdx < 0; i++) {
+    if (isDepensesHeader(rows[i])) headerIdx = i;
+  }
+  if (headerIdx < 0) return rows;
+  const header = rows[headerIdx].map(normalizeKey);
+  const additions = [];
+  for (let c = 0; c < header.length; c++) {
+    const target = docToLinkHeader(rows[headerIdx][c]);
+    if (!target || header.includes(normalizeKey(target))) continue;
+    const values = [];
+    for (let r = headerIdx + 1; r < rows.length; r++) {
+      const meta = (urlAt && String(urlAt(r, c) || '').trim()) || '';
+      const text = String(rows[r][c] ?? '').trim();
+      values.push(meta || (/^https?:/i.test(text) ? text : ''));
+    }
+    if (values.some((v) => v)) additions.push({ target, values });
+  }
+  if (!additions.length) return rows;
+  return rows.map((row, r) => {
+    const out = row.slice();
+    while (out.length < header.length) out.push('');
+    additions.forEach((a) => {
+      out.push(r === headerIdx ? a.target : (a.values[r - headerIdx - 1] || ''));
+    });
+    return out;
+  });
+};
+
+/* Adresses Excel « A1 » ↔ { r, c } — sans dépendre de la lib, car le workbook
+   retourné par XLSX.read ne porte pas toujours les utilitaires. */
+const lettersToCol = (letters) => {
+  let n = 0;
+  for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+};
+const rcToAddr = (r, c) => {
+  let letters = '';
+  let n = c + 1;
+  while (n > 0) { const rem = (n - 1) % 26; letters = String.fromCharCode(65 + rem) + letters; n = Math.floor((n - 1) / 26); }
+  return `${letters}${r + 1}`;
+};
+const addrToRC = (addr) => {
+  const m = String(addr).match(/^([A-Z]+)([0-9]+)$/);
+  return m ? { r: parseInt(m[2], 10) - 1, c: lettersToCol(m[1]) } : { r: 0, c: 0 };
+};
+const refToRange = (ref) => {
+  const parts = String(ref || 'A1').split(':');
+  const s = addrToRC(parts[0]);
+  const e = parts[1] ? addrToRC(parts[1]) : s;
+  return { s, e };
+};
+
+/* Classeur Excel (.xlsx/.xls) → liste { name, rows } par onglet. Lit aussi les
+   hyperliens (cell.l.Target) pour reconstruire les colonnes « Lien … ». */
 export const parseXlsxWorkbook = (workbook) => {
   const out = [];
   const names = workbook && workbook.SheetNames ? workbook.SheetNames : [];
   names.forEach((name) => {
     const ws = workbook.Sheets[name];
     if (!ws) return;
-    const aoa = workbook.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true, blankrows: false });
-    const rawRows = (Array.isArray(aoa) ? aoa : []).map((r) =>
-      (Array.isArray(r) ? r : []).map((c) => (c === null || c === undefined ? '' : c))
-    );
-    const width = rawRows.reduce((w, r) => Math.max(w, r.length), 0);
+    const range = ws['!ref'] ? refToRange(ws['!ref']) : null;
+    const matrix = [];
+    const urlRows = [];
+    if (range) {
+      for (let r = range.s.r; r <= range.e.r; r++) {
+        const row = [];
+        const urlRow = [];
+        for (let c = range.s.c; c <= range.e.c; c++) {
+          let v = '';
+          let url = '';
+          const cell = ws[rcToAddr(r, c)];
+          if (cell) {
+            if (cell.v !== undefined && cell.v !== null) v = cell.v;
+            const l = cell.l;
+            if (l) {
+              const raw = l.Target || l.Location || (typeof l.Tooltip === 'string' ? l.Tooltip : '');
+              if (raw) url = String(raw).trim();
+            }
+          }
+          row.push(v);
+          urlRow.push(url);
+        }
+        if (row.every((x) => x === '' || x === null || x === undefined)) continue;
+        matrix.push(row);
+        urlRows.push(urlRow);
+      }
+    }
+    const width = matrix.reduce((w, r) => Math.max(w, r.length), 0);
+    const rows = matrix.map((r) => {
+      const o = r.slice(0, width);
+      while (o.length < width) o.push('');
+      return o.map((c) => (typeof c === 'string' ? c.trim() : c));
+    });
+    const urls = urlRows.map((r) => {
+      const o = r.slice(0, width);
+      while (o.length < width) o.push('');
+      return o;
+    });
     out.push({
       name: String(name || ''),
-      rows: rawRows.map((r) => {
-        const o = r.slice(0, width);
-        while (o.length < width) o.push('');
-        return o.map((c) => (typeof c === 'string' ? c.trim() : c));
-      }),
+      rows: augmentRowsWithCellUrls(rows, (r, c) => (urls[r] && urls[r][c]) || ''),
     });
   });
   return out;
+};
+
+/* Presse-papier : Google Sheets fournit aussi la version HTML (tableau) du
+   collage, qui contient les vraies adresses des liens cliquables (<a href>).
+   On reconstruit la même grille à partir du DOM pour conserver ces adresses. */
+export const parseHtmlClipboard = (html) => {
+  if (typeof DOMParser === 'undefined' || !/<\/?(table|tr|td|th)\b/i.test(String(html || ''))) return null;
+  let doc;
+  try { doc = new DOMParser().parseFromString(String(html || ''), 'text/html'); }
+  catch { return null; }
+  const table = doc && doc.querySelector('table');
+  if (!table) return null;
+  const matrix = [];
+  const urls = [];
+  table.querySelectorAll('tr').forEach((tr) => {
+    const row = [];
+    const urlRow = [];
+    tr.querySelectorAll('td, th').forEach((td) => {
+      const a = td.querySelector('a[href]');
+      let url = '';
+      if (a) {
+        const href = (a.getAttribute('href') || '').trim();
+        if (/^(https?|ftp|mailto):/i.test(href)) url = href;
+      }
+      row.push(String(td.textContent || '').replace(/[ \t\u00a0]+/g, ' ').trim());
+      urlRow.push(url);
+    });
+    if (row.some((t) => t !== '')) { matrix.push(row); urls.push(urlRow); }
+  });
+  if (!matrix.length) return null;
+  const width = matrix.reduce((w, r) => Math.max(w, r.length), 0);
+  const pad = (arr) => { const o = arr.slice(); while (o.length < width) o.push(''); return o; };
+  const rows = matrix.map((r) => pad(r).map((c) => c));
+  const urlCells = urls.map((r) => pad(r));
+  return augmentRowsWithCellUrls(rows, (r, c) => (urlCells[r] && urlCells[r][c]) || '');
 };
 
 /* ── Convertisseurs : montants « € 18.664,00 », dates FR / ISO ────────────── */
@@ -232,8 +394,8 @@ export const IMPORT_PRESETS = [
     icon: '🧾',
     tabLabel: 'Dépenses',
     sourceUrl: GOOGLE_SHEET_LINKS.depenses,
-    expectHeaders: ['Suivi', 'ENT', 'Description', 'Demandeur', 'Categorie', 'Ligne budgetaire', 'Montant HT', 'Frais de port', 'Date demande', 'Nom du fournisseur', 'n° SIFAC', 'Date BC', 'n° BC', 'Date signature', 'n° facture', 'Livraison complete', 'Commentaires', 'Classification'],
-    help: 'Onglet « Dépenses » du classeur Google Sheets (suivi des bons de commande / SIFAC, réceptions en plusieurs colis) : copier le tableau (Ctrl+A puis Ctrl+C) ou Fichier → Télécharger → CSV (feuille actuelle), puis coller ci-dessous.',
+    expectHeaders: ['Suivi', 'ENT', 'Description', 'Demandeur', 'Categorie', 'Ligne budgetaire', 'Montant HT', 'Frais de port', 'Date demande', 'Nom du fournisseur', 'n° SIFAC', 'Date BC', 'n° BC', 'Date signature', 'n° facture', 'Livraison complete', 'Commentaires', 'Classification', 'Lien devis', 'Lien BC', 'Lien facture', 'Lien OM', 'Lien BL1', 'Lien SF1'],
+    help: 'Onglet « Dépenses » du classeur Google Sheets (suivi des bons de commande / SIFAC, réceptions en plusieurs colis) : copier le tableau (Ctrl+A puis Ctrl+C) ou Fichier → Télécharger → CSV (feuille actuelle), puis coller ci-dessous. Pour importer aussi les liens ↗ des documents, l’idéal est de copier le tableau depuis Google Sheets (Ctrl+A puis Ctrl+C : les adresses des liens cliquables sont récupérées automatiquement) ou de téléverser le fichier Excel (.xlsx) téléchargé (Fichier → Télécharger → Microsoft Excel) — un export CSV ne conserve pas les adresses des liens cliquables. Sans lien cliquable, ajoutez des colonnes « Lien devis », « Lien BC », « Lien facture », « Lien OM » et, par colis, « Lien BL1 », « Lien SF1 », « Lien BL2 »… avec l’adresse complète du document (https://…) en texte. Note : un simple lien vers la feuille ne suffit pas (le navigateur ne peut pas la lire à distance).',
   },
   {
     id: 'om-missions',
@@ -386,6 +548,53 @@ const cell = (row, idx) => (idx >= 0 && row && row[idx] !== undefined && row[idx
 const hasContent = (row) => (Array.isArray(row) ? row : []).some((c) => String(c ?? '').trim() !== '');
 
 const clean = (v) => String(v ?? '').trim();
+
+/* Cellules « N° devis / N° BC / N° facture… » qui portent l’hyperlien du
+   document : le texte visible exporté devient le nom du fichier (ex.
+   « Devis_2026-015_Fournisseur.pdf »), et le N° de référence — « 2026-015 » —
+   y figure comme un segment séparé par des « _ ». On extrait ce N° pour le
+   champ « numéro » ; une URL ou un nom de fichier seul ne doit jamais atterrir
+   dans ces champs. Si rien ne ressemble à un N° (année + séquence), on renvoie
+   une chaîne vide plutôt que le nom du fichier. */
+const DOC_EXT_RE = /\.(?:pdf|docx?|xlsx?|pptx?|odt|ods|csv|txt|jpe?g|png|gif)\s*$/i;
+const canonicalCode = (code) => String(code).replace(/[._/]/g, '-');
+
+const findCodeIn = (text) => {
+  if (!text) return '';
+  const s = String(text);
+  // « 2026-015 » isolé (c’est déjà le N°, pas un nom de fichier).
+  const whole = s.match(/^((?:19|20)\d{2}[-_./]\d{1,5})$/);
+  if (whole) return canonicalCode(whole[1]);
+  // Segments délimités par « _ » ou espaces (nom de fichier), extension ignorée.
+  const parts = s.split(/[_ ]+/).map((p) => p.replace(DOC_EXT_RE, ''));
+  for (const part of parts) {
+    const ex = part.match(/^((?:19|20)\d{2}[-_./]\d{1,5})$/);
+    if (ex) return canonicalCode(ex[1]);
+  }
+  // Recherche libre (ex. « BC2026-015 », sans exiger un séparateur) mais en
+  // refusant les dates complètes « 2026-01-15 » (on ne garderait que « 2026-01 »).
+  const m = s.match(
+    /(?:^|[^0-9])((?:19|20)\d{2}[-_.]\d{1,5})(?![-_.]\d{1,2}(?:[^0-9A-Za-z]|$))(?=$|[^0-9A-Za-z])/
+  );
+  if (m) return canonicalCode(m[1]);
+  return '';
+};
+
+export const extractNumeroFromDoc = (raw) => {
+  const s = String(raw ?? '').trim();
+  if (!s) return '';
+  // Lien dont le nom de fichier (avec le N°) est dans l’URL.
+  if (/^https?:/i.test(s)) {
+    let name = '';
+    try { name = decodeURIComponent(s.replace(/[?#].*$/, '').split('/').pop() || ''); }
+    catch { name = s.replace(/[?#].*$/, '').split('/').pop() || ''; }
+    return findCodeIn(name);
+  }
+  const found = findCodeIn(s);
+  if (found) return found;
+  // Nom de document sans N° reconnaissable → on n’écrit pas le nom dans un N°.
+  return s.includes('_') || DOC_EXT_RE.test(s) ? '' : s;
+};
 
 export const formatEuro0 = (n) => (n === null || n === undefined ? '—' : `${Math.round(n).toLocaleString('fr-FR')} €`);
 
@@ -703,13 +912,18 @@ const DEPENSE_COLUMNS = {
   dateDemande: ['Date demande', 'Demandé le'],
   fournisseur: ['Nom du fournisseur', 'Fournisseur'],
   contact: ['Contact fornisseur', 'Contact fournisseur', 'Contact'],
-  numDevis: ['n° devis', 'N° devis', 'Devis', 'N°devis'],
+  numDevis: ['n° devis', 'N° devis', 'Devis', 'N°devis', 'N° de devis', 'Numéro de devis', 'Numero devis'],
+  numDevisUrl: ['Lien devis', 'Lien du devis', 'Lien Devis', 'URL devis', 'URL Devis', 'Lien doc devis', 'Lien document devis', 'Lien Document Devis'],
   numSIFAC: ['n° SIFAC', 'N° SIFAC', 'SIFAC'],
   dateBC: ['Date BC', 'Date bon de commande'],
-  numBC: ['n° BC', 'N° BC', 'N°BC'],
+  numBC: ['n° BC', 'N° BC', 'N°BC', 'N° de BC', 'Numero BC', 'Numéro BC'],
+  numBCUrl: ['Lien BC', 'Lien du BC', 'Lien bon de commande', 'Lien Bon de commande', 'URL BC', 'Lien doc BC', 'Lien document BC', 'Lien Document BC'],
   dateSignature: ['Date signature', 'Signature'],
   dateApprob: ['Date approb fornisseur', 'Date approb fournisseur'],
-  numFacture: ['n° facture', 'N° facture', 'N° Facture'],
+  numFacture: ['n° facture', 'N° facture', 'N° Facture', 'N° de facture'],
+  numFactureUrl: ['Lien facture', 'Lien de la facture', 'Lien Facture', 'URL facture', 'Lien doc facture', 'Lien document facture', 'Lien Document Facture'],
+  omNo: ['OM', 'N° OM', 'N° OM / paiement', 'Numero OM'],
+  omUrl: ['Lien OM', 'Lien OM / paiement', 'Lien paiement', 'Lien de paiement', 'URL OM', 'Lien doc OM', 'Lien document OM'],
   livraisonComplete: ['Livraison complete', 'Livraison complète'],
   commentaires: ['Commentaires', 'Commentaire'],
   classification: ['Classification'],
@@ -747,7 +961,7 @@ const DESIDERATE_COLUMNS = {
   dateDemande: ['Date demande', 'Demandé le'],
   fournisseur: ['Nom du fournisseur', 'Fournisseur'],
   contact: ['Contact fornisseur', 'Contact fournisseur', 'Contact'],
-  devis1: ['n° devis', 'N° devis', 'Devis'],
+  devis1: ['n° devis', 'N° devis', 'Devis', 'N° de devis', 'Numéro de devis'],
   devis2: ['devis N°2', 'Devis n°2', 'devis n°2'],
   devis3: ['devis N°3', 'Devis n°3', 'devis n°3'],
   codeProduit: ['Code produit', 'Code article', 'Référence'],
@@ -903,21 +1117,25 @@ const stampFor = (label) => `Import Google Sheets « ${label} » — ${new Date(
 
 /* ── Onglet « Dépenses » (suivi BC / SIFAC) → collection depenses ─────────── */
 const collectLivraisonPhases = (header) => {
-  const col = { dateRec: {}, bl: {}, sfDate: {}, sf: {} };
+  const col = { dateRec: {}, bl: {}, blUrl: {}, sfDate: {}, sf: {}, sfUrl: {} };
   header.forEach((h, idx) => {
     const key = normalizeKey(h);
     let m = null;
     if ((m = key.match(/^date reception du colis([0-9]+)$/)) || (m = key.match(/^date reception colis([0-9]+)$/))) col.dateRec[m[1]] = idx;
     else if ((m = key.match(/^n° ?bl([0-9]+)$/))) col.bl[m[1]] = idx;
+    else if ((m = key.match(/^lien (?:doc(?:ument)? |du |de )?bl([0-9]+)$/)) || (m = key.match(/^url bl([0-9]+)$/))) col.blUrl[m[1]] = idx;
     else if ((m = key.match(/^date service fait([0-9]+)$/))) col.sfDate[m[1]] = idx;
     else if ((m = key.match(/^n° ?sf([0-9]+)$/))) col.sf[m[1]] = idx;
+    else if ((m = key.match(/^lien (?:doc(?:ument)? |du |de )?sf([0-9]+)$/)) || (m = key.match(/^url sf([0-9]+)$/))) col.sfUrl[m[1]] = idx;
   });
-  const nums = new Set([...Object.keys(col.dateRec), ...Object.keys(col.bl), ...Object.keys(col.sfDate), ...Object.keys(col.sf)]);
+  const nums = new Set([...Object.keys(col.dateRec), ...Object.keys(col.bl), ...Object.keys(col.blUrl), ...Object.keys(col.sfDate), ...Object.keys(col.sf), ...Object.keys(col.sfUrl)]);
   return [...nums].map(Number).sort((a, b) => a - b).map((n) => ({
     dateRec: col.dateRec[n],
     bl: col.bl[n],
+    blUrl: col.blUrl[n],
     sfDate: col.sfDate[n],
     sf: col.sf[n],
+    sfUrl: col.sfUrl[n],
   }));
 };
 
@@ -946,12 +1164,16 @@ const buildDepenses = (rows, headerIdx, state) => {
       const bl = clean(cell(r, p.bl));
       const sf = clean(cell(r, p.sfDate));
       const num = clean(cell(r, p.sf));
-      if (dr || bl || sf || num) {
+      const blUrl = clean(cell(r, p.blUrl));
+      const sfUrl = clean(cell(r, p.sfUrl));
+      if (dr || bl || sf || num || blUrl || sfUrl) {
         livraisons.push({
           dateReception: parseDateCell(dr),
-          numBL: bl,
+          numBL: extractNumeroFromDoc(bl),
+          numBLUrl: blUrl,
           dateServiceFait: parseDateCell(sf),
-          numSF: num,
+          numSF: extractNumeroFromDoc(num),
+          numSFUrl: sfUrl,
         });
       }
     });
@@ -977,13 +1199,18 @@ const buildDepenses = (rows, headerIdx, state) => {
         dateDemande: parseDateCell(cell(r, cols.dateDemande)),
         fournisseur: clean(cell(r, cols.fournisseur)),
         contact: clean(cell(r, cols.contact)),
-        numDevis: clean(cell(r, cols.numDevis)),
-        numSIFAC,
+        numDevis: extractNumeroFromDoc(clean(cell(r, cols.numDevis))),
+        numDevisUrl: clean(cell(r, cols.numDevisUrl)),
+        numSIFAC: extractNumeroFromDoc(numSIFAC),
         dateBC: parseDateCell(cell(r, cols.dateBC)),
-        numBC: clean(cell(r, cols.numBC)),
+        numBC: extractNumeroFromDoc(clean(cell(r, cols.numBC))),
+        numBCUrl: clean(cell(r, cols.numBCUrl)),
         dateSignature: parseDateCell(cell(r, cols.dateSignature)),
         dateApprobFournisseur: parseDateCell(cell(r, cols.dateApprob)),
-        numFacture: clean(cell(r, cols.numFacture)),
+        numFacture: extractNumeroFromDoc(clean(cell(r, cols.numFacture))),
+        numFactureUrl: clean(cell(r, cols.numFactureUrl)),
+        omNo: extractNumeroFromDoc(clean(cell(r, cols.omNo))),
+        omUrl: clean(cell(r, cols.omUrl)),
         livraisonComplete: normalizeStatut(clean(cell(r, cols.livraisonComplete))),
         livraisons,
         classification: clean(cell(r, cols.classification)),
@@ -1046,7 +1273,7 @@ const buildOm = (rows, headerIdx, state) => {
         dateDemande: parseDateCell(cell(r, cols.dateDemande)),
         dateMission: parseDateCell(cell(r, cols.dateMission)),
         dateRetour: parseDateCell(cell(r, cols.dateRetour)),
-        numOM,
+        numOM: extractNumeroFromDoc(numOM),
         commentaires,
       },
       preview: {
@@ -1099,9 +1326,9 @@ const buildDesiderate = (rows, headerIdx, state) => {
         dateDemande: parseDateCell(cell(r, cols.dateDemande)),
         fournisseur: clean(cell(r, cols.fournisseur)),
         contact: clean(cell(r, cols.contact)),
-        numDevis: clean(cell(r, cols.devis1)),
-        devis2: clean(cell(r, cols.devis2)),
-        devis3: clean(cell(r, cols.devis3)),
+        numDevis: extractNumeroFromDoc(clean(cell(r, cols.devis1))),
+        devis2: extractNumeroFromDoc(clean(cell(r, cols.devis2))),
+        devis3: extractNumeroFromDoc(clean(cell(r, cols.devis3))),
         codeProduit: clean(cell(r, cols.codeProduit)),
         commentaires,
       },
@@ -1215,6 +1442,60 @@ const buildSicurezza = (rows, headerIdx) => {
     });
   }
   return { items, skipped, unmatchedProjets: [] };
+};
+
+/* ── Catalogue fournisseurs (Librerie) ────────────────────────────────────
+   Construit les fiches fournisseurs manquantes à partir d’une liste qui les
+   référence par nom (Dépenses, Spese Desiderate…) : une fiche par nom, sans
+   doublon (comparaison insensible à la casse et aux accents, via normalizeKey).
+   Les coordonnées éventuellement portées par les lignes sources (contact,
+   email, adresse, téléphone, référence SIFAC du fournisseur, site…) sont
+   recopiées lorsqu’elles existent. */
+const SUPPLIER_NAME_KEYS = ['fournisseur', 'nomFournisseur', 'fournisseurNom', 'nom', 'name'];
+const SUPPLIER_COORD_KEYS = [
+  ['contact', ['contact', 'contactFournisseur', 'emailContact']],
+  ['adresse', ['adresse', 'address']],
+  ['email', ['email', 'mail']],
+  ['telephone', ['telephone', 'tel', 'phone']],
+  ['referenceSifac', ['referenceSifac', 'refSifac', 'sifacTiers', 'siret']],
+  ['siteWeb', ['siteWeb', 'site', 'website', 'url']],
+  ['categories', ['categories', 'categorie']],
+];
+const firstValue = (rec, keys) => {
+  if (!rec || typeof rec !== 'object') return '';
+  for (const k of keys) {
+    const v = rec[k];
+    if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
+  }
+  return '';
+};
+export const buildMissingFournisseurs = (rows, existing) => {
+  const known = new Set();
+  (Array.isArray(existing) ? existing : []).forEach((r) => {
+    const k = normalizeKey(firstValue(r, SUPPLIER_NAME_KEYS));
+    if (k) known.add(k);
+  });
+  const byName = new Map(); // normalizeKey -> fiche la plus complète
+  (Array.isArray(rows) ? rows : []).forEach((r) => {
+    const rawName = firstValue(r, SUPPLIER_NAME_KEYS);
+    const key = normalizeKey(rawName);
+    if (!key) return;
+    const current = byName.get(key);
+    if (current) {
+      SUPPLIER_COORD_KEYS.forEach(([k, cand]) => {
+        const v = firstValue(r, cand);
+        if (v && !current[k]) current[k] = v;
+      });
+      return;
+    }
+    const fiche = { fournisseur: rawName };
+    SUPPLIER_COORD_KEYS.forEach(([k, cand]) => {
+      const v = firstValue(r, cand);
+      if (v) fiche[k] = v;
+    });
+    byName.set(key, fiche);
+  });
+  return [...byName.values()].filter((f) => !known.has(normalizeKey(f.fournisseur)));
 };
 
 /* Clé de dédoublonnage partagée (utilisée aussi par l’assistant d’import). */

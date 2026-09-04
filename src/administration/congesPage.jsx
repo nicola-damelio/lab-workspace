@@ -12,9 +12,16 @@
      • L'approbation (Approuvé / Refusé) est réservée au superutilisateur
        (même règle que le changement de statut des Spese Desiderate) ; une
        demande déjà traitée n'est plus modifiable par son auteur.
+     • Seul le superutilisateur peut supprimer une demande de congés. Un
+       membre peut en revanche modifier sa propre demande tant qu'elle n'a
+       pas encore été traitée (statut « Demande »).
      • Dates stockées au format ISO (yyyy-mm-dd), affichées en jj/mm/aaaa.
      • « Jours » = jours ouvrés entre le 1er et le dernier jour inclus
        (week-ends + jours fériés français exclus), voir congesDates.js.
+     • Soldes annuels : quota par profil (47 j par défaut pour un Doctorant,
+       réglable dans Paramètres) sur la saison du 1er septembre → 31 août.
+       Les jours des demandes approuvées qui tombent dans la saison en cours
+       sont déduits du solde ; renouvellement automatique chaque 1er septembre.
 
    Modèle d'enregistrement (collection `conges`) :
      { demandeur, personnelId?, dateDebut, dateFin, jours, note, statut }
@@ -24,8 +31,11 @@ import React, { useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
 import { SmartTable } from './smartTable';
 import { AdminImportModal } from './adminImportModal';
-import { businessDaysBetween, toFrDate } from './congesDates';
-import { CONGE_STATUSES, CONGE_DEMANDE, CONGE_APPROUVE, CONGE_REFUSE } from './adminSchema';
+import { businessDaysBetween, toFrDate, congeYearBounds, businessDaysInPeriod } from './congesDates';
+import {
+  CONGE_STATUSES, CONGE_DEMANDE, CONGE_APPROUVE, CONGE_REFUSE,
+  CONGE_DEFAULT_ALLOWANCE, CONGE_QUOTA_BY_TYPE,
+} from './adminSchema';
 
 const txt = (v) => (v === null || v === undefined ? '' : String(v).trim());
 const toNum = (v) => {
@@ -84,7 +94,7 @@ const SummaryCard = ({ label, value, tone = 'slate', hint }) => {
 };
 
 export const CongesPage = () => {
-  const { data, access, upsert, remove, currentUser } = useAdmin();
+  const { data, access, settings, upsert, remove, currentUser } = useAdmin();
   const list = useMemo(() => (Array.isArray(data.conges) ? data.conges : []), [data.conges]);
   const personnel = useMemo(() => (Array.isArray(data.personnel) ? data.personnel : []), [data.personnel]);
   const [modal, setModal] = useState(null); // null | { mode:'new' } | { mode:'edit', rec }
@@ -102,26 +112,104 @@ export const CongesPage = () => {
   const own = (r) => !!meName && sameName(meName, txt(r.demandeur));
   const pending = (r) => !txt(r.statut) || txt(r.statut) === CONGE_DEMANDE;
   const canEdit = (r) => isSuper || (own(r) && pending(r));
-  const canDelete = (r) => isSuper || (own(r) && pending(r));
+  const canDelete = (r) => isSuper; // seule le superutilisateur peut supprimer une demande
 
   const summary = useMemo(() => {
+    const b = congeYearBounds();
     let demandes = 0;
     let approuve = 0;
     let demande = 0;
-    let refuse = 0;
     const personnes = new Set();
     sorted.forEach((r) => {
       demandes += 1;
       const k = norm(r.demandeur);
       if (k) personnes.add(k);
-      const j = toNum(r.jours);
       const s = txt(r.statut);
+      const j = businessDaysInPeriod(txt(r.dateDebut), txt(r.dateFin), b.start, b.end);
       if (s === CONGE_APPROUVE) approuve += j;
-      else if (s === CONGE_REFUSE) refuse += j;
+      else if (s === CONGE_REFUSE) { /* demandes refusées : rien à décompter */ }
       else demande += j;
     });
-    return { demandes, approuve, demande, refuse, personnes: personnes.size };
+    return { bounds: b, demandes, approuve, demande, personnes: personnes.size };
   }, [sorted]);
+
+  /* ── Soldes annuels par demandeur ──────────────────────────────────────────
+     Saison du 1er septembre au 31 août : les jours approuvés qui tombent dans
+     la saison en cours sont déduits du quota annuel du profil de la fiche
+     Personnel liée (corps → type → « Par défaut » ; 47 j par défaut). Le
+     calcul part de la date du jour : dès le 1er septembre, une nouvelle saison
+     démarre donc automatiquement, sans compteur à réinitialiser. */
+  const balances = useMemo(() => {
+    const b = congeYearBounds();
+    const conf = (settings && settings.congesQuotaByType && typeof settings.congesQuotaByType === 'object'
+      && !Array.isArray(settings.congesQuotaByType))
+      ? settings.congesQuotaByType
+      : CONGE_QUOTA_BY_TYPE;
+    const personByKey = new Map();
+    personnel.forEach((p) => {
+      const k = nameKey(txt(p && p.nom));
+      if (k) personByKey.set(k, p);
+    });
+    const quotaOf = (person) => {
+      if (person) {
+        const c = txt(person.corps);
+        const t = txt(person.type);
+        const cand = (c && conf[c] !== undefined && conf[c] !== null)
+          ? conf[c]
+          : (t && conf[t] !== undefined && conf[t] !== null) ? conf[t] : undefined;
+        const n = Number(cand);
+        if (cand !== undefined && Number.isFinite(n)) return n;
+      }
+      const def = Number(conf['Par défaut']);
+      return Number.isFinite(def) ? def : CONGE_DEFAULT_ALLOWANCE;
+    };
+    const map = new Map();
+    const ensure = (name) => {
+      const k = nameKey(txt(name));
+      if (!k) return null;
+      let e = map.get(k);
+      if (!e) {
+        const person = personByKey.get(k) || null;
+        e = {
+          key: k,
+          name: txt(name),
+          person,
+          quota: quotaOf(person),
+          approved: 0,
+          pending: 0,
+          requests: [],
+        };
+        map.set(k, e);
+      }
+      return e;
+    };
+    sorted.forEach((r) => {
+      const s = txt(r.statut);
+      const approved = s === CONGE_APPROUVE;
+      const pending = !s || s === CONGE_DEMANDE;
+      if (!approved && !pending) return; // Refusé : ne consomme pas de jours
+      const days = businessDaysInPeriod(txt(r.dateDebut), txt(r.dateFin), b.start, b.end);
+      if (!days) return; // demande hors saison en cours → déjà soldée une autre année
+      const e = ensure(txt(r.demandeur));
+      if (!e) return;
+      e.requests.push({ recId: r.id, days, hypothetical: !approved });
+      if (approved) e.approved += days;
+      else e.pending += days;
+    });
+    if (!isSuper && meName) ensure(meName); // un non-permanent voit toujours sa propre carte
+    const rows = [...map.values()].sort((a, b2) => a.name.localeCompare(b2.name, 'fr'));
+    const after = new Map();
+    rows.forEach((e) => {
+      e.label = e.person ? (txt(e.person.corps) || txt(e.person.type) || 'Par défaut') : 'Par défaut';
+      e.requests.forEach((x) => {
+        after.set(x.recId, {
+          days: x.days,
+          remainingAfter: x.hypothetical ? e.quota - e.approved - x.days : e.quota - e.approved,
+        });
+      });
+    });
+    return { bounds: b, rows, after };
+  }, [sorted, personnel, settings, meName, isSuper]);
 
   const suggestions = useMemo(() => {
     const set = new Set();
@@ -174,7 +262,7 @@ export const CongesPage = () => {
 
   const onRemove = (rec) => {
     if (!rec) return;
-    if (!isSuper && !(own(rec) && pending(rec))) return;
+    if (!isSuper) return; // la suppression est réservée au superutilisateur
     const who = txt(rec.demandeur);
     if (!window.confirm(who ? `Supprimer la demande de congés de ${who} ?` : 'Supprimer cette demande de congés ?')) return;
     remove('conges', rec.id);
@@ -213,9 +301,26 @@ export const CongesPage = () => {
     {
       key: 'jours', label: 'Jours', dataType: 'number', align: 'right', nowrap: true,
       value: (r) => toNum(r.jours) || '',
-      display: (r) => (toNum(r.jours)
-        ? <span className="whitespace-nowrap font-black text-slate-700">{toNum(r.jours)} j</span>
-        : <span className="text-slate-300">—</span>),
+      display: (r) => {
+        const n = toNum(r.jours);
+        if (!n) return <span className="text-slate-300">—</span>;
+        const meta = balances.after.get(r.id);
+        if (!meta) return <span className="whitespace-nowrap font-black text-slate-700">{n} j</span>;
+        const approved = txt(r.statut) === CONGE_APPROUVE;
+        return (
+          <div
+            className="whitespace-nowrap text-right"
+            title={approved
+              ? 'Jours restants de la saison en cours après déduction de tous les congés approuvés.'
+              : 'Jours restants si cette demande était approuvée (hors autres demandes en attente).'}
+          >
+            <div className="font-black text-slate-700">{n} j</div>
+            <div className={`text-[9px] font-bold uppercase tracking-wide ${approved ? 'text-emerald-600' : 'text-amber-600'}`}>
+              {approved ? `reste ${meta.remainingAfter} j` : `≈ reste ${meta.remainingAfter} j si approuvé`}
+            </div>
+          </div>
+        );
+      },
     },
     {
       key: 'statut', label: 'Approuvation', filter: 'facet',
@@ -259,7 +364,7 @@ export const CongesPage = () => {
             )}
             {deletable && (
               <button
-                onClick={() => onRemove(r)} title={isSuper ? 'Supprimer' : 'Annuler ma demande (supprimer)'}
+                onClick={() => onRemove(r)} title="Supprimer (réservé au superutilisateur)"
                 className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-red-50 hover:text-red-600 text-xs"
               >🗑</button>
             )}
@@ -273,7 +378,7 @@ export const CongesPage = () => {
     <div className="max-w-full mx-auto flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-xs font-bold text-slate-400">
-          {sorted.length} demande{sorted.length > 1 ? 's' : ''} · {summary.personnes} personne{summary.personnes > 1 ? 's' : ''} concernée{summary.personnes > 1 ? 's' : ''} — l’approbation est réservée au superutilisateur.
+          {sorted.length} demande{sorted.length > 1 ? 's' : ''} · {summary.personnes} personne{summary.personnes > 1 ? 's' : ''} concernée{summary.personnes > 1 ? 's' : ''} — l’approbation comme la suppression sont réservées au superutilisateur.
         </p>
         <div className="flex items-center gap-2">
           <button
@@ -295,14 +400,64 @@ export const CongesPage = () => {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         <SummaryCard label="Demandes" value={summary.demandes} tone="slate" hint="Nombre total de demandes saisies." />
         <SummaryCard label="Personnes concernées" value={summary.personnes} tone="blue" hint="Nombre de demandeurs distincts." />
-        <SummaryCard label="Jours approuvés" value={`${summary.approuve} j`} tone="emerald" hint="Jours cumulés des demandes « Approuvé »." />
-        <SummaryCard label="Jours en attente" value={`${summary.demande} j`} tone="amber" hint="Jours cumulés des demandes « Demande » (non encore traitées)." />
+        <SummaryCard
+          label="Jours approuvés (saison)"
+          value={`${summary.approuve} j`}
+          tone="emerald"
+          hint={`Jours approuvés décomptés du solde sur la saison en cours (${summary.bounds.label}).`}
+        />
+        <SummaryCard
+          label="Jours en attente (saison)"
+          value={`${summary.demande} j`}
+          tone="amber"
+          hint={`Jours des demandes « Demande » portant sur la saison en cours (${summary.bounds.label}).`}
+        />
       </div>
 
+      {balances.rows.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
+            <h3 className="text-sm font-black text-slate-700">🏝 Soldes de congés — saison {balances.bounds.label}</h3>
+            <span className="text-[10px] font-bold text-slate-400">
+              droits annuels réglables par profil dans Paramètres · renouvelés automatiquement chaque 1er septembre
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2">
+            {balances.rows.map((e) => {
+              const left = e.quota - e.approved;
+              const negative = left < 0;
+              const low = !negative && left <= 5;
+              const cardTone = negative ? 'border-red-200' : low ? 'border-amber-200' : 'border-emerald-200';
+              const numTone = negative ? 'text-red-600' : low ? 'text-amber-600' : 'text-emerald-600';
+              return (
+                <div
+                  key={e.key}
+                  className={`bg-white border rounded-2xl shadow-sm px-3 py-2.5 ${cardTone}`}
+                  title={`${e.name} — ${e.approved} j approuvés sur ${e.quota} j annuels (saison ${balances.bounds.label}).${e.pending ? ` ${e.pending} j en attente.` : ''}`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-black text-slate-700 truncate">{e.name}</span>
+                    <span className="shrink-0 text-[9px] font-black uppercase tracking-wide text-slate-400">{e.label}</span>
+                  </div>
+                  <div className="flex items-baseline gap-1.5 mt-0.5">
+                    <span className={`text-2xl font-black leading-none ${numTone}`}>{left} j</span>
+                    <span className="text-[9px] font-black uppercase tracking-wide text-slate-400">restants</span>
+                  </div>
+                  <div className="text-[10px] text-slate-400 mt-0.5">
+                    {e.approved} j approuvés / {e.quota} j
+                    {e.pending > 0 ? <span className="text-amber-600 font-bold"> · {e.pending} j en attente</span> : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
-        <b>Fonctionnement :</b> chacun pose sa demande (statut « Demande »), un superutilisateur l’approuve ou la refuse.
-        La feuille source référence pour les permanents 47 jours ouvrés du 1er septembre au 31 août, dont jusqu’à 28 pendant les fermetures UPJV
-        (2 semaines de Noël + 4 semaines en juillet-août) ; les fêtes nationales tombant pendant une fermeture ne sont pas décomptées.
+        <b>Fonctionnement :</b> chacun pose sa demande (statut « Demande »), un superutilisateur l’approuve ou la refuse. Le solde de chaque membre est décompté en jours ouvrés sur la saison du
+        1er septembre au 31 août (renouvelée automatiquement chaque 1er septembre) : week-ends et fêtes nationales exclus, y compris ceux qui tombent pendant une fermeture UPJV
+        (2 semaines de Noël + 4 semaines en juillet-août). Quota par défaut : 47 jours pour un Doctorant, modulable par profil dans Paramètres › « Congés : jours/an par profil ».
       </div>
 
       {sorted.length === 0 ? (

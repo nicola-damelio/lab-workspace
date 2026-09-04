@@ -16,16 +16,33 @@ import { collectionLabel } from './adminSchema';
 import {
   IMPORT_PRESETS,
   parseDelimitedText,
+  parseHtmlClipboard,
   parseXlsxWorkbook,
   detectImport,
   buildImportItems,
+  buildMissingFournisseurs,
   recordDedupeKey,
 } from './importUtils';
+
+/* Compte les URL de documents réellement capturées dans un enregistrement
+   (champs « …Url » à tous les niveaux : devis, BC, facture, OM, BL/SF par colis). */
+const countImportLinks = (node) => {
+  if (!node || typeof node !== 'object') return 0;
+  let n = 0;
+  Object.entries(node).forEach(([key, val]) => {
+    if (/url/i.test(key)) {
+      const list = Array.isArray(val) ? val : [val];
+      list.forEach((x) => { if (typeof x === 'string' && /^https?:/i.test(x)) n += 1; });
+    } else if (val && typeof val === 'object') n += countImportLinks(val);
+  });
+  return n;
+};
 
 export const AdminImportModal = ({ kind, onClose }) => {
   const { data, importMany, upsert } = useAdmin();
   const [step, setStep] = useState('source'); // 'source' | 'review' | 'done'
   const [text, setText] = useState('');
+  const [clipRows, setClipRows] = useState(null); // grille reconstruite depuis le collage HTML (avec hyperliens)
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [analysis, setAnalysis] = useState(null);
@@ -52,13 +69,37 @@ export const AdminImportModal = ({ kind, onClose }) => {
       items: built.items,
       skipped: built.skipped,
       unmatchedProjets: built.unmatchedProjets || [],
+      linkCount: (built.items || []).reduce((s, it) => s + countImportLinks(it.rec), 0),
     });
     setStep('review');
     setError('');
     return true;
   };
 
+  const handlePaste = (ev) => {
+    const cd = ev.clipboardData;
+    if (!cd) return;
+    const html = cd.getData('text/html');
+    // Google Sheets met aussi un tableau HTML dans le presse-papier : il contient
+    // les vraies adresses des liens cliquables, que le texte seul ne transporte pas.
+    if (/<\/?(table|tr|td|th)\b/i.test(html)) {
+      ev.preventDefault();
+      const parsed = parseHtmlClipboard(html);
+      const plain = cd.getData('text/plain') || '';
+      setText(plain);
+      setClipRows(parsed);
+      setError('');
+    } else {
+      setClipRows(null);
+    }
+  };
+
   const analysePaste = () => {
+    if (clipRows) {
+      setError('');
+      buildFromRows(clipRows);
+      return;
+    }
     if (!String(text || '').trim()) {
       setError('Collez d’abord les données copiées depuis la feuille Google Sheets.');
       return;
@@ -138,9 +179,20 @@ export const AdminImportModal = ({ kind, onClose }) => {
       creates.push(item.rec);
     });
     const { added } = importMany(listKind, creates);
+    // Dépenses : on complète automatiquement le catalogue des fournisseurs
+    // (Librerie) avec les noms de la colonne « Fournisseur » encore absents.
+    let fournisseurs = 0;
+    if (listKind === 'depenses' && creates.length) {
+      const missing = buildMissingFournisseurs(creates, data.librerie);
+      if (missing.length) {
+        const res = importMany('librerie', missing);
+        fournisseurs = res.added || 0;
+      }
+    }
     setSummary({
       listKind,
       added,
+      fournisseurs,
       doublons,
       relies,
       skipped: analysis.skipped || 0,
@@ -152,6 +204,7 @@ export const AdminImportModal = ({ kind, onClose }) => {
   const reset = () => {
     setStep('source');
     setText('');
+    setClipRows(null);
     setError('');
     setAnalysis(null);
     setSummary(null);
@@ -178,12 +231,14 @@ export const AdminImportModal = ({ kind, onClose }) => {
         ) : step === 'review' && analysis ? (
           <ReviewBody
             analysis={analysis} pageLabel={pageLabel} dedupe={dedupe} setDedupe={setDedupe}
-            onBack={() => { setStep('source'); setAnalysis(null); setError(''); }} onImport={runImport}
+            onBack={() => { setStep('source'); setAnalysis(null); setClipRows(null); setError(''); }} onImport={runImport}
           />
         ) : (
           <SourceBody
-            text={text} setText={setText} busy={busy} error={error}
-            onAnalyse={analysePaste} onFile={onFile} fromKind={kind}
+            text={text}
+            onChangeText={(v) => { setText(v); setClipRows(null); }}
+            busy={busy} error={error}
+            onAnalyse={analysePaste} onFile={onFile} onPaste={handlePaste} fromKind={kind}
           />
         )}
       </div>
@@ -195,7 +250,7 @@ const labelCls = 'block text-[10px] font-black uppercase text-slate-400 tracking
 const inputCls = 'w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500';
 
 /* ── Étape 1 : choisir la source (copier-coller ou fichier) ──────────────── */
-const SourceBody = ({ text, setText, busy, error, onAnalyse, onFile, fromKind }) => (
+const SourceBody = ({ text, onChangeText, busy, error, onAnalyse, onFile, onPaste, fromKind }) => (
   <div className="p-6 overflow-y-auto custom-scrollbar flex flex-col gap-4">
     <div className="flex items-center justify-between gap-3 flex-wrap">
       <div className="text-sm font-black text-slate-800 flex items-center gap-2">
@@ -220,15 +275,21 @@ const SourceBody = ({ text, setText, busy, error, onAnalyse, onFile, fromKind })
     <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-3 text-xs text-slate-600 leading-relaxed">
       <b>1.</b> Ouvrez la feuille source dans Google Sheets (liens ci-dessus), onglet voulu : sélectionnez le tableau
       (<b>Ctrl+A</b>) puis copiez-le (<b>Ctrl+C</b>).<br />
-      <b>2.</b> Collez-le ci-dessous (<b>Ctrl+V</b>) — ou téléversez un export <b>CSV / TSV / Excel</b> de l’onglet
-      (Google Sheets : Fichier → Télécharger → CSV).
+      <b>2.</b> Collez-le ci-dessous (<b>Ctrl+V</b>) — ou téléversez un export <b>CSV / TSV / Excel (.xlsx)</b> de l’onglet
+      (Google Sheets : Fichier → Télécharger → CSV ou Microsoft Excel).
+      <div className="mt-1.5 text-emerald-700">
+        💡 Les liens cliquables vers les documents (devis, BC, BL, facture…) sont récupérés automatiquement avec
+        leur adresse lors d’un copier-coller depuis Google Sheets, et dans les fichiers <b>.xlsx</b>. Un export CSV
+        ne conserve que le texte visible des cellules (pas les adresses des liens).
+      </div>
     </div>
 
     <div>
       <label className={labelCls}>Contenu de la feuille (collez le tableau ici)</label>
       <textarea
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => onChangeText(e.target.value)}
+        onPaste={onPaste}
         placeholder={'Lignes budgétaires\tCategorie\tporteur\tBudget totale\t…\n— ou —\nporteur\ttype\tHDR\tBAP\tarrivé en\tfin contrat\t…\n— ou —\nporteur\ttype\tencadrant\tProjet\tdebut\tfin contrat\tNote\n— ou —\nSuivi\tENT\tDescription\tDemandeur\tMontant HT\tn° SIFAC\t…\n— ou —\nDecision\tPriorité\tCout\tDescription\tCode produit\t…'}
         className={`${inputCls} min-h-[130px] font-mono text-xs`}
         spellCheck={false}
@@ -238,7 +299,7 @@ const SourceBody = ({ text, setText, busy, error, onAnalyse, onFile, fromKind })
     <div className="flex items-center gap-2 flex-wrap">
       <button
         onClick={onAnalyse}
-        disabled={busy || !String(text || '').trim()}
+        disabled={busy}
         className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-sm px-5 py-2 rounded-xl shadow-sm transition-colors"
       >
         {busy ? 'Analyse…' : 'Analyser le collage'}
@@ -281,6 +342,23 @@ const ReviewBody = ({ analysis, pageLabel, dedupe, setDedupe, onBack, onImport }
           {analysis.skipped > 0 ? ` · ${analysis.skipped} ligne(s) ignorée(s)` : ''}
         </span>
       </div>
+
+      {analysis.preset.kind === 'depenses' ? (
+        analysis.linkCount > 0 ? (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs text-emerald-800">
+            ✓ <b>{analysis.linkCount} lien{analysis.linkCount > 1 ? 's' : ''} de document{analysis.linkCount > 1 ? 's' : ''}</b>{' '}
+            détecté{analysis.linkCount > 1 ? 's' : ''} — ils seront importés dans les champs URL correspondants
+            (devis, BC, facture, OM, BL/SF par colis).
+          </div>
+        ) : (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800">
+            ⚠️ Aucune adresse de lien détectée. Si vos documents apparaissent en <b>bleu souligné</b> dans la feuille,
+            recopiez le tableau depuis Google Sheets (Ctrl+C) puis recollez-le ici, ou téléversez le fichier{' '}
+            <b>Excel (.xlsx)</b> exporté (Fichier → Télécharger → Microsoft Excel) : les adresses des liens sont lues
+            automatiquement. Des colonnes « Lien devis / Lien BC … » remplies d’adresses https:// en texte marchent aussi.
+          </div>
+        )
+      ) : null}
 
       <div className="rounded-xl border border-slate-200 overflow-hidden">
         <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 text-[11px] font-black uppercase tracking-wide text-slate-500">
@@ -354,7 +432,13 @@ const DoneBody = ({ summary, onReset, onClose }) => (
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
       <Stat label="Ajoutés" value={summary.added} tone="text-emerald-600" />
       <Stat label="Doublons ignorés" value={summary.doublons} tone="text-slate-500" />
-      <Stat label={summary.listKind === 'personnel' ? 'Stagiaires reliés' : 'Liens recettes'} value={summary.relies} tone="text-blue-600" />
+      <Stat
+        label={summary.listKind === 'depenses'
+          ? 'Fournisseurs ajoutés au catalogue'
+          : (summary.listKind === 'personnel' ? 'Stagiaires reliés' : 'Liens recettes')}
+        value={summary.listKind === 'depenses' ? summary.fournisseurs : summary.relies}
+        tone={summary.listKind === 'depenses' ? 'text-indigo-600' : 'text-blue-600'}
+      />
       <Stat label="Lignes ignorées" value={summary.skipped} tone="text-amber-600" />
     </div>
 

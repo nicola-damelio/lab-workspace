@@ -8,10 +8,13 @@
    métropole (fixes et mobiles — Lundi de Pâques, Ascension, Pentecôte).
 
    Saison annuelle de référence (note de la feuille source) : 1er septembre →
-   31 août de l'année suivante ; 47 jours ouvrés pour un permanent, dont
-   jusqu'à 28 pendant les fermetures UPJV (2 semaines de Noël + 4 semaines
-   entre juillet et août). Les fêtes nationales tombant pendant une fermeture
-   UPJV ne sont pas décomptées des jours de congés.
+   31 août de l'année suivante, renouvelée automatiquement chaque 1er septembre.
+   Quota annuel par profil : 47 jours ouvrés par défaut (Doctorant), modulable
+   dans Paramètres › « Congés : jours/an par profil ». Les jours de congé sont
+   décomptés en jours ouvrés entre le premier et le dernier jour inclus (week-
+   ends et fêtes nationales françaises exclus — y compris ceux qui tombent dans
+   une fermeture UPJV : 2 semaines de Noël + 4 semaines entre juillet et août,
+   et les fêtes mobiles Lundi de Pâques / Ascension / Pentecôte).
    ========================================================================= */
 
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -98,4 +101,58 @@ export const businessDaysBetween = (startISO, endISO) => {
     cursor.setDate(cursor.getDate() + 1);
   }
   return count;
+};
+
+/** Partie date (yyyy-mm-dd) d'une valeur ISO éventuellement horodatée. */
+const datePartOf = (iso) => {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : '';
+};
+
+/** ISO (yyyy-mm-dd) du jour courant (heure locale). */
+export const isoToday = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+};
+
+/**
+ * Saison de congés contenant la date `iso` (ou aujourd'hui) : elle court du
+ * 1er septembre au 31 août de l'année suivante. Le solde affiché porte toujours
+ * sur cette fenêtre, ce qui renouvelle automatiquement les jours chaque
+ * 1er septembre (aucun compteur stocké à réinitialiser).
+ */
+export const congeYearBounds = (iso) => {
+  const d = (() => {
+    const parsed = parseISO(iso);
+    if (parsed) return parsed;
+    return new Date();
+  })();
+  const y = d.getFullYear();
+  const startYear = d.getMonth() + 1 >= 9 ? y : y - 1;
+  const endYear = startYear + 1;
+  return {
+    startYear,
+    endYear,
+    start: `${startYear}-09-01`,
+    end: `${endYear}-08-31`,
+    label: `1 sept. ${startYear} → 31 août ${endYear}`,
+  };
+};
+
+/**
+ * Jours ouvrés (décomptés du solde) de la période [startISO, endISO] qui
+ * tombent à l'intérieur de la saison [periodStart, periodEnd]. Sert à prorater
+ * une demande qui chevaucherait le 1er septembre (ex. vacances fin août).
+ */
+export const businessDaysInPeriod = (startISO, endISO, periodStart, periodEnd) => {
+  const s = datePartOf(startISO);
+  const e = datePartOf(endISO);
+  const ps = datePartOf(periodStart);
+  const pe = datePartOf(periodEnd);
+  if (!s || !e || !ps || !pe) return 0;
+  const lo = s < ps ? ps : s;
+  const hi = e > pe ? pe : e;
+  if (lo > hi) return 0;
+  const n = businessDaysBetween(lo, hi);
+  return n == null ? 0 : n;
 };

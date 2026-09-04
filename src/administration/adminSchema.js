@@ -59,7 +59,7 @@ export const ADMIN_PAGES = [
     fields: ['Ligne budgétaire', 'Type : Fonctionnement / Investissement', 'Porteur du projet', 'Budget total', 'Montant mis à disposition par l’université', 'Dépenses ordonnées (BC signés)', 'Ordres de mission (acceptés / à prévoir)', 'Spese Desiderate liées', 'Solde disponible', 'Date de fin d’engagement', 'Commentaires'] },
   { id: 'librerie', label: 'Librerie', icon: '📇', superuserOnly: false, kind: 'librerie',
     blurb: 'Catalogue des fournisseurs utilisé par les Dépenses et les Spese Desiderate.',
-    fields: ['Nom du fournisseur', 'Contact', 'Email · Téléphone · Adresse', 'Catégories associées', 'Site web', 'Notes'] },
+    fields: ['Nom du fournisseur', 'Contact', 'Email · Téléphone · Adresse', 'Référence SIFAC (n° de tiers fournisseur)', 'Catégories associées', 'Site web', 'Commentaires'] },
   { id: 'personnel', label: 'Personnel', icon: '👥', superuserOnly: true, kind: 'personnel',
     blurb: 'Personnel Permanent / Technique / Temporaire, corps & grades, missions, formations et bloc stagiaire lié à une Recette.',
     fields: ['Nom', 'Type : Permanent / Technique / Temporaire', 'Corps (PR, MCF, DR, CR, IR, IE, ASI, TECH, ATRF…)', 'Grade — sous-classification du corps (PR2, PR1, CE2, CE1, CN, HC, DR2, DR1…)', 'BAP · HDR · Catégorie · Échelon · Chevron', 'Dates contrat', 'Promotion · RIPEC', 'Missions · Formations', 'Stagiaire : encadrants · ligne budgétaire · dates · durée', 'Commentaires'] },
@@ -189,6 +189,23 @@ export const GRADES_BY_CORPS = {
 };
 export const BAP_LIST = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'J'];
 export const DUTY_SUGGESTIONS = ['SST', 'ASV', 'Radioprotection', 'Sécurité incendie', 'Habilitations électriques', 'Prévention des risques chimiques'];
+
+/* Positions « atteintes » lors d’une promotion (historique des promotions de
+   la page Personnel) et intitulés de formations (lignes « intitulé | date »).
+   Les deux listes sont modifiables dans Paramètres › Options des listes
+   déroulantes — les valeurs déjà saisies dans les fiches restent toujours
+   proposées dans le formulaire, même après retrait de la liste. */
+export const PERSONNEL_POSITIONS = [
+  'Doctorant', 'ATER', 'Post-doctorant', 'PRAG', 'PRCE',
+  'Ingénieur d’études', 'Ingénieur de recherche', 'Assistant ingénieur', 'Technicien', 'Adjoint technique',
+  'Maître de conférences', 'Professeur des universités',
+  'Chargé de recherche', 'Directeur de recherche',
+];
+export const FORMATION_SUGGESTIONS = [
+  'SST initial', 'SST recyclage', 'Habilitations électriques (initial)', 'Habilitations électriques (recyclage)',
+  'Formation autoclave', 'Radioprotection', 'Équipier de première intervention', 'Secourisme',
+  'Prévention des risques chimiques',
+];
 export const DEPENSE_NATURES = ['Consommables', 'Stages', 'Instrumentation', 'Meetings', 'Audit', 'Prestations', 'Autre'];
 export const URGENCES = ['Urgent', 'Important', 'Souhaitable'];
 export const DESIDERATE_STATUSES = ['Pending', 'Approved', 'En attente', 'Rejected / Pas maintenant'];
@@ -198,6 +215,14 @@ export const CONGE_STATUSES = ['Demande', 'Approuvé', 'Refusé'];
 export const CONGE_DEMANDE = 'Demande';
 export const CONGE_APPROUVE = 'Approuvé';
 export const CONGE_REFUSE = 'Refusé';
+
+/* Congés : jours accordés par an et par profil (saison du 1er septembre au
+   31 août, renouvelée automatiquement). Le quota se règle dans Paramètres ›
+   « Congés : jours/an par profil » au format « Corps = nombre » ; la page
+   Congés cherche d'abord par corps de la fiche Personnel, puis par type,
+   puis par « Par défaut ». */
+export const CONGE_DEFAULT_ALLOWANCE = 47;
+export const CONGE_QUOTA_BY_TYPE = { Doctorant: CONGE_DEFAULT_ALLOWANCE };
 
 /* Statuts ajoutés pour le suivi budgétaire des pages Dépenses / OM. */
 export const DEPENSE_STATUSES = ['Devis en cours', 'SIFAC transmis', 'BC signé', 'Livré', 'Facturé', 'Clôturé'];
@@ -213,6 +238,8 @@ export const DEFAULT_OPTIONS = {
   gradesByCorps: GRADES_BY_CORPS,
   bap: BAP_LIST,
   dutySuggestions: DUTY_SUGGESTIONS,
+  positions: PERSONNEL_POSITIONS,
+  formations: FORMATION_SUGGESTIONS,
   depenseNatures: DEPENSE_NATURES,
   urgencies: URGENCES,
   desiderateStatuses: DESIDERATE_STATUSES,
@@ -221,6 +248,7 @@ export const DEFAULT_OPTIONS = {
   depenseStatuses: DEPENSE_STATUSES,
   issueStatuses: ISSUE_STATUSES,
   congeStatuses: CONGE_STATUSES,
+  congesQuotaByType: CONGE_QUOTA_BY_TYPE,
 };
 
 /* ── Aides ──────────────────────────────────────────────────────────────── */

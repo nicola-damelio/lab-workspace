@@ -15,6 +15,8 @@ const OPTION_KEYS = [
   { key: 'corps', label: 'Corps (PR, MCF, DR, CR…) — une par ligne' },
   { key: 'gradesByCorps', label: 'Grades par corps — format Corps = gr1, gr2' },
   { key: 'bap', label: 'BAP (A, B, C…)' },
+  { key: 'positions', label: 'Positions / postes (historique des promotions) — une par ligne' },
+  { key: 'formations', label: 'Formations (intitulés) — une par ligne' },
   { key: 'dutySuggestions', label: 'Missions suggérées (SST…)' },
   { key: 'depenseNatures', label: 'Natures de dépenses' },
   { key: 'depenseStatuses', label: 'Statuts de dépenses / BC' },
@@ -23,12 +25,18 @@ const OPTION_KEYS = [
   { key: 'omStatuses', label: 'Statuts des OM' },
   { key: 'omCostStatuses', label: 'Coût OM : Estimé / Exact' },
   { key: 'issueStatuses', label: 'Statuts des questions' },
+  { key: 'congesQuotaByType', label: 'Congés : jours / an par profil (Doctorant = 47)' },
 ];
+
+/* Options stockées comme objet « clé = valeur » (une entrée par ligne). */
+const OBJECT_OPTION_KEYS = new Set(['gradesByCorps', 'congesQuotaByType']);
 
 const toText = (key, settings) => {
   const val = settings && settings[key];
-  if (key === 'gradesByCorps' && val && typeof val === 'object') {
-    return Object.entries(val).map(([corps, grades]) => `${corps} = ${(grades || []).join(', ')}`).join('\n');
+  if (OBJECT_OPTION_KEYS.has(key) && val && typeof val === 'object') {
+    return Object.entries(val)
+      .map(([k, v]) => `${k} = ${Array.isArray(v) ? v.join(', ') : String(v)}`)
+      .join('\n');
   }
   return Array.isArray(val) ? val.join('\n') : '';
 };
@@ -45,13 +53,19 @@ export const SettingsPage = ({ operators, setOperators, authSettings, setAuthSet
 
   const saveOption = () => {
     let value;
-    if (optionKey === 'gradesByCorps') {
+    if (OBJECT_OPTION_KEYS.has(optionKey)) {
       const obj = {};
       text.split('\n').map((l) => l.trim()).filter(Boolean).forEach((l) => {
         const eq = l.indexOf('=');
-        const corps = (eq > 0 ? l.slice(0, eq) : l).trim();
-        const grades = (eq > 0 ? l.slice(eq + 1) : '').split(',').map((g) => g.trim()).filter(Boolean);
-        if (corps) obj[corps] = grades;
+        const key = (eq > 0 ? l.slice(0, eq) : l).trim();
+        if (!key) return;
+        if (optionKey === 'gradesByCorps') {
+          const grades = (eq > 0 ? l.slice(eq + 1) : '').split(',').map((g) => g.trim()).filter(Boolean);
+          if (grades.length) obj[key] = grades;
+        } else if (optionKey === 'congesQuotaByType') {
+          const n = Number(eq > 0 ? l.slice(eq + 1) : '');
+          if (eq > 0 && Number.isFinite(n) && n >= 0) obj[key] = n;
+        }
       });
       value = obj;
     } else {
@@ -107,7 +121,9 @@ export const SettingsPage = ({ operators, setOperators, authSettings, setAuthSet
             <p className="text-[10px] text-slate-400 mt-2">
               {optionKey === 'gradesByCorps'
                 ? 'Format attendu : PR = PR2, PR1, CE2, CE1 (un corps par ligne).'
-                : 'Une valeur par ligne. Vide = aucune valeur.'}
+                : optionKey === 'congesQuotaByType'
+                  ? 'Format attendu : Doctorant = 47 (une ligne par corps ou type ; « Par défaut » s’applique aux fiches sans correspondance).'
+                  : 'Une valeur par ligne. Vide = aucune valeur.'}
             </p>
           </div>
           <div>

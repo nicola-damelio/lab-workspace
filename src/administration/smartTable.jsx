@@ -82,11 +82,14 @@ const rowMatches = (row, columns, filterMap, queryTerms) => {
 };
 
 /* ── En-tête triable ──────────────────────────────────────────────────────── */
-const SortHeader = ({ col, sort, onSort, alignRight }) => {
+const SortHeader = ({ col, colIndex = 0, sort, onSort, alignRight }) => {
   const active = sort && sort.key === col.key;
   const dir = active ? sort.dir : null;
+  /* Cellule épinglée : la ligne d’en-têtes reste visible pendant le défilement
+     vertical du tableau ; un léger filet gauche sépare les colonnes. */
+  const divider = colIndex > 0 ? ' border-l border-slate-200/80' : '';
   return (
-    <th className={`px-3 py-2.5 ${alignRight ? 'text-right' : 'text-left'}`}>
+    <th className={`px-3 py-2.5 sticky top-0 z-10 bg-slate-50 border-b-2 border-slate-200 ${alignRight ? 'text-right' : 'text-left'}${divider}`}>
       {col.sortable === false ? (
         <span className="font-black uppercase tracking-wide">{col.label}</span>
       ) : (
@@ -111,6 +114,12 @@ export const SmartTable = ({
   columns = [],
   rows = [],
   rowKey = (r, i) => (r && r.id !== undefined ? r.id : i),
+  /* Classe CSS ajoutée à chaque ligne (chaîne, ou fonction (row, idx) → chaîne).
+     Utilisée par ex. pour le code couleur Permanent / Non permanent. */
+  rowClass,
+  /* Hauteur maxi du bloc défilant : la 1re ligne (en-têtes) reste toujours
+     visible (colonne de définitions épinglée) pendant le défilement vertical. */
+  maxHeight = '62vh',
   minWidth = '980px',
   emptyLabel = 'Aucune donnée.',
   noMatchLabel = 'Aucun enregistrement ne correspond aux filtres.',
@@ -354,14 +363,15 @@ export const SmartTable = ({
           >Réinitialiser les filtres</button>
         </div>
       ) : (
-        <div className="overflow-x-auto custom-scrollbar">
+        <div className="overflow-auto custom-scrollbar overscroll-contain" style={maxHeight ? { maxHeight } : undefined}>
           <table className="w-full text-sm border-collapse" style={{ minWidth }}>
             <thead>
-              <tr className="text-[10px] uppercase tracking-wide text-slate-400 border-b border-slate-200 bg-slate-50/50">
-                {visibleCols.map((col) => (
+              <tr className="text-[10px] uppercase tracking-wide text-slate-500">
+                {visibleCols.map((col, ci) => (
                   <SortHeader
                     key={col.key}
                     col={col}
+                    colIndex={ci}
                     sort={sort}
                     onSort={onSort}
                     alignRight={col.align === 'right'}
@@ -370,27 +380,31 @@ export const SmartTable = ({
               </tr>
             </thead>
             <tbody>
-              {visibleRows.map((row, idx) => (
-                <tr
-                  key={rowKey(row, idx)}
-                  className="border-b border-slate-100 last:border-0 hover:bg-blue-50/40 align-top"
-                >
-                  {visibleCols.map((col) => {
-                    const raw = typeof col.value === 'function' ? col.value(row) : row[col.key];
-                    const isNumeric = col.dataType === 'number' || !!col.numeric;
-                    const content = typeof col.display === 'function'
-                      ? col.display(row)
-                      : (isBlank(raw) ? '—' : toText(raw));
-                    const cls = [
-                      'px-3 py-2.5',
-                      col.align === 'right' || (isNumeric && col.align !== 'left') ? 'text-right' : 'text-left',
-                      col.nowrap ? 'whitespace-nowrap' : '',
-                      col.tdClass || '',
-                    ].filter(Boolean).join(' ');
-                    return <td key={col.key} className={cls}>{content}</td>;
-                  })}
-                </tr>
-              ))}
+              {visibleRows.map((row, idx) => {
+                const extraRowClass = typeof rowClass === 'function' ? rowClass(row, idx) : (rowClass || '');
+                return (
+                  <tr
+                    key={rowKey(row, idx)}
+                    className={`border-b border-slate-100 last:border-0 hover:bg-blue-50/50 align-top ${extraRowClass}`}
+                  >
+                    {visibleCols.map((col, ci) => {
+                      const raw = typeof col.value === 'function' ? col.value(row) : row[col.key];
+                      const isNumeric = col.dataType === 'number' || !!col.numeric;
+                      const content = typeof col.display === 'function'
+                        ? col.display(row)
+                        : (isBlank(raw) ? '—' : toText(raw));
+                      const cls = [
+                        'px-3 py-2.5',
+                        ci > 0 ? 'border-l border-slate-200/70' : '',
+                        col.align === 'right' || (isNumeric && col.align !== 'left') ? 'text-right' : 'text-left',
+                        col.nowrap ? 'whitespace-nowrap' : '',
+                        col.tdClass || '',
+                      ].filter(Boolean).join(' ');
+                      return <td key={col.key} className={cls}>{content}</td>;
+                    })}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
