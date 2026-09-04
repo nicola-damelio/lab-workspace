@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Icon } from '../Icons';
-import { getDriveToken, getDriveAccountEmail, clearDriveToken } from '../../utils/driveUpload';
+import { getDriveToken, getDriveAccountEmail, clearDriveToken, sharedWorkspaceMode } from '../../utils/driveUpload';
 import { openDrive } from '../../utils/driveNaming';
 
 export const AppSidebar = ({
@@ -187,8 +187,12 @@ export const AppSidebar = ({
                 { id: 'storage', icon: '📦', label: 'Storage & Boxes' },
                 { id: 'calculations', icon: '🧮', label: 'Calculations' },
                 { id: 'publications', icon: '📰', label: 'Publications' },
+                { id: 'budget', icon: '💰', label: 'Budget', superuserOnly: true },
                 { id: 'settings', icon: '⚙️', label: 'Settings' }
-              ].map((nav) => (
+              ]
+              // The Budget page is visible/accessible only to the superuser.
+              .filter((nav) => !nav.superuserOnly || currentUser?.role === 'superuser')
+              .map((nav) => (
                 <button
                   key={nav.id}
                   onClick={() => {
@@ -238,7 +242,7 @@ export const AppSidebar = ({
                   >
                     <span className="text-[10px] font-bold text-emerald-700 flex items-center gap-1">
                       <Icon name="cloud" size={12} />
-                      {isSidebarOpen ? `Drive · ${driveAccount || 'connected'}` : ''}
+                      {isSidebarOpen ? `Drive · ${driveAccount || (sharedWorkspaceMode() ? 'shared workspace' : 'connected')}` : ''}
                     </span>
                     <button
                       onClick={openDrive}
@@ -246,16 +250,18 @@ export const AppSidebar = ({
                     >
                       Open ↗
                     </button>
-                    <button
-                      onClick={() => {
-                        clearDriveToken();
-                        try { window.dispatchEvent(new CustomEvent('lab:drive-disconnected')); } catch { /* ignore */ }
-                      }}
-                      className="text-xs font-bold text-red-500 hover:text-red-700 underline"
-                      title="Disconnect Google Drive (you can reconnect at any time)"
-                    >
-                      Disconnect
-                    </button>
+                    {!sharedWorkspaceMode() && (
+                      <button
+                        onClick={() => {
+                          clearDriveToken();
+                          try { window.dispatchEvent(new CustomEvent('lab:drive-disconnected')); } catch { /* ignore */ }
+                        }}
+                        className="text-xs font-bold text-red-500 hover:text-red-700 underline"
+                        title="Disconnect Google Drive (you can reconnect at any time)"
+                      >
+                        Disconnect
+                      </button>
+                    )}
                   </div>
                 ) : (
                   onConnectDrive && (
@@ -264,9 +270,11 @@ export const AppSidebar = ({
                       className={`w-full text-center bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors flex items-center justify-center gap-1 ${
                         !isSidebarOpen ? 'py-2 px-0 text-xs' : ''
                       }`}
-                      title="Connect Google Drive so uploaded images/documents are automatically renamed and saved into folders that mirror the app, inside your Lab Workspace folder"
+                      title={sharedWorkspaceMode()
+                        ? 'Drive is temporarily unavailable — retry the shared Lab Workspace server (no personal Google Drive needed; you still log in to the app as usual)'
+                        : 'Connect Google Drive so uploaded images/documents are automatically renamed and saved into folders that mirror the app, inside your Lab Workspace folder'}
                     >
-                      <Icon name="cloud" size={14} /> {isSidebarOpen ? 'Connect Drive' : ''}
+                      <Icon name="cloud" size={14} /> {isSidebarOpen ? (sharedWorkspaceMode() ? 'Reconnect shared Drive' : 'Connect Drive') : ''}
                     </button>
                   )
                 )}

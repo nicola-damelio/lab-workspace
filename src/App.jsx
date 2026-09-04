@@ -13,6 +13,7 @@ import { AgendaModule } from './components/AppModules/agendaModule';
 import { DashboardModule } from './components/AppModules/dashboardModule';
 import { LibraryModule } from './components/AppModules/libraryModule';
 import { SettingsModule } from './components/AppModules/settingsModule';
+import { BudgetModule } from './components/AppModules/budgetModule';
 import { StorageModule } from './components/AppModules/storageModuleViews';
 import { TestsModule } from './components/AppModules/testsModule';
 import { ProtocolsModule } from './components/AppModules/protocolsModule';
@@ -22,7 +23,7 @@ import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud } fr
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
 import { setActiveProjectId, readLibrary, readAllProjectLibraries, restoreLibraryFromSnapshot } from './utils/figuresLibrary';
-import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders } from './utils/driveUpload';
+import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders } from './utils/driveUpload';
 import { sanitizeSlug, datasetFolderSlug } from './utils/driveNaming';
 import { validateDatasetExperiments } from './utils/experimentRules';
 
@@ -1097,9 +1098,15 @@ if (customType === 'dosy') {
     initAuth();
   }, []);
 
-// ── LOAD operators + authSettings FROM Firestore on login ─────────────
+// ── LOAD operators + authSettings FROM Firestore (any session) ────────────
   useEffect(() => {
-    if (!db || !user) return;
+    // The scientists list + access settings are TEAM data: they must appear on
+    // every browser even when no personal Google account is signed in (shared
+    // Lab Workspace Drive mode), so the login gate and the permissions stay
+    // exactly as configured. Reads use the public path (like datasets below)
+    // and therefore work before a Google sign-in; writes remain gated on a
+    // signed-in Google user (see the save effect above).
+    if (!db) return;
     const unsubscribe = db
       .collection(`artifacts/${appId}/public/data/appConfig`)
       .doc('global')
@@ -1167,8 +1174,11 @@ if (customType === 'dosy') {
     }
   };
 
-  // Connect Google Drive for uploads. Requires a configured Google Cloud
-  // OAuth client — the standard Google sign-in cannot get Drive permission.
+  // Connect Google Drive for uploads. In SHARED workspace mode this NEVER opens
+  // a Google popup for normal users: it simply asks the workspace server for a
+  // fresh token (the permanent credential lives on the server). Only the owner
+  // bootstrap (?drive-bootstrap=1) runs the real Google consent flow. Otherwise
+  // the flow requires the configured Google Cloud OAuth client.
   const connectDrive = async () => {
     if (getConfiguredDriveClientId()) {
       const ok = await connectDriveWithGis();
@@ -1176,12 +1186,21 @@ if (customType === 'dosy') {
         const verified = await testDriveAccess();
         if (verified) {
           try { window.dispatchEvent(new CustomEvent('lab:drive-connected')); } catch { /* ignore */ }
-          alert('Google Drive connected ✓ — uploaded images/documents will be saved automatically to your Drive folder.');
+          alert(sharedWorkspaceMode()
+            ? 'Shared Drive connected ✓ — uploaded images/documents will be saved automatically to the shared Lab Workspace Drive folder.'
+            : 'Google Drive connected ✓ — uploaded images/documents will be saved automatically to your Drive folder.');
         } else {
           clearDriveToken();
           try { window.dispatchEvent(new CustomEvent('lab:drive-disconnected')); } catch { /* ignore */ }
-          alert('Google sign-in succeeded, but Google blocked Drive access. Check that the OAuth client has the drive.file scope enabled.');
+          alert(sharedWorkspaceMode()
+            ? 'The shared Drive server answered, but it could not verify Drive access. It may not be set up yet — ask the workspace owner to run the one-time setup (?drive-bootstrap=1).'
+            : 'Google sign-in succeeded, but Google blocked Drive access. Check that the OAuth client has the drive.file scope enabled.');
         }
+      } else if (sharedWorkspaceMode()) {
+        // Shared mode: never a Google popup — explain the real cause instead.
+        alert(getWorkspaceServerIssue() === 'not_initialized'
+          ? 'Shared Drive is not set up yet. The workspace owner must open this app once with “?drive-bootstrap=1” at the end of the URL and click Connect Drive — that stores the permanent credential on the shared server. Until then files are kept locally.'
+          : 'The shared Lab Workspace server is temporarily unreachable, so Drive is unavailable right now.\n\nYour files are still saved locally, and the app will reconnect automatically as soon as the server answers again — no personal Google Drive is needed (you still log in to the app normally).');
       } else {
         const origin = (() => { try { return window.location.origin || ''; } catch { return ''; } })();
         alert(
@@ -3323,6 +3342,9 @@ const openDataset = (dset) => {
             {currentModule === 'publications' && (<PublicationsModule
               operatorNames={operatorNames} tests={tests} currentUser={currentUser} projectId={currentProjectId}
               jumpToTest={jumpToTest}
+            />)}
+            {currentModule === 'budget' && (<BudgetModule
+              currentUser={currentUser} operatorNames={operatorNames}
             />)}
           </div>
         </div>

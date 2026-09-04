@@ -89,8 +89,13 @@ export const getDriveRootName = () => driveRootName;
  *  • Google Drive → an OAuth token is available
  *  • Nextcloud → server URL + username + app password are configured
  */
-export const cloudBackendAvailable = () =>
-  getCloudProvider() === 'nextcloud' ? nextcloudConfigured() : !!getDriveToken();
+export const cloudBackendAvailable = () => {
+  if (getCloudProvider() === 'nextcloud') return nextcloudConfigured();
+  // Shared workspace mode: the server mints short-lived tokens on demand for
+  // every browser, so Drive is reachable without a personal Google login.
+  if (sharedWorkspaceMode()) return true;
+  return !!getDriveToken();
+};
 
 /** Verify the stored token really works against the Drive API (the scope can be silently missing). */
 export const testDriveAccess = async () => {
@@ -163,7 +168,15 @@ export const dataUrlToBlob = (dataUrl) => {
 };
 
 export const driveFetch = async (path, opts = {}) => {
-  const token = getDriveToken();
+  let token = getDriveToken();
+  // Shared workspace mode: a browser may legitimately have NO token yet (first
+  // page load before the background mint finished, or the hourly token expired
+  // while the workspace server was briefly unreachable). Mint one on demand —
+  // Drive must never be unusable just because "nobody logged in".
+  if (!token && sharedWorkspaceMode()) {
+    await renewDriveTokenSilently();
+    token = getDriveToken();
+  }
   if (!token) throwCode('NO_TOKEN', 'Google Drive is not connected.');
 
   // A corrupted token string (control chars, line breaks, …) makes the
@@ -1162,7 +1175,7 @@ export const trashDriveFile = async (fileId) => {
 // The standard Firebase Google sign-in cannot get the drive.file scope from
 // Google. If GOOGLE_DRIVE_CLIENT_ID is configured, we use Google Identity
 // Services to request a real Drive-access token.
-import { GOOGLE_DRIVE_CLIENT_ID, GOOGLE_TOKEN_EXCHANGE_URL } from '../data/constants';
+import { GOOGLE_DRIVE_CLIENT_ID, GOOGLE_TOKEN_EXCHANGE_URL, GOOGLE_DRIVE_SHARED_MODE } from '../data/constants';
 
 export const getConfiguredDriveClientId = () =>
   String(GOOGLE_DRIVE_CLIENT_ID || '').trim();
@@ -1170,6 +1183,71 @@ export const getConfiguredDriveClientId = () =>
 /** HTTPS endpoint that exchanges authorization codes / refresh tokens for
  *  Google access tokens (holds the OAuth client secret server-side). */
 const getTokenExchangeUrl = () => String(GOOGLE_TOKEN_EXCHANGE_URL || '').trim();
+
+// ── Shared "Lab Workspace" server mode ─────────────────────────────────────
+// GOOGLE_TOKEN_EXCHANGE_URL points at a small HTTPS server (see server/) that
+// holds the workspace OWNER's permanent Drive refresh token and mints short-
+// lived access tokens for every browser. In this mode nobody connects their
+// own Google Drive — the app just asks the server for a fresh token whenever
+// one is needed, and the "not connected" state cannot happen anymore. (Only
+// the Drive step changes: the app login and every permission stay exactly as
+// configured.)
+export const sharedWorkspaceMode = () =>
+  !!getTokenExchangeUrl() && GOOGLE_DRIVE_SHARED_MODE !== false;
+
+/** True when this page load is the OWNER's one-time bootstrap: appending
+ *  "?drive-bootstrap=1" to the URL is the ONLY situation in shared mode where
+ *  a Google consent popup may appear (the server stores the permanent token). */
+const workspaceBootstrapMode = () => {
+  try {
+    return typeof window !== 'undefined' &&
+      new URLSearchParams(window.location.search).has('drive-bootstrap');
+  } catch { return false; }
+};
+
+// Last workspace-server problem, so the UI can explain failures:
+//   null  → no failure yet
+//   'not_initialized' → server is up, but the owner never stored the credential
+//   'unreachable'     → network error / HTTP error / timeout
+let workspaceServerIssue = null;
+let lastSharedDriveConnectedAt = 0;
+export const getWorkspaceServerIssue = () => workspaceServerIssue;
+
+/** Ask the workspace server to mint a short-lived access token from the stored
+ *  permanent refresh token ({ grant_type: 'workspace' }). Stores the returned
+ *  token and CLEARS any legacy per-browser refresh token (the permanent
+ *  credential lives server-side only). Resolves true on success. */
+const mintWorkspaceAccessToken = async () => {
+  const res = await postToTokenExchange({ grant_type: 'workspace' });
+  const body = res.json || {};
+  if (res.ok && body.access_token) {
+    workspaceServerIssue = null;
+    lastSharedDriveConnectedAt = Date.now();
+    setDriveToken(body.access_token, body.expires_in);
+    setStoredRefreshToken('');
+    return true;
+  }
+  workspaceServerIssue =
+    (body.error === 'workspace_not_initialized' || res.status === 503)
+      ? 'not_initialized' : 'unreachable';
+  console.warn('Workspace token mint failed:',
+    res.error || body.error_description || body.error || `HTTP ${res.status}`);
+  return false;
+};
+
+/** Shared-mode bootstrap at app load: mint a token right away so that every
+ *  getDriveToken() / driveFetch() gate below finds one ready when the UI asks.
+ *  The success event is re-announced after ~1.5 s because components attach
+ *  their 'lab:drive-connected' listener only after first mount and would
+ *  otherwise miss the very first (very early) mint. */
+const kickOffSharedWorkspaceToken = () => {
+  if (!sharedWorkspaceMode() || getDriveToken()) return;
+  renewDriveTokenSilently().then((ok) => {
+    if (!ok) return;
+    notifyDriveConnected();
+    setTimeout(() => notifyDriveConnected(), 1500);
+  });
+};
 
 // ── Refresh-token persistence ─────────────────────────────────────────────
 // The refresh token is what makes the Drive connection permanent. It is
@@ -1245,19 +1323,45 @@ const requestGisCode = (clientId) =>
   });
 
 /** POST a JSON body to the configured token-exchange endpoint (the server holds
- *  the Google OAuth client secret). Returns the parsed response or null. */
+ *  the Google OAuth client secret and, in shared mode, the permanent refresh
+ *  token). Always resolves (never throws):
+ *    { ok:true,  json }                 — 2xx with a parsed JSON body
+ *    { ok:false, error, status, json }  — HTTP / network / parse failure
+ *  A 15 s timeout keeps mints and renewals from hanging the UI when the
+ *  workspace server is unreachable. */
 const postToTokenExchange = async (body) => {
   const url = getTokenExchangeUrl();
-  if (!url) return null;
+  if (!url) return { ok: false, error: 'No token-exchange server is configured.', status: 0, json: null };
+  const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), 15000) : null;
   try {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal: ctrl ? ctrl.signal : undefined
     });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch { return null; }
+    let json = null;
+    try { json = await res.json(); } catch { json = null; }
+    if (!res.ok) {
+      const error = (json && (json.error_description || (json.error && json.error.message)))
+        || (json && json.error) || `Server error (HTTP ${res.status})`;
+      return { ok: false, error: String(error), status: res.status, json };
+    }
+    return { ok: true, json: json || {} };
+  } catch (err) {
+    const aborted = err && err.name === 'AbortError';
+    return {
+      ok: false,
+      status: 0,
+      json: null,
+      error: aborted
+        ? 'The Lab Workspace server did not answer (timeout) — the app will retry automatically.'
+        : `Cannot reach the Lab Workspace server: ${(err && err.message) || 'network error'}`
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 };
 
 /** Persist an access token (+ optional refresh token) from an exchange response. */
@@ -1268,13 +1372,50 @@ const storeTokensFromResponse = (json) => {
   return true;
 };
 
-/** Connect to Google Drive. When a token-exchange endpoint is configured we run
- *  the OAuth CODE flow (access_type=offline, prompt=consent on the server) so a
- *  permanent refresh token is returned and stored. Without an endpoint we fall
- *  back to the GIS token client, asking for an explicit consent once (which
- *  lets Google grant later SILENT renewals while the account stays signed in). */
+/** Connect to Google Drive.
+ *
+ *  SHARED WORKSPACE mode (GOOGLE_TOKEN_EXCHANGE_URL configured): ordinary users
+ *  are NEVER shown a Google popup — the button simply asks the workspace server
+ *  to mint a fresh token from the owner's stored refresh token. Only the OWNER's
+ *  one-time bootstrap (?drive-bootstrap=1 in the URL) runs the GIS CODE flow, so
+ *  the server can store the permanent refresh token as the shared credential.
+ *
+ *  Without a shared endpoint we run the OAuth CODE flow (access_type=offline,
+ *  prompt=consent via the endpoint) so a permanent refresh token is returned
+ *  and stored, and fall back to the GIS token client otherwise (asking for an
+ *  explicit consent once so Google allows later SILENT renewals). */
 export const connectDriveWithGis = async () => {
   const clientId = getConfiguredDriveClientId();
+
+  if (sharedWorkspaceMode()) {
+    if (!workspaceBootstrapMode()) {
+      // Normal user (or plain retry): silent server mint, never a Google popup.
+      const ok = await mintWorkspaceAccessToken();
+      if (ok) return true;
+      clearDriveToken();
+      return false;
+    }
+    // Owner bootstrap: one-time GIS consent whose refresh token is stored by
+    // the server as the shared workspace credential.
+    if (!clientId) return false;
+    try { await loadGis(); } catch { return false; }
+    const code = await requestGisCode(clientId);
+    if (code) {
+      const res = await postToTokenExchange({
+        code,
+        grant_type: 'authorization_code',
+        access_type: 'offline',
+        prompt: 'consent'
+      });
+      if (res.ok && res.json && res.json.access_token) {
+        setDriveToken(res.json.access_token, res.json.expires_in);
+        setStoredRefreshToken(''); // the permanent credential stays server-side only
+        return true;
+      }
+    }
+    return false;
+  }
+
   if (!clientId) return false;
   try { await loadGis(); } catch { return false; }
 
@@ -1282,13 +1423,13 @@ export const connectDriveWithGis = async () => {
   if (getTokenExchangeUrl()) {
     const code = await requestGisCode(clientId);
     if (code) {
-      const json = await postToTokenExchange({
+      const res = await postToTokenExchange({
         code,
         grant_type: 'authorization_code',
         access_type: 'offline',
         prompt: 'consent'
       });
-      if (storeTokensFromResponse(json)) return true;
+      if (res.ok && storeTokensFromResponse(res.json)) return true;
     }
   }
 
@@ -1321,21 +1462,28 @@ const notifyDriveDisconnected = () => { try { window.dispatchEvent(new CustomEve
 let renewPromise = null;
 
 /** Renew the Drive access token with NO user interaction:
- *  1. when a refresh token is stored, it is exchanged through the configured
- *     token endpoint (refresh tokens never expire) — this is what makes the
- *     connection permanent, even days/weeks later;
- *  2. otherwise ask GIS for a silent token (works while the Google account is
- *     still signed in and the earlier consent is still valid).
+ *  • shared workspace mode → mint a fresh token from the workspace server (the
+ *    permanent refresh token lives there only; this also self-heals a browser
+ *    whose previous token expired while the server was briefly unreachable);
+ *  • personal mode:
+ *    1. when a refresh token is stored, it is exchanged through the configured
+ *       token endpoint (refresh tokens never expire) — this is what makes the
+ *       connection permanent, even days/weeks later;
+ *    2. otherwise ask GIS for a silent token (works while the Google account is
+ *       still signed in and the earlier consent is still valid).
  *  Resolves true when a fresh access token was stored. */
 export const renewDriveTokenSilently = () => {
   if (renewPromise) return renewPromise;
   renewPromise = (async () => {
+    if (sharedWorkspaceMode()) {
+      return mintWorkspaceAccessToken();
+    }
     // 1) Permanent path — stored refresh token → new access token (no UI).
     const refreshToken = getStoredRefreshToken();
     if (refreshToken) {
-      const json = await postToTokenExchange({ refresh_token: refreshToken });
-      if (json && json.access_token) {
-        storeTokensFromResponse(json);
+      const res = await postToTokenExchange({ refresh_token: refreshToken });
+      if (res.ok && res.json && res.json.access_token) {
+        storeTokensFromResponse(res.json);
         return true;
       }
       // Exchange failed (revoked/expired?) → drop it so the fallbacks below run.
@@ -1375,7 +1523,10 @@ const scheduleAutoDriveRenew = () => {
 };
 
 /** Start the background keep-alive (run once when the module loads): keeps the
- *  token fresh across the whole session and heals it after a reload. */
+ *  token fresh across the whole session and heals it after a reload. In shared
+ *  workspace mode it also re-mints every minute while the workspace server is
+ *  unreachable / not initialised yet — Drive comes back WITHOUT any user action
+ *  the moment the server answers again. */
 const initDriveAutoRenew = () => {
   if (renewInterval || typeof window === 'undefined') return;
   scheduleAutoDriveRenew();
@@ -1385,6 +1536,14 @@ const initDriveAutoRenew = () => {
       const exp = parseInt(localStorage.getItem(TOKEN_EXPIRY_KEY) || '0', 10);
       if (token && exp && Date.now() > exp - 6 * 60 * 1000 && Date.now() < exp) {
         renewDriveTokenSilently().then((ok) => { if (ok) notifyDriveConnected(); });
+      } else if (!token && sharedWorkspaceMode()) {
+        // No local token in shared mode: keep asking the workspace server until
+        // it answers again (only notify "disconnected" if a working connection
+        // was lost — a fresh browser that never got a token stays quiet).
+        renewDriveTokenSilently().then((ok) => {
+          if (ok) notifyDriveConnected();
+          else if (lastSharedDriveConnectedAt > 0) notifyDriveDisconnected();
+        });
       }
     } catch { /* ignore */ }
   }, 60 * 1000);
@@ -1392,6 +1551,7 @@ const initDriveAutoRenew = () => {
 if (typeof window !== 'undefined') {
   try { window.addEventListener('lab:drive-connected', () => scheduleAutoDriveRenew()); } catch { /* ignore */ }
   initDriveAutoRenew();
+  kickOffSharedWorkspaceToken();
 }
 
 // ── File-name registry: remember what context each uploaded file was named

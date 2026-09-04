@@ -81,6 +81,16 @@ const paths = {
       <path d="M10 6h8v4h-8V6z" />
     </>
   ),
+  banknote: (
+    <>
+      <rect x="2" y="6" width="20" height="12" rx="2" />
+      <circle cx="12" cy="12" r="2.5" />
+      <path d="M6 9.5h.01" />
+      <path d="M6 14.5h.01" />
+      <path d="M18 9.5h.01" />
+      <path d="M18 14.5h.01" />
+    </>
+  ),
   dna: (
     <>
       <path d="M2 15c6.667-6 13.333 0 20-6" />
@@ -431,6 +441,7 @@ const EMOJI_MAP = {
   '🗃️': 'box',
   '🧮': 'calculator',
   '📰': 'newspaper',
+  '💰': 'banknote',
   '🧬': 'dna',
   '🧲': 'magnet',
   '🖥️': 'monitor',
