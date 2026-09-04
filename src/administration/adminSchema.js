@@ -233,6 +233,47 @@ export const DEPENSE_STATUSES = ['Devis en cours', 'SIFAC transmis', 'BC signé'
 export const DEPENSE_BC_SIGNE = 'BC signé';
 export const OM_STATUSES = ['En attente', 'Acceptée', 'Refusée', 'Terminée'];
 
+/* Prestations internes (« PI ») — fournisseur particulier du classeur : un
+   service interne (atelier, autre équipe…) facturé sans bon de commande. Une
+   telle dépense est donc considérée comme ENGAGÉE / consommée dès sa saisie,
+   même sans statut « BC signé » (c’est le décompte utilisé par la page
+   Recettes pour le solde). */
+export const DEPENSE_FOURNISSEUR_PI = 'PI';
+/** Vrai si la valeur « nom du fournisseur » désigne une prestation interne. */
+export const isPiFournisseur = (value) => {
+  const s = String(value ?? '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ').trim();
+  return s === 'pi' || s === 'prestation interne';
+};
+
+/* Champs d’une dépense pouvant être déclarés obligatoires dans Paramètres.
+   Une ligne de la page Dépenses passe entièrement en rouge dès qu’un de ces
+   champs configurés manque (même principe que les « mandatory fields » des
+   pages de type scientifique). */
+export const DEPENSE_FIELD_CATALOG = [
+  { key: 'description', label: 'Description' },
+  { key: 'statut', label: 'Suivi / Statut' },
+  { key: 'demandeur', label: 'Demandeur' },
+  { key: 'categorie', label: 'Catégorie' },
+  { key: 'classification', label: 'Classification / nature' },
+  { key: 'ligne', label: 'Ligne budgétaire liée' },
+  { key: 'montant', label: 'Montant HT' },
+  { key: 'dateDemande', label: 'Date de la demande' },
+  { key: 'fournisseur', label: 'Nom du fournisseur' },
+  { key: 'contact', label: 'Contact fournisseur' },
+  { key: 'numSIFAC', label: 'N° SIFAC' },
+  { key: 'numBC', label: 'N° BC' },
+  { key: 'numFacture', label: 'N° facture' },
+];
+/** Clé → libellé lisible d’un champ de dépense (messages + Paramètres). */
+export const DEPENSE_FIELD_LABEL = Object.fromEntries(
+  DEPENSE_FIELD_CATALOG.map((f) => [f.key, f.label])
+);
+/** Obligatoires par défaut (réglables dans Paramètres › Champs obligatoires). */
+export const DEFAULT_DEPENSE_MANDATORY = ['fournisseur'];
+
 /** Valeurs par défaut du magasin d’options Paramètres d’une base. */
 export const DEFAULT_OPTIONS = {
   recetteTypes: RECETTE_TYPES,
@@ -250,6 +291,7 @@ export const DEFAULT_OPTIONS = {
   omCostStatuses: OM_COST_STATUSES,
   omStatuses: OM_STATUSES,
   depenseStatuses: DEPENSE_STATUSES,
+  depenseMandatoryFields: DEFAULT_DEPENSE_MANDATORY,
   issueStatuses: ISSUE_STATUSES,
   congeStatuses: CONGE_STATUSES,
   congesQuotaByType: CONGE_QUOTA_BY_TYPE,

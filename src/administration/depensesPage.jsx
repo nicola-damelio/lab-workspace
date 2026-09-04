@@ -33,7 +33,7 @@ import { useAdmin } from './AdminContext';
 import { SmartTable } from './smartTable';
 import { AdminImportModal } from './adminImportModal';
 import { toFrDate } from './congesDates';
-import { RECETTE_TYPES, DEPENSE_NATURES, DEPENSE_STATUSES } from './adminSchema';
+import { RECETTE_TYPES, DEPENSE_NATURES, DEPENSE_STATUSES, DEPENSE_FOURNISSEUR_PI, DEPENSE_FIELD_LABEL, DEFAULT_DEPENSE_MANDATORY } from './adminSchema';
 import { parseEuroAmount } from './importUtils';
 
 /* ── Petites aides ──────────────────────────────────────────────────────── */
@@ -71,6 +71,21 @@ const addScheme = (u) => {
 const norm = (s) => String(s || '')
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+/* ── Champs obligatoires (configurés dans Paramètres) ─────────────────────
+   Valeur « présente » d’un champ d’une dépense : vide → champ manquant. */
+const mandatoryValueOf = (rec, key) => {
+  const r = rec || {};
+  if (key === 'ligne') return txt(r.recetteId) || txt(r.ligneBudgetaire);
+  if (key === 'statut') return pick(r, ['statut', 'suivi']);
+  if (key === 'montant') {
+    const m = r.montant;
+    return m === null || m === undefined || m === '' ? '' : String(m).trim();
+  }
+  const v = r[key];
+  return v === null || v === undefined ? '' : String(v).trim();
+};
+const mandatoryLabelOf = (k) => DEPENSE_FIELD_LABEL[k] || k;
 
 /* ── Pipelines de suivi (statuts possibles, au-delà des valeurs personnalisées). */
 const DEPENSE_PIPELINE = ['Devis en cours', 'SIFAC transmis', 'BC signé', 'Service fait', 'Livré', 'Facturé', 'Clôturé'];
@@ -297,7 +312,7 @@ const DepensesPage = () => {
   }, [personnel, list, currentUser]);
 
   const fournisseurNames = useMemo(() => {
-    const set = new Set();
+    const set = new Set([DEPENSE_FOURNISSEUR_PI]); // « PI » = prestation interne (dépense comptée sans BC signé)
     librerie.forEach((l) => {
       const n = pick(l, ['fournisseur', 'nomFournisseur', 'nom', 'name']);
       if (n) set.add(n);
@@ -305,7 +320,9 @@ const DepensesPage = () => {
     list.forEach((r) => {
       if (txt(r.fournisseur)) set.add(txt(r.fournisseur));
     });
-    return [...set].sort((a, b) => a.localeCompare(b, 'fr'));
+    const pi = DEPENSE_FOURNISSEUR_PI;
+    const others = [...set].filter((n) => n !== pi).sort((a, b) => a.localeCompare(b, 'fr'));
+    return [pi, ...others]; // « PI » toujours proposé en tête de la liste
   }, [librerie, list]);
 
   const contactNames = useMemo(() => {
@@ -324,6 +341,15 @@ const DepensesPage = () => {
     const found = recettes.find((x) => x.id === r.recetteId);
     return found ? found.ligne : txt(r.ligneBudgetaire);
   };
+
+  /* Champs obligatoires configurés dans Paramètres (clés de DEPENSE_FIELD_CATALOG).
+     Indéfini = valeurs par défaut ; [] explicite = aucun champ obligatoire. */
+  const mandatoryFields = useMemo(() => {
+    if (Array.isArray(settings.depenseMandatoryFields)) return settings.depenseMandatoryFields;
+    return DEFAULT_DEPENSE_MANDATORY;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.depenseMandatoryFields]);
+  const missingMandatoryFor = (r) => mandatoryFields.filter((k) => !mandatoryValueOf(r, k));
 
   const sorted = useMemo(() => [...list].sort((a, b) => {
     const da = isoOf(a.dateDemande);
@@ -369,6 +395,12 @@ const DepensesPage = () => {
     const numFacture = txt(draft.numFacture);
     if (!description && !numBC && !numFacture && !txt(draft.numDevis)) {
       alert('Merci de renseigner au moins une description ou une référence (N° devis, BC ou facture).');
+      return false;
+    }
+    // Champs obligatoires (Paramètres › Champs obligatoires) — sinon ligne rouge.
+    const missing = mandatoryFields.filter((k) => !mandatoryValueOf(draft, k));
+    if (missing.length) {
+      alert(`Merci de renseigner le(s) champ(s) obligatoire(s) : ${missing.map(mandatoryLabelOf).join(', ')}.`);
       return false;
     }
     const statut = txt(draft.statut);
@@ -452,6 +484,11 @@ const DepensesPage = () => {
               {classification && <span className="text-[10px] text-slate-400 font-semibold">{classification}</span>}
             </div>
             {ent && <div className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[280px]" title={`ENT : ${ent}`}>ENT : {ent}</div>}
+            {missingMandatoryFor(r).length > 0 && (
+              <div className="text-[10px] font-black text-red-600 mt-0.5 truncate max-w-[280px]" title={`Champ(s) obligatoire(s) manquant(s) : ${missingMandatoryFor(r).map(mandatoryLabelOf).join(', ')}`}>
+                ⚠ {missingMandatoryFor(r).map(mandatoryLabelOf).join(', ')} manquant(s)
+              </div>
+            )}
           </div>
         );
       },
@@ -610,6 +647,10 @@ const DepensesPage = () => {
     },
   ];
 
+  /* Lignes incomplètes : au moins un champ obligatoire (Paramètres) manquant. */
+  const redRows = sorted.filter((r) => missingMandatoryFor(r).length > 0);
+  const redLabels = [...new Set(redRows.flatMap((r) => missingMandatoryFor(r).map(mandatoryLabelOf)))];
+
   return (
     <div className="max-w-full mx-auto flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -646,7 +687,7 @@ const DepensesPage = () => {
         />
         <SummaryCard
           label="BC signés (engagé)" value={`${summary.bcCount} · ${summary.bcCount ? euro.format(summary.bcTotal) : '—'}`} tone="indigo"
-          hint="Dépenses au statut « BC signé » et montant cumulé correspondant (c’est ce décompte qu’utilise la page Recettes pour l’engagement budgétaire)."
+          hint="Dépenses au statut « BC signé » et montant cumulé correspondant. Pour l’engagement budgétaire, la page Recettes ajoute à ce décompte les prestations internes « PI » (sans BC)."
         />
         <SummaryCard
           label="Livraisons complètes" value={`${summary.completeCount} / ${summary.count}`} tone="emerald"
@@ -662,6 +703,13 @@ const DepensesPage = () => {
         associé dans un nouvel onglet.
       </div>
 
+      {redRows.length > 0 && (
+        <div className="rounded-xl border border-red-200 bg-red-50/80 px-4 py-2.5 text-[11px] text-red-700 leading-relaxed">
+          ⚠️ <b>{redRows.length} ligne{redRows.length > 1 ? 's' : ''} en rouge</b> — champ{redLabels.length > 1 ? 's' : ''} obligatoire{redLabels.length > 1 ? 's' : ''} manquant{redLabels.length > 1 ? 's' : ''} :{' '}
+          {redLabels.join(', ')}. Ces champs se configurent dans Paramètres › Champs obligatoires.
+        </div>
+      )}
+
       {sorted.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
           <div className="text-4xl mb-2">📦</div>
@@ -674,6 +722,7 @@ const DepensesPage = () => {
         <SmartTable
           columns={columns}
           rows={sorted}
+          rowClass={(r) => (missingMandatoryFor(r).length ? 'bg-red-100/70' : '')}
           minWidth="2250px"
           searchPlaceholder="Rechercher description, fournisseur, n° BC / SIFAC / facture, BL, service fait…"
           emptyLabel="Aucune dépense"
@@ -693,6 +742,7 @@ const DepensesPage = () => {
           demandeurNames={demandeurNames}
           fournisseurNames={fournisseurNames}
           contactNames={contactNames}
+          fournisseurRequired={mandatoryFields.includes('fournisseur')}
           onCancel={() => setModal(null)}
           onSave={onSaveDepense}
         />
@@ -728,7 +778,8 @@ const Section = ({ icon, title, children }) => (
 
 const DepenseModal = ({
   rec, recettes, types, natures, statutOptions,
-  demandeurNames, fournisseurNames, contactNames, onCancel, onSave,
+  demandeurNames, fournisseurNames, contactNames,
+  fournisseurRequired = false, onCancel, onSave,
 }) => {
   const editing = !!rec;
 
@@ -915,10 +966,15 @@ const DepenseModal = ({
                 <input className={MODAL_INPUT} type="date" value={draft.dateDemande} onChange={set('dateDemande')} />
               </Field>
               <div className="sm:col-span-2">
-                <Field label="Nom du fournisseur">
+                <Field
+                  label={fournisseurRequired ? 'Nom du fournisseur *' : 'Nom du fournisseur'}
+                  hint={fournisseurRequired
+                    ? 'Obligatoire. « PI » = prestation interne : service interne facturé sans BC — comptée comme engagée/consommée dans la page Recettes.'
+                    : '« PI » = prestation interne : service interne facturé sans BC — comptée comme engagée/consommée dans la page Recettes.'}
+                >
                   <input
                     className={MODAL_INPUT} value={draft.fournisseur} onChange={set('fournisseur')} list="depenses-fournisseurs"
-                    placeholder="ex. Amazon Marketplace / Fournitures Laposte…"
+                    placeholder="ex. Amazon Marketplace / Fournitures Laposte / PI…"
                   />
                   <datalist id="depenses-fournisseurs">
                     {(fournisseurNames || []).map((n) => <option key={n} value={n} />)}

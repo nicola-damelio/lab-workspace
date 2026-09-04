@@ -1480,6 +1480,8 @@ export const buildMissingFournisseurs = (rows, existing) => {
     const rawName = firstValue(r, SUPPLIER_NAME_KEYS);
     const key = normalizeKey(rawName);
     if (!key) return;
+    // « PI » = prestation interne : pseudo-fournisseur, pas un vrai catalogue.
+    if (key === 'pi' || key === 'prestation interne') return;
     const current = byName.get(key);
     if (current) {
       SUPPLIER_COORD_KEYS.forEach(([k, cand]) => {

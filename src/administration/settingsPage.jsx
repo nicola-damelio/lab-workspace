@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 import { useAdmin } from './AdminContext';
 import { ScientistsOperatorsManager } from '../components/AppModules/definitionsManagers';
-import { DEFAULT_OPTIONS } from './adminSchema';
+import { DEFAULT_OPTIONS, DEPENSE_FIELD_CATALOG, DEFAULT_DEPENSE_MANDATORY } from './adminSchema';
 
 const OPTION_KEYS = [
   { key: 'recetteTypes', label: 'Types de Recette (Fonct. / Invest.)' },
@@ -80,6 +80,27 @@ export const SettingsPage = ({ operators, setOperators, authSettings, setAuthSet
     setText(toText(optionKey, { ...settings, [optionKey]: def }));
   };
 
+  /* ── Champs obligatoires des Dépenses ────────────────────────────────────
+     Même principe que les « mandatory fields » des pages de type scientifique :
+     une ligne de la page Dépenses à laquelle manque un champ coché passe
+     entièrement en rouge. Clé stockée : administration.settings.depenseMandatoryFields. */
+  const [mandatoryKeys, setMandatoryKeys] = useState(() => {
+    const stored = settings && Array.isArray(settings.depenseMandatoryFields)
+      ? settings.depenseMandatoryFields
+      : DEFAULT_DEPENSE_MANDATORY;
+    return [...stored];
+  });
+  const toggleMandatory = (key) => {
+    setMandatoryKeys((prev) => (prev.includes(key)
+      ? prev.filter((k) => k !== key)
+      : [...prev, key]));
+  };
+  const saveMandatory = () => updateSettings({ depenseMandatoryFields: [...mandatoryKeys] });
+  const resetMandatory = () => {
+    setMandatoryKeys([...DEFAULT_DEPENSE_MANDATORY]);
+    updateSettings({ depenseMandatoryFields: [...DEFAULT_DEPENSE_MANDATORY] });
+  };
+
   const inputCls = 'w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500';
   const labelCls = 'block text-[10px] font-black uppercase text-slate-400 tracking-wide mb-1';
 
@@ -107,6 +128,44 @@ export const SettingsPage = ({ operators, setOperators, authSettings, setAuthSet
           currentUser={currentUser}
           personnel={data && data.personnel}
         />
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
+        <h2 className="text-lg font-black text-slate-800">Champs obligatoires — Dépenses</h2>
+        <p className="text-xs text-slate-400 mb-4">
+          Une ligne de la page <b>Dépenses</b> passe entièrement en rouge dès qu’un de ces champs manque
+          (l’enregistrement est aussi bloqué tant qu’il manque) — comme les « mandatory fields » des pages de type
+          scientifique. <b>Nom du fournisseur</b> est coché par défaut ; « PI » = prestation interne (facturée sans BC,
+          comptée comme dépense engagée dans la page Recettes).
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {DEPENSE_FIELD_CATALOG.map((f) => {
+            const on = mandatoryKeys.includes(f.key);
+            return (
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => toggleMandatory(f.key)}
+                title={on ? `« ${f.label} » est obligatoire — cliquer pour retirer` : `Cliquer pour rendre « ${f.label} » obligatoire`}
+                className={`rounded-full px-3 py-1.5 text-[11px] font-bold border transition-colors ${on
+                  ? 'bg-red-600 text-white border-red-600 hover:bg-red-700'
+                  : 'bg-white text-slate-600 border-slate-200 hover:border-red-300 hover:bg-red-50/40'}`}
+              >
+                {on ? '✓ ' : '+ '}{f.label}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-2 mt-4">
+          <button
+            onClick={saveMandatory}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors"
+          >Enregistrer les champs obligatoires</button>
+          <button
+            onClick={resetMandatory}
+            className="px-4 py-2 rounded-xl text-sm font-bold text-slate-500 hover:bg-slate-100 border border-slate-200"
+          >Rétablir le défaut (fournisseur)</button>
+        </div>
       </div>
 
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">

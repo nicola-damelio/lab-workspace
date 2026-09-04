@@ -19,7 +19,7 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { useAdmin } from './AdminContext';
-import { DEPENSE_BC_SIGNE } from './adminSchema';
+import { DEPENSE_BC_SIGNE, isPiFournisseur } from './adminSchema';
 import { parseEuroAmount } from './importUtils';
 
 /* ── Formatage ──────────────────────────────────────────────────────────── */
@@ -203,7 +203,7 @@ const MEASURE_BY_SOURCE = {
   lignes: [
     moneyMeasure('dispo', 'Montant mis à disposition', (r) => r.dispoVal),
     moneyMeasure('budgetTotal', 'Budget total alloué', (r) => r.budgetTotalVal),
-    moneyMeasure('engage', 'Dépenses engagées (BC signés)', (r) => (r.engTotal > 0 ? ROUND(r.engTotal) : 0)),
+    moneyMeasure('engage', 'Dépenses engagées (BC signés + PI)', (r) => (r.engTotal > 0 ? ROUND(r.engTotal) : 0)),
     moneyMeasure('om', 'Coûts OM (hors refusés)', (r) => (r.omTotal > 0 ? ROUND(r.omTotal) : 0)),
     moneyMeasure('souhaits', 'Souhaits approuvés', (r) => (r.desApproved > 0 ? ROUND(r.desApproved) : 0)),
     moneyMeasure('solde', 'Solde restant (calculé)', (r) => ROUND(r.solde)),
@@ -252,6 +252,14 @@ const autoTitle = (draft) => {
 /* ── Lignes budgétaires « enrichies » (totaux calculés comme la page Recettes) ── */
 const buildLigneRows = (recettes, depenses, om, desiderate) => {
   const isSigned = (d) => txt(d && d.statut) === DEPENSE_BC_SIGNE;
+  const isPi = (d) => isPiFournisseur(d && d.fournisseur);
+  /* Même règle que la page Recettes : engagé = BC signés + PI (prestations
+     internes, considérées consommées dès leur saisie, sauf refus/annulation). */
+  const isEngaged = (d) => {
+    if (isSigned(d)) return true;
+    const st = txt(d && (d.statut || d.suivi));
+    return isPi(d) && !/refus|rejet|annul/i.test(st);
+  };
   const notRefused = (o) => txt(o && o.statut) !== 'Refusée';
   const omCost = (o) => {
     const t = parseAmount(o && o.coutTotal);
@@ -264,7 +272,7 @@ const buildLigneRows = (recettes, depenses, om, desiderate) => {
     const budgetTotalVal = parseAmount(rec && rec.budgetTotal);
     const dispoVal = parseAmount(rec && rec.budgetRenduDispo);
     const engTotal = (Array.isArray(depenses) ? depenses : [])
-      .filter((d) => d && d.recetteId === rid && isSigned(d))
+      .filter((d) => d && d.recetteId === rid && isEngaged(d))
       .reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
     const omTotal = (Array.isArray(om) ? om : [])
       .filter((o) => o && o.recetteId === rid && notRefused(o))
@@ -273,7 +281,8 @@ const buildLigneRows = (recettes, depenses, om, desiderate) => {
       .filter((d) => d && d.recetteSuggereeId === rid && txt(d.statut) === 'Approved')
       .reduce((s, d) => s + toNum(d.montantEstime), 0);
     const base = dispoVal !== null && dispoVal !== undefined ? dispoVal : budgetTotalVal;
-    const solde = (base === null || base === undefined ? 0 : base) - engTotal - omTotal - desApproved;
+    // Solde = dispo université − engagé (BC signés + PI) − OM
+    const solde = (base === null || base === undefined ? 0 : base) - engTotal - omTotal;
     return {
       id: rid,
       ligne: txt(rec && rec.ligne) || rid || '',

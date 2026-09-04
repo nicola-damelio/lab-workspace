@@ -10,7 +10,7 @@
    ========================================================================= */
 import React, { useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
-import { RECETTE_TYPES, DEPENSE_BC_SIGNE } from './adminSchema';
+import { RECETTE_TYPES, DEPENSE_BC_SIGNE, isPiFournisseur } from './adminSchema';
 import { AdminImportModal } from './adminImportModal';
 import { SmartTable } from './smartTable';
 
@@ -45,8 +45,19 @@ export const RecettesPage = () => {
   const aggFor = (rec) => {
     const recId = rec && rec.id;
     const isSigned = (d) => String(d.statut || '').trim() === DEPENSE_BC_SIGNE;
+    const isPi = (d) => isPiFournisseur(d && d.fournisseur);
+    /* « Engagé » = BC signés (dépenses ordonnées) + prestations internes « PI » :
+       un service interne est facturé sans bon de commande, il est donc
+       considéré consommé dès sa saisie (sauf dépense refusée / annulée). */
+    const isEngaged = (d) => {
+      if (isSigned(d)) return true;
+      const st = String(d.statut || d.suivi || '').trim();
+      return isPi(d) && !/refus|rejet|annul/i.test(st);
+    };
     const lineDepenses = depenses.filter((d) => d.recetteId === recId);
-    const engages = lineDepenses.filter(isSigned);
+    const engages = lineDepenses.filter(isEngaged);
+    const engagesBC = engages.filter(isSigned);
+    const engagesPI = engages.filter((d) => isPi(d) && !isSigned(d));
     const engTotal = engages.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
     const lineOm = om.filter((o) => o.recetteId === recId && String(o.statut || 'En attente').trim() !== 'Refusée');
     const omTotal = lineOm.reduce((s, o) => s + toNum(o.coutTotal), 0);
@@ -56,9 +67,10 @@ export const RecettesPage = () => {
     const budgetRendu = rec.budgetRenduDispo !== undefined && rec.budgetRenduDispo !== null && rec.budgetRenduDispo !== ''
       ? toNum(rec.budgetRenduDispo)
       : toNum(rec.budgetTotal);
-    const solde = budgetRendu - engTotal - omTotal - desMontant;
+    // Solde = dispo université − engagé (BC signés + PI) − OM (jamais les souhaits).
+    const solde = budgetRendu - engTotal - omTotal;
     return {
-      lineDepenses, engages, engTotal,
+      lineDepenses, engages, engagesBC, engagesPI, engTotal,
       lineOm, omEnAttente: lineOm.filter((o) => String(o.statut || 'En attente').trim() === 'En attente'),
       omAcceptees: lineOm.filter((o) => String(o.statut || '').trim() === 'Acceptée'),
       omTotal,
@@ -159,18 +171,21 @@ export const RecettesPage = () => {
       display: (r) => <span className="font-semibold text-blue-700 whitespace-nowrap">{euro.format(r.__agg.budgetRendu)}</span>,
     },
     {
-      key: 'eng', label: 'Engagé · BC signés', dataType: 'number', align: 'right', nowrap: true,
+      key: 'eng', label: 'Engagé · BC + PI', dataType: 'number', align: 'right', nowrap: true,
       value: (r) => Number(r.__agg.engTotal) || 0,
       display: (r) => (
         <HoverCell
           amount={r.__agg.engTotal}
           badge={r.__agg.engages.length}
-          hint="avec BC signé"
-          items={r.__agg.engages.map((d) => ({
-            title: d.description || 'Dépense',
-            meta: [d.bcNo || d.sifacNo || '', d.dateSignatureBC || ''].filter(Boolean).join(' · '),
-            value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
-          }))}
+          hint={`${r.__agg.engagesBC.length} BC signé(s) · ${r.__agg.engagesPI.length} PI (prestations internes)`}
+          items={r.__agg.engages.map((d) => {
+            const isPi = isPiFournisseur(d.fournisseur);
+            return {
+              title: d.description || 'Dépense',
+              meta: [isPi ? 'PI (prestation interne)' : d.bcNo || d.sifacNo || '', d.dateSignatureBC || ''].filter(Boolean).join(' · '),
+              value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
+            };
+          })}
         />
       ),
     },
@@ -214,7 +229,7 @@ export const RecettesPage = () => {
       display: (r) => (
         <span className="whitespace-nowrap">
           <span className={`font-black ${r.__agg.solde < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{euro.format(r.__agg.solde)}</span>
-          <HoverNote note={`Solde = dispo université ${euro.format(r.__agg.budgetRendu)} − BC signés ${euro.format(r.__agg.engTotal)} − OM ${euro.format(r.__agg.omTotal)} − desiderata approuvés ${euro.format(r.__agg.desMontant)}`} />
+          <HoverNote note={`Solde = dispo université ${euro.format(r.__agg.budgetRendu)} − engagé (BC signés + PI) ${euro.format(r.__agg.engTotal)} − OM ${euro.format(r.__agg.omTotal)}`} />
         </span>
       ),
     },
@@ -268,9 +283,9 @@ export const RecettesPage = () => {
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
         <SummaryCard label="Budget total" value={totals.budgetTotal} tone="slate" />
         <SummaryCard label="Mis à disposition (univ.)" value={totals.budgetRendu} tone="blue" />
-        <SummaryCard label="Engagé (BC signés)" value={totals.eng} tone="amber" />
+        <SummaryCard label="Engagé (BC signés + PI)" value={totals.eng} tone="amber" />
         <SummaryCard label="OM acceptées / en attente" value={totals.omTot} tone="violet" />
-        <SummaryCard label="Desiderata actés (estimé)" value={totals.des} tone="teal" />
+        <SummaryCard label="Desiderata approuvés (info)" value={totals.des} tone="teal" />
         <SummaryCard label="Solde restant" value={totals.solde} tone={totals.solde < 0 ? 'red' : 'emerald'} />
       </div>
 
@@ -389,7 +404,7 @@ const LineModal = ({ modal, types, personnel, depenses, om, desiderate, onCancel
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden max-h-[92vh] flex flex-col">
         <div className="px-6 py-4 bg-gradient-to-br from-blue-600 to-indigo-700 text-white">
           <h2 className="text-lg font-black">{editing ? 'Modifier la ligne budgétaire' : 'Nouvelle ligne budgétaire'}</h2>
-          <p className="text-blue-100 text-xs">Le solde est recalculé automatiquement depuis les Dépenses, OM et Desiderata liés.</p>
+          <p className="text-blue-100 text-xs">Le solde est recalculé automatiquement : dispo université − dépenses engagées (BC signés + PI) − OM liés.</p>
         </div>
         <div className="p-6 overflow-y-auto custom-scrollbar grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="sm:col-span-2">
