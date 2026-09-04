@@ -26,7 +26,13 @@ export const normalizeOperators = (ops) => {
     if (typeof op === 'string') {
       return { id: 'op_' + Date.now() + '_' + Math.random().toString(36).slice(2), name: op, role: 'user', passwordHash: '' };
     }
-    return { id: op.id || 'op_' + Date.now() + '_' + Math.random().toString(36).slice(2), name: op.name || '', role: op.role || 'user', passwordHash: op.passwordHash || '' };
+    return {
+      id: op.id || 'op_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+      name: op.name || '',
+      role: op.role || 'user',
+      passwordHash: op.passwordHash || '',
+      personnelId: op.personnelId || null,
+    };
   });
 };
 

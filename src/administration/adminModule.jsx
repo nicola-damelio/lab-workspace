@@ -6,16 +6,32 @@
    affichées comme les modules scientifiques) : l’état de la page active
    (pageId/onNavigate) est détenu par App.jsx.
    ========================================================================= */
-import { ADMIN_PAGES } from './adminSchema';
+import { ADMIN_PAGES, ADMIN_FONCTION_META } from './adminSchema';
 import { AdminProvider, useAdmin } from './AdminContext';
 import { normalizeOperators } from '../utils/auth';
 import { RecettesPage } from './recettesPage';
+import { CongesPage } from './congesPage';
 import { PersonnelPage } from './personnelPage';
 import { CollectionPage } from './collectionPages';
 import { SettingsPage } from './settingsPage';
 
 /* Collections disposant d’une page « liste » triable/filtrable (SmartTable). */
 const TABLE_KINDS = new Set(['depenses', 'om', 'desiderate', 'librerie', 'questioni', 'sicurezza']);
+
+/* Garde « accès restreint » : si une page non autorisée est demandée (URL
+   directe, historique…), on ne retombe pas silencieusement sur Vue d’ensemble :
+   on l’indique explicitement — la matrice d’accès reste la seule porte. */
+const AccessDeniedCard = ({ page }) => (
+  <div className="max-w-md mx-auto bg-white border border-slate-200 rounded-2xl shadow-sm p-8 text-center">
+    <div className="text-4xl mb-2">🔒</div>
+    <h2 className="text-lg font-black text-slate-800 mb-1">Accès restreint</h2>
+    <p className="text-sm text-slate-500 leading-relaxed">
+      La page « {page && page.label ? page.label : ''} » n’est pas autorisée pour votre profil.
+      L’accès est défini par la fiche Personnel (statut Permanent / Non permanent, fonctions AP ou
+      Gestionnaire) ; Personnel &amp; Paramètres restent réservés au superutilisateur.
+    </p>
+  </div>
+);
 
 export const AdministrationModule = ({
   currentUser, user, datasetTitle, saveStatus, content, onChange,
@@ -36,7 +52,8 @@ export const AdministrationModule = ({
 
   return (
     <AdminProvider
-      currentUser={currentUser} user={user} content={content} onChange={onChange}
+      currentUser={currentUser} user={user} operators={operators}
+      content={content} onChange={onChange}
       teamBootstrap={teamBootstrap}
     >
       <AdministrationShell
@@ -80,7 +97,9 @@ const AdministrationShell = ({
   const { data, ready, access } = useAdmin();
   const visible = ADMIN_PAGES.filter((p) => access.canViewPage(p));
   const requested = ADMIN_PAGES.find((p) => p.id === pageId) || ADMIN_PAGES[0];
-  const active = visible.find((p) => p.id === requested.id) || visible[0];
+  const allowedPage = visible.find((p) => p.id === requested.id);
+  const denied = !allowedPage;
+  const active = allowedPage || visible[0];
 
   return (
     <div className="h-full min-h-0 flex flex-col bg-slate-50">
@@ -95,12 +114,17 @@ const AdministrationShell = ({
               {active.label} · base d’administration (dataset unique)
             </p>
           </div>
-          <SaveBadge status={saveStatus} />
+          <div className="flex items-center gap-2 flex-wrap shrink-0">
+            <RoleBadge profile={access.profile} />
+            <SaveBadge status={saveStatus} />
+          </div>
         </div>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4 md:p-6">
-        {!ready ? (
+        {denied ? (
+          <AccessDeniedCard page={requested} />
+        ) : !ready ? (
           <div className="h-full flex items-center justify-center text-slate-400 text-sm">Chargement des données…</div>
         ) : active.id === 'overview' ? (
           <OverviewPage visible={visible} />
@@ -108,6 +132,8 @@ const AdministrationShell = ({
           <RecettesPage />
         ) : active.id === 'personnel' ? (
           <PersonnelPage />
+        ) : active.id === 'conges' ? (
+          <CongesPage />
         ) : active.id === 'settings' ? (
           <SettingsPage
             operators={operators} setOperators={setOperators}
@@ -123,6 +149,26 @@ const AdministrationShell = ({
         )}
       </div>
     </div>
+  );
+};
+
+const RoleBadge = ({ profile }) => {
+  const p = profile || {};
+  if (p.isSuperuser) {
+    return (
+      <span className="text-[10px] font-black uppercase text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-1" title="Superutilisateur : accès intégral à toutes les pages">
+        👑 Superutilisateur
+      </span>
+    );
+  }
+  const meta = ADMIN_FONCTION_META[p.fonction] || null;
+  return (
+    <span
+      className="text-[10px] font-black uppercase text-slate-600 bg-slate-50 border border-slate-200 rounded-full px-2.5 py-1"
+      title={meta && meta.hint ? meta.hint : (p.person ? `Fiche : ${p.person.nom || ''}` : 'Aucune fiche Personnel liée — accès minimal.')}
+    >
+      {p.statut || 'Non permanent'}{p.fonction ? ` · ${meta ? meta.label : p.fonction}` : ''}
+    </span>
   );
 };
 
@@ -176,27 +222,37 @@ const OverviewPage = ({ visible }) => {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="bg-blue-50 border border-blue-200 rounded-2xl px-4 py-3">
-          <div className="text-[10px] font-black uppercase text-blue-700">Lignes budgétaires</div>
-          <div className="text-2xl font-black text-blue-800">{totalRecettes}</div>
-        </div>
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3">
-          <div className="text-[10px] font-black uppercase text-amber-700">Dépenses / BC</div>
-          <div className="text-2xl font-black text-amber-800">{totalDepenses}</div>
-        </div>
-        <div className="bg-violet-50 border border-violet-200 rounded-2xl px-4 py-3">
-          <div className="text-[10px] font-black uppercase text-violet-700">Ordres de mission</div>
-          <div className="text-2xl font-black text-violet-800">{totalOm}</div>
-        </div>
-        <div className="bg-teal-50 border border-teal-200 rounded-2xl px-4 py-3">
-          <div className="text-[10px] font-black uppercase text-teal-700">Spese Desiderate</div>
-          <div className="text-2xl font-black text-teal-800">{totalDesiderate}</div>
-        </div>
+        {visible.some((p) => p.id === 'recettes') && (
+          <div className="bg-blue-50 border border-blue-200 rounded-2xl px-4 py-3">
+            <div className="text-[10px] font-black uppercase text-blue-700">Lignes budgétaires</div>
+            <div className="text-2xl font-black text-blue-800">{totalRecettes}</div>
+          </div>
+        )}
+        {visible.some((p) => p.id === 'depenses') && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3">
+            <div className="text-[10px] font-black uppercase text-amber-700">Dépenses / BC</div>
+            <div className="text-2xl font-black text-amber-800">{totalDepenses}</div>
+          </div>
+        )}
+        {visible.some((p) => p.id === 'om') && (
+          <div className="bg-violet-50 border border-violet-200 rounded-2xl px-4 py-3">
+            <div className="text-[10px] font-black uppercase text-violet-700">Ordres de mission</div>
+            <div className="text-2xl font-black text-violet-800">{totalOm}</div>
+          </div>
+        )}
+        {visible.some((p) => p.id === 'desiderate') && (
+          <div className="bg-teal-50 border border-teal-200 rounded-2xl px-4 py-3">
+            <div className="text-[10px] font-black uppercase text-teal-700">Spese Desiderate</div>
+            <div className="text-2xl font-black text-teal-800">{totalDesiderate}</div>
+          </div>
+        )}
       </div>
 
       {hidden.length > 0 && (
         <p className="text-[11px] text-slate-400">
-          Pages masquées pour votre rôle : {hidden.map((p) => p.label).join(' · ')} — visibles pour le superutilisateur.
+          Pages masquées pour votre profil : {hidden.map((p) => p.label).join(' · ')} — accès défini
+          par la fiche Personnel (statut Permanent / AP / Gestionnaire) ; Personnel &amp; Paramètres restent
+          réservés au superutilisateur.
         </p>
       )}
     </div>

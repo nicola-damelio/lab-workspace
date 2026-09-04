@@ -9,13 +9,14 @@
    depuis la page d’accueil comme un dataset scientifique. Tout son contenu
    vit DANS le document du dataset (datasets/<id>) sous un payload
    `administration` { recettes, librerie, personnel, depenses, om,
-   desiderate, questioni, sicurezza, settings }. Aucune sous-collection.    */
+   desiderate, conges, questioni, sicurezza, settings }. Aucune sous-collection.    */
 export const ADMIN_COLLECTIONS = {
   recettes: 'recettes',     // lignes budgétaires
   librerie: 'librerie',     // fournisseurs
   personnel: 'personnel',   // personnel + stagiaires
   depenses: 'depenses',     // dépenses / bons de commande (BC)
   om: 'om',                 // ordres de mission
+  conges: 'conges',     // congés & absences : demandes + approbation
   desiderate: 'desiderate', // souhaits d’achat
   questioni: 'questioni',   // questions ouvertes
   sicurezza: 'sicurezza',   // hygiène & sécurité
@@ -25,7 +26,7 @@ export const ADMIN_COLLECTIONS = {
 export const DATASET_KINDS = ['scientific', 'administration'];
 export const DATASET_KIND_META = {
   scientific: { label: 'Données scientifiques', icon: '🧪', blurb: 'Expériences, projets, cahier de laboratoire, bibliothèque, stockage, publications…' },
-  administration: { label: 'Administration', icon: '🏛️', blurb: 'Recettes, fournisseurs, Personnel, Dépenses, OM, Spese Desiderate, Questioni, Igiene e Sicurezza + Paramètres' },
+  administration: { label: 'Administration', icon: '🏛️', blurb: 'Recettes, fournisseurs, Personnel, Dépenses, OM, Spese Desiderate, Congés, Questioni, Igiene e Sicurezza + Paramètres' },
 };
 export const isAdministrationKind = (kind) => kind === 'administration';
 
@@ -34,14 +35,26 @@ export const isAdministrationKind = (kind) => kind === 'administration';
 export const ADMIN_SETTINGS_DOC = 'global';
 
 /* ── Registre des pages + matrice d’accès ─────────────────────────────────
-   superuserOnly = true  → page masquée hors superutilisateur, SAUF bootstrap
-                           (aucun superutilisateur défini) pour Paramètres.
-   superuserOnly = false → visible pour tout scientifique connecté.         */
+   Le droit d’accès d’un scientifique N’EST PLUS un simple drapeau : il est
+   calculé depuis sa fiche Personnel (voir adminAccessProfile / adminPageIdsForProfile
+   plus bas). superuserOnly = true ne s’applique qu’aux pages réellement
+   réservées au superutilisateur (Personnel, Paramètres) — Paramètres reste
+   accessible en bootstrap (aucun superutilisateur défini) pour créer l’équipe.
+   Récapitulatif de la matrice (validée avec l’équipe) :
+     • Statut Permanent  (type Permanent ou Technique) = socle :
+         Recettes · Dépenses · Spese Desiderate · OM · Librerie
+     • Statut Non permanent = onglet Congés uniquement.
+     • Page Congés (demandes d’absence) = réservée aux profils Non permanent
+         et au superutilisateur (rôle d’approbation) ; les Permanents ne la voient pas.
+     • Fonction AP (agent de prévention)  → ajoute Hygiène & Sécurité.
+     • Fonction Gestionnaire              → ajoute Questioni Aperte.
+     • Personnel & Paramètres → superutilisateur uniquement.
+   Le superutilisateur conserve, lui, l’accès intégral à toutes les pages.  */
 export const ADMIN_PAGES = [
   { id: 'overview', label: 'Vue d’ensemble', icon: '📊', superuserOnly: false, kind: null,
     blurb: 'Vue d’ensemble des autres pages : lignes budgétaires, personnel, demandes, missions et questions ouvertes.',
     fields: [] },
-  { id: 'recettes', label: 'Recettes', icon: '📈', superuserOnly: true, kind: 'recettes',
+  { id: 'recettes', label: 'Recettes', icon: '📈', superuserOnly: false, kind: 'recettes',
     blurb: 'Lignes budgétaires (Fonctionnement / Investissement) : porteur, budget total, montant mis à disposition, engagements, OM et souhaits.',
     fields: ['Ligne budgétaire', 'Type : Fonctionnement / Investissement', 'Porteur du projet', 'Budget total', 'Montant mis à disposition par l’université', 'Dépenses ordonnées (BC signés)', 'Ordres de mission (acceptés / à prévoir)', 'Spese Desiderate liées', 'Solde disponible', 'Date de fin d’engagement', 'Commentaires'] },
   { id: 'librerie', label: 'Librerie', icon: '📇', superuserOnly: false, kind: 'librerie',
@@ -59,6 +72,9 @@ export const ADMIN_PAGES = [
   { id: 'desiderate', label: 'Spese Desiderate', icon: '🛒', superuserOnly: false, kind: 'desiderate',
     blurb: 'Souhaits d’achat. Le changement de statut est réservé au superutilisateur.',
     fields: ['Description', 'Urgence : Urgent / Important / Souhaitable', 'Demandeur', 'Catégorie', 'Ligne budgétaire suggérée (Recette)', 'Frais de port · Montant estimé', 'Fournisseur + contact · N° devis · Code produit', 'Commentaires', 'Statut — réservé au superutilisateur'] },
+  { id: 'conges', label: 'Congés', icon: '🏖️', superuserOnly: false, kind: 'conges',
+    blurb: 'Demandes de congés de l’équipe : périodes, jours ouvrés, notes et approbation (réservée au superutilisateur).',
+    fields: ['Demandeur', 'Premier jour · Dernier jour de congé', 'Jours ouvrés', 'Notes', 'Approuvation : Demande / Approuvé / Refusé'] },
   { id: 'questioni', label: 'Questioni Aperte', icon: '❓', superuserOnly: false, kind: 'questioni',
     blurb: 'Tableau des questions ouvertes (A faire / En cours / Fait), responsable, tags.',
     fields: ['Description', 'Statut : A faire / En cours / Fait', 'Responsable', 'Tags / classification'] },
@@ -178,6 +194,10 @@ export const URGENCES = ['Urgent', 'Important', 'Souhaitable'];
 export const DESIDERATE_STATUSES = ['Pending', 'Approved', 'En attente', 'Rejected / Pas maintenant'];
 export const OM_COST_STATUSES = ['Estimé', 'Exact'];
 export const ISSUE_STATUSES = ['A faire', 'En cours', 'Fait'];
+export const CONGE_STATUSES = ['Demande', 'Approuvé', 'Refusé'];
+export const CONGE_DEMANDE = 'Demande';
+export const CONGE_APPROUVE = 'Approuvé';
+export const CONGE_REFUSE = 'Refusé';
 
 /* Statuts ajoutés pour le suivi budgétaire des pages Dépenses / OM. */
 export const DEPENSE_STATUSES = ['Devis en cours', 'SIFAC transmis', 'BC signé', 'Livré', 'Facturé', 'Clôturé'];
@@ -200,6 +220,7 @@ export const DEFAULT_OPTIONS = {
   omStatuses: OM_STATUSES,
   depenseStatuses: DEPENSE_STATUSES,
   issueStatuses: ISSUE_STATUSES,
+  congeStatuses: CONGE_STATUSES,
 };
 
 /* ── Aides ──────────────────────────────────────────────────────────────── */
@@ -218,16 +239,107 @@ export const hasDefinedSuperuser = (operators) =>
     typeof op === 'object' && op !== null ? op.role === 'superuser' : false
   );
 
+/* ── Matrice d’accès par rôle (statut de la fiche + fonction) ───────────── */
+/** Valeurs de la liste « Fonction » d’une fiche Personnel (accès module). */
+export const ADMIN_FONCTIONS = ['', 'AP', 'Gestionnaire'];
+export const ADMIN_FONCTION_META = {
+  '': { label: 'Aucune', hint: 'Accès = socle de son statut (Permanent ou Non permanent).' },
+  AP: { label: 'AP', hint: 'Agent de prévention → ajoute Dépenses + Hygiène & Sécurité.' },
+  Gestionnaire: { label: 'Gestionnaire', hint: '→ ajoute Dépenses + Questioni Aperte.' },
+};
+
+/** Libellé de l’échelon d’accès dérivé d’une fiche Personnel. */
+export const statutLabelOf = (person) => {
+  if (!person) return 'Non permanent';
+  const type = String(person.type || '').trim();
+  const corps = String(person.corps || '').trim();
+  const t = type.toLowerCase();
+  // Non permanent : contrats courts / encadrés (Doctorant, ATER, Post-doc,
+  // CDD, Stagiaire, Vacataire…) — y compris types personnalisés du paramétrage.
+  if (/temporaire|cdd|post.?doc|ater|doctorant|stagiaire|vacataire|contractuel|stage/i.test(t)) return 'Non permanent';
+  if (type) return 'Permanent'; // Permanent, Technique, Ingénieur… → statut Permanent
+  if (/post.?doc|ater|doctorant|stagiaire/i.test(corps)) return 'Non permanent';
+  if (corps) return 'Permanent'; // PR, MCF, IR, IE, TECH, ATRF…
+  return 'Non permanent';
+};
+
+/** Pages du socle d’un Permanent (type Permanent ou Technique). La page Congés
+    n’y figure pas : elle est réservée aux profils Non permanent + superutilisateur. */
+const PERMANENT_SOCLE_PAGES = ['recettes', 'depenses', 'desiderate', 'om', 'librerie'];
+/** Pages d’un Non permanent : uniquement l’espace Congés. */
+const NON_PERMANENT_SOCLE_PAGES = ['conges'];
+/** Pages ajoutées selon la fonction portée par la fiche Personnel. */
+const FONCTION_EXTRA_PAGES = {
+  AP: ['depenses', 'sicurezza'],
+  Gestionnaire: ['depenses', 'questioni'],
+};
+
+/**
+ * Profil d’accès d’un utilisateur connecté, calculé en DIRECT depuis la liste
+ * des opérateurs (pour tenir compte des dernières modifications de rôle, y
+ * compris pendant la session) puis relié à sa fiche Personnel de la base
+ * ouverte : par `personnelId` (liaison manuelle dans Paramètres › Équipe), ou
+ * à défaut par correspondance de nom. Sans fiche trouvée → statut minimal
+ * « Non permanent », sans fonction.
+ */
+export const adminAccessProfile = (currentUser, operators, personnel) => {
+  const list = Array.isArray(operators) ? operators : [];
+  const fresh =
+    (currentUser && list.find((op) => op && op.id === currentUser.id)) ||
+    currentUser ||
+    null;
+  const isSuperuser = !!(fresh && fresh.role === 'superuser');
+  const personList = Array.isArray(personnel) ? personnel : [];
+  let person = null;
+  if (fresh) {
+    const pid = fresh.personnelId;
+    if (pid) person = personList.find((p) => p && p.id === pid) || null;
+    if (!person) {
+      const key = (s) => String(s || '')
+        .toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, ' ').trim();
+      const wanted = key(fresh.name);
+      const wantedTokens = wanted ? wanted.split(/\s+/).sort().join(' ') : '';
+      person = personList.find((p) => {
+        const nk = key(p && p.nom);
+        if (!nk || !wantedTokens) return false;
+        if (nk === wanted) return true;
+        return nk.split(/\s+/).sort().join(' ') === wantedTokens; // « Nom Prénom » vs « Prénom Nom »
+      }) || null;
+    }
+  }
+  const rawFonction = person && person.fonction ? String(person.fonction).trim() : '';
+  const fonction = ADMIN_FONCTIONS.includes(rawFonction) ? rawFonction : '';
+  return { isSuperuser, statut: statutLabelOf(person), fonction, person };
+};
+
+/** Ensemble des ids de pages autorisés pour un profil d’accès donné. */
+export const adminPageIdsForProfile = (profile) => {
+  const p = profile || {};
+  const ids = new Set(['overview']);
+  if (p.isSuperuser) {
+    ADMIN_PAGES.forEach((page) => ids.add(page.id));
+    return ids;
+  }
+  const base = p.statut === 'Permanent' ? PERMANENT_SOCLE_PAGES : NON_PERMANENT_SOCLE_PAGES;
+  base.forEach((id) => ids.add(id));
+  const extra = FONCTION_EXTRA_PAGES[p.fonction] || [];
+  extra.forEach((id) => ids.add(id));
+  return ids;
+};
+
 /**
  * Matrice de visibilité d’une page d’administration pour un utilisateur donné.
  * En bootstrap (aucun compte ou aucun superutilisateur défini), la page
  * « Paramètres » reste accessible pour créer l’équipe / le superutilisateur.
+ * `personnel` = fiches Personnel de la base d’administration ouverte.
  */
-export const adminCanViewPage = (page, currentUser, operators) => {
-  if (!page || !page.superuserOnly) return true;
-  if (currentUser && currentUser.role === 'superuser') return true;
+export const adminCanViewPage = (page, currentUser, operators, personnel) => {
+  if (!page) return false;
   if (page.id === 'settings' && !hasDefinedSuperuser(operators)) return true;
-  return false;
+  const ids = adminPageIdsForProfile(adminAccessProfile(currentUser, operators, personnel));
+  return ids.has(page.id);
 };
 
 /* ── Semence d’une base d’administration ────────────────────────────────── */

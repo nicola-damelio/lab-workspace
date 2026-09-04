@@ -2837,7 +2837,7 @@ const openDataset = (dset) => {
   // Navigation d’une base d’administration : les pages du module sont
   // présentées dans la barre latérale comme les modules scientifiques.
   const adminNavEntries = isAdministrationKind(activeDatasetKind)
-    ? ADMIN_PAGES.filter((p) => adminCanViewPage(p, currentUser, operators)).map((p) => ({
+    ? ADMIN_PAGES.filter((p) => adminCanViewPage(p, currentUser, operators, (adminContent && adminContent.personnel) || [])).map((p) => ({
         id: p.id, label: p.label, icon: p.icon,
       }))
     : [];

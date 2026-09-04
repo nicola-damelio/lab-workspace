@@ -29,6 +29,7 @@ export const GOOGLE_SHEET_LINKS = {
   questioni: 'https://docs.google.com/spreadsheets/d/1m0V9L7vcYtx0bzHsdkJjLgrJT-cgk8oD58VbiwdMUtc/edit?gid=923776700#gid=923776700',
   sicurezza: 'https://docs.google.com/spreadsheets/d/1m0V9L7vcYtx0bzHsdkJjLgrJT-cgk8oD58VbiwdMUtc/edit?gid=652048951#gid=652048951',
   personnel: 'https://docs.google.com/spreadsheets/d/1iUjjE7JeJbvnjDmMT3KPUKqkoVJUegM3IRw9ZQ5n_q8/edit?gid=2082111636#gid=2082111636',
+  conges: 'https://docs.google.com/spreadsheets/d/1ere7clPdEA9bru7W-V2C7Wl76smTf4J8uf69BnvGNQA/edit?gid=555000330#gid=555000330',
 };
 
 /* Normalisation « tolérante » des en-têtes : minuscules, sans accents ni
@@ -255,6 +256,16 @@ export const IMPORT_PRESETS = [
     help: 'Onglet « Souhaités » du classeur Google Sheets (demandes d’achat : décision, priorité, coût estimé/exact, devis, code produit) : copier le tableau (Ctrl+A puis Ctrl+C) et coller ci-dessous.',
   },
   {
+    id: 'conges-demandes',
+    kind: 'conges',
+    title: 'Congés (demandes)',
+    icon: '🏖️',
+    tabLabel: 'Congés',
+    sourceUrl: GOOGLE_SHEET_LINKS.conges,
+    expectHeaders: ['Demandeur', 'Date initiale', 'Date dernier jour de congé', 'Jours', 'Notes', 'Approuvation'],
+    help: 'Onglet « Congés » de la feuille Google Sheets (planning des demandes : Demandeur, dates, Jours, Notes, Approuvation) : copier le tableau (Ctrl+A puis Ctrl+C) et coller ci-dessous.',
+  },
+  {
     id: 'questioni-reminders',
     kind: 'questioni',
     title: 'Questions ouvertes',
@@ -278,6 +289,12 @@ export const IMPORT_PRESETS = [
 
 /* Recherche de la ligne d’en-tête connue dans les premières lignes. */
 const DETECT_RULES = {
+  'conges-demandes': {
+    min: 4,
+    strong: ['demandeur', 'date initiale', 'date dernier jour de conge', 'jours', 'approuvation'],
+    strongMin: 3,
+    absent: ['suivi', 'ent', 'voyage', 'decision', 'question', 'budget totale', 'categorie'],
+  },
   'depenses-bc': {
     min: 6,
     strong: ['suivi', 'ent', 'description', 'demandeur', 'categorie', 'ligne budgetaire', 'montant ht', 'frais de port', 'date demande', 'nom du fournisseur', 'contact fornisseur', 'n° devis', 'n° sifac', 'date bc', 'n° bc', 'date signature', 'date approb fornisseur', 'n° facture', 'livraison complete', 'commentaires', 'classification'],
@@ -452,6 +469,7 @@ const PERSONNEL_PERM_COLUMNS = {
   fin: ['fin contrat', 'Fin de contrat', 'Fin'],
   sst: ['SST'],
   autoclave: ['date formation autoclave', 'Formation autoclave', 'Autoclave'],
+  fonction: ['Fonction', 'Responsabilité'],
   note: ['Note', 'Notes', 'Commentaire', 'Commentaires'],
 };
 
@@ -535,6 +553,7 @@ const buildPermanent = (rows, headerIdx) => {
       else if (/temporaire|doctorant|ater|post.?doc|stagiaire|cdd/i.test(typeCell)) type = 'Temporaire';
     }
     const bap = clean(cell(r, cols.bap));
+    const fonctionRaw = clean(cell(r, cols.fonction));
     // HDR : colonne « oui / non » (parfois une année) → Oui / Non canonique.
     const hdrRaw = clean(cell(r, cols.hdr));
     const hdr = !hdrRaw ? '' : (/non/i.test(hdrRaw) ? 'Non' : 'Oui');
@@ -568,6 +587,7 @@ const buildPermanent = (rows, headerIdx) => {
       corps,
       grade,
       bap,
+      fonction: normalizeFonction(fonctionRaw),
       hdr,
       categorie,
       echelon,
@@ -734,6 +754,24 @@ const DESIDERATE_COLUMNS = {
   commentaires: ['Commentaires', 'Commentaire', 'Lien'],
 };
 
+/* Onglet « Congés » du classeur du laboratoire → collection conges. */
+const CONGES_COLUMNS = {
+  demandeur: ['Demandeur'],
+  dateDebut: ['Date initiale', 'Premier jour', 'Debut'],
+  dateFin: ['Date dernier jour de congé', 'Dernier jour', 'Fin'],
+  jours: ['Jours', 'Jours de congé'],
+  note: ['Note', 'Notes', 'Commentaire', 'Commentaires'],
+  approuvation: ['Approuvation', 'Approbation', 'Approuvé', 'Décision', 'Statut', 'Status'],
+};
+
+const congeStatutOf = (v) => {
+  const s = normalizeKey(v);
+  if (!s || /^(demande|en attente|pending|en cours|non traitee)/.test(s)) return 'Demande';
+  if (/^(approuv|accept|accord|ok|oui)/.test(s)) return 'Approuvé';
+  if (/^(refus|rejete|annul)/.test(s)) return 'Refusé';
+  return 'Demande';
+};
+
 const QUESTIONI_COLUMNS = {
   question: ['Question', 'Description'],
   categorie: ['Categorie', 'Catégorie', 'Statut', 'Status'],
@@ -850,6 +888,15 @@ const normalizeCout = (v) => {
   if (!s) return '';
   const key = normalizeKey(s);
   return COUT_ALIAS[key] || normalizeStatut(s);
+};
+
+/* « AP », « AP Hygiène & Sécurité », « Agent de prévention » → AP ;
+   « Gestionnaire » → Gestionnaire ; sinon vide (aucune fonction). */
+const normalizeFonction = (v) => {
+  const s = String(v ?? '').trim();
+  if (/^ap(?:\b|[\s/_-])/i.test(s) || /agent de pr[eé]vention/i.test(s)) return 'AP';
+  if (/^gestionnaire/i.test(s)) return 'Gestionnaire';
+  return '';
 };
 
 const stampFor = (label) => `Import Google Sheets « ${label} » — ${new Date().toISOString().slice(0, 10)}`;
@@ -1069,6 +1116,45 @@ const buildDesiderate = (rows, headerIdx, state) => {
 };
 
 /* ── Onglets « Questions_ouvertes » / « H&S » → questioni / sicurezza ────── */
+/* ── Onglet « Congés » (demandes de l’équipe) → collection conges ────────── */
+const buildConges = (rows, headerIdx) => {
+  const header = rows[headerIdx];
+  const colIdx = {};
+  Object.keys(CONGES_COLUMNS).forEach((f) => { colIdx[f] = findColumn(header, CONGES_COLUMNS[f]); });
+  const items = [];
+  let skipped = 0;
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!hasContent(r)) break;
+    const demandeur = clean(cell(r, colIdx.demandeur));
+    const dateDebut = parseDateCell(cell(r, colIdx.dateDebut));
+    const dateFin = parseDateCell(cell(r, colIdx.dateFin));
+    // Les lignes de totaux / gabarits (sans demandeur ni dates) sont ignorées.
+    if (!demandeur || !dateDebut || !dateFin) { skipped++; continue; }
+    const joursRaw = clean(cell(r, colIdx.jours));
+    const statut = congeStatutOf(clean(cell(r, colIdx.approuvation)));
+    const jours = joursRaw ? parseEuroAmount(joursRaw) : null;
+    items.push({
+      kind: 'conges',
+      key: `${normalizeKey(demandeur)}|${dateDebut}|${dateFin}`,
+      rec: {
+        demandeur,
+        dateDebut,
+        dateFin,
+        jours: jours === null ? null : jours,
+        note: clean(cell(r, colIdx.note)),
+        statut,
+      },
+      preview: {
+        title: demandeur,
+        sub: `${dateDebut} → ${dateFin}`,
+        extra: [statut, jours === null ? '' : `${jours} j`].filter(Boolean).join(' · '),
+      },
+    });
+  }
+  return { items, skipped, unmatchedProjets: [] };
+};
+
 const buildQuestioni = (rows, headerIdx) => {
   const header = rows[headerIdx];
   const cols = {};
@@ -1141,6 +1227,7 @@ export const recordDedupeKey = (kind, rec) => {
   if (kind === 'om') return `${n(r.description)}|${n(r.demandeur)}|${n(r.dateMission || r.numOM || '')}`;
   if (kind === 'desiderate') return `${n(r.description)}|${n(r.demandeur)}`;
   if (kind === 'questioni' || kind === 'sicurezza') return `${n(r.description)}`;
+  if (kind === 'conges') return `${n(r.demandeur)}|${n(r.dateDebut)}|${n(r.dateFin)}`;
   return `${n(r.description || r.nom || r.ligne || '')}`;
 };
 
@@ -1154,6 +1241,7 @@ const BUILDER_BY_PRESET = {
   'desiderate-souhaits': buildDesiderate,
   'questioni-reminders': buildQuestioni,
   'sicurezza-hs': buildSicurezza,
+  'conges-demandes': buildConges,
 };
 
 /* Point d’entrée commun : matrice → items prêts pour `importMany`.

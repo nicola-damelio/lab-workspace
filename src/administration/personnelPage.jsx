@@ -46,6 +46,7 @@ export const PersonnelPage = () => {
       corps: patch.corps || '',
       grade: patch.grade || '',
       bap: patch.bap || '',
+      fonction: patch.fonction || '',
       hdr: patch.hdr || '',
       categorie: String(patch.categorie || '').trim(),
       echelon: String(patch.echelon || '').trim(),
@@ -108,6 +109,17 @@ export const PersonnelPage = () => {
         p.corps
           ? <span className="inline-block text-[10px] font-black px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-slate-600">{p.corps}</span>
           : <span className="text-slate-300">—</span>
+      ),
+    },
+    {
+      key: 'fonction', label: 'Fonction',
+      value: (p) => p.fonction || '',
+      display: (p) => (
+        p.fonction === 'AP'
+          ? <span className="inline-block text-[10px] font-black px-2 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-violet-700" title="Agent de prévention — ajoute Dépenses + Hygiène & Sécurité">AP</span>
+          : p.fonction === 'Gestionnaire'
+            ? <span className="inline-block text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700" title="Gestionnaire — ajoute Dépenses + Questioni Aperte">Gestionnaire</span>
+            : <span className="text-slate-300">—</span>
       ),
     },
     {

@@ -8,6 +8,7 @@ import React, { useState } from 'react';
 
 const D0 = () => ({
   nom: '', type: '', corps: '', grade: '', bap: '',
+  fonction: '',
   hdr: '', categorie: '', echelon: '', chevron: '',
   dateEmbauche: '', dateFinContrat: '', dernierePromotion: '', dernierRIPEC: '',
   dutiesText: '', formationsText: '', encadrantsText: '', recetteId: '',
@@ -21,6 +22,7 @@ export const PersonnelModal = ({ modal, corpsOptions, gradesMap, types, baps, re
     if (!r) return D0();
     return {
       nom: r.nom || '', type: r.type || types[0], corps: r.corps || '', grade: r.grade || '', bap: r.bap || '',
+      fonction: r.fonction || '',
       hdr: r.hdr || '', categorie: r.categorie || '', echelon: r.echelon || '', chevron: r.chevron || '',
       dateEmbauche: r.dateEmbauche || '', dateFinContrat: r.dateFinContrat || '',
       dernierePromotion: r.dernierePromotion || '', dernierRIPEC: r.dernierRIPEC || '',
@@ -89,6 +91,14 @@ export const PersonnelModal = ({ modal, corpsOptions, gradesMap, types, baps, re
             <select className={inputCls} value={draft.grade} onChange={set('grade')}>
               <option value="">{grades.length ? '—' : '— pas de grade —'}</option>
               {grades.map((g) => <option key={g} value={g}>{g}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className={labelCls}>Fonction (accès admin)</label>
+            <select className={inputCls} value={draft.fonction} onChange={set('fonction')}>
+              <option value="">— Aucune —</option>
+              <option value="AP">AP — Hygiène & Sécurité</option>
+              <option value="Gestionnaire">Gestionnaire</option>
             </select>
           </div>
           {!showStage && (

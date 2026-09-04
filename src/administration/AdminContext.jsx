@@ -14,7 +14,7 @@
    data/admin/… (chemin invalide dans Firestore).
    ========================================================================= */
 import React, { createContext, useContext, useMemo } from 'react';
-import { ADMIN_COLLECTIONS, DEFAULT_OPTIONS } from './adminSchema';
+import { ADMIN_COLLECTIONS, DEFAULT_OPTIONS, adminAccessProfile, adminPageIdsForProfile } from './adminSchema';
 
 const AdminDataContext = createContext(null);
 export const useAdmin = () => useContext(AdminDataContext);
@@ -22,8 +22,7 @@ export const useAdmin = () => useContext(AdminDataContext);
 const makeId = (prefix) =>
   `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}`;
 
-export const AdminProvider = ({ currentUser, user, content, onChange, children, teamBootstrap }) => {
-  const isSuperuser = currentUser?.role === 'superuser';
+export const AdminProvider = ({ currentUser, user, operators, content, onChange, children, teamBootstrap }) => {
   // Bootstrap : aucun compte scientifique ou aucun superutilisateur défini.
   // La page Parametres (equipe) reste alors accessible pour creer l'equipe.
   const safeContent = content && typeof content === 'object' ? content : {};
@@ -36,6 +35,16 @@ export const AdminProvider = ({ currentUser, user, content, onChange, children, 
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content]);
+
+  // Profil d’accès : rôle (superuser / scientifique) depuis les opérateurs,
+  // statut + fonction depuis la fiche Personnel liée de CETTE base.
+  const profile = useMemo(
+    () => adminAccessProfile(currentUser, operators, data.personnel),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [currentUser, operators, data.personnel]
+  );
+  const allowedPageIds = useMemo(() => adminPageIdsForProfile(profile), [profile]);
+  const isSuperuser = profile.isSuperuser;
 
   const settings = useMemo(
     () =>
@@ -98,12 +107,14 @@ export const AdminProvider = ({ currentUser, user, content, onChange, children, 
   const access = useMemo(
     () => ({
       isSuperuser,
-      canViewPage: (p) => !p.superuserOnly || isSuperuser || (p.id === 'settings' && !!teamBootstrap),
-      canEditPage: (p) => isSuperuser || !p.superuserOnly || (p.id === 'settings' && !!teamBootstrap),
+      profile,
+      canViewPage: (p) => !!p && (allowedPageIds.has(p.id) || (p.id === 'settings' && !!teamBootstrap)),
+      canEditPage: (p) => !!p && (allowedPageIds.has(p.id) || (p.id === 'settings' && !!teamBootstrap)),
       canChangeWishlistStatus: isSuperuser,
       canWriteCloud: !!user,
     }),
-    [isSuperuser, user, teamBootstrap]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isSuperuser, profile, allowedPageIds, user, teamBootstrap]
   );
 
   const value = {
@@ -118,6 +129,7 @@ export const AdminProvider = ({ currentUser, user, content, onChange, children, 
     updateSettings,
     isSuperuser,
     user,
+    currentUser: currentUser || null,
   };
 
   return <AdminDataContext.Provider value={value}>{children}</AdminDataContext.Provider>;

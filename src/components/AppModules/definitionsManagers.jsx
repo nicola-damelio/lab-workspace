@@ -482,17 +482,51 @@ export const ScientistsOperatorsManager = ({
   authSettings,
   setAuthSettings,
   currentUser,
+  personnel = null,
 }) => {
-  const [draft, setDraft] = useState({ name: '', surname: '', role: 'user', password: '' });
+  const [draft, setDraft] = useState({ name: '', surname: '', role: 'user', password: '', personnelId: '' });
   const [editingId, setEditingId] = useState(null);
   const [editPassword, setEditPassword] = useState('');
   const [editRole, setEditRole] = useState('user');
+  const [editPersonnelId, setEditPersonnelId] = useState('');
   const [saving, setSaving] = useState(false);
 
   const isSuperuser = currentUser?.role === 'superuser';
   // Bootstrap: if no superuser exists yet, allow anyone to define roles
   const hasSuperuserDefined = normalizeOperators(operators).some((op) => op.role === 'superuser');
   const canManage = isSuperuser || !hasSuperuserDefined;
+
+  // Liaison compte ↔ fiche Personnel de la base d’administration ouverte.
+  // Une fiche est retrouvée par id (liaison manuelle) ou par nom.
+  const personnelList = Array.isArray(personnel) ? personnel : [];
+  const nameKey = (s) => String(s || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ').trim();
+  const ficheOf = (op) => {
+    if (!personnelList.length || !op) return null;
+    if (op.personnelId) {
+      const byId = personnelList.find((p) => p && p.id === op.personnelId);
+      if (byId) return byId;
+    }
+    const wantedTokens = nameKey(op.name).split(/\s+/).sort().join(' ');
+    if (!wantedTokens) return null;
+    return personnelList.find((p) => {
+      const nk = nameKey(p && p.nom);
+      return nk && (nk === wantedTokens || nk.split(/\s+/).sort().join(' ') === wantedTokens);
+    }) || null;
+  };
+  const accessOf = (fiche) => {
+    const t = String(fiche && fiche.type || '').toLowerCase();
+    const corps = String(fiche && fiche.corps || '').trim();
+    const nonPerm = /temporaire|cdd|post.?doc|ater|doctorant|stagiaire|vacataire|contractuel|stage/i.test(t);
+    let statut = '';
+    if (fiche) statut = nonPerm ? 'Non permanent'
+      : (t || corps) ? 'Permanent'
+      : 'Non permanent';
+    const rawF = fiche && fiche.fonction ? String(fiche.fonction).trim() : '';
+    return { statut, fonction: rawF === 'AP' || rawF === 'Gestionnaire' ? rawF : '' };
+  };
 
   const addOperator = async () => {
     const fullName = `${draft.name.trim()} ${draft.surname.trim()}`.trim();
@@ -509,9 +543,10 @@ export const ScientistsOperatorsManager = ({
       name: fullName,
       role: draft.role,
       passwordHash: hash,
+      personnelId: draft.personnelId || null,
     };
     setOperators((prev) => [...normalizeOperators(prev), newOp].sort((a, b) => a.name.localeCompare(b.name)));
-    setDraft({ name: '', surname: '', role: 'user', password: '' });
+    setDraft({ name: '', surname: '', role: 'user', password: '', personnelId: '' });
   };
 
   const removeOperator = (id) => {
@@ -521,6 +556,7 @@ export const ScientistsOperatorsManager = ({
   const startEdit = (op) => {
     setEditingId(op.id);
     setEditRole(op.role);
+    setEditPersonnelId(op.personnelId || '');
     setEditPassword('');
   };
 
@@ -534,6 +570,7 @@ export const ScientistsOperatorsManager = ({
         return {
           ...op,
           role: canManage ? editRole : op.role,
+          personnelId: canManage ? (editPersonnelId || null) : op.personnelId,
           ...(hash ? { passwordHash: hash } : {}),
         };
       })
@@ -643,6 +680,19 @@ export const ScientistsOperatorsManager = ({
               {saving ? 'Saving…' : 'Add Scientist'}
             </button>
           </div>
+
+          {personnelList.length > 0 && (
+            <div className="md:col-span-12">
+              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Linked personnel record (admin access)</label>
+              <select
+                value={draft.personnelId || ''}
+                onChange={(e) => setDraft((p) => ({ ...p, personnelId: e.target.value }))}
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white">
+                <option value="">— Not linked (minimal access) —</option>
+                {personnelList.map((p) => <option key={p.id} value={p.id}>{p.nom}</option>)}
+              </select>
+            </div>
+          )}
         </div>
       )}
 
@@ -678,6 +728,41 @@ export const ScientistsOperatorsManager = ({
                   ) : (
                     <span className="ml-2 text-[10px] text-red-500">⚠️ No password</span>
                   ))}
+                  {personnelList.length > 0 && canManage && (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      {editingId === op.id ? (
+                        <select
+                          value={editPersonnelId || ''}
+                          onChange={(e) => setEditPersonnelId(e.target.value)}
+                          className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 max-w-[280px]"
+                          title="Fiche Personnel qui détermine l’accès aux pages d’administration"
+                        >
+                          <option value="">— Aucune fiche liée —</option>
+                          {personnelList.map((p) => (
+                            <option key={p.id} value={p.id}>{p.nom}</option>
+                          ))}
+                        </select>
+                      ) : (() => {
+                        const fiche = ficheOf(op);
+                        if (!fiche && op.role === 'superuser') return null;
+                        if (!fiche) {
+                          return <span className="text-[10px] italic text-slate-400">Aucune fiche Personnel liée → accès minimal (✏️ pour lier)</span>;
+                        }
+                        const acc = accessOf(fiche);
+                        return (
+                          <>
+                            <span className="text-[10px] font-semibold text-slate-500">👤 {fiche.nom}</span>
+                            {acc.statut && (
+                              <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${acc.statut === 'Permanent' ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>{acc.statut}</span>
+                            )}
+                            {acc.fonction && (
+                              <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded border ${acc.fonction === 'AP' ? 'bg-violet-50 text-violet-700 border-violet-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>{acc.fonction}</span>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </div>
+                  )}
                 </div>
 
                 {/* Edit controls — only for canManage users */}
@@ -810,7 +895,7 @@ export const ScientistLoginGate = ({ operators, onLogin, onRecovery }) => {
         setLoading(false);
         return;
       }
-      onLogin({ id: op.id, name: op.name, role: op.role });
+      onLogin({ id: op.id, name: op.name, role: op.role, personnelId: op.personnelId });
     } catch (err) {
       setError('Login failed: ' + err.message);
       setLoading(false);
@@ -965,7 +1050,7 @@ export const ScientistLoginModal = ({ operators, onLogin, onClose, title, subtit
         setLoading(false);
         return;
       }
-      onLogin({ id: op.id, name: op.name, role: op.role });
+      onLogin({ id: op.id, name: op.name, role: op.role, personnelId: op.personnelId });
     } catch (err) {
       setError('Login failed: ' + err.message);
       setLoading(false);

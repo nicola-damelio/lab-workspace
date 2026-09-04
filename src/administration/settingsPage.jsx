@@ -34,7 +34,7 @@ const toText = (key, settings) => {
 };
 
 export const SettingsPage = ({ operators, setOperators, authSettings, setAuthSettings, currentUser }) => {
-  const { settings, updateSettings } = useAdmin();
+  const { data, settings, updateSettings } = useAdmin();
   const [optionKey, setOptionKey] = useState('recetteTypes');
   const [text, setText] = useState(() => toText('recetteTypes', settings));
 
@@ -80,12 +80,18 @@ export const SettingsPage = ({ operators, setOperators, authSettings, setAuthSet
               Scientifiques et superutilisateur. Sans superutilisateur défini, les rôles restent modifiables (bootstrap) :
               créez un compte superutilisateur avec mot de passe, puis connectez-vous avec le bouton Login de la barre latérale.
             </p>
+            <p className="text-xs text-slate-400 mt-1">
+              Accès aux pages d’administration : liez chaque compte à sa fiche Personnel (menu « Linked personnel record »).
+              Le statut (Permanent / Non permanent) et la fonction (AP / Gestionnaire) de la fiche déterminent les pages
+              visibles — un compte sans fiche liée n’a qu’un accès minimal.
+            </p>
           </div>
         </div>
         <ScientistsOperatorsManager
           operators={operators} setOperators={setOperators}
           authSettings={authSettings} setAuthSettings={setAuthSettings}
           currentUser={currentUser}
+          personnel={data && data.personnel}
         />
       </div>
 
