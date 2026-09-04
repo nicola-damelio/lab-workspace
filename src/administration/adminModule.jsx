@@ -11,7 +11,11 @@ import { AdminProvider, useAdmin } from './AdminContext';
 import { normalizeOperators } from '../utils/auth';
 import { RecettesPage } from './recettesPage';
 import { PersonnelPage } from './personnelPage';
+import { CollectionPage } from './collectionPages';
 import { SettingsPage } from './settingsPage';
+
+/* Collections disposant d’une page « liste » triable/filtrable (SmartTable). */
+const TABLE_KINDS = new Set(['depenses', 'om', 'desiderate', 'librerie', 'questioni', 'sicurezza']);
 
 export const AdministrationModule = ({
   currentUser, user, datasetTitle, saveStatus, content, onChange,
@@ -110,6 +114,8 @@ const AdministrationShell = ({
             authSettings={authSettings} setAuthSettings={setAuthSettings}
             currentUser={currentUser}
           />
+        ) : TABLE_KINDS.has(active.kind) ? (
+          <CollectionPage kind={active.kind} />
         ) : active.kind ? (
           <PageScaffold page={active} count={(data[active.kind] || []).length} />
         ) : (

@@ -49,7 +49,7 @@ export const ADMIN_PAGES = [
     fields: ['Nom du fournisseur', 'Contact', 'Email · Téléphone · Adresse', 'Catégories associées', 'Site web', 'Notes'] },
   { id: 'personnel', label: 'Personnel', icon: '👥', superuserOnly: true, kind: 'personnel',
     blurb: 'Personnel Permanent / Technique / Temporaire, corps & grades, missions, formations et bloc stagiaire lié à une Recette.',
-    fields: ['Nom', 'Type : Permanent / Technique / Temporaire', 'Corps (PR, MCF, DR, CR, IR, IE, ASI, TECH, ATRF…)', 'Grade — sous-classification du corps (PR2, PR1, CE2, CE1, CN, HC, DR2, DR1…)', 'BAP · Échelon · Chevron', 'Dates contrat', 'Promotion · RIPEC', 'Missions · Formations', 'Stagiaire : encadrants · ligne budgétaire · dates · durée', 'Commentaires'] },
+    fields: ['Nom', 'Type : Permanent / Technique / Temporaire', 'Corps (PR, MCF, DR, CR, IR, IE, ASI, TECH, ATRF…)', 'Grade — sous-classification du corps (PR2, PR1, CE2, CE1, CN, HC, DR2, DR1…)', 'BAP · HDR · Catégorie · Échelon · Chevron', 'Dates contrat', 'Promotion · RIPEC', 'Missions · Formations', 'Stagiaire : encadrants · ligne budgétaire · dates · durée', 'Commentaires'] },
   { id: 'depenses', label: 'Dépenses', icon: '🧾', superuserOnly: false, kind: 'depenses',
     blurb: 'Dépenses / commandes avec pipeline complet (devis, SIFAC, BC, fournisseur, facture) et livraisons en plusieurs phases.',
     fields: ['Description', 'Demandeur', 'Catégorie Fonct. / Invest. · Nature', 'Ligne budgétaire liée (Recette)', 'Montant + frais de port', 'Devis · SIFAC · N° BC & dates', 'Fournisseur + contact', 'N° facture', 'Livraisons : arrivée, BL, Service Fait', 'Livraison complète'] },

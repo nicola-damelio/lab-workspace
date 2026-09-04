@@ -509,16 +509,18 @@ const splitCorpsGrade = (typeRaw) => {
   return { corps: n, grade: '' };
 };
 
-/* Feuille « Personnel » (colonnes porteur/HDR/BAP/échelon/RIPEC…) →
-   enregistrements d’annuaire. Les données sans équivalent structuré dans la
-   fiche (HDR, catégorie, échelon, chevron, dates partielles « 2016 » ou
-   « 10/2025 ») sont conservées telles quelles dans les commentaires. */
+/* Feuille « Personnel » (colonnes porteur/HDR/BAP/Catégorie/échelon/RIPEC…)
+   → enregistrements d’annuaire. HDR, catégorie, échelon et chevron deviennent
+   des champs structurés de la fiche (hdr / categorie / echelon / chevron).
+   Seuls les dates partielles (« 2016 », « 10/2025 »), les mentions « Depuis »
+   et les notes restent en texte dans les commentaires. */
 const buildPermanent = (rows, headerIdx) => {
   const header = rows[headerIdx];
   const cols = {};
   Object.keys(PERSONNEL_PERM_COLUMNS).forEach((f) => { cols[f] = findColumn(header, PERSONNEL_PERM_COLUMNS[f]); });
   const items = [];
   let skipped = 0;
+  const NOISE = /^(non|no|na|n\/a|—|-|\*|x|ø)?$/i;
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const r = rows[i];
     if (!hasContent(r)) break; // fin du bloc de données
@@ -532,11 +534,16 @@ const buildPermanent = (rows, headerIdx) => {
       else if (/technique|tech\.|ingenieur|ingénieur/i.test(typeCell)) type = 'Technique';
       else if (/temporaire|doctorant|ater|post.?doc|stagiaire|cdd/i.test(typeCell)) type = 'Temporaire';
     }
-    const hdrCell = clean(cell(r, cols.hdr));
     const bap = clean(cell(r, cols.bap));
-    const catCell = clean(cell(r, cols.categorie));
-    const echCell = clean(cell(r, cols.echelon));
-    const chevCell = clean(cell(r, cols.chevron));
+    // HDR : colonne « oui / non » (parfois une année) → Oui / Non canonique.
+    const hdrRaw = clean(cell(r, cols.hdr));
+    const hdr = !hdrRaw ? '' : (/non/i.test(hdrRaw) ? 'Non' : 'Oui');
+    let categorie = clean(cell(r, cols.categorie)).replace(/^cat[ée]gorie\s+/i, '');
+    if (NOISE.test(categorie)) categorie = '';
+    let echelon = clean(cell(r, cols.echelon)).replace(/^[ée]chelon\s+/i, '');
+    if (NOISE.test(echelon)) echelon = '';
+    let chevron = clean(cell(r, cols.chevron)).replace(/^chevron\s+/i, '');
+    if (NOISE.test(chevron)) chevron = '';
     const depCell = clean(cell(r, cols.depuis));
     const ripceRaw = clean(cell(r, cols.ripce));
     const arriveRaw = clean(cell(r, cols.arrivee));
@@ -551,10 +558,6 @@ const buildPermanent = (rows, headerIdx) => {
     const formations = [];
     if (autoclaveRaw && !/non/i.test(autoclaveRaw) && autoclaveRaw !== '*') formations.push(`Formation autoclave | ${autoclaveRaw}`);
     const details = [];
-    if (/oui/i.test(hdrCell)) details.push('HDR OUI');
-    if (catCell && !/non/i.test(catCell)) details.push(`Catégorie ${catCell}`);
-    if (echCell) details.push(`Échelon ${echCell}`);
-    if (chevCell) details.push(`Chevron ${chevCell}`);
     if (depCell && depCell !== arriveRaw) details.push(`Depuis ${depCell}`);
     if (arriveRaw && !arriveISO) details.push(`Arrivée ${arriveRaw}`);
     if (finRaw && !finISO) details.push(`Fin prévue ${finRaw}`);
@@ -565,6 +568,10 @@ const buildPermanent = (rows, headerIdx) => {
       corps,
       grade,
       bap,
+      hdr,
+      categorie,
+      echelon,
+      chevron,
       dernierRIPEC: ripceRaw || '',
       dateEmbauche: arriveISO,
       dateFinContrat: finISO,
@@ -581,6 +588,10 @@ const buildPermanent = (rows, headerIdx) => {
         title: nom,
         sub: [type, corps, grade].filter(Boolean).join(' · '),
         extra: [
+          hdr ? `HDR ${hdr}` : '',
+          categorie ? `Catégorie ${categorie}` : '',
+          echelon ? `Échelon ${echelon}` : '',
+          chevron ? `Chevron ${chevron}` : '',
           ripceRaw ? `RIPEC ${ripceRaw}` : '',
           finISO || finRaw ? `Fin ${finISO || finRaw}` : '',
           details.join(' · '),

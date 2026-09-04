@@ -8,6 +8,7 @@ import React, { useState } from 'react';
 
 const D0 = () => ({
   nom: '', type: '', corps: '', grade: '', bap: '',
+  hdr: '', categorie: '', echelon: '', chevron: '',
   dateEmbauche: '', dateFinContrat: '', dernierePromotion: '', dernierRIPEC: '',
   dutiesText: '', formationsText: '', encadrantsText: '', recetteId: '',
   dateDebutStage: '', dateFinStage: '', dureeMois: '', commentaires: '',
@@ -20,6 +21,7 @@ export const PersonnelModal = ({ modal, corpsOptions, gradesMap, types, baps, re
     if (!r) return D0();
     return {
       nom: r.nom || '', type: r.type || types[0], corps: r.corps || '', grade: r.grade || '', bap: r.bap || '',
+      hdr: r.hdr || '', categorie: r.categorie || '', echelon: r.echelon || '', chevron: r.chevron || '',
       dateEmbauche: r.dateEmbauche || '', dateFinContrat: r.dateFinContrat || '',
       dernierePromotion: r.dernierePromotion || '', dernierRIPEC: r.dernierRIPEC || '',
       dutiesText: Array.isArray(r.duties) ? r.duties.join(', ') : (r.duties || ''),
@@ -89,6 +91,30 @@ export const PersonnelModal = ({ modal, corpsOptions, gradesMap, types, baps, re
               {grades.map((g) => <option key={g} value={g}>{g}</option>)}
             </select>
           </div>
+          {!showStage && (
+            <>
+              <div>
+                <label className={labelCls}>HDR</label>
+                <select className={inputCls} value={draft.hdr} onChange={set('hdr')}>
+                  <option value="">—</option>
+                  <option value="Oui">Oui</option>
+                  <option value="Non">Non</option>
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Catégorie</label>
+                <input className={inputCls} value={draft.categorie} onChange={set('categorie')} placeholder="A, B, C…" />
+              </div>
+              <div>
+                <label className={labelCls}>Échelon</label>
+                <input className={inputCls} value={draft.echelon} onChange={set('echelon')} placeholder="ex. 8" />
+              </div>
+              <div>
+                <label className={labelCls}>Chevron</label>
+                <input className={inputCls} value={draft.chevron} onChange={set('chevron')} placeholder="ex. 3" />
+              </div>
+            </>
+          )}
           <div>
             <label className={labelCls}>Arrivée / embauche</label>
             <input className={inputCls} type="date" value={draft.dateEmbauche} onChange={set('dateEmbauche')} />

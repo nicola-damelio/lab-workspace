@@ -12,6 +12,7 @@ import React, { useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
 import { RECETTE_TYPES, DEPENSE_BC_SIGNE } from './adminSchema';
 import { AdminImportModal } from './adminImportModal';
+import { SmartTable } from './smartTable';
 
 const euro = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' });
 const toNum = (v) => {
@@ -101,6 +102,145 @@ export const RecettesPage = () => {
     if (window.confirm(`Supprimer la ligne budgétaire « ${rec.ligne || rec.id} » ?`)) remove('recettes', rec.id);
   };
 
+  /* Lignes enrichies des agrégats (tri/filtre sur les colonnes calculées). */
+  const recetteRows = useMemo(
+    () => recettes.map((rec) => ({ ...rec, __agg: aggFor(rec) })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [recettes, depenses, om, desiderate]
+  );
+
+  /* Colonnes triables/filtrables — rendu des cellules conservé à l’identique. */
+  const recetteCols = [
+    {
+      key: 'ligne', label: 'Ligne budgétaire', filter: 'text',
+      value: (r) => r.ligne || r.id || '',
+      display: (r) => (
+        <div className="min-w-[220px]">
+          <div className="font-bold text-slate-800 leading-snug">{r.ligne || r.id}</div>
+          {r.notes ? (
+            <div className="text-[11px] text-slate-400 italic max-w-[220px] line-clamp-2" title={r.notes}>{r.notes}</div>
+          ) : null}
+        </div>
+      ),
+    },
+    {
+      key: 'type', label: 'Type',
+      value: (r) => r.type || types[0] || '',
+      display: (r) => {
+        const t = r.type || types[0];
+        return (
+          <span className={`inline-block text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${
+            String(t) === 'Investissement'
+              ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-700'
+          }`}>
+            {t}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'porteur', label: 'Porteur',
+      value: (r) => personName(r.porteur) || '',
+      display: (r) => <span className="text-slate-700">{personName(r.porteur) || '—'}</span>,
+    },
+    {
+      key: 'budgetTotal', label: 'Budget total', dataType: 'number', align: 'right', nowrap: true,
+      value: (r) => (r.budgetTotal === null || r.budgetTotal === undefined || r.budgetTotal === '' ? null : Number(r.budgetTotal)),
+      display: (r) => (
+        r.budgetTotal === null || r.budgetTotal === undefined || r.budgetTotal === ''
+          ? <span className="text-slate-300">—</span>
+          : <span className="font-semibold text-slate-800 whitespace-nowrap">{euro.format(toNum(r.budgetTotal))}</span>
+      ),
+    },
+    {
+      key: 'dispo', label: 'Dispo université', dataType: 'number', align: 'right', nowrap: true,
+      value: (r) => Number(r.__agg.budgetRendu) || 0,
+      display: (r) => <span className="font-semibold text-blue-700 whitespace-nowrap">{euro.format(r.__agg.budgetRendu)}</span>,
+    },
+    {
+      key: 'eng', label: 'Engagé · BC signés', dataType: 'number', align: 'right', nowrap: true,
+      value: (r) => Number(r.__agg.engTotal) || 0,
+      display: (r) => (
+        <HoverCell
+          amount={r.__agg.engTotal}
+          badge={r.__agg.engages.length}
+          hint="avec BC signé"
+          items={r.__agg.engages.map((d) => ({
+            title: d.description || 'Dépense',
+            meta: [d.bcNo || d.sifacNo || '', d.dateSignatureBC || ''].filter(Boolean).join(' · '),
+            value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
+          }))}
+        />
+      ),
+    },
+    {
+      key: 'om', label: 'OM (acc. / att.)', dataType: 'number', align: 'right', nowrap: true,
+      value: (r) => Number(r.__agg.omTotal) || 0,
+      display: (r) => (
+        <HoverCell
+          amount={r.__agg.omTotal}
+          badge={r.__agg.lineOm.length}
+          hint={`${r.__agg.omAcceptees.length} acceptée(s) · ${r.__agg.omEnAttente.length} en attente`}
+          items={r.__agg.lineOm.map((o) => ({
+            title: o.description || o.destination || 'OM',
+            meta: [o.destination || '', o.statut || 'En attente'].filter(Boolean).join(' · '),
+            value: euro.format(toNum(o.coutTotal)),
+          }))}
+        />
+      ),
+    },
+    {
+      key: 'desiderata', label: 'Desiderata', dataType: 'number', align: 'right', nowrap: true,
+      value: (r) => Number(r.__agg.desMontant) || 0,
+      display: (r) => (
+        <HoverCell
+          amount={r.__agg.desMontant}
+          badge={r.__agg.lineDes.length}
+          hint={`${r.__agg.desApprouvees.length} approuvée(s)`}
+          items={r.__agg.lineDes.map((d) => ({
+            title: d.description || 'Desiderata',
+            meta: [d.demandeur || '', d.statut || 'Pending'].filter(Boolean).join(' · '),
+            value: d.montantEstime !== undefined && d.montantEstime !== null && d.montantEstime !== ''
+              ? euro.format(toNum(d.montantEstime))
+              : 'non chiffré',
+          }))}
+        />
+      ),
+    },
+    {
+      key: 'solde', label: 'Solde', dataType: 'number', align: 'right', nowrap: true,
+      value: (r) => Number(r.__agg.solde) || 0,
+      display: (r) => (
+        <span className="whitespace-nowrap">
+          <span className={`font-black ${r.__agg.solde < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{euro.format(r.__agg.solde)}</span>
+          <HoverNote note={`Solde = dispo université ${euro.format(r.__agg.budgetRendu)} − BC signés ${euro.format(r.__agg.engTotal)} − OM ${euro.format(r.__agg.omTotal)} − desiderata approuvés ${euro.format(r.__agg.desMontant)}`} />
+        </span>
+      ),
+    },
+    {
+      key: 'finEngagement', label: 'Fin d’engagement', filter: 'text',
+      value: (r) => r.dateFinEngagement || '',
+      display: (r) => <span className="whitespace-nowrap text-slate-600">{r.dateFinEngagement || '—'}</span>,
+    },
+    {
+      key: 'actions', label: '', sortable: false, filterable: false, align: 'right', nowrap: true,
+      value: () => '',
+      display: (r) => (
+        <div className="flex items-center gap-1 justify-end">
+          <button onClick={() => setModal({ mode: 'link', rec: r })} title="Lier dépenses / OM / desiderata"
+            className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-blue-50 hover:text-blue-600 text-xs">🔗</button>
+          <button onClick={() => setModal({ mode: 'edit', rec: r })} title="Modifier"
+            className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-blue-50 hover:text-blue-600 text-xs">✎</button>
+          <button onClick={() => onRemoveLine(r)} title="Supprimer"
+            className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-red-50 hover:text-red-600 text-xs">🗑</button>
+        </div>
+      ),
+    },
+    /* Critère de filtre / recherche supplémentaire (sans colonne dédiée). */
+    { key: 'notesF', label: 'Notes', hidden: true, filter: 'text', value: (r) => r.notes || '' },
+  ];
+
   return (
     <div className="max-w-full mx-auto flex flex-col gap-4">
       {/* Barre d’actions */}
@@ -144,105 +284,14 @@ export const RecettesPage = () => {
           </p>
         </div>
       ) : (
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-x-auto">
-          <table className="w-full text-sm min-w-[1280px]">
-            <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wide text-slate-400 border-b border-slate-200">
-                <th className="px-3 py-2.5">Ligne budgétaire</th>
-                <th className="px-3 py-2.5">Type</th>
-                <th className="px-3 py-2.5">Porteur</th>
-                <th className="px-3 py-2.5 text-right">Budget total</th>
-                <th className="px-3 py-2.5 text-right">Dispo université</th>
-                <th className="px-3 py-2.5 text-right">Engagé · BC signés</th>
-                <th className="px-3 py-2.5 text-right">OM (acc. / att.)</th>
-                <th className="px-3 py-2.5 text-right">Desiderata</th>
-                <th className="px-3 py-2.5 text-right">Solde</th>
-                <th className="px-3 py-2.5">Fin d’engagement</th>
-                <th className="px-3 py-2.5 w-20"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {recettes.map((rec) => {
-                const a = aggFor(rec);
-                return (
-                  <tr key={rec.id} className="border-b border-slate-100 hover:bg-slate-50/60 align-top">
-                    <td className="px-3 py-2.5 min-w-[190px]">
-                      <div className="font-bold text-slate-800 leading-snug">{rec.ligne || rec.id}</div>
-                      {rec.notes ? (
-                        <div className="text-[11px] text-slate-400 italic max-w-[220px] line-clamp-2" title={rec.notes}>{rec.notes}</div>
-                      ) : null}
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <span className={`inline-block text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${
-                        String(rec.type || types[0]) === 'Investissement'
-                          ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
-                          : 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                      }`}>
-                        {rec.type || types[0]}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2.5 text-slate-700">{personName(rec.porteur) || '—'}</td>
-                    <td className="px-3 py-2.5 text-right font-semibold text-slate-800 whitespace-nowrap">{rec.budgetTotal === null || rec.budgetTotal === undefined || rec.budgetTotal === '' ? '—' : euro.format(toNum(rec.budgetTotal))}</td>
-                    <td className="px-3 py-2.5 text-right font-semibold text-blue-700 whitespace-nowrap">{euro.format(a.budgetRendu)}</td>
-                    <td className="px-3 py-2.5 text-right">
-                      <HoverCell
-                        amount={a.engTotal}
-                        badge={a.engages.length}
-                        hint="avec BC signé"
-                        items={a.engages.map((d) => ({
-                          title: d.description || 'Dépense',
-                          meta: [d.bcNo || d.sifacNo || '', d.dateSignatureBC || ''].filter(Boolean).join(' · '),
-                          value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
-                        }))}
-                      />
-                    </td>
-                    <td className="px-3 py-2.5 text-right">
-                      <HoverCell
-                        amount={a.omTotal}
-                        badge={a.lineOm.length}
-                        hint={`${a.omAcceptees.length} acceptée(s) · ${a.omEnAttente.length} en attente`}
-                        items={a.lineOm.map((o) => ({
-                          title: o.description || o.destination || 'OM',
-                          meta: [o.destination || '', o.statut || 'En attente'].filter(Boolean).join(' · '),
-                          value: euro.format(toNum(o.coutTotal)),
-                        }))}
-                      />
-                    </td>
-                    <td className="px-3 py-2.5 text-right">
-                      <HoverCell
-                        amount={a.desMontant}
-                        badge={a.lineDes.length}
-                        hint={`${a.desApprouvees.length} approuvée(s)`}
-                        items={a.lineDes.map((d) => ({
-                          title: d.description || 'Desiderata',
-                          meta: [d.demandeur || '', d.statut || 'Pending'].filter(Boolean).join(' · '),
-                          value: d.montantEstime !== undefined && d.montantEstime !== null && d.montantEstime !== ''
-                            ? euro.format(toNum(d.montantEstime))
-                            : 'non chiffré',
-                        }))}
-                      />
-                    </td>
-                    <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                      <span className={`font-black ${a.solde < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{euro.format(a.solde)}</span>
-                      <HoverNote note={`Solde = dispo université ${euro.format(a.budgetRendu)} − BC signés ${euro.format(a.engTotal)} − OM ${euro.format(a.omTotal)} − desiderata approuvés ${euro.format(a.desMontant)}`} />
-                    </td>
-                    <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">{rec.dateFinEngagement || '—'}</td>
-                    <td className="px-3 py-2.5 whitespace-nowrap">
-                      <div className="flex items-center gap-1 justify-end">
-                        <button onClick={() => setModal({ mode: 'link', rec })} title="Lier dépenses / OM / desiderata"
-                          className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-blue-50 hover:text-blue-600 text-xs">🔗</button>
-                        <button onClick={() => setModal({ mode: 'edit', rec })} title="Modifier"
-                          className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-blue-50 hover:text-blue-600 text-xs">✎</button>
-                        <button onClick={() => onRemoveLine(rec)} title="Supprimer"
-                          className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-red-50 hover:text-red-600 text-xs">🗑</button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <SmartTable
+          columns={recetteCols}
+          rows={recetteRows}
+          minWidth="1500px"
+          searchPlaceholder="Rechercher une ligne, un porteur, une note…"
+          emptyLabel="Aucune ligne budgétaire pour le moment"
+          noMatchLabel="Aucune ligne budgétaire ne correspond aux filtres."
+        />
       )}
 
       {importOpen && <AdminImportModal kind="recettes" onClose={() => setImportOpen(false)} />}
