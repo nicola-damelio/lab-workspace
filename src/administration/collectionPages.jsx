@@ -41,6 +41,7 @@ const TONES = {
   indigo: 'bg-indigo-50 border-indigo-200 text-indigo-700',
   emerald: 'bg-emerald-50 border-emerald-200 text-emerald-700',
   amber: 'bg-amber-50 border-amber-200 text-amber-700',
+  orange: 'bg-orange-50 border-orange-200 text-orange-700',
   red: 'bg-red-50 border-red-200 text-red-600',
   violet: 'bg-violet-50 border-violet-200 text-violet-700',
   teal: 'bg-teal-50 border-teal-200 text-teal-700',
@@ -63,6 +64,33 @@ const toneFor = (v) => {
 
 const StatutBadge = ({ value }) =>
   txt(value) ? <Badge tone={toneFor(value)}>{txt(value)}</Badge> : <span className="text-slate-300">—</span>;
+
+/* Priorité H&S : échelle colorée orange (urgent) → verte (pas urgent). */
+const prioriteTone = (v) => {
+  const s = txt(v).toLowerCase();
+  if (/(urgent|critique|critical|high|haute|elev|immediat)/.test(s)) return 'orange';
+  if (/(important|moyen|medium|modere)/.test(s)) return 'amber';
+  if (/(faible|low|pas urgent|non urgent|not urgent|souhaitable|peu urgent|tranquille|ok$)/.test(s)) return 'emerald';
+  return 'slate';
+};
+
+/* Sélecteur « pastille » inséré directement dans une cellule de tableau pour
+   changer un statut / une priorité sans ouvrir la fiche. */
+const QuickSelect = ({ value, options = [], onChange, tone = 'slate', disabled = false }) => {
+  const list = Array.from(new Set([txt(value), ...(options || []).map(txt)]));
+  return (
+    <select
+      value={txt(value)}
+      disabled={disabled}
+      onChange={(e) => onChange && onChange(e.target.value)}
+      className={`inline-block max-w-[170px] text-[10px] font-black uppercase rounded-full border pl-2 pr-1 py-0.5 outline-none cursor-pointer ${TONES[tone] || TONES.slate} ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`}
+    >
+      <option value="">— Sans statut —</option>
+      {list.map((o) => <option key={o} value={o}>{o}</option>)}
+    </select>
+  );
+};
+const statutOf = (r) => pick(r, ['statut', 'status']);
 
 const LigneCell = ({ recettes, id, raw }) => {
   const name = ligneName(recettes, id, raw);
@@ -259,23 +287,70 @@ export const omColumns = (recettes) => [
     },
   },
   {
-    key: 'coutTotal', label: 'Coût total', dataType: 'number', align: 'right', nowrap: true,
+    key: 'coutVoyage', label: 'Voyage / transport', dataType: 'number', align: 'right', nowrap: true,
+    value: (r) => {
+      const n = Number(pick(r, ['coutVoyage', 'voyage']));
+      return Number.isFinite(n) && pick(r, ['coutVoyage', 'voyage']) !== '' ? n : null;
+    },
+    display: (r) => {
+      const v = pick(r, ['coutVoyage', 'voyage']);
+      return v ? <span className="whitespace-nowrap text-xs font-semibold text-slate-700 tabular-nums">{euroNum(v)}</span> : <span className="text-slate-300">—</span>;
+    },
+  },
+  {
+    key: 'coutLogement', label: 'Logement', dataType: 'number', align: 'right', nowrap: true,
+    value: (r) => {
+      const n = Number(pick(r, ['coutLogement', 'logement']));
+      return Number.isFinite(n) && pick(r, ['coutLogement', 'logement']) !== '' ? n : null;
+    },
+    display: (r) => {
+      const v = pick(r, ['coutLogement', 'logement']);
+      return v ? <span className="whitespace-nowrap text-xs font-semibold text-slate-700 tabular-nums">{euroNum(v)}</span> : <span className="text-slate-300">—</span>;
+    },
+  },
+  {
+    key: 'coutRepas', label: 'Repas', dataType: 'number', align: 'right', nowrap: true,
+    value: (r) => {
+      const n = Number(pick(r, ['coutRepas', 'repas']));
+      return Number.isFinite(n) && pick(r, ['coutRepas', 'repas']) !== '' ? n : null;
+    },
+    display: (r) => {
+      const v = pick(r, ['coutRepas', 'repas']);
+      return v ? <span className="whitespace-nowrap text-xs font-semibold text-slate-700 tabular-nums">{euroNum(v)}</span> : <span className="text-slate-300">—</span>;
+    },
+  },
+  {
+    key: 'coutInscription', label: 'Inscription (école)', dataType: 'number', align: 'right', nowrap: true,
+    value: (r) => {
+      const n = Number(pick(r, ['coutInscription', 'inscription']));
+      return Number.isFinite(n) && pick(r, ['coutInscription', 'inscription']) !== '' ? n : null;
+    },
+    display: (r) => {
+      const v = pick(r, ['coutInscription', 'inscription']);
+      return v ? <span className="whitespace-nowrap text-xs font-semibold text-slate-700 tabular-nums">{euroNum(v)}</span> : <span className="text-slate-300">—</span>;
+    },
+  },
+  {
+    key: 'coutTotal', label: 'Coût total (calculé)', dataType: 'number', align: 'right', nowrap: true,
     value: (r) => {
       const n = Number(r.coutTotal);
       return Number.isFinite(n) ? n : null;
     },
     display: (r) => {
       const parts = [
-        pick(r, ['coutVoyage', 'voyage']) && `Trajet ${euroNum(pick(r, ['coutVoyage', 'voyage']))}`,
-        pick(r, ['coutLogement', 'logement']) && `Logt ${euroNum(pick(r, ['coutLogement', 'logement']))}`,
-        pick(r, ['coutRepas', 'repas']) && `Repas ${euroNum(pick(r, ['coutRepas', 'repas']))}`,
-        pick(r, ['coutInscription', 'inscription']) && `Inscr. ${euroNum(pick(r, ['coutInscription', 'inscription']))}`,
+        pick(r, ['coutVoyage', 'voyage']),
+        pick(r, ['coutLogement', 'logement']),
+        pick(r, ['coutRepas', 'repas']),
+        pick(r, ['coutInscription', 'inscription']),
       ].filter(Boolean);
       return (
         <div className="text-right">
           <div className="font-bold text-slate-800 whitespace-nowrap">{euroNum(r.coutTotal)}</div>
-          {parts.length > 0 && <div className="text-[10px] text-slate-400 whitespace-nowrap">{parts.slice(0, 2).join(' · ')}</div>}
-          {parts.length > 2 && <div className="text-[10px] text-slate-400 whitespace-nowrap">{parts.slice(2).join(' · ')}</div>}
+          {parts.length > 0 && (
+            <div className="text-[10px] text-slate-400 whitespace-nowrap" title="Coût total = Voyage + Logement + Repas + Inscription (uniquement si école / congrès)">
+              = somme des postes
+            </div>
+          )}
         </div>
       );
     },
@@ -400,7 +475,18 @@ const desiderateColumns = (recettes) => [
   },
 ];
 /* ── Questions ouvertes ───────────────────────────────────────────────────── */
-const questioniColumns = () => [
+const questioniColumns = (recettes, ctx = {}) => [
+  {
+    key: 'statut', label: 'Statut', filter: 'facet',
+    value: (r) => statutOf(r),
+    display: (r) => {
+      const v = statutOf(r);
+      if (ctx.onPatch) {
+        return <QuickSelect value={v} options={ctx.statusOptions || []} tone={toneFor(v)} onChange={(nv) => ctx.onPatch(r.id, { statut: nv })} />;
+      }
+      return <StatutBadge value={v} />;
+    },
+  },
   {
     key: 'description', label: 'Question ouverte', filter: 'text',
     value: (r) => pick(r, ['description', 'question']),
@@ -409,11 +495,6 @@ const questioniColumns = () => [
         <div className="font-bold text-slate-800 leading-snug" title={txt(r.description)}>{r.description || r.question || r.id}</div>
       </div>
     ),
-  },
-  {
-    key: 'statut', label: 'Statut',
-    value: (r) => pick(r, ['statut']),
-    display: (r) => <StatutBadge value={pick(r, ['statut'])} />,
   },
   {
     key: 'responsable', label: 'Responsable',
@@ -437,23 +518,36 @@ const questioniColumns = () => [
 ];
 
 /* ── Hygiène & sécurité ───────────────────────────────────────────────────── */
-const sicurezzaColumns = () => [
+const sicurezzaColumns = (recettes, ctx = {}) => [
+  {
+    key: 'statut', label: 'Statut', filter: 'facet',
+    value: (r) => statutOf(r),
+    display: (r) => {
+      const v = statutOf(r);
+      if (ctx.onPatch) {
+        return <QuickSelect value={v} options={ctx.statusOptions || []} tone={toneFor(v)} onChange={(nv) => ctx.onPatch(r.id, { statut: nv })} />;
+      }
+      return <StatutBadge value={v} />;
+    },
+  },
   {
     key: 'description', label: 'Tâche H&S', filter: 'text',
     value: (r) => pick(r, ['description', 'question']),
     display: (r) => (
       <div className="min-w-[260px]">
         <div className="font-bold text-slate-800 leading-snug" title={txt(r.description)}>{r.description || r.question || r.id}</div>
-        <div className="mt-1"><StatutBadge value={pick(r, ['statut'])} /></div>
       </div>
     ),
   },
   {
-    key: 'priorite', label: 'Priorité',
+    key: 'priorite', label: 'Priorité', filter: 'facet',
     value: (r) => pick(r, ['priorite', 'urgence']),
     display: (r) => {
       const v = pick(r, ['priorite', 'urgence']);
-      return v ? <Badge tone={toneFor(v)}>{v}</Badge> : <span className="text-slate-300">—</span>;
+      if (ctx.onPatch) {
+        return <QuickSelect value={v} options={ctx.prioriteOptions || []} tone={v ? prioriteTone(v) : 'slate'} onChange={(nv) => ctx.onPatch(r.id, { priorite: nv })} />;
+      }
+      return v ? <Badge tone={prioriteTone(v)}>{v}</Badge> : <span className="text-slate-300">—</span>;
     },
   },
   {
@@ -546,25 +640,29 @@ const KIND_CONFIG = {
   librerie: {
     columns: librerieColumns, minWidth: '1320px', importable: false,
     empty: 'Catalogue des fournisseurs vide',
-    sub: 'Ce catalogue référence les fournisseurs utilisés par les Dépenses et les Spese Desiderate.',
+    sub: 'Ce catalogue référence les fournisseurs utilisés par les Dépenses et les Dépenses souhaitées.',
     search: 'Rechercher un fournisseur, contact, catégorie…',
   },
   questioni: {
-    columns: questioniColumns, minWidth: '920px', importable: true,
+    columns: questioniColumns, minWidth: '1100px', importable: true,
     canAdd: true,
     addLabel: 'Ajouter une question',
     addDone: 'Question ajoutée au tableau ✓',
+    editLabel: 'Modifier la question',
+    editDone: 'Question modifiée ✓',
     empty: 'Aucune question ouverte pour le moment',
-    sub: 'Questions ouvertes : suivi des points en suspens (A faire / En cours / Fait). Ajoutez une nouvelle question à la main ou via l’assistant d’import.',
+    sub: 'Questions ouvertes : suivi des points en suspens (Statut en première colonne : A faire / En cours / Fait). Le statut et les champs se modifient directement dans le tableau.',
     search: 'Rechercher une question, un responsable, un tag…',
   },
   sicurezza: {
-    columns: sicurezzaColumns, minWidth: '920px', importable: true,
+    columns: sicurezzaColumns, minWidth: '1100px', importable: true,
     canAdd: true,
     addLabel: 'Ajouter une tâche H&S',
     addDone: 'Tâche H&S ajoutée au tableau ✓',
+    editLabel: 'Modifier la tâche H&S',
+    editDone: 'Tâche H&S modifiée ✓',
     empty: 'Aucune tâche H&S pour le moment',
-    sub: 'Tâches d’hygiène & de sécurité du laboratoire. Ajoutez une nouvelle tâche à la main ou via l’assistant d’import.',
+    sub: 'Tâches d’hygiène & de sécurité du laboratoire : statut en première colonne (Fait / À faire / En cours) et priorité colorée de orange (urgent) à vert (pas urgent).',
     search: 'Rechercher une tâche, un responsable…',
   },
 };
@@ -574,12 +672,12 @@ export const CollectionPage = ({ kind }) => {
   const { data, settings, upsert, currentUser } = useAdmin();
   const [importOpen, setImportOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [editingRec, setEditingRec] = useState(null); // enregistrement en cours d’édition (✎)
   const [notice, setNotice] = useState(null);
   const cfg = KIND_CONFIG[kind] || KIND_CONFIG.questioni;
   const list = Array.isArray(data[kind]) ? data[kind] : [];
   const recettes = Array.isArray(data.recettes) ? data.recettes : [];
   const personnel = Array.isArray(data.personnel) ? data.personnel : [];
-  const columns = cfg.columns(recettes);
 
   // Le bandeau de confirmation disparaît automatiquement après quelques secondes.
   useEffect(() => {
@@ -604,8 +702,33 @@ export const CollectionPage = ({ kind }) => {
     ...list.map((r) => pick(r, ['priorite', 'urgence'])).filter(Boolean),
   ].filter((v, i, a) => v && a.indexOf(v) === i);
 
-  const openAdd = () => setAddOpen(true);
-  const closeAdd = () => setAddOpen(false);
+  // Context remis aux colonnes : édition « rapide » en cellule (statut / priorité).
+  const ctx = {
+    statusOptions,
+    prioriteOptions,
+    onPatch: (id, patch) => upsert(kind, patch, id),
+  };
+  const columns = [...cfg.columns(recettes, ctx)];
+  if (cfg.canAdd) {
+    columns.push({
+      key: 'actions', label: '', sortable: false, filter: 'none', filterable: false,
+      align: 'right', nowrap: true,
+      value: () => '',
+      display: (r) => (
+        <div className="flex items-center justify-end gap-1">
+          <button
+            type="button"
+            onClick={() => { setEditingRec(r); setAddOpen(true); }}
+            title="Modifier cet élément"
+            className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-blue-50 hover:text-blue-600 text-xs"
+          >✎</button>
+        </div>
+      ),
+    });
+  }
+
+  const openAdd = () => { setEditingRec(null); setAddOpen(true); };
+  const closeAdd = () => { setEditingRec(null); setAddOpen(false); };
 
   return (
     <div className="max-w-full mx-auto flex flex-col gap-4">
@@ -681,15 +804,17 @@ export const CollectionPage = ({ kind }) => {
         <CollectionAddModal
           kind={kind}
           cfg={cfg}
+          rec={editingRec}
           existing={list}
           statusOptions={statusOptions}
           responsableOptions={responsableOptions}
           prioriteOptions={prioriteOptions}
           onCancel={closeAdd}
-          onSave={(rec) => {
-            upsert(kind, rec);
+          onSave={(rec, existingId) => {
+            upsert(kind, rec, existingId);
             setAddOpen(false);
-            setNotice(cfg.addDone);
+            setEditingRec(null);
+            setNotice(existingId ? (cfg.editDone || cfg.addDone) : cfg.addDone);
           }}
         />
       )}

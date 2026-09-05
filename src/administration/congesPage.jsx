@@ -31,7 +31,7 @@ import React, { useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
 import { SmartTable } from './smartTable';
 import { AdminImportModal } from './adminImportModal';
-import { businessDaysBetween, toFrDate, congeYearBounds, businessDaysInPeriod } from './congesDates';
+import { businessDaysBetween, toFrDate, congeYearBounds, businessDaysInPeriod, frenchHolidayList } from './congesDates';
 import {
   CONGE_STATUSES, CONGE_DEMANDE, CONGE_APPROUVE, CONGE_REFUSE,
   CONGE_DEFAULT_ALLOWANCE, CONGE_QUOTA_BY_TYPE,
@@ -51,6 +51,8 @@ const nameKey = (s) => {
   return k ? k.split(/\s+/).sort().join(' ') : '';
 };
 const sameName = (a, b) => !!a && !!b && nameKey(a) === nameKey(b);
+
+const FR_WEEKDAYS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 
 /* Petits éléments d'affichage (mêmes classes que les autres pages d'admin). */
 const TONES = {
@@ -112,7 +114,7 @@ export const CongesPage = () => {
   const own = (r) => !!meName && sameName(meName, txt(r.demandeur));
   const pending = (r) => !txt(r.statut) || txt(r.statut) === CONGE_DEMANDE;
   const canEdit = (r) => isSuper || (own(r) && pending(r));
-  const canDelete = (r) => isSuper; // seule le superutilisateur peut supprimer une demande
+  const canDelete = () => isSuper; // seul le superutilisateur peut supprimer une demande
 
   const summary = useMemo(() => {
     const b = congeYearBounds();
@@ -374,6 +376,10 @@ export const CongesPage = () => {
     },
   ];
 
+  /* Jours fériés français de l’année en cours (bloc pédagogique sous le tableau). */
+  const holidaysYear = new Date().getFullYear();
+  const holidays = useMemo(() => frenchHolidayList(holidaysYear), [holidaysYear]);
+
   return (
     <div className="max-w-full mx-auto flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -419,7 +425,7 @@ export const CongesPage = () => {
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
             <h3 className="text-sm font-black text-slate-700">🏝 Soldes de congés — saison {balances.bounds.label}</h3>
             <span className="text-[10px] font-bold text-slate-400">
-              droits annuels réglables par profil dans Paramètres · renouvelés automatiquement chaque 1er septembre
+              droits annuels réglables par profil dans Setup · renouvelés automatiquement chaque 1er septembre
             </span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2">
@@ -457,7 +463,28 @@ export const CongesPage = () => {
       <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
         <b>Fonctionnement :</b> chacun pose sa demande (statut « Demande »), un superutilisateur l’approuve ou la refuse. Le solde de chaque membre est décompté en jours ouvrés sur la saison du
         1er septembre au 31 août (renouvelée automatiquement chaque 1er septembre) : week-ends et fêtes nationales exclus, y compris ceux qui tombent pendant une fermeture UPJV
-        (2 semaines de Noël + 4 semaines en juillet-août). Quota par défaut : 47 jours pour un Doctorant, modulable par profil dans Paramètres › « Congés : jours/an par profil ».
+        (2 semaines de Noël + 4 semaines en juillet-août). Quota par défaut : 47 jours pour un Doctorant, modulable par profil dans Setup › « Congés : jours/an par profil ».
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4">
+        <div className="flex items-center gap-2 mb-2 flex-wrap">
+          <h3 className="text-sm font-black text-slate-700">🎉 Jours fériés en France cette année</h3>
+          <span className="text-[10px] font-bold text-slate-400">
+            fêtes nationales françaises de métropole ({holidaysYear}) — exclues du décompte des jours ouvrés
+          </span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-4 gap-y-1">
+          {holidays.map((h) => {
+            const d = new Date(`${h.iso}T00:00:00`);
+            return (
+              <div key={h.iso} className="flex items-baseline gap-2 rounded-lg px-1 py-0.5">
+                <span className="text-[11px] font-black text-indigo-600 whitespace-nowrap tabular-nums">{toFrDate(h.iso)}</span>
+                <span className="text-[10px] text-slate-400 w-14 capitalize whitespace-nowrap">{FR_WEEKDAYS[d.getDay()]}</span>
+                <span className="text-xs font-semibold text-slate-700">{h.label}</span>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {sorted.length === 0 ? (

@@ -27,8 +27,10 @@ import { setActiveProjectId, readLibrary, readAllProjectLibraries, restoreLibrar
 import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders } from './utils/driveUpload';
 import { sanitizeSlug, datasetFolderSlug } from './utils/driveNaming';
 import { validateDatasetExperiments } from './utils/experimentRules';
+import { canUserOpenDataset, isDatasetRestricted, normalizeMemberNames } from './utils/datasetAccess';
 
 import { ScientistLoginGate, ScientistLoginModal } from './components/AppModules/definitionsManagers';
+import { DatasetAccessModal } from './components/AppModules/datasetAccessModal';
 
 
 
@@ -886,8 +888,15 @@ if (customType === 'dosy') {
   // Page active de la base d’administration ouverte — pilotée par la barre
   // latérale (structure identique aux modules d’un dataset scientifique).
   const [currentAdminPage, setCurrentAdminPage] = useState('overview');
+  // Cible de navigation inter-pages d’administration (ex. Dépenses → Librerie
+  // avec un fournisseur précis à mettre en évidence). Format :
+  // { pageId, kind, recordId } — consommée par la page d’arrivée puis effacée.
+  const [adminFocus, setAdminFocus] = useState(null);
   const [dialog, setDialog] = useState(null);
   const [pendingLoad, setPendingLoad] = useState(null);
+  // Dataset dont le superutilisateur édite la liste d’accès (bouton « 👥
+  // Membres » sur une carte de l’écran d’accueil).
+  const [accessEditorDataset, setAccessEditorDataset] = useState(null);
   const [appClipboard, setAppClipboard] = useState(null);
   const [datasetTitle, setDatasetTitle] = useState('');
   const [datasetSubtitle, setDatasetSubtitle] = useState('');
@@ -1346,6 +1355,15 @@ if (customType === 'dosy') {
   // All child components (test renderers, LabNotebook, Storage, etc.) still
   // expect operators as plain strings. This is the safe list to pass them.
   const operatorNames = normalizeOperators(operators).map((op) => op.name);
+
+  // « Bootstrap » d’accès : aucun compte OU aucun superutilisateur défini →
+  // tout le monde peut ouvrir les datasets (permet de créer la 1re équipe).
+  const datasetAccessBootstrap = operatorNames.length === 0 || !hasDefinedSuperuser(operators);
+
+  // Contexte d’accès par dataset, lu par openDataset via une ref (toujours à
+  // jour, même depuis un effet / une promesse).
+  const accessContextRef = useRef(null);
+  accessContextRef.current = { currentUser, noAccounts: datasetAccessBootstrap };
 
   const latestDataRef = useRef(null);
 
@@ -2291,6 +2309,7 @@ const createNewDataset = async (kind = 'scientific') => {
     setAdminContent(isAdmin ? adminSeed : null);
     setActiveDatasetKind(kind);
     setCurrentAdminPage('overview');
+    setAdminFocus(null);
     setCustomCmpds([]);
     setCustomCellLines([]);
     setCustomConc({});
@@ -2324,6 +2343,12 @@ const createNewDataset = async (kind = 'scientific') => {
 
     const updatedPayload = {
       kind,
+      // Par défaut, un nouveau dataset n’est visible que par les utilisateurs
+      // définis dedans (le créateur) + le superutilisateur.
+      access: {
+        restricted: true,
+        memberNames: currentUser && currentUser.name ? [String(currentUser.name).trim()] : []
+      },
       title: isAdmin ? 'Base d’administration' : 'New Dataset',
       subtitle: '',
       date: new Date().toISOString().split('T')[0],
@@ -2424,9 +2449,21 @@ const handleBackToExplorer = async () => {
   window.history.pushState({}, '', window.location.pathname);
   setAppView('explorer');
   setCurrentAdminPage('overview');
+  setAdminFocus(null);
 };
 
 const openDataset = (dset) => {
+  // Chaque dataset n’est visible que par les utilisateurs définis dedans :
+  // garde de sécurité, y compris pour l’ouverture directe par URL.
+  const ctx = accessContextRef.current || { currentUser: null, noAccounts: false };
+  if (!canUserOpenDataset(dset, ctx.currentUser, { bootstrap: ctx.noAccounts })) {
+    setDialog({
+      type: 'alert',
+      title: '🔒 Accès restreint',
+      message: `Le dataset « ${(dset && dset.title) || 'sans titre'} » n’est visible que par les utilisateurs définis comme membres. Connectez-vous avec votre compte membre, ou demandez au superutilisateur de vous ajouter.`
+    });
+    return;
+  }
   const kind = dset && dset.kind === 'administration' ? 'administration' : 'scientific';
   let s = null;
   try {
@@ -2464,6 +2501,7 @@ const openDataset = (dset) => {
     setAppView('dataset');
     setCurrentModule('administration');
     setCurrentAdminPage('overview');
+    setAdminFocus(null);
     window.history.pushState({}, '', '?dataset=' + dset.id);
     if (window.innerWidth < 768) setIsSidebarOpen(false);
     return;
@@ -2472,6 +2510,7 @@ const openDataset = (dset) => {
   setAdminContent(null);
   setActiveDatasetKind('scientific');
   setCurrentAdminPage('overview');
+  setAdminFocus(null);
 
   try {
     const migrated = migrateLoadedDataset(s);
@@ -2551,6 +2590,40 @@ const openDataset = (dset) => {
         title: 'Error',
         message: 'Error reading dataset structure.'
       });
+    }
+  };
+
+  const saveDatasetAccess = async (dsetId, access) => {
+    const cleanAccess = {
+      restricted: !!access && !!access.restricted,
+      memberNames: normalizeMemberNames(access && access.memberNames)
+    };
+
+    // Mise à jour optimiste (l’écran reflète immédiatement le changement).
+    setDatasetsList((prev) => (Array.isArray(prev) ? prev : []).map((d) =>
+      String(d.id) === String(dsetId) ? { ...d, access: cleanAccess } : d
+    ));
+
+    if (db && user) {
+      try {
+        await db
+          .collection(`artifacts/${appId}/public/data/datasets`)
+          .doc(dsetId)
+          .set({ access: cleanAccess }, { merge: true });
+        return;
+      } catch (e) {
+        console.warn('Could not sync dataset access to Firestore:', e && e.message);
+      }
+    }
+    // Repli local (cet appareil uniquement).
+    let stored = [];
+    try {
+      stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
+    } catch { /* ignore */ }
+    const idx = (Array.isArray(stored) ? stored : []).findIndex((d) => String(d.id) === String(dsetId));
+    if (idx >= 0) {
+      stored[idx] = { ...stored[idx], access: cleanAccess };
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
     }
   };
 
@@ -2724,6 +2797,15 @@ const openDataset = (dset) => {
     return [...list].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
   }, [datasetsList]);
 
+  // Chaque dataset n’est visible que par les utilisateurs définis dedans
+  // (liste de membres + superutilisateur) — voir utils/datasetAccess.js.
+  const visibleDatasets = useMemo(() => {
+    if (!currentUser && !datasetAccessBootstrap) return []; // comptes configurés : connexion requise
+    return flatDatasets.filter((d) =>
+      canUserOpenDataset(d, currentUser, { bootstrap: datasetAccessBootstrap })
+    );
+  }, [flatDatasets, currentUser, datasetAccessBootstrap]);
+
   const [currentMonth, setCurrentMonth] = useState(() => {
     const d = new Date();
     d.setDate(1);
@@ -2841,9 +2923,16 @@ const openDataset = (dset) => {
         id: p.id, label: p.label, icon: p.icon,
       }))
     : [];
-  const handleAdminNav = (navId) => {
+  // Navigation d’une page d’administration (clic dans la barre latérale ou
+  // lien inter-page). `focusPayload` optionnel = { kind, recordId } : une autre
+  // page demande à pointer un enregistrement précis (fiche fournisseur,
+  // ligne budgétaire, personne…) → la page d’arrivée le met en évidence.
+  const handleAdminNav = (navId, focusPayload) => {
     setCurrentModule('administration');
     setCurrentAdminPage(navId);
+    setAdminFocus(focusPayload && focusPayload.recordId
+      ? { pageId: navId, kind: focusPayload.kind, recordId: focusPayload.recordId }
+      : null);
     if (window.innerWidth < 768) setIsSidebarOpen(false);
   };
 
@@ -3140,6 +3229,18 @@ const openDataset = (dset) => {
         </div>
       )}
 
+      {accessEditorDataset && (
+        <DatasetAccessModal
+          dset={accessEditorDataset}
+          operators={operators}
+          onClose={() => setAccessEditorDataset(null)}
+          onSave={async (dsetId, access) => {
+            await saveDatasetAccess(dsetId, access);
+            setAccessEditorDataset(null);
+          }}
+        />
+      )}
+
       <StorageModals
         storageModal={storageModal}
         setStorageModal={setStorageModal}
@@ -3310,9 +3411,19 @@ const openDataset = (dset) => {
                     other device and “📂 Load HTML File” here.
                   </span>
                 </div>
+              ) : visibleDatasets.length === 0 ? (
+                <div className="text-center py-12 text-slate-400 text-md flex flex-col items-center gap-3">
+                  <span className="text-4xl opacity-30">🔒</span>
+                  <span>Aucun dataset n’est visible pour votre compte.</span>
+                  <span className="text-xs max-w-md text-slate-400 leading-relaxed">
+                    Chaque dataset n’est visible que par les utilisateurs définis comme membres.
+                    Demandez au superutilisateur de vous ajouter (bouton « 👥 Membres » sur la
+                    carte du dataset côté superutilisateur).
+                  </span>
+                </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                  {flatDatasets.map((dset) => (
+                  {visibleDatasets.map((dset) => (
                     <div
                       key={dset.id}
                       onClick={() => openDataset(dset)}
@@ -3321,6 +3432,12 @@ const openDataset = (dset) => {
                       <div className="flex flex-col overflow-hidden">
                         <span className="font-bold text-sm text-blue-700 truncate">
                           {dset.title || 'Untitled'}
+                          {isDatasetRestricted(dset) && (
+                            <span
+                              className="ml-1 align-middle"
+                              title="Accès restreint : seuls les membres définis + le superutilisateur voient ce dataset"
+                            >🔒</span>
+                          )}
                         </span>
 
                         <span className="text-[11px] text-slate-500 mt-1 flex gap-2">
@@ -3336,6 +3453,14 @@ const openDataset = (dset) => {
                       {/* Rename / Delete — superuser only */}
                       {currentUser?.role === 'superuser' && (
                         <div className="flex flex-col gap-1 opacity-100 md:opacity-0 group-hover/item:opacity-100 transition-all shrink-0 ml-2">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setAccessEditorDataset(dset); }}
+                            className="text-slate-500 hover:text-blue-600 hover:bg-blue-50 px-2 py-1 rounded text-xs font-bold transition-colors text-right"
+                            title="Choisir qui voit ce dataset (membres) — réservé au superutilisateur"
+                          >
+                            👥 Membres
+                          </button>
+
                           <button
                             onClick={(e) =>
                               renameDataset(e, dset.id, dset.title || 'Untitled')
@@ -3545,6 +3670,9 @@ const openDataset = (dset) => {
               operators={operators} setOperators={setOperators}
               authSettings={authSettings} setAuthSettings={setAuthSettings}
               onRequestLogin={() => setLoginModal({ isEntryGate: false })}
+              onNavigateAdmin={handleAdminNav}
+              adminFocus={adminFocus}
+              onClearFocus={() => setAdminFocus(null)}
             />)}
           </div>
         </div>

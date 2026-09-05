@@ -6,7 +6,7 @@
    « hidden » pour servir uniquement de critère de filtre/recherche sans
    être affichées (ex. Catégorie/Échelon/Chevron fusionnés dans une cellule).
    ========================================================================= */
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 const ALL_KEY = '__all__';
 const EMPTY_KEY = '__empty__';
@@ -125,6 +125,15 @@ export const SmartTable = ({
   noMatchLabel = 'Aucun enregistrement ne correspond aux filtres.',
   searchPlaceholder = 'Rechercher dans le tableau…',
   autoFacetLimit = 30,
+  /* Filtres rapides affichés en listes déroulantes directement au-dessus du
+     tableau (clés de colonnes en mode facette) — ex. Demandeur, Ligne
+     budgétaire, Fournisseur sur la page Dépenses. */
+  quickFilters = [],
+  /* Mise en évidence d’une ligne après une navigation inter-page :
+     `focusRowKey` = la clé renvoyée par rowKey(row, idx) de la ligne cible.
+     La ligne est défilée au centre et flashée ; `onFocusDone` est appelé. */
+  focusRowKey = null,
+  onFocusDone,
 }) => {
   const [sort, setSort] = useState(null); // { key, dir: 'asc'|'desc' } | null
   const [filters, setFilters] = useState({}); // colKey -> filtre actif
@@ -221,6 +230,45 @@ export const SmartTable = ({
     setFilters({});
     setQuery('');
   };
+
+  /* Mise en évidence de la ligne cible (focusRowKey) après navigation inter-page :
+     défilement au centre + flash ambre pendant ~2 s, puis onFocusDone(). */
+  const scrollRef = useRef(null);
+  const focusTimerRef = useRef(null);
+  useEffect(() => {
+    if (focusRowKey === null || focusRowKey === undefined || focusRowKey === '') {
+      return undefined;
+    }
+    const container = scrollRef.current;
+    const wanted = String(focusRowKey);
+    let target = null;
+    if (container) {
+      container.querySelectorAll('tr[data-rk]').forEach((tr) => {
+        if (!target && tr.getAttribute('data-rk') === wanted) target = tr;
+      });
+    }
+    if (!target) return undefined;
+    const clearFlash = () => {
+      if (!target) return;
+      target.style.background = '';
+      target.style.boxShadow = '';
+    };
+    clearFlash();
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.style.background = '#fef9c3';
+    target.style.boxShadow = 'inset 0 0 0 2px #fbbf24';
+    if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+    focusTimerRef.current = setTimeout(() => {
+      clearFlash();
+      if (typeof onFocusDone === 'function') onFocusDone();
+    }, 2200);
+    return () => {
+      if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+      focusTimerRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRowKey, rows]);
+
   /* ── Contrôle de filtre adapté au type de colonne ─────────────────────── */
   const renderFilterControl = (m) => {
     const { col, mode, options, hasBlank } = m;
@@ -334,6 +382,37 @@ export const SmartTable = ({
         </div>
       </div>
 
+      {/* Filtres rapides (listes déroulantes au-dessus du tableau) */}
+      {quickFilters.length > 0 && (
+        <div className="px-3 pb-2.5 pt-2 border-b border-slate-100 bg-slate-50/60 flex flex-wrap items-center gap-2">
+          <span className="text-[9px] font-black uppercase tracking-wide text-slate-400">Filtrer :</span>
+          {quickFilters.map((key) => {
+            const m = meta.find((x) => x.col.key === key && x.mode !== 'none');
+            if (!m) return null;
+            const { col, options, hasBlank } = m;
+            const current = filters[key];
+            const val = current && current.type === 'facet' ? current.val : ALL_KEY;
+            return (
+              <label key={key} className="flex items-center gap-1.5 min-w-0">
+                <span className="text-[10px] font-black uppercase text-slate-400 whitespace-nowrap">{col.label}</span>
+                <select
+                  value={val}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setFilter(key, v === ALL_KEY ? null : { type: 'facet', val: v });
+                  }}
+                  className="max-w-[210px] text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-md px-1.5 py-1 outline-none focus:border-blue-400"
+                >
+                  <option value={ALL_KEY}>Tous</option>
+                  {(hasBlank || val === EMPTY_KEY) && <option value={EMPTY_KEY}>— non renseigné —</option>}
+                  {options.map((o) => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </label>
+            );
+          })}
+        </div>
+      )}
+
       {/* Panneau de filtres par colonne */}
       {panelOpen && (
         <div className="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70">
@@ -363,7 +442,7 @@ export const SmartTable = ({
           >Réinitialiser les filtres</button>
         </div>
       ) : (
-        <div className="overflow-auto custom-scrollbar overscroll-contain" style={maxHeight ? { maxHeight } : undefined}>
+        <div className="overflow-auto custom-scrollbar overscroll-contain" ref={scrollRef} style={maxHeight ? { maxHeight } : undefined}>
           <table className="w-full text-sm border-collapse" style={{ minWidth }}>
             <thead>
               <tr className="text-[10px] uppercase tracking-wide text-slate-500">
@@ -385,6 +464,7 @@ export const SmartTable = ({
                 return (
                   <tr
                     key={rowKey(row, idx)}
+                    data-rk={String(rowKey(row, idx))}
                     className={`border-b border-slate-100 last:border-0 hover:bg-blue-50/50 align-top ${extraRowClass}`}
                   >
                     {visibleCols.map((col, ci) => {

@@ -186,6 +186,7 @@ const entriesToRows = (entries) => {
 
 const D0 = () => ({
   nom: '', type: '', corps: '', grade: '', bap: '',
+  email: '',
   fonction: '',
   hdr: '', categorie: '', echelon: '', chevron: '',
   dateEmbauche: '', dateFinContrat: '', dernierRIPEC: '',
@@ -220,6 +221,7 @@ export const PersonnelModal = ({
           : [];
     return {
       nom: r.nom || '', type: r.type || types[0], corps: r.corps || '', grade: r.grade || '', bap: r.bap || '',
+      email: r.email || '',
       fonction: r.fonction || '',
       hdr: r.hdr || '', categorie: r.categorie || '', echelon: r.echelon || '', chevron: r.chevron || '',
       dateEmbauche: r.dateEmbauche || '', dateFinContrat: r.dateFinContrat || '',
@@ -439,13 +441,17 @@ export const PersonnelModal = ({
         <div className="px-6 py-4 bg-gradient-to-br from-blue-600 to-indigo-700 text-white">
           <h2 className="text-lg font-black">{editing ? 'Modifier la personne' : 'Ajouter une personne'}</h2>
           <p className="text-blue-100 text-xs">
-            Le grade est une sous-classification du corps (ex. PR → PR2, PR1, CE2, CE1) ; les positions des promotions et les formations se choisissent dans les listes Paramètres.
+            Le grade est une sous-classification du corps (ex. PR → PR2, PR1, CE2, CE1) ; les positions des promotions et les formations se choisissent dans les listes de Setup.
           </p>
         </div>
         <div className="p-6 overflow-y-auto custom-scrollbar grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="sm:col-span-2">
             <label className={labelCls}>Nom complet</label>
             <input className={inputCls} value={draft.nom} onChange={set('nom')} placeholder="Nom Prénom" />
+          </div>
+          <div className="sm:col-span-2">
+            <label className={labelCls}>E-mail (notifications devis/BC, approbations)</label>
+            <input type="email" className={inputCls} value={draft.email} onChange={set('email')} placeholder="prenom.nom@u-picardie.fr" />
           </div>
           <div>
             <label className={labelCls}>Type</label>
@@ -491,8 +497,8 @@ export const PersonnelModal = ({
             <label className={labelCls}>Fonction (accès admin)</label>
             <select className={inputCls} value={draft.fonction} onChange={set('fonction')}>
               <option value="">— Aucune —</option>
-              <option value="AP">AP — Hygiène & Sécurité</option>
-              <option value="Gestionnaire">Gestionnaire</option>
+              <option value="AP">AP — Dépenses, Budget overview + Hygiène & Sécurité</option>
+              <option value="Gestionnaire">Gestionnaire — Dépenses, Budget overview + Questions ouvertes</option>
             </select>
           </div>
           {!showStage && (
@@ -543,7 +549,7 @@ export const PersonnelModal = ({
             <div className="border border-slate-200 rounded-xl px-2 py-1.5 bg-slate-50/60 flex flex-col gap-1.5">
               {(draft.promoRows || []).length === 0 ? (
                 <p className="text-[11px] text-slate-400 px-1 py-1.5">
-                  Aucune promotion pour l’instant — ajoutez la position atteinte (choisie dans Paramètres › Positions) et sa date.
+                  Aucune promotion pour l’instant — ajoutez la position atteinte (choisie dans Setup › Positions) et sa date.
                 </p>
               ) : (
                 (draft.promoRows || []).map((row) => (
@@ -583,7 +589,7 @@ export const PersonnelModal = ({
             <div className="border border-slate-200 rounded-xl px-2 py-1.5 bg-slate-50/60 flex flex-col gap-1.5">
               {(draft.formationRows || []).length === 0 ? (
                 <p className="text-[11px] text-slate-400 px-1 py-1.5">
-                  Aucune formation pour l’instant — ajoutez un intitulé choisi dans Paramètres › Formations et sa date.
+                  Aucune formation pour l’instant — ajoutez un intitulé choisi dans Setup › Formations et sa date.
                 </p>
               ) : (
                 (draft.formationRows || []).map((row) => (

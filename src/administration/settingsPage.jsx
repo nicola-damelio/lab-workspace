@@ -1,6 +1,6 @@
 /* =========================================================================
    src/administration/settingsPage.jsx
-   Paramètres d’une base d’administration : Équipe & accès (scientifiques,
+   Setup d’une base d’administration : Équipe & accès (scientifiques,
    superutilisateur) + options des listes déroulantes (administration.settings).
    ========================================================================= */
 import React, { useState } from 'react';
@@ -20,11 +20,11 @@ const OPTION_KEYS = [
   { key: 'dutySuggestions', label: 'Missions suggérées (SST…)' },
   { key: 'depenseNatures', label: 'Natures de dépenses' },
   { key: 'depenseStatuses', label: 'Statuts de dépenses / BC' },
-  { key: 'urgences', label: 'Niveaux d’urgence' },
-  { key: 'desiderateStatuses', label: 'Statuts Spese Desiderate' },
+  { key: 'urgences', label: 'Urgences / priorités (H&S : Urgent → Pas urgent)' },
+  { key: 'desiderateStatuses', label: 'Décisions Dépenses souhaitées (Approuvé / En attente / Pas maintenant)' },
   { key: 'omStatuses', label: 'Statuts des OM' },
   { key: 'omCostStatuses', label: 'Coût OM : Estimé / Exact' },
-  { key: 'issueStatuses', label: 'Statuts des questions' },
+  { key: 'issueStatuses', label: 'Statuts Questions ouvertes / H&S (A faire / En cours / Fait)' },
   { key: 'congesQuotaByType', label: 'Congés : jours / an par profil (Doctorant = 47)' },
 ];
 

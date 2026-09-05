@@ -45,12 +45,23 @@ const AddSection = ({ icon, title, children }) => (
 
 export const CollectionAddModal = ({
   kind, cfg, existing, statusOptions, responsableOptions, prioriteOptions,
-  onCancel, onSave,
+  rec, onCancel, onSave,
 }) => {
   const isSicurezza = kind === 'sicurezza';
-  const title = (cfg && cfg.addLabel) || (isSicurezza ? 'Ajouter une tâche H&S' : 'Ajouter une question');
-  const [draft, setDraft] = useState({
-    description: '', statut: '', responsable: '', priorite: '', tags: '', commentaires: '',
+  const editing = !!rec;
+  const title = editing
+    ? ((cfg && cfg.editLabel) || (isSicurezza ? 'Modifier la tâche H&S' : 'Modifier la question'))
+    : ((cfg && cfg.addLabel) || (isSicurezza ? 'Ajouter une tâche H&S' : 'Ajouter une question'));
+  const [draft, setDraft] = useState(() => {
+    const r = rec || {};
+    return {
+      description: txt(pick(r, ['description', 'question'])),
+      statut: txt(pick(r, ['statut', 'status'])),
+      responsable: txt(pick(r, ['responsable'])),
+      priorite: txt(pick(r, ['priorite', 'urgence'])),
+      tags: Array.isArray(r.tags) ? r.tags.join(', ') : txt(pick(r, ['tags', 'classification'])),
+      commentaires: txt(pick(r, ['commentaires', 'note', 'notes'])),
+    };
   });
   const [error, setError] = useState('');
   const set = (key) => (e) => setDraft((d) => ({ ...d, [key]: e.target.value }));
@@ -64,7 +75,7 @@ export const CollectionAddModal = ({
       return;
     }
     const wanted = normalizeDup(description);
-    const exists = (existing || []).some(
+    const exists = !editing && (existing || []).some(
       (r) => normalizeDup(pick(r, ['description', 'question'])) === wanted
     );
     if (exists) {
@@ -84,7 +95,7 @@ export const CollectionAddModal = ({
     };
     if (isSicurezza) record.priorite = txt(draft.priorite);
     else record.tags = tags;
-    onSave(record);
+    onSave(record, editing && rec.id);
   };
 
   return (
@@ -101,8 +112,12 @@ export const CollectionAddModal = ({
             </h2>
             <p className="text-blue-100 text-xs">
               {isSicurezza
-                ? 'Tâche d’hygiène & de sécurité du laboratoire : description, responsable, statut et priorité.'
-                : 'Question ouverte à suivre : description, responsable, statut et tags.'}
+                ? (editing
+                  ? 'Tâche d’hygiène & de sécurité : ajustez la description, le statut, la priorité ou le responsable.'
+                  : 'Tâche d’hygiène & de sécurité du laboratoire : description, responsable, statut et priorité.')
+                : (editing
+                  ? 'Question ouverte : ajustez le texte, le statut, le responsable ou les tags.'
+                  : 'Question ouverte à suivre : description, responsable, statut et tags.')}
             </p>
           </div>
           <button
@@ -191,7 +206,7 @@ export const CollectionAddModal = ({
             type="button" onClick={submit}
             className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm px-5 py-2 rounded-xl shadow-sm transition-colors"
           >
-            💾 {title}
+            💾 {editing ? 'Enregistrer les modifications' : title}
           </button>
         </div>
       </div>

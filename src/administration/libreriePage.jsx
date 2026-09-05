@@ -16,6 +16,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
 import { SmartTable } from './smartTable';
+import { toFrDate } from './congesDates';
 import { buildMissingFournisseurs, normalizeKey } from './importUtils';
 
 /* ── Petites aides ─────────────────────────────────────────────────────── */
@@ -122,7 +123,7 @@ const FournisseurModal = ({ rec, suggestions, existingNames, onCancel, onSave })
               <span className="text-xl" aria-hidden="true">📇</span>
               {editing ? 'Modifier le fournisseur' : 'Ajouter un fournisseur'}
             </h2>
-            <p className="text-indigo-100 text-xs">Fiche du catalogue utilisé par les Dépenses et les Spese Desiderate.</p>
+            <p className="text-indigo-100 text-xs">Fiche du catalogue utilisé par les Dépenses (BC) et les Dépenses souhaitées.</p>
           </div>
           <button type="button" onClick={onCancel} className="shrink-0 w-8 h-8 rounded-lg bg-white/15 hover:bg-white/30 text-white font-bold" title="Fermer">✕</button>
         </div>
@@ -222,12 +223,36 @@ const FournisseurModal = ({ rec, suggestions, existingNames, onCancel, onSave })
    Page Librerie
    ═════════════════════════════════════════════════════════════════════════ */
 export const LibreriePage = () => {
-  const { data, upsert, remove, importMany } = useAdmin();
+  const {
+    data, upsert, remove, importMany,
+    access, navigate, focus, clearFocus,
+  } = useAdmin();
   const librerie = useMemo(() => (Array.isArray(data.librerie) ? data.librerie : []), [data.librerie]);
   const depenses = useMemo(() => (Array.isArray(data.depenses) ? data.depenses : []), [data.depenses]);
+  const recettes = useMemo(() => (Array.isArray(data.recettes) ? data.recettes : []), [data.recettes]);
+  const personnel = useMemo(() => (Array.isArray(data.personnel) ? data.personnel : []), [data.personnel]);
+
+  /* Deux sous-tables dans la Librerie : le catalogue fournisseurs (fiches de la
+     collection `librerie`) et les lignes budgétaires (mêmes fiches que la page
+     « Recettes », vues ici comme catalogue : montant total, porteur, échéance…). */
+  const [tab, setTab] = useState('fournisseurs'); // 'fournisseurs' | 'lignes'
+  const [focusRow, setFocusRow] = useState(null);
+  const canViewPersonnel = !!access.canViewPage({ id: 'personnel' });
 
   const [modal, setModal] = useState(null); // null | { mode:'new' } | { mode:'edit', rec }
   const [notice, setNotice] = useState(null); // { tone, text }
+
+  /* Navigation inter-page entrante (ex. Dépenses → Librerie) : ouvre la bonne
+     sous-table et met en évidence la fiche ciblée (fournisseur ou ligne). */
+  useEffect(() => {
+    if (!focus || !focus.recordId) return;
+    if (focus.pageId !== 'librerie') return;
+    if (focus.kind === 'recette') setTab('lignes');
+    else setTab('fournisseurs');
+    setFocusRow(focus.recordId);
+    if (typeof clearFocus === 'function') clearFocus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus]);
 
   useEffect(() => {
     if (!notice) return undefined;
@@ -276,6 +301,151 @@ export const LibreriePage = () => {
     () => [...librerie].sort((a, b) => supplierNameOf(a).localeCompare(supplierNameOf(b), 'fr')),
     [librerie]
   );
+
+  /* ── Sous-table « Lignes budgétaires » (mêmes fiches que la page Recettes) ── */
+  const euro = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' });
+  const num = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const personLabel = (p) => {
+    const n = txt(p && p.nom);
+    const pr = txt(p && p.prenom);
+    if (pr && n && !n.startsWith(pr)) return `${pr} ${n}`;
+    return n || pr || '';
+  };
+  const lineAcronym = (r) => {
+    const direct = txt(pick(r, ['acronyme', 'acronym', 'code']));
+    if (direct) return direct;
+    const s = txt(r && r.ligne);
+    if (!s) return '';
+    const m = s.match(/^[^\s(—–-]+/);
+    return m ? m[0].replace(/[:.–]+$/, '') : '';
+  };
+  const personOf = (r) => {
+    if (r && r.porteurId) {
+      const direct = personnel.find((x) => x && x.id === r.porteurId);
+      if (direct) return direct;
+    }
+    const label = txt(r && pick(r, ['porteur', 'porteurNom']));
+    if (!label) return null;
+    const key = normalizeKey(label);
+    if (!key) return null;
+    return personnel.find((x) => normalizeKey(personLabel(x)) === key) || null;
+  };
+  const goToPersonnel = (personId) => {
+    if (!canViewPersonnel || !personId) return;
+    if (typeof navigate === 'function') navigate('personnel', { kind: 'person', recordId: personId });
+  };
+  const recetteRows = useMemo(
+    () => [...recettes].sort((a, b) => txt(a.ligne).localeCompare(txt(b.ligne), 'fr')),
+    [recettes]
+  );
+  const recetteCols = [
+    {
+      key: 'ligne', label: 'Ligne budgétaire', filter: 'facet',
+      value: (r) => txt(r.ligne),
+      display: (r) => (
+        <div className="min-w-[180px] max-w-[260px]">
+          <div className="font-mono text-[11px] font-bold text-indigo-700 leading-snug break-words" title={r.ligne}>{txt(r.ligne) || <span className="text-slate-300">—</span>}</div>
+        </div>
+      ),
+    },
+    {
+      key: 'acronyme', label: 'Acronyme', filter: 'facet',
+      value: (r) => lineAcronym(r),
+      display: (r) => {
+        const a = lineAcronym(r);
+        return a
+          ? <span className="inline-block font-mono text-[10px] font-black px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-slate-600">{a}</span>
+          : <span className="text-slate-300">—</span>;
+      },
+    },
+    {
+      key: 'type', label: 'Type', filter: 'facet',
+      value: (r) => txt(r.type),
+      display: (r) => {
+        const t = txt(r.type);
+        if (!t) return <span className="text-slate-300">—</span>;
+        const tone = t.toLowerCase() === 'investissement'
+          ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+          : 'bg-emerald-50 border-emerald-200 text-emerald-700';
+        return <span className={`inline-block text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${tone}`}>{t}</span>;
+      },
+    },
+    {
+      key: 'porteur', label: 'Porteur du projet', filter: 'facet',
+      value: (r) => {
+        const p = personOf(r);
+        return (p ? personLabel(p) : txt(pick(r, ['porteur', 'porteurNom']))) || '';
+      },
+      display: (r) => {
+        const p = personOf(r);
+        const raw = txt(pick(r, ['porteur', 'porteurNom']));
+        const shown = (p ? personLabel(p) : raw) || '';
+        if (!shown) return <span className="text-slate-300">—</span>;
+        if (p && canViewPersonnel) {
+          return (
+            <button
+              type="button"
+              onClick={() => goToPersonnel(p.id)}
+              className="text-xs font-semibold text-slate-700 underline decoration-slate-300 underline-offset-2 hover:text-blue-700 hover:decoration-blue-300 whitespace-nowrap"
+              title={`Ouvrir la fiche de ${shown} dans Personnel`}
+            >{shown}</button>
+          );
+        }
+        return (
+          <span
+            className="text-xs font-semibold text-slate-600 whitespace-nowrap"
+            title={p && !canViewPersonnel
+              ? 'Page Personnel réservée au superutilisateur'
+              : (p ? shown : `${raw || shown} — pas de fiche Personnel correspondante`)}
+          >{shown}</span>
+        );
+      },
+    },
+    {
+      key: 'budgetTotal', label: 'Budget total', numeric: true, dataType: 'number', filter: 'auto',
+      value: (r) => num(r.budgetTotal),
+      display: (r) => {
+        const n = num(r.budgetTotal);
+        return n === null
+          ? <span className="text-slate-300">—</span>
+          : <span className="whitespace-nowrap text-xs font-black text-slate-700 tabular-nums">{euro.format(n)}</span>;
+      },
+    },
+    {
+      key: 'misADispo', label: 'Mis à dispo (université)', numeric: true, dataType: 'number', filter: 'auto',
+      value: (r) => num(r.budgetRenduDispo),
+      display: (r) => {
+        const n = num(r.budgetRenduDispo);
+        return n === null
+          ? <span className="text-slate-300">—</span>
+          : <span className="whitespace-nowrap text-xs font-semibold text-slate-600 tabular-nums">{euro.format(n)}</span>;
+      },
+    },
+    {
+      key: 'dateFin', label: 'Date de fin d’engagement', filter: 'text',
+      value: (r) => String(r.dateFinEngagement || '').trim().slice(0, 10),
+      display: (r) => {
+        const iso = String(r.dateFinEngagement || '').trim().slice(0, 10);
+        const fr = toFrDate(iso);
+        return fr
+          ? <span className="whitespace-nowrap text-xs font-semibold text-slate-600">{fr}</span>
+          : <span className="text-slate-300">—</span>;
+      },
+    },
+    {
+      key: 'commentairesLigne', label: 'Commentaires', filter: 'text',
+      value: (r) => pick(r, ['notes', 'commentaires', 'commentaire']),
+      display: (r) => {
+        const v = txt(pick(r, ['notes', 'commentaires', 'commentaire']));
+        return v
+          ? <div className="text-[11px] text-slate-500 max-w-[240px] leading-snug line-clamp-2" title={v}>{v}</div>
+          : <span className="text-slate-300">—</span>;
+      },
+    },
+  ];
 
   const onSave = (cleaned, existingId) => {
     upsert('librerie', cleaned, existingId);
@@ -416,44 +586,75 @@ export const LibreriePage = () => {
   ];
 
   return (
-    <div className="max-w-full mx-auto flex flex-col gap-4">
+    <div className="w-full min-w-0 mx-auto flex flex-col gap-4">
+      {/* En-tête */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-xs font-bold text-slate-400 max-w-2xl">
-          {librerie.length} fournisseur{librerie.length > 1 ? 's' : ''} au catalogue ·{' '}
-          {depenseNames.length} nom{depenseNames.length > 1 ? 's' : ''} différent{depenseNames.length > 1 ? 's' : ''} utilisé{depenseNames.length > 1 ? 's' : ''}
-          dans les Dépenses{missingCount ? ` · ${missingCount} fiche${missingCount > 1 ? 's' : ''} à créer` : ''}
-          {' '}— les colonnes sont triables (en-têtes) et filtrables (bouton « Filtres »).
+          {librerie.length} fournisseur{librerie.length > 1 ? 's' : ''} au catalogue · {recettes.length} ligne{recettes.length > 1 ? 's' : ''} budgétaire{recettes.length > 1 ? 's' : ''} —
+          depuis la page Dépenses, un fournisseur ou une ligne budgétaire cliquable ouvre la fiche correspondante ici.
         </p>
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            type="button"
-            onClick={syncFromDepenses}
-            disabled={!depenseNames.length}
-            title={depenseNames.length
-              ? 'Créer une fiche catalogue pour chaque fournisseur saisi dans la colonne « Fournisseur » des Dépenses et absent du catalogue.'
-              : 'Aucune dépense avec un fournisseur renseigné pour le moment.'}
-            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <span className="text-base leading-none">↻</span> Créer depuis les Dépenses
-          </button>
-          <button
-            type="button"
-            onClick={() => setModal({ mode: 'new' })}
-            className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
-          >
-            <span className="text-base leading-none">＋</span> Ajouter un fournisseur
-          </button>
-        </div>
+        {tab === 'fournisseurs' && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={syncFromDepenses}
+              disabled={!depenseNames.length}
+              title={depenseNames.length
+                ? 'Créer une fiche catalogue pour chaque fournisseur saisi dans la colonne « Fournisseur » des Dépenses et absent du catalogue.'
+                : 'Aucune dépense avec un fournisseur renseigné pour le moment.'}
+              className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <span className="text-base leading-none">↻</span> Créer depuis les Dépenses
+            </button>
+            <button
+              type="button"
+              onClick={() => setModal({ mode: 'new' })}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
+            >
+              <span className="text-base leading-none">＋</span> Ajouter un fournisseur
+            </button>
+          </div>
+        )}
       </div>
 
-      {notice && <Notice tone={notice.tone} text={notice.text} onClose={() => setNotice(null)} />}
-
-      <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
-        <b>Fonctionnement :</b> chaque fiche référence un fournisseur avec son contact, son adresse, son email, sa
-        <b> référence SIFAC</b> (n° de tiers) et des commentaires. Le bouton <b>« ↻ Créer depuis les Dépenses »</b> ajoute
-        automatiquement une fiche pour chaque fournisseur présent dans la colonne « Fournisseur » des Dépenses et encore
-        absent du catalogue ; les imports de Dépenses font de même à la volée. « ✏️ Modifier » ouvre la fiche complète.
+      {/* Onglets : Fournisseurs · Lignes budgétaires */}
+      <div className="flex items-center gap-1.5 bg-slate-200/60 border border-slate-200 rounded-xl p-1 w-fit">
+        <button
+          type="button"
+          onClick={() => setTab('fournisseurs')}
+          className={`flex items-center gap-1.5 text-xs font-black px-3 py-1.5 rounded-lg transition-colors ${
+            tab === 'fournisseurs'
+              ? 'bg-white text-slate-800 shadow-sm border border-slate-200'
+              : 'text-slate-500 hover:text-slate-700 border border-transparent'
+          }`}
+        >
+          <span aria-hidden="true">📇</span> Fournisseurs
+          <span className="text-[10px] font-black px-1.5 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-slate-500">{librerie.length}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('lignes')}
+          className={`flex items-center gap-1.5 text-xs font-black px-3 py-1.5 rounded-lg transition-colors ${
+            tab === 'lignes'
+              ? 'bg-white text-slate-800 shadow-sm border border-slate-200'
+              : 'text-slate-500 hover:text-slate-700 border border-transparent'
+          }`}
+        >
+          <span aria-hidden="true">📈</span> Lignes budgétaires
+          <span className="text-[10px] font-black px-1.5 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-slate-500">{recettes.length}</span>
+        </button>
       </div>
+
+      {tab === 'fournisseurs' ? (
+        <>
+          {notice && <Notice tone={notice.tone} text={notice.text} onClose={() => setNotice(null)} />}
+
+          <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
+            <b>Fonctionnement :</b> chaque fiche référence un fournisseur avec son contact, son adresse, son email, sa
+            <b> référence SIFAC</b> (n° de tiers) et des commentaires. Le bouton <b>« ↻ Créer depuis les Dépenses »</b> ajoute
+            automatiquement une fiche pour chaque fournisseur présent dans la colonne « Fournisseur » des Dépenses et encore
+            absent du catalogue ; les imports de Dépenses font de même à la volée. « ✏️ Modifier » ouvre la fiche complète.
+          </div>
 
       {librerie.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
@@ -470,13 +671,47 @@ export const LibreriePage = () => {
           columns={columns}
           rows={rows}
           minWidth="1750px"
+          focusRowKey={focusRow}
+          onFocusDone={() => setFocusRow(null)}
           searchPlaceholder="Rechercher un fournisseur, contact, email, adresse, référence SIFAC…"
           emptyLabel="Catalogue des fournisseurs vide"
           noMatchLabel="Aucun fournisseur ne correspond aux filtres."
         />
       )}
+        </>
+      ) : (
+        <>
+          <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
+            <b>Lignes budgétaires :</b> catalogue des lignes (Fonctionnement / Investissement) avec montant total,
+            montant mis à disposition par l’université, date de fin d’engagement, porteur du projet et commentaires.
+            Les fiches se gèrent dans la page <b>« Recettes »</b> (création, solde, import) ; le <b>porteur</b> est un lien
+            vers sa fiche dans la page Personnel{canViewPersonnel ? '' : ' (réservée au superutilisateur)'}.
+          </div>
 
-      {modal && (
+          {recetteRows.length === 0 ? (
+            <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
+              <div className="text-4xl mb-2">📈</div>
+              <p className="font-black text-slate-700">Aucune ligne budgétaire</p>
+              <p className="text-sm text-slate-400 mt-1">
+                Les lignes budgétaires sont créées dans la page « Recettes » (lignes Fonctionnement / Investissement) et apparaissent ici comme catalogue.
+              </p>
+            </div>
+          ) : (
+            <SmartTable
+              columns={recetteCols}
+              rows={recetteRows}
+              minWidth="1400px"
+              focusRowKey={focusRow}
+              onFocusDone={() => setFocusRow(null)}
+              searchPlaceholder="Rechercher une ligne, un acronyme, un porteur…"
+              emptyLabel="Aucune ligne budgétaire"
+              noMatchLabel="Aucune ligne ne correspond aux filtres."
+            />
+          )}
+        </>
+      )}
+
+      {modal && tab === 'fournisseurs' && (
         <FournisseurModal
           rec={modal.mode === 'edit' ? modal.rec : null}
           suggestions={suggestions}

@@ -9,16 +9,17 @@
      Suivi/Statut · ENT · Description · Demandeur · Catégorie · Classification
      · Ligne budgétaire · Montant HT · Frais de port · Date demande ·
      Nom du fournisseur · Contact · N° devis · N° SIFAC · Date BC · N° BC ·
-     Date signature · Date approb. fournisseur · N° facture · Livraisons en
-     plusieurs phases (date réception colis, n° BL, date service fait, n° SF)
-     · Livraison complète · Commentaires.
+     Date signature devis · Date signature · Date approb. fournisseur ·
+     N° facture · Livraisons en plusieurs phases (date réception colis,
+     n° BL, date service fait, n° SF) · Livraison complète · Commentaires.
 
    Modèle stocké (mêmes clés que l’import Google Sheets) :
      { suivi, statut, ent, nonComptabiliseEnt, description, demandeur,
        categorie, classification, ligneBudgetaire, recetteId, montant,
        fraisPort, dateDemande, fournisseur, contact, numDevis, numDevisUrl,
        numSIFAC, dateBC, numBC, numBCUrl, dateSignature,
-       dateApprobFournisseur, numFacture, numFactureUrl, omNo, omUrl,
+       dateSignatureDevis, dateApprobFournisseur, numFacture, numFactureUrl,
+       omNo, omUrl,
        livraisonComplete, livraisons: [{ dateReception, numBL, numBLUrl,
        dateServiceFait, numSF, numSFUrl }], commentaires }
      + enveloppe d’audit posée par upsert() (createdAt/By, updatedAt/By).
@@ -27,14 +28,23 @@
    phases renseignées ont leur date de réception (sinon « Non »). Une commande
    sans colis à suivre (prestation, inscription…) peut être déclarée complète
    manuellement via la case « sans colis » du formulaire.
+
+   À l’enregistrement, les documents Google Drive liés (champs « lien document »
+   devis, BC, facture, OM, BL/SF) sont automatiquement RANGÉS sur Google Drive
+   dans le dossier du dataset › Budget_labo/<année courante>/Devis|BC|BL|OM|Factures
+   (dossiers créés si besoin) — voir ./driveFiling.js.
    ========================================================================= */
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
 import { SmartTable } from './smartTable';
 import { AdminImportModal } from './adminImportModal';
 import { toFrDate } from './congesDates';
-import { RECETTE_TYPES, DEPENSE_NATURES, DEPENSE_STATUSES, DEPENSE_FOURNISSEUR_PI, DEPENSE_FIELD_LABEL, DEFAULT_DEPENSE_MANDATORY } from './adminSchema';
+import {
+  RECETTE_TYPES, DEPENSE_NATURES, DEPENSE_STATUSES, DEPENSE_FOURNISSEUR_PI,
+  isPiFournisseur, DEPENSE_FIELD_LABEL, DEFAULT_DEPENSE_MANDATORY, ADMIN_PAGES,
+} from './adminSchema';
 import { parseEuroAmount } from './importUtils';
+import { fileBudgetDocs } from './driveFiling';
 
 /* ── Petites aides ──────────────────────────────────────────────────────── */
 const euro = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' });
@@ -143,6 +153,26 @@ const findRecetteId = (recettes, label) => {
   return '';
 };
 
+/* Options « Ligne budgétaire » uniques pour le sélecteur : une même ligne peut
+   exister en deux fiches (Fonctionnement et Investissement) — on n’en propose
+   qu’une seule dans la liste, en privilégiant celle dont le type correspond à
+   la « Catégorie » déjà choisie (la catégorie est un champ séparé du formulaire). */
+const uniqueRecetteOptions = (recettes, categorie, currentId) => {
+  const want = txt(categorie);
+  const byKey = new Map();
+  (Array.isArray(recettes) ? recettes : []).forEach((r) => {
+    if (!r || !r.id) return;
+    const key = norm(r.ligne) || r.id;
+    if (r.id === currentId) { byKey.set(key, r); return; }
+    const existing = byKey.get(key);
+    if (!existing) { byKey.set(key, r); return; }
+    const eMatches = want && txt(existing.type) === want;
+    const nMatches = want && txt(r.type) === want;
+    if (nMatches && !eMatches) byKey.set(key, r);
+  });
+  return [...byKey.values()];
+};
+
 /* ── Petits éléments d’affichage ────────────────────────────────────────── */
 const TONES = {
   slate: 'bg-slate-100 border-slate-200 text-slate-600',
@@ -167,6 +197,40 @@ const statutTone = (v) => {
 };
 const StatutBadge = ({ value }) =>
   txt(value) ? <Badge tone={statutTone(value)}>{txt(value)}</Badge> : <span className="text-slate-300">—</span>;
+
+/* « Etat » d’une dépense — déduit automatiquement des documents saisis, la
+   première condition vraie l’emporte (du plus avancé au moins avancé) :
+     n° SF            → « service fait »
+     n° BL            → « Colis partiellement livré »
+     n° facture       → « Facture signé »
+     date approbation fournisseur → « Validé par le fournisseur »
+     date signature BC → « BC signé »
+     date signature devis → « Devis signé »
+   La colonne « Etat » (lecture seule) est en tête du tableau. */
+const hasLivraisonField = (r, keys) => {
+  const arr = Array.isArray(r && r.livraisons) ? r.livraisons : [];
+  return arr.some((l) => l && keys.some((k) => txt(l[k])));
+};
+const etatOf = (r) => {
+  if (!r) return '';
+  if (pick(r, ['numSF', 'sfNo']) || hasLivraisonField(r, ['numSF', 'sfNo'])) return 'service fait';
+  if (pick(r, ['numBL', 'blNo']) || hasLivraisonField(r, ['numBL', 'blNo'])) return 'Colis partiellement livré';
+  if (pick(r, ['numFacture', 'factureNo'])) return 'Facture signé';
+  if (pick(r, ['dateApprobFournisseur', 'dateAcceptationFournisseur'])) return 'Validé par le fournisseur';
+  if (pick(r, ['dateSignature', 'dateSignatureBC'])) return 'BC signé';
+  if (pick(r, ['dateSignatureDevis', 'dateDevis'])) return 'Devis signé';
+  return '';
+};
+const etatTone = (v) => ({
+  'service fait': 'emerald',
+  'Colis partiellement livré': 'amber',
+  'Facture signé': 'blue',
+  'Validé par le fournisseur': 'indigo',
+  'BC signé': 'indigo',
+  'Devis signé': 'slate',
+}[txt(v)] || 'slate');
+const EtatBadge = ({ value }) =>
+  txt(value) ? <Badge tone={etatTone(value)}>{txt(value)}</Badge> : <span className="text-slate-300">—</span>;
 
 const CompleteBadge = ({ value }) => {
   const s = txt(value).toLowerCase();
@@ -215,11 +279,15 @@ const Ref = ({ value, url, fallback = '—' }) => {
   );
 };
 
-/* Cellule « Livraisons » : une ligne par phase (réception / BL / SF / n° SF). */
+/* Cellule « Livraisons » : quand une commande a plusieurs phases de livraison,
+   la liste détaillée est repliée ; un bouton « Détails » permet de l’étendre. */
 const LivraisonsCell = ({ livs }) => {
   const kept = keepLivraisons(livs);
+  const [expanded, setExpanded] = useState(false);
   if (!kept.length) return <span className="text-slate-300">—</span>;
   const received = kept.filter((l) => txt(l.dateReception)).length;
+  const multi = kept.length > 1;
+  const showDetails = !multi || expanded;
   const sub = (d) => {
     const fr = toFrDate(d);
     return fr
@@ -227,27 +295,55 @@ const LivraisonsCell = ({ livs }) => {
       : <span className="text-slate-300">—</span>;
   };
   return (
-    <div className="min-w-[560px]">
+    <div className="min-w-[300px]">
       <div className="flex items-center gap-2 mb-1">
-        <span className="font-black text-slate-700 text-xs">{kept.length} phase{kept.length > 1 ? 's' : ''}</span>
+        <span className="font-black text-slate-700 text-xs">{kept.length} phase{multi ? 's' : ''}</span>
         <span className="text-[10px] text-slate-400">{received}/{kept.length} colis reçu{received > 1 ? 's' : ''}</span>
+        {multi && (
+          <button
+            type="button"
+            onClick={() => setExpanded((e) => !e)}
+            className="ml-auto text-[10px] font-black px-2 py-0.5 rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
+            title={expanded ? 'Replier les phases' : 'Voir le détail de chaque phase'}
+          >
+            {expanded ? 'Replier ▴' : 'Détails ▾'}
+          </button>
+        )}
       </div>
-      <div className="rounded-lg border border-slate-200 overflow-hidden">
-        <div className="grid grid-cols-[110px_minmax(0,1.2fr)_110px_minmax(0,1fr)] gap-2 px-2 py-1 bg-slate-50 border-b border-slate-200 text-[9px] font-black uppercase text-slate-400">
-          <span>Réception colis</span>
-          <span>N° BL</span>
-          <span>Service fait</span>
-          <span>N° SF</span>
+      {!showDetails && (
+        <div className="flex flex-wrap gap-1">
+          {kept.map((l, i) => (
+            <span
+              key={`${l.numBL || l.numSF || ''}-${i}`}
+              className="inline-flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-slate-600"
+            >
+              <span className="text-slate-400 font-black">#{i + 1}</span>
+              {txt(l.dateReception)
+                ? toFrDate(l.dateReception)
+                : <span className="text-amber-600">en attente</span>}
+              {txt(l.numBL) && <span className="font-mono truncate max-w-[110px]" title={l.numBL}>{l.numBL}</span>}
+            </span>
+          ))}
         </div>
-        {kept.map((l, i) => (
-          <div key={`${l.numBL || l.numSF || ''}-${i}`} className="grid grid-cols-[110px_minmax(0,1.2fr)_110px_minmax(0,1fr)] gap-2 px-2 py-1 border-b border-slate-100 last:border-0 items-center bg-white">
-            {sub(l.dateReception)}
-            <Ref value={l.numBL} url={l.numBLUrl} />
-            {sub(l.dateServiceFait)}
-            <Ref value={l.numSF} url={l.numSFUrl} />
+      )}
+      {showDetails && (
+        <div className="rounded-lg border border-slate-200 overflow-hidden">
+          <div className="grid grid-cols-[110px_minmax(0,1.2fr)_110px_minmax(0,1fr)] gap-2 px-2 py-1 bg-slate-50 border-b border-slate-200 text-[9px] font-black uppercase text-slate-400">
+            <span>Réception colis</span>
+            <span>N° BL</span>
+            <span>Service fait</span>
+            <span>N° SF</span>
           </div>
-        ))}
-      </div>
+          {kept.map((l, i) => (
+            <div key={`${l.numBL || l.numSF || ''}-${i}`} className="grid grid-cols-[110px_minmax(0,1.2fr)_110px_minmax(0,1fr)] gap-2 px-2 py-1 border-b border-slate-100 last:border-0 items-center bg-white">
+              {sub(l.dateReception)}
+              <Ref value={l.numBL} url={l.numBLUrl} />
+              {sub(l.dateServiceFait)}
+              <Ref value={l.numSF} url={l.numSFUrl} />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
@@ -273,7 +369,10 @@ const SummaryCard = ({ label, value, tone = 'slate', hint }) => {
    Page Dépenses
    ═════════════════════════════════════════════════════════════════════════ */
 const DepensesPage = () => {
-  const { data, settings, upsert, remove, currentUser } = useAdmin();
+  const {
+    data, settings, upsert, remove, currentUser,
+    access, navigate, focus, clearFocus,
+  } = useAdmin();
   const list = useMemo(() => (Array.isArray(data.depenses) ? data.depenses : []), [data.depenses]);
   const recettes = useMemo(() => (Array.isArray(data.recettes) ? data.recettes : []), [data.recettes]);
   const personnel = useMemo(() => (Array.isArray(data.personnel) ? data.personnel : []), [data.personnel]);
@@ -281,6 +380,27 @@ const DepensesPage = () => {
 
   const [modal, setModal] = useState(null); // { rec } | null
   const [importOpen, setImportOpen] = useState(false);
+
+  /* Pages cibles des liens « vers la bibliothèque » (Librerie / Personnel) —
+     le lien n’est actif que si le profil de l’utilisateur peut ouvrir la page. */
+  const canViewLibrerie = useMemo(
+    () => !!ADMIN_PAGES.find((p) => p.id === 'librerie' && access.canViewPage(p)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [access]
+  );
+  const canViewPersonnel = useMemo(
+    () => !!ADMIN_PAGES.find((p) => p.id === 'personnel' && access.canViewPage(p)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [access]
+  );
+  const goToLibrerie = (kind, recordId) => {
+    if (!canViewLibrerie || !recordId) return;
+    if (typeof navigate === 'function') navigate('librerie', { kind, recordId });
+  };
+  const goToPersonnel = (personId) => {
+    if (!canViewPersonnel || !personId) return;
+    if (typeof navigate === 'function') navigate('personnel', { kind: 'person', recordId: personId });
+  };
 
   /* Options de formulaires (réglages + valeurs déjà présentes dans la liste). */
   const types = Array.isArray(settings.recetteTypes) && settings.recetteTypes.length
@@ -325,22 +445,50 @@ const DepensesPage = () => {
     return [pi, ...others]; // « PI » toujours proposé en tête de la liste
   }, [librerie, list]);
 
-  const contactNames = useMemo(() => {
-    const set = new Set();
-    librerie.forEach((l) => {
-      const c = pick(l, ['contact', 'email', 'emailContact', 'tel', 'telephone']);
-      if (c) set.add(c);
-    });
-    list.forEach((r) => {
-      if (txt(r.contact)) set.add(txt(r.contact));
-    });
-    return [...set].sort((a, b) => a.localeCompare(b, 'fr'));
-  }, [librerie, list]);
-
   const ligneLabelOf = (r) => {
     const found = recettes.find((x) => x.id === r.recetteId);
     return found ? found.ligne : txt(r.ligneBudgetaire);
   };
+
+  /* Index de recherche pour les liens vers les fiches « bibliothèque ». */
+  const librerieById = useMemo(() => new Map(librerie.map((l) => [l.id, l])), [librerie]);
+  const recettesById = useMemo(() => new Map(recettes.map((r) => [r.id, r])), [recettes]);
+  const fournisseurByKey = useMemo(() => {
+    const map = new Map();
+    librerie.forEach((l) => {
+      const k = norm(pick(l, ['fournisseur', 'nomFournisseur', 'nom', 'name']));
+      if (k) map.set(k, l);
+    });
+    return map;
+  }, [librerie]);
+  const recetteOf = (r) => (r && r.recetteId ? (recettesById.get(r.recetteId) || null) : null);
+  const fournisseurEntryOf = (r) => {
+    if (!r) return null;
+    const direct = r.fournisseurId ? librerieById.get(r.fournisseurId) : null;
+    if (direct) return direct;
+    const k = norm(txt(r.fournisseur));
+    return k ? (fournisseurByKey.get(k) || null) : null;
+  };
+  const personnelByKey = useMemo(() => {
+    const map = new Map();
+    personnel.forEach((p) => {
+      ['nom', 'prenom', 'name'].forEach((k) => {
+        const key = norm(p && p[k]);
+        if (key && !map.has(key)) map.set(key, p);
+      });
+    });
+    return map;
+  }, [personnel]);
+  const personEntryOf = (r) => {
+    const k = norm(txt(r && r.demandeur));
+    return k ? (personnelByKey.get(k) || null) : null;
+  };
+  /* Gestion d’une éventuelle cible de navigation vers cette page (Dépenses). */
+  useEffect(() => {
+    if (!focus || focus.pageId !== 'depenses') return;
+    clearFocus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus]);
 
   /* Champs obligatoires configurés dans Paramètres (clés de DEPENSE_FIELD_CATALOG).
      Indéfini = valeurs par défaut ; [] explicite = aucun champ obligatoire. */
@@ -389,7 +537,7 @@ const DepensesPage = () => {
   }, [list]);
 
   /* Enregistrement : normalise + valide, puis upsert (ou remove si absent). */
-  const onSaveDepense = (draft, existingId) => {
+  const onSaveDepense = async (draft, existingId) => {
     const description = txt(draft.description);
     const numBC = txt(draft.numBC);
     const numFacture = txt(draft.numFacture);
@@ -423,7 +571,6 @@ const DepensesPage = () => {
       fraisPort: parseNum(draft.fraisPort),
       dateDemande: isoOf(draft.dateDemande),
       fournisseur: txt(draft.fournisseur),
-      contact: txt(draft.contact),
       numDevis: txt(draft.numDevis),
       numDevisUrl: txt(draft.numDevisUrl),
       numSIFAC: txt(draft.numSIFAC),
@@ -431,6 +578,7 @@ const DepensesPage = () => {
       numBC,
       numBCUrl: txt(draft.numBCUrl),
       dateSignature: isoOf(draft.dateSignature),
+      dateSignatureDevis: isoOf(draft.dateSignatureDevis),
       dateApprobFournisseur: isoOf(draft.dateApprobFournisseur),
       numFacture,
       numFactureUrl: txt(draft.numFactureUrl),
@@ -452,6 +600,19 @@ const DepensesPage = () => {
       patch.completeDeclaredAt = null;
     }
     upsert('depenses', patch, existingId);
+
+    /* Classement automatique des documents Google Drive liés dans
+       Budget_labo/<année>/<Devis|BC|BL|OM|Factures> — best-effort, exécuté
+       après la sauvegarde : un échec de classement ne bloque jamais
+       l'enregistrement de la dépense (le lien d'origine est conservé). */
+    const filing = await fileBudgetDocs(patch, { year: new Date().getFullYear() });
+    if (filing && filing.failed && filing.failed.length > 0) {
+      const lines = filing.failed
+        .map((f) => `· ${f.folder} : ${f.reason}`)
+        .join('\n');
+      alert(`Dépense enregistrée, mais ${filing.failed.length} document${filing.failed.length > 1 ? 's' : ''} Google Drive n'a pas pu être rangé${filing.failed.length > 1 ? 's' : ''} automatiquement :\n\n${lines}\n\nConnectez Google Drive puis réessayez, ou déplacez le fichier à la main dans le dossier indiqué.`);
+    }
+
     setModal(null);
     return true;
   };
@@ -466,6 +627,11 @@ const DepensesPage = () => {
 
   /* ── Colonnes du tableau (ordre de l’onglet du classeur) ──────────────── */
   const columns = [
+    {
+      key: 'etat', label: 'Etat', filter: 'facet',
+      value: (r) => etatOf(r),
+      display: (r) => <EtatBadge value={etatOf(r)} />,
+    },
     {
       key: 'description', label: 'Dépense', filter: 'text',
       value: (r) => [r.description, r.classification, r.ent, r.numSIFAC, r.numBC, r.numFacture].filter(Boolean).join(' '),
@@ -494,11 +660,29 @@ const DepensesPage = () => {
       },
     },
     {
-      key: 'demandeur', label: 'Demandeur', filter: 'text',
+      key: 'demandeur', label: 'Demandeur', filter: 'facet',
       value: (r) => txt(r.demandeur),
-      display: (r) => (txt(r.demandeur)
-        ? <span className="whitespace-nowrap text-xs font-semibold text-slate-600">{txt(r.demandeur)}</span>
-        : <span className="text-slate-300">—</span>),
+      display: (r) => {
+        const name = txt(r.demandeur);
+        if (!name) return <span className="text-slate-300">—</span>;
+        const person = personEntryOf(r);
+        if (person && canViewPersonnel) {
+          return (
+            <button
+              type="button"
+              onClick={() => goToPersonnel(person.id)}
+              title={`Ouvrir la fiche de ${name} dans Personnel`}
+              className="whitespace-nowrap text-xs font-semibold text-slate-600 underline decoration-slate-300 underline-offset-2 hover:text-blue-700 hover:decoration-blue-300 transition-colors"
+            >{name}</button>
+          );
+        }
+        return (
+          <span
+            className="whitespace-nowrap text-xs font-semibold text-slate-600"
+            title={person && !canViewPersonnel ? 'Page Personnel réservée au superutilisateur' : name}
+          >{name}</span>
+        );
+      },
     },
     {
       key: 'categorie', label: 'Catégorie', filter: 'facet',
@@ -506,15 +690,28 @@ const DepensesPage = () => {
       display: (r) => <CategorieBadge value={r.categorie} />,
     },
     {
-      key: 'ligne', label: 'Ligne budgétaire', filter: 'text',
+      key: 'ligne', label: 'Ligne budgétaire', filter: 'facet',
       value: (r) => ligneLabelOf(r),
       display: (r) => {
         const v = ligneLabelOf(r);
         if (!v) return <span className="text-slate-300">—</span>;
+        const rec = recetteOf(r);
+        if (rec && canViewLibrerie) {
+          return (
+            <button
+              type="button"
+              onClick={() => goToLibrerie('recette', rec.id)}
+              title="Ouvrir la fiche de cette ligne budgétaire dans la Librairie"
+              className="text-left max-w-[240px] font-mono text-[11px] font-bold text-indigo-700 underline decoration-indigo-300 underline-offset-2 hover:text-indigo-900 break-words leading-tight transition-colors"
+            >{v}</button>
+          );
+        }
         return (
-          <div className="max-w-[220px]">
-            <div className="font-mono text-[11px] font-bold text-indigo-700 leading-tight break-words" title={v}>{v}</div>
-            {r.recetteId ? <div className="text-[9px] text-emerald-600 font-bold uppercase mt-0.5">● liée à la recette</div> : null}
+          <div className="max-w-[240px]">
+            <div
+              className="font-mono text-[11px] font-bold text-indigo-700 leading-tight break-words"
+              title={rec ? v : `${v} — pas de fiche au catalogue de la Librairie`}
+            >{v}</div>
           </div>
         );
       },
@@ -545,18 +742,39 @@ const DepensesPage = () => {
       display: (r) => <DateCell iso={r.dateDemande} />,
     },
     {
-      key: 'fournisseur', label: 'Nom du fournisseur', filter: 'text',
+      key: 'fournisseur', label: 'Nom du fournisseur', filter: 'facet',
       value: (r) => txt(r.fournisseur),
-      display: (r) => (txt(r.fournisseur)
-        ? <span className="whitespace-nowrap text-xs font-bold text-slate-700">{txt(r.fournisseur)}</span>
-        : <span className="text-slate-300">—</span>),
-    },
-    {
-      key: 'contact', label: 'Contact fournisseur', filter: 'text',
-      value: (r) => txt(r.contact),
-      display: (r) => (txt(r.contact)
-        ? <span className="whitespace-nowrap text-xs font-semibold text-slate-500">{txt(r.contact)}</span>
-        : <span className="text-slate-300">—</span>),
+      display: (r) => {
+        const name = txt(r.fournisseur);
+        if (!name) return <span className="text-slate-300">—</span>;
+        const entry = fournisseurEntryOf(r);
+        if (entry && canViewLibrerie) {
+          return (
+            <button
+              type="button"
+              onClick={() => goToLibrerie('fournisseur', entry.id)}
+              title={`Ouvrir la fiche « ${name} » dans la Librairie`}
+              className="whitespace-nowrap text-xs font-bold text-slate-700 underline decoration-slate-300 underline-offset-2 hover:text-blue-700 hover:decoration-blue-300 transition-colors"
+            >{name}</button>
+          );
+        }
+        if (isPiFournisseur(r.fournisseur)) {
+          return (
+            <span
+              className="whitespace-nowrap text-xs font-bold text-slate-500"
+              title="Prestation interne : service interne facturé sans BC — pas de fiche dans la Librairie"
+            >{name}</span>
+          );
+        }
+        return (
+          <span
+            className="whitespace-nowrap text-xs font-bold text-slate-700"
+            title={canViewLibrerie
+              ? 'Fournisseur pas encore au catalogue — créez sa fiche dans Librairie (bouton « ↻ Créer depuis les Dépenses »).'
+              : name}
+          >{name}</span>
+        );
+      },
     },
     {
       key: 'numDevis', label: 'N° devis', filter: 'text',
@@ -652,7 +870,7 @@ const DepensesPage = () => {
   const redLabels = [...new Set(redRows.flatMap((r) => missingMandatoryFor(r).map(mandatoryLabelOf)))];
 
   return (
-    <div className="max-w-full mx-auto flex flex-col gap-4">
+    <div className="w-full min-w-0 mx-auto flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-xs font-bold text-slate-400">
           {summary.count} dépense{summary.count > 1 ? 's' : ''} · {summary.parcelsReceived}/{summary.parcelsTotal} colis reçu{summary.parcelsReceived > 1 ? 's' : ''} ·
@@ -706,7 +924,7 @@ const DepensesPage = () => {
       {redRows.length > 0 && (
         <div className="rounded-xl border border-red-200 bg-red-50/80 px-4 py-2.5 text-[11px] text-red-700 leading-relaxed">
           ⚠️ <b>{redRows.length} ligne{redRows.length > 1 ? 's' : ''} en rouge</b> — champ{redLabels.length > 1 ? 's' : ''} obligatoire{redLabels.length > 1 ? 's' : ''} manquant{redLabels.length > 1 ? 's' : ''} :{' '}
-          {redLabels.join(', ')}. Ces champs se configurent dans Paramètres › Champs obligatoires.
+          {redLabels.join(', ')}. Ces champs se configurent dans Setup › Champs obligatoires.
         </div>
       )}
 
@@ -724,6 +942,7 @@ const DepensesPage = () => {
           rows={sorted}
           rowClass={(r) => (missingMandatoryFor(r).length ? 'bg-red-100/70' : '')}
           minWidth="2250px"
+          quickFilters={['demandeur', 'ligne', 'fournisseur']}
           searchPlaceholder="Rechercher description, fournisseur, n° BC / SIFAC / facture, BL, service fait…"
           emptyLabel="Aucune dépense"
           noMatchLabel="Aucune dépense ne correspond aux filtres."
@@ -741,7 +960,6 @@ const DepensesPage = () => {
           statutOptions={statutOptions}
           demandeurNames={demandeurNames}
           fournisseurNames={fournisseurNames}
-          contactNames={contactNames}
           fournisseurRequired={mandatoryFields.includes('fournisseur')}
           onCancel={() => setModal(null)}
           onSave={onSaveDepense}
@@ -778,7 +996,7 @@ const Section = ({ icon, title, children }) => (
 
 const DepenseModal = ({
   rec, recettes, types, natures, statutOptions,
-  demandeurNames, fournisseurNames, contactNames,
+  demandeurNames, fournisseurNames,
   fournisseurRequired = false, onCancel, onSave,
 }) => {
   const editing = !!rec;
@@ -804,7 +1022,6 @@ const DepenseModal = ({
         fraisPort: numToInput(rec.fraisPort),
         dateDemande: isoOf(rec.dateDemande),
         fournisseur: txt(rec.fournisseur),
-        contact: txt(rec.contact),
         numDevis: txt(rec.numDevis),
         numDevisUrl: txt(rec.numDevisUrl),
         numSIFAC: txt(rec.numSIFAC),
@@ -812,6 +1029,7 @@ const DepenseModal = ({
         numBC: txt(rec.numBC),
         numBCUrl: txt(rec.numBCUrl),
         dateSignature: isoOf(rec.dateSignature),
+        dateSignatureDevis: isoOf(rec.dateSignatureDevis),
         dateApprobFournisseur: isoOf(rec.dateApprobFournisseur),
         numFacture: txt(rec.numFacture),
         numFactureUrl: txt(rec.numFactureUrl),
@@ -831,9 +1049,10 @@ const DepenseModal = ({
       description: '', demandeur: '', categorie: '', classification: '',
       statut: '', ligneBudgetaire: '', recetteId: '',
       montant: '', fraisPort: '', dateDemande: '',
-      fournisseur: '', contact: '',
+      fournisseur: '',
       numDevis: '', numDevisUrl: '', numSIFAC: '', dateBC: '',
-      numBC: '', numBCUrl: '', dateSignature: '', dateApprobFournisseur: '',
+      numBC: '', numBCUrl: '', dateSignature: '', dateSignatureDevis: '',
+      dateApprobFournisseur: '',
       numFacture: '', numFactureUrl: '', omNo: '', omUrl: '',
       nonComptabiliseEnt: false, ent: '',
       livraisonComplete: '', noParcelsComplete: false,
@@ -841,6 +1060,15 @@ const DepenseModal = ({
       commentaires: '',
     };
   });
+
+  /* Lignes budgétaires proposées dans le sélecteur : chaque intitulé n’apparaît
+     qu’une fois — même si deux fiches existent (Fonctionnement / Investissement),
+     la « Catégorie » (champ séparé) précisant le type à retenir. */
+  const recetteOptions = useMemo(
+    () => uniqueRecetteOptions(recettes, draft.categorie, draft.recetteId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [recettes, draft.categorie, draft.recetteId]
+  );
 
   const set = (k) => (ev) => setDraft((d) => ({ ...d, [k]: ev.target.value }));
   const setCheck = (k) => (ev) => setDraft((d) => ({ ...d, [k]: ev.target.checked }));
@@ -869,6 +1097,21 @@ const DepenseModal = ({
     const v = ev.target.value;
     setDraft((d) => ({ ...d, ligneBudgetaire: v, recetteId: '' }));
   };
+  /* Enregistrement (asynchrone) : laisse le bouton afficher « Enregistrement… »
+     pendant le classement des documents liés sur Google Drive. */
+  const [saving, setSaving] = useState(false);
+  const handleSave = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const ok = await onSave(draft, rec && rec.id);
+      if (ok === false) setSaving(false); // validation refusée → le formulaire reste ouvert
+    } catch (err) {
+      console.error(err);
+      setSaving(false);
+    }
+  };
+
 
   const previewLivs = useMemo(() => keepLivraisons(draft.livraisons), [draft.livraisons]);
   const previewReceived = previewLivs.filter((l) => txt(l.dateReception)).length;
@@ -926,11 +1169,11 @@ const DepenseModal = ({
                 </select>
               </Field>
               <div className="lg:col-span-2">
-                <Field label="Ligne budgétaire (recette)" hint="Choisissez une ligne existante ou tapez librement son code/intitulé ; la liaison se fait automatiquement à l’enregistrement.">
+                <Field label="Ligne budgétaire" hint="Chaque ligne n’apparaît qu’une fois — le type Fonctionnement / Investissement est porté par le champ « Catégorie » ci-dessus. Choisissez une ligne existante ou tapez librement son code/intitulé ; la liaison se fait automatiquement à l’enregistrement.">
                   <div className="flex gap-2">
                     <select className={`${MODAL_INPUT} w-2/5 shrink-0`} value={draft.recetteId || ''} onChange={pickRecette}>
                       <option value="">… choisir une ligne</option>
-                      {(recettes || []).map((r) => <option key={r.id} value={r.id}>{r.ligne}</option>)}
+                      {(recetteOptions || []).map((r) => <option key={r.id} value={r.id}>{r.ligne}</option>)}
                     </select>
                     <input
                       className={MODAL_INPUT} value={draft.ligneBudgetaire} onChange={editLigne}
@@ -965,12 +1208,12 @@ const DepenseModal = ({
               <Field label="Date de la demande">
                 <input className={MODAL_INPUT} type="date" value={draft.dateDemande} onChange={set('dateDemande')} />
               </Field>
-              <div className="sm:col-span-2">
+              <div className="sm:col-span-2 lg:col-span-3">
                 <Field
                   label={fournisseurRequired ? 'Nom du fournisseur *' : 'Nom du fournisseur'}
                   hint={fournisseurRequired
-                    ? 'Obligatoire. « PI » = prestation interne : service interne facturé sans BC — comptée comme engagée/consommée dans la page Recettes.'
-                    : '« PI » = prestation interne : service interne facturé sans BC — comptée comme engagée/consommée dans la page Recettes.'}
+                    ? 'Obligatoire. « PI » = prestation interne : service interne facturé sans BC — comptée comme engagée/consommée dans la page Recettes. Le contact se gère dans la fiche du fournisseur (Librairie).'
+                    : '« PI » = prestation interne : service interne facturé sans BC — comptée comme engagée/consommée dans la page Recettes. Le contact se gère dans la fiche du fournisseur (Librairie).'}
                 >
                   <input
                     className={MODAL_INPUT} value={draft.fournisseur} onChange={set('fournisseur')} list="depenses-fournisseurs"
@@ -981,19 +1224,16 @@ const DepenseModal = ({
                   </datalist>
                 </Field>
               </div>
-              <Field label="Contact fournisseur">
-                <input
-                  className={MODAL_INPUT} value={draft.contact} onChange={set('contact')} list="depenses-contacts"
-                  placeholder="ex. Amazon / nom + email"
-                />
-                <datalist id="depenses-contacts">
-                  {(contactNames || []).map((n) => <option key={n} value={n} />)}
-                </datalist>
-              </Field>
             </div>
           </Section>
           {/* C. Documents & dates */}
           <Section icon="📎" title="Documents & dates — liens ↗ facultatifs">
+            <p className="text-[10px] text-slate-500 leading-relaxed mb-3 -mt-0.5">
+              💡 À l’enregistrement, chaque lien Google Drive saisi dans ce formulaire (devis, BC, facture, OM ci-dessous,
+              BL / SF dans la section Livraisons) est automatiquement rangé dans le dossier du dataset
+              › <b>Budget_labo/{new Date().getFullYear()}/</b><b>Devis · BC · BL · OM · Factures</b> — les dossiers manquants
+              sont créés, le fichier est déplacé (un fichier déjà au bon endroit n’est pas touché).
+            </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="sm:col-span-2 lg:col-span-1">
                 <Field label="N° devis">
@@ -1030,6 +1270,11 @@ const DepenseModal = ({
               <div className="sm:col-span-2 lg:col-span-1">
                 <Field label="Date signature">
                   <input className={MODAL_INPUT} type="date" value={draft.dateSignature} onChange={set('dateSignature')} />
+                </Field>
+              </div>
+              <div className="sm:col-span-2 lg:col-span-1">
+                <Field label="Date signature devis">
+                  <input className={MODAL_INPUT} type="date" value={draft.dateSignatureDevis} onChange={set('dateSignatureDevis')} />
                 </Field>
               </div>
               <div className="sm:col-span-2 lg:col-span-1">
@@ -1073,6 +1318,10 @@ const DepenseModal = ({
               </span>
             </div>
 
+            <p className="text-[10px] text-slate-400 leading-relaxed mb-2">
+              Les liens BL / SF sont également rangés à l’enregistrement dans Budget_labo/{new Date().getFullYear()}/BL.
+            </p>
+
             <div className="flex flex-col gap-2">
               {draft.livraisons.map((l, i) => (
                 <div key={`liv-${i}`} className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
@@ -1103,6 +1352,7 @@ const DepenseModal = ({
                         <input
                           className={MODAL_URL_INPUT} value={l.numBLUrl} onChange={setLiv(i, 'numBLUrl')}
                           placeholder="🔗 lien vers le bon de livraison"
+                          title="Lien du BL — classé à l’enregistrement dans Budget_labo/<année>/BL"
                         />
                       </Field>
                     </div>
@@ -1111,6 +1361,7 @@ const DepenseModal = ({
                         <input
                           className={MODAL_URL_INPUT} value={l.numSFUrl} onChange={setLiv(i, 'numSFUrl')}
                           placeholder="🔗 lien vers le service fait / PV de réception"
+                          title="Lien du SF / PV — classé à l’enregistrement dans Budget_labo/<année>/BL"
                         />
                       </Field>
                     </div>
@@ -1201,9 +1452,9 @@ const DepenseModal = ({
             className="px-4 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-200 bg-slate-100"
           >Annuler</button>
           <button
-            type="button" onClick={() => onSave(draft, rec && rec.id)}
-            className="px-5 py-2 rounded-xl text-sm font-bold text-white bg-blue-600 hover:bg-blue-700"
-          >{editing ? 'Enregistrer les modifications' : 'Enregistrer la dépense'}</button>
+            type="button" onClick={handleSave} disabled={saving}
+            className="px-5 py-2 rounded-xl text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-wait"
+          >{saving ? 'Enregistrement…' : (editing ? 'Enregistrer les modifications' : 'Enregistrer la dépense')}</button>
         </div>
       </div>
     </div>

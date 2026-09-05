@@ -14,6 +14,8 @@ import { CongesPage } from './congesPage';
 import { DepensesPage } from './depensesPage';
 import { LibreriePage } from './libreriePage';
 import { OmPage } from './omPage';
+import { DesiderataPage } from './desiderataPage';
+import { ApprobationPage } from './approbationPage';
 
 import { PersonnelPage } from './personnelPage';
 import { CollectionPage } from './collectionPages';
@@ -33,7 +35,7 @@ const AccessDeniedCard = ({ page }) => (
     <p className="text-sm text-slate-500 leading-relaxed">
       La page « {page && page.label ? page.label : ''} » n’est pas autorisée pour votre profil.
       L’accès est défini par la fiche Personnel (statut Permanent / Non permanent, fonctions AP ou
-      Gestionnaire) ; Personnel &amp; Paramètres restent réservés au superutilisateur.
+      Gestionnaire) ; Personnel &amp; Setup restent réservés au superutilisateur.
     </p>
   </div>
 );
@@ -43,6 +45,7 @@ export const AdministrationModule = ({
   pageId,
   operators, setOperators, authSettings, setAuthSettings,
   onRequestLogin,
+  onNavigateAdmin, adminFocus, onClearFocus,
 }) => {
   const team = normalizeOperators(operators || []);
   // Bootstrap : aucun compte scientifique OU aucun superutilisateur n’est
@@ -60,6 +63,9 @@ export const AdministrationModule = ({
       currentUser={currentUser} user={user} operators={operators}
       content={content} onChange={onChange}
       teamBootstrap={teamBootstrap}
+      navigate={onNavigateAdmin}
+      focus={adminFocus}
+      clearFocus={onClearFocus}
     >
       <AdministrationShell
         datasetTitle={datasetTitle} saveStatus={saveStatus}
@@ -80,7 +86,7 @@ const LoginRequiredCard = ({ onRequestLogin }) => (
       <p className="text-sm text-slate-500 mb-5">
         Cette base d’administration est partagée avec l’équipe du laboratoire.
         Connectez-vous en tant que scientifique pour l’ouvrir ; un superutilisateur
-        peut créer votre compte dans la page Paramètres.
+        peut créer votre compte dans la page Setup.
       </p>
       {typeof onRequestLogin === 'function' && (
         <button
@@ -153,6 +159,10 @@ const AdministrationShell = ({
           <LibreriePage />
         ) : active.id === 'om' ? (
           <OmPage />
+        ) : active.id === 'desiderate' ? (
+          <DesiderataPage />
+        ) : active.id === 'devisBc' ? (
+          <ApprobationPage />
         ) : TABLE_KINDS.has(active.kind) ? (
           <CollectionPage kind={active.kind} />
         ) : active.kind ? (
@@ -215,7 +225,7 @@ const OverviewPage = ({ visible }) => {
         <h2 className="text-xl font-black text-slate-800 mb-1">Vue d’ensemble</h2>
         <p className="text-sm text-slate-500">
           Utilisez la barre latérale pour naviguer entre les pages (comme dans un dataset scientifique).
-          Les lignes budgétaires (Recettes), le Personnel, les Paramètres d’équipe sont maintenant éditables.
+          Les lignes budgétaires (Recettes), le Personnel et le Setup d’équipe sont maintenant éditables.
         </p>
       </div>
 
@@ -255,7 +265,7 @@ const OverviewPage = ({ visible }) => {
         )}
         {visible.some((p) => p.id === 'desiderate') && (
           <div className="bg-teal-50 border border-teal-200 rounded-2xl px-4 py-3">
-            <div className="text-[10px] font-black uppercase text-teal-700">Spese Desiderate</div>
+            <div className="text-[10px] font-black uppercase text-teal-700">Dépenses souhaitées</div>
             <div className="text-2xl font-black text-teal-800">{totalDesiderate}</div>
           </div>
         )}
@@ -264,7 +274,7 @@ const OverviewPage = ({ visible }) => {
       {hidden.length > 0 && (
         <p className="text-[11px] text-slate-400">
           Pages masquées pour votre profil : {hidden.map((p) => p.label).join(' · ')} — accès défini
-          par la fiche Personnel (statut Permanent / AP / Gestionnaire) ; Personnel &amp; Paramètres restent
+          par la fiche Personnel (statut Permanent / AP / Gestionnaire) ; Personnel &amp; Setup restent
           réservés au superutilisateur.
         </p>
       )}

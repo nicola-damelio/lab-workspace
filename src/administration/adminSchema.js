@@ -9,7 +9,8 @@
    depuis la page d’accueil comme un dataset scientifique. Tout son contenu
    vit DANS le document du dataset (datasets/<id>) sous un payload
    `administration` { recettes, librerie, personnel, depenses, om,
-   desiderate, conges, questioni, sicurezza, settings }. Aucune sous-collection.    */
+   desiderate, devisBc, conges, questioni, sicurezza, settings }. Aucune
+   sous-collection.    */
 export const ADMIN_COLLECTIONS = {
   recettes: 'recettes',     // lignes budgétaires
   librerie: 'librerie',     // fournisseurs
@@ -18,6 +19,7 @@ export const ADMIN_COLLECTIONS = {
   om: 'om',                 // ordres de mission
   conges: 'conges',     // congés & absences : demandes + approbation
   desiderate: 'desiderate', // souhaits d’achat
+  devisBc: 'devisBc',       // devis & BC déposés pour approbation (signature superutilisateur)
   questioni: 'questioni',   // questions ouvertes
   sicurezza: 'sicurezza',   // hygiène & sécurité
 };
@@ -26,7 +28,7 @@ export const ADMIN_COLLECTIONS = {
 export const DATASET_KINDS = ['scientific', 'administration'];
 export const DATASET_KIND_META = {
   scientific: { label: 'Données scientifiques', icon: '🧪', blurb: 'Expériences, projets, cahier de laboratoire, bibliothèque, stockage, publications…' },
-  administration: { label: 'Administration', icon: '🏛️', blurb: 'Recettes, fournisseurs, Personnel, Dépenses, OM, Spese Desiderate, Congés, questions ouvertes, hygiène & sécurité + Paramètres' },
+  administration: { label: 'Administration', icon: '🏛️', blurb: 'Recettes, fournisseurs, Personnel, Dépenses, OM, Dépenses souhaitées, Congés, questions ouvertes, hygiène & sécurité + Setup' },
 };
 export const isAdministrationKind = (kind) => kind === 'administration';
 
@@ -41,14 +43,17 @@ export const ADMIN_SETTINGS_DOC = 'global';
    réservées au superutilisateur (Personnel, Paramètres) — Paramètres reste
    accessible en bootstrap (aucun superutilisateur défini) pour créer l’équipe.
    Récapitulatif de la matrice (validée avec l’équipe) :
-     • Statut Permanent  (type Permanent ou Technique) = socle :
-         Recettes · Dépenses · Spese Desiderate · OM · Librerie
+     • Statut Permanent  (type Permanent ou Technique) sans fonction = socle :
+         Recettes · OM · Dépenses souhaitées · Approbation devis & BC · Librairie
+     • Pages « Dépenses » et « Budget overview » = réservées aux fonctions AP et
+         Gestionnaire (et au superutilisateur) ; les Permanents sans fonction
+         ne les voient pas.
      • Statut Non permanent = onglet Congés uniquement.
      • Page Congés (demandes d’absence) = réservée aux profils Non permanent
          et au superutilisateur (rôle d’approbation) ; les Permanents ne la voient pas.
-     • Fonction AP (agent de prévention)  → ajoute Hygiène & Sécurité.
-     • Fonction Gestionnaire              → ajoute Questions ouvertes.
-     • Personnel & Paramètres → superutilisateur uniquement.
+     • Fonction AP (agent de prévention)  → ajoute Dépenses + Budget overview + Hygiène & Sécurité.
+     • Fonction Gestionnaire              → ajoute Dépenses + Budget overview + Questions ouvertes.
+     • Personnel & Setup → superutilisateur uniquement.
    Le superutilisateur conserve, lui, l’accès intégral à toutes les pages.  */
 export const ADMIN_PAGES = [
   { id: 'overview', label: 'Vue d’ensemble', icon: '📊', superuserOnly: false, kind: null,
@@ -56,36 +61,38 @@ export const ADMIN_PAGES = [
     fields: [] },
   { id: 'recettes', label: 'Recettes', icon: '📈', superuserOnly: false, kind: 'recettes',
     blurb: 'Lignes budgétaires (Fonctionnement / Investissement) : porteur, budget total, montant mis à disposition, engagements, OM et souhaits.',
-    fields: ['Ligne budgétaire', 'Type : Fonctionnement / Investissement', 'Porteur du projet', 'Budget total', 'Montant mis à disposition par l’université', 'Dépenses ordonnées (BC signés)', 'Ordres de mission (acceptés / à prévoir)', 'Spese Desiderate liées', 'Solde disponible', 'Date de fin d’engagement', 'Commentaires'] },
-  { id: 'librerie', label: 'Librerie', icon: '📇', superuserOnly: false, kind: 'librerie',
-    blurb: 'Catalogue des fournisseurs utilisé par les Dépenses et les Spese Desiderate.',
-    fields: ['Nom du fournisseur', 'Contact', 'Email · Téléphone · Adresse', 'Référence SIFAC (n° de tiers fournisseur)', 'Catégories associées', 'Site web', 'Commentaires'] },
-  { id: 'personnel', label: 'Personnel', icon: '👥', superuserOnly: true, kind: 'personnel',
-    blurb: 'Personnel Permanent / Technique / Temporaire, corps & grades, missions, formations et bloc stagiaire lié à une Recette.',
-    fields: ['Nom', 'Type : Permanent / Technique / Temporaire', 'Corps (PR, MCF, DR, CR, IR, IE, ASI, TECH, ATRF…)', 'Grade — sous-classification du corps (PR2, PR1, CE2, CE1, CN, HC, DR2, DR1…)', 'BAP · HDR · Catégorie · Échelon · Chevron', 'Dates contrat', 'Promotion · RIPEC', 'Missions · Formations', 'Stagiaire : encadrants · ligne budgétaire · dates · durée', 'Commentaires'] },
+    fields: ['Ligne budgétaire', 'Type : Fonctionnement / Investissement', 'Porteur du projet', 'Budget total', 'Montant mis à disposition par l’université', 'Dépenses ordonnées (BC signés)', 'Ordres de mission (acceptés / à prévoir)', 'Dépenses souhaitées liées', 'Solde disponible', 'Date de fin d’engagement', 'Commentaires'] },
   { id: 'depenses', label: 'Dépenses', icon: '🧾', superuserOnly: false, kind: 'depenses',
     blurb: 'Dépenses / commandes avec pipeline complet (devis, SIFAC, BC, fournisseur, facture) et livraisons en plusieurs phases.',
     fields: ['Description', 'Demandeur', 'Catégorie Fonct. / Invest. · Nature', 'Ligne budgétaire liée (Recette)', 'Montant + frais de port', 'Devis · SIFAC · N° BC & dates', 'Fournisseur + contact', 'N° facture', 'Livraisons : arrivée, BL, Service Fait', 'Livraison complète'] },
   { id: 'om', label: 'OM', icon: '✈️', superuserOnly: false, kind: 'om',
     blurb: 'Ordres de mission : dates, demandeur, destination, coûts, statut (En attente / Acceptée…).',
     fields: ['Description', 'Demandeur', 'Date de demande · Départ · Retour', 'Destination', 'Transport · Hébergement · Repas · Inscription', 'Coût total (calculé)', 'Statut : En attente / Acceptée / Refusée / Terminée', 'Estimé vs Exact', 'Ligne budgétaire liée (Recette)', 'Commentaires'] },
-  { id: 'desiderate', label: 'Spese Desiderate', icon: '🛒', superuserOnly: false, kind: 'desiderate',
-    blurb: 'Souhaits d’achat. Le changement de statut est réservé au superutilisateur.',
-    fields: ['Description', 'Urgence : Urgent / Important / Souhaitable', 'Demandeur', 'Catégorie', 'Ligne budgétaire suggérée (Recette)', 'Frais de port · Montant estimé', 'Fournisseur + contact · N° devis · Code produit', 'Commentaires', 'Statut — réservé au superutilisateur'] },
+  { id: 'desiderate', label: 'Dépenses souhaitées', icon: '🛒', superuserOnly: false, kind: 'desiderate',
+    blurb: 'Souhaits d’achat de l’équipe : coût estimé et frais de port saisis par le demandeur, décision réservée au superutilisateur (Approuvé / En attente / Pas maintenant).',
+    fields: ['Décision — réservée au superutilisateur : Approuvé / En attente / Pas maintenant', 'Souhait d’achat', 'Urgence : Urgent / Important / Souhaitable', 'Demandeur', 'Fournisseur', 'Ligne budgétaire suggérée', 'Coût estimé', 'Frais de port', 'N° devis · Code produit', 'Date de demande', 'Commentaires'] },
+  { id: 'devisBc', label: 'Approbation devis & BC', icon: '📝', superuserOnly: false, kind: 'devisBc',
+    blurb: 'Dépôt des devis et bons de commande à faire signer par le superutilisateur (visibles par les Permanents). Les fichiers sont téléversés dans Budget_labo/<année>/Devis|BC ; l’approbation d’un devis crée la dépense « Devis en cours » et celle du BC la fait passer à « BC signé » (liens automatiques).',
+    fields: ['Statut : En attente / Approuvé / Refusé (décision réservée au superutilisateur)', 'Type : Devis ou BC', 'Description', 'Fournisseur', 'N° devis · N° BC', 'Montant (optionnel)', 'Fichier téléversé (Budget_labo/<année>/Devis ou /BC)', 'Déposant', 'Date de dépôt', 'Dépense créée automatiquement à l’approbation'] },
   { id: 'budget', label: 'Budget overview', icon: '💶', superuserOnly: false, kind: null,
     blurb: 'Graphiques personnels de suivi budgétaire : dépenses par classification, ligne budgétaire, opérateur, mois / année / jour, budgets & soldes par ligne, OM et souhaits — chaque membre enregistre ses propres graphiques.',
     fields: ['Camembert / Barres / Courbe', 'Dépenses : classification, catégorie, statut, fournisseur, opérateur, ligne budgétaire, mois / année / jour', 'Budgets (Recettes) : budget total, mis à disposition, BC signés, OM, souhaits approuvés, solde', 'OM & souhaits : par période, statut, destination…'] },
-
-  { id: 'conges', label: 'Congés', icon: '🏖️', superuserOnly: false, kind: 'conges',
-    blurb: 'Demandes de congés de l’équipe : périodes, jours ouvrés, notes et approbation (réservée au superutilisateur).',
-    fields: ['Demandeur', 'Premier jour · Dernier jour de congé', 'Jours ouvrés', 'Notes', 'Approuvation : Demande / Approuvé / Refusé'] },
   { id: 'questioni', label: 'Questions ouvertes', icon: '❓', superuserOnly: false, kind: 'questioni',
     blurb: 'Tableau des questions ouvertes (A faire / En cours / Fait), responsable, tags.',
     fields: ['Description', 'Statut : A faire / En cours / Fait', 'Responsable', 'Tags / classification'] },
   { id: 'sicurezza', label: 'Hygiène & Sécurité', icon: '🛡️', superuserOnly: false, kind: 'sicurezza',
     blurb: 'Tâches d’hygiène & de sécurité du laboratoire, conservées dans leur section dédiée.',
     fields: ['Description', 'Statut : A faire / En cours / Fait', 'Responsable', 'Tags / classification', 'Sévérité (optionnelle)'] },
-  { id: 'settings', label: 'Paramètres', icon: '⚙️', superuserOnly: true, kind: null,
+  { id: 'conges', label: 'Congés', icon: '🏖️', superuserOnly: false, kind: 'conges',
+    blurb: 'Demandes de congés de l’équipe : périodes, jours ouvrés, notes et approbation (réservée au superutilisateur).',
+    fields: ['Demandeur', 'Premier jour · Dernier jour de congé', 'Jours ouvrés', 'Notes', 'Approuvation : Demande / Approuvé / Refusé'] },
+  { id: 'personnel', label: 'Personnel', icon: '👥', superuserOnly: true, kind: 'personnel',
+    blurb: 'Personnel Permanent / Technique / Temporaire, corps & grades, missions, formations et bloc stagiaire lié à une Recette.',
+    fields: ['Nom', 'Type : Permanent / Technique / Temporaire', 'Corps (PR, MCF, DR, CR, IR, IE, ASI, TECH, ATRF…)', 'Grade — sous-classification du corps (PR2, PR1, CE2, CE1, CN, HC, DR2, DR1…)', 'BAP · HDR · Catégorie · Échelon · Chevron', 'Dates contrat', 'Promotion · RIPEC', 'Missions · Formations', 'Stagiaire : encadrants · ligne budgétaire · dates · durée', 'Commentaires'] },
+  { id: 'librerie', label: 'Librairie', icon: '📇', superuserOnly: false, kind: 'librerie',
+    blurb: 'Catalogue des fournisseurs utilisé par les Dépenses (BC) et les Dépenses souhaitées (souhaits d’achat).',
+    fields: ['Nom du fournisseur', 'Contact', 'Email · Téléphone · Adresse', 'Référence SIFAC (n° de tiers fournisseur)', 'Catégories associées', 'Site web', 'Commentaires'] },
+  { id: 'settings', label: 'Setup', icon: '⚙️', superuserOnly: true, kind: null,
     blurb: 'Rôles (scientifiques / superutilisateur) et options des listes déroulantes du module.',
     fields: ['Rôles (drapeau superutilisateur)', 'Options des listes déroulantes (natures, BAP, corps & grades…)'] },
 ];
@@ -131,6 +138,7 @@ export const AUDIT_FIELDS = ['id', 'createdAt', 'createdBy', 'updatedAt', 'updat
  * @property {?string} dateBC
  * @property {string} bcNo
  * @property {?string} dateSignatureBC  // « BC signé »
+ * @property {?string} dateSignatureDevis // date de signature du devis → état « Devis signé »
  * @property {?string} dateAcceptationFournisseur
  * @property {string} factureNo
  * @property {boolean} livraisonComplete
@@ -161,16 +169,16 @@ export const AUDIT_FIELDS = ['id', 'createdAt', 'createdBy', 'updatedAt', 'updat
  * @property {('Urgent'|'Important'|'Souhaitable')} urgence
  * @property {string} demandeur
  * @property {('Fonctionnement'|'Investissement')} categorie
- * @property {?string} recetteSuggereeId
- * @property {?number} montantEstime
- * @property {?number} fraisPort
+ * @property {?string} recetteSuggereeId      // ligne budgétaire suggérée
+ * @property {?number} montantEstime          // coût estimé (€)
+ * @property {?number} fraisPort              // frais de port (€)
  * @property {?string} dateDemande
  * @property {string} fournisseurNom
  * @property {string} fournisseurContact
  * @property {string[]} devisNumbers
  * @property {string} codeProduit
  * @property {string} commentaires
- * @property {('Pending'|'Approved'|'En attente'|'Rejected / Pas maintenant')} statut
+ * @property {string} statut                // décision du superutilisateur : « Approuvé » / « En attente » / « Pas maintenant » (anciennes valeurs d’import toujours acceptées)
  * @property {?string} statutChangedBy
  * @property {?number} statutChangedAt
  */
@@ -212,13 +220,60 @@ export const FORMATION_SUGGESTIONS = [
 ];
 export const DEPENSE_NATURES = ['Consommables', 'Stages', 'Instrumentation', 'Meetings', 'Audit', 'Prestations', 'Autre'];
 export const URGENCES = ['Urgent', 'Important', 'Souhaitable'];
-export const DESIDERATE_STATUSES = ['Pending', 'Approved', 'En attente', 'Rejected / Pas maintenant'];
+/* Décisions (statuts) des « Dépenses souhaitées » — le changement est réservé
+   au superutilisateur. Cette liste reste modifiable dans Setup › Options des
+   listes déroulantes. Les anciennes valeurs d’import (« Approved », « Pending »,
+   « Rejected / Pas maintenant »…) restent reconnues et affichées dans leur
+   équivalent français par `desiderataDecisionOf`. */
+export const DESIDERATE_APPROVED = 'Approuvé';
+export const DESIDERATE_PENDING = 'En attente';
+export const DESIDERATE_REJECTED = 'Pas maintenant';
+export const DESIDERATE_STATUSES = [DESIDERATE_APPROVED, DESIDERATE_PENDING, DESIDERATE_REJECTED];
+
+/** Libellé français normalisé d’une décision (accepte les anciennes valeurs). */
+export const desiderataDecisionOf = (raw) => {
+  const s = String(raw ?? '').trim();
+  if (!s) return '';
+  const k = s.toLowerCase();
+  if (/(approuv|approved|accept)/.test(k)) return DESIDERATE_APPROVED;
+  if (/(pas maintenant|rejected|reject|refus|rejete)/.test(k)) return DESIDERATE_REJECTED;
+  if (/(pending|attente|waiting)/.test(k)) return DESIDERATE_PENDING;
+  return s;
+};
+export const isDesiderataApproved = (raw) => desiderataDecisionOf(raw) === DESIDERATE_APPROVED;
+export const isDesiderataPending = (raw) => desiderataDecisionOf(raw) === DESIDERATE_PENDING;
+export const isDesiderataRejected = (raw) => desiderataDecisionOf(raw) === DESIDERATE_REJECTED;
 export const OM_COST_STATUSES = ['Estimé', 'Exact'];
 export const ISSUE_STATUSES = ['A faire', 'En cours', 'Fait'];
 export const CONGE_STATUSES = ['Demande', 'Approuvé', 'Refusé'];
 export const CONGE_DEMANDE = 'Demande';
 export const CONGE_APPROUVE = 'Approuvé';
 export const CONGE_REFUSE = 'Refusé';
+
+/* Statuts d’approbation des devis / BC déposés sur la page « Approbation
+   devis & BC » — la décision (Approuvé / Refusé) est réservée au
+   superutilisateur ; toute valeur absente/ancienne (« Demande »…) reste
+   considérée « En attente ». */
+export const APPROVAL_STATUSES = ['En attente', 'Approuvé', 'Refusé'];
+export const APPROVAL_PENDING = 'En attente';
+export const APPROVAL_APPROVED = 'Approuvé';
+export const APPROVAL_REJECTED = 'Refusé';
+/** Normalise une valeur stockée vers l’une des 3 décisions d’approbation. */
+export const approvalStatusOf = (raw) => {
+  const k = String(raw || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (/(approuv|accept|valid|oui|sign)/.test(k)) return APPROVAL_APPROVED;
+  if (/(refus|rejet|non)/.test(k)) return APPROVAL_REJECTED;
+  return APPROVAL_PENDING;
+};
+/** Vrai si la ligne attend encore une décision du superutilisateur. */
+export const isApprovalPending = (raw) => {
+  const k = String(raw || '').trim().toLowerCase();
+  if (!k) return true;
+  if (k === 'demande') return true;
+  return approvalStatusOf(k) === APPROVAL_PENDING;
+};
 
 /* Congés : jours accordés par an et par profil (saison du 1er septembre au
    31 août, renouvelée automatiquement). Le quota se règle dans Paramètres ›
@@ -318,8 +373,8 @@ export const hasDefinedSuperuser = (operators) =>
 export const ADMIN_FONCTIONS = ['', 'AP', 'Gestionnaire'];
 export const ADMIN_FONCTION_META = {
   '': { label: 'Aucune', hint: 'Accès = socle de son statut (Permanent ou Non permanent).' },
-  AP: { label: 'AP', hint: 'Agent de prévention → ajoute Dépenses + Hygiène & Sécurité.' },
-  Gestionnaire: { label: 'Gestionnaire', hint: '→ ajoute Dépenses + Questions ouvertes.' },
+  AP: { label: 'AP', hint: 'Agent de prévention → ajoute Dépenses, Budget overview + Hygiène & Sécurité.' },
+  Gestionnaire: { label: 'Gestionnaire', hint: '→ ajoute Dépenses, Budget overview + Questions ouvertes.' },
 };
 
 /** Libellé de l’échelon d’accès dérivé d’une fiche Personnel. */
@@ -337,15 +392,18 @@ export const statutLabelOf = (person) => {
   return 'Non permanent';
 };
 
-/** Pages du socle d’un Permanent (type Permanent ou Technique). La page Congés
-    n’y figure pas : elle est réservée aux profils Non permanent + superutilisateur. */
-const PERMANENT_SOCLE_PAGES = ['recettes', 'budget', 'depenses', 'desiderate', 'om', 'librerie'];
+/** Pages du socle d’un Permanent (type Permanent ou Technique) sans fonction.
+    « Dépenses » et « Budget overview » en sont retirées : elles ne sont visibles
+    que pour les fonctions AP / Gestionnaire et le superutilisateur. La page Congés
+    n’y figure pas non plus : elle est réservée aux profils Non permanent +
+    superutilisateur. */
+const PERMANENT_SOCLE_PAGES = ['recettes', 'desiderate', 'devisBc', 'om', 'librerie'];
 /** Pages d’un Non permanent : uniquement l’espace Congés. */
 const NON_PERMANENT_SOCLE_PAGES = ['conges'];
 /** Pages ajoutées selon la fonction portée par la fiche Personnel. */
 const FONCTION_EXTRA_PAGES = {
-  AP: ['depenses', 'sicurezza'],
-  Gestionnaire: ['depenses', 'questioni'],
+  AP: ['depenses', 'budget', 'sicurezza'],
+  Gestionnaire: ['depenses', 'budget', 'questioni'],
 };
 
 /**

@@ -22,7 +22,13 @@ export const useAdmin = () => useContext(AdminDataContext);
 const makeId = (prefix) =>
   `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}`;
 
-export const AdminProvider = ({ currentUser, user, operators, content, onChange, children, teamBootstrap }) => {
+export const AdminProvider = ({
+  currentUser, user, operators, content, onChange, children, teamBootstrap,
+  /* Navigation inter-pages d’administration (fournie par App) : permet à une
+     page (ex. Dépenses) d’ouvrir une autre page et d’y pointer un
+     enregistrement précis (fournisseur, ligne budgétaire, personne…). */
+  navigate, focus, clearFocus,
+}) => {
   // Bootstrap : aucun compte scientifique ou aucun superutilisateur défini.
   // La page Parametres (equipe) reste alors accessible pour creer l'equipe.
   const safeContent = content && typeof content === 'object' ? content : {};
@@ -130,6 +136,14 @@ export const AdminProvider = ({ currentUser, user, operators, content, onChange,
     isSuperuser,
     user,
     currentUser: currentUser || null,
+    /* Navigation entre pages d’administration + mise en évidence d’un
+       enregistrement cible (consommée par la page d’arrivée au montage). */
+    navigate: typeof navigate === 'function' ? navigate : () => {},
+    focus: focus || null,
+    clearFocus: typeof clearFocus === 'function' ? clearFocus : () => {},
+    /* Opérateurs (rôles) — nécessaire aux pages qui notifient par e-mail
+       (ex. Approbation devis & BC → recherche du superutilisateur). */
+    operators: Array.isArray(operators) ? operators : [],
   };
 
   return <AdminDataContext.Provider value={value}>{children}</AdminDataContext.Provider>;

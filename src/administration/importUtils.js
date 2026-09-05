@@ -919,6 +919,7 @@ const DEPENSE_COLUMNS = {
   numBC: ['n° BC', 'N° BC', 'N°BC', 'N° de BC', 'Numero BC', 'Numéro BC'],
   numBCUrl: ['Lien BC', 'Lien du BC', 'Lien bon de commande', 'Lien Bon de commande', 'URL BC', 'Lien doc BC', 'Lien document BC', 'Lien Document BC'],
   dateSignature: ['Date signature', 'Signature'],
+  dateSignatureDevis: ['Date signature devis', 'Date signature du devis', 'Date devis', 'Date du devis', 'Signature devis'],
   dateApprob: ['Date approb fornisseur', 'Date approb fournisseur'],
   numFacture: ['n° facture', 'N° facture', 'N° Facture', 'N° de facture'],
   numFactureUrl: ['Lien facture', 'Lien de la facture', 'Lien Facture', 'URL facture', 'Lien doc facture', 'Lien document facture', 'Lien Document Facture'],
@@ -1072,14 +1073,15 @@ const normalizePriorite = (v) => {
 
 const DECISION_ALIAS = {
   'en attente': 'En attente',
-  pending: 'Pending',
-  approuve: 'Approved',
-  approve: 'Approved',
-  accepte: 'Approved',
-  'pas maintenant': 'Rejected / Pas maintenant',
-  'rejected / pas maintenant': 'Rejected / Pas maintenant',
-  refuse: 'Rejected / Pas maintenant',
-  rejete: 'Rejected / Pas maintenant',
+  pending: 'En attente',
+  approuve: 'Approuvé',
+  approve: 'Approuvé',
+  accepte: 'Approuvé',
+  'pas maintenant': 'Pas maintenant',
+  'rejected pas maintenant': 'Pas maintenant',
+  'rejected / pas maintenant': 'Pas maintenant',
+  refuse: 'Pas maintenant',
+  rejete: 'Pas maintenant',
 };
 
 const normalizeDecision = (v) => {
@@ -1201,6 +1203,7 @@ const buildDepenses = (rows, headerIdx, state) => {
         contact: clean(cell(r, cols.contact)),
         numDevis: extractNumeroFromDoc(clean(cell(r, cols.numDevis))),
         numDevisUrl: clean(cell(r, cols.numDevisUrl)),
+        dateSignatureDevis: parseDateCell(cell(r, cols.dateSignatureDevis)),
         numSIFAC: extractNumeroFromDoc(numSIFAC),
         dateBC: parseDateCell(cell(r, cols.dateBC)),
         numBC: extractNumeroFromDoc(clean(cell(r, cols.numBC))),

@@ -7,7 +7,9 @@
      · demandeur · destination · n° OM (référence)
      · ligne budgétaire liée (recette)
      · dates : demande / mission (départ) / retour
-     · statut : En attente / Acceptée / Refusée / Terminée
+     · statut : En attente / Acceptée / Refusée / Terminée — le changement de
+       statut (approbation) est réservé au superutilisateur, et une fois l’OM
+       « Acceptée » un e-mail prévient le(s) gestionnaire(s)
      · coût estimé ou exact : transport · logement · repas · inscription
        (total recalculé automatiquement)
      · commentaires
@@ -23,6 +25,7 @@ import { AdminImportModal } from './adminImportModal';
 import { omColumns } from './collectionPages';
 import { OM_COST_STATUSES, OM_STATUSES } from './adminSchema';
 import { parseEuroAmount } from './importUtils';
+import { sendAdminMail, personnelEmailsMatching, summarizeMail, mailBodyText } from './emailNotify';
 
 /* ── Petites aides ─────────────────────────────────────────────────────── */
 const txt = (v) => (v === null || v === undefined ? '' : String(v).trim());
@@ -54,6 +57,24 @@ const demandeurOf = (r) => pick(r, ['demandeur', 'porteur', 'nom', 'name']);
 const missionOf = (r) => pick(r, ['description', 'intitule', 'motif']);
 const euro = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' });
 
+/* Approbation d’un OM : l’état « Acceptée » correspond à la décision positive
+   (les valeurs d’import anglaises restent reconnues). */
+const isOmApproved = (raw) =>
+  /accept/i.test(String(raw || '').normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+
+/* Teinte + pastille du statut affiché en PREMIÈRE colonne. */
+const omStatutTone = (v) => {
+  const s = txt(v).toLowerCase();
+  if (/(accept)/.test(s)) return 'bg-emerald-50 border-emerald-200 text-emerald-700';
+  if (/(refus)/.test(s)) return 'bg-red-50 border-red-200 text-red-600';
+  if (/(termin)/.test(s)) return 'bg-indigo-50 border-indigo-200 text-indigo-700';
+  return 'bg-amber-50 border-amber-200 text-amber-700';
+};
+const StatutPill = ({ value }) =>
+  txt(value)
+    ? <span className={`inline-block text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${omStatutTone(value)}`}>{txt(value)}</span>
+    : <span className="text-slate-300">—</span>;
+
 /* Clés coût : canoniques (formulaire) + alias hérités des anciens imports. */
 const COST_INPUTS = [
   { key: 'coutVoyage', label: 'Transport', legacy: ['voyage'], icon: '🚆' },
@@ -69,12 +90,17 @@ const NOTICE_TONES = {
   warn: 'bg-amber-50 border-amber-200 text-amber-700',
 };
 
-const Notice = ({ tone, text, onClose }) => (
+const Notice = ({ tone, text, onClose, mailto }) => (
   <div className={`rounded-xl border px-4 py-2.5 text-xs font-semibold flex items-center justify-between gap-3 ${NOTICE_TONES[tone] || NOTICE_TONES.info}`}>
-    <span>{text}</span>
-    {onClose && (
-      <button type="button" onClick={onClose} className="shrink-0 font-black opacity-60 hover:opacity-100" title="Masquer">✕</button>
-    )}
+    <span className="min-w-0">{text}</span>
+    <span className="flex items-center gap-3 shrink-0">
+      {mailto && (
+        <a href={mailto} className="font-black text-blue-700 underline whitespace-nowrap" title="Ouvrir votre messagerie pour envoyer l’e-mail">✉ Ouvrir ma messagerie</a>
+      )}
+      {onClose && (
+        <button type="button" onClick={onClose} className="shrink-0 font-black opacity-60 hover:opacity-100" title="Masquer">✕</button>
+      )}
+    </span>
   </div>
 );
 
@@ -102,7 +128,7 @@ const Section = ({ icon, title, children }) => (
 /* ═════════════════════════════════════════════════════════════════════════
    Fenêtre d’ajout / édition d’un ordre de mission
    ═════════════════════════════════════════════════════════════════════════ */
-const OmModal = ({ rec, recettes, demandeurNames, onCancel, onSave }) => {
+const OmModal = ({ rec, recettes, demandeurNames, statusOptions, onCancel, onSave, canDecide = false, currentUser, onApproved }) => {
   const editing = !!rec;
   const [draft, setDraft] = useState(() => ({
     description: txt(rec && missionOf(rec)),
@@ -122,6 +148,26 @@ const OmModal = ({ rec, recettes, demandeurNames, onCancel, onSave }) => {
   const [error, setError] = useState('');
 
   const set = (key) => (e) => setDraft((d) => ({ ...d, [key]: e.target.value }));
+
+  /* La base Recettes contient parfois plusieurs exemplaires du même intitulé de
+     ligne budgétaire : dans le menu on n’en montre qu’un seul, considéré comme
+     « Fonctionnement » (règle du labo). Seule exception : si l’OM en cours
+     d’édition est déjà imputé sur un autre exemplaire de cet intitulé, on garde
+     celui-ci pour ne jamais changer le lien silencieusement à l’enregistrement. */
+  const selectedRecetteId =
+    draft.recetteId && recettes.some((r) => r.id === draft.recetteId) ? draft.recetteId : '';
+  const keyOfRecette = (r) => (txt(r.ligne) || txt(r.name) || r.id).toLowerCase().replace(/\s+/g, ' ').trim();
+  const recetteGroups = new Map();
+  recettes.forEach((r) => {
+    const k = keyOfRecette(r);
+    if (!recetteGroups.has(k)) recetteGroups.set(k, []);
+    recetteGroups.get(k).push(r);
+  });
+  const recetteOptions = [...recetteGroups.values()].map((group) =>
+    group.find((r) => r.id === selectedRecetteId)
+    || group.find((r) => String(r.type || '').toLowerCase().includes('fonctionnement'))
+    || group[0]);
+  const recetteDupCount = recettes.length - recetteOptions.length;
 
   const setRecette = (e) => {
     const id = e.target.value;
@@ -146,7 +192,9 @@ const OmModal = ({ rec, recettes, demandeurNames, onCancel, onSave }) => {
     COST_INPUTS.forEach((c) => { couts[c.key] = parseNum(draft[c.key]); });
     const coutTotal = liveTotal !== null ? liveTotal : previousTotal;
     const recetteId = draft.recetteId && recettes.some((r) => r.id === draft.recetteId) ? draft.recetteId : '';
-    onSave({
+    const previous = txt(rec && pick(rec, ['statut']));
+    const decided = txt(draft.statut) || previous || 'En attente';
+    const patch = {
       description,
       demandeur: txt(draft.demandeur),
       destination: txt(draft.destination),
@@ -155,7 +203,7 @@ const OmModal = ({ rec, recettes, demandeurNames, onCancel, onSave }) => {
       ligneBudgetaire: recetteId
         ? txt((recettes.find((r) => r.id === recetteId) || {}).ligne)
         : (editing ? txt(draft.ligneBudgetaire) : ''),
-      statut: txt(draft.statut),
+      statut: decided,
       coutStatut: txt(draft.coutStatut),
       dateDemande: isoOf(draft.dateDemande),
       dateMission: isoOf(draft.dateMission),
@@ -163,7 +211,16 @@ const OmModal = ({ rec, recettes, demandeurNames, onCancel, onSave }) => {
       commentaires: txt(draft.commentaires),
       ...couts,
       coutTotal,
-    }, editing && rec.id);
+    };
+    if (canDecide && decided !== previous) {
+      patch.statutChangedBy = (currentUser && currentUser.name) || '';
+      patch.statutChangedAt = Date.now();
+    }
+    onSave(patch, editing && rec.id);
+    /* Une fois l’OM « Acceptée », on prévient le(s) gestionnaire(s). */
+    if (canDecide && !isOmApproved(previous) && isOmApproved(decided) && typeof onApproved === 'function') {
+      onApproved(patch, editing && rec.id);
+    }
   };
   return (
     <div className="fixed inset-0 z-[999] flex items-center justify-center p-4" style={{ background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(3px)' }}>
@@ -216,10 +273,13 @@ const OmModal = ({ rec, recettes, demandeurNames, onCancel, onSave }) => {
                   {(demandeurNames || []).map((n) => <option key={n} value={n} />)}
                 </datalist>
               </Field>
-              <Field label="Ligne budgétaire liée" hint="La recette sur laquelle l’OM sera imputé.">
-                <select className={MODAL_INPUT} value={draft.recetteId} onChange={setRecette}>
+              <Field
+                label="Ligne budgétaire liée"
+                hint={`La recette sur laquelle l’OM sera imputé${recetteDupCount > 0 ? ' — les intitulés en double dans Recettes sont regroupés (considérés « Fonctionnement »).' : '.'}`}
+              >
+                <select className={MODAL_INPUT} value={selectedRecetteId} onChange={setRecette}>
                   <option value="">— Aucune ligne budgétaire —</option>
-                  {recettes.map((r) => (
+                  {recetteOptions.map((r) => (
                     <option key={r.id} value={r.id}>
                       {txt(r.ligne) || txt(r.name) || r.id}
                     </option>
@@ -240,11 +300,18 @@ const OmModal = ({ rec, recettes, demandeurNames, onCancel, onSave }) => {
                 <input type="date" className={MODAL_INPUT} value={draft.dateRetour} onChange={set('dateRetour')} />
               </Field>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3 items-end">
               <Field label="Statut">
-                <select className={MODAL_INPUT} value={draft.statut} onChange={set('statut')}>
-                  {OM_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
+                {canDecide ? (
+                  <select className={MODAL_INPUT} value={draft.statut} onChange={set('statut')}>
+                    {(statusOptions && statusOptions.length ? statusOptions : OM_STATUSES).map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <input className={MODAL_INPUT} value={draft.statut} readOnly disabled title="Le changement de statut est réservé au superutilisateur" />
+                    <span className="text-[11px]" title="Le changement de statut est réservé au superutilisateur">🔒</span>
+                  </div>
+                )}
               </Field>
               <Field label="Coût (estimé / exact)">
                 <select className={MODAL_INPUT} value={draft.coutStatut} onChange={set('coutStatut')}>
@@ -305,13 +372,40 @@ const OmModal = ({ rec, recettes, demandeurNames, onCancel, onSave }) => {
    Page OM
    ═════════════════════════════════════════════════════════════════════════ */
 export const OmPage = () => {
-  const { data, upsert, remove, currentUser } = useAdmin();
+  const {
+    data, settings, upsert, remove, currentUser, access,
+  } = useAdmin();
   const om = useMemo(() => (Array.isArray(data.om) ? data.om : []), [data.om]);
   const recettes = useMemo(() => (Array.isArray(data.recettes) ? data.recettes : []), [data.recettes]);
+  const personnel = useMemo(() => (Array.isArray(data.personnel) ? data.personnel : []), [data.personnel]);
 
   const [modal, setModal] = useState(null); // null | { mode: 'new' } | { mode: 'edit', rec }
   const [importOpen, setImportOpen] = useState(false);
-  const [notice, setNotice] = useState(null); // { tone, text }
+  const [notice, setNotice] = useState(null); // { tone, text, mailto? }
+
+  /* L’approbation (changement de statut) est réservée au superutilisateur. */
+  const isSuper = !!access.isSuperuser;
+  const currentName = txt((access.profile && access.profile.person && access.profile.person.nom)
+    || (currentUser && currentUser.name));
+
+  /* Destinataire de la notification d’approbation : la fiche « Gestionnaire ». */
+  const gestionnaireEmails = useMemo(
+    () => personnelEmailsMatching(personnel, { fonction: 'Gestionnaire' }),
+    [personnel]
+  );
+
+  /* Options de statut : personnalisées dans Setup › Options des listes déroulantes. */
+  const omStatutOptions = useMemo(() => {
+    const base = (Array.isArray(settings && settings.omStatuses) && settings.omStatuses.length)
+      ? settings.omStatuses
+      : OM_STATUSES;
+    const set = base.map((s) => txt(s)).filter(Boolean);
+    om.forEach((r) => {
+      const s = txt(pick(r, ['statut']));
+      if (s && set.indexOf(s) === -1) set.push(s);
+    });
+    return set;
+  }, [settings, om]);
 
   useEffect(() => {
     if (!notice) return undefined;
@@ -340,6 +434,48 @@ export const OmPage = () => {
     return db.localeCompare(da);
   }), [om]);
 
+  /* Envoi d’un e-mail au(x) gestionnaire(s) quand l’OM passe « Acceptée ». */
+  const notifyApproved = async (rec) => {
+    const label = missionOf(rec) || txt(rec.description) || 'ordre de mission';
+    const ref = txt(rec.numOM);
+    const subject = `[Lab Workspace] OM accepté${ref ? ` — ${ref}` : ''}`;
+    const lines = [
+      "L'ordre de mission suivant a été accepté :",
+      `  ${label}${ref ? ` (${ref})` : ''}`,
+      `Demandeur : ${txt(rec.demandeur) || '—'}`,
+      `Destination : ${txt(rec.destination) || '—'}`,
+      txt(rec.dateMission)
+        ? `Mission : du ${txt(rec.dateMission)}${txt(rec.dateRetour) ? ` au ${txt(rec.dateRetour)}` : ''}`
+        : '',
+      (rec.coutTotal !== undefined && rec.coutTotal !== null && rec.coutTotal !== '')
+        ? `Coût total : ${euro.format(Number(rec.coutTotal))}`
+        : '',
+      txt(rec.ligneBudgetaire) ? `Ligne budgétaire : ${txt(rec.ligneBudgetaire)}` : '',
+      `Décision prise par : ${currentName || 'superutilisateur'}`,
+    ].filter(Boolean);
+    const res = await sendAdminMail({ to: gestionnaireEmails, subject, text: mailBodyText(lines) });
+    const summary = summarizeMail(res, 'Gestionnaire notifiée');
+    setNotice({
+      tone: res && res.ok ? 'ok' : 'warn',
+      text: summary.text,
+      mailto: summary.mailto || undefined,
+    });
+  };
+
+  /* Changement rapide de statut dans le tableau — réservé au superutilisateur. */
+  const quickStatut = (r, rawValue) => {
+    const value = txt(rawValue);
+    if (!value || !isSuper) return;
+    const previous = txt(pick(r, ['statut']));
+    if (value === previous) return;
+    upsert('om', {
+      statut: value,
+      statutChangedBy: currentName,
+      statutChangedAt: Date.now(),
+    }, r.id);
+    if (!isOmApproved(previous) && isOmApproved(value)) notifyApproved({ ...r, statut: value });
+  };
+
   const onSave = (patch, existingId) => {
     const label = missionOf(patch) || 'sans titre';
     upsert('om', patch, existingId);
@@ -361,7 +497,33 @@ export const OmPage = () => {
   };
 
   const columns = [
-    ...omColumns(recettes),
+    {
+      key: 'statut', label: 'Statut', filter: 'facet',
+      value: (r) => pick(r, ['statut']) || 'En attente',
+      display: (r) => {
+        const v = pick(r, ['statut']) || 'En attente';
+        if (!isSuper) {
+          return (
+            <span className="inline-flex items-center gap-1.5" title="Statut — modification réservée au superutilisateur">
+              <StatutPill value={v} />
+              <span className="text-[10px] opacity-60">🔒</span>
+            </span>
+          );
+        }
+        return (
+          <select
+            value={v}
+            onChange={(e) => quickStatut(r, e.target.value)}
+            title="Statut (approbation réservée au superutilisateur)"
+            className={`inline-block max-w-[180px] text-[10px] font-black uppercase rounded-full border pl-2 pr-1 py-0.5 outline-none cursor-pointer ${omStatutTone(v)}`}
+          >
+            <option value="">— Sans statut —</option>
+            {omStatutOptions.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        );
+      },
+    },
+    ...omColumns(recettes).filter((c) => c.key !== 'statut'),
     {
       key: 'actions', label: '', filter: 'none', filterable: false,
       value: () => '',
@@ -408,14 +570,16 @@ export const OmPage = () => {
         </div>
       </div>
 
-      {notice && <Notice tone={notice.tone} text={notice.text} onClose={() => setNotice(null)} />}
+      {notice && <Notice tone={notice.tone} text={notice.text} mailto={notice.mailto} onClose={() => setNotice(null)} />}
 
       <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
         <b>Fonctionnement :</b> chaque OM décrit une mission (dates, demandeur, destination,
-        ligne budgétaire, coûts estimés ou exacts et statut). Le bouton <b>« ＋ Ajouter un OM »</b>
-        permet une saisie manuelle complète ; <b>« ✏️ Modifier »</b> ouvre la fiche d’un OM existant
-        et <b>« 🗑️ »</b> le supprime. L’assistant d’import (bouton « 📥 Importer ») reste disponible
-        pour rejouer la feuille « ENT / Prix / Description » du classeur.
+        ligne budgétaire, coûts estimés ou exacts). La <b>première colonne « Statut »</b>
+        (En attente / Acceptée / Refusée / Terminée) n’est modifiable que par le superutilisateur ;
+        une fois l’OM <b>Acceptée</b>, un e-mail prévient la gestionnaire. Le bouton
+        <b>« ＋ Ajouter un OM »</b> permet une saisie manuelle complète ; <b>« ✏️ Modifier »</b> ouvre
+        la fiche d’un OM existant et <b>« 🗑️ »</b> le supprime. L’assistant d’import
+        (bouton « 📥 Importer ») reste disponible pour rejouer la feuille « ENT / Prix / Description » du classeur.
       </div>
 
       {om.length === 0 ? (
@@ -450,6 +614,10 @@ export const OmPage = () => {
           rec={modal.mode === 'edit' ? modal.rec : null}
           recettes={recettes}
           demandeurNames={demandeurNames}
+          statusOptions={omStatutOptions}
+          canDecide={isSuper}
+          currentUser={currentUser}
+          onApproved={notifyApproved}
           onCancel={() => setModal(null)}
           onSave={onSave}
         />

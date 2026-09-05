@@ -5,12 +5,13 @@
    PR1/CE2/CE1, MCF → CN/HC, DR → DR2/DR1…), BAP, missions, formations et
    bloc stagiaire lié à une ligne budgétaire (Recette).
    ========================================================================= */
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
 import { PERSONNEL_TYPES, PERSONNEL_CORPS, GRADES_BY_CORPS, BAP_LIST, PERSONNEL_POSITIONS, FORMATION_SUGGESTIONS, statutLabelOf } from './adminSchema';
 import { PersonnelModal } from './personnelModal';
 import { AdminImportModal } from './adminImportModal';
 import { SmartTable } from './smartTable';
+import { personEmailOf } from './emailNotify';
 
 const toArray = (v) => {
   if (Array.isArray(v)) return v.filter(Boolean);
@@ -117,7 +118,7 @@ const isFormerMember = (p, todayISO) => {
 };
 
 export const PersonnelPage = () => {
-  const { data, settings, upsert, remove } = useAdmin();
+  const { data, settings, upsert, remove, focus, clearFocus } = useAdmin();
   const list = useMemo(() => (Array.isArray(data.personnel) ? data.personnel : []), [data.personnel]);
   const recettes = useMemo(() => (Array.isArray(data.recettes) ? data.recettes : []), [data.recettes]);
   /* Membres permanents / techniques de l’annuaire → encadrants des stagiaires. */
@@ -136,6 +137,16 @@ export const PersonnelPage = () => {
   const [modal, setModal] = useState(null); // null | {mode:'new'} | {mode:'edit', rec}
   const [importOpen, setImportOpen] = useState(false);
 
+  /* Navigation inter-page entrante (ex. Librerie → Personnel pour le porteur
+     d’un projet) : la fiche ciblée est mise en évidence dans son tableau. */
+  const [focusPersonId, setFocusPersonId] = useState(null);
+  useEffect(() => {
+    if (!focus || focus.pageId !== 'personnel' || !focus.recordId) return;
+    setFocusPersonId(focus.recordId);
+    if (typeof clearFocus === 'function') clearFocus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus]);
+
   /* Membre actuel tant que la date du jour n’a pas dépassé la fin du contrat
      (ou, pour un stage, la fin du stage). Passé ce terme, la fiche bascule
      automatiquement dans le tableau « Membres précédents » du bas de page. */
@@ -149,6 +160,11 @@ export const PersonnelPage = () => {
     });
     return { current: cur, former: form };
   }, [list, today]);
+  /* La fiche ciblée par un lien inter-page est-elle dans « Membres actuels » ? */
+  const focusOnCurrent = useMemo(
+    () => !!focusPersonId && current.some((p) => p && p.id === focusPersonId),
+    [focusPersonId, current]
+  );
 
   /* Code couleur (transparents et légers) : Permanent / Technique en bleu
      clair, Temporaire / non permanent en ambre clair. */
@@ -172,6 +188,7 @@ export const PersonnelPage = () => {
       .find((r) => String((r && r.date) || '').trim());
     const cleaned = {
       nom: String(patch.nom || '').trim(),
+      email: String(patch.email || '').trim(),
       type: patch.type || types[0],
       corps: patch.corps || '',
       grade: patch.grade || '',
@@ -232,6 +249,16 @@ export const PersonnelPage = () => {
       ),
     },
     {
+      key: 'email', label: 'E-mail', filter: 'text',
+      value: (p) => personEmailOf(p),
+      display: (p) => {
+        const v = personEmailOf(p);
+        return v
+          ? <a href={`mailto:${v}`} className="text-xs text-blue-700 break-all hover:underline" title={`Écrire à ${p.nom || ''}`}>{v}</a>
+          : <span className="text-[10px] font-bold text-amber-600 whitespace-nowrap" title="Aucun e-mail renseigné — les notifications devis/BC ne peuvent pas être envoyées à cette fiche.">✉ manquant</span>;
+      },
+    },
+    {
       key: 'type', label: 'Type',
       value: (p) => p.type || '',
       display: (p) => <span className="text-xs font-bold text-slate-600">{p.type || '—'}</span>,
@@ -250,9 +277,9 @@ export const PersonnelPage = () => {
       value: (p) => p.fonction || '',
       display: (p) => (
         p.fonction === 'AP'
-          ? <span className="inline-block text-[10px] font-black px-2 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-violet-700" title="Agent de prévention — ajoute Dépenses + Hygiène & Sécurité">AP</span>
+          ? <span className="inline-block text-[10px] font-black px-2 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-violet-700" title="Agent de prévention — ajoute Dépenses, Budget overview + Hygiène & Sécurité">AP</span>
           : p.fonction === 'Gestionnaire'
-            ? <span className="inline-block text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700" title="Gestionnaire — ajoute Dépenses + Questions ouvertes">Gestionnaire</span>
+            ? <span className="inline-block text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700" title="Gestionnaire — ajoute Dépenses, Budget overview + Questions ouvertes">Gestionnaire</span>
             : <span className="text-slate-300">—</span>
       ),
     },
@@ -454,6 +481,8 @@ export const PersonnelPage = () => {
                 rows={current}
                 rowClass={rowTint}
                 minWidth="1180px"
+                focusRowKey={focusOnCurrent ? focusPersonId : null}
+                onFocusDone={() => setFocusPersonId(null)}
                 searchPlaceholder="Rechercher un nom, un corps, un grade, un BAP…"
                 emptyLabel="Annuaire vide"
                 noMatchLabel="Aucun membre actuel ne correspond aux filtres."
@@ -474,6 +503,8 @@ export const PersonnelPage = () => {
                 rows={former}
                 rowClass={rowTint}
                 minWidth="1180px"
+                focusRowKey={focusPersonId && !focusOnCurrent ? focusPersonId : null}
+                onFocusDone={() => setFocusPersonId(null)}
                 searchPlaceholder="Rechercher parmi les anciens membres…"
                 emptyLabel="Aucun ancien membre"
                 noMatchLabel="Aucun ancien membre ne correspond aux filtres."

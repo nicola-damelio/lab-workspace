@@ -75,6 +75,42 @@ export const frenchHolidaysOf = (year) => {
   return set;
 };
 
+/** Jours fériés fixes français (métropole) : [mois, jour, libellé]. */
+const FIXED_FRENCH_HOLIDAYS = [
+  [1, 1, 'Jour de l’An'],
+  [5, 1, 'Fête du Travail'],
+  [5, 8, 'Victoire 1945'],
+  [7, 14, 'Fête nationale'],
+  [8, 15, 'Assomption'],
+  [11, 1, 'Toussaint'],
+  [11, 11, 'Armistice 1918'],
+  [12, 25, 'Noël'],
+];
+
+/**
+ * Liste complète et triée des jours fériés français d’une année, pour affichage :
+ * renvoie [{ iso: 'yyyy-mm-dd', label }]. Les fêtes mobiles (Lundi de Pâques,
+ * Ascension, Lundi de Pentecôte) sont recalculées depuis le dimanche de Pâques.
+ */
+export const frenchHolidayList = (year) => {
+  const items = FIXED_FRENCH_HOLIDAYS.map(([m, d, label]) => ({
+    iso: `${year}-${pad2(m)}-${pad2(d)}`,
+    label,
+  }));
+  const shift = (date, days, label) => {
+    const x = new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
+    return {
+      iso: `${x.getFullYear()}-${pad2(x.getMonth() + 1)}-${pad2(x.getDate())}`,
+      label,
+    };
+  };
+  const eSun = new Date(year, easterSunday(year).m - 1, easterSunday(year).d);
+  items.push(shift(eSun, 1, 'Lundi de Pâques'));
+  items.push(shift(eSun, 39, 'Ascension'));
+  items.push(shift(eSun, 50, 'Lundi de Pentecôte'));
+  return items.sort((a, b) => a.iso.localeCompare(b.iso));
+};
+
 /* Cache des fériés par année (évite de recalculer à chaque itération). */
 const holidayCache = new Map();
 const holidaysOf = (year) => {

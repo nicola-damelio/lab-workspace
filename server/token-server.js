@@ -30,6 +30,12 @@
          build never sends a refresh token to this server).
    GET /health
          { ok, service, initialized, email } — handy to verify deployment.
+   POST /api/mail
+         { to: string|string[], subject, text } — automatic e-mail relay for
+         the administration notifications (devis/BC approval workflow). Sent
+         through the HTTP mail service configured with MAIL_API_URL (see
+         below); without it this answers 501 { error: 'mail_not_configured' }
+         and the app falls back to a pre-filled mailto: link.
 
    ENV VARS
      PORT                   HTTP port (default 8787).
@@ -46,6 +52,13 @@
                             (default ./workspace-shared-token.json, 0600).
      WORKSPACE_REFRESH_TOKEN  optional pre-seeded credential (alternative to
                             the browser bootstrap); not written to the file.
+     MAIL_API_URL           HTTP mail-relay endpoint (JSON POST body
+                            { from, to, subject, text }, Resend-compatible).
+                            Empty = automatic e-mails disabled (501).
+     MAIL_API_KEY           optional 'Authorization: Bearer …' key for the
+                            relay above.
+     MAIL_FROM              sender shown by the relay (default:
+                            'Lab Workspace <no-reply@lab-workspace>').
 
    RUN
      GOOGLE_CLIENT_SECRET=... [SHARED_EMAIL=...] [ALLOWED_ORIGINS=...] \
@@ -78,6 +91,16 @@ const ALLOWED_ORIGINS = new Set(
     .map((o) => o.trim().replace(/\/+$/, ''))
     .filter(Boolean)
 );
+
+// ── E-mail relay (automatic admin notifications, see POST /api/mail) ──────
+// MAIL_API_URL  endpoint of any HTTP mail service expecting a JSON body
+//               { from, to: string[], subject, text } with an optional
+//               Authorization: Bearer MAIL_API_KEY header (Resend-compatible).
+// MAIL_FROM     sender shown by the relay.
+const MAIL_API_URL = env('MAIL_API_URL').trim();
+const MAIL_API_KEY = env('MAIL_API_KEY').trim();
+const MAIL_FROM = env('MAIL_FROM', 'Lab Workspace <no-reply@lab-workspace>').trim();
+const VALID_EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 if (!GOOGLE_CLIENT_SECRET) {
   console.error('GOOGLE_CLIENT_SECRET is required. Set it before starting the server.');
@@ -291,6 +314,64 @@ async function handlePost(body) {
   }
 }
 
+async function handleMail(body) {
+  if (!MAIL_API_URL) {
+    return {
+      http: 501,
+      json: {
+        ok: false,
+        error: 'mail_not_configured',
+        error_description: 'MAIL_API_URL is not set on the token server — configure an HTTP mail-relay endpoint (e.g. Resend) to enable automatic e-mails.'
+      }
+    };
+  }
+  const raw = Array.isArray(body && body.to) ? body.to : (body && body.to !== undefined ? [body.to] : []);
+  const toList = raw
+    .map((v) => String(v || '').trim())
+    .filter((v) => VALID_EMAIL.test(v))
+    .filter((v, i, a) => a.indexOf(v) === i);
+  if (!toList.length) {
+    return {
+      http: 400,
+      json: { ok: false, error: 'no_recipients', error_description: 'No valid recipient e-mail addresses provided.' }
+    };
+  }
+  const subject = String((body && body.subject) || '').trim().slice(0, 200);
+  const text = String((body && body.text) || '').trim().slice(0, 20000);
+  const payload = { from: MAIL_FROM, to: toList, subject, text };
+  try {
+    const res = await fetch(MAIL_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(MAIL_API_KEY ? { Authorization: `Bearer ${MAIL_API_KEY}` } : {})
+      },
+      body: JSON.stringify(payload)
+    });
+    let relayJson = null;
+    try { relayJson = await res.json(); } catch { relayJson = null; }
+    if (res.ok) return { http: 200, json: { ok: true } };
+    return {
+      http: res.status || 502,
+      json: {
+        ok: false,
+        error: 'mail_relay_error',
+        error_description: (relayJson && (relayJson.message || relayJson.error_description || relayJson.error))
+          || `Mail relay answered HTTP ${res.status}.`
+      }
+    };
+  } catch (err) {
+    return {
+      http: 502,
+      json: {
+        ok: false,
+        error: 'mail_relay_unreachable',
+        error_description: `Cannot reach the mail relay: ${(err && err.message) || err}`
+      }
+    };
+  }
+}
+
 // ── HTTP plumbing ───────────────────────────────────────────────────────────
 const normalizeOrigin = (o) => String(o || '').trim().replace(/\/+$/, '');
 const originAllowed = (origin) => !origin || ALLOWED_ORIGINS.has(normalizeOrigin(origin));
@@ -356,6 +437,18 @@ const server = http.createServer(async (req, res) => {
       initialized: !!(store && store.refresh_token),
       email: store ? store.email : ''
     }, origin);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/mail') {
+    // Automatic admin e-mails (Approbation devis & BC…). Relays to MAIL_API_URL.
+    try {
+      const body = await readBody(req);
+      const result = await handleMail(body);
+      send(res, result.http, result.json, origin);
+    } catch (err) {
+      send(res, 400, { error: 'bad_request', error_description: (err && err.message) || 'Invalid request.' }, origin);
+    }
     return;
   }
 

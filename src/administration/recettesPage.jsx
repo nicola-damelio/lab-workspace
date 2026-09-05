@@ -10,7 +10,7 @@
    ========================================================================= */
 import React, { useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
-import { RECETTE_TYPES, DEPENSE_BC_SIGNE, isPiFournisseur } from './adminSchema';
+import { RECETTE_TYPES, DEPENSE_BC_SIGNE, isPiFournisseur, isDesiderataRejected, isDesiderataApproved, desiderataDecisionOf } from './adminSchema';
 import { AdminImportModal } from './adminImportModal';
 import { SmartTable } from './smartTable';
 
@@ -20,6 +20,34 @@ const toNum = (v) => {
   return Number.isFinite(n) ? n : 0;
 };
 const asDate = (v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 10) : '');
+
+/* N° « service fait » (SF) portés par une dépense : valeurs saisies sur ses
+   phases de livraison (clés numSF / sfNo) ou, pour d’anciens enregistrements,
+   en champs directs à la racine de la dépense. */
+const depenseSfRefs = (d) => {
+  const refs = [];
+  const push = (v) => {
+    const s = String(v ?? '').trim();
+    if (s) refs.push(s);
+  };
+  (Array.isArray(d && d.livraisons) ? d.livraisons : []).forEach((l) => {
+    if (!l) return;
+    push(l.numSF);
+    push(l.sfNo);
+  });
+  push(d && d.numSF);
+  push(d && d.sfNo);
+  return refs;
+};
+/* « Dépensé » : coût réellement déboursé — un n° de service fait (SF) est
+   renseigné (réception acceptée → mandatement). On écarte les dépenses
+   refusées / rejetées / annulées. */
+const isDepenseSpent = (d) => {
+  if (!d) return false;
+  const st = String(d.statut || d.suivi || '').trim();
+  if (/refus|rejet|annul/i.test(st)) return false;
+  return depenseSfRefs(d).length > 0;
+};
 
 export const RecettesPage = () => {
   const { data, settings, upsert, remove } = useAdmin();
@@ -59,10 +87,12 @@ export const RecettesPage = () => {
     const engagesBC = engages.filter(isSigned);
     const engagesPI = engages.filter((d) => isPi(d) && !isSigned(d));
     const engTotal = engages.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
+    const spent = lineDepenses.filter(isDepenseSpent);
+    const depTotal = spent.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
     const lineOm = om.filter((o) => o.recetteId === recId && String(o.statut || 'En attente').trim() !== 'Refusée');
     const omTotal = lineOm.reduce((s, o) => s + toNum(o.coutTotal), 0);
-    const lineDes = desiderate.filter((d) => d.recetteSuggereeId === recId && String(d.statut || '').trim() !== 'Rejected / Pas maintenant');
-    const desApprouvees = lineDes.filter((d) => String(d.statut || '').trim() === 'Approved');
+    const lineDes = desiderate.filter((d) => d.recetteSuggereeId === recId && !isDesiderataRejected(d.statut));
+    const desApprouvees = lineDes.filter((d) => isDesiderataApproved(d.statut));
     const desMontant = desApprouvees.reduce((s, d) => s + toNum(d.montantEstime), 0);
     const budgetRendu = rec.budgetRenduDispo !== undefined && rec.budgetRenduDispo !== null && rec.budgetRenduDispo !== ''
       ? toNum(rec.budgetRenduDispo)
@@ -70,7 +100,7 @@ export const RecettesPage = () => {
     // Solde = dispo université − engagé (BC signés + PI) − OM (jamais les souhaits).
     const solde = budgetRendu - engTotal - omTotal;
     return {
-      lineDepenses, engages, engagesBC, engagesPI, engTotal,
+      lineDepenses, spent, depTotal, engages, engagesBC, engagesPI, engTotal,
       lineOm, omEnAttente: lineOm.filter((o) => String(o.statut || 'En attente').trim() === 'En attente'),
       omAcceptees: lineOm.filter((o) => String(o.statut || '').trim() === 'Acceptée'),
       omTotal,
@@ -171,6 +201,22 @@ export const RecettesPage = () => {
       display: (r) => <span className="font-semibold text-blue-700 whitespace-nowrap">{euro.format(r.__agg.budgetRendu)}</span>,
     },
     {
+      key: 'dep', label: 'Dépensé · SF', dataType: 'number', align: 'right', nowrap: true,
+      value: (r) => Number(r.__agg.depTotal) || 0,
+      display: (r) => (
+        <HoverCell
+          amount={r.__agg.depTotal}
+          badge={r.__agg.spent.length}
+          hint="service fait — dépense dont le n° SF est renseigné"
+          items={r.__agg.spent.map((d) => ({
+            title: d.description || 'Dépense',
+            meta: [d.bcNo || d.sifacNo || '', depenseSfRefs(d).join(', ')].filter(Boolean).join(' · '),
+            value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
+          }))}
+        />
+      ),
+    },
+    {
       key: 'eng', label: 'Engagé · BC + PI', dataType: 'number', align: 'right', nowrap: true,
       value: (r) => Number(r.__agg.engTotal) || 0,
       display: (r) => (
@@ -206,16 +252,16 @@ export const RecettesPage = () => {
       ),
     },
     {
-      key: 'desiderata', label: 'Desiderata', dataType: 'number', align: 'right', nowrap: true,
+      key: 'desiderata', label: 'Souhaitées (non incluses)', dataType: 'number', align: 'right', nowrap: true,
       value: (r) => Number(r.__agg.desMontant) || 0,
       display: (r) => (
         <HoverCell
           amount={r.__agg.desMontant}
           badge={r.__agg.lineDes.length}
-          hint={`${r.__agg.desApprouvees.length} approuvée(s)`}
+          hint={`${r.__agg.desApprouvees.length} souhait(s) approuvé(s) — information seule, non inclus dans le solde`}
           items={r.__agg.lineDes.map((d) => ({
-            title: d.description || 'Desiderata',
-            meta: [d.demandeur || '', d.statut || 'Pending'].filter(Boolean).join(' · '),
+            title: d.description || 'Dépense souhaitée',
+            meta: [d.demandeur || '', desiderataDecisionOf(d.statut)].filter(Boolean).join(' · '),
             value: d.montantEstime !== undefined && d.montantEstime !== null && d.montantEstime !== ''
               ? euro.format(toNum(d.montantEstime))
               : 'non chiffré',
@@ -285,7 +331,7 @@ export const RecettesPage = () => {
         <SummaryCard label="Mis à disposition (univ.)" value={totals.budgetRendu} tone="blue" />
         <SummaryCard label="Engagé (BC signés + PI)" value={totals.eng} tone="amber" />
         <SummaryCard label="OM acceptées / en attente" value={totals.omTot} tone="violet" />
-        <SummaryCard label="Desiderata approuvés (info)" value={totals.des} tone="teal" />
+        <SummaryCard label="Souhaits approuvés (non inclus)" value={totals.des} tone="teal" />
         <SummaryCard label="Solde restant" value={totals.solde} tone={totals.solde < 0 ? 'red' : 'emerald'} />
       </div>
 
@@ -507,7 +553,7 @@ const LinkLineModal = ({ modal, depenses, om, desiderate, onCancel }) => {
             <span className="min-w-0">
               <span className="block text-xs font-bold text-slate-700 truncate">{it.description || it.destination || it.ligne || it.id}</span>
               <span className="block text-[10px] text-slate-400 truncate">
-                {title === 'Dépenses (BC)' ? `${it.demandeur || ''} · ${it.bcNo || 'sans BC'}` : title === 'Ordres de mission' ? `${it.destination || ''} · ${it.statut || 'En attente'}` : `${it.demandeur || ''} · ${it.statut || 'Pending'}`}
+                {title === 'Dépenses (BC)' ? `${it.demandeur || ''} · ${it.bcNo || 'sans BC'}` : title === 'Ordres de mission' ? `${it.destination || ''} · ${it.statut || 'En attente'}` : `${it.demandeur || ''} · ${desiderataDecisionOf(it.statut) || 'En attente'}`}
               </span>
             </span>
           </label>
@@ -521,12 +567,12 @@ const LinkLineModal = ({ modal, depenses, om, desiderate, onCancel }) => {
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden max-h-[92vh] flex flex-col">
         <div className="px-6 py-4 bg-gradient-to-br from-blue-600 to-indigo-700 text-white">
           <h2 className="text-lg font-black">Lier des éléments à la ligne</h2>
-          <p className="text-blue-100 text-xs">Ligne : « {modal.rec.ligne || modal.rec.id} » — cochez les Dépenses (BC), OM ou Desiderata imputés sur ce budget.</p>
+          <p className="text-blue-100 text-xs">Ligne : « {modal.rec.ligne || modal.rec.id} » — cochez les Dépenses (BC), OM ou Dépenses souhaitées imputées sur ce budget.</p>
         </div>
         <div className="p-5 overflow-y-auto custom-scrollbar flex flex-col gap-3">
           {group('Dépenses (BC)', '🧾', depenses)}
           {group('Ordres de mission', '✈️', om)}
-          {group('Desiderata', '🛒', desiderate)}
+          {group('Dépenses souhaitées', '🛒', desiderate)}
         </div>
         <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-2 bg-slate-50">
           <button onClick={onCancel} className="px-4 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-200 bg-slate-100">Fermer</button>

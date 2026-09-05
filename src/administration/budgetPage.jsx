@@ -19,7 +19,7 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { useAdmin } from './AdminContext';
-import { DEPENSE_BC_SIGNE, isPiFournisseur } from './adminSchema';
+import { DEPENSE_BC_SIGNE, isPiFournisseur, isDesiderataApproved } from './adminSchema';
 import { parseEuroAmount } from './importUtils';
 
 /* ── Formatage ──────────────────────────────────────────────────────────── */
@@ -278,7 +278,7 @@ const buildLigneRows = (recettes, depenses, om, desiderate) => {
       .filter((o) => o && o.recetteId === rid && notRefused(o))
       .reduce((s, o) => s + toNum(omCost(o)), 0);
     const desApproved = (Array.isArray(desiderate) ? desiderate : [])
-      .filter((d) => d && d.recetteSuggereeId === rid && txt(d.statut) === 'Approved')
+      .filter((d) => d && d.recetteSuggereeId === rid && isDesiderataApproved(d.statut))
       .reduce((s, d) => s + toNum(d.montantEstime), 0);
     const base = dispoVal !== null && dispoVal !== undefined ? dispoVal : budgetTotalVal;
     // Solde = dispo université − engagé (BC signés + PI) − OM
@@ -1001,7 +1001,7 @@ export const BudgetPage = () => {
       <p className="text-[11px] text-slate-400">
         💾 Sauvegarde automatique : vos graphiques sont conservés dans cette base (datasets/&lt;id&gt;,
         payload `administration › settings › budgetCharts`). Pensez à alimenter les pages Dépenses,
-        Recettes, OM et Spese Desiderate — les montants saisis y alimentent immédiatement ces graphiques.
+        Recettes, OM et Dépenses souhaitées — les montants saisis y alimentent immédiatement ces graphiques.
       </p>
 
       {modal && (
