@@ -21,7 +21,7 @@ const OPTION_KEYS = [
   { key: 'depenseNatures', label: 'Natures de dépenses' },
   { key: 'depenseStatuses', label: 'Statuts de dépenses / BC' },
   { key: 'urgences', label: 'Urgences / priorités (H&S : Urgent → Pas urgent)' },
-  { key: 'desiderateStatuses', label: 'Décisions Dépenses souhaitées (Approuvé / En attente / Pas maintenant)' },
+  { key: 'desiderateStatuses', label: 'Décisions Achats prévus / souhaités (Approuvé / En attente / Pas maintenant)' },
   { key: 'omStatuses', label: 'Statuts des OM' },
   { key: 'omCostStatuses', label: 'Coût OM : Estimé / Exact' },
   { key: 'issueStatuses', label: 'Statuts Questions ouvertes / H&S (A faire / En cours / Fait)' },

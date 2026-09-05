@@ -123,7 +123,7 @@ const FournisseurModal = ({ rec, suggestions, existingNames, onCancel, onSave })
               <span className="text-xl" aria-hidden="true">📇</span>
               {editing ? 'Modifier le fournisseur' : 'Ajouter un fournisseur'}
             </h2>
-            <p className="text-indigo-100 text-xs">Fiche du catalogue utilisé par les Dépenses (BC) et les Dépenses souhaitées.</p>
+            <p className="text-indigo-100 text-xs">Fiche du catalogue utilisé par les Dépenses (BC) et les achats prévus / souhaités.</p>
           </div>
           <button type="button" onClick={onCancel} className="shrink-0 w-8 h-8 rounded-lg bg-white/15 hover:bg-white/30 text-white font-bold" title="Fermer">✕</button>
         </div>

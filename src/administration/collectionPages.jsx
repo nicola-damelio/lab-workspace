@@ -640,7 +640,7 @@ const KIND_CONFIG = {
   librerie: {
     columns: librerieColumns, minWidth: '1320px', importable: false,
     empty: 'Catalogue des fournisseurs vide',
-    sub: 'Ce catalogue référence les fournisseurs utilisés par les Dépenses et les Dépenses souhaitées.',
+    sub: 'Ce catalogue référence les fournisseurs utilisés par les Dépenses et les achats prévus / souhaités.',
     search: 'Rechercher un fournisseur, contact, catégorie…',
   },
   questioni: {

@@ -28,7 +28,7 @@ export const ADMIN_COLLECTIONS = {
 export const DATASET_KINDS = ['scientific', 'administration'];
 export const DATASET_KIND_META = {
   scientific: { label: 'Données scientifiques', icon: '🧪', blurb: 'Expériences, projets, cahier de laboratoire, bibliothèque, stockage, publications…' },
-  administration: { label: 'Administration', icon: '🏛️', blurb: 'Recettes, fournisseurs, Personnel, Dépenses, OM, Dépenses souhaitées, Congés, questions ouvertes, hygiène & sécurité + Setup' },
+  administration: { label: 'Administration', icon: '🏛️', blurb: 'Recettes, fournisseurs, Personnel, Dépenses (BC/PI), OM prévus / souhaités, Achats prévus / souhaités, Congés, questions ouvertes, hygiène & sécurité + Setup' },
 };
 export const isAdministrationKind = (kind) => kind === 'administration';
 
@@ -44,7 +44,7 @@ export const ADMIN_SETTINGS_DOC = 'global';
    accessible en bootstrap (aucun superutilisateur défini) pour créer l’équipe.
    Récapitulatif de la matrice (validée avec l’équipe) :
      • Statut Permanent  (type Permanent ou Technique) sans fonction = socle :
-         Recettes · OM · Dépenses souhaitées · Approbation devis & BC · Librairie
+         Recettes · OM prévus / souhaités · Achats prévus / souhaités · Approbation devis & BC · Librairie
      • Pages « Dépenses » et « Budget overview » = réservées aux fonctions AP et
          Gestionnaire (et au superutilisateur) ; les Permanents sans fonction
          ne les voient pas.
@@ -61,15 +61,15 @@ export const ADMIN_PAGES = [
     fields: [] },
   { id: 'recettes', label: 'Recettes', icon: '📈', superuserOnly: false, kind: 'recettes',
     blurb: 'Lignes budgétaires (Fonctionnement / Investissement) : porteur, budget total, montant mis à disposition, engagements, OM et souhaits.',
-    fields: ['Ligne budgétaire', 'Type : Fonctionnement / Investissement', 'Porteur du projet', 'Budget total', 'Montant mis à disposition par l’université', 'Dépenses ordonnées (BC signés)', 'Ordres de mission (acceptés / à prévoir)', 'Dépenses souhaitées liées', 'Solde disponible', 'Date de fin d’engagement', 'Commentaires'] },
+    fields: ['Ligne budgétaire', 'Type : Fonctionnement / Investissement', 'Porteur du projet', 'Budget total', 'Montant mis à disposition par l’université', 'Dépenses ordonnées (BC signés)', 'OM prévus / souhaités (acceptés / à prévoir)', 'Achats prévus / souhaités liés', 'Solde disponible', 'Date de fin d’engagement', 'Commentaires'] },
   { id: 'depenses', label: 'Dépenses', icon: '🧾', superuserOnly: false, kind: 'depenses',
     blurb: 'Dépenses / commandes avec pipeline complet (devis, SIFAC, BC, fournisseur, facture) et livraisons en plusieurs phases.',
     fields: ['Description', 'Demandeur', 'Catégorie Fonct. / Invest. · Nature', 'Ligne budgétaire liée (Recette)', 'Montant + frais de port', 'Devis · SIFAC · N° BC & dates', 'Fournisseur + contact', 'N° facture', 'Livraisons : arrivée, BL, Service Fait', 'Livraison complète'] },
-  { id: 'om', label: 'OM', icon: '✈️', superuserOnly: false, kind: 'om',
-    blurb: 'Ordres de mission : dates, demandeur, destination, coûts, statut (En attente / Acceptée…).',
+  { id: 'om', label: 'OM prévus / souhaités', icon: '✈️', superuserOnly: false, kind: 'om',
+    blurb: 'Ordres de mission prévus / souhaités : dates, demandeur, destination, coûts, statut (En attente / Acceptée…). Un OM « Acceptée » peut être transféré en dépense réelle (page Dépenses › onglet OM).',
     fields: ['Description', 'Demandeur', 'Date de demande · Départ · Retour', 'Destination', 'Transport · Hébergement · Repas · Inscription', 'Coût total (calculé)', 'Statut : En attente / Acceptée / Refusée / Terminée', 'Estimé vs Exact', 'Ligne budgétaire liée (Recette)', 'Commentaires'] },
-  { id: 'desiderate', label: 'Dépenses souhaitées', icon: '🛒', superuserOnly: false, kind: 'desiderate',
-    blurb: 'Souhaits d’achat de l’équipe : coût estimé et frais de port saisis par le demandeur, décision réservée au superutilisateur (Approuvé / En attente / Pas maintenant).',
+  { id: 'desiderate', label: 'Achats prévus / souhaités', icon: '🛒', superuserOnly: false, kind: 'desiderate',
+    blurb: 'Achats prévus / souhaités de l’équipe : coût estimé et frais de port saisis par le demandeur, décision réservée au superutilisateur (Approuvé / En attente / Pas maintenant).',
     fields: ['Décision — réservée au superutilisateur : Approuvé / En attente / Pas maintenant', 'Souhait d’achat', 'Urgence : Urgent / Important / Souhaitable', 'Demandeur', 'Fournisseur', 'Ligne budgétaire suggérée', 'Coût estimé', 'Frais de port', 'N° devis · Lien du devis (Drive, facultatif) · Code produit', 'Date de demande', 'Commentaires'] },
   { id: 'devisBc', label: 'Approbation devis & BC', icon: '📝', superuserOnly: false, kind: 'devisBc',
     blurb: 'Dépôt des devis et bons de commande à faire signer par le superutilisateur (visibles par les Permanents). Les fichiers sont téléversés dans Budget_labo/<année>/Devis|BC ; l’approbation d’un devis crée la dépense « Devis en cours » et celle du BC la fait passer à « BC signé » (liens automatiques).',
@@ -90,7 +90,7 @@ export const ADMIN_PAGES = [
     blurb: 'Personnel Permanent / Technique / Temporaire, corps & grades, missions, formations et bloc stagiaire lié à une Recette.',
     fields: ['Nom', 'Type : Permanent / Technique / Temporaire', 'Corps (PR, MCF, DR, CR, IR, IE, ASI, TECH, ATRF…)', 'Grade — sous-classification du corps (PR2, PR1, CE2, CE1, CN, HC, DR2, DR1…)', 'BAP · HDR · Catégorie · Échelon · Chevron', 'Dates contrat', 'Promotion · RIPEC', 'Missions · Formations', 'Stagiaire : encadrants · ligne budgétaire · dates · durée', 'Commentaires'] },
   { id: 'librerie', label: 'Librairie', icon: '📇', superuserOnly: false, kind: 'librerie',
-    blurb: 'Catalogue des fournisseurs utilisé par les Dépenses (BC) et les Dépenses souhaitées (souhaits d’achat).',
+    blurb: 'Catalogue des fournisseurs utilisé par les Dépenses (BC) et les achats prévus / souhaités (souhaits d’achat).',
     fields: ['Nom du fournisseur', 'Contact', 'Email · Téléphone · Adresse', 'Référence SIFAC (n° de tiers fournisseur)', 'Catégories associées', 'Site web', 'Commentaires'] },
   { id: 'settings', label: 'Setup', icon: '⚙️', superuserOnly: true, kind: null,
     blurb: 'Rôles (scientifiques / superutilisateur) et options des listes déroulantes du module.',
@@ -221,7 +221,7 @@ export const FORMATION_SUGGESTIONS = [
 ];
 export const DEPENSE_NATURES = ['Consommables', 'Stages', 'Instrumentation', 'Meetings', 'Audit', 'Prestations', 'Autre'];
 export const URGENCES = ['Urgent', 'Important', 'Souhaitable'];
-/* Décisions (statuts) des « Dépenses souhaitées » — le changement est réservé
+/* Décisions (statuts) des « Achats prévus / souhaités » — le changement est réservé
    au superutilisateur. Cette liste reste modifiable dans Setup › Options des
    listes déroulantes. Les anciennes valeurs d’import (« Approved », « Pending »,
    « Rejected / Pas maintenant »…) restent reconnues et affichées dans leur
@@ -302,6 +302,31 @@ export const isPiFournisseur = (value) => {
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, ' ').trim();
   return s === 'pi' || s === 'prestation interne';
+};
+
+/* Famille d’une dépense. La page Dépenses répartit ses lignes entre trois
+   onglets : « Achats » (fournisseur « normal », cycle devis → BC → livraisons),
+   « Prestations internes » (fournisseur « PI », sans BC) et « OM » (dépenses
+   liées à un ordre de mission, créées depuis la page « OM prévus / souhaités »
+   ou saisies directement). Le champ explicite `type` ('achat' | 'pi' | 'om')
+   prend le dessus ; à défaut la famille se déduit du fournisseur « PI ». */
+export const depenseKindOf = (d) => {
+  const t = String(d && d.type || '').trim().toLowerCase();
+  if (t === 'om' || t === 'pi' || t === 'achat') return t;
+  return isPiFournisseur(d && d.fournisseur) ? 'pi' : 'achat';
+};
+/** Vrai si la dépense est une ligne de type « OM ». */
+export const isOmDepense = (d) => depenseKindOf(d) === 'om';
+/** Libellé + icône de chaque famille, pour les sélecteurs « Déplacer… ». */
+export const DEPENSE_KIND_LABELS = {
+  achat: 'Achats (BC / SIFAC)',
+  pi: 'Prestation interne (PI)',
+  om: 'OM',
+};
+export const DEPENSE_KIND_META = {
+  achat: { label: 'Achats', icon: '🛒' },
+  pi: { label: 'Prestations internes', icon: '🛠️' },
+  om: { label: 'OM', icon: '✈️' },
 };
 
 /* Champs d’une dépense pouvant être déclarés obligatoires dans Paramètres.

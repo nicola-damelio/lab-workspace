@@ -1,9 +1,9 @@
 /* =========================================================================
    src/administration/desiderataPage.jsx
-   Page « Dépenses souhaitées » (souhaits d’achat, collection desiderate).
+   Page « Achats prévus / souhaités » (souhaits d’achat, collection desiderate).
    CRUD complet en remplacement de la liste générique :
 
-     · bouton « ＋ Ajouter une dépense souhaitée » : le demandeur déclare
+     · bouton « ＋ Ajouter un achat prévu / souhaité » : le demandeur déclare
        l’article, le fournisseur, la ligne budgétaire suggérée, le COÛT
        estimé et les FRAIS DE PORT ;
      · la PREMIÈRE colonne contient la décision du superutilisateur
@@ -129,7 +129,7 @@ const DecisionBadge = ({ raw }) =>
     ? <Badge tone={decisionTone(raw)}>{desiderataDecisionOf(raw)}</Badge>
     : <Badge tone="slate">En attente</Badge>;
 
-/* ── Fenêtre d’ajout / édition d’une dépense souhaitée ─────────────────── */
+/* ── Fenêtre d’ajout / édition d’un achat prévu / souhaité ─────────────── */
 const MODAL_INPUT = 'w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500';
 const MODAL_URL_INPUT = `${MODAL_INPUT} font-mono text-xs text-blue-700 placeholder:text-slate-300 placeholder:font-sans`;
 const MODAL_LABEL = 'block text-[10px] font-black uppercase text-slate-400 tracking-wide mb-1';
@@ -256,7 +256,7 @@ const DesiderataModal = ({
           <div className="min-w-0">
             <h2 className="text-lg font-black flex items-center gap-2">
               <span className="text-xl" aria-hidden="true">🛒</span>
-              {editing ? 'Modifier la dépense souhaitée' : 'Nouvelle dépense souhaitée'}
+              {editing ? 'Modifier l’achat prévu / souhaité' : 'Nouvel achat prévu / souhaité'}
             </h2>
             <p className="text-teal-100 text-xs">
               Souhait d’achat de l’équipe : décrivez l’article, son coût estimé et les frais de port — la décision
@@ -425,7 +425,7 @@ const DesiderataModal = ({
             Annuler
           </button>
           <button type="button" onClick={submit} className="bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm px-5 py-2 rounded-xl shadow-sm transition-colors">
-            💾 {editing ? 'Enregistrer les modifications' : 'Ajouter la dépense souhaitée'}
+            💾 {editing ? 'Enregistrer les modifications' : 'Ajouter l’achat prévu / souhaité'}
           </button>
         </div>
       </div>
@@ -435,7 +435,7 @@ const DesiderataModal = ({
 
 
 /* ═════════════════════════════════════════════════════════════════════════
-   Page « Dépenses souhaitées »
+   Page « Achats prévus / souhaités »
    ═════════════════════════════════════════════════════════════════════════ */
 export const DesiderataPage = () => {
   const {
@@ -590,24 +590,26 @@ export const DesiderataPage = () => {
     setModal(null);
     setNotice({
       tone: 'ok',
-      text: existingId ? `Dépense souhaitée « ${label} » enregistrée.` : `Dépense souhaitée « ${label} » ajoutée.`,
+      text: existingId
+        ? `Achat prévu / souhaité « ${label} » enregistré.`
+        : `Achat prévu / souhaité « ${label} » ajouté.`,
     });
   };
 
   const onRemove = (rec) => {
     if (!rec || !rec.id) return;
     const label = txt(rec.description) || rec.id;
-    if (!window.confirm(`Supprimer la dépense souhaitée « ${label} » ?\nCette action est définitive.`)) return;
+    if (!window.confirm(`Supprimer l’achat prévu / souhaité « ${label} » ?\nCette action est définitive.`)) return;
     remove('desiderate', rec.id);
-    setNotice({ tone: 'ok', text: `Dépense souhaitée « ${label} » supprimée.` });
+    setNotice({ tone: 'ok', text: `Achat prévu / souhaité « ${label} » supprimé.` });
   };
 
   /* E-mail au superutilisateur (et au(x) gestionnaire(s)) quand un souhait passe « Approuvé ». */
   const notifyApproved = async (patch) => {
-    const label = txt(patch && patch.description) || 'dépense souhaitée';
-    const subject = `[Lab Workspace] Dépense souhaitée approuvée — ${label}`;
+    const label = txt(patch && patch.description) || 'achat prévu / souhaité';
+    const subject = `[Lab Workspace] Achat prévu / souhaité approuvé — ${label}`;
     const lines = [
-      'La dépense souhaitée suivante a été approuvée :',
+      'L’achat prévu / souhaité suivant a été approuvé :',
       `  ${label}`,
       `Demandeur : ${txt(patch && patch.demandeur) || '—'}`,
       (patch && patch.montantEstime !== undefined && patch.montantEstime !== null && patch.montantEstime !== '')
@@ -850,13 +852,13 @@ export const DesiderataPage = () => {
           <button
             type="button"
             onClick={() => setModal({ mode: 'edit', rec: r })}
-            title="Modifier la dépense souhaitée"
+            title="Modifier l’achat prévu / souhaité"
             className="text-[11px] font-black px-2 py-1 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
           >✏️ Modifier</button>
           <button
             type="button"
             onClick={() => onRemove(r)}
-            title="Supprimer la dépense souhaitée"
+            title="Supprimer l’achat prévu / souhaité"
             className="text-[11px] font-black px-2 py-1 rounded-lg border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
           >🗑️</button>
         </div>
@@ -869,7 +871,7 @@ export const DesiderataPage = () => {
     <div className="max-w-full mx-auto flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-xs font-bold text-slate-400 max-w-2xl">
-          {sorted.length} dépense{sorted.length > 1 ? 's' : ''} souhaitée{sorted.length > 1 ? 's' : ''} ·
+          {sorted.length} achat{sorted.length > 1 ? 's' : ''} prévu{sorted.length > 1 ? 's' : ''} / souhaité{sorted.length > 1 ? 's' : ''} ·
           les colonnes sont triables (en-têtes) et filtrables (bouton « Filtres »).
         </p>
         <div className="flex items-center gap-2 flex-wrap">
@@ -884,10 +886,10 @@ export const DesiderataPage = () => {
           <button
             type="button"
             onClick={() => setModal({ mode: 'new' })}
-            title="Saisir une nouvelle dépense souhaitée à la main (coût estimé + frais de port)"
+            title="Saisir un nouvel achat prévu / souhaité à la main (coût estimé + frais de port)"
             className="bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
           >
-            <span className="text-base leading-none">＋</span> Ajouter une dépense souhaitée
+            <span className="text-base leading-none">＋</span> Ajouter un achat prévu / souhaité
           </button>
         </div>
       </div>
@@ -912,7 +914,7 @@ export const DesiderataPage = () => {
       )}
 
       <div className="rounded-xl border border-teal-100 bg-teal-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
-        <b>Fonctionnement :</b> chaque membre déclare ses souhaits d’achat (description, coût estimé et frais de port,
+        <b>Achats prévus / souhaités :</b> chaque membre déclare les achats souhaités de l’équipe (description, coût estimé et frais de port,
         fournisseur, ligne budgétaire suggérée…). La <b>première colonne « Décision »</b> affiche la décision du
         superutilisateur : <b>Approuvé / En attente / Pas maintenant</b> (personnalisable dans Setup › Options des listes
         déroulantes). Le <b>fournisseur</b>, la <b>ligne budgétaire</b> et le <b>demandeur</b> sont des liens vers la
@@ -922,9 +924,9 @@ export const DesiderataPage = () => {
       {sorted.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
           <div className="text-4xl mb-2">🛒</div>
-          <p className="font-black text-slate-700">Aucune dépense souhaitée pour le moment</p>
+          <p className="font-black text-slate-700">Aucun achat prévu / souhaité pour le moment</p>
           <p className="text-sm text-slate-400 mt-1 mb-4">
-            Utilisez « ＋ Ajouter une dépense souhaitée » pour déclarer un achat (coût et frais de port), ou « 📥 Importer »
+            Utilisez « ＋ Ajouter un achat prévu / souhaité » pour déclarer un article (coût et frais de port), ou « 📥 Importer »
             pour rejouer l’onglet « Souhaités » de la feuille Google Sheets.
           </p>
           <button
@@ -932,7 +934,7 @@ export const DesiderataPage = () => {
             onClick={() => setModal({ mode: 'new' })}
             className="bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm px-5 py-2.5 rounded-xl shadow-sm transition-colors"
           >
-            <span className="text-base leading-none">＋</span> Ajouter une dépense souhaitée
+            <span className="text-base leading-none">＋</span> Ajouter un achat prévu / souhaité
           </button>
         </div>
       ) : (
@@ -941,8 +943,8 @@ export const DesiderataPage = () => {
           rows={sorted}
           minWidth="1680px"
           searchPlaceholder="Rechercher article, demandeur, fournisseur, ligne, code produit…"
-          emptyLabel="Aucune dépense souhaitée pour le moment"
-          noMatchLabel="Aucune dépense souhaitée ne correspond aux filtres."
+          emptyLabel="Aucun achat prévu / souhaité pour le moment"
+          noMatchLabel="Aucun achat prévu / souhaité ne correspond aux filtres."
         />
       )}
 

@@ -4,7 +4,7 @@
 
    Chaque membre du laboratoire compose et enregistre SES propres graphiques
    (dépenses — découpées en Achats / Prestations internes comme la page
-   Dépenses — lignes budgétaires / recettes, ordres de mission, souhaits) :
+   Dépenses — lignes budgétaires / recettes, OM prévus / souhaités, achats prévus / souhaités) :
      · type : camembert 🥧 / barres 📊 / courbe 📈 ;
      · périmètre Dépenses : Toutes (Achats + PI) / Achats / Prestations internes ;
      · regroupement : Achats / PI, classification, catégorie, statut, fournisseur,
@@ -21,7 +21,7 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { useAdmin } from './AdminContext';
-import { DEPENSE_BC_SIGNE, isPiFournisseur, isDesiderataApproved } from './adminSchema';
+import { DEPENSE_BC_SIGNE, isPiFournisseur, isDesiderataApproved, isOmDepense } from './adminSchema';
 import { parseEuroAmount } from './importUtils';
 
 /* ── Formatage ──────────────────────────────────────────────────────────── */
@@ -85,20 +85,21 @@ const CHART_TYPES = [
 const SOURCE_META = {
   depenses: { label: 'Dépenses', icon: '🧾' },
   lignes: { label: 'Lignes budgétaires (Recettes)', icon: '📈' },
-  om: { label: 'Ordres de mission', icon: '✈️' },
-  desiderate: { label: 'Souhaits d’achat', icon: '🛒' },
+  om: { label: 'OM prévus / souhaités', icon: '✈️' },
+  desiderate: { label: 'Achats prévus / souhaités', icon: '🛒' },
 };
 
 /* Périmètres de la source « Dépenses » — mêmes volets que la page Dépenses
-   (onglets Achats / Prestations internes / OM ; l’OM a sa propre source
-   « Ordres de mission »). « Achats » = fournisseur autre que « PI ». */
+   (onglets Achats / Prestations internes ; les lignes de type « OM » y sont
+   exclues — l’OM a sa propre source « OM prévus / souhaités »). */
 const SCOPE_META = {
-  all: { label: 'Toutes (Achats + PI)', icon: '🧾', hint: 'Achats et prestations internes mélangés — l’OM a sa propre source « Ordres de mission ».' },
+  all: { label: 'Toutes (Achats + PI)', icon: '🧾', hint: 'Achats et prestations internes mélangés — lignes de type « OM » exclues (source « OM prévus / souhaités » dédiée).' },
   achats: { label: 'Achats', icon: '🛒', hint: 'Fournisseur différent de « PI » : cycle devis → BC/SIFAC → livraison → facture.' },
   pi: { label: 'Prestations internes (PI)', icon: '🛠️', hint: 'Fournisseur « PI » : service interne facturé sans bon de commande.' },
 };
 const scopeOf = (cfg) => (cfg && cfg.scope === 'pi' ? 'pi' : cfg && cfg.scope === 'achats' ? 'achats' : 'all');
 const scopeFilter = (scope) => (row) => {
+  if (isOmDepense(row)) return false; // les lignes OM suivent la source « OM prévus / souhaités »
   if (scope === 'all') return true;
   const isPi = isPiFournisseur(row && row.fournisseur);
   return scope === 'pi' ? isPi : !isPi;
@@ -165,13 +166,17 @@ const ligneDim = (id, recetteKeys, extraKeys) => ({
 });
 
 /* Dimension « Achats / PI » : catégorise chaque dépense exactement comme les
-   onglets de la page Dépenses. */
+   onglets de la page Dépenses. Les lignes de type « OM » sont exclues (elles
+   font partie de la source « OM prévus / souhaités »). */
 const depenseCatDim = {
   id: 'typeDepense',
   label: 'Achats / Prestations internes (PI)',
-  group: (row) => (isPiFournisseur(row && row.fournisseur)
-    ? { key: 'pi', label: 'Prestations internes (PI)' }
-    : { key: 'achats', label: 'Achats' }),
+  group: (row) => {
+    if (isOmDepense(row)) return null;
+    return isPiFournisseur(row && row.fournisseur)
+      ? { key: 'pi', label: 'Prestations internes (PI)' }
+      : { key: 'achats', label: 'Achats' };
+  },
 };
 
 /* ── Dimensions disponibles par source ─────────────────────────────────── */
@@ -286,8 +291,10 @@ const buildLigneRows = (recettes, depenses, om, desiderate) => {
   const isSigned = (d) => txt(d && d.statut) === DEPENSE_BC_SIGNE;
   const isPi = (d) => isPiFournisseur(d && d.fournisseur);
   /* Même règle que la page Recettes : engagé = BC signés + PI (prestations
-     internes, considérées consommées dès leur saisie, sauf refus/annulation). */
+     internes, considérées consommées dès leur saisie, sauf refus/annulation).
+     Les lignes de type « OM » sont exclues (coût déjà compté via la collection om). */
   const isEngaged = (d) => {
+    if (String(d && d.type || '').trim() === 'om') return false;
     if (isSigned(d)) return true;
     const st = txt(d && (d.statut || d.suivi));
     return isPi(d) && !/refus|rejet|annul/i.test(st);
@@ -862,7 +869,7 @@ const EXAMPLES = [
   },
   {
     id: 'ex-om', icon: '✈️', label: 'OM par mois',
-    hint: 'Barres des coûts totaux des ordres de mission par mois',
+    hint: 'Barres des coûts totaux des OM prévus / souhaités par mois',
     cfg: { source: 'om', chartType: 'bar', dimension: 'mois', measure: 'montant', limit: 24, title: 'Coûts des missions par mois' },
   },
   {
@@ -1084,7 +1091,7 @@ export const BudgetPage = () => {
       <p className="text-[11px] text-slate-400">
         💾 Sauvegarde automatique : vos graphiques sont conservés dans cette base (datasets/&lt;id&gt;,
         payload `administration › settings › budgetCharts`). Pensez à alimenter les pages Dépenses,
-        Recettes, OM et Dépenses souhaitées — les montants saisis y alimentent immédiatement ces graphiques.
+        Recettes, OM prévus / souhaités et achats prévus / souhaités — les montants saisis y alimentent immédiatement ces graphiques.
       </p>
 
       {modal && (

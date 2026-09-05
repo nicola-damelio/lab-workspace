@@ -317,7 +317,7 @@ const SourceBody = ({ text, onChangeText, busy, error, onAnalyse, onFile, onPast
     <p className="text-[11px] text-slate-400 leading-relaxed">
       Les en-têtes sont détectés automatiquement et dirigés vers la bonne page : <b>Lignes budgétaires</b> →
       Recettes ; <b>Personnel</b> (annuaire) et <b>Stagiaires</b> → Personnel ; <b>Dépenses</b> (BC / SIFAC) → Dépenses ;
-      <b>OMs</b> → OM ; <b>Souhaités</b> → Dépenses souhaitées ; <b>Questions_ouvertes</b> → Questions ouvertes ; <b>H&S</b> →
+      <b>OMs</b> → OM prévus / souhaités ; <b>Souhaités</b> → Achats prévus / souhaités ; <b>Questions_ouvertes</b> → Questions ouvertes ; <b>H&S</b> →
       Hygiène & Sécurité. Les montants « € 18.664,00 » et les dates « 20/10/2025 » sont convertis automatiquement, et
       la ligne budgétaire est reliée automatiquement quand le code projet figure dans « Ligne budgetaire ».
     </p>

@@ -1,6 +1,6 @@
 /* =========================================================================
    src/administration/omPage.jsx
-   Page « OM » — ordres de mission (CRUD complet).
+   Page « OM prévus / souhaités » — ordres de mission à préparer (CRUD complet).
 
    Chaque OM peut contenir :
      · description (mission) — obligatoire
@@ -376,9 +376,10 @@ const OmModal = ({ rec, recettes, demandeurNames, statusOptions, onCancel, onSav
    ═════════════════════════════════════════════════════════════════════════ */
 export const OmPage = () => {
   const {
-    data, settings, upsert, remove, currentUser, access, operators,
+    data, settings, upsert, remove, currentUser, access, operators, navigate,
   } = useAdmin();
   const om = useMemo(() => (Array.isArray(data.om) ? data.om : []), [data.om]);
+  const depenses = useMemo(() => (Array.isArray(data.depenses) ? data.depenses : []), [data.depenses]);
   const recettes = useMemo(() => (Array.isArray(data.recettes) ? data.recettes : []), [data.recettes]);
   const personnel = useMemo(() => (Array.isArray(data.personnel) ? data.personnel : []), [data.personnel]);
 
@@ -509,6 +510,108 @@ export const OmPage = () => {
     setNotice({ tone: 'ok', text: `Ordre de mission « ${label} » supprimé.` });
   };
 
+  /* ── Transfert d’un OM « Acceptée » vers la page Dépenses › onglet OM ──
+     Le transfert crée une ligne de type « om » DANS la collection depenses :
+     elle devient un enregistrement indépendant (édition, facture, paiement,
+     déplacement entre Achats / PI / OM). La collection om — les demandes de
+     mission « prévues / souhaitées » — n’est pas touchée. */
+  const linkedDepenseOf = (rec) =>
+    (Array.isArray(depenses) ? depenses : []).find((d) => d && d.omId && d.omId === rec.id) || null;
+
+  const transferOmToDepenses = (rec) => {
+    if (!rec || !rec.id) return;
+    if (linkedDepenseOf(rec)) {
+      setNotice({ tone: 'info', text: `L’OM « ${missionOf(rec) || rec.id} » est déjà transféré dans Dépenses › OM.` });
+      return;
+    }
+    if (!isSuper) return;
+    const recetteId = rec.recetteId && recettes.some((r) => r.id === rec.recetteId) ? rec.recetteId : '';
+    const patch = {
+      type: 'om',
+      omId: rec.id,
+      description: txt(missionOf(rec)),
+      demandeur: txt(demandeurOf(rec)),
+      destination: txt(pick(rec, ['destination', 'ville'])),
+      categorie: txt(pick(rec, ['categorie'])) || 'Fonctionnement',
+      classification: 'Mission',
+      ligneBudgetaire: recetteId
+        ? txt((recettes.find((r) => r.id === recetteId) || {}).ligne)
+        : txt(pick(rec, ['ligneBudgetaire', 'ligne'])),
+      recetteId,
+      montant: parseNum(rec.coutTotal),
+      fraisPort: null,
+      dateDemande: isoOf(rec.dateDemande) || isoOf(rec.dateMission),
+      dateMission: isoOf(pick(rec, ['dateMission', 'dateDebut'])),
+      dateRetour: isoOf(rec.dateRetour),
+      fournisseur: '',
+      numDevis: '', numDevisUrl: '', numSIFAC: '', dateBC: '', numBC: '', numBCUrl: '',
+      dateSignature: '', dateSignatureDevis: '', dateApprobFournisseur: '',
+      numFacture: '', numFactureUrl: '',
+      omNo: txt(pick(rec, ['numOM', 'numeroOm', 'omNo'])),
+      omUrl: txt(pick(rec, ['omUrl', 'lienOm'])),
+      suivi: '',
+      statut: '',
+      nonComptabiliseEnt: false,
+      ent: '',
+      livraisonComplete: '',
+      livraisons: [],
+      commentaires: txt(pick(rec, ['commentaires', 'notes'])),
+    };
+    const created = upsert('depenses', patch, null);
+    upsert('om', { depenseId: created && created.id }, rec.id);
+    setNotice({
+      tone: 'ok',
+      text: `OM « ${missionOf(rec) || rec.id} » transféré dans Dépenses › OM (ligne indépendante). Vous pouvez la déplacer vers Achats / PI si besoin.`,
+    });
+    if (created && created.id && typeof navigate === 'function') {
+      navigate('depenses', { kind: 'depense', recordId: created.id });
+    }
+  };
+
+  const approvedTransferables = useMemo(
+    () => om.filter((o) => isOmApproved(pick(o, ['statut'])) && !linkedDepenseOf(o)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [om, depenses]
+  );
+  const transferAllOm = () => {
+    if (!approvedTransferables.length) return;
+    approvedTransferables.forEach((o) => {
+      const recetteId = o.recetteId && recettes.some((r) => r.id === o.recetteId) ? o.recetteId : '';
+      const patch = {
+        type: 'om',
+        omId: o.id,
+        description: txt(missionOf(o)),
+        demandeur: txt(demandeurOf(o)),
+        destination: txt(pick(o, ['destination', 'ville'])),
+        categorie: txt(pick(o, ['categorie'])) || 'Fonctionnement',
+        classification: 'Mission',
+        ligneBudgetaire: recetteId
+          ? txt((recettes.find((r) => r.id === recetteId) || {}).ligne)
+          : txt(pick(o, ['ligneBudgetaire', 'ligne'])),
+        recetteId,
+        montant: parseNum(o.coutTotal),
+        fraisPort: null,
+        dateDemande: isoOf(o.dateDemande) || isoOf(o.dateMission),
+        dateMission: isoOf(pick(o, ['dateMission', 'dateDebut'])),
+        dateRetour: isoOf(o.dateRetour),
+        fournisseur: '',
+        numFacture: '', numFactureUrl: '',
+        omNo: txt(pick(o, ['numOM', 'numeroOm', 'omNo'])),
+        omUrl: txt(pick(o, ['omUrl', 'lienOm'])),
+        suivi: '', statut: '',
+        nonComptabiliseEnt: false, ent: '',
+        livraisonComplete: '', livraisons: [],
+        commentaires: txt(pick(o, ['commentaires', 'notes'])),
+      };
+      const created = upsert('depenses', patch, null);
+      upsert('om', { depenseId: created && created.id }, o.id);
+    });
+    setNotice({
+      tone: 'ok',
+      text: `${approvedTransferables.length} OM accepté${approvedTransferables.length > 1 ? 's' : ''} transféré${approvedTransferables.length > 1 ? 's' : ''} dans Dépenses › OM.`,
+    });
+  };
+
   const columns = [
     {
       key: 'statut', label: 'Statut', filter: 'facet',
@@ -540,30 +643,68 @@ export const OmPage = () => {
     {
       key: 'actions', label: '', filter: 'none', filterable: false,
       value: () => '',
-      display: (r) => (
-        <div className="flex items-center gap-1 whitespace-nowrap">
-          <button
-            type="button" title="Modifier l’ordre de mission"
-            onClick={() => setModal({ mode: 'edit', rec: r })}
-            className="text-[11px] font-black px-2 py-1 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
-          >✏️ Modifier</button>
-          <button
-            type="button" title="Supprimer l’ordre de mission"
-            onClick={() => onRemove(r)}
-            className="text-[11px] font-black px-2 py-1 rounded-lg border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
-          >🗑️</button>
-        </div>
-      ),
+      display: (r) => {
+        const approved = isOmApproved(pick(r, ['statut']));
+        const linked = linkedDepenseOf(r);
+        return (
+          <div className="flex items-center gap-1 whitespace-nowrap">
+            {approved ? (
+              linked ? (
+                <button
+                  type="button"
+                  title="Déjà transféré dans Dépenses › OM — ouvrir la ligne"
+                  onClick={() => {
+                    if (typeof navigate === 'function') navigate('depenses', { kind: 'depense', recordId: linked.id });
+                  }}
+                  className="text-[11px] font-black px-2 py-1 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
+                >✓ Dans Dépenses</button>
+              ) : isSuper ? (
+                <button
+                  type="button"
+                  title="Créer la dépense liée dans la page Dépenses › onglet OM (ligne indépendante de ce tableau)"
+                  onClick={() => transferOmToDepenses(r)}
+                  className="text-[11px] font-black px-2 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors"
+                >→ Dépenses</button>
+              ) : null
+            ) : (
+              <span title="L’OM doit être « Acceptée » avant de pouvoir être transféré en dépense" className="text-[10px] text-slate-300">↦ après acceptation</span>
+            )}
+            <button
+              type="button" title="Modifier l’ordre de mission"
+              onClick={() => setModal({ mode: 'edit', rec: r })}
+              className="text-[11px] font-black px-2 py-1 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
+            >✏️ Modifier</button>
+            <button
+              type="button" title="Supprimer l’ordre de mission"
+              onClick={() => onRemove(r)}
+              className="text-[11px] font-black px-2 py-1 rounded-lg border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
+            >🗑️</button>
+          </div>
+        );
+      },
     },
   ];
   return (
     <div className="max-w-full mx-auto flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-xs font-bold text-slate-400 max-w-2xl">
-          {om.length} ordre{om.length > 1 ? 's' : ''} de mission · les colonnes sont
+          {om.length} demande{om.length > 1 ? 's' : ''} de mission (OM prévus / souhaités) · les colonnes sont
           triables (en-têtes) et filtrables (bouton « Filtres »).
         </p>
         <div className="flex items-center gap-2 flex-wrap">
+          {isSuper && approvedTransferables.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                if (!window.confirm(`Transférer ${approvedTransferables.length} OM accepté${approvedTransferables.length > 1 ? 's' : ''} dans Dépenses › onglet OM ?\nChaque OM devient une ligne de dépense indépendante (type OM).`)) return;
+                transferAllOm();
+              }}
+              title="Créer la ligne de dépense OM de chaque OM « Acceptée » pas encore transféré"
+              className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
+            >
+              <span className="text-base leading-none">⬇</span> Transférer {approvedTransferables.length} OM accepté{approvedTransferables.length > 1 ? 's' : ''}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setImportOpen(true)}
@@ -586,10 +727,13 @@ export const OmPage = () => {
       {notice && <Notice tone={notice.tone} text={notice.text} mailto={notice.mailto} onClose={() => setNotice(null)} />}
 
       <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
-        <b>Fonctionnement :</b> chaque OM décrit une mission (dates, demandeur, destination,
+        <b>OM prévus / souhaités :</b> chaque OM décrit une mission à préparer (dates, demandeur, destination,
         ligne budgétaire, coûts estimés ou exacts). La <b>première colonne « Statut »</b>
         (En attente / Acceptée / Refusée / Terminée) n’est modifiable que par le superutilisateur ;
         une fois l’OM <b>Acceptée</b>, un e-mail prévient la gestionnaire. Le bouton
+        <b>« → Dépenses »</b> (ou « ⬇ Transférer… ») crée alors une <b>ligne de type « OM » dans la page
+        Dépenses › onglet OM</b> : ce tableau-là est <b>indépendant</b> — il ne rejoue pas cette liste, il suit
+        la dépense réelle (facture, paiement), que l’on peut déplacer vers « Achats » / « PI ». Le bouton
         <b>« ＋ Ajouter un OM »</b> permet une saisie manuelle complète ; <b>« ✏️ Modifier »</b> ouvre
         la fiche d’un OM existant et <b>« 🗑️ »</b> le supprime. L’assistant d’import
         (bouton « 📥 Importer ») reste disponible pour rejouer la feuille « ENT / Prix / Description » du classeur.
@@ -598,10 +742,11 @@ export const OmPage = () => {
       {om.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
           <div className="text-4xl mb-2">✈️</div>
-          <p className="font-black text-slate-700">Aucun ordre de mission pour le moment</p>
+          <p className="font-black text-slate-700">Aucun OM prévu / souhaité pour le moment</p>
           <p className="text-sm text-slate-400 mt-1 mb-4">
-            Utilisez « ＋ Ajouter un OM » pour saisir une mission à la main (dates, coûts, statut…)
-            ou « 📥 Importer » pour rejouer la feuille « ENT / Prix / Description » du classeur.
+            Utilisez « ＋ Ajouter un OM » pour saisir une mission à la main (dates, coûts, statut…) — une fois
+            l’OM « Acceptée », son bouton « → Dépenses » crée la dépense réelle dans Dépenses › onglet OM.
+            Ou « 📥 Importer » pour rejouer la feuille « ENT / Prix / Description » du classeur.
           </p>
           <button
             type="button"

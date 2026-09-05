@@ -259,13 +259,13 @@ const OverviewPage = ({ visible }) => {
         )}
         {visible.some((p) => p.id === 'om') && (
           <div className="bg-violet-50 border border-violet-200 rounded-2xl px-4 py-3">
-            <div className="text-[10px] font-black uppercase text-violet-700">Ordres de mission</div>
+            <div className="text-[10px] font-black uppercase text-violet-700">OM prévus / souhaités</div>
             <div className="text-2xl font-black text-violet-800">{totalOm}</div>
           </div>
         )}
         {visible.some((p) => p.id === 'desiderate') && (
           <div className="bg-teal-50 border border-teal-200 rounded-2xl px-4 py-3">
-            <div className="text-[10px] font-black uppercase text-teal-700">Dépenses souhaitées</div>
+            <div className="text-[10px] font-black uppercase text-teal-700">Achats prévus / souhaités</div>
             <div className="text-2xl font-black text-teal-800">{totalDesiderate}</div>
           </div>
         )}

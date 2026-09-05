@@ -76,8 +76,11 @@ export const RecettesPage = () => {
     const isPi = (d) => isPiFournisseur(d && d.fournisseur);
     /* « Engagé » = BC signés (dépenses ordonnées) + prestations internes « PI » :
        un service interne est facturé sans bon de commande, il est donc
-       considéré consommé dès sa saisie (sauf dépense refusée / annulée). */
+       considéré consommé dès sa saisie (sauf dépense refusée / annulée).
+       Les lignes de type « OM » sont EXCLUES : leur coût est déjà compté dans
+       la colonne OM (collection om), elles ne font que suivre le paiement. */
     const isEngaged = (d) => {
+      if (String(d && d.type || '').trim() === 'om') return false;
       if (isSigned(d)) return true;
       const st = String(d.statut || d.suivi || '').trim();
       return isPi(d) && !/refus|rejet|annul/i.test(st);
@@ -246,13 +249,13 @@ export const RecettesPage = () => {
       ),
     },
     {
-      key: 'desiderata', label: 'Souhaitées (non incluses)', dataType: 'number', align: 'right', nowrap: true,
+      key: 'desiderata', label: 'Achats prévus/souhaités (non inclus)', dataType: 'number', align: 'right', nowrap: true,
       value: (r) => Number(r.__agg.desMontant) || 0,
       display: (r) => (
         <HoverCell
           amount={r.__agg.desMontant}
           items={r.__agg.lineDes.map((d) => ({
-            title: d.description || 'Dépense souhaitée',
+            title: d.description || 'Achat prévu / souhaité',
             meta: [d.demandeur || '', desiderataDecisionOf(d.statut)].filter(Boolean).join(' · '),
             value: d.montantEstime !== undefined && d.montantEstime !== null && d.montantEstime !== ''
               ? euro.format(toNum(d.montantEstime))
@@ -545,14 +548,14 @@ const LinkLineModal = ({ modal, depenses, om, desiderate, onCancel }) => {
           <label key={it.id} className="flex items-start gap-2 px-3 py-2 border-b border-slate-100 last:border-0 cursor-pointer hover:bg-blue-50/50">
             <input
               type="checkbox"
-              checked={checked.has(`${title === 'Dépenses (BC)' ? 'depenses' : title === 'Ordres de mission' ? 'om' : 'desiderate'}:${it.id}`)}
-              onChange={() => toggle(`${title === 'Dépenses (BC)' ? 'depenses' : title === 'Ordres de mission' ? 'om' : 'desiderate'}:${it.id}`)}
+              checked={checked.has(`${title === 'Dépenses (BC · PI · OM)' ? 'depenses' : title === 'OM prévus / souhaités' ? 'om' : 'desiderate'}:${it.id}`)}
+              onChange={() => toggle(`${title === 'Dépenses (BC · PI · OM)' ? 'depenses' : title === 'OM prévus / souhaités' ? 'om' : 'desiderate'}:${it.id}`)}
               className="mt-0.5 accent-blue-600"
             />
             <span className="min-w-0">
               <span className="block text-xs font-bold text-slate-700 truncate">{it.description || it.destination || it.ligne || it.id}</span>
               <span className="block text-[10px] text-slate-400 truncate">
-                {title === 'Dépenses (BC)' ? `${it.demandeur || ''} · ${it.bcNo || 'sans BC'}` : title === 'Ordres de mission' ? `${it.destination || ''} · ${it.statut || 'En attente'}` : `${it.demandeur || ''} · ${desiderataDecisionOf(it.statut) || 'En attente'}`}
+                {title === 'Dépenses (BC · PI · OM)' ? `${it.demandeur || ''} · ${it.bcNo || 'sans BC'}` : title === 'OM prévus / souhaités' ? `${it.destination || ''} · ${it.statut || 'En attente'}` : `${it.demandeur || ''} · ${desiderataDecisionOf(it.statut) || 'En attente'}`}
               </span>
             </span>
           </label>
@@ -566,12 +569,12 @@ const LinkLineModal = ({ modal, depenses, om, desiderate, onCancel }) => {
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden max-h-[92vh] flex flex-col">
         <div className="px-6 py-4 bg-gradient-to-br from-blue-600 to-indigo-700 text-white">
           <h2 className="text-lg font-black">Lier des éléments à la ligne</h2>
-          <p className="text-blue-100 text-xs">Ligne : « {modal.rec.ligne || modal.rec.id} » — cochez les Dépenses (BC), OM ou Dépenses souhaitées imputées sur ce budget.</p>
+          <p className="text-blue-100 text-xs">Ligne : « {modal.rec.ligne || modal.rec.id} » — cochez les Dépenses (BC · PI · OM), les OM prévus / souhaités ou les achats prévus / souhaités imputés sur ce budget.</p>
         </div>
         <div className="p-5 overflow-y-auto custom-scrollbar flex flex-col gap-3">
-          {group('Dépenses (BC)', '🧾', depenses)}
-          {group('Ordres de mission', '✈️', om)}
-          {group('Dépenses souhaitées', '🛒', desiderate)}
+          {group('Dépenses (BC · PI · OM)', '🧾', depenses)}
+          {group('OM prévus / souhaités', '✈️', om)}
+          {group('Achats prévus / souhaités', '🛒', desiderate)}
         </div>
         <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-2 bg-slate-50">
           <button onClick={onCancel} className="px-4 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-200 bg-slate-100">Fermer</button>
