@@ -206,8 +206,6 @@ export const RecettesPage = () => {
       display: (r) => (
         <HoverCell
           amount={r.__agg.depTotal}
-          badge={r.__agg.spent.length}
-          hint="service fait — dépense dont le n° SF est renseigné"
           items={r.__agg.spent.map((d) => ({
             title: d.description || 'Dépense',
             meta: [d.bcNo || d.sifacNo || '', depenseSfRefs(d).join(', ')].filter(Boolean).join(' · '),
@@ -222,8 +220,6 @@ export const RecettesPage = () => {
       display: (r) => (
         <HoverCell
           amount={r.__agg.engTotal}
-          badge={r.__agg.engages.length}
-          hint={`${r.__agg.engagesBC.length} BC signé(s) · ${r.__agg.engagesPI.length} PI (prestations internes)`}
           items={r.__agg.engages.map((d) => {
             const isPi = isPiFournisseur(d.fournisseur);
             return {
@@ -241,8 +237,6 @@ export const RecettesPage = () => {
       display: (r) => (
         <HoverCell
           amount={r.__agg.omTotal}
-          badge={r.__agg.lineOm.length}
-          hint={`${r.__agg.omAcceptees.length} acceptée(s) · ${r.__agg.omEnAttente.length} en attente`}
           items={r.__agg.lineOm.map((o) => ({
             title: o.description || o.destination || 'OM',
             meta: [o.destination || '', o.statut || 'En attente'].filter(Boolean).join(' · '),
@@ -257,8 +251,6 @@ export const RecettesPage = () => {
       display: (r) => (
         <HoverCell
           amount={r.__agg.desMontant}
-          badge={r.__agg.lineDes.length}
-          hint={`${r.__agg.desApprouvees.length} souhait(s) approuvé(s) — information seule, non inclus dans le solde`}
           items={r.__agg.lineDes.map((d) => ({
             title: d.description || 'Dépense souhaitée',
             meta: [d.demandeur || '', desiderataDecisionOf(d.statut)].filter(Boolean).join(' · '),
@@ -385,29 +377,36 @@ const SummaryCard = ({ label, value, tone }) => {
   );
 };
 
-/* ── Cases à détail au survol ───────────────────────────────────────────── */
-const HoverCell = ({ amount, badge, hint, items }) => (
-  <div className="group relative inline-block text-right">
-    <div className="font-bold text-slate-800 whitespace-nowrap">{euro.format(amount)}</div>
-    <div className="text-[10px] text-slate-400">
-      {badge > 0 ? `${badge} élément${badge > 1 ? 's' : ''}` : 'aucun'}
-      {hint ? ` · ${hint}` : ''}
-    </div>
-    <div className="hidden group-hover:block absolute right-0 top-full mt-1 z-30 w-80 max-h-64 overflow-y-auto custom-scrollbar bg-white border border-slate-200 rounded-xl shadow-2xl p-2">
-      {items.length === 0 ? (
-        <p className="text-[11px] text-slate-400 px-2 py-1">Aucun élément lié à cette ligne.</p>
-      ) : items.map((it, i) => (
-        <div key={i} className="flex items-start justify-between gap-2 px-2 py-1.5 border-b border-slate-100 last:border-0">
-          <div className="min-w-0">
-            <div className="text-xs font-bold text-slate-700 truncate">{it.title}</div>
-            {it.meta ? <div className="text-[10px] text-slate-400 truncate">{it.meta}</div> : null}
-          </div>
-          <div className="text-xs font-bold text-slate-800 whitespace-nowrap">{it.value}</div>
+/* ── Cases à détail au survol ─────────────────────────────────────────────
+   Seul le montant est affiché (le détail — liste des éléments liés, n° BC /
+   SF, statuts… — n’apparaît qu’au survol, via ⓘ) : les colonnes restent
+   étroites et la vue d’ensemble de la table reste lisible. */
+const HoverCell = ({ amount, items }) => {
+  const linked = Array.isArray(items) ? items : [];
+  return (
+    <div className="group relative inline-block text-right">
+      <div className="font-bold text-slate-800 whitespace-nowrap">
+        {euro.format(amount)}
+        {linked.length > 0 && (
+          <span className="ml-1 text-[11px] text-slate-300 group-hover:text-blue-500 align-middle" aria-hidden="true">ⓘ</span>
+        )}
+      </div>
+      {linked.length > 0 && (
+        <div className="hidden group-hover:block absolute right-0 top-full mt-1 z-30 w-80 max-h-64 overflow-y-auto custom-scrollbar bg-white border border-slate-200 rounded-xl shadow-2xl p-2">
+          {linked.map((it, i) => (
+            <div key={i} className="flex items-start justify-between gap-2 px-2 py-1.5 border-b border-slate-100 last:border-0">
+              <div className="min-w-0">
+                <div className="text-xs font-bold text-slate-700 truncate">{it.title}</div>
+                {it.meta ? <div className="text-[10px] text-slate-400 truncate">{it.meta}</div> : null}
+              </div>
+              <div className="text-xs font-bold text-slate-800 whitespace-nowrap">{it.value}</div>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
     </div>
-  </div>
-);
+  );
+};
 
 const HoverNote = ({ note }) => (
   <div className="group relative inline-block ml-1 cursor-help">

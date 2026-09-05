@@ -445,7 +445,7 @@ export const SmartTable = ({
         <div className="overflow-auto custom-scrollbar overscroll-contain" ref={scrollRef} style={maxHeight ? { maxHeight } : undefined}>
           <table className="w-full text-sm border-collapse" style={{ minWidth }}>
             <thead>
-              <tr className="text-[10px] uppercase tracking-wide text-slate-500">
+              <tr className="text-xs uppercase tracking-wide text-slate-500">
                 {visibleCols.map((col, ci) => (
                   <SortHeader
                     key={col.key}
