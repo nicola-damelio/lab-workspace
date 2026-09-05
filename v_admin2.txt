@@ -1,0 +1,117 @@
+﻿134: 
+135:       <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4 md:p-6">
+136:         {denied ? (
+137:           <AccessDeniedCard page={requested} />
+138:         ) : !ready ? (
+139:           <div className="h-full flex items-center justify-center text-slate-400 text-sm">Chargement des données…</div>
+140:         ) : active.id === 'overview' ? (
+141:           <OverviewPage visible={visible} />
+142:         ) : active.id === 'recettes' ? (
+143:           <RecettesPage />
+144:         ) : active.id === 'personnel' ? (
+145:           <PersonnelPage />
+146:         ) : active.id === 'conges' ? (
+147:           <CongesPage />
+148:         ) : active.id === 'depenses' ? (
+149:           <DepensesPage />
+150:         ) : active.id === 'budget' ? (
+151:           <BudgetPage />
+152:         ) : active.id === 'settings' ? (
+153:           <SettingsPage
+154:             operators={operators} setOperators={setOperators}
+155:             authSettings={authSettings} setAuthSettings={setAuthSettings}
+156:             currentUser={currentUser}
+157:           />
+158:         ) : active.id === 'librerie' ? (
+159:           <LibreriePage />
+160:         ) : active.id === 'om' ? (
+161:           <OmPage />
+162:         ) : active.id === 'desiderate' ? (
+163:           <DesiderataPage />
+164:         ) : active.id === 'devisBc' ? (
+165:           <ApprobationPage />
+166:         ) : TABLE_KINDS.has(active.kind) ? (
+167:           <CollectionPage kind={active.kind} />
+168:         ) : active.kind ? (
+169:           <PageScaffold page={active} count={(data[active.kind] || []).length} />
+170:         ) : (
+171:           <PageScaffold page={active} count={null} />
+172:         )}
+173:       </div>
+174:     </div>
+175:   );
+176: };
+177: 
+178: const RoleBadge = ({ profile }) => {
+179:   const p = profile || {};
+180:   if (p.isSuperuser) {
+181:     return (
+182:       <span className="text-[10px] font-black uppercase text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-1" title="Superutilisateur : accès intégral à toutes les pages">
+183:         👑 Superutilisateur
+184:       </span>
+185:     );
+186:   }
+187:   const meta = ADMIN_FONCTION_META[p.fonction] || null;
+188:   return (
+189:     <span
+190:       className="text-[10px] font-black uppercase text-slate-600 bg-slate-50 border border-slate-200 rounded-full px-2.5 py-1"
+191:       title={meta && meta.hint ? meta.hint : (p.person ? `Fiche : ${p.person.nom || ''}` : 'Aucune fiche Personnel liée — accès minimal.')}
+192:     >
+193:       {p.statut || 'Non permanent'}{p.fonction ? ` · ${meta ? meta.label : p.fonction}` : ''}
+194:     </span>
+195:   );
+196: };
+197: 
+198: /* ── En-tête de sauvegarde ──────────────────────────────────────────────── */
+199: const SaveBadge = ({ status }) => {
+200:   if (status === 'saving') {
+201:     return <span className="text-[10px] font-black uppercase text-blue-700 bg-blue-50 border border-blue-200 rounded-full px-2.5 py-1 animate-pulse">Sauvegarde…</span>;
+202:   }
+203:   if (status === 'saved') {
+204:     return <span className="text-[10px] font-black uppercase text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2.5 py-1">✓ Enregistré</span>;
+205:   }
+206:   if (status === 'error') {
+207:     return <span className="text-[10px] font-black uppercase text-red-700 bg-red-50 border border-red-200 rounded-full px-2.5 py-1">✕ Sauvegarde impossible</span>;
+208:   }
+209:   return <span className="text-[10px] font-black uppercase text-slate-500 bg-slate-50 border border-slate-200 rounded-full px-2.5 py-1">💾 Sauvegarde auto</span>;
+210: };
+211: 
+212: /* ── Page « Vue d’ensemble » ────────────────────────────────────────────── */
+213: const OverviewPage = ({ visible }) => {
+214:   const { data, access } = useAdmin();
+215:   const kindPages = visible.filter((p) => p.kind);
+216:   const hidden = ADMIN_PAGES.filter((p) => !access.canViewPage(p));
+217:   const totalRecettes = Array.isArray(data.recettes) ? data.recettes.length : 0;
+218:   const totalDepenses = Array.isArray(data.depenses) ? data.depenses.length : 0;
+219:   const totalOm = Array.isArray(data.om) ? data.om.length : 0;
+220:   const totalDesiderate = Array.isArray(data.desiderate) ? data.desiderate.length : 0;
+221: 
+222:   return (
+223:     <div className="max-w-5xl mx-auto flex flex-col gap-4">
+224:       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 md:p-6">
+225:         <h2 className="text-xl font-black text-slate-800 mb-1">Vue d’ensemble</h2>
+226:         <p className="text-sm text-slate-500">
+227:           Utilisez la barre latérale pour naviguer entre les pages (comme dans un dataset scientifique).
+228:           Les lignes budgétaires (Recettes), le Personnel et le Setup d’équipe sont maintenant éditables.
+229:         </p>
+230:       </div>
+231: 
+232:       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+233:         {kindPages.map((p) => (
+234:           <div key={p.id} className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 flex items-start gap-3">
+235:             <span className="text-2xl" aria-hidden="true">{p.icon}</span>
+236:             <div className="min-w-0 flex-1">
+237:               <div className="flex items-baseline justify-between gap-2">
+238:                 <h3 className="font-black text-slate-700 text-sm truncate">{p.label}</h3>
+239:                 <span className="text-xl font-black text-blue-700">{(data[p.kind] || []).length}</span>
+240:               </div>
+241:               <p className="text-[11px] text-slate-400 leading-snug line-clamp-2 mt-0.5">{p.blurb}</p>
+242:             </div>
+243:           </div>
+244:         ))}
+245:       </div>
+246: 
+247:       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+248:         {visible.some((p) => p.id === 'recettes') && (
+249:           <div className="bg-blue-50 border border-blue-200 rounded-2xl px-4 py-3">
+250:             <div className="text-[10px] font-black uppercase text-blue-700">Lignes budgétaires</div>

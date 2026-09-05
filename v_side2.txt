@@ -1,0 +1,118 @@
+﻿138:                 {backupStatus.state === 'running' && <span className="text-blue-500 animate-pulse">💾 {backupStatus.msg}</span>}
+139:                 {backupStatus.state === 'ok' && <span className="text-emerald-600">✅ {backupStatus.msg}</span>}
+140:                 {backupStatus.state === 'error' && <span className="text-red-600">⚠️ {backupStatus.msg}</span>}
+141:                 {backupStatus.state === 'skip' && <span className="text-slate-400">💾 {backupStatus.msg}</span>}
+142:               </div>
+143:             )}
+144: 
+145:             <nav
+146:               className={`flex-1 overflow-y-auto py-4 flex flex-col gap-1 min-h-0 ${
+147:                 isSidebarOpen ? 'px-2' : 'px-1 items-center'
+148:               }`}
+149:             >
+150:               {/* ── User identity bar ── */}
+151:               {isSidebarOpen ? (
+152:                 <div className={`mb-3 rounded-xl border px-3 py-2.5 flex items-center gap-2 text-sm ${
+153:                   currentUser?.role === 'superuser'
+154:                     ? 'bg-amber-50 border-amber-200'
+155:                     : currentUser
+156:                     ? 'bg-blue-50 border-blue-200'
+157:                     : 'bg-slate-50 border-slate-200'
+158:                 }`}>
+159:                   <span className="text-base shrink-0">
+160:                     {currentUser?.role === 'superuser' ? '👑' : currentUser ? '🧪' : '👤'}
+161:                   </span>
+162:                   <div className="flex-1 min-w-0">
+163:                     <div className="text-[11px] font-black uppercase text-slate-400">Logged in as</div>
+164:                     <div className="font-bold text-slate-700 truncate text-xs">
+165:                       {currentUser ? currentUser.name : <span className="text-slate-400 italic">Guest</span>}
+166:                     </div>
+167:                   </div>
+168:                   <button
+169:                     onClick={() => {
+170:                       if (currentUser) {
+171:                         setCurrentUser(null);
+172:                         setUnlockedTestIds(new Set());
+173:                       } else {
+174:                         setLoginModal({ isEntryGate: false });
+175:                       }
+176:                     }}
+177:                     className={`shrink-0 text-[10px] font-bold px-2 py-1 rounded transition-colors ${
+178:                       currentUser
+179:                         ? 'bg-slate-200 hover:bg-red-100 text-slate-600 hover:text-red-700'
+180:                         : 'bg-blue-600 hover:bg-blue-700 text-white'
+181:                     }`}
+182:                   >
+183:                     {currentUser ? 'Logout' : 'Login'}
+184:                   </button>
+185:                 </div>
+186:               ) : (
+187:                 <button
+188:                   onClick={() => {
+189:                     if (currentUser) { setCurrentUser(null); setUnlockedTestIds(new Set()); }
+190:                     else setLoginModal({ isEntryGate: false });
+191:                   }}
+192:                   title={currentUser ? `Logged in as ${currentUser.name} — click to logout` : 'Login'}
+193:                   className={`w-10 h-10 rounded-xl border flex items-center justify-center text-base mb-2 transition-colors ${
+194:                     currentUser?.role === 'superuser' ? 'bg-amber-50 border-amber-200' :
+195:                     currentUser ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-200 hover:bg-blue-50'
+196:                   }`}
+197:                 >
+198:                   {currentUser?.role === 'superuser'
+199:                     ? <Icon name="crown" size={20} className="text-amber-500" />
+200:                     : currentUser ? <Icon name="user" size={20} className="text-blue-600" />
+201:                       : <Icon name="lock" size={20} className="text-slate-400" />}
+202:                 </button>
+203:               )}
+204: 
+205:               {adminOnly && isSidebarOpen && (
+206:                 <div className="mb-1 px-3 text-[9px] font-black uppercase tracking-widest text-slate-300">
+207:                   Base d'administration
+208:                 </div>
+209:               )}
+210: 
+211:               {navItems.map((nav) => {
+212:                 const isActive = adminOnly
+213:                   ? currentModule === 'administration' && currentAdminPage === nav.id
+214:                   : currentModule === nav.id;
+215:                 return (
+216:                   <button
+217:                     key={nav.id}
+218:                     onClick={() => {
+219:                       if (adminOnly) {
+220:                         if (typeof onAdminNav === 'function') onAdminNav(nav.id);
+221:                       } else {
+222:                         setCurrentModule(nav.id);
+223:                       }
+224:                       if (window.innerWidth < 768) setIsSidebarOpen(false);
+225:                     }}
+226:                     title={!isSidebarOpen ? nav.label : ''}
+227:                     className={`flex items-center gap-3 py-2 rounded-lg text-sm transition-all text-left ${
+228:                       isSidebarOpen ? 'px-3 w-full' : 'px-0 w-10 justify-center'
+229:                     } ${
+230:                       isActive
+231:                         ? 'bg-blue-50 text-blue-700 font-bold shadow-sm'
+232:                         : 'text-slate-600 hover:bg-slate-50'
+233:                     }`}
+234:                   >
+235:                     {adminOnly ? (
+236:                       <span className="text-base leading-none shrink-0" aria-hidden="true">{nav.icon}</span>
+237:                     ) : (
+238:                       <Icon name={nav.icon} size={18} className="shrink-0" />
+239:                     )}
+240:                     {isSidebarOpen && <span>{nav.label}</span>}
+241:                   </button>
+242:                 );
+243:               })}
+244:             </nav>
+245: 
+246:             <div
+247:               className={`p-4 border-t border-slate-200 flex flex-col gap-2 ${
+248:                 !isSidebarOpen ? 'items-center px-1' : ''
+249:               }`}
+250:             >
+251:               <div className={`flex flex-col gap-2 w-full`}>
+252:                 {!user && onGoogleLogin && (
+253:                   <button
+254:                     onClick={onGoogleLogin}
+255:                     className={`w-full text-center bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors flex items-center justify-center gap-1 ${

@@ -1,0 +1,236 @@
+﻿71:   return (
+72: 
+73:           <div
+74:             className={`bg-white border-r border-slate-200 flex flex-col shadow-sm z-50 shrink-0 no-print transition-all duration-300 absolute md:relative h-full ${
+75:               isSidebarOpen
+76:                 ? 'translate-x-0 w-64'
+77:                 : '-translate-x-full md:translate-x-0 md:w-16 items-center'
+78:             }`}
+79:           >
+80:             <div
+81:               className={`p-4 border-b border-slate-200 flex items-center gap-2 ${
+82:                 isSidebarOpen ? 'justify-between' : 'flex-col justify-center'
+83:               }`}
+84:             >
+85:               <button
+86:                 onClick={handleBackToExplorer}
+87:                 className="text-slate-400 hover:text-blue-600 transition-colors"
+88:                 title="Back to Workspace"
+89:               >
+90:                 ◀
+91:               </button>
+92: 
+93:               {isSidebarOpen && (
+94:                 <div className="min-w-0 flex-1">
+95:                   <input
+96:                     value={datasetTitle}
+97:                     onChange={(e) => setDatasetTitle(e.target.value)}
+98:                     className="w-full text-sm font-black text-slate-800 bg-transparent border-none outline-none truncate focus:ring-1 focus:ring-blue-500 rounded px-1"
+99:                     placeholder="Dataset Title"
+100:                   />
+101: 
+102:                   <input
+103:                     value={datasetSubtitle}
+104:                     onChange={(e) => setDatasetSubtitle(e.target.value)}
+105:                     className="w-full text-[10px] font-medium text-slate-500 bg-transparent border-none outline-none truncate focus:ring-1 focus:ring-blue-500 rounded px-1 mt-0.5"
+106:                     placeholder="Subtitle / Project info"
+107:                   />
+108:                 </div>
+109:               )}
+110: 
+111:               <button
+112:                 onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+113:                 className="text-slate-400 hover:text-slate-600 transition-colors text-lg"
+114:                 title="Toggle Sidebar"
+115:               >
+116:                 {isSidebarOpen ? '⮜' : '☰'}
+117:               </button>
+118:             </div>
+119: 
+120:             {isSidebarOpen && (
+121:               <div className="px-4 py-2 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center text-[10px] font-bold text-slate-500">
+122:                 <span>Status:</span>
+123: 
+124:                 {saveStatus === 'saving' ? (
+125:                   <span className="text-blue-500 animate-pulse flex items-center gap-1"><Icon name="save" size={12} /> Saving...</span>
+126:                 ) : saveStatus === 'saved' ? (
+127:                   <span className="text-emerald-600 flex items-center gap-1"><Icon name="cloud" size={12} /> Cloud Sync</span>
+128:                 ) : saveStatus === 'error' ? (
+129:                   <span className="text-red-600 flex items-center gap-1" title={saveErrorMsg}><Icon name="x" size={12} /> Error</span>
+130:                 ) : (
+131:                   <span className="text-slate-600">...</span>
+132:                 )}
+133:               </div>
+134:             )}
+135: 
+136:             {isSidebarOpen && backupStatus && (
+137:               <div className="px-4 py-1.5 border-b border-slate-100 bg-slate-50/30 text-[10px] font-bold flex items-center gap-1" title="Weekly HTML backups are written to Lab Workspace/<dataset>/backups/ (one subfolder per dataset) on Google Drive">
+138:                 {backupStatus.state === 'running' && <span className="text-blue-500 animate-pulse">💾 {backupStatus.msg}</span>}
+139:                 {backupStatus.state === 'ok' && <span className="text-emerald-600">✅ {backupStatus.msg}</span>}
+140:                 {backupStatus.state === 'error' && <span className="text-red-600">⚠️ {backupStatus.msg}</span>}
+141:                 {backupStatus.state === 'skip' && <span className="text-slate-400">💾 {backupStatus.msg}</span>}
+142:               </div>
+143:             )}
+144: 
+145:             <nav
+146:               className={`flex-1 overflow-y-auto py-4 flex flex-col gap-1 min-h-0 ${
+147:                 isSidebarOpen ? 'px-2' : 'px-1 items-center'
+148:               }`}
+149:             >
+150:               {/* ── User identity bar ── */}
+151:               {isSidebarOpen ? (
+152:                 <div className={`mb-3 rounded-xl border px-3 py-2.5 flex items-center gap-2 text-sm ${
+153:                   currentUser?.role === 'superuser'
+154:                     ? 'bg-amber-50 border-amber-200'
+155:                     : currentUser
+156:                     ? 'bg-blue-50 border-blue-200'
+157:                     : 'bg-slate-50 border-slate-200'
+158:                 }`}>
+159:                   <span className="text-base shrink-0">
+160:                     {currentUser?.role === 'superuser' ? '👑' : currentUser ? '🧪' : '👤'}
+161:                   </span>
+162:                   <div className="flex-1 min-w-0">
+163:                     <div className="text-[11px] font-black uppercase text-slate-400">Logged in as</div>
+164:                     <div className="font-bold text-slate-700 truncate text-xs">
+165:                       {currentUser ? currentUser.name : <span className="text-slate-400 italic">Guest</span>}
+166:                     </div>
+167:                   </div>
+168:                   <button
+169:                     onClick={() => {
+170:                       if (currentUser) {
+171:                         setCurrentUser(null);
+172:                         setUnlockedTestIds(new Set());
+173:                       } else {
+174:                         setLoginModal({ isEntryGate: false });
+175:                       }
+176:                     }}
+177:                     className={`shrink-0 text-[10px] font-bold px-2 py-1 rounded transition-colors ${
+178:                       currentUser
+179:                         ? 'bg-slate-200 hover:bg-red-100 text-slate-600 hover:text-red-700'
+180:                         : 'bg-blue-600 hover:bg-blue-700 text-white'
+181:                     }`}
+182:                   >
+183:                     {currentUser ? 'Logout' : 'Login'}
+184:                   </button>
+185:                 </div>
+186:               ) : (
+187:                 <button
+188:                   onClick={() => {
+189:                     if (currentUser) { setCurrentUser(null); setUnlockedTestIds(new Set()); }
+190:                     else setLoginModal({ isEntryGate: false });
+191:                   }}
+192:                   title={currentUser ? `Logged in as ${currentUser.name} — click to logout` : 'Login'}
+193:                   className={`w-10 h-10 rounded-xl border flex items-center justify-center text-base mb-2 transition-colors ${
+194:                     currentUser?.role === 'superuser' ? 'bg-amber-50 border-amber-200' :
+195:                     currentUser ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-200 hover:bg-blue-50'
+196:                   }`}
+197:                 >
+198:                   {currentUser?.role === 'superuser'
+199:                     ? <Icon name="crown" size={20} className="text-amber-500" />
+200:                     : currentUser ? <Icon name="user" size={20} className="text-blue-600" />
+201:                       : <Icon name="lock" size={20} className="text-slate-400" />}
+202:                 </button>
+203:               )}
+204: 
+205:               {adminOnly && isSidebarOpen && (
+206:                 <div className="mb-1 px-3 text-[9px] font-black uppercase tracking-widest text-slate-300">
+207:                   Base d'administration
+208:                 </div>
+209:               )}
+210: 
+211:               {navItems.map((nav) => {
+212:                 const isActive = adminOnly
+213:                   ? currentModule === 'administration' && currentAdminPage === nav.id
+214:                   : currentModule === nav.id;
+215:                 return (
+216:                   <button
+217:                     key={nav.id}
+218:                     onClick={() => {
+219:                       if (adminOnly) {
+220:                         if (typeof onAdminNav === 'function') onAdminNav(nav.id);
+221:                       } else {
+222:                         setCurrentModule(nav.id);
+223:                       }
+224:                       if (window.innerWidth < 768) setIsSidebarOpen(false);
+225:                     }}
+226:                     title={!isSidebarOpen ? nav.label : ''}
+227:                     className={`flex items-center gap-3 py-2 rounded-lg text-sm transition-all text-left ${
+228:                       isSidebarOpen ? 'px-3 w-full' : 'px-0 w-10 justify-center'
+229:                     } ${
+230:                       isActive
+231:                         ? 'bg-blue-50 text-blue-700 font-bold shadow-sm'
+232:                         : 'text-slate-600 hover:bg-slate-50'
+233:                     }`}
+234:                   >
+235:                     {adminOnly ? (
+236:                       <span className="text-base leading-none shrink-0" aria-hidden="true">{nav.icon}</span>
+237:                     ) : (
+238:                       <Icon name={nav.icon} size={18} className="shrink-0" />
+239:                     )}
+240:                     {isSidebarOpen && <span>{nav.label}</span>}
+241:                   </button>
+242:                 );
+243:               })}
+244:             </nav>
+245: 
+246:             <div
+247:               className={`p-4 border-t border-slate-200 flex flex-col gap-2 ${
+248:                 !isSidebarOpen ? 'items-center px-1' : ''
+249:               }`}
+250:             >
+251:               <div className={`flex flex-col gap-2 w-full`}>
+252:                 {!user && onGoogleLogin && (
+253:                   <button
+254:                     onClick={onGoogleLogin}
+255:                     className={`w-full text-center bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors flex items-center justify-center gap-1 ${
+256:                       !isSidebarOpen ? 'py-2 px-0 text-xs' : ''
+257:                     }`}
+258:                     title="Optional: sign in with Google to enable cloud sync (the app works fully without it)"
+259:                   >
+260:                     <Icon name="cloud" size={14} /> {isSidebarOpen ? 'Cloud sign-in (optional)' : ''}
+261:                   </button>
+262:                 )}
+263: 
+264:                 {/* Google Drive: uploads are auto-renamed and saved here */}
+265:                 {driveConnected ? (
+266:                   <div
+267:                     className={`flex items-center justify-between gap-1 bg-emerald-50 border border-emerald-200 rounded py-1.5 px-2 ${
+268:                       !isSidebarOpen ? 'flex-col px-1' : ''
+269:                     }`}
+270:                     title="Google Drive connected — uploaded files are renamed and saved automatically, organised in folders that mirror the app, inside your Lab Workspace folder"
+271:                   >
+272:                     <span className="text-[10px] font-bold text-emerald-700 flex items-center gap-1">
+273:                       <Icon name="cloud" size={12} />
+274:                       {isSidebarOpen ? `Drive · ${driveAccount || (sharedWorkspaceMode() ? 'shared workspace' : 'connected')}` : ''}
+275:                     </span>
+276:                     <button
+277:                       onClick={openDrive}
+278:                       className="text-xs font-bold text-blue-600 hover:text-blue-800 underline"
+279:                     >
+280:                       Open ↗
+281:                     </button>
+282:                     {!sharedWorkspaceMode() && (
+283:                       <button
+284:                         onClick={() => {
+285:                           clearDriveToken();
+286:                           try { window.dispatchEvent(new CustomEvent('lab:drive-disconnected')); } catch { /* ignore */ }
+287:                         }}
+288:                         className="text-xs font-bold text-red-500 hover:text-red-700 underline"
+289:                         title="Disconnect Google Drive (you can reconnect at any time)"
+290:                       >
+291:                         Disconnect
+292:                       </button>
+293:                     )}
+294:                   </div>
+295:                 ) : (
+296:                   onConnectDrive && (
+297:                     <button
+298:                       onClick={onConnectDrive}
+299:                       className={`w-full text-center bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors flex items-center justify-center gap-1 ${
+300:                         !isSidebarOpen ? 'py-2 px-0 text-xs' : ''
+301:                       }`}
+302:                       title={sharedWorkspaceMode()
+303:                         ? 'Drive is temporarily unavailable — retry the shared Lab Workspace server (no personal Google Drive needed; you still log in to the app as usual)'
+304:                         : 'Connect Google Drive so uploaded images/documents are automatically renamed and saved into folders that mirror the app, inside your Lab Workspace folder'}
+305:                     >
+306:                       <Icon name="cloud" size={14} /> {isSidebarOpen ? (sharedWorkspaceMode() ? 'Reconnect shared Drive' : 'Connect Drive') : ''}

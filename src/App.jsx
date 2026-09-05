@@ -892,6 +892,31 @@ if (customType === 'dosy') {
   // avec un fournisseur précis à mettre en évidence). Format :
   // { pageId, kind, recordId } — consommée par la page d’arrivée puis effacée.
   const [adminFocus, setAdminFocus] = useState(null);
+  // Historique « Undo » du contenu de la base d’administration ouverte : chaque
+  // commit d’une page (AdminContext → onChange → setAdminContent) empile un
+  // instantané complet du payload `administration` — même logique que
+  // l’historique des tests scientifiques. Indice -1 = aucun historique (aucune
+  // base d’administration n’est ouverte / vient d’être réinitialisée).
+  const adminHistoryRef = useRef([]);
+  const [adminHistoryIndex, setAdminHistoryIndex] = useState(-1);
+  // Dernier contenu connu (sérialisé) + base à laquelle il appartient : sert à
+  // détecter un vrai changement (nouvel instantané) vs l’ouverture/le seed.
+  const adminHistorySnapshotRef = useRef('');
+  const adminHistoryDatasetRef = useRef(null);
+  // Pile des pages d’administration visitées (bouton « ← Retour » de l’en-tête
+  // du module) : on retient la page précédente à chaque navigation réelle.
+  const [adminPageStack, setAdminPageStack] = useState([]);
+
+  // Réinitialise l’historique (Undo) et la pile de navigation (Back) quand on
+  // change de base ou qu’on la referme. L’ouverture d’une base est le nouveau
+  // point de départ : on n’annule pas « avant » l’ouverture.
+  const resetAdminNavHistory = () => {
+    adminHistoryRef.current = [];
+    setAdminHistoryIndex(-1);
+    adminHistorySnapshotRef.current = '';
+    adminHistoryDatasetRef.current = null;
+    setAdminPageStack([]);
+  };
   const [dialog, setDialog] = useState(null);
   const [pendingLoad, setPendingLoad] = useState(null);
   // Dataset dont le superutilisateur édite la liste d’accès (bouton « 👥
@@ -1066,6 +1091,33 @@ if (customType === 'dosy') {
       setReactTests(historyRef.current[newIdx]);
     }
   };
+
+  // ── HISTORIQUE UNDO DE LA BASE D’ADMINISTRATION ──────────────────────────
+  // Enregistre un instantané à chaque vrai changement du payload
+  // `administration`. Après une réinitialisation (resetAdminNavHistory → base
+  // inconnue/null), on ré-ensemence la pile sur le contenu chargé : l’indice
+  // retombe à 0 et le bouton « Annuler » reste inactif tant qu’aucune
+  // modification n’a été faite dans cette session.
+  useEffect(() => {
+    if (!currentDatasetId || activeDatasetKind !== 'administration') return;
+    if (!adminContent || typeof adminContent !== 'object') return;
+    const json = JSON.stringify(adminContent);
+    if (adminHistoryDatasetRef.current !== currentDatasetId) {
+      adminHistoryDatasetRef.current = currentDatasetId;
+      adminHistorySnapshotRef.current = json;
+      adminHistoryRef.current = [adminContent];
+      setAdminHistoryIndex(0);
+      return;
+    }
+    if (adminHistorySnapshotRef.current === json) return;
+    const nextHistory = adminHistoryRef.current.slice(0, adminHistoryIndex + 1);
+    nextHistory.push(adminContent);
+    if (nextHistory.length > 50) nextHistory.shift();
+    adminHistoryRef.current = nextHistory;
+    setAdminHistoryIndex(nextHistory.length - 1);
+    adminHistorySnapshotRef.current = json;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminContent, activeDatasetKind, currentDatasetId, adminHistoryIndex]);
 
   // ── PERSIST OPERATORS & AUTH SETTINGS ─────────────────────────────────
   // Always keep localStorage in sync (works offline / as cache)
@@ -2310,6 +2362,7 @@ const createNewDataset = async (kind = 'scientific') => {
     setActiveDatasetKind(kind);
     setCurrentAdminPage('overview');
     setAdminFocus(null);
+    resetAdminNavHistory();
     setCustomCmpds([]);
     setCustomCellLines([]);
     setCustomConc({});
@@ -2450,6 +2503,7 @@ const handleBackToExplorer = async () => {
   setAppView('explorer');
   setCurrentAdminPage('overview');
   setAdminFocus(null);
+  resetAdminNavHistory();
 };
 
 const openDataset = (dset) => {
@@ -2502,6 +2556,7 @@ const openDataset = (dset) => {
     setCurrentModule('administration');
     setCurrentAdminPage('overview');
     setAdminFocus(null);
+    resetAdminNavHistory();
     window.history.pushState({}, '', '?dataset=' + dset.id);
     if (window.innerWidth < 768) setIsSidebarOpen(false);
     return;
@@ -2511,6 +2566,7 @@ const openDataset = (dset) => {
   setActiveDatasetKind('scientific');
   setCurrentAdminPage('overview');
   setAdminFocus(null);
+  resetAdminNavHistory();
 
   try {
     const migrated = migrateLoadedDataset(s);
@@ -2923,12 +2979,45 @@ const openDataset = (dset) => {
         id: p.id, label: p.label, icon: p.icon,
       }))
     : [];
+  // « Annuler » de l’en-tête de la base d’administration : restaure
+  // l’instantané précédent du payload (voir l’effet HISTORIQUE UNDO ci-dessus).
+  const handleAdminUndo = () => {
+    if (adminHistoryIndex <= 0) return;
+    const targetIdx = adminHistoryIndex - 1;
+    const snapshot = adminHistoryRef.current[targetIdx];
+    if (!snapshot) return;
+    // Marque l’instantané comme « courant » pour que l’effet d’historique ne
+    // l’empile pas une seconde fois lors du rendu suivant.
+    adminHistorySnapshotRef.current = JSON.stringify(snapshot);
+    setAdminHistoryIndex(targetIdx);
+    setAdminContent(snapshot);
+  };
+
+  // « Retour » de l’en-tête de la base d’administration : remonte la pile des
+  // pages visitées dans cette session (dernier LIFO, comme un historique back).
+  const handleAdminBack = () => {
+    if (adminPageStack.length === 0) return;
+    const remaining = [...adminPageStack];
+    const target = remaining.pop();
+    setAdminPageStack(remaining);
+    setCurrentAdminPage(target);
+    setAdminFocus(null);
+    if (window.innerWidth < 768) setIsSidebarOpen(false);
+  };
+
   // Navigation d’une page d’administration (clic dans la barre latérale ou
   // lien inter-page). `focusPayload` optionnel = { kind, recordId } : une autre
   // page demande à pointer un enregistrement précis (fiche fournisseur,
   // ligne budgétaire, personne…) → la page d’arrivée le met en évidence.
   const handleAdminNav = (navId, focusPayload) => {
     setCurrentModule('administration');
+    // Mémorise la page en cours pour le bouton « ← Retour » de l’en-tête : on
+    // n’empile pas si on re-clique la page déjà active ou déjà au sommet.
+    setAdminPageStack((prev) =>
+      currentAdminPage === navId || prev[prev.length - 1] === navId
+        ? prev
+        : [...prev, currentAdminPage]
+    );
     setCurrentAdminPage(navId);
     setAdminFocus(focusPayload && focusPayload.recordId
       ? { pageId: navId, kind: focusPayload.kind, recordId: focusPayload.recordId }
@@ -3673,6 +3762,10 @@ const openDataset = (dset) => {
               onNavigateAdmin={handleAdminNav}
               adminFocus={adminFocus}
               onClearFocus={() => setAdminFocus(null)}
+              canAdminBack={adminPageStack.length > 0}
+              onAdminBack={handleAdminBack}
+              canAdminUndo={adminHistoryIndex > 0}
+              onAdminUndo={handleAdminUndo}
             />)}
           </div>
         </div>

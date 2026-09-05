@@ -1,0 +1,243 @@
+﻿76:       />
+77:     </AdminProvider>
+78:   );
+79: };
+80: 
+81: const LoginRequiredCard = ({ onRequestLogin }) => (
+82:   <div className="h-full min-h-0 overflow-y-auto bg-slate-50 p-4 md:p-6 flex items-center justify-center">
+83:     <div className="max-w-md w-full bg-white border border-slate-200 rounded-2xl shadow-sm p-8 text-center">
+84:       <div className="text-5xl mb-3">🔐</div>
+85:       <h2 className="text-lg font-black text-slate-800 mb-1">Connexion requise</h2>
+86:       <p className="text-sm text-slate-500 mb-5">
+87:         Cette base d’administration est partagée avec l’équipe du laboratoire.
+88:         Connectez-vous en tant que scientifique pour l’ouvrir ; un superutilisateur
+89:         peut créer votre compte dans la page Setup.
+90:       </p>
+91:       {typeof onRequestLogin === 'function' && (
+92:         <button
+93:           onClick={onRequestLogin}
+94:           className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm px-6 py-2.5 rounded-xl shadow-sm transition-colors"
+95:         >
+96:           Se connecter…
+97:         </button>
+98:       )}
+99:     </div>
+100:   </div>
+101: );
+102: 
+103: /* ── Coquille : en-tête + contenu de la page active (navigation = sidebar) ─ */
+104: const AdministrationShell = ({
+105:   datasetTitle, saveStatus, pageId,
+106:   currentUser, operators, setOperators, authSettings, setAuthSettings,
+107: }) => {
+108:   const { data, ready, access } = useAdmin();
+109:   const visible = ADMIN_PAGES.filter((p) => access.canViewPage(p));
+110:   const requested = ADMIN_PAGES.find((p) => p.id === pageId) || ADMIN_PAGES[0];
+111:   const allowedPage = visible.find((p) => p.id === requested.id);
+112:   const denied = !allowedPage;
+113:   const active = allowedPage || visible[0];
+114: 
+115:   return (
+116:     <div className="h-full min-h-0 flex flex-col bg-slate-50">
+117:       <div className="shrink-0 bg-white border-b border-slate-200 px-4 md:px-6 py-3">
+118:         <div className="flex flex-wrap items-center justify-between gap-2">
+119:           <div className="min-w-0">
+120:             <h1 className="text-lg font-black text-slate-800 flex items-center gap-2">
+121:               <span className="text-xl" aria-hidden="true">🏛️</span>
+122:               <span className="truncate">{datasetTitle || 'Base d’administration'}</span>
+123:             </h1>
+124:             <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 -mt-0.5">
+125:               {active.label} · base d’administration (dataset unique)
+126:             </p>
+127:           </div>
+128:           <div className="flex items-center gap-2 flex-wrap shrink-0">
+129:             <RoleBadge profile={access.profile} />
+130:             <SaveBadge status={saveStatus} />
+131:           </div>
+132:         </div>
+133:       </div>
+134: 
+135:       <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4 md:p-6">
+136:         {denied ? (
+137:           <AccessDeniedCard page={requested} />
+138:         ) : !ready ? (
+139:           <div className="h-full flex items-center justify-center text-slate-400 text-sm">Chargement des données…</div>
+140:         ) : active.id === 'overview' ? (
+141:           <OverviewPage visible={visible} />
+142:         ) : active.id === 'recettes' ? (
+143:           <RecettesPage />
+144:         ) : active.id === 'personnel' ? (
+145:           <PersonnelPage />
+146:         ) : active.id === 'conges' ? (
+147:           <CongesPage />
+148:         ) : active.id === 'depenses' ? (
+149:           <DepensesPage />
+150:         ) : active.id === 'budget' ? (
+151:           <BudgetPage />
+152:         ) : active.id === 'settings' ? (
+153:           <SettingsPage
+154:             operators={operators} setOperators={setOperators}
+155:             authSettings={authSettings} setAuthSettings={setAuthSettings}
+156:             currentUser={currentUser}
+157:           />
+158:         ) : active.id === 'librerie' ? (
+159:           <LibreriePage />
+160:         ) : active.id === 'om' ? (
+161:           <OmPage />
+162:         ) : active.id === 'desiderate' ? (
+163:           <DesiderataPage />
+164:         ) : active.id === 'devisBc' ? (
+165:           <ApprobationPage />
+166:         ) : TABLE_KINDS.has(active.kind) ? (
+167:           <CollectionPage kind={active.kind} />
+168:         ) : active.kind ? (
+169:           <PageScaffold page={active} count={(data[active.kind] || []).length} />
+170:         ) : (
+171:           <PageScaffold page={active} count={null} />
+172:         )}
+173:       </div>
+174:     </div>
+175:   );
+176: };
+177: 
+178: const RoleBadge = ({ profile }) => {
+179:   const p = profile || {};
+180:   if (p.isSuperuser) {
+181:     return (
+182:       <span className="text-[10px] font-black uppercase text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-1" title="Superutilisateur : accès intégral à toutes les pages">
+183:         👑 Superutilisateur
+184:       </span>
+185:     );
+186:   }
+187:   const meta = ADMIN_FONCTION_META[p.fonction] || null;
+188:   return (
+189:     <span
+190:       className="text-[10px] font-black uppercase text-slate-600 bg-slate-50 border border-slate-200 rounded-full px-2.5 py-1"
+191:       title={meta && meta.hint ? meta.hint : (p.person ? `Fiche : ${p.person.nom || ''}` : 'Aucune fiche Personnel liée — accès minimal.')}
+192:     >
+193:       {p.statut || 'Non permanent'}{p.fonction ? ` · ${meta ? meta.label : p.fonction}` : ''}
+194:     </span>
+195:   );
+196: };
+197: 
+198: /* ── En-tête de sauvegarde ──────────────────────────────────────────────── */
+199: const SaveBadge = ({ status }) => {
+200:   if (status === 'saving') {
+201:     return <span className="text-[10px] font-black uppercase text-blue-700 bg-blue-50 border border-blue-200 rounded-full px-2.5 py-1 animate-pulse">Sauvegarde…</span>;
+202:   }
+203:   if (status === 'saved') {
+204:     return <span className="text-[10px] font-black uppercase text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2.5 py-1">✓ Enregistré</span>;
+205:   }
+206:   if (status === 'error') {
+207:     return <span className="text-[10px] font-black uppercase text-red-700 bg-red-50 border border-red-200 rounded-full px-2.5 py-1">✕ Sauvegarde impossible</span>;
+208:   }
+209:   return <span className="text-[10px] font-black uppercase text-slate-500 bg-slate-50 border border-slate-200 rounded-full px-2.5 py-1">💾 Sauvegarde auto</span>;
+210: };
+211: 
+212: /* ── Page « Vue d’ensemble » ────────────────────────────────────────────── */
+213: const OverviewPage = ({ visible }) => {
+214:   const { data, access } = useAdmin();
+215:   const kindPages = visible.filter((p) => p.kind);
+216:   const hidden = ADMIN_PAGES.filter((p) => !access.canViewPage(p));
+217:   const totalRecettes = Array.isArray(data.recettes) ? data.recettes.length : 0;
+218:   const totalDepenses = Array.isArray(data.depenses) ? data.depenses.length : 0;
+219:   const totalOm = Array.isArray(data.om) ? data.om.length : 0;
+220:   const totalDesiderate = Array.isArray(data.desiderate) ? data.desiderate.length : 0;
+221: 
+222:   return (
+223:     <div className="max-w-5xl mx-auto flex flex-col gap-4">
+224:       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 md:p-6">
+225:         <h2 className="text-xl font-black text-slate-800 mb-1">Vue d’ensemble</h2>
+226:         <p className="text-sm text-slate-500">
+227:           Utilisez la barre latérale pour naviguer entre les pages (comme dans un dataset scientifique).
+228:           Les lignes budgétaires (Recettes), le Personnel et le Setup d’équipe sont maintenant éditables.
+229:         </p>
+230:       </div>
+231: 
+232:       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+233:         {kindPages.map((p) => (
+234:           <div key={p.id} className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 flex items-start gap-3">
+235:             <span className="text-2xl" aria-hidden="true">{p.icon}</span>
+236:             <div className="min-w-0 flex-1">
+237:               <div className="flex items-baseline justify-between gap-2">
+238:                 <h3 className="font-black text-slate-700 text-sm truncate">{p.label}</h3>
+239:                 <span className="text-xl font-black text-blue-700">{(data[p.kind] || []).length}</span>
+240:               </div>
+241:               <p className="text-[11px] text-slate-400 leading-snug line-clamp-2 mt-0.5">{p.blurb}</p>
+242:             </div>
+243:           </div>
+244:         ))}
+245:       </div>
+246: 
+247:       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+248:         {visible.some((p) => p.id === 'recettes') && (
+249:           <div className="bg-blue-50 border border-blue-200 rounded-2xl px-4 py-3">
+250:             <div className="text-[10px] font-black uppercase text-blue-700">Lignes budgétaires</div>
+251:             <div className="text-2xl font-black text-blue-800">{totalRecettes}</div>
+252:           </div>
+253:         )}
+254:         {visible.some((p) => p.id === 'depenses') && (
+255:           <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3">
+256:             <div className="text-[10px] font-black uppercase text-amber-700">Dépenses / BC</div>
+257:             <div className="text-2xl font-black text-amber-800">{totalDepenses}</div>
+258:           </div>
+259:         )}
+260:         {visible.some((p) => p.id === 'om') && (
+261:           <div className="bg-violet-50 border border-violet-200 rounded-2xl px-4 py-3">
+262:             <div className="text-[10px] font-black uppercase text-violet-700">OM prévus / souhaités</div>
+263:             <div className="text-2xl font-black text-violet-800">{totalOm}</div>
+264:           </div>
+265:         )}
+266:         {visible.some((p) => p.id === 'desiderate') && (
+267:           <div className="bg-teal-50 border border-teal-200 rounded-2xl px-4 py-3">
+268:             <div className="text-[10px] font-black uppercase text-teal-700">Achats prévus / souhaités</div>
+269:             <div className="text-2xl font-black text-teal-800">{totalDesiderate}</div>
+270:           </div>
+271:         )}
+272:       </div>
+273: 
+274:       {hidden.length > 0 && (
+275:         <p className="text-[11px] text-slate-400">
+276:           Pages masquées pour votre profil : {hidden.map((p) => p.label).join(' · ')} — accès défini
+277:           par la fiche Personnel (statut Permanent / AP / Gestionnaire) ; Personnel &amp; Setup restent
+278:           réservés au superutilisateur.
+279:         </p>
+280:       )}
+281:     </div>
+282:   );
+283: };
+284: 
+285: /* ── Échafaudage des pages non encore éditables ─────────────────────────── */
+286: const PageScaffold = ({ page, count }) => (
+287:   <div className="max-w-5xl mx-auto flex flex-col gap-4">
+288:     <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 md:p-6">
+289:       <div className="flex items-start justify-between gap-3 flex-wrap">
+290:         <div className="flex items-center gap-3 min-w-0">
+291:           <span className="text-3xl shrink-0" aria-hidden="true">{page.icon}</span>
+292:           <div>
+293:             <h2 className="text-xl font-black text-slate-800">{page.label}</h2>
+294:             <p className="text-sm text-slate-500 max-w-xl">{page.blurb}</p>
+295:           </div>
+296:         </div>
+297:         <div className="text-right shrink-0">
+298:           <div className="text-2xl font-black text-blue-700">{count ?? '—'}</div>
+299:           <div className="text-[10px] font-bold uppercase text-slate-400">enregistrements</div>
+300:         </div>
+301:       </div>
+302:     </div>
+303: 
+304:     <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 md:p-6">
+305:       <h3 className="text-xs font-black uppercase text-slate-400 tracking-wide mb-3">Modèle de données prévu</h3>
+306:       <div className="flex flex-wrap gap-2">
+307:         {page.fields.map((f) => (
+308:           <span key={f} className="bg-slate-50 border border-slate-200 text-slate-600 rounded-lg px-2.5 py-1.5 text-xs font-semibold">{f}</span>
+309:         ))}
+310:       </div>
+311:       <p className="mt-5 text-[11px] text-slate-400 border-t border-slate-100 pt-3">
+312:         Contenu enregistré automatiquement dans cette base (datasets/&lt;id&gt;, payload `administration`).
+313:         L’éditeur complet de cette page arrive dans une prochaine étape.
+314:       </p>
+315:     </div>
+316:   </div>
+317: );
+318: 

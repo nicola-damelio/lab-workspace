@@ -91,16 +91,16 @@ const SortHeader = ({ col, colIndex = 0, sort, onSort, alignRight }) => {
   return (
     <th className={`px-3 py-2.5 sticky top-0 z-10 bg-slate-50 border-b-2 border-slate-200 ${alignRight ? 'text-right' : 'text-left'}${divider}`}>
       {col.sortable === false ? (
-        <span className="font-black uppercase tracking-wide">{col.label}</span>
+        <span className="inline-flex flex-wrap items-center gap-x-1 gap-y-0.5 font-black uppercase tracking-wide">{col.header || col.label}</span>
       ) : (
         <button
           type="button"
           onClick={() => onSort(col)}
-          className={`inline-flex items-center gap-1 uppercase tracking-wide font-black group ${
+          className={`inline-flex items-center gap-1 uppercase tracking-wide font-black group text-left ${
             active ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'
           }`}
         >
-          {col.label}
+          {col.header || col.label}
           <span className={`text-[9px] ${active ? 'opacity-100' : 'opacity-0 group-hover:opacity-40'}`}>
             {dir === 'desc' ? '▼' : '▲'}
           </span>

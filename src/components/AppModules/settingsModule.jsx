@@ -21,8 +21,15 @@ export const SettingsModule = ({
   setCustomCmpds, setCompoundMeta, compoundMeta,
   setCustomCellLines, setCellLineMeta, cellLineMeta,
   datasetsList, deleteDataset, deleteEmptyDatasets, datasetTitle
-}) => (
+}) => {
+  /* Dans un dataset scientifique, les comptes scientist non superutilisateurs
+     ne voient que la section « Scientists / Operators » (en lecture seule) ;
+     les autres sections de réglages (métadonnées personnalisées, nettoyage de
+     la base, stockage cloud, fichiers Google Drive) sont réservées au
+     superutilisateur. */
+  const isSuper = !!currentUser && currentUser.role === 'superuser';
 
+  return (
               <div className="h-full min-h-0 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
                 <div className="max-w-6xl mx-auto flex flex-col gap-4 pb-10">
 
@@ -42,6 +49,8 @@ export const SettingsModule = ({
                     />
                   </CollapsibleSection>
 
+                  {isSuper && (
+                  <>
                   <CollapsibleSection title="Custom Metadata Fields" subtitle="Add custom fields for plate, NMR, CD, Cloning, or all tabs — and target the exact subsection of each page they appear in." defaultOpen={false}>
                     <CustomMetadataFieldsManager customFields={customFields} setCustomFields={handleSetCustomFields} />
 
@@ -80,7 +89,19 @@ export const SettingsModule = ({
                    <CollapsibleSection title="Test files on Google Drive" subtitle="Move test attachments (figures, ⭐ starred items, PDFs/documents, links) into the correct Drive folders — Lab Workspace/<dataset>/<project>/<test>/<instance>/Report." defaultOpen={false}>
                       <DriveImageMigration tests={tests} setTests={setTests} datasetTitle={datasetTitle} />
                    </CollapsibleSection>
+                  </>
+                  )}
+
+                  {!isSuper && (
+                    <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-500 leading-relaxed">
+                      🔒 Les autres sections de réglages — champs de métadonnées personnalisés,
+                      nettoyage &amp; gestion de la base de données, stockage cloud
+                      (Google Drive / Nextcloud), fichiers de tests sur Google Drive — sont
+                      réservées au superutilisateur.
+                    </div>
+                  )}
 
                 </div>
               </div>
-);
+  );
+};

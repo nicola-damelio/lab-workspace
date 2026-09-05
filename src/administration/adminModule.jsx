@@ -46,6 +46,7 @@ export const AdministrationModule = ({
   operators, setOperators, authSettings, setAuthSettings,
   onRequestLogin,
   onNavigateAdmin, adminFocus, onClearFocus,
+  canAdminBack, onAdminBack, canAdminUndo, onAdminUndo,
 }) => {
   const team = normalizeOperators(operators || []);
   // Bootstrap : aucun compte scientifique OU aucun superutilisateur n’est
@@ -73,6 +74,8 @@ export const AdministrationModule = ({
         currentUser={currentUser}
         operators={operators} setOperators={setOperators}
         authSettings={authSettings} setAuthSettings={setAuthSettings}
+        canAdminBack={canAdminBack} onAdminBack={onAdminBack}
+        canAdminUndo={canAdminUndo} onAdminUndo={onAdminUndo}
       />
     </AdminProvider>
   );
@@ -104,6 +107,7 @@ const LoginRequiredCard = ({ onRequestLogin }) => (
 const AdministrationShell = ({
   datasetTitle, saveStatus, pageId,
   currentUser, operators, setOperators, authSettings, setAuthSettings,
+  canAdminBack, onAdminBack, canAdminUndo, onAdminUndo,
 }) => {
   const { data, ready, access } = useAdmin();
   const visible = ADMIN_PAGES.filter((p) => access.canViewPage(p));
@@ -126,6 +130,42 @@ const AdministrationShell = ({
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap shrink-0">
+            {/* Navigation « Retour » entre les pages d’administration. */}
+            <button
+              type="button"
+              onClick={onAdminBack}
+              disabled={!canAdminBack}
+              title={canAdminBack
+                ? 'Revenir à la page d’administration précédente'
+                : 'Aucune page d’administration précédente'}
+              className={`flex items-center gap-1 text-[11px] font-black uppercase rounded-full border px-2.5 py-1.5 transition-colors ${
+                canAdminBack
+                  ? 'bg-white text-slate-600 border-slate-200 hover:bg-blue-50 hover:text-blue-700 active:bg-blue-100'
+                  : 'bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed'
+              }`}
+            >
+              <span aria-hidden="true">←</span>
+              <span className="hidden sm:inline">Retour</span>
+            </button>
+
+            {/* Annulation de la dernière modification du contenu de la base. */}
+            <button
+              type="button"
+              onClick={onAdminUndo}
+              disabled={!canAdminUndo}
+              title={canAdminUndo
+                ? 'Annuler la dernière modification de la base'
+                : 'Aucune modification à annuler pour le moment'}
+              className={`flex items-center gap-1 text-[11px] font-black uppercase rounded-full border px-2.5 py-1.5 transition-colors ${
+                canAdminUndo
+                  ? 'bg-white text-slate-600 border-slate-200 hover:bg-blue-50 hover:text-blue-700 active:bg-blue-100'
+                  : 'bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed'
+              }`}
+            >
+              <span aria-hidden="true">↩</span>
+              <span className="hidden sm:inline">Annuler</span>
+            </button>
+
             <RoleBadge profile={access.profile} />
             <SaveBadge status={saveStatus} />
           </div>

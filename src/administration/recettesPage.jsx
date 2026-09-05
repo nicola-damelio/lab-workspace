@@ -10,7 +10,7 @@
    ========================================================================= */
 import React, { useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
-import { RECETTE_TYPES, DEPENSE_BC_SIGNE, isPiFournisseur, isDesiderataRejected, isDesiderataApproved, desiderataDecisionOf } from './adminSchema';
+import { RECETTE_TYPES, DEPENSE_BC_SIGNE, isPiFournisseur, depenseKindOf, isDesiderataRejected, isDesiderataApproved, desiderataDecisionOf } from './adminSchema';
 import { AdminImportModal } from './adminImportModal';
 import { SmartTable } from './smartTable';
 
@@ -48,6 +48,12 @@ const isDepenseSpent = (d) => {
   if (/refus|rejet|annul/i.test(st)) return false;
   return depenseSfRefs(d).length > 0;
 };
+/* « OM approuvé » : le statut « Acceptée » correspond à la décision positive
+   (les valeurs d’import anglaises restent reconnues). C’est le seul seuil qui
+   compte dans la colonne « OM prévus » de la page Recettes — les OM en attente
+   / terminés restent visibles au survol mais ne sont pas inclus dans la somme. */
+const isOmApproved = (raw) =>
+  /accept/i.test(String(raw || '').normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
 
 export const RecettesPage = () => {
   const { data, settings, upsert, remove } = useAdmin();
@@ -74,16 +80,17 @@ export const RecettesPage = () => {
     const recId = rec && rec.id;
     const isSigned = (d) => String(d.statut || '').trim() === DEPENSE_BC_SIGNE;
     const isPi = (d) => isPiFournisseur(d && d.fournisseur);
-    /* « Engagé » = BC signés (dépenses ordonnées) + prestations internes « PI » :
-       un service interne est facturé sans bon de commande, il est donc
-       considéré consommé dès sa saisie (sauf dépense refusée / annulée).
-       Les lignes de type « OM » sont EXCLUES : leur coût est déjà compté dans
-       la colonne OM (collection om), elles ne font que suivre le paiement. */
+    /* Dépense « engagée » (retenue pour le solde) = BC signés (dépenses
+       ordonnées) + prestations internes « PI » : un service interne est facturé
+       sans bon de commande, il est donc considéré consommé dès sa saisie (sauf
+       dépense refusée / annulée). Les lignes de type « OM » sont EXCLUES : elles
+       sont suivies dans la colonne « OM payés » (collection depenses › onglet
+       OM), elles ne font que suivre le paiement. */
+    const notRejected = (d) => !/refus|rejet|annul/i.test(String(d.statut || d.suivi || '').trim());
     const isEngaged = (d) => {
-      if (String(d && d.type || '').trim() === 'om') return false;
+      if (depenseKindOf(d) === 'om') return false;
       if (isSigned(d)) return true;
-      const st = String(d.statut || d.suivi || '').trim();
-      return isPi(d) && !/refus|rejet|annul/i.test(st);
+      return isPi(d) && notRejected(d);
     };
     const lineDepenses = depenses.filter((d) => d.recetteId === recId);
     const engages = lineDepenses.filter(isEngaged);
@@ -92,20 +99,33 @@ export const RecettesPage = () => {
     const engTotal = engages.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
     const spent = lineDepenses.filter(isDepenseSpent);
     const depTotal = spent.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
+    /* Colonne « Prestations internes » : même liste que l’onglet PI de la page
+       Dépenses (type « pi », fournisseur « PI ») imputée sur cette ligne. */
+    const piRows = lineDepenses.filter((d) => depenseKindOf(d) === 'pi' && notRejected(d));
+    const piTotal = piRows.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
+    /* Colonne « OM payés » : même liste que l’onglet OM de la page Dépenses
+       (type « om », créée depuis « OM prévus / souhaités » → → Dépenses). */
+    const omPaidRows = lineDepenses.filter((d) => depenseKindOf(d) === 'om' && notRejected(d));
+    const omPaidTotal = omPaidRows.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
+    /* « OM prévus » : seuls les OM approuvés (« Acceptée ») entrent dans la
+       somme — les autres (En attente, Terminée…) restent visibles au survol
+       mais ne sont pas inclus (souhaités non inclus dans la somme). */
     const lineOm = om.filter((o) => o.recetteId === recId && String(o.statut || 'En attente').trim() !== 'Refusée');
-    const omTotal = lineOm.reduce((s, o) => s + toNum(o.coutTotal), 0);
+    const omApprouves = lineOm.filter((o) => isOmApproved(o.statut));
+    const omTotal = omApprouves.reduce((s, o) => s + toNum(o.coutTotal), 0);
     const lineDes = desiderate.filter((d) => d.recetteSuggereeId === recId && !isDesiderataRejected(d.statut));
     const desApprouvees = lineDes.filter((d) => isDesiderataApproved(d.statut));
     const desMontant = desApprouvees.reduce((s, d) => s + toNum(d.montantEstime), 0);
     const budgetRendu = rec.budgetRenduDispo !== undefined && rec.budgetRenduDispo !== null && rec.budgetRenduDispo !== ''
       ? toNum(rec.budgetRenduDispo)
       : toNum(rec.budgetTotal);
-    // Solde = dispo université − engagé (BC signés + PI) − OM (jamais les souhaits).
+    // Solde = dispo université − engagé (BC signés + PI) − OM approuvés (jamais les souhaits).
     const solde = budgetRendu - engTotal - omTotal;
     return {
       lineDepenses, spent, depTotal, engages, engagesBC, engagesPI, engTotal,
-      lineOm, omEnAttente: lineOm.filter((o) => String(o.statut || 'En attente').trim() === 'En attente'),
-      omAcceptees: lineOm.filter((o) => String(o.statut || '').trim() === 'Acceptée'),
+      piRows, piTotal, omPaidRows, omPaidTotal,
+      lineOm, omApprouves,
+      omEnAttente: lineOm.filter((o) => String(o.statut || 'En attente').trim() === 'En attente'),
       omTotal,
       lineDes, desApprouvees, desMontant,
       budgetRendu, solde,
@@ -113,15 +133,15 @@ export const RecettesPage = () => {
   };
 
   const totals = useMemo(() => {
-    let budgetTotal = 0; let budgetRendu = 0; let eng = 0; let omTot = 0; let des = 0; let solde = 0;
+    let budgetTotal = 0; let budgetRendu = 0; let pi = 0; let omPay = 0; let omTot = 0; let des = 0; let solde = 0;
     recettes.forEach((r) => {
       const a = aggFor(r);
       budgetTotal += toNum(r.budgetTotal);
       budgetRendu += a.budgetRendu;
-      eng += a.engTotal; omTot += a.omTotal; des += a.desMontant;
+      pi += a.piTotal; omPay += a.omPaidTotal; omTot += a.omTotal; des += a.desMontant;
       solde += a.solde;
     });
-    return { budgetTotal, budgetRendu, eng, omTot, des, solde };
+    return { budgetTotal, budgetRendu, pi, omPay, omTot, des, solde };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recettes, depenses, om, desiderate]);
 
@@ -218,38 +238,59 @@ export const RecettesPage = () => {
       ),
     },
     {
-      key: 'eng', label: 'Engagé · BC + PI', dataType: 'number', align: 'right', nowrap: true,
-      value: (r) => Number(r.__agg.engTotal) || 0,
+      key: 'pi', label: 'Prestations internes', dataType: 'number', align: 'right', nowrap: true,
+      value: (r) => Number(r.__agg.piTotal) || 0,
       display: (r) => (
         <HoverCell
-          amount={r.__agg.engTotal}
-          items={r.__agg.engages.map((d) => {
-            const isPi = isPiFournisseur(d.fournisseur);
-            return {
-              title: d.description || 'Dépense',
-              meta: [isPi ? 'PI (prestation interne)' : d.bcNo || d.sifacNo || '', d.dateSignatureBC || ''].filter(Boolean).join(' · '),
-              value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
-            };
-          })}
+          amount={r.__agg.piTotal}
+          items={r.__agg.piRows.map((d) => ({
+            title: d.description || 'Prestation interne',
+            meta: ['PI (prestation interne)', d.dateSignatureBC || d.dateSignature || ''].filter(Boolean).join(' · '),
+            value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
+          }))}
         />
       ),
     },
     {
-      key: 'om', label: 'OM (acc. / att.)', dataType: 'number', align: 'right', nowrap: true,
+      key: 'omPay', label: 'OM payés', dataType: 'number', align: 'right', nowrap: true,
+      value: (r) => Number(r.__agg.omPaidTotal) || 0,
+      display: (r) => (
+        <HoverCell
+          amount={r.__agg.omPaidTotal}
+          items={r.__agg.omPaidRows.map((d) => ({
+            title: d.description || d.destination || 'Dépense OM',
+            meta: [d.destination || '', d.omNo || d.bcNo || '', d.statut || d.suivi || ''].filter(Boolean).join(' · '),
+            value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
+          }))}
+        />
+      ),
+    },
+    {
+      key: 'om', label: 'OM prévus', header: (
+        <span className="inline-flex flex-wrap items-center gap-x-1 gap-y-0.5">
+          <span>OM prévus</span>
+          <span className="text-[9px] font-bold normal-case text-slate-400 whitespace-nowrap">(souhaités non inclus dans la somme)</span>
+        </span>
+      ), dataType: 'number', align: 'right', nowrap: true,
       value: (r) => Number(r.__agg.omTotal) || 0,
       display: (r) => (
         <HoverCell
           amount={r.__agg.omTotal}
           items={r.__agg.lineOm.map((o) => ({
             title: o.description || o.destination || 'OM',
-            meta: [o.destination || '', o.statut || 'En attente'].filter(Boolean).join(' · '),
+            meta: [o.destination || '', `${o.statut || 'En attente'}${isOmApproved(o.statut) ? ' · compté' : ' · non compté'}`].filter(Boolean).join(' · '),
             value: euro.format(toNum(o.coutTotal)),
           }))}
         />
       ),
     },
     {
-      key: 'desiderata', label: 'Achats prévus/souhaités (non inclus)', dataType: 'number', align: 'right', nowrap: true,
+      key: 'desiderata', label: 'Achats prévus', header: (
+        <span className="inline-flex flex-wrap items-center gap-x-1 gap-y-0.5">
+          <span>Achats prévus</span>
+          <span className="text-[9px] font-bold normal-case text-slate-400 whitespace-nowrap">(souhaités non inclus dans la somme)</span>
+        </span>
+      ), dataType: 'number', align: 'right', nowrap: true,
       value: (r) => Number(r.__agg.desMontant) || 0,
       display: (r) => (
         <HoverCell
@@ -270,7 +311,7 @@ export const RecettesPage = () => {
       display: (r) => (
         <span className="whitespace-nowrap">
           <span className={`font-black ${r.__agg.solde < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{euro.format(r.__agg.solde)}</span>
-          <HoverNote note={`Solde = dispo université ${euro.format(r.__agg.budgetRendu)} − engagé (BC signés + PI) ${euro.format(r.__agg.engTotal)} − OM ${euro.format(r.__agg.omTotal)}`} />
+          <HoverNote note={`Solde = dispo université ${euro.format(r.__agg.budgetRendu)} − dépenses engagées (BC signés + PI) ${euro.format(r.__agg.engTotal)} − OM prévus approuvés ${euro.format(r.__agg.omTotal)}`} />
         </span>
       ),
     },
@@ -321,12 +362,13 @@ export const RecettesPage = () => {
       </div>
 
       {/* Cartes de synthèse */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2">
         <SummaryCard label="Budget total" value={totals.budgetTotal} tone="slate" />
         <SummaryCard label="Mis à disposition (univ.)" value={totals.budgetRendu} tone="blue" />
-        <SummaryCard label="Engagé (BC signés + PI)" value={totals.eng} tone="amber" />
-        <SummaryCard label="OM acceptées / en attente" value={totals.omTot} tone="violet" />
-        <SummaryCard label="Souhaits approuvés (non inclus)" value={totals.des} tone="teal" />
+        <SummaryCard label="Prestations internes" value={totals.pi} tone="amber" />
+        <SummaryCard label="OM payés (Dépenses)" value={totals.omPay} tone="rose" />
+        <SummaryCard label="OM prévus (acceptés)" value={totals.omTot} tone="violet" />
+        <SummaryCard label="Achats prévus (approuvés)" value={totals.des} tone="teal" />
         <SummaryCard label="Solde restant" value={totals.solde} tone={totals.solde < 0 ? 'red' : 'emerald'} />
       </div>
 
@@ -367,6 +409,7 @@ const SummaryCard = ({ label, value, tone }) => {
     slate: 'border-slate-200 text-slate-800',
     blue: 'border-blue-200 text-blue-700',
     amber: 'border-amber-200 text-amber-700',
+    rose: 'border-rose-200 text-rose-700',
     violet: 'border-violet-200 text-violet-700',
     teal: 'border-teal-200 text-teal-700',
     emerald: 'border-emerald-200 text-emerald-700',
