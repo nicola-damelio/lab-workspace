@@ -13,17 +13,6 @@
      N° facture · Livraisons en plusieurs phases (date réception colis,
      n° BL, date service fait, n° SF) · Livraison complète · Commentaires.
 
-    La page est divisée en TROIS onglets, chacun restreint à ses colonnes
-    pertinentes :
-      • « Achats » — dépenses dont le fournisseur n’est pas « PI » (cycle
-        devis → SIFAC/BC → livraisons → facture, mêmes colonnes que le classeur) ;
-      • « Prestations internes » (PI) — dépenses dont le fournisseur est « PI » :
-        service interne facturé SANS bon de commande, colonnes réduites à
-        l’essentiel (pas de devis / BC / SIFAC ni de suivi de livraisons) ;
-      • « OM » — ordres de mission (collection `om`) affichés en LECTURE SEULE
-        avec leurs propres colonnes (mission, période, coûts, statut) : la
-        saisie et la modification se font sur la page « OM » dédiée.
-
    Modèle stocké (mêmes clés que l’import Google Sheets) :
      { suivi, statut, ent, nonComptabiliseEnt, description, demandeur,
        categorie, classification, ligneBudgetaire, recetteId, montant,
@@ -56,7 +45,6 @@ import {
 } from './adminSchema';
 import { parseEuroAmount } from './importUtils';
 import { fileBudgetDocs } from './driveFiling';
-import { omColumns } from './collectionPages';
 
 /* ── Petites aides ──────────────────────────────────────────────────────── */
 const euro = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' });
@@ -389,13 +377,9 @@ const DepensesPage = () => {
   const recettes = useMemo(() => (Array.isArray(data.recettes) ? data.recettes : []), [data.recettes]);
   const personnel = useMemo(() => (Array.isArray(data.personnel) ? data.personnel : []), [data.personnel]);
   const librerie = useMemo(() => (Array.isArray(data.librerie) ? data.librerie : []), [data.librerie]);
-  const om = useMemo(() => (Array.isArray(data.om) ? data.om : []), [data.om]);
 
   const [modal, setModal] = useState(null); // { rec } | null
   const [importOpen, setImportOpen] = useState(false);
-
-  /* Onglet actif : 'achats' | 'pi' | 'om' — voir le regroupement plus bas. */
-  const [tab, setTab] = useState('achats');
 
   /* Pages cibles des liens « vers la bibliothèque » (Librerie / Personnel) —
      le lien n’est actif que si le profil de l’utilisateur peut ouvrir la page. */
@@ -406,11 +390,6 @@ const DepensesPage = () => {
   );
   const canViewPersonnel = useMemo(
     () => !!ADMIN_PAGES.find((p) => p.id === 'personnel' && access.canViewPage(p)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [access]
-  );
-  const canViewOm = useMemo(
-    () => !!ADMIN_PAGES.find((p) => p.id === 'om' && access.canViewPage(p)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [access]
   );
@@ -529,29 +508,13 @@ const DepensesPage = () => {
     return db.localeCompare(da);
   }), [list]);
 
-  /* Regroupement par catégorie de dépense :
-       · « Achats »            — dépenses avec fournisseur « normal » (cycle devis → BC → livraisons) ;
-       · « Prestations internes » (PI) — fournisseur « PI », service interne facturé sans BC ;
-       · « OM »                — ordres de mission (collection séparée), affichés ici en lecture seule. */
-  const achatRows = sorted.filter((r) => !isPiFournisseur(r.fournisseur));
-  const piRows = sorted.filter((r) => isPiFournisseur(r.fournisseur));
-  const depViewRows = tab === 'pi' ? piRows : achatRows;
-  const omRows = useMemo(() => [...om].sort((a, b) => {
-    const da = isoOf(a.dateMission) || isoOf(a.dateDemande);
-    const db = isoOf(b.dateMission) || isoOf(b.dateDemande);
-    if (!da && !db) return 0;
-    if (!da) return 1;
-    if (!db) return -1;
-    return db.localeCompare(da);
-  }), [om]);
-
-  /* Résumé du haut de page (restreint aux lignes de l’onglet de dépenses actif). */
-  const buildSummary = (rows) => {
+    /* Résumé du haut de page. */
+  const summary = useMemo(() => {
     const out = {
       count: 0, moneyCount: 0, total: 0, bcCount: 0, bcTotal: 0,
       completeCount: 0, parcelsReceived: 0, parcelsTotal: 0, pendingCount: 0,
     };
-    rows.forEach((d) => {
+    list.forEach((d) => {
       out.count += 1;
       const m = numOf(d.montant);
       const p = numOf(d.fraisPort);
@@ -571,24 +534,7 @@ const DepensesPage = () => {
       if (liv.length && !allReceived(liv)) out.pendingCount += 1;
     });
     return out;
-  };
-  const summary = useMemo(() => buildSummary(depViewRows), [depViewRows]);
-
-  /* Chiffres du bloc OM (lecture seule) : coûts cumulés + statuts. */
-  const omStats = useMemo(() => {
-    let total = 0;
-    let moneyCount = 0;
-    let pending = 0;
-    let approved = 0;
-    omRows.forEach((o) => {
-      const c = numOf(o.coutTotal);
-      if (c !== null) { total += c; moneyCount += 1; }
-      const s = txt(o.statut).toLowerCase();
-      if (/accept/.test(s)) approved += 1;
-      else if (!s || /attente/.test(s)) pending += 1;
-    });
-    return { count: omRows.length, total, moneyCount, pending, approved };
-  }, [omRows]);
+  }, [list]);
 
   /* Enregistrement : normalise + valide, puis upsert (ou remove si absent). */
   const onSaveDepense = async (draft, existingId) => {
@@ -919,204 +865,87 @@ const DepensesPage = () => {
     },
   ];
 
-  /* Colonnes par onglet : les achats gardent toutes les colonnes du classeur ;
-     les prestations internes (sans devis / BC / SIFAC ni livraisons) n’affichent
-     que l’essentiel ; les OM utilisent les colonnes propres à leur collection. */
-  const columnByKey = new Map(columns.map((c) => [c.key, c]));
-  const piColumns = [
-    columnByKey.get('etat'),
-    columnByKey.get('description'),
-    columnByKey.get('demandeur'),
-    columnByKey.get('categorie'),
-    columnByKey.get('ligne'),
-    columnByKey.get('montant'),
-    columnByKey.get('dateDemande'),
-    columnByKey.get('numFacture'),
-    columnByKey.get('omNo'),
-    columnByKey.get('commentaires'),
-    columnByKey.get('actions'),
-  ].filter(Boolean);
-  const omCols = useMemo(() => omColumns(recettes), [recettes]);
-
-  /* Lignes incomplètes de l’onglet actif : au moins un champ obligatoire manque. */
-  const redRows = depViewRows.filter((r) => missingMandatoryFor(r).length > 0);
+  /* Lignes incomplètes : au moins un champ obligatoire (Paramètres) manquant. */
+  const redRows = sorted.filter((r) => missingMandatoryFor(r).length > 0);
   const redLabels = [...new Set(redRows.flatMap((r) => missingMandatoryFor(r).map(mandatoryLabelOf)))];
-  const piFactured = piRows.filter((r) => txt(r.numFacture)).length;
 
   return (
     <div className="w-full min-w-0 mx-auto flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        {tab === 'om' ? (
-          <p className="text-xs font-bold text-slate-400">
-            {omRows.length} ordre{omRows.length > 1 ? 's' : ''} de mission · suivi en lecture seule — la saisie, l’approbation et la suppression se font sur la page « OM ».
-          </p>
-        ) : tab === 'pi' ? (
-          <p className="text-xs font-bold text-slate-400">
-            {summary.count} prestation{summary.count > 1 ? 's' : ''} interne{summary.count > 1 ? 's' : ''} (fournisseur « PI », sans BC) · {piFactured} facturée{piFactured > 1 ? 's' : ''} — comptées « engagées » dès leur saisie dans la page Recettes.
-          </p>
-        ) : (
-          <p className="text-xs font-bold text-slate-400">
-            {summary.count} achat{summary.count > 1 ? 's' : ''} (BC/SIFAC) · {summary.parcelsReceived}/{summary.parcelsTotal} colis reçu{summary.parcelsReceived > 1 ? 's' : ''} ·{' '}
-            {summary.pendingCount ? ` ${summary.pendingCount} livraison${summary.pendingCount > 1 ? 's' : ''} en attente` : ' toutes les livraisons reçues'} — édition complète, mêmes colonnes que l’onglet « Dépenses » du classeur.
-          </p>
-        )}
+        <p className="text-xs font-bold text-slate-400">
+          {summary.count} dépense{summary.count > 1 ? 's' : ''} · {summary.parcelsReceived}/{summary.parcelsTotal} colis reçu{summary.parcelsReceived > 1 ? 's' : ''} ·
+          {summary.pendingCount ? ` ${summary.pendingCount} livraison${summary.pendingCount > 1 ? 's' : ''} en attente` : ' toutes les livraisons reçues'} —
+          édition complète, mêmes colonnes que l’onglet « Dépenses » du classeur.
+        </p>
         <div className="flex items-center gap-2">
-          {tab === 'om' ? (
-            canViewOm && (
-              <button
-                type="button"
-                onClick={() => navigate('om')}
-                title="Ouvrir la page « OM » (saisie, statut, coûts, suppression)"
-                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
-              >
-                <span className="text-base leading-none">✈️</span> Gérer dans la page OM
-              </button>
-            )
-          ) : (
-            <>
-              <button
-                onClick={() => setImportOpen(true)}
-                className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
-                title="Importer les dépenses depuis la feuille Google Sheets (coller, CSV ou Excel)"
-              >
-                <span className="text-base leading-none">📥</span> Importer
-              </button>
-              <button
-                onClick={() => setModal({ mode: 'new' })}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
-              >
-                <span className="text-base leading-none">+</span> Ajouter une dépense
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Sélecteur d’onglet : Achats · Prestations internes · OM. */}
-      <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl p-1 shadow-sm w-fit flex-wrap">
-        {[
-          { id: 'achats', icon: '🛒', label: 'Achats', count: achatRows.length },
-          { id: 'pi', icon: '🛠️', label: 'Prestations internes', count: piRows.length },
-          { id: 'om', icon: '✈️', label: 'OM', count: omRows.length },
-        ].map((v) => (
           <button
-            key={v.id}
-            type="button"
-            onClick={() => setTab(v.id)}
-            title={
-              v.id === 'achats'
-                ? 'Dépenses avec fournisseur « normal » : cycle devis → BC → livraisons → facture'
-                : v.id === 'pi'
-                  ? 'Prestations internes : fournisseur « PI », service interne facturé sans BC (colonnes réduites)'
-                  : 'Ordres de mission (collection OM) — vue en lecture seule'
-            }
-            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-colors ${tab === v.id ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:bg-blue-50 hover:text-blue-700'}`}
+            onClick={() => setImportOpen(true)}
+            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
+            title="Importer les dépenses depuis la feuille Google Sheets (coller, CSV ou Excel)"
           >
-            <span className="mr-1.5">{v.icon}</span>{v.label}
-            <span className={`ml-1.5 font-mono text-[10px] ${tab === v.id ? 'text-blue-200' : 'text-slate-400'}`}>{v.count}</span>
+            <span className="text-base leading-none">📥</span> Importer
           </button>
-        ))}
+          <button
+            onClick={() => setModal({ mode: 'new' })}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
+          >
+            <span className="text-base leading-none">+</span> Ajouter une dépense
+          </button>
+        </div>
       </div>
 
-      {/* Cartes de synthèse propres à l’onglet actif. */}
-      {tab === 'om' ? (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-          <SummaryCard label="Ordres de mission" value={omStats.count} tone="slate" hint="Nombre d’ordres de mission saisis (collection OM)." />
-          <SummaryCard label="Total des coûts" value={omStats.moneyCount ? euro.format(omStats.total) : '—'} tone="blue" hint={`Somme des coûts (estimés ou exacts) renseignés sur ${omStats.moneyCount} OM.`} />
-          <SummaryCard label="En attente" value={omStats.pending} tone="amber" hint="OM sans statut ou « En attente » (la décision se prend sur la page OM)." />
-          <SummaryCard label="Acceptés" value={omStats.approved} tone="emerald" hint="OM au statut « Acceptée » (un e-mail prévient le/la gestionnaire)." />
-        </div>
-      ) : tab === 'pi' ? (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-          <SummaryCard label="Prestations internes" value={summary.count} tone="slate" hint="Dépenses dont le fournisseur est « PI » — service interne facturé sans BC." />
-          <SummaryCard label="Montant total (HT + port)" value={summary.moneyCount ? euro.format(summary.total) : '—'} tone="blue" hint={`Somme des montants renseignés sur ${summary.moneyCount} prestation(s).`} />
-          <SummaryCard label="Facturées" value={piFactured} tone="indigo" hint="Prestations internes avec un N° facture renseigné." />
-          <SummaryCard label="À facturer" value={Math.max(0, summary.count - piFactured)} tone="amber" hint="Prestations internes sans N° facture — à compléter pour le paiement." />
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-          <SummaryCard label="Achats / BC" value={summary.count} tone="slate" hint="Nombre d’achats saisis (hors prestations internes « PI »)." />
-          <SummaryCard label="Total commandé (HT + port)" value={summary.moneyCount ? euro.format(summary.total) : '—'} tone="blue" hint={`Somme des montants HT et frais de port renseignés sur ${summary.moneyCount} achat(s).`} />
-          <SummaryCard label="BC signés (engagé)" value={`${summary.bcCount} · ${summary.bcCount ? euro.format(summary.bcTotal) : '—'}`} tone="indigo" hint="Dépenses au statut « BC signé » et montant cumulé correspondant. Pour l’engagement budgétaire, la page Recettes ajoute à ce décompte les prestations internes « PI » (sans BC)." />
-          <SummaryCard label="Livraisons complètes" value={`${summary.completeCount} / ${summary.count}`} tone="emerald" hint="Nombre d’achats dont toutes les livraisons renseignées sont arrivées (ou sans colis, déclarés complets)." />
-        </div>
-      )}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        <SummaryCard
+          label="Dépenses / BC" value={summary.count} tone="slate"
+          hint="Nombre total de dépenses saisies."
+        />
+        <SummaryCard
+          label="Total commandé (HT + port)" value={summary.moneyCount ? euro.format(summary.total) : '—'} tone="blue"
+          hint={`Somme des montants HT et frais de port renseignés sur ${summary.moneyCount} dépense(s).`}
+        />
+        <SummaryCard
+          label="BC signés (engagé)" value={`${summary.bcCount} · ${summary.bcCount ? euro.format(summary.bcTotal) : '—'}`} tone="indigo"
+          hint="Dépenses au statut « BC signé » et montant cumulé correspondant. Pour l’engagement budgétaire, la page Recettes ajoute à ce décompte les prestations internes « PI » (sans BC)."
+        />
+        <SummaryCard
+          label="Livraisons complètes" value={`${summary.completeCount} / ${summary.count}`} tone="emerald"
+          hint="Nombre de dépenses dont toutes les livraisons renseignées sont arrivées (ou sans colis, déclarées complètes)."
+        />
+      </div>
 
-      {tab === 'om' ? (
-        <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
-          <b>Ordres de mission :</b> cette vue affiche la collection « OM » pour suivre l’ensemble des dépenses du
-          laboratoire — colonnes propres à un ordre de mission (mission, période, coûts estimés ou exacts, statut) et
-          <b> lecture seule</b> : la saisie, l’approbation (statut) et la suppression se font sur la page « OM » via le
-          bouton « Gérer dans la page OM ». Les dépenses matérielles liées à une mission (billet, hébergement…) se saisissent
-          dans l’onglet « Achats » ou « Prestations internes ».
-        </div>
-      ) : tab === 'pi' ? (
-        <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
-          <b>Prestations internes :</b> service interne (atelier, autre équipe…) facturé <b>sans bon de commande</b> — pas de
-          devis / BC / SIFAC ni de suivi de livraisons, d’où des colonnes réduites à l’essentiel (ligne budgétaire, montant,
-          facture, N° OM / paiement). Une telle dépense est comptée <b>« engagée » dès sa saisie</b> dans la page Recettes.
-          Cliquez sur « + Ajouter une dépense » : le fournisseur « PI » est pré-rempli.
-        </div>
-      ) : (
-        <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
-          <b>Fonctionnement :</b> cliquez sur « ✏️ Modifier » pour ouvrir le formulaire complet (mêmes colonnes que le classeur).
-          « Livraison complète » passe automatiquement à <b>Oui</b> dès que toutes les livraisons renseignées ont leur date de
-          réception (le gestionnaire enregistre simplement chaque arrivée) ; une commande sans colis (prestation, inscription…) se
-          déclare complète via la case « sans colis » du formulaire. Les liens 🔗↗ (devis, BC, BL, facture, OM) ouvrent le document
-          associé dans un nouvel onglet.
-        </div>
-      )}
+      <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
+        <b>Fonctionnement :</b> cliquez sur « ✏️ Modifier » pour ouvrir le formulaire complet (mêmes colonnes que le classeur).
+        « Livraison complète » passe automatiquement à <b>Oui</b> dès que toutes les livraisons renseignées ont leur date de
+        réception (le gestionnaire enregistre simplement chaque arrivée) ; une commande sans colis (prestation, inscription…) se
+        déclare complète via la case « sans colis » du formulaire. Les liens 🔗↗ (devis, BC, BL, facture, OM) ouvrent le document
+        associé dans un nouvel onglet.
+      </div>
 
-      {tab !== 'om' && redRows.length > 0 && (
+      {redRows.length > 0 && (
         <div className="rounded-xl border border-red-200 bg-red-50/80 px-4 py-2.5 text-[11px] text-red-700 leading-relaxed">
           ⚠️ <b>{redRows.length} ligne{redRows.length > 1 ? 's' : ''} en rouge</b> — champ{redLabels.length > 1 ? 's' : ''} obligatoire{redLabels.length > 1 ? 's' : ''} manquant{redLabels.length > 1 ? 's' : ''} :{' '}
           {redLabels.join(', ')}. Ces champs se configurent dans Setup › Champs obligatoires.
         </div>
       )}
 
-      {tab === 'om' ? (
-        omRows.length === 0 ? (
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
-            <div className="text-4xl mb-2">✈️</div>
-            <p className="font-black text-slate-700">Aucun ordre de mission pour le moment</p>
-            <p className="text-sm text-slate-400 mt-1">
-              Les OM se saisissent sur leur page dédiée (bouton « Gérer dans la page OM » ci-dessus) — ils s’afficheront ici pour le suivi global.
-            </p>
-          </div>
-        ) : (
-          <SmartTable
-            key="om"
-            columns={omCols}
-            rows={omRows}
-            minWidth="1250px"
-            searchPlaceholder="Rechercher mission, demandeur, destination, ligne, n° OM…"
-            emptyLabel="Aucun ordre de mission"
-            noMatchLabel="Aucun ordre de mission ne correspond aux filtres."
-          />
-        )
-      ) : depViewRows.length === 0 ? (
+      {sorted.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
-          <div className="text-4xl mb-2">{tab === 'pi' ? '🛠️' : '📦'}</div>
-          <p className="font-black text-slate-700">{tab === 'pi' ? 'Aucune prestation interne' : 'Aucune dépense d’achat (BC/SIFAC)'}</p>
+          <div className="text-4xl mb-2">📦</div>
+          <p className="font-black text-slate-700">Aucune dépense enregistrée pour le moment</p>
           <p className="text-sm text-slate-400 mt-1">
-            {tab === 'pi'
-              ? 'Les prestations internes (fournisseur « PI », service interne sans BC) s’afficheront ici. Ajoutez-en une via « + Ajouter une dépense » : le fournisseur « PI » est pré-rempli.'
-              : 'Ajoutez la première dépense via « + Ajouter une dépense », ou importez l’onglet « Dépenses » de la feuille Google Sheets. Les prestations internes « PI » et les OM ont leurs propres onglets ci-dessus.'}
+            Ajoutez la première dépense via « + Ajouter une dépense », ou importez l’onglet « Dépenses » de la feuille Google Sheets.
           </p>
         </div>
       ) : (
         <SmartTable
-          key={tab}
-          columns={tab === 'pi' ? piColumns : columns}
-          rows={depViewRows}
+          columns={columns}
+          rows={sorted}
           rowClass={(r) => (missingMandatoryFor(r).length ? 'bg-red-100/70' : '')}
-          minWidth={tab === 'pi' ? '1560px' : '2250px'}
-          quickFilters={['demandeur', 'ligne'].concat(tab === 'pi' ? [] : ['fournisseur'])}
-          searchPlaceholder={tab === 'pi'
-            ? 'Rechercher description, demandeur, ligne budgétaire, n° facture / OM…'
-            : 'Rechercher description, fournisseur, n° BC / SIFAC / facture, BL, service fait…'}
+          minWidth="2250px"
+          quickFilters={['demandeur', 'ligne', 'fournisseur']}
+          searchPlaceholder="Rechercher description, fournisseur, n° BC / SIFAC / facture, BL, service fait…"
           emptyLabel="Aucune dépense"
-          noMatchLabel={tab === 'pi' ? 'Aucune prestation interne ne correspond aux filtres.' : 'Aucune dépense ne correspond aux filtres.'}
+          noMatchLabel="Aucune dépense ne correspond aux filtres."
         />
       )}
 
@@ -1131,7 +960,6 @@ const DepensesPage = () => {
           statutOptions={statutOptions}
           demandeurNames={demandeurNames}
           fournisseurNames={fournisseurNames}
-          defaultFournisseur={tab === 'pi' && modal.mode === 'new' ? DEPENSE_FOURNISSEUR_PI : ''}
           fournisseurRequired={mandatoryFields.includes('fournisseur')}
           onCancel={() => setModal(null)}
           onSave={onSaveDepense}
@@ -1168,7 +996,7 @@ const Section = ({ icon, title, children }) => (
 
 const DepenseModal = ({
   rec, recettes, types, natures, statutOptions,
-  demandeurNames, fournisseurNames, defaultFournisseur = '',
+  demandeurNames, fournisseurNames,
   fournisseurRequired = false, onCancel, onSave,
 }) => {
   const editing = !!rec;
@@ -1221,7 +1049,7 @@ const DepenseModal = ({
       description: '', demandeur: '', categorie: '', classification: '',
       statut: '', ligneBudgetaire: '', recetteId: '',
       montant: '', fraisPort: '', dateDemande: '',
-      fournisseur: defaultFournisseur,
+      fournisseur: '',
       numDevis: '', numDevisUrl: '', numSIFAC: '', dateBC: '',
       numBC: '', numBCUrl: '', dateSignature: '', dateSignatureDevis: '',
       dateApprobFournisseur: '',

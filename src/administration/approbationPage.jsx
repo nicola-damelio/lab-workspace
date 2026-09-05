@@ -40,7 +40,7 @@ import {
 } from './adminSchema';
 import { uploadLocalFile, cloudBackendAvailable } from '../utils/driveUpload';
 import {
-  sendAdminMail, personEmailOf, personnelEmailsMatching,
+  sendAdminMail, personEmailOf, personnelEmailsMatching, superuserEmailsOf,
 } from './emailNotify';
 
 /* ── Petites aides ──────────────────────────────────────────────────────── */
@@ -85,19 +85,6 @@ const Badge = ({ tone = 'slate', children }) => (
   </span>
 );
 
-/* Résolution d'une fiche Personnel à partir d'un opérateur (superutilisateur). */
-const personOfOperator = (op, personnel) => {
-  const list = Array.isArray(personnel) ? personnel : [];
-  if (op && op.personnelId) {
-    const byId = list.find((p) => p && p.id === op.personnelId);
-    if (byId) return byId;
-  }
-  if (op && txt(op.name)) {
-    return list.find((p) => p && sameName(p.nom, op.name)) || null;
-  }
-  return null;
-};
-
 /* ═════════════════════════════════════════════════════════════════════════
    Page « Approbation devis & BC »
    ═════════════════════════════════════════════════════════════════════════ */
@@ -138,16 +125,10 @@ export const ApprobationPage = () => {
   const devisOptions = useMemo(() => devisList, [devisList]);
 
   /* ── Destinataires des e-mails (e-mail renseigné dans la fiche Personnel) ── */
-  const superuserEmails = useMemo(() => {
-    const out = [];
-    (Array.isArray(operators) ? operators : []).forEach((op) => {
-      if (!op || op.role !== 'superuser') return;
-      const person = personOfOperator(op, personnel);
-      const email = personEmailOf(person);
-      if (email && out.indexOf(email) === -1) out.push(email);
-    });
-    return out;
-  }, [operators, personnel]);
+  const superuserEmails = useMemo(
+    () => superuserEmailsOf(operators, personnel),
+    [operators, personnel]
+  );
   const gestionnaireEmails = useMemo(
     () => personnelEmailsMatching(personnel, { fonction: 'Gestionnaire' }),
     [personnel]

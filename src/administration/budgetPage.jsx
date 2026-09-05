@@ -3,9 +3,11 @@
    Page « Budget overview » — studio de graphiques budgétaires.
 
    Chaque membre du laboratoire compose et enregistre SES propres graphiques
-   (dépenses, lignes budgétaires / recettes, ordres de mission, souhaits) :
+   (dépenses — découpées en Achats / Prestations internes comme la page
+   Dépenses — lignes budgétaires / recettes, ordres de mission, souhaits) :
      · type : camembert 🥧 / barres 📊 / courbe 📈 ;
-     · regroupement : classification, catégorie, statut, fournisseur,
+     · périmètre Dépenses : Toutes (Achats + PI) / Achats / Prestations internes ;
+     · regroupement : Achats / PI, classification, catégorie, statut, fournisseur,
        opérateur (demandeur), ligne budgétaire, mois / année / jour… ;
      · mesure : somme des montants ou nombre d’enregistrements.
 
@@ -86,6 +88,21 @@ const SOURCE_META = {
   om: { label: 'Ordres de mission', icon: '✈️' },
   desiderate: { label: 'Souhaits d’achat', icon: '🛒' },
 };
+
+/* Périmètres de la source « Dépenses » — mêmes volets que la page Dépenses
+   (onglets Achats / Prestations internes / OM ; l’OM a sa propre source
+   « Ordres de mission »). « Achats » = fournisseur autre que « PI ». */
+const SCOPE_META = {
+  all: { label: 'Toutes (Achats + PI)', icon: '🧾', hint: 'Achats et prestations internes mélangés — l’OM a sa propre source « Ordres de mission ».' },
+  achats: { label: 'Achats', icon: '🛒', hint: 'Fournisseur différent de « PI » : cycle devis → BC/SIFAC → livraison → facture.' },
+  pi: { label: 'Prestations internes (PI)', icon: '🛠️', hint: 'Fournisseur « PI » : service interne facturé sans bon de commande.' },
+};
+const scopeOf = (cfg) => (cfg && cfg.scope === 'pi' ? 'pi' : cfg && cfg.scope === 'achats' ? 'achats' : 'all');
+const scopeFilter = (scope) => (row) => {
+  if (scope === 'all') return true;
+  const isPi = isPiFournisseur(row && row.fournisseur);
+  return scope === 'pi' ? isPi : !isPi;
+};
 const SAVE_KEY = 'budgetCharts';
 const ROUND = (v) => Math.round(v * 100) / 100;
 
@@ -147,12 +164,23 @@ const ligneDim = (id, recetteKeys, extraKeys) => ({
   },
 });
 
+/* Dimension « Achats / PI » : catégorise chaque dépense exactement comme les
+   onglets de la page Dépenses. */
+const depenseCatDim = {
+  id: 'typeDepense',
+  label: 'Achats / Prestations internes (PI)',
+  group: (row) => (isPiFournisseur(row && row.fournisseur)
+    ? { key: 'pi', label: 'Prestations internes (PI)' }
+    : { key: 'achats', label: 'Achats' }),
+};
+
 /* ── Dimensions disponibles par source ─────────────────────────────────── */
 const DIM_BY_SOURCE = {
   depenses: [
     timeDim('annee', 'Par année', 'year'),
     timeDim('mois', 'Par mois', 'month'),
     timeDim('jour', 'Par jour', 'day'),
+    depenseCatDim,
     textDim('classification', 'Classification / nature', ['classification', 'nature']),
     textDim('categorie', 'Catégorie (Fonct. / Invest.)', ['categorie']),
     textDim('statut', 'Statut (pipeline)', ['statut', 'suivi']),
@@ -238,15 +266,19 @@ const DEFAULT_FOR_SOURCE = {
 const findDim = (source, dimId) => (DIM_BY_SOURCE[source] || []).find((d) => d.id === dimId);
 const findMeasure = (source, measureId) => (MEASURE_BY_SOURCE[source] || []).find((m) => m.id === measureId);
 const makeId = () => `budget_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}`;
-const cfgSignature = (cfg) => JSON.stringify([cfg.source, cfg.chartType, cfg.dimension, cfg.measure, Number(cfg.limit) || 0]);
+const cfgSignature = (cfg) => JSON.stringify([cfg.source, cfg.chartType, cfg.dimension, cfg.measure, Number(cfg.limit) || 0, scopeOf(cfg)]);
 
 /** Titre auto depuis les sélections (si l’utilisateur n’en saisit pas). */
 const autoTitle = (draft) => {
   const src = SOURCE_META[draft.source] ? SOURCE_META[draft.source].label : draft.source;
+  const scope = scopeOf(draft);
+  const prefix = draft.source === 'depenses' && scope !== 'all' && SCOPE_META[scope]
+    ? SCOPE_META[scope].label
+    : src;
   const dim = findDim(draft.source, draft.dimension);
   const meas = findMeasure(draft.source, draft.measure);
   const dimTxt = dim ? dim.label.replace(/^Par /, '') : draft.dimension;
-  return `${src} par ${dimTxt.toLowerCase()}${meas ? ` (${meas.label})` : ''}`;
+  return `${prefix} par ${dimTxt.toLowerCase()}${meas ? ` (${meas.label})` : ''}`;
 };
 
 /* ── Lignes budgétaires « enrichies » (totaux calculés comme la page Recettes) ── */
@@ -306,7 +338,11 @@ const computeChart = (cfg, rowsBySource, recettes) => {
   const dim = findDim(source, cfg.dimension) || dimList[0];
   const measure = findMeasure(source, cfg.measure) || measureList[0];
   if (!dim || !measure) return null;
-  const rows = rowsBySource[source] || [];
+  const scope = scopeOf(cfg);
+  const rawRows = rowsBySource[source] || [];
+  const rows = source === 'depenses' && scope !== 'all'
+    ? rawRows.filter(scopeFilter(scope))
+    : rawRows;
   const money = !!measure.money;
   const isTime = !!dim.time;
   const ctx = { source, recettes };
@@ -367,6 +403,7 @@ const computeChart = (cfg, rowsBySource, recettes) => {
     skipped,
     money,
     isTime,
+    scopeKey: scope,
     sourceLabel: SOURCE_META[source] ? SOURCE_META[source].label : source,
     dimLabel: dim.label,
     measureLabel: measure.label,
@@ -488,6 +525,10 @@ const dimLabelClean = (label) => txt(label).replace(/^Par /, '');
 const ChartCard = ({ item, res, idx, count, onEdit, onDuplicate, onRemove, onMove }) => {
   const type = typeMeta(item.chartType);
   const src = SOURCE_META[item.source];
+  const scopeKey = (res && res.scopeKey) || scopeOf(item);
+  const chip = item.source === 'depenses' && scopeKey !== 'all' && SCOPE_META[scopeKey]
+    ? SCOPE_META[scopeKey]
+    : src;
   const hasData = !!res && res.points.length > 0;
   return (
     <div className="bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col overflow-hidden">
@@ -496,8 +537,8 @@ const ChartCard = ({ item, res, idx, count, onEdit, onDuplicate, onRemove, onMov
           <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider text-slate-400 mb-0.5">
             <span aria-hidden="true">{type.icon}</span>
             <span>{type.label}</span>
-            {src && <span className="text-slate-300">·</span>}
-            {src && <span>{src.icon} {src.label}</span>}
+            {chip && <span className="text-slate-300">·</span>}
+            {chip && <span>{chip.icon} {chip.label}</span>}
           </div>
           <h3 className="font-black text-slate-800 text-sm leading-snug truncate" title={item.title}>
             {item.title}
@@ -573,6 +614,7 @@ const BudgetModal = ({ item, rowsBySource, recettes, onCancel, onSave }) => {
       chartType: item.chartType || 'pie',
       dimension: item.dimension || 'classification',
       measure: item.measure || 'montant',
+      scope: scopeOf(item),
       limit: Number(item.limit) || 10,
     }
     : { title: '', source: 'depenses', ...DEFAULT_FOR_SOURCE.depenses };
@@ -581,14 +623,21 @@ const BudgetModal = ({ item, rowsBySource, recettes, onCancel, onSave }) => {
 
   const changeSource = (src) => {
     const def = DEFAULT_FOR_SOURCE[src] || DEFAULT_FOR_SOURCE.depenses;
-    setDraft((d) => ({ ...d, source: src, ...def }));
+    setDraft((d) => ({
+      ...d,
+      source: src,
+      ...def,
+      /* « Achats / PI » est propre à la source Dépenses : le périmètre est
+         conservé quand on y reste, sinon on repart sur « Toutes ». */
+      scope: src === 'depenses' ? (d.source === 'depenses' ? (d.scope || 'all') : 'all') : undefined,
+    }));
   };
 
   const dims = DIM_BY_SOURCE[draft.source] || [];
   const measures = MEASURE_BY_SOURCE[draft.source] || [];
   const preview = useMemo(
     () => computeChart(
-      { title: draft.title, source: draft.source, chartType: draft.chartType, dimension: draft.dimension, measure: draft.measure, limit: draft.limit },
+      { title: draft.title, source: draft.source, chartType: draft.chartType, dimension: draft.dimension, measure: draft.measure, limit: draft.limit, scope: scopeOf(draft) },
       rowsBySource,
       recettes,
     ),
@@ -620,8 +669,9 @@ const BudgetModal = ({ item, rowsBySource, recettes, onCancel, onSave }) => {
             {editing ? '✏️ Modifier le graphique' : '＋ Nouveau graphique budget'}
           </h2>
           <p className="text-blue-100 text-xs mt-0.5">
-            Camembert, barres ou courbe — sur les dépenses, lignes budgétaires, OM ou souhaits de la base.
-            Le graphique est enregistré dans votre espace personnel « Budget overview ».
+            Camembert, barres ou courbe — sur les dépenses (avec leur découpage Achats / Prestations
+            internes), lignes budgétaires, OM ou souhaits de la base. Le graphique est enregistré
+            dans votre espace personnel « Budget overview ».
           </p>
         </div>
 
@@ -639,10 +689,26 @@ const BudgetModal = ({ item, rowsBySource, recettes, onCancel, onSave }) => {
               <label className={LABEL_CLS}>Source des données</label>
               <select className={INPUT_CLS} value={draft.source} onChange={(e) => changeSource(e.target.value)}>
                 {Object.keys(SOURCE_META).map((k) => (
-                  <option key={k} value={k}>{SOURCE_META[k].icon} {SOURCE_META[k].label}</option>
+                  <option key={k} value={k}>
+                    {SOURCE_META[k].icon} {k === 'depenses' ? 'Dépenses (Achats + PI)' : SOURCE_META[k].label}
+                  </option>
                 ))}
               </select>
             </div>
+
+            {draft.source === 'depenses' && (
+              <div>
+                <label className={LABEL_CLS}>Périmètre (onglets de la page Dépenses)</label>
+                <select className={INPUT_CLS} value={scopeOf(draft)} onChange={(e) => set('scope', e.target.value)}>
+                  {Object.keys(SCOPE_META).map((k) => (
+                    <option key={k} value={k}>{SCOPE_META[k].icon} {SCOPE_META[k].label}</option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-slate-400 mt-1 leading-snug">
+                  {(SCOPE_META[scopeOf(draft)] || SCOPE_META.all).hint}
+                </p>
+              </div>
+            )}
 
             <div>
               <label className={LABEL_CLS}>Type de graphique</label>
@@ -770,6 +836,21 @@ const EXAMPLES = [
     cfg: { source: 'depenses', chartType: 'line', dimension: 'jour', measure: 'montant', limit: 40, title: 'Dépenses par jour' },
   },
   {
+    id: 'ex-split', icon: '🧩', label: 'Achats vs Prestations internes',
+    hint: 'Camembert comparant le montant des Achats et des PI (fournisseur « PI »)',
+    cfg: { source: 'depenses', chartType: 'pie', dimension: 'typeDepense', measure: 'montant', limit: 0, title: 'Dépenses : Achats vs Prestations internes' },
+  },
+  {
+    id: 'ex-achats-mois', icon: '🛒', label: 'Achats par mois',
+    hint: 'Courbe mensuelle du montant (HT + port) des seuls Achats (hors PI)',
+    cfg: { source: 'depenses', chartType: 'line', dimension: 'mois', measure: 'montant', scope: 'achats', limit: 24, title: 'Achats par mois' },
+  },
+  {
+    id: 'ex-pi-mois', icon: '🛠️', label: 'Prestations internes par mois',
+    hint: 'Courbe mensuelle du montant des seules prestations internes (PI)',
+    cfg: { source: 'depenses', chartType: 'line', dimension: 'mois', measure: 'montant', scope: 'pi', limit: 24, title: 'Prestations internes (PI) par mois' },
+  },
+  {
     id: 'ex-solde', icon: '⚖️', label: 'Solde par ligne budgétaire',
     hint: 'Barres du solde restant calculé de chaque ligne',
     cfg: { source: 'lignes', chartType: 'bar', dimension: 'ligne', measure: 'solde', limit: 12, title: 'Solde par ligne budgétaire' },
@@ -836,6 +917,7 @@ export const BudgetPage = () => {
       chartType: draft.chartType,
       dimension: draft.dimension,
       measure: draft.measure,
+      scope: scopeOf(draft) === 'all' ? undefined : scopeOf(draft),
       limit: Number(draft.limit) || 0,
       createdAt: existing.createdAt || now,
       updatedAt: now,
@@ -919,10 +1001,11 @@ export const BudgetPage = () => {
               </div>
               <p className="text-sm text-slate-500 mt-0.5 max-w-3xl">
                 Composez vos propres graphiques de suivi budgétaire — camembert, barres ou courbe —
-                puis enregistrez-les dans la base : dépenses (par classification, ligne budgétaire,
-                opérateur, fournisseur, mois / année / jour…), soldes &amp; budgets des lignes
-                (Recettes), OM et souhaits d’achat. Chaque membre retrouve son tableau de bord à
-                l’ouverture de la page.
+                puis enregistrez-les dans la base. Pour les dépenses, suivez le même découpage que
+                la page Dépenses (onglets Achats / Prestations internes / OM) : filtrez « Achats »,
+                « Prestations internes (PI) » ou gardez l’ensemble. Ajoutez aussi les soldes &amp;
+                budgets des lignes (Recettes), les OM et les souhaits d’achat. Chaque membre
+                retrouve son tableau de bord à l’ouverture de la page.
               </p>
             </div>
           </div>

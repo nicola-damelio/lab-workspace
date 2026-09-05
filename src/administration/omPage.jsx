@@ -9,7 +9,7 @@
      · dates : demande / mission (départ) / retour
      · statut : En attente / Acceptée / Refusée / Terminée — le changement de
        statut (approbation) est réservé au superutilisateur, et une fois l’OM
-       « Acceptée » un e-mail prévient le(s) gestionnaire(s)
+       « Acceptée » un e-mail prévient le superutilisateur et le(s) gestionnaire(s)
      · coût estimé ou exact : transport · logement · repas · inscription
        (total recalculé automatiquement)
      · commentaires
@@ -25,7 +25,10 @@ import { AdminImportModal } from './adminImportModal';
 import { omColumns } from './collectionPages';
 import { OM_COST_STATUSES, OM_STATUSES } from './adminSchema';
 import { parseEuroAmount } from './importUtils';
-import { sendAdminMail, personnelEmailsMatching, summarizeMail, mailBodyText } from './emailNotify';
+import {
+  sendAdminMail, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
+  summarizeMail, mailBodyText,
+} from './emailNotify';
 
 /* ── Petites aides ─────────────────────────────────────────────────────── */
 const txt = (v) => (v === null || v === undefined ? '' : String(v).trim());
@@ -217,7 +220,7 @@ const OmModal = ({ rec, recettes, demandeurNames, statusOptions, onCancel, onSav
       patch.statutChangedAt = Date.now();
     }
     onSave(patch, editing && rec.id);
-    /* Une fois l’OM « Acceptée », on prévient le(s) gestionnaire(s). */
+    /* Une fois l’OM « Acceptée », on prévient le superutilisateur et le(s) gestionnaire(s). */
     if (canDecide && !isOmApproved(previous) && isOmApproved(decided) && typeof onApproved === 'function') {
       onApproved(patch, editing && rec.id);
     }
@@ -373,7 +376,7 @@ const OmModal = ({ rec, recettes, demandeurNames, statusOptions, onCancel, onSav
    ═════════════════════════════════════════════════════════════════════════ */
 export const OmPage = () => {
   const {
-    data, settings, upsert, remove, currentUser, access,
+    data, settings, upsert, remove, currentUser, access, operators,
   } = useAdmin();
   const om = useMemo(() => (Array.isArray(data.om) ? data.om : []), [data.om]);
   const recettes = useMemo(() => (Array.isArray(data.recettes) ? data.recettes : []), [data.recettes]);
@@ -388,7 +391,12 @@ export const OmPage = () => {
   const currentName = txt((access.profile && access.profile.person && access.profile.person.nom)
     || (currentUser && currentUser.name));
 
-  /* Destinataire de la notification d’approbation : la fiche « Gestionnaire ». */
+  /* Destinataires des notifications d’approbation : le superutilisateur (fiche
+     Personnel liée de l’opérateur) et, le cas échéant, la fiche « Gestionnaire ». */
+  const superuserEmails = useMemo(
+    () => superuserEmailsOf(operators, personnel),
+    [operators, personnel]
+  );
   const gestionnaireEmails = useMemo(
     () => personnelEmailsMatching(personnel, { fonction: 'Gestionnaire' }),
     [personnel]
@@ -434,7 +442,8 @@ export const OmPage = () => {
     return db.localeCompare(da);
   }), [om]);
 
-  /* Envoi d’un e-mail au(x) gestionnaire(s) quand l’OM passe « Acceptée ». */
+  /* Envoi d’un e-mail au superutilisateur (et au(x) gestionnaire(s)) quand
+     l’OM passe « Acceptée ». */
   const notifyApproved = async (rec) => {
     const label = missionOf(rec) || txt(rec.description) || 'ordre de mission';
     const ref = txt(rec.numOM);
@@ -453,8 +462,12 @@ export const OmPage = () => {
       txt(rec.ligneBudgetaire) ? `Ligne budgétaire : ${txt(rec.ligneBudgetaire)}` : '',
       `Décision prise par : ${currentName || 'superutilisateur'}`,
     ].filter(Boolean);
-    const res = await sendAdminMail({ to: gestionnaireEmails, subject, text: mailBodyText(lines) });
-    const summary = summarizeMail(res, 'Gestionnaire notifiée');
+    const res = await sendAdminMail({
+      to: mergeEmails(superuserEmails, gestionnaireEmails),
+      subject,
+      text: mailBodyText(lines),
+    });
+    const summary = summarizeMail(res, 'Superutilisateur & gestionnaire(s)');
     setNotice({
       tone: res && res.ok ? 'ok' : 'warn',
       text: summary.text,

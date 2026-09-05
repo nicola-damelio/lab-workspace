@@ -414,8 +414,8 @@ export const IMPORT_PRESETS = [
     icon: '🛒',
     tabLabel: 'Souhaités',
     sourceUrl: GOOGLE_SHEET_LINKS.desiderate,
-    expectHeaders: ['Decision', 'Priorité', 'Cout', 'Description', 'Demandeur', 'Categorie', 'Ligne budgetaire', 'Frais de port/travel', 'Date demande', 'Nom du fournisseur', 'n° devis', 'Code produit', 'Commentaires'],
-    help: 'Onglet « Souhaités » du classeur Google Sheets (demandes d’achat : décision, priorité, coût estimé/exact, devis, code produit) : copier le tableau (Ctrl+A puis Ctrl+C) et coller ci-dessous.',
+    expectHeaders: ['Decision', 'Priorité', 'Cout', 'Description', 'Demandeur', 'Categorie', 'Ligne budgetaire', 'Frais de port/travel', 'Date demande', 'Nom du fournisseur', 'n° devis', 'Lien devis', 'Code produit', 'Commentaires'],
+    help: 'Onglet « Souhaités » du classeur Google Sheets (demandes d’achat : décision, priorité, coût estimé/exact, devis, code produit) : copier le tableau (Ctrl+A puis Ctrl+C) et coller ci-dessous. Pour conserver le lien Drive du devis sur le souhait, copiez le tableau depuis Google Sheets (les adresses des liens cliquables ↗ sont récupérées automatiquement) ou ajoutez une colonne « Lien devis » avec l’adresse complète (https://…) du fichier.',
   },
   {
     id: 'conges-demandes',
@@ -963,6 +963,7 @@ const DESIDERATE_COLUMNS = {
   fournisseur: ['Nom du fournisseur', 'Fournisseur'],
   contact: ['Contact fornisseur', 'Contact fournisseur', 'Contact'],
   devis1: ['n° devis', 'N° devis', 'Devis', 'N° de devis', 'Numéro de devis'],
+  numDevisUrl: ['Lien devis', 'Lien du devis', 'Lien Devis', 'URL devis', 'URL Devis', 'Lien doc devis', 'Lien document devis', 'Lien Document Devis'],
   devis2: ['devis N°2', 'Devis n°2', 'devis n°2'],
   devis3: ['devis N°3', 'Devis n°3', 'devis n°3'],
   codeProduit: ['Code produit', 'Code article', 'Référence'],
@@ -1330,6 +1331,8 @@ const buildDesiderate = (rows, headerIdx, state) => {
         fournisseur: clean(cell(r, cols.fournisseur)),
         contact: clean(cell(r, cols.contact)),
         numDevis: extractNumeroFromDoc(clean(cell(r, cols.devis1))),
+        numDevisUrl: clean(cell(r, cols.numDevisUrl))
+          || (/^https?:/i.test(clean(cell(r, cols.devis1))) ? clean(cell(r, cols.devis1)) : ''),
         devis2: extractNumeroFromDoc(clean(cell(r, cols.devis2))),
         devis3: extractNumeroFromDoc(clean(cell(r, cols.devis3))),
         codeProduit: clean(cell(r, cols.codeProduit)),

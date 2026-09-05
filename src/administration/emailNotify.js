@@ -36,6 +36,59 @@ export const personnelEmailsMatching = (personnel = [], { fonction = '', type = 
   return out;
 };
 
+/* ── Adresses des superutilisateurs (opérateurs → fiche Personnel) ─────── */
+
+/** Normalise un nom pour comparaison tolérante (ordre des mots ignoré). */
+const normName = (s) => String(s || '')
+  .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+/** Deux noms correspondent si leurs mots triés sont identiques (ex. « Jean Dupont »). */
+const samePersonName = (a, b) => {
+  const ka = normName(a);
+  const kb = normName(b);
+  if (!ka || !kb) return false;
+  const toks = (x) => x.split(/\s+/).sort().join(' ');
+  return toks(ka) === toks(kb);
+};
+
+/** Fiche Personnel d'un opérateur : lien explicite (personnelId), sinon nom. */
+const personOfOperator = (op, personnel = []) => {
+  const list = Array.isArray(personnel) ? personnel : [];
+  if (!op) return null;
+  if (op.personnelId) {
+    const byId = list.find((p) => p && p.id === op.personnelId);
+    if (byId) return byId;
+  }
+  if (String(op.name || '').trim()) {
+    return list.find((p) => p && samePersonName(p.nom, op.name)) || null;
+  }
+  return null;
+};
+
+/** E-mails des opérateurs « superuser », résolus via leur fiche Personnel. */
+export const superuserEmailsOf = (operators = [], personnel = []) => {
+  const out = [];
+  (Array.isArray(operators) ? operators : []).forEach((op) => {
+    if (!op || String(op.role || '').trim() !== 'superuser') return;
+    const email = personEmailOf(personOfOperator(op, personnel));
+    if (email && out.indexOf(email) === -1) out.push(email);
+  });
+  return out;
+};
+
+/** Fusionne plusieurs listes d'adresses e-mail (vidées, dédoublonnées). */
+export const mergeEmails = (...lists) => {
+  const out = [];
+  lists.forEach((list) => {
+    (Array.isArray(list) ? list : [list]).forEach((e) => {
+      const s = String(e || '').trim();
+      if (s && out.indexOf(s) === -1) out.push(s);
+    });
+  });
+  return out;
+};
+
 /** URL de base du serveur partagé ('' quand non configuré). */
 export const adminMailServerBase = () =>
   String(GOOGLE_TOKEN_EXCHANGE_URL || '').trim().replace(/\/+$/, '');

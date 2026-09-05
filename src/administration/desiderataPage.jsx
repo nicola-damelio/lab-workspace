@@ -16,8 +16,9 @@
    Modèle stocké (mêmes clés que l’import Google Sheets « Souhaités ») :
      { description, urgence / priorite, demandeur, categorie,
        recetteSuggereeId, ligneBudgetaire, montantEstime, fraisPort,
-       dateDemande, fournisseur, contact, numDevis, devis2, devis3,
-       codeProduit, commentaires, statut, statutChangedBy?, statutChangedAt? }
+       dateDemande, fournisseur, contact, numDevis, numDevisUrl, devis2,
+       devis3, codeProduit, commentaires, statut, statutChangedBy?,
+       statutChangedAt? }
      + enveloppe d’audit posée par upsert() (createdAt/By, updatedAt/By).
    ========================================================================= */
 import React, { useEffect, useMemo, useState } from 'react';
@@ -28,8 +29,11 @@ import {
   ADMIN_PAGES, RECETTE_TYPES, URGENCES, DESIDERATE_STATUSES,
   desiderataDecisionOf, isDesiderataApproved,
 } from './adminSchema';
-import { parseEuroAmount } from './importUtils';
-import { sendAdminMail, personnelEmailsMatching, summarizeMail, mailBodyText } from './emailNotify';
+import { parseEuroAmount, extractNumeroFromDoc } from './importUtils';
+import {
+  sendAdminMail, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
+  summarizeMail, mailBodyText,
+} from './emailNotify';
 
 /* ── Petites aides ──────────────────────────────────────────────────────── */
 const euro = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' });
@@ -62,6 +66,36 @@ const norm = (s) => String(s || '')
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const demandeurOf = (r) => pick(r, ['demandeur', 'porteur', 'nom', 'name']);
+const devisUrlOf = (r) => txt(pick(r, ['numDevisUrl', 'devisUrl', 'urlDevis', 'lienDevis', 'devisLink']));
+const addScheme = (u) => (/^(https?:|mailto:|tel:)/i.test(u) ? u : `https://${u}`);
+
+/* Code « devis » avec lien Google Drive facultatif vers le document. */
+const DevisLink = ({ code, url }) => {
+  const v = txt(code);
+  const u = txt(url);
+  if (!v && !u) return <span className="text-slate-300">—</span>;
+  const label = v || 'document';
+  return (
+    <span className="inline-flex items-center gap-1 min-w-0 max-w-full">
+      {u ? (
+        <a
+          href={addScheme(u)} target="_blank" rel="noreferrer"
+          onClick={(e) => e.stopPropagation()} title={u}
+          className="min-w-0 truncate font-mono text-[11px] font-semibold text-blue-700 hover:text-blue-900 underline decoration-blue-300 underline-offset-2 transition-colors"
+        >{label}</a>
+      ) : (
+        <span className="font-mono text-[11px] font-semibold text-slate-600 truncate" title={v}>{label}</span>
+      )}
+      {u ? (
+        <a
+          href={addScheme(u)} target="_blank" rel="noreferrer"
+          onClick={(e) => e.stopPropagation()} title={u}
+          className="shrink-0 text-[10px] leading-4 font-black text-blue-600 hover:text-blue-800 border border-blue-200 hover:bg-blue-50 rounded px-1"
+        >↗</a>
+      ) : null}
+    </span>
+  );
+};
 
 /* Petits éléments d’affichage (mêmes classes que les autres pages d’admin). */
 const TONES = {
@@ -97,6 +131,7 @@ const DecisionBadge = ({ raw }) =>
 
 /* ── Fenêtre d’ajout / édition d’une dépense souhaitée ─────────────────── */
 const MODAL_INPUT = 'w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500';
+const MODAL_URL_INPUT = `${MODAL_INPUT} font-mono text-xs text-blue-700 placeholder:text-slate-300 placeholder:font-sans`;
 const MODAL_LABEL = 'block text-[10px] font-black uppercase text-slate-400 tracking-wide mb-1';
 
 const Field = ({ label, required, children, className = '', hint }) => (
@@ -139,6 +174,7 @@ const DesiderataModal = ({
       fournisseur: txt(pick(r, ['fournisseur', 'nomFournisseur'])),
       contact: txt(r && r.contact),
       numDevis: txt(pick(r, ['numDevis', 'devisNo'])),
+      numDevisUrl: devisUrlOf(r),
       devis2: txt(r && r.devis2),
       devis3: txt(r && r.devis3),
       codeProduit: txt(r && r.codeProduit),
@@ -154,6 +190,17 @@ const DesiderataModal = ({
     const id = e.target.value;
     const found = recettes.find((x) => x.id === id);
     setDraft((d) => ({ ...d, recetteSuggereeId: id, ligneBudgetaire: found ? txt(found.ligne) : '' }));
+  };
+
+  /* Lien du devis : si aucun N° n’est saisi, on le pré-remplit depuis le nom
+     du fichier porté par l’adresse (ex. « Devis_2026-015_Fournisseur.pdf »). */
+  const setNumDevisUrl = (e) => {
+    const u = e.target.value;
+    setDraft((d) => ({
+      ...d,
+      numDevisUrl: u,
+      numDevis: d.numDevis || extractNumeroFromDoc(u),
+    }));
   };
 
   const submit = () => {
@@ -175,6 +222,7 @@ const DesiderataModal = ({
       fournisseur: txt(draft.fournisseur),
       contact: txt(draft.contact),
       numDevis: txt(draft.numDevis),
+      numDevisUrl: txt(draft.numDevisUrl),
       devis2: txt(draft.devis2),
       devis3: txt(draft.devis3),
       codeProduit: txt(draft.codeProduit),
@@ -195,7 +243,8 @@ const DesiderataModal = ({
       patch.statut = 'En attente'; // nouveau souhait soumis → en attente de décision
     }
     onSave(patch, editing && rec.id);
-    /* Une fois le souhait approuvé, un e-mail prévient le(s) gestionnaire(s). */
+    /* Une fois le souhait approuvé, un e-mail prévient le superutilisateur et
+       le(s) gestionnaire(s). */
     if (approvalNow && typeof onApproved === 'function') onApproved(patch, editing && rec.id);
   };
 
@@ -323,6 +372,17 @@ const DesiderataModal = ({
                 <input className={MODAL_INPUT} value={draft.codeProduit} onChange={set('codeProduit')} placeholder="ex. 89501-432" />
               </Field>
             </div>
+            <div className="mt-3">
+              <Field
+                label="Lien du devis ↗ (Google Drive, facultatif)"
+                hint="Collez l’adresse du devis (PDF…) déjà déposé sur Google Drive : elle est conservée sur le souhait et le N° devis devient un lien cliquable dans le tableau. Si le N° est vide, il est pré-rempli depuis le nom du fichier (ex. « Devis_2026-015_Fournisseur.pdf » → 2026-015)."
+              >
+                <input
+                  className={MODAL_URL_INPUT} value={draft.numDevisUrl} onChange={setNumDevisUrl}
+                  placeholder="https://drive.google.com/…"
+                />
+              </Field>
+            </div>
           </Section>
 
           <Section icon="⚖️" title="Décision du superutilisateur">
@@ -380,14 +440,19 @@ const DesiderataModal = ({
 export const DesiderataPage = () => {
   const {
     data, settings, upsert, remove, currentUser,
-    access, navigate, focus, clearFocus,
+    access, navigate, focus, clearFocus, operators,
   } = useAdmin();
   const list = useMemo(() => (Array.isArray(data.desiderate) ? data.desiderate : []), [data.desiderate]);
   const recettes = useMemo(() => (Array.isArray(data.recettes) ? data.recettes : []), [data.recettes]);
   const personnel = useMemo(() => (Array.isArray(data.personnel) ? data.personnel : []), [data.personnel]);
   const librerie = useMemo(() => (Array.isArray(data.librerie) ? data.librerie : []), [data.librerie]);
 
-  /* Destinataire de la notification d’approbation : la fiche « Gestionnaire ». */
+  /* Destinataires des notifications d’approbation : le superutilisateur (fiche
+     Personnel liée de l’opérateur) et, le cas échéant, la fiche « Gestionnaire ». */
+  const superuserEmails = useMemo(
+    () => superuserEmailsOf(operators, personnel),
+    [operators, personnel]
+  );
   const gestionnaireEmails = useMemo(
     () => personnelEmailsMatching(personnel, { fonction: 'Gestionnaire' }),
     [personnel]
@@ -537,7 +602,7 @@ export const DesiderataPage = () => {
     setNotice({ tone: 'ok', text: `Dépense souhaitée « ${label} » supprimée.` });
   };
 
-  /* E-mail au(x) gestionnaire(s) quand un souhait passe « Approuvé ». */
+  /* E-mail au superutilisateur (et au(x) gestionnaire(s)) quand un souhait passe « Approuvé ». */
   const notifyApproved = async (patch) => {
     const label = txt(patch && patch.description) || 'dépense souhaitée';
     const subject = `[Lab Workspace] Dépense souhaitée approuvée — ${label}`;
@@ -556,8 +621,12 @@ export const DesiderataPage = () => {
       txt(patch && patch.codeProduit) ? `Code produit : ${txt(patch.codeProduit)}` : '',
       `Décision prise par : ${(currentUser && currentUser.name) || 'superutilisateur'}`,
     ].filter(Boolean);
-    const res = await sendAdminMail({ to: gestionnaireEmails, subject, text: mailBodyText(lines) });
-    const summary = summarizeMail(res, 'Gestionnaire notifiée');
+    const res = await sendAdminMail({
+      to: mergeEmails(superuserEmails, gestionnaireEmails),
+      subject,
+      text: mailBodyText(lines),
+    });
+    const summary = summarizeMail(res, 'Superutilisateur & gestionnaire(s)');
     setNotice({
       tone: res && res.ok ? 'ok' : 'warn',
       text: summary.text,
@@ -742,15 +811,24 @@ export const DesiderataPage = () => {
     },
     {
       key: 'devis', label: 'Devis / code produit', filter: 'text',
-      value: (r) => [pick(r, ['numDevis', 'devisNo']), r.devis2, r.devis3, r.codeProduit].filter(Boolean).join(' '),
+      value: (r) => [pick(r, ['numDevis', 'devisNo']), devisUrlOf(r), r.devis2, r.devis3, r.codeProduit].filter(Boolean).join(' '),
       display: (r) => {
+        const mainCode = pick(r, ['numDevis', 'devisNo']);
+        const mainUrl = devisUrlOf(r);
         const rows = [
-          pick(r, ['numDevis', 'devisNo']) && ['Devis', pick(r, ['numDevis', 'devisNo'])],
-          r.devis2 && ['Devis 2', r.devis2],
-          r.devis3 && ['Devis 3', r.devis3],
+          (mainCode || mainUrl) && { label: 'Devis', code: mainCode, url: mainUrl },
+          txt(r.devis2) && { label: 'Devis 2', code: txt(r.devis2) },
+          txt(r.devis3) && { label: 'Devis 3', code: txt(r.devis3) },
         ].filter(Boolean);
         return rows.length
-          ? <div className="text-[11px] font-mono text-slate-600 whitespace-nowrap">{rows.map(([l, v]) => <div key={l}>{l} {v}</div>)}</div>
+          ? <div className="whitespace-nowrap flex flex-col gap-0.5">
+              {rows.map((row) => (
+                <div key={row.label} className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold uppercase text-slate-400">{row.label}</span>
+                  <DevisLink code={row.code} url={row.url} />
+                </div>
+              ))}
+            </div>
           : <span className="text-slate-300">—</span>;
       },
     },

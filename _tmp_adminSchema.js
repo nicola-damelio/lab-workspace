@@ -70,7 +70,7 @@ export const ADMIN_PAGES = [
     fields: ['Description', 'Demandeur', 'Date de demande · Départ · Retour', 'Destination', 'Transport · Hébergement · Repas · Inscription', 'Coût total (calculé)', 'Statut : En attente / Acceptée / Refusée / Terminée', 'Estimé vs Exact', 'Ligne budgétaire liée (Recette)', 'Commentaires'] },
   { id: 'desiderate', label: 'Dépenses souhaitées', icon: '🛒', superuserOnly: false, kind: 'desiderate',
     blurb: 'Souhaits d’achat de l’équipe : coût estimé et frais de port saisis par le demandeur, décision réservée au superutilisateur (Approuvé / En attente / Pas maintenant).',
-    fields: ['Décision — réservée au superutilisateur : Approuvé / En attente / Pas maintenant', 'Souhait d’achat', 'Urgence : Urgent / Important / Souhaitable', 'Demandeur', 'Fournisseur', 'Ligne budgétaire suggérée', 'Coût estimé', 'Frais de port', 'N° devis · Lien du devis (Drive, facultatif) · Code produit', 'Date de demande', 'Commentaires'] },
+    fields: ['Décision — réservée au superutilisateur : Approuvé / En attente / Pas maintenant', 'Souhait d’achat', 'Urgence : Urgent / Important / Souhaitable', 'Demandeur', 'Fournisseur', 'Ligne budgétaire suggérée', 'Coût estimé', 'Frais de port', 'N° devis · Code produit', 'Date de demande', 'Commentaires'] },
   { id: 'devisBc', label: 'Approbation devis & BC', icon: '📝', superuserOnly: false, kind: 'devisBc',
     blurb: 'Dépôt des devis et bons de commande à faire signer par le superutilisateur (visibles par les Permanents). Les fichiers sont téléversés dans Budget_labo/<année>/Devis|BC ; l’approbation d’un devis crée la dépense « Devis en cours » et celle du BC la fait passer à « BC signé » (liens automatiques).',
     fields: ['Statut : En attente / Approuvé / Refusé (décision réservée au superutilisateur)', 'Type : Devis ou BC', 'Description', 'Fournisseur', 'N° devis · N° BC', 'Montant (optionnel)', 'Fichier téléversé (Budget_labo/<année>/Devis ou /BC)', 'Déposant', 'Date de dépôt', 'Dépense créée automatiquement à l’approbation'] },
@@ -176,7 +176,6 @@ export const AUDIT_FIELDS = ['id', 'createdAt', 'createdBy', 'updatedAt', 'updat
  * @property {string} fournisseurNom
  * @property {string} fournisseurContact
  * @property {string[]} devisNumbers
- * @property {?string} numDevisUrl           // lien Google Drive vers le devis (facultatif)
  * @property {string} codeProduit
  * @property {string} commentaires
  * @property {string} statut                // décision du superutilisateur : « Approuvé » / « En attente » / « Pas maintenant » (anciennes valeurs d’import toujours acceptées)

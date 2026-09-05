@@ -9,6 +9,9 @@
        pour approuver) ; les profils Permanent/Technique ne la voient pas.
      • Chaque membre Non permanent pose sa propre demande (statut « Demande ») —
        c'est d'ailleurs la SEULE page de ces profils.
+     • Un membre Non permanent ne voit QUE ses propres demandes (tableau,
+       soldes, statistiques) ; le superutilisateur, qui approuve, voit tout.
+
      • L'approbation (Approuvé / Refusé) est réservée au superutilisateur
        (même règle que le changement de statut des Spese Desiderate) ; une
        demande déjà traitée n'est plus modifiable par son auteur.
@@ -116,13 +119,22 @@ export const CongesPage = () => {
   const canEdit = (r) => isSuper || (own(r) && pending(r));
   const canDelete = () => isSuper; // seul le superutilisateur peut supprimer une demande
 
+  /* Un membre Non permanent ne voit QUE ses propres demandes ; le
+     superutilisateur (rôle d’approbation) voit toute la liste. */
+  const visible = useMemo(
+    () => (isSuper ? sorted : sorted.filter((r) => own(r))),
+    // own() dépend de meName (recalculée à chaque rendu).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isSuper, sorted, meName]
+  );
+
   const summary = useMemo(() => {
     const b = congeYearBounds();
     let demandes = 0;
     let approuve = 0;
     let demande = 0;
     const personnes = new Set();
-    sorted.forEach((r) => {
+    visible.forEach((r) => {
       demandes += 1;
       const k = norm(r.demandeur);
       if (k) personnes.add(k);
@@ -133,7 +145,7 @@ export const CongesPage = () => {
       else demande += j;
     });
     return { bounds: b, demandes, approuve, demande, personnes: personnes.size };
-  }, [sorted]);
+  }, [visible]);
 
   /* ── Soldes annuels par demandeur ──────────────────────────────────────────
      Saison du 1er septembre au 31 août : les jours approuvés qui tombent dans
@@ -212,6 +224,13 @@ export const CongesPage = () => {
     });
     return { bounds: b, rows, after };
   }, [sorted, personnel, settings, meName, isSuper]);
+
+  /* Cartes de soldes affichées : un non-permanent ne voit que sa propre carte. */
+  const visibleBalances = useMemo(
+    () => (isSuper ? balances.rows : balances.rows.filter((e) => e.key === nameKey(meName))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [balances.rows, isSuper, meName]
+  );
 
   const suggestions = useMemo(() => {
     const set = new Set();
@@ -384,16 +403,26 @@ export const CongesPage = () => {
     <div className="max-w-full mx-auto flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-xs font-bold text-slate-400">
-          {sorted.length} demande{sorted.length > 1 ? 's' : ''} · {summary.personnes} personne{summary.personnes > 1 ? 's' : ''} concernée{summary.personnes > 1 ? 's' : ''} — l’approbation comme la suppression sont réservées au superutilisateur.
+          {isSuper ? (
+            <>
+              {visible.length} demande{visible.length > 1 ? 's' : ''} · {summary.personnes} personne{summary.personnes > 1 ? 's' : ''} concernée{summary.personnes > 1 ? 's' : ''} — l’approbation comme la suppression sont réservées au superutilisateur.
+            </>
+          ) : (
+            <>
+              Vos demandes de congés ({visible.length}) — l’approbation est réservée au superutilisateur et vous ne voyez que vos propres demandes.
+            </>
+          )}
         </p>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setImportOpen(true)}
-            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
-            title="Importer les congés depuis la feuille Google Sheets (coller, CSV ou Excel)"
-          >
-            <span className="text-base leading-none">📥</span> Importer
-          </button>
+          {isSuper && (
+            <button
+              onClick={() => setImportOpen(true)}
+              className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
+              title="Importer les congés depuis la feuille Google Sheets (coller, CSV ou Excel)"
+            >
+              <span className="text-base leading-none">📥</span> Importer
+            </button>
+          )}
           <button
             onClick={() => setModal({ mode: 'new' })}
             className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
@@ -420,7 +449,7 @@ export const CongesPage = () => {
         />
       </div>
 
-      {balances.rows.length > 0 && (
+      {visibleBalances.length > 0 && (
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
             <h3 className="text-sm font-black text-slate-700">🏝 Soldes de congés — saison {balances.bounds.label}</h3>
@@ -429,7 +458,7 @@ export const CongesPage = () => {
             </span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2">
-            {balances.rows.map((e) => {
+            {visibleBalances.map((e) => {
               const left = e.quota - e.approved;
               const negative = left < 0;
               const low = !negative && left <= 5;
@@ -461,7 +490,7 @@ export const CongesPage = () => {
       )}
 
       <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
-        <b>Fonctionnement :</b> chacun pose sa demande (statut « Demande »), un superutilisateur l’approuve ou la refuse. Le solde de chaque membre est décompté en jours ouvrés sur la saison du
+        <b>Fonctionnement :</b> chacun pose sa demande (statut « Demande »), un superutilisateur l’approuve ou la refuse. Un membre ne voit que ses propres demandes de congés, le superutilisateur voit toute la liste et approuve. Le solde de chaque membre est décompté en jours ouvrés sur la saison du
         1er septembre au 31 août (renouvelée automatiquement chaque 1er septembre) : week-ends et fêtes nationales exclus, y compris ceux qui tombent pendant une fermeture UPJV
         (2 semaines de Noël + 4 semaines en juillet-août). Quota par défaut : 47 jours pour un Doctorant, modulable par profil dans Setup › « Congés : jours/an par profil ».
       </div>
@@ -487,18 +516,22 @@ export const CongesPage = () => {
         </div>
       </div>
 
-      {sorted.length === 0 ? (
+      {visible.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
           <div className="text-4xl mb-2">🏖️</div>
-          <p className="font-black text-slate-700">Aucune demande de congés pour le moment</p>
+          <p className="font-black text-slate-700">
+            {isSuper ? 'Aucune demande de congés pour le moment' : 'Aucune demande de congés à votre nom'}
+          </p>
           <p className="text-sm text-slate-400 mt-1">
-            Ajoutez la première demande via « + Ajouter une demande », ou importez l’onglet « Congés » de la feuille Google Sheets.
+            {isSuper
+              ? 'Ajoutez la première demande via « + Ajouter une demande », ou importez l’onglet « Congés » de la feuille Google Sheets.'
+              : 'Cliquez sur « + Ajouter une demande » pour poser votre premier congé — le formulaire est pré-rempli à votre nom.'}
           </p>
         </div>
       ) : (
         <SmartTable
           columns={columns}
-          rows={sorted}
+          rows={visible}
           minWidth="1180px"
           searchPlaceholder="Rechercher un demandeur, une note, un statut…"
           emptyLabel="Aucune demande de congés"
@@ -512,7 +545,7 @@ export const CongesPage = () => {
         <CongeModal
           rec={modal.mode === 'edit' ? modal.rec : null}
           defaultDemandeur={isSuper ? '' : meName}
-          names={suggestions}
+          names={isSuper ? suggestions : [meName].filter(Boolean)}
           isSuper={isSuper}
           onCancel={() => setModal(null)}
           onSave={onSave}
