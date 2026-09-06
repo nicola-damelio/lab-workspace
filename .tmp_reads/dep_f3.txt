@@ -1,0 +1,66 @@
+﻿38: numDevis, numDevisUrl, numSIFAC, dateBC, numBC, numBCUrl, dateSignature,
+39: dateSignatureDevis, dateApprobFournisseur, numFacture, numFactureUrl,
+40: omNo, omUrl, omId, destination, dateMission, dateRetour,
+41: livraisonComplete, livraisons: [{ dateReception, numBL, numBLUrl,
+42: dateServiceFait, numSF, numSFUrl }], commentaires }
+52: À l’enregistrement, les documents Google Drive liés (champs « lien document »
+53: devis, BC, facture, OM, BL/SF) sont automatiquement RANGÉS sur Google Drive
+55: (dossiers créés si besoin) — voir ./driveFiling.js.
+62: import { relinkDepenseDocuments, depenseDocSlots } from './budgetLink';
+69: import { fileBudgetDocs } from './driveFiling';
+70: import { findRecetteByLabel, findRecetteTwin, sameCatType } from './recetteLink';
+71: import { useDepenseLinkRepair } from './useDepenseLinkRepair';
+145: dateReception: '', numBL: '', numBLUrl: '', dateServiceFait: '', numSF: '', numSFUrl: '',
+148: && [l.dateReception, l.numBL, l.numBLUrl, l.dateServiceFait, l.numSF, l.numSFUrl].some((v) => txt(v));
+152: numBLUrl: txt(l && l.numBLUrl),
+155: numSFUrl: txt(l && l.numSFUrl),
+287: const Ref = ({ value, url, fallback = '—' }) => {
+289: const u = txt(url);
+359: <Ref value={l.numBL} url={l.numBLUrl} />
+361: <Ref value={l.numSF} url={l.numSFUrl} />
+407: const linkRepair = useDepenseLinkRepair();
+409: /* Après un import « Dépenses » depuis un fichier (ou l’ouverture de la page),
+410: on rétablit automatiquement les liens des documents Google Drive dont seul
+415: const budgetRelinkSigRef = useRef('');
+418: .map((s) => `${s.code}|${s.urlField}|${s.livraisonIndex === undefined ? '' : s.livraisonIndex}`)
+420: if (!sig || sig === budgetRelinkSigRef.current) return;
+421: budgetRelinkSigRef.current = sig;
+425: const { updates } = await relinkDepenseDocuments(list);
+436: page OM) : on bascule sur son onglet puis on la surligne dans le tableau. */
+548: et on surligne la ligne correspondante (même mécanique que la Librairie). */
+721: numDevisUrl: txt(draft.numDevisUrl),
+725: numBCUrl: txt(draft.numBCUrl),
+730: numFactureUrl: txt(draft.numFactureUrl),
+732: omUrl: txt(draft.omUrl),
+750: /* Classement automatique des documents Google Drive liés dans
+754: const filing = await fileBudgetDocs(patch, { year: new Date().getFullYear() });
+759: alert(`Dépense enregistrée, mais ${filing.failed.length} document${filing.failed.length > 1 ? 's' : ''} Google Drive n'a pas pu être rangé${filing.failed.length > 1 ? 's' : ''} automatiquement :\n\n${lines}\n\nConnectez Google Drive puis réessayez, ou déplacez le fichier à la main dans le dossier indiqué.`);
+959: display: (r) => <Ref value={r.numDevis} url={r.numDevisUrl} />,
+974: display: (r) => <Ref value={r.numBC} url={r.numBCUrl} />,
+989: display: (r) => <Ref value={r.numFacture} url={r.numFactureUrl} />,
+994: display: (r) => <Ref value={r.omNo} url={r.omUrl} />,
+1095: {linkRepair.report && (
+1098: linkRepair.report.stuck > 0
+1104: {linkRepair.report.fixed > 0
+1105: ? `✓ ${linkRepair.report.fixed} dépense${linkRepair.report.fixed > 1 ? 's' : ''} réattribuée${linkRepair.report.fixed > 1 ? 's' : ''} automatiquement sur la ligne budgétaire du type correspondant à sa catégorie (trace dans « Commentaires »).`
+1107: {linkRepair.report.fixed > 0 && linkRepair.report.stuck > 0 ? ' ' : ''}
+1108: {linkRepair.report.stuck > 0
+1109: ? `${linkRepair.report.fixed > 0 ? '— ' : ''}${linkRepair.report.stuck} dépense${linkRepair.report.stuck > 1 ? 's' : ''} rest${linkRepair.report.stuck > 1 ? 'ent' : 'e'} liée${linkRepair.report.stuck > 1 ? 's' : ''} à une ligne de l’autre type, sans fiche homonyme du bon type : à corriger manuellement (catégorie ou ligne).`
+1114: onClick={linkRepair.clearReport}
+1331: const MODAL_URL_INPUT = `${MODAL_INPUT} font-mono text-xs text-blue-700 placeholder:text-slate-300 placeholder:font-sans`;
+1391: numDevisUrl: txt(rec.numDevisUrl),
+1395: numBCUrl: txt(rec.numBCUrl),
+1400: numFactureUrl: txt(rec.numFactureUrl),
+1402: omUrl: txt(rec.omUrl),
+1419: numDevis: '', numDevisUrl: '', numSIFAC: '', dateBC: '',
+1420: numBC: '', numBCUrl: '', dateSignature: '', dateSignatureDevis: '',
+1422: numFacture: '', numFactureUrl: '', omNo: '', omUrl: '',
+1501: pendant le classement des documents liés sur Google Drive. */
+1657: 💡 À l’enregistrement, chaque lien Google Drive saisi dans ce formulaire (devis, BC, facture, OM ci-dessous,
+1660: sont créés, le fichier est déplacé (un fichier déjà au bon endroit n’est pas touché).
+1668: className={MODAL_URL_INPUT} value={draft.numDevisUrl} onChange={set('numDevisUrl')}
+1684: className={MODAL_URL_INPUT} value={draft.numBCUrl} onChange={set('numBCUrl')}
+1715: className={MODAL_URL_INPUT} value={draft.numFactureUrl} onChange={set('numFactureUrl')}
+1726: className={MODAL_URL_INPUT} value={draft.omUrl} onChange={set('omUrl')}
+1778: className={MODAL_URL_INPUT} value={l.numBLUrl} onChange={setLiv(i, 'numBLUrl')}
+1787: className={MODAL_URL_INPUT} value={l.numSFUrl} onChange={setLiv(i, 'numSFUrl')}

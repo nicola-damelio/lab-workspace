@@ -66,7 +66,8 @@ import {
   DEFAULT_DEPENSE_MANDATORY, ADMIN_PAGES,
 } from './adminSchema';
 import { parseEuroAmount } from './importUtils';
-import { fileBudgetDocs } from './driveFiling';
+import { fileBudgetDocs, budgetDocPath, BUDGET_DOC_FOLDER_BY_FIELD } from './driveFiling';
+import { uploadLocalFile, cloudBackendAvailable } from '../utils/driveUpload';
 import { findRecetteByLabel, findRecetteTwin, sameCatType } from './recetteLink';
 import { useDepenseLinkRepair } from './useDepenseLinkRepair';
 
@@ -96,6 +97,11 @@ const parseNum = (v) => {
 const isoOf = (v) => {
   const s = txt(v);
   return s ? s.slice(0, 10) : '';
+};
+const todayIso = () => {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
 const addScheme = (u) => {
   const s = txt(u);
@@ -401,6 +407,8 @@ const DepensesPage = () => {
   const [importOpen, setImportOpen] = useState(false);
   /* Onglet actif : 'achats' | 'pi' | 'om' | 'stages' — voir le regroupement plus bas. */
   const [tab, setTab] = useState('achats');
+  /* Rangement « à la demande » des documents liés (bouton « Ranger les liens »). */
+  const [filingBusy, setFilingBusy] = useState(false);
 
   /* Réattribution automatique des dépenses dont la « Catégorie » contredit le
      type de la ligne budgétaire imputée (page Recettes) — voir le hook. */
@@ -570,6 +578,56 @@ const DepensesPage = () => {
   const missingMandatoryFor = (r) => mandatoryFields.filter((k) =>
     !(k === 'fournisseur' && depenseKindOf(r) === 'om') && !mandatoryValueOf(r, k));
 
+  /* « Ranger les documents liés » — relance le classement Budget_labo/<année>/…
+     sur TOUTES les dépenses (y compris celles saisies avant l’arrivée du
+     classement automatique). Un fichier déplaçable est déplacé dans le bon
+     sous-dossier ; un lien inaccessible reste en place avec l’explication
+     (même règle qu’à l’enregistrement). */
+  const runBudgetFiling = async () => {
+    if (filingBusy) return;
+    if (!cloudBackendAvailable()) {
+      alert('Google Drive n’est pas connecté : connectez-le d’abord, puis relancez le rangement des documents.');
+      return;
+    }
+    const recs = (Array.isArray(list) ? list : []).filter((r) => r && r.id);
+    if (!recs.length) return;
+    let moved = 0; let already = 0; let failed = 0;
+    const reasons = [];
+    setFilingBusy(true);
+    try {
+      for (const rec of recs) {
+        const res = await fileBudgetDocs(rec, { year: new Date().getFullYear() });
+        if (!res) continue;
+        moved += res.moved || 0;
+        already += res.skipped || 0;
+        failed += Array.isArray(res.failed) ? res.failed.length : 0;
+        (Array.isArray(res.failed) ? res.failed : []).forEach((f) => {
+          const label = txt(rec.description) || pick(rec, ['numBC', 'numSIFAC', 'numFacture']) || rec.id;
+          reasons.push(`· « ${label} » — ${f.folder} : ${f.reason}`);
+        });
+      }
+    } catch (err) {
+      console.error(err);
+      alert(`Erreur pendant le rangement : ${(err && err.message) || err}`);
+      setFilingBusy(false);
+      return;
+    }
+    setFilingBusy(false);
+    if (moved === 0 && already === 0 && failed === 0) {
+      alert('Aucun lien Google Drive à ranger : aucune dépense ne possède de document lié (devis, BC, facture, OM, BL/SF).');
+      return;
+    }
+    const head = `Rangement terminé sur ${recs.length} dépense${recs.length > 1 ? 's' : ''} : `
+      + `${moved} document${moved > 1 ? 's' : ''} déplacé${moved > 1 ? 's' : ''} dans Budget_labo/${new Date().getFullYear()}/… · `
+      + `${already} déjà en place · ${failed} échec${failed > 1 ? 's' : ''}.`;
+    alert([
+      head,
+      failed
+        ? `\n\nDocuments non rangés (leur lien d’origine reste valide) :\n${reasons.slice(0, 15).join('\n')}${reasons.length > 15 ? `\n· … et ${reasons.length - 15} autre${reasons.length - 15 > 1 ? 's' : ''}` : ''}`
+        : '',
+    ].join(''));
+  };
+
   const sorted = useMemo(() => [...list].sort((a, b) => {
     const da = isoOf(a.dateDemande);
     const db = isoOf(b.dateDemande);
@@ -648,7 +706,11 @@ const DepensesPage = () => {
     // Le fournisseur n’est jamais exigé pour une ligne de type « OM ».
     const omRequested = txt(draft.type) === 'om';
     const missing = mandatoryFields.filter((k) =>
-      !(k === 'fournisseur' && omRequested) && !mandatoryValueOf(draft, k));
+      !(k === 'fournisseur' && omRequested)
+      // Le « Suivi / Statut » est calculé automatiquement pour une nouvelle
+      // dépense : il n’est jamais exigé à la création.
+      && !(k === 'statut' && !existingId)
+      && !mandatoryValueOf(draft, k));
     if (missing.length) {
       alert(`Merci de renseigner le(s) champ(s) obligatoire(s) : ${missing.map(mandatoryLabelOf).join(', ')}.`);
       return false;
@@ -752,11 +814,20 @@ const DepensesPage = () => {
        après la sauvegarde : un échec de classement ne bloque jamais
        l'enregistrement de la dépense (le lien d'origine est conservé). */
     const filing = await fileBudgetDocs(patch, { year: new Date().getFullYear() });
-    if (filing && filing.failed && filing.failed.length > 0) {
+    /* Le lien reste valide et la dépense est enregistrée ; on n’alerte que
+       lorsque Drive était connecté et qu’un document précis n’a pas pu être
+       déplacé (sans Drive, le bouton « Ranger les liens Drive » le fera plus
+       tard). */
+    if (cloudBackendAvailable() && filing && filing.failed && filing.failed.length > 0) {
       const lines = filing.failed
         .map((f) => `· ${f.folder} : ${f.reason}`)
         .join('\n');
-      alert(`Dépense enregistrée, mais ${filing.failed.length} document${filing.failed.length > 1 ? 's' : ''} Google Drive n'a pas pu être rangé${filing.failed.length > 1 ? 's' : ''} automatiquement :\n\n${lines}\n\nConnectez Google Drive puis réessayez, ou déplacez le fichier à la main dans le dossier indiqué.`);
+      alert(
+        `Dépense enregistrée (le lien d’origine reste valide), mais ${filing.failed.length} document${filing.failed.length > 1 ? 's' : ''} Google Drive n'a pas pu être rangé${filing.failed.length > 1 ? 's' : ''} automatiquement dans Budget_labo/<année> :\n\n${lines}\n\n`
+        + `Si le message est « fichier inaccessible à l’application », c’est normal : connecté à Google dans votre navigateur ne suffit pas — `
+        + `l’application ne peut déplacer que les fichiers créés par elle-même ou partagés avec le compte « Lab Workspace ». `
+        + `Solution : téléversez le document depuis ce PC avec le bouton « ⬆ PC », ou partagez-le avec le compte Google connecté dans l’app.`
+      );
     }
 
     setModal(null);
@@ -1157,6 +1228,15 @@ const DepensesPage = () => {
             </button>
           )}
           <button
+            type="button"
+            onClick={runBudgetFiling}
+            disabled={filingBusy}
+            className="bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50"
+            title="Copier / déplacer dans Budget_labo/<année>/… les documents Google Drive liés aux dépenses déjà saisies (devis, BC, facture, OM, BL/SF) — possible quand le fichier est accessible à l’application"
+          >
+            <span className="text-base leading-none">{filingBusy ? '⏳' : '📎'}</span>{filingBusy ? 'Rangement…' : 'Ranger les liens Drive'}
+          </button>
+          <button
             onClick={() => setModal({ mode: 'new' })}
             className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
             title={tab === 'om'
@@ -1349,6 +1429,79 @@ const Section = ({ icon, title, children }) => (
   </div>
 );
 
+/* Champ « lien document » avec téléversement d’un fichier DEPUIS CE PC.
+   Le fichier choisi est copié dans Budget_labo/<année>/<folder> sur Google
+   Drive (dossiers créés si besoin) et son lien remplit le champ — le document
+   est donc classé dans la structure convenue dès la saisie, sans dépendre
+   d’un lien Drive collé ailleurs. */
+const BudgetDocLinkInput = ({ folder, value, onChange, placeholder, title }) => {
+  const fileRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const pick = async (file) => {
+    if (!file) return;
+    setMsg('');
+    if (!cloudBackendAvailable()) {
+      setMsg('⚠️ Google Drive n’est pas connecté — collez le lien du fichier ci-contre.');
+      return;
+    }
+    setBusy(true);
+    const year = new Date().getFullYear();
+    try {
+      const drive = await uploadLocalFile({
+        name: (String(file.name || '').trim() || 'document').slice(0, 180),
+        mimeType: file.type || 'application/octet-stream',
+        file,
+        path: budgetDocPath(year, folder),
+      });
+      if (drive && drive.driveUrl) {
+        onChange(drive.driveUrl);
+        setMsg(`✓ Téléversé dans Budget_labo/${year}/${folder} — dossier créé si besoin.`);
+      } else {
+        setMsg('⚠️ Téléversement impossible (Drive non connecté ?) — collez le lien ci-contre.');
+      }
+    } catch (err) {
+      console.error(err);
+      setMsg(`⚠️ Téléversement impossible : ${(err && err.message) || err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="min-w-0">
+      <div className="flex gap-1.5 items-center">
+        <input
+          type="file"
+          ref={fileRef}
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files && e.target.files[0];
+            if (e.target) e.target.value = '';
+            if (f) pick(f);
+          }}
+        />
+        <input
+          className={MODAL_URL_INPUT}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          title={title}
+        />
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => { if (fileRef.current) fileRef.current.click(); }}
+          title={`Téléverser un fichier depuis ce PC vers Budget_labo/<année>/${folder}`}
+          className="shrink-0 text-[11px] font-black px-2 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 disabled:opacity-50"
+        >
+          {busy ? '⏳' : '⬆ PC'}
+        </button>
+      </div>
+      {msg ? <p className="text-[11px] text-slate-500 mt-1 leading-snug break-words">{msg}</p> : null}
+    </div>
+  );
+};
+
 const DepenseModal = ({
   rec, recettes, types, natures, statutOptions,
   demandeurNames, fournisseurNames, defaultFournisseur = '',
@@ -1414,7 +1567,7 @@ const DepenseModal = ({
       type: kindNow,
       description: '', demandeur: '', categorie: '', classification: defaultClassification,
       statut: '', ligneBudgetaire: '', recetteId: '',
-      montant: '', fraisPort: '', dateDemande: '',
+      montant: '', fraisPort: '', dateDemande: todayIso(),
       fournisseur: defaultFournisseur,
       numDevis: '', numDevisUrl: '', numSIFAC: '', dateBC: '',
       numBC: '', numBCUrl: '', dateSignature: '', dateSignatureDevis: '',
@@ -1556,15 +1709,25 @@ const DepenseModal = ({
                   />
                 </Field>
               </div>
-              <Field label="Suivi / Statut" hint="Valeur commune « suivi » et « statut » (statut « BC signé » = engagement suivi par la page Recettes).">
-                <input
-                  className={MODAL_INPUT} value={draft.statut} onChange={set('statut')} list="depenses-statuts"
-                  placeholder="ex. BC signé"
-                />
-                <datalist id="depenses-statuts">
-                  {(statutOptions || []).map((s) => <option key={s} value={s} />)}
-                </datalist>
-              </Field>
+              {editing ? (
+                <Field label="Suivi / Statut" hint="Valeur commune « suivi » et « statut » (statut « BC signé » = engagement suivi par la page Recettes).">
+                  <input
+                    className={MODAL_INPUT} value={draft.statut} onChange={set('statut')} list="depenses-statuts"
+                    placeholder="ex. BC signé"
+                  />
+                  <datalist id="depenses-statuts">
+                    {(statutOptions || []).map((s) => <option key={s} value={s} />)}
+                  </datalist>
+                </Field>
+              ) : (
+                <Field label="Suivi / Statut">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500 leading-snug">
+                    <b className="text-slate-600">Automatique</b> — calculé à partir des documents saisis
+                    (colonne « Etat » du tableau : devis signé → BC signé → livraison → facture → clôture).
+                    Ce champ n’est pas à renseigner pour une nouvelle dépense.
+                  </div>
+                </Field>
+              )}
               <Field label="Demandeur">
                 <input
                   className={MODAL_INPUT} value={draft.demandeur} onChange={set('demandeur')} list="depenses-demandeurs"
@@ -1622,8 +1785,14 @@ const DepenseModal = ({
                   placeholder="ex. 8,50 — vide si 0"
                 />
               </Field>
-              <Field label="Date de la demande">
-                <input className={MODAL_INPUT} type="date" value={draft.dateDemande} onChange={set('dateDemande')} />
+              <Field
+                label="Date de la demande"
+                hint={editing ? '' : 'Renseignée automatiquement : jour de la création de la dépense.'}
+              >
+                <input
+                  className={MODAL_INPUT} type="date" value={draft.dateDemande} onChange={set('dateDemande')}
+                  disabled={!editing}
+                />
               </Field>
               <div className="sm:col-span-2 lg:col-span-3">
                 {omKind ? (
@@ -1662,11 +1831,14 @@ const DepenseModal = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="sm:col-span-2 lg:col-span-1">
                 <Field label="N° devis">
-                  <div className="flex gap-1.5">
+                  <div className="flex flex-col gap-1.5">
                     <input className={MODAL_INPUT} value={draft.numDevis} onChange={set('numDevis')} placeholder="ex. 482750394" />
-                    <input
-                      className={MODAL_URL_INPUT} value={draft.numDevisUrl} onChange={set('numDevisUrl')}
-                      placeholder="🔗 lien doc." title="Lien vers le devis (PDF, dossier…) — collé ou « Lien → Code »"
+                    <BudgetDocLinkInput
+                      folder={BUDGET_DOC_FOLDER_BY_FIELD.numDevisUrl || 'Devis'}
+                      value={draft.numDevisUrl}
+                      onChange={(v) => setDraft((d) => ({ ...d, numDevisUrl: v }))}
+                      placeholder="🔗 lien du devis (Drive) — ou fichier depuis ce PC"
+                      title="Lien vers le devis — rangé à l’enregistrement dans Budget_labo/<année>/Devis"
                     />
                   </div>
                 </Field>
@@ -1678,11 +1850,14 @@ const DepenseModal = ({
               </div>
               <div className="sm:col-span-2 lg:col-span-1">
                 <Field label="N° BC">
-                  <div className="flex gap-1.5">
+                  <div className="flex flex-col gap-1.5">
                     <input className={MODAL_INPUT} value={draft.numBC} onChange={set('numBC')} placeholder="ex. R20180912" />
-                    <input
-                      className={MODAL_URL_INPUT} value={draft.numBCUrl} onChange={set('numBCUrl')}
-                      placeholder="🔗 lien doc." title="Lien vers le bon de commande"
+                    <BudgetDocLinkInput
+                      folder={BUDGET_DOC_FOLDER_BY_FIELD.numBCUrl || 'BC'}
+                      value={draft.numBCUrl}
+                      onChange={(v) => setDraft((d) => ({ ...d, numBCUrl: v }))}
+                      placeholder="🔗 lien du BC (Drive) — ou fichier depuis ce PC"
+                      title="Lien vers le bon de commande — rangé dans Budget_labo/<année>/BC"
                     />
                   </div>
                 </Field>
@@ -1709,22 +1884,28 @@ const DepenseModal = ({
               </div>
               <div className="sm:col-span-2 lg:col-span-1">
                 <Field label="N° facture">
-                  <div className="flex gap-1.5">
+                  <div className="flex flex-col gap-1.5">
                     <input className={MODAL_INPUT} value={draft.numFacture} onChange={set('numFacture')} placeholder="ex. F-2026-0041" />
-                    <input
-                      className={MODAL_URL_INPUT} value={draft.numFactureUrl} onChange={set('numFactureUrl')}
-                      placeholder="🔗 lien doc." title="Lien vers la facture"
+                    <BudgetDocLinkInput
+                      folder={BUDGET_DOC_FOLDER_BY_FIELD.numFactureUrl || 'Factures'}
+                      value={draft.numFactureUrl}
+                      onChange={(v) => setDraft((d) => ({ ...d, numFactureUrl: v }))}
+                      placeholder="🔗 lien de la facture (Drive) — ou fichier depuis ce PC"
+                      title="Lien vers la facture — rangée dans Budget_labo/<année>/Factures"
                     />
                   </div>
                 </Field>
               </div>
               <div className="sm:col-span-2 lg:col-span-1">
                 <Field label="N° OM / paiement">
-                  <div className="flex gap-1.5">
+                  <div className="flex flex-col gap-1.5">
                     <input className={MODAL_INPUT} value={draft.omNo} onChange={set('omNo')} placeholder="ex. OM 2026-124" />
-                    <input
-                      className={MODAL_URL_INPUT} value={draft.omUrl} onChange={set('omUrl')}
-                      placeholder="🔗 lien doc." title="Lien vers l’ordre de paiement / mandatement"
+                    <BudgetDocLinkInput
+                      folder={BUDGET_DOC_FOLDER_BY_FIELD.omUrl || 'OM'}
+                      value={draft.omUrl}
+                      onChange={(v) => setDraft((d) => ({ ...d, omUrl: v }))}
+                      placeholder="🔗 lien du paiement (Drive) — ou fichier depuis ce PC"
+                      title="Lien vers l’ordre de paiement / mandatement — rangé dans Budget_labo/<année>/OM"
                     />
                   </div>
                 </Field>
@@ -1774,18 +1955,28 @@ const DepenseModal = ({
                     </Field>
                     <div className="sm:col-span-2 lg:col-span-2">
                       <Field label="BL — lien document">
-                        <input
-                          className={MODAL_URL_INPUT} value={l.numBLUrl} onChange={setLiv(i, 'numBLUrl')}
-                          placeholder="🔗 lien vers le bon de livraison"
+                        <BudgetDocLinkInput
+                          folder={BUDGET_DOC_FOLDER_BY_FIELD.numBLUrl || 'BL'}
+                          value={l.numBLUrl}
+                          onChange={(v) => setDraft((d) => ({
+                            ...d,
+                            livraisons: d.livraisons.map((x, j) => (j === i ? { ...x, numBLUrl: v } : x)),
+                          }))}
+                          placeholder="🔗 lien du BL (Drive) — ou fichier depuis ce PC"
                           title="Lien du BL — classé à l’enregistrement dans Budget_labo/<année>/BL"
                         />
                       </Field>
                     </div>
                     <div className="sm:col-span-2 lg:col-span-2">
                       <Field label="SF — lien document">
-                        <input
-                          className={MODAL_URL_INPUT} value={l.numSFUrl} onChange={setLiv(i, 'numSFUrl')}
-                          placeholder="🔗 lien vers le service fait / PV de réception"
+                        <BudgetDocLinkInput
+                          folder={BUDGET_DOC_FOLDER_BY_FIELD.numSFUrl || 'BL'}
+                          value={l.numSFUrl}
+                          onChange={(v) => setDraft((d) => ({
+                            ...d,
+                            livraisons: d.livraisons.map((x, j) => (j === i ? { ...x, numSFUrl: v } : x)),
+                          }))}
+                          placeholder="🔗 lien du SF / PV (Drive) — ou fichier depuis ce PC"
                           title="Lien du SF / PV — classé à l’enregistrement dans Budget_labo/<année>/BL"
                         />
                       </Field>

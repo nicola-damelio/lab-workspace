@@ -24,6 +24,21 @@ button [class*=" text-[11px]"] {
 }
 
 /* ---------------------------------------------------------------------------
+   GLOBAL readability floor (whole program). The tiny 8–11px utilities used
+   for dates, references (N° devis / N° BC…), captions and badges are raised
+   to the standard 12px (text-xs) EVERYWHERE — modals, cards, headers, side
+   lists… Inside TABLES the stronger rule below (13px base) keeps them
+   uniform there too, so nothing stays illegible anywhere in the app.
+   ------------------------------------------------------------------------- */
+[class^="text-[8px]"], [class*=" text-[8px]"],
+[class^="text-[9px]"], [class*=" text-[9px]"],
+[class^="text-[10px]"], [class*=" text-[10px]"],
+[class^="text-[11px]"], [class*=" text-[11px]"] {
+  font-size: 0.75rem !important;   /* 12px */
+  line-height: 1rem !important;
+}
+
+/* ---------------------------------------------------------------------------
    Uniform character dimension inside TABLES (all pages).
    Every header and every cell uses the same base 13px — no more tiny 9–12px
    characters next to normal ones. Small font utilities found inside cells are

@@ -1,0 +1,228 @@
+﻿10: access token is stored in localStorage.
+14: folder → a folder named after the main file (the dataset) →
+31: const FOLDER_DATASET_KEY = 'labDriveFolderDatasetId';
+41: const token = localStorage.getItem(TOKEN_KEY) || '';
+43: const exp = parseInt(localStorage.getItem(TOKEN_EXPIRY_KEY) || '0', 10);
+45: localStorage.removeItem(TOKEN_KEY);
+46: localStorage.removeItem(TOKEN_EXPIRY_KEY);
+61: const hadToken = !!(() => { try { return localStorage.getItem(TOKEN_KEY); } catch { return ''; } })();
+63: localStorage.setItem(TOKEN_KEY, String(token || ''));
+66: localStorage.setItem(TOKEN_EXPIRY_KEY, String(Date.now() + (expiresInSec - 300) * 1000));
+68: localStorage.removeItem(TOKEN_EXPIRY_KEY);
+77: localStorage.removeItem(TOKEN_KEY);
+78: localStorage.removeItem(TOKEN_EXPIRY_KEY);
+82: import { suggestDriveFileName, sanitizeSlug, driveFolderPath, DATASET_FOLDER_DIRS, datasetFolderSlug, canonicalPageSection, canonicalExperimentPath, projectNamesOf } from './driveNaming';
+90: /** The name of the currently open dataset folder ('' when none is open). */
+91: export const getDriveRootName = () => driveRootName;
+117: try { return localStorage.getItem(FOLDER_ID_KEY) || ''; } catch { return ''; }
+121: try { localStorage.setItem(FOLDER_ID_KEY, String(id || '')); } catch { /* ignore */ }
+124: /** The dataset id the cached folder id belongs to. Persisted alongside the
+125: *  folder id so a page reload does NOT lose the link between the dataset and
+127: *  the dataset title changes (instead of creating a second folder). */
+128: const getDriveFolderDatasetId = () => {
+129: try { return localStorage.getItem(FOLDER_DATASET_KEY) || ''; } catch { return ''; }
+131: const setDriveFolderDatasetId = (id) => {
+132: try { localStorage.setItem(FOLDER_DATASET_KEY, String(id || '')); } catch { /* ignore */ }
+136: try { return localStorage.getItem(FOLDER_NAME_KEY) || ''; } catch { return ''; }
+139: try { localStorage.setItem(FOLDER_NAME_KEY, String(name || '')); } catch { /* ignore */ }
+267: // ── Dataset folder inside "Lab Workspace" ──────────────────────────────────
+268: // The whole workspace is saved as ONE main file (the dataset) whose title the
+270: // inside the app's "Lab Workspace" root folder, under a major folder named
+271: // after the dataset:
+272: //     <Lab Workspace>/<dataset title>/<project>/<test>/<section>/…
+273: // When the dataset title changes, the dataset folder is renamed in place so
+276: let driveRootId = '';            // dataset id the root folder belongs to
+277: let driveRootName = '';          // desired dataset folder name ('' → Lab Workspace root)
+278: let driveRootKind = 'scientific'; // 'scientific' | 'administration' (folder layout choice)
+279: let driveRootResolvedId = getDriveFolderDatasetId();   // dataset id of the cached labDriveFolderId
+280: let driveRootResolvedName = getDriveFolderName();      // dataset-name the cached labDriveFolderId was created with
+282: /** Sub-directories that may exist directly inside a dataset folder. Scientific
+283: *  datasets keep the canonical five-folder tree (projects / backups / protocols
+284: *  / storage / publications). An ADMINISTRATION dataset only needs its own
+285: *  `backups` folder (weekly HTML snapshots) and the `Budget_labo` container
+286: *  created by the expense/Document filing helpers — never projects, protocols,
+287: *  storage or publications (which belong to the scientific datasets only). */
+288: const datasetDirNames = () =>
+289: driveRootKind === 'administration'
+290: ? ['backups', 'Budget_labo']
+291: : DATASET_FOLDER_DIRS;
+293: /** Tell the Drive layer which main file (dataset) is currently open, so the
+294: *  dataset folder on Drive (inside "Lab Workspace") is named after it, and
+295: *  which internal folder layout it expects (`kind` = 'scientific' |
+296: *  'administration'). Called by App.jsx whenever the current dataset id,
+298: export const setDriveRootContext = ({ id = '', name = '', kind = '' } = {}) => {
+301: const nextKind = kind === 'administration' ? 'administration' : 'scientific';
+302: if (nextId === driveRootId && nextName === driveRootName && nextKind === driveRootKind) return;
+303: driveRootId = nextId;
+304: driveRootName = nextName;
+305: if (nextKind) driveRootKind = nextKind;
+306: // Switching to a DIFFERENT dataset → the cached folder id belongs to the
+307: // previous one: drop it so the new dataset gets its own folder. An EMPTY id
+309: // re-opening the same dataset after a reload still knows its folder and can
+311: if (nextId && nextId !== driveRootResolvedId) setDriveFolderId('');
+314: /** Which dataset the CURRENT Drive context points to (for the pending-upload
+315: *  queue: an upload enqueued while dataset A was open must be flushed into
+316: *  dataset A's folder even if the user has opened dataset B in the meantime). */
+317: export const getDriveRootAnchor = () => ({
+318: datasetId: driveRootId,
+319: rootFolderId: getDriveFolderId(),
+320: kind: driveRootKind
+323: /** Find (or create) the app's "Lab Workspace" root folder (inside the user's
+324: *  saved Drive folder URL if one is set, otherwise at the Drive root). */
+325: export const ensureLabWorkspaceFolder = async () => {
+338: // Otherwise find (or create) "Lab Workspace" at the Drive root.
+367: /** Ensure the sub-directories a dataset folder needs exist inside it.
+368: *  Scientific datasets get the canonical five-folder tree
+369: *  (projects/backups/protocols/storage/publications); an administration
+370: *  dataset only gets its own `backups` + `Budget_labo` containers (the
+371: *  budget-document helpers create Budget_labo/<year>/… on demand).
+373: export const ensureDatasetFolderStructure = async (datasetRootId, dirs = null) => {
+375: if (!datasetRootId || !getDriveToken()) return map;
+376: const list = Array.isArray(dirs) && dirs.length ? dirs : datasetDirNames();
+379: map[dir] = await findOrCreateFolder(dir, datasetRootId);
+385: /** Best-effort workspace-root hygiene:
+386: *  1. A root-level "backups" folder (old shared backup location) is trashed
+388: *  2. A root-level dataset folder named "<dataset>_<idTag>" (legacy weekly
+389: *     backup layout) is trashed — its current dataset/backups backup was just
+390: *     written to the canonical dataset folder by the caller.
+392: export const cleanupWorkspaceRootFolders = async ({ legacyFolderNames = [], skipTrashIfNonEmpty = true } = {}) => {
+393: const workspaceId = await ensureLabWorkspaceFolder();
+414: /** Resolve the upload root folder: "Lab Workspace" → the dataset folder inside
+415: *  it (when the dataset has a title). The dataset folder ALWAYS gets its own
+416: *  internal structure — the canonical five-folder tree for scientific datasets
+417: *  (projects/backups/protocols/storage/publications), or only backups +
+418: *  Budget_labo for an administration dataset — so uploads and weekly backups
+419: *  share one dataset directory and scientific folders are never created inside
+420: *  an administration base. */
+421: export const ensureDriveFolder = async () => {
+422: const name = driveRootName ? datasetFolderSlug(driveRootName) : '';
+425: // Fast path: the cached folder already belongs to this dataset and name.
+426: if (saved && driveRootResolvedId === driveRootId && driveRootResolvedName === name) {
+427: if (name) await ensureDatasetFolderStructure(saved).catch(() => {});
+431: // Same dataset, but the title changed → rename the app-created dataset folder
+433: if (name && saved && driveRootResolvedId === driveRootId && driveRootResolvedName && driveRootResolvedName !== name) {
+437: if (meta && meta.name === driveRootResolvedName) {
+439: driveRootResolvedName = name;
+441: if (name) await ensureDatasetFolderStructure(saved).catch(() => {});
+447: // Same dataset, title changed, but the cached folder id is missing or stale
+451: if (name && driveRootResolvedId === driveRootId && driveRootResolvedName && driveRootResolvedName !== name) {
+453: const workspaceId = await ensureLabWorkspaceFolder();
+454: const oldId = workspaceId ? await findFolderByName(driveRootResolvedName, workspaceId) : '';
+458: setDriveFolderDatasetId(driveRootId);
+460: driveRootResolvedName = name;
+461: if (name) await ensureDatasetFolderStructure(oldId).catch(() => {});
+467: const workspaceId = await ensureLabWorkspaceFolder();
+470: let rootId = workspaceId;
+472: rootId = await findFolderByName(name, workspaceId);
+473: if (!rootId) rootId = await findOrCreateFolder(name, workspaceId);
+476: if (rootId) {
+477: setDriveFolderId(rootId);
+478: setDriveFolderDatasetId(driveRootId);
+480: driveRootResolvedId = driveRootId;
+481: driveRootResolvedName = name;
+482: if (name) await ensureDatasetFolderStructure(rootId).catch(() => {});
+484: return rootId;
+490: //   protocols/<protocol>/<file>
+574: let parent = await ensureDriveFolder();
+585: /** The ACTUAL folder names (relative to the dataset root) that `ctx` resolves
+586: *  to. Experiments use the canonical architecture (projects/<project>/…);
+587: *  protocols keep their own container; anything else falls back to the legacy
+603: *  the "projects" container, so a project lives at index 1, a standalone test
+608: // The scientist is NOT a folder level (protocols/<protocol> only; test files
+622: *  walking the chain from the dataset root (lookup only — nothing is created).
+634: let parent = await ensureDriveFolder();
+665: *  recorded {name,id} chain (from the app root down to the old leaf folder). */
+690: *  "projects" container, then in the legacy dataset-root layout:
+691: *    <dataset>/projects/<project>/<test>            (canonical)
+692: *    <dataset>/projects/_unassigned/<test>          (legacy standalone)
+693: *    <dataset>/<project>/<test> and <dataset>/<test> (pre-architecture layout)
+695: const findProjectTestFolder = async (root, testName, projectName) => {
+697: if (!root || !testSlug) return null;
+700: rels.push(`projects/${sanitizeSlug(projectName)}/${testSlug}`);
+703: rels.push(`projects/_unassigned/${testSlug}`);
+706: let parent = root;
+723: const root = await ensureDriveFolder();
+724: if (!root) return 0;
+727: const found = await findProjectTestFolder(root, test.name, project);
+750: /** Trash the Drive folder that mirrors a protocol — protocols/<protocol> — so
+757: const root = await ensureDriveFolder();
+758: if (!root) return 0;
+759: const protocolsFolderId = await findFolderByName('protocols', root);
+760: if (!protocolsFolderId) return 0;
+761: let protoFolderId = await findFolderByName(sanitizeSlug(protocol.title), protocolsFolderId);
+793: const root = await ensureDriveFolder();
+794: if (!root) return 0;
+797: // projects/_unassigned container or any legacy dataset-root layout).
+799: const found = await findProjectTestFolder(root, testName, '');
+816: const projectsContainerId = await findOrCreateFolder('projects', root);
+817: const projectFolderId = await findOrCreateFolder(sanitizeSlug(projectName), projectsContainerId);
+829: // canonical path — projects/<project>/<test>/…
+830: const projectsSeg = { name: 'projects', id: projectsContainerId };
+831: const projectSeg = { name: sanitizeSlug(projectName), id: projectFolderId };
+840: .filter((seg) => seg && seg.name !== 'projects' && seg.name !== '_unassigned');
+841: const newPath = [projectsSeg, projectSeg, ...base];
+863: *  dataset root — used when a test is removed from a project. The folder is
+871: const root = await ensureDriveFolder();
+872: if (!root) return 0;
+873: const projectsContainerId = await findFolderByName('projects', root);
+876: // first, then legacy dataset-root layout).
+878: const found = await findProjectTestFolder(root, testName, projectName);
+896: // project" means "moved into the dataset's _unassigned project bucket"
+897: // (a hidden bucket inside projects/, never a stray folder at the root).
+898: const projectsFolderId = projectsContainerId || await findOrCreateFolder('projects', root);
+899: const unassignedFolderId = await findOrCreateFolder('_unassigned', projectsFolderId);
+910: const projectFolderId = await findFolderByName(sanitizeSlug(projectName), projectsFolderId);
+917: // canonical projects/_unassigned/<test>/… layout.
+919: const projectsSeg = { name: 'projects', id: projectsFolderId };
+929: .filter((seg) => seg && seg.name !== 'projects' && seg.name !== '_unassigned' && seg.name !== sanitizeSlug(projectName));
+930: reg[fileId] = { ...entry, ctx: newCtx, path: [projectsSeg, unassignedSeg, ...base], at: Date.now() };
+937: // Fallback: move the individual files into projects/_unassigned/<test>.
+940: const root = await ensureDriveFolder();
+941: const projectsFolderId = root ? await findOrCreateFolder('projects', root) : '';
+942: const unassignedFolderId = projectsFolderId ? await findOrCreateFolder('_unassigned', projectsFolderId) : '';
+976: *  `folderNames` (relative to the dataset folder). When `folderNames` is null,
+983: //   <user>/Lab Workspace/<dataset>/<project>/<test>/<page section>/[<subsection>]
+984: // (or an explicit `path` array, exactly like Drive uploads under the dataset).
+988: if (driveRootName) segments.push(sanitizeSlug(driveRootName));
+1004: // (projects/<project>/<experiment>/<instance>/<page section>/[<subsection>]
+1005: // or an explicit `path` like publications/<scientist>/own_publications).
+1006: let folderId = await ensureDriveFolder();
+1131: ...getDriveRootAnchor()
+1135: return { queued: false, reason: 'storage' };
+1142: *  ctx.projectNames lists SEVERAL projects, the file is duplicated — one full
+1143: *  canonical tree (projects/<project>/<experiment>/<instance>/<page section>/…)
+1148: *  Non-experiment uploads (protocols, publications, figures, imports that pass
+1154: const projects = projectNamesOf(ctx);
+1155: const projectList = projects.length ? projects : ['_unassigned']; // legacy safety net
+1205: * Items that belong to a dataset that is NOT currently open are left queued
+1206: * (never uploaded into the wrong dataset folder); they flush as soon as that
+1207: * dataset is opened again and a token renewal succeeds.
+1230: const currentAnchor = getDriveRootAnchor();
+1234: // in-app copy kept in the dataset document is never affected).
+1239: // Never upload into the WRONG dataset folder when another dataset is open.
+1240: if (item.datasetId && (!currentAnchor.datasetId || currentAnchor.datasetId !== item.datasetId)) continue;
+1378: - gmail.send : envoi automatique des e-mails du module Administration
+1462: try { return localStorage.getItem(REFRESH_TOKEN_KEY) || ''; } catch { return ''; }
+1466: if (token) localStorage.setItem(REFRESH_TOKEN_KEY, String(token));
+1467: else localStorage.removeItem(REFRESH_TOKEN_KEY);
+1715: const token = localStorage.getItem(TOKEN_KEY) || '';
+1716: const exp = parseInt(localStorage.getItem(TOKEN_EXPIRY_KEY) || '0', 10);
+1738: const token = localStorage.getItem(TOKEN_KEY) || '';
+1739: const exp = parseInt(localStorage.getItem(TOKEN_EXPIRY_KEY) || '0', 10);
+1751: // A dataset may have been opened since the last attempt: replay the
+1775: try { return JSON.parse(localStorage.getItem(FILE_REGISTRY_KEY) || '{}') || {}; } catch { return {}; }
+1779: try { localStorage.setItem(FILE_REGISTRY_KEY, JSON.stringify(reg)); } catch { /* ignore */ }
+1783: *  and the folder chain ({name,id} from the app root down) it was uploaded to. */
+1812: * "Lab Workspace" root folder on Drive. Unlike uploadLocalFile the folder is
+1813: * resolved from the WORKSPACE root, not the dataset folder, so e.g. the weekly
+1815: *   <Lab Workspace>/<dataset>/backups/<name>
+1816: * — one `backups` subfolder per dataset (the caller passes "<dataset>/backups"
+1817: * via `folder`), instead of piling every dataset into a single shared "backups"
+1838: const workspaceId = await ensureLabWorkspaceFolder();
+1840: // `folder` may be a nested path (e.g. "<dataset>/backups") — resolve each
+1841: // segment so every dataset's backups live in their own subfolder.
+1948: // (e.g. for protocols the folder is protocols/<protocol>, so renaming the
+2056: // ── Automatic e-mail sending via Gmail (Administration module) ───────────────
+2139: export const sendAdminGmail = async ({ to = [], subject = '', text = '', fromName = '', replyTo = '' } = {}) => {
+2155: const ensureGmailToken = async () => {
+2173: if (!(await ensureGmailToken())) {

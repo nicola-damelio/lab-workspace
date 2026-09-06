@@ -53,6 +53,26 @@ export const driveFileIdFromUrl = (url) => {
   return byPath ? byPath[1] : '';
 };
 
+/** Traduit une erreur brute de l’API Drive en un message expliquant POURQUOI
+ *  un document lié n’a pas pu être rangé — notamment le très fréquent
+ *  « File not found » : le lien est valide dans le navigateur (l’utilisateur
+ *  est connecté à Google), mais le fichier appartient à un autre compte ou
+ *  n’est pas partagé avec le compte de l’application, donc l’API ne le voit pas. */
+const filingReasonOf = (msg) => {
+  const s = String(msg || '');
+  if (/not ?found|404|no file id/i.test(s)) {
+    return 'fichier INACCESSIBLE à l’application : il appartient à un autre compte Google '
+      + 'ou n’est pas partagé avec le compte « Lab Workspace » (même connecté à Google, '
+      + 'l’application ne voit que ses propres fichiers). Partagez-le avec le compte '
+      + 'Google connecté dans l’app, ou téléversez-le depuis ce PC avec le bouton « ⬆ ».';
+  }
+  if (/permission|403|insufficient|scope/i.test(s)) {
+    return 'permissions insuffisantes : partagez le fichier avec le compte Google connecté dans l’app.';
+  }
+  if (/trash|corbeille/i.test(s)) return 'le fichier est dans la corbeille Google Drive — restaurez-le d’abord.';
+  return s;
+};
+
 /** Déplace un fichier Drive dans un dossier (si ce n'est déjà fait).
  *  @returns {'moved'|'already'} */
 const moveFileIntoFolder = async (fileId, folderId) => {
@@ -97,6 +117,13 @@ export const fileBudgetDocs = async (rec, { year } = {}) => {
     push('numBLUrl', l && l.numBLUrl);
     push('numSFUrl', l && l.numSFUrl);
   });
+  /* Enregistrements de la page « Approbation devis & BC » (collection devisBc) :
+     chaque ligne porte un fichier unique dans `fichierUrl` — Devis → /Devis,
+     BC → /BC (les documents déjà téléversés depuis l’app sont déjà au bon
+     endroit ; un fichier collé en lien depuis ailleurs est déplacé ici). */
+  if (rec && (rec.kind === 'devis' || rec.kind === 'bc')) {
+    push(rec.kind === 'devis' ? 'numDevisUrl' : 'numBCUrl', rec.fichierUrl);
+  }
   if (!links.length) return { attempted: 0, moved: 0, skipped: 0, failed: [] };
 
   if (!cloudBackendAvailable()) {
@@ -163,7 +190,7 @@ export const fileBudgetDocs = async (rec, { year } = {}) => {
         field: link.field,
         folder: link.folder,
         url: link.url,
-        reason: (err && err.message) || 'erreur Google Drive inconnue',
+        reason: filingReasonOf((err && err.message) || 'erreur Google Drive inconnue'),
       });
     }
   }

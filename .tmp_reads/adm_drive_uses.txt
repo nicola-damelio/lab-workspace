@@ -1,0 +1,19 @@
+﻿C:\Users\nicol\lab-workspace\src\administration\approbationPage.jsx:41: import { uploadLocalFile, cloudBackendAvailable } from '../utils/driveUpload';
+C:\Users\nicol\lab-workspace\src\administration\approbationPage.jsx:725: const drive = await uploadLocalFile({
+C:\Users\nicol\lab-workspace\src\administration\budgetLink.js:24: } from '../utils/driveUpload';
+C:\Users\nicol\lab-workspace\src\administration\budgetLink.js:25: import { fileBudgetDocs } from './driveFiling';
+C:\Users\nicol\lab-workspace\src\administration\budgetLink.js:246: const res = await fileBudgetDocs(rec, { year });
+C:\Users\nicol\lab-workspace\src\administration\depensesPage.jsx:69: import { fileBudgetDocs } from './driveFiling';
+C:\Users\nicol\lab-workspace\src\administration\depensesPage.jsx:754: const filing = await fileBudgetDocs(patch, { year: new Date().getFullYear() });
+C:\Users\nicol\lab-workspace\src\administration\driveFiling.js:24: resolveDrivePathFromNames,
+C:\Users\nicol\lab-workspace\src\administration\driveFiling.js:25: } from '../utils/driveUpload';
+C:\Users\nicol\lab-workspace\src\administration\driveFiling.js:88: export const fileBudgetDocs = async (rec, { year } = {}) => {
+C:\Users\nicol\lab-workspace\src\administration\driveFiling.js:127: const resolved = await resolveDrivePathFromNames(budgetDocPath(targetYear, folder));
+C:\Users\nicol\lab-workspace\src\administration\emailNotify.js:17: console qui débloque l'envoi (voir sendAdminGmail dans driveUpload.js).
+C:\Users\nicol\lab-workspace\src\administration\emailNotify.js:21: import { sendAdminGmail } from '../utils/driveUpload';
+C:\Users\nicol\lab-workspace\src\administration\personnelModal.jsx:24: cloudBackendAvailable, uploadLocalFile, readFileAsDataURL, withExtension,
+C:\Users\nicol\lab-workspace\src\administration\personnelModal.jsx:25: } from '../utils/driveUpload';
+C:\Users\nicol\lab-workspace\src\administration\personnelModal.jsx:335: const drive = await uploadLocalFile({ name, mimeType, file, path: entretiensDrivePath });
+C:\Users\nicol\lab-workspace\src\administration\personnelModal.jsx:374: const drive = await uploadLocalFile({ name, mimeType, file, path: docsDrivePath });
+C:\Users\nicol\lab-workspace\src\administration\probe_depenses.jsx:47: import { fileBudgetDocs } from './driveFiling';
+C:\Users\nicol\lab-workspace\src\administration\probe_depenses.jsx:608: const filing = await fileBudgetDocs(patch, { year: new Date().getFullYear() });

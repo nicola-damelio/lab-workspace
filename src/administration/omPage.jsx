@@ -57,6 +57,11 @@ const isoOf = (v) => {
   const s = txt(v);
   return s ? s.slice(0, 10) : '';
 };
+const todayIso = () => {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
 const demandeurOf = (r) => pick(r, ['demandeur', 'porteur', 'nom', 'name']);
 const missionOf = (r) => pick(r, ['description', 'intitule', 'motif']);
 const euro = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' });
@@ -154,7 +159,7 @@ const OmModal = ({ rec, recettes, demandeurNames, statusOptions, onCancel, onSav
     ligneBudgetaire: txt(rec && pick(rec, ['ligneBudgetaire', 'ligne'])),
     statut: txt(rec && pick(rec, ['statut'])) || 'En attente',
     coutStatut: txt(rec && pick(rec, ['coutStatut', 'prix'])) || 'Estimé',
-    dateDemande: isoOf(rec && pick(rec, ['dateDemande'])),
+    dateDemande: rec ? isoOf(pick(rec, ['dateDemande'])) : todayIso(),
     dateMission: isoOf(rec && pick(rec, ['dateMission', 'dateDebut'])),
     dateRetour: isoOf(rec && pick(rec, ['dateRetour'])),
     commentaires: txt(rec && pick(rec, ['commentaires', 'notes'])),
@@ -305,8 +310,14 @@ const OmModal = ({ rec, recettes, demandeurNames, statusOptions, onCancel, onSav
           </Section>
           <Section icon="📅" title="Dates & statut">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Field label="Date de demande">
-                <input type="date" className={MODAL_INPUT} value={draft.dateDemande} onChange={set('dateDemande')} />
+              <Field
+                label="Date de demande"
+                hint={editing ? '' : 'Renseignée automatiquement : jour de la création de l’OM.'}
+              >
+                <input
+                  type="date" className={MODAL_INPUT} value={draft.dateDemande} onChange={set('dateDemande')}
+                  disabled={!editing}
+                />
               </Field>
               <Field label="Départ (mission)">
                 <input type="date" className={MODAL_INPUT} value={draft.dateMission} onChange={set('dateMission')} />
@@ -317,7 +328,12 @@ const OmModal = ({ rec, recettes, demandeurNames, statusOptions, onCancel, onSav
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3 items-end">
               <Field label="Statut">
-                {canDecide ? (
+                {!editing ? (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-slate-600 leading-snug">
+                    <b>En attente</b> — statut fixé automatiquement à la création&nbsp;;
+                    seule l’approbation (réservée au superutilisateur) le modifiera ensuite.
+                  </div>
+                ) : canDecide ? (
                   <select className={MODAL_INPUT} value={draft.statut} onChange={set('statut')}>
                     {(statusOptions && statusOptions.length ? statusOptions : OM_STATUSES).map((s) => <option key={s} value={s}>{s}</option>)}
                   </select>

@@ -369,6 +369,10 @@ export const listDriveChildren = async (parentId) => {
  *  (projects/backups/protocols/storage/publications); an administration
  *  dataset only gets its own `backups` + `Budget_labo` containers (the
  *  budget-document helpers create Budget_labo/<year>/… on demand).
+ *  For an administration base the empty legacy scientific containers
+ *  (projects / protocols / storage / publications) possibly left behind by
+ *  older app versions are trashed — they are never created any more, and a
+ *  non-empty folder is always kept untouched.
  *  Returns the {name → id} map of the created folder structure. */
 export const ensureDatasetFolderStructure = async (datasetRootId, dirs = null) => {
   const map = {};
@@ -378,6 +382,23 @@ export const ensureDatasetFolderStructure = async (datasetRootId, dirs = null) =
     try {
       map[dir] = await findOrCreateFolder(dir, datasetRootId);
     } catch { map[dir] = ''; }
+  }
+  if (driveRootKind === 'administration') {
+    const SCIENTIFIC_ONLY = ['projects', 'protocols', 'storage', 'publications'];
+    try {
+      const children = await listDriveChildren(datasetRootId);
+      for (const child of children) {
+        if (!child || child.mimeType !== 'application/vnd.google-apps.folder') continue;
+        if (SCIENTIFIC_ONLY.indexOf(child.name) === -1) continue;
+        const inside = await listDriveChildren(child.id);
+        if (inside.length > 0) continue; // only empty leftovers are removed
+        await driveFetch(`/drive/v3/files/${child.id}?fields=id`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ trashed: true })
+        });
+      }
+    } catch { /* hygiene is best-effort */ }
   }
   return map;
 };

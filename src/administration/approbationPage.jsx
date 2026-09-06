@@ -39,6 +39,7 @@ import {
   APPROVAL_PENDING, APPROVAL_APPROVED, APPROVAL_REJECTED, isApprovalPending, approvalStatusOf,
 } from './adminSchema';
 import { uploadLocalFile, cloudBackendAvailable } from '../utils/driveUpload';
+import { fileBudgetDocs } from './driveFiling';
 import {
   sendAdminMail, personEmailOf, personnelEmailsMatching, superuserEmailsOf,
 } from './emailNotify';
@@ -128,6 +129,7 @@ export const ApprobationPage = () => {
   const [modal, setModal] = useState(null); // null | { mode:'new', kind } | { mode:'edit', kind, rec }
   const [busyId, setBusyId] = useState(null); // id de la ligne en cours de décision
   const [note, setNote] = useState(null); // { text, mailto? } — résultat du dernier e-mail
+  const [filingBusy, setFilingBusy] = useState(false); // rangement « à la demande » des fichiers
 
   const devisList = useMemo(() => rows
     .filter((r) => r && r.kind === 'devis')
@@ -137,6 +139,53 @@ export const ApprobationPage = () => {
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)), [rows]);
   const devisById = useMemo(() => new Map(devisList.map((d) => [d.id, d])), [devisList]);
   const devisOptions = useMemo(() => devisList, [devisList]);
+
+  /* « Ranger les fichiers » — classe dans Budget_labo/<année>/Devis|BC les
+     documents (dont ceux collés comme liens Google Drive) des devis / BC déjà
+     déposés avant l’arrivée du classement automatique. */
+  const runApprovalFiling = async () => {
+    if (filingBusy) return;
+    if (!cloudBackendAvailable()) {
+      setNote({ text: 'Google Drive n’est pas connecté : connectez-le, puis relancez le rangement des fichiers.' });
+      return;
+    }
+    const recs = (Array.isArray(rows) ? rows : []).filter((r) => r && r.id);
+    if (!recs.length) return;
+    let moved = 0; let already = 0; let failed = 0;
+    const reasons = [];
+    setFilingBusy(true);
+    try {
+      for (const rec of recs) {
+        const res = await fileBudgetDocs(rec, { year: new Date().getFullYear() });
+        if (!res) continue;
+        moved += res.moved || 0;
+        already += res.skipped || 0;
+        failed += Array.isArray(res.failed) ? res.failed.length : 0;
+        (Array.isArray(res.failed) ? res.failed : []).forEach((f) => {
+          const label = txt(rec.numBC) || txt(rec.numDevis) || txt(rec.description) || rec.id;
+          reasons.push(`${rec.kind === 'bc' ? 'BC' : 'Devis'} « ${label} » : ${f.reason}`);
+        });
+      }
+    } catch (err) {
+      console.error(err);
+      setNote({ text: `Erreur pendant le rangement : ${(err && err.message) || err}` });
+      setFilingBusy(false);
+      return;
+    }
+    setFilingBusy(false);
+    if (moved === 0 && already === 0 && failed === 0) {
+      setNote({ text: 'Aucun fichier lié à ranger : déposez un devis / BC avec un fichier (choix PC ou lien Drive).' });
+      return;
+    }
+    const year = new Date().getFullYear();
+    const detail = failed
+      ? ` — ${reasons.slice(0, 10).join(' · ')}${reasons.length > 10 ? ` · … et ${reasons.length - 10} autre(s)` : ''}`
+      : '';
+    setNote({
+      text: `Rangement des fichiers : ${moved} déplacé${moved > 1 ? 's' : ''} dans Budget_labo/${year}/Devis|BC · `
+        + `${already} déjà en place · ${failed} échec${failed > 1 ? 's' : ''}.${detail}`,
+    });
+  };
 
   /* ── Destinataires des e-mails (e-mail renseigné dans la fiche Personnel) ── */
   const superuserEmails = useMemo(
@@ -372,6 +421,23 @@ export const ApprobationPage = () => {
     if (isNew) {
       await notifyDeposit(saved);
     }
+    /* Rangement du fichier dans Budget_labo/<année>/Devis|BC (best-effort) —
+       surtout utile quand le fichier a été collé comme lien Google Drive
+       (le fichier d’un autre compte / non partagé reste en place et le message
+       l’explique). Inutile quand Drive n’est pas connecté (aucun fichier
+       n’aurait pu y être téléversé depuis ce PC). */
+    if (cloudBackendAvailable()) {
+      try {
+        const filing = await fileBudgetDocs(saved, { year: new Date().getFullYear() });
+        if (filing && filing.failed && filing.failed.length) {
+          const first = filing.failed[0];
+          setNote((prev) => ({
+            ...(prev || {}),
+            text: `${prev && prev.text ? `${prev.text} ` : ''}⚠️ Fichier non déplacé (${first.folder}) : ${first.reason}`,
+          }));
+        }
+      } catch { /* le dépôt reste enregistré même si le rangement échoue */ }
+    }
     return true;
   };
 
@@ -397,6 +463,15 @@ export const ApprobationPage = () => {
             className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
           >
             <span className="text-base leading-none">+</span> Déposer un BC
+          </button>
+          <button
+            type="button"
+            onClick={runApprovalFiling}
+            disabled={filingBusy}
+            className="bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50"
+            title="Copier / déplacer dans Budget_labo/<année>/Devis|BC les fichiers liés aux devis / BC déjà déposés — possible quand le fichier est accessible à l’application"
+          >
+            <span className="text-base leading-none">{filingBusy ? '⏳' : '📎'}</span>{filingBusy ? 'Rangement…' : 'Ranger les fichiers'}
           </button>
         </div>
       </div>

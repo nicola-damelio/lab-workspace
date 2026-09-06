@@ -1,0 +1,20 @@
+﻿  C:\Users\nicol\lab-workspace\src\App.jsx:24:import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
+  C:\Users\nicol\lab-workspace\src\App.jsx:25:import {normalizeOperators} from './utils/auth';
+  C:\Users\nicol\lab-workspace\src\App.jsx:26:import { setActiveProjectId, readLibrary, readAllProjectLibraries, restoreLibraryFromSnapshot } from './utils/figuresLibrary';
+> C:\Users\nicol\lab-workspace\src\App.jsx:27:import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders } from './utils/driveUpload';
+  C:\Users\nicol\lab-workspace\src\App.jsx:28:import { sanitizeSlug, datasetFolderSlug } from './utils/driveNaming';
+  C:\Users\nicol\lab-workspace\src\App.jsx:29:import { validateDatasetExperiments } from './utils/experimentRules';
+  C:\Users\nicol\lab-workspace\src\App.jsx:30:import { canUserOpenDataset, isDatasetRestricted, normalizeMemberNames } from './utils/datasetAccess';
+  C:\Users\nicol\lab-workspace\src\App.jsx:31:
+  C:\Users\nicol\lab-workspace\src\App.jsx:32:import { ScientistLoginGate, ScientistLoginModal } from './components/AppModules/definitionsManagers';
+  C:\Users\nicol\lab-workspace\src\App.jsx:33:import { DatasetAccessModal } from './components/AppModules/datasetAccessModal';
+  C:\Users\nicol\lab-workspace\src\App.jsx:933:  // and the same.
+  C:\Users\nicol\lab-workspace\src\App.jsx:934:  const driveRenameTimeoutRef = useRef(null);
+  C:\Users\nicol\lab-workspace\src\App.jsx:935:  useEffect(() => {
+> C:\Users\nicol\lab-workspace\src\App.jsx:936:    setDriveRootContext({
+  C:\Users\nicol\lab-workspace\src\App.jsx:937:      id: currentDatasetId || '',
+  C:\Users\nicol\lab-workspace\src\App.jsx:938:      name: datasetTitle || '',
+  C:\Users\nicol\lab-workspace\src\App.jsx:939:      kind: isAdministrationKind(activeDatasetKind) ? 'administration' : 'scientific',
+  C:\Users\nicol\lab-workspace\src\App.jsx:940:    });
+  C:\Users\nicol\lab-workspace\src\App.jsx:941:    if (!currentDatasetId || !getDriveToken()) return;
+  C:\Users\nicol\lab-workspace\src\App.jsx:942:    if (driveRenameTimeoutRef.current) clearTimeout(driveRenameTimeoutRef.current);
