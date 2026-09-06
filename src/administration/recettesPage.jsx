@@ -266,12 +266,9 @@ export const RecettesPage = () => {
       ),
     },
     {
-      key: 'om', label: 'OM prévus', header: (
-        <span className="inline-flex flex-wrap items-center gap-x-1 gap-y-0.5">
-          <span>OM prévus</span>
-          <span className="text-[9px] font-bold normal-case text-slate-400 whitespace-nowrap">(souhaités non inclus dans la somme)</span>
-        </span>
-      ), dataType: 'number', align: 'right', nowrap: true,
+      key: 'om', label: 'OM prévus',
+      header: <span title="souhaités non inclus dans la somme">OM prévus</span>,
+      dataType: 'number', align: 'right', nowrap: true,
       value: (r) => Number(r.__agg.omTotal) || 0,
       display: (r) => (
         <HoverCell
@@ -285,12 +282,9 @@ export const RecettesPage = () => {
       ),
     },
     {
-      key: 'desiderata', label: 'Achats prévus', header: (
-        <span className="inline-flex flex-wrap items-center gap-x-1 gap-y-0.5">
-          <span>Achats prévus</span>
-          <span className="text-[9px] font-bold normal-case text-slate-400 whitespace-nowrap">(souhaités non inclus dans la somme)</span>
-        </span>
-      ), dataType: 'number', align: 'right', nowrap: true,
+      key: 'desiderata', label: 'Achats prévus',
+      header: <span title="souhaités non inclus dans la somme">Achats prévus</span>,
+      dataType: 'number', align: 'right', nowrap: true,
       value: (r) => Number(r.__agg.desMontant) || 0,
       display: (r) => (
         <HoverCell
