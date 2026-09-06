@@ -377,7 +377,8 @@ const OmModal = ({ rec, recettes, demandeurNames, statusOptions, onCancel, onSav
    ═════════════════════════════════════════════════════════════════════════ */
 export const OmPage = () => {
   const {
-    data, settings, upsert, remove, currentUser, access, operators, navigate,
+    data, settings, upsert, remove, importMany, updateMany,
+    currentUser, access, operators, navigate,
   } = useAdmin();
   const om = useMemo(() => (Array.isArray(data.om) ? data.om : []), [data.om]);
   const depenses = useMemo(() => (Array.isArray(data.depenses) ? data.depenses : []), [data.depenses]);
@@ -592,7 +593,11 @@ export const OmPage = () => {
   );
   const transferAllOm = () => {
     if (!approvedTransferables.length) return;
-    approvedTransferables.forEach((o) => {
+    /* Toutes les lignes de dépense d’un seul coup : `importMany` fait UNE
+       seule écriture (contrairement à une boucle d’`upsert`, où seul le
+       dernier correctif survivrait — état React). Les OMs sont ensuite
+       marqués par UN `updateMany`. */
+    const patches = approvedTransferables.map((o) => {
       let recetteId = o.recetteId && recettes.some((r) => r.id === o.recetteId) ? o.recetteId : '';
       let recetteObj = recetteId ? (recettes.find((r) => r.id === recetteId) || null) : null;
       let categorie = txt(pick(o, ['categorie']));
@@ -604,7 +609,7 @@ export const OmPage = () => {
           recetteId = twin.id;
         }
       }
-      const patch = {
+      return {
         type: 'om',
         omId: o.id,
         description: txt(missionOf(o)),
@@ -630,9 +635,14 @@ export const OmPage = () => {
         livraisonComplete: '', livraisons: [],
         commentaires: txt(pick(o, ['commentaires', 'notes'])),
       };
-      const created = upsert('depenses', patch, null);
-      upsert('om', { depenseId: created && created.id }, o.id);
     });
+    const inserted = importMany('depenses', patches);
+    const created = (inserted && Array.isArray(inserted.records)) ? inserted.records : [];
+    if (created.length) {
+      updateMany('om', created
+        .filter((d) => d && d.omId)
+        .map((d) => ({ id: d.omId, patch: { depenseId: d.id } })));
+    }
     setNotice({
       tone: 'ok',
       text: `${approvedTransferables.length} OM accepté${approvedTransferables.length > 1 ? 's' : ''} transféré${approvedTransferables.length > 1 ? 's' : ''} dans Dépenses › OM.`,

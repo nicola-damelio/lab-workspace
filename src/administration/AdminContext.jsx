@@ -61,9 +61,17 @@ export const AdminProvider = ({
     [content]
   );
 
+  /* Chaque commit part de l’ÉTAT LE PLUS RÉCENT (mise à jour fonctionnelle) :
+     deux appels successifs dans le même tick (ex. transfert OM → dépense, où
+     on crée une dépense PUIS on marque l’OM) se composent au lieu de
+     s’écraser — un onChange({...safeContent}) repartirait de l’instantané du
+     rendu et perdrait silencieusement la première écriture. */
   const setList = (kind, list) => {
     if (typeof onChange !== 'function') return;
-    onChange({ ...safeContent, [kind]: list });
+    onChange((prev) => {
+      const base = prev && typeof prev === 'object' ? prev : {};
+      return { ...base, [kind]: list };
+    });
   };
 
   const upsert = (kind, patch, existingId) => {
@@ -102,7 +110,7 @@ export const AdminProvider = ({
       return { ...(patch || {}), id, createdAt: now, createdBy: actor, updatedAt: now, updatedBy: actor };
     });
     setList(kind, [...stamped, ...prevList]);
-    return { added: stamped.length };
+    return { added: stamped.length, records: stamped };
   };
 
   /** Mise à jour GROUPÉE d’enregistrements EXISTANTS (ex. réattribution

@@ -165,27 +165,41 @@ export const RecettesPage = () => {
       : toNum(rec.budgetTotal);
     // Solde = dispo université − Achats (BC signé) − prestations internes − OM payés − rémunérations de stage (jamais les souhaits / OM prévus).
     const solde = budgetRendu - ordonneeTotal - piTotal - omPaidTotal - stageTotal;
+    /* « OM prévus encore à payer » : OM acceptés qui n’ont pas encore été
+       transférés en dépense OM (transfert → Dépenses › OM). Un OM transféré a
+       déjà déduit son montant du solde via « OM payés » — le déduire à nouveau
+       le compterait deux fois (repère : `depenseId` posé sur l’OM au transfert,
+       et pour les anciens transferts, la dépense qui porte `omId`). */
+    const omPaidIds = new Set(omPaidRows.map((d) => d.omId).filter(Boolean));
+    const omPrevuEnCours = omApprouves
+      .filter((o) => !o.depenseId && !omPaidIds.has(o.id))
+      .reduce((s, o) => s + toNum(o.coutTotal), 0);
+    /* « Solde prévu » = solde − OM prévus (acceptés encore à payer) − achats
+       prévus (approuvés) : projection du solde si toutes les prévisions de la
+       ligne se concrétisent. */
+    const soldePrevu = solde - omPrevuEnCours - desMontant;
     return {
       lineDepenses, ordonneeRows, ordonneeTotal,
       piRows, piTotal, omPaidRows, omPaidTotal, stageRows, stageTotal,
       lineOm, omApprouves,
       omEnAttente: lineOm.filter((o) => String(o.statut || 'En attente').trim() === 'En attente'),
-      omTotal,
+      omTotal, omPrevuEnCours, soldePrevu,
       lineDes, desApprouvees, desMontant,
       budgetRendu, solde,
     };
   };
 
   const totals = useMemo(() => {
-    let budgetTotal = 0; let budgetRendu = 0; let pi = 0; let omPay = 0; let omTot = 0; let des = 0; let solde = 0;
+    let budgetTotal = 0; let budgetRendu = 0; let pi = 0; let omPay = 0; let omTot = 0; let des = 0; let solde = 0; let soldePrevu = 0;
     activeRecettes.forEach((r) => {
       const a = aggFor(r);
       budgetTotal += toNum(r.budgetTotal);
       budgetRendu += a.budgetRendu;
       pi += a.piTotal; omPay += a.omPaidTotal; omTot += a.omTotal; des += a.desMontant;
       solde += a.solde;
+      soldePrevu += a.soldePrevu;
     });
-    return { budgetTotal, budgetRendu, pi, omPay, omTot, des, solde };
+    return { budgetTotal, budgetRendu, pi, omPay, omTot, des, solde, soldePrevu };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRecettes, depenses, om, desiderate]);
 
@@ -367,6 +381,13 @@ export const RecettesPage = () => {
       display: (r) => <SoldeCell agg={r.__agg} />,
     },
     {
+      key: 'soldePrevu', label: 'Solde prévu',
+      header: <span title="Solde − OM prévus (acceptés encore à payer) − achats prévus (approuvés) — solde restant si toutes les prévisions se concrétisent">Solde prévu</span>,
+      dataType: 'number', align: 'right', nowrap: true,
+      value: (r) => Number(r.__agg.soldePrevu) || 0,
+      display: (r) => <SoldePrevuCell agg={r.__agg} />,
+    },
+    {
       key: 'finEngagement', label: 'Fin d’engagement', filter: 'text',
       value: (r) => r.dateFinEngagement || '',
       display: (r) => <span className="whitespace-nowrap text-slate-600">{r.dateFinEngagement || '—'}</span>,
@@ -460,7 +481,7 @@ export const RecettesPage = () => {
       </div>
 
       {/* Cartes de synthèse (onglet actif) */}
-      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2">
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2">
         <SummaryCard label="Budget total" value={totals.budgetTotal} tone="slate" />
         <SummaryCard label="Mis à disposition (univ.)" value={totals.budgetRendu} tone="blue" />
         <SummaryCard label="Prestations internes" value={totals.pi} tone="amber" />
@@ -468,6 +489,7 @@ export const RecettesPage = () => {
         <SummaryCard label="OM prévus (acceptés)" value={totals.omTot} tone="violet" />
         <SummaryCard label="Achats prévus (approuvés)" value={totals.des} tone="teal" />
         <SummaryCard label="Solde restant" value={totals.solde} tone={totals.solde < 0 ? 'red' : 'emerald'} />
+        <SummaryCard label="Solde prévu" value={totals.soldePrevu} tone={totals.soldePrevu < 0 ? 'red' : 'indigo'} />
       </div>
 
       {/* Table des lignes budgétaires */}
@@ -496,7 +518,7 @@ export const RecettesPage = () => {
           key={tab}
           columns={recetteCols}
           rows={recetteRows}
-          minWidth="1500px"
+          minWidth="1600px"
           searchPlaceholder="Rechercher une ligne, un porteur, une note…"
           emptyLabel="Aucune ligne budgétaire pour le moment"
           noMatchLabel={tab === 'salaires'
@@ -521,6 +543,7 @@ const SummaryCard = ({ label, value, tone }) => {
   const tones = {
     slate: 'border-slate-200 text-slate-800',
     blue: 'border-blue-200 text-blue-700',
+    indigo: 'border-indigo-200 text-indigo-700',
     amber: 'border-amber-200 text-amber-700',
     rose: 'border-rose-200 text-rose-700',
     violet: 'border-violet-200 text-violet-700',
@@ -607,6 +630,45 @@ const SoldeCell = ({ agg }) => {
   );
 };
 
+/* Cellule « Solde prévu » (colonne située après « Solde ») : projection du
+   solde si les prévisions de la ligne se concrétisent.
+   Solde prévu = Solde − OM prévus (acceptés encore à payer) − achats prévus
+   (approuvés). Un OM accepté déjà transféré en dépense OM n’est PAS re-déduit
+   ici : sa dépense a déjà retiré le montant du solde via « OM payés ». */
+const SoldePrevuCell = ({ agg }) => {
+  const negative = agg.soldePrevu < 0;
+  const rows = [
+    { key: 'solde', label: 'Solde actuel', value: agg.solde, sign: '+' },
+    { key: 'omPrevu', label: 'OM prévus (à payer)', value: agg.omPrevuEnCours, sign: '−' },
+    { key: 'desPrevu', label: 'Achats prévus (approuvés)', value: agg.desMontant, sign: '−' },
+  ];
+  return (
+    <div className="group relative inline-block text-right">
+      <span className={`font-black cursor-help whitespace-nowrap ${negative ? 'text-red-600' : 'text-indigo-700'}`}>
+        {euro.format(agg.soldePrevu)}
+        <span className="ml-1 text-[11px] text-slate-300 group-hover:text-blue-500 align-middle" aria-hidden="true">ⓘ</span>
+      </span>
+      <div className="hidden group-hover:block absolute right-0 top-full mt-1 z-30 w-80 bg-white border border-slate-200 rounded-xl shadow-2xl p-2">
+        <div className="px-2 pt-1 pb-1.5 text-[10px] font-black uppercase tracking-wide text-slate-400 border-b border-slate-100">
+          Détail du solde prévu
+        </div>
+        {rows.map((it) => (
+          <div key={it.key} className="flex items-baseline justify-between gap-3 px-2 py-1">
+            <span className="text-[11px] text-slate-600">{it.label}</span>
+            <span className={`text-xs font-bold whitespace-nowrap ${it.sign === '+' ? 'text-blue-700' : 'text-slate-800'}`}>
+              {it.sign === '+' ? '' : '− '}{euro.format(it.value)}
+            </span>
+          </div>
+        ))}
+        <div className="flex items-baseline justify-between gap-3 px-2 py-1.5 mt-1 border-t border-slate-200">
+          <span className="text-xs font-black text-slate-700">Solde prévu</span>
+          <span className={`text-sm font-black whitespace-nowrap ${negative ? 'text-red-600' : 'text-indigo-700'}`}>{euro.format(agg.soldePrevu)}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 /* ── Fenêtre modale : création / édition d’une ligne budgétaire ─────────── */
 const LineModal = ({ modal, types, personnel, depenses, om, desiderate, onCancel, onSave }) => {
   const editing = modal.mode === 'edit';
@@ -687,7 +749,7 @@ const LineModal = ({ modal, types, personnel, depenses, om, desiderate, onCancel
 };
 /* ── Fenêtre modale : lier des éléments existants à la ligne ────────────── */
 const LinkLineModal = ({ modal, depenses, om, desiderate, onCancel }) => {
-  const { upsert } = useAdmin();
+  const { updateMany } = useAdmin();
   const recId = modal.rec && modal.rec.id;
   const [checked, setChecked] = useState(() => {
     const set = new Set();
@@ -705,20 +767,23 @@ const LinkLineModal = ({ modal, depenses, om, desiderate, onCancel }) => {
     });
   };
 
+  /* Liaisons en UNE écriture par collection (`updateMany`) : une boucle
+     d’`upsert` repartirait de l’instantané d’origine à chaque appel et seul
+     le dernier correctif survivrait (état React). */
   const applyLink = () => {
     const nowSelected = (kind, id) => checked.has(`${kind}:${id}`);
-    (depenses || []).forEach((d) => {
-      const target = nowSelected('depenses', d.id);
-      if (target !== (d.recetteId === recId)) upsert('depenses', { recetteId: target ? recId : null }, d.id);
-    });
-    (om || []).forEach((o) => {
-      const target = nowSelected('om', o.id);
-      if (target !== (o.recetteId === recId)) upsert('om', { recetteId: target ? recId : null }, o.id);
-    });
-    (desiderate || []).forEach((x) => {
-      const target = nowSelected('desiderate', x.id);
-      if (target !== (x.recetteSuggereeId === recId)) upsert('desiderate', { recetteSuggereeId: target ? recId : null }, x.id);
-    });
+    const linkChanges = (kind, items, recIdKey) => (items || [])
+      .filter((it) => nowSelected(kind, it.id) !== (it[recIdKey] === recId))
+      .map((it) => {
+        const target = nowSelected(kind, it.id);
+        return { id: it.id, patch: { [recIdKey]: target ? recId : null } };
+      });
+    const depChanges = linkChanges('depenses', depenses, 'recetteId');
+    const omChanges = linkChanges('om', om, 'recetteId');
+    const desChanges = linkChanges('desiderate', desiderate, 'recetteSuggereeId');
+    if (depChanges.length) updateMany('depenses', depChanges);
+    if (omChanges.length) updateMany('om', omChanges);
+    if (desChanges.length) updateMany('desiderate', desChanges);
     onCancel();
   };
 
