@@ -378,7 +378,7 @@ const OmModal = ({ rec, recettes, demandeurNames, statusOptions, onCancel, onSav
 export const OmPage = () => {
   const {
     data, settings, upsert, remove, importMany, updateMany,
-    currentUser, access, operators, navigate,
+    currentUser, access, operators, navigate, focus, clearFocus,
   } = useAdmin();
   const om = useMemo(() => (Array.isArray(data.om) ? data.om : []), [data.om]);
   const depenses = useMemo(() => (Array.isArray(data.depenses) ? data.depenses : []), [data.depenses]);
@@ -388,6 +388,17 @@ export const OmPage = () => {
   const [modal, setModal] = useState(null); // null | { mode: 'new' } | { mode: 'edit', rec }
   const [importOpen, setImportOpen] = useState(false);
   const [notice, setNotice] = useState(null); // { tone, text, mailto? }
+  /* OM « cible » d’une navigation inter-page (page Recettes › survol d’un OM
+     prévu) : on surligne l’OM correspondant dans le tableau. */
+  const [focusRow, setFocusRow] = useState(null);
+
+  useEffect(() => {
+    if (!focus || focus.pageId !== 'om') return;
+    const rid = focus.recordId;
+    if (rid && om.some((o) => o.id === rid)) setFocusRow(rid);
+    if (typeof clearFocus === 'function') clearFocus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus]);
 
   /* L’approbation (changement de statut) est réservée au superutilisateur. */
   const isSuper = !!access.isSuperuser;
@@ -797,6 +808,8 @@ export const OmPage = () => {
         <SmartTable
           columns={columns}
           rows={rows}
+          focusRowKey={focusRow}
+          onFocusDone={() => setFocusRow(null)}
           minWidth="1420px"
           searchPlaceholder="Rechercher mission, demandeur, destination, n° OM…"
           emptyLabel="Aucun ordre de mission pour le moment"

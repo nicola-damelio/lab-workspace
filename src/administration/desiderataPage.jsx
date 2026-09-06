@@ -461,6 +461,9 @@ export const DesiderataPage = () => {
   const [modal, setModal] = useState(null); // null | { mode:'new' } | { mode:'edit', rec }
   const [importOpen, setImportOpen] = useState(false);
   const [notice, setNotice] = useState(null);
+  /* Souhait « cible » d’une navigation inter-page (page Recettes › survol d’un
+     achat prévu) : on surligne le souhait correspondant dans le tableau. */
+  const [focusRow, setFocusRow] = useState(null);
 
   useEffect(() => {
     if (!notice) return undefined;
@@ -468,10 +471,11 @@ export const DesiderataPage = () => {
     return () => clearTimeout(t);
   }, [notice]);
 
-  /* Une éventuelle cible de navigation vers cette page est simplement effacée. */
   useEffect(() => {
     if (!focus || focus.pageId !== 'desiderate') return;
-    clearFocus();
+    const rid = focus.recordId;
+    if (rid && list.some((d) => d.id === rid)) setFocusRow(rid);
+    if (typeof clearFocus === 'function') clearFocus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus]);
 
@@ -941,6 +945,8 @@ export const DesiderataPage = () => {
         <SmartTable
           columns={columns}
           rows={sorted}
+          focusRowKey={focusRow}
+          onFocusDone={() => setFocusRow(null)}
           minWidth="1680px"
           searchPlaceholder="Rechercher article, demandeur, fournisseur, ligne, code produit…"
           emptyLabel="Aucun achat prévu / souhaité pour le moment"

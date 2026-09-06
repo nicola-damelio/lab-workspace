@@ -22,6 +22,30 @@ const toNum = (v) => {
 };
 const asDate = (v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 10) : '');
 
+/* Lecture d’une date de fin d’engagement → minuit UTC en millisecondes.
+   La base stocke les dates en « aaaa-mm-jj » (import ou <input type=date>) ;
+   d’anciennes valeurs « jj/mm/aaaa » restent acceptées. Retourne null si vide. */
+const parseEngagementDate = (v) => {
+  const s = typeof v === 'string' ? v.trim().slice(0, 10) : '';
+  if (!s) return null;
+  const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
+  if (iso) return Date.UTC(+iso[1], +iso[2] - 1, +iso[3]);
+  const fr = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
+  if (fr) return Date.UTC(+fr[3], +fr[2] - 1, +fr[1]);
+  return null;
+};
+/* Décalage « calendrier » de N mois en UTC, en ramenant au dernier jour du
+   mois en cas de dépassement (ex. 31 mai + 3 mois = 31 août). */
+const addMonthsUTC = (t, months) => {
+  const d = new Date(t);
+  const day = d.getUTCDate();
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() + months);
+  const lastDay = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  d.setUTCDate(Math.min(day, lastDay));
+  return d.getTime();
+};
+
 const txt = (v) => String(v ?? '').trim();
 /* « Lignes salaires » : lignes budgétaires importées avec la catégorie « Autres »
    de la feuille « Lignes budgétaires » (enveloppes de rémunération du personnel).
@@ -80,12 +104,25 @@ const isOmApproved = (raw) =>
   /accept/i.test(String(raw || '').normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
 
 export const RecettesPage = () => {
-  const { data, settings, upsert, remove } = useAdmin();
+  const { data, settings, upsert, remove, access, navigate } = useAdmin();
   const recettes = useMemo(() => (Array.isArray(data.recettes) ? data.recettes : []), [data.recettes]);
   const depenses = useMemo(() => (Array.isArray(data.depenses) ? data.depenses : []), [data.depenses]);
   const om = useMemo(() => (Array.isArray(data.om) ? data.om : []), [data.om]);
   const desiderate = useMemo(() => (Array.isArray(data.desiderate) ? data.desiderate : []), [data.desiderate]);
   const personnel = useMemo(() => (Array.isArray(data.personnel) ? data.personnel : []), [data.personnel]);
+
+  /* Liens des cases « au survol » : un élément d’une autre table (dépense, OM,
+     achat prévu) s’ouvre dans sa table d’origine si le profil y a accès. */
+  const canOpenDepenses = !!access.canViewPage({ id: 'depenses' });
+  const canOpenOm = !!access.canViewPage({ id: 'om' });
+  const canOpenDesiderata = !!access.canViewPage({ id: 'desiderate' });
+  const openTarget = (target) => {
+    if (!target || !target.recordId) return;
+    if (typeof navigate === 'function') navigate(target.pageId, { kind: target.kind, recordId: target.recordId });
+  };
+  const depLink = (d) => (canOpenDepenses && d && d.id ? { pageId: 'depenses', kind: 'depense', recordId: d.id } : null);
+  const omLink = (o) => (canOpenOm && o && o.id ? { pageId: 'om', kind: 'om', recordId: o.id } : null);
+  const desLink = (d) => (canOpenDesiderata && d && d.id ? { pageId: 'desiderate', kind: 'desiderata', recordId: d.id } : null);
 
   const [modal, setModal] = useState(null);
   const [importOpen, setImportOpen] = useState(false); // {mode:'new'} | {mode:'edit', rec} | {mode:'link', rec}
@@ -232,6 +269,17 @@ export const RecettesPage = () => {
     [activeRecettes, depenses, om, desiderate]
   );
 
+  /* Seuil d’alerte « Fin d’engagement » : la date passe en rouge dès qu’il
+     reste 3 mois ou moins (date du jour + 3 mois ≥ échéance), et le reste une
+     fois l’échéance dépassée (la ligne doit être prolongée / réengagée). */
+  const now = new Date();
+  const todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const engagementAlertLimit = addMonthsUTC(todayUTC, 3);
+  const isEngagementAlert = (raw) => {
+    const t = parseEngagementDate(raw);
+    return t !== null && t <= engagementAlertLimit;
+  };
+
   /* Colonnes triables/filtrables — rendu des cellules conservé à l’identique. */
   const recetteCols = [
     {
@@ -289,10 +337,12 @@ export const RecettesPage = () => {
       display: (r) => (
         <HoverCell
           amount={r.__agg.ordonneeTotal}
+          onOpen={openTarget}
           items={r.__agg.ordonneeRows.map((d) => ({
             title: d.description || 'Achat',
             meta: [d.numBC || d.bcNo || d.sifacNo || '', d.statut || d.suivi || ''].filter(Boolean).join(' · '),
             value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
+            to: depLink(d),
           }))}
         />
       ),
@@ -303,10 +353,12 @@ export const RecettesPage = () => {
       display: (r) => (
         <HoverCell
           amount={r.__agg.piTotal}
+          onOpen={openTarget}
           items={r.__agg.piRows.map((d) => ({
             title: d.description || 'Prestation interne',
             meta: ['PI (prestation interne)', d.dateSignatureBC || d.dateSignature || ''].filter(Boolean).join(' · '),
             value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
+            to: depLink(d),
           }))}
         />
       ),
@@ -317,10 +369,12 @@ export const RecettesPage = () => {
       display: (r) => (
         <HoverCell
           amount={r.__agg.omPaidTotal}
+          onOpen={openTarget}
           items={r.__agg.omPaidRows.map((d) => ({
             title: d.description || d.destination || 'Dépense OM',
             meta: [d.destination || '', d.omNo || d.bcNo || '', d.statut || d.suivi || ''].filter(Boolean).join(' · '),
             value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
+            to: depLink(d),
           }))}
         />
       ),
@@ -333,10 +387,12 @@ export const RecettesPage = () => {
       display: (r) => (
         <HoverCell
           amount={r.__agg.stageTotal}
+          onOpen={openTarget}
           items={r.__agg.stageRows.map((d) => ({
             title: d.description || 'Rémunération de stage',
             meta: ['Stages', d.numBC || d.numSIFAC || '', d.statut || d.suivi || ''].filter(Boolean).join(' · '),
             value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
+            to: depLink(d),
           }))}
         />
       ),
@@ -349,10 +405,12 @@ export const RecettesPage = () => {
       display: (r) => (
         <HoverCell
           amount={r.__agg.omTotal}
+          onOpen={openTarget}
           items={r.__agg.lineOm.map((o) => ({
             title: o.description || o.destination || 'OM',
             meta: [o.destination || '', `${o.statut || 'En attente'}${isOmApproved(o.statut) ? ' · accepté' : ' · non accepté'}`].filter(Boolean).join(' · '),
             value: euro.format(toNum(o.coutTotal)),
+            to: omLink(o),
           }))}
         />
       ),
@@ -365,12 +423,14 @@ export const RecettesPage = () => {
       display: (r) => (
         <HoverCell
           amount={r.__agg.desMontant}
+          onOpen={openTarget}
           items={r.__agg.lineDes.map((d) => ({
             title: d.description || 'Achat prévu / souhaité',
             meta: [d.demandeur || '', desiderataDecisionOf(d.statut)].filter(Boolean).join(' · '),
             value: d.montantEstime !== undefined && d.montantEstime !== null && d.montantEstime !== ''
               ? euro.format(toNum(d.montantEstime))
               : 'non chiffré',
+            to: desLink(d),
           }))}
         />
       ),
@@ -390,7 +450,16 @@ export const RecettesPage = () => {
     {
       key: 'finEngagement', label: 'Fin d’engagement', filter: 'text',
       value: (r) => r.dateFinEngagement || '',
-      display: (r) => <span className="whitespace-nowrap text-slate-600">{r.dateFinEngagement || '—'}</span>,
+      display: (r) => {
+        const raw = txt(r.dateFinEngagement);
+        const alert = isEngagementAlert(raw);
+        return raw
+          ? <span
+            className={`whitespace-nowrap ${alert ? 'font-black text-red-600' : 'text-slate-600'}`}
+            title={alert ? 'Échéance d’engagement à 3 mois ou moins (ou déjà dépassée)' : undefined}
+          >{raw}</span>
+          : <span className="text-slate-300">—</span>;
+      },
     },
     {
       key: 'actions', label: '', sortable: false, filterable: false, align: 'right', nowrap: true,
@@ -441,7 +510,7 @@ export const RecettesPage = () => {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
           <span className="inline-block w-2 h-2 rounded-full bg-blue-500" aria-hidden="true"></span>
-          Chaque ligne affiche ses montants et les éléments liés — survolez une case pour le détail.
+          Chaque ligne affiche ses montants et les éléments liés — survolez une case pour le détail, cliquez un élément lié pour l’ouvrir dans sa table d’origine.
         </div>
         <button
           onClick={() => setImportOpen(true)}
@@ -480,8 +549,8 @@ export const RecettesPage = () => {
         ))}
       </div>
 
-      {/* Cartes de synthèse (onglet actif) */}
-      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2">
+      {/* Cartes de synthèse (onglet actif) — bandeau compact */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-1.5">
         <SummaryCard label="Budget total" value={totals.budgetTotal} tone="slate" />
         <SummaryCard label="Mis à disposition (univ.)" value={totals.budgetRendu} tone="blue" />
         <SummaryCard label="Prestations internes" value={totals.pi} tone="amber" />
@@ -552,9 +621,9 @@ const SummaryCard = ({ label, value, tone }) => {
     red: 'border-red-200 text-red-600',
   };
   return (
-    <div className={`bg-white border rounded-2xl shadow-sm px-3 py-2.5 ${tones[tone] || tones.slate}`}>
-      <div className="text-[10px] font-black uppercase tracking-wide opacity-70 leading-tight">{label}</div>
-      <div className="text-lg font-black mt-0.5 truncate">{euro.format(value)}</div>
+    <div className={`bg-white border rounded-xl shadow-sm px-3 py-1.5 ${tones[tone] || tones.slate}`}>
+      <div className="text-[9px] font-black uppercase tracking-wide opacity-70 leading-none truncate">{label}</div>
+      <div className="text-sm font-black mt-1 leading-tight tabular-nums truncate">{euro.format(value)}</div>
     </div>
   );
 };
@@ -562,8 +631,10 @@ const SummaryCard = ({ label, value, tone }) => {
 /* ── Cases à détail au survol ─────────────────────────────────────────────
    Seul le montant est affiché (le détail — liste des éléments liés, n° BC /
    SF, statuts… — n’apparaît qu’au survol, via ⓘ) : les colonnes restent
-   étroites et la vue d’ensemble de la table reste lisible. */
-const HoverCell = ({ amount, items }) => {
+   étroites et la vue d’ensemble de la table reste lisible. Chaque élément
+   lié qui appartient à une autre table est cliquable (↗) : il ouvre sa
+   définition dans la table d’origine (Dépenses, OM prévus, Achats prévus). */
+const HoverCell = ({ amount, items, onOpen }) => {
   const linked = Array.isArray(items) ? items : [];
   return (
     <div className="group relative inline-block text-right">
@@ -574,16 +645,34 @@ const HoverCell = ({ amount, items }) => {
         )}
       </div>
       {linked.length > 0 && (
-        <div className="hidden group-hover:block absolute right-0 top-full mt-1 z-30 w-80 max-h-64 overflow-y-auto custom-scrollbar bg-white border border-slate-200 rounded-xl shadow-2xl p-2">
-          {linked.map((it, i) => (
-            <div key={i} className="flex items-start justify-between gap-2 px-2 py-1.5 border-b border-slate-100 last:border-0">
-              <div className="min-w-0">
-                <div className="text-xs font-bold text-slate-700 truncate">{it.title}</div>
-                {it.meta ? <div className="text-[10px] text-slate-400 truncate">{it.meta}</div> : null}
-              </div>
-              <div className="text-xs font-bold text-slate-800 whitespace-nowrap">{it.value}</div>
-            </div>
-          ))}
+        <div
+          className="hidden group-hover:block absolute right-0 top-full mt-1 z-30 w-80 max-h-64 overflow-y-auto custom-scrollbar bg-white border border-slate-200 rounded-xl shadow-2xl p-2"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {linked.map((it, i) => {
+            const clickable = !!it.to && typeof onOpen === 'function';
+            return (
+              <button
+                key={i}
+                type="button"
+                disabled={!clickable}
+                onClick={clickable ? () => onOpen(it.to) : undefined}
+                title={clickable ? 'Ouvrir cet élément dans sa table d’origine' : undefined}
+                className={`flex w-full items-start justify-between gap-2 px-2 py-1.5 text-left border-b border-slate-100 last:border-0 transition-colors ${
+                  clickable ? 'cursor-pointer hover:bg-blue-50' : ''
+                }`}
+              >
+                <span className="min-w-0">
+                  <span className="block text-xs font-bold text-slate-700 truncate">{it.title}</span>
+                  {it.meta ? <span className="block text-[10px] text-slate-400 truncate">{it.meta}</span> : null}
+                </span>
+                <span className="flex items-center gap-1 shrink-0">
+                  <span className="text-xs font-bold text-slate-800 whitespace-nowrap">{it.value}</span>
+                  {clickable && <span className="text-[10px] text-blue-500" aria-hidden="true">↗</span>}
+                </span>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
@@ -609,7 +698,10 @@ const SoldeCell = ({ agg }) => {
         {euro.format(agg.solde)}
         <span className="ml-1 text-[11px] text-slate-300 group-hover:text-blue-500 align-middle" aria-hidden="true">ⓘ</span>
       </span>
-      <div className="hidden group-hover:block absolute right-0 top-full mt-1 z-30 w-80 bg-white border border-slate-200 rounded-xl shadow-2xl p-2">
+      <div
+        className="hidden group-hover:block absolute right-0 top-full mt-1 z-30 w-80 bg-white border border-slate-200 rounded-xl shadow-2xl p-2"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="px-2 pt-1 pb-1.5 text-[10px] font-black uppercase tracking-wide text-slate-400 border-b border-slate-100">
           Détail du solde
         </div>
@@ -648,7 +740,10 @@ const SoldePrevuCell = ({ agg }) => {
         {euro.format(agg.soldePrevu)}
         <span className="ml-1 text-[11px] text-slate-300 group-hover:text-blue-500 align-middle" aria-hidden="true">ⓘ</span>
       </span>
-      <div className="hidden group-hover:block absolute right-0 top-full mt-1 z-30 w-80 bg-white border border-slate-200 rounded-xl shadow-2xl p-2">
+      <div
+        className="hidden group-hover:block absolute right-0 top-full mt-1 z-30 w-80 bg-white border border-slate-200 rounded-xl shadow-2xl p-2"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="px-2 pt-1 pb-1.5 text-[10px] font-black uppercase tracking-wide text-slate-400 border-b border-slate-100">
           Détail du solde prévu
         </div>

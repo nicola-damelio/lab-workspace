@@ -118,14 +118,26 @@ const rowMatches = (row, columns, filterMap, queryTerms) => {
 };
 
 /* ── En-tête triable ──────────────────────────────────────────────────────── */
-const SortHeader = ({ col, colIndex = 0, sort, onSort, alignRight }) => {
+const SortHeader = ({ col, colIndex = 0, sort, onSort, alignRight, stickyLeft = null, stickyEdge = false }) => {
   const active = sort && sort.key === col.key;
   const dir = active ? sort.dir : null;
   /* Cellule épinglée : la ligne d’en-têtes reste visible pendant le défilement
      vertical du tableau ; un léger filet gauche sépare les colonnes. */
   const divider = colIndex > 0 ? ' border-l border-slate-200/80' : '';
+  /* Épinglage horizontal : `left` = position réelle mesurée de la colonne ;
+     le z-index passe au-dessus des cellules du corps qui défilent dessous. */
+  const stickyStyle = stickyLeft == null
+    ? undefined
+    : {
+        left: stickyLeft,
+        zIndex: 30,
+        boxShadow: stickyEdge ? '10px 0 10px -8px rgba(15, 23, 42, 0.4)' : undefined,
+      };
   return (
-    <th className={`px-3 py-2.5 sticky top-0 z-10 bg-slate-50 border-b-2 border-slate-200 ${alignRight ? 'text-right' : 'text-left'}${divider}`}>
+    <th
+      className={`px-3 py-2.5 sticky top-0 z-10 bg-slate-50 border-b-2 border-slate-200 ${alignRight ? 'text-right' : 'text-left'}${divider}`}
+      style={stickyStyle}
+    >
       {col.sortable === false ? (
         <span className="inline-flex flex-wrap items-center gap-x-1 gap-y-0.5 font-black uppercase tracking-wide">{col.header || col.label}</span>
       ) : (
@@ -179,11 +191,21 @@ export const SmartTable = ({
      La ligne est défilée au centre et flashée ; `onFocusDone` est appelé. */
   focusRowKey = null,
   onFocusDone,
+  /* Colonnes conservées à gauche pendant le défilement horizontal : les
+     `frozenCols` premières colonnes du tableau restent visibles quand on fait
+     défiler le reste horizontalement (identifiants, intitulés…). */
+  frozenCols = 5,
 }) => {
   const [sort, setSort] = useState(null); // { key, dir: 'asc'|'desc' } | null
   const [filters, setFilters] = useState({}); // colKey -> filtre actif
   const [query, setQuery] = useState('');
   const [panelOpen, setPanelOpen] = useState(false);
+
+  /* Colonnes épinglées à gauche pendant le défilement horizontal : `lefts`
+     contient la position en px de chaque colonne figée (mesurée dans le DOM),
+     `active` = le tableau déborde réellement et le gel s’applique. */
+  const [stickyInfo, setStickyInfo] = useState({ active: false, lefts: [] });
+  const [measureTick, setMeasureTick] = useState(0);
 
   /* Cellules chiffrées sélectionnées — clé « String(rowKey) + SEP + col.key ». */
   const [selSet, setSelSet] = useState(() => new Set());
@@ -257,6 +279,8 @@ export const SmartTable = ({
 
   const activeCount = Object.keys(filterMap).length;
   const visibleCols = columns.filter((c) => !c.hidden);
+  /* Nombre de colonnes à conserver visibles à gauche (borné au nombre réel). */
+  const frozenCount = Math.max(0, Math.min(frozenCols, visibleCols.length));
 
   const onSort = (col) => {
     setSort((prev) => {
@@ -426,6 +450,52 @@ export const SmartTable = ({
      défilement au centre + flash ambre pendant ~2 s, puis onFocusDone(). */
   const scrollRef = useRef(null);
   const focusTimerRef = useRef(null);
+
+  /* ── Épinglage des colonnes à gauche lors du défilement horizontal ──────
+     Si le tableau déborde de son conteneur, les `frozenCols` premières
+     colonnes (en-têtes + cellules) reçoivent `position: sticky; left: X` où X
+     est leur position réelle mesurée — les largeurs de colonnes d’un tableau
+     en disposition automatique ne sont connues qu’après le rendu. */
+  useEffect(() => {
+    const container = scrollRef.current;
+    const table = container ? container.querySelector('table') : null;
+    if (!container || !table) {
+      setStickyInfo((prev) => (prev.active || prev.lefts.length ? { active: false, lefts: [] } : prev));
+      return undefined;
+    }
+    const heads = Array.prototype.slice.call(table.querySelectorAll('thead th'));
+    const n = Math.min(frozenCount, heads.length);
+    const overflow = table.scrollWidth > container.clientWidth + 1;
+    if (!overflow || n === 0) {
+      setStickyInfo((prev) => (prev.active || prev.lefts.length ? { active: false, lefts: [] } : prev));
+      return undefined;
+    }
+    const tableLeft = table.getBoundingClientRect().left;
+    const lefts = [];
+    for (let i = 0; i < n; i += 1) {
+      lefts.push(Math.round((heads[i].getBoundingClientRect().left - tableLeft) * 10) / 10);
+    }
+    setStickyInfo((prev) => (
+      prev.active && prev.lefts.length === lefts.length
+        && prev.lefts.every((v, j) => Math.abs(v - lefts[j]) < 0.6)
+        ? prev
+        : { active: true, lefts }
+    ));
+    return undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleCols, visibleRows, frozenCount, measureTick]);
+
+  /* Re-mesure quand le conteneur change de largeur (redimensionnement de la
+     fenêtre, ouverture du panneau de filtres…) : en disposition automatique
+     les largeurs de colonnes peuvent alors changer. */
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(() => setMeasureTick((t) => t + 1));
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, []);
+
   useEffect(() => {
     if (focusRowKey === null || focusRowKey === undefined || focusRowKey === '') {
       return undefined;
@@ -439,15 +509,28 @@ export const SmartTable = ({
       });
     }
     if (!target) return undefined;
+    /* Les cellules épinglées (colonnes figées à gauche) ont un fond opaque :
+       on les colore aussi pendant le flash pour que la ligne reste visible. */
+    const setFrozenCells = (bg) => {
+      if (!target) return;
+      target.querySelectorAll('td.sticky').forEach((td) => {
+        const wasSelected = td.classList.contains('bg-blue-100');
+        td.style.backgroundColor = bg === null
+          ? (wasSelected ? '#dbeafe' : '#ffffff')
+          : bg;
+      });
+    };
     const clearFlash = () => {
       if (!target) return;
       target.style.background = '';
       target.style.boxShadow = '';
+      setFrozenCells(null);
     };
     clearFlash();
     target.scrollIntoView({ behavior: 'smooth', block: 'center' });
     target.style.background = '#fef9c3';
     target.style.boxShadow = 'inset 0 0 0 2px #fbbf24';
+    setFrozenCells('#fef9c3');
     if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
     focusTimerRef.current = setTimeout(() => {
       clearFlash();
@@ -649,6 +732,8 @@ export const SmartTable = ({
                     sort={sort}
                     onSort={onSort}
                     alignRight={col.align === 'right'}
+                    stickyLeft={stickyInfo.active && ci < stickyInfo.lefts.length ? stickyInfo.lefts[ci] : null}
+                    stickyEdge={stickyInfo.active && ci === stickyInfo.lefts.length - 1}
                   />
                 ))}
               </tr>
@@ -673,6 +758,9 @@ export const SmartTable = ({
                       const cellKey = rk + SEP + col.key;
                       const selectable = enableCellSum && num !== null;
                       const selected = selectable && selSet.has(cellKey);
+                      const frozenLeft = stickyInfo.active && ci < stickyInfo.lefts.length
+                        ? stickyInfo.lefts[ci]
+                        : null;
                       const cls = [
                         'px-3 py-2.5',
                         ci > 0 ? 'border-l border-slate-200/70' : '',
@@ -681,12 +769,23 @@ export const SmartTable = ({
                         col.tdClass || '',
                         selectable ? 'cursor-cell' : '',
                         selected ? 'bg-blue-100 shadow-[inset_0_0_0_2px_rgba(37,99,235,0.55)]' : '',
+                        frozenLeft != null ? 'sticky' : '',
                       ].filter(Boolean).join(' ');
                       return (
                         <td
                           key={col.key}
                           className={cls}
                           aria-selected={selected || undefined}
+                          style={frozenLeft == null
+                            ? undefined
+                            : {
+                                left: frozenLeft,
+                                zIndex: 2,
+                                backgroundColor: selected ? '#dbeafe' : '#ffffff',
+                                boxShadow: ci === stickyInfo.lefts.length - 1
+                                  ? '10px 0 10px -8px rgba(15, 23, 42, 0.4)'
+                                  : undefined,
+                              }}
                           onClick={selectable
                             ? (ev) => {
                                 const t = ev.target;
