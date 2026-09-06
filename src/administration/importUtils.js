@@ -550,14 +550,45 @@ const hasContent = (row) => (Array.isArray(row) ? row : []).some((c) => String(c
 const clean = (v) => String(v ?? '').trim();
 
 /* Cellules « N° devis / N° BC / N° facture… » qui portent l’hyperlien du
-   document : le texte visible exporté devient le nom du fichier (ex.
-   « Devis_2026-015_Fournisseur.pdf »), et le N° de référence — « 2026-015 » —
-   y figure comme un segment séparé par des « _ ». On extrait ce N° pour le
-   champ « numéro » ; une URL ou un nom de fichier seul ne doit jamais atterrir
-   dans ces champs. Si rien ne ressemble à un N° (année + séquence), on renvoie
-   une chaîne vide plutôt que le nom du fichier. */
+   document : le texte visible exporté devient le nom du fichier. Convention
+   de nommage des documents du laboratoire : le N° figure EN TÊTE du nom,
+   suivi d’un « _ » puis d’un libellé (« numero_altro »), avec éventuellement
+   le marqueur « BC_ » devant (« BC_numero_altro ») :
+
+     « 2026-015_Devis_Fournisseur.pdf »        → 2026-015
+     « BC_2026-015_Devis_Fournisseur.pdf »     → 2026-015
+     « 0041_Devis_Fournisseur.pdf »            → 0041
+     « BC_R20260215_Devis_Fournisseur.pdf »    → R20260215
+     « R20260215.pdf »                         → R20260215
+
+   Un N° n’est pas une date calendaire : il peut être sans millésime, et une
+   vraie date complète (« 2026-01-15 ») ne doit jamais être confondue avec un
+   N°. On extrait ce N° pour le champ « numéro » ; une URL ou un nom de
+   fichier sans N° reconnaissable ne doit jamais atterrir dans ces champs — on
+   renvoie une chaîne vide plutôt que le nom du fichier. */
 const DOC_EXT_RE = /\.(?:pdf|docx?|xlsx?|pptx?|odt|ods|csv|txt|jpe?g|png|gif)\s*$/i;
 const canonicalCode = (code) => String(code).replace(/[._/]/g, '-');
+
+/* Date calendaire complète (3 champs : « 2026-01-15 », « 15/01/2026 »…) : à
+   ne jamais confondre avec un N° (qui est « année-séquence » à 2 champs ou
+   une suite sans séparateur de date). */
+const DATE_FULL_RE = /^\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}$/;
+const isFullDate = (t) => {
+  if (!DATE_FULL_RE.test(t)) return false;
+  const nums = t.split(/[-/.]/).map((n) => parseInt(n, 10));
+  const [a, b, c] = nums;
+  if (!(a >= 1000 || c >= 1000)) return false; // ex. « 01-02-03 » : indécidable
+  const year = a >= 1000 ? a : c;
+  const day = a >= 1000 ? c : a;
+  return year >= 1900 && year <= 2100 && b >= 1 && b <= 12 && day >= 1 && day <= 31;
+};
+
+/* Un « N° de document » : contient au moins un chiffre, n’est pas une date
+   calendaire complète ni une simple année (« 2026 »). */
+const isReferenceToken = (tok) => {
+  const t = String(tok ?? '').trim();
+  return !!t && /\d/.test(t) && !/^(?:19|20)\d{2}$/.test(t) && !isFullDate(t);
+};
 
 const findCodeIn = (text) => {
   if (!text) return '';
@@ -566,17 +597,25 @@ const findCodeIn = (text) => {
   const whole = s.match(/^((?:19|20)\d{2}[-_./]\d{1,5})$/);
   if (whole) return canonicalCode(whole[1]);
   // Segments délimités par « _ » ou espaces (nom de fichier), extension ignorée.
-  const parts = s.split(/[_ ]+/).map((p) => p.replace(DOC_EXT_RE, ''));
+  const parts = s.split(/[_ ]+/).map((p) => p.replace(DOC_EXT_RE, '')).filter(Boolean);
+  // Un segment entier « année-séquence » (« 2026-015 », « 2026_015 ») est un N°,
+  // où qu’il se trouve dans le nom (« Devis_2026-015_Fournisseur.pdf »).
   for (const part of parts) {
     const ex = part.match(/^((?:19|20)\d{2}[-_./]\d{1,5})$/);
     if (ex) return canonicalCode(ex[1]);
   }
-  // Recherche libre (ex. « BC2026-015 », sans exiger un séparateur) mais en
+  // Recherche libre (ex. « BC2026-015 », « Devis-2026-015.pdf ») mais en
   // refusant les dates complètes « 2026-01-15 » (on ne garderait que « 2026-01 »).
   const m = s.match(
     /(?:^|[^0-9])((?:19|20)\d{2}[-_.]\d{1,5})(?![-_.]\d{1,2}(?:[^0-9A-Za-z]|$))(?=$|[^0-9A-Za-z])/
   );
   if (m) return canonicalCode(m[1]);
+  // Convention « numero_altro » / « BC_numero_altro » : le N° est le premier
+  // segment contenant un chiffre ; il n’est PAS obligatoirement une
+  // « année-séquence » (ex. « R20260215 », « 0041 »).
+  let lead = parts[0] || '';
+  if (parts.length > 1 && !/\d/.test(lead)) lead = parts[1]; // « BC_0041_… », « Devis_0041_… »
+  if (isReferenceToken(lead)) return canonicalCode(lead);
   return '';
 };
 

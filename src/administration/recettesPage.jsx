@@ -22,32 +22,38 @@ const toNum = (v) => {
 };
 const asDate = (v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 10) : '');
 
-/* N° « service fait » (SF) portés par une dépense : valeurs saisies sur ses
-   phases de livraison (clés numSF / sfNo) ou, pour d’anciens enregistrements,
-   en champs directs à la racine de la dépense. */
-const depenseSfRefs = (d) => {
-  const refs = [];
-  const push = (v) => {
-    const s = String(v ?? '').trim();
-    if (s) refs.push(s);
-  };
-  (Array.isArray(d && d.livraisons) ? d.livraisons : []).forEach((l) => {
-    if (!l) return;
-    push(l.numSF);
-    push(l.sfNo);
-  });
-  push(d && d.numSF);
-  push(d && d.sfNo);
-  return refs;
+const txt = (v) => String(v ?? '').trim();
+/* Statuts d’une dépense d’achat qui supposent un bon de commande signé
+   (pipeline : « BC signé », puis Service fait / Livré / Facturé / Clôturé…). */
+const BC_SIGNED_STATUSES = new Set([
+  DEPENSE_BC_SIGNE,
+  'Service fait',
+  'Livré',
+  'Facturé',
+  'Clôturé',
+  'Colis partiellement livré',
+  'Facture signé',
+  'Validé par le fournisseur',
+]);
+/* Date de signature du BC d’une dépense (colonne « Date signature » du
+   classeur → dateSignature ; anciens enregistrements : dateSignatureBC). */
+const bcSignatureDateOf = (d) => {
+  if (!d) return '';
+  return txt(d.dateSignature) || txt(d.dateSignatureBC);
 };
-/* « Dépensé » : coût réellement déboursé — un n° de service fait (SF) est
-   renseigné (réception acceptée → mandatement). On écarte les dépenses
-   refusées / rejetées / annulées. */
-const isDepenseSpent = (d) => {
+/* « Achats (BC signé) » d’une ligne budgétaire : dépenses de type « achat »
+   (hors prestations internes « PI » et hors OM) dont le bon de commande est
+   signé. On ne se limite pas au statut littéral « BC signé » : un achat peut
+   être passé à un état plus avancé (« Service fait », « Facturé »…) tout en
+   ayant un BC signé — le repère fiable est la date de signature du BC
+   renseignée ; à défaut, un statut du pipeline à partir de « BC signé »
+   compte aussi. Les dépenses refusées / rejetées / annulées sont écartées. */
+const isAchatBcSigne = (d) => {
   if (!d) return false;
-  const st = String(d.statut || d.suivi || '').trim();
+  const st = txt(d.statut || d.suivi);
   if (/refus|rejet|annul/i.test(st)) return false;
-  return depenseSfRefs(d).length > 0;
+  if (bcSignatureDateOf(d)) return true;
+  return BC_SIGNED_STATUSES.has(st);
 };
 /* « OM approuvé » : le statut « Acceptée » correspond à la décision positive
    (les valeurs d’import anglaises restent reconnues). C’est le seul seuil qui
@@ -84,12 +90,14 @@ export const RecettesPage = () => {
 
   const aggFor = (rec) => {
     const recId = rec && rec.id;
-    const isSigned = (d) => String(d.statut || '').trim() === DEPENSE_BC_SIGNE;
-    const notRejected = (d) => !/refus|rejet|annul/i.test(String(d.statut || d.suivi || '').trim());
-    /* Décompte retenu pour le solde (dépenses ordonnées + prestations internes
-       + OM payés) :
-       · « Dépenses ordonnées » = lignes d’achat dont le BC est signé : elles
-         retirent le montant du solde dès la commande, même avant réception ;
+    const notRejected = (d) => !/refus|rejet|annul/i.test(txt(d.statut || d.suivi));
+    /* Décompte retenu pour le solde (Achats BC signé + prestations internes +
+       OM payés) :
+       · « Achats (BC signé) » = lignes d’achat dont le bon de commande est
+         signé — BC signé même si le statut a ensuite avancé (Service fait,
+         Facturé…) : repère = date de signature du BC renseignée, sinon statut
+         à partir de « BC signé » dans le pipeline. Elles retirent le montant
+         du solde dès la signature, même avant réception ;
        · « Prestations internes (PI) » = facturées sans bon de commande, elles
          sont considérées consommées dès leur saisie (sauf refus / annulation) ;
        · « OM payés » = lignes de type « om » (créées depuis « OM prévus /
@@ -97,10 +105,8 @@ export const RecettesPage = () => {
        Les OM « prévus / souhaités » (collection om) restent INFORMATIFS : ils
        ne réduisent le solde que lorsqu’ils ont été transférés en dépense OM. */
     const lineDepenses = depenses.filter((d) => d.recetteId === recId);
-    const ordonneeRows = lineDepenses.filter((d) => depenseKindOf(d) === 'achat' && isSigned(d) && notRejected(d));
+    const ordonneeRows = lineDepenses.filter((d) => depenseKindOf(d) === 'achat' && isAchatBcSigne(d));
     const ordonneeTotal = ordonneeRows.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
-    const spent = lineDepenses.filter(isDepenseSpent);
-    const depTotal = spent.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
     /* Colonne « Prestations internes » : même liste que l’onglet PI de la page
        Dépenses (type « pi », fournisseur « PI ») imputée sur cette ligne. */
     const piRows = lineDepenses.filter((d) => depenseKindOf(d) === 'pi' && notRejected(d));
@@ -121,10 +127,10 @@ export const RecettesPage = () => {
     const budgetRendu = rec.budgetRenduDispo !== undefined && rec.budgetRenduDispo !== null && rec.budgetRenduDispo !== ''
       ? toNum(rec.budgetRenduDispo)
       : toNum(rec.budgetTotal);
-    // Solde = dispo université − dépenses ordonnées (BC signés) − prestations internes − OM payés (jamais les souhaits / OM prévus).
+    // Solde = dispo université − Achats (BC signé) − prestations internes − OM payés (jamais les souhaits / OM prévus).
     const solde = budgetRendu - ordonneeTotal - piTotal - omPaidTotal;
     return {
-      lineDepenses, spent, depTotal, ordonneeRows, ordonneeTotal,
+      lineDepenses, ordonneeRows, ordonneeTotal,
       piRows, piTotal, omPaidRows, omPaidTotal,
       lineOm, omApprouves,
       omEnAttente: lineOm.filter((o) => String(o.statut || 'En attente').trim() === 'En attente'),
@@ -226,14 +232,16 @@ export const RecettesPage = () => {
       display: (r) => <span className="font-semibold text-blue-700 whitespace-nowrap">{euro.format(r.__agg.budgetRendu)}</span>,
     },
     {
-      key: 'dep', label: 'Dépensé · SF', dataType: 'number', align: 'right', nowrap: true,
-      value: (r) => Number(r.__agg.depTotal) || 0,
+      key: 'achatsBc', label: 'Achats (BC signé)',
+      header: <span title="Achats dont le bon de commande est signé (date de signature du BC renseignée, ou statut à partir de « BC signé ») — déduits du solde">Achats (BC signé)</span>,
+      dataType: 'number', align: 'right', nowrap: true,
+      value: (r) => Number(r.__agg.ordonneeTotal) || 0,
       display: (r) => (
         <HoverCell
-          amount={r.__agg.depTotal}
-          items={r.__agg.spent.map((d) => ({
-            title: d.description || 'Dépense',
-            meta: [d.bcNo || d.sifacNo || '', depenseSfRefs(d).join(', ')].filter(Boolean).join(' · '),
+          amount={r.__agg.ordonneeTotal}
+          items={r.__agg.ordonneeRows.map((d) => ({
+            title: d.description || 'Achat',
+            meta: [d.numBC || d.bcNo || d.sifacNo || '', d.statut || d.suivi || ''].filter(Boolean).join(' · '),
             value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
           }))}
         />
@@ -472,13 +480,13 @@ const HoverCell = ({ amount, items }) => {
 
 /* Cellule « Solde » : le calcul complet apparaît au survol de la case (montant
    ou ⓘ) — liste des composantes déduites :
-   Solde = dispo université − dépenses ordonnées (BC signés) − prestations
-   internes − OM payés. */
+   Solde = dispo université − Achats (BC signé) − prestations internes − OM
+   payés. */
 const SoldeCell = ({ agg }) => {
   const negative = agg.solde < 0;
   const rows = [
     { key: 'dispo', label: 'Dispo université', value: agg.budgetRendu, sign: '+' },
-    { key: 'ordonnee', label: 'Dépenses ordonnées (BC signés)', value: agg.ordonneeTotal, sign: '−' },
+    { key: 'ordonnee', label: 'Achats (BC signé)', value: agg.ordonneeTotal, sign: '−' },
     { key: 'pi', label: 'Prestations internes', value: agg.piTotal, sign: '−' },
     { key: 'omPay', label: 'OM payés', value: agg.omPaidTotal, sign: '−' },
   ];
