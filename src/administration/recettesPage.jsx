@@ -23,6 +23,23 @@ const toNum = (v) => {
 const asDate = (v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 10) : '');
 
 const txt = (v) => String(v ?? '').trim();
+/* « Lignes salaires » : lignes budgétaires importées avec la catégorie « Autres »
+   de la feuille « Lignes budgétaires » (enveloppes de rémunération du personnel).
+   Elles sont affichées dans l’onglet « Salaires » de la page, séparées des lignes
+   Fonctionnement / Investissement. */
+const isSalaireType = (r) => String((r && r.type) || '').trim().toLowerCase() === 'autres';
+/* « Rémunération stages » : dépenses dont la « Classification / nature »
+   (`classification`, valeur « Stages » de l’onglet Dépenses) correspond à une
+   gratification de stagiaire. Elles sont retirées des onglets Achats / PI / OM
+   de la page Dépenses et décomptées ici dans leur propre colonne, déduite du
+   solde (jamais comptées deux fois). */
+const isStageNature = (v) => {
+  const s = txt(v).toLowerCase();
+  if (!s) return false;
+  // « Stages », « Stage », « Rémunération stages »… → toute valeur contenant « stage(s) ».
+  return /(^|[^a-zà-ÿ])stages?([^a-zà-ÿ]|$)/.test(s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+};
+const isStageDepense = (d) => isStageNature(d && (d.classification || d.nature));
 /* Statuts d’une dépense d’achat qui supposent un bon de commande signé
    (pipeline : « BC signé », puis Service fait / Livré / Facturé / Clôturé…). */
 const BC_SIGNED_STATUSES = new Set([
@@ -72,6 +89,7 @@ export const RecettesPage = () => {
 
   const [modal, setModal] = useState(null);
   const [importOpen, setImportOpen] = useState(false); // {mode:'new'} | {mode:'edit', rec} | {mode:'link', rec}
+  const [tab, setTab] = useState('budgets'); // 'budgets' : Fonctionnement / Investissement · 'salaires' : type « Autres »
 
   /* Réattribution automatique des dépenses dont la « Catégorie » contredit le
      type de la ligne imputée (ex. dépense « Fonctionnement » liée à une fiche
@@ -81,6 +99,15 @@ export const RecettesPage = () => {
   const types = Array.isArray(settings.recetteTypes) && settings.recetteTypes.length
     ? settings.recetteTypes
     : RECETTE_TYPES;
+
+  /* Répartition de l’onglet actif : « Lignes budgétaires » (Fonctionnement /
+     Investissement) d’un côté, « Salaires » (type « Autres ») de l’autre. */
+  const budgets = useMemo(() => recettes.filter((r) => !isSalaireType(r)), [recettes]);
+  const salaires = useMemo(() => recettes.filter((r) => isSalaireType(r)), [recettes]);
+  const activeRecettes = useMemo(
+    () => (tab === 'salaires' ? salaires : budgets),
+    [tab, salaires, budgets]
+  );
 
   const personName = (idOrName) => {
     if (!idOrName) return '';
@@ -92,7 +119,7 @@ export const RecettesPage = () => {
     const recId = rec && rec.id;
     const notRejected = (d) => !/refus|rejet|annul/i.test(txt(d.statut || d.suivi));
     /* Décompte retenu pour le solde (Achats BC signé + prestations internes +
-       OM payés) :
+       OM payés + rémunérations de stage) :
        · « Achats (BC signé) » = lignes d’achat dont le bon de commande est
          signé — BC signé même si le statut a ensuite avancé (Service fait,
          Facturé…) : repère = date de signature du BC renseignée, sinon statut
@@ -101,20 +128,29 @@ export const RecettesPage = () => {
        · « Prestations internes (PI) » = facturées sans bon de commande, elles
          sont considérées consommées dès leur saisie (sauf refus / annulation) ;
        · « OM payés » = lignes de type « om » (créées depuis « OM prévus /
-         souhaités » → transfert vers Dépenses › OM) qui suivent le paiement.
+         souhaités » → transfert vers Dépenses › OM) qui suivent le paiement ;
+       · « Rémunération stages » = lignes classées « Stages » (classification /
+         nature de la dépense) — elles sont exclues des trois colonnes
+         précédentes afin de n’être comptées qu’ici.
        Les OM « prévus / souhaités » (collection om) restent INFORMATIFS : ils
        ne réduisent le solde que lorsqu’ils ont été transférés en dépense OM. */
     const lineDepenses = depenses.filter((d) => d.recetteId === recId);
-    const ordonneeRows = lineDepenses.filter((d) => depenseKindOf(d) === 'achat' && isAchatBcSigne(d));
+    const ordonneeRows = lineDepenses.filter((d) => depenseKindOf(d) === 'achat' && !isStageDepense(d) && isAchatBcSigne(d));
     const ordonneeTotal = ordonneeRows.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
     /* Colonne « Prestations internes » : même liste que l’onglet PI de la page
        Dépenses (type « pi », fournisseur « PI ») imputée sur cette ligne. */
-    const piRows = lineDepenses.filter((d) => depenseKindOf(d) === 'pi' && notRejected(d));
+    const piRows = lineDepenses.filter((d) => depenseKindOf(d) === 'pi' && !isStageDepense(d) && notRejected(d));
     const piTotal = piRows.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
     /* Colonne « OM payés » : même liste que l’onglet OM de la page Dépenses
        (type « om », créée depuis « OM prévus / souhaités » → → Dépenses). */
-    const omPaidRows = lineDepenses.filter((d) => depenseKindOf(d) === 'om' && notRejected(d));
+    const omPaidRows = lineDepenses.filter((d) => depenseKindOf(d) === 'om' && !isStageDepense(d) && notRejected(d));
     const omPaidTotal = omPaidRows.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
+    /* Colonne « Rémunération stages » : mêmes lignes que l’onglet du même nom
+       de la page Dépenses (classification / nature « Stages »), toutes familles
+       confondues, imputées sur cette ligne — elles sont donc exclues des
+       colonnes « Achats (BC signé) » / « Prestations internes » / « OM payés ». */
+    const stageRows = lineDepenses.filter((d) => isStageDepense(d) && notRejected(d));
+    const stageTotal = stageRows.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
     /* « OM prévus » : seuls les OM approuvés (« Acceptée ») entrent dans la
        somme — les autres (En attente, Terminée…) restent visibles au survol
        mais ne sont pas inclus (souhaités non inclus dans la somme). */
@@ -127,11 +163,11 @@ export const RecettesPage = () => {
     const budgetRendu = rec.budgetRenduDispo !== undefined && rec.budgetRenduDispo !== null && rec.budgetRenduDispo !== ''
       ? toNum(rec.budgetRenduDispo)
       : toNum(rec.budgetTotal);
-    // Solde = dispo université − Achats (BC signé) − prestations internes − OM payés (jamais les souhaits / OM prévus).
-    const solde = budgetRendu - ordonneeTotal - piTotal - omPaidTotal;
+    // Solde = dispo université − Achats (BC signé) − prestations internes − OM payés − rémunérations de stage (jamais les souhaits / OM prévus).
+    const solde = budgetRendu - ordonneeTotal - piTotal - omPaidTotal - stageTotal;
     return {
       lineDepenses, ordonneeRows, ordonneeTotal,
-      piRows, piTotal, omPaidRows, omPaidTotal,
+      piRows, piTotal, omPaidRows, omPaidTotal, stageRows, stageTotal,
       lineOm, omApprouves,
       omEnAttente: lineOm.filter((o) => String(o.statut || 'En attente').trim() === 'En attente'),
       omTotal,
@@ -142,7 +178,7 @@ export const RecettesPage = () => {
 
   const totals = useMemo(() => {
     let budgetTotal = 0; let budgetRendu = 0; let pi = 0; let omPay = 0; let omTot = 0; let des = 0; let solde = 0;
-    recettes.forEach((r) => {
+    activeRecettes.forEach((r) => {
       const a = aggFor(r);
       budgetTotal += toNum(r.budgetTotal);
       budgetRendu += a.budgetRendu;
@@ -151,7 +187,7 @@ export const RecettesPage = () => {
     });
     return { budgetTotal, budgetRendu, pi, omPay, omTot, des, solde };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recettes, depenses, om, desiderate]);
+  }, [activeRecettes, depenses, om, desiderate]);
 
   const onSaveLine = (patch, existingId) => {
     if (!String(patch.ligne || '').trim()) { alert('Merci de donner un intitulé à la ligne budgétaire.'); return; }
@@ -177,9 +213,9 @@ export const RecettesPage = () => {
 
   /* Lignes enrichies des agrégats (tri/filtre sur les colonnes calculées). */
   const recetteRows = useMemo(
-    () => recettes.map((rec) => ({ ...rec, __agg: aggFor(rec) })),
+    () => activeRecettes.map((rec) => ({ ...rec, __agg: aggFor(rec) })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [recettes, depenses, om, desiderate]
+    [activeRecettes, depenses, om, desiderate]
   );
 
   /* Colonnes triables/filtrables — rendu des cellules conservé à l’identique. */
@@ -270,6 +306,22 @@ export const RecettesPage = () => {
           items={r.__agg.omPaidRows.map((d) => ({
             title: d.description || d.destination || 'Dépense OM',
             meta: [d.destination || '', d.omNo || d.bcNo || '', d.statut || d.suivi || ''].filter(Boolean).join(' · '),
+            value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
+          }))}
+        />
+      ),
+    },
+    {
+      key: 'stages', label: 'Rémunération stages',
+      header: <span title="Dépenses dont la « Classification / nature » est « Stages » (onglet « Rémunération stages » de la page Dépenses) — déduites du solde">Rémunération stages</span>,
+      dataType: 'number', align: 'right', nowrap: true,
+      value: (r) => Number(r.__agg.stageTotal) || 0,
+      display: (r) => (
+        <HoverCell
+          amount={r.__agg.stageTotal}
+          items={r.__agg.stageRows.map((d) => ({
+            title: d.description || 'Rémunération de stage',
+            meta: ['Stages', d.numBC || d.numSIFAC || '', d.statut || d.suivi || ''].filter(Boolean).join(' · '),
             value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
           }))}
         />
@@ -385,7 +437,29 @@ export const RecettesPage = () => {
         </button>
       </div>
 
-      {/* Cartes de synthèse */}
+      {/* Sélecteur d’onglet : Lignes budgétaires (Fonctionnement / Investissement)
+          · Salaires (lignes de type « Autres », feuille « Lignes budgétaires »). */}
+      <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl p-1 shadow-sm w-fit flex-wrap">
+        {[
+          { id: 'budgets', icon: '📈', label: 'Lignes budgétaires', count: budgets.length },
+          { id: 'salaires', icon: '👤', label: 'Salaires', count: salaires.length },
+        ].map((v) => (
+          <button
+            key={v.id}
+            type="button"
+            onClick={() => setTab(v.id)}
+            title={v.id === 'salaires'
+              ? 'Lignes de rémunération du personnel — catégorie « Autres » de la feuille « Lignes budgétaires » (type « Autres » dans la base)'
+              : 'Lignes budgétaires de crédits projets — Fonctionnement / Investissement'}
+            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-colors ${tab === v.id ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:bg-blue-50 hover:text-blue-700'}`}
+          >
+            <span className="mr-1.5">{v.icon}</span>{v.label}
+            <span className={`ml-1.5 font-mono text-[10px] ${tab === v.id ? 'text-blue-200' : 'text-slate-400'}`}>{v.count}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Cartes de synthèse (onglet actif) */}
       <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2">
         <SummaryCard label="Budget total" value={totals.budgetTotal} tone="slate" />
         <SummaryCard label="Mis à disposition (univ.)" value={totals.budgetRendu} tone="blue" />
@@ -405,14 +479,29 @@ export const RecettesPage = () => {
             Créez une première ligne (Fonctionnement ou Investissement) pour commencer le suivi du budget.
           </p>
         </div>
+      ) : activeRecettes.length === 0 ? (
+        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
+          <div className="text-4xl mb-2">{tab === 'salaires' ? '👤' : '📈'}</div>
+          <p className="font-black text-slate-700">
+            {tab === 'salaires' ? 'Aucune ligne « salaires » (type « Autres »)' : 'Aucune ligne budgétaire (Fonctionnement / Investissement)'}
+          </p>
+          <p className="text-sm text-slate-400 mt-1">
+            {tab === 'salaires'
+              ? 'Les lignes de rémunération du personnel (catégorie « Autres » de la feuille « Lignes budgétaires ») s’afficheront ici.'
+              : 'Toutes les lignes sont des lignes « salaires » (type « Autres ») : elles se trouvent dans l’onglet « Salaires » ci-dessus.'}
+          </p>
+        </div>
       ) : (
         <SmartTable
+          key={tab}
           columns={recetteCols}
           rows={recetteRows}
           minWidth="1500px"
           searchPlaceholder="Rechercher une ligne, un porteur, une note…"
           emptyLabel="Aucune ligne budgétaire pour le moment"
-          noMatchLabel="Aucune ligne budgétaire ne correspond aux filtres."
+          noMatchLabel={tab === 'salaires'
+            ? 'Aucune ligne « salaires » ne correspond aux filtres.'
+            : 'Aucune ligne budgétaire ne correspond aux filtres.'}
         />
       )}
 
@@ -481,7 +570,7 @@ const HoverCell = ({ amount, items }) => {
 /* Cellule « Solde » : le calcul complet apparaît au survol de la case (montant
    ou ⓘ) — liste des composantes déduites :
    Solde = dispo université − Achats (BC signé) − prestations internes − OM
-   payés. */
+   payés − rémunérations de stage. */
 const SoldeCell = ({ agg }) => {
   const negative = agg.solde < 0;
   const rows = [
@@ -489,6 +578,7 @@ const SoldeCell = ({ agg }) => {
     { key: 'ordonnee', label: 'Achats (BC signé)', value: agg.ordonneeTotal, sign: '−' },
     { key: 'pi', label: 'Prestations internes', value: agg.piTotal, sign: '−' },
     { key: 'omPay', label: 'OM payés', value: agg.omPaidTotal, sign: '−' },
+    { key: 'stages', label: 'Rémunération stages', value: agg.stageTotal, sign: '−' },
   ];
   return (
     <div className="group relative inline-block text-right">
@@ -549,7 +639,7 @@ const LineModal = ({ modal, types, personnel, depenses, om, desiderate, onCancel
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden max-h-[92vh] flex flex-col">
         <div className="px-6 py-4 bg-gradient-to-br from-blue-600 to-indigo-700 text-white">
           <h2 className="text-lg font-black">{editing ? 'Modifier la ligne budgétaire' : 'Nouvelle ligne budgétaire'}</h2>
-          <p className="text-blue-100 text-xs">Le solde est recalculé automatiquement : dispo université − dépenses ordonnées (BC signés) − prestations internes − OM payés.</p>
+          <p className="text-blue-100 text-xs">Le solde est recalculé automatiquement : dispo université − dépenses ordonnées (BC signés) − prestations internes − OM payés − rémunérations de stage.</p>
         </div>
         <div className="p-6 overflow-y-auto custom-scrollbar grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="sm:col-span-2">

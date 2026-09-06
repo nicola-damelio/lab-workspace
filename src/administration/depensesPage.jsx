@@ -13,7 +13,7 @@
      N° facture · Livraisons en plusieurs phases (date réception colis,
      n° BL, date service fait, n° SF) · Livraison complète · Commentaires.
 
-    La page est divisée en TROIS onglets, chacun restreint à ses colonnes
+    La page est divisée en QUATRE onglets, chacun restreint à ses colonnes
     pertinentes :
       • « Achats » — dépenses dont le fournisseur n’est pas « PI » (cycle
         devis → SIFAC/BC → livraisons → facture, mêmes colonnes que le classeur) ;
@@ -24,7 +24,12 @@
         à un ordre de mission accepté) : tableau INDÉPENDANT de la collection om —
         un OM « Acceptée » de la page « OM prévus / souhaités » y est transféré
         via son bouton « → Dépenses », et chaque ligne peut ensuite être déplacée
-        entre les onglets Achats / PI / OM (colonne « Déplacer… »).
+        entre les onglets Achats / PI / OM (colonne « Déplacer… ») ;
+      • « Rémunération stages » — dépenses dont la « Classification / nature »
+        est « Stages » (gratifications de stagiaires) : mêmes colonnes que les
+        Achats. Elles sont retirées des trois autres onglets et alimentent la
+        colonne « Stages » de la page Recettes (déduite de la « Dispo
+        université » dans le calcul du solde).
 
    Modèle stocké (mêmes clés que l’import Google Sheets) :
      { type: 'achat' | 'pi' | 'om', suivi, statut, ent, nonComptabiliseEnt,
@@ -99,6 +104,21 @@ const addScheme = (u) => {
 const norm = (s) => String(s || '')
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+/* « Rémunération stages » : dépenses dont la « Classification / nature »
+   (`classification`, valeur « Stages » du sélecteur) correspond à une
+   gratification de stagiaire. Ces lignes sont retirées des onglets
+   Achats / PI / OM et listées dans l’onglet « Rémunération stages » — la page
+   Recettes les décompte dans sa colonne « Stages », déduite du solde (jamais
+   comptées deux fois : elles ne sont pas non plus dans « Achats (BC signé) » /
+   « Prestations internes » / « OM payés »). */
+const isStageNature = (v) => {
+  const s = txt(v).toLowerCase();
+  if (!s) return false;
+  // « Stages », « Stage », « Rémunération stages »… → toute valeur contenant « stage(s) ».
+  return /(^|[^a-zà-ÿ])stages?([^a-zà-ÿ]|$)/.test(s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+};
+const isStageDepense = (d) => isStageNature(d && (d.classification || d.nature));
 
 /* ── Champs obligatoires (configurés dans Paramètres) ─────────────────────
    Valeur « présente » d’un champ d’une dépense : vide → champ manquant. */
@@ -374,7 +394,7 @@ const DepensesPage = () => {
 
   const [modal, setModal] = useState(null); // { rec } | null
   const [importOpen, setImportOpen] = useState(false);
-  /* Onglet actif : 'achats' | 'pi' | 'om' — voir le regroupement plus bas. */
+  /* Onglet actif : 'achats' | 'pi' | 'om' | 'stages' — voir le regroupement plus bas. */
   const [tab, setTab] = useState('achats');
 
   /* Réattribution automatique des dépenses dont la « Catégorie » contredit le
@@ -501,7 +521,7 @@ const DepensesPage = () => {
     if (rid) {
       const dep = (Array.isArray(data.depenses) ? data.depenses : []).find((d) => d.id === rid);
       if (dep) {
-        setTab(depenseKindOf(dep));
+        setTab(isStageDepense(dep) ? 'stages' : depenseKindOf(dep));
         setFocusRow(rid);
       }
     }
@@ -528,17 +548,22 @@ const DepensesPage = () => {
     return db.localeCompare(da);
   }), [list]);
 
-  /* Regroupement par famille de dépense (TOUTES les lignes vivent dans la
-     collection `depenses`, la famille est portée par depenseKindOf) :
+  /* Regroupement par famille (TOUTES les lignes vivent dans la collection
+     `depenses`) :
        · « Achats » — type achat (fournisseur « normal », cycle devis → BC → livraisons) ;
        · « Prestations internes » (PI) — fournisseur « PI », service interne sans BC ;
        · « OM » — type om : lignes liées à un ordre de mission (créées depuis la
          page « OM prévus / souhaités » ou saisies ici). Ce tableau est
-         INDÉPENDANT de la collection om (il n’en rejoue pas les éléments). */
-  const achatRows = sorted.filter((r) => depenseKindOf(r) === 'achat');
-  const piRows = sorted.filter((r) => depenseKindOf(r) === 'pi');
-  const omRows = sorted.filter((r) => depenseKindOf(r) === 'om');
-  const depViewRows = tab === 'pi' ? piRows : (tab === 'om' ? omRows : achatRows);
+         INDÉPENDANT de la collection om (il n’en rejoue pas les éléments) ;
+       · « Rémunération stages » — lignes dont la « Classification / nature »
+         est « Stages » (gratifications de stagiaires) : elles sortent des trois
+         autres onglets et sont listées ici avec les mêmes colonnes que les
+         Achats. */
+  const stageRows = sorted.filter((r) => isStageDepense(r));
+  const achatRows = sorted.filter((r) => depenseKindOf(r) === 'achat' && !isStageDepense(r));
+  const piRows = sorted.filter((r) => depenseKindOf(r) === 'pi' && !isStageDepense(r));
+  const omRows = sorted.filter((r) => depenseKindOf(r) === 'om' && !isStageDepense(r));
+  const depViewRows = tab === 'pi' ? piRows : (tab === 'om' ? omRows : (tab === 'stages' ? stageRows : achatRows));
 
   /* Résumé du haut de page (restreint aux lignes de l’onglet de dépenses actif). */
   const buildSummary = (rows) => {
@@ -571,6 +596,13 @@ const DepensesPage = () => {
     const factured = omRows.filter((r) => txt(r.numFacture)).length;
     return { ...s, factured, toInvoice: Math.max(0, s.count - factured) };
   }, [omRows]);
+
+  /* Chiffres du bloc « Rémunération stages » (lignes classées « Stages »). */
+  const stageStats = useMemo(() => {
+    const s = buildSummary(stageRows);
+    const factured = stageRows.filter((r) => txt(r.numFacture)).length;
+    return { ...s, factured, toInvoice: Math.max(0, s.count - factured) };
+  }, [stageRows]);
 
   /* Enregistrement : normalise + valide, puis upsert (ou remove si absent). */
   const onSaveDepense = async (draft, existingId) => {
@@ -995,10 +1027,10 @@ const DepensesPage = () => {
     },
   ];
 
-  /* Colonnes par onglet : les achats gardent toutes les colonnes du classeur ;
-     les prestations internes (PI) et les lignes OM (dépenses liées à un ordre
-     de mission : pas de devis / BC / SIFAC ni de suivi de livraisons) n’affichent
-     que l’essentiel — mêmes colonnes réduites pour les deux onglets. */
+  /* Colonnes par onglet : les achats et les dépenses OM affichent toutes les
+     colonnes du classeur (devis → BC/SIFAC → livraisons → facture, N° OM…).
+     Seules les prestations internes (PI — pas de devis / BC / SIFAC ni de suivi
+     de livraisons) gardent la liste réduite à l’essentiel. */
   const columnByKey = new Map(columns.map((c) => [c.key, c]));
   const simpleColumns = [
     columnByKey.get('etat'),
@@ -1019,8 +1051,10 @@ const DepensesPage = () => {
   const redLabels = [...new Set(redRows.flatMap((r) => missingMandatoryFor(r).map(mandatoryLabelOf)))];
   const piFactured = piRows.filter((r) => txt(r.numFacture)).length;
   /* Famille de la dépense en cours d’édition / création (pour le formulaire).
-     L’onglet « achats » correspond à la famille canonique « achat ». */
-  const KIND_BY_TAB = { achats: 'achat', pi: 'pi', om: 'om' };
+     L’onglet « achats » correspond à la famille canonique « achat » ; l’onglet
+     « Rémunération stages » garde le formulaire complet des achats (seule la
+     classification « Stages » est pré-remplie pour une nouvelle ligne). */
+  const KIND_BY_TAB = { achats: 'achat', pi: 'pi', om: 'om', stages: 'achat' };
   const modalKind = modal
     ? (modal.mode === 'edit' ? depenseKindOf(modal.rec) : KIND_BY_TAB[tab] || 'achat')
     : 'achat';
@@ -1061,6 +1095,10 @@ const DepensesPage = () => {
           <p className="text-xs font-bold text-slate-400">
             {summary.count} prestation{summary.count > 1 ? 's' : ''} interne{summary.count > 1 ? 's' : ''} (fournisseur « PI », sans BC) · {piFactured} facturée{piFactured > 1 ? 's' : ''} — comptées « engagées » dès leur saisie dans la page Recettes.
           </p>
+        ) : tab === 'stages' ? (
+          <p className="text-xs font-bold text-slate-400">
+            {stageStats.count} rémunération{stageStats.count > 1 ? 's' : ''} de stage (classification « Stages ») · {stageStats.factured} facturée{stageStats.factured > 1 ? 's' : ''} — édition complète, mêmes colonnes que les Achats ; déduites du solde des lignes budgétaires (page Recettes › colonne « Stages »).
+          </p>
         ) : (
           <p className="text-xs font-bold text-slate-400">
             {summary.count} achat{summary.count > 1 ? 's' : ''} (BC/SIFAC) · {summary.parcelsReceived}/{summary.parcelsTotal} colis reçu{summary.parcelsReceived > 1 ? 's' : ''} ·{' '}
@@ -1090,19 +1128,24 @@ const DepensesPage = () => {
           <button
             onClick={() => setModal({ mode: 'new' })}
             className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
-            title={tab === 'om' ? 'Ajouter une dépense liée à un ordre de mission (type OM)' : 'Ajouter une dépense'}
+            title={tab === 'om'
+              ? 'Ajouter une dépense liée à un ordre de mission (type OM)'
+              : tab === 'stages'
+                ? 'Ajouter une dépense de rémunération de stage (classification « Stages » pré-remplie)'
+                : 'Ajouter une dépense'}
           >
-            <span className="text-base leading-none">+</span>{tab === 'om' ? 'Ajouter une dépense OM' : 'Ajouter une dépense'}
+            <span className="text-base leading-none">+</span>{tab === 'om' ? 'Ajouter une dépense OM' : tab === 'stages' ? 'Ajouter une rémunération de stage' : 'Ajouter une dépense'}
           </button>
         </div>
       </div>
 
-      {/* Sélecteur d’onglet : Achats · Prestations internes · OM. */}
+      {/* Sélecteur d’onglet : Achats · Prestations internes · OM · Rémunération stages. */}
       <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl p-1 shadow-sm w-fit flex-wrap">
         {[
           { id: 'achats', icon: '🛒', label: 'Achats', count: achatRows.length },
           { id: 'pi', icon: '🛠️', label: 'Prestations internes', count: piRows.length },
           { id: 'om', icon: '✈️', label: 'OM', count: omRows.length },
+          { id: 'stages', icon: '🎓', label: 'Rémunération stages', count: stageRows.length },
         ].map((v) => (
           <button
             key={v.id}
@@ -1110,10 +1153,12 @@ const DepensesPage = () => {
             onClick={() => setTab(v.id)}
             title={
               v.id === 'achats'
-                ? 'Dépenses avec fournisseur « normal » : cycle devis → BC → livraisons → facture'
+                ? 'Dépenses avec fournisseur « normal » : cycle devis → BC → livraisons → facture (hors rémunérations de stage)'
                 : v.id === 'pi'
                   ? 'Prestations internes : fournisseur « PI », service interne facturé sans BC (colonnes réduites)'
-                  : 'Lignes OM : dépenses liées à un ordre de mission accepté — tableau indépendant de la page « OM prévus / souhaités »'
+                  : v.id === 'om'
+                    ? 'Lignes OM : dépenses liées à un ordre de mission accepté — tableau indépendant de la page « OM prévus / souhaités »'
+                    : 'Rémunérations de stage : dépenses dont la « Classification / nature » est « Stages » (gratifications de stagiaires), retirées des autres onglets et déduites du solde dans la page Recettes'
             }
             className={`px-3 py-1.5 rounded-lg text-xs font-black transition-colors ${tab === v.id ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:bg-blue-50 hover:text-blue-700'}`}
           >
@@ -1123,8 +1168,9 @@ const DepensesPage = () => {
         ))}
       </div>
 
-      {/* Cartes de synthèse propres aux onglets OM et PI. L’onglet Achats n’a plus
-          de cartes : le nombre d’achats / BC figure dans le sélecteur d’onglet. */}
+      {/* Cartes de synthèse propres aux onglets OM, PI et Rémunération stages.
+          L’onglet Achats n’a plus de cartes : le nombre d’achats / BC figure
+          dans le sélecteur d’onglet. */}
       {tab === 'om' ? (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
           <SummaryCard label="Dépenses OM" value={omStats.count} tone="slate" hint="Nombre de lignes de type « om » suivies ici (indépendantes de la page « OM prévus / souhaités »)." />
@@ -1138,6 +1184,13 @@ const DepensesPage = () => {
           <SummaryCard label="Montant total (HT + port)" value={summary.moneyCount ? euro.format(summary.total) : '—'} tone="blue" hint={`Somme des montants renseignés sur ${summary.moneyCount} prestation(s).`} />
           <SummaryCard label="Facturées" value={piFactured} tone="indigo" hint="Prestations internes avec un N° facture renseigné." />
           <SummaryCard label="À facturer" value={Math.max(0, summary.count - piFactured)} tone="amber" hint="Prestations internes sans N° facture — à compléter pour le paiement." />
+        </div>
+      ) : tab === 'stages' ? (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          <SummaryCard label="Rémunérations de stage" value={stageStats.count} tone="slate" hint="Dépenses dont la « Classification / nature » est « Stages » (gratifications de stagiaires) — retirées des onglets Achats / PI / OM." />
+          <SummaryCard label="Montant total (HT + port)" value={stageStats.moneyCount ? euro.format(stageStats.total) : '—'} tone="blue" hint={`Somme des montants renseignés sur ${stageStats.moneyCount} rémunération(s) de stage.`} />
+          <SummaryCard label="Facturées" value={stageStats.factured} tone="indigo" hint="Rémunérations de stage avec un N° facture renseigné." />
+          <SummaryCard label="À facturer" value={stageStats.toInvoice} tone="amber" hint="Rémunérations de stage sans N° facture — à compléter pour le paiement." />
         </div>
       ) : null}
 
@@ -1157,6 +1210,14 @@ const DepensesPage = () => {
           facture, N° OM / paiement). Une telle dépense est comptée <b>« engagée » dès sa saisie</b> dans la page Recettes.
           Cliquez sur « + Ajouter une dépense » : le fournisseur « PI » est pré-rempli.
         </div>
+      ) : tab === 'stages' ? (
+        <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
+          <b>Rémunérations de stage :</b> ces lignes sont identifiées par la <b>« Classification / nature » = « Stages »</b>
+          (colonne « Classification » de l’onglet Dépenses du classeur, ou sélecteur « Classification / nature » du
+          formulaire). Elles sont <b>retirées des onglets Achats / PI / OM</b> et listées ici avec les mêmes colonnes que les
+          Achats ; la page Recettes les décompte dans sa <b>colonne « Stages »</b> (déduite de la « Dispo université » dans le
+          calcul du solde), sans jamais les compter deux fois.
+        </div>
       ) : null}
 
       {redRows.length > 0 && (
@@ -1168,38 +1229,42 @@ const DepensesPage = () => {
 
       {depViewRows.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
-          <div className="text-4xl mb-2">{tab === 'pi' ? '🛠️' : (tab === 'om' ? '✈️' : '📦')}</div>
+          <div className="text-4xl mb-2">{tab === 'pi' ? '🛠️' : (tab === 'om' ? '✈️' : (tab === 'stages' ? '🎓' : '📦'))}</div>
           <p className="font-black text-slate-700">
-            {tab === 'pi' ? 'Aucune prestation interne' : (tab === 'om' ? 'Aucune dépense OM pour le moment' : 'Aucune dépense d’achat (BC/SIFAC)')}
+            {tab === 'pi' ? 'Aucune prestation interne' : (tab === 'om' ? 'Aucune dépense OM pour le moment' : (tab === 'stages' ? 'Aucune rémunération de stage' : 'Aucune dépense d’achat (BC/SIFAC)'))}
           </p>
           <p className="text-sm text-slate-400 mt-1">
             {tab === 'pi'
               ? 'Les prestations internes (fournisseur « PI », service interne sans BC) s’afficheront ici. Ajoutez-en une via « + Ajouter une dépense » : le fournisseur « PI » est pré-rempli.'
               : tab === 'om'
                 ? 'Aucune ligne de type « OM » n’a encore été transférée. Sur la page « OM prévus / souhaités » (bouton ci-dessus), mettez un OM « Acceptée » puis cliquez sur « → Dépenses » — ou ajoutez directement une dépense OM ici.'
-                : 'Ajoutez la première dépense via « + Ajouter une dépense », ou importez l’onglet « Dépenses » de la feuille Google Sheets. Les prestations internes « PI » et les OM ont leurs propres onglets ci-dessus.'}
+                : tab === 'stages'
+                  ? 'Les rémunérations de stage (gratifications de stagiaires) sont les dépenses dont la « Classification / nature » est « Stages ». Ajoutez-en une via « + Ajouter une rémunération de stage » (classification « Stages » pré-remplie), ou importez l’onglet « Dépenses » du classeur : les lignes classées « Stages » arriveront automatiquement ici.'
+                  : 'Ajoutez la première dépense via « + Ajouter une dépense », ou importez l’onglet « Dépenses » de la feuille Google Sheets. Les prestations internes « PI », les OM et les rémunérations de stage ont leurs propres onglets ci-dessus.'}
           </p>
         </div>
       ) : (
         <div className="flex-1 min-h-[280px] flex flex-col">
           <SmartTable
             key={tab}
-            columns={tab === 'achats' ? columns : simpleColumns}
+            columns={tab === 'pi' ? simpleColumns : columns}
             rows={depViewRows}
             rowClass={(r) => (missingMandatoryFor(r).length ? 'bg-red-100/70' : '')}
-            minWidth={tab === 'achats' ? '2250px' : '1560px'}
-            quickFilters={['demandeur', 'ligne'].concat(tab === 'achats' ? ['fournisseur'] : [])}
+            minWidth={tab === 'pi' ? '1560px' : '2250px'}
+            quickFilters={['demandeur', 'ligne'].concat(tab === 'pi' ? [] : ['fournisseur'])}
             focusRowKey={focusRow}
             onFocusDone={() => setFocusRow(null)}
-            searchPlaceholder={tab === 'achats'
-              ? 'Rechercher description, fournisseur, n° BC / SIFAC / facture, BL, service fait…'
-              : 'Rechercher description, demandeur, ligne budgétaire, n° facture / OM…'}
+            searchPlaceholder={tab === 'pi'
+              ? 'Rechercher description, demandeur, ligne budgétaire, n° facture / OM…'
+              : 'Rechercher description, fournisseur, n° BC / SIFAC / facture, BL, service fait…'}
             emptyLabel="Aucune dépense"
             noMatchLabel={tab === 'achats'
               ? 'Aucune dépense ne correspond aux filtres.'
               : tab === 'pi'
                 ? 'Aucune prestation interne ne correspond aux filtres.'
-                : 'Aucune dépense OM ne correspond aux filtres.'}
+                : tab === 'om'
+                  ? 'Aucune dépense OM ne correspond aux filtres.'
+                  : 'Aucune rémunération de stage ne correspond aux filtres.'}
             fillHeight
           />
         </div>
@@ -1218,6 +1283,7 @@ const DepensesPage = () => {
           fournisseurNames={fournisseurNames}
           kind={modalKind}
           defaultFournisseur={modalKind === 'pi' && modal.mode === 'new' ? DEPENSE_FOURNISSEUR_PI : ''}
+          defaultClassification={tab === 'stages' && modal.mode === 'new' ? 'Stages' : ''}
           fournisseurRequired={mandatoryFields.includes('fournisseur') && modalKind !== 'om'}
           onCancel={() => setModal(null)}
           onSave={onSaveDepense}
@@ -1255,6 +1321,7 @@ const Section = ({ icon, title, children }) => (
 const DepenseModal = ({
   rec, recettes, types, natures, statutOptions,
   demandeurNames, fournisseurNames, defaultFournisseur = '',
+  defaultClassification = '',
   kind = 'achat', fournisseurRequired = false, onCancel, onSave,
 }) => {
   const editing = !!rec;
@@ -1262,6 +1329,10 @@ const DepenseModal = ({
   const omKind = kindNow === 'om';
   const kindLabel = (DEPENSE_KIND_META[kindNow] && DEPENSE_KIND_META[kindNow].label) || kindNow;
   const kindIcon = (DEPENSE_KIND_META[kindNow] && DEPENSE_KIND_META[kindNow].icon) || '🧾';
+  /* Nouvelle ligne saisie depuis l’onglet « Rémunération stages » : on garde le
+     formulaire complet des achats, seule la classification « Stages » est
+     pré-remplie (l’utilisateur peut la changer dans le sélecteur). */
+  const stageForm = !editing && isStageNature(defaultClassification);
 
   const initialLivraisons = () => {
     const stored = Array.isArray(rec && rec.livraisons) && rec.livraisons.length
@@ -1310,7 +1381,7 @@ const DepenseModal = ({
     }
     return {
       type: kindNow,
-      description: '', demandeur: '', categorie: '', classification: '',
+      description: '', demandeur: '', categorie: '', classification: defaultClassification,
       statut: '', ligneBudgetaire: '', recetteId: '',
       montant: '', fraisPort: '', dateDemande: '',
       fournisseur: defaultFournisseur,
@@ -1415,6 +1486,11 @@ const DepenseModal = ({
   const previewReceived = previewLivs.filter((l) => txt(l.dateReception)).length;
   const previewComplete = completeValue(previewLivs, draft.livraisonComplete, draft.noParcelsComplete);
 
+  /* « Rémunération stages » au sens du formulaire : nouvelle ligne saisie depuis
+     l’onglet du même nom (classification pré-remplie) ou dépense existante dont
+     la classification est « Stages ». */
+  const showStageBadge = stageForm || (editing && isStageDepense(draft));
+
   const auditor = rec
     ? `${rec.updatedAt ? `modifié le ${toFrDate(isoOf(new Date(rec.updatedAt).toISOString()))}` : ''} ${txt(rec.updatedBy && rec.updatedBy.name)}`
     : '';
@@ -1424,14 +1500,16 @@ const DepenseModal = ({
       <div className="bg-slate-50 rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden max-h-[96vh] flex flex-col">
         <div className="px-5 py-3.5 bg-gradient-to-br from-blue-600 to-indigo-700 text-white shrink-0">
           <h2 className="text-lg font-black flex items-center gap-2">
-            <span aria-hidden="true">{kindIcon}</span>
-            {editing ? 'Modifier la dépense' : 'Nouvelle dépense'}
-            <span className={`text-[10px] font-black uppercase rounded-full px-2 py-0.5 ${omKind ? 'bg-white/20 text-white' : 'bg-white/15 text-blue-100'}`}>{kindLabel}</span>
+            <span aria-hidden="true">{showStageBadge ? '🎓' : kindIcon}</span>
+            {editing ? 'Modifier la dépense' : (showStageBadge ? 'Nouvelle rémunération de stage' : 'Nouvelle dépense')}
+            <span className={`text-[10px] font-black uppercase rounded-full px-2 py-0.5 ${omKind ? 'bg-white/20 text-white' : 'bg-white/15 text-blue-100'}`}>{showStageBadge ? 'Rémunération stages' : kindLabel}</span>
           </h2>
           <p className="text-blue-100 text-[11px]">
-            {omKind
+            {omKind && !isStageDepense(draft)
               ? 'Dépense liée à un ordre de mission (type « OM ») : saisissez le montant de la mission acceptée et suivez la facture / le paiement. Vous pourrez ensuite la déplacer vers les onglets « Achats » ou « PI » via la colonne « ↔ Déplacer » du tableau.'
-              : 'Formulaire complet de l’onglet « Dépenses » (devis → BC → livraisons → facture). Une commande peut avoir plusieurs livraisons ; elles se saisissent dans la partie « Livraisons ».'}
+              : showStageBadge
+                ? 'Rémunération de stage (gratification de stagiaire) : la « Classification / nature » est « Stages » (pré-remplie pour une nouvelle ligne depuis l’onglet « Rémunération stages »). Le formulaire complet des Achats est conservé (devis → BC / SIFAC → livraisons → facture). Cette dépense sera déduite du solde de la ligne budgétaire dans la page Recettes (colonne « Stages »).'
+                : 'Formulaire complet de l’onglet « Dépenses » (devis → BC → livraisons → facture). Une commande peut avoir plusieurs livraisons ; elles se saisissent dans la partie « Livraisons ».'}
           </p>
         </div>
 
