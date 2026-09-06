@@ -13,7 +13,7 @@
    n’est lu ni écrit directement ici — plus aucune sous-collection
    data/admin/… (chemin invalide dans Firestore).
    ========================================================================= */
-import React, { createContext, useContext, useMemo } from 'react';
+import React, { createContext, useContext, useMemo, useRef } from 'react';
 import { ADMIN_COLLECTIONS, DEFAULT_OPTIONS, adminAccessProfile, adminPageIdsForProfile } from './adminSchema';
 
 const AdminDataContext = createContext(null);
@@ -61,26 +61,56 @@ export const AdminProvider = ({
     [content]
   );
 
-  /* Chaque commit part de l’ÉTAT LE PLUS RÉCENT (mise à jour fonctionnelle) :
-     deux appels successifs dans le même tick (ex. transfert OM → dépense, où
-     on crée une dépense PUIS on marque l’OM) se composent au lieu de
-     s’écraser — un onChange({...safeContent}) repartirait de l’instantané du
-     rendu et perdrait silencieusement la première écriture. */
-  const setList = (kind, list) => {
+  /* Chaque commit part de l’ÉTAT LE PLUS RÉCENT (mise à jour fonctionnelle).
+     Deux pièges sont couverts ici :
+     - deux écritures dans le même tick (ex. transfert OM → dépense, où on
+       crée une dépense PUIS on marque l’OM) se composent au lieu de
+       s’écraser ;
+     - une écriture asynchrone POSTÉRIEURE à une autre (ex. approbation d’un
+       devis puis renommage, ~2 s plus tard, du fichier sur Google Drive) ne
+       repart JAMAIS d’un instantané obsolète : la liste est recalculée à
+       partir de l’état précédent réel (prev) reçu par la mise à jour
+       fonctionnelle, jamais d’un data[kind] figé au moment du clic — sinon
+       la seconde écriture écraserait la première (le devis « Approuvé »
+       repassait « En attente » dès que le renommage Drive se terminait). */
+  const commitKind = (kind, build) => {
     if (typeof onChange !== 'function') return;
     onChange((prev) => {
       const base = prev && typeof prev === 'object' ? prev : {};
-      return { ...base, [kind]: list };
+      const cur = Array.isArray(base[kind]) ? base[kind] : [];
+      return { ...base, [kind]: build(cur) };
     });
   };
+  /* Dernier état RENDU : sert uniquement à construire la valeur de retour de
+     upsert (id, enveloppe, champs) quand la mise à jour fonctionnelle n’a pas
+     encore été exécutée. L’état persisté, lui, est toujours calculé dans
+     commitKind à partir de l’état le plus récent. */
+  const dataRef = useRef(data);
+  dataRef.current = data;
 
   const upsert = (kind, patch, existingId) => {
-    const prevList = data[kind] || [];
-    const prev = prevList.find((d) => d.id === existingId) || (existingId ? { id: existingId } : {});
-    const id = prev.id || makeId(kind);
     const now = Date.now();
     const actor = { name: currentUser?.name || 'Invité', role: currentUser?.role || 'user' };
-    const record = {
+    const id = existingId || makeId(kind);
+    let returned = null;
+    commitKind(kind, (cur) => {
+      const prev = cur.find((d) => d.id === id) || (existingId ? { id } : {});
+      const record = {
+        ...prev,
+        ...(patch || {}),
+        id,
+        createdAt: prev.createdAt || now,
+        createdBy: prev.createdBy || actor,
+        updatedAt: now,
+        updatedBy: actor,
+      };
+      returned = record;
+      return [record, ...cur.filter((d) => d.id !== id)];
+    });
+    if (returned) return returned;
+    const cur = Array.isArray(dataRef.current && dataRef.current[kind]) ? dataRef.current[kind] : [];
+    const prev = cur.find((d) => d.id === id) || (existingId ? { id } : {});
+    return {
       ...prev,
       ...(patch || {}),
       id,
@@ -89,18 +119,15 @@ export const AdminProvider = ({
       updatedAt: now,
       updatedBy: actor,
     };
-    setList(kind, [record, ...prevList.filter((d) => d.id !== id)]);
-    return record;
   };
 
   const remove = (kind, id) => {
-    setList(kind, (data[kind] || []).filter((d) => d.id !== id));
+    commitKind(kind, (cur) => cur.filter((d) => d.id !== id));
   };
 
   /** Import groupé (assistant d’import) : un seul onChange pour toute la
    *  liste, chaque enregistrement reçoit enveloppe + audit comme `upsert`. */
   const importMany = (kind, records) => {
-    const prevList = data[kind] || [];
     const list = Array.isArray(records) ? records.filter(Boolean) : [];
     if (!list.length) return { added: 0 };
     const now = Date.now();
@@ -109,7 +136,7 @@ export const AdminProvider = ({
       const id = makeId(kind);
       return { ...(patch || {}), id, createdAt: now, createdBy: actor, updatedAt: now, updatedBy: actor };
     });
-    setList(kind, [...stamped, ...prevList]);
+    commitKind(kind, (cur) => [...stamped, ...cur]);
     return { added: stamped.length, records: stamped };
   };
 
@@ -118,24 +145,26 @@ export const AdminProvider = ({
    *  liste — appeler `upsert` en boucle synchronisée perdrait les premiers
    *  correctifs (chaque appel repart de l’instantané d’origine). */
   const updateMany = (kind, changes) => {
-    const prevList = data[kind] || [];
     const list = Array.isArray(changes) ? changes.filter((c) => c && c.id) : [];
     if (!list.length) return { updated: 0 };
     const now = Date.now();
     const actor = { name: currentUser?.name || 'Invité', role: currentUser?.role || 'user' };
     const byId = new Map(list.map((c) => [c.id, c.patch || {}]));
-    const next = prevList.map((rec) => {
+    commitKind(kind, (cur) => cur.map((rec) => {
       const patch = byId.get(rec.id);
       if (!patch) return rec;
       return { ...rec, ...patch, id: rec.id, updatedAt: now, updatedBy: actor };
-    });
-    setList(kind, next);
+    }));
     return { updated: list.length };
   };
 
   const updateSettings = (patch) => {
     if (typeof onChange !== 'function') return;
-    onChange({ ...safeContent, settings: { ...DEFAULT_OPTIONS, ...settings, ...(patch || {}) } });
+    onChange((prev) => {
+      const base = prev && typeof prev === 'object' ? prev : {};
+      const curSettings = base.settings && typeof base.settings === 'object' ? base.settings : DEFAULT_OPTIONS;
+      return { ...base, settings: { ...DEFAULT_OPTIONS, ...curSettings, ...(patch || {}) } };
+    });
   };
 
   const access = useMemo(

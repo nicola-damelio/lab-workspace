@@ -516,6 +516,7 @@ export const ApprobationPage = () => {
           numDevis: txt(rec.numDevis),
           numDevisUrl: txt(rec.fichierUrl),
           montant: numOf(rec.montant),
+          ...(numOf(rec.fraisPort) !== null ? { fraisPort: numOf(rec.fraisPort) } : {}),
           dateDemande: isoOf(rec.dateDepot) || todayIso(),
           dateSignatureDevis: todayIso(),
           demandeur: txt(rec.demandeur) || txt(rec.deposant) || currentName,
@@ -556,6 +557,7 @@ export const ApprobationPage = () => {
           suivi: 'BC signé',
           fournisseur: txt(rec.fournisseur) || txt(dep.fournisseur),
           montant: numOf(rec.montant) === null ? numOf(dep.montant) : numOf(rec.montant),
+          ...(numOf(rec.fraisPort) !== null ? { fraisPort: numOf(rec.fraisPort) } : {}),
           commentaires: txt(rec.notes) || txt(dep.commentaires),
           ...(txt(rec.demandeur) ? { demandeur: txt(rec.demandeur) } : {}),
           ...(txt(rec.ligneBudgetaire) ? { ligneBudgetaire: txt(rec.ligneBudgetaire) } : {}),
@@ -662,6 +664,7 @@ export const ApprobationPage = () => {
       devisId: kind === 'bc' ? txt(draft.devisId) : '',
       ...(kind === 'devis' ? { groupeAchatId } : {}),
       montant: numOf(draft.montant),
+      fraisPort: numOf(draft.fraisPort),
       fichierNom: txt(draft.fichierNom),
       fichierUrl: txt(draft.fichierUrl),
       fichierMime: txt(draft.fichierMime),
@@ -893,11 +896,27 @@ const buildColumns = ({
       display: (r) => (txt(r.fournisseur) ? <span className="whitespace-nowrap text-xs font-semibold text-slate-600">{r.fournisseur}</span> : <span className="text-slate-300">—</span>),
     },
     {
-      key: 'montant', label: 'Montant HT', numeric: true, align: 'right', nowrap: true,
-      value: (r) => numOf(r.montant) || '',
+      key: 'montant', label: 'Montant HT + port', numeric: true, align: 'right', nowrap: true,
+      value: (r) => {
+        const total = numOf(r.montant) === null
+          ? numOf(r.fraisPort)
+          : numOf(r.montant) + (numOf(r.fraisPort) || 0);
+        return total === null ? '' : total;
+      },
       display: (r) => {
         const n = numOf(r.montant);
-        return n === null ? <span className="text-slate-300">—</span> : <span className="whitespace-nowrap text-xs font-black text-slate-700 tabular-nums">{euro.format(n)}</span>;
+        const fp = numOf(r.fraisPort);
+        if (n === null && fp === null) return <span className="text-slate-300">—</span>;
+        return (
+          <div className="whitespace-nowrap">
+            {n !== null && <div className="text-xs font-black text-slate-700 tabular-nums">{euro.format(n)}</div>}
+            {fp !== null && (
+              <div className="text-[9px] font-semibold text-slate-400 tabular-nums">
+                {euro.format(fp)} de port
+              </div>
+            )}
+          </div>
+        );
       },
     },
   ];
@@ -1051,6 +1070,7 @@ const DepositModal = ({
         devisId: txt(rec.devisId),
         groupeAchatId: txt(rec.groupeAchatId),
         montant: rec.montant === null || rec.montant === undefined ? '' : String(rec.montant).replace('.', ','),
+        fraisPort: rec.fraisPort === null || rec.fraisPort === undefined ? '' : String(rec.fraisPort).replace('.', ','),
         fichierNom: txt(rec.fichierNom),
         fichierUrl: txt(rec.fichierUrl),
         fichierMime: txt(rec.fichierMime),
@@ -1072,6 +1092,7 @@ const DepositModal = ({
       devisId: isDevis ? '' : defaultLinkedDevisId(devisOptions),
       groupeAchatId: '',
       montant: '',
+      fraisPort: '',
       fichierNom: '',
       fichierUrl: '',
       fichierMime: '',
@@ -1305,6 +1326,16 @@ const DepositModal = ({
                 value={draft.montant}
                 onChange={set('montant')}
                 placeholder="ex. 1 234,56"
+                inputMode="decimal"
+              />
+            </div>
+            <div>
+              <label className={MODAL_LABEL}>Frais de port (€)</label>
+              <input
+                className={MODAL_INPUT}
+                value={draft.fraisPort}
+                onChange={set('fraisPort')}
+                placeholder="ex. 8,50 — vide si 0"
                 inputMode="decimal"
               />
             </div>
