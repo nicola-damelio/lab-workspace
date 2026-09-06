@@ -233,19 +233,20 @@ export const relinkDepenseDocuments = async (records) => {
 /**
  * Classe sur Google Drive chaque document lié d’une dépense dans le dossier
  *  Budget_labo/<année>/<Devis|BC|BL|OM|Factures> (best-effort, dossiers créés
- *  si besoin). Appelé après un import « Dépenses » pour que les fichiers
- *  importés atterrissent bien dans le classement du budget.
- * @returns {Promise<{moved:number, attempted:number, failed:number}>}
+ *  si besoin) : une COPIE du fichier — jamais un déplacement de l’original —
+ *  est déposée au bon endroit. Appelé après un import « Dépenses » pour que
+ *  les fichiers importés atterrissent bien dans le classement du budget.
+ * @returns {Promise<{copied:number, attempted:number, failed:number}>}
  */
 export const fileDepenseDocuments = async (records, { year } = {}) => {
   const list = (Array.isArray(records) ? records : []).filter(Boolean);
-  const out = { moved: 0, attempted: 0, failed: 0 };
+  const out = { copied: 0, attempted: 0, failed: 0 };
   if (!list.length || !cloudBackendAvailable() || !getDriveToken()) return out;
   for (const rec of list) {
     try {
       const res = await fileBudgetDocs(rec, { year });
       if (res) {
-        out.moved += res.moved || 0;
+        out.copied += res.copied || 0;
         out.attempted += res.attempted || 0;
         out.failed += Array.isArray(res.failed) ? res.failed.length : 0;
       }

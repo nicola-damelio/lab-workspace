@@ -593,9 +593,10 @@ const DepensesPage = () => {
 
   /* « Ranger les documents liés » — relance le classement Budget_labo/<année>/…
      sur TOUTES les dépenses (y compris celles saisies avant l’arrivée du
-     classement automatique). Un fichier déplaçable est déplacé dans le bon
-     sous-dossier ; un lien inaccessible reste en place avec l’explication
-     (même règle qu’à l’enregistrement). */
+     classement automatique). Chaque document accessible est COPIÉ (jamais
+     déplacé) dans le bon sous-dossier avec le nom de la convention ; un lien
+     inaccessible reste en place avec l’explication (même règle qu’à
+     l’enregistrement). */
   const runBudgetFiling = async () => {
     if (filingBusy) return;
     if (!cloudBackendAvailable()) {
@@ -604,14 +605,14 @@ const DepensesPage = () => {
     }
     const recs = (Array.isArray(list) ? list : []).filter((r) => r && r.id);
     if (!recs.length) return;
-    let moved = 0; let already = 0; let failed = 0;
+    let copied = 0; let already = 0; let failed = 0;
     const reasons = [];
     setFilingBusy(true);
     try {
       for (const rec of recs) {
         const res = await fileBudgetDocs(rec, { year: new Date().getFullYear() });
         if (!res) continue;
-        moved += res.moved || 0;
+        copied += res.copied || 0;
         already += res.skipped || 0;
         failed += Array.isArray(res.failed) ? res.failed.length : 0;
         (Array.isArray(res.failed) ? res.failed : []).forEach((f) => {
@@ -626,17 +627,17 @@ const DepensesPage = () => {
       return;
     }
     setFilingBusy(false);
-    if (moved === 0 && already === 0 && failed === 0) {
+    if (copied === 0 && already === 0 && failed === 0) {
       alert('Aucun lien Google Drive à ranger : aucune dépense ne possède de document lié (devis, BC, facture, OM, BL/SF).');
       return;
     }
     const head = `Rangement terminé sur ${recs.length} dépense${recs.length > 1 ? 's' : ''} : `
-      + `${moved} document${moved > 1 ? 's' : ''} déplacé${moved > 1 ? 's' : ''} dans Budget_labo/${new Date().getFullYear()}/… · `
+      + `${copied} copie${copied > 1 ? 's' : ''} créée${copied > 1 ? 's' : ''} dans Budget_labo/${new Date().getFullYear()}/… (l’original reste en place) · `
       + `${already} déjà en place · ${failed} échec${failed > 1 ? 's' : ''}.`;
     alert([
       head,
       failed
-        ? `\n\nDocuments non rangés (leur lien d’origine reste valide) :\n${reasons.slice(0, 15).join('\n')}${reasons.length > 15 ? `\n· … et ${reasons.length - 15} autre${reasons.length - 15 > 1 ? 's' : ''}` : ''}`
+        ? `\n\nDocuments non copiés dans Budget_labo (leur lien d’origine reste valide) :\n${reasons.slice(0, 15).join('\n')}${reasons.length > 15 ? `\n· … et ${reasons.length - 15} autre${reasons.length - 15 > 1 ? 's' : ''}` : ''}`
         : '',
     ].join(''));
   };
@@ -831,8 +832,8 @@ const DepensesPage = () => {
     const filing = await fileBudgetDocs(patch, { year: new Date().getFullYear() });
     /* Le lien reste valide et la dépense est enregistrée ; on n’alerte que
        lorsque Drive était connecté et qu’un document précis n’a pas pu être
-       déplacé (sans Drive, le bouton « Ranger les liens Drive » le fera plus
-       tard). */
+       copié dans Budget_labo (sans Drive, le bouton « Ranger les liens Drive »
+       le fera plus tard). */
     if (cloudBackendAvailable() && filing && filing.failed && filing.failed.length > 0) {
       const lines = filing.failed
         .map((f) => `· ${f.folder} : ${f.reason}`)
@@ -845,7 +846,7 @@ const DepensesPage = () => {
           + `même connecté à votre Google, l’app ne voit que les fichiers qu’elle a créés elle-même (autorisation limitée « drive.file »).`
         : '';
       alert(
-        `Dépense enregistrée (le lien d’origine reste valide), mais ${filing.failed.length} document${filing.failed.length > 1 ? 's' : ''} Google Drive n'a pas pu être rangé${filing.failed.length > 1 ? 's' : ''} automatiquement dans Budget_labo/<année> :\n\n${lines}${explain}`
+        `Dépense enregistrée (le lien d’origine reste valide), mais ${filing.failed.length} document${filing.failed.length > 1 ? 's' : ''} Google Drive n'a pas pu être copié${filing.failed.length > 1 ? 's' : ''} dans Budget_labo/<année> :\n\n${lines}${explain}`
       );
     }
 
@@ -1251,7 +1252,7 @@ const DepensesPage = () => {
             onClick={runBudgetFiling}
             disabled={filingBusy}
             className="bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50"
-            title="Copier / déplacer dans Budget_labo/<année>/… les documents Google Drive liés aux dépenses déjà saisies (devis, BC, facture, OM, BL/SF) — possible quand le fichier est accessible à l’application"
+            title="Copier dans Budget_labo/<année>/… les documents Google Drive liés aux dépenses déjà saisies (devis, BC, facture, OM, BL/SF) — l’original n’est jamais déplacé ; possible quand le fichier est accessible à l’application"
           >
             <span className="text-base leading-none">{filingBusy ? '⏳' : '📎'}</span>{filingBusy ? 'Rangement…' : 'Ranger les liens Drive'}
           </button>
@@ -1864,7 +1865,8 @@ const DepenseModal = ({
               💡 À l’enregistrement, chaque lien Google Drive saisi dans ce formulaire (devis, BC, facture, OM ci-dessous,
               BL / SF dans la section Livraisons) est automatiquement rangé dans le dossier du dataset
               › <b>Budget_labo/{new Date().getFullYear()}/</b><b>Devis · BC · BL · OM · Factures</b> — les dossiers manquants
-              sont créés, le fichier est déplacé (un fichier déjà au bon endroit n’est pas touché).
+              sont créés et une <b>copie</b> du fichier (nommée selon la convention) y est déposée : l’original
+              n’est jamais déplacé ni modifié, et un fichier déjà au bon endroit n’est pas dupliqué.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="sm:col-span-2 lg:col-span-1">

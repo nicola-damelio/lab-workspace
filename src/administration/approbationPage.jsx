@@ -314,9 +314,10 @@ export const ApprobationPage = () => {
     });
   }, [devisList]);
 
-  /* « Ranger les fichiers » — classe dans Budget_labo/<année>/Devis|BC les
+  /* « Ranger les fichiers » — copie dans Budget_labo/<année>/Devis|BC les
      documents (dont ceux collés comme liens Google Drive) des devis / BC déjà
-     déposés avant l’arrivée du classement automatique. */
+     déposés avant l’arrivée du classement automatique (COPIE uniquement :
+     l’original n’est jamais déplacé). */
   const runApprovalFiling = async () => {
     if (filingBusy) return;
     if (!cloudBackendAvailable()) {
@@ -325,14 +326,14 @@ export const ApprobationPage = () => {
     }
     const recs = (Array.isArray(rows) ? rows : []).filter((r) => r && r.id);
     if (!recs.length) return;
-    let moved = 0; let already = 0; let failed = 0;
+    let copied = 0; let already = 0; let failed = 0;
     const reasons = [];
     setFilingBusy(true);
     try {
       for (const rec of recs) {
         const res = await fileBudgetDocs(rec, { year: new Date().getFullYear() });
         if (!res) continue;
-        moved += res.moved || 0;
+        copied += res.copied || 0;
         already += res.skipped || 0;
         failed += Array.isArray(res.failed) ? res.failed.length : 0;
         (Array.isArray(res.failed) ? res.failed : []).forEach((f) => {
@@ -347,7 +348,7 @@ export const ApprobationPage = () => {
       return;
     }
     setFilingBusy(false);
-    if (moved === 0 && already === 0 && failed === 0) {
+    if (copied === 0 && already === 0 && failed === 0) {
       setNote({ text: 'Aucun fichier lié à ranger : déposez un devis / BC avec un fichier (choix PC ou lien Drive).' });
       return;
     }
@@ -356,7 +357,7 @@ export const ApprobationPage = () => {
       ? ` — ${reasons.slice(0, 10).join(' · ')}${reasons.length > 10 ? ` · … et ${reasons.length - 10} autre(s)` : ''}`
       : '';
     setNote({
-      text: `Rangement des fichiers : ${moved} déplacé${moved > 1 ? 's' : ''} dans Budget_labo/${year}/Devis|BC · `
+      text: `Rangement des fichiers : ${copied} copie${copied > 1 ? 's' : ''} créée${copied > 1 ? 's' : ''} dans Budget_labo/${year}/Devis|BC (l’original reste en place) · `
         + `${already} déjà en place · ${failed} échec${failed > 1 ? 's' : ''}.${detail}`,
     });
   };
@@ -687,10 +688,11 @@ export const ApprobationPage = () => {
     if (isNew) {
       await notifyDeposit(saved);
     }
-    /* Rangement du fichier dans Budget_labo/<année>/Devis|BC (best-effort) —
-       surtout utile quand le fichier a été collé comme lien Google Drive
-       (le fichier d’un autre compte / non partagé reste en place et le message
-       l’explique). Inutile quand Drive n’est pas connecté (aucun fichier
+    /* Copie du fichier dans Budget_labo/<année>/Devis|BC (best-effort) —
+       surtout utile quand le fichier a été collé comme lien Google Drive :
+       une copie (jamais un déplacement) est déposée au bon endroit ; un
+       fichier d’un autre compte / non partagé n’est pas copiable et le message
+       l’explique. Inutile quand Drive n’est pas connecté (aucun fichier
        n’aurait pu y être téléversé depuis ce PC). */
     if (cloudBackendAvailable()) {
       try {
@@ -699,7 +701,7 @@ export const ApprobationPage = () => {
           const first = filing.failed[0];
           setNote((prev) => ({
             ...(prev || {}),
-            text: `${prev && prev.text ? `${prev.text} ` : ''}⚠️ Fichier non déplacé (${first.folder}) : ${first.reason}`,
+            text: `${prev && prev.text ? `${prev.text} ` : ''}⚠️ Fichier non copié dans Budget_labo/…/${first.folder} : ${first.reason}`,
           }));
         }
       } catch { /* le dépôt reste enregistré même si le rangement échoue */ }
@@ -735,7 +737,7 @@ export const ApprobationPage = () => {
             onClick={runApprovalFiling}
             disabled={filingBusy}
             className="bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50"
-            title="Copier / déplacer dans Budget_labo/<année>/Devis|BC les fichiers liés aux devis / BC déjà déposés — possible quand le fichier est accessible à l’application"
+            title="Copier dans Budget_labo/<année>/Devis|BC les fichiers liés aux devis / BC déjà déposés — l’original n’est jamais déplacé ; possible quand le fichier est accessible à l’application"
           >
             <span className="text-base leading-none">{filingBusy ? '⏳' : '📎'}</span>{filingBusy ? 'Rangement…' : 'Ranger les fichiers'}
           </button>

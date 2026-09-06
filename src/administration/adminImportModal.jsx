@@ -200,7 +200,7 @@ export const AdminImportModal = ({ kind, onClose }) => {
       // dossier Budget_labo/<année>/… et on les classe au bon endroit — les
       // numéros redeviennent cliquables.
       let relinked = 0;
-      let movedDocs = 0;
+      let copiedDocs = 0;
       let filingFailed = 0;
       if (listKind === 'depenses' && stampedRecords.length) {
         try {
@@ -213,7 +213,7 @@ export const AdminImportModal = ({ kind, onClose }) => {
         try {
           const filing = await fileDepenseDocuments(stampedRecords, { year: new Date().getFullYear() });
           if (filing) {
-            movedDocs = filing.moved || 0;
+            copiedDocs = filing.copied || 0;
             filingFailed = filing.failed || 0;
           }
         } catch (err) {
@@ -228,7 +228,7 @@ export const AdminImportModal = ({ kind, onClose }) => {
         relies,
         skipped: analysis.skipped || 0,
         unmatchedProjets: analysis.unmatchedProjets || [],
-        budget: listKind === 'depenses' ? { relinked, movedDocs, filingFailed } : null,
+        budget: listKind === 'depenses' ? { relinked, copiedDocs, filingFailed } : null,
       });
       setStep('done');
     } finally {
@@ -480,14 +480,14 @@ const DoneBody = ({ summary, onReset, onClose }) => (
       <Stat label="Lignes ignorées" value={summary.skipped} tone="text-amber-600" />
     </div>
 
-    {summary.budget && (summary.budget.relinked > 0 || summary.budget.movedDocs > 0 || summary.budget.filingFailed > 0) ? (
+    {summary.budget && (summary.budget.relinked > 0 || summary.budget.copiedDocs > 0 || summary.budget.filingFailed > 0) ? (
       <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-800 leading-relaxed">
         <b>Documents budget (Drive)</b> : {summary.budget.relinked} document(s) relié(s) automatiquement aux
-        numéros importés · {summary.budget.movedDocs} fichier(s) classé(s) dans{' '}
+        numéros importés · {summary.budget.copiedDocs} fichier(s) copié(s) et classé(s) dans{' '}
         <b>Budget_labo/{new Date().getFullYear()}/Devis|BC|Factures|BL|OM</b> — les N° devis / BC / facture / BL
         sont désormais cliquables.
         {summary.budget.filingFailed > 0
-          ? ` ⚠️ ${summary.budget.filingFailed} document(s) n'ont pas pu être classé(s) (Google Drive connecté ?).`
+          ? ` ⚠️ ${summary.budget.filingFailed} document(s) n'ont pas pu être copié(s) / classé(s) (Google Drive connecté ?).`
           : ''}
       </div>
     ) : null}

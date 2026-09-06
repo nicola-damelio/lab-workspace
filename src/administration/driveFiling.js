@@ -4,7 +4,7 @@
 
    Au moment d'enregistrer une dépense, chaque lien Google Drive collé dans un
    champ « lien document » (devis, BC, facture, OM, BL/SF par livraison) est
-   DÉPLACÉ dans le dossier de classement du budget, sous le dossier du dataset :
+   COPIÉ dans le dossier de classement du budget, sous le dossier du dataset :
 
         Lab Workspace › <dataset> › Budget_labo › <année> › Devis
                                                       › BC
@@ -14,16 +14,22 @@
 
    - l'année est l'année courante (ou celle passée en argument) ;
    - les dossiers manquants sont créés automatiquement (chaîne entière) ;
-   - un fichier déjà présent au bon endroit n'est pas touché ;
-   - tout est best-effort : un fichier non déplaçable (Drive non connecté,
+   - le fichier d'origine n'est JAMAIS déplacé ni modifié : une copie est créée
+     au bon endroit et reçoit le nom de la convention (quand le N° du document
+     est connu, ex. Devis_<N°>_<ligne>_<fournisseur>_<demandeur>_<date>) ;
+   - un fichier déjà présent au bon endroit — ou déjà copié sous ce nom — n'est
+     pas touché : le classement peut être relancé sans créer de doublons ;
+   - tout est best-effort : un fichier non copiable (Drive non connecté,
      permissions insuffisantes…) garde son lien d'origine et est signalé.
    ========================================================================= */
 import {
   cloudBackendAvailable,
   driveFetch,
+  findDriveFileByName,
   resolveDrivePathFromNames,
   sharedWorkspaceMode,
 } from '../utils/driveUpload';
+import { APPROVAL_APPROVED } from './adminSchema';
 
 /** Nom du dossier Drive (dans Budget_labo/<année>/…) associé à chaque champ
  *  « lien document » d'une dépense. Les documents « service fait » (SF / PV de
@@ -101,6 +107,71 @@ export const withApprovedSuffix = (name) => {
   return `${base}${APPROVED_SUFFIX}${driveFileExtensionOf(s)}`;
 };
 
+/* ── Nom à donner à la COPIE classée ─────────────────────────────────────────
+   La copie posée dans Budget_labo/<année>/<type> reçoit le nom de la convention
+   du laboratoire (mêmes règles que le bouton « ⬆ PC » du formulaire) :
+   Devis_<N° devis>_<ligne budgétaire>_<fournisseur>_<demandeur>_<date>… avec
+   l'extension du fichier d'origine. Le nom n'est conventionnel que si le N° du
+   document est connu ; sinon on garde le nom d'origine (jamais d'extension
+   perdue). Les documents devis / BC « Approuvé » reçoivent en plus la marque
+   « _approuvé », comme au dépôt. */
+
+/** Métadonnées de nommage d'un champ « lien document » d'une DÉPENSE : type du
+ *  document (préfixe du nom), clé du N° correspondant et date(s) à préférer.
+ *  Les BL / SF sont portés par leur livraison (sujet passé séparément). */
+const DEPENSE_SLOT_NAME_META = {
+  numDevisUrl: { prefix: 'Devis', code: 'numDevis', dates: ['dateSignatureDevis'] },
+  numBCUrl: { prefix: 'BC', code: 'numBC', dates: ['dateBC'] },
+  numFactureUrl: { prefix: 'Facture', code: 'numFacture', dates: ['dateFacture'] },
+  omUrl: { prefix: 'OM', code: 'omNo', dates: [] },
+  numBLUrl: { prefix: 'BL', code: 'numBL', dates: ['dateReception'] },
+  numSFUrl: { prefix: 'SF', code: 'numSF', dates: ['dateServiceFait'] },
+};
+
+const strOf = (v) => String(v ?? '').trim();
+
+/** Nom conventionnel à donner à la COPIE d'un document lié, ou '' quand aucun
+ *  N° de document n'est connu (on conserve alors le nom d'origine). `subject`
+ *  est la livraison pour un BL / SF, sinon la dépense elle-même ; `srcName`
+ *  est le nom actuel du fichier sur Drive (il fournit l'extension). */
+export const budgetDocCopyName = (rec, field, subject, srcName) => {
+  if (!rec) return '';
+  const isApproval = rec.kind === 'devis' || rec.kind === 'bc';
+  const meta = isApproval ? null : (DEPENSE_SLOT_NAME_META[field] || null);
+  let prefix = '';
+  let code = '';
+  if (isApproval) {
+    prefix = rec.kind === 'bc' ? 'BC' : 'Devis';
+    code = strOf(rec.kind === 'bc' ? rec.numBC : rec.numDevis);
+  } else if (meta) {
+    prefix = meta.prefix;
+    code = strOf(subject && subject[meta.code]);
+  }
+  if (!code) return '';
+  let date = '';
+  if (isApproval) {
+    date = strOf(rec.date || rec.dateDepot);
+  } else if (meta && meta.dates.length) {
+    for (const k of meta.dates) {
+      const d = strOf(subject && subject[k]);
+      if (d) { date = d; break; }
+    }
+  }
+  let name = budgetDocFileName({
+    prefix,
+    code,
+    ligne: strOf(rec.ligneBudgetaire),
+    fournisseur: strOf(rec.fournisseur),
+    demandeur: strOf(rec.demandeur),
+    date: date || strOf(rec.dateDemande),
+    fileName: strOf(srcName),
+  });
+  if (isApproval && rec.statut === APPROVAL_APPROVED && !hasApprovedSuffix(name)) {
+    name = withApprovedSuffix(name);
+  }
+  return name;
+};
+
 /** Identifiant d'un FICHIER Google Drive (jamais d'un dossier) extrait d'une
  *  URL de lien partagé. Renvoie '' pour un lien externe / non-Drive. */
 export const driveFileIdFromUrl = (url) => {
@@ -152,63 +223,81 @@ const filingReasonOf = (msg) => {
   return s;
 };
 
-/** Déplace un fichier Drive dans un dossier (si ce n'est déjà fait).
- *  @returns {'moved'|'already'} */
-const moveFileIntoFolder = async (fileId, folderId) => {
-  const metaRes = await driveFetch(`/drive/v3/files/${fileId}?fields=id,parents`);
+/** Copie un fichier Google Drive dans un dossier de classement, avec le nom
+ *  conventionnel demandé — le fichier d'origine n'est JAMAIS déplacé ni modifié
+ *  (l'application ne retire plus jamais un fichier du dossier où il se trouve :
+ *  elle dépose une copie au bon endroit). Quand le fichier est déjà dans le
+ *  dossier (copie canonique posée par l'app) ou qu'une copie portant
+ *  exactement ce nom y existe déjà, on ne fait rien : « Ranger » est
+ *  relançable sans créer de doublons.
+ *  @param {string} fileId   identifiant du fichier d'origine (le lien collé)
+ *  @param {string} folderId dossier de classement Budget_labo/…/<type>
+ *  @param {(srcName:string)=>string} nameFor  nom à donner à la copie, calculé
+ *         à partir du nom actuel du fichier ('' → on garde le nom d'origine)
+ *  @returns {'copied'|'already'} */
+const copyDriveFileIntoFolder = async (fileId, folderId, nameFor) => {
+  const metaRes = await driveFetch(`/drive/v3/files/${fileId}?fields=id,name,parents,trashed`);
   const meta = await metaRes.json();
+  if (!meta || !meta.id) throw new Error('Fichier Google Drive introuvable.');
   const parents = Array.isArray(meta.parents) ? meta.parents : [];
-  if (parents.indexOf(folderId) !== -1) return 'already';
-  const params = new URLSearchParams();
-  params.set('addParents', folderId);
-  parents.forEach((p) => {
-    if (p !== folderId) params.append('removeParents', p);
-  });
-  await driveFetch(`/drive/v3/files/${fileId}?${params.toString()}`, {
-    method: 'PATCH',
+  if (parents.indexOf(folderId) !== -1) return 'already'; // déjà classé ici → ne pas dupliquer
+  const srcName = String(meta.name || '').trim();
+  const name = String((typeof nameFor === 'function' && nameFor(srcName)) || srcName || 'document')
+    .trim()
+    .slice(0, 200);
+  // Relançable sans doublon : une copie de même nom existe déjà dans le dossier.
+  if (await findDriveFileByName(name, folderId)) return 'already';
+  const res = await driveFetch(`/drive/v3/files/${fileId}/copy?fields=id,name`, {
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: '{}'
+    body: JSON.stringify({ name, parents: [folderId] }),
   });
-  return 'moved';
+  const j = await res.json();
+  if (!j || !j.id) throw new Error("Google Drive n'a pas confirmé la copie du fichier.");
+  return 'copied';
 };
 
 /**
  * Range dans Budget_labo/<année>/<Devis|BC|BL|OM|Factures> chaque document
  * Google Drive lié à une dépense (champs numDevisUrl, numBCUrl, numFactureUrl,
  * omUrl et, par livraison, numBLUrl / numSFUrl). Crée les dossiers manquants.
+ * Le fichier d'origine n'est JAMAIS déplacé ni modifié : une COPIE est créée
+ * au bon endroit, avec le nom de la convention (quand le N° est connu).
  *
  * @param {object} rec  dépense normalisée (clés …Url au niveau racine et dans
- *                      `livraisons[]`), telle qu'enregistrée par la page.
+ *                      `livraisons[]`), telle qu'enregistrée par la page — ou
+ *                      enregistrement `devisBc` (page Approbation devis & BC).
  * @param {object} [opts]
  * @param {number|string} [opts.year]  année du classement (défaut : année courante)
- * @returns {Promise<{attempted:number,moved:number,skipped:number,
+ * @returns {Promise<{attempted:number,copied:number,skipped:number,
  *           failed:Array<{field:string,folder:string,url:string,reason:string}>}>}
  */
 export const fileBudgetDocs = async (rec, { year } = {}) => {
   const links = [];
-  const push = (field, url) => {
+  const push = (field, url, subject) => {
     const folder = BUDGET_DOC_FOLDER_BY_FIELD[field];
     const s = String(url || '').trim();
-    if (folder && s) links.push({ field, folder, url: s });
+    if (folder && s) links.push({ field, folder, url: s, subject: subject || null });
   };
   Object.keys(BUDGET_DOC_FOLDER_BY_FIELD).forEach((key) => push(key, rec && rec[key]));
   (Array.isArray(rec && rec.livraisons) ? rec.livraisons : []).forEach((l) => {
-    push('numBLUrl', l && l.numBLUrl);
-    push('numSFUrl', l && l.numSFUrl);
+    push('numBLUrl', l && l.numBLUrl, l);
+    push('numSFUrl', l && l.numSFUrl, l);
   });
   /* Enregistrements de la page « Approbation devis & BC » (collection devisBc) :
      chaque ligne porte un fichier unique dans `fichierUrl` — Devis → /Devis,
      BC → /BC (les documents déjà téléversés depuis l’app sont déjà au bon
-     endroit ; un fichier collé en lien depuis ailleurs est déplacé ici). */
+     endroit ; un fichier collé en lien depuis ailleurs est COPIÉ ici — jamais
+     déplacé : l'original reste où il est). */
   if (rec && (rec.kind === 'devis' || rec.kind === 'bc')) {
     push(rec.kind === 'devis' ? 'numDevisUrl' : 'numBCUrl', rec.fichierUrl);
   }
-  if (!links.length) return { attempted: 0, moved: 0, skipped: 0, failed: [] };
+  if (!links.length) return { attempted: 0, copied: 0, skipped: 0, failed: [] };
 
   if (!cloudBackendAvailable()) {
     return {
       attempted: links.length,
-      moved: 0,
+      copied: 0,
       skipped: 0,
       failed: links.map((l) => ({
         field: l.field,
@@ -221,8 +310,8 @@ export const fileBudgetDocs = async (rec, { year } = {}) => {
 
   const targetYear = year || new Date().getFullYear();
   const leafCache = {}; // folder → id Drive (résolu une seule fois)
-  const folderError = {}; // folder → message d’échec (pour les liens qui tentent le déplacement)
-  const out = { attempted: 0, moved: 0, skipped: 0, failed: [] };
+  const folderError = {}; // folder → message d’échec (pour les liens qui tentent la copie)
+  const out = { attempted: 0, copied: 0, skipped: 0, failed: [] };
 
   /** Crée / résout le dossier Budget_labo/<année>/<folder> (une seule fois). */
   const ensureFolder = async (folder) => {
@@ -243,16 +332,18 @@ export const fileBudgetDocs = async (rec, { year } = {}) => {
 
   // 1) Les dossiers Budget_labo/<année>/Devis|BC|BL|OM|Factures sont créés dès
   //    qu'un champ « lien document » est renseigné — même quand le lien n'est
-  //    pas un fichier Google Drive déplaçable (lien externe, dossier…). C'est ce
+  //    pas un fichier Google Drive copiable (lien externe, dossier…). C'est ce
   //    qui faisait défaut : aucune création de dossier lors de l'enregistrement.
   const folders = [...new Set(links.map((l) => l.folder))];
   for (const folder of folders) await ensureFolder(folder);
 
-  // 2) Déplacement des fichiers Google Drive liés vers le dossier de leur nature.
+  // 2) Copie des fichiers Google Drive liés vers le dossier de leur nature —
+  //    toujours une COPIE (le fichier d'origine reste en place) ; la copie
+  //    reçoit le nom de la convention quand le N° du document est connu.
   for (const link of links) {
     const fileId = driveFileIdFromUrl(link.url);
     if (!fileId) {
-      out.skipped += 1; // lien externe / dossier : rien à déplacer (le dossier existe déjà)
+      out.skipped += 1; // lien externe / dossier : rien à copier (le dossier existe déjà)
       continue;
     }
     out.attempted += 1;
@@ -261,8 +352,9 @@ export const fileBudgetDocs = async (rec, { year } = {}) => {
       if (!folderId) {
         throw new Error(folderError[link.folder] || `dossier « ${link.folder} » inaccessible`);
       }
-      const result = await moveFileIntoFolder(fileId, folderId);
-      if (result === 'moved') out.moved += 1;
+      const result = await copyDriveFileIntoFolder(fileId, folderId, (srcName) =>
+        budgetDocCopyName(rec, link.field, link.subject || rec, srcName));
+      if (result === 'copied') out.copied += 1;
       else out.skipped += 1;
     } catch (err) {
       out.failed.push({
