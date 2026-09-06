@@ -287,7 +287,10 @@ const Ref = ({ value, url, fallback = '—' }) => {
 };
 
 /* Cellule « Livraisons » : quand une commande a plusieurs phases de livraison,
-   la liste détaillée est repliée ; un bouton « Détails » permet de l’étendre. */
+   seule la ligne de synthèse (« N phases · colis reçus ») est affichée tant
+   que le détail est replié — ainsi la ligne reste aussi compacte que les
+   autres lignes achats, quel que soit le nombre de phases. Un bouton
+   « Détails » permet d’étendre la liste. */
 const LivraisonsCell = ({ livs }) => {
   const kept = keepLivraisons(livs);
   const [expanded, setExpanded] = useState(false);
@@ -303,7 +306,7 @@ const LivraisonsCell = ({ livs }) => {
   };
   return (
     <div className="min-w-[300px]">
-      <div className="flex items-center gap-2 mb-1">
+      <div className={`flex items-center gap-2 ${showDetails ? 'mb-1' : ''}`}>
         <span className="font-black text-slate-700 text-xs">{kept.length} phase{multi ? 's' : ''}</span>
         <span className="text-[10px] text-slate-400">{received}/{kept.length} colis reçu{received > 1 ? 's' : ''}</span>
         {multi && (
@@ -317,22 +320,6 @@ const LivraisonsCell = ({ livs }) => {
           </button>
         )}
       </div>
-      {!showDetails && (
-        <div className="flex flex-wrap gap-1">
-          {kept.map((l, i) => (
-            <span
-              key={`${l.numBL || l.numSF || ''}-${i}`}
-              className="inline-flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-slate-600"
-            >
-              <span className="text-slate-400 font-black">#{i + 1}</span>
-              {txt(l.dateReception)
-                ? toFrDate(l.dateReception)
-                : <span className="text-amber-600">en attente</span>}
-              {txt(l.numBL) && <span className="font-mono truncate max-w-[110px]" title={l.numBL}>{l.numBL}</span>}
-            </span>
-          ))}
-        </div>
-      )}
       {showDetails && (
         <div className="rounded-lg border border-slate-200 overflow-hidden">
           <div className="grid grid-cols-[110px_minmax(0,1.2fr)_110px_minmax(0,1fr)] gap-2 px-2 py-1 bg-slate-50 border-b border-slate-200 text-[9px] font-black uppercase text-slate-400">
@@ -556,8 +543,8 @@ const DepensesPage = () => {
   /* Résumé du haut de page (restreint aux lignes de l’onglet de dépenses actif). */
   const buildSummary = (rows) => {
     const out = {
-      count: 0, moneyCount: 0, total: 0, bcCount: 0, bcTotal: 0,
-      completeCount: 0, parcelsReceived: 0, parcelsTotal: 0, pendingCount: 0,
+      count: 0, moneyCount: 0, total: 0,
+      parcelsReceived: 0, parcelsTotal: 0, pendingCount: 0,
     };
     rows.forEach((d) => {
       out.count += 1;
@@ -567,12 +554,6 @@ const DepensesPage = () => {
         out.total += (m || 0) + (p || 0);
         out.moneyCount += 1;
       }
-      const st = pick(d, ['statut', 'suivi']);
-      if (st === 'BC signé') {
-        out.bcCount += 1;
-        out.bcTotal += (m || 0) + (p || 0);
-      }
-      if (txt(d.livraisonComplete) === 'Oui') out.completeCount += 1;
       const liv = keepLivraisons(d.livraisons);
       out.parcelsTotal += liv.length;
       out.parcelsReceived += liv.filter((l) => txt(l.dateReception)).length;
@@ -1045,7 +1026,7 @@ const DepensesPage = () => {
     : 'achat';
 
   return (
-    <div className="w-full min-w-0 mx-auto flex flex-col gap-4">
+    <div className="h-full min-h-0 w-full min-w-0 mx-auto flex flex-col gap-4">
       {linkRepair.report && (
         <div
           className={`rounded-xl border px-4 py-2.5 text-xs flex items-start justify-between gap-3 shadow-sm ${
@@ -1142,7 +1123,8 @@ const DepensesPage = () => {
         ))}
       </div>
 
-      {/* Cartes de synthèse propres à l’onglet actif. */}
+      {/* Cartes de synthèse propres aux onglets OM et PI. L’onglet Achats n’a plus
+          de cartes : le nombre d’achats / BC figure dans le sélecteur d’onglet. */}
       {tab === 'om' ? (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
           <SummaryCard label="Dépenses OM" value={omStats.count} tone="slate" hint="Nombre de lignes de type « om » suivies ici (indépendantes de la page « OM prévus / souhaités »)." />
@@ -1157,14 +1139,7 @@ const DepensesPage = () => {
           <SummaryCard label="Facturées" value={piFactured} tone="indigo" hint="Prestations internes avec un N° facture renseigné." />
           <SummaryCard label="À facturer" value={Math.max(0, summary.count - piFactured)} tone="amber" hint="Prestations internes sans N° facture — à compléter pour le paiement." />
         </div>
-      ) : (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-          <SummaryCard label="Achats / BC" value={summary.count} tone="slate" hint="Nombre d’achats saisis (hors prestations internes « PI »)." />
-          <SummaryCard label="Total commandé (HT + port)" value={summary.moneyCount ? euro.format(summary.total) : '—'} tone="blue" hint={`Somme des montants HT et frais de port renseignés sur ${summary.moneyCount} achat(s).`} />
-          <SummaryCard label="BC signés (engagé)" value={`${summary.bcCount} · ${summary.bcCount ? euro.format(summary.bcTotal) : '—'}`} tone="indigo" hint="Dépenses au statut « BC signé » et montant cumulé correspondant. Pour l’engagement budgétaire, la page Recettes ajoute à ce décompte les prestations internes « PI » (sans BC)." />
-          <SummaryCard label="Livraisons complètes" value={`${summary.completeCount} / ${summary.count}`} tone="emerald" hint="Nombre d’achats dont toutes les livraisons renseignées sont arrivées (ou sans colis, déclarés complets)." />
-        </div>
-      )}
+      ) : null}
 
       {tab === 'om' ? (
         <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
@@ -1182,15 +1157,7 @@ const DepensesPage = () => {
           facture, N° OM / paiement). Une telle dépense est comptée <b>« engagée » dès sa saisie</b> dans la page Recettes.
           Cliquez sur « + Ajouter une dépense » : le fournisseur « PI » est pré-rempli.
         </div>
-      ) : (
-        <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
-          <b>Fonctionnement :</b> cliquez sur « ✏️ Modifier » pour ouvrir le formulaire complet (mêmes colonnes que le classeur).
-          « Livraison complète » passe automatiquement à <b>Oui</b> dès que toutes les livraisons renseignées ont leur date de
-          réception (le gestionnaire enregistre simplement chaque arrivée) ; une commande sans colis (prestation, inscription…) se
-          déclare complète via la case « sans colis » du formulaire. Les liens 🔗↗ (devis, BC, BL, facture, OM) ouvrent le document
-          associé dans un nouvel onglet.
-        </div>
-      )}
+      ) : null}
 
       {redRows.length > 0 && (
         <div className="rounded-xl border border-red-200 bg-red-50/80 px-4 py-2.5 text-[11px] text-red-700 leading-relaxed">
@@ -1214,25 +1181,28 @@ const DepensesPage = () => {
           </p>
         </div>
       ) : (
-        <SmartTable
-          key={tab}
-          columns={tab === 'achats' ? columns : simpleColumns}
-          rows={depViewRows}
-          rowClass={(r) => (missingMandatoryFor(r).length ? 'bg-red-100/70' : '')}
-          minWidth={tab === 'achats' ? '2250px' : '1560px'}
-          quickFilters={['demandeur', 'ligne'].concat(tab === 'achats' ? ['fournisseur'] : [])}
-          focusRowKey={focusRow}
-          onFocusDone={() => setFocusRow(null)}
-          searchPlaceholder={tab === 'achats'
-            ? 'Rechercher description, fournisseur, n° BC / SIFAC / facture, BL, service fait…'
-            : 'Rechercher description, demandeur, ligne budgétaire, n° facture / OM…'}
-          emptyLabel="Aucune dépense"
-          noMatchLabel={tab === 'achats'
-            ? 'Aucune dépense ne correspond aux filtres.'
-            : tab === 'pi'
-              ? 'Aucune prestation interne ne correspond aux filtres.'
-              : 'Aucune dépense OM ne correspond aux filtres.'}
-        />
+        <div className="flex-1 min-h-[280px] flex flex-col">
+          <SmartTable
+            key={tab}
+            columns={tab === 'achats' ? columns : simpleColumns}
+            rows={depViewRows}
+            rowClass={(r) => (missingMandatoryFor(r).length ? 'bg-red-100/70' : '')}
+            minWidth={tab === 'achats' ? '2250px' : '1560px'}
+            quickFilters={['demandeur', 'ligne'].concat(tab === 'achats' ? ['fournisseur'] : [])}
+            focusRowKey={focusRow}
+            onFocusDone={() => setFocusRow(null)}
+            searchPlaceholder={tab === 'achats'
+              ? 'Rechercher description, fournisseur, n° BC / SIFAC / facture, BL, service fait…'
+              : 'Rechercher description, demandeur, ligne budgétaire, n° facture / OM…'}
+            emptyLabel="Aucune dépense"
+            noMatchLabel={tab === 'achats'
+              ? 'Aucune dépense ne correspond aux filtres.'
+              : tab === 'pi'
+                ? 'Aucune prestation interne ne correspond aux filtres.'
+                : 'Aucune dépense OM ne correspond aux filtres.'}
+            fillHeight
+          />
+        </div>
       )}
 
       {importOpen && <AdminImportModal kind="depenses" onClose={() => setImportOpen(false)} />}

@@ -120,6 +120,11 @@ export const SmartTable = ({
   /* Hauteur maxi du bloc défilant : la 1re ligne (en-têtes) reste toujours
      visible (colonne de définitions épinglée) pendant le défilement vertical. */
   maxHeight = '62vh',
+  /* Remplit toute la hauteur laissée par le parent (page en colonne flex) :
+     le bloc de défilement prend le reste de l’écran, donc la barre de
+     défilement horizontale reste toujours visible en bas, sans faire défiler
+     la page pour la rejoindre. Désactive le plafond `maxHeight`. */
+  fillHeight = false,
   minWidth = '980px',
   emptyLabel = 'Aucune donnée.',
   noMatchLabel = 'Aucun enregistrement ne correspond aux filtres.',
@@ -333,9 +338,9 @@ export const SmartTable = ({
     );
   };
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+    <div className={`bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden ${fillHeight ? 'flex flex-1 min-h-0 flex-col' : ''}`}>
       {/* Barre d’outils */}
-      <div className="px-3 py-2 border-b border-slate-200 flex flex-wrap items-center gap-2">
+      <div className="shrink-0 px-3 py-2 border-b border-slate-200 flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1.5 min-w-[220px] flex-1">
           <span className="text-slate-300 text-sm leading-none" aria-hidden="true">🔍</span>
           <input
@@ -384,7 +389,7 @@ export const SmartTable = ({
 
       {/* Filtres rapides (listes déroulantes au-dessus du tableau) */}
       {quickFilters.length > 0 && (
-        <div className="px-3 pb-2.5 pt-2 border-b border-slate-100 bg-slate-50/60 flex flex-wrap items-center gap-2">
+        <div className="shrink-0 px-3 pb-2.5 pt-2 border-b border-slate-100 bg-slate-50/60 flex flex-wrap items-center gap-2">
           <span className="text-[9px] font-black uppercase tracking-wide text-slate-400">Filtrer :</span>
           {quickFilters.map((key) => {
             const m = meta.find((x) => x.col.key === key && x.mode !== 'none');
@@ -415,7 +420,7 @@ export const SmartTable = ({
 
       {/* Panneau de filtres par colonne */}
       {panelOpen && (
-        <div className="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70">
+        <div className={`shrink-0 px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 ${fillHeight ? 'max-h-[40vh] overflow-y-auto custom-scrollbar' : ''}`}>
           {filterable.length ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2">
               {filterable.map((m) => (
@@ -429,11 +434,11 @@ export const SmartTable = ({
       )}
       {/* Tableau */}
       {rows.length === 0 ? (
-        <div className="p-8 text-center">
+        <div className={`p-8 text-center ${fillHeight ? 'flex-1 flex flex-col items-center justify-center' : ''}`}>
           <p className="text-sm font-black text-slate-500">{emptyLabel}</p>
         </div>
       ) : visibleRows.length === 0 ? (
-        <div className="p-8 text-center">
+        <div className={`p-8 text-center ${fillHeight ? 'flex-1 flex flex-col items-center justify-center' : ''}`}>
           <p className="text-sm font-bold text-slate-500">{noMatchLabel}</p>
           <button
             type="button"
@@ -442,7 +447,11 @@ export const SmartTable = ({
           >Réinitialiser les filtres</button>
         </div>
       ) : (
-        <div className="overflow-auto custom-scrollbar overscroll-contain" ref={scrollRef} style={maxHeight ? { maxHeight } : undefined}>
+        <div
+          className={`overflow-auto custom-scrollbar overscroll-contain ${fillHeight ? 'flex-1 min-h-0' : ''}`}
+          ref={scrollRef}
+          style={!fillHeight && maxHeight ? { maxHeight } : undefined}
+        >
           <table className="w-full text-sm border-collapse" style={{ minWidth }}>
             <thead>
               <tr className="text-xs uppercase tracking-wide text-slate-500">
