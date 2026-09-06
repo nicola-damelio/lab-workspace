@@ -104,6 +104,20 @@ export const ApprobationPage = () => {
     () => new Map((Array.isArray(data.depenses) ? data.depenses : []).map((d) => [d.id, d])),
     [data.depenses]
   );
+  const librerie = useMemo(
+    () => (Array.isArray(data.librerie) ? data.librerie : []),
+    [data.librerie]
+  );
+  /* Noms des fournisseurs du catalogue (page Librairie) : ils alimentent le
+     menu déroulant « Fournisseur » du dépôt d’un devis / BC. */
+  const fournisseurNames = useMemo(() => {
+    const set = new Set();
+    librerie.forEach((l) => {
+      [l && l.fournisseur, l && l.nomFournisseur, l && l.fournisseurNom, l && l.nom, l && l.name]
+        .map((v) => txt(v)).filter(Boolean).forEach((n) => set.add(n));
+    });
+    return [...set].sort((a, b) => a.localeCompare(b, 'fr'));
+  }, [librerie]);
 
   const isSuper = !!access.isSuperuser;
   const currentName = txt(access.profile && access.profile.person
@@ -140,6 +154,7 @@ export const ApprobationPage = () => {
       return {
         text: `${label} : e-mail NON envoyé — ${res.reason || 'serveur e-mail indisponible'}. Cliquez pour l'envoyer depuis votre messagerie.`,
         mailto: res.mailto,
+        ...(res.consoleUrl ? { consoleUrl: res.consoleUrl } : {}),
       };
     }
     return { text: `${label} : ${(res && res.reason) || 'e-mail non envoyé'}` };
@@ -309,6 +324,26 @@ export const ApprobationPage = () => {
       alert('Merci de renseigner au moins une description ou une référence (N° devis / N° BC).');
       return false;
     }
+    /* Nouveaux dépôts : l’information complète est exigée (N° devis/BC,
+       fournisseur et montant) pour pouvoir créer la dépense à l’approbation. */
+    if (isNew) {
+      if (kind === 'devis' && !numDevis) {
+        alert('Le N° devis est obligatoire pour un nouveau dépôt.');
+        return false;
+      }
+      if (kind === 'bc' && !numBC) {
+        alert('Le N° BC est obligatoire pour un nouveau dépôt.');
+        return false;
+      }
+      if (!txt(draft.fournisseur)) {
+        alert('Le fournisseur est obligatoire : choisissez-le dans le menu de la Librairie.');
+        return false;
+      }
+      if (numOf(draft.montant) === null) {
+        alert('Le montant HT est obligatoire pour un nouveau dépôt.');
+        return false;
+      }
+    }
     if (!txt(draft.fichierUrl)) {
       alert('Le fichier (devis ou BC) est obligatoire : téléversez-le ou collez son lien Google Drive.');
       return false;
@@ -373,6 +408,17 @@ export const ApprobationPage = () => {
             {note.mailto ? (
               <a href={note.mailto} className="font-black text-blue-700 underline">✉ Ouvrir ma messagerie</a>
             ) : null}
+            {note.consoleUrl ? (
+              <a
+                href={note.consoleUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-black text-blue-700 underline whitespace-nowrap"
+                title="Console Google Cloud — à faire une seule fois par le propriétaire du projet"
+              >
+                ⚙ Activer l’API Gmail
+              </a>
+            ) : null}
             <button type="button" onClick={() => setNote(null)} className="text-slate-400 hover:text-slate-600 font-black">✕</button>
           </span>
         </div>
@@ -415,6 +461,7 @@ export const ApprobationPage = () => {
           kind={modal.kind}
           rec={modal.mode === 'edit' ? modal.rec : null}
           devisOptions={devisOptions}
+          fournisseurNames={fournisseurNames}
           defaultDeposant={currentName}
           onCancel={() => setModal(null)}
           onSave={onSaveDeposit}
@@ -607,7 +654,7 @@ const MODAL_INPUT = 'w-full border border-slate-300 rounded-lg px-3 py-2 text-sm
 const MODAL_LABEL = 'block text-[10px] font-black uppercase text-slate-400 tracking-wide mb-1';
 
 const DepositModal = ({
-  mode, kind, rec, devisOptions, defaultDeposant, onCancel, onSave,
+  mode, kind, rec, devisOptions, fournisseurNames = [], defaultDeposant, onCancel, onSave,
 }) => {
   const editing = mode === 'edit' && !!rec;
   const isDevis = kind === 'devis';
@@ -648,6 +695,16 @@ const DepositModal = ({
       dateDepot: todayIso(),
     };
   });
+
+  /* Menu Fournisseur : la liste de la Librairie (+ la valeur déjà enregistrée
+     si elle n’y figure plus, pour pouvoir modifier une ligne historique). */
+  const supplierOptions = useMemo(() => {
+    const opts = (Array.isArray(fournisseurNames) ? fournisseurNames : [])
+      .map((n) => txt(n)).filter(Boolean);
+    const current = txt(draft.fournisseur);
+    if (current && !opts.includes(current)) opts.push(current);
+    return opts;
+  }, [fournisseurNames, draft.fournisseur]);
 
   const set = (k) => (ev) => setDraft((d) => ({ ...d, [k]: ev.target.value }));
   const fileInputRef = useRef(null);
@@ -751,7 +808,7 @@ const DepositModal = ({
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
-              <label className={MODAL_LABEL}>{isDevis ? 'N° devis (optionnel)' : 'N° BC'}</label>
+              <label className={MODAL_LABEL}>{isDevis ? 'N° devis *' : 'N° BC *'}</label>
               <input
                 className={MODAL_INPUT}
                 value={isDevis ? draft.numDevis : draft.numBC}
@@ -760,11 +817,25 @@ const DepositModal = ({
               />
             </div>
             <div>
-              <label className={MODAL_LABEL}>Fournisseur (optionnel)</label>
-              <input className={MODAL_INPUT} value={draft.fournisseur} onChange={set('fournisseur')} placeholder="Nom du fournisseur" />
+              <label className={MODAL_LABEL}>Fournisseur *</label>
+              <select
+                className={MODAL_INPUT}
+                value={draft.fournisseur || ''}
+                onChange={set('fournisseur')}
+              >
+                <option value="">— Choisir un fournisseur —</option>
+                {supplierOptions.map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+              {!supplierOptions.length && (
+                <p className="mt-1 text-[10px] leading-snug text-slate-400">
+                  Catalogue vide : ajoutez d’abord le fournisseur dans la page Librairie.
+                </p>
+              )}
             </div>
             <div>
-              <label className={MODAL_LABEL}>Montant HT (optionnel)</label>
+              <label className={MODAL_LABEL}>Montant HT *</label>
               <input
                 className={MODAL_INPUT}
                 value={draft.montant}
@@ -816,7 +887,7 @@ const DepositModal = ({
           </div>
 
           <div>
-            <label className={MODAL_LABEL}>Notes (optionnel)</label>
+            <label className={MODAL_LABEL}>Notes</label>
             <textarea
               className={`${MODAL_INPUT} min-h-[54px]`}
               value={draft.notes}

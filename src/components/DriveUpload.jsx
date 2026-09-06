@@ -16,8 +16,8 @@
    App.jsx can run the Google sign-in that grants Drive access.
    ========================================================================= */
 
-import React, { useRef, useState } from 'react';
-import { readFileAsDataURL, withExtension, uploadLocalFile, cloudBackendAvailable } from '../utils/driveUpload';
+import React, { useRef, useState, useEffect } from 'react';
+import { readFileAsDataURL, withExtension, uploadLocalFile, cloudBackendAvailable, saveUploadForRetry } from '../utils/driveUpload';
 import { getCloudProvider } from '../utils/nextcloud';
 import { suggestDriveFileName, sanitizeSlug } from '../utils/driveNaming';
 
@@ -41,6 +41,26 @@ export const DriveUploadButton = ({
   const [lastDriveError, setLastDriveError] = useState('');
   const [lastDataUrl, setLastDataUrl] = useState('');
   const [lastFileName, setLastFileName] = useState('');
+  const queuedIdRef = useRef(null);
+  const [autoQueued, setAutoQueued] = useState(false);
+
+  // When a queued file is finally replayed after Drive reconnects, flip this
+  // button's status to "saved" and expose the real Drive link.
+  useEffect(() => {
+    const onPendingUploaded = (e) => {
+      const detail = (e && e.detail) || {};
+      if (!detail.id || queuedIdRef.current !== detail.id) return;
+      const drive = detail.drive;
+      if (!drive || !drive.id) return;
+      setStatus('drive');
+      setAutoQueued(false);
+      setLastDrive(drive);
+      setLastDriveError('');
+      setLastDataUrl('');
+    };
+    window.addEventListener('lab:pending-uploaded', onPendingUploaded);
+    return () => window.removeEventListener('lab:pending-uploaded', onPendingUploaded);
+  }, []);
 
   const upload = async (file) => {
     if (!file) return;
@@ -103,14 +123,30 @@ export const DriveUploadButton = ({
         // dataset, so big files are NOT stored locally: the user is asked to
         // connect/reconnect Google Drive and upload again.
         if (file.size > 3 * 1024 * 1024) {
-          setStatus('error');
-          setLastDriveError('File too large to store locally — connect your cloud storage (Google Drive or Nextcloud) and upload it again.');
-          if (onError) onError(new Error('File too large to store locally'));
+          // Too large for a data-URL in-app copy — but the raw bytes can still
+          // be parked in the pending queue (IndexedDB) and uploaded to the
+          // Drive folder as soon as the connection is back.
+          const queued = await saveUploadForRetry({ name, mimeType, file, ctx: namingCtx, path, source: 'button' }).catch(() => null);
+          if (queued && queued.queued) {
+            setStatus('queued');
+            setAutoQueued(true);
+            queuedIdRef.current = queued.id;
+            setLastFileName(name);
+          } else {
+            setStatus('error');
+            setLastDriveError('File too large to store locally — connect your cloud storage (Google Drive or Nextcloud) and upload it again.');
+            if (onError) onError(new Error('File too large to store locally'));
+          }
         } else {
           const dataUrl = await readFileAsDataURL(file);
           setStatus('local');
           setLastDataUrl(dataUrl);
           setLastFileName(name);
+          // Automatic retry: as soon as Drive answers again the file is sent to
+          // its Drive folder WITHOUT asking the user to re-upload it.
+          const queued = await saveUploadForRetry({ name, mimeType, file, ctx: namingCtx, path, source: 'button' }).catch(() => null);
+          if (queued && queued.queued) { queuedIdRef.current = queued.id; setAutoQueued(true); }
+          else { queuedIdRef.current = null; setAutoQueued(false); }
           if (onDone) onDone({ name, file, drive: null, mimeType, dataUrl });
         }
       }
@@ -174,7 +210,15 @@ export const DriveUploadButton = ({
           )}
         </span>
       )}
-      {status === 'local' && (
+      {status === 'local' && autoQueued && !lastDriveError && (
+        <span className="text-[10px] font-bold text-amber-600">
+          ⚠ {bigFile ? 'Large file kept locally' : 'Stored locally (temporary)'} — it will be uploaded to Google Drive <b>automatically</b> as soon as the connection is restored.
+          {lastFileName ? (
+            <> You can also <button type="button" onClick={downloadLocal} className="underline hover:text-amber-800">⬇ download the renamed file</button>.</>
+          ) : null}
+        </span>
+      )}
+      {status === 'local' && (!autoQueued || lastDriveError) && (
         <span className="text-[10px] font-bold text-amber-600">
           {lastDriveError ? (
             <>Drive saving unavailable — file kept locally. </> 
@@ -191,6 +235,13 @@ export const DriveUploadButton = ({
               , then upload again.
             </>
           )}.
+        </span>
+      )}
+      {status === 'queued' && (
+        <span className="text-[10px] font-bold text-amber-600">
+          ⚠ Drive unavailable — the large file was kept and will be uploaded to Google Drive{' '}
+          <b>automatically</b> as soon as the connection is restored.
+          <button type="button" onClick={connectDrive} className="underline hover:text-amber-800"> Retry now</button>.
         </span>
       )}
       {status === 'error' && (

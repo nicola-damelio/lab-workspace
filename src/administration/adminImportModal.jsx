@@ -23,6 +23,7 @@ import {
   buildMissingFournisseurs,
   recordDedupeKey,
 } from './importUtils';
+import { relinkDepenseDocuments, fileDepenseDocuments } from './budgetLink';
 
 /* Compte les URL de documents réellement capturées dans un enregistrement
    (champs « …Url » à tous les niveaux : devis, BC, facture, OM, BL/SF par colis). */
@@ -39,7 +40,7 @@ const countImportLinks = (node) => {
 };
 
 export const AdminImportModal = ({ kind, onClose }) => {
-  const { data, importMany, upsert } = useAdmin();
+  const { data, importMany, upsert, updateMany } = useAdmin();
   const [step, setStep] = useState('source'); // 'source' | 'review' | 'done'
   const [text, setText] = useState('');
   const [clipRows, setClipRows] = useState(null); // grille reconstruite depuis le collage HTML (avec hyperliens)
@@ -48,6 +49,7 @@ export const AdminImportModal = ({ kind, onClose }) => {
   const [analysis, setAnalysis] = useState(null);
   const [dedupe, setDedupe] = useState(true);
   const [summary, setSummary] = useState(null);
+  const [importing, setImporting] = useState(false);
 
   const keyOf = (listKind, rec) => recordDedupeKey(listKind, rec);
 
@@ -151,54 +153,87 @@ export const AdminImportModal = ({ kind, onClose }) => {
     }
   };
 
-  const runImport = () => {
-    if (!analysis) return;
-    const listKind = analysis.preset.kind;
-    const existingKeys = (Array.isArray(data[listKind]) ? data[listKind] : []).map((r) => keyOf(listKind, r));
-    const existingSet = new Set(existingKeys);
-    const inBatch = new Set();
-    const creates = [];
-    let doublons = 0;
-    let relies = 0;
-    (analysis.items || []).forEach((item) => {
-      const key = item.key || keyOf(listKind, item.rec);
-      if (inBatch.has(key) || (dedupe && existingSet.has(key))) {
-        if (listKind === 'personnel' && dedupe && item.rec.recetteId) {
-          const found = (Array.isArray(data.personnel) ? data.personnel : []).find((p) => keyOf('personnel', p) === key);
-          if (found && !found.recetteId) {
-            upsert('personnel', { recetteId: item.rec.recetteId }, found.id);
-            relies += 1;
-            inBatch.add(key);
-            return;
+  const runImport = async () => {
+    if (!analysis || importing) return;
+    setImporting(true);
+    try {
+      const listKind = analysis.preset.kind;
+      const existingKeys = (Array.isArray(data[listKind]) ? data[listKind] : []).map((r) => keyOf(listKind, r));
+      const existingSet = new Set(existingKeys);
+      const inBatch = new Set();
+      const creates = [];
+      let doublons = 0;
+      let relies = 0;
+      (analysis.items || []).forEach((item) => {
+        const key = item.key || keyOf(listKind, item.rec);
+        if (inBatch.has(key) || (dedupe && existingSet.has(key))) {
+          if (listKind === 'personnel' && dedupe && item.rec.recetteId) {
+            const found = (Array.isArray(data.personnel) ? data.personnel : []).find((p) => keyOf('personnel', p) === key);
+            if (found && !found.recetteId) {
+              upsert('personnel', { recetteId: item.rec.recetteId }, found.id);
+              relies += 1;
+              inBatch.add(key);
+              return;
+            }
           }
+          doublons += 1;
+          return;
         }
-        doublons += 1;
-        return;
+        inBatch.add(key);
+        creates.push(item.rec);
+      });
+      const imported = importMany(listKind, creates);
+      const added = imported.added || 0;
+      const stampedRecords = Array.isArray(imported.records) ? imported.records : [];
+      // Dépenses : on complète automatiquement le catalogue des fournisseurs
+      // (Librerie) avec les noms de la colonne « Fournisseur » encore absents.
+      let fournisseurs = 0;
+      if (listKind === 'depenses' && creates.length) {
+        const missing = buildMissingFournisseurs(creates, data.librerie);
+        if (missing.length) {
+          const res = importMany('librerie', missing);
+          fournisseurs = res.added || 0;
+        }
       }
-      inBatch.add(key);
-      creates.push(item.rec);
-    });
-    const { added } = importMany(listKind, creates);
-    // Dépenses : on complète automatiquement le catalogue des fournisseurs
-    // (Librerie) avec les noms de la colonne « Fournisseur » encore absents.
-    let fournisseurs = 0;
-    if (listKind === 'depenses' && creates.length) {
-      const missing = buildMissingFournisseurs(creates, data.librerie);
-      if (missing.length) {
-        const res = importMany('librerie', missing);
-        fournisseurs = res.added || 0;
+      // Dépenses importées depuis un fichier : on retrouve sur Google Drive les
+      // documents dont le N° (devis, BC, facture, BL, SF…) figure déjà dans le
+      // dossier Budget_labo/<année>/… et on les classe au bon endroit — les
+      // numéros redeviennent cliquables.
+      let relinked = 0;
+      let movedDocs = 0;
+      let filingFailed = 0;
+      if (listKind === 'depenses' && stampedRecords.length) {
+        try {
+          const { updates, linked } = await relinkDepenseDocuments(stampedRecords);
+          if (updates.length) updateMany('depenses', updates);
+          relinked = linked;
+        } catch (err) {
+          console.warn('Relink budget documents failed:', err && err.message);
+        }
+        try {
+          const filing = await fileDepenseDocuments(stampedRecords, { year: new Date().getFullYear() });
+          if (filing) {
+            movedDocs = filing.moved || 0;
+            filingFailed = filing.failed || 0;
+          }
+        } catch (err) {
+          console.warn('Filing budget documents failed:', err && err.message);
+        }
       }
+      setSummary({
+        listKind,
+        added,
+        fournisseurs,
+        doublons,
+        relies,
+        skipped: analysis.skipped || 0,
+        unmatchedProjets: analysis.unmatchedProjets || [],
+        budget: listKind === 'depenses' ? { relinked, movedDocs, filingFailed } : null,
+      });
+      setStep('done');
+    } finally {
+      setImporting(false);
     }
-    setSummary({
-      listKind,
-      added,
-      fournisseurs,
-      doublons,
-      relies,
-      skipped: analysis.skipped || 0,
-      unmatchedProjets: analysis.unmatchedProjets || [],
-    });
-    setStep('done');
   };
 
   const reset = () => {
@@ -231,6 +266,7 @@ export const AdminImportModal = ({ kind, onClose }) => {
         ) : step === 'review' && analysis ? (
           <ReviewBody
             analysis={analysis} pageLabel={pageLabel} dedupe={dedupe} setDedupe={setDedupe}
+            busy={busy || importing}
             onBack={() => { setStep('source'); setAnalysis(null); setClipRows(null); setError(''); }} onImport={runImport}
           />
         ) : (
@@ -325,7 +361,7 @@ const SourceBody = ({ text, onChangeText, busy, error, onAnalyse, onFile, onPast
 );
 
 /* ── Étape 2 : aperçu & confirmation ──────────────────────────────────────── */
-const ReviewBody = ({ analysis, pageLabel, dedupe, setDedupe, onBack, onImport }) => {
+const ReviewBody = ({ analysis, pageLabel, dedupe, setDedupe, busy = false, onBack, onImport }) => {
   const items = analysis.items || [];
   const preview = items.slice(0, 8);
   const more = Math.max(0, items.length - preview.length);
@@ -399,9 +435,11 @@ const ReviewBody = ({ analysis, pageLabel, dedupe, setDedupe, onBack, onImport }
         <button onClick={onBack} className="px-4 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-200 bg-slate-100">
           ← Changer la source
         </button>
-        <button onClick={onImport} disabled={items.length === 0}
+        <button onClick={onImport} disabled={items.length === 0 || busy}
                 className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-sm px-5 py-2 rounded-xl shadow-sm transition-colors">
-          Importer {items.length > 0 ? `les ${items.length} élément${items.length > 1 ? 's' : ''} ` : ''}dans {pageLabel}
+          {busy
+            ? 'Import en cours…'
+            : `Importer ${items.length > 0 ? `les ${items.length} élément${items.length > 1 ? 's' : ''} ` : ''}dans ${pageLabel}`}
         </button>
       </div>
     </div>
@@ -441,6 +479,18 @@ const DoneBody = ({ summary, onReset, onClose }) => (
       />
       <Stat label="Lignes ignorées" value={summary.skipped} tone="text-amber-600" />
     </div>
+
+    {summary.budget && (summary.budget.relinked > 0 || summary.budget.movedDocs > 0 || summary.budget.filingFailed > 0) ? (
+      <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-800 leading-relaxed">
+        <b>Documents budget (Drive)</b> : {summary.budget.relinked} document(s) relié(s) automatiquement aux
+        numéros importés · {summary.budget.movedDocs} fichier(s) classé(s) dans{' '}
+        <b>Budget_labo/{new Date().getFullYear()}/Devis|BC|Factures|BL|OM</b> — les N° devis / BC / facture / BL
+        sont désormais cliquables.
+        {summary.budget.filingFailed > 0
+          ? ` ⚠️ ${summary.budget.filingFailed} document(s) n'ont pas pu être classé(s) (Google Drive connecté ?).`
+          : ''}
+      </div>
+    ) : null}
 
     {summary.unmatchedProjets && summary.unmatchedProjets.length > 0 ? (
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">

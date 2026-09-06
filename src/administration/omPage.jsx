@@ -94,12 +94,23 @@ const NOTICE_TONES = {
   warn: 'bg-amber-50 border-amber-200 text-amber-700',
 };
 
-const Notice = ({ tone, text, onClose, mailto }) => (
+const Notice = ({ tone, text, onClose, mailto, consoleUrl }) => (
   <div className={`rounded-xl border px-4 py-2.5 text-xs font-semibold flex items-center justify-between gap-3 ${NOTICE_TONES[tone] || NOTICE_TONES.info}`}>
     <span className="min-w-0">{text}</span>
     <span className="flex items-center gap-3 shrink-0">
       {mailto && (
         <a href={mailto} className="font-black text-blue-700 underline whitespace-nowrap" title="Ouvrir votre messagerie pour envoyer l’e-mail">✉ Ouvrir ma messagerie</a>
+      )}
+      {consoleUrl && (
+        <a
+          href={consoleUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-black text-blue-700 underline whitespace-nowrap"
+          title="Console Google Cloud — à faire une seule fois par le propriétaire du projet"
+        >
+          ⚙ Activer l’API Gmail
+        </a>
       )}
       {onClose && (
         <button type="button" onClick={onClose} className="shrink-0 font-black opacity-60 hover:opacity-100" title="Masquer">✕</button>
@@ -486,6 +497,7 @@ export const OmPage = () => {
       tone: res && res.ok ? 'ok' : 'warn',
       text: summary.text,
       mailto: summary.mailto || undefined,
+      consoleUrl: summary.consoleUrl || undefined,
     });
   };
 
@@ -772,7 +784,7 @@ export const OmPage = () => {
         </div>
       </div>
 
-      {notice && <Notice tone={notice.tone} text={notice.text} mailto={notice.mailto} onClose={() => setNotice(null)} />}
+      {notice && <Notice tone={notice.tone} text={notice.text} mailto={notice.mailto} consoleUrl={notice.consoleUrl} onClose={() => setNotice(null)} />}
 
       <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
         <b>OM prévus / souhaités :</b> chaque OM décrit une mission à préparer (dates, demandeur, destination,

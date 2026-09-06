@@ -639,6 +639,7 @@ export const DesiderataPage = () => {
       tone: res && res.ok ? 'ok' : 'warn',
       text: summary.text,
       mailto: summary.mailto || undefined,
+      consoleUrl: summary.consoleUrl || undefined,
     });
   };
 
@@ -1004,6 +1005,17 @@ export const DesiderataPage = () => {
           <span className="flex items-center gap-3 shrink-0">
             {notice.mailto && (
               <a href={notice.mailto} className="font-black text-blue-700 underline whitespace-nowrap" title="Ouvrir votre messagerie pour envoyer l’e-mail">✉ Ouvrir ma messagerie</a>
+            )}
+            {notice.consoleUrl && (
+              <a
+                href={notice.consoleUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-black text-blue-700 underline whitespace-nowrap"
+                title="Console Google Cloud — à faire une seule fois par le propriétaire du projet"
+              >
+                ⚙ Activer l’API Gmail
+              </a>
             )}
             <button
               type="button"

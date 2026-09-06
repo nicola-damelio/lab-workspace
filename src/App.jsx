@@ -933,7 +933,11 @@ if (customType === 'dosy') {
   // and the same.
   const driveRenameTimeoutRef = useRef(null);
   useEffect(() => {
-    setDriveRootContext({ id: currentDatasetId || '', name: datasetTitle || '' });
+    setDriveRootContext({
+      id: currentDatasetId || '',
+      name: datasetTitle || '',
+      kind: isAdministrationKind(activeDatasetKind) ? 'administration' : 'scientific',
+    });
     if (!currentDatasetId || !getDriveToken()) return;
     if (driveRenameTimeoutRef.current) clearTimeout(driveRenameTimeoutRef.current);
     driveRenameTimeoutRef.current = setTimeout(() => {
@@ -943,7 +947,7 @@ if (customType === 'dosy') {
       if (driveRenameTimeoutRef.current) clearTimeout(driveRenameTimeoutRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentDatasetId, datasetTitle]);
+  }, [currentDatasetId, datasetTitle, activeDatasetKind]);
   const [customCmpds, setCustomCmpds] = useState([]);
   const [customCellLines, setCustomCellLines] = useState([]);
   const [customConc, setCustomConc] = useState({});
@@ -1982,7 +1986,7 @@ useEffect(() => {
   ]);
 
 
-  const exportHTML = () => {
+  const exportHTML = async () => {
     try {
       const isAdmin = isAdministrationKind(activeDatasetKind);
       // Hard rule: experiments may not be saved without a Project.
@@ -1991,15 +1995,66 @@ useEffect(() => {
         setDialog({ type: 'alert', title: 'Experiments must be linked to a Project', message: `${validation.message}\n\nLink every experiment to at least one Project (Projects → open project → “+ Add experiment”, or link existing experiments inside the project), then save again.` });
         return;
       }
+      const title = datasetTitle || (isAdmin ? 'Base d’administration' : 'Untitled Dataset');
+      const subtitle = datasetSubtitle || '';
       const payload = isAdmin
         ? LZString.compressToUTF16(JSON.stringify({ administration: adminContent || createAdministrationSeed() }))
         : getCompressedPayload();
 
+      /* Enregistre un instantané de l’ÉTAT du dataset (administratif comme
+         scientifique) sur Google Drive, dans le dossier de sauvegarde du
+         dataset : Lab Workspace/<dataset>/backups/. Si Drive n’est pas
+         connecté (ou en cas d’échec), un fichier HTML local est téléchargé à
+         la place — même format, relisible par « Load HTML ». */
+      const downloadSnapshot = (htmlStr) => {
+        const blob = new Blob([htmlStr], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${(datasetTitle || 'dataset').replace(/[^a-z0-9]+/gi, '_')}.html`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      };
+
+      let storedOnDrive = false;
+      if (getDriveToken() && currentDatasetId) {
+        try {
+          const html = buildBackupHtml(title, subtitle, payload);
+          const dsFolder = datasetFolderSlug(title);
+          const slug = sanitizeSlug(title) || 'dataset';
+          const idTag = String(currentDatasetId || '').replace(/[^a-z0-9]/gi, '').slice(-6) || 'ds';
+          const dateStr = new Date().toISOString().slice(0, 10);
+          const fname = `${slug}_${idTag}_save_${dateStr}.html`;
+          const res = await uploadWorkspaceFile({
+            name: fname,
+            mimeType: 'text/html',
+            file: new Blob([html], { type: 'text/html' }),
+            folder: `${dsFolder}/backups`,
+          });
+          if (res) {
+            storedOnDrive = true;
+            setBackupStatus({ state: 'ok', msg: `💾 État enregistré → Lab Workspace/<dataset>/backups (${dateStr})` });
+          }
+        } catch (err) {
+          console.warn('Save HTML to Drive failed:', err && err.message);
+        }
+      }
+
+      if (storedOnDrive) return;
+
+      setBackupStatus(
+        getDriveToken() && currentDatasetId
+          ? { state: 'error', msg: '⚠️ Enregistrement Drive impossible — copie locale téléchargée' }
+          : { state: 'skip', msg: '💾 Google Drive non connecté — copie locale téléchargée' }
+      );
+
       const dataBlob = {
         payload,
         isCompressed: true,
-        title: datasetTitle || 'Untitled Dataset',
-        subtitle: datasetSubtitle || '',
+        title,
+        subtitle,
         savedAt: Date.now()
       };
 
@@ -2019,19 +2074,7 @@ useEffect(() => {
 
       clone.querySelector('body').appendChild(tag);
 
-      const htmlStr = '<!DOCTYPE html>\n' + clone.outerHTML;
-      const blob = new Blob([htmlStr], { type: 'text/html' });
-      const url = URL.createObjectURL(blob);
-
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${(datasetTitle || 'dataset').replace(/[^a-z0-9]+/gi, '_')}.html`;
-
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      downloadSnapshot('<!DOCTYPE html>\n' + clone.outerHTML);
     } catch (e) {
       setDialog({
         type: 'alert',
@@ -2086,6 +2129,22 @@ useEffect(() => {
 
           s = JSON.parse(pStr);
           loadedTests = s.tests || s.plates || [];
+
+          /* Une sauvegarde d’une base d’administration (payload { administration:
+             … }) n’a pas d’expériences : elle est restaurée telle quelle. */
+          const isAdminLoad = !!s && typeof s.administration === 'object'
+            && s.administration !== null
+            && !Array.isArray(s.tests) && !Array.isArray(s.plates);
+          if (isAdminLoad) {
+            setPendingLoad({
+              tests: [],
+              fullState: s,
+              isAdmin: true,
+              adminTitle: dataBlob && (dataBlob.title || ''),
+              adminSubtitle: dataBlob && (dataBlob.subtitle || ''),
+            });
+            return;
+          }
 
           if (loadedTests.length === 0) {
             setDialog({
@@ -2147,6 +2206,40 @@ useEffect(() => {
   const confirmLoad = (mode) => {
     const { tests: loadedTests, fullState: s } = pendingLoad;
     let targetId = currentDatasetId;
+
+    /* Restauration d’une base d’administration : tout le contenu vit dans
+       s.administration (aucune expérience). Si la base actuellement ouverte
+       n’est PAS une base d’administration, la sauvegarde est restaurée dans
+       une NOUVELLE base (le dataset scientifique ouvert n’est pas touché). */
+    if (pendingLoad && pendingLoad.isAdmin) {
+      const admin = (s && typeof s.administration === 'object' && s.administration !== null)
+        ? s.administration
+        : createAdministrationSeed();
+      const restoringInPlace = !!currentDatasetId && isAdministrationKind(activeDatasetKind);
+      targetId = restoringInPlace ? currentDatasetId : 'ds_' + Date.now();
+      if (!restoringInPlace) {
+        setCurrentDatasetId(targetId);
+        setAppView('dataset');
+        window.history.pushState({}, '', '?dataset=' + targetId);
+      }
+      setActiveDatasetKind('administration');
+      setAdminContent(admin);
+      const loadedTitle = (pendingLoad && pendingLoad.adminTitle)
+        || (s && (s.title || s.datasetTitle))
+        || (restoringInPlace ? datasetTitle : 'Base d’administration');
+      const loadedSubtitle = (pendingLoad && pendingLoad.adminSubtitle)
+        || (s && (s.subtitle || s.datasetSubtitle))
+        || '';
+      setDatasetTitle(loadedTitle);
+      setDatasetSubtitle(loadedSubtitle);
+      setCurrentModule('administration');
+      setCurrentAdminPage('overview');
+      setAdminFocus(null);
+      resetAdminNavHistory();
+      setPendingLoad(null);
+      if (window.innerWidth < 768) setIsSidebarOpen(false);
+      return;
+    }
 
     if (!targetId || mode === 'replace') {
       targetId = s.id || 'ds_' + Date.now();
@@ -3286,34 +3379,65 @@ const openDataset = (dset) => {
       {pendingLoad && (
         <div className="fixed inset-0 bg-slate-900/50 z-[99999] flex items-center justify-center backdrop-blur-sm">
           <div className="bg-white p-6 rounded-xl shadow-xl border border-slate-200 w-full max-w-sm mx-4">
-            <h3 className="text-lg font-black text-slate-800 mb-2">Load Workspace Data</h3>
+            <h3 className="text-lg font-black text-slate-800 mb-2">
+              {pendingLoad.isAdmin ? 'Restore Administration Base' : 'Load Workspace Data'}
+            </h3>
 
-            <p className="text-sm text-slate-500 mb-6">
-              How would you like to load the data from this file?
-            </p>
+            {pendingLoad.isAdmin ? (
+              <>
+                <p className="text-sm text-slate-500 mb-6">
+                  This file contains an administration base ({' '}
+                  <b>{pendingLoad.adminTitle
+                    || (pendingLoad.fullState && (pendingLoad.fullState.title || pendingLoad.fullState.datasetTitle))
+                    || 'sans titre'}</b>
+                  ). Restoring replaces the open administration base — or creates
+                  a new one when a scientific dataset is currently open.
+                </p>
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={() => confirmLoad('replace')}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-left transition-colors"
+                  >
+                    ♻️ Restore this Administration Base
+                  </button>
+                  <button
+                    onClick={() => setPendingLoad(null)}
+                    className="mt-2 text-slate-500 hover:text-slate-700 text-sm font-bold py-2 w-full transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-slate-500 mb-6">
+                  How would you like to load the data from this file?
+                </p>
 
-            <div className="flex flex-col gap-3">
-              <button
-                onClick={() => confirmLoad('append')}
-                className="bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-800 font-bold py-2 px-4 rounded-lg text-left transition-colors"
-              >
-                ➕ Add to Current File
-              </button>
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={() => confirmLoad('append')}
+                    className="bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-800 font-bold py-2 px-4 rounded-lg text-left transition-colors"
+                  >
+                    ➕ Add to Current File
+                  </button>
 
-              <button
-                onClick={() => confirmLoad('replace')}
-                className="bg-red-50 hover:bg-red-100 border border-red-200 text-red-800 font-bold py-2 px-4 rounded-lg text-left transition-colors"
-              >
-                🔄 Substitute Data
-              </button>
+                  <button
+                    onClick={() => confirmLoad('replace')}
+                    className="bg-red-50 hover:bg-red-100 border border-red-200 text-red-800 font-bold py-2 px-4 rounded-lg text-left transition-colors"
+                  >
+                    🔄 Substitute Data
+                  </button>
 
-              <button
-                onClick={() => setPendingLoad(null)}
-                className="mt-2 text-slate-500 hover:text-slate-700 text-sm font-bold py-2 w-full transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
+                  <button
+                    onClick={() => setPendingLoad(null)}
+                    className="mt-2 text-slate-500 hover:text-slate-700 text-sm font-bold py-2 w-full transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

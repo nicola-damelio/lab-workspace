@@ -3,7 +3,7 @@ import { suggestDriveFileName, getDriveFolderUrl, setDriveFolderUrl, openDrive, 
 import { DriveUploadButton } from './DriveUpload';
 import { docxToHtml } from '../utils/docxImport';
 import { getRenderableDriveUrl, repairContentImages } from '../data/constants';
-import { archiveFileToDrive, uploadLocalFile, dataUrlToBlob, withExtension, getDriveToken } from '../utils/driveUpload';
+import { archiveFileToDrive, uploadLocalFile, dataUrlToBlob, withExtension, getDriveToken, saveUploadForRetry } from '../utils/driveUpload';
 
 export const RichTextEditor = ({
   value, onChange, placeholder, toolbarExtra = [],
@@ -22,6 +22,11 @@ export const RichTextEditor = ({
     const [pasteNotice, setPasteNotice] = useState(''); // shown when an image had to stay LOCAL (Drive unavailable)
     const [selImg, setSelImg] = useState(null);   // currently selected image (for resizing)
     const [selImgW, setSelImgW] = useState(100);  // its display width (%)
+    // Pasted/dropped images that had to stay LOCAL because Drive was down are
+    // queued for an automatic re-upload; this map remembers the exact data URL
+    // that was inserted (by queue id) so it can be swapped for the Drive URL.
+    const pendingPastesRef = useRef(null);
+    if (!pendingPastesRef.current) pendingPastesRef.current = new Map();
 
     // Deselect the resized image and clear its highlight class.
     const clearSelImg = () => {
@@ -270,14 +275,17 @@ export const RichTextEditor = ({
                 let imgSrc = dataUrl;
                 let uploadedToDrive = false;
                 let driveError = '';
+                // The pasted-image file name must survive the try/catch below:
+                // it is reused when the image is queued for a later re-upload.
+                const pastedNum = (editorRef.current ? editorRef.current.querySelectorAll('img').length : 0) + 1;
+                const pastedTitle = `pasted_image_${pastedNum}`;
                 try {
-                    const pastedNum = (editorRef.current ? editorRef.current.querySelectorAll('img').length : 0) + 1;
-                    const pastedTitle = `pasted_image_${pastedNum}`;
                     const drive = await uploadLocalFile({
                         name: withExtension(suggestDriveFileName({ ...(fileNaming || {}), title: pastedTitle }), `${pastedTitle}.jpg`),
                         mimeType: 'image/jpeg',
                         file: dataUrlToBlob(dataUrl),
-                        ctx: { ...(fileNaming || {}), title: pastedTitle }
+                        ctx: { ...(fileNaming || {}), title: pastedTitle },
+                        skipQueue: true // queued below with the exact data URL (deduplicated)
                     });
                     if (drive && drive.driveUrl) {
                         imgSrc = getRenderableDriveUrl(drive.driveUrl);
@@ -291,10 +299,27 @@ export const RichTextEditor = ({
                 if (!uploadedToDrive) {
                     // NOT silent anymore: a local (base64) image never reaches a
                     // Drive folder, so the user must know. If Drive is simply not
-                    // connected, offer to connect it right away.
-                    setPasteNotice('⚠ Image inserted as a LOCAL copy — it was NOT saved to Google Drive'
-                        + (driveError ? ` (${driveError})` : '')
-                        + '. Connect Drive and paste it again to archive it in the instance folder.');
+                    // connected, offer to connect it right away. The image is ALSO
+                    // queued for an automatic re-upload, so as soon as Drive
+                    // answers again it is archived in the instance folder and the
+                    // local data URL below is replaced by the real Drive link.
+                    let queuedForRetry = false;
+                    try {
+                        const queued = await saveUploadForRetry({
+                            name,
+                            mimeType: 'image/jpeg',
+                            file: dataUrl,
+                            ctx: { ...(fileNaming || {}), title: pastedTitle },
+                            source: 'paste'
+                        });
+                        queuedForRetry = !!(queued && queued.queued);
+                        if (queuedForRetry) pendingPastesRef.current.set(queued.id, dataUrl);
+                    } catch { /* queue is best-effort */ }
+                    setPasteNotice(queuedForRetry
+                        ? '⚠ Image inserted as a LOCAL copy for now — it will be archived to the instance Google Drive folder AUTOMATICALLY as soon as the connection is restored.'
+                        : '⚠ Image inserted as a LOCAL copy — it was NOT saved to Google Drive'
+                            + (driveError ? ` (${driveError})` : '')
+                            + '. Connect Drive and paste it again to archive it in the instance folder.');
                     if (!getDriveToken()) {
                         try { window.dispatchEvent(new CustomEvent('lab:connect-drive')); } catch { /* ignore */ }
                     }
@@ -325,6 +350,34 @@ export const RichTextEditor = ({
         e.preventDefault();
         insertImageBlob(file);
     };
+    // When a queued (Drive-unavailable) pasted image is finally uploaded after
+    // reconnection, replace its local data URL with the real Drive URL inside
+    // the editor content, so the saved HTML references the archived file.
+    useEffect(() => {
+        const onPendingUploaded = (e) => {
+            const detail = (e && e.detail) || {};
+            if (!detail.id) return;
+            const dataUrl = pendingPastesRef.current.get(detail.id);
+            const driveUrl = detail.drive && detail.drive.driveUrl;
+            if (!dataUrl || !driveUrl || !editorRef.current) return;
+            const imgs = editorRef.current.querySelectorAll('img');
+            let replaced = false;
+            for (let i = 0; i < imgs.length; i++) {
+                if (imgs[i].getAttribute('src') === dataUrl) {
+                    imgs[i].setAttribute('src', getRenderableDriveUrl(driveUrl));
+                    replaced = true;
+                }
+            }
+            pendingPastesRef.current.delete(detail.id);
+            if (replaced) {
+                onChange(editorRef.current.innerHTML);
+                setPasteNotice('✓ Image uploaded to Google Drive after reconnection — the Drive link replaced the local copy.');
+            }
+        };
+        window.addEventListener('lab:pending-uploaded', onPendingUploaded);
+        return () => window.removeEventListener('lab:pending-uploaded', onPendingUploaded);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
     // ---- Image resizing: clicking an inserted figure selects it ----
     const onEditorMouseUp = (e) => {
         storeSel();

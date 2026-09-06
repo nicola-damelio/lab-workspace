@@ -22,3 +22,28 @@ button [class*=" text-[11px]"] {
   font-size: 0.75rem !important;   /* 12px */
   line-height: 1rem !important;
 }
+
+/* ---------------------------------------------------------------------------
+   Uniform character dimension inside TABLES (all pages).
+   Every header and every cell uses the same base 13px — no more tiny 9–12px
+   characters next to normal ones. Small font utilities found inside cells are
+   raised to the table base (`inherit` = the td/th base above), so badges,
+   references, dates, amounts and captions all read at the same size.
+   ------------------------------------------------------------------------- */
+table td,
+table th {
+  font-size: 0.8125rem !important;  /* 13px — shared tabular base */
+  line-height: 1.35;
+}
+
+/* Inside table cells, the tiny 8–12px text tokens (incl. text-xs) converge to
+   the base size above. Elements without an explicit token simply inherit it. */
+table td [class*="text-[8px]"], table th [class*="text-[8px]"],
+table td [class*="text-[9px]"], table th [class*="text-[9px]"],
+table td [class*="text-[10px]"], table th [class*="text-[10px]"],
+table td [class*="text-[11px]"], table th [class*="text-[11px]"],
+table td [class*="text-[12px]"], table th [class*="text-[12px]"],
+table td .text-xs, table th .text-xs {
+  font-size: inherit !important;
+  line-height: inherit !important;
+}

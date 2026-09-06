@@ -28,6 +28,15 @@ export const GOOGLE_DRIVE_CLIENT_ID = '763848765523-kvjohq6qv8oifb2n86ibh6m4vm40
 // The notifications are sent through the Gmail API using the Google account
 // already connected for Drive; the "gmail.send" scope is therefore added to
 // the consent requested by the app. Empty = no Gmail sending.
+//
+// REQUIRED ONE-TIME SETUP (same Google Cloud project as GOOGLE_DRIVE_CLIENT_ID):
+//   the Gmail API must be ENABLED in that project, otherwise Google answers
+//   "Gmail API has not been used in project … or it is disabled" and no email
+//   is ever sent (re-consenting does NOT fix it). Enable it at:
+//     https://console.developers.google.com/apis/api/gmail.googleapis.com
+//   (project 763848765523 for the client configured below), then wait a few
+//   minutes. The app detects this case and points the user to that console
+//   page instead of suggesting a useless reconnect.
 export const GOOGLE_MAIL_SEND_SCOPE = 'https://www.googleapis.com/auth/gmail.send';
 
 // --- PERMANENT GOOGLE DRIVE ACCESS (refresh tokens) ---

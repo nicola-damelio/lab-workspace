@@ -9,6 +9,13 @@
    Personnel. En secours, l'app utilise le serveur partagé (server/token-
    server.js, endpoint POST /api/mail) puis un lien mailto: pré-rempli
    (aucun e-mail n'est jamais envoyé silencieusement sans adresse valide).
+   NB configuration : pour que l'envoi automatique fonctionne, l'API « Gmail »
+   doit être activée UNE FOIS dans le projet Google Cloud du client OAuth
+   (console Google Cloud → « API Gmail »). Si Google répond « Gmail API has not
+   been used in project … or it is disabled », une reconnexion de « Google
+   Drive » ne corrige pas le problème : c'est l'activation de l'API dans la
+   console qui débloque l'envoi (voir sendAdminGmail dans driveUpload.js).
+
    ========================================================================= */
 import { GOOGLE_TOKEN_EXCHANGE_URL } from '../data/constants';
 import { sendAdminGmail } from '../utils/driveUpload';
@@ -151,6 +158,7 @@ export const sendAdminMail = async ({ to = [], subject = '', text = '', fromName
     ok: false,
     mode: 'mailto',
     mailto,
+    ...(gmail && gmail.consoleUrl ? { consoleUrl: gmail.consoleUrl } : {}),
     reason: gmail.reason || 'Aucun serveur e-mail configuré (GOOGLE_TOKEN_EXCHANGE_URL vide).',
   };
 };
@@ -163,6 +171,7 @@ export const summarizeMail = (res, label = 'Notification') => {
     return {
       text: `${label} : e-mail NON envoyé — ${res.reason || 'serveur e-mail indisponible'}. Cliquez pour l'envoyer depuis votre messagerie.`,
       mailto: res.mailto,
+      ...(res.consoleUrl ? { consoleUrl: res.consoleUrl } : {}),
     };
   }
   return { text: `${label} : e-mail NON envoyé — ${(res && res.reason) || 'aucune adresse e-mail disponible (fiche Personnel).'}` };

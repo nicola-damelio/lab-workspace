@@ -54,11 +54,12 @@
    dans le dossier du dataset › Budget_labo/<année courante>/Devis|BC|BL|OM|Factures
    (dossiers créés si besoin) — voir ./driveFiling.js.
    ========================================================================= */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAdmin } from './AdminContext';
 import { SmartTable } from './smartTable';
 import { AdminImportModal } from './adminImportModal';
 import { toFrDate } from './congesDates';
+import { relinkDepenseDocuments, depenseDocSlots } from './budgetLink';
 import {
   RECETTE_TYPES, DEPENSE_NATURES, DEPENSE_STATUSES, DEPENSE_FOURNISSEUR_PI,
   isPiFournisseur, depenseKindOf, DEPENSE_KIND_META, DEPENSE_FIELD_LABEL,
@@ -389,7 +390,7 @@ const SummaryCard = ({ label, value, tone = 'slate', hint }) => {
 const DepensesPage = () => {
   const {
     data, settings, upsert, remove, currentUser,
-    access, navigate, focus, clearFocus,
+    access, navigate, focus, clearFocus, updateMany,
   } = useAdmin();
   const list = useMemo(() => (Array.isArray(data.depenses) ? data.depenses : []), [data.depenses]);
   const recettes = useMemo(() => (Array.isArray(data.recettes) ? data.recettes : []), [data.recettes]);
@@ -404,6 +405,32 @@ const DepensesPage = () => {
   /* Réattribution automatique des dépenses dont la « Catégorie » contredit le
      type de la ligne budgétaire imputée (page Recettes) — voir le hook. */
   const linkRepair = useDepenseLinkRepair();
+
+  /* Après un import « Dépenses » depuis un fichier (ou l’ouverture de la page),
+     on rétablit automatiquement les liens des documents Google Drive dont seul
+     le numéro a été importé : recherche par N° dans Budget_labo/<année>/… — les
+     numéros redeviennent cliquables. La signature évite de relancer le scan en
+     boucle : les liens retrouvés font changer la signature, et les documents
+     introuvables restent silencieux jusqu’au prochain changement des lignes. */
+  const budgetRelinkSigRef = useRef('');
+  useEffect(() => {
+    const sig = JSON.stringify(list.map((r) => depenseDocSlots(r)
+      .map((s) => `${s.code}|${s.urlField}|${s.livraisonIndex === undefined ? '' : s.livraisonIndex}`)
+      .join('§')));
+    if (!sig || sig === budgetRelinkSigRef.current) return;
+    budgetRelinkSigRef.current = sig;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { updates } = await relinkDepenseDocuments(list);
+        if (!cancelled && updates.length) updateMany('depenses', updates);
+      } catch (err) {
+        console.warn('Restauration des liens budget impossible :', err && err.message);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list]);
 
   /* Ligne « cible » d’une navigation inter-page (bouton « → Dépenses » de la
      page OM) : on bascule sur son onglet puis on la surligne dans le tableau. */

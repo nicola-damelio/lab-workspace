@@ -81,6 +81,11 @@ export const clearDriveToken = () => {
 const FOLDER_NAME_KEY = 'labDriveFolderName';
 import { suggestDriveFileName, sanitizeSlug, driveFolderPath, DATASET_FOLDER_DIRS, datasetFolderSlug, canonicalPageSection, canonicalExperimentPath, projectNamesOf } from './driveNaming';
 import { getCloudProvider, nextcloudConfigured, ncUploadFile } from './nextcloud';
+import {
+  enqueuePendingUpload, removePendingUpload, listPendingUploads,
+  touchPendingUpload, notifyPendingChanged,
+  MAX_SINGLE_BYTES, MAX_PENDING_AGE_MS
+} from './pendingUploads';
 
 /** The name of the currently open dataset folder ('' when none is open). */
 export const getDriveRootName = () => driveRootName;
@@ -270,18 +275,34 @@ export const driveFetch = async (path, opts = {}) => {
 
 let driveRootId = '';            // dataset id the root folder belongs to
 let driveRootName = '';          // desired dataset folder name ('' → Lab Workspace root)
+let driveRootKind = 'scientific'; // 'scientific' | 'administration' (folder layout choice)
 let driveRootResolvedId = getDriveFolderDatasetId();   // dataset id of the cached labDriveFolderId
 let driveRootResolvedName = getDriveFolderName();      // dataset-name the cached labDriveFolderId was created with
 
+/** Sub-directories that may exist directly inside a dataset folder. Scientific
+ *  datasets keep the canonical five-folder tree (projects / backups / protocols
+ *  / storage / publications). An ADMINISTRATION dataset only needs its own
+ *  `backups` folder (weekly HTML snapshots) and the `Budget_labo` container
+ *  created by the expense/Document filing helpers — never projects, protocols,
+ *  storage or publications (which belong to the scientific datasets only). */
+const datasetDirNames = () =>
+  driveRootKind === 'administration'
+    ? ['backups', 'Budget_labo']
+    : DATASET_FOLDER_DIRS;
+
 /** Tell the Drive layer which main file (dataset) is currently open, so the
- *  dataset folder on Drive (inside "Lab Workspace") is named after it.
- *  Called by App.jsx whenever the current dataset id or title changes. */
-export const setDriveRootContext = ({ id = '', name = '' } = {}) => {
+ *  dataset folder on Drive (inside "Lab Workspace") is named after it, and
+ *  which internal folder layout it expects (`kind` = 'scientific' |
+ *  'administration'). Called by App.jsx whenever the current dataset id,
+ *  title or kind changes. */
+export const setDriveRootContext = ({ id = '', name = '', kind = '' } = {}) => {
   const nextId = String(id || '');
   const nextName = String(name || '').trim();
-  if (nextId === driveRootId && nextName === driveRootName) return;
+  const nextKind = kind === 'administration' ? 'administration' : 'scientific';
+  if (nextId === driveRootId && nextName === driveRootName && nextKind === driveRootKind) return;
   driveRootId = nextId;
   driveRootName = nextName;
+  if (nextKind) driveRootKind = nextKind;
   // Switching to a DIFFERENT dataset → the cached folder id belongs to the
   // previous one: drop it so the new dataset gets its own folder. An EMPTY id
   // (nothing open yet / going back to the explorer) keeps the cache, so
@@ -289,6 +310,15 @@ export const setDriveRootContext = ({ id = '', name = '' } = {}) => {
   // rename it in place.
   if (nextId && nextId !== driveRootResolvedId) setDriveFolderId('');
 };
+
+/** Which dataset the CURRENT Drive context points to (for the pending-upload
+ *  queue: an upload enqueued while dataset A was open must be flushed into
+ *  dataset A's folder even if the user has opened dataset B in the meantime). */
+export const getDriveRootAnchor = () => ({
+  datasetId: driveRootId,
+  rootFolderId: getDriveFolderId(),
+  kind: driveRootKind
+});
 
 /** Find (or create) the app's "Lab Workspace" root folder (inside the user's
  *  saved Drive folder URL if one is set, otherwise at the Drive root). */
@@ -334,12 +364,17 @@ export const listDriveChildren = async (parentId) => {
   } catch { return []; }
 };
 
-/** Ensure the canonical five sub-directories exist inside a dataset folder.
- *  Returns the {name → id} map of the dataset folder structure. */
-export const ensureDatasetFolderStructure = async (datasetRootId) => {
+/** Ensure the sub-directories a dataset folder needs exist inside it.
+ *  Scientific datasets get the canonical five-folder tree
+ *  (projects/backups/protocols/storage/publications); an administration
+ *  dataset only gets its own `backups` + `Budget_labo` containers (the
+ *  budget-document helpers create Budget_labo/<year>/… on demand).
+ *  Returns the {name → id} map of the created folder structure. */
+export const ensureDatasetFolderStructure = async (datasetRootId, dirs = null) => {
   const map = {};
   if (!datasetRootId || !getDriveToken()) return map;
-  for (const dir of DATASET_FOLDER_DIRS) {
+  const list = Array.isArray(dirs) && dirs.length ? dirs : datasetDirNames();
+  for (const dir of list) {
     try {
       map[dir] = await findOrCreateFolder(dir, datasetRootId);
     } catch { map[dir] = ''; }
@@ -377,9 +412,12 @@ export const cleanupWorkspaceRootFolders = async ({ legacyFolderNames = [], skip
 };
 
 /** Resolve the upload root folder: "Lab Workspace" → the dataset folder inside
- *  it (when the dataset has a title). The dataset folder ALWAYS gets the
- *  canonical five-folder structure (projects/backups/protocols/storage/
- *  publications) so uploads and weekly backups share one dataset directory. */
+ *  it (when the dataset has a title). The dataset folder ALWAYS gets its own
+ *  internal structure — the canonical five-folder tree for scientific datasets
+ *  (projects/backups/protocols/storage/publications), or only backups +
+ *  Budget_labo for an administration dataset — so uploads and weekly backups
+ *  share one dataset directory and scientific folders are never created inside
+ *  an administration base. */
 export const ensureDriveFolder = async () => {
   const name = driveRootName ? datasetFolderSlug(driveRootName) : '';
   const saved = getDriveFolderId();
@@ -1035,6 +1073,69 @@ const uploadDriveFileToFolderOnce = async ({ name, mimeType, file, ctx = null, p
   return { id: fileMeta.id, name: fileMeta.name, driveUrl: `https://drive.google.com/file/d/${fileMeta.id}/view` };
 };
 
+// ── Pending-upload queue (automatic retry when Drive comes back) ───────────
+// When Drive is unreachable (workspace token server down, token expired,
+// network blip) an upload must not be lost: its bytes are parked in the
+// IndexedDB-backed queue (pendingUploads.js). uploadLocalFile() and the
+// upload button enqueue the failed attempt automatically, and
+// flushPendingUploads() replays the whole queue as soon as
+// 'lab:drive-connected' fires again (the auto-renew mints a fresh token every
+// minute while the server is down, so this happens WITHOUT user action).
+// A deterministic id (name + naming context + payload tag) makes repeated
+// attempts for the same file REPLACE the queued copy instead of duplicating.
+
+const hashQueueId = (s) => {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+};
+
+/** Payload fingerprint: two different files that share the same suggested name
+ *  (e.g. two pasted screenshots both called "pasted_image_1") stay distinct. */
+const payloadTagOf = (file) => {
+  if (typeof file === 'string' && String(file).indexOf('data:') === 0) {
+    const s = String(file);
+    return `d|${s.length}|${hashQueueId(s.slice(0, 256))}`;
+  }
+  if (file && typeof file.size === 'number') {
+    const nm = (file.name && String(file.name)) || 'blob';
+    const lm = (file.lastModified && Number(file.lastModified)) || 0;
+    return `b|${nm}|${lm}|${file.size}`;
+  }
+  return '';
+};
+
+/**
+ * Queue a failed upload for automatic retry when Drive answers again.
+ * Google Drive provider only (Nextcloud failures are reported as-is).
+ * @returns {Promise<{queued:boolean,id?:string,reason?:string}>}
+ */
+export const saveUploadForRetry = async ({ name, mimeType, file, ctx = null, path = null, source = 'upload' } = {}) => {
+  try {
+    if (!name || !file || getCloudProvider() === 'nextcloud') return { queued: false, reason: 'unsupported' };
+    const isDataUrl = typeof file === 'string' && String(file).indexOf('data:') === 0;
+    const isBlob = !isDataUrl && typeof Blob !== 'undefined' && file instanceof Blob;
+    if (!isDataUrl && !isBlob) return { queued: false, reason: 'unsupported' };
+    const approxBytes = isDataUrl ? Math.ceil(String(file).length * 0.75) : (Number(file.size) || 0);
+    if (approxBytes > MAX_SINGLE_BYTES) return { queued: false, reason: 'too_large' };
+    const tag = payloadTagOf(file);
+    const id = `pq_${hashQueueId([name, JSON.stringify(ctx || null), JSON.stringify(path || null), tag].join('|'))}`;
+    return await enqueuePendingUpload({
+      id,
+      name,
+      mimeType: mimeType || 'application/octet-stream',
+      payload: file,
+      ctx: ctx && typeof ctx === 'object' ? { ...ctx } : null,
+      path: Array.isArray(path) ? path.slice() : null,
+      source,
+      ...getDriveRootAnchor()
+    });
+  } catch (err) {
+    console.warn('Could not queue the failed upload:', err && err.message);
+    return { queued: false, reason: 'storage' };
+  }
+};
+
 /** Public upload entry point.
  *
  *  Many-to-many experiments: when `ctx` describes an experiment (ctx.test) and
@@ -1047,7 +1148,7 @@ const uploadDriveFileToFolderOnce = async ({ name, mimeType, file, ctx = null, p
  *  Non-experiment uploads (protocols, publications, figures, imports that pass
  *  an explicit `path`) are routed exactly as before.
  */
-export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path = null }) => {
+export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path = null, skipQueue = false }) => {
   const folderCtxs = [];
   if (ctx && typeof ctx === 'object' && String(ctx.test || '').trim() && ctx.protocol === undefined) {
     const projects = projectNamesOf(ctx);
@@ -1081,7 +1182,102 @@ export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path =
       console.warn(`Drive upload failed for project "${(singleCtx && singleCtx.project) || ''}":`, err && err.message);
     }
   }
+  if (!last && !skipQueue) {
+    // Every folder copy failed → Drive is unreachable right now (token server
+    // down / token expired / network error). Keep the file in the pending
+    // queue so flushPendingUploads() replays it as soon as Drive answers
+    // again, instead of losing it. The public contract is unchanged (null).
+    await saveUploadForRetry({ name, mimeType, file, ctx, path, source: 'upload' }).catch(() => null);
+  }
   return last;
+};
+
+let flushPendingInFlight = false;
+
+/** Back-off between retry attempts of one file (30 s → … → max 30 min). */
+const pendingRetryDelayMs = (attempts) => {
+  if (!attempts || attempts <= 0) return 0;
+  return Math.min(30 * 1000 * (2 ** Math.min(attempts - 1, 6)), 30 * 60 * 1000);
+};
+
+/**
+ * Replay every queued upload now that Drive is (possibly) reachable again.
+ * Items that belong to a dataset that is NOT currently open are left queued
+ * (never uploaded into the wrong dataset folder); they flush as soon as that
+ * dataset is opened again and a token renewal succeeds.
+ * @returns {Promise<number>} number of files successfully uploaded
+ */
+export const flushPendingUploads = async () => {
+  if (flushPendingInFlight || typeof window === 'undefined') return 0;
+  if (getCloudProvider() === 'nextcloud') return 0;
+  // A token is required to upload anything. If none is cached, try one silent
+  // renewal (personal refresh token / shared workspace mint) — when the
+  // workspace server is still down this returns false quickly and we simply
+  // wait for the next 'lab:drive-connected'.
+  try {
+    if (!getDriveToken()) {
+      const ok = await renewDriveTokenSilently();
+      if (!ok) return 0;
+    }
+  } catch { return 0; }
+
+  flushPendingInFlight = true;
+  let uploaded = 0;
+  try {
+    const items = await listPendingUploads();
+    if (!items.length) return 0;
+    const now = Date.now();
+    const currentAnchor = getDriveRootAnchor();
+    for (const item of items) {
+      if (!item || !item.id) continue;
+      // Housekeeping: queued copies older than 30 days are dropped (the local
+      // in-app copy kept in the dataset document is never affected).
+      if (now - (item.createdAt || now) > MAX_PENDING_AGE_MS) {
+        await removePendingUpload(item.id).catch(() => {});
+        continue;
+      }
+      // Never upload into the WRONG dataset folder when another dataset is open.
+      if (item.datasetId && (!currentAnchor.datasetId || currentAnchor.datasetId !== item.datasetId)) continue;
+      // Back-off after failed attempts so a permanently failing item (e.g. a
+      // full Drive quota) does not hammer the API on every reconnect.
+      if (item.attempts > 0 && now - (item.lastAttemptAt || 0) < pendingRetryDelayMs(item.attempts)) continue;
+      try {
+        const drive = await uploadLocalFile({
+          name: item.name,
+          mimeType: item.mimeType,
+          file: item.payload,
+          ctx: item.ctx || null,
+          path: item.path || null,
+          skipQueue: true
+        });
+        if (drive && drive.id) {
+          uploaded++;
+          await removePendingUpload(item.id).catch(() => {});
+          try {
+            window.dispatchEvent(new CustomEvent('lab:pending-uploaded', {
+              detail: {
+                id: item.id,
+                name: item.name,
+                mimeType: item.mimeType,
+                drive,
+                ctx: item.ctx || null,
+                dataUrl: item.kind === 'dataUrl' && typeof item.payload === 'string' ? item.payload : ''
+              }
+            }));
+          } catch { /* ignore */ }
+        } else {
+          await touchPendingUpload(item.id, { attempts: (item.attempts || 0) + 1, lastAttemptAt: now }).catch(() => {});
+        }
+      } catch (err) {
+        console.warn(`Pending upload "${item.name}" failed — kept for a later retry:`, err && err.message);
+        await touchPendingUpload(item.id, { attempts: (item.attempts || 0) + 1, lastAttemptAt: now }).catch(() => {});
+      }
+    }
+  } finally {
+    flushPendingInFlight = false;
+    try { notifyPendingChanged(); } catch { /* ignore */ }
+  }
+  return uploaded;
 };
 
 /** Build the "_deleted" variant of a file name (inserted before the extension). */
@@ -1552,13 +1748,22 @@ const initDriveAutoRenew = () => {
           else if (lastSharedDriveConnectedAt > 0) notifyDriveDisconnected();
         });
       }
+      // A dataset may have been opened since the last attempt: replay the
+      // pending-upload queue for it whenever a token is usable.
+      try { flushPendingUploads(); } catch { /* ignore */ }
     } catch { /* ignore */ }
   }, 60 * 1000);
 };
 if (typeof window !== 'undefined') {
   try { window.addEventListener('lab:drive-connected', () => scheduleAutoDriveRenew()); } catch { /* ignore */ }
+  // Drive is (or just became) reachable → replay the pending-upload queue.
+  // A small delay lets the freshly minted token land before the first upload.
+  try { window.addEventListener('lab:drive-connected', () => setTimeout(() => { try { flushPendingUploads(); } catch { /* ignore */ } }, 700)); } catch { /* ignore */ }
   initDriveAutoRenew();
   kickOffSharedWorkspaceToken();
+  // A page reload with a leftover queue: try once after startup (also covers
+  // the personal mode where a stored refresh token is exchanged silently).
+  setTimeout(() => { try { flushPendingUploads(); } catch { /* ignore */ } }, 3500);
 }
 
 // ── File-name registry: remember what context each uploaded file was named
@@ -1896,6 +2101,38 @@ const buildGmailRaw = ({ fromEmail, fromName = '', replyTo = '', to = [], subjec
   for (let i = 0; i < body.length; i += 76) lines.push(body.slice(i, i + 76));
   return gmailBase64Url(gmailToBase64(lines.join('\r\n')));
 };
+/* Analyse d'une réponse d'erreur de l'API Gmail :
+   - 'api_disabled'     : l'API Gmail n'est PAS activée dans le projet Google
+                          Cloud du client OAuth (réponse « has not been used in
+                          project … or it is disabled » / SERVICE_DISABLED).
+                          Aucun consentement de reconnexion ne peut corriger
+                          ça — action dans la console Google Cloud uniquement.
+   - 'consent_missing'  : le compte a un jeton sans la portée gmail.send.
+   - 'other'            : autre refus (politique, quota, réseau…). */
+const gmailErrorKind = (json) => {
+  const err = json && json.error;
+  const msg = String((err && (err.message || err.error_description)) || '').toLowerCase();
+  const details = JSON.stringify((Array.isArray(err && err.details) ? err.details : []) || []).toLowerCase();
+  if (/has not been used in project|or it is disabled|service_disabled|accessnotconfigured/i.test(`${msg} ${details}`)) {
+    return 'api_disabled';
+  }
+  if (/insufficient_permission|scope.*(denied|missing|forbidden)|forbidden|unauthorized_client/i.test(`${msg} ${details}`)) {
+    return 'consent_missing';
+  }
+  return 'other';
+};
+
+/* Lien console « API Gmail » pour le projet du message d'erreur (sinon lien
+   générique vers le client OAuth configuré). */
+const gmailConsoleUrl = (json) => {
+  const raw = String((json && json.error && (json.error.message || '')) || '');
+  const fromUrl = raw.match(/project=(\d+)/i);
+  const fromProj = raw.match(/project\s+(\d+)/i);
+  const project = (fromUrl && fromUrl[1]) || (fromProj && fromProj[1])
+    || String(getConfiguredDriveClientId()).split('-')[0];
+  return `https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=${project}`;
+};
+
 /** Envoi automatique d'un e-mail via l'API Gmail du compte Google connecté
  *  (celui utilisé pour Drive). Ne lève jamais — renvoie
  *  { ok, id? } ou { ok:false, reason }. */
@@ -1985,7 +2222,17 @@ export const sendAdminGmail = async ({ to = [], subject = '', text = '', fromNam
     token = getDriveToken();
     if (token) result = await attempt(token);
   }
-  if (result.status === 403 && !sharedWorkspaceMode() && getConfiguredDriveClientId()) {
+  if (result.status === 403 && gmailErrorKind(result.j) === 'api_disabled') {
+    /* API Gmail désactivée dans le projet Google Cloud : aucune popup inutile —
+       une reconnexion n'y changerait rien, seul l'activation console compte. */
+    const url = gmailConsoleUrl(result.j);
+    return {
+      ok: false,
+      consoleUrl: url,
+      reason: 'Gmail a refusé l’envoi : l’API « Gmail » n’est pas activée dans le projet Google Cloud de l’application (la reconnexion de « Google Drive » ne suffit pas). Cliquez sur « Activer l’API Gmail » pour l’activer dans la console Google Cloud, puis attendez quelques minutes avant de réessayer.',
+    };
+  }
+  if (result.status === 403 && !sharedWorkspaceMode() && getConfiguredDriveClientId() && GOOGLE_MAIL_SEND_SCOPE) {
     /* La permission gmail.send manque au jeton courant (connexion antérieure) :
        demander une seule fois le consentement complet (drive.file + gmail.send). */
     try { await loadGis(); } catch { /* ignoré */ }
@@ -2000,9 +2247,12 @@ export const sendAdminGmail = async ({ to = [], subject = '', text = '', fromNam
   }
   const apiMsg = (result.j && result.j.error && (result.j.error.message || result.j.error_description))
     || `HTTP ${result.status || '?'}`;
+  const kind = result.status === 403 ? gmailErrorKind(result.j) : 'other';
   const hint = sharedWorkspaceMode()
     ? 'Le propriétaire doit relancer une fois « ?drive-bootstrap=1 » en acceptant la permission « envoyer des e-mails » (gmail.send).'
-    : 'Reconnectez « Google Drive » en acceptant la permission « envoyer des e-mails » puis réessayez.';
+    : (kind === 'consent_missing'
+      ? 'Reconnectez « Google Drive » en acceptant la permission « envoyer des e-mails » puis réessayez.'
+      : 'Vérifiez que l’API « Gmail » est activée dans la console Google Cloud du projet, ou utilisez le lien de secours ci-dessous.');
   return { ok: false, reason: `Gmail a refusé l’envoi : ${apiMsg}. ${hint}` };
 };
 

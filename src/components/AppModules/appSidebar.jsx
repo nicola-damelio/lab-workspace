@@ -6,6 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { Icon } from '../Icons';
 import { getDriveToken, getDriveAccountEmail, clearDriveToken, sharedWorkspaceMode } from '../../utils/driveUpload';
+import { countPendingUploads } from '../../utils/pendingUploads';
 import { openDrive } from '../../utils/driveNaming';
 
 export const AppSidebar = ({
@@ -25,6 +26,24 @@ export const AppSidebar = ({
 }) => {
   const [driveConnected, setDriveConnected] = useState(!!getDriveToken());
   const [driveAccount, setDriveAccount] = useState('');
+  const [pendingCount, setPendingCount] = useState(0);
+
+  // Uploads waiting for Drive (kept locally when the workspace token server was
+  // down) — they are replayed automatically as soon as the connection returns.
+  useEffect(() => {
+    let alive = true;
+    const refresh = () => {
+      countPendingUploads().then((n) => { if (alive) setPendingCount(n || 0); }).catch(() => {});
+    };
+    const onChange = (e) => {
+      const n = e && e.detail && e.detail.count;
+      if (typeof n === 'number') { if (alive) setPendingCount(n); }
+      else refresh();
+    };
+    window.addEventListener('lab:pending-uploads-changed', onChange);
+    refresh();
+    return () => { alive = false; window.removeEventListener('lab:pending-uploads-changed', onChange); };
+  }, []);
 
   // Navigation adaptée au type de base ouverte : dans une base
   // d’administration, seule sa page est proposée ; dans une base scientifique,
@@ -307,6 +326,23 @@ export const AppSidebar = ({
                     </button>
                   )
                 )}
+
+                {/* Files kept locally because Drive was unavailable — auto-uploaded on reconnect */}
+                {pendingCount > 0 && (
+                  <div
+                    className={`flex items-center justify-between gap-1 bg-amber-50 border border-amber-200 rounded py-1.5 px-2 ${
+                      !isSidebarOpen ? 'flex-col px-1' : ''
+                    }`}
+                    title={`${pendingCount} file kept locally because Drive was unavailable — they will be uploaded to Google Drive automatically as soon as the connection is restored`}
+                  >
+                    <span className="text-[10px] font-bold text-amber-700">
+                      ⏳ {isSidebarOpen
+                        ? `${pendingCount} upload${pendingCount === 1 ? '' : 's'} waiting for Drive (auto)`
+                        : `${pendingCount}↗`}
+                    </span>
+                  </div>
+                )}
+
                 <button
                   onClick={handlePrint}
                   className={`w-full text-center bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors flex items-center justify-center gap-1 ${
@@ -340,7 +376,7 @@ export const AppSidebar = ({
                       className={`flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors ${
                         !isSidebarOpen ? 'py-2 px-0 text-xs' : ''
                       }`}
-                      title="Save HTML"
+                      title="Save HTML — stores the full dataset state (scientific or administration) as a loadable HTML snapshot in Lab Workspace/<dataset>/backups/ on Google Drive; a local copy is downloaded when Drive is not connected"
                     >
                       {isSidebarOpen ? '💾 Save HTML' : '💾'}
                     </button>
