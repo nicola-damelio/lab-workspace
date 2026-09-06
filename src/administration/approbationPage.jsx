@@ -149,27 +149,40 @@ export const ApprobationPage = () => {
     `Bonjour,\n\n${lines.join('\n')}\n\nMessage envoyé automatiquement par Lab Workspace (module Administration).`;
 
   const notifyDeposit = async (rec) => {
-    const label = rec && rec.kind === 'bc' ? 'Bon de commande (BC)' : 'Devis';
+    const isBc = rec && rec.kind === 'bc';
     const ref = txt(rec && (rec.numBC || rec.numDevis));
-    const subject = `[Lab Workspace] Nouveau ${label.toLowerCase()} à approuver${ref ? ` — ${ref}` : ''}`;
+    /* Objet demandé : « nouveau devis à approuver » / « nouveau BC à approuver ». */
+    const subject = `[Lab Workspace] Nouveau ${isBc ? 'BC' : 'devis'} à approuver${ref ? ` — ${ref}` : ''}`;
+    const deposantName = txt(rec && rec.deposant) || currentName;
+    const deposantPerson = personnel.find((p) => sameName(p.nom, deposantName));
+    const deposantEmail = personEmailOf(deposantPerson);
     const text = mailBody([
-      `${txt(rec.description) || label}${ref ? ` (${ref})` : ''}`,
+      `Nouveau ${isBc ? 'BC' : 'devis'} à approuver : ${txt(rec.description) || (isBc ? 'Bon de commande' : 'Devis')}${ref ? ` (${ref})` : ''}`,
       `Fournisseur : ${txt(rec.fournisseur) || '—'}`,
-      `Déposé par : ${txt(rec.deposant) || '—'}`,
-      txt(rec.fichierUrl) ? `Fichier : ${rec.fichierUrl}` : 'Fichier : lien non disponible.',
+      `Déposé par : ${deposantName}`,
+      txt(rec.fichierUrl) ? `Fichier : ${rec.fichierUrl}` : '',
       'Ouvrez l’application › Administration › Approbation devis & BC pour approuver ou refuser.',
-    ]);
-    const res = await sendAdminMail({ to: superuserEmails, subject, text });
+    ].filter(Boolean));
+    const res = await sendAdminMail({
+      to: superuserEmails,
+      subject,
+      text,
+      /* L'e-mail est envoyé depuis le compte Google connecté ; si l'adresse de
+         la fiche Personnel du déposant diffère, elle sert de Reply-To. */
+      fromName: deposantName,
+      replyTo: deposantEmail,
+    });
     setNote(await summarizeMail(res, 'Superutilisateur notifié'));
   };
 
   const notifyDecision = async (rec, decision) => {
-    const label = rec && rec.kind === 'bc' ? 'BC' : 'devis';
+    const isBc = rec && rec.kind === 'bc';
     const ref = txt(rec && (rec.numBC || rec.numDevis));
-    const subject = `[Lab Workspace] ${rec && rec.kind === 'bc' ? 'BC' : 'Devis'} ${decision.toLowerCase()}${ref ? ` — ${ref}` : ''}`;
+    /* Objet demandé : « Devis approuvé » / « BC approuvé » (ou « refusé »). */
+    const subject = `[Lab Workspace] ${isBc ? 'BC' : 'Devis'} ${decision.toLowerCase()}${ref ? ` — ${ref}` : ''}`;
     const text = mailBody([
-      `Le ${label} suivant a été ${decision.toLowerCase()} :`,
-      `  ${txt(rec.description) || label}${ref ? ` (${ref})` : ''}`,
+      `Le ${isBc ? 'BC' : 'devis'} suivant a été ${decision.toLowerCase()} :`,
+      `  ${txt(rec.description) || (isBc ? 'Bon de commande' : 'Devis')}${ref ? ` (${ref})` : ''}`,
       `  Fournisseur : ${txt(rec.fournisseur) || '—'}`,
       `  Déposé par : ${txt(rec.deposant) || '—'}`,
       decision === APPROVAL_APPROVED
@@ -182,7 +195,16 @@ export const ApprobationPage = () => {
     const to = [...gestionnaireEmails];
     const deposantEmail = personEmailOf(personnel.find((p) => sameName(p.nom, txt(rec.deposant))));
     if (deposantEmail && to.indexOf(deposantEmail) === -1) to.push(deposantEmail);
-    const res = await sendAdminMail({ to, subject, text });
+    /* Expéditeur = compte Google connecté (celui qui prend la décision) ; son
+       adresse de la fiche Personnel sert de Reply-To quand elle diffère. */
+    const actorPerson = personnel.find((p) => sameName(p.nom, currentName));
+    const res = await sendAdminMail({
+      to,
+      subject,
+      text,
+      fromName: currentName || 'Lab Workspace',
+      replyTo: personEmailOf(actorPerson) || deposantEmail,
+    });
     setNote(await summarizeMail(res, 'Gestionnaire notifié'));
   };
 
@@ -809,8 +831,9 @@ const DepositModal = ({
           </div>
 
           <p className="text-[10px] text-slate-400 leading-relaxed">
-            Le dépôt envoie un e-mail au superutilisateur (e-mail de sa fiche Personnel) ; l’approbation prévient le(s)
-            gestionnaire(s). Les fichiers restent dans le dossier du dataset › Budget_labo/&lt;année&gt;.
+            Le dépôt envoie automatiquement un e-mail « Nouveau devis / BC à approuver » au superutilisateur ; l’approbation
+            envoie « Devis / BC approuvé » au(x) gestionnaire(s). Ces e-mails partent du compte Google connecté (adresse de la
+            fiche Personnel). Les fichiers restent dans le dossier du dataset › Budget_labo/&lt;année&gt;.
           </p>
         </div>
 

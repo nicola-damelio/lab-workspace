@@ -1175,7 +1175,14 @@ export const trashDriveFile = async (fileId) => {
 // The standard Firebase Google sign-in cannot get the drive.file scope from
 // Google. If GOOGLE_DRIVE_CLIENT_ID is configured, we use Google Identity
 // Services to request a real Drive-access token.
-import { GOOGLE_DRIVE_CLIENT_ID, GOOGLE_TOKEN_EXCHANGE_URL, GOOGLE_DRIVE_SHARED_MODE } from '../data/constants';
+import { GOOGLE_DRIVE_CLIENT_ID, GOOGLE_TOKEN_EXCHANGE_URL, GOOGLE_DRIVE_SHARED_MODE, GOOGLE_MAIL_SEND_SCOPE } from '../data/constants';
+
+/* Étendues demandées à Google au moment du consentement :
+   - drive.file : fichiers créés par l'application uniquement ;
+   - gmail.send : envoi automatique des e-mails du module Administration
+     (Approbation devis & BC) depuis le compte Google connecté. */
+const GOOGLE_AUTH_SCOPES =
+  `https://www.googleapis.com/auth/drive.file${GOOGLE_MAIL_SEND_SCOPE ? ` ${GOOGLE_MAIL_SEND_SCOPE}` : ''}`;
 
 export const getConfiguredDriveClientId = () =>
   String(GOOGLE_DRIVE_CLIENT_ID || '').trim();
@@ -1290,7 +1297,7 @@ const requestGisToken = (clientId, promptValue) =>
     try {
       const params = {
         client_id: clientId,
-        scope: 'https://www.googleapis.com/auth/drive.file',
+        scope: GOOGLE_AUTH_SCOPES,
         callback: (resp) => {
           clearTimeout(guard);
           done(resp && resp.access_token ? resp : null);
@@ -1312,7 +1319,7 @@ const requestGisCode = (clientId) =>
     try {
       const client = window.google.accounts.oauth2.initCodeClient({
         client_id: clientId,
-        scope: 'https://www.googleapis.com/auth/drive.file',
+        scope: GOOGLE_AUTH_SCOPES,
         ux_mode: 'popup',
         redirect_uri: 'postmessage',
         callback: (resp) => done(resp && resp.code ? resp.code : ''),
@@ -1841,3 +1848,162 @@ export const extractDriveFolderId = (url) => {
   if (q) return q[1];
   return '';
 };
+// ── Automatic e-mail sending via Gmail (Administration module) ───────────────
+// The notifications of the devis/BC approval workflow are sent through the
+// Gmail API, from the Google account already connected for Drive (its address
+// should be the one configured in the Personnel table; when a different one is
+// provided it becomes the Reply-To so answers go back to the right person).
+const GMAIL_EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+const gmailToBase64 = (str) => {
+  try {
+    const bytes = new TextEncoder().encode(String(str));
+    let bin = '';
+    bytes.forEach((b) => { bin += String.fromCharCode(b); });
+    return btoa(bin);
+  } catch {
+    return '';
+  }
+};
+
+const gmailBase64Url = (b64) =>
+  b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+/* En-tête RFC 2047 : les sujets français (accents…) sont encodés en UTF-8. */
+const gmailHeaderValue = (value) => {
+  const v = String(value || '').replace(/[\r\n]/g, ' ').trim();
+  if (!v) return '';
+  if (/^[\x20-\x7E]+$/.test(v)) return v;
+  const b64 = gmailToBase64(v);
+  return b64 ? `=?UTF-8?B?${b64}?=` : v;
+};
+
+/* Message MIME complet, puis base64url (champ `raw` de l'API Gmail). */
+const buildGmailRaw = ({ fromEmail, fromName = '', replyTo = '', to = [], subject = '', text = '' }) => {
+  const fromLabel = String(fromName || '').trim();
+  const lines = [];
+  lines.push(`From: ${fromLabel && !/[<>\r\n]/.test(fromLabel) ? `${fromLabel} <${fromEmail}>` : fromEmail}`);
+  if (replyTo && GMAIL_EMAIL_RE.test(replyTo) && replyTo.toLowerCase() !== String(fromEmail || '').toLowerCase()) {
+    lines.push(`Reply-To: ${replyTo}`);
+  }
+  lines.push(`To: ${to.join(', ')}`);
+  lines.push(`Subject: ${gmailHeaderValue(subject)}`);
+  lines.push('MIME-Version: 1.0');
+  lines.push('Content-Type: text/plain; charset=utf-8');
+  lines.push('Content-Transfer-Encoding: base64');
+  lines.push('');
+  const body = gmailToBase64(String(text || ''));
+  for (let i = 0; i < body.length; i += 76) lines.push(body.slice(i, i + 76));
+  return gmailBase64Url(gmailToBase64(lines.join('\r\n')));
+};
+/** Envoi automatique d'un e-mail via l'API Gmail du compte Google connecté
+ *  (celui utilisé pour Drive). Ne lève jamais — renvoie
+ *  { ok, id? } ou { ok:false, reason }. */
+export const sendAdminGmail = async ({ to = [], subject = '', text = '', fromName = '', replyTo = '' } = {}) => {
+  const unique = [...new Set((Array.isArray(to) ? to : [to])
+    .map((s) => String(s || '').trim())
+    .filter((s) => GMAIL_EMAIL_RE.test(s)))];
+  if (!unique.length) {
+    return { ok: false, reason: 'Aucune adresse e-mail renseignée (fiche Personnel).' };
+  }
+  const subjectText = String(subject || '').trim();
+  const bodyText = String(text || '').trim();
+
+  /* 1) Un jeton Google doit exister. En mode personnel on demande d'abord un
+        jeton direct silencieux avec les deux portées (drive.file + gmail.send) :
+        si l'utilisateur a déjà accepté la permission d'envoi, il ne verra
+        jamais de popup ; sinon on retombe sur le renouvellement silencieux du
+        jeton stocké (drive.file) et le 403 ci-dessous demandera le
+        consentement complet une seule fois. */
+  const ensureGmailToken = async () => {
+    if (getDriveToken()) return true;
+    if (sharedWorkspaceMode()) {
+      await renewDriveTokenSilently();
+      return !!getDriveToken();
+    }
+    const clientId = getConfiguredDriveClientId();
+    if (clientId) {
+      try { await loadGis(); } catch { /* ignoré */ }
+      const silent = await requestGisToken(clientId, '');
+      if (silent && silent.access_token) {
+        setDriveToken(silent.access_token, silent.expires_in);
+        return true;
+      }
+    }
+    await renewDriveTokenSilently();
+    return !!getDriveToken();
+  };
+  if (!(await ensureGmailToken())) {
+    return {
+      ok: false,
+      reason: 'Aucun compte Google connecté — connectez « Google Drive » puis réessayez (ou utilisez le lien de secours).',
+    };
+  }
+  let token = getDriveToken();
+
+  /* 2) Expéditeur = le compte Google connecté (adresse lue sur Drive « about »). */
+  let fromEmail = '';
+  try {
+    const about = await driveFetch('/drive/v3/about?fields=user');
+    const j = await about.json();
+    fromEmail = String(((j && j.user) || {}).emailAddress || '').trim();
+  } catch { /* géré plus bas */ }
+  if (!GMAIL_EMAIL_RE.test(fromEmail)) {
+    return { ok: false, reason: 'Impossible de déterminer l’adresse e-mail du compte Google connecté.' };
+  }
+  const raw = buildGmailRaw({ fromEmail, fromName, replyTo, to: unique, subject: subjectText, text: bodyText });
+
+  /* 3) POST gmail/v1/users/me/messages/send, avec renouvellement silencieux du
+        jeton sur 401 et une demande de consentement (gmail.send) en secours. */
+  const attempt = async (tok) => {
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), 30000) : null;
+    try {
+      const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ raw }),
+        signal: ctrl ? ctrl.signal : undefined,
+      });
+      let j = null;
+      try { j = await res.json(); } catch { j = null; }
+      return { status: res.status, j };
+    } catch (err) {
+      const msg = (err && err.name === 'AbortError')
+        ? 'Gmail n’a pas répondu (délai dépassé).'
+        : ((err && err.message) || 'Réseau injoignable.');
+      return { status: 0, j: { error: { message: msg } } };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+
+  let result = await attempt(token);
+  if (result.status === 401) {
+    clearDriveToken();
+    await renewDriveTokenSilently();
+    token = getDriveToken();
+    if (token) result = await attempt(token);
+  }
+  if (result.status === 403 && !sharedWorkspaceMode() && getConfiguredDriveClientId()) {
+    /* La permission gmail.send manque au jeton courant (connexion antérieure) :
+       demander une seule fois le consentement complet (drive.file + gmail.send). */
+    try { await loadGis(); } catch { /* ignoré */ }
+    const upgraded = await requestGisToken(getConfiguredDriveClientId(), 'consent');
+    if (upgraded && upgraded.access_token) {
+      setDriveToken(upgraded.access_token, upgraded.expires_in);
+      result = await attempt(upgraded.access_token);
+    }
+  }
+  if (result.status >= 200 && result.status < 300) {
+    return { ok: true, id: String((result.j && result.j.id) || '') };
+  }
+  const apiMsg = (result.j && result.j.error && (result.j.error.message || result.j.error_description))
+    || `HTTP ${result.status || '?'}`;
+  const hint = sharedWorkspaceMode()
+    ? 'Le propriétaire doit relancer une fois « ?drive-bootstrap=1 » en acceptant la permission « envoyer des e-mails » (gmail.send).'
+    : 'Reconnectez « Google Drive » en acceptant la permission « envoyer des e-mails » puis réessayez.';
+  return { ok: false, reason: `Gmail a refusé l’envoi : ${apiMsg}. ${hint}` };
+};
+
+

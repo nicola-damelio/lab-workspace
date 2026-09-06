@@ -618,6 +618,11 @@ export const SmartTable = ({
   };
   return (
     <div className={`bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden ${fillHeight ? 'flex flex-1 min-h-0 flex-col' : ''}`}>
+      {/* Cellules dont la valeur chiffrée vaut zéro : affichées en gris clair.
+          Comportement commun à toutes les tables SmartTable. La règle passe en
+          !important car certaines cellules « montant » définissent leur propre
+          couleur de texte. */}
+      <style>{`td.st-zero, td.st-zero * { color: #94a3b8 !important; }`}</style>
       {/* Barre d’outils */}
       <div className="shrink-0 px-3 py-2 border-b border-slate-200 flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1.5 min-w-[220px] flex-1">
@@ -762,6 +767,8 @@ export const SmartTable = ({
                       const raw = rawValueOf(col, row);
                       const isNumeric = col.dataType === 'number' || !!col.numeric;
                       const num = isNumeric ? parseNumeric(raw) : null;
+                      /* Cellule dont la valeur chiffrée vaut zéro → gris clair. */
+                      const isZero = isNumeric && num !== null && num === 0;
                       const content = typeof col.display === 'function'
                         ? col.display(row)
                         : (isBlank(raw) ? '—' : toText(raw));
@@ -779,6 +786,7 @@ export const SmartTable = ({
                         col.tdClass || '',
                         selectable ? 'cursor-cell' : '',
                         selected ? 'bg-blue-100 shadow-[inset_0_0_0_2px_rgba(37,99,235,0.55)]' : '',
+                        isZero ? 'st-zero' : '',
                         frozenLeft != null ? 'sticky' : '',
                       ].filter(Boolean).join(' ');
                       return (

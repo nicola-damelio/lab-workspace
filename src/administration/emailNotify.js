@@ -3,15 +3,15 @@
    Notifications e-mail du module Administration (page « Approbation devis
    & BC ») : dépôt → superutilisateur, décision → gestionnaire(s).
 
-   L'envoi se fait par le serveur partagé (server/token-server.js, endpoint
-   POST /api/mail) qui relaie vers l'API mail configurée par variables
-   d'environnement (MAIL_API_URL / MAIL_API_KEY / MAIL_FROM). Si aucun
-   endpoint n'est configuré côté app (GOOGLE_TOKEN_EXCHANGE_URL vide) ou si
-   le serveur répond « mail_not_configured », l'app retombe sur un lien
-   mailto: pré-rempli que l'utilisateur peut ouvrir (aucun e-mail n'est
-   jamais envoyé silencieusement sans adresse valide).
+   L'envoi passe en priorité par l'API Gmail du compte Google déjà connecté
+   pour Drive (portée gmail.send — voir GOOGLE_MAIL_SEND_SCOPE) : l'e-mail
+   part alors de l'adresse de ce compte, normalement celle de la fiche
+   Personnel. En secours, l'app utilise le serveur partagé (server/token-
+   server.js, endpoint POST /api/mail) puis un lien mailto: pré-rempli
+   (aucun e-mail n'est jamais envoyé silencieusement sans adresse valide).
    ========================================================================= */
 import { GOOGLE_TOKEN_EXCHANGE_URL } from '../data/constants';
+import { sendAdminGmail } from '../utils/driveUpload';
 
 /** Adresse e-mail d'une fiche Personnel (la clé peut varier selon les bases). */
 export const personEmailOf = (person) => {
@@ -105,11 +105,16 @@ export const buildMailto = (to = [], subject = '', body = '') => {
 };
 
 /**
- * Envoie un e-mail via le serveur partagé.
- * @param {{to:string|string[], subject:string, text:string}} msg
- * @returns {Promise<{ok:boolean, mode:'server'|'mailto'|'none', mailto?:string, reason?:string}>}
+ * Envoie un e-mail.
+ * 1) Via l'API Gmail du compte Google connecté (envoi automatique, l'e-mail
+ *    part de l'adresse de ce compte — idéalement celle de la fiche Personnel) ;
+ * 2) sinon via le serveur partagé (/api/mail) quand GOOGLE_TOKEN_EXCHANGE_URL
+ *    est configuré ;
+ * 3) sinon un lien mailto: pré-rempli est renvoyé (aucun envoi silencieux).
+ * @param {{to:string|string[], subject:string, text:string, fromName?:string, replyTo?:string}} msg
+ * @returns {Promise<{ok:boolean, mode:'gmail'|'server'|'mailto'|'none', mailto?:string, reason?:string}>}
  */
-export const sendAdminMail = async ({ to = [], subject = '', text = '' } = {}) => {
+export const sendAdminMail = async ({ to = [], subject = '', text = '', fromName = '', replyTo = '' } = {}) => {
   const recipients = (Array.isArray(to) ? to : [to])
     .map((s) => String(s || '').trim())
     .filter((s) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s));
@@ -119,6 +124,12 @@ export const sendAdminMail = async ({ to = [], subject = '', text = '' } = {}) =
   const bodyText = String(text || '').trim();
   const mailto = buildMailto(unique, subjectText, bodyText);
 
+  // 1) Envoi automatique via Gmail (compte Google déjà connecté pour Drive).
+  const gmail = await sendAdminGmail({ to: unique, subject: subjectText, text: bodyText, fromName, replyTo })
+    .catch((err) => ({ ok: false, reason: (err && err.message) || 'Gmail injoignable' }));
+  if (gmail.ok) return { ok: true, mode: 'gmail' };
+
+  // 2) Repli : relais e-mail du serveur partagé (si un endpoint est configuré).
   const base = adminMailServerBase();
   if (base) {
     try {
@@ -134,7 +145,14 @@ export const sendAdminMail = async ({ to = [], subject = '', text = '' } = {}) =
       return { ok: false, mode: 'mailto', mailto, reason: (err && err.message) || 'Serveur e-mail injoignable' };
     }
   }
-  return { ok: false, mode: 'mailto', mailto, reason: 'Aucun serveur e-mail configuré (GOOGLE_TOKEN_EXCHANGE_URL vide).' };
+
+  // 3) Dernier repli : lien mailto: pré-rempli (l'utilisateur clique et envoie).
+  return {
+    ok: false,
+    mode: 'mailto',
+    mailto,
+    reason: gmail.reason || 'Aucun serveur e-mail configuré (GOOGLE_TOKEN_EXCHANGE_URL vide).',
+  };
 };
 
 /** Résumé lisible du résultat d’un envoi pour une bannière de confirmation

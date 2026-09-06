@@ -24,6 +24,12 @@ export const LOCAL_STORAGE_KEY = 'lab_datasets_local_v2';
 // Google, so uploaded files are stored locally (with a download option).
 export const GOOGLE_DRIVE_CLIENT_ID = '763848765523-kvjohq6qv8oifb2n86ibh6m4vm4057ej.apps.googleusercontent.com';
 
+// --- AUTOMATIC E-MAILS (Administration module: devis/BC approval) ---
+// The notifications are sent through the Gmail API using the Google account
+// already connected for Drive; the "gmail.send" scope is therefore added to
+// the consent requested by the app. Empty = no Gmail sending.
+export const GOOGLE_MAIL_SEND_SCOPE = 'https://www.googleapis.com/auth/gmail.send';
+
 // --- PERMANENT GOOGLE DRIVE ACCESS (refresh tokens) ---
 // A pure client-side OAuth token client (GIS) CANNOT obtain a refresh token,
 // and a refresh token only ever lives on a server. Two deployment modes:
