@@ -22,6 +22,7 @@ import {
   cloudBackendAvailable,
   driveFetch,
   resolveDrivePathFromNames,
+  sharedWorkspaceMode,
 } from '../utils/driveUpload';
 
 /** Nom du dossier Drive (dans Budget_labo/<année>/…) associé à chaque champ
@@ -56,15 +57,33 @@ export const driveFileIdFromUrl = (url) => {
 /** Traduit une erreur brute de l’API Drive en un message expliquant POURQUOI
  *  un document lié n’a pas pu être rangé — notamment le très fréquent
  *  « File not found » : le lien est valide dans le navigateur (l’utilisateur
- *  est connecté à Google), mais le fichier appartient à un autre compte ou
- *  n’est pas partagé avec le compte de l’application, donc l’API ne le voit pas. */
+ *  est connecté à son propre Google), mais l’application ne travaille pas dans
+ *  le Drive personnel de l’utilisateur : elle range tout dans le Drive partagé
+ *  « Lab Workspace » (compte du laboratoire). Un fichier qui y est invisible
+ *  pour l’API est soit posé dans le Drive personnel sans être partagé avec le
+ *  compte de l’app, soit créé directement dans Google Drive sans passer par
+ *  l’application (limite « drive.file » : seuls les fichiers créés par l’app
+ *  ou partagés avec elle sont visibles). */
 const filingReasonOf = (msg) => {
   const s = String(msg || '');
   if (/not ?found|404|no file id/i.test(s)) {
-    return 'fichier INACCESSIBLE à l’application : il appartient à un autre compte Google '
-      + 'ou n’est pas partagé avec le compte « Lab Workspace » (même connecté à Google, '
-      + 'l’application ne voit que ses propres fichiers). Partagez-le avec le compte '
-      + 'Google connecté dans l’app, ou téléversez-le depuis ce PC avec le bouton « ⬆ ».';
+    // Cause exacte selon le mode d’installation :
+    //  · partagé (serveur « Lab Workspace ») → l’app n’est pas connectée au Drive
+    //    personnel de l’utilisateur : un fichier non partagé avec le compte du
+    //    laboratoire y est invisible ;
+    //  · personnel → autorisation Google « drive.file » : l’app ne voit que les
+    //    fichiers qu’elle a créés elle-même, pas ceux déposés à la main dans le
+    //    Drive (même s’ils appartiennent au même compte).
+    const why = sharedWorkspaceMode()
+      ? 'l’app classe tout dans le Drive partagé « Lab Workspace » (compte du laboratoire), '
+      + 'et non dans votre Drive Google personnel : un fichier resté dans votre compte sans être '
+      + 'partagé avec le compte de l’app y reste invisible'
+      : 'l’app n’a accès qu’aux fichiers qu’elle a créés elle-même (autorisation Google limitée '
+      + '« drive.file ») : un fichier déposé directement dans votre Google Drive — même par vous, '
+      + 'dans votre propre compte — reste invisible pour elle';
+    return `fichier INACCESSIBLE à l’application (le lien s’ouvre chez vous, pas pour elle) : ${why}. `
+      + 'Le plus simple : téléversez le document depuis ce PC avec « ⬆ PC » — l’app crée sa propre '
+      + 'copie dans Budget_labo et la range automatiquement.';
   }
   if (/permission|403|insufficient|scope/i.test(s)) {
     return 'permissions insuffisantes : partagez le fichier avec le compte Google connecté dans l’app.';

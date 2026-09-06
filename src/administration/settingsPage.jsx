@@ -136,7 +136,9 @@ export const SettingsPage = ({ operators, setOperators, authSettings, setAuthSet
           Une ligne de la page <b>Dépenses</b> passe entièrement en rouge dès qu’un de ces champs manque
           (l’enregistrement est aussi bloqué tant qu’il manque) — comme les « mandatory fields » des pages de type
           scientifique. <b>Nom du fournisseur</b> est coché par défaut ; « PI » = prestation interne (facturée sans BC,
-          comptée comme dépense engagée dans la page Recettes).
+          comptée comme dépense engagée dans la page Recettes).<br />
+          Exception : pour une prestation interne (fournisseur « PI »), <b>N° BC</b> et <b>N° SIFAC</b> ne sont
+          <b>jamais exigés</b> — un service interne est facturé sans bon de commande.
         </p>
         <div className="flex flex-wrap gap-2">
           {DEPENSE_FIELD_CATALOG.map((f) => {

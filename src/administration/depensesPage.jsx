@@ -67,7 +67,7 @@ import {
 } from './adminSchema';
 import { parseEuroAmount } from './importUtils';
 import { fileBudgetDocs, budgetDocPath, BUDGET_DOC_FOLDER_BY_FIELD } from './driveFiling';
-import { uploadLocalFile, cloudBackendAvailable } from '../utils/driveUpload';
+import { uploadLocalFile, cloudBackendAvailable, sharedWorkspaceMode } from '../utils/driveUpload';
 import { findRecetteByLabel, findRecetteTwin, sameCatType } from './recetteLink';
 import { useDepenseLinkRepair } from './useDepenseLinkRepair';
 
@@ -126,6 +126,15 @@ const isStageNature = (v) => {
   return /(^|[^a-zà-ÿ])stages?([^a-zà-ÿ]|$)/.test(s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
 };
 const isStageDepense = (d) => isStageNature(d && (d.classification || d.nature));
+
+/* Prestation interne (PI) : service interne facturé SANS bon de commande — ni
+   N° BC, ni N° SIFAC. Ces champs « commande » n’ont donc pas d’objet pour une
+   PI : on ne les exigera jamais, même s’ils sont cochés dans Paramètres ›
+   Champs obligatoires. */
+const PI_NO_COMMAND_FIELDS = ['numBC', 'numSIFAC'];
+/** Vrai pour une ligne / un brouillon de prestation interne : fournisseur
+ *  « PI » (ou « prestation interne ») ou type canonique « pi ». */
+const isPiEntry = (d) => depenseKindOf(d) === 'pi' || isPiFournisseur(d && d.fournisseur);
 
 /* ── Champs obligatoires (configurés dans Paramètres) ─────────────────────
    Valeur « présente » d’un champ d’une dépense : vide → champ manquant. */
@@ -576,7 +585,11 @@ const DepensesPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.depenseMandatoryFields]);
   const missingMandatoryFor = (r) => mandatoryFields.filter((k) =>
-    !(k === 'fournisseur' && depenseKindOf(r) === 'om') && !mandatoryValueOf(r, k));
+    !(k === 'fournisseur' && depenseKindOf(r) === 'om')
+    // Prestation interne : aucun N° BC / N° SIFAC attendu (même s’ils sont
+    // cochés dans Paramètres › Champs obligatoires).
+    && !(isPiEntry(r) && PI_NO_COMMAND_FIELDS.includes(k))
+    && !mandatoryValueOf(r, k));
 
   /* « Ranger les documents liés » — relance le classement Budget_labo/<année>/…
      sur TOUTES les dépenses (y compris celles saisies avant l’arrivée du
@@ -703,10 +716,12 @@ const DepensesPage = () => {
       return false;
     }
     // Champs obligatoires (Paramètres › Champs obligatoires) — sinon ligne rouge.
-    // Le fournisseur n’est jamais exigé pour une ligne de type « OM ».
+    // Le fournisseur n’est jamais exigé pour une ligne de type « OM » et une
+    // prestation interne (PI) n’a ni N° BC ni N° SIFAC à fournir.
     const omRequested = txt(draft.type) === 'om';
     const missing = mandatoryFields.filter((k) =>
       !(k === 'fournisseur' && omRequested)
+      && !(isPiEntry(draft) && PI_NO_COMMAND_FIELDS.includes(k))
       // Le « Suivi / Statut » est calculé automatiquement pour une nouvelle
       // dépense : il n’est jamais exigé à la création.
       && !(k === 'statut' && !existingId)
@@ -822,11 +837,15 @@ const DepensesPage = () => {
       const lines = filing.failed
         .map((f) => `· ${f.folder} : ${f.reason}`)
         .join('\n');
+      const explain = filing.failed.some((f) => /INACCESSIBLE/i.test(String(f.reason || '')))
+        ? sharedWorkspaceMode()
+          ? `\n\nLe plus rapide : « ⬆ PC » (l’app crée une copie dans Budget_labo/<année> et la range) — `
+          + `un fichier resté dans votre Drive personnel n’est pas visible par le compte « Lab Workspace » qu’utilise l’app.`
+          : `\n\nLe plus rapide : « ⬆ PC » (l’app crée sa propre copie dans Budget_labo/<année> et la range) — `
+          + `même connecté à votre Google, l’app ne voit que les fichiers qu’elle a créés elle-même (autorisation limitée « drive.file »).`
+        : '';
       alert(
-        `Dépense enregistrée (le lien d’origine reste valide), mais ${filing.failed.length} document${filing.failed.length > 1 ? 's' : ''} Google Drive n'a pas pu être rangé${filing.failed.length > 1 ? 's' : ''} automatiquement dans Budget_labo/<année> :\n\n${lines}\n\n`
-        + `Si le message est « fichier inaccessible à l’application », c’est normal : connecté à Google dans votre navigateur ne suffit pas — `
-        + `l’application ne peut déplacer que les fichiers créés par elle-même ou partagés avec le compte « Lab Workspace ». `
-        + `Solution : téléversez le document depuis ce PC avec le bouton « ⬆ PC », ou partagez-le avec le compte Google connecté dans l’app.`
+        `Dépense enregistrée (le lien d’origine reste valide), mais ${filing.failed.length} document${filing.failed.length > 1 ? 's' : ''} Google Drive n'a pas pu être rangé${filing.failed.length > 1 ? 's' : ''} automatiquement dans Budget_labo/<année> :\n\n${lines}${explain}`
       );
     }
 
