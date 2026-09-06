@@ -454,8 +454,10 @@ export const SmartTable = ({
   /* ── Épinglage des colonnes à gauche lors du défilement horizontal ──────
      Si le tableau déborde de son conteneur, les `frozenCols` premières
      colonnes (en-têtes + cellules) reçoivent `position: sticky; left: X` où X
-     est leur position réelle mesurée — les largeurs de colonnes d’un tableau
-     en disposition automatique ne sont connues qu’après le rendu. */
+     est leur position naturelle calculée en cumulant les largeurs réelles des
+     colonnes (les largeurs d’un tableau en disposition automatique ne sont
+     connues qu’après le rendu — et la position ne doit PAS être lue sur les
+     en-têtes déjà épinglés pendant un défilement horizontal). */
   useEffect(() => {
     const container = scrollRef.current;
     const table = container ? container.querySelector('table') : null;
@@ -470,10 +472,18 @@ export const SmartTable = ({
       setStickyInfo((prev) => (prev.active || prev.lefts.length ? { active: false, lefts: [] } : prev));
       return undefined;
     }
-    const tableLeft = table.getBoundingClientRect().left;
+    /* Positions naturelles des colonnes figées. IMPORTANT : on NE PEUT PAS lire
+       getBoundingClientRect().left des en-têtes pendant que le tableau est
+       défilé — ces en-têtes sont déjà « sticky » et renverraient leur position
+       épinglée (colée), pas leur position naturelle : le calcul produirait
+       ancienne_position + scrollLeft (colonnes projetées vers la droite).
+       On cumule donc les largeurs réelles mesurées des colonnes depuis le bord
+       gauche de la table (disposition automatique, indépendant du défilement). */
+    let acc = 0;
     const lefts = [];
     for (let i = 0; i < n; i += 1) {
-      lefts.push(Math.round((heads[i].getBoundingClientRect().left - tableLeft) * 10) / 10);
+      lefts.push(Math.round(acc * 10) / 10);
+      acc += heads[i].getBoundingClientRect().width;
     }
     setStickyInfo((prev) => (
       prev.active && prev.lefts.length === lefts.length
