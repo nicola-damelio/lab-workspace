@@ -30,6 +30,7 @@ import {
   desiderataDecisionOf, isDesiderataApproved,
 } from './adminSchema';
 import { parseEuroAmount, extractNumeroFromDoc } from './importUtils';
+import { findRecetteTwin, sameCatType } from './recetteLink';
 import {
   sendAdminMail, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
   summarizeMail, mailBodyText,
@@ -443,6 +444,7 @@ export const DesiderataPage = () => {
     access, navigate, focus, clearFocus, operators,
   } = useAdmin();
   const list = useMemo(() => (Array.isArray(data.desiderate) ? data.desiderate : []), [data.desiderate]);
+  const depenses = useMemo(() => (Array.isArray(data.depenses) ? data.depenses : []), [data.depenses]);
   const recettes = useMemo(() => (Array.isArray(data.recettes) ? data.recettes : []), [data.recettes]);
   const personnel = useMemo(() => (Array.isArray(data.personnel) ? data.personnel : []), [data.personnel]);
   const librerie = useMemo(() => (Array.isArray(data.librerie) ? data.librerie : []), [data.librerie]);
@@ -657,6 +659,76 @@ export const DesiderataPage = () => {
     }
   };
 
+  /* ── Transfert d’un achat « Approuvé » vers la page Dépenses › Achats ──
+     Le transfert crée une ligne DANS la collection depenses : elle devient un
+     enregistrement indépendant (édition, cycle devis → BC → facture,
+     déplacement entre Achats / PI / OM). La collection desiderate — les
+     souhaits « prévus / souhaités » — n’est pas touchée. */
+  const isSuper = !!access.isSuperuser;
+  const linkedDepenseOf = (rec) =>
+    (Array.isArray(depenses) ? depenses : []).find((d) => d && d.desiderataId && d.desiderataId === rec.id) || null;
+
+  const transferWishToDepenses = (rec) => {
+    if (!rec || !rec.id) return;
+    if (linkedDepenseOf(rec)) {
+      setNotice({ tone: 'info', text: `L’achat prévu / souhaité « ${txt(rec.description) || rec.id} » est déjà transféré dans Dépenses › Achats.` });
+      return;
+    }
+    if (!isSuper) return;
+    const label = txt(rec.description) || rec.id;
+    let recetteObj = recetteOf(rec);
+    let recetteId = recetteObj ? recetteObj.id : '';
+    /* Catégorie (Fonct. / Invest.) de la nouvelle dépense : celle du souhait,
+       ou — si absente — le type de la ligne imputée. Si l’un des deux ne
+       correspond pas à la fiche visée mais qu’une fiche homonyme du bon type
+       existe, la nouvelle dépense y est réimputée (cohérence Recettes). */
+    let categorie = txt(rec.categorie);
+    if (!categorie && recetteObj) categorie = txt(recetteObj.type);
+    if (recetteObj && categorie && !sameCatType(categorie, recetteObj.type)) {
+      const twin = findRecetteTwin(recettes, recetteObj, categorie);
+      if (twin) {
+        recetteObj = twin;
+        recetteId = twin.id;
+      }
+    }
+    const patch = {
+      desiderataId: rec.id,
+      description: label,
+      demandeur: txt(demandeurOf(rec)),
+      categorie: categorie || 'Fonctionnement',
+      classification: '',
+      ligneBudgetaire: recetteObj
+        ? txt(recetteObj.ligne)
+        : txt(rec && rec.ligneBudgetaire),
+      recetteId,
+      montant: parseNum(rec.montantEstime),
+      fraisPort: parseNum(rec.fraisPort),
+      dateDemande: isoOf(rec.dateDemande),
+      fournisseur: txt(pick(rec, ['fournisseur', 'nomFournisseur'])),
+      contact: txt(rec.contact),
+      numDevis: txt(pick(rec, ['numDevis', 'devisNo'])),
+      numDevisUrl: devisUrlOf(rec),
+      numSIFAC: '', dateBC: '', numBC: '', numBCUrl: '',
+      dateSignature: '', dateSignatureDevis: '', dateApprobFournisseur: '',
+      numFacture: '', numFactureUrl: '',
+      suivi: '', statut: '',
+      nonComptabiliseEnt: false,
+      ent: '',
+      livraisonComplete: '',
+      livraisons: [],
+      commentaires: txt(pick(rec, ['commentaires', 'notes'])),
+    };
+    const created = upsert('depenses', patch, null);
+    upsert('desiderate', { depenseId: created && created.id }, rec.id);
+    setNotice({
+      tone: 'ok',
+      text: `Achat prévu / souhaité « ${label} » transféré dans Dépenses › Achats (ligne indépendante). Vous pouvez la déplacer vers PI / OM si besoin.`,
+    });
+    if (created && created.id && typeof navigate === 'function') {
+      navigate('depenses', { kind: 'depense', recordId: created.id });
+    }
+  };
+
   const DECISION_SELECT_TONE = (value) => {
     if (value === 'Approuvé') return 'bg-emerald-50 border-emerald-200 text-emerald-700';
     if (value === 'Pas maintenant') return 'bg-red-50 border-red-200 text-red-600';
@@ -851,14 +923,38 @@ export const DesiderataPage = () => {
       key: 'actions', label: '', sortable: false, filter: 'none', filterable: false,
       align: 'right', nowrap: true,
       value: () => '',
-      display: (r) => (
-        <div className="flex items-center gap-1 justify-end">
-          <button
-            type="button"
-            onClick={() => setModal({ mode: 'edit', rec: r })}
-            title="Modifier l’achat prévu / souhaité"
-            className="text-[11px] font-black px-2 py-1 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
-          >✏️ Modifier</button>
+      display: (r) => {
+        const approved = isDesiderataApproved(r && r.statut);
+        const linked = linkedDepenseOf(r);
+        return (
+          <div className="flex items-center gap-1 justify-end">
+            {approved ? (
+              linked ? (
+                <button
+                  type="button"
+                  title="Déjà transféré dans Dépenses › Achats — ouvrir la ligne"
+                  onClick={() => {
+                    if (typeof navigate === 'function') navigate('depenses', { kind: 'depense', recordId: linked.id });
+                  }}
+                  className="text-[11px] font-black px-2 py-1 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
+                >✓ Dans Dépenses</button>
+              ) : isSuper ? (
+                <button
+                  type="button"
+                  title="Créer la dépense liée dans la page Dépenses › onglet Achats (ligne indépendante de ce tableau)"
+                  onClick={() => transferWishToDepenses(r)}
+                  className="text-[11px] font-black px-2 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors"
+                >→ Dépenses</button>
+              ) : null
+            ) : (
+              <span title="Le souhait doit être « Approuvé » avant de pouvoir être transféré en dépense" className="text-[10px] text-slate-300">↦ après approbation</span>
+            )}
+            <button
+              type="button"
+              onClick={() => setModal({ mode: 'edit', rec: r })}
+              title="Modifier l’achat prévu / souhaité"
+              className="text-[11px] font-black px-2 py-1 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
+            >✏️ Modifier</button>
           <button
             type="button"
             onClick={() => onRemove(r)}
@@ -866,7 +962,8 @@ export const DesiderataPage = () => {
             className="text-[11px] font-black px-2 py-1 rounded-lg border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
           >🗑️</button>
         </div>
-      ),
+      );
+      },
     },
   ];
 
@@ -921,7 +1018,9 @@ export const DesiderataPage = () => {
         <b>Achats prévus / souhaités :</b> chaque membre déclare les achats souhaités de l’équipe (description, coût estimé et frais de port,
         fournisseur, ligne budgétaire suggérée…). La <b>première colonne « Décision »</b> affiche la décision du
         superutilisateur : <b>Approuvé / En attente / Pas maintenant</b> (personnalisable dans Setup › Options des listes
-        déroulantes). Le <b>fournisseur</b>, la <b>ligne budgétaire</b> et le <b>demandeur</b> sont des liens vers la
+        déroulantes). Une fois un souhait <b>Approuvé</b>, son bouton <b>« → Dépenses »</b> crée la ligne réelle dans la
+        page Dépenses › onglet Achats (ligne indépendante de ce tableau, déplaçable vers PI / OM). Le
+        <b>fournisseur</b>, la <b>ligne budgétaire</b> et le <b>demandeur</b> sont des liens vers la
         Librerie et les fiches Personnel lorsque le profil y a accès.
       </div>
 
