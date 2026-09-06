@@ -85,7 +85,7 @@ export const ADMIN_PAGES = [
     fields: ['Description', 'Statut : A faire / En cours / Fait', 'Responsable', 'Tags / classification', 'Sévérité (optionnelle)'] },
   { id: 'conges', label: 'Congés', icon: '🏖️', superuserOnly: false, kind: 'conges',
     blurb: 'Demandes de congés de l’équipe : périodes, jours ouvrés, notes et approbation (réservée au superutilisateur).',
-    fields: ['Demandeur', 'Premier jour · Dernier jour de congé', 'Jours ouvrés', 'Notes', 'Approuvation : Demande / Approuvé / Refusé'] },
+    fields: ['Demandeur', 'Premier jour · Dernier jour de congé', 'Jours ouvrés', 'Notes', 'Approuvation : Demande / Approuvé / Refusé / Présence autorisée pendant fermeture (réintègre les jours de fermeture travaillés)'] },
   { id: 'personnel', label: 'Personnel', icon: '👥', superuserOnly: true, kind: 'personnel',
     blurb: 'Personnel Permanent / Technique / Temporaire, corps & grades, missions, formations et bloc stagiaire lié à une Recette.',
     fields: ['Nom', 'Type : Permanent / Technique / Temporaire', 'Corps (PR, MCF, DR, CR, IR, IE, ASI, TECH, ATRF…)', 'Grade — sous-classification du corps (PR2, PR1, CE2, CE1, CN, HC, DR2, DR1…)', 'BAP · HDR · Catégorie · Échelon · Chevron', 'Dates contrat', 'Promotion · RIPEC', 'Missions · Formations', 'Stagiaire : encadrants · ligne budgétaire · dates · durée', 'Commentaires'] },
@@ -246,10 +246,16 @@ export const isDesiderataPending = (raw) => desiderataDecisionOf(raw) === DESIDE
 export const isDesiderataRejected = (raw) => desiderataDecisionOf(raw) === DESIDERATE_REJECTED;
 export const OM_COST_STATUSES = ['Estimé', 'Exact'];
 export const ISSUE_STATUSES = ['A faire', 'En cours', 'Fait'];
-export const CONGE_STATUSES = ['Demande', 'Approuvé', 'Refusé'];
+/* Statuts d’une ligne Congés. La ligne « Présence autorisée pendant fermeture »
+   n’est PAS une demande de congé : réservée au superutilisateur, elle
+   réintègre au solde du membre les jours ouvrés de fermeture UPJV pendant
+   lesquels il a travaillé avec autorisation (règle du labo : les jours de
+   fermeture sont décomptés d’office du quota annuel). */
+export const CONGE_STATUSES = ['Demande', 'Approuvé', 'Refusé', 'Présence autorisée pendant fermeture'];
 export const CONGE_DEMANDE = 'Demande';
 export const CONGE_APPROUVE = 'Approuvé';
 export const CONGE_REFUSE = 'Refusé';
+export const CONGE_PRESENCE = 'Présence autorisée pendant fermeture';
 
 /* Statuts d’approbation des devis / BC déposés sur la page « Approbation
    devis & BC » — la décision (Approuvé / Refusé) est réservée au

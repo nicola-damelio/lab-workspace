@@ -983,6 +983,9 @@ const CONGES_COLUMNS = {
 const congeStatutOf = (v) => {
   const s = normalizeKey(v);
   if (!s || /^(demande|en attente|pending|en cours|non traitee)/.test(s)) return 'Demande';
+  // Ligne spéciale « présence autorisée pendant fermeture » : jours de
+  // fermeture UPJV travaillés avec autorisation, réintégrés au solde.
+  if (/^(present|presence|fermeture|autorise|travail)/.test(s)) return 'Présence autorisée pendant fermeture';
   if (/^(approuv|accept|accord|ok|oui)/.test(s)) return 'Approuvé';
   if (/^(refus|rejete|annul)/.test(s)) return 'Refusé';
   return 'Demande';
@@ -1002,24 +1005,33 @@ const SICUREZZA_COLUMNS = {
   note: ['Note', 'Notes', 'Commentaire', 'Commentaires'],
 };
 
-/* Correspondance code projet → ligne de Recettes (liaisons automatiques). */
+/* Correspondance code projet → ligne de Recettes (liaisons automatiques).
+   `type` (ex. « Fonctionnement », colonne « Catégorie » de la feuille)
+   restreint la recherche aux fiches de CE type : un même code peut exister en
+   deux fiches (Fonctionnement / Investissement) et la dépense doit être
+   reliée à celle qui correspond à sa catégorie, jamais à l’autre. */
 const normalizeLigneCore = (s) => normalizeKey(s).replace(/\s*\([^)]*\)\s*$/, '').trim();
 
-const findRecetteLigne = (recettes, raw) => {
+const findRecetteLigne = (recettes, raw, type) => {
   const list = Array.isArray(recettes) ? recettes : [];
   if (!raw) return null;
+  const want = type ? normalizeKey(type) : '';
+  const pool = want
+    ? list.filter((r) => normalizeKey(r && r.type) === want)
+    : list;
+  if (!pool.length) return null;
   const n = normalizeKey(raw);
-  const exact = list.find((r) => normalizeKey(r.ligne || '') === n);
+  const exact = pool.find((r) => normalizeKey(r.ligne || '') === n);
   if (exact) return exact;
   const core = normalizeLigneCore(n);
   if (core && core.length >= 3) {
-    const byCore = list.find((r) => normalizeLigneCore(r.ligne || '') === core);
+    const byCore = pool.find((r) => normalizeLigneCore(r.ligne || '') === core);
     if (byCore) return byCore;
   }
   const m = n.match(/\(([^)]+)\)\s*$/);
   const tok = m ? m[1].trim() : '';
   if (tok && tok.length >= 2 && tok !== 'na' && tok !== 'n a') {
-    const byTok = list.find((r) => normalizeKey(r.ligne || '').includes(`(${tok})`));
+    const byTok = pool.find((r) => normalizeKey(r.ligne || '').includes(`(${tok})`));
     if (byTok) return byTok;
   }
   return null;
@@ -1159,8 +1171,15 @@ const buildDepenses = (rows, headerIdx, state) => {
     const numSIFAC = clean(cell(r, cols.numSIFAC));
     if (!description && !ligneRaw && !numSIFAC) { skipped++; continue; }
     const suivi = normalizeStatut(clean(cell(r, cols.suivi)));
-    const recette = findRecetteLigne(state && state.recettes, ligneRaw);
-    if (!recette && ligneRaw) unmatched.push(ligneRaw);
+    /* Liaison automatique restreinte au type de la « Catégorie » (colonne de
+       la feuille) : une dépense « Fonctionnement » ne doit jamais être
+       imputée sur la fiche « Investissement » du même code (et réciproquement)
+       — la page Recettes compterait sinon la dépense sur la mauvaise ligne. */
+    const categorieRaw = clean(cell(r, cols.categorie));
+    const recette = findRecetteLigne(state && state.recettes, ligneRaw, categorieRaw || undefined);
+    if (!recette && ligneRaw) {
+      unmatched.push(categorieRaw ? `${ligneRaw} (fiche « ${categorieRaw} » absente dans Recettes)` : ligneRaw);
+    }
     const livraisons = [];
     phases.forEach((p) => {
       const dr = clean(cell(r, p.dateRec));

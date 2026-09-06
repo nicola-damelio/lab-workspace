@@ -15,6 +15,14 @@
    ends et fêtes nationales françaises exclus — y compris ceux qui tombent dans
    une fermeture UPJV : 2 semaines de Noël + 4 semaines entre juillet et août,
    et les fêtes mobiles Lundi de Pâques / Ascension / Pentecôte).
+
+   Règle du laboratoire : les jours de fermeture UPJV de la saison sont
+   décomptés d'office du quota annuel de chaque membre (chômage pré-chargé). Une
+   demande de congé ne consomme donc que ses jours ouvrés HORS fermeture, et une
+   ligne « Présence autorisée pendant fermeture » (superutilisateur) réintègre
+   au contraire au solde les jours ouvrés de fermeture travaillés avec
+   autorisation. Les fenêtres de fermeture sont définies ci-dessous et se
+   recalculent automatiquement pour chaque saison (ouvrés / fériés exclus).
    ========================================================================= */
 
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -191,4 +199,48 @@ export const businessDaysInPeriod = (startISO, endISO, periodStart, periodEnd) =
   if (lo > hi) return 0;
   const n = businessDaysBetween(lo, hi);
   return n == null ? 0 : n;
+};
+
+/* ── Fermeture UPJV : décompte pré-chargé des quotas ────────────────────────
+   Les jours de fermeture UPJV de la saison (2 semaines de Noël + 4 semaines
+   entre juillet et août) sont décomptés d'office du quota annuel de chaque
+   membre. Deux fenêtres calendaires consécutives par saison :
+     • Noël : 21 décembre → 3 janvier de l'année suivante (2 semaines),
+     • Été : 27 juillet → 23 août (4 semaines — le 14 juillet, Fête nationale,
+       précède toujours la fermeture estivale et n'y tombe donc jamais).
+   Seuls les jours OUVRÉS comptent : les week-ends et les fêtes nationales
+   tombant dans ces fenêtres (25/12, 01/01, 15/08…) ne sont jamais décomptés.
+   ⚠ Si les dates réelles de l'UPJV diffèrent, ajuster les bornes ci-dessous :
+   le calcul reste automatique (ouvrés, fériés et limites de saison exclus). */
+export const upjvClosureRangesOf = (bounds) => {
+  const { startYear, endYear } = bounds || {};
+  if (!startYear || !endYear) return [];
+  return [
+    { label: 'Noël', from: `${startYear}-12-21`, to: `${endYear}-01-03` },
+    { label: 'Été', from: `${endYear}-07-27`, to: `${endYear}-08-23` },
+  ];
+};
+
+/** Jours ouvrés de fermeture UPJV contenus dans la saison (montant décompté
+ *  d'office du quota de chaque membre avant toute demande de congé). */
+export const closureDaysInSeason = (bounds) => {
+  const b = bounds || {};
+  let total = 0;
+  upjvClosureRangesOf(bounds).forEach((r) => {
+    total += businessDaysInPeriod(r.from, r.to, b.start, b.end);
+  });
+  return total;
+};
+
+/** Jours ouvrés de fermeture UPJV de la période [startISO, endISO] qui tombent
+ *  dans la saison en cours. Sert à ne décompter d'une demande ordinaire que ses
+ *  jours ouvrés HORS fermeture (le reste est déjà couvert par le pré-chargement)
+ *  et à calculer les jours réintégrés par une ligne « Présence autorisée
+ *  pendant fermeture ». */
+export const closureDaysInPeriod = (startISO, endISO, bounds) => {
+  let total = 0;
+  upjvClosureRangesOf(bounds).forEach((r) => {
+    total += businessDaysInPeriod(startISO, endISO, r.from, r.to);
+  });
+  return total;
 };

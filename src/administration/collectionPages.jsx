@@ -646,10 +646,12 @@ const KIND_CONFIG = {
   questioni: {
     columns: questioniColumns, minWidth: '1100px', importable: true,
     canAdd: true,
+    canDelete: true,
     addLabel: 'Ajouter une question',
     addDone: 'Question ajoutée au tableau ✓',
     editLabel: 'Modifier la question',
     editDone: 'Question modifiée ✓',
+    deleteDone: 'Question supprimée ✓',
     empty: 'Aucune question ouverte pour le moment',
     sub: 'Questions ouvertes : suivi des points en suspens (Statut en première colonne : A faire / En cours / Fait). Le statut et les champs se modifient directement dans le tableau.',
     search: 'Rechercher une question, un responsable, un tag…',
@@ -657,10 +659,12 @@ const KIND_CONFIG = {
   sicurezza: {
     columns: sicurezzaColumns, minWidth: '1100px', importable: true,
     canAdd: true,
+    canDelete: true,
     addLabel: 'Ajouter une tâche H&S',
     addDone: 'Tâche H&S ajoutée au tableau ✓',
     editLabel: 'Modifier la tâche H&S',
     editDone: 'Tâche H&S modifiée ✓',
+    deleteDone: 'Tâche H&S supprimée ✓',
     empty: 'Aucune tâche H&S pour le moment',
     sub: 'Tâches d’hygiène & de sécurité du laboratoire : statut en première colonne (Fait / À faire / En cours) et priorité colorée de orange (urgent) à vert (pas urgent).',
     search: 'Rechercher une tâche, un responsable…',
@@ -669,7 +673,7 @@ const KIND_CONFIG = {
 
 /* ========================================================================= */
 export const CollectionPage = ({ kind }) => {
-  const { data, settings, upsert, currentUser } = useAdmin();
+  const { data, settings, upsert, remove, currentUser, isSuperuser } = useAdmin();
   const [importOpen, setImportOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [editingRec, setEditingRec] = useState(null); // enregistrement en cours d’édition (✎)
@@ -709,19 +713,34 @@ export const CollectionPage = ({ kind }) => {
     onPatch: (id, patch) => upsert(kind, patch, id),
   };
   const columns = [...cfg.columns(recettes, ctx)];
-  if (cfg.canAdd) {
+  if (cfg.canAdd || cfg.canDelete) {
     columns.push({
       key: 'actions', label: '', sortable: false, filter: 'none', filterable: false,
       align: 'right', nowrap: true,
       value: () => '',
       display: (r) => (
         <div className="flex items-center justify-end gap-1">
-          <button
-            type="button"
-            onClick={() => { setEditingRec(r); setAddOpen(true); }}
-            title="Modifier cet élément"
-            className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-blue-50 hover:text-blue-600 text-xs"
-          >✎</button>
+          {cfg.canAdd && (
+            <button
+              type="button"
+              onClick={() => { setEditingRec(r); setAddOpen(true); }}
+              title="Modifier cet élément"
+              className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-blue-50 hover:text-blue-600 text-xs"
+            >✎</button>
+          )}
+          {cfg.canDelete && isSuperuser && (
+            <button
+              type="button"
+              onClick={() => {
+                const label = txt(pick(r, ['description', 'question'])) || r.id;
+                if (!window.confirm(`Supprimer définitivement cet élément « ${label} » ?`)) return;
+                remove(kind, r.id);
+                setNotice(cfg.deleteDone || 'Élément supprimé ✓');
+              }}
+              title="Supprimer (réservé au superutilisateur)"
+              className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-red-50 hover:text-red-600 text-xs"
+            >🗑</button>
+          )}
         </div>
       ),
     });

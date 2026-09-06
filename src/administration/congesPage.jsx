@@ -28,15 +28,20 @@
 
    Modèle d'enregistrement (collection `conges`) :
      { demandeur, personnelId?, dateDebut, dateFin, jours, note, statut }
-     statut ∈ CONGE_STATUSES = Demande / Approuvé / Refusé.
+     statut ∈ CONGE_STATUSES = Demande / Approuvé / Refusé / Présence autorisée
+     pendant fermeture. Les jours de fermeture UPJV de la saison sont décomptés
+     d'office du quota annuel (règle du labo) ; une demande de congé ne consomme
+     que ses jours ouvrés hors fermeture, et une ligne « Présence autorisée
+     pendant fermeture » (superutilisateur) réintègre au solde les jours de
+     fermeture travaillés avec autorisation.
    ========================================================================= */
 import React, { useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
 import { SmartTable } from './smartTable';
 import { AdminImportModal } from './adminImportModal';
-import { businessDaysBetween, toFrDate, congeYearBounds, businessDaysInPeriod, frenchHolidayList } from './congesDates';
+import { businessDaysBetween, toFrDate, congeYearBounds, businessDaysInPeriod, closureDaysInSeason, closureDaysInPeriod, frenchHolidayList } from './congesDates';
 import {
-  CONGE_STATUSES, CONGE_DEMANDE, CONGE_APPROUVE, CONGE_REFUSE,
+  CONGE_STATUSES, CONGE_DEMANDE, CONGE_APPROUVE, CONGE_REFUSE, CONGE_PRESENCE,
   CONGE_DEFAULT_ALLOWANCE, CONGE_QUOTA_BY_TYPE,
 } from './adminSchema';
 
@@ -64,6 +69,7 @@ const TONES = {
   amber: 'bg-amber-50 border-amber-200 text-amber-700',
   red: 'bg-red-50 border-red-200 text-red-600',
   blue: 'bg-blue-50 border-blue-200 text-blue-700',
+  indigo: 'bg-indigo-50 border-indigo-200 text-indigo-700',
 };
 const Badge = ({ tone = 'slate', children }) => (
   <span className={`inline-block text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${TONES[tone] || TONES.slate}`}>
@@ -75,6 +81,7 @@ const STATUS_TONE = {
   [CONGE_DEMANDE]: 'amber',
   [CONGE_APPROUVE]: 'emerald',
   [CONGE_REFUSE]: 'red',
+  [CONGE_PRESENCE]: 'indigo',
 };
 const StatutBadge = ({ statut }) => {
   const s = txt(statut) || CONGE_DEMANDE;
@@ -89,6 +96,7 @@ const SummaryCard = ({ label, value, tone = 'slate', hint }) => {
     amber: 'border-amber-200 text-amber-700',
     red: 'border-red-200 text-red-600',
     blue: 'border-blue-200 text-blue-700',
+    indigo: 'border-indigo-200 text-indigo-700',
   };
   return (
     <div className={`bg-white border rounded-2xl shadow-sm px-3 py-2.5 ${tones[tone] || tones.slate}`} title={hint || ''}>
@@ -133,28 +141,48 @@ export const CongesPage = () => {
     let demandes = 0;
     let approuve = 0;
     let demande = 0;
+    let presence = 0;
     const personnes = new Set();
     visible.forEach((r) => {
       demandes += 1;
       const k = norm(r.demandeur);
       if (k) personnes.add(k);
       const s = txt(r.statut);
-      const j = businessDaysInPeriod(txt(r.dateDebut), txt(r.dateFin), b.start, b.end);
-      if (s === CONGE_APPROUVE) approuve += j;
-      else if (s === CONGE_REFUSE) { /* demandes refusées : rien à décompter */ }
-      else demande += j;
+      const joursTotal = businessDaysInPeriod(txt(r.dateDebut), txt(r.dateFin), b.start, b.end);
+      const joursFermeture = closureDaysInPeriod(txt(r.dateDebut), txt(r.dateFin), b);
+      if (s === CONGE_PRESENCE) { presence += joursFermeture; return; }
+      if (s === CONGE_REFUSE) { /* demandes refusées : rien à décompter */ return; }
+      // Demandes ordinaires : seuls les jours ouvrés HORS fermeture comptent
+      // (les jours de fermeture sont déjà décomptés d'office des quotas).
+      const joursOuvres = joursTotal - joursFermeture;
+      if (s === CONGE_APPROUVE) approuve += joursOuvres;
+      else demande += joursOuvres;
     });
-    return { bounds: b, demandes, approuve, demande, personnes: personnes.size };
+    return {
+      bounds: b,
+      demandes,
+      approuve,
+      demande,
+      presence,
+      fermeture: closureDaysInSeason(b),
+      personnes: personnes.size,
+    };
   }, [visible]);
 
   /* ── Soldes annuels par demandeur ──────────────────────────────────────────
-     Saison du 1er septembre au 31 août : les jours approuvés qui tombent dans
-     la saison en cours sont déduits du quota annuel du profil de la fiche
-     Personnel liée (corps → type → « Par défaut » ; 47 j par défaut). Le
-     calcul part de la date du jour : dès le 1er septembre, une nouvelle saison
-     démarre donc automatiquement, sans compteur à réinitialiser. */
+     Saison du 1er septembre au 31 août : les jours de fermeture UPJV de la
+     saison (2 semaines de Noël + 4 semaines en juillet-août, jours ouvrés,
+     fériés exclus) sont décomptés D'OFFICE du quota annuel du profil de la
+     fiche Personnel liée (corps → type → « Par défaut » ; 47 j par défaut).
+     Une demande de congé ordinaire ne consomme ensuite que ses jours ouvrés
+     HORS fermeture ; une ligne « Présence autorisée pendant fermeture »
+     réintègre au contraire au solde les jours de fermeture travaillés avec
+     autorisation. Le calcul part de la date du jour : dès le 1er septembre,
+     une nouvelle saison démarre donc automatiquement, sans compteur à
+     réinitialiser. */
   const balances = useMemo(() => {
     const b = congeYearBounds();
+    const fermeture = closureDaysInSeason(b);
     const conf = (settings && settings.congesQuotaByType && typeof settings.congesQuotaByType === 'object'
       && !Array.isArray(settings.congesQuotaByType))
       ? settings.congesQuotaByType
@@ -189,8 +217,10 @@ export const CongesPage = () => {
           name: txt(name),
           person,
           quota: quotaOf(person),
+          fermeture,
           approved: 0,
           pending: 0,
+          presence: 0,
           requests: [],
         };
         map.set(k, e);
@@ -199,16 +229,31 @@ export const CongesPage = () => {
     };
     sorted.forEach((r) => {
       const s = txt(r.statut);
+      const presence = s === CONGE_PRESENCE;
       const approved = s === CONGE_APPROUVE;
-      const pending = !s || s === CONGE_DEMANDE;
-      if (!approved && !pending) return; // Refusé : ne consomme pas de jours
-      const days = businessDaysInPeriod(txt(r.dateDebut), txt(r.dateFin), b.start, b.end);
-      if (!days) return; // demande hors saison en cours → déjà soldée une autre année
+      const isPending = !s || s === CONGE_DEMANDE;
+      if (!presence && !approved && !isPending) return; // Refusé : ne consomme pas de jours
+      const joursTotal = businessDaysInPeriod(txt(r.dateDebut), txt(r.dateFin), b.start, b.end);
+      if (!joursTotal) return; // demande hors saison en cours → déjà soldée une autre année
+      const joursFermeture = closureDaysInPeriod(txt(r.dateDebut), txt(r.dateFin), b);
+      if (presence) {
+        // Jours de fermeture travaillés avec autorisation → réintégrés au solde.
+        if (joursFermeture <= 0) return;
+        const e = ensure(txt(r.demandeur));
+        if (!e) return;
+        e.requests.push({ recId: r.id, presence: true, open: 0, closed: joursFermeture, hypothetical: false });
+        e.presence += joursFermeture;
+        return;
+      }
+      // Demande / congé approuvé : seuls les jours ouvrés HORS fermeture sont
+      // consommés au-delà du pré-chargement des fermetures.
+      const joursOuvres = joursTotal - joursFermeture;
+      if (joursOuvres <= 0) return;
       const e = ensure(txt(r.demandeur));
       if (!e) return;
-      e.requests.push({ recId: r.id, days, hypothetical: !approved });
-      if (approved) e.approved += days;
-      else e.pending += days;
+      e.requests.push({ recId: r.id, presence: false, open: joursOuvres, closed: joursFermeture, hypothetical: !approved });
+      if (approved) e.approved += joursOuvres;
+      else e.pending += joursOuvres;
     });
     if (!isSuper && meName) ensure(meName); // un non-permanent voit toujours sa propre carte
     const rows = [...map.values()].sort((a, b2) => a.name.localeCompare(b2.name, 'fr'));
@@ -216,13 +261,17 @@ export const CongesPage = () => {
     rows.forEach((e) => {
       e.label = e.person ? (txt(e.person.corps) || txt(e.person.type) || 'Par défaut') : 'Par défaut';
       e.requests.forEach((x) => {
+        // Droits restants = quota − fermeture UPJV + présences autorisées − congés approuvés.
+        const base = e.quota - e.fermeture + e.presence - e.approved;
         after.set(x.recId, {
-          days: x.days,
-          remainingAfter: x.hypothetical ? e.quota - e.approved - x.days : e.quota - e.approved,
+          presence: x.presence,
+          closed: x.closed,
+          days: x.presence ? x.closed : x.open,
+          remainingAfter: x.hypothetical ? base - x.open : base,
         });
       });
     });
-    return { bounds: b, rows, after };
+    return { bounds: b, fermeture, rows, after };
   }, [sorted, personnel, settings, meName, isSuper]);
 
   /* Cartes de soldes affichées : un non-permanent ne voit que sa propre carte. */
@@ -321,21 +370,39 @@ export const CongesPage = () => {
     },
     {
       key: 'jours', label: 'Jours', dataType: 'number', align: 'right', nowrap: true,
-      value: (r) => toNum(r.jours) || '',
-      display: (r) => {
-        const n = toNum(r.jours);
-        if (!n) return <span className="text-slate-300">—</span>;
+      value: (r) => {
         const meta = balances.after.get(r.id);
-        if (!meta) return <span className="whitespace-nowrap font-black text-slate-700">{n} j</span>;
+        return meta ? meta.days : toNum(r.jours) || '';
+      },
+      display: (r) => {
+        const meta = balances.after.get(r.id);
+        if (!meta) {
+          const n = toNum(r.jours);
+          if (!n) return <span className="text-slate-300">—</span>;
+          return <span className="whitespace-nowrap font-black text-slate-700">{n} j</span>;
+        }
+        if (meta.presence) {
+          return (
+            <div
+              className="whitespace-nowrap text-right"
+              title={`${meta.days} jour(s) ouvrés de fermeture UPJV couverts par cette présence autorisée, réintégrés au solde du membre (week-ends et fériés exclus).`}
+            >
+              <div className="font-black text-indigo-600">+{meta.days} j</div>
+              <div className="text-[9px] font-bold uppercase tracking-wide text-indigo-500">reste {meta.remainingAfter} j</div>
+            </div>
+          );
+        }
         const approved = txt(r.statut) === CONGE_APPROUVE;
+        const overlap = meta.closed > 0;
         return (
           <div
             className="whitespace-nowrap text-right"
-            title={approved
-              ? 'Jours restants de la saison en cours après déduction de tous les congés approuvés.'
-              : 'Jours restants si cette demande était approuvée (hors autres demandes en attente).'}
+            title={(approved
+              ? 'Jours ouvrés (hors fermeture UPJV) décomptés du solde — reste après déduction de tous les congés approuvés.'
+              : 'Jours ouvrés (hors fermeture UPJV) qui seraient décomptés si cette demande était approuvée.')
+              + (overlap ? ` Dont ${meta.closed} j de fermeture UPJV déjà couverts par le pré-chargement.` : '')}
           >
-            <div className="font-black text-slate-700">{n} j</div>
+            <div className="font-black text-slate-700">{meta.days} j</div>
             <div className={`text-[9px] font-bold uppercase tracking-wide ${approved ? 'text-emerald-600' : 'text-amber-600'}`}>
               {approved ? `reste ${meta.remainingAfter} j` : `≈ reste ${meta.remainingAfter} j si approuvé`}
             </div>
@@ -432,20 +499,32 @@ export const CongesPage = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-        <SummaryCard label="Demandes" value={summary.demandes} tone="slate" hint="Nombre total de demandes saisies." />
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
+        <SummaryCard label="Demandes" value={summary.demandes} tone="slate" hint="Nombre total de lignes saisies (demandes + présences autorisées)." />
         <SummaryCard label="Personnes concernées" value={summary.personnes} tone="blue" hint="Nombre de demandeurs distincts." />
         <SummaryCard
           label="Jours approuvés (saison)"
           value={`${summary.approuve} j`}
           tone="emerald"
-          hint={`Jours approuvés décomptés du solde sur la saison en cours (${summary.bounds.label}).`}
+          hint={`Jours ouvrés approuvés hors fermeture UPJV, décomptés du solde sur la saison en cours (${summary.bounds.label}).`}
         />
         <SummaryCard
           label="Jours en attente (saison)"
           value={`${summary.demande} j`}
           tone="amber"
-          hint={`Jours des demandes « Demande » portant sur la saison en cours (${summary.bounds.label}).`}
+          hint={`Jours ouvrés hors fermeture UPJV des demandes « Demande » portant sur la saison en cours (${summary.bounds.label}).`}
+        />
+        <SummaryCard
+          label="Fermeture UPJV (saison)"
+          value={`−${summary.fermeture} j`}
+          tone="blue"
+          hint={`Jours ouvrés de fermeture UPJV de la saison (2 semaines de Noël + 4 semaines en juillet-août, week-ends et fériés exclus), décomptés d'office du quota de chaque membre — ${summary.bounds.label}.`}
+        />
+        <SummaryCard
+          label="Présences fermeture"
+          value={`+${summary.presence} j`}
+          tone="indigo"
+          hint={`Jours ouvrés de fermeture UPJV réintégrés au solde via les lignes « Présence autorisée pendant fermeture » visibles (${summary.bounds.label}).`}
         />
       </div>
 
@@ -454,12 +533,14 @@ export const CongesPage = () => {
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
             <h3 className="text-sm font-black text-slate-700">🏝 Soldes de congés — saison {balances.bounds.label}</h3>
             <span className="text-[10px] font-bold text-slate-400">
-              droits annuels réglables par profil dans Setup · renouvelés automatiquement chaque 1er septembre
+              jours de fermeture UPJV décomptés d'office (−{balances.fermeture} j cette saison) · quota réglable par profil dans Setup · renouvelé chaque 1er septembre
             </span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2">
             {visibleBalances.map((e) => {
-              const left = e.quota - e.approved;
+              // Droits restants = quota − fermeture UPJV (pré-chargée) + jours de
+              // présence autorisée en fermeture − congés approuvés (hors fermeture).
+              const left = e.quota - e.fermeture + e.presence - e.approved;
               const negative = left < 0;
               const low = !negative && left <= 5;
               const cardTone = negative ? 'border-red-200' : low ? 'border-amber-200' : 'border-emerald-200';
@@ -468,7 +549,7 @@ export const CongesPage = () => {
                 <div
                   key={e.key}
                   className={`bg-white border rounded-2xl shadow-sm px-3 py-2.5 ${cardTone}`}
-                  title={`${e.name} — ${e.approved} j approuvés sur ${e.quota} j annuels (saison ${balances.bounds.label}).${e.pending ? ` ${e.pending} j en attente.` : ''}`}
+                  title={`${e.name} — quota ${e.quota} j annuels, dont ${e.fermeture} j de fermeture UPJV décomptés d'office ; ${e.approved} j approuvés hors fermeture${e.presence ? `, ${e.presence} j réintégrés par présence autorisée` : ''} → ${left} j restants (saison ${balances.bounds.label}).${e.pending ? ` ${e.pending} j en attente.` : ''}`}
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs font-black text-slate-700 truncate">{e.name}</span>
@@ -479,8 +560,12 @@ export const CongesPage = () => {
                     <span className="text-[9px] font-black uppercase tracking-wide text-slate-400">restants</span>
                   </div>
                   <div className="text-[10px] text-slate-400 mt-0.5">
-                    {e.approved} j approuvés / {e.quota} j
-                    {e.pending > 0 ? <span className="text-amber-600 font-bold"> · {e.pending} j en attente</span> : null}
+                    {e.approved} j approuvés / {e.quota} j · −{e.fermeture} j fermeture UPJV
+                  </div>
+                  <div className="text-[10px] mt-0.5">
+                    {e.presence > 0 ? <span className="text-indigo-600 font-bold">+{e.presence} j présence fermeture</span> : null}
+                    {e.presence > 0 && e.pending > 0 ? <span className="text-slate-300"> · </span> : null}
+                    {e.pending > 0 ? <span className="text-amber-600 font-bold">{e.pending} j en attente</span> : null}
                   </div>
                 </div>
               );
@@ -491,8 +576,9 @@ export const CongesPage = () => {
 
       <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
         <b>Fonctionnement :</b> chacun pose sa demande (statut « Demande »), un superutilisateur l’approuve ou la refuse. Un membre ne voit que ses propres demandes de congés, le superutilisateur voit toute la liste et approuve. Le solde de chaque membre est décompté en jours ouvrés sur la saison du
-        1er septembre au 31 août (renouvelée automatiquement chaque 1er septembre) : week-ends et fêtes nationales exclus, y compris ceux qui tombent pendant une fermeture UPJV
-        (2 semaines de Noël + 4 semaines en juillet-août). Quota par défaut : 47 jours pour un Doctorant, modulable par profil dans Setup › « Congés : jours/an par profil ».
+        1er septembre au 31 août (renouvelée automatiquement chaque 1er septembre), week-ends et fêtes nationales exclus. Les jours de fermeture UPJV de la saison (2 semaines de Noël + 4 semaines en juillet-août, jours ouvrés hors fériés) sont
+        décomptés d’office du quota de chaque membre : une demande de congé ne consomme que ses jours ouvrés hors fermeture, et une ligne « Présence autorisée pendant fermeture » (superutilisateur) réintègre au solde les jours de fermeture travaillés avec autorisation.
+        Quota par défaut : 47 jours pour un Doctorant, modulable par profil dans Setup › « Congés : jours/an par profil ».
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4">
@@ -501,6 +587,10 @@ export const CongesPage = () => {
           <span className="text-[10px] font-bold text-slate-400">
             fêtes nationales françaises de métropole ({holidaysYear}) — exclues du décompte des jours ouvrés
           </span>
+        </div>
+        <div className="mb-3 rounded-xl border border-indigo-100 bg-indigo-50/70 px-3 py-2 text-[11px] text-indigo-900 leading-relaxed">
+          Fermeture UPJV retenue : 2 semaines de Noël (21 déc. → 3 janv.) + 4 semaines entre juillet et août (27 juil. → 23 août) — ajustable dans « congés » si les dates réelles changent.
+          Le 14 juillet précède toujours la fermeture estivale et n'y tombe jamais ; les fêtes qui tombent pendant la fermeture (25/12, 01/01, 15/08…) ne sont jamais décomptées des jours de congés.
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-4 gap-y-1">
           {holidays.map((h) => {
@@ -641,6 +731,12 @@ const CongeModal = ({ rec, defaultDemandeur, names, isSuper, onCancel, onSave })
               </div>
             )}
           </div>
+          {isSuper && draft.statut === CONGE_PRESENCE && (
+            <div className="sm:col-span-2 rounded-lg border border-indigo-200 bg-indigo-50/70 px-3 py-2 text-[11px] text-indigo-900 leading-relaxed">
+              Ligne <b>« Présence autorisée pendant fermeture »</b> : ce n'est pas une demande de congé. Les jours ouvrés de la période couverts par la fermeture UPJV de la saison
+              (week-ends et fériés exclus) sont <b>réintégrés au solde</b> du membre — à saisir quand une personne travaille pendant une fermeture avec autorisation.
+            </div>
+          )}
 
           <div className="sm:col-span-2">
             <label className={labelCls}>Notes</label>

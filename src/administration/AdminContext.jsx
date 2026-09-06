@@ -105,6 +105,26 @@ export const AdminProvider = ({
     return { added: stamped.length };
   };
 
+  /** Mise à jour GROUPÉE d’enregistrements EXISTANTS (ex. réattribution
+   *  automatique des dépenses incohérentes) : un seul onChange pour toute la
+   *  liste — appeler `upsert` en boucle synchronisée perdrait les premiers
+   *  correctifs (chaque appel repart de l’instantané d’origine). */
+  const updateMany = (kind, changes) => {
+    const prevList = data[kind] || [];
+    const list = Array.isArray(changes) ? changes.filter((c) => c && c.id) : [];
+    if (!list.length) return { updated: 0 };
+    const now = Date.now();
+    const actor = { name: currentUser?.name || 'Invité', role: currentUser?.role || 'user' };
+    const byId = new Map(list.map((c) => [c.id, c.patch || {}]));
+    const next = prevList.map((rec) => {
+      const patch = byId.get(rec.id);
+      if (!patch) return rec;
+      return { ...rec, ...patch, id: rec.id, updatedAt: now, updatedBy: actor };
+    });
+    setList(kind, next);
+    return { updated: list.length };
+  };
+
   const updateSettings = (patch) => {
     if (typeof onChange !== 'function') return;
     onChange({ ...safeContent, settings: { ...DEFAULT_OPTIONS, ...settings, ...(patch || {}) } });
@@ -132,6 +152,7 @@ export const AdminProvider = ({
     upsert,
     remove,
     importMany,
+    updateMany,
     updateSettings,
     isSuperuser,
     user,

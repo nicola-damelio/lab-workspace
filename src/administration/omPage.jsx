@@ -25,6 +25,7 @@ import { AdminImportModal } from './adminImportModal';
 import { omColumns } from './collectionPages';
 import { OM_COST_STATUSES, OM_STATUSES } from './adminSchema';
 import { parseEuroAmount } from './importUtils';
+import { findRecetteTwin, sameCatType } from './recetteLink';
 import {
   sendAdminMail, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
   summarizeMail, mailBodyText,
@@ -525,17 +526,33 @@ export const OmPage = () => {
       return;
     }
     if (!isSuper) return;
-    const recetteId = rec.recetteId && recettes.some((r) => r.id === rec.recetteId) ? rec.recetteId : '';
+    let recetteId = rec.recetteId && recettes.some((r) => r.id === rec.recetteId) ? rec.recetteId : '';
+    let recetteObj = recetteId ? (recettes.find((r) => r.id === recetteId) || null) : null;
+    /* Catégorie de la nouvelle dépense OM : celle de l’OM, ou — si absente —
+       le type de la ligne imputée (jamais « Fonctionnement » par défaut : un
+       OM porté par une ligne « Investissement » ne doit pas devenir une
+       dépense « Fonctionnement »). Si l’OM est classé dans un type qui ne
+       correspond pas à sa ligne mais qu’une fiche homonyme du bon type
+       existe, la nouvelle dépense y est réimputée (cohérence Recettes). */
+    let categorie = txt(pick(rec, ['categorie']));
+    if (!categorie && recetteObj) categorie = txt(recetteObj.type);
+    if (recetteObj && categorie && !sameCatType(categorie, recetteObj.type)) {
+      const twin = findRecetteTwin(recettes, recetteObj, categorie);
+      if (twin) {
+        recetteObj = twin;
+        recetteId = twin.id;
+      }
+    }
     const patch = {
       type: 'om',
       omId: rec.id,
       description: txt(missionOf(rec)),
       demandeur: txt(demandeurOf(rec)),
       destination: txt(pick(rec, ['destination', 'ville'])),
-      categorie: txt(pick(rec, ['categorie'])) || 'Fonctionnement',
+      categorie: categorie || 'Fonctionnement',
       classification: 'Mission',
-      ligneBudgetaire: recetteId
-        ? txt((recettes.find((r) => r.id === recetteId) || {}).ligne)
+      ligneBudgetaire: recetteObj
+        ? txt(recetteObj.ligne)
         : txt(pick(rec, ['ligneBudgetaire', 'ligne'])),
       recetteId,
       montant: parseNum(rec.coutTotal),
@@ -576,17 +593,27 @@ export const OmPage = () => {
   const transferAllOm = () => {
     if (!approvedTransferables.length) return;
     approvedTransferables.forEach((o) => {
-      const recetteId = o.recetteId && recettes.some((r) => r.id === o.recetteId) ? o.recetteId : '';
+      let recetteId = o.recetteId && recettes.some((r) => r.id === o.recetteId) ? o.recetteId : '';
+      let recetteObj = recetteId ? (recettes.find((r) => r.id === recetteId) || null) : null;
+      let categorie = txt(pick(o, ['categorie']));
+      if (!categorie && recetteObj) categorie = txt(recetteObj.type);
+      if (recetteObj && categorie && !sameCatType(categorie, recetteObj.type)) {
+        const twin = findRecetteTwin(recettes, recetteObj, categorie);
+        if (twin) {
+          recetteObj = twin;
+          recetteId = twin.id;
+        }
+      }
       const patch = {
         type: 'om',
         omId: o.id,
         description: txt(missionOf(o)),
         demandeur: txt(demandeurOf(o)),
         destination: txt(pick(o, ['destination', 'ville'])),
-        categorie: txt(pick(o, ['categorie'])) || 'Fonctionnement',
+        categorie: categorie || 'Fonctionnement',
         classification: 'Mission',
-        ligneBudgetaire: recetteId
-          ? txt((recettes.find((r) => r.id === recetteId) || {}).ligne)
+        ligneBudgetaire: recetteObj
+          ? txt(recetteObj.ligne)
           : txt(pick(o, ['ligneBudgetaire', 'ligne'])),
         recetteId,
         montant: parseNum(o.coutTotal),

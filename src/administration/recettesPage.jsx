@@ -13,6 +13,7 @@ import { useAdmin } from './AdminContext';
 import { RECETTE_TYPES, DEPENSE_BC_SIGNE, isPiFournisseur, depenseKindOf, isDesiderataRejected, isDesiderataApproved, desiderataDecisionOf } from './adminSchema';
 import { AdminImportModal } from './adminImportModal';
 import { SmartTable } from './smartTable';
+import { useDepenseLinkRepair } from './useDepenseLinkRepair';
 
 const euro = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' });
 const toNum = (v) => {
@@ -65,6 +66,11 @@ export const RecettesPage = () => {
 
   const [modal, setModal] = useState(null);
   const [importOpen, setImportOpen] = useState(false); // {mode:'new'} | {mode:'edit', rec} | {mode:'link', rec}
+
+  /* Réattribution automatique des dépenses dont la « Catégorie » contredit le
+     type de la ligne imputée (ex. dépense « Fonctionnement » liée à une fiche
+     « Investissement ») — trace ajoutée dans les commentaires de la dépense. */
+  const linkRepair = useDepenseLinkRepair();
 
   const types = Array.isArray(settings.recetteTypes) && settings.recetteTypes.length
     ? settings.recetteTypes
@@ -334,6 +340,31 @@ export const RecettesPage = () => {
 
   return (
     <div className="max-w-full mx-auto flex flex-col gap-4">
+      {linkRepair.report && (
+        <div
+          className={`rounded-xl border px-4 py-2.5 text-xs flex items-start justify-between gap-3 shadow-sm ${
+            linkRepair.report.stuck > 0
+              ? 'bg-amber-50 border-amber-200 text-amber-800'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+          }`}
+        >
+          <span className="min-w-0">
+            {linkRepair.report.fixed > 0
+              ? `✓ ${linkRepair.report.fixed} dépense${linkRepair.report.fixed > 1 ? 's' : ''} réattribuée${linkRepair.report.fixed > 1 ? 's' : ''} automatiquement sur la ligne budgétaire du type correspondant à sa catégorie (trace dans les « Commentaires » de la dépense).`
+              : ''}
+            {linkRepair.report.fixed > 0 && linkRepair.report.stuck > 0 ? ' ' : ''}
+            {linkRepair.report.stuck > 0
+              ? `${linkRepair.report.fixed > 0 ? '— ' : ''}${linkRepair.report.stuck} dépense${linkRepair.report.stuck > 1 ? 's' : ''} rest${linkRepair.report.stuck > 1 ? 'ent' : 'e'} liée${linkRepair.report.stuck > 1 ? 's' : ''} à une ligne de l’autre type, sans fiche homonyme du bon type : à corriger manuellement (catégorie ou ligne).`
+              : ''}
+          </span>
+          <button
+            type="button"
+            onClick={linkRepair.clearReport}
+            className="shrink-0 font-black opacity-60 hover:opacity-100"
+            title="Masquer"
+          >✕</button>
+        </div>
+      )}
       {/* Barre d’actions */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2 text-xs font-bold text-slate-400">

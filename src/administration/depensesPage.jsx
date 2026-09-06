@@ -61,6 +61,8 @@ import {
 } from './adminSchema';
 import { parseEuroAmount } from './importUtils';
 import { fileBudgetDocs } from './driveFiling';
+import { findRecetteByLabel, findRecetteTwin, sameCatType } from './recetteLink';
+import { useDepenseLinkRepair } from './useDepenseLinkRepair';
 
 /* ── Petites aides ──────────────────────────────────────────────────────── */
 const euro = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' });
@@ -148,25 +150,14 @@ const completeValue = (kept, prevFlag, noParcels) => {
 };
 
 /* Retrouve la Recette (ligne budgétaire) dont l’intitulé correspond, comme
-   le fait l’import (« S2R01GEC (INTRUDE) » → ligne correspondante). */
-const findRecetteId = (recettes, label) => {
-  const n = norm(label);
-  if (!n) return '';
-  const list = Array.isArray(recettes) ? recettes : [];
-  const exact = list.find((r) => norm(r.ligne) === n);
-  if (exact) return exact.id;
-  const core = n.replace(/\s*\([^)]*\)\s*$/, '');
-  if (core) {
-    const byCore = list.find((r) => norm(r.ligne).replace(/\s*\([^)]*\)\s*$/, '') === core);
-    if (byCore) return byCore.id;
-  }
-  const tok = (n.match(/\(([^)]+)\)\s*$/) || [])[1];
-  if (tok) {
-    const t = norm(tok);
-    const byTok = list.find((r) => norm(r.ligne).split(' ').includes(t));
-    if (byTok) return byTok.id;
-  }
-  return '';
+   le fait l’import (« S2R01GEC (INTRUDE) » → ligne correspondante).
+   `type` (Fonctionnement / Investissement) restreint la recherche à la
+   catégorie de la dépense — on ne relie JAMAIS vers une fiche de l’autre
+   type : la dépense serait sinon comptée sur la mauvaise ligne de la page
+   Recettes. */
+const findRecetteId = (recettes, label, type) => {
+  const found = findRecetteByLabel(recettes, label, type);
+  return found ? found.id : '';
 };
 
 /* Options « Ligne budgétaire » uniques pour le sélecteur : une même ligne peut
@@ -399,6 +390,10 @@ const DepensesPage = () => {
   /* Onglet actif : 'achats' | 'pi' | 'om' — voir le regroupement plus bas. */
   const [tab, setTab] = useState('achats');
 
+  /* Réattribution automatique des dépenses dont la « Catégorie » contredit le
+     type de la ligne budgétaire imputée (page Recettes) — voir le hook. */
+  const linkRepair = useDepenseLinkRepair();
+
   /* Ligne « cible » d’une navigation inter-page (bouton « → Dépenses » de la
      page OM) : on bascule sur son onglet puis on la surligne dans le tableau. */
   const [focusRow, setFocusRow] = useState(null);
@@ -618,9 +613,48 @@ const DepensesPage = () => {
     const livraisons = keepLivraisons(draft.livraisons);
     const complete = completeValue(livraisons, draft.livraisonComplete, draft.noParcelsComplete);
     const ligneBudgetaire = txt(draft.ligneBudgetaire);
-    const recetteId = draft.recetteId && recettes.some((r) => r.id === draft.recetteId)
-      ? draft.recetteId
-      : findRecetteId(recettes, ligneBudgetaire);
+    const categorie = txt(draft.categorie);
+    /* Ligne budgétaire imputée : la « Catégorie » (Fonctionnement /
+       Investissement) doit correspondre au type de la fiche Recettes —
+       sinon la dépense serait comptée sur la mauvaise ligne de la page
+       Recettes. Si une fiche homonyme du bon type existe on bascule dessus ;
+       sinon on refuse l’enregistrement avec un message explicite (l’utilisateur
+       corrige la catégorie, choisit une autre ligne ou crée d’abord la fiche). */
+    let recetteId = '';
+    const explicit = draft.recetteId && recettes.some((r) => r.id === draft.recetteId)
+      ? recettes.find((r) => r.id === draft.recetteId)
+      : null;
+    if (explicit) {
+      if (!categorie || !txt(explicit.type) || sameCatType(categorie, explicit.type)) {
+        recetteId = explicit.id;
+      } else {
+        const twin = findRecetteTwin(recettes, explicit, categorie);
+        if (twin) {
+          recetteId = twin.id;
+        } else {
+          alert(
+            `Impossible d’enregistrer : la dépense est classée « ${categorie} » mais liée à la ligne « ${explicit.ligne || explicit.id} » (${explicit.type || 'type inconnu'}).\n\n`
+            + `Aucune ligne budgétaire homonyme de type « ${categorie} » n’existe dans Recettes.\n`
+            + `Corrigez la catégorie, choisissez une autre ligne, ou créez d’abord la ligne « ${categorie} » correspondante (page Recettes).`
+          );
+          return false;
+        }
+      }
+    } else if (categorie) {
+      const found = findRecetteByLabel(recettes, ligneBudgetaire, categorie);
+      if (found) {
+        recetteId = found.id;
+      } else if (ligneBudgetaire && findRecetteByLabel(recettes, ligneBudgetaire)) {
+        const other = findRecetteByLabel(recettes, ligneBudgetaire);
+        alert(
+          `Aucune ligne budgétaire de type « ${categorie} » ne correspond à « ${ligneBudgetaire} » — seule « ${other.ligne || other.id} » (${other.type || 'type inconnu'}) existe dans Recettes.\n\n`
+          + `Corrigez la catégorie de la dépense ou créez d’abord la ligne budgétaire « ${categorie} » correspondante (page Recettes).`
+        );
+        return false;
+      }
+    } else {
+      recetteId = findRecetteId(recettes, ligneBudgetaire);
+    }
     const entPhrase = 'pas décompté sur ENT';
     const rawEnt = txt(draft.ent);
     const fournisseur = txt(draft.fournisseur);
@@ -631,7 +665,7 @@ const DepensesPage = () => {
       type,
       description,
       demandeur: txt(draft.demandeur),
-      categorie: txt(draft.categorie),
+      categorie,
       classification: txt(draft.classification),
       ligneBudgetaire,
       recetteId: recetteId || '',
@@ -1012,6 +1046,31 @@ const DepensesPage = () => {
 
   return (
     <div className="w-full min-w-0 mx-auto flex flex-col gap-4">
+      {linkRepair.report && (
+        <div
+          className={`rounded-xl border px-4 py-2.5 text-xs flex items-start justify-between gap-3 shadow-sm ${
+            linkRepair.report.stuck > 0
+              ? 'bg-amber-50 border-amber-200 text-amber-800'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+          }`}
+        >
+          <span className="min-w-0">
+            {linkRepair.report.fixed > 0
+              ? `✓ ${linkRepair.report.fixed} dépense${linkRepair.report.fixed > 1 ? 's' : ''} réattribuée${linkRepair.report.fixed > 1 ? 's' : ''} automatiquement sur la ligne budgétaire du type correspondant à sa catégorie (trace dans « Commentaires »).`
+              : ''}
+            {linkRepair.report.fixed > 0 && linkRepair.report.stuck > 0 ? ' ' : ''}
+            {linkRepair.report.stuck > 0
+              ? `${linkRepair.report.fixed > 0 ? '— ' : ''}${linkRepair.report.stuck} dépense${linkRepair.report.stuck > 1 ? 's' : ''} rest${linkRepair.report.stuck > 1 ? 'ent' : 'e'} liée${linkRepair.report.stuck > 1 ? 's' : ''} à une ligne de l’autre type, sans fiche homonyme du bon type : à corriger manuellement (catégorie ou ligne).`
+              : ''}
+          </span>
+          <button
+            type="button"
+            onClick={linkRepair.clearReport}
+            className="shrink-0 font-black opacity-60 hover:opacity-100"
+            title="Masquer"
+          >✕</button>
+        </div>
+      )}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         {tab === 'om' ? (
           <p className="text-xs font-bold text-slate-400">
@@ -1332,6 +1391,40 @@ const DepenseModal = ({
     const v = ev.target.value;
     setDraft((d) => ({ ...d, ligneBudgetaire: v, recetteId: '' }));
   };
+  /* Changer la « Catégorie » peut rendre incohérente la ligne déjà choisie :
+     si une fiche homonyme du bon type existe, on bascule immédiatement dessus
+     (visible dans le sélecteur) pour ne jamais enregistrer une dépense
+     « Fonctionnement » sur une fiche « Investissement » (ou l’inverse). */
+  const setCategorie = (ev) => {
+    const value = ev.target.value;
+    setDraft((d) => {
+      if (!d.recetteId) return { ...d, categorie: value };
+      const cur = recettes.find((r) => r.id === d.recetteId);
+      if (!cur || !value || !txt(cur.type) || sameCatType(value, cur.type)) {
+        return { ...d, categorie: value };
+      }
+      const twin = findRecetteTwin(recettes, cur, value);
+      return twin
+        ? { ...d, categorie: value, recetteId: twin.id, ligneBudgetaire: txt(twin.ligne) }
+        : { ...d, categorie: value };
+    });
+  };
+  /* Conflit résiduel affiché pendant l’édition : catégorie choisie ≠ type de la
+     ligne imputée (fiche homonyme du bon type absente, ou ancien enregistrement
+     que la réattribution automatique n’a pas pu corriger). */
+  const catConflict = useMemo(() => {
+    if (!draft.categorie || !draft.recetteId) return null;
+    const cur = recettes.find((r) => r.id === draft.recetteId);
+    if (!cur || !txt(cur.type) || sameCatType(draft.categorie, cur.type)) return null;
+    const twin = findRecetteTwin(recettes, cur, draft.categorie);
+    return {
+      cur,
+      hint: twin
+        ? 'la ligne sera basculée sur la fiche homonyme du bon type lors de l’enregistrement.'
+        : 'aucune fiche homonyme du bon type n’existe dans Recettes : créez-la d’abord ou corrigez la catégorie.',
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.categorie, draft.recetteId, recettes]);
   /* Enregistrement (asynchrone) : laisse le bouton afficher « Enregistrement… »
      pendant le classement des documents liés sur Google Drive. */
   const [saving, setSaving] = useState(false);
@@ -1402,11 +1495,16 @@ const DepenseModal = ({
                   {(demandeurNames || []).map((n) => <option key={n} value={n} />)}
                 </datalist>
               </Field>
-              <Field label="Catégorie">
-                <select className={MODAL_INPUT} value={draft.categorie} onChange={set('categorie')}>
+              <Field label="Catégorie" hint="Fonctionnement / Investissement. La ligne budgétaire choisie ci-contre est automatiquement du même type ; une dépense classée « Fonctionnement » ne doit jamais être comptée sur une ligne « Investissement » de la page Recettes.">
+                <select className={MODAL_INPUT} value={draft.categorie} onChange={setCategorie}>
                   <option value="">— non précisée —</option>
                   {(types || []).map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
+                {catConflict ? (
+                  <div className="text-[10px] mt-1 leading-snug text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+                    ⚠ Catégorie « {draft.categorie} » mais ligne « {catConflict.cur.ligne} » ({catConflict.cur.type}) — {catConflict.hint}
+                  </div>
+                ) : null}
               </Field>
               <div className="lg:col-span-2">
                 <Field label="Ligne budgétaire" hint="Chaque ligne n’apparaît qu’une fois — le type Fonctionnement / Investissement est porté par le champ « Catégorie » ci-dessus. Choisissez une ligne existante ou tapez librement son code/intitulé ; la liaison se fait automatiquement à l’enregistrement.">
