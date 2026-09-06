@@ -66,7 +66,7 @@ import {
   DEFAULT_DEPENSE_MANDATORY, ADMIN_PAGES,
 } from './adminSchema';
 import { parseEuroAmount } from './importUtils';
-import { fileBudgetDocs, budgetDocPath, BUDGET_DOC_FOLDER_BY_FIELD } from './driveFiling';
+import { fileBudgetDocs, budgetDocPath, budgetDocFileName, BUDGET_DOC_FOLDER_BY_FIELD } from './driveFiling';
 import { uploadLocalFile, cloudBackendAvailable, sharedWorkspaceMode } from '../utils/driveUpload';
 import { findRecetteByLabel, findRecetteTwin, sameCatType } from './recetteLink';
 import { useDepenseLinkRepair } from './useDepenseLinkRepair';
@@ -1453,7 +1453,7 @@ const Section = ({ icon, title, children }) => (
    Drive (dossiers créés si besoin) et son lien remplit le champ — le document
    est donc classé dans la structure convenue dès la saisie, sans dépendre
    d’un lien Drive collé ailleurs. */
-const BudgetDocLinkInput = ({ folder, value, onChange, placeholder, title }) => {
+const BudgetDocLinkInput = ({ folder, value, onChange, placeholder, title, nameFor }) => {
   const fileRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
@@ -1468,7 +1468,7 @@ const BudgetDocLinkInput = ({ folder, value, onChange, placeholder, title }) => 
     const year = new Date().getFullYear();
     try {
       const drive = await uploadLocalFile({
-        name: (String(file.name || '').trim() || 'document').slice(0, 180),
+        name: String((typeof nameFor === 'function' ? nameFor(file) : '') || file.name || 'document').trim().slice(0, 180),
         mimeType: file.type || 'application/octet-stream',
         file,
         path: budgetDocPath(year, folder),
@@ -1519,6 +1519,25 @@ const BudgetDocLinkInput = ({ folder, value, onChange, placeholder, title }) => 
       {msg ? <p className="text-[11px] text-slate-500 mt-1 leading-snug break-words">{msg}</p> : null}
     </div>
   );
+};
+
+/* Nom de fichier Drive « conventionnel » d’un document budget téléversé depuis
+   le formulaire Dépenses : BC_<N°>_<ligne>_<fournisseur>_<demandeur>_<date>.
+   `docDate` est la date propre au document (date du BC, signature du devis,
+   réception du BL…) ; à défaut on utilise la date de la demande. Sans N° de
+   document on renvoie '' → le nom de fichier local d’origine est conservé (un
+   document sans N° ne doit pas prendre un nom conventionnel incomplet). */
+const depenseDocDriveName = (draft, { prefix, code, docDate }, file) => {
+  if (!txt(code)) return '';
+  return budgetDocFileName({
+    prefix,
+    code: txt(code),
+    ligne: txt(draft && draft.ligneBudgetaire),
+    fournisseur: txt(draft && draft.fournisseur),
+    demandeur: txt(draft && draft.demandeur),
+    date: txt(docDate) || txt(draft && draft.dateDemande),
+    fileName: file && file.name,
+  });
 };
 
 const DepenseModal = ({
@@ -1856,6 +1875,7 @@ const DepenseModal = ({
                       folder={BUDGET_DOC_FOLDER_BY_FIELD.numDevisUrl || 'Devis'}
                       value={draft.numDevisUrl}
                       onChange={(v) => setDraft((d) => ({ ...d, numDevisUrl: v }))}
+                      nameFor={(file) => depenseDocDriveName(draft, { prefix: 'Devis', code: draft.numDevis, docDate: draft.dateSignatureDevis }, file)}
                       placeholder="🔗 lien du devis (Drive) — ou fichier depuis ce PC"
                       title="Lien vers le devis — rangé à l’enregistrement dans Budget_labo/<année>/Devis"
                     />
@@ -1875,6 +1895,7 @@ const DepenseModal = ({
                       folder={BUDGET_DOC_FOLDER_BY_FIELD.numBCUrl || 'BC'}
                       value={draft.numBCUrl}
                       onChange={(v) => setDraft((d) => ({ ...d, numBCUrl: v }))}
+                      nameFor={(file) => depenseDocDriveName(draft, { prefix: 'BC', code: draft.numBC, docDate: draft.dateBC }, file)}
                       placeholder="🔗 lien du BC (Drive) — ou fichier depuis ce PC"
                       title="Lien vers le bon de commande — rangé dans Budget_labo/<année>/BC"
                     />
@@ -1981,6 +2002,7 @@ const DepenseModal = ({
                             ...d,
                             livraisons: d.livraisons.map((x, j) => (j === i ? { ...x, numBLUrl: v } : x)),
                           }))}
+                          nameFor={(file) => depenseDocDriveName(draft, { prefix: 'BL', code: l.numBL, docDate: l.dateReception }, file)}
                           placeholder="🔗 lien du BL (Drive) — ou fichier depuis ce PC"
                           title="Lien du BL — classé à l’enregistrement dans Budget_labo/<année>/BL"
                         />

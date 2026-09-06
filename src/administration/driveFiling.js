@@ -41,6 +41,66 @@ export const BUDGET_DOC_FOLDER_BY_FIELD = {
 export const budgetDocPath = (year, folder) =>
   ['Budget_labo', String(year || new Date().getFullYear()), folder].filter(Boolean);
 
+/* ── Convention de nommage des documents budget sur Google Drive ────────────
+   Chaque document STOCKÉ par l’application (bouton « ⬆ PC ») reçoit un nom qui
+   commence par le type du document, son N°, puis les attributs de la dépense,
+   séparés par des « _ » :
+
+     BC_<n° BC>_<ligne budgétaire>_<fournisseur>_<demandeur>_<date>
+     Devis_<n° devis>_<ligne budgétaire>_<fournisseur>_<demandeur>_<date>
+     BL_<n° BL>_<ligne budgétaire>_<fournisseur>_<demandeur>_<date>
+
+   Un devis / BC approuvé reçoit en plus le suffixe « _approuvé » à la fin du
+   nom. Les parties vides sont omises ; l’extension du fichier d’origine est
+   conservée. Le N° reste le 2e segment, ce qui préserve la recherche de N°
+   faite par relinkDepenseDocuments() (./budgetLink.js). */
+
+/** Nettoyage d’un fragment (une partie) de nom de fichier : les caractères que
+ *  Google Drive n’accepte pas sont remplacés, les espaces resserrés. */
+export const driveFileNamePart = (v, max = 60) =>
+  String(v ?? '')
+    .replace(/[\p{Cc}]/gu, '')
+    .replace(/[\\/:*?"<>|]+/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
+
+/** Extension (avec le point) d’un nom de fichier local, ex. « rapport.pdf » → « .pdf ». */
+export const driveFileExtensionOf = (name) => {
+  const m = String(name || '').match(/\.([A-Za-z0-9]{1,8})$/);
+  return m ? `.${m[1].toLowerCase()}` : '';
+};
+
+/** Construit le nom de fichier Drive d’un document budget d’une dépense selon
+ *  la convention du laboratoire (voir commentaire ci-dessus). `prefix` est le
+ *  type du document (« BC », « Devis », « BL »…) ; `code` son N° ; `date` une
+ *  date ISO (AAAA-MM-JJ). Chaque partie vide est simplement omise. */
+export const budgetDocFileName = ({ prefix, code, ligne, fournisseur, demandeur, date, fileName = '' } = {}) => {
+  const parts = [prefix, code, ligne, fournisseur, demandeur, date]
+    .map((p) => driveFileNamePart(p))
+    .filter(Boolean);
+  const base = parts.join('_').slice(0, 180);
+  if (!base) return driveFileNamePart(String(fileName || 'document'));
+  return `${base}${driveFileExtensionOf(fileName)}`;
+};
+
+/** Suffixe ajouté au nom d’un devis / BC approuvé. */
+export const APPROVED_SUFFIX = '_approuvé';
+
+/** Vrai si le nom de fichier porte déjà la marque « approuvé » (qu’elle soit
+ *  suivie ou non d’une extension). */
+export const hasApprovedSuffix = (name) =>
+  /_approuv(é|e)\s*$/i.test(String(name || '').replace(/\.[^./\\]+$/, ''));
+
+/** Ajoute (une seule fois) la marque « _approuvé » à la fin du nom donné
+ *  (juste avant l’extension éventuelle). */
+export const withApprovedSuffix = (name) => {
+  const s = String(name || '');
+  if (!s || hasApprovedSuffix(s)) return s;
+  const base = s.replace(/\.[^./\\]+$/, '');
+  return `${base}${APPROVED_SUFFIX}${driveFileExtensionOf(s)}`;
+};
+
 /** Identifiant d'un FICHIER Google Drive (jamais d'un dossier) extrait d'une
  *  URL de lien partagé. Renvoie '' pour un lien externe / non-Drive. */
 export const driveFileIdFromUrl = (url) => {

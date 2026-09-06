@@ -10,6 +10,13 @@
        créés automatiquement — et un e-mail est envoyé au superutilisateur ;
      · chaque ligne arrive « En attente » dans sa table (Devis / BC) — la
        première colonne affiche la décision ;
+      · plusieurs devis CANDIDATS peuvent être déposés pour un même produit :
+        les lignes partagent un groupe commun (choisi au dépôt, ou détecté
+        automatiquement quand l'objet saisi correspond exactement à un produit
+        déjà déposé). UN SEUL devis par produit peut être approuvé : les autres
+        candidats encore « En attente » passent alors automatiquement
+        « Non retenu » (statut distinct de « Refusé », e-mail au déposant) ;
+
      · l'approbation est réservée au superutilisateur (✓ / ✗) :
          – approuver un DEVIS crée (ou met à jour) la dépense liée avec le
            statut « Devis en cours », le lien du fichier dans numDevisUrl et la
@@ -23,23 +30,40 @@
        modifier sa propre ligne tant qu'elle est « En attente ».
 
    Modèle stocké (collection `devisBc`) :
-     devis : { kind:'devis', description, fournisseur, numDevis, montant?,
-               fichierNom, fichierUrl, fichierMime, notes, deposant,
-               statut, depenseId?, decidedBy?, decidedAt? }
-     bc    : { kind:'bc',    description, fournisseur, numBC, montant?,
-               fichierNom, fichierUrl, fichierMime, notes, deposant,
-               statut, devisId?, depenseId?, decidedBy?, decidedAt? }
+     devis : { kind:'devis', description, fournisseur, ligneBudgetaire,
+               demandeur, numDevis, montant?, fichierNom, fichierUrl,
+
+
+               fichierMime, notes, deposant, statut, depenseId?,
+               decidedBy?, decidedAt? }
+     bc    : { kind:'bc',    description, fournisseur, ligneBudgetaire,
+               demandeur, numBC, montant?, fichierNom, fichierUrl,
+               fichierMime, notes, deposant, statut, devisId?, depenseId?,
+               decidedBy?, decidedAt? }
      + enveloppe d'audit posée par upsert() (createdAt/By, updatedAt/By).
+      Statuts de décision : « En attente » / « Approuvé » / « Refusé » /
+      « Non retenu » (devis candidat écarté automatiquement lors de
+      l'approbation d'un autre devis du même produit). Le champ
+      `groupeAchatId` (devis) désigne le produit/achat commun aux devis
+      candidats d'un même achat — aucune collection séparée : le libellé du
+      produit est repris du devis le plus récent du groupe.
    ========================================================================= */
 import React, { useMemo, useRef, useState } from 'react';
 import { useAdmin } from './AdminContext';
 import { SmartTable } from './smartTable';
 import { toFrDate } from './congesDates';
 import {
-  APPROVAL_PENDING, APPROVAL_APPROVED, APPROVAL_REJECTED, isApprovalPending, approvalStatusOf,
+  APPROVAL_PENDING, APPROVAL_APPROVED, APPROVAL_REJECTED, APPROVAL_NOT_RETAINED,
+  isApprovalPending, approvalStatusOf,
 } from './adminSchema';
-import { uploadLocalFile, cloudBackendAvailable } from '../utils/driveUpload';
-import { fileBudgetDocs } from './driveFiling';
+import { uploadLocalFile, cloudBackendAvailable, renameDriveFile } from '../utils/driveUpload';
+import {
+  fileBudgetDocs,
+  driveFileIdFromUrl,
+  budgetDocFileName,
+  hasApprovedSuffix,
+  withApprovedSuffix,
+} from './driveFiling';
 import {
   sendAdminMail, personEmailOf, personnelEmailsMatching, superuserEmailsOf,
 } from './emailNotify';
@@ -60,6 +84,61 @@ const todayIso = () => {
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
+/** Id d'un « produit » : groupe rassemblant les devis candidats d'un même
+ *  achat (déposés séparément, un seul sera retenu à l'approbation). */
+const newGroupeAchatId = () =>
+  `produit_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}`;
+
+/* ── Convention de nommage des fichiers devis / BC déposés ──────────────────
+   À chaque dépôt, le fichier est stocké dans Budget_labo/<année>/Devis|BC avec
+   le nom conventionnel du laboratoire (voir ./driveFiling.js) :
+     Devis_<N° devis>_<ligne budgétaire>_<fournisseur>_<demandeur>_<date>
+     BC_<N° BC>_<ligne budgétaire>_<fournisseur>_<demandeur>_<date>
+   Quand le devis / BC est approuvé, la marque « _approuvé » est ajoutée à la
+   fin du nom (juste avant l’extension). La convention n’est appliquée que si
+   le N° du document est connu ; sinon on garde le nom d’origine du fichier. */
+const depositDocDriveNameOf = (r) => {
+  const isBc = !!r && r.kind === 'bc';
+  const code = txt(r && (isBc ? r.numBC : r.numDevis));
+  if (!code) return '';
+  return budgetDocFileName({
+    prefix: isBc ? 'BC' : 'Devis',
+    code,
+    ligne: txt(r && r.ligneBudgetaire),
+    fournisseur: txt(r && r.fournisseur),
+    demandeur: txt(r && r.demandeur),
+    date: txt(r && (r.date || r.dateDepot)),
+    fileName: txt(r && r.fichierNom),
+  });
+};
+
+/** Nom final attendu pour le fichier d’un devis / BC : convention du
+ *  laboratoire, plus la marque « _approuvé » quand la ligne est approuvée. */
+const depositDocDriveFinalName = (r) => {
+  const base = depositDocDriveNameOf(r);
+  if (!base) return txt(r && r.fichierNom);
+  return r && r.statut === APPROVAL_APPROVED && !hasApprovedSuffix(base)
+    ? withApprovedSuffix(base)
+    : base;
+};
+
+/** Renomme (best-effort) sur Google Drive le fichier d’un devis / BC : nom
+ *  conventionnel au dépôt, « _approuvé » ajouté après approbation. Renvoie le
+ *  nouveau nom, ou '' quand rien n’a pu être renommé (fichier non accessible à
+ *  l’app — limite « drive.file » — ou absence de fichier / de N°). */
+const renameDepositDriveFileTo = async (r) => {
+  if (!r || !cloudBackendAvailable()) return '';
+  const fileId = driveFileIdFromUrl(txt(r.fichierUrl));
+  const target = depositDocDriveFinalName(r);
+  if (!fileId || !target) return '';
+  try {
+    const ok = await renameDriveFile(fileId, target);
+    return ok ? target : '';
+  } catch (err) {
+    console.warn('Renommage Drive du fichier devis/BC ignoré (fichier inaccessible à l’app ?)', err && err.message);
+    return '';
+  }
+};
 const norm = (s) => String(s || '')
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -69,6 +148,32 @@ const sameName = (a, b) => {
   if (!ka || !kb) return false;
   const toks = (x) => x.split(/\s+/).sort().join(' ');
   return toks(ka) === toks(kb);
+};
+
+/** Libellé court d'un statut d'approbation (menus « Devis lié », filtres…). */
+const approvalStatusShort = (r) => {
+  const raw = r && r.statut;
+  if (raw === APPROVAL_APPROVED) return 'approuvé ✓';
+  if (raw === APPROVAL_NOT_RETAINED) return 'non retenu';
+  if (isApprovalPending(raw)) return 'en attente';
+  return approvalStatusOf(raw) === APPROVAL_REJECTED ? 'refusé ✗' : approvalStatusOf(raw);
+};
+/** Devis proposés pour lier un BC : les approuvés d'abord (le BC se rattache
+ *  au devis retenu du produit), puis les devis encore en attente. */
+const rankedBcDevisOptions = (opts) => {
+  const list = (Array.isArray(opts) ? opts : []).filter((d) => d && d.id);
+  const rank = (d) => {
+    if (d.statut === APPROVAL_APPROVED) return 0;
+    if (isApprovalPending(d.statut)) return 1;
+    return 2;
+  };
+  return [...list].sort((a, b) => rank(a) - rank(b) || (b.createdAt || 0) - (a.createdAt || 0));
+};
+/** Premier devis proposé pour un nouveau BC : le plus récent des approuvés,
+ *  sinon le plus récent des devis encore en attente. */
+const defaultLinkedDevisId = (opts) => {
+  const ranked = rankedBcDevisOptions(opts);
+  return ranked.length ? ranked[0].id : '';
 };
 /** Dossier Drive du fichier déposé : Budget_labo/<année>/Devis|BC. */
 const budgetLaboPath = (kind) =>
@@ -120,6 +225,19 @@ export const ApprobationPage = () => {
     return [...set].sort((a, b) => a.localeCompare(b, 'fr'));
   }, [librerie]);
 
+  /* Lignes budgétaires connues (page Recettes) : elles alimentent (en
+     suggestions seulement) la saisie « Ligne budgétaire » du dépôt. */
+  const budgetLineOptions = useMemo(() => {
+    const set = new Set();
+    (Array.isArray(data.recettes) ? data.recettes : []).forEach((r) => {
+      [r && r.ligne, r && r.ligneBudgetaire].forEach((v) => {
+        const s = txt(v);
+        if (s) set.add(s);
+      });
+    });
+    return [...set].sort((a, b) => a.localeCompare(b, 'fr'));
+  }, [data.recettes]);
+
   const isSuper = !!access.isSuperuser;
   const currentName = txt(access.profile && access.profile.person
     ? access.profile.person.nom
@@ -139,6 +257,62 @@ export const ApprobationPage = () => {
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)), [rows]);
   const devisById = useMemo(() => new Map(devisList.map((d) => [d.id, d])), [devisList]);
   const devisOptions = useMemo(() => devisList, [devisList]);
+
+  /* « Produits » : plusieurs devis candidats déposés pour un même achat
+     (même groupeAchatId). Le groupe est décrit par son devis le plus récent
+     (libellé = objet / n° devis) et `approvedId` repère le devis retenu
+     quand le produit a déjà été décidé. */
+  const productGroups = useMemo(() => {
+    const byId = new Map();
+    devisList.forEach((d) => {
+      const g = txt(d.groupeAchatId);
+      if (!g) return;
+      let entry = byId.get(g);
+      if (!entry) {
+        entry = { id: g, devis: [], approvedId: '' };
+        byId.set(g, entry);
+      }
+      entry.devis.push(d);
+      if (d.statut === APPROVAL_APPROVED && !entry.approvedId) entry.approvedId = d.id;
+    });
+    return [...byId.values()].map((entry) => {
+      const latest = entry.devis[0]; // devisList trié du plus récent au plus ancien
+      const desc = txt(latest && (latest.description || latest.numDevis));
+      return { ...entry, label: desc || entry.id, count: entry.devis.length, latest };
+    });
+  }, [devisList]);
+  /* Rattachement automatique au dépôt : un devis dont l'objet saisi
+     correspond exactement (accents / casse / espaces ignorés) à un produit
+     déjà déposé rejoint ce produit. */
+  const productMatchingDescription = (description) => {
+    const key = norm(description);
+    if (!key) return '';
+    for (const p of productGroups) {
+      if (norm(p.label) === key) return p.id;
+    }
+    return '';
+  };
+  /* Lignes « Devis » enrichies pour le tableau : informations produit
+     (nombre de candidats, devis retenu du groupe) ajoutées à la volée, sans
+     toucher au modèle stocké. */
+  const devisRows = useMemo(() => {
+    const counts = new Map();
+    const approved = new Map();
+    devisList.forEach((d) => {
+      const g = txt(d.groupeAchatId);
+      if (!g) return;
+      counts.set(g, (counts.get(g) || 0) + 1);
+      if (d.statut === APPROVAL_APPROVED && !approved.has(g)) approved.set(g, d.id);
+    });
+    return devisList.map((d) => {
+      const g = txt(d.groupeAchatId);
+      return {
+        ...d,
+        _produitCount: g ? counts.get(g) || 0 : 0,
+        _produitApprovedId: g ? approved.get(g) || '' : '',
+      };
+    });
+  }, [devisList]);
 
   /* « Ranger les fichiers » — classe dans Budget_labo/<année>/Devis|BC les
      documents (dont ceux collés comme liens Google Drive) des devis / BC déjà
@@ -272,6 +446,36 @@ export const ApprobationPage = () => {
     setNote(await summarizeMail(res, 'Gestionnaire notifié'));
   };
 
+  /* E-mail « Devis non retenu » : prévient le déposant (et les gestionnaires)
+     quand un devis candidat n'a pas été retenu lors de l'approbation d'un
+     autre devis du même produit. */
+  const notifyNotRetained = async (nrRec, retainedRec) => {
+    const ref = txt(nrRec && nrRec.numDevis);
+    const subject = `[Lab Workspace] Devis non retenu${ref ? ` — ${ref}` : ''}`;
+    const retained = txt(retainedRec && retainedRec.numDevis)
+      || txt(retainedRec && retainedRec.description)
+      || 'un autre devis du même achat';
+    const text = mailBody([
+      `Le devis suivant n'a pas été retenu pour cet achat :`,
+      `  ${txt(nrRec && nrRec.description) || 'Devis'}${ref ? ` (${ref})` : ''}`,
+      `  Fournisseur : ${txt(nrRec && nrRec.fournisseur) || '—'}`,
+      `  Déposé par : ${txt(nrRec && nrRec.deposant) || '—'}`,
+      `Devis retenu : ${retained} — la dépense « Devis en cours » correspondante a été créée.`,
+    ].filter(Boolean));
+    const to = [...gestionnaireEmails];
+    const deposantEmail = personEmailOf(personnel.find((p) => sameName(p.nom, txt(nrRec && nrRec.deposant))));
+    if (deposantEmail && to.indexOf(deposantEmail) === -1) to.push(deposantEmail);
+    const actorPerson = personnel.find((p) => sameName(p.nom, currentName));
+    const res = await sendAdminMail({
+      to,
+      subject,
+      text,
+      fromName: currentName || 'Lab Workspace',
+      replyTo: personEmailOf(actorPerson) || deposantEmail,
+    });
+    setNote(await summarizeMail(res, 'Déposant notifié'));
+  };
+
     /* ── Décisions (réservées au superutilisateur) ────────────────────────── */
   const decideRow = async (rec, decision) => {
     if (!rec || !rec.id) return;
@@ -283,7 +487,29 @@ export const ApprobationPage = () => {
         await notifyDecision({ ...rec, statut: APPROVAL_REJECTED }, APPROVAL_REJECTED);
       } else if (rec.kind === 'devis') {
         /* Approbation du devis → dépense « Devis en cours » (créée ou mise à jour).
-           La date de signature du devis est renseignée automatiquement (aujourd'hui). */
+           La date de signature du devis est renseignée automatiquement (aujourd'hui).
+
+           Devis candidats : quand plusieurs devis d'un même produit ont été
+           déposés (même groupeAchatId), UN SEUL peut être approuvé — sinon
+           l'approbation créerait une seconde dépense pour le même achat. */
+        const groupeAchatId = txt(rec.groupeAchatId);
+        const candidats = groupeAchatId
+          ? devisList.filter((d) => d.kind === 'devis' && txt(d.groupeAchatId) === groupeAchatId && d.id !== rec.id)
+          : [];
+        const dejaRetenu = candidats.find((d) => d.statut === APPROVAL_APPROVED);
+        if (dejaRetenu) {
+          const label = txt(dejaRetenu.numDevis) || txt(dejaRetenu.fournisseur) || txt(dejaRetenu.description) || 'devis déjà approuvé';
+          const decidedOn = dejaRetenu.decidedAt
+            ? ` le ${toFrDate(isoOf(new Date(dejaRetenu.decidedAt).toISOString()))}`
+            : '';
+          alert(
+            `Ce produit a déjà un devis approuvé — un seul devis peut être retenu par achat.\n\n`
+            + `Devis déjà retenu : ${label} (décision de ${txt(dejaRetenu.decidedBy) || '—'}${decidedOn}).\n\n`
+            + `La dépense « Devis en cours » a été créée pour ce devis. Si vous voulez en retenir un `
+            + `autre, supprimez cette dépense dans la page Dépenses puis approuvez le nouveau devis.`
+          );
+          return;
+        }
         const patchDep = {
           description: txt(rec.description),
           fournisseur: txt(rec.fournisseur),
@@ -292,14 +518,25 @@ export const ApprobationPage = () => {
           montant: numOf(rec.montant),
           dateDemande: isoOf(rec.dateDepot) || todayIso(),
           dateSignatureDevis: todayIso(),
-          demandeur: txt(rec.deposant) || currentName,
+          demandeur: txt(rec.demandeur) || txt(rec.deposant) || currentName,
+          ligneBudgetaire: txt(rec.ligneBudgetaire),
           statut: 'Devis en cours',
           suivi: 'Devis en cours',
           commentaires: txt(rec.notes),
         };
         const dep = upsert('depenses', patchDep, rec.depenseId || null);
-        upsert('devisBc', { statut: APPROVAL_APPROVED, depenseId: dep.id, decidedBy: currentName, decidedAt: Date.now() }, rec.id);
+        const approvedDevis = upsert('devisBc', { statut: APPROVAL_APPROVED, depenseId: dep.id, decidedBy: currentName, decidedAt: Date.now() }, rec.id);
+        /* Devis approuvé → le fichier Drive reçoit la marque « _approuvé ». */
+        const approvedDevisName = await renameDepositDriveFileTo(approvedDevis);
+        if (approvedDevisName) upsert('devisBc', { fichierNom: approvedDevisName }, approvedDevis.id);
         await notifyDecision({ ...rec, statut: APPROVAL_APPROVED, depenseId: dep.id }, APPROVAL_APPROVED);
+        /* Les autres candidats du même produit encore « En attente » ne sont pas
+           retenus : décision enregistrée (traçabilité) + e-mail au déposant. */
+        for (const sib of candidats) {
+          if (!isApprovalPending(sib.statut)) continue;
+          const nonRetenu = upsert('devisBc', { statut: APPROVAL_NOT_RETAINED, decidedBy: currentName, decidedAt: Date.now() }, sib.id);
+          await notifyNotRetained(nonRetenu, rec);
+        }
       } else {
         /* Approbation du BC → la dépense du devis lié passe à « BC signé », avec la
            date de signature du BC (dateSignature) renseignée automatiquement. */
@@ -320,8 +557,13 @@ export const ApprobationPage = () => {
           fournisseur: txt(rec.fournisseur) || txt(dep.fournisseur),
           montant: numOf(rec.montant) === null ? numOf(dep.montant) : numOf(rec.montant),
           commentaires: txt(rec.notes) || txt(dep.commentaires),
+          ...(txt(rec.demandeur) ? { demandeur: txt(rec.demandeur) } : {}),
+          ...(txt(rec.ligneBudgetaire) ? { ligneBudgetaire: txt(rec.ligneBudgetaire) } : {}),
         }, dep.id);
-        upsert('devisBc', { statut: APPROVAL_APPROVED, depenseId: dep.id, decidedBy: currentName, decidedAt: Date.now() }, rec.id);
+        const approvedBc = upsert('devisBc', { statut: APPROVAL_APPROVED, depenseId: dep.id, decidedBy: currentName, decidedAt: Date.now() }, rec.id);
+        /* BC approuvé → le fichier Drive reçoit la marque « _approuvé ». */
+        const approvedBcName = await renameDepositDriveFileTo(approvedBc);
+        if (approvedBcName) upsert('devisBc', { fichierNom: approvedBcName }, approvedBc.id);
         await notifyDecision({ ...rec, statut: APPROVAL_APPROVED, depenseId: dep.id }, APPROVAL_APPROVED);
       }
     } catch (err) {
@@ -342,7 +584,7 @@ export const ApprobationPage = () => {
   };
 
     const activeKind = tab;
-  const activeRows = tab === 'bc' ? bcList : devisList;
+  const activeRows = tab === 'bc' ? bcList : devisRows;
   const columns = useMemo(
     () => buildColumns({
       kind: activeKind,
@@ -401,13 +643,24 @@ export const ApprobationPage = () => {
       alert('Choisissez le devis auquel ce bon de commande se rattache (déposez d’abord le devis).');
       return false;
     }
+    /* Rattachement « produit » (devis uniquement) : groupe choisi dans le
+       formulaire, sinon rattachement automatique quand l'objet saisi
+       correspond exactement à un produit déjà déposé, sinon nouveau produit
+       (un id est généré ici — un second devis du même achat rejoindra ce
+       groupe en le choisissant ou en ressaisissant le même objet). */
+    const groupeAchatId = kind === 'devis'
+      ? (txt(draft.groupeAchatId) || productMatchingDescription(description) || newGroupeAchatId())
+      : '';
     const patch = {
       kind,
       description,
       fournisseur: txt(draft.fournisseur),
+      ligneBudgetaire: txt(draft.ligneBudgetaire),
+      demandeur: txt(draft.demandeur),
       numDevis: kind === 'devis' ? numDevis : txt(draft.numDevis),
       numBC: kind === 'bc' ? numBC : '',
       devisId: kind === 'bc' ? txt(draft.devisId) : '',
+      ...(kind === 'devis' ? { groupeAchatId } : {}),
       montant: numOf(draft.montant),
       fichierNom: txt(draft.fichierNom),
       fichierUrl: txt(draft.fichierUrl),
@@ -418,6 +671,16 @@ export const ApprobationPage = () => {
       dateDepot: txt(draft.dateDepot) || todayIso(),
     };
     const saved = upsert('devisBc', patch, existingId || null);
+    /* Renommage du fichier déposé sur Google Drive selon la convention du
+       laboratoire (nom reconstruit à chaque enregistrement ; « _approuvé »
+       quand la ligne est approuvée). Best-effort : un fichier collé en lien
+       depuis ailleurs et inaccessible à l’app garde son nom d’origine. */
+    try {
+      const renamedTo = await renameDepositDriveFileTo(saved);
+      if (renamedTo && renamedTo !== txt(saved.fichierNom)) {
+        upsert('devisBc', { fichierNom: renamedTo }, saved.id);
+      }
+    } catch { /* le dépôt reste enregistré même si le renommage échoue */ }
     if (isNew) {
       await notifyDeposit(saved);
     }
@@ -536,7 +799,9 @@ export const ApprobationPage = () => {
           kind={modal.kind}
           rec={modal.mode === 'edit' ? modal.rec : null}
           devisOptions={devisOptions}
+          productGroups={productGroups}
           fournisseurNames={fournisseurNames}
+          budgetLineOptions={budgetLineOptions}
           defaultDeposant={currentName}
           onCancel={() => setModal(null)}
           onSave={onSaveDeposit}
@@ -552,12 +817,14 @@ const buildColumns = ({
   canEdit, onDecide, onEdit, onRemove,
 }) => {
   const statutTone = (r) => {
+    if (r && r.statut === APPROVAL_NOT_RETAINED) return 'violet';
     const s = approvalStatusOf(r && r.statut);
     if (s === APPROVAL_APPROVED) return 'emerald';
     if (s === APPROVAL_REJECTED) return 'red';
     return 'amber';
   };
   const decisionLabel = (r) => {
+    if (r && r.statut === APPROVAL_NOT_RETAINED) return APPROVAL_NOT_RETAINED;
     const s = approvalStatusOf(r && r.statut);
     return s === APPROVAL_APPROVED ? 'Approuvé' : s === APPROVAL_REJECTED ? 'Refusé' : 'En attente';
   };
@@ -609,6 +876,14 @@ const buildColumns = ({
         <div className="min-w-[200px] max-w-[320px]">
           <div className="font-bold text-slate-800 leading-snug line-clamp-2" title={txt(r.description) || 'Sans description'}>{txt(r.description) || <span className="text-slate-300">—</span>}</div>
           {txt(r.notes) && <div className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[280px]" title={r.notes}>{r.notes}</div>}
+          {kind === 'devis' && r._produitCount > 1 && (
+            <div className="text-[9px] font-bold text-violet-500 mt-0.5">
+              {r._produitCount} devis pour ce produit
+              {r._produitApprovedId
+                ? (r._produitApprovedId === r.id ? ' · retenu ✓' : ' · un autre devis a été retenu')
+                : ' · aucun devis retenu'}
+            </div>
+          )}
         </div>
       ),
     },
@@ -641,9 +916,13 @@ const buildColumns = ({
         return (
           <span className="text-[11px] font-semibold text-indigo-700">
             {label}
-            {approvalStatusOf(d.statut) === APPROVAL_APPROVED
+            {d.statut === APPROVAL_APPROVED
               ? <span className="text-emerald-600 ml-1" title="Devis approuvé">✓</span>
-              : <span className="text-amber-600 ml-1" title="Devis pas encore approuvé">⏳</span>}
+              : d.statut === APPROVAL_NOT_RETAINED
+                ? <span className="text-violet-500 ml-1" title="Devis non retenu">∅</span>
+                : approvalStatusOf(d.statut) === APPROVAL_REJECTED
+                  ? <span className="text-red-500 ml-1" title="Devis refusé">✗</span>
+                  : <span className="text-amber-600 ml-1" title="Devis pas encore approuvé">⏳</span>}
           </span>
         );
       },
@@ -729,20 +1008,48 @@ const MODAL_INPUT = 'w-full border border-slate-300 rounded-lg px-3 py-2 text-sm
 const MODAL_LABEL = 'block text-[10px] font-black uppercase text-slate-400 tracking-wide mb-1';
 
 const DepositModal = ({
-  mode, kind, rec, devisOptions, fournisseurNames = [], defaultDeposant, onCancel, onSave,
+  mode, kind, rec, devisOptions, productGroups = [], fournisseurNames = [], budgetLineOptions = [],
+  defaultDeposant, onCancel, onSave,
 }) => {
   const editing = mode === 'edit' && !!rec;
   const isDevis = kind === 'devis';
   const year = new Date().getFullYear();
+  /* « Ligne budgétaire » / « Demandeur » repris du devis lié quand le BC (ou
+     l’édition d’un dépôt historique) n’a pas encore ses propres valeurs. */
+  const linkedDevisOf = (devisId) => {
+    const id = txt(devisId);
+    if (!id) return null;
+    return (Array.isArray(devisOptions) ? devisOptions : []).find((d) => d.id === id) || null;
+  };
+  const devisDefaultsOf = (devisId) => {
+    const dev = linkedDevisOf(devisId);
+    return {
+      ligneBudgetaire: dev ? txt(dev.ligneBudgetaire) : '',
+      demandeur: dev ? txt(dev.demandeur) : '',
+    };
+  };
   const [draft, setDraft] = useState(() => {
+    const linkedDefaults = rec && rec.kind === 'bc'
+      ? devisDefaultsOf(rec.devisId)
+      : { ligneBudgetaire: '', demandeur: '' };
+    const firstDevisDefaults = isDevis
+      ? null
+      : devisDefaultsOf(defaultLinkedDevisId(devisOptions));
     if (rec) {
       return {
         kind: rec.kind || kind,
         description: txt(rec.description),
         fournisseur: txt(rec.fournisseur),
+        ligneBudgetaire: txt(rec.ligneBudgetaire)
+          || (rec.kind === 'bc' ? linkedDefaults.ligneBudgetaire : ''),
+        demandeur: txt(rec.demandeur)
+          || (rec.kind === 'bc' ? linkedDefaults.demandeur : '')
+          || txt(rec.deposant)
+          || txt(defaultDeposant),
         numDevis: txt(rec.numDevis),
         numBC: txt(rec.numBC),
         devisId: txt(rec.devisId),
+        groupeAchatId: txt(rec.groupeAchatId),
         montant: rec.montant === null || rec.montant === undefined ? '' : String(rec.montant).replace('.', ','),
         fichierNom: txt(rec.fichierNom),
         fichierUrl: txt(rec.fichierUrl),
@@ -757,9 +1064,13 @@ const DepositModal = ({
       kind,
       description: '',
       fournisseur: '',
+      ligneBudgetaire: isDevis ? '' : (firstDevisDefaults ? firstDevisDefaults.ligneBudgetaire : ''),
+      demandeur: (isDevis ? '' : (firstDevisDefaults ? firstDevisDefaults.demandeur : ''))
+        || txt(defaultDeposant),
       numDevis: isDevis ? '' : '',
       numBC: isDevis ? '' : '',
-      devisId: isDevis ? '' : (devisOptions && devisOptions[0] ? devisOptions[0].id : ''),
+      devisId: isDevis ? '' : defaultLinkedDevisId(devisOptions),
+      groupeAchatId: '',
       montant: '',
       fichierNom: '',
       fichierUrl: '',
@@ -782,6 +1093,39 @@ const DepositModal = ({
   }, [fournisseurNames, draft.fournisseur]);
 
   const set = (k) => (ev) => setDraft((d) => ({ ...d, [k]: ev.target.value }));
+  /* Changement du devis lié (BC) : on reprend sa ligne budgétaire et son
+     demandeur (modifiables ensuite dans le formulaire). */
+  const pickDevis = (ev) => {
+    const id = ev.target.value;
+    setDraft((d) => {
+      const dev = linkedDevisOf(id);
+      return {
+        ...d,
+        devisId: id,
+        ligneBudgetaire: dev ? txt(dev.ligneBudgetaire) || d.ligneBudgetaire : d.ligneBudgetaire,
+        demandeur: dev ? txt(dev.demandeur) || d.demandeur : d.demandeur,
+      };
+    });
+  };
+  /* Changement du produit (devis candidats d'un même achat) : en rejoignant
+     un produit déjà déposé, on reprend l'objet, le demandeur et la ligne
+     budgétaire du devis le plus récent du groupe (modifiables ensuite). */
+  const pickProduct = (ev) => {
+    const id = ev.target.value;
+    setDraft((d) => {
+      const p = (Array.isArray(productGroups) ? productGroups : []).find((x) => x.id === id);
+      const src = p && p.latest;
+      return {
+        ...d,
+        groupeAchatId: id,
+        description: id
+          ? txt(src && (src.description || src.numDevis)) || d.description
+          : d.description,
+        ligneBudgetaire: src ? txt(src.ligneBudgetaire) || d.ligneBudgetaire : d.ligneBudgetaire,
+        demandeur: src ? txt(src.demandeur) || d.demandeur : d.demandeur,
+      };
+    });
+  };
   const fileInputRef = useRef(null);
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadMsg, setUploadMsg] = useState('');
@@ -796,7 +1140,24 @@ const DepositModal = ({
     }
     setUploadBusy(true);
     try {
-      const driveName = (String(file.name || '').trim() || 'document').slice(0, 180);
+      /* Nom Drive : convention du laboratoire (date = date de dépôt). Quand on
+         dépose sur une ligne déjà approuvée, la marque « _approuvé » est
+         ajoutée immédiatement au nom. */
+      const convBase = depositDocDriveNameOf({
+        kind,
+        numDevis: txt(draft.numDevis),
+        numBC: txt(draft.numBC),
+        ligneBudgetaire: txt(draft.ligneBudgetaire),
+        fournisseur: txt(draft.fournisseur),
+        demandeur: txt(draft.demandeur),
+        date: txt(draft.dateDepot) || todayIso(),
+        fichierNom: file.name,
+      });
+      const originalName = (String(file.name || '').trim() || 'document').slice(0, 180);
+      const targetName = convBase || originalName;
+      const driveName = draft.statut === APPROVAL_APPROVED && !hasApprovedSuffix(targetName)
+        ? withApprovedSuffix(targetName)
+        : targetName;
       const drive = await uploadLocalFile({
         name: driveName,
         mimeType: file.type || 'application/octet-stream',
@@ -855,13 +1216,13 @@ const DepositModal = ({
               <select
                 className={MODAL_INPUT}
                 value={draft.devisId || ''}
-                onChange={set('devisId')}
+                onChange={pickDevis}
                 disabled={!devisOptions.length}
               >
                 {devisOptions.length ? (
-                  devisOptions.map((d) => (
+                  rankedBcDevisOptions(devisOptions).map((d) => (
                     <option key={d.id} value={d.id}>
-                      {txt(d.numDevis) || txt(d.description) || d.id} — {approvalStatusOf(d.statut) === APPROVAL_APPROVED ? 'approuvé' : 'en attente'}
+                      {txt(d.numDevis) || txt(d.description) || d.id} — {approvalStatusShort(d)}
                     </option>
                   ))
                 ) : (
@@ -880,6 +1241,34 @@ const DepositModal = ({
               placeholder={isDevis ? 'ex. Microscope, réactifs, prestation…' : 'ex. BC de la commande microscope (même objet que le devis)'}
             />
           </div>
+
+          {isDevis && (
+            <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-3">
+              <label className={MODAL_LABEL}>
+                Produit / achat concerné — devis concurrents
+              </label>
+              <select
+                className={MODAL_INPUT}
+                value={draft.groupeAchatId || ''}
+                onChange={pickProduct}
+              >
+                <option value="">
+                  ➕ Nouvel achat — je décris l'objet ci-dessus
+                </option>
+                {productGroups.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}{p.count > 1 ? ` (${p.count} devis)` : ''}{p.approvedId ? ' — retenu ✓' : ''}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1.5 text-[10px] leading-snug text-violet-500">
+                Déposez plusieurs devis d'un même achat : en choisissant un produit déjà déposé, ce devis
+                devient un candidat supplémentaire. À l'approbation, un seul devis est retenu (la dépense
+                « Devis en cours » est créée) et les autres passent automatiquement « Non retenu ».
+                Astuce : saisir exactement le même objet qu'un produit existant rattache aussi le devis.
+              </p>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
@@ -919,11 +1308,37 @@ const DepositModal = ({
                 inputMode="decimal"
               />
             </div>
+            <div>
+              <label className={MODAL_LABEL}>Demandeur</label>
+              <input
+                className={MODAL_INPUT}
+                value={draft.demandeur || ''}
+                onChange={set('demandeur')}
+                placeholder="Nom de la personne qui demande l’achat"
+              />
+            </div>
+            <div>
+              <label className={MODAL_LABEL}>Ligne budgétaire</label>
+              <input
+                className={MODAL_INPUT}
+                value={draft.ligneBudgetaire || ''}
+                onChange={set('ligneBudgetaire')}
+                list="depot-lignes-budgetaires"
+                placeholder="ex. S2R01GEC (INTRUDE)"
+              />
+              <datalist id="depot-lignes-budgetaires">
+                {(budgetLineOptions || []).map((ln) => (
+                  <option key={ln} value={ln} />
+                ))}
+              </datalist>
+            </div>
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white p-3">
             <label className={MODAL_LABEL}>
-              Fichier * — classé dans Budget_labo/{year}/{isDevis ? 'Devis' : 'BC'} (dossiers créés si besoin)
+              Fichier * — classé dans Budget_labo/{year}/{isDevis ? 'Devis' : 'BC'} — renommé
+              automatiquement « {isDevis ? 'Devis' : 'BC'}_N°_ligne_fournisseur_demandeur_date »
+              (+ « _approuvé » une fois le {isDevis ? 'devis' : 'BC'} approuvé)
             </label>
             <div className="flex items-center gap-2 flex-wrap">
               <input

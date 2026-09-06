@@ -258,13 +258,18 @@ export const CONGE_REFUSE = 'Refusé';
 export const CONGE_PRESENCE = 'Présence autorisée pendant fermeture';
 
 /* Statuts d’approbation des devis / BC déposés sur la page « Approbation
-   devis & BC » — la décision (Approuvé / Refusé) est réservée au
-   superutilisateur ; toute valeur absente/ancienne (« Demande »…) reste
-   considérée « En attente ». */
-export const APPROVAL_STATUSES = ['En attente', 'Approuvé', 'Refusé'];
+   devis & BC » — la décision (Approuvé / Refusé / Non retenu) est réservée
+   au superutilisateur ; toute valeur absente/ancienne (« Demande »…) reste
+   considérée « En attente ». Plusieurs devis peuvent être déposés pour un
+   même produit (groupeAchatId commun) : à l’approbation d’un devis, les
+   autres candidats encore « En attente » passent automatiquement
+   « Non retenu » (statut distinct de « Refusé », conservé pour la
+   traçabilité). */
+export const APPROVAL_STATUSES = ['En attente', 'Approuvé', 'Refusé', 'Non retenu'];
 export const APPROVAL_PENDING = 'En attente';
 export const APPROVAL_APPROVED = 'Approuvé';
 export const APPROVAL_REJECTED = 'Refusé';
+export const APPROVAL_NOT_RETAINED = 'Non retenu';
 /** Normalise une valeur stockée vers l’une des 3 décisions d’approbation. */
 export const approvalStatusOf = (raw) => {
   const k = String(raw || '')
