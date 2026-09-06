@@ -10,7 +10,7 @@
    ========================================================================= */
 import React, { useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
-import { RECETTE_TYPES, DEPENSE_BC_SIGNE, isPiFournisseur, depenseKindOf, isDesiderataRejected, isDesiderataApproved, desiderataDecisionOf } from './adminSchema';
+import { RECETTE_TYPES, DEPENSE_BC_SIGNE, depenseKindOf, isDesiderataRejected, isDesiderataApproved, desiderataDecisionOf } from './adminSchema';
 import { AdminImportModal } from './adminImportModal';
 import { SmartTable } from './smartTable';
 import { useDepenseLinkRepair } from './useDepenseLinkRepair';
@@ -85,24 +85,20 @@ export const RecettesPage = () => {
   const aggFor = (rec) => {
     const recId = rec && rec.id;
     const isSigned = (d) => String(d.statut || '').trim() === DEPENSE_BC_SIGNE;
-    const isPi = (d) => isPiFournisseur(d && d.fournisseur);
-    /* Dépense « engagée » (retenue pour le solde) = BC signés (dépenses
-       ordonnées) + prestations internes « PI » : un service interne est facturé
-       sans bon de commande, il est donc considéré consommé dès sa saisie (sauf
-       dépense refusée / annulée). Les lignes de type « OM » sont EXCLUES : elles
-       sont suivies dans la colonne « OM payés » (collection depenses › onglet
-       OM), elles ne font que suivre le paiement. */
     const notRejected = (d) => !/refus|rejet|annul/i.test(String(d.statut || d.suivi || '').trim());
-    const isEngaged = (d) => {
-      if (depenseKindOf(d) === 'om') return false;
-      if (isSigned(d)) return true;
-      return isPi(d) && notRejected(d);
-    };
+    /* Décompte retenu pour le solde (dépenses ordonnées + prestations internes
+       + OM payés) :
+       · « Dépenses ordonnées » = lignes d’achat dont le BC est signé : elles
+         retirent le montant du solde dès la commande, même avant réception ;
+       · « Prestations internes (PI) » = facturées sans bon de commande, elles
+         sont considérées consommées dès leur saisie (sauf refus / annulation) ;
+       · « OM payés » = lignes de type « om » (créées depuis « OM prévus /
+         souhaités » → transfert vers Dépenses › OM) qui suivent le paiement.
+       Les OM « prévus / souhaités » (collection om) restent INFORMATIFS : ils
+       ne réduisent le solde que lorsqu’ils ont été transférés en dépense OM. */
     const lineDepenses = depenses.filter((d) => d.recetteId === recId);
-    const engages = lineDepenses.filter(isEngaged);
-    const engagesBC = engages.filter(isSigned);
-    const engagesPI = engages.filter((d) => isPi(d) && !isSigned(d));
-    const engTotal = engages.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
+    const ordonneeRows = lineDepenses.filter((d) => depenseKindOf(d) === 'achat' && isSigned(d) && notRejected(d));
+    const ordonneeTotal = ordonneeRows.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
     const spent = lineDepenses.filter(isDepenseSpent);
     const depTotal = spent.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
     /* Colonne « Prestations internes » : même liste que l’onglet PI de la page
@@ -125,10 +121,10 @@ export const RecettesPage = () => {
     const budgetRendu = rec.budgetRenduDispo !== undefined && rec.budgetRenduDispo !== null && rec.budgetRenduDispo !== ''
       ? toNum(rec.budgetRenduDispo)
       : toNum(rec.budgetTotal);
-    // Solde = dispo université − engagé (BC signés + PI) − OM approuvés (jamais les souhaits).
-    const solde = budgetRendu - engTotal - omTotal;
+    // Solde = dispo université − dépenses ordonnées (BC signés) − prestations internes − OM payés (jamais les souhaits / OM prévus).
+    const solde = budgetRendu - ordonneeTotal - piTotal - omPaidTotal;
     return {
-      lineDepenses, spent, depTotal, engages, engagesBC, engagesPI, engTotal,
+      lineDepenses, spent, depTotal, ordonneeRows, ordonneeTotal,
       piRows, piTotal, omPaidRows, omPaidTotal,
       lineOm, omApprouves,
       omEnAttente: lineOm.filter((o) => String(o.statut || 'En attente').trim() === 'En attente'),
@@ -273,7 +269,7 @@ export const RecettesPage = () => {
     },
     {
       key: 'om', label: 'OM prévus',
-      header: <span title="souhaités non inclus dans la somme">OM prévus</span>,
+      header: <span title="prévision — n’est PAS déduit du solde : seul l’« OM payé » (dépense transférée) l’est">OM prévus</span>,
       dataType: 'number', align: 'right', nowrap: true,
       value: (r) => Number(r.__agg.omTotal) || 0,
       display: (r) => (
@@ -281,7 +277,7 @@ export const RecettesPage = () => {
           amount={r.__agg.omTotal}
           items={r.__agg.lineOm.map((o) => ({
             title: o.description || o.destination || 'OM',
-            meta: [o.destination || '', `${o.statut || 'En attente'}${isOmApproved(o.statut) ? ' · compté' : ' · non compté'}`].filter(Boolean).join(' · '),
+            meta: [o.destination || '', `${o.statut || 'En attente'}${isOmApproved(o.statut) ? ' · accepté' : ' · non accepté'}`].filter(Boolean).join(' · '),
             value: euro.format(toNum(o.coutTotal)),
           }))}
         />
@@ -289,7 +285,7 @@ export const RecettesPage = () => {
     },
     {
       key: 'desiderata', label: 'Achats prévus',
-      header: <span title="souhaités non inclus dans la somme">Achats prévus</span>,
+      header: <span title="non déduits du solde — information seule">Achats prévus</span>,
       dataType: 'number', align: 'right', nowrap: true,
       value: (r) => Number(r.__agg.desMontant) || 0,
       display: (r) => (
@@ -308,12 +304,7 @@ export const RecettesPage = () => {
     {
       key: 'solde', label: 'Solde', dataType: 'number', align: 'right', nowrap: true,
       value: (r) => Number(r.__agg.solde) || 0,
-      display: (r) => (
-        <span className="whitespace-nowrap">
-          <span className={`font-black ${r.__agg.solde < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{euro.format(r.__agg.solde)}</span>
-          <HoverNote note={`Solde = dispo université ${euro.format(r.__agg.budgetRendu)} − dépenses engagées (BC signés + PI) ${euro.format(r.__agg.engTotal)} − OM prévus approuvés ${euro.format(r.__agg.omTotal)}`} />
-        </span>
-      ),
+      display: (r) => <SoldeCell agg={r.__agg} />,
     },
     {
       key: 'finEngagement', label: 'Fin d’engagement', filter: 'text',
@@ -479,14 +470,44 @@ const HoverCell = ({ amount, items }) => {
   );
 };
 
-const HoverNote = ({ note }) => (
-  <div className="group relative inline-block ml-1 cursor-help">
-    <span className="text-[10px] text-slate-300 group-hover:text-blue-500">ⓘ</span>
-    <span className="hidden group-hover:block absolute right-0 top-full mt-1 z-30 w-72 bg-slate-800 text-white text-[11px] leading-snug rounded-lg px-3 py-2 shadow-xl">
-      {note}
-    </span>
-  </div>
-);
+/* Cellule « Solde » : le calcul complet apparaît au survol de la case (montant
+   ou ⓘ) — liste des composantes déduites :
+   Solde = dispo université − dépenses ordonnées (BC signés) − prestations
+   internes − OM payés. */
+const SoldeCell = ({ agg }) => {
+  const negative = agg.solde < 0;
+  const rows = [
+    { key: 'dispo', label: 'Dispo université', value: agg.budgetRendu, sign: '+' },
+    { key: 'ordonnee', label: 'Dépenses ordonnées (BC signés)', value: agg.ordonneeTotal, sign: '−' },
+    { key: 'pi', label: 'Prestations internes', value: agg.piTotal, sign: '−' },
+    { key: 'omPay', label: 'OM payés', value: agg.omPaidTotal, sign: '−' },
+  ];
+  return (
+    <div className="group relative inline-block text-right">
+      <span className={`font-black cursor-help whitespace-nowrap ${negative ? 'text-red-600' : 'text-emerald-700'}`}>
+        {euro.format(agg.solde)}
+        <span className="ml-1 text-[11px] text-slate-300 group-hover:text-blue-500 align-middle" aria-hidden="true">ⓘ</span>
+      </span>
+      <div className="hidden group-hover:block absolute right-0 top-full mt-1 z-30 w-80 bg-white border border-slate-200 rounded-xl shadow-2xl p-2">
+        <div className="px-2 pt-1 pb-1.5 text-[10px] font-black uppercase tracking-wide text-slate-400 border-b border-slate-100">
+          Détail du solde
+        </div>
+        {rows.map((it) => (
+          <div key={it.key} className="flex items-baseline justify-between gap-3 px-2 py-1">
+            <span className="text-[11px] text-slate-600">{it.label}</span>
+            <span className={`text-xs font-bold whitespace-nowrap ${it.sign === '+' ? 'text-blue-700' : 'text-slate-800'}`}>
+              {it.sign === '+' ? '' : '− '}{euro.format(it.value)}
+            </span>
+          </div>
+        ))}
+        <div className="flex items-baseline justify-between gap-3 px-2 py-1.5 mt-1 border-t border-slate-200">
+          <span className="text-xs font-black text-slate-700">Solde</span>
+          <span className={`text-sm font-black whitespace-nowrap ${negative ? 'text-red-600' : 'text-emerald-700'}`}>{euro.format(agg.solde)}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 /* ── Fenêtre modale : création / édition d’une ligne budgétaire ─────────── */
 const LineModal = ({ modal, types, personnel, depenses, om, desiderate, onCancel, onSave }) => {
@@ -520,7 +541,7 @@ const LineModal = ({ modal, types, personnel, depenses, om, desiderate, onCancel
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden max-h-[92vh] flex flex-col">
         <div className="px-6 py-4 bg-gradient-to-br from-blue-600 to-indigo-700 text-white">
           <h2 className="text-lg font-black">{editing ? 'Modifier la ligne budgétaire' : 'Nouvelle ligne budgétaire'}</h2>
-          <p className="text-blue-100 text-xs">Le solde est recalculé automatiquement : dispo université − dépenses engagées (BC signés + PI) − OM liés.</p>
+          <p className="text-blue-100 text-xs">Le solde est recalculé automatiquement : dispo université − dépenses ordonnées (BC signés) − prestations internes − OM payés.</p>
         </div>
         <div className="p-6 overflow-y-auto custom-scrollbar grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="sm:col-span-2">

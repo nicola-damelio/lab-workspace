@@ -250,11 +250,14 @@ export const PersonnelPage = () => {
     },
     {
       key: 'email', label: 'E-mail', filter: 'text',
+      /* Colonne volontairement large et lien insécable : chaque e-mail tient
+         sur une seule ligne (jamais coupé au milieu de l’adresse). */
+      tdClass: 'min-w-[240px]',
       value: (p) => personEmailOf(p),
       display: (p) => {
         const v = personEmailOf(p);
         return v
-          ? <a href={`mailto:${v}`} className="text-xs text-blue-700 break-all hover:underline" title={`Écrire à ${p.nom || ''}`}>{v}</a>
+          ? <a href={`mailto:${v}`} className="text-xs font-medium text-blue-700 whitespace-nowrap hover:underline" title={`Écrire à ${p.nom || ''}`}>{v}</a>
           : <span className="text-[10px] font-bold text-amber-600 whitespace-nowrap" title="Aucun e-mail renseigné — les notifications devis/BC ne peuvent pas être envoyées à cette fiche.">✉ manquant</span>;
       },
     },
