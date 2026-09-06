@@ -204,6 +204,7 @@ const uniqueRecetteOptions = (recettes, categorie, currentId) => {
 const TONES = {
   slate: 'bg-slate-100 border-slate-200 text-slate-600',
   blue: 'bg-blue-50 border-blue-200 text-blue-700',
+  sky: 'bg-sky-50 border-sky-200 text-sky-700',
   indigo: 'bg-indigo-50 border-indigo-200 text-indigo-700',
   emerald: 'bg-emerald-50 border-emerald-200 text-emerald-700',
   amber: 'bg-amber-50 border-amber-200 text-amber-700',
@@ -227,6 +228,7 @@ const StatutBadge = ({ value }) =>
 
 /* « Etat » d’une dépense — déduit automatiquement des documents saisis, la
    première condition vraie l’emporte (du plus avancé au moins avancé) :
+     « Livraison complète » = Oui → « Complète »
      n° SF            → « service fait »
      n° BL            → « Colis partiellement livré »
      n° facture       → « Facture signé »
@@ -240,6 +242,7 @@ const hasLivraisonField = (r, keys) => {
 };
 const etatOf = (r) => {
   if (!r) return '';
+  if (txt(r.livraisonComplete).toLowerCase() === 'oui') return 'Complète';
   if (pick(r, ['numSF', 'sfNo']) || hasLivraisonField(r, ['numSF', 'sfNo'])) return 'service fait';
   if (pick(r, ['numBL', 'blNo']) || hasLivraisonField(r, ['numBL', 'blNo'])) return 'Colis partiellement livré';
   if (pick(r, ['numFacture', 'factureNo'])) return 'Facture signé';
@@ -249,7 +252,8 @@ const etatOf = (r) => {
   return '';
 };
 const etatTone = (v) => ({
-  'service fait': 'emerald',
+  'Complète': 'emerald',
+  'service fait': 'sky',
   'Colis partiellement livré': 'amber',
   'Facture signé': 'blue',
   'Validé par le fournisseur': 'indigo',
