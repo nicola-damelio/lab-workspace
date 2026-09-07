@@ -209,7 +209,10 @@ case ",$ORIGINS," in
   *,http://localhost:5173,*) : ;;
   *) ORIGINS="$ORIGINS,http://localhost:5173" ;;
 esac
-ENVS="STORE_FILE=/data/workspace-shared-token.json,SHARED_EMAIL=$SHARED_EMAIL,ALLOWED_ORIGINS=$ORIGINS"
+# Stamp the git commit into /health so "did my deploy actually happen?" is a
+# one-line check: fetch "<url>/health" and read the "version" field.
+CODE_VERSION="$(git -C "$(dirname "$0")" rev-parse --short HEAD 2>/dev/null || echo 'dev')"
+ENVS="STORE_FILE=/data/workspace-shared-token.json,SHARED_EMAIL=$SHARED_EMAIL,ALLOWED_ORIGINS=$ORIGINS,CODE_VERSION=$CODE_VERSION"
 if [ -n "$CLIENT_ID" ]; then ENVS="$ENVS,GOOGLE_CLIENT_ID=$CLIENT_ID"; fi
 
 echo; echo "Deploying Cloud Run service '$SERVICE' (build + push, first time can take ~3-5 min)..."
@@ -235,7 +238,7 @@ URL="$(gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$R
 echo
 echo "==================== DEPLOYED ===================="
 echo "Service URL:  $URL"
-echo "Health check: $URL/health   (expect { \"ok\": true, \"initialized\": false })"
+echo "Health check: $URL/health   (expect { \"ok\": true, \"initialized\": false, \"version\": \"$CODE_VERSION\" })"
 echo
 echo 'NEXT STEPS'
 echo '  1. Paste the Service URL into GOOGLE_TOKEN_EXCHANGE_URL in src/data/constants.js'

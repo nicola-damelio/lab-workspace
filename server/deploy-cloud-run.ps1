@@ -193,6 +193,9 @@ Write-Host "Build identity ready: repository $arRepo + staging bucket $runSrcBuc
 $origins = @($AppOrigin -split ',' | ForEach-Object { $_.Trim().TrimEnd('/') } | Where-Object { $_ }) -join ','
 if ($origins -notmatch 'localhost:5173') { $origins = "$origins,http://localhost:5173" }
 $envs = "STORE_FILE=/data/workspace-shared-token.json,SHARED_EMAIL=$SharedEmail,ALLOWED_ORIGINS=$origins"
+$codeVersion = (& git -C $PSScriptRoot rev-parse --short HEAD 2>$null | Select-Object -First 1)
+if (-not $codeVersion) { $codeVersion = 'dev' }
+$envs += ",CODE_VERSION=$codeVersion"
 if ($ClientId) { $envs += ",GOOGLE_CLIENT_ID=$ClientId" }
 
 Write-Host "`nDeploying Cloud Run service '$Service' (build + push, first time can take ~3-5 min)..." -ForegroundColor Cyan

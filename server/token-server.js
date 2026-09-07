@@ -84,6 +84,9 @@ const GOOGLE_CLIENT_ID = env(
 );
 const GOOGLE_CLIENT_SECRET = env('GOOGLE_CLIENT_SECRET');
 const SHARED_EMAIL = env('SHARED_EMAIL').trim().toLowerCase();
+// Code stamp (set by deploy-cloud-run.sh/.ps1 from `git rev-parse --short HEAD`)
+// so that GET /health can prove which commit is actually running after a deploy.
+const CODE_VERSION = env('CODE_VERSION').trim();
 const STORE_FILE = path.resolve(process.cwd(), env('STORE_FILE', 'workspace-shared-token.json'));
 const ALLOWED_ORIGINS = new Set(
   env('ALLOWED_ORIGINS')
@@ -328,7 +331,7 @@ async function handlePost(body) {
     }
     case 'status': {
       const store = loadStore();
-      return { http: 200, json: { ok: true, initialized: !!(store && store.refresh_token), email: store ? store.email : '' } };
+      return { http: 200, json: { ok: true, initialized: !!(store && store.refresh_token), email: store ? store.email : '', version: CODE_VERSION } };
     }
     default:
       return {
@@ -462,7 +465,8 @@ const server = http.createServer(async (req, res) => {
       ok: true,
       service: 'lab-workspace-token-server',
       initialized: !!(store && store.refresh_token),
-      email: store ? store.email : ''
+      email: store ? store.email : '',
+      version: CODE_VERSION
     }, origin);
     return;
   }
