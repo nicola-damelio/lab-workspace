@@ -1442,6 +1442,11 @@ const workspaceBootstrapMode = () => {
   } catch { return false; }
 };
 
+/** Whether THIS page load was opened with "?drive-bootstrap=1" in the URL —
+ *  captured once at module load, before any pushState rewrite. Components use
+ *  it to show the owner the one-time shared-Drive setup UI. */
+export const driveBootstrapRequestedAtLoad = () => bootstrapRequestedAtLoad;
+
 // Last workspace-server problem, so the UI can explain failures:
 //   null  → no failure yet
 //   'not_initialized' → server is up, but the owner never stored the credential

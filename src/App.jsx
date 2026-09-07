@@ -24,7 +24,7 @@ import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud } fr
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
 import { setActiveProjectId, readLibrary, readAllProjectLibraries, restoreLibraryFromSnapshot } from './utils/figuresLibrary';
-import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, getLastDriveConnectError, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders } from './utils/driveUpload';
+import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, getLastDriveConnectError, driveBootstrapRequestedAtLoad, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders } from './utils/driveUpload';
 import { sanitizeSlug, datasetFolderSlug } from './utils/driveNaming';
 import { validateDatasetExperiments } from './utils/experimentRules';
 import { canUserOpenDataset, isDatasetRestricted, normalizeMemberNames } from './utils/datasetAccess';
@@ -475,6 +475,20 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 /* =========================================================
 MAIN APP
 ========================================================= */
+
+/** URL "?dataset=<id>" for the address bar, preserving the owner's one-time
+ *  "?drive-bootstrap=1" marker when the app opens/restores a dataset (the
+ *  pushState rewrite would otherwise drop it before the bootstrap is done). */
+const datasetHref = (datasetId) => {
+  let qs = 'dataset=' + encodeURIComponent(String(datasetId));
+  try {
+    if (new URLSearchParams(window.location.search).has('drive-bootstrap')) {
+      qs += '&drive-bootstrap=1';
+    }
+  } catch { /* ignore */ }
+  return '?' + qs;
+};
+
 export default function App() {
   try { console.info('Lab Workspace build:', typeof __APP_COMMIT__ !== 'undefined' ? __APP_COMMIT__ : 'dev'); } catch { /* ignore */ }
   const createEmptyTest = (id, num, customType = 'plate-96') => {
@@ -991,6 +1005,10 @@ if (customType === 'dosy') {
   const [plasmidMeta, setPlasmidMeta] = useState({});
   const [activeLibrarySelection, setActiveLibrarySelection] = useState({ type: null, id: null });
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 768);
+  const [driveBootstrapOpen, setDriveBootstrapOpen] = useState(false);
+  const [driveBootstrapBusy, setDriveBootstrapBusy] = useState(false);
+  const [driveBootstrapError, setDriveBootstrapError] = useState('');
+  const dismissDriveBootstrapRef = useRef(false);
   const [storages, setStorages] = useState([]);
   const [activeStorageId, setActiveStorageId] = useState(null);
   // Where the user came from before opening a test page (used by the active
@@ -1275,9 +1293,18 @@ if (customType === 'dosy') {
         }
       } else if (sharedWorkspaceMode()) {
         // Shared mode: never a Google popup — explain the real cause instead.
-        alert(getWorkspaceServerIssue() === 'not_initialized'
-          ? 'Shared Drive is not set up yet. The workspace owner must open this app once with “?drive-bootstrap=1” at the end of the URL and click Connect Drive — that stores the permanent credential on the shared server. Until then files are kept locally.' + (getLastDriveConnectError() ? '\n\nDettaglio tecnico: ' + getLastDriveConnectError() : '')
-          : 'The shared Lab Workspace server is temporarily unreachable, so Drive is unavailable right now.\n\nYour files are still saved locally, and the app will reconnect automatically as soon as the server answers again — no personal Google Drive is needed (you still log in to the app normally).');
+        const bootstrapFailed = driveBootstrapRequestedAtLoad();
+        const preciseError = getLastDriveConnectError();
+        alert(
+          bootstrapFailed
+            ? 'The one-time Google consent for the shared Drive did not complete.\n\n'
+              + (preciseError
+                ? `Dettaglio tecnico: ${preciseError}`
+                : 'Close the popup and click “Connect shared Drive (owner)” again, approving the consent with the workspace owner’s Google account.')
+            : (getWorkspaceServerIssue() === 'not_initialized'
+              ? 'Shared Drive is not set up yet. The workspace owner must open this app once with “?drive-bootstrap=1” at the end of the URL and click Connect Drive — that stores the permanent credential on the shared server. Until then files are kept locally.' + (preciseError ? '\n\nDettaglio tecnico: ' + preciseError : '')
+              : 'The shared Lab Workspace server is temporarily unreachable, so Drive is unavailable right now.\n\nYour files are still saved locally, and the app will reconnect automatically as soon as the server answers again — no personal Google Drive is needed (you still log in to the app normally).')
+        );
       } else {
         const origin = (() => { try { return window.location.origin || ''; } catch { return ''; } })();
         alert(
@@ -1306,6 +1333,66 @@ if (customType === 'dosy') {
       'Until then, uploaded files are stored locally and can be downloaded with the correct name.'
     );
   };
+
+  // One-time OWNER bootstrap (?drive-bootstrap=1): a full-screen overlay makes
+  // the Google-consent step impossible to miss, whether the owner is on the
+  // explorer or inside a dataset. It stays visible until a shared access token
+  // is stored (server initialised) and then drops the flag from the URL so a
+  // later reload does not re-open it.
+  const runDriveBootstrapConnect = async () => {
+    if (driveBootstrapBusy) return;
+    setDriveBootstrapBusy(true);
+    setDriveBootstrapError('');
+    try {
+      await connectDrive();
+      if (!getDriveToken()) {
+        setDriveBootstrapError(
+          getLastDriveConnectError()
+            || 'The Google consent flow did not complete. See the alert above for details.'
+        );
+      }
+    } catch (e) {
+      setDriveBootstrapError((e && e.message) ? e.message : String(e));
+    } finally {
+      setDriveBootstrapBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!sharedWorkspaceMode() || !driveBootstrapRequestedAtLoad()) return;
+    let alive = true;
+    const refresh = () => {
+      if (!alive) return;
+      const tokenReady = !!getDriveToken();
+      if (tokenReady) {
+        // Server already initialised / bootstrap just succeeded — remove the
+        // "?drive-bootstrap=1" marker so reloads stay clean.
+        try {
+          const q = new URLSearchParams(window.location.search);
+          if (q.has('drive-bootstrap')) {
+            q.delete('drive-bootstrap');
+            const qs = q.toString();
+            window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''));
+          }
+        } catch { /* ignore */ }
+      }
+      if (!dismissDriveBootstrapRef.current) setDriveBootstrapOpen(!tokenReady);
+    };
+    // Wait a moment so the automatic server mint (kickOffSharedWorkspaceToken)
+    // can finish first — no flashing overlay when the server is already ready.
+    const later = setTimeout(refresh, 1200);
+    const poll = setInterval(refresh, 5000);
+    const onConnected = refresh;
+    window.addEventListener('lab:drive-connected', onConnected);
+    window.addEventListener('lab:drive-disconnected', onConnected);
+    return () => {
+      alive = false;
+      clearTimeout(later);
+      clearInterval(poll);
+      window.removeEventListener('lab:drive-connected', onConnected);
+      window.removeEventListener('lab:drive-disconnected', onConnected);
+    };
+  }, []);
 
   // Let the DriveUpload component trigger the Drive connection from anywhere.
   useEffect(() => {
@@ -2220,7 +2307,7 @@ useEffect(() => {
       if (!restoringInPlace) {
         setCurrentDatasetId(targetId);
         setAppView('dataset');
-        window.history.pushState({}, '', '?dataset=' + targetId);
+        window.history.pushState({}, '', datasetHref(targetId));
       }
       setActiveDatasetKind('administration');
       setAdminContent(admin);
@@ -2245,7 +2332,7 @@ useEffect(() => {
       targetId = s.id || 'ds_' + Date.now();
       setCurrentDatasetId(targetId);
       setAppView('dataset');
-      window.history.pushState({}, '', '?dataset=' + targetId);
+      window.history.pushState({}, '', datasetHref(targetId));
     }
 
     if (mode === 'replace') {
@@ -2485,7 +2572,7 @@ const createNewDataset = async (kind = 'scientific') => {
     setAppView('dataset');
     setCurrentModule(isAdmin ? 'administration' : 'dashboard');
 
-    window.history.pushState({}, '', '?dataset=' + newId);
+    window.history.pushState({}, '', datasetHref(newId));
 
     const updatedPayload = {
       kind,
@@ -2650,7 +2737,7 @@ const openDataset = (dset) => {
     setCurrentAdminPage('overview');
     setAdminFocus(null);
     resetAdminNavHistory();
-    window.history.pushState({}, '', '?dataset=' + dset.id);
+    window.history.pushState({}, '', datasetHref(dset.id));
     if (window.innerWidth < 768) setIsSidebarOpen(false);
     return;
   }
@@ -2732,7 +2819,7 @@ const openDataset = (dset) => {
       setAppView('dataset');
       setCurrentModule('dashboard');
 
-      window.history.pushState({}, '', '?dataset=' + dset.id);
+      window.history.pushState({}, '', datasetHref(dset.id));
     } catch {
       setDialog({
         type: 'alert',
@@ -3372,6 +3459,46 @@ const openDataset = (dset) => {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* One-time owner bootstrap (?drive-bootstrap=1): full-screen guidance so
+          the Google-consent step is reachable from ANY screen (explorer or
+          dataset), not only the sidebar button inside a dataset. */}
+      {driveBootstrapOpen && (
+        <div className="fixed inset-0 z-[999999] flex items-center justify-center p-4" style={{ background: 'rgba(15,23,42,0.72)', backdropFilter: 'blur(4px)' }}>
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md p-6">
+            <div className="text-xl font-black text-slate-800 mb-1">🛠️ Shared Drive owner setup</div>
+            <p className="text-sm text-slate-600 mb-3">
+              This workspace saves its files on one <b>shared Google Drive account</b>. Before the first
+              use the <b>owner</b> must connect it a single time: a Google consent popup opens and the
+              permanent credential is stored on the Lab Workspace server. Every other user then needs no
+              Google account for Drive.
+            </p>
+            <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 mb-4">
+              You opened the app with <code className="bg-slate-100 px-1 rounded">?drive-bootstrap=1</code> —
+              this is the owner one-time flow. In the popup, sign in with the <b>workspace owner’s</b> Google
+              account.
+            </p>
+            {driveBootstrapError && (
+              <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-4 whitespace-pre-line">
+                {driveBootstrapError}
+              </div>
+            )}
+            <button
+              onClick={runDriveBootstrapConnect}
+              disabled={driveBootstrapBusy}
+              className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-wait text-white font-bold py-2.5 px-4 rounded-lg text-sm transition-colors"
+            >
+              {driveBootstrapBusy ? 'Waiting for the Google consent popup…' : '🔑 Connect shared Drive (owner)'}
+            </button>
+            <button
+              onClick={() => { dismissDriveBootstrapRef.current = true; setDriveBootstrapOpen(false); }}
+              className="mt-3 w-full text-center text-xs font-bold text-slate-400 hover:text-slate-600"
+            >
+              Not now — I’ll use the “Reconnect shared Drive” button in the sidebar later
+            </button>
           </div>
         </div>
       )}
