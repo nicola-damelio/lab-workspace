@@ -88,7 +88,7 @@ gcloud run deploy drive-token-server --source . \
   --add-volume name=tokenstore,type=cloud-storage,bucket=$PROJECT-token-store \
   --add-volume-mount volume=tokenstore,mount-path=/data \
   --set-env-vars STORE_FILE=/data/workspace-shared-token.json,\
-SHARED_EMAIL=nicola@u-picardie.fr,ALLOWED_ORIGINS=https://your-app.example.com \
+SHARED_EMAIL=nicola.damelio@gmail.com,ALLOWED_ORIGINS=https://your-app.example.com \
   --set-secrets GOOGLE_CLIENT_SECRET=drive-token-client-secret:latest
 ```
 
@@ -127,7 +127,7 @@ apply to Cloud Run exactly as to a self-hosted box.
 
    ```bash
    export GOOGLE_CLIENT_SECRET='...'          # required
-   export SHARED_EMAIL='nicola@u-picardie.fr' # the workspace owner (protects the credential)
+   export SHARED_EMAIL='nicola.damelio@gmail.com' # the workspace owner (protects the credential)
    export ALLOWED_ORIGINS='https://lab.example.com'  # comma-separated app origin(s)
    export PORT=8787
    node server/token-server.js

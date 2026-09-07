@@ -35,7 +35,7 @@ set -euo pipefail
 
 REGION="europe-west1"
 SERVICE="drive-token-server"
-SHARED_EMAIL="nicola@u-picardie.fr"
+SHARED_EMAIL="nicola.damelio@gmail.com"
 PROJECT=""
 APP_ORIGIN="http://localhost:5173"
 CLIENT_ID=""
@@ -53,7 +53,7 @@ Options:
   -p PROJECT      Google Cloud project ID (default: gcloud config project)
   -r REGION       Cloud Run region (default: europe-west1)
   -s SERVICE      Cloud Run service name (default: drive-token-server)
-  -e EMAIL        Workspace owner e-mail (default: nicola@u-picardie.fr)
+  -e EMAIL        Workspace owner e-mail (default: nicola.damelio@gmail.com)
   -i CLIENT_ID    OAuth web-client ID to use (default: the ID hard-coded in
                   token-server.js)
   -c FILE         Path to client_secret.json (or plain-text secret file)

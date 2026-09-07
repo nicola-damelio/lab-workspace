@@ -41,7 +41,7 @@ param(
   [string]$Project = '',
   [string]$Region = 'europe-west1',
   [string]$Service = 'drive-token-server',
-  [string]$SharedEmail = 'nicola@u-picardie.fr',
+  [string]$SharedEmail = 'nicola.damelio@gmail.com',
   [string]$ClientId = '',  # OAuth web-client ID (if it differs from the token-server default)
   [string]$ClientSecretFile = '',
   [switch]$ClientSecretFromEnv,
