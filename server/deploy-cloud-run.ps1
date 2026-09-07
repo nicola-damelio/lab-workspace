@@ -192,11 +192,22 @@ Write-Host "Build identity ready: repository $arRepo + staging bucket $runSrcBuc
 # --- Deploy -------------------------------------------------------------------
 $origins = @($AppOrigin -split ',' | ForEach-Object { $_.Trim().TrimEnd('/') } | Where-Object { $_ }) -join ','
 if ($origins -notmatch 'localhost:5173') { $origins = "$origins,http://localhost:5173" }
-$envs = "STORE_FILE=/data/workspace-shared-token.json,SHARED_EMAIL=$SharedEmail,ALLOWED_ORIGINS=$origins"
+# Pass the environment via a YAML file (--env-vars-file) rather than
+# --set-env-vars: gcloud parses --set-env-vars as a comma-separated KEY=VALUE
+# list, so a comma INSIDE a value (two allowed origins, e.g. localhost + the
+# production Vercel URL) is misread as the start of a new key and gcloud aborts
+# with "Bad syntax for dict arg". The file form needs no in-flag escaping.
 $codeVersion = (& git -C $PSScriptRoot rev-parse --short HEAD 2>$null | Select-Object -First 1)
 if (-not $codeVersion) { $codeVersion = 'dev' }
-$envs += ",CODE_VERSION=$codeVersion"
-if ($ClientId) { $envs += ",GOOGLE_CLIENT_ID=$ClientId" }
+$envFile = Join-Path $env:TEMP 'drive-token-server-env.yaml'
+$envLines = @(
+  'STORE_FILE: "/data/workspace-shared-token.json"',
+  "SHARED_EMAIL: `"$SharedEmail`"",
+  "ALLOWED_ORIGINS: `"$origins`"",
+  "CODE_VERSION: `"$codeVersion`""
+)
+if ($ClientId) { $envLines += "GOOGLE_CLIENT_ID: `"$ClientId`"" }
+Set-Content -LiteralPath $envFile -Value $envLines -Encoding ascii
 
 Write-Host "`nDeploying Cloud Run service '$Service' (build + push, first time can take ~3-5 min)..." -ForegroundColor Cyan
 try {
@@ -213,12 +224,13 @@ try {
     --timeout 60 `
     --add-volume name=tokenstore,type=cloud-storage,bucket=$Bucket `
     --add-volume-mount volume=tokenstore,mount-path=/data `
-    --set-env-vars $envs `
+    --env-vars-file $envFile `
     --set-secrets GOOGLE_CLIENT_SECRET=$SecretName:latest
 } catch {
   Fail "gcloud run deploy failed: $($_.Exception.Message)`nTip: update the SDK (gcloud components update) if a flag was rejected."
 }
 if ($LASTEXITCODE -ne 0) { Fail 'gcloud run deploy exited with an error (see messages above).' }
+Remove-Item -LiteralPath $envFile -Force -ErrorAction SilentlyContinue
 
 # --- Done ---------------------------------------------------------------------
 $url = (& gcloud run services describe $Service --project $Project --region $Region --format 'value(status.url)' 2>$null)

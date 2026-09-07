@@ -212,8 +212,22 @@ esac
 # Stamp the git commit into /health so "did my deploy actually happen?" is a
 # one-line check: fetch "<url>/health" and read the "version" field.
 CODE_VERSION="$(git -C "$(dirname "$0")" rev-parse --short HEAD 2>/dev/null || echo 'dev')"
-ENVS="STORE_FILE=/data/workspace-shared-token.json,SHARED_EMAIL=$SHARED_EMAIL,ALLOWED_ORIGINS=$ORIGINS,CODE_VERSION=$CODE_VERSION"
-if [ -n "$CLIENT_ID" ]; then ENVS="$ENVS,GOOGLE_CLIENT_ID=$CLIENT_ID"; fi
+# Pass the environment via a YAML file (--env-vars-file) rather than
+# --set-env-vars: gcloud parses --set-env-vars as a comma-separated KEY=VALUE
+# list, so a comma INSIDE a value (two allowed origins, e.g. localhost + the
+# production Vercel URL) is misread as the start of a new key and gcloud aborts
+# with "Bad syntax for dict arg". The file form needs no in-flag escaping.
+ENV_FILE="$(mktemp)"
+trap 'rm -f "$TMP_SECRET" "$ENV_FILE"' EXIT
+{
+  printf 'STORE_FILE: "/data/workspace-shared-token.json"\n'
+  printf 'SHARED_EMAIL: "%s"\n' "$SHARED_EMAIL"
+  printf 'ALLOWED_ORIGINS: "%s"\n' "$ORIGINS"
+  printf 'CODE_VERSION: "%s"\n' "$CODE_VERSION"
+  if [ -n "$CLIENT_ID" ]; then
+    printf 'GOOGLE_CLIENT_ID: "%s"\n' "$CLIENT_ID"
+  fi
+} > "$ENV_FILE"
 
 echo; echo "Deploying Cloud Run service '$SERVICE' (build + push, first time can take ~3-5 min)..."
 gcloud run deploy "$SERVICE" \
@@ -229,7 +243,7 @@ gcloud run deploy "$SERVICE" \
   --timeout 60 \
   --add-volume name=tokenstore,type=cloud-storage,bucket="$BUCKET" \
   --add-volume-mount volume=tokenstore,mount-path=/data \
-  --set-env-vars "$ENVS" \
+  --env-vars-file "$ENV_FILE" \
   --set-secrets "GOOGLE_CLIENT_SECRET=$SECRET_NAME:latest" || \
   die "gcloud run deploy failed. Tip: run 'gcloud components update' if a flag was rejected."
 
