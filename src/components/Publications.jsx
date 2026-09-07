@@ -8,6 +8,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Icon } from './Icons';
 import { DriveUploadButton } from './DriveUpload';
 import { extractDriveFileIds, trashDriveFile } from '../utils/driveUpload';
+import { loadProjects, saveProjects } from './AppModules/projectsModule';
 
 const JOURNALS_STORAGE_KEY = 'labWorkspace_journals';
 
@@ -953,11 +954,12 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
   // ---- Project bibliography (papers labeled with a project name; stored in
   //      the matching project's `bibliography` array in labWorkspace_projects) ----
   const pbIsSuper = currentUser?.role === 'superuser';
+  // Scoped to the dataset currently open (loadProjects/saveProjects honour the
+  // active dataset), so project bibliographies never bleed across datasets.
   const [pbProjects, setPbProjects] = useState(() => {
     try {
-      const raw = localStorage.getItem('labWorkspace_projects');
-      const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed : [];
+      const list = loadProjects();
+      return Array.isArray(list) ? list : [];
     } catch { return []; }
   });
   const [pbFilter, setPbFilter] = useState('all');
@@ -970,7 +972,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
   const [pbImportSel, setPbImportSel] = useState(new Set());
 
   useEffect(() => {
-    try { localStorage.setItem('labWorkspace_projects', JSON.stringify(pbProjects)); } catch { /* ignore */ }
+    try { saveProjects(pbProjects); } catch { /* ignore */ }
   }, [pbProjects]);
 
   useEffect(() => {

@@ -7,7 +7,6 @@ import React, { useState, useEffect } from 'react';
 import { Icon } from '../Icons';
 import { getDriveToken, getDriveAccountEmail, clearDriveToken, sharedWorkspaceMode } from '../../utils/driveUpload';
 import { countPendingUploads } from '../../utils/pendingUploads';
-import { openDrive } from '../../utils/driveNaming';
 
 export const AppSidebar = ({
   isSidebarOpen, setIsSidebarOpen,
@@ -305,12 +304,6 @@ export const AppSidebar = ({
                       <Icon name="cloud" size={12} />
                       {isSidebarOpen ? `Drive · ${sharedWorkspace ? 'Lab Workspace' : (driveAccount || 'connected')}` : ''}
                     </span>
-                    <button
-                      onClick={openDrive}
-                      className="text-xs font-bold text-blue-600 hover:text-blue-800 underline"
-                    >
-                      Open ↗
-                    </button>
                     {!sharedWorkspaceMode() && (
                       <button
                         onClick={() => {

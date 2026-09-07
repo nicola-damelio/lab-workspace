@@ -20,7 +20,7 @@ import { TestsModule } from './components/AppModules/testsModule';
 import { ProtocolsModule } from './components/AppModules/protocolsModule';
 import { ActiveTestModule } from './components/AppModules/activeTestModule';
 import { NotebookModule, CalculationsModule, PublicationsModule } from './components/AppModules/miscModules';
-import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud } from './components/AppModules/projectsModule';
+import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud, setProjectDatasetScope, removeProjectsOfDataset } from './components/AppModules/projectsModule';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
 import { setActiveProjectId, readLibrary, readAllProjectLibraries, restoreLibraryFromSnapshot } from './utils/figuresLibrary';
@@ -2334,6 +2334,9 @@ useEffect(() => {
       setAppView('dataset');
       window.history.pushState({}, '', datasetHref(targetId));
     }
+    // The restored dataset becomes the active project scope, so its projects
+    // are stored/tagged under this dataset's id.
+    setProjectDatasetScope(targetId);
 
     if (mode === 'replace') {
       setReactTests(loadedTests);
@@ -2513,11 +2516,15 @@ if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([.
 const createNewDataset = async (kind = 'scientific') => {
     const newId = 'ds_' + Date.now();
     const isAdmin = isAdministrationKind(kind);
-    // Experiments must belong to a Project: when a project already exists on
-    // this device, the starter experiment is linked to it right away (otherwise
-    // the user is asked to create/link a project before any experiment can be
-    // saved or backed up). An Administration database does NOT need a starter
-    // experiment — it starts with an empty `administration` payload.
+    // Projects are scoped per dataset: a new dataset starts with an empty
+    // project list (never the projects of the other datasets).
+    setProjectDatasetScope(isAdmin ? null : newId);
+    // Experiments must belong to a Project of the CURRENT dataset. A brand-new
+    // dataset has no projects yet, so its starter experiment starts unassigned
+    // (it must be linked to a project created inside this dataset before the
+    // experiment can be saved or backed up). An Administration database does NOT
+    // need a starter experiment — it starts with an empty `administration`
+    // payload.
     let freshTests = [];
     let adminSeed = null;
     if (isAdmin) {
@@ -2684,6 +2691,9 @@ const handleBackToExplorer = async () => {
   setCurrentAdminPage('overview');
   setAdminFocus(null);
   resetAdminNavHistory();
+  // Back on the explorer: no dataset scope anymore (the datasets list screen
+  // never shows projects).
+  setProjectDatasetScope(null);
 };
 
 const openDataset = (dset) => {
@@ -2724,6 +2734,8 @@ const openDataset = (dset) => {
 
   // ── Base d’administration : tout le contenu vit dans s.administration ──
   if (kind === 'administration') {
+    // Administration bases have no Projects module — clear any leftover scope.
+    setProjectDatasetScope(null);
     const admin = (s && s.administration && typeof s.administration === 'object')
       ? s.administration
       : createAdministrationSeed();
@@ -2809,11 +2821,19 @@ const openDataset = (dset) => {
       setDatasetProtocols(s.datasetProtocols || []);
       setStorages(migrated.storages);
 
-      // Projects are stored per-browser (localStorage). The dataset payload
-      // carries them so a second device (e.g. a phone) that opens this dataset
-      // gets the same projects — deduplicated by id and by name, so the same
-      // project can never appear twice on a device.
-      try { mergeProjectsFromCloud(s.projects); } catch (err) { console.warn('Could not restore projects from dataset:', err && err.message); }
+      // Projects are stored per-browser (localStorage) and scoped to the
+      // dataset being opened: the payload projects are merged into the device
+      // cache under THIS dataset's id, so a second device (e.g. a phone) that
+      // opens this dataset gets the same projects — and a project created in
+      // another dataset never appears here.
+      setProjectDatasetScope(dset.id);
+      try {
+        mergeProjectsFromCloud(s.projects, {
+          datasetId: dset.id,
+          testIds: new Set((loadedTests || []).map((t) => t && t.id).filter(Boolean)),
+          adoptAllLegacy: true
+        });
+      } catch (err) { console.warn('Could not restore projects from dataset:', err && err.message); }
 
       setCurrentDatasetId(dset.id);
       setAppView('dataset');
@@ -2885,6 +2905,8 @@ const openDataset = (dset) => {
           localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
           setDatasetsList(stored);
         }
+        // Remove this dataset's projects from this device's cache.
+        try { removeProjectsOfDataset(id); } catch { /* ignore */ }
       }
     });
   };

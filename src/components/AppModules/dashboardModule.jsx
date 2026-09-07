@@ -5,13 +5,13 @@
 
 import React, { useState } from 'react';
 import { Icon } from '../Icons';
+import { loadProjects } from './projectsModule';
 
 export const DashboardModule = ({ datasetTitle, setDatasetTitle, datasetSubtitle, handlePrint, tests, storages, setCurrentModule, mergedPlan }) => {
+  // Count only the projects that belong to the currently open dataset.
   const [projectCount] = useState(() => {
     try {
-      const raw = localStorage.getItem('labWorkspace_projects');
-      const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed.length : 0;
+      return loadProjects().length;
     } catch { return 0; }
   });
 

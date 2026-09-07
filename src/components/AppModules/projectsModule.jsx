@@ -23,19 +23,24 @@ const projectSize = (p) => {
   try { return JSON.stringify(p).length; } catch { return 0; }
 };
 
-/** Collapse exact duplicates (same id) and same-name duplicates (different id,
- *  e.g. the same project created once on the PC and once on a phone, each with
- *  its own generated id). For a duplicate pair the RICHER copy is kept at the
- *  position of the first occurrence (order is otherwise preserved). */
+/** Collapse exact duplicates (same id) and same-name duplicates within the
+ *  SAME dataset (different ids, e.g. the same project created once on the PC
+ *  and once on a phone, each with its own generated id). For a duplicate pair
+ *  the RICHER copy is kept at the position of the first occurrence (order is
+ *  otherwise preserved). Same-named projects in DIFFERENT datasets stay apart:
+ *  they are legitimate separate projects. */
+const datasetNameKey = (p) =>
+  `${String((p && p.datasetId) || '')}::${String((p && p.name) || '').trim().toLowerCase()}`;
+
 const dedupeProjects = (list) => {
   const byId = new Map();      // id -> index in out
-  const byName = new Map();    // name key -> index in out
+  const byName = new Map();    // dataset-scoped name key -> index in out
   const out = [];
   const add = (p) => { out.push(p); return out.length - 1; };
   for (const p of list) {
     if (!p || typeof p !== 'object') continue;
     const id = p.id;
-    const nameKey = normProjectName(p);
+    const nameKey = p && p.name ? datasetNameKey(p) : '';
     const idIdx = id ? byId.get(id) : -1;
     const nameIdx = nameKey ? byName.get(nameKey) : -1;
     if (idIdx >= 0) {
@@ -56,62 +61,191 @@ const dedupeProjects = (list) => {
   return out;
 };
 
-export const loadProjects = () => {
+/* ------------------------------------------------------------------------
+ * Per-dataset project scoping.
+ *
+ * Projects belong to the dataset they were created in. The localStorage store
+ * below is a per-device cache of EVERY dataset's projects (all ids keep living
+ * in the same key so nothing is lost when datasets are switched), but every
+ * read is FILTERED to the active dataset scope: a project created in dataset A
+ * can never show up in dataset B.
+ *
+ * App.jsx calls setProjectDatasetScope() whenever a dataset is opened, created
+ * or left. When no dataset is open (explorer, bootstrap) the scope is null and
+ * the historical global view is kept.
+ * ------------------------------------------------------------------------ */
+let activeProjectDataset = null;
+
+/** Set (or clear, with null) the dataset whose projects are currently shown. */
+export const setProjectDatasetScope = (datasetArg) => {
+  activeProjectDataset = datasetArg ? String(datasetArg) : null;
+};
+/** Dataset id of the currently shown projects (null outside a dataset). */
+export const getActiveProjectDataset = () => activeProjectDataset;
+
+const readRawProjects = () => {
   try {
     const raw = localStorage.getItem(PROJECTS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return dedupeProjects(parsed);
+      if (Array.isArray(parsed)) return parsed;
     }
   } catch { /* ignore malformed */ }
   return [];
 };
-
-export const saveProjects = (list) => {
+const writeRawProjects = (list) => {
   try {
     localStorage.setItem(PROJECTS_KEY, JSON.stringify(dedupeProjects(Array.isArray(list) ? list : [])));
   } catch { /* ignore */ }
 };
 
-/** Merge projects that arrived with a dataset payload (cloud/HTML) into this
- *  device's project store without creating duplicates:
- *    • same id          → the richer copy wins
- *    • same name, diff. id → the same logical project → keep the RICHER of the
- *      two (an empty duplicate never replaces the full project)
- *  Projects belonging to other datasets on this device are preserved.
- */
-export const mergeProjectsFromCloud = (payloadProjects) => {
-  const existing = loadProjects();
+/** Projects of one dataset — defaults to the currently open one. When no
+ *  dataset scope is active the historical (global) list is returned. Legacy
+ *  projects (not yet tagged to a dataset) only appear in that global view. */
+export const loadProjects = (datasetArg) => {
+  const datasetId = datasetArg != null ? String(datasetArg) : activeProjectDataset;
+  const all = readRawProjects();
+  if (!datasetId) return dedupeProjects(all);
+  return dedupeProjects(all.filter((p) => p && String(p.datasetId) === datasetId));
+};
+
+/** Persist the projects of the ACTIVE dataset. The list is authoritative for
+ *  that scope (a project removed from it is deleted), while projects of the
+ *  other datasets and not-yet-adopted legacy projects are left untouched. */
+export const saveProjects = (list) => {
+  const safe = dedupeProjects(Array.isArray(list) ? list : []);
+  if (!activeProjectDataset) {
+    writeRawProjects(safe);
+    return;
+  }
+  const all = readRawProjects();
+  const tagged = safe.map((p) => ({
+    ...p,
+    datasetId: (p && String(p.datasetId)) || activeProjectDataset
+  }));
+  const merged = [
+    ...all.filter((p) => !(p && String(p.datasetId) === activeProjectDataset)),
+    ...tagged
+  ];
+  writeRawProjects(merged);
+};
+
+/** Remove every project of a dataset from this device's cache (dataset
+ *  deletion). */
+export const removeProjectsOfDataset = (datasetArg) => {
+  const datasetId = datasetArg != null ? String(datasetArg) : null;
+  if (!datasetId) return;
+  try {
+    const kept = readRawProjects().filter((p) => !(p && String(p.datasetId) === datasetId));
+    writeRawProjects(kept);
+  } catch { /* ignore */ }
+};
+
+/** Merge the projects carried by a dataset payload (cloud/HTML) into this
+ *  device's cache without creating duplicates:
+ *    • same id in the same dataset   → the richer copy wins
+ *    • same name + dataset, diff. id → the same logical project → keep the
+ *      RICHER of the two (an empty duplicate never replaces the full project)
+ *  Projects already tagged to ANOTHER dataset are ignored here — they are
+ *  re-added when that dataset is opened (they live in its own payload).
+ *
+ *  Legacy projects (created before per-dataset scoping, no `datasetId`) are
+ *  attributed to a dataset as soon as one opens whose tests contain their
+ *  linked experiment ids (`opts.testIds`). Projects that reference NO
+ *  experiment at all cannot be attributed by their links: when
+ *  `opts.adoptAllLegacy` is true they go to the first dataset opened after
+ *  the upgrade (fallback chosen by the workspace owner). A legacy project
+ *  with experiments that live in another dataset is left untagged until that
+ *  dataset is opened. */
+export const mergeProjectsFromCloud = (payloadProjects, opts = {}) => {
+  const datasetId = opts.datasetId != null ? String(opts.datasetId) : activeProjectDataset;
+  const testIds = opts.testIds instanceof Set
+    ? opts.testIds
+    : new Set((Array.isArray(opts.tests) ? opts.tests : []).map((t) => t && t.id).filter(Boolean));
+  const adoptAllLegacy = !!opts.adoptAllLegacy;
+  const payload = Array.isArray(payloadProjects) ? payloadProjects : [];
+
   const byId = new Map();
-  const nameToId = new Map();
-  existing.forEach((p) => {
-    if (!p || !p.id) return;
+  const nameToId = new Map(); // dataset-scoped name → id
+  readRawProjects().forEach((p) => {
+    if (!p || typeof p !== 'object' || !p.id) return;
     byId.set(p.id, p);
-    const k = normProjectName(p);
-    if (k && !nameToId.has(k)) nameToId.set(k, p.id);
+    const nk = p && p.name ? datasetNameKey(p) : '';
+    if (nk && !nameToId.has(nk)) nameToId.set(nk, p.id);
   });
+
   let changed = false;
-  (Array.isArray(payloadProjects) ? payloadProjects : []).forEach((p) => {
-    if (!p || !p.id) return;
-    const k = normProjectName(p);
-    const localForName = k ? nameToId.get(k) : null;
-    if (localForName && localForName !== p.id) {
-      const localCopy = byId.get(localForName);
-      if (localCopy && projectSize(localCopy) >= projectSize(p)) return; // local is the fuller copy — keep it
-      byId.delete(localForName);
-      nameToId.delete(k);
-    }
-    if (byId.has(p.id)) {
-      const cur = byId.get(p.id);
-      if (!cur || projectSize(p) > projectSize(cur)) byId.set(p.id, p);
-      changed = true;
+  const remember = (p) => {
+    const nk = p && p.name ? datasetNameKey(p) : '';
+    const cur = byId.get(p.id);
+    if (cur) {
+      // A project tagged to another dataset can never be moved by this dataset.
+      if (cur.datasetId && p.datasetId && cur.datasetId !== p.datasetId) return;
+      // A legacy (untagged) payload copy never re-tags an already-tagged project.
+      if (cur.datasetId && !p.datasetId) return;
+      if (!cur.datasetId && p.datasetId) {
+        // Adopt the cached copy (keep the richer of the two) into this dataset.
+        const richer = projectSize(p) > projectSize(cur) ? p : cur;
+        byId.set(p.id, { ...richer, datasetId: p.datasetId });
+        if (nk) nameToId.set(nk, p.id);
+        changed = true;
+        return;
+      }
+      // Same scope (both tagged to the same dataset, or both legacy): richer copy wins.
+      if (projectSize(p) > projectSize(cur)) {
+        byId.set(p.id, p);
+        if (nk) nameToId.set(nk, p.id);
+        changed = true;
+      }
       return;
     }
+    // Same name within the SAME dataset, different id (project created on two
+    // devices): keep the richer copy at the first occurrence.
+    const twinId = nk ? nameToId.get(nk) : null;
+    if (twinId && twinId !== p.id) {
+      const twin = byId.get(twinId);
+      if (twin && projectSize(twin) >= projectSize(p)) return;
+      byId.delete(twinId);
+      if (nk) nameToId.delete(nk);
+    }
     byId.set(p.id, p);
-    if (k) nameToId.set(k, p.id);
+    if (nk) nameToId.set(nk, p.id);
     changed = true;
+  };
+
+  payload.forEach((p) => {
+    if (!p || typeof p !== 'object' || !p.id) return;
+    const pDs = p.datasetId != null ? String(p.datasetId) : null;
+    if (!datasetId) {
+      // Unscoped (legacy) merge: only untagged payload projects participate.
+      if (!pDs) remember(p);
+      return;
+    }
+    if (pDs) {
+      // Already tagged: only projects of THIS dataset belong here.
+      if (pDs === datasetId) remember(p);
+      return;
+    }
+    // Legacy project (no dataset): decide where it belongs.
+    const cached = byId.get(p.id);
+    if (cached && String((cached && cached.datasetId) || '') !== '' && String(cached.datasetId) !== datasetId) {
+      return; // already claimed by another dataset
+    }
+    const experiments = Array.isArray(p.experiments) ? p.experiments : [];
+    const linkedHere = experiments.some((e) => e && e.testId && testIds.has(e.testId));
+    if (linkedHere) {
+      // Its linked experiments exist in THIS dataset's tests → it belongs here.
+      remember({ ...p, datasetId });
+      return;
+    }
+    // No link found here. If the project has linked experiments at all, leave it
+    // untagged for now: the dataset that contains those experiments will claim it
+    // when it is opened. Only projects with NO experiment reference use the
+    // fallback (adoptAllLegacy = "first dataset opened after the upgrade").
+    if (experiments.length === 0 && adoptAllLegacy) remember({ ...p, datasetId });
   });
-  if (changed) saveProjects(Array.from(byId.values()));
+
+  if (changed) writeRawProjects(Array.from(byId.values()));
 };
 
 /** Normalize a project's authorized-people list to [{ name, permission }].
@@ -228,6 +362,8 @@ export const ProjectsModule = ({
       id: genProjectId(),
       name,
       scientist: myName,
+      // Projects belong to the dataset they are created in.
+      datasetId: getActiveProjectDataset() || '',
       createdAt: now,
       updatedAt: now,
       background: '',

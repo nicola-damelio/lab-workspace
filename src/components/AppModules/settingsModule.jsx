@@ -11,6 +11,7 @@ import { DatabaseCleanupManager } from './storageModules';
 import { DriveImageMigration } from '../DriveImageMigration';
 import { CloudStorageSettings } from './cloudStorageSettings';
 import { normalizeOperators } from '../../utils/auth';
+import { openDrive } from '../../utils/driveNaming';
 
 export const SettingsModule = ({
   operators, setOperators, authSettings, setAuthSettings,
@@ -84,6 +85,22 @@ export const SettingsModule = ({
 
                    <CollapsibleSection title="Cloud storage — Google Drive or Nextcloud" subtitle="Choose where files and figures are stored: Google Drive (OAuth) or your Nextcloud server (WebDAV). One global switch applies to every upload." defaultOpen={false}>
                       <CloudStorageSettings />
+                   </CollapsibleSection>
+
+                   <CollapsibleSection title="Google Drive folder" subtitle="Open the Lab Workspace Google Drive folder in a new browser tab — visible to the superuser only." defaultOpen={false}>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+                        <span className="text-xs text-slate-500 leading-relaxed">
+                          Opens the Google Drive folder currently used by this app (workspace root, dataset folders and
+                          backups) in a new tab.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={openDrive}
+                          className="shrink-0 text-xs font-bold text-blue-600 hover:text-blue-800 underline whitespace-nowrap"
+                        >
+                          Open ↗
+                        </button>
+                      </div>
                    </CollapsibleSection>
 
                    <CollapsibleSection title="Test files on Google Drive" subtitle="Move test attachments (figures, ⭐ starred items, PDFs/documents, links) into the correct Drive folders — Lab Workspace/<dataset>/<project>/<test>/<instance>/Report." defaultOpen={false}>
