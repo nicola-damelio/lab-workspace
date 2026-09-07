@@ -3,10 +3,8 @@
    Left navigation sidebar (extracted from App.jsx). Props-only component.
    ========================================================================= */
 
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Icon } from '../Icons';
-import { getDriveToken, getDriveAccountEmail, clearDriveToken, sharedWorkspaceMode } from '../../utils/driveUpload';
-import { countPendingUploads } from '../../utils/pendingUploads';
 
 export const AppSidebar = ({
   isSidebarOpen, setIsSidebarOpen,
@@ -21,33 +19,7 @@ export const AppSidebar = ({
   currentAdminPage, onAdminNav,
   handlePrint, loadHTML, exportHTML,
   handleUndo, handleRedo, historyIndex, historyRef,
-  user, onGoogleLogin, onConnectDrive
 }) => {
-  const [driveConnected, setDriveConnected] = useState(!!getDriveToken());
-  const [driveAccount, setDriveAccount] = useState('');
-  const [pendingCount, setPendingCount] = useState(0);
-  // Shared "Lab Workspace" mode: the Drive behind the app is the workspace
-  // OWNER's account. We deliberately never surface its e-mail to the UI — the
-  // chip stays neutral so collaborators only see "Lab Workspace", not that a
-  // personal Google account is doing the storage.
-  const sharedWorkspace = sharedWorkspaceMode();
-
-  // Uploads waiting for Drive (kept locally when the workspace token server was
-  // down) — they are replayed automatically as soon as the connection returns.
-  useEffect(() => {
-    let alive = true;
-    const refresh = () => {
-      countPendingUploads().then((n) => { if (alive) setPendingCount(n || 0); }).catch(() => {});
-    };
-    const onChange = (e) => {
-      const n = e && e.detail && e.detail.count;
-      if (typeof n === 'number') { if (alive) setPendingCount(n); }
-      else refresh();
-    };
-    window.addEventListener('lab:pending-uploads-changed', onChange);
-    refresh();
-    return () => { alive = false; window.removeEventListener('lab:pending-uploads-changed', onChange); };
-  }, []);
 
   // Navigation adaptée au type de base ouverte : dans une base
   // d’administration, seule sa page est proposée ; dans une base scientifique,
@@ -71,31 +43,6 @@ export const AppSidebar = ({
   const navItems = adminOnly
     ? (Array.isArray(adminNav) ? adminNav : [])
     : NAV_ITEMS.filter((nav) => nav.id !== 'administration');
-
-  useEffect(() => {
-    const refreshAccount = () => {
-      if (sharedWorkspace) {
-        // Shared mode: never ask Google for /about (and never display) the
-        // owner's account e-mail — it must stay invisible to collaborators.
-        setDriveAccount('');
-        return;
-      }
-      if (getDriveToken()) {
-        getDriveAccountEmail().then((email) => setDriveAccount(email || '')).catch(() => setDriveAccount(''));
-      } else {
-        setDriveAccount('');
-      }
-    };
-    const onConnected = () => { setDriveConnected(!!getDriveToken()); refreshAccount(); };
-    const onDisconnected = () => { setDriveConnected(false); setDriveAccount(''); };
-    window.addEventListener('lab:drive-connected', onConnected);
-    window.addEventListener('lab:drive-disconnected', onDisconnected);
-    refreshAccount(); // on first load, show which account is connected
-    return () => {
-      window.removeEventListener('lab:drive-connected', onConnected);
-      window.removeEventListener('lab:drive-disconnected', onDisconnected);
-    };
-  }, []);
 
   return (
 
@@ -278,77 +225,6 @@ export const AppSidebar = ({
               }`}
             >
               <div className={`flex flex-col gap-2 w-full`}>
-                {!user && onGoogleLogin && (
-                  <button
-                    onClick={onGoogleLogin}
-                    className={`w-full text-center bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors flex items-center justify-center gap-1 ${
-                      !isSidebarOpen ? 'py-2 px-0 text-xs' : ''
-                    }`}
-                    title="Optional: sign in with Google to enable cloud sync (the app works fully without it)"
-                  >
-                    <Icon name="cloud" size={14} /> {isSidebarOpen ? 'Cloud sign-in (optional)' : ''}
-                  </button>
-                )}
-
-                {/* Google Drive: uploads are auto-renamed and saved here */}
-                {driveConnected ? (
-                  <div
-                    className={`flex items-center justify-between gap-1 bg-emerald-50 border border-emerald-200 rounded py-1.5 px-2 ${
-                      !isSidebarOpen ? 'flex-col px-1' : ''
-                    }`}
-                    title={sharedWorkspace
-                      ? 'Shared Lab Workspace storage connected — uploaded files are renamed and saved automatically in folders that mirror the app'
-                      : 'Google Drive connected — uploaded files are renamed and saved automatically, organised in folders that mirror the app, inside your Lab Workspace folder'}
-                  >
-                    <span className="text-[10px] font-bold text-emerald-700 flex items-center gap-1">
-                      <Icon name="cloud" size={12} />
-                      {isSidebarOpen ? `Drive · ${sharedWorkspace ? 'Lab Workspace' : (driveAccount || 'connected')}` : ''}
-                    </span>
-                    {!sharedWorkspaceMode() && (
-                      <button
-                        onClick={() => {
-                          clearDriveToken();
-                          try { window.dispatchEvent(new CustomEvent('lab:drive-disconnected')); } catch { /* ignore */ }
-                        }}
-                        className="text-xs font-bold text-red-500 hover:text-red-700 underline"
-                        title="Disconnect Google Drive (you can reconnect at any time)"
-                      >
-                        Disconnect
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  onConnectDrive && (
-                    <button
-                      onClick={onConnectDrive}
-                      className={`w-full text-center bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors flex items-center justify-center gap-1 ${
-                        !isSidebarOpen ? 'py-2 px-0 text-xs' : ''
-                      }`}
-                      title={sharedWorkspaceMode()
-                        ? 'Drive is temporarily unavailable — retry the shared Lab Workspace server (no personal Google Drive needed; you still log in to the app as usual)'
-                        : 'Connect Google Drive so uploaded images/documents are automatically renamed and saved into folders that mirror the app, inside your Lab Workspace folder'}
-                    >
-                      <Icon name="cloud" size={14} /> {isSidebarOpen ? (sharedWorkspaceMode() ? 'Reconnect shared Drive' : 'Connect Drive') : ''}
-                    </button>
-                  )
-                )}
-
-                {/* Files kept locally because Drive was unavailable — auto-uploaded on reconnect */}
-                {pendingCount > 0 && (
-                  <div
-                    className={`flex items-center justify-between gap-1 bg-amber-50 border border-amber-200 rounded py-1.5 px-2 ${
-                      !isSidebarOpen ? 'flex-col px-1' : ''
-                    }`}
-                    title={`${pendingCount} file kept locally because Drive was unavailable — they will be uploaded to Google Drive automatically as soon as the connection is restored`}
-                  >
-                    <span className="text-[10px] font-bold text-amber-700">
-                      ⏳ {isSidebarOpen
-                        ? `${pendingCount} upload${pendingCount === 1 ? '' : 's'} waiting for Drive (auto)`
-                        : `${pendingCount}↗`}
-                    </span>
-                  </div>
-                )}
-
                 <button
                   onClick={handlePrint}
                   className={`w-full text-center bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors flex items-center justify-center gap-1 ${
