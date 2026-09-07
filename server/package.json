@@ -1,0 +1,15 @@
+{
+  "name": "lab-workspace-drive-token-server",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Shared 'Lab Workspace' Drive token server (zero runtime dependencies). Deploy target metadata for Google Cloud Run / Cloud Build buildpacks.",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node token-server.js",
+    "self-test": "node self-test.js"
+  },
+  "dependencies": {}
+}

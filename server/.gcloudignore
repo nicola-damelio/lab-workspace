@@ -1,0 +1,11 @@
+# Files uploaded by `gcloud run deploy --source .` live INSIDE the container
+# image — a credential file must never end up there.
+
+# Local store written when the server is run by hand (credential!).
+workspace-shared-token.json
+workspace-shared-token.json.*
+
+# Ops / development helpers — not part of the container image.
+deploy-cloud-run.ps1
+deploy-cloud-run.sh
+self-test.js

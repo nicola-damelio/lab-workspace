@@ -23,3 +23,9 @@ dist-ssr
 *.sln
 *.sw?
 /src/AA2.xtc
+
+# Shared Drive token store written by local runs of server/token-server.js
+# (contains the workspace owner's Google refresh token — never commit it!)
+workspace-shared-token.json
+workspace-shared-token.json.*
+

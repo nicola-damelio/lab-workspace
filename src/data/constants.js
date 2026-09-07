@@ -22,7 +22,7 @@ export const LOCAL_STORAGE_KEY = 'lab_datasets_local_v2';
 //   4. Paste the Client ID below.
 // Empty = the standard Google sign-in cannot get Drive permission from
 // Google, so uploaded files are stored locally (with a download option).
-export const GOOGLE_DRIVE_CLIENT_ID = '763848765523-kvjohq6qv8oifb2n86ibh6m4vm4057ej.apps.googleusercontent.com';
+export const GOOGLE_DRIVE_CLIENT_ID = '763848765523-0i3rsljv2gpnke866r8kuih6s87l7n0u.apps.googleusercontent.com';
 
 // --- AUTOMATIC E-MAILS (Administration module: devis/BC approval) ---
 // The notifications are sent through the Gmail API using the Google account
@@ -67,7 +67,7 @@ export const GOOGLE_MAIL_SEND_SCOPE = 'https://www.googleapis.com/auth/gmail.sen
 //
 // When this is empty the app keeps today's behaviour (no shared server).
 export const GOOGLE_DRIVE_SHARED_MODE = true; // a configured endpoint = the shared workspace server
-export const GOOGLE_TOKEN_EXCHANGE_URL = '';  // paste your deployed server URL here to enable shared mode
+export const GOOGLE_TOKEN_EXCHANGE_URL = 'https://drive-token-server-763848765523.europe-west1.run.app'; // deployed shared token server
 
 // --- CONSTANTS & CONFIGURATIONS ---
 export const PLATES_DEF = {

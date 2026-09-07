@@ -1421,8 +1421,21 @@ export const sharedWorkspaceMode = () =>
 
 /** True when this page load is the OWNER's one-time bootstrap: appending
  *  "?drive-bootstrap=1" to the URL is the ONLY situation in shared mode where
- *  a Google consent popup may appear (the server stores the permanent token). */
+ *  a Google consent popup may appear (the server stores the permanent token).
+ *
+ *  The flag is captured HERE at module load, because the app later rewrites
+ *  window.location.search to "?dataset=…" (window.history.pushState) when it
+ *  opens a shared dataset — which would otherwise silently erase
+ *  "drive-bootstrap=1" before the user clicks the button. */
+let bootstrapRequestedAtLoad = false;
+try {
+  bootstrapRequestedAtLoad = typeof window !== 'undefined' &&
+    !!window.location &&
+    new URLSearchParams(window.location.search).has('drive-bootstrap');
+} catch { bootstrapRequestedAtLoad = false; }
+
 const workspaceBootstrapMode = () => {
+  if (bootstrapRequestedAtLoad) return true;
   try {
     return typeof window !== 'undefined' &&
       new URLSearchParams(window.location.search).has('drive-bootstrap');
@@ -1436,6 +1449,14 @@ const workspaceBootstrapMode = () => {
 let workspaceServerIssue = null;
 let lastSharedDriveConnectedAt = 0;
 export const getWorkspaceServerIssue = () => workspaceServerIssue;
+
+// Precise reason of the last failed Drive-connect attempt (shared bootstrap debug).
+let lastDriveConnectError = '';
+const setLastDriveConnectError = (message) => {
+  lastDriveConnectError = String(message || '');
+  if (lastDriveConnectError) console.warn('[drive] connect failed:', lastDriveConnectError);
+};
+export const getLastDriveConnectError = () => lastDriveConnectError;
 
 /** Ask the workspace server to mint a short-lived access token from the stored
  *  permanent refresh token ({ grant_type: 'workspace' }). Stores the returned
@@ -1615,14 +1636,23 @@ export const connectDriveWithGis = async () => {
     if (!workspaceBootstrapMode()) {
       // Normal user (or plain retry): silent server mint, never a Google popup.
       const ok = await mintWorkspaceAccessToken();
-      if (ok) return true;
+      if (ok) { lastDriveConnectError = ''; return true; }
       clearDriveToken();
+      setLastDriveConnectError(workspaceServerIssue === 'not_initialized'
+        ? 'The shared server has no stored workspace credential yet.'
+        : 'The shared server is unreachable.');
       return false;
     }
     // Owner bootstrap: one-time GIS consent whose refresh token is stored by
     // the server as the shared workspace credential.
-    if (!clientId) return false;
-    try { await loadGis(); } catch { return false; }
+    if (!clientId) {
+      setLastDriveConnectError('No Drive OAuth client is configured (GOOGLE_DRIVE_CLIENT_ID is empty).');
+      return false;
+    }
+    try { await loadGis(); } catch {
+      setLastDriveConnectError('The Google Identity script failed to load — check the network or an ad-blocker.');
+      return false;
+    }
     const code = await requestGisCode(clientId);
     if (code) {
       const res = await postToTokenExchange({
@@ -1632,11 +1662,23 @@ export const connectDriveWithGis = async () => {
         prompt: 'consent'
       });
       if (res.ok && res.json && res.json.access_token) {
+        lastDriveConnectError = '';
         setDriveToken(res.json.access_token, res.json.expires_in);
         setStoredRefreshToken(''); // the permanent credential stays server-side only
         return true;
       }
+      setLastDriveConnectError(
+        res.ok
+          ? 'The shared server answered but returned no access token.'
+          : `The shared server refused the code: ${res.error || `HTTP ${res.status}`}`
+      );
+      return false;
     }
+    setLastDriveConnectError(
+      'Google returned no authorization code. Possible causes: this page origin is not in the OAuth '
+      + 'client “Authorized JavaScript origins”, the consent screen is in Testing without this account '
+      + 'added as a Test user, or the Google popup was closed/blocked.'
+    );
     return false;
   }
 

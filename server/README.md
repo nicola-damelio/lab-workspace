@@ -20,11 +20,101 @@ operators/settings are loaded from the Firestore appConfig for all sessions).
 If the server is briefly unreachable the app shows "Drive unavailable", keeps
 files locally, and **retries automatically every minute** — no user action.
 
-## Deploy
+## Deploy on Google Cloud Run (recommended)
 
-1. Get the OAuth client **secret** for the existing Web OAuth client
+The zero-dependency server is published as a **single-instance Cloud Run
+service with a Cloud Storage bucket mounted as a `/data` volume** (FUSE): the
+credential file keeps working unchanged and survives every instance recycle /
+scale-to-zero, so **no code change and no database** is needed. Cost stays
+inside the Cloud Run free tier for a lab.
+
+Prerequisites (one time):
+
+1. A Google Cloud project **with billing enabled** (Cloud Run needs it even
+   inside the free tier) — typically the project that owns the OAuth client
+   `GOOGLE_DRIVE_CLIENT_ID`.
+2. `gcloud` CLI installed and authenticated (`gcloud auth login`), with the
+   project selected (`gcloud config set project YOUR_PROJECT_ID`).
+3. ⚠️ **OAuth consent screen**: if it still shows **Testing**, Google expires
+   refresh tokens after 7 days. Publish the app (**In production** — no review
+   needed for an internal app) *before* bootstrapping, or the credential
+   silently dies every week.
+4. **OAuth client secret** (since 2025 Google no longer lets you view/download
+   the secret of an already-created client): if you do not have the
+   `client_secret.json` saved from when the client was created, **create a new
+   OAuth Web client** (Credentials → + Create credentials → OAuth client ID →
+   Web application) and **download the JSON immediately** — the secret is shown
+   only at creation. Point the app at the new client ID
+   (`GOOGLE_DRIVE_CLIENT_ID` in `src/data/constants.js`) and pass the same ID
+   to the scripts (`-ClientId` / `-i`): the browser asks that client for the
+   consent code and the server exchanges it, so **both must use the same ID**.
+
+Publish (PowerShell, from this repo — re-running it just redeploys):
+
+```powershell
+cd server
+# -a is optional (default: http://localhost:5173). When the app gets a real
+# public address, re-run the script with -a "https://your-app.example.com".
+.\deploy-cloud-run.ps1 -AppOrigin "https://your-app.example.com" `
+  -ClientSecretFile "$HOME\Downloads\client_secret.json" `
+  -ClientId "NEW-CLIENT-ID.apps.googleusercontent.com"   # only if you created a new client
+```
+
+If you prefer **Cloud Shell / Linux** (no install — gcloud is already there):
+upload the four files `server/token-server.js`, `server/package.json`,
+`server/deploy-cloud-run.sh` and the downloaded `client_secret.json` into one
+Cloud Shell folder and run:
+
+```bash
+bash deploy-cloud-run.sh -a "https://your-app.example.com" -p "YOUR_PROJECT_ID" \
+  -c "client_secret.json" \
+  -i "NEW-CLIENT-ID.apps.googleusercontent.com"   # only if you created a new client
+```
+
+The script enables `run` / `cloudbuild` / `secretmanager`, creates a dedicated
+service account, stores the OAuth client **secret** in Secret Manager, creates
+a small credential bucket, grants only the needed roles and deploys the
+service (`--max-instances 1` keeps the single credential file consistent;
+`--source .` = this `server/` folder; Cloud Run injects `PORT`, so the server
+listens on 8080 automatically).
+
+Manual equivalent (gcloud CLI):
+
+```bash
+gcloud run deploy drive-token-server --source . \
+  --project $PROJECT --region $REGION --allow-unauthenticated \
+  --service-account drive-token-sa@$PROJECT.iam.gserviceaccount.com \
+  --execution-environment gen2 --max-instances 1 --memory 512Mi --cpu 1 \
+  --add-volume name=tokenstore,type=cloud-storage,bucket=$PROJECT-token-store \
+  --add-volume-mount volume=tokenstore,mount-path=/data \
+  --set-env-vars STORE_FILE=/data/workspace-shared-token.json,\
+SHARED_EMAIL=nicola@u-picardie.fr,ALLOWED_ORIGINS=https://your-app.example.com \
+  --set-secrets GOOGLE_CLIENT_SECRET=drive-token-client-secret:latest
+```
+
+After the first deploy:
+
+1. Open the printed service URL + `/health` in a browser →
+   `{ "ok": true, "initialized": false, ... }`.
+2. Paste that URL into `GOOGLE_TOKEN_EXCHANGE_URL` in
+   `src/data/constants.js` (shared mode is already `true`), rebuild and
+   redeploy the app.
+3. **One-time owner bootstrap**: open the deployed app with
+   `?drive-bootstrap=1`, click **Connect Drive**, approve the Google consent.
+   `/health` now reports `"initialized": true` and every browser mints Drive
+   tokens from the server with **no Google popup**.
+
+To reset the credential: delete the file in the `*-token-store` bucket and
+repeat the bootstrap. The OAuth consent-screen and `gmail.send` notes below
+apply to Cloud Run exactly as to a self-hosted box.
+
+## Deploy — alternative: your own always-on machine
+
+1. Get the OAuth client **secret** for the Web OAuth client
    `GOOGLE_DRIVE_CLIENT_ID` (Google Cloud Console → APIs & Services →
-   Credentials → your client → download JSON).
+   Credentials → your client → download JSON — possible only if you saved it
+   before the 2025 policy change; otherwise create a new OAuth Web client and
+   download its JSON at creation).
    - The Google Drive API must be enabled for that project and the scope
      `https://www.googleapis.com/auth/drive.file` added to the consent screen.
    - ⚠️ If the OAuth consent screen is still in **Testing** status, Google

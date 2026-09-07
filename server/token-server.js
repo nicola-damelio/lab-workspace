@@ -80,7 +80,7 @@ const env = (k, dflt = '') => process.env[k] || dflt;
 const port = parseInt(env('PORT', '8787'), 10) || 8787;
 const GOOGLE_CLIENT_ID = env(
   'GOOGLE_CLIENT_ID',
-  '763848765523-kvjohq6qv8oifb2n86ibh6m4vm4057ej.apps.googleusercontent.com'
+  '763848765523-0i3rsljv2gpnke866r8kuih6s87l7n0u.apps.googleusercontent.com'
 );
 const GOOGLE_CLIENT_SECRET = env('GOOGLE_CLIENT_SECRET');
 const SHARED_EMAIL = env('SHARED_EMAIL').trim().toLowerCase();
@@ -150,17 +150,38 @@ async function googleTokenCall(params) {
   return { ok: res.ok, status: res.status, json: json || {} };
 }
 
-/** Which Google account does this freshly-minted access token belong to? */
+/** Which Google account does this freshly-minted access token belong to?
+ *  NOTE: the Drive API v3 /about "user" object exposes the address as
+ *  `emailAddress` (NOT `email` — reading `.email` always yields an empty
+ *  string and made every bootstrap fail with email_check_failed). When the
+ *  granted scopes hide the address, fall back to the OAuth tokeninfo
+ *  endpoint, which answers with `email` for identity-capable tokens. */
 async function accessTokenEmail(accessToken) {
   try {
     const res = await fetch(GOOGLE_DRIVE_ABOUT, {
       headers: { Authorization: `Bearer ${accessToken}` }
     });
     const j = await res.json();
-    const email = String(((j && j.user) || {}).email || '').trim().toLowerCase();
-    return { ok: res.ok && !!email, email };
-  } catch {
-    return { ok: false, email: '' };
+    const user = (j && j.user) || {};
+    const email = String(user.emailAddress || user.email || '').trim().toLowerCase();
+    if (res.ok && email) return { ok: true, email };
+    // Fallback: OAuth tokeninfo may still expose the account email.
+    try {
+      const ti = await (
+        await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(accessToken)}`)
+      ).json();
+      const tiEmail = String((ti && ti.email) || '').trim().toLowerCase();
+      if (tiEmail) return { ok: true, email: tiEmail };
+    } catch { /* keep the Drive error detail below */ }
+    return {
+      ok: false,
+      email: '',
+      detail: res.ok
+        ? `Google Drive /about did not expose user.emailAddress${user.displayName ? ` for “${user.displayName}”` : ''}`
+        : `Google Drive /about answered HTTP ${res.status}${j && j.error ? ` (${j.error})` : ''}`
+    };
+  } catch (err) {
+    return { ok: false, email: '', detail: (err && err.message) || 'network error' };
   }
 }
 
@@ -242,7 +263,13 @@ async function handleBootstrap(code) {
   if (SHARED_EMAIL) {
     const who = await accessTokenEmail(accessToken);
     if (!who.ok) {
-      return { http: 502, json: { error: 'email_check_failed', error_description: 'Could not verify the consenting Google account against SHARED_EMAIL.' } };
+      return {
+        http: 502,
+        json: {
+          error: 'email_check_failed',
+          error_description: `Could not verify the consenting Google account against SHARED_EMAIL${who.detail ? ` — ${who.detail}` : ''}.`
+        }
+      };
     }
     accountEmail = who.email;
     if (accountEmail !== SHARED_EMAIL) {

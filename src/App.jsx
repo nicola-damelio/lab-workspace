@@ -24,7 +24,7 @@ import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud } fr
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
 import { setActiveProjectId, readLibrary, readAllProjectLibraries, restoreLibraryFromSnapshot } from './utils/figuresLibrary';
-import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders } from './utils/driveUpload';
+import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, getLastDriveConnectError, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders } from './utils/driveUpload';
 import { sanitizeSlug, datasetFolderSlug } from './utils/driveNaming';
 import { validateDatasetExperiments } from './utils/experimentRules';
 import { canUserOpenDataset, isDatasetRestricted, normalizeMemberNames } from './utils/datasetAccess';
@@ -1276,7 +1276,7 @@ if (customType === 'dosy') {
       } else if (sharedWorkspaceMode()) {
         // Shared mode: never a Google popup — explain the real cause instead.
         alert(getWorkspaceServerIssue() === 'not_initialized'
-          ? 'Shared Drive is not set up yet. The workspace owner must open this app once with “?drive-bootstrap=1” at the end of the URL and click Connect Drive — that stores the permanent credential on the shared server. Until then files are kept locally.'
+          ? 'Shared Drive is not set up yet. The workspace owner must open this app once with “?drive-bootstrap=1” at the end of the URL and click Connect Drive — that stores the permanent credential on the shared server. Until then files are kept locally.' + (getLastDriveConnectError() ? '\n\nDettaglio tecnico: ' + getLastDriveConnectError() : '')
           : 'The shared Lab Workspace server is temporarily unreachable, so Drive is unavailable right now.\n\nYour files are still saved locally, and the app will reconnect automatically as soon as the server answers again — no personal Google Drive is needed (you still log in to the app normally).');
       } else {
         const origin = (() => { try { return window.location.origin || ''; } catch { return ''; } })();
