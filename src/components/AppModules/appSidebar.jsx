@@ -27,6 +27,11 @@ export const AppSidebar = ({
   const [driveConnected, setDriveConnected] = useState(!!getDriveToken());
   const [driveAccount, setDriveAccount] = useState('');
   const [pendingCount, setPendingCount] = useState(0);
+  // Shared "Lab Workspace" mode: the Drive behind the app is the workspace
+  // OWNER's account. We deliberately never surface its e-mail to the UI — the
+  // chip stays neutral so collaborators only see "Lab Workspace", not that a
+  // personal Google account is doing the storage.
+  const sharedWorkspace = sharedWorkspaceMode();
 
   // Uploads waiting for Drive (kept locally when the workspace token server was
   // down) — they are replayed automatically as soon as the connection returns.
@@ -70,6 +75,12 @@ export const AppSidebar = ({
 
   useEffect(() => {
     const refreshAccount = () => {
+      if (sharedWorkspace) {
+        // Shared mode: never ask Google for /about (and never display) the
+        // owner's account e-mail — it must stay invisible to collaborators.
+        setDriveAccount('');
+        return;
+      }
       if (getDriveToken()) {
         getDriveAccountEmail().then((email) => setDriveAccount(email || '')).catch(() => setDriveAccount(''));
       } else {
@@ -286,11 +297,13 @@ export const AppSidebar = ({
                     className={`flex items-center justify-between gap-1 bg-emerald-50 border border-emerald-200 rounded py-1.5 px-2 ${
                       !isSidebarOpen ? 'flex-col px-1' : ''
                     }`}
-                    title="Google Drive connected — uploaded files are renamed and saved automatically, organised in folders that mirror the app, inside your Lab Workspace folder"
+                    title={sharedWorkspace
+                      ? 'Shared Lab Workspace storage connected — uploaded files are renamed and saved automatically in folders that mirror the app'
+                      : 'Google Drive connected — uploaded files are renamed and saved automatically, organised in folders that mirror the app, inside your Lab Workspace folder'}
                   >
                     <span className="text-[10px] font-bold text-emerald-700 flex items-center gap-1">
                       <Icon name="cloud" size={12} />
-                      {isSidebarOpen ? `Drive · ${driveAccount || (sharedWorkspaceMode() ? 'shared workspace' : 'connected')}` : ''}
+                      {isSidebarOpen ? `Drive · ${sharedWorkspace ? 'Lab Workspace' : (driveAccount || 'connected')}` : ''}
                     </span>
                     <button
                       onClick={openDrive}
