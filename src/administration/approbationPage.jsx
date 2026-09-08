@@ -1035,32 +1035,42 @@ const DepositModal = ({
   const editing = mode === 'edit' && !!rec;
   const isDevis = kind === 'devis';
   const year = new Date().getFullYear();
-  /* « Ligne budgétaire » / « Demandeur » repris du devis lié quand le BC (ou
-     l’édition d’un dépôt historique) n’a pas encore ses propres valeurs. */
+  /* Informations reprises du devis lié quand le BC (ou l’édition d’un dépôt
+     historique) n’a pas encore ses propres valeurs : objet, fournisseur,
+     montant HT, frais de port, ligne budgétaire et demandeur — le BC se
+     rattachant au même devis reprend ses informations (modifiables ensuite
+     dans le formulaire). */
   const linkedDevisOf = (devisId) => {
     const id = txt(devisId);
     if (!id) return null;
     return (Array.isArray(devisOptions) ? devisOptions : []).find((d) => d.id === id) || null;
   };
+  const moneyInputOf = (v) => (v === null || v === undefined || v === '' ? '' : String(v).replace('.', ','));
   const devisDefaultsOf = (devisId) => {
     const dev = linkedDevisOf(devisId);
     return {
+      description: dev ? txt(dev.description) : '',
+      fournisseur: dev ? txt(dev.fournisseur) : '',
       ligneBudgetaire: dev ? txt(dev.ligneBudgetaire) : '',
       demandeur: dev ? txt(dev.demandeur) : '',
+      montant: dev ? moneyInputOf(dev.montant) : '',
+      fraisPort: dev ? moneyInputOf(dev.fraisPort) : '',
     };
   };
   const [draft, setDraft] = useState(() => {
     const linkedDefaults = rec && rec.kind === 'bc'
       ? devisDefaultsOf(rec.devisId)
-      : { ligneBudgetaire: '', demandeur: '' };
+      : {};
     const firstDevisDefaults = isDevis
       ? null
       : devisDefaultsOf(defaultLinkedDevisId(devisOptions));
     if (rec) {
       return {
         kind: rec.kind || kind,
-        description: txt(rec.description),
-        fournisseur: txt(rec.fournisseur),
+        description: txt(rec.description)
+          || (rec.kind === 'bc' ? linkedDefaults.description : ''),
+        fournisseur: txt(rec.fournisseur)
+          || (rec.kind === 'bc' ? linkedDefaults.fournisseur : ''),
         ligneBudgetaire: txt(rec.ligneBudgetaire)
           || (rec.kind === 'bc' ? linkedDefaults.ligneBudgetaire : ''),
         demandeur: txt(rec.demandeur)
@@ -1071,8 +1081,12 @@ const DepositModal = ({
         numBC: txt(rec.numBC),
         devisId: txt(rec.devisId),
         groupeAchatId: txt(rec.groupeAchatId),
-        montant: rec.montant === null || rec.montant === undefined ? '' : String(rec.montant).replace('.', ','),
-        fraisPort: rec.fraisPort === null || rec.fraisPort === undefined ? '' : String(rec.fraisPort).replace('.', ','),
+        montant: rec.montant === null || rec.montant === undefined || rec.montant === ''
+          ? (rec.kind === 'bc' ? linkedDefaults.montant : '')
+          : moneyInputOf(rec.montant),
+        fraisPort: rec.fraisPort === null || rec.fraisPort === undefined || rec.fraisPort === ''
+          ? (rec.kind === 'bc' ? linkedDefaults.fraisPort : '')
+          : moneyInputOf(rec.fraisPort),
         fichierNom: txt(rec.fichierNom),
         fichierUrl: txt(rec.fichierUrl),
         fichierMime: txt(rec.fichierMime),
@@ -1084,8 +1098,8 @@ const DepositModal = ({
     }
     return {
       kind,
-      description: '',
-      fournisseur: '',
+      description: isDevis ? '' : (firstDevisDefaults ? firstDevisDefaults.description : ''),
+      fournisseur: isDevis ? '' : (firstDevisDefaults ? firstDevisDefaults.fournisseur : ''),
       ligneBudgetaire: isDevis ? '' : (firstDevisDefaults ? firstDevisDefaults.ligneBudgetaire : ''),
       demandeur: (isDevis ? '' : (firstDevisDefaults ? firstDevisDefaults.demandeur : ''))
         || txt(defaultDeposant),
@@ -1093,8 +1107,8 @@ const DepositModal = ({
       numBC: isDevis ? '' : '',
       devisId: isDevis ? '' : defaultLinkedDevisId(devisOptions),
       groupeAchatId: '',
-      montant: '',
-      fraisPort: '',
+      montant: isDevis ? '' : (firstDevisDefaults ? firstDevisDefaults.montant : ''),
+      fraisPort: isDevis ? '' : (firstDevisDefaults ? firstDevisDefaults.fraisPort : ''),
       fichierNom: '',
       fichierUrl: '',
       fichierMime: '',
@@ -1116,17 +1130,23 @@ const DepositModal = ({
   }, [fournisseurNames, draft.fournisseur]);
 
   const set = (k) => (ev) => setDraft((d) => ({ ...d, [k]: ev.target.value }));
-  /* Changement du devis lié (BC) : on reprend sa ligne budgétaire et son
+  /* Changement du devis lié (BC) : on reprend de ce devis l'objet, le
+     fournisseur, le montant HT, les frais de port, la ligne budgétaire et le
      demandeur (modifiables ensuite dans le formulaire). */
   const pickDevis = (ev) => {
     const id = ev.target.value;
     setDraft((d) => {
-      const dev = linkedDevisOf(id);
+      if (!id) return { ...d, devisId: '' };
+      const def = devisDefaultsOf(id);
       return {
         ...d,
         devisId: id,
-        ligneBudgetaire: dev ? txt(dev.ligneBudgetaire) || d.ligneBudgetaire : d.ligneBudgetaire,
-        demandeur: dev ? txt(dev.demandeur) || d.demandeur : d.demandeur,
+        description: def.description,
+        fournisseur: def.fournisseur,
+        ligneBudgetaire: def.ligneBudgetaire,
+        demandeur: def.demandeur || d.demandeur,
+        montant: def.montant,
+        fraisPort: def.fraisPort,
       };
     });
   };
@@ -1252,6 +1272,11 @@ const DepositModal = ({
                   <option value="">Aucun devis disponible — créez d’abord un devis</option>
                 )}
               </select>
+              <p className="mt-1.5 text-[10px] leading-snug text-indigo-500">
+                Le choix du devis lié pré-remplit automatiquement l’objet, le fournisseur, le montant HT,
+                les frais de port, la ligne budgétaire et le demandeur à partir de ce devis — ces champs
+                restent modifiables. Il ne reste qu’à saisir le N° BC et joindre le fichier.
+              </p>
             </div>
           )}
 
