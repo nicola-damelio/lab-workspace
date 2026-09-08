@@ -30,12 +30,16 @@
         Achats. Elles sont retirées des autres onglets et alimentent la
         colonne « Stages » de la page Recettes (déduite de la « Dispo
         université » dans le calcul du solde).
-      • « Remboursements » — dépenses dont la « Classification / nature » est
-        « Remboursements » (frais avancés par un membre puis remboursés par le
-        laboratoire) : mêmes colonnes que les Achats. Elles sont retirées des
-        onglets Achats / PI / OM et alimentent la colonne « Remboursements » de
-        la page Recettes (déduite de la « Dispo université » dans le calcul du
-        solde, comme les rémunérations de stage).
+      • « Remboursements » — registre INDÉPENDANT de la table Dépenses
+        (collection `reimbursements`) : frais avancés par un membre puis
+        remboursés par le laboratoire. Formulaire sur le modèle d’un OM prévu
+        (dates, bénéficiaire, coûts détaillés) — NI devis, NI N° SIFAC/D.A.,
+        NI BC, NI fournisseur. Un remboursement reste dans son registre, même
+        une fois le remboursement effectué : il ne migre jamais vers les
+        onglets Achats / PI / OM. La page Recettes le décompte dans sa
+        colonne « Remboursements » (déduite de la « Dispo université » dans le
+        calcul du solde). Les anciennes lignes du classeur classées
+        « Remboursements » sont rapatriées ici automatiquement.
 
    Modèle stocké (mêmes clés que l’import Google Sheets) :
      { type: 'achat' | 'pi' | 'om', suivi, statut, ent, nonComptabiliseEnt,
@@ -70,6 +74,7 @@ import {
   RECETTE_TYPES, DEPENSE_NATURES, DEPENSE_STATUSES, DEPENSE_FOURNISSEUR_PI,
   isPiFournisseur, depenseKindOf, DEPENSE_KIND_META, DEPENSE_FIELD_LABEL,
   DEFAULT_DEPENSE_MANDATORY, ADMIN_PAGES,
+  REIMBURSEMENT_COST_FIELDS, reimbTotalOf,
 } from './adminSchema';
 import { parseEuroAmount } from './importUtils';
 import { fileBudgetDocs, budgetDocPath, budgetDocFileName, BUDGET_DOC_FOLDER_BY_FIELD } from './driveFiling';
@@ -133,15 +138,13 @@ const isStageNature = (v) => {
 };
 const isStageDepense = (d) => isStageNature(d && (d.classification || d.nature));
 
-/* « Remboursements » : dépenses dont la « Classification / nature »
-   (`classification`, valeur « Remboursements » du sélecteur) correspond à un
-   remboursement de frais avancés par un membre (le laboratoire reverse la
-   somme — il n’y a pas de fournisseur). Traitement identique aux « Stages » :
-   ces lignes sortent des onglets Achats / PI / OM et sont listées dans
-   l’onglet « Remboursements » — la page Recettes les décompte dans sa colonne
-   « Remboursements », déduite du solde (jamais comptées deux fois : elles ne
-   sont pas non plus dans « Achats (BC signé) » / « Prestations internes » /
-   « OM payés »). */
+/* « Remboursements » (collection `reimbursements`, onglet du même nom) : frais
+   avancés par un membre puis remboursés par le laboratoire. Registre
+   INDÉPENDANT de la table Dépenses — jamais de devis / N° SIFAC/D.A. / BC /
+   fournisseur, et jamais de migration vers les onglets Achats / PI / OM. La
+   détection ci-dessous ne sert plus qu’au RAPATRIEMENT des anciennes lignes
+   Dépenses classées « Remboursements » (import du classeur) vers le registre
+   dédié, opéré automatiquement par AdminContext. */
 const isReimbNature = (v) => {
   const s = txt(v).toLowerCase();
   if (!s) return false;
@@ -435,6 +438,13 @@ const DepensesPage = () => {
   const recettes = useMemo(() => (Array.isArray(data.recettes) ? data.recettes : []), [data.recettes]);
   const personnel = useMemo(() => (Array.isArray(data.personnel) ? data.personnel : []), [data.personnel]);
   const librerie = useMemo(() => (Array.isArray(data.librerie) ? data.librerie : []), [data.librerie]);
+  /* Registre « Remboursements » — collection dédiée, indépendante de la table
+     Dépenses (ni devis, ni BC/SIFAC ; jamais de migration vers les autres
+     onglets). Les fiches sont saisies sur le modèle d’un OM prévu. */
+  const reimbRecords = useMemo(
+    () => (Array.isArray(data.reimbursements) ? data.reimbursements : []),
+    [data.reimbursements]
+  );
 
   const [modal, setModal] = useState(null); // { rec } | null
   const [importOpen, setImportOpen] = useState(false);
@@ -591,10 +601,16 @@ const DepensesPage = () => {
     if (!focus || focus.pageId !== 'depenses') return;
     const rid = focus.recordId;
     if (rid) {
-      const dep = (Array.isArray(data.depenses) ? data.depenses : []).find((d) => d.id === rid);
-      if (dep) {
-        setTab(isReimbDepense(dep) ? 'remboursements' : isStageDepense(dep) ? 'stages' : depenseKindOf(dep));
+      const reimb = reimbRecords.find((x) => x.id === rid);
+      if (reimb) {
+        setTab('remboursements');
         setFocusRow(rid);
+      } else {
+        const dep = (Array.isArray(data.depenses) ? data.depenses : []).find((d) => d.id === rid);
+        if (dep) {
+          setTab(isStageDepense(dep) ? 'stages' : depenseKindOf(dep));
+          setFocusRow(rid);
+        }
       }
     }
     clearFocus();
@@ -677,8 +693,8 @@ const DepensesPage = () => {
     return db.localeCompare(da);
   }), [list]);
 
-  /* Regroupement par famille (TOUTES les lignes vivent dans la collection
-     `depenses`) :
+  /* Regroupement par famille (TOUTES les lignes de ce tableau vivent dans la
+     collection `depenses`) :
        · « Achats » — type achat (fournisseur « normal », cycle devis → BC → livraisons) ;
        · « Prestations internes » (PI) — fournisseur « PI », service interne sans BC ;
        · « OM » — type om : lignes liées à un ordre de mission (créées depuis la
@@ -687,18 +703,33 @@ const DepensesPage = () => {
        · « Rémunération stages » — lignes dont la « Classification / nature »
          est « Stages » (gratifications de stagiaires) : elles sortent des
          autres onglets et sont listées ici avec les mêmes colonnes que les
-         Achats ;
-       · « Remboursements » — lignes dont la « Classification / nature » est
-         « Remboursements » (frais avancés par un membre puis remboursés par le
-         laboratoire) : même mécanique que les « Stages », elles sortent des
-         autres onglets et sont listées ici avec les mêmes colonnes que les
-         Achats. */
+         Achats.
+       Les remboursements, eux, vivent dans la collection DÉDIÉE
+       `reimbursements` (registre indépendant, onglet « Remboursements ») —
+       jamais dans `depenses` : une fiche de remboursement n’est pas un bon de
+       commande et n’y migre jamais. */
   const stageRows = sorted.filter((r) => isStageDepense(r));
-  const reimbRows = sorted.filter((r) => isReimbDepense(r));
   const achatRows = sorted.filter((r) => depenseKindOf(r) === 'achat' && !isStageDepense(r) && !isReimbDepense(r));
   const piRows = sorted.filter((r) => depenseKindOf(r) === 'pi' && !isStageDepense(r) && !isReimbDepense(r));
   const omRows = sorted.filter((r) => depenseKindOf(r) === 'om' && !isStageDepense(r) && !isReimbDepense(r));
-  const depViewRows = tab === 'pi' ? piRows : (tab === 'om' ? omRows : (tab === 'stages' ? stageRows : (tab === 'remboursements' ? reimbRows : achatRows)));
+  /* Lignes du tableau Dépenses selon l’onglet (Achats / PI / OM / Stages).
+     L’onglet « Remboursements » ne passe PAS ici : c’est un registre dédié
+     (collection `reimbursements`) affiché par son propre tableau. */
+  const depViewRows = tab === 'remboursements'
+    ? []
+    : (tab === 'pi' ? piRows : (tab === 'om' ? omRows : (tab === 'stages' ? stageRows : achatRows)));
+
+  /* Fiches du registre « Remboursements », les plus récentes d’abord (départ /
+     date de la demande, comme les OM). Chiffres de l’onglet : total déduit du
+     solde dans la page Recettes (colonne « Remboursements »). */
+  const reimbList = useMemo(() => [...reimbRecords].sort((a, b) => {
+    const da = isoOf(a.dateMission) || isoOf(a.dateDemande);
+    const db = isoOf(b.dateMission) || isoOf(b.dateDemande);
+    if (!da && !db) return 0;
+    if (!da) return 1;
+    if (!db) return -1;
+    return db.localeCompare(da);
+  }), [reimbRecords]);
 
   /* Résumé du haut de page (restreint aux lignes de l’onglet de dépenses actif). */
   const buildSummary = (rows) => {
@@ -721,6 +752,9 @@ const DepensesPage = () => {
     });
     return out;
   };
+  /* depViewRows est recalculé à chaque rendu (tableau de l’onglet actif) — la
+     somme de l’onglet ne doit pas dépendre de son identité. */
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const summary = useMemo(() => buildSummary(depViewRows), [depViewRows]);
 
   /* Chiffres du bloc OM : lignes de type om suivies dans CETTE page (indépendante
@@ -739,12 +773,22 @@ const DepensesPage = () => {
     return { ...s, factured, toInvoice: Math.max(0, s.count - factured) };
   }, [stageRows]);
 
-  /* Chiffres du bloc « Remboursements » (lignes classées « Remboursements »). */
+  /* Chiffres du registre « Remboursements » (collection dédiée, sans statut :
+     chaque fiche décrit des frais avancés, intégralement déduits du solde des
+     lignes budgétaires dans la page Recettes). */
   const reimbStats = useMemo(() => {
-    const s = buildSummary(reimbRows);
-    const factured = reimbRows.filter((r) => txt(r.numFacture)).length;
-    return { ...s, factured, toInvoice: Math.max(0, s.count - factured) };
-  }, [reimbRows]);
+    let moneyCount = 0;
+    let total = 0;
+    reimbList.forEach((r) => {
+      const t = reimbTotalOf(r);
+      if (t > 0) {
+        total += t;
+        moneyCount += 1;
+      }
+    });
+    const withoutLine = reimbList.filter((r) => !r.recetteId && !txt(r.ligneBudgetaire)).length;
+    return { count: reimbList.length, moneyCount, total, withoutLine };
+  }, [reimbList]);
 
   /* Enregistrement : normalise + valide, puis upsert (ou remove si absent). */
   const onSaveDepense = async (draft, existingId) => {
@@ -893,6 +937,89 @@ const DepensesPage = () => {
 
     setModal(null);
     return true;
+  };
+
+  /* Enregistrement d’une fiche du registre « Remboursements » (collection
+     dédiée). Même résolution « Catégorie / Ligne budgétaire » que les Dépenses,
+     mais aucun pipeline devis / SIFAC / BC : le formulaire suit le modèle d’un
+     OM prévu (sans la partie statut). La fiche reste dans son registre — elle
+     ne migre jamais vers la table Dépenses. */
+  const onSaveReimb = (draft, existingId) => {
+    const description = txt(draft.description);
+    if (!description) {
+      alert('Merci de renseigner l’objet du remboursement : c’est son intitulé (obligatoire).');
+      return false;
+    }
+    const couts = {};
+    REIMBURSEMENT_COST_FIELDS.forEach((c) => { couts[c.key] = parseNum(draft[c.key]); });
+    const coutTotal = parseNum(draft.coutTotal);
+    const categorie = txt(draft.categorie);
+    const ligneBudgetaire = txt(draft.ligneBudgetaire);
+    /* Imputation : la « Catégorie » (Fonctionnement / Investissement) doit
+       correspondre au type de la ligne Recettes — sinon le remboursement serait
+       décompté sur la mauvaise ligne (colonne « Remboursements »). */
+    let recetteId = '';
+    const explicit = draft.recetteId && recettes.some((r) => r.id === draft.recetteId)
+      ? recettes.find((r) => r.id === draft.recetteId)
+      : null;
+    if (explicit) {
+      if (!categorie || !txt(explicit.type) || sameCatType(categorie, explicit.type)) {
+        recetteId = explicit.id;
+      } else {
+        const twin = findRecetteTwin(recettes, explicit, categorie);
+        if (twin) {
+          recetteId = twin.id;
+        } else {
+          alert(
+            `Impossible d’enregistrer : le remboursement est classé « ${categorie} » mais lié à la ligne « ${explicit.ligne || explicit.id} » (${explicit.type || 'type inconnu'}).\n\n`
+            + `Aucune ligne budgétaire homonyme de type « ${categorie} » n’existe dans Recettes.\n`
+            + `Corrigez la catégorie, choisissez une autre ligne, ou créez d’abord la ligne « ${categorie} » correspondante (page Recettes).`
+          );
+          return false;
+        }
+      }
+    } else if (categorie) {
+      const found = findRecetteByLabel(recettes, ligneBudgetaire, categorie);
+      if (found) {
+        recetteId = found.id;
+      } else if (ligneBudgetaire && findRecetteByLabel(recettes, ligneBudgetaire)) {
+        const other = findRecetteByLabel(recettes, ligneBudgetaire);
+        alert(
+          `Aucune ligne budgétaire de type « ${categorie} » ne correspond à « ${ligneBudgetaire} » — seule « ${other.ligne || other.id} » (${other.type || 'type inconnu'}) existe dans Recettes.\n\n`
+          + `Corrigez la catégorie du remboursement ou créez d’abord la ligne budgétaire « ${categorie} » correspondante (page Recettes).`
+        );
+        return false;
+      }
+    } else {
+      recetteId = findRecetteId(recettes, ligneBudgetaire);
+    }
+    const patch = {
+      description,
+      demandeur: txt(draft.demandeur),
+      destination: txt(draft.destination),
+      numOM: txt(draft.numOM),
+      categorie,
+      ligneBudgetaire,
+      recetteId: recetteId || '',
+      dateDemande: isoOf(draft.dateDemande),
+      dateMission: isoOf(draft.dateMission),
+      dateRetour: isoOf(draft.dateRetour),
+      coutStatut: txt(draft.coutStatut) || 'Exact',
+      commentaires: txt(draft.commentaires),
+      ...couts,
+      coutTotal,
+    };
+    upsert('reimbursements', patch, existingId);
+    setModal(null);
+    return true;
+  };
+
+  const removeReimb = (rec) => {
+    if (!rec || !rec.id) return;
+    const label = txt(rec.description) || 'ce remboursement';
+    if (window.confirm(`Supprimer définitivement le remboursement « ${label} » ?`)) {
+      remove('reimbursements', rec.id);
+    }
   };
 
   const removeDepense = (rec) => {
@@ -1210,16 +1337,120 @@ const DepensesPage = () => {
     columnByKey.get('actions'),
   ].filter(Boolean);
 
+  /* Colonnes du registre « Remboursements » — formulaire calqué sur un OM
+     prévu (sans la partie statut En attente / Acceptée / Refusée) : AUCUNE
+     colonne devis / N° SIFAC / BC / fournisseur, et pas de « Déplacer » vers
+     les onglets Achats / PI / OM (une fiche ne migre jamais). */
+  const reimbCostDetail = (r) => REIMBURSEMENT_COST_FIELDS
+    .map((c) => {
+      const n = numOf(r && (r[c.key] !== undefined && r[c.key] !== null && r[c.key] !== '' ? r[c.key] : null));
+      return n === null ? null : { label: c.label, n };
+    })
+    .filter((x) => x !== null);
+  const reimbCols = [
+    {
+      key: 'objet', label: 'Objet du remboursement', filter: 'text',
+      value: (r) => [r.description, r.destination, r.numOM, r.demandeur, ligneLabelOf(r)].filter(Boolean).join(' '),
+      display: (r) => (
+        <div className="min-w-[220px]">
+          <div className="font-bold text-slate-800 leading-snug">{txt(r.description) || 'Remboursement'}</div>
+          <div className="text-[11px] text-slate-400 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+            {r.destination ? <span>📍 {txt(r.destination)}</span> : null}
+            {r.numOM ? <span className="font-mono text-[10px] text-slate-500"># {txt(r.numOM)}</span> : null}
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'beneficiaire', label: 'Bénéficiaire', filter: 'text',
+      value: (r) => txt(r.demandeur),
+      display: (r) => (txt(r.demandeur)
+        ? <span className="text-slate-700 whitespace-nowrap">{txt(r.demandeur)}</span>
+        : <span className="text-slate-300">—</span>),
+    },
+    {
+      key: 'dates', label: 'Dates', filter: 'text',
+      value: (r) => [r.dateDemande, r.dateMission, r.dateRetour].filter(Boolean).join(' '),
+      display: (r) => {
+        const asked = isoOf(r.dateDemande);
+        const start = isoOf(r.dateMission);
+        const end = isoOf(r.dateRetour);
+        const period = start ? (end ? `${toFrDate(start)} → ${toFrDate(end)}` : toFrDate(start)) : (end ? `→ ${toFrDate(end)}` : '');
+        return (
+          <div className="text-[11px] text-slate-500 leading-snug whitespace-nowrap">
+            {asked ? <div title="Date de la demande">📅 {toFrDate(asked)}</div> : null}
+            {period ? <div className="text-slate-400">{period}</div> : null}
+          </div>
+        );
+      },
+    },
+    {
+      key: 'ligne', label: 'Ligne budgétaire', filter: 'text',
+      value: (r) => ligneLabelOf(r) || txt(r.ligneBudgetaire) || '',
+      display: (r) => {
+        const label = ligneLabelOf(r) || txt(r.ligneBudgetaire);
+        return label
+          ? <span className="text-slate-700 whitespace-nowrap">{label}</span>
+          : <span className="text-amber-600 text-[11px] font-semibold whitespace-nowrap" title="Imputez ce remboursement sur une ligne budgétaire pour qu’il soit déduit du bon budget (page Recettes).">non imputé</span>;
+      },
+    },
+    {
+      key: 'cout', label: 'Coût total', dataType: 'number', align: 'right', nowrap: true,
+      value: (r) => reimbTotalOf(r),
+      display: (r) => {
+        const total = reimbTotalOf(r);
+        const parts = reimbCostDetail(r);
+        const statut = txt(r.coutStatut) || 'Exact';
+        const hint = [
+          total > 0 ? `Coût total : ${euro.format(total)}` : 'Non chiffré',
+          parts.length ? parts.map((p) => `${p.label} : ${euro.format(p.n)}`).join(' · ') : '',
+          `Montant ${statut}`,
+        ].filter(Boolean).join('\n');
+        return (
+          <div className="text-right" title={hint}>
+            <div className="font-semibold text-slate-800 whitespace-nowrap">
+              {total > 0 ? euro.format(total) : <span className="text-slate-300">—</span>}
+            </div>
+            <div className="text-[10px] text-slate-400 uppercase font-black">
+              {statut}
+            </div>
+          </div>
+        );
+      },
+    },
+    { key: 'commentaires', label: 'Commentaires', filter: 'text', hidden: true, value: (r) => txt(r.commentaires) },
+    {
+      key: 'actions', label: '', filter: 'none', filterable: false, value: () => '',
+      display: (r) => (
+        <div className="flex items-center gap-1 whitespace-nowrap">
+          <button
+            type="button"
+            title="Modifier le remboursement"
+            onClick={() => setModal({ mode: 'edit', rec: r, reimb: true })}
+            className="text-[11px] font-black px-2 py-1 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
+          >✏️ Modifier</button>
+          <button
+            type="button"
+            title="Supprimer le remboursement"
+            onClick={() => removeReimb(r)}
+            className="text-[11px] font-black px-2 py-1 rounded-lg border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
+          >🗑️</button>
+        </div>
+      ),
+    },
+  ];
+
   /* Lignes incomplètes de l’onglet actif : au moins un champ obligatoire manque. */
   const redRows = depViewRows.filter((r) => missingMandatoryFor(r).length > 0);
   const redLabels = [...new Set(redRows.flatMap((r) => missingMandatoryFor(r).map(mandatoryLabelOf)))];
   const piFactured = piRows.filter((r) => txt(r.numFacture)).length;
   /* Famille de la dépense en cours d’édition / création (pour le formulaire).
-     L’onglet « achats » correspond à la famille canonique « achat » ; les
-     onglets « Rémunération stages » et « Remboursements » gardent le formulaire
-     complet des achats (seules les classifications « Stages » / « Remboursements »
-     sont pré-remplies pour une nouvelle ligne). */
-  const KIND_BY_TAB = { achats: 'achat', pi: 'pi', om: 'om', stages: 'achat', remboursements: 'achat' };
+     L’onglet « achats » correspond à la famille canonique « achat » ; l’onglet
+     « Rémunération stages » garde le formulaire complet des achats (seule la
+     classification « Stages » est pré-remplie pour une nouvelle ligne). Les
+     remboursements ouvrent leur PROPRE formulaire (RemboursementModal),
+     calqué sur un OM prévu : ils ne passent pas par cette dépense. */
+  const KIND_BY_TAB = { achats: 'achat', pi: 'pi', om: 'om', stages: 'achat' };
   const modalKind = modal
     ? (modal.mode === 'edit' ? depenseKindOf(modal.rec) : KIND_BY_TAB[tab] || 'achat')
     : 'achat';
@@ -1266,7 +1497,7 @@ const DepensesPage = () => {
           </p>
         ) : tab === 'remboursements' ? (
           <p className="text-xs font-bold text-slate-400">
-            {reimbStats.count} remboursement{reimbStats.count > 1 ? 's' : ''} de frais (classification « Remboursements ») · {reimbStats.factured} justifié{reimbStats.factured > 1 ? 's' : ''} par une facture / note de frais — édition complète, mêmes colonnes que les Achats ; déduits du solde des lignes budgétaires (page Recettes › colonne « Remboursements »).
+            {reimbStats.count} remboursement{reimbStats.count > 1 ? 's' : ''} de frais · {reimbStats.moneyCount ? euro.format(reimbStats.total) : '—'} — registre <b>dédié</b> (sur le modèle d’un OM prévu : dates, bénéficiaire, coûts) ; aucune fiche ne comporte de devis / N° SIFAC / BC et rien ne migre vers les onglets Achats / PI / OM. Total déduit du solde des lignes budgétaires (page Recettes › colonne « Remboursements »).
           </p>
         ) : (
           <p className="text-xs font-bold text-slate-400">
@@ -1289,29 +1520,33 @@ const DepensesPage = () => {
             <button
               onClick={() => setImportOpen(true)}
               className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
-              title="Importer les dépenses depuis la feuille Google Sheets (coller, CSV ou Excel)"
+              title={tab === 'remboursements'
+                ? 'Importer les lignes du classeur — les lignes classées « Remboursements » arriveront dans cet onglet (registre dédié, jamais dans les Dépenses BC/SIFAC)'
+                : 'Importer les dépenses depuis la feuille Google Sheets (coller, CSV ou Excel)'}
             >
               <span className="text-base leading-none">📥</span> Importer
             </button>
           )}
+          {tab !== 'remboursements' && (
+            <button
+              type="button"
+              onClick={runBudgetFiling}
+              disabled={filingBusy}
+              className="bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50"
+              title="Copier dans Budget_labo/<année>/… les documents Google Drive liés aux dépenses déjà saisies (devis, BC, facture, OM, BL/SF) — l’original n’est jamais déplacé ; possible quand le fichier est accessible à l’application"
+            >
+              <span className="text-base leading-none">{filingBusy ? '⏳' : '📎'}</span>{filingBusy ? 'Rangement…' : 'Ranger les liens Drive'}
+            </button>
+          )}
           <button
-            type="button"
-            onClick={runBudgetFiling}
-            disabled={filingBusy}
-            className="bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50"
-            title="Copier dans Budget_labo/<année>/… les documents Google Drive liés aux dépenses déjà saisies (devis, BC, facture, OM, BL/SF) — l’original n’est jamais déplacé ; possible quand le fichier est accessible à l’application"
-          >
-            <span className="text-base leading-none">{filingBusy ? '⏳' : '📎'}</span>{filingBusy ? 'Rangement…' : 'Ranger les liens Drive'}
-          </button>
-          <button
-            onClick={() => setModal({ mode: 'new' })}
+            onClick={() => setModal(tab === 'remboursements' ? { mode: 'new', reimb: true } : { mode: 'new' })}
             className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
             title={tab === 'om'
               ? 'Ajouter une dépense liée à un ordre de mission (type OM)'
               : tab === 'stages'
                 ? 'Ajouter une dépense de rémunération de stage (classification « Stages » pré-remplie)'
                 : tab === 'remboursements'
-                  ? 'Ajouter un remboursement de frais avancés par un membre (classification « Remboursements » pré-remplie, pas de fournisseur)'
+                  ? 'Ajouter un remboursement de frais avancés par un membre — registre dédié (modèle OM prévu : ni devis, ni N° SIFAC/D.A., ni BC, ni fournisseur). Une fois saisi, il reste ici et ne migre jamais vers les Dépenses (Achats / PI / OM).'
                   : 'Ajouter une dépense'}
           >
             <span className="text-base leading-none">+</span>{tab === 'om' ? 'Ajouter une dépense OM' : tab === 'stages' ? 'Ajouter une rémunération de stage' : tab === 'remboursements' ? 'Ajouter un remboursement' : 'Ajouter une dépense'}
@@ -1326,7 +1561,7 @@ const DepensesPage = () => {
           { id: 'pi', icon: '🛠️', label: 'Prestations internes', count: piRows.length },
           { id: 'om', icon: '✈️', label: 'OM', count: omRows.length },
           { id: 'stages', icon: '🎓', label: 'Rémunération stages', count: stageRows.length },
-          { id: 'remboursements', icon: '💸', label: 'Remboursements', count: reimbRows.length },
+          { id: 'remboursements', icon: '💸', label: 'Remboursements', count: reimbList.length },
         ].map((v) => (
           <button
             key={v.id}
@@ -1341,7 +1576,7 @@ const DepensesPage = () => {
                     ? 'Lignes OM : dépenses liées à un ordre de mission accepté — tableau indépendant de la page « OM prévus / souhaités »'
                     : v.id === 'stages'
                       ? 'Rémunérations de stage : dépenses dont la « Classification / nature » est « Stages » (gratifications de stagiaires), retirées des autres onglets et déduites du solde dans la page Recettes'
-                      : 'Remboursements : frais avancés par un membre puis remboursés par le laboratoire (classification « Remboursements »), retirés des autres onglets et déduits du solde dans la page Recettes'
+                      : 'Remboursements : registre dédié de frais avancés par un membre puis remboursés par le laboratoire — jamais de devis / N° SIFAC / BC, indépendant des Achats / PI / OM, déduit du solde dans la page Recettes'
             }
             className={`px-3 py-1.5 rounded-lg text-xs font-black transition-colors ${tab === v.id ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:bg-blue-50 hover:text-blue-700'}`}
           >
@@ -1376,11 +1611,10 @@ const DepensesPage = () => {
           <SummaryCard label="À facturer" value={stageStats.toInvoice} tone="amber" hint="Rémunérations de stage sans N° facture — à compléter pour le paiement." />
         </div>
       ) : tab === 'remboursements' ? (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-          <SummaryCard label="Remboursements" value={reimbStats.count} tone="slate" hint="Dépenses dont la « Classification / nature » est « Remboursements » (frais avancés par un membre puis remboursés par le laboratoire) — retirées des onglets Achats / PI / OM." />
-          <SummaryCard label="Montant total (HT + port)" value={reimbStats.moneyCount ? euro.format(reimbStats.total) : '—'} tone="blue" hint={`Somme des montants renseignés sur ${reimbStats.moneyCount} remboursement(s).`} />
-          <SummaryCard label="Justifiés" value={reimbStats.factured} tone="indigo" hint="Remboursements avec une facture / note de frais renseignée." />
-          <SummaryCard label="À justifier" value={reimbStats.toInvoice} tone="amber" hint="Remboursements sans facture / note de frais — à compléter pour le remboursement." />
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+          <SummaryCard label="Remboursements" value={reimbStats.count} tone="slate" hint="Fiches du registre dédié « Remboursements » (frais avancés par un membre puis remboursés par le laboratoire)." />
+          <SummaryCard label="Montant total (coûts)" value={reimbStats.moneyCount ? euro.format(reimbStats.total) : '—'} tone="blue" hint={`Somme des coûts renseignés sur ${reimbStats.moneyCount} remboursement(s) — déduite du solde des lignes budgétaires (page Recettes › colonne « Remboursements »).`} />
+          <SummaryCard label="Non imputés" value={reimbStats.withoutLine} tone={reimbStats.withoutLine ? 'amber' : 'slate'} hint="Remboursements sans ligne budgétaire liée — à imputer pour qu’ils soient déduits du bon budget dans la page Recettes." />
         </div>
       ) : null}
 
@@ -1410,12 +1644,12 @@ const DepensesPage = () => {
         </div>
       ) : tab === 'remboursements' ? (
         <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
-          <b>Remboursements :</b> frais <b>avancés par un membre</b> (achat personnel, billet, inscription… payé de sa poche
-          pour le laboratoire) puis <b>remboursés par le laboratoire</b>. Ces lignes sont identifiées par la <b>« Classification /
-          nature » = « Remboursements »</b> ; elles sont <b>retirées des onglets Achats / PI / OM</b> et listées ici avec les
-          mêmes colonnes que les Achats. La page Recettes les décompte dans sa <b>colonne « Remboursements »</b> (déduite de
-          la « Dispo université » dans le calcul du solde), sans jamais les compter deux fois. <b>Aucun fournisseur</b> n’est
-          attendu : le bénéficiaire du remboursement est le demandeur.
+          <b>Remboursements :</b> frais <b>avancés par un membre</b> (billet, inscription, mission…) puis <b>remboursés par le laboratoire</b>.
+          C’est un <b>registre à part</b> : le formulaire suit le modèle d’un <b>OM prévu</b> (objet, bénéficiaire, dates, coûts
+          détaillés) — <b>ni devis, ni N° SIFAC/D.A., ni BC, ni fournisseur</b> — et une fiche <b>reste ici</b>, elle ne migre
+          jamais vers les onglets Achats / PI / OM, même une fois le remboursement effectué. La page Recettes les décompte
+          dans sa <b>colonne « Remboursements »</b> (déduite de la « Dispo université » dans le calcul du solde), sans jamais
+          les compter deux fois. <b>Bénéficiaire = le demandeur</b> (membre qui a payé).
         </div>
       ) : null}
 
@@ -1426,7 +1660,35 @@ const DepensesPage = () => {
         </div>
       )}
 
-      {depViewRows.length === 0 ? (
+      {tab === 'remboursements' ? (
+        reimbList.length === 0 ? (
+          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
+            <div className="text-4xl mb-2">💸</div>
+            <p className="font-black text-slate-700">Aucun remboursement de frais</p>
+            <p className="text-sm text-slate-400 mt-1 mb-4">
+              Le registre des remboursements est vide. Utilisez « ＋ Ajouter un remboursement » pour saisir des frais
+              avancés par un membre (objet, bénéficiaire, dates, coûts…), sur le modèle d’un OM prévu : pas de devis, de
+              N° SIFAC/D.A. ni de BC, pas de fournisseur. Une fiche créée reste ici — elle est déduite du solde de sa ligne
+              budgétaire (page Recettes › colonne « Remboursements ») et ne migre jamais vers les Dépenses réelles.
+            </p>
+          </div>
+        ) : (
+          <div className="flex-1 min-h-[280px] flex flex-col">
+            <SmartTable
+              columns={reimbCols}
+              rows={reimbList}
+              focusRowKey={focusRow}
+              onFocusDone={() => setFocusRow(null)}
+              minWidth="1500px"
+              quickFilters={['demandeur', 'ligne']}
+              searchPlaceholder="Rechercher objet, bénéficiaire, destination, référence, ligne budgétaire…"
+              emptyLabel="Aucun remboursement"
+              noMatchLabel="Aucun remboursement ne correspond aux filtres."
+              fillHeight
+            />
+          </div>
+        )
+      ) : depViewRows.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
           <div className="text-4xl mb-2">{tab === 'pi' ? '🛠️' : (tab === 'om' ? '✈️' : (tab === 'stages' ? '🎓' : (tab === 'remboursements' ? '💸' : '📦')))}</div>
           <p className="font-black text-slate-700">
@@ -1475,7 +1737,16 @@ const DepensesPage = () => {
 
       {importOpen && <AdminImportModal kind="depenses" onClose={() => setImportOpen(false)} />}
 
-      {modal && (
+      {modal && (modal.reimb ? (
+        <RemboursementModal
+          rec={modal.mode === 'edit' ? modal.rec : null}
+          recettes={recettes}
+          types={types}
+          demandeurNames={demandeurNames}
+          onCancel={() => setModal(null)}
+          onSave={onSaveReimb}
+        />
+      ) : (
         <DepenseModal
           rec={modal.mode === 'edit' ? modal.rec : null}
           recettes={recettes}
@@ -1486,14 +1757,12 @@ const DepensesPage = () => {
           fournisseurNames={fournisseurNames}
           kind={modalKind}
           defaultFournisseur={modalKind === 'pi' && modal.mode === 'new' ? DEPENSE_FOURNISSEUR_PI : ''}
-          defaultClassification={modal.mode === 'new'
-            ? (tab === 'stages' ? 'Stages' : tab === 'remboursements' ? 'Remboursements' : '')
-            : ''}
+          defaultClassification={modal.mode === 'new' && tab === 'stages' ? 'Stages' : ''}
           fournisseurRequired={mandatoryFields.includes('fournisseur') && modalKind !== 'om'}
           onCancel={() => setModal(null)}
           onSave={onSaveDepense}
         />
-      )}
+      ))}
     </div>
   );
 };
@@ -1811,7 +2080,7 @@ const DepenseModal = ({
               : showStageBadge
                 ? 'Rémunération de stage (gratification de stagiaire) : la « Classification / nature » est « Stages » (pré-remplie pour une nouvelle ligne depuis l’onglet « Rémunération stages »). Le formulaire complet des Achats est conservé (devis → BC / SIFAC → livraisons → facture). Cette dépense sera déduite du solde de la ligne budgétaire dans la page Recettes (colonne « Stages »).'
                 : showReimbBadge
-                  ? 'Remboursement de frais avancés par un membre (achat personnel pour le laboratoire, billet, inscription…) : la « Classification / nature » est « Remboursements » (pré-remplie pour une nouvelle ligne depuis l’onglet « Remboursements »). Le formulaire complet des Achats est conservé — aucun fournisseur n’est attendu (le bénéficiaire est le demandeur). Cette dépense sera déduite du solde de la ligne budgétaire dans la page Recettes (colonne « Remboursements »).'
+                  ? 'Cette ligne est classée « Remboursements » : les remboursements de frais sont désormais gérés par le registre dédié (onglet « Remboursements » de la page Dépenses) et seront rapatriés automatiquement ici — cette ligne Dépenses sera retirée de la table (ni devis, ni N° SIFAC/D.A., ni BC).'
                   : 'Formulaire complet de l’onglet « Dépenses » (devis → BC → livraisons → facture). Une commande peut avoir plusieurs livraisons ; elles se saisissent dans la partie « Livraisons ».'}
           </p>
         </div>
@@ -1884,12 +2153,15 @@ const DepenseModal = ({
               <Field label="Classification / nature">
                 <select className={MODAL_INPUT} value={draft.classification} onChange={set('classification')}>
                   <option value="">— non précisée —</option>
-                  {/* La valeur courante (pré-remplie « Stages » / « Remboursements », ou
-                      classée dans le classeur) est toujours proposée, même si la liste
-                      des natures a été personnalisée dans Paramètres. */}
+                  {/* La valeur courante (pré-remplie « Stages », ou classée dans le
+                      classeur) est toujours proposée, même si la liste des natures a
+                      été personnalisée dans Paramètres. « Remboursements » est
+                      volontairement exclu : un remboursement vit dans son registre
+                      dédié (onglet « Remboursements »), jamais dans la table Dépenses. */}
                   {(natures || [])
                     .concat([draft.classification])
                     .filter((n, i, a) => n && a.indexOf(n) === i)
+                    .filter((n) => !isReimbNature(n))
                     .map((n) => <option key={n} value={n}>{n}</option>)}
                 </select>
               </Field>
@@ -2207,6 +2479,260 @@ const DepenseModal = ({
     </div>
   );
 };
+
+/* ═════════════════════════════════════════════════════════════════════════
+   Fenêtre d’ajout / édition d’un remboursement de frais — registre dédié
+   (collection `reimbursements`). Formulaire calqué sur le modèle d’un OM
+   prévu (objet, bénéficiaire, destination, référence, dates, coûts détaillés,
+   imputation budgétaire, commentaires) SANS la partie statut (En attente /
+   Acceptée / Refusée) et SANS aucune section devis / N° SIFAC / BC /
+   fournisseur. Une fiche créée reste dans son registre : elle ne migre jamais
+   vers les onglets Achats / PI / OM de la table Dépenses.
+   ═════════════════════════════════════════════════════════════════════════ */
+const pickReimbCost = (rec, c) => {
+  if (!rec) return null;
+  for (const k of [c.key, ...(c.legacy || [])]) {
+    const v = rec[k];
+    if (v !== undefined && v !== null && String(v).trim() !== '') return v;
+  }
+  return null;
+};
+
+const RemboursementModal = ({ rec, recettes, types, demandeurNames, onCancel, onSave }) => {
+  const editing = !!rec;
+  const [error, setError] = useState('');
+  const [draft, setDraft] = useState(() => ({
+    description: txt(rec && rec.description),
+    demandeur: txt(rec && rec.demandeur),
+    destination: txt(rec && rec.destination),
+    numOM: txt(rec && rec.numOM),
+    categorie: txt(rec && rec.categorie),
+    recetteId: (rec && rec.recetteId) || '',
+    ligneBudgetaire: txt(rec && rec.ligneBudgetaire),
+    dateDemande: isoOf(rec && rec.dateDemande) || todayIso(),
+    dateMission: isoOf(rec && rec.dateMission),
+    dateRetour: isoOf(rec && rec.dateRetour),
+    coutVoyage: numToInput(pickReimbCost(rec, REIMBURSEMENT_COST_FIELDS[0])),
+    coutLogement: numToInput(pickReimbCost(rec, REIMBURSEMENT_COST_FIELDS[1])),
+    coutRepas: numToInput(pickReimbCost(rec, REIMBURSEMENT_COST_FIELDS[2])),
+    coutInscription: numToInput(pickReimbCost(rec, REIMBURSEMENT_COST_FIELDS[3])),
+    coutStatut: txt(rec && rec.coutStatut) || 'Exact',
+    commentaires: txt(rec && rec.commentaires),
+  }));
+  const set = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
+
+  /* Ligne budgétaire : sélection parmi les fiches Recettes (une seule par
+     intitulé, celle du type correspondant à la catégorie si possible) ou
+     saisie libre — la liaison est résolue à l’enregistrement. */
+  const recetteOptions = useMemo(
+    () => uniqueRecetteOptions(recettes, draft.categorie, draft.recetteId),
+    [recettes, draft.categorie, draft.recetteId]
+  );
+  const pickRecette = (e) => {
+    const id = e.target.value;
+    setDraft((d) => {
+      const cur = recettes.find((r) => r.id === id);
+      return {
+        ...d,
+        recetteId: id,
+        ligneBudgetaire: cur ? cur.ligne : d.ligneBudgetaire,
+        categorie: d.categorie || (cur && cur.type) || '',
+      };
+    });
+  };
+  const editLigne = (e) => {
+    const val = e.target.value;
+    setDraft((d) => {
+      const cur = d.recetteId ? recettes.find((r) => r.id === d.recetteId) : null;
+      const same = cur && norm(cur.ligne) === norm(val);
+      return { ...d, ligneBudgetaire: val, recetteId: same ? d.recetteId : '' };
+    });
+  };
+
+  /* Coûts : le total est recalculé en direct (comme sur le formulaire OM). */
+  const liveTotal = useMemo(() => {
+    const parts = REIMBURSEMENT_COST_FIELDS
+      .map((c) => parseNum(draft[c.key]))
+      .filter((n) => n !== null);
+    return parts.length ? Math.round(parts.reduce((s, n) => s + n, 0) * 100) / 100 : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.coutVoyage, draft.coutLogement, draft.coutRepas, draft.coutInscription]);
+  const previousTotal = numOf(rec && rec.coutTotal);
+  const displayTotal = liveTotal !== null ? liveTotal : previousTotal;
+
+  const submit = () => {
+    const description = txt(draft.description);
+    if (!description) {
+      setError('Merci de renseigner l’objet du remboursement : c’est son intitulé (obligatoire).');
+      return;
+    }
+    setError('');
+    onSave(
+      {
+        description,
+        demandeur: txt(draft.demandeur),
+        destination: txt(draft.destination),
+        numOM: txt(draft.numOM),
+        categorie: txt(draft.categorie),
+        recetteId: draft.recetteId,
+        ligneBudgetaire: txt(draft.ligneBudgetaire),
+        dateDemande: isoOf(draft.dateDemande),
+        dateMission: isoOf(draft.dateMission),
+        dateRetour: isoOf(draft.dateRetour),
+        coutVoyage: parseNum(draft.coutVoyage),
+        coutLogement: parseNum(draft.coutLogement),
+        coutRepas: parseNum(draft.coutRepas),
+        coutInscription: parseNum(draft.coutInscription),
+        coutStatut: txt(draft.coutStatut) || 'Exact',
+        coutTotal: displayTotal,
+        commentaires: txt(draft.commentaires),
+      },
+      editing && rec.id
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 z-[999] flex items-center justify-center p-4" style={{ background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(3px)' }}>
+      <div className="bg-slate-50 rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden max-h-[94vh] flex flex-col">
+        <div className="px-6 py-4 bg-gradient-to-br from-blue-700 to-indigo-800 text-white flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-lg font-black flex items-center gap-2">
+              <span className="text-xl" aria-hidden="true">💸</span>
+              {editing ? 'Modifier le remboursement' : 'Ajouter un remboursement'}
+            </h2>
+            <p className="text-blue-100 text-xs">
+              Frais avancés par un membre puis remboursés par le laboratoire — formulaire sur le modèle d’un OM prévu,
+              sans devis / N° SIFAC / BC ni fournisseur.
+            </p>
+          </div>
+          <button type="button" onClick={onCancel} className="shrink-0 w-8 h-8 rounded-lg bg-white/15 hover:bg-white/30 text-white font-bold" title="Fermer">✕</button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto custom-scrollbar px-6 py-5 flex flex-col gap-3">
+          {error && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-xs font-semibold text-red-600">
+              {error}
+            </div>
+          )}
+
+          <Section icon="💸" title="Remboursement">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2">
+                <Field label="Objet du remboursement *">
+                  <input
+                    className={MODAL_INPUT} value={draft.description} onChange={set('description')}
+                    placeholder="ex. Congrès — frais d’inscription, billet de train…" autoFocus
+                  />
+                </Field>
+              </div>
+              <Field label="Bénéficiaire" hint="Le membre qui a avancé les frais — il n’y a pas de fournisseur.">
+                <input
+                  className={MODAL_INPUT} value={draft.demandeur} onChange={set('demandeur')}
+                  list="remboursements-beneficiaires" placeholder="Prénom Nom"
+                />
+                <datalist id="remboursements-beneficiaires">
+                  {(demandeurNames || []).map((n) => <option key={n} value={n} />)}
+                </datalist>
+              </Field>
+              <Field label="Destination / contexte" hint="Optionnel — lieu de la mission, boutique, salon…">
+                <input className={MODAL_INPUT} value={draft.destination} onChange={set('destination')} placeholder="ex. Barcelone (Espagne)" />
+              </Field>
+              <Field label="N° OM / référence" hint="Si un numéro d’ordre de mission ou de justificatif a été attribué.">
+                <input className={MODAL_INPUT} value={draft.numOM} onChange={set('numOM')} placeholder="ex. 2025-042" />
+              </Field>
+              <Field label="Commentaires">
+                <input className={MODAL_INPUT} value={draft.commentaires} onChange={set('commentaires')} placeholder="Contexte, justificatif, remarque…" />
+              </Field>
+            </div>
+          </Section>
+
+          <Section icon="📅" title="Dates">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <Field label="Date de la demande">
+                <input className={MODAL_INPUT} type="date" value={draft.dateDemande} onChange={set('dateDemande')} />
+              </Field>
+              <Field label="Début des frais" hint="Départ (période concernée).">
+                <input className={MODAL_INPUT} type="date" value={draft.dateMission} onChange={set('dateMission')} />
+              </Field>
+              <Field label="Fin des frais" hint="Retour (période concernée).">
+                <input className={MODAL_INPUT} type="date" value={draft.dateRetour} onChange={set('dateRetour')} />
+              </Field>
+            </div>
+          </Section>
+
+          <Section icon="🧾" title="Coûts (frais avancés)">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {REIMBURSEMENT_COST_FIELDS.map((c) => (
+                <Field key={c.key} label={c.label}>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm leading-none">{c.icon}</span>
+                    <input
+                      className={MODAL_INPUT} value={draft[c.key]} onChange={set(c.key)}
+                      placeholder="0,00 €" inputMode="decimal"
+                    />
+                  </div>
+                </Field>
+              ))}
+              <div className="sm:col-span-2 flex items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5">
+                <span className="text-xs font-black uppercase text-slate-500">Coût total</span>
+                <span className="text-lg font-black text-blue-800">{displayTotal !== null ? euro.format(displayTotal) : '—'}</span>
+              </div>
+              <div className="sm:col-span-2">
+                <Field label="Montant estimé ou exact" hint="« Estimé » avant la dépense, « Exact » une fois les justificatifs connus.">
+                  <select className={MODAL_INPUT} value={draft.coutStatut} onChange={set('coutStatut')}>
+                    <option value="Estimé">Estimé</option>
+                    <option value="Exact">Exact</option>
+                  </select>
+                </Field>
+              </div>
+            </div>
+          </Section>
+
+          <Section icon="🏦" title="Imputation budgétaire">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="Catégorie" hint="Fonctionnement / Investissement — doit correspondre au type de la ligne budgétaire choisie.">
+                <select className={MODAL_INPUT} value={draft.categorie} onChange={set('categorie')}>
+                  <option value="">— non précisée —</option>
+                  {(types || []).map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </Field>
+              <div>
+                <Field label="Ligne budgétaire" hint="Chaque ligne n’apparaît qu’une fois — choisissez une ligne existante ou tapez librement son code / intitulé ; la liaison se fait automatiquement à l’enregistrement.">
+                  <div className="flex gap-2">
+                    <select className={`${MODAL_INPUT} w-2/5 shrink-0`} value={draft.recetteId || ''} onChange={pickRecette}>
+                      <option value="">… choisir</option>
+                      {recetteOptions.map((r) => <option key={r.id} value={r.id}>{r.ligne}</option>)}
+                    </select>
+                    <input
+                      className={MODAL_INPUT} value={draft.ligneBudgetaire} onChange={editLigne}
+                      placeholder="ex. S2R01GEC (INTRUDE)"
+                    />
+                  </div>
+                </Field>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-2 leading-snug">
+              Le total sera déduit du solde de cette ligne dans la page Recettes (colonne « Remboursements »). Le
+              remboursement reste ici, dans son registre : il ne migre jamais vers les Dépenses (Achats / PI / OM).
+            </p>
+          </Section>
+
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button
+              type="button" onClick={onCancel}
+              className="px-5 py-2 rounded-xl text-sm font-bold text-slate-600 bg-white border border-slate-200 hover:bg-slate-50"
+            >Annuler</button>
+            <button
+              type="button" onClick={submit}
+              className="px-5 py-2 rounded-xl text-sm font-bold text-white bg-blue-600 hover:bg-blue-700"
+            >{editing ? 'Enregistrer les modifications' : 'Ajouter le remboursement'}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export { DepensesPage };
 
 

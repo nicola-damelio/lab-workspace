@@ -17,6 +17,7 @@ export const ADMIN_COLLECTIONS = {
   personnel: 'personnel',   // personnel + stagiaires
   depenses: 'depenses',     // dépenses / bons de commande (BC)
   om: 'om',                 // ordres de mission
+  reimbursements: 'reimbursements', // remboursements de frais — registre INDÉPENDANT des Dépenses (jamais de BC / SIFAC)
   conges: 'conges',     // congés & absences : demandes + approbation
   desiderate: 'desiderate', // souhaits d’achat
   devisBc: 'devisBc',       // devis & BC déposés pour approbation (signature superutilisateur)
@@ -164,6 +165,32 @@ export const AUDIT_FIELDS = ['id', 'createdAt', 'createdBy', 'updatedAt', 'updat
  * @property {string} commentaires
  */
 /**
+ * @typedef {Object} Reimbursement
+ * Registre « Remboursements » de la page Dépenses — collection INDÉPENDANTE de
+ * `depenses` : un remboursement n’est JAMAIS un bon de commande (pas de devis,
+ * N° SIFAC/D.A. ni N° BC) et ne migre pas vers la table Dépenses, quel que soit
+ * son état. Formulaire sur le modèle d’un OM prévu (sans la partie statut
+ * En attente / Acceptée / Refusée). La page Recettes les décompte dans sa
+ * colonne « Remboursements » (déduite du solde de la ligne budgétaire).
+ * @property {string} description       // objet du remboursement (obligatoire)
+ * @property {string} demandeur         // bénéficiaire : membre qui a avancé les frais
+ * @property {?string} destination      // lieu / contexte (optionnel)
+ * @property {?string} numOM            // N° OM / référence (optionnel)
+ * @property {?string} categorie        // Fonctionnement / Investissement
+ * @property {?string} recetteId        // ligne budgétaire imputée
+ * @property {?string} ligneBudgetaire  // intitulé/code de la ligne imputée
+ * @property {?string} dateDemande
+ * @property {?string} dateMission      // date de début de la période de frais
+ * @property {?string} dateRetour
+ * @property {?number} coutVoyage       // transport
+ * @property {?number} coutLogement
+ * @property {?number} coutRepas
+ * @property {?number} coutInscription
+ * @property {number} coutTotal         // total recalculé automatiquement
+ * @property {('Estimé'|'Exact')} coutStatut
+ * @property {string} commentaires
+ */
+/**
  * @typedef {Object} Desiderata
  * @property {string} description
  * @property {('Urgent'|'Important'|'Souhaitable')} urgence
@@ -219,7 +246,12 @@ export const FORMATION_SUGGESTIONS = [
   'Formation autoclave', 'Radioprotection', 'Équipier de première intervention', 'Secourisme',
   'Prévention des risques chimiques',
 ];
-export const DEPENSE_NATURES = ['Consommables', 'Stages', 'Instrumentation', 'Meetings', 'Audit', 'Prestations', 'Remboursements', 'Autre'];
+/* « Remboursements » n’est volontairement PAS une nature de Dépense : un
+   remboursement n’est jamais un bon de commande — il vit dans le registre
+   dédié (collection `reimbursements`, onglet « Remboursements » de la page
+   Dépenses). Les anciennes lignes du classeur classées « Remboursements »
+   sont rapatriées automatiquement vers ce registre. */
+export const DEPENSE_NATURES = ['Consommables', 'Stages', 'Instrumentation', 'Meetings', 'Audit', 'Prestations', 'Autre'];
 export const URGENCES = ['Urgent', 'Important', 'Souhaitable'];
 /* Décisions (statuts) des « Achats prévus / souhaités » — le changement est réservé
    au superutilisateur. Cette liste reste modifiable dans Setup › Options des
@@ -338,6 +370,90 @@ export const DEPENSE_KIND_META = {
   achat: { label: 'Achats', icon: '🛒' },
   pi: { label: 'Prestations internes', icon: '🛠️' },
   om: { label: 'OM', icon: '✈️' },
+};
+
+/* ── Remboursements : registre dédié (collection `reimbursements`) ────────
+   Un remboursement = frais avancés par un membre puis remboursés par le
+   laboratoire. Ce n’est JAMAIS un bon de commande : aucune notion de devis /
+   N° SIFAC/D.A. / BC / fournisseur. Le registre est indépendant de la table
+   Dépenses — les anciennes lignes de la collection `depenses` dont la
+   « Classification / nature » vaut « Remboursements » sont rapatriées ici
+   automatiquement à la lecture (AdminContext). La page Recettes déduit leur
+   total du solde de la ligne budgétaire (colonne « Remboursements »). */
+
+/** Lignes de coût d’un remboursement (mêmes libellés que le formulaire OM). */
+export const REIMBURSEMENT_COST_FIELDS = [
+  { key: 'coutVoyage', label: 'Transport', legacy: ['coutTransport', 'voyage'], icon: '🚆' },
+  { key: 'coutLogement', label: 'Logement', legacy: ['coutHebergement', 'logement'], icon: '🏨' },
+  { key: 'coutRepas', label: 'Repas', legacy: ['repas'], icon: '🍽️' },
+  { key: 'coutInscription', label: 'Inscription', legacy: ['inscription'], icon: '🎟️' },
+];
+/** Vrai si la valeur « Classification / nature » désigne un remboursement de frais. */
+export const isReimbNature = (v) => {
+  const s = String(v === null || v === undefined ? '' : v).trim().toLowerCase();
+  if (!s) return false;
+  // « Remboursements », « Remboursement », « Remboursé », « Reimbursement »…
+  // → toute valeur contenant « rembours… » / « reimburs… ».
+  return /(^|[^a-zà-ÿ])(rembours\w*|reimburs\w*)([^a-zà-ÿ]|$)/.test(s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+};
+const reimbNum = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+const reimbValue = (r, keys) => {
+  for (const k of keys) {
+    if (r && r[k] !== undefined && r[k] !== null && String(r[k]).trim() !== '') return r[k];
+  }
+  return null;
+};
+/** Coût total d’un remboursement (coutTotal stocké, sinon somme des lignes). */
+export const reimbTotalOf = (r) => {
+  const total = reimbValue(r, ['coutTotal']);
+  if (total !== null) return Math.round(reimbNum(total) * 100) / 100;
+  const parts = REIMBURSEMENT_COST_FIELDS
+    .map((c) => reimbValue(r, [c.key, ...c.legacy]))
+    .filter((n) => n !== null)
+    .map(reimbNum);
+  if (parts.length) return Math.round(parts.reduce((s, n) => s + n, 0) * 100) / 100;
+  const legacy = reimbValue(r, ['montant']);
+  return legacy !== null ? Math.round(reimbNum(legacy) * 100) / 100 : 0;
+};
+/** Vrai si au moins une ligne de coût / un total est renseigné. */
+export const reimbHasCost = (r) => reimbTotalOf(r) > 0;
+/**
+ * Conversion d’une ancienne ligne Dépenses classée « Remboursements » (import du
+ * classeur ou saisies antérieures) vers une fiche du registre dédié. Le montant
+ * HT + frais de port deviennent le « coût total » ; les numéros de facture /
+ * référence éventuels sont conservés dans la référence de la fiche.
+ */
+export const reimbursementFromDepense = (d) => {
+  const s = (v) => String(v === null || v === undefined ? '' : v).trim();
+  const iso = (v) => { const x = s(v); return x ? x.slice(0, 10) : ''; };
+  const n = (v) => { const x = Number(v); return Number.isFinite(x) ? Math.round(x * 100) / 100 : null; };
+  const montant = n(d && d.montant);
+  const fraisPort = n(d && d.fraisPort);
+  const coutTotal = n(d && d.coutTotal);
+  return {
+    description: s(d && (d.description || d.nom)),
+    demandeur: s(d && d.demandeur),
+    destination: s(d && (d.destination || '')),
+    numOM: s(d && (d.numOM || d.omNo || d.numFacture || d.factureNo)),
+    categorie: s(d && d.categorie),
+    recetteId: s(d && d.recetteId),
+    ligneBudgetaire: s(d && (d.ligneBudgetaire || '')),
+    dateDemande: iso(d && (d.dateDemande || '')),
+    dateMission: iso(d && (d.dateMission || d.dateDebut || '')),
+    dateRetour: iso(d && d.dateRetour),
+    coutVoyage: n(d && d.coutVoyage),
+    coutLogement: n(d && d.coutLogement),
+    coutRepas: n(d && d.coutRepas),
+    coutInscription: n(d && d.coutInscription),
+    coutStatut: 'Exact',
+    coutTotal: coutTotal !== null
+      ? coutTotal
+      : (montant !== null || fraisPort !== null ? (montant || 0) + (fraisPort || 0) : null),
+    commentaires: s(d && d.commentaires),
+  };
 };
 
 /* Champs d’une dépense pouvant être déclarés obligatoires dans Paramètres.

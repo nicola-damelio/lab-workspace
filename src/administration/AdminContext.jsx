@@ -13,8 +13,11 @@
    n’est lu ni écrit directement ici — plus aucune sous-collection
    data/admin/… (chemin invalide dans Firestore).
    ========================================================================= */
-import React, { createContext, useContext, useMemo, useRef } from 'react';
-import { ADMIN_COLLECTIONS, DEFAULT_OPTIONS, adminAccessProfile, adminPageIdsForProfile } from './adminSchema';
+import React, { createContext, useContext, useEffect, useMemo, useRef } from 'react';
+import {
+  ADMIN_COLLECTIONS, DEFAULT_OPTIONS, adminAccessProfile, adminPageIdsForProfile,
+  isReimbNature, reimbursementFromDepense,
+} from './adminSchema';
 
 const AdminDataContext = createContext(null);
 export const useAdmin = () => useContext(AdminDataContext);
@@ -124,6 +127,34 @@ export const AdminProvider = ({
   const remove = (kind, id) => {
     commitKind(kind, (cur) => cur.filter((d) => d.id !== id));
   };
+
+  /* Rapatriement automatique des anciennes lignes Dépenses classées
+     « Remboursements » (saisies ou importées avant l’arrivée du registre
+     dédié) vers la collection `reimbursements`. Un remboursement est une
+     CATÉGORIE À PART : il ne doit jamais rester dans la table Dépenses (ni
+     y « migrer » ensuite) — il vit dans son propre registre, présenté dans
+     l’onglet « Remboursements » de la page Dépenses. La conversion est
+     idempotente : dès qu’il ne reste plus de ligne classée « Remboursements »
+     dans `depenses`, l’effet ne fait plus rien. */
+  const drainedReimbRef = useRef(false);
+  useEffect(() => {
+    if (drainedReimbRef.current) return;
+    const deps = Array.isArray(data.depenses) ? data.depenses : [];
+    const stale = deps.filter((d) => d && d.id && isReimbNature(d.classification || d.nature));
+    if (!stale.length) return;
+    drainedReimbRef.current = true;
+    const now = Date.now();
+    const actor = { name: currentUser?.name || 'Invité', role: currentUser?.role || 'user' };
+    const removedIds = new Set();
+    const converted = stale.map((d) => {
+      removedIds.add(d.id);
+      const id = makeId('reimbursements');
+      return { ...reimbursementFromDepense(d), id, createdAt: now, createdBy: actor, updatedAt: now, updatedBy: actor };
+    });
+    commitKind('reimbursements', (cur) => [...converted, ...cur]);
+    commitKind('depenses', (cur) => cur.filter((d) => !removedIds.has(d.id)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.depenses]);
 
   /** Import groupé (assistant d’import) : un seul onChange pour toute la
    *  liste, chaque enregistrement reçoit enveloppe + audit comme `upsert`. */

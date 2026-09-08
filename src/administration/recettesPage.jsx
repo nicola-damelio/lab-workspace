@@ -6,11 +6,12 @@
    (BC signés), ordres de mission (acceptés / à prévoir), souhaits d’achat
    liés, solde calculé, date de fin d’engagement et commentaires.
    Les agrégats sont calculés depuis les collections depenses / om /
-   desiderate de la même base (liaison par recetteId / recetteSuggereeId).
+   desiderate / reimbursements de la même base (liaison par recetteId /
+   recetteSuggereeId).
    ========================================================================= */
 import React, { useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
-import { RECETTE_TYPES, DEPENSE_BC_SIGNE, depenseKindOf, isDesiderataRejected, isDesiderataApproved, desiderataDecisionOf } from './adminSchema';
+import { RECETTE_TYPES, DEPENSE_BC_SIGNE, depenseKindOf, isDesiderataRejected, isDesiderataApproved, desiderataDecisionOf, reimbTotalOf } from './adminSchema';
 import { AdminImportModal } from './adminImportModal';
 import { SmartTable } from './smartTable';
 import { useDepenseLinkRepair } from './useDepenseLinkRepair';
@@ -65,10 +66,12 @@ const isStageNature = (v) => {
 };
 const isStageDepense = (d) => isStageNature(d && (d.classification || d.nature));
 /* « Remboursements » : frais avancés par un membre puis remboursés par le
-   laboratoire. Même mécanique que les « Stages » : ils sont retirés des
-   colonnes « Achats (BC signé) » / « Prestations internes » / « OM payés » et
-   décomptés dans leur propre colonne, déduite du solde (jamais comptés deux
-   fois). */
+   laboratoire. Ils vivent dans un registre DÉDIÉ (collection
+   `reimbursements`, onglet « Remboursements » de la page Dépenses) — jamais
+   dans la table Dépenses. La détection ci-dessous ne sert plus qu’à écarter
+   d’éventuelles anciennes lignes du classeur encore classées
+   « Remboursements » dans `depenses` (elles sont rapatriées automatiquement
+   par AdminContext) des colonnes « Achats / PI / OM payés ». */
 const isReimbNature = (v) => {
   const s = txt(v).toLowerCase();
   if (!s) return false;
@@ -121,6 +124,14 @@ export const RecettesPage = () => {
   const recettes = useMemo(() => (Array.isArray(data.recettes) ? data.recettes : []), [data.recettes]);
   const depenses = useMemo(() => (Array.isArray(data.depenses) ? data.depenses : []), [data.depenses]);
   const om = useMemo(() => (Array.isArray(data.om) ? data.om : []), [data.om]);
+  /* Registre « Remboursements » — collection DÉDIÉE, indépendante de la table
+     Dépenses : les fiches de frais avancés par un membre puis remboursés par le
+     laboratoire n’y figurent jamais (ni BC, ni SIFAC). Décomptées dans la
+     colonne « Remboursements », déduite du solde de la ligne budgétaire. */
+  const reimbursements = useMemo(
+    () => (Array.isArray(data.reimbursements) ? data.reimbursements : []),
+    [data.reimbursements]
+  );
   const desiderate = useMemo(() => (Array.isArray(data.desiderate) ? data.desiderate : []), [data.desiderate]);
   const personnel = useMemo(() => (Array.isArray(data.personnel) ? data.personnel : []), [data.personnel]);
 
@@ -134,6 +145,7 @@ export const RecettesPage = () => {
     if (typeof navigate === 'function') navigate(target.pageId, { kind: target.kind, recordId: target.recordId });
   };
   const depLink = (d) => (canOpenDepenses && d && d.id ? { pageId: 'depenses', kind: 'depense', recordId: d.id } : null);
+  const reimbLink = (x) => (canOpenDepenses && x && x.id ? { pageId: 'depenses', kind: 'reimb', recordId: x.id } : null);
   const omLink = (o) => (canOpenOm && o && o.id ? { pageId: 'om', kind: 'om', recordId: o.id } : null);
   const desLink = (d) => (canOpenDesiderata && d && d.id ? { pageId: 'desiderate', kind: 'desiderata', recordId: d.id } : null);
 
@@ -182,9 +194,11 @@ export const RecettesPage = () => {
        · « Rémunération stages » = lignes classées « Stages » (classification /
          nature de la dépense) — elles sont exclues des trois colonnes
          précédentes afin de n’être comptées qu’ici ;
-       · « Remboursements » = lignes classées « Remboursements » (frais avancés
-         par un membre puis remboursés par le laboratoire) — même mécanique
-         que les « Stages ».
+       · « Remboursements » = fiches du registre dédié (collection
+         `reimbursements`, onglet « Remboursements » de la page Dépenses) :
+         frais avancés par un membre puis remboursés par le laboratoire. Ce
+         registre est INDÉPENDANT de la table Dépenses (ni BC, ni SIFAC) et ses
+         fiches y restent — elles n’en migrent jamais.
        Les OM « prévus / souhaités » (collection om) restent INFORMATIFS : ils
        ne réduisent le solde que lorsqu’ils ont été transférés en dépense OM. */
     const lineDepenses = depenses.filter((d) => d.recetteId === recId);
@@ -204,12 +218,12 @@ export const RecettesPage = () => {
        colonnes « Achats (BC signé) » / « Prestations internes » / « OM payés ». */
     const stageRows = lineDepenses.filter((d) => isStageDepense(d) && notRejected(d));
     const stageTotal = stageRows.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
-    /* Colonne « Remboursements » : mêmes lignes que l’onglet du même nom de la
-       page Dépenses (classification / nature « Remboursements »), toutes
-       familles confondues, imputées sur cette ligne — exclues des trois
-       colonnes précédentes et de la colonne « Rémunération stages ». */
-    const reimbRows = lineDepenses.filter((d) => isReimbDepense(d) && notRejected(d));
-    const reimbTotal = reimbRows.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
+    /* Colonne « Remboursements » : fiches du registre DÉDIÉ de la page Dépenses
+       (collection `reimbursements`), imputées sur cette ligne par recetteId.
+       Ce ne sont jamais des dépenses (ni BC, ni SIFAC) : chaque fiche décrit
+       des frais avancés par un membre et son coût total est déduit du solde. */
+    const reimbRows = reimbursements.filter((x) => x && x.recetteId === recId);
+    const reimbTotal = reimbRows.reduce((s, x) => s + reimbTotalOf(x), 0);
     /* « OM prévus » : seuls les OM approuvés (« Acceptée ») entrent dans la
        somme — les autres (En attente, Terminée…) restent visibles au survol
        mais ne sont pas inclus (souhaités non inclus dans la somme). */
@@ -261,7 +275,7 @@ export const RecettesPage = () => {
     });
     return { budgetTotal, budgetRendu, pi, omPay, omTot, des, reimb, solde, soldePrevu };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRecettes, depenses, om, desiderate]);
+  }, [activeRecettes, depenses, om, reimbursements, desiderate]);
 
   const onSaveLine = (patch, existingId) => {
     if (!String(patch.ligne || '').trim()) { alert('Merci de donner un intitulé à la ligne budgétaire.'); return; }
@@ -289,7 +303,7 @@ export const RecettesPage = () => {
   const recetteRows = useMemo(
     () => activeRecettes.map((rec) => ({ ...rec, __agg: aggFor(rec) })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeRecettes, depenses, om, desiderate]
+    [activeRecettes, depenses, om, reimbursements, desiderate]
   );
 
   /* Seuil d’alerte « Fin d’engagement » : la date passe en rouge dès qu’il
@@ -422,18 +436,18 @@ export const RecettesPage = () => {
     },
     {
       key: 'remboursements', label: 'Remboursements',
-      header: <span title="Dépenses dont la « Classification / nature » est « Remboursements » (onglet « Remboursements » de la page Dépenses : frais avancés par un membre puis remboursés par le laboratoire) — déduites du solde">Remboursements</span>,
+      header: <span title="Registre dédié de la page Dépenses › onglet « Remboursements » (collection `reimbursements`) : frais avancés par un membre puis remboursés par le laboratoire — jamais de BC / SIFAC, déduits du solde">Remboursements</span>,
       dataType: 'number', align: 'right', nowrap: true,
       value: (r) => Number(r.__agg.reimbTotal) || 0,
       display: (r) => (
         <HoverCell
           amount={r.__agg.reimbTotal}
           onOpen={openTarget}
-          items={r.__agg.reimbRows.map((d) => ({
-            title: d.description || 'Remboursement',
-            meta: ['Remboursements', d.statut || d.suivi || ''].filter(Boolean).join(' · '),
-            value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
-            to: depLink(d),
+          items={r.__agg.reimbRows.map((x) => ({
+            title: x.description || 'Remboursement',
+            meta: ['Remboursement de frais', x.destination || '', x.numOM || '', x.dateMission || ''].filter(Boolean).join(' · '),
+            value: euro.format(reimbTotalOf(x)),
+            to: reimbLink(x),
           }))}
         />
       ),
