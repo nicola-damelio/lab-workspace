@@ -1,3 +1,0 @@
-﻿59: import { SmartTable } from './smartTable';
-1279: <SmartTable
-1281: columns={tab === 'pi' ? simpleColumns : columns}
