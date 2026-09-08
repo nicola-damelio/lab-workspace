@@ -242,6 +242,11 @@ export const ApprobationPage = () => {
   const currentName = txt(access.profile && access.profile.person
     ? access.profile.person.nom
     : (currentUser && currentUser.name));
+  /* Fonctions chargées du suivi des achats (Gestionnaire / Responsable
+     d'achats) : autorisées à compléter les devis générés par un transfert
+     depuis « OM prévus / souhaités » ou « Achats prévus / souhaités ». */
+  const currentFonction = txt(access.profile && access.profile.fonction);
+  const isAchatsRole = currentFonction === 'Gestionnaire' || currentFonction === 'Achats';
 
   const [tab, setTab] = useState('devis'); // 'devis' | 'bc'
   const [modal, setModal] = useState(null); // null | { mode:'new', kind } | { mode:'edit', kind, rec }
@@ -594,14 +599,23 @@ export const ApprobationPage = () => {
       isSuper,
       busyId,
       devisById,
-      canEdit: (r) => isSuper
-        || (txt(r.deposant) && currentName && sameName(r.deposant, currentName) && isApprovalPending(r.statut)),
+      canEdit: (r) => {
+        if (isSuper) return true;
+        if (!isApprovalPending(r && r.statut)) return false;
+        /* Devis / BC générés automatiquement par un transfert (« OM / achat
+           prévu ») : la gestionnaire et le responsable d'achats peuvent les
+           compléter (fournisseur, N° devis, fichier…) tant qu'ils sont « En
+           attente », même sans être le déposant nominal. */
+        const generated = !!(r && (r.transfert || r.sourceKind || r.sourceId));
+        if (generated && currentName && isAchatsRole) return true;
+        return !!(txt(r.deposant) && currentName && sameName(r.deposant, currentName));
+      },
       onDecide: decideRow,
       onEdit: (r) => setModal({ mode: 'edit', kind: activeKind, rec: r }),
       onRemove: removeRow,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeKind, isSuper, busyId, devisById, activeRows, currentName]
+    [activeKind, isSuper, busyId, devisById, activeRows, currentName, isAchatsRole]
   );
 
   const pendingCount = (kind) => rows.filter((r) => r.kind === kind && isApprovalPending(r.statut)).length;

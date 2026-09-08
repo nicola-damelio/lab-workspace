@@ -1001,6 +1001,10 @@ const DepensesPage = () => {
       categorie,
       ligneBudgetaire,
       recetteId: recetteId || '',
+      /* Fiches créées automatiquement depuis un OM prévu : drapeau « À
+         corriger » tant que les montants estimés n'ont pas été vérifiés /
+         corrigés (case du formulaire). */
+      aCorriger: draft.aCorriger === true,
       dateDemande: isoOf(draft.dateDemande),
       dateMission: isoOf(draft.dateMission),
       dateRetour: isoOf(draft.dateRetour),
@@ -1353,7 +1357,15 @@ const DepensesPage = () => {
       value: (r) => [r.description, r.destination, r.numOM, r.demandeur, ligneLabelOf(r)].filter(Boolean).join(' '),
       display: (r) => (
         <div className="min-w-[220px]">
-          <div className="font-bold text-slate-800 leading-snug">{txt(r.description) || 'Remboursement'}</div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="font-bold text-slate-800 leading-snug">{txt(r.description) || 'Remboursement'}</span>
+            {r.aCorriger && (
+              <span
+                className="inline-block text-[9px] font-black uppercase px-1.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 whitespace-nowrap"
+                title="Créée automatiquement depuis un OM prévu — montants encore estimés : à corriger à la main une fois les justificatifs réels connus (case « Frais corrigés » du formulaire)."
+              >À corriger</span>
+            )}
+          </div>
           <div className="text-[11px] text-slate-400 flex flex-wrap items-center gap-x-2 gap-y-0.5">
             {r.destination ? <span>📍 {txt(r.destination)}</span> : null}
             {r.numOM ? <span className="font-mono text-[10px] text-slate-500"># {txt(r.numOM)}</span> : null}
@@ -2518,6 +2530,7 @@ const RemboursementModal = ({ rec, recettes, types, demandeurNames, onCancel, on
     coutInscription: numToInput(pickReimbCost(rec, REIMBURSEMENT_COST_FIELDS[3])),
     coutStatut: txt(rec && rec.coutStatut) || 'Exact',
     commentaires: txt(rec && rec.commentaires),
+    aCorriger: !!(rec && rec.aCorriger),
   }));
   const set = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
 
@@ -2586,6 +2599,7 @@ const RemboursementModal = ({ rec, recettes, types, demandeurNames, onCancel, on
         coutStatut: txt(draft.coutStatut) || 'Exact',
         coutTotal: displayTotal,
         commentaires: txt(draft.commentaires),
+        aCorriger: draft.aCorriger === true,
       },
       editing && rec.id
     );
@@ -2612,6 +2626,13 @@ const RemboursementModal = ({ rec, recettes, types, demandeurNames, onCancel, on
           {error && (
             <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-xs font-semibold text-red-600">
               {error}
+            </div>
+          )}
+
+          {editing && rec && rec.aCorriger && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[11px] text-amber-800 leading-relaxed">
+              ⚠️ Fiche créée automatiquement depuis un OM prévu : montants encore <b>estimés</b>. Corrigez-les une fois
+              les justificatifs réels connus, puis décochez la case « Frais À corriger » dans la section Coûts.
             </div>
           )}
 
@@ -2685,6 +2706,24 @@ const RemboursementModal = ({ rec, recettes, types, demandeurNames, onCancel, on
                   </select>
                 </Field>
               </div>
+              {editing && rec && rec.aCorriger && (
+                <div className="sm:col-span-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+                  <label className="flex items-start gap-2 text-[11px] text-amber-800 cursor-pointer leading-snug">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 shrink-0"
+                      checked={draft.aCorriger !== false}
+                      onChange={(e) => setDraft((d) => ({ ...d, aCorriger: e.target.checked }))}
+                    />
+                    <span>
+                      <b>Frais « À corriger »</b> — fiche créée automatiquement depuis un OM prévu : montants encore
+                      estimés. <b>Corrigez</b> les montants une fois les justificatifs réels connus, puis <b>décochez
+                      cette case</b> : le badge « À corriger » disparaît de la liste et solde les postes de l'OM dans la
+                      page « OM prévus / souhaités ».
+                    </span>
+                  </label>
+                </div>
+              )}
             </div>
           </Section>
 

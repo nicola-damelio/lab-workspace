@@ -499,6 +499,7 @@ export const PersonnelModal = ({
               <option value="">— Aucune —</option>
               <option value="AP">AP — Dépenses, Budget overview + Hygiène & Sécurité</option>
               <option value="Gestionnaire">Gestionnaire — Dépenses, Budget overview + Questions ouvertes</option>
+              <option value="Achats">Responsable d'achats — Dépenses, Budget overview ; reçoit les OM / achats prévus transférés</option>
             </select>
           </div>
           {!showStage && (

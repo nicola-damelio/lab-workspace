@@ -35,6 +35,10 @@ import {
   sendAdminMail, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
   summarizeMail, mailBodyText,
 } from './emailNotify';
+import {
+  TRANSFER_TARGETS, targetMetaOf, cibleEmailsOf,
+  devisPatchFromDesiderata, desiderataTransferStatus, isDepenseBcSigne,
+} from './transferAchats';
 
 /* ── Petites aides ──────────────────────────────────────────────────────── */
 const euro = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' });
@@ -448,6 +452,10 @@ export const DesiderataPage = () => {
   const recettes = useMemo(() => (Array.isArray(data.recettes) ? data.recettes : []), [data.recettes]);
   const personnel = useMemo(() => (Array.isArray(data.personnel) ? data.personnel : []), [data.personnel]);
   const librerie = useMemo(() => (Array.isArray(data.librerie) ? data.librerie : []), [data.librerie]);
+  /* Devis / BC déposés (page « Approbation devis & BC ») : un souhait transféré
+     y devient un devis « En attente » ; il ne disparaît de cette liste qu'une
+     fois son BC signé (date de signature BC de la dépense liée). */
+  const devisBc = useMemo(() => (Array.isArray(data.devisBc) ? data.devisBc : []), [data.devisBc]);
 
   /* Destinataires des notifications d’approbation : le superutilisateur (fiche
      Personnel liée de l’opérateur) et, le cas échéant, la fiche « Gestionnaire ». */
@@ -466,6 +474,8 @@ export const DesiderataPage = () => {
   /* Souhait « cible » d’une navigation inter-page (page Recettes › survol d’un
      achat prévu) : on surligne le souhait correspondant dans le tableau. */
   const [focusRow, setFocusRow] = useState(null);
+  /* Réafficher les souhaits « soldés » (BC signé) masqués par défaut. */
+  const [showDone, setShowDone] = useState(false);
 
   useEffect(() => {
     if (!notice) return undefined;
@@ -671,6 +681,10 @@ export const DesiderataPage = () => {
 
   const transferWishToDepenses = (rec) => {
     if (!rec || !rec.id) return;
+    if (rec.transfert) {
+      setNotice({ tone: 'info', text: `L’achat prévu / souhaité « ${txt(rec.description) || rec.id} » a été transféré en devis via la colonne « Transfert » (Approbation devis & BC).` });
+      return;
+    }
     if (linkedDepenseOf(rec)) {
       setNotice({ tone: 'info', text: `L’achat prévu / souhaité « ${txt(rec.description) || rec.id} » est déjà transféré dans Dépenses › Achats.` });
       return;
@@ -729,6 +743,101 @@ export const DesiderataPage = () => {
       navigate('depenses', { kind: 'depense', recordId: created.id });
     }
   };
+
+  /* ── Transfert « devis » d'un achat approuvé vers la gestionnaire ou le
+     responsable d'achats : crée un devis « En attente » pré-rempli dans la
+     page « Approbation devis & BC » et prévient le destinataire par e-mail.
+     Le souhait reste listé et ne disparaît que lorsque le BC de la dépense
+     liée est signé (date de signature BC dans Dépenses). */
+  const doTransferWish = async (rec, cible) => {
+    if (!rec || !rec.id || !isSuper) return;
+    if (rec.transfert || desiderataTransferStatus(rec, devisBc, depenses).devis) {
+      setNotice({ tone: 'info', text: `L’achat prévu / souhaité « ${txt(rec.description) || rec.id} » est déjà transféré (devis créé).` });
+      return;
+    }
+    if (linkedDepenseOf(rec)) {
+      setNotice({ tone: 'info', text: `L’achat prévu / souhaité « ${txt(rec.description) || rec.id} » a déjà été transféré directement dans Dépenses › Achats.` });
+      return;
+    }
+    const meta = targetMetaOf(cible);
+    const label = txt(rec.description) || rec.id;
+    const montant = numOf(rec.montantEstime);
+    const port = numOf(rec.fraisPort);
+    const confirmText = [
+      `Transférer l’achat prévu / souhaité « ${label} » à ${meta.article} ?`,
+      '',
+      'Un devis « En attente » pré-rempli sera créé dans « Approbation devis & BC »',
+      montant !== null
+        ? `(montant estimé : ${euro.format(montant)}${port !== null ? ` + frais de port ${euro.format(port)}` : ''})`
+        : '(montant non chiffré)',
+      'et le destinataire en sera prévenu par e-mail.',
+      '',
+      'Le souhait restera listé et ne disparaîtra que lorsque le BC lié sera signé (date de signature BC dans Dépenses).',
+    ].filter(Boolean).join('\n');
+    if (!window.confirm(confirmText)) return;
+    const patch = devisPatchFromDesiderata(rec, { cible: meta.code, by: (currentUser && currentUser.name) || '' });
+    const saved = upsert('devisBc', patch, null);
+    upsert('desiderate', {
+      transfert: {
+        cible: meta.code,
+        by: (currentUser && currentUser.name) || '',
+        at: Date.now(),
+        devisId: saved && saved.id,
+      },
+    }, rec.id);
+    const res = await sendAdminMail({
+      to: cibleEmailsOf(personnel, meta.code),
+      subject: `[Lab Workspace] Achat prévu « ${label} » transmis à ${meta.title}`,
+      text: mailBodyText([
+        `Un achat prévu / souhaité a été transmis à ${meta.article} :`,
+        `  ${label}`,
+        `Demandeur : ${txt(demandeurOf(rec)) || '—'}`,
+        montant !== null
+          ? `Coût estimé : ${euro.format(montant)}${port !== null ? ` + frais de port ${euro.format(port)}` : ''}`
+          : 'Coût non chiffré',
+        txt(rec.fournisseur) ? `Fournisseur : ${txt(rec.fournisseur)}` : '',
+        'Un devis « En attente » pré-rempli a été créé dans « Approbation devis & BC » :',
+        'complétez-le (N° devis, fichier) puis faites-le approuver — le souhait disparaîtra de sa liste quand le BC sera signé.',
+      ].filter(Boolean)),
+    });
+    const mailSummary = summarizeMail(res, `${meta.title} notifié`);
+    setNotice({
+      tone: res && res.ok ? 'ok' : 'warn',
+      text: `Achat prévu / souhaité « ${label} » transmis à ${meta.article} : devis « En attente » créé dans « Approbation devis & BC ». ${mailSummary.text}`,
+      mailto: mailSummary.mailto || undefined,
+      consoleUrl: mailSummary.consoleUrl || undefined,
+    });
+    if (typeof navigate === 'function') navigate('devisBc');
+  };
+
+  /* Suivi des souhaits transférés : un souhait est « soldé » — et disparaît de
+     la liste — lorsque son BC est signé (devis transféré : dépense liée portant
+     la date de signature BC ; ou souhait déjà transféré directement dans
+     Dépenses › Achats dont la dépense a un BC signé). */
+  const transferStatus = useMemo(() => {
+    const map = new Map();
+    list.forEach((d) => {
+      const devisInfo = desiderataTransferStatus(d, devisBc, depenses);
+      const direct = linkedDepenseOf(d);
+      map.set(d.id, {
+        ...devisInfo,
+        direct,
+        done: (!!direct && isDepenseBcSigne(direct)) || devisInfo.bcSigned,
+      });
+    });
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list, devisBc, depenses]);
+
+  const visibleSorted = useMemo(() => {
+    if (showDone) return sorted;
+    return sorted.filter((d) => {
+      const st = transferStatus.get(d.id);
+      return !(st && st.done);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sorted, showDone, transferStatus]);
+  const hiddenDone = sorted.length - visibleSorted.length;
 
   const DECISION_SELECT_TONE = (value) => {
     if (value === 'Approuvé') return 'bg-emerald-50 border-emerald-200 text-emerald-700';
@@ -921,6 +1030,56 @@ export const DesiderataPage = () => {
       value: (r) => pick(r, ['commentaires']),
     },
     {
+      key: 'transfert', label: 'Transfert', filter: 'none', filterable: false, sortable: false,
+      value: (r) => {
+        const st = transferStatus.get(r.id);
+        return st && st.transferred ? 'transmis' : '';
+      },
+      display: (r) => {
+        const approved = isDesiderataApproved(r && r.statut);
+        const st = transferStatus.get(r.id);
+        const transferred = !!(r.transfert || (st && st.devis));
+        const metaT = r.transfert ? targetMetaOf(r.transfert.cible) : null;
+        const badge = (cls, label) => (
+          <span className={`inline-block text-[9px] font-black uppercase px-1.5 py-0.5 rounded-full whitespace-nowrap ${cls}`}>{label}</span>
+        );
+        return (
+          <div className="min-w-[200px] flex flex-col gap-1">
+            {transferred && st ? (
+              <div className="flex items-center flex-wrap gap-1.5">
+                {metaT ? <span className="text-[10px] font-semibold text-slate-500 whitespace-nowrap" title={`Transféré par ${txt(r.transfert.by) || '—'} le ${r.transfert.at ? new Date(r.transfert.at).toLocaleDateString('fr-FR') : '—'}`}>{metaT.icon} {metaT.title}</span> : null}
+                {st.state === 'devis-attente'
+                  ? badge('bg-amber-50 border border-amber-200 text-amber-700', 'Devis en attente')
+                  : st.bcSigned
+                    ? badge('bg-emerald-50 border border-emerald-200 text-emerald-700', '✓ BC signé')
+                    : badge('bg-blue-50 border border-blue-200 text-blue-700', 'BC à signer')}
+              </div>
+            ) : null}
+            {!transferred && approved && isSuper && !linkedDepenseOf(r) ? (
+              <div className="flex flex-col gap-1">
+                <span className="text-[9px] uppercase font-black text-slate-400">Transférer à</span>
+                <div className="flex flex-col gap-1">
+                  <button
+                    type="button"
+                    onClick={() => doTransferWish(r, TRANSFER_TARGETS.Gestionnaire.code)}
+                    title="Créer le devis « En attente » dans « Approbation devis & BC » puis prévenir la gestionnaire par e-mail"
+                    className="text-left text-[11px] font-black px-2 py-1 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors whitespace-nowrap"
+                  >➡ {TRANSFER_TARGETS.Gestionnaire.title}</button>
+                  <button
+                    type="button"
+                    onClick={() => doTransferWish(r, TRANSFER_TARGETS.Achats.code)}
+                    title="Créer le devis « En attente » dans « Approbation devis & BC » puis prévenir le responsable d'achats par e-mail"
+                    className="text-left text-[11px] font-black px-2 py-1 rounded-lg border border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100 transition-colors whitespace-nowrap"
+                  >➡ {TRANSFER_TARGETS.Achats.title}</button>
+                </div>
+              </div>
+            ) : null}
+            {!transferred && !approved ? <span className="text-[10px] text-slate-300">↦ après approbation</span> : null}
+          </div>
+        );
+      },
+    },
+    {
       key: 'actions', label: '', sortable: false, filter: 'none', filterable: false,
       align: 'right', nowrap: true,
       value: () => '',
@@ -929,7 +1088,14 @@ export const DesiderataPage = () => {
         const linked = linkedDepenseOf(r);
         return (
           <div className="flex items-center gap-1 justify-end">
-            {approved ? (
+            {approved && r.transfert ? (
+              <button
+                type="button"
+                title="Transféré en devis (Approbation devis & BC) — ouvrir la page pour compléter puis faire signer"
+                onClick={() => { if (typeof navigate === 'function') navigate('devisBc'); }}
+                className="text-[11px] font-black px-2 py-1 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
+              >→ Devis & BC</button>
+            ) : approved ? (
               linked ? (
                 <button
                   type="button"
@@ -973,10 +1139,18 @@ export const DesiderataPage = () => {
     <div className="max-w-full mx-auto flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-xs font-bold text-slate-400 max-w-2xl">
-          {sorted.length} achat{sorted.length > 1 ? 's' : ''} prévu{sorted.length > 1 ? 's' : ''} / souhaité{sorted.length > 1 ? 's' : ''} ·
+          {visibleSorted.length} achat{visibleSorted.length > 1 ? 's' : ''} prévu{visibleSorted.length > 1 ? 's' : ''} / souhaité{visibleSorted.length > 1 ? 's' : ''} à suivre
+          ({sorted.length} au total{hiddenDone > 0 ? ` — ${hiddenDone} soldé${hiddenDone > 1 ? 's' : ''} masqué${hiddenDone > 1 ? 's' : ''} (BC signé)` : ''}) ·
           les colonnes sont triables (en-têtes) et filtrables (bouton « Filtres »).
         </p>
         <div className="flex items-center gap-2 flex-wrap">
+          <label
+            className="flex items-center gap-1.5 text-[10px] font-black text-slate-500 cursor-pointer select-none bg-white border border-slate-200 rounded-xl px-3 py-2 hover:border-slate-300 whitespace-nowrap"
+            title="Un souhait transféré ne disparaît de la liste que lorsque le BC lié est signé ; cochez pour réafficher ces souhaits soldés."
+          >
+            <input type="checkbox" className="accent-teal-600" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} />
+            Afficher les soldés
+          </label>
           <button
             type="button"
             onClick={() => setImportOpen(true)}
@@ -1030,19 +1204,28 @@ export const DesiderataPage = () => {
         <b>Achats prévus / souhaités :</b> chaque membre déclare les achats souhaités de l’équipe (description, coût estimé et frais de port,
         fournisseur, ligne budgétaire suggérée…). La <b>première colonne « Décision »</b> affiche la décision du
         superutilisateur : <b>Approuvé / En attente / Pas maintenant</b> (personnalisable dans Setup › Options des listes
-        déroulantes). Une fois un souhait <b>Approuvé</b>, son bouton <b>« → Dépenses »</b> crée la ligne réelle dans la
-        page Dépenses › onglet Achats (ligne indépendante de ce tableau, déplaçable vers PI / OM). Le
-        <b>fournisseur</b>, la <b>ligne budgétaire</b> et le <b>demandeur</b> sont des liens vers la
-        Librerie et les fiches Personnel lorsque le profil y a accès.
+        déroulantes). Une fois un souhait <b>Approuvé</b>, la colonne <b>« Transfert »</b> permet de le confier à la
+        <b>gestionnaire</b> ou au <b>responsable d'achats</b> : un devis « En attente » pré-rempli est créé dans
+        « Approbation devis & BC » (e-mail au destinataire), complété puis approuvé — le souhait reste listé et ne
+        <b>disparaît que lorsque le BC lié est signé</b> (date de signature BC dans Dépenses). Le bouton <b>« → Dépenses »</b>
+        crée directement la ligne dans Dépenses › onglet Achats (déplaçable vers PI / OM). Le <b>fournisseur</b>,
+        la <b>ligne budgétaire</b> et le <b>demandeur</b> sont des liens vers la Librerie et les fiches Personnel.
       </div>
 
-      {sorted.length === 0 ? (
+      {visibleSorted.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
           <div className="text-4xl mb-2">🛒</div>
           <p className="font-black text-slate-700">Aucun achat prévu / souhaité pour le moment</p>
           <p className="text-sm text-slate-400 mt-1 mb-4">
-            Utilisez « ＋ Ajouter un achat prévu / souhaité » pour déclarer un article (coût et frais de port), ou « 📥 Importer »
-            pour rejouer l’onglet « Souhaités » de la feuille Google Sheets.
+            {hiddenDone > 0 ? (
+              <>Tous les achats transférés sont soldés (BC signé). Cochez « Afficher les soldés » pour les retrouver
+                dans la liste.</>
+            ) : (
+              <>Utilisez « ＋ Ajouter un achat prévu / souhaité » pour déclarer un article (coût et frais de port), puis
+                une fois approuvé, confiez-le à la gestionnaire ou au responsable d'achats via la colonne « Transfert »
+                (devis dans « Approbation devis & BC »). Ou « 📥 Importer » pour rejouer l’onglet « Souhaités » de la
+                feuille Google Sheets.</>
+            )}
           </p>
           <button
             type="button"
@@ -1055,10 +1238,10 @@ export const DesiderataPage = () => {
       ) : (
         <SmartTable
           columns={columns}
-          rows={sorted}
+          rows={visibleSorted}
           focusRowKey={focusRow}
           onFocusDone={() => setFocusRow(null)}
-          minWidth="1680px"
+          minWidth="1820px"
           searchPlaceholder="Rechercher article, demandeur, fournisseur, ligne, code produit…"
           emptyLabel="Aucun achat prévu / souhaité pour le moment"
           noMatchLabel="Aucun achat prévu / souhaité ne correspond aux filtres."

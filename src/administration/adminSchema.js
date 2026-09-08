@@ -54,6 +54,11 @@ export const ADMIN_SETTINGS_DOC = 'global';
          et au superutilisateur (rôle d’approbation) ; les Permanents ne la voient pas.
      • Fonction AP (agent de prévention)  → ajoute Dépenses + Budget overview + Hygiène & Sécurité.
      • Fonction Gestionnaire              → ajoute Dépenses + Budget overview + Questions ouvertes.
+     • Fonction Achats (« Responsable
+       d'achats »)                         → ajoute Dépenses + Budget overview ; reçoit les OM /
+         achats prévus transférés depuis « OM prévus / souhaités » et « Achats
+         prévus / souhaités » (création de devis « Approbation devis & BC » et de
+         fiches du registre Remboursements).
      • Personnel & Setup → superutilisateur uniquement.
    Le superutilisateur conserve, lui, l’accès intégral à toutes les pages.  */
 export const ADMIN_PAGES = [
@@ -523,11 +528,12 @@ export const hasDefinedSuperuser = (operators) =>
 
 /* ── Matrice d’accès par rôle (statut de la fiche + fonction) ───────────── */
 /** Valeurs de la liste « Fonction » d’une fiche Personnel (accès module). */
-export const ADMIN_FONCTIONS = ['', 'AP', 'Gestionnaire'];
+export const ADMIN_FONCTIONS = ['', 'AP', 'Gestionnaire', 'Achats'];
 export const ADMIN_FONCTION_META = {
   '': { label: 'Aucune', hint: 'Accès = socle de son statut (Permanent ou Non permanent).' },
   AP: { label: 'AP', hint: 'Agent de prévention → ajoute Dépenses, Budget overview + Hygiène & Sécurité.' },
   Gestionnaire: { label: 'Gestionnaire', hint: '→ ajoute Dépenses, Budget overview + Questions ouvertes.' },
+  Achats: { label: "Responsable d'achats", hint: "Destinataire des OM / achats transférés (devis & BC, remboursements) → ajoute Dépenses + Budget overview." },
 };
 
 /** Libellé de l’échelon d’accès dérivé d’une fiche Personnel. */
@@ -557,6 +563,7 @@ const NON_PERMANENT_SOCLE_PAGES = ['conges'];
 const FONCTION_EXTRA_PAGES = {
   AP: ['depenses', 'budget', 'sicurezza'],
   Gestionnaire: ['depenses', 'budget', 'questioni'],
+  Achats: ['depenses', 'budget'],
 };
 
 /**

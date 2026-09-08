@@ -283,7 +283,9 @@ export const PersonnelPage = () => {
           ? <span className="inline-block text-[10px] font-black px-2 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-violet-700" title="Agent de prévention — ajoute Dépenses, Budget overview + Hygiène & Sécurité">AP</span>
           : p.fonction === 'Gestionnaire'
             ? <span className="inline-block text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700" title="Gestionnaire — ajoute Dépenses, Budget overview + Questions ouvertes">Gestionnaire</span>
-            : <span className="text-slate-300">—</span>
+            : p.fonction === 'Achats'
+              ? <span className="inline-block text-[10px] font-black px-2 py-0.5 rounded-full bg-cyan-50 border border-cyan-200 text-cyan-700" title="Responsable d'achats — ajoute Dépenses, Budget overview ; reçoit les OM / achats prévus transférés (devis & BC, remboursements)">Resp. achats</span>
+              : <span className="text-slate-300">—</span>
       ),
     },
     {

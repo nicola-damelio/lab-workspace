@@ -18,7 +18,7 @@
    Description » du classeur Google Sheets) ou à la main : bouton
    « ＋ Ajouter un OM » (et édition / suppression par ligne).
    ========================================================================= */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAdmin } from './AdminContext';
 import { SmartTable } from './smartTable';
 import { AdminImportModal } from './adminImportModal';
@@ -30,6 +30,10 @@ import {
   sendAdminMail, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
   summarizeMail, mailBodyText,
 } from './emailNotify';
+import {
+  TRANSFER_TARGETS, targetMetaOf, cibleEmailsOf, partModeOf, omTransferSummary,
+  devisPatchFromOmPart, reimbPatchFromOm, omTransferStatus,
+} from './transferAchats';
 
 /* ── Petites aides ─────────────────────────────────────────────────────── */
 const txt = (v) => (v === null || v === undefined ? '' : String(v).trim());
@@ -164,10 +168,15 @@ const OmModal = ({ rec, recettes, demandeurNames, statusOptions, onCancel, onSav
     dateRetour: isoOf(rec && pick(rec, ['dateRetour'])),
     commentaires: txt(rec && pick(rec, ['commentaires', 'notes'])),
     ...COST_INPUTS.reduce((acc, c) => { acc[c.key] = numToInput(rec && costValue(rec, c)); return acc; }, {}),
+    partMode: COST_INPUTS.reduce((acc, c) => { acc[c.key] = partModeOf(rec, c.key); return acc; }, {}),
   }));
   const [error, setError] = useState('');
 
   const set = (key) => (e) => setDraft((d) => ({ ...d, [key]: e.target.value }));
+  /* Mode de paiement d'un poste de coût : « bc » = payé par commande (devis à
+     faire signer) ; « reimb » = frais avancés par le membre puis remboursés
+     (aucun BC). */
+  const setPartMode = (key) => (mode) => setDraft((d) => ({ ...d, partMode: { ...(d.partMode || {}), [key]: mode } }));
 
   /* La base Recettes contient parfois plusieurs exemplaires du même intitulé de
      ligne budgétaire : dans le menu on n’en montre qu’un seul, considéré comme
@@ -231,6 +240,7 @@ const OmModal = ({ rec, recettes, demandeurNames, statusOptions, onCancel, onSav
       commentaires: txt(draft.commentaires),
       ...couts,
       coutTotal,
+      partMode: COST_INPUTS.reduce((acc, c) => { acc[c.key] = txt(draft.partMode && draft.partMode[c.key]) || 'bc'; return acc; }, {}),
     };
     if (canDecide && decided !== previous) {
       patch.statutChangedBy = (currentUser && currentUser.name) || '';
@@ -360,9 +370,37 @@ const OmModal = ({ rec, recettes, demandeurNames, statusOptions, onCancel, onSav
                     className={MODAL_INPUT} inputMode="decimal" value={draft[c.key]} onChange={set(c.key)}
                     placeholder="0,00"
                   />
+                  <div className="mt-1.5 flex gap-1">
+                    {['bc', 'reimb'].map((mode) => {
+                      const active = (draft.partMode && draft.partMode[c.key]) === mode
+                        || ((!draft.partMode || !draft.partMode[c.key]) && mode === 'bc');
+                      return (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => setPartMode(c.key)(mode)}
+                          title={mode === 'bc'
+                            ? 'Payé par le laboratoire sur commande : ce poste sera converti en devis « Approbation devis & BC », soldé quand son BC est signé.'
+                            : 'Frais avancés par le membre puis remboursés : ce poste migrera dans Dépenses › Remboursements (badge « À corriger »).'}
+                          className={`px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase transition-colors ${
+                            active
+                              ? (mode === 'bc' ? 'bg-blue-600 text-white' : 'bg-amber-500 text-white')
+                              : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                          }`}
+                        >
+                          {mode === 'bc' ? 'BC' : 'Remb.'}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </Field>
               ))}
             </div>
+            <p className="mt-1.5 text-[10px] text-slate-400 leading-snug">
+              Sous chaque montant : <b className="text-slate-500">BC</b> = commandé par le laboratoire (devis dans
+              « Approbation devis & BC », soldé à la signature du BC) · <b className="text-slate-500">Remb.</b> = frais
+              avancés par le membre puis remboursés (aucun BC : migre vers Dépenses › Remboursements, « À corriger »).
+            </p>
             <div className="mt-3 rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 flex items-center justify-between gap-3">
               <div className="text-[11px] font-semibold text-slate-500">
                 Total du tableau
@@ -411,6 +449,15 @@ export const OmPage = () => {
   const depenses = useMemo(() => (Array.isArray(data.depenses) ? data.depenses : []), [data.depenses]);
   const recettes = useMemo(() => (Array.isArray(data.recettes) ? data.recettes : []), [data.recettes]);
   const personnel = useMemo(() => (Array.isArray(data.personnel) ? data.personnel : []), [data.personnel]);
+  /* Devis / BC déposés (page « Approbation devis & BC ») et fiches du registre
+     « Remboursements » (page Dépenses) : suivent la résolution des OM
+     transférées (BC signé pour les postes « Commande », remboursement corrigé
+     pour les postes « Remboursement »). */
+  const devisBc = useMemo(() => (Array.isArray(data.devisBc) ? data.devisBc : []), [data.devisBc]);
+  const reimbursements = useMemo(
+    () => (Array.isArray(data.reimbursements) ? data.reimbursements : []),
+    [data.reimbursements]
+  );
 
   const [modal, setModal] = useState(null); // null | { mode: 'new' } | { mode: 'edit', rec }
   const [importOpen, setImportOpen] = useState(false);
@@ -418,6 +465,9 @@ export const OmPage = () => {
   /* OM « cible » d’une navigation inter-page (page Recettes › survol d’un OM
      prévu) : on surligne l’OM correspondant dans le tableau. */
   const [focusRow, setFocusRow] = useState(null);
+  /* Réafficher les OM « soldées » (toutes les parties réglées — BC signé et/ou
+     remboursements corrigés) qui sont masquées par défaut. */
+  const [showSoldes, setShowSoldes] = useState(false);
 
   useEffect(() => {
     if (!focus || focus.pageId !== 'om') return;
@@ -482,6 +532,53 @@ export const OmPage = () => {
     if (!db) return -1;
     return db.localeCompare(da);
   }), [om]);
+
+  /* Suivi des OM transférées : un poste « Commande / BC » est soldé quand la
+     dépense liée à son devis porte la date de signature de son BC ; un poste
+     « Remboursement » l'est quand sa fiche du registre Remboursements n'est
+     plus « À corriger ». */
+  const omStatusByKey = useMemo(() => {
+    const map = new Map();
+    om.forEach((o) => map.set(o.id, omTransferStatus(o, devisBc, depenses, reimbursements)));
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [om, devisBc, depenses, reimbursements]);
+
+  /* Quand une OM transférée a TOUS ses postes soldés (BC signé + remboursements
+     corrigés), son statut passe automatiquement à « Terminée » : elle sort
+     alors des projections « OM prévus » de la page Recettes. */
+  const autoTerminatedRef = useRef(new Set());
+  useEffect(() => {
+    if (!isSuper) return;
+    om.forEach((o) => {
+      if (!o.transfert || autoTerminatedRef.current.has(o.id)) return;
+      const st = omStatusByKey.get(o.id);
+      if (!st || !st.allResolved || !st.parts.length) return;
+      autoTerminatedRef.current.add(o.id);
+      if (!/termin/i.test(txt(pick(o, ['statut'])))) {
+        upsert('om', {
+          statut: 'Terminée',
+          statutChangedBy: 'Système (frais soldés : BC signés / remboursements corrigés)',
+          statutChangedAt: Date.now(),
+        }, o.id);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [om, omStatusByKey, isSuper]);
+
+  /* Par défaut, une OM transférée dont TOUS les postes sont soldés disparaît
+     de la liste ; la case « Afficher les soldées » la réaffiche. Les OM jamais
+     transférées restent toujours visibles. */
+  const visibleRows = useMemo(() => {
+    if (showSoldes) return rows;
+    return rows.filter((o) => {
+      if (!o.transfert) return true;
+      const st = omStatusByKey.get(o.id);
+      return !(st && st.allResolved && st.parts.length > 0);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, showSoldes, omStatusByKey]);
+  const hiddenSoldes = rows.length - visibleRows.length;
 
   /* Envoi d’un e-mail au superutilisateur (et au(x) gestionnaire(s)) quand
      l’OM passe « Acceptée ». */
@@ -561,6 +658,10 @@ export const OmPage = () => {
 
   const transferOmToDepenses = (rec) => {
     if (!rec || !rec.id) return;
+    if (rec.transfert) {
+      setNotice({ tone: 'info', text: `L’OM « ${missionOf(rec) || rec.id} » a été transférée via la colonne « Gestion des frais » (devis / remboursements).` });
+      return;
+    }
     if (linkedDepenseOf(rec)) {
       setNotice({ tone: 'info', text: `L’OM « ${missionOf(rec) || rec.id} » est déjà transféré dans Dépenses › OM.` });
       return;
@@ -626,7 +727,7 @@ export const OmPage = () => {
   };
 
   const approvedTransferables = useMemo(
-    () => om.filter((o) => isOmApproved(pick(o, ['statut'])) && !linkedDepenseOf(o)),
+    () => om.filter((o) => isOmApproved(pick(o, ['statut'])) && !o.transfert && !linkedDepenseOf(o)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [om, depenses]
   );
@@ -688,6 +789,89 @@ export const OmPage = () => {
     });
   };
 
+  /* ── Transfert « granulaire » vers la gestionnaire / le responsable d'achats
+     Chaque poste « Commande / BC » devient son propre devis « En attente » dans
+     la page « Approbation devis & BC » (pré-rempli, complété puis signé par la
+     suite) ; les postes « Remboursement » migrent vers Dépenses › Remboursements
+     (une fiche « À corriger »). E-mail au destinataire. L'OM reste listée
+     (badge « En attente de gestion ») tant qu'au moins un poste n'est pas soldé
+     (BC signé / remboursement corrigé). */
+  const doTransferOm = async (rec, cible) => {
+    if (!rec || !rec.id || !isSuper) return;
+    if (rec.transfert) {
+      setNotice({ tone: 'info', text: `L’OM « ${missionOf(rec) || rec.id} » est déjà transférée.` });
+      return;
+    }
+    const summary = omTransferSummary(rec);
+    if (!summary.hasCommande && !summary.hasRemboursement) {
+      setNotice({ tone: 'warn', text: `Chiffrez au moins un poste de coût avant de transférer l’OM « ${missionOf(rec) || rec.id} ».` });
+      return;
+    }
+    const meta = targetMetaOf(cible);
+    const label = missionOf(rec) || rec.id;
+    const confirmLines = [
+      `Transférer l’OM « ${label} » à ${meta.article} ?`,
+      '',
+      summary.hasCommande
+        ? `• ${summary.commande.length} devis pré-remplis dans « Approbation devis & BC » (postes Commande : ${euro.format(summary.commandeTotal)})`
+        : '',
+      summary.hasRemboursement
+        ? `• 1 fiche dans Dépenses › Remboursements (postes Remboursement : ${euro.format(summary.remboursementTotal)}) — badge « À corriger »`
+        : '',
+      '',
+      'Un e-mail prévient le destinataire. L’OM restera listée (badge « En attente de gestion ») jusqu’à la',
+      'signature des BC (postes Commande) et la correction des remboursements (postes Remboursement).',
+    ].filter(Boolean);
+    if (!window.confirm(confirmLines.join('\n'))) return;
+
+    let createdDevis = 0;
+    summary.commande.forEach((part) => {
+      const saved = upsert('devisBc', devisPatchFromOmPart(rec, part, { cible: meta.code, by: currentName }), null);
+      if (saved && saved.id) createdDevis += 1;
+    });
+    let reimbId = '';
+    if (summary.hasRemboursement) {
+      const saved = upsert('reimbursements', reimbPatchFromOm(rec, summary.remboursement, { cible: meta.code, by: currentName }), null);
+      if (saved && saved.id) reimbId = saved.id;
+    }
+    upsert('om', {
+      transfert: {
+        cible: meta.code,
+        by: currentName,
+        at: Date.now(),
+        devisCount: createdDevis,
+        reimbId,
+      },
+    }, rec.id);
+
+    const mailLines = [
+      `Un élément de la page « OM prévus / souhaités » a été transmis à ${meta.article} :`,
+      `  ${label}`,
+      `  Demandeur : ${txt(demandeurOf(rec)) || '—'}`,
+      `  Destination : ${txt(pick(rec, ['destination', 'ville'])) || '—'}`,
+      summary.hasCommande
+        ? `Postes « Commande » (${createdDevis} devis « En attente » créés dans « Approbation devis & BC ») : ${summary.commande.map((p) => `${p.label} ${euro.format(p.montant)}`).join(' · ')}`
+        : '',
+      summary.hasRemboursement
+        ? `Postes « Remboursement » (fiche créée dans Dépenses › Remboursements, badge « À corriger ») : ${summary.remboursement.map((p) => `${p.label} ${euro.format(p.montant)}`).join(' · ')}`
+        : '',
+      'Ouvrez l’application › Administration : complétez les devis (fournisseur, N° devis, fichier) dans « Approbation devis & BC » et corrigez la fiche Remboursement une fois les justificatifs réels connus.',
+    ].filter(Boolean);
+    const res = await sendAdminMail({
+      to: cibleEmailsOf(personnel, meta.code),
+      subject: `[Lab Workspace] OM « ${label} » transmise à ${meta.title}`,
+      text: mailBodyText(mailLines),
+    });
+    const mailSummary = summarizeMail(res, `${meta.title} notifié`);
+    const doneText = `OM « ${label} » transmise à ${meta.article} : ${createdDevis} devis créé${createdDevis > 1 ? 's' : ''} dans « Approbation devis & BC »${reimbId ? ' + 1 fiche Remboursement dans Dépenses › Remboursements' : ''}. ${mailSummary.text}`;
+    setNotice({
+      tone: res && res.ok ? 'ok' : 'warn',
+      text: doneText,
+      mailto: mailSummary.mailto || undefined,
+      consoleUrl: mailSummary.consoleUrl || undefined,
+    });
+  };
+
   const columns = [
     {
       key: 'statut', label: 'Statut', filter: 'facet',
@@ -717,6 +901,66 @@ export const OmPage = () => {
     },
     ...omColumns(recettes).filter((c) => c.key !== 'statut'),
     {
+      key: 'gestion', label: 'Gestion des frais', filter: 'none', filterable: false, sortable: false,
+      value: (r) => {
+        const s = omStatusByKey.get(r.id);
+        return `${r.transfert ? `transmis ${txt(r.transfert.cible)} ` : ''}${s && s.pending ? `${s.pending} en attente` : ''}${s && s.allResolved ? 'soldé' : ''}`.trim();
+      },
+      display: (r) => {
+        const approved = isOmApproved(pick(r, ['statut']));
+        const st = omStatusByKey.get(r.id);
+        const transferred = !!r.transfert;
+        const metaT = r.transfert ? targetMetaOf(r.transfert.cible) : null;
+        const chip = (p) => {
+          if (p.mode === 'bc') {
+            if (p.state === 'bc-signe') return <span className="text-emerald-600 font-black whitespace-nowrap" title="BC signé (date de signature BC dans Dépenses)">✓ BC signé</span>;
+            if (p.state === 'bc-en-cours') return <span className="text-blue-600 whitespace-nowrap" title="Devis approuvé, BC non signé">… BC à signer</span>;
+            if (p.state === 'bc-devis-attente') return <span className="text-amber-600 whitespace-nowrap" title="Devis « En attente » dans Approbation devis & BC">… devis en attente</span>;
+            return <span className="text-slate-300 whitespace-nowrap">devis à créer</span>;
+          }
+          if (p.fiche) {
+            return p.fiche.aCorriger
+              ? <span className="text-amber-600 whitespace-nowrap" title="Montants estimés à corriger une fois les justificatifs réels connus">… À corriger</span>
+              : <span className="text-emerald-600 font-black whitespace-nowrap" title="Fiche Remboursement corrigée">✓ remboursé</span>;
+          }
+          return <span className="text-slate-300 whitespace-nowrap">fiche à créer</span>;
+        };
+        return (
+          <div className="min-w-[230px] max-w-[320px] flex flex-col gap-1">
+            {transferred && metaT ? (
+              <div className="flex items-center flex-wrap gap-1.5">
+                <span className="text-[10px] font-semibold text-slate-500 whitespace-nowrap" title={`Transféré par ${txt(r.transfert.by) || '—'} le ${r.transfert.at ? new Date(r.transfert.at).toLocaleDateString('fr-FR') : '—'}`}>{metaT.icon} {metaT.title}</span>
+                {st && st.pending > 0 ? (
+                  <span className="inline-block text-[9px] font-black uppercase px-1.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 whitespace-nowrap" title="Postes non soldés : devis / BC à signer, remboursement à corriger">⏳ En attente de gestion</span>
+                ) : st && st.allResolved ? (
+                  <span className="inline-block text-[9px] font-black uppercase px-1.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 whitespace-nowrap" title="Tous les postes soldés — l'OM disparaît de la liste (case « Afficher les soldées »)">✓ Soldé</span>
+                ) : null}
+              </div>
+            ) : null}
+            {!transferred && approved && isSuper && !linkedDepenseOf(r) ? (
+              <div className="flex flex-col gap-1">
+                <span className="text-[9px] uppercase font-black text-slate-400">Transférer les frais à</span>
+                <div className="flex items-center gap-1 flex-wrap">
+                  <button type="button" onClick={() => doTransferOm(r, TRANSFER_TARGETS.Gestionnaire.code)} title="Devis (postes Commande) + fiche Remboursement (postes Remb.) + e-mail" className="text-[11px] font-black px-2 py-1 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 whitespace-nowrap">➡ {TRANSFER_TARGETS.Gestionnaire.title}</button>
+                  <button type="button" onClick={() => doTransferOm(r, TRANSFER_TARGETS.Achats.code)} title="Devis (postes Commande) + fiche Remboursement (postes Remb.) + e-mail" className="text-[11px] font-black px-2 py-1 rounded-lg border border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100 whitespace-nowrap">➡ {TRANSFER_TARGETS.Achats.title}</button>
+                </div>
+              </div>
+            ) : null}
+            {!transferred && !approved ? <span className="text-[10px] text-slate-300">↦ après acceptation</span> : null}
+            {st && st.parts.length ? st.parts.map((p) => (
+              <div key={p.key} className="flex items-center gap-1.5 text-[10px] leading-tight">
+                <span className="shrink-0">{p.icon}</span>
+                <span className="text-slate-500 shrink-0">{p.label}</span>
+                <span className="text-[10px] text-slate-400 tabular-nums whitespace-nowrap">{p.montant !== null && p.montant !== undefined ? euro.format(p.montant) : '—'}</span>
+                {transferred ? chip(p) : <span className={`text-[9px] font-black uppercase px-1 rounded whitespace-nowrap ${p.mode === 'bc' ? 'text-blue-600 bg-blue-50' : 'text-amber-600 bg-amber-50'}`}>{p.mode === 'bc' ? 'BC' : 'Remb.'}</span>}
+              </div>
+            )) : null}
+            {st && !st.hasCosts ? <span className="text-[10px] text-slate-300">aucun poste chiffré</span> : null}
+          </div>
+        );
+      },
+    },
+    {
       key: 'actions', label: '', filter: 'none', filterable: false,
       value: () => '',
       display: (r) => {
@@ -724,7 +968,14 @@ export const OmPage = () => {
         const linked = linkedDepenseOf(r);
         return (
           <div className="flex items-center gap-1 whitespace-nowrap">
-            {approved ? (
+            {approved && r.transfert ? (
+              <button
+                type="button"
+                title="Les frais ont été transférés (devis / remboursements) — ouvrir la page « Approbation devis & BC » pour les compléter et les faire signer."
+                onClick={() => { if (typeof navigate === 'function') navigate('devisBc'); }}
+                className="text-[11px] font-black px-2 py-1 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
+              >→ Devis & BC</button>
+            ) : approved ? (
               linked ? (
                 <button
                   type="button"
@@ -764,7 +1015,9 @@ export const OmPage = () => {
     <div className="max-w-full mx-auto flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-xs font-bold text-slate-400 max-w-2xl">
-          {om.length} demande{om.length > 1 ? 's' : ''} de mission (OM prévus / souhaités) · les colonnes sont
+          {visibleRows.length} demande{visibleRows.length > 1 ? 's' : ''} de mission à suivre
+          ({om.length} OM prévu{om.length > 1 ? 's' : ''} / souhaité{om.length > 1 ? 's' : ''} au total
+          {hiddenSoldes > 0 ? ` — ${hiddenSoldes} soldée${hiddenSoldes > 1 ? 's' : ''} masquée${hiddenSoldes > 1 ? 's' : ''}` : ''}) · les colonnes sont
           triables (en-têtes) et filtrables (bouton « Filtres »).
         </p>
         <div className="flex items-center gap-2 flex-wrap">
@@ -781,6 +1034,13 @@ export const OmPage = () => {
               <span className="text-base leading-none">⬇</span> Transférer {approvedTransferables.length} OM accepté{approvedTransferables.length > 1 ? 's' : ''}
             </button>
           )}
+          <label
+            className="flex items-center gap-1.5 text-[10px] font-black text-slate-500 cursor-pointer select-none bg-white border border-slate-200 rounded-xl px-3 py-2 hover:border-slate-300 whitespace-nowrap"
+            title="Les OM transférées dont tous les frais sont soldés (BC signé + remboursements corrigés) disparaissent de la liste par défaut ; réaffichez-les ici."
+          >
+            <input type="checkbox" className="accent-cyan-600" checked={showSoldes} onChange={(e) => setShowSoldes(e.target.checked)} />
+            Afficher les soldées
+          </label>
           <button
             type="button"
             onClick={() => setImportOpen(true)}
@@ -803,26 +1063,33 @@ export const OmPage = () => {
       {notice && <Notice tone={notice.tone} text={notice.text} mailto={notice.mailto} consoleUrl={notice.consoleUrl} onClose={() => setNotice(null)} />}
 
       <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
-        <b>OM prévus / souhaités :</b> chaque OM décrit une mission à préparer (dates, demandeur, destination,
-        ligne budgétaire, coûts estimés ou exacts). La <b>première colonne « Statut »</b>
-        (En attente / Acceptée / Refusée / Terminée) n’est modifiable que par le superutilisateur ;
-        une fois l’OM <b>Acceptée</b>, un e-mail prévient la gestionnaire. Le bouton
-        <b>« → Dépenses »</b> (ou « ⬇ Transférer… ») crée alors une <b>ligne de type « OM » dans la page
-        Dépenses › onglet OM</b> : ce tableau-là est <b>indépendant</b> — il ne rejoue pas cette liste, il suit
-        la dépense réelle (facture, paiement), que l’on peut déplacer vers « Achats » / « PI ». Le bouton
-        <b>« ＋ Ajouter un OM »</b> permet une saisie manuelle complète ; <b>« ✏️ Modifier »</b> ouvre
-        la fiche d’un OM existant et <b>« 🗑️ »</b> le supprime. L’assistant d’import
-        (bouton « 📥 Importer ») reste disponible pour rejouer la feuille « ENT / Prix / Description » du classeur.
+        <b>OM prévus / souhaités :</b> chaque OM décrit une mission à préparer. La <b>première colonne « Statut »</b>
+        (En attente / Acceptée / Refusée / Terminée) n’est modifiable que par le superutilisateur. Dans le formulaire,
+        chaque <b>poste de coût</b> est étiqueté <b>« BC »</b> (commandé par le laboratoire : devis dans « Approbation
+        devis & BC ») ou <b>« Remb. »</b> (frais avancés par le membre puis remboursés : fiche dans Dépenses ›
+        Remboursements). Une fois l’OM <b>Acceptée</b>, la colonne <b>« Gestion des frais »</b> permet de la
+        <b>transférer à la gestionnaire ou au responsable d’achats</b> : e-mail au destinataire, devis « En attente »
+        créés par poste « Commande », fiche Remboursement « À corriger » pour les postes « Remb. ». L’OM reste listée
+        (badge ⏳ « En attente de gestion ») et ne <b>disparaît</b> que lorsque tous ses postes sont soldés — BC signé
+        (date de signature BC dans Dépenses) et remboursements corrigés. Le bouton <b>« → Dépenses »</b> conserve
+        l’ancien circuit (dépense « OM » directe, sans signature BC). « ✏️ Modifier » ouvre la fiche, « 🗑️ » supprime,
+        « 📥 Importer » rejoue la feuille « ENT / Prix / Description » du classeur.
       </div>
 
-      {om.length === 0 ? (
+      {visibleRows.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
           <div className="text-4xl mb-2">✈️</div>
           <p className="font-black text-slate-700">Aucun OM prévu / souhaité pour le moment</p>
           <p className="text-sm text-slate-400 mt-1 mb-4">
-            Utilisez « ＋ Ajouter un OM » pour saisir une mission à la main (dates, coûts, statut…) — une fois
-            l’OM « Acceptée », son bouton « → Dépenses » crée la dépense réelle dans Dépenses › onglet OM.
-            Ou « 📥 Importer » pour rejouer la feuille « ENT / Prix / Description » du classeur.
+            {hiddenSoldes > 0 ? (
+              <>Toutes les OM transférées sont soldées (BC signé / remboursements corrigés). Cochez
+                « Afficher les soldées » pour les retrouver dans la liste.</>
+            ) : (
+              <>Utilisez « ＋ Ajouter un OM » pour saisir une mission à la main (dates, coûts, statut…) — une fois
+                l’OM « Acceptée », la colonne « Gestion des frais » permet de la transférer à la gestionnaire ou au
+                responsable d’achats (devis « Approbation devis & BC » / remboursements). Ou « 📥 Importer » pour
+                rejouer la feuille « ENT / Prix / Description » du classeur.</>
+            )}
           </p>
           <button
             type="button"
@@ -835,10 +1102,10 @@ export const OmPage = () => {
       ) : (
         <SmartTable
           columns={columns}
-          rows={rows}
+          rows={visibleRows}
           focusRowKey={focusRow}
           onFocusDone={() => setFocusRow(null)}
-          minWidth="1420px"
+          minWidth="1560px"
           searchPlaceholder="Rechercher mission, demandeur, destination, n° OM…"
           emptyLabel="Aucun ordre de mission pour le moment"
           noMatchLabel="Aucun ordre de mission ne correspond aux filtres."
