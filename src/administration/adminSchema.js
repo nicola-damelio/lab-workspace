@@ -508,6 +508,11 @@ export const DEFAULT_OPTIONS = {
   issueStatuses: ISSUE_STATUSES,
   congeStatuses: CONGE_STATUSES,
   congesQuotaByType: CONGE_QUOTA_BY_TYPE,
+  /* Permissions personnalisées « qui voit quelle page » (éditées dans Setup ›
+     Accès aux pages) : { [pageId]: { mode:'custom', roles:[catégorie…],
+     include:[ids fiche], exclude:[ids fiche] } }. Une page sans règle garde la
+     matrice par défaut (statut + fonctions de la fiche Personnel). */
+  pageAccess: {},
 };
 
 /* ── Aides ──────────────────────────────────────────────────────────────── */
@@ -527,14 +532,35 @@ export const hasDefinedSuperuser = (operators) =>
   );
 
 /* ── Matrice d’accès par rôle (statut de la fiche + fonction) ───────────── */
-/** Valeurs de la liste « Fonction » d’une fiche Personnel (accès module). */
-export const ADMIN_FONCTIONS = ['', 'AP', 'Gestionnaire', 'Achats'];
+/** Valeurs possibles de la liste « Fonctions » (accès module) d’une fiche
+ *  Personnel. Une personne peut PORTER PLUSIEURS fonctions à la fois (choix
+ *  multiple : stocké en tableau) ; les anciennes fiches « une seule valeur »
+ *  restent acceptées par toutes les lectures (voir fonctionsOfPerson). */
+export const ADMIN_FONCTIONS = ['AP', 'Gestionnaire', 'Achats'];
 export const ADMIN_FONCTION_META = {
-  '': { label: 'Aucune', hint: 'Accès = socle de son statut (Permanent ou Non permanent).' },
   AP: { label: 'AP', hint: 'Agent de prévention → ajoute Dépenses, Budget overview + Hygiène & Sécurité.' },
   Gestionnaire: { label: 'Gestionnaire', hint: '→ ajoute Dépenses, Budget overview + Questions ouvertes.' },
-  Achats: { label: "Responsable d'achats", hint: "Destinataire des OM / achats transférés (devis & BC, remboursements) → ajoute Dépenses + Budget overview." },
+  Achats: { label: "Responsable d'achats", hint: "→ ajoute Dépenses + Budget overview ; reçoit les OM / achats prévus transférés et est notifié par e-mail quand un devis est créé." },
 };
+
+/** Lecture normalisée des fonctions d’une fiche Personnel (tableau de codes).
+ *  Accepte le stockage moderne en tableau, l’ancien champ « une valeur » ou
+ *  plusieurs valeurs séparées (« AP | Gestionnaire ») — rien n’est perdu. */
+export const fonctionsOfPerson = (person) => {
+  const raw = person && person.fonction;
+  const items = Array.isArray(raw)
+    ? raw
+    : (typeof raw === 'string' && String(raw).trim() ? String(raw).split(/[;|,/]+/) : []);
+  const out = [];
+  items.forEach((v) => {
+    const code = String(v || '').trim();
+    if (ADMIN_FONCTIONS.indexOf(code) !== -1 && out.indexOf(code) === -1) out.push(code);
+  });
+  return out;
+};
+/** Vrai si la fiche Personnel porte la fonction `code` (AP / Gestionnaire / Achats). */
+export const personHasFonction = (person, code) =>
+  code && fonctionsOfPerson(person).indexOf(code) !== -1;
 
 /** Libellé de l’échelon d’accès dérivé d’une fiche Personnel. */
 export const statutLabelOf = (person) => {
@@ -601,9 +627,16 @@ export const adminAccessProfile = (currentUser, operators, personnel) => {
       }) || null;
     }
   }
-  const rawFonction = person && person.fonction ? String(person.fonction).trim() : '';
-  const fonction = ADMIN_FONCTIONS.includes(rawFonction) ? rawFonction : '';
-  return { isSuperuser, statut: statutLabelOf(person), fonction, person };
+  const fonctions = fonctionsOfPerson(person);
+  return {
+    isSuperuser,
+    statut: statutLabelOf(person),
+    fonctions,
+    /* Rétro-compatibilité : première fonction (ou '') pour les lecteurs qui ne
+       connaissent pas encore la liste. */
+    fonction: fonctions[0] || '',
+    person,
+  };
 };
 
 /** Ensemble des ids de pages autorisés pour un profil d’accès donné. */
@@ -616,8 +649,81 @@ export const adminPageIdsForProfile = (profile) => {
   }
   const base = p.statut === 'Permanent' ? PERMANENT_SOCLE_PAGES : NON_PERMANENT_SOCLE_PAGES;
   base.forEach((id) => ids.add(id));
-  const extra = FONCTION_EXTRA_PAGES[p.fonction] || [];
-  extra.forEach((id) => ids.add(id));
+  /* Toutes les fonctions portées par la fiche (une personne peut en avoir
+     plusieurs) ajoutent leurs pages. */
+  (p.fonctions || []).forEach((f) => {
+    const extra = FONCTION_EXTRA_PAGES[f] || [];
+    extra.forEach((id) => ids.add(id));
+  });
+  return ids;
+};
+
+/* ── Permissions personnalisées (Setup › Accès aux pages) ──────────────────
+   La matrice par défaut (statut + fonctions) reste la règle de base. Le
+   superutilisateur peut, page par page (administration.settings.pageAccess),
+   activer un mode « Personnalisé » : une liste de CATÉGORIES autorisées
+   (Permanent / Non permanent / chaque fonction / aucune fonction) complétée
+   par des INCLUSIONS et EXCLUSIONS de personnes précises (fiche Personnel).
+   Une personne est admise si elle est incluse explicitement OU appartient à
+   une catégorie cochée, et qu'elle n'est pas exclue. Le superutilisateur, lui,
+   garde toujours l'accès intégral. */
+export const ADMIN_ACCESS_CATEGORY_META = {
+  Permanent: { label: 'Permanent / Technique', icon: '👤', tone: 'bg-blue-50 border-blue-200 text-blue-700', hint: 'Toute fiche de statut Permanent ou Technique (avec ou sans fonction).' },
+  'Non permanent': { label: 'Non permanent', icon: '🎓', tone: 'bg-amber-50 border-amber-200 text-amber-700', hint: 'Doctorants, ATER, post-docs, stagiaires, CDD, vacataires…' },
+  AP: { label: 'AP', icon: '🛡️', tone: 'bg-violet-50 border-violet-200 text-violet-700', hint: 'Agent de prévention (Hygiène & Sécurité).' },
+  Gestionnaire: { label: 'Gestionnaire', icon: '🧾', tone: 'bg-emerald-50 border-emerald-200 text-emerald-700', hint: 'Travaille à partir du bon de commande (BC) et du suivi des dépenses.' },
+  Achats: { label: "Responsable d'achats", icon: '🛍️', tone: 'bg-cyan-50 border-cyan-200 text-cyan-700', hint: "Reçoit les devis créés depuis les OM / achats prévus (notification e-mail)." },
+  'Aucune fonction': { label: 'Aucune fonction', icon: '·', tone: 'bg-slate-50 border-slate-200 text-slate-600', hint: 'Fiches sans AP, sans Gestionnaire et sans Responsable d’achats.' },
+};
+export const ADMIN_ACCESS_CATEGORIES = Object.keys(ADMIN_ACCESS_CATEGORY_META);
+
+/** Catégories d’accès d’un profil (statut + toutes ses fonctions). */
+export const profileAccessCategoriesOf = (profile) => {
+  const p = profile || {};
+  const out = [];
+  const statut = p.statut === 'Permanent' ? 'Permanent' : 'Non permanent';
+  if (out.indexOf(statut) === -1) out.push(statut);
+  (Array.isArray(p.fonctions) ? p.fonctions : []).forEach((f) => {
+    if (ADMIN_ACCESS_CATEGORIES.indexOf(f) !== -1 && out.indexOf(f) === -1) out.push(f);
+  });
+  if (!(p.fonctions || []).length && out.indexOf('Aucune fonction') === -1) out.push('Aucune fonction');
+  return out;
+};
+
+/** Règle personnalisée enregistrée pour une page (null = matrice par défaut). */
+export const pageAccessRuleOf = (settings, pageId) => {
+  const rules = settings && settings.pageAccess && typeof settings.pageAccess === 'object'
+    ? settings.pageAccess
+    : {};
+  const rule = rules && rules[pageId];
+  if (!rule || typeof rule !== 'object') return null;
+  if (String(rule.mode || '').trim() !== 'custom') return null;
+  return {
+    roles: (Array.isArray(rule.roles) ? rule.roles : []).filter((c) => ADMIN_ACCESS_CATEGORIES.indexOf(c) !== -1),
+    include: (Array.isArray(rule.include) ? rule.include : []).filter(Boolean),
+    exclude: (Array.isArray(rule.exclude) ? rule.exclude : []).filter(Boolean),
+  };
+};
+
+/** Un profil d’accès peut-il voir la page ? Matrice par défaut, sauf si une
+ *  règle personnalisée existe pour cette page (elle remplace alors la matrice). */
+export const adminCanProfileViewPage = (profile, settings, pageId) => {
+  const p = profile || {};
+  if (p.isSuperuser) return true;
+  const rule = pageAccessRuleOf(settings, pageId);
+  if (!rule) return adminPageIdsForProfile(p).has(pageId);
+  const pid = p.person && p.person.id;
+  if (pid && rule.exclude.indexOf(pid) !== -1) return false;
+  if (pid && rule.include.indexOf(pid) !== -1) return true;
+  return profileAccessCategoriesOf(p).some((c) => rule.roles.indexOf(c) !== -1);
+};
+
+/** Ensemble des ids de pages autorisés (matrice par défaut + règles Setup). */
+export const adminPageIdsFor = (profile, settings) => {
+  const ids = new Set();
+  ADMIN_PAGES.forEach((page) => {
+    if (adminCanProfileViewPage(profile, settings, page.id)) ids.add(page.id);
+  });
   return ids;
 };
 
@@ -625,13 +731,15 @@ export const adminPageIdsForProfile = (profile) => {
  * Matrice de visibilité d’une page d’administration pour un utilisateur donné.
  * En bootstrap (aucun compte ou aucun superutilisateur défini), la page
  * « Paramètres » reste accessible pour créer l’équipe / le superutilisateur.
- * `personnel` = fiches Personnel de la base d’administration ouverte.
+ * `personnel` = fiches Personnel de la base d’administration ouverte ;
+ * `settings`  = administration.settings (règles personnalisées « Accès aux
+ * pages », optionnelles).
  */
-export const adminCanViewPage = (page, currentUser, operators, personnel) => {
+export const adminCanViewPage = (page, currentUser, operators, personnel, settings) => {
   if (!page) return false;
   if (page.id === 'settings' && !hasDefinedSuperuser(operators)) return true;
-  const ids = adminPageIdsForProfile(adminAccessProfile(currentUser, operators, personnel));
-  return ids.has(page.id);
+  const profile = adminAccessProfile(currentUser, operators, personnel);
+  return adminPageIdsFor(profile, settings).has(page.id);
 };
 
 /* ── Semence d’une base d’administration ────────────────────────────────── */

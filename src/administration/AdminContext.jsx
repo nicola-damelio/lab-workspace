@@ -15,7 +15,7 @@
    ========================================================================= */
 import React, { createContext, useContext, useEffect, useMemo, useRef } from 'react';
 import {
-  ADMIN_COLLECTIONS, DEFAULT_OPTIONS, adminAccessProfile, adminPageIdsForProfile,
+  ADMIN_COLLECTIONS, DEFAULT_OPTIONS, adminAccessProfile, adminPageIdsFor,
   isReimbNature, reimbursementFromDepense,
 } from './adminSchema';
 
@@ -52,7 +52,6 @@ export const AdminProvider = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [currentUser, operators, data.personnel]
   );
-  const allowedPageIds = useMemo(() => adminPageIdsForProfile(profile), [profile]);
   const isSuperuser = profile.isSuperuser;
 
   const settings = useMemo(
@@ -62,6 +61,15 @@ export const AdminProvider = ({
         : DEFAULT_OPTIONS,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [content]
+  );
+
+  /* Pages autorisées : matrice par défaut (statut + fonctions de la fiche) +
+     règles personnalisées du Setup (« Accès aux pages »). Recalculées à
+     chaque changement du payload (fiches Personnel ou réglages). */
+  const allowedPageIds = useMemo(
+    () => adminPageIdsFor(profile, settings),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [profile, content]
   );
 
   /* Chaque commit part de l’ÉTAT LE PLUS RÉCENT (mise à jour fonctionnelle).

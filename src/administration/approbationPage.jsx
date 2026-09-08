@@ -65,7 +65,7 @@ import {
   withApprovedSuffix,
 } from './driveFiling';
 import {
-  sendAdminMail, personEmailOf, personnelEmailsMatching, superuserEmailsOf,
+  sendAdminMail, personEmailOf, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
 } from './emailNotify';
 
 /* ── Petites aides ──────────────────────────────────────────────────────── */
@@ -244,9 +244,11 @@ export const ApprobationPage = () => {
     : (currentUser && currentUser.name));
   /* Fonctions chargées du suivi des achats (Gestionnaire / Responsable
      d'achats) : autorisées à compléter les devis générés par un transfert
-     depuis « OM prévus / souhaités » ou « Achats prévus / souhaités ». */
-  const currentFonction = txt(access.profile && access.profile.fonction);
-  const isAchatsRole = currentFonction === 'Gestionnaire' || currentFonction === 'Achats';
+     depuis « OM prévus / souhaités » ou « Achats prévus / souhaités ». Une
+     fiche peut porter plusieurs fonctions. */
+  const currentFonctions = (access.profile && access.profile.fonctions) || [];
+  const isAchatsRole = currentFonctions.indexOf('Gestionnaire') !== -1
+    || currentFonctions.indexOf('Achats') !== -1;
 
   const [tab, setTab] = useState('devis'); // 'devis' | 'bc'
   const [modal, setModal] = useState(null); // null | { mode:'new', kind } | { mode:'edit', kind, rec }
@@ -376,6 +378,13 @@ export const ApprobationPage = () => {
     () => personnelEmailsMatching(personnel, { fonction: 'Gestionnaire' }),
     [personnel]
   );
+  /* Responsable(s) d'achats (fonction « Achats ») : notifiés dès qu'un devis
+     est créé/déposé — ils travaillent sur le devis, le gestionnaire n'intervient
+     qu'à partir du bon de commande (BC). */
+  const achatsEmails = useMemo(
+    () => personnelEmailsMatching(personnel, { fonction: 'Achats' }),
+    [personnel]
+  );
 
   const summarizeMail = async (res, label) => {
     if (res && res.ok) return { text: `${label} : e-mail envoyé ✓` };
@@ -407,8 +416,12 @@ export const ApprobationPage = () => {
       txt(rec.fichierUrl) ? `Fichier : ${rec.fichierUrl}` : '',
       'Ouvrez l’application › Administration › Approbation devis & BC pour approuver ou refuser.',
     ].filter(Boolean));
+    /* À la création d'un DEVIS : le superutilisateur (pour approuver) ET le(s)
+       responsable(s) d'achats (qui travaillent sur le devis) sont notifiés.
+       Pour un BC, le superutilisateur reste seul destinataire. */
+    const to = isBc ? superuserEmails : mergeEmails(superuserEmails, achatsEmails);
     const res = await sendAdminMail({
-      to: superuserEmails,
+      to,
       subject,
       text,
       /* L'e-mail est envoyé depuis le compte Google connecté ; si l'adresse de

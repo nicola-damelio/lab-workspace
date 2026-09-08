@@ -19,6 +19,7 @@
    ========================================================================= */
 import { GOOGLE_TOKEN_EXCHANGE_URL } from '../data/constants';
 import { sendAdminGmail } from '../utils/driveUpload';
+import { fonctionsOfPerson } from './adminSchema';
 
 /** Adresse e-mail d'une fiche Personnel (la clé peut varier selon les bases). */
 export const personEmailOf = (person) => {
@@ -31,11 +32,13 @@ export const personEmailOf = (person) => {
   return '';
 };
 
-/** E-mails des fiches Personnel correspondant à un critère ({ fonction?, type? }). */
+/** E-mails des fiches Personnel correspondant à un critère ({ fonction?, type? }).
+ *  Une fiche peut porter plusieurs fonctions : elle correspond dès qu’une de
+ *  ses fonctions est la fonction demandée. */
 export const personnelEmailsMatching = (personnel = [], { fonction = '', type = '' } = {}) => {
   const out = [];
   (Array.isArray(personnel) ? personnel : []).forEach((p) => {
-    if (fonction && String(p.fonction || '').trim() !== fonction) return;
+    if (fonction && fonctionsOfPerson(p).indexOf(fonction) === -1) return;
     if (type && String(p.type || '').trim() !== type) return;
     const email = personEmailOf(p);
     if (email && out.indexOf(email) === -1) out.push(email);

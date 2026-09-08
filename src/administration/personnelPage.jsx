@@ -7,7 +7,7 @@
    ========================================================================= */
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
-import { PERSONNEL_TYPES, PERSONNEL_CORPS, GRADES_BY_CORPS, BAP_LIST, PERSONNEL_POSITIONS, FORMATION_SUGGESTIONS, statutLabelOf } from './adminSchema';
+import { PERSONNEL_TYPES, PERSONNEL_CORPS, GRADES_BY_CORPS, BAP_LIST, PERSONNEL_POSITIONS, FORMATION_SUGGESTIONS, statutLabelOf, fonctionsOfPerson } from './adminSchema';
 import { PersonnelModal } from './personnelModal';
 import { AdminImportModal } from './adminImportModal';
 import { SmartTable } from './smartTable';
@@ -193,7 +193,7 @@ export const PersonnelPage = () => {
       corps: patch.corps || '',
       grade: patch.grade || '',
       bap: patch.bap || '',
-      fonction: patch.fonction || '',
+      fonction: fonctionsOfPerson(patch),
       hdr: patch.hdr || '',
       categorie: String(patch.categorie || '').trim(),
       echelon: String(patch.echelon || '').trim(),
@@ -276,17 +276,23 @@ export const PersonnelPage = () => {
       ),
     },
     {
-      key: 'fonction', label: 'Fonction',
-      value: (p) => p.fonction || '',
-      display: (p) => (
-        p.fonction === 'AP'
-          ? <span className="inline-block text-[10px] font-black px-2 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-violet-700" title="Agent de prévention — ajoute Dépenses, Budget overview + Hygiène & Sécurité">AP</span>
-          : p.fonction === 'Gestionnaire'
-            ? <span className="inline-block text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700" title="Gestionnaire — ajoute Dépenses, Budget overview + Questions ouvertes">Gestionnaire</span>
-            : p.fonction === 'Achats'
-              ? <span className="inline-block text-[10px] font-black px-2 py-0.5 rounded-full bg-cyan-50 border border-cyan-200 text-cyan-700" title="Responsable d'achats — ajoute Dépenses, Budget overview ; reçoit les OM / achats prévus transférés (devis & BC, remboursements)">Resp. achats</span>
-              : <span className="text-slate-300">—</span>
-      ),
+      key: 'fonction', label: 'Fonction(s)',
+      value: (p) => fonctionsOfPerson(p).join(' · '),
+      display: (p) => {
+        const codes = fonctionsOfPerson(p);
+        if (!codes.length) return <span className="text-slate-300">—</span>;
+        return (
+          <div className="flex flex-wrap gap-1 max-w-[260px]">
+            {codes.map((code) => (
+              code === 'AP'
+                ? <span key={code} className="inline-block text-[10px] font-black px-2 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-violet-700" title="Agent de prévention — ajoute Dépenses, Budget overview + Hygiène & Sécurité">AP</span>
+                : code === 'Gestionnaire'
+                  ? <span key={code} className="inline-block text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700" title="Gestionnaire — ajoute Dépenses, Budget overview + Questions ouvertes">Gestionnaire</span>
+                  : <span key={code} className="inline-block text-[10px] font-black px-2 py-0.5 rounded-full bg-cyan-50 border border-cyan-200 text-cyan-700" title="Responsable d'achats — ajoute Dépenses, Budget overview ; reçoit les OM / achats prévus transférés (devis & BC, remboursements)">Resp. achats</span>
+            ))}
+          </div>
+        );
+      },
     },
     {
       key: 'grade', label: 'Grade',

@@ -524,8 +524,13 @@ export const ScientistsOperatorsManager = ({
     if (fiche) statut = nonPerm ? 'Non permanent'
       : (t || corps) ? 'Permanent'
       : 'Non permanent';
-    const rawF = fiche && fiche.fonction ? String(fiche.fonction).trim() : '';
-    return { statut, fonction: rawF === 'AP' || rawF === 'Gestionnaire' ? rawF : '' };
+    // Fonctions : tableau (nouveau) ou ancienne valeur unique / séparée.
+    const rawF = fiche && fiche.fonction;
+    const items = Array.isArray(rawF) ? rawF : (typeof rawF === 'string' && rawF.trim() ? rawF.split(/[;|,/]+/) : []);
+    const fonctions = items
+      .map((s) => String(s || '').trim())
+      .filter((c) => c === 'AP' || c === 'Gestionnaire' || c === 'Achats');
+    return { statut, fonctions };
   };
 
   const addOperator = async () => {
@@ -749,14 +754,24 @@ export const ScientistsOperatorsManager = ({
                           return <span className="text-[10px] italic text-slate-400">Aucune fiche Personnel liée → accès minimal (✏️ pour lier)</span>;
                         }
                         const acc = accessOf(fiche);
+                        const foncCls = (code) => (code === 'AP'
+                          ? 'bg-violet-50 text-violet-700 border-violet-200'
+                          : code === 'Achats'
+                            ? 'bg-cyan-50 text-cyan-700 border-cyan-200'
+                            : 'bg-emerald-50 text-emerald-700 border-emerald-200');
                         return (
                           <>
                             <span className="text-[10px] font-semibold text-slate-500">👤 {fiche.nom}</span>
                             {acc.statut && (
                               <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${acc.statut === 'Permanent' ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>{acc.statut}</span>
                             )}
-                            {acc.fonction && (
-                              <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded border ${acc.fonction === 'AP' ? 'bg-violet-50 text-violet-700 border-violet-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>{acc.fonction}</span>
+                            {acc.fonctions && acc.fonctions.map((code) => (
+                              <span key={code} className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded border ${foncCls(code)}`}>
+                                {code === 'Achats' ? 'Resp. achats' : code}
+                              </span>
+                            ))}
+                            {acc.fonctions && acc.fonctions.length === 0 && (
+                              <span className="text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded bg-slate-50 border border-slate-200 text-slate-400">Aucune fonction</span>
                             )}
                           </>
                         );

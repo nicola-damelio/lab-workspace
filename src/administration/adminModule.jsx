@@ -34,8 +34,9 @@ const AccessDeniedCard = ({ page }) => (
     <h2 className="text-lg font-black text-slate-800 mb-1">Accès restreint</h2>
     <p className="text-sm text-slate-500 leading-relaxed">
       La page « {page && page.label ? page.label : ''} » n’est pas autorisée pour votre profil.
-      L’accès est défini par la fiche Personnel (statut Permanent / Non permanent, fonctions AP ou
-      Gestionnaire) ; Personnel &amp; Setup restent réservés au superutilisateur.
+      L’accès combine la fiche Personnel (statut, fonctions — AP / Gestionnaire / Responsable
+      d'achats — éventuellement plusieurs) et les règles du Setup (« Accès aux pages »). Personnel
+      &amp; Setup restent réservés au superutilisateur.
     </p>
   </div>
 );
@@ -194,6 +195,7 @@ const AdministrationShell = ({
             operators={operators} setOperators={setOperators}
             authSettings={authSettings} setAuthSettings={setAuthSettings}
             currentUser={currentUser}
+            datasetTitle={datasetTitle}
           />
         ) : active.id === 'librerie' ? (
           <LibreriePage />
@@ -224,13 +226,31 @@ const RoleBadge = ({ profile }) => {
       </span>
     );
   }
-  const meta = ADMIN_FONCTION_META[p.fonction] || null;
+  const fonctions = Array.isArray(p.fonctions) && p.fonctions.length
+    ? p.fonctions
+    : (p.fonction ? [p.fonction] : []);
+  const titleBits = [];
+  if (p.person) titleBits.push(`Fiche : ${p.person.nom || ''}`);
+  if (!fonctions.length) titleBits.push('Aucune fiche Personnel liée — accès minimal.');
   return (
     <span
-      className="text-[10px] font-black uppercase text-slate-600 bg-slate-50 border border-slate-200 rounded-full px-2.5 py-1"
-      title={meta && meta.hint ? meta.hint : (p.person ? `Fiche : ${p.person.nom || ''}` : 'Aucune fiche Personnel liée — accès minimal.')}
+      className="inline-flex items-center gap-1 text-[10px] font-black uppercase text-slate-600 bg-slate-50 border border-slate-200 rounded-full px-2.5 py-1"
+      title={titleBits.join(' · ')}
     >
-      {p.statut || 'Non permanent'}{p.fonction ? ` · ${meta ? meta.label : p.fonction}` : ''}
+      <span>{p.statut || 'Non permanent'}</span>
+      {fonctions.map((code) => {
+        const meta = ADMIN_FONCTION_META[code];
+        if (!meta) return <span key={code} className="rounded-full px-1.5">{code}</span>;
+        return (
+          <span
+            key={code}
+            className="rounded-full bg-blue-50 border border-blue-200 text-blue-700 px-1.5"
+            title={meta.hint}
+          >
+            {meta.label}
+          </span>
+        );
+      })}
     </span>
   );
 };
@@ -314,8 +334,8 @@ const OverviewPage = ({ visible }) => {
       {hidden.length > 0 && (
         <p className="text-[11px] text-slate-400">
           Pages masquées pour votre profil : {hidden.map((p) => p.label).join(' · ')} — accès défini
-          par la fiche Personnel (statut Permanent / AP / Gestionnaire) ; Personnel &amp; Setup restent
-          réservés au superutilisateur.
+          par la fiche Personnel (statut, fonctions — AP / Gestionnaire / Responsable d'achats) et les règles
+          du Setup (« Accès aux pages ») ; Personnel &amp; Setup restent réservés au superutilisateur.
         </p>
       )}
     </div>

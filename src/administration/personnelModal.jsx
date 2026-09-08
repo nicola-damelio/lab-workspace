@@ -24,6 +24,20 @@ import {
   cloudBackendAvailable, uploadLocalFile, readFileAsDataURL, withExtension,
 } from '../utils/driveUpload';
 import { sanitizeSlug, suggestDriveFileName } from '../utils/driveNaming';
+import { ADMIN_FONCTIONS, ADMIN_FONCTION_META, fonctionsOfPerson } from './adminSchema';
+
+/* ── Fonctions (accès admin) : une personne peut en porter plusieurs ────────
+   Options affichées dans la fiche (mêmes libellés que le module). */
+const FONCTION_CHOICES = ADMIN_FONCTIONS.map((code) => ({
+  code,
+  label: (ADMIN_FONCTION_META[code] && ADMIN_FONCTION_META[code].label) || code,
+  hint: (ADMIN_FONCTION_META[code] && ADMIN_FONCTION_META[code].hint) || '',
+}));
+
+const toggleFonction = (list, code) => {
+  const cur = Array.isArray(list) ? list.filter(Boolean) : [];
+  return cur.indexOf(code) !== -1 ? cur.filter((c) => c !== code) : [...cur, code];
+};
 
 /* ── Pièces jointes d’une fiche Personnel ────────────────────────────────────
    Documents / images et entretiens sont téléversés vers Google Drive dans le
@@ -187,7 +201,7 @@ const entriesToRows = (entries) => {
 const D0 = () => ({
   nom: '', type: '', corps: '', grade: '', bap: '',
   email: '',
-  fonction: '',
+  fonction: [],
   hdr: '', categorie: '', echelon: '', chevron: '',
   dateEmbauche: '', dateFinContrat: '', dernierRIPEC: '',
   dutiesText: '', recetteId: '',
@@ -222,7 +236,7 @@ export const PersonnelModal = ({
     return {
       nom: r.nom || '', type: r.type || types[0], corps: r.corps || '', grade: r.grade || '', bap: r.bap || '',
       email: r.email || '',
-      fonction: r.fonction || '',
+      fonction: fonctionsOfPerson(r),
       hdr: r.hdr || '', categorie: r.categorie || '', echelon: r.echelon || '', chevron: r.chevron || '',
       dateEmbauche: r.dateEmbauche || '', dateFinContrat: r.dateFinContrat || '',
       dernierRIPEC: r.dernierRIPEC || '',
@@ -493,14 +507,35 @@ export const PersonnelModal = ({
               {grades.map((g) => <option key={g} value={g}>{g}</option>)}
             </select>
           </div>
-          <div>
-            <label className={labelCls}>Fonction (accès admin)</label>
-            <select className={inputCls} value={draft.fonction} onChange={set('fonction')}>
-              <option value="">— Aucune —</option>
-              <option value="AP">AP — Dépenses, Budget overview + Hygiène & Sécurité</option>
-              <option value="Gestionnaire">Gestionnaire — Dépenses, Budget overview + Questions ouvertes</option>
-              <option value="Achats">Responsable d'achats — Dépenses, Budget overview ; reçoit les OM / achats prévus transférés</option>
-            </select>
+          <div className="sm:col-span-2">
+            <label className={labelCls}>Fonction(s) — accès admin (choix multiple)</label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {FONCTION_CHOICES.map((f) => {
+                const on = (draft.fonction || []).includes(f.code);
+                return (
+                  <label
+                    key={f.code}
+                    className={`flex items-start gap-2 border rounded-xl px-2.5 py-2 cursor-pointer transition-colors ${on ? 'bg-blue-50 border-blue-300' : 'bg-slate-50/60 border-slate-200 hover:border-slate-300'}`}
+                    title={f.hint}
+                  >
+                    <input
+                      type="checkbox"
+                      className="accent-blue-600 mt-0.5"
+                      checked={on}
+                      onChange={() => setDraft((d) => ({ ...d, fonction: toggleFonction(d.fonction, f.code) }))}
+                    />
+                    <span className="min-w-0">
+                      <span className={`block text-xs font-bold leading-tight ${on ? 'text-blue-800' : 'text-slate-600'}`}>{f.label}</span>
+                      <span className="block text-[10px] text-slate-400 leading-tight mt-0.5">{f.hint}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1.5">
+              Une même personne peut cumuler plusieurs rôles (ex. « Gestionnaire » + « Responsable d'achats ») :
+              les pages visibles et les notifications e-mail (devis créé, décisions…) combinent toutes les fonctions cochées.
+            </p>
           </div>
           {!showStage && (
             <>
