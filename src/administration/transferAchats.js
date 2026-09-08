@@ -196,10 +196,16 @@ export const reimbPatchFromOm = (om, parts, { cible, by } = {}) => {
   };
 };
 
-/** Patch « devis » (collection devisBc) pour un achat prévu / souhaité. */
+/** Patch « devis » (collection devisBc) pour un achat prévu / souhaité.
+ *  Depuis l’ajout des champs obligatoires de la page « Achats prévus /
+ *  souhaités » (description, N° devis, ligne budgétaire, fournisseur, montant,
+ *  frais de port, demandeur et fichier du devis), le devis pré-rempli est
+ *  COMPLET — il n’est plus à compléter par le destinataire avant approbation. */
 export const devisPatchFromDesiderata = (rec, { cible, by } = {}) => {
   const objet = txt(rec && pick(rec, ['description', 'intitule', 'nom'])) || 'Achat prévu / souhaité';
-  const devisUrl = txt(rec && pick(rec, ['numDevisUrl', 'devisUrl', 'urlDevis', 'lienDevis', 'devisLink']));
+  const devisUrl = txt(rec && pick(rec, ['fichierUrl', 'numDevisUrl', 'devisUrl', 'urlDevis', 'lienDevis', 'devisLink']));
+  const fichierNom = txt(rec && pick(rec, ['fichierNom', 'devisFileName']));
+  const fichierMime = txt(rec && rec.fichierMime);
   const note = txt(rec && pick(rec, ['commentaires', 'notes']));
   const ligne = txt(rec && pick(rec, ['ligneBudgetaire', 'ligne']));
   return {
@@ -214,10 +220,10 @@ export const devisPatchFromDesiderata = (rec, { cible, by } = {}) => {
     devisId: '',
     montant: parseNum(rec && rec.montantEstime),
     fraisPort: parseNum(rec && rec.fraisPort),
-    fichierNom: '',
+    fichierNom,
     fichierUrl: devisUrl,
-    fichierMime: '',
-    notes: [note, `Créé automatiquement depuis l'achat prévu / souhaité par ${txt(by) || '—'} — à compléter : N° devis et fichier avant approbation.`]
+    fichierMime,
+    notes: [note, `Créé automatiquement depuis l'achat prévu / souhaité par ${txt(by) || '—'}.`]
       .filter(Boolean).join(' · '),
     deposant: txt(by) || '',
     dateDepot: todayIso(),

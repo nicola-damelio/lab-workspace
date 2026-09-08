@@ -6,6 +6,14 @@
      · bouton « ＋ Ajouter un achat prévu / souhaité » : le demandeur déclare
        l’article, le fournisseur, la ligne budgétaire suggérée, le COÛT
        estimé et les FRAIS DE PORT ;
+     · isolation par membre : CHAQUE utilisateur ne voit que les achats qu’il
+       a lui-même déposés (et leur état : décision, devis, BC) — jamais ceux
+       des autres. Le superutilisateur, qui décide et transfère, voit tout.
+       Le champ « demandeur » est verrouillé sur soi-même (« demandeur = moi ») ;
+     · pour qu’un transfert produise un devis COMPLET, un membre doit fournir
+       à la saisie : la description, le N° devis, la ligne budgétaire, le
+       fournisseur, le montant, les frais de port et le fichier du devis
+       (téléversé sur Google Drive Budget_labo/<année>/Devis, ou lien collé) ;
      · la PREMIÈRE colonne contient la décision du superutilisateur
        (Approuvé / En attente / Pas maintenant — personnalisable dans
        Setup › Options des listes déroulantes) ; les autres membres ne
@@ -21,7 +29,7 @@
        statutChangedAt? }
      + enveloppe d’audit posée par upsert() (createdAt/By, updatedAt/By).
    ========================================================================= */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAdmin } from './AdminContext';
 import { SmartTable } from './smartTable';
 import { AdminImportModal } from './adminImportModal';
@@ -35,6 +43,9 @@ import {
   sendAdminMail, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
   summarizeMail, mailBodyText,
 } from './emailNotify';
+import { uploadLocalFile, cloudBackendAvailable } from '../utils/driveUpload';
+import { budgetDocPath, budgetDocFileName } from './driveFiling';
+import { scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName } from './ownScope';
 import {
   TRANSFER_TARGETS, targetMetaOf, cibleEmailsOf,
   devisPatchFromDesiderata, desiderataTransferStatus, isDepenseBcSigne,
@@ -71,7 +82,7 @@ const norm = (s) => String(s || '')
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const demandeurOf = (r) => pick(r, ['demandeur', 'porteur', 'nom', 'name']);
-const devisUrlOf = (r) => txt(pick(r, ['numDevisUrl', 'devisUrl', 'urlDevis', 'lienDevis', 'devisLink']));
+const devisUrlOf = (r) => txt(pick(r, ['fichierUrl', 'numDevisUrl', 'devisUrl', 'urlDevis', 'lienDevis', 'devisLink']));
 const addScheme = (u) => (/^(https?:|mailto:|tel:)/i.test(u) ? u : `https://${u}`);
 
 /* Code « devis » avec lien Google Drive facultatif vers le document. */
@@ -158,18 +169,33 @@ const Section = ({ icon, title, children }) => (
 );
 
 
-/* Le formulaire complet : le demandeur décrit le souhait, son coût et ses
-   frais de port ; la décision n’est modifiable que par un superutilisateur. */
+/* Le formulaire complet : le membre décrit le souhait d’achat avec TOUTES les
+   informations nécessaires à la création du devis au transfert (description,
+   N° devis, ligne budgétaire, fournisseur, montant, frais de port, fichier du
+   devis). Le champ « demandeur » est verrouillé sur soi-même pour les membres
+   (« demandeur = moi ») : chacun ne voit que ses propres souhaits. La décision
+   reste réservée au superutilisateur. */
 const DesiderataModal = ({
   rec, recettes, demandeurNames, fournisseurNames,
-  types, urgenceOptions, decisionOptions, canDecide, currentUser, onApproved, onCancel, onSave,
+  types, urgenceOptions, decisionOptions, canDecide, currentUser,
+  meNames = [], mePersonId = null, personnel = [], lockDemandeurToMe = false,
+  onApproved, onCancel, onSave,
 }) => {
   const editing = !!rec;
+  const meName = (meNames && meNames[0]) || '';
+  /* Le membre (et toute NOUVELLE demande) doit fournir toutes les informations
+     nécessaires à la création du devis au transfert. Seul le superutilisateur
+     qui édite une ancienne ligne d’import minimale en est dispensé. */
+  const requiredInfo = !editing || !canDecide;
   const [draft, setDraft] = useState(() => {
     const r = rec || {};
+    const url = devisUrlOf(r);
     return {
       description: txt(r && r.description),
-      demandeur: txt(demandeurOf(r)),
+      /* Nouvelle demande : le demandeur est automatiquement le membre connecté
+         (« demandeur = moi »). Le superutilisateur peut le changer pour une
+         autre personne quand il saisit une demande pour le compte de l’équipe. */
+      demandeur: editing ? txt(demandeurOf(r)) : (meName || txt(demandeurOf(r))),
       categorie: txt(r && r.categorie),
       urgence: txt(pick(r, ['priorite', 'urgence'])),
       recetteSuggereeId: (r && r.recetteSuggereeId) || '',
@@ -179,7 +205,10 @@ const DesiderataModal = ({
       fournisseur: txt(pick(r, ['fournisseur', 'nomFournisseur'])),
       contact: txt(r && r.contact),
       numDevis: txt(pick(r, ['numDevis', 'devisNo'])),
-      numDevisUrl: devisUrlOf(r),
+      numDevisUrl: url,
+      fichierNom: txt(r && (r.fichierNom || r.devisFileName)),
+      fichierUrl: url,
+      fichierMime: txt(r && r.fichierMime),
       devis2: txt(r && r.devis2),
       devis3: txt(r && r.devis3),
       codeProduit: txt(r && r.codeProduit),
@@ -189,6 +218,9 @@ const DesiderataModal = ({
     };
   });
   const [error, setError] = useState('');
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState('');
+  const fileInputRef = useRef(null);
   const set = (key) => (e) => setDraft((d) => ({ ...d, [key]: e.target.value }));
 
   const setRecette = (e) => {
@@ -197,15 +229,81 @@ const DesiderataModal = ({
     setDraft((d) => ({ ...d, recetteSuggereeId: id, ligneBudgetaire: found ? txt(found.ligne) : '' }));
   };
 
-  /* Lien du devis : si aucun N° n’est saisi, on le pré-remplit depuis le nom
-     du fichier porté par l’adresse (ex. « Devis_2026-015_Fournisseur.pdf »). */
+  const todayIso = () => {
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  };
+
+  /* Lien du devis : si aucun N° n’est saisi, on le pré-remplit depuis le nom du
+     fichier porté par l’adresse (ex. « Devis_2026-015_Fournisseur.pdf »).
+     Modifier le lien « à la main » retire les métadonnées d’un fichier téléversé
+     depuis le PC (le lien reste, seuls le nom et le MIME redeviennent vides). */
   const setNumDevisUrl = (e) => {
     const u = e.target.value;
-    setDraft((d) => ({
-      ...d,
-      numDevisUrl: u,
-      numDevis: d.numDevis || extractNumeroFromDoc(u),
-    }));
+    setDraft((d) => {
+      const sameFile = txt(d.fichierUrl) && txt(u) === txt(d.fichierUrl);
+      return {
+        ...d,
+        numDevisUrl: u,
+        fichierUrl: u,
+        fichierNom: sameFile ? d.fichierNom : '',
+        fichierMime: sameFile ? d.fichierMime : '',
+        numDevis: d.numDevis || extractNumeroFromDoc(u),
+      };
+    });
+  };
+
+  /* Téléversement du fichier devis vers Budget_labo/<année>/Devis (dossier créé
+     si besoin) avec le nom de la convention du laboratoire, puis enregistrement
+     du lien + nom + MIME dans le brouillon. Best-effort : sans Drive connecté,
+     l’utilisateur colle le lien du fichier dans le champ prévu (obligatoire). */
+  const pickFile = async (file) => {
+    if (!file) return;
+    setUploadMsg('');
+    if (!cloudBackendAvailable()) {
+      setUploadMsg('⚠️ Google Drive n’est pas connecté — collez le lien du fichier devis ci-dessous (obligatoire pour la création du devis).');
+      return;
+    }
+    setUploadBusy(true);
+    try {
+      const year = new Date().getFullYear();
+      const driveName = budgetDocFileName({
+        prefix: 'Devis',
+        code: txt(draft.numDevis),
+        ligne: txt(draft.ligneBudgetaire),
+        fournisseur: txt(draft.fournisseur),
+        demandeur: txt(draft.demandeur) || meName,
+        date: todayIso(),
+        fileName: file.name,
+      }) || String(file.name || 'document').trim().slice(0, 180);
+      const drive = await uploadLocalFile({
+        name: driveName,
+        mimeType: file.type || 'application/octet-stream',
+        file,
+        path: budgetDocPath(year, 'Devis'),
+      });
+      if (drive && drive.driveUrl) {
+        const url = txt(drive.driveUrl);
+        const storedName = String(drive.name || file.name || driveName).trim().slice(0, 180);
+        setDraft((d) => ({
+          ...d,
+          numDevisUrl: url,
+          fichierUrl: url,
+          fichierNom: storedName,
+          fichierMime: file.type || '',
+          numDevis: d.numDevis || extractNumeroFromDoc(storedName),
+        }));
+        setUploadMsg(`✓ Devis téléversé dans Budget_labo/${year}/Devis (dossier créé si besoin).`);
+      } else {
+        setUploadMsg('⚠️ Téléversement impossible — collez le lien du fichier devis ci-dessous.');
+      }
+    } catch (err) {
+      console.error(err);
+      setUploadMsg(`⚠️ Téléversement impossible : ${(err && err.message) || err}`);
+    } finally {
+      setUploadBusy(false);
+    }
   };
 
   const submit = () => {
@@ -214,6 +312,26 @@ const DesiderataModal = ({
       setError('Merci de décrire le souhait d’achat (obligatoire).');
       return;
     }
+    /* Champs obligatoires pour un membre (et pour toute NOUVELLE demande) : les
+       informations exigées pour créer un devis complet au moment du transfert.
+       Le superutilisateur qui édite une ancienne ligne minimale (import Google
+       Sheets) reste libre de la compléter à son rythme. */
+    const strict = !editing || !canDecide;
+    if (strict) {
+      const missing = [];
+      const need = (ok, label) => { if (!ok) missing.push(label); };
+      need(txt(draft.numDevis), 'le n° devis');
+      need(!!(draft.recetteSuggereeId || txt(draft.ligneBudgetaire)), 'la ligne budgétaire');
+      need(txt(draft.fournisseur), 'le fournisseur');
+      need(parseNum(draft.montantEstime) !== null, 'le montant');
+      need(parseNum(draft.fraisPort) !== null, 'les frais de port');
+      need(txt(draft.fichierUrl) || txt(draft.numDevisUrl), 'le fichier du devis (téléversé ou lien)');
+      if (missing.length) {
+        setError(`Toutes les informations nécessaires à la création du devis doivent être fournies : ${missing.join(', ')}.`);
+        return;
+      }
+    }
+    const fichierUrl = txt(draft.fichierUrl) || txt(draft.numDevisUrl);
     const patch = {
       description,
       demandeur: txt(draft.demandeur),
@@ -227,13 +345,22 @@ const DesiderataModal = ({
       fournisseur: txt(draft.fournisseur),
       contact: txt(draft.contact),
       numDevis: txt(draft.numDevis),
-      numDevisUrl: txt(draft.numDevisUrl),
+      numDevisUrl: fichierUrl,
+      fichierNom: txt(draft.fichierNom),
+      fichierUrl,
+      fichierMime: txt(draft.fichierMime),
       devis2: txt(draft.devis2),
       devis3: txt(draft.devis3),
       codeProduit: txt(draft.codeProduit),
       dateDemande: isoOf(draft.dateDemande),
       commentaires: txt(draft.commentaires),
     };
+    /* Attribution stable à la fiche Personnel du demandeur : elle permet à
+       chaque membre de ne voir que ses propres souhaits. */
+    const demandeurPersonId = lockDemandeurToMe
+      ? (mePersonId || scopePersonIdForName(personnel, patch.demandeur))
+      : scopePersonIdForName(personnel, patch.demandeur);
+    if (demandeurPersonId) patch.demandeurPersonId = demandeurPersonId;
     let approvalNow = false;
     if (canDecide) {
       const decided = desiderataDecisionOf(draft.statut) || 'En attente';
@@ -264,8 +391,11 @@ const DesiderataModal = ({
               {editing ? 'Modifier l’achat prévu / souhaité' : 'Nouvel achat prévu / souhaité'}
             </h2>
             <p className="text-teal-100 text-xs">
-              Souhait d’achat de l’équipe : décrivez l’article, son coût estimé et les frais de port — la décision
-              (Approuvé / En attente / Pas maintenant) reste réservée au superutilisateur.
+              {lockDemandeurToMe
+                ? editing
+                  ? 'Modification de votre demande — conservez bien toutes les informations nécessaires à la création du devis (description, n° devis, ligne budgétaire, fournisseur, montant, frais de port et fichier du devis).'
+                  : 'Votre demande : renseignez TOUTES les informations nécessaires à la création du devis (description, n° devis, ligne budgétaire, fournisseur, montant, frais de port et fichier du devis) — elle partira en « En attente » et la décision restera réservée au superutilisateur.'
+                : 'Souhait d’achat : description, ligne budgétaire, fournisseur, coût, frais de port et devis (n° + fichier) — la décision reste réservée au superutilisateur.'}
             </p>
           </div>
           <button type="button" onClick={onCancel} className="shrink-0 w-8 h-8 rounded-lg bg-white/15 hover:bg-white/30 text-white font-bold" title="Fermer">✕</button>
@@ -305,16 +435,32 @@ const DesiderataModal = ({
 
           <Section icon="👤" title="Demandeur & ligne budgétaire suggérée">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Field label="Demandeur">
+              <Field
+                label="Demandeur"
+                hint={lockDemandeurToMe
+                  ? 'Verrouillé sur vous-même : chacun ne voit que ses propres demandes.'
+                  : 'Personne à l’origine de la demande.'}
+              >
                 <input
-                  className={MODAL_INPUT} value={draft.demandeur} onChange={set('demandeur')}
-                  list="desiderata-demandeurs" placeholder="ex. Marie Curie"
+                  className={MODAL_INPUT} value={draft.demandeur}
+                  onChange={set('demandeur')}
+                  readOnly={lockDemandeurToMe}
+                  list={lockDemandeurToMe ? undefined : 'desiderata-demandeurs'}
+                  placeholder={lockDemandeurToMe ? 'vous-même' : 'ex. Marie Curie'}
                 />
-                <datalist id="desiderata-demandeurs">
-                  {(demandeurNames || []).map((n) => <option key={n} value={n} />)}
-                </datalist>
+                {!lockDemandeurToMe && (
+                  <datalist id="desiderata-demandeurs">
+                    {(demandeurNames || []).map((n) => <option key={n} value={n} />)}
+                  </datalist>
+                )}
               </Field>
-              <Field label="Ligne budgétaire suggérée" hint="La recette sur laquelle ce souhait serait imputé s’il est approuvé.">
+              <Field
+                label="Ligne budgétaire suggérée"
+                required={requiredInfo}
+                hint={requiredInfo
+                  ? 'Obligatoire : la ligne sur laquelle ce devis sera imputé.'
+                  : 'La recette sur laquelle ce souhait serait imputé s’il est approuvé.'}
+              >
                 <select className={MODAL_INPUT} value={draft.recetteSuggereeId} onChange={setRecette}>
                   <option value="">— Aucune ligne suggérée —</option>
                   {recettes.map((r) => (
@@ -329,13 +475,19 @@ const DesiderataModal = ({
 
           <Section icon="💶" title="Coût estimé">
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Coût estimé (€ HT)">
+              <Field label="Coût estimé (€ HT)" required={requiredInfo} hint={requiredInfo ? 'Montant du devis (HT), obligatoire.' : undefined}>
                 <input
                   className={MODAL_INPUT} inputMode="decimal" value={draft.montantEstime} onChange={set('montantEstime')}
                   placeholder="ex. 1 250,00"
                 />
               </Field>
-              <Field label="Frais de port (€)" hint="Livraison si elle est facturée à part.">
+              <Field
+                label="Frais de port (€)"
+                required={requiredInfo}
+                hint={requiredInfo
+                  ? '0,00 si la livraison est gratuite — toujours renseigné pour le devis.'
+                  : 'Livraison si elle est facturée à part.'}
+              >
                 <input
                   className={MODAL_INPUT} inputMode="decimal" value={draft.fraisPort} onChange={set('fraisPort')}
                   placeholder="ex. 24,90"
@@ -346,7 +498,7 @@ const DesiderataModal = ({
 
           <Section icon="🏬" title="Fournisseur">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Field label="Nom du fournisseur">
+              <Field label="Nom du fournisseur" required={requiredInfo} hint="Fournisseur du devis (obligatoire pour le transfert).">
                 <input
                   className={MODAL_INPUT} value={draft.fournisseur} onChange={set('fournisseur')}
                   list="desiderata-fournisseurs" placeholder="ex. VWR International"
@@ -364,7 +516,7 @@ const DesiderataModal = ({
 
           <Section icon="🧾" title="Devis & code produit">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Field label="N° devis">
+              <Field label="N° devis" required={requiredInfo} hint={requiredInfo ? 'Numéro du devis choisi (obligatoire).' : undefined}>
                 <input className={MODAL_INPUT} value={draft.numDevis} onChange={set('numDevis')} placeholder="ex. 2025-012345" />
               </Field>
               <Field label="Devis 2">
@@ -377,16 +529,44 @@ const DesiderataModal = ({
                 <input className={MODAL_INPUT} value={draft.codeProduit} onChange={set('codeProduit')} placeholder="ex. 89501-432" />
               </Field>
             </div>
-            <div className="mt-3">
-              <Field
-                label="Lien du devis ↗ (Google Drive, facultatif)"
-                hint="Collez l’adresse du devis (PDF…) déjà déposé sur Google Drive : elle est conservée sur le souhait et le N° devis devient un lien cliquable dans le tableau. Si le N° est vide, il est pré-rempli depuis le nom du fichier (ex. « Devis_2026-015_Fournisseur.pdf » → 2026-015)."
-              >
+            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <label className={MODAL_LABEL}>
+                Fichier du devis{requiredInfo ? ' *' : ''} — classé dans Budget_labo/&lt;année&gt;/Devis, renommé « Devis_N°_ligne_fournisseur_demandeur_date »
+              </label>
+              <div className="flex items-center gap-2 flex-wrap">
                 <input
-                  className={MODAL_URL_INPUT} value={draft.numDevisUrl} onChange={setNumDevisUrl}
-                  placeholder="https://drive.google.com/…"
+                  ref={fileInputRef}
+                  type="file"
+                  className="hidden"
+                  accept=".pdf,.doc,.docx,.odt,.xls,.xlsx,.jpg,.jpeg,.png,.txt"
+                  onChange={(e) => {
+                    const f = e.target.files && e.target.files[0];
+                    if (e.target) e.target.value = '';
+                    if (f) pickFile(f);
+                  }}
                 />
-              </Field>
+                <button
+                  type="button"
+                  disabled={uploadBusy}
+                  onClick={() => { if (fileInputRef.current) fileInputRef.current.click(); }}
+                  className="text-[11px] font-black px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 disabled:opacity-50"
+                >
+                  {uploadBusy ? '⏳ Téléversement…' : '⬆ Choisir le fichier devis'}
+                </button>
+                <input
+                  className={`${MODAL_URL_INPUT} flex-1 min-w-[200px]`}
+                  value={draft.numDevisUrl}
+                  onChange={setNumDevisUrl}
+                  placeholder="🔗 … ou collez le lien Google Drive du devis"
+                />
+              </div>
+              {txt(draft.numDevisUrl) && (
+                <p className="mt-1.5 text-[11px] text-slate-500 flex items-center gap-1.5 flex-wrap">
+                  📎 {txt(draft.fichierNom) || 'document lié'} :
+                  <a href={addScheme(draft.numDevisUrl)} target="_blank" rel="noreferrer" className="text-blue-700 underline decoration-blue-300 underline-offset-2 truncate max-w-[300px]">{draft.numDevisUrl}</a>
+                </p>
+              )}
+              {uploadMsg && <p className="mt-1.5 text-[11px] leading-snug text-slate-500">{uploadMsg}</p>}
             </div>
           </Section>
 
@@ -494,6 +674,22 @@ export const DesiderataPage = () => {
   /* La décision est réservée au superutilisateur. */
   const canDecide = !!access.canChangeWishlistStatus;
 
+  /* Isolation « chacun ne voit que ses propres souhaits » : le superutilisateur
+     voit tout (il décide et transfère) ; chaque autre membre ne voit que ses
+     propres demandes — et l’évolution de leur état — jamais celles des autres.
+     Les lignes sont attribuées par la fiche Personnel du demandeur posée à la
+     création (`demandeurPersonId`), sinon par correspondance de nom avec la
+     colonne « demandeur » (anciens imports Google Sheets). */
+  const isSuper = !!access.isSuperuser;
+  const meNames = useMemo(() => scopeMeNames(access, currentUser), [access, currentUser]);
+  const mePersonId = useMemo(() => scopeMePersonId(access), [access]);
+  const myRows = useMemo(
+    () => (isSuper ? list : list.filter((r) => scopeCanSeeItem(r, { isSuper, meNames, mePersonId }))),
+    // scopeCanSeeItem dépend de meNames / mePersonId (recalculés à chaque rendu).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [list, isSuper, meNames, mePersonId]
+  );
+
   /* Pages cibles des liens « vers la bibliothèque » (Librerie / Personnel). */
   const canViewLibrerie = useMemo(
     () => !!ADMIN_PAGES.find((p) => p.id === 'librerie' && access.canViewPage(p)),
@@ -523,20 +719,26 @@ export const DesiderataPage = () => {
     const base = (Array.isArray(settings.desiderateStatuses) && settings.desiderateStatuses.length)
       ? settings.desiderateStatuses : DESIDERATE_STATUSES;
     const set = base.map(desiderataDecisionOf);
-    list.forEach((r) => set.push(desiderataDecisionOf(r && r.statut)));
+    myRows.forEach((r) => set.push(desiderataDecisionOf(r && r.statut)));
     return [...new Set(set.filter(Boolean))];
-  }, [settings, list]);
+  }, [settings, myRows]);
 
-  /* Suggestions de listes. */
+  /* Suggestions « demandeur » du formulaire : pour un membre, uniquement
+     lui-même (« demandeur = moi », verrouillé) ; pour le superutilisateur,
+     toute l’équipe (il peut saisir pour le compte d’une autre personne). */
   const demandeurNames = useMemo(() => {
     const set = new Set();
+    if (!isSuper) {
+      meNames.forEach((n) => { const s = txt(n); if (s) set.add(s); });
+      return [...set];
+    }
     personnel.forEach((p) => {
       ['nom', 'prenom', 'name'].forEach((k) => { const n = txt(p && p[k]); if (n) set.add(n); });
     });
     list.forEach((r) => { const d = demandeurOf(r); if (d) set.add(d); });
     if (currentUser && txt(currentUser.name)) set.add(txt(currentUser.name));
     return [...set].sort((a, b) => a.localeCompare(b, 'fr'));
-  }, [personnel, list, currentUser]);
+  }, [personnel, list, currentUser, isSuper, meNames]);
 
   const fournisseurNames = useMemo(() => {
     const set = new Set();
@@ -589,15 +791,17 @@ export const DesiderataPage = () => {
     return k ? (personnelByKey.get(k) || null) : null;
   };
 
-  /* Les plus récentes d’abord (date de demande, sinon création). */
-  const sorted = useMemo(() => [...list].sort((a, b) => {
+  /* Les plus récentes d’abord (date de demande, sinon création) — sur les
+     seules lignes visibles par le membre connecté (les siennes, sauf pour le
+     superutilisateur qui voit tout). */
+  const sorted = useMemo(() => [...myRows].sort((a, b) => {
     const da = isoOf(a.dateDemande) || '';
     const db = isoOf(b.dateDemande) || '';
     if (!da && !db) return (b.createdAt || 0) - (a.createdAt || 0);
     if (!da) return 1;
     if (!db) return -1;
     return db.localeCompare(da);
-  }), [list]);
+  }), [myRows]);
 
 
   const onSave = (patch, existingId) => {
@@ -614,6 +818,7 @@ export const DesiderataPage = () => {
 
   const onRemove = (rec) => {
     if (!rec || !rec.id) return;
+    if (!isSuper && !scopeCanSeeItem(rec, { isSuper, meNames, mePersonId })) return;
     const label = txt(rec.description) || rec.id;
     if (!window.confirm(`Supprimer l’achat prévu / souhaité « ${label} » ?\nCette action est définitive.`)) return;
     remove('desiderate', rec.id);
@@ -675,7 +880,6 @@ export const DesiderataPage = () => {
      enregistrement indépendant (édition, cycle devis → BC → facture,
      déplacement entre Achats / PI / OM). La collection desiderate — les
      souhaits « prévus / souhaités » — n’est pas touchée. */
-  const isSuper = !!access.isSuperuser;
   const linkedDepenseOf = (rec) =>
     (Array.isArray(depenses) ? depenses : []).find((d) => d && d.desiderataId && d.desiderataId === rec.id) || null;
 
@@ -796,8 +1000,9 @@ export const DesiderataPage = () => {
           ? `Coût estimé : ${euro.format(montant)}${port !== null ? ` + frais de port ${euro.format(port)}` : ''}`
           : 'Coût non chiffré',
         txt(rec.fournisseur) ? `Fournisseur : ${txt(rec.fournisseur)}` : '',
-        'Un devis « En attente » pré-rempli a été créé dans « Approbation devis & BC » :',
-        'complétez-le (N° devis, fichier) puis faites-le approuver — le souhait disparaîtra de sa liste quand le BC sera signé.',
+        'Un devis « En attente » pré-rempli a été créé dans « Approbation devis & BC » avec toutes les informations',
+        'déclarées par le demandeur (description, N° devis, fournisseur, ligne budgétaire, montant, frais de port, fichier du devis) :',
+        'vérifiez-le puis faites-le approuver — le souhait disparaîtra de sa liste quand le BC lié sera signé.',
       ].filter(Boolean)),
     });
     const mailSummary = summarizeMail(res, `${meta.title} notifié`);
@@ -816,7 +1021,7 @@ export const DesiderataPage = () => {
      Dépenses › Achats dont la dépense a un BC signé). */
   const transferStatus = useMemo(() => {
     const map = new Map();
-    list.forEach((d) => {
+    myRows.forEach((d) => {
       const devisInfo = desiderataTransferStatus(d, devisBc, depenses);
       const direct = linkedDepenseOf(d);
       map.set(d.id, {
@@ -827,7 +1032,7 @@ export const DesiderataPage = () => {
     });
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [list, devisBc, depenses]);
+  }, [myRows, devisBc, depenses]);
 
   const visibleSorted = useMemo(() => {
     if (showDone) return sorted;
@@ -1140,7 +1345,7 @@ export const DesiderataPage = () => {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-xs font-bold text-slate-400 max-w-2xl">
           {visibleSorted.length} achat{visibleSorted.length > 1 ? 's' : ''} prévu{visibleSorted.length > 1 ? 's' : ''} / souhaité{visibleSorted.length > 1 ? 's' : ''} à suivre
-          ({sorted.length} au total{hiddenDone > 0 ? ` — ${hiddenDone} soldé${hiddenDone > 1 ? 's' : ''} masqué${hiddenDone > 1 ? 's' : ''} (BC signé)` : ''}) ·
+          ({sorted.length} au total{!isSuper ? ' — vos demandes uniquement' : ''}{hiddenDone > 0 ? ` — ${hiddenDone} soldé${hiddenDone > 1 ? 's' : ''} masqué${hiddenDone > 1 ? 's' : ''} (BC signé)` : ''}) ·
           les colonnes sont triables (en-têtes) et filtrables (bouton « Filtres »).
         </p>
         <div className="flex items-center gap-2 flex-wrap">
@@ -1151,14 +1356,16 @@ export const DesiderataPage = () => {
             <input type="checkbox" className="accent-teal-600" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} />
             Afficher les soldés
           </label>
-          <button
-            type="button"
-            onClick={() => setImportOpen(true)}
-            title="Importer des souhaits depuis la feuille Google Sheets (feuille « Decision / Code produit »)"
-            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
-          >
-            <span className="text-base leading-none">📥</span> Importer
-          </button>
+          {isSuper && (
+            <button
+              type="button"
+              onClick={() => setImportOpen(true)}
+              title="Importer des souhaits depuis la feuille Google Sheets (feuille « Decision / Code produit ») — action du superutilisateur"
+              className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
+            >
+              <span className="text-base leading-none">📥</span> Importer
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setModal({ mode: 'new' })}
@@ -1201,12 +1408,13 @@ export const DesiderataPage = () => {
       )}
 
       <div className="rounded-xl border border-teal-100 bg-teal-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
-        <b>Achats prévus / souhaités :</b> chaque membre déclare les achats souhaités de l’équipe (description, coût estimé et frais de port,
-        fournisseur, ligne budgétaire suggérée…). La <b>première colonne « Décision »</b> affiche la décision du
+        <b>Achats prévus / souhaités :</b> chaque membre déclare ses achats souhaités et ne voit QUE ses propres demandes
+        (description, n° devis, ligne budgétaire, fournisseur, montant, frais de port, fichier du devis) — le superutilisateur, qui décide et
+        transfère, voit tout. La <b>première colonne « Décision »</b> affiche la décision du
         superutilisateur : <b>Approuvé / En attente / Pas maintenant</b> (personnalisable dans Setup › Options des listes
         déroulantes). Une fois un souhait <b>Approuvé</b>, la colonne <b>« Transfert »</b> permet de le confier à la
         <b>gestionnaire</b> ou au <b>responsable d'achats</b> : un devis « En attente » pré-rempli est créé dans
-        « Approbation devis & BC » (e-mail au destinataire), complété puis approuvé — le souhait reste listé et ne
+        « Approbation devis & BC » (e-mail au destinataire), puis approuvé — le souhait reste listé et ne
         <b>disparaît que lorsque le BC lié est signé</b> (date de signature BC dans Dépenses). Le bouton <b>« → Dépenses »</b>
         crée directement la ligne dans Dépenses › onglet Achats (déplaçable vers PI / OM). Le <b>fournisseur</b>,
         la <b>ligne budgétaire</b> et le <b>demandeur</b> sont des liens vers la Librerie et les fiches Personnel.
@@ -1215,16 +1423,23 @@ export const DesiderataPage = () => {
       {visibleSorted.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
           <div className="text-4xl mb-2">🛒</div>
-          <p className="font-black text-slate-700">Aucun achat prévu / souhaité pour le moment</p>
+          <p className="font-black text-slate-700">
+            {isSuper ? 'Aucun achat prévu / souhaité pour le moment' : 'Aucun achat prévu / souhaité à votre nom'}
+          </p>
           <p className="text-sm text-slate-400 mt-1 mb-4">
-            {hiddenDone > 0 ? (
-              <>Tous les achats transférés sont soldés (BC signé). Cochez « Afficher les soldés » pour les retrouver
-                dans la liste.</>
+            {isSuper ? (
+              hiddenDone > 0 ? (
+                <>Tous les achats transférés sont soldés (BC signé). Cochez « Afficher les soldés » pour les retrouver
+                  dans la liste.</>
+              ) : (
+                <>Utilisez « ＋ Ajouter un achat prévu / souhaité » pour déclarer un article (coût et frais de port), puis
+                  une fois approuvé, confiez-le à la gestionnaire ou au responsable d'achats via la colonne « Transfert »
+                  (devis dans « Approbation devis & BC »). Ou « 📥 Importer » pour rejouer l’onglet « Souhaités » de la
+                  feuille Google Sheets.</>
+              )
             ) : (
-              <>Utilisez « ＋ Ajouter un achat prévu / souhaité » pour déclarer un article (coût et frais de port), puis
-                une fois approuvé, confiez-le à la gestionnaire ou au responsable d'achats via la colonne « Transfert »
-                (devis dans « Approbation devis & BC »). Ou « 📥 Importer » pour rejouer l’onglet « Souhaités » de la
-                feuille Google Sheets.</>
+              <>Chaque membre ne voit que ses propres demandes — ajoutez votre premier achat prévu / souhaité avec toutes les
+                informations du devis (description, n° devis, ligne budgétaire, fournisseur, montant, frais de port, fichier).</>
             )}
           </p>
           <button
@@ -1261,6 +1476,10 @@ export const DesiderataPage = () => {
           decisionOptions={decisionOptions}
           canDecide={canDecide}
           currentUser={currentUser}
+          meNames={meNames}
+          mePersonId={mePersonId}
+          personnel={personnel}
+          lockDemandeurToMe={!isSuper}
           onApproved={notifyApproved}
           onCancel={() => setModal(null)}
           onSave={onSave}

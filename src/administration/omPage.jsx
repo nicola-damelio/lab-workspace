@@ -30,6 +30,7 @@ import {
   sendAdminMail, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
   summarizeMail, mailBodyText,
 } from './emailNotify';
+import { scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName } from './ownScope';
 import {
   TRANSFER_TARGETS, targetMetaOf, cibleEmailsOf, partModeOf, omTransferSummary,
   devisPatchFromOmPart, reimbPatchFromOm, omTransferStatus,
@@ -152,11 +153,16 @@ const Section = ({ icon, title, children }) => (
 /* ═════════════════════════════════════════════════════════════════════════
    Fenêtre d’ajout / édition d’un ordre de mission
    ═════════════════════════════════════════════════════════════════════════ */
-const OmModal = ({ rec, recettes, demandeurNames, statusOptions, onCancel, onSave, canDecide = false, currentUser, onApproved }) => {
+const OmModal = ({
+  rec, recettes, demandeurNames, statusOptions, onCancel, onSave, canDecide = false,
+  currentUser, onApproved, meName = '', mePersonId = null, personnel = [], lockDemandeurToMe = false,
+}) => {
   const editing = !!rec;
   const [draft, setDraft] = useState(() => ({
     description: txt(rec && missionOf(rec)),
-    demandeur: txt(rec && demandeurOf(rec)),
+    /* Nouvelle demande : le demandeur est le membre connecté (« demandeur =
+       moi »), verrouillé pour les membres — chacun ne voit que ses propres OM. */
+    demandeur: txt(rec && demandeurOf(rec)) || (lockDemandeurToMe ? meName : ''),
     destination: txt(rec && pick(rec, ['destination', 'ville'])),
     numOM: txt(rec && pick(rec, ['numOM', 'numeroOm', 'omNo'])),
     recetteId: (rec && rec.recetteId) || '',
@@ -242,6 +248,12 @@ const OmModal = ({ rec, recettes, demandeurNames, statusOptions, onCancel, onSav
       coutTotal,
       partMode: COST_INPUTS.reduce((acc, c) => { acc[c.key] = txt(draft.partMode && draft.partMode[c.key]) || 'bc'; return acc; }, {}),
     };
+    /* Attribution stable à la fiche Personnel du demandeur : chacun ne voit que
+       ses propres OM (« demandeur = moi »). */
+    const demandeurPersonId = lockDemandeurToMe
+      ? (mePersonId || scopePersonIdForName(personnel, patch.demandeur))
+      : scopePersonIdForName(personnel, patch.demandeur);
+    if (demandeurPersonId) patch.demandeurPersonId = demandeurPersonId;
     if (canDecide && decided !== previous) {
       patch.statutChangedBy = (currentUser && currentUser.name) || '';
       patch.statutChangedAt = Date.now();
@@ -294,14 +306,24 @@ const OmModal = ({ rec, recettes, demandeurNames, statusOptions, onCancel, onSav
 
           <Section icon="👤" title="Demandeur & budget">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Field label="Demandeur">
+              <Field
+                label="Demandeur"
+                hint={lockDemandeurToMe
+                  ? 'Verrouillé sur vous-même : chacun ne voit que ses propres OM.'
+                  : 'Personne à l’origine de la demande de mission.'}
+              >
                 <input
-                  className={MODAL_INPUT} value={draft.demandeur} onChange={set('demandeur')} list="om-demandeurs"
-                  placeholder="ex. Marie Curie"
+                  className={MODAL_INPUT} value={draft.demandeur}
+                  onChange={set('demandeur')}
+                  readOnly={lockDemandeurToMe}
+                  list={lockDemandeurToMe ? undefined : 'om-demandeurs'}
+                  placeholder={lockDemandeurToMe ? 'vous-même' : 'ex. Marie Curie'}
                 />
-                <datalist id="om-demandeurs">
-                  {(demandeurNames || []).map((n) => <option key={n} value={n} />)}
-                </datalist>
+                {!lockDemandeurToMe && (
+                  <datalist id="om-demandeurs">
+                    {(demandeurNames || []).map((n) => <option key={n} value={n} />)}
+                  </datalist>
+                )}
               </Field>
               <Field
                 label="Ligne budgétaire liée"
@@ -482,6 +504,20 @@ export const OmPage = () => {
   const currentName = txt((access.profile && access.profile.person && access.profile.person.nom)
     || (currentUser && currentUser.name));
 
+  /* Isolation « chacun ne voit que ses propres OM » : le superutilisateur voit
+     tout (il approuve et transfère) ; chaque autre membre ne voit que ses
+     propres demandes — jamais celles des autres. Les OM sont attribuées par la
+     fiche Personnel du demandeur (`demandeurPersonId`, posée à la création),
+     sinon par correspondance de nom (anciens imports Google Sheets). */
+  const meNames = useMemo(() => scopeMeNames(access, currentUser), [access, currentUser]);
+  const mePersonId = useMemo(() => scopeMePersonId(access), [access]);
+  const myOm = useMemo(
+    () => (isSuper ? om : om.filter((o) => scopeCanSeeItem(o, { isSuper, meNames, mePersonId }))),
+    // scopeCanSeeItem dépend de meNames / mePersonId (recalculés à chaque rendu).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [om, isSuper, meNames, mePersonId]
+  );
+
   /* Destinataires des notifications d’approbation : le superutilisateur (fiche
      Personnel liée de l’opérateur) et, le cas échéant, la fiche « Gestionnaire ». */
   const superuserEmails = useMemo(
@@ -512,26 +548,34 @@ export const OmPage = () => {
     return () => clearTimeout(t);
   }, [notice]);
 
-  /* Suggestions « demandeur » : déjà saisis dans les OM + utilisateur courant. */
+  /* Suggestions « demandeur » : pour un membre, uniquement lui-même (« demandeur
+     = moi », verrouillé) ; pour le superutilisateur, tous les noms déjà saisis. */
   const demandeurNames = useMemo(() => {
+    if (!isSuper) {
+      const set = new Set();
+      meNames.forEach((n) => { const s = txt(n); if (s) set.add(s); });
+      return [...set];
+    }
     const set = new Set();
-    om.forEach((r) => {
+    myOm.forEach((r) => {
       const d = demandeurOf(r);
       if (d) set.add(d);
     });
     if (currentUser && txt(currentUser.name)) set.add(txt(currentUser.name));
     return [...set].sort((a, b) => a.localeCompare(b, 'fr'));
-  }, [om, currentUser]);
+  }, [myOm, currentUser, isSuper, meNames]);
 
-  /* Les plus récentes d’abord (par départ, sinon date de demande). */
-  const rows = useMemo(() => [...om].sort((a, b) => {
+  /* Les plus récentes d’abord (par départ, sinon date de demande) — sur les
+     seules OM visibles par le membre connecté (les siennes, sauf pour le
+     superutilisateur qui voit tout). */
+  const rows = useMemo(() => [...myOm].sort((a, b) => {
     const da = isoOf(pick(a, ['dateMission', 'dateDebut'])) || isoOf(a.dateDemande);
     const db = isoOf(pick(b, ['dateMission', 'dateDebut'])) || isoOf(b.dateDemande);
     if (!da && !db) return 0;
     if (!da) return 1;
     if (!db) return -1;
     return db.localeCompare(da);
-  }), [om]);
+  }), [myOm]);
 
   /* Suivi des OM transférées : un poste « Commande / BC » est soldé quand la
      dépense liée à son devis porte la date de signature de son BC ; un poste
@@ -539,10 +583,10 @@ export const OmPage = () => {
      plus « À corriger ». */
   const omStatusByKey = useMemo(() => {
     const map = new Map();
-    om.forEach((o) => map.set(o.id, omTransferStatus(o, devisBc, depenses, reimbursements)));
+    myOm.forEach((o) => map.set(o.id, omTransferStatus(o, devisBc, depenses, reimbursements)));
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [om, devisBc, depenses, reimbursements]);
+  }, [myOm, devisBc, depenses, reimbursements]);
 
   /* Quand une OM transférée a TOUS ses postes soldés (BC signé + remboursements
      corrigés), son statut passe automatiquement à « Terminée » : elle sort
@@ -642,6 +686,7 @@ export const OmPage = () => {
 
   const onRemove = (rec) => {
     if (!rec || !rec.id) return;
+    if (!isSuper && !scopeCanSeeItem(rec, { isSuper, meNames, mePersonId })) return;
     const label = missionOf(rec) || rec.id;
     if (!window.confirm(`Supprimer l’ordre de mission « ${label} » ?\nCette action est définitive.`)) return;
     remove('om', rec.id);
@@ -1016,7 +1061,7 @@ export const OmPage = () => {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-xs font-bold text-slate-400 max-w-2xl">
           {visibleRows.length} demande{visibleRows.length > 1 ? 's' : ''} de mission à suivre
-          ({om.length} OM prévu{om.length > 1 ? 's' : ''} / souhaité{om.length > 1 ? 's' : ''} au total
+          ({myOm.length} OM prévu{myOm.length > 1 ? 's' : ''} / souhaité{myOm.length > 1 ? 's' : ''} au total{!isSuper ? ' — vos demandes uniquement' : ''}
           {hiddenSoldes > 0 ? ` — ${hiddenSoldes} soldée${hiddenSoldes > 1 ? 's' : ''} masquée${hiddenSoldes > 1 ? 's' : ''}` : ''}) · les colonnes sont
           triables (en-têtes) et filtrables (bouton « Filtres »).
         </p>
@@ -1041,14 +1086,16 @@ export const OmPage = () => {
             <input type="checkbox" className="accent-cyan-600" checked={showSoldes} onChange={(e) => setShowSoldes(e.target.checked)} />
             Afficher les soldées
           </label>
-          <button
-            type="button"
-            onClick={() => setImportOpen(true)}
-            title="Importer des OM depuis la feuille Google Sheets (feuille « ENT / Prix / Description »)"
-            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
-          >
-            <span className="text-base leading-none">📥</span> Importer
-          </button>
+          {isSuper && (
+            <button
+              type="button"
+              onClick={() => setImportOpen(true)}
+              title="Importer des OM depuis la feuille Google Sheets (feuille « ENT / Prix / Description ») — action du superutilisateur"
+              className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
+            >
+              <span className="text-base leading-none">📥</span> Importer
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setModal({ mode: 'new' })}
@@ -1063,7 +1110,8 @@ export const OmPage = () => {
       {notice && <Notice tone={notice.tone} text={notice.text} mailto={notice.mailto} consoleUrl={notice.consoleUrl} onClose={() => setNotice(null)} />}
 
       <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
-        <b>OM prévus / souhaités :</b> chaque OM décrit une mission à préparer. La <b>première colonne « Statut »</b>
+        <b>OM prévus / souhaités :</b> chaque OM décrit une mission à préparer. Chaque membre ne voit que ses propres OM
+        (demandeur = lui-même, verrouillé) — le superutilisateur, qui approuve et transfère, voit tout. La <b>première colonne « Statut »</b>
         (En attente / Acceptée / Refusée / Terminée) n’est modifiable que par le superutilisateur. Dans le formulaire,
         chaque <b>poste de coût</b> est étiqueté <b>« BC »</b> (commandé par le laboratoire : devis dans « Approbation
         devis & BC ») ou <b>« Remb. »</b> (frais avancés par le membre puis remboursés : fiche dans Dépenses ›
@@ -1079,16 +1127,23 @@ export const OmPage = () => {
       {visibleRows.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
           <div className="text-4xl mb-2">✈️</div>
-          <p className="font-black text-slate-700">Aucun OM prévu / souhaité pour le moment</p>
+          <p className="font-black text-slate-700">
+            {isSuper ? 'Aucun OM prévu / souhaité pour le moment' : 'Aucun OM prévu / souhaité à votre nom'}
+          </p>
           <p className="text-sm text-slate-400 mt-1 mb-4">
-            {hiddenSoldes > 0 ? (
-              <>Toutes les OM transférées sont soldées (BC signé / remboursements corrigés). Cochez
-                « Afficher les soldées » pour les retrouver dans la liste.</>
+            {isSuper ? (
+              hiddenSoldes > 0 ? (
+                <>Toutes les OM transférées sont soldées (BC signé / remboursements corrigés). Cochez
+                  « Afficher les soldées » pour les retrouver dans la liste.</>
+              ) : (
+                <>Utilisez « ＋ Ajouter un OM » pour saisir une mission à la main (dates, coûts, statut…) — une fois
+                  l’OM « Acceptée », la colonne « Gestion des frais » permet de la transférer à la gestionnaire ou au
+                  responsable d’achats (devis « Approbation devis & BC » / remboursements). Ou « 📥 Importer » pour
+                  rejouer la feuille « ENT / Prix / Description » du classeur.</>
+              )
             ) : (
-              <>Utilisez « ＋ Ajouter un OM » pour saisir une mission à la main (dates, coûts, statut…) — une fois
-                l’OM « Acceptée », la colonne « Gestion des frais » permet de la transférer à la gestionnaire ou au
-                responsable d’achats (devis « Approbation devis & BC » / remboursements). Ou « 📥 Importer » pour
-                rejouer la feuille « ENT / Prix / Description » du classeur.</>
+              <>Chaque membre ne voit que ses propres OM — ajoutez votre première mission (dates, destination, coûts
+                par poste BC / Remboursement).</>
             )}
           </p>
           <button
@@ -1120,6 +1175,10 @@ export const OmPage = () => {
           statusOptions={omStatutOptions}
           canDecide={isSuper}
           currentUser={currentUser}
+          meName={currentName}
+          mePersonId={mePersonId}
+          personnel={personnel}
+          lockDemandeurToMe={!isSuper}
           onApproved={notifyApproved}
           onCancel={() => setModal(null)}
           onSave={onSave}

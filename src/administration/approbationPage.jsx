@@ -56,7 +56,7 @@ import {
   APPROVAL_PENDING, APPROVAL_APPROVED, APPROVAL_REJECTED, APPROVAL_NOT_RETAINED,
   isApprovalPending, approvalStatusOf,
 } from './adminSchema';
-import { uploadLocalFile, cloudBackendAvailable, renameDriveFile } from '../utils/driveUpload';
+import { uploadLocalFile, cloudBackendAvailable, renameDriveFile, driveFetch } from '../utils/driveUpload';
 import {
   fileBudgetDocs,
   driveFileIdFromUrl,
@@ -64,6 +64,7 @@ import {
   hasApprovedSuffix,
   withApprovedSuffix,
 } from './driveFiling';
+import { stampPdfWithSignature, makeSignedPdfFromImage } from './approvalSignature';
 import {
   sendAdminMail, personEmailOf, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
 } from './emailNotify';
@@ -120,6 +121,66 @@ const depositDocDriveFinalName = (r) => {
   return r && r.statut === APPROVAL_APPROVED && !hasApprovedSuffix(base)
     ? withApprovedSuffix(base)
     : base;
+};
+
+/* ── Copie signée créée à l'approbation d'un devis / BC ─────────────────── */
+/** Type effectif du fichier déposé : 'pdf' | 'image' | 'other'. L'extension
+ *  d'origine ou le type MIME (renseigné au téléversement) sont utilisés. */
+const depositFileKindOf = (rec) => {
+  const name = txt(rec && (rec.fichierNom || rec.fichierUrl));
+  const mime = String(rec && rec.fichierMime || '').toLowerCase();
+  if (mime === 'application/pdf' || /\.pdf(?:[?#].*)?$/i.test(name)) return 'pdf';
+  if (mime.startsWith('image/') || /\.(jpe?g|png)(?:[?#].*)?$/i.test(name)) return 'image';
+  return 'other';
+};
+
+/** Nom du fichier SIGNÉ téléversé à l'approbation : convention du laboratoire
+ *  (avec la marque « _approuvé » portée par depositDocDriveFinalName) + la
+ *  marque « _signé », toujours en extension PDF :
+ *    Devis_<N°>_<ligne>_<fournisseur>_<demandeur>_<date>_approuvé_signé.pdf */
+const signedDocDriveName = (r) => {
+  const base = depositDocDriveFinalName(r) || txt(r && r.fichierNom) || 'document';
+  return `${String(base).replace(/\.[^./\\]+$/, '')}_signé.pdf`;
+};
+
+/** Date ISO (AAAA-MM-JJ) → « JJ/MM/AAAA » (mention portée sur la signature). */
+const frShortDateOf = (iso) => {
+  const [y, m, d] = (isoOf(iso) || todayIso()).split('-');
+  return y && m && d ? `${d}/${m}/${y}` : todayIso();
+};
+
+/** Octets binaires → data:URL (utile quand le devis déposé est une image). */
+const bytesToDataUrl = (bytes, mime) => {
+  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  let bin = '';
+  for (let i = 0; i < arr.length; i += 1) bin += String.fromCharCode(arr[i]);
+  return `data:${mime || 'application/octet-stream'};base64,${btoa(bin)}`;
+};
+
+/** Image (data:URL) réduite pour le stockage dans les réglages : la dimension
+ *  la plus grande est plafonnée (la transparence PNG est conservée). */
+const MAX_SIGNATURE_DIM = 1500;
+const downscaleImageDataUrl = async (dataUrl) => {
+  const img = new Image();
+  img.src = dataUrl;
+  await new Promise((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error('Image illisible.'));
+  });
+  const w = img.naturalWidth || img.width || 0;
+  const h = img.naturalHeight || img.height || 0;
+  const scale = Math.min(1, MAX_SIGNATURE_DIM / Math.max(1, w, h));
+  if (scale >= 1 && String(dataUrl).startsWith('data:image/png')) {
+    return { dataUrl, width: w, height: h };
+  }
+  const cw = Math.max(1, Math.round(w * scale));
+  const ch = Math.max(1, Math.round(h * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = cw;
+  canvas.height = ch;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, cw, ch);
+  return { dataUrl: canvas.toDataURL('image/png'), width: cw, height: ch };
 };
 
 /** Renomme (best-effort) sur Google Drive le fichier d’un devis / BC : nom
@@ -196,7 +257,7 @@ const Badge = ({ tone = 'slate', children }) => (
    ═════════════════════════════════════════════════════════════════════════ */
 export const ApprobationPage = () => {
   const {
-    data, access, upsert, remove, currentUser, operators,
+    data, access, upsert, remove, currentUser, operators, settings, updateSettings,
   } = useAdmin();
   const personnel = useMemo(
     () => (Array.isArray(data.personnel) ? data.personnel : []),
@@ -495,6 +556,116 @@ export const ApprobationPage = () => {
     setNote(await summarizeMail(res, 'Déposant notifié'));
   };
 
+  /* ── Signature automatique des devis / BC approuvés (PDF) ──────────────────
+     Quand le superutilisateur approuve un devis ou un BC, si une image de
+     signature est enregistrée dans les réglages ET que le fichier déposé est
+     un PDF (ou une image) accessible sur Google Drive, une COPIE SIGNÉE est
+     créée (l'original reste intact) :
+       Budget_labo/<année>/Devis|BC › <nom conventionnel>_approuvé_signé.pdf
+     Cette copie devient le fichier officiel de la ligne devis/BC et de la
+     dépense créée/mise à jour par l'approbation. Tout est best-effort : en cas
+     d'échec, la décision reste enregistrée et un message l'explique. */
+  const signDepositDocument = async (rec, depId) => {
+    const signature = settings && settings.approvalSignature;
+    const frags = [];
+    const warn = (msg) => frags.push(`✍️ Signature : ${msg}`);
+    if (!rec || !rec.id) return frags;
+    if (!signature || !txt(signature.dataUrl)) return frags; // aucune image : rien à faire
+    try {
+      if (!cloudBackendAvailable()) {
+        warn('Google Drive non connecté — le PDF signé n’a pas été créé.');
+        return frags;
+      }
+      const fileId = driveFileIdFromUrl(txt(rec.fichierUrl));
+      if (!fileId) {
+        warn('fichier non stocké sur Google Drive — le PDF signé n’a pas été créé.');
+        return frags;
+      }
+      let docKind = depositFileKindOf(rec);
+      let mime = String(rec.fichierMime || '').toLowerCase();
+      /* Le fichier collé en lien (sans type MIME local) : on interroge Drive. */
+      try {
+        const metaRes = await driveFetch(`/drive/v3/files/${fileId}?fields=name,mimeType`);
+        const meta = metaRes ? await metaRes.json() : null;
+        const metaName = String(meta && meta.name || '');
+        mime = String(meta && meta.mimeType || mime).toLowerCase();
+        if (mime === 'application/pdf' || /\.pdf$/i.test(metaName)) docKind = 'pdf';
+        else if (mime.startsWith('image/') || /\.(jpe?g|png)$/i.test(metaName)) docKind = 'image';
+      } catch { /* on garde le type deviné depuis l'enregistrement */ }
+      if (docKind === 'other') {
+        warn('document non PDF (Word, Excel…) — la signature ne peut pas y être apposée.');
+        return frags;
+      }
+      const contentRes = await driveFetch(`/drive/v3/files/${fileId}?alt=media`, {
+        headers: { Accept: docKind === 'pdf' ? 'application/pdf' : (mime || 'image/png') },
+      });
+      if (!contentRes || !contentRes.ok) {
+        warn('impossible de télécharger le fichier (permissions Google Drive ?).');
+        return frags;
+      }
+      const bytes = new Uint8Array(await contentRes.arrayBuffer());
+      if (!bytes || !bytes.length) {
+        warn('fichier vide — la copie signée n’a pas été créée.');
+        return frags;
+      }
+      const kindLabel = rec.kind === 'bc' ? 'BC' : 'Devis';
+      const ref = txt(rec.kind === 'bc' ? rec.numBC : rec.numDevis);
+      const captionLines = [
+        'Bon pour accord',
+        `${kindLabel}${ref ? ` N° ${ref}` : ''} — approuvé le ${frShortDateOf()} par ${currentName}`,
+      ];
+      const signedBytes = docKind === 'pdf'
+        ? await stampPdfWithSignature({ pdfBytes: bytes, signatureDataUrl: signature.dataUrl, captionLines })
+        : await makeSignedPdfFromImage({
+          imageDataUrl: bytesToDataUrl(bytes, mime || 'image/png'),
+          signatureDataUrl: signature.dataUrl,
+          captionLines,
+        });
+      const signedName = signedDocDriveName(rec);
+      const drive = await uploadLocalFile({
+        name: signedName,
+        mimeType: 'application/pdf',
+        file: new Blob([signedBytes], { type: 'application/pdf' }),
+        path: budgetLaboPath(rec.kind),
+      });
+      if (!drive || !drive.driveUrl) {
+        warn('téléversement de la copie signée impossible (Drive non connecté ?).');
+        return frags;
+      }
+      const driveName = String(drive.name || signedName);
+      upsert('devisBc', {
+        fichierNom: driveName,
+        fichierUrl: drive.driveUrl,
+        fichierMime: 'application/pdf',
+        signedAt: Date.now(),
+        signedBy: currentName,
+      }, rec.id);
+      if (depId) {
+        const linkField = rec.kind === 'bc' ? 'numBCUrl' : 'numDevisUrl';
+        upsert('depenses', { [linkField]: drive.driveUrl }, depId);
+      }
+      frags.push(`✍️ Copie signée « ${driveName} » créée — c'est maintenant le fichier officiel.`);
+      return frags;
+    } catch (err) {
+      console.warn('Signature automatique du document ignorée :', err && err.message);
+      warn((err && err.message) || 'erreur inattendue.');
+      return frags;
+    }
+  };
+
+  /** Ajoute un fragment d'information au bandeau de note SANS écraser ce qui
+   *  s'y trouve déjà (l'e-mail, le rangement des fichiers, la signature…). */
+  const appendNoteFrag = (frags) => {
+    if (!Array.isArray(frags) || !frags.length) return;
+    setNote((prev) => {
+      const base = prev || {};
+      return { ...base, text: [prev && prev.text, frags.join(' · ')].filter(Boolean).join(' ') };
+    });
+  };
+
+  const setApprovalSignature = (sig) => updateSettings({ approvalSignature: sig });
+  const clearApprovalSignature = () => updateSettings({ approvalSignature: null });
+
     /* ── Décisions (réservées au superutilisateur) ────────────────────────── */
   const decideRow = async (rec, decision) => {
     if (!rec || !rec.id) return;
@@ -557,6 +728,10 @@ export const ApprobationPage = () => {
           const nonRetenu = upsert('devisBc', { statut: APPROVAL_NOT_RETAINED, decidedBy: currentName, decidedAt: Date.now() }, sib.id);
           await notifyNotRetained(nonRetenu, rec);
         }
+        /* ✍️ Devis approuvé → copie signée du PDF (best-effort, l'original reste
+           intact) : la copie « …_approuvé_signé.pdf » devient le fichier
+           officiel du devis et de la dépense créée. */
+        appendNoteFrag(await signDepositDocument(approvedDevis, dep.id));
       } else {
         /* Approbation du BC → la dépense du devis lié passe à « BC signé », avec la
            date de signature du BC (dateSignature) renseignée automatiquement. */
@@ -586,6 +761,10 @@ export const ApprobationPage = () => {
         const approvedBcName = await renameDepositDriveFileTo(approvedBc);
         if (approvedBcName) upsert('devisBc', { fichierNom: approvedBcName }, approvedBc.id);
         await notifyDecision({ ...rec, statut: APPROVAL_APPROVED, depenseId: dep.id }, APPROVAL_APPROVED);
+        /* ✍️ BC approuvé → copie signée du PDF (best-effort, l'original reste
+           intact) : la copie « …_approuvé_signé.pdf » devient le fichier
+           officiel du BC et le lien « BC » de la dépense passe à « BC signé ». */
+        appendNoteFrag(await signDepositDocument(approvedBc, dep.id));
       }
     } catch (err) {
       console.error(err);
@@ -742,7 +921,8 @@ export const ApprobationPage = () => {
         <p className="text-xs font-bold text-slate-400">
           Dépôt des devis & bons de commande à faire signer — fichiers classés dans
           Budget_labo/{new Date().getFullYear()}/<b>Devis</b> et <b>BC</b> · décision
-          réservée au superutilisateur.
+          réservée au superutilisateur · l’approbation d’un PDF crée une copie
+          signée « …_approuvé_signé.pdf » (l’original reste intact).
         </p>
         <div className="flex items-center gap-2">
           <button
@@ -814,6 +994,14 @@ export const ApprobationPage = () => {
           <div className="text-[10px] text-slate-400 font-semibold">{bcList.length} déposé{bcList.length > 1 ? 's' : ''} · {decidedCount('bc')} traité{decidedCount('bc') > 1 ? 's' : ''}</div>
         </button>
       </div>
+
+      {isSuper ? (
+        <SignatureBar
+          signature={settings && settings.approvalSignature ? settings.approvalSignature : null}
+          onUpdate={setApprovalSignature}
+          onRemove={clearApprovalSignature}
+        />
+      ) : null}
 
       <SmartTable
         columns={columns}
@@ -1047,6 +1235,108 @@ const buildColumns = ({
     }
   );
   return cols;
+};
+
+/* ═════════════════════════════════════════════════════════════════════════
+   Bandeau « Signature d'approbation » (superutilisateur) — dépôt, remplacement
+   ou retrait de l'image apposée automatiquement en bas des PDF approuvés.
+   ═════════════════════════════════════════════════════════════════════════ */
+const SignatureBar = ({ signature, onUpdate, onRemove }) => {
+  const fileRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const readAsDataUrl = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Fichier illisible.'));
+    reader.readAsDataURL(file);
+  });
+  const pick = async (file) => {
+    if (!file) return;
+    setMsg('');
+    const mimeOk = /^image\/(png|jpe?g)$/i.test(String(file.type || ''));
+    const extOk = /\.(png|jpe?g)$/i.test(String(file.name || ''));
+    if (!mimeOk && !extOk) {
+      setMsg('⚠️ Choisissez un fichier image PNG ou JPEG (fond transparent recommandé).');
+      return;
+    }
+    setBusy(true);
+    try {
+      const raw = await readAsDataUrl(file);
+      const sized = await downscaleImageDataUrl(raw);
+      onUpdate({
+        name: String(file.name || 'signature').slice(0, 120),
+        dataUrl: sized.dataUrl,
+        mime: 'image/png',
+        width: sized.width || 0,
+        height: sized.height || 0,
+        updatedAt: Date.now(),
+      });
+      setMsg(`✓ Signature enregistrée${sized.width && sized.height ? ` (${sized.width} × ${sized.height} px)` : ''} — elle sera apposée automatiquement en bas des PDF approuvés.`);
+    } catch (err) {
+      setMsg(`⚠️ ${(err && err.message) || 'erreur'}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remove = () => {
+    if (window.confirm('Retirer l’image de signature ? Les prochains devis / BC approuvés ne seront plus signés.')) {
+      onRemove();
+      setMsg('');
+    }
+  };
+  const hasSig = !!(signature && txt(signature.dataUrl));
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+      <span className="text-[11px] font-black uppercase tracking-wide text-slate-400">
+        ✍️ Signature d’approbation
+      </span>
+      {hasSig ? (
+        <>
+          <img
+            src={signature.dataUrl}
+            alt="Aperçu de la signature"
+            title={txt(signature.name) || 'Signature'}
+            className="h-9 w-auto max-w-[150px] object-contain bg-slate-50 border border-slate-200 rounded-md p-1"
+          />
+          <span className="text-[10px] text-slate-400 max-w-[180px] truncate">
+            {txt(signature.name) || 'signature'}
+          </span>
+        </>
+      ) : (
+        <span className="text-[11px] font-bold text-amber-600">Aucune signature — les PDF ne seront pas signés.</span>
+      )}
+      <input
+        ref={fileRef}
+        type="file"
+        className="hidden"
+        accept=".png,.jpg,.jpeg,image/png,image/jpeg"
+        onChange={(ev) => {
+          const f = ev.target.files && ev.target.files[0];
+          if (ev.target) ev.target.value = '';
+          if (f) pick(f);
+        }}
+      />
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => { if (fileRef.current) fileRef.current.click(); }}
+        className="text-[11px] font-black px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200 disabled:opacity-50"
+      >
+        {busy ? '⏳ Traitement…' : (hasSig ? '⬆ Changer' : '⬆ Choisir l’image')}
+      </button>
+      {hasSig ? (
+        <button type="button" onClick={remove} className="text-[11px] font-black px-2 py-1.5 rounded-lg text-red-500 hover:bg-red-50">
+          🗑 Retirer
+        </button>
+      ) : null}
+      <span className="text-[10px] text-slate-400 leading-snug flex-1 min-w-[220px]">
+        Image apposée en bas de la <b>dernière page</b> des PDF des devis & BC approuvés : une copie
+        « …_approuvé_signé.pdf » est créée dans Budget_labo/{new Date().getFullYear()}/Devis|BC (l’original reste intact).
+      </span>
+      {msg ? <span className="text-[11px] font-semibold text-slate-500 basis-full">{msg}</span> : null}
+    </div>
+  );
 };
 
 /* ═════════════════════════════════════════════════════════════════════════
@@ -1423,7 +1713,8 @@ const DepositModal = ({
             <label className={MODAL_LABEL}>
               Fichier * — classé dans Budget_labo/{year}/{isDevis ? 'Devis' : 'BC'} — renommé
               automatiquement « {isDevis ? 'Devis' : 'BC'}_N°_ligne_fournisseur_demandeur_date »
-              (+ « _approuvé » une fois le {isDevis ? 'devis' : 'BC'} approuvé)
+              (+ « _approuvé » une fois le {isDevis ? 'devis' : 'BC'} approuvé — l’approbation d’un
+              PDF crée en plus une copie signée « …_approuvé_signé.pdf », l’original reste intact)
             </label>
             <div className="flex items-center gap-2 flex-wrap">
               <input
