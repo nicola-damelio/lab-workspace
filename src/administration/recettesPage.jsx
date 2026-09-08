@@ -64,6 +64,19 @@ const isStageNature = (v) => {
   return /(^|[^a-zà-ÿ])stages?([^a-zà-ÿ]|$)/.test(s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
 };
 const isStageDepense = (d) => isStageNature(d && (d.classification || d.nature));
+/* « Remboursements » : frais avancés par un membre puis remboursés par le
+   laboratoire. Même mécanique que les « Stages » : ils sont retirés des
+   colonnes « Achats (BC signé) » / « Prestations internes » / « OM payés » et
+   décomptés dans leur propre colonne, déduite du solde (jamais comptés deux
+   fois). */
+const isReimbNature = (v) => {
+  const s = txt(v).toLowerCase();
+  if (!s) return false;
+  // « Remboursements », « Remboursement », « Remboursé », « Reimbursement »…
+  // → toute valeur contenant « rembours… » / « reimburs… ».
+  return /(^|[^a-zà-ÿ])(rembours\w*|reimburs\w*)([^a-zà-ÿ]|$)/.test(s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+};
+const isReimbDepense = (d) => isReimbNature(d && (d.classification || d.nature));
 /* Statuts d’une dépense d’achat qui supposent un bon de commande signé
    (pipeline : « BC signé », puis Service fait / Livré / Facturé / Clôturé…). */
 const BC_SIGNED_STATUSES = new Set([
@@ -156,7 +169,7 @@ export const RecettesPage = () => {
     const recId = rec && rec.id;
     const notRejected = (d) => !/refus|rejet|annul/i.test(txt(d.statut || d.suivi));
     /* Décompte retenu pour le solde (Achats BC signé + prestations internes +
-       OM payés + rémunérations de stage) :
+       OM payés + rémunérations de stage + remboursements) :
        · « Achats (BC signé) » = lignes d’achat dont le bon de commande est
          signé — BC signé même si le statut a ensuite avancé (Service fait,
          Facturé…) : repère = date de signature du BC renseignée, sinon statut
@@ -168,19 +181,22 @@ export const RecettesPage = () => {
          souhaités » → transfert vers Dépenses › OM) qui suivent le paiement ;
        · « Rémunération stages » = lignes classées « Stages » (classification /
          nature de la dépense) — elles sont exclues des trois colonnes
-         précédentes afin de n’être comptées qu’ici.
+         précédentes afin de n’être comptées qu’ici ;
+       · « Remboursements » = lignes classées « Remboursements » (frais avancés
+         par un membre puis remboursés par le laboratoire) — même mécanique
+         que les « Stages ».
        Les OM « prévus / souhaités » (collection om) restent INFORMATIFS : ils
        ne réduisent le solde que lorsqu’ils ont été transférés en dépense OM. */
     const lineDepenses = depenses.filter((d) => d.recetteId === recId);
-    const ordonneeRows = lineDepenses.filter((d) => depenseKindOf(d) === 'achat' && !isStageDepense(d) && isAchatBcSigne(d));
+    const ordonneeRows = lineDepenses.filter((d) => depenseKindOf(d) === 'achat' && !isStageDepense(d) && !isReimbDepense(d) && isAchatBcSigne(d));
     const ordonneeTotal = ordonneeRows.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
     /* Colonne « Prestations internes » : même liste que l’onglet PI de la page
        Dépenses (type « pi », fournisseur « PI ») imputée sur cette ligne. */
-    const piRows = lineDepenses.filter((d) => depenseKindOf(d) === 'pi' && !isStageDepense(d) && notRejected(d));
+    const piRows = lineDepenses.filter((d) => depenseKindOf(d) === 'pi' && !isStageDepense(d) && !isReimbDepense(d) && notRejected(d));
     const piTotal = piRows.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
     /* Colonne « OM payés » : même liste que l’onglet OM de la page Dépenses
        (type « om », créée depuis « OM prévus / souhaités » → → Dépenses). */
-    const omPaidRows = lineDepenses.filter((d) => depenseKindOf(d) === 'om' && !isStageDepense(d) && notRejected(d));
+    const omPaidRows = lineDepenses.filter((d) => depenseKindOf(d) === 'om' && !isStageDepense(d) && !isReimbDepense(d) && notRejected(d));
     const omPaidTotal = omPaidRows.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
     /* Colonne « Rémunération stages » : mêmes lignes que l’onglet du même nom
        de la page Dépenses (classification / nature « Stages »), toutes familles
@@ -188,6 +204,12 @@ export const RecettesPage = () => {
        colonnes « Achats (BC signé) » / « Prestations internes » / « OM payés ». */
     const stageRows = lineDepenses.filter((d) => isStageDepense(d) && notRejected(d));
     const stageTotal = stageRows.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
+    /* Colonne « Remboursements » : mêmes lignes que l’onglet du même nom de la
+       page Dépenses (classification / nature « Remboursements »), toutes
+       familles confondues, imputées sur cette ligne — exclues des trois
+       colonnes précédentes et de la colonne « Rémunération stages ». */
+    const reimbRows = lineDepenses.filter((d) => isReimbDepense(d) && notRejected(d));
+    const reimbTotal = reimbRows.reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
     /* « OM prévus » : seuls les OM approuvés (« Acceptée ») entrent dans la
        somme — les autres (En attente, Terminée…) restent visibles au survol
        mais ne sont pas inclus (souhaités non inclus dans la somme). */
@@ -200,8 +222,8 @@ export const RecettesPage = () => {
     const budgetRendu = rec.budgetRenduDispo !== undefined && rec.budgetRenduDispo !== null && rec.budgetRenduDispo !== ''
       ? toNum(rec.budgetRenduDispo)
       : toNum(rec.budgetTotal);
-    // Solde = dispo université − Achats (BC signé) − prestations internes − OM payés − rémunérations de stage (jamais les souhaits / OM prévus).
-    const solde = budgetRendu - ordonneeTotal - piTotal - omPaidTotal - stageTotal;
+    // Solde = dispo université − Achats (BC signé) − prestations internes − OM payés − rémunérations de stage − remboursements (jamais les souhaits / OM prévus).
+    const solde = budgetRendu - ordonneeTotal - piTotal - omPaidTotal - stageTotal - reimbTotal;
     /* « OM prévus encore à payer » : OM acceptés qui n’ont pas encore été
        transférés en dépense OM (transfert → Dépenses › OM). Un OM transféré a
        déjà déduit son montant du solde via « OM payés » — le déduire à nouveau
@@ -218,6 +240,7 @@ export const RecettesPage = () => {
     return {
       lineDepenses, ordonneeRows, ordonneeTotal,
       piRows, piTotal, omPaidRows, omPaidTotal, stageRows, stageTotal,
+      reimbRows, reimbTotal,
       lineOm, omApprouves,
       omEnAttente: lineOm.filter((o) => String(o.statut || 'En attente').trim() === 'En attente'),
       omTotal, omPrevuEnCours, soldePrevu,
@@ -227,16 +250,16 @@ export const RecettesPage = () => {
   };
 
   const totals = useMemo(() => {
-    let budgetTotal = 0; let budgetRendu = 0; let pi = 0; let omPay = 0; let omTot = 0; let des = 0; let solde = 0; let soldePrevu = 0;
+    let budgetTotal = 0; let budgetRendu = 0; let pi = 0; let omPay = 0; let omTot = 0; let des = 0; let reimb = 0; let solde = 0; let soldePrevu = 0;
     activeRecettes.forEach((r) => {
       const a = aggFor(r);
       budgetTotal += toNum(r.budgetTotal);
       budgetRendu += a.budgetRendu;
-      pi += a.piTotal; omPay += a.omPaidTotal; omTot += a.omTotal; des += a.desMontant;
+      pi += a.piTotal; omPay += a.omPaidTotal; omTot += a.omTotal; des += a.desMontant; reimb += a.reimbTotal;
       solde += a.solde;
       soldePrevu += a.soldePrevu;
     });
-    return { budgetTotal, budgetRendu, pi, omPay, omTot, des, solde, soldePrevu };
+    return { budgetTotal, budgetRendu, pi, omPay, omTot, des, reimb, solde, soldePrevu };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRecettes, depenses, om, desiderate]);
 
@@ -391,6 +414,24 @@ export const RecettesPage = () => {
           items={r.__agg.stageRows.map((d) => ({
             title: d.description || 'Rémunération de stage',
             meta: ['Stages', d.numBC || d.numSIFAC || '', d.statut || d.suivi || ''].filter(Boolean).join(' · '),
+            value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
+            to: depLink(d),
+          }))}
+        />
+      ),
+    },
+    {
+      key: 'remboursements', label: 'Remboursements',
+      header: <span title="Dépenses dont la « Classification / nature » est « Remboursements » (onglet « Remboursements » de la page Dépenses : frais avancés par un membre puis remboursés par le laboratoire) — déduites du solde">Remboursements</span>,
+      dataType: 'number', align: 'right', nowrap: true,
+      value: (r) => Number(r.__agg.reimbTotal) || 0,
+      display: (r) => (
+        <HoverCell
+          amount={r.__agg.reimbTotal}
+          onOpen={openTarget}
+          items={r.__agg.reimbRows.map((d) => ({
+            title: d.description || 'Remboursement',
+            meta: ['Remboursements', d.statut || d.suivi || ''].filter(Boolean).join(' · '),
             value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
             to: depLink(d),
           }))}
@@ -682,7 +723,7 @@ const HoverCell = ({ amount, items, onOpen }) => {
 /* Cellule « Solde » : le calcul complet apparaît au survol de la case (montant
    ou ⓘ) — liste des composantes déduites :
    Solde = dispo université − Achats (BC signé) − prestations internes − OM
-   payés − rémunérations de stage. */
+   payés − rémunérations de stage − remboursements. */
 const SoldeCell = ({ agg }) => {
   const negative = agg.solde < 0;
   const rows = [
@@ -691,6 +732,7 @@ const SoldeCell = ({ agg }) => {
     { key: 'pi', label: 'Prestations internes', value: agg.piTotal, sign: '−' },
     { key: 'omPay', label: 'OM payés', value: agg.omPaidTotal, sign: '−' },
     { key: 'stages', label: 'Rémunération stages', value: agg.stageTotal, sign: '−' },
+    { key: 'remboursements', label: 'Remboursements', value: agg.reimbTotal, sign: '−' },
   ];
   return (
     <div className="group relative inline-block text-right">
@@ -796,7 +838,7 @@ const LineModal = ({ modal, types, personnel, depenses, om, desiderate, onCancel
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden max-h-[92vh] flex flex-col">
         <div className="px-6 py-4 bg-gradient-to-br from-blue-600 to-indigo-700 text-white">
           <h2 className="text-lg font-black">{editing ? 'Modifier la ligne budgétaire' : 'Nouvelle ligne budgétaire'}</h2>
-          <p className="text-blue-100 text-xs">Le solde est recalculé automatiquement : dispo université − dépenses ordonnées (BC signés) − prestations internes − OM payés − rémunérations de stage.</p>
+          <p className="text-blue-100 text-xs">Le solde est recalculé automatiquement : dispo université − dépenses ordonnées (BC signés) − prestations internes − OM payés − rémunérations de stage − remboursements.</p>
         </div>
         <div className="p-6 overflow-y-auto custom-scrollbar grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="sm:col-span-2">

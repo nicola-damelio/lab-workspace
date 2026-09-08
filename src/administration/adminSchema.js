@@ -64,7 +64,7 @@ export const ADMIN_PAGES = [
     fields: ['Ligne budgétaire', 'Type : Fonctionnement / Investissement', 'Porteur du projet', 'Budget total', 'Montant mis à disposition par l’université', 'Dépenses ordonnées (BC signés)', 'OM prévus / souhaités (acceptés / à prévoir)', 'Achats prévus / souhaités liés', 'Solde disponible', 'Date de fin d’engagement', 'Commentaires'] },
   { id: 'depenses', label: 'Dépenses', icon: '🧾', superuserOnly: false, kind: 'depenses',
     blurb: 'Dépenses / commandes avec pipeline complet (devis, SIFAC, BC, fournisseur, facture) et livraisons en plusieurs phases.',
-    fields: ['Description', 'Demandeur', 'Catégorie Fonct. / Invest. · Nature', 'Ligne budgétaire liée (Recette)', 'Montant + frais de port', 'Devis · SIFAC · N° BC & dates', 'Fournisseur + contact', 'N° facture', 'Livraisons : arrivée, BL, Service Fait', 'Livraison complète'] },
+    fields: ['Description', 'Demandeur', 'Catégorie Fonct. / Invest. · Nature', 'Ligne budgétaire liée (Recette)', 'Montant + frais de port', 'Devis · N° SIFAC/D.A. · N° BC & dates', 'Fournisseur + contact', 'N° facture', 'Livraisons : arrivée, BL, Service Fait', 'Livraison complète'] },
   { id: 'om', label: 'OM prévus / souhaités', icon: '✈️', superuserOnly: false, kind: 'om',
     blurb: 'Ordres de mission prévus / souhaités : dates, demandeur, destination, coûts, statut (En attente / Acceptée…). Un OM « Acceptée » peut être transféré en dépense réelle (page Dépenses › onglet OM).',
     fields: ['Description', 'Demandeur', 'Date de demande · Départ · Retour', 'Destination', 'Transport · Hébergement · Repas · Inscription', 'Coût total (calculé)', 'Statut : En attente / Acceptée / Refusée / Terminée', 'Estimé vs Exact', 'Ligne budgétaire liée (Recette)', 'Commentaires'] },
@@ -219,7 +219,7 @@ export const FORMATION_SUGGESTIONS = [
   'Formation autoclave', 'Radioprotection', 'Équipier de première intervention', 'Secourisme',
   'Prévention des risques chimiques',
 ];
-export const DEPENSE_NATURES = ['Consommables', 'Stages', 'Instrumentation', 'Meetings', 'Audit', 'Prestations', 'Autre'];
+export const DEPENSE_NATURES = ['Consommables', 'Stages', 'Instrumentation', 'Meetings', 'Audit', 'Prestations', 'Remboursements', 'Autre'];
 export const URGENCES = ['Urgent', 'Important', 'Souhaitable'];
 /* Décisions (statuts) des « Achats prévus / souhaités » — le changement est réservé
    au superutilisateur. Cette liste reste modifiable dans Setup › Options des
@@ -355,7 +355,7 @@ export const DEPENSE_FIELD_CATALOG = [
   { key: 'dateDemande', label: 'Date de la demande' },
   { key: 'fournisseur', label: 'Nom du fournisseur' },
   { key: 'contact', label: 'Contact fournisseur' },
-  { key: 'numSIFAC', label: 'N° SIFAC' },
+  { key: 'numSIFAC', label: 'N° SIFAC/D.A.' },
   { key: 'numBC', label: 'N° BC' },
   { key: 'numFacture', label: 'N° facture' },
 ];
