@@ -213,7 +213,7 @@ export const AdminImportModal = ({ kind, onClose }) => {
         try {
           const filing = await fileDepenseDocuments(stampedRecords, { year: new Date().getFullYear() });
           if (filing) {
-            copiedDocs = filing.copied || 0;
+            copiedDocs = (filing.copied || 0) + (filing.renamed || 0);
             filingFailed = filing.failed || 0;
           }
         } catch (err) {

@@ -236,17 +236,18 @@ export const relinkDepenseDocuments = async (records) => {
  *  si besoin) : une COPIE du fichier — jamais un déplacement de l’original —
  *  est déposée au bon endroit. Appelé après un import « Dépenses » pour que
  *  les fichiers importés atterrissent bien dans le classement du budget.
- * @returns {Promise<{copied:number, attempted:number, failed:number}>}
+ * @returns {Promise<{copied:number, renamed:number, attempted:number, failed:number}>}
  */
 export const fileDepenseDocuments = async (records, { year } = {}) => {
   const list = (Array.isArray(records) ? records : []).filter(Boolean);
-  const out = { copied: 0, attempted: 0, failed: 0 };
+  const out = { copied: 0, renamed: 0, attempted: 0, failed: 0 };
   if (!list.length || !cloudBackendAvailable() || !getDriveToken()) return out;
   for (const rec of list) {
     try {
       const res = await fileBudgetDocs(rec, { year });
       if (res) {
         out.copied += res.copied || 0;
+        out.renamed += res.renamed || 0;
         out.attempted += res.attempted || 0;
         out.failed += Array.isArray(res.failed) ? res.failed.length : 0;
       }

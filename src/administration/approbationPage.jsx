@@ -394,7 +394,7 @@ export const ApprobationPage = () => {
     }
     const recs = (Array.isArray(rows) ? rows : []).filter((r) => r && r.id);
     if (!recs.length) return;
-    let copied = 0; let already = 0; let failed = 0;
+    let copied = 0; let renamed = 0; let already = 0; let failed = 0;
     const reasons = [];
     setFilingBusy(true);
     try {
@@ -402,6 +402,7 @@ export const ApprobationPage = () => {
         const res = await fileBudgetDocs(rec, { year: new Date().getFullYear() });
         if (!res) continue;
         copied += res.copied || 0;
+        renamed += res.renamed || 0;
         already += res.skipped || 0;
         failed += Array.isArray(res.failed) ? res.failed.length : 0;
         (Array.isArray(res.failed) ? res.failed : []).forEach((f) => {
@@ -416,7 +417,7 @@ export const ApprobationPage = () => {
       return;
     }
     setFilingBusy(false);
-    if (copied === 0 && already === 0 && failed === 0) {
+    if (copied === 0 && renamed === 0 && already === 0 && failed === 0) {
       setNote({ text: 'Aucun fichier lié à ranger : déposez un devis / BC avec un fichier (choix PC ou lien Drive).' });
       return;
     }
@@ -426,6 +427,7 @@ export const ApprobationPage = () => {
       : '';
     setNote({
       text: `Rangement des fichiers : ${copied} copie${copied > 1 ? 's' : ''} créée${copied > 1 ? 's' : ''} dans Budget_labo/${year}/Devis|BC (l’original reste en place) · `
+        + `${renamed} fichier${renamed > 1 ? 's' : ''} renommé${renamed > 1 ? 's' : ''} selon la convention · `
         + `${already} déjà en place · ${failed} échec${failed > 1 ? 's' : ''}.${detail}`,
     });
   };

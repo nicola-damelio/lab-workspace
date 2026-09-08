@@ -77,8 +77,9 @@ import {
   REIMBURSEMENT_COST_FIELDS, reimbTotalOf,
 } from './adminSchema';
 import { parseEuroAmount } from './importUtils';
-import { fileBudgetDocs, budgetDocPath, budgetDocFileName, BUDGET_DOC_FOLDER_BY_FIELD } from './driveFiling';
+import { fileBudgetDocs, budgetDocPath, budgetDocFileName, budgetDocLinkSlots, BUDGET_DOC_FOLDER_BY_FIELD } from './driveFiling';
 import { uploadLocalFile, cloudBackendAvailable, sharedWorkspaceMode } from '../utils/driveUpload';
+import { reimportBudgetDriveDocs } from './driveReimport';
 import { findRecetteByLabel, findRecetteTwin, sameCatType } from './recetteLink';
 import { useDepenseLinkRepair } from './useDepenseLinkRepair';
 
@@ -452,6 +453,10 @@ const DepensesPage = () => {
   const [tab, setTab] = useState('achats');
   /* Rangement « à la demande » des documents liés (bouton « Ranger les liens »). */
   const [filingBusy, setFilingBusy] = useState(false);
+  /* Ré-import des documents que l'app ne voit pas (déposés à la main — limite
+     « drive.file ») : téléchargement public + dépôt d'une copie de l'app. */
+  const [reimportBusy, setReimportBusy] = useState(false);
+  const [reimportProgress, setReimportProgress] = useState(null); // { done, total }
 
   /* Réattribution automatique des dépenses dont la « Catégorie » contredit le
      type de la ligne budgétaire imputée (page Recettes) — voir le hook. */
@@ -647,7 +652,7 @@ const DepensesPage = () => {
     }
     const recs = (Array.isArray(list) ? list : []).filter((r) => r && r.id);
     if (!recs.length) return;
-    let copied = 0; let already = 0; let failed = 0;
+    let copied = 0; let renamed = 0; let already = 0; let failed = 0;
     const reasons = [];
     setFilingBusy(true);
     try {
@@ -655,6 +660,7 @@ const DepensesPage = () => {
         const res = await fileBudgetDocs(rec, { year: new Date().getFullYear() });
         if (!res) continue;
         copied += res.copied || 0;
+        renamed += res.renamed || 0;
         already += res.skipped || 0;
         failed += Array.isArray(res.failed) ? res.failed.length : 0;
         (Array.isArray(res.failed) ? res.failed : []).forEach((f) => {
@@ -669,12 +675,13 @@ const DepensesPage = () => {
       return;
     }
     setFilingBusy(false);
-    if (copied === 0 && already === 0 && failed === 0) {
+    if (copied === 0 && renamed === 0 && already === 0 && failed === 0) {
       alert('Aucun lien Google Drive à ranger : aucune dépense ne possède de document lié (devis, BC, facture, OM, BL/SF).');
       return;
     }
     const head = `Rangement terminé sur ${recs.length} dépense${recs.length > 1 ? 's' : ''} : `
       + `${copied} copie${copied > 1 ? 's' : ''} créée${copied > 1 ? 's' : ''} dans Budget_labo/${new Date().getFullYear()}/… (l’original reste en place) · `
+      + `${renamed} fichier${renamed > 1 ? 's' : ''} renommé${renamed > 1 ? 's' : ''} selon la convention · `
       + `${already} déjà en place · ${failed} échec${failed > 1 ? 's' : ''}.`;
     alert([
       head,
@@ -682,6 +689,75 @@ const DepensesPage = () => {
         ? `\n\nDocuments non copiés dans Budget_labo (leur lien d’origine reste valide) :\n${reasons.slice(0, 15).join('\n')}${reasons.length > 15 ? `\n· … et ${reasons.length - 15} autre${reasons.length - 15 > 1 ? 's' : ''}` : ''}`
         : '',
     ].join(''));
+  };
+
+  /* « Ré-importer les documents Drive » — chaque document Google Drive lié que
+     l'app ne voit pas (déposé à la main ; limite « drive.file ») est téléchargé
+     par son adresse PUBLIQUE puis ré-téléversé comme copie de l'application
+     dans Budget_labo/<année>/… ; le lien de la dépense bascule sur cette copie
+     (l'original n'est jamais supprimé). Les documents déjà visibles par l'app
+     ne sont pas touchés (« Ranger les liens Drive » les classe). */
+  const runDriveReimport = async () => {
+    if (reimportBusy || filingBusy) return;
+    if (!cloudBackendAvailable()) {
+      alert('Google Drive n’est pas connecté : connectez-le d’abord, puis relancez le ré-import des documents.');
+      return;
+    }
+    const recs = (Array.isArray(list) ? list : []).filter((r) => r && r.id);
+    if (!recs.length) return;
+    const linkedSlots = recs.reduce((n, r) => n + budgetDocLinkSlots(r).length, 0);
+    if (!linkedSlots) {
+      alert('Aucun lien Google Drive à ré-importer : aucune dépense ne possède de document lié (devis, BC, facture, OM, BL/SF).');
+      return;
+    }
+    const go = window.confirm(
+      'Ré-importer les documents Google Drive invisibles pour l’application ?\n\n'
+      + 'Pour chaque document lié déposé à la main (donc invisible sous l’autorisation « drive.file »), '
+      + 'l’app télécharge le fichier par son adresse publique puis le ré-téléverse comme SA copie '
+      + 'dans Budget_labo/<année>/… avec le nom de la convention. Le lien de la dépense bascule sur '
+      + 'cette copie ; l’original n’est jamais supprimé.\n\n'
+      + 'Prérequis : le dossier Google Drive concerné doit être partagé en « Toute personne disposant du lien ».'
+    );
+    if (!go) return;
+    setReimportBusy(true);
+    setReimportProgress(null);
+    try {
+      const res = await reimportBudgetDriveDocs(recs, {
+        year: new Date().getFullYear(),
+        concurrency: 3,
+        onProgress: (p) => setReimportProgress(p || null),
+      });
+      if (Array.isArray(res.updates) && res.updates.length) {
+        updateMany('depenses', res.updates);
+      }
+      const imported = res.imported || 0;
+      const adopted = res.adopted || 0;
+      const accessible = res.accessible || 0;
+      const failed = Array.isArray(res.failed) ? res.failed.length : 0;
+      if (imported + adopted + accessible + failed === 0) {
+        alert('Aucun document à ré-importer : tous les documents liés sont déjà visibles par l’application (classez-les avec « Ranger les liens Drive ») ou aucun lien Google Drive valide n’a été trouvé.');
+        return;
+      }
+      const lines = (Array.isArray(res.failed) ? res.failed : [])
+        .map((f) => `· « ${f.label || 'dépense'} » — ${f.folder} : ${f.reason}`);
+      const head = `Ré-import terminé sur ${recs.length} dépense${recs.length > 1 ? 's' : ''} : `
+        + `${imported} copie${imported > 1 ? 's' : ''} créée${imported > 1 ? 's' : ''} pour l’application · `
+        + `${adopted} reliée${adopted > 1 ? 's' : ''} à une copie déjà classée · `
+        + `${accessible} déjà visible${accessible > 1 ? 's' : ''} par l’app (à classer via « Ranger les liens Drive ») · `
+        + `${failed} échec${failed > 1 ? 's' : ''}.`;
+      alert([
+        head,
+        failed
+          ? `\n\nDocuments non ré-importés (leur lien d’origine reste valide) :\n${lines.slice(0, 15).join('\n')}${lines.length > 15 ? `\n· … et ${lines.length - 15} autre${lines.length - 15 > 1 ? 's' : ''}` : ''}\n\nCause la plus fréquente : le dossier n’est pas partagé en « Toute personne disposant du lien » (partagez-le puis relancez), ou le fichier n’est pas téléchargeable — dans ce cas utilisez « ⬆ PC » pour le document concerné.`
+          : '',
+      ].join(''));
+    } catch (err) {
+      console.error(err);
+      alert(`Erreur pendant le ré-import : ${(err && err.message) || err}`);
+    } finally {
+      setReimportBusy(false);
+      setReimportProgress(null);
+    }
   };
 
   const sorted = useMemo(() => [...list].sort((a, b) => {
@@ -924,11 +1000,14 @@ const DepensesPage = () => {
         .map((f) => `· ${f.folder} : ${f.reason}`)
         .join('\n');
       const explain = filing.failed.some((f) => /INACCESSIBLE/i.test(String(f.reason || '')))
-        ? sharedWorkspaceMode()
+        ? (sharedWorkspaceMode()
           ? `\n\nLe plus rapide : « ⬆ PC » (l’app crée une copie dans Budget_labo/<année> et la range) — `
           + `un fichier resté dans votre Drive personnel n’est pas visible par le compte « Lab Workspace » qu’utilise l’app.`
           : `\n\nLe plus rapide : « ⬆ PC » (l’app crée sa propre copie dans Budget_labo/<année> et la range) — `
-          + `même connecté à votre Google, l’app ne voit que les fichiers qu’elle a créés elle-même (autorisation limitée « drive.file »).`
+          + `même connecté à votre Google, l’app ne voit que les fichiers qu’elle a créés elle-même (autorisation limitée « drive.file »).`)
+        + `\n\nPour traiter d’un coup TOUS les documents déjà déposés à la main, utilisez le bouton `
+        + `« Ré-importer les documents Drive » de la page (téléchargement par le lien public, copie classée de l’app, `
+        + `lien remplacé) — le dossier Google Drive doit être partagé en « Toute personne disposant du lien ».`
         : '';
       alert(
         `Dépense enregistrée (le lien d’origine reste valide), mais ${filing.failed.length} document${filing.failed.length > 1 ? 's' : ''} Google Drive n'a pas pu être copié${filing.failed.length > 1 ? 's' : ''} dans Budget_labo/<année> :\n\n${lines}${explain}`
@@ -1543,11 +1622,27 @@ const DepensesPage = () => {
             <button
               type="button"
               onClick={runBudgetFiling}
-              disabled={filingBusy}
+              disabled={filingBusy || reimportBusy}
               className="bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50"
               title="Copier dans Budget_labo/<année>/… les documents Google Drive liés aux dépenses déjà saisies (devis, BC, facture, OM, BL/SF) — l’original n’est jamais déplacé ; possible quand le fichier est accessible à l’application"
             >
               <span className="text-base leading-none">{filingBusy ? '⏳' : '📎'}</span>{filingBusy ? 'Rangement…' : 'Ranger les liens Drive'}
+            </button>
+          )}
+          {tab !== 'remboursements' && (
+            <button
+              type="button"
+              onClick={runDriveReimport}
+              disabled={reimportBusy || filingBusy}
+              className="bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50"
+              title="Ré-importer comme copie de l’application chaque document Google Drive que l’app ne voit pas (déposé à la main — autorisation limitée « drive.file ») : téléchargement par le lien public puis dépôt dans Budget_labo/<année>/… avec le nom de la convention, et remplacement du lien de la dépense (l’original n’est jamais supprimé). Prérequis : dossier partagé en « Toute personne disposant du lien »."
+            >
+              <span className="text-base leading-none">{reimportBusy ? '⏳' : '🔁'}</span>
+              {reimportBusy
+                ? (reimportProgress && reimportProgress.total
+                  ? `Ré-import ${reimportProgress.done}/${reimportProgress.total}…`
+                  : 'Ré-import…')
+                : 'Ré-importer les documents Drive'}
             </button>
           )}
           <button
