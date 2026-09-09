@@ -644,7 +644,9 @@ const RECETTE_COLUMNS = {
   porteur: ['porteur', 'Porteur du projet', 'responsable'],
   budgetTotal: ['Budget totale', 'Budget total', 'Total', 'Montant total'],
   budgetDispo: ['Budget disponible', 'Montant mis à disposition', 'mis à disposition', 'Disponible'],
-  finEngagement: ['Date de fin engagement', 'Fin d’engagement', 'Date de fin'],
+  finEngagement: ['Date de fin engagement', 'Date fin engagement', 'Fin d’engagement', 'Date de fin'],
+  debut: ['Date de début', 'Date début', 'Début', 'debut'],
+  fin: ['Date de fin', 'Fin'],
   note: ['Note', 'Notes', 'Commentaire', 'Commentaires'],
 };
 
@@ -652,6 +654,18 @@ const buildRecettes = (rows, headerIdx) => {
   const header = rows[headerIdx];
   const cols = {};
   Object.keys(RECETTE_COLUMNS).forEach((f) => { cols[f] = findColumn(header, RECETTE_COLUMNS[f]); });
+  /* Colonnes de dates — distinction « période » vs « fin d’engagement » : les
+     feuilles historiques n’ont souvent qu’une colonne « Date de fin » (c’est
+     l’échéance d’engagement). Dès qu’une colonne de début (ou une fin
+     d’engagement explicite) existe, une éventuelle colonne « Date de fin »
+     désigne la fin de la PÉRIODE de la ligne. */
+  const headerKeys = header.map(normalizeKey);
+  const bareFin = headerKeys.indexOf('date de fin');
+  if (cols.debut >= 0 && bareFin >= 0) {
+    if (cols.finEngagement === bareFin) cols.finEngagement = -1;
+  } else if (cols.fin >= 0 && cols.finEngagement >= 0 && cols.fin === cols.finEngagement) {
+    cols.fin = -1; // feuille historique : « Date de fin » = fin d’engagement
+  }
   const items = [];
   let skipped = 0;
   for (let i = headerIdx + 1; i < rows.length; i++) {
@@ -659,7 +673,11 @@ const buildRecettes = (rows, headerIdx) => {
     if (!hasContent(r)) break; // fin du bloc de données
     const ligne = clean(cell(r, cols.ligne));
     if (!ligne || /^https?:/i.test(ligne)) { skipped++; continue; }
-    const type = clean(cell(r, cols.categorie)) || 'Fonctionnement';
+    const rawType = clean(cell(r, cols.categorie)) || 'Fonctionnement';
+    /* La catégorie « Autres » (feuille « Lignes budgétaires ») désigne les
+       enveloppes de rémunération du personnel → type « Salaire ». */
+    const typeKey = normalizeKey(rawType);
+    const type = (typeKey === 'autres' || typeKey === 'salaire' || typeKey === 'salaires') ? 'Salaire' : rawType;
     const porteur = clean(cell(r, cols.porteur));
     const bT = parseEuroAmount(cell(r, cols.budgetTotal));
     const bD = parseEuroAmount(cell(r, cols.budgetDispo));
@@ -674,6 +692,8 @@ const buildRecettes = (rows, headerIdx) => {
         porteur,
         budgetTotal: bT === null ? null : bT,
         budgetRenduDispo: bD === null ? null : bD,
+        dateDebut: parseDateCell(cell(r, cols.debut)),
+        dateFin: parseDateCell(cell(r, cols.fin)),
         dateFinEngagement: parseDateCell(cell(r, cols.finEngagement)),
         notes: [note, importStamp].filter(Boolean).join(' · '),
       },
@@ -1568,7 +1588,11 @@ export const buildMissingFournisseurs = (rows, existing) => {
 export const recordDedupeKey = (kind, rec) => {
   const r = rec || {};
   const n = (x) => normalizeKey(x);
-  if (kind === 'recettes') return `${n(r.ligne)}|${n(r.type)}`;
+  if (kind === 'recettes') {
+    const t = normalizeKey(r.type);
+    const typeKey = (t === 'autres' || t === 'salaire' || t === 'salaires') ? 'salaire' : t;
+    return `${n(r.ligne)}|${typeKey}`;
+  }
   if (kind === 'personnel') return `${n(r.nom)}|${n(r.dateDebutStage || r.dateEmbauche || '')}`;
   if (kind === 'depenses') return `${n(r.description)}|${n(r.numSIFAC || r.numBC || '')}`;
   if (kind === 'om') return `${n(r.description)}|${n(r.demandeur)}|${n(r.dateMission || r.numOM || '')}`;

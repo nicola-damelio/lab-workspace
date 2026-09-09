@@ -11,7 +11,7 @@
    ========================================================================= */
 import React, { useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
-import { RECETTE_TYPES, DEPENSE_BC_SIGNE, depenseKindOf, isDesiderataRejected, isDesiderataApproved, desiderataDecisionOf, reimbTotalOf } from './adminSchema';
+import { RECETTE_TYPES, DEPENSE_BC_SIGNE, depenseKindOf, isDesiderataRejected, isDesiderataApproved, desiderataDecisionOf, reimbTotalOf, isSalaireRecetteType } from './adminSchema';
 import { omTransferStatus } from './transferAchats';
 import { AdminImportModal } from './adminImportModal';
 import { SmartTable } from './smartTable';
@@ -49,11 +49,13 @@ const addMonthsUTC = (t, months) => {
 };
 
 const txt = (v) => String(v ?? '').trim();
-/* « Lignes salaires » : lignes budgétaires importées avec la catégorie « Autres »
-   de la feuille « Lignes budgétaires » (enveloppes de rémunération du personnel).
-   Elles sont affichées dans l’onglet « Salaires » de la page, séparées des lignes
+/* « Lignes salaires » : lignes budgétaires de rémunération du personnel —
+   type « Salaire » saisi dans l’app (à l’import, la catégorie « Autres » de la
+   feuille « Lignes budgétaires » est convertie en « Salaire »). Le type
+   « Autres » des bases historiques reste reconnu à l’affichage. Elles sont
+   affichées dans l’onglet « Salaires » de la page, séparées des lignes
    Fonctionnement / Investissement. */
-const isSalaireType = (r) => String((r && r.type) || '').trim().toLowerCase() === 'autres';
+const isSalaireType = (r) => isSalaireRecetteType(r && r.type);
 /* « Rémunération stages » : dépenses dont la « Classification / nature »
    (`classification`, valeur « Stages » de l’onglet Dépenses) correspond à une
    gratification de stagiaire. Elles sont retirées des onglets Achats / PI / OM
@@ -159,9 +161,27 @@ export const RecettesPage = () => {
   const desLink = (d) => (canOpenDesiderata && d && d.id ? { pageId: 'desiderate', kind: 'desiderata', recordId: d.id } : null);
   const devisBcLink = (v) => (canOpenApprobation && v && v.id ? { pageId: 'devisBc', kind: v.kind || 'devis', recordId: v.id } : null);
 
+  /* Devis « Approbation devis & BC » lié à un souhait d'achat transféré pour
+     signature ou en révision (même recherche que les pages « Achats prévus /
+     souhaités » et la colonne « Devis en signature/signé »). */
+  const devisOfDesiderata = (d) => {
+    const id = d && d.id;
+    if (!id) return null;
+    return (Array.isArray(devisBc) ? devisBc : []).find(
+      (x) => x && x.kind === 'devis' && x.sourceKind === 'desiderate' && x.sourceId === id && !x.sourcePart
+    ) || null;
+  };
+  /* Dépense « Dépenses › Achats » créée directement depuis un souhait (transfert
+     sans passage par la page « Approbation devis & BC »). */
+  const directDepenseOfDesiderata = (d) => {
+    const id = d && d.id;
+    if (!id) return null;
+    return (Array.isArray(depenses) ? depenses : []).find((x) => x && x.desiderataId === id) || null;
+  };
+
   const [modal, setModal] = useState(null);
   const [importOpen, setImportOpen] = useState(false); // {mode:'new'} | {mode:'edit', rec} | {mode:'link', rec}
-  const [tab, setTab] = useState('budgets'); // 'budgets' : Fonctionnement / Investissement · 'salaires' : type « Autres »
+  const [tab, setTab] = useState('budgets'); // 'budgets' : Fonctionnement / Investissement · 'salaires' : type « Salaire »
 
   /* Réattribution automatique des dépenses dont la « Catégorie » contredit le
      type de la ligne imputée (ex. dépense « Fonctionnement » liée à une fiche
@@ -173,7 +193,8 @@ export const RecettesPage = () => {
     : RECETTE_TYPES;
 
   /* Répartition de l’onglet actif : « Lignes budgétaires » (Fonctionnement /
-     Investissement) d’un côté, « Salaires » (type « Autres ») de l’autre. */
+     Investissement) d’un côté, « Salaires » (type « Salaire » — « Autres »
+     historique toujours reconnu) de l’autre. */
   const budgets = useMemo(() => recettes.filter((r) => !isSalaireType(r)), [recettes]);
   const salaires = useMemo(() => recettes.filter((r) => isSalaireType(r)), [recettes]);
   const activeRecettes = useMemo(
@@ -355,6 +376,8 @@ export const RecettesPage = () => {
         ? null : toNum(patch.budgetTotal),
       budgetRenduDispo: patch.budgetRenduDispo === '' || patch.budgetRenduDispo === null || patch.budgetRenduDispo === undefined
         ? null : toNum(patch.budgetRenduDispo),
+      dateDebut: asDate(patch.dateDebut),
+      dateFin: asDate(patch.dateFin),
       dateFinEngagement: asDate(patch.dateFinEngagement),
       notes: String(patch.notes || ''),
     };
@@ -403,12 +426,13 @@ export const RecettesPage = () => {
       value: (r) => r.type || types[0] || '',
       display: (r) => {
         const t = r.type || types[0];
+        const badge = String(t) === 'Investissement'
+          ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+          : isSalaireType(r)
+            ? 'bg-amber-50 border-amber-200 text-amber-700'
+            : 'bg-emerald-50 border-emerald-200 text-emerald-700';
         return (
-          <span className={`inline-block text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${
-            String(t) === 'Investissement'
-              ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
-              : 'bg-emerald-50 border-emerald-200 text-emerald-700'
-          }`}>
+          <span className={`inline-block text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${badge}`}>
             {t}
           </span>
         );
@@ -546,14 +570,33 @@ export const RecettesPage = () => {
         <HoverCell
           amount={r.__agg.desMontant}
           onOpen={openTarget}
-          items={r.__agg.lineDes.map((d) => ({
-            title: d.description || 'Achat prévu / souhaité',
-            meta: [d.demandeur || '', desiderataDecisionOf(d.statut)].filter(Boolean).join(' · '),
-            value: d.montantEstime !== undefined && d.montantEstime !== null && d.montantEstime !== ''
-              ? euro.format(toNum(d.montantEstime))
-              : 'non chiffré',
-            to: desLink(d),
-          }))}
+          items={r.__agg.lineDes.map((d) => {
+            const dv = devisOfDesiderata(d);
+            const direct = directDepenseOfDesiderata(d);
+            return {
+              title: d.description || 'Achat prévu / souhaité',
+              meta: [
+                d.demandeur || '',
+                desiderataDecisionOf(d.statut),
+                /* Dès qu'une demande est devenue un devis, la « dépense » vit
+                   dans « Approbation devis & BC » : le libellé l'indique et le
+                   clic y mène (ou vers la dépense si transfert direct). */
+                dv
+                  ? dv.statut === 'Approuvé'
+                    ? 'devis signé — BC à signer'
+                    : dv.statut === 'En attente'
+                      ? 'devis en attente de signature'
+                      : dv.statut === 'En gestion'
+                        ? 'devis à compléter — Approbation devis & BC'
+                        : 'devis — Approbation devis & BC'
+                  : direct ? 'transféré — Dépenses › Achats' : '',
+              ].filter(Boolean).join(' · '),
+              value: d.montantEstime !== undefined && d.montantEstime !== null && d.montantEstime !== ''
+                ? euro.format(toNum(d.montantEstime))
+                : 'non chiffré',
+              to: dv ? devisBcLink(dv) : (direct ? depLink(direct) : desLink(d)),
+            };
+          })}
         />
       ),
     },
@@ -632,6 +675,24 @@ export const RecettesPage = () => {
       },
     },
     {
+      key: 'periode', label: 'Période',
+      header: <span title="Dates de début / de fin de la période couverte par la ligne — la « fin d’engagement » des crédits reste dans sa propre colonne">Période</span>,
+      filter: 'text',
+      value: (r) => [r.dateDebut || '', r.dateFin || ''].filter(Boolean).join(' '),
+      display: (r) => {
+        const d = txt(r.dateDebut);
+        const f = txt(r.dateFin);
+        if (!d && !f) return <span className="text-slate-300">—</span>;
+        return (
+          <span className="whitespace-nowrap text-slate-600">
+            <span>{d || '…'}</span>
+            <span className="mx-1 text-slate-300">→</span>
+            <span>{f || '…'}</span>
+          </span>
+        );
+      },
+    },
+    {
       key: 'actions', label: '', sortable: false, filterable: false, align: 'right', nowrap: true,
       value: () => '',
       display: (r) => (
@@ -698,7 +759,7 @@ export const RecettesPage = () => {
       </div>
 
       {/* Sélecteur d’onglet : Lignes budgétaires (Fonctionnement / Investissement)
-          · Salaires (lignes de type « Autres », feuille « Lignes budgétaires »). */}
+          · Salaires (lignes de rémunération, type « Salaire » — « Autres » historique). */}
       <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl p-1 shadow-sm w-fit flex-wrap">
         {[
           { id: 'budgets', icon: '📈', label: 'Lignes budgétaires', count: budgets.length },
@@ -709,7 +770,7 @@ export const RecettesPage = () => {
             type="button"
             onClick={() => setTab(v.id)}
             title={v.id === 'salaires'
-              ? 'Lignes de rémunération du personnel — catégorie « Autres » de la feuille « Lignes budgétaires » (type « Autres » dans la base)'
+              ? 'Lignes de rémunération du personnel — type « Salaire » (l’ancienne catégorie « Autres » des imports reste reconnue)'
               : 'Lignes budgétaires de crédits projets — Fonctionnement / Investissement'}
             className={`px-3 py-1.5 rounded-lg text-xs font-black transition-colors ${tab === v.id ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:bg-blue-50 hover:text-blue-700'}`}
           >
@@ -746,12 +807,12 @@ export const RecettesPage = () => {
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
           <div className="text-4xl mb-2">{tab === 'salaires' ? '👤' : '📈'}</div>
           <p className="font-black text-slate-700">
-            {tab === 'salaires' ? 'Aucune ligne « salaires » (type « Autres »)' : 'Aucune ligne budgétaire (Fonctionnement / Investissement)'}
+            {tab === 'salaires' ? 'Aucune ligne « salaires » (type « Salaire »)' : 'Aucune ligne budgétaire (Fonctionnement / Investissement)'}
           </p>
           <p className="text-sm text-slate-400 mt-1">
             {tab === 'salaires'
-              ? 'Les lignes de rémunération du personnel (catégorie « Autres » de la feuille « Lignes budgétaires ») s’afficheront ici.'
-              : 'Toutes les lignes sont des lignes « salaires » (type « Autres ») : elles se trouvent dans l’onglet « Salaires » ci-dessus.'}
+              ? 'Les lignes de rémunération du personnel (type « Salaire ») s’afficheront ici.'
+              : 'Toutes les lignes sont des lignes « salaires » (type « Salaire » ou ancien « Autres ») : elles se trouvent dans l’onglet « Salaires » ci-dessus.'}
           </p>
         </div>
       ) : (
@@ -951,11 +1012,13 @@ export const LineModal = ({ modal, types, personnel, depenses, om, desiderate, o
         porteur: r.porteur || '',
         budgetTotal: r.budgetTotal === null || r.budgetTotal === undefined ? '' : String(r.budgetTotal),
         budgetRenduDispo: r.budgetRenduDispo === null || r.budgetRenduDispo === undefined ? '' : String(r.budgetRenduDispo),
+        dateDebut: r.dateDebut || '',
+        dateFin: r.dateFin || '',
         dateFinEngagement: r.dateFinEngagement || '',
         notes: r.notes || '',
       };
     }
-    return { ligne: '', type: '', porteur: '', budgetTotal: '', budgetRenduDispo: '', dateFinEngagement: '', notes: '' };
+    return { ligne: '', type: '', porteur: '', budgetTotal: '', budgetRenduDispo: '', dateDebut: '', dateFin: '', dateFinEngagement: '', notes: '' };
   });
   const set = (k) => (ev) => setDraft((d) => ({ ...d, [k]: ev.target.value }));
   const persons = [...new Set((personnel || []).map((p) => p.nom).filter(Boolean))];
@@ -981,7 +1044,10 @@ export const LineModal = ({ modal, types, personnel, depenses, om, desiderate, o
           <div>
             <label className={labelCls}>Type</label>
             <select className={inputCls} value={draft.type} onChange={set('type')}>
-              {(types || []).map((t) => <option key={t} value={t}>{t}</option>)}
+              {/* « Salaire » est toujours proposé : c’est la nature des lignes de
+                  rémunération (affichées dans l’onglet « Salaires »). On garde
+                  aussi la valeur existante (« Autres » des anciennes bases…). */}
+              {Array.from(new Set([...(types || []), 'Salaire', draft.type].filter(Boolean))).map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
           <div>
@@ -998,6 +1064,14 @@ export const LineModal = ({ modal, types, personnel, depenses, om, desiderate, o
           <div>
             <label className={labelCls}>Mis à disposition par l’université (€)</label>
             <input className={inputCls} type="number" min="0" step="0.01" value={draft.budgetRenduDispo} onChange={set('budgetRenduDispo')} placeholder="vide = budget total" />
+          </div>
+          <div>
+            <label className={labelCls}>Date de début</label>
+            <input className={inputCls} type="date" value={draft.dateDebut} onChange={set('dateDebut')} />
+          </div>
+          <div>
+            <label className={labelCls}>Date de fin</label>
+            <input className={inputCls} type="date" value={draft.dateFin} onChange={set('dateFin')} />
           </div>
           <div className="sm:col-span-2">
             <label className={labelCls}>Date de fin d’engagement</label>

@@ -1131,7 +1131,12 @@ export const DesiderataPage = () => {
         devisId: saved && saved.id,
       },
     }, rec.id);
-    if (!wasApproved) notifyApproved({ ...rec, statut: 'Approuvé' });
+    /* Pas de notification « approuvé » séparée ici : quand la demande n'était
+       pas encore décidée, l'e-mail de transfert ci-dessous annonce déjà
+       l'acceptation (« accepté … ») à la responsable d'achats. Un avis
+       « approuvé » supplémentaire doublerait l'e-mail (deux messages partaient
+       au lieu d'un) et prêtait à confusion — surtout en révision, où le devis
+       repart « En gestion » et n'est PAS encore approuvé. */
     const signatureWay = mode === TRANSFER_MODES.SIGNATURE;
     const res = await sendAdminMail({
       to: cibleEmailsOf(personnel, meta.code),

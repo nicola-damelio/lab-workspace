@@ -126,12 +126,14 @@ export const AUDIT_FIELDS = ['id', 'createdAt', 'createdBy', 'updatedAt', 'updat
 /**
  * @typedef {Object} Recette
  * @property {string} ligne             // intitulé de la ligne budgétaire
- * @property {('Fonctionnement'|'Investissement')} type
+ * @property {('Fonctionnement'|'Investissement'|'Salaire')} type  // « Salaire » = ligne de rémunération (l’ancien « Autres » reste reconnu)
  * @property {string} porteur           // nom du porteur de projet
  * @property {?string} porteurId        // id du membre du personnel lié
  * @property {?number} budgetTotal      // budget total alloué à la ligne
  * @property {?number} budgetRenduDispo // montant mis à dispo par l’université
- * @property {?string} dateFinEngagement
+ * @property {?string} dateDebut        // début de la période couverte par la ligne (saisie / import)
+ * @property {?string} dateFin          // fin de la période couverte par la ligne (saisie / import)
+ * @property {?string} dateFinEngagement // échéance d’engagement des crédits
  * @property {string} notes
  * @property {string} categorie         // (legacy)
  * @property {?number} budgetConsomme   // (legacy)
@@ -242,6 +244,16 @@ export const AUDIT_FIELDS = ['id', 'createdAt', 'createdBy', 'updatedAt', 'updat
  *  est proposé dans les listes « Demandeur » / « Bénéficiaire » des formulaires. */
 export const SERVICE_DEMANDEUR = 'Service';
 export const RECETTE_TYPES = ['Fonctionnement', 'Investissement'];
+/* Type « Salaire » d’une ligne budgétaire : lignes de rémunération du
+   personnel. À l’import, la catégorie « Autres » (ou « Salaire »/« Salaires »)
+   de la feuille « Lignes budgétaires » est enregistrée sous le type « Salaire » ;
+   les bases historiques qui stockent encore « Autres » restent reconnues. */
+export const isSalaireRecetteType = (t) => {
+  const s = String(t ?? '')
+    .trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return s === 'salaire' || s === 'salaires' || s === 'autres';
+};
 export const TRANCHES_STATUSES = ['Disponible', 'Engagé', 'Consommé'];
 export const PERSONNEL_TYPES = ['Permanent', 'Technique', 'Temporaire'];
 export const PERSONNEL_CORPS = ['PR', 'MCF', 'IR', 'IE', 'ASI', 'TECH', 'ATRF', 'DR', 'CR', 'PRAG', 'PRCE', 'Post-doc', 'ATER', 'Doctorant', 'Stagiaire'];

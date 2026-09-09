@@ -1094,8 +1094,12 @@ export const OmPage = () => {
         reimbId,
       },
     }, rec.id);
-    if (!wasApproved) notifyApproved({ ...rec, statut: 'Acceptée' });
-
+    /* Pas de notification « accepté » séparée ici : quand l'OM n'était pas
+       encore décidée, l'e-mail de transfert ci-dessous annonce déjà
+       l'acceptation (« acceptée … ») à la responsable d'achats. Un avis
+       supplémentaire doublerait l'e-mail (deux messages partaient au lieu
+       d'un) et prêtait à confusion — surtout en révision, où les devis
+       repartent « En gestion » et ne sont PAS encore approuvés. */
     const mailLines = [
       signatureWay
         ? `L’OM « ${label} » a été acceptée et transmise pour signature.`

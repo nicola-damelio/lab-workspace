@@ -380,9 +380,12 @@ export const LibreriePage = () => {
       display: (r) => {
         const t = txt(r.type);
         if (!t) return <span className="text-slate-300">—</span>;
-        const tone = t.toLowerCase() === 'investissement'
+        const tLow = t.toLowerCase();
+        const tone = tLow === 'investissement'
           ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
-          : 'bg-emerald-50 border-emerald-200 text-emerald-700';
+          : (tLow === 'salaire' || tLow === 'salaires' || tLow === 'autres')
+            ? 'bg-amber-50 border-amber-200 text-amber-700'
+            : 'bg-emerald-50 border-emerald-200 text-emerald-700';
         return <span className={`inline-block text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${tone}`}>{t}</span>;
       },
     },
@@ -435,6 +438,24 @@ export const LibreriePage = () => {
         return n === null
           ? <span className="text-slate-300">—</span>
           : <span className="whitespace-nowrap text-xs font-semibold text-slate-600 tabular-nums">{euro.format(n)}</span>;
+      },
+    },
+    {
+      key: 'periode', label: 'Période',
+      header: <span title="Dates de début / de fin de la période couverte par la ligne — la « fin d’engagement » des crédits reste dans sa propre colonne">Période</span>,
+      filter: 'text',
+      value: (r) => [String(r.dateDebut || ''), String(r.dateFin || '')].filter(Boolean).join(' '),
+      display: (r) => {
+        const d = txt(r.dateDebut);
+        const f = txt(r.dateFin);
+        if (!d && !f) return <span className="text-slate-300">—</span>;
+        return (
+          <span className="whitespace-nowrap text-xs font-semibold text-slate-600">
+            <span>{toFrDate(d) || '…'}</span>
+            <span className="mx-1 text-slate-300">→</span>
+            <span>{toFrDate(f) || '…'}</span>
+          </span>
+        );
       },
     },
     {
@@ -505,6 +526,8 @@ export const LibreriePage = () => {
       porteur: String(patch.porteur || '').trim(),
       budgetTotal: (patch.budgetTotal === '' || patch.budgetTotal === null || patch.budgetTotal === undefined) ? null : Number(patch.budgetTotal),
       budgetRenduDispo: (patch.budgetRenduDispo === '' || patch.budgetRenduDispo === null || patch.budgetRenduDispo === undefined) ? null : Number(patch.budgetRenduDispo),
+      dateDebut: String(patch.dateDebut || '').trim().slice(0, 10),
+      dateFin: String(patch.dateFin || '').trim().slice(0, 10),
       dateFinEngagement: String(patch.dateFinEngagement || '').trim().slice(0, 10),
       notes: String(patch.notes || ''),
     };
@@ -754,8 +777,8 @@ export const LibreriePage = () => {
       ) : (
         <>
           <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
-            <b>Lignes budgétaires :</b> catalogue des lignes (Fonctionnement / Investissement) avec montant total,
-            montant mis à disposition par l’université, date de fin d’engagement, porteur du projet et commentaires.
+            <b>Lignes budgétaires :</b> catalogue des lignes (Fonctionnement / Investissement / Salaire) avec montant total,
+            montant mis à disposition par l’université, dates de début / de fin, date de fin d’engagement, porteur du projet et commentaires.
             Les fiches se gèrent dans la page <b>« Recettes »</b> (création, solde, import) ; le <b>porteur</b> est un lien
             vers sa fiche dans la page Personnel{canViewPersonnel ? '' : ' (réservée au superutilisateur)'}.
             {canEditRecettes ? (
@@ -772,8 +795,8 @@ export const LibreriePage = () => {
               <p className="font-black text-slate-700">Aucune ligne budgétaire</p>
               <p className="text-sm text-slate-400 mt-1">
                 {canEditRecettes
-                  ? 'Cliquez sur « ＋ Nouvelle ligne budgétaire » pour créer la première ligne (Fonctionnement / Investissement) ; la page « Recettes » reste disponible pour le suivi complet (solde, import…).'
-                  : 'Les lignes budgétaires sont créées dans la page « Recettes » (lignes Fonctionnement / Investissement) et apparaissent ici comme catalogue.'}
+                  ? 'Cliquez sur « ＋ Nouvelle ligne budgétaire » pour créer la première ligne (Fonctionnement / Investissement / Salaire) ; la page « Recettes » reste disponible pour le suivi complet (solde, import…).'
+                  : 'Les lignes budgétaires sont créées dans la page « Recettes » (lignes Fonctionnement / Investissement / Salaire) et apparaissent ici comme catalogue.'}
               </p>
             </div>
           ) : (
