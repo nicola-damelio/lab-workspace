@@ -3920,6 +3920,9 @@ export const MolecularStructureSection = ({ ctx }) => {
   const structureMode = activeTest.structureMode || '2d';
   const atomLabelMode = activeTest.atomLabelMode || 'selected';
   const residueOffset = activeTest.residueOffset || 0;
+  // "University test" exam mode: hides every hint that would give the
+  // secondary structure away (brush + 3D folding driven by the brush).
+  const univTestMode = Boolean(activeTest.universityTest);
   const atomNameMap = useMemo(() => { try { return activeTest.atomNameMap ? JSON.parse(activeTest.atomNameMap) : {}; } catch { return {}; } }, [activeTest.atomNameMap]);
   const [hasOpened3D, setHasOpened3D] = useState(structureMode === '3d');
   
@@ -4040,7 +4043,11 @@ const generatedStructure = useMemo(() => {
     
     if (d.moleculeType === 'protein' && d.seq) {
       console.log('✅ Generating protein structure...');
-      return { text: proteinSequenceToPdbText(d.seq, activeTest.secondaryStructure || '', activeTest.name || 'PROTEIN'), ext: 'pdb' };
+      // University test mode: the molecule must NOT fold from the secondary
+      // structure painted with the brush (that would leak the answer). An
+      // empty secondary structure yields the fully-extended chain.
+      const ssFor3D = univTestMode ? '' : (activeTest.secondaryStructure || '');
+      return { text: proteinSequenceToPdbText(d.seq, ssFor3D, activeTest.name || 'PROTEIN'), ext: 'pdb' };
     }
     
     if ((d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.seq) {
@@ -4054,7 +4061,7 @@ const generatedStructure = useMemo(() => {
   }
   
   return null;
-}, [hasExplicitOverride, d.moleculeType, d.seq, activeTest.secondaryStructure, activeTest.name]);
+}, [hasExplicitOverride, d.moleculeType, d.seq, activeTest.secondaryStructure, activeTest.name, univTestMode]);
 
   // Organic molecules with no override: fetch + validate a real 3D structure ourselves (Cactus,
   // falling back to PubChem) instead of handing NGL a raw URL to fetch on its own -- this is what
@@ -4158,7 +4165,7 @@ const generatedStructure = useMemo(() => {
       // Fallback: build it fresh even if organicFetch/generatedStructure hasn't populated yet
       try {
         const text = d.moleculeType === 'protein'
-          ? proteinSequenceToPdbText(d.seq, activeTest.secondaryStructure || '', activeTest.name || 'PROTEIN')
+          ? proteinSequenceToPdbText(d.seq, univTestMode ? '' : (activeTest.secondaryStructure || ''), activeTest.name || 'PROTEIN')
           : nucleicSequenceToPdbText(d.seq, d.moleculeType, activeTest.name || 'NUCLEIC_ACID');
         triggerDownload(text, `${pdbBase}.pdb`);
       } catch (e) {
@@ -4342,7 +4349,7 @@ const generatedStructure = useMemo(() => {
         </div>
       </div>
       
-      {d.moleculeType === 'protein' && d.parsedSeq.length > 0 && (
+      {!univTestMode && d.moleculeType === 'protein' && d.parsedSeq.length > 0 && (
         <div>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
@@ -5287,6 +5294,9 @@ export const DataSection = ({ ctx }) => {
   const [newLayerName, setNewLayerName] = useState('');
   const [newLayerUnit, setNewLayerUnit] = useState('');
   const [, setShowImport] = useState(false);
+  // "Results test" overlay: paints the wrong ¹H/¹³C chemical shifts red and
+  // reports the % of correct values + the grade out of 20.
+  const [checkShown, setCheckShown] = useState(false);
 
   // ---- Bruker 1r import (ppm axis) ----
   const [nmrBrukerDataUrl, setNmrBrukerDataUrl] = useState('');
@@ -5472,6 +5482,46 @@ export const DataSection = ({ ctx }) => {
     delete nv.cs;
     updateActiveTest({ chemicalShifts: cs, nmrValues: nv });
   };
+
+  // ---- "University test" exam mode ----
+  // While ON: the ≈ estimates under the table cells are hidden, "Fill
+  // Estimated" is disabled, the secondary-structure brush section disappears
+  // and the 3D viewer no longer folds from the brush assignments.
+  const univTestMode = Boolean(activeTest.universityTest);
+  const toggleUnivTest = () => updateActiveTest({ universityTest: !univTestMode });
+
+  // ---- "Results test": red-mark the wrong ¹H / ¹³C shifts, compute the
+  //      percentage of correct values and the grade out of 20. Tolerance:
+  //      ±0.05 ppm on ¹H, ±0.5 ppm on ¹³C. Cells are counted across ALL
+  //      residues and every H/C atom that carries a theoretical estimate.
+  const checkReport = useMemo(() => {
+    const csMap = activeTest.chemicalShifts || {};
+    let total = 0, correct = 0;
+    const wrongKeys = new Set();
+    d.estSeq.forEach((res, idx) => {
+      const resAtoms = (d.atomOptions || []).filter((opt) => opt.key.startsWith(`${idx}-`));
+      const displayAtoms = effTableMode === 'backbone'
+        ? resAtoms.filter((o) => o.label.includes(' HN ') || o.label.includes(' N ') || o.label.includes(' Cα ') || o.label.includes(' Cβ ') || o.label.includes(" C' "))
+        : resAtoms;
+      displayAtoms.forEach((opt) => {
+        const atomName = opt.key.slice(String(idx).length + 1);
+        let est = null, kind = null;
+        if (opt.label.includes('(¹H)')) { est = res.estShifts?.[atomName]; kind = 'H'; }
+        else if (opt.label.includes('(¹³C)')) { est = atomName === "C'" ? res.estCP : res.estUniqueC?.[atomName]; kind = 'C'; }
+        if (est === undefined || est === null || !kind) return;
+        const tol = kind === 'H' ? 0.05 : 0.5;
+        total += 1;
+        const val = parseManual(csMap[opt.key]);
+        const ok = val !== null && Math.abs(val - est) <= tol;
+        if (ok) correct += 1; else wrongKeys.add(opt.key);
+      });
+    });
+    const pct = total > 0 ? (correct / total) * 100 : 0;
+    const grade = total > 0 ? (correct / total) * 20 : 0;
+    return { total, correct, pct, grade, wrongKeys };
+  }, [activeTest.chemicalShifts, d.estSeq, d.atomOptions, effTableMode]);
+
+  const isWrongCell = (optKey) => checkShown && Boolean(checkReport && checkReport.wrongKeys.has(optKey));
   
   const openExportModal = () => {
     setExportColumns([...visibleLayers]);
@@ -6167,8 +6217,14 @@ let dom = brukerZoomDom || xFull;
               </div>
             )}
             <button onClick={openExportModal} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-50 border border-indigo-300 text-indigo-700 hover:bg-indigo-100">📄 Publication Table</button>
-            <button onClick={fillEstimated} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-green-50 border border-green-300 text-green-700 hover:bg-green-100">✨ Fill Estimated</button>
+            <button onClick={fillEstimated} disabled={univTestMode} title={univTestMode ? 'Disabled during University test' : 'Fill empty cells with the theoretical estimates'} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${univTestMode ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed' : 'bg-green-50 border-green-300 text-green-700 hover:bg-green-100'}`}>✨ Fill Estimated</button>
             <button onClick={() => setShowImport(true)} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 border border-amber-300 text-amber-700 hover:bg-amber-100">📥 Import Fitted Parameters</button>
+            <button onClick={toggleUnivTest} title="University test: hides the ≈ estimate hints under the cells, disables ✨ Fill Estimated, hides the secondary-structure 🖌️ brush and stops the 3D viewer from folding from the brush. Click again to restore everything." className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${univTestMode ? 'bg-slate-800 border-slate-900 text-white shadow-sm' : 'bg-fuchsia-50 border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-100'}`}>
+              🎓 {univTestMode ? 'University test ON' : 'University test'}
+            </button>
+            <button onClick={() => setCheckShown((v) => !v)} disabled={d.estSeq.length === 0} title="Results test: mark in red the chemical shifts that differ from the theoretical estimates by more than 0.05 ppm (¹H) or 0.5 ppm (¹³C), then show the % of correct H/C values and the grade out of 20." className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors disabled:opacity-40 ${checkShown ? 'bg-red-600 border-red-700 text-white shadow-sm' : 'bg-rose-50 border-rose-300 text-rose-700 hover:bg-rose-100'}`}>
+              🎯 {checkShown ? 'Results test ON' : 'Results test'}
+            </button>
             {dragSel && (
               <button onClick={copyCells} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 border border-blue-700 text-white hover:bg-blue-700 flex items-center gap-1">
                 📋 Copy Selection {copiedMsg && <span className="text-blue-200">{copiedMsg}</span>}
@@ -6179,6 +6235,23 @@ let dom = brukerZoomDom || xFull;
             )}
           </div>
         </div>
+
+        {checkShown && checkReport && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3 text-xs">
+            {checkReport.total > 0 ? (
+              <>
+                <span className="font-black text-rose-800">🎯 Results test:</span>
+                <span className="text-rose-900 font-bold">
+                  {checkReport.correct}/{checkReport.total} H/C shifts correct ({checkReport.pct.toFixed(1)}%)
+                </span>
+                <span className="text-rose-900 font-black">Grade: {checkReport.grade.toFixed(1)}/20</span>
+                <span className="text-rose-400 ml-1">Wrong or missing values are highlighted in red (tolerance ±0.05 ppm ¹H · ±0.5 ppm ¹³C).</span>
+              </>
+            ) : (
+              <span className="font-bold text-rose-800">🎯 Results test: no ¹H / ¹³C estimates to grade for this molecule.</span>
+            )}
+          </div>
+        )}
 
         <div className="flex flex-wrap gap-2 items-center border-t border-slate-100 pt-3">
             <span className="text-[10px] font-bold text-slate-500 uppercase">Visible Columns:</span>
@@ -6269,7 +6342,7 @@ let dom = brukerZoomDom || xFull;
                           
                           let isManuallyEdited = false;
                           if (hasValue) {
-                              if (lk !== 'cs') {
+                              if (lk !== 'cs' || univTestMode) {
                                   isManuallyEdited = true;
                               } else if (est !== undefined && est !== null) {
                                   const valNum = parseFloat(val);
@@ -6280,10 +6353,12 @@ let dom = brukerZoomDom || xFull;
                               }
                           }
                           
-                          const isFillEstimated = hasValue && !isManuallyEdited;
+                          const isFillEstimated = !univTestMode && hasValue && !isManuallyEdited;
 
                           const isDragSelected = cellInDragSel(idx, atomName, lk);
+                          const isWrong = lk === 'cs' && isWrongCell(opt.key);
                           const tdClass = `px-2 py-1 cursor-pointer transition-colors border-r border-slate-100 select-none ${
+                              isWrong ? 'bg-red-100 ring-1 ring-inset ring-red-400' :
                               isDragSelected ? 'bg-blue-100 ring-1 ring-inset ring-blue-400' :
                               isSel ? 'bg-amber-100 ring-1 ring-inset ring-amber-400' : 
                               isManuallyEdited ? 'bg-emerald-100' : 
@@ -6291,6 +6366,7 @@ let dom = brukerZoomDom || xFull;
                           }`;
 
                           const inputClass = `w-full border rounded px-1.5 py-0.5 outline-none text-xs font-mono text-center transition-colors ${
+                              isWrong ? 'border-red-500 bg-red-100 text-red-800 font-black' :
                               isManuallyEdited ? 'border-emerald-600 bg-emerald-100 text-emerald-900 font-black' : 
                               isFillEstimated ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 
                               'border-slate-200 focus:border-blue-500 bg-transparent text-slate-700'
@@ -6309,7 +6385,7 @@ let dom = brukerZoomDom || xFull;
                                     className={inputClass} 
                                     placeholder="—" 
                                   />
-                                  {lk === 'cs' && est !== undefined && est !== null && <div className="text-[10px] font-bold text-slate-400 text-center mt-0.5" title="Theoretical estimate">≈ {est.toFixed(2)}</div>}
+                                  {lk === 'cs' && !univTestMode && est !== undefined && est !== null && <div className="text-[10px] font-bold text-slate-400 text-center mt-0.5" title="Theoretical estimate">≈ {est.toFixed(2)}</div>}
                               </td>
                           );
                       })}
