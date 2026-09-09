@@ -940,7 +940,7 @@ const SoldePrevuCell = ({ agg }) => {
 };
 
 /* ── Fenêtre modale : création / édition d’une ligne budgétaire ─────────── */
-const LineModal = ({ modal, types, personnel, depenses, om, desiderate, onCancel, onSave }) => {
+export const LineModal = ({ modal, types, personnel, depenses, om, desiderate, onCancel, onSave }) => {
   const editing = modal.mode === 'edit';
   const [draft, setDraft] = useState(() => {
     if (editing && modal.rec) {

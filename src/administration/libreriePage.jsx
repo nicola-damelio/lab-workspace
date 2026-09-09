@@ -18,6 +18,8 @@ import { useAdmin } from './AdminContext';
 import { SmartTable } from './smartTable';
 import { toFrDate } from './congesDates';
 import { buildMissingFournisseurs, normalizeKey } from './importUtils';
+import { RECETTE_TYPES } from './adminSchema';
+import { LineModal } from './recettesPage';
 
 /* ── Petites aides ─────────────────────────────────────────────────────── */
 const txt = (v) => (v === null || v === undefined ? '' : String(v).trim());
@@ -226,11 +228,21 @@ export const LibreriePage = () => {
   const {
     data, upsert, remove, importMany,
     access, navigate, focus, clearFocus,
+    settings,
   } = useAdmin();
   const librerie = useMemo(() => (Array.isArray(data.librerie) ? data.librerie : []), [data.librerie]);
   const depenses = useMemo(() => (Array.isArray(data.depenses) ? data.depenses : []), [data.depenses]);
   const recettes = useMemo(() => (Array.isArray(data.recettes) ? data.recettes : []), [data.recettes]);
   const personnel = useMemo(() => (Array.isArray(data.personnel) ? data.personnel : []), [data.personnel]);
+  const om = useMemo(() => (Array.isArray(data.om) ? data.om : []), [data.om]);
+  const desiderate = useMemo(() => (Array.isArray(data.desiderate) ? data.desiderate : []), [data.desiderate]);
+
+  /* Gestion des lignes budgétaires depuis cette sous-table : mêmes droits que
+     la page « Recettes » (matrice d’accès par défaut + règles personnalisées). */
+  const canEditRecettes = !!access.canViewPage({ id: 'recettes' });
+  const types = Array.isArray(settings && settings.recetteTypes) && settings.recetteTypes.length
+    ? settings.recetteTypes
+    : RECETTE_TYPES;
 
   /* Deux sous-tables dans la Librerie : le catalogue fournisseurs (fiches de la
      collection `librerie`) et les lignes budgétaires (mêmes fiches que la page
@@ -240,6 +252,7 @@ export const LibreriePage = () => {
   const canViewPersonnel = !!access.canViewPage({ id: 'personnel' });
 
   const [modal, setModal] = useState(null); // null | { mode:'new' } | { mode:'edit', rec }
+  const [lineModal, setLineModal] = useState(null); // lignes budgétaires : { mode:'new' } | { mode:'edit'|'link', rec }
   const [notice, setNotice] = useState(null); // { tone, text }
 
   /* Navigation inter-page entrante (ex. Dépenses → Librerie) : ouvre la bonne
@@ -445,6 +458,20 @@ export const LibreriePage = () => {
           : <span className="text-slate-300">—</span>;
       },
     },
+    ...(canEditRecettes ? [{
+      key: 'ligneActions', label: '', sortable: false, filterable: false, align: 'right', nowrap: true,
+      value: () => '',
+      display: (r) => (
+        <div className="flex items-center gap-1 justify-end">
+          <button onClick={() => setLineModal({ mode: 'link', rec: r })} title="Lier dépenses / OM / achats prévus"
+            className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-blue-50 hover:text-blue-600 text-xs">🔗</button>
+          <button onClick={() => setLineModal({ mode: 'edit', rec: r })} title="Modifier"
+            className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-blue-50 hover:text-blue-600 text-xs">✎</button>
+          <button onClick={() => onRemoveLine(r)} title="Supprimer"
+            className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-red-50 hover:text-red-600 text-xs">🗑</button>
+        </div>
+      ),
+    }] : []),
   ];
 
   const onSave = (cleaned, existingId) => {
@@ -467,6 +494,39 @@ export const LibreriePage = () => {
     )) return;
     remove('librerie', rec.id);
     setNotice({ tone: 'ok', text: `Fournisseur « ${label} » retiré du catalogue.` });
+  };
+
+  const onSaveLine = (patch, existingId) => {
+    if (!String(patch.ligne || '').trim()) { alert('Merci de donner un intitulé à la ligne budgétaire.'); return; }
+    const cleaned = {
+      ...patch,
+      ligne: String(patch.ligne || '').trim(),
+      type: patch.type || (types && types[0]) || 'Fonctionnement',
+      porteur: String(patch.porteur || '').trim(),
+      budgetTotal: (patch.budgetTotal === '' || patch.budgetTotal === null || patch.budgetTotal === undefined) ? null : Number(patch.budgetTotal),
+      budgetRenduDispo: (patch.budgetRenduDispo === '' || patch.budgetRenduDispo === null || patch.budgetRenduDispo === undefined) ? null : Number(patch.budgetRenduDispo),
+      dateFinEngagement: String(patch.dateFinEngagement || '').trim().slice(0, 10),
+      notes: String(patch.notes || ''),
+    };
+    if (cleaned.budgetTotal !== null && !Number.isFinite(cleaned.budgetTotal)) cleaned.budgetTotal = null;
+    if (cleaned.budgetRenduDispo !== null && !Number.isFinite(cleaned.budgetRenduDispo)) cleaned.budgetRenduDispo = null;
+    upsert('recettes', cleaned, existingId);
+    setLineModal(null);
+    setNotice({
+      tone: 'ok',
+      text: existingId
+        ? `Ligne budgétaire « ${cleaned.ligne} » enregistrée.`
+        : `Ligne budgétaire « ${cleaned.ligne} » créée — retrouvez-la aussi dans la page « Recettes ».`,
+    });
+    return true;
+  };
+
+  const onRemoveLine = (rec) => {
+    if (!rec || !rec.id) return;
+    const label = txt(rec.ligne) || rec.id;
+    if (!window.confirm(`Supprimer la ligne budgétaire « ${label} » ?\nLes dépenses, OM et achats prévus déjà saisis conserveront leur intitulé texte.`)) return;
+    remove('recettes', rec.id);
+    setNotice({ tone: 'ok', text: `Ligne budgétaire « ${label} » supprimée.` });
   };
 
   const syncFromDepenses = () => {
@@ -615,6 +675,18 @@ export const LibreriePage = () => {
             </button>
           </div>
         )}
+        {tab === 'lignes' && canEditRecettes && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setLineModal({ mode: 'new' })}
+              title="Créer une nouvelle ligne budgétaire (Fonctionnement / Investissement) — mêmes droits que la page « Recettes »."
+              className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
+            >
+              <span className="text-base leading-none">＋</span> Nouvelle ligne budgétaire
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Onglets : Fournisseurs · Lignes budgétaires */}
@@ -686,6 +758,12 @@ export const LibreriePage = () => {
             montant mis à disposition par l’université, date de fin d’engagement, porteur du projet et commentaires.
             Les fiches se gèrent dans la page <b>« Recettes »</b> (création, solde, import) ; le <b>porteur</b> est un lien
             vers sa fiche dans la page Personnel{canViewPersonnel ? '' : ' (réservée au superutilisateur)'}.
+            {canEditRecettes ? (
+              <div className="mt-1 text-blue-700">
+                💡 « ＋ Nouvelle ligne budgétaire » (et les actions 🔗 ✎ 🗑 de chaque ligne) crée / modifie les fiches
+                ici-même, avec les mêmes droits que la page « Recettes ».
+              </div>
+            ) : null}
           </div>
 
           {recetteRows.length === 0 ? (
@@ -693,7 +771,9 @@ export const LibreriePage = () => {
               <div className="text-4xl mb-2">📈</div>
               <p className="font-black text-slate-700">Aucune ligne budgétaire</p>
               <p className="text-sm text-slate-400 mt-1">
-                Les lignes budgétaires sont créées dans la page « Recettes » (lignes Fonctionnement / Investissement) et apparaissent ici comme catalogue.
+                {canEditRecettes
+                  ? 'Cliquez sur « ＋ Nouvelle ligne budgétaire » pour créer la première ligne (Fonctionnement / Investissement) ; la page « Recettes » reste disponible pour le suivi complet (solde, import…).'
+                  : 'Les lignes budgétaires sont créées dans la page « Recettes » (lignes Fonctionnement / Investissement) et apparaissent ici comme catalogue.'}
               </p>
             </div>
           ) : (
@@ -718,6 +798,19 @@ export const LibreriePage = () => {
           existingNames={librerie}
           onCancel={() => setModal(null)}
           onSave={onSave}
+        />
+      )}
+
+      {lineModal && tab === 'lignes' && canEditRecettes && (
+        <LineModal
+          modal={lineModal}
+          types={types}
+          personnel={personnel}
+          depenses={depenses}
+          om={om}
+          desiderate={desiderate}
+          onCancel={() => setLineModal(null)}
+          onSave={onSaveLine}
         />
       )}
     </div>
