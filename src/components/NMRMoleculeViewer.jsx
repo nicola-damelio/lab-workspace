@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ensureNGL } from '../utils/ngl';
 import { computeSmiles3DNameMap } from '../utils/atomNameSync';
+import { rebuildProteinHydrogenCoords } from '../utils/rebuildProteinHydrogens';
 import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
 import { abortControl } from '../utils/abortControl';
 import { archiveFileToDrive } from '../utils/driveUpload';
@@ -1030,6 +1031,13 @@ const measureModeRef = useRef(false);
 measureModeRef.current = measureMode;
 const measurePendingRef = useRef(null); // { comp, atomIndex, label } of the 1st picked atom
 const measureRepsRef = useRef([]);      // [{ comp, elem }] NGL 'distance' representations that were drawn
+const [rebuildMsg, setRebuildMsg] = useState('');
+const rebuildMsgTimerRef = useRef(null);
+const flashRebuildMsg = (m) => {
+  setRebuildMsg(m);
+  clearTimeout(rebuildMsgTimerRef.current);
+  rebuildMsgTimerRef.current = setTimeout(() => setRebuildMsg(''), 6000);
+};
 
 // ---- 2D↔3D atom-name synchronisation ---------------------------------------
 // Holds the map { NGL atom index → 2D SMILES atom name } for organic/lipid/
@@ -1667,6 +1675,7 @@ blobUrlsRef.current = [];
 
 const [manualOverride, setManualOverride] = useState(false);
 const lastLoadedTextRef = useRef(null);
+const loadedPdbTextRef = useRef(null); // raw PDB text of the currently loaded structure (rebuild-H source)
 const lastSeenSrcRef = useRef(undefined);
 const lastSeenTextRef = useRef(undefined);
 
@@ -2309,11 +2318,17 @@ labelCompRef.current = null;
 sidechainCompRef.current = null;
 
 let component;
+loadedPdbTextRef.current = null;
 if (loadRequest.file) {
-component = await stage.loadFile(loadRequest.file);
+  const fname = String((loadRequest.file && loadRequest.file.name) || '').toLowerCase();
+  if (fname.endsWith('.pdb') || fname.endsWith('.ent')) {
+    try { loadedPdbTextRef.current = await loadRequest.file.text(); } catch { /* keep null */ }
+  }
+  component = await stage.loadFile(loadRequest.file);
 } else if (loadRequest.text) {
-const blob = new Blob([loadRequest.text], { type: 'text/plain' });
-component = await stage.loadFile(blob, { ext: loadRequest.ext || 'pdb' });
+  if (['pdb', 'ent'].includes(String(loadRequest.ext || '').toLowerCase())) loadedPdbTextRef.current = loadRequest.text;
+  const blob = new Blob([loadRequest.text], { type: 'text/plain' });
+  component = await stage.loadFile(blob, { ext: loadRequest.ext || 'pdb' });
 } else {
 const target = normalizeStructureSource(loadRequest.url);
 if (!target) throw new Error('No structure URL or PDB ID provided');
@@ -3978,6 +3993,7 @@ const handleClearViewer = () => {
   selCompsRef.current = {};
   baseCompsRef.current = [];
   setFile(null);
+  loadedPdbTextRef.current = null;
   setPdbId('');
   setLoadRequest(null);
   setStatus('idle');
@@ -4017,6 +4033,37 @@ const handleAbort = () => {
     abortRef.current = null;
     a.cancel();
   }
+};
+
+// ---- ⚗️ Physical hydrogen rebuild ------------------------------------------
+// "Delete the hydrogens, then add them again": re-derives every H coordinate of
+// the loaded PDB from its own heavy atoms (ideal bond lengths/angles, all atom
+// NAMES preserved, heavy atoms untouched) and reloads the text through the same
+// pipeline as any structure, so labels / highlights / measurements rebuild on
+// the new geometry.
+const rebuildHydrogensNow = async () => {
+  if (!stageRef.current || !componentRef.current) {
+    flashRebuildMsg('⚠️ Load a structure first — nothing to rebuild yet.');
+    return;
+  }
+  const raw = loadedPdbTextRef.current;
+  if (!raw) {
+    flashRebuildMsg('⚠️ Hydrogen rebuild needs the loaded PDB text (use the 📂 PDB file button or a generated peptide). PDB-ID / URL downloads can’t be edited in the viewer.');
+    return;
+  }
+  const result = rebuildProteinHydrogenCoords(raw);
+  if (!result.ok) {
+    flashRebuildMsg(`⚠️ ${result.message}`);
+    return;
+  }
+  loadedPdbTextRef.current = result.text;
+  if (result.moved > 0) {
+    requestStructureLoad({ file: null, url: null, text: result.text, ext: 'pdb', ts: Date.now() });
+  }
+  const suffix = result.moved > 0
+    ? `moved ${result.moved} hydrogen${result.moved === 1 ? '' : 's'} to ideal geometry`
+    : 'all hydrogens were already at ideal positions';
+  flashRebuildMsg(`⚗️ Hydrogens rebuilt across ${result.residues} residues (${result.rebuilt} re-placed, names kept) — ${suffix}.`);
 };
 
 // ---- Capture the current 3D scene as a figure -------------------------------
@@ -4111,6 +4158,19 @@ title={measurePending ? 'Cancel the pending first atom and remove all drawn dist
 >
 ✕ Clear distances
 </button>
+)}
+<button
+type="button"
+onClick={rebuildHydrogensNow}
+title="Delete every hydrogen of the peptide and re-place them with ideal bond lengths and angles (N–H ≈ 1.01 Å, C–H ≈ 1.09 Å…). All atom names are kept and no heavy atom moves — the rebuild works on generated structures and on PDB files you load with the 📂 button."
+className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8 whitespace-nowrap bg-slate-100 border-slate-300 text-slate-500 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700"
+>
+⚗️ Rebuild H
+</button>
+{rebuildMsg && (
+<span title={rebuildMsg} className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md px-2 py-1 h-8 inline-flex items-center max-w-[480px] truncate">
+{rebuildMsg}
+</span>
 )}
 {file && (
 <span title={file.name} className="text-[10px] text-slate-500 max-w-[120px] truncate">

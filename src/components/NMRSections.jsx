@@ -1519,6 +1519,15 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
     }));
   }, [data]);
 
+  // Only dim peaks when the current selection actually hits a peak of THIS
+  // panel. Selecting an atom/residue that has no peak here (e.g. a ¹³C-only or
+  // an N atom while viewing the ¹H 1D) used to wash out the whole spectrum at
+  // 20% opacity — leaving it nearly invisible for no reason.
+  const panelSelMatch = useMemo(() => {
+    if (!selectedKeys || !selectedKeys.length) return false;
+    return processedData.some((p) => p.keys && p.keys.some((k) => selectedKeys.includes(k)));
+  }, [processedData, selectedKeys]);
+
   const peakMarkers = useMemo(() => {
     if (!simShowLabels) return [];
     const markers = [];
@@ -1558,12 +1567,12 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
                   const centerX = x + width / 2;
                   const isSel = selectedKeys && payload.keys && payload.keys.some((k) => selectedKeys.includes(k));
                   const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.includes(k));
-                  const dimmed = selectedKeys && !isSel && !isMan;
+                  const dimmed = panelSelMatch && !isSel && !isMan;
                   
                   const barElem = <line x1={centerX} y1={y + height} x2={centerX} y2={y} stroke={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : (lineColor || payload.color)} strokeWidth={isSel ? 3 : isMan ? 2.5 : ((lineThickness || 1.5) + (simShowLabels ? 0 : 0.6))} />;
                   
                   if (!payload.multipletBounds || !payload.isLabelAnchor) {
-                    return <g opacity={dimmed ? 0.2 : 1}>{barElem}</g>;
+                    return <g opacity={dimmed ? 0.5 : 1}>{barElem}</g>;
                   }
 
                   const m = payload.multipletBounds;
@@ -1594,7 +1603,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
                   }
 
                   return (
-                    <g opacity={dimmed ? 0.2 : 1}>
+                    <g opacity={dimmed ? 0.5 : 1}>
                       {barElem}
                       {annotationElem}
                     </g>
@@ -1778,13 +1787,21 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
   const processedCrossPeaks = useMemo(() =>
     place2DLabels(crossPeakData, { showLabels: simShowLabels, format: simLabelFormat, dim: simLabelDim, yRange: 11, boxW, aspect, fontSize: simLabelFontSize }),
     [crossPeakData, simShowLabels, simLabelFormat, simLabelDim, boxW, aspect, simLabelFontSize]);
+
+  // Like the 1D plots: only dim the cross peaks when the current selection
+  // actually matches a cross peak of THIS spectrum (a selection that only hits
+  // the diagonal or belongs to another nucleus must not wash the panel out).
+  const crossSelMatch = useMemo(() => {
+    if (!selectedKeys || !selectedKeys.length) return false;
+    return processedCrossPeaks.some((p) => p.keys && p.keys.some((k) => selectedKeys.includes(k)));
+  }, [processedCrossPeaks, selectedKeys]);
   
   const shape = (props) => {
     const { cx, cy, fill, payload } = props;
     if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
     const isSel = selectedKeys && payload.keys && payload.keys.some((k) => selectedKeys.includes(k));
     const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.includes(k));
-    const dimmed = selectedKeys && !isSel && !isMan && payload.type !== 'Diagonal';
+    const dimmed = crossSelMatch && !isSel && !isMan && payload.type !== 'Diagonal';
     const textStr = simShowLabels && payload.type !== 'Diagonal' ? getPeakLabelText(payload, simLabelFormat, simLabelDim) : '';
     
     // When peak labels are hidden (default view / university test) every marker is
@@ -1797,7 +1814,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
     const isMoved = Math.abs(payload.labelDx || 0) > 0 || Math.abs(payload.labelDy || 0) > 0;
 
     return (
-      <g opacity={dimmed ? 0.18 : 1}>
+      <g opacity={dimmed ? 0.45 : 1}>
         {textStr && isMoved && (
           <line x1={cx} y1={cy} x2={textX} y2={textY} stroke={simLabelColor} strokeWidth={1.5} strokeDasharray="2 2" />
         )}
@@ -1919,6 +1936,13 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
   const processedCrossPeaks = useMemo(() =>
     place2DLabels(crossPeakData, { showLabels: simShowLabels, format: simLabelFormat, dim: simLabelDim, yRange: yDomainInit[1] - yDomainInit[0], boxW, aspect, fontSize: simLabelFontSize }),
     [crossPeakData, simShowLabels, simLabelFormat, simLabelDim, yDomainInit, boxW, aspect, simLabelFontSize]);
+
+  // Only dim the cross peaks when the selection matches one in THIS panel —
+  // a selection that has no peak here must not wash out the whole spectrum.
+  const crossSelMatch = useMemo(() => {
+    if (!selectedKeys || !selectedKeys.length) return false;
+    return processedCrossPeaks.some((p) => p.keys && p.keys.some((k) => selectedKeys.includes(k)));
+  }, [processedCrossPeaks, selectedKeys]);
   
   return (
     <>
@@ -1944,7 +1968,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
                   if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
                   const isSel = selectedKeys && payload.keys && payload.keys.some((k) => selectedKeys.includes(k));
                   const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.includes(k));
-                  const dimmed = selectedKeys && !isSel && !isMan;
+                  const dimmed = crossSelMatch && !isSel && !isMan;
                   const textStr = simShowLabels ? getPeakLabelText(payload, simLabelFormat, simLabelDim) : '';
                   
                   const noLabelBoost = simShowLabels ? 1 : 1.45;
@@ -1955,7 +1979,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
                   const isMoved = Math.abs(payload.labelDx || 0) > 0 || Math.abs(payload.labelDy || 0) > 0;
 
                   return (
-                    <g opacity={dimmed ? 0.18 : 1}>
+                    <g opacity={dimmed ? 0.45 : 1}>
                       {textStr && isMoved && (
                         <line x1={cx} y1={cy} x2={textX} y2={textY} stroke={simLabelColor} strokeWidth={1.5} strokeDasharray="2 2" />
                       )}
