@@ -2710,7 +2710,13 @@ const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED') => {
           });
         }
       } else if (char !== 'P') {
-        bbH.push({ name: 'H', pos: nerfPlace(residues[i - 1].C, r.N, r.CA, 1.01, _deg2rad(120), _deg2rad(180)) });
+        // Amide proton: nerfPlace ALWAYS attaches the new atom to its 3rd
+        // argument, so the atom list is (O,C)-of-the-previous-residue + N HERE
+        // (not ...C, N, CA which silently attached H to CA and produced an
+        // N–H CONECT whose atoms are 2.15 Å apart — a visible "impossible
+        // bond"). Torsion 180° (0° puts H ~0.45 Å from its own CA) gives the
+        // verified physical placement: H–N 1.01 Å, H–CA ~2.13 Å, no overlaps.
+        bbH.push({ name: 'H', pos: nerfPlace(residues[i - 1].O, residues[i - 1].C, r.N, 1.01, _deg2rad(120), _deg2rad(180)) });
       }
     } catch (e) {
       console.warn(`Backbone-H placement failed for residue ${i + 1} (${char}), continuing without them:`, e);
@@ -2833,7 +2839,9 @@ const buildProteinHCoords = (seq, ssString) => {
       }
     } else if (char !== 'P') {
       try {
-        coords.H = nerfPlace(residues[i - 1].C, r.N, r.CA, 1.01, _deg2rad(120), _deg2rad(180));
+        // Same verified geometry as the PDB writer: H bonded to N (3rd arg),
+        // torsion 180° (H–N 1.01 Å, H–CA ~2.13 Å, no overlaps).
+        coords.H = nerfPlace(residues[i - 1].O, residues[i - 1].C, r.N, 1.01, _deg2rad(120), _deg2rad(180));
       } catch { /* no amide H */ }
     }
     try {
