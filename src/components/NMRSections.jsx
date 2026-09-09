@@ -1732,6 +1732,96 @@ const place2DLabels = (crossPeakData, { showLabels, format, dim, yRange, boxW, a
   return result;
 };
 
+// ================= 2D CROSSHAIR / PEAK HOVER (deterministic) =================
+// Recharts' built-in scatter Tooltip only activates when the pointer happens to
+// land EXACTLY on an SVG marker path, so in practice it fires for a few peaks
+// and stays silent for most of them. The 2D simulated spectra therefore track
+// the pointer themselves over the whole plot:
+//   • a dashed crosshair (vertical F2 + horizontal F1 guides) always follows
+//     the cursor while it is over the plot — no more dead zones;
+//   • when the pointer is within a comfortable pixel distance of a peak the
+//     crosshair locks onto that peak and `peak` is populated so the tooltip
+//     (NMRTooltip) can be shown. This gives identical behaviour on every peak,
+//     whether or not the marker happens to be hit pixel-perfectly.
+const CROSSHAIR_STROKE = '#94a3b8';
+const CROSSHAIR_DASH = '3 3';
+
+const use2DCrosshair = ({ chartRef, xDomain, yDomain, points = [], markerScale = 1, isDraggingRef = null }) => {
+  const [hover, setHover] = useState(null); // { x, y, peak, tipLeft, tipTop }
+  const keyRef = useRef('');
+  const pendingRef = useRef(null);
+  const rafRef = useRef(0);
+
+  // Reset whenever the underlying dataset / zoom window changes.
+  useEffect(() => { setHover(null); keyRef.current = ''; }, [points, xDomain, yDomain]);
+
+  useEffect(() => () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); }, []);
+
+  const schedule = (next) => {
+    pendingRef.current = next;
+    if (rafRef.current) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = 0;
+      const n = pendingRef.current;
+      pendingRef.current = null;
+      if (!n || n.key === keyRef.current) return;
+      keyRef.current = n.key;
+      setHover({ x: n.x, y: n.y, peak: n.peak, tipLeft: n.tipLeft, tipTop: n.tipTop });
+    });
+  };
+
+  const clear = () => {
+    pendingRef.current = null;
+    if (keyRef.current) { keyRef.current = ''; setHover(null); }
+  };
+
+  const onMouseMove = (e) => {
+    if (isDraggingRef && isDraggingRef.current) { clear(); return; }
+    if (!points.length || !chartRef.current) return;
+    const wrapper = chartRef.current.querySelector('.recharts-wrapper');
+    if (!wrapper) return;
+    const rect = wrapper.getBoundingClientRect();
+    const plotW = rect.width - CHART_MARGIN.left - CHART_MARGIN.right;
+    const plotH = rect.height - CHART_MARGIN.top - CHART_MARGIN.bottom;
+    if (plotW <= 0 || plotH <= 0) return;
+    const px = e.clientX - rect.left - CHART_MARGIN.left;
+    const py = e.clientY - rect.top - CHART_MARGIN.top;
+    const fx = Math.min(1, Math.max(0, px / plotW));
+    const fy = Math.min(1, Math.max(0, py / plotH));
+    const x = xDomain[1] - fx * (xDomain[1] - xDomain[0]);
+    const y = yDomain[0] + fy * (yDomain[1] - yDomain[0]);
+    const xRange = (xDomain[1] - xDomain[0]) || 1;
+    const yRange = (yDomain[1] - yDomain[0]) || 1;
+
+    // Nearest peak measured in screen pixels (domains may be zoomed).
+    let best = points[0];
+    let bestD = Infinity;
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i];
+      const dx = ((p.x - x) / xRange) * plotW;
+      const dy = ((p.y - y) / yRange) * plotH;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD) { bestD = d2; best = p; }
+    }
+    const rad = ((best && best.size) || 5) * markerScale;
+    // Generous lock radius: the marker itself (r) + 14 px, so peaks no longer
+    // need a pixel-perfect hit to show their crosshair + tooltip.
+    const locked = bestD <= (rad + 14) * (rad + 14);
+    // Tooltip card ≈ 236 px wide; keep it inside the chart box.
+    const tipLeft = Math.max(6, Math.min(rect.width - 236, px + 14));
+    const tipTop = Math.max(4, py - 76);
+    schedule({
+      key: `${locked ? 'p:' + points.indexOf(best) : 'f'}|${fx.toFixed(3)}|${fy.toFixed(3)}`,
+      x: locked ? best.x : x,
+      y: locked ? best.y : y,
+      peak: locked ? best : null,
+      tipLeft, tipTop
+    });
+  };
+
+  return { hover, onMouseMove, onMouseLeave: clear };
+};
+
 const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setExpandedPanel, panelId, diagonalColor, selectedKeys, manualKeys = [], aspect = 1, fs = 11, simCfg = {} }) => {
   const { simShowLabels, hidePeakIdentity = false, simLabelFormat, simLabelDim, simLabelFontSize = 12, simLabelColor = '#b91c1c', tickAngle = 0, lineColor = '', xAxisLabel = '', title: cfgTitle = '', tickColor = '' } = simCfg;
   const isExpanded = expandedPanel === panelId;
@@ -1788,6 +1878,25 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
     place2DLabels(crossPeakData, { showLabels: simShowLabels, format: simLabelFormat, dim: simLabelDim, yRange: 11, boxW, aspect, fontSize: simLabelFontSize }),
     [crossPeakData, simShowLabels, simLabelFormat, simLabelDim, boxW, aspect, simLabelFontSize]);
 
+  // Every point that can carry a tooltip (cross peaks + the diagonal peaks).
+  const all2DPeaks = useMemo(() => {
+    const arr = processedCrossPeaks.filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y));
+    (diagonalData || []).forEach((p) => {
+      if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) arr.push(p);
+    });
+    return arr;
+  }, [processedCrossPeaks, diagonalData]);
+
+  // Deterministic crosshair + hover (see use2DCrosshair) so the dashed F2/F1
+  // guides and peak tooltip work on EVERY peak, not only the ones whose tiny
+  // SVG marker happens to be hit pixel-perfectly by the pointer.
+  const crosshair = use2DCrosshair({
+    chartRef, xDomain, yDomain,
+    points: all2DPeaks,
+    markerScale: simShowLabels ? 1 : 1.45,
+    isDraggingRef: isDragging
+  });
+
   // Like the 1D plots: only dim the cross peaks when the current selection
   // actually matches a cross peak of THIS spectrum (a selection that only hits
   // the diagonal or belongs to another nucleus must not wash the panel out).
@@ -1843,13 +1952,13 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
         <div ref={(n) => { chartRef.current = n; boxRef.current = n; }} className="select-none relative flex-1 min-h-0">
-          <div onMouseDown={handleMouseDown} style={{ width: '100%', height: '100%' }}>
+          <div onMouseDown={handleMouseDown} onMouseMove={crosshair.onMouseMove} onMouseLeave={crosshair.onMouseLeave} style={{ width: '100%', height: '100%' }}>
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={CHART_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                 <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} angle={tickAngle} color={tickColor || '#64748b'} />} label={{ value: xAxisLabel || '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} />
                 <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomYTick1H isZoomed={isZoomed} fs={fs} color={tickColor || '#64748b'} />} label={{ value: '¹H F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fs + 1 }} />
-                <Tooltip content={<NMRTooltip diagonalColor={diagonalColor} selectedKeys={selectedKeys} hideIdentity={hidePeakIdentity} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
+                {/* Crosshair guides + peak tooltip are drawn deterministically via use2DCrosshair below */}
                 
                 {/* Changed shape to function to avoid DOM warning propagation */}
                 <Scatter name="Diagonal" data={[{ x: 0, y: 0 }, { x: 11, y: 11 }]} line={{ stroke: '#cbd5e1', strokeWidth: 1 }} shape={(props) => <circle cx={props.cx || 0} cy={props.cy || 0} r={0} />} legendType="none" isAnimationActive={false} />
@@ -1857,9 +1966,20 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
                 <Scatter data={diagonalData} fill={lineColor || diagonalColor} shape={shape} isAnimationActive={false} />
                 <Scatter data={processedCrossPeaks} shape={shape} isAnimationActive={false} />
                 {refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
+                {crosshair.hover && (
+                  <>
+                    <ReferenceLine x={crosshair.hover.x} stroke={CROSSHAIR_STROKE} strokeWidth={1} strokeDasharray={CROSSHAIR_DASH} />
+                    <ReferenceLine y={crosshair.hover.y} stroke={CROSSHAIR_STROKE} strokeWidth={1} strokeDasharray={CROSSHAIR_DASH} />
+                  </>
+                )}
               </ScatterChart>
             </ResponsiveContainer>
           </div>
+          {crosshair.hover && crosshair.hover.peak && (
+            <div className="absolute z-20 pointer-events-none" style={{ left: crosshair.hover.tipLeft, top: crosshair.hover.tipTop }}>
+              <NMRTooltip active payload={[{ payload: crosshair.hover.peak }]} diagonalColor={diagonalColor} selectedKeys={selectedKeys} hideIdentity={hidePeakIdentity} />
+            </div>
+          )}
           {crossPeakData.length === 0 && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <p className="text-xs text-slate-400 italic bg-white/80 px-3 py-1.5 rounded-lg">No COSY / NOESY cross peaks for this molecule type.</p>
@@ -1937,6 +2057,21 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
     place2DLabels(crossPeakData, { showLabels: simShowLabels, format: simLabelFormat, dim: simLabelDim, yRange: yDomainInit[1] - yDomainInit[0], boxW, aspect, fontSize: simLabelFontSize }),
     [crossPeakData, simShowLabels, simLabelFormat, simLabelDim, yDomainInit, boxW, aspect, simLabelFontSize]);
 
+  // Every point that can carry a tooltip.
+  const all2DPeaks = useMemo(() =>
+    processedCrossPeaks.filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y)),
+    [processedCrossPeaks]);
+
+  // Deterministic crosshair + hover (see use2DCrosshair) so the dashed F2/F1
+  // guides and peak tooltip work on EVERY peak, not only the ones whose tiny
+  // SVG marker happens to be hit pixel-perfectly by the pointer.
+  const crosshair = use2DCrosshair({
+    chartRef, xDomain, yDomain,
+    points: all2DPeaks,
+    markerScale: simShowLabels ? 1 : 1.45,
+    isDraggingRef: isDragging
+  });
+
   // Only dim the cross peaks when the selection matches one in THIS panel —
   // a selection that has no peak here must not wash out the whole spectrum.
   const crossSelMatch = useMemo(() => {
@@ -1956,13 +2091,13 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
         <div ref={(n) => { chartRef.current = n; boxRef.current = n; }} className="select-none relative flex-1 min-h-0">
-          <div onMouseDown={handleMouseDown} style={{ width: '100%', height: '100%' }}>
+          <div onMouseDown={handleMouseDown} onMouseMove={crosshair.onMouseMove} onMouseLeave={crosshair.onMouseLeave} style={{ width: '100%', height: '100%' }}>
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={CHART_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                 <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} angle={tickAngle} color={tickColor || '#64748b'} />} label={{ value: xAxisLabel || '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} />
                 <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : yTicks} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} fs={fs} color={tickColor || '#64748b'} />} label={{ value: yAxisLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fs + 1 }} />
-                <Tooltip content={<NMRTooltip diagonalColor="#8b5cf6" selectedKeys={selectedKeys} hideIdentity={hidePeakIdentity} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
+                {/* Crosshair guides + peak tooltip are drawn deterministically via use2DCrosshair below */}
                 <Scatter data={processedCrossPeaks} shape={(props) => {
                   const { cx, cy, payload } = props;
                   if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
@@ -1996,9 +2131,20 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
                   );
                 }} isAnimationActive={false} />
                 {refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
+                {crosshair.hover && (
+                  <>
+                    <ReferenceLine x={crosshair.hover.x} stroke={CROSSHAIR_STROKE} strokeWidth={1} strokeDasharray={CROSSHAIR_DASH} />
+                    <ReferenceLine y={crosshair.hover.y} stroke={CROSSHAIR_STROKE} strokeWidth={1} strokeDasharray={CROSSHAIR_DASH} />
+                  </>
+                )}
               </ScatterChart>
             </ResponsiveContainer>
           </div>
+          {crosshair.hover && crosshair.hover.peak && (
+            <div className="absolute z-20 pointer-events-none" style={{ left: crosshair.hover.tipLeft, top: crosshair.hover.tipTop }}>
+              <NMRTooltip active payload={[{ payload: crosshair.hover.peak }]} diagonalColor="#8b5cf6" selectedKeys={selectedKeys} hideIdentity={hidePeakIdentity} />
+            </div>
+          )}
           {crossPeakData.length === 0 && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <p className="text-xs text-slate-400 italic bg-white/80 px-3 py-1.5 rounded-lg">No HSQC cross peaks for this molecule — no ¹³C-correlated protons were generated.</p>
@@ -5557,6 +5703,10 @@ export const DataSection = ({ ctx }) => {
   const isDragging = useRef(false);
   const [copiedMsg, setCopiedMsg] = useState('');
 
+  // Snapshot taken by the "🗑 Empty all" action so the removed chemical-shift
+  // values can be brought back with a single "↩ Restore values" click.
+  const [emptyCsBackup, setEmptyCsBackup] = useState(null);
+
   const cellInDragSel = (rowIdx) => {
     if (!dragSel) return false;
     const rows = [dragSel.startRow, dragSel.endRow].sort((a, b) => a - b);
@@ -5637,7 +5787,12 @@ export const DataSection = ({ ctx }) => {
     else setVisibleLayers([...visibleLayers, key]);
   };
 
-  const handleShiftChange = (resIdx, atom, layerKey, val) => writeCellValue(activeTest, updateActiveTest, layerKey, `${resIdx}-${atom}`, val);
+  const handleShiftChange = (resIdx, atom, layerKey, val) => {
+    // Typing a fresh value after "Empty all" invalidates the restore snapshot so
+    // ↩ Restore values can never silently overwrite newer work.
+    if (layerKey === 'cs' && emptyCsBackup) setEmptyCsBackup(null);
+    writeCellValue(activeTest, updateActiveTest, layerKey, `${resIdx}-${atom}`, val);
+  };
   
   const handleCellClick = (e, idx, atom) => {
     if (e && e.target && e.target.tagName === 'INPUT') return;
@@ -5671,7 +5826,38 @@ export const DataSection = ({ ctx }) => {
     });
     const nv = { ...(activeTest.nmrValues || {}) };
     delete nv.cs;
+    setEmptyCsBackup(null);
     updateActiveTest({ chemicalShifts: cs, nmrValues: nv });
+  };
+
+  // ---- "Empty all" / "Restore values" for the Chemical Shift column --------
+  const csValueCount = (m) => {
+    let n = 0;
+    Object.values(m || {}).forEach((v) => { if (parseManual(v) !== null) n += 1; });
+    return n;
+  };
+  const hasCsValues = csValueCount(activeTest.chemicalShifts) > 0
+    || csValueCount((activeTest.nmrValues || {}).cs) > 0;
+  const restoredCount = emptyCsBackup
+    ? csValueCount(emptyCsBackup.top) + (emptyCsBackup.overlay ? csValueCount(emptyCsBackup.overlay) : 0)
+    : 0;
+
+  const emptyAllShifts = () => {
+    if (!hasCsValues) return;
+    const nv = { ...(activeTest.nmrValues || {}) };
+    const overlay = nv.cs && typeof nv.cs === 'object' ? { ...nv.cs } : null;
+    setEmptyCsBackup({ top: { ...(activeTest.chemicalShifts || {}) }, overlay });
+    delete nv.cs; // also drop any per-instance 'cs' overlay that feeds plots/simulations
+    updateActiveTest({ chemicalShifts: {}, nmrValues: nv });
+  };
+
+  const restoreAllShifts = () => {
+    if (!emptyCsBackup) return;
+    const nv = { ...(activeTest.nmrValues || {}) };
+    if (emptyCsBackup.overlay) nv.cs = { ...emptyCsBackup.overlay };
+    else delete nv.cs;
+    updateActiveTest({ chemicalShifts: { ...emptyCsBackup.top }, nmrValues: nv });
+    setEmptyCsBackup(null);
   };
 
   // ---- "University test" exam mode ----
@@ -6415,6 +6601,13 @@ let dom = brukerZoomDom || xFull;
             )}
             <button onClick={openExportModal} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-50 border border-indigo-300 text-indigo-700 hover:bg-indigo-100">📄 Publication Table</button>
             <button onClick={fillEstimated} disabled={univTestMode} title={univTestMode ? 'Disabled during University test' : 'Fill empty cells with the theoretical estimates'} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${univTestMode ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed' : 'bg-green-50 border-green-300 text-green-700 hover:bg-green-100'}`}>✨ Fill Estimated</button>
+            {hasCsValues || emptyCsBackup ? (
+              emptyCsBackup ? (
+                <button onClick={restoreAllShifts} title={`Restore the ${restoredCount} chemical shift value(s) removed by "Empty all"`} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-50 border border-emerald-300 text-emerald-700 hover:bg-emerald-100">↩ Restore values</button>
+              ) : (
+                <button onClick={emptyAllShifts} title="Remove every chemical shift value from the table — click again right away to restore the previous values" className="px-3 py-1.5 rounded-lg text-xs font-bold bg-rose-50 border border-rose-300 text-rose-700 hover:bg-rose-100">🗑 Empty all</button>
+              )
+            ) : null}
             <button onClick={() => setShowImport(true)} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 border border-amber-300 text-amber-700 hover:bg-amber-100">📥 Import Fitted Parameters</button>
             {isSuperuser && (
               <button onClick={toggleUnivTest} title="University test: hides the ≈ estimate hints under the cells, disables ✨ Fill Estimated, hides the secondary-structure 🖌️ brush and stops the 3D viewer from folding from the brush. Click again to restore everything." className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${univTestMode ? 'bg-slate-800 border-slate-900 text-white shadow-sm' : 'bg-fuchsia-50 border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-100'}`}>
