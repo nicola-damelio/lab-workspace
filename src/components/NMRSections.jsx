@@ -1554,7 +1554,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
                   const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.includes(k));
                   const dimmed = selectedKeys && !isSel && !isMan;
                   
-                  const barElem = <line x1={centerX} y1={y + height} x2={centerX} y2={y} stroke={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : (lineColor || payload.color)} strokeWidth={isSel ? 3 : isMan ? 2.5 : (lineThickness || 1.5)} />;
+                  const barElem = <line x1={centerX} y1={y + height} x2={centerX} y2={y} stroke={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : (lineColor || payload.color)} strokeWidth={isSel ? 3 : isMan ? 2.5 : ((lineThickness || 1.5) + (simShowLabels ? 0 : 0.6))} />;
                   
                   if (!payload.multipletBounds || !payload.isLabelAnchor) {
                     return <g opacity={dimmed ? 0.2 : 1}>{barElem}</g>;
@@ -1781,7 +1781,11 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
     const dimmed = selectedKeys && !isSel && !isMan && payload.type !== 'Diagonal';
     const textStr = simShowLabels && payload.type !== 'Diagonal' ? getPeakLabelText(payload, simLabelFormat, simLabelDim) : '';
     
-    const r = payload.size || 5;
+    // When peak labels are hidden (default view / university test) every marker is
+    // enlarged and outlined so the peak positions stay clearly visible.
+    const noLabelBoost = simShowLabels ? 1 : 1.45;
+    const r = (payload.size || 5) * noLabelBoost;
+    const outlined = noLabelBoost > 1 && !isSel && !isMan;
     const textX = cx + r + 5 + (payload.labelDx || 0);
     const textY = cy - r - 5 + (payload.labelDy || 0);
     const isMoved = Math.abs(payload.labelDx || 0) > 0 || Math.abs(payload.labelDy || 0) > 0;
@@ -1793,7 +1797,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
         )}
         {isSel && <circle cx={cx} cy={cy} r={r + 5} fill={SELECT_COLOR} opacity={0.3} />}
         {isMan && !isSel && <circle cx={cx} cy={cy} r={r + 5} fill={MANUAL_COLOR} opacity={0.22} />}
-        <circle cx={cx} cy={cy} r={isSel ? r + 2 : isMan ? r + 1.5 : r} fill={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : payload.type === 'Diagonal' ? fill : getNMRFillColor(payload)} stroke={isSel ? '#b45309' : isMan ? '#166534' : 'none'} strokeWidth={isSel ? 2 : isMan ? 1.5 : 0} opacity={0.85} />
+        <circle cx={cx} cy={cy} r={isSel ? r + 2 : isMan ? r + 1.5 : r} fill={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : payload.type === 'Diagonal' ? fill : getNMRFillColor(payload)} stroke={isSel ? '#b45309' : isMan ? '#166534' : outlined ? '#ffffff' : 'none'} strokeWidth={isSel ? 2 : isMan ? 1.5 : outlined ? 1.4 : 0} opacity={outlined ? 0.95 : 0.85} />
         {textStr && (
           <g>
             <text x={textX} y={textY} fontSize={simLabelFontSize} textAnchor="middle" fill="rgba(255,255,255,0.5)" stroke="rgba(255,255,255,0.5)" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
@@ -1937,7 +1941,9 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
                   const dimmed = selectedKeys && !isSel && !isMan;
                   const textStr = simShowLabels ? getPeakLabelText(payload, simLabelFormat, simLabelDim) : '';
                   
-                  const r = payload.size || 5;
+                  const noLabelBoost = simShowLabels ? 1 : 1.45;
+                  const r = (payload.size || 5) * noLabelBoost;
+                  const outlined = noLabelBoost > 1 && !isSel && !isMan;
                   const textX = cx + r + 5 + (payload.labelDx || 0);
                   const textY = cy - r - 5 + (payload.labelDy || 0);
                   const isMoved = Math.abs(payload.labelDx || 0) > 0 || Math.abs(payload.labelDy || 0) > 0;
@@ -1949,7 +1955,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
                       )}
                       {isSel && <circle cx={cx} cy={cy} r={r + 5} fill={SELECT_COLOR} opacity={0.3} />}
                       {isMan && !isSel && <circle cx={cx} cy={cy} r={r + 5} fill={MANUAL_COLOR} opacity={0.22} />}
-                      <circle cx={cx} cy={cy} r={isSel ? r + 2 : isMan ? r + 1.5 : r} fill={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : getNMRFillColor(payload)} stroke={isSel ? '#b45309' : isMan ? '#166534' : 'none'} strokeWidth={isSel ? 2 : isMan ? 1.5 : 0} opacity={0.85} />
+                      <circle cx={cx} cy={cy} r={isSel ? r + 2 : isMan ? r + 1.5 : r} fill={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : getNMRFillColor(payload)} stroke={isSel ? '#b45309' : isMan ? '#166534' : outlined ? '#ffffff' : 'none'} strokeWidth={isSel ? 2 : isMan ? 1.5 : outlined ? 1.4 : 0} opacity={outlined ? 0.95 : 0.85} />
                       {textStr && (
                         <g>
                           <text x={textX} y={textY} fontSize={simLabelFontSize} textAnchor="middle" fill="rgba(255,255,255,0.5)" stroke="rgba(255,255,255,0.5)" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
@@ -2390,7 +2396,12 @@ const PROTEIN_BB = {
 const SS_TORSIONS = {
   H: { phi: _deg2rad(-57), psi: _deg2rad(-47) },   // alpha helix
   E: { phi: _deg2rad(-119), psi: _deg2rad(113) },  // beta strand
-  C: { phi: _deg2rad(180), psi: _deg2rad(180) },   // fallback: fully extended
+  // Coil / extended default: polyproline-II-like (phi=-75°, psi=+145°). The old
+  // "fully extended" phi=psi=180° puts every side chain straight back into the
+  // previous residue's carbonyl (O...H as close as ~0.5 A for bulky residues),
+  // which made the 3D viewer show meaningless "bonds" between atoms that are
+  // NOT covalently linked. PP-II is the true random-coil/extended conformation.
+  C: { phi: _deg2rad(-75), psi: _deg2rad(145) },
 };
 const ssTorsionAt = (ssChar) => SS_TORSIONS[ssChar] || SS_TORSIONS.C;
 
@@ -2753,7 +2764,86 @@ const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED') => {
   return lines.join('\n') + '\n';
 };
 
-// ---- Nucleic acid full-nucleotide builder (explicit idealized coordinates) ----
+// =========================================================================
+// Distance-based NOESY cross peaks (protein)
+// -------------------------------------------------------------------------
+// The simulated NOESY spectrum is generated from the SAME idealized all-atom
+// geometry that the 3D viewer displays: for each pair of proton resonances we
+// compute the real 3D H-H distance (minimum over the atoms the resonance
+// represents, e.g. all three methyl protons) and only draw a cross peak when
+// that distance is below 0.5 nm (5 Å). This replaces the previous fake NOESY
+// that simply copied COSY/4-bond patterns regardless of the fold.
+// =========================================================================
+
+// DB resonance key -> actual PDB atom names produced by placeSidechainAtoms /
+// the backbone builder. Backbone keys (HN/Hα/Hα1/Hα2) are resolved separately.
+const PROTEIN_NOE_SIDECHAIN = {
+  A: { 'Hβ': ['HB1', 'HB2', 'HB3'] },
+  C: { 'Hβ1': ['HB2'], 'Hβ2': ['HB3'] },
+  D: { 'Hβ1': ['HB2'], 'Hβ2': ['HB3'] },
+  E: { 'Hβ': ['HB2', 'HB3'], 'Hγ': ['HG2', 'HG3'] },
+  F: { 'Hβ1': ['HB2'], 'Hβ2': ['HB3'], 'Hδ': ['HD1', 'HD2'], 'Hε': ['HE1', 'HE2'], 'Hζ': ['HZ'] },
+  G: {},
+  H: { 'Hβ1': ['HB2'], 'Hβ2': ['HB3'], 'Hδ2': ['HD2'], 'Hε1': ['HE1'] },
+  I: { 'Hβ': ['HB'], 'Hγ1': ['HG2', 'HG3'], 'Hγ2': ['HG21', 'HG22', 'HG23'], 'Hδ1': ['HD11', 'HD12', 'HD13'] },
+  K: { 'Hβ': ['HB2', 'HB3'], 'Hγ': ['HG2', 'HG3'], 'Hδ': ['HD2', 'HD3'], 'Hε': ['HE2', 'HE3'], 'Hζ(NH3)': ['HZ1', 'HZ2', 'HZ3'] },
+  L: { 'Hβ': ['HB2', 'HB3'], 'Hγ': ['HG'], 'Hδ1': ['HD11', 'HD12', 'HD13'], 'Hδ2': ['HD21', 'HD22', 'HD23'] },
+  M: { 'Hβ': ['HB2', 'HB3'], 'Hγ': ['HG2', 'HG3'], 'Hε(CH3)': ['HE1', 'HE2', 'HE3'] },
+  N: { 'Hβ1': ['HB2'], 'Hβ2': ['HB3'], 'Hδ21': ['HD21'], 'Hδ22': ['HD22'] },
+  P: { 'Hβ1': ['HB2'], 'Hβ2': ['HB3'], 'Hγ1': ['HG2'], 'Hγ2': ['HG3'], 'Hδ1': ['HD2'], 'Hδ2': ['HD3'] },
+  Q: { 'Hβ': ['HB2', 'HB3'], 'Hγ': ['HG2', 'HG3'], 'Hε21': ['HE21'], 'Hε22': ['HE22'] },
+  R: { 'Hβ': ['HB2', 'HB3'], 'Hγ': ['HG2', 'HG3'], 'Hδ': ['HD2', 'HD3'], 'Hε': ['HE'] },
+  S: { 'Hβ1': ['HB2'], 'Hβ2': ['HB3'] },
+  T: { 'Hβ': ['HB'], 'Hγ2': ['HG21', 'HG22', 'HG23'] },
+  V: { 'Hβ': ['HB'], 'Hγ1': ['HG11', 'HG12', 'HG13'], 'Hγ2': ['HG21', 'HG22', 'HG23'] },
+  // Trp DB naming is non-IUPAC: DB 'Hδ1' is the indole N-H (10 ppm, PDB HE1),
+  // the aromatic CH protons are Hε3/Hζ2/Hη2/Hζ3 = HE3/HZ2/HH2/HZ3.
+  W: { 'Hβ1': ['HB2'], 'Hβ2': ['HB3'], 'Hδ1': ['HE1'], 'Hε3': ['HE3'], 'Hζ2': ['HZ2'], 'Hη2': ['HH2'], 'Hζ3': ['HZ3'] },
+  Y: { 'Hβ1': ['HB2'], 'Hβ2': ['HB3'], 'Hδ': ['HD1', 'HD2'], 'Hε': ['HE1', 'HE2'] },
+};
+
+// Resolve which actual PDB hydrogens a DB proton resonance represents.
+const proteinDbHToPdbNames = (char, key) => {
+  if (key === 'HN') return ['H'];
+  if (key === 'Hα' || key === 'Hα1' || key === 'Hα2') return ['HA'];
+  const entry = PROTEIN_NOE_SIDECHAIN[char];
+  return (entry && entry[key]) || [];
+};
+
+// Idealized 3D coordinates of every hydrogen in the same geometry shown by the
+// 3D viewer (buildProteinBackbone + backbone H + placeSidechainAtoms).
+const buildProteinHCoords = (seq, ssString) => {
+  const residues = buildProteinBackbone(seq, ssString);
+  return residues.map((r, i) => {
+    const char = seq[i];
+    const coords = {};
+    try {
+      coords.HA = nerfPlace(r.O, r.C, r.CA, 1.09, _deg2rad(109.5), _deg2rad(180));
+    } catch { /* no HA */ }
+    if (i === 0) {
+      if (char !== 'P') {
+        try {
+          [60, 180, -60].forEach((tor, k) => {
+            coords[`H${k + 1}`] = nerfPlace(r.HA, r.CA, r.N, 1.01, _deg2rad(109.5), _deg2rad(tor));
+          });
+        } catch { /* no terminal H */ }
+      }
+    } else if (char !== 'P') {
+      try {
+        coords.H = nerfPlace(residues[i - 1].C, r.N, r.CA, 1.01, _deg2rad(120), _deg2rad(180));
+      } catch { /* no amide H */ }
+    }
+    try {
+      const sc = placeSidechainAtoms(char, r);
+      (sc.atoms || []).forEach((a) => {
+        if (a && a.name && a.pos) coords[a.name] = a.pos;
+      });
+    } catch { /* keep backbone H only */ }
+    return coords;
+  });
+};
+
+
 // The sugar is an EXACT closed regular pentagon (so the ribose ring always shows),
 // the base is an exact planar ring attached to C1' (glycosidic bond, never to the
 // phosphate), and every exocyclic substituent is placed with near-tetrahedral
@@ -3281,6 +3371,7 @@ cosyPairs.forEach(pairStr => {
           }
         }
       });
+      if (moleculeType !== 'protein') {
       const adj = {};
       if (res.cosy) res.cosy.forEach(([u, v]) => { if (!adj[u]) adj[u] = []; if (!adj[v]) adj[v] = []; adj[u].push(v); adj[v].push(u); });
       const seenPairs = new Set();
@@ -3303,6 +3394,7 @@ cosyPairs.forEach(pairStr => {
           addPair(noesy, res.simShifts['HN'], nextRes.simShifts['HN'], 'Seq. NOE', `${res.id} HN ↔ ${nextRes.id} HN`, 'noesySeq', 3, [...buildKeys(index, ['HN'], 'protein', res.char), ...buildKeys(index + 1, ['HN'], 'protein', nextRes.char)], 'HN', 'HN', index, res.char);
         }
       }
+      }
       Object.keys(res.simShifts13C || {}).forEach((atom) => {
         if (res.simShifts[atom] !== undefined) {
           const cn = getCarbonName(moleculeType, res.char, atom);
@@ -3316,8 +3408,60 @@ if (moleculeType === 'protein' && res.simN !== null && res.simN !== undefined &&
         p31.push({ x: res.p31, y: 0.8 + Math.random() * 0.4, label: `${res.id} P`, color: res.color, type: '1D', colorClass: 'p31', keys: [`${index}-P`], resNum: rN, resCode: rC, atom1: null, atom2: 'P' });
       }
     });
+    // PROTEIN NOESY — real 3D distance filter. The cross peaks shown in the
+    // simulated NOESY spectrum correspond to pairs of proton resonances whose
+    // hydrogens are actually closer than 0.5 nm (5 Å) in the same idealized 3D
+    // geometry that the structure viewer displays (secondary structure used for
+    // folding is skipped in the university test so the coil is fully extended).
+    if (moleculeType === 'protein' && simSeq.length > 0 && seq) {
+      const noeSs = activeTest.universityTest ? '' : ssRaw;
+      const hCoords = buildProteinHCoords(seq, noeSs);
+      const noeEntries = [];
+      hCoords.forEach((atomCoords, ri) => {
+        const res = simSeq[ri];
+        if (!res || !res.simShifts) return;
+        const char = res.char;
+        Object.keys(res.simShifts).forEach((key) => {
+          if (key[0] !== 'H') return;
+          const pdbNames = proteinDbHToPdbNames(char, key);
+          const pts = pdbNames.map((nm) => atomCoords[nm]).filter(Boolean);
+          if (pts.length === 0) return;
+          noeEntries.push({ ri, key, shift: res.simShifts[key], pts });
+        });
+      });
+      for (let a = 0; a < noeEntries.length; a++) {
+        for (let b = a + 1; b < noeEntries.length; b++) {
+          const A = noeEntries[a];
+          const B = noeEntries[b];
+          if (A.ri === B.ri && A.key === B.key) continue;
+          let best = Infinity;
+          for (let i = 0; i < A.pts.length; i++) {
+            for (let j = 0; j < B.pts.length; j++) {
+              const dx = A.pts[i][0] - B.pts[j][0];
+              const dy = A.pts[i][1] - B.pts[j][1];
+              const dz = A.pts[i][2] - B.pts[j][2];
+              const dd = dx * dx + dy * dy + dz * dz;
+              if (dd < best) best = dd;
+            }
+          }
+          best = Math.sqrt(best);
+          // When two resonances of the same residue map to the same modelled
+          // proton (Gly Hα1/Hα2 → single HA), never report a 0 Å contact: those
+          // are geminal protons ~1.8 Å apart in the idealised geometry.
+          if (best === 0 && A.ri === B.ri) best = 1.78;
+          if (!Number.isFinite(best) || best >= 5) continue;
+          const rA = simSeq[A.ri];
+          const rB = simSeq[B.ri];
+          const sep = Math.abs(A.ri - B.ri);
+          const colorClass = A.ri === B.ri ? 'noesyIntra' : sep === 1 ? 'noesySeq' : 'noesyIntra4';
+          const size = best < 3 ? 4 : best < 4 ? 3.4 : 2.7;
+          const keys = [...buildKeys(A.ri, [A.key], 'protein', rA.char), ...buildKeys(B.ri, [B.key], 'protein', rB.char)];
+          addPair(noesy, A.shift, B.shift, `${rA.id} ${A.key}–${rB.id} ${B.key}`, `${A.key}-${B.key} (NOE ${best.toFixed(1)} Å)`, colorClass, size, keys, A.key, B.key, A.ri, rA.char);
+        }
+      }
+    }
     return { diagonalData: diag, cosyPeaks: cosy, tocsyPeaks: tocsy, noesyPeaks: noesy, hsqcPeaks: hsqc, hsqc15NPeaks: hsqc15n, data1H: d1H, data13C: d13C, p31Data: p31 };
-  }, [simSeq, moleculeType, hasPhosphorus]);
+  }, [simSeq, moleculeType, hasPhosphorus, seq, ssRaw, activeTest.universityTest]);
   
   const uniqueTypes = useMemo(() => [...new Set(parsedSeq.map((r) => r.char))], [parsedSeq]);
   const ranges = useMemo(() => {
@@ -7779,8 +7923,14 @@ export const SimulationsSection = ({ ctx }) => {
   // Always an ARRAY (the spectrum plots call `.includes` on it) — an empty
   // array when the "Assigned atoms" highlight is off, never a Set.
   const manualKeys = useMemo(() => (showAssignedFlag ? getManualKeys(d.shifts) : []), [d.shifts, showAssignedFlag]);
+  // University test mode: peak labels are hidden AND the toolbar tick is
+  // deactivated — labels such as 3A Hα would give the peak assignments away.
+  const univTestMode = Boolean(activeTest.universityTest);
   const simCfg = { fontSize: 11, h1D: 300, aspect2D: 1, simShowLabels: false, simLabelFormat: 'resNum_code_atom', simLabelDim: 'both', simLabelFontSize: 12, simLabelColor: '#b91c1c', tickAngle: 0, tickColor: '#64748b', lineColor: '#3b82f6', lineThickness: 1.5, title: '', xAxisLabel: '', xMin: '', xMax: '', yMin: '', yMax: '', ...(activeTest.simChartCfg || {}) };
   const setCfg = (patch) => updateActiveTest({ simChartCfg: { ...simCfg, ...patch } });
+  // The plots never receive labels during the university test, regardless of any
+  // previously saved simChartCfg.simShowLabels value.
+  const plotSimCfg = univTestMode ? { ...simCfg, simShowLabels: false } : simCfg;
   if (d.parsedSeq.length === 0 && d.moleculeType !== 'organic') {
     return <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Enter a sequence / select a molecule (in Experiment Setup) to generate simulated spectra.</div>;
   }
@@ -7806,11 +7956,13 @@ export const SimulationsSection = ({ ctx }) => {
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-3 flex-wrap bg-white border border-slate-200 rounded-lg px-3 py-2 w-fit">
         <button type="button" onClick={() => setShowCfg(!showCfg)} className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'}`}>⚙️ Chart Parameters</button>
-        <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer ml-1 border-l border-slate-200 pl-3">
-          <input type="checkbox" checked={simCfg.simShowLabels} onChange={(e) => setCfg({ simShowLabels: e.target.checked })} className="accent-blue-600 w-4 h-4" />
+        <label className={`flex items-center gap-2 text-xs font-bold ml-1 border-l border-slate-200 pl-3 ${univTestMode ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700 cursor-pointer'}`}
+               title={univTestMode ? 'Peak labels would reveal the peak assignments — hidden during the 🎓 university test.' : undefined}>
+          <input type="checkbox" checked={plotSimCfg.simShowLabels} disabled={univTestMode} onChange={(e) => setCfg({ simShowLabels: e.target.checked })} className="accent-blue-600 w-4 h-4" />
           Peak labels
+          {univTestMode && <span className="text-[10px] italic font-semibold text-rose-500 ml-1">hidden during 🎓 test</span>}
         </label>
-        {simCfg.simShowLabels && (
+        {plotSimCfg.simShowLabels && (
           <>
             <select value={simCfg.simLabelFormat} onChange={(e) => setCfg({ simLabelFormat: e.target.value })}
                     className="border border-slate-300 rounded-md px-2 py-1 text-xs outline-none bg-white font-semibold" title="Label format">
@@ -7875,19 +8027,19 @@ export const SimulationsSection = ({ ctx }) => {
         </div>
       )}
  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-   <OneDSpectrumPlot key={`1d1h-${focusIdx}-${simCfg.xMin}-${simCfg.xMax}`} title="Simulated ¹H 1D Spectrum" data={fP(d.peaks.data1H).filter(p => p.atom1 && p.atom1.startsWith('H'))} fullDomain={[0, 11]} ticks={TICKS_1H} TickComponent={CustomXTick1H} xLabel="¹H (ppm)" panelId="1D_1H" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={simCfg} />
-   <OneDSpectrumPlot key={`1d13c-${focusIdx}-${simCfg.xMin}-${simCfg.xMax}`} title="Simulated ¹³C 1D Spectrum" data={fP(d.peaks.data13C).filter(p => p.atom2 && p.atom2.startsWith('C'))} fullDomain={[0, 220]} ticks={TICKS_13C} TickComponent={CustomXTick13C} xLabel="¹³C (ppm)" panelId="1D_13C" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={simCfg} />
+   <OneDSpectrumPlot key={`1d1h-${focusIdx}-${simCfg.xMin}-${simCfg.xMax}`} title="Simulated ¹H 1D Spectrum" data={fP(d.peaks.data1H).filter(p => p.atom1 && p.atom1.startsWith('H'))} fullDomain={[0, 11]} ticks={TICKS_1H} TickComponent={CustomXTick1H} xLabel="¹H (ppm)" panelId="1D_1H" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={plotSimCfg} />
+   <OneDSpectrumPlot key={`1d13c-${focusIdx}-${simCfg.xMin}-${simCfg.xMax}`} title="Simulated ¹³C 1D Spectrum" data={fP(d.peaks.data13C).filter(p => p.atom2 && p.atom2.startsWith('C'))} fullDomain={[0, 220]} ticks={TICKS_13C} TickComponent={CustomXTick13C} xLabel="¹³C (ppm)" panelId="1D_13C" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={plotSimCfg} />
    {d.hasPhosphorus && d.selNuc.includes('P') && fP(d.peaks.p31Data).length > 0 && (
-     <OneDSpectrumPlot key={`1dp31-${focusIdx}-${simCfg.xMin}-${simCfg.xMax}`} title="Simulated ³¹P 1D Spectrum" data={fP(d.peaks.p31Data)} fullDomain={[-5, 5]} ticks={Array.from({ length: 11 }, (_, i) => i - 5)} TickComponent={CustomXTick1H} xLabel="³¹P (ppm)" panelId="1D_31P" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={simCfg} />
+     <OneDSpectrumPlot key={`1dp31-${focusIdx}-${simCfg.xMin}-${simCfg.xMax}`} title="Simulated ³¹P 1D Spectrum" data={fP(d.peaks.p31Data)} fullDomain={[-5, 5]} ticks={Array.from({ length: 11 }, (_, i) => i - 5)} TickComponent={CustomXTick1H} xLabel="³¹P (ppm)" panelId="1D_31P" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={plotSimCfg} />
    )}
-   <SpectrumPlot key={`cosy-${focusIdx}`} title="Simulated COSY Spectrum" diagonalData={fP(d.peaks.diagonalData).filter(p => p.atom1 && p.atom1.startsWith('H'))} crossPeakData={fP(d.peaks.cosyPeaks).filter(p => p.atom1 && p.atom1.startsWith('H') && p.atom2 && p.atom2.startsWith('H'))} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="cosy" diagonalColor="#22c55e" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
-   <SpectrumPlot key={`noesy-${focusIdx}`} title="Simulated NOESY Spectrum" diagonalData={fP(d.peaks.diagonalData).filter(p => p.atom1 && p.atom1.startsWith('H'))} crossPeakData={fP(d.peaks.noesyPeaks).filter(p => p.atom1 && p.atom1.startsWith('H') && p.atom2 && p.atom2.startsWith('H'))} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="noesy" diagonalColor="#ef4444" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
-   <SpectrumPlot key={`tocsy-${focusIdx}`} title="Simulated TOCSY Spectrum" diagonalData={fP(d.peaks.diagonalData).filter(p => p.atom1 && p.atom1.startsWith('H'))} crossPeakData={fP(d.peaks.tocsyPeaks).filter(p => p.atom1 && p.atom1.startsWith('H') && p.atom2 && p.atom2.startsWith('H'))} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="tocsy" diagonalColor="#1e3a8a" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
+   <SpectrumPlot key={`cosy-${focusIdx}`} title="Simulated COSY Spectrum" diagonalData={fP(d.peaks.diagonalData).filter(p => p.atom1 && p.atom1.startsWith('H'))} crossPeakData={fP(d.peaks.cosyPeaks).filter(p => p.atom1 && p.atom1.startsWith('H') && p.atom2 && p.atom2.startsWith('H'))} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="cosy" diagonalColor="#22c55e" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={plotSimCfg} />
+   <SpectrumPlot key={`noesy-${focusIdx}`} title="Simulated NOESY Spectrum" diagonalData={fP(d.peaks.diagonalData).filter(p => p.atom1 && p.atom1.startsWith('H'))} crossPeakData={fP(d.peaks.noesyPeaks).filter(p => p.atom1 && p.atom1.startsWith('H') && p.atom2 && p.atom2.startsWith('H'))} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="noesy" diagonalColor="#ef4444" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={plotSimCfg} />
+   <SpectrumPlot key={`tocsy-${focusIdx}`} title="Simulated TOCSY Spectrum" diagonalData={fP(d.peaks.diagonalData).filter(p => p.atom1 && p.atom1.startsWith('H'))} crossPeakData={fP(d.peaks.tocsyPeaks).filter(p => p.atom1 && p.atom1.startsWith('H') && p.atom2 && p.atom2.startsWith('H'))} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="tocsy" diagonalColor="#1e3a8a" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={plotSimCfg} />
  </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <HSQCPlot key={`hsqc-${focusIdx}`} title="Simulated ¹H-¹³C HSQC Spectrum" crossPeakData={fP(d.peaks.hsqcPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹³C F1 (ppm)" yDomainInit={[0, 220]} yTicks={TICKS_13C} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
+        <HSQCPlot key={`hsqc-${focusIdx}`} title="Simulated ¹H-¹³C HSQC Spectrum" crossPeakData={fP(d.peaks.hsqcPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹³C F1 (ppm)" yDomainInit={[0, 220]} yTicks={TICKS_13C} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={plotSimCfg} />
         {d.moleculeType === 'protein' && d.selNuc.includes('N') && fP(d.peaks.hsqc15NPeaks).length > 0 && (
-          <HSQCPlot key={`hsqc15n-${focusIdx}`} title="Simulated ¹H-¹⁵N HSQC Spectrum" crossPeakData={fP(d.peaks.hsqc15NPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc15n" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹⁵N F1 (ppm)" yDomainInit={[95, 135]} yTicks={TICKS_15N} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
+          <HSQCPlot key={`hsqc15n-${focusIdx}`} title="Simulated ¹H-¹⁵N HSQC Spectrum" crossPeakData={fP(d.peaks.hsqc15NPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc15n" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹⁵N F1 (ppm)" yDomainInit={[95, 135]} yTicks={TICKS_15N} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={plotSimCfg} />
         )}
       </div>
     </div>
