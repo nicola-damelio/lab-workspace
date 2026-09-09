@@ -15,9 +15,10 @@
        fournisseur, le montant, les frais de port et le fichier du devis
        (téléversé sur Google Drive Budget_labo/<année>/Devis, ou lien collé) ;
      · la PREMIÈRE colonne contient la décision du superutilisateur
-       (Approuvé / En attente / Pas maintenant — personnalisable dans
+       (Approuvé / En attente / Test / Pas maintenant — personnalisable dans
        Setup › Options des listes déroulantes) ; les autres membres ne
-       peuvent pas modifier cette décision ;
+       peuvent pas modifier cette décision. « Test » = montant compté dans les
+       prévisions « Achats prévus » de la page Recettes sans acceptation réelle ;
      · colonnes cliquables : fournisseur → Librerie, ligne budgétaire →
        Librerie (onglet Lignes budgétaires), demandeur → fiche Personnel.
 
@@ -34,8 +35,8 @@ import { useAdmin } from './AdminContext';
 import { SmartTable } from './smartTable';
 import { AdminImportModal } from './adminImportModal';
 import {
-  ADMIN_PAGES, RECETTE_TYPES, URGENCES, DESIDERATE_STATUSES,
-  desiderataDecisionOf, isDesiderataApproved, APPROVAL_GESTION,
+  ADMIN_PAGES, RECETTE_TYPES, URGENCES, DESIDERATE_STATUSES, DESIDERATE_TEST,
+  desiderataDecisionOf, isDesiderataApproved, isDesiderataTest, APPROVAL_GESTION,
 } from './adminSchema';
 import { parseEuroAmount, extractNumeroFromDoc } from './importUtils';
 import {
@@ -133,11 +134,15 @@ const Badge = ({ tone = 'slate', children }) => (
 
 /* Pastille de DÉCISION (superutilisateur) à partir de la valeur stockée.
    « Approved » / « Pending » / « Rejected / Pas maintenant » (anciens imports)
-   sont automatiquement affichés dans leur équivalent français. */
+   sont automatiquement affichés dans leur équivalent français. Seul
+   « Approuvé » est vert ; « En attente », « Test » (compté en prévision, sans
+   acceptation) et « Pas maintenant » restent en AMBRE (jaune) pour ne jamais
+   laisser croire à un refus ou à une acceptation. */
 const DECISION_TONES = {
   [desiderataDecisionOf('Approved')]: 'emerald',
   [desiderataDecisionOf('Pending')]: 'amber',
-  [desiderataDecisionOf('Rejected / Pas maintenant')]: 'red',
+  [desiderataDecisionOf('Test')]: 'amber',
+  [desiderataDecisionOf('Rejected / Pas maintenant')]: 'amber',
 };
 const decisionTone = (raw) => DECISION_TONES[desiderataDecisionOf(raw)] || 'slate';
 const DecisionBadge = ({ raw }) =>
@@ -869,6 +874,10 @@ export const DesiderataPage = () => {
       ? settings.desiderateStatuses : DESIDERATE_STATUSES;
     const set = base.map(desiderataDecisionOf);
     myRows.forEach((r) => set.push(desiderataDecisionOf(r && r.statut)));
+    /* Le statut « Test » (compté en prévision dans Recettes, sans acceptation
+       réelle) reste toujours proposé, même si la liste personnalisée de Setup
+       ne l’a pas encore. */
+    set.push(DESIDERATE_TEST);
     return [...new Set(set.filter(Boolean))];
   }, [settings, myRows]);
 
@@ -1200,8 +1209,11 @@ export const DesiderataPage = () => {
   const hiddenDone = sorted.length - visibleSorted.length;
 
   const DECISION_SELECT_TONE = (value) => {
+    /* Seul « Approuvé » est vert. Tout le reste (« En attente », « Test »,
+       « Pas maintenant »…) est en AMBRE (jaune) : un état non-accepté ne doit
+       jamais être montré en rouge (fausse impression de refus) ni en vert
+       (fausse impression d’acceptation). */
     if (value === 'Approuvé') return 'bg-emerald-50 border-emerald-200 text-emerald-700';
-    if (value === 'Pas maintenant') return 'bg-red-50 border-red-200 text-red-600';
     return 'bg-amber-50 border-amber-200 text-amber-700';
   };
 
@@ -1223,7 +1235,7 @@ export const DesiderataPage = () => {
           <select
             value={value}
             onChange={(e) => quickDecide(r, e.target.value)}
-            title="Décision du superutilisateur (Approuvé / En attente / Pas maintenant)"
+            title="Décision du superutilisateur (Approuvé / En attente / Test / Pas maintenant)"
             className={`inline-block max-w-[170px] text-[10px] font-black uppercase rounded-full border pl-2 pr-1 py-0.5 outline-none cursor-pointer ${DECISION_SELECT_TONE(value)}`}
           >
             {decisionOptions.map((o) => <option key={o} value={o}>{o}</option>)}
@@ -1398,6 +1410,7 @@ export const DesiderataPage = () => {
       display: (r) => {
         const approved = isDesiderataApproved(r && r.statut);
         const pendingDecision = desiderataDecisionOf(r && r.statut) === 'En attente';
+        const inTest = isDesiderataTest(r && r.statut);
         const st = transferStatus.get(r.id);
         const transferred = !!(r.transfert || (st && st.devis));
         const metaT = r.transfert ? targetMetaOf(r.transfert.cible) : null;
@@ -1432,6 +1445,14 @@ export const DesiderataPage = () => {
                       : badge('bg-blue-50 border border-blue-200 text-blue-700', 'Devis signé · BC à signer')}
               </div>
             ) : null}
+            {!transferred && inTest ? (
+              <div className="flex items-center gap-1.5">
+                <span
+                  className="inline-block text-[9px] font-black uppercase px-1.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 whitespace-nowrap"
+                  title="« Test » : montant compté dans les prévisions « Achats prévus » de la page Recettes, mais la demande n’est PAS acceptée — aucun transfert tant que la décision ne passe pas à « Approuvé »."
+                >🧪 en test</span>
+              </div>
+            ) : null}
             {!transferred && isSuper && !linkedDepenseOf(r) && (pendingDecision || approved) ? (
               <div className="flex flex-col gap-1">
                 <span className="text-[9px] uppercase font-black text-slate-400">
@@ -1454,7 +1475,7 @@ export const DesiderataPage = () => {
                 </div>
               </div>
             ) : null}
-            {!transferred && !approved && !pendingDecision ? <span className="text-[10px] text-slate-300">demande refusée</span> : null}
+            {!transferred && !approved && !pendingDecision && !inTest ? <span className="text-[10px] text-slate-300">demande refusée</span> : null}
           </div>
         );
       },
@@ -1577,8 +1598,9 @@ export const DesiderataPage = () => {
         <b>Achats prévus / souhaités :</b> chaque membre déclare ses achats souhaités et ne voit QUE ses propres demandes
         (description, ligne budgétaire, fournisseur, coût estimé, frais de port — le N° devis et le fichier du devis sont facultatifs
         à la soumission) — le superutilisateur, qui décide et transfère, voit tout. La <b>première colonne « Décision »</b> affiche la
-        décision du superutilisateur : <b>Approuvé / En attente / Pas maintenant</b> (personnalisable dans Setup › Options des listes
-        déroulantes). Pour toute demande en attente, la colonne <b>« Transfert »</b> propose au directeur : <b>« ✓ Signature »</b>
+        décision du superutilisateur : <b>Approuvé / En attente / Test / Pas maintenant</b> (personnalisable dans Setup › Options des listes
+        déroulantes). La décision <b>« Test »</b> compte la demande dans les prévisions <b>« Achats prévus »</b> de la page Recettes sans
+        l’accepter réellement (aucune notification, aucun transfert). Pour toute demande en attente, la colonne <b>« Transfert »</b> propose au directeur : <b>« ✓ Signature »</b>
         (documents complets — un devis « en attente de signature » est créé dans « Approbation devis & BC ») ou <b>« ✎ Révision »</b>
         (documents manquants — un devis « En gestion » est créé pour être complété par la responsable d'achats, puis envoyé pour
         signature). La demande transférée <b>disparaît de cette liste</b> (rétablie via « Afficher les transférées ») et son montant est

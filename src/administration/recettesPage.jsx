@@ -3,7 +3,8 @@
    Page « Recettes » — lignes budgétaires.
    Chaque ligne : type Fonctionnement / Investissement, porteur, budget total,
    montant mis à disposition par l’université, dépenses déjà ordonnées
-   (BC signés), ordres de mission (acceptés / à prévoir), souhaits d’achat
+   (BC signés), ordres de mission (acceptés / à prévoir — y compris ceux
+   marqués « Test », comptés en prévision sans être acceptés), souhaits d’achat
    liés, solde calculé, date de fin d’engagement et commentaires.
    Les agrégats sont calculés depuis les collections depenses / om /
    desiderate / reimbursements de la même base (liaison par recetteId /
@@ -11,7 +12,7 @@
    ========================================================================= */
 import React, { useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
-import { RECETTE_TYPES, DEPENSE_BC_SIGNE, depenseKindOf, isDesiderataRejected, isDesiderataApproved, desiderataDecisionOf, reimbTotalOf, isSalaireRecetteType } from './adminSchema';
+import { RECETTE_TYPES, DEPENSE_BC_SIGNE, depenseKindOf, isDesiderataRejected, isDesiderataApproved, isDesiderataTest, desiderataDecisionOf, reimbTotalOf, isSalaireRecetteType } from './adminSchema';
 import { omTransferStatus } from './transferAchats';
 import { AdminImportModal } from './adminImportModal';
 import { SmartTable } from './smartTable';
@@ -121,6 +122,11 @@ const isAchatBcSigne = (d) => {
    / terminés restent visibles au survol mais ne sont pas inclus dans la somme. */
 const isOmApproved = (raw) =>
   /accept/i.test(String(raw || '').normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+
+/* « OM en test » : statut « Test » (choix du superutilisateur). Ces OM sont
+   comptées dans la colonne « OM prévus » (prévision), mais ne sont jamais
+   acceptées / transférées. */
+const isOmTest = (raw) => /^test$/i.test(String(raw || '').trim());
 
 export const RecettesPage = () => {
   const { data, settings, upsert, remove, access, navigate } = useAdmin();
@@ -255,15 +261,20 @@ export const RecettesPage = () => {
        des frais avancés par un membre et son coût total est déduit du solde. */
     const reimbRows = reimbursements.filter((x) => x && x.recetteId === recId);
     const reimbTotal = reimbRows.reduce((s, x) => s + reimbTotalOf(x), 0);
-    /* « OM prévus / en signature » : seuls les OM approuvés (« Acceptée »)
-       comptent. Une OM acceptée mais PAS encore transférée reste « OM prévus ».
-       Dès qu'elle est transférée pour signature, ses postes « Commande » dont
-       le devis est « En attente de signature » ou déjà signé (BC pas encore
-       signé) passent dans la colonne « OM en signature / signé » ; les postes
-       « Commande » dont le devis est « En gestion » (à compléter) restent
-       prévus ; les postes soldés (BC signé) sont suivis via la dépense liée. */
+    /* « OM prévus / en signature » : les OM approuvés (« Acceptée ») comptent,
+       ainsi que les OM « Test » (choix du superutilisateur : comptées en
+       prévision, sans être réellement acceptées). Une OM acceptée mais PAS
+       encore transférée reste « OM prévus ». Dès qu'elle est transférée pour
+       signature, ses postes « Commande » dont le devis est « En attente de
+       signature » ou déjà signé (BC pas encore signé) passent dans la colonne
+       « OM en signature / signé » ; les postes « Commande » dont le devis est
+       « En gestion » (à compléter) restent prévus ; les postes soldés (BC
+       signé) sont suivis via la dépense liée. Les OM « Test » ne sont jamais
+       transférées : elles restent « OM prévus » tant que le statut ne passe
+       pas à « Acceptée ». */
     const lineOm = om.filter((o) => o.recetteId === recId && String(o.statut || 'En attente').trim() !== 'Refusée');
     const omApprouves = lineOm.filter((o) => isOmApproved(o.statut));
+    const omEnTest = lineOm.filter((o) => isOmTest(o.statut));
     const omEnSignatureItems = [];
     const omPrevuItems = [];
     omApprouves.forEach((o) => {
@@ -287,6 +298,10 @@ export const RecettesPage = () => {
       if (enSig.length) omEnSignatureItems.push({ om: o, parts: enSig });
       if (restePrevu.length) omPrevuItems.push({ om: o, parts: restePrevu });
     });
+    /* OM « Test » : jamais transférées, elles restent intégralement dans la
+       colonne « OM prévus » (aucun e-mail, aucun transfert — c'est une
+       prévision, pas une acceptation). */
+    omEnTest.forEach((o) => omPrevuItems.push({ om: o, whole: true }));
     const omEnSignatureTotal = omEnSignatureItems.reduce((s, x) => s
       + x.parts.reduce((s2, p) => s2 + (p.montant || 0), 0), 0);
     const omTotal = omPrevuItems.reduce((s, x) => {
@@ -316,6 +331,15 @@ export const RecettesPage = () => {
       if (dvLive && d.transfert && !orphanDevis) desEnSignatureItems.push(d);
       else if (!orphanDevis) desPrevuItems.push(d);
     });
+    /* Demandes « Test » (choix du superutilisateur) : comptées « Achats prévus »
+       comme une prévision, sans être réellement acceptées. Elles n'ont jamais
+       de devis / transfert ; seul un éventuel lien direct déjà soldé (BC signé)
+       les retirerait de la prévision (cas hors-circuit, par sécurité). */
+    lineDes.filter((d) => isDesiderataTest(d.statut)).forEach((d) => {
+      const directDep = depenses.find((x) => x && x.desiderataId === d.id) || null;
+      const bcSigned = !!directDep && isAchatBcSigne(directDep);
+      if (!bcSigned) desPrevuItems.push(d);
+    });
     const desEnSignatureTotal = desEnSignatureItems.reduce((s, d) => s + toNum(d.montantEstime) + toNum(d.fraisPort), 0);
     const desMontant = desPrevuItems.reduce((s, d) => s + toNum(d.montantEstime), 0);
     const budgetRendu = rec.budgetRenduDispo !== undefined && rec.budgetRenduDispo !== null && rec.budgetRenduDispo !== ''
@@ -323,9 +347,10 @@ export const RecettesPage = () => {
       : toNum(rec.budgetTotal);
     // Solde = dispo université − Achats (BC signé) − prestations internes − OM payés − rémunérations de stage − remboursements (jamais les souhaits / OM prévus).
     const solde = budgetRendu - ordonneeTotal - piTotal - omPaidTotal - stageTotal - reimbTotal;
-    /* « OM prévus encore à payer » : OM acceptés pas encore transférés — et,
-       pour une OM transférée, les postes « Commande » dont le devis n'est pas
-       encore parti en signature (devis « En gestion » / pas de devis). */
+    /* « OM prévus encore à payer » : OM acceptées (ou « Test », prévision)
+       pas encore transférées — et, pour une OM transférée, les postes
+       « Commande » dont le devis n'est pas encore parti en signature (devis
+       « En gestion » / pas de devis). */
     const omPrevuEnCours = omPrevuItems.reduce((s, x) => {
       if (x.whole) return s + toNum(x.om.coutTotal);
       return s + x.parts.reduce((s2, p) => s2 + (p.montant || 0), 0);
@@ -545,7 +570,7 @@ export const RecettesPage = () => {
     },
     {
       key: 'om', label: 'OM prévus',
-      header: <span title="prévision — n’est PAS déduit du solde : seul l’« OM payé » (dépense transférée) l’est">OM prévus</span>,
+      header: <span title="prévision (OM « Acceptée » et OM « Test » comptées ; les OM en attente / terminées ne le sont pas) — n’est PAS déduit du solde : seul l’« OM payé » (dépense transférée) l’est">OM prévus</span>,
       dataType: 'number', align: 'right', nowrap: true,
       value: (r) => Number(r.__agg.omTotal) || 0,
       display: (r) => (
@@ -554,7 +579,7 @@ export const RecettesPage = () => {
           onOpen={openTarget}
           items={r.__agg.lineOm.map((o) => ({
             title: o.description || o.destination || 'OM',
-            meta: [o.destination || '', `${o.statut || 'En attente'}${isOmApproved(o.statut) ? ' · accepté' : ' · non accepté'}`].filter(Boolean).join(' · '),
+            meta: [o.destination || '', `${o.statut || 'En attente'}${isOmApproved(o.statut) ? ' · accepté' : isOmTest(o.statut) ? ' · en test' : ' · non accepté'}`].filter(Boolean).join(' · '),
             value: euro.format(toNum(o.coutTotal)),
             to: omLink(o),
           }))}
@@ -563,7 +588,7 @@ export const RecettesPage = () => {
     },
     {
       key: 'desiderata', label: 'Achats prévus',
-      header: <span title="non déduits du solde — information seule">Achats prévus</span>,
+      header: <span title="Achats « Approuvés » et achats « Test » comptés en prévision ; non déduits du solde — information seule">Achats prévus</span>,
       dataType: 'number', align: 'right', nowrap: true,
       value: (r) => Number(r.__agg.desMontant) || 0,
       display: (r) => (

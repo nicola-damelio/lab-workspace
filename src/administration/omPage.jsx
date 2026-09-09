@@ -7,9 +7,11 @@
      · demandeur · destination · n° OM (référence)
      · ligne budgétaire liée (recette)
      · dates : demande / mission (départ) / retour
-     · statut : En attente / Acceptée / Refusée / Terminée — le changement de
+     · statut : En attente / Acceptée / Test / Refusée / Terminée — le changement de
        statut (approbation) est réservé au superutilisateur, et une fois l’OM
-       « Acceptée » un e-mail prévient le superutilisateur et le(s) gestionnaire(s)
+       « Acceptée » un e-mail prévient le superutilisateur et le(s) gestionnaire(s).
+       « Test » = OM comptée dans les prévisions « OM prévus » des Recettes sans
+       être réellement acceptée ;
      · coût estimé ou exact : transport · logement · repas · inscription
        (total recalculé automatiquement)
      · commentaires
@@ -78,11 +80,20 @@ const euro = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR'
 const isOmApproved = (raw) =>
   /accept/i.test(String(raw || '').normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
 
-/* Teinte + pastille du statut affiché en PREMIÈRE colonne. */
+/* « OM en test » : statut « Test » choisi par le superutilisateur — l’OM est
+   comptée dans les prévisions « OM prévus » de la page Recettes mais n’est PAS
+   acceptée (pas de notification, pas de transfert possible). */
+const isOmTest = (raw) => /^test$/i.test(txt(raw));
+
+/* Teinte + pastille du statut affiché en PREMIÈRE colonne.
+   Seule « Acceptée » est verte ; « En attente », « Test » (compté en prévision
+   sans acceptation) et « Refusée » restent en AMBRE (jaune) : un état
+   non-accepté ne doit jamais être montré en rouge (fausse impression de refus)
+   ni en vert (fausse impression d’acceptation). */
 const omStatutTone = (v) => {
   const s = txt(v).toLowerCase();
   if (/(accept)/.test(s)) return 'bg-emerald-50 border-emerald-200 text-emerald-700';
-  if (/(refus)/.test(s)) return 'bg-red-50 border-red-200 text-red-600';
+  if (/(refus|rejet)/.test(s)) return 'bg-amber-50 border-amber-200 text-amber-700';
   if (/(termin)/.test(s)) return 'bg-indigo-50 border-indigo-200 text-indigo-700';
   return 'bg-amber-50 border-amber-200 text-amber-700';
 };
@@ -673,6 +684,10 @@ export const OmPage = () => {
       const s = txt(pick(r, ['statut']));
       if (s && set.indexOf(s) === -1) set.push(s);
     });
+    /* Le statut « Test » (compté en prévision dans Recettes, sans acceptation
+       réelle) reste toujours proposé, même si la liste personnalisée de Setup
+       ne l’a pas encore. */
+    if (set.indexOf('Test') === -1) set.push('Test');
     return set;
   }, [settings, om]);
 
@@ -1149,7 +1164,7 @@ export const OmPage = () => {
           <select
             value={v}
             onChange={(e) => quickStatut(r, e.target.value)}
-            title="Statut (approbation réservée au superutilisateur)"
+            title="Statut (approbation réservée au superutilisateur : En attente / Acceptée / Test / Refusée / Terminée)"
             className={`inline-block max-w-[180px] text-[10px] font-black uppercase rounded-full border pl-2 pr-1 py-0.5 outline-none cursor-pointer ${omStatutTone(v)}`}
           >
             <option value="">— Sans statut —</option>
@@ -1167,6 +1182,7 @@ export const OmPage = () => {
       },
       display: (r) => {
         const approved = isOmApproved(pick(r, ['statut']));
+        const inTest = isOmTest(pick(r, ['statut']));
         const pendingDecision = String(pick(r, ['statut']) || 'En attente').trim() === 'En attente';
         const st = omStatusByKey.get(r.id);
         const transferred = !!r.transfert;
@@ -1210,6 +1226,14 @@ export const OmPage = () => {
                 ) : null}
               </div>
             ) : null}
+            {!transferred && inTest ? (
+              <div className="flex items-center gap-1.5">
+                <span
+                  className="inline-block text-[9px] font-black uppercase px-1.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 whitespace-nowrap"
+                  title="« Test » : OM comptée dans les prévisions « OM prévus » de la page Recettes, mais PAS acceptée — aucun transfert tant que le statut ne passe pas à « Acceptée »."
+                >🧪 en test</span>
+              </div>
+            ) : null}
             {!transferred && isSuper && !linkedDepenseOf(r) && (pendingDecision || approved) ? (
               <div className="flex flex-col gap-1">
                 <span className="text-[9px] uppercase font-black text-slate-400">
@@ -1232,7 +1256,7 @@ export const OmPage = () => {
                 </div>
               </div>
             ) : null}
-            {!transferred && !approved && !pendingDecision ? <span className="text-[10px] text-slate-300">OM refusée</span> : null}
+            {!transferred && !approved && !pendingDecision && !inTest ? <span className="text-[10px] text-slate-300">OM refusée</span> : null}
             {st && st.parts.length ? st.parts.map((p) => (
               <div key={p.key} className="flex items-center gap-1.5 text-[10px] leading-tight">
                 <span className="shrink-0">{p.icon}</span>
@@ -1329,7 +1353,8 @@ export const OmPage = () => {
       <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
         <b>OM prévus / souhaités :</b> chaque OM décrit une mission à préparer. Chaque membre ne voit que ses propres OM
         (demandeur = lui-même, verrouillé) — le superutilisateur, qui accepte et transfère, voit tout. La <b>première colonne « Statut »</b>
-        (En attente / Acceptée / Refusée / Terminée) n’est modifiable que par le superutilisateur. Dans le formulaire,
+        (En attente / Acceptée / Test / Refusée / Terminée) n’est modifiable que par le superutilisateur. Le statut <b>« Test »</b> compte l’OM
+        dans les prévisions <b>« OM prévus »</b> de la page Recettes sans l’accepter réellement (aucune notification, aucun transfert). Dans le formulaire,
         chaque <b>poste de coût</b> est étiqueté <b>« BC »</b> (commandé par le laboratoire : devis dans « Approbation
         devis & BC ») ou <b>« Remb. »</b> (frais avancés par le membre puis remboursés : fiche dans Dépenses ›
         Remboursements). Pour une demande en attente, la colonne <b>« Gestion des frais »</b> propose au directeur

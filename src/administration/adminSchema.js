@@ -82,11 +82,11 @@ export const ADMIN_PAGES = [
     blurb: 'Dépenses / commandes avec pipeline complet (devis, SIFAC, BC, fournisseur, facture) et livraisons en plusieurs phases.',
     fields: ['Description', 'Demandeur', 'Catégorie Fonct. / Invest. · Nature', 'Ligne budgétaire liée (Recette)', 'Montant + frais de port', 'Devis · N° SIFAC/D.A. · N° BC & dates', 'Fournisseur + contact', 'N° facture', 'Livraisons : arrivée, BL, Service Fait', 'Livraison complète'] },
   { id: 'om', label: 'OM prévus / souhaités', icon: '✈️', superuserOnly: false, kind: 'om',
-    blurb: 'Ordres de mission prévus / souhaités : dates, demandeur, destination, coûts, statut (En attente / Acceptée…). Un OM « Acceptée » peut être transféré en dépense réelle (page Dépenses › onglet OM).',
-    fields: ['Description', 'Demandeur', 'Date de demande · Départ · Retour', 'Destination', 'Transport · Hébergement · Repas · Inscription', 'Coût total (calculé)', 'Statut : En attente / Acceptée / Refusée / Terminée', 'Estimé vs Exact', 'Ligne budgétaire liée (Recette)', 'Commentaires'] },
+    blurb: 'Ordres de mission prévus / souhaités : dates, demandeur, destination, coûts, statut (En attente / Acceptée…). Un OM « Acceptée » peut être transféré en dépense réelle (page Dépenses › onglet OM). Le statut « Test » compte l’OM dans les prévisions des Recettes sans l’accepter réellement.',
+    fields: ['Description', 'Demandeur', 'Date de demande · Départ · Retour', 'Destination', 'Transport · Hébergement · Repas · Inscription', 'Coût total (calculé)', 'Statut : En attente / Acceptée / Test / Refusée / Terminée', 'Estimé vs Exact', 'Ligne budgétaire liée (Recette)', 'Commentaires'] },
   { id: 'desiderate', label: 'Achats prévus / souhaités', icon: '🛒', superuserOnly: false, kind: 'desiderate',
-    blurb: 'Achats prévus / souhaités de l’équipe : coût estimé et frais de port saisis par le demandeur, décision réservée au superutilisateur (Approuvé / En attente / Pas maintenant).',
-    fields: ['Décision — réservée au superutilisateur : Approuvé / En attente / Pas maintenant', 'Souhait d’achat', 'Urgence : Urgent / Important / Souhaitable', 'Demandeur', 'Fournisseur', 'Ligne budgétaire suggérée', 'Coût estimé', 'Frais de port', 'N° devis · Lien du devis (Drive, facultatif) · Code produit', 'Date de demande', 'Commentaires'] },
+    blurb: 'Achats prévus / souhaités de l’équipe : coût estimé et frais de port saisis par le demandeur, décision réservée au superutilisateur (Approuvé / En attente / Test / Pas maintenant). Le statut « Test » compte le montant dans les prévisions des Recettes sans que la demande soit réellement acceptée.',
+    fields: ['Décision — réservée au superutilisateur : Approuvé / En attente / Test / Pas maintenant', 'Souhait d’achat', 'Urgence : Urgent / Important / Souhaitable', 'Demandeur', 'Fournisseur', 'Ligne budgétaire suggérée', 'Coût estimé', 'Frais de port', 'N° devis · Lien du devis (Drive, facultatif) · Code produit', 'Date de demande', 'Commentaires'] },
   { id: 'devisBc', label: 'Approbation devis & BC', icon: '📝', superuserOnly: false, kind: 'devisBc',
     blurb: 'Dépôt des devis et bons de commande à faire signer par le superutilisateur (visibles par les Permanents ; les lignes demandées par « Service » sont visibles par tout le monde). Les fichiers sont téléversés dans Budget_labo/<année>/Devis|BC avec un nom qui reprend le N°, les attributs de la ligne ET l’objet (description) après un « _ » à la fin du titre ; l’approbation d’un devis crée la dépense « Devis en cours » et celle du BC la fait passer à « BC signé » (liens automatiques). À l’approbation d’un fichier PDF, une copie signée « …_approuvé_signé.pdf » est créée (image de signature du superutilisateur en bas de la dernière page) et devient le fichier officiel — l’original reste intact.',
     fields: ['Statut : En attente / Approuvé / Refusé (décision réservée au superutilisateur)', 'Type : Devis ou BC', 'Description', 'Fournisseur', 'N° devis · N° BC', 'Montant (optionnel)', 'Fichier téléversé (Budget_labo/<année>/Devis ou /BC)', 'Déposant', 'Date de dépôt', 'Dépense créée automatiquement à l’approbation'] },
@@ -226,7 +226,7 @@ export const AUDIT_FIELDS = ['id', 'createdAt', 'createdBy', 'updatedAt', 'updat
  * @property {?string} numDevisUrl           // lien Google Drive vers le devis (facultatif)
  * @property {string} codeProduit
  * @property {string} commentaires
- * @property {string} statut                // décision du superutilisateur : « Approuvé » / « En attente » / « Pas maintenant » (anciennes valeurs d’import toujours acceptées)
+ * @property {string} statut                // décision du superutilisateur : « Approuvé » / « En attente » / « Test » / « Pas maintenant » (anciennes valeurs d’import toujours acceptées)
  * @property {?string} statutChangedBy
  * @property {?number} statutChangedAt
  */
@@ -292,11 +292,14 @@ export const URGENCES = ['Urgent', 'Important', 'Souhaitable'];
    au superutilisateur. Cette liste reste modifiable dans Setup › Options des
    listes déroulantes. Les anciennes valeurs d’import (« Approved », « Pending »,
    « Rejected / Pas maintenant »…) restent reconnues et affichées dans leur
-   équivalent français par `desiderataDecisionOf`. */
+   équivalent français par `desiderataDecisionOf`. Le statut « Test » compte le
+   montant dans les prévisions des Recettes (« Achats prévus ») sans que la
+   demande soit réellement acceptée (aucune notification, aucun transfert). */
 export const DESIDERATE_APPROVED = 'Approuvé';
 export const DESIDERATE_PENDING = 'En attente';
+export const DESIDERATE_TEST = 'Test';
 export const DESIDERATE_REJECTED = 'Pas maintenant';
-export const DESIDERATE_STATUSES = [DESIDERATE_APPROVED, DESIDERATE_PENDING, DESIDERATE_REJECTED];
+export const DESIDERATE_STATUSES = [DESIDERATE_APPROVED, DESIDERATE_PENDING, DESIDERATE_TEST, DESIDERATE_REJECTED];
 
 /** Libellé français normalisé d’une décision (accepte les anciennes valeurs). */
 export const desiderataDecisionOf = (raw) => {
@@ -305,11 +308,13 @@ export const desiderataDecisionOf = (raw) => {
   const k = s.toLowerCase();
   if (/(approuv|approved|accept)/.test(k)) return DESIDERATE_APPROVED;
   if (/(pas maintenant|rejected|reject|refus|rejete)/.test(k)) return DESIDERATE_REJECTED;
+  if (/(test|simulation|essai)/.test(k)) return DESIDERATE_TEST;
   if (/(pending|attente|waiting)/.test(k)) return DESIDERATE_PENDING;
   return s;
 };
 export const isDesiderataApproved = (raw) => desiderataDecisionOf(raw) === DESIDERATE_APPROVED;
 export const isDesiderataPending = (raw) => desiderataDecisionOf(raw) === DESIDERATE_PENDING;
+export const isDesiderataTest = (raw) => desiderataDecisionOf(raw) === DESIDERATE_TEST;
 export const isDesiderataRejected = (raw) => desiderataDecisionOf(raw) === DESIDERATE_REJECTED;
 export const OM_COST_STATUSES = ['Estimé', 'Exact'];
 export const ISSUE_STATUSES = ['A faire', 'En cours', 'Fait'];
@@ -381,7 +386,10 @@ export const CONGE_QUOTA_BY_TYPE = { Doctorant: CONGE_DEFAULT_ALLOWANCE };
 /* Statuts ajoutés pour le suivi budgétaire des pages Dépenses / OM. */
 export const DEPENSE_STATUSES = ['Devis en cours', 'SIFAC transmis', 'BC signé', 'Livré', 'Facturé', 'Clôturé'];
 export const DEPENSE_BC_SIGNE = 'BC signé';
-export const OM_STATUSES = ['En attente', 'Acceptée', 'Refusée', 'Terminée'];
+/* Statuts des OM. Le statut « Test » (choix du superutilisateur) compte l’OM
+   dans les prévisions « OM prévus » de la page Recettes sans l’accepter
+   réellement : aucun e-mail, aucun transfert possible. */
+export const OM_STATUSES = ['En attente', 'Acceptée', 'Test', 'Refusée', 'Terminée'];
 
 /* Prestations internes (« PI ») — fournisseur particulier du classeur : un
    service interne (atelier, autre équipe…) facturé sans bon de commande. Une
