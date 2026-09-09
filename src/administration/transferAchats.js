@@ -330,3 +330,39 @@ export const desiderataTransferStatus = (rec, devisBcList, depenses) => {
   };
 };
 
+
+/* ── Circuit « gestion de requêtes » (transferts pour signature / révision) ── */
+/** Modes de transfert d’une demande acceptée (directeur) :
+ *  · 'signature' → documents complets : les devis générés attendent la
+ *    signature du superutilisateur (« En attente de signature ») ;
+ *  · 'revision'  → documents manquants : les devis générés partent « En
+ *    gestion » pour être complétés par la responsable d'achats. */
+export const TRANSFER_MODES = {
+  SIGNATURE: 'signature',
+  REVISION: 'revision',
+};
+/** Mode enregistré sur un transfert (rétro-compatible avec les transferts
+ *  antérieurs, qui n'en portaient pas — ils sont considérés « signature »). */
+export const transferModeOf = (rec) =>
+  txt(rec && rec.transfert && rec.transfert.mode) || TRANSFER_MODES.SIGNATURE;
+
+/** Un devis est « complet » (prêt pour la signature) quand il porte un N° devis
+ *  ET un fichier/lien (les autres champs — fournisseur, montant… — sont exigés
+ *  à la saisie ou repris de la demande). */
+export const devisCompleteOf = (rec) =>
+  !!txt(rec && pick(rec, ['numDevis', 'devisNo'])) &&
+  !!(txt(rec && (rec.fichierUrl || rec.numDevisUrl)) || txt(rec && rec.fichierNom));
+
+/** Vrai si le devis est en attente d'être complété (« En gestion »). */
+export const isDevisGestion = (rec) => txt(rec && rec.statut) === 'En gestion';
+
+/** Une demande (achat prévu) est « complète » quand son devis (N° + fichier)
+ *  a été fourni par le demandeur — c'est le critère du directeur pour choisir
+ *  « pour signature » plutôt que « pour révision ». */
+export const demandeDevisCompleteOf = (rec) =>
+  !!txt(rec && pick(rec, ['numDevis', 'devisNo'])) &&
+  !!(devisUrlOfAchat(rec));
+
+/** Lien du fichier devis d'un achat prévu / souhaité (téléversé ou collé). */
+const devisUrlOfAchat = (rec) => txt(rec && pick(rec, ['fichierUrl', 'numDevisUrl', 'devisUrl', 'urlDevis', 'lienDevis', 'devisLink']));
+

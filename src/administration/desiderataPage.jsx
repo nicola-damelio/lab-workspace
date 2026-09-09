@@ -35,10 +35,9 @@ import { SmartTable } from './smartTable';
 import { AdminImportModal } from './adminImportModal';
 import {
   ADMIN_PAGES, RECETTE_TYPES, URGENCES, DESIDERATE_STATUSES,
-  desiderataDecisionOf, isDesiderataApproved,
+  desiderataDecisionOf, isDesiderataApproved, APPROVAL_GESTION,
 } from './adminSchema';
 import { parseEuroAmount, extractNumeroFromDoc } from './importUtils';
-import { findRecetteTwin, sameCatType } from './recetteLink';
 import {
   sendAdminMail, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
   summarizeMail, mailBodyText,
@@ -47,8 +46,9 @@ import { uploadLocalFile, cloudBackendAvailable } from '../utils/driveUpload';
 import { budgetDocPath, budgetDocFileName } from './driveFiling';
 import { scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName } from './ownScope';
 import {
-  TRANSFER_TARGETS, targetMetaOf, cibleEmailsOf,
+  TRANSFER_TARGETS, targetMetaOf, cibleEmailsOf, TRANSFER_MODES,
   devisPatchFromDesiderata, desiderataTransferStatus, isDepenseBcSigne,
+  demandeDevisCompleteOf, isDevisGestion,
 } from './transferAchats';
 
 /* ── Petites aides ──────────────────────────────────────────────────────── */
@@ -262,7 +262,7 @@ const DesiderataModal = ({
     if (!file) return;
     setUploadMsg('');
     if (!cloudBackendAvailable()) {
-      setUploadMsg('⚠️ Google Drive n’est pas connecté — collez le lien du fichier devis ci-dessous (obligatoire pour la création du devis).');
+      setUploadMsg('⚠️ Google Drive n’est pas connecté — collez le lien du fichier devis ci-dessous (nécessaire pour un transfert « pour signature »).');
       return;
     }
     setUploadBusy(true);
@@ -312,22 +312,23 @@ const DesiderataModal = ({
       setError('Merci de décrire le souhait d’achat (obligatoire).');
       return;
     }
-    /* Champs obligatoires pour un membre (et pour toute NOUVELLE demande) : les
-       informations exigées pour créer un devis complet au moment du transfert.
-       Le superutilisateur qui édite une ancienne ligne minimale (import Google
+    /* Champs obligatoires pour un membre (et pour toute NOUVELLE demande) :
+       la demande est une REQUÊTE budgétaire — le N° devis et le fichier du
+       devis sont désormais FACULTATIFS à la soumission (la demande peut être
+       présentée sans eux ; le directeur choisira alors « accepter et transférer
+       pour révision », et le devis sera complété avant la signature). Le
+       superutilisateur qui édite une ancienne ligne minimale (import Google
        Sheets) reste libre de la compléter à son rythme. */
     const strict = !editing || !canDecide;
     if (strict) {
       const missing = [];
       const need = (ok, label) => { if (!ok) missing.push(label); };
-      need(txt(draft.numDevis), 'le n° devis');
       need(!!(draft.recetteSuggereeId || txt(draft.ligneBudgetaire)), 'la ligne budgétaire');
       need(txt(draft.fournisseur), 'le fournisseur');
       need(parseNum(draft.montantEstime) !== null, 'le montant');
       need(parseNum(draft.fraisPort) !== null, 'les frais de port');
-      need(txt(draft.fichierUrl) || txt(draft.numDevisUrl), 'le fichier du devis (téléversé ou lien)');
       if (missing.length) {
-        setError(`Toutes les informations nécessaires à la création du devis doivent être fournies : ${missing.join(', ')}.`);
+        setError(`Merci de compléter : ${missing.join(', ')}. (Le N° devis et le fichier du devis ne sont pas obligatoires pour soumettre la demande.)`);
         return;
       }
     }
@@ -393,9 +394,9 @@ const DesiderataModal = ({
             <p className="text-teal-100 text-xs">
               {lockDemandeurToMe
                 ? editing
-                  ? 'Modification de votre demande — conservez bien toutes les informations nécessaires à la création du devis (description, n° devis, ligne budgétaire, fournisseur, montant, frais de port et fichier du devis).'
-                  : 'Votre demande : renseignez TOUTES les informations nécessaires à la création du devis (description, n° devis, ligne budgétaire, fournisseur, montant, frais de port et fichier du devis) — elle partira en « En attente » et la décision restera réservée au superutilisateur.'
-                : 'Souhait d’achat : description, ligne budgétaire, fournisseur, coût, frais de port et devis (n° + fichier) — la décision reste réservée au superutilisateur.'}
+                  ? 'Modification de votre demande — conservez les informations de la demande (description, ligne budgétaire, fournisseur, montant, frais de port). Le N° devis et le fichier du devis peuvent être ajoutés plus tard.'
+                  : 'Votre demande : renseignez la description, la ligne budgétaire, le fournisseur, le coût estimé et les frais de port. Le N° devis et le fichier du devis sont facultatifs pour soumettre — elle partira en « En attente » et la décision restera réservée au superutilisateur.'
+                : 'Souhait d’achat : description, ligne budgétaire, fournisseur, coût, frais de port et devis (n° + fichier, facultatifs à la soumission) — la décision reste réservée au superutilisateur.'}
             </p>
           </div>
           <button type="button" onClick={onCancel} className="shrink-0 w-8 h-8 rounded-lg bg-white/15 hover:bg-white/30 text-white font-bold" title="Fermer">✕</button>
@@ -516,7 +517,7 @@ const DesiderataModal = ({
 
           <Section icon="🧾" title="Devis & code produit">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Field label="N° devis" required={requiredInfo} hint={requiredInfo ? 'Numéro du devis choisi (obligatoire).' : undefined}>
+              <Field label="N° devis" hint="Facultatif à la soumission — requis pour un transfert « pour signature ».">
                 <input className={MODAL_INPUT} value={draft.numDevis} onChange={set('numDevis')} placeholder="ex. 2025-012345" />
               </Field>
               <Field label="Devis 2">
@@ -531,7 +532,7 @@ const DesiderataModal = ({
             </div>
             <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
               <label className={MODAL_LABEL}>
-                Fichier du devis{requiredInfo ? ' *' : ''} — classé dans Budget_labo/&lt;année&gt;/Devis, renommé « Devis_N°_ligne_fournisseur_demandeur_date »
+                Fichier du devis — facultatif à la soumission, requis pour un transfert « pour signature » · classé dans Budget_labo/&lt;année&gt;/Devis, renommé « Devis_N°_ligne_fournisseur_demandeur_date »
               </label>
               <div className="flex items-center gap-2 flex-wrap">
                 <input
@@ -875,145 +876,106 @@ export const DesiderataPage = () => {
     }
   };
 
-  /* ── Transfert d’un achat « Approuvé » vers la page Dépenses › Achats ──
-     Le transfert crée une ligne DANS la collection depenses : elle devient un
-     enregistrement indépendant (édition, cycle devis → BC → facture,
-     déplacement entre Achats / PI / OM). La collection desiderate — les
-     souhaits « prévus / souhaités » — n’est pas touchée. */
+  /* ── Décision du directeur : « accepter et transférer » (signature / révision) ──
+     Une seule action regroupe l'ACCEPTATION (statut → « Approuvé ») et le
+     transfert vers la responsable d'achats :
+       · mode 'signature' — les documents sont complets (N° devis + fichier) :
+         un devis « En attente » est créé dans « Approbation devis & BC »,
+         affiché « en attente de signature » ;
+       · mode 'revision'  — des documents manquent : un devis « En gestion » est
+         créé pour être complété (fournisseur, N° devis, fichier…), puis envoyé
+         pour signature.
+     Dans les deux cas le souhait n'est plus listé (on le retrouve via
+     « Afficher les transférées ») et un e-mail prévient la responsable d'achats. */
   const linkedDepenseOf = (rec) =>
     (Array.isArray(depenses) ? depenses : []).find((d) => d && d.desiderataId && d.desiderataId === rec.id) || null;
 
-  const transferWishToDepenses = (rec) => {
-    if (!rec || !rec.id) return;
-    if (rec.transfert) {
-      setNotice({ tone: 'info', text: `L’achat prévu / souhaité « ${txt(rec.description) || rec.id} » a été transféré en devis via la colonne « Transfert » (Approbation devis & BC).` });
-      return;
-    }
-    if (linkedDepenseOf(rec)) {
-      setNotice({ tone: 'info', text: `L’achat prévu / souhaité « ${txt(rec.description) || rec.id} » est déjà transféré dans Dépenses › Achats.` });
-      return;
-    }
-    if (!isSuper) return;
-    const label = txt(rec.description) || rec.id;
-    let recetteObj = recetteOf(rec);
-    let recetteId = recetteObj ? recetteObj.id : '';
-    /* Catégorie (Fonct. / Invest.) de la nouvelle dépense : celle du souhait,
-       ou — si absente — le type de la ligne imputée. Si l’un des deux ne
-       correspond pas à la fiche visée mais qu’une fiche homonyme du bon type
-       existe, la nouvelle dépense y est réimputée (cohérence Recettes). */
-    let categorie = txt(rec.categorie);
-    if (!categorie && recetteObj) categorie = txt(recetteObj.type);
-    if (recetteObj && categorie && !sameCatType(categorie, recetteObj.type)) {
-      const twin = findRecetteTwin(recettes, recetteObj, categorie);
-      if (twin) {
-        recetteObj = twin;
-        recetteId = twin.id;
-      }
-    }
-    const patch = {
-      desiderataId: rec.id,
-      description: label,
-      demandeur: txt(demandeurOf(rec)),
-      categorie: categorie || 'Fonctionnement',
-      classification: '',
-      ligneBudgetaire: recetteObj
-        ? txt(recetteObj.ligne)
-        : txt(rec && rec.ligneBudgetaire),
-      recetteId,
-      montant: parseNum(rec.montantEstime),
-      fraisPort: parseNum(rec.fraisPort),
-      dateDemande: isoOf(rec.dateDemande),
-      fournisseur: txt(pick(rec, ['fournisseur', 'nomFournisseur'])),
-      contact: txt(rec.contact),
-      numDevis: txt(pick(rec, ['numDevis', 'devisNo'])),
-      numDevisUrl: devisUrlOf(rec),
-      numSIFAC: '', dateBC: '', numBC: '', numBCUrl: '',
-      dateSignature: '', dateSignatureDevis: '', dateApprobFournisseur: '',
-      numFacture: '', numFactureUrl: '',
-      suivi: '', statut: '',
-      nonComptabiliseEnt: false,
-      ent: '',
-      livraisonComplete: '',
-      livraisons: [],
-      commentaires: txt(pick(rec, ['commentaires', 'notes'])),
-    };
-    const created = upsert('depenses', patch, null);
-    upsert('desiderate', { depenseId: created && created.id }, rec.id);
-    setNotice({
-      tone: 'ok',
-      text: `Achat prévu / souhaité « ${label} » transféré dans Dépenses › Achats (ligne indépendante). Vous pouvez la déplacer vers PI / OM si besoin.`,
-    });
-    if (created && created.id && typeof navigate === 'function') {
-      navigate('depenses', { kind: 'depense', recordId: created.id });
-    }
-  };
-
-  /* ── Transfert « devis » d'un achat approuvé vers la gestionnaire ou le
-     responsable d'achats : crée un devis « En attente » pré-rempli dans la
-     page « Approbation devis & BC » et prévient le destinataire par e-mail.
-     Le souhait reste listé et ne disparaît que lorsque le BC de la dépense
-     liée est signé (date de signature BC dans Dépenses). */
-  const doTransferWish = async (rec, cible) => {
+  const acceptAndTransferWish = async (rec, mode) => {
     if (!rec || !rec.id || !isSuper) return;
     if (rec.transfert || desiderataTransferStatus(rec, devisBc, depenses).devis) {
-      setNotice({ tone: 'info', text: `L’achat prévu / souhaité « ${txt(rec.description) || rec.id} » est déjà transféré (devis créé).` });
+      setNotice({ tone: 'info', text: `L’achat prévu / souhaité « ${txt(rec.description) || rec.id} » a déjà été transféré (devis créé dans « Approbation devis & BC »).` });
       return;
     }
     if (linkedDepenseOf(rec)) {
-      setNotice({ tone: 'info', text: `L’achat prévu / souhaité « ${txt(rec.description) || rec.id} » a déjà été transféré directement dans Dépenses › Achats.` });
+      setNotice({ tone: 'info', text: `L’achat prévu / souhaité « ${txt(rec.description) || rec.id} » a déjà été transféré dans Dépenses › Achats.` });
       return;
     }
-    const meta = targetMetaOf(cible);
+    const complete = demandeDevisCompleteOf(rec);
     const label = txt(rec.description) || rec.id;
+    if (mode === TRANSFER_MODES.SIGNATURE && !complete) {
+      setNotice({ tone: 'warn', text: `« ${label} » n’a pas encore de N° devis ni de fichier devis : utilisez « accepter et transférer pour révision » (le devis partira « En gestion »).` });
+      return;
+    }
     const montant = numOf(rec.montantEstime);
     const port = numOf(rec.fraisPort);
     const confirmText = [
-      `Transférer l’achat prévu / souhaité « ${label} » à ${meta.article} ?`,
+      mode === TRANSFER_MODES.SIGNATURE
+        ? `Accepter et transférer l’achat « ${label} » pour signature ?`
+        : `Accepter et transférer l’achat « ${label} » pour révision ?`,
       '',
-      'Un devis « En attente » pré-rempli sera créé dans « Approbation devis & BC »',
+      mode === TRANSFER_MODES.SIGNATURE
+        ? 'Les documents sont complets : un devis sera créé « en attente de signature » dans « Approbation devis & BC ».'
+        : 'Des documents manquent (N° devis / fichier du devis) : un devis « En gestion » sera créé dans « Approbation devis & BC » pour être complété.',
       montant !== null
         ? `(montant estimé : ${euro.format(montant)}${port !== null ? ` + frais de port ${euro.format(port)}` : ''})`
         : '(montant non chiffré)',
-      'et le destinataire en sera prévenu par e-mail.',
-      '',
-      'Le souhait restera listé et ne disparaîtra que lorsque le BC lié sera signé (date de signature BC dans Dépenses).',
+      'La responsable d’achats en sera prévenue par e-mail. Le souhait disparaîtra de cette liste.',
     ].filter(Boolean).join('\n');
     if (!window.confirm(confirmText)) return;
+    const wasApproved = isDesiderataApproved(rec && rec.statut);
+    const meta = targetMetaOf(TRANSFER_TARGETS.Achats.code);
     const patch = devisPatchFromDesiderata(rec, { cible: meta.code, by: (currentUser && currentUser.name) || '' });
+    patch.statut = mode === TRANSFER_MODES.REVISION ? APPROVAL_GESTION : patch.statut;
+    if (!patch.transfert) patch.transfert = { cible: meta.code, by: (currentUser && currentUser.name) || '', at: Date.now(), depuis: 'desiderate' };
+    patch.transfert.mode = mode;
+    if (mode === TRANSFER_MODES.REVISION) {
+      const missing = [];
+      if (!txt(rec && pick(rec, ['numDevis', 'devisNo']))) missing.push('le N° devis');
+      if (!txt(rec && (rec.fichierUrl || rec.numDevisUrl))) missing.push('le fichier du devis (téléversé ou lien)');
+      patch.notes = [patch.notes, `⚠️ À compléter avant signature : ${missing.join(' et ')} — demande acceptée le ${new Date().toISOString().slice(0, 10)} par ${(currentUser && currentUser.name) || 'le directeur'}.`].filter(Boolean).join(' · ');
+    }
     const saved = upsert('devisBc', patch, null);
     upsert('desiderate', {
+      ...(!wasApproved ? { statut: 'Approuvé', statutChangedBy: (currentUser && currentUser.name) || '', statutChangedAt: Date.now() } : {}),
       transfert: {
         cible: meta.code,
         by: (currentUser && currentUser.name) || '',
         at: Date.now(),
+        mode,
         devisId: saved && saved.id,
       },
     }, rec.id);
+    if (!wasApproved) notifyApproved({ ...rec, statut: 'Approuvé' });
+    const signatureWay = mode === TRANSFER_MODES.SIGNATURE;
     const res = await sendAdminMail({
       to: cibleEmailsOf(personnel, meta.code),
-      subject: `[Lab Workspace] Achat prévu « ${label} » transmis à ${meta.title}`,
+      subject: `[Lab Workspace] Achat prévu « ${label} » ${signatureWay ? 'transmis pour signature' : 'accepté — devis à compléter'}`,
       text: mailBodyText([
-        `Un achat prévu / souhaité a été transmis à ${meta.article} :`,
-        `  ${label}`,
+        signatureWay
+          ? `L’achat prévu / souhaité « ${label} » a été accepté et transmis pour signature.`
+          : `L’achat prévu / souhaité « ${label} » a été accepté, mais des documents manquent : complétez le devis « En gestion » créé dans « Approbation devis & BC » (fournisseur, N° devis, fichier), puis envoyez-le pour signature.`,
         `Demandeur : ${txt(demandeurOf(rec)) || '—'}`,
         montant !== null
           ? `Coût estimé : ${euro.format(montant)}${port !== null ? ` + frais de port ${euro.format(port)}` : ''}`
           : 'Coût non chiffré',
         txt(rec.fournisseur) ? `Fournisseur : ${txt(rec.fournisseur)}` : '',
-        'Un devis « En attente » pré-rempli a été créé dans « Approbation devis & BC » avec toutes les informations',
-        'déclarées par le demandeur (description, N° devis, fournisseur, ligne budgétaire, montant, frais de port, fichier du devis) :',
-        'vérifiez-le puis faites-le approuver — le souhait disparaîtra de sa liste quand le BC lié sera signé.',
+        `Décision prise par : ${(currentUser && currentUser.name) || 'directeur'}.`,
       ].filter(Boolean)),
     });
-    const mailSummary = summarizeMail(res, `${meta.title} notifié`);
+    const mailSummary = summarizeMail(res, `${meta.title} notifiée`);
     setNotice({
       tone: res && res.ok ? 'ok' : 'warn',
-      text: `Achat prévu / souhaité « ${label} » transmis à ${meta.article} : devis « En attente » créé dans « Approbation devis & BC ». ${mailSummary.text}`,
+      text: `Achat « ${label} » ${signatureWay ? 'accepté et transmis pour signature' : 'accepté — devis « En gestion » créé'}. ${mailSummary.text}`,
       mailto: mailSummary.mailto || undefined,
       consoleUrl: mailSummary.consoleUrl || undefined,
     });
     if (typeof navigate === 'function') navigate('devisBc');
   };
+
+
+  /* L'ancienne fonction doTransferWish (choix gestionnaire / responsable
+     d'achats) a été remplacée par acceptAndTransferWish ci-dessus : le
+     directeur choisit désormais « pour signature » ou « pour révision ». */
 
   /* Suivi des souhaits transférés : un souhait est « soldé » — et disparaît de
      la liste — lorsque son BC est signé (devis transféré : dépense liée portant
@@ -1038,7 +1000,9 @@ export const DesiderataPage = () => {
     if (showDone) return sorted;
     return sorted.filter((d) => {
       const st = transferStatus.get(d.id);
-      return !(st && st.done);
+      /* Le souhait disparaît de la liste dès qu'il est transféré (signature ou
+         révision) ; il ne réapparaît que via « Afficher les transférées ». */
+      return !(st && (st.transferred || st.done));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sorted, showDone, transferStatus]);
@@ -1242,44 +1206,64 @@ export const DesiderataPage = () => {
       },
       display: (r) => {
         const approved = isDesiderataApproved(r && r.statut);
+        const pendingDecision = desiderataDecisionOf(r && r.statut) === 'En attente';
         const st = transferStatus.get(r.id);
         const transferred = !!(r.transfert || (st && st.devis));
         const metaT = r.transfert ? targetMetaOf(r.transfert.cible) : null;
+        const devisRec = st && st.devis;
+        const gestion = devisRec && isDevisGestion(devisRec);
+        const complete = demandeDevisCompleteOf(r);
         const badge = (cls, label) => (
           <span className={`inline-block text-[9px] font-black uppercase px-1.5 py-0.5 rounded-full whitespace-nowrap ${cls}`}>{label}</span>
+        );
+        const transferButton = (mode, tone, label, hint, disabled = false) => (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => acceptAndTransferWish(r, mode)}
+            title={hint}
+            className={`text-left text-[11px] font-black px-2 py-1 rounded-lg border whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed transition-colors ${tone}`}
+          >
+            {label}
+          </button>
         );
         return (
           <div className="min-w-[200px] flex flex-col gap-1">
             {transferred && st ? (
               <div className="flex items-center flex-wrap gap-1.5">
                 {metaT ? <span className="text-[10px] font-semibold text-slate-500 whitespace-nowrap" title={`Transféré par ${txt(r.transfert.by) || '—'} le ${r.transfert.at ? new Date(r.transfert.at).toLocaleDateString('fr-FR') : '—'}`}>{metaT.icon} {metaT.title}</span> : null}
-                {st.state === 'devis-attente'
-                  ? badge('bg-amber-50 border border-amber-200 text-amber-700', 'Devis en attente')
-                  : st.bcSigned
-                    ? badge('bg-emerald-50 border border-emerald-200 text-emerald-700', '✓ BC signé')
-                    : badge('bg-blue-50 border border-blue-200 text-blue-700', 'BC à signer')}
+                {gestion
+                  ? badge('bg-orange-50 border border-orange-200 text-orange-700', 'En gestion')
+                  : st.state === 'devis-attente'
+                    ? badge('bg-amber-50 border border-amber-200 text-amber-700', 'En attente de signature')
+                    : st.bcSigned
+                      ? badge('bg-emerald-50 border border-emerald-200 text-emerald-700', '✓ BC signé')
+                      : badge('bg-blue-50 border border-blue-200 text-blue-700', 'Devis signé · BC à signer')}
               </div>
             ) : null}
-            {!transferred && approved && isSuper && !linkedDepenseOf(r) ? (
+            {!transferred && isSuper && !linkedDepenseOf(r) && (pendingDecision || approved) ? (
               <div className="flex flex-col gap-1">
-                <span className="text-[9px] uppercase font-black text-slate-400">Transférer à</span>
+                <span className="text-[9px] uppercase font-black text-slate-400">
+                  {approved ? 'Transférer' : 'Accepter & transférer'}
+                </span>
                 <div className="flex flex-col gap-1">
-                  <button
-                    type="button"
-                    onClick={() => doTransferWish(r, TRANSFER_TARGETS.Gestionnaire.code)}
-                    title="Créer le devis « En attente » dans « Approbation devis & BC » puis prévenir la gestionnaire par e-mail"
-                    className="text-left text-[11px] font-black px-2 py-1 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors whitespace-nowrap"
-                  >➡ {TRANSFER_TARGETS.Gestionnaire.title}</button>
-                  <button
-                    type="button"
-                    onClick={() => doTransferWish(r, TRANSFER_TARGETS.Achats.code)}
-                    title="Créer le devis « En attente » dans « Approbation devis & BC » puis prévenir le responsable d'achats par e-mail"
-                    className="text-left text-[11px] font-black px-2 py-1 rounded-lg border border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100 transition-colors whitespace-nowrap"
-                  >➡ {TRANSFER_TARGETS.Achats.title}</button>
+                  {transferButton(
+                    TRANSFER_MODES.SIGNATURE,
+                    'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100',
+                    approved ? '📨 Pour signature' : '✓ Signature',
+                    'Documents complets (N° devis + fichier) : créer le devis « En attente de signature » dans « Approbation devis & BC »',
+                    !complete,
+                  )}
+                  {transferButton(
+                    TRANSFER_MODES.REVISION,
+                    'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100',
+                    approved ? '🔧 Pour révision' : '✎ Révision',
+                    'Documents manquants : créer le devis « En gestion » pour complément par la responsable d’achats',
+                  )}
                 </div>
               </div>
             ) : null}
-            {!transferred && !approved ? <span className="text-[10px] text-slate-300">↦ après approbation</span> : null}
+            {!transferred && !approved && !pendingDecision ? <span className="text-[10px] text-slate-300">demande refusée</span> : null}
           </div>
         );
       },
@@ -1291,36 +1275,27 @@ export const DesiderataPage = () => {
       display: (r) => {
         const approved = isDesiderataApproved(r && r.statut);
         const linked = linkedDepenseOf(r);
+        const st = transferStatus.get(r.id);
+        const transferred = !!(r.transfert || (st && st.devis));
         return (
           <div className="flex items-center gap-1 justify-end">
-            {approved && r.transfert ? (
+            {transferred ? (
               <button
                 type="button"
                 title="Transféré en devis (Approbation devis & BC) — ouvrir la page pour compléter puis faire signer"
                 onClick={() => { if (typeof navigate === 'function') navigate('devisBc'); }}
                 className="text-[11px] font-black px-2 py-1 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
               >→ Devis & BC</button>
-            ) : approved ? (
-              linked ? (
-                <button
-                  type="button"
-                  title="Déjà transféré dans Dépenses › Achats — ouvrir la ligne"
-                  onClick={() => {
-                    if (typeof navigate === 'function') navigate('depenses', { kind: 'depense', recordId: linked.id });
-                  }}
-                  className="text-[11px] font-black px-2 py-1 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
-                >✓ Dans Dépenses</button>
-              ) : isSuper ? (
-                <button
-                  type="button"
-                  title="Créer la dépense liée dans la page Dépenses › onglet Achats (ligne indépendante de ce tableau)"
-                  onClick={() => transferWishToDepenses(r)}
-                  className="text-[11px] font-black px-2 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors"
-                >→ Dépenses</button>
-              ) : null
-            ) : (
-              <span title="Le souhait doit être « Approuvé » avant de pouvoir être transféré en dépense" className="text-[10px] text-slate-300">↦ après approbation</span>
-            )}
+            ) : linked ? (
+              <button
+                type="button"
+                title="Déjà transféré dans Dépenses › Achats — ouvrir la ligne"
+                onClick={() => {
+                  if (typeof navigate === 'function') navigate('depenses', { kind: 'depense', recordId: linked.id });
+                }}
+                className="text-[11px] font-black px-2 py-1 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
+              >✓ Dans Dépenses</button>
+            ) : !approved ? null : null}
             <button
               type="button"
               onClick={() => setModal({ mode: 'edit', rec: r })}
@@ -1345,16 +1320,16 @@ export const DesiderataPage = () => {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-xs font-bold text-slate-400 max-w-2xl">
           {visibleSorted.length} achat{visibleSorted.length > 1 ? 's' : ''} prévu{visibleSorted.length > 1 ? 's' : ''} / souhaité{visibleSorted.length > 1 ? 's' : ''} à suivre
-          ({sorted.length} au total{!isSuper ? ' — vos demandes uniquement' : ''}{hiddenDone > 0 ? ` — ${hiddenDone} soldé${hiddenDone > 1 ? 's' : ''} masqué${hiddenDone > 1 ? 's' : ''} (BC signé)` : ''}) ·
+          ({sorted.length} au total{!isSuper ? ' — vos demandes uniquement' : ''}{hiddenDone > 0 ? ` — ${hiddenDone} transférée${hiddenDone > 1 ? 's' : ''} masquée${hiddenDone > 1 ? 's' : ''}` : ''}) ·
           les colonnes sont triables (en-têtes) et filtrables (bouton « Filtres »).
         </p>
         <div className="flex items-center gap-2 flex-wrap">
           <label
             className="flex items-center gap-1.5 text-[10px] font-black text-slate-500 cursor-pointer select-none bg-white border border-slate-200 rounded-xl px-3 py-2 hover:border-slate-300 whitespace-nowrap"
-            title="Un souhait transféré ne disparaît de la liste que lorsque le BC lié est signé ; cochez pour réafficher ces souhaits soldés."
+            title="Une demande acceptée (transférée pour signature ou pour révision) disparaît de la liste ; cochez pour la réafficher."
           >
             <input type="checkbox" className="accent-teal-600" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} />
-            Afficher les soldés
+            Afficher les transférées
           </label>
           {isSuper && (
             <button
@@ -1409,14 +1384,14 @@ export const DesiderataPage = () => {
 
       <div className="rounded-xl border border-teal-100 bg-teal-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
         <b>Achats prévus / souhaités :</b> chaque membre déclare ses achats souhaités et ne voit QUE ses propres demandes
-        (description, n° devis, ligne budgétaire, fournisseur, montant, frais de port, fichier du devis) — le superutilisateur, qui décide et
-        transfère, voit tout. La <b>première colonne « Décision »</b> affiche la décision du
-        superutilisateur : <b>Approuvé / En attente / Pas maintenant</b> (personnalisable dans Setup › Options des listes
-        déroulantes). Une fois un souhait <b>Approuvé</b>, la colonne <b>« Transfert »</b> permet de le confier à la
-        <b>gestionnaire</b> ou au <b>responsable d'achats</b> : un devis « En attente » pré-rempli est créé dans
-        « Approbation devis & BC » (e-mail au destinataire), puis approuvé — le souhait reste listé et ne
-        <b>disparaît que lorsque le BC lié est signé</b> (date de signature BC dans Dépenses). Le bouton <b>« → Dépenses »</b>
-        crée directement la ligne dans Dépenses › onglet Achats (déplaçable vers PI / OM). Le <b>fournisseur</b>,
+        (description, ligne budgétaire, fournisseur, coût estimé, frais de port — le N° devis et le fichier du devis sont facultatifs
+        à la soumission) — le superutilisateur, qui décide et transfère, voit tout. La <b>première colonne « Décision »</b> affiche la
+        décision du superutilisateur : <b>Approuvé / En attente / Pas maintenant</b> (personnalisable dans Setup › Options des listes
+        déroulantes). Pour toute demande en attente, la colonne <b>« Transfert »</b> propose au directeur : <b>« ✓ Signature »</b>
+        (documents complets — un devis « en attente de signature » est créé dans « Approbation devis & BC ») ou <b>« ✎ Révision »</b>
+        (documents manquants — un devis « En gestion » est créé pour être complété par la responsable d'achats, puis envoyé pour
+        signature). La demande transférée <b>disparaît de cette liste</b> (rétablie via « Afficher les transférées ») et son montant est
+        suivi dans les colonnes <b>« Devis en signature / signé »</b> de la page Recettes jusqu'à la signature du BC. Le <b>fournisseur</b>,
         la <b>ligne budgétaire</b> et le <b>demandeur</b> sont des liens vers la Librerie et les fiches Personnel.
       </div>
 
@@ -1429,17 +1404,17 @@ export const DesiderataPage = () => {
           <p className="text-sm text-slate-400 mt-1 mb-4">
             {isSuper ? (
               hiddenDone > 0 ? (
-                <>Tous les achats transférés sont soldés (BC signé). Cochez « Afficher les soldés » pour les retrouver
-                  dans la liste.</>
+                <>Toutes les demandes affichables ont été transférées (pour signature ou pour révision). Cochez « Afficher les transférées »
+                  pour les retrouver dans la liste.</>
               ) : (
-                <>Utilisez « ＋ Ajouter un achat prévu / souhaité » pour déclarer un article (coût et frais de port), puis
-                  une fois approuvé, confiez-le à la gestionnaire ou au responsable d'achats via la colonne « Transfert »
-                  (devis dans « Approbation devis & BC »). Ou « 📥 Importer » pour rejouer l’onglet « Souhaités » de la
-                  feuille Google Sheets.</>
+                <>Utilisez « ＋ Ajouter un achat prévu / souhaité » pour déclarer une demande de l’équipe. Chaque demande en attente peut
+                  être acceptée puis transférée dans « Approbation devis & BC » : <b>pour signature</b> (documents complets) ou
+                  <b>pour révision</b> (documents à compléter — devis « En gestion »). Ou « 📥 Importer » pour rejouer l’onglet
+                  « Souhaités » de la feuille Google Sheets.</>
               )
             ) : (
-              <>Chaque membre ne voit que ses propres demandes — ajoutez votre premier achat prévu / souhaité avec toutes les
-                informations du devis (description, n° devis, ligne budgétaire, fournisseur, montant, frais de port, fichier).</>
+              <>Chaque membre ne voit que ses propres demandes — ajoutez votre première demande d’achat (description, ligne budgétaire,
+                fournisseur, coût estimé, frais de port) : le N° devis et le fichier du devis ne sont pas obligatoires pour soumettre.</>
             )}
           </p>
           <button

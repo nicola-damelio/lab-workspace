@@ -54,8 +54,10 @@ import { SmartTable } from './smartTable';
 import { toFrDate } from './congesDates';
 import {
   APPROVAL_PENDING, APPROVAL_APPROVED, APPROVAL_REJECTED, APPROVAL_NOT_RETAINED,
+  APPROVAL_GESTION, DEVIS_SIGNATURE_PENDING,
   isApprovalPending, approvalStatusOf,
 } from './adminSchema';
+import { devisCompleteOf } from './transferAchats';
 import { uploadLocalFile, cloudBackendAvailable, renameDriveFile, driveFetch } from '../utils/driveUpload';
 import {
   fileBudgetDocs,
@@ -312,6 +314,7 @@ export const ApprobationPage = () => {
     || currentFonctions.indexOf('Achats') !== -1;
 
   const [tab, setTab] = useState('devis'); // 'devis' | 'bc'
+  const [showTreated, setShowTreated] = useState(false); // afficher les lignes déjà décidées (signées / refusées)
   const [modal, setModal] = useState(null); // null | { mode:'new', kind } | { mode:'edit', kind, rec }
   const [busyId, setBusyId] = useState(null); // id de la ligne en cours de décision
   const [note, setNote] = useState(null); // { text, mailto? } — résultat du dernier e-mail
@@ -678,6 +681,12 @@ export const ApprobationPage = () => {
         upsert('devisBc', { statut: APPROVAL_REJECTED, decidedBy: currentName, decidedAt: Date.now() }, rec.id);
         await notifyDecision({ ...rec, statut: APPROVAL_REJECTED }, APPROVAL_REJECTED);
       } else if (rec.kind === 'devis') {
+        /* Un devis « En gestion » (documents incomplets) n'est pas signable :
+           il doit d'abord être complété puis envoyé pour signature. */
+        if (rec.statut === APPROVAL_GESTION || !devisCompleteOf(rec)) {
+          alert('Ce devis est incomplet (N° devis et/ou fichier manquants). Complétez-le d’abord — il est « En gestion » — puis envoyez-le pour signature (✉️).');
+          return;
+        }
         /* Approbation du devis → dépense « Devis en cours » (créée ou mise à jour).
            La date de signature du devis est renseignée automatiquement (aujourd'hui).
 
@@ -776,6 +785,24 @@ export const ApprobationPage = () => {
     }
   };
 
+  /* ── Envoi pour signature d'un devis « En gestion » ─────────────────────
+     Une fois les documents complétés (N° devis + fichier) par la responsable
+     d'achats (ou le superutilisateur), le devis passe « En attente » — il
+     s'affiche « en attente de signature » au directeur. */
+  const sendForSignature = (rec) => {
+    if (!rec || !rec.id || rec.kind !== 'devis') return;
+    if (rec.statut !== APPROVAL_GESTION) return;
+    if (!devisCompleteOf(rec)) {
+      alert('Le devis n’est pas encore complet : renseignez le N° devis ET le fichier (téléversé ou lien Google Drive) avant de l’envoyer pour signature.');
+      return;
+    }
+    upsert('devisBc', {
+      statut: APPROVAL_PENDING,
+      notes: [txt(rec.notes), `✉️ Envoyé pour signature le ${todayIso()} par ${currentName}.`].filter(Boolean).join(' · '),
+    }, rec.id);
+    setNote({ text: '✓ Devis envoyé pour signature : il est désormais « en attente de signature ».' });
+  };
+
   /* ── Suppression (superutilisateur uniquement) ────────────────────────── */
   const removeRow = (rec) => {
     if (!rec || !rec.id || !isSuper) return;
@@ -786,7 +813,8 @@ export const ApprobationPage = () => {
   };
 
     const activeKind = tab;
-  const activeRows = tab === 'bc' ? bcList : devisRows;
+  const activeRows = (tab === 'bc' ? bcList : devisRows)
+    .filter((r) => showTreated || isApprovalPending(r.statut));
   const columns = useMemo(
     () => buildColumns({
       kind: activeKind,
@@ -799,7 +827,7 @@ export const ApprobationPage = () => {
         /* Devis / BC générés automatiquement par un transfert (« OM / achat
            prévu ») : la gestionnaire et le responsable d'achats peuvent les
            compléter (fournisseur, N° devis, fichier…) tant qu'ils sont « En
-           attente », même sans être le déposant nominal. */
+           attente » / « En gestion », même sans être le déposant nominal. */
         const generated = !!(r && (r.transfert || r.sourceKind || r.sourceId));
         if (generated && currentName && isAchatsRole) return true;
         return !!(txt(r.deposant) && currentName && sameName(r.deposant, currentName));
@@ -807,13 +835,15 @@ export const ApprobationPage = () => {
       onDecide: decideRow,
       onEdit: (r) => setModal({ mode: 'edit', kind: activeKind, rec: r }),
       onRemove: removeRow,
+      onSendForSignature: sendForSignature,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeKind, isSuper, busyId, devisById, activeRows, currentName, isAchatsRole]
+    [activeKind, isSuper, busyId, devisById, activeRows, currentName, isAchatsRole, showTreated, sendForSignature]
   );
 
   const pendingCount = (kind) => rows.filter((r) => r.kind === kind && isApprovalPending(r.statut)).length;
   const decidedCount = (kind) => rows.filter((r) => r.kind === kind && !isApprovalPending(r.statut)).length;
+  const gestionCount = (kind) => rows.filter((r) => r.kind === kind && r.statut === APPROVAL_GESTION).length;
 
   /* ── Enregistrement d'un dépôt (nouveau ou modification) ─────────────── */
   const onSaveDeposit = async (draft, existingId) => {
@@ -862,6 +892,19 @@ export const ApprobationPage = () => {
     const groupeAchatId = kind === 'devis'
       ? (txt(draft.groupeAchatId) || productMatchingDescription(description) || newGroupeAchatId())
       : '';
+    /* Devis généré par un transfert de demande, encore « En gestion » : dès
+       que la responsable d'achats renseigne le N° devis ET le fichier, le devis
+       passe automatiquement « En attente » (= envoyé pour signature). */
+    const existingRec = existingId ? rows.find((x) => x.id === existingId) : null;
+    const generatedEdit = !!existingRec && !!(existingRec.transfert || existingRec.sourceKind || existingRec.sourceId);
+    const wasGestion = !!existingRec && existingRec.statut === APPROVAL_GESTION;
+    const documentsComplete = !!(numDevis && txt(draft.fichierUrl));
+    let statut;
+    if (generatedEdit && wasGestion) {
+      statut = documentsComplete ? APPROVAL_PENDING : APPROVAL_GESTION;
+    } else {
+      statut = isApprovalPending(draft.statut) ? APPROVAL_PENDING : approvalStatusOf(draft.statut);
+    }
     const patch = {
       kind,
       description,
@@ -879,9 +922,14 @@ export const ApprobationPage = () => {
       fichierMime: txt(draft.fichierMime),
       notes: txt(draft.notes),
       deposant: txt(draft.deposant) || currentName,
-      statut: isApprovalPending(draft.statut) ? APPROVAL_PENDING : approvalStatusOf(draft.statut),
+      statut,
       dateDepot: txt(draft.dateDepot) || todayIso(),
     };
+    /* Un devis « En gestion » complété et envoyé pour signature : on le signale
+       dans ses notes pour la traçabilité. */
+    if (generatedEdit && wasGestion && documentsComplete) {
+      patch.notes = [patch.notes, `✉️ Devis complété et envoyé pour signature le ${todayIso()} par ${currentName}.`].filter(Boolean).join(' · ');
+    }
     const saved = upsert('devisBc', patch, existingId || null);
     /* Renommage du fichier déposé sur Google Drive selon la convention du
        laboratoire (nom reconstruit à chaque enregistrement ; « _approuvé »
@@ -984,7 +1032,7 @@ export const ApprobationPage = () => {
         >
           <div className="text-[10px] font-black uppercase tracking-wide text-slate-400">Devis à approuver</div>
           <div className="text-xl font-black text-slate-800">{pendingCount('devis')}<span className="text-slate-400 text-xs font-bold"> en attente</span></div>
-          <div className="text-[10px] text-slate-400 font-semibold">{devisList.length} déposé{devisList.length > 1 ? 's' : ''} · {decidedCount('devis')} traité{decidedCount('devis') > 1 ? 's' : ''}</div>
+          <div className="text-[10px] text-slate-400 font-semibold">{devisList.length} déposé{devisList.length > 1 ? 's' : ''} · {decidedCount('devis')} traité{decidedCount('devis') > 1 ? 's' : ''}{gestionCount('devis') ? ` · ${gestionCount('devis')} en gestion` : ''}</div>
         </button>
         <button
           type="button"
@@ -996,6 +1044,14 @@ export const ApprobationPage = () => {
           <div className="text-[10px] text-slate-400 font-semibold">{bcList.length} déposé{bcList.length > 1 ? 's' : ''} · {decidedCount('bc')} traité{decidedCount('bc') > 1 ? 's' : ''}</div>
         </button>
       </div>
+
+      <label
+        className="self-start flex items-center gap-1.5 text-[10px] font-black text-slate-500 cursor-pointer select-none bg-white border border-slate-200 rounded-xl px-3 py-2 hover:border-slate-300 whitespace-nowrap"
+        title="Une fois signés (ou refusés), les devis / BC migrent vers la page Dépenses et disparaissent de la liste par défaut ; cochez pour les réafficher."
+      >
+        <input type="checkbox" className="accent-blue-600" checked={showTreated} onChange={(e) => setShowTreated(e.target.checked)} />
+        Afficher les traités
+      </label>
 
       {isSuper ? (
         <SignatureBar
@@ -1036,19 +1092,29 @@ export const ApprobationPage = () => {
 /* ── Colonnes de la table active (devis ou BC) ──────────────────────────── */
 const buildColumns = ({
   kind, isSuper, busyId, devisById,
-  canEdit, onDecide, onEdit, onRemove,
+  canEdit, onDecide, onEdit, onRemove, onSendForSignature,
 }) => {
   const statutTone = (r) => {
     if (r && r.statut === APPROVAL_NOT_RETAINED) return 'violet';
+    if (r && r.statut === APPROVAL_GESTION) return 'orange';
     const s = approvalStatusOf(r && r.statut);
     if (s === APPROVAL_APPROVED) return 'emerald';
     if (s === APPROVAL_REJECTED) return 'red';
     return 'amber';
   };
+  const pendingLabelOf = (r) => {
+    if (r && r.statut === APPROVAL_GESTION) return APPROVAL_GESTION;
+    /* Un devis généré par un transfert de demande (source connue) et « En
+       attente » attend la signature du directeur. */
+    if (r && (r.transfert || r.sourceKind || r.sourceId)) return DEVIS_SIGNATURE_PENDING;
+    return 'En attente';
+  };
   const decisionLabel = (r) => {
     if (r && r.statut === APPROVAL_NOT_RETAINED) return APPROVAL_NOT_RETAINED;
     const s = approvalStatusOf(r && r.statut);
-    return s === APPROVAL_APPROVED ? 'Approuvé' : s === APPROVAL_REJECTED ? 'Refusé' : 'En attente';
+    if (s === APPROVAL_APPROVED) return r && r.kind === 'bc' ? 'BC signé' : 'Signé';
+    if (s === APPROVAL_REJECTED) return 'Refusé';
+    return pendingLabelOf(r);
   };
   const numLabel = kind === 'bc' ? 'N° BC' : 'N° devis';
   const cols = [
@@ -1058,16 +1124,20 @@ const buildColumns = ({
       display: (r) => {
         const pending = isApprovalPending(r.statut);
         const busy = busyId === r.id;
+        const gestion = !!(r && r.statut === APPROVAL_GESTION);
+        const complete = devisCompleteOf(r);
         return (
           <div className="flex items-center gap-1.5">
             <Badge tone={statutTone(r)}>{decisionLabel(r)}</Badge>
-            {isSuper && pending && (
+            {isSuper && pending && !gestion && (
               <>
                 <button
                   type="button"
                   disabled={busy}
                   onClick={() => onDecide(r, APPROVAL_APPROVED)}
-                  title="Approuver (crée / met à jour la dépense)"
+                  title={kind === 'devis'
+                    ? 'Signer le devis (crée la dépense « Devis en cours »)'
+                    : 'Signer le bon de commande (dépense « BC signé »)'}
                   className="w-7 h-7 rounded-lg border border-emerald-200 text-emerald-600 hover:bg-emerald-50 text-xs font-black disabled:opacity-40"
                 >{busy ? '…' : '✓'}</button>
                 <button
@@ -1079,6 +1149,17 @@ const buildColumns = ({
                 >✗</button>
               </>
             )}
+            {gestion && kind === 'devis' && (canEdit(r) || isSuper) && complete ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => onSendForSignature(r)}
+                title="Devis complété (N° devis + fichier présents) — l'envoyer pour signature : il passera « En attente de signature »"
+                className="w-8 h-7 rounded-lg border border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100 text-[11px] font-black disabled:opacity-40 whitespace-nowrap px-1"
+              >✉️ Envoyer pour signature</button>
+            ) : gestion && kind === 'devis' ? (
+              <span className="text-[10px] text-orange-500 font-bold whitespace-nowrap" title="À compléter : fournisseur, N° devis et fichier avant l'envoi pour signature">🔧 à compléter</span>
+            ) : null}
           </div>
         );
       },

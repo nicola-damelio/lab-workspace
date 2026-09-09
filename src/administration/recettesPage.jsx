@@ -12,6 +12,7 @@
 import React, { useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
 import { RECETTE_TYPES, DEPENSE_BC_SIGNE, depenseKindOf, isDesiderataRejected, isDesiderataApproved, desiderataDecisionOf, reimbTotalOf } from './adminSchema';
+import { omTransferStatus } from './transferAchats';
 import { AdminImportModal } from './adminImportModal';
 import { SmartTable } from './smartTable';
 import { useDepenseLinkRepair } from './useDepenseLinkRepair';
@@ -133,6 +134,10 @@ export const RecettesPage = () => {
     [data.reimbursements]
   );
   const desiderate = useMemo(() => (Array.isArray(data.desiderate) ? data.desiderate : []), [data.desiderate]);
+  /* Devis / BC déposés (« Approbation devis & BC ») : suivent les demandes
+     « Achats prévus / souhaités » et les postes « Commande » des OM acceptées
+     transférées pour signature ou en révision. */
+  const devisBc = useMemo(() => (Array.isArray(data.devisBc) ? data.devisBc : []), [data.devisBc]);
   const personnel = useMemo(() => (Array.isArray(data.personnel) ? data.personnel : []), [data.personnel]);
 
   /* Liens des cases « au survol » : un élément d’une autre table (dépense, OM,
@@ -224,33 +229,70 @@ export const RecettesPage = () => {
        des frais avancés par un membre et son coût total est déduit du solde. */
     const reimbRows = reimbursements.filter((x) => x && x.recetteId === recId);
     const reimbTotal = reimbRows.reduce((s, x) => s + reimbTotalOf(x), 0);
-    /* « OM prévus » : seuls les OM approuvés (« Acceptée ») entrent dans la
-       somme — les autres (En attente, Terminée…) restent visibles au survol
-       mais ne sont pas inclus (souhaités non inclus dans la somme). */
+    /* « OM prévus / en signature » : seuls les OM approuvés (« Acceptée »)
+       comptent. Une OM acceptée mais PAS encore transférée reste « OM prévus ».
+       Dès qu'elle est transférée pour signature, ses postes « Commande » dont
+       le devis est « En attente de signature » ou déjà signé (BC pas encore
+       signé) passent dans la colonne « OM en signature / signé » ; les postes
+       « Commande » dont le devis est « En gestion » (à compléter) restent
+       prévus ; les postes soldés (BC signé) sont suivis via la dépense liée. */
     const lineOm = om.filter((o) => o.recetteId === recId && String(o.statut || 'En attente').trim() !== 'Refusée');
     const omApprouves = lineOm.filter((o) => isOmApproved(o.statut));
-    const omTotal = omApprouves.reduce((s, o) => s + toNum(o.coutTotal), 0);
+    const omEnSignatureItems = [];
+    const omPrevuItems = [];
+    omApprouves.forEach((o) => {
+      const st = omTransferStatus(o, devisBc, depenses, reimbursements);
+      if (!st.transferred) {
+        omPrevuItems.push({ om: o, whole: true });
+        return;
+      }
+      const enSig = st.parts.filter((p) => p.mode === 'bc' && p.state !== 'bc-signe'
+        && p.devis && p.devis.statut !== 'En gestion'
+        && (p.devis.statut === 'En attente' || p.devis.statut === 'Approuvé'));
+      const restePrevu = st.parts.filter((p) => p.mode === 'bc'
+        && (p.state === 'bc-attente' || (p.devis && p.devis.statut === 'En gestion')));
+      if (enSig.length) omEnSignatureItems.push({ om: o, parts: enSig });
+      if (restePrevu.length) omPrevuItems.push({ om: o, parts: restePrevu });
+    });
+    const omEnSignatureTotal = omEnSignatureItems.reduce((s, x) => s
+      + x.parts.reduce((s2, p) => s2 + (p.montant || 0), 0), 0);
+    const omTotal = omPrevuItems.reduce((s, x) => {
+      if (x.whole) return s + toNum(x.om.coutTotal);
+      return s + x.parts.reduce((s2, p) => s2 + (p.montant || 0), 0);
+    }, 0);
+    /* — Achats prévus / « Devis en signature ou signé » — */
     const lineDes = desiderate.filter((d) => d.recetteSuggereeId === recId && !isDesiderataRejected(d.statut));
     const desApprouvees = lineDes.filter((d) => isDesiderataApproved(d.statut));
-    const desMontant = desApprouvees.reduce((s, d) => s + toNum(d.montantEstime), 0);
+    const desEnSignatureItems = [];
+    const desPrevuItems = [];
+    desApprouvees.forEach((d) => {
+      const dv = devisBc.find((x) => x && x.kind === 'devis' && x.sourceKind === 'desiderate'
+        && x.sourceId === d.id && !x.sourcePart) || null;
+      const depOfDv = dv && dv.depenseId ? depenses.find((x) => x && x.id === dv.depenseId) : null;
+      const directDep = depenses.find((x) => x && x.desiderataId === d.id) || null;
+      const bcSigned = (depOfDv && isAchatBcSigne(depOfDv)) || (directDep && isAchatBcSigne(directDep));
+      if (bcSigned) return; /* soldé : suivi par la colonne « Achats (BC signé) » */
+      if (dv && (dv.statut === 'En attente' || dv.statut === 'Approuvé') && d.transfert) desEnSignatureItems.push(d);
+      else desPrevuItems.push(d);
+    });
+    const desEnSignatureTotal = desEnSignatureItems.reduce((s, d) => s + toNum(d.montantEstime) + toNum(d.fraisPort), 0);
+    const desMontant = desPrevuItems.reduce((s, d) => s + toNum(d.montantEstime), 0);
     const budgetRendu = rec.budgetRenduDispo !== undefined && rec.budgetRenduDispo !== null && rec.budgetRenduDispo !== ''
       ? toNum(rec.budgetRenduDispo)
       : toNum(rec.budgetTotal);
     // Solde = dispo université − Achats (BC signé) − prestations internes − OM payés − rémunérations de stage − remboursements (jamais les souhaits / OM prévus).
     const solde = budgetRendu - ordonneeTotal - piTotal - omPaidTotal - stageTotal - reimbTotal;
-    /* « OM prévus encore à payer » : OM acceptés qui n’ont pas encore été
-       transférés en dépense OM (transfert → Dépenses › OM). Un OM transféré a
-       déjà déduit son montant du solde via « OM payés » — le déduire à nouveau
-       le compterait deux fois (repère : `depenseId` posé sur l’OM au transfert,
-       et pour les anciens transferts, la dépense qui porte `omId`). */
-    const omPaidIds = new Set(omPaidRows.map((d) => d.omId).filter(Boolean));
-    const omPrevuEnCours = omApprouves
-      .filter((o) => !o.depenseId && !omPaidIds.has(o.id))
-      .reduce((s, o) => s + toNum(o.coutTotal), 0);
-    /* « Solde prévu » = solde − OM prévus (acceptés encore à payer) − achats
-       prévus (approuvés) : projection du solde si toutes les prévisions de la
-       ligne se concrétisent. */
-    const soldePrevu = solde - omPrevuEnCours - desMontant;
+    /* « OM prévus encore à payer » : OM acceptés pas encore transférés — et,
+       pour une OM transférée, les postes « Commande » dont le devis n'est pas
+       encore parti en signature (devis « En gestion » / pas de devis). */
+    const omPrevuEnCours = omPrevuItems.reduce((s, x) => {
+      if (x.whole) return s + toNum(x.om.coutTotal);
+      return s + x.parts.reduce((s2, p) => s2 + (p.montant || 0), 0);
+    }, 0);
+    /* « Solde prévu » = solde − OM prévus − achats prévus − montants déjà en
+       signature / signés (devis et OM « en signature / signé ») : projection du
+       solde si toutes les prévisions (et signatures en cours) se concrétisent. */
+    const soldePrevu = solde - omPrevuEnCours - desMontant - omEnSignatureTotal - desEnSignatureTotal;
     return {
       lineDepenses, ordonneeRows, ordonneeTotal,
       piRows, piTotal, omPaidRows, omPaidTotal, stageRows, stageTotal,
@@ -258,24 +300,29 @@ export const RecettesPage = () => {
       lineOm, omApprouves,
       omEnAttente: lineOm.filter((o) => String(o.statut || 'En attente').trim() === 'En attente'),
       omTotal, omPrevuEnCours, soldePrevu,
+      omEnSignatureItems, omEnSignatureTotal,
+      omPrevuItems,
       lineDes, desApprouvees, desMontant,
+      desEnSignatureItems, desEnSignatureTotal,
       budgetRendu, solde,
     };
   };
 
   const totals = useMemo(() => {
-    let budgetTotal = 0; let budgetRendu = 0; let pi = 0; let omPay = 0; let omTot = 0; let des = 0; let reimb = 0; let solde = 0; let soldePrevu = 0;
+    let budgetTotal = 0; let budgetRendu = 0; let pi = 0; let omPay = 0; let omTot = 0; let des = 0; let reimb = 0;
+    let omSign = 0; let desSign = 0; let solde = 0; let soldePrevu = 0;
     activeRecettes.forEach((r) => {
       const a = aggFor(r);
       budgetTotal += toNum(r.budgetTotal);
       budgetRendu += a.budgetRendu;
       pi += a.piTotal; omPay += a.omPaidTotal; omTot += a.omTotal; des += a.desMontant; reimb += a.reimbTotal;
+      omSign += a.omEnSignatureTotal; desSign += a.desEnSignatureTotal;
       solde += a.solde;
       soldePrevu += a.soldePrevu;
     });
-    return { budgetTotal, budgetRendu, pi, omPay, omTot, des, reimb, solde, soldePrevu };
+    return { budgetTotal, budgetRendu, pi, omPay, omTot, des, reimb, omSign, desSign, solde, soldePrevu };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRecettes, depenses, om, reimbursements, desiderate]);
+  }, [activeRecettes, depenses, om, reimbursements, desiderate, devisBc]);
 
   const onSaveLine = (patch, existingId) => {
     if (!String(patch.ligne || '').trim()) { alert('Merci de donner un intitulé à la ligne budgétaire.'); return; }
@@ -303,7 +350,7 @@ export const RecettesPage = () => {
   const recetteRows = useMemo(
     () => activeRecettes.map((rec) => ({ ...rec, __agg: aggFor(rec) })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeRecettes, depenses, om, reimbursements, desiderate]
+    [activeRecettes, depenses, om, reimbursements, desiderate, devisBc]
   );
 
   /* Seuil d’alerte « Fin d’engagement » : la date passe en rouge dès qu’il
@@ -491,13 +538,49 @@ export const RecettesPage = () => {
       ),
     },
     {
+      key: 'devisEnSignature', label: 'Devis en signature/signé',
+      header: <span title="Achats prévus / souhaités acceptés et transférés pour signature : devis « en attente de signature » ou déjà signé (BC pas encore signé) — déduit du solde prévu">Devis en signature/signé</span>,
+      dataType: 'number', align: 'right', nowrap: true,
+      value: (r) => Number(r.__agg.desEnSignatureTotal) || 0,
+      display: (r) => (
+        <HoverCell
+          amount={r.__agg.desEnSignatureTotal}
+          onOpen={openTarget}
+          items={r.__agg.desEnSignatureItems.map((d) => ({
+            title: d.description || 'Achat prévu / souhaité',
+            meta: [d.demandeur || '', d.numDevis || '', 'en attente de signature ou signé'].filter(Boolean).join(' · '),
+            value: euro.format(toNum(d.montantEstime) + toNum(d.fraisPort)),
+            to: desLink(d),
+          }))}
+        />
+      ),
+    },
+    {
+      key: 'omEnSignature', label: 'OM en signature/signé',
+      header: <span title="OM acceptées et transférées pour signature : postes « Commande » dont le devis est « en attente de signature » ou déjà signé (BC pas encore signé) — déduit du solde prévu">OM en signature/signé</span>,
+      dataType: 'number', align: 'right', nowrap: true,
+      value: (r) => Number(r.__agg.omEnSignatureTotal) || 0,
+      display: (r) => (
+        <HoverCell
+          amount={r.__agg.omEnSignatureTotal}
+          onOpen={openTarget}
+          items={r.__agg.omEnSignatureItems.flatMap((x) => (x.parts || []).map((p) => ({
+            title: (x.om && (x.om.description || x.om.destination)) || 'OM',
+            meta: [x.om && x.om.destination, p.label, 'devis en attente de signature / signé'].filter(Boolean).join(' · '),
+            value: euro.format(p.montant || 0),
+            to: x.om ? omLink(x.om) : null,
+          })))}
+        />
+      ),
+    },
+    {
       key: 'solde', label: 'Solde', dataType: 'number', align: 'right', nowrap: true,
       value: (r) => Number(r.__agg.solde) || 0,
       display: (r) => <SoldeCell agg={r.__agg} />,
     },
     {
       key: 'soldePrevu', label: 'Solde prévu',
-      header: <span title="Solde − OM prévus (acceptés encore à payer) − achats prévus (approuvés) — solde restant si toutes les prévisions se concrétisent">Solde prévu</span>,
+      header: <span title="Solde − OM prévus − Achats prévus − Devis en signature/signé − OM en signature/signé : solde restant si toutes les prévisions (et signatures en cours) se concrétisent">Solde prévu</span>,
       dataType: 'number', align: 'right', nowrap: true,
       value: (r) => Number(r.__agg.soldePrevu) || 0,
       display: (r) => <SoldePrevuCell agg={r.__agg} />,
@@ -605,13 +688,15 @@ export const RecettesPage = () => {
       </div>
 
       {/* Cartes de synthèse (onglet actif) — bandeau compact */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-1.5">
+      <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-10 gap-1.5">
         <SummaryCard label="Budget total" value={totals.budgetTotal} tone="slate" />
         <SummaryCard label="Mis à disposition (univ.)" value={totals.budgetRendu} tone="blue" />
         <SummaryCard label="Prestations internes" value={totals.pi} tone="amber" />
         <SummaryCard label="OM payés (Dépenses)" value={totals.omPay} tone="rose" />
         <SummaryCard label="OM prévus (acceptés)" value={totals.omTot} tone="violet" />
         <SummaryCard label="Achats prévus (approuvés)" value={totals.des} tone="teal" />
+        <SummaryCard label="Devis en signature/signé" value={totals.desSign} tone="teal" />
+        <SummaryCard label="OM en signature/signé" value={totals.omSign} tone="indigo" />
         <SummaryCard label="Solde restant" value={totals.solde} tone={totals.solde < 0 ? 'red' : 'emerald'} />
         <SummaryCard label="Solde prévu" value={totals.soldePrevu} tone={totals.soldePrevu < 0 ? 'red' : 'indigo'} />
       </div>
@@ -781,14 +866,16 @@ const SoldeCell = ({ agg }) => {
 /* Cellule « Solde prévu » (colonne située après « Solde ») : projection du
    solde si les prévisions de la ligne se concrétisent.
    Solde prévu = Solde − OM prévus (acceptés encore à payer) − achats prévus
-   (approuvés). Un OM accepté déjà transféré en dépense OM n’est PAS re-déduit
-   ici : sa dépense a déjà retiré le montant du solde via « OM payés ». */
+   (approuvés) − Devis en signature/signé − OM en signature/signé (montants
+   dont les documents sont déjà transmis pour signature — dépenses imminentes). */
 const SoldePrevuCell = ({ agg }) => {
   const negative = agg.soldePrevu < 0;
   const rows = [
     { key: 'solde', label: 'Solde actuel', value: agg.solde, sign: '+' },
     { key: 'omPrevu', label: 'OM prévus (à payer)', value: agg.omPrevuEnCours, sign: '−' },
     { key: 'desPrevu', label: 'Achats prévus (approuvés)', value: agg.desMontant, sign: '−' },
+    { key: 'desSign', label: 'Devis en signature/signé', value: agg.desEnSignatureTotal, sign: '−' },
+    { key: 'omSign', label: 'OM en signature/signé', value: agg.omEnSignatureTotal, sign: '−' },
   ];
   return (
     <div className="group relative inline-block text-right">

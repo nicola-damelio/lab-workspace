@@ -49,19 +49,51 @@ export const ActiveTestModule = ({
 
                 // ── Auth gate ─────────────────────────────────────
                 const isSuperuserSession = currentUser?.role === 'superuser';
-                // Project membership grants access to every experiment linked to a
-                // project the user belongs to, with the same rights as the project.
-                const projectPerm = currentUser ? testProjectAccess(activeTest, currentUser.name) : null;
-                const activeTestOwned = !activeTest.operator || isSuperuserSession || (currentUser && currentUser.name === activeTest.operator) || unlockedTestIds.has(activeTest.id) || !!projectPerm;
-                if (!activeTestOwned) {
-                  // Redirect to test list — user should use the login modal from there
+                // An experiment is a GROUP of instances that share the same `name`:
+                // the sibling "Date / Conditions" chips and every group operation
+                // (rename, reorder, duplicate instance, delete experiment) act on
+                // the whole group. Access is therefore checked at the group level —
+                // once the user may legitimately open any instance of the
+                // experiment, switching to a sibling instance must not bounce back
+                // to the tests list (that check has to hold for co-scientists too).
+                const isBoxGroup = activeTest.type === 'plate-9x9box';
+                const groupName = isBoxGroup || !(activeTest.name && activeTest.name.trim())
+                  ? null
+                  : activeTest.name;
+                const groupTests = groupName
+                  ? tests.filter((t) => t.name === groupName)
+                  : [activeTest];
+                // True when the user may open this instance: an assigned scientist
+                // (operator or co-scientist), an unlocked test, a project the user
+                // belongs to (same rights as the project), a superuser session, or
+                // an instance without any assigned scientist (boxes / unassigned).
+                const isTestAccessible = (test) => {
+                  if (!test) return false;
+                  if (isSuperuserSession) return true;
+                  if (!test.operator) return true;
+                  if (currentUser) {
+                    const scientists = [test.operator, ...(test.coScientists || [])];
+                    if (scientists.includes(currentUser.name)) return true;
+                    if (testProjectAccess(test, currentUser.name)) return true;
+                  }
+                  return unlockedTestIds.has(test.id);
+                };
+                if (!groupTests.some(isTestAccessible)) {
+                  // No instance of this experiment is accessible (e.g. stale deep
+                  // link): redirect to the test list.
                   setCurrentModule('tests');
                   return null;
                 }
+                // Project permission on the ACTIVE instance (instances of a group
+                // are normally linked to the same projects).
+                const projectPerm = currentUser ? testProjectAccess(activeTest, currentUser.name) : null;
                 // Read-only enforcement: a user who only has 'view' on the linked
-                // project (and is not the operator / superuser / unlocked) can open
-                // the experiment but every update is ignored.
-                const projectViewOnly = projectPerm === 'view' && !(isSuperuserSession || (currentUser && currentUser.name === activeTest.operator) || unlockedTestIds.has(activeTest.id) || !activeTest.operator);
+                // project (and is not one of the assigned scientists / a superuser /
+                // the test is unlocked or unassigned) can open the experiment but
+                // every update is ignored.
+                const isAssignedScientist = !!(currentUser &&
+                  (currentUser.name === activeTest.operator || (activeTest.coScientists || []).includes(currentUser.name)));
+                const projectViewOnly = projectPerm === 'view' && !(isSuperuserSession || isAssignedScientist || unlockedTestIds.has(activeTest.id) || !activeTest.operator);
                 // ─────────────────────────────────────────────────
 
                 const updateActiveTest = (updates) => {

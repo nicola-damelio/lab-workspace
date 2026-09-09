@@ -307,11 +307,27 @@ export const APPROVAL_PENDING = 'En attente';
 export const APPROVAL_APPROVED = 'Approuvé';
 export const APPROVAL_REJECTED = 'Refusé';
 export const APPROVAL_NOT_RETAINED = 'Non retenu';
+/* Statuts du circuit « demandes de devis / achats » introduits avec la
+   gestion des requêtes :
+   · « En gestion »      → devis généré par un transfert « pour révision » :
+                          des documents manquent, la responsable d'achats doit
+                          compléter (fournisseur, N° devis, fichier…) avant que
+                          le devis ne parte en signature ;
+   · « En attente de
+     signature »         → libellé affiché quand un devis généré par un
+                          transfert « pour signature » (ou complété) attend la
+                          signature du superutilisateur. Stocké « En attente »
+                          pour rester compatible avec le dépôt manuel. */
+export const APPROVAL_GESTION = 'En gestion';
+export const DEVIS_SIGNATURE_PENDING = 'En attente de signature';
 /** Normalise une valeur stockée vers l’une des 3 décisions d’approbation. */
 export const approvalStatusOf = (raw) => {
   const k = String(raw || '')
     .toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  /* « En gestion » et « En attente de signature » restent des états EN ATTENTE
+     (le test « sign » plus bas les classerait à tort « Approuvé »). */
+  if (/(attente|gestion|pending|waiting|demande)/.test(k)) return APPROVAL_PENDING;
   if (/(approuv|accept|valid|oui|sign)/.test(k)) return APPROVAL_APPROVED;
   if (/(refus|rejet|non)/.test(k)) return APPROVAL_REJECTED;
   return APPROVAL_PENDING;
