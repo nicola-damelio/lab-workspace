@@ -1,0 +1,15 @@
+atoms=324  conectLines=329
+maxSerial=324 (atoms=324) — CONECT pairs referencing missing/self serials: 0
+CONECT count (pairs): 329
+atoms with NO bond: 0
+ALA1 CB-HB1  : ok
+ALA1 CA-CB   : ok
+peptide C1-N2: ok
+CYS2 CB-SG   : ok
+PHE5 CD1-HD1 : ok
+HIS7 CG-ND1  : ok
+PRO13 CD-N   : ok
+TRP19 CE2-CD2: ok
+TRP19 NE1-HE1: ok
+TYR20 CZ-OH  : ok
+TYR20 OH-HH  : ok
