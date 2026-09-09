@@ -1016,6 +1016,21 @@ const [showAtomLabel, setShowAtomLabel] = useState(false);
 // both of the toggles above (for protein / nucleic residues).
 const [showResidueNumberType, setShowResidueNumberType] = useState(false);
 
+// ---- 📏 Atom distance measurement ----------------------------------------
+// While ON, clicking TWO atoms draws an NGL "distance" representation between
+// them — a line with a live label in Å (labelUnit 'angstrom'). Each completed
+// pair immediately accepts the next one, so you can walk along a chain of
+// distances. The drawn lines are normal NGL representations that survive
+// rotation/zoom and are removed with ✕ (or automatically when a structure is
+// reloaded / the viewer is cleared).
+const [measureMode, setMeasureMode] = useState(false);
+const [measurePending, setMeasurePending] = useState(null); // label of the 1st picked atom, awaiting the 2nd
+const [measureInfo, setMeasureInfo] = useState('');         // instruction / last-action status line
+const measureModeRef = useRef(false);
+measureModeRef.current = measureMode;
+const measurePendingRef = useRef(null); // { comp, atomIndex, label } of the 1st picked atom
+const measureRepsRef = useRef([]);      // [{ comp, elem }] NGL 'distance' representations that were drawn
+
 // ---- 2D↔3D atom-name synchronisation ---------------------------------------
 // Holds the map { NGL atom index → 2D SMILES atom name } for organic/lipid/
 // sugar molecules generated from `smiles`. The label pipeline reads this map
@@ -1501,6 +1516,68 @@ residueOffsetRef.current = residueOffset;
 namingConventionRef.current = namingConvention;
 }, [parsedSeq, moleculeType, onAtomClick, selectedKeys, residueOffset, namingConvention]);
 
+// ---- 📏 Measurement helpers -----------------------------------------------
+// The stage-signal handlers below run against refs (never stale props), so the
+// helpers here only touch refs / stable setters.
+const atomPickName = (atom) => {
+  if (!atom) return '';
+  try {
+    const mapped = mapAtomToNmrKeys(atom, parsedSeqRef.current, moleculeTypeRef.current, namingConventionRef.current);
+    if (mapped && mapped.label) return mapped.label;
+  } catch { /* fall through to the raw PDB name */ }
+  return `${atom.resname || ''} ${atom.resno || ''} ${displayNameRef.current(atom)}`.trim();
+};
+
+const addDistanceMeasurement = (comp, aIndex, bIndex, aLabel, bLabel) => {
+  if (!comp || !Number.isInteger(aIndex) || !Number.isInteger(bIndex)) return false;
+  try {
+    const elem = comp.addRepresentation('distance', {
+      atomPair: [[aIndex, bIndex]],  // pair of NGL atom indices → one line + one label
+      labelUnit: 'angstrom',         // label text becomes e.g. "2.13 Å"
+      labelVisible: true,
+      labelSize: 1.0,
+      labelColor: 0xdc2626,
+      color: 0xdc2626,               // red dashed line
+      linewidth: 3,
+      lineOpacity: 0.9,
+      opacity: 1,
+      visible: true,
+    });
+    if (elem) {
+      measureRepsRef.current.push({ comp, elem });
+      setMeasureInfo(`✓ ${aLabel} — ${bLabel}: distance drawn. Click 2 more atoms for another.`);
+      return true;
+    }
+  } catch (e) { console.warn('Distance measurement failed:', e); }
+  return false;
+};
+
+const clearMeasurements = () => {
+  measurePendingRef.current = null;
+  setMeasurePending(null);
+  const reps = measureRepsRef.current;
+  measureRepsRef.current = [];
+  reps.forEach(({ comp, elem }) => {
+    try { if (comp && elem) comp.removeRepresentation(elem); } catch { /* component may already be disposed */ }
+    try { if (elem && typeof elem.dispose === 'function') elem.dispose(); } catch { /* idempotent */ }
+  });
+  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
+  setMeasureInfo('');
+};
+
+const toggleMeasureMode = () => {
+  const next = !measureModeRef.current;
+  setMeasureMode(next);
+  measureModeRef.current = next;
+  if (!next) {
+    measurePendingRef.current = null;
+    setMeasurePending(null);
+    setMeasureInfo('');
+  } else {
+    setMeasureInfo('📏 Measure ON — click two atoms to show the distance between them.');
+  }
+};
+
 useEffect(() => {
 let cancelled = false;
 stageReadyRef.current = (async () => {
@@ -1518,6 +1595,33 @@ applyShadowSettings(); // honour the user's shadow preference (off by default)
 stage.signals.clicked.add((pickingProxy) => {
 if (!pickingProxy || !pickingProxy.atom) return;
 const atom = pickingProxy.atom;
+// 📏 Measure mode: clicks pick distance endpoints instead of selecting atoms.
+if (measureModeRef.current) {
+  const comp = pickingProxy.component;
+  if (!comp) return;
+  const label = atomPickName(atom);
+  const pending = measurePendingRef.current;
+  if (!pending) {
+    measurePendingRef.current = { comp, atomIndex: atom.index, label };
+    setMeasurePending(label);
+    setMeasureInfo(`1st atom: ${label} — now click the 2nd atom.`);
+    return;
+  }
+  if (pending.comp !== comp) {
+    setMeasureInfo('⚠ The two atoms belong to different structures — pick both atoms in the same molecule.');
+    return;
+  }
+  if (pending.atomIndex === atom.index) {
+    measurePendingRef.current = null; // re-clicking the same atom cancels the pending pick
+    setMeasurePending(null);
+    setMeasureInfo('Measure — click two atoms to show the distance between them.');
+    return;
+  }
+  measurePendingRef.current = null;
+  setMeasurePending(null);
+  addDistanceMeasurement(comp, pending.atomIndex, atom.index, pending.label, label);
+  return; // measuring replaces atom-click selection
+}
 if (renameModeRef.current) {
 setRenameTarget(atom.index);
 setRenameDraft(displayNameRef.current(atom));
@@ -1655,6 +1759,7 @@ if (!structureText) {
   if (!src && !structureFile && !structureFileData && hadText && statusRef.current !== 'loading') {
     clearExtraMolecules();
     try { if (stageRef.current) stageRef.current.removeAllComponents(); } catch {}
+    clearMeasurements(); // drawn distance lines die with their component
     componentRef.current = null;
     highlightCompRef.current = null;
     manualHighlightCompRef.current = null;
@@ -2163,6 +2268,7 @@ abortRef.current = {
     setLightInfo(null);
     setHasNonProtein(false);
     try { if (stageRef.current) stageRef.current.removeAllComponents(); } catch {}
+    clearMeasurements(); // distance lines belong to the removed components
   }
 };
 const unregisterAbort = abortControl.register('structure loading', () => {
@@ -2194,6 +2300,7 @@ try {
 const stage = await stageReadyRef.current;
 if (cancelled || !stage) return;
 stage.removeAllComponents();
+clearMeasurements(); // any previously drawn distance lines are gone too
 componentRef.current = null;
 espResetAll(); // every previous component (and its ⚡ ESP overlay) is gone
 highlightCompRef.current = null;
@@ -3859,6 +3966,7 @@ const handleClearViewer = () => {
   abortControl.abortAll();
   clearExtraMolecules();
   try { if (stageRef.current) stageRef.current.removeAllComponents(); } catch {}
+  clearMeasurements(); // distance lines belong to the removed components
   espResetAll(); // every component (and its ⚡ ESP overlay) is gone now
   componentRef.current = null;
   highlightCompRef.current = null;
@@ -3981,6 +4089,29 @@ className={`text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-
 >
 {showManualHighlight ? '🟢 Assigned' : '⚪ Assigned'}
 </button>
+<button
+type="button"
+onClick={toggleMeasureMode}
+title={measureMode ? '📏 Measure is ON — click any two atoms to draw the distance between them (shown in Å). Click again to stop measuring; drawn distances stay visible.' : 'Measure atom distances: click any two atoms to draw the distance between them, with a live label in Å (NGL distance representation).'}
+className={`text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8 whitespace-nowrap ${measureMode ? 'bg-rose-50 border-rose-400 text-rose-700 ring-1 ring-rose-200' : 'bg-slate-100 border-slate-300 text-slate-500'}`}
+>
+{measureMode ? '📏 Measuring…' : '📏 Measure'}
+</button>
+{measureMode && (
+<span title={measureInfo || 'Click two atoms to measure the distance between them'} className="text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-2 py-1 h-8 inline-flex items-center max-w-[340px] truncate">
+{measureInfo || (measurePending ? `1st atom: ${measurePending} — click the 2nd…` : 'Click two atoms…')}
+</span>
+)}
+{(measureRepsRef.current.length > 0 || measurePending) && (
+<button
+type="button"
+onClick={clearMeasurements}
+className="text-xs font-bold px-2 py-1.5 rounded-md border border-rose-300 bg-white text-rose-700 hover:bg-rose-50 h-8 whitespace-nowrap"
+title={measurePending ? 'Cancel the pending first atom and remove all drawn distance measurements' : 'Remove all drawn distance measurements'}
+>
+✕ Clear distances
+</button>
+)}
 {file && (
 <span title={file.name} className="text-[10px] text-slate-500 max-w-[120px] truncate">
 {file.name}

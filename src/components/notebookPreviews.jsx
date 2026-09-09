@@ -585,13 +585,18 @@ const noopPanel = () => {};
 
 export const NMRSpectraPreview = ({ test, selectedTypes = [] }) => {
 const d = useNmrDerived(test, {});
+// University tests must never reveal peak identities — neither as static labels
+// nor in the hover tooltips (hidePeakIdentity is picked up by NMRTooltip).
+const isUnivTest = Boolean(test && test.universityTest);
 const simCfg = {
     fontSize: 11,
     simShowLabels: false,
+    hidePeakIdentity: false,
     simLabelFormat: 'resNum_code_atom',
     simLabelDim: 'both',
     simLabelFontSize: 12,
-    ...(test.simChartCfg || {})
+    ...(test.simChartCfg || {}),
+    ...(isUnivTest ? { simShowLabels: false, hidePeakIdentity: true } : {})
   };
 const has = (id) => selectedTypes.includes(id);
 const hasMolecule = d.parsedSeq.length > 0 || d.moleculeType === 'organic';

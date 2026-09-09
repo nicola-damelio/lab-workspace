@@ -1171,7 +1171,10 @@ const CustomYTick13C = ({ x, y, payload, isZoomed, fs = 11 }) => {
   );
 };
 
-const NMRTooltip = ({ active, payload, diagonalColor, selectedKeys }) => {
+// hideIdentity suppresses the assignment line (data.label) so a hover can never
+// reveal WHICH atom/residue a peak belongs to — used during the 🎓 university
+// test where the static labels are already hidden. Peak type / ppm stays shown.
+const NMRTooltip = ({ active, payload, diagonalColor, selectedKeys, hideIdentity = false }) => {
   if (active && payload && payload.length) {
     const data = payload[0].payload;
     if (data.min !== undefined) {
@@ -1183,10 +1186,13 @@ const NMRTooltip = ({ active, payload, diagonalColor, selectedKeys }) => {
       );
     }
     const isSel = selectedKeys && data.keys && data.keys.some((k) => selectedKeys.includes(k));
+    const identityLine = (!hideIdentity && data.label) ? (
+      <p className="font-bold text-slate-800">{data.label}{isSel && <span style={{ color: SELECT_COLOR }}> ● selected</span>}</p>
+    ) : null;
     if (data.type === '1D') {
       return (
         <div className="bg-white p-2 border border-slate-200 shadow-md rounded text-xs z-50">
-          <p className="font-bold text-slate-800">{data.label}{isSel && <span style={{ color: SELECT_COLOR }}> ● selected</span>}</p>
+          {identityLine}
           <p className="text-slate-500">{data.x.toFixed(3)} ppm</p>
           {data.multiplet && <p className="text-slate-400 text-[10px]">Multiplicity: {data.multiplet}</p>}
         </div>
@@ -1194,7 +1200,7 @@ const NMRTooltip = ({ active, payload, diagonalColor, selectedKeys }) => {
     }
     return (
       <div className="bg-white p-3 border border-slate-200 shadow-xl rounded text-sm z-50">
-        <p className="font-bold text-slate-800">{data.label}{isSel && <span style={{ color: SELECT_COLOR }}> ● selected</span>}</p>
+        {identityLine}
         <p className="font-semibold" style={{ color: data.type === 'Diagonal' ? diagonalColor : getNMRFillColor(data) }}>{data.type}</p>
         <p className="text-slate-500 text-xs mt-1">F2: {Number(data.x).toFixed(2)} ppm<br />F1: {Number(data.y).toFixed(2)} ppm</p>
       </div>
@@ -1433,7 +1439,7 @@ const AxisScrollbar = ({ domain, fullDomain, onChange, vertical = false, reverse
 };
 
 const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel, selectedKeys, manualKeys = [], heightPx = 300, fs = 11, aspect = null, simCfg }) => {
-  const { simShowLabels = true, simLabelFormat = 'resNum_code_atom', simLabelDim = 'both', simLabelFontSize = 12, simLabelColor = '#b91c1c', tickAngle = 0, lineColor = '', lineThickness = 1.5, xAxisLabel = '', title: cfgTitle = '', xMin = '', xMax = '', yMin = '', yMax = '', tickColor = '' } = simCfg || {};
+  const { simShowLabels = true, hidePeakIdentity = false, simLabelFormat = 'resNum_code_atom', simLabelDim = 'both', simLabelFontSize = 12, simLabelColor = '#b91c1c', tickAngle = 0, lineColor = '', lineThickness = 1.5, xAxisLabel = '', title: cfgTitle = '', xMin = '', xMax = '', yMin = '', yMax = '', tickColor = '' } = simCfg || {};
   const effTitle = cfgTitle || title;
   const effXLabel = xAxisLabel || xLabel;
   const effTickColor = tickColor || '#64748b';
@@ -1546,7 +1552,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
                 <CartesianGrid strokeDasharray="3 3" vertical={true} horizontal={false} stroke="#f1f5f9" />
                 <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} fs={fs} angle={tickAngle} color={effTickColor} />} label={{ value: effXLabel, position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} axisLine={{ stroke: '#cbd5e1' }} />
                 <YAxis type="number" dataKey="y" domain={[yMin !== '' ? Number(yMin) : 0, yMax !== '' ? Number(yMax) : 'auto']} hide={true} />
-                <Tooltip cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} content={<NMRTooltip selectedKeys={selectedKeys} />} />
+                <Tooltip cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} content={<NMRTooltip selectedKeys={selectedKeys} hideIdentity={hidePeakIdentity} />} />
                 <Bar dataKey="y" barSize={2} shape={(props) => {
                   const { x, y, width, height, payload } = props;
                   const centerX = x + width / 2;
@@ -1718,7 +1724,7 @@ const place2DLabels = (crossPeakData, { showLabels, format, dim, yRange, boxW, a
 };
 
 const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setExpandedPanel, panelId, diagonalColor, selectedKeys, manualKeys = [], aspect = 1, fs = 11, simCfg = {} }) => {
-  const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 12, simLabelColor = '#b91c1c', tickAngle = 0, lineColor = '', xAxisLabel = '', title: cfgTitle = '', tickColor = '' } = simCfg;
+  const { simShowLabels, hidePeakIdentity = false, simLabelFormat, simLabelDim, simLabelFontSize = 12, simLabelColor = '#b91c1c', tickAngle = 0, lineColor = '', xAxisLabel = '', title: cfgTitle = '', tickColor = '' } = simCfg;
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState([0, 11]);
   const [yDomain, setYDomain] = useState([0, 11]);
@@ -1826,7 +1832,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                 <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} angle={tickAngle} color={tickColor || '#64748b'} />} label={{ value: xAxisLabel || '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} />
                 <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomYTick1H isZoomed={isZoomed} fs={fs} color={tickColor || '#64748b'} />} label={{ value: '¹H F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fs + 1 }} />
-                <Tooltip content={<NMRTooltip diagonalColor={diagonalColor} selectedKeys={selectedKeys} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
+                <Tooltip content={<NMRTooltip diagonalColor={diagonalColor} selectedKeys={selectedKeys} hideIdentity={hidePeakIdentity} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
                 
                 {/* Changed shape to function to avoid DOM warning propagation */}
                 <Scatter name="Diagonal" data={[{ x: 0, y: 0 }, { x: 11, y: 11 }]} line={{ stroke: '#cbd5e1', strokeWidth: 1 }} shape={(props) => <circle cx={props.cx || 0} cy={props.cy || 0} r={0} />} legendType="none" isAnimationActive={false} />
@@ -1859,7 +1865,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
 };
 
 const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panelId, selectedKeys, manualKeys = [], yAxisLabel = '¹³C F1 (ppm)', yDomainInit = [0, 220], yTicks = TICKS_13C, aspect = 1, fs = 11, simCfg = {} }) => {
-  const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 12, simLabelColor = '#b91c1c', tickAngle = 0, xAxisLabel = '', title: cfgTitle = '', tickColor = '' } = simCfg;
+  const { simShowLabels, hidePeakIdentity = false, simLabelFormat, simLabelDim, simLabelFontSize = 12, simLabelColor = '#b91c1c', tickAngle = 0, xAxisLabel = '', title: cfgTitle = '', tickColor = '' } = simCfg;
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState([0, 11]);
   const [yDomain, setYDomain] = useState(yDomainInit);
@@ -1932,7 +1938,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                 <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} angle={tickAngle} color={tickColor || '#64748b'} />} label={{ value: xAxisLabel || '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} />
                 <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : yTicks} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} fs={fs} color={tickColor || '#64748b'} />} label={{ value: yAxisLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fs + 1 }} />
-                <Tooltip content={<NMRTooltip diagonalColor="#8b5cf6" selectedKeys={selectedKeys} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
+                <Tooltip content={<NMRTooltip diagonalColor="#8b5cf6" selectedKeys={selectedKeys} hideIdentity={hidePeakIdentity} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
                 <Scatter data={processedCrossPeaks} shape={(props) => {
                   const { cx, cy, payload } = props;
                   if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
@@ -7971,11 +7977,13 @@ export const SimulationsSection = ({ ctx }) => {
   // University test mode: peak labels are hidden AND the toolbar tick is
   // deactivated — labels such as 3A Hα would give the peak assignments away.
   const univTestMode = Boolean(activeTest.universityTest);
-  const simCfg = { fontSize: 11, h1D: 300, aspect2D: 1, simShowLabels: false, simLabelFormat: 'resNum_code_atom', simLabelDim: 'both', simLabelFontSize: 12, simLabelColor: '#b91c1c', tickAngle: 0, tickColor: '#64748b', lineColor: '#3b82f6', lineThickness: 1.5, title: '', xAxisLabel: '', xMin: '', xMax: '', yMin: '', yMax: '', ...(activeTest.simChartCfg || {}) };
+  const simCfg = { fontSize: 11, h1D: 300, aspect2D: 1, simShowLabels: false, hidePeakIdentity: false, simLabelFormat: 'resNum_code_atom', simLabelDim: 'both', simLabelFontSize: 12, simLabelColor: '#b91c1c', tickAngle: 0, tickColor: '#64748b', lineColor: '#3b82f6', lineThickness: 1.5, title: '', xAxisLabel: '', xMin: '', xMax: '', yMin: '', yMax: '', ...(activeTest.simChartCfg || {}) };
   const setCfg = (patch) => updateActiveTest({ simChartCfg: { ...simCfg, ...patch } });
   // The plots never receive labels during the university test, regardless of any
-  // previously saved simChartCfg.simShowLabels value.
-  const plotSimCfg = univTestMode ? { ...simCfg, simShowLabels: false } : simCfg;
+  // previously saved simChartCfg.simShowLabels value — and the hover tooltips are
+  // made identity-free too (labels such as 3A Hα would give the peak assignments
+  // away while hovering, even though the static text labels are hidden).
+  const plotSimCfg = univTestMode ? { ...simCfg, simShowLabels: false, hidePeakIdentity: true } : simCfg;
   if (d.parsedSeq.length === 0 && d.moleculeType !== 'organic') {
     return <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Enter a sequence / select a molecule (in Experiment Setup) to generate simulated spectra.</div>;
   }
