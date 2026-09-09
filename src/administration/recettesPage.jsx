@@ -145,6 +145,10 @@ export const RecettesPage = () => {
   const canOpenDepenses = !!access.canViewPage({ id: 'depenses' });
   const canOpenOm = !!access.canViewPage({ id: 'om' });
   const canOpenDesiderata = !!access.canViewPage({ id: 'desiderate' });
+  /* « Approbation devis & BC » : la colonne « En signature / signé » renvoie
+     vers la position exacte du devis dans cette page (onglet Devis), pas vers
+     la demande d’origine. */
+  const canOpenApprobation = !!access.canViewPage({ id: 'devisBc' });
   const openTarget = (target) => {
     if (!target || !target.recordId) return;
     if (typeof navigate === 'function') navigate(target.pageId, { kind: target.kind, recordId: target.recordId });
@@ -153,6 +157,7 @@ export const RecettesPage = () => {
   const reimbLink = (x) => (canOpenDepenses && x && x.id ? { pageId: 'depenses', kind: 'reimb', recordId: x.id } : null);
   const omLink = (o) => (canOpenOm && o && o.id ? { pageId: 'om', kind: 'om', recordId: o.id } : null);
   const desLink = (d) => (canOpenDesiderata && d && d.id ? { pageId: 'desiderate', kind: 'desiderata', recordId: d.id } : null);
+  const devisBcLink = (v) => (canOpenApprobation && v && v.id ? { pageId: 'devisBc', kind: v.kind || 'devis', recordId: v.id } : null);
 
   const [modal, setModal] = useState(null);
   const [importOpen, setImportOpen] = useState(false); // {mode:'new'} | {mode:'edit', rec} | {mode:'link', rec}
@@ -246,9 +251,16 @@ export const RecettesPage = () => {
         omPrevuItems.push({ om: o, whole: true });
         return;
       }
-      const enSig = st.parts.filter((p) => p.mode === 'bc' && p.state !== 'bc-signe'
-        && p.devis && p.devis.statut !== 'En gestion'
-        && (p.devis.statut === 'En attente' || p.devis.statut === 'Approuvé'));
+      const enSig = st.parts.filter((p) => {
+        if (p.mode !== 'bc' || p.state === 'bc-signe') return false;
+        if (!p.devis || p.devis.statut === 'En gestion') return false;
+        if (p.devis.statut !== 'En attente' && p.devis.statut !== 'Approuvé') return false;
+        /* Devis approuvé dont la dépense liée a disparu (« orphelin ») : plus
+           compté « en signature » — il reste visible dans « Approbation devis
+           & BC » pour être supprimé ou réparé. */
+        if (p.devis.statut === 'Approuvé' && p.devis.depenseId && !p.dep) return false;
+        return true;
+      });
       const restePrevu = st.parts.filter((p) => p.mode === 'bc'
         && (p.state === 'bc-attente' || (p.devis && p.devis.statut === 'En gestion')));
       if (enSig.length) omEnSignatureItems.push({ om: o, parts: enSig });
@@ -272,8 +284,16 @@ export const RecettesPage = () => {
       const directDep = depenses.find((x) => x && x.desiderataId === d.id) || null;
       const bcSigned = (depOfDv && isAchatBcSigne(depOfDv)) || (directDep && isAchatBcSigne(directDep));
       if (bcSigned) return; /* soldé : suivi par la colonne « Achats (BC signé) » */
-      if (dv && (dv.statut === 'En attente' || dv.statut === 'Approuvé') && d.transfert) desEnSignatureItems.push(d);
-      else desPrevuItems.push(d);
+      /* Devis « orphelin » : le devis est approuvé mais la dépense liée a été
+         supprimée (ou le devis lui-même a disparu après un transfert) — plus
+         rien ne le relie à la page « Approbation devis & BC ». Il ne doit plus
+         être compté « en signature » (ni en « prévu ») : le superutilisateur le
+         voit dans « Approbation devis & BC » pour le supprimer ou le réparer. */
+      const orphanDevis = !!(dv && dv.statut === 'Approuvé' && txt(dv.depenseId) && !depOfDv)
+        || (!dv && !!d.transfert);
+      const dvLive = !!dv && (dv.statut === 'En attente' || dv.statut === 'Approuvé');
+      if (dvLive && d.transfert && !orphanDevis) desEnSignatureItems.push(d);
+      else if (!orphanDevis) desPrevuItems.push(d);
     });
     const desEnSignatureTotal = desEnSignatureItems.reduce((s, d) => s + toNum(d.montantEstime) + toNum(d.fraisPort), 0);
     const desMontant = desPrevuItems.reduce((s, d) => s + toNum(d.montantEstime), 0);
@@ -546,12 +566,18 @@ export const RecettesPage = () => {
         <HoverCell
           amount={r.__agg.desEnSignatureTotal}
           onOpen={openTarget}
-          items={r.__agg.desEnSignatureItems.map((d) => ({
-            title: d.description || 'Achat prévu / souhaité',
-            meta: [d.demandeur || '', d.numDevis || '', 'en attente de signature ou signé'].filter(Boolean).join(' · '),
-            value: euro.format(toNum(d.montantEstime) + toNum(d.fraisPort)),
-            to: desLink(d),
-          }))}
+          items={r.__agg.desEnSignatureItems.map((d) => {
+            const dv = (Array.isArray(devisBc) ? devisBc : []).find((x) => x && x.kind === 'devis'
+              && x.sourceKind === 'desiderate' && x.sourceId === d.id && !x.sourcePart) || null;
+            return {
+              title: d.description || 'Achat prévu / souhaité',
+              meta: [d.demandeur || '', dv && dv.numDevis ? dv.numDevis : d.numDevis || '',
+                dv ? (dv.statut === 'Approuvé' ? 'devis signé — BC à signer' : 'devis en attente de signature') : ''].filter(Boolean).join(' · '),
+              value: euro.format(toNum(d.montantEstime) + toNum(d.fraisPort)),
+              /* Le lien mène à la position du devis dans « Approbation devis & BC ». */
+              to: dv ? devisBcLink(dv) : desLink(d),
+            };
+          })}
         />
       ),
     },
@@ -564,12 +590,18 @@ export const RecettesPage = () => {
         <HoverCell
           amount={r.__agg.omEnSignatureTotal}
           onOpen={openTarget}
-          items={r.__agg.omEnSignatureItems.flatMap((x) => (x.parts || []).map((p) => ({
-            title: (x.om && (x.om.description || x.om.destination)) || 'OM',
-            meta: [x.om && x.om.destination, p.label, 'devis en attente de signature / signé'].filter(Boolean).join(' · '),
-            value: euro.format(p.montant || 0),
-            to: x.om ? omLink(x.om) : null,
-          })))}
+          items={r.__agg.omEnSignatureItems.flatMap((x) => (x.parts || []).map((p) => {
+            const dv = p && p.devis;
+            return {
+              title: (x.om && (x.om.description || x.om.destination)) || 'OM',
+              meta: [x.om && x.om.destination, p.label,
+                dv && dv.numDevis ? dv.numDevis : '',
+                dv ? (dv.statut === 'Approuvé' ? 'devis signé — BC à signer' : 'devis en attente de signature') : ''].filter(Boolean).join(' · '),
+              value: euro.format(p.montant || 0),
+              /* Le lien mène à la position du devis dans « Approbation devis & BC ». */
+              to: dv ? devisBcLink(dv) : (x.om ? omLink(x.om) : null),
+            };
+          }))}
         />
       ),
     },

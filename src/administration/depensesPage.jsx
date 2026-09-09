@@ -2641,6 +2641,25 @@ const pickReimbCost = (rec, c) => {
   return null;
 };
 
+/* Nom de fichier Drive conventionnel d’un « état liquidatif » téléversé depuis
+   le formulaire Remboursements : OM_<N° OM>_<ligne>_<bénéficiaire>_<date de
+   demande>_<objet> — même règle que la copie rangée à l’enregistrement par
+   driveFiling (prefix « OM », code « numOM »). Sans N° OM connu on renvoie ''
+   → le nom de fichier local d’origine est conservé (un document sans N° ne
+   doit pas prendre un nom conventionnel incomplet). */
+const reimbLiquidatifDriveName = (draft, file) => {
+  if (!txt(draft && draft.numOM)) return '';
+  return budgetDocFileName({
+    prefix: 'OM',
+    code: txt(draft.numOM),
+    ligne: txt(draft.ligneBudgetaire),
+    demandeur: txt(draft.demandeur),
+    date: isoOf(draft.dateDemande) || todayIso(),
+    description: txt(draft.description),
+    fileName: file && file.name,
+  });
+};
+
 const RemboursementModal = ({ rec, recettes, types, demandeurNames, onCancel, onSave }) => {
   const editing = !!rec;
   const [error, setError] = useState('');
@@ -2863,14 +2882,16 @@ const RemboursementModal = ({ rec, recettes, types, demandeurNames, onCancel, on
           <Section icon="🗄️" title="État liquidatif (fichier signé du remboursement)">
             <div className="grid grid-cols-1 gap-3">
               <Field
-                label="Lien Google Drive du document signé"
-                hint="État liquidatif / pièce signée qui valide le remboursement. Collez le lien du fichier (PDF de préférence) : à l’enregistrement, une copie est classée dans Budget_labo/<année>/OM et le lien apparaît sur la ligne du tableau « Remboursements »."
+                label="Fichier signé du remboursement"
+                hint="Pièce signée qui valide le remboursement. Téléversez le document depuis ce PC (bouton « ⬆ PC », PDF de préférence) ou collez le lien d’un fichier Google Drive : à l’enregistrement, une copie est classée dans Budget_labo/<année>/OM (nommée « OM_<N° OM>… » selon la convention) et le lien apparaît sur la ligne du tableau « Remboursements »."
               >
-                <input
-                  className={MODAL_INPUT}
+                <BudgetDocLinkInput
+                  folder={BUDGET_DOC_FOLDER_BY_FIELD.etatLiquidatifUrl || 'OM'}
                   value={draft.etatLiquidatifUrl || ''}
-                  onChange={set('etatLiquidatifUrl')}
-                  placeholder="https://drive.google.com/file/d/…/view"
+                  onChange={(v) => setDraft((d) => ({ ...d, etatLiquidatifUrl: v }))}
+                  nameFor={(file) => reimbLiquidatifDriveName(draft, file)}
+                  placeholder="🔗 lien de la pièce signée (Drive) — ou fichier depuis ce PC"
+                  title="État liquidatif signé — rangé à l’enregistrement dans Budget_labo/<année>/OM"
                 />
               </Field>
             </div>

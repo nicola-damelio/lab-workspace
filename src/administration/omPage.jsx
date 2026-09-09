@@ -25,6 +25,8 @@ import { AdminImportModal } from './adminImportModal';
 import { omColumns } from './collectionPages';
 import { OM_COST_STATUSES, OM_STATUSES, APPROVAL_GESTION } from './adminSchema';
 import { parseEuroAmount } from './importUtils';
+import { uploadLocalFile, cloudBackendAvailable } from '../utils/driveUpload';
+import { budgetDocPath, budgetDocFileName } from './driveFiling';
 import { findRecetteTwin, sameCatType } from './recetteLink';
 import {
   sendAdminMail, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
@@ -193,12 +195,64 @@ const OmModal = ({
     }, {}),
   }));
   const [error, setError] = useState('');
+  /* Fichier(s) devis joints depuis le PC pour les postes « Commande / BC » :
+     téléversés vers Budget_labo/<année>/Devis, le lien est enregistré dans le
+     champ « devisUrl_… » du poste concerné. */
+  const partFileRefs = useRef({});
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState('');
 
   const set = (key) => (e) => setDraft((d) => ({ ...d, [key]: e.target.value }));
   /* Mode de paiement d'un poste de coût : « bc » = payé par commande (devis à
      faire signer) ; « reimb » = frais avancés par le membre puis remboursés
      (aucun BC). */
   const setPartMode = (key) => (mode) => setDraft((d) => ({ ...d, partMode: { ...(d.partMode || {}), [key]: mode } }));
+
+  /* Téléversement d'un devis (fichier local du PC) pour un poste « BC ». */
+  const pickPartFile = async (file, key) => {
+    if (!file || !key) return;
+    setUploadMsg('');
+    if (!cloudBackendAvailable()) {
+      setUploadMsg('⚠️ Google Drive n’est pas connecté — collez le lien du devis dans le champ « lien » ci-dessous.');
+      return;
+    }
+    setUploadBusy(true);
+    try {
+      const year = new Date().getFullYear();
+      const label = ((COST_INPUTS.find((x) => x.key === key) || {}).label) || key;
+      const driveName = budgetDocFileName({
+        prefix: 'Devis',
+        code: txt(draft[`devisNum_${key}`]),
+        ligne: txt(draft.ligneBudgetaire),
+        fournisseur: '',
+        demandeur: txt(draft.demandeur) || meName,
+        date: todayIso(),
+        fileName: file.name,
+      }) || String(file.name || 'document').trim().slice(0, 180);
+      const drive = await uploadLocalFile({
+        name: driveName,
+        mimeType: file.type || 'application/octet-stream',
+        file,
+        path: budgetDocPath(year, 'Devis'),
+      });
+      if (drive && drive.driveUrl) {
+        const url = txt(drive.driveUrl);
+        setDraft((d) => ({
+          ...d,
+          [`devisUrl_${key}`]: url,
+          [`devisNum_${key}`]: txt(d[`devisNum_${key}`]),
+        }));
+        setUploadMsg(`✓ Devis « ${label} » téléversé dans Budget_labo/${year}/Devis (dossier créé si besoin).`);
+      } else {
+        setUploadMsg('⚠️ Téléversement impossible — collez le lien du devis dans le champ « lien » ci-dessous.');
+      }
+    } catch (err) {
+      console.error(err);
+      setUploadMsg(`⚠️ Téléversement impossible : ${(err && err.message) || err}`);
+    } finally {
+      setUploadBusy(false);
+    }
+  };
 
   /* La base Recettes contient parfois plusieurs exemplaires du même intitulé de
      ligne budgétaire : dans le menu on n’en montre qu’un seul, considéré comme
@@ -237,6 +291,14 @@ const OmModal = ({
     const description = txt(draft.description);
     if (!description) {
       setError('Merci de renseigner la mission : c’est l’intitulé de l’OM (obligatoire).');
+      return;
+    }
+    /* Les dates d’aller (départ en mission) et de retour sont OBLIGATOIRES
+       dans une demande d’OM. */
+    const dateMission = isoOf(draft.dateMission);
+    const dateRetour = isoOf(draft.dateRetour);
+    if (!dateMission || !dateRetour) {
+      setError('Les dates de départ (aller) et de retour de la mission sont obligatoires.');
       return;
     }
     const couts = {};
@@ -372,10 +434,10 @@ const OmModal = ({
                   disabled={!editing}
                 />
               </Field>
-              <Field label="Départ (mission)">
+              <Field label="Départ (mission)" required>
                 <input type="date" className={MODAL_INPUT} value={draft.dateMission} onChange={set('dateMission')} />
               </Field>
-              <Field label="Retour">
+              <Field label="Retour" required>
                 <input type="date" className={MODAL_INPUT} value={draft.dateRetour} onChange={set('dateRetour')} />
               </Field>
             </div>
@@ -451,6 +513,32 @@ const OmModal = ({
                           placeholder="🔗 lien du devis (facultatif)"
                           title="Lien Google Drive du devis de ce poste — facultatif à la soumission."
                         />
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            ref={(el) => { partFileRefs.current[c.key] = el; }}
+                            type="file"
+                            className="hidden"
+                            accept=".pdf,.doc,.docx,.odt,.xls,.xlsx,.jpg,.jpeg,.png,.txt"
+                            onChange={(e) => {
+                              const f = e.target.files && e.target.files[0];
+                              if (e.target) e.target.value = '';
+                              if (f) pickPartFile(f, c.key);
+                            }}
+                          />
+                          <button
+                            type="button"
+                            disabled={uploadBusy}
+                            onClick={() => {
+                              const el = partFileRefs.current[c.key];
+                              if (el) el.click();
+                            }}
+                            title="Choisir le fichier du devis sur ce PC — téléversé dans Budget_labo/<année>/Devis"
+                            className="text-[10px] font-black px-2 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 disabled:opacity-50 whitespace-nowrap"
+                          >⬆ Devis (PC)</button>
+                          <span className={`text-[9px] truncate min-w-0 flex-1 ${txt(draft[`devisUrl_${c.key}`]) ? 'text-emerald-600 font-semibold' : 'text-slate-400'}`}>
+                            {txt(draft[`devisUrl_${c.key}`]) ? 'devis joint ✓' : 'ou collez le lien ci-dessus'}
+                          </span>
+                        </div>
                       </div>
                     ) : null}
                   </Field>
@@ -466,6 +554,9 @@ const OmModal = ({
               <b className="text-slate-500"> « pour signature »</b> ; sinon, elle partira « pour révision »
               (devis « En gestion » à compléter).
             </p>
+            {uploadMsg && (
+              <p className="mt-2 text-[11px] leading-snug text-slate-500">{uploadMsg}</p>
+            )}
             <div className="mt-3 rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 flex items-center justify-between gap-3">
               <div className="text-[11px] font-semibold text-slate-500">
                 Total du tableau
@@ -713,6 +804,38 @@ export const OmPage = () => {
     if (!isOmApproved(previous) && isOmApproved(value)) notifyApproved({ ...r, statut: value });
   };
 
+  /* E-mail au superutilisateur quand un membre soumet une NOUVELLE demande
+     d’OM (« OM prévus / souhaités ») — il approuve puis transfère. */
+  const notifyNewOm = async (patch) => {
+    const label = missionOf(patch) || 'ordre de mission';
+    const subject = `[Lab Workspace] Nouvelle demande d’OM — ${label}`;
+    const lines = [
+      'Une nouvelle demande d’ordre de mission a été soumise :',
+      `  ${label}`,
+      `Demandeur : ${txt(patch && demandeurOf(patch)) || '—'}`,
+      txt(patch && patch.destination) ? `Destination : ${txt(patch.destination)}` : '',
+      (patch && isoOf(patch.dateMission))
+        ? `Mission : du ${isoOf(patch.dateMission)}${isoOf(patch.dateRetour) ? ` au ${isoOf(patch.dateRetour)}` : ''}`
+        : '',
+      (patch && patch.coutTotal !== undefined && patch.coutTotal !== null && patch.coutTotal !== '')
+        ? `Coût total : ${euro.format(Number(patch.coutTotal))}`
+        : 'Coût non chiffré',
+      txt(patch && patch.ligneBudgetaire) ? `Ligne budgétaire : ${txt(patch.ligneBudgetaire)}` : '',
+    ].filter(Boolean);
+    const res = await sendAdminMail({
+      to: superuserEmails,
+      subject,
+      text: mailBodyText(lines),
+    });
+    const summary = summarizeMail(res, 'Superutilisateur notifié');
+    setNotice({
+      tone: res && res.ok ? 'ok' : 'warn',
+      text: summary.text,
+      mailto: summary.mailto || undefined,
+      consoleUrl: summary.consoleUrl || undefined,
+    });
+  };
+
   const onSave = (patch, existingId) => {
     const label = missionOf(patch) || 'sans titre';
     upsert('om', patch, existingId);
@@ -723,6 +846,10 @@ export const OmPage = () => {
         ? `Ordre de mission « ${label} » enregistré.`
         : `Ordre de mission « ${label} » ajouté.`,
     });
+    /* Nouvelle demande soumise par un membre → prévenir le superutilisateur. */
+    if (!existingId && !isSuper && typeof notifyNewOm === 'function') {
+      notifyNewOm({ ...patch });
+    }
   };
 
   const onRemove = (rec) => {

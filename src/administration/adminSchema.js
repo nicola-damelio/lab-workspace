@@ -51,13 +51,18 @@ export const ADMIN_SETTINGS_DOC = 'global';
      • Pages « Dépenses » et « Budget overview » = réservées aux fonctions AP et
          Gestionnaire (et au superutilisateur) ; les Permanents sans fonction
          ne les voient pas.
+     • Recettes (création de lignes budgétaires) : socle Permanent, et aussi
+         accordée aux fonctions Gestionnaire / Achats (même hors statut
+         Permanent) — voir plus bas.
      • Statut Non permanent = onglet Congés uniquement.
      • Page Congés (demandes d’absence) = réservée aux profils Non permanent
          et au superutilisateur (rôle d’approbation) ; les Permanents ne la voient pas.
      • Fonction AP (agent de prévention)  → ajoute Dépenses + Budget overview + Hygiène & Sécurité.
-     • Fonction Gestionnaire              → ajoute Dépenses + Budget overview + Questions ouvertes.
+     • Fonction Gestionnaire              → ajoute Recettes (création de lignes budgétaires) +
+         Dépenses + Budget overview + Questions ouvertes.
      • Fonction Achats (« Responsable
-       d'achats »)                         → ajoute Dépenses + Budget overview ; reçoit les OM /
+       d'achats »)                         → ajoute Recettes (création de lignes budgétaires) +
+         Dépenses + Budget overview ; reçoit les OM /
          achats prévus transférés depuis « OM prévus / souhaités » et « Achats
          prévus / souhaités » (création de devis « Approbation devis & BC » et de
          fiches du registre Remboursements).
@@ -568,8 +573,8 @@ export const hasDefinedSuperuser = (operators) =>
 export const ADMIN_FONCTIONS = ['AP', 'Gestionnaire', 'Achats'];
 export const ADMIN_FONCTION_META = {
   AP: { label: 'AP', hint: 'Agent de prévention → ajoute Dépenses, Budget overview + Hygiène & Sécurité.' },
-  Gestionnaire: { label: 'Gestionnaire', hint: '→ ajoute Dépenses, Budget overview + Questions ouvertes.' },
-  Achats: { label: "Responsable d'achats", hint: "→ ajoute Dépenses + Budget overview ; reçoit les OM / achats prévus transférés et est notifié par e-mail quand un devis est créé." },
+  Gestionnaire: { label: 'Gestionnaire', hint: '→ ajoute Recettes (création de lignes budgétaires), Dépenses, Budget overview + Questions ouvertes.' },
+  Achats: { label: "Responsable d'achats", hint: "→ ajoute Recettes (création de lignes budgétaires), Dépenses + Budget overview ; reçoit les OM / achats prévus transférés et est notifié par e-mail quand un devis est créé." },
 };
 
 /** Lecture normalisée des fonctions d’une fiche Personnel (tableau de codes).
@@ -614,11 +619,14 @@ export const statutLabelOf = (person) => {
 const PERMANENT_SOCLE_PAGES = ['recettes', 'desiderate', 'devisBc', 'om', 'librerie'];
 /** Pages d’un Non permanent : uniquement l’espace Congés. */
 const NON_PERMANENT_SOCLE_PAGES = ['conges'];
-/** Pages ajoutées selon la fonction portée par la fiche Personnel. */
+/** Pages ajoutées selon la fonction portée par la fiche Personnel.
+    « Recettes » est aussi accordée aux fonctions Gestionnaire / Achats : elles
+    doivent pouvoir créer de nouvelles lignes budgétaires (bouton « Nouvelle
+    ligne budgétaire ») même si leur fiche n’est pas de statut Permanent. */
 const FONCTION_EXTRA_PAGES = {
   AP: ['depenses', 'budget', 'sicurezza'],
-  Gestionnaire: ['depenses', 'budget', 'questioni'],
-  Achats: ['depenses', 'budget'],
+  Gestionnaire: ['recettes', 'depenses', 'budget', 'questioni'],
+  Achats: ['recettes', 'depenses', 'budget'],
 };
 
 /**

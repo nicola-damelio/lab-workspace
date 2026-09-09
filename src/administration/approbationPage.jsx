@@ -48,7 +48,7 @@
       candidats d'un même achat — aucune collection séparée : le libellé du
       produit est repris du devis le plus récent du groupe.
    ========================================================================= */
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAdmin } from './AdminContext';
 import { SmartTable } from './smartTable';
 import { toFrDate } from './congesDates';
@@ -280,6 +280,7 @@ const Badge = ({ tone = 'slate', children }) => (
 export const ApprobationPage = () => {
   const {
     data, access, upsert, remove, currentUser, operators, settings, updateSettings,
+    focus, clearFocus,
   } = useAdmin();
   const personnel = useMemo(
     () => (Array.isArray(data.personnel) ? data.personnel : []),
@@ -375,6 +376,25 @@ export const ApprobationPage = () => {
   const [busyId, setBusyId] = useState(null); // id de la ligne en cours de décision
   const [note, setNote] = useState(null); // { text, mailto? } — résultat du dernier e-mail
   const [filingBusy, setFilingBusy] = useState(false); // rangement « à la demande » des fichiers
+
+  /* Lien depuis la page Recettes / OM / Achats prévus : ouvre l’onglet du
+     devis / BC ciblé et garantit que la ligne est visible (un devis signé
+     reste affiché tant que son BC n’est pas signé ; sinon on coche
+     « Afficher les traités »). */
+  useEffect(() => {
+    if (!focus || focus.pageId !== 'devisBc') return undefined;
+    const rid = focus.recordId;
+    const found = (Array.isArray(rows) ? rows : []).find((x) => x && x.id === rid);
+    if (found) {
+      setTab(found.kind === 'bc' ? 'bc' : 'devis');
+      const visibleByDefault = isApprovalPending(found.statut)
+        || (found.kind === 'devis' && found.statut === APPROVAL_APPROVED);
+      if (!visibleByDefault) setShowTreated(true);
+    }
+    if (typeof clearFocus === 'function') clearFocus();
+    return undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus]);
 
   const devisList = useMemo(() => visibleRows
     .filter((r) => r && r.kind === 'devis')
@@ -875,8 +895,34 @@ export const ApprobationPage = () => {
   /* ── Envoi pour signature d'un devis « En gestion » ─────────────────────
      Une fois les documents complétés (N° devis + fichier) par la responsable
      d'achats (ou le superutilisateur), le devis passe « En attente » — il
-     s'affiche « en attente de signature » au directeur. */
-  const sendForSignature = (rec) => {
+     s'affiche « en attente de signature » au directeur, qui est prévenu par
+     e-mail. */
+  const sendForSignatureMail = async (rec) => {
+    if (!rec || !rec.id) return;
+    const ref = txt(rec.numDevis) || txt(rec.description) || rec.id;
+    const res = await sendAdminMail({
+      to: superuserEmails,
+      subject: `[Lab Workspace] Devis envoyé pour signature — ${ref}`,
+      text: mailBody([
+        `Le devis suivant a été complété et envoyé pour signature :`,
+        `  ${txt(rec.description) || ref}`,
+        `N° devis : ${txt(rec.numDevis) || '—'}`,
+        txt(rec.fournisseur) ? `Fournisseur : ${txt(rec.fournisseur)}` : '',
+        `Demandeur : ${txt(rec.demandeur) || txt(rec.deposant) || '—'}`,
+        txt(rec.ligneBudgetaire) ? `Ligne budgétaire : ${txt(rec.ligneBudgetaire)}` : '',
+        `Envoyé par : ${currentName || '—'}.`,
+      ].filter(Boolean)),
+    });
+    const summary = summarizeMail(res, 'Superutilisateur notifié');
+    setNote((prev) => ({
+      ...(prev || {}),
+      text: ['✓ Devis envoyé pour signature : il est désormais « en attente de signature ».', summary.text].filter(Boolean).join(' '),
+      ...(summary.mailto ? { mailto: summary.mailto } : {}),
+      ...(summary.consoleUrl ? { consoleUrl: summary.consoleUrl } : {}),
+    }));
+  };
+
+  const sendForSignature = async (rec) => {
     if (!rec || !rec.id || rec.kind !== 'devis') return;
     if (rec.statut !== APPROVAL_GESTION) return;
     if (!devisCompleteOf(rec)) {
@@ -887,7 +933,47 @@ export const ApprobationPage = () => {
       statut: APPROVAL_PENDING,
       notes: [txt(rec.notes), `✉️ Envoyé pour signature le ${todayIso()} par ${currentName}.`].filter(Boolean).join(' · '),
     }, rec.id);
-    setNote({ text: '✓ Devis envoyé pour signature : il est désormais « en attente de signature ».' });
+    await sendForSignatureMail({ ...rec, statut: APPROVAL_PENDING });
+  };
+
+  /* ── Renvoi à la responsable d'achats (superutilisateur) ──────────────────
+     Le devis est « En attente de signature », mais le superutilisateur juge
+     qu’il ne convient pas encore : il le renvoie « En gestion » à la
+     responsable d'achats (motif demandé, e-mail envoyé), qui pourra corriger
+     puis le renvoyer pour signature. */
+  const returnToAchats = async (rec) => {
+    if (!rec || !rec.id || rec.kind !== 'devis' || !isSuper) return;
+    if (approvalStatusOf(rec.statut) !== APPROVAL_PENDING || rec.statut === APPROVAL_GESTION) return;
+    const ref = txt(rec.numDevis) || txt(rec.description) || rec.id;
+    const motif = window.prompt(
+      `Renvoyer le devis « ${ref} » à la responsable d'achats ?\nIndiquez le motif : il lui sera transmis par e-mail.`,
+      ''
+    );
+    if (motif === null) return;
+    upsert('devisBc', {
+      statut: APPROVAL_GESTION,
+      notes: [txt(rec.notes), `↩️ Renvoyé à la responsable d'achats le ${todayIso()} par ${currentName}${txt(motif) ? ` — motif : ${txt(motif)}` : ''} : à corriger, puis ré-envoyer pour signature.`].filter(Boolean).join(' · '),
+    }, rec.id);
+    const deposantPerson = personnel.find((p) => sameName(txt(p && p.nom), txt(rec.deposant))) || null;
+    const deposantEmail = deposantPerson ? personEmailOf(deposantPerson) : '';
+    const res = await sendAdminMail({
+      to: mergeEmails(achatsEmails, deposantEmail ? [deposantEmail] : []),
+      subject: `[Lab Workspace] Devis « ${ref} » renvoyé pour révision`,
+      text: mailBody([
+        `Le devis « ${ref} » vous a été renvoyé : il ne convient pas encore.`,
+        `  ${txt(rec.description) || ''}`,
+        txt(motif) ? `Motif : ${txt(motif)}` : 'Motif : à compléter / corriger.',
+        `Demandeur : ${txt(rec.demandeur) || txt(rec.deposant) || '—'}`,
+        `Renvoi décidé par : ${currentName || 'superutilisateur'}.`,
+        `Le devis repart « En gestion » dans « Approbation devis & BC » : corrigez-le puis renvoyez-le pour signature (✉️).`,
+      ].filter(Boolean)),
+    });
+    const summary = summarizeMail(res, 'Responsable d’achats notifiée');
+    setNote({
+      text: `✓ Devis « ${ref} » renvoyé à la responsable d'achats (il repart « En gestion »). ${summary.text}`,
+      ...(summary.mailto ? { mailto: summary.mailto } : {}),
+      ...(summary.consoleUrl ? { consoleUrl: summary.consoleUrl } : {}),
+    });
   };
 
   /* ── Suppression (superutilisateur uniquement) ────────────────────────── */
@@ -900,8 +986,18 @@ export const ApprobationPage = () => {
   };
 
     const activeKind = tab;
+  /* Un devis approuvé (« Signé ») reste listé tant que le BC qui s’y rattache
+     n’est pas lui-même signé : il ne disparaît qu’à la signature du BC (le
+     suivi reprend alors dans la page Dépenses / la colonne « Achats (BC
+     signé) » de la page Recettes). « Refusé », « Non retenu » et les BC signés
+     ne s’affichent que via « Afficher les traités ». */
+  const depHasSignedBc = (d) => !!(d && (txt(d.dateSignature) || txt(d.dateSignatureBC)
+    || /bc s/i.test(txt(d.statut || d.suivi))));
+  const approvedDevisStillOpen = (r) => !!r && r.kind === 'devis'
+    && r.statut === APPROVAL_APPROVED
+    && !(txt(r.depenseId) && depHasSignedBc(depensesById.get(txt(r.depenseId))));
   const activeRows = (tab === 'bc' ? bcList : devisRows)
-    .filter((r) => showTreated || isApprovalPending(r.statut));
+    .filter((r) => showTreated || isApprovalPending(r.statut) || approvedDevisStillOpen(r));
   const columns = useMemo(
     () => buildColumns({
       kind: activeKind,
@@ -923,9 +1019,10 @@ export const ApprobationPage = () => {
       onEdit: (r) => setModal({ mode: 'edit', kind: activeKind, rec: r }),
       onRemove: removeRow,
       onSendForSignature: sendForSignature,
+      onSendBack: returnToAchats,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeKind, isSuper, busyId, devisById, activeRows, currentName, isAchatsRole, showTreated, sendForSignature]
+    [activeKind, isSuper, busyId, devisById, activeRows, currentName, isAchatsRole, showTreated, sendForSignature, returnToAchats]
   );
 
   const pendingCount = (kind) => visibleRows.filter((r) => r.kind === kind && isApprovalPending(r.statut)).length;
@@ -1018,6 +1115,11 @@ export const ApprobationPage = () => {
       patch.notes = [patch.notes, `✉️ Devis complété et envoyé pour signature le ${todayIso()} par ${currentName}.`].filter(Boolean).join(' · ');
     }
     const saved = upsert('devisBc', patch, existingId || null);
+    /* Devis « En gestion » complété via le formulaire (= envoyé pour
+       signature) → e-mail au superutilisateur pour qu’il le signe. */
+    if (generatedEdit && wasGestion && documentsComplete && saved && saved.id) {
+      await sendForSignatureMail(saved);
+    }
     /* Renommage du fichier déposé sur Google Drive selon la convention du
        laboratoire (nom reconstruit à chaque enregistrement ; « _approuvé »
        quand la ligne est approuvée). Best-effort : un fichier collé en lien
@@ -1140,7 +1242,7 @@ export const ApprobationPage = () => {
 
       <label
         className="self-start flex items-center gap-1.5 text-[10px] font-black text-slate-500 cursor-pointer select-none bg-white border border-slate-200 rounded-xl px-3 py-2 hover:border-slate-300 whitespace-nowrap"
-        title="Une fois signés (ou refusés), les devis / BC migrent vers la page Dépenses et disparaissent de la liste par défaut ; cochez pour les réafficher."
+        title="Par défaut : devis « en attente » / « en gestion », et devis signés dont le BC n’est pas encore signé — un devis ne disparaît qu’à la signature de son BC (suivi alors dans la page Dépenses). Cochez pour réafficher aussi les refusés, non retenus et BC signés."
       >
         <input type="checkbox" className="accent-blue-600" checked={showTreated} onChange={(e) => setShowTreated(e.target.checked)} />
         Afficher les traités
@@ -1186,7 +1288,7 @@ export const ApprobationPage = () => {
 /* ── Colonnes de la table active (devis ou BC) ──────────────────────────── */
 const buildColumns = ({
   kind, isSuper, busyId, devisById,
-  canEdit, onDecide, onEdit, onRemove, onSendForSignature,
+  canEdit, onDecide, onEdit, onRemove, onSendForSignature, onSendBack,
 }) => {
   const statutTone = (r) => {
     if (r && r.statut === APPROVAL_NOT_RETAINED) return 'violet';
@@ -1241,6 +1343,15 @@ const buildColumns = ({
                   title="Refuser"
                   className="w-7 h-7 rounded-lg border border-red-200 text-red-500 hover:bg-red-50 text-xs font-black disabled:opacity-40"
                 >✗</button>
+                {kind === 'devis' ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onSendBack(r)}
+                    title="Renvoyer à la responsable d'achats si le devis ne convient pas encore (il repart « En gestion » — elle en est prévenue par e-mail)"
+                    className="w-7 h-7 rounded-lg border border-amber-200 text-amber-600 hover:bg-amber-50 text-xs font-black disabled:opacity-40"
+                  >↩</button>
+                ) : null}
               </>
             )}
             {gestion && kind === 'devis' && (canEdit(r) || isSuper) && complete ? (

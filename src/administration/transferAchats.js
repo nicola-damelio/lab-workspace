@@ -149,7 +149,9 @@ export const devisPatchFromOmPart = (om, part, { cible, by } = {}) => {
     fichierUrl: '',
     fichierMime: '',
     notes: [omNote, noteCree].filter(Boolean).join(' · '),
-    deposant: txt(by) || '',
+    /* « Déposé par » = le demandeur (celui qui a soumis l’OM), jamais
+       l’opérateur qui transfère (souvent le superutilisateur). */
+    deposant: txt(om && pick(om, ['demandeur', 'porteur', 'nom', 'name'])) || txt(by) || '',
     dateDepot: todayIso(),
     sourceKind: 'om',
     sourceId: om && om.id,
@@ -225,7 +227,8 @@ export const devisPatchFromDesiderata = (rec, { cible, by } = {}) => {
     fichierMime,
     notes: [note, `Créé automatiquement depuis l'achat prévu / souhaité par ${txt(by) || '—'}.`]
       .filter(Boolean).join(' · '),
-    deposant: txt(by) || '',
+    /* « Déposé par » = le demandeur de l’achat prévu / souhaité. */
+    deposant: txt(rec && pick(rec, ['demandeur', 'porteur', 'nom', 'name'])) || txt(by) || '',
     dateDepot: todayIso(),
     sourceKind: 'desiderate',
     sourceId: rec && rec.id,

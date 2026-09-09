@@ -210,9 +210,23 @@ const DesiderataModal = ({
       fichierUrl: url,
       fichierMime: txt(r && r.fichierMime),
       devis2: txt(r && r.devis2),
+      devis2Url: txt(r && r.devis2Url),
+      devis2Nom: txt(r && (r.devis2Nom || r.fichierNom2)),
+      devis2Mime: txt(r && r.devis2Mime),
       devis3: txt(r && r.devis3),
+      devis3Url: txt(r && r.devis3Url),
+      devis3Nom: txt(r && (r.devis3Nom || r.fichierNom3)),
+      devis3Mime: txt(r && r.devis3Mime),
       codeProduit: txt(r && r.codeProduit),
-      dateDemande: isoOf(r && r.dateDemande),
+      /* La date de la demande se remplit automatiquement (jour de la
+         soumission) pour une nouvelle demande. */
+      dateDemande: editing
+        ? isoOf(r && r.dateDemande)
+        : (() => {
+          const d = new Date();
+          const p = (n) => String(n).padStart(2, '0');
+          return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+        })(),
       commentaires: txt(r && r.commentaires),
       statut: txt(r && r.statut) || 'En attente',
     };
@@ -221,6 +235,8 @@ const DesiderataModal = ({
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadMsg, setUploadMsg] = useState('');
   const fileInputRef = useRef(null);
+  const devis2FileRef = useRef(null);
+  const devis3FileRef = useRef(null);
   const set = (key) => (e) => setDraft((d) => ({ ...d, [key]: e.target.value }));
 
   const setRecette = (e) => {
@@ -252,6 +268,68 @@ const DesiderataModal = ({
         numDevis: d.numDevis || extractNumeroFromDoc(u),
       };
     });
+  };
+
+  /* Lien d'un devis concurrent (2 ou 3) : modifié à la main → le nom / MIME
+     d'un fichier téléversé depuis le PC est retiré (le lien reste). */
+  const setSlotDevisUrl = (slot) => (e) => {
+    const u = e.target.value;
+    const urlKey = `devis${slot}Url`;
+    const nomKey = `devis${slot}Nom`;
+    const mimeKey = `devis${slot}Mime`;
+    setDraft((d) => {
+      const sameFile = txt(d[urlKey]) && txt(u) === txt(d[urlKey]);
+      return { ...d, [urlKey]: u, [nomKey]: sameFile ? d[nomKey] : '', [mimeKey]: sameFile ? d[mimeKey] : '' };
+    });
+  };
+
+  /* Téléversement du fichier d'un devis concurrent (2 ou 3) vers
+     Budget_labo/<année>/Devis, comme pour le devis principal. */
+  const pickSlotFile = async (file, slot) => {
+    if (!file) return;
+    setUploadMsg('');
+    if (!cloudBackendAvailable()) {
+      setUploadMsg(`⚠️ Google Drive n’est pas connecté — collez le lien du devis ${slot} ci-dessous (nécessaire pour un transfert « pour signature »).`);
+      return;
+    }
+    setUploadBusy(true);
+    try {
+      const year = new Date().getFullYear();
+      const driveName = budgetDocFileName({
+        prefix: `Devis${slot}`,
+        code: txt(draft[`devis${slot}`]),
+        ligne: txt(draft.ligneBudgetaire),
+        fournisseur: txt(draft.fournisseur),
+        demandeur: txt(draft.demandeur) || meName,
+        date: todayIso(),
+        fileName: file.name,
+      }) || String(file.name || 'document').trim().slice(0, 180);
+      const drive = await uploadLocalFile({
+        name: driveName,
+        mimeType: file.type || 'application/octet-stream',
+        file,
+        path: budgetDocPath(year, 'Devis'),
+      });
+      if (drive && drive.driveUrl) {
+        const url = txt(drive.driveUrl);
+        const storedName = String(drive.name || file.name || driveName).trim().slice(0, 180);
+        setDraft((d) => ({
+          ...d,
+          [`devis${slot}Url`]: url,
+          [`devis${slot}Nom`]: storedName,
+          [`devis${slot}Mime`]: file.type || '',
+          [`devis${slot}`]: txt(d[`devis${slot}`]) || extractNumeroFromDoc(storedName),
+        }));
+        setUploadMsg(`✓ Devis ${slot} téléversé dans Budget_labo/${year}/Devis.`);
+      } else {
+        setUploadMsg(`⚠️ Téléversement impossible — collez le lien du devis ${slot} ci-dessous.`);
+      }
+    } catch (err) {
+      console.error(err);
+      setUploadMsg(`⚠️ Téléversement impossible : ${(err && err.message) || err}`);
+    } finally {
+      setUploadBusy(false);
+    }
   };
 
   /* Téléversement du fichier devis vers Budget_labo/<année>/Devis (dossier créé
@@ -351,9 +429,17 @@ const DesiderataModal = ({
       fichierUrl,
       fichierMime: txt(draft.fichierMime),
       devis2: txt(draft.devis2),
+      devis2Url: txt(draft.devis2Url),
+      devis2Nom: txt(draft.devis2Nom),
+      devis2Mime: txt(draft.devis2Mime),
       devis3: txt(draft.devis3),
+      devis3Url: txt(draft.devis3Url),
+      devis3Nom: txt(draft.devis3Nom),
+      devis3Mime: txt(draft.devis3Mime),
       codeProduit: txt(draft.codeProduit),
-      dateDemande: isoOf(draft.dateDemande),
+      /* La date de la demande se remplit automatiquement si elle est vide
+         (nouvelle demande : jour de la soumission). */
+      dateDemande: isoOf(draft.dateDemande) || todayIso(),
       commentaires: txt(draft.commentaires),
     };
     /* Attribution stable à la fiche Personnel du demandeur : elle permet à
@@ -520,11 +606,73 @@ const DesiderataModal = ({
               <Field label="N° devis" hint="Facultatif à la soumission — requis pour un transfert « pour signature ».">
                 <input className={MODAL_INPUT} value={draft.numDevis} onChange={set('numDevis')} placeholder="ex. 2025-012345" />
               </Field>
-              <Field label="Devis 2">
-                <input className={MODAL_INPUT} value={draft.devis2} onChange={set('devis2')} placeholder="devis concurrent" />
+              <Field label="Devis 2" hint="2e devis concurrent — fichier (PC) ou lien Google Drive, facultatif">
+                <input className={MODAL_INPUT} value={draft.devis2} onChange={set('devis2')} placeholder="N° devis 2 (concurrent)" />
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <input
+                    ref={devis2FileRef}
+                    type="file"
+                    className="hidden"
+                    accept=".pdf,.doc,.docx,.odt,.xls,.xlsx,.jpg,.jpeg,.png,.txt"
+                    onChange={(e) => {
+                      const f = e.target.files && e.target.files[0];
+                      if (e.target) e.target.value = '';
+                      if (f) pickSlotFile(f, '2');
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={uploadBusy}
+                    onClick={() => { if (devis2FileRef.current) devis2FileRef.current.click(); }}
+                    className="text-[10px] font-black px-2 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 disabled:opacity-50 whitespace-nowrap"
+                  >⬆ Fichier devis 2</button>
+                  <input
+                    className={`${MODAL_URL_INPUT} flex-1 min-w-0`}
+                    value={draft.devis2Url}
+                    onChange={setSlotDevisUrl('2')}
+                    placeholder="🔗 lien devis 2"
+                  />
+                </div>
+                {txt(draft.devis2Url) ? (
+                  <p className="mt-1 text-[10px] text-slate-500 flex items-center gap-1 min-w-0">
+                    📎 {txt(draft.devis2Nom) || 'document lié'} :{' '}
+                    <a href={addScheme(draft.devis2Url)} target="_blank" rel="noreferrer" className="text-blue-700 underline truncate">{draft.devis2Url}</a>
+                  </p>
+                ) : null}
               </Field>
-              <Field label="Devis 3">
-                <input className={MODAL_INPUT} value={draft.devis3} onChange={set('devis3')} placeholder="devis concurrent" />
+              <Field label="Devis 3" hint="3e devis concurrent — fichier (PC) ou lien Google Drive, facultatif">
+                <input className={MODAL_INPUT} value={draft.devis3} onChange={set('devis3')} placeholder="N° devis 3 (concurrent)" />
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <input
+                    ref={devis3FileRef}
+                    type="file"
+                    className="hidden"
+                    accept=".pdf,.doc,.docx,.odt,.xls,.xlsx,.jpg,.jpeg,.png,.txt"
+                    onChange={(e) => {
+                      const f = e.target.files && e.target.files[0];
+                      if (e.target) e.target.value = '';
+                      if (f) pickSlotFile(f, '3');
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={uploadBusy}
+                    onClick={() => { if (devis3FileRef.current) devis3FileRef.current.click(); }}
+                    className="text-[10px] font-black px-2 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 disabled:opacity-50 whitespace-nowrap"
+                  >⬆ Fichier devis 3</button>
+                  <input
+                    className={`${MODAL_URL_INPUT} flex-1 min-w-0`}
+                    value={draft.devis3Url}
+                    onChange={setSlotDevisUrl('3')}
+                    placeholder="🔗 lien devis 3"
+                  />
+                </div>
+                {txt(draft.devis3Url) ? (
+                  <p className="mt-1 text-[10px] text-slate-500 flex items-center gap-1 min-w-0">
+                    📎 {txt(draft.devis3Nom) || 'document lié'} :{' '}
+                    <a href={addScheme(draft.devis3Url)} target="_blank" rel="noreferrer" className="text-blue-700 underline truncate">{draft.devis3Url}</a>
+                  </p>
+                ) : null}
               </Field>
               <Field label="Code produit / référence" className="sm:col-span-3">
                 <input className={MODAL_INPUT} value={draft.codeProduit} onChange={set('codeProduit')} placeholder="ex. 89501-432" />
@@ -805,6 +953,40 @@ export const DesiderataPage = () => {
   }), [myRows]);
 
 
+  /* E-mail au superutilisateur quand un membre soumet une NOUVELLE demande
+     (« Achats prévus / souhaités ») — il décide puis transfère. */
+  const notifySubmitted = async (patch) => {
+    const label = txt(patch && patch.description) || 'achat prévu / souhaité';
+    const subject = `[Lab Workspace] Nouvel achat prévu / souhaité — ${label}`;
+    const lines = [
+      'Une nouvelle demande d’achat a été soumise :',
+      `  ${label}`,
+      `Demandeur : ${txt(patch && patch.demandeur) || '—'}`,
+      `Date de la demande : ${txt(patch && patch.dateDemande) || '—'}`,
+      (patch && patch.montantEstime !== undefined && patch.montantEstime !== null && patch.montantEstime !== '')
+        ? `Coût estimé : ${euro.format(Number(patch.montantEstime))}`
+        : '',
+      (patch && patch.fraisPort !== undefined && patch.fraisPort !== null && patch.fraisPort !== '')
+        ? `Frais de port : ${euro.format(Number(patch.fraisPort))}`
+        : '',
+      txt(patch && patch.fournisseur) ? `Fournisseur : ${txt(patch.fournisseur)}` : '',
+      txt(patch && patch.ligneBudgetaire) ? `Ligne budgétaire suggérée : ${txt(patch.ligneBudgetaire)}` : '',
+      txt(patch && patch.codeProduit) ? `Code produit : ${txt(patch.codeProduit)}` : '',
+    ].filter(Boolean);
+    const res = await sendAdminMail({
+      to: superuserEmails,
+      subject,
+      text: mailBodyText(lines),
+    });
+    const summary = summarizeMail(res, 'Superutilisateur notifié');
+    setNotice({
+      tone: res && res.ok ? 'ok' : 'warn',
+      text: summary.text,
+      mailto: summary.mailto || undefined,
+      consoleUrl: summary.consoleUrl || undefined,
+    });
+  };
+
   const onSave = (patch, existingId) => {
     const label = txt(patch.description) || 'souhait';
     upsert('desiderate', patch, existingId);
@@ -815,6 +997,10 @@ export const DesiderataPage = () => {
         ? `Achat prévu / souhaité « ${label} » enregistré.`
         : `Achat prévu / souhaité « ${label} » ajouté.`,
     });
+    /* Nouvelle demande soumise par un membre → prévenir le superutilisateur. */
+    if (!existingId && !isSuper && typeof notifySubmitted === 'function') {
+      notifySubmitted({ ...patch });
+    }
   };
 
   const onRemove = (rec) => {
@@ -1174,8 +1360,8 @@ export const DesiderataPage = () => {
         const mainUrl = devisUrlOf(r);
         const rows = [
           (mainCode || mainUrl) && { label: 'Devis', code: mainCode, url: mainUrl },
-          txt(r.devis2) && { label: 'Devis 2', code: txt(r.devis2) },
-          txt(r.devis3) && { label: 'Devis 3', code: txt(r.devis3) },
+          txt(r.devis2) && { label: 'Devis 2', code: txt(r.devis2), url: txt(r.devis2Url) },
+          txt(r.devis3) && { label: 'Devis 3', code: txt(r.devis3), url: txt(r.devis3Url) },
         ].filter(Boolean);
         return rows.length
           ? <div className="whitespace-nowrap flex flex-col gap-0.5">
