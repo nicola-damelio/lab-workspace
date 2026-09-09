@@ -2159,6 +2159,9 @@ const getInstances = (ctx, activeTest) => {
   return insts;
 };
 const CHEMICAL_SHIFT_LAYER = { key: 'cs', label: 'Chemical Shift', unit: 'ppm', builtin: true };
+// Cell atom → RANDOM_COIL_DB key for the four CSI reference nuclei (Wishart
+// style). Only these backbone atoms have a random-coil baseline in the DB.
+const RC_ATOM_DB_KEY = { Hα: 'HA', Cα: 'CA', Cβ: 'CB', "C'": 'CO' };
 const makeLayerId = () => `layer_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 const getLayers = (activeTest) => [CHEMICAL_SHIFT_LAYER, ...(Array.isArray(activeTest.parameterLayers) ? activeTest.parameterLayers : [])];
 const getActiveLayerKey = (activeTest) => activeTest.activeLayerKey || 'cs';
@@ -5441,6 +5444,12 @@ export const DataSection = ({ ctx }) => {
   // "Results test" overlay: paints the wrong ¹H/¹³C chemical shifts red and
   // reports the % of correct values + the grade out of 20.
   const [checkShown, setCheckShown] = useState(false);
+  // During the 🎓 university test the ≈ estimate hints are hidden because they
+  // embed the secondary-structure answer. This toggle instead reveals the pure
+  // random-coil reference values (Hα, Cα, Cβ, C′ — structure independent) under
+  // each cell, so students can compute the Chemical Shift Index (CSI) by hand:
+  //   CSI Δδ = measured shift − random-coil reference
+  const [rcRefShown, setRcRefShown] = useState(false);
 
   // ---- Bruker 1r import (ppm axis) ----
   const [nmrBrukerDataUrl, setNmrBrukerDataUrl] = useState('');
@@ -5633,6 +5642,12 @@ export const DataSection = ({ ctx }) => {
   // and the 3D viewer no longer folds from the brush assignments.
   const univTestMode = Boolean(activeTest.universityTest);
   const toggleUnivTest = () => updateActiveTest({ universityTest: !univTestMode });
+
+  // The 🎓 university test and 🎯 results test controls reveal (or grade with)
+  // the secondary-structure-carrying theoretical estimates, so they are reserved
+  // for the superuser who builds / marks the exam. Students opening the test
+  // page never see them — only the persisted exam behaviour itself stays active.
+  const isSuperuser = ctx.currentUser?.role === 'superuser';
 
   // ---- "Results test": red-mark the wrong ¹H / ¹³C shifts, compute the
   //      percentage of correct values and the grade out of 20. Tolerance:
@@ -6363,12 +6378,21 @@ let dom = brukerZoomDom || xFull;
             <button onClick={openExportModal} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-50 border border-indigo-300 text-indigo-700 hover:bg-indigo-100">📄 Publication Table</button>
             <button onClick={fillEstimated} disabled={univTestMode} title={univTestMode ? 'Disabled during University test' : 'Fill empty cells with the theoretical estimates'} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${univTestMode ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed' : 'bg-green-50 border-green-300 text-green-700 hover:bg-green-100'}`}>✨ Fill Estimated</button>
             <button onClick={() => setShowImport(true)} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 border border-amber-300 text-amber-700 hover:bg-amber-100">📥 Import Fitted Parameters</button>
-            <button onClick={toggleUnivTest} title="University test: hides the ≈ estimate hints under the cells, disables ✨ Fill Estimated, hides the secondary-structure 🖌️ brush and stops the 3D viewer from folding from the brush. Click again to restore everything." className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${univTestMode ? 'bg-slate-800 border-slate-900 text-white shadow-sm' : 'bg-fuchsia-50 border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-100'}`}>
-              🎓 {univTestMode ? 'University test ON' : 'University test'}
-            </button>
-            <button onClick={() => setCheckShown((v) => !v)} disabled={d.estSeq.length === 0} title="Results test: mark in red the chemical shifts that differ from the theoretical estimates by more than 0.05 ppm (¹H) or 0.5 ppm (¹³C), then show the % of correct H/C values and the grade out of 20." className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors disabled:opacity-40 ${checkShown ? 'bg-red-600 border-red-700 text-white shadow-sm' : 'bg-rose-50 border-rose-300 text-rose-700 hover:bg-rose-100'}`}>
-              🎯 {checkShown ? 'Results test ON' : 'Results test'}
-            </button>
+            {isSuperuser && (
+              <button onClick={toggleUnivTest} title="University test: hides the ≈ estimate hints under the cells, disables ✨ Fill Estimated, hides the secondary-structure 🖌️ brush and stops the 3D viewer from folding from the brush. Click again to restore everything." className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${univTestMode ? 'bg-slate-800 border-slate-900 text-white shadow-sm' : 'bg-fuchsia-50 border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-100'}`}>
+                🎓 {univTestMode ? 'University test ON' : 'University test'}
+              </button>
+            )}
+            {univTestMode && d.moleculeType === 'protein' && (
+              <button onClick={() => setRcRefShown((v) => !v)} title="Suggest the random-coil reference values under the cells (Hα, Cα, Cβ, C′). These structure-independent values are shown even if the structure is not random coil, so students can subtract them from their measured shifts to compute the Chemical Shift Index (CSI)." className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${rcRefShown ? 'bg-sky-600 border-sky-700 text-white shadow-sm' : 'bg-sky-50 border-sky-300 text-sky-700 hover:bg-sky-100'}`}>
+                🧪 {rcRefShown ? 'Random coil ON' : 'Random coil'}
+              </button>
+            )}
+            {isSuperuser && (
+              <button onClick={() => setCheckShown((v) => !v)} disabled={d.estSeq.length === 0} title="Results test: mark in red the chemical shifts that differ from the theoretical estimates by more than 0.05 ppm (¹H) or 0.5 ppm (¹³C), then show the % of correct H/C values and the grade out of 20." className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors disabled:opacity-40 ${checkShown ? 'bg-red-600 border-red-700 text-white shadow-sm' : 'bg-rose-50 border-rose-300 text-rose-700 hover:bg-rose-100'}`}>
+                🎯 {checkShown ? 'Results test ON' : 'Results test'}
+              </button>
+            )}
             {dragSel && (
               <button onClick={copyCells} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 border border-blue-700 text-white hover:bg-blue-700 flex items-center gap-1">
                 📋 Copy Selection {copiedMsg && <span className="text-blue-200">{copiedMsg}</span>}
@@ -6466,6 +6490,18 @@ let dom = brukerZoomDom || xFull;
                   else if (opt.label.includes('(¹⁵N)')) est = res.estN;
                   else if (opt.label.includes('(³¹P)')) est = res.p31;
 
+                  // Pure random-coil CSI reference (Wishart RANDOM_COIL_DB),
+                  // independent of the real secondary structure: the baseline a
+                  // student subtracts from the measured shift to get Δδ (CSI).
+                  let rcVal = null;
+                  if (d.moleculeType === 'protein') {
+                    const rcKey = RC_ATOM_DB_KEY[atomName];
+                    if (rcKey) {
+                      const rcEntry = RANDOM_COIL_DB[res.char];
+                      if (rcEntry && rcEntry[rcKey] != null) rcVal = rcEntry[rcKey];
+                    }
+                  }
+
                   return (
                     <tr key={opt.key} className="hover:bg-slate-50 transition-colors border-b border-slate-50">
                       {aIdx === 0 && (
@@ -6530,6 +6566,7 @@ let dom = brukerZoomDom || xFull;
                                     placeholder="—" 
                                   />
                                   {lk === 'cs' && !univTestMode && est !== undefined && est !== null && <div className="text-[10px] font-bold text-slate-400 text-center mt-0.5" title="Theoretical estimate">≈ {est.toFixed(2)}</div>}
+                                  {lk === 'cs' && univTestMode && rcRefShown && rcVal !== null && <div className="text-[10px] font-bold text-sky-500 text-center mt-0.5" title="Random-coil reference — subtract it from your measured shift to get the Chemical Shift Index (CSI)">RC {rcVal.toFixed(2)}</div>}
                               </td>
                           );
                       })}

@@ -631,6 +631,7 @@ const TestHeader = (
                     <NMRTestRenderer
                       activeTest={activeTest}
                       updateActiveTest={updateActiveTest}
+                      currentUser={currentUser}
                       allTests={tests}
                       setTests={setTests}
                       TestHeader={TestHeader}
