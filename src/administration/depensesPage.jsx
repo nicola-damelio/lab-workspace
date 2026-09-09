@@ -74,7 +74,7 @@ import {
   RECETTE_TYPES, DEPENSE_NATURES, DEPENSE_STATUSES, DEPENSE_FOURNISSEUR_PI,
   isPiFournisseur, depenseKindOf, DEPENSE_KIND_META, DEPENSE_FIELD_LABEL,
   DEFAULT_DEPENSE_MANDATORY, ADMIN_PAGES,
-  REIMBURSEMENT_COST_FIELDS, reimbTotalOf,
+  REIMBURSEMENT_COST_FIELDS, reimbTotalOf, SERVICE_DEMANDEUR,
 } from './adminSchema';
 import { parseEuroAmount } from './importUtils';
 import { fileBudgetDocs, budgetDocPath, budgetDocFileName, budgetDocLinkSlots, BUDGET_DOC_FOLDER_BY_FIELD } from './driveFiling';
@@ -544,6 +544,7 @@ const DepensesPage = () => {
       if (d) set.add(d);
     });
     if (currentUser && txt(currentUser.name)) set.add(txt(currentUser.name));
+    set.add(SERVICE_DEMANDEUR); // demandeur collectif « Service » (visible par tous sur la page Approbation devis & BC)
     return [...set].sort((a, b) => a.localeCompare(b, 'fr'));
   }, [personnel, list, currentUser]);
 
@@ -1077,6 +1078,7 @@ const DepensesPage = () => {
       demandeur: txt(draft.demandeur),
       destination: txt(draft.destination),
       numOM: txt(draft.numOM),
+      etatLiquidatifUrl: txt(draft.etatLiquidatifUrl),
       categorie,
       ligneBudgetaire,
       recetteId: recetteId || '',
@@ -1093,6 +1095,13 @@ const DepensesPage = () => {
       coutTotal,
     };
     upsert('reimbursements', patch, existingId);
+    /* Classement best-effort de l’« état liquidatif » : copie du fichier signé
+       (lien Drive collé) dans Budget_labo/<année>/OM — même règle que pour les
+       documents d’une dépense (./driveFiling.js). L’enregistrement reste
+       valide même si Drive n’est pas joignable ou le fichier inaccessible. */
+    if (txt(patch.etatLiquidatifUrl) && cloudBackendAvailable()) {
+      fileBudgetDocs({ ...patch, id: existingId || undefined }, { year: new Date().getFullYear() }).catch(() => {});
+    }
     setModal(null);
     return true;
   };
@@ -1506,6 +1515,33 @@ const DepensesPage = () => {
               {statut}
             </div>
           </div>
+        );
+      },
+    },
+    {
+      key: 'etatLiquidatif', label: 'État liquidatif', filter: 'none', filterable: false, nowrap: true,
+      value: (r) => [txt(r.numOM), txt(r.etatLiquidatifUrl)].filter(Boolean).join(' '),
+      display: (r) => {
+        const url = txt(r.etatLiquidatifUrl);
+        const num = txt(r.numOM);
+        if (!url) {
+          return (
+            <span
+              className="text-slate-300 text-[11px] whitespace-nowrap"
+              title="Aucun état liquidatif signé joint — ouvrez la fiche et collez le lien du document signé : il sera classé dans Budget_labo/…/OM et apparaîtra ici."
+            >—</span>
+          );
+        }
+        return (
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 hover:underline whitespace-nowrap"
+            title="Ouvrir l’état liquidatif signé — classé dans Budget_labo/…/OM"
+          >
+            🖋️ {num ? `OM ${num}` : 'Pièce signée'} ↗
+          </a>
         );
       },
     },
@@ -2613,6 +2649,7 @@ const RemboursementModal = ({ rec, recettes, types, demandeurNames, onCancel, on
     demandeur: txt(rec && rec.demandeur),
     destination: txt(rec && rec.destination),
     numOM: txt(rec && rec.numOM),
+    etatLiquidatifUrl: txt(rec && rec.etatLiquidatifUrl),
     categorie: txt(rec && rec.categorie),
     recetteId: (rec && rec.recetteId) || '',
     ligneBudgetaire: txt(rec && rec.ligneBudgetaire),
@@ -2681,6 +2718,7 @@ const RemboursementModal = ({ rec, recettes, types, demandeurNames, onCancel, on
         demandeur: txt(draft.demandeur),
         destination: txt(draft.destination),
         numOM: txt(draft.numOM),
+        etatLiquidatifUrl: txt(draft.etatLiquidatifUrl),
         categorie: txt(draft.categorie),
         recetteId: draft.recetteId,
         ligneBudgetaire: txt(draft.ligneBudgetaire),
@@ -2819,6 +2857,22 @@ const RemboursementModal = ({ rec, recettes, types, demandeurNames, onCancel, on
                   </label>
                 </div>
               )}
+            </div>
+          </Section>
+
+          <Section icon="🗄️" title="État liquidatif (fichier signé du remboursement)">
+            <div className="grid grid-cols-1 gap-3">
+              <Field
+                label="Lien Google Drive du document signé"
+                hint="État liquidatif / pièce signée qui valide le remboursement. Collez le lien du fichier (PDF de préférence) : à l’enregistrement, une copie est classée dans Budget_labo/<année>/OM et le lien apparaît sur la ligne du tableau « Remboursements »."
+              >
+                <input
+                  className={MODAL_INPUT}
+                  value={draft.etatLiquidatifUrl || ''}
+                  onChange={set('etatLiquidatifUrl')}
+                  placeholder="https://drive.google.com/file/d/…/view"
+                />
+              </Field>
             </div>
           </Section>
 

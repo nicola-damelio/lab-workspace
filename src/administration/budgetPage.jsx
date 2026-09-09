@@ -3,12 +3,18 @@
    Page « Budget overview » — studio de graphiques budgétaires.
 
    Chaque membre du laboratoire compose et enregistre SES propres graphiques
-   (dépenses — découpées en Achats / Prestations internes comme la page
-   Dépenses — lignes budgétaires / recettes, OM prévus / souhaités, achats prévus / souhaités) :
+   sur TOUTES les subdivisions du budget gérées par l’app :
+   dépenses (découpées comme les onglets de la page Dépenses : Achats /
+   Prestations internes / OM / Rémunérations de stage), lignes budgétaires /
+   recettes, OM prévus / souhaités, achats prévus / souhaités, le registre
+   dédié des Remboursements et les devis & BC déposés sur la page
+   « Approbation devis & BC » :
      · type : camembert 🥧 / barres 📊 / courbe 📈 ;
-     · périmètre Dépenses : Toutes (Achats + PI) / Achats / Prestations internes ;
-     · regroupement : Achats / PI, classification, catégorie, statut, fournisseur,
-       opérateur (demandeur), ligne budgétaire, mois / année / jour… ;
+     · périmètre Dépenses : Toutes les subdivisions / Achats / Prestations
+       internes / OM / Rémunérations de stage ;
+     · regroupement : subdivision (Achats / PI / OM / Stages), classification,
+       catégorie, statut, fournisseur, opérateur (demandeur), bénéficiaire,
+       état liquidatif, ligne budgétaire, mois / année / jour… ;
      · mesure : somme des montants ou nombre d’enregistrements.
 
    Sauvegarde : les graphiques personnels sont rangés DANS la base courante,
@@ -21,7 +27,10 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { useAdmin } from './AdminContext';
-import { DEPENSE_BC_SIGNE, isPiFournisseur, isDesiderataApproved, isOmDepense } from './adminSchema';
+import {
+  DEPENSE_BC_SIGNE, isPiFournisseur, isDesiderataApproved, isOmDepense,
+  depenseKindOf, isReimbNature, reimbTotalOf, REIMBURSEMENT_COST_FIELDS,
+} from './adminSchema';
 import { parseEuroAmount } from './importUtils';
 
 /* ── Formatage ──────────────────────────────────────────────────────────── */
@@ -87,22 +96,55 @@ const SOURCE_META = {
   lignes: { label: 'Lignes budgétaires (Recettes)', icon: '📈' },
   om: { label: 'OM prévus / souhaités', icon: '✈️' },
   desiderate: { label: 'Achats prévus / souhaités', icon: '🛒' },
+  reimbursements: { label: 'Remboursements', icon: '💸' },
+  devisBc: { label: 'Approbation devis & BC', icon: '✍️' },
 };
 
-/* Périmètres de la source « Dépenses » — mêmes volets que la page Dépenses
-   (onglets Achats / Prestations internes ; les lignes de type « OM » y sont
-   exclues — l’OM a sa propre source « OM prévus / souhaités »). */
-const SCOPE_META = {
-  all: { label: 'Toutes (Achats + PI)', icon: '🧾', hint: 'Achats et prestations internes mélangés — lignes de type « OM » exclues (source « OM prévus / souhaités » dédiée).' },
-  achats: { label: 'Achats', icon: '🛒', hint: 'Fournisseur différent de « PI » : cycle devis → BC/SIFAC → livraison → facture.' },
-  pi: { label: 'Prestations internes (PI)', icon: '🛠️', hint: 'Fournisseur « PI » : service interne facturé sans bon de commande.' },
+/* Détection « Rémunération stages » (classification / nature « Stages ») —
+   mêmes règles que les pages Dépenses / Recettes. Les remboursements sont
+   reconnus par `isReimbNature` (registre dédié, jamais dans la source Dépenses). */
+const isStageNature = (v) => {
+  const s = txt(v).toLowerCase();
+  if (!s) return false;
+  // « Stages », « Stage », « Rémunération stages »… → toute valeur contenant « stage(s) ».
+  return /(^|[^a-zà-ÿ])stages?([^a-zà-ÿ]|$)/.test(s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
 };
-const scopeOf = (cfg) => (cfg && cfg.scope === 'pi' ? 'pi' : cfg && cfg.scope === 'achats' ? 'achats' : 'all');
+const isStageDepense = (d) => isStageNature(d && (d.classification || d.nature));
+const isReimbDepense = (d) => isReimbNature(d && (d.classification || d.nature));
+
+/* Périmètres de la source « Dépenses » — mêmes onglets que la page Dépenses
+   (Achats / Prestations internes / OM / Rémunérations de stage). Les fiches de
+   remboursement, elles, vivent dans le registre dédié `reimbursements`
+   (source « Remboursements ») et ne passent jamais par cette source. */
+const SCOPE_META = {
+  all: {
+    label: 'Toutes les dépenses (Achats + PI + OM + Stages)', icon: '🧾',
+    hint: 'Tous les onglets de la page Dépenses mélangés (Achats, prestations internes, OM transférées, rémunérations de stage) — les Remboursements ont leur propre source dédiée.',
+  },
+  achats: { label: 'Achats', icon: '🛒', hint: 'Fournisseur différent de « PI », hors OM et Stages : cycle devis → BC/SIFAC → livraison → facture.' },
+  pi: { label: 'Prestations internes (PI)', icon: '🛠️', hint: 'Fournisseur « PI » : service interne facturé sans bon de commande, considéré engagé dès la saisie.' },
+  om: {
+    label: 'OM (missions transférées)', icon: '✈️',
+    hint: 'Dépenses de type « OM » (onglet OM de la page Dépenses) liées à un ordre de mission transféré. Les OM encore à préparer / approuver restent dans la source « OM prévus / souhaités ».',
+  },
+  stages: {
+    label: 'Rémunérations de stage', icon: '🎓',
+    hint: 'Lignes dont la « Classification / nature » est « Stages » (gratifications de stagiaires) — déduites du solde des lignes budgétaires (page Recettes › colonne « Stages »).',
+  },
+};
+const scopeOf = (cfg) => {
+  const v = cfg && cfg.scope;
+  return v === 'pi' || v === 'om' || v === 'stages' ? v : (v === 'achats' ? 'achats' : 'all');
+};
 const scopeFilter = (scope) => (row) => {
-  if (isOmDepense(row)) return false; // les lignes OM suivent la source « OM prévus / souhaités »
+  if (isReimbDepense(row)) return false; // registre dédié « Remboursements » (source à part)
   if (scope === 'all') return true;
-  const isPi = isPiFournisseur(row && row.fournisseur);
-  return scope === 'pi' ? isPi : !isPi;
+  const isStage = isStageDepense(row);
+  if (scope === 'stages') return isStage;
+  if (isStage) return false;
+  if (scope === 'om') return isOmDepense(row);
+  if (scope === 'pi') return isPiFournisseur(row && row.fournisseur) && !isOmDepense(row);
+  return !isOmDepense(row) && !isPiFournisseur(row && row.fournisseur); // Achats
 };
 const SAVE_KEY = 'budgetCharts';
 const ROUND = (v) => Math.round(v * 100) / 100;
@@ -112,6 +154,8 @@ const DATE_KEYS = {
   depenses: ['dateDemande', 'dateBC', 'dateSignatureBC', 'dateSignature', 'dateApprobFournisseur', 'dateAcceptationFournisseur'],
   om: ['dateDemande', 'dateDebut', 'dateRetour'],
   desiderate: ['dateDemande'],
+  reimbursements: ['dateDemande', 'dateMission', 'dateRetour'],
+  devisBc: ['dateDepot', 'dateDemande', 'date'],
   lignes: [],
 };
 const firstDate = (row, source) => {
@@ -165,17 +209,55 @@ const ligneDim = (id, recetteKeys, extraKeys) => ({
   },
 });
 
-/* Dimension « Achats / PI » : catégorise chaque dépense exactement comme les
-   onglets de la page Dépenses. Les lignes de type « OM » sont exclues (elles
-   font partie de la source « OM prévus / souhaités »). */
+/* Dimension « Subdivision » : répartit chaque dépense exactement comme les
+   onglets de la page Dépenses (Achats / Prestations internes / OM /
+   Rémunérations de stage). Les remboursements (registre dédié) ne sont pas des
+   dépenses : ils ne passent jamais dans cette source. */
 const depenseCatDim = {
   id: 'typeDepense',
-  label: 'Achats / Prestations internes (PI)',
+  label: 'Subdivision (Achats / PI / OM / Stages)',
   group: (row) => {
-    if (isOmDepense(row)) return null;
+    if (isReimbDepense(row)) return null;
+    if (isStageDepense(row)) {
+      return { key: 'stages', label: 'Rémunérations de stage' };
+    }
+    if (isOmDepense(row)) return { key: 'om', label: 'OM (missions transférées)' };
     return isPiFournisseur(row && row.fournisseur)
       ? { key: 'pi', label: 'Prestations internes (PI)' }
       : { key: 'achats', label: 'Achats' };
+  },
+};
+
+/* Statut d’approbation d’un devis / BC (page « Approbation devis & BC »),
+   regroupé en valeurs normalisées : En attente / En gestion / Approuvé /
+   Refusé / Non retenu. */
+const approvalStatusDim = {
+  id: 'statut',
+  label: 'Statut (approbation)',
+  group: (row) => {
+    const raw = txt(row && (row.statut || row.suivi));
+    if (!raw) return { key: 'attente', label: 'En attente' };
+    const k = raw.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    if (/non.?retenu/.test(k)) return { key: 'nonretenu', label: 'Non retenu' };
+    if (/gestion/.test(k)) return { key: 'gestion', label: 'En gestion' };
+    if (/(attente|demande|pending|waiting)/.test(k)) return { key: 'attente', label: 'En attente' };
+    if (/sign/.test(k)) return { key: 'signature', label: 'En attente de signature' };
+    if (/(approuv|accept|valid|oui)/.test(k)) return { key: 'approuve', label: 'Approuvé' };
+    if (/(refus|rejet)/.test(k)) return { key: 'refuse', label: 'Refusé' };
+    return { key: normLabel(raw), label: raw };
+  },
+};
+
+/* Dimension « État liquidatif » des remboursements : la pièce signée classée
+   dans Budget_labo/<année>/OM est-elle présente (lien collé sur la fiche) ? */
+const liquidatifDim = {
+  id: 'liquidatif',
+  label: 'État liquidatif (pièce signée)',
+  group: (row) => {
+    const url = txt(row && (row.etatLiquidatifUrl || row.etatLiquidatif || row.pieceUrl));
+    return url
+      ? { key: 'avec', label: 'Avec état liquidatif' }
+      : { key: 'sans', label: 'Sans état liquidatif' };
   },
 };
 
@@ -220,6 +302,28 @@ const DIM_BY_SOURCE = {
     ligneDim('ligne', ['recetteSuggereeId'], ['ligneBudgetaire', 'ligne', 'recetteSuggerie']),
     textDim('fournisseur', 'Fournisseur', ['fournisseur', 'fournisseurNom', 'nomFournisseur']),
   ],
+  reimbursements: [
+    timeDim('annee', 'Par année', 'year'),
+    timeDim('mois', 'Par mois', 'month'),
+    timeDim('jour', 'Par jour', 'day'),
+    textDim('demandeur', 'Bénéficiaire', ['demandeur']),
+    textDim('destination', 'Destination / contexte', ['destination', 'ville']),
+    textDim('numOM', 'N° OM / référence', ['numOM', 'omNo']),
+    textDim('categorie', 'Catégorie (Fonct. / Invest.)', ['categorie']),
+    liquidatifDim,
+    ligneDim('ligne', ['recetteId'], ['ligneBudgetaire', 'ligne']),
+  ],
+  devisBc: [
+    timeDim('annee', 'Par année', 'year'),
+    timeDim('mois', 'Par mois', 'month'),
+    timeDim('jour', 'Par jour', 'day'),
+    approvalStatusDim,
+    textDim('kind', 'Type (Devis / BC)', ['kind']),
+    textDim('demandeur', 'Demandeur', ['demandeur', 'deposant']),
+    textDim('fournisseur', 'Fournisseur', ['fournisseur', 'fournisseurNom', 'nomFournisseur']),
+    textDim('deposant', 'Déposant', ['deposant']),
+    ligneDim('ligne', ['recetteId'], ['ligneBudgetaire', 'ligne']),
+  ],
 };
 
 /* ── Mesures disponibles par source ────────────────────────────────────── */
@@ -236,10 +340,15 @@ const MEASURE_BY_SOURCE = {
   lignes: [
     moneyMeasure('dispo', 'Montant mis à disposition', (r) => r.dispoVal),
     moneyMeasure('budgetTotal', 'Budget total alloué', (r) => r.budgetTotalVal),
-    moneyMeasure('engage', 'Dépenses engagées (BC signés + PI)', (r) => (r.engTotal > 0 ? ROUND(r.engTotal) : 0)),
-    moneyMeasure('om', 'Coûts OM (hors refusés)', (r) => (r.omTotal > 0 ? ROUND(r.omTotal) : 0)),
+    moneyMeasure('ordonnee', 'Achats (BC signés)', (r) => (r.ordonneeTotal > 0 ? ROUND(r.ordonneeTotal) : 0)),
+    moneyMeasure('pi', 'Prestations internes (PI)', (r) => (r.piTotal > 0 ? ROUND(r.piTotal) : 0)),
+    moneyMeasure('omPaye', 'OM payés (dépenses OM)', (r) => (r.omPaidTotal > 0 ? ROUND(r.omPaidTotal) : 0)),
+    moneyMeasure('stages', 'Rémunérations de stage', (r) => (r.stageTotal > 0 ? ROUND(r.stageTotal) : 0)),
+    moneyMeasure('remboursements', 'Remboursements (registre dédié)', (r) => (r.reimbTotal > 0 ? ROUND(r.reimbTotal) : 0)),
+    moneyMeasure('engage', 'Engagé (BC signés + PI)', (r) => (r.engTotal > 0 ? ROUND(r.engTotal) : 0)),
+    moneyMeasure('om', 'OM approuvés (prévus / souhaités)', (r) => (r.omTotal > 0 ? ROUND(r.omTotal) : 0)),
     moneyMeasure('souhaits', 'Souhaits approuvés', (r) => (r.desApproved > 0 ? ROUND(r.desApproved) : 0)),
-    moneyMeasure('solde', 'Solde restant (calculé)', (r) => ROUND(r.solde)),
+    moneyMeasure('solde', 'Solde disponible (règle page Recettes)', (r) => ROUND(r.solde)),
     countMeasure('count', 'Nombre de lignes budgétaires'),
   ],
   om: [
@@ -258,6 +367,28 @@ const MEASURE_BY_SOURCE = {
     }),
     countMeasure('count', 'Nombre de souhaits'),
   ],
+  reimbursements: [
+    moneyMeasure('montant', 'Coût total (€)', (r) => {
+      const t = reimbTotalOf(r);
+      return t > 0 ? ROUND(t) : null;
+    }),
+    ...REIMBURSEMENT_COST_FIELDS.map((c) => moneyMeasure(`cout_${c.key}`, c.label, (r) => {
+      const direct = r && r[c.key] !== undefined && r[c.key] !== null && String(r[c.key]).trim() !== '' ? r[c.key] : null;
+      const legacy = direct === null
+        ? (c.legacy || []).map((k) => (r && r[k] !== undefined && r[k] !== null && String(r[k]).trim() !== '' ? r[k] : null)).find((v) => v !== null)
+        : null;
+      const v = parseAmount(direct !== null ? direct : legacy);
+      return v !== null && v > 0 ? ROUND(v) : null;
+    })),
+    countMeasure('count', 'Nombre de remboursements'),
+  ],
+  devisBc: [
+    moneyMeasure('montant', 'Montant (HT + port)', (r) => {
+      const v = toNum(r && r.montant) + toNum(r && r.fraisPort);
+      return v > 0 ? ROUND(v) : null;
+    }),
+    countMeasure('count', 'Nombre de devis / BC'),
+  ],
 };
 
 /* Valeurs par défaut quand on change de source dans le studio. */
@@ -266,6 +397,8 @@ const DEFAULT_FOR_SOURCE = {
   lignes: { chartType: 'bar', dimension: 'type', measure: 'solde', limit: 12 },
   om: { chartType: 'bar', dimension: 'mois', measure: 'montant', limit: 12 },
   desiderate: { chartType: 'pie', dimension: 'urgence', measure: 'montant', limit: 8 },
+  reimbursements: { chartType: 'pie', dimension: 'demandeur', measure: 'montant', limit: 10 },
+  devisBc: { chartType: 'bar', dimension: 'statut', measure: 'montant', limit: 8 },
 };
 
 const findDim = (source, dimId) => (DIM_BY_SOURCE[source] || []).find((d) => d.id === dimId);
@@ -286,42 +419,75 @@ const autoTitle = (draft) => {
   return `${prefix} par ${dimTxt.toLowerCase()}${meas ? ` (${meas.label})` : ''}`;
 };
 
-/* ── Lignes budgétaires « enrichies » (totaux calculés comme la page Recettes) ── */
-const buildLigneRows = (recettes, depenses, om, desiderate) => {
-  const isSigned = (d) => txt(d && d.statut) === DEPENSE_BC_SIGNE;
-  const isPi = (d) => isPiFournisseur(d && d.fournisseur);
-  /* Même règle que la page Recettes : engagé = BC signés + PI (prestations
-     internes, considérées consommées dès leur saisie, sauf refus/annulation).
-     Les lignes de type « OM » sont exclues (coût déjà compté via la collection om). */
-  const isEngaged = (d) => {
-    if (String(d && d.type || '').trim() === 'om') return false;
-    if (isSigned(d)) return true;
-    const st = txt(d && (d.statut || d.suivi));
-    return isPi(d) && !/refus|rejet|annul/i.test(st);
-  };
-  const notRefused = (o) => txt(o && o.statut) !== 'Refusée';
-  const omCost = (o) => {
-    const t = parseAmount(o && o.coutTotal);
-    if (t !== null && t !== undefined) return t;
-    const parts = toNum(o && o.coutTransport) + toNum(o && o.coutHebergement) + toNum(o && o.coutRepas) + toNum(o && o.coutInscription);
-    return parts > 0 ? parts : null;
-  };
+/* ── Lignes budgétaires « enrichies » (mêmes totaux que la page Recettes) ── */
+const BC_SIGNED_STATUSES = new Set([
+  DEPENSE_BC_SIGNE, 'Service fait', 'Livré', 'Facturé', 'Clôturé',
+  'Colis partiellement livré', 'Facture signé', 'Validé par le fournisseur',
+]);
+const bcSignatureDateOf = (d) => txt(d && (d.dateSignature || d.dateSignatureBC));
+const isAchatBcSigne = (d) => {
+  if (!d) return false;
+  const st = txt(d.statut || d.suivi);
+  if (/refus|rejet|annul/i.test(st)) return false;
+  if (bcSignatureDateOf(d)) return true;
+  return BC_SIGNED_STATUSES.has(st);
+};
+const isNotRejectedLine = (d) => !/refus|rejet|annul/i.test(txt(d.statut || d.suivi));
+const isOmApproved = (raw) =>
+  /accept/i.test(String(raw || '').normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+const omCostOf = (o) => {
+  const t = parseAmount(o && o.coutTotal);
+  if (t !== null && t !== undefined) return t;
+  return toNum(o && o.coutTransport) + toNum(o && o.coutHebergement) + toNum(o && o.coutRepas) + toNum(o && o.coutInscription);
+};
+
+const buildLigneRows = (recettes, depenses, om, desiderate, reimbursements) => {
+  const depensesAll = Array.isArray(depenses) ? depenses : [];
+  const omAll = Array.isArray(om) ? om : [];
+  const reimbAll = Array.isArray(reimbursements) ? reimbursements : [];
   return (Array.isArray(recettes) ? recettes : []).map((rec) => {
     const rid = rec && rec.id;
-    const budgetTotalVal = parseAmount(rec && rec.budgetTotal);
-    const dispoVal = parseAmount(rec && rec.budgetRenduDispo);
-    const engTotal = (Array.isArray(depenses) ? depenses : [])
-      .filter((d) => d && d.recetteId === rid && isEngaged(d))
+    const lineDepenses = depensesAll.filter((d) => d && d.recetteId === rid);
+    /* Même découpage que la page Recettes (et que les onglets de la page
+       Dépenses) :
+         · « Achats (BC signé) » : bon de commande signé — la date de signature
+           du BC fait foi, sinon un statut du pipeline à partir de « BC signé » ;
+         · « Prestations internes » : considérées engagées dès la saisie
+           (sauf refus / annulation) ;
+         · « OM payés » : lignes de type « OM » transférées (onglet OM) ;
+         · « Rémunérations de stage » : classification / nature « Stages » ;
+         · « Remboursements » : registre dédié (collection `reimbursements`),
+           jamais une dépense (ni BC, ni SIFAC). */
+    const ordonneeTotal = lineDepenses
+      .filter((d) => depenseKindOf(d) === 'achat' && !isStageDepense(d) && !isReimbDepense(d) && isAchatBcSigne(d))
       .reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
-    const omTotal = (Array.isArray(om) ? om : [])
-      .filter((o) => o && o.recetteId === rid && notRefused(o))
-      .reduce((s, o) => s + toNum(omCost(o)), 0);
+    const piTotal = lineDepenses
+      .filter((d) => depenseKindOf(d) === 'pi' && !isStageDepense(d) && !isReimbDepense(d) && isNotRejectedLine(d))
+      .reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
+    const omPaidTotal = lineDepenses
+      .filter((d) => depenseKindOf(d) === 'om' && !isStageDepense(d) && !isReimbDepense(d) && isNotRejectedLine(d))
+      .reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
+    const stageTotal = lineDepenses
+      .filter((d) => isStageDepense(d) && isNotRejectedLine(d))
+      .reduce((s, d) => s + toNum(d.montant) + toNum(d.fraisPort), 0);
+    const reimbTotal = reimbAll
+      .filter((x) => x && x.recetteId === rid)
+      .reduce((s, x) => s + reimbTotalOf(x), 0);
+    /* Prévisions INFORMATIVES (elles ne réduisent le solde que lorsqu’elles
+       deviennent des dépenses / remboursements ci-dessus) : OM approuvés de la
+       collection `om` et souhaits d’achat approuvés de `desiderate`. */
+    const omTotal = omAll
+      .filter((o) => o && o.recetteId === rid && isOmApproved(o.statut))
+      .reduce((s, o) => s + omCostOf(o), 0);
     const desApproved = (Array.isArray(desiderate) ? desiderate : [])
       .filter((d) => d && d.recetteSuggereeId === rid && isDesiderataApproved(d.statut))
       .reduce((s, d) => s + toNum(d.montantEstime), 0);
+    const budgetTotalVal = parseAmount(rec && rec.budgetTotal);
+    const dispoVal = parseAmount(rec && rec.budgetRenduDispo);
     const base = dispoVal !== null && dispoVal !== undefined ? dispoVal : budgetTotalVal;
-    // Solde = dispo université − engagé (BC signés + PI) − OM
-    const solde = (base === null || base === undefined ? 0 : base) - engTotal - omTotal;
+    // Solde = dispo université − Achats (BC signé) − PI − OM payés − Stages − Remboursements
+    const solde = (base === null || base === undefined ? 0 : base)
+      - ordonneeTotal - piTotal - omPaidTotal - stageTotal - reimbTotal;
     return {
       id: rid,
       ligne: txt(rec && rec.ligne) || rid || '',
@@ -329,7 +495,12 @@ const buildLigneRows = (recettes, depenses, om, desiderate) => {
       porteur: txt(rec && rec.porteur) || txt(rec && rec.porteurNom),
       budgetTotalVal,
       dispoVal,
-      engTotal,
+      engTotal: ordonneeTotal + piTotal,
+      ordonneeTotal,
+      piTotal,
+      omPaidTotal,
+      stageTotal,
+      reimbTotal,
       omTotal,
       desApproved,
       solde,
@@ -676,9 +847,12 @@ const BudgetModal = ({ item, rowsBySource, recettes, onCancel, onSave }) => {
             {editing ? '✏️ Modifier le graphique' : '＋ Nouveau graphique budget'}
           </h2>
           <p className="text-blue-100 text-xs mt-0.5">
-            Camembert, barres ou courbe — sur les dépenses (avec leur découpage Achats / Prestations
-            internes), lignes budgétaires, OM ou souhaits de la base. Le graphique est enregistré
-            dans votre espace personnel « Budget overview ».
+            Camembert, barres ou courbe — sur toutes les subdivisions du budget :
+            dépenses (Achats / Prestations internes / OM / Rémunérations de stage,
+            comme les onglets de la page Dépenses), lignes budgétaires, OM prévus /
+            souhaités, achats prévus / souhaités, remboursements de frais et devis
+            &amp; BC à approuver. Le graphique est enregistré dans votre espace
+            personnel « Budget overview ».
           </p>
         </div>
 
@@ -697,7 +871,7 @@ const BudgetModal = ({ item, rowsBySource, recettes, onCancel, onSave }) => {
               <select className={INPUT_CLS} value={draft.source} onChange={(e) => changeSource(e.target.value)}>
                 {Object.keys(SOURCE_META).map((k) => (
                   <option key={k} value={k}>
-                    {SOURCE_META[k].icon} {k === 'depenses' ? 'Dépenses (Achats + PI)' : SOURCE_META[k].label}
+                    {SOURCE_META[k].icon} {k === 'depenses' ? 'Dépenses (Achats + PI + OM + Stages)' : SOURCE_META[k].label}
                   </option>
                 ))}
               </select>
@@ -843,9 +1017,9 @@ const EXAMPLES = [
     cfg: { source: 'depenses', chartType: 'line', dimension: 'jour', measure: 'montant', limit: 40, title: 'Dépenses par jour' },
   },
   {
-    id: 'ex-split', icon: '🧩', label: 'Achats vs Prestations internes',
-    hint: 'Camembert comparant le montant des Achats et des PI (fournisseur « PI »)',
-    cfg: { source: 'depenses', chartType: 'pie', dimension: 'typeDepense', measure: 'montant', limit: 0, title: 'Dépenses : Achats vs Prestations internes' },
+    id: 'ex-split', icon: '🧩', label: 'Dépenses par subdivision',
+    hint: 'Camembert répartissant le montant des dépenses entre Achats, PI, OM et rémunérations de stage (comme les onglets de la page Dépenses)',
+    cfg: { source: 'depenses', chartType: 'pie', dimension: 'typeDepense', measure: 'montant', limit: 0, title: 'Dépenses par subdivision (Achats / PI / OM / Stages)' },
   },
   {
     id: 'ex-achats-mois', icon: '🛒', label: 'Achats par mois',
@@ -877,6 +1051,36 @@ const EXAMPLES = [
     hint: 'Camembert du montant estimé des souhaits par urgence',
     cfg: { source: 'desiderate', chartType: 'pie', dimension: 'urgence', measure: 'montant', limit: 8, title: 'Souhaits d’achat par urgence' },
   },
+  {
+    id: 'ex-om-dep', icon: '✈️', label: 'Dépenses OM par mois',
+    hint: 'Barres mensuelles des dépenses OM transférées (onglet OM de la page Dépenses)',
+    cfg: { source: 'depenses', chartType: 'bar', dimension: 'mois', measure: 'montant', scope: 'om', limit: 24, title: 'Dépenses OM (missions transférées) par mois' },
+  },
+  {
+    id: 'ex-stages', icon: '🎓', label: 'Rémunérations de stage par mois',
+    hint: 'Courbe mensuelle des lignes classées « Stages » (gratifications de stagiaires)',
+    cfg: { source: 'depenses', chartType: 'line', dimension: 'mois', measure: 'montant', scope: 'stages', limit: 24, title: 'Rémunérations de stage par mois' },
+  },
+  {
+    id: 'ex-reimb', icon: '💸', label: 'Remboursements par mois',
+    hint: 'Barres du coût total des remboursements de frais (registre dédié) par mois',
+    cfg: { source: 'reimbursements', chartType: 'bar', dimension: 'mois', measure: 'montant', limit: 24, title: 'Remboursements de frais par mois' },
+  },
+  {
+    id: 'ex-reimb-ligne', icon: '📊', label: 'Remboursements par ligne budgétaire',
+    hint: 'Barres du coût total des remboursements par ligne budgétaire imputée',
+    cfg: { source: 'reimbursements', chartType: 'bar', dimension: 'ligne', measure: 'montant', limit: 12, title: 'Remboursements par ligne budgétaire' },
+  },
+  {
+    id: 'ex-liquidatif', icon: '📎', label: 'Remboursements : états liquidatifs',
+    hint: 'Camembert comparant le montant des remboursements avec / sans état liquidatif signé (Budget_labo/…/OM)',
+    cfg: { source: 'reimbursements', chartType: 'pie', dimension: 'liquidatif', measure: 'montant', limit: 0, title: 'Remboursements avec / sans état liquidatif' },
+  },
+  {
+    id: 'ex-approb', icon: '✍️', label: 'Approbations devis & BC par statut',
+    hint: 'Montants des devis & BC déposés selon leur statut (en attente, approuvé, refusé, non retenu)',
+    cfg: { source: 'devisBc', chartType: 'bar', dimension: 'statut', measure: 'montant', limit: 8, title: 'Devis & BC par statut d’approbation' },
+  },
 ];
 
 /* ── Page « Budget overview » ──────────────────────────────────────────── */
@@ -887,13 +1091,17 @@ export const BudgetPage = () => {
   const depenses = list('depenses');
   const om = list('om');
   const desiderate = list('desiderate');
+  const reimbursements = list('reimbursements');
+  const devisBc = list('devisBc');
 
   const rowsBySource = useMemo(() => ({
     depenses,
-    lignes: buildLigneRows(recettes, depenses, om, desiderate),
+    lignes: buildLigneRows(recettes, depenses, om, desiderate, reimbursements),
     om,
     desiderate,
-  }), [depenses, recettes, om, desiderate]);
+    reimbursements,
+    devisBc,
+  }), [depenses, recettes, om, desiderate, reimbursements, devisBc]);
 
   const store = (settings && settings[SAVE_KEY] && typeof settings[SAVE_KEY] === 'object')
     ? settings[SAVE_KEY]
@@ -1008,11 +1216,13 @@ export const BudgetPage = () => {
               </div>
               <p className="text-sm text-slate-500 mt-0.5 max-w-3xl">
                 Composez vos propres graphiques de suivi budgétaire — camembert, barres ou courbe —
-                puis enregistrez-les dans la base. Pour les dépenses, suivez le même découpage que
-                la page Dépenses (onglets Achats / Prestations internes / OM) : filtrez « Achats »,
-                « Prestations internes (PI) » ou gardez l’ensemble. Ajoutez aussi les soldes &amp;
-                budgets des lignes (Recettes), les OM et les souhaits d’achat. Chaque membre
-                retrouve son tableau de bord à l’ouverture de la page.
+                puis enregistrez-les dans la base. Les sources suivent la structure actuelle du
+                budget : dépenses découpées comme les onglets de la page Dépenses (Achats /
+                Prestations internes / OM / Rémunérations de stage), lignes budgétaires &amp; soldes
+                (page Recettes : Achats BC signés, PI, OM payés, Stages et Remboursements déduits
+                du solde), OM prévus / souhaités, achats prévus / souhaités, le registre des
+                Remboursements (avec les états liquidatifs) et les devis &amp; BC de l’Approbation.
+                Chaque membre retrouve son tableau de bord à l’ouverture de la page.
               </p>
             </div>
           </div>
@@ -1090,8 +1300,10 @@ export const BudgetPage = () => {
 
       <p className="text-[11px] text-slate-400">
         💾 Sauvegarde automatique : vos graphiques sont conservés dans cette base (datasets/&lt;id&gt;,
-        payload `administration › settings › budgetCharts`). Pensez à alimenter les pages Dépenses,
-        Recettes, OM prévus / souhaités et achats prévus / souhaités — les montants saisis y alimentent immédiatement ces graphiques.
+        payload `administration › settings › budgetCharts`). Pensez à alimenter les pages Dépenses
+        (tous les onglets), Recettes, OM prévus / souhaités, achats prévus / souhaités,
+        Remboursements et Approbation devis &amp; BC — les montants saisis y alimentent immédiatement
+        ces graphiques.
       </p>
 
       {modal && (

@@ -35,8 +35,8 @@ const AccessDeniedCard = ({ page }) => (
     <p className="text-sm text-slate-500 leading-relaxed">
       La page « {page && page.label ? page.label : ''} » n’est pas autorisée pour votre profil.
       L’accès combine la fiche Personnel (statut, fonctions — AP / Gestionnaire / Responsable
-      d'achats — éventuellement plusieurs) et les règles du Setup (« Accès aux pages »). Personnel
-      &amp; Setup restent réservés au superutilisateur.
+      d'achats — éventuellement plusieurs) et les règles du Setup (« Accès aux pages »).
+      La page Personnel reste réservée au superutilisateur.
     </p>
   </div>
 );
@@ -335,7 +335,7 @@ const OverviewPage = ({ visible }) => {
         <p className="text-[11px] text-slate-400">
           Pages masquées pour votre profil : {hidden.map((p) => p.label).join(' · ')} — accès défini
           par la fiche Personnel (statut, fonctions — AP / Gestionnaire / Responsable d'achats) et les règles
-          du Setup (« Accès aux pages ») ; Personnel &amp; Setup restent réservés au superutilisateur.
+          du Setup (« Accès aux pages ») ; la gestion de l’équipe (Personnel) reste réservée au superutilisateur.
         </p>
       )}
     </div>

@@ -30,10 +30,28 @@ import {
   budgetDocFileName,
   budgetDocLinkSlots,
   budgetDocPath,
+  driveFileExtensionOf,
   driveFileIdFromUrl,
 } from './driveFiling';
 
 const txtOf = (v) => (v === null || v === undefined ? '' : String(v).trim());
+
+/** Type RÉEL d'un document d'après ses premiers octets : 'pdf' | 'png' | 'jpg'
+ *  | '' (inconnu). Une copie déposée dans Budget_labo doit garder l'extension
+ *  de son VRAI contenu (jamais un PDF nommé « …png » ou l'inverse). */
+const sniffBudgetBytes = (bytes) => {
+  const a = bytes && bytes.byteLength > 0 ? bytes[0] : -1;
+  const b = bytes && bytes.byteLength > 1 ? bytes[1] : -1;
+  const c = bytes && bytes.byteLength > 2 ? bytes[2] : -1;
+  const d = bytes && bytes.byteLength > 3 ? bytes[3] : -1;
+  if (a === 0x25 && b === 0x50 && c === 0x44 && d === 0x46) return 'pdf';        // %PDF
+  if (a === 0x89 && b === 0x50 && c === 0x4e && d === 0x47) return 'png';        // \x89PNG
+  if (a === 0xff && b === 0xd8 && c === 0xff) return 'jpg';                       // JPEG
+  return '';
+};
+
+/** Extension réelle (avec le point) associée au type détecté. */
+const sniffExtOf = (kind) => (kind === 'pdf' ? '.pdf' : (kind === 'png' ? '.png' : (kind === 'jpg' ? '.jpg' : '')));
 
 /** Libellé humain d'un enregistrement pour les comptes rendus. */
 const recordLabel = (rec) => {
@@ -94,8 +112,23 @@ const reimportOne = async ({ rec, slot, fileId, year, folderCache }) => {
   }
 
   /* Nom de la convention (Devis_<N°>_<ligne>_…), comme pour le classement
-     ordinaire ; sans N° connu on garde le nom réel du fichier téléchargé. */
-  const srcName = txtOf(dl.name) || `document${mimeExtOf(dl.mimeType)}`;
+     ordinaire ; sans N° connu on garde le nom réel du fichier téléchargé.
+     L'extension est d'abord corrigée d'après le VRAI contenu (magic bytes) :
+     un fichier que Drive étiquette « …png » mais qui est réellement un PDF
+     (ou l'inverse) est déposé sous la bonne extension. */
+  let srcName = txtOf(dl.name) || `document${mimeExtOf(dl.mimeType)}`;
+  const sniffed = sniffBudgetBytes(dl.bytes);
+  if (sniffed) {
+    const curExt = driveFileExtensionOf(srcName);
+    const wantExt = sniffExtOf(sniffed);
+    if (wantExt && curExt !== wantExt) {
+      srcName = `${String(srcName).replace(/\.[^./\\]+$/, '')}${wantExt}`;
+    }
+  }
+  const uploadMime = sniffed === 'pdf' ? 'application/pdf'
+    : (sniffed === 'png' ? 'image/png'
+      : (sniffed === 'jpg' ? 'image/jpeg'
+        : (txtOf(dl.mimeType) || 'application/octet-stream')));
   const canonical = budgetDocCopyName(rec, slot.field, slot.subject || rec, srcName);
   const name = txtOf(canonical) || budgetDocFileName({ fileName: srcName });
 
@@ -117,8 +150,8 @@ const reimportOne = async ({ rec, slot, fileId, year, folderCache }) => {
 
   const drive = await uploadLocalFile({
     name: name.slice(0, 200),
-    mimeType: dl.mimeType || 'application/octet-stream',
-    file: new Blob([dl.bytes], { type: dl.mimeType || 'application/octet-stream' }),
+    mimeType: uploadMime,
+    file: new Blob([dl.bytes], { type: uploadMime }),
     path: budgetDocPath(year, slot.folder),
   });
   if (!drive || !drive.driveUrl) {

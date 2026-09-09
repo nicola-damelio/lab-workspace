@@ -55,6 +55,7 @@ import { toFrDate } from './congesDates';
 import {
   APPROVAL_PENDING, APPROVAL_APPROVED, APPROVAL_REJECTED, APPROVAL_NOT_RETAINED,
   APPROVAL_GESTION, DEVIS_SIGNATURE_PENDING,
+  SERVICE_DEMANDEUR,
   isApprovalPending, approvalStatusOf,
 } from './adminSchema';
 import { devisCompleteOf } from './transferAchats';
@@ -67,6 +68,7 @@ import {
   withApprovedSuffix,
 } from './driveFiling';
 import { stampPdfWithSignature, makeSignedPdfFromImage } from './approvalSignature';
+import { downloadDriveFileBytes } from '../utils/migrateTestImages';
 import {
   sendAdminMail, personEmailOf, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
 } from './emailNotify';
@@ -95,8 +97,8 @@ const newGroupeAchatId = () =>
 /* ── Convention de nommage des fichiers devis / BC déposés ──────────────────
    À chaque dépôt, le fichier est stocké dans Budget_labo/<année>/Devis|BC avec
    le nom conventionnel du laboratoire (voir ./driveFiling.js) :
-     Devis_<N° devis>_<ligne budgétaire>_<fournisseur>_<demandeur>_<date>
-     BC_<N° BC>_<ligne budgétaire>_<fournisseur>_<demandeur>_<date>
+     Devis_<N° devis>_<ligne budgétaire>_<fournisseur>_<demandeur>_<date>_<description>
+     BC_<N° BC>_<ligne budgétaire>_<fournisseur>_<demandeur>_<date>_<description>
    Quand le devis / BC est approuvé, la marque « _approuvé » est ajoutée à la
    fin du nom (juste avant l’extension). La convention n’est appliquée que si
    le N° du document est connu ; sinon on garde le nom d’origine du fichier. */
@@ -111,6 +113,9 @@ const depositDocDriveNameOf = (r) => {
     fournisseur: txt(r && r.fournisseur),
     demandeur: txt(r && r.demandeur),
     date: txt(r && (r.date || r.dateDepot)),
+    /* L’objet saisi (description) termine le nom après un « _ » : on reconnaît
+       le contenu du document sans avoir à l’ouvrir. */
+    description: txt(r && r.description),
     fileName: txt(r && r.fichierNom),
   });
 };
@@ -134,6 +139,21 @@ const depositFileKindOf = (rec) => {
   if (mime === 'application/pdf' || /\.pdf(?:[?#].*)?$/i.test(name)) return 'pdf';
   if (mime.startsWith('image/') || /\.(jpe?g|png)(?:[?#].*)?$/i.test(name)) return 'image';
   return 'other';
+};
+
+/** Type RÉEL d'un document d'après ses premiers octets : 'pdf' | 'image/png' |
+ *  'image/jpeg' | '' (inconnu). Le contenu fait foi : un fichier mal étiqueté
+ *  (ex. un vrai PDF nommé « …png » par le Drive) est reconnu correctement, ce
+ *  qui garantit qu'une copie signée est toujours un PDF et jamais une image. */
+const sniffBudgetDocBytes = (bytes) => {
+  const a = bytes && bytes.length > 0 ? bytes[0] : -1;
+  const b = bytes && bytes.length > 1 ? bytes[1] : -1;
+  const c = bytes && bytes.length > 2 ? bytes[2] : -1;
+  const d = bytes && bytes.length > 3 ? bytes[3] : -1;
+  if (a === 0x25 && b === 0x50 && c === 0x44 && d === 0x46) return 'pdf';        // %PDF
+  if (a === 0x89 && b === 0x50 && c === 0x4e && d === 0x47) return 'image/png';  // \x89PNG
+  if (a === 0xff && b === 0xd8 && c === 0xff) return 'image/jpeg';               // JPEG
+  return '';
 };
 
 /** Nom du fichier SIGNÉ téléversé à l'approbation : convention du laboratoire
@@ -305,6 +325,24 @@ export const ApprobationPage = () => {
   const currentName = txt(access.profile && access.profile.person
     ? access.profile.person.nom
     : (currentUser && currentUser.name));
+  /* Suggestions « Demandeur » du dépôt : membres du Personnel + noms déjà
+     saisis + le demandeur collectif « Service » (visible par tout le monde). */
+  const demandeurNames = useMemo(() => {
+    const set = new Set();
+    personnel.forEach((p) => {
+      const n = txt(p && (p.nom || p.name));
+      if (n) set.add(n);
+    });
+    (Array.isArray(rows) ? rows : []).forEach((r) => {
+      [r && r.demandeur, r && r.deposant].forEach((v) => {
+        const s = txt(v);
+        if (s) set.add(s);
+      });
+    });
+    if (currentName) set.add(currentName);
+    set.add(SERVICE_DEMANDEUR);
+    return [...set].sort((a, b) => a.localeCompare(b, 'fr'));
+  }, [personnel, rows, currentName]);
   /* Fonctions chargées du suivi des achats (Gestionnaire / Responsable
      d'achats) : autorisées à compléter les devis générés par un transfert
      depuis « OM prévus / souhaités » ou « Achats prévus / souhaités ». Une
@@ -312,6 +350,24 @@ export const ApprobationPage = () => {
   const currentFonctions = (access.profile && access.profile.fonctions) || [];
   const isAchatsRole = currentFonctions.indexOf('Gestionnaire') !== -1
     || currentFonctions.indexOf('Achats') !== -1;
+  /* Visibilité : le superutilisateur, la gestionnaire et la responsable
+     d’achats voient TOUTES les lignes. Les autres membres ne voient que
+     leurs propres éléments (déposés par eux, demandés à leur nom ou créés
+     par leur compte) — jamais ceux des autres utilisateurs — plus les lignes
+     demandées par « Service » (demandeur collectif), visibles par tous. */
+  const canSeeAllRows = isSuper || isAchatsRole;
+  const visibleRows = useMemo(() => {
+    if (canSeeAllRows || !currentName) return rows;
+    const mine = (r) => !!(r && (
+      sameName(txt(r.deposant), currentName)
+      || sameName(txt(r.demandeur), currentName)
+      /* Les demandes portées par le demandeur collectif « Service » sont
+         visibles par tout le monde (le Service travaille pour le labo). */
+      || sameName(txt(r.demandeur), SERVICE_DEMANDEUR)
+      || (r.createdBy && sameName(txt(r.createdBy.name), currentName))
+    ));
+    return (Array.isArray(rows) ? rows : []).filter(mine);
+  }, [rows, canSeeAllRows, currentName]);
 
   const [tab, setTab] = useState('devis'); // 'devis' | 'bc'
   const [showTreated, setShowTreated] = useState(false); // afficher les lignes déjà décidées (signées / refusées)
@@ -320,12 +376,12 @@ export const ApprobationPage = () => {
   const [note, setNote] = useState(null); // { text, mailto? } — résultat du dernier e-mail
   const [filingBusy, setFilingBusy] = useState(false); // rangement « à la demande » des fichiers
 
-  const devisList = useMemo(() => rows
+  const devisList = useMemo(() => visibleRows
     .filter((r) => r && r.kind === 'devis')
-    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)), [rows]);
-  const bcList = useMemo(() => rows
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)), [visibleRows]);
+  const bcList = useMemo(() => visibleRows
     .filter((r) => r && r.kind === 'bc')
-    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)), [rows]);
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)), [visibleRows]);
   const devisById = useMemo(() => new Map(devisList.map((d) => [d.id, d])), [devisList]);
   const devisOptions = useMemo(() => devisList, [devisList]);
 
@@ -395,7 +451,7 @@ export const ApprobationPage = () => {
       setNote({ text: 'Google Drive n’est pas connecté : connectez-le, puis relancez le rangement des fichiers.' });
       return;
     }
-    const recs = (Array.isArray(rows) ? rows : []).filter((r) => r && r.id);
+    const recs = (Array.isArray(visibleRows) ? visibleRows : []).filter((r) => r && r.id);
     if (!recs.length) return;
     let copied = 0; let renamed = 0; let already = 0; let failed = 0;
     const reasons = [];
@@ -597,18 +653,49 @@ export const ApprobationPage = () => {
         if (mime === 'application/pdf' || /\.pdf$/i.test(metaName)) docKind = 'pdf';
         else if (mime.startsWith('image/') || /\.(jpe?g|png)$/i.test(metaName)) docKind = 'image';
       } catch { /* on garde le type deviné depuis l'enregistrement */ }
+
+      /* Octets du document : téléchargés via l'API d'abord. Quand le fichier
+         est INVISIBLE à l'API (déposé à la main dans un Drive personnel non
+         partagé — autorisation limitée « drive.file »), on retente par son
+         adresse PUBLIQUE — exactement comme le ré-import des documents
+         (./driveReimport.js). Sans ce repli, la copie signée n'était jamais
+         créée pour ces fichiers et la signature « disparaissait ». */
+      let bytes = null;
+      try {
+        const contentRes = await driveFetch(`/drive/v3/files/${fileId}?alt=media`, {
+          headers: { Accept: docKind === 'pdf' ? 'application/pdf' : (mime || 'image/png') },
+        });
+        if (contentRes && contentRes.ok) bytes = new Uint8Array(await contentRes.arrayBuffer());
+      } catch { /* → tentative par adresse publique ci-dessous */ }
+      if (!bytes || !bytes.length) {
+        try {
+          const dl = await downloadDriveFileBytes(fileId);
+          if (dl && dl.bytes && dl.bytes.byteLength) {
+            bytes = new Uint8Array(dl.bytes);
+            const dlMime = String(dl.mimeType || '').toLowerCase();
+            if (dlMime) mime = dlMime;
+            const dlName = String(dl.name || '');
+            if (/\.pdf$/i.test(dlName)) docKind = 'pdf';
+            else if (/\.(jpe?g|png)$/i.test(dlName)) docKind = 'image';
+          }
+        } catch { bytes = null; }
+        if (!bytes || !bytes.length) {
+          warn('impossible de télécharger le fichier (permissions Google Drive ?). Partagez-le avec le compte de l’app, ou téléversez-le depuis ce PC avec « ⬆ PC », puis approuvez à nouveau.');
+          return frags;
+        }
+      }
+
+      /* Le CONTENU fait foi : certains documents sont mal étiquetés (vrai PDF
+         vu comme PNG, ou l'inverse). La détection par les premiers octets évite
+         de produire une « copie signée » qui serait en réalité une image — la
+         copie signée téléversée est toujours un vrai PDF. */
+      const sniffed = sniffBudgetDocBytes(bytes);
+      if (sniffed === 'pdf') { docKind = 'pdf'; mime = 'application/pdf'; }
+      else if (sniffed === 'image/png' || sniffed === 'image/jpeg') { docKind = 'image'; mime = sniffed; }
       if (docKind === 'other') {
         warn('document non PDF (Word, Excel…) — la signature ne peut pas y être apposée.');
         return frags;
       }
-      const contentRes = await driveFetch(`/drive/v3/files/${fileId}?alt=media`, {
-        headers: { Accept: docKind === 'pdf' ? 'application/pdf' : (mime || 'image/png') },
-      });
-      if (!contentRes || !contentRes.ok) {
-        warn('impossible de télécharger le fichier (permissions Google Drive ?).');
-        return frags;
-      }
-      const bytes = new Uint8Array(await contentRes.arrayBuffer());
       if (!bytes || !bytes.length) {
         warn('fichier vide — la copie signée n’a pas été créée.');
         return frags;
@@ -841,9 +928,9 @@ export const ApprobationPage = () => {
     [activeKind, isSuper, busyId, devisById, activeRows, currentName, isAchatsRole, showTreated, sendForSignature]
   );
 
-  const pendingCount = (kind) => rows.filter((r) => r.kind === kind && isApprovalPending(r.statut)).length;
-  const decidedCount = (kind) => rows.filter((r) => r.kind === kind && !isApprovalPending(r.statut)).length;
-  const gestionCount = (kind) => rows.filter((r) => r.kind === kind && r.statut === APPROVAL_GESTION).length;
+  const pendingCount = (kind) => visibleRows.filter((r) => r.kind === kind && isApprovalPending(r.statut)).length;
+  const decidedCount = (kind) => visibleRows.filter((r) => r.kind === kind && !isApprovalPending(r.statut)).length;
+  const gestionCount = (kind) => visibleRows.filter((r) => r.kind === kind && r.statut === APPROVAL_GESTION).length;
 
   /* ── Enregistrement d'un dépôt (nouveau ou modification) ─────────────── */
   const onSaveDeposit = async (draft, existingId) => {
@@ -895,7 +982,7 @@ export const ApprobationPage = () => {
     /* Devis généré par un transfert de demande, encore « En gestion » : dès
        que la responsable d'achats renseigne le N° devis ET le fichier, le devis
        passe automatiquement « En attente » (= envoyé pour signature). */
-    const existingRec = existingId ? rows.find((x) => x.id === existingId) : null;
+    const existingRec = existingId ? visibleRows.find((x) => x.id === existingId) : null;
     const generatedEdit = !!existingRec && !!(existingRec.transfert || existingRec.sourceKind || existingRec.sourceId);
     const wasGestion = !!existingRec && existingRec.statut === APPROVAL_GESTION;
     const documentsComplete = !!(numDevis && txt(draft.fichierUrl));
@@ -974,6 +1061,12 @@ export const ApprobationPage = () => {
           réservée au superutilisateur · l’approbation d’un PDF crée une copie
           signée « …_approuvé_signé.pdf » (l’original reste intact).
         </p>
+        {!canSeeAllRows && currentName && (
+          <p className="text-[11px] leading-snug text-slate-500 bg-white border border-slate-200 rounded-xl px-3 py-2">
+            👁 Affichage limité à <b>vos</b> devis &amp; bons de commande (déposés par vous ou demandés à votre nom) —
+            les éléments des autres membres ne sont pas listés ici. La gestionnaire et la responsable d’achats voient l’ensemble des lignes.
+          </p>
+        )}
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -1080,6 +1173,7 @@ export const ApprobationPage = () => {
           productGroups={productGroups}
           fournisseurNames={fournisseurNames}
           budgetLineOptions={budgetLineOptions}
+          demandeurNames={demandeurNames}
           defaultDeposant={currentName}
           onCancel={() => setModal(null)}
           onSave={onSaveDeposit}
@@ -1430,7 +1524,7 @@ const MODAL_LABEL = 'block text-[10px] font-black uppercase text-slate-400 track
 
 const DepositModal = ({
   mode, kind, rec, devisOptions, productGroups = [], fournisseurNames = [], budgetLineOptions = [],
-  defaultDeposant, onCancel, onSave,
+  demandeurNames = [], defaultDeposant, onCancel, onSave,
 }) => {
   const editing = mode === 'edit' && !!rec;
   const isDevis = kind === 'devis';
@@ -1593,6 +1687,7 @@ const DepositModal = ({
         ligneBudgetaire: txt(draft.ligneBudgetaire),
         fournisseur: txt(draft.fournisseur),
         demandeur: txt(draft.demandeur),
+        description: txt(draft.description),
         date: txt(draft.dateDepot) || todayIso(),
         fichierNom: file.name,
       });
@@ -1772,8 +1867,14 @@ const DepositModal = ({
                 className={MODAL_INPUT}
                 value={draft.demandeur || ''}
                 onChange={set('demandeur')}
-                placeholder="Nom de la personne qui demande l’achat"
+                list="depot-demandeurs"
+                placeholder="Nom de la personne — ou « Service » pour un achat du Service"
               />
+              <datalist id="depot-demandeurs">
+                {(demandeurNames || []).map((n) => (
+                  <option key={n} value={n} />
+                ))}
+              </datalist>
             </div>
             <div>
               <label className={MODAL_LABEL}>Ligne budgétaire</label>
@@ -1795,8 +1896,9 @@ const DepositModal = ({
           <div className="rounded-xl border border-slate-200 bg-white p-3">
             <label className={MODAL_LABEL}>
               Fichier * — classé dans Budget_labo/{year}/{isDevis ? 'Devis' : 'BC'} — renommé
-              automatiquement « {isDevis ? 'Devis' : 'BC'}_N°_ligne_fournisseur_demandeur_date »
-              (+ « _approuvé » une fois le {isDevis ? 'devis' : 'BC'} approuvé — l’approbation d’un
+              automatiquement « {isDevis ? 'Devis' : 'BC'}_N°_ligne_fournisseur_demandeur_date_description »
+              (l’objet du {isDevis ? 'devis' : 'BC'} est ajouté après un « _ » à la fin du nom pour reconnaître le
+              document ; « _approuvé » est ajouté une fois le {isDevis ? 'devis' : 'BC'} approuvé — l’approbation d’un
               PDF crée en plus une copie signée « …_approuvé_signé.pdf », l’original reste intact)
             </label>
             <div className="flex items-center gap-2 flex-wrap">

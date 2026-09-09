@@ -37,12 +37,15 @@ import { APPROVAL_APPROVED } from './adminSchema';
 
 /** Nom du dossier Drive (dans Budget_labo/<année>/…) associé à chaque champ
  *  « lien document » d'une dépense. Les documents « service fait » (SF / PV de
- *  réception) sont rangés avec le bon de livraison (BL) de leur livraison. */
+ *  réception) sont rangés avec le bon de livraison (BL) de leur livraison.
+ *  Les « états liquidatifs » des remboursements (fichiers signés validant le
+ *  remboursement) sont rangés dans le dossier « OM » de l’année. */
 export const BUDGET_DOC_FOLDER_BY_FIELD = {
   numDevisUrl: 'Devis',
   numBCUrl: 'BC',
   numFactureUrl: 'Factures',
   omUrl: 'OM',
+  etatLiquidatifUrl: 'OM',
   numBLUrl: 'BL',
   numSFUrl: 'BL',
 };
@@ -84,9 +87,12 @@ export const driveFileExtensionOf = (name) => {
 /** Construit le nom de fichier Drive d’un document budget d’une dépense selon
  *  la convention du laboratoire (voir commentaire ci-dessus). `prefix` est le
  *  type du document (« BC », « Devis », « BL »…) ; `code` son N° ; `date` une
- *  date ISO (AAAA-MM-JJ). Chaque partie vide est simplement omise. */
-export const budgetDocFileName = ({ prefix, code, ligne, fournisseur, demandeur, date, fileName = '' } = {}) => {
-  const parts = [prefix, code, ligne, fournisseur, demandeur, date]
+ *  date ISO (AAAA-MM-JJ). `description` (optionnelle) est ajoutée APRÈS un « _ »
+ *  à la fin du titre pour reconnaître l’objet du document :
+ *    Devis_<N°>_<ligne>_<fournisseur>_<demandeur>_<date>_<description>
+ *  Chaque partie vide est simplement omise. */
+export const budgetDocFileName = ({ prefix, code, ligne, fournisseur, demandeur, date, description, fileName = '' } = {}) => {
+  const parts = [prefix, code, ligne, fournisseur, demandeur, date, description]
     .map((p) => driveFileNamePart(p))
     .filter(Boolean);
   const base = parts.join('_').slice(0, 180);
@@ -128,6 +134,9 @@ const DEPENSE_SLOT_NAME_META = {
   numBCUrl: { prefix: 'BC', code: 'numBC', dates: ['dateBC'] },
   numFactureUrl: { prefix: 'Facture', code: 'numFacture', dates: ['dateFacture'] },
   omUrl: { prefix: 'OM', code: 'omNo', dates: [] },
+  /* État liquidatif d’un remboursement : classé dans « OM », nommé d’après le
+     N° OM / référence porté par la fiche Remboursement (collection dédiée). */
+  etatLiquidatifUrl: { prefix: 'OM', code: 'numOM', dates: [] },
   numBLUrl: { prefix: 'BL', code: 'numBL', dates: ['dateReception'] },
   numSFUrl: { prefix: 'SF', code: 'numSF', dates: ['dateServiceFait'] },
 };
@@ -168,6 +177,10 @@ export const budgetDocCopyName = (rec, field, subject, srcName) => {
     fournisseur: strOf(rec.fournisseur),
     demandeur: strOf(rec.demandeur),
     date: date || strOf(rec.dateDemande),
+    /* L’objet du document (description de la dépense / du devis / du
+       remboursement) termine le titre après un « _ » : il permet de reconnaître
+       le document sans l’ouvrir. */
+    description: strOf(rec.description),
     fileName: strOf(srcName),
   });
   if (isApproval && rec.statut === APPROVAL_APPROVED && !hasApprovedSuffix(name)) {

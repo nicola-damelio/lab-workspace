@@ -10,7 +10,7 @@ import { openDrive, datasetFolderSlug } from '../utils/driveNaming';
 import {
   DEFAULT_OPTIONS, DEPENSE_FIELD_CATALOG, DEFAULT_DEPENSE_MANDATORY,
   ADMIN_PAGES, ADMIN_ACCESS_CATEGORIES, ADMIN_ACCESS_CATEGORY_META,
-  adminPageIdsForProfile, fonctionsOfPerson, statutLabelOf,
+  adminPageIdsForProfile, fonctionsOfPerson, statutLabelOf, hasDefinedSuperuser,
 } from './adminSchema';
 
 const OPTION_KEYS = [
@@ -358,6 +358,10 @@ export const SettingsPage = ({ operators, setOperators, authSettings, setAuthSet
   const { data, settings, updateSettings, access } = useAdmin();
   const personnelList = (Array.isArray(data && data.personnel) ? data.personnel : []).filter((p) => p && p.id);
   const isSuper = !!(access && access.isSuperuser);
+  /* Mode bootstrap (aucun superutilisateur défini) : le Setup reste ouvert et
+     éditable pour créer l’équipe — les panneaux « réservés » ne sont masqués
+     qu’une fois un superutilisateur défini et pour les comptes simples. */
+  const canManageTeam = isSuper || !hasDefinedSuperuser(operators);
   const [optionKey, setOptionKey] = useState('recetteTypes');
   const [text, setText] = useState(() => toText('recetteTypes', settings));
 
@@ -440,19 +444,29 @@ export const SettingsPage = ({ operators, setOperators, authSettings, setAuthSet
     <div className="max-w-5xl mx-auto flex flex-col gap-4">
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
-          <span className="text-2xl" aria-hidden="true">👑</span>
+          <span className="text-2xl" aria-hidden="true">{canManageTeam ? '👑' : '🔑'}</span>
           <div>
-            <h2 className="text-lg font-black text-slate-800">Équipe &amp; accès</h2>
+            <h2 className="text-lg font-black text-slate-800">{canManageTeam ? 'Équipe & accès' : 'Mon compte & sécurité'}</h2>
+            {canManageTeam ? (
             <p className="text-xs text-slate-400">
               Scientifiques et superutilisateur. Sans superutilisateur défini, les rôles restent modifiables (bootstrap) :
               créez un compte superutilisateur avec mot de passe, puis connectez-vous avec le bouton Login de la barre latérale.
             </p>
+            ) : (
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Vous êtes connecté comme <b>{currentUser && currentUser.name ? currentUser.name : 'membre de l’équipe'}</b>.
+              Cette page vous permet de <b>changer votre propre mot de passe</b> de connexion à la base d’administration.
+              La gestion des comptes, des accès aux pages et des réglages avancés reste réservée au superutilisateur.
+            </p>
+            )}
+            {canManageTeam && (
             <p className="text-xs text-slate-400 mt-1">
               Accès aux pages d’administration : liez chaque compte à sa fiche Personnel (menu « Linked personnel record »).
               Le statut (Permanent / Non permanent) et la ou les fonctions (AP / Gestionnaire / Responsable d'achats — une personne
               peut en cumuler plusieurs) de la fiche déterminent les pages visibles — un compte sans fiche liée n’a qu’un accès minimal.
               En dessous, le panneau « Accès aux pages » permet au superutilisateur de personnaliser chaque page.
             </p>
+            )}
           </div>
         </div>
         <ScientistsOperatorsManager
@@ -507,6 +521,7 @@ export const SettingsPage = ({ operators, setOperators, authSettings, setAuthSet
         </div>
       )}
 
+      {canManageTeam && (
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
         <h2 className="text-lg font-black text-slate-800">Champs obligatoires — Dépenses</h2>
         <p className="text-xs text-slate-400 mb-4">
@@ -546,7 +561,9 @@ export const SettingsPage = ({ operators, setOperators, authSettings, setAuthSet
           >Rétablir le défaut (fournisseur)</button>
         </div>
       </div>
+      )}
 
+      {canManageTeam && (
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
         <h2 className="text-lg font-black text-slate-800">Options des listes déroulantes</h2>
         <p className="text-xs text-slate-400 mb-4">Une valeur par ligne — enregistrées dans la base d’administration elle-même.</p>
@@ -579,6 +596,7 @@ export const SettingsPage = ({ operators, setOperators, authSettings, setAuthSet
           <button onClick={resetDefaults} className="px-4 py-2 rounded-xl text-sm font-bold text-slate-500 hover:bg-slate-100 border border-slate-200">Rétablir les valeurs par défaut</button>
         </div>
       </div>
+      )}
     </div>
   );
 };

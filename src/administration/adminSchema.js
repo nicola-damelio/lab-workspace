@@ -41,8 +41,10 @@ export const ADMIN_SETTINGS_DOC = 'global';
    Le droit d’accès d’un scientifique N’EST PLUS un simple drapeau : il est
    calculé depuis sa fiche Personnel (voir adminAccessProfile / adminPageIdsForProfile
    plus bas). superuserOnly = true ne s’applique qu’aux pages réellement
-   réservées au superutilisateur (Personnel, Paramètres) — Paramètres reste
-   accessible en bootstrap (aucun superutilisateur défini) pour créer l’équipe.
+   réservées au superutilisateur (Personnel) — la page Setup reste
+   accessible en bootstrap (aucun superutilisateur défini) pour créer l’équipe,
+    et à tout membre connecté pour changer son propre mot de passe (les réglages
+    avancés de Setup restent réservés au superutilisateur).
    Récapitulatif de la matrice (validée avec l’équipe) :
      • Statut Permanent  (type Permanent ou Technique) sans fonction = socle :
          Recettes · OM prévus / souhaités · Achats prévus / souhaités · Approbation devis & BC · Librairie
@@ -59,7 +61,10 @@ export const ADMIN_SETTINGS_DOC = 'global';
          achats prévus transférés depuis « OM prévus / souhaités » et « Achats
          prévus / souhaités » (création de devis « Approbation devis & BC » et de
          fiches du registre Remboursements).
-     • Personnel & Setup → superutilisateur uniquement.
+     • Personnel → superutilisateur uniquement.
+      • Page Setup → ouverte à tout membre connecté (changement de son propre
+          mot de passe) ; gestion des comptes et réglages avancés réservés au
+          superutilisateur.
    Le superutilisateur conserve, lui, l’accès intégral à toutes les pages.  */
 export const ADMIN_PAGES = [
   { id: 'overview', label: 'Vue d’ensemble', icon: '📊', superuserOnly: false, kind: null,
@@ -78,11 +83,11 @@ export const ADMIN_PAGES = [
     blurb: 'Achats prévus / souhaités de l’équipe : coût estimé et frais de port saisis par le demandeur, décision réservée au superutilisateur (Approuvé / En attente / Pas maintenant).',
     fields: ['Décision — réservée au superutilisateur : Approuvé / En attente / Pas maintenant', 'Souhait d’achat', 'Urgence : Urgent / Important / Souhaitable', 'Demandeur', 'Fournisseur', 'Ligne budgétaire suggérée', 'Coût estimé', 'Frais de port', 'N° devis · Lien du devis (Drive, facultatif) · Code produit', 'Date de demande', 'Commentaires'] },
   { id: 'devisBc', label: 'Approbation devis & BC', icon: '📝', superuserOnly: false, kind: 'devisBc',
-    blurb: 'Dépôt des devis et bons de commande à faire signer par le superutilisateur (visibles par les Permanents). Les fichiers sont téléversés dans Budget_labo/<année>/Devis|BC ; l’approbation d’un devis crée la dépense « Devis en cours » et celle du BC la fait passer à « BC signé » (liens automatiques). À l’approbation d’un fichier PDF, une copie signée « …_approuvé_signé.pdf » est créée (image de signature du superutilisateur en bas de la dernière page) et devient le fichier officiel — l’original reste intact.',
+    blurb: 'Dépôt des devis et bons de commande à faire signer par le superutilisateur (visibles par les Permanents ; les lignes demandées par « Service » sont visibles par tout le monde). Les fichiers sont téléversés dans Budget_labo/<année>/Devis|BC avec un nom qui reprend le N°, les attributs de la ligne ET l’objet (description) après un « _ » à la fin du titre ; l’approbation d’un devis crée la dépense « Devis en cours » et celle du BC la fait passer à « BC signé » (liens automatiques). À l’approbation d’un fichier PDF, une copie signée « …_approuvé_signé.pdf » est créée (image de signature du superutilisateur en bas de la dernière page) et devient le fichier officiel — l’original reste intact.',
     fields: ['Statut : En attente / Approuvé / Refusé (décision réservée au superutilisateur)', 'Type : Devis ou BC', 'Description', 'Fournisseur', 'N° devis · N° BC', 'Montant (optionnel)', 'Fichier téléversé (Budget_labo/<année>/Devis ou /BC)', 'Déposant', 'Date de dépôt', 'Dépense créée automatiquement à l’approbation'] },
   { id: 'budget', label: 'Budget overview', icon: '💶', superuserOnly: false, kind: null,
-    blurb: 'Graphiques personnels de suivi budgétaire : dépenses par classification, ligne budgétaire, opérateur, mois / année / jour, budgets & soldes par ligne, OM et souhaits — chaque membre enregistre ses propres graphiques.',
-    fields: ['Camembert / Barres / Courbe', 'Dépenses : classification, catégorie, statut, fournisseur, opérateur, ligne budgétaire, mois / année / jour', 'Budgets (Recettes) : budget total, mis à disposition, BC signés, OM, souhaits approuvés, solde', 'OM & souhaits : par période, statut, destination…'] },
+    blurb: 'Graphiques personnels de suivi budgétaire : dépenses découpées comme les onglets de la page Dépenses (Achats / Prestations internes / OM / Rémunérations de stage), lignes budgétaires & soldes (page Recettes), OM, souhaits, Remboursements (avec états liquidatifs) et devis & BC à approuver — chaque membre enregistre ses propres graphiques.',
+    fields: ['Camembert / Barres / Courbe', 'Dépenses : subdivision (Achats / PI / OM / Stages), classification, catégorie, statut, fournisseur, opérateur, ligne budgétaire, mois / année / jour', 'Budgets (Recettes) : dispo, budget total, Achats (BC signés), PI, OM payés, Stages, Remboursements, OM prévus, souhaits approuvés, solde (règle page Recettes)', 'Remboursements : par mois, bénéficiaire, ligne budgétaire, état liquidatif…', 'Approbation devis & BC : par statut, demandeur, fournisseur, type (Devis / BC)…'] },
   { id: 'questioni', label: 'Questions ouvertes', icon: '❓', superuserOnly: false, kind: 'questioni',
     blurb: 'Tableau des questions ouvertes (A faire / En cours / Fait), responsable, tags.',
     fields: ['Description', 'Statut : A faire / En cours / Fait', 'Responsable', 'Tags / classification'] },
@@ -98,9 +103,9 @@ export const ADMIN_PAGES = [
   { id: 'librerie', label: 'Librairie', icon: '📇', superuserOnly: false, kind: 'librerie',
     blurb: 'Catalogue des fournisseurs utilisé par les Dépenses (BC) et les achats prévus / souhaités (souhaits d’achat).',
     fields: ['Nom du fournisseur', 'Contact', 'Email · Téléphone · Adresse', 'Référence SIFAC (n° de tiers fournisseur)', 'Catégories associées', 'Site web', 'Commentaires'] },
-  { id: 'settings', label: 'Setup', icon: '⚙️', superuserOnly: true, kind: null,
-    blurb: 'Rôles (scientifiques / superutilisateur) et options des listes déroulantes du module.',
-    fields: ['Rôles (drapeau superutilisateur)', 'Options des listes déroulantes (natures, BAP, corps & grades…)'] },
+  { id: 'settings', label: 'Setup', icon: '⚙️', superuserOnly: false, kind: null,
+    blurb: 'Ouvert à tout membre connecté pour changer son propre mot de passe ; rôles (scientifiques / superutilisateur) et options des listes déroulantes réservés au superutilisateur.',
+    fields: ['Mon compte (mot de passe personnel)', 'Rôles (drapeau superutilisateur)', 'Options des listes déroulantes (natures, BAP, corps & grades…)'] },
 ];
 
 /* ── Enveloppe commune de chaque enregistrement ─────────────────────────── */
@@ -181,6 +186,9 @@ export const AUDIT_FIELDS = ['id', 'createdAt', 'createdBy', 'updatedAt', 'updat
  * @property {string} demandeur         // bénéficiaire : membre qui a avancé les frais
  * @property {?string} destination      // lieu / contexte (optionnel)
  * @property {?string} numOM            // N° OM / référence (optionnel)
+ * @property {?string} etatLiquidatifUrl // lien Google Drive de l’« état liquidatif » — fichier
+ *                                        signé validant le remboursement — classé automatiquement
+ *                                        dans Budget_labo/<année>/OM (colonne « État liquidatif » du tableau)
  * @property {?string} categorie        // Fonctionnement / Investissement
  * @property {?string} recetteId        // ligne budgétaire imputée
  * @property {?string} ligneBudgetaire  // intitulé/code de la ligne imputée
@@ -223,6 +231,11 @@ export const AUDIT_FIELDS = ['id', 'createdAt', 'createdBy', 'updatedAt', 'updat
  * @property {string} severite
  * @property {?number} dateCreation
 /* ── Listes d’options (listes déroulantes + magasin d’options Paramètres) ─ */
+/** « Demandeur » collectif « Service » : les devis / BC (et dépenses) demandés
+ *  au nom du Service sont VISIBLES PAR TOUS les membres sur la page
+ *  « Approbation devis & BC » (pas seulement par leur déposant) ; « Service »
+ *  est proposé dans les listes « Demandeur » / « Bénéficiaire » des formulaires. */
+export const SERVICE_DEMANDEUR = 'Service';
 export const RECETTE_TYPES = ['Fonctionnement', 'Investissement'];
 export const TRANCHES_STATUSES = ['Disponible', 'Engagé', 'Consommé'];
 export const PERSONNEL_TYPES = ['Permanent', 'Technique', 'Temporaire'];
@@ -740,6 +753,10 @@ export const adminPageIdsFor = (profile, settings) => {
   ADMIN_PAGES.forEach((page) => {
     if (adminCanProfileViewPage(profile, settings, page.id)) ids.add(page.id);
   });
+  /* La page Setup reste accessible à TOUT membre connecté : elle y change son
+     propre mot de passe (seule la fiche « Mon compte » est affichée hors
+     superutilisateur — voir SettingsPage). Bootstrap déjà couvert plus haut. */
+  ids.add('settings');
   return ids;
 };
 
