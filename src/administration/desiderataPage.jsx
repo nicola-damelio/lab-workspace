@@ -247,7 +247,58 @@ const DesiderataModal = ({
   const setRecette = (e) => {
     const id = e.target.value;
     const found = recettes.find((x) => x.id === id);
-    setDraft((d) => ({ ...d, recetteSuggereeId: id, ligneBudgetaire: found ? txt(found.ligne) : '' }));
+    setDraft((d) => ({
+      ...d,
+      recetteSuggereeId: id,
+      ligneBudgetaire: found ? txt(found.ligne) : '',
+      categorie: found && found.type && !txt(d.categorie) ? txt(found.type) : txt(d.categorie),
+    }));
+  };
+
+  /* Même intitulé de ligne budgétaire = plusieurs fiches dans Recettes (une
+     par type Fonctionnement / Investissement). Dans le menu on n’en propose
+     qu’UNE par intitulé : la « Catégorie (Fonct. / Invest.) » choisie
+     ci-dessus précise le type à retenir (une fiche de l’autre type ne reçoit
+     jamais la demande). */
+  const catKey = (v) => txt(v).toLowerCase().replace(/\s+/g, ' ').trim();
+  const lineKey = (r) => txt(r && (r.ligne || r.name) || r.id).toLowerCase().replace(/\s+/g, ' ').trim();
+  const recetteGroups = new Map();
+  (Array.isArray(recettes) ? recettes : []).forEach((r) => {
+    if (!r || !r.id) return;
+    const k = lineKey(r);
+    if (!k) return;
+    if (!recetteGroups.has(k)) recetteGroups.set(k, []);
+    recetteGroups.get(k).push(r);
+  });
+  const wantCat = catKey(draft.categorie);
+  const recetteOptions = [...recetteGroups.values()].map((group) =>
+    (wantCat ? group.find((r) => catKey(r.type) === wantCat) : null)
+    || group.find((r) => r.id === draft.recetteSuggereeId)
+    || group.find((r) => catKey(r.type).includes('fonctionnement'))
+    || group[0]);
+  const recetteDupCount = (Array.isArray(recettes) ? recettes : []).length - recetteOptions.length;
+
+  /* Changement de la catégorie : si la ligne déjà choisie est d’un autre type,
+     on bascule sur la fiche homonyme du bon type quand elle existe. */
+  const setDesCategorie = (e) => {
+    const cat = e.target.value;
+    setDraft((d) => {
+      const cur = (Array.isArray(recettes) ? recettes : []).find((x) => x.id === d.recetteSuggereeId);
+      if (cur && cat && catKey(cur.type) !== catKey(cat)) {
+        const twin = (Array.isArray(recettes) ? recettes : []).find(
+          (x) => x.id !== cur.id && lineKey(x) === lineKey(cur) && catKey(x.type) === catKey(cat)
+        );
+        if (twin) {
+          return {
+            ...d,
+            categorie: cat,
+            recetteSuggereeId: twin.id,
+            ligneBudgetaire: txt(twin.ligne),
+          };
+        }
+      }
+      return { ...d, categorie: cat };
+    });
   };
 
   const todayIso = () => {
@@ -517,7 +568,7 @@ const DesiderataModal = ({
                 </select>
               </Field>
               <Field label="Catégorie (Fonct. / Invest.)">
-                <select className={MODAL_INPUT} value={draft.categorie} onChange={set('categorie')}>
+                <select className={MODAL_INPUT} value={draft.categorie} onChange={setDesCategorie}>
                   <option value="">— Aucune —</option>
                   {(types || []).map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
@@ -555,12 +606,18 @@ const DesiderataModal = ({
               >
                 <select className={MODAL_INPUT} value={draft.recetteSuggereeId} onChange={setRecette}>
                   <option value="">— Aucune ligne suggérée —</option>
-                  {recettes.map((r) => (
+                  {recetteOptions.map((r) => (
                     <option key={r.id} value={r.id}>
                       {txt(r.ligne) || txt(r.name) || r.id}
+                      {recetteDupCount > 0 && txt(r.type) ? ` — ${r.type}` : ''}
                     </option>
                   ))}
                 </select>
+                {recetteDupCount > 0 ? (
+                  <div className="text-[10px] mt-1 leading-snug text-slate-400">
+                    Intitulés présents en double dans Recettes ({recetteDupCount} fiche{recetteDupCount > 1 ? 's' : ''} masquée{recetteDupCount > 1 ? 's' : ''}) : la « Catégorie » choisie ci-dessus précise le type à retenir.
+                  </div>
+                ) : null}
               </Field>
             </div>
           </Section>

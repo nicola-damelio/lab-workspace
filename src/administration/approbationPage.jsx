@@ -18,12 +18,18 @@
         « Non retenu » (statut distinct de « Refusé », e-mail au déposant) ;
 
      · l'approbation est réservée au superutilisateur (✓ / ✗) :
-         – approuver un DEVIS crée (ou met à jour) la dépense liée avec le
-           statut « Devis en cours », le lien du fichier dans numDevisUrl et la
-           date de signature du devis (dateSignatureDevis = jour de l'approbation) ;
-         – approuver un BC rattaché à un devis approuvé fait passer cette
-           même dépense à « BC signé » (n° BC, lien numBCUrl et date de
-           signature du BC, dateSignature, = jour de l'approbation) ;
+         – approuver un DEVIS valide le document et le marque « Approuvé » :
+           la dépense n'est PAS créée à cette étape, elle n'existera qu'à la
+           signature du BC lié (page Dépenses) ;
+         – approuver un BC rattaché à un devis approuvé CRÉE alors la dépense
+           directement « BC signé » (ou met à jour la dépense « Devis en cours »
+           d'un ancien devis approuvé avant ce changement) avec le n° BC, le lien
+           numBCUrl, la date de signature du BC (dateSignature = jour de
+           l'approbation), la catégorie (Fonctionnement / Investissement), la
+           ligne budgétaire imputée et le N° SIFAC/D.A. saisis au dépôt du BC ;
+           un N° SIFAC/D.A. encore manquant ne bloque pas l'approbation : la
+           dépense « BC signé » est créée quand même et comptée sur la page
+           Recettes dès que sa date de signature est renseignée ;
          – une décision envoie un e-mail au(x) gestionnaire(s) (et au
            déposant quand son e-mail figure dans sa fiche Personnel) ;
      · seul le superutilisateur peut supprimer une ligne ; un déposant peut
@@ -58,6 +64,7 @@ import {
   SERVICE_DEMANDEUR,
   isApprovalPending, approvalStatusOf,
 } from './adminSchema';
+import { findRecetteByLabel } from './recetteLink';
 import { devisCompleteOf } from './transferAchats';
 import { uploadLocalFile, cloudBackendAvailable, renameDriveFile, driveFetch } from '../utils/driveUpload';
 import {
@@ -321,6 +328,21 @@ export const ApprobationPage = () => {
     });
     return [...set].sort((a, b) => a.localeCompare(b, 'fr'));
   }, [data.recettes]);
+
+  /* Catégories proposées au dépôt : les types présents dans Recettes (lignes
+     Fonctionnement / Investissement / Salaires) + les valeurs par défaut. */
+  const recettesList = useMemo(
+    () => (Array.isArray(data.recettes) ? data.recettes : []),
+    [data.recettes]
+  );
+  const categorieOptions = useMemo(() => {
+    const set = new Set(['Fonctionnement', 'Investissement', 'Salaire']);
+    recettesList.forEach((r) => {
+      const t = txt(r && r.type);
+      if (t) set.add(t);
+    });
+    return [...set];
+  }, [recettesList]);
 
   const isSuper = !!access.isSuperuser;
   const currentName = txt(access.profile && access.profile.person
@@ -586,8 +608,8 @@ export const ApprobationPage = () => {
       `  Déposé par : ${txt(rec.deposant) || '—'}`,
       decision === APPROVAL_APPROVED
         ? (rec.kind === 'devis'
-          ? 'La dépense « Devis en cours » correspondante a été créée (ou mise à jour) automatiquement — date de signature du devis : aujourd’hui.'
-          : 'La dépense liée passe à « BC signé » — date de signature du BC : aujourd’hui.')
+          ? 'Le devis est validé. La dépense ne sera créée qu\'à la signature du BC lié (elle passera directement « BC signé » dans la page Dépenses).'
+          : 'La dépense « BC signé » correspondante a été créée (ou mise à jour) — date de signature du BC : aujourd\'hui.')
         : 'Aucune dépense n’a été créée pour cette ligne.',
       txt(rec.fichierUrl) ? `Fichier : ${rec.fichierUrl}` : '',
     ].filter(Boolean));
@@ -621,7 +643,7 @@ export const ApprobationPage = () => {
       `  ${txt(nrRec && nrRec.description) || 'Devis'}${ref ? ` (${ref})` : ''}`,
       `  Fournisseur : ${txt(nrRec && nrRec.fournisseur) || '—'}`,
       `  Déposé par : ${txt(nrRec && nrRec.deposant) || '—'}`,
-      `Devis retenu : ${retained} — la dépense « Devis en cours » correspondante a été créée.`,
+      `Devis retenu : ${retained} — la dépense sera créée « BC signé » à la signature de son bon de commande.`,
     ].filter(Boolean));
     const to = [...gestionnaireEmails];
     const deposantEmail = personEmailOf(personnel.find((p) => sameName(p.nom, txt(nrRec && nrRec.deposant))));
@@ -794,12 +816,14 @@ export const ApprobationPage = () => {
           alert('Ce devis est incomplet (N° devis et/ou fichier manquants). Complétez-le d’abord — il est « En gestion » — puis envoyez-le pour signature (✉️).');
           return;
         }
-        /* Approbation du devis → dépense « Devis en cours » (créée ou mise à jour).
-           La date de signature du devis est renseignée automatiquement (aujourd'hui).
+        /* Approbation du devis → le document est validé (« Approuvé »), mais la
+           dépense n'est PAS créée ici : elle n'existera qu'à la signature du BC
+           lié (la dépense est alors créée directement « BC signé » dans la page
+           Dépenses et comptée sur la page Recettes).
 
            Devis candidats : quand plusieurs devis d'un même produit ont été
            déposés (même groupeAchatId), UN SEUL peut être approuvé — sinon
-           l'approbation créerait une seconde dépense pour le même achat. */
+           l'achat serait engagé deux fois. */
         const groupeAchatId = txt(rec.groupeAchatId);
         const candidats = groupeAchatId
           ? devisList.filter((d) => d.kind === 'devis' && txt(d.groupeAchatId) === groupeAchatId && d.id !== rec.id)
@@ -813,32 +837,20 @@ export const ApprobationPage = () => {
           alert(
             `Ce produit a déjà un devis approuvé — un seul devis peut être retenu par achat.\n\n`
             + `Devis déjà retenu : ${label} (décision de ${txt(dejaRetenu.decidedBy) || '—'}${decidedOn}).\n\n`
-            + `La dépense « Devis en cours » a été créée pour ce devis. Si vous voulez en retenir un `
-            + `autre, supprimez cette dépense dans la page Dépenses puis approuvez le nouveau devis.`
+            + `La dépense ne sera créée qu'à la signature du BC de ce devis. Pour retenir un autre `
+            + `devis, repassez d'abord celui-ci « En attente » (modification), puis approuvez le nouveau devis.`
           );
           return;
         }
-        const patchDep = {
-          description: txt(rec.description),
-          fournisseur: txt(rec.fournisseur),
-          numDevis: txt(rec.numDevis),
-          numDevisUrl: txt(rec.fichierUrl),
-          montant: numOf(rec.montant),
-          ...(numOf(rec.fraisPort) !== null ? { fraisPort: numOf(rec.fraisPort) } : {}),
-          dateDemande: isoOf(rec.dateDepot) || todayIso(),
-          dateSignatureDevis: todayIso(),
-          demandeur: txt(rec.demandeur) || txt(rec.deposant) || currentName,
-          ligneBudgetaire: txt(rec.ligneBudgetaire),
-          statut: 'Devis en cours',
-          suivi: 'Devis en cours',
-          commentaires: txt(rec.notes),
-        };
-        const dep = upsert('depenses', patchDep, rec.depenseId || null);
-        const approvedDevis = upsert('devisBc', { statut: APPROVAL_APPROVED, depenseId: dep.id, decidedBy: currentName, decidedAt: Date.now() }, rec.id);
+        const approvedDevis = upsert('devisBc', {
+          statut: APPROVAL_APPROVED,
+          decidedBy: currentName,
+          decidedAt: Date.now(),
+        }, rec.id);
         /* Devis approuvé → le fichier Drive reçoit la marque « _approuvé ». */
         const approvedDevisName = await renameDepositDriveFileTo(approvedDevis);
         if (approvedDevisName) upsert('devisBc', { fichierNom: approvedDevisName }, approvedDevis.id);
-        await notifyDecision({ ...rec, statut: APPROVAL_APPROVED, depenseId: dep.id }, APPROVAL_APPROVED);
+        await notifyDecision({ ...rec, statut: APPROVAL_APPROVED }, APPROVAL_APPROVED);
         /* Les autres candidats du même produit encore « En attente » ne sont pas
            retenus : décision enregistrée (traçabilité) + e-mail au déposant. */
         for (const sib of candidats) {
@@ -848,33 +860,88 @@ export const ApprobationPage = () => {
         }
         /* ✍️ Devis approuvé → copie signée du PDF (best-effort, l'original reste
            intact) : la copie « …_approuvé_signé.pdf » devient le fichier
-           officiel du devis et de la dépense créée. */
-        appendNoteFrag(await signDepositDocument(approvedDevis, dep.id));
+           officiel du devis (aucune dépense liée à cette étape). */
+        appendNoteFrag(await signDepositDocument(approvedDevis, ''));
       } else {
-        /* Approbation du BC → la dépense du devis lié passe à « BC signé », avec la
-           date de signature du BC (dateSignature) renseignée automatiquement. */
+        /* Approbation du BC → la dépense réelle est CRÉÉE (ou, pour un ancien
+           devis déjà approuvé qui avait créé une dépense « Devis en cours »,
+           mise à jour) directement « BC signé ». La date de signature du BC
+           (dateSignature) est renseignée automatiquement. La dépense porte la
+           catégorie, la ligne budgétaire imputée, la recette liée et le N°
+           SIFAC/D.A. — indispensables pour qu'elle soit comptée sur la bonne
+           ligne de la page Recettes. Un N° SIFAC/D.A. encore manquant ne
+           bloque pas : la dépense est créée quand même et comptabilisée dès
+           que sa date de signature est renseignée. */
         const devisRec = rec.devisId ? devisById.get(rec.devisId) : null;
-        const depId = txt(rec.depenseId) || (devisRec && txt(devisRec.depenseId));
-        const dep = depId ? depensesById.get(depId) : null;
-        if (!dep) {
-          alert('Impossible d’approuver ce BC : le devis lié doit d’abord être approuvé (la dépense « Devis en cours » n’existe pas encore).');
+        if (!devisRec) {
+          alert('Impossible d’approuver ce BC : aucun devis lié. Modifiez la ligne pour choisir le devis correspondant.');
           return;
         }
-        upsert('depenses', {
+        const depId = txt(rec.depenseId) || (devisRec && txt(devisRec.depenseId));
+        const existingDep = depId ? depensesById.get(depId) : null;
+        if (!existingDep && approvalStatusOf(devisRec.statut) !== APPROVAL_APPROVED) {
+          alert('Impossible d’approuver ce BC : le devis lié doit d’abord être approuvé.');
+          return;
+        }
+        /* Les valeurs du BC l'emportent, puis celles du devis, puis celles de
+           l'éventuelle dépense « Devis en cours » créée avant ce changement. */
+        const srcDep = existingDep || null;
+        const categorie = txt(rec.categorie) || txt(devisRec.categorie) || txt(srcDep && srcDep.categorie);
+        const ligneBudgetaire = txt(rec.ligneBudgetaire)
+          || txt(devisRec.ligneBudgetaire)
+          || txt(srcDep && srcDep.ligneBudgetaire);
+        const numSIFAC = txt(rec.numSIFAC) || txt(devisRec.numSIFAC) || txt(srcDep && srcDep.numSIFAC);
+        /* Fiche Recettes imputée : idéalement choisie au dépôt (recetteId) ;
+           sinon on la retrouve par l'intitulé + la catégorie, puis par
+           l'intitulé seul — jamais on ne relie à une fiche de l'autre type
+           quand la catégorie est connue. */
+        const recettesList = Array.isArray(data.recettes) ? data.recettes : [];
+        let recetteId = txt(rec.recetteId) || txt(devisRec.recetteId) || txt(srcDep && srcDep.recetteId);
+        if (!recetteId && ligneBudgetaire) {
+          const found = findRecetteByLabel(recettesList, ligneBudgetaire, categorie)
+            || findRecetteByLabel(recettesList, ligneBudgetaire, '');
+          if (found) recetteId = found.id;
+        }
+        const devisSignatureDate = (devisRec && devisRec.decidedAt)
+          ? isoOf(new Date(devisRec.decidedAt).toISOString())
+          : (srcDep ? isoOf(srcDep.dateSignatureDevis) : todayIso()) || todayIso();
+        const depPatch = {
+          description: txt(rec.description) || txt(devisRec.description) || txt(srcDep && srcDep.description),
+          fournisseur: txt(rec.fournisseur) || txt(devisRec.fournisseur) || txt(srcDep && srcDep.fournisseur),
+          numDevis: txt(devisRec.numDevis) || txt(srcDep && srcDep.numDevis),
+          numDevisUrl: txt(devisRec.fichierUrl) || txt(srcDep && srcDep.numDevisUrl),
           numBC: txt(rec.numBC),
           numBCUrl: txt(rec.fichierUrl),
           dateBC: isoOf(rec.dateDepot) || todayIso(),
           dateSignature: todayIso(),
           statut: 'BC signé',
           suivi: 'BC signé',
-          fournisseur: txt(rec.fournisseur) || txt(dep.fournisseur),
-          montant: numOf(rec.montant) === null ? numOf(dep.montant) : numOf(rec.montant),
-          ...(numOf(rec.fraisPort) !== null ? { fraisPort: numOf(rec.fraisPort) } : {}),
-          commentaires: txt(rec.notes) || txt(dep.commentaires),
-          ...(txt(rec.demandeur) ? { demandeur: txt(rec.demandeur) } : {}),
-          ...(txt(rec.ligneBudgetaire) ? { ligneBudgetaire: txt(rec.ligneBudgetaire) } : {}),
-        }, dep.id);
+          demandeur: txt(rec.demandeur) || txt(devisRec.demandeur) || txt(srcDep && srcDep.demandeur) || currentName,
+          montant: numOf(rec.montant) === null
+            ? (numOf(devisRec.montant) === null ? numOf(srcDep && srcDep.montant) : numOf(devisRec.montant))
+            : numOf(rec.montant),
+          commentaires: txt(rec.notes) || txt(devisRec.notes) || txt(srcDep && srcDep.commentaires),
+        };
+        if (numOf(rec.fraisPort) !== null) depPatch.fraisPort = numOf(rec.fraisPort);
+        else if (numOf(devisRec.fraisPort) !== null) depPatch.fraisPort = numOf(devisRec.fraisPort);
+        else if (srcDep && numOf(srcDep.fraisPort) !== null) depPatch.fraisPort = numOf(srcDep.fraisPort);
+        if (categorie) depPatch.categorie = categorie;
+        if (ligneBudgetaire) depPatch.ligneBudgetaire = ligneBudgetaire;
+        if (recetteId) depPatch.recetteId = recetteId;
+        if (numSIFAC) depPatch.numSIFAC = numSIFAC;
+        if (!srcDep) {
+          /* Dépense créée ici : on reprend la date de demande du devis et la
+             date de signature du devis (jour de son approbation). */
+          depPatch.dateDemande = isoOf(devisRec.dateDepot) || isoOf(rec.dateDepot) || todayIso();
+          depPatch.dateSignatureDevis = devisSignatureDate;
+        }
+        const dep = upsert('depenses', depPatch, depId || null);
         const approvedBc = upsert('devisBc', { statut: APPROVAL_APPROVED, depenseId: dep.id, decidedBy: currentName, decidedAt: Date.now() }, rec.id);
+        /* On relie aussi le devis à la dépense (suivi « devis visible tant que
+           son BC n'est pas signé » et transferts OM / achats prévus). */
+        if (!txt(devisRec.depenseId) || txt(devisRec.depenseId) !== dep.id) {
+          upsert('devisBc', { depenseId: dep.id }, devisRec.id);
+        }
         /* BC approuvé → le fichier Drive reçoit la marque « _approuvé ». */
         const approvedBcName = await renameDepositDriveFileTo(approvedBc);
         if (approvedBcName) upsert('devisBc', { fichierNom: approvedBcName }, approvedBc.id);
@@ -1059,6 +1126,17 @@ export const ApprobationPage = () => {
         alert('Le montant HT est obligatoire pour un nouveau dépôt.');
         return false;
       }
+      /* Le BC porte la catégorie et le N° SIFAC/D.A. de la commande : ce sont
+         eux qui permettront de créer la dépense « BC signé » complète à
+         l'approbation (et donc de la compter sur la bonne ligne des Recettes). */
+      if (kind === 'bc' && !txt(draft.categorie)) {
+        alert('La catégorie (Fonctionnement / Investissement) est obligatoire pour un nouveau BC : c’est elle qui relie la dépense à la bonne ligne budgétaire.');
+        return false;
+      }
+      if (kind === 'bc' && !txt(draft.numSIFAC)) {
+        alert('Le N° SIFAC/D.A. est obligatoire pour un nouveau BC.');
+        return false;
+      }
     }
     if (!txt(draft.fichierUrl)) {
       alert('Le fichier (devis ou BC) est obligatoire : téléversez-le ou collez son lien Google Drive.');
@@ -1094,6 +1172,9 @@ export const ApprobationPage = () => {
       description,
       fournisseur: txt(draft.fournisseur),
       ligneBudgetaire: txt(draft.ligneBudgetaire),
+      categorie: txt(draft.categorie),
+      numSIFAC: txt(draft.numSIFAC),
+      recetteId: txt(draft.recetteId),
       demandeur: txt(draft.demandeur),
       numDevis: kind === 'devis' ? numDevis : txt(draft.numDevis),
       numBC: kind === 'bc' ? numBC : '',
@@ -1275,6 +1356,8 @@ export const ApprobationPage = () => {
           productGroups={productGroups}
           fournisseurNames={fournisseurNames}
           budgetLineOptions={budgetLineOptions}
+          categorieOptions={categorieOptions}
+          recettesList={recettesList}
           demandeurNames={demandeurNames}
           defaultDeposant={currentName}
           onCancel={() => setModal(null)}
@@ -1332,8 +1415,8 @@ const buildColumns = ({
                   disabled={busy}
                   onClick={() => onDecide(r, APPROVAL_APPROVED)}
                   title={kind === 'devis'
-                    ? 'Signer le devis (crée la dépense « Devis en cours »)'
-                    : 'Signer le bon de commande (dépense « BC signé »)'}
+                    ? 'Signer le devis (la dépense ne sera créée qu’à la signature du BC lié)'
+                    : 'Signer le bon de commande (crée la dépense « BC signé »)'}
                   className="w-7 h-7 rounded-lg border border-emerald-200 text-emerald-600 hover:bg-emerald-50 text-xs font-black disabled:opacity-40"
                 >{busy ? '…' : '✓'}</button>
                 <button
@@ -1635,6 +1718,7 @@ const MODAL_LABEL = 'block text-[10px] font-black uppercase text-slate-400 track
 
 const DepositModal = ({
   mode, kind, rec, devisOptions, productGroups = [], fournisseurNames = [], budgetLineOptions = [],
+  categorieOptions = [], recettesList = [],
   demandeurNames = [], defaultDeposant, onCancel, onSave,
 }) => {
   const editing = mode === 'edit' && !!rec;
@@ -1642,9 +1726,9 @@ const DepositModal = ({
   const year = new Date().getFullYear();
   /* Informations reprises du devis lié quand le BC (ou l’édition d’un dépôt
      historique) n’a pas encore ses propres valeurs : objet, fournisseur,
-     montant HT, frais de port, ligne budgétaire et demandeur — le BC se
-     rattachant au même devis reprend ses informations (modifiables ensuite
-     dans le formulaire). */
+     montant HT, frais de port, catégorie, N° SIFAC/D.A., ligne budgétaire et
+     demandeur — le BC se rattachant au même devis reprend ses informations
+     (modifiables ensuite dans le formulaire). */
   const linkedDevisOf = (devisId) => {
     const id = txt(devisId);
     if (!id) return null;
@@ -1657,6 +1741,9 @@ const DepositModal = ({
       description: dev ? txt(dev.description) : '',
       fournisseur: dev ? txt(dev.fournisseur) : '',
       ligneBudgetaire: dev ? txt(dev.ligneBudgetaire) : '',
+      categorie: dev ? txt(dev.categorie) : '',
+      numSIFAC: dev ? txt(dev.numSIFAC) : '',
+      recetteId: dev ? txt(dev.recetteId) : '',
       demandeur: dev ? txt(dev.demandeur) : '',
       montant: dev ? moneyInputOf(dev.montant) : '',
       fraisPort: dev ? moneyInputOf(dev.fraisPort) : '',
@@ -1678,6 +1765,12 @@ const DepositModal = ({
           || (rec.kind === 'bc' ? linkedDefaults.fournisseur : ''),
         ligneBudgetaire: txt(rec.ligneBudgetaire)
           || (rec.kind === 'bc' ? linkedDefaults.ligneBudgetaire : ''),
+        categorie: txt(rec.categorie)
+          || (rec.kind === 'bc' ? linkedDefaults.categorie : ''),
+        numSIFAC: txt(rec.numSIFAC)
+          || (rec.kind === 'bc' ? linkedDefaults.numSIFAC : ''),
+        recetteId: txt(rec.recetteId)
+          || (rec.kind === 'bc' ? linkedDefaults.recetteId : ''),
         demandeur: txt(rec.demandeur)
           || (rec.kind === 'bc' ? linkedDefaults.demandeur : '')
           || txt(rec.deposant)
@@ -1706,6 +1799,9 @@ const DepositModal = ({
       description: isDevis ? '' : (firstDevisDefaults ? firstDevisDefaults.description : ''),
       fournisseur: isDevis ? '' : (firstDevisDefaults ? firstDevisDefaults.fournisseur : ''),
       ligneBudgetaire: isDevis ? '' : (firstDevisDefaults ? firstDevisDefaults.ligneBudgetaire : ''),
+      categorie: isDevis ? '' : (firstDevisDefaults ? firstDevisDefaults.categorie : ''),
+      numSIFAC: isDevis ? '' : (firstDevisDefaults ? firstDevisDefaults.numSIFAC : ''),
+      recetteId: isDevis ? '' : (firstDevisDefaults ? firstDevisDefaults.recetteId : ''),
       demandeur: (isDevis ? '' : (firstDevisDefaults ? firstDevisDefaults.demandeur : ''))
         || txt(defaultDeposant),
       numDevis: isDevis ? '' : '',
@@ -1736,8 +1832,8 @@ const DepositModal = ({
 
   const set = (k) => (ev) => setDraft((d) => ({ ...d, [k]: ev.target.value }));
   /* Changement du devis lié (BC) : on reprend de ce devis l'objet, le
-     fournisseur, le montant HT, les frais de port, la ligne budgétaire et le
-     demandeur (modifiables ensuite dans le formulaire). */
+     fournisseur, le montant HT, les frais de port, la catégorie, le N°
+     SIFAC/D.A., la ligne budgétaire et le demandeur (modifiables ensuite). */
   const pickDevis = (ev) => {
     const id = ev.target.value;
     setDraft((d) => {
@@ -1748,10 +1844,45 @@ const DepositModal = ({
         devisId: id,
         description: def.description,
         fournisseur: def.fournisseur,
-        ligneBudgetaire: def.ligneBudgetaire,
+        ligneBudgetaire: def.ligneBudgetaire || d.ligneBudgetaire,
+        categorie: def.categorie || d.categorie,
+        numSIFAC: def.numSIFAC || d.numSIFAC,
+        recetteId: def.recetteId || d.recetteId,
         demandeur: def.demandeur || d.demandeur,
         montant: def.montant,
         fraisPort: def.fraisPort,
+      };
+    });
+  };
+  /* Catégorie choisie : la ligne déjà saisie est conservée si une fiche
+     Recettes homonyme du bon type existe (recetteId basculé sur celle-ci),
+     pour ne jamais relier à une fiche de l'autre type. */
+  const setCategorie = (ev) => {
+    const cat = ev.target.value;
+    setDraft((d) => {
+      let recetteId = d.recetteId;
+      const label = txt(d.ligneBudgetaire);
+      if (cat && label) {
+        const found = findRecetteByLabel(recettesList, label, cat)
+          || findRecetteByLabel(recettesList, label, '');
+        recetteId = found ? found.id : '';
+      }
+      return { ...d, categorie: cat, recetteId };
+    });
+  };
+  /* Saisie de la ligne budgétaire : dès qu'un intitulé correspond à une fiche
+     Recettes du type choisi, la liaison (recetteId) est posée. */
+  const setBudgetLine = (ev) => {
+    const label = ev.target.value;
+    setDraft((d) => {
+      const want = txt(d.categorie);
+      const found = findRecetteByLabel(recettesList, label, want)
+        || (want ? null : findRecetteByLabel(recettesList, label, ''));
+      return {
+        ...d,
+        ligneBudgetaire: label,
+        recetteId: found ? found.id : txt(d.recetteId),
+        categorie: txt(d.categorie) || (found ? txt(found.type) : txt(d.categorie)),
       };
     });
   };
@@ -1770,6 +1901,9 @@ const DepositModal = ({
           ? txt(src && (src.description || src.numDevis)) || d.description
           : d.description,
         ligneBudgetaire: src ? txt(src.ligneBudgetaire) || d.ligneBudgetaire : d.ligneBudgetaire,
+        categorie: src ? txt(src.categorie) || d.categorie : d.categorie,
+        numSIFAC: src ? txt(src.numSIFAC) || d.numSIFAC : d.numSIFAC,
+        recetteId: src ? txt(src.recetteId) || d.recetteId : d.recetteId,
         demandeur: src ? txt(src.demandeur) || d.demandeur : d.demandeur,
       };
     });
@@ -1854,7 +1988,7 @@ const DepositModal = ({
           </h2>
           <p className="text-blue-100 text-[11px]">
             Fichier téléversé dans Budget_labo/{year}/{isDevis ? 'Devis' : 'BC'} ·{' '}
-            {isDevis ? 'l’approbation crée la dépense « Devis en cours »' : 'l’approbation fait passer la dépense liée à « BC signé »'}.
+            {isDevis ? 'l’approbation valide le devis — la dépense n’est créée qu’à la signature du BC lié' : 'l’approbation crée la dépense « BC signé » (catégorie, ligne budgétaire et N° SIFAC/D.A. repris du formulaire)'}.
           </p>
         </div>
 
@@ -1880,8 +2014,9 @@ const DepositModal = ({
               </select>
               <p className="mt-1.5 text-[10px] leading-snug text-indigo-500">
                 Le choix du devis lié pré-remplit automatiquement l’objet, le fournisseur, le montant HT,
-                les frais de port, la ligne budgétaire et le demandeur à partir de ce devis — ces champs
-                restent modifiables. Il ne reste qu’à saisir le N° BC et joindre le fichier.
+                les frais de port, la catégorie, le N° SIFAC/D.A., la ligne budgétaire et le demandeur à
+                partir de ce devis — ces champs restent modifiables. Il ne reste qu’à saisir le N° BC et
+                joindre le fichier.
               </p>
             </div>
           )}
@@ -1918,7 +2053,8 @@ const DepositModal = ({
               <p className="mt-1.5 text-[10px] leading-snug text-violet-500">
                 Déposez plusieurs devis d'un même achat : en choisissant un produit déjà déposé, ce devis
                 devient un candidat supplémentaire. À l'approbation, un seul devis est retenu (la dépense
-                « Devis en cours » est créée) et les autres passent automatiquement « Non retenu ».
+                sera créée « BC signé » à la signature de son bon de commande) et les autres passent
+                automatiquement « Non retenu ».
                 Astuce : saisir exactement le même objet qu'un produit existant rattache aussi le devis.
               </p>
             </div>
@@ -1988,11 +2124,11 @@ const DepositModal = ({
               </datalist>
             </div>
             <div>
-              <label className={MODAL_LABEL}>Ligne budgétaire</label>
+              <label className={MODAL_LABEL}>Ligne budgétaire{isDevis ? '' : ' *'}</label>
               <input
                 className={MODAL_INPUT}
                 value={draft.ligneBudgetaire || ''}
-                onChange={set('ligneBudgetaire')}
+                onChange={setBudgetLine}
                 list="depot-lignes-budgetaires"
                 placeholder="ex. S2R01GEC (INTRUDE)"
               />
@@ -2001,6 +2137,34 @@ const DepositModal = ({
                   <option key={ln} value={ln} />
                 ))}
               </datalist>
+            </div>
+            <div>
+              <label className={MODAL_LABEL}>Catégorie{isDevis ? '' : ' *'}</label>
+              <select className={MODAL_INPUT} value={draft.categorie || ''} onChange={setCategorie}>
+                <option value="">— non précisée —</option>
+                {(categorieOptions || []).map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+              {!isDevis && (
+                <p className="mt-1 text-[10px] leading-snug text-slate-400">
+                  Fonctionnement / Investissement — la dépense « BC signé » sera imputée sur une ligne de ce type.
+                </p>
+              )}
+            </div>
+            <div>
+              <label className={MODAL_LABEL}>N° SIFAC/D.A.{isDevis ? '' : ' *'}</label>
+              <input
+                className={MODAL_INPUT}
+                value={draft.numSIFAC || ''}
+                onChange={set('numSIFAC')}
+                placeholder="ex. 2026000000"
+              />
+              {!isDevis && (
+                <p className="mt-1 text-[10px] leading-snug text-slate-400">
+                  Transmis à la dépense lors de la signature du BC. Obligatoire au dépôt d’un nouveau BC.
+                </p>
+              )}
             </div>
           </div>
 
