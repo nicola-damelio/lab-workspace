@@ -10,14 +10,16 @@
    desiderate / reimbursements de la même base (liaison par recetteId /
    recetteSuggereeId).
    ========================================================================= */
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
 import { RECETTE_TYPES, DEPENSE_BC_SIGNE, depenseKindOf, isDesiderataRejected, isDesiderataApproved, isDesiderataTest, desiderataDecisionOf, reimbTotalOf, isSalaireRecetteType } from './adminSchema';
-import { omTransferStatus } from './transferAchats';
+import {
+  omTransferStatus, demandeTransferOrphaned, omTransferSummary, reimbPatchFromOm,
+  TRANSFER_TARGETS, targetMetaOf,
+} from './transferAchats';
 import { AdminImportModal } from './adminImportModal';
 import { SmartTable } from './smartTable';
 import { useDepenseLinkRepair } from './useDepenseLinkRepair';
-import { useOrphanTransferRepair } from './useOrphanTransferRepair';
 
 const euro = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' });
 const toNum = (v) => {
@@ -130,7 +132,7 @@ const isOmApproved = (raw) =>
 const isOmTest = (raw) => /^test$/i.test(String(raw || '').trim());
 
 export const RecettesPage = () => {
-  const { data, settings, upsert, remove, access, navigate } = useAdmin();
+  const { data, settings, upsert, removeRecord, access, navigate, updateMany, currentUser } = useAdmin();
   const recettes = useMemo(() => (Array.isArray(data.recettes) ? data.recettes : []), [data.recettes]);
   const depenses = useMemo(() => (Array.isArray(data.depenses) ? data.depenses : []), [data.depenses]);
   const om = useMemo(() => (Array.isArray(data.om) ? data.om : []), [data.om]);
@@ -189,16 +191,21 @@ export const RecettesPage = () => {
   const [modal, setModal] = useState(null);
   const [importOpen, setImportOpen] = useState(false); // {mode:'new'} | {mode:'edit', rec} | {mode:'link', rec}
   const [tab, setTab] = useState('budgets'); // 'budgets' : Fonctionnement / Investissement · 'salaires' : type « Salaire »
+  /* Bandeau d’information : bilan d’une suppression / d’un transfert lancé
+     DEPUIS cette page (les éléments appartiennent aux pages Dépenses, OM et
+     Achats prévus / souhaités : ils sont masqués au bout de quelques secondes). */
+  const [notice, setNotice] = useState(null); // { tone: 'ok' | 'warn', text, target? }
+
+  useEffect(() => {
+    if (!notice) return undefined;
+    const t = setTimeout(() => setNotice(null), 9000);
+    return () => clearTimeout(t);
+  }, [notice]);
 
   /* Réattribution automatique des dépenses dont la « Catégorie » contredit le
      type de la ligne imputée (ex. dépense « Fonctionnement » liée à une fiche
      « Investissement ») — trace ajoutée dans les commentaires de la dépense. */
   const linkRepair = useDepenseLinkRepair();
-  /* Réparation automatique des transferts « orphelins » : une OM / un achat
-     prévu transféré dont le devis / BC (origine) et la dépense ont été
-     supprimés ne doit plus rester masqué ni compté en signature — il redevient
-     ordinaire (visible, supprimable) dans sa page d'origine. */
-  useOrphanTransferRepair();
 
   const types = Array.isArray(settings.recetteTypes) && settings.recetteTypes.length
     ? settings.recetteTypes
@@ -289,6 +296,12 @@ export const RecettesPage = () => {
         omPrevuItems.push({ om: o, whole: true });
         return;
       }
+      /* Transfert « orphelin » (devis / BC d'origine ET dépense liée supprimés) :
+         l'OM a bien été acceptée mais plus rien ne la rattache à une dépense —
+         elle ne compte donc plus parmi les prévisions. Elle reste consultable
+         (et supprimable) dans sa page via « Afficher les transférées » : une OM
+         acceptée ne doit apparaître que comme dépense. */
+      if (demandeTransferOrphaned(o, 'om', devisBc, depenses, reimbursements)) return;
       const enSig = st.parts.filter((p) => {
         if (p.mode !== 'bc' || p.state === 'bc-signe') return false;
         if (!p.devis || p.devis.statut === 'En gestion') return false;
@@ -417,8 +430,168 @@ export const RecettesPage = () => {
   };
 
   const onRemoveLine = (rec) => {
-    if (window.confirm(`Supprimer la ligne budgétaire « ${rec.ligne || rec.id} » ?`)) remove('recettes', rec.id);
+    if (window.confirm(`Supprimer la ligne budgétaire « ${rec.ligne || rec.id} » ?`)) removeRecord('recettes', rec);
   };
+
+  /* Droit de suppression directe depuis cette page : la page agrège des lignes
+     qui vivent ailleurs — on applique donc la règle de la page qui les héberge
+     (Dépenses : n’importe quel membre autorisé sur la page peut supprimer ;
+     OM / Achats prévus : décision et transfert réservés au superutilisateur). */
+  const canDeleteDepenses = !!access.canViewPage({ id: 'depenses' });
+  const isSuper = !!access.isSuperuser;
+  const currentName = txt(
+    (access.profile && access.profile.person && access.profile.person.nom)
+    || (currentUser && currentUser.name)
+  );
+
+  /* ── Suppression directe depuis la page Recettes ──────────────────────────
+     Les cases « au survol » listent les lignes agrégées : chacune peut être
+     supprimée à la source sans quitter cette page. */
+
+  /* Dépense (Achats / PI / OM payés / Rémunération stages). */
+  const removeDepenseRow = (d) => {
+    if (!d) return;
+    const label = txt(d.description) || txt(d.numBC || d.numSIFAC || d.numFacture) || d.id || 'cette dépense';
+    if (!window.confirm(`Supprimer définitivement la dépense « ${label} » ?\n\nElle disparaît de la page Dépenses et de tous les totaux de cette page.`)) return;
+    /* Nettoyage des liens ENTRANTS (même règle que la page Dépenses) : un devis
+       / BC ou une OM source ne doit pas rester rattaché à une dépense
+       supprimée. */
+    const devisChanges = devisBc
+      .filter((x) => x && x.id && txt(x.depenseId) === d.id)
+      .map((x) => ({ id: x.id, patch: { depenseId: null } }));
+    if (devisChanges.length) updateMany('devisBc', devisChanges);
+    const omChanges = om
+      .filter((o) => o && o.id && txt(o.depenseId) === d.id)
+      .map((o) => ({ id: o.id, patch: { depenseId: null } }));
+    if (omChanges.length) updateMany('om', omChanges);
+    removeRecord('depenses', d);
+    setNotice({ tone: 'ok', text: `Dépense « ${label} » supprimée.` });
+  };
+
+  /* Fiche du registre « Remboursements ». */
+  const removeReimbRow = (x) => {
+    if (!x) return;
+    const label = txt(x.description) || 'ce remboursement';
+    if (!window.confirm(`Supprimer définitivement le remboursement « ${label} » ?`)) return;
+    removeRecord('reimbursements', x);
+    setNotice({ tone: 'ok', text: `Remboursement « ${label} » supprimé.` });
+  };
+
+  /* Ordre de mission « prévu / souhaité » (suppression réservée au
+     superutilisateur, comme la page OM Prévus). */
+  const removeOmRow = (o) => {
+    if (!o || !isSuper) return;
+    const label = txt(o.description) || txt(o.destination) || o.id || 'cet OM';
+    if (!window.confirm(`Supprimer l’ordre de mission « ${label} » ?\n\nCette action est définitive.`)) return;
+    removeRecord('om', o);
+    setNotice({ tone: 'ok', text: `Ordre de mission « ${label} » supprimé.` });
+  };
+
+  /* Achat prévu / souhaité (superutilisateur uniquement). */
+  const removeDesiderataRow = (rec) => {
+    if (!rec || !isSuper) return;
+    const label = txt(rec.description) || rec.id || 'cet achat prévu';
+    if (!window.confirm(`Supprimer l’achat prévu / souhaité « ${label} » ?\n\nCette action est définitive.`)) return;
+    removeRecord('desiderate', rec);
+    setNotice({ tone: 'ok', text: `Achat prévu / souhaité « ${label} » supprimé.` });
+  };
+
+  /* ── Transfert d’une OM prévue vers « Dépenses › Remboursements » ─────────
+     Circuit « frais avancés » : le laboratoire rembourse la mission au lieu de
+     passer commande. Tous les postes chiffrés de l’OM deviennent des postes
+     « Remboursement » et UNE fiche du registre dédié est créée (badge
+     « À corriger », comme depuis la page OM Prévus) ; l’OM est marquée
+     transférée afin de ne plus compter dans « OM prévus » — son montant passe
+     dans la colonne « Remboursements », déduite du solde. */
+  const transferOmToReimb = (o) => {
+    if (!o || !isSuper) return;
+    if (!o.id) {
+      setNotice({ tone: 'warn', text: 'Cet OM n’a pas d’identifiant : rechargez la page (l’application en attribue un automatiquement), puis réessayez.' });
+      return;
+    }
+    const label = txt(o.description) || txt(o.destination) || o.id;
+    const summary = omTransferSummary(o);
+    if (!summary.parts.length) {
+      setNotice({ tone: 'warn', text: `Chiffrez au moins un poste de coût avant de transférer l’OM « ${label} » vers les remboursements.` });
+      return;
+    }
+    const already = reimbursements.find((r) => r && txt(r.sourceKind) === 'om' && txt(r.sourceId) === o.id) || null;
+    if (already) {
+      setNotice({
+        tone: 'ok',
+        text: `L’OM « ${label} » est déjà transférée dans Dépenses › Remboursements.`,
+        target: { pageId: 'depenses', kind: 'reimb', recordId: already.id },
+      });
+      return;
+    }
+    /* OM déjà transmise pour signature (des devis existent déjà) : basculer ses
+       postes en remboursement laisserait ces devis orphelins dans « Approbation
+       devis & BC » — on l’explique plutôt que de le faire silencieusement. */
+    if (o.transfert && !o.transfert.remboursementsSeuls) {
+      setNotice({
+        tone: 'warn',
+        text: `L’OM « ${label} » a déjà été transmise pour signature (devis / BC en cours) : son remboursement se gère depuis « Approbation devis & BC » et la fiche Remboursement créée à cette occasion.`,
+      });
+      return;
+    }
+    const cible = TRANSFER_TARGETS.Gestionnaire.code;
+    const total = summary.parts.reduce((s, p) => s + (p.montant || 0), 0);
+    const lines = [
+      `Transférer l’OM « ${label} » vers Dépenses › Remboursements ?`,
+      '',
+      `• 1 fiche de frais de ${euro.format(total)} (postes : ${summary.parts.map((p) => p.label).join(' · ')}) — badge « À corriger »`,
+      `• destinataire : ${targetMetaOf(cible).title}`,
+      '• l’OM disparaît de « OM prévus » (et de sa page, rétablie par « Afficher les transférées ») : son montant est déduit du solde de la ligne budgétaire',
+    ];
+    if (!window.confirm(lines.join('\n'))) return;
+    /* Tous les postes deviennent « Remboursement » : aucun poste ne reste
+       compté « OM prévu » (sinon le montant serait compté deux fois). */
+    const partMode = { ...(o.partMode || {}) };
+    summary.parts.forEach((p) => { partMode[p.key] = 'reimb'; });
+    const saved = upsert('reimbursements', reimbPatchFromOm(o, summary.parts, { cible, by: currentName }), null);
+    upsert('om', {
+      ...(isOmApproved(o.statut)
+        ? {}
+        : { statut: 'Acceptée', statutChangedBy: currentName, statutChangedAt: Date.now() }),
+      partMode,
+      transfert: {
+        cible,
+        by: currentName,
+        at: Date.now(),
+        depuis: 'om',
+        remboursementsSeuls: true,
+        reimbId: (saved && saved.id) || '',
+      },
+    }, o.id);
+    setNotice({
+      tone: 'ok',
+      text: `OM « ${label} » transférée vers Dépenses › Remboursements (fiche « À corriger », ${euro.format(total)}).`,
+      target: saved && saved.id ? { pageId: 'depenses', kind: 'reimb', recordId: saved.id } : null,
+    });
+  };
+
+  /* Boutons d’action rendus à côté de chaque élément listé au survol d’une
+     case (🗑 supprimer · ↪ transférer vers les remboursements). */
+  const depenseActions = (d) => (canDeleteDepenses
+    ? [{ label: '🗑', title: 'Supprimer la dépense (page Dépenses)', onClick: () => removeDepenseRow(d) }]
+    : []);
+  const reimbActions = (x) => (canDeleteDepenses
+    ? [{ label: '🗑', title: 'Supprimer le remboursement (page Dépenses › Remboursements)', onClick: () => removeReimbRow(x) }]
+    : []);
+  const omActions = (o) => (isSuper
+    ? [
+      {
+        label: '↪ Remb.',
+        title: 'Transférer l’OM vers Dépenses › Remboursements (frais avancés : tous les postes deviennent « Remboursement », montant déduit du solde)',
+        tone: 'border-amber-200 text-amber-700 hover:bg-amber-50',
+        onClick: () => transferOmToReimb(o),
+      },
+      { label: '🗑', title: 'Supprimer l’ordre de mission', onClick: () => removeOmRow(o) },
+    ]
+    : []);
+  const desActions = (rec) => (isSuper
+    ? [{ label: '🗑', title: 'Supprimer l’achat prévu / souhaité', onClick: () => removeDesiderataRow(rec) }]
+    : []);
 
   /* Lignes enrichies des agrégats (tri/filtre sur les colonnes calculées). */
   const recetteRows = useMemo(
@@ -502,6 +675,7 @@ export const RecettesPage = () => {
             meta: [d.numBC || d.bcNo || d.sifacNo || '', d.statut || d.suivi || ''].filter(Boolean).join(' · '),
             value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
             to: depLink(d),
+            actions: depenseActions(d),
           }))}
         />
       ),
@@ -518,6 +692,7 @@ export const RecettesPage = () => {
             meta: ['PI (prestation interne)', d.dateSignatureBC || d.dateSignature || ''].filter(Boolean).join(' · '),
             value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
             to: depLink(d),
+            actions: depenseActions(d),
           }))}
         />
       ),
@@ -534,6 +709,7 @@ export const RecettesPage = () => {
             meta: [d.destination || '', d.omNo || d.bcNo || '', d.statut || d.suivi || ''].filter(Boolean).join(' · '),
             value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
             to: depLink(d),
+            actions: depenseActions(d),
           }))}
         />
       ),
@@ -552,6 +728,7 @@ export const RecettesPage = () => {
             meta: ['Stages', d.numBC || d.numSIFAC || '', d.statut || d.suivi || ''].filter(Boolean).join(' · '),
             value: euro.format(toNum(d.montant) + toNum(d.fraisPort)),
             to: depLink(d),
+            actions: depenseActions(d),
           }))}
         />
       ),
@@ -570,6 +747,7 @@ export const RecettesPage = () => {
             meta: ['Remboursement de frais', x.destination || '', x.numOM || '', x.dateMission || ''].filter(Boolean).join(' · '),
             value: euro.format(reimbTotalOf(x)),
             to: reimbLink(x),
+            actions: reimbActions(x),
           }))}
         />
       ),
@@ -585,9 +763,18 @@ export const RecettesPage = () => {
           onOpen={openTarget}
           items={r.__agg.lineOm.map((o) => ({
             title: o.description || o.destination || 'OM',
-            meta: [o.destination || '', `${o.statut || 'En attente'}${isOmApproved(o.statut) ? ' · accepté' : isOmTest(o.statut) ? ' · en test' : ' · non accepté'}`].filter(Boolean).join(' · '),
+            meta: [
+              o.destination || '',
+              `${o.statut || 'En attente'}${isOmApproved(o.statut) ? ' · accepté' : isOmTest(o.statut) ? ' · en test' : ' · non accepté'}`,
+              o.transfert
+                ? (o.transfert.remboursementsSeuls
+                  ? 'frais à rembourser — hors prévision (colonne Remboursements)'
+                  : 'transférée — hors prévision (suivie en signature)')
+                : '',
+            ].filter(Boolean).join(' · '),
             value: euro.format(toNum(o.coutTotal)),
             to: omLink(o),
+            actions: omActions(o),
           }))}
         />
       ),
@@ -626,6 +813,7 @@ export const RecettesPage = () => {
                 ? euro.format(toNum(d.montantEstime))
                 : 'non chiffré',
               to: dv ? devisBcLink(dv) : (direct ? depLink(direct) : desLink(d)),
+              actions: desActions(d),
             };
           })}
         />
@@ -768,6 +956,28 @@ export const RecettesPage = () => {
           >✕</button>
         </div>
       )}
+      {notice && (
+        <div className={`rounded-xl border px-4 py-2.5 text-xs flex items-start justify-between gap-3 shadow-sm ${
+          notice.tone === 'warn' ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+        }`}>
+          <span className="min-w-0">{notice.text}</span>
+          <span className="flex items-center gap-3 shrink-0">
+            {notice.target && (
+              <button
+                type="button"
+                onClick={() => { openTarget(notice.target); setNotice(null); }}
+                className="font-black underline"
+              >Ouvrir</button>
+            )}
+            <button
+              type="button"
+              onClick={() => setNotice(null)}
+              className="font-black opacity-60 hover:opacity-100"
+              title="Masquer"
+            >✕</button>
+          </span>
+        </div>
+      )}
       {/* Barre d’actions */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
@@ -897,7 +1107,10 @@ const SummaryCard = ({ label, value, tone }) => {
    SF, statuts… — n’apparaît qu’au survol, via ⓘ) : les colonnes restent
    étroites et la vue d’ensemble de la table reste lisible. Chaque élément
    lié qui appartient à une autre table est cliquable (↗) : il ouvre sa
-   définition dans la table d’origine (Dépenses, OM prévus, Achats prévus). */
+   définition dans la table d’origine (Dépenses, OM prévus, Achats prévus).
+   Un élément peut aussi porter des `actions` (boutons à droite de la ligne) :
+   🗑 supprime la ligne À LA SOURCE (dépense, remboursement, OM, achat prévu) et
+   « ↪ Remb. » transfère une OM prévue vers le registre « Remboursements ». */
 const HoverCell = ({ amount, items, onOpen }) => {
   const linked = Array.isArray(items) ? items : [];
   return (
@@ -915,26 +1128,50 @@ const HoverCell = ({ amount, items, onOpen }) => {
         >
           {linked.map((it, i) => {
             const clickable = !!it.to && typeof onOpen === 'function';
+            const acts = Array.isArray(it.actions)
+              ? it.actions.filter((a) => a && typeof a.onClick === 'function')
+              : [];
             return (
-              <button
+              <div
                 key={i}
-                type="button"
-                disabled={!clickable}
-                onClick={clickable ? () => onOpen(it.to) : undefined}
-                title={clickable ? 'Ouvrir cet élément dans sa table d’origine' : undefined}
-                className={`flex w-full items-start justify-between gap-2 px-2 py-1.5 text-left border-b border-slate-100 last:border-0 transition-colors ${
-                  clickable ? 'cursor-pointer hover:bg-blue-50' : ''
-                }`}
+                className="flex w-full items-start justify-between gap-1 border-b border-slate-100 last:border-0"
               >
-                <span className="min-w-0">
-                  <span className="block text-xs font-bold text-slate-700 truncate">{it.title}</span>
-                  {it.meta ? <span className="block text-[10px] text-slate-400 truncate">{it.meta}</span> : null}
-                </span>
-                <span className="flex items-center gap-1 shrink-0">
-                  <span className="text-xs font-bold text-slate-800 whitespace-nowrap">{it.value}</span>
-                  {clickable && <span className="text-[10px] text-blue-500" aria-hidden="true">↗</span>}
-                </span>
-              </button>
+                <button
+                  type="button"
+                  disabled={!clickable}
+                  onClick={clickable ? () => onOpen(it.to) : undefined}
+                  title={clickable ? 'Ouvrir cet élément dans sa table d’origine' : undefined}
+                  className={`flex min-w-0 flex-1 items-start justify-between gap-2 px-2 py-1.5 text-left transition-colors ${
+                    clickable ? 'cursor-pointer hover:bg-blue-50' : 'cursor-default'
+                  }`}
+                >
+                  <span className="min-w-0">
+                    <span className="block text-xs font-bold text-slate-700 truncate">{it.title}</span>
+                    {it.meta ? <span className="block text-[10px] text-slate-400 truncate">{it.meta}</span> : null}
+                  </span>
+                  <span className="flex items-center gap-1 shrink-0">
+                    <span className="text-xs font-bold text-slate-800 whitespace-nowrap">{it.value}</span>
+                    {clickable && <span className="text-[10px] text-blue-500" aria-hidden="true">↗</span>}
+                  </span>
+                </button>
+                {acts.length > 0 && (
+                  <span className="flex items-center gap-1 shrink-0 pt-1.5 pr-1">
+                    {acts.map((a, k) => (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => a.onClick()}
+                        title={a.title}
+                        className={`text-[10px] font-black px-1.5 py-0.5 rounded-md border whitespace-nowrap transition-colors ${
+                          a.tone || 'border-slate-200 text-slate-400 hover:bg-red-50 hover:text-red-600 hover:border-red-200'
+                        }`}
+                      >
+                        {a.label}
+                      </button>
+                    ))}
+                  </span>
+                )}
+              </div>
             );
           })}
         </div>

@@ -294,9 +294,10 @@ const isLiveDevis = (d) => !DEAD_DEVIS_STATUSES.has(txt(d && d.statut));
  *     « Non retenu ») via `sourceKind` / `sourceId` ;
  *   · aucune dépense créée directement depuis elle (`omId` / `desiderataId`) ;
  *   · aucune fiche Remboursement issue d'elle (sourceKind 'om').
- * Un tel transfert est obsolète : la demande doit redevenir ordinaire
- * (visible, supprimable, transférable à nouveau). Réparé automatiquement par
- * ./useOrphanTransferRepair.js ; sert aussi à ne pas l'escamoter de la liste.
+ * Un tel transfert est obsolète : la demande n'est plus une prévision. Elle
+ * reste consultable (et supprimable) dans sa page d'origine via « Afficher les
+ * transférées », mais la page Recettes ne la compte plus dans « OM prévus » /
+ * « Achats prévus » — une demande acceptée n'apparaît que comme dépense.
  */
 export const demandeTransferOrphaned = (rec, kind, devisBcList, depenses, reimbList) => {
   if (!rec || !rec.id || !rec.transfert) return false;

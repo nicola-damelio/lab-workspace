@@ -432,7 +432,7 @@ const SummaryCard = ({ label, value, tone = 'slate', hint }) => {
    ═════════════════════════════════════════════════════════════════════════ */
 const DepensesPage = () => {
   const {
-    data, settings, upsert, remove, currentUser,
+    data, settings, upsert, removeRecord, currentUser,
     access, navigate, focus, clearFocus, updateMany,
   } = useAdmin();
   const list = useMemo(() => (Array.isArray(data.depenses) ? data.depenses : []), [data.depenses]);
@@ -1107,22 +1107,21 @@ const DepensesPage = () => {
   };
 
   const removeReimb = (rec) => {
-    if (!rec || !rec.id) return;
+    if (!rec) return;
     const label = txt(rec.description) || 'ce remboursement';
     if (window.confirm(`Supprimer définitivement le remboursement « ${label} » ?`)) {
-      remove('reimbursements', rec.id);
+      removeRecord('reimbursements', rec);
     }
   };
 
   const removeDepense = (rec) => {
-    if (!rec || !rec.id) return;
-    const label = txt(rec.description) || pick(rec, ['numBC', 'numSIFAC', 'numFacture']) || rec.id;
+    if (!rec) return;
+    const label = txt(rec.description) || pick(rec, ['numBC', 'numSIFAC', 'numFacture']) || rec.id || 'cette dépense';
     if (!window.confirm(`Supprimer définitivement la dépense « ${label} » ?`)) return;
     /* Nettoyage des liens ENTRANTS : un devis / BC approuvé qui pointait vers
        cette dépense (`depenseId`) ou une OM source (`depenseId`) ne doit pas
-       rester « lié » à une dépense disparue — sinon la demande d'origine
-       paraîtrait encore transférée alors que sa cible a été supprimée (voir
-       ./useOrphanTransferRepair.js). */
+       rester « lié » à une dépense disparue — le devis / BC serait autrement
+       marqué « rattaché à une dépense » qui n'existe plus. */
     const devisChanges = (Array.isArray(data.devisBc) ? data.devisBc : [])
       .filter((x) => x && x.id && txt(x.depenseId) === rec.id)
       .map((x) => ({ id: x.id, patch: { depenseId: null } }));
@@ -1131,7 +1130,7 @@ const DepensesPage = () => {
       .filter((o) => o && o.id && txt(o.depenseId) === rec.id)
       .map((o) => ({ id: o.id, patch: { depenseId: null } }));
     if (omChanges.length) updateMany('om', omChanges);
-    remove('depenses', rec.id);
+    removeRecord('depenses', rec);
   };
 
   /* Déplacement d’une ligne entre les trois onglets (Achats / PI / OM).

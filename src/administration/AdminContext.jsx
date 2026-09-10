@@ -136,6 +136,48 @@ export const AdminProvider = ({
     commitKind(kind, (cur) => cur.filter((d) => d.id !== id));
   };
 
+  /** Suppression « par enregistrement », sûre même pour une ligne héritée SANS
+   *  `id` (anciens imports) : `remove(kind, undefined)` effacerait TOUTES les
+   *  lignes dépourvues d’identifiant — on cible alors l’objet lui-même. */
+  const removeRecord = (kind, target) => {
+    if (!target) return;
+    const id = String(target.id || '').trim();
+    if (id) { remove(kind, target.id); return; }
+    commitKind(kind, (cur) => cur.filter((rec) => rec !== target));
+  };
+
+  /* Réparation d’identifiants : une ligne héritée SANS `id` ne peut être ni
+     modifiée (l’enregistrement en créerait une copie) ni supprimée (les pages
+     abandonnent silencieusement la suppression). On attribue donc un
+     identifiant unique à ces lignes au premier chargement — une seule écriture
+     par collection, idempotente (dès qu’il n’y a plus de ligne sans
+     identifiant, l’effet ne fait plus rien). */
+  const idRepairRef = useRef(false);
+  useEffect(() => {
+    if (idRepairRef.current) return;
+    const kinds = Object.keys(ADMIN_COLLECTIONS).filter((kind) =>
+      (Array.isArray(data[kind]) ? data[kind] : [])
+        .some((rec) => !rec || !String(rec.id || '').trim()));
+    if (!kinds.length) return;
+    idRepairRef.current = true;
+    const now = Date.now();
+    const actor = { name: currentUser?.name || 'Invité', role: currentUser?.role || 'user' };
+    kinds.forEach((kind) => {
+      commitKind(kind, (cur) => cur.filter(Boolean).map((rec) => {
+        if (String(rec.id || '').trim()) return rec;
+        return {
+          ...rec,
+          id: makeId(kind),
+          createdAt: rec.createdAt || now,
+          createdBy: rec.createdBy || actor,
+          updatedAt: now,
+          updatedBy: actor,
+        };
+      }));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
   /* Rapatriement automatique des anciennes lignes Dépenses classées
      « Remboursements » (saisies ou importées avant l’arrivée du registre
      dédié) vers la collection `reimbursements`. Un remboursement est une
@@ -229,6 +271,7 @@ export const AdminProvider = ({
     access,
     upsert,
     remove,
+    removeRecord,
     importMany,
     updateMany,
     updateSettings,

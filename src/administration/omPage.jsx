@@ -25,7 +25,6 @@ import { useAdmin } from './AdminContext';
 import { SmartTable } from './smartTable';
 import { AdminImportModal } from './adminImportModal';
 import { omColumns } from './collectionPages';
-import { useOrphanTransferRepair } from './useOrphanTransferRepair';
 import { OM_COST_STATUSES, OM_STATUSES, APPROVAL_GESTION } from './adminSchema';
 import { parseEuroAmount } from './importUtils';
 import { uploadLocalFile, cloudBackendAvailable } from '../utils/driveUpload';
@@ -610,7 +609,7 @@ const OmModal = ({
    ═════════════════════════════════════════════════════════════════════════ */
 export const OmPage = () => {
   const {
-    data, settings, upsert, remove, importMany, updateMany,
+    data, settings, upsert, removeRecord, importMany, updateMany,
     currentUser, access, operators, navigate, focus, clearFocus,
   } = useAdmin();
   const om = useMemo(() => (Array.isArray(data.om) ? data.om : []), [data.om]);
@@ -627,11 +626,6 @@ export const OmPage = () => {
     [data.reimbursements]
   );
 
-  /* Réparation automatique des transferts « orphelins » (devis / BC et dépense
-     d'origine supprimés) : la marque `transfert` obsolète est retirée, l'OM
-     redevient visible — donc supprimable et éventuellement re-transférable. */
-  useOrphanTransferRepair();
-
   const [modal, setModal] = useState(null); // null | { mode: 'new' } | { mode: 'edit', rec }
   const [importOpen, setImportOpen] = useState(false);
   const [notice, setNotice] = useState(null); // { tone, text, mailto? }
@@ -645,7 +639,14 @@ export const OmPage = () => {
   useEffect(() => {
     if (!focus || focus.pageId !== 'om') return;
     const rid = focus.recordId;
-    if (rid && om.some((o) => o.id === rid)) setFocusRow(rid);
+    if (rid && om.some((o) => o.id === rid)) {
+      setFocusRow(rid);
+      /* La ligne ciblée (ex. clic sur un OM prévu de la page Recettes) peut être
+         une OM TRANSFÉRÉE — masquée par défaut : on rétablit l’affichage pour
+         qu’elle soit bien visible (et supprimable) à l’arrivée. */
+      const target = om.find((o) => o.id === rid);
+      if (target && target.transfert) setShowSoldes(true);
+    }
     if (typeof clearFocus === 'function') clearFocus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus]);
@@ -874,11 +875,11 @@ export const OmPage = () => {
   };
 
   const onRemove = (rec) => {
-    if (!rec || !rec.id) return;
+    if (!rec) return;
     if (!isSuper && !scopeCanSeeItem(rec, { isSuper, meNames, mePersonId })) return;
     const label = missionOf(rec) || rec.id;
     if (!window.confirm(`Supprimer l’ordre de mission « ${label} » ?\nCette action est définitive.`)) return;
-    remove('om', rec.id);
+    removeRecord('om', rec);
     setNotice({ tone: 'ok', text: `Ordre de mission « ${label} » supprimé.` });
   };
 
