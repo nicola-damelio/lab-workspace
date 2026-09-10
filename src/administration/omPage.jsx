@@ -1152,6 +1152,74 @@ export const OmPage = () => {
     if (createdDevis && typeof navigate === 'function') navigate('devisBc');
   };
 
+  /* ── Transfert DIRECT d’un OM vers Dépenses › Remboursements ─────────────
+     Bouton « 💸 Remb. » porté par chaque OM prévu / souhaité (superutilisateur).
+     Circuit « frais avancés » : TOUS les postes chiffrés deviennent des postes
+     « Remboursement » et UNE fiche du registre dédié est créée (badge
+     « À corriger », comme depuis la page Recettes). L’OM est acceptée au passage
+     puis marquée transférée (`remboursementsSeuls`) : elle disparaît de cette
+     liste et son montant n’est plus compté dans « OM prévus » (pages Recettes /
+     Budget) — il passe dans la colonne « Remboursements », déduite du solde de
+     la ligne budgétaire. */
+  const transferOmToRemb = (rec) => {
+    if (!rec || !rec.id || !isSuper) return;
+    const label = missionOf(rec) || rec.id;
+    /* OM déjà transmise pour signature (des devis existent) : basculer ses
+       postes en remboursement laisserait ces devis orphelins dans
+       « Approbation devis & BC » — on l’explique au lieu de le faire
+       silencieusement. */
+    if (rec.transfert && !rec.transfert.remboursementsSeuls) {
+      setNotice({
+        tone: 'warn',
+        text: `L’OM « ${label} » a déjà été transmise pour signature (devis / BC en cours) : son remboursement se gère depuis « Approbation devis & BC » et la fiche Remboursement créée à cette occasion.`,
+      });
+      return;
+    }
+    const already = reimbursements
+      .find((x) => x && txt(x.sourceKind) === 'om' && txt(x.sourceId) === rec.id) || null;
+    if (already) {
+      setNotice({ tone: 'ok', text: `L’OM « ${label} » est déjà transférée dans Dépenses › Remboursements.` });
+      return;
+    }
+    const summary = omTransferSummary(rec);
+    if (!summary.parts.length) {
+      setNotice({ tone: 'warn', text: `Chiffrez au moins un poste de coût avant de transférer l’OM « ${label} » vers les remboursements.` });
+      return;
+    }
+    const cible = TRANSFER_TARGETS.Gestionnaire.code;
+    const total = summary.parts.reduce((s, p) => s + (p.montant || 0), 0);
+    const lines = [
+      `Transférer l’OM « ${label} » vers Dépenses › Remboursements ?`,
+      '',
+      `• 1 fiche de frais de ${euro.format(total)} (postes : ${summary.parts.map((p) => p.label).join(' · ')}) — badge « À corriger »`,
+      `• destinataire : ${targetMetaOf(cible).title}`,
+      '• l’OM disparaît de « OM prévus » (et de sa page, rétablie par « Afficher les transférées ») : son montant est déduit du solde de la ligne budgétaire',
+    ];
+    if (!window.confirm(lines.join('\n'))) return;
+    /* Tous les postes deviennent « Remboursement » : aucun ne reste compté
+       « OM prévu » (sinon le montant serait compté deux fois). */
+    const partMode = { ...(rec.partMode || {}) };
+    summary.parts.forEach((p) => { partMode[p.key] = 'reimb'; });
+    const saved = upsert('reimbursements', reimbPatchFromOm(rec, summary.parts, { cible, by: currentName }), null);
+    upsert('om', {
+      ...(isOmApproved(pick(rec, ['statut']))
+        ? {}
+        : { statut: 'Acceptée', statutChangedBy: currentName, statutChangedAt: Date.now() }),
+      partMode,
+      transfert: {
+        cible,
+        by: currentName,
+        at: Date.now(),
+        depuis: 'om',
+        remboursementsSeuls: true,
+        reimbId: (saved && saved.id) || '',
+      },
+    }, rec.id);
+    setNotice({
+      tone: 'ok',
+      text: `OM « ${label} » transférée vers Dépenses › Remboursements (fiche « À corriger », ${euro.format(total)}).`,
+    });
+  };
 
   const columns = [
     {
@@ -1221,6 +1289,22 @@ export const OmPage = () => {
             {label}
           </button>
         );
+        /* Transfert « frais avancés » : TOUS les postes de l’OM basculent en
+           remboursement (1 fiche dans Dépenses › Remboursements, badge
+           « À corriger », montant déduit du solde de la ligne budgétaire). */
+        const reimbButton = (disabled = false) => (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => transferOmToRemb(r)}
+            title={disabled
+              ? 'Chiffrez au moins un poste de coût (Transport · Logement · Repas · Inscription) pour transférer l’OM en remboursement.'
+              : 'Transférer l’OM en remboursement : tous les postes deviennent « Remboursement » — 1 fiche « À corriger » dans Dépenses › Remboursements, montant déduit du solde de la ligne budgétaire'}
+            className="text-left text-[11px] font-black px-2 py-1 rounded-lg border whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed transition-colors border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+          >
+            💸 Remb.
+          </button>
+        );
         return (
           <div className="min-w-[230px] max-w-[320px] flex flex-col gap-1">
             {transferred && metaT ? (
@@ -1260,6 +1344,7 @@ export const OmPage = () => {
                     approved ? '🔧 Pour révision' : '✎ Révision',
                     'Les postes sans N° devis / fichier partent « En gestion » pour être complétés',
                   )}
+                  {reimbButton(!(st && st.parts.length))}
                 </div>
               </div>
             ) : null}
@@ -1367,8 +1452,10 @@ export const OmPage = () => {
         Remboursements). Pour une demande en attente, la colonne <b>« Gestion des frais »</b> propose au directeur
         <b>« ✓ Signature »</b> ou <b>« ✎ Révision »</b> : l'OM est acceptée, des devis « en attente de signature »
         (postes complets) ou « En gestion » (à compléter) sont créés par poste « Commande », et la fiche Remboursement
-        « À corriger » pour les postes « Remb. ». L’OM transférée <b>disparaît de la liste</b> et son montant est suivi
-        dans les colonnes <b>« OM en signature / signé »</b> de la page Recettes jusqu'à la signature des BC.
+        « À corriger » pour les postes « Remb. ». Le bouton <b>« 💸 Remb. »</b> transfère quant à lui <b>tous les postes</b>
+        en remboursement (frais avancés : 1 fiche dans Dépenses › Remboursements, montant déduit du solde). L’OM transférée
+        <b>disparaît de la liste</b> et son montant est suivi dans les colonnes <b>« OM en signature / signé »</b> de la page
+        Recettes jusqu'à la signature des BC.
         « ✏️ Modifier » ouvre la fiche, « 🗑️ » supprime, « 📥 Importer » rejoue la feuille « ENT / Prix / Description » du classeur.
       </div>
 

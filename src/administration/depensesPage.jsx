@@ -34,9 +34,10 @@
         (collection `reimbursements`) : frais avancés par un membre puis
         remboursés par le laboratoire. Formulaire sur le modèle d’un OM prévu
         (dates, bénéficiaire, coûts détaillés) — NI devis, NI N° SIFAC/D.A.,
-        NI BC, NI fournisseur. Un remboursement reste dans son registre, même
-        une fois le remboursement effectué : il ne migre jamais vers les
-        onglets Achats / PI / OM. La page Recettes le décompte dans sa
+        NI BC, NI fournisseur. Une fiche reste dans son registre : elle n’en
+        sort que par un déplacement EXPLICITE d’onglet (colonne « ↔ Déplacer »
+        des deux tableaux), qui la convertit en ligne de Dépenses — et
+        inversement. La page Recettes décompte le registre dans sa
         colonne « Remboursements » (déduite de la « Dispo université » dans le
         calcul du solde). Les anciennes lignes du classeur classées
         « Remboursements » sont rapatriées ici automatiquement.
@@ -74,7 +75,7 @@ import {
   RECETTE_TYPES, DEPENSE_NATURES, DEPENSE_STATUSES, DEPENSE_FOURNISSEUR_PI,
   isPiFournisseur, depenseKindOf, DEPENSE_KIND_META, DEPENSE_FIELD_LABEL,
   DEFAULT_DEPENSE_MANDATORY, ADMIN_PAGES,
-  REIMBURSEMENT_COST_FIELDS, reimbTotalOf, SERVICE_DEMANDEUR,
+  REIMBURSEMENT_COST_FIELDS, reimbTotalOf, SERVICE_DEMANDEUR, reimbursementFromDepense,
 } from './adminSchema';
 import { parseEuroAmount } from './importUtils';
 import { fileBudgetDocs, budgetDocPath, budgetDocFileName, budgetDocLinkSlots, BUDGET_DOC_FOLDER_BY_FIELD } from './driveFiling';
@@ -154,6 +155,12 @@ const isReimbNature = (v) => {
   return /(^|[^a-zà-ÿ])(rembours\w*|reimburs\w*)([^a-zà-ÿ]|$)/.test(s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
 };
 const isReimbDepense = (d) => isReimbNature(d && (d.classification || d.nature));
+
+/* « Mission » : classification posée automatiquement sur les dépenses OM
+   (transfert depuis « OM prévus / souhaités », ou déplacement d’onglet vers
+   « OM »). Elle n’est pas une valeur du sélecteur « Classification / nature » :
+   on la retire quand la ligne quitte l’onglet OM. */
+const isMissionNature = (v) => /^mission$/i.test(txt(v));
 
 /* Prestation interne (PI) : service interne facturé SANS bon de commande — ni
    N° BC, ni N° SIFAC. Ces champs « commande » n’ont donc pas d’objet pour une
@@ -447,7 +454,20 @@ const DepensesPage = () => {
     [data.reimbursements]
   );
 
+  /* Opérateur courant (traçabilité des déplacements d’onglet). */
+  const currentName = txt(
+    (access.profile && access.profile.person && access.profile.person.nom)
+    || (currentUser && currentUser.name)
+  );
+
   const [modal, setModal] = useState(null); // { rec } | null
+  /* Bandeau de confirmation d’un déplacement d’onglet (masqué tout seul). */
+  const [moveNotice, setMoveNotice] = useState(null);
+  useEffect(() => {
+    if (!moveNotice) return undefined;
+    const t = setTimeout(() => setMoveNotice(null), 7000);
+    return () => clearTimeout(t);
+  }, [moveNotice]);
   const [importOpen, setImportOpen] = useState(false);
   /* Onglet actif : 'achats' | 'pi' | 'om' | 'stages' — voir le regroupement plus bas. */
   const [tab, setTab] = useState('achats');
@@ -1114,14 +1134,12 @@ const DepensesPage = () => {
     }
   };
 
-  const removeDepense = (rec) => {
-    if (!rec) return;
-    const label = txt(rec.description) || pick(rec, ['numBC', 'numSIFAC', 'numFacture']) || rec.id || 'cette dépense';
-    if (!window.confirm(`Supprimer définitivement la dépense « ${label} » ?`)) return;
-    /* Nettoyage des liens ENTRANTS : un devis / BC approuvé qui pointait vers
-       cette dépense (`depenseId`) ou une OM source (`depenseId`) ne doit pas
-       rester « lié » à une dépense disparue — le devis / BC serait autrement
-       marqué « rattaché à une dépense » qui n'existe plus. */
+  /* Nettoyage des liens ENTRANTS d’une dépense qui quitte la table Dépenses
+     (suppression, ou déplacement vers le registre des remboursements) : un
+     devis / BC approuvé qui la visait (`depenseId`) ou une OM source ne doit pas
+     rester « lié » à une ligne disparue — le devis / BC serait autrement marqué
+     « rattaché à une dépense » qui n'existe plus. */
+  const unlinkDepense = (rec) => {
     const devisChanges = (Array.isArray(data.devisBc) ? data.devisBc : [])
       .filter((x) => x && x.id && txt(x.depenseId) === rec.id)
       .map((x) => ({ id: x.id, patch: { depenseId: null } }));
@@ -1130,29 +1148,163 @@ const DepensesPage = () => {
       .filter((o) => o && o.id && txt(o.depenseId) === rec.id)
       .map((o) => ({ id: o.id, patch: { depenseId: null } }));
     if (omChanges.length) updateMany('om', omChanges);
+  };
+
+  const removeDepense = (rec) => {
+    if (!rec) return;
+    const label = txt(rec.description) || pick(rec, ['numBC', 'numSIFAC', 'numFacture']) || rec.id || 'cette dépense';
+    if (!window.confirm(`Supprimer définitivement la dépense « ${label} » ?`)) return;
+    unlinkDepense(rec);
     removeRecord('depenses', rec);
   };
 
-  /* Déplacement d’une ligne entre les trois onglets (Achats / PI / OM).
-     Familles possibles : toutes, sauf celle courante. */
-  const moveTargetsOf = (r) => ['achat', 'pi', 'om'].filter((t) => t !== depenseKindOf(r));
-  const moveDepenseTo = (r, target) => {
-    if (!r || !r.id || !['achat', 'pi', 'om'].includes(target)) return;
-    const from = depenseKindOf(r);
-    if (from === target) return;
-    const label = txt(r.description) || pick(r, ['numBC', 'numSIFAC', 'numFacture']) || r.id;
-    const note = target === 'om'
-      ? '\n\nCette ligne devient une dépense « OM » (onglet OM, indépendant de la page « OM prévus / souhaités »). Elle n’est plus comptée dans « Engagé (BC signés + PI) » des pages Recettes / Budget : son coût se retrouve via la collection om.'
-      : target === 'pi'
-        ? '\n\nLe fournisseur « PI » est appliqué : la ligne sera comptée comme engagée (prestation interne) dans les pages Recettes / Budget.'
-        : isPiFournisseur(r.fournisseur)
-          ? '\n\nLe fournisseur « PI » est effacé : pensez à renseigner le vrai fournisseur dans la fiche.'
-          : '';
-    if (!window.confirm(`Déplacer « ${label} » de « ${DEPENSE_KIND_META[from].label} » vers « ${DEPENSE_KIND_META[target].label} » ?${note}`)) return;
-    const patch = { type: target };
+  /* ── Déplacement d’une ligne entre TOUS les onglets de la page ───────────
+     « Achats » · « Prestations internes » · « OM » se pilotent par la FAMILLE
+     de la dépense (`type`, + fournisseur « PI ») ; « Rémunération stages » par
+     la classification « Stages » ; « Remboursements » par une VRAIE migration
+     vers le registre dédié (collection `reimbursements`) — la ligne quitte
+     alors la table Dépenses, et inversement. */
+  const MOVE_TABS = ['achats', 'pi', 'om', 'stages', 'remboursements'];
+  const MOVE_TAB_META = {
+    achats: { label: 'Achats', icon: '🛒' },
+    pi: { label: 'Prestations internes', icon: '🛠️' },
+    om: { label: 'OM', icon: '✈️' },
+    stages: { label: 'Rémunération stages', icon: '🎓' },
+    remboursements: { label: 'Remboursements', icon: '💸' },
+  };
+  /* Onglet d’une ligne de la table Dépenses : la famille (`depenseKindOf`) pour
+     les trois premiers onglets, la classification pour les deux derniers. */
+  const depTabOf = (r) => {
+    if (isReimbDepense(r)) return 'remboursements';
+    if (isStageDepense(r)) return 'stages';
+    const k = depenseKindOf(r);
+    return k === 'pi' ? 'pi' : (k === 'om' ? 'om' : 'achats');
+  };
+  const moveTargetsOf = (fromTab) => MOVE_TABS.filter((t) => t !== fromTab);
+  /* Patch d’une ligne de Dépenses qui change d’onglet (hors Remboursements, qui
+     passe par une conversion vers le registre dédié). */
+  const movePatchOf = (r, target) => {
+    const patch = { type: target === 'achats' ? 'achat' : target };
     if (target === 'pi') patch.fournisseur = DEPENSE_FOURNISSEUR_PI;
-    else if (target === 'achat' && isPiFournisseur(r.fournisseur)) patch.fournisseur = '';
-    upsert('depenses', patch, r.id);
+    else if (target === 'achats' && isPiFournisseur(r.fournisseur)) patch.fournisseur = '';
+    if (target === 'stages') patch.classification = 'Stages';
+    else if (isStageDepense(r)) patch.classification = '';
+    else if (target === 'om' && !txt(r.classification || r.nature)) patch.classification = 'Mission';
+    else if (target !== 'om' && isMissionNature(r.classification || r.nature)) patch.classification = '';
+    return patch;
+  };
+  /* Fiche « Remboursement » → ligne de la table Dépenses (déplacement inverse).
+     Le registre dédié n’a ni devis, ni N° SIFAC / BC : la ligne créée reprend la
+     famille visée, sa classification (« Stages » / « Mission »), ses dates, son
+     bénéficiaire et son coût total. Le lien vers l’OM d’origine (transfert
+     « frais avancés ») est conservé. */
+  const depensePatchFromReimb = (x, target) => ({
+    type: target === 'achats' ? 'achat' : target,
+    description: txt(x.description),
+    demandeur: txt(x.demandeur),
+    destination: txt(x.destination),
+    categorie: txt(x.categorie),
+    classification: target === 'stages' ? 'Stages' : (target === 'om' ? 'Mission' : ''),
+    ligneBudgetaire: txt(x.ligneBudgetaire),
+    recetteId: txt(x.recetteId),
+    montant: reimbTotalOf(x) || null,
+    fraisPort: null,
+    dateDemande: isoOf(x.dateDemande),
+    dateMission: isoOf(x.dateMission),
+    dateRetour: isoOf(x.dateRetour),
+    fournisseur: target === 'pi' ? DEPENSE_FOURNISSEUR_PI : '',
+    omId: txt(x.sourceKind) === 'om' ? txt(x.sourceId) : '',
+    omNo: txt(x.numOM),
+    omUrl: txt(x.etatLiquidatifUrl),
+    suivi: '',
+    statut: '',
+    nonComptabiliseEnt: false,
+    ent: '',
+    livraisonComplete: '',
+    livraisons: [],
+    commentaires: [
+      txt(x.commentaires),
+      `Ligne déplacée depuis Dépenses › Remboursements par ${currentName || 'un opérateur'} (déplacement d’onglet).`,
+    ].filter(Boolean).join(' · '),
+  });
+
+  /* Déplace une ligne (dépense OU fiche Remboursement) vers l’onglet visé.
+     `fromTab` est fourni pour les fiches du registre « Remboursements »
+     (elles n’ont pas de famille `type` / classification de dépense). */
+  const moveRowTo = (r, target, fromTab) => {
+    if (!r || !r.id || !MOVE_TAB_META[target]) return;
+    const from = fromTab || depTabOf(r);
+    if (from === target) return;
+    const label = txt(r.description) || pick(r, ['numOM', 'numBC', 'numSIFAC', 'numFacture']) || r.id;
+    const note = target === 'remboursements'
+      ? '\n\nLa ligne QUITTE la table Dépenses et devient une fiche du registre dédié « Remboursements » (montant déduit du solde de la ligne budgétaire, page Recettes).'
+      : from === 'remboursements'
+        ? '\n\nLa fiche quitte le registre « Remboursements » et devient une ligne de la table Dépenses (son montant sort de la colonne « Remboursements » des Recettes).'
+        : target === 'stages'
+          ? '\n\nLa « Classification / nature » passe à « Stages » : la ligne est décomptée dans la colonne « Stages » de la page Recettes.'
+          : target === 'om'
+            ? '\n\nCette ligne devient une dépense « OM » (onglet OM, indépendant de la page « OM prévus / souhaités »).'
+            : target === 'pi'
+              ? '\n\nLe fournisseur « PI » est appliqué : la ligne sera comptée comme engagée (prestation interne) dans les pages Recettes / Budget.'
+              : (isPiFournisseur(r.fournisseur)
+                ? '\n\nLe fournisseur « PI » est effacé : pensez à renseigner le vrai fournisseur dans la fiche.'
+                : '');
+    if (!window.confirm(`Déplacer « ${label} » de « ${MOVE_TAB_META[from].label} » vers « ${MOVE_TAB_META[target].label} » ?${note}`)) return;
+    if (target === 'remboursements') {
+      /* Vraie migration : la fiche du registre dédié est créée (en conservant le
+         lien vers l’OM d’origine quand la ligne en vient), puis la ligne de la
+         table Dépenses est retirée — jamais les deux à la fois. */
+      const omSource = txt(r.omId) && (Array.isArray(data.om) ? data.om : []).some((o) => o && o.id === r.omId)
+        ? txt(r.omId)
+        : '';
+      upsert('reimbursements', {
+        ...reimbursementFromDepense(r),
+        ...(r.aCorriger ? { aCorriger: true } : {}),
+        sourceKind: omSource ? 'om' : 'depense',
+        sourceId: omSource || r.id,
+        commentaires: [
+          txt(r.commentaires),
+          `Fiche créée depuis Dépenses › ${MOVE_TAB_META[from].label} par ${currentName || 'un opérateur'} (déplacement d’onglet).`,
+        ].filter(Boolean).join(' · '),
+      }, null);
+      unlinkDepense(r);
+      removeRecord('depenses', r);
+      setMoveNotice(`« ${label} » déplacée vers « Remboursements » : la fiche a été créée dans le registre dédié, la ligne a quitté la table Dépenses.`);
+      return;
+    }
+    if (from === 'remboursements') {
+      upsert('depenses', depensePatchFromReimb(r, target), null);
+      removeRecord('reimbursements', r);
+      setMoveNotice(`Remboursement « ${label} » déplacé vers « ${MOVE_TAB_META[target].label} » : une ligne a été créée dans la table Dépenses, la fiche a quitté le registre.`);
+      return;
+    }
+    upsert('depenses', movePatchOf(r, target), r.id);
+    setMoveNotice(`« ${label} » déplacée vers « ${MOVE_TAB_META[target].label} ».`);
+  };
+
+  /* Sélecteur « ↔ Déplacer » d’une ligne : tous les onglets de la page, sauf
+     celui où la ligne se trouve déjà. */
+  const moveSelect = (r, fromTab) => {
+    const targets = moveTargetsOf(fromTab);
+    if (!targets.length) return null;
+    return (
+      <select
+        value=""
+        onChange={(e) => {
+          const t = e.target.value;
+          if (t) moveRowTo(r, t, fromTab);
+        }}
+        title="Déplacer cette ligne vers un autre onglet de la page (Achats / Prestations internes / OM / Rémunération stages / Remboursements)"
+        className="text-[10px] font-black text-slate-600 border border-slate-200 bg-slate-50 rounded-lg px-1 py-1 outline-none cursor-pointer hover:border-slate-300"
+      >
+        <option value="">↔ Déplacer</option>
+        {targets.map((t) => (
+          <option key={t} value={t}>
+            {MOVE_TAB_META[t].icon} vers {MOVE_TAB_META[t].label}
+          </option>
+        ))}
+      </select>
+    );
   };
 
   /* ── Colonnes du tableau (ordre de l’onglet du classeur) ──────────────── */
@@ -1388,22 +1540,7 @@ const DepensesPage = () => {
       value: () => '',
       display: (r) => (
         <div className="flex items-center gap-1 whitespace-nowrap">
-          <select
-            value=""
-            onChange={(e) => {
-              const t = e.target.value;
-              if (t) moveDepenseTo(r, t);
-            }}
-            title="Déplacer cette dépense vers un autre onglet (Achats / PI / OM)"
-            className="text-[10px] font-black text-slate-600 border border-slate-200 bg-slate-50 rounded-lg px-1 py-1 outline-none cursor-pointer hover:border-slate-300"
-          >
-            <option value="">↔ Déplacer</option>
-            {moveTargetsOf(r).map((t) => (
-              <option key={t} value={t}>
-                {DEPENSE_KIND_META[t].icon} vers {DEPENSE_KIND_META[t].label}
-              </option>
-            ))}
-          </select>
+          {moveSelect(r, depTabOf(r))}
           <button
             type="button"
             title="Modifier la dépense"
@@ -1442,8 +1579,9 @@ const DepensesPage = () => {
 
   /* Colonnes du registre « Remboursements » — formulaire calqué sur un OM
      prévu (sans la partie statut En attente / Acceptée / Refusée) : AUCUNE
-     colonne devis / N° SIFAC / BC / fournisseur, et pas de « Déplacer » vers
-     les onglets Achats / PI / OM (une fiche ne migre jamais). */
+     colonne devis / N° SIFAC / BC / fournisseur. Le sélecteur « ↔ Déplacer »
+     permet de convertir explicitement la fiche en ligne de Dépenses (Achats /
+     PI / OM / Rémunération stages) — et inversement depuis les autres onglets. */
   const reimbCostDetail = (r) => REIMBURSEMENT_COST_FIELDS
     .map((c) => {
       const n = numOf(r && (r[c.key] !== undefined && r[c.key] !== null && r[c.key] !== '' ? r[c.key] : null));
@@ -1561,6 +1699,7 @@ const DepensesPage = () => {
       key: 'actions', label: '', filter: 'none', filterable: false, value: () => '',
       display: (r) => (
         <div className="flex items-center gap-1 whitespace-nowrap">
+          {moveSelect(r, 'remboursements')}
           <button
             type="button"
             title="Modifier le remboursement"
@@ -1615,6 +1754,17 @@ const DepensesPage = () => {
           <button
             type="button"
             onClick={linkRepair.clearReport}
+            className="shrink-0 font-black opacity-60 hover:opacity-100"
+            title="Masquer"
+          >✕</button>
+        </div>
+      )}
+      {moveNotice && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs text-emerald-800 flex items-start justify-between gap-3 shadow-sm">
+          <span className="min-w-0">↔ {moveNotice}</span>
+          <button
+            type="button"
+            onClick={() => setMoveNotice(null)}
             className="shrink-0 font-black opacity-60 hover:opacity-100"
             title="Masquer"
           >✕</button>
@@ -1822,8 +1972,9 @@ const DepensesPage = () => {
             <p className="text-sm text-slate-400 mt-1 mb-4">
               Le registre des remboursements est vide. Utilisez « ＋ Ajouter un remboursement » pour saisir des frais
               avancés par un membre (objet, bénéficiaire, dates, coûts…), sur le modèle d’un OM prévu : pas de devis, de
-              N° SIFAC/D.A. ni de BC, pas de fournisseur. Une fiche créée reste ici — elle est déduite du solde de sa ligne
-              budgétaire (page Recettes › colonne « Remboursements ») et ne migre jamais vers les Dépenses réelles.
+              N° SIFAC/D.A. ni de BC, pas de fournisseur. Une fiche reste ici — elle est déduite du solde de sa ligne
+              budgétaire (page Recettes › colonne « Remboursements ») — sauf si vous la déplacez explicitement vers un
+              autre onglet (« ↔ Déplacer »), auquel cas elle devient une ligne de la table Dépenses.
             </p>
           </div>
         ) : (
@@ -2933,7 +3084,8 @@ const RemboursementModal = ({ rec, recettes, types, demandeurNames, onCancel, on
             </div>
             <p className="text-[11px] text-slate-400 mt-2 leading-snug">
               Le total sera déduit du solde de cette ligne dans la page Recettes (colonne « Remboursements »). Le
-              remboursement reste ici, dans son registre : il ne migre jamais vers les Dépenses (Achats / PI / OM).
+              remboursement reste ici, dans son registre : il ne rejoint la table Dépenses (Achats / PI / OM) que si
+              vous le déplacez explicitement avec « ↔ Déplacer ».
             </p>
           </Section>
 
