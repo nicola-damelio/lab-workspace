@@ -1404,6 +1404,15 @@ if (customType === 'dosy') {
     }
   }, [isCloudReady, currentDatasetId, needsLogin]);
 
+  /* Datasets supprimés VOLONTAIREMENT pendant cette session. Le document est
+     retiré de Firestore, mais le cache localStorage de l’appareil en garde une
+     copie : sans ce marqueur, l’écouteur du snapshot la ré-ajoutait aussitôt à
+     la liste et la suppression semblait « ne rien faire » (le dataset restait
+     vivant, y compris après rechargement tant que le cache local existait).
+     Il empêche aussi la sauvegarde automatique en attente de recréer le
+     document (un `set(..., {merge:true})` ressuscite un document supprimé). */
+  const deletedDatasetIdsRef = useRef(new Set());
+
   useEffect(() => {
     // Cloud datasets live under `artifacts/{appId}/public/data/datasets`. This
     // path is readable AND writable from any device without a Google sign-in
@@ -1436,6 +1445,8 @@ if (customType === 'dosy') {
             const local = stored ? JSON.parse(stored) : [];
             (Array.isArray(local) ? local : []).forEach((l) => {
               if (!l || !l.id) return;
+              // Dataset supprimé volontairement : ne jamais le ressusciter.
+              if (deletedDatasetIdsRef.current.has(String(l.id))) return;
               if (!dsets.some((d) => String(d.id) === String(l.id))) dsets.push(l);
             });
             dsets.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
@@ -2920,29 +2931,78 @@ const openDataset = (dset) => {
 
 
 
+  /* ── Suppression d’un dataset : le nettoyage LOCAL est obligatoire ─────────
+     Firestore est la source de vérité, mais chaque appareil garde un cache
+     localStorage que l’écouteur du snapshot ré-injecte : sans ce nettoyage, le
+     dataset supprimé réapparaissait aussitôt dans la liste (le « Delete » de
+     Database Cleanup semblait ne rien faire). */
+  const forgetLocalDataset = (id) => {
+    const key = String(id);
+    try {
+      const stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
+      const kept = (Array.isArray(stored) ? stored : []).filter((d) => !d || String(d.id) !== key);
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(kept));
+    } catch { /* cache illisible : le cloud reste la référence */ }
+    setDatasetsList((prev) => (Array.isArray(prev) ? prev : []).filter((d) => !d || String(d.id) !== key));
+  };
+
+  /* Ferme le dataset OUVERT sans le sauvegarder : il vient d’être supprimé et la
+     sauvegarde automatique débouncée le recréerait (`set(..., {merge:true})` sur
+     un document supprimé recrée le document). Toute sauvegarde en attente est
+     annulée avant d’afficher la page de démarrage. */
+  const closeDeletedDataset = (id) => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    if (!currentDatasetId || String(currentDatasetId) !== String(id)) return;
+    window.history.pushState({}, '', window.location.pathname);
+    setAppView('explorer');
+    setCurrentDatasetId(null);
+    setDatasetTitle('');
+    setDatasetSubtitle('');
+  };
+
   const deleteDataset = (e, id) => {
     e.stopPropagation();
+    const target = (Array.isArray(datasetsList) ? datasetsList : [])
+      .find((d) => d && String(d.id) === String(id)) || null;
+    const label = (target && (target.title || target.id)) || id;
+    const isOpen = !!currentDatasetId && String(currentDatasetId) === String(id);
 
     setDialog({
       type: 'confirm',
       title: 'Delete Dataset',
-      message: 'Are you sure you want to delete this entire Dataset?',
+      message: isOpen
+        ? `« ${label} » est le dataset actuellement OUVERT.\n\nIl sera fermé (sans sauvegarde) puis supprimé définitivement : cloud, cache de cet appareil et projets liés. Continuer ?`
+        : 'Are you sure you want to delete this entire Dataset?',
       onConfirm: async () => {
-        if (db) {
-          await db.collection(`artifacts/${appId}/public/data/datasets`).doc(id).delete();
-        } else {
-          let stored = [];
-
-          try {
-            stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
-          } catch {}
-
-          stored = stored.filter((d) => d.id !== id);
-
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
-          setDatasetsList(stored);
+        /* 1) Marquer comme supprimé AVANT toute écriture : ni le snapshot (qui
+           ré-injecte le cache local) ni une sauvegarde en attente ne doivent
+           recréer ce dataset. */
+        deletedDatasetIdsRef.current.add(String(id));
+        closeDeletedDataset(id);
+        try {
+          if (db) {
+            await db.collection(`artifacts/${appId}/public/data/datasets`).doc(id).delete();
+          } else {
+            forgetLocalDataset(id);
+          }
+        } catch (err) {
+          /* Échec (hors ligne, droits Firestore…) : le dataset est toujours là.
+             On annule le marqueur et on le dit, au lieu de laisser croire à une
+             suppression alors que la ligne reste affichée. */
+          deletedDatasetIdsRef.current.delete(String(id));
+          setDialog({
+            type: 'alert',
+            title: 'Delete Failed',
+            message: `The dataset could not be deleted${err && err.message ? `: ${err.message}` : '.'}\n\nCheck your connection and the Firestore rules, then try again.`
+          });
+          return;
         }
-        // Remove this dataset's projects from this device's cache.
+        /* 2) Nettoyage local (cache de l’appareil + liste affichée) et projets
+           de ce dataset sur cet appareil. */
+        forgetLocalDataset(id);
         try { removeProjectsOfDataset(id); } catch { /* ignore */ }
       }
     });
@@ -3028,6 +3088,14 @@ const openDataset = (dset) => {
       title: 'Delete Empty Datasets',
       message: `Are you sure you want to delete ${emptyDatasets.length} empty dataset(s)?`,
       onConfirm: async () => {
+        /* Ces datasets ne doivent plus être recréés : marqueur posé AVANT toute
+           écriture (le snapshot ré-injecterait leur copie du cache local) et
+           sauvegarde automatique en attente annulée. */
+        emptyDatasets.forEach((dset) => deletedDatasetIdsRef.current.add(String(dset.id)));
+        if (saveTimeoutRef.current) {
+          clearTimeout(saveTimeoutRef.current);
+          saveTimeoutRef.current = null;
+        }
         if (db) {
           try {
             const batch = db.batch();
@@ -3041,7 +3109,15 @@ const openDataset = (dset) => {
             });
 
             await batch.commit();
+
+            /* Nettoyage local + fermeture du dataset ouvert s’il fait partie du lot. */
+            emptyDatasets.forEach((dset) => {
+              closeDeletedDataset(dset.id);
+              forgetLocalDataset(dset.id);
+            });
           } catch (e) {
+            /* Rien n’a été supprimé : on annule les marqueurs. */
+            emptyDatasets.forEach((dset) => deletedDatasetIdsRef.current.delete(String(dset.id)));
             console.error('Batch delete failed', e);
 
             setDialog({
@@ -3051,18 +3127,10 @@ const openDataset = (dset) => {
             });
           }
         } else {
-          let stored = [];
-
-          try {
-            stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
-          } catch {}
-
-          const emptyIds = emptyDatasets.map((d) => d.id);
-
-          stored = stored.filter((d) => !emptyIds.includes(d.id));
-
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
-          setDatasetsList(stored);
+          emptyDatasets.forEach((dset) => {
+            closeDeletedDataset(dset.id);
+            forgetLocalDataset(dset.id);
+          });
         }
       }
     });

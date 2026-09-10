@@ -440,6 +440,11 @@ const DesiderataModal = ({
     }
   };
 
+  /* Ligne budgétaire OBLIGATOIRE : le champ passe en rouge tant qu’aucune ligne
+     (fiche Recettes ou intitulé repris) n’est choisie, et `submit()` refuse
+     l’enregistrement sans elle. */
+  const lineMissing = !(draft.recetteSuggereeId || txt(draft.ligneBudgetaire));
+
   const submit = () => {
     const description = txt(draft.description);
     if (!description) {
@@ -454,10 +459,16 @@ const DesiderataModal = ({
        superutilisateur qui édite une ancienne ligne minimale (import Google
        Sheets) reste libre de la compléter à son rythme. */
     const strict = !editing || !canDecide;
+    /* La LIGNE BUDGÉTAIRE est obligatoire dans TOUS les cas — nouvelle demande
+       comme modification : une demande d’achat est une requête budgétaire, elle
+       doit toujours être imputée sur une ligne des Recettes. */
+    if (!(draft.recetteSuggereeId || txt(draft.ligneBudgetaire))) {
+      setError('Merci de choisir la ligne budgétaire sur laquelle la demande sera imputée (obligatoire) — créez-la d’abord dans la page Recettes si elle manque.');
+      return;
+    }
     if (strict) {
       const missing = [];
       const need = (ok, label) => { if (!ok) missing.push(label); };
-      need(!!(draft.recetteSuggereeId || txt(draft.ligneBudgetaire)), 'la ligne budgétaire');
       need(txt(draft.fournisseur), 'le fournisseur');
       need(parseNum(draft.montantEstime) !== null, 'le montant');
       need(parseNum(draft.fraisPort) !== null, 'les frais de port');
@@ -576,7 +587,7 @@ const DesiderataModal = ({
             </div>
           </Section>
 
-          <Section icon="👤" title="Demandeur & ligne budgétaire suggérée">
+          <Section icon="👤" title="Demandeur & ligne budgétaire (obligatoire)">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field
                 label="Demandeur"
@@ -598,14 +609,18 @@ const DesiderataModal = ({
                 )}
               </Field>
               <Field
-                label="Ligne budgétaire suggérée"
-                required={requiredInfo}
+                label="Ligne budgétaire"
+                required
                 hint={requiredInfo
                   ? 'Obligatoire : la ligne sur laquelle ce devis sera imputé.'
-                  : 'La recette sur laquelle ce souhait serait imputé s’il est approuvé.'}
+                  : 'Obligatoire : la ligne sur laquelle ce souhait sera imputé.'}
               >
-                <select className={MODAL_INPUT} value={draft.recetteSuggereeId} onChange={setRecette}>
-                  <option value="">— Aucune ligne suggérée —</option>
+                <select
+                  className={`${MODAL_INPUT} ${lineMissing ? 'border-red-300' : ''}`}
+                  value={draft.recetteSuggereeId}
+                  onChange={setRecette}
+                >
+                  <option value="">— Choisir une ligne budgétaire (obligatoire) —</option>
                   {recetteOptions.map((r) => (
                     <option key={r.id} value={r.id}>
                       {txt(r.ligne) || txt(r.name) || r.id}

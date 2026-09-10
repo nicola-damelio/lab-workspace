@@ -13,10 +13,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
 import { RECETTE_TYPES, DEPENSE_BC_SIGNE, depenseKindOf, isDesiderataRejected, isDesiderataApproved, isDesiderataTest, desiderataDecisionOf, reimbTotalOf, isSalaireRecetteType } from './adminSchema';
-import {
-  omTransferStatus, demandeTransferOrphaned, omTransferSummary, reimbPatchFromOm,
-  TRANSFER_TARGETS, targetMetaOf,
-} from './transferAchats';
+import { omTransferStatus, demandeTransferOrphaned } from './transferAchats';
 import { AdminImportModal } from './adminImportModal';
 import { SmartTable } from './smartTable';
 import { useDepenseLinkRepair } from './useDepenseLinkRepair';
@@ -132,7 +129,7 @@ const isOmApproved = (raw) =>
 const isOmTest = (raw) => /^test$/i.test(String(raw || '').trim());
 
 export const RecettesPage = () => {
-  const { data, settings, upsert, removeRecord, access, navigate, updateMany, currentUser } = useAdmin();
+  const { data, settings, upsert, removeRecord, access, navigate, updateMany } = useAdmin();
   const recettes = useMemo(() => (Array.isArray(data.recettes) ? data.recettes : []), [data.recettes]);
   const depenses = useMemo(() => (Array.isArray(data.depenses) ? data.depenses : []), [data.depenses]);
   const om = useMemo(() => (Array.isArray(data.om) ? data.om : []), [data.om]);
@@ -439,10 +436,6 @@ export const RecettesPage = () => {
      la page qui les héberge : réservé au SUPERUTILISATEUR, comme les décisions
      et transferts des pages OM Prévus / Achats prévus. */
   const isSuper = !!access.isSuperuser;
-  const currentName = txt(
-    (access.profile && access.profile.person && access.profile.person.nom)
-    || (currentUser && currentUser.name)
-  );
 
   /* ── Suppression directe depuis la page Recettes ──────────────────────────
      Les cases « au survol » listent les lignes agrégées : chacune peut être
@@ -496,83 +489,16 @@ export const RecettesPage = () => {
     setNotice({ tone: 'ok', text: `Achat prévu / souhaité « ${label} » supprimé.` });
   };
 
-  /* ── Transfert d’une OM prévue vers « Dépenses › Remboursements » ─────────
-     Circuit « frais avancés » : le laboratoire rembourse la mission au lieu de
-     passer commande. Tous les postes chiffrés de l’OM deviennent des postes
-     « Remboursement » et UNE fiche du registre dédié est créée (badge
-     « À corriger », comme depuis la page OM Prévus) ; l’OM est marquée
-     transférée afin de ne plus compter dans « OM prévus » — son montant passe
-     dans la colonne « Remboursements », déduite du solde. */
-  const transferOmToReimb = (o) => {
-    if (!o || !isSuper) return;
-    if (!o.id) {
-      setNotice({ tone: 'warn', text: 'Cet OM n’a pas d’identifiant : rechargez la page (l’application en attribue un automatiquement), puis réessayez.' });
-      return;
-    }
-    const label = txt(o.description) || txt(o.destination) || o.id;
-    const summary = omTransferSummary(o);
-    if (!summary.parts.length) {
-      setNotice({ tone: 'warn', text: `Chiffrez au moins un poste de coût avant de transférer l’OM « ${label} » vers les remboursements.` });
-      return;
-    }
-    const already = reimbursements.find((r) => r && txt(r.sourceKind) === 'om' && txt(r.sourceId) === o.id) || null;
-    if (already) {
-      setNotice({
-        tone: 'ok',
-        text: `L’OM « ${label} » est déjà transférée dans Dépenses › Remboursements.`,
-        target: { pageId: 'depenses', kind: 'reimb', recordId: already.id },
-      });
-      return;
-    }
-    /* OM déjà transmise pour signature (des devis existent déjà) : basculer ses
-       postes en remboursement laisserait ces devis orphelins dans « Approbation
-       devis & BC » — on l’explique plutôt que de le faire silencieusement. */
-    if (o.transfert && !o.transfert.remboursementsSeuls) {
-      setNotice({
-        tone: 'warn',
-        text: `L’OM « ${label} » a déjà été transmise pour signature (devis / BC en cours) : son remboursement se gère depuis « Approbation devis & BC » et la fiche Remboursement créée à cette occasion.`,
-      });
-      return;
-    }
-    const cible = TRANSFER_TARGETS.Gestionnaire.code;
-    const total = summary.parts.reduce((s, p) => s + (p.montant || 0), 0);
-    const lines = [
-      `Transférer l’OM « ${label} » vers Dépenses › Remboursements ?`,
-      '',
-      `• 1 fiche de frais de ${euro.format(total)} (postes : ${summary.parts.map((p) => p.label).join(' · ')}) — badge « À corriger »`,
-      `• destinataire : ${targetMetaOf(cible).title}`,
-      '• l’OM disparaît de « OM prévus » (et de sa page, rétablie par « Afficher les transférées ») : son montant est déduit du solde de la ligne budgétaire',
-    ];
-    if (!window.confirm(lines.join('\n'))) return;
-    /* Tous les postes deviennent « Remboursement » : aucun poste ne reste
-       compté « OM prévu » (sinon le montant serait compté deux fois). */
-    const partMode = { ...(o.partMode || {}) };
-    summary.parts.forEach((p) => { partMode[p.key] = 'reimb'; });
-    const saved = upsert('reimbursements', reimbPatchFromOm(o, summary.parts, { cible, by: currentName }), null);
-    upsert('om', {
-      ...(isOmApproved(o.statut)
-        ? {}
-        : { statut: 'Acceptée', statutChangedBy: currentName, statutChangedAt: Date.now() }),
-      partMode,
-      transfert: {
-        cible,
-        by: currentName,
-        at: Date.now(),
-        depuis: 'om',
-        remboursementsSeuls: true,
-        reimbId: (saved && saved.id) || '',
-      },
-    }, o.id);
-    setNotice({
-      tone: 'ok',
-      text: `OM « ${label} » transférée vers Dépenses › Remboursements (fiche « À corriger », ${euro.format(total)}).`,
-      target: saved && saved.id ? { pageId: 'depenses', kind: 'reimb', recordId: saved.id } : null,
-    });
-  };
-
+  /* ── Transfert « frais avancés » d’une OM ────────────────────────────────
+     Le transfert d’une OM prévue vers « Dépenses › Remboursements » se fait
+     désormais depuis la page « OM prévus / souhaités » (bouton « 💸 Remb. » de
+     sa colonne « Gestion des frais »). Il a été RETIRÉ du panneau qui s’ouvre
+     au survol d’une case de cette table : les éléments affichés au survol
+     disparaissaient dès que la souris les quittait, ce qui les rendait très
+     difficiles à cliquer. */
   /* Boutons d’action rendus à côté de chaque élément listé au survol d’une
-     case (🗑 supprimer · ↪ transférer vers les remboursements).
-     Suppression à la source ET transfert : SUPERUTILISATEUR uniquement. */
+     case (🗑 supprimer À LA SOURCE : dépense, remboursement, OM, achat prévu).
+     Suppression à la source : SUPERUTILISATEUR uniquement. */
   const depenseActions = (d) => (isSuper
     ? [{ label: '🗑', title: 'Supprimer la dépense (superutilisateur) — retire aussi la ligne de la page Dépenses', onClick: () => removeDepenseRow(d) }]
     : []);
@@ -580,15 +506,7 @@ export const RecettesPage = () => {
     ? [{ label: '🗑', title: 'Supprimer le remboursement (superutilisateur) — Dépenses › Remboursements', onClick: () => removeReimbRow(x) }]
     : []);
   const omActions = (o) => (isSuper
-    ? [
-      {
-        label: '↪ Remb.',
-        title: 'Transférer l’OM vers Dépenses › Remboursements (frais avancés : tous les postes deviennent « Remboursement », montant déduit du solde)',
-        tone: 'border-amber-200 text-amber-700 hover:bg-amber-50',
-        onClick: () => transferOmToReimb(o),
-      },
-      { label: '🗑', title: 'Supprimer l’ordre de mission', onClick: () => removeOmRow(o) },
-    ]
+    ? [{ label: '🗑', title: 'Supprimer l’ordre de mission', onClick: () => removeOmRow(o) }]
     : []);
   const desActions = (rec) => (isSuper
     ? [{ label: '🗑', title: 'Supprimer l’achat prévu / souhaité', onClick: () => removeDesiderataRow(rec) }]
@@ -601,15 +519,21 @@ export const RecettesPage = () => {
     [activeRecettes, depenses, om, reimbursements, desiderate, devisBc]
   );
 
-  /* Seuil d’alerte « Fin d’engagement » : la date passe en rouge dès qu’il
-     reste 3 mois ou moins (date du jour + 3 mois ≥ échéance), et le reste une
-     fois l’échéance dépassée (la ligne doit être prolongée / réengagée). */
+  /* Seuil d’alerte « Fin d’engagement » : la date devient ORANGE dès qu’il
+     reste 3 mois ou moins (date du jour + 3 mois ≥ échéance), GRISE une fois
+     l’échéance dépassée (la ligne doit être prolongée / réengagée) et reste
+     AZUR CLAIR dans tous les autres cas (plus de 3 mois restants). */
   const now = new Date();
   const todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const engagementAlertLimit = addMonthsUTC(todayUTC, 3);
-  const isEngagementAlert = (raw) => {
+  /* 'past' (échéance dépassée → gris) · 'soon' (≤ 3 mois → orange) ·
+     'ok' (plus de 3 mois → azur clair) · 'none' (date vide). */
+  const engagementState = (raw) => {
     const t = parseEngagementDate(raw);
-    return t !== null && t <= engagementAlertLimit;
+    if (t === null) return 'none';
+    if (t < todayUTC) return 'past';
+    if (t <= engagementAlertLimit) return 'soon';
+    return 'ok';
   };
 
   /* Colonnes triables/filtrables — rendu des cellules conservé à l’identique. */
@@ -885,13 +809,19 @@ export const RecettesPage = () => {
       value: (r) => r.dateFinEngagement || '',
       display: (r) => {
         const raw = txt(r.dateFinEngagement);
-        const alert = isEngagementAlert(raw);
-        return raw
-          ? <span
-            className={`whitespace-nowrap ${alert ? 'font-black text-red-600' : 'text-slate-600'}`}
-            title={alert ? 'Échéance d’engagement à 3 mois ou moins (ou déjà dépassée)' : undefined}
-          >{raw}</span>
-          : <span className="text-slate-300">—</span>;
+        const state = engagementState(raw);
+        if (!raw) return <span className="text-slate-300">—</span>;
+        /* Gris = échéance dépassée · Orange = 3 mois ou moins · Azur clair = le
+           reste (échéance à plus de 3 mois). */
+        const tone = state === 'past'
+          ? 'text-slate-400'
+          : (state === 'soon' ? 'font-black text-orange-600' : 'text-sky-500');
+        const title = state === 'past'
+          ? 'Échéance d’engagement dépassée — ligne à prolonger / réengager'
+          : (state === 'soon'
+            ? 'Échéance d’engagement à 3 mois ou moins — à prolonger / réengager'
+            : 'Échéance d’engagement à plus de 3 mois');
+        return <span className={`whitespace-nowrap ${tone}`} title={title}>{raw}</span>;
       },
     },
     {
@@ -1110,8 +1040,10 @@ const SummaryCard = ({ label, value, tone }) => {
    lié qui appartient à une autre table est cliquable (↗) : il ouvre sa
    définition dans la table d’origine (Dépenses, OM prévus, Achats prévus).
    Un élément peut aussi porter des `actions` (boutons à droite de la ligne) :
-   🗑 supprime la ligne À LA SOURCE (dépense, remboursement, OM, achat prévu) et
-   « ↪ Remb. » transfère une OM prévue vers le registre « Remboursements ». */
+   🗑 supprime la ligne À LA SOURCE (dépense, remboursement, OM, achat prévu).
+   Le panneau reste COLLÉ sous la case (padding au lieu d’une marge) : au
+   survol, la souris ne passe plus par une zone morte et les éléments affichés
+   restent cliquables. */
 const HoverCell = ({ amount, items, onOpen }) => {
   const linked = Array.isArray(items) ? items : [];
   return (
@@ -1124,7 +1056,7 @@ const HoverCell = ({ amount, items, onOpen }) => {
       </div>
       {linked.length > 0 && (
         <div
-          className="hidden group-hover:block absolute right-0 top-full mt-1 z-30 w-80 max-h-64 overflow-y-auto custom-scrollbar bg-white border border-slate-200 rounded-xl shadow-2xl p-2"
+          className="hidden group-hover:block absolute right-0 top-full z-30 w-80 max-h-64 overflow-y-auto custom-scrollbar bg-white border border-slate-200 rounded-xl shadow-2xl p-2 pt-1"
           onClick={(e) => e.stopPropagation()}
         >
           {linked.map((it, i) => {
@@ -1202,7 +1134,7 @@ const SoldeCell = ({ agg }) => {
         <span className="ml-1 text-[11px] text-slate-300 group-hover:text-blue-500 align-middle" aria-hidden="true">ⓘ</span>
       </span>
       <div
-        className="hidden group-hover:block absolute right-0 top-full mt-1 z-30 w-80 bg-white border border-slate-200 rounded-xl shadow-2xl p-2"
+        className="hidden group-hover:block absolute right-0 top-full z-30 w-80 bg-white border border-slate-200 rounded-xl shadow-2xl p-2 pt-1"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-2 pt-1 pb-1.5 text-[10px] font-black uppercase tracking-wide text-slate-400 border-b border-slate-100">
@@ -1246,7 +1178,7 @@ const SoldePrevuCell = ({ agg }) => {
         <span className="ml-1 text-[11px] text-slate-300 group-hover:text-blue-500 align-middle" aria-hidden="true">ⓘ</span>
       </span>
       <div
-        className="hidden group-hover:block absolute right-0 top-full mt-1 z-30 w-80 bg-white border border-slate-200 rounded-xl shadow-2xl p-2"
+        className="hidden group-hover:block absolute right-0 top-full z-30 w-80 bg-white border border-slate-200 rounded-xl shadow-2xl p-2 pt-1"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-2 pt-1 pb-1.5 text-[10px] font-black uppercase tracking-wide text-slate-400 border-b border-slate-100">
