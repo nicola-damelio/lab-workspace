@@ -434,10 +434,10 @@ export const RecettesPage = () => {
   };
 
   /* Droit de suppression directe depuis cette page : la page agrège des lignes
-     qui vivent ailleurs — on applique donc la règle de la page qui les héberge
-     (Dépenses : n’importe quel membre autorisé sur la page peut supprimer ;
-     OM / Achats prévus : décision et transfert réservés au superutilisateur). */
-  const canDeleteDepenses = !!access.canViewPage({ id: 'depenses' });
+     qui vivent ailleurs (dépenses, remboursements, OM, achats prévus) et les
+     supprime À LA SOURCE depuis un simple survol — c’est donc plus sensible que
+     la page qui les héberge : réservé au SUPERUTILISATEUR, comme les décisions
+     et transferts des pages OM Prévus / Achats prévus. */
   const isSuper = !!access.isSuperuser;
   const currentName = txt(
     (access.profile && access.profile.person && access.profile.person.nom)
@@ -446,11 +446,11 @@ export const RecettesPage = () => {
 
   /* ── Suppression directe depuis la page Recettes ──────────────────────────
      Les cases « au survol » listent les lignes agrégées : chacune peut être
-     supprimée à la source sans quitter cette page. */
+     supprimée à la source sans quitter cette page (superutilisateur). */
 
-  /* Dépense (Achats / PI / OM payés / Rémunération stages). */
+  /* Dépense (Achats / PI / OM payés / Rémunération stages) — superutilisateur. */
   const removeDepenseRow = (d) => {
-    if (!d) return;
+    if (!d || !isSuper) return;
     const label = txt(d.description) || txt(d.numBC || d.numSIFAC || d.numFacture) || d.id || 'cette dépense';
     if (!window.confirm(`Supprimer définitivement la dépense « ${label} » ?\n\nElle disparaît de la page Dépenses et de tous les totaux de cette page.`)) return;
     /* Nettoyage des liens ENTRANTS (même règle que la page Dépenses) : un devis
@@ -468,9 +468,9 @@ export const RecettesPage = () => {
     setNotice({ tone: 'ok', text: `Dépense « ${label} » supprimée.` });
   };
 
-  /* Fiche du registre « Remboursements ». */
+  /* Fiche du registre « Remboursements » — superutilisateur. */
   const removeReimbRow = (x) => {
-    if (!x) return;
+    if (!x || !isSuper) return;
     const label = txt(x.description) || 'ce remboursement';
     if (!window.confirm(`Supprimer définitivement le remboursement « ${label} » ?`)) return;
     removeRecord('reimbursements', x);
@@ -571,12 +571,13 @@ export const RecettesPage = () => {
   };
 
   /* Boutons d’action rendus à côté de chaque élément listé au survol d’une
-     case (🗑 supprimer · ↪ transférer vers les remboursements). */
-  const depenseActions = (d) => (canDeleteDepenses
-    ? [{ label: '🗑', title: 'Supprimer la dépense (page Dépenses)', onClick: () => removeDepenseRow(d) }]
+     case (🗑 supprimer · ↪ transférer vers les remboursements).
+     Suppression à la source ET transfert : SUPERUTILISATEUR uniquement. */
+  const depenseActions = (d) => (isSuper
+    ? [{ label: '🗑', title: 'Supprimer la dépense (superutilisateur) — retire aussi la ligne de la page Dépenses', onClick: () => removeDepenseRow(d) }]
     : []);
-  const reimbActions = (x) => (canDeleteDepenses
-    ? [{ label: '🗑', title: 'Supprimer le remboursement (page Dépenses › Remboursements)', onClick: () => removeReimbRow(x) }]
+  const reimbActions = (x) => (isSuper
+    ? [{ label: '🗑', title: 'Supprimer le remboursement (superutilisateur) — Dépenses › Remboursements', onClick: () => removeReimbRow(x) }]
     : []);
   const omActions = (o) => (isSuper
     ? [
