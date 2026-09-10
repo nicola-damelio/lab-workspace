@@ -287,7 +287,7 @@ const Badge = ({ tone = 'slate', children }) => (
 export const ApprobationPage = () => {
   const {
     data, access, upsert, remove, currentUser, operators, settings, updateSettings,
-    focus, clearFocus,
+    focus, clearFocus, updateMany,
   } = useAdmin();
   const personnel = useMemo(
     () => (Array.isArray(data.personnel) ? data.personnel : []),
@@ -1047,9 +1047,17 @@ export const ApprobationPage = () => {
   const removeRow = (rec) => {
     if (!rec || !rec.id || !isSuper) return;
     const ref = txt(rec.numBC) || txt(rec.numDevis) || txt(rec.description) || rec.id;
-    if (window.confirm(`Supprimer définitivement cette ligne « ${ref} » ?`)) {
-      remove('devisBc', rec.id);
+    if (!window.confirm(`Supprimer définitivement cette ligne « ${ref} » ?`)) return;
+    /* Un devis supprimé ne doit pas laisser un BC orphelin : les bons de
+       commande rattachés via `devisId` perdent ce lien (la colonne « Devis
+       lié » affiche « — » au lieu d'un devis disparu). */
+    if (rec.kind === 'devis') {
+      const changes = (Array.isArray(data.devisBc) ? data.devisBc : [])
+        .filter((d) => d && d.id && d.kind === 'bc' && txt(d.devisId) === rec.id)
+        .map((d) => ({ id: d.id, patch: { devisId: '' } }));
+      if (changes.length) updateMany('devisBc', changes);
     }
+    remove('devisBc', rec.id);
   };
 
     const activeKind = tab;

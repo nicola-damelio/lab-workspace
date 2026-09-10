@@ -25,7 +25,9 @@
    badge « En attente de gestion » — et n'en disparaît que lorsque TOUS les
    postes sont soldés (BC signés + remboursements corrigés).
    ========================================================================= */
-import { REIMBURSEMENT_COST_FIELDS, DEPENSE_BC_SIGNE } from './adminSchema';
+import {
+  REIMBURSEMENT_COST_FIELDS, DEPENSE_BC_SIGNE, APPROVAL_REJECTED, APPROVAL_NOT_RETAINED,
+} from './adminSchema';
 import { parseEuroAmount } from './importUtils';
 import { personnelEmailsMatching } from './emailNotify';
 
@@ -273,6 +275,43 @@ export const devisRecordFor = (devisBcList, sourceKind, sourceId, sourcePart = '
 export const reimbRecordFor = (reimbList, sourceId) =>
   (Array.isArray(reimbList) ? reimbList : [])
     .find((r) => r && r.sourceKind === 'om' && r.sourceId === sourceId) || null;
+
+/* ── Transferts « orphelins » (leur origine a été supprimée) ───────────── */
+/* Décisions qui ÉCARTENT définitivement un devis / BC : la demande d'origine
+   n'a plus rien en cours de ce côté (elle ne débouchera jamais sur une
+   dépense signée). */
+const DEAD_DEVIS_STATUSES = new Set([APPROVAL_REJECTED, APPROVAL_NOT_RETAINED]);
+/** Un devis / BC est encore « vivant » s'il n'a pas été définitivement écarté. */
+const isLiveDevis = (d) => !DEAD_DEVIS_STATUSES.has(txt(d && d.statut));
+
+/**
+ * Vrai si le transfert d'une demande (OM `kind='om'` ou achat prévu / souhaité
+ * `kind='desiderate'`) est « orphelin » : la demande porte la marque `transfert`
+ * mais PLUS AUCUNE de ses cibles n'existe dans la base — c'est la situation
+ * typique quand le devis / BC (son « origine ») et la dépense liée ont été
+ * supprimés :
+ *   · aucun devis / BC déposé ne la référence encore (hors « Refusé » /
+ *     « Non retenu ») via `sourceKind` / `sourceId` ;
+ *   · aucune dépense créée directement depuis elle (`omId` / `desiderataId`) ;
+ *   · aucune fiche Remboursement issue d'elle (sourceKind 'om').
+ * Un tel transfert est obsolète : la demande doit redevenir ordinaire
+ * (visible, supprimable, transférable à nouveau). Réparé automatiquement par
+ * ./useOrphanTransferRepair.js ; sert aussi à ne pas l'escamoter de la liste.
+ */
+export const demandeTransferOrphaned = (rec, kind, devisBcList, depenses, reimbList) => {
+  if (!rec || !rec.id || !rec.transfert) return false;
+  const target = txt(kind);
+  const liveDevis = (Array.isArray(devisBcList) ? devisBcList : [])
+    .some((d) => d && txt(d.sourceKind) === target && txt(d.sourceId) === rec.id && isLiveDevis(d));
+  if (liveDevis) return false;
+  const linkedDep = (Array.isArray(depenses) ? depenses : []).some((d) => d
+    && (target === 'om' ? txt(d.omId) === rec.id : txt(d.desiderataId) === rec.id));
+  if (linkedDep) return false;
+  const linkedReimb = (Array.isArray(reimbList) ? reimbList : [])
+    .some((r) => r && txt(r.sourceKind) === 'om' && txt(r.sourceId) === rec.id);
+  if (linkedReimb) return false;
+  return true;
+};
 
 /** Statut détaillé des postes d'une OM transférée (par transfert « devis/BC »
  *  ou « remboursement »). Retourne pour chaque poste chiffré son mode, son

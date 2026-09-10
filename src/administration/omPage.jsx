@@ -25,6 +25,7 @@ import { useAdmin } from './AdminContext';
 import { SmartTable } from './smartTable';
 import { AdminImportModal } from './adminImportModal';
 import { omColumns } from './collectionPages';
+import { useOrphanTransferRepair } from './useOrphanTransferRepair';
 import { OM_COST_STATUSES, OM_STATUSES, APPROVAL_GESTION } from './adminSchema';
 import { parseEuroAmount } from './importUtils';
 import { uploadLocalFile, cloudBackendAvailable } from '../utils/driveUpload';
@@ -625,6 +626,11 @@ export const OmPage = () => {
     () => (Array.isArray(data.reimbursements) ? data.reimbursements : []),
     [data.reimbursements]
   );
+
+  /* Réparation automatique des transferts « orphelins » (devis / BC et dépense
+     d'origine supprimés) : la marque `transfert` obsolète est retirée, l'OM
+     redevient visible — donc supprimable et éventuellement re-transférable. */
+  useOrphanTransferRepair();
 
   const [modal, setModal] = useState(null); // null | { mode: 'new' } | { mode: 'edit', rec }
   const [importOpen, setImportOpen] = useState(false);

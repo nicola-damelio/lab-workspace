@@ -17,6 +17,7 @@ import { omTransferStatus } from './transferAchats';
 import { AdminImportModal } from './adminImportModal';
 import { SmartTable } from './smartTable';
 import { useDepenseLinkRepair } from './useDepenseLinkRepair';
+import { useOrphanTransferRepair } from './useOrphanTransferRepair';
 
 const euro = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' });
 const toNum = (v) => {
@@ -193,6 +194,11 @@ export const RecettesPage = () => {
      type de la ligne imputée (ex. dépense « Fonctionnement » liée à une fiche
      « Investissement ») — trace ajoutée dans les commentaires de la dépense. */
   const linkRepair = useDepenseLinkRepair();
+  /* Réparation automatique des transferts « orphelins » : une OM / un achat
+     prévu transféré dont le devis / BC (origine) et la dépense ont été
+     supprimés ne doit plus rester masqué ni compté en signature — il redevient
+     ordinaire (visible, supprimable) dans sa page d'origine. */
+  useOrphanTransferRepair();
 
   const types = Array.isArray(settings.recetteTypes) && settings.recetteTypes.length
     ? settings.recetteTypes

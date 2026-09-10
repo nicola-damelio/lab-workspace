@@ -1117,9 +1117,21 @@ const DepensesPage = () => {
   const removeDepense = (rec) => {
     if (!rec || !rec.id) return;
     const label = txt(rec.description) || pick(rec, ['numBC', 'numSIFAC', 'numFacture']) || rec.id;
-    if (window.confirm(`Supprimer définitivement la dépense « ${label} » ?`)) {
-      remove('depenses', rec.id);
-    }
+    if (!window.confirm(`Supprimer définitivement la dépense « ${label} » ?`)) return;
+    /* Nettoyage des liens ENTRANTS : un devis / BC approuvé qui pointait vers
+       cette dépense (`depenseId`) ou une OM source (`depenseId`) ne doit pas
+       rester « lié » à une dépense disparue — sinon la demande d'origine
+       paraîtrait encore transférée alors que sa cible a été supprimée (voir
+       ./useOrphanTransferRepair.js). */
+    const devisChanges = (Array.isArray(data.devisBc) ? data.devisBc : [])
+      .filter((x) => x && x.id && txt(x.depenseId) === rec.id)
+      .map((x) => ({ id: x.id, patch: { depenseId: null } }));
+    if (devisChanges.length) updateMany('devisBc', devisChanges);
+    const omChanges = (Array.isArray(data.om) ? data.om : [])
+      .filter((o) => o && o.id && txt(o.depenseId) === rec.id)
+      .map((o) => ({ id: o.id, patch: { depenseId: null } }));
+    if (omChanges.length) updateMany('om', omChanges);
+    remove('depenses', rec.id);
   };
 
   /* Déplacement d’une ligne entre les trois onglets (Achats / PI / OM).

@@ -32,6 +32,7 @@
    ========================================================================= */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAdmin } from './AdminContext';
+import { useOrphanTransferRepair } from './useOrphanTransferRepair';
 import { SmartTable } from './smartTable';
 import { AdminImportModal } from './adminImportModal';
 import {
@@ -847,6 +848,11 @@ export const DesiderataPage = () => {
      y devient un devis « En attente » ; il ne disparaît de cette liste qu'une
      fois son BC signé (date de signature BC de la dépense liée). */
   const devisBc = useMemo(() => (Array.isArray(data.devisBc) ? data.devisBc : []), [data.devisBc]);
+
+  /* Réparation automatique des transferts « orphelins » (devis / BC et dépense
+     d'origine supprimés) : la marque `transfert` obsolète est retirée, l'achat
+     prévu / souhaité redevient visible — donc supprimable et re-transférable. */
+  useOrphanTransferRepair();
 
   /* Destinataires des notifications d’approbation : le superutilisateur (fiche
      Personnel liée de l’opérateur) et, le cas échéant, la fiche « Gestionnaire ». */
