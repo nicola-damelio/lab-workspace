@@ -101,6 +101,15 @@ export const DatasetAccessModal = ({ dset, operators, onClose, onSave }) => {
               </span>
             </span>
           </label>
+          <p className={`mt-3 text-[11px] font-bold rounded-xl px-3 py-2 border leading-snug ${
+            restricted
+              ? 'bg-amber-50 border-amber-200 text-amber-800'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+          }`}>
+            {restricted
+              ? `🔒 Actuellement : visible uniquement par ${selected.size} compte(s) coché(s) + le superutilisateur.`
+              : '🌐 Actuellement : visible par TOUS les comptes de l’équipe. Cochez la case ci-dessus pour restreindre l’accès.'}
+          </p>
 
           <div className="flex items-center justify-between mt-4 mb-2">
             <span className="text-[11px] font-black uppercase tracking-wide text-slate-400">

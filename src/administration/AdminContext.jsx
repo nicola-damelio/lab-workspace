@@ -213,7 +213,9 @@ export const AdminProvider = ({
       canViewPage: (p) => !!p && (allowedPageIds.has(p.id) || (p.id === 'settings' && !!teamBootstrap)),
       canEditPage: (p) => !!p && (allowedPageIds.has(p.id) || (p.id === 'settings' && !!teamBootstrap)),
       canChangeWishlistStatus: isSuperuser,
-      canWriteCloud: !!user,
+      // Every write goes straight to Firestore now — no Google sign-in is
+      // required any more — so this is always true.
+      canWriteCloud: true,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [isSuperuser, profile, allowedPageIds, user, teamBootstrap]

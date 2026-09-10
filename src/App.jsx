@@ -27,7 +27,7 @@ import { setActiveProjectId, readLibrary, readAllProjectLibraries, restoreLibrar
 import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, getLastDriveConnectError, driveBootstrapRequestedAtLoad, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders } from './utils/driveUpload';
 import { sanitizeSlug, datasetFolderSlug } from './utils/driveNaming';
 import { validateDatasetExperiments } from './utils/experimentRules';
-import { canUserOpenDataset, isDatasetRestricted, normalizeMemberNames } from './utils/datasetAccess';
+import { canUserOpenDataset, isDatasetRestricted, normalizeMemberNames, datasetAccessOf } from './utils/datasetAccess';
 
 import { ScientistLoginGate, ScientistLoginModal } from './components/AppModules/definitionsManagers';
 import { DatasetAccessModal } from './components/AppModules/datasetAccessModal';
@@ -886,6 +886,10 @@ if (customType === 'dosy') {
   const [isCloudReady, setIsCloudReady] = useState(false);
   const [saveStatus, setSaveStatus] = useState('idle');
   const [saveErrorMsg, setSaveErrorMsg] = useState('');
+  // Where the last successful save went: 'cloud' (shared Firestore workspace) or
+  // 'local' (this device only, used when Firestore is unreachable). The sidebar
+  // status must not claim "Cloud Sync" when the data never left the device.
+  const [saveTarget, setSaveTarget] = useState('cloud');
   const [appView, setAppView] = useState('explorer');
   const [currentModule, setCurrentModule] = useState('dashboard');
   const [currentProjectId, setCurrentProjectId] = useState(null);
@@ -1154,7 +1158,9 @@ if (customType === 'dosy') {
   // Sync operators + authSettings TO Firestore whenever they change (cloud persistence)
   const appConfigSaveRef = useRef(null);
   useEffect(() => {
-    if (!db || !user) return; // only sync when logged into Firebase
+    // NO Google/Firebase sign-in required: the whole team shares ONE workspace,
+    // so cloud persistence starts as soon as the Firestore SDK is available.
+    if (!db) return;
     if (appConfigSaveRef.current) clearTimeout(appConfigSaveRef.current);
     appConfigSaveRef.current = setTimeout(async () => {
       try {
@@ -1166,7 +1172,7 @@ if (customType === 'dosy') {
       } catch (e) { console.warn('Could not sync app config to Firestore:', e.message); }
     }, 1500);
     return () => { if (appConfigSaveRef.current) clearTimeout(appConfigSaveRef.current); };
-  }, [operators, authSettings, user]);
+  }, [operators, authSettings]);
   // ─────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -1176,15 +1182,17 @@ if (customType === 'dosy') {
     }
 
     const initAuth = async () => {
-      auth.onAuthStateChanged((currentUser) => {
-        // Google / Firebase sign-in is OPTIONAL and only used for cloud sync.
-        // People without a Google account must still be able to use the app:
-        // the scientist password login (ScientistLoginGate) is the only
-        // required gate, and saving falls back to localStorage when no Google
-        // user is signed in.
-        if (currentUser) {
-          setUser(currentUser);
-        }
+      // PORTAL-ONLY LOGIN. The scientist password gate (ScientistLoginGate /
+      // utils/auth) is the single required login: nobody needs a Google/Firebase
+      // account, because Firestore reads AND writes now work without one (every
+      // save effect below only requires `db`).
+      setIsCloudReady(true);
+      setNeedsLogin(false);
+      // Drop any session left over from the old "☁️ Cloud sign-in" button so no
+      // browser keeps a cloud credential it no longer needs.
+      try { if (auth.currentUser) await auth.signOut(); } catch { /* ignore */ }
+      setUser(null);
+      auth.onAuthStateChanged(() => {
         setNeedsLogin(false);
         setIsCloudReady(true);
       });
@@ -1243,31 +1251,6 @@ if (customType === 'dosy') {
   }, [user]);
   // ──────────────────────────────────────────────────────────────────────
 
-
-    const handleManualLogin = async () => {
-    // Optional Google sign-in for CLOUD SYNC (Firestore).
-    // Drive uploads are handled separately by connectDrive() below.
-    if (!window.firebase || !auth) {
-      console.warn('Firebase auth is not available — cloud sync is disabled.');
-      return;
-    }
-
-    const provider = new window.firebase.auth.GoogleAuthProvider();
-
-    try {
-      await auth.signInWithPopup(provider);
-
-      // If a proper Google Cloud OAuth client is configured, also connect Drive.
-      if (getConfiguredDriveClientId()) {
-        const ok = await connectDriveWithGis();
-        if (ok) {
-          try { window.dispatchEvent(new CustomEvent('lab:drive-connected')); } catch { /* ignore */ }
-        }
-      }
-    } catch (e) {
-      console.error('Google sign-in error:', e);
-    }
-  };
 
   // Connect Google Drive for uploads. In SHARED workspace mode this NEVER opens
   // a Google popup for normal users: it simply asks the workspace server for a
@@ -1422,11 +1405,11 @@ if (customType === 'dosy') {
   }, [isCloudReady, currentDatasetId, needsLogin]);
 
   useEffect(() => {
-    // Cloud datasets live under `artifacts/{appId}/public/data/datasets` — the
-    // "public" path is meant to be readable from any device, even BEFORE a
-    // Google sign-in, so a phone can reach the data that was synced from the
-    // desktop. Writes still require a signed-in user (the save paths below keep
-    // their `db && user` guard and fall back to localStorage otherwise).
+    // Cloud datasets live under `artifacts/{appId}/public/data/datasets`. This
+    // path is readable AND writable from any device without a Google sign-in
+    // (verified against the live project: the Firestore rules accept anonymous
+    // clients), so every browser — phone, second PC, collaborator — sees and
+    // updates the same workspace. localStorage is only an offline cache now.
     if (db) {
       const collRef = db.collection(`artifacts/${appId}/public/data/datasets`);
 
@@ -1440,21 +1423,23 @@ if (customType === 'dosy') {
 
           dsets.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 
-          // NOT signed in: this is a read-only peek at the cloud. Keep any
-          // datasets stored locally on THIS device too (local copy wins for the
-          // same id, since that is the copy the user is actually editing).
-          if (!user) {
-            try {
-              const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
-              const local = stored ? JSON.parse(stored) : [];
-              (Array.isArray(local) ? local : []).forEach((l) => {
-                const i = dsets.findIndex((d) => d.id === l.id);
-                if (i >= 0) dsets[i] = l;
-                else dsets.push(l);
-              });
-              dsets.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-            } catch {}
-          }
+          // CLOUD WINS. Firestore is the single source of truth: every device
+          // reads AND writes it now, so its record — including `access`, the
+          // hide/show-visibility flag — must never be overridden by this
+          // device's cached copy; that override is what made the access toggle
+          // look "stuck". localStorage is kept only for datasets this device has
+          // that the cloud does not know yet (e.g. created while offline): they
+          // are appended so nothing is silently dropped, and the next successful
+          // save publishes them.
+          try {
+            const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+            const local = stored ? JSON.parse(stored) : [];
+            (Array.isArray(local) ? local : []).forEach((l) => {
+              if (!l || !l.id) return;
+              if (!dsets.some((d) => String(d.id) === String(l.id))) dsets.push(l);
+            });
+            dsets.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+          } catch { /* quota / parse — the cloud copy is enough */ }
 
           setDatasetsList(dsets);
           setIsCloudReady(true);
@@ -1953,7 +1938,7 @@ useEffect(() => {
         payload: compressedPayload,
         isCompressed: true
       };
-      if (db && user) {
+      if (db) {
         const docRef = db
           .collection(`artifacts/${appId}/public/data/datasets`)
           .doc(currentDatasetId);
@@ -1961,6 +1946,7 @@ useEffect(() => {
           .set(updatedPayload, { merge: true })
           .then(() => {
             setSaveStatus('saved');
+            setSaveTarget('cloud');
             setSaveErrorMsg('');
           })
           .catch((err) => {
@@ -1984,6 +1970,7 @@ useEffect(() => {
           [...stored].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
         );
         setSaveStatus('saved');
+        setSaveTarget('local');
       }
     } catch (e) {
       setSaveStatus('error');
@@ -2025,7 +2012,7 @@ useEffect(() => {
           payload: LZString.compressToUTF16(JSON.stringify({ administration: adminContent })),
           isCompressed: true
         };
-        if (db && user) {
+        if (db) {
           const docRef = db
             .collection(`artifacts/${appId}/public/data/datasets`)
             .doc(currentDatasetId);
@@ -2033,6 +2020,7 @@ useEffect(() => {
             .set(updatedPayload, { merge: true })
             .then(() => {
               setSaveStatus('saved');
+              setSaveTarget('cloud');
               setSaveErrorMsg('');
             })
             .catch((err) => {
@@ -2056,6 +2044,7 @@ useEffect(() => {
             [...stored].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
           );
           setSaveStatus('saved');
+          setSaveTarget('local');
         }
       } catch (e) {
         setSaveStatus('error');
@@ -2583,10 +2572,10 @@ const createNewDataset = async (kind = 'scientific') => {
 
     const updatedPayload = {
       kind,
-      // Par défaut, un nouveau dataset n’est visible que par les utilisateurs
-      // définis dedans (le créateur) + le superutilisateur.
+      // Par défaut, un nouveau dataset est visible par TOUS les comptes de
+      // l’équipe (comportement historique) ; le créateur est pré-rempli membre.
       access: {
-        restricted: true,
+        restricted: false,
         memberNames: currentUser && currentUser.name ? [String(currentUser.name).trim()] : []
       },
       title: isAdmin ? 'Base d’administration' : 'New Dataset',
@@ -2604,7 +2593,7 @@ const createNewDataset = async (kind = 'scientific') => {
       isCompressed: isAdmin
     };
 
-    if (db && user) {
+    if (db) {
       await db
         .collection(`artifacts/${appId}/public/data/datasets`)
         .doc(newId)
@@ -2659,7 +2648,7 @@ const handleBackToExplorer = async () => {
             isCompressed: true,
             kind: 'scientific'
           };
-      if (db && user) {
+      if (db) {
         await db
           .collection(`artifacts/${appId}/public/data/datasets`)
           .doc(currentDatasetId)
@@ -2859,8 +2848,19 @@ const openDataset = (dset) => {
     setDatasetsList((prev) => (Array.isArray(prev) ? prev : []).map((d) =>
       String(d.id) === String(dsetId) ? { ...d, access: cleanAccess } : d
     ));
+    // On écrit AUSSI dans la copie locale : simple cache hors-ligne. Le cloud
+    // fait désormais autorité dans l’onSnapshot, et chaque appareil y écrit
+    // directement — aucune connexion Google n’est plus requise.
+    try {
+      const localList = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
+      const localIdx = (Array.isArray(localList) ? localList : []).findIndex((d) => String(d.id) === String(dsetId));
+      if (localIdx >= 0) {
+        localList[localIdx] = { ...localList[localIdx], access: cleanAccess };
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(localList));
+      }
+    } catch { /* quota / parse — le cloud reste la source de vérité */ }
 
-    if (db && user) {
+    if (db) {
       try {
         await db
           .collection(`artifacts/${appId}/public/data/datasets`)
@@ -2882,6 +2882,43 @@ const openDataset = (dset) => {
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
     }
   };
+  // ── Action groupée : rendre TOUS les datasets visibles par l’équipe ──────
+  // Dé-coche « Restreindre la visibilité aux membres » sur chaque dataset ;
+  // les listes de membres sont conservées pour une restriction ultérieure.
+  const [allVisibleBusy, setAllVisibleBusy] = useState(false);
+
+  const makeAllDatasetsTeamVisible = () => {
+    const list = Array.isArray(datasetsList) ? datasetsList : [];
+    const restrictedList = list.filter((d) => isDatasetRestricted(d));
+    if (restrictedList.length === 0) {
+      setDialog({
+        type: 'alert',
+        title: '🌐 Déjà partagés',
+        message: 'Tous les datasets sont déjà visibles par toute l’équipe.'
+      });
+      return;
+    }
+    setDialog({
+      type: 'confirm',
+      title: '🌐 Rendre visibles à toute l’équipe',
+      message: `${restrictedList.length} dataset(s) sont actuellement restreints.\n\n« Restreindre la visibilité » sera décoché pour chacun : ils redeviennent visibles par TOUS les comptes de l’équipe (les listes de membres sont conservées).\n\nContinuer ?`,
+      onConfirm: async () => {
+        setAllVisibleBusy(true);
+        try {
+          for (const d of restrictedList) {
+            await saveDatasetAccess(String(d.id), {
+              restricted: false,
+              memberNames: datasetAccessOf(d).memberNames
+            });
+          }
+        } finally {
+          setAllVisibleBusy(false);
+        }
+      }
+    });
+  };
+
+
 
   const deleteDataset = (e, id) => {
     e.stopPropagation();
@@ -2891,7 +2928,7 @@ const openDataset = (dset) => {
       title: 'Delete Dataset',
       message: 'Are you sure you want to delete this entire Dataset?',
       onConfirm: async () => {
-        if (db && user) {
+        if (db) {
           await db.collection(`artifacts/${appId}/public/data/datasets`).doc(id).delete();
         } else {
           let stored = [];
@@ -2921,7 +2958,7 @@ const openDataset = (dset) => {
       defaultValue: currentTitle,
       onConfirm: async (newTitle) => {
         if (newTitle && newTitle.trim() !== currentTitle) {
-          if (db && user) {
+          if (db) {
             await db
               .collection(`artifacts/${appId}/public/data/datasets`)
               .doc(id)
@@ -2991,7 +3028,7 @@ const openDataset = (dset) => {
       title: 'Delete Empty Datasets',
       message: `Are you sure you want to delete ${emptyDatasets.length} empty dataset(s)?`,
       onConfirm: async () => {
-        if (db && user) {
+        if (db) {
           try {
             const batch = db.batch();
 
@@ -3668,19 +3705,11 @@ const openDataset = (dset) => {
             </div>
           )}
 
-              {/* Cloud sign-in — lets a NEW device (phone, another browser) pull
-                  the datasets that were synced from elsewhere. Without it, a fresh
-                  browser only sees its own local storage (often empty). */}
-              {!user && window.firebase && auth && (
-                <button
-                  type="button"
-                  onClick={handleManualLogin}
-                  className="mt-4 flex items-center gap-2 bg-white border border-blue-200 text-blue-700 hover:bg-blue-50 font-bold px-5 py-2.5 rounded-full shadow-sm transition-all hover:shadow-md text-sm"
-                  title="Sign in with Google so your datasets sync to / from the cloud and are reachable on every device"
-                >
-                  ☁️ Cloud sign-in to access your datasets
-                </button>
-              )}
+              {/* There is deliberately NO cloud sign-in button here any more:
+                  Firestore reads AND writes work without a Google account, so a
+                  new device (phone, another browser) already pulls the datasets
+                  that were saved from elsewhere. */}
+
 
               {!isCloudReady && (
                 <div className="mt-6 flex flex-col items-center gap-3">
@@ -3752,6 +3781,18 @@ const openDataset = (dset) => {
                    🗑️ Delete Empty
                  </button>
                )}
+               {/* Rendre TOUS les datasets visibles par l’équipe — superuser / bootstrap / recovery */}
+               {(currentUser?.role === 'superuser' || operatorNames.length === 0 || recoveryBypass) && (
+                 <button
+                   onClick={makeAllDatasetsTeamVisible}
+                   disabled={allVisibleBusy}
+                   className={`bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex-1 md:flex-none flex items-center justify-center gap-2 text-sm ${allVisibleBusy ? 'opacity-60 cursor-wait' : 'cursor-pointer'}`}
+                   title="Dé-coche « Restreindre la visibilité aux membres » sur TOUS les datasets : ils redeviennent visibles par tous les comptes de l’équipe (les listes de membres sont conservées)"
+                 >
+                   {allVisibleBusy ? '⏳ Mise à jour…' : '🌐 Rendre visibles à toute l’équipe'}
+                 </button>
+               )}
+
                {/* Load HTML — superuser / bootstrap / recovery */}
                {(currentUser?.role === 'superuser' || operatorNames.length === 0 || recoveryBypass) && (
                  <label className="bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex-1 md:flex-none flex items-center justify-center gap-2 cursor-pointer text-sm">
@@ -3769,10 +3810,10 @@ const openDataset = (dset) => {
                   <span className="text-4xl opacity-30">📂</span>
                   <span>No datasets found in cloud or local storage.</span>
                   <span className="text-xs max-w-md text-slate-400 leading-relaxed">
-                    Datasets live in the browser where they were created. To reach them from this device,
-                    use “☁️ Cloud sign-in” above with the same Google account (once signed in on the other
-                    device too, they sync automatically) — or transfer a copy with “💾 Save HTML” on the
-                    other device and “📂 Load HTML File” here.
+                    Every dataset is saved to the shared cloud workspace, so it shows up here
+                    automatically on any device — no sign-in needed. If this list is empty, the cloud
+                    may be unreachable right now; a superuser can restore a copy with
+                    “📂 Load HTML File” below.
                   </span>
                 </div>
               ) : visibleDatasets.length === 0 ? (
@@ -3802,6 +3843,10 @@ const openDataset = (dset) => {
                               title="Accès restreint : seuls les membres définis + le superutilisateur voient ce dataset"
                             >🔒</span>
                           )}
+                          {!isDatasetRestricted(dset) && (
+                            <span className="ml-1 align-middle" title="Visible par TOUS les comptes de l’équipe — bouton « 👥 Membres » pour restreindre">🌐</span>
+                          )}
+
                         </span>
 
                         <span className="text-[11px] text-slate-500 mt-1 flex gap-2">
@@ -3884,7 +3929,7 @@ const openDataset = (dset) => {
             handleBackToExplorer={handleBackToExplorer}
             datasetTitle={datasetTitle} setDatasetTitle={setDatasetTitle}
             datasetSubtitle={datasetSubtitle} setDatasetSubtitle={setDatasetSubtitle}
-            saveStatus={saveStatus} saveErrorMsg={saveErrorMsg}
+            saveStatus={saveStatus} saveErrorMsg={saveErrorMsg} saveTarget={saveTarget}
             backupStatus={backupStatus}
             currentUser={currentUser} setCurrentUser={setCurrentUser}
             setUnlockedTestIds={setUnlockedTestIds} setLoginModal={setLoginModal}
@@ -3896,7 +3941,6 @@ const openDataset = (dset) => {
             adminNav={adminNavEntries}
             currentAdminPage={currentAdminPage}
             onAdminNav={handleAdminNav}
-            user={user} onGoogleLogin={handleManualLogin}
             onConnectDrive={connectDrive}
           />
 

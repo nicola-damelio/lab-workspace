@@ -15,6 +15,9 @@
    • Bootstrap (aucun compte scientifique OU aucun superutilisateur encore
      défini) → tout le monde peut ouvrir, pour permettre la création de la
      première équipe.
+   • Les NOUVEAUX datasets sont créés en `restricted: false` (visibles par
+     TOUS les comptes de l’équipe) ; le superutilisateur peut ensuite les
+     restreindre depuis « 👥 Membres » (le créateur y est pré-rempli).
    L’identité d’un « utilisateur défini dans le dataset » est le nom du
    compte opérateur (celui utilisé pour se connecter à l’app).
    ========================================================================= */

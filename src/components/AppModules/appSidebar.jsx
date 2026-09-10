@@ -10,7 +10,7 @@ export const AppSidebar = ({
   isSidebarOpen, setIsSidebarOpen,
   handleBackToExplorer,
   datasetTitle, setDatasetTitle, datasetSubtitle, setDatasetSubtitle,
-  saveStatus, saveErrorMsg,
+  saveStatus, saveErrorMsg, saveTarget,
   backupStatus,
   currentUser, setCurrentUser, setUnlockedTestIds, setLoginModal,
   currentModule, setCurrentModule,
@@ -100,7 +100,11 @@ export const AppSidebar = ({
                 {saveStatus === 'saving' ? (
                   <span className="text-blue-500 animate-pulse flex items-center gap-1"><Icon name="save" size={12} /> Saving...</span>
                 ) : saveStatus === 'saved' ? (
-                  <span className="text-emerald-600 flex items-center gap-1"><Icon name="cloud" size={12} /> Cloud Sync</span>
+                  saveTarget === 'local' ? (
+                    <span className="text-amber-600 flex items-center gap-1" title="Saved on THIS device only — the cloud (Firestore) was not reachable. It will sync as soon as the connection is back."><Icon name="save" size={12} /> Local only</span>
+                  ) : (
+                    <span className="text-emerald-600 flex items-center gap-1" title="Saved in the shared cloud workspace — visible on every device."><Icon name="cloud" size={12} /> Cloud Sync</span>
+                  )
                 ) : saveStatus === 'error' ? (
                   <span className="text-red-600 flex items-center gap-1" title={saveErrorMsg}><Icon name="x" size={12} /> Error</span>
                 ) : (
