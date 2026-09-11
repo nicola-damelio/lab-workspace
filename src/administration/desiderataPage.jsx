@@ -1580,7 +1580,12 @@ export const DesiderataPage = () => {
                     TRANSFER_MODES.SIGNATURE,
                     'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100',
                     approved ? '📨 Pour signature' : '✓ Signature',
-                    'Documents complets (N° devis + fichier) : créer le devis « En attente de signature » dans « Approbation devis & BC »',
+                    /* L’explication du bouton inactif tient dans l’infobulle :
+                       la colonne reste compacte (la phrase affichée en clair
+                       occupait trop de place). */
+                    complete
+                      ? 'Documents complets (N° devis + fichier) : créer le devis « En attente de signature » dans « Approbation devis & BC »'
+                      : '🔒 Inactif tant que la demande n’a pas un N° de devis ET un fichier — utilisez « ✎ Révision » : un devis « En gestion » est créé pour être complété par la responsable d’achats',
                     !complete,
                   )}
                   {transferButton(
@@ -1590,12 +1595,6 @@ export const DesiderataPage = () => {
                     'Documents manquants : créer le devis « En gestion » pour complément par la responsable d’achats',
                   )}
                 </div>
-                {!complete && (
-                  <span className="text-[9px] font-bold text-amber-600 leading-tight max-w-[240px]">
-                    🔒 « Pour signature » est inactif tant que la demande n’a pas un N° de devis ET un fichier.
-                    Utilisez « ✎ Révision » : un devis « En gestion » est créé pour être complété par la responsable d’achats.
-                  </span>
-                )}
               </div>
             ) : null}
             {!transferred && !approved && !pendingDecision && !inTest ? <span className="text-[10px] text-slate-300">demande refusée</span> : null}

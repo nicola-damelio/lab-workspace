@@ -32,6 +32,10 @@ import {
   selectionHasTests, selectionIsComplete, describeCount,
 } from './utils/loadSelection';
 import { canUserOpenDataset, isDatasetRestricted, normalizeMemberNames, datasetAccessOf } from './utils/datasetAccess';
+import {
+  authServerConfigured, fetchAuthStatus, fetchRoster, serverLogin,
+  publishAccounts, applyServerSession, clearFirebaseSession, serverAdminToken
+} from './utils/labAuth';
 
 import { ScientistLoginGate, ScientistLoginModal } from './components/AppModules/definitionsManagers';
 import { DatasetAccessModal } from './components/AppModules/datasetAccessModal';
@@ -1095,6 +1099,16 @@ if (customType === 'dosy') {
   });
   const [unlockedTestIds, setUnlockedTestIds] = useState(new Set());
   const [recoveryBypass, setRecoveryBypass] = useState(false); // transient — not persisted
+  // ── AUTHENTIFICATION SERVEUR (voir src/utils/labAuth.js + docs/SECURITY-SETUP.md)
+  // `serverAuth.ready` = le serveur de jetons vérifie les mots de passe ET
+  // l'équipe y est publiée : dans ce cas la session Firebase devient
+  // obligatoire (les règles Firestore ne répondent qu'à un jeton signé).
+  // `serverRoster` = liste des membres (nom + rôle, SANS mot de passe) servie
+  // par le serveur pour remplir la liste déroulante avant toute connexion.
+  const [serverAuth, setServerAuth] = useState({
+    checked: false, configured: false, accounts: 0, ready: false, adminPushEnabled: false, lastError: ''
+  });
+  const [serverRoster, setServerRoster] = useState([]);
   // ────────────────────────────────────────────────────────
 
   const [customFields, setCustomFields] = useState([]);
@@ -1260,10 +1274,24 @@ if (customType === 'dosy') {
 
   // Sync operators + authSettings TO Firestore whenever they change (cloud persistence)
   const appConfigSaveRef = useRef(null);
+  // La copie distante a-t-elle été lue ? Tant que non, on n'écrit RIEN : un
+  // navigateur neuf (cache local vide) écrasait sinon la liste des comptes du
+  // cloud par une liste vide, ce qui supprimait l'écran de connexion pour
+  // TOUTE l'équipe (et ouvrait l'accès à tout le monde). Le cloud fait foi.
+  const [cloudAppConfigRead, setCloudAppConfigRead] = useState(false);
+  const cloudHasAccountsRef = useRef(false);
   useEffect(() => {
     // NO Google/Firebase sign-in required: the whole team shares ONE workspace,
     // so cloud persistence starts as soon as the Firestore SDK is available.
     if (!db) return;
+    // Avec l'authentification serveur active, aucune écriture sans session.
+    if (serverAuth.ready && !user) return;
+    // Protection anti-effacement (voir ci-dessus).
+    if (!cloudAppConfigRead) return;
+    if (!normalizeOperators(operators).length && cloudHasAccountsRef.current) {
+      console.warn('Écriture annulée : liste de comptes locale vide alors que le cloud en contient — protection anti-effacement.');
+      return;
+    }
     if (appConfigSaveRef.current) clearTimeout(appConfigSaveRef.current);
     appConfigSaveRef.current = setTimeout(async () => {
       try {
@@ -1275,33 +1303,138 @@ if (customType === 'dosy') {
       } catch (e) { console.warn('Could not sync app config to Firestore:', e.message); }
     }, 1500);
     return () => { if (appConfigSaveRef.current) clearTimeout(appConfigSaveRef.current); };
-  }, [operators, authSettings]);
+  }, [operators, authSettings, user, serverAuth.ready, cloudAppConfigRead]);
   // ─────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!auth) {
       setIsCloudReady(true);
-      return;
+      return undefined;
     }
 
-    const initAuth = async () => {
-      // PORTAL-ONLY LOGIN. The scientist password gate (ScientistLoginGate /
-      // utils/auth) is the single required login: nobody needs a Google/Firebase
-      // account, because Firestore reads AND writes now work without one (every
-      // save effect below only requires `db`).
+    // ── SESSION FIREBASE = IDENTITÉ RÉELLE ──────────────────────────────────
+    // Le mot de passe est vérifié par le serveur de jetons (server/), qui signe
+    // un jeton Firebase portant les revendications « lab », nom et rôle : c'est
+    // ce jeton que les règles Firestore (firestore.rules) exigent. On ne
+    // déconnecte donc plus le visiteur au chargement — on ÉCOUTE l'état
+    // d'authentification et on reconstruit l'identité depuis ces revendications
+    // signées (donc non falsifiables via localStorage / la console).
+    setIsCloudReady(true);
+    setNeedsLogin(false);
+
+    const unsubscribe = auth.onAuthStateChanged(async (fbUser) => {
       setIsCloudReady(true);
       setNeedsLogin(false);
-      // Drop any session left over from the old "☁️ Cloud sign-in" button so no
-      // browser keeps a cloud credential it no longer needs.
-      try { if (auth.currentUser) await auth.signOut(); } catch { /* ignore */ }
-      setUser(null);
-      auth.onAuthStateChanged(() => {
-        setNeedsLogin(false);
-        setIsCloudReady(true);
-      });
-    };
+      if (!fbUser) { setUser(null); return; }
+      setUser(fbUser);
+      try {
+        const tokenResult = await fbUser.getIdTokenResult();
+        const claims = (tokenResult && tokenResult.claims) || {};
+        if (claims.lab === true) {
+          setCurrentUser({
+            id: fbUser.uid,
+            name: claims.name || fbUser.displayName || '',
+            role: claims.role === 'superuser' ? 'superuser' : 'user'
+          });
+        } else {
+          // Session Firebase SANS jeton du serveur (ex. compte créé par une
+          // inscription publique avec la clé API) : aucun accès aux données.
+          console.warn('Session Firebase sans revendication « lab » — déconnexion.');
+          setCurrentUser(null);
+          try { await auth.signOut(); } catch { /* ignore */ }
+        }
+      } catch (e) {
+        console.warn('Lecture des revendications du jeton impossible:', e && e.message);
+      }
+    });
 
-    initAuth();
+    return () => { try { unsubscribe(); } catch { /* ignore */ } };
+  }, []);
+
+  // ── ÉTAT DE L'AUTHENTIFICATION SERVEUR + LISTE DE L'ÉQUIPE ────────────────
+  // `ready` (serveur prêt ET équipe publiée) impose la session Firebase ;
+  // le roster (noms + rôles, SANS mot de passe) alimente l'écran de connexion
+  // avant toute authentification. Rien n'est bloqué si le serveur n'est pas
+  // encore configuré : l'application garde alors son comportement historique.
+  const refreshServerAuth = useCallback(async () => {
+    if (!authServerConfigured()) {
+      setServerAuth({ checked: true, configured: false, accounts: 0, ready: false, adminPushEnabled: false, lastError: '' });
+      setServerRoster([]);
+      return;
+    }
+    const st = await fetchAuthStatus();
+    setServerAuth({
+      checked: true,
+      configured: !!st.configured,
+      accounts: Number(st.accounts || 0),
+      ready: !!st.ready,
+      adminPushEnabled: !!st.adminPushEnabled,
+      lastError: st.ok ? '' : (st.message || st.error || 'serveur injoignable')
+    });
+    if (st.ok) {
+      const roster = await fetchRoster();
+      if (roster.ok) setServerRoster(Array.isArray(roster.members) ? roster.members : []);
+    }
+  }, []);
+
+  useEffect(() => { refreshServerAuth(); }, [refreshServerAuth]);
+
+  // Le roster (liste des noms) alimente l'écran de connexion : si le serveur est
+  // prêt mais que la liste n'a pas pu être lue (réseau intermittent), on
+  // réessaie — sans elle, personne ne pourrait choisir son nom.
+  useEffect(() => {
+    if (!serverAuth.ready || serverRoster.length) return undefined;
+    const timer = setInterval(async () => {
+      const roster = await fetchRoster();
+      if (roster.ok && roster.members.length) setServerRoster(roster.members);
+    }, 8000);
+    return () => clearInterval(timer);
+  }, [serverAuth.ready, serverRoster.length]);
+
+  // ── PUBLICATION DE L'ÉQUIPE SUR LE SERVEUR DE JETONS ──────────────────────
+  // Le serveur doit connaître les comptes (nom + hash) pour vérifier lui-même
+  // les mots de passe : le superutilisateur publie la liste (ADMIN_TOKEN requis,
+  // voir docs/SECURITY-SETUP.md). Mise en page : Setup → Équipe & accès.
+  const publishTeamToServer = useCallback(async () => {
+    const list = normalizeOperators(operators);
+    if (!list.length) return { ok: false, error: 'empty_roster', message: 'Aucun compte à publier.' };
+    const res = await publishAccounts(list, serverAdminToken());
+    if (res.ok) {
+      console.info(`[auth] ${res.accounts} compte(s) publié(s) sur le serveur de jetons.`);
+      await refreshServerAuth();
+    } else {
+      console.warn('[auth] publication de l’équipe impossible:', res.error, res.message);
+    }
+    return res;
+  }, [operators, refreshServerAuth]);
+
+  // Synchronisation automatique (superutilisateur, jeton admin présent) : au
+  // plus une publication par changement d'équipe — pour qu'une fiche ajoutée
+  // ou un mot de passe modifié soit immédiatement accepté par le serveur.
+  const lastPublishedRef = useRef('');
+  useEffect(() => {
+    if (!serverAuth.checked || !serverAuth.configured || !serverAuth.adminPushEnabled) return;
+    if (!serverAdminToken()) return;
+    if (currentUser?.role !== 'superuser') return;
+    const list = normalizeOperators(operators);
+    if (!list.length) return;
+    const fingerprint = JSON.stringify(list.map((o) => [o.id, o.name, o.role, o.passwordHash]));
+    if (lastPublishedRef.current === fingerprint) return;
+    const t = setTimeout(() => {
+      lastPublishedRef.current = fingerprint;
+      publishTeamToServer();
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [operators, currentUser, serverAuth.checked, serverAuth.configured, serverAuth.adminPushEnabled, publishTeamToServer]);
+
+  // ── FERMETURE DE SESSION ─────────────────────────────────────────────────
+  // Fermer AUSSI la session Firebase : sans cela Firestore resterait
+  // accessible après un « Sign out » (le jeton n'expire qu'au bout d'une heure).
+  const handleSignOut = useCallback(async () => {
+    setCurrentUser(null);
+    setUnlockedTestIds(new Set());
+    try { sessionStorage.removeItem('labCurrentUser'); } catch { /* ignore */ }
+    await clearFirebaseSession();
   }, []);
 
 // ── LOAD operators + authSettings FROM Firestore (any session) ────────────
@@ -1313,24 +1446,35 @@ if (customType === 'dosy') {
     // and therefore work before a Google sign-in; writes remain gated on a
     // signed-in Google user (see the save effect above).
     if (!db) return;
+    // Avec l'authentification serveur active, on ne lit le cloud qu'une fois
+    // connecté : les règles Firestore refusent tout jeton non signé.
+    if (serverAuth.ready && !user) return;
     const unsubscribe = db
       .collection(`artifacts/${appId}/public/data/appConfig`)
       .doc('global')
       .onSnapshot(
         (doc) => {
-          if (!doc.exists) return;
+          // La lecture distante a eu lieu : les écritures (opérateurs / réglages)
+          // deviennent autorisées — voir la protection anti-effacement de
+          // l'effet de sauvegarde plus haut.
+          setCloudAppConfigRead(true);
+          if (!doc.exists) {
+            cloudHasAccountsRef.current = false;
+            return;
+          }
           const data = doc.data();
           
           // Fix infinite loop: only update state if cloud data differs from current local string
           try {
             if (data.operators) {
               const currentLocal = localStorage.getItem('labWorkspace_operators');
-              if (currentLocal !== data.operators) {
-                const parsed = JSON.parse(data.operators);
-                if (Array.isArray(parsed) && parsed.length > 0) {
-                  setOperators(parsed);
-                  localStorage.setItem('labWorkspace_operators', data.operators);
-                }
+              let parsedList = [];
+              try { const p = JSON.parse(data.operators); parsedList = Array.isArray(p) ? p : []; } catch { parsedList = []; }
+              // Le cloud contient-il déjà une équipe ? (protection anti-effacement)
+              cloudHasAccountsRef.current = parsedList.length > 0;
+              if (currentLocal !== data.operators && parsedList.length > 0) {
+                setOperators(parsedList);
+                localStorage.setItem('labWorkspace_operators', data.operators);
               }
             }
           } catch {}
@@ -1351,7 +1495,7 @@ if (customType === 'dosy') {
         (err) => console.warn('AppConfig Firestore listener error:', err.message)
       );
     return () => unsubscribe();
-  }, [user]);
+  }, [user, serverAuth.ready]);
   // ──────────────────────────────────────────────────────────────────────
 
 
@@ -1493,7 +1637,8 @@ if (customType === 'dosy') {
     const urlParams = new URLSearchParams(window.location.search);
     const sharedDatasetId = urlParams.get('dataset');
 
-    if (sharedDatasetId && isCloudReady && db && !currentDatasetId) {
+    if (sharedDatasetId && isCloudReady && db && !currentDatasetId
+        && (!serverAuth.ready || !!user)) {
       db.collection(`artifacts/${appId}/public/data/datasets`)
         .doc(sharedDatasetId)
         .get()
@@ -1505,7 +1650,10 @@ if (customType === 'dosy') {
         })
         .catch((err) => console.error('Errore dataset condiviso:', err));
     }
-  }, [isCloudReady, currentDatasetId, needsLogin]);
+    // openDataset est stable pour cet effet (garde `!currentDatasetId`) :
+    // l'ajouter aux dépendances relancerait la lecture à chaque rendu.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCloudReady, currentDatasetId, needsLogin, user, serverAuth.ready]);
 
   /* Datasets supprimés VOLONTAIREMENT pendant cette session. Le document est
      retiré de Firestore, mais le cache localStorage de l’appareil en garde une
@@ -1517,11 +1665,23 @@ if (customType === 'dosy') {
   const deletedDatasetIdsRef = useRef(new Set());
 
   useEffect(() => {
-    // Cloud datasets live under `artifacts/{appId}/public/data/datasets`. This
-    // path is readable AND writable from any device without a Google sign-in
-    // (verified against the live project: the Firestore rules accept anonymous
-    // clients), so every browser — phone, second PC, collaborator — sees and
-    // updates the same workspace. localStorage is only an offline cache now.
+    // Cloud datasets live under `artifacts/{appId}/public/data/datasets`.
+    // La lecture ET l'écriture exigent désormais un jeton signé par le serveur
+    // de jetons (voir firestore.rules) : plus aucun client anonyme. Quand
+    // l'authentification serveur est active, on n'interroge le cloud qu'avec une
+    // session ET on n'affiche aucun cache local sans session — un visiteur sans
+    // compte ne doit même pas voir la LISTE des datasets.
+    // Tant que l'état du serveur de jetons n'est pas connu (serveur configuré),
+    // on ne charge RIEN : sans cela le cache local laisserait apparaître les
+    // titres des datasets avant toute connexion. En mode historique (aucun
+    // serveur de jetons configuré) le comportement d'origine est conservé.
+    const serverAuthActive = !!serverAuth.ready;
+    const serverAuthPending = authServerConfigured() && !serverAuth.checked;
+    if ((serverAuthActive || serverAuthPending) && !user) {
+      setDatasetsList([]);
+      setIsCloudReady(true);
+      return undefined;
+    }
     if (db) {
       const collRef = db.collection(`artifacts/${appId}/public/data/datasets`);
 
@@ -1591,7 +1751,7 @@ if (customType === 'dosy') {
     } catch {}
 
     setIsCloudReady(true);
-  }, [user]);
+  }, [user, serverAuth.ready, serverAuth.checked]);
 
   // ── Derived string array for backward-compatible child components ──
   // All child components (test renderers, LabNotebook, Storage, etc.) still
@@ -3478,7 +3638,20 @@ const openDataset = (dset) => {
   // définir le premier superutilisateur).
   const teamNoSuperuser = !hasDefinedSuperuser(operators);
 
-  const showLoginGate = authSettings.requireLoginOnEntry && !currentUser && !recoveryBypass && operatorNames.length > 0;
+  // Authentification SERVEUR prête (jetons signés + équipe publiée) : la session
+  // Firebase devient OBLIGATOIRE (les règles Firestore n'acceptent qu'un jeton
+  // signé), et le contournement de secours historique est neutralisé.
+  const serverAuthReady = !!serverAuth.ready;
+  const recoveryBypassActive = recoveryBypass && !serverAuthReady;
+  // Liste proposée à l'écran de connexion : celle du serveur (nom + rôle, SANS
+  // mot de passe) quand elle existe, sinon la copie locale historique.
+  const loginRoster = serverRoster.length ? serverRoster : normalizeOperators(operators);
+  const serverLoginMode = serverAuthReady || serverRoster.length > 0;
+
+  const showLoginGate =
+    (authSettings.requireLoginOnEntry || serverAuthReady) &&
+    !user && !currentUser && !recoveryBypassActive &&
+    (operatorNames.length > 0 || loginRoster.length > 0 || serverAuthReady);
 
   return (
     <Suspense fallback={<div className="flex items-center justify-center h-screen text-slate-400 text-sm">Loading…</div>}>
@@ -3490,10 +3663,34 @@ const openDataset = (dset) => {
     ══════════════════════════════════════════════════════ */}
     {showLoginGate && (
       <ScientistLoginGate
-        operators={normalizeOperators(operators)}
-        onLogin={(user) => {
+        operators={loginRoster}
+        serverMode={serverLoginMode}
+        serverStatus={serverAuth}
+        onLogin={async (user, password) => {
+          // Identité vérifiée CÔTÉ SERVEUR : le serveur de jetons contrôle le
+          // mot de passe puis signe une session Firebase (claim « lab » + rôle).
+          if (authServerConfigured()) {
+            const res = await serverLogin(user && user.name, password);
+            if (!res.ok) {
+              if (serverAuthReady) {
+                return { error: res.message || 'Connexion refusée par le serveur.' };
+              }
+              // Serveur configuré mais pas encore prêt (équipe non publiée) :
+              // on informe sans bloquer, les règles Firestore n'étant pas
+              // encore fermées. À régler AVANT de publier les règles.
+              console.warn('[auth] connexion serveur indisponible:', res.error, res.message);
+            } else {
+              const applied = await applyServerSession(res.token);
+              if (!applied.ok) return { error: applied.message };
+              const identity = { id: res.id || user.id, name: res.name || user.name, role: res.role || user.role };
+              setCurrentUser(identity);
+              try { sessionStorage.setItem('labCurrentUser', JSON.stringify(identity)); } catch { /* ignore */ }
+              return undefined;
+            }
+          }
           setCurrentUser(user);
-          try { sessionStorage.setItem('labCurrentUser', JSON.stringify(user)); } catch {}
+          try { sessionStorage.setItem('labCurrentUser', JSON.stringify(user)); } catch { /* ignore */ }
+          return undefined;
         }}
         onRecovery={() => {
           // Transient bypass — does NOT touch requireLoginOnEntry in localStorage
@@ -3979,10 +4176,7 @@ const openDataset = (dset) => {
                         </span>
                       </div>
                       <button
-                        onClick={() => {
-                          setCurrentUser(null);
-                          try { sessionStorage.removeItem('labCurrentUser'); } catch {}
-                        }}
+                        onClick={handleSignOut}
                         className="ml-2 text-xs text-slate-400 hover:text-red-500 font-bold transition-colors px-2 py-1 rounded hover:bg-red-50"
                         title="Log out"
                       >
@@ -4176,6 +4370,7 @@ const openDataset = (dset) => {
             saveStatus={saveStatus} saveErrorMsg={saveErrorMsg} saveTarget={saveTarget}
             backupStatus={backupStatus}
             currentUser={currentUser} setCurrentUser={setCurrentUser}
+            onSignOut={handleSignOut}
             setUnlockedTestIds={setUnlockedTestIds} setLoginModal={setLoginModal}
             currentModule={currentModule} setCurrentModule={setCurrentModule}
             handlePrint={handlePrint} loadHTML={loadHTML} exportHTML={exportHTML}
@@ -4338,24 +4533,45 @@ const openDataset = (dset) => {
     {/* The new ScientistLoginGate above (fixed full-screen) handles requireLoginOnEntry for ALL views */}
 
 {/* ── Generic Login Modal (triggered by sidebar or locked tests) ── */}
-    {loginModal && !(authSettings.requireLoginOnEntry && !currentUser) && (
+    {loginModal && !((authSettings.requireLoginOnEntry || serverAuthReady) && !currentUser && !user) && (
       <ScientistLoginModal
         operators={
           loginModal.targetScientistName
-            ? normalizeOperators(operators).filter((op) => op.name === loginModal.targetScientistName)
-            : normalizeOperators(operators)
+            ? (serverRoster.length ? serverRoster : normalizeOperators(operators)).filter((op) => op.name === loginModal.targetScientistName)
+            : (serverRoster.length ? serverRoster : normalizeOperators(operators))
         }
+        serverMode={serverLoginMode}
         title={loginModal.targetScientistName ? `Log in as ${loginModal.targetScientistName}` : 'Scientist Login'}
         subtitle={loginModal.targetScientistName
           ? `This test belongs to ${loginModal.targetScientistName}. Enter their password to continue.`
           : 'Select your name and enter your password to access protected data.'}
-        onLogin={(user) => {
+        onLogin={async (user, password) => {
+          // Ce modal (barre latérale, test verrouillé) doit passer par le même
+          // contrôle serveur que l'écran de connexion : sans session Firebase,
+          // les règles Firestore refusent toute lecture/écriture.
+          if (authServerConfigured()) {
+            const res = await serverLogin(user && user.name, password);
+            if (!res.ok) {
+              if (serverAuthReady) return { error: res.message || 'Connexion refusée par le serveur.' };
+              console.warn('[auth] connexion serveur indisponible:', res.error, res.message);
+            } else {
+              const applied = await applyServerSession(res.token);
+              if (!applied.ok) return { error: applied.message };
+              const identity = { id: res.id || user.id, name: res.name || user.name, role: res.role || user.role };
+              setCurrentUser(identity);
+              try { sessionStorage.setItem('labCurrentUser', JSON.stringify(identity)); } catch { /* ignore */ }
+              if (loginModal.onSuccess) loginModal.onSuccess(identity);
+              else setLoginModal(null);
+              return undefined;
+            }
+          }
           if (loginModal.onSuccess) {
             loginModal.onSuccess(user);
           } else {
             setCurrentUser(user);
             setLoginModal(null);
           }
+          return undefined;
         }}
         onClose={() => setLoginModal(null)}
       />

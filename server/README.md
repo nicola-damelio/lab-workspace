@@ -20,6 +20,32 @@ operators/settings are loaded from the Firestore appConfig for all sessions).
 If the server is briefly unreachable the app shows "Drive unavailable", keeps
 files locally, and **retries automatically every minute** — no user action.
 
+## Team sign-in (server-side password check) — recommended
+
+The app's login screen alone never protected the data: it runs in the browser.
+This server can now do the real check and hand out a **signed Firebase token**,
+which is what the Firestore rules require (`firestore.rules` at the repo root).
+
+| Endpoint | Purpose |
+| -------- | ------- |
+| `POST /api/auth/login` `{ name, password }` | verifies the password server-side (PBKDF2-SHA256; the app's legacy SHA-256 fingerprints are hardened on first successful login) and answers `{ token }` — a Firebase **custom token** carrying `claims { lab: true, name, role }`. |
+| `GET /api/auth/roster` | `{ members: [{ id, name, role }] }` — fills the login screen's name list. **No password, no hash.** |
+| `POST /api/auth/accounts` (header `X-Admin-Token`) | replaces the server-side copy of the team (the app publishes it from *Setup → Équipe & accès → 🛡️ Sécurité serveur*). |
+| `GET /api/auth/status` | `{ configured, accounts, savedAt, adminPushEnabled }`. |
+
+Enable it with three extra environment variables (see `deploy-cloud-run.ps1`
+`-FirebaseServiceAccountFile` / `-AdminToken`):
+
+| Variable | Meaning |
+| -------- | ------- |
+| `FIREBASE_SERVICE_ACCOUNT` (or `…_B64`, or `FIREBASE_SA_FILE`) | the Firebase service-account JSON whose key signs the custom tokens. Empty = `/api/auth/*` answers `501 auth_not_configured`. |
+| `ADMIN_TOKEN` | shared secret required by `POST /api/auth/accounts`. Empty = publication disabled. |
+| `ACCOUNTS_FILE` | where the server keeps its copy of the team (default `./workspace-accounts.json`, `0600`; on Cloud Run: `/data/workspace-accounts.json`). |
+
+Until the Firestore rules are published, **nothing changes** for the team: the
+app keeps its historical local login as a fallback. The full procedure (order,
+verification, rollback) is in **`docs/SECURITY-SETUP.md`**.
+
 ## Deploy on Google Cloud Run (recommended)
 
 The zero-dependency server is published as a **single-instance Cloud Run

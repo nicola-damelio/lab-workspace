@@ -8,6 +8,9 @@ import React, {useState} from 'react';
 import { normalizeOperators, hashPassword } from '../../utils/auth';
 import { Icon } from '../Icons';
 import { SPECIAL_PAGES, CUSTOM_FIELD_TAB_OPTIONS, getSubsectionsForPage } from '../../data/specialPages';
+import {
+  authServerBase, fetchAuthStatus, publishAccounts, serverAdminToken, setServerAdminToken
+} from '../../utils/labAuth';
 
 export const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => {
   const [draft, setDraft] = useState({
@@ -476,6 +479,107 @@ export const MandatoryParametersManager = ({
   );
 };
 
+/* =========================================================
+   SÉCURITÉ SERVEUR — l'équipe doit être publiée sur le serveur de
+   jetons (server/token-server.js) pour que celui-ci puisse vérifier
+   les mots de passe et signer les jetons que les règles Firestore
+   exigent. ⚠️ Publier AVANT de fermer les règles (docs/SECURITY-SETUP.md).
+========================================================= */
+const ServerSecurityPanel = ({ operators }) => {
+  const [status, setStatus] = useState(null);
+  const [token, setToken] = useState(() => serverAdminToken());
+  const [busy, setBusy] = useState(false);
+  const [ok, setOk] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const refresh = async () => setStatus(await fetchAuthStatus());
+  React.useEffect(() => { refresh(); }, []);
+
+  const publish = async () => {
+    setBusy(true); setMessage(''); setOk(false);
+    setServerAdminToken(token);
+    const res = await publishAccounts(normalizeOperators(operators), token);
+    setOk(!!res.ok);
+    setMessage(res.ok
+      ? `${res.accounts} compte(s) publié(s) — ${res.withPassword} avec mot de passe.`
+      : (res.message || 'Publication impossible.'));
+    setBusy(false);
+    refresh();
+  };
+
+  const list = normalizeOperators(operators);
+  const withoutPassword = list.filter((o) => !o.passwordHash).length;
+  const accounts = status ? status.accounts : null;
+
+  return (
+    <div className="border-t border-slate-200 pt-5">
+      <h3 className="text-sm font-bold text-sky-700 uppercase mb-3 flex items-center gap-2">
+        🛡️ Sécurité serveur — vérification des mots de passe
+      </h3>
+
+      <div className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 mb-3 flex flex-col gap-1">
+        <span>
+          Serveur : <b className="text-slate-700">{authServerBase() || 'non configuré'}</b>
+        </span>
+        {!status && <span className="text-slate-400">État du serveur : vérification…</span>}
+        {status && !status.ok && (
+          <span className="text-amber-700">⚠️ Serveur injoignable ({status.message || status.error})</span>
+        )}
+        {status && status.ok && (
+          <span>
+            Signature de jetons : <b className={status.configured ? 'text-emerald-700' : 'text-red-600'}>
+              {status.configured ? 'configurée' : 'non configurée (FIREBASE_SERVICE_ACCOUNT manquant)'}
+            </b>
+            {' · '}Équipe publiée : <b className="text-slate-700">{accounts} compte(s)</b>
+            {' · '}Publication par l’app : <b className={status.adminPushEnabled ? 'text-emerald-700' : 'text-red-600'}>
+              {status.adminPushEnabled ? 'autorisée' : 'désactivée (ADMIN_TOKEN manquant)'}
+            </b>
+          </span>
+        )}
+      </div>
+
+      <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">
+        Jeton administrateur du serveur (ADMIN_TOKEN)
+      </label>
+      <div className="flex gap-2 mb-2">
+        <input
+          type="password"
+          value={token}
+          onChange={(e) => { setToken(e.target.value); setMessage(''); }}
+          placeholder="ADMIN_TOKEN défini au déploiement du serveur"
+          className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-sky-500"
+        />
+        <button
+          onClick={publish}
+          disabled={busy || !list.length}
+          className={`font-bold text-sm px-4 py-2 rounded-lg shadow-sm transition-colors ${
+            busy ? 'bg-slate-300 text-slate-500 cursor-wait' : 'bg-sky-600 hover:bg-sky-700 text-white'
+          }`}
+        >
+          {busy ? '⏳ Publication…' : '⬆ Publier les comptes'}
+        </button>
+      </div>
+
+      {message && (
+        <p className={`text-xs mb-2 ${ok ? 'text-emerald-700' : 'text-red-600'}`}>
+          {ok ? '✅' : '⛔'} {message}
+        </p>
+      )}
+      {withoutPassword > 0 && (
+        <p className="text-xs text-amber-700 mb-2">
+          ⚠️ {withoutPassword} fiche(s) sans mot de passe : leur connexion sera refusée par le serveur.
+        </p>
+      )}
+      <p className="text-[11px] text-slate-500 leading-relaxed">
+        Le serveur ne reçoit que les noms, les rôles et les empreintes des mots de passe — jamais un
+        mot de passe en clair. Les empreintes sont renforcées (PBKDF2 + sel) dès la première connexion
+        réussie de chaque personne. Publiez cette liste <b>avant</b> de coller
+        <code className="mx-1 px-1 bg-slate-100 rounded">firestore.rules</code> dans la Console Firebase.
+      </p>
+    </div>
+  );
+};
+
 export const ScientistsOperatorsManager = ({
   operators = [],
   setOperators,
@@ -869,6 +973,10 @@ export const ScientistsOperatorsManager = ({
               </div>
             </label>
           </div>
+
+          {/* Sécurité serveur : vérification des mots de passe par le serveur
+              de jetons (les règles Firestore n'acceptent que ses jetons signés). */}
+          {authServerBase() && <ServerSecurityPanel operators={operators} />}
         </div>
       )}
     </div>
@@ -879,10 +987,13 @@ export const ScientistsOperatorsManager = ({
    SCIENTIST LOGIN GATE  (full-screen, mandatory)
 ========================================================= */
 
-export const ScientistLoginGate = ({ operators, onLogin, onRecovery }) => {
+export const ScientistLoginGate = ({ operators, onLogin, onRecovery, serverMode = false, serverStatus = null }) => {
   const normalizedOps = normalizeOperators(operators || []);
   // Recovery mode: if nobody has a password set, allow emergency bypass
   const noneHavePassword = normalizedOps.every((op) => !op.passwordHash);
+  // Authentification serveur amorcée : le contournement d'urgence est fermé
+  // (sinon il rouvrirait exactement le trou que le serveur referme).
+  const recoveryAllowed = !serverMode && !(serverStatus && serverStatus.configured);
   const [selectedId, setSelectedId] = useState(normalizedOps.length === 1 ? normalizedOps[0].id : '');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -902,17 +1013,28 @@ export const ScientistLoginGate = ({ operators, onLogin, onRecovery }) => {
     try {
       const op = normalizedOps.find((o) => o.id === selectedId);
       if (!op) { setError('Scientist not found.'); setLoading(false); return; }
-      if (!op.passwordHash) { setError('No password set for this account. Contact a superuser.'); setLoading(false); return; }
-      const hash = await hashPassword(password);
-      if (hash !== op.passwordHash) {
-        setError('Incorrect password. Try again.');
+      /* serverMode : le mot de passe n'est PAS vérifié ici — le hash n'est même
+         pas transmis au navigateur. C'est le serveur de jetons qui vérifie le
+         mot de passe et signe la session Firebase ; le parent répond { error }
+         en cas de refus. */
+      if (!serverMode) {
+        if (!op.passwordHash) { setError('No password set for this account. Contact a superuser.'); setLoading(false); return; }
+        const hash = await hashPassword(password);
+        if (hash !== op.passwordHash) {
+          setError('Incorrect password. Try again.');
+          setPassword('');
+          setLoading(false);
+          return;
+        }
+      }
+      const result = await onLogin({ id: op.id, name: op.name, role: op.role, personnelId: op.personnelId }, password);
+      if (result && result.error) {
+        setError(result.error);
         setPassword('');
         setLoading(false);
-        return;
       }
-      onLogin({ id: op.id, name: op.name, role: op.role, personnelId: op.personnelId });
     } catch (err) {
-      setError('Login failed: ' + err.message);
+      setError('Login failed: ' + ((err && err.message) || String(err)));
       setLoading(false);
     }
   };
@@ -944,7 +1066,7 @@ export const ScientistLoginGate = ({ operators, onLogin, onRecovery }) => {
               <p className="text-amber-300/70 text-xs">
                 Scientist accounts were lost (e.g. from an HTML file load). Use recovery to re-configure.
               </p>
-              {onRecovery && (
+              {onRecovery && recoveryAllowed && (
                 <button
                   type="button"
                   onClick={onRecovery}
@@ -999,6 +1121,24 @@ export const ScientistLoginGate = ({ operators, onLogin, onRecovery }) => {
             </div>
           )}
 
+          {/* État de l'authentification serveur (jetons signés) */}
+          {serverMode ? (
+            <p className="mb-4 text-[11px] text-emerald-200/80 leading-relaxed">
+              🔐 Mot de passe vérifié par le serveur sécurisé du laboratoire : l’accès aux données
+              n’est délivré qu’à un compte valide de l’équipe.
+            </p>
+          ) : (serverStatus && serverStatus.configured && serverStatus.accounts === 0) ? (
+            <p className="mb-4 text-[11px] text-amber-200/80 leading-relaxed">
+              ⚠️ Le serveur sécurisé n’a pas encore reçu la liste de l’équipe : un superutilisateur doit
+              publier les comptes (Setup → Équipe & accès) AVANT de fermer les règles Firestore
+              (docs/SECURITY-SETUP.md).
+            </p>
+          ) : (serverStatus && serverStatus.lastError) ? (
+            <p className="mb-4 text-[11px] text-amber-200/80 leading-relaxed">
+              ⚠️ Serveur sécurisé injoignable ({serverStatus.lastError}) — connexion locale de secours.
+            </p>
+          ) : null}
+
           {/* Submit */}
           <button
             type="submit"
@@ -1016,7 +1156,7 @@ export const ScientistLoginGate = ({ operators, onLogin, onRecovery }) => {
           </button>
 
           {/* Recovery bypass — shown only if no passwords are set at all */}
-          {noneHavePassword && onRecovery && (
+          {noneHavePassword && onRecovery && recoveryAllowed && (
             <div className="mt-4 text-center">
               <button
                 type="button"
@@ -1037,7 +1177,7 @@ export const ScientistLoginGate = ({ operators, onLogin, onRecovery }) => {
    SCIENTIST LOGIN MODAL
 ========================================================= */
 
-export const ScientistLoginModal = ({ operators, onLogin, onClose, title, subtitle }) => {
+export const ScientistLoginModal = ({ operators, onLogin, onClose, title, subtitle, serverMode = false }) => {
   const normalizedOps = normalizeOperators(operators || []);
   const [selectedId, setSelectedId] = useState(normalizedOps.length === 1 ? normalizedOps[0].id : '');
   const [password, setPassword] = useState('');
@@ -1057,17 +1197,26 @@ export const ScientistLoginModal = ({ operators, onLogin, onClose, title, subtit
     try {
       const op = normalizedOps.find((o) => o.id === selectedId);
       if (!op) { setError('Scientist not found.'); setLoading(false); return; }
-      if (!op.passwordHash) { setError('This scientist has no password set. Ask a superuser to set one.'); setLoading(false); return; }
-      const hash = await hashPassword(password);
-      if (hash !== op.passwordHash) {
-        setError('Incorrect password. Try again.');
+      // serverMode : la vérification est faite par le serveur de jetons (le hash
+      // n'est pas transmis au navigateur) — le parent peut répondre { error }.
+      if (!serverMode) {
+        if (!op.passwordHash) { setError('This scientist has no password set. Ask a superuser to set one.'); setLoading(false); return; }
+        const hash = await hashPassword(password);
+        if (hash !== op.passwordHash) {
+          setError('Incorrect password. Try again.');
+          setPassword('');
+          setLoading(false);
+          return;
+        }
+      }
+      const result = await onLogin({ id: op.id, name: op.name, role: op.role, personnelId: op.personnelId }, password);
+      if (result && result.error) {
+        setError(result.error);
         setPassword('');
         setLoading(false);
-        return;
       }
-      onLogin({ id: op.id, name: op.name, role: op.role, personnelId: op.personnelId });
     } catch (err) {
-      setError('Login failed: ' + err.message);
+      setError('Login failed: ' + ((err && err.message) || String(err)));
       setLoading(false);
     }
   };

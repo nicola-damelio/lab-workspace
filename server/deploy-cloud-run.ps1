@@ -45,7 +45,12 @@ param(
   [string]$ClientId = '',  # OAuth web-client ID (if it differs from the token-server default)
   [string]$ClientSecretFile = '',
   [switch]$ClientSecretFromEnv,
-  [string]$Bucket = ''
+  [string]$Bucket = '',
+  # Authentification serveur de l'équipe (voir docs/SECURITY-SETUP.md) :
+  # la clé de compte de service Firebase qui signe les jetons d'accès, et le
+  # jeton administrateur qui autorise l'app à publier la liste de l'équipe.
+  [string]$FirebaseServiceAccountFile = '',
+  [string]$AdminToken = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -207,6 +212,32 @@ $envLines = @(
   "CODE_VERSION: `"$codeVersion`""
 )
 if ($ClientId) { $envLines += "GOOGLE_CLIENT_ID: `"$ClientId`"" }
+$envLines += 'ACCOUNTS_FILE: "/data/workspace-accounts.json"'
+
+# Authentification serveur de l'équipe : la clé de compte de service Firebase
+# (encodée en base64 pour tenir sur une ligne du fichier YAML) signe les jetons
+# délivrés après vérification du mot de passe ; ADMIN_TOKEN autorise l'app à
+# publier la liste de l'équipe. Sans eux, /api/auth/* répond 501 et l'app garde
+# son comportement historique (à utiliser seulement avant de fermer les règles).
+if ($FirebaseServiceAccountFile) {
+  if (-not (Test-Path -LiteralPath $FirebaseServiceAccountFile)) { Fail "FirebaseServiceAccountFile not found: $FirebaseServiceAccountFile" }
+  $saRaw = Get-Content -LiteralPath $FirebaseServiceAccountFile -Raw
+  try { $saObj = $saRaw | ConvertFrom-Json } catch { Fail 'FirebaseServiceAccountFile is not valid JSON.' }
+  if (-not $saObj.client_email -or -not $saObj.private_key) {
+    Fail 'The service-account JSON must contain client_email and private_key (Firebase Console → Project settings → Service accounts → Generate new private key).'
+  }
+  $saB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($saRaw))
+  $envLines += "FIREBASE_SERVICE_ACCOUNT_B64: `"$saB64`""
+  Write-Host "Team sign-in:      enabled (service account $($saObj.client_email))"
+} else {
+  Write-Host 'Team sign-in:      DISABLED (no -FirebaseServiceAccountFile) — /api/auth/* answers 501' -ForegroundColor Yellow
+}
+if ($AdminToken) {
+  $envLines += "ADMIN_TOKEN: `"$AdminToken`""
+  Write-Host 'Team publication:  enabled (ADMIN_TOKEN set)'
+} else {
+  Write-Host 'Team publication:  DISABLED (no -AdminToken) — the app cannot publish the team list' -ForegroundColor Yellow
+}
 Set-Content -LiteralPath $envFile -Value $envLines -Encoding ascii
 
 Write-Host "`nDeploying Cloud Run service '$Service' (build + push, first time can take ~3-5 min)..." -ForegroundColor Cyan

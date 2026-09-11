@@ -224,6 +224,24 @@ trap 'rm -f "$TMP_SECRET" "$ENV_FILE"' EXIT
   printf 'SHARED_EMAIL: "%s"\n' "$SHARED_EMAIL"
   printf 'ALLOWED_ORIGINS: "%s"\n' "$ORIGINS"
   printf 'CODE_VERSION: "%s"\n' "$CODE_VERSION"
+  printf 'ACCOUNTS_FILE: "/data/workspace-accounts.json"\n'
+  # Authentification de l'équipe (voir docs/SECURITY-SETUP.md) : la clé de
+  # compte de service Firebase signe les jetons délivrés après vérification du
+  # mot de passe côté serveur ; ADMIN_TOKEN autorise l'app à publier l'équipe.
+  if [ -n "${FIREBASE_SERVICE_ACCOUNT_FILE:-}" ]; then
+    [ -f "$FIREBASE_SERVICE_ACCOUNT_FILE" ] || { echo "ERROR: FIREBASE_SERVICE_ACCOUNT_FILE not found: $FIREBASE_SERVICE_ACCOUNT_FILE" >&2; exit 1; }
+    SA_B64="$(base64 -w0 < "$FIREBASE_SERVICE_ACCOUNT_FILE" 2>/dev/null || base64 < "$FIREBASE_SERVICE_ACCOUNT_FILE" | tr -d '\n')"
+    printf 'FIREBASE_SERVICE_ACCOUNT_B64: "%s"\n' "$SA_B64"
+    echo "Team sign-in:      enabled ($FIREBASE_SERVICE_ACCOUNT_FILE)"
+  else
+    echo 'Team sign-in:      DISABLED (set FIREBASE_SERVICE_ACCOUNT_FILE) — /api/auth/* answers 501'
+  fi
+  if [ -n "${ADMIN_TOKEN:-}" ]; then
+    printf 'ADMIN_TOKEN: "%s"\n' "$ADMIN_TOKEN"
+    echo 'Team publication:  enabled (ADMIN_TOKEN set)'
+  else
+    echo 'Team publication:  DISABLED (set ADMIN_TOKEN) — the app cannot publish the team list'
+  fi
   if [ -n "$CLIENT_ID" ]; then
     printf 'GOOGLE_CLIENT_ID: "%s"\n' "$CLIENT_ID"
   fi

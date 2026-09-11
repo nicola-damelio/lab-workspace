@@ -37,6 +37,25 @@
          below); without it this answers 501 { error: 'mail_not_configured' }
          and the app falls back to a pre-filled mailto: link.
 
+     POST /api/auth/login      { name, password }
+         Verify the password SERVER-SIDE (PBKDF2-SHA256, legacy SHA-256 hashes
+         are upgraded on first successful login) and answer
+         { token } — a signed Firebase custom token carrying
+         claims { lab: true, name, role }. The browser trades it with Firebase
+         (signInWithCustomToken); the Firestore rules accept ONLY such tokens,
+         so the workspace data is unreadable to anybody without an account.
+     GET  /api/auth/roster
+         { members: [{ id, name, role }] } — NO password, NO hash: only what
+         the login screen needs to fill its name list before authentication.
+     POST /api/auth/accounts   (header X-Admin-Token: <ADMIN_TOKEN>)
+         { members: [{ id, name, role, passwordHash }] } — replaces the
+         server-side copy of the team (the app publishes it from Setup).
+         PBKDF2 upgrades already obtained are preserved when the published
+         hash for a member is unchanged.
+     GET  /api/auth/status
+         { configured, accounts, savedAt, adminPushEnabled } — lets the app
+         know whether server authentication is active.
+
    ENV VARS
      PORT                   HTTP port (default 8787).
      GOOGLE_CLIENT_ID       default: the app's OAuth Web client id.
@@ -60,6 +79,19 @@
      MAIL_FROM              sender shown by the relay (default:
                             'Lab Workspace <no-reply@lab-workspace>').
 
+     FIREBASE_SERVICE_ACCOUNT  the Firebase service-account JSON (one line) whose
+                            key signs the custom tokens. Empty = /api/auth/*
+                            answers 501 auth_not_configured. Alternatives:
+                            FIREBASE_SERVICE_ACCOUNT_B64 (base64 of the same
+                            JSON — easiest in a YAML env file) or
+                            FIREBASE_SA_FILE=</path/to/serviceAccount.json>.
+     ADMIN_TOKEN            shared secret required by POST /api/auth/accounts
+                            (the app sends it as X-Admin-Token). Empty = the
+                            endpoint is disabled.
+     ACCOUNTS_FILE          where the server-side copy of the team is stored
+                            (default ./workspace-accounts.json, 0600).
+     PBKDF2_ITERATIONS      password-hardening cost (default 150000).
+
    RUN
      GOOGLE_CLIENT_SECRET=... [SHARED_EMAIL=...] [ALLOWED_ORIGINS=...] \
        node server/token-server.js
@@ -72,6 +104,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const GOOGLE_DRIVE_ABOUT = 'https://www.googleapis.com/drive/v3/about?fields=user';
@@ -138,6 +171,363 @@ function saveStore(refreshToken, email) {
 
 function deleteStore() {
   try { fs.unlinkSync(STORE_FILE); } catch { /* ignore */ }
+}
+
+/* ── AUTHENTIFICATION DE L'ÉQUIPE (jetons Firebase signés) ───────────────────
+   Voir docs/SECURITY-SETUP.md. Principe — c'est ce qui rend le workspace
+   réellement privé (les règles Firestore n'acceptent QUE ces jetons) :
+
+     1. le navigateur envoie { name, password } à  POST /api/auth/login  ;
+     2. CE serveur vérifie le mot de passe (PBKDF2-SHA256 ; repli SHA-256 pour
+        les fiches créées par l'app, durcies automatiquement à la 1re connexion)
+        contre sa propre copie de l'équipe (ACCOUNTS_FILE, hors Firestore) ;
+     3. en cas de succès il SIGNE un jeton personnalisé Firebase (RS256) dont
+        les revendications portent { lab: true, name, role } ;
+     4. le client l'échange auprès de Firebase (signInWithCustomToken) et
+        obtient une session ; les règles Firestore exigent
+        request.auth.token.lab == true — donc personne d'autre ne peut lire ni
+        modifier le workspace, et le rôle n'est plus falsifiable en local.
+
+   Endpoints :
+     POST /api/auth/login     { name, password }      → { token, name, role }
+     GET  /api/auth/roster                            → { members:[{id,name,role}] }
+     POST /api/auth/accounts  { members:[…] }         → remplace la copie serveur
+                              (en-tête X-Admin-Token obligatoire)
+     GET  /api/auth/status                            → { configured, accounts }
+
+   Sans FIREBASE_SERVICE_ACCOUNT / FIREBASE_SA_FILE le serveur répond
+   501 auth_not_configured et l'app garde son comportement actuel (aucune
+   régression tant que les règles Firestore ne sont pas fermées). */
+
+const FIREBASE_SA_JSON = env('FIREBASE_SERVICE_ACCOUNT').trim();
+const FIREBASE_SA_B64 = env('FIREBASE_SERVICE_ACCOUNT_B64').trim();
+const FIREBASE_SA_FILE = env('FIREBASE_SA_FILE').trim();
+const ADMIN_TOKEN = env('ADMIN_TOKEN').trim();
+const ACCOUNTS_FILE = path.resolve(process.cwd(), env('ACCOUNTS_FILE', 'workspace-accounts.json'));
+const PBKDF2_ITERATIONS = parseInt(env('PBKDF2_ITERATIONS', '150000'), 10) || 150000;
+const CUSTOM_TOKEN_AUD =
+  'https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit';
+const CUSTOM_TOKEN_TTL = 3600;
+
+let cachedServiceAccount;
+let serviceAccountLoaded = false;
+
+/** Clé de compte de service Firebase (JSON ou fichier) — sert UNIQUEMENT à
+ *  signer les jetons. Jamais exposée au navigateur. */
+function loadServiceAccount() {
+  if (serviceAccountLoaded) return cachedServiceAccount;
+  serviceAccountLoaded = true;
+  let raw = FIREBASE_SA_JSON;
+  if (!raw && FIREBASE_SA_B64) {
+    // Variante base64 (JSON sur une seule ligne, sans guillemets à échapper
+    // dans un fichier d'environnement YAML — voir deploy-cloud-run).
+    try { raw = Buffer.from(FIREBASE_SA_B64, 'base64').toString('utf8'); } catch { raw = ''; }
+  }
+  if (!raw && FIREBASE_SA_FILE) {
+    try { raw = fs.readFileSync(FIREBASE_SA_FILE, 'utf8'); } catch { raw = ''; }
+  }
+  if (!raw) { cachedServiceAccount = null; return null; }
+  try {
+    const j = JSON.parse(raw);
+    const clientEmail = String(j.client_email || '').trim();
+    const privateKey = String(j.private_key || '').replace(/\\n/g, '\n').trim();
+    if (!clientEmail || !privateKey) throw new Error('client_email / private_key manquants');
+    cachedServiceAccount = {
+      clientEmail,
+      privateKey,
+      privateKeyId: String(j.private_key_id || '').trim(),
+      projectId: String(j.project_id || '').trim(),
+    };
+  } catch (e) {
+    console.error('FIREBASE_SERVICE_ACCOUNT illisible — auth serveur désactivée :', e.message);
+    cachedServiceAccount = null;
+  }
+  return cachedServiceAccount;
+}
+
+/** Copie serveur de l'équipe : { members: [{ id, name, role, passwordHash, algo, salt, iterations }] }.
+ *  Ce fichier vit sur le volume persistant du serveur (à côté du jeton Drive). */
+function loadAccounts() {
+  try {
+    const j = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, 'utf8'));
+    const members = Array.isArray(j && j.members) ? j.members : [];
+    return { members: members.filter((m) => m && m.name), savedAt: String((j && j.savedAt) || '') };
+  } catch {
+    return { members: [], savedAt: '' };
+  }
+}
+
+function saveAccounts(store) {
+  const dir = path.dirname(ACCOUNTS_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const tmp = `${ACCOUNTS_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(
+    tmp,
+    JSON.stringify({ members: store.members, savedAt: new Date().toISOString() }, null, 2),
+    { mode: 0o600 }
+  );
+  fs.renameSync(tmp, ACCOUNTS_FILE);
+}
+
+const b64url = (buf) => Buffer.from(buf).toString('base64')
+  .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+const sha256Hex = (password) => crypto.createHash('sha256').update(String(password), 'utf8').digest('hex');
+
+const pbkdf2Hex = (password, saltHex, iterations) =>
+  crypto
+    .pbkdf2Sync(String(password), Buffer.from(String(saltHex), 'hex'), iterations, 32, 'sha256')
+    .toString('hex');
+
+const safeEqualHex = (a, b) => {
+  try {
+    const A = Buffer.from(String(a || ''), 'hex');
+    const B = Buffer.from(String(b || ''), 'hex');
+    return A.length > 0 && A.length === B.length && crypto.timingSafeEqual(A, B);
+  } catch { return false; }
+};
+
+const normName = (s) => String(s || '').trim().toLowerCase();
+
+/**
+ * Vérifie un mot de passe contre la fiche serveur.
+ *   'ok'          → PBKDF2 valide
+ *   'upgrade'     → hash SHA-256 hérité (créé par l'app) : valide, à durcir
+ *   'no-password' → fiche sans mot de passe : connexion refusée
+ *   'invalid'     → refusé
+ */
+function verifyMemberPassword(member, password) {
+  if (!member || !password) return 'invalid';
+  if (member.algo === 'pbkdf2-sha256' && member.salt) {
+    const iterations = parseInt(member.iterations, 10) || PBKDF2_ITERATIONS;
+    return safeEqualHex(pbkdf2Hex(password, member.salt, iterations), member.passwordHash) ? 'ok' : 'invalid';
+  }
+  const legacy = String(member.passwordHash || '').trim();
+  if (!legacy) return 'no-password';
+  return sha256Hex(password) === legacy ? 'upgrade' : 'invalid';
+}
+
+/** Remplace le hash hérité par un PBKDF2 salé (le mot de passe en clair ne
+ *  quitte pas la mémoire du serveur). */
+function upgradeMemberHash(member, password, store) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  member.legacyHash = String(member.passwordHash || '');
+  member.passwordHash = pbkdf2Hex(password, salt, PBKDF2_ITERATIONS);
+  member.algo = 'pbkdf2-sha256';
+  member.salt = salt;
+  member.iterations = PBKDF2_ITERATIONS;
+  member.upgradedAt = new Date().toISOString();
+  saveAccounts(store);
+}
+
+/** Jeton personnalisé Firebase (JWT RS256) — format officiel du SDK Admin. */
+function mintCustomToken(member, sa) {
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: 'RS256', typ: 'JWT' };
+  if (sa.privateKeyId) header.kid = sa.privateKeyId;
+  const payload = {
+    iss: sa.clientEmail,
+    sub: sa.clientEmail,
+    aud: CUSTOM_TOKEN_AUD,
+    iat: now,
+    exp: now + CUSTOM_TOKEN_TTL,
+    uid: String(member.id || member.name || '').slice(0, 128),
+    claims: {
+      lab: true,
+      name: String(member.name || ''),
+      role: member.role === 'superuser' ? 'superuser' : 'user',
+    },
+  };
+  const signingInput = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(payload))}`;
+  const signer = crypto.createSign('RSA-SHA256');
+  signer.update(signingInput);
+  signer.end();
+  return `${signingInput}.${b64url(signer.sign(sa.privateKey))}`;
+}
+
+// Anti-force brute : 12 tentatives par 5 min et par adresse.
+const LOGIN_WINDOW_MS = 5 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 12;
+const loginAttempts = new Map();
+const loginRateLimited = (ip) => {
+  const now = Date.now();
+  const hits = (loginAttempts.get(ip) || []).filter((t) => now - t < LOGIN_WINDOW_MS);
+  hits.push(now);
+  loginAttempts.set(ip, hits);
+  if (loginAttempts.size > 5000) loginAttempts.clear();
+  return hits.length > LOGIN_MAX_ATTEMPTS;
+};
+
+const safeEqualText = (a, b) => {
+  const A = Buffer.from(String(a || ''), 'utf8');
+  const B = Buffer.from(String(b || ''), 'utf8');
+  return A.length > 0 && A.length === B.length && crypto.timingSafeEqual(A, B);
+};
+
+/** Réponse d'échec unique : jamais d'indication sur l'existence du nom. */
+const authRejected = () => ({
+  http: 401,
+  json: { ok: false, error: 'invalid_credentials', error_description: 'Nom ou mot de passe incorrect.' },
+});
+
+async function handleAuthLogin(body, ip) {
+  const sa = loadServiceAccount();
+  if (!sa) {
+    return {
+      http: 501,
+      json: {
+        ok: false,
+        error: 'auth_not_configured',
+        error_description: 'Authentification serveur non configurée : FIREBASE_SERVICE_ACCOUNT est absent du serveur.'
+      }
+    };
+  }
+  if (loginRateLimited(ip)) {
+    return {
+      http: 429,
+      json: {
+        ok: false,
+        error: 'too_many_attempts',
+        error_description: 'Trop de tentatives de connexion — réessayez dans quelques minutes.'
+      }
+    };
+  }
+  const store = loadAccounts();
+  if (!store.members.length) {
+    return {
+      http: 503,
+      json: {
+        ok: false,
+        error: 'accounts_not_initialized',
+        error_description: "Aucun compte n'a encore été publié sur ce serveur — le superutilisateur doit presser « Publier les comptes » (Setup → Équipe & accès). Voir docs/SECURITY-SETUP.md."
+      }
+    };
+  }
+  const name = String((body && body.name) || '').trim();
+  const password = String((body && body.password) || '');
+  const member = store.members.find(
+    (m) => normName(m.name) === normName(name) || String(m.id) === String(name)
+  );
+  const verdict = verifyMemberPassword(member, password);
+  if (!member || verdict === 'invalid' || verdict === 'no-password') {
+    console.warn(`[auth] connexion refusée pour « ${name || '(vide)'} » depuis ${ip}`);
+    return authRejected();
+  }
+  if (verdict === 'upgrade') upgradeMemberHash(member, password, store);
+  const role = member.role === 'superuser' ? 'superuser' : 'user';
+  return {
+    http: 200,
+    json: {
+      ok: true,
+      token: mintCustomToken({ ...member, role }, sa),
+      id: member.id || '',
+      name: member.name,
+      role,
+      expires_in: CUSTOM_TOKEN_TTL
+    }
+  };
+}
+
+/** Liste des membres SANS mot de passe ni hash — sert à remplir la liste
+ *  déroulante de l'écran de connexion avant toute authentification. */
+function handleAuthRoster() {
+  const store = loadAccounts();
+  return {
+    http: 200,
+    json: {
+      ok: true,
+      members: store.members.map((m) => ({
+        id: m.id || '',
+        name: m.name,
+        role: m.role === 'superuser' ? 'superuser' : 'user'
+      }))
+    }
+  };
+}
+
+function handleAuthStatus() {
+  const store = loadAccounts();
+  return {
+    http: 200,
+    json: {
+      ok: true,
+      configured: !!loadServiceAccount(),
+      accounts: store.members.length,
+      savedAt: store.savedAt,
+      adminPushEnabled: !!ADMIN_TOKEN,
+      version: CODE_VERSION
+    }
+  };
+}
+
+/** Publication de la copie serveur de l'équipe (superutilisateur, via l'app) —
+ *  protégée par ADMIN_TOKEN. Les hash PBKDF2 déjà obtenus sont conservés tant
+ *  que le hash publié pour cette fiche ne change pas. */
+function handleAuthAccounts(body, headers) {
+  if (!ADMIN_TOKEN) {
+    return {
+      http: 501,
+      json: {
+        ok: false,
+        error: 'admin_disabled',
+        error_description: "ADMIN_TOKEN n'est pas défini sur le serveur : la publication des comptes est désactivée."
+      }
+    };
+  }
+  const provided = String((headers && (headers['x-admin-token'] || headers['X-Admin-Token'])) || '');
+  if (!safeEqualText(provided, ADMIN_TOKEN)) {
+    return {
+      http: 401,
+      json: { ok: false, error: 'invalid_admin_token', error_description: 'Jeton administrateur invalide.' }
+    };
+  }
+  const raw = Array.isArray(body && body.members) ? body.members : [];
+  const members = raw
+    .map((m) => ({
+      id: String((m && m.id) || '').trim(),
+      name: String((m && m.name) || '').trim(),
+      role: m && m.role === 'superuser' ? 'superuser' : 'user',
+      passwordHash: String((m && m.passwordHash) || '').trim().toLowerCase()
+    }))
+    .filter((m) => m.name);
+  if (!members.length) {
+    return {
+      http: 400,
+      json: {
+        ok: false,
+        error: 'empty_roster',
+        error_description: 'Liste vide refusée : publiez au moins un compte.'
+      }
+    };
+  }
+  const previous = loadAccounts();
+  const next = members.map((m) => {
+    const old =
+      previous.members.find((p) => p.id && m.id && p.id === m.id) ||
+      previous.members.find((p) => normName(p.name) === normName(m.name));
+    const reference = old ? String(old.legacyHash || old.passwordHash || '') : '';
+    if (old && reference && reference === m.passwordHash) {
+      // Mot de passe inchangé : on garde le durcissement PBKDF2 déjà obtenu.
+      return { ...old, id: m.id || old.id, name: m.name, role: m.role };
+    }
+    return {
+      id: m.id,
+      name: m.name,
+      role: m.role,
+      passwordHash: m.passwordHash,
+      algo: m.passwordHash ? 'sha256' : ''
+    };
+  });
+  saveAccounts({ members: next });
+  return {
+    http: 200,
+    json: {
+      ok: true,
+      accounts: next.length,
+      withPassword: next.filter((m) => m.passwordHash).length,
+      savedAt: new Date().toISOString()
+    }
+  };
 }
 
 // ── Google API calls ────────────────────────────────────────────────────────
@@ -461,13 +851,52 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/health') {
     const store = loadStore();
+    const accounts = loadAccounts();
     send(res, 200, {
       ok: true,
       service: 'lab-workspace-token-server',
       initialized: !!(store && store.refresh_token),
       email: store ? store.email : '',
+      authConfigured: !!loadServiceAccount(),
+      authAccounts: accounts.members.length,
       version: CODE_VERSION
     }, origin);
+    return;
+  }
+
+  /* ── Authentification de l'équipe (voir docs/SECURITY-SETUP.md) ───────── */
+  if (req.method === 'GET' && url.pathname === '/api/auth/status') {
+    const out = handleAuthStatus();
+    send(res, out.http, out.json, origin);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/auth/roster') {
+    const out = handleAuthRoster();
+    send(res, out.http, out.json, origin);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/auth/login') {
+    try {
+      const body = await readBody(req);
+      const ip = String(req.socket && req.socket.remoteAddress || '');
+      const out = await handleAuthLogin(body, ip);
+      send(res, out.http, out.json, origin);
+    } catch (err) {
+      send(res, 400, { ok: false, error: 'bad_request', error_description: (err && err.message) || 'Invalid request.' }, origin);
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/auth/accounts') {
+    try {
+      const body = await readBody(req);
+      const out = handleAuthAccounts(body, req.headers);
+      send(res, out.http, out.json, origin);
+    } catch (err) {
+      send(res, 400, { ok: false, error: 'bad_request', error_description: (err && err.message) || 'Invalid request.' }, origin);
+    }
     return;
   }
 
@@ -500,4 +929,10 @@ server.listen(port, () => {
   console.log(`  shared credential: ${store && store.refresh_token ? `STORED${store.email ? ` (${store.email})` : ''}` : 'NOT SET — owner must bootstrap (?drive-bootstrap=1)'}`);
   console.log(`  allowed origins:  ${[...ALLOWED_ORIGINS].join(', ') || '(same-origin / curl only)'}`);
   console.log(`  store file:       ${STORE_FILE}`);
+  const sa = loadServiceAccount();
+  const acc = loadAccounts();
+  console.log(`  team auth:        ${sa ? `ENABLED (SA ${sa.clientEmail})` : 'disabled — FIREBASE_SERVICE_ACCOUNT absent'}`);
+  console.log(`  team accounts:    ${acc.members.length}${acc.members.length ? ` (with password: ${acc.members.filter((m) => m.passwordHash).length})` : ' — owner must publish them from the app (Setup → Équipe & accès)'}`);
+  console.log(`  accounts file:    ${ACCOUNTS_FILE}`);
+  console.log(`  admin push:       ${ADMIN_TOKEN ? 'enabled (ADMIN_TOKEN set)' : 'disabled — ADMIN_TOKEN absent'}`);
 });

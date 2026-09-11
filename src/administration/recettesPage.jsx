@@ -385,6 +385,10 @@ export const RecettesPage = () => {
       omEnSignatureItems, omEnSignatureTotal,
       omPrevuItems,
       lineDes, desApprouvees, desMontant,
+      /* Éléments comptés dans « Achats prévus » (approuvés / « Test » encore
+         prévus) : sert au survol de la case à séparer « Inclus dans le total »
+         des autres demandes. */
+      desPrevuItems,
       desEnSignatureItems, desEnSignatureTotal,
       budgetRendu, solde,
     };
@@ -682,67 +686,90 @@ export const RecettesPage = () => {
       header: <span title="prévision (OM « Acceptée » et OM « Test » comptées ; les OM en attente / terminées ne le sont pas) — n’est PAS déduit du solde : seul l’« OM payé » (dépense transférée) l’est">OM prévus</span>,
       dataType: 'number', align: 'right', nowrap: true,
       value: (r) => Number(r.__agg.omTotal) || 0,
-      display: (r) => (
-        <HoverCell
-          amount={r.__agg.omTotal}
-          onOpen={openTarget}
-          items={r.__agg.lineOm.map((o) => ({
+      display: (r) => {
+        /* Le détail au survol sépare les OM qui COMPTENT dans la somme de la
+           colonne (statut « Acceptée » ou « Test », non transférées — ou, si
+           elle est transférée, ses postes encore en prévision) de celles qui
+           n'y comptent pas (« En attente », transférées hors prévision…) :
+           les premières d'abord, sous l'intitulé « Inclus dans le total ». */
+        const counted = new Set((r.__agg.omPrevuItems || []).map((x) => x.om && x.om.id));
+        const itemOf = (o) => {
+          const isCounted = counted.has(o.id);
+          return {
+            group: isCounted ? 'Inclus dans le total' : 'Non inclus dans le total',
             title: o.description || o.destination || 'OM',
             meta: [
               o.destination || '',
               `${o.statut || 'En attente'}${isOmApproved(o.statut) ? ' · accepté' : isOmTest(o.statut) ? ' · en test' : ' · non accepté'}`,
               o.transfert
-                ? (o.transfert.remboursementsSeuls
-                  ? 'frais à rembourser — hors prévision (colonne Remboursements)'
-                  : 'transférée — hors prévision (suivie en signature)')
+                ? (isCounted
+                  /* OM acceptée et transférée mais dont des postes restent à
+                     compléter (« En gestion ») : ces postes comptent encore. */
+                  ? 'transférée — postes à compléter encore prévus'
+                  : (o.transfert.remboursementsSeuls
+                    ? 'frais à rembourser — hors prévision (colonne Remboursements)'
+                    : 'transférée — hors prévision (suivie en signature)'))
                 : '',
             ].filter(Boolean).join(' · '),
             value: euro.format(toNum(o.coutTotal)),
             to: omLink(o),
             actions: omActions(o),
-          }))}
-        />
-      ),
+          };
+        };
+        const items = [
+          ...r.__agg.lineOm.filter((o) => counted.has(o.id)).map(itemOf),
+          ...r.__agg.lineOm.filter((o) => !counted.has(o.id)).map(itemOf),
+        ];
+        return <HoverCell amount={r.__agg.omTotal} onOpen={openTarget} items={items} />;
+      },
     },
     {
       key: 'desiderata', label: 'Achats prévus',
       header: <span title="Achats « Approuvés » et achats « Test » comptés en prévision ; non déduits du solde — information seule">Achats prévus</span>,
       dataType: 'number', align: 'right', nowrap: true,
       value: (r) => Number(r.__agg.desMontant) || 0,
-      display: (r) => (
-        <HoverCell
-          amount={r.__agg.desMontant}
-          onOpen={openTarget}
-          items={r.__agg.lineDes.map((d) => {
-            const dv = devisOfDesiderata(d);
-            const direct = directDepenseOfDesiderata(d);
-            return {
-              title: d.description || 'Achat prévu / souhaité',
-              meta: [
-                d.demandeur || '',
-                desiderataDecisionOf(d.statut),
-                /* Dès qu'une demande est devenue un devis, la « dépense » vit
-                   dans « Approbation devis & BC » : le libellé l'indique et le
-                   clic y mène (ou vers la dépense si transfert direct). */
-                dv
-                  ? dv.statut === 'Approuvé'
-                    ? 'devis signé — BC à signer'
-                    : dv.statut === 'En attente'
-                      ? 'devis en attente de signature'
-                      : dv.statut === 'En gestion'
-                        ? 'devis à compléter — Approbation devis & BC'
-                        : 'devis — Approbation devis & BC'
-                  : direct ? 'transféré — Dépenses › Achats' : '',
-              ].filter(Boolean).join(' · '),
-              value: d.montantEstime !== undefined && d.montantEstime !== null && d.montantEstime !== ''
-                ? euro.format(toNum(d.montantEstime))
-                : 'non chiffré',
-              to: dv ? devisBcLink(dv) : (direct ? depLink(direct) : desLink(d)),
-              actions: desActions(d),
-            };
-          })}
-        />
-      ),
+      display: (r) => {
+        /* Le détail au survol sépare les achats qui COMPTENT dans la somme de
+           la colonne (demandes « Approuvées » ou « Test » encore prévues) de
+           celles qui n'y comptent pas (« En attente », souhaitées, BC déjà
+           signé, devis « orphelin »…) : les premiers d'abord, sous l'intitulé
+           « Inclus dans le total ». */
+        const counted = new Set((r.__agg.desPrevuItems || []).map((d) => d.id));
+        const itemOf = (d) => {
+          const dv = devisOfDesiderata(d);
+          const direct = directDepenseOfDesiderata(d);
+          return {
+            group: counted.has(d.id) ? 'Inclus dans le total' : 'Non inclus dans le total',
+            title: d.description || 'Achat prévu / souhaité',
+            meta: [
+              d.demandeur || '',
+              desiderataDecisionOf(d.statut),
+              /* Dès qu'une demande est devenue un devis, la « dépense » vit
+                 dans « Approbation devis & BC » : le libellé l'indique et le
+                 clic y mène (ou vers la dépense si transfert direct). */
+              dv
+                ? dv.statut === 'Approuvé'
+                  ? 'devis signé — BC à signer'
+                  : dv.statut === 'En attente'
+                    ? 'devis en attente de signature'
+                    : dv.statut === 'En gestion'
+                      ? 'devis à compléter — Approbation devis & BC'
+                      : 'devis — Approbation devis & BC'
+                : direct ? 'transféré — Dépenses › Achats' : '',
+            ].filter(Boolean).join(' · '),
+            value: d.montantEstime !== undefined && d.montantEstime !== null && d.montantEstime !== ''
+              ? euro.format(toNum(d.montantEstime))
+              : 'non chiffré',
+            to: dv ? devisBcLink(dv) : (direct ? depLink(direct) : desLink(d)),
+            actions: desActions(d),
+          };
+        };
+        const items = [
+          ...r.__agg.lineDes.filter((d) => counted.has(d.id)).map(itemOf),
+          ...r.__agg.lineDes.filter((d) => !counted.has(d.id)).map(itemOf),
+        ];
+        return <HoverCell amount={r.__agg.desMontant} onOpen={openTarget} items={items} />;
+      },
     },
     {
       key: 'devisEnSignature', label: 'Devis en signature/signé',
@@ -1041,6 +1068,11 @@ const SummaryCard = ({ label, value, tone }) => {
    définition dans la table d’origine (Dépenses, OM prévus, Achats prévus).
    Un élément peut aussi porter des `actions` (boutons à droite de la ligne) :
    🗑 supprime la ligne À LA SOURCE (dépense, remboursement, OM, achat prévu).
+   Un élément peut enfin porter un `group` : quand il change d’un élément au
+   suivant, un intitulé de section est inséré (« Inclus dans le total » /
+   « Non inclus dans le total ») — les éléments comptés dans la somme de la
+   colonne sont ainsi séparés des autres (un élément sans `group` n’affiche
+   aucun intitulé).
    Le panneau reste COLLÉ sous la case (padding au lieu d’une marge) : au
    survol, la souris ne passe plus par une zone morte et les éléments affichés
    restent cliquables. */
@@ -1064,46 +1096,53 @@ const HoverCell = ({ amount, items, onOpen }) => {
             const acts = Array.isArray(it.actions)
               ? it.actions.filter((a) => a && typeof a.onClick === 'function')
               : [];
+            /* Intitulé de section : affiché seulement quand il change (pas de
+               doublon si les éléments d’un même groupe se suivent). */
+            const showGroup = !!it.group && it.group !== (i > 0 ? linked[i - 1].group : null);
             return (
-              <div
-                key={i}
-                className="flex w-full items-start justify-between gap-1 border-b border-slate-100 last:border-0"
-              >
-                <button
-                  type="button"
-                  disabled={!clickable}
-                  onClick={clickable ? () => onOpen(it.to) : undefined}
-                  title={clickable ? 'Ouvrir cet élément dans sa table d’origine' : undefined}
-                  className={`flex min-w-0 flex-1 items-start justify-between gap-2 px-2 py-1.5 text-left transition-colors ${
-                    clickable ? 'cursor-pointer hover:bg-blue-50' : 'cursor-default'
-                  }`}
-                >
-                  <span className="min-w-0">
-                    <span className="block text-xs font-bold text-slate-700 truncate">{it.title}</span>
-                    {it.meta ? <span className="block text-[10px] text-slate-400 truncate">{it.meta}</span> : null}
-                  </span>
-                  <span className="flex items-center gap-1 shrink-0">
-                    <span className="text-xs font-bold text-slate-800 whitespace-nowrap">{it.value}</span>
-                    {clickable && <span className="text-[10px] text-blue-500" aria-hidden="true">↗</span>}
-                  </span>
-                </button>
-                {acts.length > 0 && (
-                  <span className="flex items-center gap-1 shrink-0 pt-1.5 pr-1">
-                    {acts.map((a, k) => (
-                      <button
-                        key={k}
-                        type="button"
-                        onClick={() => a.onClick()}
-                        title={a.title}
-                        className={`text-[10px] font-black px-1.5 py-0.5 rounded-md border whitespace-nowrap transition-colors ${
-                          a.tone || 'border-slate-200 text-slate-400 hover:bg-red-50 hover:text-red-600 hover:border-red-200'
-                        }`}
-                      >
-                        {a.label}
-                      </button>
-                    ))}
-                  </span>
-                )}
+              <div key={i} className="border-b border-slate-100 last:border-0">
+                {showGroup ? (
+                  <div className="px-2 pt-1.5 pb-0.5 text-[9px] font-black uppercase tracking-wide text-slate-400">
+                    {it.group}
+                  </div>
+                ) : null}
+                <div className="flex w-full items-start justify-between gap-1">
+                  <button
+                    type="button"
+                    disabled={!clickable}
+                    onClick={clickable ? () => onOpen(it.to) : undefined}
+                    title={clickable ? 'Ouvrir cet élément dans sa table d’origine' : undefined}
+                    className={`flex min-w-0 flex-1 items-start justify-between gap-2 px-2 py-1.5 text-left transition-colors ${
+                      clickable ? 'cursor-pointer hover:bg-blue-50' : 'cursor-default'
+                    }`}
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-xs font-bold text-slate-700 truncate">{it.title}</span>
+                      {it.meta ? <span className="block text-[10px] text-slate-400 truncate">{it.meta}</span> : null}
+                    </span>
+                    <span className="flex items-center gap-1 shrink-0">
+                      <span className="text-xs font-bold text-slate-800 whitespace-nowrap">{it.value}</span>
+                      {clickable && <span className="text-[10px] text-blue-500" aria-hidden="true">↗</span>}
+                    </span>
+                  </button>
+                  {acts.length > 0 && (
+                    <span className="flex items-center gap-1 shrink-0 pt-1.5 pr-1">
+                      {acts.map((a, k) => (
+                        <button
+                          key={k}
+                          type="button"
+                          onClick={() => a.onClick()}
+                          title={a.title}
+                          className={`text-[10px] font-black px-1.5 py-0.5 rounded-md border whitespace-nowrap transition-colors ${
+                            a.tone || 'border-slate-200 text-slate-400 hover:bg-red-50 hover:text-red-600 hover:border-red-200'
+                          }`}
+                        >
+                          {a.label}
+                        </button>
+                      ))}
+                    </span>
+                  )}
+                </div>
               </div>
             );
           })}

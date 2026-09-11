@@ -13,6 +13,7 @@ export const AppSidebar = ({
   saveStatus, saveErrorMsg, saveTarget,
   backupStatus,
   currentUser, setCurrentUser, setUnlockedTestIds, setLoginModal,
+  onSignOut,
   currentModule, setCurrentModule,
   datasetKind,
   adminNav,
@@ -148,7 +149,8 @@ export const AppSidebar = ({
                   <button
                     onClick={() => {
                       if (currentUser) {
-                        setCurrentUser(null);
+                        if (typeof onSignOut === 'function') onSignOut();
+                        else setCurrentUser(null);
                         setUnlockedTestIds(new Set());
                       } else {
                         setLoginModal({ isEntryGate: false });
@@ -166,8 +168,11 @@ export const AppSidebar = ({
               ) : (
                 <button
                   onClick={() => {
-                    if (currentUser) { setCurrentUser(null); setUnlockedTestIds(new Set()); }
-                    else setLoginModal({ isEntryGate: false });
+                    if (currentUser) {
+                      if (typeof onSignOut === 'function') onSignOut();
+                      else setCurrentUser(null);
+                      setUnlockedTestIds(new Set());
+                    } else setLoginModal({ isEntryGate: false });
                   }}
                   title={currentUser ? `Logged in as ${currentUser.name} — click to logout` : 'Login'}
                   className={`w-10 h-10 rounded-xl border flex items-center justify-center text-base mb-2 transition-colors ${

@@ -1,0 +1,69 @@
+rules_version = '2';
+
+/* =============================================================================
+   Lab Workspace — règles de sécurité Firestore
+   -----------------------------------------------------------------------------
+   POURQUOI CE FICHIER EXISTE
+   Avant : la base répondait aux clients ANONYMES (vérifié en direct : une
+   requête sans authentification sur
+   /projects/cell-experiment-tracker/databases/(default)/documents/…
+   renvoyait 200 sans jeton). N'importe qui connaissant l'identifiant du projet
+   (public, présent dans le bundle) pouvait donc LIRE et MODIFIER tout le
+   workspace, sans jamais passer par l'écran de connexion — l'écran de connexion
+   n'était qu'un rideau côté navigateur.
+
+   MAINTENANT
+   La lecture et l'écriture exigent un jeton Firebase portant la revendication
+   « lab » à true. Ce jeton est délivré UNIQUEMENT par server/token-server.js,
+   après vérification du mot de passe CÔTÉ SERVEUR (PBKDF2-SHA256). Aucun autre
+   chemin ne peut l'obtenir :
+     · aucune inscription publique (même si un fournisseur était activé, la
+       clé API publique permet de créer un compte mais JAMAIS d'obtenir le
+       claim « lab » → request.auth != null ne suffit pas, on teste le claim) ;
+     · le rôle (superuser / user) est signé par le serveur, donc non
+       falsifiable depuis localStorage ou la console du navigateur.
+
+   DÉPLOIEMENT (voir docs/SECURITY-SETUP.md, à faire dans CET ordre)
+     1. déployer le serveur de jetons avec FIREBASE_SERVICE_ACCOUNT + ADMIN_TOKEN ;
+     2. publier l'équipe sur le serveur depuis l'app (Setup → Équipe & accès →
+        « Publier les comptes ») ;
+     3. SEULEMENT ENSUITE coller ce fichier dans la Console Firebase →
+        Firestore Database → Règles → Publier.
+
+   RETOUR ARRIÈRE (si un problème bloque l'équipe) : remplacer le contenu par
+     rules_version = '2';
+     service cloud.firestore {
+       match /databases/{database}/documents {
+         match /{document=**} { allow read, write: if true; }
+       }
+     }
+   puis Publier — l'ancien comportement (ouvert) est immédiatement rétabli.
+   ========================================================================== */
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Membre de l'équipe : jeton signé par le serveur de jetons (claim lab:true).
+    function isLabMember() {
+      return request.auth != null && request.auth.token.lab == true;
+    }
+
+    // Superutilisateur : même jeton, revendication de rôle signée elle aussi.
+    function isLabSuperuser() {
+      return isLabMember() && request.auth.token.role == 'superuser';
+    }
+
+    // Tout le workspace (datasets, appConfig — comptes, réglages…) : membres
+    // authentifiés uniquement. Suppression réservée au superutilisateur.
+    match /artifacts/{appId}/public/data/{document=**} {
+      allow read: if isLabMember();
+      allow create, update: if isLabMember();
+      allow delete: if isLabSuperuser();
+    }
+
+    // Par défaut, rien n'est accessible depuis le navigateur.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
