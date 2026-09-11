@@ -67,6 +67,14 @@
                             endpoint (CORS). Curl and same-origin requests are
                             always allowed. Example:
                             https://lab.example.com,http://localhost:5173
+     CORS_ALLOW_HEADERS     comma-separated request headers the browser is
+                            allowed to send (CORS preflight). Default:
+                            'Content-Type, X-Admin-Token, Authorization'.
+                            ⚠️ A header missing from this list is rejected by the
+                            BROWSER: the request never reaches this server and the
+                            app shows "Serveur de jetons injoignable (Failed to
+                            fetch)". The app sends X-Admin-Token to publish the
+                            team (POST /api/auth/accounts) — keep it listed.
      STORE_FILE             where the shared refresh token is persisted
                             (default ./workspace-shared-token.json, 0600).
      WORKSPACE_REFRESH_TOKEN  optional pre-seeded credential (alternative to
@@ -127,6 +135,17 @@ const ALLOWED_ORIGINS = new Set(
     .map((o) => o.trim().replace(/\/+$/, ''))
     .filter(Boolean)
 );
+// Client headers the browser may send (CORS preflight). This is NOT the security
+// boundary (that is ALLOWED_ORIGINS + ADMIN_TOKEN, verified server-side): it only
+// tells the browser whether it is allowed to send the request at all. Any header
+// missing here makes the browser abort with "Failed to fetch" — the app then
+// displays "Serveur de jetons injoignable (Failed to fetch)" and this server
+// never sees the call. The app sends X-Admin-Token when it publishes the team.
+const CORS_ALLOW_HEADERS = env('CORS_ALLOW_HEADERS', 'Content-Type, X-Admin-Token, Authorization')
+  .split(',')
+  .map((h) => h.trim())
+  .filter(Boolean)
+  .join(', ');
 
 // ── E-mail relay (automatic admin notifications, see POST /api/mail) ──────
 // MAIL_API_URL  endpoint of any HTTP mail service expecting a JSON body
@@ -797,7 +816,9 @@ const normalizeOrigin = (o) => String(o || '').trim().replace(/\/+$/, '');
 const originAllowed = (origin) => !origin || ALLOWED_ORIGINS.has(normalizeOrigin(origin));
 
 const send = (res, status, json, origin) => {
-  const headers = { 'Content-Type': 'application/json' };
+  // Vary: Origin — the CORS header below depends on the caller's origin, so
+  // any cache in between must not reuse this answer for another origin.
+  const headers = { 'Content-Type': 'application/json', Vary: 'Origin' };
   const o = normalizeOrigin(origin);
   if (o && ALLOWED_ORIGINS.has(o)) headers['Access-Control-Allow-Origin'] = o;
   res.writeHead(status, headers);
@@ -833,12 +854,18 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'OPTIONS') {
     // CORS preflight — only allow explicitly listed browser origins.
-    if (!originAllowed(origin)) { res.writeHead(204); res.end(); return; }
+    // The header list below decides whether the BROWSER sends the real request:
+    // without 'X-Admin-Token' the app's "⬆ Publier les comptes" is aborted before
+    // reaching this server ("Serveur de jetons injoignable (Failed to fetch)").
+    if (!originAllowed(origin)) { res.writeHead(204, { Vary: 'Origin' }); res.end(); return; }
     res.writeHead(204, {
       'Access-Control-Allow-Origin': normalizeOrigin(origin),
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-      'Access-Control-Max-Age': '86400'
+      'Access-Control-Allow-Headers': CORS_ALLOW_HEADERS,
+      // Volontairement court : si la liste ci-dessus est corrigée par un
+      // redéploiement, le navigateur ne reste pas bloqué 24 h sur l'ancien avis.
+      'Access-Control-Max-Age': '600',
+      Vary: 'Origin'
     });
     res.end();
     return;

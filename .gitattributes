@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Les scripts shell doivent rester en LF : ils sont exécutés par bash sous Linux
+# (Google Cloud Shell). Un simple \r en fin de ligne casse l'interpréteur.
+*.sh text eol=lf

@@ -8,4 +8,5 @@ workspace-shared-token.json.*
 # Ops / development helpers — not part of the container image.
 deploy-cloud-run.ps1
 deploy-cloud-run.sh
+cloud-shell-quick-update.sh
 self-test.js

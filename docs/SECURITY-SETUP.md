@@ -77,15 +77,33 @@ reste disponible en secours).
 
 ### Étape 1 — clé de compte de service (signature des jetons)
 
-1. Console Firebase → ⚙️ **Paramètres du projet** → onglet **Comptes de service**.
-2. **Générer une nouvelle clé privée** → JSON (le compte `firebase-adminsdk…`
+> **Raccourci recommandé.** Cette étape **et** l'étape 2 sont faites
+> automatiquement par la *Voie A bis* de l'étape 3 (une seule commande dans
+> Cloud Shell, **aucune navigation dans la console Firebase**). Dans ce cas,
+> allez directement à l'étape 3.
+
+Le réglage se trouve ici (lien direct, à ouvrir en étant connecté au bon compte
+Google) :
+
+<https://console.firebase.google.com/project/cell-experiment-tracker/settings/serviceaccounts/adminsdk>
+
+Si vous préférez passer par les menus : ouvrir l'app → en haut **à gauche**,
+icône **⚙️** juste à côté de *Project Overview* → **Project settings**
+(*Paramètres du projet* / *Impostazioni del progetto*) → onglet
+**Service accounts** (*Comptes de service* / *Account di servizio*) → bouton
+**Generate new private key** → **JSON**.
+
+1. **Générer une nouvelle clé privée** → JSON (le compte `firebase-adminsdk…`
    convient parfaitement).
-3. Enregistrer le fichier hors du dépôt Git (ex. `%USERPROFILE%\Downloads`).
+2. Enregistrer le fichier hors du dépôt Git (ex. `%USERPROFILE%\Downloads`).
 
 > Cette clé ne sert qu'à **signer** les jetons ; elle reste sur le serveur et
 > n'est jamais exposée au navigateur.
 
 ### Étape 2 — jeton administrateur
+
+> *Voie A bis :* **sautez cette étape** — le script génère le jeton et l'affiche
+> à la fin.
 
 ```powershell
 [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')
@@ -98,37 +116,145 @@ autorise seulement **la publication de la liste de l'équipe**.
 
 ### Étape 3 — redéployer le serveur de jetons
 
-⚠️ Sur ce PC, **`gcloud` n'est pas installé** : le plus simple est de faire cette
-étape dans **Google Cloud Shell** (navigateur, aucune installation). Il faut y
-téléverser trois fichiers :
+⚠️ Sur ce PC, **`gcloud` n'est pas installé** : tout se fait dans **Google Cloud
+Shell** (navigateur, aucune installation) :
 
-| Fichier local | À téléverser comme | Pourquoi |
+<https://shell.cloud.google.com/?project=cell-experiment-tracker>
+
+#### Voie A bis — une seule commande (recommandée)
+
+> **Prérequis :** le projet doit avoir un **compte de facturation actif** (Cloud Run
+> l'exige). Vérifier/associer ici :
+> <https://console.cloud.google.com/billing/linkedaccount?project=cell-experiment-tracker>
+> Le coût réel attendu reste **0 €** : Cloud Run s'arrête dès qu'il n'y a plus de
+> requête et les paliers gratuits couvrent ce service. Le script vérifie ce point
+> au démarrage (étape 1/6) et le dit clairement si ce n'est pas le cas.
+
+Elle exécute les **étapes 1, 2 et 3** d'un coup : création de la clé de service,
+tirage du jeton d'administration, redéploiement du serveur, vérification du
+résultat. Elle ne touche **ni** au Drive, **ni** au volume `/data`, **ni** aux
+origines autorisées.
+
+1. Ouvrir <https://shell.cloud.google.com/?project=cell-experiment-tracker> et
+   vérifier que le compte Google affiché (« Authorize » la première fois) est
+   bien le **propriétaire du projet**.
+2. Dans le terminal, taper `cd ~`, puis **glisser-déposer les trois fichiers**
+   directement dans la fenêtre (ou menu **⋮** → *Upload*) :
+
+| Fichier local | À déposer sous le nom |
+| --- | --- |
+| `…\lab-workspace\server\cloud-shell-quick-update.sh` | `cloud-shell-quick-update.sh` |
+| `…\lab-workspace\server\token-server.js` | `token-server.js` |
+| `…\lab-workspace\server\package.json` | `package.json` |
+
+3. Lancer **une seule** commande :
+
+```bash
+sed -i 's/\r$//' ~/cloud-shell-quick-update.sh && bash ~/cloud-shell-quick-update.sh
+```
+
+Le `sed` corrige d'éventuelles fins de ligne Windows (sans effet si le fichier
+est déjà propre) : les messages `$'\r': command not found` viennent de là.
+
+Le script se termine par un cadre jaune **ADMIN_TOKEN** : copiez-le (il sert à
+l'étape 4) et passez **directement à l'étape 4**.
+
+**En cas d'échec du déploiement**, le script affiche tout seul les 40 dernières
+lignes de `gcloud` plus un diagnostic court : c'est **ce texte** qu'il faut me
+transmettre (la ligne commençant par `ERROR` est la plus importante), pas le
+message final du script. Le journal complet reste lisible dans Cloud Shell :
+
+```bash
+tail -40 ~/tsrv-deploy.log
+```
+
+##### Trois pannes déjà rencontrées (et déjà gérées)
+
+| Ligne `ERROR` | Cause | Correction |
 | --- | --- | --- |
-| `C:\Users\Nicola\OneDrive\Documents\lab-workspace\server\token-server.js` | `token-server.js` | le nouveau code (authentification) |
-| `C:\Users\Nicola\OneDrive\Documents\lab-workspace\server\package.json` | `package.json` | nécessaire pour reconstruire l'image |
-| le JSON de l'**étape 1** | `firebase-sa.json` | la clé qui signe les jetons |
+| `FAILED_PRECONDITION: Billing account for project … is not found` | le projet n'a plus de compte de facturation associé (essai terminé, compte supprimé) | associer un compte de facturation actif (lien ci-dessus) puis relancer le script |
+| `PERMISSION_DENIED: Build failed because the default service account is missing required IAM permissions` | sur les projets récents, le compte de service Cloud Build (`…-compute@developer.gserviceaccount.com`) a été créé **sans** le rôle Editor : il ne peut donc plus lire le code source envoyé au build | le script **corrige tout seul** : il accorde `roles/run.builder`, `roles/storage.objectViewer`, `roles/artifactregistry.writer`, `roles/logging.logWriter` à ce compte de service, attend la propagation (20 s) puis **retente le déploiement automatiquement** |
+| `The user-provided container failed to start and listen on the port defined provided by the PORT=8080` | le conteneur se construit mais `node` s'arrête aussitôt — typiquement un service **créé par erreur dans le mauvais projet** : la révision est alors neuve, donc sans volume `/data`, **sans `GOOGLE_CLIENT_SECRET`** (que `token-server.js` exige, sinon `process.exit(1)`), sans compte de service et sans origines autorisées | le script **ne peut plus** provoquer ce cas : l'étape 1/6 localise le projet qui héberge réellement le service (en comparant l'URL publique utilisée par l'app), refuse de continuer si elle ne le trouve pas, et vérifie que le service porte bien `GOOGLE_CLIENT_SECRET` **avant** de déployer. Supprimer le service fantôme éventuel : `gcloud run services delete drive-token-server --project <projet listé> --region europe-west1 --quiet` |
 
-#### Voie A — recommandée (pas besoin du `client_secret.json`)
+> ⚠️ **Le service ne vit PAS dans le projet Firebase.** L'app Firebase est
+> `cell-experiment-tracker` (n° **855790481107**) — c'est lui qui **signe les
+> jetons** (`firebase-sa.json`) et qui porte les règles Firestore. Le service
+> Cloud Run, lui, vit dans le projet dont le **numéro apparaît dans l'URL**
+> (`drive-token-server-763848765523…`). Le script gère les deux tout seul ;
+> les commandes manuelles ci-dessous utilisent `$PROJECT` pour le second.
+
+Aucune de ces pannes ne touche la production : tant que la nouvelle
+révision n'est pas déployée, l'ancienne continue de répondre (le Drive de
+l'équipe continue de fonctionner).
+
+Réparation manuelle du second cas, si le script n'y arrive pas (Cloud Shell) —
+`$PROJECT` = projet qui **héberge le service** :
+
+```bash
+# 1) retrouver le projet qui HÉBERGE le service : c'est celui dont le numéro
+#    apparaît dans l'URL (le projet Firebase cell-experiment-tracker porte le
+#    n° 855790481107 : ce n'est PAS le même)
+PROJECT="$(gcloud projects list --filter='projectNumber=763848765523' --format='value(projectId)')"
+echo "projet du service : $PROJECT"
+
+# 2) réparer les droits du compte de service Cloud Build
+SA="$(gcloud builds get-default-service-account --project "$PROJECT")"
+for r in roles/run.builder roles/storage.objectViewer roles/artifactregistry.writer roles/logging.logWriter; do
+  gcloud projects add-iam-policy-binding "$PROJECT" \
+    --member="serviceAccount:$SA" --role="$r" --condition=None --quiet
+done
+```
+
+#### Voie A — manuelle (faire les étapes 1 et 2 à la main)
 
 Le secret OAuth est déjà enregistré dans Secret Manager : on ne touche **qu'aux
 trois nouvelles variables**, donc **aucun risque de casser le Drive** ni les
 origines autorisées.
 
 1. Ouvrir <https://shell.cloud.google.com> et sélectionner le projet du service
-   (celui dont le **numéro** apparaît dans l'URL `drive-token-server-763848765523`).
+   (celui dont le **numéro** apparaît dans l'URL `drive-token-server-763848765523` ;
+   ici : **`project-5bef8353-9780-43db-885`**).
 2. Dans le terminal Cloud Shell :
 
 ```bash
 mkdir -p ~/token-server && cd ~/token-server
-gcloud config set project 763848765523        # ou l'ID du projet, si vous le connaissez
+
+# projet qui HÉBERGE le service (≠ projet Firebase) : celui du numéro de l'URL
+PROJECT="$(gcloud projects list --filter='projectNumber=763848765523' --format='value(projectId)')"
+echo "$PROJECT"          # → project-5bef8353-9780-43db-885
+gcloud config set project "$PROJECT"
 
 # (facultatif) voir les origines déjà autorisées — à NE PAS modifier
-gcloud run services describe drive-token-server --region europe-west1 \
+gcloud run services describe drive-token-server --project "$PROJECT" --region europe-west1 \
   --format='value(spec.template.spec.containers[0].env)'
 ```
 
-3. Téléverser les trois fichiers (menu **⋮** de Cloud Shell → *Upload*) dans
-   `~/token-server`, puis :
+> **Un même service, deux noms.** Cloud Run répond aussi bien à
+> `drive-token-server-**763848765523**.europe-west1.run.app` (le nom que l'app
+> utilise, dans `src/data/constants.js`) qu'à
+> `drive-token-server-**6eq5wljpia**-ew.a.run.app` (le nom que **gcloud** affiche
+> par défaut dans `status.url`). Les deux mènent au même conteneur : ne « corrigez »
+> donc pas l'URL de l'app parce que gcloud affiche l'autre nom. Le script
+> `cloud-shell-quick-update.sh` identifie le projet par le **numéro** présent dans
+> l'URL de l'app et vérifie que les deux noms répondent.
+
+3. Déposer dans `~/token-server` (menu **⋮** de Cloud Shell → *Upload*) les
+   fichiers `token-server.js` et `package.json` du dossier `server/`, plus
+   `firebase-sa.json` (la clé de l'**étape 1**). Si la console Firebase vous
+   résiste, la clé se crée aussi **sans quitter Cloud Shell** :
+
+```bash
+# ⚠️ la clé doit venir du projet FIREBASE (celui qui signe les jetons)
+SA_EMAIL="$(gcloud iam service-accounts list --project cell-experiment-tracker \
+  --filter='email~firebase-adminsdk' --format='value(email)' --limit=1 | head -n1)"
+echo "$SA_EMAIL"                      # doit afficher …@cell-experiment-tracker.…
+gcloud iam service-accounts keys create firebase-sa.json \
+  --iam-account "$SA_EMAIL" --project cell-experiment-tracker
+```
+
+4. Toujours dans `~/token-server`, déployer (`$PROJECT` = projet du service ; ne
+   jamais mettre `cell-experiment-tracker` ici, cela **créerait un second
+   service vide** qui refuse de démarrer) :
 
 ```bash
 SA_B64="$(base64 -w0 firebase-sa.json)"       # une seule ligne, sans virgule
@@ -136,28 +262,48 @@ ADMIN_TOKEN='<jeton de l étape 2>'            # entre apostrophes simples
 
 gcloud run deploy drive-token-server \
   --source . \
-  --project 763848765523 --region europe-west1 \
+  --project "$PROJECT" --region europe-west1 \
+  --allow-unauthenticated \
   --update-env-vars ACCOUNTS_FILE=/data/workspace-accounts.json,FIREBASE_SERVICE_ACCOUNT_B64="$SA_B64",ADMIN_TOKEN="$ADMIN_TOKEN"
 ```
 
-4. Vérifier **immédiatement** (la réponse doit contenir `authConfigured:true`) :
+5. Vérifier **immédiatement** (la réponse doit contenir `authConfigured:true`) :
 
 ```bash
 curl -s https://drive-token-server-763848765523.europe-west1.run.app/health
 # → {"ok":true,…,"authConfigured":true,"authAccounts":0,…}
+
+# l'autre nom du même service (celui que gcloud affiche) doit répondre aussi :
+curl -s "$(gcloud run services describe drive-token-server --project "$PROJECT" \
+        --region europe-west1 --format='value(status.url)')/health"
 ```
 
-5. Vérifier que le volume `/data` (qui garde la liste d'équipe et le jeton Drive)
+6. Vérifier que le volume `/data` (qui garde la liste d'équipe et le jeton Drive)
    et le compte de service sont **restés en place** :
 
 ```bash
-gcloud run services describe drive-token-server --region europe-west1 \
+gcloud run services describe drive-token-server --project "$PROJECT" --region europe-west1 \
   --format='yaml(spec.template.spec.containers[0].volumeMounts,spec.template.spec.serviceAccountName)'
 # doit afficher : mountPath: /data  +  serviceAccountName: drive-token-sa@…​.iam.gserviceaccount.com
 ```
 
 > Si `<url>` change (ce n'est pas le cas ici : le service existe déjà), mettre à
 > jour `GOOGLE_TOKEN_EXCHANGE_URL` dans `src/data/constants.js`.
+
+7. Vérifier qu'il n'existe **pas** un second service du même nom dans un autre
+   projet (symptôme d'un déploiement dans le mauvais projet) :
+
+```bash
+for p in $(gcloud projects list --format='value(projectId)'); do
+  u="$(gcloud run services describe drive-token-server --project "$p" --region europe-west1 \
+        --format='value(status.url)' 2>/dev/null)" && echo "$p  $u"
+done
+# → une seule ligne attendue : le projet ci-dessus, avec l'URL …-763848765523…
+#   (ou la forme équivalente …-6eq5wljpia-ew.a.run.app : même service)
+#   Pour supprimer un service fantôme :
+#     gcloud run services delete drive-token-server --project <le fantôme> \
+#       --region europe-west1 --quiet
+```
 
 #### Voie B — avec le script complet (si vous avez encore `client_secret.json`)
 
@@ -184,6 +330,14 @@ Vérification, dans les deux voies :
 ```powershell
 curl.exe https://drive-token-server-763848765523.europe-west1.run.app/health
 # → {"ok":true,…,"authConfigured":true,"authAccounts":0,…}
+
+# CORS : le navigateur n'enverra « Publier les comptes » que si le préflight
+# autorise l'en-tête X-Admin-Token (sinon « Failed to fetch », sans trace serveur).
+curl.exe -s -i -X OPTIONS https://drive-token-server-763848765523.europe-west1.run.app/api/auth/accounts `
+  -H "Origin: http://localhost:5173" -H "Access-Control-Request-Method: POST" `
+  -H "Access-Control-Request-Headers: content-type,x-admin-token" |
+  Select-String 'access-control-allow-headers'
+# → access-control-allow-headers: Content-Type, X-Admin-Token, Authorization
 ```
 
 ### Étape 4 — publier l'équipe sur le serveur
@@ -199,6 +353,25 @@ superutilisateur (l'ancien nom + mot de passe fonctionnent toujours), puis
 
 La publication est ensuite **automatique** à chaque modification de l'équipe
 (le jeton reste enregistré dans ce navigateur).
+
+> **Si l'app répond « Serveur de jetons injoignable (Failed to fetch) » en
+> pressant « ⬆ Publier les comptes »** — c'est un refus du **navigateur**, pas
+> une panne du serveur (une panne du serveur donnerait « HTTP 5xx » ou
+> « n'a pas répondu à temps »). Deux causes possibles :
+>
+> 1. **l'en-tête `X-Admin-Token` n'est pas autorisé par le préflight CORS** : le
+>    navigateur annule la requête avant de l'envoyer (elle n'apparaît donc dans
+>    aucun log Cloud Run). Ce réglage est dans `server/token-server.js`
+>    (`CORS_ALLOW_HEADERS`) : si le service a été déployé avant que cette
+>    constante existe, retéléverser `token-server.js` dans Cloud Shell puis
+>    relancer `cloud-shell-quick-update.sh` (son étape 5/6 vérifie désormais ce
+>    point et le signale) ;
+> 2. **le serveur ne répond pas** : ouvrir `/health` dans un onglet (voir
+>    l'étape 3).
+>
+> Le navigateur met en cache le verdict du préflight (`Access-Control-Max-Age`) :
+> après correction, **vider le cache ou ouvrir une fenêtre de navigation privée**
+> avant de réessayer, sinon l'ancien refus peut persister quelques minutes.
 
 **Voie de secours (PowerShell, sans passer par l'app)** — utile pour un
 déploiement neuf ou si l'app est inaccessible :

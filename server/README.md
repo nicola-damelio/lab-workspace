@@ -33,6 +33,12 @@ which is what the Firestore rules require (`firestore.rules` at the repo root).
 | `POST /api/auth/accounts` (header `X-Admin-Token`) | replaces the server-side copy of the team (the app publishes it from *Setup → Équipe & accès → 🛡️ Sécurité serveur*). |
 | `GET /api/auth/status` | `{ configured, accounts, savedAt, adminPushEnabled }`. |
 
+> **CORS note** — `X-Admin-Token` is a custom header, so the browser sends an
+> `OPTIONS` preflight first and aborts the real POST unless the preflight answer
+> lists that header (`CORS_ALLOW_HEADERS`, see the variable table below). In that
+> case the app displays *Serveur de jetons injoignable (Failed to fetch)* and
+> **nothing shows up in the server logs** — the request was never sent.
+
 Enable it with three extra environment variables (see `deploy-cloud-run.ps1`
 `-FirebaseServiceAccountFile` / `-AdminToken`):
 
@@ -41,10 +47,62 @@ Enable it with three extra environment variables (see `deploy-cloud-run.ps1`
 | `FIREBASE_SERVICE_ACCOUNT` (or `…_B64`, or `FIREBASE_SA_FILE`) | the Firebase service-account JSON whose key signs the custom tokens. Empty = `/api/auth/*` answers `501 auth_not_configured`. |
 | `ADMIN_TOKEN` | shared secret required by `POST /api/auth/accounts`. Empty = publication disabled. |
 | `ACCOUNTS_FILE` | where the server keeps its copy of the team (default `./workspace-accounts.json`, `0600`; on Cloud Run: `/data/workspace-accounts.json`). |
+| `CORS_ALLOW_HEADERS` | request headers the browser is allowed to send (CORS preflight). Default `Content-Type, X-Admin-Token, Authorization`. A header missing here is refused **by the browser**: the call never reaches the server and the app shows *Serveur de jetons injoignable (Failed to fetch)*. |
 
 Until the Firestore rules are published, **nothing changes** for the team: the
 app keeps its historical local login as a fallback. The full procedure (order,
 verification, rollback) is in **`docs/SECURITY-SETUP.md`**.
+
+### Updating an already deployed service (team sign-in) — one command
+
+`server/cloud-shell-quick-update.sh` is an idempotent one-command update for the
+Cloud Run service that is **already running**: it creates the service-account
+key with `gcloud iam service-accounts keys create` (**no Firebase Console
+navigation**), mints an `ADMIN_TOKEN`, redeploys with `--update-env-vars` — so
+the `/data` volume, the OAuth secret, `ALLOWED_ORIGINS`, the service account and
+the IAM bindings are left untouched — and then checks `/health` for
+`authConfigured:true` **and the CORS preflight for `X-Admin-Token`** (without
+that header the app's *⬆ Publier les comptes* never leaves the browser). Upload
+`token-server.js`, `package.json` and the script
+into one Cloud Shell folder and run:
+
+```bash
+sed -i 's/\r$//' ~/cloud-shell-quick-update.sh && bash ~/cloud-shell-quick-update.sh
+```
+
+Ordered procedure, verification and rollback: **`docs/SECURITY-SETUP.md`**.
+
+Three failures are already handled: a project **without an active billing account**
+(checked at step 1/6, the script stops and says what to link); a **Cloud Build
+service account missing IAM permissions** (recent projects create
+`…-compute@developer.gserviceaccount.com` without the Editor role, so the build
+cannot read the uploaded source), where the script grants `roles/run.builder`,
+`roles/storage.objectViewer`, `roles/artifactregistry.writer` and
+`roles/logging.logWriter` to that account, waits for propagation and retries the
+deployment once; and a **deployment into the wrong project**, which would create
+a brand-new empty service (no `/data` volume, no `GOOGLE_CLIENT_SECRET`) whose
+container dies at startup with *"failed to start and listen on the port"*. On any
+other failure it prints the last 40 lines of `gcloud` plus a keyword diagnostic
+and keeps the full log in `~/tsrv-deploy.log`.
+
+> ⚠️ **The service does not live in the Firebase project.** The Firebase app is
+> `cell-experiment-tracker` (number **855790481107**) — it signs the tokens
+> (`firebase-sa.json`) and holds the Firestore rules. The Cloud Run service lives
+> in **`project-5bef8353-9780-43db-885`** (number **763848765523**), the project
+> whose number appears in the URL the app calls
+> (`drive-token-server-763848765523.europe-west1.run.app`). Step 1/6 therefore
+> *locates* the hosting project, in this order: (1) a project whose service URL
+> **is** the one the app uses, (2) a project whose **number** is the one embedded
+> in that URL — Cloud Run serves the same service under two names, the app's
+> `…-763848765523.europe-west1.run.app` and the `…-6eq5wljpia-ew.a.run.app` that
+> `gcloud` reports as `status.url`, (3) failing both, a single `drive-token-server`
+> that actually answers on `/health`. It refuses to continue when nothing matches,
+> checks that the service already carries `GOOGLE_CLIENT_SECRET`, verifies that the
+> URL used by the app still answers and warns you if it does not (then update
+> `GOOGLE_TOKEN_EXCHANGE_URL` in `src/data/constants.js`). Override the lookup with
+> `TSRV_PROJECT=<project id>` if ever needed; a service of the same name found in
+> another project is reported as a *ghost* (delete it with `gcloud run services
+> delete drive-token-server --project <id> --region europe-west1 --quiet`).
 
 ## Deploy on Google Cloud Run (recommended)
 

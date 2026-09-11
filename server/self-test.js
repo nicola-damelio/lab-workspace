@@ -115,6 +115,24 @@ try {
   res = await fetch(`${base}/`, { method: 'OPTIONS', headers: { Origin: allowed, 'Access-Control-Request-Method': 'POST' } });
   check('OPTIONS preflight (allowed origin) → 204 + ACAO', res.status === 204 && res.headers.get('access-control-allow-origin') === allowed);
 
+  /* The app publishes the team with a custom header (X-Admin-Token). The browser
+     only sends it when the preflight lists it, otherwise it aborts with
+     "Failed to fetch" (the app shows « Serveur de jetons injoignable ») and this
+     server never sees the call — which is why a missing entry here is invisible
+     to every test that omits the Origin header (see the /api/auth/accounts tests
+     below, which talk to the server directly). */
+  res = await fetch(`${base}/api/auth/accounts`, {
+    method: 'OPTIONS',
+    headers: {
+      Origin: allowed,
+      'Access-Control-Request-Method': 'POST',
+      'Access-Control-Request-Headers': 'content-type,x-admin-token'
+    }
+  });
+  check('OPTIONS preflight → header X-Admin-Token autorisé (sinon « Failed to fetch »)',
+    res.status === 204 && /x-admin-token/i.test(res.headers.get('access-control-allow-headers') || ''),
+    res.headers.get('access-control-allow-headers') || '(aucun en-tête autorisé)');
+
   res = await fetch(`${base}/health`, { headers: { Origin: 'http://evil.example' } });
   json = await res.json();
   check('Origin not in allow-list → 403 origin_not_allowed', res.status === 403 && json.error === 'origin_not_allowed', JSON.stringify(json));
