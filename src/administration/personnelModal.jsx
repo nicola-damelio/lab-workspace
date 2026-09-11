@@ -262,6 +262,31 @@ export const PersonnelModal = ({
   });
 
   const set = (k) => (ev) => setDraft((d) => ({ ...d, [k]: ev.target.value }));
+
+  /* ── Garde-fou « e-mail » contre le remplissage automatique ────────────────
+     Les navigateurs et les gestionnaires de mots de passe remplissent parfois
+     seuls un champ « E-mail » avec l’adresse du COMPTE connecté. Ouvrir puis
+     enregistrer la fiche d’un autre membre suffisait alors à remplacer son
+     adresse par celle du superutilisateur — les notifications (devis / BC,
+     approbations) partaient ensuite à la mauvaise personne.
+     L’adresse du formulaire n’est donc transmise au parent que si elle a
+     réellement été modifiée à la main (frappe, collage, glisser-déposer,
+     effacement) ; sinon la fiche conserve l’adresse DÉJÀ ENREGISTRÉE.
+     Une saisie manuelle s’accompagne toujours d’un événement clavier /
+     presse-papiers, contrairement au remplissage automatique (qui arrive sans
+     événement utilisateur, ou avec `inputType === 'insertReplacementText'`). */
+  const storedEmail = editing && modal.rec ? String(modal.rec.email || '') : '';
+  const [emailTouched, setEmailTouched] = useState(false);
+  const markEmailTouched = () => setEmailTouched(true);
+  const changeEmail = (ev) => {
+    const inputType = String((ev.nativeEvent && ev.nativeEvent.inputType) || '');
+    if (inputType && inputType !== 'insertReplacementText') setEmailTouched(true);
+    set('email')(ev);
+  };
+  /* Adresse présente dans le champ mais jamais saisie à la main (remplissage
+     automatique) : on l’annonce au lieu de l’enregistrer en silence. */
+  const emailAutoFilled = !emailTouched && String(draft.email || '').trim() !== storedEmail.trim();
+
   const grades = (gradesMap[draft.corps] || []);
   const showStage = draft.corps === 'Stagiaire' || (draft.type === 'Temporaire' && !draft.corps);
   const inputCls = 'w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500';
@@ -461,11 +486,38 @@ export const PersonnelModal = ({
         <div className="p-6 overflow-y-auto custom-scrollbar grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="sm:col-span-2">
             <label className={labelCls}>Nom complet</label>
-            <input className={inputCls} value={draft.nom} onChange={set('nom')} placeholder="Nom Prénom" />
+            <input name="personnel-nom" autoComplete="off" className={inputCls} value={draft.nom} onChange={set('nom')} placeholder="Nom Prénom" />
           </div>
           <div className="sm:col-span-2">
             <label className={labelCls}>E-mail (notifications devis/BC, approbations)</label>
-            <input type="email" className={inputCls} value={draft.email} onChange={set('email')} placeholder="prenom.nom@u-picardie.fr" />
+            {/* Attributs anti-remplissage automatique : sans eux, Chrome / Firefox
+                et les gestionnaires de mots de passe peuvent injecter l’adresse
+                du compte connecté à l’ouverture de la fiche. */}
+            <input
+              type="email"
+              name="personnel-email"
+              autoComplete="off"
+              autoCorrect="off"
+              spellCheck={false}
+              data-form-type="other"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              className={inputCls}
+              value={draft.email}
+              onKeyDown={markEmailTouched}
+              onBeforeInput={markEmailTouched}
+              onPaste={markEmailTouched}
+              onCut={markEmailTouched}
+              onDrop={markEmailTouched}
+              onChange={changeEmail}
+              placeholder="prenom.nom@u-picardie.fr"
+            />
+            {emailAutoFilled && (
+              <p className="text-[10px] text-amber-600 mt-1">
+                Adresse remplie automatiquement par le navigateur (non saisie) : elle ne sera pas enregistrée.
+                Saisissez-la ou collez-la pour la valider.
+              </p>
+            )}
           </div>
           <div>
             <label className={labelCls}>Type</label>
@@ -877,7 +929,12 @@ export const PersonnelModal = ({
         </div>
         <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-2 bg-slate-50">
           <button onClick={onCancel} className="px-4 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-200 bg-slate-100">Annuler</button>
-          <button onClick={() => onSave(draft, editing ? modal.rec.id : undefined)}
+          {/* L’adresse n’est enregistrée que si elle a été saisie à la main :
+              sinon on renvoie l’adresse déjà stockée (voir `emailTouched`). */}
+          <button onClick={() => onSave(
+            emailTouched ? draft : { ...draft, email: storedEmail },
+            editing ? modal.rec.id : undefined,
+          )}
             className="px-5 py-2 rounded-xl text-sm font-bold text-white bg-blue-600 hover:bg-blue-700">Enregistrer</button>
         </div>
       </div>

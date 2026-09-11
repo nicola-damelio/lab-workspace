@@ -54,15 +54,19 @@ export const ADMIN_SETTINGS_DOC = 'global';
      • Recettes (création de lignes budgétaires) : socle Permanent, et aussi
          accordée aux fonctions Gestionnaire / Achats (même hors statut
          Permanent) — voir plus bas.
+     • Approbation devis & BC (suivi des achats : TOUTES les demandes de devis /
+         BC y sont visibles) : socle Permanent, et aussi accordée aux fonctions
+         Gestionnaire / Achats même hors statut Permanent — charger du suivi des
+         achats ne suppose pas un statut Permanent (voir plus bas).
      • Statut Non permanent = onglet Congés uniquement.
      • Page Congés (demandes d’absence) = réservée aux profils Non permanent
          et au superutilisateur (rôle d’approbation) ; les Permanents ne la voient pas.
      • Fonction AP (agent de prévention)  → ajoute Dépenses + Budget overview + Hygiène & Sécurité.
      • Fonction Gestionnaire              → ajoute Recettes (création de lignes budgétaires) +
-         Dépenses + Budget overview + Questions ouvertes.
+         Dépenses + Budget overview + Questions ouvertes + Approbation devis & BC.
      • Fonction Achats (« Responsable
        d'achats »)                         → ajoute Recettes (création de lignes budgétaires) +
-         Dépenses + Budget overview ; reçoit les OM /
+         Dépenses + Budget overview + Approbation devis & BC ; reçoit les OM /
          achats prévus transférés depuis « OM prévus / souhaités » et « Achats
          prévus / souhaités » (création de devis « Approbation devis & BC » et de
          fiches du registre Remboursements).
@@ -88,7 +92,7 @@ export const ADMIN_PAGES = [
     blurb: 'Achats prévus / souhaités de l’équipe : coût estimé et frais de port saisis par le demandeur, décision réservée au superutilisateur (Approuvé / En attente / Test / Pas maintenant). Le statut « Test » compte le montant dans les prévisions des Recettes sans que la demande soit réellement acceptée.',
     fields: ['Décision — réservée au superutilisateur : Approuvé / En attente / Test / Pas maintenant', 'Souhait d’achat', 'Urgence : Urgent / Important / Souhaitable', 'Demandeur', 'Fournisseur', 'Ligne budgétaire suggérée', 'Coût estimé', 'Frais de port', 'N° devis · Lien du devis (Drive, facultatif) · Code produit', 'Date de demande', 'Commentaires'] },
   { id: 'devisBc', label: 'Approbation devis & BC', icon: '📝', superuserOnly: false, kind: 'devisBc',
-    blurb: 'Dépôt des devis et bons de commande à faire signer par le superutilisateur (visibles par les Permanents ; les lignes demandées par « Service » sont visibles par tout le monde). Les fichiers sont téléversés dans Budget_labo/<année>/Devis|BC avec un nom qui reprend le N°, les attributs de la ligne ET l’objet (description) après un « _ » à la fin du titre ; l’approbation d’un devis le valide, et celle du BC lié crée la dépense « BC signé » correspondante dans la page Dépenses (catégorie, ligne budgétaire, N° SIFAC/D.A. et date de signature transmis automatiquement). À l’approbation d’un fichier PDF, une copie signée « …_approuvé_signé.pdf » est créée (image de signature du superutilisateur en bas de la dernière page) et devient le fichier officiel — l’original reste intact.',
+    blurb: 'Dépôt des devis et bons de commande à faire signer par le superutilisateur (visibles par les Permanents ; le Gestionnaire et le Responsable d’achats voient toutes les demandes ; les lignes demandées par « Service » sont visibles par tout le monde). Les fichiers sont téléversés dans Budget_labo/<année>/Devis|BC avec un nom qui reprend le N°, les attributs de la ligne ET l’objet (description) après un « _ » à la fin du titre ; l’approbation d’un devis le valide, et celle du BC lié crée la dépense « BC signé » correspondante dans la page Dépenses (catégorie, ligne budgétaire, N° SIFAC/D.A. et date de signature transmis automatiquement). À l’approbation d’un fichier PDF, une copie signée « …_approuvé_signé.pdf » est créée (image de signature du superutilisateur en bas de la dernière page) et devient le fichier officiel — l’original reste intact.',
     fields: ['Statut : En attente / Approuvé / Refusé (décision réservée au superutilisateur)', 'Type : Devis ou BC', 'Description', 'Fournisseur', 'N° devis · N° BC · Catégorie · N° SIFAC/D.A.', 'Montant (optionnel)', 'Fichier téléversé (Budget_labo/<année>/Devis ou /BC)', 'Déposant', 'Date de dépôt', 'Dépense « BC signé » créée automatiquement à l’approbation du BC'] },
   { id: 'budget', label: 'Budget overview', icon: '💶', superuserOnly: false, kind: null,
     blurb: 'Graphiques personnels de suivi budgétaire : dépenses découpées comme les onglets de la page Dépenses (Achats / Prestations internes / OM / Rémunérations de stage), lignes budgétaires & soldes (page Recettes), OM, souhaits, Remboursements (avec états liquidatifs) et devis & BC à approuver — chaque membre enregistre ses propres graphiques.',
@@ -593,8 +597,8 @@ export const hasDefinedSuperuser = (operators) =>
 export const ADMIN_FONCTIONS = ['AP', 'Gestionnaire', 'Achats'];
 export const ADMIN_FONCTION_META = {
   AP: { label: 'AP', hint: 'Agent de prévention → ajoute Dépenses, Budget overview + Hygiène & Sécurité.' },
-  Gestionnaire: { label: 'Gestionnaire', hint: '→ ajoute Recettes (création de lignes budgétaires), Dépenses, Budget overview + Questions ouvertes.' },
-  Achats: { label: "Responsable d'achats", hint: "→ ajoute Recettes (création de lignes budgétaires), Dépenses + Budget overview ; reçoit les OM / achats prévus transférés et est notifié par e-mail quand un devis est créé." },
+  Gestionnaire: { label: 'Gestionnaire', hint: '→ ajoute Recettes (création de lignes budgétaires), Dépenses, Budget overview, Questions ouvertes + Approbation devis & BC (toutes les demandes).' },
+  Achats: { label: "Responsable d'achats", hint: "→ ajoute Recettes (création de lignes budgétaires), Dépenses, Budget overview + Approbation devis & BC (toutes les demandes) ; reçoit les OM / achats prévus transférés et est notifié par e-mail quand un devis est créé." },
 };
 
 /** Lecture normalisée des fonctions d’une fiche Personnel (tableau de codes).
@@ -642,11 +646,15 @@ const NON_PERMANENT_SOCLE_PAGES = ['conges'];
 /** Pages ajoutées selon la fonction portée par la fiche Personnel.
     « Recettes » est aussi accordée aux fonctions Gestionnaire / Achats : elles
     doivent pouvoir créer de nouvelles lignes budgétaires (bouton « Nouvelle
-    ligne budgétaire ») même si leur fiche n’est pas de statut Permanent. */
+    ligne budgétaire ») même si leur fiche n’est pas de statut Permanent.
+    « Approbation devis & BC » (devisBc) leur est accordée pour la même raison :
+    le suivi des achats ne suppose pas un statut Permanent, et ces deux profils
+    doivent voir l’ENSEMBLE des demandes de devis / BC (la page ne limite plus
+    les lignes affichées pour un Gestionnaire / Responsable d’achats). */
 const FONCTION_EXTRA_PAGES = {
   AP: ['depenses', 'budget', 'sicurezza'],
-  Gestionnaire: ['recettes', 'depenses', 'budget', 'questioni'],
-  Achats: ['recettes', 'depenses', 'budget'],
+  Gestionnaire: ['recettes', 'depenses', 'budget', 'questioni', 'devisBc'],
+  Achats: ['recettes', 'depenses', 'budget', 'devisBc'],
 };
 
 /**
