@@ -601,9 +601,93 @@ export const ADMIN_FONCTION_META = {
   Achats: { label: "Responsable d'achats", hint: "→ ajoute Recettes (création de lignes budgétaires), Dépenses, Budget overview + Approbation devis & BC (toutes les demandes) ; reçoit les OM / achats prévus transférés et est notifié par e-mail quand un devis est créé." },
 };
 
+/** Synonymes acceptés pour chaque fonction : libellé affiché, saisie libre,
+ *  import Google Sheets, singulier / pluriel. Sans eux, une fiche dont la
+ *  fonction est stockée « Responsable d’achats » (libellé) au lieu du code
+ *  « Achats » n’était reconnue NULLE PART : ni page « Approbation devis & BC »,
+ *  ni visibilité des OM / achats prévus, ni surtout destinataire des e-mails de
+ *  transfert (devis & BC) — la responsable d’achats n’était alors jamais
+ *  prévenue, sans message d’erreur explicite. */
+export const ADMIN_FONCTION_ALIASES = {
+  AP: ['ap', 'agent prevention', 'agents prevention', 'prevention', 'hygiene securite', 'ap securite', 'ap hygiene securite'],
+  Gestionnaire: ['gestionnaire', 'gestion', 'gestionnaire achats', 'gestionnaire achat', 'responsable gestion'],
+  Achats: [
+    'achats', 'achat', 'responsable achats', 'responsable achat', 'responsables achats', 'resp achats',
+    'resp achat', 'acheteur', 'acheteurs', 'gestion achats', 'achats commandes',
+  ],
+};
+
+/** Mots d’une fonction, normalisés : casse, accents, apostrophes et mots de
+ *  liaison (« de / du / des / la / le / les / et ») ignorés —
+ *  « Responsable d’achats », « responsable des achats » et « RESPONSABLE
+ *  ACHAT » donnent les mêmes mots. */
+const adminFonctionWords = (value) => String(value || '')
+  .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, ' ')
+  .split(' ')
+  .filter((w) => w && ['de', 'du', 'des', 'd', 'la', 'le', 'les', 'et'].indexOf(w) === -1);
+
+/** Tous les libellés acceptés (code canonique + synonymes) en mots, les plus
+ *  spécifiques d’abord : « Gestionnaire des achats » doit l’emporter sur
+ *  « achats » (Achats). */
+const ADMIN_FONCTION_LABELS = (() => {
+  const out = [];
+  ADMIN_FONCTIONS.forEach((code) => {
+    [code].concat(ADMIN_FONCTION_ALIASES[code] || []).forEach((label) => {
+      const words = adminFonctionWords(label);
+      if (words.length) out.push({ code, words });
+    });
+  });
+  return out.sort((a, b) => b.words.length - a.words.length);
+})();
+
+/** Les mots `needle` apparaissent-ils dans `haystack`, en bloc et dans l’ordre
+ *  (« responsable achats » ⊂ « responsable achats commandes ») ? */
+const adminWordsContain = (haystack, needle) => {
+  if (!needle.length || needle.length > haystack.length) return false;
+  for (let i = 0; i + needle.length <= haystack.length; i += 1) {
+    let ok = true;
+    for (let j = 0; j < needle.length; j += 1) {
+      if (haystack[i + j] !== needle[j]) { ok = false; break; }
+    }
+    if (ok) return true;
+  }
+  return false;
+};
+
+/** Code canonique (AP / Gestionnaire / Achats) d’une valeur de fonction saisie
+ *  librement — '' quand elle n’est reconnue (aucune fonction).
+ *
+ *  Deux passes : (1) correspondance EXACTE d’un code ou d’un synonyme ;
+ *  (2) repli TOLÉRANT sur les libellés CONTENUS dans la valeur — « Responsable
+ *  d’achats (commandes) », « Gestionnaire · achats et commandes », « Achats et
+ *  logistique », « AP — hygiène & sécurité ». Les mots restent comparés ENTIERS
+ *  (« apprenti » ne contient donc jamais « ap ») et un libellé d’UN SEUL mot
+ *  n’est accepté que s’il est assez long (≥ 5 lettres : achats, gestion,
+ *  acheteur, prévention…) pour ne pas attraper une spécialité sans rapport.
+ *  On retient à chaque fois le libellé le plus spécifique (le plus de mots). */
+export const adminFonctionCode = (value) => {
+  const words = adminFonctionWords(value);
+  if (!words.length) return '';
+  const key = words.join(' ');
+  const exact = ADMIN_FONCTION_LABELS.find((l) => l.words.join(' ') === key);
+  if (exact) return exact.code;
+  const fuzzy = ADMIN_FONCTION_LABELS.filter((l) => (
+    l.words.length > 1
+      ? adminWordsContain(words, l.words)
+      : (l.words[0].length >= 5 && words.indexOf(l.words[0]) !== -1)
+  ));
+  if (!fuzzy.length) return '';
+  let best = fuzzy[0];
+  fuzzy.forEach((l) => { if (l.words.length > best.words.length) best = l; });
+  return best.code;
+};
+
 /** Lecture normalisée des fonctions d’une fiche Personnel (tableau de codes).
- *  Accepte le stockage moderne en tableau, l’ancien champ « une valeur » ou
- *  plusieurs valeurs séparées (« AP | Gestionnaire ») — rien n’est perdu. */
+ *  Accepte le stockage moderne en tableau, l’ancien champ « une valeur »,
+ *  plusieurs valeurs séparées (« AP | Gestionnaire ») ET les libellés
+ *  (« Responsable d’achats » → Achats) — rien n’est perdu ni ignoré. */
 export const fonctionsOfPerson = (person) => {
   const raw = person && person.fonction;
   const items = Array.isArray(raw)
@@ -611,8 +695,8 @@ export const fonctionsOfPerson = (person) => {
     : (typeof raw === 'string' && String(raw).trim() ? String(raw).split(/[;|,/]+/) : []);
   const out = [];
   items.forEach((v) => {
-    const code = String(v || '').trim();
-    if (ADMIN_FONCTIONS.indexOf(code) !== -1 && out.indexOf(code) === -1) out.push(code);
+    const code = adminFonctionCode(v);
+    if (code && out.indexOf(code) === -1) out.push(code);
   });
   return out;
 };

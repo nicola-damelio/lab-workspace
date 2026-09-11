@@ -41,13 +41,13 @@ import {
 import { parseEuroAmount, extractNumeroFromDoc } from './importUtils';
 import {
   sendAdminMail, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
-  summarizeMail, mailBodyText,
+  summarizeMail, mailBodyText, notificationTargetOf, personEmailOf,
 } from './emailNotify';
 import { uploadLocalFile, cloudBackendAvailable } from '../utils/driveUpload';
 import { budgetDocPath, budgetDocFileName } from './driveFiling';
-import { scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName } from './ownScope';
+import { scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName, scopeSeesAllRows, scopeFonctions } from './ownScope';
 import {
-  TRANSFER_TARGETS, targetMetaOf, cibleEmailsOf, TRANSFER_MODES,
+  TRANSFER_TARGETS, targetMetaOf, TRANSFER_MODES,
   devisPatchFromDesiderata, desiderataTransferStatus, isDepenseBcSigne,
   demandeDevisCompleteOf, isDevisGestion,
 } from './transferAchats';
@@ -882,6 +882,12 @@ export const DesiderataPage = () => {
   const [focusRow, setFocusRow] = useState(null);
   /* Réafficher les souhaits « soldés » (BC signé) masqués par défaut. */
   const [showDone, setShowDone] = useState(false);
+  /* Gestionnaire / Responsable d’achats : ces deux fonctions suivent l’ENSEMBLE
+     des demandes (comme le superutilisateur). Rien ne leur est donc masqué par
+     défaut : les souhaits déjà transférés restent listés (la case est
+     décochable à tout moment), et la décision reste réservée au superutilisateur. */
+  const seesAllRows = scopeSeesAllRows(access);
+  useEffect(() => { if (seesAllRows) setShowDone(true); }, [seesAllRows]);
 
   useEffect(() => {
     if (!notice) return undefined;
@@ -908,19 +914,34 @@ export const DesiderataPage = () => {
   const canDecide = !!access.canChangeWishlistStatus;
 
   /* Isolation « chacun ne voit que ses propres souhaits » : le superutilisateur
-     voit tout (il décide et transfère) ; chaque autre membre ne voit que ses
-     propres demandes — et l’évolution de leur état — jamais celles des autres.
-     Les lignes sont attribuées par la fiche Personnel du demandeur posée à la
-     création (`demandeurPersonId`), sinon par correspondance de nom avec la
-     colonne « demandeur » (anciens imports Google Sheets). */
+     et les fonctions Gestionnaire / Responsable d’achats voient tout (suivi des
+     achats) ; chaque autre membre ne voit que ses propres demandes — et
+     l’évolution de leur état — jamais celles des autres. Les lignes sont
+     attribuées par la fiche Personnel du demandeur posée à la création
+     (`demandeurPersonId`), sinon par correspondance de nom avec la colonne
+     « demandeur » (anciens imports Google Sheets). */
   const isSuper = !!access.isSuperuser;
+  /* Portée réellement appliquée par la page, affichée dans l’en-tête : elle
+     sert aussi de DIAGNOSTIC — l’info-bulle liste les fonctions reconnues sur
+     la fiche Personnel du membre connecté. Si un Gestionnaire / Responsable
+     d’achats lit « vos demandes uniquement », sa fiche ne porte pas (ou pas
+     sous une forme reconnue) la fonction correspondante. */
+  const scopeLabel = isSuper
+    ? ''
+    : (seesAllRows ? ' — toutes les demandes (suivi achats)' : ' — vos demandes uniquement');
+  const scopeTitle = isSuper
+    ? ''
+    : `Fonctions reconnues sur votre fiche Personnel : ${scopeFonctions(access).join(', ') || 'aucune'}. `
+      + (seesAllRows
+        ? 'Le suivi des achats (Gestionnaire / Responsable d’achats) affiche toutes les demandes.'
+        : 'Seules vos propres demandes sont affichées ici. Pour voir toutes les demandes, cochez « Gestionnaire » ou « Responsable d’achats » sur votre fiche dans Administration › Personnel.');
   const meNames = useMemo(() => scopeMeNames(access, currentUser), [access, currentUser]);
   const mePersonId = useMemo(() => scopeMePersonId(access), [access]);
   const myRows = useMemo(
-    () => (isSuper ? list : list.filter((r) => scopeCanSeeItem(r, { isSuper, meNames, mePersonId }))),
+    () => (seesAllRows ? list : list.filter((r) => scopeCanSeeItem(r, { isSuper, meNames, mePersonId }))),
     // scopeCanSeeItem dépend de meNames / mePersonId (recalculés à chaque rendu).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [list, isSuper, meNames, mePersonId]
+    [list, seesAllRows, isSuper, meNames, mePersonId]
   );
 
   /* Pages cibles des liens « vers la bibliothèque » (Librerie / Personnel). */
@@ -1194,10 +1215,27 @@ export const DesiderataPage = () => {
         ? `(montant estimé : ${euro.format(montant)}${port !== null ? ` + frais de port ${euro.format(port)}` : ''})`
         : '(montant non chiffré)',
       'La responsable d’achats en sera prévenue par e-mail. Le souhait disparaîtra de cette liste.',
-    ].filter(Boolean).join('\n');
-    if (!window.confirm(confirmText)) return;
-    const wasApproved = isDesiderataApproved(rec && rec.statut);
+    ].filter(Boolean);
+    /* Destinataires RÉELS (fiche « Achats » + adresse valide) et motif exact
+       quand personne ne peut être prévenu : le transfert ne part jamais en
+       silence, la responsable d’achats doit pouvoir être prévenue. */
     const meta = targetMetaOf(TRANSFER_TARGETS.Achats.code);
+    const cible = notificationTargetOf(personnel, meta.code);
+    /* L’adresse retenue pour la responsable d’achats est-elle celle de MA fiche ?
+       C’est la trace d’une adresse recopiée par erreur (notifications qui
+       reviennent à l’expéditeur au lieu de la responsable d’achats). */
+    const myEmail = String(personEmailOf(access.profile && access.profile.person) || '').trim();
+    const sendsToMe = !!myEmail
+      && cible.emails.some((e) => String(e).toLowerCase() === myEmail.toLowerCase());
+    confirmText.push(cible.emails.length
+      ? `Notification envoyée à : ${cible.emails.join(', ')}`
+      : `⚠ AUCUN e-mail ne partira : ${cible.reason}. Renseignez l’adresse dans Administration › Personnel ; autrement, prévenez la responsable d’achats vous-même.`);
+    if (sendsToMe) {
+      confirmText.push(`⚠ L’adresse prévue pour la responsable d’achats est la MÊME que la vôtre (« ${myEmail} ») : `
+        + 'la notification vous reviendra. Corrigez sa fiche dans Administration › Personnel.');
+    }
+    if (!window.confirm(confirmText.join('\n'))) return;
+    const wasApproved = isDesiderataApproved(rec && rec.statut);
     const patch = devisPatchFromDesiderata(rec, { cible: meta.code, by: (currentUser && currentUser.name) || '' });
     patch.statut = mode === TRANSFER_MODES.REVISION ? APPROVAL_GESTION : patch.statut;
     if (!patch.transfert) patch.transfert = { cible: meta.code, by: (currentUser && currentUser.name) || '', at: Date.now(), depuis: 'desiderate' };
@@ -1227,7 +1265,7 @@ export const DesiderataPage = () => {
        repart « En gestion » et n'est PAS encore approuvé. */
     const signatureWay = mode === TRANSFER_MODES.SIGNATURE;
     const res = await sendAdminMail({
-      to: cibleEmailsOf(personnel, meta.code),
+      to: cible.emails,
       subject: `[Lab Workspace] Achat prévu « ${label} » ${signatureWay ? 'transmis pour signature' : 'accepté — devis à compléter'}`,
       text: mailBodyText([
         signatureWay
@@ -1244,7 +1282,7 @@ export const DesiderataPage = () => {
     const mailSummary = summarizeMail(res, `${meta.title} notifiée`);
     setNotice({
       tone: res && res.ok ? 'ok' : 'warn',
-      text: `Achat « ${label} » ${signatureWay ? 'accepté et transmis pour signature' : 'accepté — devis « En gestion » créé'}. ${mailSummary.text}`,
+      text: `Achat « ${label} » ${signatureWay ? 'accepté et transmis pour signature' : 'accepté — devis « En gestion » créé'}. ${mailSummary.text}${cible.emails.length ? '' : ` ⚠ ${cible.reason} : la responsable d’achats n’a pas été prévenue automatiquement.`}`,
       mailto: mailSummary.mailto || undefined,
       consoleUrl: mailSummary.consoleUrl || undefined,
     });
@@ -1552,6 +1590,12 @@ export const DesiderataPage = () => {
                     'Documents manquants : créer le devis « En gestion » pour complément par la responsable d’achats',
                   )}
                 </div>
+                {!complete && (
+                  <span className="text-[9px] font-bold text-amber-600 leading-tight max-w-[240px]">
+                    🔒 « Pour signature » est inactif tant que la demande n’a pas un N° de devis ET un fichier.
+                    Utilisez « ✎ Révision » : un devis « En gestion » est créé pour être complété par la responsable d’achats.
+                  </span>
+                )}
               </div>
             ) : null}
             {!transferred && !approved && !pendingDecision && !inTest ? <span className="text-[10px] text-slate-300">demande refusée</span> : null}
@@ -1609,9 +1653,9 @@ export const DesiderataPage = () => {
   return (
     <div className="max-w-full mx-auto flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <p className="text-xs font-bold text-slate-400 max-w-2xl">
+        <p className="text-xs font-bold text-slate-400 max-w-2xl" title={scopeTitle || undefined}>
           {visibleSorted.length} achat{visibleSorted.length > 1 ? 's' : ''} prévu{visibleSorted.length > 1 ? 's' : ''} / souhaité{visibleSorted.length > 1 ? 's' : ''} à suivre
-          ({sorted.length} au total{!isSuper ? ' — vos demandes uniquement' : ''}{hiddenDone > 0 ? ` — ${hiddenDone} transférée${hiddenDone > 1 ? 's' : ''} masquée${hiddenDone > 1 ? 's' : ''}` : ''}) ·
+          ({sorted.length} au total{scopeLabel}{hiddenDone > 0 ? ` — ${hiddenDone} transférée${hiddenDone > 1 ? 's' : ''} masquée${hiddenDone > 1 ? 's' : ''}` : ''}) ·
           les colonnes sont triables (en-têtes) et filtrables (bouton « Filtres »).
         </p>
         <div className="flex items-center gap-2 flex-wrap">

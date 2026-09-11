@@ -16,6 +16,8 @@
        Sheets) puis par l’enveloppe d’audit `createdBy`.
    ========================================================================= */
 
+import { adminFonctionCode } from './adminSchema';
+
 const norm = (s) => String(s || '')
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -29,6 +31,41 @@ export const scopeNameKey = (s) => {
 
 /** Deux noms désignent-ils la même personne ? */
 export const scopeSameName = (a, b) => !!a && !!b && scopeNameKey(a) === scopeNameKey(b);
+
+/** Codes de fonction (AP / Gestionnaire / Achats) portés par la fiche Personnel
+ *  du membre connecté. Les libellés libres des anciennes fiches (« Responsable
+ *  d’achats », « Gestionnaire · achats et commandes »…) sont normalisés en codes
+ *  par `adminFonctionCode` — sans quoi une fonction stockée en libellé était
+ *  invisible : pas de page, pas de notification, pas de vision globale. */
+export const scopeFonctions = (access) => {
+  const a = access || {};
+  const profile = a.profile || {};
+  const person = profile.person || {};
+  const raw = []
+    .concat(Array.isArray(profile.fonctions) ? profile.fonctions : [])
+    .concat(profile.fonction ? [profile.fonction] : [])
+    .concat(Array.isArray(person.fonction) ? person.fonction : (person.fonction ? [person.fonction] : []));
+  const out = [];
+  raw.forEach((value) => {
+    const code = adminFonctionCode(value);
+    if (code && out.indexOf(code) === -1) out.push(code);
+  });
+  return out;
+};
+
+/** Le membre connecté voit-il TOUTES les lignes, ou seulement les siennes ?
+ *  Oui pour le superutilisateur et pour les fonctions chargées du suivi des
+ *  achats (Gestionnaire / Responsable d’achats) : ces deux profils doivent
+ *  pouvoir suivre l’ENSEMBLE des demandes sur « OM prévus / souhaités »,
+ *  « Achats prévus / souhaités » et « Approbation devis & BC » (une OM ou un
+ *  achat transféré ne doit jamais leur échapper parce qu’il a été déposé par
+ *  quelqu’un d’autre). La DÉCISION, elle, reste réservée au superutilisateur. */
+export const scopeSeesAllRows = (access) => {
+  const a = access || {};
+  if (a.isSuperuser) return true;
+  const fonctions = scopeFonctions(a);
+  return fonctions.indexOf('Gestionnaire') !== -1 || fonctions.indexOf('Achats') !== -1;
+};
 
 /** Noms d’identité du membre connecté : fiche Personnel liée d’abord, nom du
  *  compte opérateur sinon (les deux sont conservés s’ils diffèrent). */

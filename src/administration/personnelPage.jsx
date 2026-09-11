@@ -19,6 +19,15 @@ const toArray = (v) => {
   return [];
 };
 
+/* Valeur brute du champ « fonction » d’une fiche : tableau moderne ou texte
+   historique (« Achats ; Gestionnaire »). Sert à montrer EXACTEMENT ce qui est
+   enregistré quand la valeur n’est pas reconnue (bannière ci-dessous). */
+const rawFonctionTextOf = (p) => {
+  const raw = p && p.fonction;
+  const items = Array.isArray(raw) ? raw : String(raw || '').split(/[;|,]+/);
+  return items.map((v) => String(v || '').trim()).filter(Boolean).join(' · ');
+};
+
 /* Sous-ligne « Cat. A · Éch. 8 · Chev. 3 » affichée sous le BAP. */
 const cadreBits = (p) => [
   p.categorie ? `Cat. ${p.categorie}` : '',
@@ -118,7 +127,7 @@ const isFormerMember = (p, todayISO) => {
 };
 
 export const PersonnelPage = () => {
-  const { data, settings, upsert, remove, focus, clearFocus } = useAdmin();
+  const { data, settings, upsert, remove, focus, clearFocus, access, currentUser } = useAdmin();
   const list = useMemo(() => (Array.isArray(data.personnel) ? data.personnel : []), [data.personnel]);
   const recettes = useMemo(() => (Array.isArray(data.recettes) ? data.recettes : []), [data.recettes]);
   /* Membres permanents / techniques de l’annuaire → encadrants des stagiaires. */
@@ -166,6 +175,49 @@ export const PersonnelPage = () => {
     [focusPersonId, current]
   );
 
+  /* ── Adresses e-mail partagées par plusieurs fiches ─────────────────────────
+     Une même adresse sur plusieurs fiches fait partir TOUTES les notifications
+     (devis & BC, transferts, décisions) vers une seule boîte : c’est la trace
+     d’une adresse recopiée par erreur (typiquement celle du compte connecté sur
+     la fiche de la responsable d’achats). Signalé aux profils concernés. */
+  const myPersonId = (access && access.profile && access.profile.person && access.profile.person.id) || null;
+  const emailConflicts = useMemo(() => {
+    const byEmail = new Map();
+    (list || []).forEach((p) => {
+      const e = personEmailOf(p);
+      if (!e) return;
+      const key = e.toLowerCase();
+      if (!byEmail.has(key)) byEmail.set(key, { email: e, fiches: [] });
+      byEmail.get(key).fiches.push(p);
+    });
+    const out = [];
+    byEmail.forEach(({ email, fiches }) => {
+      if (fiches.length < 2) return;
+      const relevant = fiches.some((f) => fonctionsOfPerson(f).length > 0)
+        || (myPersonId && fiches.some((f) => f.id === myPersonId));
+      if (relevant) out.push({ email, fiches });
+    });
+    return out;
+  }, [list, myPersonId]);
+
+  /* ── Fonctions non reconnues ───────────────────────────────────────────────
+     Une fonction est lue par son CODE canonique (AP / Gestionnaire / Achats) ou
+     par un libellé connu (« Responsable d’achats », « Gestionnaire · achats et
+     commandes »…). Une valeur libre qui ne rentre dans aucune de ces formes
+     (« Achats et logistique », faute de frappe…) laissait son porteur sans les
+     pages de suivi des achats, sans la vision de TOUTES les demandes et sans
+     les notifications de transfert — silencieusement. La bannière ci-dessous
+     liste ces fiches ; « corriger la fiche » coche la fonction réelle, qui est
+     alors enregistrée sous son code (la valeur libre est remplacée). */
+  const unrecognizedFonctions = useMemo(() => (list || []).filter((p) => {
+    if (!p) return false;
+    const raw = p.fonction;
+    const hasValue = Array.isArray(raw)
+      ? raw.some((v) => String(v || '').trim() !== '')
+      : String(raw || '').trim() !== '';
+    return hasValue && fonctionsOfPerson(p).length === 0;
+  }), [list]);
+
   /* Code couleur (transparents et légers) : Permanent / Technique en bleu
      clair, Temporaire / non permanent en ambre clair. */
   const rowTint = (p) => (statutLabelOf(p) === 'Permanent' ? 'bg-sky-100/40' : 'bg-amber-100/40');
@@ -186,9 +238,34 @@ export const PersonnelPage = () => {
     // « Dernière promotion » = date de la ligne la plus récente de l’historique.
     const lastDated = [...(patch.promoRows || [])].reverse()
       .find((r) => String((r && r.date) || '').trim());
+    /* ── Garde-fou « e-mail » au niveau de l’ENREGISTREMENT ────────────────
+       L’adresse d’une fiche existante n’est remplacée QUE si elle a été saisie
+       à la main dans le formulaire (`emailTouched`). Un champ rempli
+       automatiquement par le navigateur ou un gestionnaire de mots de passe ne
+       peut donc plus écraser l’adresse d’un tiers : c’est ce qui faisait
+       partir les notifications (devis & BC, transferts, décisions) vers le
+       compte connecté au lieu de la responsable d’achats. */
+    const storedFiche = existingId ? (list.find((p) => p && p.id === existingId) || null) : null;
+    const storedEmail = String((storedFiche && storedFiche.email) || '').trim();
+    const email = existingId && patch.emailTouched !== true
+      ? storedEmail
+      : String(patch.email || '').trim();
+    const emailChanged = email.toLowerCase() !== storedEmail.toLowerCase();
+    /* Deux fiches qui partagent une adresse reçoivent les mêmes notifications :
+       on demande confirmation (et l’on signale la fiche en doublon). */
+    const twin = email
+      ? list.find((p) => p && p.id !== existingId
+        && String(personEmailOf(p)).toLowerCase() === email.toLowerCase())
+      : null;
+    if (twin && !window.confirm(
+      `L’adresse « ${email} » est déjà celle de la fiche « ${twin.nom || twin.id} ».\n\n`
+      + 'Deux fiches qui partagent une adresse reçoivent les mêmes notifications '
+      + '(devis & BC, transferts, décisions).\n\nEnregistrer quand même ?'
+    )) return;
     const cleaned = {
       nom: String(patch.nom || '').trim(),
-      email: String(patch.email || '').trim(),
+      email,
+      ...(emailChanged ? { emailChangedAt: Date.now(), emailChangedBy: (currentUser && currentUser.name) || '' } : {}),
       type: patch.type || types[0],
       corps: patch.corps || '',
       grade: patch.grade || '',
@@ -470,6 +547,55 @@ export const PersonnelPage = () => {
           ⏳ Une fin de contrat dépassée déplace automatiquement la fiche dans « Membres précédents » (tableau du bas).
         </span>
       </div>
+
+      {emailConflicts.length > 0 && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50/70 px-4 py-2.5 text-[11px] text-rose-800 leading-relaxed">
+          <b>⚠ Adresses e-mail partagées</b> — une même adresse sur plusieurs fiches envoie les
+          notifications (devis &amp; BC, transferts, décisions) à une seule boîte, et masque donc
+          le bon destinataire :
+          <ul className="mt-1 list-disc pl-4">
+            {emailConflicts.map(({ email, fiches }) => (
+              <li key={email}>
+                <b>{email}</b> → {fiches.map((f) => f.nom || f.id).join(' · ')}
+                {' '}
+                <button
+                  type="button"
+                  onClick={() => setModal({ mode: 'edit', rec: fiches[0] })}
+                  className="font-black text-rose-700 underline"
+                  title={`Ouvrir la fiche « ${fiches[0].nom || fiches[0].id} » pour corriger l’adresse`}
+                >
+                  corriger la fiche
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {unrecognizedFonctions.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-2.5 text-[11px] text-amber-800 leading-relaxed">
+          <b>⚠ Fonctions non reconnues</b> — ces fiches portent une fonction que le module ne sait pas
+          rattacher à <b>AP</b>, <b>Gestionnaire</b> ou <b>Responsable d’achats</b> : leur porteur ne voit
+          que ses propres demandes sur « OM prévus / souhaités » et « Achats prévus / souhaités », et ne
+          reçoit aucune notification de transfert. Ouvrez la fiche et cochez la fonction réelle.
+          <ul className="mt-1 list-disc pl-4">
+            {unrecognizedFonctions.map((p) => (
+              <li key={p.id}>
+                <b>{p.nom || p.id}</b> → « {rawFonctionTextOf(p)} »
+                {' '}
+                <button
+                  type="button"
+                  onClick={() => setModal({ mode: 'edit', rec: p })}
+                  className="font-black text-amber-800 underline"
+                  title={`Ouvrir la fiche « ${p.nom || p.id} » et cocher la bonne fonction`}
+                >
+                  corriger la fiche
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {list.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">

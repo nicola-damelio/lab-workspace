@@ -18,6 +18,7 @@
    lecture distante : l’utilisateur colle ou dépose les données, pas de clé
    API, pas de CORS.
    ========================================================================= */
+import { adminFonctionCode } from './adminSchema';
 
 // Feuilles sources (liens du bouton « Ouvrir la feuille source »).
 // Classeur budget « Budget_GEC_UPJV_2026 » : un onglet par page d’admin.
@@ -1179,13 +1180,12 @@ const normalizeCout = (v) => {
 };
 
 /* « AP », « AP Hygiène & Sécurité », « Agent de prévention » → AP ;
-   « Gestionnaire » → Gestionnaire ; sinon vide (aucune fonction). */
-const normalizeFonction = (v) => {
-  const s = String(v ?? '').trim();
-  if (/^ap(?:\b|[\s/_-])/i.test(s) || /agent de pr[eé]vention/i.test(s)) return 'AP';
-  if (/^gestionnaire/i.test(s)) return 'Gestionnaire';
-  return '';
-};
+   « Gestionnaire » → Gestionnaire ; « Responsable d’achats », « Resp. achats »,
+   « Achat(s) », « Acheteur » → Achats ; sinon vide (aucune fonction).
+   La normalisation est partagée avec le reste du module (adminSchema) pour que
+   les fiches importées soient reconnues partout : pages autorisées, visibilité
+   des OM / achats prévus et destinataires des e-mails de transfert. */
+const normalizeFonction = (v) => adminFonctionCode(v);
 
 const stampFor = (label) => `Import Google Sheets « ${label} » — ${new Date().toISOString().slice(0, 10)}`;
 

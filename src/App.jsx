@@ -27,6 +27,10 @@ import { setActiveProjectId, readLibrary, readAllProjectLibraries, restoreLibrar
 import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, getLastDriveConnectError, driveBootstrapRequestedAtLoad, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders } from './utils/driveUpload';
 import { sanitizeSlug, datasetFolderSlug } from './utils/driveNaming';
 import { validateDatasetExperiments } from './utils/experimentRules';
+import {
+  loadSectionsOf, defaultSelection, sectionGroupsOf, filterLoadState,
+  selectionHasTests, selectionIsComplete, describeCount,
+} from './utils/loadSelection';
 import { canUserOpenDataset, isDatasetRestricted, normalizeMemberNames, datasetAccessOf } from './utils/datasetAccess';
 
 import { ScientistLoginGate, ScientistLoginModal } from './components/AppModules/definitionsManagers';
@@ -489,6 +493,88 @@ const datasetHref = (datasetId) => {
   return '?' + qs;
 };
 
+/* =========================================================================
+   « Load HTML » — panneau de sélection des éléments à importer.
+   Un fichier de sauvegarde peut contenir plusieurs pages : ce panneau laisse
+   cocher EXACTEMENT ce qu’on veut importer (« quel élément de quelle page »),
+   avec par page « Tout / Rien » et, globalement, « Tout sélectionner ».
+   ========================================================================= */
+const LoadPickPanel = ({ sections, picked, onToggle, onPickMany }) => {
+  const groups = sectionGroupsOf(sections);
+  const isOn = (id) => picked.indexOf(id) !== -1;
+  const groupIds = (g) => g.items.map((s) => s.id);
+  return (
+    <div className="border border-slate-200 rounded-xl overflow-hidden">
+      <div className="flex items-center justify-between gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200">
+        <span className="text-[11px] font-black text-slate-500 uppercase tracking-wide">
+          Elements to import ({picked.length}/{sections.length})
+        </span>
+        <span className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onPickMany(sections.map((s) => s.id), true)}
+            className="text-[10px] font-black text-blue-700 hover:underline"
+          >
+            Select all
+          </button>
+          <button
+            type="button"
+            onClick={() => onPickMany(sections.map((s) => s.id), false)}
+            className="text-[10px] font-black text-slate-500 hover:underline"
+          >
+            Clear all
+          </button>
+        </span>
+      </div>
+      <div className="max-h-[46vh] overflow-y-auto divide-y divide-slate-100">
+        {groups.map((g) => (
+          <div key={g.page || '_flat'} className="px-3 py-2">
+            {g.page ? (
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <span className="text-[11px] font-black text-slate-600">{g.page}</span>
+                <span className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onPickMany(groupIds(g), true)}
+                    title={`Import every element of « ${g.page} »`}
+                    className="text-[10px] font-bold text-blue-700 hover:underline"
+                  >
+                    import all
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onPickMany(groupIds(g), false)}
+                    title={`Import nothing from « ${g.page} »`}
+                    className="text-[10px] font-bold text-slate-400 hover:underline"
+                  >
+                    none
+                  </button>
+                </span>
+              </div>
+            ) : null}
+            <div className="flex flex-col gap-1">
+              {g.items.map((s) => (
+                <label key={s.id} className="flex items-start gap-2 cursor-pointer rounded-lg px-1.5 py-1 hover:bg-slate-50">
+                  <input
+                    type="checkbox"
+                    className="accent-blue-600 mt-0.5"
+                    checked={isOn(s.id)}
+                    onChange={(e) => onToggle(s.id, e.target.checked)}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs font-bold text-slate-700 leading-tight">{s.label}</span>
+                    <span className="block text-[10px] text-slate-400 leading-tight">{describeCount(s)}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 export default function App() {
   try { console.info('Lab Workspace build:', typeof __APP_COMMIT__ !== 'undefined' ? __APP_COMMIT__ : 'dev'); } catch { /* ignore */ }
   const createEmptyTest = (id, num, customType = 'plate-96') => {
@@ -937,6 +1023,23 @@ if (customType === 'dosy') {
   };
   const [dialog, setDialog] = useState(null);
   const [pendingLoad, setPendingLoad] = useState(null);
+  /* Éléments (pages / sections) COCHÉS pour l’import en cours : « Load HTML »
+     peut n’importer qu’une partie du fichier — par exemple les seules fiches
+     Personnel, ou les seuls OM prévus, sans toucher au reste du dataset. */
+  const [loadPick, setLoadPick] = useState(null);
+  /* Éléments proposés / cochés de l’import en cours (voir LoadPickPanel). */
+  const loadSections = (pendingLoad && Array.isArray(pendingLoad.sections)) ? pendingLoad.sections : [];
+  const loadPicked = Array.isArray(loadPick) ? loadPick : defaultSelection(loadSections);
+  const toggleLoadPick = (id, on) => setLoadPick((prev) => {
+    const cur = Array.isArray(prev) ? prev : [];
+    if (on) return cur.indexOf(id) === -1 ? [...cur, id] : cur;
+    return cur.filter((x) => x !== id);
+  });
+  const pickManyLoad = (ids, on) => setLoadPick((prev) => {
+    const cur = Array.isArray(prev) ? prev : [];
+    if (on) return [...new Set([...cur, ...ids])];
+    return cur.filter((x) => ids.indexOf(x) === -1);
+  });
   // Dataset dont le superutilisateur édite la liste d’accès (bouton « 👥
   // Membres » sur une carte de l’écran d’accueil).
   const [accessEditorDataset, setAccessEditorDataset] = useState(null);
@@ -2223,13 +2326,18 @@ useEffect(() => {
             && s.administration !== null
             && !Array.isArray(s.tests) && !Array.isArray(s.plates);
           if (isAdminLoad) {
+            /* Éléments importables de la base (une page = une collection) :
+               l’utilisateur peut n’en restaurer qu’une partie. */
+            const sections = loadSectionsOf(s, true);
             setPendingLoad({
               tests: [],
               fullState: s,
               isAdmin: true,
+              sections,
               adminTitle: dataBlob && (dataBlob.title || ''),
               adminSubtitle: dataBlob && (dataBlob.subtitle || ''),
             });
+            setLoadPick(defaultSelection(sections));
             return;
           }
 
@@ -2275,7 +2383,11 @@ useEffect(() => {
         loadedTests = migrated.tests;
         s.storages = migrated.storages;
 
-        setPendingLoad({ tests: loadedTests, fullState: s });
+        /* Éléments importables du dataset scientifique (expériences, projets,
+           définitions, stockage, rapport, Figures & Slides…). */
+        const dataSections = loadSectionsOf(s, false);
+        setPendingLoad({ tests: loadedTests, fullState: s, sections: dataSections });
+        setLoadPick(defaultSelection(dataSections));
       } catch (err) {
         setDialog({
           type: 'alert',
@@ -2290,8 +2402,19 @@ useEffect(() => {
     e.target.value = '';
   };
 
-  const confirmLoad = (mode) => {
-    const { tests: loadedTests, fullState: s } = pendingLoad;
+  const confirmLoad = (mode, pickedIds) => {
+    const { tests: pendingTests, fullState: rawState, sections } = pendingLoad;
+    const allSections = Array.isArray(sections) ? sections : [];
+    const picked = Array.isArray(pickedIds)
+      ? pickedIds
+      : (Array.isArray(loadPick) ? loadPick : defaultSelection(allSections));
+    /* Import PARTIEL : le snapshot est réduit aux éléments COCHÉS — les autres
+       gardent leur valeur actuelle (rien n’est écrasé en silence). Les
+       expériences d’un dataset scientifique ne sont remplacées que si
+       l’élément « Expériences » est coché. */
+    const pruned = filterLoadState(rawState, allSections, picked);
+    const s = pruned.state;
+    const loadedTests = selectionHasTests(picked) ? (pendingTests || []) : [];
     let targetId = currentDatasetId;
 
     /* Restauration d’une base d’administration : tout le contenu vit dans
@@ -2299,9 +2422,18 @@ useEffect(() => {
        n’est PAS une base d’administration, la sauvegarde est restaurée dans
        une NOUVELLE base (le dataset scientifique ouvert n’est pas touché). */
     if (pendingLoad && pendingLoad.isAdmin) {
-      const admin = (s && typeof s.administration === 'object' && s.administration !== null)
-        ? s.administration
+      const pickedAdmin = pruned.administration || {};
+      /* Tout est coché → le contenu du fichier remplace la base, comme avant ;
+         import PARTIEL → seules les pages cochées remplacent leurs homologues,
+         les autres pages de la base ouverte restent intactes. */
+      const complete = selectionIsComplete(allSections, picked);
+      const base = (currentDatasetId && isAdministrationKind(activeDatasetKind)
+        && adminContent && typeof adminContent === 'object')
+        ? adminContent
         : createAdministrationSeed();
+      const admin = complete
+        ? (Object.keys(pickedAdmin).length ? pickedAdmin : base)
+        : { ...base, ...pickedAdmin };
       const restoringInPlace = !!currentDatasetId && isAdministrationKind(activeDatasetKind);
       targetId = restoringInPlace ? currentDatasetId : 'ds_' + Date.now();
       if (!restoringInPlace) {
@@ -2324,6 +2456,7 @@ useEffect(() => {
       setAdminFocus(null);
       resetAdminNavHistory();
       setPendingLoad(null);
+      setLoadPick(null);
       if (window.innerWidth < 768) setIsSidebarOpen(false);
       return;
     }
@@ -2339,12 +2472,17 @@ useEffect(() => {
     setProjectDatasetScope(targetId);
 
     if (mode === 'replace') {
-      setReactTests(loadedTests);
-      historyRef.current = [loadedTests];
-      setHistoryIndex(0);
+      /* Les expériences ne sont remplacées que si l’élément « Expériences » est
+         coché : importer uniquement les définitions ne doit jamais vider les
+         expériences déjà présentes dans le dataset. */
+      if (loadedTests.length > 0 || selectionHasTests(picked)) {
+        setReactTests(loadedTests);
+        historyRef.current = [loadedTests];
+        setHistoryIndex(0);
 
-      if (loadedTests.length > 0) {
-        setActiveTestId(loadedTests[0].id);
+        if (loadedTests.length > 0) {
+          setActiveTestId(loadedTests[0].id);
+        }
       }
 
       if (s.datasetTitle !== undefined) setDatasetTitle(s.datasetTitle);
@@ -2508,6 +2646,7 @@ if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([.
     }
 
     setPendingLoad(null);
+    setLoadPick(null);
     setCurrentModule('tests');
 
     if (window.innerWidth < 768) setIsSidebarOpen(false);
@@ -3633,31 +3772,49 @@ const openDataset = (dset) => {
       )}
 
       {pendingLoad && (
-        <div className="fixed inset-0 bg-slate-900/50 z-[99999] flex items-center justify-center backdrop-blur-sm">
-          <div className="bg-white p-6 rounded-xl shadow-xl border border-slate-200 w-full max-w-sm mx-4">
+        <div className="fixed inset-0 bg-slate-900/50 z-[99999] flex items-center justify-center backdrop-blur-sm p-4">
+          <div className="bg-white p-6 rounded-xl shadow-xl border border-slate-200 w-full max-w-lg max-h-[92vh] overflow-y-auto">
             <h3 className="text-lg font-black text-slate-800 mb-2">
               {pendingLoad.isAdmin ? 'Restore Administration Base' : 'Load Workspace Data'}
             </h3>
 
             {pendingLoad.isAdmin ? (
               <>
-                <p className="text-sm text-slate-500 mb-6">
+                <p className="text-sm text-slate-500 mb-4">
                   This file contains an administration base ({' '}
                   <b>{pendingLoad.adminTitle
                     || (pendingLoad.fullState && (pendingLoad.fullState.title || pendingLoad.fullState.datasetTitle))
                     || 'sans titre'}</b>
-                  ). Restoring replaces the open administration base — or creates
-                  a new one when a scientific dataset is currently open.
+                  ). Tick the pages to import: a ticked page replaces its counterpart and the other
+                  pages of the open base stay untouched — or import everything to restore the base
+                  exactly as saved.
                 </p>
-                <div className="flex flex-col gap-3">
+                <LoadPickPanel
+                  sections={loadSections}
+                  picked={loadPicked}
+                  onToggle={toggleLoadPick}
+                  onPickMany={pickManyLoad}
+                />
+                <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
+                  Accounts (operators) and the security configuration are never imported: they belong
+                  to the application, not to the dataset.
+                </p>
+                <div className="flex flex-col gap-3 mt-4">
                   <button
                     onClick={() => confirmLoad('replace')}
-                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-left transition-colors"
+                    disabled={loadPicked.length === 0}
+                    className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg text-left transition-colors"
                   >
-                    ♻️ Restore this Administration Base
+                    ♻️ Import the selected pages ({loadPicked.length})
                   </button>
                   <button
-                    onClick={() => setPendingLoad(null)}
+                    onClick={() => confirmLoad('replace', defaultSelection(loadSections))}
+                    className="bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-800 font-bold py-2 px-4 rounded-lg text-left transition-colors"
+                  >
+                    ♻️ Import everything (restore the whole base)
+                  </button>
+                  <button
+                    onClick={() => { setPendingLoad(null); setLoadPick(null); }}
                     className="mt-2 text-slate-500 hover:text-slate-700 text-sm font-bold py-2 w-full transition-colors"
                   >
                     Cancel
@@ -3666,27 +3823,46 @@ const openDataset = (dset) => {
               </>
             ) : (
               <>
-                <p className="text-sm text-slate-500 mb-6">
-                  How would you like to load the data from this file?
+                <p className="text-sm text-slate-500 mb-4">
+                  Choose the elements to import from this file (per row, per project, or whole pages),
+                  then add them to the open dataset or replace what is already there.
                 </p>
-
-                <div className="flex flex-col gap-3">
+                <LoadPickPanel
+                  sections={loadSections}
+                  picked={loadPicked}
+                  onToggle={toggleLoadPick}
+                  onPickMany={pickManyLoad}
+                />
+                <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
+                  Un-ticked elements keep their current value; accounts (operators) and the security
+                  configuration are never imported.
+                </p>
+                <div className="flex flex-col gap-3 mt-4">
                   <button
                     onClick={() => confirmLoad('append')}
-                    className="bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-800 font-bold py-2 px-4 rounded-lg text-left transition-colors"
+                    disabled={loadPicked.length === 0}
+                    className="bg-blue-50 hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed border border-blue-200 text-blue-800 font-bold py-2 px-4 rounded-lg text-left transition-colors"
                   >
-                    ➕ Add to Current File
+                    ➕ Add the selected elements ({loadPicked.length})
                   </button>
 
                   <button
                     onClick={() => confirmLoad('replace')}
-                    className="bg-red-50 hover:bg-red-100 border border-red-200 text-red-800 font-bold py-2 px-4 rounded-lg text-left transition-colors"
+                    disabled={loadPicked.length === 0}
+                    className="bg-red-50 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed border border-red-200 text-red-800 font-bold py-2 px-4 rounded-lg text-left transition-colors"
                   >
-                    🔄 Substitute Data
+                    🔄 Replace the selected elements
                   </button>
 
                   <button
-                    onClick={() => setPendingLoad(null)}
+                    onClick={() => confirmLoad('replace', defaultSelection(loadSections))}
+                    className="bg-red-50 hover:bg-red-100 border border-red-200 text-red-800 font-bold py-2 px-4 rounded-lg text-left transition-colors"
+                  >
+                    🔄 Import everything (replace the dataset)
+                  </button>
+
+                  <button
+                    onClick={() => { setPendingLoad(null); setLoadPick(null); }}
                     className="mt-2 text-slate-500 hover:text-slate-700 text-sm font-bold py-2 w-full transition-colors"
                   >
                     Cancel

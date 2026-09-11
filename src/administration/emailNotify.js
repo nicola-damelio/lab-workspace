@@ -46,6 +46,29 @@ export const personnelEmailsMatching = (personnel = [], { fonction = '', type = 
   return out;
 };
 
+/** Fiches Personnel portant la fonction demandée (codes normalisés : les
+ *  libellés « Responsable d’achats » / « Gestionnaire » sont reconnus).
+ *  Sert au diagnostic affiché quand aucun e-mail ne peut être envoyé. */
+export const personnelFichesWithFonction = (personnel = [], fonction = '') =>
+  (Array.isArray(personnel) ? personnel : [])
+    .filter((p) => !!p && (!fonction || fonctionsOfPerson(p).indexOf(fonction) !== -1));
+
+/** Destinataires d’une notification liée à une fonction, avec le motif exact
+ *  quand personne ne peut être prévenu (aucune fiche, ou fiche sans e-mail).
+ *  @returns {{emails:string[], fiches:object[], reason:string}} */
+export const notificationTargetOf = (personnel = [], fonction = '') => {
+  const fiches = personnelFichesWithFonction(personnel, fonction);
+  const emails = personnelEmailsMatching(personnel, { fonction });
+  const label = fonction === 'Achats' ? 'responsable d’achats' : (fonction === 'Gestionnaire' ? 'gestionnaire' : fonction);
+  let reason = '';
+  if (!emails.length) {
+    reason = fiches.length
+      ? `les fiches « ${label} » (${fiches.map((f) => String(f.nom || f.id)).join(', ')}) n’ont pas d’adresse e-mail`
+      : `aucune fiche Personnel ne porte la fonction « ${label} »`;
+  }
+  return { emails, fiches, reason };
+};
+
 /* ── Adresses des superutilisateurs (opérateurs → fiche Personnel) ─────── */
 
 /** Normalise un nom pour comparaison tolérante (ordre des mots ignoré). */

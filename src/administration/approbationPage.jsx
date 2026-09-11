@@ -75,9 +75,11 @@ import {
   withApprovedSuffix,
 } from './driveFiling';
 import { stampPdfWithSignature, makeSignedPdfFromImage } from './approvalSignature';
+import { scopeFonctions } from './ownScope';
 import { downloadDriveFileBytes } from '../utils/migrateTestImages';
 import {
   sendAdminMail, personEmailOf, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
+  notificationTargetOf,
 } from './emailNotify';
 
 /* ── Petites aides ──────────────────────────────────────────────────────── */
@@ -287,7 +289,7 @@ const Badge = ({ tone = 'slate', children }) => (
 export const ApprobationPage = () => {
   const {
     data, access, upsert, remove, currentUser, operators, settings, updateSettings,
-    focus, clearFocus, updateMany,
+    focus, clearFocus, updateMany, navigate,
   } = useAdmin();
   const personnel = useMemo(
     () => (Array.isArray(data.personnel) ? data.personnel : []),
@@ -370,7 +372,13 @@ export const ApprobationPage = () => {
      d'achats) : autorisées à compléter les devis générés par un transfert
      depuis « OM prévus / souhaités » ou « Achats prévus / souhaités ». Une
      fiche peut porter plusieurs fonctions. */
-  const currentFonctions = (access.profile && access.profile.fonctions) || [];
+  /* Fonctions reconnues sur la fiche Personnel du membre connecté (codes
+     AP / Gestionnaire / Achats) : `scopeFonctions` normalise aussi les libellés
+     libres des anciennes fiches. Repli sur le profil si rien n’est détecté. */
+  const currentFonctions = (() => {
+    const detected = scopeFonctions(access);
+    return detected.length ? detected : ((access.profile && access.profile.fonctions) || []);
+  })();
   const isAchatsRole = currentFonctions.indexOf('Gestionnaire') !== -1
     || currentFonctions.indexOf('Achats') !== -1;
   /* Visibilité : le superutilisateur, la gestionnaire et la responsable
@@ -549,6 +557,21 @@ export const ApprobationPage = () => {
     () => personnelEmailsMatching(personnel, { fonction: 'Achats' }),
     [personnel]
   );
+  /* Diagnostic « notifications » : sans fiche Personnel reliée (bonne fonction
+     + adresse e-mail), un transfert depuis « OM prévus » / « Achats prévus »
+     partirait SANS prévenir la responsable d’achats (c’est la cause des
+     notifications qui « n’arrivaient jamais »). Affiché au superutilisateur. */
+  const notifDiagnosis = useMemo(() => {
+    if (!personnel.length) return null;
+    const missing = [];
+    if (!achatsEmails.length) {
+      missing.push({ label: 'responsable d’achats', reason: notificationTargetOf(personnel, 'Achats').reason });
+    }
+    if (!gestionnaireEmails.length) {
+      missing.push({ label: 'gestionnaire', reason: notificationTargetOf(personnel, 'Gestionnaire').reason });
+    }
+    return missing.length ? missing : null;
+  }, [personnel, achatsEmails, gestionnaireEmails]);
 
   const summarizeMail = async (res, label) => {
     if (res && res.ok) return { text: `${label} : e-mail envoyé ✓` };
@@ -1252,10 +1275,28 @@ export const ApprobationPage = () => {
           réservée au superutilisateur · l’approbation d’un PDF crée une copie
           signée « …_approuvé_signé.pdf » (l’original reste intact).
         </p>
-        {!canSeeAllRows && currentName && (
-          <p className="text-[11px] leading-snug text-slate-500 bg-white border border-slate-200 rounded-xl px-3 py-2">
-            👁 Affichage limité à <b>vos</b> devis &amp; bons de commande (déposés par vous ou demandés à votre nom) —
-            les éléments des autres membres ne sont pas listés ici. La gestionnaire et la responsable d’achats voient l’ensemble des lignes.
+        {!isSuper && (
+          <p
+            className="text-[11px] leading-snug text-slate-500 bg-white border border-slate-200 rounded-xl px-3 py-2"
+            title={`Fonctions reconnues sur votre fiche Personnel : ${currentFonctions.join(', ') || 'aucune'}.`}
+          >
+            {canSeeAllRows ? (
+              <>
+                👁 Vous voyez <b>toutes</b> les demandes déposées (suivi des achats — Gestionnaire /
+                Responsable d’achats) : les devis &amp; BC de tous les membres sont listés ici.
+              </>
+            ) : currentName ? (
+              <>
+                👁 Affichage limité à <b>vos</b> devis &amp; bons de commande (déposés par vous ou demandés à votre nom) —
+                les éléments des autres membres ne sont pas listés ici. La gestionnaire et la responsable d’achats voient l’ensemble des lignes.
+              </>
+            ) : (
+              <>
+                👁 Aucune fiche <b>Personnel</b> n’est reliée à votre compte : toutes les lignes sont
+                affichées par défaut. Demandez au superutilisateur de lier votre fiche pour un affichage
+                limité à vos demandes.
+              </>
+            )}
           </p>
         )}
         <div className="flex items-center gap-2">
@@ -1284,6 +1325,29 @@ export const ApprobationPage = () => {
           </button>
         </div>
       </div>
+
+      {isSuper && notifDiagnosis && (
+        <div className="flex items-start justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50/70 px-4 py-2.5 text-[11px] text-rose-800 leading-relaxed">
+          <span>
+            <b>⚠ Notifications incomplètes</b> — les transferts « OM / achats prévus » et les décisions
+            partiront <b>sans prévenir personne</b> :
+            <ul className="mt-1 list-disc pl-4">
+              {notifDiagnosis.map((m) => (
+                <li key={m.label}>aucun e-mail pour la {m.label} : {m.reason}.</li>
+              ))}
+            </ul>
+            Corrigez la fiche concernée dans <b>Administration › Personnel</b> : fonction
+            « <b>Responsable d’achats</b> » ou « <b>Gestionnaire</b> » <i>et</i> adresse e-mail.
+          </span>
+          <button
+            type="button"
+            onClick={() => { if (typeof navigate === 'function') navigate('personnel'); }}
+            className="shrink-0 font-black text-rose-700 underline whitespace-nowrap"
+          >
+            Ouvrir Personnel
+          </button>
+        </div>
+      )}
 
       {note && (
         <div className="flex items-start justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50/70 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">

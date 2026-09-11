@@ -32,11 +32,11 @@ import { budgetDocPath, budgetDocFileName } from './driveFiling';
 import { findRecetteTwin, sameCatType } from './recetteLink';
 import {
   sendAdminMail, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
-  summarizeMail, mailBodyText,
+  summarizeMail, mailBodyText, notificationTargetOf, personEmailOf,
 } from './emailNotify';
-import { scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName } from './ownScope';
+import { scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName, scopeSeesAllRows, scopeFonctions } from './ownScope';
 import {
-  TRANSFER_TARGETS, targetMetaOf, cibleEmailsOf, partModeOf, omTransferSummary,
+  TRANSFER_TARGETS, targetMetaOf, partModeOf, omTransferSummary,
   devisPatchFromOmPart, reimbPatchFromOm, omTransferStatus, TRANSFER_MODES, isDevisGestion,
 } from './transferAchats';
 
@@ -625,6 +625,10 @@ export const OmPage = () => {
     () => (Array.isArray(data.reimbursements) ? data.reimbursements : []),
     [data.reimbursements]
   );
+  /* Gestionnaire / Responsable d’achats : ces deux fonctions suivent l’ENSEMBLE
+     des demandes (comme le superutilisateur) — elles ne sont donc pas limitées
+     à leurs propres OM. La décision, elle, reste réservée au superutilisateur. */
+  const seesAllRows = scopeSeesAllRows(access);
 
   const [modal, setModal] = useState(null); // null | { mode: 'new' } | { mode: 'edit', rec }
   const [importOpen, setImportOpen] = useState(false);
@@ -635,6 +639,10 @@ export const OmPage = () => {
   /* Réafficher les OM « soldées » (toutes les parties réglées — BC signé et/ou
      remboursements corrigés) qui sont masquées par défaut. */
   const [showSoldes, setShowSoldes] = useState(false);
+  /* Pour la gestionnaire et la responsable d’achats, rien n’est masqué par
+     défaut : les OM déjà transférées (aujourd’hui en devis / BC ou en
+     remboursement) restent visibles — la case reste décochable à tout moment. */
+  useEffect(() => { if (seesAllRows) setShowSoldes(true); }, [seesAllRows]);
 
   useEffect(() => {
     if (!focus || focus.pageId !== 'om') return;
@@ -653,21 +661,36 @@ export const OmPage = () => {
 
   /* L’approbation (changement de statut) est réservée au superutilisateur. */
   const isSuper = !!access.isSuperuser;
+  /* Portée réellement appliquée par la page, affichée dans l’en-tête : elle
+     sert aussi de DIAGNOSTIC — l’info-bulle liste les fonctions reconnues sur
+     la fiche Personnel du membre connecté. Si un Gestionnaire / Responsable
+     d’achats lit « vos demandes uniquement », sa fiche ne porte pas (ou pas
+     sous une forme reconnue) la fonction correspondante. */
+  const scopeLabel = isSuper
+    ? ''
+    : (seesAllRows ? ' — toutes les demandes (suivi achats)' : ' — vos demandes uniquement');
+  const scopeTitle = isSuper
+    ? ''
+    : `Fonctions reconnues sur votre fiche Personnel : ${scopeFonctions(access).join(', ') || 'aucune'}. `
+      + (seesAllRows
+        ? 'Le suivi des achats (Gestionnaire / Responsable d’achats) affiche toutes les demandes.'
+        : 'Seules vos propres demandes sont affichées ici. Pour voir toutes les demandes, cochez « Gestionnaire » ou « Responsable d’achats » sur votre fiche dans Administration › Personnel.');
   const currentName = txt((access.profile && access.profile.person && access.profile.person.nom)
     || (currentUser && currentUser.name));
 
-  /* Isolation « chacun ne voit que ses propres OM » : le superutilisateur voit
-     tout (il approuve et transfère) ; chaque autre membre ne voit que ses
-     propres demandes — jamais celles des autres. Les OM sont attribuées par la
-     fiche Personnel du demandeur (`demandeurPersonId`, posée à la création),
-     sinon par correspondance de nom (anciens imports Google Sheets). */
+  /* Isolation « chacun ne voit que ses propres OM » : le superutilisateur (et
+     les fonctions Gestionnaire / Responsable d’achats, qui assurent le suivi
+     des achats) voient tout ; chaque autre membre ne voit que ses propres
+     demandes — jamais celles des autres. Les OM sont attribuées par la fiche
+     Personnel du demandeur (`demandeurPersonId`, posée à la création), sinon
+     par correspondance de nom (anciens imports Google Sheets). */
   const meNames = useMemo(() => scopeMeNames(access, currentUser), [access, currentUser]);
   const mePersonId = useMemo(() => scopeMePersonId(access), [access]);
   const myOm = useMemo(
-    () => (isSuper ? om : om.filter((o) => scopeCanSeeItem(o, { isSuper, meNames, mePersonId }))),
+    () => (seesAllRows ? om : om.filter((o) => scopeCanSeeItem(o, { isSuper, meNames, mePersonId }))),
     // scopeCanSeeItem dépend de meNames / mePersonId (recalculés à chaque rendu).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [om, isSuper, meNames, mePersonId]
+    [om, seesAllRows, isSuper, meNames, mePersonId]
   );
 
   /* Destinataires des notifications d’approbation : le superutilisateur (fiche
@@ -1062,6 +1085,16 @@ export const OmPage = () => {
     const label = missionOf(rec) || rec.id;
     const wasApproved = isOmApproved(pick(rec, ['statut']));
     const signatureWay = mode === TRANSFER_MODES.SIGNATURE;
+    /* Destinataires RÉELS de la notification (fiches ayant la fonction
+       « Achats » + une adresse valide) et motif exact quand personne ne peut
+       être prévenu : un transfert ne doit jamais partir en silence. */
+    const cible = notificationTargetOf(personnel, meta.code);
+    /* L’adresse retenue pour la responsable d’achats est-elle celle de MA fiche ?
+       C’est la trace d’une adresse recopiée par erreur : les notifications
+       reviendraient à l’expéditeur au lieu de la responsable d’achats. */
+    const myEmail = String(personEmailOf(access.profile && access.profile.person) || '').trim();
+    const sendsToMe = !!myEmail
+      && cible.emails.some((e) => String(e).toLowerCase() === myEmail.toLowerCase());
     const confirmLines = [
       signatureWay
         ? `Accepter et transférer l’OM « ${label} » pour signature ?`
@@ -1075,7 +1108,14 @@ export const OmPage = () => {
         : '',
       '',
       'Un e-mail prévient la responsable d’achats. L’OM transférée disparaîtra de cette liste.',
+      cible.emails.length
+        ? `Notification envoyée à : ${cible.emails.join(', ')}`
+        : `⚠ AUCUN e-mail ne partira : ${cible.reason}. Renseignez l’adresse dans Administration › Personnel ; autrement, prévenez la responsable d’achats vous-même.`,
     ].filter(Boolean);
+    if (sendsToMe) {
+      confirmLines.push(`⚠ L’adresse prévue pour la responsable d’achats est la MÊME que la vôtre (« ${myEmail} ») :`
+        + ' la notification vous reviendra. Corrigez sa fiche dans Administration › Personnel.');
+    }
     if (!window.confirm(confirmLines.join('\n'))) return;
 
     let createdDevis = 0; let gestionDevis = 0;
@@ -1137,12 +1177,12 @@ export const OmPage = () => {
       `Décision prise par : ${currentName || 'directeur'}.`,
     ].filter(Boolean);
     const res = await sendAdminMail({
-      to: cibleEmailsOf(personnel, meta.code),
+      to: cible.emails,
       subject: `[Lab Workspace] OM « ${label} » ${signatureWay ? 'transmise pour signature' : 'acceptée — devis à compléter'}`,
       text: mailBodyText(mailLines),
     });
     const mailSummary = summarizeMail(res, `${meta.title} notifié`);
-    const doneText = `OM « ${label} » ${signatureWay ? 'acceptée et transmise pour signature' : 'acceptée — devis « En gestion » créés'} : ${createdDevis} devis dans « Approbation devis & BC »${reimbId ? ' + 1 fiche Remboursement dans Dépenses › Remboursements' : ''}. ${mailSummary.text}`;
+    const doneText = `OM « ${label} » ${signatureWay ? 'acceptée et transmise pour signature' : 'acceptée — devis « En gestion » créés'} : ${createdDevis} devis dans « Approbation devis & BC »${reimbId ? ' + 1 fiche Remboursement dans Dépenses › Remboursements' : ''}. ${mailSummary.text}${cible.emails.length ? '' : ` ⚠ ${cible.reason} : la responsable d’achats n’a pas été prévenue automatiquement.`}`;
     setNotice({
       tone: res && res.ok ? 'ok' : 'warn',
       text: doneText,
@@ -1346,6 +1386,12 @@ export const OmPage = () => {
                   )}
                   {reimbButton(!(st && st.parts.length))}
                 </div>
+                {!readyAll && (
+                  <span className="text-[9px] font-bold text-amber-600 leading-tight max-w-[300px]">
+                    🔒 « Pour signature » est inactif tant que TOUS les postes « Commande » n’ont pas un N° de devis + un fichier.
+                    Utilisez « ✎ Révision » : les devis partent « En gestion » pour être complétés par la responsable d’achats, puis signés.
+                  </span>
+                )}
               </div>
             ) : null}
             {!transferred && !approved && !pendingDecision && !inTest ? <span className="text-[10px] text-slate-300">OM refusée</span> : null}
@@ -1405,9 +1451,9 @@ export const OmPage = () => {
   return (
     <div className="max-w-full mx-auto flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <p className="text-xs font-bold text-slate-400 max-w-2xl">
+        <p className="text-xs font-bold text-slate-400 max-w-2xl" title={scopeTitle || undefined}>
           {visibleRows.length} demande{visibleRows.length > 1 ? 's' : ''} de mission à suivre
-          ({myOm.length} OM prévu{myOm.length > 1 ? 's' : ''} / souhaité{myOm.length > 1 ? 's' : ''} au total{!isSuper ? ' — vos demandes uniquement' : ''}
+          ({myOm.length} OM prévu{myOm.length > 1 ? 's' : ''} / souhaité{myOm.length > 1 ? 's' : ''} au total{scopeLabel}
           {hiddenSoldes > 0 ? ` — ${hiddenSoldes} transférée${hiddenSoldes > 1 ? 's' : ''} masquée${hiddenSoldes > 1 ? 's' : ''}` : ''}) · les colonnes sont
           triables (en-têtes) et filtrables (bouton « Filtres »).
         </p>

@@ -217,6 +217,17 @@ export const PersonnelModal = ({
   onCancel, onSave,
 }) => {
   const editing = modal.mode === 'edit';
+  /* Valeur « fonction » enregistrée que le module ne sait pas lire (ni code
+     AP / Gestionnaire / Achats, ni libellé connu) : elle est affichée telle
+     quelle avec la marche à suivre. Enregistrer la fiche écrit le CODE de la
+     fonction cochée — la valeur illisible est alors remplacée. */
+  const storedRawFonction = (() => {
+    const r = editing && modal.rec ? modal.rec : null;
+    const raw = r && r.fonction;
+    const items = Array.isArray(raw) ? raw : String(raw || '').split(/[;|,]+/);
+    const text = items.map((v) => String(v || '').trim()).filter(Boolean).join(' · ');
+    return text && fonctionsOfPerson(r).length === 0 ? text : '';
+  })();
   const [draft, setDraft] = useState(() => {
     const r = editing && modal.rec ? modal.rec : null;
     if (!r) return D0();
@@ -277,6 +288,13 @@ export const PersonnelModal = ({
      événement utilisateur, ou avec `inputType === 'insertReplacementText'`). */
   const storedEmail = editing && modal.rec ? String(modal.rec.email || '') : '';
   const [emailTouched, setEmailTouched] = useState(false);
+  /* Le champ « E-mail » n’est éditable qu’à la demande : au montage de la fiche
+     d’un autre membre, aucun <input type="email"> n’existe, donc aucun
+     navigateur ni gestionnaire de mots de passe ne peut y « injecter »
+     l’adresse du compte connecté puis l’enregistrer (bug observé : l’adresse
+     d’une responsable d’achats remplacée par celle du superutilisateur, qui
+     faisait ensuite partir les notifications au mauvais destinataire). */
+  const [emailEditing, setEmailEditing] = useState(() => !editing);
   const markEmailTouched = () => setEmailTouched(true);
   const changeEmail = (ev) => {
     const inputType = String((ev.nativeEvent && ev.nativeEvent.inputType) || '');
@@ -286,6 +304,25 @@ export const PersonnelModal = ({
   /* Adresse présente dans le champ mais jamais saisie à la main (remplissage
      automatique) : on l’annonce au lieu de l’enregistrer en silence. */
   const emailAutoFilled = !emailTouched && String(draft.email || '').trim() !== storedEmail.trim();
+
+  /* Enregistrement : on n’envoie l’adresse que si elle a été saisie à la main.
+     Un remplissage automatique non confirmé fait l’objet d’une question. */
+  const submit = () => {
+    const typed = String(draft.email || '').trim();
+    if (!emailTouched && typed && typed !== storedEmail.trim()) {
+      const keep = window.confirm(
+        `Le champ « E-mail » contient « ${typed} », qui n’a pas été saisi à la main `
+        + '(remplissage automatique du navigateur).\n\n'
+        + `OK : enregistrer cette adresse.\n`
+        + `Annuler : garder l’adresse déjà enregistrée (${storedEmail || 'aucune'}).`
+      );
+      return onSave(
+        { ...draft, email: keep ? typed : storedEmail, emailTouched: keep },
+        editing ? modal.rec.id : undefined,
+      );
+    }
+    return onSave({ ...draft, emailTouched }, editing ? modal.rec.id : undefined);
+  };
 
   const grades = (gradesMap[draft.corps] || []);
   const showStage = draft.corps === 'Stagiaire' || (draft.type === 'Temporaire' && !draft.corps);
@@ -490,33 +527,63 @@ export const PersonnelModal = ({
           </div>
           <div className="sm:col-span-2">
             <label className={labelCls}>E-mail (notifications devis/BC, approbations)</label>
-            {/* Attributs anti-remplissage automatique : sans eux, Chrome / Firefox
-                et les gestionnaires de mots de passe peuvent injecter l’adresse
-                du compte connecté à l’ouverture de la fiche. */}
-            <input
-              type="email"
-              name="personnel-email"
-              autoComplete="off"
-              autoCorrect="off"
-              spellCheck={false}
-              data-form-type="other"
-              data-lpignore="true"
-              data-1p-ignore="true"
-              className={inputCls}
-              value={draft.email}
-              onKeyDown={markEmailTouched}
-              onBeforeInput={markEmailTouched}
-              onPaste={markEmailTouched}
-              onCut={markEmailTouched}
-              onDrop={markEmailTouched}
-              onChange={changeEmail}
-              placeholder="prenom.nom@u-picardie.fr"
-            />
-            {emailAutoFilled && (
-              <p className="text-[10px] text-amber-600 mt-1">
-                Adresse remplie automatiquement par le navigateur (non saisie) : elle ne sera pas enregistrée.
-                Saisissez-la ou collez-la pour la valider.
-              </p>
+            {!emailEditing ? (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span
+                  className={`flex-1 min-w-0 truncate rounded-lg border px-3 py-2 text-sm ${storedEmail ? 'bg-slate-50 border-slate-200 text-slate-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}
+                  title={storedEmail || 'Aucune adresse enregistrée pour cette fiche'}
+                >
+                  {storedEmail || '⚠ Aucune adresse — les notifications ne pourront pas partir'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => { setDraft((d) => ({ ...d, email: storedEmail })); setEmailTouched(false); setEmailEditing(true); }}
+                  className="text-[11px] font-black px-2.5 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 whitespace-nowrap"
+                  title="L’adresse n’est modifiable qu’après ce clic : c’est ce qui empêche le navigateur de remplacer silencieusement l’adresse d’un autre membre"
+                >
+                  ✏️ Modifier l’adresse
+                </button>
+              </div>
+            ) : (
+              <>
+                {/* Attributs anti-remplissage automatique : sans eux, Chrome /
+                    Firefox et les gestionnaires de mots de passe peuvent
+                    injecter l’adresse du compte connecté. */}
+                <input
+                  type="email"
+                  name="personnel-email"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  data-form-type="other"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  className={inputCls}
+                  value={draft.email}
+                  onKeyDown={markEmailTouched}
+                  onBeforeInput={markEmailTouched}
+                  onPaste={markEmailTouched}
+                  onCut={markEmailTouched}
+                  onDrop={markEmailTouched}
+                  onChange={changeEmail}
+                  placeholder="prenom.nom@u-picardie.fr"
+                />
+                {editing && (
+                  <button
+                    type="button"
+                    onClick={() => { setDraft((d) => ({ ...d, email: storedEmail })); setEmailTouched(false); setEmailEditing(false); }}
+                    className="text-[10px] font-bold text-slate-500 underline mt-1"
+                  >
+                    Revenir à l’adresse enregistrée ({storedEmail || 'aucune'})
+                  </button>
+                )}
+                {emailAutoFilled && (
+                  <p className="text-[10px] text-amber-600 mt-1">
+                    Adresse remplie automatiquement par le navigateur (non saisie) : elle ne sera pas enregistrée.
+                    Saisissez-la ou collez-la pour la valider.
+                  </p>
+                )}
+              </>
             )}
           </div>
           <div>
@@ -588,6 +655,13 @@ export const PersonnelModal = ({
               Une même personne peut cumuler plusieurs rôles (ex. « Gestionnaire » + « Responsable d'achats ») :
               les pages visibles et les notifications e-mail (devis créé, décisions…) combinent toutes les fonctions cochées.
             </p>
+            {storedRawFonction && (
+              <p className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mt-1.5 leading-relaxed">
+                ⚠ Fonction enregistrée non reconnue : « {storedRawFonction} » — cochez la fonction réelle
+                ci-dessus. Sans cela, le porteur de cette fiche ne voit que ses propres demandes
+                (OM prévus / Achats prévus) et ne reçoit pas les notifications de transfert.
+              </p>
+            )}
           </div>
           {!showStage && (
             <>
@@ -930,11 +1004,8 @@ export const PersonnelModal = ({
         <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-2 bg-slate-50">
           <button onClick={onCancel} className="px-4 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-200 bg-slate-100">Annuler</button>
           {/* L’adresse n’est enregistrée que si elle a été saisie à la main :
-              sinon on renvoie l’adresse déjà stockée (voir `emailTouched`). */}
-          <button onClick={() => onSave(
-            emailTouched ? draft : { ...draft, email: storedEmail },
-            editing ? modal.rec.id : undefined,
-          )}
+              sinon on renvoie l’adresse déjà stockée (voir `submit`). */}
+          <button onClick={submit}
             className="px-5 py-2 rounded-xl text-sm font-bold text-white bg-blue-600 hover:bg-blue-700">Enregistrer</button>
         </div>
       </div>
