@@ -1,0 +1,9 @@
+﻿origin	https://github.com/nicola-damelio/lab-workspace.git (fetch)
+origin	https://github.com/nicola-damelio/lab-workspace.git (push)
+--- firebase.json ---
+{
+  "firestore": {
+    "rules": "firestore.rules"
+  }
+}
+--- .firebaserc ---

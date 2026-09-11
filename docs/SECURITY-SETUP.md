@@ -47,6 +47,21 @@ sert à ce que l'application continue de fonctionner normalement.
 
 ## 3. À faire — dans CET ordre (le désordre peut bloquer l'équipe)
 
+> **Deux déploiements différents, à ne pas confondre**
+>
+> | Quoi | Où | Comment | Étape |
+> | --- | --- | --- | --- |
+> | l'**application** (interface, `src/`) | votre hébergeur web | `git push` → reconstruction automatique | 0 (faite) |
+> | le **serveur de jetons** (`server/token-server.js`) | Cloud Run `drive-token-server` | **manuel**, en ligne de commande | **3** |
+>
+> `git push` ne met à jour **que** l'application. Faire l'étape 3 avant l'étape 6.
+
+> **État vérifié du service Cloud Run (à la date de rédaction de ce document)**
+> `GET /health` renvoie encore `{"ok":true,…, "version":"dev"}` **sans**
+> `authConfigured`, et `GET /api/auth/status` répond `{"error":"method_not_allowed"}` :
+> le serveur en production tourne donc toujours **l'ancienne version**. Rien
+> n'est encore sécurisé — les étapes 1 à 7 restent à faire.
+
 ### Étape 0 — déployer la nouvelle version de l'application
 
 ```powershell
@@ -54,8 +69,11 @@ npm run build
 # puis le déploiement habituel de l'app (hébergement existant)
 ```
 
-Tant que les règles ne sont pas publiées, cette version fonctionne **exactement
-comme avant** (la connexion locale reste disponible en secours).
+Sur cette machine, le dépôt est poussé avec **GitHub Desktop** : `Commit` puis
+`Push` suffisent si l'hébergeur est relié au dépôt. Vérifier ensuite que l'app
+s'ouvre et se comporte **exactement** comme avant : tant que les règles Firestore
+sont ouvertes, la nouvelle version code est rétro-compatible (la connexion locale
+reste disponible en secours).
 
 ### Étape 1 — clé de compte de service (signature des jetons)
 
@@ -73,26 +91,95 @@ comme avant** (la connexion locale reste disponible en secours).
 [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')
 ```
 
-Il servira au serveur (variable `ADMIN_TOKEN`) et à l'app (réglage
-« Sécurité serveur ») : il autorise seulement **la publication de la liste de
-l'équipe**.
+Copier la ligne obtenue (64 caractères) dans un endroit sûr (gestionnaire de
+mots de passe / bloc-notes) : il servira **deux fois** — au serveur (variable
+`ADMIN_TOKEN`, étape 3) et à l'app (réglage « Sécurité serveur », étape 4). Il
+autorise seulement **la publication de la liste de l'équipe**.
 
 ### Étape 3 — redéployer le serveur de jetons
 
-Reprenez les paramètres du premier déploiement (`-ClientSecretFile`, `-Bucket`
-s'ils ont été utilisés) et ajoutez les deux nouveaux :
+⚠️ Sur ce PC, **`gcloud` n'est pas installé** : le plus simple est de faire cette
+étape dans **Google Cloud Shell** (navigateur, aucune installation). Il faut y
+téléverser trois fichiers :
 
-```powershell
-cd server
-.\deploy-cloud-run.ps1 `
-  -AppOrigin "https://<url-publique-de-l-app>" `
-  -ClientSecretFile "$HOME\Downloads\client_secret.json" `
-  -FirebaseServiceAccountFile "$HOME\Downloads\cell-experiment-tracker-firebase-adminsdk-xxxxx.json" `
-  -AdminToken "<jeton-de-l-etape-2>"
+| Fichier local | À téléverser comme | Pourquoi |
+| --- | --- | --- |
+| `C:\Users\Nicola\OneDrive\Documents\lab-workspace\server\token-server.js` | `token-server.js` | le nouveau code (authentification) |
+| `C:\Users\Nicola\OneDrive\Documents\lab-workspace\server\package.json` | `package.json` | nécessaire pour reconstruire l'image |
+| le JSON de l'**étape 1** | `firebase-sa.json` | la clé qui signe les jetons |
+
+#### Voie A — recommandée (pas besoin du `client_secret.json`)
+
+Le secret OAuth est déjà enregistré dans Secret Manager : on ne touche **qu'aux
+trois nouvelles variables**, donc **aucun risque de casser le Drive** ni les
+origines autorisées.
+
+1. Ouvrir <https://shell.cloud.google.com> et sélectionner le projet du service
+   (celui dont le **numéro** apparaît dans l'URL `drive-token-server-763848765523`).
+2. Dans le terminal Cloud Shell :
+
+```bash
+mkdir -p ~/token-server && cd ~/token-server
+gcloud config set project 763848765523        # ou l'ID du projet, si vous le connaissez
+
+# (facultatif) voir les origines déjà autorisées — à NE PAS modifier
+gcloud run services describe drive-token-server --region europe-west1 \
+  --format='value(spec.template.spec.containers[0].env)'
+```
+
+3. Téléverser les trois fichiers (menu **⋮** de Cloud Shell → *Upload*) dans
+   `~/token-server`, puis :
+
+```bash
+SA_B64="$(base64 -w0 firebase-sa.json)"       # une seule ligne, sans virgule
+ADMIN_TOKEN='<jeton de l étape 2>'            # entre apostrophes simples
+
+gcloud run deploy drive-token-server \
+  --source . \
+  --project 763848765523 --region europe-west1 \
+  --update-env-vars ACCOUNTS_FILE=/data/workspace-accounts.json,FIREBASE_SERVICE_ACCOUNT_B64="$SA_B64",ADMIN_TOKEN="$ADMIN_TOKEN"
+```
+
+4. Vérifier **immédiatement** (la réponse doit contenir `authConfigured:true`) :
+
+```bash
+curl -s https://drive-token-server-763848765523.europe-west1.run.app/health
+# → {"ok":true,…,"authConfigured":true,"authAccounts":0,…}
+```
+
+5. Vérifier que le volume `/data` (qui garde la liste d'équipe et le jeton Drive)
+   et le compte de service sont **restés en place** :
+
+```bash
+gcloud run services describe drive-token-server --region europe-west1 \
+  --format='yaml(spec.template.spec.containers[0].volumeMounts,spec.template.spec.serviceAccountName)'
+# doit afficher : mountPath: /data  +  serviceAccountName: drive-token-sa@…​.iam.gserviceaccount.com
+```
+
+> Si `<url>` change (ce n'est pas le cas ici : le service existe déjà), mettre à
+> jour `GOOGLE_TOKEN_EXCHANGE_URL` dans `src/data/constants.js`.
+
+#### Voie B — avec le script complet (si vous avez encore `client_secret.json`)
+
+```bash
+cd server   # dossier contenant token-server.js, package.json, deploy-cloud-run.sh
+export FIREBASE_SERVICE_ACCOUNT_FILE=~/firebase-sa.json     # nouveau
+export ADMIN_TOKEN='<jeton de l étape 2>'                   # nouveau
+bash deploy-cloud-run.sh -a "https://<url-publique-de-l-app>" -p 763848765523 \
+  -c client_secret.json                                     # ⚠️ même valeur -a qu'au 1er déploiement
 ```
 
 Le script affiche `Team sign-in: enabled (…@….iam.gserviceaccount.com)`.
-Vérification immédiate :
+
+> ⚠️ `-a/AppOrigin` (PowerShell : `-AppOrigin`) **remplace** la liste des
+> origines autorisées : reprendre exactement la valeur du premier déploiement
+> (l'URL que vous tapez dans le navigateur pour ouvrir l'app), sinon la
+> connexion sera refusée par CORS (`403 origin_not_allowed`). En cas de doute,
+> utiliser la **voie A**, qui ne touche pas ce réglage.
+> *(Rassurant : le Drive fonctionne déjà depuis l'app en production, donc
+> l'origine utilisée est forcément autorisée.)*
+
+Vérification, dans les deux voies :
 
 ```powershell
 curl.exe https://drive-token-server-763848765523.europe-west1.run.app/health
@@ -226,16 +313,22 @@ secours reste active tant que les règles sont ouvertes.
 
 ## 7. Riepilogo (italiano)
 
+0. **Attenzione**: il push su GitHub (GitHub Desktop) aggiorna **solo
+   l'applicazione**. Il **server dei token** (Cloud Run) si aggiorna a parte e a
+   mano (passo 4). Su questo PC `gcloud` **non è installato** → usare **Google
+   Cloud Shell** (basta il browser). Stato verificato: il server in produzione
+   gira ancora la **vecchia** versione → non c'è ancora nessuna protezione.
 1. Il problema: la banca dati rispondeva **anche ai client anonimi** (HTTP 200
    senza token) → l'URL dell'app bastava per leggere e modificare tutto.
 2. La soluzione: il server dei token verifica lui stesso le password e firma un
    jeton Firebase; le regole Firestore (`firestore.rules`) accettano **solo**
    quei jetons.
-3. Ordine da rispettare: (1) déployer l'app, (2) chiave di servizio Firebase,
-   (3) ADMIN_TOKEN, (4) ridistribuire il server dei token, (5) pubblicare
-   l'equipe (`Setup → Équipe & accès → 🛡️ Sécurité serveur`), (6) pubblicare
-   `firestore.rules` nella Console Firebase, (7) verificare che un accesso
-   anonimo risponda **403**.
+3. Ordine da rispettare (i numeri sono gli « Étape » del documento): (0) deploy
+   dell'app — **fatto**, (1) chiave di servizio Firebase, (2) ADMIN_TOKEN,
+   (3) ridistribuire il server dei token, (4) pubblicare l'equipe
+   (`Setup → Équipe & accès → 🛡️ Sécurité serveur`), (5) verificare la
+   connessione via server, (6) pubblicare `firestore.rules` nella Console
+   Firebase, (7) verificare che un accesso anonimo risponda **403**.
 4. Per l'équipe nulla cambia: stessi nomi, stesse password, stesso schermo.
 5. In caso di blocco: rimettere le regole permissive (sezione 4) — si torna
    subito alla situazione precedente.
