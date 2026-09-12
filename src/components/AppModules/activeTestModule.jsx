@@ -13,6 +13,7 @@ import { testProjectAccess } from './projectsModule';
 import {
   applyDataLock, clearDataLock, dataLockLabel, guardLockedInstances, isDataLocked, lockedIdSet
 } from '../../utils/dataLock';
+import { blankConditionName, withExperimentContext } from '../../utils/conditionInstance';
 import { Icon } from '../Icons';
 // Lazy renderers (kept as dynamic imports so each stays its own chunk).
 const NMRTestRenderer = lazy(() => import('../NMRTestRenderer').then(m => ({ default: m.NMRTestRenderer })));
@@ -29,7 +30,7 @@ const MicroscopyTestRenderer = lazy(() => import('../MicroscopyTestRenderer').th
 
 export const ActiveTestModule = ({
   activeTestId, additives, allCellLines, allCmpds, appClipboard, buffers,
-  cmpColors, compoundMeta, currentUser, customCmpds, customConc, customFields,
+  cmpColors, compoundMeta, createEmptyTest, currentUser, customCmpds, customConc, customFields,
   datasetProtocols, expandedGroups, jumpToTest, mandatoryBehavior, mandatoryRules,
   molecules, nmrExperiments, nmrInstruments, nmrProbes, operatorNames, plasmidMeta,
   returnTarget, setActiveStorageId, setReturnTarget, setActiveTestId, setAppClipboard,
@@ -250,6 +251,25 @@ export const ActiveTestModule = ({
 
                   setTests((prev) => [...prev, newTest]);
 
+                  setActiveTestId(id);
+                };
+
+                // "+ Add Date/Condition": a NEW condition of this experiment
+                // opens on a VIRGIN page — the blank defaults of its type
+                // (createEmptyTest) plus the experiment context ONLY (name,
+                // classification, projects, scientists). No data at all is
+                // copied: to start from the data of an existing condition, use
+                // the "⧉ Copy the data to a new instance" button of the
+                // data-lock banner (handleDuplicateInstance above).
+                // The rule itself lives in src/utils/conditionInstance.js.
+                const handleAddBlankInstance = () => {
+                  const id = 't' + Date.now() + Math.floor(Math.random() * 1e4);
+                  const created = withExperimentContext(
+                    createEmptyTest(id, siblingTests.length + 1, activeTest.type),
+                    activeTest,
+                    { instanceName: blankConditionName(siblingTests.length) }
+                  );
+                  setTests((prev) => [...prev, created]);
                   setActiveTestId(id);
                 };
 
@@ -704,10 +724,11 @@ const TestHeader = (
                         ))}
 
                         <button
-                          onClick={handleDuplicateInstance}
+                          onClick={handleAddBlankInstance}
+                          title="Add a new date/condition to this experiment — it starts on a blank page"
                           className="shrink-0 px-3 py-1.5 md:py-1 text-xs font-bold text-blue-600 border border-dashed border-blue-400 rounded-full hover:bg-blue-100 transition-colors bg-white shadow-sm ml-2"
                         >
-                          + Add Date/Condition copy
+                          + Add Date/Condition
                         </button>
                       </div>
                     )}

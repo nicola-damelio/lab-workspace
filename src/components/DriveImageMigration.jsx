@@ -1,11 +1,15 @@
 /* =========================================================================
    src/components/DriveImageMigration.jsx
 
-   Dashboard maintenance card: moves every test image that is currently just a
-   pasted Google Drive LINK into the correct Drive folder and renames it with
-   the current conventions (Report section, <title>_<scientist>.<ext>).
+   Settings maintenance card with TWO one-click Drive repairs:
+     • test files attached as plain Drive LINKs → moved into the correct folder
+       and renamed with the current conventions
+       (Report section, <title>_<scientist>.<ext>);
+     • image-library figures (captures, Image Builder canvases) saved as
+       <dataset>/<project>/images → moved into the canonical
+       <dataset>/projects/<project>/images.
 
-   Mounted on the Dataset Overview (dashboard) — self-contained.
+   Mounted from Settings (superuser section) — self-contained.
    ========================================================================= */
 import React, { useState } from 'react';
 import { getDriveToken } from '../utils/driveUpload';
@@ -15,15 +19,28 @@ import {
   migrateTestDriveImages,
   TEST_IMAGE_SECTION
 } from '../utils/migrateTestImages';
+import {
+  countMisplacedFigures,
+  previewFigureMoves,
+  migrateFigureImages
+} from '../utils/migrateFigureImages';
 
 export const DriveImageMigration = ({ tests, setTests, datasetTitle = '' }) => {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [showPreview, setShowPreview] = useState(false);
+  // Image-library figures (captures / Image Builder canvases) stored before the
+  // canonical layout: <dataset>/<project>/images → projects/<project>/images.
+  const [figBusy, setFigBusy] = useState(false);
+  const [figResult, setFigResult] = useState(null);
+  const [figShowPreview, setFigShowPreview] = useState(false);
+  const [figProgress, setFigProgress] = useState('');
+  const [figCount, setFigCount] = useState(() => countMisplacedFigures());
 
   const refCount = countTestImageRefs(tests);
   const preview = showPreview ? previewTestDriveFiles(tests) : [];
   const autoNamed = preview.filter((p) => p.autoNamed);
+  const figPreview = figShowPreview ? previewFigureMoves() : [];
 
   const run = async () => {
     if (!getDriveToken()) {
@@ -55,6 +72,38 @@ export const DriveImageMigration = ({ tests, setTests, datasetTitle = '' }) => {
       alert('Image migration failed: ' + ((err && err.message) || err));
     } finally {
       setBusy(false);
+    }
+  };
+
+  /** Second maintenance action: relocate image-library figures saved as
+   *  <dataset>/<project>/images into projects/<project>/images. */
+  const runFigures = async () => {
+    if (!getDriveToken()) {
+      alert('Google Drive is not connected. Connect it from the sidebar first (Connect Drive).');
+      return;
+    }
+    const n = countMisplacedFigures();
+    if (n === 0) { setFigResult({ nothing: true, moved: 0, failed: 0, details: [] }); return; }
+    const ok = window.confirm(
+      `Move ${n} figure(s) into the canonical Drive folder\n` +
+      `(Lab Workspace/<dataset>/projects/<project>/images)?\n\n` +
+      `Every file keeps its Drive id, so the links stored in the image library / ` +
+      `project pages keep working. The folders the files leave behind are removed ` +
+      `when they are empty.`
+    );
+    if (!ok) return;
+    setFigBusy(true);
+    setFigResult(null);
+    setFigProgress('');
+    try {
+      const res = await migrateFigureImages({ onProgress: setFigProgress });
+      setFigResult(res);
+      setFigCount(countMisplacedFigures());
+    } catch (err) {
+      alert('Figure migration failed: ' + ((err && err.message) || err));
+    } finally {
+      setFigBusy(false);
+      setFigProgress('');
     }
   };
 
@@ -197,6 +246,83 @@ export const DriveImageMigration = ({ tests, setTests, datasetTitle = '' }) => {
           )}
         </div>
       )}
+      {/* ── Image-library figures: captures / Image Builder canvases ─────── */}
+      <div className="mt-4 pt-4 border-t border-slate-200">
+        <div className="flex items-center justify-between gap-2 mb-1.5">
+          <h4 className="text-sm font-bold text-slate-700">🖼️ Image-library figures</h4>
+          {figCount > 0 && (
+            <span className="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 rounded-full px-2 py-0.5 whitespace-nowrap">
+              {figCount} to move
+            </span>
+          )}
+        </div>
+
+        <p className="text-[11px] text-slate-500 mb-2">
+          Captures and Image Builder canvases saved earlier sit in{' '}
+          <code className="text-slate-600">&lt;dataset&gt;/&lt;project&gt;/images</code>, beside the canonical folders.
+          This moves them INSIDE the projects container{' '}
+          (<code className="text-slate-600">…/projects/&lt;project&gt;/images</code>) — same Drive id, so the links stored
+          in the image library and on the project pages keep working — and removes the folders they leave behind.
+        </p>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={runFigures}
+            disabled={figBusy || figCount === 0}
+            className={`text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition-colors ${
+              figCount === 0
+                ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-default'
+                : 'bg-indigo-600 hover:bg-indigo-700 text-white border border-indigo-700 disabled:opacity-60'
+            }`}
+          >
+            {figBusy ? 'Moving figures…' : figCount === 0 ? 'No misplaced figures' : '↑ Move figures into projects/<project>/images'}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setFigShowPreview((v) => !v)}
+            className="text-xs font-bold px-3 py-1.5 rounded-lg border transition-colors bg-white border-slate-300 text-slate-600 hover:bg-slate-50"
+            title="Dry run — list every figure and its exact target folder (nothing is touched on Drive)"
+          >
+            {figShowPreview ? ' Hide preview' : ' Preview figures'}
+          </button>
+        </div>
+
+        {figShowPreview && (
+          <ul className="mt-3 max-h-40 overflow-y-auto custom-scrollbar text-[11px] space-y-1">
+            {figPreview.map((p) => (
+              <li key={p.fileId} className="flex items-start gap-1.5">
+                <span className="text-slate-400 mt-0.5">•</span>
+                <span className="min-w-0 truncate">
+                  <span className="font-semibold text-slate-700">{p.name}</span>{' '}
+                  <span className="text-slate-400 font-mono text-[10px]">→ {p.folder}</span>
+                </span>
+              </li>
+            ))}
+            {figPreview.length === 0 && (
+              <li className="text-slate-400">Nothing to move — every figure already sits in projects/&lt;project&gt;/images.</li>
+            )}
+          </ul>
+        )}
+
+        {figBusy && figProgress && (
+          <p className="text-[11px] text-indigo-600 font-bold mt-2 animate-pulse">{figProgress}</p>
+        )}
+
+        {figResult && !figBusy && (
+          <p className="text-[11px] font-semibold mt-2">
+            {(figResult.nothing || (figResult.moved === 0 && figResult.failed === 0))
+              ? <span className="text-slate-500">✓ Nothing to do — no misplaced figure found.</span>
+              : (
+                <span className="text-emerald-700">
+                  ✓ {figResult.moved} figure{figResult.moved === 1 ? '' : 's'} moved into projects/&lt;project&gt;/images
+                  {figResult.failed > 0 ? ` · ${figResult.failed} failed` : ''}
+                </span>
+              )}
+          </p>
+        )}
+      </div>
     </div>
   );
 };

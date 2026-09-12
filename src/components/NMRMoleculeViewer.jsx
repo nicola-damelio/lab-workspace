@@ -4088,8 +4088,9 @@ const captureScene = async () => {
   if (!url) { setCaptureMsg('⚠️ Could not capture the 3D scene'); setTimeout(() => setCaptureMsg(''), 3500); return; }
   const label = `Structure${file ? ` · ${file.name}` : pdbId ? ` · ${pdbId}` : ''}`;
   const pid = getActiveProjectId();
-  // The real capture is stored on Google Drive (<project>/images or dataset
-  // images); only a small local preview stays in the browser.
+  // The real capture is stored on Google Drive (projects/<project>/images, and
+  // projects/_unassigned/images when no project is open); only a small local
+  // preview stays in the browser.
   await publishLibraryFigure({ scope: pid ? 'project' : 'common', projectId: pid, dataUrl: url, label });
   if (pid) {
     setCaptureMsg(`✓ 3D structure saved to the project library (Publications → Figures & Slides · ${pid}) and on Google Drive`);

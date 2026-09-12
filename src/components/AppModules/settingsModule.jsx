@@ -103,7 +103,7 @@ export const SettingsModule = ({
                       </div>
                    </CollapsibleSection>
 
-                   <CollapsibleSection title="Test files on Google Drive" subtitle="Move test attachments (figures, ⭐ starred items, PDFs/documents, links) into the correct Drive folders — Lab Workspace/<dataset>/<project>/<test>/<instance>/Report." defaultOpen={false}>
+                   <CollapsibleSection title="Files on Google Drive" subtitle="Move misplaced Drive files into the canonical folders — test attachments (figures, ⭐ starred items, PDFs/documents, links) into Lab Workspace/<dataset>/projects/<project>/<test>/<instance>/Report, and image-library figures (captures, Image Builder canvases) into Lab Workspace/<dataset>/projects/<project>/images." defaultOpen={false}>
                       <DriveImageMigration tests={tests} setTests={setTests} datasetTitle={datasetTitle} />
                    </CollapsibleSection>
                   </>

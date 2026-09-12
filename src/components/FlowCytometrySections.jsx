@@ -1,7 +1,7 @@
 // components/FlowCytometrySections.jsx
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { suggestDriveFileName, sanitizeSlug } from '../utils/driveNaming';
-import { uploadLocalFile, withExtension, getDriveToken, getDriveFileRegistry, driveFetch } from '../utils/driveUpload';
+import { uploadLocalFile, withExtension, getDriveToken, getDriveFileRegistry, driveFetch, untrashDriveFile } from '../utils/driveUpload';
 import { saveFcsFile, loadFcsFile, removeFcsFile } from '../utils/fcsBlobStore';
 import { PLATE_PRESET_LABELS, PLATE_PRESET_COLORS, isPlatePreset, platePresetColor } from '../utils/platePresets';
 import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Line, ComposedChart, Area, ReferenceArea} from 'recharts';
@@ -2657,39 +2657,80 @@ export const Data = ({ ctx }) => {
           String(e.ctx?.test || '') === String(testName) &&
           String(e.ctx?.subsection || '') === 'Flow Cytometry'
         );
+      const seenIds = new Set(candidates.map((c) => c.id).filter(Boolean));
+
+      // The file stems this experiment declares (main file + extra spectra),
+      // BOTH as typed and in the slugged form Google Drive stores them in: the
+      // Drive name is built with suggestDriveFileName (sanitizeSlug turns
+      // spaces into "_" and drops punctuation), so a search for the raw
+      // "Sample 1" never matches the stored "Sample_1_<scientist>.fcs".
+      const wantedStems = () => {
+        const out = new Map(); // slug search term -> the stem the app declared
+        const add = (name) => {
+          const raw = stemOf(name);
+          const slug = slugOf(raw);
+          if (!raw || slug.length < 3) return; // too short: would match anything
+          if (!out.has(slug)) out.set(slug, raw);
+        };
+        targets.forEach((x) => {
+          add(x.fcsFileName);
+          add(x.instanceName);
+          (x.fcExtraFiles || []).forEach((f) => add(f && f.filename));
+        });
+        return [...out.entries()].map(([slug, raw]) => ({ slug, raw }));
+      };
+
+      // Locate the .fcs files of this experiment ON DRIVE BY NAME. Used when
+      // the registry is empty (another browser / computer) and again when every
+      // registry entry failed to download: the stored ids go stale as soon as
+      // the Drive account changes, and a file moved to the Drive TRASH by an
+      // old folder cleanup is only reachable once it has been put back (see
+      // downloadOne). That is why the query does NOT filter `trashed=false` —
+      // and why a hit is accepted only when its Drive name really starts with
+      // one of the declared stems ("sample1" must not match "sample10_run2").
+      const searchDriveByName = async () => {
+        const found = [];
+        for (const { slug, raw } of wantedStems()) {
+          try {
+            const q = encodeURIComponent(`name contains '${slug.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`);
+            const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name,trashed)&pageSize=50`);
+            const j = res && res.ok ? await res.json() : { files: [] };
+            (j.files || []).forEach((f) => {
+              if (!f || !f.id || seenIds.has(f.id)) return;
+              if (!/\.fcs$/i.test(String(f.name || ''))) return;
+              const slugName = slugOf(stemOf(f.name));
+              if (!(slugName === slug || slugName.startsWith(slug + '_'))) return;
+              seenIds.add(f.id);
+              // `title` keeps the EXACT declared stem (not the slugged Drive
+              // name), so the file is matched back to its instance — and to
+              // that instance's MAIN file — exactly like a registry entry.
+              found.push({
+                id: f.id,
+                name: f.name,
+                trashed: !!f.trashed,
+                ctx: { test: testName, subsection: 'Flow Cytometry', instance: stemOf(f.name), title: raw },
+                fromSearch: true
+              });
+            });
+          } catch { /* keep going with the other stems */ }
+        }
+        return found;
+      };
 
       // Registry missing / empty (different browser or machine): find the .fcs
       // files on Drive by name — each uploaded file carries the source file name
       // (and thus the instance it belonged to) in its Drive name.
       if (candidates.length === 0) {
         setFcsMsg('⬇️ Local registry is empty — searching Google Drive for the .fcs files…');
-        const wanted = [];
-        targets.forEach((x) => {
-          wanted.push(stemOf(x.fcsFileName), stemOf(x.instanceName));
-          (x.fcExtraFiles || []).forEach((f) => wanted.push(stemOf(f && f.filename)));
-        });
-        const seen = new Set();
-        for (const w of [...new Set(wanted.filter(Boolean))]) {
-          if (w.length < 3) continue; // too short — would match anything
-          try {
-            const q = encodeURIComponent(`name contains '${String(w).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}' and trashed=false`);
-            const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=50`);
-            const j = res && res.ok ? await res.json() : { files: [] };
-            (j.files || []).forEach((f) => {
-              if (!f || !f.id || seen.has(f.id)) return;
-              if (!/\.fcs$/i.test(String(f.name || ''))) return;
-              seen.add(f.id);
-              // `title` keeps the EXACT wanted stem (the instance's declared
-              // file name), so the file is matched back to that instance even
-              // though its Drive name also carries the scientist suffix.
-              candidates.push({ id: f.id, name: f.name, ctx: { test: testName, subsection: 'Flow Cytometry', instance: stemOf(f.name), title: w }, fromSearch: true });
-            });
-          } catch { /* keep going with the other stems */ }
-        }
+        candidates = await searchDriveByName();
       }
 
       if (candidates.length === 0) {
-        setFcsMsg('⚠️ No .fcs files were found on Google Drive for this experiment.');
+        setFcsMsg('⚠️ No .fcs file of this experiment could be found on Google Drive'
+          + ' — neither in this browser\'s upload registry nor by file name (the Drive trash is searched too).'
+          + ' If the file(s) were loaded on a computer where Google Drive was not connected,'
+          + ' re-open that computer, connect Google Drive and use “⬆️ Archive cached .fcs to Drive”,'
+          + ' or re-upload the .fcs file(s) here: they are archived automatically.');
         return;
       }
       // ── 2. Match each candidate to the instance it belongs to ──────────────
@@ -2716,33 +2757,67 @@ export const Data = ({ ctx }) => {
       // ── 3. Download and distribute ─────────────────────────────────────────
       let restored = 0;
       let failReason = '';
+      let searchedOnDrive = false;
+      let tokenDead = false; // set when Drive access is gone — retrying is pointless
       // targetId -> { main: {parsed, filename, buf}, extras: Map<stem, {parsed, filename, buf}> }
       const byTarget = new Map();
-      for (const entry of candidates) {
+      const downloadOne = async (entry) => {
         try {
           // A reference without an id can only produce /files/undefined?alt=media
           // (an error page the browser reports as a network failure) — skip it and
           // say so, instead of blaming the connection.
-          if (!entry || !entry.id) { failReason = failReason || 'a Drive file reference has no id'; continue; }
-          const res = await driveFetch(`/drive/v3/files/${entry.id}?alt=media`);
-          if (!res || !res.ok) { failReason = failReason || `HTTP ${res ? res.status : 'no response'}`; continue; }
+          if (!entry || !entry.id) { failReason = failReason || 'a Drive file reference has no id'; return; }
+          // A hit reported by the name search as sitting in the Drive trash is
+          // put back FIRST, so the download does not have to fail and retry.
+          if (entry.trashed) { await untrashDriveFile(entry.id).catch(() => false); entry.trashed = false; }
+          let res;
+          try {
+            res = await driveFetch(`/drive/v3/files/${entry.id}?alt=media`);
+          } catch (driveErr) {
+            // An expired/revoked token is final (driveFetch already renewed it
+            // once): do not untrash anything, just report it.
+            if (driveErr && driveErr.code === 'TOKEN_EXPIRED') {
+              failReason = failReason || (driveErr.message || 'Drive access expired');
+              tokenDead = true;
+              return;
+            }
+            // A .fcs file that an old folder cleanup (or the user) moved to the
+            // Drive TRASH answers 404 — the bytes are still there, so put the
+            // file back and download it again (the same recovery the file
+            // migration applies before moving a trashed file).
+            const back = await untrashDriveFile(entry.id).catch(() => false);
+            if (!back) { failReason = failReason || (driveErr && driveErr.message) || 'unknown error'; return; }
+            try {
+              res = await driveFetch(`/drive/v3/files/${entry.id}?alt=media`);
+            } catch (e2) {
+              failReason = failReason || (e2 && e2.message) || (driveErr && driveErr.message) || 'unknown error';
+              return;
+            }
+          }
+          if (!res || !res.ok) { failReason = failReason || `HTTP ${res ? res.status : 'no response'}`; return; }
           const buf = await res.arrayBuffer();
           const parsed = parseFCSFile(buf);
-          if (!parsed || typeof parsed.numEvents !== 'number') { failReason = failReason || 'downloaded file is not a valid .fcs'; continue; }
+          if (!parsed || typeof parsed.numEvents !== 'number') { failReason = failReason || 'downloaded file is not a valid .fcs'; return; }
           parsed.filename = entry.name || 'restored.fcs';
 
           const ti = targetOf(entry);
           const target = targets[ti];
-          if (!target || !target.id) continue;
+          if (!target || !target.id) return;
           let bucket = byTarget.get(target.id);
           if (!bucket) { bucket = { main: null, extras: new Map() }; byTarget.set(target.id, bucket); }
           const entryStem = stemOf(entry.ctx && entry.ctx.title) || stemOf(entry.name);
+          const mainStem = stemOf(target.fcsFileName);
+          // The same upload can be reached twice (a registry entry AND a Drive
+          // name-search hit on a re-uploaded copy): never load one file into
+          // one instance twice.
+          if (bucket.main && mainStem && mainStem === entryStem) return;
+          if (entryStem && bucket.extras.has(entryStem)) return;
           const isMain = !bucket.main && (
             // the main file of this instance: its instance matches, or its file
             // name is the one the instance declared, or this instance has no
             // declared file yet and this is its first candidate
             (slugOf(entry.ctx && entry.ctx.instance) === slugOf(target.instanceName) && slugOf(target.instanceName)) ||
-            (stemOf(target.fcsFileName) && stemOf(target.fcsFileName) === entryStem) ||
+            (mainStem && mainStem === entryStem) ||
             !target.fcsFileName
           );
           if (isMain) {
@@ -2756,8 +2831,25 @@ export const Data = ({ ctx }) => {
           // the token and the sidebar switches back to "Connect Drive"). Keep
           // the real reason so the user knows exactly what happened.
           failReason = failReason || (e && e.message) || 'unknown error';
-          if (e && e.code === 'TOKEN_EXPIRED') break; // retrying is pointless
+          if (e && e.code === 'TOKEN_EXPIRED') tokenDead = true;
         }
+      };
+      const runDownloads = async (list) => {
+        for (const entry of list) {
+          if (tokenDead) break; // retrying is pointless
+          await downloadOne(entry);
+        }
+      };
+      await runDownloads(candidates);
+
+      // Nothing came back from the registry (stale ids after a Drive account
+      // change, an experiment renamed since the upload, files moved to the
+      // trash…): look the .fcs files up ON DRIVE BY NAME and try those too,
+      // instead of leaving the user with an empty page and no explanation.
+      if (restored === 0 && !tokenDead) {
+        setFcsMsg('🔎 Nothing came back from the upload registry — searching Google Drive for the .fcs files…');
+        searchedOnDrive = true;
+        await runDownloads(await searchDriveByName());
       }
       // ── 4. Write the restored data onto EVERY affected instance ────────────
       if (restored > 0 && byTarget.size > 0 && typeof ctx.setTests === 'function') {
@@ -2815,11 +2907,14 @@ export const Data = ({ ctx }) => {
         });
       }
       const networkErr = failReason && /failed to fetch|networkerror|load failed|offline|timed out|cannot reach/i.test(failReason);
+      const searchedNote = searchedOnDrive
+        ? ' The Drive name search (which also looks at files sitting in the Drive trash) found nothing usable either.'
+        : '';
       setFcsMsg(restored > 0
         ? `✅ Restored ${restored} .fcs file(s) from Google Drive across ${byTarget.size} instance(s).`
         : networkErr
           ? `⚠️ Could not reach Google Drive (${failReason}). This is a network / browser-blocking problem, not an expired token — check your internet connection, VPN / proxy or ad-blocker. Manual recovery: open Google Drive in a new tab, download the .fcs files, and re-upload them with “Choose .fcs file(s)”.`
-          : `⚠️ Could not download the .fcs files from Google Drive${failReason ? ` (${failReason})` : ''}. If the Drive token expired, reconnect Google Drive from the sidebar and try again.`);
+          : `⚠️ Could not download the .fcs files from Google Drive${failReason ? ` (${failReason})` : ''}.${searchedNote} If the Drive token expired, reconnect Google Drive from the sidebar and try again.`);
     } catch (err) {
       setFcsMsg(`⚠️ Restore error: ${err.message} (reconnect Google Drive from the sidebar if the token expired).`);
       console.error('FCS Drive restore error:', err);

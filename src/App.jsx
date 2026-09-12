@@ -4588,7 +4588,7 @@ const openDataset = (dset) => {
             {currentModule === 'active-test' && (<SectionsScope value={activeTestId}><ActiveTestModule
               activeTestId={activeTestId} additives={additives} allCellLines={allCellLines} allCmpds={allCmpds}
               appClipboard={appClipboard} buffers={buffers} cmpColors={cmpColors} compoundMeta={compoundMeta}
-              currentUser={currentUser} customCmpds={customCmpds} customConc={customConc} customFields={customFields}
+              createEmptyTest={createEmptyTest} currentUser={currentUser} customCmpds={customCmpds} customConc={customConc} customFields={customFields}
               datasetProtocols={datasetProtocols} expandedGroups={expandedGroups} jumpToTest={jumpToTest}
               mandatoryBehavior={mandatoryBehavior} mandatoryRules={mandatoryRules} molecules={molecules}
               nmrExperiments={nmrExperiments} nmrInstruments={nmrInstruments} nmrProbes={nmrProbes}

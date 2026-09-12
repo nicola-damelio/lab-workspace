@@ -10,8 +10,10 @@
    activeTestModule (updateActiveTest / updateInstance / setTests) drop any
    modification and restore the stored value of the frozen instance.
    The way out offered to a scientist who needs a DIFFERENT analysis is to
-   COPY the data into a new instance (the + copy button / the banner button);
-   a copy is never locked, so it can be edited freely.
+   COPY the data into a new instance (the "⧉ Copy the data to a new instance"
+   button of the lock banner); a copy is never locked, so it can be edited
+   freely. (The "+ Add Date/Condition" button of the Date/Conditions row adds
+   a brand-new EMPTY condition instead — see activeTestModule.)
 
    The three fields travel with the dataset (plain properties of the instance
    object, JSON-serializable, ignored by every other module):
@@ -101,7 +103,8 @@ export const applyDataLock = (tests, ids, locked, by = '', at = 0) => {
  * non-superuser tried to write (`next`), it puts every frozen instance back to
  * its stored value and re-adds the frozen ones the updater tried to delete —
  * so no analysis can modify or remove frozen data. Two things stay possible:
- *   • brand-new instances (ids not present in `prev`) — i.e. the copies,
+ *   • brand-new instances (ids not present in `prev`) — the copies and the
+ *     new (blank) conditions,
  *   • any change to the instances that are NOT frozen.
  * Returns `next` when nothing had to be blocked (same reference → cheap).
  */

@@ -469,7 +469,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       ? (allProjects.find((p) => p.id === activeLibProjectId) || null)
       : null;
     const driveProjectName = driveProject ? String(driveProject.name || '') : '';
-    const driveFolderLabel = driveProjectName ? `${driveProjectName.trim()}/images` : 'dataset images';
+    const driveFolderLabel = driveProjectName ? `projects/${driveProjectName.trim()}/images` : 'projects/_unassigned/images';
     const imported = [];
     const failed = [];
     let driveOk = 0;
@@ -688,7 +688,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       setLibVersion((v) => v + 1);
       setLibraryTab(projectId ? 'project' : 'common');
       setShowLibrary(true);
-      const folderLabel = driveProjectName ? `${driveProjectName.trim()}/images` : 'dataset images';
+      const folderLabel = driveProjectName ? `projects/${driveProjectName.trim()}/images` : 'projects/_unassigned/images';
       const what = updated ? 'updated' : 'saved';
       const linked = projectId ? ' · linked on the project page (🖼 Saved canvases)' : '';
       if (drive && drive.id) setLibMsg(`✅ Canvas ${what} in the image library${linked} · stored on your cloud (${folderLabel})`);

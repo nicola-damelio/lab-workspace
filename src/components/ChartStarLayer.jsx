@@ -200,7 +200,7 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
       const where = pid ? 'project library' : 'common library';
       const src = { testId: test && test.id, testName: test && test.name, elementLabel: t.label, elementKey: t.key };
       const projectName = projectNameFor(test);
-      // The real image is stored on Google Drive (<project>/images), only a
+      // The real image is stored on Google Drive (projects/<project>/images), only a
       // small local preview + metadata remain in the browser.
       const { entry, drive } = await publishLibraryFigure({
         scope: pid ? 'project' : 'common',
@@ -212,8 +212,8 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
       });
       void entry;
       const driveMsg = pid && projectName
-        ? (drive && drive.id ? ` · Drive: ${projectName}/images` : ' · Drive upload failed — browser copy only')
-        : (drive && drive.id ? ' · Drive: dataset images' : ' · Drive not connected — library copy only');
+        ? (drive && drive.id ? ` · Drive: projects/${projectName}/images` : ' · Drive upload failed — browser copy only')
+        : (drive && drive.id ? ' · Drive: projects/_unassigned/images' : ' · Drive not connected — library copy only');
       setFigStatus({ key: t.key, ok: true, msg: `📷 Figure saved to ${where}${driveMsg}` });
     } catch {
       setFigStatus({ key: t.key, ok: false, msg: '⚠️ Figure capture failed' });

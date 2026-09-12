@@ -468,6 +468,12 @@ secours reste active tant que les règles sont ouvertes.
   n'est jamais verrouillée. Seul un superutilisateur peut déverrouiller
   (**🔓 Unlock data**) et modifier ou supprimer une expérience figée. La carte de
   l'expérience affiche un badge « Data locked » (voir `src/utils/dataLock.js`).
+* **Nouvelle date / condition** : dans l'expérience, le bouton
+  **+ Add Date/Condition** ajoute une condition qui démarre sur une **page
+  vierge** (mêmes nom d'expérience, classification, projets et scientifiques,
+  mais aucune donnée reprise : ni plaque, ni spectre, ni commentaire, ni image).
+  Pour repartir des **données** d'une condition existante, utilisez
+  **⧉ Copy the data to a new instance** (bannière de verrouillage).
 * **Fichiers utiles d'un projet** : sur la page d'un projet, la section
   **📎 Useful files** enregistre les documents de référence du projet
   (protocoles, PDF, tableurs, feuilles de données…) sur Google Drive, dans un

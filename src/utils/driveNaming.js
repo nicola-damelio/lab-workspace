@@ -205,3 +205,15 @@ export const pageSectionOf = (ctx = {}) => {
   const subsection = canonicalSubSection(ctx.subsection || ctx.pagesubsection || '');
   return { pagesection: section, pagesubsection: subsection };
 };
+
+/** Canonical Drive folder NAMES (relative to the dataset folder) of a project's
+ *  IMAGE LIBRARY — the figures captured in the app (Image Builder canvases,
+ *  ⭐ chart captures, molecule-viewer captures):
+ *      projects/<project>/images
+ *  The figures folder always lives INSIDE the canonical "projects" container:
+ *  a figure saved with no project goes to the "_unassigned" bucket, exactly
+ *  like an experiment with no project, so a dataset folder never grows a stray
+ *  directory beside projects/backups/protocols/storage/publications. */
+export const projectImagesFolderPath = (projectName) => [
+  'projects', sanitizeSlug(projectName) || '_unassigned', 'images'
+];

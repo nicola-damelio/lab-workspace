@@ -1,5 +1,5 @@
 import { getDriveToken, uploadLocalFile, dataUrlToBlob, cloudBackendAvailable, getDriveRootName } from './driveUpload';
-import { sanitizeSlug } from './driveNaming';
+import { sanitizeSlug, projectImagesFolderPath } from './driveNaming';
 import { getCloudProvider, isNextcloudUrl, ncFetchBlob, ncUploadFile } from './nextcloud';
 
 /* =========================================================================
@@ -324,7 +324,7 @@ const figureThumb = async (dataUrl) => {
 // Persist one figure into the image library with the REAL image on Google Drive:
 //   • dataUrl          – self-contained high-resolution source (PNG/JPEG/SVG)
 //   • scope/projectId  – 'project' → that project's library, 'common' → general
-//   • projectName      – Drive folder name used for <dataset>/<project>/images
+//   • projectName      – Drive folder name used for <dataset>/projects/<project>/images
 // Only a small local thumbnail + metadata are kept in the browser (the library
 // list is memory-first and localStorage is a best-effort cache, so even a full
 // 5 MB quota cannot block an import). Returns { entry, drive }.
@@ -376,12 +376,16 @@ export const publishLibraryFigure = async ({ scope = 'common', projectId = null,
   return { entry, drive, driveUrl: humanUrl, updated: false };
 };
 
-// Upload a high-resolution figure copy to the active cloud provider under
-// <Lab Workspace>/<dataset>/<project>/images/ (falling back to <images> at the
-// dataset root when the figure has no project). SVG figures keep their vector
-// form; raster figures keep their actual type (PNG/JPEG/WebP…). Returns the
-// upload result (Drive-like { id, name, driveUrl }) or null when the provider
-// is not available / the source is not a self-contained data URL.
+// Upload a high-resolution figure copy to the active cloud provider under the
+// canonical project image directory:
+//   <Lab Workspace>/<dataset>/projects/<project>/images/<file>
+// (projects/_unassigned/images when the figure has no project). The folder is
+// decided by the explicit PATH below — for Google Drive AND Nextcloud — so a
+// figure never lands in a stray <dataset>/<project> folder beside the canonical
+// projects container. SVG figures keep their vector form; raster figures keep
+// their actual type (PNG/JPEG/WebP…). Returns the upload result (Drive-like
+// { id, name, driveUrl }) or null when the provider is not available / the
+// source is not a self-contained data URL.
 export const uploadFigureToDrive = async ({ full, label = 'figure', projectName = '' }) => {
   if (!cloudBackendAvailable() || !full) return null;
   const src = String(full);
@@ -397,8 +401,9 @@ export const uploadFigureToDrive = async ({ full, label = 'figure', projectName 
     const parts = ['Lab Workspace'];
     const ds = getDriveRootName();
     if (ds) parts.push(sanitizeSlug(ds));
-    if (projectName) parts.push(sanitizeSlug(projectName));
-    parts.push('images');
+    // Canonical location, INSIDE the projects container:
+    //   <dataset>/projects/<project>/images (/_unassigned when no project).
+    parts.push(...projectImagesFolderPath(projectName));
     try {
       return await ncUploadFile({
         parts,
@@ -414,12 +419,17 @@ export const uploadFigureToDrive = async ({ full, label = 'figure', projectName 
 
   // ── Google Drive ──────────────────────────────────────────────────────────
   try {
+    // The EXPLICIT path picks the folder for both providers, so the figure
+    // always goes to <dataset>/projects/<project>/images (only the Drive file
+    // registry still needs the naming context: future project renames move the
+    // file and its folder with the project).
     const ctx = { section: 'images' };
     if (projectName) ctx.project = projectName;
     return await uploadLocalFile({
       name: `${base}.${ext}`,
       mimeType: isSvg ? 'image/svg+xml' : (mime || 'image/png'),
       file: dataUrlToBlob(src),
+      path: projectImagesFolderPath(projectName),
       ctx
     });
   } catch (err) {
