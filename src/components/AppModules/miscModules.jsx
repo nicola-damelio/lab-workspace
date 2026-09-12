@@ -1,7 +1,7 @@
 /* =========================================================================
    src/components/AppModules/miscModules.jsx
-   Small module screens (Lab Notebook, Calculations, Publications) extracted
-   from App.jsx. Props-only.
+   Small module screens (Lab Notebook, Calculations, Publications, Image
+   Builder) extracted from App.jsx. Props-only.
    ========================================================================= */
 
 import React, { lazy } from 'react';
@@ -73,7 +73,7 @@ export const CalculationsModule = ({
                 );
 };
 
-export const PublicationsModule = ({ operatorNames, tests, currentUser, projectId = 'global', jumpToTest }) => (
+export const PublicationsModule = ({ operatorNames, tests, currentUser }) => (
           <div className="h-full overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
             <div className="max-w-6xl mx-auto flex flex-col gap-4 pb-10">
               <PublicationsSection
@@ -84,7 +84,18 @@ export const PublicationsModule = ({ operatorNames, tests, currentUser, projectI
                 defaultScientist={currentUser?.name || ''}
                 currentUser={currentUser}
               />
-              {/* Image Builder replaces the former "Figures & Slides" section */}
+            </div>
+          </div>
+);
+
+// The Image Builder now has its OWN page (sidebar entry right below
+// Publications, same hierarchical level) instead of being appended to the
+// bottom of the Publications page: composing a figure no longer means
+// scrolling past the whole publication list. `projectId` selects the project
+// library + saved canvas (the builder persists its state per project).
+export const ImageBuilderModule = ({ projectId, jumpToTest }) => (
+          <div className="h-full overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
+            <div className="max-w-6xl mx-auto flex flex-col gap-4 pb-10">
               <ImageBuilder projectId={projectId} jumpToTest={jumpToTest} />
             </div>
           </div>

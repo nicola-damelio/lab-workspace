@@ -339,27 +339,36 @@ export function RegionCharts({ regionName, regionData, config }) {
 
         if (drChart.current) drChart.current.destroy();
 
+        // Compound list shared by the labels / values / colours / error bars of
+        // the IC50 histogram, so the whiskers stay aligned with the bars.
+        const histHits = isHistogram ? regionData.filter((cd) => !hiddenCmpds[cd.name] && cd.fit) : [];
         const chartConfig = isHistogram
             ? {
                   type: 'bar',
                   data: {
-                      labels: regionData.filter((cd) => !hiddenCmpds[cd.name] && cd.fit).map((cd) => cd.name),
+                      labels: histHits.map((cd) => cd.name),
                       datasets: [
                           {
                               label: `IC50 (${unit})`,
-                              data: regionData
-                                  .filter((cd) => !hiddenCmpds[cd.name] && cd.fit)
-                                  .map((cd) => cd.fit.ic50),
-                              backgroundColor: regionData
-                                  .filter((cd) => !hiddenCmpds[cd.name] && cd.fit)
-                                  .map((cd) => cd.color + '99'),
-                              borderColor: regionData
-                                  .filter((cd) => !hiddenCmpds[cd.name] && cd.fit)
-                                  .map((cd) => cd.color),
+                              data: histHits.map((cd) => cd.fit.ic50),
+                              // ± SE of each fitted IC50 — the same error bars the
+                              // dose-response view draws on its points, so switching
+                              // the "Chart Type" in the Graphical Parameters no
+                              // longer makes them disappear (errBarPlugin draws
+                              // them and grows the Y axis to fit).
+                              errorBars: histHits.map((cd) => {
+                                  const se = Math.min(cd.fit.se, cd.fit.ic50 * 2) * eScale;
+                                  return { plus: se, minus: se };
+                              }),
+                              backgroundColor: histHits.map((cd) => cd.color + '99'),
+                              borderColor: histHits.map((cd) => cd.color),
                               borderWidth: 1
                           }
                       ]
                   },
+                  // Required to DRAW the whiskers of `errorBars` above (and to
+                  // let the plugin grow the Y axis so they are not clipped).
+                  plugins: [errBarPlugin],
                   options: {
                       responsive: true,
                       maintainAspectRatio: false,

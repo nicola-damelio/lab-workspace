@@ -270,8 +270,9 @@ const TestHeader = (
                               setCurrentModule('storage-detail');
                               setReturnTarget(null);
                             } else if (returnTarget && returnTarget.module === 'publications') {
-                              // Return to the Figures & Slides builder (the slide
-                              // is preserved because the deck/cur are persisted).
+                              // Back to the Publications page with its project
+                              // context (the Image Builder is its own module
+                              // now, handled by the generic branch below).
                               setCurrentProjectId(returnTarget.projectId || null);
                               setCurrentModule('publications');
                               setReturnTarget(null);

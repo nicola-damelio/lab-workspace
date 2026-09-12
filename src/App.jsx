@@ -22,7 +22,7 @@ import { ActiveTestModule } from './components/AppModules/activeTestModule';
 // Contexte des sections repliables : les sections de la page d'expérience
 // mémorisent leur état ouvert/fermé PAR EXPÉRIENCE (voir src/components/ui.jsx).
 import { SectionsScope } from './components/ui';
-import { NotebookModule, CalculationsModule, PublicationsModule } from './components/AppModules/miscModules';
+import { NotebookModule, CalculationsModule, PublicationsModule, ImageBuilderModule } from './components/AppModules/miscModules';
 import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud, setProjectDatasetScope, removeProjectsOfDataset } from './components/AppModules/projectsModule';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
@@ -4605,8 +4605,13 @@ const openDataset = (dset) => {
             />)}
 
             {currentModule === 'publications' && (<PublicationsModule
-              operatorNames={operatorNames} tests={tests} currentUser={currentUser} projectId={currentProjectId}
-              jumpToTest={jumpToTest}
+              operatorNames={operatorNames} tests={tests} currentUser={currentUser}
+            />)}
+
+            {/* Image Builder: dedicated page, siblings with Publications in the
+                sidebar (it used to be appended to the Publications page). */}
+            {currentModule === 'image-builder' && (<ImageBuilderModule
+              projectId={currentProjectId} jumpToTest={jumpToTest}
             />)}
 
             {currentModule === 'administration' && (<AdministrationModule

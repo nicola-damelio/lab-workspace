@@ -912,6 +912,54 @@ const numericTicks = (min, max, step) => {
   return out.length > 1 ? out : null;
 };
 
+// Strict numeric reader: '' / null / undefined / NaN → null (Number(null) is 0,
+// which would silently pull a chart axis down to the origin).
+const numOrNullStrict = (v) => {
+  if (v === undefined || v === null || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+/**
+ * Value-axis range that ALSO takes the ± error into account.
+ *
+ * Recharts computes its automatic ("auto") Y domain from the plotted dataKeys
+ * only: the ErrorBar dataKey (`<key>__sd`, `sd`, `err`…) is invisible to it, so
+ * error bars sticking out of the tallest bar / point get clipped by the plot
+ * area. Callers that draw error bars use this range for `domain={[lo, hi]}`
+ * whenever the user did not pin Y Min / Y Max in the Graphical Parameters.
+ *
+ *   rows    -- the chart rows (histogram rows or [{ x, y, sd }] points)
+ *   keys    -- the plotted series keys
+ *   errOf   -- (row, key) => ± error for this row / series. When omitted the
+ *              conventional `<key>__sd` column is used.
+ *   baseMin -- lower bound kept when everything sits above it (0 = baseline).
+ * Returns null when no finite value is found (caller then keeps "auto").
+ */
+export const errorBarRange = (rows, keys, errOf, baseMin = 0) => {
+  const list = Array.isArray(rows) ? rows : [];
+  const seriesKeys = Array.isArray(keys) ? keys : [];
+  let lo = null;
+  let hi = null;
+  list.forEach((row) => {
+    if (!row) return;
+    seriesKeys.forEach((key) => {
+      const v = numOrNullStrict(row[key]);
+      if (v === null) return;
+      const rawErr = errOf ? errOf(row, key) : row[`${key}__sd`];
+      const e = Math.abs(numOrNullStrict(rawErr) || 0);
+      const dn = v - e;
+      const up = v + e;
+      lo = lo === null ? dn : Math.min(lo, dn);
+      hi = hi === null ? up : Math.max(hi, up);
+    });
+  });
+  if (lo === null || hi === null || !(hi > lo)) return null;
+  const base = numOrNullStrict(baseMin);
+  if (base !== null && base < lo) lo = base;
+  return [lo, hi];
+};
+
 export const SharedChart = ({
   data = [],
   xKey = 'x',
@@ -971,12 +1019,20 @@ export const SharedChart = ({
       ]
     : [zoom.domain[0], zoom.domain[1]];
 
-  /* Y domain (0-based unless the user overrides; positive when log). */
+  /* Y domain (0-based unless the user overrides; positive when log).
+     The ± errors drawn through `errorKey` are folded into the automatic range,
+     so error bars sticking out above the last point are never clipped. */
   const yMin = numOrNull(cfg.yMin);
   const yMax = numOrNull(cfg.yMax);
+  const errRange = (errorKey && cfg.errorBarStyle !== 'none')
+    ? errorBarRange(plotData, safeSeries.map((s) => s.key), (row) => row[errorKey], 0)
+    : null;
   const yDomain = yLog
-    ? [yMin !== null && yMin > 0 ? yMin : 'auto', yMax !== null ? yMax : 'auto']
-    : [yMin ?? 0, yMax ?? 'auto'];
+    ? [
+        yMin !== null && yMin > 0 ? yMin : (errRange && errRange[0] > 0 ? errRange[0] : 'auto'),
+        yMax !== null ? yMax : (errRange ? errRange[1] : 'auto')
+      ]
+    : [yMin ?? (errRange ? errRange[0] : 0), yMax ?? (errRange ? errRange[1] : 'auto')];
 
   /* Tick steps → explicit ticks on numeric axes. */
   const xStep = cfg.xTickStep ?? cfg.tickStep;

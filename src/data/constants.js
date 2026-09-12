@@ -123,6 +123,41 @@ export const fit4PL = (pts) => {
 // --- CHART.JS ERROR BARS PLUGIN ---
 export const errBarPlugin = {
     id: 'errBars',
+
+    /**
+     * Auto-scaling that HONOURS the error bars.
+     * Chart.js computes the value-axis range from the plotted points only: the
+     * ± error kept on `dataset.errorBars` is invisible to it, so whiskers taller
+     * than the tallest point used to be clipped (and the curve looked squashed
+     * at the top/right of the plot). This hook runs right after the scale has
+     * computed its data limits and widens them to cover y ± error.
+     * Explicit Y Min/Max set in the Graphical Parameters always win, and
+     * `beginAtZero` axes keep their 0 baseline.
+     */
+    afterDataLimits(chart, args) {
+        const scale = args && args.scale;
+        if (!scale || scale.axis !== 'y') return;
+        const fixedMin = Number.isFinite(Number(scale.options && scale.options.min));
+        const fixedMax = Number.isFinite(Number(scale.options && scale.options.max));
+        const beginAtZero = !!(scale.options && scale.options.beginAtZero);
+        (chart && chart.data && chart.data.datasets ? chart.data.datasets : []).forEach((ds, i) => {
+            if (!ds || !Array.isArray(ds.errorBars)) return;
+            const meta = chart.getDatasetMeta(i);
+            if (!meta || meta.hidden) return;
+            (ds.data || []).forEach((pt, idx) => {
+                const eb = ds.errorBars[idx];
+                if (!eb) return;
+                const y = pt !== null && typeof pt === 'object' ? pt.y : pt;
+                const yv = Number(y);
+                if (!Number.isFinite(yv)) return;
+                const up = yv + (Number(eb.plus) || 0);
+                const dn = yv - (Number(eb.minus) || 0);
+                if (!fixedMax && Number.isFinite(up) && (!Number.isFinite(scale.max) || up > scale.max)) scale.max = up;
+                if (!fixedMin && !beginAtZero && Number.isFinite(dn) && (!Number.isFinite(scale.min) || dn < scale.min)) scale.min = dn;
+            });
+        });
+    },
+
     afterDatasetsDraw(chart) {
         const { ctx, chartArea } = chart;
         if (!chartArea) return;

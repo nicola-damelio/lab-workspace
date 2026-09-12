@@ -39,6 +39,9 @@ export const AppSidebar = ({
     { id: 'storage', icon: '📦', label: 'Storage & Boxes' },
     { id: 'calculations', icon: '🧮', label: 'Calculations' },
     { id: 'publications', icon: '📰', label: 'Publications' },
+    // Sits directly under Publications, at the same level: the builder used to
+    // be embedded at the bottom of the Publications page.
+    { id: 'image-builder', icon: '🖼️', label: 'Image Builder' },
     { id: 'administration', icon: '🏛️', label: 'Administration' },
     { id: 'settings', icon: '⚙️', label: 'Settings' }
   ];

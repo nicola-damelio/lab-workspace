@@ -2643,12 +2643,20 @@ export const Data = ({ ctx }) => {
       const targets = (siblings.length > 0 ? siblings : [t]).filter(Boolean);
 
       // ── 1. Locate the candidate files ──────────────────────────────────────
+      // The registry is keyed by the Drive FILE ID (`reg[fileId] = { name, ctx, … }`),
+      // so the id MUST be read from the KEY: with Object.values() alone every
+      // candidate carries `id === undefined`, the download URL becomes
+      // `/drive/v3/files/undefined?alt=media`, and Drive answers with an error body
+      // the browser refuses to hand over (it has no CORS header) — which surfaces
+      // as a misleading "Cannot reach Google Drive (Failed to fetch)".
       const reg = getDriveFileRegistry();
-      let candidates = Object.values(reg).filter((e) =>
-        e && !e.deleted &&
-        String(e.ctx?.test || '') === String(testName) &&
-        String(e.ctx?.subsection || '') === 'Flow Cytometry'
-      );
+      let candidates = Object.entries(reg)
+        .map(([id, e]) => ({ ...e, id }))
+        .filter((e) =>
+          e && !e.deleted &&
+          String(e.ctx?.test || '') === String(testName) &&
+          String(e.ctx?.subsection || '') === 'Flow Cytometry'
+        );
 
       // Registry missing / empty (different browser or machine): find the .fcs
       // files on Drive by name — each uploaded file carries the source file name
@@ -2712,6 +2720,10 @@ export const Data = ({ ctx }) => {
       const byTarget = new Map();
       for (const entry of candidates) {
         try {
+          // A reference without an id can only produce /files/undefined?alt=media
+          // (an error page the browser reports as a network failure) — skip it and
+          // say so, instead of blaming the connection.
+          if (!entry || !entry.id) { failReason = failReason || 'a Drive file reference has no id'; continue; }
           const res = await driveFetch(`/drive/v3/files/${entry.id}?alt=media`);
           if (!res || !res.ok) { failReason = failReason || `HTTP ${res ? res.status : 'no response'}`; continue; }
           const buf = await res.arrayBuffer();

@@ -158,6 +158,12 @@ export const DashboardModule = ({ datasetTitle, setDatasetTitle, datasetSubtitle
                         desc: 'Target journals, impact factors, links and notes.'
                       },
                       {
+                        id: 'image-builder',
+                        icon: '🖼️',
+                        title: 'Image Builder',
+                        desc: 'Compose publication-quality multi-panel figures from your experiment graphs and images.'
+                      },
+                      {
                         id: 'settings',
                         icon: '⚙️',
                         title: 'Settings',
