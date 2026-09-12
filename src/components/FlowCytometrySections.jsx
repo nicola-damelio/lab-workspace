@@ -2633,6 +2633,19 @@ export const Data = ({ ctx }) => {
       const testName = activeTest.name || '';
       const stemOf = (n) => String(n || '').replace(/\.[^/.]+$/, '').trim().toLowerCase();
       const slugOf = (s) => sanitizeSlug(String(s || '')).toLowerCase();
+      // Two file names designate the same file when their slugged stems are equal
+      // or when one is the DRIVE name of the other ("Sample 2" vs the archived
+      // "Sample_2_<scientist>.fcs"). This matters because an earlier version of
+      // the restore overwrote the declared name with the Drive name: the exact
+      // comparison alone stopped recognising the file afterwards, the file could
+      // no longer be matched back to its condition and every restore dumped it on
+      // the FIRST condition tab of the experiment (see targetOf below).
+      const sameStem = (a, b) => {
+        const x = slugOf(stemOf(a));
+        const y = slugOf(stemOf(b));
+        if (!x || !y) return false;
+        return x === y || x.startsWith(y + '_') || y.startsWith(x + '_');
+      };
 
       // Every instance of this experiment (all sibling tabs share the name).
       const allTests = Array.isArray(ctx.allTests) ? ctx.allTests
@@ -2742,16 +2755,27 @@ export const Data = ({ ctx }) => {
           if (byInstance >= 0) return byInstance;
           // The instance folder may have been created from the SOURCE file name,
           // while instanceName was edited later — match the declared file too.
-          const byFile = targets.findIndex((x) => stemOf(x.fcsFileName) && stemOf(x.fcsFileName) === candInstance);
+          const byFile = targets.findIndex((x) => stemOf(x.fcsFileName) && sameStem(x.fcsFileName, candInstance));
           if (byFile >= 0) return byFile;
+          const byLabel = targets.findIndex((x) => stemOf(x.instanceName) && sameStem(x.instanceName, candInstance));
+          if (byLabel >= 0) return byLabel;
         }
         if (candStem) {
-          const byFile = targets.findIndex((x) => stemOf(x.fcsFileName) && stemOf(x.fcsFileName) === candStem);
+          const byFile = targets.findIndex((x) => stemOf(x.fcsFileName) && sameStem(x.fcsFileName, candStem));
           if (byFile >= 0) return byFile;
-          const byExtra = targets.findIndex((x) => (x.fcExtraFiles || []).some((f) => f && stemOf(f.filename) === candStem));
+          const byExtra = targets.findIndex((x) => (x.fcExtraFiles || []).some((f) => f && sameStem(f.filename, candStem)));
           if (byExtra >= 0) return byExtra;
         }
-        return 0; // 'same-instance' mode / unmatched → extras of the first tab
+        // Nothing matched (a 'same-instance' upload whose recorded context
+        // predates a condition rename, an upload made on another computer, a file
+        // whose declared name an earlier restore overwrote…): NEVER drop it on an
+        // arbitrary tab. `targets[0]` is the FIRST condition of the array, which
+        // is usually NOT the condition the user has open — that is exactly how a
+        // restore could report success while the visible tab stayed empty. The
+        // active tab is where the file was uploaded from, and it is the only place
+        // the user can see the data right now.
+        const activeIdx = targets.findIndex((x) => x && x.id === t.id);
+        return activeIdx >= 0 ? activeIdx : 0;
       };
 
       // ── 3. Download and distribute ─────────────────────────────────────────
@@ -2798,26 +2822,40 @@ export const Data = ({ ctx }) => {
           const buf = await res.arrayBuffer();
           const parsed = parseFCSFile(buf);
           if (!parsed || typeof parsed.numEvents !== 'number') { failReason = failReason || 'downloaded file is not a valid .fcs'; return; }
-          parsed.filename = entry.name || 'restored.fcs';
-
           const ti = targetOf(entry);
           const target = targets[ti];
           if (!target || !target.id) return;
+          const entryStem = stemOf(entry.ctx && entry.ctx.title) || stemOf(entry.name);
+          // Name the file the way the DATASET declares it — the instance's main
+          // file name, or the extra spectrum's own file name — instead of the
+          // Drive name "<stem>_<scientist>.fcs". The plots then keep the
+          // scientist's file names, and above all a LATER restore recognises the
+          // file again: overwriting the declared name with the Drive name used to
+          // break the match and to send the file to another condition tab.
+          const declaredName = () => {
+            const ex = (target.fcExtraFiles || []).find((f) => f && sameStem(f.filename, entryStem));
+            if (ex && ex.filename) return ex.filename;
+            if (target.fcsFileName && sameStem(target.fcsFileName, entryStem)) return target.fcsFileName;
+            return entry.ctx && entry.ctx.title
+              ? withExtension(entry.ctx.title, entry.name)
+              : (entry.name || 'restored.fcs');
+          };
+          parsed.filename = declaredName();
           let bucket = byTarget.get(target.id);
           if (!bucket) { bucket = { main: null, extras: new Map() }; byTarget.set(target.id, bucket); }
-          const entryStem = stemOf(entry.ctx && entry.ctx.title) || stemOf(entry.name);
           const mainStem = stemOf(target.fcsFileName);
           // The same upload can be reached twice (a registry entry AND a Drive
           // name-search hit on a re-uploaded copy): never load one file into
-          // one instance twice.
-          if (bucket.main && mainStem && mainStem === entryStem) return;
+          // one instance twice. The comparison tolerates the archived Drive
+          // name ("Sample_2_<scientist>") next to the declared one ("Sample 2").
+          if (bucket.main && mainStem && sameStem(mainStem, entryStem)) return;
           if (entryStem && bucket.extras.has(entryStem)) return;
           const isMain = !bucket.main && (
             // the main file of this instance: its instance matches, or its file
             // name is the one the instance declared, or this instance has no
             // declared file yet and this is its first candidate
             (slugOf(entry.ctx && entry.ctx.instance) === slugOf(target.instanceName) && slugOf(target.instanceName)) ||
-            (mainStem && mainStem === entryStem) ||
+            (mainStem && sameStem(mainStem, entryStem)) ||
             !target.fcsFileName
           );
           if (isMain) {
@@ -2852,43 +2890,56 @@ export const Data = ({ ctx }) => {
         await runDownloads(await searchDriveByName());
       }
       // ── 4. Write the restored data onto EVERY affected instance ────────────
-      if (restored > 0 && byTarget.size > 0 && typeof ctx.setTests === 'function') {
-        ctx.setTests((prev) => prev.map((test) => {
-          const bucket = byTarget.get(test.id);
-          if (!bucket) return test;
-          const next = { ...test };
-          if (bucket.main) {
-            globalFcsCache[test.id] = bucket.main.parsed;
-            next.fcParsed = serializeFcsForSave(bucket.main.parsed);
-            next.fcsFileName = bucket.main.filename;
-            saveFcsFile(test.id, new File([bucket.main.buf], bucket.main.filename, { type: 'application/octet-stream' }));
-          }
-          if (bucket.extras.size > 0) {
-            const existing = Array.isArray(next.fcExtraFiles) ? [...next.fcExtraFiles] : [];
-            bucket.extras.forEach((ex, exStem) => {
-              let extra = existing.find((x) => x && stemOf(x.filename) === exStem);
-              if (!extra) {
-                const exId = 'fcxR' + Date.now() + Math.random().toString(36).slice(2, 6);
-                extra = { id: exId, filename: ex.filename, data: null };
-                existing.push(extra);
-              }
-              globalFcsCache[extra.id] = ex.parsed;
-              extra.data = serializeFcsForSave(ex.parsed) || extra.data;
-              saveFcsFile(extra.id, new File([ex.buf], ex.filename, { type: 'application/octet-stream' }));
-            });
-            next.fcExtraFiles = existing;
-          }
-          return next;
-        }));
-      } else if (restored > 0) {
-        // No setTests available — fall back to updating just the active test.
-        const bucket = byTarget.get(t.id);
-        if (bucket && bucket.main) {
-          globalFcsCache[t.id] = bucket.main.parsed;
-          updateActiveTest({
-            fcParsed: serializeFcsForSave(bucket.main.parsed),
-            fcsFileName: bucket.main.filename
+      // The charts read the in-memory cache (`globalFcsCache`), so the cache is
+      // filled FIRST and unconditionally: even when the dataset metadata cannot be
+      // written (data frozen by a superuser, a read-only project, a preview with
+      // no setTests) the downloaded files are never silently thrown away — that
+      // is what turned a successful download into "no data in the UI".
+      // The metadata (fcParsed / fcsFileName / fcExtraFiles) then goes through the
+      // normal write funnels, so it survives a reload (IndexedDB + payload) and
+      // reaches every other user of the dataset.
+      const patches = new Map(); // instance id -> patch merged into that instance
+      byTarget.forEach((bucket, id) => {
+        const owner = targets.find((x) => x && x.id === id) || null;
+        const patch = {};
+        if (bucket.main) {
+          globalFcsCache[id] = bucket.main.parsed;
+          patch.fcParsed = serializeFcsForSave(bucket.main.parsed);
+          patch.fcsFileName = bucket.main.filename;
+          saveFcsFile(id, new File([bucket.main.buf], bucket.main.filename, { type: 'application/octet-stream' })).catch(() => {});
+        }
+        if (bucket.extras.size > 0 && owner) {
+          const existing = Array.isArray(owner.fcExtraFiles) ? [...owner.fcExtraFiles] : [];
+          bucket.extras.forEach((ex, exStem) => {
+            // Reuse the declared extra spectrum instead of piling up copies: the
+            // match tolerates the Drive name so an entry that an earlier restore
+            // overwrote is recognised again.
+            let extra = existing.find((x) => x && sameStem(x.filename, exStem));
+            if (!extra) {
+              const exId = 'fcxR' + Date.now() + Math.random().toString(36).slice(2, 6);
+              extra = { id: exId, filename: ex.filename, data: null };
+              existing.push(extra);
+            }
+            const storedName = extra.filename || ex.filename || 'restored.fcs';
+            globalFcsCache[extra.id] = ex.parsed;
+            extra.data = serializeFcsForSave(ex.parsed) || extra.data;
+            saveFcsFile(extra.id, new File([ex.buf], storedName, { type: 'application/octet-stream' })).catch(() => {});
           });
+          patch.fcExtraFiles = existing;
+        }
+        if (Object.keys(patch).length > 0) patches.set(id, patch);
+      });
+      if (patches.size > 0) {
+        if (typeof ctx.setTests === 'function') {
+          ctx.setTests((prev) => prev.map((test) => (
+            patches.has(test.id) ? { ...test, ...patches.get(test.id) } : test
+          )));
+        } else if (typeof updateActiveTest === 'function') {
+          // No setTests available (Lab-Notebook / preview page): at least update
+          // the instance the user is working on — INCLUDING its extra spectra,
+          // which the previous fallback silently dropped.
+          const own = patches.get(t.id);
+          if (own) updateActiveTest(own);
         }
       }
 
@@ -2910,8 +2961,26 @@ export const Data = ({ ctx }) => {
       const searchedNote = searchedOnDrive
         ? ' The Drive name search (which also looks at files sitting in the Drive trash) found nothing usable either.'
         : '';
+      // Which conditions actually received files? A restore that answers success
+      // while the OPEN tab stays empty is the one thing a user cannot diagnose
+      // (the files went to a sibling condition) — so name them in the message.
+      const labelOf = (x) => (x && (x.instanceName || x.date || x.name)) || 'unnamed condition';
+      const gotIds = [...byTarget.keys()].filter(Boolean);
+      const gotLabels = gotIds.map((id) => labelOf(targets.find((x) => x && x.id === id)));
+      const activeGot = byTarget.has(t.id);
+      const elsewhere = restored > 0 && !activeGot && gotLabels.length > 0
+        ? ` ⚠️ None of them belongs to the condition you have open (“${labelOf(t)}”): they were matched to ${gotLabels.join(', ')}. This condition's own .fcs file is therefore NOT on Google Drive (it was probably uploaded from a computer where Drive was not connected) — re-upload it here and it will be archived automatically.`
+        : '';
+      console.info('[FCS restore]', {
+        test: testName,
+        candidates: candidates.length,
+        restored,
+        targets: targets.map((x) => ({ id: x.id, instanceName: x.instanceName, fcsFileName: x.fcsFileName })),
+        gotIds,
+        activeGot
+      });
       setFcsMsg(restored > 0
-        ? `✅ Restored ${restored} .fcs file(s) from Google Drive across ${byTarget.size} instance(s).`
+        ? `✅ Restored ${restored} .fcs file(s) from Google Drive across ${byTarget.size} instance(s).${elsewhere}`
         : networkErr
           ? `⚠️ Could not reach Google Drive (${failReason}). This is a network / browser-blocking problem, not an expired token — check your internet connection, VPN / proxy or ad-blocker. Manual recovery: open Google Drive in a new tab, download the .fcs files, and re-upload them with “Choose .fcs file(s)”.`
           : `⚠️ Could not download the .fcs files from Google Drive${failReason ? ` (${failReason})` : ''}.${searchedNote} If the Drive token expired, reconnect Google Drive from the sidebar and try again.`);
