@@ -328,7 +328,7 @@ const figureThumb = async (dataUrl) => {
 // Only a small local thumbnail + metadata are kept in the browser (the library
 // list is memory-first and localStorage is a best-effort cache, so even a full
 // 5 MB quota cannot block an import). Returns { entry, drive }.
-export const publishLibraryFigure = async ({ scope = 'common', projectId = null, projectName = '', dataUrl, label = 'Figure', src = null, canvasData = null }) => {
+export const publishLibraryFigure = async ({ scope = 'common', projectId = null, projectName = '', dataUrl, label = 'Figure', src = null, canvasData = null, updateId = null }) => {
   const srcData = await resolveImageToDataUrl(dataUrl);
   const isSvg = typeof srcData === 'string' && (srcData.startsWith('data:image/svg+xml') || srcData.includes('<svg'));
   // High-resolution copy (uploaded to Drive / kept as fallback): capped raster,
@@ -354,10 +354,26 @@ export const publishLibraryFigure = async ({ scope = 'common', projectId = null,
   const url = isSvg ? srcData : await figureThumb(srcData);
   const full = isSvg ? srcData : srcFull;
   const item = { url, full, label, src, canvasData, drive: !!drive, driveUrl: humanUrl };
+  // `updateId` patches an EXISTING entry in place instead of adding a copy.
+  // Used by the Image Builder when it re-saves a canvas that was opened from the
+  // library: the project page links to that entry id, so the id must not change
+  // (and the "Saved canvases" list must not fill up with duplicates of the same
+  // figure). Unknown id → normal insert.
+  if (updateId) {
+    const list = scope === 'project' ? readProjectLibrary(projectId) : readLibrary();
+    const prev = list.find((i) => i.id === updateId);
+    if (prev) {
+      const updated = { ...prev, ...item, id: prev.id, addedAt: prev.addedAt, updatedAt: new Date().toISOString() };
+      const next = list.map((i) => (i.id === updateId ? updated : i));
+      if (scope === 'project') writeProjectLibrary(projectId, next);
+      else writeLibrary(next);
+      return { entry: updated, drive, driveUrl: humanUrl, updated: true };
+    }
+  }
   const entry = scope === 'project'
     ? addProjectLibraryItem(projectId, item)
     : addLibraryItem(item);
-  return { entry, drive, driveUrl: humanUrl };
+  return { entry, drive, driveUrl: humanUrl, updated: false };
 };
 
 // Upload a high-resolution figure copy to the active cloud provider under

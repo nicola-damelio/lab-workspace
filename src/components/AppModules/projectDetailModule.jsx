@@ -10,7 +10,7 @@ import { UsefulFilesSection } from '../UsefulFilesSection';
 import { normalizeProjectFiles } from '../../utils/projectFiles';
 import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject } from '../../utils/driveUpload';
 import { repairContentImages } from '../../data/constants';
-import { readDeck } from '../../utils/figuresLibrary';
+import { readDeck, readProjectLibrary, removeProjectLibraryItem } from '../../utils/figuresLibrary';
 import { SlidePreview, renderSlideToDataUrl } from '../FiguresSlides';
 
 /* =========================================================================
@@ -212,12 +212,13 @@ const mmPartsFor = (project, tests, onlyIncluded) =>
 
 export const ProjectDetailModule = ({
   currentUser, setCurrentModule, setCurrentProjectId, currentProjectId,
-  createEmptyTest, tests, setTests, setActiveTestId, jumpToTest, operatorNames
+  createEmptyTest, tests, setTests, setActiveTestId, jumpToTest, operatorNames,
+  openImageBuilder
 }) => {
   const isSuper = currentUser?.role === 'superuser';
   const myName = currentUser?.name || '';
   const [projects, setProjects] = useState(loadProjects);
-  const [openSections, setOpenSections] = useState({ background: true, materials: true, usefulFiles: true, comments: false });
+  const [openSections, setOpenSections] = useState({ background: true, canvases: true, materials: true, usefulFiles: true, comments: false });
   const [refPicker, setRefPicker] = useState(null); // null | { insertText?: fn }
   const [showBibForm, setShowBibForm] = useState(false);
   const [bibDraft, setBibDraft] = useState({ title: '', link: '' });
@@ -271,6 +272,28 @@ export const ProjectDetailModule = ({
       .map(([name]) => name)
       .sort((a, b) => a.localeCompare(b));
   }, [visibleTests, project?.experiments]);
+
+  // ---- Saved Image Builder canvases (editable figures linked on this page) ----
+  // The Image Builder stores each composition in the project image library as an
+  // item carrying its `canvasData` snapshot: those items ARE the links back into
+  // the editor, so this list is read straight from that library (memory-first;
+  // refreshed on every remount, e.g. coming back from the builder).
+  const [canvasLibVersion, setCanvasLibVersion] = useState(0);
+  const savedCanvases = useMemo(() => {
+    const list = readProjectLibrary(project?.id || 'global') || [];
+    return list
+      .filter((i) => i && i.canvasData)
+      .sort((a, b) => String(b.updatedAt || b.addedAt || '').localeCompare(String(a.updatedAt || a.addedAt || '')));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id, canvasLibVersion]);
+
+  // Forget a canvas link (the Drive/cloud copy of the image is kept).
+  const removeCanvasLink = (id) => {
+    if (!canModify) return;
+    if (!window.confirm('Remove this canvas from the project image library? The cloud/Drive copy is kept.')) return;
+    removeProjectLibraryItem(project.id, id);
+    setCanvasLibVersion((v) => v + 1);
+  };
 
   // ---- Coworkers & permissions (computed early so every effect can use them) ----
   // Each coworker gets 'view' (read-only) or 'modify' (see and edit).
@@ -1512,6 +1535,53 @@ export const ProjectDetailModule = ({
             {renderCoworkers()}
           </div>
         </div>
+
+        {/* ---------- Saved Image Builder canvases (links back into the editor) ---------- */}
+        <SectionCard title="🖼 Saved canvases" open={openSections.canvases} onToggle={() => toggleSection('canvases')}
+                     badge={<span className="text-[10px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">{savedCanvases.length}</span>}>
+          <p className="text-xs text-slate-500 mb-3">
+            Figures composed in the <span className="font-bold">Image Builder</span> (sidebar → 🖼️ Image Builder) while
+            this project is open and stored with “💾 Save canvas”. Every canvas below is a
+            <span className="font-bold"> link</span>: “Open in Image Builder” reloads its panels, captions and grid into
+            the editor, and saving it again updates this same entry.
+          </p>
+          {savedCanvases.length === 0 ? (
+            <div className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-5 text-center">
+              No canvas yet — open the Image Builder with this project selected and click “💾 Save canvas”: the canvas
+              will appear here as a link that reopens it in the editor.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {savedCanvases.map((c) => (
+                <div key={c.id} className="bg-slate-50 border border-amber-200 rounded-xl p-3 flex flex-col gap-2">
+                  <div className="bg-white border border-slate-200 rounded-lg h-28 flex items-center justify-center overflow-hidden">
+                    {c.url
+                      ? <img src={c.url} alt={c.label || 'Canvas'} className="max-h-28 max-w-full object-contain" />
+                      : <span className="text-[10px] italic text-slate-400">no preview</span>}
+                  </div>
+                  <span className="text-xs font-bold text-slate-700 truncate" title={c.label || 'Canvas'}>{c.label || 'Canvas'}</span>
+                  <span className="text-[10px] text-slate-400">
+                    saved {new Date(c.updatedAt || c.addedAt || Date.now()).toLocaleString()}
+                    {c.drive ? ' · ☁ on your cloud' : ''}
+                  </span>
+                  <div className="flex items-center gap-1.5 mt-auto">
+                    <button type="button"
+                            onClick={() => { if (typeof openImageBuilder === 'function') openImageBuilder(project.id, c.id); }}
+                            className="flex-1 text-xs font-bold rounded-lg bg-amber-500 text-white hover:bg-amber-600 px-2 py-1.5"
+                            title="Reopen this canvas in the Image Builder (this project) — the editor loads the saved panels, captions and grid">
+                      🖼 Open in Image Builder
+                    </button>
+                    {canModify && (
+                      <button type="button" onClick={() => removeCanvasLink(c.id)}
+                              className="text-red-400 hover:text-red-600 border border-red-200 bg-red-50 rounded-lg px-2 py-1.5 text-xs font-bold"
+                              title="Remove this canvas from the project image library (the cloud/Drive copy is kept)">🗑</button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </SectionCard>
 
         {/* ---------- Scientific background ---------- */}
         {textSection('background', '🔬 Scientific background',

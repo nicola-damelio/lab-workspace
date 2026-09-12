@@ -93,10 +93,15 @@ export const PublicationsModule = ({ operatorNames, tests, currentUser }) => (
 // bottom of the Publications page: composing a figure no longer means
 // scrolling past the whole publication list. `projectId` selects the project
 // library + saved canvas (the builder persists its state per project).
-export const ImageBuilderModule = ({ projectId, jumpToTest }) => (
+// `openCanvasId` is the saved canvas the project page asked to reopen (its
+// "🖼 Saved canvases" link) and `onCanvasOpened` clears that request once it
+// has been loaded; `onBackToProject` returns to the project page.
+export const ImageBuilderModule = ({ projectId, jumpToTest, openCanvasId = null, onCanvasOpened, onBackToProject }) => (
           <div className="h-full overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
             <div className="max-w-6xl mx-auto flex flex-col gap-4 pb-10">
-              <ImageBuilder projectId={projectId} jumpToTest={jumpToTest} />
+              <ImageBuilder projectId={projectId} jumpToTest={jumpToTest}
+                            openCanvasId={openCanvasId} onCanvasOpened={onCanvasOpened}
+                            onBackToProject={onBackToProject} />
             </div>
           </div>
 );

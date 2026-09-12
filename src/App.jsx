@@ -1013,6 +1013,10 @@ if (customType === 'dosy') {
   const [appView, setAppView] = useState('explorer');
   const [currentModule, setCurrentModule] = useState('dashboard');
   const [currentProjectId, setCurrentProjectId] = useState(null);
+  // Saved Image Builder canvas the builder must load on its next mount. Set by
+  // the "🖼 Saved canvases" links on a project page ({ projectId, canvasId }) and
+  // cleared by the builder as soon as it has opened it — see openImageBuilder.
+  const [pendingCanvas, setPendingCanvas] = useState(null);
   const [datasetsList, setDatasetsList] = useState([]);
   const [currentDatasetId, setCurrentDatasetId] = useState(null);
   // Type de la base actuellement ouverte : 'scientific' (par défaut, toute la
@@ -3639,6 +3643,16 @@ const openDataset = (dset) => {
     jumpToTest(target.id);
   };
 
+  // Open the dedicated Image Builder page (sidebar entry, or the "🖼 Saved
+  // canvases" links of a project page). `canvasId` is a saved canvas of that
+  // project's image library: the builder loads it as soon as it mounts.
+  const openImageBuilder = (projectIdArg, canvasId = null) => {
+    if (projectIdArg !== undefined) setCurrentProjectId(projectIdArg || null);
+    setPendingCanvas(canvasId ? { projectId: projectIdArg || null, canvasId } : null);
+    setCurrentModule('image-builder');
+    if (window.innerWidth < 768) setIsSidebarOpen(false);
+  };
+
   const handlePrint = async () => {
     // Wait for all visible images to finish loading before printing
     // This is the correct approach for public Drive/external images already in the browser
@@ -4501,7 +4515,7 @@ const openDataset = (dset) => {
               currentProjectId={currentProjectId} setCurrentProjectId={setCurrentProjectId}
               createEmptyTest={createEmptyTest} tests={tests} setTests={setTests}
               setActiveTestId={setActiveTestId} jumpToTest={jumpToTest}
-              operatorNames={operatorNames}
+              operatorNames={operatorNames} openImageBuilder={openImageBuilder}
             />)}
 
             {currentModule === 'library' && (<LibraryModule
@@ -4609,9 +4623,14 @@ const openDataset = (dset) => {
             />)}
 
             {/* Image Builder: dedicated page, siblings with Publications in the
-                sidebar (it used to be appended to the Publications page). */}
+                sidebar (it used to be appended to the Publications page).
+                openCanvasId → the saved canvas a project page asked to reopen;
+                onBackToProject → the "📁 Project page" button of the builder. */}
             {currentModule === 'image-builder' && (<ImageBuilderModule
               projectId={currentProjectId} jumpToTest={jumpToTest}
+              openCanvasId={(pendingCanvas && pendingCanvas.projectId === (currentProjectId || null)) ? pendingCanvas.canvasId : null}
+              onCanvasOpened={() => setPendingCanvas(null)}
+              onBackToProject={currentProjectId ? () => setCurrentModule('project-detail') : undefined}
             />)}
 
             {currentModule === 'administration' && (<AdministrationModule

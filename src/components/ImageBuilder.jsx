@@ -17,7 +17,7 @@ const PX_PER_MM = 96 / 25.4; // CSS: 1 mm ≈ 3.78 px
 // graph and back NEVER loses the user's edits within this session.
 const imageBuilderSessionCache = new Map();
 
-export const ImageBuilder = ({ projectId, jumpToTest }) => {
+export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCanvasOpened, onBackToProject }) => {
   const storageKey = `labImageBuilder_${projectId || 'global'}`;
   const svgRef = useRef(null);
   const svgFsRef = useRef(null);    // fullscreen SVG — kept SEPARATE from the normal one so
@@ -54,6 +54,12 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   const [libProjectId, setLibProjectId] = useState(null); // which project's library to browse (null = the active one)
   const [libMsg, setLibMsg] = useState('');       // transient feedback after a PC upload / transfer
   const libFileRef = useRef(null);                // hidden <input type=file> for uploading images from the PC
+  // The library entry (id + label) this canvas was last SAVED to / OPENED from.
+  // When set, "💾 Save canvas" updates that very entry instead of creating a
+  // duplicate — which is what keeps the "🖼 Saved canvases" link on the project
+  // page pointing at the current composition.
+  const [canvasLibId, setCanvasLibId] = useState(null);
+  const [canvasLabel, setCanvasLabel] = useState('');
   const [placeTextMode, setPlaceTextMode] = useState(false); // click on the object to add text there
   const [globalCaption, setGlobalCaption] = useState('');     // figure-wide caption at the bottom
   const [editingText, setEditingText] = useState(null);       // { objId, txId, mmX, mmY, value } — type directly on the canvas
@@ -214,6 +220,20 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
     } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storageKey]);
+
+  // Open a saved canvas requested by the project page ("🖼 Saved canvases" →
+  // "Open in Image Builder"): App.jsx passes the library entry id here and the
+  // module remounts, so this runs after the session-cache restore above and
+  // wins. The request is consumed right away, so visiting the Image Builder
+  // afterwards keeps whatever the user was working on.
+  useEffect(() => {
+    if (!openCanvasId) return;
+    const list = projectId ? readProjectLibrary(projectId) : readLibrary();
+    const item = list.find((i) => i.id === openCanvasId && i.canvasData);
+    if (item) restoreCanvasFromItem(item, { confirm: false });
+    if (typeof onCanvasOpened === 'function') onCanvasOpened(openCanvasId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openCanvasId]);
 
   useEffect(() => {
     try {
@@ -631,35 +651,49 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   const saveCanvasToLibrary = async () => {
     const dataUrl = await renderToDataUrl(Math.max(3, 1800 / Math.max(1, canvasW)));
     if (!dataUrl) { window.alert('Could not render the canvas — nothing was saved.'); return; }
+    const updating = !!canvasLibId;
     const label = window.prompt(
-      'Name this canvas — it is saved in the image library (Project or Dataset tab) and can be recalled there:',
-      globalCaption && String(globalCaption).trim() ? `Figure — ${String(globalCaption).trim().slice(0, 60)}` : `Canvas ${new Date().toLocaleDateString()}`
+      projectId
+        ? (updating
+          ? 'Update this canvas — it stays linked on the project page (🖼 Saved canvases), where you can reopen it:'
+          : 'Name this canvas — it is saved in the project image library AND linked on the project page (🖼 Saved canvases) so you can reopen it from there:')
+        : 'Name this canvas — it is saved in the image library (Project or Dataset tab) and can be recalled there:',
+      canvasLabel || (globalCaption && String(globalCaption).trim() ? `Figure — ${String(globalCaption).trim().slice(0, 60)}` : `Canvas ${new Date().toLocaleDateString()}`)
     );
     if (!label || !label.trim()) return;
     setLibMsg('📤 Saving canvas…');
     const driveProject = projectId ? (allProjects.find((p) => p.id === projectId) || null) : null;
     const driveProjectName = driveProject ? String(driveProject.name || '') : '';
     try {
-      const { entry, drive } = await publishLibraryFigure({
+      // `updateId` replaces the entry this canvas was opened from instead of
+      // adding a copy — the project page links to that entry, so its id must
+      // never change and the library must not fill up with duplicates.
+      const { entry, drive, updated } = await publishLibraryFigure({
         scope: projectId ? 'project' : 'common',
         projectId: projectId || null,
         projectName: driveProjectName,
         dataUrl,
         label: label.trim(),
         src: null,
+        updateId: canvasLibId,
         canvasData: {
           canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, globalCaption,
           objects: (objects || []).map(thumbnailsOf)
         }
       });
       if (!entry) { window.alert('Could not save the canvas in the library.'); return; }
+      // This canvas IS that library entry now (updates + project-page link).
+      setCanvasLibId(entry.id);
+      setCanvasLabel(entry.label || label.trim());
       setLibVersion((v) => v + 1);
       setLibraryTab(projectId ? 'project' : 'common');
       setShowLibrary(true);
       const folderLabel = driveProjectName ? `${driveProjectName.trim()}/images` : 'dataset images';
-      if (drive && drive.id) setLibMsg(`✅ Canvas saved in the image library · stored on your cloud (${folderLabel})`);
-      else if (!localStorageHealthy()) setLibMsg('✅ Canvas saved in the image library · browser storage full — connect Google Drive or Nextcloud so it is kept there (works this session)');
-      else setLibMsg('✅ Canvas saved in the image library · cloud storage not connected — browser copy only');
+      const what = updated ? 'updated' : 'saved';
+      const linked = projectId ? ' · linked on the project page (🖼 Saved canvases)' : '';
+      if (drive && drive.id) setLibMsg(`✅ Canvas ${what} in the image library${linked} · stored on your cloud (${folderLabel})`);
+      else if (!localStorageHealthy()) setLibMsg(`✅ Canvas ${what} in the image library${linked} · browser storage full — connect Google Drive or Nextcloud so it is kept there (works this session)`);
+      else setLibMsg(`✅ Canvas ${what} in the image library${linked} · cloud storage not connected — browser copy only`);
     } catch (err) {
       console.warn('Canvas save failed:', err && err.message);
       window.alert('Could not save the canvas — please connect Google Drive and try again.');
@@ -667,10 +701,12 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   };
 
   // Recall a saved canvas from the library: replace the current canvas with the
-  // saved snapshot (all objects, positions, captions, size and grid).
-  const restoreCanvasFromItem = (item) => {
+  // saved snapshot (all objects, positions, captions, size and grid). `confirm`
+  // is skipped when the project page itself asked for this canvas (the user
+  // already clicked "Open in Image Builder").
+  const restoreCanvasFromItem = (item, opts = {}) => {
     if (!item || !item.canvasData) return;
-    if (!window.confirm(`Replace the current canvas with “${item.label}”?`)) return;
+    if (opts.confirm !== false && !window.confirm(`Replace the current canvas with “${item.label}”?`)) return;
     commitHistory();
     const cd = item.canvasData;
     if (cd.canvasW) setCanvasW(cd.canvasW);
@@ -688,6 +724,10 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
     setEditingCaption(false);
     setShowLibrary(false);
     setHydrateTick((t) => t + 1);
+    // Remember which library entry this canvas is: the next "💾 Save canvas"
+    // updates it (ids never change) so the project-page link keeps working.
+    setCanvasLibId(item.id);
+    setCanvasLabel(item.label || '');
   };
 
   // Open the original experiment AND scroll to the exact chart/spectrum the
@@ -1413,13 +1453,26 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
     <>
       {/* Main Component UI */}
       <div className="flex flex-col gap-4 bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-        <div className="flex justify-between items-center">
+        <div className="flex justify-between items-center gap-2 flex-wrap">
           <h3 className="text-lg font-black text-slate-800">🖼️ Image Builder (Publication Quality)</h3>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center flex-wrap">
+            {canvasLibId && (
+              <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-1"
+                    title="This canvas is a saved library entry. “💾 Save canvas” updates it in place, so the “🖼 Saved canvases” link on the project page always opens the latest version.">
+                🖼 {canvasLabel || 'saved canvas'}
+              </span>
+            )}
+            {projectId && typeof onBackToProject === 'function' && (
+              <button onClick={onBackToProject}
+                      className="text-xs bg-slate-100 border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg font-bold hover:bg-slate-200"
+                      title="Back to the project page — its “🖼 Saved canvases” section links back to this canvas">
+                📁 Project page
+              </button>
+            )}
             <button onClick={() => { initialZoomRef.current = zoom; setIsFullScreen(true); }} className="text-xs bg-slate-800 text-white border border-slate-800 px-3 py-1.5 rounded-lg font-bold hover:bg-slate-700 flex items-center gap-1">
               🔍 Full Screen
             </button>
-            <button onClick={() => { if(window.confirm('Clear the entire canvas?')) { commitHistory(); setObjects([]); setSelectedId(null); } }} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100">Clear Canvas</button>
+            <button onClick={() => { if(window.confirm('Clear the entire canvas?')) { commitHistory(); setObjects([]); setSelectedId(null); setCanvasLibId(null); setCanvasLabel(''); } }} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100">Clear Canvas</button>
           </div>
         </div>
 
@@ -1453,7 +1506,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
           <button onClick={() => selectedId && zoomToObject(selectedId)} disabled={!selectedId} title={selectedId ? 'Zoom fullscreen on the selected object' : 'Select an object first'}
             className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold px-3 py-1.5 rounded-lg text-xs">⛶ Zoom Object</button>
           <button onClick={exportPng} title="300 DPI PNG of the composition — the blue selection square and resize handles are never included; panel borders and grid lines follow the checkboxes." className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">Export PNG (300 DPI)</button>
-          <button onClick={saveCanvasToLibrary} title="Save the whole canvas into the image library (Project tab) — you can recall it there later"
+          <button onClick={saveCanvasToLibrary} title="Save the whole canvas into the image library (Project tab) and link it on the project page (🖼 Saved canvases) so you can reopen it there — re-saving a canvas you opened updates that same entry"
             className="bg-amber-500 hover:bg-amber-600 text-white font-bold px-3 py-1.5 rounded-lg text-xs">💾 Save canvas</button>
           <button onClick={() => { setPickMode('replace'); setShowLibrary(true); }}
             title="Open the image library — browse images or upload new ones from your computer (Project or Dataset library)"
