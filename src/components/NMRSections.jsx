@@ -1,5 +1,5 @@
 import NMRMoleculeViewer, { useShowAssignedFlag } from './NMRMoleculeViewer';
-import { ChartControlBar, SharedChartStylePanel, AngledTick, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, errorBarRange, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
+import { ChartControlBar, SharedChartStylePanel, AngledTick, tickLabelOffset, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, errorBarRange, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { Icon } from './Icons';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
@@ -1110,11 +1110,16 @@ const CustomXTick1H = ({ x, y, payload, isZoomed, fs = 11, angle = 0, color = '#
   const isInt = Number.isInteger(numVal);
   const isHalf = numVal % 0.5 === 0;
   const tickLength = isZoomed ? 5 : isInt ? 8 : isHalf ? 5 : 3;
+  // The numbers keep a CONSTANT clearance below the tick mark whatever the
+  // character size (the old fixed +12 px let bigger labels climb into the axis
+  // line / tick marks — see tickLabelOffset; the historical offset stays the
+  // floor so small labels do not move).
+  const labelY = tickLabelOffset(tickLength, isZoomed ? fs - 1 : fs, 3, tickLength + 12);
   return (
     <g transform={`translate(${x || 0},${y || 0})`}>
       <line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />
       {(isZoomed || isInt) && (
-        <text x={0} y={tickLength + 12} textAnchor={angle ? (angle > 0 ? 'start' : 'end') : 'middle'} transform={angle ? `rotate(${angle})` : undefined} dy={angle ? 4 : undefined} dx={angle ? (angle > 0 ? 4 : -4) : undefined} fill={color} fontSize={isZoomed ? fs - 1 : fs} fontWeight={isInt && !isZoomed ? 'bold' : 'normal'}>
+        <text x={0} y={labelY} textAnchor={angle ? (angle > 0 ? 'start' : 'end') : 'middle'} transform={angle ? `rotate(${angle})` : undefined} dy={angle ? 4 : undefined} dx={angle ? (angle > 0 ? 4 : -4) : undefined} fill={color} fontSize={isZoomed ? fs - 1 : fs} fontWeight={isInt && !isZoomed ? 'bold' : 'normal'}>
           {isZoomed ? numVal.toFixed(2) : numVal}
         </text>
       )}
@@ -1143,11 +1148,13 @@ const CustomXTick13C = ({ x, y, payload, isZoomed, fs = 11, angle = 0, color = '
   const numVal = Number(payload.value);
   const isTen = numVal % 10 === 0;
   const tickLength = isZoomed ? 5 : isTen ? 8 : 4;
+  // Constant clearance below the tick mark whatever the character size.
+  const labelY = tickLabelOffset(tickLength, isZoomed ? fs - 1 : fs, 3, tickLength + 12);
   return (
     <g transform={`translate(${x || 0},${y || 0})`}>
       <line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />
       {(isZoomed || isTen) && (
-        <text x={0} y={tickLength + 12} textAnchor={angle ? (angle > 0 ? 'start' : 'end') : 'middle'} transform={angle ? `rotate(${angle})` : undefined} dy={angle ? 4 : undefined} dx={angle ? (angle > 0 ? 4 : -4) : undefined} fill={color} fontSize={isZoomed ? fs - 1 : fs} fontWeight={isTen && !isZoomed ? 'bold' : 'normal'}>
+        <text x={0} y={labelY} textAnchor={angle ? (angle > 0 ? 'start' : 'end') : 'middle'} transform={angle ? `rotate(${angle})` : undefined} dy={angle ? 4 : undefined} dx={angle ? (angle > 0 ? 4 : -4) : undefined} fill={color} fontSize={isZoomed ? fs - 1 : fs} fontWeight={isTen && !isZoomed ? 'bold' : 'normal'}>
           {isZoomed ? numVal.toFixed(1) : numVal}
         </text>
       )}
@@ -7862,7 +7869,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={paramData} margin={cfgChartMargin(cfg, { top: 10, right: 10, bottom: 20, left: 10 })}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                          <XAxis dataKey="name" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={Math.max(9, cfg.fontSize - 2)} />} />
+                          <XAxis dataKey="name" interval={catInterval(cfg.tickStep)} tickMargin={10} tick={<AngledTick angle={cfg.tickAngle} fontSize={Math.max(9, cfg.fontSize - 2)} />} />
                           <YAxis domain={[dom(cfg.yMin) ?? paramRange?.[0] ?? 'auto', dom(cfg.yMax) ?? paramRange?.[1] ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: Math.max(9, cfg.fontSize - 2) }} label={cfgAxisLabel(cfg, 'y', paramGraphVar, 0)} />
                           <Tooltip />
                           <Bar dataKey="val" isAnimationActive={false}>

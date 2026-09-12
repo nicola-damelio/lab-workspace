@@ -117,6 +117,206 @@ const writeSectionOpen = (scope, key, open) => {
   }
 };
 
+// ---- Per-condition scroll memory ----------------------------------------
+// Same idea as the section memory above, for the SCROLL OFFSET. The
+// experiment page's scroll container is destroyed when the page unmounts, so
+// coming back (sidebar « ↩ Back to experiment », Projects → experiment…)
+// dumped the user at the very top instead of the subsection they were
+// reading. The offset is remembered PER CONDITION (the active test id, exactly
+// like the sections) and re-applied as soon as the page is laid out again.
+//
+// sessionStorage on purpose (not localStorage): this is a "where was I a
+// minute ago" shortcut for the current tab — it survives a reload and is gone
+// with the tab.
+const SCROLL_MEMORY_KEY = 'labExperimentScroll';
+// Safety bound: only the most recently visited conditions are remembered
+// (insertion order = last-visit order, so the oldest entries are dropped).
+const SCROLL_MEMORY_MAX_TESTS = 200;
+// Below this range the container simply cannot scroll (the layout switches at
+// the md breakpoint: the page root scrolls on mobile, the inner body on
+// desktop — so we ask the element instead of assuming).
+const SCROLL_RANGE_MIN = 8;
+let scrollMemoryCache = null;
+
+const loadScrollMemory = () => {
+  if (scrollMemoryCache) return scrollMemoryCache;
+  try {
+    const raw = JSON.parse(sessionStorage.getItem(SCROLL_MEMORY_KEY) || 'null');
+    scrollMemoryCache = raw && typeof raw === 'object' ? raw : {};
+  } catch {
+    scrollMemoryCache = {};
+  }
+  return scrollMemoryCache;
+};
+
+/** Scroll offset remembered for `scope` (an active test id); 0 when unknown. */
+export const readViewScroll = (scope) => {
+  if (!scope) return 0;
+  const saved = loadScrollMemory()[scope];
+  return Number.isFinite(saved) && saved > 0 ? saved : 0;
+};
+
+/** Remember the scroll offset of `scope` for the next visit. A value of 0 (or
+ *  less) simply forgets it — the user is back at the top of the page. */
+export const writeViewScroll = (scope, top) => {
+  if (!scope) return;
+  const value = Math.max(0, Math.round(Number(top) || 0));
+  const mem = loadScrollMemory();
+  delete mem[scope];
+  if (value > 0) mem[scope] = value; // re-insert → refreshed in the bound below
+  try {
+    const scopes = Object.keys(mem);
+    if (scopes.length > SCROLL_MEMORY_MAX_TESTS) {
+      scopes.slice(0, scopes.length - SCROLL_MEMORY_MAX_TESTS).forEach((k) => delete mem[k]);
+    }
+    sessionStorage.setItem(SCROLL_MEMORY_KEY, JSON.stringify(mem));
+  } catch {
+    /* sessionStorage full or unavailable — only the scroll memory is lost. */
+  }
+};
+
+/** Can the user actually scroll `el` right now? */
+const isScrollContainer = (el) => {
+  if (!el || el.scrollHeight - el.clientHeight <= SCROLL_RANGE_MIN) return false;
+  try {
+    const oy = window.getComputedStyle(el).overflowY;
+    return oy === 'auto' || oy === 'scroll';
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Remember the page scroll offset PER CONDITION and restore it when the user
+ * comes back to that condition (see the comment block above).
+ *
+ * @param scope  the active test id (same scope as the section memory)
+ * @param refs   the candidate scroll containers of the page, outer first (the
+ *               layout switches at the md breakpoint: the page root scrolls on
+ *               mobile, the inner body on desktop)
+ */
+export const useExperimentScrollMemory = (scope, refs) => {
+  // Keep the caller's ref list in a ref: it is a fresh array on every render.
+  const refsRef = React.useRef(refs);
+  refsRef.current = refs;
+  const latest = React.useRef(0);        // last user-driven offset
+  const restoring = React.useRef(false); // our own scrollTop writes → ignore
+  const timer = React.useRef(0);
+
+  const elements = () => (refsRef.current || []).map((r) => r && r.current).filter(Boolean);
+
+  const flush = () => {
+    // Only real positions are remembered: writing 0 would erase a position the
+    // user may still want back (e.g. the page was not laid out yet).
+    if (latest.current > 0) writeViewScroll(scope, latest.current);
+  };
+
+  // ── Save: every scroll of the page container, and on the way out ─────────
+  useEffect(() => {
+    // New scope (the user switched condition) → the offset recorded so far
+    // belonged to the previous condition and was just flushed by the previous
+    // run's cleanup, so start over. Nothing is written until the user really
+    // scrolls, which keeps the position already remembered for THIS condition.
+    latest.current = 0;
+    const onScroll = (e) => {
+      const el = e.currentTarget;
+      if (restoring.current || !isScrollContainer(el)) return;
+      latest.current = el.scrollTop;
+      if (timer.current) return; // trailing throttle: one write per 200 ms
+      timer.current = window.setTimeout(() => { timer.current = 0; flush(); }, 200);
+    };
+    const els = elements();
+    els.forEach((el) => el.addEventListener('scroll', onScroll, { passive: true }));
+    return () => {
+      els.forEach((el) => el.removeEventListener('scroll', onScroll));
+      if (timer.current) { window.clearTimeout(timer.current); timer.current = 0; }
+      flush(); // leaving the page (or switching condition): remember where we were
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope]);
+
+  // ── Restore: on mount, and every time the user switches condition ────────
+  useEffect(() => {
+    const saved = readViewScroll(scope);
+    if (!saved) return undefined;
+
+    restoring.current = true;
+    let done = false;
+    let tries = 0;
+    const timers = [];
+    // Stop as soon as the user takes over (wheel, touch, click, keyboard) so
+    // the restore never fights a manual scroll.
+    const opts = { passive: true };
+    const stop = () => {
+      if (done) return;
+      done = true;
+      restoring.current = false;
+      timers.forEach((id) => window.clearTimeout(id));
+      elements().forEach((el) => {
+        el.removeEventListener('wheel', stop, opts);
+        el.removeEventListener('touchstart', stop, opts);
+        el.removeEventListener('pointerdown', stop, opts);
+        el.removeEventListener('keydown', stop);
+      });
+    };
+    const apply = () => {
+      if (done) return;
+      const el = elements().find(isScrollContainer);
+      if (el) {
+        const wanted = Math.min(saved, el.scrollHeight - el.clientHeight);
+        if (el.scrollTop !== wanted) el.scrollTop = wanted;
+      }
+      // Sections, charts and images keep growing the page for a moment: keep
+      // retrying (with the ORIGINAL offset) until the layout has settled.
+      tries += 1;
+      if (tries >= 12) { stop(); return; }
+      timers.push(window.setTimeout(apply, tries < 4 ? 60 : 150));
+    };
+    elements().forEach((el) => {
+      el.addEventListener('wheel', stop, opts);
+      el.addEventListener('touchstart', stop, opts);
+      el.addEventListener('pointerdown', stop, opts);
+      el.addEventListener('keydown', stop);
+    });
+    // Give the sections their first paint (they reopen from their own memory)
+    // before positioning the page.
+    timers.push(window.setTimeout(apply, 30));
+    return stop;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope]);
+};
+
+/**
+ * Same per-experiment memory as <CollapsibleSection>, for the page's OWN group
+ * toggles: the big "GENERAL" / "SETUP" / "DATA AND ANALYSIS" / "REPORT" areas
+ * of the experiment pages are plain local state (not sections), so they used
+ * to collapse again every time the page was left and reopened.
+ *
+ * Returns [open, setOpen]; setOpen takes a boolean (never an updater), because
+ * the page header's "expand all / collapse all" button drives it too.
+ */
+export const useSectionMemory = (key, fallback = false) => {
+  const scope = React.useContext(SectionsScope);
+  const memoryKey = scope ? String(key || '') : null;
+  const [open, setOpen] = useState(() => readSectionOpen(scope, memoryKey, fallback));
+  const sectionsCmd = useSectionsCommand();
+
+  // Every change — user click, docking auto-open, "expand all" command — is
+  // remembered for the next visit. The setter stays the plain useState one, so
+  // callers can keep putting it in their effect dependencies.
+  useEffect(() => {
+    writeSectionOpen(scope, memoryKey, open);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  useEffect(() => {
+    if (sectionsCmd !== null && sectionsCmd !== undefined) setOpen(sectionsCmd);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sectionsCmd]);
+
+  return [open, setOpen];
+};
+
 export const CollapsibleSection = ({
   title, icon, defaultOpen = false, children, headerExtra, className = '', openWhen = false
 }) => {

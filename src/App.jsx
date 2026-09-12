@@ -3629,18 +3629,37 @@ const openDataset = (dset) => {
   };
 
   // « ↩ Retour à l'expérience » (barre latérale + barre mobile) : rouvre la
-  // dernière expérience ouverte — sur la même condition — depuis n'importe
-  // quelle autre page, sans repasser par Projects/Experiments. Si l'expérience
-  // a été supprimée entre-temps, la mémoire est simplement oubliée.
+  // dernière expérience ouverte — sur la même condition, dans la même zone —
+  // depuis n'importe quelle autre page, sans repasser par Projects/Experiments.
+  // L'état de vue (sous-sections ouvertes, position de défilement) est restauré
+  // par la page elle-même : voir SectionsScope / useExperimentScrollMemory
+  // dans src/components/ui.jsx. Si l'expérience a été supprimée entre-temps, la
+  // mémoire est simplement oubliée.
   const handleReturnToTest = () => {
     const target = lastOpenedTest;
     if (!target || !target.id) return;
-    if (!tests.some((t) => t.id === target.id)) {
-      setLastOpenedTest(null);
-      writeLastExperiment(currentDatasetId, null);
+
+    // Cas normal : la condition mémorisée existe encore → on la rouvre telle
+    // quelle (même instance, mêmes sous-sections, même défilement).
+    if (tests.some((t) => t.id === target.id)) {
+      jumpToTest(target.id);
       return;
     }
-    jumpToTest(target.id);
+
+    // Son id a disparu (condition reconstruite par une restauration Drive,
+    // duplication…) : on retombe sur la MÊME condition de la MÊME expérience
+    // (nom + instance), puis sur l'expérience elle-même, avant d'oublier.
+    const fallback = target.name
+      ? tests.find((t) => t.name === target.name && target.instanceName && t.instanceName === target.instanceName)
+        || tests.find((t) => t.name === target.name)
+      : null;
+    if (fallback) {
+      jumpToTest(fallback.id);
+      return;
+    }
+
+    setLastOpenedTest(null);
+    writeLastExperiment(currentDatasetId, null);
   };
 
   // Open the dedicated Image Builder page (sidebar entry, or the "🖼 Saved

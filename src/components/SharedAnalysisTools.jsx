@@ -245,19 +245,61 @@ export const ChartControlBar = ({
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TICK-LABEL OFFSET  -- keeps the distance between the axis tick NUMBERS and
+// the axis CONSTANT when the character size changes.
+//
+// Both tick renderers used to place the numbers with a hard-coded offset tuned
+// for ~11 px labels (AngledTick: dy = 12 px below the tick origin; NMRSections:
+// baseline = tickLength + 12 px from the axis). The baseline follows the font
+// size but the TOP of the digits does not: a 24 px label is ~17 px tall, so its
+// top climbed into the tick marks and, a bit further, ABOVE the axis line.
+// Returning `gap + 0.72 em` (≈ the digit height of the font) makes the numbers
+// grow downwards from a fixed clearance instead; `minOffset` keeps the
+// historical offset for the usual sizes, so nothing moves until the label is
+// big enough to need the extra room.
+//
+//   tickEnd   -- px from the tick origin (the `y` recharts passes to the tick)
+//                down to the END of the tick mark. Negative when the origin is
+//                already below the mark (tickMargin > tickSize, e.g. 10 > 6).
+//   fontSize  -- font size (px) of the numbers
+//   gap       -- clearance kept between the end of the tick mark and the number
+//   minOffset -- historical offset (baseline, from the same origin) used as a
+//                floor so small labels keep their current position
+// ─────────────────────────────────────────────────────────────────────────────
+export const tickLabelOffset = (tickEnd = 0, fontSize = 11, gap = 3, minOffset = 0) => {
+    const fs = Number(fontSize) || 11;
+    const end = Number(tickEnd) || 0;
+    const floor = Number(minOffset) || 0;
+    return Math.max(floor, Math.round(end + gap + fs * 0.72));
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ANGLED TICK  -- rotated axis tick label, honours the "Tick label angle"
 // setting of SharedChartStylePanel (cfg.tickAngle). Previously copy-pasted in
 // CDSections / ssNMRSections / NMRSections.
+//
+// The x-axes that use it pass tickMargin={10} with recharts' default tickSize=6,
+// so the tick marks end 6 px below the axis and the tick origin (the `y` we get)
+// already sits 10 px below it — the marks therefore end 4 px ABOVE the origin:
+// tickEnd = tickSize - tickMargin = -4. The old fixed dy = 12 (kept as the
+// floor) starts to be too small once the digits are ~26 px tall; from there the
+// offset grows with the font so the numbers never touch the axis or its marks.
 // ─────────────────────────────────────────────────────────────────────────────
 export const AngledTick = ({ x, y, payload, angle = 0, fontSize = 11, anchor = 'middle', formatter }) => {
     const a = Number(angle) || 0;
+    const fs = Number(fontSize) || 11;
+    // Rotated labels need a little more side room as they grow; upright ones are
+    // pushed down by their own cap height (≈0.72 em) + a fixed clearance.
+    const grow = Math.max(4, Math.round(4 + Math.max(0, fs - 11) * 0.5));
+    const dy = a ? grow : tickLabelOffset(-4, fs, 3, 12);
+    const dx = a ? (a > 0 ? grow : -grow) : 0;
     return (
         <g transform={`translate(${x || 0},${y || 0})`}>
             <text
                 transform={a ? `rotate(${a})` : undefined}
                 textAnchor={a < 0 ? 'end' : a > 0 ? 'start' : anchor}
-                dy={a ? 4 : 12}
-                dx={a ? (a > 0 ? 4 : -4) : 0}
+                dy={dy}
+                dx={dx}
                 fill="#64748b"
                 fontSize={fontSize}
             >
@@ -1115,6 +1157,7 @@ export const SharedChart = ({
       allowDataOverflow
       scale={xLog ? 'log' : 'auto'}
       tick={tickPropsFor('x')}
+      tickMargin={10}
       tickFormatter={cfgTickFormatter(cfg, 'x') || undefined}
       {...(xTicks ? { ticks: xTicks } : {})}
       label={cfgAxisLabel(cfg, 'x', cfg.xAxisLabel || (unit ? `Value (${unit})` : 'Value'), 18)}

@@ -4,7 +4,7 @@ import { BufferAdditiveFields } from './DefinitionsExtra';
 import { SearchableSelect } from './SearchableSelect';
 import { parseSimulationParameters } from './MDData';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES } from '../data/testTypes';
-import { CollapsibleSection, useSectionsCommand } from './ui';
+import { CollapsibleSection, useExperimentScrollMemory, useSectionMemory } from './ui';
 import { abortControl, useAbortControl } from '../utils/abortControl';
 import { mdAnalysisRunAll } from '../utils/mdAnalysisRunAll';
 import { Icon } from './Icons';
@@ -421,6 +421,12 @@ export const TestShellRenderer = ({
 
   const t = activeTest || {};
   const pageRef = useRef(null); // root container scanned by the universal ⭐ layer
+  // Inner body of the page: the element that scrolls on desktop (the root
+  // scrolls on mobile, see the wrapper classes below). Both are handed to the
+  // per-condition scroll memory so that « ↩ Back to experiment » — or simply
+  // switching condition tab — drops the user back exactly where they were.
+  const pageBodyRef = useRef(null);
+  useExperimentScrollMemory(t.id, [pageRef, pageBodyRef]);
 
   const samplesCfg = config.samples || {};
   const imagesKey = config.imagesKey || 'images';
@@ -445,27 +451,19 @@ const experimentPlan = Array.isArray(t.plan) ? t.plan : [];
   const [zoomImage, setZoomImage] = useState(null);
   const [mdParamFileReport, setMdParamFileReport] = useState(null);
 
-const [showGeneral, setShowGeneral] = useState(false);
-  const [showSetup, setShowSetup] = useState(false);
-  const [showMolSys, setShowMolSys] = useState(false);
-  const [showData, setShowData] = useState(false);
-  const [showReport, setShowReport] = useState(false);
+  // The page's own group toggles ("GENERAL", "SETUP", "DATA AND ANALYSIS"…) are
+  // remembered per condition exactly like the CollapsibleSections inside them
+  // (useSectionMemory handles the header's expand-all / collapse-all command
+  // too). Leaving the page — sidebar « ↩ Back to experiment » — and coming back
+  // therefore reopens the very same subsections.
+  const [showGeneral, setShowGeneral] = useSectionMemory('group:general');
+  const [showSetup, setShowSetup] = useSectionMemory('group:setup');
+  const [showMolSys, setShowMolSys] = useSectionMemory('group:structure');
+  const [showData, setShowData] = useSectionMemory('group:data');
+  const [showReport, setShowReport] = useSectionMemory('group:report');
   // When several compounds are defined, the Concentration field becomes a
   // dropdown (choose the compound) + a per-compound value (compoundConcentrations).
   const [concCompound, setConcCompound] = useState('');
-
-  // The top-bar "Expand all / Collapse all" button also drives the custom
-  // section toggles (they are not CollapsibleSections).
-  const sectionsCmd = useSectionsCommand();
-  useEffect(() => {
-    if (sectionsCmd !== null && sectionsCmd !== undefined) {
-      setShowGeneral(!!sectionsCmd);
-      setShowSetup(!!sectionsCmd);
-      setShowMolSys(!!sectionsCmd);
-      setShowData(!!sectionsCmd);
-      setShowReport(!!sectionsCmd);
-    }
-  }, [sectionsCmd]);
 
   // Auto-open the top-level areas when docking-imported data arrives, so the
   // user immediately sees the imported artifacts (raw_input.toml in Instrumental
@@ -477,6 +475,9 @@ const [showGeneral, setShowGeneral] = useState(false);
     const hasDockStructs = !!(t.dockingStructures && t.dockingStructures.length);
     if (hasDockRaw || hasDockMols) setShowGeneral(true);
     if (hasDockStructs) setShowMolSys(true);
+    // The two setters come from useSectionMemory (plain state setters), so they
+    // are stable: only the docking data itself has to trigger this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t.dockingRawInput, t.dockingMolecules, t.dockingStructures]);
 
   // Shared stride / max-frames for the MD "Calculate all analyses" toolbar.
@@ -1393,7 +1394,7 @@ const details = [
           image / table rendered on this test page, for import into the
           project's Export document. */}
       <ChartStarLayer rootRef={pageRef} test={t} update={update} />
-<div className="p-4 md:flex-1 md:overflow-y-auto md:min-h-0 custom-scrollbar">
+<div ref={pageBodyRef} className="p-4 md:flex-1 md:overflow-y-auto md:min-h-0 custom-scrollbar">
         {!mandatoryBlocked && missingMandatoryRules.length > 0 && (
           <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg shadow-sm">
             <div className="flex items-center gap-2">

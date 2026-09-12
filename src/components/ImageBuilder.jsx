@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
   readLibrary, readProjectLibrary, moveLibraryItem,
@@ -16,6 +16,72 @@ const PX_PER_MM = 96 / 25.4; // CSS: 1 mm ≈ 3.78 px
 // fail — the in-memory copy always survives, so navigating to the original
 // graph and back NEVER loses the user's edits within this session.
 const imageBuilderSessionCache = new Map();
+
+// ---- figures of an object + their natural aspect ratio ---------------------
+// Every object can hold SEVERAL figures in one lettered panel (`images[]`); the
+// legacy single-image fields mirror the FIRST one. (Hoisted to module scope so
+// the aspect-ratio hook below can use it without re-subscribing on every render.)
+const getObjImagesOf = (obj) => {
+  if (Array.isArray(obj.images) && obj.images.length) return obj.images;
+  if (obj && obj.imgSrc) return [{ imgSrc: obj.imgSrc, imgThumb: obj.imgThumb, libId: obj.libId, libScope: obj.libScope, libProjectId: obj.libProjectId, src: obj.src }];
+  return [];
+};
+
+// Persisted / undo-snapshot copy of an object: keep only the small thumbnails so
+// the canvas never exceeds the localStorage quota. Module scope as well, so the
+// persistence effect below only depends on real values (no recreated function).
+const thumbnailsOf = (obj) => {
+  const images = getObjImagesOf(obj).map((im) => ({ ...im, imgSrc: im.imgThumb || im.imgSrc }));
+  const first = images[0] || {};
+  return {
+    ...obj,
+    images,
+    imgSrc: first.imgSrc || obj.imgThumb || obj.imgSrc || null,
+    imgThumb: first.imgThumb || first.imgSrc || obj.imgThumb || null
+  };
+};
+
+// Natural width/height ratio of every figure already measured, keyed by source
+// (data URL / Drive URL). The canvas "🔒 Keep aspect ratio" option draws each
+// figure with its own ratio inside its panel, so the ratio has to be known
+// before the geometry can be computed.
+const imageAspectCache = new Map();
+const IMAGE_ASPECT_CACHE_MAX = 300; // forget ratios if a session imports a huge library
+
+/**
+ * Measure the natural width/height ratio of every figure on the canvas.
+ * Returns a tick that changes once the ratios are known, so the canvas can
+ * re-render with the aspect-corrected geometry. Sources that cannot be loaded
+ * (offline Drive copies) simply keep the ratio they already had.
+ */
+const useImageAspects = (objects) => {
+  const [tick, setTick] = useState(0);
+  const srcs = useMemo(() => {
+    const set = new Set();
+    (objects || []).forEach((o) => getObjImagesOf(o).forEach((im) => { if (im && im.imgSrc) set.add(im.imgSrc); }));
+    return [...set];
+  }, [objects]);
+  useEffect(() => {
+    if (imageAspectCache.size > IMAGE_ASPECT_CACHE_MAX) imageAspectCache.clear();
+    const pending = srcs.filter((s) => !imageAspectCache.has(s));
+    if (!pending.length) return undefined;
+    let cancelled = false;
+    let left = pending.length;
+    const settle = (src, aspect) => {
+      imageAspectCache.set(src, aspect);
+      left -= 1;
+      if (!cancelled && left === 0) setTick((t) => t + 1);
+    };
+    pending.forEach((src) => {
+      const img = new Image();
+      img.onload = () => settle(src, img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : 0);
+      img.onerror = () => settle(src, 0);
+      img.src = src;
+    });
+    return () => { cancelled = true; };
+  }, [srcs]);
+  return tick;
+};
 
 export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCanvasOpened, onBackToProject }) => {
   const storageKey = `labImageBuilder_${projectId || 'global'}`;
@@ -81,11 +147,16 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // Every object can hold SEVERAL figures in one lettered panel (`images[]`).
   // The legacy single-image fields (imgSrc/imgThumb/libId/libScope/libProjectId/src)
   // mirror the FIRST image, so all existing code keeps working.
-  const getObjImages = (obj) => {
-    if (Array.isArray(obj.images) && obj.images.length) return obj.images;
-    if (obj && obj.imgSrc) return [{ imgSrc: obj.imgSrc, imgThumb: obj.imgThumb, libId: obj.libId, libScope: obj.libScope, libProjectId: obj.libProjectId, src: obj.src }];
-    return [];
-  };
+  const getObjImages = getObjImagesOf;
+
+  // Canvas option "🔒 Keep aspect ratio" (on by default): every figure is drawn
+  // with its OWN width/height ratio inside its panel, so changing the number of
+  // panels (grid) or the canvas dimensions only RESCALES the figures — it never
+  // stretches them. `void aspectTick` keeps the re-render triggered by freshly
+  // measured figure ratios (see useImageAspects above).
+  const [keepAspect, setKeepAspect] = useState(true);
+  const aspectTick = useImageAspects(objects);
+  void aspectTick;
 
   // Build an object that stores `images` (and mirrors the first one into the
   // legacy single-image fields).
@@ -104,18 +175,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     };
   };
 
-  // Persisted / undo-snapshot copy: keep only the small thumbnails so the
-  // canvas never exceeds the localStorage quota.
-  const thumbnailsOf = (obj) => {
-    const images = getObjImages(obj).map((im) => ({ ...im, imgSrc: im.imgThumb || im.imgSrc }));
-    const first = images[0] || {};
-    return {
-      ...obj,
-      images,
-      imgSrc: first.imgSrc || obj.imgThumb || obj.imgSrc || null,
-      imgThumb: first.imgThumb || first.imgSrc || obj.imgThumb || null
-    };
-  };
+  // `thumbnailsOf` (persisted / undo-snapshot copy, module scope above) keeps the
+  // canvas small enough for localStorage.
 
   // Resolve the copy of a library image that the canvas can DISPLAY (the canvas
   // persists only thumbnails / libId). The full-resolution pixels now live on
@@ -196,6 +257,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         if (data.gridRows) setGridRows(data.gridRows);
         if (data.showPanelBorders !== undefined) setShowPanelBorders(!!data.showPanelBorders);
         if (data.showGridLines !== undefined) setShowGridLines(!!data.showGridLines);
+        // Canvases saved before this option existed default to keeping the
+        // figures in their own aspect ratio (the behaviour the option adds).
+        if (data.keepAspect !== undefined) setKeepAspect(!!data.keepAspect);
         if (data.objects) {
           // Only the small thumbnail is persisted; re-resolve the full-resolution
           // image from its library entry so the canvas never exceeds the
@@ -241,13 +305,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       // full-resolution dataURL) so the layout always re-opens after
       // navigating away and back.
       const persisted = (objects || []).map(thumbnailsOf);
-      const payload = { canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, objects: persisted, focusObjId, globalCaption, isFullScreen };
+      const payload = { canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects: persisted, focusObjId, globalCaption, isFullScreen };
       // Always keep the freshest copy in memory (survives module remounts even
       // when localStorage is full), then best-effort write localStorage.
       imageBuilderSessionCache.set(storageKey, payload);
       localStorage.setItem(storageKey, JSON.stringify(payload));
     } catch { /* localStorage may be full — the session cache above still holds the state */ }
-  }, [canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, objects, focusObjId, globalCaption, isFullScreen, storageKey]);
+  }, [canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects, focusObjId, globalCaption, isFullScreen, storageKey]);
 
   // Async "hydrate" pass — after objects are (re)loaded from a persisted canvas
   // or an undo snapshot, their images may reference Google Drive (the real
@@ -577,10 +641,22 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     const ch = (obj.h * cellH) / rows;
     const pad = obj.imgPadding || 0;
     const figScale = (obj.imgScale || 1) * (im.scale || 1);
-    const iW = (cw - pad * 2) * figScale;
-    const iH = (ch - pad * 2) * figScale;
+    let iW = (cw - pad * 2) * figScale;
+    let iH = (ch - pad * 2) * figScale;
+    /* Canvas option "🔒 Keep aspect ratio": the figure is drawn with its OWN
+       width/height ratio inside its panel instead of being stretched to the
+       panel cell — so changing the number of panels (grid) or the canvas
+       dimensions only rescales it. When the ratio is not known yet (figure
+       still loading / unreachable) the cell is used, which is harmless because
+       the <image> is rendered with preserveAspectRatio="meet" anyway. */
+    const aspect = keepAspect ? (imageAspectCache.get(im.imgSrc) || 0) : 0;
+    if (aspect > 0 && iW > 0 && iH > 0) {
+      if (iW / iH > aspect) iW = iH * aspect;
+      else iH = iW / aspect;
+    }
     const cellX = obj.x * cellW + (i % cols) * cw;
     const cellY = obj.y * cellH + Math.floor(i / cols) * ch;
+
     return {
       iX: cellX + pad + (cw - pad * 2 - iW) / 2 + (obj.imgOffsetX || 0) + (im.dx || 0),
       iY: cellY + pad + (ch - pad * 2 - iH) / 2 + (obj.imgOffsetY || 0) + (im.dy || 0),
@@ -677,7 +753,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         src: null,
         updateId: canvasLibId,
         canvasData: {
-          canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, globalCaption,
+          canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, globalCaption,
           objects: (objects || []).map(thumbnailsOf)
         }
       });
@@ -717,6 +793,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     // current choice (they simply have no value stored).
     if (cd.showPanelBorders !== undefined) setShowPanelBorders(!!cd.showPanelBorders);
     if (cd.showGridLines !== undefined) setShowGridLines(!!cd.showGridLines);
+    if (cd.keepAspect !== undefined) setKeepAspect(!!cd.keepAspect);
     if (cd.globalCaption !== undefined) setGlobalCaption(cd.globalCaption);
     setObjects((cd.objects || []).map((o) => resolveObj(o)));
     setSelectedId(null);
@@ -1172,7 +1249,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                         href={src}
                         x={g.iX} y={g.iY} width={g.iW} height={g.iH}
                         transform={rot ? `rotate(${rot} ${g.iX + g.iW / 2} ${g.iY + g.iH / 2})` : undefined}
-                        preserveAspectRatio={fit === 'cover' ? 'xMidYMid slice' : fit === 'stretch' ? 'none' : 'xMidYMid meet'}
+                        preserveAspectRatio={keepAspect ? 'xMidYMid meet' : fit === 'cover' ? 'xMidYMid slice' : fit === 'stretch' ? 'none' : 'xMidYMid meet'}
                         style={{ pointerEvents: 'none' }}
                       />
                     );
@@ -1343,7 +1420,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
 
           <div className="grid grid-cols-2 gap-2">
             <label className="text-[10px] font-bold text-slate-500">Fit
-              <select value={selectedObj.imgFit} onChange={e => updateObj({ imgFit: e.target.value })} className="w-full border rounded p-1 text-xs">
+              <select value={keepAspect ? 'contain' : selectedObj.imgFit} disabled={keepAspect} onChange={e => updateObj({ imgFit: e.target.value })}
+                className={`w-full border rounded p-1 text-xs ${keepAspect ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}`}
+                title={keepAspect ? 'The canvas option “🔒 Keep aspect ratio” is on: every figure is fitted with its own width/height ratio. Untick it to choose Contain / Cover / Stretch per panel.' : 'How the figure fills its panel cell: Contain / Cover / Stretch'}>
                 <option value="contain">Contain</option>
                 <option value="cover">Cover</option>
                 <option value="stretch">Stretch</option>
@@ -1368,6 +1447,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
               </div>
             </label>
             <span className="col-span-2 text-[9px] text-slate-400 italic">Drag the image directly on the canvas to shift it (or hold Shift + drag the object frame); drag its corner to resize it.</span>
+            {keepAspect && (
+              <span className="col-span-2 text-[9px] font-bold text-emerald-700">
+                🔒 Keep aspect ratio is on (canvas option): the figure keeps its own width/height ratio, whatever the number of panels or the canvas size.
+              </span>
+            )}
           </div>
         </div>
 
@@ -1497,6 +1581,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 pb-2 cursor-pointer"
             title="Draw the cell divider guides across the canvas (layout guides). They are part of the composition, so Export PNG, Save canvas and Insert into project follow this choice.">
             <input type="checkbox" checked={showGridLines} onChange={e => setShowGridLines(e.target.checked)} /> Grid lines
+          </label>
+          <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 pb-2 cursor-pointer"
+            title="Canvas option: every figure keeps its own width/height ratio inside its panel, so changing the number of panels or the canvas width/height only rescales the figures instead of stretching them. It overrides the per-object “Fit → Stretch” choice.">
+            <input type="checkbox" checked={keepAspect} onChange={e => setKeepAspect(e.target.checked)} /> 🔒 Keep aspect ratio
           </label>
           <label className="text-[10px] font-bold text-slate-500 flex flex-col flex-1 min-w-[220px]">Global caption (click to edit — merges the object sub-captions)
             <span className="border border-slate-200 rounded p-1 text-xs bg-slate-50 text-slate-600 truncate hover:border-blue-400 hover:bg-blue-50 cursor-text" title={effectiveGlobalCaption} onClick={() => { setSelectedId(null); setEditingCaption(true); }}>{effectiveGlobalCaption || 'Merges the object sub-captions (A: …, B: …)'}</span>
@@ -1639,6 +1727,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-600 bg-slate-100 rounded-lg px-2 py-1.5 cursor-pointer"
                    title="Draw a thin frame around every panel (composition setting — exports follow it).">
                    <input type="checkbox" checked={showPanelBorders} onChange={e => setShowPanelBorders(e.target.checked)} /> Borders
+                 </label>
+                 <label className="flex items-center gap-1 text-[11px] font-bold text-slate-600 bg-slate-100 rounded-lg px-2 py-1.5 cursor-pointer"
+                   title="Canvas option: every figure keeps its own width/height ratio inside its panel (grid/canvas changes only rescale it, never stretch it). It overrides “Fit → Stretch”.">
+                   <input type="checkbox" checked={keepAspect} onChange={e => setKeepAspect(e.target.checked)} /> 🔒 Ratio
                  </label>
                  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-600 bg-slate-100 rounded-lg px-2 py-1.5 cursor-pointer"
                    title="Draw the cell divider guides across the canvas (composition setting — exports follow it).">
