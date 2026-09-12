@@ -491,6 +491,22 @@ export const SharedChartStylePanel = ({ cfg = {}, setCfg, series = [], unit = 'a
                     </div>
                     <TF label="X axis label" value={cfg.xAxisLabel} onChange={(v) => set({ xAxisLabel: v })} placeholder={`e.g. ${unit}`} />
                     <TF label="Y axis label" value={cfg.yAxisLabel} onChange={(v) => set({ yAxisLabel: v })} placeholder="e.g. Intensity (a.u.)" />
+                    <NF label="X label gap (px)" value={cfg.xAxisLabelGap ?? ''} onChange={(v) => set({ xAxisLabelGap: v })} placeholder="0" />
+                    <NF label="Y label gap (px)" value={cfg.yAxisLabelGap ?? ''} onChange={(v) => set({ yAxisLabelGap: v })} placeholder="0" />
+                    <div className="flex flex-col gap-1">
+                        <label className="text-[10px] font-bold text-slate-600">X label style</label>
+                        <div className="flex items-center gap-3 h-[30px]">
+                            <CB label="Bold" checked={cfg.xAxisLabelBold} onChange={(v) => set({ xAxisLabelBold: v })} />
+                            <CB label="Italic" checked={cfg.xAxisLabelItalic} onChange={(v) => set({ xAxisLabelItalic: v })} />
+                        </div>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                        <label className="text-[10px] font-bold text-slate-600">Y label style</label>
+                        <div className="flex items-center gap-3 h-[30px]">
+                            <CB label="Bold" checked={cfg.yAxisLabelBold} onChange={(v) => set({ yAxisLabelBold: v })} />
+                            <CB label="Italic" checked={cfg.yAxisLabelItalic} onChange={(v) => set({ yAxisLabelItalic: v })} />
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -620,6 +636,11 @@ export const useXZoom = (chartRef, dataDomain, margin = { top: 20, right: 20, bo
   const eff = domain || safe;
   const effRef = useRef(eff);
   effRef.current = eff;
+  // The window listeners below are registered only once, so they would capture
+  // the margins of the first render; reading them from a ref keeps the drag math
+  // pixel-accurate when the panel changes the font size / axis-title gap.
+  const marginRef = useRef(margin);
+  marginRef.current = margin;
 
   const getX = (clientX) => {
     const el = chartRef.current;
@@ -627,9 +648,10 @@ export const useXZoom = (chartRef, dataDomain, margin = { top: 20, right: 20, bo
     const wrapper = el.querySelector('.recharts-wrapper');
     if (!wrapper) return null;
     const rect = wrapper.getBoundingClientRect();
-    const plotW = rect.width - margin.left - margin.right;
+    const m = marginRef.current;
+    const plotW = rect.width - m.left - m.right;
     if (plotW <= 0) return null;
-    const fx = Math.min(1, Math.max(0, (clientX - rect.left - margin.left) / plotW));
+    const fx = Math.min(1, Math.max(0, (clientX - rect.left - m.left) / plotW));
     const d0 = effRef.current;
     return d0[0] + fx * (d0[1] - d0[0]);
   };
@@ -670,6 +692,9 @@ export const useYZoom = (chartRef, dataDomain, margin = { top: 10, right: 20, bo
   const eff = domain || safe;
   const effRef = useRef(eff);
   effRef.current = eff;
+  // Live margins for the once-registered window listeners (see useXZoom).
+  const marginRef = useRef(margin);
+  marginRef.current = margin;
 
   const getY = (clientY) => {
     const el = chartRef.current;
@@ -677,9 +702,10 @@ export const useYZoom = (chartRef, dataDomain, margin = { top: 10, right: 20, bo
     const wrapper = el.querySelector('.recharts-wrapper');
     if (!wrapper) return null;
     const rect = wrapper.getBoundingClientRect();
-    const plotH = rect.height - margin.top - margin.bottom;
+    const m = marginRef.current;
+    const plotH = rect.height - m.top - m.bottom;
     if (plotH <= 0) return null;
-    const fy = Math.min(1, Math.max(0, (clientY - rect.top - margin.top) / plotH));
+    const fy = Math.min(1, Math.max(0, (clientY - rect.top - m.top) / plotH));
     const d0 = effRef.current;
     return d0[1] - fy * (d0[1] - d0[0]);
   };
@@ -735,6 +761,9 @@ export const useXYZoom = (chartRef, xDataDomain, yDataDomain, margin = { top: 20
   const effY = yDomain || ySafe;
   const effXRef = useRef(effX); effXRef.current = effX;
   const effYRef = useRef(effY); effYRef.current = effY;
+  // Live margins for the once-registered window listeners (see useXZoom).
+  const marginRef = useRef(margin);
+  marginRef.current = margin;
 
   const getX = (clientX) => {
     const el = chartRef.current;
@@ -742,9 +771,10 @@ export const useXYZoom = (chartRef, xDataDomain, yDataDomain, margin = { top: 20
     const wrapper = el.querySelector('.recharts-wrapper');
     if (!wrapper) return null;
     const rect = wrapper.getBoundingClientRect();
-    const plotW = rect.width - margin.left - margin.right;
+    const m = marginRef.current;
+    const plotW = rect.width - m.left - m.right;
     if (plotW <= 0) return null;
-    const fx = Math.min(1, Math.max(0, (clientX - rect.left - margin.left) / plotW));
+    const fx = Math.min(1, Math.max(0, (clientX - rect.left - m.left) / plotW));
     const d0 = effXRef.current;
     return d0[0] + fx * (d0[1] - d0[0]);
   };
@@ -754,9 +784,10 @@ export const useXYZoom = (chartRef, xDataDomain, yDataDomain, margin = { top: 20
     const wrapper = el.querySelector('.recharts-wrapper');
     if (!wrapper) return null;
     const rect = wrapper.getBoundingClientRect();
-    const plotH = rect.height - margin.top - margin.bottom;
+    const m = marginRef.current;
+    const plotH = rect.height - m.top - m.bottom;
     if (plotH <= 0) return null;
-    const fy = Math.min(1, Math.max(0, (clientY - rect.top - margin.top) / plotH));
+    const fy = Math.min(1, Math.max(0, (clientY - rect.top - m.top) / plotH));
     const d0 = effYRef.current;
     return d0[1] - fy * (d0[1] - d0[0]);
   };
@@ -928,7 +959,11 @@ export const SharedChart = ({
   const cMin = numOrNull(cfg.xMin);
   const cMax = numOrNull(cfg.xMax);
   const cfgDomain = cMin !== null && cMax !== null && cMax > cMin ? [cMin, cMax] : dataDomain;
-  const zoom = useXZoom(chartRef, cfgDomain, { ...margin, left: yAxisWidth });
+  /* Grow the axis areas with the panel font size so bigger ticks never overlap
+     the axis titles. The SAME margin object feeds the chart and the drag-to-zoom
+     pixel math, so the zoom rectangle stays aligned with the plot. */
+  const resolvedMargin = cfgChartMargin(cfg, { top: 8, right: 12, bottom: 34, ...margin, left: margin.left ?? yAxisWidth });
+  const zoom = useXZoom(chartRef, cfgDomain, resolvedMargin);
   const xDomain = xLog
     ? [
         Math.max(1e-9, cMin !== null && cMin > 0 ? cMin : (dataDomain[0] > 0 ? dataDomain[0] : zoom.domain[0])),
@@ -1068,9 +1103,6 @@ export const SharedChart = ({
   ];
 
   const h = useChartFsHeight(Number(cfg.height) || height);
-  // Grow the axis areas with the panel font size so bigger ticks never overlap
-  // the axis titles.
-  const resolvedMargin = cfgChartMargin(cfg, { top: 8, right: 12, bottom: 34, ...margin, left: margin.left ?? yAxisWidth });
 
   return (
     <div className="flex flex-col gap-1">
@@ -1195,21 +1227,50 @@ export const cfgAxisLabel = (cfg = {}, axis = 'x', value = '', base) => {
   const fs = Number(cfg.fontSize) || 16;
   const extra = Math.max(0, fs - 12) + (Math.abs(Number(cfg.tickAngle) || 0) > 0 ? 8 : 0);
   const baseOff = base ?? (axis === 'x' ? 25 : 20);
-  const offset = -(baseOff + extra * 1.6);
+  const gap = axisLabelGap(cfg, axis);
+  const offset = -(baseOff + extra * 1.6 + gap);
+  const bold = !!(axis === 'x' ? cfg.xAxisLabelBold : cfg.yAxisLabelBold);
+  const italic = !!(axis === 'x' ? cfg.xAxisLabelItalic : cfg.yAxisLabelItalic);
+  const style = {
+    value,
+    fill: '#64748b',
+    fontSize: fs + 1,
+    ...(bold ? { fontWeight: 'bold' } : {}),
+    ...(italic ? { fontStyle: 'italic' } : {})
+  };
   if (axis === 'x') {
-    return { value, position: 'insideBottom', offset, fill: '#64748b', fontSize: fs + 1 };
+    return { ...style, position: 'insideBottom', offset };
   }
-  return { value, angle: -90, position: 'insideLeft', offset, fill: '#64748b', fontSize: fs + 1 };
+  return { ...style, angle: -90, position: 'insideLeft', offset };
+};
+
+/**
+ * Extra gap (px) requested between the tick numbers and the axis title, from
+ * the panel controls `xAxisLabelGap` / `yAxisLabelGap` (positive = further away
+ * from the plot, negative = closer). Returns 0 when unset.
+ */
+const axisLabelGap = (cfg = {}, axis = 'x') => {
+  const raw = axis === 'x' ? cfg.xAxisLabelGap : cfg.yAxisLabelGap;
+  if (raw === '' || raw === null || raw === undefined) return 0;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
 };
 
 /**
  * Chart margin that grows with the panel font size so the axis areas have room
  * for larger tick labels + titles. Pass the chart's base margin as `base`.
+ * A positive axis-title gap also widens the corresponding margin.
  */
 export const cfgChartMargin = (cfg = {}, base = { top: 20, right: 20, bottom: 45, left: 50 }) => {
   const fs = Number(cfg.fontSize) || 16;
   const extra = Math.max(0, fs - 12);
-  return { ...base, bottom: (base.bottom ?? 45) + extra * 2.2, left: (base.left ?? 50) + extra * 2.2 };
+  const xGap = Math.max(0, axisLabelGap(cfg, 'x'));
+  const yGap = Math.max(0, axisLabelGap(cfg, 'y'));
+  return {
+    ...base,
+    bottom: (base.bottom ?? 45) + extra * 2.2 + xGap,
+    left: (base.left ?? 50) + extra * 2.2 + yGap
+  };
 };
 
 

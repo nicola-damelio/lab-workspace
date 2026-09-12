@@ -358,7 +358,7 @@ export const listDriveChildren = async (parentId) => {
   if (!parentId || !getDriveToken()) return [];
   try {
     const q = encodeURIComponent(`'${parentId}' in parents and trashed=false`);
-    const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name,mimeType)&pageSize=1000`);
+    const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name,mimeType,size,webViewLink)&pageSize=1000`);
     const j = await res.json();
     return Array.isArray(j.files) ? j.files : [];
   } catch { return []; }

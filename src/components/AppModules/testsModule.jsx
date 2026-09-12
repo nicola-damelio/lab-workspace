@@ -684,9 +684,22 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 
 <Icon name={TEST_CARD_ICON[test.type] || 'flask'} size={22} />
 </div>
 
-                              <span className="text-[10px] font-black uppercase tracking-wider text-blue-600 bg-blue-50 px-2 py-0.5 rounded self-start mb-1.5 border border-blue-100">
-                                {test.testCategory || 'Uncategorized'}
-                              </span>
+                              <div className="flex items-center gap-1.5 flex-wrap self-start mb-1.5">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
+                                  {test.testCategory || 'Uncategorized'}
+                                </span>
+                                {/* 🔒 Data frozen by a superuser (see src/utils/dataLock.js):
+                                    read-only for everybody else, but the data can still be
+                                    COPIED into a new instance to run another analysis. */}
+                                {test.dataLocked && (
+                                  <span
+                                    className="text-[10px] font-black uppercase tracking-wider text-slate-700 bg-slate-100 px-2 py-0.5 rounded border border-slate-300 inline-flex items-center gap-1"
+                                    title={`Data locked${test.dataLockedBy ? ` by ${test.dataLockedBy}` : ''} — read-only for everyone except superusers (copy it into a new instance to run another analysis)`}
+                                  >
+                                    <Icon name="lock" size={10} /> Data locked
+                                  </span>
+                                )}
+                              </div>
 
                               <h3 className="font-bold text-slate-800 text-sm truncate pr-8">
                                 {test.name} {test.bestMeasurement && '⭐'}

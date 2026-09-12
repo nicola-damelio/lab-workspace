@@ -26,7 +26,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   const fsAreaRef = useRef(null);   // fullscreen canvas area (measured for "zoom on object")
   const textEditRef = useRef(null);  // inline free-text editor
   const capEditRef = useRef(null);   // inline global-caption editor
-  const objCapRef = useRef(null);    // inline panel sub-caption editor
+  const objCapRef = useRef(null);    // floating panel sub-caption editor
   const initialZoomRef = useRef(1.5);        // zoom when fullscreen was entered ("↩ Initial zoom")
   const initialPanRef = useRef({ x: 0, y: 0 });
   const undoStack = useRef([]);     // undo history of the canvas objects
@@ -36,6 +36,11 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   const [canvasH, setCanvasH] = useState(120);
   const [gridCols, setGridCols] = useState(4);
   const [gridRows, setGridRows] = useState(5);
+  // Panel delimiter lines. They live in the composition (not in the selection
+  // UI), so every export path — Export PNG, Save canvas and Insert into project
+  // — honours whatever the user picked here.
+  const [showPanelBorders, setShowPanelBorders] = useState(true); // thin frame around each panel
+  const [showGridLines, setShowGridLines] = useState(true);       // cell divider guides across the canvas
   const [objects, setObjects] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [hydrateTick, setHydrateTick] = useState(0); // bumped to async-fetch Drive-backed images onto the canvas
@@ -53,7 +58,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   const [globalCaption, setGlobalCaption] = useState('');     // figure-wide caption at the bottom
   const [editingText, setEditingText] = useState(null);       // { objId, txId, mmX, mmY, value } — type directly on the canvas
   const [editingCaption, setEditingCaption] = useState(false); // edit the figure caption directly at the bottom
-  const [editingObjCaption, setEditingObjCaption] = useState(null); // objId — inline sub-caption editor (click a panel's caption)
+  const [editingObjCaption, setEditingObjCaption] = useState(null); // objId — floating sub-caption editor (opened from the properties panel)
   const [insertOpen, setInsertOpen] = useState(false);        // "insert into project section" modal
   const [insertTarget, setInsertTarget] = useState({ projectId: projectId || '', section: 'background' });
   const [insertMsg, setInsertMsg] = useState('');
@@ -183,6 +188,8 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
         if (data.canvasH) setCanvasH(data.canvasH);
         if (data.gridCols) setGridCols(data.gridCols);
         if (data.gridRows) setGridRows(data.gridRows);
+        if (data.showPanelBorders !== undefined) setShowPanelBorders(!!data.showPanelBorders);
+        if (data.showGridLines !== undefined) setShowGridLines(!!data.showGridLines);
         if (data.objects) {
           // Only the small thumbnail is persisted; re-resolve the full-resolution
           // image from its library entry so the canvas never exceeds the
@@ -214,13 +221,13 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
       // full-resolution dataURL) so the layout always re-opens after
       // navigating away and back.
       const persisted = (objects || []).map(thumbnailsOf);
-      const payload = { canvasW, canvasH, gridCols, gridRows, objects: persisted, focusObjId, globalCaption, isFullScreen };
+      const payload = { canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, objects: persisted, focusObjId, globalCaption, isFullScreen };
       // Always keep the freshest copy in memory (survives module remounts even
       // when localStorage is full), then best-effort write localStorage.
       imageBuilderSessionCache.set(storageKey, payload);
       localStorage.setItem(storageKey, JSON.stringify(payload));
     } catch { /* localStorage may be full — the session cache above still holds the state */ }
-  }, [canvasW, canvasH, gridCols, gridRows, objects, focusObjId, globalCaption, isFullScreen, storageKey]);
+  }, [canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, objects, focusObjId, globalCaption, isFullScreen, storageKey]);
 
   // Async "hydrate" pass — after objects are (re)loaded from a persisted canvas
   // or an undo snapshot, their images may reference Google Drive (the real
@@ -325,7 +332,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
       letter: nextLetter,
       letterStyle: { fontSize: 14, color: '#000000', bold: true },
       caption: '',
-      captionStyle: { fontSize: 10, color: '#000000', bold: false },
+      captionStyle: { fontSize: 10, color: '#000000', bold: false }, // kept for canvases saved before the panel caption was hidden (never drawn)
       imgSrc: null, imgFit: 'contain', imgScale: 1, imgPadding: 2,
       imgOffsetX: 0, imgOffsetY: 0,  // shift the image inside the object frame (mm)
       imgRotate: 0,                   // image rotation (degrees)
@@ -641,7 +648,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
         label: label.trim(),
         src: null,
         canvasData: {
-          canvasW, canvasH, gridCols, gridRows, globalCaption,
+          canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, globalCaption,
           objects: (objects || []).map(thumbnailsOf)
         }
       });
@@ -670,6 +677,10 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
     if (cd.canvasH) setCanvasH(cd.canvasH);
     if (cd.gridCols) setGridCols(cd.gridCols);
     if (cd.gridRows) setGridRows(cd.gridRows);
+    // Saved canvases written before the delimiter switches existed keep the
+    // current choice (they simply have no value stored).
+    if (cd.showPanelBorders !== undefined) setShowPanelBorders(!!cd.showPanelBorders);
+    if (cd.showGridLines !== undefined) setShowGridLines(!!cd.showGridLines);
     if (cd.globalCaption !== undefined) setGlobalCaption(cd.globalCaption);
     setObjects((cd.objects || []).map((o) => resolveObj(o)));
     setSelectedId(null);
@@ -975,6 +986,11 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   // Render the composition (without selection UI) to a PNG data URL.
   // Rasterizes any SVG image source to PNG first so the composite SVG loads
   // reliably as an image (SVG-inside-SVG often refuses to rasterize).
+  // NOTE: screen-only decoration (the blue selected-panel square, the resize
+  // handles, the active figure's dashed outline) MUST carry
+  // data-selection-ui="true" to be dropped from the clone below — anything else
+  // drawn in renderSvg also ends up in Export PNG, "Save canvas" and
+  // "Insert into project".
   const renderToDataUrl = (outScale = 11.8) => new Promise((resolve) => {
     const svgEl = activeSvgEl();
     if (!svgEl) { resolve(null); return; }
@@ -1045,11 +1061,12 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   // Helper to render the SVG content (shared between normal and fullscreen)
   const renderSvg = (svgElRef) => (
     <svg ref={svgElRef} viewBox={`0 0 ${canvasW} ${canvasH + captionH}`} width="100%" height="100%" onClick={(e) => { e.stopPropagation(); setSelectedId(null); }}>
-      {/* Grid Lines */}
-      {Array.from({ length: gridCols - 1 }).map((_, i) => (
+      {/* Grid lines (the cell divider guides between the panels) — switched off
+          with the "Grid lines" checkbox, on the canvas and in every export. */}
+      {Array.from({ length: showGridLines ? gridCols - 1 : 0 }).map((_, i) => (
         <line key={`v${i}`} x1={(i + 1) * cellW} y1={0} x2={(i + 1) * cellW} y2={canvasH} stroke="#e2e8f0" strokeWidth={0.2} />
       ))}
-      {Array.from({ length: gridRows - 1 }).map((_, i) => (
+      {Array.from({ length: showGridLines ? gridRows - 1 : 0 }).map((_, i) => (
         <line key={`h${i}`} x1={0} y1={(i + 1) * cellH} x2={canvasW} y2={(i + 1) * cellH} stroke="#e2e8f0" strokeWidth={0.2} />
       ))}
 
@@ -1082,7 +1099,12 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
               addTextAt(obj, xMm, yMm);
             }
           }}>
-            <rect x={ox} y={oy} width={ow} height={oh} fill="white" stroke={isSelected ? '#3b82f6' : '#cbd5e1'} strokeWidth={isSelected ? 0.5 : 0.2} onMouseDown={(e) => startDrag(e, obj.id)} style={{ cursor: 'move' }} />
+            {/* Panel frame. Its styling must NOT depend on the selection: the
+                exported PNG (Export PNG / Save canvas / Insert into project)
+                rasterizes this very SVG and only strips the elements tagged
+                `data-selection-ui`, so the blue "selected panel" square lives in
+                its own overlay rect further down (screen only). */}
+            <rect x={ox} y={oy} width={ow} height={oh} fill="white" stroke={showPanelBorders ? '#cbd5e1' : 'none'} strokeWidth={0.2} onMouseDown={(e) => startDrag(e, obj.id)} style={{ cursor: 'move' }} />
 
             {(() => {
               // Multi-figure object: every figure in `images[]` is laid out in a
@@ -1165,14 +1187,12 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
               </text>
             )}
 
-            {obj.caption && (
-              <text x={ox + ow / 2} y={oy + oh - 1.5} fontSize={ptToMm(obj.captionStyle.fontSize)} fill={obj.captionStyle.color} fontWeight={obj.captionStyle.bold ? 'bold' : 'normal'} textAnchor="middle"
-                style={{ pointerEvents: isSelected ? 'auto' : 'none', cursor: isSelected ? 'text' : 'default' }}
-                onClick={(e) => { if (isSelected) { e.stopPropagation(); setSelectedId(obj.id); setEditingObjCaption(obj.id); } }}
-                title={isSelected ? 'Click to edit this panel sub-caption' : undefined}>
-                {obj.caption}
-              </text>
-            )}
+            {/* The panel sub-caption is deliberately NOT drawn inside the panel:
+                it is only merged into the figure caption at the bottom of the
+                canvas (see `autoGlobalCaption`), so it never shows up in the
+                composition, in Export PNG or in Insert into project. It stays
+                editable in the properties panel and in the floating caption
+                editor ("✎ Edit in place"). */}
 
             {/* Free text overlays — draggable anywhere inside the object; double-click to edit in place */}
             {(obj.texts || []).map(tx => {
@@ -1196,6 +1216,15 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
 
             {isSelected && (
               <rect data-selection-ui="true" x={ox + ow - 2} y={oy + oh - 2} width={2} height={2} fill="#3b82f6" style={{ cursor: 'nwse-resize' }} onMouseDown={(e) => startResize(e, obj.id)} />
+            )}
+
+            {/* Blue square marking the selected panel — screen only: it carries
+                data-selection-ui, so renderToDataUrl drops it from Export PNG,
+                "Save canvas" and "Insert into project". Drawn last (on top of the
+                figure) and transparent to the mouse, so the panel frame below
+                keeps receiving the drag. */}
+            {isSelected && (
+              <rect data-selection-ui="true" x={ox} y={oy} width={ow} height={oh} fill="none" stroke="#3b82f6" strokeWidth={0.5} style={{ pointerEvents: 'none' }} />
             )}
 
             {/* Link back to the original graph lives in the properties panel
@@ -1311,12 +1340,15 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
             <label className="text-[10px] font-bold text-slate-500">Letter Size (pt)
               <input type="number" min="4" max="48" value={selectedObj.letterStyle.fontSize} onChange={e => updateObj({ letterStyle: { ...selectedObj.letterStyle, fontSize: Number(e.target.value) } })} className="w-full border rounded p-1 text-xs" />
             </label>
-            <label className="text-[10px] font-bold text-slate-500 col-span-2">Caption (sub-caption of this panel — click the caption on the canvas to edit in place)
-              <textarea rows={2} value={selectedObj.caption} onChange={e => updateObj({ caption: e.target.value })} placeholder={`Sub-caption for panel ${selectedObj.letter || ''} — shown at the bottom of this panel and merged into the figure caption`} className="w-full border rounded p-1 text-xs mt-0.5" />
-            </label>
-            <label className="text-[10px] font-bold text-slate-500">Caption Size (pt)
-              <input type="number" min="4" max="48" value={selectedObj.captionStyle.fontSize} onChange={e => updateObj({ captionStyle: { ...selectedObj.captionStyle, fontSize: Number(e.target.value) } })} className="w-full border rounded p-1 text-xs" />
-            </label>
+            <div className="col-span-2 flex flex-col gap-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-bold text-slate-500">Caption (sub-caption — merged into the figure caption at the bottom, never drawn inside the panel)</span>
+                <button type="button" onClick={() => setEditingObjCaption(selectedObj.id)}
+                  className="shrink-0 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold px-2 py-0.5 rounded text-[10px]"
+                  title="Open the floating caption editor">✎ Edit in place</button>
+              </div>
+              <textarea rows={2} value={selectedObj.caption} onChange={e => updateObj({ caption: e.target.value })} placeholder={`Sub-caption for panel ${selectedObj.letter || ''} — merged into the figure caption at the bottom`} className="w-full border rounded p-1 text-xs" />
+            </div>
           </div>
           <div className="flex gap-2 items-center flex-wrap">
             <label className="text-[10px] font-bold text-slate-500">Letter Color
@@ -1324,12 +1356,6 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
             </label>
             <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500">
               <input type="checkbox" checked={selectedObj.letterStyle.bold} onChange={e => updateObj({ letterStyle: { ...selectedObj.letterStyle, bold: e.target.checked } })} /> Bold
-            </label>
-            <label className="text-[10px] font-bold text-slate-500">Caption Color
-              <input type="color" value={selectedObj.captionStyle.color} onChange={e => updateObj({ captionStyle: { ...selectedObj.captionStyle, color: e.target.value } })} className="w-8 h-6 rounded border cursor-pointer" />
-            </label>
-            <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500">
-              <input type="checkbox" checked={selectedObj.captionStyle.bold} onChange={e => updateObj({ captionStyle: { ...selectedObj.captionStyle, bold: e.target.checked } })} /> Bold
             </label>
           </div>
         </div>
@@ -1411,6 +1437,14 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
           <label className="text-[10px] font-bold text-slate-500 flex flex-col">Grid Rows
             <input type="number" min="1" max="20" value={gridRows} onChange={e => setGridRows(Number(e.target.value))} className="border rounded p-1 text-xs w-16" />
           </label>
+          <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 pb-2 cursor-pointer"
+            title="Draw a thin frame around every panel. It is part of the composition, so Export PNG, Save canvas and Insert into project follow this choice.">
+            <input type="checkbox" checked={showPanelBorders} onChange={e => setShowPanelBorders(e.target.checked)} /> Panel borders
+          </label>
+          <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 pb-2 cursor-pointer"
+            title="Draw the cell divider guides across the canvas (layout guides). They are part of the composition, so Export PNG, Save canvas and Insert into project follow this choice.">
+            <input type="checkbox" checked={showGridLines} onChange={e => setShowGridLines(e.target.checked)} /> Grid lines
+          </label>
           <label className="text-[10px] font-bold text-slate-500 flex flex-col flex-1 min-w-[220px]">Global caption (click to edit — merges the object sub-captions)
             <span className="border border-slate-200 rounded p-1 text-xs bg-slate-50 text-slate-600 truncate hover:border-blue-400 hover:bg-blue-50 cursor-text" title={effectiveGlobalCaption} onClick={() => { setSelectedId(null); setEditingCaption(true); }}>{effectiveGlobalCaption || 'Merges the object sub-captions (A: …, B: …)'}</span>
           </label>
@@ -1418,7 +1452,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
           <button onClick={undo} disabled={!undoStack.current.length || histTick < 0} className="bg-slate-100 border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-200 disabled:opacity-40" title="Undo last change (Ctrl+Z)">↩ Undo</button>
           <button onClick={() => selectedId && zoomToObject(selectedId)} disabled={!selectedId} title={selectedId ? 'Zoom fullscreen on the selected object' : 'Select an object first'}
             className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold px-3 py-1.5 rounded-lg text-xs">⛶ Zoom Object</button>
-          <button onClick={exportPng} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">Export PNG (300 DPI)</button>
+          <button onClick={exportPng} title="300 DPI PNG of the composition — the blue selection square and resize handles are never included; panel borders and grid lines follow the checkboxes." className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">Export PNG (300 DPI)</button>
           <button onClick={saveCanvasToLibrary} title="Save the whole canvas into the image library (Project tab) — you can recall it there later"
             className="bg-amber-500 hover:bg-amber-600 text-white font-bold px-3 py-1.5 rounded-lg text-xs">💾 Save canvas</button>
           <button onClick={() => { setPickMode('replace'); setShowLibrary(true); }}
@@ -1477,9 +1511,10 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
         );
       })()}
 
-      {/* Inline PANEL sub-caption editor — click a panel's caption on the canvas
-          to write its sub-caption comfortably in a floating textarea. Closes on
-          Enter / Escape or a real click outside — never on an internal re-render. */}
+      {/* Inline PANEL sub-caption editor — opened with “✎ Edit in place” in the
+          object properties (the caption is no longer drawn on the canvas).
+          Closes on Enter / Escape or a real click outside — never on an
+          internal re-render. */}
       {editingObjCaption && activeSvgEl() && (() => {
         const obj = objects.find(o => o.id === editingObjCaption);
         if (!obj) return null;
@@ -1548,7 +1583,15 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
                  <button onClick={() => { setPickMode('replace'); setShowLibrary(true); }}
                    title="Open the image library — browse or upload new images from your computer"
                    className="bg-teal-600 hover:bg-teal-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">🖼 Library</button>
-                 <button onClick={exportPng} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">Export PNG</button>
+                 <label className="flex items-center gap-1 text-[11px] font-bold text-slate-600 bg-slate-100 rounded-lg px-2 py-1.5 cursor-pointer"
+                   title="Draw a thin frame around every panel (composition setting — exports follow it).">
+                   <input type="checkbox" checked={showPanelBorders} onChange={e => setShowPanelBorders(e.target.checked)} /> Borders
+                 </label>
+                 <label className="flex items-center gap-1 text-[11px] font-bold text-slate-600 bg-slate-100 rounded-lg px-2 py-1.5 cursor-pointer"
+                   title="Draw the cell divider guides across the canvas (composition setting — exports follow it).">
+                   <input type="checkbox" checked={showGridLines} onChange={e => setShowGridLines(e.target.checked)} /> Grid
+                 </label>
+                 <button onClick={exportPng} title="PNG of the composition — the blue selection square and resize handles are never included; panel borders and grid lines follow the checkboxes." className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">Export PNG</button>
               </div>
             </div>
             <button onClick={() => { setFocusObjId(null); setIsFullScreen(false); }} className="shrink-0 bg-slate-800 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-slate-700 flex items-center gap-2">

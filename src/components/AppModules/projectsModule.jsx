@@ -370,6 +370,9 @@ export const ProjectsModule = ({
       discussion: '',
       conclusions: '',
       experiments: [],
+      // Project-level reference documents (Google Drive …/projects/<project>/useful_files).
+      usefulFiles: [],
+      usefulFilesFolderUrl: '',
       bibliography: [],
       references: [],
       figures: { background: [], discussion: [], conclusions: [] },

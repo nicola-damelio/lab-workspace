@@ -800,7 +800,7 @@ export const FCSOverlayVisualization = ({ ctx }) => {
   }, [overlayParam, visibleInstances, logScale, smoothHist, fillHist, smoothSigma]);
 
   const chartRef = useRef(null);
-  const zoom = useXZoom(chartRef, chartData.domain);
+  const zoom = useXZoom(chartRef, chartData.domain, cfgChartMargin(cfgAna, { top: 10, right: 20, left: 75, bottom: 45 }));
   useEffect(() => { zoom.reset(); }, [overlayParam, logScale]); 
 
   const applyPalette = (paletteKey) => {
@@ -932,7 +932,7 @@ export const FCSOverlayVisualization = ({ ctx }) => {
                     </div>
                     <div className="w-1/2 mx-auto pb-1">
                       <ResponsiveContainer width="100%" height={Number(cfgSplit.height) || 80}>
-                        <ComposedChart data={chartData.bins} margin={{ top: 2, right: 4, left: 0, bottom: 0 }}>
+                        <ComposedChart data={chartData.bins} margin={cfgChartMargin(cfgSplit, { top: 2, right: 4, left: 0, bottom: 0 })}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                           <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow hide={i < visibleInstances.length - 1} tickFormatter={cfgTickFormatter(cfgSplit, 'x') || undefined} tick={{ fontSize: Math.max(9, Number(cfgSplit.fontSize) || 11), fill: '#64748b' }} />
                           <YAxis tickFormatter={cfgTickFormatter(cfgSplit, 'y') || undefined} tick={{ fontSize: Math.max(9, Number(cfgSplit.fontSize) || 11), fill: '#64748b' }} width={Math.max(30, (Number(cfgSplit.fontSize) || 11) + 22)} domain={splitSharedY ? [0, chartData.maxCount] : [0, 'auto']} />
@@ -1290,7 +1290,7 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
   // `const` initialization would throw a "Cannot access ... before initialization"
   // (temporal dead zone) error on FCS load.
   const chartRef1D = useRef(null);
-  const zoom1D = useXZoom(chartRef1D, chartData1D.domain);
+  const zoom1D = useXZoom(chartRef1D, chartData1D.domain, cfgChartMargin(cfg1D, { top: 10, right: 20, left: 75, bottom: 45 }));
   useEffect(() => { zoom1D.reset(); }, [overlayParam1D, log1D]);
 
   const histXMirrors2D = overlayParam1D === xParam2D && log1D === logX2D;
@@ -3068,10 +3068,10 @@ export const DataAnalysis = ({ ctx }) => {
             {showCfgFreq && <SharedChartStylePanel cfg={cfgFreq} setCfg={setVizCfgFreq} series={chartData.map(c => ({key: c.name, label: c.name, color: c.fill}))} unit="%" />  }
             <div className={`relative ${fsFreq ? 'flex-1 min-h-0' : 'h-[300px]'}`}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 50 }}>
+                <BarChart data={chartData} margin={cfgChartMargin(cfgFreq, { top: 20, right: 30, left: 20, bottom: 50 })}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                   <XAxis dataKey="name" tick={{ fontSize: Math.max(9, cfgFreq.fontSize - 2) }} angle={-15} textAnchor="end" />
-                  <YAxis tick={{ fontSize: Math.max(9, cfgFreq.fontSize - 2) }} label={{ value: '% of Parent', angle: -90, position: 'insideLeft', fontSize: cfgFreq.fontSize }} />
+                  <YAxis tick={{ fontSize: Math.max(9, cfgFreq.fontSize - 2) }} label={cfgAxisLabel(cfgFreq, 'y', '% of Parent', 10)} />
                   <Tooltip formatter={(value) => `${value}%`} />
                   <Bar dataKey="value" radius={[4, 4, 0, 0]}>
                     {chartData.map((entry, index) => (<Cell key={`cell-${index}`} fill={entry.fill} />))}

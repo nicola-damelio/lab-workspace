@@ -458,6 +458,25 @@ secours reste active tant que les règles sont ouvertes.
 * Ajouter/retirer un membre : `Setup → Équipe & accès` (publication automatique
   si le jeton administrateur est enregistré). Un changement de **rôle** prend
   effet à la prochaine connexion de la personne.
+* **Verrouiller les données d'une expérience** : dans l'en-tête de chaque
+  expérience, un superutilisateur dispose de **🔒 Lock data** — et, si
+  l'expérience a plusieurs conditions, de **🔒 Lock all N** — pour figer les
+  données. Les autres membres gardent **toute la lecture** (résultats, graphes,
+  tableaux) mais plus aucune modification n'est enregistrée : une bannière leur
+  propose de **copier les données dans une nouvelle instance**
+  (`⧉ Copy the data to a new instance`) pour mener une autre analyse — la copie
+  n'est jamais verrouillée. Seul un superutilisateur peut déverrouiller
+  (**🔓 Unlock data**) et modifier ou supprimer une expérience figée. La carte de
+  l'expérience affiche un badge « Data locked » (voir `src/utils/dataLock.js`).
+* **Fichiers utiles d'un projet** : sur la page d'un projet, la section
+  **📎 Useful files** enregistre les documents de référence du projet
+  (protocoles, PDF, tableurs, feuilles de données…) sur Google Drive, dans un
+  répertoire **`useful_files`** créé DANS le dossier du projet :
+  `<Lab Workspace>/<dataset>/projects/<projet>/useful_files`. Chaque fichier
+  garde son propre nom ; le projet n'en conserve qu'un index (nom, taille, lien,
+  auteur, date). **⟳ Refresh from Drive** relit le dossier réel — c'est Drive
+  qui fait foi — et **📂 Open the Drive folder ↗** ouvre (et crée au besoin) le
+  répertoire (voir `src/utils/projectFiles.js`).
 * Si le serveur de jetons est momentanément injoignable, personne ne peut se
   connecter (Firestore refuse alors tout le monde — c'est le prix de la
   protection). `/health` et les logs Cloud Run indiquent l'état du service.

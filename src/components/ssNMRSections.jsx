@@ -833,6 +833,11 @@ const useXZoom = (chartRef, dataDomain, margin = CHART_MARGIN) => {
   const eff = domain || safe;
   const effRef = useRef(eff);
   effRef.current = eff;
+  // The window listeners below are registered only once, so they would capture
+  // the margins of the first render; reading them from a ref keeps the drag math
+  // pixel-accurate when the panel changes the font size / axis-title gap.
+  const marginRef = useRef(margin);
+  marginRef.current = margin;
 
   const getX = (clientX) => {
     const el = chartRef.current;
@@ -840,9 +845,10 @@ const useXZoom = (chartRef, dataDomain, margin = CHART_MARGIN) => {
     const wrapper = el.querySelector('.recharts-wrapper');
     if (!wrapper) return null;
     const rect = wrapper.getBoundingClientRect();
-    const plotW = rect.width - margin.left - margin.right;
+    const m = marginRef.current;
+    const plotW = rect.width - m.left - m.right;
     if (plotW <= 0) return null;
-    const fx = Math.min(1, Math.max(0, (clientX - rect.left - margin.left) / plotW));
+    const fx = Math.min(1, Math.max(0, (clientX - rect.left - m.left) / plotW));
     const d0 = effRef.current;
     return d0[0] + fx * (d0[1] - d0[0]);
   };
@@ -885,6 +891,9 @@ const useYZoom = (chartRef, dataDomain, margin = CHART_MARGIN) => {
   const eff = domain || safe;
   const effRef = useRef(eff);
   effRef.current = eff;
+  // Same once-registered-listener caveat as useXZoom — read the live margins.
+  const marginRef = useRef(margin);
+  marginRef.current = margin;
 
   const getY = (clientY) => {
     const el = chartRef.current;
@@ -892,9 +901,10 @@ const useYZoom = (chartRef, dataDomain, margin = CHART_MARGIN) => {
     const wrapper = el.querySelector('.recharts-wrapper');
     if (!wrapper) return null;
     const rect = wrapper.getBoundingClientRect();
-    const plotH = rect.height - margin.top - margin.bottom;
+    const m = marginRef.current;
+    const plotH = rect.height - m.top - m.bottom;
     if (plotH <= 0) return null;
-    const fy = Math.min(1, Math.max(0, (clientY - rect.top - margin.top) / plotH));
+    const fy = Math.min(1, Math.max(0, (clientY - rect.top - m.top) / plotH));
     const d0 = effRef.current;
     // Screen Y grows downward, data domain grows upward — invert.
     return d0[1] - fy * (d0[1] - d0[0]);
@@ -1350,17 +1360,23 @@ export const Data = ({ ctx }) => {
   };
 
   const normalizeActiveSpectrum = () => {
-    const parsed = computeParsed(instTest);
+    // Normalising an already normalised spectrum compounded the scaling and
+    // overwrote the raw-intensity backup (so "Revert to raw intensity" restored
+    // normalised numbers): always rescale the raw columns.
+    const normalizeFrom = instTest.yUnit === 'norm' && Array.isArray(instTest.rawSpectraColumns)
+      ? { ...instTest, spectraColumns: instTest.rawSpectraColumns }
+      : instTest;
+    const parsed = computeParsed(normalizeFrom);
     if (!parsed.parsedSpectra.length) { alert('No spectrum to normalize.'); return; }
     const maxAbs = Math.max(1e-9, ...parsed.parsedSpectra.flatMap((s) => s.values.map((v) => Math.abs(v))));
-    const cols = (instTest.spectraColumns || []).map((c) => ({
+    const cols = (normalizeFrom.spectraColumns || []).map((c) => ({
       ...c,
       data: String(c.data || '').split(/[\n,]+/).map((s) => {
         const n = parseFloat(String(s).trim());
         return Number.isFinite(n) ? String(n / maxAbs) : s;
       }).join('\n')
     }));
-    patchActive({ spectraColumns: cols, rawSpectraColumns: instTest.spectraColumns, yUnit: 'norm' });
+    patchActive({ spectraColumns: cols, rawSpectraColumns: normalizeFrom.spectraColumns, yUnit: 'norm' });
   };
   const revertNormalization = () => {
     if (!Array.isArray(instTest.rawSpectraColumns)) return;
@@ -1932,7 +1948,7 @@ export const SpectraVisualization = ({ ctx }) => {
   const chartRef = useRef(null);
   // Combined X + Y mouse zoom: drag horizontally to zoom the frequency axis,
   // vertically to zoom the intensity axis (same as the NMR 1D spectrum).
-  const zoom = useXYZoom(chartRef, dataDomain, [yAutoMin, yAutoMax], CHART_MARGIN);
+  const zoom = useXYZoom(chartRef, dataDomain, [yAutoMin, yAutoMax], cfgChartMargin(cfg, CHART_MARGIN));
   const yLabel = activeTest.yUnit === 'norm' ? 'Normalized intensity (a.u.)' : 'Intensity (a.u.)';
   const xLabel = cfg.xAxisLabel || 'Frequency (kHz)';
   const yLab = cfg.yAxisLabel || yLabel;
@@ -2026,10 +2042,10 @@ export const SpectraVisualization = ({ ctx }) => {
                   </div>
                   <div className={`flex-1 relative min-h-0 ${fsSmall !== s.key ? 'pointer-events-none' : ''}`}>
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={s.data} margin={{ top: 5, right: 8, bottom: fsSmall === s.key ? 30 : 18, left: fsSmall === s.key ? 10 : 2 }}>
+                      <LineChart data={s.data} margin={fsSmall === s.key ? cfgChartMargin(cfg, CHART_MARGIN) : { top: 5, right: 8, bottom: 18, left: 2 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                        <XAxis type="number" dataKey="x" tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} domain={['dataMin', 'dataMax']} label={fsSmall === s.key ? { value: xLabel, position: 'insideBottom', offset: -20, fill: '#64748b', fontSize: cfg.fontSize + 1 } : undefined} />
-                        <YAxis domain={[yAutoMin, yAutoMax]} tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} width={fsSmall === s.key ? 60 : 38} label={fsSmall === s.key ? { value: yLab, angle: -90, position: 'insideLeft', offset: -5, fill: '#64748b', fontSize: cfg.fontSize + 1 } : undefined} />
+                        <XAxis type="number" dataKey="x" tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} domain={['dataMin', 'dataMax']} label={fsSmall === s.key ? cfgAxisLabel(cfg, 'x', xLabel) : undefined} />
+                        <YAxis domain={[yAutoMin, yAutoMax]} tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} width={fsSmall === s.key ? 60 : 38} label={fsSmall === s.key ? cfgAxisLabel(cfg, 'y', yLab) : undefined} />
                         {fsSmall === s.key && <Tooltip />}
                         <Line type="monotone" dataKey="y" stroke={s.color} strokeWidth={cfg.lineThickness || 2} strokeDasharray={lineDash(cfg.lineStyle)} dot={false} isAnimationActive={false} />
                       </LineChart>
@@ -2049,7 +2065,10 @@ export const SpectraVisualization = ({ ctx }) => {
 DATA ANALYSIS — FITTING (DYNAMIC PURE COMPONENTS)
 ======================================================================== */
 
-const OrderProfileChart = ({ res }) => {
+/* Order profile of a saved quadrupolar fit. The parent (QuadrupolarFitting)
+   renders <SharedChartStylePanel cfg={cfg} />, so the chart margin and the
+   `S_CD` axis title follow the panel's margin/font/gap controls. */
+const OrderProfileChart = ({ res, cfg = {} }) => {
   const data = (res.activeBases || []).map((k) => ({
     name: SSNMR_FIT_COMPONENTS[k]?.label || k,
     S: res.fractions ? res.fractions[k] : 0,
@@ -2059,10 +2078,10 @@ const OrderProfileChart = ({ res }) => {
   return (
     <div style={{ width: '100%', height: 260 }}>
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 10, right: 10, bottom: 20, left: 0 }}>
+        <BarChart data={data} margin={cfgChartMargin(cfg, { top: 10, right: 10, bottom: 20, left: 0 })}>
           <CartesianGrid strokeDasharray="3 3" vertical={false} />
           <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#64748b' }} />
-          <YAxis domain={[0, (dataMax) => Math.max(0.3, Math.ceil((dataMax * 1.2) * 10) / 10)]} tick={{ fontSize: 11, fill: '#64748b' }} label={{ value: 'S_CD', angle: -90, position: 'insideLeft', fontSize: 12, fill: '#64748b' }} />
+          <YAxis domain={[0, (dataMax) => Math.max(0.3, Math.ceil((dataMax * 1.2) * 10) / 10)]} tick={{ fontSize: 11, fill: '#64748b' }} label={cfgAxisLabel(cfg, 'y', 'S_CD', 0)} />
           <Tooltip formatter={(v, name, item) => [`S = ${v}  (Δν = ${item.payload.dNu} kHz)`, 'Order parameter']} />
           <ReferenceLine y={0} stroke="#94a3b8" />
           <Bar dataKey="S" isAnimationActive={false}>
@@ -2080,6 +2099,13 @@ export const QuadrupolarFitting = ({ ctx }) => {
   const { instances } = d;
   const [fitInstId, setFitInstId] = useState(activeTest.id);
   const [fitSpecIdx, setFitSpecIdx] = useState(0);
+  // Same as the CD fitter: the condition tabs at the top of the page drive this
+  // panel, so switching instance must retarget the "Target Condition" dropdown
+  // to that instance instead of leaving the previous one selected.
+  useEffect(() => {
+    setFitInstId((prev) => (prev === activeTest.id ? prev : activeTest.id));
+    setFitSpecIdx(0);
+  }, [activeTest.id]);
   const [msg, setMsg] = useState('');
   const [fsFit, setFsFit] = useState(false);
   const [showCfg, setShowCfg] = useState(false);
@@ -2136,7 +2162,7 @@ export const QuadrupolarFitting = ({ ctx }) => {
     dom(cfg.xMin) !== undefined ? dom(cfg.xMin) : (allXs.length ? Math.min(...allXs) - padX : -80),
     dom(cfg.xMax) !== undefined ? dom(cfg.xMax) : (allXs.length ? Math.max(...allXs) + padX : 80)
   ];
-  const zoomFit = useXZoom(overlayRef, resolvedXDomain);
+  const zoomFit = useXZoom(overlayRef, resolvedXDomain, cfgChartMargin(cfg, CHART_MARGIN));
 
   const allSaved = useMemo(() => {
     const out = [];
@@ -2207,7 +2233,7 @@ export const QuadrupolarFitting = ({ ctx }) => {
             <p className="text-xs text-slate-500">
               Fit quality: <b>R² = {Number(savedFit.r2 || 0).toFixed(4)}</b> · {savedFit.nPoints} points · χ = {savedFit.chiKHz} kHz · σ = {Number(savedFit.sigmaFit || 0).toFixed(2)} kHz · saved {savedFit.savedAt}
             </p>
-            <OrderProfileChart res={savedFit} />
+            <OrderProfileChart res={savedFit} cfg={cfg} />
           </div>
           <div className="flex flex-col">
             {fsFit && <div className={OVERLAY_CLASSES} onClick={() => setFsFit(false)} />}
@@ -2741,7 +2767,7 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
   const xs = visibleSeries.flatMap((s) => includedPts(s).filter((p) => Number.isFinite(p.x)).map((p) => p.x));
   const padX = xs.length ? ((Math.max(...xs) - Math.min(...xs)) * 0.06 || 1) : 1;
   const dataDomain = xs.length ? [Math.min(...xs) - padX, Math.max(...xs) + padX] : [0, 1];
-  const zoom = useXZoom(chartRef, dataDomain);
+  const zoom = useXZoom(chartRef, dataDomain, cfgChartMargin(cfg, { top: 8, right: 16, bottom: 30, left: 12 }));
 
   const numData = (s) => includedPts(s).filter((p) => Number.isFinite(p.x)).sort((a, b) => a.x - b.x).map((p) => ({ x: p.x, y: p.y, sd: effSD(s.key, p), name: p.name }));
   const excludedPts = (s) => s.pts.filter((p) => p.excluded && Number.isFinite(p.x)).sort((a, b) => a.x - b.x).map((p) => ({ x: p.x, y: p.y, name: p.name }));
@@ -2811,7 +2837,7 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
     return [min - pad, max + pad];
   }, [paramData]);
   const fitChartRef = useRef(null);
-  const fitZoom = useYZoom(fitChartRef, paramYDataDomain);
+  const fitZoom = useYZoom(fitChartRef, paramYDataDomain, cfgChartMargin(cfg, { top: 10, right: 10, bottom: 20, left: 10 }));
 
   const refLines = (
     <>
@@ -3103,7 +3129,7 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
                     </div>
                     <div ref={fitChartRef} onMouseDown={fitZoom.onMouseDown} style={{ height: Math.min(280, cfg.height), aspectRatio: String(cfg.aspect || 2) }} className="select-none">
                       <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={paramData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
+                        <BarChart data={paramData} margin={cfgChartMargin(cfg, { top: 10, right: 10, bottom: 20, left: 10 })}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} />
                           <XAxis dataKey="name" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={Math.max(9, cfg.fontSize - 2)} />} />
                           <YAxis domain={[dom(cfg.yMin) ?? fitZoom.domain[0], dom(cfg.yMax) ?? fitZoom.domain[1]]} allowDataOverflow tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: Math.max(9, cfg.fontSize - 2) }} label={cfgAxisLabel(cfg, 'y', paramGraphVar, 0)} />

@@ -1211,6 +1211,9 @@ const NMRTooltip = ({ active, payload, diagonalColor, selectedKeys, hideIdentity
 
 const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, rowLabels, simCfg = {} }) => {
   const { fontSize = 11, title: cfgTitle = '', xAxisLabel: cfgXLabel = '' } = simCfg;
+  // Axis title styling (font size / bold / italic) comes from the shared panel
+  // that drives the simulated spectra (see <SharedChartStylePanel cfg={simCfg}>).
+  const xTitleProps = cfgAxisLabel({ ...simCfg, fontSize }, 'x', cfgXLabel || xAxisLabel, 0);
   const containerRef = useRef(null);
   const [width, setWidth] = useState(0);
   const [hover, setHover] = useState(null);
@@ -1276,7 +1279,7 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
             </g>
           );
         })}
-        <text x={margin.left + plotW / 2} y={svgHeight - 6} textAnchor="middle" fontSize={11} fill="#64748b">{cfgXLabel || xAxisLabel}</text>
+        <text x={margin.left + plotW / 2} y={svgHeight - 6} textAnchor="middle" fontSize={xTitleProps.fontSize} fontWeight={xTitleProps.fontWeight} fontStyle={xTitleProps.fontStyle} fill="#64748b">{xTitleProps.value}</text>
       </svg>
       {hover && ranges[hover.idx] && (
         <div className="absolute bg-white p-2 border border-slate-200 shadow-md rounded text-xs z-50 pointer-events-none whitespace-nowrap" style={{ left: hover.x + 12, top: Math.max(0, hover.y - 44) }}>
@@ -1443,6 +1446,10 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
   const effTitle = cfgTitle || title;
   const effXLabel = xAxisLabel || xLabel;
   const effTickColor = tickColor || '#64748b';
+  // Panel-controlled margins/titles: the SAME margin object feeds the chart and
+  // the drag-to-zoom pixel math below, so zooming stays pixel-accurate.
+  const plotMargin = cfgChartMargin({ ...simCfg, fontSize: fs }, CHART_MARGIN_1D);
+  const xLabelProps = cfgAxisLabel({ ...simCfg, fontSize: fs }, 'x', effXLabel, 25);
   const baseDomain = (xMin !== '' || xMax !== '') ? [(xMin !== '' ? Number(xMin) : fullDomain[0]), (xMax !== '' ? Number(xMax) : fullDomain[1])] : fullDomain;
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState(baseDomain);
@@ -1458,9 +1465,9 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
     const wrapper = chartRef.current.querySelector('.recharts-wrapper');
     if (!wrapper) return null;
     const rect = wrapper.getBoundingClientRect();
-    const plotW = rect.width - CHART_MARGIN_1D.left - CHART_MARGIN_1D.right;
+    const plotW = rect.width - plotMargin.left - plotMargin.right;
     if (plotW <= 0) return null;
-    const px = clientX - rect.left - CHART_MARGIN_1D.left;
+    const px = clientX - rect.left - plotMargin.left;
     const fx = Math.min(1, Math.max(0, px / plotW));
     return xDomain[1] - fx * (xDomain[1] - xDomain[0]);
   };
@@ -1541,7 +1548,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
   }, [processedData, simShowLabels, simLabelFormat, simLabelDim]);
 
   const labelAreaH = (simShowLabels && peakMarkers.length > 0) ? Math.min(220, 40 + peakMarkers.length * (simLabelFontSize + 10)) : 0;
-  const activeMargin = { ...CHART_MARGIN_1D, top: CHART_MARGIN_1D.top + labelAreaH };
+  const activeMargin = { ...plotMargin, top: plotMargin.top + labelAreaH };
   
   return (
     <>
@@ -1559,7 +1566,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={processedData} margin={activeMargin}>
                 <CartesianGrid strokeDasharray="3 3" vertical={true} horizontal={false} stroke="#f1f5f9" />
-                <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} fs={fs} angle={tickAngle} color={effTickColor} />} label={{ value: effXLabel, position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} axisLine={{ stroke: '#cbd5e1' }} />
+                <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} fs={fs} angle={tickAngle} color={effTickColor} />} label={xLabelProps} axisLine={{ stroke: '#cbd5e1' }} />
                 <YAxis type="number" dataKey="y" domain={[yMin !== '' ? Number(yMin) : 0, yMax !== '' ? Number(yMax) : 'auto']} hide={true} />
                 <Tooltip cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} content={<NMRTooltip selectedKeys={selectedKeys} hideIdentity={hidePeakIdentity} />} />
                 <Bar dataKey="y" barSize={2} shape={(props) => {
@@ -1746,7 +1753,7 @@ const place2DLabels = (crossPeakData, { showLabels, format, dim, yRange, boxW, a
 const CROSSHAIR_STROKE = '#94a3b8';
 const CROSSHAIR_DASH = '3 3';
 
-const use2DCrosshair = ({ chartRef, xDomain, yDomain, points = [], markerScale = 1, isDraggingRef = null }) => {
+const use2DCrosshair = ({ chartRef, xDomain, yDomain, points = [], markerScale = 1, isDraggingRef = null, margin = CHART_MARGIN }) => {
   const [hover, setHover] = useState(null); // { x, y, peak, tipLeft, tipTop }
   const keyRef = useRef('');
   const pendingRef = useRef(null);
@@ -1781,11 +1788,11 @@ const use2DCrosshair = ({ chartRef, xDomain, yDomain, points = [], markerScale =
     const wrapper = chartRef.current.querySelector('.recharts-wrapper');
     if (!wrapper) return;
     const rect = wrapper.getBoundingClientRect();
-    const plotW = rect.width - CHART_MARGIN.left - CHART_MARGIN.right;
-    const plotH = rect.height - CHART_MARGIN.top - CHART_MARGIN.bottom;
+    const plotW = rect.width - margin.left - margin.right;
+    const plotH = rect.height - margin.top - margin.bottom;
     if (plotW <= 0 || plotH <= 0) return;
-    const px = e.clientX - rect.left - CHART_MARGIN.left;
-    const py = e.clientY - rect.top - CHART_MARGIN.top;
+    const px = e.clientX - rect.left - margin.left;
+    const py = e.clientY - rect.top - margin.top;
     const fx = Math.min(1, Math.max(0, px / plotW));
     const fy = Math.min(1, Math.max(0, py / plotH));
     const x = xDomain[1] - fx * (xDomain[1] - xDomain[0]);
@@ -1823,8 +1830,13 @@ const use2DCrosshair = ({ chartRef, xDomain, yDomain, points = [], markerScale =
 };
 
 const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setExpandedPanel, panelId, diagonalColor, selectedKeys, manualKeys = [], aspect = 1, fs = 11, simCfg = {} }) => {
-  const { simShowLabels, hidePeakIdentity = false, simLabelFormat, simLabelDim, simLabelFontSize = 12, simLabelColor = '#b91c1c', tickAngle = 0, lineColor = '', xAxisLabel = '', title: cfgTitle = '', tickColor = '' } = simCfg;
+  const { simShowLabels, hidePeakIdentity = false, simLabelFormat, simLabelDim, simLabelFontSize = 12, simLabelColor = '#b91c1c', tickAngle = 0, lineColor = '', xAxisLabel = '', yAxisLabel: cfgYLabel = '', title: cfgTitle = '', tickColor = '' } = simCfg;
   const isExpanded = expandedPanel === panelId;
+  // Panel-controlled margins/titles (same object feeds the chart, the drag-rect
+  // math and the crosshair overlay, so everything stays pixel-aligned).
+  const plotMargin = cfgChartMargin({ ...simCfg, fontSize: fs }, CHART_MARGIN);
+  const xLabelProps = cfgAxisLabel({ ...simCfg, fontSize: fs }, 'x', xAxisLabel || '¹H F2 (ppm)', 25);
+  const yLabelProps = cfgAxisLabel({ ...simCfg, fontSize: fs }, 'y', cfgYLabel || '¹H F1 (ppm)', 20);
   const [xDomain, setXDomain] = useState([0, 11]);
   const [yDomain, setYDomain] = useState([0, 11]);
   const [refAreaLeft, setRefAreaLeft] = useState(null);
@@ -1841,11 +1853,11 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
     const wrapper = chartRef.current.querySelector('.recharts-wrapper');
     if (!wrapper) return null;
     const rect = wrapper.getBoundingClientRect();
-    const plotW = rect.width - CHART_MARGIN.left - CHART_MARGIN.right;
-    const plotH = rect.height - CHART_MARGIN.top - CHART_MARGIN.bottom;
+    const plotW = rect.width - plotMargin.left - plotMargin.right;
+    const plotH = rect.height - plotMargin.top - plotMargin.bottom;
     if (plotW <= 0 || plotH <= 0) return null;
-    const px = clientX - rect.left - CHART_MARGIN.left;
-    const py = clientY - rect.top - CHART_MARGIN.top;
+    const px = clientX - rect.left - plotMargin.left;
+    const py = clientY - rect.top - plotMargin.top;
     const fx = Math.min(1, Math.max(0, px / plotW));
     const fy = Math.min(1, Math.max(0, py / plotH));
     return { x: xDomain[1] - fx * (xDomain[1] - xDomain[0]), y: yDomain[0] + fy * (yDomain[1] - yDomain[0]) };
@@ -1894,7 +1906,8 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
     chartRef, xDomain, yDomain,
     points: all2DPeaks,
     markerScale: simShowLabels ? 1 : 1.45,
-    isDraggingRef: isDragging
+    isDraggingRef: isDragging,
+    margin: plotMargin
   });
 
   // Like the 1D plots: only dim the cross peaks when the current selection
@@ -1954,10 +1967,10 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
         <div ref={(n) => { chartRef.current = n; boxRef.current = n; }} className="select-none relative flex-1 min-h-0">
           <div onMouseDown={handleMouseDown} onMouseMove={crosshair.onMouseMove} onMouseLeave={crosshair.onMouseLeave} style={{ width: '100%', height: '100%' }}>
             <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={CHART_MARGIN}>
+              <ScatterChart margin={plotMargin}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} angle={tickAngle} color={tickColor || '#64748b'} />} label={{ value: xAxisLabel || '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} />
-                <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomYTick1H isZoomed={isZoomed} fs={fs} color={tickColor || '#64748b'} />} label={{ value: '¹H F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fs + 1 }} />
+                <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} angle={tickAngle} color={tickColor || '#64748b'} />} label={xLabelProps} />
+                <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomYTick1H isZoomed={isZoomed} fs={fs} color={tickColor || '#64748b'} />} label={yLabelProps} />
                 {/* Crosshair guides + peak tooltip are drawn deterministically via use2DCrosshair below */}
                 
                 {/* Changed shape to function to avoid DOM warning propagation */}
@@ -1987,10 +2000,10 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
           )}
           {isZoomed && (
             <>
-              <div className="absolute left-0 right-0 z-10 flex items-center" style={{ bottom: '0px', paddingLeft: CHART_MARGIN.left, paddingRight: CHART_MARGIN.right }}>
+              <div className="absolute left-0 right-0 z-10 flex items-center" style={{ bottom: '0px', paddingLeft: plotMargin.left, paddingRight: plotMargin.right }}>
                 <AxisScrollbar domain={xDomain} fullDomain={[0, 11]} onChange={setXDomain} />
               </div>
-              <div className="absolute top-0 bottom-0 z-10 flex justify-center" style={{ right: '0px', paddingTop: CHART_MARGIN.top, paddingBottom: CHART_MARGIN.bottom }}>
+              <div className="absolute top-0 bottom-0 z-10 flex justify-center" style={{ right: '0px', paddingTop: plotMargin.top, paddingBottom: plotMargin.bottom }}>
                 <AxisScrollbar domain={yDomain} fullDomain={[0, 11]} onChange={setYDomain} vertical={true} />
               </div>
             </>
@@ -2002,8 +2015,13 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
 };
 
 const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panelId, selectedKeys, manualKeys = [], yAxisLabel = '¹³C F1 (ppm)', yDomainInit = [0, 220], yTicks = TICKS_13C, aspect = 1, fs = 11, simCfg = {} }) => {
-  const { simShowLabels, hidePeakIdentity = false, simLabelFormat, simLabelDim, simLabelFontSize = 12, simLabelColor = '#b91c1c', tickAngle = 0, xAxisLabel = '', title: cfgTitle = '', tickColor = '' } = simCfg;
+  const { simShowLabels, hidePeakIdentity = false, simLabelFormat, simLabelDim, simLabelFontSize = 12, simLabelColor = '#b91c1c', tickAngle = 0, xAxisLabel = '', yAxisLabel: cfgYLabel = '', title: cfgTitle = '', tickColor = '' } = simCfg;
   const isExpanded = expandedPanel === panelId;
+  // Panel-controlled margins/titles (same object feeds the chart, the drag-rect
+  // math and the crosshair overlay, so everything stays pixel-aligned).
+  const plotMargin = cfgChartMargin({ ...simCfg, fontSize: fs }, CHART_MARGIN);
+  const xLabelProps = cfgAxisLabel({ ...simCfg, fontSize: fs }, 'x', xAxisLabel || '¹H F2 (ppm)', 25);
+  const yLabelProps = cfgAxisLabel({ ...simCfg, fontSize: fs }, 'y', cfgYLabel || yAxisLabel, 20);
   const [xDomain, setXDomain] = useState([0, 11]);
   const [yDomain, setYDomain] = useState(yDomainInit);
   const [refAreaLeft, setRefAreaLeft] = useState(null);
@@ -2020,11 +2038,11 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
     const wrapper = chartRef.current.querySelector('.recharts-wrapper');
     if (!wrapper) return null;
     const rect = wrapper.getBoundingClientRect();
-    const plotW = rect.width - CHART_MARGIN.left - CHART_MARGIN.right;
-    const plotH = rect.height - CHART_MARGIN.top - CHART_MARGIN.bottom;
+    const plotW = rect.width - plotMargin.left - plotMargin.right;
+    const plotH = rect.height - plotMargin.top - plotMargin.bottom;
     if (plotW <= 0 || plotH <= 0) return null;
-    const px = clientX - rect.left - CHART_MARGIN.left;
-    const py = clientY - rect.top - CHART_MARGIN.top;
+    const px = clientX - rect.left - plotMargin.left;
+    const py = clientY - rect.top - plotMargin.top;
     const fx = Math.min(1, Math.max(0, px / plotW));
     const fy = Math.min(1, Math.max(0, py / plotH));
     return { x: xDomain[1] - fx * (xDomain[1] - xDomain[0]), y: yDomain[0] + fy * (yDomain[1] - yDomain[0]) };
@@ -2069,7 +2087,8 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
     chartRef, xDomain, yDomain,
     points: all2DPeaks,
     markerScale: simShowLabels ? 1 : 1.45,
-    isDraggingRef: isDragging
+    isDraggingRef: isDragging,
+    margin: plotMargin
   });
 
   // Only dim the cross peaks when the selection matches one in THIS panel —
@@ -2093,10 +2112,10 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
         <div ref={(n) => { chartRef.current = n; boxRef.current = n; }} className="select-none relative flex-1 min-h-0">
           <div onMouseDown={handleMouseDown} onMouseMove={crosshair.onMouseMove} onMouseLeave={crosshair.onMouseLeave} style={{ width: '100%', height: '100%' }}>
             <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={CHART_MARGIN}>
+              <ScatterChart margin={plotMargin}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} angle={tickAngle} color={tickColor || '#64748b'} />} label={{ value: xAxisLabel || '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} />
-                <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : yTicks} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} fs={fs} color={tickColor || '#64748b'} />} label={{ value: yAxisLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fs + 1 }} />
+                <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} angle={tickAngle} color={tickColor || '#64748b'} />} label={xLabelProps} />
+                <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : yTicks} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} fs={fs} color={tickColor || '#64748b'} />} label={yLabelProps} />
                 {/* Crosshair guides + peak tooltip are drawn deterministically via use2DCrosshair below */}
                 <Scatter data={processedCrossPeaks} shape={(props) => {
                   const { cx, cy, payload } = props;
@@ -2152,10 +2171,10 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
           )}
           {isZoomed && (
             <>
-              <div className="absolute left-0 right-0 z-10 flex items-center" style={{ bottom: '0px', paddingLeft: CHART_MARGIN.left, paddingRight: CHART_MARGIN.right }}>
+              <div className="absolute left-0 right-0 z-10 flex items-center" style={{ bottom: '0px', paddingLeft: plotMargin.left, paddingRight: plotMargin.right }}>
                 <AxisScrollbar domain={xDomain} fullDomain={[0, 11]} onChange={setXDomain} />
               </div>
-              <div className="absolute top-0 bottom-0 z-10 flex justify-center" style={{ right: '0px', paddingTop: CHART_MARGIN.top, paddingBottom: CHART_MARGIN.bottom }}>
+              <div className="absolute top-0 bottom-0 z-10 flex justify-center" style={{ right: '0px', paddingTop: plotMargin.top, paddingBottom: plotMargin.bottom }}>
                 <AxisScrollbar domain={yDomain} fullDomain={yDomainInit} onChange={setYDomain} vertical={true} />
               </div>
             </>
@@ -3873,15 +3892,21 @@ const useXZoom = (chartRef, dataDomain, margin = CHART_MARGIN) => {
   const eff = domain || safe;
   const effRef = useRef(eff);
   effRef.current = eff;
+  // The window listeners below are registered only once, so they would capture
+  // the margins of the first render; reading them from a ref keeps the drag math
+  // pixel-accurate when the panel changes the font size / axis-title gap.
+  const marginRef = useRef(margin);
+  marginRef.current = margin;
   const getX = (clientX) => {
     const el = chartRef.current;
     if (!el) return null;
     const wrapper = el.querySelector('.recharts-wrapper');
     if (!wrapper) return null;
     const rect = wrapper.getBoundingClientRect();
-    const plotW = rect.width - margin.left - margin.right;
+    const m = marginRef.current;
+    const plotW = rect.width - m.left - m.right;
     if (plotW <= 0) return null;
-    const fx = Math.min(1, Math.max(0, (clientX - rect.left - margin.left) / plotW));
+    const fx = Math.min(1, Math.max(0, (clientX - rect.left - m.left) / plotW));
     const d0 = effRef.current;
     return d0[0] + fx * (d0[1] - d0[0]);
   };
@@ -6317,15 +6342,19 @@ let dom = brukerZoomDom || xFull;
     const nmr1dLabelColor = activeTest.nmr1dLabelColor || '#b91c1c';
     const labelAreaH = (showPeakLabels && peakMarkers.length > 0) ? Math.min(220, 40 + peakMarkers.length * (nmr1dLabelFontSize + 10)) : 0;
     const topMargin = 10;
+    // Panel-controlled margins/titles — the same margin object is used by the
+    // chart, the drag-to-zoom pixel math and the peak-label overlay.
+    const plotMargin = cfgChartMargin(nmr1dCfg, CHART_MARGIN);
+    const xLabelProps = cfgAxisLabel(nmr1dCfg, 'x', nmr1dCfg.xAxisLabel || 'Chemical Shift (ppm)', 12);
 
     const getX = (clientX) => {
       if (!brukerChartRef.current) return null;
       const w = brukerChartRef.current.querySelector('.recharts-wrapper');
       if (!w) return null;
       const r = w.getBoundingClientRect();
-      const plotW = r.width - CHART_MARGIN.left - CHART_MARGIN.right;
+      const plotW = r.width - plotMargin.left - plotMargin.right;
       if (plotW <= 0) return null;
-  const fx = Math.min(1, Math.max(0, (clientX - r.left - CHART_MARGIN.left) / plotW));
+  const fx = Math.min(1, Math.max(0, (clientX - r.left - plotMargin.left) / plotW));
    return dom[1] - fx * (dom[1] - dom[0]);
     };
     // Pixel → intensity value using the currently displayed Y domain (so a second
@@ -6335,7 +6364,7 @@ let dom = brukerZoomDom || xFull;
       const w = brukerChartRef.current.querySelector('.recharts-wrapper');
       if (!w) return null;
       const r = w.getBoundingClientRect();
-      const plotH = r.height - (topMargin + labelAreaH) - CHART_MARGIN.bottom;
+      const plotH = r.height - (topMargin + labelAreaH) - plotMargin.bottom;
       if (plotH <= 0) return null;
       const fy = Math.min(1, Math.max(0, (clientY - r.top - topMargin - labelAreaH) / plotH));
       return effYDom[1] - fy * (effYDom[1] - effYDom[0]);
@@ -6536,7 +6565,7 @@ let dom = brukerZoomDom || xFull;
         <div ref={brukerChartRef} className="select-none" style={{height: PANEL_H, backgroundColor: 'white', position: 'relative'}}
              onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}>
        <ResponsiveContainer width="100%" height="100%">
-         <LineChart data={chartData} margin={{top: topMargin + labelAreaH, right: CHART_MARGIN.right, bottom: CHART_MARGIN.bottom, left: CHART_MARGIN.left}}>
+         <LineChart data={chartData} margin={{top: topMargin + labelAreaH, right: plotMargin.right, bottom: plotMargin.bottom, left: plotMargin.left}}>
            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
            <XAxis type="number" dataKey="x" domain={dom} reversed={true} allowDataOverflow
              ticks={(() => {
@@ -6552,7 +6581,7 @@ let dom = brukerZoomDom || xFull;
              })()}
              tickFormatter={v => Number(v).toFixed(2)}
              tick={{fontSize: nmr1dCfg.fontSize, fill:'#64748b'}}
-             label={{value: nmr1dCfg.xAxisLabel || 'Chemical Shift (ppm)', position:'insideBottom', offset:-12, fontSize:nmr1dCfg.fontSize, fill:'#64748b'}} />
+             label={xLabelProps} />
            <YAxis hide domain={effYDom} />
            <Tooltip formatter={v => Number(v).toFixed(3)} labelFormatter={v => Number(v).toFixed(2) + ' ppm'} />
            <Line type="monotone" dataKey="y" stroke={nmr1dCfg.colors?.spec || nmr1dCfg.lineColor || '#3b82f6'} strokeWidth={nmr1dCfg.lineThickness} strokeDasharray={lineDash(nmr1dCfg.lineStyle)} dot={false} isAnimationActive={false} connectNulls />
@@ -6564,10 +6593,10 @@ let dom = brukerZoomDom || xFull;
             <PeakLabelOverlay
               markers={peakMarkers}
               dom={dom}
-              marginLeft={CHART_MARGIN.left}
-              marginRight={CHART_MARGIN.right}
+              marginLeft={plotMargin.left}
+              marginRight={plotMargin.right}
               marginTop={topMargin + labelAreaH}
-              marginBottom={CHART_MARGIN.bottom}
+              marginBottom={plotMargin.bottom}
               labelAreaH={labelAreaH}
               fontSize={nmr1dLabelFontSize}
               color={nmr1dLabelColor}
@@ -7497,7 +7526,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
   const xs = visibleSeries.flatMap((s) => includedPts(s).filter((p) => p.x !== null).map((p) => p.x));
   const padX = xs.length ? ((Math.max(...xs) - Math.min(...xs)) * 0.05 || 1) : 1;
   const dataXDomain = xs.length ? [Math.min(...xs) - padX, Math.max(...xs) + padX] : [0, 1];
-  const zoom = useXZoom(chartRef, dataXDomain);
+  const zoom = useXZoom(chartRef, dataXDomain, cfgChartMargin(cfg, { top: 8, right: 16, bottom: 30, left: 12 }));
   const xTicks = makeTicks(zoom.domain, cfg.tickStep);
   const catData = useMemo(() => {
     return d.instances.filter((inst) => used[inst.id] !== false).map((inst) => {
@@ -7817,7 +7846,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                     </div>
                     <div style={{ height: Math.min(280, cfg.height), aspectRatio: String(cfg.aspect || 2) }}>
                       <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={paramData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
+                        <BarChart data={paramData} margin={cfgChartMargin(cfg, { top: 10, right: 10, bottom: 20, left: 10 })}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} />
                           <XAxis dataKey="name" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={Math.max(9, cfg.fontSize - 2)} />} />
                           <YAxis tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: Math.max(9, cfg.fontSize - 2) }} label={cfgAxisLabel(cfg, 'y', paramGraphVar, 0)} />
@@ -8049,10 +8078,10 @@ const PerAtomChartPanel = ({ ctx, d, chart, updateChart, removeChart }) => {
       {/* Chart — X axis always in sequence order */}
       {chartData.length > 0 ? (
         <ResponsiveContainer width="100%" aspect={cfg.aspect}>
-          <BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 16, left: 8 }}>
+          <BarChart data={chartData} margin={cfgChartMargin(cfg, { top: 8, right: 8, bottom: 16, left: 8 })}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="label" tick={{ fontSize: cfg.fontSize }} />
-            <YAxis tick={{ fontSize: cfg.fontSize }} label={{ value: layer?.unit || '', angle: -90, position: 'insideLeft', style: { fontSize: cfg.fontSize } }} />
+            <XAxis dataKey="label" tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'x', cfg.xAxisLabel || '', 16)} />
+            <YAxis tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'y', cfg.yAxisLabel || layer?.unit || '', 6)} />
             <Tooltip />
             <Legend wrapperStyle={{ fontSize: cfg.fontSize }} />
             {atomMeta.map(m => <Bar key={m.key} dataKey={m.key} name={m.label} fill={m.color} isAnimationActive={false} />)}

@@ -10,6 +10,9 @@ import { markAttachmentsDeleted, renameDriveFilesFor, deleteTestDriveFolder } fr
 import { removeTestFcsBlobs } from '../../utils/fcsBlobStore';
 import { setSectionsCommand } from '../ui';
 import { testProjectAccess } from './projectsModule';
+import {
+  applyDataLock, clearDataLock, dataLockLabel, guardLockedInstances, isDataLocked, lockedIdSet
+} from '../../utils/dataLock';
 import { Icon } from '../Icons';
 // Lazy renderers (kept as dynamic imports so each stays its own chunk).
 const NMRTestRenderer = lazy(() => import('../NMRTestRenderer').then(m => ({ default: m.NMRTestRenderer })));
@@ -96,11 +99,51 @@ export const ActiveTestModule = ({
                 const projectViewOnly = projectPerm === 'view' && !(isSuperuserSession || isAssignedScientist || unlockedTestIds.has(activeTest.id) || !activeTest.operator);
                 // ─────────────────────────────────────────────────
 
+                // ── Data lock (🔒 in the header, see src/utils/dataLock.js) ────
+                // A superuser can FREEZE the data of a condition — or of every
+                // condition of the experiment. For everybody else the page then
+                // becomes read-only: it stays fully readable (results, plots,
+                // tables) but every write funnel below restores the frozen data
+                // instead of storing the change, and a copy is proposed so a
+                // scientist who needs ANOTHER analysis can work on that copy.
+                // Ids of EVERY frozen instance of the dataset (not only this
+                // experiment's group): frozen data is frozen everywhere, so the
+                // guards below also cover a write aimed at another experiment.
+                const lockedIds = lockedIdSet(tests);
+                const activeInstanceLocked = isDataLocked(activeTest);
+                // Read-only for THIS user on THIS page.
+                const dataReadOnly = !isSuperuserSession && activeInstanceLocked;
+                // Is `instId` frozen for this user? (per-instance write guard)
+                const isFrozenForMe = (instId) => !isSuperuserSession && lockedIds.has(instId);
+                const allGroupLocked = groupTests.length > 0 && groupTests.every((t) => isDataLocked(t));
+                const lockTargetLabel = (test) =>
+                  `"${activeTest.name || 'this experiment'}" — ${test.instanceName || test.date || 'this condition'}`;
+                const setDataLock = (lock, ids, what) => {
+                  const ok = window.confirm(lock
+                    ? `Lock the data of ${what}?\n\nEverybody except a superuser will still be able to READ it and to COPY it into a new instance, but nothing they change (import, processing, fit, comment…) is saved. Only a superuser can unlock it again.`
+                    : `Unlock the data of ${what}?\n\nThe scientists will be able to edit this experiment again.`);
+                  if (!ok) return;
+                  setTests((prev) => applyDataLock(prev, ids, lock, currentUser?.name || 'unknown', Date.now()));
+                };
+
                 const updateActiveTest = (updates) => {
                   if (projectViewOnly) return; // view-only project member — read-only
+                  if (dataReadOnly) return;    // data frozen by a superuser — read-only
                   setTests((prev) =>
                     prev.map((t) => (t.id === activeTestId ? { ...t, ...updates } : t))
                   );
+                };
+
+                // Guarded `setTests` handed to the experiment renderers: a
+                // non-superuser can never modify or delete a frozen instance,
+                // but may still ADD new ones (the copies) and freely work on the
+                // instances that are not frozen.
+                const guardedSetTests = (updater) => {
+                  if (isSuperuserSession || lockedIds.size === 0) { setTests(updater); return; }
+                  setTests((prev) => {
+                    const next = typeof updater === 'function' ? updater(prev) : updater;
+                    return guardLockedInstances(prev, next, lockedIds);
+                  });
                 };
 
                 // Renaming the experiment NAME renames the WHOLE group — all
@@ -109,7 +152,7 @@ export const ActiveTestModule = ({
                 // old name keeps the other instances. Per-instance labels are
                 // edited separately via instanceName.
                 const handleTestNameChange = (value) => {
-                  if (projectViewOnly) return;
+                  if (projectViewOnly || dataReadOnly) return; // read-only (project view / frozen data)
                   const prevName = activeTest.name;
                   if (value === prevName) return;
                   setTests((prevTests) =>
@@ -175,11 +218,15 @@ export const ActiveTestModule = ({
 
                 const handleDuplicateInstance = () => {
                   const id = 't' + Date.now();
-                  const newTest = JSON.parse(JSON.stringify(activeTest));
+                  // A copy NEVER inherits the data lock: copying the data into an
+                  // editable instance is precisely the way out offered to a
+                  // scientist who must run a different analysis on frozen data.
+                  const copiedLocked = isDataLocked(activeTest);
+                  const newTest = clearDataLock(JSON.parse(JSON.stringify(activeTest)));
 
                   newTest.id = id;
                   newTest.date = new Date().toISOString().split('T')[0];
-                  newTest.instanceName = 'New Instance ' + (siblingTests.length + 1);
+                  newTest.instanceName = 'New Instance ' + (siblingTests.length + 1) + (copiedLocked ? ' (copy)' : '');
                   newTest.comments = '';
                   newTest.images = [];
                   newTest.documents = [];
@@ -228,6 +275,16 @@ const TestHeader = (
                               setCurrentProjectId(returnTarget.projectId || null);
                               setCurrentModule('publications');
                               setReturnTarget(null);
+                            } else if (returnTarget && returnTarget.module && returnTarget.module !== 'active-test') {
+                              // Tout autre module (Library, Lab Notebook, Projects,
+                              // Agenda, Calculations, Settings…) : on y retourne
+                              // tel quel — son contexte est conservé (filtres,
+                              // sélection, onglet…). Sans cela « ◀ Back » renvoyait
+                              // toujours à la liste des expériences.
+                              if (returnTarget.projectId) setCurrentProjectId(returnTarget.projectId);
+                              if (returnTarget.storageId) setActiveStorageId(returnTarget.storageId);
+                              setCurrentModule(returnTarget.module);
+                              setReturnTarget(null);
                             } else if (isBox && activeTest.storageId) {
                               setActiveStorageId(activeTest.storageId);
                               setCurrentModule('storage-detail');
@@ -235,6 +292,9 @@ const TestHeader = (
                               setCurrentModule('tests');
                             }
                           }}
+                          title={(returnTarget && returnTarget.module && returnTarget.module !== 'active-test')
+                            ? `Back to ${String(returnTarget.module).replace(/-/g, ' ')}`
+                            : 'Back to the experiment list'}
                           className="text-slate-400 hover:text-blue-600 transition-colors bg-slate-50 hover:bg-blue-50 p-2 rounded-lg shadow-sm border border-slate-200 self-start md:self-auto"
                         >
                           ◀ Back
@@ -279,6 +339,45 @@ const TestHeader = (
                       </div>
 
                       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full lg:w-auto flex-wrap">
+                        {/* ── 🔒 Data lock — superuser only ────────────────
+                            Freezes the data of this condition (page becomes
+                            read-only for everybody else) with an escape hatch:
+                            they can copy the data into a new instance to run a
+                            different analysis. See src/utils/dataLock.js */}
+                        {isSuperuserSession && (
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setDataLock(
+                                !activeInstanceLocked,
+                                new Set([activeTest.id]),
+                                lockTargetLabel(activeTest)
+                              )}
+                              title={activeInstanceLocked
+                                ? 'Unlock this condition — its data can be edited again by everybody who can open the experiment'
+                                : 'Freeze this condition: other users keep full read access (results, plots, tables) but nothing they change is saved. They are offered to copy the data into a new instance instead.'}
+                              className={`font-bold py-2 px-3 rounded-lg text-xs border shadow-sm transition-colors ${activeInstanceLocked ? 'bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
+                            >
+                              {activeInstanceLocked ? '🔓 Unlock data' : '🔒 Lock data'}
+                            </button>
+                            {siblingTests.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => setDataLock(
+                                  !allGroupLocked,
+                                  new Set(groupTests.map((t) => t.id)),
+                                  `all ${groupTests.length} conditions of "${activeTest.name}"`
+                                )}
+                                title={allGroupLocked
+                                  ? 'Unlock every condition of this experiment'
+                                  : `Freeze the data of all ${groupTests.length} conditions of this experiment at once`}
+                                className="font-bold py-2 px-3 rounded-lg text-xs border border-slate-300 bg-white text-slate-600 shadow-sm hover:bg-slate-50 transition-colors"
+                              >
+                                {allGroupLocked ? '🔓 Unlock all' : `🔒 Lock all ${groupTests.length}`}
+                              </button>
+                            )}
+                          </div>
+                        )}
                         {!isBox && (
                           <button
                             type="button"
@@ -294,6 +393,10 @@ const TestHeader = (
                           </button>
                         )}
                         <button
+                          disabled={dataReadOnly}
+                          title={dataReadOnly
+                            ? 'Data locked — only a superuser can delete this experiment.'
+                            : 'Permanently delete this experiment (all its conditions)'}
                           onClick={() => {
                             // Deleting an experiment removes ALL its instances
                             // (they share the name); a box is a single item.
@@ -322,7 +425,7 @@ const TestHeader = (
                               });
                             }
                           }}
-                          className="bg-red-50 text-red-600 hover:bg-red-100 hover:border-red-300 font-bold py-2 px-3 rounded-lg text-xs transition-colors border border-red-200 shadow-sm"
+                          className={`font-bold py-2 px-3 rounded-lg text-xs transition-colors border shadow-sm border-red-200 bg-red-50 text-red-600 ${dataReadOnly ? 'opacity-40 cursor-not-allowed' : 'hover:bg-red-100 hover:border-red-300'}`}
                         >
                           <Icon name="trash" size={14} /> Delete
                         </button>
@@ -552,8 +655,17 @@ const TestHeader = (
                           >
                             <span className="opacity-40 text-[9px] mr-0.5" aria-hidden="true">⠿</span>
                             <Icon name="calendar" size={12} className="mr-1 text-blue-700" /> {t.instanceName || t.date || `Cond ${idx + 1}`}
+                            {isDataLocked(t) && (
+                              <span title={dataLockLabel(t)} className="flex items-center">
+                                <Icon
+                                  name="lock"
+                                  size={10}
+                                  className={activeTestId === t.id ? 'text-amber-200' : 'text-amber-600'}
+                                />
+                              </span>
+                            )}
 
-                            {(
+                            {!isFrozenForMe(t.id) && (
                               <span
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -598,6 +710,31 @@ const TestHeader = (
                         </button>
                       </div>
                     )}
+
+                    {/* ── 🔒 Read-only notice when this condition is frozen ──
+                        Everybody (superusers excepted) keeps full read access
+                        and is offered the way out: copy the data into a NEW
+                        instance and run a different analysis on that copy. */}
+                    {activeInstanceLocked && (
+                      <div className={`border-b px-4 md:px-6 py-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] ${isSuperuserSession ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-slate-100 border-slate-300 text-slate-700'}`}>
+                        <span className="font-black uppercase tracking-wide flex items-center gap-1.5">
+                          <Icon name="lock" size={12} /> {dataLockLabel(activeTest) || 'Data locked'}
+                        </span>
+                        <span className="font-medium max-w-3xl">
+                          {isSuperuserSession
+                            ? 'You are a superuser — you can still edit this experiment. Use “Unlock data” above to reopen it for the scientists.'
+                            : 'Read-only for you: the results stay visible, but nothing you change here is saved (the stored values are restored). To run a different analysis, copy the data into a new instance — the copy is yours to edit.'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleDuplicateInstance}
+                          title="Create an editable copy of this condition (same experiment) and run your own analysis on it"
+                          className="ml-auto shrink-0 px-3 py-1 rounded-full text-[11px] font-bold bg-white border border-blue-300 text-blue-700 hover:bg-blue-50 shadow-sm transition-colors"
+                        >
+                          ⧉ Copy the data to a new instance
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
 
@@ -633,7 +770,7 @@ const TestHeader = (
                       updateActiveTest={updateActiveTest}
                       currentUser={currentUser}
                       allTests={tests}
-                      setTests={setTests}
+                      setTests={guardedSetTests}
                       TestHeader={TestHeader}
                       datasetProtocols={datasetProtocols}
                       jumpToProtocol={jumpToProtocolFn}
@@ -659,6 +796,7 @@ const TestHeader = (
 
                 if (activeTest.type === 'cd') {
                   const updateInstance = (instId, updates) => {
+                    if (isFrozenForMe(instId)) return; // frozen condition — write ignored
                     setTests((prev) => prev.map((t) => t.id === instId ? { ...t, ...updates } : t));
                   };
                   return (
@@ -666,7 +804,7 @@ const TestHeader = (
                       activeTest={activeTest}
                       updateActiveTest={updateActiveTest}
                       allTests={tests}
-                      setTests={setTests}
+                      setTests={guardedSetTests}
                       appClipboard={appClipboard}
                       setAppClipboard={setAppClipboard}
                       TestHeader={TestHeader}
@@ -702,6 +840,7 @@ if (activeTest.type === 'ssnmr') {
   })();
 
   const updateInstance = (instId, updates) => {
+    if (isFrozenForMe(instId)) return; // frozen condition — write ignored
     setTests((prev) =>
       prev.map((t) => (t.id === instId ? { ...t, ...updates } : t))
     );
@@ -712,7 +851,7 @@ if (activeTest.type === 'ssnmr') {
       activeTest={activeTest}
       updateActiveTest={updateActiveTest}
       allTests={tests}
-      setTests={setTests}
+      setTests={guardedSetTests}
       appClipboard={appClipboard}
       setAppClipboard={setAppClipboard}
       TestHeader={TestHeader}
@@ -757,7 +896,7 @@ if (activeTest.type === 'ssnmr') {
                    activeTest={activeTest}
                    updateActiveTest={updateActiveTest}
                    allTests={tests}
-                   setTests={setTests}
+                   setTests={guardedSetTests}
                    TestHeader={TestHeader}
                    datasetProtocols={datasetProtocols}
                    jumpToProtocol={jumpToProtocolFn}
@@ -782,7 +921,7 @@ if (activeTest.type === 'microscopy') {
                    activeTest={activeTest}
                    updateActiveTest={updateActiveTest}
                    allTests={tests}
-                   setTests={setTests}
+                   setTests={guardedSetTests}
                    TestHeader={TestHeader}
                    datasetProtocols={datasetProtocols}
                    jumpToProtocol={jumpToProtocolFn}

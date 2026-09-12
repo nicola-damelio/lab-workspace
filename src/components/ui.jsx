@@ -59,28 +59,98 @@ if (typeof window !== 'undefined') {
   });
 }
 
+// ---- Per-experiment section memory --------------------------------------
+// Leaving the experiment page (to consult the Library, the Projects, the Lab
+// Notebook…) UNMOUNTS it, so every section used to collapse and its scroll
+// position was lost: coming back meant reopening the same subsections again.
+//
+// Sections now remember whether they were open, PER EXPERIMENT (the active
+// test id), so returning to an experiment restores the very same view — and
+// two different experiments each keep their own layout.
+//
+// The scope comes from <SectionsScope>, which App.jsx wraps around the
+// experiment page. Sections rendered outside that scope (Library, Settings…)
+// keep their current, non-persistent behaviour on purpose: their titles are
+// not unique enough to be used as keys.
+export const SectionsScope = React.createContext(null);
+
+const SECTION_MEMORY_KEY = 'labWorkspace_sectionMemory';
+// Safety bound: only the most recently opened experiments are remembered
+// (insertion order = first-visit order, so the oldest entries are dropped).
+const SECTION_MEMORY_MAX_TESTS = 200;
+let sectionMemoryCache = null;
+
+const loadSectionMemory = () => {
+  if (sectionMemoryCache) return sectionMemoryCache;
+  try {
+    const raw = JSON.parse(localStorage.getItem(SECTION_MEMORY_KEY) || 'null');
+    sectionMemoryCache = raw && typeof raw === 'object' ? raw : {};
+  } catch {
+    sectionMemoryCache = {};
+  }
+  return sectionMemoryCache;
+};
+
+/** Open state remembered for `key` inside `scope` (a test id), or `fallback`. */
+const readSectionOpen = (scope, key, fallback) => {
+  if (!scope || !key) return fallback;
+  const bucket = loadSectionMemory()[scope];
+  const saved = bucket ? bucket[key] : undefined;
+  return typeof saved === 'boolean' ? saved : fallback;
+};
+
+/** Remember the open state of one section for the next visit. */
+const writeSectionOpen = (scope, key, open) => {
+  if (!scope || !key) return;
+  try {
+    const mem = loadSectionMemory();
+    if (!mem[scope]) mem[scope] = {};
+    mem[scope][key] = !!open;
+    const scopes = Object.keys(mem);
+    if (scopes.length > SECTION_MEMORY_MAX_TESTS) {
+      scopes.slice(0, scopes.length - SECTION_MEMORY_MAX_TESTS).forEach((k) => delete mem[k]);
+    }
+    localStorage.setItem(SECTION_MEMORY_KEY, JSON.stringify(mem));
+  } catch {
+    /* localStorage full or unavailable — the page keeps working, only the
+       open/closed state is not remembered. */
+  }
+};
+
 export const CollapsibleSection = ({
   title, icon, defaultOpen = false, children, headerExtra, className = '', openWhen = false
 }) => {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
+  // Per-experiment memory (see SectionsScope above): the section reopens the
+  // way the user left it when coming back to this experiment.
+  const scope = React.useContext(SectionsScope);
+  const memoryKey = scope ? String(title || '') : null;
+  const [isOpen, setIsOpen] = useState(() => readSectionOpen(scope, memoryKey, defaultOpen));
   const sectionsCmd = useSectionsCommand();
+
+  // Open/close AND remember it, so the choice survives leaving the page.
+  const applyOpen = (next) => {
+    setIsOpen(next);
+    writeSectionOpen(scope, memoryKey, next);
+  };
 
   // Apply expand-all / collapse-all (also covers nested sections that mount
   // right after their parent opened).
   useEffect(() => {
-    if (sectionsCmd !== null && sectionsCmd !== undefined) setIsOpen(sectionsCmd);
+    if (sectionsCmd !== null && sectionsCmd !== undefined) applyOpen(sectionsCmd);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sectionsCmd]);
 
   // Auto-open when something important appears (e.g. imported docking data) —
   // e.g. "Instrumental Setup" opens once raw_input.toml is attached.
   useEffect(() => {
-    if (openWhen) setIsOpen(true);
+    if (openWhen) applyOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openWhen]);
 
   return (
     <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-3 break-inside-avoid ${className}`}>
       <div
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => applyOpen(!isOpen)}
         className={`w-full flex justify-between items-center px-3 py-2 bg-slate-50 hover:bg-slate-100 transition-colors text-left cursor-pointer ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}
       >
         <div className="flex items-center gap-2 overflow-hidden">
@@ -100,24 +170,37 @@ export const CollapsibleSection = ({
 };
 
 export const CollapsibleSectionPanel = ({ id, title, subtitle, defaultOpen = false, children, className = '' }) => {
-  const [open, setOpen] = useState(defaultOpen);
+  // Same per-experiment memory as CollapsibleSection (see SectionsScope).
+  const scope = React.useContext(SectionsScope);
+  const memoryKey = scope ? String(id || title || '') : null;
+  const [open, setOpen] = useState(() => readSectionOpen(scope, memoryKey, defaultOpen));
   const sectionsCmd = useSectionsCommand();
 
+  const applyOpen = (next) => {
+    setOpen(next);
+    writeSectionOpen(scope, memoryKey, next);
+  };
+
   useEffect(() => {
-    setOpen(defaultOpen);
+    // A section already remembered for this experiment keeps ITS state; only
+    // panels without memory follow the caller's default (e.g. the Library
+    // opens the panel matching the current selection).
+    if (!scope || readSectionOpen(scope, memoryKey, undefined) === undefined) setOpen(defaultOpen);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultOpen]);
 
   // Apply expand-all / collapse-all (also covers nested panels that mount
   // right after their parent opened).
   useEffect(() => {
-    if (sectionsCmd !== null && sectionsCmd !== undefined) setOpen(sectionsCmd);
+    if (sectionsCmd !== null && sectionsCmd !== undefined) applyOpen(sectionsCmd);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sectionsCmd]);
 
   return (
     <div id={id} className={`bg-white border border-slate-200 rounded-xl shadow-sm overflow-visible scroll-mt-6 ${className}`}>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => applyOpen(!open)}
         className="w-full flex items-center justify-between gap-3 p-4 text-left"
       >
         <div>

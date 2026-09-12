@@ -6,6 +6,8 @@ import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigF
 import { loadProjects, saveProjects, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized } from './projectsModule';
 import { suggestDriveFileName, openDrive } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
+import { UsefulFilesSection } from '../UsefulFilesSection';
+import { normalizeProjectFiles } from '../../utils/projectFiles';
 import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject } from '../../utils/driveUpload';
 import { repairContentImages } from '../../data/constants';
 import { readDeck } from '../../utils/figuresLibrary';
@@ -215,7 +217,7 @@ export const ProjectDetailModule = ({
   const isSuper = currentUser?.role === 'superuser';
   const myName = currentUser?.name || '';
   const [projects, setProjects] = useState(loadProjects);
-  const [openSections, setOpenSections] = useState({ background: true, materials: true, comments: false });
+  const [openSections, setOpenSections] = useState({ background: true, materials: true, usefulFiles: true, comments: false });
   const [refPicker, setRefPicker] = useState(null); // null | { insertText?: fn }
   const [showBibForm, setShowBibForm] = useState(false);
   const [bibDraft, setBibDraft] = useState({ title: '', link: '' });
@@ -1683,6 +1685,24 @@ export const ProjectDetailModule = ({
             The 📄 Export document includes the Materials &amp; Methods of only the tests ticked “Include”.
             {project.materialsAndMethods?.edited ? ' “🔄 Update from tests” regenerates it and discards your edits.' : ''}
           </p>
+        </SectionCard>
+
+        {/* ---------- Useful files (project reference documents on Drive) ---------- */}
+        <SectionCard title="📎 Useful files" open={openSections.usefulFiles} onToggle={() => toggleSection('usefulFiles')}
+                     badge={
+                       <span className="text-[10px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">
+                         {normalizeProjectFiles(project.usefulFiles).length}
+                       </span>
+                     }>
+          <UsefulFilesSection
+            projectName={project.name}
+            files={project.usefulFiles}
+            folderUrl={project.usefulFilesFolderUrl || ''}
+            canModify={canModify}
+            currentUser={currentUser}
+            onChange={(next) => updateProject({ usefulFiles: next })}
+            onFolderUrl={(url) => updateProject({ usefulFilesFolderUrl: url })}
+          />
         </SectionCard>
 
         {/* ---------- Discussion ---------- */}

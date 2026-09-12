@@ -1350,6 +1350,11 @@ const useXZoom = (chartRef, dataDomain, margin = CHART_MARGIN) => {
   const eff = domain || safe;
   const effRef = useRef(eff);
   effRef.current = eff;
+  // The window listeners below are registered only once, so they would capture
+  // the margins of the first render; reading them from a ref keeps the drag math
+  // pixel-accurate when the panel changes the font size / axis-title gap.
+  const marginRef = useRef(margin);
+  marginRef.current = margin;
 
   const getX = (clientX) => {
     const el = chartRef.current;
@@ -1357,9 +1362,10 @@ const useXZoom = (chartRef, dataDomain, margin = CHART_MARGIN) => {
     const wrapper = el.querySelector('.recharts-wrapper');
     if (!wrapper) return null;
     const rect = wrapper.getBoundingClientRect();
-    const plotW = rect.width - margin.left - margin.right;
+    const m = marginRef.current;
+    const plotW = rect.width - m.left - m.right;
     if (plotW <= 0) return null;
-    const fx = Math.min(1, Math.max(0, (clientX - rect.left - margin.left) / plotW));
+    const fx = Math.min(1, Math.max(0, (clientX - rect.left - m.left) / plotW));
     const d0 = effRef.current;
     return d0[0] + fx * (d0[1] - d0[0]);
   };
@@ -1402,6 +1408,9 @@ const useYZoom = (chartRef, dataDomain, margin = CHART_MARGIN) => {
   const eff = domain || safe;
   const effRef = useRef(eff);
   effRef.current = eff;
+  // Same once-registered-listener caveat as useXZoom — read the live margins.
+  const marginRef = useRef(margin);
+  marginRef.current = margin;
 
   const getY = (clientY) => {
     const el = chartRef.current;
@@ -1409,9 +1418,10 @@ const useYZoom = (chartRef, dataDomain, margin = CHART_MARGIN) => {
     const wrapper = el.querySelector('.recharts-wrapper');
     if (!wrapper) return null;
     const rect = wrapper.getBoundingClientRect();
-    const plotH = rect.height - margin.top - margin.bottom;
+    const m = marginRef.current;
+    const plotH = rect.height - m.top - m.bottom;
     if (plotH <= 0) return null;
-    const fy = Math.min(1, Math.max(0, (clientY - rect.top - margin.top) / plotH));
+    const fy = Math.min(1, Math.max(0, (clientY - rect.top - m.top) / plotH));
     const d0 = effRef.current;
     // Screen Y grows downward, data domain grows upward — invert.
     return d0[1] - fy * (d0[1] - d0[0]);
@@ -1523,7 +1533,11 @@ export const Data = ({ ctx }) => {
     const updates = {
       wavelengthData: parsed.xs.join('\n'),
       spectraColumns: [{ id: makeId('spec'), title: parsed.title || 'Imported Spectrum', data: parsed.ys.join('\n'), color: SPECTRA_PALETTE[0], visible: true }],
-      yUnit: 'mdeg'
+      yUnit: 'mdeg',
+      // A fresh import replaces whatever conversion state the condition had:
+      // drop the backups so a stale one can never be restored by mistake.
+      rawSpectraColumns: undefined,
+      thetaSpectraColumns: undefined
     };
     
     // Assign instanceName safely in the same state update
@@ -1716,46 +1730,65 @@ export const Data = ({ ctx }) => {
   const residueSource = activeInstance ? residueCountSource(activeInstance, ctx) : null;
   const needsN = CD_THETA_NEEDS_N.includes(thetaMode);
   const meFactor = activeInstance ? cdConversionFactor(activeInstance, mw, residues) : null;
+  // The mdeg → [θ] factor is ALWAYS applied to the raw mdeg values: converting
+  // the already converted columns a second time (e.g. after switching the target
+  // unit) compounded the factor and — worse — overwrote the raw backup with
+  // converted numbers, so "Revert to raw mdeg" could not bring the mdeg data
+  // back and the Y axis kept showing the converted magnitudes.
+  const thetaBaseline = (test) => {
+    const t = test || {};
+    return t.yUnit === 'theta' && Array.isArray(t.rawSpectraColumns)
+      ? t.rawSpectraColumns
+      : (Array.isArray(t.spectraColumns) ? t.spectraColumns : []);
+  };
+  const scaledColumns = (cols, factor) => cols.map((c) => ({
+    ...c, data: String(c.data || '').split(/[\n,]+/).map((s) => { const n = parseFloat(String(s).trim()); return Number.isFinite(n) ? String(n * factor) : s; }).join('\n')
+  }));
   const convertToMolarEllipticity = () => {
     if (!mw) { alert('Molecular weight is required. Select a compound with a defined MW or fill the manual MW field.'); return; }
     if (!meFactor) {
       if (needsN && !residues) { alert(`Set the number of residues (N) to convert to ${thetaUnitLabel(thetaMode)}.`); return; }
       alert('Fill the concentration and cuvette path length in the Experimental Conditions section of this tab.'); return;
     }
+    const baseline = thetaBaseline(activeTest);
+    if (!baseline.length) { alert('This condition has no spectrum to convert — import or paste one first.'); return; }
     if (!window.confirm(`Convert all spectra of the ACTIVE condition to ${thetaUnitLabel(thetaMode)}?\nThe raw spectra are kept as a backup (revert button).`)) return;
-    const cols = (activeTest.spectraColumns || []).map((c) => ({
-      ...c, data: String(c.data || '').split(/[\n,]+/).map((s) => { const n = parseFloat(String(s).trim()); return Number.isFinite(n) ? String(n * meFactor) : s; }).join('\n')
-    }));
-    updateActiveTest({ spectraColumns: cols, rawSpectraColumns: activeTest.spectraColumns, yUnit: 'theta', thetaMode, thetaResidues: residues || undefined });
+    updateActiveTest({ spectraColumns: scaledColumns(baseline, meFactor), rawSpectraColumns: baseline, yUnit: 'theta', thetaMode, thetaResidues: residues || undefined });
   };
   const convertAllInstances = () => {
     if (!window.confirm(`Convert the spectra of ALL conditions to ${thetaUnitLabel(thetaMode)} using each tab's own concentration / path length / MW?`)) return;
     let done = 0, skippedN = 0;
     instances.forEach((inst) => {
       const t = inst.test || {};
-      if (t.yUnit === 'theta') return;
       const instMw = getMWForInstance(inst, ctx);
       const instRes = getResidueCount(inst, ctx);
       const instMode = CD_THETA_MODES.includes(t.thetaMode) ? t.thetaMode : thetaMode;
       const factor = cdConversionFactor(inst, instMw, instRes, instMode);
-      if (!factor || !Array.isArray(t.spectraColumns) || !t.spectraColumns.length) {
+      // Always recompute from the raw mdeg columns (see thetaBaseline) so the
+      // unit can be changed for every condition without compounding the factor
+      // or clobbering the raw backup.
+      const baseline = thetaBaseline(t);
+      if (!factor || !baseline.length) {
         if (CD_THETA_NEEDS_N.includes(instMode) && !instRes) skippedN++;
         return;
       }
-      const cols = t.spectraColumns.map((c) => ({
-        ...c, data: String(c.data || '').split(/[\n,]+/).map((s) => { const n = parseFloat(String(s).trim()); return Number.isFinite(n) ? String(n * factor) : s; }).join('\n')
-      }));
-      patchInstance(ctx, activeTest, inst.id, { spectraColumns: cols, rawSpectraColumns: t.spectraColumns, yUnit: 'theta', thetaMode: instMode, thetaResidues: instRes || undefined });
+      patchInstance(ctx, activeTest, inst.id, { spectraColumns: scaledColumns(baseline, factor), rawSpectraColumns: baseline, yUnit: 'theta', thetaMode: instMode, thetaResidues: instRes || undefined });
       done++;
     });
     alert(`Converted ${done} condition(s) to ${thetaUnitLabel(thetaMode)}${skippedN ? ` — ${skippedN} skipped (no residue count for the per-residue unit).` : ''}.`);
   };
   const revertConversion = () => {
-    if (!Array.isArray(activeTest.rawSpectraColumns)) return;
+    if (!Array.isArray(activeTest.rawSpectraColumns) || !activeTest.rawSpectraColumns.length) {
+      alert('No raw mdeg backup is stored for this condition — re-import the original spectrum (or undo) to get the raw values back.');
+      return;
+    }
     updateActiveTest({ spectraColumns: activeTest.rawSpectraColumns, rawSpectraColumns: undefined, thetaSpectraColumns: activeTest.spectraColumns, yUnit: 'mdeg' });
   };
   const restoreMolarEllipticity = () => {
-    if (!Array.isArray(activeTest.thetaSpectraColumns)) return;
+    if (!Array.isArray(activeTest.thetaSpectraColumns) || !activeTest.thetaSpectraColumns.length) {
+      alert('No converted spectra are stored for this condition — convert it to [θ] / Δε first.');
+      return;
+    }
     updateActiveTest({ spectraColumns: activeTest.thetaSpectraColumns, rawSpectraColumns: activeTest.spectraColumns, thetaSpectraColumns: undefined, yUnit: 'theta' });
   };
 
@@ -2082,6 +2115,11 @@ export const Data = ({ ctx }) => {
             <span className={`text-xs font-bold px-2 py-1 rounded ${yUnit === 'theta' ? 'bg-violet-100 text-violet-800' : 'bg-slate-100 text-slate-600'}`}>
               Current Y unit: {yUnit === 'theta' ? thetaUnitLabel(thetaModeOf(activeTest)) : 'Ellipticity (mdeg)'}
             </span>
+            {yUnit === 'theta' && !Array.isArray(activeTest.rawSpectraColumns) && (
+              <span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-1 rounded">
+                ⚠️ No raw mdeg backup stored for this condition — re-import the original spectrum to get the raw values back.
+              </span>
+            )}
             {yUnit === 'theta' && Array.isArray(activeTest.rawSpectraColumns) && (
               <button type="button" onClick={revertConversion} className="text-xs font-bold bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 px-3 py-1.5 rounded-lg shadow-sm">↩️ Revert to raw mdeg</button>
             )}
@@ -2235,10 +2273,21 @@ export const SpectraVisualization = ({ ctx }) => {
   const yDataMin = allYs.length ? Math.min(...allYs) : 0;
   const yDataMax = allYs.length ? Math.max(...allYs) : 1;
 
+  // Converted ([θ]/Δε) and raw mdeg conditions share one numeric axis, so the
+  // converted magnitudes squash the mdeg curves flat — surface the mix instead
+  // of letting the mdeg data look empty on a "mdeg" Y axis.
+  const unitLabelForInst = (instId) => {
+    const inst = instances.find((i) => i.id === instId);
+    const t = inst ? inst.test : null;
+    return t && t.yUnit === 'theta' ? thetaUnitShort(thetaModeOf(t)) : 'Ellipticity (mdeg)';
+  };
+  const visibleUnitLabels = [...new Set(visible.map((s) => unitLabelForInst(String(s.key).split('__')[0])))];
+  const mixedUnits = visibleUnitLabels.length > 1;
+
   const chartRef = useRef(null);
   // Combined X + Y mouse zoom: drag horizontally to zoom the wavelength axis,
   // vertically to zoom the intensity axis.
-  const zoom = useXYZoom(chartRef, dataDomain, [yDataMin, yDataMax], CHART_MARGIN);
+  const zoom = useXYZoom(chartRef, dataDomain, [yDataMin, yDataMax], cfgChartMargin(cfg, CHART_MARGIN));
   const yLabel = activeTest.yUnit === 'theta' ? thetaUnitShort(thetaModeOf(activeTest)) : 'Ellipticity (mdeg)';
   const xLabel = cfg.xAxisLabel || 'Wavelength (nm)';
   const yLab = cfg.yAxisLabel || yLabel;
@@ -2306,6 +2355,12 @@ export const SpectraVisualization = ({ ctx }) => {
           ))}
         </div>
       )}
+      {mixedUnits && (
+        <div className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          ⚠️ This overlay mixes Y units ({visibleUnitLabels.join(' · ')}). A single numeric axis is scaled to the largest unit, so the conditions shown in mdeg look flat.
+          {' '}Use the checkboxes above to hide the converted series, or run “Convert ALL conditions” so every condition shares one unit.
+        </div>
+      )}
       {fs && <div className={OVERLAY_CLASSES} onClick={() => setFs(false)} />}
       <div className={fs ? FS_CLASSES + ' p-6 flex flex-col' : 'flex flex-col'}>
         {fs && (
@@ -2332,10 +2387,10 @@ export const SpectraVisualization = ({ ctx }) => {
                   </div>
                   <div className={`flex-1 relative min-h-0 ${fsSmall !== s.key ? 'pointer-events-none' : ''}`}>
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={s.data} margin={{ top: 5, right: 8, bottom: fsSmall === s.key ? 30 : 18, left: fsSmall === s.key ? 10 : 2 }}>
+                      <LineChart data={s.data} margin={fsSmall === s.key ? cfgChartMargin(cfg, CHART_MARGIN) : { top: 5, right: 8, bottom: 18, left: 2 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                        <XAxis type="number" dataKey="x" tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} domain={['dataMin', 'dataMax']} label={fsSmall === s.key ? { value: xLabel, position: 'insideBottom', offset: -20, fill: '#64748b', fontSize: cfg.fontSize + 1 } : undefined} />
-                        <YAxis domain={[yDataMin, yDataMax]} tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} width={fsSmall === s.key ? 60 : 38} label={fsSmall === s.key ? { value: yLab, angle: -90, position: 'insideLeft', offset: -5, fill: '#64748b', fontSize: cfg.fontSize + 1 } : undefined} />
+                        <XAxis type="number" dataKey="x" tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} domain={['dataMin', 'dataMax']} label={fsSmall === s.key ? cfgAxisLabel(cfg, 'x', xLabel) : undefined} />
+                        <YAxis domain={[yDataMin, yDataMax]} tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} width={fsSmall === s.key ? 60 : 38} label={fsSmall === s.key ? cfgAxisLabel(cfg, 'y', yLab) : undefined} />
                         {fsSmall === s.key && <Tooltip />}
                         <Line type="monotone" dataKey="y" stroke={s.color} strokeWidth={cfg.lineThickness || 2} strokeDasharray={lineDash(cfg.lineStyle)} dot={false} isAnimationActive={false} />
                       </LineChart>
@@ -2354,13 +2409,17 @@ export const SpectraVisualization = ({ ctx }) => {
 /* ========================================================================
 DATA ANALYSIS — FITTING (DYNAMIC PURE COMPONENTS)
 ======================================================================== */
-const DonutSS = ({ res }) => {
+// `components` lets the manual-entry card reuse this ring with its own extra
+// bucket ("Other") while the fitter keeps the CD_FIT_COMPONENTS palette.
+const DonutSS = ({ res, components = CD_FIT_COMPONENTS }) => {
   const bases = res.activeBases || ['alpha', 'beta', 'turn', 'coil'];
   const data = bases.map((k) => ({
-    name: CD_FIT_COMPONENTS[k]?.label || k,
+    name: components[k]?.label || k,
     value: res.fractions ? res.fractions[k] : res[k],
-    color: CD_FIT_COMPONENTS[k]?.color || '#cbd5e1'
+    color: components[k]?.color || '#cbd5e1'
   })).filter((x) => x.value > 0);
+
+  if (!data.length) return <p className="text-xs text-slate-400 italic">No composition to display yet.</p>;
   
   return (
     <div style={{ width: '100%', height: 260 }}>
@@ -2387,6 +2446,15 @@ export const SpectrumFitting = ({ ctx }) => {
   const [fsFit, setFsFit] = useState(false);
   const [showCfg, setShowCfg] = useState(false);
   const [selectedFitBases, setSelectedFitBases] = useState(['alpha', 'beta', 'turn', 'coil']);
+  // The condition tabs at the top of the page drive this panel: switching
+  // instance must retarget the "Target Condition" dropdown to that instance
+  // instead of leaving the previous condition selected (or silently falling
+  // back to the first one when the previous id is no longer available).
+  // Keyed on activeTest.id only, so a manual selection survives re-renders.
+  useEffect(() => {
+    setFitInstId((prev) => (prev === activeTest.id ? prev : activeTest.id));
+    setFitSpecIdx(0);
+  }, [activeTest.id]);
   const [fitMethod, setFitMethod] = useState('pure'); // 'pure' | 'classical'
   const [classicalOpts, setClassicalOpts] = useState({ nRefs: 400, topK: 30, ridge: 1e-5 });
   const patchClassicalOpts = (patch) => setClassicalOpts((prev) => ({ ...prev, ...patch }));
@@ -2466,7 +2534,9 @@ export const SpectrumFitting = ({ ctx }) => {
     return fitParsed.parsedWavelengths.map((w, i) => ({ x: w, y: Number.isFinite(spec.values[i]) ? spec.values[i] : null })).filter((p) => p.y !== null);
   }, [spec, fitParsed]);
   const simData = useMemo(() => {
-    if (!savedFit || !spec) return [];
+    // A manual composition has no fitted scale factor, so there is no curve to
+    // reconstruct from it (see the manual-entry card below).
+    if (!savedFit || savedFit.manual || !spec) return [];
     return buildSimulatedCurve(savedFit, fitParsed.parsedWavelengths);
   }, [savedFit, fitParsed, spec]);
 
@@ -2474,7 +2544,7 @@ export const SpectrumFitting = ({ ctx }) => {
   const allXs = [...expData.map((p) => p.x), ...simData.map((p) => p.x)];
   const padX = allXs.length ? ((Math.max(...allXs) - Math.min(...allXs)) * 0.03 || 1) : 1;
   const resolvedXDomain = [dom(cfg.xMin) !== undefined ? dom(cfg.xMin) : (allXs.length ? Math.min(...allXs) - padX : 190), dom(cfg.xMax) !== undefined ? dom(cfg.xMax) : (allXs.length ? Math.max(...allXs) + padX : 260)];
-  const zoomFit = useXZoom(overlayRef, resolvedXDomain);
+  const zoomFit = useXZoom(overlayRef, resolvedXDomain, cfgChartMargin(cfg, CHART_MARGIN));
 
   const allSaved = useMemo(() => {
     const out = [];
@@ -2584,11 +2654,17 @@ export const SpectrumFitting = ({ ctx }) => {
                 );
               })}
             </div>
-            <p className="text-xs text-slate-500">
-              Fit quality: <b>R² = {Number(savedFit.r2 || 0).toFixed(4)}</b> · {savedFit.nPoints} points · scale k = {Number(savedFit.scaleK || 0).toFixed(4)}
-              {savedFit.method === 'classical'
-                ? ` · method: classical NNLS (${savedFit.nRefs} refs, ${savedFit.refsUsed} used)` : ''} · saved {savedFit.savedAt}
-            </p>
+            {savedFit.manual ? (
+              <p className="text-xs text-slate-500">
+                <b className="text-amber-700">Manual composition</b> — percentages typed in the manual-entry card, not fitted (no R², no scale factor). Saved {savedFit.savedAt}.
+              </p>
+            ) : (
+              <p className="text-xs text-slate-500">
+                Fit quality: <b>R² = {Number(savedFit.r2 || 0).toFixed(4)}</b> · {savedFit.nPoints} points · scale k = {Number(savedFit.scaleK || 0).toFixed(4)}
+                {savedFit.method === 'classical'
+                  ? ` · method: classical NNLS (${savedFit.nRefs} refs, ${savedFit.refsUsed} used)` : ''} · saved {savedFit.savedAt}
+              </p>
+            )}
             <DonutSS res={savedFit} />
           </div>
 
@@ -2611,14 +2687,16 @@ export const SpectrumFitting = ({ ctx }) => {
                         : [dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']}
                       allowDataOverflow scale={cfgLogScale(cfg, 'y')} ticks={dom(cfg.yMin) != null && dom(cfg.yMax) != null ? cfgAxisTicks(cfg, 'y', [dom(cfg.yMin), dom(cfg.yMax)]) : undefined} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={cfgAxisLabel(cfg, 'y', cfg.yAxisLabel || ((fitInst && fitInst.test.yUnit === 'theta') ? thetaUnitShort(thetaModeOf(fitInst.test)) : 'Ellipticity (mdeg)'))} />
                     {cfgSeriesEl(cfg, { key: 'exp', data: expData, dataKey: 'y', name: 'Experimental', stroke: cfg.colors?.exp || '#3b82f6' })}
-                    {cfgSeriesEl(cfg, { key: 'sim', data: simData, dataKey: 'y', name: 'Simulated (fit)', stroke: cfg.colors?.sim || '#ef4444' })}
+                    {!savedFit.manual && cfgSeriesEl(cfg, { key: 'sim', data: simData, dataKey: 'y', name: 'Simulated (fit)', stroke: cfg.colors?.sim || '#ef4444' })}
                     <Tooltip />
                     {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize || 11 }} />}
                     {zoomFit.refLo !== null && zoomFit.refHi !== null && <ReferenceArea x1={zoomFit.refLo} x2={zoomFit.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
-              <p className="text-[10px] text-slate-400 mt-1">💡 Blue = experimental · Red dashed = reconstructed from the fit ({savedFit.method === 'classical' ? 'reference-set NNLS' : 'pure components'}). Drag to zoom.</p>
+              <p className="text-[10px] text-slate-400 mt-1">{savedFit.manual
+                ? '💡 Blue = experimental. A manual composition has no reconstructed curve — run ✨ Fit Spectrum to overlay the spectrum rebuilt from the fit.'
+                : `💡 Blue = experimental · Red dashed = reconstructed from the fit (${savedFit.method === 'classical' ? 'reference-set NNLS' : 'pure components'}). Drag to zoom.`}</p>
             </div>
           </div>
         </div>
@@ -2644,9 +2722,11 @@ export const SpectrumFitting = ({ ctx }) => {
                   <td className="px-3 py-1.5 font-bold text-slate-700">{row.inst.name}</td>
                   <td className="px-3 py-1.5 text-slate-600">{row.title}</td>
                   <td className="px-3 py-1.5 text-[11px] whitespace-nowrap">
-                    {row.res.method === 'classical'
-                      ? <span className="font-bold text-cyan-700" title={`${row.res.nRefs} reference spectra, ${row.res.refsUsed} used`}>Classical NNLS</span>
-                      : <span className="font-bold text-purple-700">Pure comp.</span>}
+                    {row.res.manual
+                      ? <span className="font-bold text-amber-700" title="Typed by hand in the manual composition card">Manual</span>
+                      : row.res.method === 'classical'
+                        ? <span className="font-bold text-cyan-700" title={`${row.res.nRefs} reference spectra, ${row.res.refsUsed} used`}>Classical NNLS</span>
+                        : <span className="font-bold text-purple-700">Pure comp.</span>}
                   </td>
                   <td className="px-3 py-1.5 text-[11px] leading-tight">
                     {(row.res.activeBases || ['alpha', 'beta', 'turn', 'coil']).map(k => {
@@ -2655,7 +2735,7 @@ export const SpectrumFitting = ({ ctx }) => {
                       return <span key={k} style={{color: CD_FIT_COMPONENTS[k]?.color, marginRight: '8px', whiteSpace: 'nowrap'}}>{CD_FIT_COMPONENTS[k]?.label}: <b>{v}%</b></span>;
                     })}
                   </td>
-                  <td className="px-3 py-1.5 font-mono text-slate-600">{Number(row.res.r2 || 0).toFixed(4)}</td>
+                  <td className="px-3 py-1.5 font-mono text-slate-600">{row.res.manual ? '—' : Number(row.res.r2 || 0).toFixed(4)}</td>
                   <td className="px-3 py-1.5 text-slate-400">{row.res.savedAt}</td>
                   <td className="px-3 py-1.5 text-right">
                     <button type="button" onClick={() => deleteFit(row.inst, row.specId)} className="text-red-500 hover:text-red-700 font-black px-2" title="Delete fit">×</button>
@@ -2667,6 +2747,227 @@ export const SpectrumFitting = ({ ctx }) => {
         </div>
       )}
       {showCfg && <SharedChartStylePanel cfg={cfg} setCfg={setCfg} series={[{ key: 'exp', label: 'Experimental', color: '#3b82f6' }, { key: 'sim', label: 'Simulated (fit)', color: '#ef4444' }]} unit="nm" />}
+    </div>
+  );
+};
+
+/* ========================================================================
+DATA ANALYSIS — MANUAL SECONDARY-STRUCTURE COMPOSITION (RING CHART)
+======================================================================= */
+// The fitter derives the SS percentages from the spectrum; this card lets the
+// same percentages be typed in directly (literature values, another method, a
+// teaching exercise) so they can feed the ring chart without running a fit.
+// Saving writes the per-condition `structureComposition` (what the notebook
+// doughnut reads) plus a `ssFits` entry flagged `manual`, so the fitter's ring
+// chart, composition cards, saved-fits table and the "SS % vs condition" plots
+// show the manual values too — always labelled as manual, never as fitted.
+const MANUAL_SS_BASES = ['alpha', 'beta', 'turn', 'coil'];
+const MANUAL_SS_EXTRA_BASES = ['aDNA', 'bDNA', 'zDNA', 'gqP', 'gqH', 'gqA'];
+const MANUAL_SS_COMPONENTS = { ...CD_FIT_COMPONENTS, other: { label: 'Other', color: '#8b5cf6' } };
+const MANUAL_SS_KEY_BY_LABEL = Object.entries(MANUAL_SS_COMPONENTS).reduce((acc, [k, def]) => { acc[def.label] = k; return acc; }, {});
+const manualSSSeed = (composition) => {
+  const out = {};
+  Object.entries(composition || {}).forEach(([label, v]) => {
+    const key = MANUAL_SS_KEY_BY_LABEL[String(label)] || (String(label).trim().toLowerCase() === 'other' ? 'other' : null);
+    const n = parseFloat(String(v).trim());
+    if (key && Number.isFinite(n)) out[key] = String(n);
+  });
+  return out;
+};
+
+const ManualSSComposition = ({ ctx }) => {
+  const { activeTest } = ctx;
+  const d = useCdDerived(activeTest, ctx);
+  const { instances } = d;
+  const [instId, setInstId] = useState(activeTest.id);
+  const [specIdx, setSpecIdx] = useState(0);
+  // Draft = { sig, vals }: `vals` are the numbers currently in the boxes, `sig`
+  // is the condition+composition signature they were seeded from. When the
+  // target changes the stale draft is simply ignored and the boxes fall back to
+  // the newly stored composition — ordinary re-renders therefore can never wipe
+  // what the user is typing (the instances array is rebuilt on every render).
+  const [draft, setDraft] = useState({ sig: null, vals: null });
+  const [showExtras, setShowExtras] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  const inst = instances.find((i) => i.id === instId) || instances[0] || null;
+  const instParsed = useMemo(() => computeParsed(inst ? inst.test : null), [inst]);
+  const spec = instParsed.parsedSpectra[specIdx] || instParsed.parsedSpectra[0] || null;
+  const ssFits = (inst && inst.test && inst.test.ssFits) || {};
+  const storedFit = spec ? (ssFits[spec.id] || null) : null;
+  const composition = (inst && inst.test && inst.test.structureComposition) || {};
+
+  // The condition tabs drive this card too: switching condition retargets it.
+  useEffect(() => {
+    setInstId((prev) => (prev === activeTest.id ? prev : activeTest.id));
+    setSpecIdx(0);
+    setMsg('');
+  }, [activeTest.id]);
+
+  const seedSig = `${inst ? inst.id : ''}|${JSON.stringify(composition)}`;
+  const vals = draft.sig === seedSig ? draft.vals : manualSSSeed(composition);
+  const setVals = (next) => setDraft({ sig: seedSig, vals: next });
+  const setVal = (key, v) => setVals({ ...vals, [key]: v });
+
+  const numOf = (k) => {
+    const n = parseFloat(String(vals[k] ?? '').trim());
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  };
+  // The nucleic-acid / G-quadruplex rows appear as soon as one of them carries a
+  // value (e.g. a previously fitted composition), or when the user opens them.
+  const extrasInUse = MANUAL_SS_EXTRA_BASES.some((k) => numOf(k) > 0);
+  const visibleKeys = [...MANUAL_SS_BASES, ...((showExtras || extrasInUse) ? MANUAL_SS_EXTRA_BASES : []), 'other'];
+  const enteredKeys = visibleKeys.filter((k) => numOf(k) > 0);
+  const total = enteredKeys.reduce((sum, k) => sum + numOf(k), 0);
+  const preview = { activeBases: enteredKeys, fractions: Object.fromEntries(enteredKeys.map((k) => [k, numOf(k)])) };
+  // Entries this card cannot edit (older / foreign labels) are kept on save.
+  const untouched = Object.fromEntries(Object.entries(composition).filter(([label]) => !MANUAL_SS_KEY_BY_LABEL[String(label)] && String(label).trim().toLowerCase() !== 'other'));
+
+  const normalize = () => {
+    if (!enteredKeys.length) { setMsg('⚠️ Enter at least one percentage first.'); return; }
+    const factor = 100 / total;
+    const rounded = enteredKeys.map((k) => ({ k, v: Math.round(numOf(k) * factor * 10) / 10 }));
+    // Per-box rounding can leave 99.9 / 100.1 behind; move the residue onto the
+    // largest component so the freshly normalized total is exactly 100.0 %.
+    const residue = Math.round((100 - rounded.reduce((sum, x) => sum + x.v, 0)) * 10) / 10;
+    const biggest = rounded.reduce((a, b) => (b.v > a.v ? b : a), rounded[0]);
+    const next = { ...vals };
+    rounded.forEach((x) => { next[x.k] = String(x.k === biggest.k ? Math.round((x.v + residue) * 10) / 10 : x.v); });
+    setVals(next);
+    setMsg(`✅ Normalized to 100 % (was ${total.toFixed(1)} %).`);
+  };
+
+  const clearAll = () => { setVals({}); setMsg(''); };
+
+  const loadStored = () => {
+    if (!storedFit) { setMsg('⚠️ Nothing stored for this spectrum yet — type the values or run a fit.'); return; }
+    const src = storedFit.fractions || storedFit;
+    const next = {};
+    (storedFit.activeBases || MANUAL_SS_BASES).forEach((k) => {
+      const n = parseFloat(String(src[k]).trim());
+      if (Number.isFinite(n)) next[k] = String(n);
+    });
+    if (Object.keys(next).some((k) => MANUAL_SS_EXTRA_BASES.includes(k))) setShowExtras(true);
+    setVals(next);
+    setMsg(storedFit.manual ? '↺ Loaded the stored manual composition.' : '↺ Loaded the stored fitted composition.');
+  };
+
+  const save = () => {
+    if (!inst) return;
+    if (!enteredKeys.length) { setMsg('⚠️ Enter at least one component percentage.'); return; }
+    const fractions = Object.fromEntries(enteredKeys.map((k) => [k, Math.round(numOf(k) * 10) / 10]));
+    const sum = enteredKeys.reduce((acc, k) => acc + fractions[k], 0);
+    if (Math.abs(sum - 100) > 0.05 && !window.confirm(`The entered composition totals ${sum.toFixed(1)} % instead of 100 %. Save it anyway?`)) return;
+    if (storedFit && !storedFit.manual && !window.confirm('A fitted composition is stored for this spectrum. Replace it with the manual composition?')) return;
+    const structureComposition = { ...untouched };
+    enteredKeys.forEach((k) => { structureComposition[MANUAL_SS_COMPONENTS[k].label] = fractions[k]; });
+    const updates = { structureComposition };
+    if (spec) {
+      updates.ssFits = {
+        ...ssFits,
+        [spec.id]: { manual: true, fractions, activeBases: enteredKeys, method: 'manual', algorithm: 'manual', savedAt: new Date().toLocaleString() }
+      };
+    }
+    patchInstance(ctx, activeTest, inst.id, updates);
+    setMsg(`✅ Composition saved for ${inst.name}${spec ? ` — ${spec.title || 'Spectrum'}` : ''} (total ${sum.toFixed(1)} %).`);
+  };
+
+  const totalBadge = total > 0
+    ? (Math.abs(total - 100) < 0.05 ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-amber-50 border-amber-200 text-amber-700')
+    : 'bg-slate-50 border-slate-200 text-slate-500';
+
+  return (
+    <div className="flex flex-col gap-4 border border-slate-200 rounded-xl p-4 bg-white shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h4 className="text-sm font-bold text-slate-700">🥧 Composition — Manual Entry (Ring Chart)</h4>
+          <span className="text-xs font-bold text-slate-500 uppercase">Type the secondary-structure % directly · no fitting required</span>
+        </div>
+        <button type="button" onClick={() => setShowExtras((v) => !v)}
+                className="text-[10px] font-bold px-2 py-1 rounded-lg border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+                title="Also expose the nucleic-acid / G-quadruplex components">
+          {showExtras ? '− DNA / G-quadruplex components' : '+ DNA / G-quadruplex components'}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-end gap-3 bg-slate-50 border border-slate-200 rounded-lg p-2.5">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">Target Condition</label>
+              <select value={inst ? inst.id : ''} onChange={(e) => { setInstId(e.target.value); setSpecIdx(0); setMsg(''); }}
+                      className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+                {instances.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">Spectrum Slot</label>
+              <select value={specIdx} onChange={(e) => setSpecIdx(parseInt(e.target.value, 10))}
+                      className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
+                {instParsed.parsedSpectra.length
+                  ? instParsed.parsedSpectra.map((s, i) => <option key={s.id} value={i}>{s.title || `Spectrum ${i + 1}`}</option>)
+                  : <option value={0}>No spectrum</option>}
+              </select>
+            </div>
+            <button type="button" onClick={loadStored}
+                    className="bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 font-bold px-3 py-2 rounded-lg text-xs shadow-sm"
+                    title="Copy the composition currently stored for the selected spectrum into the boxes">
+              ↺ Load stored composition
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
+            {visibleKeys.map((k) => {
+              const def = MANUAL_SS_COMPONENTS[k];
+              return (
+                <label key={k} className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: def.color }} />
+                  <span className="text-[10px] font-bold uppercase text-slate-500 truncate flex-1" title={def.label}>{def.label}</span>
+                  <input type="number" min="0" max="100" step="0.1" value={vals[k] ?? ''} placeholder="0"
+                         onChange={(e) => setVal(k, e.target.value)}
+                         className="w-16 border border-slate-300 rounded px-1.5 py-1 text-[11px] bg-white outline-none focus:border-blue-500 font-semibold text-right" />
+                  <span className="text-[10px] font-bold text-slate-400">%</span>
+                </label>
+              );
+            })}
+          </div>
+          {/* totals + actions */}
+          <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3">
+            <span className={`text-xs font-bold px-2 py-1 rounded border ${totalBadge}`}>
+              Total: {total.toFixed(1)} %{enteredKeys.length ? '' : ' — nothing entered'}
+            </span>
+            <button type="button" onClick={normalize}
+                    className="bg-slate-100 border border-slate-300 text-slate-700 hover:bg-slate-200 font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm"
+                    title="Rescale the entered values so they add up to exactly 100 %">
+              ⚖️ Normalize to 100 %
+            </button>
+            <button type="button" onClick={clearAll}
+                    className="bg-white border border-slate-300 text-slate-600 hover:bg-slate-100 font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm">
+              🧹 Clear
+            </button>
+            <button type="button" onClick={save}
+                    className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-4 py-1.5 rounded-lg text-xs shadow-sm">
+              💾 Save composition
+            </button>
+            {msg && <span className="text-xs font-bold text-slate-700">{msg}</span>}
+          </div>
+          {Object.keys(untouched).length > 0 && (
+            <p className="text-[10px] font-bold text-amber-700">
+              ⚠️ {Object.keys(untouched).length} stored entry(ies) this card cannot edit ({Object.keys(untouched).join(', ')}) — they are preserved as they are when you save.
+            </p>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <DonutSS res={preview} components={MANUAL_SS_COMPONENTS} />
+          <p className="text-[10px] text-slate-400">
+            💡 Saving stores this composition on <b>{inst ? inst.name : 'this condition'}</b>{spec ? ` for “${spec.title || 'Spectrum'}”` : ''}. It drives the secondary-structure ring chart of the notebook preview and the condition plots (Y = SS %), and it shows up in the fitter above as a composition flagged <b>Manual</b> (no fit quality, no reconstructed curve).
+          </p>
+          {storedFit
+            ? <span className="text-[10px] font-bold text-slate-500">Stored for this spectrum: {storedFit.manual ? 'manual entry' : `fitted (R² = ${Number(storedFit.r2 || 0).toFixed(4)})`} · {storedFit.savedAt || 'unknown date'}</span>
+            : spec && <span className="text-[10px] font-bold text-slate-400">Nothing stored for this spectrum yet — the ring chart above previews what you type.</span>}
+        </div>
+      </div>
     </div>
   );
 };
@@ -3130,7 +3431,7 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
   const xs = visibleSeries.flatMap((s) => includedPts(s).filter((p) => Number.isFinite(p.x)).map((p) => p.x));
   const padX = xs.length ? ((Math.max(...xs) - Math.min(...xs)) * 0.06 || 1) : 1;
   const dataDomain = xs.length ? [Math.min(...xs) - padX, Math.max(...xs) + padX] : [0, 1];
-  const zoom = useXZoom(chartRef, dataDomain);
+  const zoom = useXZoom(chartRef, dataDomain, cfgChartMargin(cfg, { top: 8, right: 16, bottom: 30, left: 12 }));
 
   const numData = (s) => includedPts(s).filter((p) => Number.isFinite(p.x)).sort((a, b) => a.x - b.x).map((p) => ({ x: p.x, y: p.y, sd: effSD(s.key, p), name: p.name }));
   const excludedPts = (s) => s.pts.filter((p) => p.excluded && Number.isFinite(p.x)).sort((a, b) => a.x - b.x).map((p) => ({ x: p.x, y: p.y, name: p.name }));
@@ -3200,7 +3501,7 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
     return [min - pad, max + pad];
   }, [paramData]);
   const fitChartRef = useRef(null);
-  const fitZoom = useYZoom(fitChartRef, paramYDataDomain);
+  const fitZoom = useYZoom(fitChartRef, paramYDataDomain, cfgChartMargin(cfg, { top: 10, right: 10, bottom: 20, left: 10 }));
 
   const refLines = (
     <>
@@ -3492,7 +3793,7 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
                     </div>
                     <div ref={fitChartRef} onMouseDown={fitZoom.onMouseDown} style={{ height: Math.min(280, cfg.height), aspectRatio: String(cfg.aspect || 2) }} className="select-none">
                       <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={paramData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
+                        <BarChart data={paramData} margin={cfgChartMargin(cfg, { top: 10, right: 10, bottom: 20, left: 10 })}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} />
                           <XAxis dataKey="name" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={Math.max(9, cfg.fontSize - 2)} />} />
                           <YAxis domain={[dom(cfg.yMin) ?? fitZoom.domain[0], dom(cfg.yMax) ?? fitZoom.domain[1]]} allowDataOverflow tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: Math.max(9, cfg.fontSize - 2) }} label={cfgAxisLabel(cfg, 'y', paramGraphVar, 0)} />
@@ -3625,6 +3926,7 @@ export const DataAnalysis = ({ ctx }) => (
   <CollapsibleSection title="Data Analysis" icon="📐" defaultOpen={false}>
     <div className="flex flex-col gap-6">
       <SpectrumFitting ctx={ctx} />
+      <ManualSSComposition ctx={ctx} />
       <ConditionFittingSection ctx={ctx} />
     </div>
   </CollapsibleSection>
@@ -4206,7 +4508,7 @@ export const NotebookExtra = ({ ctx, checkId }) => {
         const v = res.fractions ? res.fractions[k] : res[k];
         return v > 0 ? `${CD_FIT_COMPONENTS[k]?.label || k}: <b>${v}%</b>` : null;
       }).filter(Boolean).join('<br/>');
-      html += `<tr><td style="padding: 6px; border: 1px solid #e2e8f0;"><b>${inst}</b></td><td style="padding: 6px; border: 1px solid #e2e8f0;">${spec}</td><td style="padding: 6px; border: 1px solid #e2e8f0;">${compStr}</td><td style="padding: 6px; border: 1px solid #e2e8f0;">${Number(res.r2 || 0).toFixed(4)}</td></tr>`;
+      html += `<tr><td style="padding: 6px; border: 1px solid #e2e8f0;"><b>${inst}</b></td><td style="padding: 6px; border: 1px solid #e2e8f0;">${spec}</td><td style="padding: 6px; border: 1px solid #e2e8f0;">${compStr}</td><td style="padding: 6px; border: 1px solid #e2e8f0;">${res.manual ? '— (manual)' : Number(res.r2 || 0).toFixed(4)}</td></tr>`;
     });
     html += `</table>`;
     return html;

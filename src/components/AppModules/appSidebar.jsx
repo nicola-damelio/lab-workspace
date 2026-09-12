@@ -15,6 +15,7 @@ export const AppSidebar = ({
   currentUser, setCurrentUser, setUnlockedTestIds, setLoginModal,
   onSignOut,
   currentModule, setCurrentModule,
+  lastOpenedTest, onReturnToTest,
   datasetKind,
   adminNav,
   currentAdminPage, onAdminNav,
@@ -128,6 +129,37 @@ export const AppSidebar = ({
                 isSidebarOpen ? 'px-2' : 'px-1 items-center'
               }`}
             >
+              {/* ── ↩ Retour à l'expérience en cours de travail ──────────────
+                  Quitter la page d'une expérience la démonte : ce raccourci la
+                  rouvre en un clic (sur la même condition) depuis n'importe
+                  quelle autre page — Library, Projects, Lab Notebook… Voir
+                  readLastExperiment / handleReturnToTest dans App.jsx. */}
+              {lastOpenedTest && currentModule !== 'active-test' && (
+                <button
+                  type="button"
+                  onClick={onReturnToTest}
+                  title={`Back to the experiment you were working on: ${lastOpenedTest.name}${lastOpenedTest.instanceName ? ` — ${lastOpenedTest.instanceName}` : ''}`}
+                  className={`mb-2 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-800 font-bold shadow-sm hover:bg-emerald-100 transition-colors flex items-center gap-2 ${
+                    isSidebarOpen ? 'w-full px-3 py-2 text-left' : 'w-10 h-10 justify-center'
+                  }`}
+                >
+                  <Icon name="arrow-left" size={16} className="shrink-0" />
+                  {isSidebarOpen && (
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[9px] font-black uppercase tracking-widest text-emerald-600">
+                        Back to experiment
+                      </span>
+                      <span className="block text-xs truncate">{lastOpenedTest.name}</span>
+                      {lastOpenedTest.instanceName && (
+                        <span className="block text-[10px] font-medium text-emerald-700/80 truncate">
+                          {lastOpenedTest.instanceName}
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </button>
+              )}
+
               {/* ── User identity bar ── */}
               {isSidebarOpen ? (
                 <div className={`mb-3 rounded-xl border px-3 py-2.5 flex items-center gap-2 text-sm ${

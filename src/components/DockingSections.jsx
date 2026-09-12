@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, ScatterChart, Scatter} from 'recharts';
-import {ChartControlBar, SharedChartStylePanel} from './SharedAnalysisTools';
+import {ChartControlBar, SharedChartStylePanel, cfgAxisLabel, cfgChartMargin} from './SharedAnalysisTools';
 import { Icon } from './Icons';
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
@@ -1149,10 +1149,10 @@ export const DockingAnalysisSection = ({ ctx }) => {
         <CollapsibleSection title={`Binding Affinity per Pose (${unit})`} icon="📊" defaultOpen={false}>
           <div style={dockChartBoxStyle(cfg)}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={affinityData} margin={DOCK_CHART_MARGIN}>
+              <BarChart data={affinityData} margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="mode" tick={{ fontSize: cfg.fontSize }} label={{ value: 'Mode / Pose', position: 'insideBottom', offset: -10, fontSize: cfg.fontSize }} />
-                <YAxis tick={{ fontSize: cfg.fontSize }} label={{ value: unit, angle: -90, position: 'insideLeft', fontSize: cfg.fontSize }} />
+                <XAxis dataKey="mode" tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'x', 'Mode / Pose', 10)} />
+                <YAxis tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'y', unit, 0)} />
                 <Tooltip />
                 <Bar dataKey="affinity" name={`Affinity (${unit})`} radius={[3, 3, 0, 0]}>
                   {affinityData.map((entry, i) => (
@@ -1168,10 +1168,10 @@ export const DockingAnalysisSection = ({ ctx }) => {
         <CollapsibleSection title="Affinity vs. RMSD" icon="🎯" defaultOpen={false}>
           <div ref={scatterRef} style={dockChartBoxStyle(cfg)} className="select-none relative">
             <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={DOCK_CHART_MARGIN}>
+              <ScatterChart margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis type="number" dataKey="rmsd" name="RMSD" tick={{ fontSize: cfg.fontSize }} label={{ value: 'RMSD from best (Å)', position: 'insideBottom', offset: -10, fontSize: cfg.fontSize }} />
-                <YAxis type="number" dataKey="affinity" name="Affinity" tick={{ fontSize: cfg.fontSize }} label={{ value: unit, angle: -90, position: 'insideLeft', fontSize: cfg.fontSize }} />
+                <XAxis type="number" dataKey="rmsd" name="RMSD" tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'x', 'RMSD from best (Å)', 10)} />
+                <YAxis type="number" dataKey="affinity" name="Affinity" tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'y', unit, 0)} />
                 <Tooltip cursor={{ strokeDasharray: '3 3' }} />
                 <Scatter data={rmsdData} fill="#8b5cf6" />
               </ScatterChart>
@@ -1186,10 +1186,10 @@ export const DockingAnalysisSection = ({ ctx }) => {
         <CollapsibleSection title="Energy Component Breakdown" icon="🔋" defaultOpen={false}>
           <div style={dockChartBoxStyle(cfg)}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={energyBreakdownData} margin={DOCK_CHART_MARGIN}>
+              <BarChart data={energyBreakdownData} margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="mode" tick={{ fontSize: cfg.fontSize }} label={{ value: 'Mode / Pose', position: 'insideBottom', offset: -10, fontSize: cfg.fontSize }} />
-                <YAxis tick={{ fontSize: cfg.fontSize }} label={{ value: unit, angle: -90, position: 'insideLeft', fontSize: cfg.fontSize }} />
+                <XAxis dataKey="mode" tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'x', 'Mode / Pose', 10)} />
+                <YAxis tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'y', unit, 0)} />
                 <Tooltip />
                 <Legend />
                 <Bar dataKey="vdW" stackId="e" fill="#3b82f6" name="vdW / Hbond / desolv" />
@@ -1212,7 +1212,7 @@ export const DockingAnalysisSection = ({ ctx }) => {
                   BSA: (parseDockingValue(p.bsa) ?? 0) / 100,
                   vdW: parseDockingValue(p.energy_vdw) ?? 0,
                   Elec: parseDockingValue(p.energy_elec) ?? 0
-                }))} margin={DOCK_CHART_MARGIN}>
+                }))} margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                   <XAxis dataKey="mode" tick={{ fontSize: cfg.fontSize }} />
                   <YAxis tick={{ fontSize: cfg.fontSize }} />

@@ -19,6 +19,9 @@ import { StorageModule } from './components/AppModules/storageModuleViews';
 import { TestsModule } from './components/AppModules/testsModule';
 import { ProtocolsModule } from './components/AppModules/protocolsModule';
 import { ActiveTestModule } from './components/AppModules/activeTestModule';
+// Contexte des sections repliables : les sections de la page d'expérience
+// mémorisent leur état ouvert/fermé PAR EXPÉRIENCE (voir src/components/ui.jsx).
+import { SectionsScope } from './components/ui';
 import { NotebookModule, CalculationsModule, PublicationsModule } from './components/AppModules/miscModules';
 import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud, setProjectDatasetScope, removeProjectsOfDataset } from './components/AppModules/projectsModule';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
@@ -495,6 +498,33 @@ const datasetHref = (datasetId) => {
     }
   } catch { /* ignore */ }
   return '?' + qs;
+};
+
+/* -------------------------------------------------------------------------
+   « OÙ J'ÉTAIS » — dernière expérience ouverte.
+
+   Quitter une page d'expérience (pour consulter la Library, les Projects, le
+   Lab Notebook…) la démonte : il fallait retrouver le chemin (Projects →
+   projet → expérience) pour y revenir. On mémorise donc, PAR BASE, la
+   dernière expérience ouverte — id + nom (et le nom de la condition en cours)
+   — pour que la barre latérale propose « ↩ Retour à l'expérience » en un clic.
+   sessionStorage : la mémoire vaut pour l'onglet courant et survit à un
+   rechargement, sans polluer durablement le poste.
+   ------------------------------------------------------------------------- */
+const lastExperimentKey = (datasetId) => `labLastExperiment_${datasetId || 'global'}`;
+
+const readLastExperiment = (datasetId) => {
+  try {
+    const raw = JSON.parse(sessionStorage.getItem(lastExperimentKey(datasetId)) || 'null');
+    if (raw && typeof raw === 'object' && raw.id) return raw;
+  } catch { /* ignore */ }
+  return null;
+};
+
+const writeLastExperiment = (datasetId, payload) => {
+  try {
+    sessionStorage.setItem(lastExperimentKey(datasetId), JSON.stringify(payload));
+  } catch { /* ignore */ }
 };
 
 /* =========================================================================
@@ -1135,6 +1165,10 @@ if (customType === 'dosy') {
   // Where the user came from before opening a test page (used by the active
   // test's "◀ Back" button), e.g. { module: 'project-detail', projectId }.
   const [returnTarget, setReturnTarget] = useState(null);
+  // Dernière expérience ouverte de cette base (voir readLastExperiment
+  // ci-dessus) : alimente le bouton « ↩ Retour à l'expérience » de la barre
+  // latérale, disponible depuis n'importe quelle autre page.
+  const [lastOpenedTest, setLastOpenedTest] = useState(() => readLastExperiment(currentDatasetId));
   const [storageModal, setStorageModal] = useState(null);
   const [moveModal, setMoveModal] = useState(null);
 
@@ -1156,6 +1190,10 @@ if (customType === 'dosy') {
   const [reactTests, setReactTests] = useState(historyRef.current[0]);
 
   const tests = reactTests;
+  // Miroir de `tests` lu par l'effet « dernière expérience ouverte » : évite de
+  // le relancer à chaque frappe (le tableau change à chaque édition du nom).
+  const testsRef = useRef(tests);
+  testsRef.current = tests;
 
   const allCmpds = useMemo(() => {
     // Built-in default compounds only appear as a fallback when the user has
@@ -1211,6 +1249,37 @@ if (customType === 'dosy') {
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTestId]);
+
+  // ── « OÙ J'ÉTAIS » : mémoire de la dernière expérience ouverte ───────────
+  // 1) Chaque fois qu'on ouvre un dataset, on relit la mémoire de CETTE base
+  //    (sessionStorage, clé par dataset) — la mémoire suit donc l'onglet et
+  //    survit à un rechargement de page.
+  useEffect(() => {
+    setLastOpenedTest(readLastExperiment(currentDatasetId));
+  }, [currentDatasetId]);
+
+  // 2) Chaque fois qu'une expérience est à l'écran, on mémorise son id, son nom
+  //    et la condition (instance) en cours : c'est ce que le bouton « ↩ Retour
+  //    à l'expérience » rouvrira, exactement sur la même condition.
+  //    On lit le test via une ref pour ne PAS relancer cet effet à chaque
+  //    frappe (l'édition du nom change le tableau `tests` à chaque fois).
+  useEffect(() => {
+    if (currentModule !== 'active-test' || !activeTestId) return;
+    const t = testsRef.current.find((x) => x.id === activeTestId);
+    if (!t) return;
+    const payload = {
+      id: t.id,
+      name: t.name || t.instanceName || 'Experiment',
+      instanceName: t.instanceName || '',
+      at: Date.now(),
+    };
+    setLastOpenedTest((prev) =>
+      prev && prev.id === payload.id && prev.name === payload.name && prev.instanceName === payload.instanceName
+        ? prev
+        : payload
+    );
+    writeLastExperiment(currentDatasetId, payload);
+  }, [currentModule, activeTestId, currentDatasetId]);
 
   const handleSetCustomFields = useCallback((updater) => {
     setCustomFields((prev) => {
@@ -3555,6 +3624,21 @@ const openDataset = (dset) => {
     if (window.innerWidth < 768) setIsSidebarOpen(false);
   };
 
+  // « ↩ Retour à l'expérience » (barre latérale + barre mobile) : rouvre la
+  // dernière expérience ouverte — sur la même condition — depuis n'importe
+  // quelle autre page, sans repasser par Projects/Experiments. Si l'expérience
+  // a été supprimée entre-temps, la mémoire est simplement oubliée.
+  const handleReturnToTest = () => {
+    const target = lastOpenedTest;
+    if (!target || !target.id) return;
+    if (!tests.some((t) => t.id === target.id)) {
+      setLastOpenedTest(null);
+      writeLastExperiment(currentDatasetId, null);
+      return;
+    }
+    jumpToTest(target.id);
+  };
+
   const handlePrint = async () => {
     // Wait for all visible images to finish loading before printing
     // This is the correct approach for public Drive/external images already in the browser
@@ -4351,7 +4435,21 @@ const openDataset = (dset) => {
               {datasetTitle || 'Lab Workspace'}
             </span>
 
-            <div className="w-8"></div>
+            {/* Retour direct à la dernière expérience ouverte (voir
+                readLastExperiment) : sur mobile la barre latérale est repliée,
+                ce raccourci évite de la rouvrir pour retrouver sa page. */}
+            {lastOpenedTest && currentModule !== 'active-test' ? (
+              <button
+                type="button"
+                onClick={handleReturnToTest}
+                className="shrink-0 flex items-center gap-1 max-w-[42%] px-2 py-1 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-800 text-[11px] font-bold"
+                title={`Back to the experiment you were working on: ${lastOpenedTest.name}${lastOpenedTest.instanceName ? ` — ${lastOpenedTest.instanceName}` : ''}`}
+              >
+                ↩ <span className="truncate">{lastOpenedTest.name}</span>
+              </button>
+            ) : (
+              <div className="w-8"></div>
+            )}
           </div>
 
           {isSidebarOpen && (
@@ -4381,6 +4479,8 @@ const openDataset = (dset) => {
             currentAdminPage={currentAdminPage}
             onAdminNav={handleAdminNav}
             onConnectDrive={connectDrive}
+            lastOpenedTest={lastOpenedTest}
+            onReturnToTest={handleReturnToTest}
           />
 
           {/* MAIN CONTENT */}
@@ -4471,7 +4571,7 @@ const openDataset = (dset) => {
               setProtocolCategories={setProtocolCategories}
               tests={tests}
             />)}
-            {currentModule === 'active-test' && (<ActiveTestModule
+            {currentModule === 'active-test' && (<SectionsScope value={activeTestId}><ActiveTestModule
               activeTestId={activeTestId} additives={additives} allCellLines={allCellLines} allCmpds={allCmpds}
               appClipboard={appClipboard} buffers={buffers} cmpColors={cmpColors} compoundMeta={compoundMeta}
               currentUser={currentUser} customCmpds={customCmpds} customConc={customConc} customFields={customFields}
@@ -4486,7 +4586,7 @@ const openDataset = (dset) => {
               setExpandedGroups={setExpandedGroups} setMoveModal={setMoveModal} setTests={setTests}
               solvents={solvents} storages={storages} testCategories={testCategories} tests={tests}
               unlockedTestIds={unlockedTestIds} MDTestRenderer={MDTestRenderer}
-            />)}
+            /></SectionsScope>)}
             {currentModule === 'notebook' && (<NotebookModule
               tests={tests} allCellLines={allCellLines} testCategories={testCategories}
               setActiveTestId={setActiveTestId} setCurrentModule={setCurrentModule}

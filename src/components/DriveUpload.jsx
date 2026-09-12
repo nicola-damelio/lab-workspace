@@ -14,6 +14,14 @@
 
    If Drive is not connected it dispatches a "lab:connect-drive" event so
    App.jsx can run the Google sign-in that grants Drive access.
+
+   Optional props:
+     • multiple  → the picker accepts SEVERAL files at once (used by the
+       project page "Useful files" section); onDone fires once per file and a
+       combined "N files saved" line is shown.
+     • nameFor   → fn(file) returning the BASE name to use instead of the
+       project/scientist naming convention (keeps the file's own name — used
+       by "Useful files").
    ========================================================================= */
 
 import React, { useRef, useState, useEffect } from 'react';
@@ -30,6 +38,8 @@ export const DriveUploadButton = ({
   naming = null,
   path = null,
   fileSuffix = null,
+  multiple = false,
+  nameFor = null,
   onDone,
   onError
 }) => {
@@ -43,6 +53,8 @@ export const DriveUploadButton = ({
   const [lastFileName, setLastFileName] = useState('');
   const queuedIdRef = useRef(null);
   const [autoQueued, setAutoQueued] = useState(false);
+  // Set only when SEVERAL files were picked at once (multiple): { total, saved }.
+  const [batch, setBatch] = useState(null);
 
   // When a queued file is finally replayed after Drive reconnects, flip this
   // button's status to "saved" and expose the real Drive link.
@@ -82,6 +94,13 @@ export const DriveUploadButton = ({
       let computed = namingCtx
         ? suggestDriveFileName(namingCtx)
         : (suggestedName || 'file');
+      // `nameFor` keeps the file's OWN name (used by "Useful files", which are
+      // reference documents — they are not renamed with the project/scientist
+      // convention). The base name is slugged so it stays Drive-safe.
+      if (typeof nameFor === 'function') {
+        const ownBase = sanitizeSlug(nameFor(file) || '');
+        if (ownBase) computed = ownBase;
+      }
       // Optional suffix appended to the base name (e.g. publication year or
       // keywords): base_suffix.ext
       if (fileSuffix) {
@@ -117,6 +136,7 @@ export const DriveUploadButton = ({
         setLastDataUrl('');
         setLastFileName('');
         if (onDone) onDone({ name, file, drive, mimeType, dataUrl: null });
+        return { name, file, drive, mimeType, dataUrl: null };
       } else {
         // Temporary in-app copy — but ONLY for small files. Encoding a large
         // file into a data URL would freeze the app and bloat the saved
@@ -137,6 +157,7 @@ export const DriveUploadButton = ({
             setLastDriveError('File too large to store locally — connect your cloud storage (Google Drive or Nextcloud) and upload it again.');
             if (onError) onError(new Error('File too large to store locally'));
           }
+          return { name, file, drive: null, mimeType, dataUrl: null };
         } else {
           const dataUrl = await readFileAsDataURL(file);
           setStatus('local');
@@ -148,21 +169,32 @@ export const DriveUploadButton = ({
           if (queued && queued.queued) { queuedIdRef.current = queued.id; setAutoQueued(true); }
           else { queuedIdRef.current = null; setAutoQueued(false); }
           if (onDone) onDone({ name, file, drive: null, mimeType, dataUrl });
+          return { name, file, drive: null, mimeType, dataUrl };
         }
       }
     } catch (err) {
       setStatus('error');
       if (onError) onError(err);
+      return null;
     } finally {
       setBusy(false);
     }
   };
 
   const handleFile = async (e) => {
-    const file = e.target.files && e.target.files[0];
+    const chosen = Array.from(e.target.files || []).filter(Boolean);
     if (e.target.value) e.target.value = '';
-    if (!file) return;
-    await upload(file);
+    if (!chosen.length) return;
+    // `multiple` uploads every chosen file (sequentially — Drive wants one
+    // request at a time and the status line stays readable).
+    const files = multiple ? chosen : chosen.slice(0, 1);
+    setBatch(null);
+    let saved = 0;
+    for (let i = 0; i < files.length; i += 1) {
+      const res = await upload(files[i]);
+      if (res && res.drive && res.drive.id) saved += 1;
+    }
+    if (files.length > 1) setBatch({ total: files.length, saved });
   };
 
   const connectDrive = () => {
@@ -183,7 +215,7 @@ export const DriveUploadButton = ({
 
   return (
     <div className="flex flex-col gap-1">
-      <input ref={fileRef} type="file" accept={accept} onChange={handleFile} className="hidden" />
+      <input ref={fileRef} type="file" accept={accept} multiple={multiple} onChange={handleFile} className="hidden" />
       <button
         type="button"
         disabled={busy}
@@ -199,7 +231,14 @@ export const DriveUploadButton = ({
         {busy ? '⏳ Uploading…' : label}
       </button>
 
-      {status === 'drive' && lastDrive && (
+      {batch && (
+        <span className={`text-[10px] font-bold ${batch.saved === batch.total ? 'text-emerald-600' : 'text-amber-600'}`}>
+          {batch.saved === batch.total
+            ? `✓ ${batch.saved} file${batch.saved > 1 ? 's' : ''} saved to Google Drive`
+            : `⚠ ${batch.saved}/${batch.total} files saved to Google Drive — the others were kept and will upload automatically once Drive answers again`}
+        </span>
+      )}
+      {!batch && status === 'drive' && lastDrive && (
         <span className="text-[10px] font-bold text-emerald-600 flex items-center gap-1">
           ✓ Saved to Google Drive
           {lastDrive.driveUrl && (
@@ -210,7 +249,7 @@ export const DriveUploadButton = ({
           )}
         </span>
       )}
-      {status === 'local' && autoQueued && !lastDriveError && (
+      {!batch && status === 'local' && autoQueued && !lastDriveError && (
         <span className="text-[10px] font-bold text-amber-600">
           ⚠ {bigFile ? 'Large file kept locally' : 'Stored locally (temporary)'} — it will be uploaded to Google Drive <b>automatically</b> as soon as the connection is restored.
           {lastFileName ? (
@@ -218,7 +257,7 @@ export const DriveUploadButton = ({
           ) : null}
         </span>
       )}
-      {status === 'local' && (!autoQueued || lastDriveError) && (
+      {!batch && status === 'local' && (!autoQueued || lastDriveError) && (
         <span className="text-[10px] font-bold text-amber-600">
           {lastDriveError ? (
             <>Drive saving unavailable — file kept locally. </> 
@@ -237,14 +276,14 @@ export const DriveUploadButton = ({
           )}.
         </span>
       )}
-      {status === 'queued' && (
+      {!batch && status === 'queued' && (
         <span className="text-[10px] font-bold text-amber-600">
           ⚠ Drive unavailable — the large file was kept and will be uploaded to Google Drive{' '}
           <b>automatically</b> as soon as the connection is restored.
           <button type="button" onClick={connectDrive} className="underline hover:text-amber-800"> Retry now</button>.
         </span>
       )}
-      {status === 'error' && (
+      {!batch && status === 'error' && (
         <span className="text-[10px] font-bold text-red-600">
           Upload failed — try again or paste a link instead.
         </span>

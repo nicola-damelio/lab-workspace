@@ -3,7 +3,7 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, ReferenceArea
 } from 'recharts';
 import { Icon } from './Icons';
-import { ChartControlBar, SharedChartStylePanel, useXZoom, ChartPanel, CHART_FS_CLASSES, useChartFsHeight, AngledTick } from './SharedAnalysisTools';
+import { ChartControlBar, SharedChartStylePanel, useXZoom, ChartPanel, CHART_FS_CLASSES, useChartFsHeight, AngledTick, cfgAxisLabel, cfgChartMargin } from './SharedAnalysisTools';
 import { parseSimulationParameters } from './MDData';
 import {
   CONTACT_DEFAULTS, parseTopology, computeContactRDF, demoFrames,
@@ -1730,7 +1730,11 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
   // derive x data domain for zoom
   const xs = data.map(d => typeof d[xKey] === 'number' ? d[xKey] : 0);
   const dataDomain = xs.length > 1 ? [Math.min(...xs), Math.max(...xs)] : [0, 1];
-  const zoom = useXZoom(chartRef, dataDomain, MD_CHART_M_ZOOM);
+  // Panel-controlled margin: grows with the font size so bigger axis titles and
+  // the configurable label gap always have room. The same object is used for the
+  // drag-to-zoom pixel → value mapping so zooming stays accurate.
+  const effMargin = cfgChartMargin(cfg, MD_CHART_M_ZOOM);
+  const zoom = useXZoom(chartRef, dataDomain, effMargin);
 
   return (
     <div id={id} className="bg-white rounded-lg border border-slate-200 p-2 flex flex-col relative">
@@ -1743,22 +1747,22 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
       <div ref={chartRef} onMouseDown={chartType !== 'bar' ? zoom.onMouseDown : undefined} className="flex-1 w-full select-none" style={{ aspectRatio: String(aspect), minHeight: 200 }}>
         <ResponsiveContainer width="100%" height="100%">
           {chartType === 'bar' ? (
-            <BarChart data={data} margin={MD_CHART_M_ZOOM}>
+            <BarChart data={data} margin={effMargin}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey={xKey} interval={0} tick={<AngledTick angle={cfg.tickAngle} fontSize={fSize} />} tickMargin={10} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fSize + 1 }} />
-              <YAxis width={70} tick={{ fontSize: fSize }} label={{ value: yLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fSize + 1 }} />
+              <XAxis dataKey={xKey} interval={0} tick={<AngledTick angle={cfg.tickAngle} fontSize={fSize} />} tickMargin={10} label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'x', xLabel)} />
+              <YAxis width={70} tick={{ fontSize: fSize }} label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'y', yLabel)} />
               <Tooltip />
               <Bar dataKey={dataKey} isAnimationActive={false}>
                 {data.map((entry, index) => <Cell key={index} fill={entry.fill || lineColor} />)}
               </Bar>
             </BarChart>
           ) : (
-            <LineChart data={data} margin={MD_CHART_M_ZOOM}>
+            <LineChart data={data} margin={effMargin}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey={xKey} type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow tick={<AngledTick angle={cfg.tickAngle} fontSize={fSize} />} tickMargin={10}
-                label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fSize + 1 }} />
+                label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'x', xLabel)} />
               <YAxis type="number" width={70} domain={[mdDom(cfg.yMin) ?? 'auto', mdDom(cfg.yMax) ?? 'auto']} tick={{ fontSize: fSize }}
-                label={{ value: yLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fSize + 1 }} />
+                label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'y', yLabel)} />
               <Tooltip />
               <Line type="monotone" dataKey={dataKey} stroke={lineColor} strokeWidth={cfg.lineThickness || 2} strokeDasharray={mdLineDash(cfg.lineStyle)} dot={false} isAnimationActive={false} />
               {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
@@ -1853,10 +1857,10 @@ const MDPerAtomChartPanel = ({ d, chart, updateChart, removeChart }) => {
       </div>
       {chartData.length > 0 ? (
         <ResponsiveContainer width="100%" aspect={cfg.aspect}>
-          <BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 16, left: 8 }}>
+          <BarChart data={chartData} margin={cfgChartMargin(cfg, { top: 8, right: 8, bottom: 16, left: 8 })}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="label" tick={{ fontSize: cfg.fontSize }} />
-            <YAxis tick={{ fontSize: cfg.fontSize }} label={{ value: layer?.unit || '', angle: -90, position: 'insideLeft', style: { fontSize: cfg.fontSize } }} />
+            <YAxis tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'y', layer?.unit || '', 4)} />
             <Tooltip />
             <Legend wrapperStyle={{ fontSize: cfg.fontSize }} />
             {atomMeta.map(m => <Bar key={m.key} dataKey={m.key} name={m.label} fill={m.color} isAnimationActive={false} />)}
@@ -1989,11 +1993,11 @@ const MDConditionPlotPanel = ({ d, chart, updateChart, removeChart, activeTest }
       </div>
       {series.length > 0 ? (
         <ResponsiveContainer width="100%" aspect={cfg.aspect}>
-          <LineChart margin={{ top: 8, right: 16, bottom: 24, left: 16 }}>
+          <LineChart margin={cfgChartMargin(cfg, { top: 8, right: 16, bottom: 24, left: 16 })}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="x" type="number" allowDuplicatedCategory={false} tick={{ fontSize: cfg.fontSize }}
-              label={{ value: MD_COND_FIELDS.find(f => f.key === xField)?.label || xField, position: 'insideBottom', offset: -16, fill: '#64748b', fontSize: cfg.fontSize }} />
-            <YAxis tick={{ fontSize: cfg.fontSize }} label={{ value: layer?.unit || '', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: cfg.fontSize }} />
+              label={cfgAxisLabel(cfg, 'x', MD_COND_FIELDS.find(f => f.key === xField)?.label || xField, 10)} />
+            <YAxis tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'y', layer?.unit || '', 4)} />
             <Tooltip />
             <Legend wrapperStyle={{ fontSize: cfg.fontSize }} />
             {series.map(s => (
@@ -2298,7 +2302,7 @@ export const MDAnalysisSection = ({ ctx }) => {
           )}
           <div style={{ height: 250 }}>
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={energy} margin={{ top: 5, right: 10, bottom: 25, left: 10 }}>
+              <LineChart data={energy} margin={cfgChartMargin({ ...cfg, fontSize: cfg.fontSize || 12 }, { top: 5, right: 10, bottom: 25, left: 10 })}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="time" tick={<AngledTick angle={cfg.tickAngle} fontSize={10} />} tickMargin={10} />
                 <YAxis tick={{ fontSize: 10 }} />
@@ -2654,7 +2658,8 @@ const MDContactChart = ({ rows, series, yLabel, cfg }) => {
   rows.forEach((r) => series.forEach((s) => { const v = r[s.key]; if (typeof v === 'number' && v > yMax) yMax = v; }));
   const chartData = useMemo(() => rows.map((r, i) => ({ ...r, __xi: i })), [rows]);
   // X-axis drag-to-zoom on the atom axis (horizontal drag selects a range), like the other charts
-  const zoom = useXZoom(ref, [0, Math.max(1, rows.length - 1)], { top: 8, right: 8, bottom: 96, left: 8 });
+  const effMargin = cfgChartMargin(cfg, { top: 8, right: 8, bottom: 96, left: 8 });
+  const zoom = useXZoom(ref, [0, Math.max(1, rows.length - 1)], effMargin);
   const ticks = [];
   for (let i = Math.max(0, Math.ceil(zoom.domain[0])); i <= Math.min(rows.length - 1, Math.floor(zoom.domain[1])); i++) ticks.push(i);
   const colorOf = (s, i) => s.color || seriesColorFor(cfg, s.key, i, series.length);
@@ -2668,15 +2673,15 @@ const MDContactChart = ({ rows, series, yLabel, cfg }) => {
       <div className="flex gap-3">
         <div ref={ref} onMouseDown={zoom.onMouseDown} style={{ flex: 1, minWidth: 0 }} className="select-none">
           <ResponsiveContainer width="100%" height={effHeight}>
-            <LineChart data={chartData} margin={{ top: 8, right: 8, bottom: 96, left: 8 }}>
+            <LineChart data={chartData} margin={effMargin}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis dataKey="__xi" type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow
                      ticks={ticks} tickFormatter={(v) => { const r = chartData[Math.round(v)]; return r ? r.atom : ''; }}
                      interval={0} height={100} tick={{ fontSize, angle: -90, textAnchor: 'end' }}
-                     label={{ value: cfg.xAxisLabel || 'Atom group', position: 'insideBottom', offset: -76, style: { fontSize: fontSize + 1 } }} />
+                     label={cfgAxisLabel({ ...cfg, fontSize: fontSize + 1 }, 'x', cfg.xAxisLabel || 'Atom group', 70)} />
               <YAxis tick={{ fontSize: fontSize + 1 }} width={70}
                      domain={[mdDom(cfg.yMin) ?? 0, mdDom(cfg.yMax) ?? (yMax || 1)]} allowDataOverflow
-                     label={{ value: cfg.yAxisLabel || yLabel, angle: -90, position: 'insideLeft', style: { fontSize: fontSize + 2 } }} />
+                     label={cfgAxisLabel({ ...cfg, fontSize: fontSize + 2 }, 'y', cfg.yAxisLabel || yLabel, 4)} />
               <Tooltip />
               {series.map((s, i) => {
                 const color = colorOf(s, i);
@@ -3088,7 +3093,9 @@ const MDProfileChart = ({ rows, series, xKey, yLabel, xLabel, height = 380, rota
   // X-axis drag-to-zoom in every case (horizontal drag selects an X range).
   // For a categorical X axis we zoom over the row index, so the axis is rendered numeric.
   const chartData = useMemo(() => (numericX ? rows : rows.map((r, i) => ({ ...r, __xi: i }))), [rows, numericX]);
-  const zoom = useXZoom(ref, numericX ? xDomain : [0, Math.max(1, rows.length - 1)], { top: 8, right: 8, bottom: rotateX ? 90 : 36, left: 8 });
+  // Panel-controlled margin (grows with font size / axis-label gap); also fed to the zoom maths.
+  const effMargin = cfgChartMargin(cfg, { top: 8, right: 8, bottom: rotateX ? 90 : 36, left: 8 });
+  const zoom = useXZoom(ref, numericX ? xDomain : [0, Math.max(1, rows.length - 1)], effMargin);
   const onMouseDown = zoom.onMouseDown;
   const isZoomed = zoom.isZoomed;
   const reset = zoom.reset;
@@ -3106,11 +3113,11 @@ const MDProfileChart = ({ rows, series, xKey, yLabel, xLabel, height = 380, rota
       <div className="flex gap-3">
         <div ref={ref} onMouseDown={onMouseDown} style={{ flex: 1, minWidth: 0 }} className="select-none">
           <ResponsiveContainer width="100%" height={effHeight}>
-            <LineChart data={chartData} margin={{ top: 8, right: 8, bottom: rotateX ? 90 : 36, left: 8 }}>
+            <LineChart data={chartData} margin={effMargin}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               {numericX ? (
                 <XAxis dataKey={xKey} type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow tick={{ fontSize: fSize }}
-                       label={{ value: cfg.xAxisLabel || xLabel, position: 'insideBottom', offset: -18, style: { fontSize: fSize + 1 } }} />
+                       label={cfgAxisLabel({ ...cfg, fontSize: fSize + 1 }, 'x', cfg.xAxisLabel || xLabel, 12)} />
               ) : (
                 <XAxis dataKey="__xi" type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow
                        ticks={catTicks} tickFormatter={(v) => { const r = chartData[Math.round(v)]; return r ? r[xKey] : ''; }}
@@ -3119,7 +3126,7 @@ const MDProfileChart = ({ rows, series, xKey, yLabel, xLabel, height = 380, rota
               )}
               <YAxis tick={{ fontSize: fSize + 1 }} width={70}
                      domain={[mdDom(cfg.yMin) ?? 'auto', mdDom(cfg.yMax) ?? 'auto']}
-                     label={{ value: cfg.yAxisLabel || yLabel, angle: -90, position: 'insideLeft', style: { fontSize: fSize + 2 } }} />
+                     label={cfgAxisLabel({ ...cfg, fontSize: fSize + 2 }, 'y', cfg.yAxisLabel || yLabel, 4)} />
               <Tooltip />
               {series.map((s, i) => (
                 <Line key={s.key} dataKey={s.key} stroke={colorOf(s, i)}
@@ -3909,11 +3916,13 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
   const occRef = useRef(null);
   const contentXs = (contentData?.rows || []).map((r) => r.x).filter((x) => typeof x === 'number');
   const contentDomain = contentXs.length > 1 ? [Math.min(...contentXs), Math.max(...contentXs)] : [0, 1];
-  const contentZoom = useXZoom(contentRef, contentDomain, { top: 8, right: 8, bottom: 30, left: 8 });
+  const contentMargin = cfgChartMargin(dsspCfg, { top: 8, right: 8, bottom: 30, left: 8 });
+  const contentZoom = useXZoom(contentRef, contentDomain, contentMargin);
   const occRows = useMemo(() => outputs[0]?.result.occupancy || [], [outputs]);
   // X-axis drag-to-zoom on the residue axis (horizontal drag selects a range), like the other charts
   const occRowsWithXi = useMemo(() => occRows.map((r, i) => ({ ...r, __xi: i })), [occRows]);
-  const occZoom = useXZoom(occRef, [0, Math.max(1, occRows.length - 1)], { top: 8, right: 8, bottom: 70, left: 8 });
+  const occMargin = cfgChartMargin({ ...dsspCfg, fontSize: dsspCfg.fontSize || 10 }, { top: 8, right: 8, bottom: 70, left: 8 });
+  const occZoom = useXZoom(occRef, [0, Math.max(1, occRows.length - 1)], occMargin);
   const contentH = useChartFsHeight(dsspChartCfg.contentH || 380);
   const occH = useChartFsHeight(dsspChartCfg.occH || 320);
 
@@ -4058,13 +4067,13 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
             <div id="md-dssp-content">
               <div ref={contentRef} onMouseDown={contentZoom.onMouseDown} className="select-none">
                 <ResponsiveContainer width="100%" height={contentH}>
-                  <LineChart data={contentData.rows} margin={{ top: 8, right: 8, bottom: 30, left: 8 }}>
+                  <LineChart data={contentData.rows} margin={contentMargin}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                   <XAxis dataKey="x" type="number" domain={[contentZoom.domain[0], contentZoom.domain[1]]} allowDataOverflow tick={{ fontSize: dsspCfg.fontSize || 10 }}
-                         label={{ value: dsspCfg.xAxisLabel || (outputs[0].result.xUnit === 'ns' ? 'Time (ns)' : 'Frame'), position: 'insideBottom', offset: -18, style: { fontSize: (dsspCfg.fontSize || 10) + 1 } }} />
+                         label={cfgAxisLabel({ ...dsspCfg, fontSize: (dsspCfg.fontSize || 10) + 1 }, 'x', dsspCfg.xAxisLabel || (outputs[0].result.xUnit === 'ns' ? 'Time (ns)' : 'Frame'), 12)} />
                   <YAxis tick={{ fontSize: (dsspCfg.fontSize || 10) + 1 }} width={70} unit="%"
                          domain={[mdDom(dsspCfg.yMin) ?? 'auto', mdDom(dsspCfg.yMax) ?? 'auto']}
-                         label={{ value: dsspCfg.yAxisLabel || 'Residues (%)', angle: -90, position: 'insideLeft', style: { fontSize: (dsspCfg.fontSize || 10) + 2 } }} />
+                         label={cfgAxisLabel({ ...dsspCfg, fontSize: (dsspCfg.fontSize || 10) + 2 }, 'y', dsspCfg.yAxisLabel || 'Residues (%)', 4)} />
                   <Tooltip />
                   {dsspCfg.legend !== 'none' && <Legend verticalAlign={dsspCfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: (dsspCfg.fontSize || 10) }} />}
                   {contentData.series.map((s, i) => (
@@ -4148,7 +4157,7 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
               <div id="md-dssp-occ">
                 <div ref={occRef} onMouseDown={occZoom.onMouseDown} className="select-none">
                   <ResponsiveContainer width="100%" height={occH}>
-                  <BarChart data={occRowsWithXi} margin={{ top: 8, right: 8, bottom: 70, left: 8 }}>
+                  <BarChart data={occRowsWithXi} margin={occMargin}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                     <XAxis dataKey="__xi" type="number" domain={[occZoom.domain[0], occZoom.domain[1]]} allowDataOverflow
                            ticks={occTicks} tickFormatter={(v) => { const r = occRowsWithXi[Math.round(v)]; return r ? r.label : ''; }}
