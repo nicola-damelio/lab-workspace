@@ -14,7 +14,7 @@ import { abortControl, isAbortError } from '../utils/abortControl';
 import { mdAnalysisRunAll } from '../utils/mdAnalysisRunAll';
 import { blobStore } from '../utils/blobStore';
 import html2canvas from 'html2canvas';
-import { PER_ATOM_COLORS, seriesColorFor, rainbowColors, tickTextProps, legendTextStyle, tickSize, fontFamilyOf
+import { chartAspect, PER_ATOM_COLORS, seriesColorFor, rainbowColors, tickTextProps, legendTextStyle, tickSize, fontFamilyOf
 } from '../utils/chartStyle';
 export { parseSimulationParameters };   
 import NMRMoleculeViewer from './NMRMoleculeViewer';
@@ -1723,7 +1723,7 @@ const MD_CHART_M_ZOOM = { top: 10, right: 15, bottom: 45, left: 55 };
 
 const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color, cfg, yLabel, xLabel, chartType = 'line', id, setCfg = null }) => {
   const fSize = tickSize(cfg, 12);
-  const aspect = cfg.aspect || 1.8;
+  const aspect = chartAspect(cfg, 1.8);
   const lineColor = color || '#3b82f6';
   const chartRef = useRef(null);
 
@@ -1869,7 +1869,7 @@ const MDPerAtomChartPanel = ({ d, chart, updateChart, removeChart }) => {
           series={atomMeta.map(m => ({ key: m.key, label: m.label, color: m.color }))}
           unit={layer?.unit}
           className="w-full">
-          <ResponsiveContainer width="100%" aspect={cfg.aspect}>
+          <ResponsiveContainer width="100%" aspect={chartAspect(cfg, 2.5)}>
             <BarChart data={chartData} margin={cfgChartMargin(cfg, { top: 8, right: 8, bottom: 16, left: 8 })}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="label" tick={tickTextProps(cfg)} />
@@ -2013,7 +2013,7 @@ const MDConditionPlotPanel = ({ d, chart, updateChart, removeChart, activeTest }
           series={series.map(s => ({ key: s.key, label: s.label, color: s.color }))}
           unit={layer?.unit}
           className="w-full">
-          <ResponsiveContainer width="100%" aspect={cfg.aspect}>
+          <ResponsiveContainer width="100%" aspect={chartAspect(cfg, 2.5)}>
             <LineChart margin={cfgChartMargin(cfg, { top: 8, right: 16, bottom: 24, left: 16 })}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="x" type="number" allowDuplicatedCategory={false} tick={tickTextProps(cfg)}

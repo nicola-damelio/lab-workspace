@@ -10,7 +10,7 @@ import {
 } from 'recharts';
 import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, ChartInspector, AngledTick, useXYZoom, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgAxisDomain, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, errorBarRange, instancesLinked, InstanceLinkToggle, deferredClick } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
-import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor, chartBoxStyle, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf, tickTextProps, tickSize, fontFamilyOf, legendTextStyle, axisTitleSize
+import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor, chartBoxStyle, chartAspect, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf, tickTextProps, tickSize, fontFamilyOf, legendTextStyle, axisTitleSize
 } from '../utils/chartStyle';
 import { SplitChartStack, SplitToggle, SPLIT_CHART_H } from './SplitChartStack';
 import { parseJascoJwsBinary, isJascoJwsBinary } from '../utils/jascoJws';
@@ -3861,7 +3861,7 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
                         </select>
                       </div>
                     </div>
-                    <div ref={fitChartRef} onMouseDown={fitZoom.onMouseDown} style={{ height: Math.min(280, cfg.height), aspectRatio: String(cfg.aspect || 2) }} className="select-none">
+                    <div ref={fitChartRef} onMouseDown={fitZoom.onMouseDown} style={{ height: Math.min(280, cfg.height), aspectRatio: String(chartAspect(cfg, 2)) }} className="select-none">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={paramData} margin={cfgChartMargin(cfg, { top: 10, right: 10, bottom: 20, left: 10 })}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} />

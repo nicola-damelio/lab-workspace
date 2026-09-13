@@ -22,23 +22,39 @@
        ones whose cfg lives in local React state, like MD) registers its
        `cfg` / `setCfg` pair here, so ONE click can push the profile into all of
        them without touching any of the ~10 section files.
+     • the plot-box RATIO — the x-axis length : y-axis length of a figure,
+       pushed as `cfg.aspect` + `cfg.figureAspect` (see chartAspect in
+       utils/chartStyle.js). 0 = every chart keeps its own ratio.
    ========================================================================= */
+
+import { FIGURE_ASPECT_KEY, figureAspectOf } from './chartStyle.js';
 
 export const FIGURE_STYLE_KEY = 'labFigureStyle';
 export const FIGURE_STYLE_EVENT = 'lab:figure-style-changed';
 
 // Character sizes are clamped: below 8 px a figure is unreadable; the upper
-// bound is 40 px — the "poster" size used for figures printed on a poster
-// (36 / 40 are offered as one-click values, see FIGURE_FONT_STEPS). Rotation is
-// clamped to ±90°.
+// bound is 160 px — the "oversized" value of a figure that is captured big and
+// then scaled down to its place in a slide / a PDF panel (48 … 160 are offered
+// as one-click values, see FIGURE_FONT_STEPS). Rotation is clamped to ±90°.
 export const FIGURE_FONT_MIN = 8;
-export const FIGURE_FONT_MAX = 40;
+export const FIGURE_FONT_MAX = 160;
 export const FIGURE_ANGLE_MIN = -90;
 export const FIGURE_ANGLE_MAX = 90;
 
-// One-click character sizes of the profile editor. 36 / 40 are the poster
-// values a figure printed at A0 needs; the slider is not limited to them.
-export const FIGURE_FONT_STEPS = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40];
+// One-click character sizes of the profile editor: the usual values, the POSTER
+// values a figure printed at A0 needs (36 / 40) and the OVERSIZED values up to
+// the 160 px upper bound. The slider is not limited to these steps.
+export const FIGURE_FONT_STEPS = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48, 56, 64, 80, 96, 120, 160];
+
+// The plot-box ratio (x-axis length : y-axis length) the profile can impose on
+// every figure. 0 = KEEP EACH CHART'S OWN ratio — the default, and the only
+// value that fits a page mixing spectra, chromatograms and 2D plots; the range
+// covers a tall square-ish panel (0.5) up to a flat strip (4). The 2D spectra
+// (COSY / HSQC) keep their own square ratio: they are driven by the "2D aspect
+// ratio" knob of the spectra panel, not by this one.
+export const FIGURE_ASPECT_MIN = 0;
+export const FIGURE_ASPECT_MAX = 4;
+export const FIGURE_ASPECT_STEPS = [0, 0.5, 0.75, 1, 1.33, 1.5, 1.8, 2, 2.5, 3, 4];
 
 /**
  * The profile — ONE character size per ELEMENT, plus the font family:
@@ -50,6 +66,9 @@ export const FIGURE_FONT_STEPS = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40]
  *   legendFontSize      legend entries / series names.
  *   simLabelFontSize    peak / data labels of the spectra (assignments).
  *   tickAngle           rotation of the x tick labels.
+ *   aspect              x-axis length : y-axis length of the plot box — ONE
+ *                       shape for every figure of a page. 0 = each chart keeps
+ *                       its own ratio (see FIGURE_ASPECT_MIN).
  *   applyOnOpen         push the profile automatically when a page opens.
  *
  * A chart that does not read one of the sizes simply ignores it; the ones that
@@ -62,6 +81,7 @@ export const DEFAULT_FIGURE_STYLE = {
   legendFontSize: 16,
   simLabelFontSize: 16,
   tickAngle: 0,
+  aspect: 0,
   applyOnOpen: false
 };
 
@@ -81,7 +101,7 @@ export const FIGURE_SIZE_LABELS = {
 // `test.<...>Cfg` object). Every merged style container of the app
 // (DEFAULT_CHART_STYLE, simCfg, DEFAULT_CFG…) carries all of them, so the
 // spectra are covered everywhere an x axis exists.
-export const FIGURE_STYLE_FIELDS = ['fontFamily', 'fontSize', 'axisTitleFontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle'];
+export const FIGURE_STYLE_FIELDS = ['fontFamily', 'fontSize', 'axisTitleFontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle', 'aspect'];
 export const FIGURE_SPECTRA_FIELDS = ['simLabelFontSize', 'tickAngle'];
 
 const toNum = (v, fb) => {
@@ -92,6 +112,12 @@ export const clampFigureFont = (v, fb = DEFAULT_FIGURE_STYLE.fontSize) =>
   Math.max(FIGURE_FONT_MIN, Math.min(FIGURE_FONT_MAX, Math.round(toNum(v, fb))));
 export const clampFigureAngle = (v) =>
   Math.max(FIGURE_ANGLE_MIN, Math.min(FIGURE_ANGLE_MAX, Math.round(toNum(v, DEFAULT_FIGURE_STYLE.tickAngle))));
+/** Ratio clamp: 0 (keep the chart's own ratio) … FIGURE_ASPECT_MAX, 2 decimals. */
+export const clampFigureAspect = (v) => {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= FIGURE_ASPECT_MIN) return FIGURE_ASPECT_MIN;
+  return Math.round(Math.min(FIGURE_ASPECT_MAX, n) * 100) / 100;
+};
 
 /** A font stack of the profile: '' (app font) or a sanitised CSS font stack. */
 export const normalizeFigureFont = (v) => {
@@ -118,6 +144,7 @@ export const normalizeFigureStyle = (style) => {
     legendFontSize: clampFigureFont(s.legendFontSize, DEFAULT_FIGURE_STYLE.legendFontSize),
     simLabelFontSize: clampFigureFont(s.simLabelFontSize, DEFAULT_FIGURE_STYLE.simLabelFontSize),
     tickAngle: clampFigureAngle(s.tickAngle),
+    aspect: clampFigureAspect(s.aspect),
     applyOnOpen: s.applyOnOpen === true || s.applyOnOpen === 'true'
   };
 };
@@ -164,13 +191,16 @@ export const writeFigureStyle = (style) => {
  * (`test.figureStyleTag`) so a page can tell whether it is already styled and
  * which profile was used for its figures (see the Image Builder notice).
  *
- *   fs<tick>-t<title>-lg<legend>-lb<labels>-rot<angle>[-<Family>]
+ *   fs<tick>-t<title>-lg<legend>-lb<labels>-rot<angle>[-ar<ratio>][-<Family>]
  * e.g. `fs16-t18-lg16-lb16-rot0` (app font) or `fs20-…-Arial`.
  */
 export const figureStyleTag = (style) => {
   const s = normalizeFigureStyle(style || readFigureStyle());
   const fam = s.fontFamily ? `-${s.fontFamily.replace(/[^A-Za-z0-9]/g, '').slice(0, 12)}` : '';
-  return `fs${s.fontSize}-t${s.axisTitleFontSize}-lg${s.legendFontSize}-lb${s.simLabelFontSize}-rot${s.tickAngle}${fam}`;
+  // The ratio only shows in the tag when it is imposed (0 = "each chart keeps
+  // its own"), so every tag written before this knob existed stays identical.
+  const ar = s.aspect > 0 ? `-ar${s.aspect}` : '';
+  return `fs${s.fontSize}-t${s.axisTitleFontSize}-lg${s.legendFontSize}-lb${s.simLabelFontSize}-rot${s.tickAngle}${ar}${fam}`;
 };
 
 /**
@@ -182,6 +212,12 @@ export const figureStyleTag = (style) => {
  *   • `simLabelFontSize`, `tickAngle` → only when the cfg already uses them
  *     (spectra: the merged simCfg / nmr1dCfg / DEFAULT_CHART_STYLE carry both).
  * `options.spectra === true` forces the two spectra keys on.
+ * The plot-box RATIO goes to `aspect` (the value the per-chart panel then
+ * shows) AND to `figureAspect` — the key that really wins, because `aspect`
+ * alone cannot be told apart from the two historical defaults of a chart (see
+ * chartAspect in utils/chartStyle.js). A profile back at 0 clears the
+ * `figureAspect` a previous apply left behind, so "each chart keeps its own
+ * ratio" really gives the chart its own ratio back.
  */
 export const figureStylePatch = (style, cfg = null, options = null) => {
   const s = normalizeFigureStyle(style || readFigureStyle());
@@ -193,6 +229,13 @@ export const figureStylePatch = (style, cfg = null, options = null) => {
     const uses = forceSpectra || (!!cfg && typeof cfg === 'object' && k in cfg);
     if (uses) out[k] = s[k];
   });
+  const owns = !!cfg && typeof cfg === 'object';
+  if (s.aspect > 0) {
+    out.aspect = s.aspect;
+    out[FIGURE_ASPECT_KEY] = s.aspect;
+  } else if (owns && figureAspectOf(cfg)) {
+    out[FIGURE_ASPECT_KEY] = FIGURE_ASPECT_MIN;
+  }
   return out;
 };
 

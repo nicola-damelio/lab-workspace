@@ -604,7 +604,8 @@ export const ChartPanel = ({
 // ─────────────────────────────────────────────────────────────────────────────
 // A character size typed in the style panel: '' clears it (→ “auto”, i.e. it
 // follows the axis numbers), a number is clamped to the readable range of the
-// shared figure style (up to 96 px — 36 / 40 for a poster figure).
+// shared figure style (MIN_CHART_FONT … MAX_CHART_FONT — up to 160 px, the
+// oversized characters the 🎨 Figure style profile can push).
 const chartFontValue = (v) => {
     if (v === '' || v == null) return '';
     const n = Number(v);
@@ -705,7 +706,8 @@ const chartStyleCharacterBlock = (cfg, set, showHeightSlider) => (
                 onChange={(v) => set({ legendFontSize: chartFontValue(v) })} />
             <SF label="Font family" value={fontFamilyOf(cfg)} onChange={(v) => set({ fontFamily: v })}
                 options={[['', 'App default (Inter)'], ...FIGURE_FONT_CHOICES.filter((f) => f.value).map((f) => [f.value, f.label])]} />
-            <NF label="Aspect ratio W/H" step={0.1} value={cfg.aspect ?? 1.8} onChange={(v) => set({ aspect: v || 1.8 })} />
+            <NF label="Aspect ratio W/H" step={0.1} value={cfg.aspect ?? 1.8}
+                onChange={(v) => set({ aspect: v || 1.8, figureAspect: 0 })} />
             {showHeightSlider && (
                 <div className="flex flex-col gap-1 lg:col-span-2">
                     <label className="text-[10px] font-bold text-slate-600">Chart height (px) -- {cfg.height || 380}</label>
@@ -1026,7 +1028,8 @@ export const SharedChartStylePanel = ({ cfg = {}, setCfg, series = [], unit = 'a
             <div>
                 <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Layout</p>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 items-end">
-                    <NF label="Aspect ratio W/H" step={0.1} value={cfg.aspect ?? 1.8} onChange={(v) => set({ aspect: v || 1.8 })} />
+                    <NF label="Aspect ratio W/H" step={0.1} value={cfg.aspect ?? 1.8}
+                        onChange={(v) => set({ aspect: v || 1.8, figureAspect: 0 })} />
                     {showHeightSlider && (
                         <div className="flex flex-col gap-1">
                             <label className="text-[10px] font-bold text-slate-600">Chart height (px) -- {cfg.height || 380}</label>

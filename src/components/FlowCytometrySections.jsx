@@ -8,7 +8,7 @@ import { PLATE_PRESET_LABELS, PLATE_PRESET_COLORS, isPlatePreset, platePresetCol
 import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Line, ComposedChart, Area, ReferenceArea} from 'recharts';
 import { ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
-import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES, seriesColorFor, tickSize, fontFamilyOf
+import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES, seriesColorFor, tickSize, fontFamilyOf, chartAspect
 } from '../utils/chartStyle';
 import { PLATES_DEF, formatConc, getRegionColor } from '../data/constants';
 export { VIS_PALETTES };
@@ -609,7 +609,7 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, xLabel, yLabel, logX, log
     <div 
       ref={wrapRef} 
       onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}
-      style={fs ? { width: '100%', height: '100%' } : { width: '100%', aspectRatio: String(cfg.aspect || 1.8), height: cfg.height || 380 }} 
+      style={fs ? { width: '100%', height: '100%' } : { width: '100%', aspectRatio: String(chartAspect(cfg, 1.8)), height: cfg.height || 380 }} 
       className={`relative rounded-lg border border-slate-200 bg-white overflow-hidden cursor-crosshair ${fs ? 'flex-1 min-h-0' : 'min-h-[300px]'}`}
     >
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
@@ -898,7 +898,7 @@ export const FCSOverlayVisualization = ({ ctx }) => {
             unit="a.u."
             title="Double-click the plot, an axis, a label or a curve to edit it"
             className={`bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair min-w-0 ${fs ? 'flex-1 min-h-0' : splitStack ? 'lg:w-[54%]' : 'w-full'}`}
-            style={!fs ? { aspectRatio: String(Number(cfgAna.aspect) || 1), maxHeight: `min(${Number(cfgAna.height) || 380}px, 55vh)` } : undefined}>
+            style={!fs ? { aspectRatio: String(chartAspect(cfgAna, 1)), maxHeight: `min(${Number(cfgAna.height) || 380}px, 55vh)` } : undefined}>
             {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
             {cfgAna.title && <div className="text-sm font-bold text-slate-700 mb-1">{cfgAna.title}</div>}
             <ResponsiveContainer width="100%" height="100%">

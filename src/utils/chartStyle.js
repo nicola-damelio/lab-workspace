@@ -33,6 +33,36 @@ export const DEFAULT_CHART_FONT_SIZE = 16;
 export const DEFAULT_CHART_ASPECT = 1;
 export const DEFAULT_CHART_ASPECT_WIDE = 1.8;
 
+// The cfg key the GLOBAL "Figure style" profile (Settings → Figure style, see
+// utils/figureStyle.js) writes to impose ONE x : y ratio on every figure of a
+// page. It has to be a key of its own: `cfg.aspect` above carries the two
+// historical defaults (1 = square / 1.8 = wide) and a chart cannot tell "the
+// user picked 1" from "nobody ever touched it" — writing `aspect: 1` into a
+// wide spectrum would leave it wide. `figureAspect` always wins, 0 = the chart
+// keeps its own ratio. The profile writes BOTH keys, so the 🎨 Graphical
+// Parameters panel shows the ratio the figure was really drawn with.
+export const FIGURE_ASPECT_KEY = 'figureAspect';
+
+/** The ratio forced by the global Figure style profile, or 0 (keep its own). */
+export const figureAspectOf = (cfg) => {
+  const n = Number(cfg && cfg[FIGURE_ASPECT_KEY]);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
+
+/**
+ * Effective aspect ratio (x-axis length ÷ y-axis length) of a chart box:
+ * the global Figure style wins, then the chart's own `cfg.aspect`, then the
+ * caller's fallback. Used wherever a plot box is sized by its ratio.
+ */
+export const chartAspect = (cfg = {}, fallback = DEFAULT_CHART_ASPECT) => {
+  const forced = figureAspectOf(cfg);
+  if (forced) return forced;
+  const own = Number(cfg.aspect);
+  if (Number.isFinite(own) && own > 0) return own;
+  const fb = Number(fallback);
+  return Number.isFinite(fb) && fb > 0 ? fb : DEFAULT_CHART_ASPECT;
+};
+
 /* =========================================================================
    AXIS-TITLE ROOM — why a bigger character size used to CUT the y-axis label.
 
@@ -62,13 +92,18 @@ export const axisTitleRoomPx = (texts, fontSize) => {
 // chromatograms) that should stay wide. `cfg.aspect` is honoured whenever it
 // differs from the (old) wide default — so explicit user choices survive, but
 // the new square default is imposed on everything else.
+// `cfg.figureAspect` — the ratio of Settings → Figure style — wins over both,
+// so ONE ratio can be imposed on every figure of a page (see figureAspectOf).
 // `opts.yTitle` / `opts.xTitle` (or cfg.yAxisLabel / cfg.xAxisLabel) let the
 // box grow so the axis TITLES fit at the current character size.
 export const chartBoxStyle = (cfg = {}, opts = {}) => {
   const wide = opts.square === false;
+  const forced = figureAspectOf(cfg);
   const a = Number(cfg.aspect);
   let aspect;
-  if (wide) {
+  if (forced) {
+    aspect = forced;
+  } else if (wide) {
     aspect = (Number.isFinite(a) && a !== DEFAULT_CHART_ASPECT) ? a : DEFAULT_CHART_ASPECT_WIDE;
   } else {
     aspect = (Number.isFinite(a) && a !== DEFAULT_CHART_ASPECT_WIDE) ? a : DEFAULT_CHART_ASPECT;
@@ -653,10 +688,12 @@ export const FIGURE_FONT_CHOICES = [
   { value: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', label: 'System monospace' }
 ];
 
-// A chart character size is only bounded by readability: the panels offer up to
-// 40 px (poster figures) and a per-chart hand-typed value may go a little over.
+// A chart character size is only bounded by readability: the shared "Figure
+// style" profile pushes up to FIGURE_FONT_MAX (160 px, see utils/figureStyle.js)
+// and a per-chart hand-typed value gets the same head-room — a figure captured
+// with oversized characters and then scaled down keeps its labels readable.
 export const MIN_CHART_FONT = 6;
-export const MAX_CHART_FONT = 96;
+export const MAX_CHART_FONT = 160;
 
 export const clampChartFont = (v, fallback = DEFAULT_CHART_FONT_SIZE) => {
   const n = Number(v);

@@ -7,7 +7,7 @@ import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell
 } from 'recharts';
 import { CollapsibleSection } from './ui';
-import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, VIS_PALETTES, PER_ATOM_COLORS, seriesColorFor, chartBoxStyle, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf, tickTextProps, tickSize, fontFamilyOf, legendTextStyle
+import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, VIS_PALETTES, PER_ATOM_COLORS, seriesColorFor, chartBoxStyle, chartAspect, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf, tickTextProps, tickSize, fontFamilyOf, legendTextStyle
 } from '../utils/chartStyle';
 import { SplitChartStack, SplitToggle, SPLIT_CHART_H } from './SplitChartStack';
 import { suggestDriveFileName, driveFolderPath, sanitizeSlug } from '../utils/driveNaming';
@@ -7311,7 +7311,7 @@ export const SecondaryShiftsSection = ({ ctx }) => {
   const SCSPlot = ({ title, data, color, cfg }) => (
     <div className="bg-white p-4 border border-slate-200 rounded-lg shadow-sm">
       <h4 className="font-bold text-xs text-slate-700 mb-2 text-center">{title}</h4>
-      <ResponsiveContainer width="100%" aspect={cfg.aspect}>
+      <ResponsiveContainer width="100%" aspect={chartAspect(cfg, 2.5)}>
         <BarChart data={data} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
           <CartesianGrid strokeDasharray="3 3" vertical={false} />
           <XAxis dataKey="label" tick={tickTextProps(cfg)} />
@@ -7341,7 +7341,7 @@ export const SecondaryShiftsSection = ({ ctx }) => {
     return (
       <div className="bg-white p-4 border border-slate-200 rounded-lg shadow-sm">
         <h4 className="font-bold text-xs text-slate-700 mb-2 text-center">{title}</h4>
-        <ResponsiveContainer width="100%" aspect={cfg.aspect}>
+        <ResponsiveContainer width="100%" aspect={chartAspect(cfg, 2.5)}>
           <BarChart data={merged} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="label" tick={tickTextProps(cfg)} />
@@ -7393,7 +7393,7 @@ export const SecondaryShiftsSection = ({ ctx }) => {
       {showConfig && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-white p-4 rounded-xl border border-slate-300 shadow-sm">
           <NumField label="Font size" value={scsCfg.fontSize} onChange={(v) => setCfg({ fontSize: v || 11 })} />
-          <NumField label="Aspect ratio (W/H)" step={0.1} value={scsCfg.aspect} onChange={(v) => setCfg({ aspect: v || 2.5 })} />
+          <NumField label="Aspect ratio (W/H)" step={0.1} value={scsCfg.aspect} onChange={(v) => setCfg({ aspect: v || 2.5, figureAspect: 0 })} />
           <TxtField label="X axis title" value={scsCfg.xAxisTitle} onChange={(v) => setCfg({ xAxisTitle: v })} />
           <TxtField label="Y axis title" value={scsCfg.yAxisTitle} onChange={(v) => setCfg({ yAxisTitle: v })} />
           <div className="flex flex-col gap-1">
@@ -7927,7 +7927,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                         {paramKeys.map((k) => <option key={k} value={k}>{k}</option>)}
                       </select>
                     </div>
-                    <div style={{ height: Math.min(280, cfg.height), aspectRatio: String(cfg.aspect || 2) }}>
+                    <div style={{ height: Math.min(280, cfg.height), aspectRatio: String(chartAspect(cfg, 2)) }}>
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={paramData} margin={cfgChartMargin(cfg, { top: 10, right: 10, bottom: 20, left: 10 })}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -8166,7 +8166,7 @@ const PerAtomChartPanel = ({ ctx, d, chart, updateChart, removeChart }) => {
           series={atomMeta.map(m => ({ key: m.key, label: m.label, color: m.color }))}
           unit={layer?.unit}
           className="w-full">
-          <ResponsiveContainer width="100%" aspect={cfg.aspect}>
+          <ResponsiveContainer width="100%" aspect={chartAspect(cfg, 2.5)}>
             <BarChart data={chartData} margin={cfgChartMargin(cfg, { top: 8, right: 8, bottom: 16, left: 8 })}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="label" tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'x', cfg.xAxisLabel || '', 16)} />

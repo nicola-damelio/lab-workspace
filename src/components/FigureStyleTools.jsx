@@ -147,6 +147,7 @@ export const FigureStyleApplyButton = ({ test, update }) => {
             Ticks <b>{profile.fontSize} px</b> · axis titles <b>{profile.axisTitleFontSize} px</b> ·
             {' '}legends <b>{profile.legendFontSize} px</b> · data labels <b>{profile.simLabelFontSize} px</b> ·
             {' '}x rotation <b>{profile.tickAngle}°</b>
+            {' '}· plot box <b>{profile.aspect > 0 ? `${profile.aspect} : 1` : 'per chart'}</b>
             {profile.fontFamily
               ? <> · font <b>{profile.fontFamily.split(',')[0].replace(/"/g, '').trim()}</b></>
               : null}
