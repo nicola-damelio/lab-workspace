@@ -185,9 +185,9 @@ export const splitRowGapStyle = (layout = {}) => {
 
 export const SplitChartStack = ({
   id, label, series = [], renderChart, extraHeader = null, className = '',
-  // The shape / separation / axes of the graphs: `{ aspect, gap, yAxis }`, see
-  // above. Left out (or 0 / 0 / true) the stack renders exactly as it did
-  // before the knobs existed.
+  // The shape / size / separation / axes of the graphs: `{ aspect, rowH, gap,
+  // yAxis }`, see above. Left out (or 0 / 0 / 0 / true) the stack renders
+  // exactly as it did before the knobs existed.
   layout = null
 }) => {
   const rowGap = splitRowGapStyle(layout);
