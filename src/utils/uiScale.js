@@ -35,8 +35,11 @@ export const UI_SCALE_DEFAULT = 15;
 export const UI_SCALE_MIN = 12;
 export const UI_SCALE_MAX = 18;
 
-/* What the Settings page offers, with the share of the standard 16px size. */
+/* What the Settings page offers, with the share of the standard 16px size.
+   “Small” sits ON the floor (12px): the complaint “everything is gigantic” must
+   always be answerable in one click, without hunting for a numeric field. */
 export const UI_SCALE_PRESETS = [
+  { id: 'small', px: 12, label: 'Small', hint: '75%' },
   { id: 'compact', px: 13, label: 'Compact', hint: '81%' },
   { id: 'tight', px: 14, label: 'Tight', hint: '88%' },
   { id: 'normal', px: 15, label: 'Normal', hint: '94%' },

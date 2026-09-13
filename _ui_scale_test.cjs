@@ -9,9 +9,10 @@
  *   src/index.css          restates the arbitrary text tokens in `rem` (the
  *      8–11px readability floor AND 13/14/15px), otherwise only `rem` follows.
  *   settingsModule.jsx     offers the presets to EVERY user (per-browser pref).
- *   activeTestModule.jsx   the two wide strips of the experiment page: the
- *      identification fields share ONE adaptive grid, and the Date/Conditions
- *      chips wrap instead of pushing a sideways scrollbar.
+ *   activeTestModule.jsx   the chrome of the experiment page: TWO compact bars
+ *      (identity + actions on ONE wrapping line, then the identification fields
+ *      on a full-width grid of COMPACT inline-label fields) and the
+ *      Date/Conditions chips that wrap instead of pushing a sideways scrollbar.
  */
 const fs = require('fs');
 const path = require('path');
@@ -133,25 +134,44 @@ const frag = (name, hay, needle) => checkTrue(`${name}: ${needle.slice(0, 46)}�
     UI.UI_SCALE_PRESETS.some((p) => p.px === 0), true);
   check('4d …and the shipped default is one of the presets',
     UI.UI_SCALE_PRESETS.some((p) => p.px === UI.UI_SCALE_DEFAULT), true);
+  check('4e …and a preset sits ON the floor, so “too big” is one click away',
+    UI.UI_SCALE_PRESETS.some((p) => p.px === UI.UI_SCALE_MIN), true);
 
   /* ══════════════════════════════════════════════════════════════════════════
-     5) THE TWO WIDE STRIPS OF THE EXPERIMENT PAGE
+     5) THE CHROME OF THE EXPERIMENT PAGE — stacked, it is worth a THIRD of the
+        screen, so the header is laid out as TWO compact bars
      ══════════════════════════════════════════════════════════════════════════ */
-  frag('the identification fields share ONE adaptive grid', ATM,
-    '<div className="w-full grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-x-3 gap-y-1.5">');
-  check('5a the grid is opened exactly once',
-    (ATM.match(/grid-cols-\[repeat\(auto-fit,minmax\(180px,1fr\)\)\]/g) || []).length, 1);
-  check('5b the grid wraps the fields (opened before them, closed before the strip)',
-    ATM.indexOf('minmax(180px,1fr)') < ATM.indexOf('<React.Fragment>')
-    && ATM.indexOf('minmax(180px,1fr)') < ATM.indexOf('{siblingTests.length > 0 && ('), true);
-  check('5c the track minimum equals the widest field minimum, so no field overflows its cell',
-    ATM.includes('min-w-[180px]'), true);
+  /* Bar 1 — name + classification chips + “◀ Back” + the action buttons on ONE
+     wrapping line. It used to be `flex-col lg:flex-row`, i.e. two stacked rows
+     as soon as the window is narrower than the `lg` breakpoint. */
+  frag('bar 1 lays identity + actions on ONE wrapping line', ATM,
+    '<div className="bg-white border-b border-slate-200 px-3 md:px-4 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 shadow-sm">');
+  check('5a the old stacked identity bar is gone',
+    ATM.includes('py-2 flex flex-col lg:flex-row justify-between items-start lg:items-center'), false);
+
+  /* Bar 2 — the identification fields on a grid of their OWN, at the FULL width
+     of the page. Inside the action-button row (`lg:w-auto`) they were squeezed
+     into a few hundred pixels, and eight fields became three or four rows. */
+  frag('the identification fields get a full-width bar of their own', ATM,
+    '<div className="bg-white border-b border-slate-200 px-3 md:px-4 py-1.5 grid grid-cols-[repeat(auto-fit,minmax(210px,1fr))] gap-x-2 gap-y-1 shadow-sm">');
+  check('5b the fields grid is opened exactly once',
+    (ATM.match(/grid-cols-\[repeat\(auto-fit,minmax\(210px,1fr\)\)\]/g) || []).length, 1);
+  check('5c …AFTER the action buttons, i.e. NOT inside their row',
+    ATM.indexOf('grid-cols-[repeat(auto-fit,minmax(210px,1fr))]')
+      > ATM.indexOf('flex flex-wrap items-center gap-1.5 shrink-0'), true);
+  check('5d the grid wraps the fields (opened before them, closed before the strip)',
+    ATM.indexOf('minmax(210px,1fr)') < ATM.indexOf('<React.Fragment>')
+    && ATM.indexOf('minmax(210px,1fr)') < ATM.indexOf('{siblingTests.length > 0 && ('), true);
+  check('5e no field keeps a column minimum that would re-create the old stacked rows',
+    ATM.includes('flex flex-col flex-1 min-w-['), false);
+  check('5f every field label sits IN LINE with its control (half the height)',
+    (ATM.match(/shrink-0 text-\[10px\] font-bold text-slate-400 uppercase/g) || []).length >= 7, true);
 
   frag('the Date / Conditions chips WRAP', ATM,
     'className="bg-blue-50 border-b border-blue-200 px-4 md:px-6 py-1.5 flex flex-wrap items-center gap-1.5 shadow-inner"');
-  check('5d the strip no longer forces a sideways scrollbar',
+  check('5g the strip no longer forces a sideways scrollbar',
     ATM.includes('overflow-x-auto custom-scrollbar gap-2 shadow-inner'), false);
-  check('5e the strip comment is a JS comment — a JSX `{/* … */}` inside `&& (` would not compile',
+  check('5h the strip comment is a JS comment — a JSX `{/* … */}` inside `&& (` would not compile',
     ATM.includes('/* Date / Conditions strip') && !ATM.includes('{/* Date / Conditions strip'), true);
 
   /* ══════════════════════════════════════════════════════════════════════════ */

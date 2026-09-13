@@ -275,8 +275,14 @@ export const ActiveTestModule = ({
 
 const TestHeader = (
                   <div className="flex flex-col shrink-0 z-20 no-print">
-                    <div className="bg-white border-b border-slate-200 px-4 py-2 flex flex-col lg:flex-row justify-between items-start lg:items-center shadow-sm gap-2">
-                      <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4 w-full lg:w-auto">
+                    {/* ── Bar 1 — identity + actions on ONE wrapping line ─────
+                        Everything above the plots is chrome: every row the
+                        header adds is a row of plot it takes away, so the name,
+                        the classification chips, “◀ Back” and the action buttons
+                        share ONE line instead of stacking (the wrap only kicks in
+                        on a really narrow window). */}
+                    <div className="bg-white border-b border-slate-200 px-3 md:px-4 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 shadow-sm">
+                      <div className="flex flex-1 min-w-[240px] items-center gap-2 md:gap-3">
                         <button
                           onClick={() => {
                             // "◀ Back" returns to where the user came from
@@ -316,12 +322,12 @@ const TestHeader = (
                           title={(returnTarget && returnTarget.module && returnTarget.module !== 'active-test')
                             ? `Back to ${String(returnTarget.module).replace(/-/g, ' ')}`
                             : 'Back to the experiment list'}
-                          className="text-slate-400 hover:text-blue-600 transition-colors bg-slate-50 hover:bg-blue-50 p-2 rounded-lg shadow-sm border border-slate-200 self-start md:self-auto"
+                          className="shrink-0 text-xs font-bold text-slate-500 hover:text-blue-600 transition-colors bg-slate-50 hover:bg-blue-50 px-2 py-1 rounded-lg shadow-sm border border-slate-200"
                         >
                           ◀ Back
                         </button>
 
-                        <div className="flex-1 w-full">
+                        <div className="flex flex-1 min-w-[200px] flex-wrap items-center gap-x-2 gap-y-0.5">
                           <input
                             value={activeTest.name}
                             onChange={(e) => handleTestNameChange(e.target.value)}
@@ -335,11 +341,11 @@ const TestHeader = (
                               }
                               testNameBeforeEditRef.current = null;
                             }}
-                            className="text-base font-black text-slate-800 bg-transparent border-none outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 w-full md:w-64"
+                            className="text-base font-black text-slate-800 bg-transparent border-none outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 flex-1 min-w-[120px]"
                             placeholder={isBox ? 'Box Name' : 'Test Name'}
                           />
 
-                          <div className="text-[11px] text-slate-500 font-medium px-1 mt-0.5 flex flex-wrap items-center gap-1.5">
+                          <div className="text-[10px] text-slate-500 font-medium flex flex-wrap items-center gap-1">
                             {activeTest.testCategory && (
                               <span className="uppercase text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
                                 {activeTest.testCategory}
@@ -359,7 +365,10 @@ const TestHeader = (
                         </div>
                       </div>
 
-                      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full lg:w-auto flex-wrap">
+                      {/* Action buttons — their own line only when the line above
+                          is full; the identification fields no longer travel with
+                          them (see “Bar 2” below). */}
+                      <div className="flex flex-wrap items-center gap-1.5 shrink-0">
                         {/* ── 🔒 Data lock — superuser only ────────────────
                             Freezes the data of this condition (page becomes
                             read-only for everybody else) with an escape hatch:
@@ -377,7 +386,7 @@ const TestHeader = (
                               title={activeInstanceLocked
                                 ? 'Unlock this condition — its data can be edited again by everybody who can open the experiment'
                                 : 'Freeze this condition: other users keep full read access (results, plots, tables) but nothing they change is saved. They are offered to copy the data into a new instance instead.'}
-                              className={`font-bold py-2 px-3 rounded-lg text-xs border shadow-sm transition-colors ${activeInstanceLocked ? 'bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
+                              className={`font-bold py-1 px-2 rounded-lg text-xs border shadow-sm transition-colors ${activeInstanceLocked ? 'bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
                             >
                               {activeInstanceLocked ? '🔓 Unlock data' : '🔒 Lock data'}
                             </button>
@@ -392,7 +401,7 @@ const TestHeader = (
                                 title={allGroupLocked
                                   ? 'Unlock every condition of this experiment'
                                   : `Freeze the data of all ${groupTests.length} conditions of this experiment at once`}
-                                className="font-bold py-2 px-3 rounded-lg text-xs border border-slate-300 bg-white text-slate-600 shadow-sm hover:bg-slate-50 transition-colors"
+                                className="font-bold py-1 px-2 rounded-lg text-xs border border-slate-300 bg-white text-slate-600 shadow-sm hover:bg-slate-50 transition-colors"
                               >
                                 {allGroupLocked ? '🔓 Unlock all' : `🔒 Lock all ${groupTests.length}`}
                               </button>
@@ -413,7 +422,7 @@ const TestHeader = (
                             // otherwise, so it could not be scrolled to). Only exposed
                             // while it would EXPAND the page.
                             data-expand-all={allSectionsOpen ? undefined : '1'}
-                            className={`font-bold py-2 px-3 rounded-lg text-xs border shadow-sm transition-colors ${allSectionsOpen ? 'bg-slate-100 text-slate-600 border-slate-300 hover:bg-slate-200' : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'}`}
+                            className={`font-bold py-1 px-2 rounded-lg text-xs border shadow-sm transition-colors ${allSectionsOpen ? 'bg-slate-100 text-slate-600 border-slate-300 hover:bg-slate-200' : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'}`}
                             title={allSectionsOpen ? 'Close all sections and subsections' : 'Expand all sections and subsections'}
                           >
                             {allSectionsOpen ? '▾ Collapse all' : '▸ Expand all'}
@@ -452,56 +461,58 @@ const TestHeader = (
                               });
                             }
                           }}
-                          className={`font-bold py-2 px-3 rounded-lg text-xs transition-colors border shadow-sm border-red-200 bg-red-50 text-red-600 ${dataReadOnly ? 'opacity-40 cursor-not-allowed' : 'hover:bg-red-100 hover:border-red-300'}`}
+                          className={`font-bold py-1 px-2 rounded-lg text-xs transition-colors border shadow-sm border-red-200 bg-red-50 text-red-600 ${dataReadOnly ? 'opacity-40 cursor-not-allowed' : 'hover:bg-red-100 hover:border-red-300'}`}
                         >
                           <Icon name="trash" size={14} /> Delete
                         </button>
                         
-                        {/* ── Identification fields — ONE adaptive grid ──────────
-                            Primary/secondary class, experiment type, instance,
-                            date, scientists, box owner… belong to the same
-                            block, so they are laid out by ONE grid:
-                            `repeat(auto-fit, minmax(180px, 1fr))` fits as many
-                            columns as the screen allows (180px = the widest
-                            field's own minimum) instead of letting every field
-                            wrap onto a line of its own. The header used to grow
-                            to four or five rows and push the plots down. */}
-                        <div className="w-full grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-x-3 gap-y-1.5">
+                      </div>
+                    </div>
+
+                    {/* ── Bar 2 — the identification fields, FULL width of the page ──
+                        Primary/secondary class, experiment type, instance, date,
+                        scientists, box owner… used to share the width of the
+                        action buttons above, so a laptop window squeezed them
+                        into a column a few hundred pixels wide and eight fields
+                        became three or four rows. On a full-width grid they fit
+                        in TWO rows of COMPACT fields — the label sits IN LINE
+                        with its control, which is what halves their height. */}
+                    <div className="bg-white border-b border-slate-200 px-3 md:px-4 py-1.5 grid grid-cols-[repeat(auto-fit,minmax(210px,1fr))] gap-x-2 gap-y-1 shadow-sm">
                         <React.Fragment>
   {activeTest.type === 'plate-9x9box' ? (
-    <div className="flex flex-col flex-1 min-w-[160px]">
-      <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
+    <label className="flex items-center gap-1.5 min-w-0">
+      <span className="shrink-0 text-[10px] font-bold text-slate-400 uppercase">
         Box Owner
-      </label>
+      </span>
       <select
         value={activeTest.boxOwner || ''}
         onChange={(e) => updateActiveTest({ boxOwner: e.target.value })}
-        className="bg-slate-50 border border-slate-200 text-xs px-2 py-1.5 rounded-lg outline-none focus:border-blue-500"
+        className="flex-1 min-w-0 bg-slate-50 border border-slate-200 text-xs px-1.5 py-1 rounded-lg outline-none focus:border-blue-500"
       >
         <option value="">Select Box Owner...</option>
         {operatorNames.map((op) => (<option key={`owner-${op}`} value={op}>{op}</option>))}
       </select>
-    </div>
+    </label>
   ) : (
     <>
-    <div className="flex flex-col flex-1 min-w-[160px]">
-      <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
+    <label className="flex items-center gap-1.5 min-w-0">
+      <span className="shrink-0 text-[10px] font-bold text-slate-400 uppercase">
         Primary Scientist
-      </label>
+      </span>
       <select
         value={activeTest.operator || ''}
         onChange={(e) => updateActiveTest({ operator: e.target.value })}
-        className="bg-slate-50 border border-slate-200 text-xs px-2 py-1.5 rounded-lg outline-none focus:border-blue-500"
+        className="flex-1 min-w-0 bg-slate-50 border border-slate-200 text-xs px-1.5 py-1 rounded-lg outline-none focus:border-blue-500"
       >
         <option value="">Select Scientist...</option>
         {operatorNames.map((op) => (<option key={`sci-${op}`} value={op}>{op}</option>))}
       </select>
-    </div>
-    <div className="flex flex-col flex-1 min-w-[180px]">
-      <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
+    </label>
+    <label className="flex items-center gap-1.5 min-w-0">
+      <span className="shrink-0 text-[10px] font-bold text-slate-400 uppercase">
         Co-Scientists
-      </label>
-      <div className="flex flex-wrap gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 min-h-[32px]">
+      </span>
+      <div className="flex flex-1 min-w-0 flex-wrap items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-1.5 py-1 min-h-[28px]">
         {(activeTest.coScientists || []).map((cs) => (
           <span key={cs} className="flex items-center gap-1 bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
             {cs}
@@ -526,17 +537,17 @@ const TestHeader = (
           ))}
         </select>
       </div>
-    </div>
+    </label>
     </>
   )}
 </React.Fragment>
 
                     {!isBox && (
                     <>
-                    <div className="flex flex-col flex-1 min-w-[140px]">
-                       <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
+                    <label className="flex items-center gap-1.5 min-w-0">
+                       <span className="shrink-0 text-[10px] font-bold text-slate-400 uppercase">
                          Primary Class.
-                       </label>
+                       </span>
                        <select
                          value={activeTest.testCategory || ''}
                          onChange={(e) => {
@@ -545,22 +556,22 @@ const TestHeader = (
                              secondaryCategory: '' 
                            });
                          }}
-                         className="bg-slate-50 border border-slate-200 text-xs px-2 py-1.5 rounded-lg outline-none focus:border-blue-500"
+                         className="flex-1 min-w-0 bg-slate-50 border border-slate-200 text-xs px-1.5 py-1 rounded-lg outline-none focus:border-blue-500"
                        >
                          <option value="">Select...</option>
                          {PRIMARY_CATEGORIES.map((cat) => (
                            <option key={cat} value={cat}>{cat}</option>
                          ))}
                        </select>
-                     </div>
-                     <div className="flex flex-col flex-1 min-w-[140px]">
-                       <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
+                     </label>
+                     <label className="flex items-center gap-1.5 min-w-0">
+                       <span className="shrink-0 text-[10px] font-bold text-slate-400 uppercase">
                          Sec. Class.
-                       </label>
+                       </span>
                        <select
                          value={activeTest.secondaryCategory || ''}
                          onChange={(e) => updateActiveTest({ secondaryCategory: e.target.value })}
-                         className="bg-slate-50 border border-slate-200 text-xs px-2 py-1.5 rounded-lg outline-none focus:border-blue-500"
+                         className="flex-1 min-w-0 bg-slate-50 border border-slate-200 text-xs px-1.5 py-1 rounded-lg outline-none focus:border-blue-500"
                          disabled={!activeTest.testCategory || !CLASSIFICATION_MAP[activeTest.testCategory]}
                        >
                          <option value="">Select...</option>
@@ -571,12 +582,12 @@ const TestHeader = (
                            : null
                          }
                        </select>
-                     </div>
+                     </label>
 
-                        <div className="flex flex-col flex-1 min-w-[140px]">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
+                        <label className="flex items-center gap-1.5 min-w-0">
+                          <span className="shrink-0 text-[10px] font-bold text-slate-400 uppercase">
                             Experiment Type
-                          </label>
+                          </span>
                           <select
                             value={
                            activeTest.type === 'plate-96' || activeTest.type === 'plate-384' || activeTest.type === 'plate-24' ? 'Multiwell plate essay' : 
@@ -592,20 +603,20 @@ const TestHeader = (
                            activeTest.type === 'flow_cytometry' ? 'Flow Cytometry' : 'Multiwell plate essay'
                          }
                             disabled
-                            className="bg-slate-100 border border-slate-200 text-xs px-2 py-1.5 rounded-lg outline-none text-slate-500 cursor-not-allowed"
+                            className="flex-1 min-w-0 bg-slate-100 border border-slate-200 text-xs px-1.5 py-1 rounded-lg outline-none text-slate-500 cursor-not-allowed"
                           >
                             {EXPERIMENT_TYPES.map(type => (
                               <option key={type} value={type}>{type}</option>
                             ))}
                           </select>
-                        </div>
+                        </label>
                     </>
                     )}
 
-                        <div className="flex flex-col flex-1 min-w-[110px]">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
+                        <label className="flex items-center gap-1.5 min-w-0">
+                          <span className="shrink-0 text-[10px] font-bold text-slate-400 uppercase">
                             Instance
-                          </label>
+                          </span>
                           <input
                             type="text"
                             value={activeTest.instanceName || ''}
@@ -627,26 +638,25 @@ const TestHeader = (
                               }
                               instanceNameBeforeEditRef.current = null;
                             }}
-                            className="bg-slate-50 border border-slate-200 text-xs px-2 py-1.5 rounded-lg outline-none focus:border-blue-500"
+                            className="flex-1 min-w-0 bg-slate-50 border border-slate-200 text-xs px-1.5 py-1 rounded-lg outline-none focus:border-blue-500"
                             placeholder="e.g. 24h / Rep 1"
                           />
-                        </div>
+                        </label>
 
-                        <div className="flex flex-col flex-1 min-w-[120px]">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
+                        <label className="flex items-center gap-1.5 min-w-0">
+                          <span className="shrink-0 text-[10px] font-bold text-slate-400 uppercase">
                             Date
-                          </label>
+                          </span>
                           <input
                             type="date"
                             value={activeTest.date}
                             onChange={(e) => updateActiveTest({ date: e.target.value })}
-                            className="bg-slate-50 border border-slate-200 text-xs px-2 py-1.5 rounded-lg outline-none focus:border-blue-500"
+                            className="flex-1 min-w-0 bg-slate-50 border border-slate-200 text-xs px-1.5 py-1 rounded-lg outline-none focus:border-blue-500"
                           />
-                        </div>
+                        </label>
                         
                         {!isBox && (
-                        <div className="flex flex-col items-center justify-center self-end mb-1">
-                          <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 cursor-pointer hover:text-blue-600 transition-colors">
+                        <label className="flex items-center justify-center gap-1.5 text-xs font-bold text-slate-600 cursor-pointer hover:text-blue-600 transition-colors">
                             <input
                               type="checkbox"
                               checked={!!activeTest.bestMeasurement}
@@ -655,12 +665,8 @@ const TestHeader = (
                             />
                             ⭐ Best
                           </label>
-                        </div>
                         )}
                         </div>
-
-                      </div>
-                    </div>
 
                     {siblingTests.length > 0 && (
                       /* Date / Conditions strip — the conditions WRAP onto the next

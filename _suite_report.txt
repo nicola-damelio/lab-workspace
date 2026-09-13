@@ -28,5 +28,6 @@ OK   _spectra_split_test.mjs  →  passed 197/197
 OK   _split_test.cjs  →  (no output)
 OK   _src_split_test.cjs  →  (no output)
 OK   _star_group_test.cjs  →  ✅ 33/33 checks passed
+OK   _ui_scale_test.cjs  →  ✅ 44/44 checks passed
 OK   _view_scroll_memory_test.cjs  →  ✅ 41/41 checks passed
-total 31, failed 0
+total 32, failed 0
