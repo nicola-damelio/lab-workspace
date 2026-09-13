@@ -10,7 +10,7 @@ import { CollapsibleSection } from './ui';
 import { useFigureStyleSlot } from './FigureStyleTools';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, VIS_PALETTES, PER_ATOM_COLORS, seriesColorFor, chartBoxStyle, chartAspect, chartRatioBoxStyle, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf, tickTextProps, tickSize, fontFamilyOf, legendTextStyle, chartAspectImposed, tickColorOf
 } from '../utils/chartStyle';
-import { SplitChartStack, SplitLayoutControls, SplitToggle, splitChartBoxStyle, splitLayoutOf, withSplitLayout } from './SplitChartStack';
+import { SplitChartStack, SplitLayoutControls, SplitToggle, splitChartBoxStyle, splitChartClass, splitChartMargin, splitLayoutOf, splitXAxisHidden, splitYAxisProps, withSplitLayout } from './SplitChartStack';
 import { suggestDriveFileName, driveFolderPath, sanitizeSlug } from '../utils/driveNaming';
 import { uploadLocalFile, getDriveToken, archiveFileToDrive } from '../utils/driveUpload';
 import { storeJson, loadJson } from '../utils/pdbStore';
@@ -5218,14 +5218,14 @@ const onUp = () => {
          series={visibleSeries}
          layout={splitLayout}
          className="w-full lg:w-[46%]"
-         renderChart={(s) => (
-           <div style={splitBoxStyle} className="px-2 pb-1">
+         renderChart={(s, i) => (
+           <div style={splitBoxStyle} className={splitChartClass(splitLayout)}>
              <ResponsiveContainer width="100%" height="100%">
-               <LineChart data={s.data} margin={{ top: 4, right: 10, bottom: 16, left: 2 }}>
+               <LineChart data={s.data} margin={splitChartMargin(splitLayout, { top: 4, right: 10, bottom: 16, left: 2 }, i, visibleSeries.length)}>
                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                 <XAxis type="number" dataKey="x" domain={dom} reversed={true} allowDataOverflow
+                 <XAxis type="number" dataKey="x" domain={dom} reversed={true} allowDataOverflow hide={splitXAxisHidden(splitLayout, i, visibleSeries.length)}
                    tickFormatter={v => Number(v).toFixed(2)} tick={{ fontSize: splitFontSize, fill: tickColorOf(activeTest.nmr1dChartCfg) }} />
-                 <YAxis domain={splitSharedY ? yDomain : ['dataMin', 'dataMax']} tick={{ fontSize: splitFontSize, fill: tickColorOf(activeTest.nmr1dChartCfg) }} width={40} />
+                 <YAxis {...splitYAxisProps(splitLayout, 40)} domain={splitSharedY ? yDomain : ['dataMin', 'dataMax']} tick={{ fontSize: splitFontSize, fill: tickColorOf(activeTest.nmr1dChartCfg) }} />
                  <Line data={s.data} type="monotone" dataKey="y" stroke={s.color} strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls />
                </LineChart>
              </ResponsiveContainer>

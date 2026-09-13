@@ -25,6 +25,10 @@
        never both (the same rule chartRatioBoxStyle follows in chartStyle.js).
      • gap — the VERTICAL SEPARATION (px) inserted between two rows (0 = the
        hairlines of the historical layout, untouched).
+     • yAxis — false hides the Y axis of every sub-chart: its numbers and the
+       room the round ticks need are gone, so a curve fills its box from the
+       baseline to its peak and two rows really come close (the “No Y axis”
+       switch; see the readers below).
    Both are clamped by normalizeSplitLayout, so a stored / hand-edited value
    can neither break the stack nor shrink a graph into a 4 px line.
    <SplitLayoutControls> (bottom of this file) is the pair of knobs the pages
@@ -64,13 +68,16 @@ const numberOf = (v) => {
 };
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
-/** A clamped `{ aspect, gap }` — the only reader of a stored / typed value. */
+/** A clamped `{ aspect, gap, yAxis }` — the only reader of a stored / typed value. */
 export const normalizeSplitLayout = (layout = {}) => {
   const src = layout || {};
   const aspect = numberOf(src.aspect);
   return {
     aspect: aspect > 0 ? clamp(aspect, SPLIT_ASPECT_MIN, SPLIT_ASPECT_MAX) : 0,
-    gap: clamp(numberOf(src.gap), SPLIT_GAP_MIN, SPLIT_GAP_MAX)
+    gap: clamp(numberOf(src.gap), SPLIT_GAP_MIN, SPLIT_GAP_MAX),
+    // “No Y axis”: only an explicit false hides it, so a layout stored before
+    // that switch existed keeps every axis the stack has always drawn.
+    yAxis: src.yAxis !== false
   };
 };
 
@@ -95,6 +102,39 @@ export const splitOwnHeight = (baseHeight = SPLIT_CHART_H) => {
   return n > 0 ? n : SPLIT_CHART_H;
 };
 
+/* ── “No Y axis” — the switch that really packs the curves ────────────────
+   With `layout.yAxis === false` every sub-chart of a stack loses its Y axis
+   (the numbers AND the gutter they sit in) and, with it, the round-tick
+   headroom that kept a curve away from the top of its box: a curve then fills
+   its box from the baseline to its peak. The rows lose the rest of their
+   furniture too — the caption moves OVER the box (see SplitChartStack), the box
+   drops its bottom padding and only the BOTTOM row keeps the X ruler. Stacked
+   at Gap 0 the curves really come close, which is the whole point: a Y axis
+   needs round tick values, and the space above a peak is what separates two
+   curves on screen. The four split views (NMR 1D, ssNMR, CD, Flow Cytometry)
+   share these readers, so their packing cannot drift apart. */
+
+/** True when the layout asks for NO Y axis (layout.yAxis === false). */
+export const splitYAxisHidden = (layout = null) => !normalizeSplitLayout(layout).yAxis;
+
+/** The YAxis props of ONE sub-chart: gone, its gutter included (`width: 0`). */
+export const splitYAxisProps = (layout = null, width = 44) =>
+  (splitYAxisHidden(layout) ? { hide: true, width: 0 } : { width });
+
+/** …and the XAxis `hide` of ONE row: only the bottom row keeps the ruler. */
+export const splitXAxisHidden = (layout = null, i = 0, count = 1) =>
+  splitYAxisHidden(layout) && i < count - 1;
+
+/** The margin of ONE sub-chart: the page's own, minus the axes that are gone. */
+export const splitChartMargin = (layout = null, base = {}, i = 0, count = 1) => {
+  if (!splitYAxisHidden(layout)) return base;
+  return { ...base, top: 0, bottom: splitXAxisHidden(layout, i, count) ? 0 : base.bottom };
+};
+
+/** The className of ONE sub-chart box: the page's own, unpadded when packing. */
+export const splitChartClass = (layout = null, base = 'px-2 pb-1') =>
+  (splitYAxisHidden(layout) ? 'px-1' : base);
+
 /**
  * The style of ONE sub-chart box: the ratio when one was asked for, the “own”
  * fixed height (splitOwnHeight) otherwise — never both, because a definite
@@ -118,11 +158,15 @@ export const splitRowGapStyle = (layout = {}) => {
 
 export const SplitChartStack = ({
   id, label, series = [], renderChart, extraHeader = null, className = '',
-  // The shape / separation of the graphs: `{ aspect, gap }`, see above. Left
-  // out (or 0 / 0) the stack renders exactly as it did before the knob existed.
+  // The shape / separation / axes of the graphs: `{ aspect, gap, yAxis }`, see
+  // above. Left out (or 0 / 0 / true) the stack renders exactly as it did
+  // before the knobs existed.
   layout = null
 }) => {
   const rowGap = splitRowGapStyle(layout);
+  // “No Y axis” (layout.yAxis === false): the caption of a row moves over its
+  // box and the box itself is unpadded — see splitYAxisHidden.
+  const packed = splitYAxisHidden(layout);
   return (
     <div
       data-star-group={id}
@@ -139,11 +183,15 @@ export const SplitChartStack = ({
         <div className="overflow-y-auto custom-scrollbar flex-1">
           {series.map((s, i) => (
             // The SEPARATION between two graphs: the extra space the layout
-            // asks for (undefined at 0 → the hairlines alone, as before).
-            <div key={s.key || i} className="border-b border-slate-100 last:border-b-0" style={rowGap}>
-              <div className="px-2.5 pt-1.5 pb-0.5 text-[10px] font-bold truncate flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
-                <span className="text-slate-700 truncate" title={s.label}>{s.label}</span>
+            // asks for (undefined at 0 → the hairlines alone, as before). A
+            // PACKED row (no Y axis) puts its caption OVER the box instead of
+            // above it, so no line of text is left between two curves.
+            <div key={s.key || i} className="relative border-b border-slate-100 last:border-b-0" style={rowGap}>
+              <div className={packed
+                ? 'absolute top-0 left-1 z-10 max-w-[70%] text-[9px] font-bold truncate flex items-center gap-1 pointer-events-none'
+                : 'px-2.5 pt-1.5 pb-0.5 text-[10px] font-bold truncate flex items-center gap-1.5'}>
+                <span className={packed ? 'hidden' : 'w-2 h-2 rounded-full shrink-0'} style={{ backgroundColor: s.color }} />
+                <span className={packed ? 'text-slate-400' : 'text-slate-700 truncate'} title={s.label}>{s.label}</span>
               </div>
               {renderChart(s, i)}
             </div>
@@ -183,9 +231,12 @@ export const SplitToggle = ({ on, onToggle, sharedY = null, onToggleSharedY = nu
             A ratio that is not one of the presets — a value coming from an
             older session — stays SELECTABLE, so opening the page never snaps a
             deliberate shape to another one.
-     Gap    the vertical separation between two rows, 0 – SPLIT_GAP_MAX px. */
+     Gap    the vertical separation between two rows, 0 – SPLIT_GAP_MAX px.
+     No Y   the “No Y axis” switch: the Y axis of every sub-chart is dropped
+     axis   (numbers AND gutter), so each curve fills its box and the rows really
+            come close — layout.yAxis === false, see splitYAxisHidden. */
 export const SplitLayoutControls = ({ layout = null, onChange, className = '', baseHeight = SPLIT_CHART_H }) => {
-  const { aspect, gap } = normalizeSplitLayout(layout);
+  const { aspect, gap, yAxis } = normalizeSplitLayout(layout);
   // The height of the “own” box as the HOST page sizes it (SPLIT_CHART_H for
   // the spectra stacks, the Flow Cytometry split panel's own `height` there),
   // so the knob says what “own” really is — see splitOwnHeight.
@@ -225,6 +276,15 @@ export const SplitLayoutControls = ({ layout = null, onChange, className = '', b
         <input type="range" min={SPLIT_GAP_MIN} max={SPLIT_GAP_MAX} step={SPLIT_GAP_STEP} value={gap}
                onChange={(e) => set({ gap: Number(e.target.value) })} className="w-20 accent-blue-600" />
         <span className="text-slate-600 tabular-nums">{gap} px</span>
+      </label>
+      {/* The switch that lets the curves REALLY pack together: no Y axis (no
+          numbers, no gutter), the caption over the box and the X ruler on the
+          bottom row only — see splitYAxisHidden. */}
+      <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer"
+             title="Hide the Y axis of every stacked graph (its numbers and the room they need) and keep the X axis on the bottom row only: each curve fills its box, so the curves really come close — at Gap 0 they touch">
+        <input type="checkbox" checked={!yAxis} onChange={(e) => set({ yAxis: !e.target.checked })}
+               className="w-3.5 h-3.5 accent-blue-600" />
+        <span className="text-slate-500">No Y axis</span>
       </label>
     </div>
   );

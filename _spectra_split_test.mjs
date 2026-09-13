@@ -9,8 +9,10 @@
 //     ONE ⭐ / 📷 item → the split figure is captured / starred / saved as a
 //     SINGLE image (the Image Builder then places it as one block),
 //   • and the stack follows the page's LAYOUT — the width : height ratio of one
-//     sub-chart (0 = the default 375 px box, 2.5 × the 150 px it started at)
-//     and the vertical separation between two graphs (see SplitLayoutControls).
+//     sub-chart (0 = the default 375 px box, 2.5 × the 150 px it started at),
+//     the vertical separation between two graphs, and the “No Y axis” switch
+//     that drops the axes of a row so the curves really come close (see
+//     SplitLayoutControls, section 3d below).
 //
 // The shared component is imported for REAL (transformed with the project's own
 // bundler, rolldown) and rendered with react-dom/server, so its structure is
@@ -43,6 +45,7 @@ const {
   SplitChartStack, SplitToggle, SplitLayoutControls, SPLIT_CHART_H, SPLIT_CHART_MIN_H,
   SPLIT_ASPECT_STEPS, SPLIT_GAP_MAX,
   splitChartBoxStyle, splitRowGapStyle, splitLayoutOf, withSplitLayout, normalizeSplitLayout,
+  splitYAxisHidden, splitYAxisProps, splitXAxisHidden, splitChartMargin, splitChartClass,
   splitOwnHeight
 } = await import(`./${bundleFile}`);
 
@@ -127,20 +130,20 @@ check('[layout] an unusable host height falls back to the default box',
   [{ width: '100%', height: 375 }, { width: '100%', height: 375 }, { width: '100%', height: 375 }]);
 check('[layout] the host height is a plain number',
   [splitOwnHeight(200), splitOwnHeight(), splitOwnHeight('240')], [200, 375, 240]);
-check('[layout] the ratio is clamped', normalizeSplitLayout({ aspect: 99, gap: 999 }), { aspect: 8, gap: 48 });
+check('[layout] the ratio is clamped', normalizeSplitLayout({ aspect: 99, gap: 999 }), { aspect: 8, gap: 48, yAxis: true });
 check('[layout] …and a nonsense value falls back to “own”',
-  normalizeSplitLayout({ aspect: 'abc', gap: -5 }), { aspect: 0, gap: 0 });
+  normalizeSplitLayout({ aspect: 'abc', gap: -5 }), { aspect: 0, gap: 0, yAxis: true });
 check('[layout] an unusable ratio is raised to the minimum', normalizeSplitLayout({ aspect: 0.1 }).aspect, 0.5);
-check('[layout] 0 means “keep the historical box”', normalizeSplitLayout({ aspect: 0, gap: 0 }), { aspect: 0, gap: 0 });
+check('[layout] 0 means “keep the historical box”', normalizeSplitLayout({ aspect: 0, gap: 0 }), { aspect: 0, gap: 0, yAxis: true });
 check('[layout] the gap is undefined at 0 (nothing changes)', splitRowGapStyle({ gap: 0 }), undefined);
 check('[layout] …and a plain margin when asked', splitRowGapStyle({ gap: 6 }), { marginBottom: 6 });
-check('[layout] a missing layout is safe', splitLayoutOf(null), { aspect: 0, gap: 0 });
+check('[layout] a missing layout is safe', splitLayoutOf(null), { aspect: 0, gap: 0, yAxis: true });
 check('[layout] the layout stored on the experiment is read back',
-  splitLayoutOf({ splitLayout: { aspect: 3, gap: 4 } }), { aspect: 3, gap: 4 });
+  splitLayoutOf({ splitLayout: { aspect: 3, gap: 4 } }), { aspect: 3, gap: 4, yAxis: true });
 check('[layout] a change merges with what was already stored',
-  withSplitLayout({ splitLayout: { aspect: 3, gap: 4 } }, { gap: 20 }), { aspect: 3, gap: 20 });
+  withSplitLayout({ splitLayout: { aspect: 3, gap: 4 } }, { gap: 20 }), { aspect: 3, gap: 20, yAxis: true });
 check('[layout] …and is clamped on the way in',
-  withSplitLayout({ splitLayout: { aspect: 3 } }, { aspect: 100 }), { aspect: 8, gap: 0 });
+  withSplitLayout({ splitLayout: { aspect: 3 } }, { aspect: 100 }), { aspect: 8, gap: 0, yAxis: true });
 
 /* ── 3c. the two knobs of the page toolbar ──────────────────────────────── */
 const controls = (layout) => renderToStaticMarkup(React.createElement(SplitLayoutControls, {
@@ -167,6 +170,50 @@ checkTrue('[controls] …and stays selected', /value="3\.3"[^>]*selected/.test(c
 check('[controls] …so it is never silently snapped', normalizeSplitLayout({ aspect: 3.3 }).aspect, 3.3);
 checkTrue('[controls] the presets really are the shared list', SPLIT_ASPECT_STEPS.includes(3));
 check('[controls] the gap knob is bounded', SPLIT_GAP_MAX, 48);
+
+/* ── 3d. “No Y axis” — the switch that really packs the curves ────────────
+   The Gap knob sets the space BETWEEN two rows, but a row also carries its own
+   furniture: the caption line, the box padding, the x-tick row and — with a Y
+   axis — the round-tick headroom above each peak. `layout.yAxis === false` (the
+   “No Y axis” checkbox) drops all of it, so two curves really come close. The
+   readers below are what the four split views use to do exactly that. */
+const PACKED = { yAxis: false };
+check('[packed] the Y axis is shown unless the layout hid it',
+  [splitYAxisHidden(null), splitYAxisHidden({}), splitYAxisHidden({ yAxis: true }), splitYAxisHidden(PACKED)],
+  [false, false, false, true]);
+check('[packed] …and nothing but an explicit false hides it', splitYAxisHidden({ yAxis: 'no' }), false);
+check('[packed] the switch survives a round trip',
+  withSplitLayout({ splitLayout: { gap: 6, yAxis: false } }, { gap: 8 }), { aspect: 0, gap: 8, yAxis: false });
+check('[packed] the YAxis of a sub-chart loses its gutter',
+  [splitYAxisProps(null, 44), splitYAxisProps(PACKED, 44)], [{ width: 44 }, { hide: true, width: 0 }]);
+check('[packed] only the bottom row keeps the X ruler',
+  [splitXAxisHidden(null, 0, 3), splitXAxisHidden(PACKED, 0, 3), splitXAxisHidden(PACKED, 2, 3), splitXAxisHidden(PACKED, 0, 1)],
+  [false, true, false, false]);
+check('[packed] a packed row loses the room its axes took',
+  [splitChartMargin(null, { top: 5, bottom: 18 }, 0, 3),
+   splitChartMargin(PACKED, { top: 5, bottom: 18 }, 0, 3),
+   splitChartMargin(PACKED, { top: 5, bottom: 18 }, 2, 3)],
+  [{ top: 5, bottom: 18 }, { top: 0, bottom: 0 }, { top: 0, bottom: 18 }]);
+check('[packed] …and its box loses the padding of the caption',
+  [splitChartClass(null), splitChartClass(PACKED), splitChartClass(PACKED, 'w-1/2 mx-auto pb-1')],
+  ['px-2 pb-1', 'px-1', 'px-1']);
+const packedHtml = renderToStaticMarkup(React.createElement(SplitChartStack, {
+  id: 'cd-split', label: 'Packed', series: SERIES, layout: PACKED,
+  renderChart: (s) => React.createElement('svg', { 'data-chart': s.key, key: s.key })
+}));
+checkTrue('[packed] a packed row still says which curve it is', packedHtml.includes('Condition A — Spectrum'));
+checkTrue('[packed] …as a caption OVER the box, taking no line of its own',
+  packedHtml.includes('absolute top-0 left-1'));
+check('[packed] …while the rows keep their hairlines',
+  packedHtml.split('border-b border-slate-100 last:border-b-0').length - 1, 2);
+check('[packed] …and the stack is still ONE figure item',
+  packedHtml.split('data-star-group').length - 1, 1);
+check('[packed] nothing but the curves is left between two rows (and one ruler)',
+  [packedHtml.includes('px-2.5 pt-1.5 pb-0.5'), (packedHtml.match(/data-chart=/g) || []).length], [false, 2]);
+const noY = controls(PACKED);
+checkTrue('[controls] offers the packed switch', plain.includes('No Y axis') && noY.includes('No Y axis'));
+check('[controls] …off while the axis is shown', plain.includes('checked=""'), false);
+check('[controls] …on as soon as the axis is hidden', noY.includes('checked=""'), true);
 
 /* ── 5. each spectra page mounts its own stack ──────────────────────────── */
 const PAGES = [
@@ -216,12 +263,12 @@ const PAGES = [
 PAGES.forEach((p) => {
   const src = fs.readFileSync(p.file, 'utf8');
   const count = (needle) => src.split(needle).length - 1;
-  checkTrue(`[${p.tag}] imports the shared stack`, src.includes("import { SplitChartStack, SplitLayoutControls, SplitToggle, splitChartBoxStyle, splitLayoutOf, withSplitLayout } from './SplitChartStack';"));
+  checkTrue(`[${p.tag}] imports the shared stack`, src.includes("import { SplitChartStack, SplitLayoutControls, SplitToggle, splitChartBoxStyle, splitChartClass, splitChartMargin, splitLayoutOf, splitXAxisHidden, splitYAxisProps, withSplitLayout } from './SplitChartStack';"));
   checkTrue(`[${p.tag}] mounts the stack`, count('<SplitChartStack') === 1);
   checkTrue(`[${p.tag}] …with its own id`, src.includes(`id="${p.id}"`));
   checkTrue(`[${p.tag}] …named for the user`, src.includes(`label="${p.label}"`));
   checkTrue(`[${p.tag}] …fed with the VISIBLE series only`, src.includes(`series={${p.seriesVar}}`));
-  checkTrue(`[${p.tag}] …one chart per series`, src.includes('renderChart={(s) => ('));
+  checkTrue(`[${p.tag}] …one chart per series`, src.includes('renderChart={(s, i) => ('));
   checkTrue(`[${p.tag}] …sized by the shared layout helper`, src.includes('splitChartBoxStyle(splitLayout)'));
   checkTrue(`[${p.tag}] …handed to the box of every sub-chart`, src.includes('style={splitBoxStyle}'));
   checkTrue(`[${p.tag}] the stack is handed that layout`, src.includes('layout={splitLayout}'));
@@ -245,6 +292,11 @@ PAGES.forEach((p) => {
   checkTrue(`[${p.tag}] …and every tick of the stack uses it`,
     src.split('fontSize: splitFontSize').length - 1 === 2);
   p.extras.forEach(([what, needle]) => checkTrue(`[${p.tag}] ${what}`, src.includes(needle)));
+  checkTrue(`[${p.tag}] the rows can really pack (no Y axis)`,
+    src.includes('splitChartClass(splitLayout)') && src.includes('splitChartMargin(splitLayout, '));
+  checkTrue(`[${p.tag}] …the YAxis is handed the packing props`, src.includes('splitYAxisProps(splitLayout, '));
+  checkTrue(`[${p.tag}] …and only the bottom row keeps the X ruler`,
+    src.includes('splitXAxisHidden(splitLayout, i, '));
 });
 
 /* ── 6. the four split panels stay distinct figure items ────────────────── */
@@ -260,7 +312,7 @@ check('[FCS] is not double-tagged by this change', FCS.split('data-star-group=')
 // experiment, so the four split views of a test share one shape), with the
 // panel's own “Height” as the size of its “own” box.
 checkTrue('[FCS] imports the shared knobs', FCS.includes(
-  "import { SplitLayoutControls, splitChartBoxStyle, splitRowGapStyle, splitLayoutOf, withSplitLayout, splitOwnHeight } from './SplitChartStack';"));
+  "import { SplitLayoutControls, splitChartBoxStyle, splitChartClass, splitChartMargin, splitRowGapStyle, splitLayoutOf, splitYAxisHidden, splitYAxisProps, withSplitLayout, splitOwnHeight } from './SplitChartStack';"));
 checkTrue('[FCS] the layout is read from the experiment',
   FCS.includes('const splitLayout = splitLayoutOf(activeTest);'));
 checkTrue('[FCS] …and written straight back',
@@ -284,6 +336,15 @@ checkTrue('[FCS] …and so is its parameter panel',
   FCS.indexOf('{showCfgSplit && (') > FCS.indexOf('data-star-group="fcs-split"'));
 checkTrue('[FCS] the stacked curves start 2.5 × taller than they were',
   FCS.includes('height: 200, aspect: 1, fontSize: 11'));
+checkTrue('[FCS] every mini chart can lose its Y axis',
+  FCS.includes('{...splitYAxisProps(splitLayout, Math.max(30, (Number(cfgSplit.fontSize) || 11) + 22))}'));
+checkTrue('[FCS] …and then drops the round-tick headroom',
+  FCS.includes("[0, splitYAxisHidden(splitLayout) ? 'dataMax' : 'auto']"));
+checkTrue('[FCS] the caption moves over the box when packing', FCS.includes('absolute top-0 left-1'));
+checkTrue('[FCS] …and the box loses its padding',
+  FCS.includes("splitChartClass(splitLayout, 'w-1/2 mx-auto pb-1')"));
+checkTrue('[FCS] …with the margins of the hidden axes gone',
+  FCS.includes('splitChartMargin(splitLayout, cfgChartMargin(cfgSplit,'));
 
 /* ── report ─────────────────────────────────────────────────────────────── */
 try { fs.unlinkSync(bundleFile); } catch { /* ignore */ }

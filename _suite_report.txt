@@ -23,7 +23,7 @@ OK   _pdb_conect_sanity.cjs  →  (no output)
 OK   _probe_ngl.cjs  →  WROTE _ngl_src/molecularsurface-representation.ts len 10528
 OK   _project_figures_access_test.cjs  →  │ (index) │ name                                                                                                                       │ ok   │ error 
 OK   _rebuild_h_test.mjs  →  PASS
-OK   _spectra_split_test.mjs  →  passed 142/142
+OK   _spectra_split_test.mjs  →  passed 171/171
 OK   _split_test.cjs  →  (no output)
 OK   _src_split_test.cjs  →  (no output)
 OK   _star_group_test.cjs  →  ✅ 33/33 checks passed

@@ -11,7 +11,7 @@ import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, ChartInsp
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor, chartBoxStyle, chartRatioBoxStyle, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf, tickTextProps, tickSize, fontFamilyOf, legendTextStyle, axisTitleSize, tickColorOf
 } from '../utils/chartStyle';
-import { SplitChartStack, SplitLayoutControls, SplitToggle, splitChartBoxStyle, splitLayoutOf, withSplitLayout } from './SplitChartStack';
+import { SplitChartStack, SplitLayoutControls, SplitToggle, splitChartBoxStyle, splitChartClass, splitChartMargin, splitLayoutOf, splitXAxisHidden, splitYAxisProps, withSplitLayout } from './SplitChartStack';
 export { CollapsibleSection };
 export { VIS_PALETTES };
 import { DriveUploadButton } from './DriveUpload';
@@ -2076,13 +2076,13 @@ export const SpectraVisualization = ({ ctx }) => {
             series={visible}
             layout={splitLayout}
             className={fs ? 'lg:w-[46%]' : 'w-full lg:w-[46%]'}
-            renderChart={(s) => (
-              <div style={splitBoxStyle} className="px-2 pb-1">
+            renderChart={(s, i) => (
+              <div style={splitBoxStyle} className={splitChartClass(splitLayout)}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={s.data} margin={cfgChartMargin(cfg, { top: 5, right: 8, bottom: 18, left: 2 })}>
+                  <LineChart data={s.data} margin={splitChartMargin(splitLayout, cfgChartMargin(cfg, { top: 5, right: 8, bottom: 18, left: 2 }), i, visible.length)}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis type="number" dataKey="x" tick={{ fontSize: splitFontSize, fill: tickColorOf(cfg) }} domain={['dataMin', 'dataMax']} />
-                    <YAxis domain={splitSharedY ? [yAutoMin, yAutoMax] : ['dataMin', 'dataMax']} tick={{ fontSize: splitFontSize, fill: tickColorOf(cfg) }} width={44} />
+                    <XAxis type="number" dataKey="x" tick={{ fontSize: splitFontSize, fill: tickColorOf(cfg) }} domain={['dataMin', 'dataMax']} hide={splitXAxisHidden(splitLayout, i, visible.length)} />
+                    <YAxis {...splitYAxisProps(splitLayout, 44)} domain={splitSharedY ? [yAutoMin, yAutoMax] : ['dataMin', 'dataMax']} tick={{ fontSize: splitFontSize, fill: tickColorOf(cfg) }} />
                     <Line type="monotone" dataKey="y" stroke={s.color} strokeWidth={cfg.lineThickness || 2} strokeDasharray={lineDash(cfg.lineStyle)} dot={false} isAnimationActive={false} />
                   </LineChart>
                 </ResponsiveContainer>

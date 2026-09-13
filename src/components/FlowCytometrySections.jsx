@@ -10,7 +10,7 @@ import { ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES, seriesColorFor, tickSize, fontFamilyOf, chartRatioBoxStyle, tickColorOf, axisTitleColorOf
 } from '../utils/chartStyle';
-import { SplitLayoutControls, splitChartBoxStyle, splitRowGapStyle, splitLayoutOf, withSplitLayout, splitOwnHeight } from './SplitChartStack';
+import { SplitLayoutControls, splitChartBoxStyle, splitChartClass, splitChartMargin, splitRowGapStyle, splitLayoutOf, splitYAxisHidden, splitYAxisProps, withSplitLayout, splitOwnHeight } from './SplitChartStack';
 import { PLATES_DEF, formatConc, getRegionColor } from '../data/constants';
 export { VIS_PALETTES };
 
@@ -657,6 +657,10 @@ export const FCSOverlayVisualization = ({ ctx }) => {
   const splitOwnBoxH = splitOwnHeight(cfgSplit.height);
   const splitBoxStyle = splitChartBoxStyle(splitLayout, splitOwnBoxH);
   const splitRowGap = splitRowGapStyle(splitLayout);
+  // “No Y axis” (layout.yAxis === false): the caption of a row moves over its
+  // box, the Y axis (and the round-tick headroom it needs) is dropped and only
+  // the BOTTOM row keeps the X ruler — see splitYAxisHidden.
+  const packed = splitYAxisHidden(splitLayout);
 
   const [fs, setFs] = useState(false);
   const [showCfg, setShowCfg] = useState(false);
@@ -972,11 +976,14 @@ export const FCSOverlayVisualization = ({ ctx }) => {
                   {visibleInstances.map((s, i) => (
                     // The SEPARATION between two graphs: the extra space the
                     // layout asks for (undefined at 0 → the hairlines alone,
-                    // exactly as it always was) — see splitRowGapStyle.
-                    <div key={s.id} className="border-b border-slate-100 last:border-b-0" style={splitRowGap}>
-                      <div className="px-2.5 pt-1.5 pb-0.5 text-[10px] font-bold truncate flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
-                        <span className="text-slate-700 truncate">{s.name}</span>
+                    // exactly as it always was) — see splitRowGapStyle. A PACKED
+                    // row puts its caption OVER the box instead of above it.
+                    <div key={s.id} className="relative border-b border-slate-100 last:border-b-0" style={splitRowGap}>
+                      <div className={packed
+                        ? 'absolute top-0 left-1 z-10 max-w-[70%] text-[9px] font-bold truncate flex items-center gap-1 pointer-events-none'
+                        : 'px-2.5 pt-1.5 pb-0.5 text-[10px] font-bold truncate flex items-center gap-1.5'}>
+                        <span className={packed ? 'hidden' : 'w-2 h-2 rounded-full shrink-0'} style={{ backgroundColor: s.color }} />
+                        <span className={packed ? 'text-slate-400' : 'text-slate-700 truncate'}>{s.name}</span>
                       </div>
                       {/* The box of ONE mini chart. Its SHAPE is the one the panel
                           asks for — a width : height ratio, or this panel's own
@@ -984,13 +991,17 @@ export const FCSOverlayVisualization = ({ ctx }) => {
                           ratio) — and the chart then fills the box. */}
                       <ChartInspector cfg={cfgSplit} setCfg={setVizCfgSplit}
                         series={visibleInstances.map(x => ({ key: x.id, label: x.name, color: x.color }))} unit="a.u."
-                        className="w-1/2 mx-auto pb-1"
+                        className={splitChartClass(splitLayout, 'w-1/2 mx-auto pb-1')}
                         style={splitBoxStyle}>
                         <ResponsiveContainer width="100%" height="100%">
-                          <ComposedChart data={chartData.bins} margin={cfgChartMargin(cfgSplit, { top: 2, right: 4, left: 0, bottom: 0 })}>
+                          <ComposedChart data={chartData.bins} margin={splitChartMargin(splitLayout, cfgChartMargin(cfgSplit, { top: 2, right: 4, left: 0, bottom: 0 }), i, visibleInstances.length)}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                             <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow hide={i < visibleInstances.length - 1} tickFormatter={cfgTickFormatter(cfgSplit, 'x') || undefined} tick={{ fontSize: Math.max(9, Number(cfgSplit.fontSize) || 11), fill: tickColorOf(cfgSplit) }} />
-                            <YAxis tickFormatter={cfgTickFormatter(cfgSplit, 'y') || undefined} tick={{ fontSize: Math.max(9, Number(cfgSplit.fontSize) || 11), fill: tickColorOf(cfgSplit) }} width={Math.max(30, (Number(cfgSplit.fontSize) || 11) + 22)} domain={splitSharedY ? [0, chartData.maxCount] : [0, 'auto']} />
+                            {/* The Y scale of the mini chart: “Same Y” (the panel's own
+                                [0, max]) beats the others; with the axis HIDDEN the
+                                round-tick headroom goes too, so each curve fills its
+                                box and the curves really come close. */}
+                            <YAxis {...splitYAxisProps(splitLayout, Math.max(30, (Number(cfgSplit.fontSize) || 11) + 22))} tickFormatter={cfgTickFormatter(cfgSplit, 'y') || undefined} tick={{ fontSize: Math.max(9, Number(cfgSplit.fontSize) || 11), fill: tickColorOf(cfgSplit) }} domain={splitSharedY ? [0, chartData.maxCount] : [0, splitYAxisHidden(splitLayout) ? 'dataMax' : 'auto']} />
                             {fillHist && <Area type="monotone" dataKey={smoothHist ? s.id + '_sm' : s.id} name={s.name} stroke="none" fill={cfgSplit.colors?.[s.id] || s.color} fillOpacity={Number(cfgSplit.areaOpacity ?? 0.3)} isAnimationActive={false} />}
                             {cfgSeriesEl(cfgSplit, { key: s.id, data: chartData.bins, dataKey: s.id, name: s.name, stroke: cfgSplit.colors?.[s.id] || s.color })}
                             {smoothHist && <Line type="monotone" dataKey={s.id + '_sm'} name={`${s.name} (smooth)`} stroke={cfgSplit.colors?.[s.id] || s.color} strokeWidth={cfgSplit.lineThickness || 2} strokeDasharray={cfgSplit.lineStyle === 'dashed' ? '7 5' : cfgSplit.lineStyle === 'dotted' ? '2 3' : undefined} dot={false} isAnimationActive={false} />}
