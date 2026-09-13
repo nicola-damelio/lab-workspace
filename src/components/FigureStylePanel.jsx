@@ -3,6 +3,7 @@ import {
   DEFAULT_FIGURE_STYLE, FIGURE_FONT_MIN, FIGURE_FONT_MAX,
   FIGURE_FONT_STEPS, FIGURE_ANGLE_MIN, FIGURE_ANGLE_MAX,
   FIGURE_ASPECT_MIN, FIGURE_ASPECT_MAX, FIGURE_ASPECT_STEPS,
+  FIGURE_DECIMALS_STEPS,
   figureStyleTag, writeFigureStyle
 } from '../utils/figureStyle';
 import { FIGURE_FONT_CHOICES, DEFAULT_CHART_ASPECT_WIDE } from '../utils/chartStyle';
@@ -20,6 +21,14 @@ import { useFigureStyleProfile } from './FigureStyleTools';
      • legends / series names       legendFontSize
      • peak / data labels           simLabelFontSize
    …plus the FONT FAMILY every one of them is drawn with.
+
+   And the two commands a figure of a paper always needs next to the sizes:
+     • the axis titles in BOLD / ITALIC   (axisTitleBold, axisTitleItalic)
+     • the axis numbers in EXPONENTIAL notation and with a fixed NUMBER OF
+       DECIMALS                            (tickSci, tickDecimals)
+   They are the same commands as the 🎨 “Graphical Parameters” panel of a single
+   chart (X/Y label style, decimals, scientific notation) — set once here and
+   pushed into every chart by the 🎨 button of the experiment page.
 
    The plot-box RATIO (x-axis length : y-axis length) is the fifth knob: 0 = each
    chart keeps its own ratio, anything else is imposed on every figure of the
@@ -103,6 +112,17 @@ const Row = ({ label, hint, value, min, max, step = 1, unit = 'px', onChange, qu
   );
 };
 
+
+// The axis-number sample of the preview: the decimals / exponential commands
+// applied to one value, exactly the way cfgTickFormatter does it on a real axis
+// ('' = automatic → the plain number, as the charts render it today).
+const previewTick = (v, profile) => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v);
+  if (profile.tickSci) return n.toExponential(profile.tickDecimals === '' ? 2 : Number(profile.tickDecimals));
+  if (profile.tickDecimals !== '') return n.toFixed(Number(profile.tickDecimals));
+  return String(n);
+};
 
 export const FigureStylePanel = () => {
   const profile = useFigureStyleProfile();
@@ -196,6 +216,67 @@ export const FigureStylePanel = () => {
         quick={FIGURE_FONT_STEPS} quickLabel="px"
         onChange={(v) => set({ simLabelFontSize: v })}
       />
+      {/* ---- axis titles & axis numbers ----------------------------------- */}
+      <div className="bg-white border border-slate-200 rounded-lg p-3 flex flex-col gap-3">
+        <div className="text-[10px] font-black text-slate-400 uppercase">Axis titles &amp; axis numbers — style and format</div>
+
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+          <label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer">
+            <input
+              type="checkbox" checked={profile.axisTitleBold}
+              onChange={(e) => set({ axisTitleBold: e.target.checked })}
+              className="w-3.5 h-3.5 accent-indigo-600"
+            />
+            Axis titles in <b>bold</b>
+          </label>
+          <label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer">
+            <input
+              type="checkbox" checked={profile.axisTitleItalic}
+              onChange={(e) => set({ axisTitleItalic: e.target.checked })}
+              className="w-3.5 h-3.5 accent-indigo-600"
+            />
+            Axis titles in <i>italic</i>
+          </label>
+          <label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer">
+            <input
+              type="checkbox" checked={profile.tickSci}
+              onChange={(e) => set({ tickSci: e.target.checked })}
+              className="w-3.5 h-3.5 accent-indigo-600"
+            />
+            Axis numbers in exponential notation (1.23 × 10⁴)
+          </label>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-bold text-slate-600">Axis numbers — number of decimals</span>
+          {FIGURE_DECIMALS_STEPS.map((v) => (
+            <button
+              key={v === '' ? 'auto' : String(v)}
+              type="button"
+              onClick={() => set({ tickDecimals: v })}
+              title={v === '' ? 'Automatic — every chart keeps the format it shows today' : `Always ${v} decimal${v === 1 ? '' : 's'}`}
+              className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${
+                String(profile.tickDecimals) === String(v)
+                  ? 'bg-indigo-600 text-white border-indigo-600'
+                  : 'bg-white text-slate-600 border-slate-300 hover:bg-indigo-50'
+              }`}
+            >
+              {v === '' ? 'Auto' : v}
+            </button>
+          ))}
+          <span className="text-[10px] font-mono text-slate-400">
+            {previewTick(12500, profile)}
+          </span>
+        </div>
+
+        <div className="text-[10px] text-slate-500 leading-snug">
+          Same commands as the 🎨 <b>Graphical Parameters</b> panel of a single chart (X / Y label style,
+          decimals, scientific notation): set them once here and press 🎨 on the experiment page to push
+          them into every chart and spectrum — so the axis titles and the axis numbers of every captured
+          figure are written the same way. “Auto” leaves the format of each chart exactly as it is today.
+        </div>
+      </div>
+
       <Row
         label="X label rotation (spectra)"
         hint="Rotation of the x tick labels of the spectra / long category names. 0 = browser default."
@@ -229,11 +310,15 @@ export const FigureStylePanel = () => {
         <div className="text-[10px] font-bold text-slate-500 mb-2">Preview — what the figures will look like</div>
         <div className="flex items-end gap-4 h-32 border-l border-b border-slate-300 pl-2 pb-1 relative overflow-hidden"
           style={{ fontFamily: family || undefined }}>
-          <span className="absolute left-1 top-1 text-slate-500" style={{ fontSize: profile.axisTitleFontSize }}>
+          <span className="absolute left-1 top-1 text-slate-500" style={{
+            fontSize: profile.axisTitleFontSize,
+            fontWeight: profile.axisTitleBold ? 'bold' : 'normal',
+            fontStyle: profile.axisTitleItalic ? 'italic' : 'normal'
+          }}>
             Intensity (a.u.)
           </span>
           <span className="absolute -bottom-1 right-1 text-slate-500" style={{ fontSize: profile.fontSize }}>
-            250 nm
+            {previewTick(12500, profile)} ppm
           </span>
           <span className="absolute left-1 top-12 text-slate-500" style={{ fontSize: profile.legendFontSize }}>
             ▲ 3 conditions ▼

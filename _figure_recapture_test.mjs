@@ -187,14 +187,17 @@ check('20 it finds the exact element by its stamp and captures it', () => {
   ok(CSL.includes('const url = await captureFigure(el, kindOf(el));'), 'the element is not captured');
   ok(CSL.includes("if (el.hasAttribute && el.hasAttribute('data-star-group')) return 'group';"), 'a composite panel would not be captured as a whole');
 });
-check('21 it REPLACES the library entry (same id) instead of adding a copy', () => {
+check('21 it REPLACES the library entry (same id) and never adds a copy', () => {
   ok(CSL.includes('updateId: item.figId'), 'no in-place update');
-  ok(CSL.includes("if (!res || !res.updated) return { ok: false, message: 'the saved figure is no longer in the image library' };"), 'a missing entry is not reported');
+  ok(CSL.includes('insertIfMissing: false'), 'a missing entry could still be inserted as a NEW copy');
+  ok(CSL.includes("if (!res || !res.updated) return { ok: false, hard: true, message: 'the saved figure is no longer in the image library' };"), 'a missing entry is not reported as a final failure');
   const LIB = SRC('utils/figuresLibrary.js');
   ok(LIB.includes('if (updateId) {'), 'publishLibraryFigure has no in-place path');
+  ok(LIB.includes('if (insertIfMissing === false) {'), 'publishLibraryFigure cannot refuse the insert');
+  ok(LIB.includes('missing: true'), 'the refusal is not reported to the caller');
 });
 check('22 it reports the outcome and waits for a lazy chart', () => {
-  ok(CSL.includes("markFigureRecaptureResult(item.figId, out.ok ? 'done' : 'failed', out.message);"), 'the result is not recorded');
+  ok(CSL.includes("markFigureRecaptureResult(item.figId, out.ok ? 'done' : 'failed', out.message, { retry: !out.hard });"), 'the result is not recorded');
   ok(CSL.includes('const DEADLINE_MS = 30000;'), 'no deadline (a lazy chart is not waited for)');
   ok(CSL.includes('data-figure-recapture="1"'), 'no progress chip');
   ok(CSL.includes('<b>{recap.done}</b>/{recap.total}'), 'the chip does not count');
@@ -218,6 +221,68 @@ check('25 App listens for the two recapture hops', () => {
   ok(APP.includes('navRef.current.jumpToTest(detail.testId, detail.origin || null);'), 'the test hop does not use the live navigation');
   ok(APP.includes('navRef.current.openImageBuilder(detail.projectId || undefined);'), 'the builder hop does not use the live navigation');
   ok(APP.includes('window.removeEventListener(RECAPTURE_RETURN_EVENT, onOpenBuilder);'), 'the listeners are never removed');
+});
+
+/* ── 5. ⏹ Stop, attempt cap, no duplicate flooding ───────────────────────── */
+check('26 ⏹ Stop closes the run: nothing pending, no page touches it again', () => {
+  R.queueFigureRecaptures([ITEM(), ITEM({ figId: 'fig2' })]);
+  eq(R.figureRecaptureProgress().pending, 2);
+  R.stopFigureRecaptures('stopped by the user');
+  eq(R.figureRecaptureProgress(), { total: 2, done: 0, failed: 2, pending: 0 });
+  eq(R.figureRecapturesForTest({ id: 't1', name: 'CD' }).length, 0, 'a stopped run is never picked up again');
+  eq(R.nextRecaptureTarget(), null, 'a stopped run never chains to another experiment');
+  eq(R.figureRecaptureSummary().stopped, true);
+  eq(R.figureRecaptureSummary().results.map((r) => r.message), ['stopped by the user', 'stopped by the user']);
+  R.clearFigureRecaptures();
+  eq(R.stopFigureRecaptures(), null, 'stopping an idle app is a no-op');
+});
+check('27 a failure is final by default, and a retryable one stops at 3 attempts', () => {
+  R.queueFigureRecaptures([ITEM(), ITEM({ figId: 'fig2' })]);
+  R.markFigureRecaptureResult('fig1', 'failed', 'boom');
+  eq(R.figureRecaptureProgress().failed, 1, 'a reported failure is final (as before)');
+  R.markFigureRecaptureResult('fig2', 'failed', 'still painting', { retry: true });
+  eq(R.figureRecaptureProgress().pending, 1, 'a retryable failure stays pending');
+  R.markFigureRecaptureResult('fig2', 'failed', 'still painting', { retry: true });
+  eq(R.figureRecaptureProgress().pending, 1);
+  R.markFigureRecaptureResult('fig2', 'failed', 'still painting', { retry: true });
+  eq(R.figureRecaptureProgress(), { total: 2, done: 0, failed: 2, pending: 0 }, `the cap (${R.FIGURE_RECAPTURE_MAX_ATTEMPTS}) closes it`);
+  eq(R.figureRecapturesForTest({ id: 't1', name: 'CD' }).length, 0);
+  R.clearFigureRecaptures();
+});
+check('28 a hard failure is never retried (the entry is gone: no copy, no retry)', () => {
+  R.queueFigureRecaptures([ITEM()]);
+  R.markFigureRecaptureResult('fig1', 'failed', 'the saved figure is no longer in the image library', { retry: true, hard: true });
+  eq(R.figureRecaptureProgress(), { total: 1, done: 0, failed: 1, pending: 0 });
+  R.clearFigureRecaptures();
+});
+check('29 the same figure is never queued twice', () => {
+  R.queueFigureRecaptures([ITEM(), ITEM(), ITEM({ figId: 'fig2' })]);
+  eq(R.readFigureRecapture().items.map((i) => i.figId), ['fig1', 'fig2']);
+  R.clearFigureRecaptures();
+});
+check('30 a figure of a canvas placed in two panels is queued once (Image Builder)', () => {
+  ok(IB.includes('const seen = new Set();'), 'the builder queues the audit rows as they are');
+  ok(IB.includes('const key = `${r.libId}|${r.elementKey}`;'), 'no per-figure deduplication');
+  ok(IB.includes('if (items.length > 4 && typeof window !== \'undefined\''), 'a mass re-capture is not confirmed first');
+});
+check('31 the ⏹ Stop button is on the page and in the Image Builder', () => {
+  ok(CSL.includes('onClick={stopRun}'), 'no stop button on the experiment page');
+  ok(CSL.includes("stopFigureRecaptures('stopped by the user')"), 'the stop button does not stop the run');
+  ok(CSL.includes('if (stopped || userStopRef.current) return;'), 'a tick already running keeps capturing after the stop');
+  ok(CSL.includes('if (userStopRef.current) {'), 'a stopped run still hands over to the next experiment');
+  ok(CSL.includes('disabled={!!recap.stopped}'), 'the stop button never turns itself off');
+  ok(IB.includes('stopFigureRecaptures('), 'the Image Builder cannot stop a stuck run');
+  ok(IB.includes('⏹ Stop ('), 'the Image Builder banner has no stop button');
+});
+check('32 the duplicates a runaway run left behind can be cleaned in one click', () => {
+  ok(IB.includes('countRecaptureDuplicates'), 'the Image Builder does not count the duplicates');
+  ok(IB.includes('removeRecaptureDuplicates'), 'the Image Builder cannot clean them up');
+  ok(IB.includes('🧹 Remove '), 'no clean-up button');
+  const LIB2 = SRC('utils/figuresLibrary.js');
+  ok(LIB2.includes('export const findRecaptureDuplicates = () => {'), 'no duplicate finder');
+  ok(LIB2.includes('export const removeRecaptureDuplicates = () => {'), 'no duplicate remover');
+  ok(LIB2.includes('const RECAPTURE_DUP_MIN = 3;'), 'two hand-made copies must never be treated as a runaway loop');
+  ok(LIB2.includes("const RECAPTURE_DUP_WINDOW_MS = 10 * 60 * 1000;"), 'the copies must be close in time');
 });
 
 const failed = results.filter((r) => !r.ok);

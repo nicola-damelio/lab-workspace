@@ -2265,6 +2265,17 @@ export const cfgTickFormatter = (cfg = {}, axis = 'x') => {
 };
 
 /**
+ * The same decimals / scientific-notation commands for a Chart.js axis:
+ * `ticks.callback` (undefined = Chart.js keeps its own default format, which is
+ * what every chart showed before the panel — and the global Figure style
+ * profile — grew these two commands).
+ */
+export const chartJsTickCallback = (cfg = {}, axis = 'x') => (v) => {
+  const f = cfgTickFormatter(cfg, axis);
+  return f ? f(v) : undefined;
+};
+
+/**
  * Axis-title label props whose offset grows with the panel font size (and the
  * tick angle), so larger tick labels never overlap the axis title.
  *

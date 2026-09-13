@@ -825,5 +825,23 @@ export const chartJsFont = (cfg, extra) => {
   };
 };
 
-/** Chart.js `font: { … }` object of an axis TITLE (usually bold). */
-export const chartJsTitleFont = (cfg, extra) => chartJsFont(cfg, { size: axisTitleSize(cfg), ...(extra || {}) });
+/**
+ * Chart.js `font: { … }` object of an axis TITLE. It honours the two axis-title
+ * style commands of the profile / the 🎨 panel (`xAxisLabelBold`,
+ * `yAxisLabelBold`, `xAxisLabelItalic`, `yAxisLabelItalic`): pass the axis
+ * ('x' | 'y') to follow that axis alone, or leave it out and the title is
+ * bold / italic as soon as EITHER axis asks for it (the global Figure style
+ * writes both axes together). `extra` always wins, so the historical
+ * `chartJsTitleFont(cfg, { weight: 'bold' })` call sites keep their exact look.
+ */
+export const chartJsTitleFont = (cfg, extra, axis = null) => {
+  const on = (flag) => (axis
+    ? !!(cfg && cfg[`${axis}AxisLabel${flag}`])
+    : !!(cfg && (cfg[`xAxisLabel${flag}`] || cfg[`yAxisLabel${flag}`])));
+  return chartJsFont(cfg, {
+    size: axisTitleSize(cfg),
+    ...(on('Bold') ? { weight: 'bold' } : {}),
+    ...(on('Italic') ? { style: 'italic' } : {}),
+    ...(extra || {})
+  });
+};

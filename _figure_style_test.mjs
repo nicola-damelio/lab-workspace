@@ -13,7 +13,9 @@ import {
   DEFAULT_FIGURE_STYLE, FIGURE_FONT_MIN, FIGURE_FONT_MAX, FIGURE_FONT_STEPS,
   FIGURE_STYLE_KEY, FIGURE_STYLE_EVENT, FIGURE_STYLE_FIELDS,
   FIGURE_ASPECT_MIN, FIGURE_ASPECT_MAX, FIGURE_ASPECT_STEPS,
+  FIGURE_DECIMALS_STEPS, FIGURE_AXIS_CFG_KEYS,
   normalizeFigureStyle, clampFigureFont, clampFigureAngle, clampFigureAspect,
+  clampFigureDecimals, figureCfgAcceptsAxisStyle,
   readFigureStyle, writeFigureStyle, figureStyleTag,
   figureStylePatch, figureStyleMatches, applyFigureStyleToCfg,
   registerFigureStyleSlot, figureStyleSlotCount, applyFigureStyleToSlots,
@@ -39,7 +41,9 @@ const SRC = (p) => readFileSync(`./src/${p}`, 'utf8');
 check('1 the default profile is one size per element, no rotation, no ratio, no auto-apply', () => {
   eq(DEFAULT_FIGURE_STYLE, {
     fontFamily: '', fontSize: 16, axisTitleFontSize: 18, legendFontSize: 16,
-    simLabelFontSize: 16, tickAngle: 0, aspect: 0, applyOnOpen: false
+    simLabelFontSize: 16, tickAngle: 0,
+    axisTitleBold: false, axisTitleItalic: false, tickSci: false, tickDecimals: '',
+    aspect: 0, applyOnOpen: false
   });
   eq(FIGURE_STYLE_KEY, 'labFigureStyle');
   eq(FIGURE_STYLE_EVENT, 'lab:figure-style-changed');
@@ -70,13 +74,23 @@ check('4 the auto-apply flag is always a real boolean', () => {
 });
 check('5 unknown keys never leak into the stored profile', () => {
   const p = normalizeFigureStyle({ fontSize: 16, colors: { a: '#fff' }, height: 380 });
-  eq(Object.keys(p).sort(), ['applyOnOpen', 'aspect', 'axisTitleFontSize', 'fontFamily', 'fontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle']);
+  eq(Object.keys(p).sort(), ['applyOnOpen', 'aspect', 'axisTitleBold', 'axisTitleFontSize', 'axisTitleItalic', 'fontFamily', 'fontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle', 'tickDecimals', 'tickSci']);
 });
 check('6 read/write round-trip (browser storage is optional in Node)', () => {
   const before = readFigureStyle();
-  writeFigureStyle({ fontFamily: 'Arial', fontSize: 20, axisTitleFontSize: 22, legendFontSize: 18, simLabelFontSize: 18, tickAngle: 45, aspect: 0, applyOnOpen: true });
-  eq(readFigureStyle(), { fontFamily: 'Arial', fontSize: 20, axisTitleFontSize: 22, legendFontSize: 18, simLabelFontSize: 18, tickAngle: 45, aspect: 0, applyOnOpen: true });
-  eq(figureStyleTag(), 'fs20-t22-lg18-lb18-rot45-Arial');
+  writeFigureStyle({
+    fontFamily: 'Arial', fontSize: 20, axisTitleFontSize: 22, legendFontSize: 18,
+    simLabelFontSize: 18, tickAngle: 45,
+    axisTitleBold: true, axisTitleItalic: false, tickSci: true, tickDecimals: 2,
+    aspect: 0, applyOnOpen: true
+  });
+  eq(readFigureStyle(), {
+    fontFamily: 'Arial', fontSize: 20, axisTitleFontSize: 22, legendFontSize: 18,
+    simLabelFontSize: 18, tickAngle: 45,
+    axisTitleBold: true, axisTitleItalic: false, tickSci: true, tickDecimals: 2,
+    aspect: 0, applyOnOpen: true
+  });
+  eq(figureStyleTag(), 'fs20-t22-lg18-lb18-rot45-bold-sci-dec2-Arial');
   writeFigureStyle(before);
   eq(readFigureStyle(), before);
 });
@@ -149,8 +163,10 @@ check('13b the font family is written on demand — and cleared when the profile
   ok(!('fontFamily' in applyFigureStyleToCfg(rechart, profile)), 'no empty family injected');
 });
 check('14 the profile fields are the single source of the applied keys', () => {
-  eq(FIGURE_STYLE_FIELDS, ['fontFamily', 'fontSize', 'axisTitleFontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle', 'aspect']);
+  eq(FIGURE_STYLE_FIELDS, ['fontFamily', 'fontSize', 'axisTitleFontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle', 'axisTitleBold', 'axisTitleItalic', 'tickSci', 'tickDecimals', 'aspect']);
   eq(Object.keys(figureStylePatch(profile, spectra)).sort(), ['fontSize', 'axisTitleFontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle'].sort());
+  eq(FIGURE_AXIS_CFG_KEYS.bold, ['xAxisLabelBold', 'yAxisLabelBold']);
+  eq(FIGURE_AXIS_CFG_KEYS.decimals, ['xDecimals', 'yDecimals']);
 });
 
 /* ══ 4. the registry: one click styles every registered chart ═════════════ */
@@ -448,6 +464,94 @@ check('36 every figure of a page can be reshaped — height-driven ones too', ()
     ok(/chartAspectImposed\(/.test(s), `${f} (Chart.js canvas) cannot be reshaped`);
     ok(/aspectRatio: String\(chartAspect\(/.test(s), `${f} never hands a shape to its canvas box`);
   });
+});
+
+/* ══ 6. AXIS TITLE style + AXIS NUMBER format (the four axis knobs) ═══════ */
+const axisProfile = {
+  ...DEFAULT_FIGURE_STYLE,
+  axisTitleBold: true, axisTitleItalic: true, tickSci: true, tickDecimals: 2
+};
+check('37 the four axis knobs are normalised and clamped', () => {
+  eq(normalizeFigureStyle({ axisTitleBold: 'true' }).axisTitleBold, true);
+  eq(normalizeFigureStyle({ axisTitleBold: 1 }).axisTitleBold, false, 'only true / \'true\' switch it on');
+  eq(normalizeFigureStyle({ axisTitleItalic: true }).axisTitleItalic, true);
+  eq(normalizeFigureStyle({ tickSci: true }).tickSci, true);
+  eq(clampFigureDecimals(''), '');
+  eq(clampFigureDecimals('3'), 3, 'stored as a number');
+  eq(clampFigureDecimals(9), 6, 'clamped to the readable maximum');
+  eq(clampFigureDecimals('abc'), '', 'garbage = auto');
+  eq(normalizeFigureStyle({ tickDecimals: '2' }).tickDecimals, 2);
+  eq(FIGURE_DECIMALS_STEPS[0], '', 'the first one-click value is Auto');
+});
+check('38 they only show in the tag when they deviate from the default', () => {
+  eq(figureStyleTag({ fontSize: 16 }), 'fs16-t18-lg16-lb16-rot0',
+    'a profile left at the defaults is tagged exactly as before (old figures still match)');
+  ok(figureStyleTag({ fontSize: 16, axisTitleBold: true }).includes('-bold'));
+  ok(figureStyleTag({ fontSize: 16, axisTitleItalic: true }).includes('-ital'));
+  ok(figureStyleTag({ fontSize: 16, tickSci: true }).includes('-sci'));
+  ok(figureStyleTag({ fontSize: 16, tickDecimals: 2 }).includes('-dec2'));
+  eq(figureStyleTag({ fontSize: 16, axisTitleBold: true, tickSci: true, tickDecimals: 3 }),
+    'fs16-t18-lg16-lb16-rot0-bold-sci-dec3');
+});
+check('39 ON: they reach the cfg of every chart, on BOTH axes', () => {
+  const next = applyFigureStyleToCfg(rechart, axisProfile);
+  eq(next.xAxisLabelBold, true);
+  eq(next.yAxisLabelBold, true);
+  eq(next.xAxisLabelItalic, true);
+  eq(next.yAxisLabelItalic, true);
+  eq(next.xSci, true);
+  eq(next.ySci, true);
+  eq(next.xDecimals, 2);
+  eq(next.yDecimals, 2);
+  eq(next.lineStyle, 'dashed', 'the rest of the cfg is untouched');
+  const sp = applyFigureStyleToCfg(spectra, axisProfile);
+  eq(sp.xSci, true);
+  eq(sp.yDecimals, 2);
+  eq(sp.simLabelFormat, 'resNum_code_atom', 'a spectrum keeps its own keys');
+});
+check('40 OFF: they only clear the cfg keys that are really there', () => {
+  const styled = {
+    ...rechart,
+    xAxisLabelBold: true, yAxisLabelBold: true, xSci: true, ySci: true, xDecimals: 2, yDecimals: 2
+  };
+  const cleared = figureStylePatch(DEFAULT_FIGURE_STYLE, styled);
+  eq(cleared.xAxisLabelBold, false);
+  eq(cleared.ySci, false);
+  eq(cleared.xDecimals, '');
+  const fresh = figureStylePatch(DEFAULT_FIGURE_STYLE, rechart);
+  ['xAxisLabelBold', 'yAxisLabelBold', 'xAxisLabelItalic', 'yAxisLabelItalic', 'xSci', 'ySci', 'xDecimals', 'yDecimals']
+    .forEach((k) => ok(!(k in fresh), `${k} must not be injected as dead plumbing`));
+});
+check('41 a cfg that does not speak the panel language never gets the axis keys', () => {
+  eq(figureCfgAcceptsAxisStyle(rechart), true, 'every page cfg carries at least one panel key');
+  eq(figureCfgAcceptsAxisStyle({ color: '#fff' }), false);
+  eq(figureCfgAcceptsAxisStyle(null), false);
+  eq(figureCfgAcceptsAxisStyle([1, 2]), false);
+  const foreign = figureStylePatch(axisProfile, { color: '#fff' });
+  eq(foreign.fontSize, 16, 'the shared character sizes still reach every registered chart');
+  FIGURE_AXIS_CFG_KEYS.bold.concat(FIGURE_AXIS_CFG_KEYS.italic, FIGURE_AXIS_CFG_KEYS.sci, FIGURE_AXIS_CFG_KEYS.decimals)
+    .forEach((k) => ok(!(k in foreign), `${k} must not be written into a cfg that has no axes panel`));
+});
+check('42 a figure the profile was applied to is recognised as styled', () => {
+  const styled = applyFigureStyleToCfg(rechart, axisProfile);
+  eq(figureStyleMatches(styled, axisProfile), true);
+  eq(figureStyleMatches(rechart, axisProfile), false, 'the audit must see the axis commands');
+  eq(applyFigureStyleToCfg(styled, axisProfile), null, 'a second apply has nothing left to change');
+});
+check('43 the panel, the settings page and the Chart.js figures offer the same commands', () => {
+  const PANEL = SRC('components/FigureStylePanel.jsx');
+  ok(PANEL.includes('axisTitleBold'), 'the profile editor has no bold switch');
+  ok(PANEL.includes('axisTitleItalic'), 'the profile editor has no italic switch');
+  ok(PANEL.includes('tickSci'), 'the profile editor has no exponential-notation switch');
+  ok(PANEL.includes('FIGURE_DECIMALS_STEPS'), 'the profile editor has no decimals control');
+  const CS4 = SRC('utils/chartStyle.js');
+  ok(CS4.includes("on('Bold') ? { weight: 'bold' } : {}"), 'Chart.js axis titles ignore the bold command');
+  ok(CS4.includes("on('Italic') ? { style: 'italic' } : {}"), 'Chart.js axis titles ignore the italic command');
+  const SAT2 = SRC('components/SharedAnalysisTools.jsx');
+  ok(SAT2.includes("export const chartJsTickCallback = (cfg = {}, axis = 'x') => (v) => {"), 'no Chart.js tick callback helper');
+  ok(SAT2.includes("const sci = axis === 'x' ? !!cfg.xSci : !!cfg.ySci;"), 'cfgTickFormatter does not read the profile keys');
+  const SET = SRC('components/AppModules/settingsModule.jsx');
+  ok(SET.includes('exponential notation'), 'the Settings page does not mention the axis commands');
 });
 
 const failed = results.filter((r) => !r.ok);

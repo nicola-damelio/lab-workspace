@@ -499,7 +499,7 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
         scales: {
           x: {
             type: 'linear',
-            title: { display: true, text: xTitle, font: chartJsTitleFont(cfg, { size: axisTitleSize(cfg, fs) }), padding: chartJsTitlePad(cfg).x },
+            title: { display: true, text: xTitle, font: chartJsTitleFont(cfg, { size: axisTitleSize(cfg, fs) }, 'x'), padding: chartJsTitlePad(cfg).x },
             ticks: {
               font: chartJsFont(cfg, { size: (Number(tickSize(cfg, fs)) || fs) - 1 }),
               callback: (v) => { const f = cfgTickFormatter(cfg, 'x'); return f ? f(v) : undefined; }
@@ -508,7 +508,7 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
             max: cfg.xMax !== '' && cfg.xMax !== undefined && cfg.xMax !== null ? Number(cfg.xMax) : undefined
           },
           y: {
-            title: { display: true, text: yTitle, font: chartJsTitleFont(cfg, { size: axisTitleSize(cfg, fs) }), padding: chartJsTitlePad(cfg).y },
+            title: { display: true, text: yTitle, font: chartJsTitleFont(cfg, { size: axisTitleSize(cfg, fs) }, 'y'), padding: chartJsTitlePad(cfg).y },
             ticks: {
               font: chartJsFont(cfg, { size: (Number(tickSize(cfg, fs)) || fs) - 1 }),
               callback: (v) => { const f = cfgTickFormatter(cfg, 'y'); return f ? f(v) : undefined; }

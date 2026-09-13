@@ -325,10 +325,15 @@ const figureThumb = async (dataUrl) => {
 //   • dataUrl          – self-contained high-resolution source (PNG/JPEG/SVG)
 //   • scope/projectId  – 'project' → that project's library, 'common' → general
 //   • projectName      – Drive folder name used for <dataset>/projects/<project>/images
+//   • updateId         – replace THAT entry in place (no new entry)
+//   • insertIfMissing  – false = an unknown updateId is a FAILURE, not a new
+//     entry. The automatic figure re-capture passes false: when the entry it
+//     came from is gone, inserting a copy per attempt is what filled the image
+//     library with hundreds of duplicates of the same figure.
 // Only a small local thumbnail + metadata are kept in the browser (the library
 // list is memory-first and localStorage is a best-effort cache, so even a full
-// 5 MB quota cannot block an import). Returns { entry, drive }.
-export const publishLibraryFigure = async ({ scope = 'common', projectId = null, projectName = '', dataUrl, label = 'Figure', src = null, canvasData = null, updateId = null }) => {
+// 5 MB quota cannot block an import). Returns { entry, drive, updated, missing }.
+export const publishLibraryFigure = async ({ scope = 'common', projectId = null, projectName = '', dataUrl, label = 'Figure', src = null, canvasData = null, updateId = null, insertIfMissing = true }) => {
   const srcData = await resolveImageToDataUrl(dataUrl);
   const isSvg = typeof srcData === 'string' && (srcData.startsWith('data:image/svg+xml') || srcData.includes('<svg'));
   // High-resolution copy (uploaded to Drive / kept as fallback): capped raster,
@@ -359,6 +364,13 @@ export const publishLibraryFigure = async ({ scope = 'common', projectId = null,
   // library: the project page links to that entry id, so the id must not change
   // (and the "Saved canvases" list must not fill up with duplicates of the same
   // figure). Unknown id → normal insert.
+  // `updateId` patches an EXISTING entry in place instead of adding a copy.
+  // Used by the Image Builder when it re-saves a canvas that was opened from the
+  // library: the project page links to that entry id, so the id must not change
+  // (and the "Saved canvases" list must not fill up with duplicates of the same
+  // figure). Unknown id → normal insert, unless the caller asked for the strict
+  // behaviour (`insertIfMissing: false`), which is what the automatic
+  // re-capture of a figure uses.
   if (updateId) {
     const list = scope === 'project' ? readProjectLibrary(projectId) : readLibrary();
     const prev = list.find((i) => i.id === updateId);
@@ -367,13 +379,107 @@ export const publishLibraryFigure = async ({ scope = 'common', projectId = null,
       const next = list.map((i) => (i.id === updateId ? updated : i));
       if (scope === 'project') writeProjectLibrary(projectId, next);
       else writeLibrary(next);
-      return { entry: updated, drive, driveUrl: humanUrl, updated: true };
+      return { entry: updated, drive, driveUrl: humanUrl, updated: true, missing: false };
+    }
+    if (insertIfMissing === false) {
+      // The entry the caller asked to update is GONE. Do not add a copy: the
+      // caller reports it, the figure already in the library is left alone.
+      return { entry: null, drive: null, driveUrl: null, updated: false, missing: true };
     }
   }
   const entry = scope === 'project'
     ? addProjectLibraryItem(projectId, item)
     : addLibraryItem(item);
-  return { entry, drive, driveUrl: humanUrl, updated: false };
+  return { entry, drive, driveUrl: humanUrl, updated: false, missing: !!updateId };
+};
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   DUPLICATES LEFT BY A RUNAWAY RE-CAPTURE
+
+   The automatic re-capture ("🔄 Recapture automatically" of the Image Builder)
+   REPLACES the library entry a figure came from. A version of that flow retried
+   a figure every 600 ms and inserted a NEW entry on every attempt whose update
+   failed, so one click could leave hundreds of copies of the same figure in the
+   library. publishLibraryFigure refuses those inserts now (insertIfMissing:
+   false); these three helpers clean up what a previous run left behind, and are
+   only ever called from an explicit click in the Image Builder.
+   ──────────────────────────────────────────────────────────────────────────── */
+// Two copies are considered the SAME figure when they carry the same label and
+// the same origin stamp (experiment + condition + element), and they were added
+// within this window: a runaway loop writes its copies seconds apart, while a
+// user working on one figure over days/weeks does not.
+const RECAPTURE_DUP_WINDOW_MS = 10 * 60 * 1000;
+// …and they must be at least this many. Two copies are a normal re-do.
+const RECAPTURE_DUP_MIN = 3;
+
+const duplicateKeyOf = (i) => [
+  (i && i.label) || '',
+  (i && i.src && i.src.testId) || '',
+  (i && i.src && i.src.elementKey) || '',
+  (i && i.src && i.src.instanceName) || ''
+].join('|');
+
+const addedMsOf = (i) => {
+  const t = Date.parse((i && (i.addedAt || i.updatedAt)) || '');
+  return Number.isFinite(t) ? t : 0;
+};
+
+/**
+ * Groups of copies that a runaway re-capture left in the libraries of this
+ * workspace: `[{ scope, projectId, label, keepId, removeIds, count }]`.
+ * Nothing is removed here — the Image Builder shows the count and only the
+ * user's click calls removeRecaptureDuplicates().
+ */
+export const findRecaptureDuplicates = () => {
+  const out = [];
+  const scan = (scope, projectId, items) => {
+    const byKey = new Map();
+    (items || []).forEach((i) => {
+      if (!i || !i.id) return;
+      const k = duplicateKeyOf(i);
+      if (!byKey.has(k)) byKey.set(k, []);
+      byKey.get(k).push(i);
+    });
+    byKey.forEach((list, key) => {
+      if (list.length < RECAPTURE_DUP_MIN) return;
+      const sorted = list.slice().sort((a, b) => addedMsOf(b) - addedMsOf(a)); // newest first
+      const newest = sorted[0];
+      const inside = sorted.slice(1).filter((i) => addedMsOf(newest) - addedMsOf(i) <= RECAPTURE_DUP_WINDOW_MS);
+      if (inside.length < RECAPTURE_DUP_MIN - 1) return;
+      out.push({
+        scope,
+        projectId: projectId || null,
+        key,
+        label: newest.label || 'figure',
+        keepId: newest.id,
+        removeIds: inside.map((i) => i.id),
+        count: inside.length
+      });
+    });
+  };
+  try { scan('common', null, readLibrary()); } catch { /* ignore */ }
+  try {
+    Object.entries(readAllProjectLibraries()).forEach(([pid, items]) => scan('project', pid, items));
+  } catch { /* ignore */ }
+  return out;
+};
+
+/** Total number of duplicate copies findRecaptureDuplicates() would remove. */
+export const countRecaptureDuplicates = () => findRecaptureDuplicates().reduce((n, g) => n + g.count, 0);
+
+/** Remove them (keeps the NEWEST copy of each figure). Returns { removed, groups }. */
+export const removeRecaptureDuplicates = () => {
+  const groups = findRecaptureDuplicates();
+  let removed = 0;
+  groups.forEach((g) => {
+    const ids = new Set(g.removeIds);
+    const list = g.scope === 'project' ? readProjectLibrary(g.projectId) : readLibrary();
+    const next = list.filter((i) => !ids.has(i.id));
+    removed += list.length - next.length;
+    if (g.scope === 'project') writeProjectLibrary(g.projectId, next);
+    else writeLibrary(next);
+  });
+  return { removed, groups: groups.length };
 };
 
 // Upload a high-resolution figure copy to the active cloud provider under the

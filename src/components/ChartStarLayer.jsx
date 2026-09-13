@@ -9,7 +9,8 @@ import { FigureStyleApplyButton } from './FigureStyleTools';
 import { figureStyleTag, readFigureStyle, applyFigureStyleEverywhere } from '../utils/figureStyle';
 import {
   figureRecapturesForTest, markFigureRecaptureResult, figureRecaptureProgress,
-  nextRecaptureTarget, readFigureRecapture, RECAPTURE_RETURN_EVENT, RECAPTURE_NEXT_TEST_EVENT
+  nextRecaptureTarget, readFigureRecapture, stopFigureRecaptures,
+  RECAPTURE_RETURN_EVENT, RECAPTURE_NEXT_TEST_EVENT
 } from '../utils/figureRecapture';
 import { sanitizeColorsForHtml2Canvas } from '../utils/captureColors';
 import { loadProjects } from './AppModules/projectsModule';
@@ -681,11 +682,23 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
 
      When nothing is left the page either jumps to the next experiment of the
      run or reopens the Image Builder (utils/figureRecapture owns the queue). */
-  const [recap, setRecap] = useState(null); // { total, done, failed, msg }
+  const [recap, setRecap] = useState(null); // { total, done, failed, msg, stopped }
+  // The user pressed ⏹: the run must not hand over to the next experiment.
+  const userStopRef = useRef(false);
+  const stopRun = () => {
+    userStopRef.current = true;
+    stopFigureRecaptures('stopped by the user');
+    setRecap((r) => ({
+      ...(r || { total: 0, done: 0, failed: 0 }),
+      stopped: true,
+      msg: 'stopped by you — nothing else was captured'
+    }));
+  };
   useEffect(() => {
     const rootEl = rootRef && rootRef.current;
     if (!rootEl || !test) return undefined;
     if (!figureRecapturesForTest(test).length) return undefined;
+    userStopRef.current = false;
 
     let stopped = false;
     let busy = false;
@@ -742,11 +755,16 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
         dataUrl: url,
         label: item.label,
         src,
-        updateId: item.figId
+        updateId: item.figId,
+        // STRICT: the entry is only ever REPLACED, never added to. Inserting a
+        // copy when the entry is gone is exactly how one click could fill the
+        // image library with hundreds of duplicates (one per retry).
+        insertIfMissing: false
       });
       // `updated: false` = the entry vanished from the library: the canvas would
-      // keep the OLD pixels, so this is reported as a failure.
-      if (!res || !res.updated) return { ok: false, message: 'the saved figure is no longer in the image library' };
+      // keep the OLD pixels, re-trying cannot help, and a copy must NOT be
+      // created — so this is a FINAL failure (no further attempt).
+      if (!res || !res.updated) return { ok: false, hard: true, message: 'the saved figure is no longer in the image library' };
       return { ok: true, message: res.drive && res.drive.id ? 're-captured + uploaded to Drive' : 're-captured' };
     };
     const finish = () => {
@@ -763,6 +781,17 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
         failed: progress.failed,
         msg: progress.failed ? 'some figures could not be re-captured automatically' : 'all figures are up to date'
       });
+      // ⏹ The user stopped the run: no hand-over, nothing else is captured.
+      if (userStopRef.current) {
+        setRecap({
+          total: progress.total,
+          done: progress.done,
+          failed: progress.failed,
+          stopped: true,
+          msg: 'stopped by you — nothing else was captured'
+        });
+        return;
+      }
       // Hand over: the next experiment of the run, else back to the Image Builder.
       const next = nextRecaptureTarget();
       const wait = progress.failed ? 2600 : 1600;
@@ -795,11 +824,14 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
       busy = true;
       try {
         for (const item of list) {
-          if (stopped) return;
+          if (stopped || userStopRef.current) return;   // ⏹ pressed mid-tick: stop NOW
           const el = findEl(item.elementKey);
           if (!el) continue;               // not mounted yet (lazy / Drive data)
           const out = await redo(item, el);
-          markFigureRecaptureResult(item.figId, out.ok ? 'done' : 'failed', out.message);
+          // A capture failure may be transient (the chart was still painting) →
+          // one more try, capped by FIGURE_RECAPTURE_MAX_ATTEMPTS. A HARD failure
+          // (the library entry is gone) is final: retrying could only duplicate.
+          markFigureRecaptureResult(item.figId, out.ok ? 'done' : 'failed', out.message, { retry: !out.hard });
           if (out.ok) results.done += 1; else results.failed += 1;
           setRecap({
             total: results.done + results.failed + Math.max(0, list.length - results.done - results.failed),
@@ -816,7 +848,7 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
       const left = figureRecapturesForTest(test);
       if (!left.length) { finish(); return; }
       if (Date.now() - startedAt > DEADLINE_MS) {
-        left.forEach((it) => markFigureRecaptureResult(it.figId, 'failed', 'the chart was not found on the page — capture it with 📷'));
+        left.forEach((it) => markFigureRecaptureResult(it.figId, 'failed', 'the chart was not found on the page — capture it with 📷', { hard: true }));
         finish();
       }
     };
@@ -929,7 +961,7 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
           className="no-print" data-figure-recapture="1">
           <div className="bg-white border border-indigo-300 rounded-xl shadow-lg px-3 py-2 text-[11px] text-slate-700 w-64">
             <div className="font-bold text-slate-800 mb-0.5">
-              {recap.failed ? '⚠️' : '🔄'} Re-capture with the figure style
+              {recap.stopped ? '⏹' : recap.failed ? '⚠️' : '🔄'} Re-capture with the figure style
             </div>
             <div>
               <b>{recap.done}</b>/{recap.total} figure{recap.total === 1 ? '' : 's'} updated
@@ -938,6 +970,19 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
             {recap.msg ? <div className="text-[10px] text-slate-500 mt-0.5 break-words">{recap.msg}</div> : null}
             <div className="text-[10px] text-slate-400 mt-1">
               The figures were replaced in the image library — the Image Builder reopens by itself.
+            </div>
+            <div className="flex items-center gap-2 mt-2">
+              <button
+                type="button" onClick={stopRun} disabled={!!recap.stopped}
+                title="Stop the re-capture now: no other figure is captured and nothing else is written to the image library."
+                className="flex-1 rounded-md bg-red-50 border border-red-300 text-red-700 hover:bg-red-100 font-bold py-1 disabled:opacity-40">
+                ⏹ Stop
+              </button>
+              <button
+                type="button" onClick={() => setRecap(null)} title="Hide this notice"
+                className="rounded-md bg-white border border-slate-300 text-slate-500 hover:bg-slate-50 font-bold py-1 px-2">
+                ✕
+              </button>
             </div>
           </div>
         </div>

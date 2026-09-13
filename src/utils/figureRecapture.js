@@ -87,6 +87,14 @@ export const hasFreshFigureRecapture = (withinMs = 5 * 60 * 1000) => {
   return Date.now() - (Number(run.at) || 0) <= (Number(withinMs) || 0);
 };
 
+// How many times ONE figure may be tried again while its chart is not on the
+// page yet (a lazy section, Drive-hosted data, a chart that mounts late). The
+// experiment page ticks every 600 ms: without a cap, a figure that can never be
+// captured was retried for the whole deadline — and every attempt used to add a
+// NEW copy of the figure to the image library (hundreds of copies from one
+// click, no way to stop it). After the cap the item is 'failed' for good and
+// the run stops touching it.
+export const FIGURE_RECAPTURE_MAX_ATTEMPTS = 3;
 
 /** One queued figure: the library entry + the exact element of the page. */
 const normalizeItem = (item = {}) => ({
@@ -98,6 +106,7 @@ const normalizeItem = (item = {}) => ({
   styleTag: item.styleTag || '',
   origin: item.origin && typeof item.origin === 'object' ? item.origin : {},
   status: 'pending',
+  attempts: 0,
   message: '',
   at: 0
 });
@@ -110,11 +119,23 @@ const normalizeItem = (item = {}) => ({
  */
 export const queueFigureRecaptures = (items, opts = {}) => {
   const list = (Array.isArray(items) ? items : [items]).filter(Boolean).map(normalizeItem);
+  // ONE item per FIGURE: the same library entry queued twice (the same figure
+  // placed in two panels of a canvas, a double click on the 🔄 button) must not
+  // be captured twice — that is how a single click could start many captures.
+  const seen = new Set();
+  const unique = [];
+  list.forEach((it) => {
+    const key = it.figId || `${it.elementKey}|${it.scope}|${it.projectId || ''}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    unique.push(it);
+  });
   const run = {
     at: Date.now(),
     origin: opts.origin || 'image-builder',
     returnTo: opts.return || null,
-    items: list
+    items: unique,
+    stopped: false
   };
   return writeStore(run);
 };
@@ -136,21 +157,60 @@ export const recaptureMatchesTest = (item, test) => {
   return true;
 };
 
-/** The items still to do on THIS experiment page (pending + failed retries). */
+/** The items still to do on THIS experiment page (pending + a failed retry left). */
 export const figureRecapturesForTest = (test) => {
   const run = readFigureRecapture();
-  if (!run || !test) return [];
-  return run.items.filter((it) => it.status !== 'done' && recaptureMatchesTest(it, test));
+  if (!run || run.stopped || !test) return [];
+  return run.items.filter((it) => it.status === 'pending'
+    && (Number(it.attempts) || 0) < FIGURE_RECAPTURE_MAX_ATTEMPTS
+    && recaptureMatchesTest(it, test));
 };
 
-/** Record the outcome of one figure. Returns the updated run (or null). */
-export const markFigureRecaptureResult = (figId, status, message = '') => {
+/**
+ * Record the outcome of one figure. Returns the updated run (or null).
+ *
+ * A reported failure is FINAL by default — exactly as before. `opts.retry`
+ * asks for another attempt (a capture can fail for a transient reason: the
+ * chart was still painting), and even then the item gives up after
+ * FIGURE_RECAPTURE_MAX_ATTEMPTS tries, so a figure that can never be captured
+ * cannot keep the loop alive for the whole deadline. `opts.hard` always wins
+ * over `opts.retry`: the entry the figure had to replace is gone, nothing to
+ * retry.
+ */
+export const markFigureRecaptureResult = (figId, status, message = '', opts = null) => {
   const run = readFigureRecapture();
   if (!run) return null;
+  const hard = !!(opts && opts.hard);
+  const retryable = !hard && !!(opts && opts.retry);
   const next = {
     ...run,
-    items: run.items.map((it) => (it.figId === figId
-      ? { ...it, status: status === 'done' ? 'done' : 'failed', message: String(message || ''), at: Date.now() }
+    items: run.items.map((it) => {
+      if (it.figId !== figId) return it;
+      if (status === 'done') return { ...it, status: 'done', message: String(message || ''), at: Date.now() };
+      const attempts = (Number(it.attempts) || 0) + 1;
+      const keepTrying = retryable && attempts < FIGURE_RECAPTURE_MAX_ATTEMPTS;
+      return { ...it, status: keepTrying ? 'pending' : 'failed', attempts, message: String(message || ''), at: Date.now() };
+    })
+  };
+  return writeStore(next);
+};
+
+/**
+ * STOP the run now — the ⏹ button of the experiment page (and of the Image
+ * Builder). Every figure still pending is marked 'failed' with the reason and
+ * the run is flagged as stopped, so no page may touch it again and the chain to
+ * the next experiment stops as well. Returns the updated run (or null: idle).
+ */
+export const stopFigureRecaptures = (reason = 'stopped by the user') => {
+  const run = readFigureRecapture();
+  if (!run) return null;
+  const msg = String(reason || '');
+  const next = {
+    ...run,
+    stopped: true,
+    stoppedAt: Date.now(),
+    items: run.items.map((it) => (it.status === 'pending'
+      ? { ...it, status: 'failed', message: msg, at: Date.now() }
       : it))
   };
   return writeStore(next);
@@ -169,7 +229,7 @@ export const figureRecaptureProgress = () => {
 /** The next experiment that still has pending items (the automatic chain). */
 export const nextRecaptureTarget = () => {
   const run = readFigureRecapture();
-  if (!run) return null;
+  if (!run || run.stopped) return null;
   const item = run.items.find((i) => i.status === 'pending');
   if (!item) return null;
   return { figId: item.figId, label: item.label, origin: item.origin, returnTo: run.returnTo || null };
@@ -182,6 +242,7 @@ export const figureRecaptureSummary = () => {
   return {
     at: run.at,
     origin: run.origin,
+    stopped: !!run.stopped,
     returnTo: run.returnTo || null,
     ...figureRecaptureProgress(),
     results: run.items.map((i) => ({ figId: i.figId, label: i.label, status: i.status, message: i.message }))

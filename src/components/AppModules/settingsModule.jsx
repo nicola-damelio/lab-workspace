@@ -55,7 +55,7 @@ export const SettingsModule = ({
                   <>
                   <CollapsibleSection
                     title="Figure style — uniform fonts & character sizes"
-                    subtitle="One global character size for every chart and spectrum of every experiment: axis / tick characters, peak labels, x-label rotation and the plot-box ratio. Applied per page with the 🎨 Figure style button (bottom-left of each experiment page) before the 📷 figures are captured, so figures of different experiments line up in one Image Builder slide / PDF."
+                    subtitle="One global character size for every chart and spectrum of every experiment: axis / tick characters, peak labels, x-label rotation and the plot-box ratio — plus the axis-title style (bold / italic) and the format of the axis numbers (exponential notation, number of decimals). Applied per page with the 🎨 Figure style button (bottom-left of each experiment page) before the 📷 figures are captured, so figures of different experiments line up in one Image Builder slide / PDF."
                     defaultOpen={false}
                   >
                     <FigureStylePanel />

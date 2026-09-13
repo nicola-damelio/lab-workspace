@@ -3,13 +3,15 @@ import { createPortal } from 'react-dom';
 import {
   readLibrary, readProjectLibrary, moveLibraryItem,
   renameLibraryItem, removeLibraryItem, renameProjectLibraryItem, removeProjectLibraryItem,
-  blobToDataUrl, publishLibraryFigure, resolveImageToDataUrl, localStorageHealthy
+  blobToDataUrl, publishLibraryFigure, resolveImageToDataUrl, localStorageHealthy,
+  countRecaptureDuplicates, removeRecaptureDuplicates
 } from '../utils/figuresLibrary';
 import { loadProjects, saveProjects, genProjectId } from './AppModules/projectsModule';
 import { queuePendingFigureScroll } from '../utils/pendingFigureScroll';
 import { figureStyleTag } from '../utils/figureStyle';
 import {
-  queueFigureRecaptures, figureRecaptureSummary, subscribeFigureRecapture, hasFreshFigureRecapture
+  queueFigureRecaptures, figureRecaptureSummary, subscribeFigureRecapture, hasFreshFigureRecapture,
+  stopFigureRecaptures
 } from '../utils/figureRecapture';
 import { useFigureStyleProfile } from './FigureStyleTools';
 
@@ -246,7 +248,6 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const capEditRef = useRef(null);   // inline global-caption editor
   const objCapRef = useRef(null);    // floating panel sub-caption editor
   const initialZoomRef = useRef(1.5);        // zoom when fullscreen was entered ("↩ Initial zoom")
-  const initialPanRef = useRef({ x: 0, y: 0 });
   const undoStack = useRef([]);     // undo history of the canvas objects
   const [histTick, setHistTick] = useState(0);
   // Global "Figure style" profile (Settings → Figure style) — read-only here:
@@ -461,8 +462,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // Fullscreen & Zoom states
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [zoom, setZoom] = useState(1.5); // Start at 150% for better visibility
-  const [panX, setPanX] = useState(0);   // fullscreen canvas pan (px) — used by "zoom on object"
-  const [panY, setPanY] = useState(0);
+  // The viewport SCROLLS (see the sizer in the fullscreen markup): there is no
+  // pan offset to keep — the scrollbars / wheel move the canvas.
   const [focusObjId, setFocusObjId] = useState(null); // object zoomed on (persisted so "◀ Back" restores it)
 
   // Load persisted state — the in-memory session cache (freshest, immune to the
@@ -1298,15 +1299,35 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const recaptureFigures = (rows) => {
     const usable = (rows || []).filter((r) => r && r.canRecapture);
     if (!usable.length) return 0;
-    const items = usable.map((r) => ({
-      figId: r.libId,
-      scope: r.libScope,
-      projectId: r.libProjectId,
-      label: r.label,
-      elementKey: r.elementKey,
-      styleTag: r.tag,
-      origin: r.src || {}
-    }));
+    // ONE item per FIGURE: the same library entry can sit on the canvas twice
+    // (the same capture placed in two panels) — capturing it twice would only
+    // write the same pixels again.
+    const seen = new Set();
+    const items = [];
+    usable.forEach((r) => {
+      const key = `${r.libId}|${r.elementKey}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      items.push({
+        figId: r.libId,
+        scope: r.libScope,
+        projectId: r.libProjectId,
+        label: r.label,
+        elementKey: r.elementKey,
+        styleTag: r.tag,
+        origin: r.src || {}
+      });
+    });
+    // A run travels through EVERY experiment of the list, so a stray click on a
+    // canvas holding dozens of figures is worth one question. (The experiment
+    // page has a ⏹ Stop button too, see ChartStarLayer.)
+    if (items.length > 4 && typeof window !== 'undefined'
+      && !window.confirm(`Re-capture ${items.length} figures automatically?\n\nThe app opens each experiment, re-renders its charts with the current figure style and replaces the saved figures in the image library. A ⏹ Stop button appears on the experiment page while the run is going.`)) {
+      return 0;
+    }
+    // Two runs must never capture at the same time: whatever is still pending
+    // from a previous request is closed first (nothing new is written).
+    stopFigureRecaptures('replaced by a new re-capture request');
     queueFigureRecaptures(items, {
       origin: 'image-builder',
       return: { module: 'image-builder', projectId: projectId || null }
@@ -1340,6 +1361,25 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // How many figure(s) of the canvas can be redone automatically? (A figure
   // captured before the element stamp existed — or a saved canvas — cannot.)
   const recapturableCount = styleBad.filter((r) => r.canRecapture).length;
+
+  // 🧹 Copies a runaway re-capture left in the image library (see
+  // figuresLibrary.findRecaptureDuplicates): the count is shown while the audit
+  // panel is open and the copies go away only on an explicit click.
+  const [dupInfo, setDupInfo] = useState({ count: 0, msg: '' });
+  useEffect(() => {
+    if (!styleAuditOpen) return;
+    try { setDupInfo((d) => ({ ...d, count: countRecaptureDuplicates() })); } catch { /* ignore */ }
+  }, [styleAuditOpen, objects, recapNote]);
+  const cleanRecaptureCopies = () => {
+    const res = removeRecaptureDuplicates();
+    let left = 0;
+    try { left = countRecaptureDuplicates(); } catch { left = 0; }
+    setDupInfo({
+      count: left,
+      msg: res.removed ? `${res.removed} duplicate cop${res.removed === 1 ? 'y' : 'ies'} removed` : 'no duplicate left'
+    });
+    setObjects((objs) => objs.map((o) => ((o.libId || (o.images || []).some((im) => im && im.libId)) ? resolveObj(o) : o)));
+  };
 
   // Human-readable origin of a figure: "experiment — condition · chart".
   const originLabelOf = (src) => [src.testName, src.instanceName].filter(Boolean).join(' — ');
@@ -1680,6 +1720,62 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     setIsFullScreen(true);
   };
 
+  // ── FULLSCREEN VIEWPORT: SCROLL, not a transform ──────────────────────────
+  // The canvas is drawn at `zoom` inside a "sizer" box that really IS
+  // (canvas × zoom) big (see the fullscreen markup below). A CSS transform does
+  // not change the layout, so the old `translate(...) scale(...)` version left
+  // nothing to scroll: zooming on one element trapped the view on a fragment of
+  // the figure, with only the arrow buttons to move. With the sizer the browser
+  // draws its own scrollbars and the wheel / trackpad / bars all work.
+  const SCROLL_PAD = 32;                       // p-8 of the fullscreen area (px)
+  const scrollAreaTo = (x, y) => {
+    const area = fsAreaRef.current;
+    if (!area) return;
+    area.scrollLeft = Math.max(0, Number(x) || 0);
+    area.scrollTop = Math.max(0, Number(y) || 0);
+  };
+  const nudgeArea = (dx, dy) => {
+    const area = fsAreaRef.current;
+    if (!area) return;
+    area.scrollLeft = Math.max(0, area.scrollLeft + dx);
+    area.scrollTop = Math.max(0, area.scrollTop + dy);
+  };
+  // Put the point (xMm, yMm) of the canvas in the MIDDLE of the viewport. The
+  // scaled box only exists after React re-renders, so the scroll is reapplied on
+  // the next frame (scrollHeight of a too-small box clamps the first attempt).
+  const centerOnMm = (xMm, yMm, z) => {
+    const area = fsAreaRef.current;
+    if (!area) return;
+    const run = () => scrollAreaTo(
+      xMm * PX_PER_MM * z + SCROLL_PAD - area.clientWidth / 2,
+      yMm * PX_PER_MM * z + SCROLL_PAD - area.clientHeight / 2
+    );
+    run();
+    // The scaled box only exists once React has committed the new zoom, and
+    // scrollHeight of the still-small box clamps the first attempt: retry on the
+    // next frame (twice — the second frame also covers a scrollbar appearing).
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => { run(); requestAnimationFrame(run); });
+    }
+  };
+
+  // Zoom change that keeps the point at the centre of the viewport where it is
+  // (a plain setZoom would jump to another corner of a big canvas).
+  const setZoomKeepingCenter = (nextZ) => {
+    const area = fsAreaRef.current;
+    const z = Number(nextZ);
+    if (!area || !Number.isFinite(z) || z <= 0) { setZoom(z); return; }
+    const prev = Number(zoom) || z;
+    setZoom(z);
+    if (prev === z) return;
+    const factor = z / prev;
+    const cx = (area.scrollLeft + area.clientWidth / 2 - SCROLL_PAD) * factor + SCROLL_PAD;
+    const cy = (area.scrollTop + area.clientHeight / 2 - SCROLL_PAD) * factor + SCROLL_PAD;
+    const run = () => scrollAreaTo(cx - area.clientWidth / 2, cy - area.clientHeight / 2);
+    run();
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+  };
+
   // Centre the focused object in the fullscreen canvas area (measured live so
   // it fits any screen size).
   const recenterFocus = () => {
@@ -1693,41 +1789,30 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     const owMm = Math.max(12, obj.w * cellW), ohMm = Math.max(12, obj.h * cellH);
     // The canvas is styled in CSS millimetres (≈3.78 px/mm): convert the object
     // size to pixels so the WHOLE object fits the viewport (with a small margin)
-    // instead of being over-zoomed to a fragment of it.
+    // instead of being over-zoomed to a fragment of it. The rest of the canvas
+    // stays reachable: the viewport scrolls.
     const owPx = owMm * PX_PER_MM, ohPx = ohMm * PX_PER_MM;
     const scale = Math.max(0.05, Math.min((aw - 24) / owPx, (ah - 24) / ohPx));
-    const px = (aw - owPx * scale) / 2 - oxMm * PX_PER_MM * scale;
-    const py = (ah - ohPx * scale) / 2 - oyMm * PX_PER_MM * scale;
     // The object-fit view is the "initial" view of this fullscreen session.
     initialZoomRef.current = scale;
-    initialPanRef.current = { x: px, y: py };
     setZoom(scale);
-    setPanX(px);
-    setPanY(py);
+    centerOnMm(oxMm + owMm / 2, oyMm + ohMm / 2, scale);
   };
 
   // Centre the whole canvas in the fullscreen viewport (no focused object).
-  const centerCanvasAt = (z) => {
-    const area = fsAreaRef.current;
-    if (!area) return;
-    const aw = Math.max(120, area.clientWidth - 64); // p-8 padding
-    const ah = Math.max(120, area.clientHeight - 64);
-    const cw = canvasW * PX_PER_MM * z;
-    const ch = (canvasH + captionH) * PX_PER_MM * z;
-    setPanX(Math.max(0, (aw - cw) / 2));
-    setPanY(Math.max(0, (ah - ch) / 2));
-  };
+  const centerCanvasAt = (z) => centerOnMm(canvasW / 2, (canvasH + captionH) / 2, z);
   const centerCanvas = () => centerCanvasAt(zoom);
 
   // Restore the zoom (and centring) that was active when fullscreen was entered.
   const restoreInitialZoom = () => {
-    setZoom(initialZoomRef.current);
+    const z = initialZoomRef.current;
+    setZoom(z);
     if (focusObjId) {
-      setPanX(initialPanRef.current.x);
-      setPanY(initialPanRef.current.y);
-    } else {
-      centerCanvasAt(initialZoomRef.current);
+      const obj = objects.find(o => o.id === focusObjId);
+      if (obj) centerOnMm(obj.x * cellW + (obj.w * cellW) / 2, obj.y * cellH + (obj.h * cellH) / 2, z);
+      return;
     }
+    centerCanvasAt(z);
   };
 
   useEffect(() => {
@@ -2341,11 +2426,12 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           <div className={`rounded-xl border px-3 py-2 text-xs flex flex-wrap items-center gap-x-2 gap-y-1 ${
             recapNote.failed ? 'bg-amber-50 border-amber-300 text-amber-800' : 'bg-emerald-50 border-emerald-300 text-emerald-800'}`}>
             <span className="font-bold">
-              {recapNote.failed ? '⚠️' : '✅'} Automatic re-capture
+              {recapNote.stopped ? '⏹' : recapNote.failed ? '⚠️' : '✅'} Automatic re-capture
             </span>
             <span>
               {recapNote.done} figure{recapNote.done === 1 ? '' : 's'} replaced in the image library
-              {recapNote.failed ? ` · ${recapNote.failed} could not be redone` : ''}.
+              {recapNote.failed ? ` · ${recapNote.failed} could not be redone` : ''}
+              {recapNote.stopped ? ' · stopped by you' : ''}.
             </span>
             {recapNote.failed ? (
               <span className="text-[11px] text-amber-700">
@@ -2355,6 +2441,14 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
               </span>
             ) : null}
             <span className="text-[10px] text-slate-500">The canvas below already shows the new figures.</span>
+            {recapNote.pending ? (
+              <button type="button"
+                onClick={() => { stopFigureRecaptures('stopped from the Image Builder'); setRecapNote(figureRecaptureSummary()); }}
+                className="font-bold text-red-700 bg-red-50 border border-red-300 rounded-md px-2 py-0.5 hover:bg-red-100"
+                title="This run is not finished: stop it now, so no other figure is captured and nothing else is written to the image library.">
+                ⏹ Stop ({recapNote.pending} to go)
+              </button>
+            ) : null}
             <button type="button" onClick={() => setRecapNote(null)}
               className="ml-auto font-bold text-slate-500 hover:text-slate-800" title="Dismiss">✕</button>
           </div>
@@ -2424,14 +2518,24 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                       ? `⚠ ${styleBad.length} of ${styleRows.length} figure(s) were not captured with the current style — characters may look bigger / smaller in the same slide.`
                       : `✅ All ${styleRows.length} figure(s) share the current style.`)}
                 </span>
-                {recapturableCount > 0 ? (
-                  <button type="button" onClick={() => recaptureFigures(styleBad)}
-                    className="ml-auto bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-2.5 py-1 rounded-md text-[11px]"
-                    title="One click: the app opens the experiment(s), applies the CURRENT Figure style to the charts and replaces the saved figures in the image library — then it comes back to this canvas on its own.">
-                    🔄 Recapture automatically ({recapturableCount})
-                  </button>
-                ) : null}
+                <div className="ml-auto flex flex-wrap items-center gap-2">
+                  {dupInfo.count > 0 ? (
+                    <button type="button" onClick={cleanRecaptureCopies}
+                      className="bg-white border border-amber-300 text-amber-800 hover:bg-amber-50 font-bold px-2.5 py-1 rounded-md text-[11px]"
+                      title="Copies of the SAME figure that a previous automatic re-capture left in the image library (each retry whose entry could no longer be found added one). Keeps the newest copy of every figure and deletes the older ones — only figures with 3+ copies written within a few minutes are touched, and only when you click.">
+                      🧹 Remove {dupInfo.count} duplicate cop{dupInfo.count === 1 ? 'y' : 'ies'}
+                    </button>
+                  ) : null}
+                  {recapturableCount > 0 ? (
+                    <button type="button" onClick={() => recaptureFigures(styleBad)}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-2.5 py-1 rounded-md text-[11px]"
+                      title="One click: the app opens the experiment(s), applies the CURRENT Figure style to the charts and replaces the saved figures in the image library — then it comes back to this canvas on its own. A ⏹ Stop button appears on the experiment page while it works.">
+                      🔄 Recapture automatically ({recapturableCount})
+                    </button>
+                  ) : null}
+                </div>
               </div>
+              {dupInfo.msg ? <div className="text-[10px] font-bold text-emerald-700">{dupInfo.msg}</div> : null}
               {styleRows.length > 0 && (
                 <ul className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
                   {styleRows.map((r) => {
@@ -2562,20 +2666,21 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           <div className="bg-white border-b border-slate-200 px-3 md:px-4 py-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 shadow-sm z-10 shrink-0">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
               <h3 className="font-bold text-slate-800">Image Builder</h3>
-              <div className="flex flex-wrap items-center gap-2 bg-slate-100 rounded-lg px-3 py-1.5">
-                <button onClick={() => setZoom(z => Math.max(0.1, +(z - 0.1).toFixed(1)))} className="w-6 h-6 flex items-center justify-center bg-white border border-slate-300 rounded text-slate-600 hover:bg-slate-50 font-bold">-</button>
+              <div className="flex flex-wrap items-center gap-2 bg-slate-100 rounded-lg px-3 py-1.5"
+                title="Zoom of the fullscreen view. The canvas is drawn on a real, bigger sheet, so the scrollbars at the right / bottom (and the wheel) move it.">
+                <button onClick={() => setZoomKeepingCenter(Math.max(0.1, +(zoom - 0.1).toFixed(1)))} className="w-6 h-6 flex items-center justify-center bg-white border border-slate-300 rounded text-slate-600 hover:bg-slate-50 font-bold">-</button>
                 <input
                   type="range"
                   min="0.1"
                   max="8"
                   step="0.1"
                   value={zoom}
-                  onChange={e => setZoom(Number(e.target.value))}
+                  onChange={e => setZoomKeepingCenter(Number(e.target.value))}
                   className="w-24 md:w-32 accent-blue-600"
                 />
-                <button onClick={() => setZoom(z => Math.min(8, +(z + 0.1).toFixed(1)))} className="w-6 h-6 flex items-center justify-center bg-white border border-slate-300 rounded text-slate-600 hover:bg-slate-50 font-bold">+</button>
+                <button onClick={() => setZoomKeepingCenter(Math.min(8, +(zoom + 0.1).toFixed(1)))} className="w-6 h-6 flex items-center justify-center bg-white border border-slate-300 rounded text-slate-600 hover:bg-slate-50 font-bold">+</button>
                 <span className="text-xs font-bold text-slate-600 w-12 text-center">{Math.round(zoom * 100)}%</span>
-                <button onClick={() => setZoom(1)} className="text-xs font-bold text-blue-600 hover:underline ml-2">Reset</button>
+                <button onClick={() => setZoomKeepingCenter(1)} className="text-xs font-bold text-blue-600 hover:underline ml-2">Reset</button>
                 <button onClick={restoreInitialZoom} className="text-xs font-bold text-indigo-600 hover:underline ml-1" title="Zoom out to the initial zoom of this fullscreen session">↩ Initial zoom</button>
               </div>
 
@@ -2585,11 +2690,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                   title={focusObjId ? 'Re-centre the zoomed object in the viewport' : 'Centre the canvas in the viewport'}>
                   ◎ Center
                 </button>
-                <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg px-1.5 py-1" title="Pan the canvas">
-                  <button onClick={() => setPanX(p => p - 30)} className="w-5 h-5 bg-white border border-slate-300 rounded text-slate-600 hover:bg-slate-50 text-[10px]">←</button>
-                  <button onClick={() => setPanY(p => p - 30)} className="w-5 h-5 bg-white border border-slate-300 rounded text-slate-600 hover:bg-slate-50 text-[10px]">↑</button>
-                  <button onClick={() => setPanY(p => p + 30)} className="w-5 h-5 bg-white border border-slate-300 rounded text-slate-600 hover:bg-slate-50 text-[10px]">↓</button>
-                  <button onClick={() => setPanX(p => p + 30)} className="w-5 h-5 bg-white border border-slate-300 rounded text-slate-600 hover:bg-slate-50 text-[10px]">→</button>
+                <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg px-1.5 py-1" title="Scroll the canvas — exactly like the scrollbars and the mouse wheel">
+                  <button onClick={() => nudgeArea(-30, 0)} className="w-5 h-5 bg-white border border-slate-300 rounded text-slate-600 hover:bg-slate-50 text-[10px]">←</button>
+                  <button onClick={() => nudgeArea(0, -30)} className="w-5 h-5 bg-white border border-slate-300 rounded text-slate-600 hover:bg-slate-50 text-[10px]">↑</button>
+                  <button onClick={() => nudgeArea(0, 30)} className="w-5 h-5 bg-white border border-slate-300 rounded text-slate-600 hover:bg-slate-50 text-[10px]">↓</button>
+                  <button onClick={() => nudgeArea(30, 0)} className="w-5 h-5 bg-white border border-slate-300 rounded text-slate-600 hover:bg-slate-50 text-[10px]">→</button>
                 </div>
               </div>
 
@@ -2625,18 +2730,28 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             </button>
           </div>
 
-          {/* Canvas Area */}
+          {/* Canvas Area — a REAL scrollable sheet: the inner box is canvas × zoom
+              big, so the browser draws its own scrollbars (and the wheel works)
+              instead of a transform that leaves nothing to scroll. */}
           <div ref={fsAreaRef} className="flex-1 min-h-0 overflow-auto relative bg-slate-200 p-8" onClick={() => setSelectedId(null)}>
             <div
               style={{
-                transform: `translate(${panX}px, ${panY}px) scale(${zoom})`,
-                transformOrigin: '0 0',
-                width: `${canvasW}mm`,
-                height: `${canvasH + captionH}mm`
+                width: `calc(${canvasW}mm * ${zoom})`,
+                height: `calc(${canvasH + captionH}mm * ${zoom})`
               }}
-              className="shadow-2xl bg-white"
+              className="relative"
             >
-              {renderSvg(svgFsRef)}
+              <div
+                style={{
+                  transform: `scale(${zoom})`,
+                  transformOrigin: '0 0',
+                  width: `${canvasW}mm`,
+                  height: `${canvasH + captionH}mm`
+                }}
+                className="absolute top-0 left-0 shadow-2xl bg-white"
+              >
+                {renderSvg(svgFsRef)}
+              </div>
             </div>
           </div>
 

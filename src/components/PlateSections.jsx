@@ -5,7 +5,7 @@ import html2canvas from 'html2canvas';
 import {
   jsPDF } from 'jspdf';
 import { CollapsibleSection } from './TestShellRenderer';
-import { SharedGraphConfig, SharedErrorTreatment, ChartControlBar, ChartJsInspector, useDeferredClick } from './SharedAnalysisTools';
+import { SharedGraphConfig, SharedErrorTreatment, ChartControlBar, ChartJsInspector, useDeferredClick, cfgTickFormatter, chartJsTickCallback } from './SharedAnalysisTools';
 import {
     PLATES_DEF, formatConc, concKey, getRegionColor, toHex, lighten, darken, needsDarkText, PALETTE, fit4PL, errBarPlugin
 } from '../data/constants';
@@ -142,14 +142,15 @@ function IndividualDoseResponseChart({ cd, chartCfg, isFs, onToggleFs, unit, eSc
                         title: {
                             display: isFs,
                             text: chartCfg.xAxisLabel || `Log₁₀ [Conc. (${unit})]`,
-                            font: chartJsTitleFont(chartCfg, { weight: 'bold' }),
+                            font: chartJsTitleFont(chartCfg, { weight: 'bold' }, 'x'),
                             color: '#334155',
                             padding: chartJsTitlePad(chartCfg).x
                         },
                         ticks: {
                             display: isFs,
                             font: chartJsFont(chartCfg),
-                            color: '#64748b'
+                            color: '#64748b',
+                            callback: chartJsTickCallback(chartCfg, 'x')
                         }
                     },
                     y: {
@@ -159,14 +160,15 @@ function IndividualDoseResponseChart({ cd, chartCfg, isFs, onToggleFs, unit, eSc
                         title: {
                             display: isFs,
                             text: 'Viability (%)',
-                            font: chartJsTitleFont(chartCfg, { weight: 'bold' }),
+                            font: chartJsTitleFont(chartCfg, { weight: 'bold' }, 'y'),
                             color: '#334155',
                             padding: chartJsTitlePad(chartCfg).y
                         },
                         ticks: {
                             display: isFs,
                             font: chartJsFont(chartCfg),
-                            color: '#64748b'
+                            color: '#64748b',
+                            callback: chartJsTickCallback(chartCfg, 'y')
                         }
                     }
                 },
@@ -416,17 +418,17 @@ export function RegionCharts({ regionName, regionData, config }) {
                               title: {
                                   display: true,
                                   text: `IC50 (${unit})`,
-                                  font: chartJsTitleFont(chartCfg, { weight: 'bold' }),
+                                  font: chartJsTitleFont(chartCfg, { weight: 'bold' }, 'y'),
                                   color: '#334155',
                                   padding: chartJsTitlePad(chartCfg).y
                               },
-                              ticks: { font: chartJsFont(chartCfg), color: '#64748b' }
+                              ticks: { font: chartJsFont(chartCfg), color: '#64748b', callback: chartJsTickCallback(chartCfg, 'y') }
                           },
                           x: {
                               title: {
                                   display: true,
                                   text: 'Compound',
-                                  font: chartJsTitleFont(chartCfg, { weight: 'bold' }),
+                                  font: chartJsTitleFont(chartCfg, { weight: 'bold' }, 'x'),
                                   color: '#334155',
                                   padding: chartJsTitlePad(chartCfg).x
                               },
@@ -515,15 +517,18 @@ export function RegionCharts({ regionName, regionData, config }) {
                               title: {
                                   display: true,
                                   text: chartCfg.xAxisLabel || `Log₁₀ [Conc. (${unit})]`,
-                                  font: chartJsTitleFont(chartCfg, { weight: 'bold' }),
+                                  font: chartJsTitleFont(chartCfg, { weight: 'bold' }, 'x'),
                                   color: '#334155',
                                   padding: chartJsTitlePad(chartCfg).x
                               },
                               ticks: {
                                   font: chartJsFont(chartCfg),
                                   color: '#64748b',
-                                  callback: function (value) {
-                                      return value.toFixed(2);
+                                  // The decimals / exponential-notation commands (🎨 panel and the
+                                  // global Figure style) win over the historical 2 decimals.
+                                  callback: (value) => {
+                                      const f = cfgTickFormatter(chartCfg, 'x');
+                                      return f ? f(value) : value.toFixed(2);
                                   }
                               }
                           },
@@ -534,13 +539,14 @@ export function RegionCharts({ regionName, regionData, config }) {
                               title: {
                                   display: true,
                                   text: 'Viability (%)',
-                                  font: chartJsTitleFont(chartCfg, { weight: 'bold' }),
+                                  font: chartJsTitleFont(chartCfg, { weight: 'bold' }, 'y'),
                                   color: '#334155',
                                   padding: chartJsTitlePad(chartCfg).y
                               },
                               ticks: {
                                   font: chartJsFont(chartCfg),
-                                  color: '#64748b'
+                                  color: '#64748b',
+                                  callback: chartJsTickCallback(chartCfg, 'y')
                               }
                           }
                       },
@@ -649,13 +655,14 @@ export function RegionCharts({ regionName, regionData, config }) {
                         title: {
                             display: true,
                             text: `IC50 (${unit})`,
-                            font: chartJsTitleFont(chartCfg, { weight: 'bold' }),
+                            font: chartJsTitleFont(chartCfg, { weight: 'bold' }, 'y'),
                             color: '#334155',
                             padding: chartJsTitlePad(chartCfg).y
                         },
                         ticks: {
                             font: chartJsFont(chartCfg),
-                            color: '#64748b'
+                            color: '#64748b',
+                            callback: chartJsTickCallback(chartCfg, 'y')
                         }
                     },
                     x: {
