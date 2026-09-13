@@ -3,7 +3,7 @@ import { RichTextEditor } from '../RichTextEditor';
 import { SmartImage } from '../TestShellRenderer';
 import { loadPubFormat, pubCitationHtml } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
-import { loadProjects, saveProjects, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized } from './projectsModule';
+import { loadProjects, saveProjects, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor } from './projectsModule';
 import { suggestDriveFileName, openDrive } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
 import { UsefulFilesSection } from '../UsefulFilesSection';
@@ -280,12 +280,16 @@ export const ProjectDetailModule = ({
   // refreshed on every remount, e.g. coming back from the builder).
   const [canvasLibVersion, setCanvasLibVersion] = useState(0);
   const savedCanvases = useMemo(() => {
+    // The canvases of a project are private to its team (owner + authorized
+    // people): without access to the project NOTHING is listed here — the
+    // library read itself is gated, not just the page around it.
+    if (!projectAccessFor(project, myName, isSuper)) return [];
     const list = readProjectLibrary(project?.id || 'global') || [];
     return list
       .filter((i) => i && i.canvasData)
       .sort((a, b) => String(b.updatedAt || b.addedAt || '').localeCompare(String(a.updatedAt || a.addedAt || '')));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project?.id, canvasLibVersion]);
+  }, [project?.id, canvasLibVersion, myName, isSuper]);
 
   // Forget a canvas link (the Drive/cloud copy of the image is kept).
   const removeCanvasLink = (id) => {

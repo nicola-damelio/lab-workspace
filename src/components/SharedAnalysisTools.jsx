@@ -537,7 +537,11 @@ export const ChartPanel = ({
     cfg = null,
     setCfg = null,
     series = [],
-    unit
+    unit,
+    // WHAT this figure is (see FIGURE_KINDS in utils/figureStyle.js): it decides
+    // which plot-box ratio of Settings → Figure style the panel's chart gets.
+    // Left out → 'graph'.
+    figureKind = null
 }) => {
     const [showErr, setShowErr] = useState(defaultOpenErr);
     const [showCfg, setShowCfg] = useState(defaultOpenCfg);
@@ -583,7 +587,7 @@ export const ChartPanel = ({
             )}
 
             <ChartFsContext.Provider value={isFs}>
-                <ChartInspector cfg={cfg} setCfg={setCfg} series={series} unit={unit} className={`flex-1 min-h-0 ${bodyClassName}`}>
+                <ChartInspector cfg={cfg} setCfg={setCfg} series={series} unit={unit} figureKind={figureKind} className={`flex-1 min-h-0 ${bodyClassName}`}>
                     {children}
                 </ChartInspector>
             </ChartFsContext.Provider>
@@ -1273,6 +1277,10 @@ export const ChartElementDialog = ({ target, cfg, setCfg, series = [], unit, onC
 export const ChartInspector = ({
     cfg, setCfg, series = [], unit,
     children, className = '', style, containerRef = null, containerProps = null,
+    // WHAT this figure is (see FIGURE_KINDS in utils/figureStyle.js): spectra,
+    // per-atom plots, per-residue plots or — left out — a plain graph. It tells
+    // the global Figure style profile which plot-box ratio this chart gets.
+    figureKind = null,
     title = 'Double-click a curve, an axis or a label to edit it'
 }) => {
     const [target, setTarget] = useState(null);
@@ -1280,7 +1288,7 @@ export const ChartInspector = ({
     // Registers this chart in the global "Figure style" registry: the 🎨 button
     // of the experiment page can then push the shared character sizes into it
     // (through the very same setter the panel uses).
-    useFigureStyleSlot(cfg, setCfg);
+    useFigureStyleSlot(cfg, setCfg, figureKind);
     const handle = (e) => {
         // 1) the recharts element under the pointer (it is what the browser
         //    hit-tests, so it always matches what was really double-clicked),
@@ -1350,12 +1358,13 @@ export const chartJsTargetAt = (chart, evt) => {
  * It renders the canvas' sizing box, so it can replace that div without
  * changing the box Chart.js measures (responsive sizing stays identical).
  */
-export const ChartJsInspector = ({ chartRef, cfg, setCfg, series = [], unit, children, className = '', style = null }) => {
+export const ChartJsInspector = ({ chartRef, cfg, setCfg, series = [], unit, children, className = '', style = null, figureKind = null }) => {
     const [target, setTarget] = useState(null);
     const editable = !!cfg && typeof setCfg === 'function';
     // Same registry as ChartInspector: Chart.js canvases (Plate, DOSY, fittings…)
-    // are styled by the page-level 🎨 button too.
-    useFigureStyleSlot(cfg, setCfg);
+    // are styled by the page-level 🎨 button too — `figureKind` says what they
+    // are (see FIGURE_KINDS), so each one gets its own plot-box ratio.
+    useFigureStyleSlot(cfg, setCfg, figureKind);
     const handle = (e) => {
         const t = chartJsTargetAt(chartRef && chartRef.current, e.nativeEvent || e);
         if (!t) return;
@@ -1831,7 +1840,10 @@ export const SharedChart = ({
   referenceLines = [],
   yAxisWidth = 54,
   height = 260,
-  setCfg = null
+  setCfg = null,
+  // WHAT this figure is (see FIGURE_KINDS in utils/figureStyle.js); left out →
+  // 'graph'. Forwarded to the inspector that registers the chart's style slot.
+  figureKind = null
 }) => {
   const safeSeries = Array.isArray(series) && series.length
     ? series
@@ -2090,6 +2102,7 @@ export const SharedChart = ({
         setCfg={setCfg}
         series={safeSeries}
         unit={unit}
+        figureKind={figureKind}
       >
         <ResponsiveContainer width="100%" height="100%">
           {chartType === 'bar' && !hasSeriesOverrides(cfg) ? (

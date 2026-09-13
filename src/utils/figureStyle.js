@@ -24,7 +24,10 @@
        them without touching any of the ~10 section files.
      • the plot-box RATIO — the x-axis length : y-axis length of a figure,
        pushed as `cfg.aspect` + `cfg.figureAspect` (see chartAspect in
-       utils/chartStyle.js). 0 = every chart keeps its own ratio.
+       utils/chartStyle.js). 0 = every chart keeps its own ratio. There is ONE
+       ratio PER KIND of figure (spectra / per-atom / per-residue / graphs, see
+       FIGURE_KINDS), so a page mixing a 1D spectrum and a per-atom bar chart
+       can give each the shape it needs.
    ========================================================================= */
 
 import { FIGURE_ASPECT_KEY, figureAspectOf } from './chartStyle.js';
@@ -56,6 +59,60 @@ export const FIGURE_ASPECT_MIN = 0;
 export const FIGURE_ASPECT_MAX = 4;
 export const FIGURE_ASPECT_STEPS = [0, 0.5, 0.75, 1, 1.33, 1.5, 1.8, 2, 2.5, 3, 4];
 
+/* ── ONE RATIO PER KIND OF FIGURE ────────────────────────────────────────────
+   Settings → Figure style carries FOUR plot-box ratios, because one page mixes
+   figures that do not ask for the same shape: a 1D spectrum is a flat strip, a
+   per-atom / per-residue bar chart needs room for its many categories, and a
+   plain graph sits in between.
+
+     spectra   the NMR (imported 1D + simulated 1D/2D), CD and ssNMR spectra
+     atom      the per-atom plots (the NMR and MD “Per-Atom” chart panels)
+     residue   the per-residue plots (MD per-residue occupancy / analysis bars)
+     graph     every other chart — the DEFAULT, so a chart that does not say
+               what it is keeps following the historical `aspect` knob
+
+   A chart declares its kind when its style slot is registered (`figureKind` of
+   <ChartInspector> / <ChartJsInspector> / <ChartPanel> / <SharedChart>, see
+   useFigureStyleSlot); the profile then writes THAT kind's ratio into
+   `cfg.aspect` + `cfg.figureAspect`, which is what chartAspect() reads. */
+export const FIGURE_KINDS = ['spectra', 'atom', 'residue', 'graph'];
+export const DEFAULT_FIGURE_KIND = 'graph';
+// Profile field ↔ kind. The graph ratio keeps the historical `aspect` name, so
+// a profile saved before the kinds existed still means “the other charts”.
+export const FIGURE_KIND_FIELDS = {
+  spectra: 'aspectSpectra',
+  atom: 'aspectAtom',
+  residue: 'aspectResidue',
+  graph: 'aspect'
+};
+export const FIGURE_ASPECT_FIELDS = FIGURE_KINDS.map((k) => FIGURE_KIND_FIELDS[k]);
+export const FIGURE_KIND_LABELS = {
+  spectra: 'Spectra (NMR, CD, ssNMR)',
+  atom: 'Per-atom plots',
+  residue: 'Per-residue plots',
+  graph: 'Graphs (everything else)'
+};
+/** Anything (null, '' , 'SPECTRA', a typo) → a kind of FIGURE_KINDS (graph). */
+export const normalizeFigureKind = (kind) => (FIGURE_KINDS.includes(kind) ? kind : DEFAULT_FIGURE_KIND);
+/** The profile field that carries the ratio of a kind. */
+export const figureAspectFieldForKind = (kind) => FIGURE_KIND_FIELDS[normalizeFigureKind(kind)];
+/** The plot-box ratio the profile imposes on a KIND of figure (0 = its own). */
+export const figureAspectForKind = (style, kind) => {
+  const s = normalizeFigureStyle(style);
+  const n = Number(s[figureAspectFieldForKind(kind)]);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
+/** [{ kind, label, field, ratio }] — the four rows of the Settings panel. */
+export const figureAspectSummary = (style) => {
+  const s = normalizeFigureStyle(style);
+  return FIGURE_KINDS.map((kind) => ({
+    kind,
+    label: FIGURE_KIND_LABELS[kind],
+    field: FIGURE_KIND_FIELDS[kind],
+    ratio: Number(s[FIGURE_KIND_FIELDS[kind]]) || 0
+  }));
+};
+
 // …and the AXIS TITLE style / AXIS NUMBER format of the same profile:
 //   axisTitleBold / axisTitleItalic   the axis titles ("Wavelength (nm)",
 //                                     "Intensity (a.u.)") of every figure.
@@ -86,9 +143,13 @@ export const FIGURE_SCI_FORMAT = 'exponential';
  *                       (1.23 × 10⁴) instead of 12300.
  *   tickDecimals        how many decimals the axis NUMBERS show ('' = auto,
  *                       0…FIGURE_DECIMALS_MAX).
- *   aspect              x-axis length : y-axis length of the plot box — ONE
- *                       shape for every figure of a page. 0 = each chart keeps
- *                       its own ratio (see FIGURE_ASPECT_MIN).
+ *   aspect              x-axis length : y-axis length of the plot box of a
+ *                       GRAPH — every figure that is not one of the three kinds
+ *                       below. 0 = each chart keeps its own ratio.
+ *   aspectSpectra       …the same command for the SPECTRA (NMR, CD, ssNMR).
+ *   aspectAtom          …the same command for the PER-ATOM plots.
+ *   aspectResidue       …the same command for the PER-RESIDUE plots.
+ *                       (see FIGURE_ASPECT_MIN and FIGURE_KINDS)
  *   applyOnOpen         push the profile automatically when a page opens.
  *
  * A chart that does not read one of the sizes simply ignores it; the ones that
@@ -105,7 +166,13 @@ export const DEFAULT_FIGURE_STYLE = {
   axisTitleItalic: false,
   tickSci: false,
   tickDecimals: '',
+  // ONE plot-box ratio per KIND of figure (see FIGURE_KINDS): the spectra, the
+  // per-atom plots, the per-residue plots and — the historical key, last —
+  // every other graph. 0 = that kind keeps the ratio of its own 🎨 panel.
   aspect: 0,
+  aspectSpectra: 0,
+  aspectAtom: 0,
+  aspectResidue: 0,
   applyOnOpen: false
 };
 
@@ -125,7 +192,7 @@ export const FIGURE_SIZE_LABELS = {
 // `test.<...>Cfg` object). Every merged style container of the app
 // (DEFAULT_CHART_STYLE, simCfg, DEFAULT_CFG…) carries all of them, so the
 // spectra are covered everywhere an x axis exists.
-export const FIGURE_STYLE_FIELDS = ['fontFamily', 'fontSize', 'axisTitleFontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle', 'axisTitleBold', 'axisTitleItalic', 'tickSci', 'tickDecimals', 'aspect'];
+export const FIGURE_STYLE_FIELDS = ['fontFamily', 'fontSize', 'axisTitleFontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle', 'axisTitleBold', 'axisTitleItalic', 'tickSci', 'tickDecimals', 'aspect', 'aspectSpectra', 'aspectAtom', 'aspectResidue'];
 export const FIGURE_SPECTRA_FIELDS = ['simLabelFontSize', 'tickAngle'];
 
 // The cfg keys of the AXIS TITLE style / AXIS NUMBER format. They are the very
@@ -216,6 +283,11 @@ export const normalizeFigureStyle = (style) => {
     tickSci: toBool(s.tickSci),
     tickDecimals: clampFigureDecimals(s.tickDecimals),
     aspect: clampFigureAspect(s.aspect),
+    // …and one ratio per kind of figure (see FIGURE_KINDS): a profile saved
+    // before they existed simply reads 0 = “that kind keeps its own ratio”.
+    aspectSpectra: clampFigureAspect(s.aspectSpectra),
+    aspectAtom: clampFigureAspect(s.aspectAtom),
+    aspectResidue: clampFigureAspect(s.aspectResidue),
     applyOnOpen: s.applyOnOpen === true || s.applyOnOpen === 'true'
   };
 };
@@ -262,7 +334,8 @@ export const writeFigureStyle = (style) => {
  * (`test.figureStyleTag`) so a page can tell whether it is already styled and
  * which profile was used for its figures (see the Image Builder notice).
  *
- *   fs<tick>-t<title>-lg<legend>-lb<labels>-rot<angle>[-ar<ratio>][-bold]
+ *   fs<tick>-t<title>-lg<legend>-lb<labels>-rot<angle>[-ar<ratio>]
+ *   [-ars<spectra>][-ara<atom>][-arr<residue>][-bold]
  *   [-ital][-sci][-dec<n>][-<Family>]
  * e.g. `fs16-t18-lg16-lb16-rot0` (app font) or `fs20-…-Arial`.
  *
@@ -275,7 +348,15 @@ export const figureStyleTag = (style) => {
   const fam = s.fontFamily ? `-${s.fontFamily.replace(/[^A-Za-z0-9]/g, '').slice(0, 12)}` : '';
   // The ratio only shows in the tag when it is imposed (0 = "each chart keeps
   // its own"), so every tag written before this knob existed stays identical.
-  const ar = s.aspect > 0 ? `-ar${s.aspect}` : '';
+  // ONE suffix per kind of figure (see FIGURE_KINDS): `ar` = the graphs — the
+  // historical suffix — then the spectra / per-atom / per-residue ratios.
+  const kindAr = [
+    s.aspect > 0 ? `ar${s.aspect}` : '',
+    s.aspectSpectra > 0 ? `ars${s.aspectSpectra}` : '',
+    s.aspectAtom > 0 ? `ara${s.aspectAtom}` : '',
+    s.aspectResidue > 0 ? `arr${s.aspectResidue}` : ''
+  ].filter(Boolean).join('-');
+  const ar = kindAr ? `-${kindAr}` : '';
   const axis = [
     s.axisTitleBold ? 'bold' : '',
     s.axisTitleItalic ? 'ital' : '',
@@ -318,9 +399,14 @@ export const figureStylePatch = (style, cfg = null, options = null) => {
     if (uses) out[k] = s[k];
   });
   const owns = !!cfg && typeof cfg === 'object';
-  if (s.aspect > 0) {
-    out.aspect = s.aspect;
-    out[FIGURE_ASPECT_KEY] = s.aspect;
+  // The ratio depends on WHAT the figure is — a spectrum, a per-atom plot, a
+  // per-residue plot or a plain graph (see FIGURE_KINDS). `options.kind` is the
+  // kind the chart declared when it registered its slot; a chart that declares
+  // nothing is a GRAPH, i.e. it keeps following the historical `aspect` knob.
+  const ratio = figureAspectForKind(s, options && options.kind);
+  if (ratio > 0) {
+    out.aspect = ratio;
+    out[FIGURE_ASPECT_KEY] = ratio;
   } else if (owns && figureAspectOf(cfg)) {
     out[FIGURE_ASPECT_KEY] = FIGURE_ASPECT_MIN;
   }
@@ -421,6 +507,8 @@ export const applyFigureStyleEverywhere = (style = null, options = null) => {
    Parameters panel uses. The write therefore follows the same path as a manual
    edit: `activeTest.<...>Cfg` containers go through `updateActiveTest`, the
    local-state ones (MD) through `setState`.
+   `kind` says WHAT the figure is (see FIGURE_KINDS) — the fan-out then hands it
+   the plot-box ratio the profile defines for that kind of figure.
    The inspectors register / unregister themselves, so a page always knows every
    chart it can style — including the charts of a closed section, as soon as that
    section is opened.
@@ -439,7 +527,11 @@ const emitSlots = () => slotListeners.forEach((fn) => { try { fn(slots.size); } 
 export const registerFigureStyleSlot = (slot) => {
   if (!slot || typeof slot.get !== 'function' || typeof slot.set !== 'function') return () => {};
   const id = `figslot_${(slotSeq += 1)}`;
-  slots.set(id, { id, get: slot.get, set: slot.set });
+  // `kind` = what this figure IS (a spectrum? a per-atom plot? a per-residue
+  // plot? a graph? — see FIGURE_KINDS), so the fan-out can hand it the ratio of
+  // Settings → Figure style that belongs to it. A slot without a kind is a
+  // GRAPH, which is the historical behaviour of the whole profile.
+  slots.set(id, { id, get: slot.get, set: slot.set, kind: normalizeFigureKind(slot.kind) });
   emitSlots();
   return () => { if (slots.delete(id)) emitSlots(); };
 };
@@ -469,7 +561,7 @@ export const applyFigureStyleToSlots = (style = null, options = null) => {
     try { cur = slot.get(); } catch { cur = null; }
     if (!cur || typeof cur !== 'object') continue;
     total += 1;
-    const next = applyFigureStyleToCfg(cur, profile, options);
+    const next = applyFigureStyleToCfg(cur, profile, { ...(options || {}), kind: slot.kind });
     if (!next) continue;
     try { slot.set(next); } catch { continue; }
     changed += 1;

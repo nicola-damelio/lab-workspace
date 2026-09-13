@@ -9,7 +9,7 @@ import { NMR_FITTING_TAB_CONFIG } from './tabConfigs';
 import { toHex, errBarPlugin } from '../data/constants';
 import { rainbowColors, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, normalizeChartType, seriesVisible, seriesColorOf, chartJsFont, chartJsTitleFont, chartAspect, chartAspectImposed, DEFAULT_CHART_ASPECT_WIDE
 } from '../utils/chartStyle';
-import { brokenAxisScaleOptions } from '../utils/chartJsBrokenAxis';
+import { brokenAxisScaleOptions, chartJsYValues } from '../utils/chartJsBrokenAxis';
 import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
 import { ChartControlBar, SharedChartStylePanel, ChartJsInspector, useDeferredClick, chartJsTickCallback } from './SharedAnalysisTools';
 import { isPointExcluded, togglePointExcluded, clearExcludedForTable, computePointSD } from '../utils/pointTreatment';
@@ -869,7 +869,7 @@ function DecayChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType = 'l
                 layout: { padding: chartJsPadding(chartCfg) },
                 scales: {
                     x: { type: isHist ? 'category' : 'linear', position: chartCfg.xPos, min: !isHist && chartCfg.xMin !== '' ? parseFloat(chartCfg.xMin) : undefined, max: !isHist && chartCfg.xMax !== '' ? parseFloat(chartCfg.xMax) : undefined, title: { display: true, text: xLabel, font: chartJsTitleFont(chartCfg, null, 'x'), padding: chartJsTitlePad(chartCfg).x }, ticks: { font: chartJsFont(chartCfg), callback: chartJsTickCallback(chartCfg, 'x') } },
-                    y: { position: chartCfg.yPos, min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined, max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined, ...brokenAxisScaleOptions(chartCfg, 'y'), title: { display: true, text: yLab, font: chartJsTitleFont(chartCfg, null, 'y'), padding: chartJsTitlePad(chartCfg).y }, ticks: { font: chartJsFont(chartCfg), callback: chartJsTickCallback(chartCfg, 'y') } },
+                    y: { position: chartCfg.yPos, min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined, max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined, ...brokenAxisScaleOptions(chartCfg, 'y', chartJsYValues(ds)), title: { display: true, text: yLab, font: chartJsTitleFont(chartCfg, null, 'y'), padding: chartJsTitlePad(chartCfg).y }, ticks: { font: chartJsFont(chartCfg), callback: chartJsTickCallback(chartCfg, 'y') } },
                 },
                 plugins: { legend: { display: !isHist, labels: { font: chartJsFont(chartCfg) } } }
             }
@@ -924,7 +924,7 @@ function ParameterChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType 
                 responsive: true, maintainAspectRatio: false,
                 layout: { padding: chartJsPadding(chartCfg) },
                 scales: {
-                    y: { position: chartCfg.yPos, min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined, max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined, title: { display: true, text: yLabel, font: chartJsTitleFont(chartCfg, null, 'y'), padding: chartJsTitlePad(chartCfg).y }, ticks: { font: chartJsFont(chartCfg), callback: chartJsTickCallback(chartCfg, 'y') } },
+                    y: { position: chartCfg.yPos, min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined, max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined, /* ✂ the histogram of the FITTED rates: one residue can dwarf the others. */ ...brokenAxisScaleOptions(chartCfg, 'y', data), title: { display: true, text: yLabel, font: chartJsTitleFont(chartCfg, null, 'y'), padding: chartJsTitlePad(chartCfg).y }, ticks: { font: chartJsFont(chartCfg), callback: chartJsTickCallback(chartCfg, 'y') } },
                     x: { position: chartCfg.xPos, title: { display: true, text: 'Residue / Atom', font: chartJsTitleFont(chartCfg, null, 'x'), padding: chartJsTitlePad(chartCfg).x }, ticks: { font: chartJsFont(chartCfg) } }
                 },
                 plugins: { legend: { display: false } }
@@ -984,7 +984,7 @@ function IndividualDecayChart({ table, colIndex, colFit, chartCfg, isFs, onToggl
                 layout: { padding: chartJsPadding(chartCfg) },
                 scales: {
                     x: { type: 'linear', position: chartCfg.xPos, min: chartCfg.xMin !== '' ? parseFloat(chartCfg.xMin) : undefined, max: chartCfg.xMax !== '' ? parseFloat(chartCfg.xMax) : undefined, title: { display: isFs, text: chartCfg.xAxisLabel || (table.relaxType === 'DOSY' ? `b-value / G² (${table.delayUnit})` : `Delay (${table.delayUnit})`), font: chartJsTitleFont(chartCfg, null, 'x'), padding: chartJsTitlePad(chartCfg).x }, ticks: { display: isFs, font: chartJsFont(chartCfg), callback: chartJsTickCallback(chartCfg, 'x') } },
-                    y: { position: chartCfg.yPos, min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined, max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined, title: { display: isFs, text: 'Intensity / Volume', font: chartJsTitleFont(chartCfg, null, 'y'), padding: chartJsTitlePad(chartCfg).y }, ticks: { display: isFs, font: chartJsFont(chartCfg), callback: chartJsTickCallback(chartCfg, 'y') } },
+                    y: { position: chartCfg.yPos, min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined, max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined, ...brokenAxisScaleOptions(chartCfg, 'y', chartJsYValues(ds)), title: { display: isFs, text: 'Intensity / Volume', font: chartJsTitleFont(chartCfg, null, 'y'), padding: chartJsTitlePad(chartCfg).y }, ticks: { display: isFs, font: chartJsFont(chartCfg), callback: chartJsTickCallback(chartCfg, 'y') } },
                 },
                 plugins: { legend: { display: false }, tooltip: { enabled: true } },
                 interaction: { mode: 'nearest', intersect: true },

@@ -279,8 +279,9 @@ check('32 the duplicates a runaway run left behind can be cleaned in one click',
   ok(IB.includes('removeRecaptureDuplicates'), 'the Image Builder cannot clean them up');
   ok(IB.includes('🧹 Remove '), 'no clean-up button');
   const LIB2 = SRC('utils/figuresLibrary.js');
-  ok(LIB2.includes('export const findRecaptureDuplicates = () => {'), 'no duplicate finder');
-  ok(LIB2.includes('export const removeRecaptureDuplicates = () => {'), 'no duplicate remover');
+  ok(LIB2.includes('export const findRecaptureDuplicates = ({ allowedProjectIds = null } = {}) => {'), 'no duplicate finder');
+  ok(LIB2.includes('export const removeRecaptureDuplicates = (opts = {}) => {'), 'no duplicate remover');
+  ok(LIB2.includes("if (allowed && !allowed(pid)) return; // another team's project library"), 'the scan cannot be limited to the projects the user may open');
   ok(LIB2.includes('const RECAPTURE_DUP_MIN = 3;'), 'two hand-made copies must never be treated as a runaway loop');
   ok(LIB2.includes("const RECAPTURE_DUP_WINDOW_MS = 10 * 60 * 1000;"), 'the copies must be close in time');
 });

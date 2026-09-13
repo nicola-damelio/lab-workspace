@@ -287,14 +287,14 @@ frag('[SAT] …opens the matching section of the panel', SAT, 'section={target.s
 frag('[SAT] …and highlights the double-clicked curve', SAT, 'highlightKey={matched ? matched.key : null}');
 frag('[SAT] the dialog closes on Escape', SAT, "if (e.key === 'Escape') onClose();");
 frag('[SAT] the dialog is rendered in a portal (never clipped by the card)', SAT, 'document.body');
-frag('[SAT] the Chart.js wrapper', SAT, 'export const ChartJsInspector = ({ chartRef, cfg, setCfg, series = [], unit, children, className = \'\', style = null }) => {');
+frag('[SAT] the Chart.js wrapper', SAT, "export const ChartJsInspector = ({ chartRef, cfg, setCfg, series = [], unit, children, className = '', style = null, figureKind = null }) => {");
 frag('[SAT] …which renders the canvas sizing box itself', SAT, '<div className={className} style={style} onDoubleClick={editable ? handle : undefined}');
 frag('[SAT] the style panel is section-addressable', SAT, "section = 'all', highlightKey = null");
 frag('[SAT] …and filters the blocks through `show`', SAT, "const show = (name) => section === 'all' || section === name;");
 frag('[SAT] …with the X / Y range blocks', SAT, 'chartStyleRangeBlock(cfg, set, unit, rangeSection)');
 frag('[SAT] …the tick blocks', SAT, "{(show('x') || show('y')) && chartStyleTickBlock(cfg, set, section)}");
 frag('[SAT] …and the character-size block of the focused views', SAT, "section !== 'all' && section !== 'series' && chartStyleCharacterBlock(cfg, set, showHeightSlider)");
-frag('[SAT] ChartPanel wires the inspector for its charts', SAT, '<ChartInspector cfg={cfg} setCfg={setCfg} series={series} unit={unit} className={`flex-1 min-h-0 ${bodyClassName}`}>');
+frag('[SAT] ChartPanel wires the inspector for its charts', SAT, '<ChartInspector cfg={cfg} setCfg={setCfg} series={series} unit={unit} figureKind={figureKind} className={`flex-1 min-h-0 ${bodyClassName}`}>');
 frag('[SAT] …and takes the style object as props', SAT, 'cfg = null,');
 frag('[SAT] SharedChart wires it too (double-click on a small chart)', SAT, 'containerRef={chartRef}');
 frag('[SAT] …when the caller can write the style back', SAT, 'cfg={setCfg ? cfg : null}');
@@ -386,7 +386,8 @@ frag('[SAT] the ✂ interrupted axis is a panel command', SAT, 'Interrupt Y axis
 frag('[SAT] …and it is drawn on the axis', SAT, 'export const AxisBreakMarks = ({ cfg = {}, axis = \'y\', values = [], brk = null }) => {');
 frag('[SAT] any recharts chart can ask for it in three lines', SAT, 'export const brokenAxisProps = (cfg = {}, axis = \'y\', values = [], opts = {}) => {');
 frag('[STYLE] the interrupted scale of recharts', STYLE, 'export const brokenScale = (brk) => {');
-frag('[STYLE] …and of the Chart.js canvases', STYLE, 'export const chartJsBrokenAxisOptions = (cfg = {}, axis = \'y\') => {');
+frag('[STYLE] …and of the Chart.js canvases', STYLE, "export const chartJsBrokenAxisOptions = (cfg = {}, axis = 'y', values = []) => {");
+frag('[STYLE] …which takes the automatic break from those values', STYLE, 'const brk = axisBreakFor(cfg, axis, values);');
 
 /* ══ 7. the charts that forgot to wire the inspector ═════════════════════ */
 const FCS = read('src/components/FlowCytometrySections.jsx');

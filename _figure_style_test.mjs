@@ -14,6 +14,8 @@ import {
   FIGURE_STYLE_KEY, FIGURE_STYLE_EVENT, FIGURE_STYLE_FIELDS,
   FIGURE_ASPECT_MIN, FIGURE_ASPECT_MAX, FIGURE_ASPECT_STEPS,
   FIGURE_DECIMALS_STEPS, FIGURE_AXIS_CFG_KEYS,
+  FIGURE_KINDS, DEFAULT_FIGURE_KIND, FIGURE_KIND_FIELDS, FIGURE_ASPECT_FIELDS, FIGURE_KIND_LABELS,
+  normalizeFigureKind, figureAspectFieldForKind, figureAspectForKind, figureAspectSummary,
   normalizeFigureStyle, clampFigureFont, clampFigureAngle, clampFigureAspect,
   clampFigureDecimals, figureCfgAcceptsAxisStyle,
   readFigureStyle, writeFigureStyle, figureStyleTag,
@@ -43,7 +45,7 @@ check('1 the default profile is one size per element, no rotation, no ratio, no 
     fontFamily: '', fontSize: 16, axisTitleFontSize: 18, legendFontSize: 16,
     simLabelFontSize: 16, tickAngle: 0,
     axisTitleBold: false, axisTitleItalic: false, tickSci: false, tickDecimals: '',
-    aspect: 0, applyOnOpen: false
+    aspect: 0, aspectSpectra: 0, aspectAtom: 0, aspectResidue: 0, applyOnOpen: false
   });
   eq(FIGURE_STYLE_KEY, 'labFigureStyle');
   eq(FIGURE_STYLE_EVENT, 'lab:figure-style-changed');
@@ -74,7 +76,7 @@ check('4 the auto-apply flag is always a real boolean', () => {
 });
 check('5 unknown keys never leak into the stored profile', () => {
   const p = normalizeFigureStyle({ fontSize: 16, colors: { a: '#fff' }, height: 380 });
-  eq(Object.keys(p).sort(), ['applyOnOpen', 'aspect', 'axisTitleBold', 'axisTitleFontSize', 'axisTitleItalic', 'fontFamily', 'fontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle', 'tickDecimals', 'tickSci']);
+  eq(Object.keys(p).sort(), ['applyOnOpen', 'aspect', 'aspectAtom', 'aspectResidue', 'aspectSpectra', 'axisTitleBold', 'axisTitleFontSize', 'axisTitleItalic', 'fontFamily', 'fontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle', 'tickDecimals', 'tickSci']);
 });
 check('6 read/write round-trip (browser storage is optional in Node)', () => {
   const before = readFigureStyle();
@@ -88,7 +90,7 @@ check('6 read/write round-trip (browser storage is optional in Node)', () => {
     fontFamily: 'Arial', fontSize: 20, axisTitleFontSize: 22, legendFontSize: 18,
     simLabelFontSize: 18, tickAngle: 45,
     axisTitleBold: true, axisTitleItalic: false, tickSci: true, tickDecimals: 2,
-    aspect: 0, applyOnOpen: true
+    aspect: 0, aspectSpectra: 0, aspectAtom: 0, aspectResidue: 0, applyOnOpen: true
   });
   eq(figureStyleTag(), 'fs20-t22-lg18-lb18-rot45-bold-sci-dec2-Arial');
   writeFigureStyle(before);
@@ -163,7 +165,7 @@ check('13b the font family is written on demand — and cleared when the profile
   ok(!('fontFamily' in applyFigureStyleToCfg(rechart, profile)), 'no empty family injected');
 });
 check('14 the profile fields are the single source of the applied keys', () => {
-  eq(FIGURE_STYLE_FIELDS, ['fontFamily', 'fontSize', 'axisTitleFontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle', 'axisTitleBold', 'axisTitleItalic', 'tickSci', 'tickDecimals', 'aspect']);
+  eq(FIGURE_STYLE_FIELDS, ['fontFamily', 'fontSize', 'axisTitleFontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle', 'axisTitleBold', 'axisTitleItalic', 'tickSci', 'tickDecimals', 'aspect', 'aspectSpectra', 'aspectAtom', 'aspectResidue']);
   eq(Object.keys(figureStylePatch(profile, spectra)).sort(), ['fontSize', 'axisTitleFontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle'].sort());
   eq(FIGURE_AXIS_CFG_KEYS.bold, ['xAxisLabelBold', 'yAxisLabelBold']);
   eq(FIGURE_AXIS_CFG_KEYS.decimals, ['xDecimals', 'yDecimals']);
@@ -268,7 +270,7 @@ check('20b the character sizes reach 160 px and the charts let them through', ()
 });
 check('21 the two inspectors register their cfg in the registry', () => {
   ok(SAT.includes("import { useFigureStyleSlot } from './FigureStyleTools';"), 'no import');
-  eq(SAT.split('useFigureStyleSlot(cfg, setCfg);').length - 1, 2, 'both inspectors must register');
+  eq(SAT.split('useFigureStyleSlot(cfg, setCfg, figureKind);').length - 1, 2, 'both inspectors must register — with the kind of figure they are');
   ok(TOOLS.includes('registerFigureStyleSlot('), 'the hook does not register');
   ok(TOOLS.includes('get: () => cfgRef.current'), 'the slot must read the LIVE cfg');
 });
@@ -552,6 +554,115 @@ check('43 the panel, the settings page and the Chart.js figures offer the same c
   ok(SAT2.includes("const sci = axis === 'x' ? !!cfg.xSci : !!cfg.ySci;"), 'cfgTickFormatter does not read the profile keys');
   const SET = SRC('components/AppModules/settingsModule.jsx');
   ok(SET.includes('exponential notation'), 'the Settings page does not mention the axis commands');
+});
+
+/* ══ 7. ONE plot-box ratio PER KIND of figure ═══════════════════════════════
+   Settings → Figure style has to shape a 1D spectrum differently from a
+   per-atom bar chart, a per-residue bar chart and a plain graph.            */
+check('44 the four kinds exist, each with its own profile field and a neutral default', () => {
+  eq(FIGURE_KINDS, ['spectra', 'atom', 'residue', 'graph']);
+  eq(DEFAULT_FIGURE_KIND, 'graph', 'a chart that declares nothing is a plain graph');
+  eq(FIGURE_KIND_FIELDS, { spectra: 'aspectSpectra', atom: 'aspectAtom', residue: 'aspectResidue', graph: 'aspect' });
+  eq(FIGURE_ASPECT_FIELDS, ['aspectSpectra', 'aspectAtom', 'aspectResidue', 'aspect']);
+  FIGURE_KINDS.forEach((k) => eq(DEFAULT_FIGURE_STYLE[FIGURE_KIND_FIELDS[k]], 0, `${k} must default to "its own ratio"`));
+  eq(DEFAULT_FIGURE_STYLE.aspect, 0, 'the graph knob IS the historical `aspect` key (old profiles keep working)');
+  eq(normalizeFigureKind('spectra'), 'spectra');
+  eq(normalizeFigureKind('SPECTRA'), 'graph', 'a kind is exact — no fuzzy matching');
+  eq(normalizeFigureKind(''), 'graph');
+  eq(normalizeFigureKind(null), 'graph');
+  eq(normalizeFigureKind(7), 'graph');
+});
+check('45 every kind has its own clamped ratio — 0 = "its own shape"', () => {
+  const p = normalizeFigureStyle({ aspect: 1.8, aspectSpectra: 2.2, aspectAtom: -1, aspectResidue: 99 });
+  eq(p.aspect, 1.8);
+  eq(p.aspectSpectra, 2.2);
+  eq(p.aspectAtom, 0, 'a negative ratio cannot exist');
+  eq(p.aspectResidue, FIGURE_ASPECT_MAX, 'the same upper bound as the historical knob');
+  eq(figureAspectFieldForKind('atom'), 'aspectAtom');
+  eq(figureAspectFieldForKind('nonsense'), 'aspect');
+  eq(figureAspectForKind(p, 'spectra'), 2.2);
+  eq(figureAspectForKind(p, 'atom'), 0);
+  eq(figureAspectForKind(p, 'residue'), FIGURE_ASPECT_MAX);
+  eq(figureAspectForKind(p, 'anything else'), 1.8, 'an undeclared figure keeps following the graph knob');
+  eq(figureAspectSummary(p).map((a) => `${a.kind}=${a.ratio}`),
+    ['spectra=2.2', 'atom=0', `residue=${FIGURE_ASPECT_MAX}`, 'graph=1.8'], 'the panel rows, in order');
+  eq(figureAspectSummary(p).map((a) => a.label), FIGURE_KINDS.map((k) => FIGURE_KIND_LABELS[k]));
+});
+check('46 the profile hands every figure the ratio of ITS kind', () => {
+  const p = { ...DEFAULT_FIGURE_STYLE, aspect: 1.8, aspectSpectra: 2.2, aspectAtom: 2.5, aspectResidue: 1.2 };
+  const cfg0 = { height: 300, aspect: 1, fontSize: 16 };
+  eq(figureStylePatch(p, cfg0, { kind: 'spectra' }),
+    { fontSize: 16, axisTitleFontSize: 18, legendFontSize: 16, aspect: 2.2, figureAspect: 2.2 },
+    'the spectrum takes the spectra ratio');
+  eq(figureStylePatch(p, cfg0, { kind: 'atom' }).figureAspect, 2.5);
+  eq(figureStylePatch(p, cfg0, { kind: 'residue' }).figureAspect, 1.2);
+  eq(figureStylePatch(p, cfg0, null).figureAspect, 1.8, 'no kind = graph');
+  // A kind the profile left at 0 gives the figure its own ratio BACK.
+  const imposed = { ...cfg0, aspect: 2.2, figureAspect: 2.2 };
+  eq(figureStylePatch({ ...DEFAULT_FIGURE_STYLE, aspect: 1.8 }, imposed, { kind: 'spectra' })[FIGURE_ASPECT_KEY], 0,
+    'the spectra knob at 0 releases the ratio a previous apply imposed');
+  eq(applyFigureStyleToCfg(imposed, { ...DEFAULT_FIGURE_STYLE, aspect: 1.8 }, { kind: 'spectra' }).aspect, 2.2,
+    '…while the per-chart panel keeps showing the ratio of the chart itself');
+  eq(applyFigureStyleToCfg(cfg0, { ...DEFAULT_FIGURE_STYLE, aspectAtom: 2.5 }, { kind: 'atom' }).figureAspect, 2.5);
+});
+
+check('47 the 🎨 button gives every registered figure the ratio of its own kind', () => {
+  let graphCfg = { height: 300, aspect: 1, fontSize: 16 };
+  let atomCfg = { height: 300, aspect: 1, fontSize: 16 };
+  let specCfg = { height: 300, aspect: 1, fontSize: 16 };
+  const offG = registerFigureStyleSlot({ get: () => graphCfg, set: (n) => { graphCfg = n; } });
+  const offA = registerFigureStyleSlot({ get: () => atomCfg, set: (n) => { atomCfg = n; }, kind: 'atom' });
+  const offS = registerFigureStyleSlot({ get: () => specCfg, set: (n) => { specCfg = n; }, kind: 'spectra' });
+  const res = applyFigureStyleToSlots({ fontSize: 16, aspect: 1.8, aspectAtom: 2.5, aspectSpectra: 2.2 });
+  eq(res.changed, 3);
+  eq(graphCfg.figureAspect, 1.8, 'a chart that declares nothing stays on the historical knob');
+  eq(atomCfg.figureAspect, 2.5);
+  eq(specCfg.figureAspect, 2.2);
+  eq(atomCfg.aspect, 2.5, 'the per-chart panel shows the ratio the figure was drawn with');
+  // The per-atom knob of THAT profile is 0 → the per-atom chart goes back to its own shape.
+  applyFigureStyleToSlots({ fontSize: 16, aspect: 1.8 });
+  eq(atomCfg.figureAspect, 0, 'a kind left at 0 keeps the shape of the chart own panel');
+  eq(specCfg.figureAspect, 0);
+  undoFigureStyleSlots();
+  offG(); offA(); offS();
+  eq(figureStyleSlotCount(), 0);
+});
+check('48 the kind ratios only show in the tag when they are imposed', () => {
+  eq(figureStyleTag({ fontSize: 16 }), 'fs16-t18-lg16-lb16-rot0', 'the tag of an untouched profile must not change');
+  eq(figureStyleTag({ fontSize: 16, aspectSpectra: 2 }), 'fs16-t18-lg16-lb16-rot0-ars2');
+  eq(figureStyleTag({ fontSize: 16, aspect: 1.8, aspectSpectra: 2, aspectAtom: 2.5, aspectResidue: 1.2 }),
+    'fs16-t18-lg16-lb16-rot0-ar1.8-ars2-ara2.5-arr1.2');
+  ok(figureStyleTag({ fontSize: 16, aspectAtom: 2 }) !== figureStyleTag({ fontSize: 16, aspectAtom: 2.5 }),
+    'the per-atom ratio must change the tag (the Image Builder audit relies on it)');
+});
+check('49 the four kinds are wired from Settings down to every figure', () => {
+  const SAT3 = SRC('components/SharedAnalysisTools.jsx');
+  ok(SAT3.includes('figureKind = null'), 'the inspectors / wrappers have no figureKind prop');
+  ok(SAT3.includes('<ChartInspector cfg={cfg} setCfg={setCfg} series={series} unit={unit} figureKind={figureKind}'),
+    'ChartPanel does not forward the kind of its chart');
+  ok(/series=\{safeSeries\}[\s\S]{0,40}unit=\{unit\}[\s\S]{0,40}figureKind=\{figureKind\}/.test(SAT3),
+    'SharedChart does not forward the kind of its chart');
+  ok(TOOLS.includes('normalizeFigureKind(kind)'), 'the hook does not normalise the kind');
+  ok(TOOLS.includes('kind: slotKind'), 'the hook does not register the kind');
+  ok(FSJS.includes('applyFigureStyleToCfg(cur, profile, { ...(options || {}), kind: slot.kind })'),
+    'the fan-out ignores the kind of each slot');
+  const nmr = readFileSync('./src/components/NMRSections.jsx', 'utf8');
+  ok(nmr.includes("useFigureStyleSlot(nmr1dCfg, setNmr1dCfg, 'spectra');"),
+    'the imported 1D NMR spectrum is not registered as a spectrum');
+  eq(nmr.split('figureKind="spectra"').length - 1, 2, 'the simulated NMR 1D / 2D spectra are not marked as spectra');
+  ok(nmr.includes('figureKind="atom"'), 'the NMR per-atom charts are not marked');
+  ['CDSections', 'ssNMRSections'].forEach((f) => {
+    const s = readFileSync(`./src/components/${f}.jsx`, 'utf8');
+    eq(s.split('figureKind="spectra"').length - 1, 2, `${f}: overlay + individual spectra must be spectra`);
+  });
+  const md = readFileSync('./src/components/MDSections.jsx', 'utf8');
+  ok(md.includes('figureKind="atom"'), 'the MD per-atom charts are not marked');
+  ok(md.includes('figureKind="residue"'), 'the MD per-residue chart is not marked');
+  ok(PANEL.includes('FIGURE_KINDS.map('), 'Settings offers no row per kind');
+  ok(PANEL.includes('figureAspectSummary(profile)'), 'the preview does not draw the four boxes');
+  ok(PANEL.includes('FIGURE_KIND_LABELS[kind]'), 'the rows do not name the kinds of figure');
+  ok(PANEL.includes('FIGURE_KIND_FIELDS[kind]'), 'the rows are not bound to their own profile field');
+  ok(TOOLS.includes('figureAspectSummary(profile)'), 'the 🎨 chip does not list the imposed ratios');
 });
 
 const failed = results.filter((r) => !r.ok);

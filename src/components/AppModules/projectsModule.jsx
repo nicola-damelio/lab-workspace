@@ -260,6 +260,30 @@ export const normalizeAuthorized = (list) => {
   }).filter((x) => x && String(x.name).trim());
 };
 
+/** Access level one user has on ONE project: 'modify' (owner, superuser or a
+ *  coworker with edit rights), 'view' (read-only coworker) or null (no access
+ *  at all). Mirrors what the Projects page (visible list / canManage) and the
+ *  project page (canSee / canModify) already do, so every module — the figures
+ *  of a project included — answers the same question the same way. */
+export const projectAccessFor = (project, userName, isSuper = false) => {
+  const name = String(userName || '');
+  if (!project || !name.trim()) return null;
+  if (isSuper || String(project.scientist || '') === name) return 'modify';
+  const coworker = normalizeAuthorized(project.authorizedPeople || [])
+    .find((c) => String(c.name) === name);
+  if (!coworker) return null;
+  return coworker.permission === 'view' ? 'view' : 'modify';
+};
+
+/** The projects of `projects` the user may OPEN (owner, any coworker — view or
+ *  modify — or a superuser). Used to keep a project's own content (its image
+ *  library figures, its saved canvases) visible only to its team. */
+export const visibleProjectsFor = (projects, userName, isSuper = false) => {
+  const list = Array.isArray(projects) ? projects.filter(Boolean) : [];
+  if (isSuper) return list;
+  return list.filter((p) => projectAccessFor(p, userName, false) !== null);
+};
+
 /** Map of projectName → permission ('view' | 'modify') for the given user,
  *  built from every project's authorizedPeople list. */
 export const getProjectAccessForUser = (userName) => {

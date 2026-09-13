@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   readFigureStyle, figureStyleTag, subscribeFigureStyle, subscribeFigureStyleSlots,
   figureStyleSlotCount, registerFigureStyleSlot, applyFigureStyleToSlots,
-  applyFigureStyleEverywhere, undoFigureStyleSlots, figureStyleUndoAvailable
+  applyFigureStyleEverywhere, undoFigureStyleSlots, figureStyleUndoAvailable,
+  normalizeFigureKind, figureAspectSummary
 } from '../utils/figureStyle';
 
 /* =========================================================================
@@ -39,9 +40,15 @@ export const useFigureStyleSlots = () => {
  * of one chart so the page-level 🎨 button can style it. The refs keep the
  * registration valid across renders without re-registering (and without
  * re-running the effect on every keystroke in the style panel).
+ *
+ * `kind` says WHAT the figure is (see FIGURE_KINDS in utils/figureStyle.js): a
+ * spectrum, a per-atom plot, a per-residue plot or a graph. The profile of
+ * Settings → Figure style carries one plot-box ratio per kind, and this is how a
+ * figure gets the one that belongs to it. Left out → 'graph'.
  */
-export const useFigureStyleSlot = (cfg, setCfg) => {
+export const useFigureStyleSlot = (cfg, setCfg, kind = null) => {
   const editable = !!cfg && typeof setCfg === 'function';
+  const slotKind = normalizeFigureKind(kind);
   const cfgRef = useRef(cfg);
   cfgRef.current = cfg;
   const setRef = useRef(setCfg);
@@ -50,9 +57,10 @@ export const useFigureStyleSlot = (cfg, setCfg) => {
     if (!editable) return undefined;
     return registerFigureStyleSlot({
       get: () => cfgRef.current,
-      set: (next) => setRef.current(next)
+      set: (next) => setRef.current(next),
+      kind: slotKind
     });
-  }, [editable]);
+  }, [editable, slotKind]);
 };
 
 const CHIP = 'flex items-center gap-1.5 rounded-full border shadow-md px-3 h-7 text-[11px] font-bold transition-colors';
@@ -67,6 +75,9 @@ export const FigureStyleApplyButton = ({ test, update }) => {
   const autoRef = useRef('');                     // experiment already auto-styled
   const tag = figureStyleTag(profile);
   const applied = !!test && test.figureStyleTag === tag;
+  // ONE plot-box ratio per kind of figure (spectra / per-atom / per-residue /
+  // graphs): the chip lists only the ones the profile really imposes.
+  const boxRatios = figureAspectSummary(profile).filter((a) => a.ratio > 0);
 
   const flash = (ok, msg) => {
     setStatus({ ok, msg });
@@ -147,7 +158,9 @@ export const FigureStyleApplyButton = ({ test, update }) => {
             Ticks <b>{profile.fontSize} px</b> · axis titles <b>{profile.axisTitleFontSize} px</b> ·
             {' '}legends <b>{profile.legendFontSize} px</b> · data labels <b>{profile.simLabelFontSize} px</b> ·
             {' '}x rotation <b>{profile.tickAngle}°</b>
-            {' '}· plot box <b>{profile.aspect > 0 ? `${profile.aspect} : 1` : 'per chart'}</b>
+            {' '}· plot box <b>{boxRatios.length
+              ? boxRatios.map((a) => `${a.kind} ${a.ratio} : 1`).join(' · ')
+              : 'per chart'}</b>
             {profile.fontFamily
               ? <> · font <b>{profile.fontFamily.split(',')[0].replace(/"/g, '').trim()}</b></>
               : null}

@@ -24,6 +24,7 @@ import { enableCellClipboard, cellAttrs } from '../utils/cellClipboard';
 import { ChartPanel, SharedErrorTreatment, SharedChartStylePanel, ChartJsInspector, cfgTickFormatter } from './SharedAnalysisTools';
 import { shadesFromColor, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, tickSize, chartJsFont, chartJsTitleFont, axisTitleSize, chartAspect, chartAspectImposed, DEFAULT_CHART_ASPECT_WIDE
 } from '../utils/chartStyle';
+import { brokenAxisScaleOptions, chartJsYValues } from '../utils/chartJsBrokenAxis';
 import { StarToggle } from './StarToggle';
 import { isStarred, toggleStarredItem } from '../utils/starredItems';
 import { isPointExcluded, togglePointExcluded, clearExcludedForTable, computePointSD } from '../utils/pointTreatment';
@@ -508,6 +509,9 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
             max: cfg.xMax !== '' && cfg.xMax !== undefined && cfg.xMax !== null ? Number(cfg.xMax) : undefined
           },
           y: {
+            // ✂ "Interrupt Y axis" of the 🎨 panel: one residue's decay /
+            // diffusion can dwarf the others of the same plot.
+            ...brokenAxisScaleOptions(cfg, 'y', chartJsYValues(datasets)),
             title: { display: true, text: yTitle, font: chartJsTitleFont(cfg, { size: axisTitleSize(cfg, fs) }, 'y'), padding: chartJsTitlePad(cfg).y },
             ticks: {
               font: chartJsFont(cfg, { size: (Number(tickSize(cfg, fs)) || fs) - 1 }),

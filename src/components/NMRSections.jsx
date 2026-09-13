@@ -7,6 +7,7 @@ import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell
 } from 'recharts';
 import { CollapsibleSection } from './ui';
+import { useFigureStyleSlot } from './FigureStyleTools';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, VIS_PALETTES, PER_ATOM_COLORS, seriesColorFor, chartBoxStyle, chartAspect, chartRatioBoxStyle, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf, tickTextProps, tickSize, fontFamilyOf, legendTextStyle, chartAspectImposed
 } from '../utils/chartStyle';
 import { SplitChartStack, SplitToggle, SPLIT_CHART_H } from './SplitChartStack';
@@ -5731,6 +5732,12 @@ export const DataSection = ({ ctx }) => {
   // to zoom the ppm axis, vertically to zoom the intensity axis.
   const nmr1dCfg = { ...DEFAULT_CHART_STYLE, yScale: 2, lineColor: '#3b82f6', lineThickness: 1.5, fontSize: 9, ...(activeTest.nmr1dChartCfg || {}) };
   const setNmr1dCfg = (patch) => updateActiveTest({ nmr1dChartCfg: { ...nmr1dCfg, ...patch } });
+  // The imported 1D spectrum is a SPECTRUM: register it in the global Figure
+  // style registry with that kind, so the 🎨 button of the page gives it the
+  // spectra plot-box ratio (this panel has its own SharedChartStylePanel and is
+  // not wrapped in the ChartInspector of SharedAnalysisTools, hence the explicit
+  // registration — same registry, same setter as the panel).
+  useFigureStyleSlot(nmr1dCfg, setNmr1dCfg, 'spectra');
   const [expandedBruker, setExpandedBruker] = useState(false);
   const [brukerZoomDom, setBrukerZoomDom] = useState(null);   // X (ppm) zoomed domain
   const [brukerYZoomDom, setBrukerYZoomDom] = useState(null); // Y (intensity) zoomed domain
@@ -7610,6 +7617,10 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
         ? errorBarRange(catData, visibleSeries.map((s) => s.key))
         : errorBarRange(visibleSeries.flatMap((s) => numData(s)), ['y'], (row) => row.sd, null))
     : null;
+  /* ✂ "Interrupt Y axis" of the 🎨 panel: one condition can dwarf all the others
+     of the histogram. A typed Y range keeps the axis exactly as it is. */
+  const histBrk = brokenAxisProps(cfg, 'y', visibleSeries.flatMap((s) => catData.map((r) => r[s.key])), { min: cfg.yMin, max: cfg.yMax });
+  const histBrkOn = histBrk.on && dom(cfg.yMin) === undefined && dom(cfg.yMax) === undefined;
 
   const fitData = (s) => {
     const fit = fits[s.key];
@@ -7675,6 +7686,10 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
   // Same idea for the fitted-parameter bars: without this the IC50/EC50 error
   // bars of the tallest bar ran past the top of an "auto" Y axis.
   const paramRange = HAS_EB ? errorBarRange(paramData, ['val'], (row) => row.err) : null;
+  /* ✂ "Interrupt Y axis" of the 🎨 panel: the histogram of the FITTED parameters
+     can hold one series 100× the others. A typed Y range keeps the axis as it is. */
+  const paramBrk = brokenAxisProps(cfg, 'y', paramData.map((p) => p.val), { min: cfg.yMin, max: cfg.yMax });
+  const paramBrkOn = paramBrk.on && dom(cfg.yMin) === undefined && dom(cfg.yMax) === undefined;
   return (
     <CollapsibleSection title={plot.title} icon="📈" defaultOpen={false}
       headerExtra={
@@ -7857,7 +7872,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                       <BarChart data={catData} margin={cfgChartMargin(cfg, { top: 8, right: 16, bottom: 30, left: 12 })}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                         <XAxis dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={tickSize(cfg)} fontFamily={fontFamilyOf(cfg)} edgeAnchor={false} />} tickMargin={10} label={cfgAxisLabel(cfg, 'x', 'Condition', 22)} />
-                        <YAxis type="number" domain={[dom(cfg.yMin) ?? errRangeY?.[0] ?? 'auto', dom(cfg.yMax) ?? errRangeY?.[1] ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={tickTextProps(cfg, { fill: '#64748b' })} label={cfgAxisLabel(cfg, 'y', yLab, 6)} />
+                        <YAxis {...(histBrkOn ? { type: 'number', ...histBrk.axisProps } : { type: 'number', domain: [dom(cfg.yMin) ?? errRangeY?.[0] ?? 'auto', dom(cfg.yMax) ?? errRangeY?.[1] ?? 'auto'] })} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={tickTextProps(cfg, { fill: '#64748b' })} label={cfgAxisLabel(cfg, 'y', yLab, 6)} />
                         <Tooltip />
                         {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
                         {refLines}
@@ -7869,6 +7884,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                             </Bar>
                           );
                         })}
+                        {histBrkOn && histBrk.marks}
                       </BarChart>
                     ) : (
                       <LineChart margin={cfgChartMargin(cfg, { top: 8, right: 16, bottom: 30, left: 12 })}>
@@ -7938,12 +7954,13 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                         <BarChart data={paramData} margin={cfgChartMargin(cfg, { top: 10, right: 10, bottom: 20, left: 10 })}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} />
                           <XAxis dataKey="name" interval={catInterval(cfg.tickStep)} tickMargin={10} tick={<AngledTick angle={cfg.tickAngle} fontSize={Math.max(9, cfg.fontSize - 2)} edgeAnchor={false} />} />
-                          <YAxis domain={[dom(cfg.yMin) ?? paramRange?.[0] ?? 'auto', dom(cfg.yMax) ?? paramRange?.[1] ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={tickTextProps(cfg, { fontSize: Math.max(9, Number(tickSize(cfg)) - 2) })} label={cfgAxisLabel(cfg, 'y', paramGraphVar, 0)} />
+                          <YAxis {...(paramBrkOn ? paramBrk.axisProps : { domain: [dom(cfg.yMin) ?? paramRange?.[0] ?? 'auto', dom(cfg.yMax) ?? paramRange?.[1] ?? 'auto'] })} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={tickTextProps(cfg, { fontSize: Math.max(9, Number(tickSize(cfg)) - 2) })} label={cfgAxisLabel(cfg, 'y', paramGraphVar, 0)} />
                           <Tooltip />
                           <Bar dataKey="val" isAnimationActive={false}>
                             {paramData.map((entry, idx) => <Cell key={idx} fill={entry.fill} />)}
                             {HAS_EB && <ErrorBar dataKey="err" width={4} strokeWidth={1} color="#333" />}
                           </Bar>
+                          {paramBrkOn && paramBrk.marks}
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
@@ -8168,7 +8185,7 @@ const PerAtomChartPanel = ({ ctx, d, chart, updateChart, removeChart }) => {
 
       {/* Chart — X axis always in sequence order */}
       {chartData.length > 0 ? (
-        <ChartInspector cfg={cfg} setCfg={setCfg}
+        <ChartInspector cfg={cfg} setCfg={setCfg} figureKind="atom"
           series={atomMeta.map(m => ({ key: m.key, label: m.label, color: m.color }))}
           unit={layer?.unit}
           className="w-full">
@@ -8422,7 +8439,7 @@ export const SimulationsSection = ({ ctx }) => {
           <RangeBarChart title="Theoretical ¹³C Ranges" ranges={filteredRanges13C} domain={[0, 220]} ticks={Array.from({ length: 23 }, (_, i) => i * 10)} xAxisLabel="¹³C (ppm)" rowCount={focusIdx === 'ALL' ? d.uniqueTypes.length : 1} rowLabels={focusIdx === 'ALL' ? d.uniqueTypes.map((c) => d.DB[c]?.code3 || c) : [d.parsedSeq[focusIdx]?.code3 || d.parsedSeq[focusIdx]?.char]} simCfg={simCfg} />
         </div>
       )}
- <ChartInspector cfg={plotSimCfg} setCfg={setCfg} series={[]} unit="ppm" className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+ <ChartInspector cfg={plotSimCfg} setCfg={setCfg} series={[]} unit="ppm" figureKind="spectra" className="grid grid-cols-1 lg:grid-cols-2 gap-6">
    <OneDSpectrumPlot key={`1d1h-${focusIdx}-${simCfg.xMin}-${simCfg.xMax}`} title="Simulated ¹H 1D Spectrum" data={fP(d.peaks.data1H).filter(p => p.atom1 && p.atom1.startsWith('H'))} fullDomain={[0, 11]} ticks={TICKS_1H} TickComponent={CustomXTick1H} xLabel="¹H (ppm)" panelId="1D_1H" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={plotSimCfg} />
    <OneDSpectrumPlot key={`1d13c-${focusIdx}-${simCfg.xMin}-${simCfg.xMax}`} title="Simulated ¹³C 1D Spectrum" data={fP(d.peaks.data13C).filter(p => p.atom2 && p.atom2.startsWith('C'))} fullDomain={[0, 220]} ticks={TICKS_13C} TickComponent={CustomXTick13C} xLabel="¹³C (ppm)" panelId="1D_13C" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={plotSimCfg} />
    {d.hasPhosphorus && d.selNuc.includes('P') && fP(d.peaks.p31Data).length > 0 && (
@@ -8432,7 +8449,7 @@ export const SimulationsSection = ({ ctx }) => {
    <SpectrumPlot key={`noesy-${focusIdx}`} title="Simulated NOESY Spectrum" diagonalData={fP(d.peaks.diagonalData).filter(p => p.atom1 && p.atom1.startsWith('H'))} crossPeakData={fP(d.peaks.noesyPeaks).filter(p => p.atom1 && p.atom1.startsWith('H') && p.atom2 && p.atom2.startsWith('H'))} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="noesy" diagonalColor="#ef4444" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={plotSimCfg} />
    <SpectrumPlot key={`tocsy-${focusIdx}`} title="Simulated TOCSY Spectrum" diagonalData={fP(d.peaks.diagonalData).filter(p => p.atom1 && p.atom1.startsWith('H'))} crossPeakData={fP(d.peaks.tocsyPeaks).filter(p => p.atom1 && p.atom1.startsWith('H') && p.atom2 && p.atom2.startsWith('H'))} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="tocsy" diagonalColor="#1e3a8a" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={plotSimCfg} />
  </ChartInspector>
-      <ChartInspector cfg={plotSimCfg} setCfg={setCfg} series={[]} unit="ppm" className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <ChartInspector cfg={plotSimCfg} setCfg={setCfg} series={[]} unit="ppm" figureKind="spectra" className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <HSQCPlot key={`hsqc-${focusIdx}`} title="Simulated ¹H-¹³C HSQC Spectrum" crossPeakData={fP(d.peaks.hsqcPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹³C F1 (ppm)" yDomainInit={[0, 220]} yTicks={TICKS_13C} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={plotSimCfg} />
         {d.moleculeType === 'protein' && d.selNuc.includes('N') && fP(d.peaks.hsqc15NPeaks).length > 0 && (
           <HSQCPlot key={`hsqc15n-${focusIdx}`} title="Simulated ¹H-¹⁵N HSQC Spectrum" crossPeakData={fP(d.peaks.hsqc15NPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc15n" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹⁵N F1 (ppm)" yDomainInit={[95, 135]} yTicks={TICKS_15N} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={plotSimCfg} />

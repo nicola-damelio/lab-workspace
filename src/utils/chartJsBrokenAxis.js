@@ -11,6 +11,11 @@
    cursor). Only value→pixel and pixel→value are re-mapped through the same
    piecewise maths as the recharts side (src/utils/chartStyle.js), so a CSV
    export or a hovered value never shows a rescaled number.
+
+   The commands come from the 🎨 panel (cfg.yBreak / yBreakFrom / yBreakTo /
+   yBreakGap). With the two numbers left EMPTY the break is placed automatically
+   on the biggest gap of the data (see brokenAxisScaleOptions below), so the ✂
+   tick alone is enough — exactly like the recharts side.
    ========================================================================= */
 import { Chart, LinearScale } from 'chart.js';
 import { breakSegments, breakMapFrac, breakFracValue, chartJsBrokenAxisOptions } from './chartStyle.js';
@@ -139,7 +144,30 @@ export const registerBrokenAxis = () => {
 registerBrokenAxis();
 
 /**
- * `{ ...options.scales.y, ...brokenAxisScaleOptions(cfg, 'y') }` — null when the
- * axis is not interrupted, so a normal chart keeps its plain linear scale.
+ * `{ ...options.scales.y, ...brokenAxisScaleOptions(cfg, 'y', values) }` — null
+ * when the axis is not interrupted, so a normal chart keeps its plain linear
+ * scale.
+ *
+ * `values` are the Y values of the axis (chartJsYValues does it for a Chart.js
+ * `datasets` array): they let the ✂ tick ALONE interrupt the axis, the panel's
+ * two numbers only being needed to override where the break sits.
  */
-export const brokenAxisScaleOptions = (cfg = {}, axis = 'y') => chartJsBrokenAxisOptions(cfg, axis);
+export const brokenAxisScaleOptions = (cfg = {}, axis = 'y', values = []) => chartJsBrokenAxisOptions(cfg, axis, values);
+
+/**
+ * The Y values of Chart.js datasets — `[{ data: [{x, y}] }]` (scatter / line /
+ * bar) or `[{ data: [12, 8, 4000] }]` (histogram) — ready for the automatic
+ * break. Hidden datasets and non-finite / missing points are dropped, so a
+ * series switched off in the panel cannot decide where the axis is cut.
+ */
+export const chartJsYValues = (datasets = []) => (Array.isArray(datasets) ? datasets : [])
+  .flatMap((ds) => {
+    if (!ds || ds.hidden) return [];
+    const rows = Array.isArray(ds.data) ? ds.data : [];
+    return rows.map((p) => {
+      if (p === null || p === undefined) return NaN;
+      return typeof p === 'object' ? Number(p.y) : Number(p);
+    });
+  })
+  .filter((v) => Number.isFinite(v));
+

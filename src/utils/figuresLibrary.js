@@ -64,6 +64,32 @@ export const writeProjectLibrary = (projectId, items) => {
   saveLS(k, memProjects.get(k));
 };
 
+/* ---- who may SEE a project's figures ----------------------------------------
+   The figures of a project are private to that project's team (owner +
+   authorizedPeople). This module does not know who is logged in, so the caller
+   passes the projects the current user may open. ONLY the read paths that feed a
+   list / grid / thumbnail go through the helper below: the raw read/write API
+   (readProjectLibrary / writeProjectLibrary …) is deliberately left unfiltered,
+   because a write built on a filtered list would erase the entries it cannot
+   see. `null` means "no restriction asked" (internal callers, tests, the HTML
+   backup snapshot). */
+const allowedProjectFilter = (allowedProjectIds) => {
+  if (allowedProjectIds == null) return null;
+  if (typeof allowedProjectIds === 'function') return allowedProjectIds;
+  const set = allowedProjectIds instanceof Set ? allowedProjectIds : new Set(allowedProjectIds);
+  return (projectId) => set.has(projectId);
+};
+
+/** Read a project library for DISPLAY: [] when `projectId` is not among the
+ *  projects the user may open (`allowedProjectIds`). The unassigned/global
+ *  scope (null / '') is always readable — it belongs to no project. */
+export const readVisibleProjectLibrary = (projectId, allowedProjectIds = null) => {
+  if (projectId == null || projectId === '') return readProjectLibrary(projectId);
+  const allowed = allowedProjectFilter(allowedProjectIds);
+  if (!allowed) return readProjectLibrary(projectId);
+  return allowed(projectId) ? readProjectLibrary(projectId) : [];
+};
+
 // True when localStorage is currently writable (quota NOT full). Used by the
 // upload flows to tell the user whether the in-session library list will also
 // survive a reload (it always works in memory, images are on Drive either way).
@@ -430,8 +456,9 @@ const addedMsOf = (i) => {
  * Nothing is removed here — the Image Builder shows the count and only the
  * user's click calls removeRecaptureDuplicates().
  */
-export const findRecaptureDuplicates = () => {
+export const findRecaptureDuplicates = ({ allowedProjectIds = null } = {}) => {
   const out = [];
+  const allowed = allowedProjectFilter(allowedProjectIds);
   const scan = (scope, projectId, items) => {
     const byKey = new Map();
     (items || []).forEach((i) => {
@@ -459,17 +486,20 @@ export const findRecaptureDuplicates = () => {
   };
   try { scan('common', null, readLibrary()); } catch { /* ignore */ }
   try {
-    Object.entries(readAllProjectLibraries()).forEach(([pid, items]) => scan('project', pid, items));
+    Object.entries(readAllProjectLibraries()).forEach(([pid, items]) => {
+      if (allowed && !allowed(pid)) return; // another team's project library
+      scan('project', pid, items);
+    });
   } catch { /* ignore */ }
   return out;
 };
 
 /** Total number of duplicate copies findRecaptureDuplicates() would remove. */
-export const countRecaptureDuplicates = () => findRecaptureDuplicates().reduce((n, g) => n + g.count, 0);
+export const countRecaptureDuplicates = (opts = {}) => findRecaptureDuplicates(opts).reduce((n, g) => n + g.count, 0);
 
 /** Remove them (keeps the NEWEST copy of each figure). Returns { removed, groups }. */
-export const removeRecaptureDuplicates = () => {
-  const groups = findRecaptureDuplicates();
+export const removeRecaptureDuplicates = (opts = {}) => {
+  const groups = findRecaptureDuplicates(opts);
   let removed = 0;
   groups.forEach((g) => {
     const ids = new Set(g.removeIds);

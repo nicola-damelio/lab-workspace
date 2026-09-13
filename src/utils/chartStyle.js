@@ -41,6 +41,10 @@ export const DEFAULT_CHART_ASPECT_WIDE = 1.8;
 // wide spectrum would leave it wide. `figureAspect` always wins, 0 = the chart
 // keeps its own ratio. The profile writes BOTH keys, so the 🎨 Graphical
 // Parameters panel shows the ratio the figure was really drawn with.
+// WHICH ratio the profile writes depends on the KIND of figure (spectra /
+// per-atom / per-residue / graphs — see FIGURE_KINDS in figureStyle.js): a chart
+// declares its kind where its style slot is registered, and the four ratios are
+// flattened into this one key before the chart ever sees them.
 export const FIGURE_ASPECT_KEY = 'figureAspect';
 
 /** The ratio forced by the global Figure style profile, or 0 (keep its own). */
@@ -684,11 +688,16 @@ export const brokenScale = (brk) => {
 
 /**
  * Chart.js axis options for a broken Y (or X) axis — spread them over the axis
- * options: `{ ...options.scales.y, ...chartJsBrokenAxisOptions(cfg, 'y') }`.
+ * options: `{ ...options.scales.y, ...chartJsBrokenAxisOptions(cfg, 'y', values) }`.
  * 'brokenLinear' is the scale type registered by utils/chartJsBrokenAxis.
+ *
+ * `values` are the plotted values of that axis (see chartJsYValues): they are
+ * what makes the ✂ tick alone enough, exactly like the recharts side — with the
+ * two numbers of the panel left empty the break is placed on the biggest gap of
+ * the data (axisBreakFor → autoBreakBounds).
  */
-export const chartJsBrokenAxisOptions = (cfg = {}, axis = 'y') => {
-  const brk = axisBreakOf(cfg, axis);
+export const chartJsBrokenAxisOptions = (cfg = {}, axis = 'y', values = []) => {
+  const brk = axisBreakFor(cfg, axis, values);
   if (!brk.on) return null;
   return { type: 'brokenLinear', breakFrom: brk.from, breakTo: brk.to, breakGap: brk.gap };
 };

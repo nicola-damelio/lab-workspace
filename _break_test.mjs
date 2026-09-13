@@ -238,7 +238,7 @@ check('26 axisBreakFor: typed numbers win, otherwise the data decides', () => {
 });
 
 /* ══ 8. the Chart.js scale class (Plate / NMR-fittings histograms) ═════════ */
-const { BrokenLinearScale, brokenAxisPlugin, registerBrokenAxis } = await import('./src/utils/chartJsBrokenAxis.js');
+const { BrokenLinearScale, brokenAxisPlugin, registerBrokenAxis, chartJsYValues } = await import('./src/utils/chartJsBrokenAxis.js');
 
 check('27 the Chart.js scale maps value→pixel through the interruption', () => {
   // A minimal stand-in for a Chart.js LinearScale: same min/max/options surface,
@@ -275,6 +275,34 @@ check('29 the scale type is registered with Chart.js (so `type: brokenLinear` ex
   eq(getScale('brokenLinear').id, 'brokenLinear');
   eq(getPlugin('labBrokenAxis').id, 'labBrokenAxis');
   registerBrokenAxis();   // idempotent: a second call is a no-op
+});
+
+/* ══ 9. the ✂ tick ALONE on a canvas (no numbers to type) ════════════════ */
+check('30 chartJsBrokenAxisOptions also works from the plotted values', () => {
+  // The Chart.js bridge now follows the recharts rule: the biggest gap of the
+  // data is compressed when the panel's two numbers are left empty.
+  const auto = chartJsBrokenAxisOptions({ yBreak: true }, 'y', [5, 8, 12, 30, 4000]);
+  eq(auto.type, 'brokenLinear');
+  eqc(auto.breakFrom, 36, 1e-9);           // 30 × 1.2 = the top of the small bars
+  eqc(auto.breakTo, 4000, 1e-9);
+  eqc(auto.breakGap, 0.07, 1e-12);
+  // A canvas can also interrupt its X axis, with its own values.
+  eq(chartJsBrokenAxisOptions({ xBreak: true }, 'x', [1, 2, 3, 90]).type, 'brokenLinear');
+  eq(chartJsBrokenAxisOptions({ xBreak: true }, 'x', [1, 2, 3, 90]).breakTo, 90);
+});
+check('31 the typed numbers still win, and nothing happens without a gap', () => {
+  eq(chartJsBrokenAxisOptions(CFG, 'y', [5, 4000]).breakFrom, 50);
+  eq(chartJsBrokenAxisOptions({ yBreak: true }, 'y', [5, 8, 12]), null);   // no dramatic gap
+  eq(chartJsBrokenAxisOptions({ yBreak: true }, 'y'), null);               // no values at all
+  eq(chartJsBrokenAxisOptions({}, 'y', [5, 4000]), null);                  // the switch is off
+});
+check('32 chartJsYValues reads every dataset shape a canvas uses', () => {
+  // Scatter / line points ({x, y}) and plain histogram numbers — both at once.
+  eq(chartJsYValues([{ data: [{ x: 0, y: 5 }, { x: 1, y: 4000 }] }, { data: [7, '8'] }]), [5, 4000, 7, 8]);
+  eq(chartJsYValues([{ data: [7, null, 'x', undefined] }]), [7]);          // gaps are dropped
+  eq(chartJsYValues([{ hidden: true, data: [1, 4000] }, { data: [2] }]), [2]); // a hidden series is ignored
+  eq(chartJsYValues(), []);
+  eq(chartJsYValues(null), []);
 });
 
 const failed = results.filter((r) => !r.ok);

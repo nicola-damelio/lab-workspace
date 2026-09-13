@@ -1865,7 +1865,7 @@ const MDPerAtomChartPanel = ({ d, chart, updateChart, removeChart }) => {
         )}
       </div>
       {chartData.length > 0 ? (
-        <ChartInspector cfg={cfg} setCfg={setCfg}
+        <ChartInspector cfg={cfg} setCfg={setCfg} figureKind="atom"
           series={atomMeta.map(m => ({ key: m.key, label: m.label, color: m.color }))}
           unit={layer?.unit}
           className="w-full">
@@ -4161,8 +4161,12 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
             </ChartPanel>
           )}
 
+          {/* One bar group PER RESIDUE: this figure takes the per-residue
+              plot-box ratio of Settings → Figure style (the style object is
+              read from cfgPanel / SharedChartStylePanel). */}
           {occRows.length > 0 && (
             <ChartPanel title={`Per-residue occupancy (${outputs[0].name})`} icon="📊"
+                        figureKind="residue"
                         headerExtra={occZoom.isZoomed ? (
                           <button type="button" onClick={occZoom.reset} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">↩ Reset Zoom</button>
                         ) : null}

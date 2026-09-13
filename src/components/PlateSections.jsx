@@ -12,7 +12,7 @@ import {
 import { PLATE_PRESET_LABELS, PLATE_PRESET_COLORS, isPlatePreset, platePresetColor } from '../utils/platePresets';
 import { FS_CLASSES, OVERLAY_CLASSES, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, normalizeChartType, seriesVisible, seriesColorOf, chartJsFont, chartJsTitleFont, chartAspect, chartAspectImposed, DEFAULT_CHART_ASPECT_WIDE
 } from '../utils/chartStyle';
-import { brokenAxisScaleOptions } from '../utils/chartJsBrokenAxis';
+import { brokenAxisScaleOptions, chartJsYValues } from '../utils/chartJsBrokenAxis';
 
 // Chart/style constants now live in ../utils/chartStyle.
 
@@ -157,6 +157,9 @@ function IndividualDoseResponseChart({ cd, chartCfg, isFs, onToggleFs, unit, eSc
                         position: chartCfg.yPos || 'left',
                         min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined,
                         max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined,
+                        // ✂ "Interrupt Y axis" of the 🎨 panel: one compound's
+                        // viability can dwarf every other point of the curve.
+                        ...brokenAxisScaleOptions(chartCfg, 'y', chartJsYValues(ds)),
                         title: {
                             display: isFs,
                             text: 'Viability (%)',
@@ -414,7 +417,7 @@ export function RegionCharts({ regionName, regionData, config }) {
                               beginAtZero: true,
                               // ✂ "Interrupt Y axis" of the 🎨 panel: an IC50 histogram
                               // can hold one compound 100× the others.
-                              ...brokenAxisScaleOptions(chartCfg, 'y'),
+                              ...brokenAxisScaleOptions(chartCfg, 'y', histHits.map((cd) => cd.fit.ic50)),
                               title: {
                                   display: true,
                                   text: `IC50 (${unit})`,
@@ -536,6 +539,10 @@ export function RegionCharts({ regionName, regionData, config }) {
                               position: chartCfg.yPos || 'left',
                               min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined,
                               max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined,
+                              // ✂ "Interrupt Y axis" of the 🎨 panel: the same command
+                              // as the histogram branch, so switching the chart type
+                              // never makes the interruption disappear.
+                              ...brokenAxisScaleOptions(chartCfg, 'y', regionData.flatMap((cd) => [...cd.vPts.map((p) => p.y), ...cd.ePts.map((p) => p.y)])),
                               title: {
                                   display: true,
                                   text: 'Viability (%)',
@@ -652,6 +659,9 @@ export function RegionCharts({ regionName, regionData, config }) {
                     y: {
                         position: chartCfg.yPos || 'left',
                         beginAtZero: true,
+                        // ✂ "Interrupt Y axis" of the 🎨 panel: the histogram of the
+                        // FITTED IC50 can hold one compound 100× the others.
+                        ...brokenAxisScaleOptions(chartCfg, 'y', data),
                         title: {
                             display: true,
                             text: `IC50 (${unit})`,

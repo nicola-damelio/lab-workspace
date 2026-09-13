@@ -1,12 +1,12 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  readLibrary, readProjectLibrary, moveLibraryItem,
+  readLibrary, readProjectLibrary, readVisibleProjectLibrary, moveLibraryItem,
   renameLibraryItem, removeLibraryItem, renameProjectLibraryItem, removeProjectLibraryItem,
   blobToDataUrl, publishLibraryFigure, resolveImageToDataUrl, localStorageHealthy,
   countRecaptureDuplicates, removeRecaptureDuplicates
 } from '../utils/figuresLibrary';
-import { loadProjects, saveProjects, genProjectId } from './AppModules/projectsModule';
+import { loadProjects, saveProjects, genProjectId, projectAccessFor, visibleProjectsFor } from './AppModules/projectsModule';
 import { queuePendingFigureScroll } from '../utils/pendingFigureScroll';
 import { figureStyleTag } from '../utils/figureStyle';
 import {
@@ -188,22 +188,27 @@ const STYLE_BADGE = {
   canvas: { text: 'canvas', cls: 'bg-indigo-50 text-indigo-600 border border-indigo-200' }
 };
 
-const libItemOf = (im, fallbackProjectId = null) => {
+// `projectVisible` (optional) answers "may the current user open this project?".
+// The figures of a project are private to its team (project library), so an
+// inaccessible project library is never searched: the figure is reported as
+// untagged / unlinked instead of being read out of somebody else's project.
+const libItemOf = (im, fallbackProjectId = null, projectVisible = null) => {
   if (!im || !im.libId) return null;
   const scope = im.libScope === 'project' ? 'project' : 'common';
   const pid = im.libProjectId || fallbackProjectId;
   try {
+    if (scope === 'project' && typeof projectVisible === 'function' && !projectVisible(pid)) return null;
     const list = scope === 'project' ? readProjectLibrary(pid) : readLibrary();
     return (list || []).find((x) => x.id === im.libId) || null;
   } catch { return null; }
 };
 
-export const figureStyleAudit = (objects, currentTag, fallbackProjectId = null) => {
+export const figureStyleAudit = (objects, currentTag, fallbackProjectId = null, projectVisible = null) => {
   const rows = [];
   (objects || []).forEach((o) => {
     const imgs = getObjImagesOf(o);
     imgs.forEach((im, idx) => {
-      const item = libItemOf(im, fallbackProjectId);
+      const item = libItemOf(im, fallbackProjectId, projectVisible);
       const src = (item && item.src) || (im && im.src) || null;
       const px = (im && im.imgSrc && imagePxCache.get(im.imgSrc)) || null;
       const tag = (src && src.styleTag) || '';
@@ -237,7 +242,7 @@ export const figureStyleAudit = (objects, currentTag, fallbackProjectId = null) 
   return rows;
 };
 
-export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCanvasOpened, onBackToProject }) => {
+export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCanvasOpened, onBackToProject, currentUser = null }) => {
   const storageKey = `labImageBuilder_${projectId || 'global'}`;
   const svgRef = useRef(null);
   const svgFsRef = useRef(null);    // fullscreen SVG — kept SEPARATE from the normal one so
@@ -314,6 +319,36 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const allProjects = loadProjects();
   const activeLibProjectId = libProjectId || projectId; // project library scope currently browsed
 
+  // ---- which project library is the user's to see -----------------------------
+  // The figures of a project live in THAT project's library (Image Library →
+  // Project tab) and are private to its team: only the projects this user may
+  // OPEN (owner / coworker / superuser) are offered here — in the browser, in
+  // the canvas save dialog, in “Insert into project…” and in the style audit.
+  // A coworker with 'view' permission keeps READING them but cannot write into
+  // that project (upload, save a canvas, rename, delete, transfer), exactly like
+  // the project page itself (its canModify).
+  const myName = (currentUser && currentUser.name) || '';
+  const isSuper = !!(currentUser && currentUser.role === 'superuser');
+  const myProjects = visibleProjectsFor(allProjects, myName, isSuper);
+  const myProjectIds = myProjects.map((p) => p.id);
+  // Same list as a STRING: its value is stable across renders, so it can sit in
+  // an effect's dependency array without re-running the effect every time.
+  const myProjectIdsKey = myProjectIds.join('|');
+  // 'modify' | 'view' | null — 'modify' for the shared dataset library (no project).
+  const libProjectAccess = (pid) => (pid
+    ? projectAccessFor(allProjects.find((p) => p.id === pid) || null, myName, isSuper)
+    : 'modify');
+  const canSeeLibProject = (pid) => libProjectAccess(pid) !== null;
+  const canWriteLibProject = (pid) => libProjectAccess(pid) === 'modify';
+  const myWritableProjects = myProjects.filter((p) => canWriteLibProject(p.id));
+
+  // A project the user cannot open must never stay selected in the library
+  // browser (e.g. a selection left over from another user of this browser).
+  useEffect(() => {
+    if (libProjectId && !canSeeLibProject(libProjectId)) setLibProjectId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [libProjectId, myName, isSuper]);
+
   // ---- which library entry this canvas is, per scope --------------------------
   const canvasEntryIn = (scopeProjectId) => canvasEntries[canvasScopeKey(scopeProjectId)] || null;
   const canvasScopeName = (scopeProjectId) => (scopeProjectId
@@ -374,7 +409,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // ⚖️ panel is open): a figure captured with another profile than the current
   // one is what makes two graphs of one slide look different.
   const styleTag = figureStyleTag(styleProfile);
-  const styleRows = styleAuditOpen ? figureStyleAudit(objects, styleTag, projectId) : [];
+  const styleRows = styleAuditOpen ? figureStyleAudit(objects, styleTag, projectId, canSeeLibProject) : [];
   const styleBad = styleRows.filter((r) => r.status === 'mismatch' || r.status === 'untagged');
   void aspectTick;
 
@@ -416,6 +451,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         scopes.push(['common', null], ['project', im.libProjectId || projectId]);
       }
       for (const [scope, pid] of scopes) {
+        // Never resolve pixels out of a project library this user may not open.
+        if (scope === 'project' && !canSeeLibProject(pid)) continue;
         const lib = scope === 'project' ? readProjectLibrary(pid) : readLibrary();
         const it = lib.find((x) => x.id === im.libId);
         if (it) {
@@ -533,6 +570,15 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // afterwards keeps whatever the user was working on.
   useEffect(() => {
     if (!openCanvasId) return;
+    // A saved canvas that lives in the library of a project this user may not
+    // open is not theirs to load: say so instead of reading that project.
+    if (projectId && !canSeeLibProject(projectId)) {
+      setLibraryTab('project');
+      setLibMsg('🔒 That project’s figures are private to its team — this canvas cannot be opened here.');
+      setShowLibrary(true);
+      if (typeof onCanvasOpened === 'function') onCanvasOpened(openCanvasId);
+      return;
+    }
     const list = projectId ? readProjectLibrary(projectId) : readLibrary();
     const item = list.find((i) => i.id === openCanvasId && i.canvasData);
     if (item) restoreCanvasFromItem(item, { confirm: false, scopeProjectId: projectId || null });
@@ -886,6 +932,12 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     if (!files.length) return;
     const scope = libraryTab; // 'project' | 'common'
     const scopeName = scope === 'project' ? 'project' : 'general (dataset)';
+    // Uploading into a project library writes to that project: edit access is
+    // required (the shared dataset library has no owner to restrict).
+    if (scope === 'project' && !canWriteLibProject(activeLibProjectId)) {
+      setLibMsg('🔒 That project’s figures are private to its team — you cannot add images here.');
+      return;
+    }
     const driveProject = scope === 'project' && activeLibProjectId
       ? (allProjects.find((p) => p.id === activeLibProjectId) || null)
       : null;
@@ -1114,12 +1166,22 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const transferItem = (item) => {
     const from = libraryTab; // 'project' | 'common'
     const to = from === 'project' ? 'common' : 'project';
+    // Moving a figure INTO a project library writes to that project (the same
+    // right the project page asks for before editing it).
+    if (to === 'project' && !canWriteLibProject(projectId)) {
+      setLibMsg('🔒 You do not have edit access to that project’s image library.');
+      return;
+    }
     moveLibraryItem(from, to, libraryTab === 'project' ? activeLibProjectId : projectId, item.id);
     setLibVersion((v) => v + 1);
   };
 
   // Rename / delete a library image.
   const renameLib = (id) => {
+    if (libraryTab === 'project' && !canWriteLibProject(activeLibProjectId)) {
+      setLibMsg('🔒 You do not have edit access to that project’s image library.');
+      return;
+    }
     const current = (libraryTab === 'project' ? readProjectLibrary(activeLibProjectId) : readLibrary()).find((i) => i.id === id);
     const name = window.prompt('Image label:', (current && current.label) || '');
     if (name && name.trim()) {
@@ -1129,6 +1191,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     }
   };
   const deleteLib = (id) => {
+    if (libraryTab === 'project' && !canWriteLibProject(activeLibProjectId)) {
+      setLibMsg('🔒 You do not have edit access to that project’s image library.');
+      return;
+    }
     if (!window.confirm('Delete this image from the library?')) return;
     if (libraryTab === 'project') removeProjectLibraryItem(activeLibProjectId, id);
     else removeLibraryItem(id);
@@ -1148,9 +1214,12 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // stores the returned entry id on the inserted figure → "✏️ Modify in Image
   // Builder").
   const publishCanvas = async ({ label, targetProjectId = projectId || null, dataUrl = null }) => {
+    const target = targetProjectId || null;
+    // Publishing a canvas into a project library writes to that project, so it
+    // needs edit access to it (a 'view' coworker may read it, not write).
+    if (target && !canWriteLibProject(target)) return null;
     const img = dataUrl || await renderToDataUrl(Math.max(3, 1800 / Math.max(1, canvasW)));
     if (!img) return null;
-    const target = targetProjectId || null;
     const driveProject = target ? (allProjects.find((p) => p.id === target) || null) : null;
     const known = canvasEntryIn(target);
     const { entry, drive, updated } = await publishLibraryFigure({
@@ -1185,6 +1254,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       : `Canvas ${new Date().toLocaleDateString()}`);
     setSaveName(fallback);
     setSaveDest(storedScopeCount ? (canvasHome || '') : (projectId || ''));
+    // The dialog only offers the projects this user may WRITE to, so a project
+    // they cannot edit must not stay proposed: fall back to the shared library.
+    const proposed = storedScopeCount ? (canvasHome || '') : (projectId || '');
+    if (!canWriteLibProject(proposed)) setSaveDest('');
     setSaveMsg('');
     setSaveOpen(true);
   };
@@ -1201,7 +1274,12 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     setSaveMsg('📤 Saving the canvas…');
     try {
       const pub = await publishCanvas({ label, targetProjectId: destProjectId, dataUrl: null });
-      if (!pub || !pub.entry) { setSaveMsg('⚠️ Could not save the canvas in the library.'); return; }
+      if (!pub || !pub.entry) {
+        setSaveMsg(destProjectId && !canWriteLibProject(destProjectId)
+          ? '🔒 You do not have edit access to that project’s image library — save into the shared dataset library instead.'
+          : '⚠️ Could not save the canvas in the library.');
+        return;
+      }
       const what = pub.updated ? 'updated' : 'saved';
       const where = destProjectId
         ? `in the “${canvasScopeName(destProjectId)}” image library (Image Library → Project tab — and on that project page under “🖼 Saved canvases”, where it reopens here)`
@@ -1234,6 +1312,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // saving it again updates that very entry — not a copy in another scope.
   const restoreCanvasFromItem = (item, opts = {}) => {
     if (!item || !item.canvasData) return;
+    // Defence in depth: a canvas living in the library of a project this user
+    // may not open is never restored, whoever calls this.
+    const fromProject = opts.scopeProjectId || null;
+    if (fromProject && !canSeeLibProject(fromProject)) {
+      setLibMsg('🔒 That project’s figures are private to its team.');
+      return;
+    }
     if (opts.confirm !== false && !window.confirm(`Replace the current canvas with “${item.label}”?`)) return;
     commitHistory();
     const cd = item.canvasData;
@@ -1368,12 +1453,18 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const [dupInfo, setDupInfo] = useState({ count: 0, msg: '' });
   useEffect(() => {
     if (!styleAuditOpen) return;
-    try { setDupInfo((d) => ({ ...d, count: countRecaptureDuplicates() })); } catch { /* ignore */ }
-  }, [styleAuditOpen, objects, recapNote]);
+    // Only the libraries of the projects this user may open are counted/cleaned:
+    // a maintenance click must not touch another team's project. (The allow-list
+    // is rebuilt from its string form so it can be an effect dependency.)
+    try {
+      const ids = myProjectIdsKey ? myProjectIdsKey.split('|') : [];
+      setDupInfo((d) => ({ ...d, count: countRecaptureDuplicates({ allowedProjectIds: ids }) }));
+    } catch { /* ignore */ }
+  }, [styleAuditOpen, objects, recapNote, myProjectIdsKey]);
   const cleanRecaptureCopies = () => {
-    const res = removeRecaptureDuplicates();
+    const res = removeRecaptureDuplicates({ allowedProjectIds: myProjectIds });
     let left = 0;
-    try { left = countRecaptureDuplicates(); } catch { left = 0; }
+    try { left = countRecaptureDuplicates({ allowedProjectIds: myProjectIds }); } catch { left = 0; }
     setDupInfo({
       count: left,
       msg: res.removed ? `${res.removed} duplicate cop${res.removed === 1 ? 'y' : 'ies'} removed` : 'no duplicate left'
@@ -1898,7 +1989,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // controls of the toolbar and of "Labels & Captions" (see setLetterSizeAll).
   const letterPt = currentLetterPt();
   void libVersion; // re-read the library lists on every transfer (the bump triggers a re-render)
-  const libraryItems = libraryTab === 'project' ? readProjectLibrary(activeLibProjectId) : readLibrary();
+  // The Project tab only ever lists libraries of the projects this user may open
+  // (readVisibleProjectLibrary returns [] otherwise: the entries are not ours to
+  // show, and they are left untouched).
+  const libraryItems = libraryTab === 'project'
+    ? readVisibleProjectLibrary(activeLibProjectId, myProjectIds)
+    : readLibrary();
+  const libProjectBlocked = libraryTab === 'project' && !!activeLibProjectId && !canSeeLibProject(activeLibProjectId);
 
   // Helper to render the SVG content (shared between normal and fullscreen)
   const renderSvg = (svgElRef) => (
@@ -2497,7 +2594,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           <button onClick={() => { setPickMode('replace'); setShowLibrary(true); }}
             title="Open the image library — browse images or upload new ones from your computer (Project or Dataset library)"
             className="bg-teal-600 hover:bg-teal-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">🖼 Image Library</button>
-          <button onClick={() => { setInsertTarget({ projectId: projectId || (allProjects[0] && allProjects[0].id) || '', section: 'background' }); setInsertMsg(''); setInsertOpen(true); }}
+          <button onClick={() => { setInsertTarget({ projectId: (canWriteLibProject(projectId) ? projectId : '') || (myWritableProjects[0] && myWritableProjects[0].id) || '', section: 'background' }); setInsertMsg(''); setInsertOpen(true); }}
             title="Render this composition into a project section (Background / Discussion / Conclusions). The inserted figure keeps a link back to this canvas, so the project page can reopen it here with “✏️ Modify in Image Builder”."
             className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">📤 Insert into project…</button>
           <button onClick={() => setStyleAuditOpen((v) => !v)}
@@ -2803,12 +2900,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                 </div>
               )}
               {libraryTab === 'project' && (
-                <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
+                <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500"
+                  title="Only the projects of your team are listed: the figures of a project are visible to the people who have access to that project (its owner and its authorized people).">
                   Project
                   <select value={activeLibProjectId || 'global'} onChange={(e) => setLibProjectId(e.target.value === 'global' ? null : e.target.value)}
                     className="border border-slate-300 rounded px-2 py-1 text-xs bg-white max-w-[240px]">
                     <option value="global">Current / no project</option>
-                    {allProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    {myProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                 </label>
               )}
@@ -2820,7 +2918,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
               )}
             </div>
             <div className="flex-1 overflow-y-auto p-4 grid grid-cols-3 md:grid-cols-4 gap-4 min-h-0">
-              {libraryItems.length === 0 && <p className="col-span-full text-center text-slate-400 italic">No images in this library yet.</p>}
+              {libraryItems.length === 0 && (
+                <p className="col-span-full text-center text-slate-400 italic">
+                  {libProjectBlocked
+                    ? '🔒 This project’s figures are private to its team.'
+                    : 'No images in this library yet.'}
+                </p>
+              )}
               {libraryItems.map(item => (
                 <div key={item.id} className="border rounded-lg p-2 cursor-pointer hover:border-blue-500 flex flex-col items-center hover:shadow-md transition-all" onClick={() => (pickMode === 'add' ? handleAddImage(item) : handlePickImage(item))}>
                   <img src={item.url} alt={item.label} className="w-full h-24 object-contain bg-slate-50 rounded" />
@@ -2867,8 +2971,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Project
               <select value={insertTarget.projectId} onChange={(e) => setInsertTarget({ ...insertTarget, projectId: e.target.value })}
                 className="border border-slate-300 rounded px-2 py-1.5 text-xs bg-white">
-                {allProjects.length === 0 && <option value="">No projects yet</option>}
-                {allProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                {myWritableProjects.length === 0 && <option value="">No project you can edit</option>}
+                {myWritableProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </label>
             <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Text subsection
@@ -2900,6 +3004,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
               <button
                 onClick={async () => {
                   if (!insertTarget.projectId) { setInsertMsg('⚠️ Choose a project first.'); return; }
+                  // Inserting writes a figure into that project (and, when the link
+                  // is on, a canvas into its image library): edit access required.
+                  if (!canWriteLibProject(insertTarget.projectId)) { setInsertMsg('🔒 You do not have edit access to that project.'); return; }
                   const dataUrl = await renderToDataUrl(Math.max(3, 1800 / canvasW));
                   if (!dataUrl) { setInsertMsg('⚠️ Could not render the composition.'); return; }
                   const projects = loadProjects();
@@ -2971,7 +3078,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
               <select value={saveDest} onChange={(e) => { setSaveDest(e.target.value); setSaveMsg(''); }}
                 className="border border-slate-300 rounded px-2 py-1.5 text-xs bg-white font-normal text-slate-700">
                 <option value="">🌐 Dataset library — shared by every project (Image Library → Dataset tab)</option>
-                {allProjects.map((p) => <option key={p.id} value={p.id}>📁 {p.name} — its Project tab + “🖼 Saved canvases”</option>)}
+                {myWritableProjects.map((p) => <option key={p.id} value={p.id}>📁 {p.name} — its Project tab + “🖼 Saved canvases”</option>)}
               </select>
             </label>
             <p className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded p-2">

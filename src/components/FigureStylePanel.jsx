@@ -3,7 +3,8 @@ import {
   DEFAULT_FIGURE_STYLE, FIGURE_FONT_MIN, FIGURE_FONT_MAX,
   FIGURE_FONT_STEPS, FIGURE_ANGLE_MIN, FIGURE_ANGLE_MAX,
   FIGURE_ASPECT_MIN, FIGURE_ASPECT_MAX, FIGURE_ASPECT_STEPS,
-  FIGURE_DECIMALS_STEPS,
+  FIGURE_DECIMALS_STEPS, FIGURE_KINDS, FIGURE_KIND_FIELDS, FIGURE_KIND_LABELS,
+  figureAspectSummary,
   figureStyleTag, writeFigureStyle
 } from '../utils/figureStyle';
 import { FIGURE_FONT_CHOICES, DEFAULT_CHART_ASPECT_WIDE } from '../utils/chartStyle';
@@ -30,16 +31,27 @@ import { useFigureStyleProfile } from './FigureStyleTools';
    chart (X/Y label style, decimals, scientific notation) — set once here and
    pushed into every chart by the 🎨 button of the experiment page.
 
-   The plot-box RATIO (x-axis length : y-axis length) is the fifth knob: 0 = each
-   chart keeps its own ratio, anything else is imposed on every figure of the
-   page — so the captured figures have the same SHAPE, not only the same
-   characters.
+   The plot-box RATIO (x-axis length : y-axis length) is the fifth knob — and it
+   comes in FOUR flavours, one per KIND of figure (see FIGURE_KINDS):
+     • spectra (NMR, CD, ssNMR)   • per-atom plots
+     • per-residue plots          • graphs (everything else)
+   Each one defaults to 0 = every chart of that kind keeps its own ratio, and
+   anything else is imposed on every figure of that kind of a page — so the
+   captured figures have the same SHAPE, not only the same characters.
 
    The profile is saved in `labFigureStyle` (localStorage, app-wide) and applied
    on an experiment page by the 🎨 button of the ChartStarLayer — "apply the
    style BEFORE the capture", which is the only way a figure captured here and a
    figure captured on another page end up with the same characters.
    ========================================================================= */
+
+// One hint per KIND of figure: what the ratio lands on, and what 0 means.
+const FIGURE_ASPECT_HINTS = {
+  spectra: 'The NMR (imported 1D and simulated 1D / 2D), CD and ssNMR spectra: 1.8 = the wide spectrum box, 3 = a flat strip. 0 = every spectrum keeps the ratio of its own 🎨 Graphical Parameters panel (the 2D spectra keep their own square ratio).',
+  atom: 'The per-atom plots (the NMR and MD “Per-Atom” chart panels): one bar group per atom needs a wider box. 0 = they keep the ratio of their own 🎨 panel.',
+  residue: 'The per-residue plots (the MD per-residue occupancy bars and the other plots whose x axis is the residue number). 0 = they keep the ratio of their own 🎨 panel.',
+  graph: 'Every other figure — time series, bar charts, scatter plots, chromatograms, dose-response curves… 0 = each chart keeps the ratio of its own 🎨 panel. This is the historical “aspect ratio” knob of the profile.'
+};
 
 // Presets set the four sizes at once. The POSTER ones are the values a figure
 // printed at A0 needs (36 / 40 px) — the ticks stay readable when the figure is
@@ -285,14 +297,27 @@ export const FigureStylePanel = () => {
         quick={[0, -30, -45, -60, 30, 45, 60, 90]} quickLabel="°"
         onChange={(v) => set({ tickAngle: v })}
       />
-      <Row
-        label="Aspect ratio — x axis length : y axis length"
-        hint="The shape of the plot box every figure of the page is drawn with: 1 = square, 1.8 = the wide spectrum / chromatogram box, 3 = a flat strip. 0 = every chart keeps the ratio of its own 🎨 Graphical Parameters panel (the 2D spectra keep their own square ratio)."
-        value={profile.aspect} min={FIGURE_ASPECT_MIN} max={FIGURE_ASPECT_MAX} step={0.05}
-        unit=""
-        quick={FIGURE_ASPECT_STEPS} quickLabel="x:y"
-        onChange={(v) => set({ aspect: v })}
-      />
+      {/* ---- ONE plot-box ratio per KIND of figure ------------------------ */}
+      <div className="flex flex-col gap-1 bg-white border border-slate-200 rounded-lg px-3 py-2">
+        <div className="text-xs font-bold text-slate-700">5 · Aspect ratio — x axis length : y axis length</div>
+        <div className="text-[10px] text-slate-500 leading-snug">
+          The profile carries ONE shape per kind of figure, so a page mixing a 1D spectrum with a per-atom
+          bar chart gives each the box it needs. 0 = that kind keeps the ratio of its own 🎨 Graphical
+          Parameters panel; anything else is imposed by the 🎨 Figure style button of the page.
+        </div>
+      </div>
+      {FIGURE_KINDS.map((kind) => (
+        <Row
+          key={kind}
+          label={`Aspect ratio — ${FIGURE_KIND_LABELS[kind]}`}
+          hint={FIGURE_ASPECT_HINTS[kind]}
+          value={profile[FIGURE_KIND_FIELDS[kind]]}
+          min={FIGURE_ASPECT_MIN} max={FIGURE_ASPECT_MAX} step={0.05}
+          unit=""
+          quick={FIGURE_ASPECT_STEPS} quickLabel="x:y"
+          onChange={(v) => set({ [FIGURE_KIND_FIELDS[kind]]: v })}
+        />
+      ))}
 
       <label className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2 cursor-pointer">
         <input
@@ -333,15 +358,19 @@ export const FigureStylePanel = () => {
             rotated x label
           </span>
         </div>
-        <div className="flex items-center gap-2 mt-2">
-          <span className="text-[10px] text-slate-500">Plot box</span>
-          <div className="h-8 border border-slate-400 bg-indigo-100/70"
-            style={{ aspectRatio: String(profile.aspect > 0 ? profile.aspect : DEFAULT_CHART_ASPECT_WIDE) }} />
-          <span className="text-[10px] font-bold text-slate-600">
-            {profile.aspect > 0
-              ? `${profile.aspect} : 1 (x : y)`
-              : `each chart keeps its own (e.g. ${DEFAULT_CHART_ASPECT_WIDE} : 1)`}
-          </span>
+        <div className="flex flex-wrap items-end gap-4 mt-3">
+          {figureAspectSummary(profile).map((a) => (
+            <div key={a.kind} className="flex flex-col items-start gap-1">
+              <span className="text-[9px] font-bold text-slate-500 uppercase">{a.kind}</span>
+              <div className="h-8 border border-slate-400 bg-indigo-100/70"
+                style={{ aspectRatio: String(a.ratio > 0 ? a.ratio : DEFAULT_CHART_ASPECT_WIDE) }} />
+              <span className="text-[9px] font-bold text-slate-600">
+                {a.ratio > 0
+                  ? `${a.ratio} : 1 (x : y)`
+                  : `keeps its own (e.g. ${DEFAULT_CHART_ASPECT_WIDE} : 1)`}
+              </span>
+            </div>
+          ))}
         </div>
       </div>
     </div>

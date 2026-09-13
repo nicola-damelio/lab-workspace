@@ -1881,7 +1881,12 @@ if (customType === 'dosy') {
       ...latestDataRef.current,
       // The Figures & Slides image library (common + every project) is embedded
       // in the HTML save and the weekly Drive backups so a restored file brings
-      // the library back too.
+      // the library back too. NOTE: this is the WHOLE-workspace backup (it also
+      // carries every project and every experiment), so it deliberately keeps
+      // the project libraries the person saving cannot open: filtering them here
+      // would make "Load HTML" erase those projects' figures (the restore
+      // REPLACES the libraries of the file). Visibility is enforced where the
+      // figures are SHOWN — see ImageBuilder/readVisibleProjectLibrary.
       _figuresLibrary: readLibrary(),
       _figuresLibraryProjects: readAllProjectLibraries(),
       projects: loadProjects()
@@ -4683,7 +4688,7 @@ const openDataset = (dset) => {
                 openCanvasId → the saved canvas a project page asked to reopen;
                 onBackToProject → the "📁 Project page" button of the builder. */}
             {currentModule === 'image-builder' && (<ImageBuilderModule
-              projectId={currentProjectId} jumpToTest={jumpToTest}
+              projectId={currentProjectId} jumpToTest={jumpToTest} currentUser={currentUser}
               openCanvasId={(pendingCanvas && pendingCanvas.projectId === (currentProjectId || null)) ? pendingCanvas.canvasId : null}
               onCanvasOpened={() => setPendingCanvas(null)}
               onBackToProject={currentProjectId ? () => setCurrentModule('project-detail') : undefined}

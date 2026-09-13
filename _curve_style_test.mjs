@@ -258,19 +258,39 @@ check('46 every histogram family can interrupt its Y axis', () => {
   // recharts charts: SharedChart draws the scale itself, the others ask for it.
   assert.ok(SAT.includes('const yScale = brokenScale(yBrk);'), 'SharedChart builds the scale');
   assert.ok(SAT.includes('export const AxisBreakMarks'), 'SharedChart draws the ✂ marks');
-  for (const f of ['FlowCytometrySections', 'MDSections', 'NMRSections', 'DockingSections']) {
+  for (const f of ['FlowCytometrySections', 'MDSections', 'NMRSections', 'DockingSections', 'CDSections', 'ssNMRSections']) {
     const s = readFileSync(`./src/components/${f}.jsx`, 'utf8');
     assert.ok(s.includes('brokenAxisProps('), `${f} does not use the shared break helper`);
   }
-  // Chart.js canvases: Plate (IC50 histogram) + NMR fittings (rate histogram).
-  for (const f of ['PlateSections', 'NMRFittingsTestRenderer']) {
+  // Chart.js canvases: every `new Chart(` of a canvas page must spread the break
+  // over its Y scale AND hand it the plotted values — that is what makes the ✂
+  // tick alone enough (the panel placeholders say "from (auto)").
+  for (const f of ['PlateSections', 'NMRFittingsTestRenderer', 'DOSYTestRenderer']) {
     const s = readFileSync(`./src/components/${f}.jsx`, 'utf8');
-    assert.ok(s.includes('brokenAxisScaleOptions(chartCfg, \'y\')'), `${f} does not interrupt the histogram`);
     assert.ok(s.includes("from '../utils/chartJsBrokenAxis'"), `${f} does not import the broken scale`);
+    const canvases = (s.match(/new Chart\(/g) || []).length;
+    const interrupted = (s.match(/\.\.\.brokenAxisScaleOptions\(/g) || []).length;
+    assert.ok(interrupted >= canvases, `${f}: ${canvases} canvas(es) but ${interrupted} interrupted scale(s)`);
+    assert.ok(s.includes('chartJsYValues('), `${f} does not give its values to the automatic break`);
   }
   const cjs = readFileSync('./src/utils/chartJsBrokenAxis.js', 'utf8');
   assert.ok(cjs.includes("static id = 'brokenLinear';"), 'the Chart.js scale type is declared');
   assert.ok(cjs.includes('Chart.register(BrokenLinearScale, brokenAxisPlugin);'), 'and registered');
+});
+check('46b the fitted-parameter histograms interrupt their Y axis too', () => {
+  // CD / ssNMR / NMR "Fitted Parameter Chart": one fitted value can dwarf all the
+  // others (a 4PL EC50 next to the other compounds). The drag-zoom window and a
+  // typed Y range stay master, so the bar chart keeps behaving as before.
+  for (const f of ['CDSections', 'ssNMRSections', 'NMRSections']) {
+    const s = readFileSync(`./src/components/${f}.jsx`, 'utf8');
+    assert.ok(s.includes("brokenAxisProps(cfg, 'y', paramData.map((p) => p.val)"),
+      `${f}'s fitted-parameter histogram ignores the ✂ command`);
+    assert.ok(s.includes('{paramBrkOn && paramBrk.marks}'), `${f} does not draw the ✂ marks`);
+    // …and the per-condition HISTOGRAM (chart type "hist") of the same page.
+    assert.ok(s.includes("brokenAxisProps(cfg, 'y', visibleSeries.flatMap((s) =>"),
+      `${f}'s condition histogram ignores the ✂ command`);
+    assert.ok(s.includes('{histBrkOn && histBrk.marks}'), `${f} does not draw the histogram ✂ marks`);
+  }
 });
 
 check('47 the panel offers the ALONG-AXIS move of each title', () => {

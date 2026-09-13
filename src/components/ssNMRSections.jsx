@@ -7,7 +7,7 @@
 import React, {useState, useEffect, useRef, useMemo} from 'react';
 import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell, ComposedChart} from 'recharts';
-import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, ChartInspector, AngledTick, useXYZoom, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgAxisDomain, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, errorBarRange, instancesLinked, InstanceLinkToggle, deferredClick } from './SharedAnalysisTools';
+import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps, AngledTick, useXYZoom, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgAxisDomain, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, errorBarRange, instancesLinked, InstanceLinkToggle, deferredClick } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor, chartBoxStyle, chartRatioBoxStyle, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf, tickTextProps, tickSize, fontFamilyOf, legendTextStyle, axisTitleSize
 } from '../utils/chartStyle';
@@ -1995,6 +1995,7 @@ export const SpectraVisualization = ({ ctx }) => {
       cfg={cfg}
       setCfg={setCfg}
       series={seriesList}
+      figureKind="spectra"
     >
       {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
       {cfg.title && <h4 className="text-sm font-bold text-slate-700 mb-1">{cfg.title}</h4>}
@@ -2095,7 +2096,7 @@ export const SpectraVisualization = ({ ctx }) => {
                     <h4 className="text-xs font-bold text-slate-600 uppercase truncate w-[80%]" title={s.label}>{s.label}</h4>
                     <button className={fsSmall === s.key ? 'text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5' : 'opacity-0 group-hover:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 rounded p-1 text-xs'} onClick={(e) => { e.stopPropagation(); setFsSmall(fsSmall === s.key ? null : s.key); }}>{fsSmall === s.key ? '↙️' : '↗️'}</button>
                   </div>
-                  <ChartInspector cfg={cfg} setCfg={setCfg}
+                  <ChartInspector cfg={cfg} setCfg={setCfg} figureKind="spectra"
                     series={seriesList.map((x) => ({ key: x.key, label: x.label, color: x.color }))}
                     unit="ppm" className="flex-1 relative min-h-0">
                     <ResponsiveContainer width="100%" height="100%">
@@ -2858,6 +2859,10 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
         ? errorBarRange(histData, visibleSeries.map((s) => s.key))
         : errorBarRange(visibleSeries.flatMap((s) => numData(s)), ['y'], (row) => row.sd, null))
     : null;
+  /* ✂ "Interrupt Y axis" of the 🎨 panel: one condition can dwarf all the others
+     of the histogram. A typed Y range keeps the axis exactly as it is. */
+  const histBrk = brokenAxisProps(cfg, 'y', visibleSeries.flatMap((s) => histData.map((r) => r[s.key])), { min: cfg.yMin, max: cfg.yMax });
+  const histBrkOn = histBrk.on && dom(cfg.yMin) === undefined && dom(cfg.yMax) === undefined;
 
   const makeDot = (color, s) => (props) => {
     const { cx, cy, index } = props;
@@ -2907,6 +2912,11 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
   }, [paramData]);
   const fitChartRef = useRef(null);
   const fitZoom = useYZoom(fitChartRef, paramYDataDomain, cfgChartMargin(cfg, { top: 10, right: 10, bottom: 20, left: 10 }));
+  /* ✂ "Interrupt Y axis" of the 🎨 panel: the histogram of the FITTED parameters
+     can hold one series 100× the others. A typed Y range or a drag-zoom window
+     keeps the axis exactly as it is — the manual window wins over the break. */
+  const paramBrk = brokenAxisProps(cfg, 'y', paramData.map((p) => p.val), { min: cfg.yMin, max: cfg.yMax });
+  const paramBrkOn = paramBrk.on && !fitZoom.isZoomed && dom(cfg.yMin) === undefined && dom(cfg.yMax) === undefined;
 
   const refLines = (
     <>
@@ -3097,7 +3107,7 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
                         <BarChart data={histData} margin={cfgChartMargin(cfg, { top: 8, right: 16, bottom: 30, left: 12 })}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                           <XAxis dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={tickSize(cfg)} fontFamily={fontFamilyOf(cfg)} edgeAnchor={false} />} tickMargin={10} label={cfgAxisLabel(cfg, 'x', 'Condition', 22)} />
-                          <YAxis type="number" domain={[dom(cfg.yMin) ?? errRangeY?.[0] ?? 'auto', dom(cfg.yMax) ?? errRangeY?.[1] ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={tickTextProps(cfg, { fill: '#64748b' })} label={cfgAxisLabel(cfg, 'y', yLab, 6)} />
+                          <YAxis {...(histBrkOn ? { type: 'number', ...histBrk.axisProps } : { type: 'number', domain: [dom(cfg.yMin) ?? errRangeY?.[0] ?? 'auto', dom(cfg.yMax) ?? errRangeY?.[1] ?? 'auto'] })} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={tickTextProps(cfg, { fill: '#64748b' })} label={cfgAxisLabel(cfg, 'y', yLab, 6)} />
                           <Tooltip />
                           {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={legendTextStyle(cfg, { paddingBottom: 10 })} />}
                           {refLines}
@@ -3109,6 +3119,7 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
                               </Bar>
                             );
                           })}
+                          {histBrkOn && histBrk.marks}
                         </BarChart>
                       ) : (
                         <LineChart margin={cfgChartMargin(cfg, { top: 8, right: 16, bottom: 30, left: 12 })}>
@@ -3201,12 +3212,13 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
                         <BarChart data={paramData} margin={cfgChartMargin(cfg, { top: 10, right: 10, bottom: 20, left: 10 })}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} />
                           <XAxis dataKey="name" interval={catInterval(cfg.tickStep)} tickMargin={10} tick={<AngledTick angle={cfg.tickAngle} fontSize={Math.max(9, Number(tickSize(cfg)) - 2)} fontFamily={fontFamilyOf(cfg)} edgeAnchor={false} />} />
-                          <YAxis domain={[dom(cfg.yMin) ?? fitZoom.domain[0], dom(cfg.yMax) ?? fitZoom.domain[1]]} allowDataOverflow tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={tickTextProps(cfg, { fontSize: Math.max(9, Number(tickSize(cfg)) - 2) })} label={cfgAxisLabel(cfg, 'y', paramGraphVar, 0)} />
+                          <YAxis {...(paramBrkOn ? paramBrk.axisProps : { domain: [dom(cfg.yMin) ?? fitZoom.domain[0], dom(cfg.yMax) ?? fitZoom.domain[1]], allowDataOverflow: true })} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={tickTextProps(cfg, { fontSize: Math.max(9, Number(tickSize(cfg)) - 2) })} label={cfgAxisLabel(cfg, 'y', paramGraphVar, 0)} />
                           <Tooltip />
                           <Bar dataKey="val" isAnimationActive={false}>
                             {paramData.map((entry, idx) => <Cell key={idx} fill={entry.fill} />)}
                             {HAS_EB && <ErrorBar dataKey="err" width={4} strokeWidth={1} color="#333" />}
                           </Bar>
+                          {paramBrkOn && paramBrk.marks}
                           {fitZoom.refLo !== null && fitZoom.refHi !== null && <ReferenceArea y1={fitZoom.refLo} y2={fitZoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
                         </BarChart>
                       </ResponsiveContainer>

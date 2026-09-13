@@ -1,28 +1,30 @@
 OK   _axis_aspect_test.cjs  →  ✅ 123/123 checks passed
 OK   _axis_fit_test.cjs  →  ✅ 476/476 checks passed
-OK   _break_test.mjs  →  30/30 checks passed
+OK   _break_test.mjs  →  33/33 checks passed
 OK   _builder_crop_test.cjs  →  ✅ 61/61 checks passed
 OK   _builder_letters_test.cjs  →  ✅ 56/56 checks passed
 OK   _builder_link_test.cjs  →  │ 39      │ '[App] openImageBuilder is passed to the project page: operatorNames={operatorNames} openImageBuild…'       │ 'true'            │ 'true'  
 OK   _builder_pixels_test.cjs  →  ✅ 41/41 checks passed
 OK   _builder_place_test.cjs  →  ✅ 52/52 checks passed
+OK   _builder_zoom_test.cjs  →  ✅ 31/31 checks passed
 OK   _capture_fix_test.mjs  →  passed 70/70
 OK   _chain_test.cjs  →  RESULT: PASS (two chains separated, contacts do not merge them)
-OK   _chart_dblclick_test.cjs  →  ✅ 96/96 checks passed
+OK   _chart_dblclick_test.cjs  →  ✅ 101/101 checks passed
 OK   _cov_check.cjs  →  UNWIRED: none - every editable new Chart( site is wrapped in ChartJsInspector.
-OK   _curve_style_test.mjs  →  │ (index) │ name                                                                        │ ok   │ error │ | ✅ 49/49 checks passed
+OK   _curve_style_test.mjs  →  │ (index) │ name                                                                        │ ok   │ error │ | ✅ 50/50 checks passed
 OK   _docking_sanity.cjs  →  (no output)
 OK   _fcs_restore_match_test.cjs  →  ✅ 7/7 checks passed
 OK   _figure_origin_test.cjs  →  ✅ 64/64 checks passed
-OK   _figure_recapture_test.mjs  →  │ (index) │ name                                                                       │ ok   │ error │ | ✅ 25/25 checks passed
-OK   _figure_style_test.mjs  →  │ (index) │ name                                                                               │ ok   │ error │ | ✅ 31/31 checks passed
+OK   _figure_recapture_test.mjs  →  │ (index) │ name                                                                          │ ok   │ error │ | ✅ 32/32 checks passed
+OK   _figure_style_test.mjs  →  │ (index) │ name                                                                                  │ ok   │ error │ | ✅ 52/52 checks passed
 OK   _new_image_test.cjs  →  ✅ 29/29 checks passed
 OK   _pdb_conect_sanity.cjs  →  (no output)
 OK   _probe_ngl.cjs  →  WROTE _ngl_src/molecularsurface-representation.ts len 10528
+OK   _project_figures_access_test.cjs  →  │ (index) │ name                                                                                                                       │ ok   │ error 
 OK   _rebuild_h_test.mjs  →  PASS
 OK   _spectra_split_test.mjs  →  ✗ [ssNMR] the sub-chart character size follows the page's own chart font | ✗ [CD] the sub-chart character size follows the page's own chart font
 OK   _split_test.cjs  →  (no output)
 OK   _src_split_test.cjs  →  (no output)
 OK   _star_group_test.cjs  →  ✅ 33/33 checks passed
 OK   _view_scroll_memory_test.cjs  →  ✅ 41/41 checks passed
-total 27, failed 0
+total 29, failed 0
