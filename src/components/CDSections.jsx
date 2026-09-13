@@ -2246,7 +2246,7 @@ export const SpectraVisualization = ({ ctx }) => {
     updateActiveTest({ splitSharedY: nv });
     return nv;
   });
-  // The SHAPE of each sub-chart (width : height, 0 = the historical 150 px box)
+  // The SHAPE of each sub-chart (width : height, 0 = the default 375 px box)
   // and the SEPARATION between the graphs (px). Read from the experiment on
   // every render and written straight back — the same value pattern as this
   // page's chart style cfg — so the layout survives a page switch.

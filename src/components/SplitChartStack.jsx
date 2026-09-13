@@ -12,12 +12,13 @@
    styling helpers.
 
    ── THE LAYOUT OF THE STACK: { aspect, gap } ─────────────────────────────
-   Every sub-chart used to be a FIXED 150 px box with no space between the
-   rows — fine for two conditions, cramped for ten (the stack has to be
-   scrolled, and a graph cannot be made flatter than its box allows). The page
-   can now hand the stack a `layout`:
-     • aspect — the WIDTH : HEIGHT ratio of ONE sub-chart (0 = the historical
-       fixed 150 px box). It is applied as `aspect-ratio`, so the graphs grow
+   A sub-chart used to be a FIXED 150 px box with no space between the rows —
+   fine for two conditions, cramped for ten (the stack has to be scrolled, and
+   a graph cannot be made flatter than its box allows). It is now drawn 2.5 ×
+   taller (SPLIT_CHART_H = 375 px — about the height of the overlay chart it is
+   compared against), and the page can hand the stack a `layout`:
+     • aspect — the WIDTH : HEIGHT ratio of ONE sub-chart (0 = the default
+       SPLIT_CHART_H box). It is applied as `aspect-ratio`, so the graphs grow
        and shrink with the width the stack was given. A definite `height` — or
        a `max-height` smaller than the ratio needs — CANCELS `aspect-ratio` in
        the browser, which is why splitChartBoxStyle returns ONE of the two and
@@ -28,24 +29,29 @@
    can neither break the stack nor shrink a graph into a 4 px line.
    <SplitLayoutControls> (bottom of this file) is the pair of knobs the pages
    show in their toolbar — deliberately OUTSIDE the tagged card, so a control
-   can never end up in the captured figure.
+   can never end up in the captured figure. The Flow Cytometry split panel uses
+   the same helpers (its “own” box height is its own Graphical-Parameters
+   height, see splitOwnHeight), so the four split views cannot drift apart.
    ========================================================================= */
 import React from 'react';
 
-// Compact height of a stacked sub-chart (the overlay chart is ~380 px tall).
-// It stays the height of a sub-chart until the page asks for a RATIO
-// (layout.aspect > 0) — see splitChartBoxStyle.
-export const SPLIT_CHART_H = 150;
+// Height of a stacked sub-chart: 2.5 × the 150 px box the stack originally
+// used, i.e. about as tall as the overlay chart it is compared against
+// (~380 px). It stays the height of a sub-chart until the page asks for a
+// RATIO (layout.aspect > 0) — see splitChartBoxStyle.
+export const SPLIT_CHART_H = 375;
 
-// Floor of a RATIO-sized box: an 8 : 1 graph in a narrow column would be
-// shorter than its own axis numbers. A definite `min-height` is allowed next
-// to `aspect-ratio` (only a definite HEIGHT cancels it), so the floor never
-// disables the shape — it only stops it at a readable minimum.
-export const SPLIT_CHART_MIN_H = 72;
+// Floor of a RATIO-sized box (2.5 × the 72 px floor that went with the old
+// 150 px box): an 8 : 1 graph in a narrow column would be shorter than its own
+// axis numbers. A definite `min-height` is allowed next to `aspect-ratio` (only
+// a definite HEIGHT cancels it), so the floor never disables the shape — it
+// only stops it at a readable minimum.
+export const SPLIT_CHART_MIN_H = 180;
 
 export const SPLIT_ASPECT_MIN = 0.5;
 export const SPLIT_ASPECT_MAX = 8;
-// The one-click shapes of <SplitLayoutControls>; 0 / “own” is the 150 px box.
+// The one-click shapes of <SplitLayoutControls>; 0 / “own” is the
+// SPLIT_CHART_H (375 px) box.
 export const SPLIT_ASPECT_STEPS = [1, 1.25, 1.5, 2, 2.5, 3, 4, 6];
 export const SPLIT_GAP_MIN = 0;
 export const SPLIT_GAP_MAX = 48;
@@ -76,14 +82,29 @@ export const withSplitLayout = (exp, patch) =>
   normalizeSplitLayout({ ...splitLayoutOf(exp), ...(patch || {}) });
 
 /**
- * The style of ONE sub-chart box: the ratio when one was asked for, the
- * historical fixed height otherwise — never both, because a definite `height`
- * silently wins over `aspect-ratio` and the shape knob would look ignored.
+ * The height of the “own” box: SPLIT_CHART_H, unless the page hosts its
+ * sub-charts with a height of its own. The Flow Cytometry split panel is that
+ * host — its mini charts are sized by the `height` of its own Graphical
+ * Parameters (vizCfgSplit), so “own” there must keep meaning “the height I set
+ * in that panel” and not silently override it with the 375 px of the spectra
+ * stacks. Anything unusable (missing / empty / non-positive) falls back to
+ * SPLIT_CHART_H, so a stored or typed value can never collapse a graph.
  */
-export const splitChartBoxStyle = (layout = {}) => {
+export const splitOwnHeight = (baseHeight = SPLIT_CHART_H) => {
+  const n = numberOf(baseHeight);
+  return n > 0 ? n : SPLIT_CHART_H;
+};
+
+/**
+ * The style of ONE sub-chart box: the ratio when one was asked for, the “own”
+ * fixed height (splitOwnHeight) otherwise — never both, because a definite
+ * `height` silently wins over `aspect-ratio` and the shape knob would look
+ * ignored.
+ */
+export const splitChartBoxStyle = (layout = {}, baseHeight = SPLIT_CHART_H) => {
   const { aspect } = normalizeSplitLayout(layout);
   if (aspect > 0) return { width: '100%', aspectRatio: String(aspect), minHeight: SPLIT_CHART_MIN_H };
-  return { width: '100%', height: SPLIT_CHART_H };
+  return { width: '100%', height: splitOwnHeight(baseHeight) };
 };
 
 /**
@@ -163,8 +184,12 @@ export const SplitToggle = ({ on, onToggle, sharedY = null, onToggleSharedY = nu
             older session — stays SELECTABLE, so opening the page never snaps a
             deliberate shape to another one.
      Gap    the vertical separation between two rows, 0 – SPLIT_GAP_MAX px. */
-export const SplitLayoutControls = ({ layout = null, onChange, className = '' }) => {
+export const SplitLayoutControls = ({ layout = null, onChange, className = '', baseHeight = SPLIT_CHART_H }) => {
   const { aspect, gap } = normalizeSplitLayout(layout);
+  // The height of the “own” box as the HOST page sizes it (SPLIT_CHART_H for
+  // the spectra stacks, the Flow Cytometry split panel's own `height` there),
+  // so the knob says what “own” really is — see splitOwnHeight.
+  const ownHeight = splitOwnHeight(baseHeight);
   // The number field keeps what was TYPED while it is being typed: a numeric
   // `value` would swallow the decimal point of “2.5” (see FigureStylePanel,
   // which keeps the same draft). It is dropped on blur, i.e. when the field is
@@ -177,11 +202,11 @@ export const SplitLayoutControls = ({ layout = null, onChange, className = '' })
   return (
     <div className={`flex items-center gap-2 flex-wrap ${className}`}>
       <label className="flex items-center gap-1 text-xs font-bold text-slate-700"
-             title="Width : height of every stacked graph — “own” keeps the compact 150 px box">
+             title={`Width : height of every stacked graph — “own” keeps the ${ownHeight} px box this figure already has`}>
         <span className="text-slate-500">Shape</span>
         <select value={String(aspect)} onChange={(e) => set({ aspect: Number(e.target.value) })}
                 className="border border-slate-300 rounded px-1 py-0.5 text-[11px] font-bold bg-white text-slate-700 outline-none focus:border-blue-500">
-          <option value="0">own (150 px)</option>
+          <option value="0">own ({ownHeight} px)</option>
           {shapes.map((a) => <option key={a} value={String(a)}>{a} : 1</option>)}
         </select>
       </label>

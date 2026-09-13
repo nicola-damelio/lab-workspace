@@ -9,8 +9,8 @@
 //     ONE ⭐ / 📷 item → the split figure is captured / starred / saved as a
 //     SINGLE image (the Image Builder then places it as one block),
 //   • and the stack follows the page's LAYOUT — the width : height ratio of one
-//     sub-chart (0 = the historical fixed 150 px box) and the vertical
-//     separation between two graphs (see SplitLayoutControls).
+//     sub-chart (0 = the default 375 px box, 2.5 × the 150 px it started at)
+//     and the vertical separation between two graphs (see SplitLayoutControls).
 //
 // The shared component is imported for REAL (transformed with the project's own
 // bundler, rolldown) and rendered with react-dom/server, so its structure is
@@ -40,9 +40,10 @@ const { output } = await bundle.generate({ format: 'esm' });
 const bundleFile = 'tmp_splitstack_bundle.mjs';
 fs.writeFileSync(bundleFile, output.map((o) => o.code).join('\n'), 'utf8');
 const {
-  SplitChartStack, SplitToggle, SplitLayoutControls, SPLIT_CHART_H,
+  SplitChartStack, SplitToggle, SplitLayoutControls, SPLIT_CHART_H, SPLIT_CHART_MIN_H,
   SPLIT_ASPECT_STEPS, SPLIT_GAP_MAX,
-  splitChartBoxStyle, splitRowGapStyle, splitLayoutOf, withSplitLayout, normalizeSplitLayout
+  splitChartBoxStyle, splitRowGapStyle, splitLayoutOf, withSplitLayout, normalizeSplitLayout,
+  splitOwnHeight
 } = await import(`./${bundleFile}`);
 
 const SERIES = [
@@ -76,7 +77,10 @@ checkTrue('[stack] each row carries the series colour', html.includes('backgroun
 checkTrue('[stack] the inner scroller is expandable by the capture', html.includes('overflow-y-auto'));
 checkTrue('[stack] …and bounded on screen', html.includes('max-h-[70vh]'));
 check('[stack] an empty stack does not throw', empty.includes('data-star-group="nmr-split"'), true);
-checkTrue('[stack] the compact sub-chart height is exported', Number(SPLIT_CHART_H) > 80);
+/* Each graph is 2.5 × taller than the 150 px box the stack started with, and
+   the ratio floor scaled with it (see SPLIT_CHART_H / SPLIT_CHART_MIN_H). */
+check('[stack] a sub-chart is 2.5 × the 150 px box it started with', SPLIT_CHART_H, 375);
+check('[stack] …and its ratio floor scaled with it', SPLIT_CHART_MIN_H, 180);
 
 /* ── 3. the Split / Same Y controls ─────────────────────────────────────── */
 const toggles = (sharedY) => renderToStaticMarkup(React.createElement(SplitToggle, {
@@ -92,7 +96,7 @@ checkTrue('[toggle] explains what split does', withShared.includes('stacked vert
 
 /* ── 3b. the SHAPE of a sub-chart + the SEPARATION between the graphs ─────
    `layout = { aspect, gap }`: the ratio each sub-chart box is drawn with
-   (0 = the historical fixed 150 px box) and the space inserted between two
+   (0 = the default 375 px box) and the space inserted between two
    stacked graphs. Both are clamped, and the two knobs live OUTSIDE the tagged
    card — a control must never end up in the captured figure. */
 const spaced = renderToStaticMarkup(React.createElement(SplitChartStack, {
@@ -104,12 +108,25 @@ check('[layout] the graphs are separated by the layout', (spaced.match(/margin-b
 check('[layout] the default stack carries no separator at all', html.includes('margin-bottom'), false);
 check('[layout] a control is never part of the captured figure',
   spaced.includes('Shape') || spaced.includes('>Gap<'), false);
-check('splitChartBoxStyle keeps the historical box by default',
-  splitChartBoxStyle(null), { width: '100%', height: 150 });
+check('splitChartBoxStyle keeps the default box when no shape was asked for',
+  splitChartBoxStyle(null), { width: '100%', height: 375 });
 check('splitChartBoxStyle sizes the box by the ratio when asked',
-  splitChartBoxStyle({ aspect: 2 }), { width: '100%', aspectRatio: '2', minHeight: 72 });
+  splitChartBoxStyle({ aspect: 2 }), { width: '100%', aspectRatio: '2', minHeight: 180 });
 check('[layout] a definite height and a ratio are never mixed',
   'height' in splitChartBoxStyle({ aspect: 2 }), false);
+// A HOST page may size its own “own” box: the Flow Cytometry split panel draws
+// its mini charts with the height of its own Graphical Parameters, so the knob
+// there has to keep meaning “the height I set in that panel”. The ratio still
+// beats it, and an unusable value falls back to the default box.
+check('[layout] the “own” box can be the height the host page uses',
+  splitChartBoxStyle(null, 200), { width: '100%', height: 200 });
+check('[layout] …and the ratio still beats it',
+  splitChartBoxStyle({ aspect: 4 }, 200), { width: '100%', aspectRatio: '4', minHeight: 180 });
+check('[layout] an unusable host height falls back to the default box',
+  [splitChartBoxStyle(null, ''), splitChartBoxStyle(null, 0), splitChartBoxStyle(null, 'abc')],
+  [{ width: '100%', height: 375 }, { width: '100%', height: 375 }, { width: '100%', height: 375 }]);
+check('[layout] the host height is a plain number',
+  [splitOwnHeight(200), splitOwnHeight(), splitOwnHeight('240')], [200, 375, 240]);
 check('[layout] the ratio is clamped', normalizeSplitLayout({ aspect: 99, gap: 999 }), { aspect: 8, gap: 48 });
 check('[layout] …and a nonsense value falls back to “own”',
   normalizeSplitLayout({ aspect: 'abc', gap: -5 }), { aspect: 0, gap: 0 });
@@ -130,7 +147,13 @@ const controls = (layout) => renderToStaticMarkup(React.createElement(SplitLayou
   layout, onChange: () => {}
 }));
 const plain = controls(null);
-checkTrue('[controls] offers “own”, the compact box', plain.includes('own (150 px)'));
+checkTrue('[controls] offers “own”, the default box', plain.includes('own (375 px)'));
+// …and says what “own” really is on a page that sizes its own box.
+const hosted = renderToStaticMarkup(React.createElement(SplitLayoutControls, {
+  layout: null, onChange: () => {}, baseHeight: 200
+}));
+checkTrue('[controls] names the “own” box of the host page',
+  hosted.includes('own (200 px)') && hosted.includes('200 px box'));
 checkTrue('[controls] offers the one-click shapes', />2 : 1</.test(plain));
 checkTrue('[controls] offers the separation', plain.includes('Gap') && /\d+ px/.test(plain));
 checkTrue('[controls] shows the stored gap', controls({ gap: 20 }).includes('20 px'));
@@ -230,6 +253,37 @@ checkTrue('[FCS] keeps its own split panel', FCS.includes('data-star-group="fcs-
 const ids = ['fcs-split', ...PAGES.map((p) => p.id)];
 check('the four panels have distinct ids', new Set(ids).size, 4);
 check('[FCS] is not double-tagged by this change', FCS.split('data-star-group=').length - 1, 1);
+
+/* ── 7. that panel gets the SAME shape + separation knobs ───────────────── */
+// The mini charts of the Flow Cytometry split view follow the very same
+// { aspect, gap } layout as the spectra stacks (one `splitLayout` key on the
+// experiment, so the four split views of a test share one shape), with the
+// panel's own “Height” as the size of its “own” box.
+checkTrue('[FCS] imports the shared knobs', FCS.includes(
+  "import { SplitLayoutControls, splitChartBoxStyle, splitRowGapStyle, splitLayoutOf, withSplitLayout, splitOwnHeight } from './SplitChartStack';"));
+checkTrue('[FCS] the layout is read from the experiment',
+  FCS.includes('const splitLayout = splitLayoutOf(activeTest);'));
+checkTrue('[FCS] …and written straight back',
+  FCS.includes('const changeSplitLayout = (patch) => updateActiveTest({ splitLayout: withSplitLayout(activeTest, patch) });'));
+checkTrue('[FCS] “own” is the height of its own Graphical Parameters',
+  FCS.includes('const splitOwnBoxH = splitOwnHeight(cfgSplit.height);'));
+checkTrue('[FCS] the panel offers the shape + separation knobs',
+  FCS.includes('<SplitLayoutControls layout={splitLayout} onChange={changeSplitLayout} baseHeight={splitOwnBoxH} />'));
+checkTrue('[FCS] every mini chart is sized by the shared layout helper',
+  FCS.includes('splitChartBoxStyle(splitLayout, splitOwnBoxH)'));
+checkTrue('[FCS] …handed to the box of every sub-chart', FCS.includes('style={splitBoxStyle}'));
+checkTrue('[FCS] the chart then fills that box', FCS.includes('<ResponsiveContainer width="100%" height="100%">'));
+check('[FCS] no fixed height is left on a mini chart',
+  FCS.includes('height={Number(cfgSplit.height) || 80}'), false);
+checkTrue('[FCS] the graphs are separated by the layout', FCS.includes('style={splitRowGap}'));
+checkTrue('[FCS] …a 0 gap leaving the hairlines alone',
+  FCS.includes('const splitRowGap = splitRowGapStyle(splitLayout);'));
+checkTrue('[FCS] the knobs are OUTSIDE the captured panel',
+  FCS.indexOf('<SplitLayoutControls') < FCS.indexOf('data-star-group="fcs-split"'));
+checkTrue('[FCS] …and so is its parameter panel',
+  FCS.indexOf('{showCfgSplit && (') > FCS.indexOf('data-star-group="fcs-split"'));
+checkTrue('[FCS] the stacked curves start 2.5 × taller than they were',
+  FCS.includes('height: 200, aspect: 1, fontSize: 11'));
 
 /* ── report ─────────────────────────────────────────────────────────────── */
 try { fs.unlinkSync(bundleFile); } catch { /* ignore */ }

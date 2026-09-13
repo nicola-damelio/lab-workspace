@@ -10,14 +10,19 @@ import { ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES, seriesColorFor, tickSize, fontFamilyOf, chartRatioBoxStyle, tickColorOf, axisTitleColorOf
 } from '../utils/chartStyle';
+import { SplitLayoutControls, splitChartBoxStyle, splitRowGapStyle, splitLayoutOf, withSplitLayout, splitOwnHeight } from './SplitChartStack';
 import { PLATES_DEF, formatConc, getRegionColor } from '../data/constants';
 export { VIS_PALETTES };
 
 const COLORS = VIS_PALETTES.default;
 const DEFAULT_CHART_STYLE = { height: 380, aspect: 1, fontSize: 16, tickStep: '', tickAngle: 0, ptStyle: 'circle', ptSize: 5, lineStyle: 'solid', lineThickness: 2, legend: 'top', colors: {}, barRadius: 3, xMin: '', xMax: '', yMin: '', yMax: '', xAxisLabel: '', yAxisLabel: '' };
-// Compact defaults for the "Split view — single curves" mini charts (own
-// Graphical Parameters panel, saved in vizCfgSplit).
-const DEFAULT_SPLIT_STYLE = { height: 80, aspect: 1, fontSize: 11, tickStep: '', tickAngle: 0, ptStyle: 'circle', ptSize: 4, lineStyle: 'solid', lineThickness: 2, legend: 'none', colors: {}, barRadius: 2, xMin: '', xMax: '', yMin: '', yMax: '', xAxisLabel: '', yAxisLabel: '' };
+// Defaults for the "Split view — single curves" mini charts (own Graphical
+// Parameters panel, saved in vizCfgSplit). The box starts 2.5 × taller than the
+// 80 px it used to be — the spectra split stacks are 2.5 × taller too
+// (SPLIT_CHART_H = 375 px) — so a curve split off the overlay is as readable as
+// the overlay it is compared with; the Shape knob of the panel can flatten it
+// again, and “Height” in this panel still sets the “own” box.
+const DEFAULT_SPLIT_STYLE = { height: 200, aspect: 1, fontSize: 11, tickStep: '', tickAngle: 0, ptStyle: 'circle', ptSize: 4, lineStyle: 'solid', lineThickness: 2, legend: 'none', colors: {}, barRadius: 2, xMin: '', xMax: '', yMin: '', yMax: '', xAxisLabel: '', yAxisLabel: '' };
 // FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES now live in ../utils/chartStyle.
 // CollapsibleSection now lives in ./ui (single shared definition).
 
@@ -639,6 +644,19 @@ export const FCSOverlayVisualization = ({ ctx }) => {
   const setVizCfgSplit = (patch) => updateActiveTest({ vizCfgSplit: { ...vizCfgSplit, ...patch } });
   const cfgSplit = { ...DEFAULT_SPLIT_STYLE, ...vizCfgSplit };
   const [showCfgSplit, setShowCfgSplit] = useState(false);
+  // The SHAPE of each stacked mini chart (width : height, 0 = the panel's own
+  // “Height”) and the SEPARATION between the graphs (px). Read from the
+  // experiment on every render and written straight back — the same value
+  // pattern, and the same `splitLayout` key, as the NMR / ssNMR / CD split
+  // stacks, so the layout survives a page switch and the four split views of an
+  // experiment share one shape.
+  const splitLayout = splitLayoutOf(activeTest);
+  const changeSplitLayout = (patch) => updateActiveTest({ splitLayout: withSplitLayout(activeTest, patch) });
+  // “own” is THIS panel's height (its Graphical Parameters “Height” knob):
+  // splitOwnHeight guards a missing / empty / hand-edited value.
+  const splitOwnBoxH = splitOwnHeight(cfgSplit.height);
+  const splitBoxStyle = splitChartBoxStyle(splitLayout, splitOwnBoxH);
+  const splitRowGap = splitRowGapStyle(splitLayout);
 
   const [fs, setFs] = useState(false);
   const [showCfg, setShowCfg] = useState(false);
@@ -928,47 +946,65 @@ export const FCSOverlayVisualization = ({ ctx }) => {
               ONE ⭐/📷 item (`data-star-group`), so the split figure can be
               starred / saved as a single image; each sub-graph keeps its own. */}
           {splitStack && (
-            <div
-              data-star-group="fcs-split"
-              data-star-label="Split view — single curves"
-              className={`flex flex-col gap-2 min-w-0 ${fs ? 'w-[46%]' : 'w-full lg:w-[46%]'}`}>
-              <div className={`bg-white rounded border border-slate-200 flex flex-col overflow-hidden ${fs ? 'min-h-0 flex-1' : 'max-h-[560px]'}`}>
-              <div className="shrink-0 px-2.5 py-1.5 bg-slate-100 border-b border-slate-200 text-[10px] font-black uppercase tracking-wide text-slate-500 flex items-center justify-between gap-2">
-                <span className="flex items-center gap-2">
-                  📚 Split view — single curves
-                  <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600 cursor-pointer normal-case"
-                         title="Use the same Y scale on every stacked graph">
-                    <input type="checkbox" checked={splitSharedY} onChange={toggleSplitSharedY} className="w-3 h-3 accent-blue-600" /> Same Y
-                  </label>
-                  <ChartControlBar showCfg={showCfgSplit} onToggleCfg={() => setShowCfgSplit(!showCfgSplit)} />
-                </span>
-                <span className="text-slate-400">{visibleInstances.length} {visibleInstances.length === 1 ? 'curve' : 'curves'}</span>
-              </div>
-              <div className="overflow-y-auto custom-scrollbar flex-1">
-                {visibleInstances.map((s, i) => (
-                  <div key={s.id} className="border-b border-slate-100 last:border-b-0">
-                    <div className="px-2.5 pt-1.5 pb-0.5 text-[10px] font-bold truncate flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
-                      <span className="text-slate-700 truncate">{s.name}</span>
+            // The panel AND the two knobs that shape it. The knobs sit OUTSIDE
+            // the tagged element (a group snapshot captures the tagged element
+            // as a whole), so a control can never end up in the captured figure
+            // — the very rule the spectra split stacks follow.
+            <div className={`flex flex-col gap-2 min-w-0 ${fs ? 'w-[46%] min-h-0' : 'w-full lg:w-[46%]'}`}>
+              <SplitLayoutControls layout={splitLayout} onChange={changeSplitLayout} baseHeight={splitOwnBoxH} />
+              <div
+                data-star-group="fcs-split"
+                data-star-label="Split view — single curves"
+                className={`flex flex-col gap-2 min-w-0 ${fs ? 'min-h-0 flex-1' : ''}`}>
+                <div className={`bg-white rounded border border-slate-200 flex flex-col overflow-hidden ${fs ? 'min-h-0 flex-1' : 'max-h-[560px]'}`}>
+                <div className="shrink-0 px-2.5 py-1.5 bg-slate-100 border-b border-slate-200 text-[10px] font-black uppercase tracking-wide text-slate-500 flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2">
+                    📚 Split view — single curves
+                    <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600 cursor-pointer normal-case"
+                           title="Use the same Y scale on every stacked graph">
+                      <input type="checkbox" checked={splitSharedY} onChange={toggleSplitSharedY} className="w-3 h-3 accent-blue-600" /> Same Y
+                    </label>
+                    <ChartControlBar showCfg={showCfgSplit} onToggleCfg={() => setShowCfgSplit(!showCfgSplit)} />
+                  </span>
+                  <span className="text-slate-400">{visibleInstances.length} {visibleInstances.length === 1 ? 'curve' : 'curves'}</span>
+                </div>
+                <div className="overflow-y-auto custom-scrollbar flex-1">
+                  {visibleInstances.map((s, i) => (
+                    // The SEPARATION between two graphs: the extra space the
+                    // layout asks for (undefined at 0 → the hairlines alone,
+                    // exactly as it always was) — see splitRowGapStyle.
+                    <div key={s.id} className="border-b border-slate-100 last:border-b-0" style={splitRowGap}>
+                      <div className="px-2.5 pt-1.5 pb-0.5 text-[10px] font-bold truncate flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
+                        <span className="text-slate-700 truncate">{s.name}</span>
+                      </div>
+                      {/* The box of ONE mini chart. Its SHAPE is the one the panel
+                          asks for — a width : height ratio, or this panel's own
+                          “Height”, never both (a definite height cancels a
+                          ratio) — and the chart then fills the box. */}
+                      <ChartInspector cfg={cfgSplit} setCfg={setVizCfgSplit}
+                        series={visibleInstances.map(x => ({ key: x.id, label: x.name, color: x.color }))} unit="a.u."
+                        className="w-1/2 mx-auto pb-1"
+                        style={splitBoxStyle}>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <ComposedChart data={chartData.bins} margin={cfgChartMargin(cfgSplit, { top: 2, right: 4, left: 0, bottom: 0 })}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                            <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow hide={i < visibleInstances.length - 1} tickFormatter={cfgTickFormatter(cfgSplit, 'x') || undefined} tick={{ fontSize: Math.max(9, Number(cfgSplit.fontSize) || 11), fill: tickColorOf(cfgSplit) }} />
+                            <YAxis tickFormatter={cfgTickFormatter(cfgSplit, 'y') || undefined} tick={{ fontSize: Math.max(9, Number(cfgSplit.fontSize) || 11), fill: tickColorOf(cfgSplit) }} width={Math.max(30, (Number(cfgSplit.fontSize) || 11) + 22)} domain={splitSharedY ? [0, chartData.maxCount] : [0, 'auto']} />
+                            {fillHist && <Area type="monotone" dataKey={smoothHist ? s.id + '_sm' : s.id} name={s.name} stroke="none" fill={cfgSplit.colors?.[s.id] || s.color} fillOpacity={Number(cfgSplit.areaOpacity ?? 0.3)} isAnimationActive={false} />}
+                            {cfgSeriesEl(cfgSplit, { key: s.id, data: chartData.bins, dataKey: s.id, name: s.name, stroke: cfgSplit.colors?.[s.id] || s.color })}
+                            {smoothHist && <Line type="monotone" dataKey={s.id + '_sm'} name={`${s.name} (smooth)`} stroke={cfgSplit.colors?.[s.id] || s.color} strokeWidth={cfgSplit.lineThickness || 2} strokeDasharray={cfgSplit.lineStyle === 'dashed' ? '7 5' : cfgSplit.lineStyle === 'dotted' ? '2 3' : undefined} dot={false} isAnimationActive={false} />}
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                      </ChartInspector>
                     </div>
-                    <ChartInspector cfg={cfgSplit} setCfg={setVizCfgSplit}
-                      series={visibleInstances.map(x => ({ key: x.id, label: x.name, color: x.color }))} unit="a.u."
-                      className="w-1/2 mx-auto pb-1">
-                      <ResponsiveContainer width="100%" height={Number(cfgSplit.height) || 80}>
-                        <ComposedChart data={chartData.bins} margin={cfgChartMargin(cfgSplit, { top: 2, right: 4, left: 0, bottom: 0 })}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                          <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow hide={i < visibleInstances.length - 1} tickFormatter={cfgTickFormatter(cfgSplit, 'x') || undefined} tick={{ fontSize: Math.max(9, Number(cfgSplit.fontSize) || 11), fill: tickColorOf(cfgSplit) }} />
-                          <YAxis tickFormatter={cfgTickFormatter(cfgSplit, 'y') || undefined} tick={{ fontSize: Math.max(9, Number(cfgSplit.fontSize) || 11), fill: tickColorOf(cfgSplit) }} width={Math.max(30, (Number(cfgSplit.fontSize) || 11) + 22)} domain={splitSharedY ? [0, chartData.maxCount] : [0, 'auto']} />
-                          {fillHist && <Area type="monotone" dataKey={smoothHist ? s.id + '_sm' : s.id} name={s.name} stroke="none" fill={cfgSplit.colors?.[s.id] || s.color} fillOpacity={Number(cfgSplit.areaOpacity ?? 0.3)} isAnimationActive={false} />}
-                          {cfgSeriesEl(cfgSplit, { key: s.id, data: chartData.bins, dataKey: s.id, name: s.name, stroke: cfgSplit.colors?.[s.id] || s.color })}
-                          {smoothHist && <Line type="monotone" dataKey={s.id + '_sm'} name={`${s.name} (smooth)`} stroke={cfgSplit.colors?.[s.id] || s.color} strokeWidth={cfgSplit.lineThickness || 2} strokeDasharray={cfgSplit.lineStyle === 'dashed' ? '7 5' : cfgSplit.lineStyle === 'dotted' ? '2 3' : undefined} dot={false} isAnimationActive={false} />}
-                        </ComposedChart>
-                      </ResponsiveContainer>
-                    </ChartInspector>
-                  </div>
-                ))}
+                  ))}
+                </div>
+                </div>
               </div>
-              </div>
+              {/* The mini charts' own Graphical Parameters panel — a CONTROL, so
+                  it lives outside the tagged element too: its rows never end up
+                  in a captured split figure. */}
               {showCfgSplit && (
                 <SharedChartStylePanel cfg={cfgSplit} setCfg={setVizCfgSplit} series={visibleInstances.map(s => ({ key: s.id, label: s.name, color: s.color }))} unit="a.u." />
               )}
