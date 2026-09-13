@@ -922,8 +922,14 @@ export const FCSOverlayVisualization = ({ ctx }) => {
             </ResponsiveContainer>
           </ChartInspector>
 
+          {/* Split view — the whole stack is offered to the ChartStarLayer as
+              ONE ⭐/📷 item (`data-star-group`), so the split figure can be
+              starred / saved as a single image; each sub-graph keeps its own. */}
           {splitStack && (
-            <div className={`flex flex-col gap-2 min-w-0 ${fs ? 'w-[46%]' : 'w-full lg:w-[46%]'}`}>
+            <div
+              data-star-group="fcs-split"
+              data-star-label="Split view — single curves"
+              className={`flex flex-col gap-2 min-w-0 ${fs ? 'w-[46%]' : 'w-full lg:w-[46%]'}`}>
               <div className={`bg-white rounded border border-slate-200 flex flex-col overflow-hidden ${fs ? 'min-h-0 flex-1' : 'max-h-[560px]'}`}>
               <div className="shrink-0 px-2.5 py-1.5 bg-slate-100 border-b border-slate-200 text-[10px] font-black uppercase tracking-wide text-slate-500 flex items-center justify-between gap-2">
                 <span className="flex items-center gap-2">

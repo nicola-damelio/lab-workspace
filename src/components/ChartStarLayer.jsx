@@ -20,9 +20,14 @@ import { loadProjects } from './AppModules/projectsModule';
 
    Elements inside `[data-star-key]` are skipped — those already have a
    hand-placed, captioned ⭐ (figures grid, DOSY plot/tables).
+
+   A block that stacks SEVERAL sub-graphs inside one card can additionally be
+   offered as a single item by tagging it `data-star-group` (an optional
+   `data-star-label` names it): the layer then shows one extra ⭐/📷 pair for
+   the whole panel, while the sub-graphs keep their own buttons.
    ========================================================================= */
 
-const KIND_LABEL = { canvas: 'Chart', img: 'Image', table: 'Table', svg: 'Chart' };
+const KIND_LABEL = { canvas: 'Chart', img: 'Image', table: 'Table', svg: 'Chart', group: 'Panel' };
 
 // Nearest ancestor container that has a heading → used as the item's label.
 const headingText = (el, root) => {
@@ -71,6 +76,55 @@ const svgToDataUrl = (svg) => {
 };
 const nextFrames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
+// Composite snapshot of a `data-star-group` block — several sub-graphs living
+// in ONE card (e.g. the Flow Cytometry "📚 Split view — single curves" panel).
+// Its sub-graphs are live DOM + SVG, so html2canvas renders exactly what is on
+// screen. Inner scrollers (`max-h-[…]` + `overflow-y-auto`) are expanded for
+// the capture so the figure holds EVERY sub-graph, not only the ones currently
+// scrolled into view. html2canvas is imported on demand: it is only needed for
+// these panels and stays out of the test-page bundle until one is captured.
+const htmlToDataUrl = async (el) => {
+  if (!el) return '';
+  let html2canvas = null;
+  try { ({ default: html2canvas } = await import('html2canvas')); } catch { return ''; }
+  if (typeof html2canvas !== 'function') return '';
+  const restore = [];
+  const expand = (n) => {
+    if (!n || !n.style || typeof window === 'undefined') return;
+    let cs = null;
+    try { cs = window.getComputedStyle(n); } catch { cs = null; }
+    if (!cs) return;
+    const scrolls = /auto|scroll/.test(`${cs.overflowY} ${cs.overflow}`);
+    if (!scrolls && cs.maxHeight === 'none') return;
+    restore.push({ n, maxHeight: n.style.maxHeight, overflow: n.style.overflow, overflowY: n.style.overflowY });
+    n.style.maxHeight = 'none';
+    n.style.overflow = 'visible';
+    n.style.overflowY = 'visible';
+  };
+  expand(el);
+  try { el.querySelectorAll('*').forEach(expand); } catch { /* ignore */ }
+  try {
+    await nextFrames();
+    // Cap the long edge at ~1400 px so a tall panel cannot produce an image
+    // too heavy for the project document / figures library.
+    const rect = el.getBoundingClientRect();
+    const scale = Math.max(1, Math.min(2, 1400 / Math.max(1, Math.max(rect.width, rect.height))));
+    const canvas = await html2canvas(el, {
+      scale, useCORS: true, backgroundColor: '#ffffff', logging: false, imageTimeout: 15000
+    });
+    return canvas.toDataURL('image/png');
+  } catch {
+    return '';
+  } finally {
+    restore.forEach(({ n, maxHeight, overflow, overflowY }) => {
+      n.style.maxHeight = maxHeight;
+      n.style.overflow = overflow;
+      n.style.overflowY = overflowY;
+    });
+    await nextFrames();
+  }
+};
+
 // High-resolution snapshot of the CURRENT rendered state of an element:
 // • svg    → serialized as-is (vector — keeps axis labels, zoom/pan transforms)
 // • img    → the current source URL (resolved to a self-contained data URL by
@@ -80,6 +134,7 @@ const nextFrames = () => new Promise((r) => requestAnimationFrame(() => requestA
 //            any other canvas is captured at its native pixel resolution.
 const captureFigure = async (el, kind) => {
   if (!el) return '';
+  if (kind === 'group') return htmlToDataUrl(el);
   if (kind === 'svg') return svgToDataUrl(el);
   if (kind === 'img') return el.currentSrc || el.src || '';
   if (kind === 'canvas') {
@@ -385,6 +440,23 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
     if (!rootEl) return;
     const found = [];
     const counts = {};
+    // Composite panels (`data-star-group`) are exposed as ONE additional item,
+    // so a stack of sub-graphs (FCS "Split view"…) can be starred / saved as a
+    // single figure. The sub-graphs keep their own ⭐/📷 buttons below — this
+    // only ADDS the panel item. Optional `data-star-label` names it.
+    rootEl.querySelectorAll('[data-star-group]').forEach((el) => {
+      if (el.nodeType !== 1) return;
+      if (isHiddenEl(el)) return;
+      if (hasStarKeyAncestor(el, rootEl)) return;
+      if (inFormControl(el)) return;
+      if (el.parentElement && el.parentElement.closest('[data-star-group]')) return;
+      const explicit = (el.getAttribute('data-star-label') || '').replace(/\s+/g, ' ').trim();
+      const label = explicit || headingText(el, rootEl) || KIND_LABEL.group;
+      counts.group = (counts.group || 0) + 1;
+      const key = `${label} · ${KIND_LABEL.group} · ${counts.group}`;
+      try { el.setAttribute('data-figure-origin', key); } catch { /* ignore */ }
+      found.push({ key, kind: 'group', label, el });
+    });
     rootEl.querySelectorAll('canvas, table, img, svg').forEach((el) => {
       if (el.nodeType !== 1) return;
       if (isHiddenEl(el)) return;
@@ -437,11 +509,15 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rootRef]);
 
-  const toggleFor = (t) => {
+  const toggleFor = async (t) => {
     if (!update) return;
     const el = elMap.current.get(t.key);
     let item = null;
-    if (t.kind === 'canvas' && el) {
+    if (t.kind === 'group' && el) {
+      // Composite panel (data-star-group): one image of the WHOLE stack.
+      const url = await htmlToDataUrl(el);
+      if (url) item = { id: t.key, kind: 'graph', label: t.label, caption: t.label, url };
+    } else if (t.kind === 'canvas' && el) {
       // Capture raster canvases at 2× so zooming into a figure panel stays
       // sharper. SVG charts keep their vector form (crisp at any zoom).
       let url = '';
