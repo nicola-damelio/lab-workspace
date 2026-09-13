@@ -5,10 +5,13 @@
 // ============================================================================
 
 import React, {useState, useEffect, useRef, useMemo} from 'react';
-import {XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell, ComposedChart} from 'recharts';
+import {
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell, ComposedChart} from 'recharts';
 import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, ChartInspector, AngledTick, useXYZoom, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgAxisDomain, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, errorBarRange, instancesLinked, InstanceLinkToggle, deferredClick } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
-import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor, chartBoxStyle, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf } from '../utils/chartStyle';
+import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor, chartBoxStyle, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf, tickTextProps, tickSize, fontFamilyOf, legendTextStyle, axisTitleSize
+} from '../utils/chartStyle';
+import { SplitChartStack, SplitToggle, SPLIT_CHART_H } from './SplitChartStack';
 export { CollapsibleSection };
 export { VIS_PALETTES };
 import { DriveUploadButton } from './DriveUpload';
@@ -1893,6 +1896,25 @@ export const SpectraVisualization = ({ ctx }) => {
   // Single click zooms a small spectrum, double click edits it (see deferredClick).
   const smallClickTimer = useRef(null);
   const [hidden, setHidden] = useState({});
+  // “Split view” — one graph per condition, stacked in a single card that is
+  // captured / starred as ONE image (data-star-group). Persisted on the test so
+  // the layout survives page switches (same keys as the FCS split view).
+  const [splitStack, setSplitStack] = useState(!!activeTest.splitStack);
+  const [splitSharedY, setSplitSharedY] = useState(!!activeTest.splitSharedY);
+  // Character size of the stacked sub-charts: it follows the page's shared style
+  // cfg, so the global “Figure style” profile (🎨) reaches the split figure too
+  // and every character of a captured stack matches the other figures.
+  const splitFontSize = Math.max(9, Number(tickSize(cfg)) || 16);
+  const toggleSplitStack = () => setSplitStack((v) => {
+    const nv = !v;
+    updateActiveTest({ splitStack: nv });
+    return nv;
+  });
+  const toggleSplitSharedY = () => setSplitSharedY((v) => {
+    const nv = !v;
+    updateActiveTest({ splitSharedY: nv });
+    return nv;
+  });
 
   const [localColors, setLocalColors] = useState(activeTest.instanceColors || {});
   const [customPaletteInput, setCustomPaletteInput] = useState('#ef4444, #3b82f6, #22c55e');
@@ -1979,10 +2001,10 @@ export const SpectraVisualization = ({ ctx }) => {
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart margin={cfgChartMargin(cfg, CHART_MARGIN)}>
           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-          <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow scale={xScale} ticks={cfgAxisTicks(cfg, 'x', xDomain)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} formatter={cfgTickFormatter(cfg, 'x') || undefined} />} tickMargin={10} label={cfgAxisLabel(cfg, 'x', xLabel)} />
-          <YAxis type="number" domain={yDomain} allowDataOverflow scale={yScale} ticks={yMinV != null && yMaxV != null ? cfgAxisTicks(cfg, 'y', [yMinV, yMaxV]) : undefined} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={cfgAxisLabel(cfg, 'y', yLab)} />
+          <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow scale={xScale} ticks={cfgAxisTicks(cfg, 'x', xDomain)} tick={<AngledTick angle={cfg.tickAngle} fontSize={tickSize(cfg)} fontFamily={fontFamilyOf(cfg)} formatter={cfgTickFormatter(cfg, 'x') || undefined} />} tickMargin={10} label={cfgAxisLabel(cfg, 'x', xLabel)} />
+          <YAxis type="number" domain={yDomain} allowDataOverflow scale={yScale} ticks={yMinV != null && yMaxV != null ? cfgAxisTicks(cfg, 'y', [yMinV, yMaxV]) : undefined} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={tickTextProps(cfg, { fill: '#64748b' })} label={cfgAxisLabel(cfg, 'y', yLab)} />
           <Tooltip />
-          {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 8 }} />}
+          {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={legendTextStyle(cfg, { paddingBottom: 8 })} />}
           {visible.map((s) => cfgSeriesEl(cfg, { key: s.key, data: s.data, dataKey: 'y', name: s.label, stroke: cfg.colors?.[s.key] || s.color }))}
           {zoom.ref && (zoom.ref.axis === 'x'
             ? <ReferenceArea x1={zoom.ref.x1} x2={zoom.ref.x2} strokeOpacity={0.3} fill="#cbd5e1" />
@@ -2009,8 +2031,9 @@ export const SpectraVisualization = ({ ctx }) => {
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h4 className="text-sm font-bold text-slate-700">📈 Spectra Visualization — all conditions overlaid</h4>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap items-center">
           <InstanceLinkToggle activeTest={activeTest} updateActiveTest={updateActiveTest} />
+          <SplitToggle on={splitStack} onToggle={toggleSplitStack} sharedY={splitSharedY} onToggleSharedY={toggleSplitSharedY} />
           <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)} className="flex gap-2" />
           <button type="button" onClick={() => setFs(!fs)} className="font-bold py-1.5 px-3 rounded-lg text-xs border border-slate-300 bg-white text-slate-800 hover:bg-slate-50">{fs ? '↙️ Exit' : '↗️ Fullscreen'}</button>
         </div>
@@ -2027,14 +2050,36 @@ export const SpectraVisualization = ({ ctx }) => {
         </div>
       )}
       {fs && <div className={OVERLAY_CLASSES} onClick={() => setFs(false)} />}
-      <div className={fs ? FS_CLASSES + ' p-6 flex flex-col' : 'flex flex-col'}>
-        {fs && (
-          <div className="flex justify-between items-center mb-2 shrink-0">
-            <h3 className="font-bold text-slate-700">ssNMR Spectra — all conditions</h3>
-            <button type="button" onClick={() => setFs(false)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">↙️</button>
-          </div>
+      <div className={`${fs ? FS_CLASSES + ' p-6 flex' : 'flex'} flex-col${splitStack ? ' lg:flex-row gap-3' : ''}`}>
+        <div className={`flex flex-col${splitStack && !fs ? ' lg:w-[54%] min-w-0' : ''}${fs ? ' flex-1 min-h-0' : ''}`}>
+          {fs && (
+            <div className="flex justify-between items-center mb-2 shrink-0">
+              <h3 className="font-bold text-slate-700">ssNMR Spectra — all conditions</h3>
+              <button type="button" onClick={() => setFs(false)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">↙️</button>
+            </div>
+          )}
+          {chartBody}
+        </div>
+        {splitStack && (
+          <SplitChartStack
+            id="ssnmr-split"
+            label="Split view — individual spectra"
+            series={visible}
+            className={fs ? 'lg:w-[46%]' : 'w-full lg:w-[46%]'}
+            renderChart={(s) => (
+              <div style={{ width: '100%', height: SPLIT_CHART_H }} className="px-2 pb-1">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={s.data} margin={cfgChartMargin(cfg, { top: 5, right: 8, bottom: 18, left: 2 })}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis type="number" dataKey="x" tick={{ fontSize: splitFontSize, fill: '#64748b' }} domain={['dataMin', 'dataMax']} />
+                    <YAxis domain={splitSharedY ? [yAutoMin, yAutoMax] : ['dataMin', 'dataMax']} tick={{ fontSize: splitFontSize, fill: '#64748b' }} width={44} />
+                    <Line type="monotone" dataKey="y" stroke={s.color} strokeWidth={cfg.lineThickness || 2} strokeDasharray={lineDash(cfg.lineStyle)} dot={false} isAnimationActive={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          />
         )}
-        {chartBody}
       </div>
       {showCfg && <SharedChartStylePanel cfg={cfg} setCfg={setCfg} series={seriesList.map((s) => ({ key: s.key, label: s.label, color: s.color }))} unit="ppm" />}
       
@@ -2056,8 +2101,8 @@ export const SpectraVisualization = ({ ctx }) => {
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={s.data} margin={fsSmall === s.key ? cfgChartMargin(cfg, CHART_MARGIN) : { top: 5, right: 8, bottom: 18, left: 2 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                        <XAxis type="number" dataKey="x" tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} domain={['dataMin', 'dataMax']} label={fsSmall === s.key ? cfgAxisLabel(cfg, 'x', xLabel) : undefined} />
-                        <YAxis domain={[yAutoMin, yAutoMax]} tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} width={fsSmall === s.key ? 60 : 38} label={fsSmall === s.key ? cfgAxisLabel(cfg, 'y', yLab) : undefined} />
+                        <XAxis type="number" dataKey="x" tick={tickTextProps(cfg, { fontSize: fsSmall === s.key ? tickSize(cfg) : 9, fill: '#64748b' })} domain={['dataMin', 'dataMax']} label={fsSmall === s.key ? cfgAxisLabel(cfg, 'x', xLabel) : undefined} />
+                        <YAxis domain={[yAutoMin, yAutoMax]} tick={tickTextProps(cfg, { fontSize: fsSmall === s.key ? tickSize(cfg) : 9, fill: '#64748b' })} width={fsSmall === s.key ? 60 : 38} label={fsSmall === s.key ? cfgAxisLabel(cfg, 'y', yLab) : undefined} />
                         {fsSmall === s.key && <Tooltip />}
                         <Line type="monotone" dataKey="y" stroke={s.color} strokeWidth={cfg.lineThickness || 2} strokeDasharray={lineDash(cfg.lineStyle)} dot={false} isAnimationActive={false} />
                       </LineChart>
@@ -2260,15 +2305,15 @@ export const QuadrupolarFitting = ({ ctx }) => {
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart margin={cfgChartMargin(cfg, CHART_MARGIN)}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis type="number" dataKey="x" domain={cfgAxisDomain(cfg, 'x', zoomFit.domain)} allowDataOverflow scale={cfgLogScale(cfg, 'x')} ticks={cfgAxisTicks(cfg, 'x', cfgAxisDomain(cfg, 'x', zoomFit.domain))} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} formatter={cfgTickFormatter(cfg, 'x') || undefined} />} tickMargin={10} label={cfgAxisLabel(cfg, 'x', cfg.xAxisLabel || 'Frequency offset (kHz)')} />
+                    <XAxis type="number" dataKey="x" domain={cfgAxisDomain(cfg, 'x', zoomFit.domain)} allowDataOverflow scale={cfgLogScale(cfg, 'x')} ticks={cfgAxisTicks(cfg, 'x', cfgAxisDomain(cfg, 'x', zoomFit.domain))} tick={<AngledTick angle={cfg.tickAngle} fontSize={tickSize(cfg)} fontFamily={fontFamilyOf(cfg)} formatter={cfgTickFormatter(cfg, 'x') || undefined} />} tickMargin={10} label={cfgAxisLabel(cfg, 'x', cfg.xAxisLabel || 'Frequency offset (kHz)')} />
                     <YAxis type="number" domain={cfgLogScale(cfg, 'y') === 'log'
                         ? [((dom(cfg.yMin) != null && dom(cfg.yMin) > 0) ? dom(cfg.yMin) : 1e-3), (dom(cfg.yMax) != null ? dom(cfg.yMax) : 'auto')]
                         : [dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']}
-                      allowDataOverflow scale={cfgLogScale(cfg, 'y')} ticks={dom(cfg.yMin) != null && dom(cfg.yMax) != null ? cfgAxisTicks(cfg, 'y', [dom(cfg.yMin), dom(cfg.yMax)]) : undefined} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={cfgAxisLabel(cfg, 'y', cfg.yAxisLabel || 'Intensity (a.u.)')} />
+                      allowDataOverflow scale={cfgLogScale(cfg, 'y')} ticks={dom(cfg.yMin) != null && dom(cfg.yMax) != null ? cfgAxisTicks(cfg, 'y', [dom(cfg.yMin), dom(cfg.yMax)]) : undefined} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={tickTextProps(cfg, { fill: '#64748b' })} label={cfgAxisLabel(cfg, 'y', cfg.yAxisLabel || 'Intensity (a.u.)')} />
                     {cfgSeriesEl(cfg, { key: 'exp', data: expData, dataKey: 'y', name: 'Experimental', stroke: cfg.colors?.exp || '#3b82f6' })}
                     {cfgSeriesEl(cfg, { key: 'sim', data: simData, dataKey: 'y', name: 'Simulated (fit)', stroke: cfg.colors?.sim || '#ef4444' })}
                     <Tooltip />
-                    {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize || 11 }} />}
+                    {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={legendTextStyle(cfg, { fontSize: cfg.fontSize || 11 })} />}
                     {zoomFit.refLo !== null && zoomFit.refHi !== null && <ReferenceArea x1={zoomFit.refLo} x2={zoomFit.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
                   </ComposedChart>
                 </ResponsiveContainer>
@@ -2457,7 +2502,9 @@ const Condition3DScatter = ({ series, colorOf, includedPts, xLabel, yLabel, zLab
   }));
 
   const proj = (x, y, z) => rotateProject(x, y, z, azimuth, elevation, cx, cy, scale);
-  const fontSize = (cfg && cfg.fontSize) || 12;
+  const fontSize = tickSize(cfg, 12);
+  const titleFs = axisTitleSize(cfg, 14);
+  const fam = fontFamilyOf(cfg);
   const ptSize = (cfg && cfg.ptSize) || 5;
 
   const AXIS_LEN = 1.12;
@@ -2526,9 +2573,9 @@ const Condition3DScatter = ({ series, colorOf, includedPts, xLabel, yLabel, zLab
         <line x1={origin[0]} y1={origin[1]} x2={xEnd[0]} y2={xEnd[1]} stroke="#334155" strokeWidth={1.5} />
         <line x1={origin[0]} y1={origin[1]} x2={yEnd[0]} y2={yEnd[1]} stroke="#334155" strokeWidth={1.5} />
         <line x1={origin[0]} y1={origin[1]} x2={zEnd[0]} y2={zEnd[1]} stroke="#334155" strokeWidth={1.5} />
-        <text x={xEnd[0]} y={xEnd[1] + 16} fontSize={fontSize} fill="#334155" textAnchor="middle" fontWeight="bold">{xLabel}</text>
-        <text x={yEnd[0]} y={yEnd[1] + 4} fontSize={fontSize} fill="#334155" textAnchor="start" fontWeight="bold">{yLabel}</text>
-        <text x={zEnd[0] - 8} y={zEnd[1] - 6} fontSize={fontSize} fill="#334155" textAnchor="end" fontWeight="bold">{zLabel}</text>
+        <text x={xEnd[0]} y={xEnd[1] + 16} fontSize={titleFs} fontFamily={fam || undefined} fill="#334155" textAnchor="middle" fontWeight="bold">{xLabel}</text>
+        <text x={yEnd[0]} y={yEnd[1] + 4} fontSize={titleFs} fontFamily={fam || undefined} fill="#334155" textAnchor="start" fontWeight="bold">{yLabel}</text>
+        <text x={zEnd[0] - 8} y={zEnd[1] - 6} fontSize={titleFs} fontFamily={fam || undefined} fill="#334155" textAnchor="end" fontWeight="bold">{zLabel}</text>
         <text x={origin[0]} y={origin[1] + 16} fontSize={Math.max(8, fontSize - 3)} fill="#94a3b8" textAnchor="middle">{fmt3D(xMin)}</text>
         <text x={xEnd[0]} y={xEnd[1] + 30} fontSize={Math.max(8, fontSize - 3)} fill="#94a3b8" textAnchor="middle">{fmt3D(xMax)}</text>
         <text x={yEnd[0] - 4} y={yEnd[1] - 4} fontSize={Math.max(8, fontSize - 3)} fill="#94a3b8" textAnchor="end">{fmt3D(yMax)}</text>
@@ -2866,7 +2913,7 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
       {(plot.hLines || []).map((h) => {
         const v = parseManual(h.value);
         if (v === null) return null;
-        return <ReferenceLine key={h.id} y={v} stroke={h.color || '#64748b'} strokeDasharray="4 4" ifOverflow="extendDomain" label={{ value: h.label || `y=${v}`, fill: h.color || '#64748b', fontSize: Math.max(9, cfg.fontSize - 1), position: 'insideTopRight' }} />;
+        return <ReferenceLine key={h.id} y={v} stroke={h.color || '#64748b'} strokeDasharray="4 4" ifOverflow="extendDomain" label={{ value: h.label || `y=${v}`, fill: h.color || '#64748b', fontSize: Math.max(9, Number(tickSize(cfg)) - 1), position: 'insideTopRight' }} />;
       })}
     </>
   );
@@ -3049,10 +3096,10 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
                       {isHist ? (
                         <BarChart data={histData} margin={cfgChartMargin(cfg, { top: 8, right: 16, bottom: 30, left: 12 })}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                          <XAxis dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} edgeAnchor={false} />} tickMargin={10} label={cfgAxisLabel(cfg, 'x', 'Condition', 22)} />
-                          <YAxis type="number" domain={[dom(cfg.yMin) ?? errRangeY?.[0] ?? 'auto', dom(cfg.yMax) ?? errRangeY?.[1] ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={cfgAxisLabel(cfg, 'y', yLab, 6)} />
+                          <XAxis dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={tickSize(cfg)} fontFamily={fontFamilyOf(cfg)} edgeAnchor={false} />} tickMargin={10} label={cfgAxisLabel(cfg, 'x', 'Condition', 22)} />
+                          <YAxis type="number" domain={[dom(cfg.yMin) ?? errRangeY?.[0] ?? 'auto', dom(cfg.yMax) ?? errRangeY?.[1] ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={tickTextProps(cfg, { fill: '#64748b' })} label={cfgAxisLabel(cfg, 'y', yLab, 6)} />
                           <Tooltip />
-                          {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
+                          {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={legendTextStyle(cfg, { paddingBottom: 10 })} />}
                           {refLines}
                           {visibleSeries.map((s) => {
                             const color = colorOf(s);
@@ -3066,10 +3113,10 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
                       ) : (
                         <LineChart margin={cfgChartMargin(cfg, { top: 8, right: 16, bottom: 30, left: 12 })}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                          <XAxis type="number" dataKey="x" domain={[dom(cfg.xMin) ?? zoom.domain[0], dom(cfg.xMax) ?? zoom.domain[1]]} ticks={makeTicks(zoom.domain, cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} formatter={cfgTickFormatter(cfg, 'x') || undefined} />} tickMargin={10} allowDataOverflow label={cfgAxisLabel(cfg, 'x', `${xLab}${yUnitSuffix ? ` (${yUnitSuffix})` : ''}`, 22)} />
-                          <YAxis type="number" domain={[dom(cfg.yMin) ?? errRangeY?.[0] ?? 'auto', dom(cfg.yMax) ?? errRangeY?.[1] ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} allowDataOverflow label={cfgAxisLabel(cfg, 'y', yLab, 6)} />
+                          <XAxis type="number" dataKey="x" domain={[dom(cfg.xMin) ?? zoom.domain[0], dom(cfg.xMax) ?? zoom.domain[1]]} ticks={makeTicks(zoom.domain, cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={tickSize(cfg)} fontFamily={fontFamilyOf(cfg)} formatter={cfgTickFormatter(cfg, 'x') || undefined} />} tickMargin={10} allowDataOverflow label={cfgAxisLabel(cfg, 'x', `${xLab}${yUnitSuffix ? ` (${yUnitSuffix})` : ''}`, 22)} />
+                          <YAxis type="number" domain={[dom(cfg.yMin) ?? errRangeY?.[0] ?? 'auto', dom(cfg.yMax) ?? errRangeY?.[1] ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={tickTextProps(cfg, { fill: '#64748b' })} allowDataOverflow label={cfgAxisLabel(cfg, 'y', yLab, 6)} />
                           <Tooltip />
-                          {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
+                          {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={legendTextStyle(cfg, { paddingBottom: 10 })} />}
                           {refLines}
                           {visibleSeries.map((s) => {
                             const color = colorOf(s);
@@ -3153,8 +3200,8 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={paramData} margin={cfgChartMargin(cfg, { top: 10, right: 10, bottom: 20, left: 10 })}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                          <XAxis dataKey="name" interval={catInterval(cfg.tickStep)} tickMargin={10} tick={<AngledTick angle={cfg.tickAngle} fontSize={Math.max(9, cfg.fontSize - 2)} edgeAnchor={false} />} />
-                          <YAxis domain={[dom(cfg.yMin) ?? fitZoom.domain[0], dom(cfg.yMax) ?? fitZoom.domain[1]]} allowDataOverflow tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: Math.max(9, cfg.fontSize - 2) }} label={cfgAxisLabel(cfg, 'y', paramGraphVar, 0)} />
+                          <XAxis dataKey="name" interval={catInterval(cfg.tickStep)} tickMargin={10} tick={<AngledTick angle={cfg.tickAngle} fontSize={Math.max(9, Number(tickSize(cfg)) - 2)} fontFamily={fontFamilyOf(cfg)} edgeAnchor={false} />} />
+                          <YAxis domain={[dom(cfg.yMin) ?? fitZoom.domain[0], dom(cfg.yMax) ?? fitZoom.domain[1]]} allowDataOverflow tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={tickTextProps(cfg, { fontSize: Math.max(9, Number(tickSize(cfg)) - 2) })} label={cfgAxisLabel(cfg, 'y', paramGraphVar, 0)} />
                           <Tooltip />
                           <Bar dataKey="val" isAnimationActive={false}>
                             {paramData.map((entry, idx) => <Cell key={idx} fill={entry.fill} />)}

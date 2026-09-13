@@ -2,24 +2,16 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import Chart from 'chart.js/auto';
 import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
+import {
+  jsPDF } from 'jspdf';
 import { CollapsibleSection } from './TestShellRenderer';
 import { SharedGraphConfig, SharedErrorTreatment, ChartControlBar, ChartJsInspector, useDeferredClick } from './SharedAnalysisTools';
 import {
-    PLATES_DEF,
-    formatConc,
-    concKey,
-    getRegionColor,
-    toHex,
-    lighten,
-    darken,
-    needsDarkText,
-    PALETTE,
-    fit4PL,
-    errBarPlugin
+    PLATES_DEF, formatConc, concKey, getRegionColor, toHex, lighten, darken, needsDarkText, PALETTE, fit4PL, errBarPlugin
 } from '../data/constants';
 import { PLATE_PRESET_LABELS, PLATE_PRESET_COLORS, isPlatePreset, platePresetColor } from '../utils/platePresets';
-import { FS_CLASSES, OVERLAY_CLASSES, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, normalizeChartType, seriesVisible, seriesColorOf } from '../utils/chartStyle';
+import { FS_CLASSES, OVERLAY_CLASSES, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, normalizeChartType, seriesVisible, seriesColorOf, chartJsFont, chartJsTitleFont
+} from '../utils/chartStyle';
 import { brokenAxisScaleOptions } from '../utils/chartJsBrokenAxis';
 
 // Chart/style constants now live in ../utils/chartStyle.
@@ -150,13 +142,13 @@ function IndividualDoseResponseChart({ cd, chartCfg, isFs, onToggleFs, unit, eSc
                         title: {
                             display: isFs,
                             text: chartCfg.xAxisLabel || `Log₁₀ [Conc. (${unit})]`,
-                            font: { size: chartCfg.fontSize + 2, weight: 'bold' },
+                            font: chartJsTitleFont(chartCfg, { weight: 'bold' }),
                             color: '#334155',
                             padding: chartJsTitlePad(chartCfg).x
                         },
                         ticks: {
                             display: isFs,
-                            font: { size: chartCfg.fontSize },
+                            font: chartJsFont(chartCfg),
                             color: '#64748b'
                         }
                     },
@@ -167,13 +159,13 @@ function IndividualDoseResponseChart({ cd, chartCfg, isFs, onToggleFs, unit, eSc
                         title: {
                             display: isFs,
                             text: 'Viability (%)',
-                            font: { size: chartCfg.fontSize + 2, weight: 'bold' },
+                            font: chartJsTitleFont(chartCfg, { weight: 'bold' }),
                             color: '#334155',
                             padding: chartJsTitlePad(chartCfg).y
                         },
                         ticks: {
                             display: isFs,
-                            font: { size: chartCfg.fontSize },
+                            font: chartJsFont(chartCfg),
                             color: '#64748b'
                         }
                     }
@@ -424,21 +416,21 @@ export function RegionCharts({ regionName, regionData, config }) {
                               title: {
                                   display: true,
                                   text: `IC50 (${unit})`,
-                                  font: { size: chartCfg.fontSize + 2, weight: 'bold' },
+                                  font: chartJsTitleFont(chartCfg, { weight: 'bold' }),
                                   color: '#334155',
                                   padding: chartJsTitlePad(chartCfg).y
                               },
-                              ticks: { font: { size: chartCfg.fontSize }, color: '#64748b' }
+                              ticks: { font: chartJsFont(chartCfg), color: '#64748b' }
                           },
                           x: {
                               title: {
                                   display: true,
                                   text: 'Compound',
-                                  font: { size: chartCfg.fontSize + 2, weight: 'bold' },
+                                  font: chartJsTitleFont(chartCfg, { weight: 'bold' }),
                                   color: '#334155',
                                   padding: chartJsTitlePad(chartCfg).x
                               },
-                              ticks: { font: { size: chartCfg.fontSize, weight: 'bold' }, color: '#334155' }
+                              ticks: { font: chartJsFont(chartCfg, { weight: 'bold' }), color: '#334155' }
                           }
                       },
                       plugins: {
@@ -523,12 +515,12 @@ export function RegionCharts({ regionName, regionData, config }) {
                               title: {
                                   display: true,
                                   text: chartCfg.xAxisLabel || `Log₁₀ [Conc. (${unit})]`,
-                                  font: { size: chartCfg.fontSize + 2, weight: 'bold' },
+                                  font: chartJsTitleFont(chartCfg, { weight: 'bold' }),
                                   color: '#334155',
                                   padding: chartJsTitlePad(chartCfg).x
                               },
                               ticks: {
-                                  font: { size: chartCfg.fontSize },
+                                  font: chartJsFont(chartCfg),
                                   color: '#64748b',
                                   callback: function (value) {
                                       return value.toFixed(2);
@@ -542,12 +534,12 @@ export function RegionCharts({ regionName, regionData, config }) {
                               title: {
                                   display: true,
                                   text: 'Viability (%)',
-                                  font: { size: chartCfg.fontSize + 2, weight: 'bold' },
+                                  font: chartJsTitleFont(chartCfg, { weight: 'bold' }),
                                   color: '#334155',
                                   padding: chartJsTitlePad(chartCfg).y
                               },
                               ticks: {
-                                  font: { size: chartCfg.fontSize },
+                                  font: chartJsFont(chartCfg),
                                   color: '#64748b'
                               }
                           }
@@ -556,7 +548,7 @@ export function RegionCharts({ regionName, regionData, config }) {
                           legend: {
                               position: 'top',
                               labels: {
-                                  font: { size: chartCfg.fontSize, weight: 'bold' },
+                                  font: chartJsFont(chartCfg, { weight: 'bold' }),
                                   filter: (item) => {
                                       if (item.text.includes('[excl]')) return false;
                                       if (fitIC50 && item.text.includes('[pts]')) return false;
@@ -657,19 +649,19 @@ export function RegionCharts({ regionName, regionData, config }) {
                         title: {
                             display: true,
                             text: `IC50 (${unit})`,
-                            font: { size: chartCfg.fontSize + 2, weight: 'bold' },
+                            font: chartJsTitleFont(chartCfg, { weight: 'bold' }),
                             color: '#334155',
                             padding: chartJsTitlePad(chartCfg).y
                         },
                         ticks: {
-                            font: { size: chartCfg.fontSize },
+                            font: chartJsFont(chartCfg),
                             color: '#64748b'
                         }
                     },
                     x: {
                         position: chartCfg.xPos || 'bottom',
                         ticks: {
-                            font: { size: chartCfg.fontSize, weight: 'bold' },
+                            font: chartJsFont(chartCfg, { weight: 'bold' }),
                             color: '#334155'
                         }
                     }

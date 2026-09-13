@@ -1,0 +1,35 @@
+--- parseTomlSimple ---
+top: [{"key":"run_dir","value":"run1"},{"key":"job_id","value":"pizza"},{"key":"seed","value":"42"}]
+sections: [{"name":"parameters","pairs":[{"key":"structures_it0","value":"1000"},{"key":"structures_it1","value":"200"},{"key":"structures_w","value":"200"},{"key":"sampling","value":"1000"},{"key":"waterrefine","value":"true"},{"key":"randorien","value":"true"},{"key":"mdsteps_rigid","value":"0"}]}]
+tables: {"molecules":[{"name":"receptor","pdb":"receptor.pdb","segid":"A","automatic":"true","ncs":"off"},{"name":"ligand","pdb":"ligand.pdb.gz","segid":"B","automatic":"true"}]}
+--- extractDockedMolecules ---
+[
+  {
+    "name": "receptor",
+    "pdb": "receptor.pdb",
+    "segid": "A"
+  },
+  {
+    "name": "ligand",
+    "pdb": "ligand.pdb.gz",
+    "segid": "B"
+  }
+]
+--- resolution ---
+receptor -> run1/data/0_topoaa/receptor.pdb
+ligand   -> run1/data/ligand.pdb
+--- top-level molecules array ---
+[{"name":"receptor","pdb":"data/receptor.pdb","segid":""},{"name":"ligand","pdb":"data/ligand.pdb.gz","segid":""}]
+--- [molecules] label table ---
+[{"name":"receptor","pdb":"receptor.pdb","segid":""},{"name":"ligand","pdb":"ligand.pdb","segid":""}]
+--- 0_topoaa fallback ---
+[{"name":"receptor","pdb":"run1/data/0_topoaa/receptor.pdb","segid":""}]
+--- path-aware resolution ---
+receptor(data/0_topoaa/receptor.pdb) -> run1/data/0_topoaa/receptor.pdb
+--- toml matcher ---
+found: run1/data/configurations/raw_input.toml
+--- 8_seletopclusts PDBs ---
+run1/8_seletopclusts/cluster_1.pdb
+run1/8_seletopclusts/cluster_2.pdb.gz
+
+All sanity checks passed ✔

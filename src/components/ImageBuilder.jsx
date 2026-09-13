@@ -8,6 +8,9 @@ import {
 import { loadProjects, saveProjects, genProjectId } from './AppModules/projectsModule';
 import { queuePendingFigureScroll } from '../utils/pendingFigureScroll';
 import { figureStyleTag } from '../utils/figureStyle';
+import {
+  queueFigureRecaptures, figureRecaptureSummary, subscribeFigureRecapture, hasFreshFigureRecapture
+} from '../utils/figureRecapture';
 import { useFigureStyleProfile } from './FigureStyleTools';
 
 const ptToMm = (pt) => pt * 0.352778;
@@ -18,7 +21,51 @@ const PX_PER_MM = 96 / 25.4; // CSS: 1 mm ≈ 3.78 px
 // full-resolution figures can blow past the quota and make setItem silently
 // fail — the in-memory copy always survives, so navigating to the original
 // graph and back NEVER loses the user's edits within this session.
+// Every entry holds TWO copies of one canvas:
+//   • payload — the lightweight one (the small thumbnails instead of the
+//     full-resolution dataURLs); it is what gets written to localStorage.
+//   • live    — the objects EXACTLY as they are on screen, full-resolution
+//     pixels included. It is never serialized, so it cannot blow the quota,
+//     and it is what the builder restores when the user comes back from the
+//     original experiment (same browser session): the panels keep the pixels
+//     they were showing.
+// Re-resolving the panels from the image library instead drops every figure
+// back to its ≤240 px LOCAL THUMBNAIL and then depends on a live Google Drive /
+// Nextcloud fetch to bring the full copy back. When that fetch fails (expired
+// token, offline, provider hiccup) the raster figures (📷 captures, composite
+// panels) stayed blurry while the vector (SVG) ones kept their sharpness —
+// exactly the “some images lost their resolution” bug. See the restore effect
+// below, which prefers `live` over the library resolution.
 const imageBuilderSessionCache = new Map();
+
+// How many canvases keep their full-resolution pixels in memory (one canvas can
+// hold several MB of base64). The canvas being edited plus the few the user
+// switched between are plenty; anything older simply loses its `live` copy and
+// falls back to the library resolution + the background hydrate pass.
+const LIVE_CACHE_MAX = 6;
+
+// Remember a canvas for the rest of the session: its lightweight payload (for
+// localStorage) and its live objects (for the pixels). The canvas just edited is
+// re-inserted last, so the map is in most-recently-edited order and the entries
+// beyond the cap only lose their `live` copy (they keep working, thumbnail-first).
+const rememberSessionCanvas = (key, payload, live) => {
+  const entry = imageBuilderSessionCache.get(key) || {};
+  entry.payload = payload;
+  entry.live = live;
+  imageBuilderSessionCache.delete(key);
+  imageBuilderSessionCache.set(key, entry);
+  let kept = 0;
+  const older = [];
+  imageBuilderSessionCache.forEach((e, k) => {
+    if (!e || !e.live) return;
+    kept += 1;
+    if (k !== key) older.push(k);
+  });
+  while (kept > LIVE_CACHE_MAX && older.length) {
+    const e = imageBuilderSessionCache.get(older.shift());
+    if (e && e.live) { e.live = null; kept -= 1; }
+  }
+};
 
 // ---- figures of an object + their natural aspect ratio ---------------------
 // Every object can hold SEVERAL figures in one lettered panel (`images[]`); the
@@ -159,6 +206,8 @@ export const figureStyleAudit = (objects, currentTag, fallbackProjectId = null) 
       const px = (im && im.imgSrc && imagePxCache.get(im.imgSrc)) || null;
       const tag = (src && src.styleTag) || '';
       const isCanvas = !!(item && item.canvasData);
+      const elementKey = (src && src.elementKey) || '';
+      const libId = (im && im.libId) || '';
       rows.push({
         key: `${o.id}:${idx}`,
         objId: o.id,
@@ -167,6 +216,14 @@ export const figureStyleAudit = (objects, currentTag, fallbackProjectId = null) 
         origin: [src && src.testName, src && src.instanceName].filter(Boolean).join(' — '),
         src,
         tag,
+        // Where the figure lives + which chart of which page it came from: the
+        // automatic re-capture needs BOTH (the library entry to replace and the
+        // `data-figure-origin` stamp of the element to snapshot).
+        libId,
+        libScope: (im && im.libScope) || (fallbackProjectId ? 'project' : 'common'),
+        libProjectId: (im && im.libProjectId) || fallbackProjectId || null,
+        elementKey,
+        canRecapture: !!libId && !!elementKey && !isCanvas,
         pxW: Number(src && src.pxW) || 0,
         pxH: Number(src && src.pxH) || 0,
         renderedW: px ? px.w : 0,
@@ -412,9 +469,16 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // localStorage quota) wins; localStorage is the fallback / cross-reload source.
   useEffect(() => {
     try {
-      const saved = imageBuilderSessionCache.get(storageKey) || (() => {
+      const cached = imageBuilderSessionCache.get(storageKey) || null;
+      const saved = (cached && cached.payload) || (() => {
         try { return JSON.parse(localStorage.getItem(storageKey) || 'null'); } catch { return null; }
       })();
+      // Same session → the canvas is still in memory WITH its pixels: restore
+      // the objects EXACTLY as they were instead of re-resolving them from the
+      // image library (which would put every panel back on its ≤240 px thumbnail
+      // and lose the resolution of the figures whose full copy cannot be fetched
+      // again — the bug this cache exists for, see its comment at the top).
+      const live = (cached && Array.isArray(cached.live)) ? cached.live : null;
       if (saved) {
         const data = saved;
         if (data.canvasW) setCanvasW(data.canvasW);
@@ -427,12 +491,16 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         // figures in their own aspect ratio (the behaviour the option adds).
         if (data.keepAspect !== undefined) setKeepAspect(!!data.keepAspect);
         if (data.objects) {
-          // Only the small thumbnail is persisted; re-resolve the full-resolution
-          // image from its library entry so the canvas never exceeds the
-          // localStorage quota (and the object does not "disappear" after the
-          // user navigates to the original graph and back). Works for both the
-          // legacy single-image objects and the new multi-figure `images[]`.
-          setObjects((data.objects || []).map((o) => {
+          // The LIVE copy wins: the panels keep the pixels they were showing —
+          // nothing to re-resolve, nothing to fetch. It is only missing on a
+          // canvas this session has not opened yet (first visit after a page
+          // reload, or an entry dropped by the LRU cap): then — and only then —
+          // the persisted thumbnail is all we have, so re-resolve the
+          // full-resolution image from its library entry (the async "hydrate"
+          // pass below fetches the Drive/Nextcloud copy in the background, and
+          // the object never "disappears"). Works for both the legacy
+          // single-image objects and the new multi-figure `images[]`.
+          setObjects(live || (data.objects || []).map((o) => {
             if (!o.libId && !(o.images || []).some((im) => im && im.libId)) return o;
             return resolveObj(o);
           }));
@@ -479,8 +547,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       const persisted = (objects || []).map(thumbnailsOf);
       const payload = { canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects: persisted, focusObjId, globalCaption, isFullScreen };
       // Always keep the freshest copy in memory (survives module remounts even
-      // when localStorage is full), then best-effort write localStorage.
-      imageBuilderSessionCache.set(storageKey, payload);
+      // when localStorage is full), then best-effort write localStorage:
+      // rememberSessionCanvas keeps BOTH the lightweight payload AND the live
+      // objects — the pixels the canvas is showing — so coming back from the
+      // original experiment cannot drop a figure to its local thumbnail.
+      rememberSessionCanvas(storageKey, payload, objects || []);
       localStorage.setItem(storageKey, JSON.stringify(payload));
     } catch { /* localStorage may be full — the session cache above still holds the state */ }
   }, [canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects, focusObjId, globalCaption, isFullScreen, storageKey]);
@@ -579,27 +650,116 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     });
   };
 
+  // A brand-new EMPTY panel — a letter (A, B, …) plus the figure-wide letter
+  // size, no figure yet. ONE factory for both creation paths: "+ Add Object"
+  // (one more panel of the figure being built) and "➕ New image" (a new figure
+  // starts with this single panel, ready for its first 📷 capture).
+  // It comes with the top-left cell (0, 0) — the right home for the FIRST panel
+  // of a canvas; "+ Add Object" moves it to the first free cell (firstFreeCell),
+  // so a panel added to a figure already in progress never covers another one.
+  const blankObject = (letter) => ({
+    id: `obj_${Date.now()}`,
+    x: 0, y: 0, w: 1, h: 1,
+    letter: letter || 'A',
+    letterStyle: { fontSize: currentLetterPt(), color: '#000000', bold: true },
+    caption: '',
+    captionStyle: { fontSize: 10, color: '#000000', bold: false }, // kept for canvases saved before the panel caption was hidden (never drawn)
+    imgSrc: null, imgFit: 'contain', imgScale: 1, imgPadding: 2,
+    imgOffsetX: 0, imgOffsetY: 0,  // shift the image inside the object frame (mm)
+    imgRotate: 0,                   // image rotation (degrees)
+    texts: [],                      // free text overlays [{ id, x, y, text, fontSize, color, bold, italic }]
+    src: null,                      // { testId, testName, elementLabel } — link back to the original graph
+    images: [],                     // extra figures inside this same object/panel (multi-figure montage)
+    imgCols: 2                      // grid columns when the object holds several figures
+  });
+
+  // Where a NEW panel goes: the FIRST FREE CELL of the grid, scanned in the very
+  // order the panel letters follow (row by row, left→right — see
+  // `renumberLetters`). "+ Add Object" used to drop every panel on the top-left
+  // cell, i.e. right on top of panel A: the new panel hid the figure underneath
+  // and the user had to drag it away (often grabbing the wrong panel instead).
+  // The new panel now lands in the first EMPTY space — beside the panels already
+  // there, or in a gap left by a deleted / moved panel.
+  // `w` / `h` are the panel size IN CELLS (1 × 1 for a new panel) and every cell
+  // the panel would occupy is tested, so it can never half-cover an existing one.
+  // Returns null when the grid has no free cell left: the caller must not stack
+  // the panel on an occupied cell, it reports the full grid instead (addObject).
+  const firstFreeCell = (list, w = 1, h = 1) => {
+    const occupied = (x, y) => (list || []).some((o) => {
+      if (!o) return false;
+      const ox = Number(o.x) || 0, oy = Number(o.y) || 0;
+      const ow = Math.max(1, Number(o.w) || 1), oh = Math.max(1, Number(o.h) || 1);
+      return x < ox + ow && x + w > ox && y < oy + oh && y + h > oy;
+    });
+    for (let y = 0; y + h <= gridRows; y++) {
+      for (let x = 0; x + w <= gridCols; x++) {
+        if (!occupied(x, y)) return { x, y };
+      }
+    }
+    return null;
+  };
+
   const addObject = () => {
-    const id = `obj_${Date.now()}`;
+    // The new panel takes the first free cell — never the top-left cell, which
+    // usually holds panel A. A grid with no free cell cannot host one: say so
+    // and change nothing (stacking it would simply hide a figure).
+    const spot = firstFreeCell(objects);
+    if (!spot) {
+      window.alert(`The ${gridCols} × ${gridRows} grid is full: a new panel would cover an existing one. Increase “Grid Cols” or “Grid Rows” in the canvas format, or delete a panel, to make room.`);
+      return;
+    }
     commitHistory();
     const nextLetter = objects.length < 26 ? String.fromCharCode(65 + objects.length) : `${objects.length + 1}`;
-    const newObj = {
-      id, x: 0, y: 0, w: 1, h: 1,
-      letter: nextLetter,
-      letterStyle: { fontSize: currentLetterPt(), color: '#000000', bold: true },
-      caption: '',
-      captionStyle: { fontSize: 10, color: '#000000', bold: false }, // kept for canvases saved before the panel caption was hidden (never drawn)
-      imgSrc: null, imgFit: 'contain', imgScale: 1, imgPadding: 2,
-      imgOffsetX: 0, imgOffsetY: 0,  // shift the image inside the object frame (mm)
-      imgRotate: 0,                   // image rotation (degrees)
-      texts: [],                      // free text overlays [{ id, x, y, text, fontSize, color, bold, italic }]
-      src: null,                      // { testId, testName, elementLabel } — link back to the original graph
-      images: [],                     // extra figures inside this same object/panel (multi-figure montage)
-      imgCols: 2                      // grid columns when the object holds several figures
-    };
+    const newObj = blankObject(nextLetter);
+    newObj.x = spot.x;               // the first free cell of the grid…
+    newObj.y = spot.y;               // …instead of the factory's default (0, 0)
     setObjects([...objects, newObj]);
-    setSelectedId(id);
+    setSelectedId(newObj.id);
     renumberLetters();
+  };
+
+  // ---- start a NEW image -----------------------------------------------------
+  // The editor had no CREATE button: it re-opens the canvas it was left on, and
+  // the only way to empty it was the red "Clear Canvas" — which reads as "you
+  // are about to lose your work" (and it forgets which library entry the canvas
+  // came from). This is its positive sibling:
+  //   • the figure that was open stays in the image library EXACTLY as it was
+  //     last saved (its "↩ Load" in the library restores it any time), and
+  //   • the next "💾 Save canvas" CREATES a new image in the library instead of
+  //     overwriting it, so two figures of one project never collide.
+  // The canvas FORMAT is kept (width/height, grid, borders, grid lines, aspect
+  // ratio, letter size): a new image is a new figure in the same format. It
+  // starts with one empty panel (A), selected, ready for a capture.
+  const startNewImage = () => {
+    const hasWork = (objects || []).length > 0 || String(globalCaption || '').trim();
+    if (hasWork) {
+      const savedLabel = canvasLabel || (homeEntry && homeEntry.label) || '';
+      const msg = savedLabel
+        ? `Start a new image? “${savedLabel}” stays in the image library as it was last saved — only the editor is emptied.`
+        : 'Start a new image? The current canvas was never saved to the image library, so it will be lost.';
+      if (!window.confirm(msg)) return;
+    }
+    commitHistory();                 // the canvas that was open stays one Ctrl+Z away
+    const first = blankObject('A');
+    setObjects([first]);
+    setSelectedId(first.id);
+    renumberLetters();               // a single panel is always "A"
+    setEditingText(null);
+    setEditingObjCaption(null);
+    setEditingCaption(false);
+    setPlaceTextMode(false);
+    setGlobalCaption('');
+    setFocusObjId(null);
+    // Detach from the stored canvas: with no known entry the next "💾 Save
+    // canvas" adds a NEW image to the library (the one that was open is left
+    // untouched) while the save dialog still proposes the same destination.
+    setCanvasEntries({});
+    setCanvasLabel('');
+    setCanvasHome(projectId || null);
+    setPickMode('replace');
+    setShowLibrary(false);
+    setInsertOpen(false);
+    setRecapNote(null);
   };
 
   // Ctrl+Z undoes the last canvas change.
@@ -1123,6 +1283,63 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     });
     if (jumpToTest) jumpToTest(src.testId, src);
   };
+
+  /* ── AUTOMATIC RE-CAPTURE ─────────────────────────────────────────────────
+     "The figures of this canvas were captured with another style": instead of
+     sending the user to each experiment to press 🎨 then 📷, the builder QUEUES
+     the figures (library entry + the exact chart element, see
+     utils/figureRecapture) and opens the first experiment. The experiment page
+     applies the profile, re-captures each queued element and REPLACES its
+     library entry in place, then reopens this builder — whose canvas objects
+     are refreshed from the library below. Nothing to do by hand. */
+  const [recapNote, setRecapNote] = useState(null);   // summary of the last run
+  const recapAppliedAt = useRef(0);
+
+  const recaptureFigures = (rows) => {
+    const usable = (rows || []).filter((r) => r && r.canRecapture);
+    if (!usable.length) return 0;
+    const items = usable.map((r) => ({
+      figId: r.libId,
+      scope: r.libScope,
+      projectId: r.libProjectId,
+      label: r.label,
+      elementKey: r.elementKey,
+      styleTag: r.tag,
+      origin: r.src || {}
+    }));
+    queueFigureRecaptures(items, {
+      origin: 'image-builder',
+      return: { module: 'image-builder', projectId: projectId || null }
+    });
+    setRecapNote(null);
+    const first = items[0];
+    if (jumpToTest && first.origin && first.origin.testId) jumpToTest(first.origin.testId, first.origin);
+    return items.length;
+  };
+
+  // Coming back from the experiments: show what was done and pull the NEW
+  // pixels of every re-captured figure into the canvas (the objects keep a
+  // thumbnail + the library id, so re-resolving them is enough).
+  useEffect(() => {
+    const sync = () => {
+      const sum = figureRecaptureSummary();
+      if (!sum || sum.at === recapAppliedAt.current) return;
+      recapAppliedAt.current = sum.at;
+      // The report banner is only shown for a run that just happened — the
+      // canvas refresh below is done whenever a run is recorded, so a figure
+      // re-captured earlier still shows its NEW pixels here.
+      if (hasFreshFigureRecapture(5 * 60 * 1000)) setRecapNote(sum);
+      setObjects((objs) => objs.map((o) => ((o.libId || (o.images || []).some((im) => im && im.libId)) ? resolveObj(o) : o)));
+      setHydrateTick((t) => t + 1);
+    };
+    sync();
+    return subscribeFigureRecapture(sync);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, storageKey]);
+
+  // How many figure(s) of the canvas can be redone automatically? (A figure
+  // captured before the element stamp existed — or a saved canvas — cannot.)
+  const recapturableCount = styleBad.filter((r) => r.canRecapture).length;
 
   // Human-readable origin of a figure: "experiment — condition · chart".
   const originLabelOf = (src) => [src.testName, src.instanceName].filter(Boolean).join(' — ');
@@ -2109,9 +2326,39 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             <button onClick={() => { initialZoomRef.current = zoom; setIsFullScreen(true); }} className="text-xs bg-slate-800 text-white border border-slate-800 px-3 py-1.5 rounded-lg font-bold hover:bg-slate-700 flex items-center gap-1">
               🔍 Full Screen
             </button>
+            <button onClick={startNewImage}
+                    className="text-xs bg-amber-500 hover:bg-amber-600 text-white border border-amber-500 px-3 py-1.5 rounded-lg font-bold"
+                    title="Create a NEW image — a new figure, not a wipe: the editor starts on a blank canvas with one empty panel (A) ready for its first capture, and the next “💾 Save canvas” adds a NEW image to the image library. The figure you were working on stays in the library exactly as it was last saved (its “↩ Load” brings it back). The canvas format — size, grid, borders, aspect ratio, letter size — is kept.">
+              ➕ New image
+            </button>
             <button onClick={() => { if(window.confirm('Clear the entire canvas?')) { commitHistory(); setObjects([]); setSelectedId(null); setCanvasEntries({}); setCanvasLabel(''); } }} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100">Clear Canvas</button>
           </div>
         </div>
+
+        {/* Automatic re-capture report — the figures were redone on their own
+            experiment page and this canvas already shows the new pixels. */}
+        {recapNote && (recapNote.done > 0 || recapNote.failed > 0) ? (
+          <div className={`rounded-xl border px-3 py-2 text-xs flex flex-wrap items-center gap-x-2 gap-y-1 ${
+            recapNote.failed ? 'bg-amber-50 border-amber-300 text-amber-800' : 'bg-emerald-50 border-emerald-300 text-emerald-800'}`}>
+            <span className="font-bold">
+              {recapNote.failed ? '⚠️' : '✅'} Automatic re-capture
+            </span>
+            <span>
+              {recapNote.done} figure{recapNote.done === 1 ? '' : 's'} replaced in the image library
+              {recapNote.failed ? ` · ${recapNote.failed} could not be redone` : ''}.
+            </span>
+            {recapNote.failed ? (
+              <span className="text-[11px] text-amber-700">
+                {recapNote.results.filter((r) => r.status === 'failed').slice(0, 3)
+                  .map((r) => `${r.label}${r.message ? ` (${r.message})` : ''}`).join(' · ')}
+                {' '}— use ↗ Open original graph for those.
+              </span>
+            ) : null}
+            <span className="text-[10px] text-slate-500">The canvas below already shows the new figures.</span>
+            <button type="button" onClick={() => setRecapNote(null)}
+              className="ml-auto font-bold text-slate-500 hover:text-slate-800" title="Dismiss">✕</button>
+          </div>
+        ) : null}
 
         {/* Toolbar */}
         <div className="flex flex-wrap gap-3 items-end bg-slate-50 border border-slate-200 rounded-lg p-3">
@@ -2146,7 +2393,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           <label className="text-[10px] font-bold text-slate-500 flex flex-col flex-1 min-w-[220px]" title="The caption written at the bottom of the figure. By default it merges the panel sub-captions in LETTER order (A: … · B: … · C: …), whatever order the panels were created in.">Global caption (click to edit — merges the object sub-captions in letter order)
             <span className="border border-slate-200 rounded p-1 text-xs bg-slate-50 text-slate-600 truncate hover:border-blue-400 hover:bg-blue-50 cursor-text" title={effectiveGlobalCaption} onClick={() => { setSelectedId(null); setEditingCaption(true); }}>{effectiveGlobalCaption || 'Merges the object sub-captions (A: …, B: …)'}</span>
           </label>
-          <button onClick={addObject} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">+ Add Object</button>
+          <button onClick={addObject} title="Add a panel — it takes the FIRST FREE cell of the grid, so it never lands on a panel that is already there (a full grid is reported instead of covering a figure)." className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">+ Add Object</button>
           <button onClick={undo} disabled={!undoStack.current.length || histTick < 0} className="bg-slate-100 border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-200 disabled:opacity-40" title="Undo last change (Ctrl+Z)">↩ Undo</button>
           <button onClick={() => selectedId && zoomToObject(selectedId)} disabled={!selectedId} title={selectedId ? 'Zoom fullscreen on the selected object' : 'Select an object first'}
             className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold px-3 py-1.5 rounded-lg text-xs">⛶ Zoom Object</button>
@@ -2177,6 +2424,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                       ? `⚠ ${styleBad.length} of ${styleRows.length} figure(s) were not captured with the current style — characters may look bigger / smaller in the same slide.`
                       : `✅ All ${styleRows.length} figure(s) share the current style.`)}
                 </span>
+                {recapturableCount > 0 ? (
+                  <button type="button" onClick={() => recaptureFigures(styleBad)}
+                    className="ml-auto bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-2.5 py-1 rounded-md text-[11px]"
+                    title="One click: the app opens the experiment(s), applies the CURRENT Figure style to the charts and replaces the saved figures in the image library — then it comes back to this canvas on its own.">
+                    🔄 Recapture automatically ({recapturableCount})
+                  </button>
+                ) : null}
               </div>
               {styleRows.length > 0 && (
                 <ul className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
@@ -2193,12 +2447,23 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                             {r.pxW ? ` · ${r.pxW}×${r.pxH} px` : (r.renderedW ? ` · ${r.renderedW}×${r.renderedH} px` : '')}
                           </span>
                         </span>
-                        {r.src && r.src.testId && r.status !== 'match' && r.status !== 'canvas' ? (
-                          <button type="button" onClick={() => openOriginalGraph(r.src)}
-                            className="shrink-0 text-[10px] font-bold text-blue-600 hover:underline"
-                            title="Open the experiment and the exact graph this figure was captured from — apply the 🎨 Figure style there, then capture again.">
-                            ↗ Open original graph
-                          </button>
+                        {r.status !== 'match' && r.status !== 'canvas' ? (
+                          <>
+                            {r.canRecapture ? (
+                              <button type="button" onClick={() => recaptureFigures([r])}
+                                className="shrink-0 text-[10px] font-bold text-indigo-600 hover:underline"
+                                title="Re-render THIS graph with the current Figure style and replace the saved figure automatically — the app opens the experiment for you.">
+                                🔄 Recapture
+                              </button>
+                            ) : null}
+                            {r.src && r.src.testId ? (
+                              <button type="button" onClick={() => openOriginalGraph(r.src)}
+                                className="shrink-0 text-[10px] font-bold text-blue-600 hover:underline"
+                                title="Open the experiment and the exact graph this figure was captured from — apply the 🎨 Figure style there, then capture again.">
+                                ↗ Open original graph
+                              </button>
+                            ) : null}
+                          </>
                         ) : null}
                       </li>
                     );
@@ -2329,7 +2594,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
               </div>
 
               <div className="flex flex-wrap gap-2">
-                 <button onClick={addObject} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">+ Add Object</button>
+                 <button onClick={addObject} title="Add a panel — it takes the FIRST FREE cell of the grid, so it never lands on a panel that is already there (a full grid is reported instead of covering a figure)." className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">+ Add Object</button>
                  <button onClick={undo} disabled={!undoStack.current.length || histTick < 0} className="bg-slate-100 border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-200 disabled:opacity-40" title="Undo last change (Ctrl+Z)">↩ Undo</button>
                  <button onClick={() => { setPickMode('replace'); setShowLibrary(true); }}
                    title="Open the image library — browse or upload new images from your computer"
@@ -2407,6 +2672,14 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                   ⬆ Upload from PC
                 </button>
                 <input ref={libFileRef} type="file" accept="image/*,.svg" multiple className="hidden" onChange={handleLibUpload} />
+                <button
+                  type="button"
+                  onClick={startNewImage}
+                  className="bg-amber-500 hover:bg-amber-600 text-white font-bold px-3 py-1.5 rounded text-xs flex items-center gap-1"
+                  title="Nothing in the library fits? Close it and start a NEW image (a blank canvas with one empty panel). The figure you were working on stays in the library as it was last saved, and the next “💾 Save canvas” creates a new library entry."
+                >
+                  ➕ New image
+                </button>
               </div>
               {selectedObj && (
                 <div className="flex gap-1 ml-auto" title="Replace: the selected object shows only this figure. Add: appends the figure to the selected object so several figures share one panel.">

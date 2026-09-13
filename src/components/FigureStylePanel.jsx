@@ -1,51 +1,84 @@
 import React from 'react';
 import {
   DEFAULT_FIGURE_STYLE, FIGURE_FONT_MIN, FIGURE_FONT_MAX,
-  FIGURE_ANGLE_MIN, FIGURE_ANGLE_MAX, figureStyleTag, writeFigureStyle
+  FIGURE_FONT_STEPS, FIGURE_ANGLE_MIN, FIGURE_ANGLE_MAX, figureStyleTag, writeFigureStyle
 } from '../utils/figureStyle';
+import { FIGURE_FONT_CHOICES } from '../utils/chartStyle';
 import { useFigureStyleProfile } from './FigureStyleTools';
 
 /* =========================================================================
    src/components/FigureStylePanel.jsx
-   Settings → "Figure style": the ONE place where the character sizes shared by
-   every chart / spectrum of every experiment are defined.
+   Settings → "Figure style": the ONE place where the font and the character
+   sizes shared by every chart / spectrum of every experiment are defined.
+
+   ONE SIZE PER ELEMENT — a printed figure never uses the same size for the
+   axis numbers, the axis titles and the legend:
+     • axis numbers (tick labels)   fontSize
+     • axis titles (x / y names)    axisTitleFontSize
+     • legends / series names       legendFontSize
+     • peak / data labels           simLabelFontSize
+   …plus the FONT FAMILY every one of them is drawn with.
 
    The profile is saved in `labFigureStyle` (localStorage, app-wide) and applied
    on an experiment page by the 🎨 button of the ChartStarLayer — "apply the
    style BEFORE the capture", which is the only way a figure captured here and a
-   figure captured on another page end up with the same apparent character size.
+   figure captured on another page end up with the same characters.
    ========================================================================= */
 
+// Presets set the four sizes at once. The last two are the POSTER values
+// (36 / 40 px) a figure printed at A0 needs — the ticks stay readable when the
+// figure is looked at from a metre away.
 const PRESETS = [
-  { label: 'Compact', fontSize: 12, simLabelFontSize: 12, tickAngle: 0 },
-  { label: 'Standard', fontSize: 16, simLabelFontSize: 16, tickAngle: 0 },
-  { label: 'Slide', fontSize: 20, simLabelFontSize: 20, tickAngle: 0 },
-  { label: 'Poster', fontSize: 24, simLabelFontSize: 24, tickAngle: 0 }
+  { label: 'Compact', fontSize: 12, axisTitleFontSize: 13, legendFontSize: 12, simLabelFontSize: 12, tickAngle: 0 },
+  { label: 'Standard', fontSize: 16, axisTitleFontSize: 18, legendFontSize: 16, simLabelFontSize: 16, tickAngle: 0 },
+  { label: 'Slide', fontSize: 20, axisTitleFontSize: 22, legendFontSize: 20, simLabelFontSize: 20, tickAngle: 0 },
+  { label: 'Poster', fontSize: 28, axisTitleFontSize: 32, legendFontSize: 28, simLabelFontSize: 28, tickAngle: 0 },
+  { label: 'Poster A0', fontSize: 36, axisTitleFontSize: 40, legendFontSize: 36, simLabelFontSize: 36, tickAngle: 0 },
+  { label: 'Poster A0 XL', fontSize: 40, axisTitleFontSize: 40, legendFontSize: 36, simLabelFontSize: 36, tickAngle: 0 }
 ];
 
-const Row = ({ label, hint, value, min, max, step = 1, unit = 'px', onChange }) => (
-  <div className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-    <div className="flex-1 min-w-0">
-      <div className="text-xs font-bold text-slate-700">{label}</div>
-      {hint ? <div className="text-[10px] text-slate-500 leading-snug">{hint}</div> : null}
+const Row = ({ label, hint, value, min, max, step = 1, unit = 'px', onChange, quick = null, quickLabel = null }) => (
+  <div className="flex flex-col gap-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+    <div className="flex items-center gap-3">
+      <div className="flex-1 min-w-0">
+        <div className="text-xs font-bold text-slate-700">{label}</div>
+        {hint ? <div className="text-[10px] text-slate-500 leading-snug">{hint}</div> : null}
+      </div>
+      <input
+        type="range" min={min} max={max} step={step} value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-32 accent-indigo-600"
+      />
+      <input
+        type="number" min={min} max={max} step={step} value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-16 border border-slate-300 rounded-md px-2 py-1 text-xs text-right outline-none focus:border-indigo-500"
+      />
+      <span className="text-[10px] text-slate-400 w-4">{unit}</span>
     </div>
-    <input
-      type="range" min={min} max={max} step={step} value={value}
-      onChange={(e) => onChange(Number(e.target.value))}
-      className="w-32 accent-indigo-600"
-    />
-    <input
-      type="number" min={min} max={max} step={step} value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="w-16 border border-slate-300 rounded-md px-2 py-1 text-xs text-right outline-none focus:border-indigo-500"
-    />
-    <span className="text-[10px] text-slate-400 w-4">{unit}</span>
+    {quick && quick.length ? (
+      <div className="flex flex-wrap items-center gap-1 pl-1">
+        {quickLabel ? <span className="text-[9px] font-bold text-slate-400 uppercase mr-0.5">{quickLabel}</span> : null}
+        {quick.map((v) => (
+          <button
+            key={v} type="button" onClick={() => onChange(v)}
+            className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${Number(value) === v
+              ? 'bg-indigo-600 text-white border-indigo-600'
+              : 'bg-white border-slate-300 text-slate-600 hover:bg-indigo-50 hover:text-indigo-700'}`}
+          >
+            {v}
+          </button>
+        ))}
+      </div>
+    ) : null}
   </div>
 );
+
 
 export const FigureStylePanel = () => {
   const profile = useFigureStyleProfile();
   const set = (patch) => writeFigureStyle({ ...profile, ...patch });
+  const family = profile.fontFamily;
 
   return (
     <div className="flex flex-col gap-3">
@@ -60,9 +93,10 @@ export const FigureStylePanel = () => {
         {PRESETS.map((p) => (
           <button
             key={p.label} type="button" onClick={() => set(p)}
+            title={`Ticks ${p.fontSize} px · titles ${p.axisTitleFontSize} px · legends ${p.legendFontSize} px · data labels ${p.simLabelFontSize} px`}
             className="text-[11px] font-bold px-2.5 py-1 rounded-full border border-slate-300 bg-white text-slate-600 hover:bg-indigo-50 hover:text-indigo-700"
           >
-            {p.label} · {p.fontSize}px
+            {p.label} · {p.fontSize}/{p.axisTitleFontSize}
           </button>
         ))}
         <button
@@ -74,16 +108,63 @@ export const FigureStylePanel = () => {
         <span className="text-[10px] font-mono text-slate-400">tag: {figureStyleTag(profile)}</span>
       </div>
 
+      {/* ---- font family -------------------------------------------------- */}
+      <div className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+        <div className="flex-1 min-w-0">
+          <div className="text-xs font-bold text-slate-700">Font family</div>
+          <div className="text-[10px] text-slate-500 leading-snug">
+            Applied to every axis number, axis title, legend and data label of every chart (recharts AND
+            Chart.js figures). “App default” = the font the charts use today.
+          </div>
+        </div>
+        <select
+          value={family}
+          onChange={(e) => set({ fontFamily: e.target.value })}
+          className="w-56 border border-slate-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-indigo-500"
+        >
+          {FIGURE_FONT_CHOICES.map((f) => (
+            <option key={f.value || 'default'} value={f.value}>{f.label}</option>
+          ))}
+          {family && !FIGURE_FONT_CHOICES.some((f) => f.value === family) ? (
+            <option value={family}>{family}</option>
+          ) : null}
+        </select>
+      </div>
+      {family ? (
+        <input
+          type="text" value={family} onChange={(e) => set({ fontFamily: e.target.value })}
+          placeholder='Any CSS font stack, e.g. "Helvetica Neue", Arial, sans-serif'
+          className="border border-slate-300 rounded-md px-2 py-1 text-[11px] font-mono outline-none focus:border-indigo-500"
+        />
+      ) : null}
+
+      {/* ---- one character size per element ------------------------------- */}
       <Row
-        label="Axis & tick characters"
-        hint="Ticks, axis titles, legends of every chart (all families / modules)."
+        label="1 · Axis numbers (tick labels)"
+        hint="The numbers along the axes — the size every page has always used (cfg.fontSize)."
         value={profile.fontSize} min={FIGURE_FONT_MIN} max={FIGURE_FONT_MAX}
+        quick={FIGURE_FONT_STEPS} quickLabel="px"
         onChange={(v) => set({ fontSize: v })}
       />
       <Row
-        label="Peak / data labels (spectra)"
+        label="2 · Axis titles (x / y names)"
+        hint="“Wavelength (nm)”, “Intensity (a.u.)” — printed bigger than the numbers."
+        value={profile.axisTitleFontSize} min={FIGURE_FONT_MIN} max={FIGURE_FONT_MAX}
+        quick={FIGURE_FONT_STEPS} quickLabel="px"
+        onChange={(v) => set({ axisTitleFontSize: v })}
+      />
+      <Row
+        label="3 · Legends / series names"
+        hint="The key of a multi-series graph (conditions, fits, simulated vs experimental)."
+        value={profile.legendFontSize} min={FIGURE_FONT_MIN} max={FIGURE_FONT_MAX}
+        quick={FIGURE_FONT_STEPS} quickLabel="px"
+        onChange={(v) => set({ legendFontSize: v })}
+      />
+      <Row
+        label="4 · Peak / data labels (spectra)"
         hint="Simulated spectra assignments, 1D / 2D peak labels — wherever an x axis exists."
         value={profile.simLabelFontSize} min={FIGURE_FONT_MIN} max={FIGURE_FONT_MAX}
+        quick={FIGURE_FONT_STEPS} quickLabel="px"
         onChange={(v) => set({ simLabelFontSize: v })}
       />
       <Row
@@ -91,6 +172,7 @@ export const FigureStylePanel = () => {
         hint="Rotation of the x tick labels of the spectra / long category names. 0 = browser default."
         value={profile.tickAngle} min={FIGURE_ANGLE_MIN} max={FIGURE_ANGLE_MAX}
         unit="°"
+        quick={[0, -30, -45, -60, 30, 45, 60, 90]} quickLabel="°"
         onChange={(v) => set({ tickAngle: v })}
       />
 
@@ -108,10 +190,20 @@ export const FigureStylePanel = () => {
 
       <div className="bg-white border border-slate-200 rounded-lg p-3">
         <div className="text-[10px] font-bold text-slate-500 mb-2">Preview — what the figures will look like</div>
-        <div className="flex items-end gap-4 h-24 border-l border-b border-slate-300 pl-2 pb-1 relative">
-          <span className="absolute left-1 top-1 text-slate-500" style={{ fontSize: profile.fontSize }}>Intensity</span>
-          <span className="absolute -bottom-1 right-1 text-slate-500" style={{ fontSize: profile.fontSize }}>250 nm</span>
-          <span className="absolute left-10 top-9 text-red-600 font-semibold" style={{ fontSize: profile.simLabelFontSize }}>3A Hα</span>
+        <div className="flex items-end gap-4 h-32 border-l border-b border-slate-300 pl-2 pb-1 relative"
+          style={{ fontFamily: family || undefined }}>
+          <span className="absolute left-1 top-1 text-slate-500" style={{ fontSize: profile.axisTitleFontSize }}>
+            Intensity (a.u.)
+          </span>
+          <span className="absolute -bottom-1 right-1 text-slate-500" style={{ fontSize: profile.fontSize }}>
+            250 nm
+          </span>
+          <span className="absolute left-1 top-12 text-slate-500" style={{ fontSize: profile.legendFontSize }}>
+            ▲ 3 conditions ▼
+          </span>
+          <span className="absolute left-32 top-20 text-red-600 font-semibold" style={{ fontSize: profile.simLabelFontSize }}>
+            3A Hα
+          </span>
           <span
             className="absolute right-2 top-1 text-slate-500 origin-top-left"
             style={{ fontSize: profile.fontSize, transform: `rotate(${profile.tickAngle}deg)` }}

@@ -1,13 +1,15 @@
 // components/FlowCytometrySections.jsx
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { suggestDriveFileName, sanitizeSlug } from '../utils/driveNaming';
+import {
+  suggestDriveFileName, sanitizeSlug } from '../utils/driveNaming';
 import { uploadLocalFile, withExtension, getDriveToken, getDriveFileRegistry, driveFetch, untrashDriveFile } from '../utils/driveUpload';
 import { saveFcsFile, loadFcsFile, removeFcsFile } from '../utils/fcsBlobStore';
 import { PLATE_PRESET_LABELS, PLATE_PRESET_COLORS, isPlatePreset, platePresetColor } from '../utils/platePresets';
 import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Line, ComposedChart, Area, ReferenceArea} from 'recharts';
 import { ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
-import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES, seriesColorFor } from '../utils/chartStyle';
+import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES, seriesColorFor, tickSize, fontFamilyOf
+} from '../utils/chartStyle';
 import { PLATES_DEF, formatConc, getRegionColor } from '../data/constants';
 export { VIS_PALETTES };
 
@@ -523,13 +525,13 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, xLabel, yLabel, logX, log
         }
       }
 
-      ctx.fillStyle = '#334155'; ctx.font = `bold ${cfg.fontSize || 12}px sans-serif`; ctx.textAlign = 'center';
+      ctx.fillStyle = '#334155'; ctx.font = `bold ${Number(tickSize(cfg)) || 12}px ${fontFamilyOf(cfg) || 'sans-serif'}`; ctx.textAlign = 'center';
       ctx.fillText(`${xLabel}${logX ? ' (Log)' : ''}`, pad.left + plotW / 2, H - 10);
       
       ctx.save(); ctx.translate(20, pad.top + plotH / 2); ctx.rotate(-Math.PI / 2); // Shifted Y-label rightward
       ctx.fillText(`${yLabel}${logY ? ' (Log)' : ''}`, 0, 0); ctx.restore();
       
-      ctx.fillStyle = '#64748b'; ctx.font = `${Math.max(9, (cfg.fontSize || 12) - 2)}px sans-serif`;
+      ctx.fillStyle = '#64748b'; ctx.font = `${Math.max(9, (Number(tickSize(cfg)) || 12) - 2)}px ${fontFamilyOf(cfg) || 'sans-serif'}`;
       for (let i = 0; i <= 5; i++) {
         const valX = minX + (maxX - minX) * (i / 5);
         const valY = minY + (maxY - minY) * (i / 5);

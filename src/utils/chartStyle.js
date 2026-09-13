@@ -615,3 +615,128 @@ export const axisBreakPatch = (axis, patch) => {
   Object.keys(patch || {}).forEach((key) => { out[`${k}${key}`] = patch[key]; });
   return out;
 };
+
+/* =========================================================================
+   FIGURE CHARACTERS — FONT FAMILY + ONE CHARACTER SIZE PER ELEMENT
+
+   `cfg.fontSize` is (and stays) the size of the axis NUMBER labels: it is the
+   knob every page has always read, so nothing moves for a cfg that does not
+   carry the new keys. Three MORE element sizes are honoured, each one falling
+   back to `fontSize` when it is not set:
+
+     • cfg.axisTitleFontSize — the axis TITLES ("Wavelength (nm)"), which the
+       chart code has always drawn at `fontSize + 1` (see cfgAxisLabel);
+     • cfg.legendFontSize    — the legend entries (a chart legend carries the
+       series names, printed smaller than the ticks on a real figure);
+     • cfg.simLabelFontSize  — peak / data labels of the spectra (read by the
+       spectra themselves — see utils/figureStyle.js).
+
+   `cfg.fontFamily` names the font of ALL of them. '' / undefined = the app
+   font, i.e. exactly what the charts rendered before this existed.
+
+   The helpers below exist so a call site reads `tickTextProps(cfg, { fill })`
+   instead of hard-coding `fontSize: cfg.fontSize` — one place to change, every
+   page (recharts AND Chart.js) follows.
+   ========================================================================= */
+
+// Selectable font stacks. '' = the app font (Tailwind's sans stack = Inter).
+export const FIGURE_FONT_CHOICES = [
+  { value: '', label: 'App default (Inter)' },
+  { value: 'Arial, Helvetica, sans-serif', label: 'Arial / Helvetica' },
+  { value: '"Times New Roman", Times, serif', label: 'Times New Roman (serif)' },
+  { value: 'Georgia, "Times New Roman", serif', label: 'Georgia (serif)' },
+  { value: '"Palatino Linotype", Palatino, serif', label: 'Palatino (serif)' },
+  { value: 'Verdana, Geneva, sans-serif', label: 'Verdana (wide)' },
+  { value: 'Tahoma, Geneva, sans-serif', label: 'Tahoma' },
+  { value: '"Trebuchet MS", Helvetica, sans-serif', label: 'Trebuchet MS' },
+  { value: '"Courier New", Courier, monospace', label: 'Courier New (mono)' },
+  { value: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', label: 'System monospace' }
+];
+
+// A chart character size is only bounded by readability: the panels offer up to
+// 40 px (poster figures) and a per-chart hand-typed value may go a little over.
+export const MIN_CHART_FONT = 6;
+export const MAX_CHART_FONT = 96;
+
+export const clampChartFont = (v, fallback = DEFAULT_CHART_FONT_SIZE) => {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.max(MIN_CHART_FONT, Math.min(MAX_CHART_FONT, Math.round(n)));
+};
+
+/** Font family of a cfg ('' = the app font — the value a chart got before). */
+export const fontFamilyOf = (cfg) => String((cfg && (cfg.fontFamily || cfg.font)) || '').trim();
+
+/**
+ * Size of the axis NUMBER labels. Returns the raw value when the cfg has none,
+ * so a call site that used to pass `cfg.fontSize` (undefined → the library's own
+ * default) keeps rendering exactly the same chart.
+ */
+export const tickSize = (cfg, fallback) => {
+  const raw = cfg ? cfg.fontSize : undefined;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return clampChartFont(n);
+  const f = Number(fallback);
+  return Number.isFinite(f) && f > 0 ? clampChartFont(f) : raw;
+};
+
+/** Size of the axis TITLES (`axisTitleFontSize`, else one px over the ticks). */
+export const axisTitleSize = (cfg, fallback) => {
+  const n = Number(cfg && cfg.axisTitleFontSize);
+  if (Number.isFinite(n) && n > 0) return clampChartFont(n);
+  const t = Number(tickSize(cfg));
+  if (Number.isFinite(t) && t > 0) return clampChartFont(t + 1);
+  const f = Number(fallback);
+  return Number.isFinite(f) && f > 0 ? clampChartFont(f) : fallback;
+};
+
+/** Size of the legend entries (`legendFontSize`, else the axis numbers). */
+export const legendSize = (cfg, fallback) => {
+  const n = Number(cfg && cfg.legendFontSize);
+  if (Number.isFinite(n) && n > 0) return clampChartFont(n);
+  const t = Number(tickSize(cfg, fallback));
+  if (Number.isFinite(t) && t > 0) return clampChartFont(t);
+  return fallback;
+};
+
+/** Size of the peak / data labels (`simLabelFontSize`, else the ticks). */
+export const dataLabelSize = (cfg, fallback) => {
+  const n = Number(cfg && cfg.simLabelFontSize);
+  if (Number.isFinite(n) && n > 0) return clampChartFont(n);
+  const t = Number(tickSize(cfg, fallback));
+  if (Number.isFinite(t) && t > 0) return clampChartFont(t);
+  return fallback;
+};
+
+/** recharts `tick={…}` props: the number size + the chosen font family. */
+export const tickTextProps = (cfg, extra) => {
+  const fam = fontFamilyOf(cfg);
+  return {
+    fontSize: tickSize(cfg),
+    ...(fam ? { fontFamily: fam } : {}),
+    ...(extra || {})
+  };
+};
+
+/** recharts `<Legend wrapperStyle={…}>`: legend size + font family. */
+export const legendTextStyle = (cfg, extra) => {
+  const fam = fontFamilyOf(cfg);
+  return {
+    fontSize: legendSize(cfg),
+    ...(fam ? { fontFamily: fam } : {}),
+    ...(extra || {})
+  };
+};
+
+/** Chart.js `font: { … }` object (state of the axis numbers). */
+export const chartJsFont = (cfg, extra) => {
+  const fam = fontFamilyOf(cfg);
+  return {
+    size: tickSize(cfg),
+    ...(fam ? { family: fam } : {}),
+    ...(extra || {})
+  };
+};
+
+/** Chart.js `font: { … }` object of an axis TITLE (usually bold). */
+export const chartJsTitleFont = (cfg, extra) => chartJsFont(cfg, { size: axisTitleSize(cfg), ...(extra || {}) });

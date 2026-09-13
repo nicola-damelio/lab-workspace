@@ -6,7 +6,12 @@ import {
 } from '../utils/figuresLibrary';
 import { clearPendingFigureScroll, peekPendingFigureScroll } from '../utils/pendingFigureScroll';
 import { FigureStyleApplyButton } from './FigureStyleTools';
-import { figureStyleTag } from '../utils/figureStyle';
+import { figureStyleTag, readFigureStyle, applyFigureStyleEverywhere } from '../utils/figureStyle';
+import {
+  figureRecapturesForTest, markFigureRecaptureResult, figureRecaptureProgress,
+  nextRecaptureTarget, readFigureRecapture, RECAPTURE_RETURN_EVENT, RECAPTURE_NEXT_TEST_EVENT
+} from '../utils/figureRecapture';
+import { sanitizeColorsForHtml2Canvas } from '../utils/captureColors';
 import { loadProjects } from './AppModules/projectsModule';
 
 
@@ -67,29 +72,171 @@ const inFormControl = (el) => {
   return !!c;
 };
 
-const svgToDataUrl = (svg) => {
+const svgToDataUrl = (svg, scale = 1) => {
   const r = svg.getBoundingClientRect();
   const clone = svg.cloneNode(true);
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-  clone.setAttribute('width', String(Math.max(1, Math.round(r.width))));
-  clone.setAttribute('height', String(Math.max(1, Math.round(r.height))));
+  clone.setAttribute('width', String(Math.max(1, Math.round(r.width * scale))));
+  clone.setAttribute('height', String(Math.max(1, Math.round(r.height * scale))));
+  // A serialised SVG loses every INHERITED style, so the text of a recharts
+  // chart would fall back to the browser default (serif) font and to the UA
+  // 16px size. Carry the element's own font over. Explicit sizes/attributes on
+  // the inner <text> nodes still win (an inherited value never beats a
+  // declaration), so each chart keeps its own fontSize setting.
+  try {
+    const cs = window.getComputedStyle(svg);
+    if (cs) {
+      if (cs.fontFamily) clone.style.fontFamily = cs.fontFamily;
+      if (cs.fontSize) clone.style.fontSize = cs.fontSize;
+      clone.style.background = '#ffffff';
+    }
+  } catch { /* ignore — the snapshot stays plain */ }
   const xml = new XMLSerializer().serializeToString(clone);
   return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml);
 };
 const nextFrames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
+// One-line, printable reason of a failed snapshot (shown by the 📷 button).
+const shortError = (err) =>
+  String((err && err.message) || err || 'unknown error').replace(/\s+/g, ' ').slice(0, 120);
+
+// Why the last composite snapshot failed ('' when it did not).
+let captureReason = '';
+export const captureFailureReason = () => captureReason;
+
+// Snapshot engines for a `data-star-group` panel, in order of preference:
+//  1. `html2canvas-pro` — same API, and it parses the oklch()/oklab()/color()
+//     values Tailwind v4 emits (that is exactly what made the legacy build
+//     throw “Attempting to parse an unsupported color function "oklch"”).
+//  2. the legacy `html2canvas` with the subtree's computed colours normalised
+//     to rgb() beforehand (utils/captureColors) — for locked/offline setups.
+//  3. our own sub-chart compositor (`composeChartsToCanvas`).
+// Returns the rendered canvas, or null when every engine failed.
+const snapshotPanel = async (el) => {
+  const rect = el.getBoundingClientRect();
+  // Cap the long edge at ~1400 px so a tall panel cannot produce an image too
+  // heavy for the project document / figures library.
+  const scale = Math.max(1, Math.min(2, 1400 / Math.max(1, Math.max(rect.width, rect.height))));
+  const opts = { scale, useCORS: true, backgroundColor: '#ffffff', logging: false, imageTimeout: 15000 };
+  try {
+    const { default: html2canvasPro } = await import('html2canvas-pro');
+    if (typeof html2canvasPro === 'function') return await html2canvasPro(el, opts);
+  } catch (err) {
+    captureReason = `html2canvas-pro: ${shortError(err)}`;
+  }
+  let html2canvas = null;
+  try { ({ default: html2canvas } = await import('html2canvas')); } catch (err) { captureReason = `html2canvas: ${shortError(err)}`; }
+  if (typeof html2canvas === 'function') {
+    const restore = sanitizeColorsForHtml2Canvas(el);
+    try {
+      return await html2canvas(el, opts);
+    } catch (err) {
+      captureReason = `html2canvas: ${shortError(err)}`;
+    } finally {
+      restore();
+    }
+  }
+  return null;
+};
+
+// Last-resort compositor: draws the panel's OWN sub-charts (the graphs of a
+// “Split view” stack) on a single canvas, in DOM order, each with its row label
+// above it. Vector sub-charts are re-rendered at 2×, so the fallback figure
+// stays crisp even though the DOM snapshot engine failed.
+const CAPTURE_MIN_W = 120;
+const CAPTURE_MIN_H = 40;
+
+const visibleCharts = (el) => {
+  const found = [];
+  let nodes = [];
+  try { nodes = Array.from(el.querySelectorAll('svg, canvas')); } catch { nodes = []; }
+  nodes.forEach((n) => {
+    try {
+      const r = n.getBoundingClientRect();
+      if (r.width < CAPTURE_MIN_W || r.height < CAPTURE_MIN_H) return;
+      if (n.tagName.toLowerCase() === 'svg' && n.parentElement && n.parentElement.closest('svg')) return;
+      if (found.some((f) => f.node.contains(n))) return; // nested duplicate
+      found.push({ node: n, rect: r });
+    } catch { /* ignore this node */ }
+  });
+  return found;
+};
+
+// Nearest short text above a sub-chart — the series name of a split row.
+const rowLabelOf = (node) => {
+  let n = node;
+  for (let depth = 0; depth < 3 && n; depth += 1) {
+    let sib = n.previousElementSibling;
+    while (sib) {
+      const txt = (sib.textContent || '').replace(/\s+/g, ' ').trim();
+      if (txt && txt.length <= 90 && !sib.querySelector('svg, canvas, img')) return txt;
+      sib = sib.previousElementSibling;
+    }
+    n = n.parentElement;
+  }
+  return '';
+};
+
+const loadImage = (url) => new Promise((resolve) => {
+  const img = new Image();
+  img.onload = () => resolve(img);
+  img.onerror = () => resolve(null);
+  img.src = url;
+});
+
+const composeChartsToCanvas = async (el) => {
+  const items = visibleCharts(el);
+  if (!items.length) return null;
+  const shots = [];
+  for (const it of items) {
+    const isSvg = it.node.tagName.toLowerCase() === 'svg';
+    let url = '';
+    if (isSvg) url = svgToDataUrl(it.node, 2);
+    else { try { url = it.node.toDataURL('image/png'); } catch { url = ''; } }
+    if (!url) continue;
+    const img = await loadImage(url);
+    if (img && img.width) shots.push({ img, label: rowLabelOf(it.node) });
+  }
+  if (!shots.length) return null;
+  const pad = 24;
+  const gap = 20;
+  const labelH = 30;
+  const rawW = Math.max(...shots.map((s) => s.img.width)) + pad * 2;
+  const rawH = pad * 2 + shots.reduce((acc, s) => acc + s.img.height + (s.label ? labelH : 0) + gap, 0) - gap;
+  const fit = Math.min(1, 4000 / Math.max(1, rawW), 6000 / Math.max(1, rawH));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(rawW * fit));
+  canvas.height = Math.max(1, Math.round(rawH * fit));
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.scale(fit, fit);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, rawW, rawH);
+  ctx.textBaseline = 'top';
+  ctx.font = 'bold 26px ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+  let y = pad;
+  shots.forEach((s) => {
+    if (s.label) {
+      ctx.fillStyle = '#334155';
+      ctx.fillText(s.label.slice(0, 60), pad, y + 2);
+      y += labelH;
+    }
+    ctx.drawImage(s.img, Math.round((rawW - s.img.width) / 2), y, s.img.width, s.img.height);
+    y += s.img.height + gap;
+  });
+  return canvas;
+};
+
 // Composite snapshot of a `data-star-group` block — several sub-graphs living
-// in ONE card (e.g. the Flow Cytometry "📚 Split view — single curves" panel).
-// Its sub-graphs are live DOM + SVG, so html2canvas renders exactly what is on
-// screen. Inner scrollers (`max-h-[…]` + `overflow-y-auto`) are expanded for
-// the capture so the figure holds EVERY sub-graph, not only the ones currently
-// scrolled into view. html2canvas is imported on demand: it is only needed for
-// these panels and stays out of the test-page bundle until one is captured.
+// in ONE card (e.g. the Flow Cytometry “📚 Split view — single curves” panel and
+// the NMR / ssNMR / CD split stacks). Its sub-graphs are live DOM + SVG, so the
+// snapshot engine renders exactly what is on screen. Inner scrollers
+// (`max-h-[…]` + `overflow-y-auto`) are expanded for the capture so the figure
+// holds EVERY sub-graph, not only the ones currently scrolled into view.
+// The engine itself is imported on demand (see `snapshotPanel`): it is only
+// needed for these panels and stays out of the test-page bundle.
 const htmlToDataUrl = async (el) => {
   if (!el) return '';
-  let html2canvas = null;
-  try { ({ default: html2canvas } = await import('html2canvas')); } catch { return ''; }
-  if (typeof html2canvas !== 'function') return '';
   const restore = [];
   const expand = (n) => {
     if (!n || !n.style || typeof window === 'undefined') return;
@@ -107,15 +254,12 @@ const htmlToDataUrl = async (el) => {
   try { el.querySelectorAll('*').forEach(expand); } catch { /* ignore */ }
   try {
     await nextFrames();
-    // Cap the long edge at ~1400 px so a tall panel cannot produce an image
-    // too heavy for the project document / figures library.
-    const rect = el.getBoundingClientRect();
-    const scale = Math.max(1, Math.min(2, 1400 / Math.max(1, Math.max(rect.width, rect.height))));
-    const canvas = await html2canvas(el, {
-      scale, useCORS: true, backgroundColor: '#ffffff', logging: false, imageTimeout: 15000
-    });
-    return canvas.toDataURL('image/png');
-  } catch {
+    captureReason = '';
+    let canvas = await snapshotPanel(el);
+    if (!canvas) canvas = await composeChartsToCanvas(el);
+    return canvas ? canvas.toDataURL('image/png') : '';
+  } catch (err) {
+    captureReason = shortError(err);
     return '';
   } finally {
     restore.forEach(({ n, maxHeight, overflow, overflowY }) => {
@@ -374,7 +518,15 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
     setFigBusyKey(t.key);
     try {
       const url = await captureFigure(el, t.kind);
-      if (!url) { setFigStatus({ key: t.key, ok: false, msg: '⚠️ Could not capture this element as an image' }); return; }
+      if (!url) {
+        const why = captureFailureReason();
+        setFigStatus({
+          key: t.key,
+          ok: false,
+          msg: `⚠️ Could not capture this element as an image${why ? ` — ${why}` : ''}`
+        });
+        return;
+      }
       const label = `${t.label} · ${(test && test.name) || 'experiment'}`.slice(0, 120);
       const pid = projectIdForTest(test);
       const where = pid ? 'project library' : 'common library';
@@ -519,6 +671,170 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rootRef]);
+  /* ── AUTOMATIC RE-CAPTURE (Image Builder → “🔄 Recapture”) ────────────────
+     The Image Builder queues the figures whose style stamp does not match the
+     current profile and opens the experiment. Here the profile is pushed into
+     every chart of the page (closed sections included), each queued element is
+     found by its `data-figure-origin` stamp, captured and written back OVER its
+     own library entry (same id) — so the canvas that pointed at it shows the
+     new figure without the user touching 🎨 or 📷.
+
+     When nothing is left the page either jumps to the next experiment of the
+     run or reopens the Image Builder (utils/figureRecapture owns the queue). */
+  const [recap, setRecap] = useState(null); // { total, done, failed, msg }
+  useEffect(() => {
+    const rootEl = rootRef && rootRef.current;
+    if (!rootEl || !test) return undefined;
+    if (!figureRecapturesForTest(test).length) return undefined;
+
+    let stopped = false;
+    let busy = false;
+    let applied = false;
+    let cancelApply = null;
+    const startedAt = Date.now();
+    const DEADLINE_MS = 30000;   // lazy renderers + Drive-hosted data
+    const TICK_MS = 600;
+    const timers = [];
+    const results = { done: 0, failed: 0 };
+
+    const findEl = (key) => {
+      if (!key) return null;
+      try {
+        return Array.from(rootEl.querySelectorAll('[data-figure-origin]'))
+          .find((el) => el.getAttribute('data-figure-origin') === key) || null;
+      } catch { return null; }
+    };
+
+    // A captured element is a composite panel, a Chart.js canvas, a recharts
+    // SVG chart or an image — the same kinds the 📷 button knows.
+    const kindOf = (el) => {
+      if (el.hasAttribute && el.hasAttribute('data-star-group')) return 'group';
+      const tag = el.tagName ? el.tagName.toLowerCase() : '';
+      return (tag === 'canvas' || tag === 'svg' || tag === 'img') ? tag : 'group';
+    };
+
+    const redo = async (item, el) => {
+      const url = await captureFigure(el, kindOf(el));
+      if (!url) return { ok: false, message: captureFailureReason() || 'the element could not be captured' };
+      let pxW = 0;
+      let pxH = 0;
+      try {
+        const r = el.getBoundingClientRect();
+        pxW = Math.round(el.naturalWidth || el.width || r.width || 0);
+        pxH = Math.round(el.naturalHeight || el.height || r.height || 0);
+      } catch { /* ignore */ }
+      const src = {
+        testId: test.id,
+        testName: test.name,
+        instanceName: test.instanceName || '',
+        date: test.date || '',
+        elementLabel: item.label,
+        elementKey: item.elementKey,
+        styleTag: figureStyleTag(),
+        pxW,
+        pxH,
+        recapturedAt: new Date().toISOString()
+      };
+      const res = await publishLibraryFigure({
+        scope: item.scope,
+        projectId: item.projectId,
+        projectName: projectNameFor(test),
+        dataUrl: url,
+        label: item.label,
+        src,
+        updateId: item.figId
+      });
+      // `updated: false` = the entry vanished from the library: the canvas would
+      // keep the OLD pixels, so this is reported as a failure.
+      if (!res || !res.updated) return { ok: false, message: 'the saved figure is no longer in the image library' };
+      return { ok: true, message: res.drive && res.drive.id ? 're-captured + uploaded to Drive' : 're-captured' };
+    };
+    const finish = () => {
+      if (stopped) return;
+      stopped = true;
+      clearInterval(timer);
+      timers.forEach((t) => clearTimeout(t));
+      const progress = figureRecaptureProgress();
+      const run = readFigureRecapture() || {};
+      const ret = run.returnTo || null;
+      setRecap({
+        total: progress.total,
+        done: progress.done,
+        failed: progress.failed,
+        msg: progress.failed ? 'some figures could not be re-captured automatically' : 'all figures are up to date'
+      });
+      // Hand over: the next experiment of the run, else back to the Image Builder.
+      const next = nextRecaptureTarget();
+      const wait = progress.failed ? 2600 : 1600;
+      timers.push(setTimeout(() => {
+        try {
+          if (next && next.origin && next.origin.testId) {
+            window.dispatchEvent(new CustomEvent(RECAPTURE_NEXT_TEST_EVENT, { detail: { testId: next.origin.testId, origin: next.origin } }));
+          } else if (ret && ret.module === 'image-builder') {
+            window.dispatchEvent(new CustomEvent(RECAPTURE_RETURN_EVENT, { detail: { projectId: ret.projectId || null } }));
+          }
+        } catch { /* the navigation is a convenience — never break the page */ }
+      }, wait));
+    };
+
+    const step = async () => {
+      if (stopped) return;
+      const list = figureRecapturesForTest(test);
+      if (!list.length) { finish(); return; }
+      if (!applied) {
+        // ONE pass over every chart (the closed sections are opened first), then
+        // let the charts re-render before the first snapshot.
+        const res = applyFigureStyleEverywhere(readFigureStyle());
+        cancelApply = res.cancel;
+        applied = true;
+        if (update) update({ figureStyleTag: res.tag, figureStyleAppliedAt: new Date().toISOString() });
+        setRecap({ total: list.length, done: 0, failed: 0, msg: 'applying the figure style…' });
+        return;
+      }
+      if (busy) return;
+      busy = true;
+      try {
+        for (const item of list) {
+          if (stopped) return;
+          const el = findEl(item.elementKey);
+          if (!el) continue;               // not mounted yet (lazy / Drive data)
+          const out = await redo(item, el);
+          markFigureRecaptureResult(item.figId, out.ok ? 'done' : 'failed', out.message);
+          if (out.ok) results.done += 1; else results.failed += 1;
+          setRecap({
+            total: results.done + results.failed + Math.max(0, list.length - results.done - results.failed),
+            done: results.done,
+            failed: results.failed,
+            msg: out.ok ? `${item.label} ✓` : `${item.label} — ${out.message}`
+          });
+        }
+      } catch (err) {
+        setRecap((r) => ({ ...(r || { total: 0, done: 0, failed: 0 }), msg: shortError(err) }));
+      } finally {
+        busy = false;
+      }
+      const left = figureRecapturesForTest(test);
+      if (!left.length) { finish(); return; }
+      if (Date.now() - startedAt > DEADLINE_MS) {
+        left.forEach((it) => markFigureRecaptureResult(it.figId, 'failed', 'the chart was not found on the page — capture it with 📷'));
+        finish();
+      }
+    };
+
+    const timer = setInterval(step, TICK_MS);
+    timers.push(setTimeout(step, 300));
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+      timers.forEach((t) => clearTimeout(t));
+      if (cancelApply) cancelApply();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rootRef, test && test.id]);
+
+
+
+
 
   const toggleFor = async (t) => {
     if (!update) return;
@@ -601,6 +917,29 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
           <span className={`text-xs font-bold px-3 py-1.5 rounded-full shadow-md border whitespace-nowrap ${figStatus.ok ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-red-50 text-red-600 border-red-300'}`}>
             {figStatus.msg}
           </span>
+        </div>
+      )}
+
+      {/* 🔄 AUTOMATIC RE-CAPTURE PROGRESS — driven by the Image Builder's
+          "Recapture" button (see utils/figureRecapture): the figures of this
+          page are re-rendered with the current style and written back over
+          their library entries, then the app returns to the Image Builder. */}
+      {recap && (
+        <div style={{ position: 'fixed', right: 12, bottom: 16, zIndex: 63, pointerEvents: 'auto' }}
+          className="no-print" data-figure-recapture="1">
+          <div className="bg-white border border-indigo-300 rounded-xl shadow-lg px-3 py-2 text-[11px] text-slate-700 w-64">
+            <div className="font-bold text-slate-800 mb-0.5">
+              {recap.failed ? '⚠️' : '🔄'} Re-capture with the figure style
+            </div>
+            <div>
+              <b>{recap.done}</b>/{recap.total} figure{recap.total === 1 ? '' : 's'} updated
+              {recap.failed ? <span className="text-amber-700"> · {recap.failed} failed</span> : null}
+            </div>
+            {recap.msg ? <div className="text-[10px] text-slate-500 mt-0.5 break-words">{recap.msg}</div> : null}
+            <div className="text-[10px] text-slate-400 mt-1">
+              The figures were replaced in the image library — the Image Builder reopens by itself.
+            </div>
+          </div>
         </div>
       )}
 

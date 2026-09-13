@@ -365,9 +365,9 @@ const SS = fs.readFileSync(path.join(ROOT, 'src/components/ssNMRSections.jsx'), 
 const NMR = fs.readFileSync(path.join(ROOT, 'src/components/NMRSections.jsx'), 'utf8');
 const MD = fs.readFileSync(path.join(ROOT, 'src/components/MDSections.jsx'), 'utf8');
 const fragIn = (name, hay, needle) => checkBool(`${name}: ${needle.slice(0, 40)}…`, hay.includes(needle));
-fragIn('[CDSections] a condition bar chart opts out', CD, 'dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} edgeAnchor={false} />}');
-fragIn('[CDSections] a "name" bar chart opts out', CD, 'fontSize={Math.max(9, cfg.fontSize - 2)} edgeAnchor={false} />');
-fragIn('[CDSections] the numeric CD spectrum keeps the anchor', CD, 'type="number" dataKey="x" domain={xDomain} allowDataOverflow scale={xScale} ticks={cfgAxisTicks(cfg, \'x\', xDomain)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} formatter=');
+fragIn('[CDSections] a condition bar chart opts out', CD, 'dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={tickSize(cfg)} fontFamily={fontFamilyOf(cfg)} edgeAnchor={false} />}');
+fragIn('[CDSections] a "name" bar chart opts out', CD, 'fontSize={Math.max(9, Number(tickSize(cfg)) - 2)} fontFamily={fontFamilyOf(cfg)} edgeAnchor={false} />');
+fragIn('[CDSections] the numeric CD spectrum keeps the anchor', CD, 'type="number" dataKey="x" domain={xDomain} allowDataOverflow scale={xScale} ticks={cfgAxisTicks(cfg, \'x\', xDomain)} tick={<AngledTick angle={cfg.tickAngle} fontSize={tickSize(cfg)} fontFamily={fontFamilyOf(cfg)} formatter=');
 checkTrue('[ssNMRSections] both band axes opt out', (SS.match(/edgeAnchor=\{false\}/g) || []).length === 2);
 checkTrue('[NMRSections] both band axes opt out', (NMR.match(/edgeAnchor=\{false\}/g) || []).length === 2);
 checkTrue('[MDSections] the per-atom bar chart opts out', (MD.match(/edgeAnchor=\{false\}/g) || []).length === 1);

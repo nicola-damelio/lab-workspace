@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   readFigureStyle, figureStyleTag, subscribeFigureStyle, subscribeFigureStyleSlots,
   figureStyleSlotCount, registerFigureStyleSlot, applyFigureStyleToSlots,
-  undoFigureStyleSlots, figureStyleUndoAvailable
+  applyFigureStyleEverywhere, undoFigureStyleSlots, figureStyleUndoAvailable
 } from '../utils/figureStyle';
 
 /* =========================================================================
@@ -93,20 +93,12 @@ export const FigureStyleApplyButton = ({ test, update }) => {
 
   // Closed sections are not rendered at all, so their charts register only once
   // the page is expanded. The "▸ Expand all" button only EXISTS while it would
-  // expand (see ActiveTestModule), hence clicking it is always safe.
+  // expand (see ActiveTestModule), hence clicking it is always safe. The whole
+  // dance lives in utils/figureStyle (the automatic re-capture uses it too).
   const applyEverywhere = () => {
-    const first = applyToSlots();
+    const res = applyFigureStyleEverywhere(profile);
     setOpen(false);
-    flash(true, messageOf(first));
-    let btn = null;
-    try { btn = document.querySelector('[data-expand-all]'); } catch { btn = null; }
-    if (!btn) return;
-    try { btn.click(); } catch { return; }
-    setTimeout(() => applyToSlots(), 900);
-    setTimeout(() => {
-      const res = applyToSlots();
-      flash(true, `${messageOf(res)} · closed sections opened`);
-    }, 2400);
+    flash(true, `${messageOf(res)}${res.expanded ? ' · closed sections opened' : ''}`);
   };
 
   const undo = () => {
@@ -152,8 +144,13 @@ export const FigureStyleApplyButton = ({ test, update }) => {
         >
           <div className="font-bold text-slate-800 mb-1">Uniform figure style</div>
           <div className="text-[11px] text-slate-500 leading-relaxed mb-2">
-            Axis characters <b>{profile.fontSize} px</b> · peak / data labels <b>{profile.simLabelFontSize} px</b>
-            {' '}· x rotation <b>{profile.tickAngle}°</b> — {slots} styled chart{slots === 1 ? '' : 's'} on this page.
+            Ticks <b>{profile.fontSize} px</b> · axis titles <b>{profile.axisTitleFontSize} px</b> ·
+            {' '}legends <b>{profile.legendFontSize} px</b> · data labels <b>{profile.simLabelFontSize} px</b> ·
+            {' '}x rotation <b>{profile.tickAngle}°</b>
+            {profile.fontFamily
+              ? <> · font <b>{profile.fontFamily.split(',')[0].replace(/"/g, '').trim()}</b></>
+              : null}
+            {' '}— {slots} styled chart{slots === 1 ? '' : 's'} on this page.
             Rules: Settings → Figure style.
           </div>
           <div className="flex flex-col gap-1.5">

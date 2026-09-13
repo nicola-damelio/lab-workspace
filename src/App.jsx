@@ -30,6 +30,7 @@ import { setActiveProjectId, readLibrary, readAllProjectLibraries, restoreLibrar
 import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, getLastDriveConnectError, driveBootstrapRequestedAtLoad, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders } from './utils/driveUpload';
 import { sanitizeSlug, datasetFolderSlug } from './utils/driveNaming';
 import { resolveOriginTest } from './utils/pendingFigureScroll';
+import { RECAPTURE_RETURN_EVENT, RECAPTURE_NEXT_TEST_EVENT } from './utils/figureRecapture';
 import { validateDatasetExperiments } from './utils/experimentRules';
 import {
   loadSectionsOf, defaultSelection, sectionGroupsOf, filterLoadState,
@@ -3679,6 +3680,34 @@ const openDataset = (dset) => {
     setCurrentModule('image-builder');
     if (window.innerWidth < 768) setIsSidebarOpen(false);
   };
+  /* ── AUTOMATIC FIGURE RE-CAPTURE — the two hops of the run ────────────────
+     The Image Builder queues the figures captured with another style and
+     requests "open this experiment" (lab:open-origin-test); when the last
+     figure of the queue is done the experiment page requests "reopen the Image
+     Builder" (lab:open-image-builder). The handlers go through a ref so they
+     always use the CURRENT navigation functions (no stale closure) while the
+     listener itself is registered once. See utils/figureRecapture.js. */
+  const navRef = useRef(null);
+  navRef.current = { jumpToTest, openImageBuilder };
+  useEffect(() => {
+    const onOpenTest = (e) => {
+      const detail = (e && e.detail) || {};
+      if (!detail.testId) return;
+      try { navRef.current.jumpToTest(detail.testId, detail.origin || null); } catch { /* ignore */ }
+    };
+    const onOpenBuilder = (e) => {
+      const detail = (e && e.detail) || {};
+      try { navRef.current.openImageBuilder(detail.projectId || undefined); } catch { /* ignore */ }
+    };
+    window.addEventListener(RECAPTURE_NEXT_TEST_EVENT, onOpenTest);
+    window.addEventListener(RECAPTURE_RETURN_EVENT, onOpenBuilder);
+    return () => {
+      window.removeEventListener(RECAPTURE_NEXT_TEST_EVENT, onOpenTest);
+      window.removeEventListener(RECAPTURE_RETURN_EVENT, onOpenBuilder);
+    };
+  }, []);
+
+
 
   const handlePrint = async () => {
     // Wait for all visible images to finish loading before printing

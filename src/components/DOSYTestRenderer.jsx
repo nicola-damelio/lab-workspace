@@ -16,12 +16,14 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import Chart from 'chart.js/auto';
 import TestShellRenderer from './TestShellRenderer';
-import { DOSY_TAB_CONFIG } from './tabConfigs';
+import {
+  DOSY_TAB_CONFIG } from './tabConfigs';
 import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
 import { makeTable, stokesEinsteinD, radiusFromMW, GAMMA_H } from './NMRFittingsTestRenderer';
 import { enableCellClipboard, cellAttrs } from '../utils/cellClipboard';
 import { ChartPanel, SharedErrorTreatment, SharedChartStylePanel, ChartJsInspector, cfgTickFormatter } from './SharedAnalysisTools';
-import { shadesFromColor, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle } from '../utils/chartStyle';
+import { shadesFromColor, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, tickSize, chartJsFont, chartJsTitleFont, axisTitleSize
+} from '../utils/chartStyle';
 import { StarToggle } from './StarToggle';
 import { isStarred, toggleStarredItem } from '../utils/starredItems';
 import { isPointExcluded, togglePointExcluded, clearExcludedForTable, computePointSD } from '../utils/pointTreatment';
@@ -347,7 +349,7 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
     if (chartRef.current) chartRef.current.destroy();
 
     const datasets = [];
-    const fs = Number(cfg.fontSize) || 11;
+    const fs = Number(tickSize(cfg, 11)) || 11;
     // b-value for a given gradient strength G (G/cm): b = (γ·δ·G_Tm)²·(Δ−δ/3)
     const dS = (Number(deltaMs) || 2) / 1000;      // small delta δ, s
     const DS = (Number(bigDeltaMs) || 50) / 1000;  // diffusion time Δ, s
@@ -497,18 +499,18 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
         scales: {
           x: {
             type: 'linear',
-            title: { display: true, text: xTitle, font: { size: fs }, padding: chartJsTitlePad(cfg).x },
+            title: { display: true, text: xTitle, font: chartJsTitleFont(cfg, { size: axisTitleSize(cfg, fs) }), padding: chartJsTitlePad(cfg).x },
             ticks: {
-              font: { size: fs - 1 },
+              font: chartJsFont(cfg, { size: (Number(tickSize(cfg, fs)) || fs) - 1 }),
               callback: (v) => { const f = cfgTickFormatter(cfg, 'x'); return f ? f(v) : undefined; }
             },
             min: cfg.xMin !== '' && cfg.xMin !== undefined && cfg.xMin !== null ? Number(cfg.xMin) : undefined,
             max: cfg.xMax !== '' && cfg.xMax !== undefined && cfg.xMax !== null ? Number(cfg.xMax) : undefined
           },
           y: {
-            title: { display: true, text: yTitle, font: { size: fs }, padding: chartJsTitlePad(cfg).y },
+            title: { display: true, text: yTitle, font: chartJsTitleFont(cfg, { size: axisTitleSize(cfg, fs) }), padding: chartJsTitlePad(cfg).y },
             ticks: {
-              font: { size: fs - 1 },
+              font: chartJsFont(cfg, { size: (Number(tickSize(cfg, fs)) || fs) - 1 }),
               callback: (v) => { const f = cfgTickFormatter(cfg, 'y'); return f ? f(v) : undefined; }
             },
             min: cfg.yMin !== '' && cfg.yMin !== undefined && cfg.yMin !== null ? Number(cfg.yMin) : undefined,
@@ -517,7 +519,7 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
         },
         plugins: {
           title: cfg.title ? { display: true, text: cfg.title, font: { size: fs + 2 } } : undefined,
-          legend: { display: datasets.length > 0, labels: { font: { size: fs - 1 } } }
+          legend: { display: datasets.length > 0, labels: { font: chartJsFont(cfg, { size: (Number(tickSize(cfg, fs)) || fs) - 1 }) } }
         }
       }
     });

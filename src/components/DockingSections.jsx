@@ -7,6 +7,9 @@ import { suggestDriveFileName } from '../utils/driveNaming';
 import { getDriveToken, uploadLocalFile } from '../utils/driveUpload';
 import { storeJson, loadJson } from '../utils/pdbStore';
 import { gunzipSync } from 'fflate';
+// One character size per element + the font family of the shared figure style
+// (the axis numbers keep riding on cfg.fontSize, see utils/chartStyle.js).
+import { tickTextProps } from '../utils/chartStyle';
 
 import NMRMoleculeViewer from './NMRMoleculeViewer';
 import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, DOCK_CHART_MARGIN} from './DockingData';
@@ -1162,8 +1165,8 @@ export const DockingAnalysisSection = ({ ctx }) => {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={affinityData} margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="mode" tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'x', 'Mode / Pose', 10)} />
-                <YAxis {...brkAff.axisProps} tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'y', unit, 0)} />
+                <XAxis dataKey="mode" tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'x', 'Mode / Pose', 10)} />
+                <YAxis {...brkAff.axisProps} tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'y', unit, 0)} />
                 <Tooltip />
                 {brkAff.marks}
                 <Bar dataKey="affinity" name={`Affinity (${unit})`} radius={[3, 3, 0, 0]}>
@@ -1182,8 +1185,8 @@ export const DockingAnalysisSection = ({ ctx }) => {
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis type="number" dataKey="rmsd" name="RMSD" tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'x', 'RMSD from best (Å)', 10)} />
-                <YAxis type="number" dataKey="affinity" name="Affinity" tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'y', unit, 0)} />
+                <XAxis type="number" dataKey="rmsd" name="RMSD" tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'x', 'RMSD from best (Å)', 10)} />
+                <YAxis type="number" dataKey="affinity" name="Affinity" tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'y', unit, 0)} />
                 <Tooltip cursor={{ strokeDasharray: '3 3' }} />
                 <Scatter data={rmsdData} fill="#8b5cf6" />
               </ScatterChart>
@@ -1200,8 +1203,8 @@ export const DockingAnalysisSection = ({ ctx }) => {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={energyBreakdownData} margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="mode" tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'x', 'Mode / Pose', 10)} />
-                <YAxis tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'y', unit, 0)} />
+                <XAxis dataKey="mode" tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'x', 'Mode / Pose', 10)} />
+                <YAxis tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'y', unit, 0)} />
                 <Tooltip />
                 <Legend />
                 <Bar dataKey="vdW" stackId="e" fill="#3b82f6" name="vdW / Hbond / desolv" />
@@ -1226,8 +1229,8 @@ export const DockingAnalysisSection = ({ ctx }) => {
                   Elec: parseDockingValue(p.energy_elec) ?? 0
                 }))} margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="mode" tick={{ fontSize: cfg.fontSize }} />
-                  <YAxis tick={{ fontSize: cfg.fontSize }} />
+                  <XAxis dataKey="mode" tick={tickTextProps(cfg)} />
+                  <YAxis tick={tickTextProps(cfg)} />
                   <Tooltip />
                   <Legend />
                   <Bar dataKey="AIR" fill="#8b5cf6" />

@@ -1,13 +1,15 @@
 import NMRMoleculeViewer, { useShowAssignedFlag } from './NMRMoleculeViewer';
-import { ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps, AngledTick, tickLabelOffset, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, errorBarRange, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
+import {
+  ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps, AngledTick, tickLabelOffset, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, errorBarRange, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { Icon } from './Icons';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
-  ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell
+  ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell
 } from 'recharts';
 import { CollapsibleSection } from './ui';
-import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, VIS_PALETTES, PER_ATOM_COLORS, seriesColorFor, chartBoxStyle, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf } from '../utils/chartStyle';
+import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, VIS_PALETTES, PER_ATOM_COLORS, seriesColorFor, chartBoxStyle, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf, tickTextProps, tickSize, fontFamilyOf, legendTextStyle
+} from '../utils/chartStyle';
+import { SplitChartStack, SplitToggle, SPLIT_CHART_H } from './SplitChartStack';
 import { suggestDriveFileName, driveFolderPath, sanitizeSlug } from '../utils/driveNaming';
 import { uploadLocalFile, getDriveToken, archiveFileToDrive } from '../utils/driveUpload';
 import { storeJson, loadJson } from '../utils/pdbStore';
@@ -1105,7 +1107,7 @@ const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, char
   );
 };
 
-const CustomXTick1H = ({ x, y, payload, isZoomed, fs = 11, angle = 0, color = '#64748b' }) => {
+const CustomXTick1H = ({ x, y, payload, isZoomed, fs = 11, angle = 0, color = '#64748b', fontFamily = '' }) => {
   const numVal = Number(payload.value);
   const isInt = Number.isInteger(numVal);
   const isHalf = numVal % 0.5 === 0;
@@ -1119,7 +1121,7 @@ const CustomXTick1H = ({ x, y, payload, isZoomed, fs = 11, angle = 0, color = '#
     <g transform={`translate(${x || 0},${y || 0})`}>
       <line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />
       {(isZoomed || isInt) && (
-        <text x={0} y={labelY} textAnchor={angle ? (angle > 0 ? 'start' : 'end') : 'middle'} transform={angle ? `rotate(${angle})` : undefined} dy={angle ? 4 : undefined} dx={angle ? (angle > 0 ? 4 : -4) : undefined} fill={color} fontSize={isZoomed ? fs - 1 : fs} fontWeight={isInt && !isZoomed ? 'bold' : 'normal'}>
+        <text x={0} y={labelY} textAnchor={angle ? (angle > 0 ? 'start' : 'end') : 'middle'} transform={angle ? `rotate(${angle})` : undefined} dy={angle ? 4 : undefined} dx={angle ? (angle > 0 ? 4 : -4) : undefined} fill={color} fontFamily={fontFamily || undefined} fontSize={isZoomed ? fs - 1 : fs} fontWeight={isInt && !isZoomed ? 'bold' : 'normal'}>
           {isZoomed ? numVal.toFixed(2) : numVal}
         </text>
       )}
@@ -1127,7 +1129,7 @@ const CustomXTick1H = ({ x, y, payload, isZoomed, fs = 11, angle = 0, color = '#
   );
 };
 
-const CustomYTick1H = ({ x, y, payload, isZoomed, fs = 11 }) => {
+const CustomYTick1H = ({ x, y, payload, isZoomed, fs = 11, fontFamily = '' }) => {
   const numVal = Number(payload.value);
   const isInt = Number.isInteger(numVal);
   const isHalf = numVal % 0.5 === 0;
@@ -1136,7 +1138,7 @@ const CustomYTick1H = ({ x, y, payload, isZoomed, fs = 11 }) => {
     <g transform={`translate(${x || 0},${y || 0})`}>
       <line x1={0} y1={0} x2={-tickLength} y2={0} stroke="#94a3b8" strokeWidth={1} />
       {(isZoomed || isInt) && (
-        <text x={-(tickLength + 4)} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={isZoomed ? fs - 1 : fs} fontWeight={isInt && !isZoomed ? 'bold' : 'normal'}>
+        <text x={-(tickLength + 4)} y={0} dy={4} textAnchor="end" fill="#64748b" fontFamily={fontFamily || undefined} fontSize={isZoomed ? fs - 1 : fs} fontWeight={isInt && !isZoomed ? 'bold' : 'normal'}>
           {isZoomed ? numVal.toFixed(2) : numVal}
         </text>
       )}
@@ -1144,7 +1146,7 @@ const CustomYTick1H = ({ x, y, payload, isZoomed, fs = 11 }) => {
   );
 };
 
-const CustomXTick13C = ({ x, y, payload, isZoomed, fs = 11, angle = 0, color = '#64748b' }) => {
+const CustomXTick13C = ({ x, y, payload, isZoomed, fs = 11, angle = 0, color = '#64748b', fontFamily = '' }) => {
   const numVal = Number(payload.value);
   const isTen = numVal % 10 === 0;
   const tickLength = isZoomed ? 5 : isTen ? 8 : 4;
@@ -1154,7 +1156,7 @@ const CustomXTick13C = ({ x, y, payload, isZoomed, fs = 11, angle = 0, color = '
     <g transform={`translate(${x || 0},${y || 0})`}>
       <line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />
       {(isZoomed || isTen) && (
-        <text x={0} y={labelY} textAnchor={angle ? (angle > 0 ? 'start' : 'end') : 'middle'} transform={angle ? `rotate(${angle})` : undefined} dy={angle ? 4 : undefined} dx={angle ? (angle > 0 ? 4 : -4) : undefined} fill={color} fontSize={isZoomed ? fs - 1 : fs} fontWeight={isTen && !isZoomed ? 'bold' : 'normal'}>
+        <text x={0} y={labelY} textAnchor={angle ? (angle > 0 ? 'start' : 'end') : 'middle'} transform={angle ? `rotate(${angle})` : undefined} dy={angle ? 4 : undefined} dx={angle ? (angle > 0 ? 4 : -4) : undefined} fill={color} fontFamily={fontFamily || undefined} fontSize={isZoomed ? fs - 1 : fs} fontWeight={isTen && !isZoomed ? 'bold' : 'normal'}>
           {isZoomed ? numVal.toFixed(1) : numVal}
         </text>
       )}
@@ -1162,7 +1164,7 @@ const CustomXTick13C = ({ x, y, payload, isZoomed, fs = 11, angle = 0, color = '
   );
 };
 
-const CustomYTick13C = ({ x, y, payload, isZoomed, fs = 11 }) => {
+const CustomYTick13C = ({ x, y, payload, isZoomed, fs = 11, fontFamily = '' }) => {
   const numVal = Number(payload.value);
   const isTen = numVal % 10 === 0;
   const tickLength = isZoomed ? 5 : isTen ? 10 : 4;
@@ -1170,7 +1172,7 @@ const CustomYTick13C = ({ x, y, payload, isZoomed, fs = 11 }) => {
     <g transform={`translate(${x || 0},${y || 0})`}>
       <line x1={0} y1={0} x2={-tickLength} y2={0} stroke="#94a3b8" strokeWidth={1} />
       {(isZoomed || isTen) && (
-        <text x={-(tickLength + 5)} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={isZoomed ? fs - 1 : fs} fontWeight={isTen && !isZoomed ? 'bold' : 'normal'}>
+        <text x={-(tickLength + 5)} y={0} dy={4} textAnchor="end" fill="#64748b" fontFamily={fontFamily || undefined} fontSize={isZoomed ? fs - 1 : fs} fontWeight={isTen && !isZoomed ? 'bold' : 'normal'}>
           {isZoomed ? numVal.toFixed(1) : numVal}
         </text>
       )}
@@ -1301,7 +1303,7 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
    PEAK LABEL OVERLAYS (1D & 2D)
    Renders peak labels searching for free space to avoid collisions.
    ============================================================================ */
-const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, marginBottom, fontSize = 11, color = '#b91c1c' }) => {
+const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, marginBottom, fontSize = 11, color = '#b91c1c', fontFamily = '' }) => {
   const containerRef = useRef(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
 
@@ -1402,7 +1404,7 @@ const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, ma
                 {arrowStartY < arrowEndY && (
                   <line x1={p.cx} y1={arrowStartY} x2={p.peakCx} y2={arrowEndY} stroke={lightColor} strokeWidth={1} markerEnd="url(#pk-arrow)" />
                 )}
-                <text x={p.cx} y={p.cy + LABEL_H / 2 + FONT_SIZE / 2 - 1} textAnchor="middle" fontSize={FONT_SIZE} fontFamily="monospace" fontWeight="bold" fill={color}>
+                <text x={p.cx} y={p.cy + LABEL_H / 2 + FONT_SIZE / 2 - 1} textAnchor="middle" fontSize={FONT_SIZE} fontFamily={fontFamily || 'monospace'} fontWeight="bold" fill={color}>
                   {p.label}
                 </text>
               </g>
@@ -1573,7 +1575,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={processedData} margin={activeMargin}>
                 <CartesianGrid strokeDasharray="3 3" vertical={true} horizontal={false} stroke="#f1f5f9" />
-                <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} fs={fs} angle={tickAngle} color={effTickColor} />} label={xLabelProps} axisLine={{ stroke: '#cbd5e1' }} />
+                <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} fs={fs} fontFamily={simCfg.fontFamily} angle={tickAngle} color={effTickColor} />} label={xLabelProps} axisLine={{ stroke: '#cbd5e1' }} />
                 <YAxis type="number" dataKey="y" domain={[yMin !== '' ? Number(yMin) : 0, yMax !== '' ? Number(yMax) : 'auto']} hide={true} />
                 <Tooltip cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} content={<NMRTooltip selectedKeys={selectedKeys} hideIdentity={hidePeakIdentity} />} />
                 <Bar dataKey="y" barSize={2} shape={(props) => {
@@ -1637,6 +1639,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
               marginBottom={activeMargin.bottom}
               labelAreaH={labelAreaH}
               fontSize={simLabelFontSize}
+              fontFamily={simCfg.fontFamily || undefined}
               color={simLabelColor}
             />
           )}
@@ -1952,8 +1955,8 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
         <circle cx={cx} cy={cy} r={isSel ? r + 2 : isMan ? r + 1.5 : r} fill={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : payload.type === 'Diagonal' ? fill : getNMRFillColor(payload)} stroke={isSel ? '#b45309' : isMan ? '#166534' : outlined ? '#ffffff' : 'none'} strokeWidth={isSel ? 2 : isMan ? 1.5 : outlined ? 1.4 : 0} opacity={outlined ? 0.95 : 0.85} />
         {textStr && (
           <g>
-            <text x={textX} y={textY} fontSize={simLabelFontSize} textAnchor="middle" fill="rgba(255,255,255,0.5)" stroke="rgba(255,255,255,0.5)" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
-            <text x={textX} y={textY} fontSize={simLabelFontSize} textAnchor="middle" fill={simLabelColor} fontWeight="bold">{textStr}</text>
+            <text x={textX} y={textY} fontFamily={simCfg.fontFamily || undefined} fontSize={simLabelFontSize} textAnchor="middle" fill="rgba(255,255,255,0.5)" stroke="rgba(255,255,255,0.5)" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
+            <text x={textX} y={textY} fontFamily={simCfg.fontFamily || undefined} fontSize={simLabelFontSize} textAnchor="middle" fill={simLabelColor} fontWeight="bold">{textStr}</text>
           </g>
         )}
       </g>
@@ -1976,8 +1979,8 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={plotMargin}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} angle={tickAngle} color={tickColor || '#64748b'} />} label={xLabelProps} />
-                <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomYTick1H isZoomed={isZoomed} fs={fs} color={tickColor || '#64748b'} />} label={yLabelProps} />
+                <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} fontFamily={simCfg.fontFamily} angle={tickAngle} color={tickColor || '#64748b'} />} label={xLabelProps} />
+                <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomYTick1H isZoomed={isZoomed} fs={fs} fontFamily={simCfg.fontFamily} color={tickColor || '#64748b'} />} label={yLabelProps} />
                 {/* Crosshair guides + peak tooltip are drawn deterministically via use2DCrosshair below */}
                 
                 {/* Changed shape to function to avoid DOM warning propagation */}
@@ -2121,8 +2124,8 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={plotMargin}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} angle={tickAngle} color={tickColor || '#64748b'} />} label={xLabelProps} />
-                <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : yTicks} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} fs={fs} color={tickColor || '#64748b'} />} label={yLabelProps} />
+                <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} fontFamily={simCfg.fontFamily} angle={tickAngle} color={tickColor || '#64748b'} />} label={xLabelProps} />
+                <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : yTicks} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} fs={fs} fontFamily={simCfg.fontFamily} color={tickColor || '#64748b'} />} label={yLabelProps} />
                 {/* Crosshair guides + peak tooltip are drawn deterministically via use2DCrosshair below */}
                 <Scatter data={processedCrossPeaks} shape={(props) => {
                   const { cx, cy, payload } = props;
@@ -2149,8 +2152,8 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
                       <circle cx={cx} cy={cy} r={isSel ? r + 2 : isMan ? r + 1.5 : r} fill={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : getNMRFillColor(payload)} stroke={isSel ? '#b45309' : isMan ? '#166534' : outlined ? '#ffffff' : 'none'} strokeWidth={isSel ? 2 : isMan ? 1.5 : outlined ? 1.4 : 0} opacity={outlined ? 0.95 : 0.85} />
                       {textStr && (
                         <g>
-                          <text x={textX} y={textY} fontSize={simLabelFontSize} textAnchor="middle" fill="rgba(255,255,255,0.5)" stroke="rgba(255,255,255,0.5)" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
-                          <text x={textX} y={textY} fontSize={simLabelFontSize} textAnchor="middle" fill={simLabelColor} fontWeight="bold">{textStr}</text>
+                          <text x={textX} y={textY} fontFamily={simCfg.fontFamily || undefined} fontSize={simLabelFontSize} textAnchor="middle" fill="rgba(255,255,255,0.5)" stroke="rgba(255,255,255,0.5)" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
+                          <text x={textX} y={textY} fontFamily={simCfg.fontFamily || undefined} fontSize={simLabelFontSize} textAnchor="middle" fill={simLabelColor} fontWeight="bold">{textStr}</text>
                         </g>
                       )}
                     </g>
@@ -4994,6 +4997,25 @@ const NMRSpectraVisualization = ({ ctx }) => {
   }, [ctx, activeTest]);
 
   const [showOverlay, setShowOverlay] = useState(true);
+  // “Split view” — one graph per condition, stacked in a single card that is
+  // captured / starred as ONE image (data-star-group). Persisted on the test so
+  // the layout survives page switches (same keys as the FCS split view).
+  const [splitStack, setSplitStack] = useState(!!activeTest.splitStack);
+  const [splitSharedY, setSplitSharedY] = useState(!!activeTest.splitSharedY);
+  // Character size of the stacked sub-charts: the NMR page's own 1D spectrum
+  // character size (nmr1dChartCfg, the “Font size(px)” of the 1D Chart
+  // Parameters), so a captured split stack matches the other NMR figures.
+  const splitFontSize = Math.max(9, Number((activeTest.nmr1dChartCfg || {}).fontSize) || 9);
+  const toggleSplitStack = () => setSplitStack((v) => {
+    const nv = !v;
+    updateActiveTest({ splitStack: nv });
+    return nv;
+  });
+  const toggleSplitSharedY = () => setSplitSharedY((v) => {
+    const nv = !v;
+    updateActiveTest({ splitSharedY: nv });
+    return nv;
+  });
   const [hiddenSeries, setHiddenSeries] = useState({});
   const [localColors, setLocalColors] = useState(activeTest.nmrInstanceColors || {});
 const [savedPalettes, setSavedPalettes] = useState(activeTest.nmrSavedPalettes || {});
@@ -5127,8 +5149,9 @@ const onUp = () => {
     <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3 mt-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h4 className="text-sm font-bold text-slate-700">📈 1D Spectra Overlay & Palette Manager</h4>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <InstanceLinkToggle activeTest={activeTest} updateActiveTest={updateActiveTest} />
+          <SplitToggle on={splitStack} onToggle={toggleSplitStack} sharedY={splitSharedY} onToggleSharedY={toggleSplitSharedY} />
           <label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer">
             <input type="checkbox" checked={showOverlay} onChange={e => setShowOverlay(e.target.checked)} className="w-4 h-4 accent-blue-600" />
             Show Overlay
@@ -5136,8 +5159,10 @@ const onUp = () => {
         </div>
       </div>
 
- {showOverlay && seriesList.length > 0 && (
-     <div className="h-[300px] w-full border border-slate-200 rounded-lg bg-slate-50 p-2 flex flex-col">
+ {(showOverlay || splitStack) && seriesList.length > 0 && (
+     <div className={splitStack ? 'flex flex-col lg:flex-row gap-3' : ''}>
+     {showOverlay && (
+     <div className={`h-[300px] border border-slate-200 rounded-lg bg-slate-50 p-2 flex flex-col ${splitStack ? 'w-full lg:w-[54%]' : 'w-full'}`}>
        <div className="flex justify-end mb-1 shrink-0">
          {zoomDom && (
            <button type="button" onClick={() => setZoomDom(null)} className="text-xs bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded font-bold">Reset zoom</button>
@@ -5175,6 +5200,29 @@ const onUp = () => {
            </LineChart>
          </ResponsiveContainer>
        </div>
+     </div>
+     )}
+     {splitStack && (
+       <SplitChartStack
+         id="nmr-split"
+         label="Split view — 1D spectra"
+         series={visibleSeries}
+         className="w-full lg:w-[46%]"
+         renderChart={(s) => (
+           <div style={{ width: '100%', height: SPLIT_CHART_H }} className="px-2 pb-1">
+             <ResponsiveContainer width="100%" height="100%">
+               <LineChart data={s.data} margin={{ top: 4, right: 10, bottom: 16, left: 2 }}>
+                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                 <XAxis type="number" dataKey="x" domain={dom} reversed={true} allowDataOverflow
+                   tickFormatter={v => Number(v).toFixed(2)} tick={{ fontSize: splitFontSize, fill: '#64748b' }} />
+                 <YAxis domain={splitSharedY ? yDomain : ['dataMin', 'dataMax']} tick={{ fontSize: splitFontSize, fill: '#64748b' }} width={40} />
+                 <Line data={s.data} type="monotone" dataKey="y" stroke={s.color} strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls />
+               </LineChart>
+             </ResponsiveContainer>
+           </div>
+         )}
+       />
+     )}
      </div>
    )}
 
@@ -6587,7 +6635,7 @@ let dom = brukerZoomDom || xFull;
                return out;
              })()}
              tickFormatter={v => Number(v).toFixed(2)}
-             tick={{fontSize: nmr1dCfg.fontSize, fill:'#64748b'}}
+             tick={tickTextProps(nmr1dCfg, { fill: '#64748b' })}
              label={xLabelProps} />
            <YAxis hide domain={effYDom} />
            <Tooltip formatter={v => Number(v).toFixed(3)} labelFormatter={v => Number(v).toFixed(2) + ' ppm'} />
@@ -7266,8 +7314,8 @@ export const SecondaryShiftsSection = ({ ctx }) => {
       <ResponsiveContainer width="100%" aspect={cfg.aspect}>
         <BarChart data={data} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
           <CartesianGrid strokeDasharray="3 3" vertical={false} />
-          <XAxis dataKey="label" tick={{ fontSize: cfg.fontSize }} />
-          <YAxis tick={{ fontSize: cfg.fontSize }} />
+          <XAxis dataKey="label" tick={tickTextProps(cfg)} />
+          <YAxis tick={tickTextProps(cfg)} />
           <Tooltip />
           {cfg.showHLine && <ReferenceLine y={cfg.hLineVal} stroke="red" strokeDasharray="3 3" />}
           {cfg.showHLine && <ReferenceLine y={-cfg.hLineVal} stroke="red" strokeDasharray="3 3" />}
@@ -7296,8 +7344,8 @@ export const SecondaryShiftsSection = ({ ctx }) => {
         <ResponsiveContainer width="100%" aspect={cfg.aspect}>
           <BarChart data={merged} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="label" tick={{ fontSize: cfg.fontSize }} />
-            <YAxis tick={{ fontSize: cfg.fontSize }} />
+            <XAxis dataKey="label" tick={tickTextProps(cfg)} />
+            <YAxis tick={tickTextProps(cfg)} />
             <Tooltip />
             {cfg.showHLine && <ReferenceLine y={cfg.hLineVal} stroke="red" strokeDasharray="3 3" />}
             {cfg.showHLine && <ReferenceLine y={-cfg.hLineVal} stroke="red" strokeDasharray="3 3" />}
@@ -7305,7 +7353,7 @@ export const SecondaryShiftsSection = ({ ctx }) => {
             {seriesList.map((s) => (
               <Bar key={s.name} dataKey={s.name} fill={s.color} />
             ))}
-            <Legend wrapperStyle={{ fontSize: cfg.fontSize }} />
+            <Legend wrapperStyle={legendTextStyle(cfg)} />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -7591,12 +7639,12 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
         const m = maxOf(s);
         if (m === null) return null;
         const c = colorOf(s);
-        return <ReferenceLine key={`mx-${s.key}`} y={m} stroke={c} strokeDasharray="6 4" ifOverflow="extendDomain" label={{ value: `max ${s.label}=${m.toFixed(2)}`, fill: c, fontSize: Math.max(9, cfg.fontSize - 1), position: 'insideTopRight' }} />;
+        return <ReferenceLine key={`mx-${s.key}`} y={m} stroke={c} strokeDasharray="6 4" ifOverflow="extendDomain" label={{ value: `max ${s.label}=${m.toFixed(2)}`, fill: c, fontSize: Math.max(9, Number(tickSize(cfg)) - 1), position: 'insideTopRight' }} />;
       })}
       {(plot.hLines || []).map((h) => {
         const v = parseManual(h.value);
         if (v === null) return null;
-        return <ReferenceLine key={h.id} y={v} stroke={h.color || '#64748b'} strokeDasharray="4 4" ifOverflow="extendDomain" label={{ value: h.label || `y=${v}`, fill: h.color || '#64748b', fontSize: Math.max(9, cfg.fontSize - 1), position: 'insideTopRight' }} />;
+        return <ReferenceLine key={h.id} y={v} stroke={h.color || '#64748b'} strokeDasharray="4 4" ifOverflow="extendDomain" label={{ value: h.label || `y=${v}`, fill: h.color || '#64748b', fontSize: Math.max(9, Number(tickSize(cfg)) - 1), position: 'insideTopRight' }} />;
       })}
     </>
   );
@@ -7802,8 +7850,8 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                     {isHist ? (
                       <BarChart data={catData} margin={cfgChartMargin(cfg, { top: 8, right: 16, bottom: 30, left: 12 })}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                        <XAxis dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} edgeAnchor={false} />} tickMargin={10} label={cfgAxisLabel(cfg, 'x', 'Condition', 22)} />
-                        <YAxis type="number" domain={[dom(cfg.yMin) ?? errRangeY?.[0] ?? 'auto', dom(cfg.yMax) ?? errRangeY?.[1] ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={cfgAxisLabel(cfg, 'y', yLab, 6)} />
+                        <XAxis dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={tickSize(cfg)} fontFamily={fontFamilyOf(cfg)} edgeAnchor={false} />} tickMargin={10} label={cfgAxisLabel(cfg, 'x', 'Condition', 22)} />
+                        <YAxis type="number" domain={[dom(cfg.yMin) ?? errRangeY?.[0] ?? 'auto', dom(cfg.yMax) ?? errRangeY?.[1] ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={tickTextProps(cfg, { fill: '#64748b' })} label={cfgAxisLabel(cfg, 'y', yLab, 6)} />
                         <Tooltip />
                         {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
                         {refLines}
@@ -7820,9 +7868,9 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                       <LineChart margin={cfgChartMargin(cfg, { top: 8, right: 16, bottom: 30, left: 12 })}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                         <XAxis type="number" dataKey="x" domain={[dom(cfg.xMin) ?? zoom.domain[0], dom(cfg.xMax) ?? zoom.domain[1]]} ticks={xTicks}
-                          tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} formatter={cfgTickFormatter(cfg, 'x') || undefined} />} tickMargin={10}
+                          tick={<AngledTick angle={cfg.tickAngle} fontSize={tickSize(cfg)} fontFamily={fontFamilyOf(cfg)} formatter={cfgTickFormatter(cfg, 'x') || undefined} />} tickMargin={10}
                           label={cfgAxisLabel(cfg, 'x', xLab, 22)} />
-                        <YAxis type="number" domain={[dom(cfg.yMin) ?? errRangeY?.[0] ?? 'auto', dom(cfg.yMax) ?? errRangeY?.[1] ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={cfgAxisLabel(cfg, 'y', yLab, 6)} />
+                        <YAxis type="number" domain={[dom(cfg.yMin) ?? errRangeY?.[0] ?? 'auto', dom(cfg.yMax) ?? errRangeY?.[1] ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={tickTextProps(cfg, { fill: '#64748b' })} label={cfgAxisLabel(cfg, 'y', yLab, 6)} />
                         <Tooltip />
                         {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
                         {refLines}
@@ -7884,7 +7932,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                         <BarChart data={paramData} margin={cfgChartMargin(cfg, { top: 10, right: 10, bottom: 20, left: 10 })}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} />
                           <XAxis dataKey="name" interval={catInterval(cfg.tickStep)} tickMargin={10} tick={<AngledTick angle={cfg.tickAngle} fontSize={Math.max(9, cfg.fontSize - 2)} edgeAnchor={false} />} />
-                          <YAxis domain={[dom(cfg.yMin) ?? paramRange?.[0] ?? 'auto', dom(cfg.yMax) ?? paramRange?.[1] ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: Math.max(9, cfg.fontSize - 2) }} label={cfgAxisLabel(cfg, 'y', paramGraphVar, 0)} />
+                          <YAxis domain={[dom(cfg.yMin) ?? paramRange?.[0] ?? 'auto', dom(cfg.yMax) ?? paramRange?.[1] ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={tickTextProps(cfg, { fontSize: Math.max(9, Number(tickSize(cfg)) - 2) })} label={cfgAxisLabel(cfg, 'y', paramGraphVar, 0)} />
                           <Tooltip />
                           <Bar dataKey="val" isAnimationActive={false}>
                             {paramData.map((entry, idx) => <Cell key={idx} fill={entry.fill} />)}
@@ -8121,11 +8169,11 @@ const PerAtomChartPanel = ({ ctx, d, chart, updateChart, removeChart }) => {
           <ResponsiveContainer width="100%" aspect={cfg.aspect}>
             <BarChart data={chartData} margin={cfgChartMargin(cfg, { top: 8, right: 8, bottom: 16, left: 8 })}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'x', cfg.xAxisLabel || '', 16)} />
-              <YAxis {...brkAtomNmr.axisProps} tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'y', cfg.yAxisLabel || layer?.unit || '', 6)} />
+              <XAxis dataKey="label" tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'x', cfg.xAxisLabel || '', 16)} />
+              <YAxis {...brkAtomNmr.axisProps} tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'y', cfg.yAxisLabel || layer?.unit || '', 6)} />
               <Tooltip />
               {brkAtomNmr.marks}
-              <Legend wrapperStyle={{ fontSize: cfg.fontSize }} />
+              <Legend wrapperStyle={legendTextStyle(cfg)} />
               {atomMeta.map(m => <Bar key={m.key} dataKey={m.key} name={m.label} fill={m.color} isAnimationActive={false} />)}
             </BarChart>
           </ResponsiveContainer>

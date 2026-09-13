@@ -27,33 +27,61 @@
 export const FIGURE_STYLE_KEY = 'labFigureStyle';
 export const FIGURE_STYLE_EVENT = 'lab:figure-style-changed';
 
-// Character sizes are clamped: below 8 px a figure is unreadable, above 30 px a
-// 1D spectrum only shows two ticks. Rotation is clamped to ±90°.
+// Character sizes are clamped: below 8 px a figure is unreadable; the upper
+// bound is 40 px — the "poster" size used for figures printed on a poster
+// (36 / 40 are offered as one-click values, see FIGURE_FONT_STEPS). Rotation is
+// clamped to ±90°.
 export const FIGURE_FONT_MIN = 8;
-export const FIGURE_FONT_MAX = 30;
+export const FIGURE_FONT_MAX = 40;
 export const FIGURE_ANGLE_MIN = -90;
 export const FIGURE_ANGLE_MAX = 90;
 
+// One-click character sizes of the profile editor. 36 / 40 are the poster
+// values a figure printed at A0 needs; the slider is not limited to them.
+export const FIGURE_FONT_STEPS = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40];
+
 /**
- * The profile. `fontSize` is THE knob (axis ticks, axis titles, legends of the
- * Chart.js canvases…); the two others only reach the charts that read them:
- * `simLabelFontSize` the simulated / peak labels of the spectra, `tickAngle`
- * the rotated x labels (spectra, long category names).
+ * The profile — ONE character size per ELEMENT, plus the font family:
+ *
+ *   fontFamily          '' = the app font (Inter). Any CSS font stack otherwise.
+ *   fontSize            axis NUMBER labels (the historical knob: every page
+ *                       already reads `cfg.fontSize`).
+ *   axisTitleFontSize   axis TITLES ("Wavelength (nm)", "Intensity (a.u.)").
+ *   legendFontSize      legend entries / series names.
+ *   simLabelFontSize    peak / data labels of the spectra (assignments).
+ *   tickAngle           rotation of the x tick labels.
+ *   applyOnOpen         push the profile automatically when a page opens.
+ *
+ * A chart that does not read one of the sizes simply ignores it; the ones that
+ * do read it keep their own value when the profile leaves the field alone.
  */
 export const DEFAULT_FIGURE_STYLE = {
+  fontFamily: '',
   fontSize: 16,
+  axisTitleFontSize: 18,
+  legendFontSize: 16,
   simLabelFontSize: 16,
   tickAngle: 0,
   applyOnOpen: false
 };
 
-// The cfg keys the profile writes when applying. `fontSize` goes into EVERY
-// registered chart; the spectra keys only into a cfg that ALREADY carries them
-// (a recharts chart has no peak labels, and we never inject plumbing into a
-// saved `test.<...>Cfg` object). Every merged style container of the app
-// (DEFAULT_CHART_STYLE, simCfg, DEFAULT_CFG…) carries all three, so the spectra
-// are covered everywhere an x axis exists.
-export const FIGURE_STYLE_FIELDS = ['fontSize', 'simLabelFontSize', 'tickAngle'];
+// Human labels of the character sizes (panel rows, tooltips, the 🎨 chip).
+export const FIGURE_SIZE_FIELDS = ['fontSize', 'axisTitleFontSize', 'legendFontSize', 'simLabelFontSize'];
+export const FIGURE_SIZE_LABELS = {
+  fontSize: 'Axis numbers (tick labels)',
+  axisTitleFontSize: 'Axis titles (x / y names)',
+  legendFontSize: 'Legends / series names',
+  simLabelFontSize: 'Peak / data labels (spectra)'
+};
+
+// The cfg keys the profile writes when applying. The family + the three sizes
+// go into EVERY registered chart (a chart that does not use one ignores it);
+// the spectra keys only into a cfg that ALREADY carries them (a recharts chart
+// has no peak labels, and we never inject plumbing into a saved
+// `test.<...>Cfg` object). Every merged style container of the app
+// (DEFAULT_CHART_STYLE, simCfg, DEFAULT_CFG…) carries all of them, so the
+// spectra are covered everywhere an x axis exists.
+export const FIGURE_STYLE_FIELDS = ['fontFamily', 'fontSize', 'axisTitleFontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle'];
 export const FIGURE_SPECTRA_FIELDS = ['simLabelFontSize', 'tickAngle'];
 
 const toNum = (v, fb) => {
@@ -65,6 +93,17 @@ export const clampFigureFont = (v, fb = DEFAULT_FIGURE_STYLE.fontSize) =>
 export const clampFigureAngle = (v) =>
   Math.max(FIGURE_ANGLE_MIN, Math.min(FIGURE_ANGLE_MAX, Math.round(toNum(v, DEFAULT_FIGURE_STYLE.tickAngle))));
 
+/** A font stack of the profile: '' (app font) or a sanitised CSS font stack. */
+export const normalizeFigureFont = (v) => {
+  if (v == null) return '';
+  const s = String(v).trim().replace(/\s+/g, ' ');
+  if (!s) return '';
+  // A font stack is a comma separated list of names — never markup, never CSS
+  // declarations (the value ends up in a style attribute).
+  if (/[<>;{}()"']/.test(s.replace(/"[^"]*"/g, ''))) return '';
+  return s.slice(0, 120);
+};
+
 /** Accepts anything (a partial object, a stored JSON string, null) → a valid profile. */
 export const normalizeFigureStyle = (style) => {
   let raw = style;
@@ -73,7 +112,10 @@ export const normalizeFigureStyle = (style) => {
   }
   const s = raw && typeof raw === 'object' ? raw : {};
   return {
+    fontFamily: normalizeFigureFont(s.fontFamily),
     fontSize: clampFigureFont(s.fontSize),
+    axisTitleFontSize: clampFigureFont(s.axisTitleFontSize, DEFAULT_FIGURE_STYLE.axisTitleFontSize),
+    legendFontSize: clampFigureFont(s.legendFontSize, DEFAULT_FIGURE_STYLE.legendFontSize),
     simLabelFontSize: clampFigureFont(s.simLabelFontSize, DEFAULT_FIGURE_STYLE.simLabelFontSize),
     tickAngle: clampFigureAngle(s.tickAngle),
     applyOnOpen: s.applyOnOpen === true || s.applyOnOpen === 'true'
@@ -121,15 +163,22 @@ export const writeFigureStyle = (style) => {
  * Stable short signature of a profile. It is stored on the test
  * (`test.figureStyleTag`) so a page can tell whether it is already styled and
  * which profile was used for its figures (see the Image Builder notice).
+ *
+ *   fs<tick>-t<title>-lg<legend>-lb<labels>-rot<angle>[-<Family>]
+ * e.g. `fs16-t18-lg16-lb16-rot0` (app font) or `fs20-…-Arial`.
  */
 export const figureStyleTag = (style) => {
   const s = normalizeFigureStyle(style || readFigureStyle());
-  return `fs${s.fontSize}-lb${s.simLabelFontSize}-rot${s.tickAngle}`;
+  const fam = s.fontFamily ? `-${s.fontFamily.replace(/[^A-Za-z0-9]/g, '').slice(0, 12)}` : '';
+  return `fs${s.fontSize}-t${s.axisTitleFontSize}-lg${s.legendFontSize}-lb${s.simLabelFontSize}-rot${s.tickAngle}${fam}`;
 };
 
 /**
  * The subset of the profile a given cfg accepts.
- *   • `fontSize`                    → always (the shared character size)
+ *   • `fontSize`, `axisTitleFontSize`, `legendFontSize` → always (the shared
+ *     character sizes; a chart that does not use one simply ignores it);
+ *   • `fontFamily` → always, but only written when the profile HAS one (or to
+ *     clear one the cfg already carries);
  *   • `simLabelFontSize`, `tickAngle` → only when the cfg already uses them
  *     (spectra: the merged simCfg / nmr1dCfg / DEFAULT_CHART_STYLE carry both).
  * `options.spectra === true` forces the two spectra keys on.
@@ -137,7 +186,9 @@ export const figureStyleTag = (style) => {
 export const figureStylePatch = (style, cfg = null, options = null) => {
   const s = normalizeFigureStyle(style || readFigureStyle());
   const forceSpectra = !!(options && options.spectra);
-  const out = { fontSize: s.fontSize };
+  const out = { fontSize: s.fontSize, axisTitleFontSize: s.axisTitleFontSize, legendFontSize: s.legendFontSize };
+  if (s.fontFamily) out.fontFamily = s.fontFamily;
+  else if (cfg && typeof cfg === 'object' && cfg.fontFamily) out.fontFamily = '';
   FIGURE_SPECTRA_FIELDS.forEach((k) => {
     const uses = forceSpectra || (!!cfg && typeof cfg === 'object' && k in cfg);
     if (uses) out[k] = s[k];
@@ -145,11 +196,16 @@ export const figureStylePatch = (style, cfg = null, options = null) => {
   return out;
 };
 
+/** Same value? (the profile carries numbers AND the font family string) */
+const sameStyleValue = (a, b) => (typeof a === 'string' || typeof b === 'string'
+  ? String(a == null ? '' : a) === String(b == null ? '' : b)
+  : Number(a) === Number(b));
+
 /** True when every field of the profile already holds its value in `cfg`. */
 export const figureStyleMatches = (cfg, style = null) => {
   if (!cfg || typeof cfg !== 'object') return true;
   const patch = figureStylePatch(style, cfg);
-  return Object.keys(patch).every((k) => Number(cfg[k]) === patch[k]);
+  return Object.keys(patch).every((k) => sameStyleValue(cfg[k], patch[k]));
 };
 
 /**
@@ -161,9 +217,45 @@ export const figureStyleMatches = (cfg, style = null) => {
 export const applyFigureStyleToCfg = (cfg, style = null, options = null) => {
   if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return null;
   const patch = figureStylePatch(style, cfg, options);
-  const changed = Object.keys(patch).some((k) => Number(cfg[k]) !== patch[k]);
+  const changed = Object.keys(patch).some((k) => !sameStyleValue(cfg[k], patch[k]));
   if (!changed) return null;
   return { ...cfg, ...patch };
+};
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   PAGE-LEVEL HELPERS — the 🎨 button and the automatic re-capture share them.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Open every CLOSED section of the page (their charts are not rendered at all
+ * until then, so they cannot be styled nor captured). Clicks the page's own
+ * "▸ Expand all" button — which only exists while it would expand something.
+ */
+export const expandAllChartSections = () => {
+  try {
+    if (typeof document === 'undefined') return false;
+    const btn = document.querySelector('[data-expand-all]');
+    if (!btn) return false;
+    btn.click();
+    return true;
+  } catch { return false; }
+};
+
+/**
+ * Push the profile into every chart of the page — NOW, and again a moment after
+ * the closed sections were opened (the charts mount lazily). Returns the first
+ * result plus `expanded` and a `cancel()` for the parked re-applies.
+ */
+export const applyFigureStyleEverywhere = (style = null, options = null) => {
+  const profile = normalizeFigureStyle(style || readFigureStyle());
+  const first = applyFigureStyleToSlots(profile, options);
+  const expanded = expandAllChartSections();
+  const timers = [];
+  if (expanded && typeof setTimeout === 'function') {
+    timers.push(setTimeout(() => applyFigureStyleToSlots(profile, options), 900));
+    timers.push(setTimeout(() => applyFigureStyleToSlots(profile, options), 2400));
+  }
+  return { ...first, expanded, cancel: () => timers.forEach((t) => clearTimeout(t)) };
 };
 
 /* ─────────────────────────────────────────────────────────────────────────────

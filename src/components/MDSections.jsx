@@ -6,8 +6,7 @@ import { Icon } from './Icons';
 import { ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps, useXZoom, ChartPanel, CHART_FS_CLASSES, useChartFsHeight, AngledTick, cfgAxisLabel, cfgChartMargin } from './SharedAnalysisTools';
 import { parseSimulationParameters } from './MDData';
 import {
-  CONTACT_DEFAULTS, parseTopology, computeContactRDF, demoFrames,
-  resolveFrameSource, AWK_PALETTE, contactSeriesStyle
+  CONTACT_DEFAULTS, parseTopology, computeContactRDF, demoFrames, resolveFrameSource, AWK_PALETTE, contactSeriesStyle
 } from './MDMembraneContacts';
 import { computeOrderAndDensity, parseChargeMap } from './MDMembraneProfiles';
 import { computeMDTrajectoryAnalysis, parseEnergyFile } from '../utils/mdAnalysis';
@@ -15,7 +14,8 @@ import { abortControl, isAbortError } from '../utils/abortControl';
 import { mdAnalysisRunAll } from '../utils/mdAnalysisRunAll';
 import { blobStore } from '../utils/blobStore';
 import html2canvas from 'html2canvas';
-import { PER_ATOM_COLORS, seriesColorFor, rainbowColors } from '../utils/chartStyle';
+import { PER_ATOM_COLORS, seriesColorFor, rainbowColors, tickTextProps, legendTextStyle, tickSize, fontFamilyOf
+} from '../utils/chartStyle';
 export { parseSimulationParameters };   
 import NMRMoleculeViewer from './NMRMoleculeViewer';
 import {
@@ -1722,7 +1722,7 @@ export const MDDataSection = ({ ctx }) => {
 const MD_CHART_M_ZOOM = { top: 10, right: 15, bottom: 45, left: 55 };
 
 const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color, cfg, yLabel, xLabel, chartType = 'line', id, setCfg = null }) => {
-  const fSize = cfg.fontSize || 12;
+  const fSize = tickSize(cfg, 12);
   const aspect = cfg.aspect || 1.8;
   const lineColor = color || '#3b82f6';
   const chartRef = useRef(null);
@@ -1754,8 +1754,8 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
           {chartType === 'bar' ? (
             <BarChart data={data} margin={effMargin}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey={xKey} interval={0} tick={<AngledTick angle={cfg.tickAngle} fontSize={fSize} edgeAnchor={false} />} tickMargin={10} label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'x', xLabel)} />
-              <YAxis {...brk.axisProps} width={70} tick={{ fontSize: fSize }} label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'y', yLabel)} />
+              <XAxis dataKey={xKey} interval={0} tick={<AngledTick angle={cfg.tickAngle} fontSize={fSize} fontFamily={fontFamilyOf(cfg)} edgeAnchor={false} />} tickMargin={10} label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'x', xLabel)} />
+              <YAxis {...brk.axisProps} width={70} tick={tickTextProps(cfg, { fontSize: fSize })} label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'y', yLabel)} />
               <Tooltip />
               {brk.marks}
               <Bar dataKey={dataKey} isAnimationActive={false}>
@@ -1765,9 +1765,9 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
           ) : (
             <LineChart data={data} margin={effMargin}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey={xKey} type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow tick={<AngledTick angle={cfg.tickAngle} fontSize={fSize} />} tickMargin={10}
+              <XAxis dataKey={xKey} type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow tick={<AngledTick angle={cfg.tickAngle} fontSize={fSize} fontFamily={fontFamilyOf(cfg)} />} tickMargin={10}
                 label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'x', xLabel)} />
-              <YAxis type="number" width={70} {...brk.axisProps} domain={brk.on ? brk.axisProps.domain : [mdDom(cfg.yMin) ?? 'auto', mdDom(cfg.yMax) ?? 'auto']} tick={{ fontSize: fSize }}
+              <YAxis type="number" width={70} {...brk.axisProps} domain={brk.on ? brk.axisProps.domain : [mdDom(cfg.yMin) ?? 'auto', mdDom(cfg.yMax) ?? 'auto']} tick={tickTextProps(cfg, { fontSize: fSize })}
                 label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'y', yLabel)} />
               <Tooltip />
               <Line type="monotone" dataKey={dataKey} stroke={lineColor} strokeWidth={cfg.lineThickness || 2} strokeDasharray={mdLineDash(cfg.lineStyle)} dot={false} isAnimationActive={false} />
@@ -1872,11 +1872,11 @@ const MDPerAtomChartPanel = ({ d, chart, updateChart, removeChart }) => {
           <ResponsiveContainer width="100%" aspect={cfg.aspect}>
             <BarChart data={chartData} margin={cfgChartMargin(cfg, { top: 8, right: 8, bottom: 16, left: 8 })}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: cfg.fontSize }} />
-              <YAxis {...brkAtom.axisProps} tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'y', layer?.unit || '', 4)} />
+              <XAxis dataKey="label" tick={tickTextProps(cfg)} />
+              <YAxis {...brkAtom.axisProps} tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'y', layer?.unit || '', 4)} />
               <Tooltip />
               {brkAtom.marks}
-              <Legend wrapperStyle={{ fontSize: cfg.fontSize }} />
+              <Legend wrapperStyle={legendTextStyle(cfg)} />
               {atomMeta.map(m => <Bar key={m.key} dataKey={m.key} name={m.label} fill={m.color} isAnimationActive={false} />)}
             </BarChart>
           </ResponsiveContainer>
@@ -2016,12 +2016,12 @@ const MDConditionPlotPanel = ({ d, chart, updateChart, removeChart, activeTest }
           <ResponsiveContainer width="100%" aspect={cfg.aspect}>
             <LineChart margin={cfgChartMargin(cfg, { top: 8, right: 16, bottom: 24, left: 16 })}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="x" type="number" allowDuplicatedCategory={false} tick={{ fontSize: cfg.fontSize }}
+              <XAxis dataKey="x" type="number" allowDuplicatedCategory={false} tick={tickTextProps(cfg)}
                 label={cfgAxisLabel(cfg, 'x', MD_COND_FIELDS.find(f => f.key === xField)?.label || xField, 10)} />
-              <YAxis {...brkCond.axisProps} tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'y', layer?.unit || '', 4)} />
+              <YAxis {...brkCond.axisProps} tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'y', layer?.unit || '', 4)} />
               <Tooltip />
               {brkCond.marks}
-              <Legend wrapperStyle={{ fontSize: cfg.fontSize }} />
+              <Legend wrapperStyle={legendTextStyle(cfg)} />
               {series.map(s => (
                 <Line key={s.key} data={s.pts} dataKey="y" name={s.label} stroke={s.color} strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} />
               ))}
@@ -2681,7 +2681,7 @@ const contactDot = (symbol, color) => (props) => {
 const MDContactChart = ({ rows, series, yLabel, cfg }) => {
   const effHeight = useChartFsHeight(cfg.height || 480);
   const ref = useRef(null);
-  const fontSize = cfg.fontSize || 9;
+  const fontSize = tickSize(cfg, 9);
   let yMax = 0;
   rows.forEach((r) => series.forEach((s) => { const v = r[s.key]; if (typeof v === 'number' && v > yMax) yMax = v; }));
   const chartData = useMemo(() => rows.map((r, i) => ({ ...r, __xi: i })), [rows]);
@@ -2707,7 +2707,7 @@ const MDContactChart = ({ rows, series, yLabel, cfg }) => {
                      ticks={ticks} tickFormatter={(v) => { const r = chartData[Math.round(v)]; return r ? r.atom : ''; }}
                      interval={0} height={100} tick={{ fontSize, angle: -90, textAnchor: 'end' }}
                      label={cfgAxisLabel({ ...cfg, fontSize: fontSize + 1 }, 'x', cfg.xAxisLabel || 'Atom group', 70)} />
-              <YAxis tick={{ fontSize: fontSize + 1 }} width={70}
+              <YAxis tick={tickTextProps(cfg, { fontSize: fontSize + 1 })} width={70}
                      domain={[mdDom(cfg.yMin) ?? 0, mdDom(cfg.yMax) ?? (yMax || 1)]} allowDataOverflow
                      label={cfgAxisLabel({ ...cfg, fontSize: fontSize + 2 }, 'y', cfg.yAxisLabel || yLabel, 4)} />
               <Tooltip />
@@ -3114,7 +3114,7 @@ export const MDMembraneContactSection = ({ ctx }) => {
 const MDProfileChart = ({ rows, series, xKey, yLabel, xLabel, height = 380, rotateX = false, numericX = false, fontSize = 10, cfg = {} }) => {
   const effHeight = useChartFsHeight(height || cfg.height || 380);
   const ref = useRef(null);
-  const fSize = cfg.fontSize || fontSize || 10;
+  const fSize = tickSize(cfg, fontSize || 10);
   const colorOf = (s, i) => s.color || seriesColorFor(cfg, s.key, i, series.length);
   const xVals = rows.map((r) => (typeof r[xKey] === 'number' ? r[xKey] : NaN)).filter(Number.isFinite);
   const xDomain = xVals.length > 1 ? [Math.min(...xVals), Math.max(...xVals)] : [0, 1];
@@ -3144,7 +3144,7 @@ const MDProfileChart = ({ rows, series, xKey, yLabel, xLabel, height = 380, rota
             <LineChart data={chartData} margin={effMargin}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               {numericX ? (
-                <XAxis dataKey={xKey} type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow tick={{ fontSize: fSize }}
+                <XAxis dataKey={xKey} type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow tick={tickTextProps(cfg, { fontSize: fSize })}
                        label={cfgAxisLabel({ ...cfg, fontSize: fSize + 1 }, 'x', cfg.xAxisLabel || xLabel, 12)} />
               ) : (
                 <XAxis dataKey="__xi" type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow
@@ -3152,7 +3152,7 @@ const MDProfileChart = ({ rows, series, xKey, yLabel, xLabel, height = 380, rota
                        interval={0} height={rotateX ? 100 : 40}
                        tick={{ fontSize: rotateX ? fSize - 1 : fSize, angle: rotateX ? -90 : 0, textAnchor: rotateX ? 'end' : 'middle' }} />
               )}
-              <YAxis tick={{ fontSize: fSize + 1 }} width={70}
+              <YAxis tick={tickTextProps(cfg, { fontSize: fSize + 1 })} width={70}
                      domain={[mdDom(cfg.yMin) ?? 'auto', mdDom(cfg.yMax) ?? 'auto']}
                      label={cfgAxisLabel({ ...cfg, fontSize: fSize + 2 }, 'y', cfg.yAxisLabel || yLabel, 4)} />
               <Tooltip />

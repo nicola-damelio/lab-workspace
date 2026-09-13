@@ -11,7 +11,12 @@ import {
   seriesPointStyle, seriesPtSize, seriesLineThickness,
   seriesDash, seriesVisible, seriesLabelOf, seriesColorOf, hasSeriesOverrides,
   axisBreakOf, axisBreakFor, breakSegments, breakTicks, brokenScale,
-  AXIS_BREAK_GAP_DEFAULT
+  AXIS_BREAK_GAP_DEFAULT,
+  // One character size per ELEMENT + the font family (see utils/chartStyle):
+  // the axis NUMBERS are `cfg.fontSize`, the axis TITLES `cfg.axisTitleFontSize`,
+  // the legend `cfg.legendFontSize`, all drawn with `cfg.fontFamily`.
+  FIGURE_FONT_CHOICES, MIN_CHART_FONT, MAX_CHART_FONT,
+  fontFamilyOf, axisTitleSize
 } from '../utils/chartStyle';
 import { Icon } from './Icons';
 import { useFigureStyleSlot } from './FigureStyleTools';
@@ -401,7 +406,7 @@ export const extremeTickAnchor = (index, visibleTicksCount, fallback = 'middle')
 // the middle of their band, so the extreme ticks are NOT on the plot edges)
 // so those labels keep their centred position over their bar.
 // ─────────────────────────────────────────────────────────────────────────────
-export const AngledTick = ({ x, y, payload, angle = 0, fontSize = 11, anchor = 'middle', formatter, index, visibleTicksCount, edgeAnchor = true }) => {
+export const AngledTick = ({ x, y, payload, angle = 0, fontSize = 11, fontFamily = '', anchor = 'middle', formatter, index, visibleTicksCount, edgeAnchor = true }) => {
     const a = Number(angle) || 0;
     // Rotated labels need a little more side room as they grow; upright ones are
     // pushed down by their own cap height (≈0.72 em) + a fixed clearance.
@@ -420,6 +425,7 @@ export const AngledTick = ({ x, y, payload, angle = 0, fontSize = 11, anchor = '
                 dx={dx}
                 fill="#64748b"
                 fontSize={fontSize}
+                fontFamily={fontFamily || undefined}
             >
                 {formatter ? formatter(payload.value) : String(payload.value)}
             </text>
@@ -596,6 +602,16 @@ export const ChartPanel = ({
 //   unit       -- string for axis label placeholder
 //   showHeightSlider -- show height range slider (default true)
 // ─────────────────────────────────────────────────────────────────────────────
+// A character size typed in the style panel: '' clears it (→ “auto”, i.e. it
+// follows the axis numbers), a number is clamped to the readable range of the
+// shared figure style (up to 96 px — 36 / 40 for a poster figure).
+const chartFontValue = (v) => {
+    if (v === '' || v == null) return '';
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) return '';
+    return Math.max(MIN_CHART_FONT, Math.min(MAX_CHART_FONT, Math.round(n)));
+};
+
 const NF = ({ label, value, onChange, step = 1, placeholder = '' }) => (
     <div className="flex flex-col gap-1">
         <label className="text-[10px] font-bold text-slate-600">{label}</label>
@@ -680,9 +696,15 @@ export const IntensityControl = ({ value = 1, onChange, className = '' }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 const chartStyleCharacterBlock = (cfg, set, showHeightSlider) => (
     <div>
-        <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Character size &amp; chart box</p>
+        <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Character sizes (one per element), font &amp; chart box</p>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 items-end">
-            <NF label="Font size (px) — every label" value={cfg.fontSize ?? 12} onChange={(v) => set({ fontSize: v || 12 })} />
+            <NF label="Axis numbers (px)" value={cfg.fontSize ?? 12} onChange={(v) => set({ fontSize: v || 12 })} />
+            <NF label="Axis titles (px)" value={cfg.axisTitleFontSize ?? ''} placeholder="auto (+1)"
+                onChange={(v) => set({ axisTitleFontSize: chartFontValue(v) })} />
+            <NF label="Legend (px)" value={cfg.legendFontSize ?? ''} placeholder="auto"
+                onChange={(v) => set({ legendFontSize: chartFontValue(v) })} />
+            <SF label="Font family" value={fontFamilyOf(cfg)} onChange={(v) => set({ fontFamily: v })}
+                options={[['', 'App default (Inter)'], ...FIGURE_FONT_CHOICES.filter((f) => f.value).map((f) => [f.value, f.label])]} />
             <NF label="Aspect ratio W/H" step={0.1} value={cfg.aspect ?? 1.8} onChange={(v) => set({ aspect: v || 1.8 })} />
             {showHeightSlider && (
                 <div className="flex flex-col gap-1 lg:col-span-2">
@@ -693,6 +715,11 @@ const chartStyleCharacterBlock = (cfg, set, showHeightSlider) => (
                 </div>
             )}
         </div>
+        <p className="text-[9px] text-slate-400 mt-1">
+            Each element keeps its OWN character size: the axis <b>numbers</b>, the axis <b>titles</b> and the
+            <b> legend</b>. “auto” follows the axis numbers (titles one px bigger). The <b>font family</b> is applied to
+            all of them — and to the Chart.js figures too. Up to {MAX_CHART_FONT} px for a poster.
+        </p>
     </div>
 );
 /** Axis ranges + titles. `section` ('all' | 'x' | 'y') picks the columns shown. */
@@ -973,7 +1000,7 @@ export const SharedChartStylePanel = ({ cfg = {}, setCfg, series = [], unit = 'a
                     <SF label="Point style" value={cfg.pointStyle || cfg.ptStyle || 'circle'} onChange={(v) => set({ pointStyle: v, ptStyle: v })}
                         options={[['circle','Circle'],['square','Square'],['triangle','Triangle'],['cross','Cross'],['none','None']]} />
                     <NF label="Point size" value={cfg.ptSize ?? 5} onChange={(v) => set({ ptSize: v || 5 })} />
-                    <NF label="Font size (px)" value={cfg.fontSize ?? 12} onChange={(v) => set({ fontSize: v || 12 })} />
+                    <NF label="Axis numbers (px)" value={cfg.fontSize ?? 12} onChange={(v) => set({ fontSize: v || 12 })} />
                 </div>
             </div>
             )}
@@ -2269,10 +2296,13 @@ export const cfgAxisLabel = (cfg = {}, axis = 'x', value = '', base) => {
     : Math.max((base ?? 20) + extra * 1.6, yAxisTitleOffset(fs)) + gap;
   const bold = !!(axis === 'x' ? cfg.xAxisLabelBold : cfg.yAxisLabelBold);
   const italic = !!(axis === 'x' ? cfg.xAxisLabelItalic : cfg.yAxisLabelItalic);
+  const titleFs = axisTitleSize(cfg, axisTitleFontSize(fs));
+  const family = fontFamilyOf(cfg);
   const style = {
     value,
     fill: '#64748b',
-    fontSize: axisTitleFontSize(fs),
+    fontSize: titleFs,
+    ...(family ? { fontFamily: family } : {}),
     ...(bold ? { fontWeight: 'bold' } : {}),
     ...(italic ? { fontStyle: 'italic' } : {})
   };

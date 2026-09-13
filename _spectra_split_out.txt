@@ -1,0 +1,7 @@
+passed 77/79
+✗ [ssNMR] the sub-chart character size follows the page's own chart font
+    got  false
+    want true
+✗ [CD] the sub-chart character size follows the page's own chart font
+    got  false
+    want true

@@ -29,8 +29,11 @@ const ok = (v, msg) => assert.ok(v, msg);
 const SRC = (p) => readFileSync(`./src/${p}`, 'utf8');
 
 /* ══ 1. the profile: defaults, clamping, stored JSON ══════════════════════ */
-check('1 the default profile is 16 px everywhere, no rotation, no auto-apply', () => {
-  eq(DEFAULT_FIGURE_STYLE, { fontSize: 16, simLabelFontSize: 16, tickAngle: 0, applyOnOpen: false });
+check('1 the default profile is one size per element, no rotation, no auto-apply', () => {
+  eq(DEFAULT_FIGURE_STYLE, {
+    fontFamily: '', fontSize: 16, axisTitleFontSize: 18, legendFontSize: 16,
+    simLabelFontSize: 16, tickAngle: 0, applyOnOpen: false
+  });
   eq(FIGURE_STYLE_KEY, 'labFigureStyle');
   eq(FIGURE_STYLE_EVENT, 'lab:figure-style-changed');
 });
@@ -56,26 +59,36 @@ check('4 the auto-apply flag is always a real boolean', () => {
 });
 check('5 unknown keys never leak into the stored profile', () => {
   const p = normalizeFigureStyle({ fontSize: 16, colors: { a: '#fff' }, height: 380 });
-  eq(Object.keys(p).sort(), ['applyOnOpen', 'fontSize', 'simLabelFontSize', 'tickAngle']);
+  eq(Object.keys(p).sort(), ['applyOnOpen', 'axisTitleFontSize', 'fontFamily', 'fontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle']);
 });
 check('6 read/write round-trip (browser storage is optional in Node)', () => {
   const before = readFigureStyle();
-  writeFigureStyle({ fontSize: 20, simLabelFontSize: 18, tickAngle: 45, applyOnOpen: true });
-  eq(readFigureStyle(), { fontSize: 20, simLabelFontSize: 18, tickAngle: 45, applyOnOpen: true });
-  eq(figureStyleTag(), 'fs20-lb18-rot45');
+  writeFigureStyle({ fontFamily: 'Arial', fontSize: 20, axisTitleFontSize: 22, legendFontSize: 18, simLabelFontSize: 18, tickAngle: 45, applyOnOpen: true });
+  eq(readFigureStyle(), { fontFamily: 'Arial', fontSize: 20, axisTitleFontSize: 22, legendFontSize: 18, simLabelFontSize: 18, tickAngle: 45, applyOnOpen: true });
+  eq(figureStyleTag(), 'fs20-t22-lg18-lb18-rot45-Arial');
   writeFigureStyle(before);
   eq(readFigureStyle(), before);
 });
 
 /* ══ 2. the tag: what identifies "this figure's style" ════════════════════ */
-check('7 the tag follows the three knobs', () => {
-  eq(figureStyleTag({ fontSize: 16, simLabelFontSize: 12, tickAngle: 0 }), 'fs16-lb12-rot0');
-  eq(figureStyleTag({ fontSize: 12, simLabelFontSize: 12, tickAngle: 0 }), 'fs12-lb12-rot0');
+check('7 the tag follows the four character sizes and the font', () => {
+  eq(figureStyleTag({ fontSize: 16, simLabelFontSize: 12, tickAngle: 0 }), 'fs16-t18-lg16-lb12-rot0');
+  eq(figureStyleTag({ fontSize: 12, simLabelFontSize: 12, tickAngle: 0 }), 'fs12-t18-lg16-lb12-rot0');
+  eq(figureStyleTag({ fontSize: 40, axisTitleFontSize: 40, legendFontSize: 36, simLabelFontSize: 36, tickAngle: 0, fontFamily: 'Times' }),
+    'fs40-t40-lg36-lb36-rot0-Times', 'the poster sizes and the font must show in the tag');
   ok(figureStyleTag({ fontSize: 16 }) !== figureStyleTag({ fontSize: 20 }), 'the size must change the tag');
   ok(figureStyleTag({ fontSize: 16, tickAngle: 45 }) !== figureStyleTag({ fontSize: 16 }), 'the rotation must change the tag');
+  ok(figureStyleTag({ fontSize: 16, axisTitleFontSize: 24 }) !== figureStyleTag({ fontSize: 16 }), 'the axis-title size must change the tag');
+  ok(figureStyleTag({ fontSize: 16, legendFontSize: 24 }) !== figureStyleTag({ fontSize: 16 }), 'the legend size must change the tag');
 });
 check('8 a partial profile is tagged with the defaults of the missing knobs', () => {
-  eq(figureStyleTag({ fontSize: 20 }), 'fs20-lb16-rot0');
+  eq(figureStyleTag({ fontSize: 20 }), 'fs20-t18-lg16-lb16-rot0');
+});
+check('8b the font stack is sanitised (never markup, never CSS declarations)', () => {
+  eq(normalizeFigureStyle({ fontFamily: '  Arial,  Helvetica ' }).fontFamily, 'Arial, Helvetica');
+  eq(normalizeFigureStyle({ fontFamily: 'Arial; color: red' }).fontFamily, '');
+  eq(normalizeFigureStyle({ fontFamily: '<script>x</script>' }).fontFamily, '');
+  eq(normalizeFigureStyle({ fontFamily: null }).fontFamily, '');
 });
 
 /* ══ 3. applyFigureStyleToCfg: what a chart accepts ═══════════════════════ */
@@ -100,25 +113,33 @@ check('10 the spectra keys only reach a cfg that USES them', () => {
 });
 check('11 { spectra: true } forces the two spectra keys on', () => {
   const next = applyFigureStyleToCfg({ fontSize: 11 }, profile, { spectra: true });
-  eq(next, { fontSize: 20, simLabelFontSize: 18, tickAngle: 45 });
+  eq(next, { fontSize: 20, axisTitleFontSize: 18, legendFontSize: 16, simLabelFontSize: 18, tickAngle: 45 });
 });
 check('12 nothing to do → null (no pointless re-render / test save)', () => {
-  eq(applyFigureStyleToCfg({ fontSize: 20, simLabelFontSize: 18, tickAngle: 45 }, profile), null);
-  eq(applyFigureStyleToCfg({ fontSize: '20', simLabelFontSize: '18', tickAngle: '45' }, profile), null,
+  eq(applyFigureStyleToCfg({ fontSize: 20, axisTitleFontSize: 18, legendFontSize: 16, simLabelFontSize: 18, tickAngle: 45 }, profile), null);
+  eq(applyFigureStyleToCfg({ fontSize: '20', axisTitleFontSize: '18', legendFontSize: '16', simLabelFontSize: '18', tickAngle: '45' }, profile), null,
     'a cfg stored as text numbers is already styled');
   eq(applyFigureStyleToCfg(null, profile), null);
   eq(applyFigureStyleToCfg(undefined, profile), null);
   eq(applyFigureStyleToCfg([1, 2], profile), null);
 });
 check('13 figureStylePatch / figureStyleMatches describe the same rule', () => {
-  eq(figureStylePatch(profile, rechart), { fontSize: 20 });
-  eq(figureStylePatch(profile, spectra), { fontSize: 20, simLabelFontSize: 18, tickAngle: 45 });
-  eq(figureStyleMatches({ fontSize: 20, simLabelFontSize: 18, tickAngle: 45 }, profile), true);
+  eq(figureStylePatch(profile, rechart), { fontSize: 20, axisTitleFontSize: 18, legendFontSize: 16 });
+  eq(figureStylePatch(profile, spectra), { fontSize: 20, axisTitleFontSize: 18, legendFontSize: 16, simLabelFontSize: 18, tickAngle: 45 });
+  eq(figureStyleMatches({ fontSize: 20, axisTitleFontSize: 18, legendFontSize: 16, simLabelFontSize: 18, tickAngle: 45 }, profile), true);
   eq(figureStyleMatches(rechart, profile), false);
 });
+check('13b the font family is written on demand — and cleared when the profile drops it', () => {
+  const named = applyFigureStyleToCfg(rechart, { ...profile, fontFamily: 'Georgia, serif' });
+  eq(named.fontFamily, 'Georgia, serif');
+  // A cfg that already carries a family gets it REMOVED when the profile has none.
+  eq(applyFigureStyleToCfg({ ...rechart, fontFamily: 'Georgia, serif' }, profile).fontFamily, '');
+  // …but a cfg that never had one is left untouched (no pointless key).
+  ok(!('fontFamily' in applyFigureStyleToCfg(rechart, profile)), 'no empty family injected');
+});
 check('14 the profile fields are the single source of the applied keys', () => {
-  eq(FIGURE_STYLE_FIELDS, ['fontSize', 'simLabelFontSize', 'tickAngle']);
-  eq(Object.keys(figureStylePatch(profile, spectra)).sort(), ['fontSize', 'simLabelFontSize', 'tickAngle'].sort());
+  eq(FIGURE_STYLE_FIELDS, ['fontFamily', 'fontSize', 'axisTitleFontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle']);
+  eq(Object.keys(figureStylePatch(profile, spectra)).sort(), ['fontSize', 'axisTitleFontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle'].sort());
 });
 
 /* ══ 4. the registry: one click styles every registered chart ═════════════ */
@@ -131,7 +152,7 @@ check('15 apply pushes the profile into every registered chart', () => {
   const res = applyFigureStyleToSlots(profile);
   eq(res.total, 2);
   eq(res.changed, 2);
-  eq(res.tag, 'fs20-lb18-rot45');
+  eq(res.tag, 'fs20-t18-lg16-lb18-rot45');
   eq(chartA.fontSize, 20);
   eq(chartB.fontSize, 20);
   eq(chartB.simLabelFontSize, 18);
@@ -178,18 +199,39 @@ const SETTINGS = SRC('components/AppModules/settingsModule.jsx');
 const CSL = SRC('components/ChartStarLayer.jsx');
 const SAT = SRC('components/SharedAnalysisTools.jsx');
 const IB = SRC('components/ImageBuilder.jsx');
+const FSJS = SRC('utils/figureStyle.js');
 
 check('19 the profile editor lives in Settings', () => {
   ok(SETTINGS.includes("import { FigureStylePanel } from '../FigureStylePanel';"), 'the panel is not imported');
   ok(SETTINGS.includes('title="Figure style — uniform fonts & character sizes"'), 'no Settings section');
   ok(SETTINGS.includes('<FigureStylePanel />'), 'the section does not render the panel');
 });
-check('20 the panel exposes exactly the three shared knobs', () => {
-  ok(PANEL.includes('Axis & tick characters'), 'the shared character size is missing');
-  ok(PANEL.includes('Peak / data labels (spectra)'), 'the spectra label size is missing');
+check('20 the panel exposes the font AND one size per element', () => {
+  ok(PANEL.includes('Font family'), 'the font family is missing');
+  ok(PANEL.includes('1 · Axis numbers (tick labels)'), 'the tick character size is missing');
+  ok(PANEL.includes('2 · Axis titles (x / y names)'), 'the axis-title size is missing');
+  ok(PANEL.includes('3 · Legends / series names'), 'the legend size is missing');
+  ok(PANEL.includes('4 · Peak / data labels (spectra)'), 'the spectra label size is missing');
   ok(PANEL.includes('X label rotation (spectra)'), 'the x-rotation is missing');
+  ok(PANEL.includes('FIGURE_FONT_CHOICES'), 'the font list is not offered');
+  ok(PANEL.includes('Poster A0'), 'the poster values (36 / 40 px) are missing');
   ok(PANEL.includes('writeFigureStyle('), 'the panel does not save the profile');
   ok(PANEL.includes('Apply automatically when an experiment page is opened'), 'no auto-apply option');
+});
+check('20b the character sizes reach 40 px and the helpers are wired in the charts', () => {
+  ok(FIGURE_FONT_MAX >= 40, 'the profile cannot go past 30 px');
+  ok(PANEL.includes('FIGURE_FONT_STEPS'), 'no one-click size steps (36 / 40)');
+  const CS = SRC('utils/chartStyle.js');
+  ok(CS.includes('export const FIGURE_FONT_CHOICES'), 'no font list in chartStyle');
+  ok(CS.includes('export const tickTextProps = (cfg, extra)'), 'no tick helper');
+  ok(CS.includes('export const legendTextStyle = (cfg, extra)'), 'no legend helper');
+  ok(CS.includes('export const chartJsFont = (cfg, extra)'), 'no Chart.js font helper');
+  ['NMRSections', 'ssNMRSections', 'CDSections', 'MDSections', 'PlateSections'].forEach((f) => {
+    const s = readFileSync(`./src/components/${f}.jsx`, 'utf8');
+    ok(/tickTextProps\(|chartJsFont\(|fontFamilyOf\(/.test(s), `${f} does not use the shared font helpers`);
+  });
+  ok(SAT.includes('axisTitleSize(cfg'), 'the axis titles do not follow the profile');
+  ok(SAT.includes('fontFamilyOf(cfg)'), 'the axis titles ignore the font family');
 });
 check('21 the two inspectors register their cfg in the registry', () => {
   ok(SAT.includes("import { useFigureStyleSlot } from './FigureStyleTools';"), 'no import');
@@ -204,9 +246,11 @@ check('22 the 🎨 chip is mounted on every experiment page', () => {
 });
 
 check('23 applying from the page reaches the charts of the CLOSED sections', () => {
-  ok(TOOLS.includes("document.querySelector('[data-expand-all]')"), 'the Expand all button is not used');
-  ok(TOOLS.includes('btn.click()'), 'the closed sections are never opened');
-  ok(TOOLS.includes('setTimeout(() => applyToSlots(), 900)'), 'the delayed re-apply is missing');
+  ok(TOOLS.includes('applyFigureStyleEverywhere'), 'the page does not use the shared apply');
+  ok(FSJS.includes('export const applyFigureStyleEverywhere'), 'no shared page-level apply');
+  ok(FSJS.includes("document.querySelector('[data-expand-all]')"), 'the Expand all button is not used');
+  ok(FSJS.includes('btn.click()'), 'the closed sections are never opened');
+  ok(FSJS.includes('setTimeout(() => applyFigureStyleToSlots(profile, options), 900)'), 'the delayed re-apply is missing');
 });
 check('24 the page records the style it applied', () => {
   ok(TOOLS.includes('update({ figureStyleTag: res.tag, figureStyleAppliedAt:'), 'the applied style is not stamped on the experiment');
@@ -217,7 +261,7 @@ check('25 a captured figure carries its style stamp and its pixel size', () => {
   ok(CSL.includes('src.styleTag = figureStyleTag();'), 'the capture does not stamp the style');
   ok(CSL.includes('src.pxW = Math.round('), 'the capture does not record pxW');
   ok(CSL.includes('src.pxH = Math.round('), 'the capture does not record pxH');
-  ok(CSL.includes("import { figureStyleTag } from '../utils/figureStyle';"), 'no import of the tag helper');
+  ok(CSL.includes("import { figureStyleTag, readFigureStyle, applyFigureStyleEverywhere } from '../utils/figureStyle';"), 'no import of the tag helper');
 });
 check('26 the Image Builder audits the figures of the canvas', () => {
   ok(IB.includes('export const figureStyleAudit = (objects, currentTag'), 'no audit helper');
