@@ -126,9 +126,9 @@ checkTrue('[stack] rows are labelled (series name + colour dot)', STACK.includes
 checkTrue('[FCS] split panel is a star group',
   fs.readFileSync('src/components/FlowCytometrySections.jsx', 'utf8').includes('data-star-group="fcs-split"'));
 const PAGES = [
-  ['NMR', 'src/components/NMRSections.jsx', 'nmr-split', 'splitChartBoxStyle(splitLayout)'],
-  ['ssNMR', 'src/components/ssNMRSections.jsx', 'ssnmr-split', 'splitChartBoxStyle(splitLayout)'],
-  ['CD', 'src/components/CDSections.jsx', 'cd-split', 'splitChartBoxStyle(splitLayout)']
+  ['NMR', 'src/components/NMRSections.jsx', 'nmr-split', 'splitRowBoxStyle(splitLayout, i, '],
+  ['ssNMR', 'src/components/ssNMRSections.jsx', 'ssnmr-split', 'splitRowBoxStyle(splitLayout, i, '],
+  ['CD', 'src/components/CDSections.jsx', 'cd-split', 'splitRowBoxStyle(splitLayout, i, ']
 ];
 PAGES.forEach(([tag, file, id, box]) => {
   const src = fs.readFileSync(file, 'utf8');

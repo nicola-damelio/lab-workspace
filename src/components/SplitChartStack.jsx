@@ -34,7 +34,9 @@
      • yAxis — false hides the Y axis of every sub-chart: its numbers and the
        room the round ticks need are gone, so a curve fills its box from the
        baseline to its peak and two rows really come close (the “No Y axis”
-       switch; see the readers below).
+       switch; see the readers below). The bottom row then keeps the X ruler in
+       a strip of its own (SPLIT_RULER_H) UNDER its lane — at the bottom of the
+       pack, see splitRowBoxStyle.
    Every value is clamped by normalizeSplitLayout, so a stored / hand-edited value
    can neither break the stack nor shrink a graph into a 4 px line.
    <SplitLayoutControls> (bottom of this file) is the set of knobs the pages
@@ -80,6 +82,17 @@ export const SPLIT_ROW_H_STEP = 10;
 // per curve ⇒ the tightest stack this component can draw, i.e. the curves
 // almost touching. Every knob of the controls can tune it from there.
 export const SPLIT_PACK_H = 60;
+
+// …and the room (px) the X RULER of a packed stack needs: the tick marks and
+// the numbers under them. It is the height of the strip the ruler occupies at
+// the BOTTOM of a packed stack — the row that keeps the ruler grows by it
+// (splitRowBoxStyle) and reserves exactly it (splitChartMargin) — so the ruler
+// sits at the very bottom of the pack, under the last LANE and never inside it,
+// and every lane keeps the height the Height knob asks for. A packed stack
+// draws no axis title, so this is far less than the room a full-size chart
+// reserves (see xTickNumberExtent in SharedAnalysisTools); it fits the tick
+// numbers of every character size the panels offer.
+export const SPLIT_RULER_H = 30;
 
 /** A number, or 0 when the value is missing / empty / not a number. */
 const numberOf = (v) => {
@@ -133,11 +146,14 @@ export const splitOwnHeight = (baseHeight = SPLIT_CHART_H) => {
    headroom that kept a curve away from the top of its box: a curve then fills
    its box from the baseline to its peak. The rows lose the rest of their
    furniture too — the caption moves OVER the box (see SplitChartStack), the box
-   drops its bottom padding and only the BOTTOM row keeps the X ruler. Stacked
-   at Gap 0 — with a short Height — they almost touch, which is the whole point: a Y axis
-   needs round tick values, and the space above a peak is what separates two
-   curves on screen. The four split views (NMR 1D, ssNMR, CD, Flow Cytometry)
-   share these readers, so their packing cannot drift apart. */
+   drops its bottom padding and the X ruler of the stack is kept on the BOTTOM
+   row only, in a strip of its own (SPLIT_RULER_H) under that row's lane, so it
+   is the last thing of the pack and never grows into the lane above it (see
+   splitRowBoxStyle / splitChartMargin). Stacked at Gap 0 — with a short Height
+   — they almost touch, which is the whole point: a Y axis needs round tick
+   values, and the space above a peak is what separates two curves on screen.
+   The four split views (NMR 1D, ssNMR, CD, Flow Cytometry) share these readers,
+   so their packing cannot drift apart. */
 
 /** True when the layout asks for NO Y axis (layout.yAxis === false). */
 export const splitYAxisHidden = (layout = null) => !normalizeSplitLayout(layout).yAxis;
@@ -150,10 +166,23 @@ export const splitYAxisProps = (layout = null, width = 44) =>
 export const splitXAxisHidden = (layout = null, i = 0, count = 1) =>
   splitYAxisHidden(layout) && i < count - 1;
 
-/** The margin of ONE sub-chart: the page's own, minus the axes that are gone. */
+/** …and the ONE row that really draws the ruler (the bottom one, when packed). */
+export const splitXAxisKept = (layout = null, i = 0, count = 1) =>
+  splitYAxisHidden(layout) && !splitXAxisHidden(layout, i, count);
+
+/**
+ * The margin of ONE sub-chart: the page's own, minus the axes that are gone.
+ * The row that keeps the X ruler reserves exactly SPLIT_RULER_H — the strip its
+ * numbers need — and NOT the page's own bottom margin, which is sized for a
+ * full-size chart (numbers + title): in a lane that is only a few dozen px
+ * tall that margin would either push the ruler up into the middle of the pack
+ * or leave the last curve a sliver. The strip and the box the ruler gets
+ * (splitRowBoxStyle) are the same number, so the ruler lands at the bottom of
+ * the pack by construction.
+ */
 export const splitChartMargin = (layout = null, base = {}, i = 0, count = 1) => {
   if (!splitYAxisHidden(layout)) return base;
-  return { ...base, top: 0, bottom: splitXAxisHidden(layout, i, count) ? 0 : base.bottom };
+  return { ...base, top: 0, bottom: splitXAxisHidden(layout, i, count) ? 0 : SPLIT_RULER_H };
 };
 
 /** The className of ONE sub-chart box: the page's own, unpadded when packing. */
@@ -175,6 +204,28 @@ export const splitChartBoxStyle = (layout = {}, baseHeight = SPLIT_CHART_H) => {
 };
 
 /**
+ * The style of ONE sub-chart box, given the ROW it belongs to — what every page
+ * hands its `renderChart`: splitChartBoxStyle PLUS the strip of the X ruler
+ * (SPLIT_RULER_H) on the one row that keeps it. The ruler is then drawn in a
+ * band of its own UNDER the last lane, i.e. at the very bottom of the pack, and
+ * the last curve is exactly as tall as the others — without the strip the ruler
+ * eats into the bottom lane (a 60 px lane reserving the ~54 px a full-size
+ * chart needs for its x numbers leaves a 6 px curve and can even drop the
+ * numbers), which is what used to make the ruler look like it sits in the
+ * middle of the pack.
+ *
+ * A box that has no definite height (the Shape ratio is applied as
+ * `aspect-ratio`) cannot take the strip without losing its ratio, so it is left
+ * alone there — a ratio-sized box is tall enough for its own ruler.
+ */
+export const splitRowBoxStyle = (layout = {}, i = 0, count = 1, baseHeight = SPLIT_CHART_H) => {
+  const box = splitChartBoxStyle(layout, baseHeight);
+  const lane = Number(box.height);
+  if (!(lane > 0) || !splitXAxisKept(layout, i, count)) return box;
+  return { ...box, height: lane + SPLIT_RULER_H };
+};
+
+/**
  * The separation between two rows. `undefined` at gap 0, so a stack that never
  * touched the knob renders (and captures) exactly as it always did.
  */
@@ -188,6 +239,11 @@ export const SplitChartStack = ({
   // The shape / size / separation / axes of the graphs: `{ aspect, rowH, gap,
   // yAxis }`, see above. Left out (or 0 / 0 / 0 / true) the stack renders
   // exactly as it did before the knobs existed.
+  //
+  // `renderChart(s, i)` gets the index of the row it draws, so the page can size
+  // the box of that row with splitRowBoxStyle(layout, i, count) and keep the X
+  // ruler on the last one — the two helpers that make the ruler a strip at the
+  // bottom of the pack.
   layout = null
 }) => {
   const rowGap = splitRowGapStyle(layout);
@@ -265,7 +321,8 @@ export const SplitToggle = ({ on, onToggle, sharedY = null, onToggleSharedY = nu
             together until they almost touch. Empty = auto (the Shape knob / the
             box the page sizes itself). SPLIT_ROW_H_MIN – SPLIT_ROW_H_MAX.
      Pack   one click writes the tightest stack: Height SPLIT_PACK_H, Gap 0 and
-            no Y axis — the curves almost touching, ready to be tuned.
+            no Y axis — the curves almost touching, with the X ruler on a strip
+            of its own at the bottom of the pack, ready to be tuned.
      No Y   the “No Y axis” switch: the Y axis of every sub-chart is dropped
      axis   (numbers AND gutter), so each curve fills its box and the rows really
             come close — layout.yAxis === false, see splitYAxisHidden. */
@@ -329,18 +386,20 @@ export const SplitLayoutControls = ({ layout = null, onChange, className = '', b
         <span className="text-slate-500">px</span>
       </label>
       {/* One click of “Pack”: the tightest stack this file can draw — one short
-          lane per curve, no gap and no Y axis, i.e. the curves almost touching.
-          The Height / Gap / Shape fields tune it from there. */}
+          lane per curve, no gap and no Y axis, i.e. the curves almost touching,
+          with the X ruler on a strip of its own at the bottom of the pack. The
+          Height / Gap / Shape fields tune it from there. */}
       <button type="button" onClick={() => set({ yAxis: false, gap: 0, rowH: SPLIT_PACK_H })}
-              title={`Squeeze the stack together so the curves almost touch: no Y axis, Gap 0 and one ${SPLIT_PACK_H} px lane per curve — tune it with the Height field`}
+              title={`Squeeze the stack together so the curves almost touch: no Y axis, Gap 0 and one ${SPLIT_PACK_H} px lane per curve, the X ruler kept in a ${SPLIT_RULER_H} px strip at the bottom of the pack — tune it with the Height field`}
               className="text-[11px] font-bold px-2 py-0.5 rounded border border-slate-300 bg-white text-slate-600 hover:border-blue-500 hover:text-blue-600">
         Pack
       </button>
       {/* The switch that lets the curves REALLY pack together: no Y axis (no
-          numbers, no gutter), the caption over the box and the X ruler on the
-          bottom row only — see splitYAxisHidden. */}
+          numbers, no gutter), the caption over the box, and the X ruler of the
+          stack kept on the bottom row — in a strip of its own UNDER its lane,
+          at the bottom of the pack — see splitYAxisHidden. */}
       <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer"
-             title="Hide the Y axis of every stacked graph (its numbers and the room they need) and keep the X axis on the bottom row only: each curve fills its box, so the curves really come close — at Gap 0 they touch">
+             title="Hide the Y axis of every stacked graph (its numbers and the room they need) and keep the X axis on the bottom row only — in a strip of its own, at the bottom of the pack: each curve fills its box, so the curves really come close — at Gap 0 they touch">
         <input type="checkbox" checked={!yAxis} onChange={(e) => set({ yAxis: !e.target.checked })}
                className="w-3.5 h-3.5 accent-blue-600" />
         <span className="text-slate-500">No Y axis</span>

@@ -45,9 +45,9 @@ fs.writeFileSync(bundleFile, output.map((o) => o.code).join('\n'), 'utf8');
 const {
   SplitChartStack, SplitToggle, SplitLayoutControls, SPLIT_CHART_H, SPLIT_CHART_MIN_H,
   SPLIT_ASPECT_STEPS, SPLIT_GAP_MAX, SPLIT_ROW_H_MIN, SPLIT_ROW_H_MAX, SPLIT_PACK_H,
-  splitChartBoxStyle, splitRowGapStyle, splitLayoutOf, withSplitLayout, normalizeSplitLayout,
-  splitYAxisHidden, splitYAxisProps, splitXAxisHidden, splitChartMargin, splitChartClass,
-  splitOwnHeight
+  SPLIT_RULER_H, splitChartBoxStyle, splitRowBoxStyle, splitRowGapStyle, splitLayoutOf,
+  withSplitLayout, normalizeSplitLayout, splitYAxisHidden, splitYAxisProps, splitXAxisHidden,
+  splitXAxisKept, splitChartMargin, splitChartClass, splitOwnHeight
 } = await import(`./${bundleFile}`);
 
 const SERIES = [
@@ -191,11 +191,21 @@ check('[packed] the YAxis of a sub-chart loses its gutter',
 check('[packed] only the bottom row keeps the X ruler',
   [splitXAxisHidden(null, 0, 3), splitXAxisHidden(PACKED, 0, 3), splitXAxisHidden(PACKED, 2, 3), splitXAxisHidden(PACKED, 0, 1)],
   [false, true, false, false]);
+check('[packed] …and it is the ONE row that really draws it',
+  [splitXAxisKept(null, 0, 3), splitXAxisKept(PACKED, 0, 3), splitXAxisKept(PACKED, 2, 3), splitXAxisKept(PACKED, 0, 1)],
+  [false, false, true, true]);
 check('[packed] a packed row loses the room its axes took',
   [splitChartMargin(null, { top: 5, bottom: 18 }, 0, 3),
    splitChartMargin(PACKED, { top: 5, bottom: 18 }, 0, 3),
    splitChartMargin(PACKED, { top: 5, bottom: 18 }, 2, 3)],
-  [{ top: 5, bottom: 18 }, { top: 0, bottom: 0 }, { top: 0, bottom: 18 }]);
+  [{ top: 5, bottom: 18 }, { top: 0, bottom: 0 }, { top: 0, bottom: SPLIT_RULER_H }]);
+check('[packed] …and the ruler row keeps its numbers’ room, not the page’s margin',
+  // A page margin sized for a full-size chart (numbers + title) would push the
+  // ruler up into the middle of a short lane — see splitChartMargin.
+  [splitChartMargin(PACKED, { top: 5, bottom: 54 }, 1, 2).bottom,
+   splitChartMargin(PACKED, { top: 5, bottom: 18 }, 1, 2).bottom,
+   splitChartMargin(PACKED, {}, 1, 2).bottom],
+  [SPLIT_RULER_H, SPLIT_RULER_H, SPLIT_RULER_H]);
 check('[packed] …and its box loses the padding of the caption',
   [splitChartClass(null), splitChartClass(PACKED), splitChartClass(PACKED, 'w-1/2 mx-auto pb-1')],
   ['px-2 pb-1', 'px-1', 'px-1']);
@@ -265,6 +275,39 @@ check('[height] a tight stack separates nothing at all',
 checkTrue('[height] …and its rows still say which curve they are',
   tightHtml.includes('Condition A — Spectrum') && tightHtml.includes('absolute top-0 left-1'));
 
+/* ── 3f. the X RULER gets a strip of its own, at the BOTTOM of the pack ────
+   The bottom row used to reserve the page's own bottom margin for its ruler —
+   the room a FULL-SIZE chart needs for its x numbers AND their title (~54 px on
+   the CD / ssNMR pages). In a 60 px lane that left a 6 px curve, pushed the
+   ruler up into the middle of the pack (and recharts even dropped the numbers
+   when the plot area collapsed). The ruler row therefore reserves exactly
+   SPLIT_RULER_H (splitChartMargin) and GROWS by the same number
+   (splitRowBoxStyle), so the ruler is drawn under the last lane — the last
+   thing of the pack — while every lane keeps the height the Height knob asks
+   for. Both helpers read the same predicate (splitXAxisKept), so they cannot
+   drift apart. */
+check('[ruler] the room the numbers need is a small part of a lane', SPLIT_RULER_H, 30);
+check('[ruler] a packed lane keeps its height, only the ruler row grows',
+  [splitRowBoxStyle(LANE, 0, 2), splitRowBoxStyle(LANE, 1, 2)],
+  [{ width: '100%', height: 60 }, { width: '100%', height: 60 + SPLIT_RULER_H }]);
+check('[ruler] …and the strip IS the margin that row reserves',
+  [splitRowBoxStyle(LANE, 1, 2).height - splitRowBoxStyle(LANE, 0, 2).height,
+   splitChartMargin(LANE, { top: 5, bottom: 54 }, 1, 2).bottom],
+  [SPLIT_RULER_H, SPLIT_RULER_H]);
+check('[ruler] a stack that is NOT packed is left exactly as it was',
+  [splitRowBoxStyle({}, 0, 2), splitRowBoxStyle({ rowH: 60 }, 1, 2), splitRowBoxStyle({ aspect: 3 }, 0, 1)],
+  [{ width: '100%', height: SPLIT_CHART_H }, { width: '100%', height: 60 },
+   { width: '100%', aspectRatio: '3', minHeight: SPLIT_CHART_MIN_H }]);
+check('[ruler] a lone row of a packed stack keeps the ruler AND the strip',
+  splitRowBoxStyle(LANE, 0, 1), { width: '100%', height: 60 + SPLIT_RULER_H });
+check('[ruler] the “own” box of a page grows by the strip for the ruler too',
+  [splitRowBoxStyle({ yAxis: false }, 1, 2), splitRowBoxStyle({ yAxis: false }, 1, 2, 200)],
+  [{ width: '100%', height: SPLIT_CHART_H + SPLIT_RULER_H },
+   { width: '100%', height: 200 + SPLIT_RULER_H }]);
+check('[ruler] a ratio-sized box keeps its ratio (it is tall enough already)',
+  splitRowBoxStyle({ yAxis: false, aspect: 3 }, 1, 2),
+  { width: '100%', aspectRatio: '3', minHeight: SPLIT_CHART_MIN_H });
+
 /* ── 5. each spectra page mounts its own stack ──────────────────────────── */
 const PAGES = [
   {
@@ -313,14 +356,15 @@ const PAGES = [
 PAGES.forEach((p) => {
   const src = fs.readFileSync(p.file, 'utf8');
   const count = (needle) => src.split(needle).length - 1;
-  checkTrue(`[${p.tag}] imports the shared stack`, src.includes("import { SplitChartStack, SplitLayoutControls, SplitToggle, splitChartBoxStyle, splitChartClass, splitChartMargin, splitLayoutOf, splitXAxisHidden, splitYAxisProps, withSplitLayout } from './SplitChartStack';"));
+  checkTrue(`[${p.tag}] imports the shared stack`, src.includes("import { SplitChartStack, SplitLayoutControls, SplitToggle, splitRowBoxStyle, splitChartClass, splitChartMargin, splitLayoutOf, splitXAxisHidden, splitYAxisProps, withSplitLayout } from './SplitChartStack';"));
   checkTrue(`[${p.tag}] mounts the stack`, count('<SplitChartStack') === 1);
   checkTrue(`[${p.tag}] …with its own id`, src.includes(`id="${p.id}"`));
   checkTrue(`[${p.tag}] …named for the user`, src.includes(`label="${p.label}"`));
   checkTrue(`[${p.tag}] …fed with the VISIBLE series only`, src.includes(`series={${p.seriesVar}}`));
   checkTrue(`[${p.tag}] …one chart per series`, src.includes('renderChart={(s, i) => ('));
-  checkTrue(`[${p.tag}] …sized by the shared layout helper`, src.includes('splitChartBoxStyle(splitLayout)'));
-  checkTrue(`[${p.tag}] …handed to the box of every sub-chart`, src.includes('style={splitBoxStyle}'));
+  checkTrue(`[${p.tag}] …sized by the shared layout helper`, src.includes('splitRowBoxStyle(splitLayout, i, '));
+  checkTrue(`[${p.tag}] …handed to the box of EVERY row (the ruler row included)`,
+    src.includes('style={splitRowBoxStyle(splitLayout, i, ') && !src.includes('style={splitBoxStyle}'));
   checkTrue(`[${p.tag}] the stack is handed that layout`, src.includes('layout={splitLayout}'));
   checkTrue(`[${p.tag}] the layout is read from the experiment`,
     src.includes('const splitLayout = splitLayoutOf(activeTest);'));
@@ -362,7 +406,7 @@ check('[FCS] is not double-tagged by this change', FCS.split('data-star-group=')
 // experiment, so the four split views of a test share one shape), with the
 // panel's own “Height” as the size of its “own” box.
 checkTrue('[FCS] imports the shared knobs', FCS.includes(
-  "import { SplitLayoutControls, splitChartBoxStyle, splitChartClass, splitChartMargin, splitRowGapStyle, splitLayoutOf, splitYAxisHidden, splitYAxisProps, withSplitLayout, splitOwnHeight } from './SplitChartStack';"));
+  "import { SplitLayoutControls, splitRowBoxStyle, splitChartClass, splitChartMargin, splitRowGapStyle, splitLayoutOf, splitYAxisHidden, splitYAxisProps, withSplitLayout, splitOwnHeight } from './SplitChartStack';"));
 checkTrue('[FCS] the layout is read from the experiment',
   FCS.includes('const splitLayout = splitLayoutOf(activeTest);'));
 checkTrue('[FCS] …and written straight back',
@@ -372,8 +416,8 @@ checkTrue('[FCS] “own” is the height of its own Graphical Parameters',
 checkTrue('[FCS] the panel offers the shape + separation knobs',
   FCS.includes('<SplitLayoutControls layout={splitLayout} onChange={changeSplitLayout} baseHeight={splitOwnBoxH} />'));
 checkTrue('[FCS] every mini chart is sized by the shared layout helper',
-  FCS.includes('splitChartBoxStyle(splitLayout, splitOwnBoxH)'));
-checkTrue('[FCS] …handed to the box of every sub-chart', FCS.includes('style={splitBoxStyle}'));
+  FCS.includes('splitRowBoxStyle(splitLayout, i, visibleInstances.length, splitOwnBoxH)'));
+checkTrue('[FCS] …handed to the box of every sub-chart', FCS.includes('style={splitRowBoxStyle('));
 checkTrue('[FCS] the chart then fills that box', FCS.includes('<ResponsiveContainer width="100%" height="100%">'));
 check('[FCS] no fixed height is left on a mini chart',
   FCS.includes('height={Number(cfgSplit.height) || 80}'), false);

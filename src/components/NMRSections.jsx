@@ -10,7 +10,7 @@ import { CollapsibleSection } from './ui';
 import { useFigureStyleSlot } from './FigureStyleTools';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, VIS_PALETTES, PER_ATOM_COLORS, seriesColorFor, chartBoxStyle, chartAspect, chartRatioBoxStyle, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf, tickTextProps, tickSize, fontFamilyOf, legendTextStyle, chartAspectImposed, tickColorOf
 } from '../utils/chartStyle';
-import { SplitChartStack, SplitLayoutControls, SplitToggle, splitChartBoxStyle, splitChartClass, splitChartMargin, splitLayoutOf, splitXAxisHidden, splitYAxisProps, withSplitLayout } from './SplitChartStack';
+import { SplitChartStack, SplitLayoutControls, SplitToggle, splitRowBoxStyle, splitChartClass, splitChartMargin, splitLayoutOf, splitXAxisHidden, splitYAxisProps, withSplitLayout } from './SplitChartStack';
 import { suggestDriveFileName, driveFolderPath, sanitizeSlug } from '../utils/driveNaming';
 import { uploadLocalFile, getDriveToken, archiveFileToDrive } from '../utils/driveUpload';
 import { storeJson, loadJson } from '../utils/pdbStore';
@@ -5023,7 +5023,6 @@ const NMRSpectraVisualization = ({ ctx }) => {
   // page's 1D chart cfg — so the layout survives a page switch.
   const splitLayout = splitLayoutOf(activeTest);
   const changeSplitLayout = (patch) => updateActiveTest({ splitLayout: withSplitLayout(activeTest, patch) });
-  const splitBoxStyle = splitChartBoxStyle(splitLayout);
   const [hiddenSeries, setHiddenSeries] = useState({});
   const [localColors, setLocalColors] = useState(activeTest.nmrInstanceColors || {});
 const [savedPalettes, setSavedPalettes] = useState(activeTest.nmrSavedPalettes || {});
@@ -5212,6 +5211,10 @@ const onUp = () => {
      </div>
      )}
      {splitStack && (
+       // The box of ONE sub-chart is sized by its ROW: splitRowBoxStyle adds the
+       // strip the X ruler needs to the row that keeps it (the bottom one), so
+       // the ruler is the last thing of the pack and every lane — the last
+       // included — keeps the height the Height knob asks for.
        <SplitChartStack
          id="nmr-split"
          label="Split view — 1D spectra"
@@ -5219,7 +5222,7 @@ const onUp = () => {
          layout={splitLayout}
          className="w-full lg:w-[46%]"
          renderChart={(s, i) => (
-           <div style={splitBoxStyle} className={splitChartClass(splitLayout)}>
+           <div style={splitRowBoxStyle(splitLayout, i, visibleSeries.length)} className={splitChartClass(splitLayout)}>
              <ResponsiveContainer width="100%" height="100%">
                <LineChart data={s.data} margin={splitChartMargin(splitLayout, { top: 4, right: 10, bottom: 16, left: 2 }, i, visibleSeries.length)}>
                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />

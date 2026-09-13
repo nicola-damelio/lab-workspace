@@ -10,7 +10,7 @@ import { ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES, seriesColorFor, tickSize, fontFamilyOf, chartRatioBoxStyle, tickColorOf, axisTitleColorOf
 } from '../utils/chartStyle';
-import { SplitLayoutControls, splitChartBoxStyle, splitChartClass, splitChartMargin, splitRowGapStyle, splitLayoutOf, splitYAxisHidden, splitYAxisProps, withSplitLayout, splitOwnHeight } from './SplitChartStack';
+import { SplitLayoutControls, splitRowBoxStyle, splitChartClass, splitChartMargin, splitRowGapStyle, splitLayoutOf, splitYAxisHidden, splitYAxisProps, withSplitLayout, splitOwnHeight } from './SplitChartStack';
 import { PLATES_DEF, formatConc, getRegionColor } from '../data/constants';
 export { VIS_PALETTES };
 
@@ -655,7 +655,6 @@ export const FCSOverlayVisualization = ({ ctx }) => {
   // “own” is THIS panel's height (its Graphical Parameters “Height” knob):
   // splitOwnHeight guards a missing / empty / hand-edited value.
   const splitOwnBoxH = splitOwnHeight(cfgSplit.height);
-  const splitBoxStyle = splitChartBoxStyle(splitLayout, splitOwnBoxH);
   const splitRowGap = splitRowGapStyle(splitLayout);
   // “No Y axis” (layout.yAxis === false): the caption of a row moves over its
   // box, the Y axis (and the round-tick headroom it needs) is dropped and only
@@ -985,14 +984,16 @@ export const FCSOverlayVisualization = ({ ctx }) => {
                         <span className={packed ? 'hidden' : 'w-2 h-2 rounded-full shrink-0'} style={{ backgroundColor: s.color }} />
                         <span className={packed ? 'text-slate-400' : 'text-slate-700 truncate'}>{s.name}</span>
                       </div>
-                      {/* The box of ONE mini chart. Its SHAPE is the one the panel
-                          asks for — a width : height ratio, or this panel's own
-                          “Height”, never both (a definite height cancels a
-                          ratio) — and the chart then fills the box. */}
+                      {/* The box of ONE mini chart, sized by its ROW: its
+                          SHAPE is the one the panel asks for — a width : height
+                          ratio, or this panel's own “Height”, never both (a
+                          definite height cancels a ratio) — the chart then
+                          fills the box, and the row that keeps the X ruler gets
+                          the strip its numbers need (see splitRowBoxStyle). */}
                       <ChartInspector cfg={cfgSplit} setCfg={setVizCfgSplit}
                         series={visibleInstances.map(x => ({ key: x.id, label: x.name, color: x.color }))} unit="a.u."
                         className={splitChartClass(splitLayout, 'w-1/2 mx-auto pb-1')}
-                        style={splitBoxStyle}>
+                        style={splitRowBoxStyle(splitLayout, i, visibleInstances.length, splitOwnBoxH)}>
                         <ResponsiveContainer width="100%" height="100%">
                           <ComposedChart data={chartData.bins} margin={splitChartMargin(splitLayout, cfgChartMargin(cfgSplit, { top: 2, right: 4, left: 0, bottom: 0 }), i, visibleInstances.length)}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />

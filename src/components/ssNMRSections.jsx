@@ -11,7 +11,7 @@ import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, ChartInsp
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor, chartBoxStyle, chartRatioBoxStyle, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf, tickTextProps, tickSize, fontFamilyOf, legendTextStyle, axisTitleSize, tickColorOf
 } from '../utils/chartStyle';
-import { SplitChartStack, SplitLayoutControls, SplitToggle, splitChartBoxStyle, splitChartClass, splitChartMargin, splitLayoutOf, splitXAxisHidden, splitYAxisProps, withSplitLayout } from './SplitChartStack';
+import { SplitChartStack, SplitLayoutControls, SplitToggle, splitRowBoxStyle, splitChartClass, splitChartMargin, splitLayoutOf, splitXAxisHidden, splitYAxisProps, withSplitLayout } from './SplitChartStack';
 export { CollapsibleSection };
 export { VIS_PALETTES };
 import { DriveUploadButton } from './DriveUpload';
@@ -1921,7 +1921,6 @@ export const SpectraVisualization = ({ ctx }) => {
   // page's chart style cfg — so the layout survives a page switch.
   const splitLayout = splitLayoutOf(activeTest);
   const changeSplitLayout = (patch) => updateActiveTest({ splitLayout: withSplitLayout(activeTest, patch) });
-  const splitBoxStyle = splitChartBoxStyle(splitLayout);
 
   const [localColors, setLocalColors] = useState(activeTest.instanceColors || {});
   const [customPaletteInput, setCustomPaletteInput] = useState('#ef4444, #3b82f6, #22c55e');
@@ -2070,6 +2069,10 @@ export const SpectraVisualization = ({ ctx }) => {
           {chartBody}
         </div>
         {splitStack && (
+          // The box of ONE sub-chart is sized by its ROW: splitRowBoxStyle adds
+          // the strip the X ruler needs to the row that keeps it (the bottom
+          // one), so the ruler is the last thing of the pack and every lane —
+          // the last included — keeps the height the Height knob asks for.
           <SplitChartStack
             id="ssnmr-split"
             label="Split view — individual spectra"
@@ -2077,7 +2080,7 @@ export const SpectraVisualization = ({ ctx }) => {
             layout={splitLayout}
             className={fs ? 'lg:w-[46%]' : 'w-full lg:w-[46%]'}
             renderChart={(s, i) => (
-              <div style={splitBoxStyle} className={splitChartClass(splitLayout)}>
+              <div style={splitRowBoxStyle(splitLayout, i, visible.length)} className={splitChartClass(splitLayout)}>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={s.data} margin={splitChartMargin(splitLayout, cfgChartMargin(cfg, { top: 5, right: 8, bottom: 18, left: 2 }), i, visible.length)}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
