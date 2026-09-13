@@ -19,7 +19,7 @@ import {
     errBarPlugin
 } from '../data/constants';
 import { PLATE_PRESET_LABELS, PLATE_PRESET_COLORS, isPlatePreset, platePresetColor } from '../utils/platePresets';
-import { FS_CLASSES, OVERLAY_CLASSES, chartJsPadding, chartJsHeightFit } from '../utils/chartStyle';
+import { FS_CLASSES, OVERLAY_CLASSES, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, normalizeChartType, seriesVisible, seriesColorOf } from '../utils/chartStyle';
 
 // Chart/style constants now live in ../utils/chartStyle.
 
@@ -116,7 +116,12 @@ function IndividualDoseResponseChart({ cd, chartCfg, isFs, onToggleFs, unit, eSc
                 pointRadius: chartCfg.ptSize != null ? chartCfg.ptSize : 5,
                 fill: false,
                 type: 'scatter',
-                showLine: false
+                showLine: false,
+                ...chartJsSeriesStyle(chartCfg, cd.name, {
+                    color: cd.color,
+                    pointStyle: chartCfg.ptStyle || 'circle',
+                    pointRadius: chartCfg.ptSize != null ? chartCfg.ptSize : 5
+                })
             });
         }
 
@@ -142,7 +147,8 @@ function IndividualDoseResponseChart({ cd, chartCfg, isFs, onToggleFs, unit, eSc
                             display: isFs,
                             text: chartCfg.xAxisLabel || `Log₁₀ [Conc. (${unit})]`,
                             font: { size: chartCfg.fontSize + 2, weight: 'bold' },
-                            color: '#334155'
+                            color: '#334155',
+                            padding: chartJsTitlePad(chartCfg).x
                         },
                         ticks: {
                             display: isFs,
@@ -158,7 +164,8 @@ function IndividualDoseResponseChart({ cd, chartCfg, isFs, onToggleFs, unit, eSc
                             display: isFs,
                             text: 'Viability (%)',
                             font: { size: chartCfg.fontSize + 2, weight: 'bold' },
-                            color: '#334155'
+                            color: '#334155',
+                            padding: chartJsTitlePad(chartCfg).y
                         },
                         ticks: {
                             display: isFs,
@@ -210,6 +217,7 @@ function IndividualDoseResponseChart({ cd, chartCfg, isFs, onToggleFs, unit, eSc
                 )}
             </div>
             <ChartJsInspector chartRef={chartRef} cfg={chartCfg} setCfg={setCfg} unit={unit}
+                series={[{ key: cd.name, label: cd.name, color: cd.color }]}
                 className={`flex-1 relative min-h-0 ${!isFs ? 'pointer-events-none' : ''}`}>
                 <canvas ref={ref} />
             </ChartJsInspector>
@@ -246,7 +254,15 @@ export function RegionCharts({ regionName, regionData, config }) {
     const isDrFs = fsPanel === `dr_${regionName}`;
     const isIc50Fs = fsPanel === `ic50_${regionName}`;
 
-    const isHistogram = chartType === 'histogram';
+    // "Bar / Histogram" in the double-click style panel writes cfg.chartType =
+    // 'bar'; the plate's own select writes 'histogram'. Both mean the same view
+    // and the normalizer keeps them in sync (the panel used to silently switch
+    // the histogram back to the dose-response curves).
+    const isHistogram = normalizeChartType(chartType) === 'bar';
+
+    // One row per compound for the per-curve block of the style panel
+    // (key = the compound name, the same key the datasets below use).
+    const seriesList = regionData.map((cd) => ({ key: cd.name, label: cd.name, color: cd.color }));
 
     // Dose-Response / Histogram Chart
     useEffect(() => {
@@ -301,7 +317,14 @@ export function RegionCharts({ regionName, regionData, config }) {
                         fill: false,
                         type: 'line',
                         tension: 0,
-                        showLine: true
+                        showLine: true,
+                        // Per-curve overrides of the style panel (colour, line
+                        // style / width, show-hide) for THIS compound.
+                        ...chartJsSeriesStyle(chartCfg, cd.name, {
+                            color: cd.color,
+                            borderWidth: chartCfg.lineThickness || 2,
+                            borderDash
+                        })
                     });
                     map.push(null);
                 }
@@ -319,7 +342,12 @@ export function RegionCharts({ regionName, regionData, config }) {
                         pointRadius: chartCfg.ptSize != null ? chartCfg.ptSize : 5,
                         fill: false,
                         type: 'scatter',
-                        showLine: false
+                        showLine: false,
+                        ...chartJsSeriesStyle(chartCfg, cd.name, {
+                            color: cd.color,
+                            pointStyle: chartCfg.ptStyle || 'circle',
+                            pointRadius: chartCfg.ptSize != null ? chartCfg.ptSize : 5
+                        })
                     });
                     map.push({ name: cd.name, excl: false });
                 }
@@ -346,7 +374,7 @@ export function RegionCharts({ regionName, regionData, config }) {
 
         // Compound list shared by the labels / values / colours / error bars of
         // the IC50 histogram, so the whiskers stay aligned with the bars.
-        const histHits = isHistogram ? regionData.filter((cd) => !hiddenCmpds[cd.name] && cd.fit) : [];
+        const histHits = isHistogram ? regionData.filter((cd) => !hiddenCmpds[cd.name] && cd.fit && seriesVisible(chartCfg, cd.name)) : [];
         const chartConfig = isHistogram
             ? {
                   type: 'bar',
@@ -365,9 +393,12 @@ export function RegionCharts({ regionName, regionData, config }) {
                                   const se = Math.min(cd.fit.se, cd.fit.ic50 * 2) * eScale;
                                   return { plus: se, minus: se };
                               }),
-                              backgroundColor: histHits.map((cd) => cd.color + '99'),
-                              borderColor: histHits.map((cd) => cd.color),
-                              borderWidth: 1
+                              backgroundColor: histHits.map((cd, i) => seriesColorOf(chartCfg, cd.name, i, histHits.length, cd.color) + '99'),
+                              borderColor: histHits.map((cd, i) => seriesColorOf(chartCfg, cd.name, i, histHits.length, cd.color)),
+                              borderWidth: 1,
+                              // A curve switched off in the per-curve block is
+                              // also dropped from the histogram bars.
+                              hidden: false
                           }
                       ]
                   },
@@ -377,6 +408,9 @@ export function RegionCharts({ regionName, regionData, config }) {
                   options: {
                       responsive: true,
                       maintainAspectRatio: false,
+                      // A positive Y label gap moves the rotated title and the
+                      // padding reserves the room so it is never cut.
+                      layout: { padding: chartJsPadding(chartCfg) },
                       scales: {
                           y: {
                               beginAtZero: true,
@@ -384,7 +418,8 @@ export function RegionCharts({ regionName, regionData, config }) {
                                   display: true,
                                   text: `IC50 (${unit})`,
                                   font: { size: chartCfg.fontSize + 2, weight: 'bold' },
-                                  color: '#334155'
+                                  color: '#334155',
+                                  padding: chartJsTitlePad(chartCfg).y
                               },
                               ticks: { font: { size: chartCfg.fontSize }, color: '#64748b' }
                           },
@@ -393,7 +428,8 @@ export function RegionCharts({ regionName, regionData, config }) {
                                   display: true,
                                   text: 'Compound',
                                   font: { size: chartCfg.fontSize + 2, weight: 'bold' },
-                                  color: '#334155'
+                                  color: '#334155',
+                                  padding: chartJsTitlePad(chartCfg).x
                               },
                               ticks: { font: { size: chartCfg.fontSize, weight: 'bold' }, color: '#334155' }
                           }
@@ -481,7 +517,8 @@ export function RegionCharts({ regionName, regionData, config }) {
                                   display: true,
                                   text: chartCfg.xAxisLabel || `Log₁₀ [Conc. (${unit})]`,
                                   font: { size: chartCfg.fontSize + 2, weight: 'bold' },
-                                  color: '#334155'
+                                  color: '#334155',
+                                  padding: chartJsTitlePad(chartCfg).x
                               },
                               ticks: {
                                   font: { size: chartCfg.fontSize },
@@ -499,7 +536,8 @@ export function RegionCharts({ regionName, regionData, config }) {
                                   display: true,
                                   text: 'Viability (%)',
                                   font: { size: chartCfg.fontSize + 2, weight: 'bold' },
-                                  color: '#334155'
+                                  color: '#334155',
+                                  padding: chartJsTitlePad(chartCfg).y
                               },
                               ticks: {
                                   font: { size: chartCfg.fontSize },
@@ -613,7 +651,8 @@ export function RegionCharts({ regionName, regionData, config }) {
                             display: true,
                             text: `IC50 (${unit})`,
                             font: { size: chartCfg.fontSize + 2, weight: 'bold' },
-                            color: '#334155'
+                            color: '#334155',
+                            padding: chartJsTitlePad(chartCfg).y
                         },
                         ticks: {
                             font: { size: chartCfg.fontSize },
@@ -685,12 +724,14 @@ export function RegionCharts({ regionName, regionData, config }) {
                     </div>
 
                     {/* Double-click the canvas → the style section that matches
-                        the element under the pointer. No `series` list here: the
-                        compound colours come from the plate, not from cfg.colors. */}
+                        the element under the pointer. `series` is the plate's own
+                        compound list (key = compound name = the dataset key), so
+                        the per-curve block can style each compound. */}
                     <ChartJsInspector
                         chartRef={drChart}
                         cfg={chartCfg}
                         setCfg={setChartCfg}
+                        series={seriesList}
                         unit={unit}
                         className="flex-1 relative min-h-0"
                         style={{ minHeight: isDrFs ? '0' : `${chartJsHeightFit(chartH, chartCfg, { yTitle: 'Viability (%)' })}px` }}
@@ -727,6 +768,7 @@ export function RegionCharts({ regionName, regionData, config }) {
                                 chartRef={ic50Chart}
                                 cfg={chartCfg}
                                 setCfg={setChartCfg}
+                                series={seriesList}
                                 unit={unit}
                                 className="flex-1 relative min-h-0"
                                 style={{ minHeight: isIc50Fs ? '0' : `${chartJsHeightFit(chartH, chartCfg, { yTitle: `IC50 (${unit})` })}px` }}
@@ -3629,7 +3671,7 @@ return (
                                         <div className="flex flex-col gap-1 w-64">
                                             <label className="text-xs font-bold text-slate-600">Chart Type (Plate Only)</label>
                                             <select
-                                                value={chartCfg.chartType || 'dose-response'}
+                                                value={normalizeChartType(chartCfg.chartType) === 'bar' ? 'histogram' : 'dose-response'}
                                                 onChange={(e) => updatePlate({ chartCfg: { ...chartCfg, chartType: e.target.value } })}
                                                 className="border border-slate-300 rounded-md p-2 text-sm bg-slate-50 outline-none focus:border-blue-500"
                                             >

@@ -7,7 +7,7 @@ import {
   ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell
 } from 'recharts';
 import { CollapsibleSection } from './ui';
-import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, VIS_PALETTES, PER_ATOM_COLORS, seriesColorFor, chartBoxStyle } from '../utils/chartStyle';
+import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, VIS_PALETTES, PER_ATOM_COLORS, seriesColorFor, chartBoxStyle, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf } from '../utils/chartStyle';
 import { suggestDriveFileName, driveFolderPath, sanitizeSlug } from '../utils/driveNaming';
 import { uploadLocalFile, getDriveToken, archiveFileToDrive } from '../utils/driveUpload';
 import { storeJson, loadJson } from '../utils/pdbStore';
@@ -7569,11 +7569,17 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
   const makeDot = (color, s) => (props) => {
     const { cx, cy, index } = props;
     if (cx == null || cy == null) return <g key={`d-${s.key}-${index}`} />;
-    const r = cfg.ptSize || 5;
+    // Per-curve symbol / size when the style panel set one for THIS curve.
+    const r = seriesPtSize(cfg, s.key, cfg.ptSize || 5);
+    const style = seriesPointStyle(cfg, s.key);
     let el;
-    if (cfg.pointStyle === 'square') el = <rect x={cx - r} y={cy - r} width={2 * r} height={2 * r} fill={color} />;
-    else if (cfg.pointStyle === 'triangle') el = <polygon points={`${cx},${cy - r} ${cx - r},${cy + r} ${cx + r},${cy + r}`} fill={color} />;
-    else if (cfg.pointStyle === 'cross') el = <g><line x1={cx - r} y1={cy - r} x2={cx + r} y2={cy + r} stroke={color} strokeWidth={2} /><line x1={cx - r} y1={cy + r} x2={cx + r} y2={cy - r} stroke={color} strokeWidth={2} /></g>;
+    if (style === 'square' || style === 'rect') el = <rect x={cx - r} y={cy - r} width={2 * r} height={2 * r} fill={color} />;
+    else if (style === 'rectRot') el = <rect x={cx - r} y={cy - r} width={2 * r} height={2 * r} fill={color} transform={`rotate(45 ${cx} ${cy})`} />;
+    else if (style === 'diamond') el = <polygon points={`${cx},${cy - r * 1.4} ${cx + r * 1.4},${cy} ${cx},${cy + r * 1.4} ${cx - r * 1.4},${cy}`} fill={color} />;
+    else if (style === 'triangle') el = <polygon points={`${cx},${cy - r} ${cx - r},${cy + r} ${cx + r},${cy + r}`} fill={color} />;
+    else if (style === 'cross' || style === 'crossRot') el = <g><line x1={cx - r} y1={cy - r} x2={cx + r} y2={cy + r} stroke={color} strokeWidth={2} /><line x1={cx - r} y1={cy + r} x2={cx + r} y2={cy - r} stroke={color} strokeWidth={2} /></g>;
+    else if (style === 'star') el = <g><line x1={cx - r} y1={cy} x2={cx + r} y2={cy} stroke={color} strokeWidth={2} /><line x1={cx} y1={cy - r} x2={cx} y2={cy + r} stroke={color} strokeWidth={2} /><line x1={cx - r} y1={cy - r} x2={cx + r} y2={cy + r} stroke={color} strokeWidth={1.5} /><line x1={cx - r} y1={cy + r} x2={cx + r} y2={cy - r} stroke={color} strokeWidth={1.5} /></g>;
+    else if (style === 'none') el = null;
     else el = <circle cx={cx} cy={cy} r={r} fill={color} />;
     return <g key={`d-${s.key}-${index}`}>{el}</g>;
   };
@@ -7824,7 +7830,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                           const color = colorOf(s);
                           return (
                             <React.Fragment key={s.key}>
-                              <Line data={numData(s)} type="monotone" dataKey="y" name={s.label} stroke={color} strokeWidth={cfg.lineThickness || 2} strokeDasharray={lineDash(cfg.lineStyle)} dot={plot.showPoints ? makeDot(color, s) : false} connectNulls isAnimationActive={false}>
+                              <Line data={numData(s)} type="monotone" dataKey="y" name={seriesLabelOf(cfg, s.key, s.label)} stroke={color} strokeWidth={seriesLineThickness(cfg, s.key, cfg.lineThickness || 2)} strokeDasharray={seriesDash(cfg, s.key) || lineDash(cfg.lineStyle)} dot={plot.showPoints ? makeDot(color, s) : false} connectNulls isAnimationActive={false}>
                                 {HAS_EB && plot.showErrors && <ErrorBar dataKey="sd" width={4} strokeWidth={1} direction="y" color={color} />}
                               </Line>
                               {plot.fitEnabled && plot.showFit && fits[s.key] && (

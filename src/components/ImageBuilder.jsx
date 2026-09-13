@@ -729,6 +729,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // ON TOP so it is always grabbable.
   const [activeFig, setActiveFig] = useState(null); // { objId, idx }
   const suppressCycleRef = useRef(false);           // a drag just happened → the trailing click must NOT cycle
+  // A crop drag also ends with a click on the canvas; that click must not
+  // DESELECT the object (which would close the crop panel mid-work).
+  const suppressSelectRef = useRef(false);
 
   // ── image CROP ─────────────────────────────────────────────────────────────
   // A crop belongs to ONE figure (a lettered panel can hold several figures) and
@@ -1170,8 +1173,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     // Releasing the mouse APPLIES the crop window that was just drawn.
     if (type === 'crop') {
       setCropDraft(null);
+      // The click that follows this release must not deselect the object (the
+      // crop commands of the properties panel would vanish mid-work).
+      suppressSelectRef.current = true;
       const d = st.draft;
-      if (moved && d && (d.x2 - d.x1) >= CROP_MIN && (d.y2 - d.y1) >= CROP_MIN) {
+      // `moved` is deliberately NOT required: a draft only exists while the
+      // mouse really was dragged, and a zero-size window is refused below.
+      if (d && (d.x2 - d.x1) >= CROP_MIN && (d.y2 - d.y1) >= CROP_MIN) {
         applyCropRect(st.id, st.imgIdx, {
           x1: +d.x1.toFixed(4), y1: +d.y1.toFixed(4),
           x2: +d.x2.toFixed(4), y2: +d.y2.toFixed(4)
@@ -1258,12 +1266,16 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     e.preventDefault();
     e.stopPropagation();
     const obj = objects.find(o => o.id === objId);
-    const im = obj && getObjImages(obj)[idx];
-    if (!obj || !im) return;
+    if (!obj) return;
+    // `idx` normally is the active figure; falling back to it keeps the command
+    // working when the caller could not resolve one (single-figure panels).
+    const figIdx = idx >= 0 ? idx : activeFigIdx(obj);
+    const im = figIdx >= 0 ? getObjImages(obj)[figIdx] : null;
+    if (!im) return;
     const svgEl = activeSvgEl();
     if (!svgEl) return;
     const r = svgEl.getBoundingClientRect();
-    const geom = objFigureGeom(obj, idx);
+    const geom = objFigureGeom(obj, figIdx);
     const toSrc = (clientX, clientY) => ({
       x: Math.max(0, Math.min(1, ((clientX - r.left) * (canvasW / Math.max(1, r.width)) - geom.iX) / Math.max(1e-6, geom.iW))),
       y: Math.max(0, Math.min(1, ((clientY - r.top) * (canvasH / Math.max(1, r.height)) - geom.iY) / Math.max(1e-6, geom.iH)))
@@ -1275,7 +1287,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       y: Math.min(Math.max(start.y, base.y1), base.y2)
     };
     const draft = { x1: from.x, y1: from.y, x2: from.x, y2: from.y };
-    dragState.current = { type: 'crop', id: objId, imgIdx: idx, geom, base, from, draft };
+    setActiveFig({ objId, idx: figIdx });
+    dragState.current = { type: 'crop', id: objId, imgIdx: figIdx, geom, base, from, draft };
     setCropDraft(draft);
     window.addEventListener('mousemove', onDrag);
     window.addEventListener('mouseup', endDrag);
@@ -1491,7 +1504,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
 
   // Helper to render the SVG content (shared between normal and fullscreen)
   const renderSvg = (svgElRef) => (
-    <svg ref={svgElRef} viewBox={`0 0 ${canvasW} ${canvasH + captionH}`} width="100%" height="100%" onClick={(e) => { e.stopPropagation(); setSelectedId(null); }}>
+    <svg ref={svgElRef} viewBox={`0 0 ${canvasW} ${canvasH + captionH}`} width="100%" height="100%" onClick={(e) => {
+      e.stopPropagation();
+      // The click that follows a crop drag must not deselect the panel (the crop
+      // commands of the properties panel would disappear while cropping).
+      if (suppressSelectRef.current) { suppressSelectRef.current = false; return; }
+      setSelectedId(null);
+    }}>
       {/* Grid lines (the cell divider guides between the panels) — switched off
           with the "Grid lines" checkbox, on the canvas and in every export. */}
       {Array.from({ length: showGridLines ? gridCols - 1 : 0 }).map((_, i) => (
@@ -1848,25 +1867,32 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
               </div>
               {cropPanelOn ? (
                 <span className="text-[10px] font-bold text-amber-700">
-                  Drag a rectangle on the canvas over the figure — the mouse release applies it. Drag again to refine: a crop only ever keeps what is left, so the parts already removed never come back.
+                  Drag a rectangle on the canvas over the figure — the mouse release applies it — or type the four % below.
+                  A crop only ever keeps what is left, so the parts already removed never come back.
                 </span>
               ) : (
                 <span className="text-[10px] text-slate-500 italic">
                   {cropPanelRect
                     ? `Kept: ${cropPct(cropPanelRect.x1)}–${cropPct(cropPanelRect.x2)} % × ${cropPct(cropPanelRect.y1)}–${cropPct(cropPanelRect.y2)} % of the original image.`
-                    : 'No crop — the whole figure is shown.'}
+                    : 'No crop — the whole figure is shown. Set the four % below or turn ✂️ Crop mode on and drag on the canvas.'}
                 </span>
               )}
-              {cropPanelRect && (
+              {/* The numeric window is ALWAYS available: crop never depends on a
+                  drag landing on the figure, and typing an edge crops at once
+                  (Left/Right/Top/Bottom in % of the original image). */}
+              {cropPanelIdx >= 0 && (
                 <div className="grid grid-cols-4 gap-1">
-                  {[['x1', 'Left'], ['x2', 'Right'], ['y1', 'Top'], ['y2', 'Bottom']].map(([edge, label]) => (
-                    <label key={edge} className="text-[9px] font-bold text-slate-500">{label} (%)
-                      <input type="number" min="0" max="100" step="0.5" value={cropPct(cropPanelRect[edge])}
-                        onChange={(e) => setCropEdge(selectedObj.id, cropPanelIdx, edge, e.target.value)}
-                        onWheel={(e) => e.target.blur()}
-                        className="w-full border rounded p-0.5 text-[10px]" />
-                    </label>
-                  ))}
+                  {[['x1', 'Left'], ['x2', 'Right'], ['y1', 'Top'], ['y2', 'Bottom']].map(([edge, label]) => {
+                    const cur = cropPanelRect || { x1: 0, y1: 0, x2: 1, y2: 1 };
+                    return (
+                      <label key={edge} className="text-[9px] font-bold text-slate-500">{label} (%)
+                        <input type="number" min="0" max="100" step="0.5" value={cropPct(cur[edge])}
+                          onChange={(e) => setCropEdge(selectedObj.id, cropPanelIdx, edge, e.target.value)}
+                          onWheel={(e) => e.target.blur()}
+                          className="w-full border rounded p-0.5 text-[10px]" />
+                      </label>
+                    );
+                  })}
                 </div>
               )}
             </div>

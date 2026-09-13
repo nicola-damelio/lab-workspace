@@ -6,7 +6,7 @@ import { enableCellClipboard, cellAttrs } from '../utils/cellClipboard';
 enableCellClipboard(); // global multi-cell select / copy / paste for data tables
 import { NMR_FITTING_TAB_CONFIG } from './tabConfigs';
 import { toHex, errBarPlugin } from '../data/constants';
-import { rainbowColors } from '../utils/chartStyle';
+import { rainbowColors, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, normalizeChartType, seriesVisible, seriesColorOf } from '../utils/chartStyle';
 import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
 import { ChartControlBar, SharedChartStylePanel, ChartJsInspector } from './SharedAnalysisTools';
 import { isPointExcluded, togglePointExcluded, clearExcludedForTable, computePointSD } from '../utils/pointTreatment';
@@ -747,10 +747,24 @@ CHARTS — FULL WIDTH (not side by side)
 --------------------------------------------------------------------------- */
 function DecayChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType = 'line', errMode = 'none', fixedSD = '', manualSD = {}, excluded = {}, update = null, setCfg = null }) {
     const ref = useRef(null); const chartRef = useRef(null);
+    // The page select ("Line / Scatter" / "Histogram") and the double-click
+    // style panel ("Bar / Histogram") write the same command, so the panel's
+    // choice WINS and both controls stay in sync (the panel used to be ignored).
+    const effType = normalizeChartType(chartCfg.chartType || chartType);
+    const isHist = effType === 'bar';
+    // One row per column of the decay table — the same keys the datasets use
+    // (`col<c>`), so the per-curve block can style each curve.
+    const series = Array.from({ length: table.nCols }, (_, c) => ({
+        key: `col${c}`,
+        label: table.colResidues?.[c] || `Col ${c + 1}`,
+        color: toHex(rainbowColors(Math.max(1, table.nCols))[c % Math.max(1, table.nCols)])
+    }));
+    const yLab = isHist
+        ? `Rate (${table.relaxType === 'T1' ? 'R1' : table.relaxType === 'DOSY' ? 'D' : 'R2'})`
+        : 'Intensity / Volume';
     useEffect(() => {
         if (!ref.current) return;
         const ds = [];
-        const isHist = chartType === 'hist';
         const tableId = table.id;
         // Replicate values per row (across columns) for the "SD" error-bar mode.
         const rowVals = [];
@@ -802,7 +816,7 @@ function DecayChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType = 'l
                     errorBars: errBars,
                     showLine: false,
                     pointRadius: chartCfg.ptSize,
-                    pointStyle: chartCfg.ptStyle,
+                    pointStyle: chartCfg.pointStyle || chartCfg.ptStyle,
                     backgroundColor: color,
                     borderColor: color,
                     pointBackgroundColor: pts.map((p) => (p.ex ? '#ffffff' : color)),
@@ -810,6 +824,12 @@ function DecayChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType = 'l
                     pointBorderWidth: pts.map((p) => (p.ex ? 2 : 1)),
                     _pointKeys: pts.map((p) => p.key),
                     _tableId: tableId,
+                    // Per-curve overrides for THIS column (symbol, size, colour).
+                    ...chartJsSeriesStyle(chartCfg, `col${c}`, {
+                        color,
+                        pointStyle: chartCfg.pointStyle || chartCfg.ptStyle,
+                        pointRadius: chartCfg.ptSize
+                    }),
                     onClick: (event, elements) => {
                         if (!elements || !elements.length || !update) return;
                         const el = elements[0];
@@ -828,7 +848,9 @@ function DecayChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType = 'l
                     let borderDash = [];
                     if (chartCfg.lineStyle === 'dashed') borderDash = [5, 5];
                     if (chartCfg.lineStyle === 'dotted') borderDash = [2, 3];
-                    ds.push({ label: `${table.colResidues[c] || `Col ${c + 1}`} fit`, data: curve, showLine: true, pointRadius: 0, borderColor: color, backgroundColor: 'transparent', borderWidth: chartCfg.lineThickness, borderDash, type: 'line', tension: 0.25 });
+                    ds.push({ label: `${table.colResidues[c] || `Col ${c + 1}`} fit`, data: curve, showLine: true, pointRadius: 0, borderColor: color, backgroundColor: 'transparent', borderWidth: chartCfg.lineThickness, borderDash, type: 'line', tension: 0.25,
+                        // Per-curve line style / width / colour of THIS column.
+                        ...chartJsSeriesStyle(chartCfg, `col${c}`, { color, borderWidth: chartCfg.lineThickness, borderDash }) });
                 }
             }
         }
@@ -840,22 +862,25 @@ function DecayChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType = 'l
             plugins: errBarPlugin ? [errBarPlugin] : [],
             options: {
                 responsive: true, maintainAspectRatio: false,
+                // Keep the axis titles inside the canvas at any font size / shift.
+                layout: { padding: chartJsPadding(chartCfg) },
                 scales: {
-                    x: { type: isHist ? 'category' : 'linear', position: chartCfg.xPos, min: !isHist && chartCfg.xMin !== '' ? parseFloat(chartCfg.xMin) : undefined, max: !isHist && chartCfg.xMax !== '' ? parseFloat(chartCfg.xMax) : undefined, title: { display: true, text: xLabel, font: { size: chartCfg.fontSize + 2 } }, ticks: { font: { size: chartCfg.fontSize } } },
-                    y: { position: chartCfg.yPos, min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined, max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined, title: { display: true, text: isHist ? `Rate (${table.relaxType === 'T1' ? 'R1' : table.relaxType === 'DOSY' ? 'D' : 'R2'})` : 'Intensity / Volume', font: { size: chartCfg.fontSize + 2 } }, ticks: { font: { size: chartCfg.fontSize } } },
+                    x: { type: isHist ? 'category' : 'linear', position: chartCfg.xPos, min: !isHist && chartCfg.xMin !== '' ? parseFloat(chartCfg.xMin) : undefined, max: !isHist && chartCfg.xMax !== '' ? parseFloat(chartCfg.xMax) : undefined, title: { display: true, text: xLabel, font: { size: chartCfg.fontSize + 2 }, padding: chartJsTitlePad(chartCfg).x }, ticks: { font: { size: chartCfg.fontSize } } },
+                    y: { position: chartCfg.yPos, min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined, max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined, title: { display: true, text: yLab, font: { size: chartCfg.fontSize + 2 }, padding: chartJsTitlePad(chartCfg).y }, ticks: { font: { size: chartCfg.fontSize } } },
                 },
                 plugins: { legend: { display: !isHist, labels: { font: { size: chartCfg.fontSize } } } }
             }
         });
         return () => { if (chartRef.current) chartRef.current.destroy(); };
-    }, [table, colFits, chartCfg, chartType, errMode, fixedSD, manualSD, excluded, update]);
+    }, [table, colFits, chartCfg, chartType, isHist, yLab, errMode, fixedSD, manualSD, excluded, update]);
     return (
-        <div className={`flex flex-col ${isFs ? FS_CLASSES + ' p-6' : 'relative h-[350px]'}`}>
+        <div className={`flex flex-col ${isFs ? FS_CLASSES + ' p-6' : ''}`}
+            style={isFs ? undefined : { height: `${chartJsHeightFit(350, chartCfg, { yTitle: yLab })}px` }}>
             <div className="flex justify-between items-start mb-2 z-10">
                 <h4 className="text-xs font-bold text-slate-600 uppercase">Decay / Diffusion curves</h4>
                 <button onClick={onToggleFs} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors no-print">{isFs ? '↙️' : '↗️'}</button>
             </div>
-            <ChartJsInspector chartRef={chartRef} cfg={chartCfg} setCfg={setCfg} className="flex-1 relative min-h-0">
+            <ChartJsInspector chartRef={chartRef} cfg={chartCfg} setCfg={setCfg} series={series} className="flex-1 relative min-h-0">
                 <canvas ref={ref} />
             </ChartJsInspector>
         </div>
@@ -864,41 +889,52 @@ function DecayChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType = 'l
 
 function ParameterChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType = 'bar', setCfg = null }) {
     const ref = useRef(null); const chartRef = useRef(null);
+    // Same "one row per column" list as the decay chart (keys `col<c>`).
+    const series = colFits.map((cf, i) => ({
+        key: `col${i}`,
+        label: cf.residue || `Col ${i + 1}`,
+        color: toHex(rainbowColors(Math.max(1, colFits.length))[i % Math.max(1, colFits.length)])
+    }));
+    const yLabel = table.relaxType === 'DOSY' ? 'Diffusion Rate (D)' : `Rate (${table.relaxType === 'T1' ? 'R1' : 'R2'}) s⁻¹`;
     useEffect(() => {
         if (!ref.current || !colFits.some(cf => cf.fit)) return;
         const labels = []; const data = []; const colors = []; const ebars = [];
         colFits.forEach((cf, i) => {
             if (!cf.fit) return;
+            // A column switched off in the per-curve block leaves the bars.
+            if (!seriesVisible(chartCfg, `col${i}`)) return;
             labels.push(cf.residue || `Col ${i+1}`);
             data.push(cf.fit.R_s);
-            colors.push(toHex(rainbowColors(Math.max(1, colFits.length))[i % Math.max(1, colFits.length)]));
+            const base = toHex(rainbowColors(Math.max(1, colFits.length))[i % Math.max(1, colFits.length)]);
+            colors.push(seriesColorOf(chartCfg, `col${i}`, i, colFits.length, base));
             const err = cf.effectiveError || cf.fit.seR_s || 0;
             ebars.push({ plus: err, minus: err });
         });
         if (chartRef.current) chartRef.current.destroy();
-        const yLabel = table.relaxType === 'DOSY' ? 'Diffusion Rate (D)' : `Rate (${table.relaxType === 'T1' ? 'R1' : 'R2'}) s⁻¹`;
         chartRef.current = new Chart(ref.current, {
-            type: chartType === 'hist' ? 'bar' : 'bar',
+            type: normalizeChartType(chartType, 'bar') === 'bar' ? 'bar' : 'bar',
             data: { labels, datasets: [{ label: yLabel, data, backgroundColor: colors, borderColor: colors, borderWidth: 1, errorBars: ebars }] },
             plugins: errBarPlugin ? [errBarPlugin] : [],
             options: {
                 responsive: true, maintainAspectRatio: false,
+                layout: { padding: chartJsPadding(chartCfg) },
                 scales: {
-                    y: { position: chartCfg.yPos, min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined, max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined, title: { display: true, text: yLabel, font: { size: chartCfg.fontSize + 2 } }, ticks: { font: { size: chartCfg.fontSize } } },
-                    x: { position: chartCfg.xPos, title: { display: true, text: 'Residue / Atom', font: { size: chartCfg.fontSize + 2 } }, ticks: { font: { size: chartCfg.fontSize } } }
+                    y: { position: chartCfg.yPos, min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined, max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined, title: { display: true, text: yLabel, font: { size: chartCfg.fontSize + 2 }, padding: chartJsTitlePad(chartCfg).y }, ticks: { font: { size: chartCfg.fontSize } } },
+                    x: { position: chartCfg.xPos, title: { display: true, text: 'Residue / Atom', font: { size: chartCfg.fontSize + 2 }, padding: chartJsTitlePad(chartCfg).x }, ticks: { font: { size: chartCfg.fontSize } } }
                 },
                 plugins: { legend: { display: false } }
             }
         });
         return () => { if (chartRef.current) chartRef.current.destroy(); };
-    }, [table, colFits, chartCfg, chartType]);
+    }, [table, colFits, chartCfg, chartType, yLabel]);
     return (
-        <div className={`flex flex-col ${isFs ? FS_CLASSES + ' p-6' : 'relative h-[350px]'}`}>
+        <div className={`flex flex-col ${isFs ? FS_CLASSES + ' p-6' : ''}`}
+            style={isFs ? undefined : { height: `${chartJsHeightFit(350, chartCfg, { yTitle: yLabel })}px` }}>
             <div className="flex justify-between items-start mb-2 z-10">
                 <h4 className="text-xs font-bold text-slate-600 uppercase">Parameter vs Atom</h4>
                 <button onClick={onToggleFs} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors no-print">{isFs ? '↙️' : '↗️'}</button>
             </div>
-            <ChartJsInspector chartRef={chartRef} cfg={chartCfg} setCfg={setCfg} className="flex-1 relative min-h-0">
+            <ChartJsInspector chartRef={chartRef} cfg={chartCfg} setCfg={setCfg} series={series} className="flex-1 relative min-h-0">
                 <canvas ref={ref} />
             </ChartJsInspector>
         </div>
@@ -917,7 +953,8 @@ function IndividualDecayChart({ table, colIndex, colFit, chartCfg, isFs, onToggl
         }
         if (pts.length === 0) return;
         const ds = [];
-        ds.push({ label: 'Data', data: pts, showLine: false, pointRadius: chartCfg.ptSize, pointStyle: chartCfg.ptStyle, backgroundColor: color, borderColor: color, type: 'scatter' });
+        ds.push({ label: 'Data', data: pts, showLine: false, pointRadius: chartCfg.ptSize, pointStyle: chartCfg.pointStyle || chartCfg.ptStyle, backgroundColor: color, borderColor: color, type: 'scatter',
+            ...chartJsSeriesStyle(chartCfg, `col${colIndex}`, { color, pointStyle: chartCfg.pointStyle || chartCfg.ptStyle, pointRadius: chartCfg.ptSize }) });
         const fit = colFit?.fit;
         if (fit && pts.length >= 2) {
             const xmin = Math.min(...pts.map((p) => p.x)), xmax = Math.max(...pts.map((p) => p.x)), curve = [];
@@ -929,16 +966,18 @@ function IndividualDecayChart({ table, colIndex, colFit, chartCfg, isFs, onToggl
             let borderDash = [];
             if (chartCfg.lineStyle === 'dashed') borderDash = [5, 5];
             if (chartCfg.lineStyle === 'dotted') borderDash = [2, 3];
-            ds.push({ label: `Fit`, data: curve, showLine: true, pointRadius: 0, borderColor: color, backgroundColor: 'transparent', borderWidth: chartCfg.lineThickness, borderDash, type: 'line', tension: 0.25 });
+            ds.push({ label: `Fit`, data: curve, showLine: true, pointRadius: 0, borderColor: color, backgroundColor: 'transparent', borderWidth: chartCfg.lineThickness, borderDash, type: 'line', tension: 0.25,
+                ...chartJsSeriesStyle(chartCfg, `col${colIndex}`, { color, borderWidth: chartCfg.lineThickness, borderDash }) });
         }
         if (chartRef.current) chartRef.current.destroy();
         chartRef.current = new Chart(ref.current, {
             type: 'scatter', data: { datasets: ds },
             options: {
                 responsive: true, maintainAspectRatio: false,
+                layout: { padding: chartJsPadding(chartCfg) },
                 scales: {
-                    x: { type: 'linear', position: chartCfg.xPos, min: chartCfg.xMin !== '' ? parseFloat(chartCfg.xMin) : undefined, max: chartCfg.xMax !== '' ? parseFloat(chartCfg.xMax) : undefined, title: { display: isFs, text: chartCfg.xAxisLabel || (table.relaxType === 'DOSY' ? `b-value / G² (${table.delayUnit})` : `Delay (${table.delayUnit})`), font: { size: chartCfg.fontSize + 2 } }, ticks: { display: isFs, font: { size: chartCfg.fontSize } } },
-                    y: { position: chartCfg.yPos, min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined, max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined, title: { display: isFs, text: 'Intensity / Volume', font: { size: chartCfg.fontSize + 2 } }, ticks: { display: isFs, font: { size: chartCfg.fontSize } } },
+                    x: { type: 'linear', position: chartCfg.xPos, min: chartCfg.xMin !== '' ? parseFloat(chartCfg.xMin) : undefined, max: chartCfg.xMax !== '' ? parseFloat(chartCfg.xMax) : undefined, title: { display: isFs, text: chartCfg.xAxisLabel || (table.relaxType === 'DOSY' ? `b-value / G² (${table.delayUnit})` : `Delay (${table.delayUnit})`), font: { size: chartCfg.fontSize + 2 }, padding: chartJsTitlePad(chartCfg).x }, ticks: { display: isFs, font: { size: chartCfg.fontSize } } },
+                    y: { position: chartCfg.yPos, min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined, max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined, title: { display: isFs, text: 'Intensity / Volume', font: { size: chartCfg.fontSize + 2 }, padding: chartJsTitlePad(chartCfg).y }, ticks: { display: isFs, font: { size: chartCfg.fontSize } } },
                 },
                 plugins: { legend: { display: false }, tooltip: { enabled: true } },
                 interaction: { mode: 'nearest', intersect: true },
@@ -955,6 +994,7 @@ function IndividualDecayChart({ table, colIndex, colFit, chartCfg, isFs, onToggl
                 {isFs && <button onClick={(e) => { e.stopPropagation(); onToggleFs(); }} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors no-print">↙️</button>}
             </div>
             <ChartJsInspector chartRef={chartRef} cfg={chartCfg} setCfg={setCfg}
+                series={[{ key: `col${colIndex}`, label: residueName, color: toHex(rainbowColors(Math.max(1, table.nCols))[colIndex % Math.max(1, table.nCols)]) }]}
                 className={`flex-1 relative min-h-0 ${!isFs ? 'pointer-events-none' : ''}`}>
                 <canvas ref={ref} />
             </ChartJsInspector>
@@ -1313,7 +1353,9 @@ const renderTableAnalysis = (t, tIndex) => {
                     <div className="flex items-center justify-between border-t border-slate-100 pt-3 mt-1">
                         <div className="flex items-center gap-3">
                             <label className="text-[10px] font-bold text-slate-500 uppercase">Chart Type:</label>
-                            <select value={chartType} onChange={(e) => setChartType(e.target.value)} className="border border-slate-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-blue-500">
+                            <select value={normalizeChartType(chartCfg.chartType || chartType) === 'bar' ? 'hist' : 'line'}
+                                onChange={(e) => { setChartType(e.target.value); setChartCfg({ chartType: e.target.value }); }}
+                                className="border border-slate-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-blue-500">
                                 <option value="line">Line / Scatter</option>
                                 <option value="hist">Histogram</option>
                             </select>

@@ -2,10 +2,15 @@ import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar, ScatterChart, Scatter,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceArea, ReferenceLine,
-  ResponsiveContainer, ErrorBar
+  ComposedChart, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceArea,
+  ReferenceLine, ResponsiveContainer, ErrorBar
 } from 'recharts';
-import { BASE_COLOR_SWATCHES, shadesFromColor, rainbowColors, DEFAULT_CHART_FONT_SIZE } from '../utils/chartStyle';
+import {
+  BASE_COLOR_SWATCHES, shadesFromColor, rainbowColors, DEFAULT_CHART_FONT_SIZE,
+  normalizeChartType, seriesOverride, seriesChartType,
+  seriesPointStyle, seriesPtSize, seriesLineThickness,
+  seriesDash, seriesVisible, seriesLabelOf, seriesColorOf, hasSeriesOverrides
+} from '../utils/chartStyle';
 import { Icon } from './Icons';
 
 
@@ -731,6 +736,98 @@ const chartStyleTickBlock = (cfg, set, section) => {
     );
 };
 
+/**
+ * PER-CURVE SETTINGS — the answer to "the style is applied to every curve and I
+ * cannot tell them apart". One row per series, writing `cfg.seriesStyles[key]`:
+ * colour, chart type, symbol, symbol size, line style, line width and a
+ * show / hide switch. An empty field means "auto", i.e. the chart-wide value of
+ * "Chart Appearance" above is used, so a chart that never touches this block
+ * behaves exactly as before.
+ */
+export const chartStyleSeriesBlock = (cfg, set, series = [], highlightKey = null) => {
+    if (!series.length) return null;
+    const all = cfg.seriesStyles || {};
+    const write = (key, patch) => {
+        const next = { ...(all[key] || {}), ...patch };
+        Object.keys(next).forEach((k) => {
+            const v = next[k];
+            if (v === '' || v === null || v === undefined || v === false) delete next[k];
+        });
+        const map = { ...all };
+        if (Object.keys(next).length) map[key] = next; else delete map[key];
+        set({ seriesStyles: map });
+    };
+    const clear = (key) => {
+        const map = { ...all };
+        delete map[key];
+        set({ seriesStyles: map });
+    };
+    const sel = 'border border-slate-300 rounded-md px-1 py-0.5 text-[10px] bg-white outline-none focus:border-blue-500';
+    return (
+        <div className="pt-2 border-t border-slate-100">
+            <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Per-curve settings — one style for each curve</p>
+            <div className="flex flex-col gap-1.5">
+                {series.map((s, i) => {
+                    const st = all[s.key] || {};
+                    const hit = highlightKey === s.key;
+                    return (
+                        <div key={s.key}
+                            className={`flex flex-wrap items-center gap-1.5 border rounded-lg px-2 py-1.5 ${hit ? 'border-amber-400 ring-2 ring-amber-200 bg-amber-50' : 'border-slate-200 bg-slate-50'}`}>
+                            <span className="text-[10px] font-black text-slate-700 w-20 truncate" title={String(s.label || s.key)}>{s.label || s.key}</span>
+                            <input type="color" title="Colour of this curve"
+                                value={seriesColorOf(cfg, s.key, i, series.length, s.color || '#3b82f6')}
+                                onChange={(e) => set({ colors: { ...(cfg.colors || {}), [s.key]: e.target.value } })}
+                                className="w-6 h-6 rounded cursor-pointer border border-slate-300" />
+                            <select className={sel} title="Type of THIS curve" value={st.chartType || ''}
+                                onChange={(e) => write(s.key, { chartType: e.target.value })}>
+                                <option value="">Type: auto</option>
+                                <option value="line">Line</option>
+                                <option value="bar">Bar / Histogram</option>
+                                <option value="scatter">Scatter (points)</option>
+                                <option value="area">Area</option>
+                            </select>
+                            <select className={sel} title="Symbol of THIS curve" value={st.pointStyle || ''}
+                                onChange={(e) => write(s.key, { pointStyle: e.target.value })}>
+                                <option value="">Symbol: auto</option>
+                                <option value="circle">Circle</option>
+                                <option value="square">Square</option>
+                                <option value="triangle">Triangle</option>
+                                <option value="cross">Cross</option>
+                                <option value="diamond">Diamond</option>
+                                <option value="star">Star</option>
+                                <option value="none">None</option>
+                            </select>
+                            <input type="number" min="0" max="40" step="1" placeholder="size" title="Symbol size of this curve (blank = chart-wide)"
+                                value={st.ptSize ?? ''} onChange={(e) => write(s.key, { ptSize: e.target.value })}
+                                className="w-14 border border-slate-300 rounded-md px-1 py-0.5 text-[10px] bg-white outline-none" />
+                            <select className={sel} title="Line style of THIS curve" value={st.lineStyle || ''}
+                                onChange={(e) => write(s.key, { lineStyle: e.target.value })}>
+                                <option value="">Line: auto</option>
+                                <option value="solid">Solid</option>
+                                <option value="dashed">Dashed</option>
+                                <option value="dotted">Dotted</option>
+                            </select>
+                            <input type="number" min="0" max="20" step="0.5" placeholder="width" title="Line thickness of this curve (blank = chart-wide)"
+                                value={st.lineThickness ?? ''} onChange={(e) => write(s.key, { lineThickness: e.target.value })}
+                                className="w-14 border border-slate-300 rounded-md px-1 py-0.5 text-[10px] bg-white outline-none" />
+                            <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600" title="Show / hide this curve">
+                                <input type="checkbox" checked={!st.hidden} onChange={(e) => write(s.key, { hidden: !e.target.checked })}
+                                    className="w-3.5 h-3.5 accent-blue-600" />show
+                            </label>
+                            <button type="button" onClick={() => clear(s.key)}
+                                className="text-[10px] font-bold text-slate-400 hover:text-red-600 px-1" title="Back to automatic (chart-wide) style for this curve">⟲</button>
+                        </div>
+                    );
+                })}
+            </div>
+            <p className="text-[9px] text-slate-400 mt-1">
+                “auto” = the chart-wide setting of “Chart Appearance” above. Set a value here to give ONE curve its own
+                symbol / line / colour / type, so several curves in the same graph never look alike.
+            </p>
+        </div>
+    );
+};
+
 export const SharedChartStylePanel = ({ cfg = {}, setCfg, series = [], unit = 'a.u.', showHeightSlider = true, section = 'all', highlightKey = null }) => {
     const set = (patch) => setCfg({ ...patch });
     const show = (name) => section === 'all' || section === name;
@@ -746,7 +843,7 @@ export const SharedChartStylePanel = ({ cfg = {}, setCfg, series = [], unit = 'a
                 <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Chart Appearance</p>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                     <TF label="Chart title" value={cfg.title} onChange={(v) => set({ title: v })} placeholder="Optional title" />
-                    <SF label="Chart type" value={cfg.chartType || 'line'} onChange={(v) => set({ chartType: v })}
+                    <SF label="Chart type" value={normalizeChartType(cfg.chartType)} onChange={(v) => set({ chartType: v })}
                         options={[['line','Line'],['bar','Bar / Histogram'],['scatter','Scatter (no line)'],['area','Area']]} />
                     <SF label="Error bar style" value={cfg.errorBarStyle || 'caps'} onChange={(v) => set({ errorBarStyle: v })}
                         options={[['caps','Caps (standard)'],['no-caps','No caps'],['band','Shaded band'],['none','None']]} />
@@ -856,6 +953,10 @@ export const SharedChartStylePanel = ({ cfg = {}, setCfg, series = [], unit = 'a
                     <p className="text-[9px] text-slate-400 mt-1">Pick a base colour and the curves are degraded from dark to light; the rainbow range is used when no colour is selected.</p>
                 </div>
             )}
+
+            {/* Per-curve overrides — each curve its own type / symbol / line /
+                colour, so several curves in one graph can be told apart. */}
+            {show('series') && chartStyleSeriesBlock(cfg, set, series, highlightKey)}
 
             {section === 'all' && (
                 <p className="text-[9px] text-slate-400">Drag with the mouse over any graph to zoom. Use Reset Zoom to restore. Tip: double-click an axis, a label or a curve to edit exactly that element.</p>
@@ -1436,11 +1537,8 @@ export const SharedChart = ({
 
   const chartRef = useRef(null);
   const fs = Number(cfg.fontSize) || DEFAULT_CHART_FONT_SIZE;
-  const dash = cfg.lineStyle === 'dashed' ? '4 4' : cfg.lineStyle === 'dotted' ? '1 3' : undefined;
   const strokeWidth = Number(cfg.lineThickness) || 2;
-  const ptSize = Number(cfg.ptSize) || 4;
-  const showPoints = cfg.pointStyle && cfg.pointStyle !== 'none';
-  const chartType = cfg.chartType || 'line';
+  const chartType = normalizeChartType(cfg.chartType);
   const xLog = !!cfg.xLog;
   const yLog = !!cfg.yLog;
   const tickAngle = Number(cfg.tickAngle) || 0;
@@ -1496,12 +1594,9 @@ export const SharedChart = ({
   const xTicks = xStep ? numericTicks(xDomain[0], xDomain[1], xStep) : null;
   const yTicks = yStep && yMin !== null && yMax !== null ? numericTicks(yMin, yMax, yStep) : null;
 
-  /* Series colours: per-series override → base-colour shades → rainbow → default. */
-  const colorFor = (s, i) =>
-    (cfg.colors && cfg.colors[s.key]) ||
-    (cfg.baseColor ? shadesFromColor(cfg.baseColor, safeSeries.length)[i] : rainbowColors(safeSeries.length)[i]) ||
-    s.color ||
-    '#3b82f6';
+  /* Series colours: per-curve colour → legacy colours[] → base-colour shades →
+     rainbow → the colour the page passed in. */
+  const colorFor = (s, i) => seriesColorOf(cfg, s.key, i, safeSeries.length, s.color);
 
   const errColor = cfg.errorBarColor || '#94a3b8';
   const noCaps = cfg.errorBarStyle === 'no-caps';
@@ -1520,41 +1615,54 @@ export const SharedChart = ({
   };
 
 
-  const makeSeries = safeSeries.map((s, i) => {
+  /* One element per curve. The type / colour / symbol / line style of each
+     curve come from the per-curve block when it has an entry for that key,
+     and from the chart-wide "Chart Appearance" commands otherwise — so the
+     curves of one graph CAN be told apart. A curve switched off is dropped. */
+  const makeSeries = safeSeries.filter((s) => seriesVisible(cfg, s.key)).map((s, i) => {
     const col = colorFor(s, i);
-    const base = { dataKey: s.key, name: s.label, isAnimationActive: false };
-    if (chartType === 'bar') {
+    const t = seriesChartType(cfg, s.key, chartType);
+    const dot = cfgDot(cfg, col, s.key);
+    const base = {
+      dataKey: s.key, name: seriesLabelOf(cfg, s.key, s.label), isAnimationActive: false
+    };
+    if (t === 'bar') {
       return <Bar key={s.key} {...base} fill={col} stroke={col} strokeWidth={1}>{errorBarsFor()}</Bar>;
     }
-    if (chartType === 'scatter') {
+    if (t === 'scatter' && chartType === 'scatter') {
       return <Scatter key={s.key} {...base} fill={col} stroke={col} fillOpacity={0.85} shape="circle">{errorBarsFor()}</Scatter>;
     }
-    if (chartType === 'area') {
+    if (t === 'area') {
       return (
         <Area
           key={s.key}
           {...base}
           type="monotone"
           stroke={col}
-          strokeWidth={strokeWidth}
-          strokeDasharray={dash}
+          strokeWidth={seriesLineThickness(cfg, s.key, strokeWidth)}
+          strokeDasharray={seriesDash(cfg, s.key)}
           fill={col}
           fillOpacity={0.15}
-          dot={showPoints ? { r: ptSize, fill: col, strokeWidth: 0 } : false}
+          dot={dot}
         >
           {errorBarsFor()}
         </Area>
       );
     }
+    // 'scatter' as a PER-CURVE choice: the curve keeps its identity through the
+    // symbols, with the connecting line faded out (a Line inside a ComposedChart
+    // is the reliable way to keep the X axis numeric).
+    const faded = t === 'scatter' && chartType !== 'scatter';
     return (
       <Line
         key={s.key}
         {...base}
         type="monotone"
         stroke={col}
-        strokeWidth={strokeWidth}
-        strokeDasharray={dash}
-        dot={showPoints ? { r: ptSize, fill: col, strokeWidth: 0 } : false}
+        strokeOpacity={faded ? 0.35 : 1}
+        strokeWidth={seriesLineThickness(cfg, s.key, strokeWidth)}
+        strokeDasharray={seriesDash(cfg, s.key)}
+        dot={dot}
       >
         {errorBarsFor()}
       </Line>
@@ -1630,14 +1738,18 @@ export const SharedChart = ({
         unit={unit}
       >
         <ResponsiveContainer width="100%" height="100%">
-          {chartType === 'bar' ? (
+          {chartType === 'bar' && !hasSeriesOverrides(cfg) ? (
             <BarChart data={plotData} margin={resolvedMargin}>{children}</BarChart>
-          ) : chartType === 'scatter' ? (
+          ) : chartType === 'scatter' && !hasSeriesOverrides(cfg) ? (
             <ScatterChart data={plotData} margin={resolvedMargin}>{children}</ScatterChart>
-          ) : chartType === 'area' ? (
+          ) : chartType === 'area' && !hasSeriesOverrides(cfg) ? (
             <AreaChart data={plotData} margin={resolvedMargin}>{children}</AreaChart>
-          ) : (
+          ) : chartType === 'line' && !hasSeriesOverrides(cfg) ? (
             <LineChart data={plotData} margin={resolvedMargin}>{children}</LineChart>
+          ) : (
+            /* Per-curve types: one chart has to host lines, bars, areas and
+               point-only curves at once — that is exactly a ComposedChart. */
+            <ComposedChart data={plotData} margin={resolvedMargin}>{children}</ComposedChart>
           )}
         </ResponsiveContainer>
       </ChartInspector>
@@ -1655,6 +1767,7 @@ export const SharedChart = ({
 // ─────────────────────────────────────────────────────────────────────────────
 const cfgDash = (cfg) =>
   cfg.lineStyle === 'dashed' ? '7 5' : cfg.lineStyle === 'dotted' ? '2 3' : undefined;
+void cfgDash; // kept for readers of the older code — seriesDash(cfg, key) is the per-curve one
 
 /** 'log' | 'auto' axis scale from the panel's xLog / yLog checkboxes. */
 export const cfgLogScale = (cfg = {}, axis = 'x') =>
@@ -1683,38 +1796,98 @@ export const cfgAxisDomain = (cfg = {}, axis = 'x', fallback = [0, 1]) => {
   return [lo, hi];
 };
 
-/** Dot config from pointStyle + ptSize (false = no points). */
-const cfgDot = (cfg, stroke) => {
-  if (!cfg.pointStyle || cfg.pointStyle === 'none') return false;
-  const r = Number(cfg.ptSize) || 4;
-  return r > 0 ? { r, fill: stroke, strokeWidth: 0 } : false;
+/**
+ * The SYMBOL of a curve — a real shape, not always a circle. Recharts' plain
+ * `dot={{ r }}` only ever draws a circle, which is why choosing "Square" or
+ * "Triangle" in the panel appeared to do nothing. This component draws the
+ * shape the user picked (circle / square / triangle / cross / diamond / star)
+ * at the requested size and colour.
+ */
+export const ChartDot = ({ cx, cy, r, fill, stroke, symbol = 'circle', strokeWidth = 0, hidden = false }) => {
+    if (hidden || !Number.isFinite(cx) || !Number.isFinite(cy)) return null;
+    const rad = Math.max(1, Number(r) || 4);
+    const col = fill || stroke || '#3b82f6';
+    const k = String(symbol || 'circle').toLowerCase();
+    const sw = Number(strokeWidth) || 0;
+    if (k === 'none') return null;
+    if (k === 'square') {
+        const s = rad * 1.7;
+        return <rect x={cx - s / 2} y={cy - s / 2} width={s} height={s} fill={col} stroke={stroke || 'none'} strokeWidth={sw} />;
+    }
+    if (k === 'triangle') {
+        const h = rad * 1.75;
+        const pts = `${cx},${cy - h * 0.6} ${cx - h * 0.55},${cy + h * 0.42} ${cx + h * 0.55},${cy + h * 0.42}`;
+        return <polygon points={pts} fill={col} stroke={stroke || 'none'} strokeWidth={sw} />;
+    }
+    if (k === 'cross' || k === 'crossrot' || k === 'x') {
+        const d = rad * 1.2;
+        return (
+            <g stroke={col} strokeWidth={Math.max(1.2, sw)} strokeLinecap="round">
+                <line x1={cx - d} y1={cy - d} x2={cx + d} y2={cy + d} />
+                <line x1={cx - d} y1={cy + d} x2={cx + d} y2={cy - d} />
+            </g>
+        );
+    }
+    if (k === 'diamond') {
+        const d = rad * 1.4;
+        return <polygon points={`${cx},${cy - d} ${cx + d},${cy} ${cx},${cy + d} ${cx - d},${cy}`} fill={col} stroke={stroke || 'none'} strokeWidth={sw} />;
+    }
+    if (k === 'star') {
+        const pts = Array.from({ length: 10 }, (_, i) => {
+            const ang = (Math.PI / 5) * i - Math.PI / 2;
+            const rr = i % 2 === 0 ? rad * 1.6 : rad * 0.7;
+            return `${cx + rr * Math.cos(ang)},${cy + rr * Math.sin(ang)}`;
+        }).join(' ');
+        return <polygon points={pts} fill={col} stroke={stroke || 'none'} strokeWidth={sw} />;
+    }
+    return <circle cx={cx} cy={cy} r={rad} fill={col} stroke={stroke || 'none'} strokeWidth={sw} />;
+};
+
+/** Dot config of ONE series (false = no points). */
+const cfgDot = (cfg, stroke, key = null) => {
+    const style = seriesPointStyle(cfg, key);
+    if (!style || style === 'none') return false;
+    const r = seriesPtSize(cfg, key, 4);
+    if (!(r > 0)) return false;
+    // A shape other than the circle needs the custom renderer — a plain
+    // `{ r }` object would silently draw a circle again.
+    if (style !== 'circle') {
+        return (props) => <ChartDot {...props} r={r} symbol={style} fill={stroke} />;
+    }
+    return { r, fill: stroke, strokeWidth: 0 };
 };
 
 /**
  * Recharts series element (Line / Area / Bar / scatter-like Line) that honours
- * every "Chart Appearance" panel command. Use inside a ComposedChart (or any
- * chart that can host the returned element).
+ * every "Chart Appearance" panel command AND the per-curve overrides of
+ * `opts.key` (type, colour, symbol, line style / width — or hidden).
+ * Use inside a ComposedChart (or any chart that can host the returned element).
  *   opts: { key, data, dataKey, name, stroke }
  */
 export const cfgSeriesEl = (cfg = {}, opts = {}) => {
-  const type = cfg.chartType || 'line';
-  const strokeWidth = Number(cfg.lineThickness) || 2;
-  const common = {
-    key: opts.key, data: opts.data, dataKey: opts.dataKey, name: opts.name,
-    stroke: opts.stroke, strokeWidth, strokeDasharray: cfgDash(cfg),
-    isAnimationActive: false,
-  };
-  if (type === 'bar') {
-    const r = Number(cfg.barRadius) || 3;
-    return <Bar {...common} fill={opts.stroke} stroke="none" radius={[r, r, 0, 0]} />;
-  }
-  if (type === 'area') {
-    return <Area {...common} type="monotone" fill={opts.stroke} fillOpacity={Number(cfg.areaOpacity ?? 0.15)} connectNulls />;
-  }
-  if (type === 'scatter') {
-    return <Line {...common} type="monotone" strokeOpacity={0.35} dot={cfgDot(cfg, opts.stroke)} activeDot={false} connectNulls />;
-  }
-  return <Line {...common} type="monotone" dot={cfgDot(cfg, opts.stroke)} activeDot={false} connectNulls />;
+    const key = opts.key;
+    // A curve switched OFF in the per-curve block is simply not rendered.
+    if (!seriesVisible(cfg, key)) return null;
+    const type = seriesChartType(cfg, key, cfg.chartType || 'line');
+    const strokeWidth = seriesLineThickness(cfg, key, 2);
+    const stroke = seriesOverride(cfg, key, 'color') || opts.stroke;
+    const name = seriesLabelOf(cfg, key, opts.name);
+    const common = {
+        key, data: opts.data, dataKey: opts.dataKey, name,
+        stroke, strokeWidth, strokeDasharray: seriesDash(cfg, key),
+        isAnimationActive: false,
+    };
+    if (type === 'bar') {
+        const r = Number(cfg.barRadius) || 3;
+        return <Bar {...common} fill={stroke} stroke="none" radius={[r, r, 0, 0]} />;
+    }
+    if (type === 'area') {
+        return <Area {...common} type="monotone" fill={stroke} fillOpacity={Number(cfg.areaOpacity ?? 0.15)} connectNulls dot={cfgDot(cfg, stroke, key)} />;
+    }
+    if (type === 'scatter') {
+        return <Line {...common} type="monotone" strokeOpacity={0.35} dot={cfgDot(cfg, stroke, key)} activeDot={false} connectNulls />;
+    }
+    return <Line {...common} type="monotone" dot={cfgDot(cfg, stroke, key)} activeDot={false} connectNulls />;
 };
 
 /**

@@ -99,13 +99,21 @@ export const chartBoxStyle = (cfg = {}, opts = {}) => {
 export const chartJsPadding = (cfg = {}, base = 2) => {
   const fs = Number(cfg.fontSize) || DEFAULT_CHART_FONT_SIZE;
   const pad = Math.round(base + Math.max(0, fs - 12) * 0.5);
-  return { left: pad, right: pad, top: pad, bottom: pad };
+  // A positive "Y label gap" pushes the rotated y title further left and a
+  // positive "X label gap" pushes the x title further down: the canvas padding
+  // reserves exactly that room, so the moved title stays inside the canvas.
+  const xg = Math.max(0, cfgAxisGap(cfg, 'x'));
+  const yg = Math.max(0, cfgAxisGap(cfg, 'y'));
+  return { left: pad + yg, right: pad, top: pad, bottom: pad + xg };
 };
 
 export const chartJsHeightFit = (height, cfg = {}, opts = {}) => {
   const h = Number(height) || 380;
   const yRoom = axisTitleRoomPx([opts.yTitle, cfg.yAxisLabel], cfg.fontSize);
-  return Math.max(h, yRoom + 150);
+  // The rotated title needs the canvas to be TALLER than its own length; a
+  // positive shift keeps a little extra room so the moved title is never cut by
+  // the canvas edge (the ⭐ capture rasterizes the canvas as-is).
+  return Math.max(h, yRoom + 150 + Math.max(0, cfgAxisGap(cfg, 'y')));
 };
 
 /* =========================================================================
@@ -219,6 +227,169 @@ export const seriesColorFor = (cfg, key, idx, total) => {
   const count = total != null && total > 0 ? total : 12;
   return rainbowColors(count)[i % count];
 };
+
+/* =========================================================================
+   CHART TYPE — one canonical vocabulary.
+
+   The style panel writes `cfg.chartType` ('line' | 'bar' | 'scatter' | 'area')
+   while the pages have their own historical words for the same things
+   ('dose-response', 'hist'…). Everything a chart type selects goes through this
+   helper so "Bar / Histogram" chosen in the double-click panel REALLY switches
+   a dose-response chart to its histogram, and a page-level "hist" choice is not
+   silently undone when the panel writes 'bar'.
+   ========================================================================= */
+export const CHART_TYPES = ['line', 'bar', 'scatter', 'area'];
+
+export const normalizeChartType = (raw, fallback = 'line') => {
+  const v = String(raw == null ? '' : raw).trim().toLowerCase();
+  if (v === 'hist' || v === 'histogram' || v === 'bar' || v === 'bars') return 'bar';
+  if (v === 'scatter' || v === 'points' || v === 'point') return 'scatter';
+  if (v === 'area') return 'area';
+  if (v === 'line' || v === 'curve' || v === 'dose-response' || v === 'dose_response') return 'line';
+  return fallback;
+};
+
+/* =========================================================================
+   PER-CURVE ("per series") STYLE OVERRIDES
+
+   The style panel's "Chart Appearance" commands are chart-wide, which is not
+   enough when several curves share one chart: the user could not give curve 2
+   a different symbol / line style from curve 1. `cfg.seriesStyles` holds an
+   OPTIONAL override per series key:
+     cfg.seriesStyles = {
+       'curve key': { chartType, pointStyle, ptSize, lineStyle, lineThickness,
+                      color, label, hidden }
+     }
+   An absent / empty value means "inherit the chart-wide setting", so the
+   helpers below always fall back to the global cfg and never change the
+   behaviour of a chart that has no overrides.
+   ========================================================================= */
+export const seriesStyleOf = (cfg, key) => {
+  const all = cfg && cfg.seriesStyles;
+  if (!all || key == null) return {};
+  const one = all[key];
+  return one && typeof one === 'object' ? one : {};
+};
+
+/** Raw override value for one property ('' / null / undefined = inherit). */
+export const seriesOverride = (cfg, key, prop) => {
+  const v = seriesStyleOf(cfg, key)[prop];
+  if (v === '' || v === null || v === undefined || v === false) return undefined;
+  return v;
+};
+
+export const seriesChartType = (cfg, key, fallback = null) =>
+  seriesOverride(cfg, key, 'chartType')
+  || (fallback != null ? normalizeChartType(fallback) : normalizeChartType(cfg && cfg.chartType));
+
+export const seriesPointStyle = (cfg, key) =>
+  seriesOverride(cfg, key, 'pointStyle') || (cfg && (cfg.pointStyle || cfg.ptStyle)) || 'circle';
+
+export const seriesPtSize = (cfg, key, fallback = 4) => {
+  const v = seriesOverride(cfg, key, 'ptSize');
+  const n = Number(v != null ? v : (cfg && cfg.ptSize));
+  return Number.isFinite(n) ? n : fallback;
+};
+
+export const seriesLineStyle = (cfg, key) =>
+  seriesOverride(cfg, key, 'lineStyle') || (cfg && cfg.lineStyle) || 'solid';
+
+export const seriesLineThickness = (cfg, key, fallback = 2) => {
+  const v = seriesOverride(cfg, key, 'lineThickness');
+  const n = Number(v != null ? v : (cfg && cfg.lineThickness));
+  return Number.isFinite(n) ? n : fallback;
+};
+
+/** Dash pattern (recharts `strokeDasharray`) of one series. */
+export const seriesDash = (cfg, key, scale = 1) => {
+  const st = seriesLineStyle(cfg, key);
+  if (st === 'dashed') return `${4 * scale} ${4 * scale}`;
+  if (st === 'dotted') return `${1 * scale} ${3 * scale}`;
+  return undefined;
+};
+
+/** True unless the series was switched OFF in the per-curve block. */
+export const seriesVisible = (cfg, key) => !seriesStyleOf(cfg, key).hidden;
+
+/** Legend label of one series (the "Label" column of the per-curve block). */
+export const seriesLabelOf = (cfg, key, fallback) => {
+  const v = seriesOverride(cfg, key, 'label');
+  return (v == null ? '' : String(v)) || fallback;
+};
+
+/** Colour of one series: per-curve colour > legacy colours[] > auto palette. */
+export const seriesColorOf = (cfg, key, idx, total, fallback) => {
+  const own = seriesOverride(cfg, key, 'color');
+  if (own) return own;
+  const legacy = cfg && cfg.colors && key != null ? cfg.colors[key] : null;
+  if (legacy) return legacy;
+  const i = Math.max(0, idx || 0);
+  const count = total != null && total > 0 ? total : 12;
+  if (cfg && cfg.baseColor) return shadesFromColor(cfg.baseColor, count)[i % count];
+  return fallback || rainbowColors(count)[i % count];
+};
+
+/** Is ANY per-curve override set? (used to pick a ComposedChart) */
+export const hasSeriesOverrides = (cfg) => {
+  const all = cfg && cfg.seriesStyles;
+  if (!all || typeof all !== 'object') return false;
+  return Object.keys(all).some((k) => {
+    const one = all[k];
+    return !!one && typeof one === 'object' && Object.keys(one).length > 0;
+  });
+};
+
+/**
+ * Chart.js dataset props for ONE series, from the per-curve block.
+ * `base` carries what the page already computed, so a chart with no override
+ * keeps exactly the datasets it had. Returns only the overriding props, ready
+ * to be spread over the dataset: `{ ...dataset, ...chartJsSeriesStyle(cfg, key, base) }`.
+ */
+export const chartJsSeriesStyle = (cfg, key, base = {}) => {
+  const st = seriesStyleOf(cfg, key);
+  const color = seriesOverride(cfg, key, 'color') || base.color;
+  const out = {};
+  if (color && color !== base.color) {
+    out.borderColor = color;
+    if (base.backgroundColor == null || base.backgroundColor === base.color) out.backgroundColor = color;
+    if (base.pointBackgroundColor == null || base.pointBackgroundColor === base.color) out.pointBackgroundColor = color;
+  }
+  const ps = seriesOverride(cfg, key, 'pointStyle');
+  // Chart.js has no 'none' point style: hiding the symbols means radius 0.
+  if (ps === 'none') out.pointRadius = 0;
+  else if (ps) out.pointStyle = ps;
+  const size = seriesOverride(cfg, key, 'ptSize');
+  if (size != null && Number.isFinite(Number(size))) out.pointRadius = Number(size);
+  const ls = seriesOverride(cfg, key, 'lineStyle');
+  if (ls) out.borderDash = ls === 'dashed' ? [6, 4] : ls === 'dotted' ? [2, 4] : [];
+  const lt = seriesOverride(cfg, key, 'lineThickness');
+  if (lt != null && Number.isFinite(Number(lt))) out.borderWidth = Number(lt);
+  if (st.hidden) out.hidden = true;
+  return out;
+};
+
+/* =========================================================================
+   MANUAL AXIS-TITLE SHIFT — the "X / Y label gap (px)" panel commands.
+
+   Positive = push the title FURTHER from the axis (beyond the tick numbers),
+   negative = pull it back towards them. The recharts side already uses it
+   (cfgAxisLabel offset + cfgChartMargin); these two helpers bring the SAME
+   command to the Chart.js canvases: the title padding of the scale and the
+   canvas padding / height the rotated title needs to stay inside the canvas
+   (what the ⭐ figure capture and the PNG exports rasterize).
+   ========================================================================= */
+export const cfgAxisGap = (cfg = {}, axis = 'x') => {
+  const raw = axis === 'x' ? cfg.xAxisLabelGap : cfg.yAxisLabelGap;
+  if (raw === '' || raw === null || raw === undefined) return 0;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
+};
+
+/** `scales.x.title.padding` / `scales.y.title.padding` for Chart.js. */
+export const chartJsTitlePad = (cfg = {}) => ({
+  x: Math.max(0, cfgAxisGap(cfg, 'x')),
+  y: Math.max(0, cfgAxisGap(cfg, 'y'))
+});
 
 /** Swatches for the "Base colour" picker (null = auto rainbow). */
 export const BASE_COLOR_SWATCHES = [

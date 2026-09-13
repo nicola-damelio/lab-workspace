@@ -21,7 +21,7 @@ import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
 import { makeTable, stokesEinsteinD, radiusFromMW, GAMMA_H } from './NMRFittingsTestRenderer';
 import { enableCellClipboard, cellAttrs } from '../utils/cellClipboard';
 import { ChartPanel, SharedErrorTreatment, SharedChartStylePanel, ChartJsInspector, cfgTickFormatter } from './SharedAnalysisTools';
-import { shadesFromColor, chartJsPadding, chartJsHeightFit } from '../utils/chartStyle';
+import { shadesFromColor, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle } from '../utils/chartStyle';
 import { StarToggle } from './StarToggle';
 import { isStarred, toggleStarredItem } from '../utils/starredItems';
 import { isPointExcluded, togglePointExcluded, clearExcludedForTable, computePointSD } from '../utils/pointTreatment';
@@ -418,7 +418,7 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
           data: rows.map((p) => ({ x: xOf(p), y: yOf(p) })),
           errorBars: errBars,
           showLine: false,
-          pointStyle: cfg.ptStyle || 'circle',
+          pointStyle: cfg.pointStyle || cfg.ptStyle || 'circle',
           pointRadius: Number(cfg.ptSize) || 4,
           backgroundColor: color,
           borderColor: color,
@@ -427,6 +427,13 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
           pointBorderWidth: rows.map((p) => (showExcl && p.ex ? 2 : 1)),
           _pointKeys: rows.map((p) => p.key),
           _tableId: tableId,
+          // Per-curve overrides of the style panel (symbol, size, colour,
+          // line style / width, show-hide) for THIS column.
+          ...chartJsSeriesStyle(cfg, key, {
+            color,
+            pointStyle: cfg.pointStyle || cfg.ptStyle || 'circle',
+            pointRadius: Number(cfg.ptSize) || 4
+          }),
           onClick: (event, elements) => {
             if (!elements || !elements.length || !update) return;
             const el = elements[0];
@@ -461,7 +468,12 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
             borderColor: color,
             borderWidth: Number(cfg.lineThickness) || 2,
             borderDash: cfg.lineStyle === 'dashed' ? [6, 4] : cfg.lineStyle === 'dotted' ? [2, 4] : [],
-            type: 'line', fill: false
+            type: 'line', fill: false,
+            ...chartJsSeriesStyle(cfg, key, {
+              color,
+              borderWidth: Number(cfg.lineThickness) || 2,
+              borderDash: cfg.lineStyle === 'dashed' ? [6, 4] : cfg.lineStyle === 'dotted' ? [2, 4] : []
+            })
           });
         }
       }
@@ -485,7 +497,7 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
         scales: {
           x: {
             type: 'linear',
-            title: { display: true, text: xTitle, font: { size: fs } },
+            title: { display: true, text: xTitle, font: { size: fs }, padding: chartJsTitlePad(cfg).x },
             ticks: {
               font: { size: fs - 1 },
               callback: (v) => { const f = cfgTickFormatter(cfg, 'x'); return f ? f(v) : undefined; }
@@ -494,7 +506,7 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
             max: cfg.xMax !== '' && cfg.xMax !== undefined && cfg.xMax !== null ? Number(cfg.xMax) : undefined
           },
           y: {
-            title: { display: true, text: yTitle, font: { size: fs } },
+            title: { display: true, text: yTitle, font: { size: fs }, padding: chartJsTitlePad(cfg).y },
             ticks: {
               font: { size: fs - 1 },
               callback: (v) => { const f = cfgTickFormatter(cfg, 'y'); return f ? f(v) : undefined; }
