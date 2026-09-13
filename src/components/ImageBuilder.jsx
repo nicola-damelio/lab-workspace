@@ -1189,16 +1189,35 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   };
 
   // Move an image between a project library and the common (dataset) library.
+  // The destination project is the one picked in the modal's project list
+  // (`libProjectId`, defaulting to the project this editor was opened with) — the
+  // same choice the library browse uses. It is NEVER an implicit fallback: a
+  // builder opened without a project used to send the image to the unassigned
+  // scope, which no project page and no Project tab ever lists again (the image
+  // looked lost). Leaving a project needs write access to the project the entry
+  // is taken OUT of; entering one needs it on the project it goes INTO.
   const transferItem = (item) => {
     const from = libraryTab; // 'project' | 'common'
     const to = from === 'project' ? 'common' : 'project';
-    // Moving a figure INTO a project library writes to that project (the same
-    // right the project page asks for before editing it).
-    if (to === 'project' && !canWriteLibProject(projectId)) {
+    const srcProjectId = activeLibProjectId;                  // scope left behind
+    const destProjectId = libProjectId || projectId || null;   // scope written to
+    if (to === 'project') {
+      if (!destProjectId) {
+        setLibMsg('📁 Pick the project this image goes to in the “Move into” list, then click ⇄ again.');
+        return;
+      }
+      if (!canWriteLibProject(destProjectId)) {
+        setLibMsg('🔒 You do not have edit access to that project’s image library.');
+        return;
+      }
+    } else if (!canWriteLibProject(srcProjectId)) {
       setLibMsg('🔒 You do not have edit access to that project’s image library.');
       return;
     }
-    moveLibraryItem(from, to, libraryTab === 'project' ? activeLibProjectId : projectId, item.id);
+    moveLibraryItem(from, to, to === 'project' ? destProjectId : srcProjectId, item.id);
+    setLibMsg(to === 'project'
+      ? `✅ “${item.label || 'Image'}” is now in the “${canvasScopeName(destProjectId)}” project library (Project tab — and that project page’s “🖼 Saved canvases”).`
+      : `✅ “${item.label || 'Image'}” is now in the shared dataset library.`);
     setLibVersion((v) => v + 1);
   };
 
@@ -3109,17 +3128,22 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                   <button className={`px-3 py-1 rounded font-bold text-xs ${pickMode === 'add' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'}`} onClick={() => setPickMode('add')}>➕ Add</button>
                 </div>
               )}
-              {libraryTab === 'project' && (
-                <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500"
-                  title="Only the projects of your team are listed: the figures of a project are visible to the people who have access to that project (its owner and its authorized people).">
-                  Project
-                  <select value={activeLibProjectId || 'global'} onChange={(e) => setLibProjectId(e.target.value === 'global' ? null : e.target.value)}
-                    className="border border-slate-300 rounded px-2 py-1 text-xs bg-white max-w-[240px]">
-                    <option value="global">Current / no project</option>
-                    {myProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
-                </label>
-              )}
+              {/* The project list is shown in BOTH tabs: on the Project tab it picks
+                  the library being browsed, on the Dataset tab the project the ⇄ of
+                  a dataset image moves the figure INTO. Without it the transfer had
+                  to guess (the project this editor was opened with, or the
+                  unassigned scope when there is none) and the figure vanished. */}
+              <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500"
+                title={libraryTab === 'project'
+                  ? 'Only the projects of your team are listed: the figures of a project are visible to the people who have access to that project (its owner and its authorized people). “Current / no project” browses the figures stored without a project.'
+                  : 'The project an image of the dataset library is moved into with ⇄ — its Project tab and that project page’s “🖼 Saved canvases”. A project you may only read is marked 🔒 and refuses the move.'}>
+                {libraryTab === 'project' ? 'Project' : 'Move into'}
+                <select value={activeLibProjectId || 'global'} onChange={(e) => setLibProjectId(e.target.value === 'global' ? null : e.target.value)}
+                  className="border border-slate-300 rounded px-2 py-1 text-xs bg-white max-w-[240px]">
+                  <option value="global">{libraryTab === 'project' ? 'Current / no project' : '— pick a project —'}</option>
+                  {myProjects.map((p) => <option key={p.id} value={p.id}>{p.name}{canWriteLibProject(p.id) ? '' : ' 🔒 read-only'}</option>)}
+                </select>
+              </label>
               {pickMode === 'add' && (
                 <span className="text-[10px] font-bold text-indigo-700">Click figures to add them to this panel — the window stays open so you can add several.</span>
               )}
@@ -3158,7 +3182,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                       className="text-[9px] font-bold text-red-400 hover:text-red-600 border border-slate-200 rounded px-1.5 py-0.5 hover:border-red-300" title="Delete this image from the library">🗑</button>
                     <button type="button" onClick={(e) => { e.stopPropagation(); transferItem(item); }}
                       className="text-[9px] font-bold text-slate-500 hover:text-blue-600 border border-slate-200 rounded px-1.5 py-0.5 hover:border-blue-300"
-                      title={`Move this image to the ${libraryTab === 'project' ? 'common (dataset)' : 'project'} library`}>
+                      title={libraryTab === 'project'
+                        ? 'Move this image to the shared dataset library (Image Library → Dataset tab)'
+                        : activeLibProjectId
+                          ? `Move this image into the “${canvasScopeName(activeLibProjectId)}” project library (its Project tab — and that project page’s “🖼 Saved canvases”)`
+                          : 'Pick a project in the “Move into” list above, then click ⇄ to store this image in that project’s library'}>
                       ⇄
                     </button>
                   </div>

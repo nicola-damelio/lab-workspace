@@ -18,6 +18,7 @@ OK   _fcs_restore_match_test.cjs  →  ✅ 7/7 checks passed
 OK   _figure_origin_test.cjs  →  ✅ 64/64 checks passed
 OK   _figure_recapture_test.mjs  →  │ (index) │ name                                                                          │ ok   │ error │ | ✅ 32/32 checks passed
 OK   _figure_style_test.mjs  →  │ (index) │ name                                                                                  │ ok   │ error │ | ✅ 71/71 checks passed
+OK   _library_transfer_test.cjs  →  │ (index) │ name                                                                                                                   │ ok   │ error │ | 
 OK   _new_image_test.cjs  →  ✅ 29/29 checks passed
 OK   _pdb_conect_sanity.cjs  →  (no output)
 OK   _probe_ngl.cjs  →  WROTE _ngl_src/molecularsurface-representation.ts len 10528
@@ -28,4 +29,4 @@ OK   _split_test.cjs  →  (no output)
 OK   _src_split_test.cjs  →  (no output)
 OK   _star_group_test.cjs  →  ✅ 33/33 checks passed
 OK   _view_scroll_memory_test.cjs  →  ✅ 41/41 checks passed
-total 30, failed 0
+total 31, failed 0

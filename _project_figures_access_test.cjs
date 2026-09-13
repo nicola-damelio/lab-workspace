@@ -73,14 +73,16 @@ frag('[ImageBuilder] the reader is told why nothing is listed', IB, 'figures are
 frag('[ImageBuilder] publishing into a project needs edit access', IB, 'if (target && !canWriteLibProject(target)) return null;');
 frag('[ImageBuilder] uploading into a project needs edit access', IB, 'private to its team — you cannot add images here.');
 frag('[ImageBuilder] renaming/deleting a project figure too', IB, 'You do not have edit access to that project');
-frag('[ImageBuilder] transferring into a project too', IB, "if (to === 'project' && !canWriteLibProject(projectId)) {");
+frag('[ImageBuilder] transferring into a project needs edit access to THAT project', IB, 'if (!canWriteLibProject(destProjectId)) {');
+frag('[ImageBuilder] …and moving one OUT needs it on the project left', IB, '} else if (!canWriteLibProject(srcProjectId)) {');
 frag('[ImageBuilder] an insert writes only into an editable project', IB, "if (!canWriteLibProject(insertTarget.projectId)) { setInsertMsg('");
 frag('[ImageBuilder] restoring a canvas of a hidden project is refused', IB, 'if (fromProject && !canSeeLibProject(fromProject)) {');
 frag('[ImageBuilder] opening a requested canvas of a hidden project too', IB, 'if (projectId && !canSeeLibProject(projectId)) {');
 frag('[ImageBuilder] cleanup only touches the projects of that user', IB, 'removeRecaptureDuplicates({ allowedProjectIds: myProjectIds })');
 frag('[ImageBuilder] the count is limited the same way', IB, 'countRecaptureDuplicates({ allowedProjectIds: myProjectIds })');
 frag('[ImageBuilder] insert offers only editable projects', IB, 'No project you can edit');
-frag('[ImageBuilder] browser offers the projects of the user', IB, '{myProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}');
+frag('[ImageBuilder] browser offers the projects of the user', IB, '{myProjects.map((p) => <option key={p.id} value={p.id}>{p.name}');
+frag('[ImageBuilder] …and flags the ones that cannot receive a figure', IB, "{canWriteLibProject(p.id) ? '' : ' 🔒 read-only'}");
 frag('[ImageBuilder] save dialog offers only editable projects', IB, '{myWritableProjects.map((p) => <option key={p.id} value={p.id}>');
 
 frag('[projectDetail] saved canvases need access to the project', PD, 'if (!projectAccessFor(project, myName, isSuper)) return [];');
