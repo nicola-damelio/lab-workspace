@@ -10,6 +10,7 @@ import { CustomMetadataFieldsManager, MandatoryParametersManager, ScientistsOper
 import { DatabaseCleanupManager } from './storageModules';
 import { DriveImageMigration } from '../DriveImageMigration';
 import { CloudStorageSettings } from './cloudStorageSettings';
+import { FigureStylePanel } from '../FigureStylePanel';
 import { normalizeOperators } from '../../utils/auth';
 import { openDrive } from '../../utils/driveNaming';
 
@@ -52,6 +53,14 @@ export const SettingsModule = ({
 
                   {isSuper && (
                   <>
+                  <CollapsibleSection
+                    title="Figure style — uniform fonts & character sizes"
+                    subtitle="One global character size for every chart and spectrum of every experiment: axis / tick characters, peak labels and x-label rotation. Applied per page with the 🎨 Figure style button (bottom-left of each experiment page) before the 📷 figures are captured, so figures of different experiments line up in one Image Builder slide / PDF."
+                    defaultOpen={false}
+                  >
+                    <FigureStylePanel />
+                  </CollapsibleSection>
+
                   <CollapsibleSection title="Custom Metadata Fields" subtitle="Add custom fields for plate, NMR, CD, Cloning, or all tabs — and target the exact subsection of each page they appear in." defaultOpen={false}>
                     <CustomMetadataFieldsManager customFields={customFields} setCustomFields={handleSetCustomFields} />
 

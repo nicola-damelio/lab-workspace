@@ -7,6 +7,8 @@ import {
 } from '../utils/figuresLibrary';
 import { loadProjects, saveProjects, genProjectId } from './AppModules/projectsModule';
 import { queuePendingFigureScroll } from '../utils/pendingFigureScroll';
+import { figureStyleTag } from '../utils/figureStyle';
+import { useFigureStyleProfile } from './FigureStyleTools';
 
 const ptToMm = (pt) => pt * 0.352778;
 const PX_PER_MM = 96 / 25.4; // CSS: 1 mm ≈ 3.78 px
@@ -75,6 +77,11 @@ const DEFAULT_LETTER_PT = 14;
 // figure with its own ratio inside its panel, so the ratio has to be known
 // before the geometry can be computed.
 const imageAspectCache = new Map();
+// Natural PIXEL size of every measured figure, keyed by source. Together with
+// the style tag the figure was captured with (`src.styleTag`, written by
+// ChartStarLayer) it lets the builder tell how big the characters of a figure
+// really are — see the "⚖️ Character size" audit of the toolbar.
+const imagePxCache = new Map();
 const IMAGE_ASPECT_CACHE_MAX = 300; // forget ratios if a session imports a huge library
 
 /**
@@ -96,20 +103,79 @@ const useImageAspects = (objects) => {
     if (!pending.length) return undefined;
     let cancelled = false;
     let left = pending.length;
-    const settle = (src, aspect) => {
+    const settle = (src, aspect, pxW = 0, pxH = 0) => {
       imageAspectCache.set(src, aspect);
+      if (pxW > 0 && pxH > 0) imagePxCache.set(src, { w: Math.round(pxW), h: Math.round(pxH) });
       left -= 1;
       if (!cancelled && left === 0) setTick((t) => t + 1);
     };
     pending.forEach((src) => {
       const img = new Image();
-      img.onload = () => settle(src, img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : 0);
+      img.onload = () => settle(src, img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : 0,
+        img.naturalWidth, img.naturalHeight);
       img.onerror = () => settle(src, 0);
       img.src = src;
     });
     return () => { cancelled = true; };
   }, [srcs]);
   return tick;
+};
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   FIGURE STYLE AUDIT — "are the characters of these figures the same size?"
+
+   Every 📷 capture stamps the figure library entry with the style profile it
+   was RENDERED with (`src.styleTag` = fs16-lb16-rot0, see ChartStarLayer) and
+   with its pixel size (`src.pxW/pxH`). Two figures of the same canvas can
+   therefore come from two pages styled differently — the audit lists them and
+   sends the user back to the exact graph ("↗ Open original graph") to apply the
+   🎨 profile and capture again.
+   ──────────────────────────────────────────────────────────────────────────── */
+/* The badge of one audited figure: 'same' / 'other style' / 'no stamp' / 'canvas'. */
+const STYLE_BADGE = {
+  match: { text: 'same style', cls: 'bg-emerald-50 text-emerald-700 border border-emerald-200' },
+  mismatch: { text: 'other style', cls: 'bg-amber-50 text-amber-700 border border-amber-200' },
+  untagged: { text: 'no stamp', cls: 'bg-slate-100 text-slate-500 border border-slate-200' },
+  canvas: { text: 'canvas', cls: 'bg-indigo-50 text-indigo-600 border border-indigo-200' }
+};
+
+const libItemOf = (im, fallbackProjectId = null) => {
+  if (!im || !im.libId) return null;
+  const scope = im.libScope === 'project' ? 'project' : 'common';
+  const pid = im.libProjectId || fallbackProjectId;
+  try {
+    const list = scope === 'project' ? readProjectLibrary(pid) : readLibrary();
+    return (list || []).find((x) => x.id === im.libId) || null;
+  } catch { return null; }
+};
+
+export const figureStyleAudit = (objects, currentTag, fallbackProjectId = null) => {
+  const rows = [];
+  (objects || []).forEach((o) => {
+    const imgs = getObjImagesOf(o);
+    imgs.forEach((im, idx) => {
+      const item = libItemOf(im, fallbackProjectId);
+      const src = (item && item.src) || (im && im.src) || null;
+      const px = (im && im.imgSrc && imagePxCache.get(im.imgSrc)) || null;
+      const tag = (src && src.styleTag) || '';
+      const isCanvas = !!(item && item.canvasData);
+      rows.push({
+        key: `${o.id}:${idx}`,
+        objId: o.id,
+        letter: o.letter || '',
+        label: (item && item.label) || (src && src.elementLabel) || `Panel ${o.letter || ''}`.trim(),
+        origin: [src && src.testName, src && src.instanceName].filter(Boolean).join(' — '),
+        src,
+        tag,
+        pxW: Number(src && src.pxW) || 0,
+        pxH: Number(src && src.pxH) || 0,
+        renderedW: px ? px.w : 0,
+        renderedH: px ? px.h : 0,
+        status: isCanvas ? 'canvas' : (!tag ? 'untagged' : (tag === currentTag ? 'match' : 'mismatch'))
+      });
+    });
+  });
+  return rows;
 };
 
 export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCanvasOpened, onBackToProject }) => {
@@ -126,6 +192,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const initialPanRef = useRef({ x: 0, y: 0 });
   const undoStack = useRef([]);     // undo history of the canvas objects
   const [histTick, setHistTick] = useState(0);
+  // Global "Figure style" profile (Settings → Figure style) — read-only here:
+  // the audit below compares it with the style each figure was CAPTURED with.
+  const styleProfile = useFigureStyleProfile();
+  const [styleAuditOpen, setStyleAuditOpen] = useState(false);
 
   const [canvasW, setCanvasW] = useState(180);
   const [canvasH, setCanvasH] = useState(120);
@@ -222,6 +292,32 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // measured figure ratios (see useImageAspects above).
   const [keepAspect, setKeepAspect] = useState(true);
   const aspectTick = useImageAspects(objects);
+
+  // Persist the natural pixel size of every measured figure on its object
+  // (`imgPxW/imgPxH`), so "how big were the characters of this figure really"
+  // is answered even before the sources are loaded again. The write only
+  // happens when the value CHANGED, so this cannot loop.
+  useEffect(() => {
+    if (!objects || !objects.length) return;
+    let dirty = false;
+    const next = objects.map((o) => {
+      const src = o.imgSrc || (o.images && o.images[0] && o.images[0].imgSrc);
+      const px = src ? imagePxCache.get(src) : null;
+      if (!px) return o;
+      if (Number(o.imgPxW) === px.w && Number(o.imgPxH) === px.h) return o;
+      dirty = true;
+      return { ...o, imgPxW: px.w, imgPxH: px.h };
+    });
+    if (dirty) setObjects(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aspectTick, objects]);
+
+  // Audit of the figure styles placed on the canvas (computed only while the
+  // ⚖️ panel is open): a figure captured with another profile than the current
+  // one is what makes two graphs of one slide look different.
+  const styleTag = figureStyleTag(styleProfile);
+  const styleRows = styleAuditOpen ? figureStyleAudit(objects, styleTag, projectId) : [];
+  const styleBad = styleRows.filter((r) => r.status === 'mismatch' || r.status === 'untagged');
   void aspectTick;
 
   // Build an object that stores `images` (and mirrors the first one into the
@@ -2063,6 +2159,58 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           <button onClick={() => { setInsertTarget({ projectId: projectId || (allProjects[0] && allProjects[0].id) || '', section: 'background' }); setInsertMsg(''); setInsertOpen(true); }}
             title="Render this composition into a project section (Background / Discussion / Conclusions). The inserted figure keeps a link back to this canvas, so the project page can reopen it here with “✏️ Modify in Image Builder”."
             className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">📤 Insert into project…</button>
+          <button onClick={() => setStyleAuditOpen((v) => !v)}
+            title="Check that every figure on this canvas was captured with the SAME character size (Settings → Figure style). Figures captured with another style are listed with a link back to their original graph, where the 🎨 button re-applies the profile."
+            className={`font-bold px-3 py-1.5 rounded-lg text-xs border ${styleAuditOpen ? 'bg-slate-800 text-white border-slate-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}`}>
+            ⚖️ Character sizes
+          </button>
+
+          {styleAuditOpen && (
+            <div className="w-full bg-white border border-slate-300 rounded-lg p-3 flex flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <h5 className="text-xs font-bold text-slate-700">⚖️ Figure style audit</h5>
+                <span className="text-[10px] font-mono text-slate-400">current style: {styleTag}</span>
+                <span className={`text-[11px] font-bold ${styleBad.length ? 'text-amber-700' : 'text-emerald-700'}`}>
+                  {styleRows.length === 0
+                    ? 'No figure on the canvas yet.'
+                    : (styleBad.length
+                      ? `⚠ ${styleBad.length} of ${styleRows.length} figure(s) were not captured with the current style — characters may look bigger / smaller in the same slide.`
+                      : `✅ All ${styleRows.length} figure(s) share the current style.`)}
+                </span>
+              </div>
+              {styleRows.length > 0 && (
+                <ul className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
+                  {styleRows.map((r) => {
+                    const badge = STYLE_BADGE[r.status] || STYLE_BADGE.untagged;
+                    return (
+                      <li key={r.key} className="flex items-center gap-2 border border-slate-200 rounded-md px-2 py-1.5">
+                        <span className={`shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded ${badge.cls}`}>{badge.text}</span>
+                        <span className="min-w-0 flex-1 truncate">
+                          <b>{r.letter ? `${r.letter}: ` : ''}{r.label}</b>
+                          {r.origin ? <span className="text-slate-400"> · {r.origin}</span> : null}
+                          <span className="text-slate-400">
+                            {' · '}{r.tag || 'no style stamp'}
+                            {r.pxW ? ` · ${r.pxW}×${r.pxH} px` : (r.renderedW ? ` · ${r.renderedW}×${r.renderedH} px` : '')}
+                          </span>
+                        </span>
+                        {r.src && r.src.testId && r.status !== 'match' && r.status !== 'canvas' ? (
+                          <button type="button" onClick={() => openOriginalGraph(r.src)}
+                            className="shrink-0 text-[10px] font-bold text-blue-600 hover:underline"
+                            title="Open the experiment and the exact graph this figure was captured from — apply the 🎨 Figure style there, then capture again.">
+                            ↗ Open original graph
+                          </button>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              <p className="text-[10px] text-slate-400 leading-relaxed">
+                A 📷 figure keeps the style it was rendered with: apply the 🎨 Figure style on the experiment page
+                <i> before</i> capturing, then the figures of different experiments line up here.
+              </p>
+            </div>
+          )}
         </div>
 
         {/* SVG Canvas (Normal View) */}

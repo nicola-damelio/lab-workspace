@@ -5,6 +5,8 @@ import {
   getActiveProjectId, publishLibraryFigure
 } from '../utils/figuresLibrary';
 import { clearPendingFigureScroll, peekPendingFigureScroll } from '../utils/pendingFigureScroll';
+import { FigureStyleApplyButton } from './FigureStyleTools';
+import { figureStyleTag } from '../utils/figureStyle';
 import { loadProjects } from './AppModules/projectsModule';
 
 
@@ -388,6 +390,15 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
         elementLabel: t.label,
         elementKey: t.key
       };
+      // The global figure style this figure was RENDERED with + its pixel size:
+      // the Image Builder audits them (⚖️ Character sizes) to warn when figures
+      // captured with different character sizes end up in the same slide.
+      src.styleTag = figureStyleTag();
+      try {
+        const r = el.getBoundingClientRect();
+        src.pxW = Math.round(el.naturalWidth || el.width || r.width || 0);
+        src.pxH = Math.round(el.naturalHeight || el.height || r.height || 0);
+      } catch { /* ignore */ }
       const projectName = projectNameFor(test);
       // The real image is stored on Google Drive (projects/<project>/images), only a
       // small local preview + metadata remain in the browser.
@@ -592,6 +603,13 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
           </span>
         </div>
       )}
+
+      {/* 🎨 GLOBAL FIGURE STYLE — pushes the character sizes defined in
+          Settings → "Figure style" into every chart / spectrum of this page
+          (incl. the ones of the closed sections) BEFORE the 📷 figures are
+          captured, so figures of different experiments share one character
+          size in the Image Builder. See utils/figureStyle.js. */}
+      <FigureStyleApplyButton test={test} update={update} />
 
     </div>
   );

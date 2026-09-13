@@ -14,6 +14,7 @@ import {
   AXIS_BREAK_GAP_DEFAULT
 } from '../utils/chartStyle';
 import { Icon } from './Icons';
+import { useFigureStyleSlot } from './FigureStyleTools';
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1246,6 +1247,10 @@ export const ChartInspector = ({
 }) => {
     const [target, setTarget] = useState(null);
     const editable = !!cfg && typeof setCfg === 'function';
+    // Registers this chart in the global "Figure style" registry: the 🎨 button
+    // of the experiment page can then push the shared character sizes into it
+    // (through the very same setter the panel uses).
+    useFigureStyleSlot(cfg, setCfg);
     const handle = (e) => {
         // 1) the recharts element under the pointer (it is what the browser
         //    hit-tests, so it always matches what was really double-clicked),
@@ -1318,6 +1323,9 @@ export const chartJsTargetAt = (chart, evt) => {
 export const ChartJsInspector = ({ chartRef, cfg, setCfg, series = [], unit, children, className = '', style = null }) => {
     const [target, setTarget] = useState(null);
     const editable = !!cfg && typeof setCfg === 'function';
+    // Same registry as ChartInspector: Chart.js canvases (Plate, DOSY, fittings…)
+    // are styled by the page-level 🎨 button too.
+    useFigureStyleSlot(cfg, setCfg);
     const handle = (e) => {
         const t = chartJsTargetAt(chartRef && chartRef.current, e.nativeEvent || e);
         if (!t) return;
