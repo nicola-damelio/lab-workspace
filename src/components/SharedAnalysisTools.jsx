@@ -9,7 +9,9 @@ import {
   BASE_COLOR_SWATCHES, shadesFromColor, rainbowColors, DEFAULT_CHART_FONT_SIZE,
   normalizeChartType, seriesOverride, seriesChartType,
   seriesPointStyle, seriesPtSize, seriesLineThickness,
-  seriesDash, seriesVisible, seriesLabelOf, seriesColorOf, hasSeriesOverrides
+  seriesDash, seriesVisible, seriesLabelOf, seriesColorOf, hasSeriesOverrides,
+  axisBreakOf, axisBreakFor, breakSegments, breakTicks, brokenScale,
+  AXIS_BREAK_GAP_DEFAULT
 } from '../utils/chartStyle';
 import { Icon } from './Icons';
 
@@ -445,6 +447,55 @@ export const useChartFsHeight = (normalHeight) => {
     return Math.max(480, window.innerHeight - 210);
 };
 
+/**
+ * The same delay for a LIST of cards (a hook cannot be called inside a map):
+ *   onClick={deferredClick(timerRef, () => setFsSmall(s.key))}
+ * where `timerRef` is one shared useRef in the component.
+ */
+export const deferredClick = (timerRef, fn, delay = 260) => (e) => {
+    if (e && e.detail > 1) {
+        // Second click of a double click: cancel the pending single click.
+        if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+        return;
+    }
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; return; }
+    timerRef.current = setTimeout(() => { timerRef.current = null; fn(); }, delay);
+};
+
+/**
+ * A chart card that zooms to fullscreen on a SINGLE click AND is edited by a
+ * DOUBLE click cannot use a plain onClick: both clicks of the double click would
+ * run it (the second one landing on the fullscreen copy the first one opened).
+ * This delays the single click just long enough for a double click to cancel it,
+ * so both gestures work on the small charts too.
+ */
+export const useDeferredClick = (onClick, delay = 260) => {
+    const timer = useRef(null);
+    useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+    return deferredClick(timer, onClick, delay);
+};
+
+/**
+ * The style object / setter behind a `🎨` panel element. A page writes
+ *   cfgPanel={<SharedChartStylePanel cfg={cfg} setCfg={setCfg} series={s} />}
+ * (or a fragment holding it, sometimes with extra controls) and ChartPanel reads
+ * the props straight out of that element, so the double-click editor ALWAYS
+ * edits the same object as the panel — even when the chart sits deep inside a
+ * sub-section and nobody remembered to pass cfg / setCfg again.
+ */
+const stylePanelCfg = (node) => {
+    if (!node || typeof node !== 'object') return null;
+    if (node.type === SharedChartStylePanel) return node.props || null;
+    const kids = node.props ? node.props.children : null;
+    if (!kids) return null;
+    const list = Array.isArray(kids) ? kids : [kids];
+    for (let i = 0; i < list.length; i++) {
+        const found = stylePanelCfg(list[i]);
+        if (found) return found;
+    }
+    return null;
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CHART PANEL  -- fully generalised wrapper for every chart / graph / spectrum.
 // Renders the standard header (title + Error Management / Graphical Parameters /
@@ -485,6 +536,16 @@ export const ChartPanel = ({
     const [showCfg, setShowCfg] = useState(defaultOpenCfg);
     const [isFs, setIsFs] = useState(defaultFs);
     const toggleFs = () => setIsFs((v) => !v);
+
+    // The chart body is edited with the VERY object the 🎨 panel writes, read
+    // straight from the panel element — so any chart that HAS a style panel is
+    // double-click-editable without repeating cfg / setCfg at the call site
+    // (this is what makes the gesture work in the nested sub-sections too).
+    const panelStyle = stylePanelCfg(cfgPanel);
+    cfg = cfg ?? (panelStyle && panelStyle.cfg) ?? null;
+    setCfg = setCfg ?? (panelStyle && panelStyle.setCfg) ?? null;
+    series = series && series.length ? series : (panelStyle && panelStyle.series) || [];
+    unit = unit ?? (panelStyle ? panelStyle.unit : undefined);
 
     return (
         <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-3 flex flex-col min-h-0 ${isFs ? CHART_FS_CLASSES : ''} ${className}`}>
@@ -658,6 +719,11 @@ const chartStyleRangeBlock = (cfg, set, unit, section) => {
         yLabel: <TF label="Y axis label" value={cfg.yAxisLabel} onChange={(v) => set({ yAxisLabel: v })} placeholder="e.g. Intensity (a.u.)" />,
         xGap: <NF label="X label gap (px)" value={cfg.xAxisLabelGap ?? ''} onChange={(v) => set({ xAxisLabelGap: v })} placeholder="0" />,
         yGap: <NF label="Y label gap (px)" value={cfg.yAxisLabelGap ?? ''} onChange={(v) => set({ yAxisLabelGap: v })} placeholder="0" />,
+        /* Slide the title ALONG its own axis (the gap only pushes it AWAY from
+           the plot): the manual way to park a long, rotated y title back inside
+           the graph when the characters are big. */
+        xMove: <NF label="X label move (px) — + right / − left" value={cfg.xAxisLabelMove ?? ''} onChange={(v) => set({ xAxisLabelMove: v })} placeholder="0" />,
+        yMove: <NF label="Y label move (px) — + down / − up" value={cfg.yAxisLabelMove ?? ''} onChange={(v) => set({ yAxisLabelMove: v })} placeholder="0" />,
         xStyle: (
             <div className="flex flex-col gap-1">
                 <label className="text-[10px] font-bold text-slate-600">X label style</label>
@@ -677,10 +743,10 @@ const chartStyleRangeBlock = (cfg, set, unit, section) => {
             </div>
         )
     };
-    const keys = section === 'x' ? ['xRange', 'xLabel', 'xGap', 'xStyle']
-        : section === 'y' ? ['yRange', 'yLabel', 'yGap', 'yStyle']
-            : section === 'label' ? ['xLabel', 'yLabel', 'xGap', 'yGap', 'xStyle', 'yStyle']
-                : ['xRange', 'yRange', 'xLabel', 'yLabel', 'xGap', 'yGap', 'xStyle', 'yStyle'];
+    const keys = section === 'x' ? ['xRange', 'xLabel', 'xGap', 'xMove', 'xStyle']
+        : section === 'y' ? ['yRange', 'yLabel', 'yGap', 'yMove', 'yStyle']
+            : section === 'label' ? ['xLabel', 'yLabel', 'xGap', 'xMove', 'yGap', 'yMove', 'xStyle', 'yStyle']
+                : ['xRange', 'yRange', 'xLabel', 'yLabel', 'xGap', 'xMove', 'yGap', 'yMove', 'xStyle', 'yStyle'];
     const heading = section === 'x' ? 'X axis — range, label, title'
         : section === 'y' ? 'Y axis — range, label, title'
             : section === 'label' ? 'Axis titles'
@@ -691,6 +757,16 @@ const chartStyleRangeBlock = (cfg, set, unit, section) => {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                 {keys.map((k) => <React.Fragment key={k}>{cells[k]}</React.Fragment>)}
             </div>
+            {/* The rotated y title is anchored on the MIDDLE of the plot and the
+                characters run upwards: a long title at a big character size
+                leaves the chart at the TOP, where no margin can follow it (the
+                room it needs is vertical, i.e. its own length). The "move"
+                command slides it along the axis and brings it back inside. */}
+            {section !== 'x' && (
+                <p className="text-[9px] text-slate-400 mt-2">
+                    The Y title is rotated and grows upwards from the middle of the plot: a long title at a big character size leaves the graph at the top. Set a positive “Y label move” to slide it back down — the “gap” only pushes it away from the plot. (The canvas plots — Plate IC50 / dose-response, DOSY, NMR fittings — grow their canvas to fit the title instead.)
+                </p>
+            )}
         </div>
     );
 };
@@ -719,15 +795,51 @@ const chartStyleTickBlock = (cfg, set, section) => {
                 <CB label="Sci. notation X" checked={cfg.xSci} onChange={(v) => set({ xSci: v })} />
                 <CB label="Sci. notation Y" checked={cfg.ySci} onChange={(v) => set({ ySci: v })} />
             </div>
+        ),
+        /* The interrupted axis: one tick is enough — when the two numbers are
+           left empty the break is placed automatically on the biggest gap. */
+        yBreak: (
+            <div className="flex flex-col gap-1 lg:col-span-2">
+                <CB label="✂ Interrupt Y axis — huge bar vs small bars" checked={!!cfg.yBreak} onChange={(v) => set({ yBreak: v })} />
+                <div className="flex items-center gap-1">
+                    <input type="number" placeholder="from (auto)" value={cfg.yBreakFrom ?? ''} onChange={(e) => set({ yBreakFrom: e.target.value })}
+                        title="Y value where the interruption starts = the top of the SMALL bars. Empty = detected automatically."
+                        className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none bg-white" />
+                    <input type="number" placeholder="to (auto)" value={cfg.yBreakTo ?? ''} onChange={(e) => set({ yBreakTo: e.target.value })}
+                        title="Y value where the interruption stops = the bottom of the HUGE bars. Empty = detected automatically."
+                        className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none bg-white" />
+                    <input type="number" min="1" max="40" placeholder={`${AXIS_BREAK_GAP_DEFAULT}`} value={cfg.yBreakGap ?? ''} onChange={(e) => set({ yBreakGap: e.target.value })}
+                        title="Height of the interrupted band, in % of the axis"
+                        className="border border-slate-300 rounded-md p-1.5 text-xs w-16 outline-none bg-white" />
+                </div>
+                <p className="text-[9px] text-slate-400">
+                    e.g. from 50 to 950: the 50→950 emptiness is squeezed into a small band (marked ✂ on the axis) so the small
+                    bars and the huge one are both readable. Leave both numbers empty to let the graph find the gap itself.
+                </p>
+            </div>
+        ),
+        xBreak: (
+            <div className="flex flex-col gap-1 lg:col-span-2">
+                <CB label="✂ Interrupt X axis" checked={!!cfg.xBreak} onChange={(v) => set({ xBreak: v })} />
+                <div className="flex items-center gap-1">
+                    <input type="number" placeholder="from (auto)" value={cfg.xBreakFrom ?? ''} onChange={(e) => set({ xBreakFrom: e.target.value })}
+                        className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none bg-white" />
+                    <input type="number" placeholder="to (auto)" value={cfg.xBreakTo ?? ''} onChange={(e) => set({ xBreakTo: e.target.value })}
+                        className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none bg-white" />
+                    <input type="number" min="1" max="40" placeholder={`${AXIS_BREAK_GAP_DEFAULT}`} value={cfg.xBreakGap ?? ''} onChange={(e) => set({ xBreakGap: e.target.value })}
+                        className="border border-slate-300 rounded-md p-1.5 text-xs w-16 outline-none bg-white" />
+                </div>
+            </div>
         )
     };
-    const keys = section === 'x' ? ['xStep', 'angle', 'xDec', 'scis', 'logs']
-        : section === 'y' ? ['yStep', 'angle', 'yDec', 'scis', 'logs']
-            : ['xStep', 'yStep', 'angle', 'logs', 'xDec', 'yDec', 'scis'];
+    const keys = section === 'x' ? ['xStep', 'angle', 'xDec', 'scis', 'logs', 'xBreak']
+        : section === 'y' ? ['yStep', 'angle', 'yDec', 'scis', 'logs', 'yBreak']
+            : section === 'label' ? ['xDec', 'yDec', 'scis', 'logs', 'angle', 'xStep', 'yStep', 'xBreak', 'yBreak']
+                : ['xStep', 'yStep', 'angle', 'logs', 'xDec', 'yDec', 'scis', 'xBreak', 'yBreak'];
     return (
         <div>
             <p className="text-[10px] font-black text-slate-400 uppercase mb-2">
-                {section === 'x' ? 'X ticks' : section === 'y' ? 'Y ticks' : 'Tick Settings'}
+                {section === 'x' ? 'X ticks' : section === 'y' ? 'Y ticks' : section === 'label' ? 'Ticks, numbers & scales' : 'Tick Settings'}
             </p>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 items-end">
                 {keys.map((k) => <React.Fragment key={k}>{cells[k]}</React.Fragment>)}
@@ -876,6 +988,11 @@ export const SharedChartStylePanel = ({ cfg = {}, setCfg, series = [], unit = 'a
             {/* Tick Settings */}
             {(show('x') || show('y')) && chartStyleTickBlock(cfg, set, section)}
 
+            {/* …and the same commands are reachable from an axis TITLE: double-
+                clicking "Intensity (a.u.)" usually also means "and show me the
+                numbers / decimals / scientific notation / log scale". */}
+            {section === 'label' && chartStyleTickBlock(cfg, set, 'label')}
+
             {/* Layout (chart-level commands: the full panel and the curves) */}
             {show('series') && (
             <div>
@@ -1004,12 +1121,62 @@ export const classifyChartElement = (el) => {
     return null;
 };
 
+/**
+ * The FALLBACK of the classifier: recharts elements only cover the curves, the
+ * bars, the axes and the legend, so a double-click on the plot background, on a
+ * grid line or on the surface itself used to do nothing at all — which is what
+ * made the gesture feel unreliable ("I cannot find the right position").
+ *
+ * This looks at WHERE the double-click landed inside the chart box:
+ *   left of the plot  → the Y axis (or its title, further left)
+ *   below the plot    → the X axis (or its title, lower down)
+ *   inside the plot   → the whole style panel (curves + everything)
+ * Returns null when the root is not a recharts chart.
+ */
+export const chartElementAtPoint = (root, evt) => {
+    if (!root || !evt || typeof root.querySelector !== 'function') return null;
+    const wrapper = root.closest && root.closest('.recharts-wrapper')
+        ? root.closest('.recharts-wrapper')
+        : root.querySelector('.recharts-wrapper');
+    if (!wrapper || typeof wrapper.getBoundingClientRect !== 'function') return null;
+    const box = wrapper.getBoundingClientRect();
+    const cx = Number(evt.clientX);
+    const cy = Number(evt.clientY);
+    if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
+    const rectOf = (sel) => {
+        const n = wrapper.querySelector(sel);
+        return n && typeof n.getBoundingClientRect === 'function' ? n.getBoundingClientRect() : null;
+    };
+    const grid = rectOf('.recharts-cartesian-grid');
+    const yAxis = rectOf('.recharts-yAxis');
+    const xAxis = rectOf('.recharts-xAxis');
+    const left = yAxis ? yAxis.right - box.left : grid ? grid.left - box.left : 0;
+    const bottom = xAxis ? xAxis.top - box.top : grid ? grid.bottom - box.top : box.height;
+    const px = cx - box.left;
+    const py = cy - box.top;
+    // Far enough from the numbers to be the title itself (the panel then opens
+    // on the label commands, ticks included).
+    if (py > bottom) {
+        return py > bottom + 26
+            ? { kind: 'xLabel', section: 'label', axis: 'x', label: '' }
+            : { kind: 'xAxis', section: 'x', axis: 'x', label: '' };
+    }
+    if (px < left) {
+        return px < left - 26
+            ? { kind: 'yLabel', section: 'label', axis: 'y', label: '' }
+            : { kind: 'yAxis', section: 'y', axis: 'y', label: '' };
+    }
+    // Somewhere over the plot: the user wants "everything", not nothing.
+    return { kind: 'plot', section: 'all', axis: null, label: '' };
+};
+
 export const CHART_ELEMENT_TITLES = {
-    xAxis: 'X axis — min / max, ticks, numbers size',
-    yAxis: 'Y axis — min / max, ticks, numbers size',
-    xLabel: 'X axis label — text, character size, style',
-    yLabel: 'Y axis label — text, character size, style',
-    label: 'Axis label — text, character size, style',
+    xAxis: 'X axis — min / max, ticks, number of decimals, log scale',
+    yAxis: 'Y axis — min / max, ticks, number of decimals, log scale',
+    xLabel: 'X axis title — text, size, ticks, decimals, log scale',
+    yLabel: 'Y axis title — text, size, ticks, decimals, log scale',
+    label: 'Axis title — text, size, ticks, decimals, log scale',
+    plot: 'Chart — every setting (axes, ticks, log, interrupt, curves)',
     series: 'Curves / bars / points — type, thickness, symbols, colour',
     legend: 'Series colours'
 };
@@ -1031,10 +1198,10 @@ export const ChartElementDialog = ({ target, cfg, setCfg, series = [], unit, onC
         : null;
     return createPortal(
         <div
-            className="fixed inset-0 z-[9999999] bg-slate-900/40 backdrop-blur-sm flex items-start justify-center overflow-auto p-4"
+            className="fixed inset-0 z-[9999999] bg-slate-900/10 flex items-start justify-center overflow-auto p-4 pointer-events-none"
             onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
         >
-            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl my-8" onDoubleClick={(e) => e.stopPropagation()}>
+            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl my-8 pointer-events-auto" onDoubleClick={(e) => e.stopPropagation()}>
                 <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-200 sticky top-0 bg-white rounded-t-2xl z-10">
                     <span className="text-lg">🖱️</span>
                     <h4 className="font-black text-slate-800">
@@ -1080,7 +1247,11 @@ export const ChartInspector = ({
     const [target, setTarget] = useState(null);
     const editable = !!cfg && typeof setCfg === 'function';
     const handle = (e) => {
-        const t = classifyChartElement(e.target);
+        // 1) the recharts element under the pointer (it is what the browser
+        //    hit-tests, so it always matches what was really double-clicked),
+        // 2) otherwise WHERE the pointer is (plot background, grid line, the
+        //    margin around the plot) — a double-click is never lost.
+        const t = classifyChartElement(e.target) || chartElementAtPoint(e.currentTarget, e);
         if (!t) return;
         e.preventDefault();
         e.stopPropagation();
@@ -1516,6 +1687,99 @@ export const errorBarRange = (rows, keys, errOf, baseMin = 0) => {
   return [lo, hi];
 };
 
+/**
+ * The classic "axis interruption" glyph: two parallel strokes crossing the axis
+ * line. Recharts passes the reference-line geometry through `viewBox`.
+ */
+const AxisBreakSlash = ({ viewBox, axis = 'y' }) => {
+  const x = Number(viewBox && viewBox.x) || 0;
+  const y = Number(viewBox && viewBox.y) || 0;
+  const h = Number(viewBox && viewBox.height) || 0;
+  // A vertical (X) reference line: the axis sits at the BOTTOM of the plot box.
+  const yy = axis === 'x' ? y + h : y;
+  return (
+    <g style={{ pointerEvents: 'none' }}>
+      {[-3, 3].map((off) => (
+        <line key={off}
+          x1={x - 5} y1={yy + off - 5} x2={x + 5} y2={yy + off + 5}
+          stroke="#475569" strokeWidth={1.6} strokeLinecap="round" />
+      ))}
+    </g>
+  );
+};
+
+/**
+ * Draws the interruption of a broken axis: a light shading + two dashed guides
+ * at the edges of the compressed band, and the double slash on the axis itself.
+ * Use it INSIDE a recharts chart, after the series (so the marks stay visible
+ * over the bars). `brk` may be passed when the caller already resolved it (the
+ * automatic break), otherwise it is read from `cfg`.
+ */
+export const AxisBreakMarks = ({ cfg = {}, axis = 'y', values = [], brk = null }) => {
+  const b = brk || axisBreakFor(cfg, axis, values);
+  if (!b || !b.on) return null;
+  const horiz = axis !== 'x';
+  const band = horiz
+    ? { y1: b.from, y2: b.to }
+    : { x1: b.from, x2: b.to };
+  const line = (v) => (horiz ? { y: v } : { x: v });
+  return (
+    <React.Fragment>
+      <ReferenceArea key="brkArea" {...band} fill="#94a3b8" fillOpacity={0.12} stroke="none" ifOverflow="visible" />
+      <ReferenceLine key="brkFrom" {...line(b.from)} stroke="#94a3b8" strokeDasharray="4 4" ifOverflow="visible" />
+      <ReferenceLine key="brkTo" {...line(b.to)} stroke="#94a3b8" strokeDasharray="4 4" ifOverflow="visible"
+        label={<AxisBreakSlash axis={axis} />} />
+    </React.Fragment>
+  );
+};
+
+/**
+ * Everything a recharts axis needs to be INTERRUPTED, computed from the plotted
+ * values — so a chart that does not use <SharedChart> (flow cytometry, MD, NMR,
+ * docking…) gets the feature in three lines:
+ *
+ *   const brk = brokenAxisProps(cfg, 'y', binValues);
+ *   <YAxis {...brk.axisProps} tick={{…}} label={…} />
+ *   {brk.marks}
+ *
+ * `opts.log` skips it (a log axis already compresses small values), `opts.min` /
+ * `opts.max` are the user's yMin / yMax, `opts.step` a tick interval.
+ */
+export const brokenAxisProps = (cfg = {}, axis = 'y', values = [], opts = {}) => {
+  const off = { on: false, brk: null, axisProps: {}, marks: null };
+  if (opts.log) return off;
+  const brk = axisBreakFor(cfg, axis, values);
+  if (!brk.on) return off;
+  let lo = Infinity;
+  let hi = -Infinity;
+  values.forEach((v) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return;
+    if (n < lo) lo = n;
+    if (n > hi) hi = n;
+  });
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return off;
+  const numOrNull = (v) => (v === '' || v === null || v === undefined ? null : (Number.isFinite(Number(v)) ? Number(v) : null));
+  const min = numOrNull(opts.min);
+  const max = numOrNull(opts.max);
+  const low = min !== null ? min : Math.min(0, lo);
+  const top = max !== null ? max : Math.max(hi, brk.to) * 1.02;
+  const seg = breakSegments(brk, low, top);
+  if (!seg) return off;
+  return {
+    on: true,
+    brk,
+    domain: [low, top],
+    axisProps: {
+      scale: brokenScale(brk),
+      domain: [low, top],
+      ticks: breakTicks(seg, opts.step),
+      allowDataOverflow: true
+    },
+    marks: <AxisBreakMarks brk={brk} axis={axis} />
+  };
+};
+
 export const SharedChart = ({
   data = [],
   xKey = 'x',
@@ -1591,8 +1855,56 @@ export const SharedChart = ({
   /* Tick steps → explicit ticks on numeric axes. */
   const xStep = cfg.xTickStep ?? cfg.tickStep;
   const yStep = cfg.yTickStep;
-  const xTicks = xStep ? numericTicks(xDomain[0], xDomain[1], xStep) : null;
-  const yTicks = yStep && yMin !== null && yMax !== null ? numericTicks(yMin, yMax, yStep) : null;
+
+  /* ── BROKEN ("INTERRUPTED") AXIS ──────────────────────────────────────────
+     A histogram with one bar 100× the others: the panel's "✂ Interrupt Y axis"
+     squeezes the empty range into a small band so the low bars AND the huge one
+     are readable. The VALUES are never touched — only the value→pixel mapping
+     (brokenScale) and the ticks change, so the tooltip and the exports keep the
+     real numbers. See chartStyle.axisBreakOf / brokenScale / breakTicks. */
+  const axisValues = (key) => {
+    const out = [];
+    plotData.forEach((row) => {
+      const v = Number(row?.[key]);
+      if (Number.isFinite(v)) out.push(v);
+    });
+    return out;
+  };
+  /* A log axis already compresses the small values: no interruption there. */
+  const xBrk = xLog ? axisBreakOf(cfg, 'x') : axisBreakFor(cfg, 'x', axisValues(xKey));
+  const yBrk = yLog ? axisBreakOf(cfg, 'y') : axisBreakFor(cfg, 'y', safeSeries.flatMap((s) => axisValues(s.key)));
+  const xScale = brokenScale(xBrk);
+  const yScale = brokenScale(yBrk);
+  const spanOf = (vals) => {
+    if (!vals.length) return null;
+    let lo = vals[0];
+    let hi = vals[0];
+    for (let i = 1; i < vals.length; i++) {
+      if (vals[i] < lo) lo = vals[i];
+      if (vals[i] > hi) hi = vals[i];
+    }
+    return [lo, hi];
+  };
+  const headroom = (lo, hi) => hi + Math.abs(hi - lo) * 0.02;
+  /* The interrupted axis needs a CONCRETE domain (a 'auto' domain computed by
+     recharts from the data would make the break edges slide around). */
+  const ySpan = yBrk.on ? spanOf(safeSeries.flatMap((s) => axisValues(s.key))) : null;
+  const yBrkLo = yMin !== null ? yMin : (ySpan ? Math.min(0, ySpan[0]) : 0);
+  const yBrkHi = yMax !== null ? yMax : headroom(yBrkLo, Math.max(ySpan ? ySpan[1] : 1, yBrk.to));
+  const xSpan = xBrk.on ? spanOf(axisValues(xKey)) : null;
+  const xBrkLo = cMin !== null ? cMin : (xSpan ? xSpan[0] : zoom.domain[0]);
+  const xBrkHi = cMax !== null ? cMax : headroom(xBrkLo, Math.max(xSpan ? xSpan[1] : 1, xBrk.to));
+
+  const xTicks = xBrk.on
+    ? breakTicks(breakSegments(xBrk, xBrkLo, xBrkHi), xStep)
+    : (xStep ? numericTicks(xDomain[0], xDomain[1], xStep) : null);
+  const yTicks = yBrk.on
+    ? breakTicks(breakSegments(yBrk, yBrkLo, yBrkHi), yStep)
+    : (yStep && yMin !== null && yMax !== null ? numericTicks(yMin, yMax, yStep) : null);
+
+  /* The interrupted axis supplies its own concrete domain. */
+  const xDomainDraw = xBrk.on ? [xBrkLo, xBrkHi] : xDomain;
+  const yDomainDraw = yBrk.on ? [yBrkLo, yBrkHi] : yDomain;
 
   /* Series colours: per-curve colour → legacy colours[] → base-colour shades →
      rainbow → the colour the page passed in. */
@@ -1675,9 +1987,9 @@ export const SharedChart = ({
       key="x"
       type="number"
       dataKey={xKey}
-      domain={xDomain}
+      domain={xDomainDraw}
       allowDataOverflow
-      scale={xLog ? 'log' : 'auto'}
+      scale={xScale || (xLog ? 'log' : 'auto')}
       tick={tickPropsFor('x')}
       tickMargin={10}
       tickFormatter={cfgTickFormatter(cfg, 'x') || undefined}
@@ -1686,9 +1998,9 @@ export const SharedChart = ({
     />,
     <YAxis
       key="y"
-      domain={yDomain}
+      domain={yDomainDraw}
       allowDataOverflow
-      scale={yLog ? 'log' : 'auto'}
+      scale={yScale || (yLog ? 'log' : 'auto')}
       tick={tickPropsFor('y')}
       tickFormatter={cfgTickFormatter(cfg, 'y') || undefined}
       {...(yTicks ? { ticks: yTicks } : {})}
@@ -1720,7 +2032,11 @@ export const SharedChart = ({
           : undefined}
       />
     )),
-    ...makeSeries
+    ...makeSeries,
+    /* The interruption marks come LAST so the ✂ double slash stays visible over
+       the bars it explains. */
+    yBrk.on ? <AxisBreakMarks key="brk-y" brk={yBrk} axis="y" /> : null,
+    xBrk.on ? <AxisBreakMarks key="brk-x" brk={xBrk} axis="x" /> : null
   ];
 
   const h = useChartFsHeight(Number(cfg.height) || height);
@@ -1920,6 +2236,12 @@ export const cfgTickFormatter = (cfg = {}, axis = 'x') => {
  * the numbers (or, on the y axis, into them), and the numbers could reach the
  * edge of the chart. cfgChartMargin reserves exactly this room, so the title
  * stays inside the chart at every size.
+ *
+ * Two panel commands are honoured here:
+ *   • `xAxisLabelGap` / `yAxisLabelGap` push the title AWAY from the plot
+ *     (the `offset` above);
+ *   • `xAxisLabelMove` / `yAxisLabelMove` SLIDE it along its own axis — see
+ *     axisLabelMove, which is what keeps a rotated y title inside the canvas.
  *   cfg  -- style object (fontSize, tickAngle)
  *   axis -- 'x' | 'y'
  *   value-- label text
@@ -1929,6 +2251,7 @@ export const cfgAxisLabel = (cfg = {}, axis = 'x', value = '', base) => {
   const fs = Number(cfg.fontSize) || 16;
   const extra = Math.max(0, fs - 12) + (Math.abs(Number(cfg.tickAngle) || 0) > 0 ? 8 : 0);
   const gap = axisLabelGap(cfg, axis);
+  const move = axisLabelMove(cfg, axis);
   const offset = axis === 'x'
     // the x title is placed under the numbers (its cap height included)
     ? xAxisTitleOffset(fs, cfg.tickAngle, base ?? 25, extra, gap)
@@ -1946,9 +2269,13 @@ export const cfgAxisLabel = (cfg = {}, axis = 'x', value = '', base) => {
     ...(italic ? { fontStyle: 'italic' } : {})
   };
   if (axis === 'x') {
-    return { ...style, position: 'insideBottom', offset: -offset };
+    // `dx` slides the title along the x axis (recharts adds it to the label
+    // anchor BEFORE any rotation), `dy` does the same vertically for the
+    // rotated y title. Left out entirely at 0, so an untouched chart renders
+    // exactly the markup it used to.
+    return { ...style, position: 'insideBottom', offset: -offset, ...(move ? { dx: move } : {}) };
   }
-  return { ...style, angle: -90, position: 'insideLeft', offset: -offset };
+  return { ...style, angle: -90, position: 'insideLeft', offset: -offset, ...(move ? { dy: move } : {}) };
 };
 
 /**
@@ -1958,6 +2285,32 @@ export const cfgAxisLabel = (cfg = {}, axis = 'x', value = '', base) => {
  */
 const axisLabelGap = (cfg = {}, axis = 'x') => {
   const raw = axis === 'x' ? cfg.xAxisLabelGap : cfg.yAxisLabelGap;
+  if (raw === '' || raw === null || raw === undefined) return 0;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
+};
+
+/**
+ * MANUAL MOVE (px) of the axis title ALONG its own axis, from the panel
+ * controls `xAxisLabelMove` / `yAxisLabelMove` (positive = right for the x
+ * title, DOWN for the y one). Returns 0 when unset — nothing moves by default.
+ *
+ * Why this exists, next to the gap above: the y title is drawn ROTATED and
+ * recharts anchors it on the MIDDLE of the plot, the text running UPWARDS. The
+ * room a rotated title needs is therefore VERTICAL and equal to its own length
+ * ("Ellipticity (mdeg)" at 24 px is ~250 px), which neither cfgChartMargin
+ * (that reserves room ACROSS the axis) nor the gap can give back: as soon as
+ * the characters grow the top of the title leaves the chart box and there is no
+ * margin left to grow. Sliding the whole label down with `yAxisLabelMove` puts
+ * it back inside the graph whatever its length and character size — the panel
+ * keeps the title itself unchanged.
+ *
+ * recharts applies `dx` / `dy` to the label anchor point and only then
+ * `rotate(-90, x, y)` around it (Label → Text), so these are TRUE screen px:
+ * +Y moves down, −Y moves up, whatever the angle.
+ */
+const axisLabelMove = (cfg = {}, axis = 'x') => {
+  const raw = axis === 'x' ? cfg.xAxisLabelMove : cfg.yAxisLabelMove;
   if (raw === '' || raw === null || raw === undefined) return 0;
   const n = Number(raw);
   return Number.isFinite(n) ? n : 0;

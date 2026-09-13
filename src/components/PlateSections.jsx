@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { CollapsibleSection } from './TestShellRenderer';
-import { SharedGraphConfig, SharedErrorTreatment, ChartControlBar, ChartJsInspector } from './SharedAnalysisTools';
+import { SharedGraphConfig, SharedErrorTreatment, ChartControlBar, ChartJsInspector, useDeferredClick } from './SharedAnalysisTools';
 import {
     PLATES_DEF,
     formatConc,
@@ -20,6 +20,7 @@ import {
 } from '../data/constants';
 import { PLATE_PRESET_LABELS, PLATE_PRESET_COLORS, isPlatePreset, platePresetColor } from '../utils/platePresets';
 import { FS_CLASSES, OVERLAY_CLASSES, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, normalizeChartType, seriesVisible, seriesColorOf } from '../utils/chartStyle';
+import { brokenAxisScaleOptions } from '../utils/chartJsBrokenAxis';
 
 // Chart/style constants now live in ../utils/chartStyle.
 
@@ -65,6 +66,9 @@ export const ErrInput = ({ label, value, isOverridden, onSave, onReset }) => {
 function IndividualDoseResponseChart({ cd, chartCfg, isFs, onToggleFs, unit, eScale, setCfg = null }) {
     const ref = useRef(null);
     const chartRef = useRef(null);
+    // Single click = fullscreen, double click = edit: delay the single click so a
+    // double click on the small chart reaches the ChartJsInspector instead.
+    const clickCard = useDeferredClick(onToggleFs);
 
     useEffect(() => {
         if (!ref.current) return;
@@ -193,7 +197,7 @@ function IndividualDoseResponseChart({ cd, chartCfg, isFs, onToggleFs, unit, eSc
                     ? FS_CLASSES + ' p-6'
                     : 'relative aspect-square p-2 cursor-pointer hover:shadow-lg transition-shadow border border-slate-200 rounded-lg group'
             }`}
-            onClick={!isFs ? onToggleFs : undefined}
+            onClick={!isFs ? clickCard : undefined}
         >
             <div className="flex justify-between items-start mb-1 z-10">
                 <h4 className="text-xs font-bold text-slate-600 uppercase truncate w-[80%]">
@@ -218,7 +222,7 @@ function IndividualDoseResponseChart({ cd, chartCfg, isFs, onToggleFs, unit, eSc
             </div>
             <ChartJsInspector chartRef={chartRef} cfg={chartCfg} setCfg={setCfg} unit={unit}
                 series={[{ key: cd.name, label: cd.name, color: cd.color }]}
-                className={`flex-1 relative min-h-0 ${!isFs ? 'pointer-events-none' : ''}`}>
+                className="flex-1 relative min-h-0">
                 <canvas ref={ref} />
             </ChartJsInspector>
         </div>
@@ -414,6 +418,9 @@ export function RegionCharts({ regionName, regionData, config }) {
                       scales: {
                           y: {
                               beginAtZero: true,
+                              // ✂ "Interrupt Y axis" of the 🎨 panel: an IC50 histogram
+                              // can hold one compound 100× the others.
+                              ...brokenAxisScaleOptions(chartCfg, 'y'),
                               title: {
                                   display: true,
                                   text: `IC50 (${unit})`,

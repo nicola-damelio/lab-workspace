@@ -3,7 +3,7 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, ReferenceArea
 } from 'recharts';
 import { Icon } from './Icons';
-import { ChartControlBar, SharedChartStylePanel, useXZoom, ChartPanel, CHART_FS_CLASSES, useChartFsHeight, AngledTick, cfgAxisLabel, cfgChartMargin } from './SharedAnalysisTools';
+import { ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps, useXZoom, ChartPanel, CHART_FS_CLASSES, useChartFsHeight, AngledTick, cfgAxisLabel, cfgChartMargin } from './SharedAnalysisTools';
 import { parseSimulationParameters } from './MDData';
 import {
   CONTACT_DEFAULTS, parseTopology, computeContactRDF, demoFrames,
@@ -1721,7 +1721,7 @@ export const MDDataSection = ({ ctx }) => {
 // ================= 3) ANALYSIS (RMSD / RMSF / Rg / SASA / Energy) =================
 const MD_CHART_M_ZOOM = { top: 10, right: 15, bottom: 45, left: 55 };
 
-const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color, cfg, yLabel, xLabel, chartType = 'line', id }) => {
+const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color, cfg, yLabel, xLabel, chartType = 'line', id, setCfg = null }) => {
   const fSize = cfg.fontSize || 12;
   const aspect = cfg.aspect || 1.8;
   const lineColor = color || '#3b82f6';
@@ -1735,6 +1735,8 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
   // drag-to-zoom pixel → value mapping so zooming stays accurate.
   const effMargin = cfgChartMargin(cfg, MD_CHART_M_ZOOM);
   const zoom = useXZoom(chartRef, dataDomain, effMargin);
+  // Interrupted Y axis (✂ in the panel): one residue / frame can dwarf the rest.
+  const brk = brokenAxisProps(cfg, 'y', data.map((d) => d[dataKey]), { log: !!cfg.yLog, min: cfg.yMin, max: cfg.yMax });
 
   return (
     <div id={id} className="bg-white rounded-lg border border-slate-200 p-2 flex flex-col relative">
@@ -1744,14 +1746,18 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
           <button type="button" onClick={zoom.reset} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>
         )}
       </div>
-      <div ref={chartRef} onMouseDown={chartType !== 'bar' ? zoom.onMouseDown : undefined} className="flex-1 w-full select-none" style={{ aspectRatio: String(aspect), minHeight: 200 }}>
+      <ChartInspector containerRef={chartRef} containerProps={{ onMouseDown: chartType !== 'bar' ? zoom.onMouseDown : undefined }}
+        cfg={cfg} setCfg={setCfg}
+        series={[{ key: dataKey, label: yLabel || title, color: lineColor }]} unit={yLabel}
+        className="flex-1 w-full select-none" style={{ aspectRatio: String(aspect), minHeight: 200 }}>
         <ResponsiveContainer width="100%" height="100%">
           {chartType === 'bar' ? (
             <BarChart data={data} margin={effMargin}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey={xKey} interval={0} tick={<AngledTick angle={cfg.tickAngle} fontSize={fSize} edgeAnchor={false} />} tickMargin={10} label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'x', xLabel)} />
-              <YAxis width={70} tick={{ fontSize: fSize }} label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'y', yLabel)} />
+              <YAxis {...brk.axisProps} width={70} tick={{ fontSize: fSize }} label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'y', yLabel)} />
               <Tooltip />
+              {brk.marks}
               <Bar dataKey={dataKey} isAnimationActive={false}>
                 {data.map((entry, index) => <Cell key={index} fill={entry.fill || lineColor} />)}
               </Bar>
@@ -1761,15 +1767,16 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey={xKey} type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow tick={<AngledTick angle={cfg.tickAngle} fontSize={fSize} />} tickMargin={10}
                 label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'x', xLabel)} />
-              <YAxis type="number" width={70} domain={[mdDom(cfg.yMin) ?? 'auto', mdDom(cfg.yMax) ?? 'auto']} tick={{ fontSize: fSize }}
+              <YAxis type="number" width={70} {...brk.axisProps} domain={brk.on ? brk.axisProps.domain : [mdDom(cfg.yMin) ?? 'auto', mdDom(cfg.yMax) ?? 'auto']} tick={{ fontSize: fSize }}
                 label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'y', yLabel)} />
               <Tooltip />
               <Line type="monotone" dataKey={dataKey} stroke={lineColor} strokeWidth={cfg.lineThickness || 2} strokeDasharray={mdLineDash(cfg.lineStyle)} dot={false} isAnimationActive={false} />
               {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
+              {brk.marks}
             </LineChart>
           )}
         </ResponsiveContainer>
-      </div>
+      </ChartInspector>
     </div>
   );
 };
@@ -1813,6 +1820,8 @@ const MDPerAtomChartPanel = ({ d, chart, updateChart, removeChart }) => {
   const chartData = Object.values(residueMap).filter(r => Object.keys(r).length > 1);
   const filtered = d.atomOptions.filter(o => !atomSearch.trim() || o.label.toLowerCase().includes(atomSearch.toLowerCase()));
   const toggleAtom = (k) => setC({ atoms: atoms.includes(k) ? atoms.filter(a => a !== k) : [...atoms, k] });
+  // ✂ interrupted Y axis: one atom can dwarf all the others.
+  const brkAtom = brokenAxisProps(cfg, 'y', chartData.flatMap(r => atomMeta.map(m => r[m.key])), { min: cfg.yMin, max: cfg.yMax });
 
   return (
     <div className={`bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3 ${isFs ? CHART_FS_CLASSES : ''}`}>
@@ -1856,16 +1865,22 @@ const MDPerAtomChartPanel = ({ d, chart, updateChart, removeChart }) => {
         )}
       </div>
       {chartData.length > 0 ? (
-        <ResponsiveContainer width="100%" aspect={cfg.aspect}>
-          <BarChart data={chartData} margin={cfgChartMargin(cfg, { top: 8, right: 8, bottom: 16, left: 8 })}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="label" tick={{ fontSize: cfg.fontSize }} />
-            <YAxis tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'y', layer?.unit || '', 4)} />
-            <Tooltip />
-            <Legend wrapperStyle={{ fontSize: cfg.fontSize }} />
-            {atomMeta.map(m => <Bar key={m.key} dataKey={m.key} name={m.label} fill={m.color} isAnimationActive={false} />)}
-          </BarChart>
-        </ResponsiveContainer>
+        <ChartInspector cfg={cfg} setCfg={setCfg}
+          series={atomMeta.map(m => ({ key: m.key, label: m.label, color: m.color }))}
+          unit={layer?.unit}
+          className="w-full">
+          <ResponsiveContainer width="100%" aspect={cfg.aspect}>
+            <BarChart data={chartData} margin={cfgChartMargin(cfg, { top: 8, right: 8, bottom: 16, left: 8 })}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: cfg.fontSize }} />
+              <YAxis {...brkAtom.axisProps} tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'y', layer?.unit || '', 4)} />
+              <Tooltip />
+              {brkAtom.marks}
+              <Legend wrapperStyle={{ fontSize: cfg.fontSize }} />
+              {atomMeta.map(m => <Bar key={m.key} dataKey={m.key} name={m.label} fill={m.color} isAnimationActive={false} />)}
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartInspector>
       ) : (
         <div className="bg-slate-50 border border-dashed border-slate-200 rounded-lg p-4 text-center text-xs text-slate-400">
           {atoms.length === 0 ? 'Select atoms above to plot.' : 'No data for selected atoms in this layer.'}
@@ -1949,6 +1964,8 @@ const MDConditionPlotPanel = ({ d, chart, updateChart, removeChart, activeTest }
       pts,
     };
   }).filter(s => s.pts.length > 0);
+  // ✂ interrupted Y axis for the condition plots.
+  const brkCond = brokenAxisProps(cfg, 'y', series.flatMap(s => s.pts.map(p => p.y)), { min: cfg.yMin, max: cfg.yMax });
 
   return (
     <div className={`bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3 ${isFs ? CHART_FS_CLASSES : ''}`}>
@@ -1992,19 +2009,25 @@ const MDConditionPlotPanel = ({ d, chart, updateChart, removeChart, activeTest }
         </div>
       </div>
       {series.length > 0 ? (
-        <ResponsiveContainer width="100%" aspect={cfg.aspect}>
-          <LineChart margin={cfgChartMargin(cfg, { top: 8, right: 16, bottom: 24, left: 16 })}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="x" type="number" allowDuplicatedCategory={false} tick={{ fontSize: cfg.fontSize }}
-              label={cfgAxisLabel(cfg, 'x', MD_COND_FIELDS.find(f => f.key === xField)?.label || xField, 10)} />
-            <YAxis tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'y', layer?.unit || '', 4)} />
-            <Tooltip />
-            <Legend wrapperStyle={{ fontSize: cfg.fontSize }} />
-            {series.map(s => (
-              <Line key={s.key} data={s.pts} dataKey="y" name={s.label} stroke={s.color} strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} />
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
+        <ChartInspector cfg={cfg} setCfg={setCfg}
+          series={series.map(s => ({ key: s.key, label: s.label, color: s.color }))}
+          unit={layer?.unit}
+          className="w-full">
+          <ResponsiveContainer width="100%" aspect={cfg.aspect}>
+            <LineChart margin={cfgChartMargin(cfg, { top: 8, right: 16, bottom: 24, left: 16 })}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="x" type="number" allowDuplicatedCategory={false} tick={{ fontSize: cfg.fontSize }}
+                label={cfgAxisLabel(cfg, 'x', MD_COND_FIELDS.find(f => f.key === xField)?.label || xField, 10)} />
+              <YAxis {...brkCond.axisProps} tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'y', layer?.unit || '', 4)} />
+              <Tooltip />
+              {brkCond.marks}
+              <Legend wrapperStyle={{ fontSize: cfg.fontSize }} />
+              {series.map(s => (
+                <Line key={s.key} data={s.pts} dataKey="y" name={s.label} stroke={s.color} strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </ChartInspector>
       ) : (
         <div className="bg-slate-50 border border-dashed border-slate-200 rounded-lg p-4 text-center text-xs text-slate-400">
           {atoms.length === 0 ? 'Select atoms above.' : d.instances.length < 2 ? 'Add multiple simulation instances with different conditions to compare.' : 'No numeric data for selected atoms across instances.'}
@@ -2179,6 +2202,8 @@ export const MDAnalysisSection = ({ ctx }) => {
   const rg = useMemo(() => downsampleSeries(calcData?.rg || []), [calcData]);
   const sasa = useMemo(() => downsampleSeries(calcData?.sasa || []), [calcData]);
   const energy = useMemo(() => downsampleSeries(energyData || []), [energyData]);
+  // ✂ interrupted Y axis for the energy curves (potential vs kinetic differ a lot).
+  const brkEnergy = brokenAxisProps(cfg, 'y', energy.flatMap((e) => [e.potential, e.kinetic, e.total]).map(Number), { min: cfg.yMin, max: cfg.yMax });
 
   return (
     <div className={`flex flex-col gap-4 ${isFs ? CHART_FS_CLASSES : ''}`}>
@@ -2285,10 +2310,10 @@ export const MDAnalysisSection = ({ ctx }) => {
         <div className="text-center py-8 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed">Enter a sequence in Experiment Setup to enable trajectory charts.</div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <MDAnalysisChart id="md-rmsd" title="RMSD (backbone)" data={rmsd} cfg={cfg} color="#3b82f6" yLabel="nm" xLabel="Time (ns)" />
-          <MDAnalysisChart id="md-rmsf" title="RMSF per residue" data={rmsf} xKey="residue" cfg={cfg} color="#3b82f6" yLabel="nm" xLabel="Residue" chartType="bar" />
-          <MDAnalysisChart id="md-rg" title="Radius of Gyration (Rg)" data={rg} cfg={cfg} color="#22c55e" yLabel="nm" xLabel="Time (ns)" />
-          <MDAnalysisChart id="md-sasa" title="SASA" data={sasa} cfg={cfg} color="#f59e0b" yLabel="nm²" xLabel="Time (ns)" />
+          <MDAnalysisChart id="md-rmsd" title="RMSD (backbone)" data={rmsd} cfg={cfg} setCfg={setCfg} color="#3b82f6" yLabel="nm" xLabel="Time (ns)" />
+          <MDAnalysisChart id="md-rmsf" title="RMSF per residue" data={rmsf} xKey="residue" cfg={cfg} setCfg={setCfg} color="#3b82f6" yLabel="nm" xLabel="Residue" chartType="bar" />
+          <MDAnalysisChart id="md-rg" title="Radius of Gyration (Rg)" data={rg} cfg={cfg} setCfg={setCfg} color="#22c55e" yLabel="nm" xLabel="Time (ns)" />
+          <MDAnalysisChart id="md-sasa" title="SASA" data={sasa} cfg={cfg} setCfg={setCfg} color="#f59e0b" yLabel="nm²" xLabel="Time (ns)" />
         </div>
       )}
       
@@ -2300,20 +2325,23 @@ export const MDAnalysisSection = ({ ctx }) => {
               XTC/TRR trajectories carry no energies — load a <code>gmx energy -o</code> output (.xvg/.dat) above to plot them.
             </div>
           )}
-          <div style={{ height: 250 }}>
+          <ChartInspector cfg={cfg} setCfg={setCfg}
+            series={[{ key: 'potential', label: 'Potential' }, { key: 'kinetic', label: 'Kinetic' }, { key: 'total', label: 'Total' }]}
+            unit="kJ/mol" className="w-full" style={{ height: 250 }}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={energy} margin={cfgChartMargin({ ...cfg, fontSize: cfg.fontSize || 12 }, { top: 5, right: 10, bottom: 25, left: 10 })}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="time" tick={<AngledTick angle={cfg.tickAngle} fontSize={10} />} tickMargin={10} />
-                <YAxis tick={{ fontSize: 10 }} />
+                <YAxis {...brkEnergy.axisProps} tick={{ fontSize: 10 }} />
                 <Tooltip />
+                {brkEnergy.marks}
                 <Legend verticalAlign="top" wrapperStyle={{ fontSize: 10 }} />
                 <Line type="monotone" dataKey="potential" stroke="#ef4444" strokeWidth={1.5} dot={false} isAnimationActive={false} />
                 <Line type="monotone" dataKey="kinetic" stroke="#3b82f6" strokeWidth={1.5} dot={false} isAnimationActive={false} />
                 <Line type="monotone" dataKey="total" stroke="#22c55e" strokeWidth={1.5} dot={false} isAnimationActive={false} />
               </LineChart>
             </ResponsiveContainer>
-          </div>
+          </ChartInspector>
         </div>
       )}
 

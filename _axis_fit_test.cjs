@@ -106,6 +106,40 @@ const cfgChartMargin = (cfg = {}, base = { top: 20, right: 20, bottom: 45, left:
     left: Math.max((base.left ?? 50) + extra * 2.2, yNeed)
   };
 };
+// ── mirror: SharedAnalysisTools.jsx — the ALONG-AXIS move of a title ────────
+// cfgAxisLabel turns the panel commands `xAxisLabelMove` / `yAxisLabelMove` into
+// the recharts `dx` / `dy` of the label. recharts adds dx / dy to the label
+// ANCHOR and only then rotates it (Label → Text: rotate(-90, x, y)), so a
+// positive Y move really slides the rotated y title DOWN by that many px.
+const axisLabelMoveOf = (cfg, axis) => {
+  const raw = axis === 'x' ? cfg.xAxisLabelMove : cfg.yAxisLabelMove;
+  if (raw === '' || raw === null || raw === undefined) return 0;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
+};
+const cfgAxisLabelProps = (cfg, axis = 'x', base) => {
+  const f = Number(cfg.fontSize) || 16;
+  const extra = extraOf(f, cfg.tickAngle);
+  const gap = axisLabelGapOf(cfg, axis);
+  const move = axisLabelMoveOf(cfg, axis);
+  const offset = axis === 'x'
+    ? xAxisTitleOffset(f, cfg.tickAngle, base ?? 25, extra, gap)
+    : Math.max((base ?? 20) + extra * 1.6, yAxisTitleOffset(f)) + gap;
+  return axis === 'x'
+    ? { position: 'insideBottom', offset: -offset, ...(move ? { dx: move } : {}) }
+    : { angle: -90, position: 'insideLeft', offset: -offset, ...(move ? { dy: move } : {}) };
+};
+// ── mirror: src/utils/chartStyle.js (axisTitleRoomPx / chartBoxStyle) ───────
+const AVG_GLYPH = 0.55;
+const textWidthPx = (text, fontSize) =>
+  String(text == null ? '' : text).length * (Number(fontSize) || 12) * AVG_GLYPH;
+const axisTitleRoomPx = (texts, fontSize) => {
+  const list = (Array.isArray(texts) ? texts : [texts]).filter(Boolean);
+  if (!list.length) return 0;
+  return Math.round(Math.max(...list.map((t) => textWidthPx(t, (Number(fontSize) || 16) + 1))));
+};
+const chartBoxHeight = (yTitle, fontSize, requested = 380) =>
+  Math.max(220, axisTitleRoomPx([yTitle], fontSize) + 120, requested);
 // the pre-fix versions, to document what used to happen
 const OLD_xTitleOffset = (f, angle, base = 25) => base + extraOf(f, angle) * 1.6;
 const OLD_marginBottom = (f) => 45 + Math.max(0, f - 12) * 2.2;
@@ -246,7 +280,66 @@ checkBool('a big y gap pushes the y title out and widens the left margin',
   && Math.abs(cfgAxisLabelOffset({ fontSize: 16, yAxisLabelGap: 60 }, 'y') - cfgAxisLabelOffset({ fontSize: 16 }, 'y') - 60) < 1e-9);
 
 /* ══════════════════════════════════════════════════════════════════════════
-   5) SOURCE CHECKS — the shared helpers really are the ones in use
+   5) THE TITLE CAN BE MOVED ALONG ITS OWN AXIS — "the y label still falls out
+      of the canvas when the characters are large"
+   ══════════════════════════════════════════════════════════════════════════ */
+// Nothing moves unless the command is used: the extra props are ABSENT at 0, so
+// every chart that does not ask for a move renders exactly the old markup.
+checkBool('an untouched y title carries no dy', cfgAxisLabelProps({ fontSize: 16 }, 'y').dy === undefined);
+checkBool('an untouched x title carries no dx', cfgAxisLabelProps({ fontSize: 16 }, 'x').dx === undefined);
+check('a positive Y move slides the rotated title DOWN', cfgAxisLabelProps({ fontSize: 16, yAxisLabelMove: 60 }, 'y').dy, 60);
+check('a negative Y move slides it UP', cfgAxisLabelProps({ fontSize: 16, yAxisLabelMove: -35 }, 'y').dy, -35);
+check('…and the x title takes its own command', cfgAxisLabelProps({ fontSize: 16, xAxisLabelMove: 12 }, 'x').dx, 12);
+// The move is ALONG the axis: the y title is vertical, the x one horizontal —
+// never the other way round.
+checkBool('the y title is moved vertically (dy, not dx)',
+  cfgAxisLabelProps({ yAxisLabelMove: 40 }, 'y').dx === undefined);
+checkBool('the x title is moved horizontally (dx, not dy)',
+  cfgAxisLabelProps({ xAxisLabelMove: 40 }, 'x').dy === undefined);
+// An empty box / junk never moves anything.
+checkBool('an empty or junk command means no move',
+  ['', 'abc', null, undefined].every((v) => cfgAxisLabelProps({ yAxisLabelMove: v }, 'y').dy === undefined));
+// Moving along the axis needs no room ACROSS it: the margins (and the distance
+// to the plot the gap controls) are exactly the ones without the command.
+checkBool('the move does not touch the margins',
+  JSON.stringify(cfgChartMargin({ fontSize: 24, yAxisLabelMove: 300 })) === JSON.stringify(cfgChartMargin({ fontSize: 24 }))
+  && JSON.stringify(cfgChartMargin({ fontSize: 24, xAxisLabelMove: 300 })) === JSON.stringify(cfgChartMargin({ fontSize: 24 })));
+checkBool('…nor the gap (the only command that pushes the title away)',
+  cfgAxisLabelOffset({ fontSize: 24, yAxisLabelMove: 300 }, 'y') === cfgAxisLabelOffset({ fontSize: 24 }, 'y')
+  && cfgAxisLabelProps({ fontSize: 24, yAxisLabelMove: 300 }, 'y').offset === cfgAxisLabelProps({ fontSize: 24 }, 'y').offset);
+
+// THE REPORTED BUG, measured on a real chart box: the rotated y title is
+// anchored on the middle of the plot and runs UP, so at 24 px the 20-character
+// "Ellipticity (mdeg)" needs ~275 px and its top leaves the box even though the
+// box already grew with the title (chartBoxStyle). No margin can follow it —
+// the label has to be moved.
+const CHART_TOP = 20;                                   // CHART_MARGIN.top
+const CHART_BOTTOM = 45;                                // CHART_MARGIN.bottom
+const titleLength = (yTitle, fs) => axisTitleRoomPx([yTitle], fs);
+const boxTopOfTitle = (yTitle, fs, requested) => {
+  const h = chartBoxHeight(yTitle, fs, requested);
+  const plotH = h - CHART_TOP - CHART_BOTTOM;
+  return CHART_TOP + plotH / 2 - titleLength(yTitle, fs);   // < 0 = inside the box
+};
+const LONG_TITLE = 'Ellipticity (mdeg)';
+checkBool('OLD: the 24 px y title really leaves the top of its box', boxTopOfTitle(LONG_TITLE, 24) < 0);
+checkBool('OLD: the box the panel sizes for it (380 px + the title room) is still too short',
+  chartBoxHeight(LONG_TITLE, 24) === 380 && boxTopOfTitle(LONG_TITLE, 24) < 0);
+const needed24 = Math.round(-boxTopOfTitle(LONG_TITLE, 24));
+checkBool('the move command parks it back inside exactly',
+  needed24 > 0 && boxTopOfTitle(LONG_TITLE, 24) + needed24 >= 0
+  && cfgAxisLabelProps({ fontSize: 24, yAxisLabelMove: needed24 }, 'y').dy === needed24);
+// Whatever the character size, the command covers the whole overflow…
+[16, 20, 24, 32, 40, 48].forEach((fs) => {
+  const need = Math.round(-boxTopOfTitle(LONG_TITLE, fs));
+  checkBool(`${fs} px: the move can bring the title inside`,
+    need <= 0 || boxTopOfTitle(LONG_TITLE, fs) + cfgAxisLabelProps({ fontSize: fs, yAxisLabelMove: need }, 'y').dy >= 0);
+});
+// …and a title that already fits is left alone (0 = "no move", not a clamp).
+checkBool('a 12 px title needs no move', Math.round(-boxTopOfTitle(LONG_TITLE, 12)) <= 0);
+
+/* ══════════════════════════════════════════════════════════════════════════
+   6) SOURCE CHECKS — the shared helpers really are the ones in use
    ══════════════════════════════════════════════════════════════════════════ */
 frag('[SharedAnalysisTools] extent helper', 'export const xTickNumberExtent = (fontSize, tickAngle = 0) => {');
 frag('[SharedAnalysisTools] y number band helper', 'export const yTickNumberBand = (fontSize, gutter = Y_AXIS_GUTTER) =>');
@@ -258,6 +351,13 @@ frag('[SharedAnalysisTools] AngledTick anchors the ends', 'const edge = a === 0 
 frag('[SharedAnalysisTools] the y title clears the numbers', ': Math.max((base ?? 20) + extra * 1.6, yAxisTitleOffset(fs)) + gap;');
 frag('[SharedAnalysisTools] the bottom margin honours the geometry', 'bottom: Math.max((base.bottom ?? 45) + extra * 2.2, xNeed),');
 frag('[SharedAnalysisTools] the left margin too', 'left: Math.max((base.left ?? 50) + extra * 2.2, yNeed)');
+frag('[SharedAnalysisTools] the along-axis move reader', "const axisLabelMove = (cfg = {}, axis = 'x') => {");
+frag('[SharedAnalysisTools] the y title takes the move as dy', '...(move ? { dy: move } : {})');
+frag('[SharedAnalysisTools] the x title takes it as dx', '...(move ? { dx: move } : {})');
+frag('[SharedAnalysisTools] the move is read by cfgAxisLabel', 'const move = axisLabelMove(cfg, axis);');
+frag('[SharedAnalysisTools] the panel writes the y move', 'set({ yAxisLabelMove: v })');
+frag('[SharedAnalysisTools] …and its x twin', 'set({ xAxisLabelMove: v })');
+frag('[SharedAnalysisTools] the control is offered in the title views', "'xGap', 'xMove', 'yGap', 'yMove'");
 // Band axes (bar charts) keep the centred labels over their bars; the numeric
 // axes of the spectra do get the extreme-anchor treatment.
 const CD = fs.readFileSync(path.join(ROOT, 'src/components/CDSections.jsx'), 'utf8');

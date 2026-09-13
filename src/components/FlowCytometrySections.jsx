@@ -5,7 +5,7 @@ import { uploadLocalFile, withExtension, getDriveToken, getDriveFileRegistry, dr
 import { saveFcsFile, loadFcsFile, removeFcsFile } from '../utils/fcsBlobStore';
 import { PLATE_PRESET_LABELS, PLATE_PRESET_COLORS, isPlatePreset, platePresetColor } from '../utils/platePresets';
 import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Line, ComposedChart, Area, ReferenceArea} from 'recharts';
-import { ChartControlBar, SharedChartStylePanel, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
+import { ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES, seriesColorFor } from '../utils/chartStyle';
 import { PLATES_DEF, formatConc, getRegionColor } from '../data/constants';
@@ -823,6 +823,10 @@ export const FCSOverlayVisualization = ({ ctx }) => {
 
   const label1D = getParamLabel({name: overlayParam}, panelArray, paramRenames);
 
+  // Interrupted Y axis (✂ in the 🎨 panel): one bin of the histogram can hold
+  // 100× the events of the others — this keeps both readable.
+  const brkAna = brokenAxisProps(cfgAna, 'y', loadedInstances.flatMap(s => chartData.bins.map(b => b[s.id])), { log: !!cfgAna.yLog, min: cfgAna.yMin, max: cfgAna.yMax });
+
   return (
     <>
       {fs && <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[99990]" onClick={() => setFs(false)} />}
@@ -883,15 +887,23 @@ export const FCSOverlayVisualization = ({ ctx }) => {
         {showCfg && <SharedChartStylePanel cfg={cfgAna} setCfg={setVizCfgAna} series={visibleInstances.map(s => ({ key: s.id, label: s.name, color: s.color }))} unit="a.u." />}
         
         <div className={`${fs ? 'flex-1 min-h-0' : ''} ${splitStack ? 'flex flex-col lg:flex-row gap-3' : ''}`}>
-          <div ref={chartRef} onMouseDown={zoom.onMouseDown} className={`bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair min-w-0 ${fs ? 'flex-1 min-h-0' : splitStack ? 'lg:w-[54%]' : 'w-full'}`}
-               style={!fs ? { aspectRatio: String(Number(cfgAna.aspect) || 1), maxHeight: `min(${Number(cfgAna.height) || 380}px, 55vh)` } : undefined}>
+          <ChartInspector
+            containerRef={chartRef}
+            containerProps={{ onMouseDown: zoom.onMouseDown }}
+            cfg={cfgAna}
+            setCfg={setVizCfgAna}
+            series={visibleInstances.map(s => ({ key: s.id, label: s.name, color: s.color }))}
+            unit="a.u."
+            title="Double-click the plot, an axis, a label or a curve to edit it"
+            className={`bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair min-w-0 ${fs ? 'flex-1 min-h-0' : splitStack ? 'lg:w-[54%]' : 'w-full'}`}
+            style={!fs ? { aspectRatio: String(Number(cfgAna.aspect) || 1), maxHeight: `min(${Number(cfgAna.height) || 380}px, 55vh)` } : undefined}>
             {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
             {cfgAna.title && <div className="text-sm font-bold text-slate-700 mb-1">{cfgAna.title}</div>}
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={chartData.bins} margin={cfgChartMargin(cfgAna, { top: 10, right: 20, left: 75, bottom: 45 })}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow ticks={cfgAxisTicks(cfgAna, 'x', zoom.domain)} tickFormatter={cfgTickFormatter(cfgAna, 'x') || ((v) => v.toFixed(logScale ? 1 : 0))} tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} label={cfgAxisLabel(cfgAna, 'x', `${label1D}${logScale ? ' (Log)' : ''}`, 10)} />
-                <YAxis tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} scale={cfgLogScale(cfgAna, 'y')} tickFormatter={cfgTickFormatter(cfgAna, 'y') || undefined} ticks={cfgAna.yMin !== '' && cfgAna.yMin != null && cfgAna.yMax !== '' && cfgAna.yMax != null ? cfgAxisTicks(cfgAna, 'y', [Number(cfgAna.yMin), Number(cfgAna.yMax)]) : undefined} label={cfgAxisLabel(cfgAna, 'y', cfgAna.yAxisLabel || 'Count', 5)} />
+                <YAxis {...brkAna.axisProps} tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} scale={brkAna.on ? brkAna.axisProps.scale : cfgLogScale(cfgAna, 'y')} tickFormatter={cfgTickFormatter(cfgAna, 'y') || undefined} ticks={brkAna.on ? brkAna.axisProps.ticks : (cfgAna.yMin !== '' && cfgAna.yMin != null && cfgAna.yMax !== '' && cfgAna.yMax != null ? cfgAxisTicks(cfgAna, 'y', [Number(cfgAna.yMin), Number(cfgAna.yMax)]) : undefined)} label={cfgAxisLabel(cfgAna, 'y', cfgAna.yAxisLabel || 'Count', 5)} />
                 <Tooltip labelFormatter={(label) => `Value: ${Number(label).toFixed(logScale ? 2 : 0)}`} formatter={(value) => [value, 'Events']} />
                 {visibleInstances.map(s => {
                   const color = cfgAna.colors?.[s.id] || s.color;
@@ -905,9 +917,10 @@ export const FCSOverlayVisualization = ({ ctx }) => {
                   );
                 })}
                 {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
+                {brkAna.marks}
               </ComposedChart>
             </ResponsiveContainer>
-          </div>
+          </ChartInspector>
 
           {splitStack && (
             <div className={`flex flex-col gap-2 min-w-0 ${fs ? 'w-[46%]' : 'w-full lg:w-[46%]'}`}>
@@ -930,7 +943,9 @@ export const FCSOverlayVisualization = ({ ctx }) => {
                       <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
                       <span className="text-slate-700 truncate">{s.name}</span>
                     </div>
-                    <div className="w-1/2 mx-auto pb-1">
+                    <ChartInspector cfg={cfgSplit} setCfg={setVizCfgSplit}
+                      series={visibleInstances.map(x => ({ key: x.id, label: x.name, color: x.color }))} unit="a.u."
+                      className="w-1/2 mx-auto pb-1">
                       <ResponsiveContainer width="100%" height={Number(cfgSplit.height) || 80}>
                         <ComposedChart data={chartData.bins} margin={cfgChartMargin(cfgSplit, { top: 2, right: 4, left: 0, bottom: 0 })}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -941,7 +956,7 @@ export const FCSOverlayVisualization = ({ ctx }) => {
                           {smoothHist && <Line type="monotone" dataKey={s.id + '_sm'} name={`${s.name} (smooth)`} stroke={cfgSplit.colors?.[s.id] || s.color} strokeWidth={cfgSplit.lineThickness || 2} strokeDasharray={cfgSplit.lineStyle === 'dashed' ? '7 5' : cfgSplit.lineStyle === 'dotted' ? '2 3' : undefined} dot={false} isAnimationActive={false} />}
                         </ComposedChart>
                       </ResponsiveContainer>
-                    </div>
+                    </ChartInspector>
                   </div>
                 ))}
               </div>
@@ -1302,6 +1317,9 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
   const labelX2D = getParamLabel({name: xParam2D}, panelArray, paramRenames);
   const labelY2D = getParamLabel({name: yParam2D}, panelArray, paramRenames);
 
+  // Interrupted Y axis (✂ in the 🎨 panel) of the 1D histogram.
+  const brk1D = brokenAxisProps(cfg1D, 'y', loadedInstances.flatMap(s => chartData1D.bins.map(b => b[s.id])), { log: !!cfg1D.yLog, min: cfg1D.yMin, max: cfg1D.yMax });
+
   return (
     <div className="flex flex-col gap-4 mt-2 w-full">
       <div className="flex flex-col gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200 shadow-sm">
@@ -1501,21 +1519,30 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
             
             {showCfg1D && <SharedChartStylePanel cfg={cfg1D} setCfg={setVizCfg1D} series={visibleInstances.map(s => ({ key: s.id, label: s.name, color: s.color }))} unit="a.u." />}
             
-            <div ref={chartRef1D} onMouseDown={zoom1D.onMouseDown} className={`bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair w-full ${fs1D ? 'flex-1 min-h-0' : ''}`}
-                 style={!fs1D ? { height: Math.min(Number(cfg1D.height) || 300, 560) } : undefined}>
+            <ChartInspector
+              containerRef={chartRef1D}
+              containerProps={{ onMouseDown: zoom1D.onMouseDown }}
+              cfg={cfg1D}
+              setCfg={setVizCfg1D}
+              series={visibleInstances.map(s => ({ key: s.id, label: s.name, color: s.color }))}
+              unit="a.u."
+              title="Double-click the plot, an axis, a label or a curve to edit it"
+              className={`bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair w-full ${fs1D ? 'flex-1 min-h-0' : ''}`}
+              style={!fs1D ? { height: Math.min(Number(cfg1D.height) || 300, 560) } : undefined}>
               {zoom1D.isZoomed && <button type="button" onClick={zoom1D.reset} className="absolute top-2 right-2 z-10 text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
               {cfg1D.title && <div className="text-sm font-bold text-slate-700 mb-1">{cfg1D.title}</div>}
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={chartData1D.bins} margin={cfgChartMargin(cfg1D, { top: 10, right: 20, left: 75, bottom: 45 })}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                   <XAxis dataKey="x" type="number" domain={histDomain} allowDataOverflow ticks={cfgAxisTicks(cfg1D, 'x', histDomain)} tickFormatter={cfgTickFormatter(cfg1D, 'x') || ((v) => v.toFixed(log1D ? 1 : 0))} tick={{ fontSize: Math.max(9, cfg1D.fontSize - 2) }} label={cfgAxisLabel(cfg1D, 'x', `${label1D}${log1D ? ' (Log)' : ''}`, 10)} />
-                  <YAxis tick={{ fontSize: Math.max(9, cfg1D.fontSize - 2) }} scale={cfgLogScale(cfg1D, 'y')} tickFormatter={cfgTickFormatter(cfg1D, 'y') || undefined} ticks={cfg1D.yMin !== '' && cfg1D.yMin != null && cfg1D.yMax !== '' && cfg1D.yMax != null ? cfgAxisTicks(cfg1D, 'y', [Number(cfg1D.yMin), Number(cfg1D.yMax)]) : undefined} label={cfgAxisLabel(cfg1D, 'y', cfg1D.yAxisLabel || 'Count', 5)} />
+                  <YAxis {...brk1D.axisProps} tick={{ fontSize: Math.max(9, cfg1D.fontSize - 2) }} scale={brk1D.on ? brk1D.axisProps.scale : cfgLogScale(cfg1D, 'y')} tickFormatter={cfgTickFormatter(cfg1D, 'y') || undefined} ticks={brk1D.on ? brk1D.axisProps.ticks : (cfg1D.yMin !== '' && cfg1D.yMin != null && cfg1D.yMax !== '' && cfg1D.yMax != null ? cfgAxisTicks(cfg1D, 'y', [Number(cfg1D.yMin), Number(cfg1D.yMax)]) : undefined)} label={cfgAxisLabel(cfg1D, 'y', cfg1D.yAxisLabel || 'Count', 5)} />
                   <Tooltip labelFormatter={(label) => `Value: ${Number(label).toFixed(log1D ? 2 : 0)}`} formatter={(value) => [value, 'Events']} />
                   {visibleInstances.map(s => cfgSeriesEl(cfg1D, { key: s.id, data: chartData1D.bins, dataKey: s.id, name: s.name, stroke: cfg1D.colors?.[s.id] || s.color }))}
                   {zoom1D.refLo !== null && zoom1D.refHi !== null && <ReferenceArea x1={zoom1D.refLo} x2={zoom1D.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
+                  {brk1D.marks}
                 </ComposedChart>
               </ResponsiveContainer>
-            </div>
+            </ChartInspector>
           </div>
         </>
 
@@ -3211,6 +3238,8 @@ export const DataAnalysis = ({ ctx }) => {
   const cfgFreq = { ...DEFAULT_CHART_STYLE, ...vizCfgFreq };
   const [fsFreq, setFsFreq] = useState(false);
   const [showCfgFreq, setShowCfgFreq] = useState(false);
+  // Interrupted Y axis for the frequency bars (one population can dwarf the rest).
+  const brkFreq = brokenAxisProps(cfgFreq, 'y', chartData.map(c => c.value), { log: !!cfgFreq.yLog, min: cfgFreq.yMin, max: cfgFreq.yMax });
 
   // Restore the in-memory FCS cache when the test is (re)opened — the payload
   // copy first (small files), then the IndexedDB copy for files too large for
@@ -3242,19 +3271,22 @@ export const DataAnalysis = ({ ctx }) => {
               </div>
             </div>
             {showCfgFreq && <SharedChartStylePanel cfg={cfgFreq} setCfg={setVizCfgFreq} series={chartData.map(c => ({key: c.name, label: c.name, color: c.fill}))} unit="%" />  }
-            <div className={`relative ${fsFreq ? 'flex-1 min-h-0' : 'h-[300px]'}`}>
+            <ChartInspector cfg={cfgFreq} setCfg={setVizCfgFreq}
+              series={chartData.map(c => ({ key: c.name, label: c.name, color: c.fill }))} unit="%"
+              className={`relative ${fsFreq ? 'flex-1 min-h-0' : 'h-[300px]'}`}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartData} margin={cfgChartMargin(cfgFreq, { top: 20, right: 30, left: 20, bottom: 50 })}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                   <XAxis dataKey="name" tick={{ fontSize: Math.max(9, cfgFreq.fontSize - 2) }} angle={-15} textAnchor="end" />
-                  <YAxis tick={{ fontSize: Math.max(9, cfgFreq.fontSize - 2) }} label={cfgAxisLabel(cfgFreq, 'y', '% of Parent', 10)} />
+                  <YAxis {...brkFreq.axisProps} tick={{ fontSize: Math.max(9, cfgFreq.fontSize - 2) }} label={cfgAxisLabel(cfgFreq, 'y', '% of Parent', 10)} />
                   <Tooltip formatter={(value) => `${value}%`} />
+                  {brkFreq.marks}
                   <Bar dataKey="value" radius={[4, 4, 0, 0]}>
                     {chartData.map((entry, index) => (<Cell key={`cell-${index}`} fill={entry.fill} />))}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
-            </div>
+            </ChartInspector>
           </div>
         ) : (
           <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">

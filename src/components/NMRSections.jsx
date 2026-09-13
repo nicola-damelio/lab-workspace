@@ -1,5 +1,5 @@
 import NMRMoleculeViewer, { useShowAssignedFlag } from './NMRMoleculeViewer';
-import { ChartControlBar, SharedChartStylePanel, ChartInspector, AngledTick, tickLabelOffset, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, errorBarRange, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
+import { ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps, AngledTick, tickLabelOffset, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, errorBarRange, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { Icon } from './Icons';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
@@ -8022,6 +8022,8 @@ const PerAtomChartPanel = ({ ctx, d, chart, updateChart, removeChart }) => {
   const chartData = Object.values(residueEntries)
     .filter(r => Object.keys(r).length > 2) // has _idx + label + at least 1 value
     .sort((a, b) => a._idx - b._idx);
+  // ✂ interrupted Y axis: one residue can dwarf the others.
+  const brkAtomNmr = brokenAxisProps(cfg, 'y', chartData.flatMap(r => atomMeta.map(m => r[m.key])), { min: cfg.yMin, max: cfg.yMax });
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
@@ -8112,16 +8114,22 @@ const PerAtomChartPanel = ({ ctx, d, chart, updateChart, removeChart }) => {
 
       {/* Chart — X axis always in sequence order */}
       {chartData.length > 0 ? (
-        <ResponsiveContainer width="100%" aspect={cfg.aspect}>
-          <BarChart data={chartData} margin={cfgChartMargin(cfg, { top: 8, right: 8, bottom: 16, left: 8 })}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="label" tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'x', cfg.xAxisLabel || '', 16)} />
-            <YAxis tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'y', cfg.yAxisLabel || layer?.unit || '', 6)} />
-            <Tooltip />
-            <Legend wrapperStyle={{ fontSize: cfg.fontSize }} />
-            {atomMeta.map(m => <Bar key={m.key} dataKey={m.key} name={m.label} fill={m.color} isAnimationActive={false} />)}
-          </BarChart>
-        </ResponsiveContainer>
+        <ChartInspector cfg={cfg} setCfg={setCfg}
+          series={atomMeta.map(m => ({ key: m.key, label: m.label, color: m.color }))}
+          unit={layer?.unit}
+          className="w-full">
+          <ResponsiveContainer width="100%" aspect={cfg.aspect}>
+            <BarChart data={chartData} margin={cfgChartMargin(cfg, { top: 8, right: 8, bottom: 16, left: 8 })}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'x', cfg.xAxisLabel || '', 16)} />
+              <YAxis {...brkAtomNmr.axisProps} tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'y', cfg.yAxisLabel || layer?.unit || '', 6)} />
+              <Tooltip />
+              {brkAtomNmr.marks}
+              <Legend wrapperStyle={{ fontSize: cfg.fontSize }} />
+              {atomMeta.map(m => <Bar key={m.key} dataKey={m.key} name={m.label} fill={m.color} isAnimationActive={false} />)}
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartInspector>
       ) : (
         <div className="bg-slate-50 border border-dashed border-slate-200 rounded-lg p-4 text-center text-xs text-slate-400">
           {atoms.length === 0 ? 'Select atoms above to plot.' : 'No data for selected atoms in this layer.'}
@@ -8360,7 +8368,7 @@ export const SimulationsSection = ({ ctx }) => {
           <RangeBarChart title="Theoretical ¹³C Ranges" ranges={filteredRanges13C} domain={[0, 220]} ticks={Array.from({ length: 23 }, (_, i) => i * 10)} xAxisLabel="¹³C (ppm)" rowCount={focusIdx === 'ALL' ? d.uniqueTypes.length : 1} rowLabels={focusIdx === 'ALL' ? d.uniqueTypes.map((c) => d.DB[c]?.code3 || c) : [d.parsedSeq[focusIdx]?.code3 || d.parsedSeq[focusIdx]?.char]} simCfg={simCfg} />
         </div>
       )}
- <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+ <ChartInspector cfg={plotSimCfg} setCfg={setCfg} series={[]} unit="ppm" className="grid grid-cols-1 lg:grid-cols-2 gap-6">
    <OneDSpectrumPlot key={`1d1h-${focusIdx}-${simCfg.xMin}-${simCfg.xMax}`} title="Simulated ¹H 1D Spectrum" data={fP(d.peaks.data1H).filter(p => p.atom1 && p.atom1.startsWith('H'))} fullDomain={[0, 11]} ticks={TICKS_1H} TickComponent={CustomXTick1H} xLabel="¹H (ppm)" panelId="1D_1H" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={plotSimCfg} />
    <OneDSpectrumPlot key={`1d13c-${focusIdx}-${simCfg.xMin}-${simCfg.xMax}`} title="Simulated ¹³C 1D Spectrum" data={fP(d.peaks.data13C).filter(p => p.atom2 && p.atom2.startsWith('C'))} fullDomain={[0, 220]} ticks={TICKS_13C} TickComponent={CustomXTick13C} xLabel="¹³C (ppm)" panelId="1D_13C" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={plotSimCfg} />
    {d.hasPhosphorus && d.selNuc.includes('P') && fP(d.peaks.p31Data).length > 0 && (
@@ -8369,13 +8377,13 @@ export const SimulationsSection = ({ ctx }) => {
    <SpectrumPlot key={`cosy-${focusIdx}`} title="Simulated COSY Spectrum" diagonalData={fP(d.peaks.diagonalData).filter(p => p.atom1 && p.atom1.startsWith('H'))} crossPeakData={fP(d.peaks.cosyPeaks).filter(p => p.atom1 && p.atom1.startsWith('H') && p.atom2 && p.atom2.startsWith('H'))} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="cosy" diagonalColor="#22c55e" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={plotSimCfg} />
    <SpectrumPlot key={`noesy-${focusIdx}`} title="Simulated NOESY Spectrum" diagonalData={fP(d.peaks.diagonalData).filter(p => p.atom1 && p.atom1.startsWith('H'))} crossPeakData={fP(d.peaks.noesyPeaks).filter(p => p.atom1 && p.atom1.startsWith('H') && p.atom2 && p.atom2.startsWith('H'))} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="noesy" diagonalColor="#ef4444" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={plotSimCfg} />
    <SpectrumPlot key={`tocsy-${focusIdx}`} title="Simulated TOCSY Spectrum" diagonalData={fP(d.peaks.diagonalData).filter(p => p.atom1 && p.atom1.startsWith('H'))} crossPeakData={fP(d.peaks.tocsyPeaks).filter(p => p.atom1 && p.atom1.startsWith('H') && p.atom2 && p.atom2.startsWith('H'))} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="tocsy" diagonalColor="#1e3a8a" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={plotSimCfg} />
- </div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+ </ChartInspector>
+      <ChartInspector cfg={plotSimCfg} setCfg={setCfg} series={[]} unit="ppm" className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <HSQCPlot key={`hsqc-${focusIdx}`} title="Simulated ¹H-¹³C HSQC Spectrum" crossPeakData={fP(d.peaks.hsqcPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹³C F1 (ppm)" yDomainInit={[0, 220]} yTicks={TICKS_13C} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={plotSimCfg} />
         {d.moleculeType === 'protein' && d.selNuc.includes('N') && fP(d.peaks.hsqc15NPeaks).length > 0 && (
           <HSQCPlot key={`hsqc15n-${focusIdx}`} title="Simulated ¹H-¹⁵N HSQC Spectrum" crossPeakData={fP(d.peaks.hsqc15NPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc15n" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹⁵N F1 (ppm)" yDomainInit={[95, 135]} yTicks={TICKS_15N} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={plotSimCfg} />
         )}
-      </div>
+      </ChartInspector>
     </div>
   );
 };

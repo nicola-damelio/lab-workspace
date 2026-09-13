@@ -396,3 +396,222 @@ export const BASE_COLOR_SWATCHES = [
   { label: '🌈 Rainbow', hex: null },
   ...rainbowColors(12).map((hex) => ({ label: hex, hex })),
 ];
+
+/* =========================================================================
+   BROKEN ("INTERRUPTED") AXIS — the histogram scale-break.
+
+   When one bar is 10000 and the others are 12, 8, 5… the small bars are
+   invisible. The fix used by every graphing package is to INTERRUPT the axis:
+   the empty range between the small bars and the huge one is compressed into a
+   narrow band (marked with the classic double slash), so both the low bars AND
+   the full height of the big one stay readable.
+
+   The commands live in `cfg`:
+     cfg.yBreak      true/false     — is the Y axis interrupted?
+     cfg.yBreakFrom  number         — top of the LOW (expanded) segment
+     cfg.yBreakTo    number         — bottom of the HIGH (expanded) segment
+     cfg.yBreakGap   % of the axis  — height of the compressed band (default 7 %)
+   `xBreak*` are the same commands for an interrupted X axis.
+
+   The values themselves are NEVER modified (no data is rescaled): only the
+   value→pixel mapping changes, so the tooltips, the exports and the numbers of
+   the axis keep showing the real values.
+   ========================================================================= */
+export const AXIS_BREAK_GAP_DEFAULT = 7;
+
+/** Parse the break commands of one axis: `{ on, axis, from, to, gap, share }`. */
+export const axisBreakOf = (cfg = {}, axis = 'y') => {
+  const k = axis === 'x' ? 'x' : 'y';
+  const num = (v) => (v === '' || v === null || v === undefined ? NaN : Number(v));
+  const from = num(cfg[`${k}BreakFrom`]);
+  const to = num(cfg[`${k}BreakTo`]);
+  let gap = num(cfg[`${k}BreakGap`]);
+  if (!Number.isFinite(gap)) gap = AXIS_BREAK_GAP_DEFAULT;
+  gap = Math.min(40, Math.max(1, gap)) / 100;
+  let share = num(cfg[`${k}BreakShare`]);
+  if (!Number.isFinite(share)) share = 50;
+  share = Math.min(85, Math.max(15, share)) / 100;
+  const ok = !!cfg[`${k}Break`] && Number.isFinite(from) && Number.isFinite(to) && to > from;
+  return { on: ok, axis: k, from: ok ? from : 0, to: ok ? to : 0, gap, share };
+};
+
+/**
+ * Automatic break bounds for a histogram: when the biggest value dwarfs the
+ * second biggest (×3 by default) the axis is interrupted between them, so the
+ * "Interrupt Y axis" tick alone is enough — no numbers to type.
+ */
+export const autoBreakBounds = (values, factor = 3) => {
+  const nums = (Array.isArray(values) ? values : [])
+    .map(Number)
+    .filter((v) => Number.isFinite(v) && v > 0)
+    .sort((a, b) => a - b);
+  if (nums.length < 3) return null;
+  const max = nums[nums.length - 1];
+  const second = nums[nums.length - 2];
+  if (!(second > 0) || max < second * factor) return null;
+  return { from: second * 1.2, to: max };
+};
+
+/**
+ * The break to use for one axis: the panel numbers when they are set, otherwise
+ * an automatic break computed from the plotted values (null when the switch is
+ * off or the data has no dramatic gap).
+ */
+export const axisBreakFor = (cfg = {}, axis = 'y', values = []) => {
+  const k = axis === 'x' ? 'x' : 'y';
+  const brk = axisBreakOf(cfg, axis);
+  if (brk.on) return brk;
+  if (!cfg[`${k}Break`]) return brk;
+  const auto = autoBreakBounds(values);
+  if (!auto) return brk;
+  return { on: true, axis: k, from: auto.from, to: auto.to, gap: brk.gap, share: brk.share, auto: true };
+};
+
+/** "Nice" tick step (1 / 2 / 5 × 10ⁿ) for a wanted number of ticks. */
+export const niceStep = (span, count = 6) => {
+  const s = Math.abs(Number(span));
+  const n = Math.max(2, Math.round(Number(count) || 6));
+  if (!(s > 0)) return 1;
+  const raw = s / n;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const norm = raw / mag;
+  const mult = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+  return mult * mag;
+};
+
+/**
+ * The two visible pieces of a broken axis, in FRACTION of the axis length:
+ *   value ≤ from  →  [0, lowFrac]            (the low bars, expanded)
+ *   from … to     →  [lowFrac, lowFrac+gap]  (the interrupted band)
+ *   value ≥ to    →  [lowFrac+gap, 1]        (the tall bars, expanded)
+ *
+ * The two parts split the axis EVENLY (`brk.share`, default 50 %) — the classic
+ * interrupted-axis look. Splitting them in proportion to their value span would
+ * give the low bars 1 % of the plot as soon as the big bar is 100× larger, i.e.
+ * exactly what the interruption is supposed to fix.
+ *
+ * Returns null when the break is off or sits completely outside [lo, hi].
+ */
+export const breakSegments = (brk, lo, hi) => {
+  if (!brk || !brk.on) return null;
+  const a = Number(lo);
+  const b = Number(hi);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || !(b > a)) return null;
+  const from = Math.min(Math.max(brk.from, a), b);
+  const to = Math.min(Math.max(brk.to, a), b);
+  if (!(to > from)) return null;
+  const gapFrac = Math.min(Math.max(brk.gap, 0), 0.5);
+  const share = Math.min(Math.max(Number.isFinite(brk.share) ? brk.share : 0.5, 0.15), 0.85);
+  const lowFrac = share * (1 - gapFrac);
+  return {
+    lo: a, hi: b, from, to,
+    lowSpan: from - a,
+    highSpan: b - to,
+    lowFrac,
+    gapFrac,
+    share
+  };
+};
+
+/** value → fraction (0..1) of a broken axis. */
+export const breakMapFrac = (seg, value) => {
+  if (!seg) return null;
+  const v = Number(value);
+  if (!Number.isFinite(v)) return null;
+  const { lo, from, to, lowSpan, highSpan, lowFrac, gapFrac } = seg;
+  const a = lowFrac;
+  const b = lowFrac + gapFrac;
+  if (v <= from) return lowSpan > 0 ? ((v - lo) / lowSpan) * lowFrac : 0;
+  // Nothing is visible above `to` (the break reaches the top of the axis): the
+  // values above it sit ON the top edge, exactly like a clipped histogram.
+  if (v >= to) return highSpan > 0 ? b + ((v - to) / highSpan) * (1 - b) : 1;
+  // Inside the interrupted band: keep the relative position instead of dropping
+  // the point, so a value sitting in the gap stays visible (squeezed).
+  return a + ((v - from) / (to - from)) * gapFrac;
+};
+
+/** fraction (0..1) of a broken axis → value (the inverse of breakMapFrac). */
+export const breakFracValue = (seg, frac) => {
+  if (!seg) return NaN;
+  const { lo, from, to, lowSpan, highSpan, lowFrac, gapFrac } = seg;
+  const a = lowFrac;
+  const b = lowFrac + gapFrac;
+  const f = Math.min(Math.max(Number(frac) || 0, 0), 1);
+  if (f <= a) return lowSpan > 0 && a > 0 ? lo + (f / a) * lowSpan : from;
+  if (f >= b) return highSpan > 0 && b < 1 ? to + ((f - b) / (1 - b)) * highSpan : to;
+  return gapFrac > 0 ? from + ((f - a) / gapFrac) * (to - from) : from;
+};
+
+/**
+ * Ticks of a broken axis, in REAL values: the two edges of the interruption are
+ * always kept, every tick falling inside the compressed band is dropped.
+ */
+export const breakTicks = (seg, step) => {
+  if (!seg) return null;
+  const { lo, hi, from, to } = seg;
+  const st = Number(step) > 0 ? Number(step) : niceStep((hi - lo) - (to - from), 6);
+  const eps = Math.abs(st) / 1e6;
+  const out = [from, to];
+  for (let i = Math.ceil((lo - eps) / st); i * st <= hi + eps; i++) {
+    const v = i * st;
+    if (v <= from + eps || v >= to - eps) out.push(v);
+  }
+  return out
+    .sort((x, y) => x - y)
+    .filter((v, i, arr) => i === 0 || Math.abs(v - arr[i - 1]) > eps);
+};
+
+/**
+ * A recharts-compatible scale: a callable carrying the d3-scale methods recharts
+ * v3 uses (copy / domain / range / invert / ticks). Recharts calls
+ * `scale.copy().domain(axisDomain).range(axisRange)`, where the domain may be
+ * computed from the data ('auto'), so nothing has to be precomputed here.
+ */
+export const brokenScale = (brk) => {
+  if (!brk || !brk.on) return null;
+  let dom = [0, 1];
+  let rng = [0, 1];
+  const seg = () => breakSegments(brk, dom[0], dom[1]);
+  const scale = (v) => {
+    const f = breakMapFrac(seg(), v);
+    if (f == null) return NaN;
+    return rng[0] + f * (rng[1] - rng[0]);
+  };
+  scale.copy = () => brokenScale(brk);
+  scale.domain = (d) => {
+    if (!d) return dom;
+    dom = [Number(d[0]), Number(d[1])];
+    return scale;
+  };
+  scale.range = (r) => {
+    if (!r) return rng;
+    rng = [Number(r[0]), Number(r[1])];
+    return scale;
+  };
+  scale.invert = (px) => {
+    const f = rng[1] - rng[0] !== 0 ? (Number(px) - rng[0]) / (rng[1] - rng[0]) : 0;
+    return breakFracValue(seg(), f);
+  };
+  scale.ticks = (count) => breakTicks(seg(), niceStep(dom[1] - dom[0], count || 6)) || [];
+  scale.tickFormat = () => (v) => String(v);
+  return scale;
+};
+
+/**
+ * Chart.js axis options for a broken Y (or X) axis — spread them over the axis
+ * options: `{ ...options.scales.y, ...chartJsBrokenAxisOptions(cfg, 'y') }`.
+ * 'brokenLinear' is the scale type registered by utils/chartJsBrokenAxis.
+ */
+export const chartJsBrokenAxisOptions = (cfg = {}, axis = 'y') => {
+  const brk = axisBreakOf(cfg, axis);
+  if (!brk.on) return null;
+  return { type: 'brokenLinear', breakFrom: brk.from, breakTo: brk.to, breakGap: brk.gap };
+};
+
+/** `${axis}Break` / `${axis}BreakFrom` … — the commands the panel writes. */
+export const axisBreakPatch = (axis, patch) => {
+  const k = axis === 'x' ? 'x' : 'y';
+  const out = {};
+  Object.keys(patch || {}).forEach((key) => { out[`${k}${key}`] = patch[key]; });
+  return out;
+};

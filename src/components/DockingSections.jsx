@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, ScatterChart, Scatter} from 'recharts';
-import {ChartControlBar, SharedChartStylePanel, cfgAxisLabel, cfgChartMargin} from './SharedAnalysisTools';
+import {ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps, cfgAxisLabel, cfgChartMargin} from './SharedAnalysisTools';
 import { Icon } from './Icons';
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
@@ -1133,6 +1133,17 @@ export const DockingAnalysisSection = ({ ctx }) => {
     desolv: parseDockingValue(p.energy_desolv) ?? 0
   }));
 
+  const dockSeries = [
+    { key: 'affinity', label: `Affinity (${unit})` },
+    { key: 'vdW', label: 'vdW / Hbond / desolv' },
+    { key: 'elec', label: 'Electrostatic' },
+    { key: 'torsional', label: 'Torsional' },
+    { key: 'desolv', label: 'Desolvation' }
+  ];
+  // Docking energies often mix a few huge values with many small ones: the
+  // interrupted axis (✂ in the panel) keeps all the poses readable.
+  const brkAff = brokenAxisProps(cfg, 'y', affinityData.map((p) => p.affinity), { min: cfg.yMin, max: cfg.yMax });
+
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center gap-3">
@@ -1147,13 +1158,14 @@ export const DockingAnalysisSection = ({ ctx }) => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Affinity bar chart */}
         <CollapsibleSection title={`Binding Affinity per Pose (${unit})`} icon="📊" defaultOpen={false}>
-          <div style={dockChartBoxStyle(cfg)}>
+          <ChartInspector cfg={cfg} setCfg={setCfg} series={dockSeries} unit={unit} style={dockChartBoxStyle(cfg)}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={affinityData} margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis dataKey="mode" tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'x', 'Mode / Pose', 10)} />
-                <YAxis tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'y', unit, 0)} />
+                <YAxis {...brkAff.axisProps} tick={{ fontSize: cfg.fontSize }} label={cfgAxisLabel(cfg, 'y', unit, 0)} />
                 <Tooltip />
+                {brkAff.marks}
                 <Bar dataKey="affinity" name={`Affinity (${unit})`} radius={[3, 3, 0, 0]}>
                   {affinityData.map((entry, i) => (
                     <Cell key={i} fill={i === 0 ? '#16a34a' : '#3b82f6'} />
@@ -1161,12 +1173,12 @@ export const DockingAnalysisSection = ({ ctx }) => {
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
-          </div>
+          </ChartInspector>
         </CollapsibleSection>
 
         {/* Affinity vs RMSD scatter */}
         <CollapsibleSection title="Affinity vs. RMSD" icon="🎯" defaultOpen={false}>
-          <div ref={scatterRef} style={dockChartBoxStyle(cfg)} className="select-none relative">
+          <ChartInspector containerRef={scatterRef} cfg={cfg} setCfg={setCfg} series={dockSeries} unit={unit} style={dockChartBoxStyle(cfg)} className="select-none relative">
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -1176,7 +1188,7 @@ export const DockingAnalysisSection = ({ ctx }) => {
                 <Scatter data={rmsdData} fill="#8b5cf6" />
               </ScatterChart>
             </ResponsiveContainer>
-          </div>
+          </ChartInspector>
           {rmsdData.length === 0 && (
             <p className="text-xs text-slate-400 italic text-center mt-2">No RMSD data available for these poses.</p>
           )}
@@ -1184,7 +1196,7 @@ export const DockingAnalysisSection = ({ ctx }) => {
 
         {/* Energy breakdown stacked bar */}
         <CollapsibleSection title="Energy Component Breakdown" icon="🔋" defaultOpen={false}>
-          <div style={dockChartBoxStyle(cfg)}>
+          <ChartInspector cfg={cfg} setCfg={setCfg} series={dockSeries} unit={unit} style={dockChartBoxStyle(cfg)}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={energyBreakdownData} margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -1198,13 +1210,13 @@ export const DockingAnalysisSection = ({ ctx }) => {
                 <Bar dataKey="desolv" stackId="e" fill="#14b8a6" name="Desolvation" />
               </BarChart>
             </ResponsiveContainer>
-          </div>
+          </ChartInspector>
         </CollapsibleSection>
 
         {/* HADDOCK-specific score terms */}
         {isHADDOCK && (
           <CollapsibleSection title="HADDOCK Score Terms" icon="🧮" defaultOpen={false}>
-            <div style={dockChartBoxStyle(cfg)}>
+            <ChartInspector cfg={cfg} setCfg={setCfg} series={dockSeries} unit={unit} style={dockChartBoxStyle(cfg)}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={d.poses.slice(0, 15).map((p, i) => ({
                   mode: p.mode ?? i + 1,
@@ -1224,7 +1236,7 @@ export const DockingAnalysisSection = ({ ctx }) => {
                   <Bar dataKey="BSA" fill="#22c55e" />
                 </BarChart>
               </ResponsiveContainer>
-            </div>
+            </ChartInspector>
           </CollapsibleSection>
         )}
       </div>

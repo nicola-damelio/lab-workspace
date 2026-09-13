@@ -7,8 +7,9 @@ enableCellClipboard(); // global multi-cell select / copy / paste for data table
 import { NMR_FITTING_TAB_CONFIG } from './tabConfigs';
 import { toHex, errBarPlugin } from '../data/constants';
 import { rainbowColors, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, normalizeChartType, seriesVisible, seriesColorOf } from '../utils/chartStyle';
+import { brokenAxisScaleOptions } from '../utils/chartJsBrokenAxis';
 import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
-import { ChartControlBar, SharedChartStylePanel, ChartJsInspector } from './SharedAnalysisTools';
+import { ChartControlBar, SharedChartStylePanel, ChartJsInspector, useDeferredClick } from './SharedAnalysisTools';
 import { isPointExcluded, togglePointExcluded, clearExcludedForTable, computePointSD } from '../utils/pointTreatment';
 const DIPOLAR_SIM_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -866,7 +867,7 @@ function DecayChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType = 'l
                 layout: { padding: chartJsPadding(chartCfg) },
                 scales: {
                     x: { type: isHist ? 'category' : 'linear', position: chartCfg.xPos, min: !isHist && chartCfg.xMin !== '' ? parseFloat(chartCfg.xMin) : undefined, max: !isHist && chartCfg.xMax !== '' ? parseFloat(chartCfg.xMax) : undefined, title: { display: true, text: xLabel, font: { size: chartCfg.fontSize + 2 }, padding: chartJsTitlePad(chartCfg).x }, ticks: { font: { size: chartCfg.fontSize } } },
-                    y: { position: chartCfg.yPos, min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined, max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined, title: { display: true, text: yLab, font: { size: chartCfg.fontSize + 2 }, padding: chartJsTitlePad(chartCfg).y }, ticks: { font: { size: chartCfg.fontSize } } },
+                    y: { position: chartCfg.yPos, min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined, max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined, ...brokenAxisScaleOptions(chartCfg, 'y'), title: { display: true, text: yLab, font: { size: chartCfg.fontSize + 2 }, padding: chartJsTitlePad(chartCfg).y }, ticks: { font: { size: chartCfg.fontSize } } },
                 },
                 plugins: { legend: { display: !isHist, labels: { font: { size: chartCfg.fontSize } } } }
             }
@@ -986,8 +987,10 @@ function IndividualDecayChart({ table, colIndex, colFit, chartCfg, isFs, onToggl
         return () => { if (chartRef.current) chartRef.current.destroy(); };
     }, [table, colIndex, colFit, chartCfg, isFs]);
     const residueName = table.colResidues[colIndex] || `Col ${colIndex + 1}`;
+    // Single click = fullscreen, double click = edit (see useDeferredClick).
+    const clickCard = useDeferredClick(onToggleFs);
     return (
-        <div className={`flex flex-col bg-white ${isFs ? FS_CLASSES + ' p-6' : 'relative aspect-square p-2 cursor-pointer hover:shadow-lg transition-shadow border border-slate-200 rounded-lg group'}`} onClick={!isFs ? onToggleFs : undefined}>
+        <div className={`flex flex-col bg-white ${isFs ? FS_CLASSES + ' p-6' : 'relative aspect-square p-2 cursor-pointer hover:shadow-lg transition-shadow border border-slate-200 rounded-lg group'}`} onClick={!isFs ? clickCard : undefined}>
             <div className="flex justify-between items-start mb-1 z-10">
                 <h4 className="text-xs font-bold text-slate-600 uppercase">{residueName}</h4>
                 {!isFs && <button className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1 transition-all text-xs">↗️</button>}
@@ -995,7 +998,7 @@ function IndividualDecayChart({ table, colIndex, colFit, chartCfg, isFs, onToggl
             </div>
             <ChartJsInspector chartRef={chartRef} cfg={chartCfg} setCfg={setCfg}
                 series={[{ key: `col${colIndex}`, label: residueName, color: toHex(rainbowColors(Math.max(1, table.nCols))[colIndex % Math.max(1, table.nCols)]) }]}
-                className={`flex-1 relative min-h-0 ${!isFs ? 'pointer-events-none' : ''}`}>
+                className="flex-1 relative min-h-0">
                 <canvas ref={ref} />
             </ChartJsInspector>
         </div>

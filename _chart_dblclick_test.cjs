@@ -286,6 +286,90 @@ frag('[ssNMR] …and room for its y title', SSNMR, 'chartBoxStyle(cfg, { yTitle:
 frag('[Plate] the dose-response canvas gets padding from the character size', PLATE, 'layout: { padding: chartJsPadding(chartCfg) }');
 frag('[Plate] …and a height that fits the rotated y title', PLATE, "chartJsHeightFit(chartH, chartCfg, { yTitle: 'Viability (%)' })");
 
+/* ══ 5. a double-click ANYWHERE in the chart is never lost ════════════════
+   recharts only marks the curves, the axes and the legend, so the plot
+   background / a grid line / the surface used to swallow the gesture ("it is
+   very difficult to click on the good position"). chartElementAtPoint() looks
+   at WHERE the pointer landed and opens the matching settings instead.
+   ──────────────────────────────────────────────────────────────────────── */
+const chartElementAtPoint = (root, evt) => {
+  if (!root || !evt || typeof root.querySelector !== 'function') return null;
+  const wrapper = root.closest && root.closest('.recharts-wrapper')
+    ? root.closest('.recharts-wrapper')
+    : root.querySelector('.recharts-wrapper');
+  if (!wrapper || typeof wrapper.getBoundingClientRect !== 'function') return null;
+  const box = wrapper.getBoundingClientRect();
+  const cx = Number(evt.clientX);
+  const cy = Number(evt.clientY);
+  if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
+  const rectOf = (sel) => {
+    const n = wrapper.querySelector(sel);
+    return n && typeof n.getBoundingClientRect === 'function' ? n.getBoundingClientRect() : null;
+  };
+  const grid = rectOf('.recharts-cartesian-grid');
+  const yAxis = rectOf('.recharts-yAxis');
+  const xAxis = rectOf('.recharts-xAxis');
+  const left = yAxis ? yAxis.right - box.left : grid ? grid.left - box.left : 0;
+  const bottom = xAxis ? xAxis.top - box.top : grid ? grid.bottom - box.top : box.height;
+  const px = cx - box.left;
+  const py = cy - box.top;
+  if (py > bottom) {
+    return py > bottom + 26
+      ? { kind: 'xLabel', section: 'label', axis: 'x', label: '' }
+      : { kind: 'xAxis', section: 'x', axis: 'x', label: '' };
+  }
+  if (px < left) {
+    return px < left - 26
+      ? { kind: 'yLabel', section: 'label', axis: 'y', label: '' }
+      : { kind: 'yAxis', section: 'y', axis: 'y', label: '' };
+  }
+  return { kind: 'plot', section: 'all', axis: null, label: '' };
+};
+
+// A chart box at (100,50) 400×300; the Y axis band ends at x = 160, the X axis
+// band starts at y = 250.
+const RECTS = {
+  '.recharts-cartesian-grid': { left: 160, top: 50, right: 500, bottom: 250 },
+  '.recharts-yAxis': { left: 100, top: 50, right: 160, bottom: 250 },
+  '.recharts-xAxis': { left: 160, top: 250, right: 500, bottom: 290 }
+};
+const wrapperAt = (rects = RECTS, box = { left: 100, top: 50, width: 400, height: 300 }) => ({
+  getBoundingClientRect: () => box,
+  querySelector: (sel) => (rects[sel] ? { getBoundingClientRect: () => rects[sel] } : null)
+});
+const rootWith = (wrapper) => ({ querySelector: (sel) => (sel === '.recharts-wrapper' ? wrapper : null) });
+const at = (x, y, rects, box) => chartElementAtPoint(rootWith(wrapperAt(rects, box)), { clientX: x, clientY: y });
+
+check('double-click ON the plot background → the whole panel', at(300, 150), { kind: 'plot', section: 'all', axis: null, label: '' });
+check('double-click on the Y numbers → the Y axis commands', at(140, 150).section, 'y');
+check('double-click further left (the Y title) → the label commands', at(120, 150).kind, 'yLabel');
+check('double-click under the plot → the X axis commands', at(300, 265).section, 'x');
+check('double-click below the X title → the label commands', at(300, 300).kind, 'xLabel');
+check('a container without a recharts chart → nothing', chartElementAtPoint({ querySelector: () => null }, { clientX: 1, clientY: 1 }), null);
+check('a double-click without coordinates → nothing', at(NaN, NaN), null);
+frag('[SAT] the geometric fallback exists', SAT, 'export const chartElementAtPoint = (root, evt) => {');
+frag('[SAT] …and every wrapper uses it when no element matched', SAT, 'classifyChartElement(e.target) || chartElementAtPoint(e.currentTarget, e)');
+frag('[SAT] the plot target has its own title', SAT, "plot: 'Chart — every setting (axes, ticks, log, interrupt, curves)'");
+
+/* ══ 6. the axis commands a double-click must reach ═══════════════════════ */
+frag('[SAT] an axis TITLE also shows the ticks / decimals / log scale', SAT, "{section === 'label' && chartStyleTickBlock(cfg, set, 'label')}");
+frag('[SAT] the ✂ interrupted axis is a panel command', SAT, 'Interrupt Y axis — huge bar vs small bars');
+frag('[SAT] …and it is drawn on the axis', SAT, 'export const AxisBreakMarks = ({ cfg = {}, axis = \'y\', values = [], brk = null }) => {');
+frag('[SAT] any recharts chart can ask for it in three lines', SAT, 'export const brokenAxisProps = (cfg = {}, axis = \'y\', values = [], opts = {}) => {');
+frag('[STYLE] the interrupted scale of recharts', STYLE, 'export const brokenScale = (brk) => {');
+frag('[STYLE] …and of the Chart.js canvases', STYLE, 'export const chartJsBrokenAxisOptions = (cfg = {}, axis = \'y\') => {');
+
+/* ══ 7. the charts that forgot to wire the inspector ═════════════════════ */
+const FCS = read('src/components/FlowCytometrySections.jsx');
+const DOCK = read('src/components/DockingSections.jsx');
+const MD = read('src/components/MDSections.jsx');
+frag('[SAT] a 🎨 panel makes its ChartPanel body editable on its own', SAT, 'const panelStyle = stylePanelCfg(cfgPanel);');
+for (const [name, src] of [['[FCS] the histograms are editable', FCS], ['[Dock] the docking charts are editable', DOCK], ['[MD] the trajectory charts are editable', MD], ['[NMR] the per-atom chart is editable', NMR], ['[ssNMR] the small spectra are editable', SSNMR], ['[CD] the small spectra are editable', CD]]) {
+  frag(`${name} (ChartInspector)`, src, '<ChartInspector');
+}
+frag('[Plate] a small canvas is no longer pointer-events-none', PLATE, 'onClick={!isFs ? clickCard : undefined}');
+frag('[Plate] …so the double-click reaches it', SAT, 'export const useDeferredClick = (onClick, delay = 260) => {');
+
 const failed = results.filter((r) => !r.ok);
 console.table(results);
 if (failed.length) {

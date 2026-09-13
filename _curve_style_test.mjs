@@ -14,7 +14,8 @@ import {
   seriesPointStyle, seriesPtSize, seriesLineStyle, seriesLineThickness,
   seriesDash, seriesVisible, seriesLabelOf, seriesColorOf, hasSeriesOverrides,
   chartJsSeriesStyle, chartJsPadding, chartJsHeightFit, chartJsTitlePad,
-  cfgAxisGap, rainbowColors
+  cfgAxisGap, rainbowColors,
+  axisBreakOf, breakSegments, breakTicks, brokenScale, chartJsBrokenAxisOptions
 } from './src/utils/chartStyle.js';
 
 const results = [];
@@ -236,6 +237,65 @@ check('42 …and the crop release keeps the object selected', () => {
 check('43 the helper is defined exactly once (no duplicate export)', () => {
   eq((SAT.match(/export const chartStyleSeriesBlock/g) || []).length, 1);
   eq((SAT.match(/const cfgDot = \(cfg, stroke, key = null\)/g) || []).length, 1);
+});
+check('44 the interrupted ("broken") axis is a first-class panel command', () => {
+  // The helpers the panel / the charts read, all from the real module.
+  const brk = axisBreakOf({ yBreak: true, yBreakFrom: 10, yBreakTo: 90, yBreakGap: 6 }, 'y');
+  eq(brk.on, true);
+  eq(brk.from, 10);
+  eq(brk.to, 90);
+  assert.ok(brokenScale(brk) != null, 'brokenScale returns a scale');
+  assert.ok(breakTicks(breakSegments(brk, 0, 100), 20).length > 0, 'breakTicks returns ticks');
+  eq(chartJsBrokenAxisOptions({}, 'y'), null);
+  eq(chartJsBrokenAxisOptions({ yBreak: true, yBreakFrom: 10, yBreakTo: 90 }, 'y').type, 'brokenLinear');
+});
+check('45 the panel writes the break commands and the title view shows them', () => {
+  assert.ok(SAT.includes('✂ Interrupt Y axis'), 'the Y switch is in the panel');
+  assert.ok(SAT.includes("{section === 'label' && chartStyleTickBlock(cfg, set, 'label')}"), 'the axis-title view shows ticks / decimals / log');
+  assert.ok(SAT.includes('yBreakFrom') && SAT.includes('yBreakTo') && SAT.includes('yBreakGap'), 'the three commands exist');
+});
+check('46 every histogram family can interrupt its Y axis', () => {
+  // recharts charts: SharedChart draws the scale itself, the others ask for it.
+  assert.ok(SAT.includes('const yScale = brokenScale(yBrk);'), 'SharedChart builds the scale');
+  assert.ok(SAT.includes('export const AxisBreakMarks'), 'SharedChart draws the ✂ marks');
+  for (const f of ['FlowCytometrySections', 'MDSections', 'NMRSections', 'DockingSections']) {
+    const s = readFileSync(`./src/components/${f}.jsx`, 'utf8');
+    assert.ok(s.includes('brokenAxisProps('), `${f} does not use the shared break helper`);
+  }
+  // Chart.js canvases: Plate (IC50 histogram) + NMR fittings (rate histogram).
+  for (const f of ['PlateSections', 'NMRFittingsTestRenderer']) {
+    const s = readFileSync(`./src/components/${f}.jsx`, 'utf8');
+    assert.ok(s.includes('brokenAxisScaleOptions(chartCfg, \'y\')'), `${f} does not interrupt the histogram`);
+    assert.ok(s.includes("from '../utils/chartJsBrokenAxis'"), `${f} does not import the broken scale`);
+  }
+  const cjs = readFileSync('./src/utils/chartJsBrokenAxis.js', 'utf8');
+  assert.ok(cjs.includes("static id = 'brokenLinear';"), 'the Chart.js scale type is declared');
+  assert.ok(cjs.includes('Chart.register(BrokenLinearScale, brokenAxisPlugin);'), 'and registered');
+});
+
+check('47 the panel offers the ALONG-AXIS move of each title', () => {
+  // The GAP pushes a title AWAY from the plot; the MOVE slides it ALONG its own
+  // axis — the command that keeps a long, rotated y title inside the graph when
+  // the characters are big (the title runs upwards from the middle of the plot).
+  assert.ok(SAT.includes('X label move (px)') && SAT.includes('+ right / '), 'the X move control is missing');
+  assert.ok(SAT.includes('Y label move (px)') && SAT.includes('+ down / '), 'the Y move control is missing');
+  assert.ok(SAT.includes('set({ xAxisLabelMove: v })') && SAT.includes('set({ yAxisLabelMove: v })'),
+    'the panel does not write the commands');
+  assert.ok(SAT.includes('const move = axisLabelMove(cfg, axis);'), 'cfgAxisLabel does not read the move');
+  assert.ok(SAT.includes("const axisLabelMove = (cfg = {}, axis = 'x') => {"), 'the reader is missing');
+  assert.ok(SAT.includes('...(move ? { dy: move } : {})'), 'the rotated y title does not take the vertical move');
+  assert.ok(SAT.includes('...(move ? { dx: move } : {})'), 'the x title does not take the horizontal move');
+  // Nothing moves unless the user asks: at 0 no prop is added at all.
+  assert.ok(SAT.includes('...(move ? { dy: move } : {})'), 'the move must be omitted at 0');
+});
+check('48 the move is not a gap: the two commands stay independent', () => {
+  // A chart that only MOVES its titles asks for no extra canvas padding, and the
+  // Chart.js canvases keep their own (gap-driven) room.
+  eq(cfgAxisGap({ yAxisLabelMove: 60 }, 'y'), 0);
+  eq(chartJsPadding({ fontSize: 16, yAxisLabelMove: 60 }), chartJsPadding({ fontSize: 16 }));
+  eq(chartJsTitlePad({ yAxisLabelMove: 60 }), { x: 0, y: 0 });
+  eq(chartJsHeightFit(100, { fontSize: 16, yAxisLabelMove: 60 }, { yTitle: 'Intensity (a.u.)' }),
+    chartJsHeightFit(100, { fontSize: 16 }, { yTitle: 'Intensity (a.u.)' }));
 });
 
 const failed = results.filter((r) => !r.ok);

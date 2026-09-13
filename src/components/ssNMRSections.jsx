@@ -6,7 +6,7 @@
 
 import React, {useState, useEffect, useRef, useMemo} from 'react';
 import {XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell, ComposedChart} from 'recharts';
-import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, ChartInspector, AngledTick, useXYZoom, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgAxisDomain, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, errorBarRange, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
+import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, ChartInspector, AngledTick, useXYZoom, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgAxisDomain, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, errorBarRange, instancesLinked, InstanceLinkToggle, deferredClick } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor, chartBoxStyle, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf } from '../utils/chartStyle';
 export { CollapsibleSection };
@@ -1890,6 +1890,8 @@ export const SpectraVisualization = ({ ctx }) => {
   const [showCfg, setShowCfg] = useState(false);
   const [fs, setFs] = useState(false);
   const [fsSmall, setFsSmall] = useState(null);
+  // Single click zooms a small spectrum, double click edits it (see deferredClick).
+  const smallClickTimer = useRef(null);
   const [hidden, setHidden] = useState({});
 
   const [localColors, setLocalColors] = useState(activeTest.instanceColors || {});
@@ -2043,12 +2045,14 @@ export const SpectraVisualization = ({ ctx }) => {
             {seriesList.map((s) => (
               <React.Fragment key={s.key}>
                 {fsSmall === s.key && <div className={OVERLAY_CLASSES} onClick={() => setFsSmall(null)} />}
-                <div className={`flex flex-col bg-white ${fsSmall === s.key ? FS_CLASSES + ' p-6' : 'relative aspect-square p-2 cursor-pointer hover:shadow-lg transition-shadow border border-slate-200 rounded-lg group'}`} onClick={fsSmall !== s.key ? () => setFsSmall(s.key) : undefined}>
+                <div className={`flex flex-col bg-white ${fsSmall === s.key ? FS_CLASSES + ' p-6' : 'relative aspect-square p-2 cursor-pointer hover:shadow-lg transition-shadow border border-slate-200 rounded-lg group'}`} onClick={fsSmall !== s.key ? deferredClick(smallClickTimer, () => setFsSmall(s.key)) : undefined}>
                   <div className="flex justify-between items-start mb-1 z-10">
                     <h4 className="text-xs font-bold text-slate-600 uppercase truncate w-[80%]" title={s.label}>{s.label}</h4>
                     <button className={fsSmall === s.key ? 'text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5' : 'opacity-0 group-hover:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 rounded p-1 text-xs'} onClick={(e) => { e.stopPropagation(); setFsSmall(fsSmall === s.key ? null : s.key); }}>{fsSmall === s.key ? '↙️' : '↗️'}</button>
                   </div>
-                  <div className={`flex-1 relative min-h-0 ${fsSmall !== s.key ? 'pointer-events-none' : ''}`}>
+                  <ChartInspector cfg={cfg} setCfg={setCfg}
+                    series={seriesList.map((x) => ({ key: x.key, label: x.label, color: x.color }))}
+                    unit="ppm" className="flex-1 relative min-h-0">
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={s.data} margin={fsSmall === s.key ? cfgChartMargin(cfg, CHART_MARGIN) : { top: 5, right: 8, bottom: 18, left: 2 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -2058,7 +2062,7 @@ export const SpectraVisualization = ({ ctx }) => {
                         <Line type="monotone" dataKey="y" stroke={s.color} strokeWidth={cfg.lineThickness || 2} strokeDasharray={lineDash(cfg.lineStyle)} dot={false} isAnimationActive={false} />
                       </LineChart>
                     </ResponsiveContainer>
-                  </div>
+                  </ChartInspector>
                 </div>
               </React.Fragment>
             ))}
