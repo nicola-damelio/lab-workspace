@@ -407,6 +407,12 @@ const TestHeader = (
                               setAllSectionsOpen(next);
                               setSectionsCommand(next);
                             }}
+                            // Stable hook: the Image Builder's "↗ Open original graph"
+                            // opens the page with this button when the captured chart
+                            // sits inside a CLOSED section (it would not be in the DOM
+                            // otherwise, so it could not be scrolled to). Only exposed
+                            // while it would EXPAND the page.
+                            data-expand-all={allSectionsOpen ? undefined : '1'}
                             className={`font-bold py-2 px-3 rounded-lg text-xs border shadow-sm transition-colors ${allSectionsOpen ? 'bg-slate-100 text-slate-600 border-slate-300 hover:bg-slate-200' : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'}`}
                             title={allSectionsOpen ? 'Close all sections and subsections' : 'Expand all sections and subsections'}
                           >

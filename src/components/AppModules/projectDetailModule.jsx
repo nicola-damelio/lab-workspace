@@ -1568,17 +1568,18 @@ export const ProjectDetailModule = ({
         <SectionCard title="🖼 Saved canvases" open={openSections.canvases} onToggle={() => toggleSection('canvases')}
                      badge={<span className="text-[10px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">{savedCanvases.length}</span>}>
           <p className="text-xs text-slate-500 mb-3">
-            Figures composed in the <span className="font-bold">Image Builder</span> (sidebar → 🖼️ Image Builder) while
-            this project is open and stored with “💾 Save canvas”. Every canvas below is a
-            <span className="font-bold"> link</span>: “Open in Image Builder” reloads its panels, captions and grid into
-            the editor, and saving it again updates this same entry. A composition inserted straight into a section
-            (“📤 Insert into project…”) is stored here too, and its figure in that section shows the same link as
-            “✏️ Modify in Image Builder”.
+            Compositions stored in this project's image library — with <span className="font-bold">💾 Save canvas</span> (the
+            dialog asks where to save: pick this project) or by <span className="font-bold">📤 Insert into project…</span>.
+            Every canvas below is also an image of the library (Figures &amp; Slides → <span className="font-bold">Project</span> tab)
+            and a <span className="font-bold">link</span> back into the editor: “Open in Image Builder” reloads its panels, captions
+            and grid, and saving it again updates this same entry. A composition inserted into a section keeps showing its
+            <span className="font-bold"> image</span> there — the link is added on top, it never replaces the picture.
           </p>
           {savedCanvases.length === 0 ? (
             <div className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-5 text-center">
-              No canvas yet — open the Image Builder with this project selected and click “💾 Save canvas”: the canvas
-              will appear here as a link that reopens it in the editor.
+              No canvas yet — in the Image Builder (sidebar → 🖼️ Image Builder) click “💾 Save canvas” and choose
+              <span className="font-bold"> this project</span> as the destination, or insert a composition with
+              “📤 Insert into project…”: it appears here and in the image library's Project tab.
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">

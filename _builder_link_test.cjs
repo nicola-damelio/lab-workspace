@@ -34,9 +34,11 @@ const frag = (name, hay, needle) => checkTrue(`${name}: ${needle.slice(0, 44)}�
 // 1) The editor side: publishCanvas() + the insert handler stamps the link
 // ===========================================================================
 frag('[ImageBuilder] publishCanvas', IB, 'const publishCanvas = async ({ label, targetProjectId = projectId || null, dataUrl = null }) => {');
-frag('[ImageBuilder] target scope', IB, "scope: target ? 'project' : 'common',");
-frag('[ImageBuilder] in-place update only inside the same scope', IB, 'updateId: sameScope ? canvasLibId : null,');
-frag('[ImageBuilder] scope comparison', IB, 'const sameScope = target === (projectId || null);');
+frag('[ImageBuilder] target scope', IB, `scope: target ? 'project' : 'common',`);
+frag('[ImageBuilder] per-scope entry lookup', IB, 'const known = canvasEntryIn(target);');
+frag('[ImageBuilder] in-place update of THAT scope copy', IB, 'updateId: known ? known.id : null,');
+frag('[ImageBuilder] scope key helper', IB, "const canvasScopeKey = (scopeProjectId) => scopeProjectId || 'dataset';");
+frag('[ImageBuilder] entry remembered per scope', IB, 'rememberCanvasEntry(target, entry);');
 frag('[ImageBuilder] snapshot carried by the canvas', IB, 'canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, globalCaption,');
 frag('[ImageBuilder] snapshot objects', IB, 'objects: (objects || []).map(thumbnailsOf)');
 frag('[ImageBuilder] insert publishes to the target project', IB, 'const pub = await publishCanvas({ label, targetProjectId: prj.id, dataUrl });');
@@ -45,8 +47,24 @@ frag('[ImageBuilder] link spread into the figure', IB, '...(link || {})');
 frag('[ImageBuilder] legacy marker kept', IB, "source: 'image-builder',");
 frag('[ImageBuilder] opt-out switch (on by default)', IB, 'const [insertLink, setInsertLink] = useState(true);');
 frag('[ImageBuilder] opt-out checkbox', IB, 'checked={insertLink}');
-frag('[ImageBuilder] "Save canvas" still updates its own scope', IB, 'const pub = await publishCanvas({ label: label.trim(), dataUrl });');
+frag('[ImageBuilder] the figure keeps its image (pushed as a normal figure)', IB, 'url: dataUrl,');
+frag('[ImageBuilder] insert says the image stays in the section', IB, 'it stays visible in that section on');
+frag('[ImageBuilder] "Save canvas" opens the destination dialog', IB, '<button onClick={openSaveDialog} title="Save the whole canvas in the image library');
+frag('[ImageBuilder] save dialog proposes where the canvas lives', IB, `setSaveDest(storedScopeCount ? (canvasHome || '') : (projectId || ''));`);
+frag('[ImageBuilder] save dialog lists every project', IB, '📁 {p.name} — its Project tab + “🖼 Saved canvases”');
+frag('[ImageBuilder] save dialog can choose the dataset library', IB, '<option value="">🌐 Dataset library — shared by every project (Image Library → Dataset tab)</option>');
+frag('[ImageBuilder] save goes to the CHOSEN destination', IB, 'const pub = await publishCanvas({ label, targetProjectId: destProjectId, dataUrl: null });');
+frag('[ImageBuilder] save tells where it landed', IB, 'Image Library → Project tab — and on that project page under “🖼 Saved canvases”');
+frag('[ImageBuilder] the library opens on the destination tab', IB, "setLibraryTab(destProjectId ? 'project' : 'common');");
+frag('[ImageBuilder] the library opens on the destination project', IB, 'setLibProjectId(destProjectId);');
+frag('[ImageBuilder] re-homing is announced', IB, 'Saving it here stores a');
 frag('[ImageBuilder] render reused (no second render)', IB, 'const img = dataUrl || await renderToDataUrl(');
+frag('[ImageBuilder] canvas badge shows the home scope', IB, 'const homeEntry = canvasEntryIn(canvasHome);');
+frag('[ImageBuilder] bookkeeping is reset per canvas/project', IB, 'setCanvasEntries({});');
+frag('[ImageBuilder] reset also re-homes the dialog default', IB, 'setCanvasHome(projectId || null);');
+frag('[ImageBuilder] loading a canvas binds it to THAT library', IB, 'restoreCanvasFromItem(item, { confirm: false, scopeProjectId: projectId || null })');
+frag('[ImageBuilder] library "Load" binds the browsed scope', IB, "restoreCanvasFromItem(item, { scopeProjectId: libraryTab === 'project' ? activeLibProjectId : null })");
+frag('[projectDetail] the project page says the picture stays', PD, 'there — the link is added on top, it never replaces the picture.');
 
 // A failed link publish must never lose the insert itself.
 const insertBlock = IB.slice(IB.indexOf('const sec = insertTarget.section'), IB.indexOf('setInsertMsg(link'));
@@ -99,18 +117,30 @@ const publishLibraryFigure = (store, { scope, projectId = null, dataUrl, label, 
   return { entry: item, updated: false };
 };
 
-// Mirror of ImageBuilder.publishCanvas: the scope follows the TARGET project and
-// the in-place update only applies when that scope is the builder's own one.
+// Mirror of ImageBuilder.publishCanvas + rememberCanvasEntry: the scope follows
+// the TARGET project, the copy of THAT scope is updated in place when it exists
+// (its id is recorded per scope, so re-saving never duplicates and never touches
+// the copies of the other scopes).
+const canvasScopeKey = (scopeProjectId) => scopeProjectId || 'dataset';
 const publishCanvas = (store, builder, { label, targetProjectId = builder.projectId, dataUrl, canvasData }) => {
   const target = targetProjectId || null;
-  const sameScope = target === (builder.projectId || null);
+  const known = (builder.canvasEntries || {})[canvasScopeKey(target)] || null;
   const { entry, updated } = publishLibraryFigure(store, {
     scope: target ? 'project' : 'common', projectId: target, dataUrl, label,
-    canvasData, updateId: sameScope ? builder.canvasLibId : null
+    canvasData, updateId: known ? known.id : null
   });
-  if (sameScope) builder.canvasLibId = entry.id;
+  builder.canvasEntries = { ...(builder.canvasEntries || {}), [canvasScopeKey(target)]: { id: entry.id, label: entry.label } };
+  builder.canvasHome = target;
+  builder.canvasLabel = entry.label;
   return { entry, updated };
 };
+
+// Mirror of ImageBuilder.openSaveDialog: the proposed destination is where the
+// canvas is stored already, else the project this builder is open with, else the
+// shared dataset library ('').
+const defaultSaveDest = (builder) => (Object.keys(builder.canvasEntries || {}).length
+  ? (builder.canvasHome || '')
+  : (builder.projectId || ''));
 
 // Mirror of the insert handler: the figure is always stored; the link fields are
 // added only when the publish succeeded (link === null otherwise).
@@ -150,7 +180,7 @@ const snap = (gridCols, gridRows, objectCount) => ({
 {
   const store = makeStore();
   const project = { id: 'P', name: 'Project P' };
-  const builder = { projectId: 'P', canvasLibId: null };
+  const builder = { projectId: 'P', canvasEntries: {} };
   const fig = insertFigure(store, builder, { project, section: 'background', dataUrl: 'img1', caption: 'Fig 1', canvasData: snap(2, 1, 2) });
   check('S1 insert → 1 canvas in the project library', listOf(store, 'project', 'P').length, 1);
   check('S1 nothing leaks into the common library', store.common.length, 0);
@@ -169,7 +199,7 @@ const snap = (gridCols, gridRows, objectCount) => ({
 {
   const store = makeStore();
   const project = { id: 'P', name: 'Project P' };
-  const builder = { projectId: 'P', canvasLibId: null };
+  const builder = { projectId: 'P', canvasEntries: {} };
   const fig1 = insertFigure(store, builder, { project, section: 'background', dataUrl: 'img1', caption: 'Fig 1', canvasData: snap(2, 1, 2) });
   const firstId = fig1.canvasId;
   // The user edits the canvas (now 3 panels / 4 objects) and inserts again.
@@ -185,10 +215,10 @@ const snap = (gridCols, gridRows, objectCount) => ({
 {
   const store = makeStore();
   const project = { id: 'P', name: 'Project P' };
-  const builder = { projectId: null, canvasLibId: null };
+  const builder = { projectId: null, canvasEntries: {} };
   const fig = insertFigure(store, builder, { project, section: 'conclusions', dataUrl: 'img1', caption: 'Fig 1', canvasData: snap(1, 1, 1) });
   check('S3 canvas stored in the target project (not the common library)', [listOf(store, 'project', 'P').length, store.common.length], [1, 0]);
-  checkTrue('S3 the builder did not adopt the id of another scope', builder.canvasLibId === null);
+  check('S3 the builder remembers the entry it created there', builder.canvasEntries.P.id, fig.canvasId);
   check('S3 link opens the target project scope', openImageBuilder(fig.builderProjectId, fig.canvasId), { projectId: 'P', canvasId: fig.canvasId });
   checkTrue('S3 the canvas is found where the link points', !!loadRequestedCanvas(store, 'P', fig.canvasId));
 }
@@ -197,7 +227,7 @@ const snap = (gridCols, gridRows, objectCount) => ({
 {
   const store = makeStore();
   const other = { id: 'P', name: 'Project P' };
-  const builder = { projectId: 'Q', canvasLibId: null };
+  const builder = { projectId: 'Q', canvasEntries: {} };
   // The builder's own canvas was already saved in Q's library.
   const own = publishCanvas(store, builder, { label: 'My canvas', dataUrl: 'imgQ', canvasData: snap(2, 2, 3) });
   const fig = insertFigure(store, builder, { project: other, section: 'background', dataUrl: 'imgP', caption: 'Fig', canvasData: snap(4, 1, 1) });
@@ -207,13 +237,21 @@ const snap = (gridCols, gridRows, objectCount) => ({
   check('S4 the link stays in the target project', fig.builderProjectId, 'P');
   const inP = loadRequestedCanvas(store, 'P', fig.canvasId);
   checkTrue('S4 reopening resolves in the target project only', inP.gridCols === 4 && loadRequestedCanvas(store, 'Q', fig.canvasId) === null);
+  // Inserting the SAME canvas into P again must reuse P's own copy (the entry
+  // recorded for that scope) instead of piling up duplicates there; the Q copy
+  // stays exactly as it was for the Q project page.
+  const fig2 = insertFigure(store, builder, { project: other, section: 'discussion', dataUrl: 'imgP2', caption: 'Fig 2', canvasData: snap(4, 2, 5) });
+  check('S4 repeat insert reuses the target entry (no duplicate)', listOf(store, 'project', 'P').length, 1);
+  check('S4 both P figures share that canvas id', [fig.canvasId, fig2.canvasId], [fig.canvasId, fig.canvasId]);
+  check('S4 the Q copy is untouched', listOf(store, 'project', 'Q').map((i) => i.id), [own.entry.id]);
+  checkTrue('S4 the P copy carries the latest composition', loadRequestedCanvas(store, 'P', fig2.canvasId).objects.length === 5);
 }
 
 // ---- S5: opt-out + legacy figures ----------------------------------------
 {
   const store = makeStore();
   const project = { id: 'P', name: 'Project P' };
-  const builder = { projectId: 'P', canvasLibId: null };
+  const builder = { projectId: 'P', canvasEntries: {} };
   const fig = insertFigure(store, builder, { project, section: 'background', dataUrl: 'img1', caption: 'Fig', canvasData: snap(1, 1, 1), link: false });
   check('S5 opt-out → no canvas saved', listOf(store, 'project', 'P').length, 0);
   checkTrue('S5 opt-out still inserts the figure', fig.url === 'img1' && fig.source === 'image-builder');
@@ -224,6 +262,70 @@ const snap = (gridCols, gridRows, objectCount) => ({
   check('S5 legacy figure → open the builder on this project',
     openImageBuilder(legacy.builderProjectId || project.id, legacy.canvasId || null), { projectId: 'P', canvasId: null });
   check('S5 nothing to restore → the builder keeps its state', loadRequestedCanvas(store, 'P', null), null);
+}
+
+// ---- S7: the destination dialog — save into ANY project's library ----------
+// The reported flow: the Image Builder is opened from the sidebar (no project),
+// the composition is saved with the dialog destination = project P. It must land
+// in P's library — the one the library's Project tab and the project page's
+// "🖼 Saved canvases" read — and NOT in the shared dataset library; re-saving it
+// for that project must update that very entry.
+{
+  const store = makeStore();
+  const builder = { projectId: null, canvasEntries: {} }; // opened without a project
+  check('S7 destination proposed with no project = shared library', defaultSaveDest(builder), '');
+  const first = publishCanvas(store, builder, { label: 'My canvas', targetProjectId: 'P', dataUrl: 'img1', canvasData: snap(2, 1, 1) });
+  check('S7 canvas lands in the chosen project library', listOf(store, 'project', 'P').length, 1);
+  check('S7 shared dataset library untouched', store.common.length, 0);
+  check('S7 the project page lists it as a canvas', listOf(store, 'project', 'P').filter((i) => i.canvasData).map((i) => i.id), [first.entry.id]);
+  check('S7 the library keeps a picture of it (thumbnail)', typeof listOf(store, 'project', 'P')[0].url, 'string');
+  check('S7 that project is now the proposed destination', defaultSaveDest(builder), 'P');
+  const second = publishCanvas(store, builder, { label: 'My canvas', targetProjectId: 'P', dataUrl: 'img2', canvasData: snap(3, 2, 4) });
+  check('S7 re-saving updates that same entry', [listOf(store, 'project', 'P').length, second.updated, second.entry.id === first.entry.id], [1, true, true]);
+  checkTrue('S7 the link reopens the LATEST composition', loadRequestedCanvas(store, 'P', first.entry.id).gridCols === 3);
+  // The same canvas can ALSO be parked in the shared dataset library: a separate
+  // entry, and the project copy is left alone.
+  const shared = publishCanvas(store, builder, { label: 'My canvas', targetProjectId: null, dataUrl: 'img3', canvasData: snap(3, 2, 4) });
+  check('S7 the shared copy is a separate entry', [store.common.length, listOf(store, 'project', 'P').length], [1, 1]);
+  checkTrue('S7 the two copies are independent', shared.entry.id !== first.entry.id && loadRequestedCanvas(store, 'P', first.entry.id).gridCols === 3);
+  check('S7 the shared library is now the proposed destination', defaultSaveDest(builder), '');
+}
+
+// ---- S8: the dialog proposes where the canvas already lives ----------------
+{
+  const store = makeStore();
+  const builder = { projectId: 'P', canvasEntries: {} };
+  check('S8 fresh canvas + project open → propose that project', defaultSaveDest(builder), 'P');
+  const saved = publishCanvas(store, builder, { label: 'Canvas P', dataUrl: 'img', canvasData: snap(1, 1, 1) });
+  check('S8 after saving → still that project', defaultSaveDest(builder), 'P');
+  // A canvas opened from the dataset library proposes the dataset library again,
+  // even while a project is open in the editor.
+  const opened = { projectId: 'P', canvasEntries: { dataset: { id: saved.entry.id, label: 'Canvas P' } }, canvasHome: null };
+  check('S8 canvas opened from the shared library → propose it', defaultSaveDest(opened), '');
+}
+
+// ---- S9: a canvas whose entry was deleted re-saves as a NEW entry ----------
+{
+  const store = makeStore();
+  const builder = { projectId: 'P', canvasEntries: {} };
+  const first = publishCanvas(store, builder, { label: 'C', dataUrl: 'a', canvasData: snap(1, 1, 1) });
+  put(store, 'project', 'P', []); // the user deleted it from the library
+  const again = publishCanvas(store, builder, { label: 'C', dataUrl: 'b', canvasData: snap(2, 1, 2) });
+  check('S9 deleted entry → a fresh entry is created', [listOf(store, 'project', 'P').length, again.updated], [1, false]);
+  checkTrue('S9 the new id is remembered', builder.canvasEntries.P.id === again.entry.id && again.entry.id !== first.entry.id);
+}
+
+// ---- S10: the inserted figure keeps the IMAGE (the link is additive) -------
+{
+  const store = makeStore();
+  const project = { id: 'P', name: 'Project P' };
+  const builder = { projectId: 'P', canvasEntries: {} };
+  const fig = insertFigure(store, builder, { project, section: 'discussion', dataUrl: 'rendered-png', caption: 'Fig', canvasData: snap(2, 1, 1) });
+  check('S10 the section holds the rendered image', project.figures.discussion.map((f) => f.url), ['rendered-png']);
+  checkTrue('S10 the image is the render itself (not a link)', !/^https?:/.test(fig.url));
+  checkTrue('S10 the same object carries the canvas link on top', !!fig.canvasId && !!loadRequestedCanvas(store, 'P', fig.canvasId));
+  const entry = listOf(store, 'project', 'P')[0];
+  checkTrue('S10 the library entry is an image with a preview', typeof entry.url === 'string' && entry.url.endsWith('#thumb'));
 }
 
 // ---- S6: negative controls ------------------------------------------------

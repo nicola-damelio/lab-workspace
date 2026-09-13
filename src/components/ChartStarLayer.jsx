@@ -4,6 +4,7 @@ import Chart from 'chart.js/auto';
 import {
   getActiveProjectId, publishLibraryFigure
 } from '../utils/figuresLibrary';
+import { clearPendingFigureScroll, peekPendingFigureScroll } from '../utils/pendingFigureScroll';
 import { loadProjects } from './AppModules/projectsModule';
 
 
@@ -173,6 +174,128 @@ const tableToData = (table) => {
 
 const OVERLAY_STYLE = { position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 60 };
 
+/* =========================================================================
+   revealPendingFigure — arriving from the Image Builder's
+   "↗ Open original graph": bring the EXACT chart / spectrum / image the figure
+   was captured from into view, on the correct condition.
+
+   The old version scrolled once (5 retries over ~2.5 s) and gave up silently:
+   • the lazy test renderer, its charts and any Drive-hosted data take longer
+     than that, so the element often did not exist yet;
+   • a chart inside a CLOSED section is not in the DOM at all — the section has
+     to be opened first (the page's own "▸ Expand all" button does that);
+   • the page's scroll memory (useExperimentScrollMemory) kept restoring the
+     position the user had left, which overrode the scroll (it is told to stand
+     down while this request is pending — see utils/pendingFigureScroll.js).
+
+   The request is kept while we look for the target, then re-asserted for a few
+   seconds (the layout keeps moving while charts and images finish loading) and
+   dropped as soon as the user takes over.
+   ========================================================================= */
+const revealPendingFigure = (rootEl, test) => {
+  const pending = peekPendingFigureScroll();
+  if (!pending || !pending.key || !rootEl) return () => {};
+  // Another attempt may still be parked from an earlier navigation (the request
+  // lives for a minute): only a request for THIS page is honoured, so opening a
+  // different experiment never scrolls to / expands anything by surprise.
+  if (test && pending.testName && pending.testId !== test.id && pending.testName !== test.name) {
+    return () => {};
+  }
+
+  const TICK_MS = 350;            // how often we look for the element
+  const EXPAND_MS = 900;          // not there yet → open the closed sections
+  const SETTLE_MS = 4200;         // keep it centred while the page settles
+  const DEADLINE_MS = 20000;      // lazy renderers + Drive-hosted data
+  const hosts = [rootEl, document];
+  const opts = { capture: true, passive: true };
+
+  let stopped = false;
+  let expanded = false;
+  let hitEl = null;
+  let hitAt = 0;
+  let flashed = null;
+  const startedAt = Date.now();
+  const timers = [];
+
+  const stop = (clear = true) => {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(timer);
+    timers.forEach((t) => clearTimeout(t));
+    if (flashed) {
+      flashed.el.style.outline = flashed.prev;
+      flashed = null;
+    }
+    hosts.forEach((host) => {
+      host.removeEventListener('wheel', onUser, opts);
+      host.removeEventListener('touchstart', onUser, opts);
+      host.removeEventListener('pointerdown', onUser, opts);
+      host.removeEventListener('keydown', onUser, true);
+    });
+    if (clear) clearPendingFigureScroll();
+  };
+
+  function onUser() { stop(true); }
+
+  // Keys are human labels ("CD Spectra · Chart · 2"), so compare the attribute
+  // instead of building a CSS selector out of it.
+  const find = () => Array.from(rootEl.querySelectorAll('[data-figure-origin]'))
+    .find((el) => el.getAttribute('data-figure-origin') === pending.key) || null;
+
+  const flash = (el) => {
+    try {
+      const card = el.closest('div,section,td') || el;
+      flashed = { el: card, prev: card.style.outline };
+      card.style.outline = '3px solid #3b82f6';
+      timers.push(setTimeout(() => {
+        if (flashed && flashed.el === card) card.style.outline = flashed.prev;
+        flashed = null;
+      }, 2600));
+    } catch { /* ignore */ }
+  };
+
+  const scrollTo = (el) => {
+    try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch { /* ignore */ }
+  };
+
+  const expandAll = () => {
+    try {
+      const btn = document.querySelector('[data-expand-all]');
+      if (btn) { btn.click(); return true; }
+    } catch { /* ignore */ }
+    return false;
+  };
+
+  const timer = setInterval(() => {
+    if (stopped) return;
+    const elapsed = Date.now() - startedAt;
+    if (!hitEl || !hitEl.isConnected) hitEl = find();
+    if (hitEl) {
+      if (!hitAt) { hitAt = Date.now(); flash(hitEl); }
+      scrollTo(hitEl);
+      // The layout settles for a moment (charts mount, images decode): keep
+      // re-centring the element, then hand the page back to the user.
+      if (Date.now() - hitAt > SETTLE_MS) stop(true);
+      return;
+    }
+    if (!expanded && elapsed > EXPAND_MS) {
+      // The chart is hidden inside a closed section (or a closed group): open
+      // the page the same way the "▸ Expand all" button does.
+      expanded = expandAll();
+    }
+    if (elapsed > DEADLINE_MS) stop(true);
+  }, TICK_MS);
+
+  hosts.forEach((host) => {
+    host.addEventListener('wheel', onUser, opts);
+    host.addEventListener('touchstart', onUser, opts);
+    host.addEventListener('pointerdown', onUser, opts);
+    host.addEventListener('keydown', onUser, true);
+  });
+
+  return () => stop(false);
+};
+
 
 export const ChartStarLayer = ({ rootRef, test, update }) => {
   const [targets, setTargets] = useState([]); // { key, kind, label, left, top, right, bottom }
@@ -198,7 +321,18 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
       const label = `${t.label} · ${(test && test.name) || 'experiment'}`.slice(0, 120);
       const pid = projectIdForTest(test);
       const where = pid ? 'project library' : 'common library';
-      const src = { testId: test && test.id, testName: test && test.name, elementLabel: t.label, elementKey: t.key };
+      // The stamp that makes the figure findable again: the INSTANCE it was
+      // captured on (id + experiment name + condition + date, so a rebuilt
+      // experiment can still be resolved to the same condition) and the exact
+      // chart element on that page.
+      const src = {
+        testId: test && test.id,
+        testName: test && test.name,
+        instanceName: (test && test.instanceName) || '',
+        date: (test && test.date) || '',
+        elementLabel: t.label,
+        elementKey: t.key
+      };
       const projectName = projectNameFor(test);
       // The real image is stored on Google Drive (projects/<project>/images), only a
       // small local preview + metadata remain in the browser.
@@ -283,31 +417,8 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
     if (!rootEl) return;
     collect();
     // If the user arrived here from the Image Builder's "↗ Open original graph",
-    // scroll to the exact chart/spectrum the figure was captured from.
-    try {
-      const pend = localStorage.getItem('labPendingFigureScroll');
-      if (pend) {
-        localStorage.removeItem('labPendingFigureScroll');
-        const target = JSON.parse(pend);
-        if (target && target.key) {
-          // Charts / spectra can render lazily (Chart.js, async svg, …), so keep
-          // retrying for a couple of seconds instead of giving up on the first pass.
-          const attemptScroll = (attemptsLeft) => {
-            const el = rootEl.querySelector(`[data-figure-origin="${target.key}"]`);
-            if (el) {
-              setTimeout(() => el.scrollIntoView({ block: 'center', behavior: 'smooth' }), 120);
-              const flash = el.closest('div,section,td') || el;
-              const prevOutline = flash.style.outline;
-              flash.style.outline = '3px solid #3b82f6';
-              setTimeout(() => { flash.style.outline = prevOutline; }, 2600);
-              return;
-            }
-            if (attemptsLeft > 0) setTimeout(() => attemptScroll(attemptsLeft - 1), 500);
-          };
-          attemptScroll(5); // ≈ 2.5 s of retries
-        }
-      }
-    } catch { /* ignore */ }
+    // bring the exact chart/spectrum the figure was captured from into view.
+    const stopReveal = revealPendingFigure(rootEl, test);
     const debounced = () => { clearTimeout(debounced.t); debounced.t = setTimeout(collect, 400); };
     const mo = new MutationObserver(debounced);
     mo.observe(rootEl, { subtree: true, childList: true, attributes: true, characterData: true });
@@ -316,6 +427,7 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', onScroll);
     return () => {
+      stopReveal();
       mo.disconnect();
       clearTimeout(debounced.t);
       rootEl.removeEventListener('scroll', onScroll, true);

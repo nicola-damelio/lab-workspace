@@ -29,6 +29,7 @@ import {normalizeOperators} from './utils/auth';
 import { setActiveProjectId, readLibrary, readAllProjectLibraries, restoreLibraryFromSnapshot } from './utils/figuresLibrary';
 import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, getLastDriveConnectError, driveBootstrapRequestedAtLoad, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders } from './utils/driveUpload';
 import { sanitizeSlug, datasetFolderSlug } from './utils/driveNaming';
+import { resolveOriginTest } from './utils/pendingFigureScroll';
 import { validateDatasetExperiments } from './utils/experimentRules';
 import {
   loadSectionsOf, defaultSelection, sectionGroupsOf, filterLoadState,
@@ -3612,7 +3613,7 @@ const openDataset = (dset) => {
   const handleNextMonth = () =>
     setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
 
-  const jumpToTest = (testId) => {
+  const jumpToTest = (testId, origin = null) => {
     // Remember where we came from so the test page's "◀ Back" button can
     // return there (e.g. a project detail page instead of the test list).
     if (currentModule !== 'active-test') {
@@ -3622,7 +3623,14 @@ const openDataset = (dset) => {
         storageId: activeStorageId
       });
     }
-    setActiveTestId(testId);
+    // "↗ Open original graph" (Image Builder) passes the origin stamp of the
+    // figure: normally the stored id is still valid, but when the experiment
+    // was rebuilt in between (Drive restore, duplication…) it points at a
+    // condition that no longer exists. The SAME condition is then reclaimed by
+    // experiment + instance name (then date) so the user lands on the instance
+    // the figure was taken from instead of "Test not found" / the first one.
+    const target = origin ? resolveOriginTest(tests, origin) : null;
+    setActiveTestId(target ? target.id : testId);
     setCurrentModule('active-test');
 
     if (window.innerWidth < 768) setIsSidebarOpen(false);

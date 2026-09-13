@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Icon } from './Icons';
+import { hasFreshPendingFigureScroll } from '../utils/pendingFigureScroll';
 
 /* =========================================================================
    src/components/ui.jsx
@@ -237,6 +238,12 @@ export const useExperimentScrollMemory = (scope, refs) => {
 
   // ── Restore: on mount, and every time the user switches condition ────────
   useEffect(() => {
+    // Coming back to a graph from the Image Builder ("↗ Open original graph")?
+    // The remembered offset must stand down: ChartStarLayer is bringing the
+    // captured chart into view, and re-applying the old position here would
+    // override it (the user ended up on the right page, but not at the graph).
+    if (hasFreshPendingFigureScroll()) return undefined;
+
     const saved = readViewScroll(scope);
     if (!saved) return undefined;
 

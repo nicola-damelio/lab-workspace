@@ -274,6 +274,102 @@ export const tickLabelOffset = (tickEnd = 0, fontSize = 11, gap = 3, minOffset =
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// AXIS ROOM  -- how much space the tick NUMBERS and the axis TITLE need around
+// the plot, derived from the character size (cfg.fontSize) and the tick angle.
+//
+// A chart is an <svg>: everything that falls outside its viewport is CLIPPED
+// (this is the "the numbers / the label went out of the chart" report). The
+// chart margin (cfgChartMargin) and the title offset (cfgAxisLabel) are both
+// derived from the helpers below, so a bigger character size can only make the
+// PLOT smaller — never push a number or a title out of the chart.
+//
+//   * xTickNumberExtent -- px from the x axis LINE down to the bottom of the
+//     numbers, mirroring the geometry AngledTick renders with (tickSize 6 +
+//     tickMargin 10, the same dy formula, plus the descender of the digits).
+//   * yTickNumberBand   -- px the y numbers reach LEFT of the axis gutter.
+//     recharts does not widen an axis that was given an explicit width (the
+//     default is 60 px), so with a big font the numbers grow into the chart
+//     margin and are cut off at the left edge of the chart.
+//   * extremeTickAnchor -- the first / last number of a horizontal axis is
+//     anchored INSIDE the plot area: the old centred anchor pushed the first
+//     number over the y number of the origin (bottom-left corner) and the last
+//     one off the right edge of the chart.
+// ─────────────────────────────────────────────────────────────────────────────
+export const TICK_CHARS = 6;            // a typical number: "0.0009", "-250.5"
+const AVG_GLYPH_EM = 0.55;              // average digit / sign / dot width (em)
+const CAP_EM = 0.72;                    // digit height (cap height) in em
+const DESCENT_EM = 0.22;                // descender of the digits in em
+const Y_AXIS_GUTTER = 60;               // recharts' default y-axis width
+
+/** Width (px) reserved for a tick number of `chars` characters at `fontSize`. */
+export const tickNumberWidth = (fontSize, chars = TICK_CHARS) =>
+    Math.round((Number(chars) || 0) * (Number(fontSize) || 11) * AVG_GLYPH_EM);
+
+/** Room the y-axis NUMBERS need beyond the axis gutter, in px (0 = they fit). */
+export const yTickNumberBand = (fontSize, gutter = Y_AXIS_GUTTER) =>
+    Math.max(0, Math.round(6 + 10 + tickNumberWidth(fontSize) - (Number(gutter) || Y_AXIS_GUTTER)));
+
+/**
+ * Offset the y-axis TITLE needs (measured from the axis gutter, which is the
+ * reference recharts positions the y label against) so that it stays clear of
+ * numbers that have outgrown the 60 px gutter.
+ */
+export const yAxisTitleOffset = (fontSize) =>
+    yTickNumberBand(fontSize) + Math.round(axisTitleFontSize(fontSize) * DESCENT_EM) + 4;
+
+/** Font size of an axis TITLE (one px above the tick numbers) and its cap height. */
+export const axisTitleFontSize = (fontSize) => (Number(fontSize) || 11) + 1;
+export const axisTitleCap = (fontSize) => Math.round(axisTitleFontSize(fontSize) * CAP_EM);
+
+/** Vertical offset (dy) of a tick label; rotated labels need their own room. */
+export const angledTickDy = (fontSize, angle = 0) => {
+    const fs = Number(fontSize) || 11;
+    if (Number(angle) || 0) return Math.max(4, Math.round(4 + Math.max(0, fs - 11) * 0.5));
+    return tickLabelOffset(-4, fs, 3, 12);
+};
+
+/** px from the x axis LINE down to the bottom of the tick numbers. */
+export const xTickNumberExtent = (fontSize, tickAngle = 0) => {
+    const fs = Number(fontSize) || 11;
+    const a = Math.abs(Number(tickAngle) || 0);
+    const origin = 6 + 10;                       // tickSize + tickMargin
+    if (a > 0) {
+        // A rotated label reaches down by its width × sin(angle) + its digits.
+        const w = tickNumberWidth(fs, 4);
+        const drop = w * Math.sin((Math.min(a, 90) * Math.PI) / 180);
+        return Math.round(origin + angledTickDy(fs, a) + fs * CAP_EM + drop);
+    }
+    return Math.round(origin + angledTickDy(fs, 0) + fs * DESCENT_EM);
+};
+
+/**
+ * Offset (px, counted from the plot's bottom edge) the x-axis TITLE needs: the
+ * tick numbers' band PLUS the title's own cap height, so the title sits under
+ * the numbers instead of on top of them (the historical `base + 1.6/px` value
+ * is kept as a floor, so small character sizes do not move).
+ */
+export const xAxisTitleOffset = (fontSize, tickAngle = 0, base = 25, extra = 0, gap = 0) =>
+    Math.max(
+        (Number(base) || 0) + (Number(extra) || 0) * 1.6,
+        xTickNumberExtent(fontSize, tickAngle) + axisTitleCap(fontSize) + 4
+    ) + (Number(gap) || 0);
+
+/**
+ * Text anchor of a horizontal-axis tick number. The extreme ticks are anchored
+ * inside the plot area so they never spill into the neighbouring axis (the
+ * x/y ORIGIN numbers used to overlap at the bottom-left corner) or off the
+ * chart (the last number used to be clipped on the right).
+ */
+export const extremeTickAnchor = (index, visibleTicksCount, fallback = 'middle') => {
+    const i = Number(index);
+    const n = Number(visibleTicksCount);
+    if (!Number.isFinite(i) || !Number.isFinite(n) || n < 2) return { textAnchor: fallback, dx: 0 };
+    if (i <= 0) return { textAnchor: 'start', dx: 2 };
+    if (i >= n - 1) return { textAnchor: 'end', dx: -2 };
+    return { textAnchor: fallback, dx: 0 };
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ANGLED TICK  -- rotated axis tick label, honours the "Tick label angle"
 // setting of SharedChartStylePanel (cfg.tickAngle). Previously copy-pasted in
 // CDSections / ssNMRSections / NMRSections.
@@ -284,20 +380,33 @@ export const tickLabelOffset = (tickEnd = 0, fontSize = 11, gap = 3, minOffset =
 // tickEnd = tickSize - tickMargin = -4. The old fixed dy = 12 (kept as the
 // floor) starts to be too small once the digits are ~26 px tall; from there the
 // offset grows with the font so the numbers never touch the axis or its marks.
+//
+// The first / last number of the axis is anchored inside the plot (see
+// extremeTickAnchor): recharts hands every tick its `index` and the number of
+// visible ticks, so the extreme ones are re-aligned instead of being centred on
+// the ends of the axis — that is what used to make the x number of the origin
+// collide with the y number of the origin, and the last number of the axis fall
+// off the right edge of the chart once the characters grew.
+//
+// Pass `edgeAnchor={false}` on a BAND axis (bar charts: the categories sit in
+// the middle of their band, so the extreme ticks are NOT on the plot edges)
+// so those labels keep their centred position over their bar.
 // ─────────────────────────────────────────────────────────────────────────────
-export const AngledTick = ({ x, y, payload, angle = 0, fontSize = 11, anchor = 'middle', formatter }) => {
+export const AngledTick = ({ x, y, payload, angle = 0, fontSize = 11, anchor = 'middle', formatter, index, visibleTicksCount, edgeAnchor = true }) => {
     const a = Number(angle) || 0;
-    const fs = Number(fontSize) || 11;
     // Rotated labels need a little more side room as they grow; upright ones are
     // pushed down by their own cap height (≈0.72 em) + a fixed clearance.
-    const grow = Math.max(4, Math.round(4 + Math.max(0, fs - 11) * 0.5));
-    const dy = a ? grow : tickLabelOffset(-4, fs, 3, 12);
-    const dx = a ? (a > 0 ? grow : -grow) : 0;
+    const dy = angledTickDy(fontSize, a);
+    // Upright numbers: the extreme ticks are pulled back INSIDE the plot so they
+    // never collide with the neighbouring axis (the x/y ORIGIN numbers overlap)
+    // nor run off the chart when the characters grow.
+    const edge = a === 0 && edgeAnchor !== false ? extremeTickAnchor(index, visibleTicksCount, anchor) : null;
+    const dx = a ? (a > 0 ? dy : -dy) : (edge ? edge.dx : 0);
     return (
         <g transform={`translate(${x || 0},${y || 0})`}>
             <text
                 transform={a ? `rotate(${a})` : undefined}
-                textAnchor={a < 0 ? 'end' : a > 0 ? 'start' : anchor}
+                textAnchor={a < 0 ? 'end' : a > 0 ? 'start' : (edge ? edge.textAnchor : anchor)}
                 dy={dy}
                 dx={dx}
                 fill="#64748b"
@@ -1317,6 +1426,13 @@ export const cfgTickFormatter = (cfg = {}, axis = 'x') => {
 /**
  * Axis-title label props whose offset grows with the panel font size (and the
  * tick angle), so larger tick labels never overlap the axis title.
+ *
+ * The offset is the LARGER of the historical value (base + 1.6 px per extra
+ * font px) and the room the tick numbers really take (xTickNumberExtent /
+ * yTickNumberBand): with a big character size the title used to be pushed into
+ * the numbers (or, on the y axis, into them), and the numbers could reach the
+ * edge of the chart. cfgChartMargin reserves exactly this room, so the title
+ * stays inside the chart at every size.
  *   cfg  -- style object (fontSize, tickAngle)
  *   axis -- 'x' | 'y'
  *   value-- label text
@@ -1325,22 +1441,27 @@ export const cfgTickFormatter = (cfg = {}, axis = 'x') => {
 export const cfgAxisLabel = (cfg = {}, axis = 'x', value = '', base) => {
   const fs = Number(cfg.fontSize) || 16;
   const extra = Math.max(0, fs - 12) + (Math.abs(Number(cfg.tickAngle) || 0) > 0 ? 8 : 0);
-  const baseOff = base ?? (axis === 'x' ? 25 : 20);
   const gap = axisLabelGap(cfg, axis);
-  const offset = -(baseOff + extra * 1.6 + gap);
+  const offset = axis === 'x'
+    // the x title is placed under the numbers (its cap height included)
+    ? xAxisTitleOffset(fs, cfg.tickAngle, base ?? 25, extra, gap)
+    // the y title is placed to the LEFT of the numbers, measured from the axis
+    // gutter (recharts' reference for the y label): only numbers that outgrow
+    // the gutter push it further left.
+    : Math.max((base ?? 20) + extra * 1.6, yAxisTitleOffset(fs)) + gap;
   const bold = !!(axis === 'x' ? cfg.xAxisLabelBold : cfg.yAxisLabelBold);
   const italic = !!(axis === 'x' ? cfg.xAxisLabelItalic : cfg.yAxisLabelItalic);
   const style = {
     value,
     fill: '#64748b',
-    fontSize: fs + 1,
+    fontSize: axisTitleFontSize(fs),
     ...(bold ? { fontWeight: 'bold' } : {}),
     ...(italic ? { fontStyle: 'italic' } : {})
   };
   if (axis === 'x') {
-    return { ...style, position: 'insideBottom', offset };
+    return { ...style, position: 'insideBottom', offset: -offset };
   }
-  return { ...style, angle: -90, position: 'insideLeft', offset };
+  return { ...style, angle: -90, position: 'insideLeft', offset: -offset };
 };
 
 /**
@@ -1359,16 +1480,32 @@ const axisLabelGap = (cfg = {}, axis = 'x') => {
  * Chart margin that grows with the panel font size so the axis areas have room
  * for larger tick labels + titles. Pass the chart's base margin as `base`.
  * A positive axis-title gap also widens the corresponding margin.
+ *
+ * The growth is the LARGER of the historical 2.2 px per extra font px and the
+ * room the geometry really needs (tick numbers + the axis title after them, see
+ * xTickNumberExtent / yTickNumberBand). The chart is an <svg>: whatever the
+ * margin does not reserve is clipped, which is what used to happen to the y
+ * numbers (wide) and to the x numbers / title with angled ticks.
  */
 export const cfgChartMargin = (cfg = {}, base = { top: 20, right: 20, bottom: 45, left: 50 }) => {
   const fs = Number(cfg.fontSize) || 16;
+  const angle = Number(cfg.tickAngle) || 0;
   const extra = Math.max(0, fs - 12);
   const xGap = Math.max(0, axisLabelGap(cfg, 'x'));
   const yGap = Math.max(0, axisLabelGap(cfg, 'y'));
+  // Absolute floors, measured from the plot edges: the x title (which sits
+  // under the numbers) and the y title (which sits left of the axis gutter,
+  // i.e. of the numbers that outgrow it).
+  const xNeed = Math.round(
+    xAxisTitleOffset(fs, angle, 25, extra, xGap) + axisTitleFontSize(fs) * 0.22 + 2
+  );
+  const yNeed = Math.round(
+    Math.max(20 + extra * 1.6, yAxisTitleOffset(fs)) + axisTitleCap(fs) + 2 + yGap
+  );
   return {
     ...base,
-    bottom: (base.bottom ?? 45) + extra * 2.2 + xGap,
-    left: (base.left ?? 50) + extra * 2.2 + yGap
+    bottom: Math.max((base.bottom ?? 45) + extra * 2.2, xNeed),
+    left: Math.max((base.left ?? 50) + extra * 2.2, yNeed)
   };
 };
 

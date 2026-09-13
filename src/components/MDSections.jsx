@@ -1749,7 +1749,7 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
           {chartType === 'bar' ? (
             <BarChart data={data} margin={effMargin}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey={xKey} interval={0} tick={<AngledTick angle={cfg.tickAngle} fontSize={fSize} />} tickMargin={10} label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'x', xLabel)} />
+              <XAxis dataKey={xKey} interval={0} tick={<AngledTick angle={cfg.tickAngle} fontSize={fSize} edgeAnchor={false} />} tickMargin={10} label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'x', xLabel)} />
               <YAxis width={70} tick={{ fontSize: fSize }} label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'y', yLabel)} />
               <Tooltip />
               <Bar dataKey={dataKey} isAnimationActive={false}>
