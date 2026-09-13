@@ -48,6 +48,28 @@ const thumbnailsOf = (obj) => {
 // library entries are tracked PER SCOPE — see canvasEntries below.
 const canvasScopeKey = (scopeProjectId) => scopeProjectId || 'dataset';
 
+// ---- panel letters (A, B, C, …) --------------------------------------------
+// The letters label the panels in reading order (top→bottom, left→right — see
+// `renumberLetters`), and the figure caption at the bottom lists the
+// sub-captions in that very order: A first, then B, … So the caption is built
+// from the LETTERS, never from the order the panels happen to be stored in
+// (placing panel C before A used to make the caption read “C: … · A: …”).
+// Past Z the label falls back to a number (1, 2, …); a custom label sorts last.
+const panelLetterRank = (letter) => {
+  const s = String(letter == null ? '' : letter).trim();
+  if (/^[A-Za-z]$/.test(s)) return [0, s.toUpperCase().charCodeAt(0), ''];
+  if (/^\d+$/.test(s)) return [1, Number(s), ''];
+  return [2, 0, s.toUpperCase()];
+};
+const comparePanelLetters = (a, b) => {
+  const ra = panelLetterRank(a);
+  const rb = panelLetterRank(b);
+  return (ra[0] - rb[0]) || (ra[1] - rb[1]) || (ra[2] < rb[2] ? -1 : ra[2] > rb[2] ? 1 : 0);
+};
+
+// Size of the panel letters (pt) when a canvas has no letter at all yet.
+const DEFAULT_LETTER_PT = 14;
+
 // Natural width/height ratio of every figure already measured, keyed by source
 // (data URL / Drive URL). The canvas "🔒 Keep aspect ratio" option draws each
 // figure with its own ratio inside its panel, so the ratio has to be known
@@ -147,6 +169,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const [saveBusy, setSaveBusy] = useState(false);
   const [placeTextMode, setPlaceTextMode] = useState(false); // click on the object to add text there
   const [globalCaption, setGlobalCaption] = useState('');     // figure-wide caption at the bottom
+  // Size the figure-wide letter-size control falls back to when the canvas holds
+  // no panel yet: a size typed before the first panel is added is remembered for
+  // it (see setLetterSizeAll / currentLetterPt).
+  const [letterPtFallback, setLetterPtFallback] = useState(DEFAULT_LETTER_PT);
   const [editingText, setEditingText] = useState(null);       // { objId, txId, mmX, mmY, value } — type directly on the canvas
   const [editingCaption, setEditingCaption] = useState(false); // edit the figure caption directly at the bottom
   const [editingObjCaption, setEditingObjCaption] = useState(null); // objId — floating sub-caption editor (opened from the properties panel)
@@ -266,8 +292,12 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   };
 
   // The figure-wide caption at the bottom is built from every object's
-  // sub-caption (merged), unless the user typed a custom one directly on the canvas.
+  // sub-caption (merged), unless the user typed a custom one directly on the
+  // canvas. The panels are listed in ALPHABETICAL LETTER order — A, B, C … —
+  // i.e. the order the letters read on the figure, whatever order the panels
+  // were created / pasted in (see `comparePanelLetters`).
   const autoGlobalCaption = (objects || []).filter((o) => String(o.caption || '').trim())
+    .sort((a, b) => comparePanelLetters(a.letter, b.letter) || (a.y - b.y) || (a.x - b.x))
     .map((o) => `${o.letter || '?'}: ${String(o.caption).trim()}`).join(' · ');
   const effectiveGlobalCaption = String(globalCaption || '').trim() ? globalCaption : autoGlobalCaption;
   const captionH = (effectiveGlobalCaption.trim() || editingCaption) ? 14 : 0; // reserved caption band (mm)
@@ -460,7 +490,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     const newObj = {
       id, x: 0, y: 0, w: 1, h: 1,
       letter: nextLetter,
-      letterStyle: { fontSize: 14, color: '#000000', bold: true },
+      letterStyle: { fontSize: currentLetterPt(), color: '#000000', bold: true },
       caption: '',
       captionStyle: { fontSize: 10, color: '#000000', bold: false }, // kept for canvases saved before the panel caption was hidden (never drawn)
       imgSrc: null, imgFit: 'contain', imgScale: 1, imgPadding: 2,
@@ -529,6 +559,30 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // which must not depend on the currently-selected object).
   const setObjCaption = (objId, caption) => {
     setObjects(prev => prev.map(o => o.id === objId ? { ...o, caption } : o));
+  };
+
+  // ── letter size: ONE size for EVERY panel letter (A, B, C …) ───────────────
+  // The letters of a figure always read alike, so the size is a FIGURE setting,
+  // not a per-panel one: the controls (toolbar, canvas options, "Labels &
+  // Captions") write the new size to ALL the objects at once — the user never
+  // has to repeat it panel by panel. Colour and bold stay per panel, so a
+  // single panel can still be highlighted.
+  const setLetterSizeAll = (pt) => {
+    const size = Number(pt);
+    if (!Number.isFinite(size) || size <= 0) return; // empty / invalid field → keep the current size
+    setLetterPtFallback(size); // remembered for an empty canvas / a new panel
+    setObjects(prev => prev.map(o => ({ ...o, letterStyle: { ...(o.letterStyle || {}), fontSize: size } })));
+  };
+  // Size shown by those controls: once the figure-wide control is used every
+  // panel holds the same value; before that (a canvas whose letters were set
+  // panel by panel) the selected panel's size is shown, else the first panel's,
+  // else the size typed last (a canvas that has no panel left to show).
+  const currentLetterPt = () => {
+    const sel = (objects || []).find((o) => o.id === selectedId);
+    const s = sel && sel.letterStyle ? Number(sel.letterStyle.fontSize) : 0;
+    if (Number.isFinite(s) && s > 0) return s;
+    const first = (objects || []).find((o) => o && o.letterStyle && Number(o.letterStyle.fontSize) > 0);
+    return first ? Number(first.letterStyle.fontSize) : letterPtFallback;
   };
 
   // Replace-mode click: the object shows exactly this one figure (also clears
@@ -1272,6 +1326,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   };
 
   const selectedObj = objects.find(o => o.id === selectedId);
+  // The size every panel letter is drawn at — the value shown by the letter-size
+  // controls of the toolbar and of "Labels & Captions" (see setLetterSizeAll).
+  const letterPt = currentLetterPt();
   void libVersion; // re-read the library lists on every transfer (the bump triggers a re-render)
   const libraryItems = libraryTab === 'project' ? readProjectLibrary(activeLibProjectId) : readLibrary();
 
@@ -1561,8 +1618,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             <label className="text-[10px] font-bold text-slate-500">Letter
               <input type="text" value={selectedObj.letter} onChange={e => updateObj({ letter: e.target.value })} className="w-full border rounded p-1 text-xs" />
             </label>
-            <label className="text-[10px] font-bold text-slate-500">Letter Size (pt)
-              <input type="number" min="4" max="48" value={selectedObj.letterStyle.fontSize} onChange={e => updateObj({ letterStyle: { ...selectedObj.letterStyle, fontSize: Number(e.target.value) } })} className="w-full border rounded p-1 text-xs" />
+            <label className="text-[10px] font-bold text-slate-500" title="The letter size belongs to the FIGURE, not to a single panel: changing it rescales every panel letter (A, B, C …) at once — no need to set it panel by panel. New panels adopt it automatically.">Letter Size — all panels (pt)
+              <input type="number" min="4" max="48" value={letterPt} onChange={e => setLetterSizeAll(e.target.value)} className="w-full border rounded p-1 text-xs" />
             </label>
             <div className="col-span-2 flex flex-col gap-1">
               <div className="flex items-center justify-between gap-2">
@@ -1575,12 +1632,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             </div>
           </div>
           <div className="flex gap-2 items-center flex-wrap">
-            <label className="text-[10px] font-bold text-slate-500">Letter Color
+            <label className="text-[10px] font-bold text-slate-500" title="Colour of THIS panel's letter (colour and bold stay per panel — the size above is shared by every panel).">Letter Color
               <input type="color" value={selectedObj.letterStyle.color} onChange={e => updateObj({ letterStyle: { ...selectedObj.letterStyle, color: e.target.value } })} className="w-8 h-6 rounded border cursor-pointer" />
             </label>
-            <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500">
+            <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500" title="Bold for THIS panel's letter.">
               <input type="checkbox" checked={selectedObj.letterStyle.bold} onChange={e => updateObj({ letterStyle: { ...selectedObj.letterStyle, bold: e.target.checked } })} /> Bold
             </label>
+            <span className="text-[9px] text-slate-400 italic">Letter size is shared by every panel; colour and bold are per panel.</span>
           </div>
         </div>
       </div>
@@ -1686,7 +1744,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             title="Canvas option: every figure keeps its own width/height ratio inside its panel, so changing the number of panels or the canvas width/height only rescales the figures instead of stretching them. It overrides the per-object “Fit → Stretch” choice.">
             <input type="checkbox" checked={keepAspect} onChange={e => setKeepAspect(e.target.checked)} /> 🔒 Keep aspect ratio
           </label>
-          <label className="text-[10px] font-bold text-slate-500 flex flex-col flex-1 min-w-[220px]">Global caption (click to edit — merges the object sub-captions)
+          <label className="text-[10px] font-bold text-slate-500 flex flex-col" title="Size of the panel letters (A, B, C …). It is a FIGURE setting: changing it rescales every letter of the canvas at once, and the panels added later adopt it — you never set it panel by panel.">
+            Letter size (pt)
+            <input type="number" min="4" max="48" value={letterPt} onChange={e => setLetterSizeAll(e.target.value)} className="border rounded p-1 text-xs w-20" />
+          </label>
+          <label className="text-[10px] font-bold text-slate-500 flex flex-col flex-1 min-w-[220px]" title="The caption written at the bottom of the figure. By default it merges the panel sub-captions in LETTER order (A: … · B: … · C: …), whatever order the panels were created in.">Global caption (click to edit — merges the object sub-captions in letter order)
             <span className="border border-slate-200 rounded p-1 text-xs bg-slate-50 text-slate-600 truncate hover:border-blue-400 hover:bg-blue-50 cursor-text" title={effectiveGlobalCaption} onClick={() => { setSelectedId(null); setEditingCaption(true); }}>{effectiveGlobalCaption || 'Merges the object sub-captions (A: …, B: …)'}</span>
           </label>
           <button onClick={addObject} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">+ Add Object</button>
@@ -1836,6 +1898,12 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-600 bg-slate-100 rounded-lg px-2 py-1.5 cursor-pointer"
                    title="Draw the cell divider guides across the canvas (composition setting — exports follow it).">
                    <input type="checkbox" checked={showGridLines} onChange={e => setShowGridLines(e.target.checked)} /> Grid
+                 </label>
+                 <label className="flex items-center gap-1 text-[11px] font-bold text-slate-600 bg-slate-100 rounded-lg px-2 py-1.5"
+                   title="Size of the panel letters (A, B, C …). It is a FIGURE setting: it rescales every letter of the canvas at once — not one panel at a time.">
+                   Letters
+                   <input type="number" min="4" max="48" value={letterPt} onChange={e => setLetterSizeAll(e.target.value)} className="border border-slate-300 rounded px-1 py-0.5 text-[11px] w-14 bg-white font-normal" />
+                   pt
                  </label>
                  <button onClick={exportPng} title="PNG of the composition — the blue selection square and resize handles are never included; panel borders and grid lines follow the checkboxes." className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">Export PNG</button>
               </div>
