@@ -195,6 +195,13 @@ export const FigureStyleApplyButton = ({ test, update }) => {
             {' '}· plot box <b>{boxRatios.length
               ? boxRatios.map((a) => `${a.kind} ${a.ratio} : 1`).join(' · ')
               : 'per chart'}</b>
+            {/* The ink & the lines the profile imposes ('' / 0 = the chart
+                keeps its own colour / thickness, so they stay hidden). */}
+            {profile.lineThickness > 0
+              ? <> · curves <b>{profile.lineThickness} px</b></>
+              : null}
+            {profile.tickColor ? <> · number colour <b>{profile.tickColor}</b></> : null}
+            {profile.axisTitleColor ? <> · title colour <b>{profile.axisTitleColor}</b></> : null}
             {profile.fontFamily
               ? <> · font <b>{profile.fontFamily.split(',')[0].replace(/"/g, '').trim()}</b></>
               : null}

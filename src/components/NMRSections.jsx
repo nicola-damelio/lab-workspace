@@ -8,9 +8,9 @@ import {
 } from 'recharts';
 import { CollapsibleSection } from './ui';
 import { useFigureStyleSlot } from './FigureStyleTools';
-import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, VIS_PALETTES, PER_ATOM_COLORS, seriesColorFor, chartBoxStyle, chartAspect, chartRatioBoxStyle, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf, tickTextProps, tickSize, fontFamilyOf, legendTextStyle, chartAspectImposed
+import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, VIS_PALETTES, PER_ATOM_COLORS, seriesColorFor, chartBoxStyle, chartAspect, chartRatioBoxStyle, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf, tickTextProps, tickSize, fontFamilyOf, legendTextStyle, chartAspectImposed, tickColorOf
 } from '../utils/chartStyle';
-import { SplitChartStack, SplitToggle, SPLIT_CHART_H } from './SplitChartStack';
+import { SplitChartStack, SplitLayoutControls, SplitToggle, splitChartBoxStyle, splitLayoutOf, withSplitLayout } from './SplitChartStack';
 import { suggestDriveFileName, driveFolderPath, sanitizeSlug } from '../utils/driveNaming';
 import { uploadLocalFile, getDriveToken, archiveFileToDrive } from '../utils/driveUpload';
 import { storeJson, loadJson } from '../utils/pdbStore';
@@ -5017,6 +5017,13 @@ const NMRSpectraVisualization = ({ ctx }) => {
     updateActiveTest({ splitSharedY: nv });
     return nv;
   });
+  // The SHAPE of each sub-chart (width : height, 0 = the historical 150 px box)
+  // and the SEPARATION between the graphs (px). Read from the experiment on
+  // every render and written straight back — the same value pattern as this
+  // page's 1D chart cfg — so the layout survives a page switch.
+  const splitLayout = splitLayoutOf(activeTest);
+  const changeSplitLayout = (patch) => updateActiveTest({ splitLayout: withSplitLayout(activeTest, patch) });
+  const splitBoxStyle = splitChartBoxStyle(splitLayout);
   const [hiddenSeries, setHiddenSeries] = useState({});
   const [localColors, setLocalColors] = useState(activeTest.nmrInstanceColors || {});
 const [savedPalettes, setSavedPalettes] = useState(activeTest.nmrSavedPalettes || {});
@@ -5153,6 +5160,7 @@ const onUp = () => {
         <div className="flex items-center gap-2 flex-wrap">
           <InstanceLinkToggle activeTest={activeTest} updateActiveTest={updateActiveTest} />
           <SplitToggle on={splitStack} onToggle={toggleSplitStack} sharedY={splitSharedY} onToggleSharedY={toggleSplitSharedY} />
+          {splitStack && <SplitLayoutControls layout={splitLayout} onChange={changeSplitLayout} />}
           <label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer">
             <input type="checkbox" checked={showOverlay} onChange={e => setShowOverlay(e.target.checked)} className="w-4 h-4 accent-blue-600" />
             Show Overlay
@@ -5208,15 +5216,16 @@ const onUp = () => {
          id="nmr-split"
          label="Split view — 1D spectra"
          series={visibleSeries}
+         layout={splitLayout}
          className="w-full lg:w-[46%]"
          renderChart={(s) => (
-           <div style={{ width: '100%', height: SPLIT_CHART_H }} className="px-2 pb-1">
+           <div style={splitBoxStyle} className="px-2 pb-1">
              <ResponsiveContainer width="100%" height="100%">
                <LineChart data={s.data} margin={{ top: 4, right: 10, bottom: 16, left: 2 }}>
                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                  <XAxis type="number" dataKey="x" domain={dom} reversed={true} allowDataOverflow
-                   tickFormatter={v => Number(v).toFixed(2)} tick={{ fontSize: splitFontSize, fill: '#64748b' }} />
-                 <YAxis domain={splitSharedY ? yDomain : ['dataMin', 'dataMax']} tick={{ fontSize: splitFontSize, fill: '#64748b' }} width={40} />
+                   tickFormatter={v => Number(v).toFixed(2)} tick={{ fontSize: splitFontSize, fill: tickColorOf(activeTest.nmr1dChartCfg) }} />
+                 <YAxis domain={splitSharedY ? yDomain : ['dataMin', 'dataMax']} tick={{ fontSize: splitFontSize, fill: tickColorOf(activeTest.nmr1dChartCfg) }} width={40} />
                  <Line data={s.data} type="monotone" dataKey="y" stroke={s.color} strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls />
                </LineChart>
              </ResponsiveContainer>
@@ -7871,7 +7880,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                     {isHist ? (
                       <BarChart data={catData} margin={cfgChartMargin(cfg, { top: 8, right: 16, bottom: 30, left: 12 })}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                        <XAxis dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={tickSize(cfg)} fontFamily={fontFamilyOf(cfg)} edgeAnchor={false} />} tickMargin={10} label={cfgAxisLabel(cfg, 'x', 'Condition', 22)} />
+                        <XAxis dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={tickSize(cfg)} fontFamily={fontFamilyOf(cfg)} color={tickColorOf(cfg)} edgeAnchor={false} />} tickMargin={10} label={cfgAxisLabel(cfg, 'x', 'Condition', 22)} />
                         <YAxis {...(histBrkOn ? { type: 'number', ...histBrk.axisProps } : { type: 'number', domain: [dom(cfg.yMin) ?? errRangeY?.[0] ?? 'auto', dom(cfg.yMax) ?? errRangeY?.[1] ?? 'auto'] })} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={tickTextProps(cfg, { fill: '#64748b' })} label={cfgAxisLabel(cfg, 'y', yLab, 6)} />
                         <Tooltip />
                         {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
@@ -7890,7 +7899,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                       <LineChart margin={cfgChartMargin(cfg, { top: 8, right: 16, bottom: 30, left: 12 })}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                         <XAxis type="number" dataKey="x" domain={[dom(cfg.xMin) ?? zoom.domain[0], dom(cfg.xMax) ?? zoom.domain[1]]} ticks={xTicks}
-                          tick={<AngledTick angle={cfg.tickAngle} fontSize={tickSize(cfg)} fontFamily={fontFamilyOf(cfg)} formatter={cfgTickFormatter(cfg, 'x') || undefined} />} tickMargin={10}
+                          tick={<AngledTick angle={cfg.tickAngle} fontSize={tickSize(cfg)} fontFamily={fontFamilyOf(cfg)} color={tickColorOf(cfg)} formatter={cfgTickFormatter(cfg, 'x') || undefined} />} tickMargin={10}
                           label={cfgAxisLabel(cfg, 'x', xLab, 22)} />
                         <YAxis type="number" domain={[dom(cfg.yMin) ?? errRangeY?.[0] ?? 'auto', dom(cfg.yMax) ?? errRangeY?.[1] ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={tickTextProps(cfg, { fill: '#64748b' })} label={cfgAxisLabel(cfg, 'y', yLab, 6)} />
                         <Tooltip />
@@ -7953,7 +7962,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={paramData} margin={cfgChartMargin(cfg, { top: 10, right: 10, bottom: 20, left: 10 })}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                          <XAxis dataKey="name" interval={catInterval(cfg.tickStep)} tickMargin={10} tick={<AngledTick angle={cfg.tickAngle} fontSize={Math.max(9, cfg.fontSize - 2)} edgeAnchor={false} />} />
+                          <XAxis dataKey="name" interval={catInterval(cfg.tickStep)} tickMargin={10} tick={<AngledTick angle={cfg.tickAngle} fontSize={Math.max(9, cfg.fontSize - 2)} color={tickColorOf(cfg)} edgeAnchor={false} />} />
                           <YAxis {...(paramBrkOn ? paramBrk.axisProps : { domain: [dom(cfg.yMin) ?? paramRange?.[0] ?? 'auto', dom(cfg.yMax) ?? paramRange?.[1] ?? 'auto'] })} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={tickTextProps(cfg, { fontSize: Math.max(9, Number(tickSize(cfg)) - 2) })} label={cfgAxisLabel(cfg, 'y', paramGraphVar, 0)} />
                           <Tooltip />
                           <Bar dataKey="val" isAnimationActive={false}>

@@ -14,12 +14,14 @@ import {
   FIGURE_STYLE_KEY, FIGURE_STYLE_EVENT, FIGURE_STYLE_FIELDS,
   FIGURE_ASPECT_MIN, FIGURE_ASPECT_MAX, FIGURE_ASPECT_STEPS,
   FIGURE_DECIMALS_STEPS, FIGURE_AXIS_CFG_KEYS,
+  FIGURE_LINE_MIN, FIGURE_LINE_MAX, FIGURE_LINE_STEPS,
   FIGURE_KINDS, DEFAULT_FIGURE_KIND, FIGURE_KIND_FIELDS, FIGURE_ASPECT_FIELDS, FIGURE_KIND_LABELS,
   FIGURE_AXIS_BASES, FIGURE_AXIS_KIND_SUFFIX, FIGURE_AXIS_FORMAT_FIELDS, FIGURE_AXIS_BASE_LABELS, FIGURE_AXIS_HINTS,
   figureAxisFormatField, figureAxisFormatForKind, figureAxisAllSci, figureAxisFormatSummary,
   normalizeFigureKind, figureAspectFieldForKind, figureAspectForKind, figureAspectSummary,
   normalizeFigureStyle, clampFigureFont, clampFigureAngle, clampFigureAspect,
   clampFigureDecimals, figureCfgAcceptsAxisStyle,
+  normalizeFigureColor, clampFigureLineThickness,
   readFigureStyle, writeFigureStyle, figureStyleTag,
   figureStylePatch, figureStyleMatches, applyFigureStyleToCfg,
   registerFigureStyleSlot, figureStyleSlotCount, applyFigureStyleToSlots,
@@ -36,7 +38,11 @@ import {
 // …and the ratio resolver a plot box is sized with.
 import {
   clampChartFont, chartAspect, figureAspectOf, chartBoxStyle, chartAspectImposed,
-  chartRatioBoxStyle, DEFAULT_CHART_ASPECT_WIDE, FIGURE_ASPECT_KEY
+  chartRatioBoxStyle, DEFAULT_CHART_ASPECT_WIDE, FIGURE_ASPECT_KEY,
+  // …and the “ink & lines” helpers of the very same module: the colour of the
+  // axis numbers / axis titles and the thickness of the curves.
+  seriesLineThickness, tickTextProps, tickColorOf, axisTitleColorOf,
+  tickColorProps, axisTitleColorProps, figureLineThicknessOf, FIGURE_LINE_KEY
 } from './src/utils/chartStyle.js';
 
 const results = [];
@@ -54,6 +60,9 @@ check('1 the default profile is one size per element, no rotation, no ratio, no 
     fontFamily: '', fontSize: 16, axisTitleFontSize: 18, legendFontSize: 16,
     simLabelFontSize: 16, tickAngle: 0,
     axisTitleBold: false, axisTitleItalic: false, tickSci: false, tickDecimals: '',
+    // …the INK of a figure (the two colours) and the thickness of its curves:
+    // '' / 0 = every chart keeps what its own 🎨 panel draws.
+    tickColor: '', axisTitleColor: '', lineThickness: 0,
     // the sixteen axis format / scale knobs, one per axis × kind (all off):
     // exponential notation and log scale of the X / the Y axis of each kind.
     xSci: false, ySci: false, xLog: false, yLog: false,
@@ -111,9 +120,9 @@ check('5 unknown keys never leak into the stored profile', () => {
   const p = normalizeFigureStyle({ fontSize: 16, colors: { a: '#fff' }, height: 380 });
   eq(Object.keys(p).sort(), [
     'applyOnOpen', 'aspect', 'aspectAtom', 'aspectResidue', 'aspectSpectra',
-    'axisTitleBold', 'axisTitleFontSize', 'axisTitleItalic',
-    'fontFamily', 'fontSize', 'legendFontSize', 'simLabelFontSize',
-    'tickAngle', 'tickDecimals', 'tickSci',
+    'axisTitleBold', 'axisTitleColor', 'axisTitleFontSize', 'axisTitleItalic',
+    'fontFamily', 'fontSize', 'legendFontSize', 'lineThickness', 'simLabelFontSize',
+    'tickAngle', 'tickColor', 'tickDecimals', 'tickSci',
     // the axis format / scale knobs (see check 1b)
     ...FIGURE_AXIS_FORMAT_FIELDS.slice().sort()
   ].sort());
@@ -124,6 +133,7 @@ check('6 read/write round-trip (browser storage is optional in Node)', () => {
     fontFamily: 'Arial', fontSize: 20, axisTitleFontSize: 22, legendFontSize: 18,
     simLabelFontSize: 18, tickAngle: 45,
     axisTitleBold: true, axisTitleItalic: false, tickSci: true, tickDecimals: 2,
+    tickColor: '', axisTitleColor: '', lineThickness: 0,
     aspect: 0, applyOnOpen: true
   });
   const round = readFigureStyle();
@@ -131,6 +141,7 @@ check('6 read/write round-trip (browser storage is optional in Node)', () => {
     fontFamily: 'Arial', fontSize: 20, axisTitleFontSize: 22, legendFontSize: 18,
     simLabelFontSize: 18, tickAngle: 45,
     axisTitleBold: true, axisTitleItalic: false, tickSci: true, tickDecimals: 2,
+    tickColor: '', axisTitleColor: '', lineThickness: 0,
     // the legacy `tickSci` is expanded onto the eight sci knobs…
     xSci: true, ySci: true, xLog: false, yLog: false,
     xSciSpectra: true, ySciSpectra: true, xLogSpectra: false, yLogSpectra: false,
@@ -215,6 +226,7 @@ check('14 the profile fields are the single source of the applied keys', () => {
   eq(FIGURE_STYLE_FIELDS, [
     'fontFamily', 'fontSize', 'axisTitleFontSize', 'legendFontSize', 'simLabelFontSize',
     'tickAngle', 'axisTitleBold', 'axisTitleItalic', 'tickSci', 'tickDecimals',
+    'tickColor', 'axisTitleColor', 'lineThickness',
     'aspect', 'aspectSpectra', 'aspectAtom', 'aspectResidue',
     'xSciSpectra', 'ySciSpectra', 'xLogSpectra', 'yLogSpectra',
     'xSciAtom', 'ySciAtom', 'xLogAtom', 'yLogAtom',
@@ -1025,6 +1037,135 @@ check('58 Settings and the 🎨 button can both save and switch configurations',
     'a switch is not recorded on the experiment');
   const SET2 = SRC('components/AppModules/settingsModule.jsx');
   ok(SET2.includes('SAVES your configurations'), 'the Settings page does not announce the saved configurations');
+});
+
+/* ══ 59 · 64 THE INK & THE LINES — the two colours and the curve thickness ══
+   Settings → Figure style can name the COLOUR of the axis numbers, the COLOUR
+   of the axis titles and the THICKNESS of the curves of every figure. They ride
+   on the helpers every chart already uses (tickColorOf / axisTitleColorOf /
+   seriesLineThickness in utils/chartStyle.js), so nothing new is invented for
+   the charts — and a profile that says nothing about them renders every page
+   exactly as before. */
+check('59 the profile normalises the two colours and the line thickness', () => {
+  eq(normalizeFigureColor('#FFF'), '#ffffff', 'a short hex is expanded');
+  eq(normalizeFigureColor('#A1b2C3'), '#a1b2c3', 'a 6-digit hex is lower-cased');
+  eq(normalizeFigureColor('  #010203  '), '#010203', 'the surrounding spaces are trimmed');
+  ['', null, undefined, 'red', 'rgb(1,2,3)', '#12', '#12345', 42, {}, 'black'].forEach((v) =>
+    eq(normalizeFigureColor(v), '', `${JSON.stringify(v)} is not an imposable colour`));
+  eq(normalizeFigureStyle({ tickColor: '#0F172A', axisTitleColor: '#abc' }),
+    { ...DEFAULT_FIGURE_STYLE, tickColor: '#0f172a', axisTitleColor: '#aabbcc' });
+  eq(normalizeFigureStyle({ tickColor: 'nonsense' }).tickColor, '', 'a foreign colour means “the chart own”');
+  // The thickness: 0 = each chart keeps its own, a tenth of a pixel step, clamped.
+  eq(clampFigureLineThickness(-3), FIGURE_LINE_MIN);
+  eq(clampFigureLineThickness(''), FIGURE_LINE_MIN);
+  eq(clampFigureLineThickness('nope'), FIGURE_LINE_MIN);
+  eq(clampFigureLineThickness(2), 2);
+  eq(clampFigureLineThickness('2.5'), 2.5, 'the panel may hand over a string');
+  eq(clampFigureLineThickness(1.24), 1.2, 'rounded to a tenth of a pixel');
+  eq(clampFigureLineThickness(999), FIGURE_LINE_MAX);
+  eq(normalizeFigureStyle({ lineThickness: 99 }).lineThickness, FIGURE_LINE_MAX);
+  eq(FIGURE_LINE_MIN, 0, 'the default is “every chart keeps its own panel value”');
+  eq(FIGURE_LINE_STEPS[0], 0, 'the first one-click value is “each chart its own”');
+  eq(FIGURE_LINE_STEPS.includes(2), true, 'the thickness the charts draw today is offered');
+});
+check('60 the tag shows the ink and the thickness only when they are imposed', () => {
+  eq(figureStyleTag({ fontSize: 16 }), 'fs16-t18-lg16-lb16-rot0', 'an untouched profile keeps its tag');
+  eq(figureStyleTag({ fontSize: 16, tickColor: '#FF0000' }), 'fs16-t18-lg16-lb16-rot0-tcff0000');
+  eq(figureStyleTag({ fontSize: 16, tickColor: '#ff0000', axisTitleColor: '#0f172a' }),
+    'fs16-t18-lg16-lb16-rot0-tcff0000-atc0f172a');
+  eq(figureStyleTag({ fontSize: 16, lineThickness: 2.5 }), 'fs16-t18-lg16-lb16-rot0-lw2.5');
+  eq(figureStyleTag({ fontSize: 16, tickColor: '#ff0000', lineThickness: 3 }),
+    'fs16-t18-lg16-lb16-rot0-tcff0000-lw3', 'the ink comes before the lines, the font stays last');
+  eq(figureStyleTag({ fontSize: 16, tickColor: '#fff' }), figureStyleTag({ fontSize: 16, tickColor: '#FFFFFF' }),
+    'the same colour written two ways is the same profile');
+  eq(figureStyleTag({ fontSize: 16, lineThickness: 0 }), figureStyleTag({ fontSize: 16 }),
+    'a released thickness is not in the tag');
+});
+check('61 the fan-out writes the ink and the thickness — and releases them', () => {
+  const cfg = { ...rechart, tickColor: '#64748b', axisTitleColor: '#64748b', lineThickness: 2 };
+  const styled = applyFigureStyleToCfg(cfg, {
+    ...DEFAULT_FIGURE_STYLE, tickColor: '#111827', axisTitleColor: '#b91c1c', lineThickness: 3
+  });
+  eq(styled.tickColor, '#111827');
+  eq(styled.axisTitleColor, '#b91c1c');
+  eq(styled.lineThickness, 3, 'the key every chart reads…');
+  eq(styled[FIGURE_LINE_KEY], 3, '…and the marker the helpers read first');
+  eq(styled.fontSize, 16, 'the rest of the cfg is untouched');
+  // Back to “each chart keeps its own”: the colours are cleared and the imposed
+  // thickness RELEASED (the value the chart panel shows stays visible).
+  const freed = applyFigureStyleToCfg(styled, DEFAULT_FIGURE_STYLE);
+  eq(freed.tickColor, '');
+  eq(freed.axisTitleColor, '');
+  eq(freed[FIGURE_LINE_KEY], 0, 'the imposed thickness must be released');
+  eq(freed.lineThickness, 3, '…while the chart own panel value stays readable');
+  // A cfg that never carried the keys receives no dead plumbing.
+  const virgin = applyFigureStyleToCfg({ foo: 1 },
+    { ...DEFAULT_FIGURE_STYLE, tickColor: '#000000', axisTitleColor: '#000000', lineThickness: 4 });
+  eq('tickColor' in virgin, false);
+  eq('axisTitleColor' in virgin, false);
+  eq(virgin[FIGURE_LINE_KEY], 4, 'the marker is the one key the series helpers need');
+});
+
+check('62 the thickness follows the profile until a curve overrides it', () => {
+  eq(figureLineThicknessOf({}), 0);
+  eq(figureLineThicknessOf({ [FIGURE_LINE_KEY]: '2.5' }), 2.5, 'a stored string counts');
+  const imposed = { lineThickness: 3, [FIGURE_LINE_KEY]: 3 };
+  eq(seriesLineThickness(imposed, 'a', 2), 3, 'the profile wins over the default of the call site');
+  eq(seriesLineThickness({ ...imposed, seriesStyles: { a: { lineThickness: 6 } } }, 'a', 2), 6,
+    'a per-curve width still wins over the profile');
+  eq(seriesLineThickness({ lineThickness: 4 }, 'a', 2), 4, 'a released marker hands the chart back to its own value');
+  // A cleared / invalid thickness can never draw an invisible curve.
+  eq(seriesLineThickness({ lineThickness: 0 }, 'a', 2), 2);
+  eq(seriesLineThickness({ lineThickness: '' }, 'a', 2), 2);
+  eq(seriesLineThickness({ lineThickness: 'abc' }, 'a', 2), 2);
+  eq(seriesLineThickness({ lineThickness: 2, [FIGURE_LINE_KEY]: 0 }, 'a', 2), 2, 'a released marker is ignored');
+});
+check('63 the helpers every chart already uses read the two colours', () => {
+  eq(tickColorOf({}), '#64748b', 'the historical slate grey');
+  eq(tickColorOf({ tickColor: '#111827' }), '#111827');
+  eq(tickColorOf({}, '#475569'), '#475569', 'the colour of the call site is the fallback');
+  eq(tickColorOf({ tickColor: '   ' }, '#475569'), '#475569', 'a blank colour is not a colour');
+  eq(axisTitleColorOf({}), '#64748b');
+  eq(axisTitleColorOf({ axisTitleColor: '#000000' }), '#000000');
+  // recharts numbers: the profile wins over the fill a call site hard-codes.
+  eq(tickTextProps({ fontSize: 16, tickColor: '#b91c1c' }, { fill: '#64748b' }).fill, '#b91c1c');
+  eq(tickTextProps({ fontSize: 16 }, { fill: '#64748b' }).fill, '#64748b', 'an untouched profile keeps the chart colour');
+  eq('fill' in tickTextProps({ fontSize: 16 }), false, 'no fill is invented where the chart had none');
+  // Chart.js: the two bundles are no-ops until the profile names a colour.
+  eq(tickColorProps({}), {});
+  eq(tickColorProps({ tickColor: '#0f172a' }), { color: '#0f172a' });
+  eq(axisTitleColorProps({}), {});
+  eq(axisTitleColorProps({ axisTitleColor: '#0f172a' }), { color: '#0f172a' });
+  const CS5 = SRC('utils/chartStyle.js');
+  ["export const tickColorOf = (cfg, fallback = '#64748b') =>",
+    "export const axisTitleColorOf = (cfg, fallback = '#64748b') =>",
+    'export const tickColorProps = (cfg) => {',
+    'export const axisTitleColorProps = (cfg) => {',
+    'export const figureLineThicknessOf = (cfg) => {',
+    "export const FIGURE_LINE_KEY = 'figureLineThickness';"].forEach((t) =>
+    ok(CS5.includes(t), `utils/chartStyle.js lacks ${t}`));
+  ok(SAT.includes('fill: axisTitleColorOf(cfg)'), 'the axis titles ignore the colour of the profile');
+  ok(SAT.includes("fill={color || '#64748b'}"), 'AngledTick cannot take the colour of the numbers');
+  ['CDSections', 'ssNMRSections', 'MDSections', 'NMRSections', 'FlowCytometrySections'].forEach((f) =>
+    ok(SRC(`components/${f}.jsx`).includes('tickColorOf('), `${f} does not follow the colour of the numbers`));
+  ['DOSYTestRenderer', 'NMRFittingsTestRenderer', 'PlateSections'].forEach((f) => {
+    const s = SRC(`components/${f}.jsx`);
+    ok(s.includes('tickColorProps(') || s.includes('tickColorOf('), `${f} does not follow the colour of the numbers`);
+    ok(s.includes('axisTitleColorProps(') || s.includes('axisTitleColorOf('), `${f} does not follow the colour of the titles`);
+  });
+});
+check('64 Settings offers the ink and the lines, and the summaries list them', () => {
+  const PANEL3 = SRC('components/FigureStylePanel.jsx');
+  ['FIGURE_LINE_STEPS', 'FIGURE_LINE_MIN', 'FIGURE_LINE_MAX', 'normalizeFigureColor',
+    'tickColor', 'axisTitleColor', 'lineThickness', 'type="color"'].forEach((t) =>
+    ok(PANEL3.includes(t), `the Settings panel does not offer ${t}`));
+  ok(PANEL3.includes('Axis numbers — colour'), 'no colour control for the axis numbers');
+  const summary = figureStyleConfigSummary({ fontSize: 16, tickColor: '#111827', axisTitleColor: '#b91c1c', lineThickness: 2.5 });
+  ok(summary.includes('numbers #111827') && summary.includes('titles #b91c1c') && summary.includes('lines 2.5 px'),
+    `the summary hides the ink & lines: ${summary}`);
+  ok(!figureStyleConfigSummary({ fontSize: 16 }).includes('lines'), 'an untouched profile adds no noise');
+  ok(SRC('components/AppModules/settingsModule.jsx').includes('colour of the axis numbers'),
+    'the Settings page does not announce the colours');
 });
 
 const failed = results.filter((r) => !r.ok);

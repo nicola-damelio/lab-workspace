@@ -346,7 +346,7 @@ frag('[SharedAnalysisTools] y number band helper', 'export const yTickNumberBand
 frag('[SharedAnalysisTools] y title offset helper', 'export const yAxisTitleOffset = (fontSize) =>');
 frag('[SharedAnalysisTools] x title offset helper', 'export const xAxisTitleOffset = (fontSize, tickAngle = 0, base = 25, extra = 0, gap = 0) =>');
 frag('[SharedAnalysisTools] extreme anchor helper', "export const extremeTickAnchor = (index, visibleTicksCount, fallback = 'middle') => {");
-frag('[SharedAnalysisTools] AngledTick takes the tick index', "anchor = 'middle', formatter, index, visibleTicksCount, edgeAnchor = true }) => {");
+frag('[SharedAnalysisTools] AngledTick takes the tick index', "fontFamily = '', color = '', anchor = 'middle', formatter, index, visibleTicksCount, edgeAnchor = true }) => {");
 frag('[SharedAnalysisTools] AngledTick anchors the ends', 'const edge = a === 0 && edgeAnchor !== false ? extremeTickAnchor(index, visibleTicksCount, anchor) : null;');
 frag('[SharedAnalysisTools] the y title clears the numbers', ': Math.max((base ?? 20) + extra * 1.6, yAxisTitleOffset(fs)) + gap;');
 frag('[SharedAnalysisTools] the bottom margin honours the geometry', 'bottom: Math.max((base.bottom ?? 45) + extra * 2.2, xNeed),');
@@ -365,9 +365,9 @@ const SS = fs.readFileSync(path.join(ROOT, 'src/components/ssNMRSections.jsx'), 
 const NMR = fs.readFileSync(path.join(ROOT, 'src/components/NMRSections.jsx'), 'utf8');
 const MD = fs.readFileSync(path.join(ROOT, 'src/components/MDSections.jsx'), 'utf8');
 const fragIn = (name, hay, needle) => checkBool(`${name}: ${needle.slice(0, 40)}…`, hay.includes(needle));
-fragIn('[CDSections] a condition bar chart opts out', CD, 'dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={tickSize(cfg)} fontFamily={fontFamilyOf(cfg)} edgeAnchor={false} />}');
-fragIn('[CDSections] a "name" bar chart opts out', CD, 'fontSize={Math.max(9, Number(tickSize(cfg)) - 2)} fontFamily={fontFamilyOf(cfg)} edgeAnchor={false} />');
-fragIn('[CDSections] the numeric CD spectrum keeps the anchor', CD, 'type="number" dataKey="x" domain={xDomain} allowDataOverflow scale={xScale} ticks={cfgAxisTicks(cfg, \'x\', xDomain)} tick={<AngledTick angle={cfg.tickAngle} fontSize={tickSize(cfg)} fontFamily={fontFamilyOf(cfg)} formatter=');
+fragIn('[CDSections] a condition bar chart opts out', CD, 'dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={tickSize(cfg)} fontFamily={fontFamilyOf(cfg)} color={tickColorOf(cfg)} edgeAnchor={false} />}');
+fragIn('[CDSections] a "name" bar chart opts out', CD, 'fontSize={Math.max(9, Number(tickSize(cfg)) - 2)} fontFamily={fontFamilyOf(cfg)} color={tickColorOf(cfg)} edgeAnchor={false} />');
+fragIn('[CDSections] the numeric CD spectrum keeps the anchor', CD, 'type="number" dataKey="x" domain={xDomain} allowDataOverflow scale={xScale} ticks={cfgAxisTicks(cfg, \'x\', xDomain)} tick={<AngledTick angle={cfg.tickAngle} fontSize={tickSize(cfg)} fontFamily={fontFamilyOf(cfg)} color={tickColorOf(cfg)} formatter=');
 checkTrue('[ssNMRSections] both band axes opt out', (SS.match(/edgeAnchor=\{false\}/g) || []).length === 2);
 checkTrue('[NMRSections] both band axes opt out', (NMR.match(/edgeAnchor=\{false\}/g) || []).length === 2);
 checkTrue('[MDSections] the per-atom bar chart opts out', (MD.match(/edgeAnchor=\{false\}/g) || []).length === 1);

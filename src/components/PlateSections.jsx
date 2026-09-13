@@ -10,7 +10,7 @@ import {
     PLATES_DEF, formatConc, concKey, getRegionColor, toHex, lighten, darken, needsDarkText, PALETTE, fit4PL, errBarPlugin
 } from '../data/constants';
 import { PLATE_PRESET_LABELS, PLATE_PRESET_COLORS, isPlatePreset, platePresetColor } from '../utils/platePresets';
-import { FS_CLASSES, OVERLAY_CLASSES, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, normalizeChartType, seriesVisible, seriesColorOf, chartJsFont, chartJsTitleFont, chartAspect, chartAspectImposed, DEFAULT_CHART_ASPECT_WIDE
+import { FS_CLASSES, OVERLAY_CLASSES, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, normalizeChartType, seriesVisible, seriesColorOf, chartJsFont, chartJsTitleFont, chartAspect, chartAspectImposed, DEFAULT_CHART_ASPECT_WIDE, tickColorOf, axisTitleColorOf
 } from '../utils/chartStyle';
 import { brokenAxisScaleOptions, chartJsYValues } from '../utils/chartJsBrokenAxis';
 
@@ -143,13 +143,13 @@ function IndividualDoseResponseChart({ cd, chartCfg, isFs, onToggleFs, unit, eSc
                             display: isFs,
                             text: chartCfg.xAxisLabel || `Log₁₀ [Conc. (${unit})]`,
                             font: chartJsTitleFont(chartCfg, { weight: 'bold' }, 'x'),
-                            color: '#334155',
+                            color: axisTitleColorOf(chartCfg, '#334155'),
                             padding: chartJsTitlePad(chartCfg).x
                         },
                         ticks: {
                             display: isFs,
                             font: chartJsFont(chartCfg),
-                            color: '#64748b',
+                            color: tickColorOf(chartCfg),
                             callback: chartJsTickCallback(chartCfg, 'x')
                         }
                     },
@@ -164,13 +164,13 @@ function IndividualDoseResponseChart({ cd, chartCfg, isFs, onToggleFs, unit, eSc
                             display: isFs,
                             text: 'Viability (%)',
                             font: chartJsTitleFont(chartCfg, { weight: 'bold' }, 'y'),
-                            color: '#334155',
+                            color: axisTitleColorOf(chartCfg, '#334155'),
                             padding: chartJsTitlePad(chartCfg).y
                         },
                         ticks: {
                             display: isFs,
                             font: chartJsFont(chartCfg),
-                            color: '#64748b',
+                            color: tickColorOf(chartCfg),
                             callback: chartJsTickCallback(chartCfg, 'y')
                         }
                     }
@@ -422,20 +422,20 @@ export function RegionCharts({ regionName, regionData, config }) {
                                   display: true,
                                   text: `IC50 (${unit})`,
                                   font: chartJsTitleFont(chartCfg, { weight: 'bold' }, 'y'),
-                                  color: '#334155',
+                                  color: axisTitleColorOf(chartCfg, '#334155'),
                                   padding: chartJsTitlePad(chartCfg).y
                               },
-                              ticks: { font: chartJsFont(chartCfg), color: '#64748b', callback: chartJsTickCallback(chartCfg, 'y') }
+                              ticks: { font: chartJsFont(chartCfg), color: tickColorOf(chartCfg), callback: chartJsTickCallback(chartCfg, 'y') }
                           },
                           x: {
                               title: {
                                   display: true,
                                   text: 'Compound',
                                   font: chartJsTitleFont(chartCfg, { weight: 'bold' }, 'x'),
-                                  color: '#334155',
+                                  color: axisTitleColorOf(chartCfg, '#334155'),
                                   padding: chartJsTitlePad(chartCfg).x
                               },
-                              ticks: { font: chartJsFont(chartCfg, { weight: 'bold' }), color: '#334155' }
+                              ticks: { font: chartJsFont(chartCfg, { weight: 'bold' }), color: tickColorOf(chartCfg, '#334155') }
                           }
                       },
                       plugins: {
@@ -521,12 +521,12 @@ export function RegionCharts({ regionName, regionData, config }) {
                                   display: true,
                                   text: chartCfg.xAxisLabel || `Log₁₀ [Conc. (${unit})]`,
                                   font: chartJsTitleFont(chartCfg, { weight: 'bold' }, 'x'),
-                                  color: '#334155',
+                                  color: axisTitleColorOf(chartCfg, '#334155'),
                                   padding: chartJsTitlePad(chartCfg).x
                               },
                               ticks: {
                                   font: chartJsFont(chartCfg),
-                                  color: '#64748b',
+                                  color: tickColorOf(chartCfg),
                                   // The decimals / exponential-notation commands (🎨 panel and the
                                   // global Figure style) win over the historical 2 decimals.
                                   callback: (value) => {
@@ -547,12 +547,12 @@ export function RegionCharts({ regionName, regionData, config }) {
                                   display: true,
                                   text: 'Viability (%)',
                                   font: chartJsTitleFont(chartCfg, { weight: 'bold' }, 'y'),
-                                  color: '#334155',
+                                  color: axisTitleColorOf(chartCfg, '#334155'),
                                   padding: chartJsTitlePad(chartCfg).y
                               },
                               ticks: {
                                   font: chartJsFont(chartCfg),
-                                  color: '#64748b',
+                                  color: tickColorOf(chartCfg),
                                   callback: chartJsTickCallback(chartCfg, 'y')
                               }
                           }
@@ -666,12 +666,12 @@ export function RegionCharts({ regionName, regionData, config }) {
                             display: true,
                             text: `IC50 (${unit})`,
                             font: chartJsTitleFont(chartCfg, { weight: 'bold' }, 'y'),
-                            color: '#334155',
+                            color: axisTitleColorOf(chartCfg, '#334155'),
                             padding: chartJsTitlePad(chartCfg).y
                         },
                         ticks: {
                             font: chartJsFont(chartCfg),
-                            color: '#64748b',
+                            color: tickColorOf(chartCfg),
                             callback: chartJsTickCallback(chartCfg, 'y')
                         }
                     },

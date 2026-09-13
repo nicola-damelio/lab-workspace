@@ -33,13 +33,20 @@
        KIND of figure (see FIGURE_AXIS_FORMAT_FIELDS). They are pushed as the
        very keys the per-chart 🎨 panel writes (xSci / ySci / xLog / yLog), so
        the profile and a single chart say the same thing.
+     • the INK and the LINES — the COLOUR of the axis number labels
+       (tickColor), the COLOUR of the axis titles (axisTitleColor) and the
+       THICKNESS of the curves (lineThickness, with the marker key
+       `figureLineThickness` the helpers read first). They ride on the helpers
+       every chart already uses (tickColorOf / axisTitleColorOf /
+       seriesLineThickness in utils/chartStyle.js), so a recharts axis, a
+       Chart.js canvas and the hand-drawn spectra all follow them.
      • the SAVED CONFIGURATIONS — the named profiles of the user ("Figure — A4",
        "Screen"), so the style a set of figures needs and the everyday one live
        side by side and switching is one click (see FIGURE_STYLE_LIBRARY_KEY and
        the saveFigureStyleConfig family).
    ========================================================================= */
 
-import { FIGURE_ASPECT_KEY, figureAspectOf } from './chartStyle.js';
+import { FIGURE_ASPECT_KEY, figureAspectOf, FIGURE_LINE_KEY, figureLineThicknessOf } from './chartStyle.js';
 
 export const FIGURE_STYLE_KEY = 'labFigureStyle';
 export const FIGURE_STYLE_EVENT = 'lab:figure-style-changed';
@@ -52,6 +59,18 @@ export const FIGURE_FONT_MIN = 8;
 export const FIGURE_FONT_MAX = 160;
 export const FIGURE_ANGLE_MIN = -90;
 export const FIGURE_ANGLE_MAX = 90;
+
+/* The LINE THICKNESS of the curves (px) and the two COLOURS of a figure
+   (the axis NUMBERS and the axis TITLES). 0 = every chart keeps the thickness
+   of its own 🎨 panel, '' = every chart keeps the colour it has always drawn —
+   the default of both, so a profile that says nothing about them renders the
+   figures of every page exactly as they are today. The thickness range covers a
+   hairline (0.5 px) up to the heavy line of a figure read from the back of a
+   lecture hall (8 px); 0.5 is the step, 2 px is what the charts draw today.
+   The colours are stored as '#rrggbb' (see normalizeFigureColor). */
+export const FIGURE_LINE_MIN = 0;
+export const FIGURE_LINE_MAX = 8;
+export const FIGURE_LINE_STEPS = [0, 1, 1.5, 2, 2.5, 3, 4, 6];
 
 // One-click character sizes of the profile editor: the usual values, the POSTER
 // values a figure printed at A0 needs (36 / 40) and the OVERSIZED values up to
@@ -251,6 +270,12 @@ export const FIGURE_SCI_FORMAT = 'exponential';
  *   aspectAtom          …the same command for the PER-ATOM plots.
  *   aspectResidue       …the same command for the PER-RESIDUE plots.
  *                       (see FIGURE_ASPECT_MIN and FIGURE_KINDS)
+ *   tickColor           the COLOUR of the axis NUMBER labels. '' = every chart
+ *                       keeps the colour of its own 🎨 panel (#64748b).
+ *   axisTitleColor      the COLOUR of the axis TITLES. '' = their own colour.
+ *   lineThickness       the THICKNESS (px) of the curves of every figure.
+ *                       0 = each chart keeps the thickness of its own panel.
+ *                       (see clampFigureLineThickness / FIGURE_LINE_STEPS)
  *   applyOnOpen         push the profile automatically when a page opens.
  *
  * A chart that does not read one of the sizes simply ignores it; the ones that
@@ -267,6 +292,11 @@ export const DEFAULT_FIGURE_STYLE = {
   axisTitleItalic: false,
   tickSci: false,
   tickDecimals: '',
+  // …the two COLOURS of a figure ('' = the chart keeps the colour it draws) and
+  // the THICKNESS of its curves (0 = the thickness of its own 🎨 panel).
+  tickColor: '',
+  axisTitleColor: '',
+  lineThickness: 0,
   // …and the axis FORMAT / axis SCALE knobs, one per KIND of figure (see
   // FIGURE_AXIS_FORMAT_FIELDS): the exponential notation and the log scale of
   // the X and of the Y axis — for the graphs (the historical names), the
@@ -305,6 +335,10 @@ export const FIGURE_SIZE_LABELS = {
 export const FIGURE_STYLE_FIELDS = [
   'fontFamily', 'fontSize', 'axisTitleFontSize', 'legendFontSize', 'simLabelFontSize',
   'tickAngle', 'axisTitleBold', 'axisTitleItalic', 'tickSci', 'tickDecimals',
+  // …the two COLOURS of the profiles (the axis numbers, the axis titles) and the
+  // THICKNESS of the curves — the “ink & lines” of a figure (see tickColorOf /
+  // axisTitleColorOf / seriesLineThickness in utils/chartStyle.js).
+  'tickColor', 'axisTitleColor', 'lineThickness',
   'aspect', 'aspectSpectra', 'aspectAtom', 'aspectResidue',
   // …and the sixteen axis format / scale knobs (kind by kind, axis by axis):
   // the exponential notation and the log scale of the X / Y axis of each kind
@@ -336,7 +370,10 @@ export const FIGURE_PANEL_CFG_KEYS = [
   'fontSize', 'axisTitleFontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle',
   'tickStep', 'xTickStep', 'yTickStep', 'xMin', 'xMax', 'yMin', 'yMax',
   'xAxisLabel', 'yAxisLabel', 'chartType', 'lineStyle', 'legend',
-  'ptStyle', 'pointStyle', 'colors', 'barRadius', 'aspect', 'height'
+  'ptStyle', 'pointStyle', 'colors', 'barRadius', 'aspect', 'height',
+  // …and the “ink & lines” keys, so a cfg carrying one of them alone is still a
+  // chart cfg of the page (the colours and the thickness reach it).
+  'tickColor', 'axisTitleColor', 'lineThickness'
 ];
 
 /** Is this cfg a chart cfg of the page (i.e. one the style panel drives)? */
@@ -368,6 +405,37 @@ export const clampFigureDecimals = (v) => {
   const n = Number(v);
   if (!Number.isFinite(n)) return '';
   return Math.max(FIGURE_DECIMALS_MIN, Math.min(FIGURE_DECIMALS_MAX, Math.round(n)));
+};
+
+/**
+ * Line-thickness clamp: 0 (every chart keeps the thickness of its own panel) or
+ * a 0.5 px step between FIGURE_LINE_MIN and FIGURE_LINE_MAX, stored as a NUMBER
+ * so '2', 2 and '2.0' are the same profile (and the same tag).
+ */
+export const clampFigureLineThickness = (v) => {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= FIGURE_LINE_MIN) return FIGURE_LINE_MIN;
+  return Math.round(Math.min(FIGURE_LINE_MAX, n) * 10) / 10;
+};
+
+const HEX3 = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i;
+const HEX6 = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i;
+
+/**
+ * Colour of the profile: '' (the chart keeps the colour it draws today, i.e.
+ * #64748b for the axis labels) or a normalised '#rrggbb'. Anything else — a
+ * colour name, an rgb() string, a foreign value of an imported backup — is not
+ * a colour this profile can impose, so it simply means “the chart's own”.
+ * Lower-case and expanded to 6 digits, so '#FFF', '#ffffff' and '#FFFFFF' are
+ * one and the same colour (which keeps the tag stable).
+ */
+export const normalizeFigureColor = (v) => {
+  const s = String(v == null ? '' : v).trim();
+  const m6 = HEX6.exec(s);
+  if (m6) return `#${m6[1]}${m6[2]}${m6[3]}`.toLowerCase();
+  const m3 = HEX3.exec(s);
+  if (m3) return `#${m3[1]}${m3[1]}${m3[2]}${m3[2]}${m3[3]}${m3[3]}`.toLowerCase();
+  return '';
 };
 
 /** The two axis-title style booleans, stored as real booleans. */
@@ -424,6 +492,11 @@ export const normalizeFigureStyle = (style) => {
     axisTitleItalic: toBool(s.axisTitleItalic),
     tickSci: allSci,
     tickDecimals: clampFigureDecimals(s.tickDecimals),
+    // …the two COLOURS (the axis numbers, the axis titles) and the curve
+    // THICKNESS of the profile: '' / 0 = “every chart keeps its own”.
+    tickColor: normalizeFigureColor(s.tickColor),
+    axisTitleColor: normalizeFigureColor(s.axisTitleColor),
+    lineThickness: clampFigureLineThickness(s.lineThickness),
     // …and the sixteen axis format / scale knobs (kind by kind, axis by axis).
     ...axisFormat,
     aspect: clampFigureAspect(s.aspect),
@@ -532,6 +605,11 @@ export const figureStyleConfigSummary = (style = null) => {
   if (s.axisTitleBold) parts.push('bold');
   if (s.axisTitleItalic) parts.push('italic');
   if (s.tickDecimals !== '') parts.push(`${s.tickDecimals} dec`);
+  // …the ink & lines of the figures (see tickColor / axisTitleColor /
+  // lineThickness): only what the profile really imposes is listed.
+  if (s.tickColor) parts.push(`numbers ${s.tickColor}`);
+  if (s.axisTitleColor) parts.push(`titles ${s.axisTitleColor}`);
+  if (s.lineThickness > 0) parts.push(`lines ${s.lineThickness} px`);
   const on = (prefix) => FIGURE_AXIS_FORMAT_FIELDS.filter((f) => f.startsWith(prefix) && s[f]).length;
   const sci = on('xSci') + on('ySci');
   const log = on('xLog') + on('yLog');
@@ -814,7 +892,17 @@ export const figureStyleTag = (style) => {
     s.tickDecimals === '' ? '' : `dec${s.tickDecimals}`
   ].filter(Boolean).join('-');
   const ax = axis ? `-${axis}` : '';
-  return `fs${s.fontSize}-t${s.axisTitleFontSize}-lg${s.legendFontSize}-lb${s.simLabelFontSize}-rot${s.tickAngle}${ar}${ax}${fam}`;
+  // The INK of a figure (the two colours) and the THICKNESS of its curves, each
+  // one shown only when the profile really imposes it ('' / 0 = “the chart keeps
+  // its own”), so the tag of an untouched profile is byte-identical to the one
+  // written before these knobs existed.
+  const inkSuffix = [
+    s.tickColor ? `tc${s.tickColor.slice(1)}` : '',
+    s.axisTitleColor ? `atc${s.axisTitleColor.slice(1)}` : ''
+  ].filter(Boolean).join('-');
+  const ink = inkSuffix ? `-${inkSuffix}` : '';
+  const lw = s.lineThickness > 0 ? `-lw${s.lineThickness}` : '';
+  return `fs${s.fontSize}-t${s.axisTitleFontSize}-lg${s.legendFontSize}-lb${s.simLabelFontSize}-rot${s.tickAngle}${ar}${ax}${ink}${lw}${fam}`;
 };
 
 /**
@@ -836,6 +924,12 @@ export const figureStyleTag = (style) => {
  *     cfgLogScale read). They are resolved PER KIND of figure: a chart that
  *     declared `figureKind="atom"` takes the atom ones, a chart that declared
  *     nothing takes the graph ones.
+ *   • `tickColor`, `axisTitleColor` → the same cfg keys, read by tickColorOf /
+ *     axisTitleColorOf: the axis NUMBERS and the axis TITLES of every chart of
+ *     the page take the colour of the profile.
+ *   • `lineThickness` → `lineThickness` (what every chart reads and its own 🎨
+ *     panel shows) AND FIGURE_LINE_KEY, the marker seriesLineThickness reads
+ *     first. Back at 0 the marker is released (see the block below).
  * `options.spectra === true` forces the two spectra keys on.
  * The plot-box RATIO goes to `aspect` (the value the per-chart panel then
  * shows) AND to `figureAspect` — the key that really wins, because `aspect`
@@ -896,6 +990,34 @@ export const figureStylePatch = (style, cfg = null, options = null) => {
     if (owns) FIGURE_AXIS_CFG_KEYS.decimals.forEach((k) => { if (k in cfg) out[k] = ''; });
   } else if (panel || (owns && FIGURE_AXIS_CFG_KEYS.decimals.some((k) => k in cfg))) {
     FIGURE_AXIS_CFG_KEYS.decimals.forEach((k) => { out[k] = s.tickDecimals; });
+  }
+  // ── THE INK OF A FIGURE — the colour of the axis NUMBERS and of the axis
+  // TITLES (see tickColorOf / axisTitleColorOf in utils/chartStyle).
+  // Same convention as the axis-title style above: a colour the profile names
+  // reaches the charts of the page, and a colour it takes back is CLEARED on the
+  // cfgs that carry it — never injected as an empty string into a cfg that has
+  // no such key at all.
+  const ink = (value, key) => {
+    if (value) {
+      if (panel) out[key] = value;
+      return;
+    }
+    if (owns && key in cfg) out[key] = '';
+  };
+  ink(s.tickColor, 'tickColor');
+  ink(s.axisTitleColor, 'axisTitleColor');
+  // ── THE THICKNESS OF THE CURVES — the same TWO-KEY convention as the plot-box
+  // ratio: `lineThickness` is what every chart reads (and what its own 🎨 panel
+  // then shows), while FIGURE_LINE_KEY is the marker seriesLineThickness reads
+  // FIRST (utils/chartStyle). Back at 0 the marker is RELEASED, so the charts
+  // stop following the profile — and the value they keep in `lineThickness`
+  // (never a 0, which would draw an invisible curve) stays visible in their own
+  // panel, exactly like a released ratio.
+  if (s.lineThickness > 0) {
+    out.lineThickness = s.lineThickness;
+    out[FIGURE_LINE_KEY] = s.lineThickness;
+  } else if (owns && figureLineThicknessOf(cfg)) {
+    out[FIGURE_LINE_KEY] = FIGURE_LINE_MIN;
   }
   return out;
 };

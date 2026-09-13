@@ -14,7 +14,7 @@ import { abortControl, isAbortError } from '../utils/abortControl';
 import { mdAnalysisRunAll } from '../utils/mdAnalysisRunAll';
 import { blobStore } from '../utils/blobStore';
 import html2canvas from 'html2canvas';
-import { chartAspect, PER_ATOM_COLORS, seriesColorFor, rainbowColors, tickTextProps, legendTextStyle, tickSize, fontFamilyOf
+import { chartAspect, PER_ATOM_COLORS, seriesColorFor, rainbowColors, tickTextProps, legendTextStyle, tickSize, fontFamilyOf, tickColorOf
 } from '../utils/chartStyle';
 export { parseSimulationParameters };   
 import NMRMoleculeViewer from './NMRMoleculeViewer';
@@ -1754,7 +1754,7 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
           {chartType === 'bar' ? (
             <BarChart data={data} margin={effMargin}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey={xKey} interval={0} tick={<AngledTick angle={cfg.tickAngle} fontSize={fSize} fontFamily={fontFamilyOf(cfg)} edgeAnchor={false} />} tickMargin={10} label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'x', xLabel)} />
+              <XAxis dataKey={xKey} interval={0} tick={<AngledTick angle={cfg.tickAngle} fontSize={fSize} fontFamily={fontFamilyOf(cfg)} color={tickColorOf(cfg)} edgeAnchor={false} />} tickMargin={10} label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'x', xLabel)} />
               <YAxis {...brk.axisProps} width={70} tick={tickTextProps(cfg, { fontSize: fSize })} label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'y', yLabel)} />
               <Tooltip />
               {brk.marks}
@@ -1765,7 +1765,7 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
           ) : (
             <LineChart data={data} margin={effMargin}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey={xKey} type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow tick={<AngledTick angle={cfg.tickAngle} fontSize={fSize} fontFamily={fontFamilyOf(cfg)} />} tickMargin={10}
+              <XAxis dataKey={xKey} type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow tick={<AngledTick angle={cfg.tickAngle} fontSize={fSize} fontFamily={fontFamilyOf(cfg)} color={tickColorOf(cfg)} />} tickMargin={10}
                 label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'x', xLabel)} />
               <YAxis type="number" width={70} {...brk.axisProps} domain={brk.on ? brk.axisProps.domain : [mdDom(cfg.yMin) ?? 'auto', mdDom(cfg.yMax) ?? 'auto']} tick={tickTextProps(cfg, { fontSize: fSize })}
                 label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'y', yLabel)} />
@@ -2331,7 +2331,7 @@ export const MDAnalysisSection = ({ ctx }) => {
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={energy} margin={cfgChartMargin({ ...cfg, fontSize: cfg.fontSize || 12 }, { top: 5, right: 10, bottom: 25, left: 10 })}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="time" tick={<AngledTick angle={cfg.tickAngle} fontSize={10} />} tickMargin={10} />
+                <XAxis dataKey="time" tick={<AngledTick angle={cfg.tickAngle} fontSize={10} color={tickColorOf(cfg)} />} tickMargin={10} />
                 <YAxis {...brkEnergy.axisProps} tick={{ fontSize: 10 }} />
                 <Tooltip />
                 {brkEnergy.marks}

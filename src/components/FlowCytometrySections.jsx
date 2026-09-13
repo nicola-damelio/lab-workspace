@@ -8,7 +8,7 @@ import { PLATE_PRESET_LABELS, PLATE_PRESET_COLORS, isPlatePreset, platePresetCol
 import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Line, ComposedChart, Area, ReferenceArea} from 'recharts';
 import { ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
-import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES, seriesColorFor, tickSize, fontFamilyOf, chartRatioBoxStyle
+import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES, seriesColorFor, tickSize, fontFamilyOf, chartRatioBoxStyle, tickColorOf, axisTitleColorOf
 } from '../utils/chartStyle';
 import { PLATES_DEF, formatConc, getRegionColor } from '../data/constants';
 export { VIS_PALETTES };
@@ -525,13 +525,13 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, xLabel, yLabel, logX, log
         }
       }
 
-      ctx.fillStyle = '#334155'; ctx.font = `bold ${Number(tickSize(cfg)) || 12}px ${fontFamilyOf(cfg) || 'sans-serif'}`; ctx.textAlign = 'center';
+      ctx.fillStyle = axisTitleColorOf(cfg, '#334155'); ctx.font = `bold ${Number(tickSize(cfg)) || 12}px ${fontFamilyOf(cfg) || 'sans-serif'}`; ctx.textAlign = 'center';
       ctx.fillText(`${xLabel}${logX ? ' (Log)' : ''}`, pad.left + plotW / 2, H - 10);
       
       ctx.save(); ctx.translate(20, pad.top + plotH / 2); ctx.rotate(-Math.PI / 2); // Shifted Y-label rightward
       ctx.fillText(`${yLabel}${logY ? ' (Log)' : ''}`, 0, 0); ctx.restore();
       
-      ctx.fillStyle = '#64748b'; ctx.font = `${Math.max(9, (Number(tickSize(cfg)) || 12) - 2)}px ${fontFamilyOf(cfg) || 'sans-serif'}`;
+      ctx.fillStyle = tickColorOf(cfg); ctx.font = `${Math.max(9, (Number(tickSize(cfg)) || 12) - 2)}px ${fontFamilyOf(cfg) || 'sans-serif'}`;
       for (let i = 0; i <= 5; i++) {
         const valX = minX + (maxX - minX) * (i / 5);
         const valY = minY + (maxY - minY) * (i / 5);
@@ -957,8 +957,8 @@ export const FCSOverlayVisualization = ({ ctx }) => {
                       <ResponsiveContainer width="100%" height={Number(cfgSplit.height) || 80}>
                         <ComposedChart data={chartData.bins} margin={cfgChartMargin(cfgSplit, { top: 2, right: 4, left: 0, bottom: 0 })}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                          <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow hide={i < visibleInstances.length - 1} tickFormatter={cfgTickFormatter(cfgSplit, 'x') || undefined} tick={{ fontSize: Math.max(9, Number(cfgSplit.fontSize) || 11), fill: '#64748b' }} />
-                          <YAxis tickFormatter={cfgTickFormatter(cfgSplit, 'y') || undefined} tick={{ fontSize: Math.max(9, Number(cfgSplit.fontSize) || 11), fill: '#64748b' }} width={Math.max(30, (Number(cfgSplit.fontSize) || 11) + 22)} domain={splitSharedY ? [0, chartData.maxCount] : [0, 'auto']} />
+                          <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow hide={i < visibleInstances.length - 1} tickFormatter={cfgTickFormatter(cfgSplit, 'x') || undefined} tick={{ fontSize: Math.max(9, Number(cfgSplit.fontSize) || 11), fill: tickColorOf(cfgSplit) }} />
+                          <YAxis tickFormatter={cfgTickFormatter(cfgSplit, 'y') || undefined} tick={{ fontSize: Math.max(9, Number(cfgSplit.fontSize) || 11), fill: tickColorOf(cfgSplit) }} width={Math.max(30, (Number(cfgSplit.fontSize) || 11) + 22)} domain={splitSharedY ? [0, chartData.maxCount] : [0, 'auto']} />
                           {fillHist && <Area type="monotone" dataKey={smoothHist ? s.id + '_sm' : s.id} name={s.name} stroke="none" fill={cfgSplit.colors?.[s.id] || s.color} fillOpacity={Number(cfgSplit.areaOpacity ?? 0.3)} isAnimationActive={false} />}
                           {cfgSeriesEl(cfgSplit, { key: s.id, data: chartData.bins, dataKey: s.id, name: s.name, stroke: cfgSplit.colors?.[s.id] || s.color })}
                           {smoothHist && <Line type="monotone" dataKey={s.id + '_sm'} name={`${s.name} (smooth)`} stroke={cfgSplit.colors?.[s.id] || s.color} strokeWidth={cfgSplit.lineThickness || 2} strokeDasharray={cfgSplit.lineStyle === 'dashed' ? '7 5' : cfgSplit.lineStyle === 'dotted' ? '2 3' : undefined} dot={false} isAnimationActive={false} />}

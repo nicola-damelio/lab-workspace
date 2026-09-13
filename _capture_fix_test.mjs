@@ -126,16 +126,16 @@ checkTrue('[stack] rows are labelled (series name + colour dot)', STACK.includes
 checkTrue('[FCS] split panel is a star group',
   fs.readFileSync('src/components/FlowCytometrySections.jsx', 'utf8').includes('data-star-group="fcs-split"'));
 const PAGES = [
-  ['NMR', 'src/components/NMRSections.jsx', 'nmr-split', 'SPLIT_CHART_H'],
-  ['ssNMR', 'src/components/ssNMRSections.jsx', 'ssnmr-split', 'SPLIT_CHART_H'],
-  ['CD', 'src/components/CDSections.jsx', 'cd-split', 'SPLIT_CHART_H']
+  ['NMR', 'src/components/NMRSections.jsx', 'nmr-split', 'splitChartBoxStyle(splitLayout)'],
+  ['ssNMR', 'src/components/ssNMRSections.jsx', 'ssnmr-split', 'splitChartBoxStyle(splitLayout)'],
+  ['CD', 'src/components/CDSections.jsx', 'cd-split', 'splitChartBoxStyle(splitLayout)']
 ];
-PAGES.forEach(([tag, file, id, h]) => {
+PAGES.forEach(([tag, file, id, box]) => {
   const src = fs.readFileSync(file, 'utf8');
   checkTrue(`[${tag}] split stack mounted with its own id`, src.includes(`<SplitChartStack`) && src.includes(`id="${id}"`));
   checkTrue(`[${tag}] has a human label`, /id="[a-z]+-split"\s*\n\s*label="[^"]+"/.test(src));
   checkTrue(`[${tag}] imports the shared stack`, src.includes("from './SplitChartStack'"));
-  checkTrue(`[${tag}] sub-charts are stacked rows`, src.includes(`height: ${h}`));
+  checkTrue(`[${tag}] sub-charts are stacked rows`, src.includes(box));
   checkTrue(`[${tag}] the layout becomes a split row`, src.includes('lg:flex-row gap-3'));
 });
 

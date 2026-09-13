@@ -15,8 +15,10 @@ import {
   // One character size per ELEMENT + the font family (see utils/chartStyle):
   // the axis NUMBERS are `cfg.fontSize`, the axis TITLES `cfg.axisTitleFontSize`,
   // the legend `cfg.legendFontSize`, all drawn with `cfg.fontFamily`.
+  // …and the colours of the two labels: `cfg.tickColor` (the numbers) and
+  // `cfg.axisTitleColor` (the titles), see tickColorOf / axisTitleColorOf.
   FIGURE_FONT_CHOICES, MIN_CHART_FONT, MAX_CHART_FONT,
-  fontFamilyOf, axisTitleSize
+  fontFamilyOf, axisTitleSize, axisTitleColorOf
 } from '../utils/chartStyle';
 import { Icon } from './Icons';
 import { useFigureStyleSlot } from './FigureStyleTools';
@@ -406,7 +408,7 @@ export const extremeTickAnchor = (index, visibleTicksCount, fallback = 'middle')
 // the middle of their band, so the extreme ticks are NOT on the plot edges)
 // so those labels keep their centred position over their bar.
 // ─────────────────────────────────────────────────────────────────────────────
-export const AngledTick = ({ x, y, payload, angle = 0, fontSize = 11, fontFamily = '', anchor = 'middle', formatter, index, visibleTicksCount, edgeAnchor = true }) => {
+export const AngledTick = ({ x, y, payload, angle = 0, fontSize = 11, fontFamily = '', color = '', anchor = 'middle', formatter, index, visibleTicksCount, edgeAnchor = true }) => {
     const a = Number(angle) || 0;
     // Rotated labels need a little more side room as they grow; upright ones are
     // pushed down by their own cap height (≈0.72 em) + a fixed clearance.
@@ -423,7 +425,7 @@ export const AngledTick = ({ x, y, payload, angle = 0, fontSize = 11, fontFamily
                 textAnchor={a < 0 ? 'end' : a > 0 ? 'start' : (edge ? edge.textAnchor : anchor)}
                 dy={dy}
                 dx={dx}
-                fill="#64748b"
+                fill={color || '#64748b'}
                 fontSize={fontSize}
                 fontFamily={fontFamily || undefined}
             >
@@ -1000,7 +1002,11 @@ export const SharedChartStylePanel = ({ cfg = {}, setCfg, series = [], unit = 'a
                             onChange={(e) => set({ errorBarColor: e.target.value })}
                             className="w-10 h-8 rounded cursor-pointer border border-slate-300 bg-white" />
                     </div>
-                    <NF label="Line thickness" step={0.5} value={cfg.lineThickness ?? 2} onChange={(v) => set({ lineThickness: v || 2 })} />
+                    {/* The chart-wide line thickness. Editing it RELEASES the
+                        thickness Settings → Figure style may have imposed
+                        (figureLineThickness = 0, see utils/chartStyle), so a
+                        hand-typed value always wins over the profile. */}
+                    <NF label="Line thickness" step={0.5} value={cfg.lineThickness ?? 2} onChange={(v) => set({ lineThickness: v || 2, figureLineThickness: 0 })} />
                     <SF label="Line style" value={cfg.lineStyle || 'solid'} onChange={(v) => set({ lineStyle: v })}
                         options={[['solid','Solid'],['dashed','Dashed'],['dotted','Dotted']]} />
                     <SF label="Point style" value={cfg.pointStyle || cfg.ptStyle || 'circle'} onChange={(v) => set({ pointStyle: v, ptStyle: v })}
@@ -2327,7 +2333,9 @@ export const cfgAxisLabel = (cfg = {}, axis = 'x', value = '', base) => {
   const family = fontFamilyOf(cfg);
   const style = {
     value,
-    fill: '#64748b',
+    // The colour of the axis TITLE: Figure style when it names one, else the
+    // slate grey of the panel (see axisTitleColorOf in utils/chartStyle).
+    fill: axisTitleColorOf(cfg),
     fontSize: titleFs,
     ...(family ? { fontFamily: family } : {}),
     ...(bold ? { fontWeight: 'bold' } : {}),

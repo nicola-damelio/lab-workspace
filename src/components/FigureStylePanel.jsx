@@ -5,6 +5,7 @@ import {
   FIGURE_ASPECT_MIN, FIGURE_ASPECT_MAX, FIGURE_ASPECT_STEPS,
   FIGURE_DECIMALS_STEPS, FIGURE_KINDS, FIGURE_KIND_FIELDS, FIGURE_KIND_LABELS,
   FIGURE_AXIS_BASES, FIGURE_AXIS_BASE_LABELS, FIGURE_AXIS_HINTS,
+  FIGURE_LINE_MIN, FIGURE_LINE_MAX, FIGURE_LINE_STEPS, normalizeFigureColor,
   FIGURE_STYLE_PRESET_MAX,
   figureAspectSummary, figureAxisFormatField, figureAxisFormatSummary,
   figureStyleTag, writeFigureStyle,
@@ -146,6 +147,30 @@ const Row = ({ label, hint, value, min, max, step = 1, unit = 'px', onChange, qu
    the list (Use · ⤓ update · ✎ rename · 🗑 delete). The renaming happens IN
    PLACE, with a small draft — never through a browser prompt dialog. */
 const ROW_BTN = 'text-[10px] font-bold px-1.5 py-0.5 rounded border border-slate-300 bg-white text-slate-600 hover:bg-indigo-50 hover:text-indigo-700';
+
+/* One COLOUR of the profile (the axis numbers, the axis titles): a swatch, the
+   hex value, and the “each chart's own” reset. The swatch always shows a colour
+   — the historical #64748b when the profile names none — so it is obvious what
+   the charts draw until this knob is set. */
+const ColourRow = ({ label, hint, value, onChange }) => (
+  <div className="flex flex-col gap-0.5">
+    <span className="text-xs font-bold text-slate-600">{label}</span>
+    <span className="text-[10px] text-slate-400">{hint}</span>
+    <div className="flex items-center gap-2">
+      <input
+        type="color"
+        value={value || '#64748b'}
+        onChange={(e) => onChange(normalizeFigureColor(e.target.value))}
+        className="w-9 h-6 rounded cursor-pointer border border-slate-300 bg-white p-0"
+      />
+      <span className="text-[10px] font-mono text-slate-500">{value || 'each chart’s own (#64748b)'}</span>
+      {value ? (
+        <button type="button" onClick={() => onChange('')} className={ROW_BTN}
+          title="Let every chart keep the colour it draws today">⟲ own</button>
+      ) : null}
+    </div>
+  </div>
+);
 
 const ConfigRow = ({ config, applied, onUse, onUpdate, onRename, onDelete }) => {
   const [editing, setEditing] = React.useState(false);
@@ -367,6 +392,69 @@ export const FigureStylePanel = () => {
         </details>
       </div>
 
+      {/* ---- the ink & the lines of a figure ------------------------------ */}
+      <div className="bg-white border border-slate-200 rounded-lg p-3 flex flex-col gap-3">
+        <div className="text-[10px] font-black text-slate-400 uppercase">Colours &amp; lines — the ink of every figure</div>
+        <div className="text-[10px] text-slate-500 leading-snug">
+          The <b>colour of the axis numbers</b>, the <b>colour of the axis titles</b> and the
+          <b> thickness of the curves</b> — of every chart and spectrum of the page, recharts and Chart.js
+          alike. “Each chart's own” = the colour / the thickness that chart draws today, so a profile that
+          names none of them renders every figure exactly as it is.
+        </div>
+        <div className="flex flex-wrap items-start gap-x-8 gap-y-3">
+          <ColourRow
+            label="Axis numbers — colour"
+            hint="The numbers along every axis (the tick labels)."
+            value={profile.tickColor}
+            onChange={(v) => set({ tickColor: v })}
+          />
+          <ColourRow
+            label="Axis titles — colour"
+            hint="“Wavelength (nm)”, “Intensity (a.u.)”…"
+            value={profile.axisTitleColor}
+            onChange={(v) => set({ axisTitleColor: v })}
+          />
+        </div>
+        <div className="flex flex-col gap-2 border-t border-slate-100 pt-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-bold text-slate-600">Line thickness — the curves of every figure</span>
+            <span className="text-[10px] font-mono text-slate-400">
+              {profile.lineThickness > 0 ? `${profile.lineThickness} px` : 'each chart’s own'}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {FIGURE_LINE_STEPS.map((v) => (
+              <button
+                key={String(v)}
+                type="button"
+                onClick={() => set({ lineThickness: v })}
+                title={v === FIGURE_LINE_MIN
+                  ? 'Every chart keeps the thickness of its own 🎨 panel'
+                  : `Draw every curve ${v} px thick`}
+                className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${profile.lineThickness === v
+                  ? 'bg-indigo-600 text-white border-indigo-600'
+                  : 'bg-white text-slate-600 border-slate-300 hover:bg-indigo-50'}`}
+              >
+                {v === FIGURE_LINE_MIN ? 'Own' : v}
+              </button>
+            ))}
+            <input
+              type="range" min={FIGURE_LINE_MIN} max={FIGURE_LINE_MAX} step="0.5"
+              value={profile.lineThickness}
+              onChange={(e) => set({ lineThickness: Number(e.target.value) })}
+              title="Any thickness between 0 and 8 px (0 = each chart's own)"
+              className="w-40 accent-indigo-600"
+            />
+            <span className="inline-block bg-indigo-500 rounded-full align-middle"
+              style={{ height: `${Math.max(1, profile.lineThickness || 2)}px`, width: '72px' }} />
+          </div>
+          <div className="text-[9px] text-slate-400 leading-snug">
+            A curve given its own width in the 🎨 panel keeps it: the per-curve value wins, then this knob,
+            then the chart itself.
+          </div>
+        </div>
+      </div>
+
       {/* ---- font family -------------------------------------------------- */}
       <div className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
         <div className="flex-1 min-w-0">
@@ -574,13 +662,24 @@ export const FigureStylePanel = () => {
           style={{ fontFamily: family || undefined }}>
           <span className="absolute left-1 top-1 text-slate-500" style={{
             fontSize: profile.axisTitleFontSize,
+            color: profile.axisTitleColor || undefined,
             fontWeight: profile.axisTitleBold ? 'bold' : 'normal',
             fontStyle: profile.axisTitleItalic ? 'italic' : 'normal'
           }}>
             Intensity (a.u.)
           </span>
-          <span className="absolute -bottom-1 right-1 text-slate-500" style={{ fontSize: profile.fontSize }}>
+          <span className="absolute -bottom-1 right-1 text-slate-500"
+            style={{ fontSize: profile.fontSize, color: profile.tickColor || undefined }}>
             {previewTick(12500, profile)} ppm
+          </span>
+          {/* …and the thickness of the curves, at the size the figures will be
+              drawn with (2 px = what every chart draws today). */}
+          <span className="absolute left-1 bottom-8 flex items-center gap-2">
+            <span className="inline-block bg-indigo-500 rounded-full"
+              style={{ height: `${Math.max(1, profile.lineThickness || 2)}px`, width: '80px' }} />
+            <span className="text-[9px] text-slate-400">
+              {profile.lineThickness > 0 ? `curves ${profile.lineThickness} px` : 'curves: own'}
+            </span>
           </span>
           <span className="absolute left-1 top-12 text-slate-500" style={{ fontSize: profile.legendFontSize }}>
             ▲ 3 conditions ▼
@@ -590,7 +689,7 @@ export const FigureStylePanel = () => {
           </span>
           <span
             className="absolute right-2 top-1 text-slate-500 origin-top-left"
-            style={{ fontSize: profile.fontSize, transform: `rotate(${profile.tickAngle}deg)` }}
+            style={{ fontSize: profile.fontSize, color: profile.tickColor || undefined, transform: `rotate(${profile.tickAngle}deg)` }}
           >
             rotated x label
           </span>

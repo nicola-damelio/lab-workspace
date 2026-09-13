@@ -22,7 +22,7 @@ import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
 import { makeTable, stokesEinsteinD, radiusFromMW, GAMMA_H } from './NMRFittingsTestRenderer';
 import { enableCellClipboard, cellAttrs } from '../utils/cellClipboard';
 import { ChartPanel, SharedErrorTreatment, SharedChartStylePanel, ChartJsInspector, cfgTickFormatter } from './SharedAnalysisTools';
-import { shadesFromColor, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, tickSize, chartJsFont, chartJsTitleFont, axisTitleSize, chartAspect, chartAspectImposed, DEFAULT_CHART_ASPECT_WIDE
+import { shadesFromColor, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, tickSize, chartJsFont, chartJsTitleFont, axisTitleSize, chartAspect, chartAspectImposed, DEFAULT_CHART_ASPECT_WIDE, tickColorProps, axisTitleColorProps
 } from '../utils/chartStyle';
 import { brokenAxisScaleOptions, chartJsYValues } from '../utils/chartJsBrokenAxis';
 import { StarToggle } from './StarToggle';
@@ -500,9 +500,9 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
         scales: {
           x: {
             type: 'linear',
-            title: { display: true, text: xTitle, font: chartJsTitleFont(cfg, { size: axisTitleSize(cfg, fs) }, 'x'), padding: chartJsTitlePad(cfg).x },
+            title: { display: true, text: xTitle, font: chartJsTitleFont(cfg, { size: axisTitleSize(cfg, fs) }, 'x'), padding: chartJsTitlePad(cfg).x, ...axisTitleColorProps(cfg) },
             ticks: {
-              font: chartJsFont(cfg, { size: (Number(tickSize(cfg, fs)) || fs) - 1 }),
+              font: chartJsFont(cfg, { size: (Number(tickSize(cfg, fs)) || fs) - 1 }), ...tickColorProps(cfg),
               callback: (v) => { const f = cfgTickFormatter(cfg, 'x'); return f ? f(v) : undefined; }
             },
             min: cfg.xMin !== '' && cfg.xMin !== undefined && cfg.xMin !== null ? Number(cfg.xMin) : undefined,
@@ -512,9 +512,9 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
             // ✂ "Interrupt Y axis" of the 🎨 panel: one residue's decay /
             // diffusion can dwarf the others of the same plot.
             ...brokenAxisScaleOptions(cfg, 'y', chartJsYValues(datasets)),
-            title: { display: true, text: yTitle, font: chartJsTitleFont(cfg, { size: axisTitleSize(cfg, fs) }, 'y'), padding: chartJsTitlePad(cfg).y },
+            title: { display: true, text: yTitle, font: chartJsTitleFont(cfg, { size: axisTitleSize(cfg, fs) }, 'y'), padding: chartJsTitlePad(cfg).y, ...axisTitleColorProps(cfg) },
             ticks: {
-              font: chartJsFont(cfg, { size: (Number(tickSize(cfg, fs)) || fs) - 1 }),
+              font: chartJsFont(cfg, { size: (Number(tickSize(cfg, fs)) || fs) - 1 }), ...tickColorProps(cfg),
               callback: (v) => { const f = cfgTickFormatter(cfg, 'y'); return f ? f(v) : undefined; }
             },
             min: cfg.yMin !== '' && cfg.yMin !== undefined && cfg.yMin !== null ? Number(cfg.yMin) : undefined,

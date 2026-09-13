@@ -54,6 +54,23 @@ export const figureAspectOf = (cfg) => {
 };
 
 /**
+ * LINE THICKNESS — the same two-key convention as the ratio above.
+ *
+ * `figureLineThickness` is the marker Settings → Figure style writes next to
+ * `lineThickness` (the key every chart already reads, and the one its own 🎨
+ * panel shows) so a thickness that is NOT a positive number can mean “each
+ * chart keeps its own” without ever drawing a curve 0 px wide. See
+ * seriesLineThickness, which reads it first.
+ */
+export const FIGURE_LINE_KEY = 'figureLineThickness';
+
+/** The line thickness (px) forced by the profile, or 0 (each chart its own). */
+export const figureLineThicknessOf = (cfg) => {
+  const n = Number(cfg && cfg[FIGURE_LINE_KEY]);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
+
+/**
  * Effective aspect ratio (x-axis length ÷ y-axis length) of a chart box:
  * the global Figure style wins, then the chart's own `cfg.aspect`, then the
  * caller's fallback. Used wherever a plot box is sized by its ratio.
@@ -383,10 +400,32 @@ export const seriesPtSize = (cfg, key, fallback = 4) => {
 export const seriesLineStyle = (cfg, key) =>
   seriesOverride(cfg, key, 'lineStyle') || (cfg && cfg.lineStyle) || 'solid';
 
+/**
+ * Line thickness (px) of ONE series.
+ *
+ *   per-curve override  >  the thickness imposed by Figure style  >  the
+ *   chart-wide `lineThickness` of its own 🎨 panel  >  `fallback`
+ *
+ * The marker key is read FIRST because the profile writes BOTH keys (the value
+ * every chart already reads AND the marker) — exactly like the plot-box ratio
+ * (see figureAspectOf): when the profile is switched back to “each chart keeps
+ * its own”, the marker is released (0) and the value the panel shows is the one
+ * the figure was last drawn with.
+ *
+ * A thickness that is not a POSITIVE number is not a thickness: 0 / '' / NaN
+ * fall through to the next source, so a cleared knob can never draw a curve
+ * 0 px wide (an invisible curve).
+ */
 export const seriesLineThickness = (cfg, key, fallback = 2) => {
-  const v = seriesOverride(cfg, key, 'lineThickness');
-  const n = Number(v != null ? v : (cfg && cfg.lineThickness));
-  return Number.isFinite(n) ? n : fallback;
+  const positive = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  const v = positive(seriesOverride(cfg, key, 'lineThickness'));
+  const forced = positive(figureLineThicknessOf(cfg));
+  const own = positive(cfg && cfg.lineThickness);
+  const fb = Number(fallback);
+  return v != null ? v : (forced != null ? forced : (own != null ? own : (Number.isFinite(fb) ? fb : 2)));
 };
 
 /** Dash pattern (recharts `strokeDasharray`) of one series. */
@@ -763,6 +802,43 @@ export const clampChartFont = (v, fallback = DEFAULT_CHART_FONT_SIZE) => {
 /** Font family of a cfg ('' = the app font — the value a chart got before). */
 export const fontFamilyOf = (cfg) => String((cfg && (cfg.fontFamily || cfg.font)) || '').trim();
 
+/* -------------------------------------------------------------------------
+   FIGURE COLOURS — the axis NUMBERS and the axis TITLES.
+
+   Two profile knobs (Settings → Figure style) that reach EVERY chart through
+   the very same helpers as the character sizes:
+
+     cfg.tickColor       the axis NUMBER labels (the key the spectra already
+                         read, see `effTickColor` in NMRSections);
+     cfg.axisTitleColor  the axis TITLES (“Wavelength (nm)”).
+
+   '' / undefined = the colour the call site has always used (the slate grey of
+   the panel), so a profile that says nothing about colours returns exactly the
+   values the charts rendered before this existed.
+
+   The `fallback` is the call site's OWN colour: the profile wins when it names
+   one, and a chart keeps its historical colour when it does not.
+   ------------------------------------------------------------------------- */
+export const tickColorOf = (cfg, fallback = '#64748b') =>
+  String((cfg && cfg.tickColor) || '').trim() || fallback;
+
+export const axisTitleColorOf = (cfg, fallback = '#64748b') =>
+  String((cfg && cfg.axisTitleColor) || '').trim() || fallback;
+
+/* The two bundles a Chart.js scale needs: `title: { …axisTitleColorProps(cfg) }`
+   and `ticks: { …tickColorProps(cfg) }`. Empty objects when the profile names no
+   colour, so a Chart.js canvas that has never met Figure style keeps exactly the
+   colours Chart.js paints on its own. */
+export const tickColorProps = (cfg) => {
+  const ink = String((cfg && cfg.tickColor) || '').trim();
+  return ink ? { color: ink } : {};
+};
+
+export const axisTitleColorProps = (cfg) => {
+  const ink = String((cfg && cfg.axisTitleColor) || '').trim();
+  return ink ? { color: ink } : {};
+};
+
 /**
  * Size of the axis NUMBER labels. Returns the raw value when the cfg has none,
  * so a call site that used to pass `cfg.fontSize` (undefined → the library's own
@@ -804,13 +880,26 @@ export const dataLabelSize = (cfg, fallback) => {
   return fallback;
 };
 
-/** recharts `tick={…}` props: the number size + the chosen font family. */
+/**
+ * recharts `tick={…}` props: the number size, the chosen font family and the
+ * colour of the numbers (Figure style, else the `fill` of the call site, else
+ * the historical slate grey).
+ */
 export const tickTextProps = (cfg, extra) => {
   const fam = fontFamilyOf(cfg);
+  const own = extra || {};
+  // The profile colour WINS over the `fill` a call site hard-codes (the
+  // historical '#64748b'), which becomes the fallback — so every axis of every
+  // chart follows Figure style, while an untouched profile renders the very
+  // same colours as before. A call site that passes no fill and a profile that
+  // names no colour add NO `fill` key at all: the props object is then exactly
+  // the one this helper returned before the knob existed.
+  const fill = String((cfg && cfg.tickColor) || '').trim() || own.fill;
   return {
     fontSize: tickSize(cfg),
     ...(fam ? { fontFamily: fam } : {}),
-    ...(extra || {})
+    ...own,
+    ...(fill ? { fill } : {})
   };
 };
 
