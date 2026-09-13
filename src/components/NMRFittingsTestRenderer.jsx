@@ -8,7 +8,7 @@ import { NMR_FITTING_TAB_CONFIG } from './tabConfigs';
 import { toHex, errBarPlugin } from '../data/constants';
 import { rainbowColors } from '../utils/chartStyle';
 import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
-import { ChartControlBar, SharedChartStylePanel} from './SharedAnalysisTools';
+import { ChartControlBar, SharedChartStylePanel, ChartJsInspector } from './SharedAnalysisTools';
 import { isPointExcluded, togglePointExcluded, clearExcludedForTable, computePointSD } from '../utils/pointTreatment';
 const DIPOLAR_SIM_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -745,7 +745,7 @@ export const ErrInput = ({ label, value, isOverridden, onSave, onReset }) => {
 /* ---------------------------------------------------------------------------
 CHARTS — FULL WIDTH (not side by side)
 --------------------------------------------------------------------------- */
-function DecayChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType = 'line', errMode = 'none', fixedSD = '', manualSD = {}, excluded = {}, update = null }) {
+function DecayChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType = 'line', errMode = 'none', fixedSD = '', manualSD = {}, excluded = {}, update = null, setCfg = null }) {
     const ref = useRef(null); const chartRef = useRef(null);
     useEffect(() => {
         if (!ref.current) return;
@@ -855,12 +855,14 @@ function DecayChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType = 'l
                 <h4 className="text-xs font-bold text-slate-600 uppercase">Decay / Diffusion curves</h4>
                 <button onClick={onToggleFs} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors no-print">{isFs ? '↙️' : '↗️'}</button>
             </div>
-            <div className="flex-1 relative min-h-0"> <canvas ref={ref} /> </div>
+            <ChartJsInspector chartRef={chartRef} cfg={chartCfg} setCfg={setCfg} className="flex-1 relative min-h-0">
+                <canvas ref={ref} />
+            </ChartJsInspector>
         </div>
     );
 }
 
-function ParameterChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType = 'bar' }) {
+function ParameterChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType = 'bar', setCfg = null }) {
     const ref = useRef(null); const chartRef = useRef(null);
     useEffect(() => {
         if (!ref.current || !colFits.some(cf => cf.fit)) return;
@@ -896,12 +898,14 @@ function ParameterChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType 
                 <h4 className="text-xs font-bold text-slate-600 uppercase">Parameter vs Atom</h4>
                 <button onClick={onToggleFs} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors no-print">{isFs ? '↙️' : '↗️'}</button>
             </div>
-            <div className="flex-1 relative min-h-0"> <canvas ref={ref} /> </div>
+            <ChartJsInspector chartRef={chartRef} cfg={chartCfg} setCfg={setCfg} className="flex-1 relative min-h-0">
+                <canvas ref={ref} />
+            </ChartJsInspector>
         </div>
     );
 }
 
-function IndividualDecayChart({ table, colIndex, colFit, chartCfg, isFs, onToggleFs }) {
+function IndividualDecayChart({ table, colIndex, colFit, chartCfg, isFs, onToggleFs, setCfg = null }) {
     const ref = useRef(null); const chartRef = useRef(null);
     useEffect(() => {
         if (!ref.current) return;
@@ -950,7 +954,10 @@ function IndividualDecayChart({ table, colIndex, colFit, chartCfg, isFs, onToggl
                 {!isFs && <button className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1 transition-all text-xs">↗️</button>}
                 {isFs && <button onClick={(e) => { e.stopPropagation(); onToggleFs(); }} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors no-print">↙️</button>}
             </div>
-            <div className={`flex-1 relative min-h-0 ${!isFs ? 'pointer-events-none' : ''}`}> <canvas ref={ref} /> </div>
+            <ChartJsInspector chartRef={chartRef} cfg={chartCfg} setCfg={setCfg}
+                className={`flex-1 relative min-h-0 ${!isFs ? 'pointer-events-none' : ''}`}>
+                <canvas ref={ref} />
+            </ChartJsInspector>
         </div>
     );
 }
@@ -1136,6 +1143,8 @@ export const NMRFittingsTestRenderer = ({ activeTest = {}, updateActiveTest, Tes
     const [chartType, setChartType] = useState('line'); // 'line' or 'hist'
     const manualErrors = activeTest.manualErrors || {};
     const chartCfg = { yMin: '', yMax: '', xMin: '', xMax: '', ptStyle: 'circle', ptSize: 5, fontSize: 12, xPos: 'bottom', yPos: 'left', xAxisLabel: '', lineStyle: 'solid', lineThickness: 2, ...(activeTest.chartCfg || {}) };
+    // Shared setter: the 🎨 panel and the double-click editor write the same object.
+    const setChartCfg = (patch) => update({ chartCfg: { ...(activeTest.chartCfg || {}), ...patch } });
 
     useEffect(() => { if (!Array.isArray(activeTest.nmrTables) || activeTest.nmrTables.length === 0) update({ nmrTables: [makeTable()] }); }, []);
 
@@ -1320,7 +1329,7 @@ const renderTableAnalysis = (t, tIndex) => {
                         <div className="mb-2">
                             <SharedChartStylePanel
                                 cfg={{ ...activeTest.chartCfg }}
-                                setCfg={(patch) => update({ chartCfg: { ...(activeTest.chartCfg || {}), ...patch } })}
+                                setCfg={setChartCfg}
                                 series={[]}
                                 showHeightSlider={false}
                             />
@@ -1478,12 +1487,13 @@ const renderTableAnalysis = (t, tIndex) => {
                                 fixedSD={activeTest.nmrFixedSDStr || ''}
                                 manualSD={activeTest.nmrManualSD || {}}
                                 excluded={activeTest.nmrExcluded || {}}
-                                update={update} />
+                                update={update}
+                                setCfg={setChartCfg} />
                         </div>
 
                         {fsPanel === `param_${t.id}` && <div className={OVERLAY_CLASSES} onClick={() => setFsPanel(null)}></div>}
                         <div className={`border border-slate-200 rounded-lg bg-white ${fsPanel === `param_${t.id}` ? 'z-[999999]' : 'p-3'}`}>
-                            <ParameterChart table={t} colFits={colFits} chartCfg={chartCfg} isFs={fsPanel === `param_${t.id}`} onToggleFs={() => setFsPanel(fsPanel === `param_${t.id}` ? null : `param_${t.id}`)} chartType={chartType} />
+                            <ParameterChart table={t} colFits={colFits} chartCfg={chartCfg} isFs={fsPanel === `param_${t.id}`} onToggleFs={() => setFsPanel(fsPanel === `param_${t.id}` ? null : `param_${t.id}`)} chartType={chartType} setCfg={setChartCfg} />
                         </div>
                     </div>
 
@@ -1502,6 +1512,7 @@ const renderTableAnalysis = (t, tIndex) => {
                                             chartCfg={chartCfg}
                                             isFs={fsPanel === `indiv_${t.id}_${c}`}
                                             onToggleFs={() => setFsPanel(fsPanel === `indiv_${t.id}_${c}` ? null : `indiv_${t.id}_${c}`)}
+                                            setCfg={setChartCfg}
                                         />
                                     </React.Fragment>
                                 ))}

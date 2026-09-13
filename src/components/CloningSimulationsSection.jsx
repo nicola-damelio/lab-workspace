@@ -212,6 +212,9 @@ export const CloningSimulationsSection = ({ ctx }) => {
             <ChartPanel
               title={(sim.chartCfg && sim.chartCfg.title) || 'Simulated UV Spectrum'}
               icon="🧪"
+              cfg={sim.chartCfg || {}}
+              setCfg={(patch) => setSim({ chartCfg: { ...(sim.chartCfg || {}), ...patch } })}
+              unit="Wavelength (nm)"
               cfgPanel={<SharedChartStylePanel cfg={sim.chartCfg || {}} setCfg={(patch) => setSim({ chartCfg: { ...(sim.chartCfg || {}), ...patch } })} unit="Wavelength (nm)" />}
             >
               <SimUvZoomChart data={data} cfg={sim.chartCfg || {}} />

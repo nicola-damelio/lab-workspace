@@ -730,6 +730,31 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const [activeFig, setActiveFig] = useState(null); // { objId, idx }
   const suppressCycleRef = useRef(false);           // a drag just happened → the trailing click must NOT cycle
 
+  // ── image CROP ─────────────────────────────────────────────────────────────
+  // A crop belongs to ONE figure (a lettered panel can hold several figures) and
+  // is stored in SOURCE-relative units — x1/y1 = top-left, x2/y2 = bottom-right,
+  // 0 = the edge of the original image, 1 = the other edge — so it survives a
+  // change of panel size, grid or canvas dimensions. `cropMode` remembers the
+  // object + figure being cropped: while it is on, dragging on the canvas draws
+  // the new window (released mouse = applied).
+  const [cropMode, setCropMode] = useState(null);   // { objId, idx }
+  const [cropDraft, setCropDraft] = useState(null); // live rectangle { x1, y1, x2, y2 }
+  const CROP_MIN = 0.02;                            // smallest window: 2 % of the source
+
+  // Valid crop window of a figure (null when the figure is not cropped).
+  const cropOf = (im) => {
+    const c = im && im.crop;
+    if (!c) return null;
+    const nums = ['x1', 'y1', 'x2', 'y2'].map((k) => Math.max(0, Math.min(1, Number(c[k]))));
+    if (nums.some((v) => !Number.isFinite(v))) return null;
+    const [x1, y1, x2, y2] = nums;
+    if (!(x2 - x1 >= CROP_MIN && y2 - y1 >= CROP_MIN)) return null;
+    // A window that covers the whole image is NOT a crop: the figure is drawn
+    // by the historical path (browser aspect fitting) again.
+    if (x1 <= 0 && y1 <= 0 && x2 >= 1 && y2 >= 1) return null;
+    return { x1, y1, x2, y2 };
+  };
+
   // Geometry (mm, absolute on the canvas) of ONE figure inside an object.
   const objFigureGeom = (obj, i) => {
     const imgs = getObjImages(obj);
@@ -741,6 +766,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     const ch = (obj.h * cellH) / rows;
     const pad = obj.imgPadding || 0;
     const figScale = (obj.imgScale || 1) * (im.scale || 1);
+    const crop = cropOf(im);
+    const cropW = crop ? crop.x2 - crop.x1 : 1;
+    const cropH = crop ? crop.y2 - crop.y1 : 1;
     let iW = (cw - pad * 2) * figScale;
     let iH = (ch - pad * 2) * figScale;
     /* Canvas option "🔒 Keep aspect ratio": the figure is drawn with its OWN
@@ -748,20 +776,48 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
        panel cell — so changing the number of panels (grid) or the canvas
        dimensions only rescales it. When the ratio is not known yet (figure
        still loading / unreachable) the cell is used, which is harmless because
-       the <image> is rendered with preserveAspectRatio="meet" anyway. */
-    const aspect = keepAspect ? (imageAspectCache.get(im.imgSrc) || 0) : 0;
-    if (aspect > 0 && iW > 0 && iH > 0) {
-      if (iW / iH > aspect) iW = iH * aspect;
-      else iH = iW / aspect;
+       the <image> is rendered with preserveAspectRatio="meet" anyway.
+       A CROPPED figure is fitted on the ratio of its CROP WINDOW (the window
+       replaces the figure: it fills the panel, the rest of the source stays
+       hidden around it). */
+    const natAspect = keepAspect || crop ? (imageAspectCache.get(im.imgSrc) || 0) : 0;
+    const boxAspect = natAspect > 0 && (keepAspect || crop)
+      ? (obj.imgFit === 'stretch' && crop ? 0 : natAspect * (cropW / cropH))
+      : 0;
+    if (boxAspect > 0 && iW > 0 && iH > 0) {
+      if (iW / iH > boxAspect) iW = iH * boxAspect;
+      else iH = iW / boxAspect;
     }
     const cellX = obj.x * cellW + (i % cols) * cw;
     const cellY = obj.y * cellH + Math.floor(i / cols) * ch;
-
+    // The VISIBLE window (what the user sees, clicks and drags).
+    const vX = cellX + pad + (cw - pad * 2 - iW) / 2 + (obj.imgOffsetX || 0) + (im.dx || 0);
+    const vY = cellY + pad + (ch - pad * 2 - iH) / 2 + (obj.imgOffsetY || 0) + (im.dy || 0);
+    if (!crop) {
+      return { iX: vX, iY: vY, iW, iH, vX, vY, vW: iW, vH: iH, crop: null };
+    }
+    // The FULL image is drawn AROUND that window (bigger, offset) and clipped to
+    // it, so the crop window lands exactly on the visible box.
+    const dW = iW / cropW;
+    const dH = iH / cropH;
     return {
-      iX: cellX + pad + (cw - pad * 2 - iW) / 2 + (obj.imgOffsetX || 0) + (im.dx || 0),
-      iY: cellY + pad + (ch - pad * 2 - iH) / 2 + (obj.imgOffsetY || 0) + (im.dy || 0),
-      iW, iH
+      iX: vX - crop.x1 * dW,
+      iY: vY - crop.y1 * dH,
+      iW: dW,
+      iH: dH,
+      vX, vY, vW: iW, vH: iH,
+      crop
     };
+  };
+
+  // Figure index a per-figure command (crop, resize…) applies to: the single
+  // figure, else the active one, else the topmost.
+  const activeFigIdx = (obj) => {
+    const imgs = getObjImages(obj);
+    if (!imgs.length) return -1;
+    if (imgs.length === 1) return 0;
+    return (activeFig && activeFig.objId === obj.id && activeFig.idx >= 0 && activeFig.idx < imgs.length)
+      ? activeFig.idx : imgs.length - 1;
   };
 
   // Figure indices whose bounds contain the point (mm, absolute), topmost first.
@@ -771,7 +827,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     imgs.forEach((im, i) => {
       if (!im || !im.imgSrc) return;
       const g = objFigureGeom(obj, i);
-      if (xMm >= g.iX && xMm <= g.iX + g.iW && yMm >= g.iY && yMm <= g.iY + g.iH) hits.push(i);
+      if (xMm >= g.vX && xMm <= g.vX + g.vW && yMm >= g.vY && yMm <= g.vY + g.vH) hits.push(i);
     });
     return hits.reverse(); // last rendered = topmost
   };
@@ -1015,6 +1071,28 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       if (dragState.current) dragState.current.moved = true;
     }
 
+    // ── CROP: drag a rectangle over the figure being cropped ──────────────────
+    // The pointer is converted into SOURCE units (0…1 of the original image)
+    // through the DRAWN rect (iX/iW) — the rect that maps the whole source — and
+    // the window is kept inside the window that was already there (a crop can
+    // only ever be refined, never re-opened on the parts already cropped away).
+    if (type === 'crop') {
+      const st = dragState.current;
+      const g = st.geom;
+      const nx = g && g.iW ? Math.max(0, Math.min(1, ((e.clientX - rect.left) * scaleX - g.iX) / g.iW)) : 0;
+      const ny = g && g.iH ? Math.max(0, Math.min(1, ((e.clientY - rect.top) * scaleY - g.iY) / g.iH)) : 0;
+      const { base, from } = st;
+      const draft = {
+        x1: Math.max(base.x1, Math.min(from.x, nx)),
+        y1: Math.max(base.y1, Math.min(from.y, ny)),
+        x2: Math.min(base.x2, Math.max(from.x, nx)),
+        y2: Math.min(base.y2, Math.max(from.y, ny))
+      };
+      st.draft = draft;
+      setCropDraft(draft);
+      return;
+    }
+
     // Move ONE figure of a multi-figure object independently (drag the figure).
     if (type === 'figMove') {
       setObjects(prev => prev.map(o => {
@@ -1078,8 +1156,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   };
 
   const endDrag = () => {
-    const type = dragState.current && dragState.current.type;
-    const moved = dragState.current && dragState.current.moved;
+    const st = dragState.current;
+    const type = st && st.type;
+    const moved = st && st.moved;
     dragState.current = null;
     window.removeEventListener('mousemove', onDrag);
     window.removeEventListener('mouseup', endDrag);
@@ -1088,6 +1167,17 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     if (moved && (type === 'figMove' || type === 'figResize')) suppressCycleRef.current = true;
     // Re-order the A/B/C panel letters after an object is moved/resized.
     if (type === 'move' || type === 'resize') renumberLetters();
+    // Releasing the mouse APPLIES the crop window that was just drawn.
+    if (type === 'crop') {
+      setCropDraft(null);
+      const d = st.draft;
+      if (moved && d && (d.x2 - d.x1) >= CROP_MIN && (d.y2 - d.y1) >= CROP_MIN) {
+        applyCropRect(st.id, st.imgIdx, {
+          x1: +d.x1.toFixed(4), y1: +d.y1.toFixed(4),
+          x2: +d.x2.toFixed(4), y2: +d.y2.toFixed(4)
+        });
+      }
+    }
   };
 
   // Start dragging a free text overlay (millimetre coordinates inside the object).
@@ -1120,6 +1210,73 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     const obj = objects.find(o => o.id === objId);
     if (!obj || !obj.imgSrc) return;
     dragState.current = { type: 'imgResize', id: objId, startX: e.clientX, startY: e.clientY, origScale: obj.imgScale || 1 };
+    window.addEventListener('mousemove', onDrag);
+    window.addEventListener('mouseup', endDrag);
+  };
+
+  // Write / clear a crop window (source units) on ONE figure of an object.
+  // `history` is turned OFF for the numeric % fields: every keystroke would
+  // otherwise push a snapshot and fill the undo stack.
+  const writeCrop = (objId, idx, rect, history = true) => {
+    if (idx < 0) return;
+    if (history) commitHistory();
+    setObjects(prev => prev.map(o => {
+      if (o.id !== objId) return o;
+      const imgs = getObjImages(o).map((im, i) => (i === idx ? { ...im, crop: rect } : im));
+      return withImages(o, imgs);
+    }));
+  };
+  const applyCropRect = (objId, idx, rect) => writeCrop(objId, idx, rect, true);
+  const resetCropRect = (objId, idx) => writeCrop(objId, idx, null, true);
+
+  // Turn the crop mode on / off for one figure (the "✂️ Crop" button).
+  const toggleCropMode = (objId, idx) => {
+    if (idx < 0) return;
+    setSelectedId(objId);
+    setCropDraft(null);
+    setCropMode(prev => (prev && prev.objId === objId && prev.idx === idx ? null : { objId, idx }));
+  };
+
+  // One edge of the numeric crop fields (value in % of the original image).
+  const setCropEdge = (objId, idx, edge, pct) => {
+    const obj = objects.find(o => o.id === objId);
+    const cur = cropOf(obj && getObjImages(obj)[idx]) || { x1: 0, y1: 0, x2: 1, y2: 1 };
+    const v = Math.max(0, Math.min(100, Number(pct) || 0)) / 100;
+    const next = { ...cur, [edge]: v };
+    if (edge === 'x1') next.x1 = Math.min(v, next.x2 - CROP_MIN);
+    if (edge === 'y1') next.y1 = Math.min(v, next.y2 - CROP_MIN);
+    if (edge === 'x2') next.x2 = Math.max(v, next.x1 + CROP_MIN);
+    if (edge === 'y2') next.y2 = Math.max(v, next.y1 + CROP_MIN);
+    writeCrop(objId, idx, {
+      x1: +next.x1.toFixed(4), y1: +next.y1.toFixed(4),
+      x2: +next.x2.toFixed(4), y2: +next.y2.toFixed(4)
+    }, false);
+  };
+
+  // Start a crop window on the figure being cropped (drag on the canvas).
+  const startCropDrag = (e, objId, idx) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const obj = objects.find(o => o.id === objId);
+    const im = obj && getObjImages(obj)[idx];
+    if (!obj || !im) return;
+    const svgEl = activeSvgEl();
+    if (!svgEl) return;
+    const r = svgEl.getBoundingClientRect();
+    const geom = objFigureGeom(obj, idx);
+    const toSrc = (clientX, clientY) => ({
+      x: Math.max(0, Math.min(1, ((clientX - r.left) * (canvasW / Math.max(1, r.width)) - geom.iX) / Math.max(1e-6, geom.iW))),
+      y: Math.max(0, Math.min(1, ((clientY - r.top) * (canvasH / Math.max(1, r.height)) - geom.iY) / Math.max(1e-6, geom.iH)))
+    });
+    const start = toSrc(e.clientX, e.clientY);
+    const base = cropOf(im) || { x1: 0, y1: 0, x2: 1, y2: 1 };
+    const from = {
+      x: Math.min(Math.max(start.x, base.x1), base.x2),
+      y: Math.min(Math.max(start.y, base.y1), base.y2)
+    };
+    const draft = { x1: from.x, y1: from.y, x2: from.x, y2: from.y };
+    dragState.current = { type: 'crop', id: objId, imgIdx: idx, geom, base, from, draft };
+    setCropDraft(draft);
     window.addEventListener('mousemove', onDrag);
     window.addEventListener('mouseup', endDrag);
   };
@@ -1351,9 +1508,23 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             <rect x={obj.x * cellW} y={obj.y * cellH} width={obj.w * cellW} height={obj.h * cellH} />
           </clipPath>
         ))}
+        {/* Crop windows: one clip per CROPPED figure (the full image is drawn
+            around the window and clipped to it — see objFigureGeom). */}
+        {objects.map(obj => getObjImages(obj).map((im, i) => {
+          const g = objFigureGeom(obj, i);
+          if (!g.crop) return null;
+          return (
+            <clipPath key={`fcp-${obj.id}-${i}`} id={`figclip-${obj.id}-${i}`}>
+              <rect x={g.vX} y={g.vY} width={g.vW} height={g.vH} />
+            </clipPath>
+          );
+        }))}
       </defs>
       {objects.map(obj => {
         const isSelected = obj.id === selectedId;
+        // Crop mode belongs to ONE object: the dimmed window + the drag catcher
+        // below are drawn only for that one.
+        const cropOn = !!cropMode && cropMode.objId === obj.id;
         const ox = obj.x * cellW;
         const oy = obj.y * cellH;
         const ow = obj.w * cellW;
@@ -1401,12 +1572,30 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                     const src = im.imgSrc;
                     if (!src) return null;
                     const g = objFigureGeom(obj, i);
+                    const par = keepAspect ? 'xMidYMid meet' : fit === 'cover' ? 'xMidYMid slice' : fit === 'stretch' ? 'none' : 'xMidYMid meet';
+                    const center = `${g.iX + g.iW / 2} ${g.iY + g.iH / 2}`;
+                    /* CROPPED figure: the FULL image is drawn around the window
+                       with an exact pixel mapping (hence preserveAspectRatio
+                       "none") and clipped to it. The rotation wraps both so the
+                       clip rotates with the figure, like the uncropped image. */
+                    if (g.crop) {
+                      return (
+                        <g key={im.libId || i} transform={rot ? `rotate(${rot} ${center})` : undefined}>
+                          <image href={src}
+                            x={g.iX} y={g.iY} width={g.iW} height={g.iH}
+                            preserveAspectRatio="none"
+                            clipPath={`url(#figclip-${obj.id}-${i})`}
+                            style={{ pointerEvents: 'none' }}
+                          />
+                        </g>
+                      );
+                    }
                     return (
                       <image key={im.libId || i}
                         href={src}
                         x={g.iX} y={g.iY} width={g.iW} height={g.iH}
-                        transform={rot ? `rotate(${rot} ${g.iX + g.iW / 2} ${g.iY + g.iH / 2})` : undefined}
-                        preserveAspectRatio={keepAspect ? 'xMidYMid meet' : fit === 'cover' ? 'xMidYMid slice' : fit === 'stretch' ? 'none' : 'xMidYMid meet'}
+                        transform={rot ? `rotate(${rot} ${center})` : undefined}
+                        preserveAspectRatio={par}
                         style={{ pointerEvents: 'none' }}
                       />
                     );
@@ -1501,6 +1690,42 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
               <rect data-selection-ui="true" x={ox} y={oy} width={ow} height={oh} fill="none" stroke="#3b82f6" strokeWidth={0.5} style={{ pointerEvents: 'none' }} />
             )}
 
+            {/* CROP (screen only): the dimmed bands show what the crop removes,
+                the dashed rectangle is the window being drawn. Everything is
+                tagged data-selection-ui, so exports never contain it. */}
+            {isSelected && cropOn && (() => {
+              const idx = activeFigIdx(obj);
+              const g = idx < 0 ? null : objFigureGeom(obj, idx);
+              const imgs = getObjImages(obj);
+              if (!g || !imgs[idx]) return null;
+              const d = cropDraft || cropOf(imgs[idx]) || { x1: 0, y1: 0, x2: 1, y2: 1 };
+              const x1 = g.iX + d.x1 * g.iW;
+              const x2 = g.iX + d.x2 * g.iW;
+              const y1 = g.iY + d.y1 * g.iH;
+              const y2 = g.iY + d.y2 * g.iH;
+              const dim = 'rgba(15,23,42,0.5)';
+              return (
+                <g data-selection-ui="true" clipPath={`url(#clip-${obj.id})`} style={{ pointerEvents: 'none' }}>
+                  <rect x={g.iX} y={g.iY} width={Math.max(0, x1 - g.iX)} height={g.iH} fill={dim} />
+                  <rect x={x2} y={g.iY} width={Math.max(0, g.iX + g.iW - x2)} height={g.iH} fill={dim} />
+                  <rect x={x1} y={g.iY} width={Math.max(0, x2 - x1)} height={Math.max(0, y1 - g.iY)} fill={dim} />
+                  <rect x={x1} y={y2} width={Math.max(0, x2 - x1)} height={Math.max(0, g.iY + g.iH - y2)} fill={dim} />
+                  <rect x={x1} y={y1} width={Math.max(0, x2 - x1)} height={Math.max(0, y2 - y1)} fill="none"
+                    stroke="#f59e0b" strokeWidth={0.4} strokeDasharray="1.4,1.2" />
+                  <text x={x1 + 1} y={Math.max(y1 - 1, g.iY + 3)} fontSize={3} fill="#b45309" fontWeight="bold">
+                    ✂ {Math.round(d.x1 * 100)}–{Math.round(d.x2 * 100)} % × {Math.round(d.y1 * 100)}–{Math.round(d.y2 * 100)} %
+                  </text>
+                </g>
+              );
+            })()}
+            {/* Transparent catcher that turns a drag into the crop window. */}
+            {isSelected && cropOn && (
+              <rect data-selection-ui="true" x={ox} y={oy} width={ow} height={oh} fill="transparent"
+                style={{ cursor: 'crosshair' }}
+                onMouseDown={(e) => startCropDrag(e, obj.id, activeFigIdx(obj))}
+                title="Drag to set the crop window — releasing the mouse applies it" />
+            )}
+
             {/* Link back to the original graph lives in the properties panel
                 ("↗ Open original graph") — no on-canvas arrow needed. */}
           </g>
@@ -1515,6 +1740,14 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       )}
     </svg>
   );
+
+  // ── crop, as shown in the properties panel ─────────────────────────────────
+  // The commands act on ONE figure: the active one (picked in the list below /
+  // on the canvas), so a multi-figure panel can be cropped figure by figure.
+  const cropPanelIdx = selectedObj ? activeFigIdx(selectedObj) : -1;
+  const cropPanelOn = !!cropMode && !!selectedObj && cropMode.objId === selectedObj.id;
+  const cropPanelRect = selectedObj && cropPanelIdx >= 0 ? cropOf(getObjImages(selectedObj)[cropPanelIdx]) : null;
+  const cropPct = (v) => Math.round((Number(v) || 0) * 1000) / 10; // 0.825 → 82.5
 
   // Properties Panel Component (reused in normal and fullscreen)
   const PropertiesPanel = ({ isFloating = false }) => (
@@ -1550,7 +1783,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             <div className="flex flex-col gap-1">
               <span className="text-[10px] font-bold text-slate-500">Figures in this panel: {getObjImages(selectedObj).length}</span>
               {getObjImages(selectedObj).map((im, i) => (
-                <div key={im.libId || i} className="flex flex-wrap items-center gap-x-2 gap-y-1 bg-white border border-slate-200 rounded-lg px-2 py-1">
+                <div key={im.libId || i} onClick={() => setActiveFig({ objId: selectedObj.id, idx: i })}
+                  className={`flex flex-wrap items-center gap-x-2 gap-y-1 border rounded-lg px-2 py-1 cursor-pointer ${cropPanelIdx === i && getObjImages(selectedObj).length > 1 ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200'}`}
+                  title="Click to make this figure the active one (crop / resize commands apply to the active figure)">
                   {im.imgThumb || im.imgSrc
                     ? <img src={im.imgThumb || im.imgSrc} alt="" className="w-8 h-8 shrink-0 object-contain rounded border border-slate-100 bg-slate-50" />
                     : <span className="w-8 h-8 shrink-0 rounded bg-slate-100" />}
@@ -1591,12 +1826,50 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             <label className="text-[10px] font-bold text-slate-500">Padding (mm)
               <input type="number" min="0" max="20" step="0.5" value={selectedObj.imgPadding} onChange={e => updateObj({ imgPadding: Number(e.target.value) })} className="w-full border rounded p-1 text-xs" />
             </label>
-            <label className="text-[10px] font-bold text-slate-500">Shift X (mm)
-              <input type="number" min="-200" max="200" step="0.5" value={selectedObj.imgOffsetX || 0} onChange={e => updateObj({ imgOffsetX: Number(e.target.value) })} className="w-full border rounded p-1 text-xs" title="Shift the image horizontally inside the object frame" />
-            </label>
-            <label className="text-[10px] font-bold text-slate-500">Shift Y (mm)
-              <input type="number" min="-200" max="200" step="0.5" value={selectedObj.imgOffsetY || 0} onChange={e => updateObj({ imgOffsetY: Number(e.target.value) })} className="w-full border rounded p-1 text-xs" title="Shift the image vertically inside the object frame" />
-            </label>
+            {/* CROP — the "Shift X / Shift Y" number commands were removed: the
+                image is shifted by DRAGGING it on the canvas (or Shift+drag
+                anywhere on the object), which is the natural gesture. Cropping
+                replaces them as the precise command. */}
+            <div className="col-span-2 flex flex-col gap-1 bg-amber-50 border border-amber-200 rounded-lg p-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-bold text-amber-800 flex-1">
+                  ✂️ Crop{cropPanelIdx >= 0 && getObjImages(selectedObj).length > 1 ? ` — figure ${cropPanelIdx + 1}` : ''}
+                </span>
+                <button type="button" onClick={() => toggleCropMode(selectedObj.id, cropPanelIdx)}
+                  disabled={cropPanelIdx < 0}
+                  className={`font-bold px-2.5 py-1 rounded text-[10px] border ${cropPanelIdx < 0 ? 'bg-slate-100 border-slate-200 text-slate-300' : cropPanelOn ? 'bg-amber-500 text-white border-amber-600' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-100'}`}
+                  title="Turn crop mode on, then drag a rectangle on the canvas over this figure — releasing the mouse applies the crop">
+                  {cropPanelOn ? '✂️ Crop mode ON — click to exit' : '✂️ Crop'}
+                </button>
+                <button type="button" onClick={() => resetCropRect(selectedObj.id, cropPanelIdx)}
+                  disabled={!cropPanelRect}
+                  className={`font-bold px-2.5 py-1 rounded text-[10px] border ${cropPanelRect ? 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100' : 'bg-slate-100 border-slate-200 text-slate-300'}`}
+                  title="Show the whole original image again">⟲ Reset crop</button>
+              </div>
+              {cropPanelOn ? (
+                <span className="text-[10px] font-bold text-amber-700">
+                  Drag a rectangle on the canvas over the figure — the mouse release applies it. Drag again to refine: a crop only ever keeps what is left, so the parts already removed never come back.
+                </span>
+              ) : (
+                <span className="text-[10px] text-slate-500 italic">
+                  {cropPanelRect
+                    ? `Kept: ${cropPct(cropPanelRect.x1)}–${cropPct(cropPanelRect.x2)} % × ${cropPct(cropPanelRect.y1)}–${cropPct(cropPanelRect.y2)} % of the original image.`
+                    : 'No crop — the whole figure is shown.'}
+                </span>
+              )}
+              {cropPanelRect && (
+                <div className="grid grid-cols-4 gap-1">
+                  {[['x1', 'Left'], ['x2', 'Right'], ['y1', 'Top'], ['y2', 'Bottom']].map(([edge, label]) => (
+                    <label key={edge} className="text-[9px] font-bold text-slate-500">{label} (%)
+                      <input type="number" min="0" max="100" step="0.5" value={cropPct(cropPanelRect[edge])}
+                        onChange={(e) => setCropEdge(selectedObj.id, cropPanelIdx, edge, e.target.value)}
+                        onWheel={(e) => e.target.blur()}
+                        className="w-full border rounded p-0.5 text-[10px]" />
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
             <label className="text-[10px] font-bold text-slate-500">Rotate (°)
               <div className="flex gap-1">
                 <input type="number" min="-360" max="360" step="1" value={selectedObj.imgRotate || 0} onChange={e => updateObj({ imgRotate: Number(e.target.value) })} className="w-full border rounded p-1 text-xs" title="Rotate the image" />

@@ -1,0 +1,454 @@
+┌─────────┬───────────────────────────────────────────────────────────────────────────────────────────────────────────┬───────────────────┬───────────────────┬──────┐
+│ (index) │ name                                                                                                      │ got               │ want              │ ok   │
+├─────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────┼───────────────────┼───────────────────┼──────┤
+│ 0       │ 'OLD 8 px: the first x number reached 9 px left of the plot'                                              │ 'true'            │ 'true'            │ true │
+│ 1       │ 'FIXED 8 px: it starts on the plot edge'                                                                  │ 'true'            │ 'true'            │ true │
+│ 2       │ 'FIXED 8 px: the last number is pulled back inside'                                                       │ 'true'            │ 'true'            │ true │
+│ 3       │ 'OLD 10 px: the first x number reached 11 px left of the plot'                                            │ 'true'            │ 'true'            │ true │
+│ 4       │ 'FIXED 10 px: it starts on the plot edge'                                                                 │ 'true'            │ 'true'            │ true │
+│ 5       │ 'FIXED 10 px: the last number is pulled back inside'                                                      │ 'true'            │ 'true'            │ true │
+│ 6       │ 'OLD 11 px: the first x number reached 12 px left of the plot'                                            │ 'true'            │ 'true'            │ true │
+│ 7       │ 'FIXED 11 px: it starts on the plot edge'                                                                 │ 'true'            │ 'true'            │ true │
+│ 8       │ 'FIXED 11 px: the last number is pulled back inside'                                                      │ 'true'            │ 'true'            │ true │
+│ 9       │ 'OLD 12 px: the first x number reached 13 px left of the plot'                                            │ 'true'            │ 'true'            │ true │
+│ 10      │ 'FIXED 12 px: it starts on the plot edge'                                                                 │ 'true'            │ 'true'            │ true │
+│ 11      │ 'FIXED 12 px: the last number is pulled back inside'                                                      │ 'true'            │ 'true'            │ true │
+│ 12      │ 'OLD 14 px: the first x number reached 16 px left of the plot'                                            │ 'true'            │ 'true'            │ true │
+│ 13      │ 'FIXED 14 px: it starts on the plot edge'                                                                 │ 'true'            │ 'true'            │ true │
+│ 14      │ 'FIXED 14 px: the last number is pulled back inside'                                                      │ 'true'            │ 'true'            │ true │
+│ 15      │ 'OLD 16 px: the first x number reached 18 px left of the plot'                                            │ 'true'            │ 'true'            │ true │
+│ 16      │ 'FIXED 16 px: it starts on the plot edge'                                                                 │ 'true'            │ 'true'            │ true │
+│ 17      │ 'FIXED 16 px: the last number is pulled back inside'                                                      │ 'true'            │ 'true'            │ true │
+│ 18      │ 'OLD 18 px: the first x number reached 20 px left of the plot'                                            │ 'true'            │ 'true'            │ true │
+│ 19      │ 'FIXED 18 px: it starts on the plot edge'                                                                 │ 'true'            │ 'true'            │ true │
+│ 20      │ 'FIXED 18 px: the last number is pulled back inside'                                                      │ 'true'            │ 'true'            │ true │
+│ 21      │ 'OLD 20 px: the first x number reached 22 px left of the plot'                                            │ 'true'            │ 'true'            │ true │
+│ 22      │ 'FIXED 20 px: it starts on the plot edge'                                                                 │ 'true'            │ 'true'            │ true │
+│ 23      │ 'FIXED 20 px: the last number is pulled back inside'                                                      │ 'true'            │ 'true'            │ true │
+│ 24      │ 'OLD 24 px: the first x number reached 27 px left of the plot'                                            │ 'true'            │ 'true'            │ true │
+│ 25      │ 'FIXED 24 px: it starts on the plot edge'                                                                 │ 'true'            │ 'true'            │ true │
+│ 26      │ 'FIXED 24 px: the last number is pulled back inside'                                                      │ 'true'            │ 'true'            │ true │
+│ 27      │ 'OLD 24 px: the last x number ran 27 px past the right edge'                                              │ 'true'            │ 'true'            │ true │
+│ 28      │ 'OLD 28 px: the first x number reached 31 px left of the plot'                                            │ 'true'            │ 'true'            │ true │
+│ 29      │ 'FIXED 28 px: it starts on the plot edge'                                                                 │ 'true'            │ 'true'            │ true │
+│ 30      │ 'FIXED 28 px: the last number is pulled back inside'                                                      │ 'true'            │ 'true'            │ true │
+│ 31      │ 'OLD 28 px: the last x number ran 31 px past the right edge'                                              │ 'true'            │ 'true'            │ true │
+│ 32      │ 'OLD 32 px: the first x number reached 35 px left of the plot'                                            │ 'true'            │ 'true'            │ true │
+│ 33      │ 'FIXED 32 px: it starts on the plot edge'                                                                 │ 'true'            │ 'true'            │ true │
+│ 34      │ 'FIXED 32 px: the last number is pulled back inside'                                                      │ 'true'            │ 'true'            │ true │
+│ 35      │ 'OLD 32 px: the last x number ran 35 px past the right edge'                                              │ 'true'            │ 'true'            │ true │
+│ 36      │ 'OLD 40 px: the first x number reached 44 px left of the plot'                                            │ 'true'            │ 'true'            │ true │
+│ 37      │ 'FIXED 40 px: it starts on the plot edge'                                                                 │ 'true'            │ 'true'            │ true │
+│ 38      │ 'FIXED 40 px: the last number is pulled back inside'                                                      │ 'true'            │ 'true'            │ true │
+│ 39      │ 'OLD 40 px: the last x number ran 44 px past the right edge'                                              │ 'true'            │ 'true'            │ true │
+│ 40      │ 'OLD 48 px: the first x number reached 53 px left of the plot'                                            │ 'true'            │ 'true'            │ true │
+│ 41      │ 'FIXED 48 px: it starts on the plot edge'                                                                 │ 'true'            │ 'true'            │ true │
+│ 42      │ 'FIXED 48 px: the last number is pulled back inside'                                                      │ 'true'            │ 'true'            │ true │
+│ 43      │ 'OLD 48 px: the last x number ran 53 px past the right edge'                                              │ 'true'            │ 'true'            │ true │
+│ 44      │ 'the middle number keeps the centred anchor'                                                              │ '[object Object]' │ '[object Object]' │ true │
+│ 45      │ 'the first number is start-anchored with a small inset'                                                   │ '[object Object]' │ '[object Object]' │ true │
+│ 46      │ 'the last number is end-anchored with a small inset'                                                      │ '[object Object]' │ '[object Object]' │ true │
+│ 47      │ 'a lone number is left alone'                                                                             │ '[object Object]' │ '[object Object]' │ true │
+│ 48      │ 'an unknown index is left alone'                                                                          │ '[object Object]' │ '[object Object]' │ true │
+│ 49      │ 'a custom anchor is honoured for the middle'                                                              │ 'start'           │ 'start'           │ true │
+│ 50      │ 'the rotated branch keeps its own offset'                                                                 │ 'true'            │ 'true'            │ true │
+│ 51      │ 'x numbers start below the tick marks (8 px / 0°)'                                                        │ 'true'            │ 'true'            │ true │
+│ 52      │ 'x numbers stay inside the chart (8 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 53      │ 'x title starts below the numbers (8 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 54      │ 'x title stays inside the chart (8 px / 0°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 55      │ 'y numbers stay inside the chart (8 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 56      │ 'y title clears the y numbers (8 px / 0°)'                                                                │ 'true'            │ 'true'            │ true │
+│ 57      │ 'y title stays inside the chart (8 px / 0°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 58      │ 'x numbers start below the tick marks (8 px / 45°)'                                                       │ 'true'            │ 'true'            │ true │
+│ 59      │ 'x numbers stay inside the chart (8 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 60      │ 'x title starts below the numbers (8 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 61      │ 'x title stays inside the chart (8 px / 45°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 62      │ 'y numbers stay inside the chart (8 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 63      │ 'y title clears the y numbers (8 px / 45°)'                                                               │ 'true'            │ 'true'            │ true │
+│ 64      │ 'y title stays inside the chart (8 px / 45°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 65      │ 'x numbers start below the tick marks (8 px / -45°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 66      │ 'x numbers stay inside the chart (8 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 67      │ 'x title starts below the numbers (8 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 68      │ 'x title stays inside the chart (8 px / -45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 69      │ 'y numbers stay inside the chart (8 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 70      │ 'y title clears the y numbers (8 px / -45°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 71      │ 'y title stays inside the chart (8 px / -45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 72      │ 'x numbers start below the tick marks (8 px / 90°)'                                                       │ 'true'            │ 'true'            │ true │
+│ 73      │ 'x numbers stay inside the chart (8 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 74      │ 'x title starts below the numbers (8 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 75      │ 'x title stays inside the chart (8 px / 90°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 76      │ 'y numbers stay inside the chart (8 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 77      │ 'y title clears the y numbers (8 px / 90°)'                                                               │ 'true'            │ 'true'            │ true │
+│ 78      │ 'y title stays inside the chart (8 px / 90°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 79      │ 'x numbers start below the tick marks (10 px / 0°)'                                                       │ 'true'            │ 'true'            │ true │
+│ 80      │ 'x numbers stay inside the chart (10 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 81      │ 'x title starts below the numbers (10 px / 0°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 82      │ 'x title stays inside the chart (10 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 83      │ 'y numbers stay inside the chart (10 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 84      │ 'y title clears the y numbers (10 px / 0°)'                                                               │ 'true'            │ 'true'            │ true │
+│ 85      │ 'y title stays inside the chart (10 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 86      │ 'x numbers start below the tick marks (10 px / 45°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 87      │ 'x numbers stay inside the chart (10 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 88      │ 'x title starts below the numbers (10 px / 45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 89      │ 'x title stays inside the chart (10 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 90      │ 'y numbers stay inside the chart (10 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 91      │ 'y title clears the y numbers (10 px / 45°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 92      │ 'y title stays inside the chart (10 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 93      │ 'x numbers start below the tick marks (10 px / -45°)'                                                     │ 'true'            │ 'true'            │ true │
+│ 94      │ 'x numbers stay inside the chart (10 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 95      │ 'x title starts below the numbers (10 px / -45°)'                                                         │ 'true'            │ 'true'            │ true │
+│ 96      │ 'x title stays inside the chart (10 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 97      │ 'y numbers stay inside the chart (10 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 98      │ 'y title clears the y numbers (10 px / -45°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 99      │ 'y title stays inside the chart (10 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 100     │ 'x numbers start below the tick marks (10 px / 90°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 101     │ 'x numbers stay inside the chart (10 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 102     │ 'x title starts below the numbers (10 px / 90°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 103     │ 'x title stays inside the chart (10 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 104     │ 'y numbers stay inside the chart (10 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 105     │ 'y title clears the y numbers (10 px / 90°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 106     │ 'y title stays inside the chart (10 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 107     │ 'x numbers start below the tick marks (11 px / 0°)'                                                       │ 'true'            │ 'true'            │ true │
+│ 108     │ 'x numbers stay inside the chart (11 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 109     │ 'x title starts below the numbers (11 px / 0°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 110     │ 'x title stays inside the chart (11 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 111     │ 'y numbers stay inside the chart (11 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 112     │ 'y title clears the y numbers (11 px / 0°)'                                                               │ 'true'            │ 'true'            │ true │
+│ 113     │ 'y title stays inside the chart (11 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 114     │ 'x numbers start below the tick marks (11 px / 45°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 115     │ 'x numbers stay inside the chart (11 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 116     │ 'x title starts below the numbers (11 px / 45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 117     │ 'x title stays inside the chart (11 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 118     │ 'y numbers stay inside the chart (11 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 119     │ 'y title clears the y numbers (11 px / 45°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 120     │ 'y title stays inside the chart (11 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 121     │ 'x numbers start below the tick marks (11 px / -45°)'                                                     │ 'true'            │ 'true'            │ true │
+│ 122     │ 'x numbers stay inside the chart (11 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 123     │ 'x title starts below the numbers (11 px / -45°)'                                                         │ 'true'            │ 'true'            │ true │
+│ 124     │ 'x title stays inside the chart (11 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 125     │ 'y numbers stay inside the chart (11 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 126     │ 'y title clears the y numbers (11 px / -45°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 127     │ 'y title stays inside the chart (11 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 128     │ 'x numbers start below the tick marks (11 px / 90°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 129     │ 'x numbers stay inside the chart (11 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 130     │ 'x title starts below the numbers (11 px / 90°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 131     │ 'x title stays inside the chart (11 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 132     │ 'y numbers stay inside the chart (11 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 133     │ 'y title clears the y numbers (11 px / 90°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 134     │ 'y title stays inside the chart (11 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 135     │ 'x numbers start below the tick marks (12 px / 0°)'                                                       │ 'true'            │ 'true'            │ true │
+│ 136     │ 'x numbers stay inside the chart (12 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 137     │ 'x title starts below the numbers (12 px / 0°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 138     │ 'x title stays inside the chart (12 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 139     │ 'y numbers stay inside the chart (12 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 140     │ 'y title clears the y numbers (12 px / 0°)'                                                               │ 'true'            │ 'true'            │ true │
+│ 141     │ 'y title stays inside the chart (12 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 142     │ 'x numbers start below the tick marks (12 px / 45°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 143     │ 'x numbers stay inside the chart (12 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 144     │ 'x title starts below the numbers (12 px / 45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 145     │ 'x title stays inside the chart (12 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 146     │ 'y numbers stay inside the chart (12 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 147     │ 'y title clears the y numbers (12 px / 45°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 148     │ 'y title stays inside the chart (12 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 149     │ 'x numbers start below the tick marks (12 px / -45°)'                                                     │ 'true'            │ 'true'            │ true │
+│ 150     │ 'x numbers stay inside the chart (12 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 151     │ 'x title starts below the numbers (12 px / -45°)'                                                         │ 'true'            │ 'true'            │ true │
+│ 152     │ 'x title stays inside the chart (12 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 153     │ 'y numbers stay inside the chart (12 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 154     │ 'y title clears the y numbers (12 px / -45°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 155     │ 'y title stays inside the chart (12 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 156     │ 'x numbers start below the tick marks (12 px / 90°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 157     │ 'x numbers stay inside the chart (12 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 158     │ 'x title starts below the numbers (12 px / 90°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 159     │ 'x title stays inside the chart (12 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 160     │ 'y numbers stay inside the chart (12 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 161     │ 'y title clears the y numbers (12 px / 90°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 162     │ 'y title stays inside the chart (12 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 163     │ 'x numbers start below the tick marks (14 px / 0°)'                                                       │ 'true'            │ 'true'            │ true │
+│ 164     │ 'x numbers stay inside the chart (14 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 165     │ 'x title starts below the numbers (14 px / 0°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 166     │ 'x title stays inside the chart (14 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 167     │ 'y numbers stay inside the chart (14 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 168     │ 'y title clears the y numbers (14 px / 0°)'                                                               │ 'true'            │ 'true'            │ true │
+│ 169     │ 'y title stays inside the chart (14 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 170     │ 'x numbers start below the tick marks (14 px / 45°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 171     │ 'x numbers stay inside the chart (14 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 172     │ 'x title starts below the numbers (14 px / 45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 173     │ 'x title stays inside the chart (14 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 174     │ 'y numbers stay inside the chart (14 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 175     │ 'y title clears the y numbers (14 px / 45°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 176     │ 'y title stays inside the chart (14 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 177     │ 'x numbers start below the tick marks (14 px / -45°)'                                                     │ 'true'            │ 'true'            │ true │
+│ 178     │ 'x numbers stay inside the chart (14 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 179     │ 'x title starts below the numbers (14 px / -45°)'                                                         │ 'true'            │ 'true'            │ true │
+│ 180     │ 'x title stays inside the chart (14 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 181     │ 'y numbers stay inside the chart (14 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 182     │ 'y title clears the y numbers (14 px / -45°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 183     │ 'y title stays inside the chart (14 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 184     │ 'x numbers start below the tick marks (14 px / 90°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 185     │ 'x numbers stay inside the chart (14 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 186     │ 'x title starts below the numbers (14 px / 90°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 187     │ 'x title stays inside the chart (14 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 188     │ 'y numbers stay inside the chart (14 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 189     │ 'y title clears the y numbers (14 px / 90°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 190     │ 'y title stays inside the chart (14 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 191     │ 'x numbers start below the tick marks (16 px / 0°)'                                                       │ 'true'            │ 'true'            │ true │
+│ 192     │ 'x numbers stay inside the chart (16 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 193     │ 'x title starts below the numbers (16 px / 0°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 194     │ 'x title stays inside the chart (16 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 195     │ 'y numbers stay inside the chart (16 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 196     │ 'y title clears the y numbers (16 px / 0°)'                                                               │ 'true'            │ 'true'            │ true │
+│ 197     │ 'y title stays inside the chart (16 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 198     │ 'x numbers start below the tick marks (16 px / 45°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 199     │ 'x numbers stay inside the chart (16 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 200     │ 'x title starts below the numbers (16 px / 45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 201     │ 'x title stays inside the chart (16 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 202     │ 'y numbers stay inside the chart (16 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 203     │ 'y title clears the y numbers (16 px / 45°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 204     │ 'y title stays inside the chart (16 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 205     │ 'x numbers start below the tick marks (16 px / -45°)'                                                     │ 'true'            │ 'true'            │ true │
+│ 206     │ 'x numbers stay inside the chart (16 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 207     │ 'x title starts below the numbers (16 px / -45°)'                                                         │ 'true'            │ 'true'            │ true │
+│ 208     │ 'x title stays inside the chart (16 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 209     │ 'y numbers stay inside the chart (16 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 210     │ 'y title clears the y numbers (16 px / -45°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 211     │ 'y title stays inside the chart (16 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 212     │ 'x numbers start below the tick marks (16 px / 90°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 213     │ 'x numbers stay inside the chart (16 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 214     │ 'x title starts below the numbers (16 px / 90°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 215     │ 'x title stays inside the chart (16 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 216     │ 'y numbers stay inside the chart (16 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 217     │ 'y title clears the y numbers (16 px / 90°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 218     │ 'y title stays inside the chart (16 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 219     │ 'x numbers start below the tick marks (18 px / 0°)'                                                       │ 'true'            │ 'true'            │ true │
+│ 220     │ 'x numbers stay inside the chart (18 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 221     │ 'x title starts below the numbers (18 px / 0°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 222     │ 'x title stays inside the chart (18 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 223     │ 'y numbers stay inside the chart (18 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 224     │ 'y title clears the y numbers (18 px / 0°)'                                                               │ 'true'            │ 'true'            │ true │
+│ 225     │ 'y title stays inside the chart (18 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 226     │ 'x numbers start below the tick marks (18 px / 45°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 227     │ 'x numbers stay inside the chart (18 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 228     │ 'x title starts below the numbers (18 px / 45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 229     │ 'x title stays inside the chart (18 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 230     │ 'y numbers stay inside the chart (18 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 231     │ 'y title clears the y numbers (18 px / 45°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 232     │ 'y title stays inside the chart (18 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 233     │ 'x numbers start below the tick marks (18 px / -45°)'                                                     │ 'true'            │ 'true'            │ true │
+│ 234     │ 'x numbers stay inside the chart (18 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 235     │ 'x title starts below the numbers (18 px / -45°)'                                                         │ 'true'            │ 'true'            │ true │
+│ 236     │ 'x title stays inside the chart (18 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 237     │ 'y numbers stay inside the chart (18 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 238     │ 'y title clears the y numbers (18 px / -45°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 239     │ 'y title stays inside the chart (18 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 240     │ 'x numbers start below the tick marks (18 px / 90°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 241     │ 'x numbers stay inside the chart (18 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 242     │ 'x title starts below the numbers (18 px / 90°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 243     │ 'x title stays inside the chart (18 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 244     │ 'y numbers stay inside the chart (18 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 245     │ 'y title clears the y numbers (18 px / 90°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 246     │ 'y title stays inside the chart (18 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 247     │ 'x numbers start below the tick marks (20 px / 0°)'                                                       │ 'true'            │ 'true'            │ true │
+│ 248     │ 'x numbers stay inside the chart (20 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 249     │ 'x title starts below the numbers (20 px / 0°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 250     │ 'x title stays inside the chart (20 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 251     │ 'y numbers stay inside the chart (20 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 252     │ 'y title clears the y numbers (20 px / 0°)'                                                               │ 'true'            │ 'true'            │ true │
+│ 253     │ 'y title stays inside the chart (20 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 254     │ 'x numbers start below the tick marks (20 px / 45°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 255     │ 'x numbers stay inside the chart (20 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 256     │ 'x title starts below the numbers (20 px / 45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 257     │ 'x title stays inside the chart (20 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 258     │ 'y numbers stay inside the chart (20 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 259     │ 'y title clears the y numbers (20 px / 45°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 260     │ 'y title stays inside the chart (20 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 261     │ 'x numbers start below the tick marks (20 px / -45°)'                                                     │ 'true'            │ 'true'            │ true │
+│ 262     │ 'x numbers stay inside the chart (20 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 263     │ 'x title starts below the numbers (20 px / -45°)'                                                         │ 'true'            │ 'true'            │ true │
+│ 264     │ 'x title stays inside the chart (20 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 265     │ 'y numbers stay inside the chart (20 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 266     │ 'y title clears the y numbers (20 px / -45°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 267     │ 'y title stays inside the chart (20 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 268     │ 'x numbers start below the tick marks (20 px / 90°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 269     │ 'x numbers stay inside the chart (20 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 270     │ 'x title starts below the numbers (20 px / 90°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 271     │ 'x title stays inside the chart (20 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 272     │ 'y numbers stay inside the chart (20 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 273     │ 'y title clears the y numbers (20 px / 90°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 274     │ 'y title stays inside the chart (20 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 275     │ 'x numbers start below the tick marks (24 px / 0°)'                                                       │ 'true'            │ 'true'            │ true │
+│ 276     │ 'x numbers stay inside the chart (24 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 277     │ 'x title starts below the numbers (24 px / 0°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 278     │ 'x title stays inside the chart (24 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 279     │ 'y numbers stay inside the chart (24 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 280     │ 'y title clears the y numbers (24 px / 0°)'                                                               │ 'true'            │ 'true'            │ true │
+│ 281     │ 'y title stays inside the chart (24 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 282     │ 'x numbers start below the tick marks (24 px / 45°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 283     │ 'x numbers stay inside the chart (24 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 284     │ 'x title starts below the numbers (24 px / 45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 285     │ 'x title stays inside the chart (24 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 286     │ 'y numbers stay inside the chart (24 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 287     │ 'y title clears the y numbers (24 px / 45°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 288     │ 'y title stays inside the chart (24 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 289     │ 'x numbers start below the tick marks (24 px / -45°)'                                                     │ 'true'            │ 'true'            │ true │
+│ 290     │ 'x numbers stay inside the chart (24 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 291     │ 'x title starts below the numbers (24 px / -45°)'                                                         │ 'true'            │ 'true'            │ true │
+│ 292     │ 'x title stays inside the chart (24 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 293     │ 'y numbers stay inside the chart (24 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 294     │ 'y title clears the y numbers (24 px / -45°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 295     │ 'y title stays inside the chart (24 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 296     │ 'x numbers start below the tick marks (24 px / 90°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 297     │ 'x numbers stay inside the chart (24 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 298     │ 'x title starts below the numbers (24 px / 90°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 299     │ 'x title stays inside the chart (24 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 300     │ 'y numbers stay inside the chart (24 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 301     │ 'y title clears the y numbers (24 px / 90°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 302     │ 'y title stays inside the chart (24 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 303     │ 'x numbers start below the tick marks (28 px / 0°)'                                                       │ 'true'            │ 'true'            │ true │
+│ 304     │ 'x numbers stay inside the chart (28 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 305     │ 'x title starts below the numbers (28 px / 0°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 306     │ 'x title stays inside the chart (28 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 307     │ 'y numbers stay inside the chart (28 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 308     │ 'y title clears the y numbers (28 px / 0°)'                                                               │ 'true'            │ 'true'            │ true │
+│ 309     │ 'y title stays inside the chart (28 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 310     │ 'x numbers start below the tick marks (28 px / 45°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 311     │ 'x numbers stay inside the chart (28 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 312     │ 'x title starts below the numbers (28 px / 45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 313     │ 'x title stays inside the chart (28 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 314     │ 'y numbers stay inside the chart (28 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 315     │ 'y title clears the y numbers (28 px / 45°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 316     │ 'y title stays inside the chart (28 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 317     │ 'x numbers start below the tick marks (28 px / -45°)'                                                     │ 'true'            │ 'true'            │ true │
+│ 318     │ 'x numbers stay inside the chart (28 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 319     │ 'x title starts below the numbers (28 px / -45°)'                                                         │ 'true'            │ 'true'            │ true │
+│ 320     │ 'x title stays inside the chart (28 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 321     │ 'y numbers stay inside the chart (28 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 322     │ 'y title clears the y numbers (28 px / -45°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 323     │ 'y title stays inside the chart (28 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 324     │ 'x numbers start below the tick marks (28 px / 90°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 325     │ 'x numbers stay inside the chart (28 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 326     │ 'x title starts below the numbers (28 px / 90°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 327     │ 'x title stays inside the chart (28 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 328     │ 'y numbers stay inside the chart (28 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 329     │ 'y title clears the y numbers (28 px / 90°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 330     │ 'y title stays inside the chart (28 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 331     │ 'x numbers start below the tick marks (32 px / 0°)'                                                       │ 'true'            │ 'true'            │ true │
+│ 332     │ 'x numbers stay inside the chart (32 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 333     │ 'x title starts below the numbers (32 px / 0°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 334     │ 'x title stays inside the chart (32 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 335     │ 'y numbers stay inside the chart (32 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 336     │ 'y title clears the y numbers (32 px / 0°)'                                                               │ 'true'            │ 'true'            │ true │
+│ 337     │ 'y title stays inside the chart (32 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 338     │ 'x numbers start below the tick marks (32 px / 45°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 339     │ 'x numbers stay inside the chart (32 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 340     │ 'x title starts below the numbers (32 px / 45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 341     │ 'x title stays inside the chart (32 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 342     │ 'y numbers stay inside the chart (32 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 343     │ 'y title clears the y numbers (32 px / 45°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 344     │ 'y title stays inside the chart (32 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 345     │ 'x numbers start below the tick marks (32 px / -45°)'                                                     │ 'true'            │ 'true'            │ true │
+│ 346     │ 'x numbers stay inside the chart (32 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 347     │ 'x title starts below the numbers (32 px / -45°)'                                                         │ 'true'            │ 'true'            │ true │
+│ 348     │ 'x title stays inside the chart (32 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 349     │ 'y numbers stay inside the chart (32 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 350     │ 'y title clears the y numbers (32 px / -45°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 351     │ 'y title stays inside the chart (32 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 352     │ 'x numbers start below the tick marks (32 px / 90°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 353     │ 'x numbers stay inside the chart (32 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 354     │ 'x title starts below the numbers (32 px / 90°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 355     │ 'x title stays inside the chart (32 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 356     │ 'y numbers stay inside the chart (32 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 357     │ 'y title clears the y numbers (32 px / 90°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 358     │ 'y title stays inside the chart (32 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 359     │ 'x numbers start below the tick marks (40 px / 0°)'                                                       │ 'true'            │ 'true'            │ true │
+│ 360     │ 'x numbers stay inside the chart (40 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 361     │ 'x title starts below the numbers (40 px / 0°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 362     │ 'x title stays inside the chart (40 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 363     │ 'y numbers stay inside the chart (40 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 364     │ 'y title clears the y numbers (40 px / 0°)'                                                               │ 'true'            │ 'true'            │ true │
+│ 365     │ 'y title stays inside the chart (40 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 366     │ 'x numbers start below the tick marks (40 px / 45°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 367     │ 'x numbers stay inside the chart (40 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 368     │ 'x title starts below the numbers (40 px / 45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 369     │ 'x title stays inside the chart (40 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 370     │ 'y numbers stay inside the chart (40 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 371     │ 'y title clears the y numbers (40 px / 45°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 372     │ 'y title stays inside the chart (40 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 373     │ 'x numbers start below the tick marks (40 px / -45°)'                                                     │ 'true'            │ 'true'            │ true │
+│ 374     │ 'x numbers stay inside the chart (40 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 375     │ 'x title starts below the numbers (40 px / -45°)'                                                         │ 'true'            │ 'true'            │ true │
+│ 376     │ 'x title stays inside the chart (40 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 377     │ 'y numbers stay inside the chart (40 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 378     │ 'y title clears the y numbers (40 px / -45°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 379     │ 'y title stays inside the chart (40 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 380     │ 'x numbers start below the tick marks (40 px / 90°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 381     │ 'x numbers stay inside the chart (40 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 382     │ 'x title starts below the numbers (40 px / 90°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 383     │ 'x title stays inside the chart (40 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 384     │ 'y numbers stay inside the chart (40 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 385     │ 'y title clears the y numbers (40 px / 90°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 386     │ 'y title stays inside the chart (40 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 387     │ 'x numbers start below the tick marks (48 px / 0°)'                                                       │ 'true'            │ 'true'            │ true │
+│ 388     │ 'x numbers stay inside the chart (48 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 389     │ 'x title starts below the numbers (48 px / 0°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 390     │ 'x title stays inside the chart (48 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 391     │ 'y numbers stay inside the chart (48 px / 0°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 392     │ 'y title clears the y numbers (48 px / 0°)'                                                               │ 'true'            │ 'true'            │ true │
+│ 393     │ 'y title stays inside the chart (48 px / 0°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 394     │ 'x numbers start below the tick marks (48 px / 45°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 395     │ 'x numbers stay inside the chart (48 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 396     │ 'x title starts below the numbers (48 px / 45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 397     │ 'x title stays inside the chart (48 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 398     │ 'y numbers stay inside the chart (48 px / 45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 399     │ 'y title clears the y numbers (48 px / 45°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 400     │ 'y title stays inside the chart (48 px / 45°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 401     │ 'x numbers start below the tick marks (48 px / -45°)'                                                     │ 'true'            │ 'true'            │ true │
+│ 402     │ 'x numbers stay inside the chart (48 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 403     │ 'x title starts below the numbers (48 px / -45°)'                                                         │ 'true'            │ 'true'            │ true │
+│ 404     │ 'x title stays inside the chart (48 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 405     │ 'y numbers stay inside the chart (48 px / -45°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 406     │ 'y title clears the y numbers (48 px / -45°)'                                                             │ 'true'            │ 'true'            │ true │
+│ 407     │ 'y title stays inside the chart (48 px / -45°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 408     │ 'x numbers start below the tick marks (48 px / 90°)'                                                      │ 'true'            │ 'true'            │ true │
+│ 409     │ 'x numbers stay inside the chart (48 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 410     │ 'x title starts below the numbers (48 px / 90°)'                                                          │ 'true'            │ 'true'            │ true │
+│ 411     │ 'x title stays inside the chart (48 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 412     │ 'y numbers stay inside the chart (48 px / 90°)'                                                           │ 'true'            │ 'true'            │ true │
+│ 413     │ 'y title clears the y numbers (48 px / 90°)'                                                              │ 'true'            │ 'true'            │ true │
+│ 414     │ 'y title stays inside the chart (48 px / 90°)'                                                            │ 'true'            │ 'true'            │ true │
+│ 415     │ 'OLD: the 16 px x title overlapped the numbers'                                                           │ 'true'            │ 'true'            │ true │
+│ 416     │ 'FIXED: it now sits below them'                                                                           │ 'true'            │ 'true'            │ true │
+│ 417     │ 'OLD: the angled numbers of 16 px did not fit the historical margin'                                      │ 'true'            │ 'true'            │ true │
+│ 418     │ 'FIXED: they fit'                                                                                         │ 'true'            │ 'true'            │ true │
+│ 419     │ 'the 16 px bottom margin keeps the historical 53.8 as its floor'                                          │ 'true'            │ 'true'            │ true │
+│ 420     │ 'the 32 px bottom margin is unchanged'                                                                    │ '89'              │ '89'              │ true │
+│ 421     │ 'the 16 px left margin is unchanged'                                                                      │ '58.8'            │ '58.8'            │ true │
+│ 422     │ 'the 12 px left margin is untouched'                                                                      │ '50'              │ '50'              │ true │
+│ 423     │ 'the historical growth still wins where it is bigger (24 px)'                                             │ 'true'            │ 'true'            │ true │
+│ 424     │ 'the 16 px y title keeps its offset'                                                                      │ '26.4'            │ '26.4'            │ true │
+│ 425     │ '≈4 characters still fit the 60 px gutter at 16 px'                                                       │ 'true'            │ 'true'            │ true │
+│ 426     │ 'the y title only moves out once the numbers outgrow the gutter (24 px)'                                  │ 'true'            │ 'true'            │ true │
+│ 427     │ 'a small base margin is raised to the geometry (bottom)'                                                  │ 'true'            │ 'true'            │ true │
+│ 428     │ 'a small base margin is raised to the geometry (left)'                                                    │ 'true'            │ 'true'            │ true │
+│ 429     │ 'an unknown font size falls back to the 16 px default'                                                    │ 'true'            │ 'true'            │ true │
+│ 430     │ 'a positive x gap pushes the x title further out'                                                         │ '20'              │ '20'              │ true │
+│ 431     │ 'a positive x gap widens the bottom margin'                                                               │ '20'              │ '20'              │ true │
+│ 432     │ 'a big y gap pushes the y title out and widens the left margin'                                           │ 'true'            │ 'true'            │ true │
+│ 433     │ '[SharedAnalysisTools] extent helper: export const xTickNumberExtent = (fontSi…'                          │ 'true'            │ 'true'            │ true │
+│ 434     │ '[SharedAnalysisTools] y number band helper: export const yTickNumberBand = (fontSize…'                   │ 'true'            │ 'true'            │ true │
+│ 435     │ '[SharedAnalysisTools] y title offset helper: export const yAxisTitleOffset = (fontSiz…'                  │ 'true'            │ 'true'            │ true │
+│ 436     │ '[SharedAnalysisTools] x title offset helper: export const xAxisTitleOffset = (fontSiz…'                  │ 'true'            │ 'true'            │ true │
+│ 437     │ '[SharedAnalysisTools] extreme anchor helper: export const extremeTickAnchor = (index,…'                  │ 'true'            │ 'true'            │ true │
+│ 438     │ "[SharedAnalysisTools] AngledTick takes the tick index: anchor = 'middle', formatter, index, vis…"        │ 'true'            │ 'true'            │ true │
+│ 439     │ '[SharedAnalysisTools] AngledTick anchors the ends: const edge = a === 0 && edgeAnchor !== f…'            │ 'true'            │ 'true'            │ true │
+│ 440     │ '[SharedAnalysisTools] the y title clears the numbers: : Math.max((base ?? 20) + extra * 1.6, y…'         │ 'true'            │ 'true'            │ true │
+│ 441     │ '[SharedAnalysisTools] the bottom margin honours the geometry: bottom: Math.max((base.bottom ?? 45) + e…' │ 'true'            │ 'true'            │ true │
+│ 442     │ '[SharedAnalysisTools] the left margin too: left: Math.max((base.left ?? 50) + extra…'                    │ 'true'            │ 'true'            │ true │
+│ 443     │ '[CDSections] a condition bar chart opts out: dataKey="__condition" interval={catInter…'                  │ 'true'            │ 'true'            │ true │
+│ 444     │ '[CDSections] a "name" bar chart opts out: fontSize={Math.max(9, cfg.fontSize - 2)}…'                     │ 'true'            │ 'true'            │ true │
+│ 445     │ '[CDSections] the numeric CD spectrum keeps the anchor: type="number" dataKey="x" domain={xDomai…'        │ 'true'            │ 'true'            │ true │
+│ 446     │ '[ssNMRSections] both band axes opt out'                                                                  │ 'true'            │ 'true'            │ true │
+│ 447     │ '[NMRSections] both band axes opt out'                                                                    │ 'true'            │ 'true'            │ true │
+│ 448     │ '[MDSections] the per-atom bar chart opts out'                                                            │ 'true'            │ 'true'            │ true │
+└─────────┴───────────────────────────────────────────────────────────────────────────────────────────────────────────┴───────────────────┴───────────────────┴──────┘
+✅ 449/449 checks passed

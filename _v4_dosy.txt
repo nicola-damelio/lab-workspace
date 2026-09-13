@@ -1,0 +1,10 @@
+﻿dosy_lint_exit=0
+dosy: Found 0 warnings and 0 errors.
+notebookPreviews chartCfg/setter lines:
+  L52: export const CDSpectraChart = ({ wavelengthData, spectraColumns, chartCfg }) => {
+  L104: min: chartCfg?.xMin !== '' && chartCfg?.xMin !== undefined ? parseFloat(chartCfg.xMin) : undefined,
+  L105: max: chartCfg?.xMax !== '' && chartCfg?.xMax !== undefined ? parseFloat(chartCfg.xMax) : undefined,
+  L111: min: chartCfg?.yMin !== '' && chartCfg?.yMin !== undefined ? parseFloat(chartCfg.yMin) : undefined,
+  L112: max: chartCfg?.yMax !== '' && chartCfg?.yMax !== undefined ? parseFloat(chartCfg.yMax) : undefined,
+  L131: }, [parsedWavelengths, parsedSpectra, chartCfg]);
+  L598: ...(test.simChartCfg || {}),

@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { CollapsibleSection } from './TestShellRenderer';
-import { SharedGraphConfig, SharedErrorTreatment, ChartControlBar } from './SharedAnalysisTools';
+import { SharedGraphConfig, SharedErrorTreatment, ChartControlBar, ChartJsInspector } from './SharedAnalysisTools';
 import {
     PLATES_DEF,
     formatConc,
@@ -19,7 +19,7 @@ import {
     errBarPlugin
 } from '../data/constants';
 import { PLATE_PRESET_LABELS, PLATE_PRESET_COLORS, isPlatePreset, platePresetColor } from '../utils/platePresets';
-import { FS_CLASSES, OVERLAY_CLASSES } from '../utils/chartStyle';
+import { FS_CLASSES, OVERLAY_CLASSES, chartJsPadding, chartJsHeightFit } from '../utils/chartStyle';
 
 // Chart/style constants now live in ../utils/chartStyle.
 
@@ -62,7 +62,7 @@ export const ErrInput = ({ label, value, isOverridden, onSave, onReset }) => {
 };
 
 // ================= INDIVIDUAL DOSE RESPONSE CHART =================
-function IndividualDoseResponseChart({ cd, chartCfg, isFs, onToggleFs, unit, eScale }) {
+function IndividualDoseResponseChart({ cd, chartCfg, isFs, onToggleFs, unit, eScale, setCfg = null }) {
     const ref = useRef(null);
     const chartRef = useRef(null);
 
@@ -129,6 +129,9 @@ function IndividualDoseResponseChart({ cd, chartCfg, isFs, onToggleFs, unit, eSc
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                // Canvas padding derived from the character size: the axis
+                // titles / numbers stay inside the canvas at every font size.
+                layout: { padding: chartJsPadding(chartCfg) },
                 scales: {
                     x: {
                         type: 'linear',
@@ -206,9 +209,10 @@ function IndividualDoseResponseChart({ cd, chartCfg, isFs, onToggleFs, unit, eSc
                     </button>
                 )}
             </div>
-            <div className={`flex-1 relative min-h-0 ${!isFs ? 'pointer-events-none' : ''}`}>
+            <ChartJsInspector chartRef={chartRef} cfg={chartCfg} setCfg={setCfg} unit={unit}
+                className={`flex-1 relative min-h-0 ${!isFs ? 'pointer-events-none' : ''}`}>
                 <canvas ref={ref} />
-            </div>
+            </ChartJsInspector>
         </div>
     );
 }
@@ -217,6 +221,7 @@ function IndividualDoseResponseChart({ cd, chartCfg, isFs, onToggleFs, unit, eSc
 export function RegionCharts({ regionName, regionData, config }) {
     const {
         chartCfg,
+        setChartCfg = null,
         fitIC50,
         showExcl,
         eScale,
@@ -463,6 +468,8 @@ export function RegionCharts({ regionName, regionData, config }) {
                       },
                       responsive: true,
                       maintainAspectRatio: false,
+                      // Keep the axis titles inside the canvas at any font size.
+                      layout: { padding: chartJsPadding(chartCfg) },
                       interaction: { mode: 'nearest', intersect: false },
                       scales: {
                           x: {
@@ -596,6 +603,8 @@ export function RegionCharts({ regionName, regionData, config }) {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                // Keep the rotated y title inside the canvas at any font size.
+                layout: { padding: chartJsPadding(chartCfg) },
                 scales: {
                     y: {
                         position: chartCfg.yPos || 'left',
@@ -675,12 +684,19 @@ export function RegionCharts({ regionName, regionData, config }) {
                         </div>
                     </div>
 
-                    <div
+                    {/* Double-click the canvas → the style section that matches
+                        the element under the pointer. No `series` list here: the
+                        compound colours come from the plate, not from cfg.colors. */}
+                    <ChartJsInspector
+                        chartRef={drChart}
+                        cfg={chartCfg}
+                        setCfg={setChartCfg}
+                        unit={unit}
                         className="flex-1 relative min-h-0"
-                        style={{ minHeight: isDrFs ? '0' : `${chartH}px` }}
+                        style={{ minHeight: isDrFs ? '0' : `${chartJsHeightFit(chartH, chartCfg, { yTitle: 'Viability (%)' })}px` }}
                     >
                         <canvas ref={drRef}></canvas>
-                    </div>
+                    </ChartJsInspector>
                 </div>
 
                 {fitIC50 && !isHistogram && (
@@ -707,12 +723,16 @@ export function RegionCharts({ regionName, regionData, config }) {
                                 </button>
                             </div>
 
-                            <div
+                            <ChartJsInspector
+                                chartRef={ic50Chart}
+                                cfg={chartCfg}
+                                setCfg={setChartCfg}
+                                unit={unit}
                                 className="flex-1 relative min-h-0"
-                                style={{ minHeight: isIc50Fs ? '0' : `${chartH}px` }}
+                                style={{ minHeight: isIc50Fs ? '0' : `${chartJsHeightFit(chartH, chartCfg, { yTitle: `IC50 (${unit})` })}px` }}
                             >
                                 <canvas ref={ic50Ref}></canvas>
-                            </div>
+                            </ChartJsInspector>
                         </div>
                     </>
                 )}
@@ -744,6 +764,7 @@ export function RegionCharts({ regionName, regionData, config }) {
                                             onToggleFs={() => toggleFs(`indiv_${regionName}_${idx}`)}
                                             unit={unit}
                                             eScale={eScale}
+                                            setCfg={setChartCfg}
                                         />
                                     </React.Fragment>
                                 ))}
@@ -3630,6 +3651,9 @@ return (
                             regionData={comps}
                             config={{
                                 chartCfg,
+                                // Same merge semantics as the 🎨 panel: partial patch in,
+                                // full chartCfg stored on the test.
+                                setChartCfg: (patch) => updatePlate({ chartCfg: { ...chartCfg, ...patch } }),
                                 fitIC50,
                                 showExcl,
                                 eScale,

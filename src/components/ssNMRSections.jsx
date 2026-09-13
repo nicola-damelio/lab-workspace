@@ -6,7 +6,7 @@
 
 import React, {useState, useEffect, useRef, useMemo} from 'react';
 import {XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell, ComposedChart} from 'recharts';
-import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, AngledTick, useXYZoom, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgAxisDomain, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, errorBarRange, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
+import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, ChartInspector, AngledTick, useXYZoom, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgAxisDomain, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, errorBarRange, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor, chartBoxStyle } from '../utils/chartStyle';
 export { CollapsibleSection };
@@ -1963,7 +1963,15 @@ export const SpectraVisualization = ({ ctx }) => {
     : hasManualY ? [yMinV ?? yAutoMin, yMaxV ?? yAutoMax] : zoom.yDomain;
 
   const chartBody = (
-    <div ref={chartRef} onMouseDown={zoom.onMouseDown} style={fs ? { flex: 1, minHeight: 0 } : chartBoxStyle(cfg)} className={`bg-white border border-slate-200 rounded-xl p-3 select-none relative ${fs ? 'w-full' : ''}`}>
+    <ChartInspector
+      containerRef={chartRef}
+      containerProps={{ onMouseDown: zoom.onMouseDown }}
+      style={fs ? { flex: 1, minHeight: 0 } : chartBoxStyle(cfg, { yTitle: yLab })}
+      className={`bg-white border border-slate-200 rounded-xl p-3 select-none relative ${fs ? 'w-full' : ''}`}
+      cfg={cfg}
+      setCfg={setCfg}
+      series={seriesList}
+    >
       {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
       {cfg.title && <h4 className="text-sm font-bold text-slate-700 mb-1">{cfg.title}</h4>}
       <ResponsiveContainer width="100%" height="100%">
@@ -1979,7 +1987,7 @@ export const SpectraVisualization = ({ ctx }) => {
             : <ReferenceArea y1={zoom.ref.y1} y2={zoom.ref.y2} strokeOpacity={0.3} fill="#cbd5e1" />)}
         </ComposedChart>
       </ResponsiveContainer>
-    </div>
+    </ChartInspector>
   );
 
   return (

@@ -186,6 +186,9 @@ return (
         <ChartPanel
           title={(chr.chartCfg && chr.chartCfg.title) || `Elution Profile${chr.method ? ` — ${chr.method}` : ''}`}
           icon="📈"
+          cfg={chr.chartCfg || {}}
+          setCfg={(patch) => onChange({ chartCfg: { ...(chr.chartCfg || {}), ...patch } })}
+          unit="Elution Volume (mL)"
           cfgPanel={<SharedChartStylePanel cfg={chr.chartCfg || {}} setCfg={(patch) => onChange({ chartCfg: { ...(chr.chartCfg || {}), ...patch } })} unit="Elution Volume (mL)" />}
         >
           <ChromaZoomChart data={chartData} stroke={stroke} cfg={chr.chartCfg || {}} />

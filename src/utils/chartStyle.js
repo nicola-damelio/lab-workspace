@@ -33,11 +33,37 @@ export const DEFAULT_CHART_FONT_SIZE = 16;
 export const DEFAULT_CHART_ASPECT = 1;
 export const DEFAULT_CHART_ASPECT_WIDE = 1.8;
 
+/* =========================================================================
+   AXIS-TITLE ROOM — why a bigger character size used to CUT the y-axis label.
+
+   The y-axis title is drawn ROTATED (angle -90), so the room it needs is its
+   own LENGTH: a chart shorter than "Intensity (a.u.)" at 24 px clips the
+   beginning / the end of the label — the "the y axis label does not fit in the
+   canvas and it is cut" report. The x-axis title runs horizontally and only
+   needs its cap height, which the bottom margin already reserves.
+
+   The estimates below are the same ones the axis-room helpers of
+   SharedAnalysisTools use (average glyph ≈ 0.55 em, titles are drawn 1 px
+   above the tick numbers).
+   ========================================================================= */
+export const textWidthPx = (text, fontSize) =>
+  String(text == null ? '' : text).length * (Number(fontSize) || 12) * 0.55;
+
+/** px a set of texts occupies at `fontSize` (longest one wins). */
+export const axisTitleRoomPx = (texts, fontSize) => {
+  const list = (Array.isArray(texts) ? texts : [texts]).filter(Boolean);
+  if (!list.length) return 0;
+  const fs = (Number(fontSize) || DEFAULT_CHART_FONT_SIZE) + 1;
+  return Math.round(Math.max(...list.map((t) => textWidthPx(t, fs))));
+};
+
 // Shared chart-box style: width 100% and a square plot area by default.
 // Pass `{ square: false }` for spectrum-like plots (CD, 1D, per-atom,
 // chromatograms) that should stay wide. `cfg.aspect` is honoured whenever it
 // differs from the (old) wide default — so explicit user choices survive, but
 // the new square default is imposed on everything else.
+// `opts.yTitle` / `opts.xTitle` (or cfg.yAxisLabel / cfg.xAxisLabel) let the
+// box grow so the axis TITLES fit at the current character size.
 export const chartBoxStyle = (cfg = {}, opts = {}) => {
   const wide = opts.square === false;
   const a = Number(cfg.aspect);
@@ -47,12 +73,39 @@ export const chartBoxStyle = (cfg = {}, opts = {}) => {
   } else {
     aspect = (Number.isFinite(a) && a !== DEFAULT_CHART_ASPECT_WIDE) ? a : DEFAULT_CHART_ASPECT;
   }
+  const yRoom = axisTitleRoomPx([opts.yTitle, cfg.yAxisLabel], cfg.fontSize);
+  // 220 px is the historical minimum (an unlabelled chart keeps it); a long
+  // rotated y title adds the room it really needs (its own length + the plot
+  // band / the x numbers and title below it).
+  const minHeight = Math.max(220, yRoom + 120);
+  const maxHeight = Math.max(Number(cfg.height) || 380, minHeight);
   return {
     width: '100%',
     aspectRatio: String(aspect),
-    maxHeight: cfg.height || 380,
-    minHeight: 220
+    maxHeight,
+    minHeight
   };
+};
+
+/* -------------------------------------------------------------------------
+   CHART.JS PLOTS (Plate dose-response / IC50, DOSY, NMR fittings…)
+
+   A canvas clips whatever is drawn outside it, and Chart.js reserves only the
+   space IT computed — a long rotated y title on a short canvas is cut. The two
+   helpers below give those plots the same treatment as the recharts ones:
+   a canvas padding derived from the character size, and a container height
+   that leaves room for the rotated y title.
+   ------------------------------------------------------------------------- */
+export const chartJsPadding = (cfg = {}, base = 2) => {
+  const fs = Number(cfg.fontSize) || DEFAULT_CHART_FONT_SIZE;
+  const pad = Math.round(base + Math.max(0, fs - 12) * 0.5);
+  return { left: pad, right: pad, top: pad, bottom: pad };
+};
+
+export const chartJsHeightFit = (height, cfg = {}, opts = {}) => {
+  const h = Number(height) || 380;
+  const yRoom = axisTitleRoomPx([opts.yTitle, cfg.yAxisLabel], cfg.fontSize);
+  return Math.max(h, yRoom + 150);
 };
 
 /* =========================================================================

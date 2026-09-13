@@ -62,3 +62,20 @@ table td .text-xs, table th .text-xs {
   font-size: inherit !important;
   line-height: inherit !important;
 }
+
+/* ---------------------------------------------------------------------------
+   CHARTS — axis labels must never be sliced.
+
+   Everything recharts draws (the y-axis title, the tick numbers, an axis
+   constant…) lives in an <svg>, and an <svg> CLIPS whatever falls outside its
+   viewport: raising the "Font size (px)" of a graph then cut the end of the
+   y-axis label. The margins are already computed from the character size
+   (cfgChartMargin / chartBoxStyle), and this rule is the safety net for what
+   the estimate cannot foresee: the text is drawn over the card padding instead
+   of being cut. It applies to every recharts chart of the program.
+   ------------------------------------------------------------------------- */
+.recharts-surface,
+.recharts-wrapper {
+  overflow: visible;
+}
+

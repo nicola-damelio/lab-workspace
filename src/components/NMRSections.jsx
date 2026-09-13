@@ -1,5 +1,5 @@
 import NMRMoleculeViewer, { useShowAssignedFlag } from './NMRMoleculeViewer';
-import { ChartControlBar, SharedChartStylePanel, AngledTick, tickLabelOffset, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, errorBarRange, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
+import { ChartControlBar, SharedChartStylePanel, ChartInspector, AngledTick, tickLabelOffset, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, errorBarRange, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { Icon } from './Icons';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
@@ -7783,7 +7783,15 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                 {!isHist && zoom.isZoomed && (
                   <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>
                 )}
-                <div ref={chartRef} onMouseDown={isHist ? undefined : zoom.onMouseDown} style={chartBoxStyle(cfg)} className="bg-white border border-slate-200 rounded-xl p-3">
+                <ChartInspector
+                  containerRef={chartRef}
+                  containerProps={{ onMouseDown: isHist ? undefined : zoom.onMouseDown }}
+                  style={chartBoxStyle(cfg, { yTitle: yLab })}
+                  className="bg-white border border-slate-200 rounded-xl p-3"
+                  cfg={cfg}
+                  setCfg={setCfg}
+                  series={series}
+                >
                   <ResponsiveContainer width="100%" height="100%">
                     {isHist ? (
                       <BarChart data={catData} margin={cfgChartMargin(cfg, { top: 8, right: 16, bottom: 30, left: 12 })}>
@@ -7829,7 +7837,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                       </LineChart>
                     )}
                   </ResponsiveContainer>
-                </div>
+                </ChartInspector>
                 {!isHist && <p className="text-[10px] text-slate-400 mt-1">💡 Drag with the mouse across the graph to zoom into an X region.</p>}
               </div>
             )}

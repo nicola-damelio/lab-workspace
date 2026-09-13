@@ -181,6 +181,9 @@ const UvSpectrumCard = ({ spec, onChange, onRemove, onSendToQuant }) => {
             <ChartPanel
               title={(spec.chartCfg && spec.chartCfg.title) || 'UV Spectrum'}
               icon="📈"
+              cfg={spec.chartCfg || {}}
+              setCfg={(patch) => onChange({ chartCfg: { ...(spec.chartCfg || {}), ...patch } })}
+              unit="Wavelength (nm)"
               cfgPanel={<SharedChartStylePanel cfg={spec.chartCfg || {}} setCfg={(patch) => onChange({ chartCfg: { ...(spec.chartCfg || {}), ...patch } })} unit="Wavelength (nm)" />}
             >
               <UvZoomChart pts={an.pts} cfg={spec.chartCfg || {}} />

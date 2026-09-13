@@ -1,0 +1,128 @@
+┌─────────┬───────────────────────────────────────────────────────────────────┬───────────┬───────────┬──────┐
+│ (index) │ name                                                              │ got       │ want      │ ok   │
+├─────────┼───────────────────────────────────────────────────────────────────┼───────────┼───────────┼──────┤
+│ 0       │ 'AngledTick 8 px: numbers start below the tick marks'             │ 'true'    │ 'true'    │ true │
+│ 1       │ 'AngledTick 10 px: numbers start below the tick marks'            │ 'true'    │ 'true'    │ true │
+│ 2       │ 'AngledTick 11 px: numbers start below the tick marks'            │ 'true'    │ 'true'    │ true │
+│ 3       │ 'AngledTick 12 px: numbers start below the tick marks'            │ 'true'    │ 'true'    │ true │
+│ 4       │ 'AngledTick 14 px: numbers start below the tick marks'            │ 'true'    │ 'true'    │ true │
+│ 5       │ 'AngledTick 16 px: numbers start below the tick marks'            │ 'true'    │ 'true'    │ true │
+│ 6       │ 'AngledTick 18 px: numbers start below the tick marks'            │ 'true'    │ 'true'    │ true │
+│ 7       │ 'AngledTick 20 px: numbers start below the tick marks'            │ 'true'    │ 'true'    │ true │
+│ 8       │ 'AngledTick 24 px: numbers start below the tick marks'            │ 'true'    │ 'true'    │ true │
+│ 9       │ 'AngledTick 28 px: numbers start below the tick marks'            │ 'true'    │ 'true'    │ true │
+│ 10      │ 'AngledTick 32 px: numbers start below the tick marks'            │ 'true'    │ 'true'    │ true │
+│ 11      │ 'AngledTick 40 px: numbers start below the tick marks'            │ 'true'    │ 'true'    │ true │
+│ 12      │ 'AngledTick 48 px: numbers start below the tick marks'            │ 'true'    │ 'true'    │ true │
+│ 13      │ 'OLD dy = 12 still fine at 16 px (no visual change)'              │ 'true'    │ 'true'    │ true │
+│ 14      │ 'OLD dy = 12 climbed into the marks at 32 px (the bug)'           │ 'false'   │ 'false'   │ true │
+│ 15      │ 'OLD dy = 12 climbed above the axis at 40 px (the bug)'           │ 'true'    │ 'true'    │ true │
+│ 16      │ 'FIXED: 32 px stays below the tick marks'                         │ 'true'    │ 'true'    │ true │
+│ 17      │ 'FIXED: 40 px stays below the tick marks'                         │ 'true'    │ 'true'    │ true │
+│ 18      │ 'AngledTick 11 px keeps the historical dy'                        │ 'true'    │ 'true'    │ true │
+│ 19      │ 'AngledTick 16 px keeps the historical dy (app default)'          │ 'true'    │ 'true'    │ true │
+│ 20      │ 'AngledTick dy only grows with big fonts'                         │ 'true'    │ 'true'    │ true │
+│ 21      │ 'Rotated labels keep a sane offset'                               │ 'true'    │ 'true'    │ true │
+│ 22      │ 'NMR x-tick len 3 / 8 px: clear of the tick mark'                 │ 'true'    │ 'true'    │ true │
+│ 23      │ 'NMR x-tick len 3 / 10 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 24      │ 'NMR x-tick len 3 / 11 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 25      │ 'NMR x-tick len 3 / 12 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 26      │ 'NMR x-tick len 3 / 14 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 27      │ 'NMR x-tick len 3 / 16 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 28      │ 'NMR x-tick len 3 / 18 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 29      │ 'NMR x-tick len 3 / 20 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 30      │ 'NMR x-tick len 3 / 24 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 31      │ 'NMR x-tick len 3 / 28 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 32      │ 'NMR x-tick len 3 / 32 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 33      │ 'NMR x-tick len 3 / 40 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 34      │ 'NMR x-tick len 3 / 48 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 35      │ 'NMR x-tick len 3: historical offset kept at 11 px'               │ 'true'    │ 'true'    │ true │
+│ 36      │ 'NMR x-tick len 4 / 8 px: clear of the tick mark'                 │ 'true'    │ 'true'    │ true │
+│ 37      │ 'NMR x-tick len 4 / 10 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 38      │ 'NMR x-tick len 4 / 11 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 39      │ 'NMR x-tick len 4 / 12 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 40      │ 'NMR x-tick len 4 / 14 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 41      │ 'NMR x-tick len 4 / 16 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 42      │ 'NMR x-tick len 4 / 18 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 43      │ 'NMR x-tick len 4 / 20 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 44      │ 'NMR x-tick len 4 / 24 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 45      │ 'NMR x-tick len 4 / 28 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 46      │ 'NMR x-tick len 4 / 32 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 47      │ 'NMR x-tick len 4 / 40 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 48      │ 'NMR x-tick len 4 / 48 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 49      │ 'NMR x-tick len 4: historical offset kept at 11 px'               │ 'true'    │ 'true'    │ true │
+│ 50      │ 'NMR x-tick len 5 / 8 px: clear of the tick mark'                 │ 'true'    │ 'true'    │ true │
+│ 51      │ 'NMR x-tick len 5 / 10 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 52      │ 'NMR x-tick len 5 / 11 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 53      │ 'NMR x-tick len 5 / 12 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 54      │ 'NMR x-tick len 5 / 14 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 55      │ 'NMR x-tick len 5 / 16 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 56      │ 'NMR x-tick len 5 / 18 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 57      │ 'NMR x-tick len 5 / 20 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 58      │ 'NMR x-tick len 5 / 24 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 59      │ 'NMR x-tick len 5 / 28 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 60      │ 'NMR x-tick len 5 / 32 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 61      │ 'NMR x-tick len 5 / 40 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 62      │ 'NMR x-tick len 5 / 48 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 63      │ 'NMR x-tick len 5: historical offset kept at 11 px'               │ 'true'    │ 'true'    │ true │
+│ 64      │ 'NMR x-tick len 8 / 8 px: clear of the tick mark'                 │ 'true'    │ 'true'    │ true │
+│ 65      │ 'NMR x-tick len 8 / 10 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 66      │ 'NMR x-tick len 8 / 11 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 67      │ 'NMR x-tick len 8 / 12 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 68      │ 'NMR x-tick len 8 / 14 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 69      │ 'NMR x-tick len 8 / 16 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 70      │ 'NMR x-tick len 8 / 18 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 71      │ 'NMR x-tick len 8 / 20 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 72      │ 'NMR x-tick len 8 / 24 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 73      │ 'NMR x-tick len 8 / 28 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 74      │ 'NMR x-tick len 8 / 32 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 75      │ 'NMR x-tick len 8 / 40 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 76      │ 'NMR x-tick len 8 / 48 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 77      │ 'NMR x-tick len 8: historical offset kept at 11 px'               │ 'true'    │ 'true'    │ true │
+│ 78      │ 'NMR x-tick len 10 / 8 px: clear of the tick mark'                │ 'true'    │ 'true'    │ true │
+│ 79      │ 'NMR x-tick len 10 / 10 px: clear of the tick mark'               │ 'true'    │ 'true'    │ true │
+│ 80      │ 'NMR x-tick len 10 / 11 px: clear of the tick mark'               │ 'true'    │ 'true'    │ true │
+│ 81      │ 'NMR x-tick len 10 / 12 px: clear of the tick mark'               │ 'true'    │ 'true'    │ true │
+│ 82      │ 'NMR x-tick len 10 / 14 px: clear of the tick mark'               │ 'true'    │ 'true'    │ true │
+│ 83      │ 'NMR x-tick len 10 / 16 px: clear of the tick mark'               │ 'true'    │ 'true'    │ true │
+│ 84      │ 'NMR x-tick len 10 / 18 px: clear of the tick mark'               │ 'true'    │ 'true'    │ true │
+│ 85      │ 'NMR x-tick len 10 / 20 px: clear of the tick mark'               │ 'true'    │ 'true'    │ true │
+│ 86      │ 'NMR x-tick len 10 / 24 px: clear of the tick mark'               │ 'true'    │ 'true'    │ true │
+│ 87      │ 'NMR x-tick len 10 / 28 px: clear of the tick mark'               │ 'true'    │ 'true'    │ true │
+│ 88      │ 'NMR x-tick len 10 / 32 px: clear of the tick mark'               │ 'true'    │ 'true'    │ true │
+│ 89      │ 'NMR x-tick len 10 / 40 px: clear of the tick mark'               │ 'true'    │ 'true'    │ true │
+│ 90      │ 'NMR x-tick len 10 / 48 px: clear of the tick mark'               │ 'true'    │ 'true'    │ true │
+│ 91      │ 'NMR x-tick len 10: historical offset kept at 11 px'              │ 'true'    │ 'true'    │ true │
+│ 92      │ 'OLD NMR offset overlapped the mark at 32 px (the bug)'           │ 'false'   │ 'false'   │ true │
+│ 93      │ 'FIXED: NMR offset clear at 32 px'                                │ 'true'    │ 'true'    │ true │
+│ 94      │ 'figure ratio preserved (180x120 mm / 4x5)'                       │ '1.5000'  │ '1.5000'  │ true │
+│ 95      │ 'figure stays inside the panel (180x120 mm / 4x5)'                │ 'true'    │ 'true'    │ true │
+│ 96      │ 'figure centred in the panel (180x120 mm / 4x5)'                  │ 'true'    │ 'true'    │ true │
+│ 97      │ 'figure ratio preserved (180x120 mm / 6x5)'                       │ '1.5000'  │ '1.5000'  │ true │
+│ 98      │ 'figure stays inside the panel (180x120 mm / 6x5)'                │ 'true'    │ 'true'    │ true │
+│ 99      │ 'figure centred in the panel (180x120 mm / 6x5)'                  │ 'true'    │ 'true'    │ true │
+│ 100     │ 'figure ratio preserved (180x120 mm / 3x7)'                       │ '1.5000'  │ '1.5000'  │ true │
+│ 101     │ 'figure stays inside the panel (180x120 mm / 3x7)'                │ 'true'    │ 'true'    │ true │
+│ 102     │ 'figure centred in the panel (180x120 mm / 3x7)'                  │ 'true'    │ 'true'    │ true │
+│ 103     │ 'figure ratio preserved (240x90 mm / 4x5)'                        │ '1.5000'  │ '1.5000'  │ true │
+│ 104     │ 'figure stays inside the panel (240x90 mm / 4x5)'                 │ 'true'    │ 'true'    │ true │
+│ 105     │ 'figure centred in the panel (240x90 mm / 4x5)'                   │ 'true'    │ 'true'    │ true │
+│ 106     │ 'figure ratio preserved (90x240 mm / 4x5)'                        │ '1.5000'  │ '1.5000'  │ true │
+│ 107     │ 'figure stays inside the panel (90x240 mm / 4x5)'                 │ 'true'    │ 'true'    │ true │
+│ 108     │ 'figure centred in the panel (90x240 mm / 4x5)'                   │ 'true'    │ 'true'    │ true │
+│ 109     │ 'figure ratio preserved (300x300 mm / 1x1)'                       │ '1.5000'  │ '1.5000'  │ true │
+│ 110     │ 'figure stays inside the panel (300x300 mm / 1x1)'                │ 'true'    │ 'true'    │ true │
+│ 111     │ 'figure centred in the panel (300x300 mm / 1x1)'                  │ 'true'    │ 'true'    │ true │
+│ 112     │ 'OLD (option off): a 1x1 panel in a 5-row grid stretches the box' │ '8.8000'  │ '8.8000'  │ true │
+│ 113     │ 'NEW (option on): the same panel keeps the figure ratio'          │ '1.5000'  │ '1.5000'  │ true │
+│ 114     │ 'unknown ratio falls back to the panel cell'                      │ '41.0000' │ '41.0000' │ true │
+│ 115     │ 'scale 50% halves the fitted width'                               │ '15.0000' │ '15.0000' │ true │
+│ 116     │ 'scale keeps the ratio'                                           │ '1.5000'  │ '1.5000'  │ true │
+│ 117     │ 'multi-figure sub-cell keeps the ratio'                           │ '1.5000'  │ '1.5000'  │ true │
+│ 118     │ 'multi-figure sub-cell stays inside its cell'                     │ 'true'    │ 'true'    │ true │
+│ 119     │ 'new canvas defaults to keep aspect ratio'                        │ 'true'    │ 'true'    │ true │
+│ 120     │ 'saved canvas without the flag -> on'                             │ 'true'    │ 'true'    │ true │
+│ 121     │ 'saved canvas with the flag off -> off'                           │ 'false'   │ 'false'   │ true │
+│ 122     │ 'saved canvas with the flag on -> on'                             │ 'true'    │ 'true'    │ true │
+└─────────┴───────────────────────────────────────────────────────────────────┴───────────┴───────────┴──────┘
+✅ 123/123 checks passed

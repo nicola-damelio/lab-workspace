@@ -1,0 +1,11 @@
+﻿build_exit=0
+cov_exit=0
+dbl_exit=0
+axisfit_exit=0
+aspect_exit=0
+[39m
+[32mâœ“ built in 1.67s[39m
+
+âœ… 71/71 checks passed
+âœ… 449/449 checks passed
+âœ… 123/123 checks passed

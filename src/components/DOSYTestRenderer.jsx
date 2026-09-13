@@ -20,8 +20,8 @@ import { DOSY_TAB_CONFIG } from './tabConfigs';
 import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
 import { makeTable, stokesEinsteinD, radiusFromMW, GAMMA_H } from './NMRFittingsTestRenderer';
 import { enableCellClipboard, cellAttrs } from '../utils/cellClipboard';
-import { ChartPanel, SharedErrorTreatment, SharedChartStylePanel, cfgTickFormatter } from './SharedAnalysisTools';
-import { shadesFromColor } from '../utils/chartStyle';
+import { ChartPanel, SharedErrorTreatment, SharedChartStylePanel, ChartJsInspector, cfgTickFormatter } from './SharedAnalysisTools';
+import { shadesFromColor, chartJsPadding, chartJsHeightFit } from '../utils/chartStyle';
 import { StarToggle } from './StarToggle';
 import { isStarred, toggleStarredItem } from '../utils/starredItems';
 import { isPointExcluded, togglePointExcluded, clearExcludedForTable, computePointSD } from '../utils/pointTreatment';
@@ -319,12 +319,17 @@ const DOSYDataSection = ({ ctx }) => {
 // intensity) and the read-only gradient parameters of Instrumental Setup.
 // Applied style comes from the Graphical Parameters panel (dosyChartCfg) and
 // excluded/outlier points (Error Management) are drawn hollow.
-const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh = '2.0', showFit = true, mode = 'b', gamma = GAMMA_H, useAll = true, errMode = 'none', fixedSD = '', manualSD = {}, excluded = {}, update = null }) => {
+const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh = '2.0', showFit = true, mode = 'b', gamma = GAMMA_H, useAll = true, errMode = 'none', fixedSD = '', manualSD = {}, excluded = {}, update = null, setCfg = null, series = [], unit = null }) => {
   const ref = useRef(null);
   const chartRef = useRef(null);
   const { maxG, deltaMs, bigDeltaMs } = params || {};
   const thresh = Number(outlierThresh) > 0 ? Number(outlierThresh) : 2;
   const xMode = mode === 'percent' ? 'percent' : mode === 'g' ? 'g' : 'b';
+  // Y-axis title for the applied mode. Kept at component scope because the
+  // canvas sizing box (chartJsHeightFit) is rendered outside the effect.
+  const yTitle = xMode === 'percent'
+    ? (cfg.yAxisLabel || 'Intensity (I)')
+    : (cfg.yAxisLabel || 'ln(I)');
 
   const anyPoint = (Array.isArray(tables) ? tables : []).some((t) => {
     for (let c = 0; c < (t.nCols || 0); c++) {
@@ -467,9 +472,6 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
       : xMode === 'g'
         ? (cfg.xAxisLabel || `Gradient strength G (G/cm) — Gmax = ${maxG} G/cm`)
         : (cfg.xAxisLabel || `b (s/mm²) — Gmax = ${maxG} G/cm · Δ = ${bigDeltaMs} ms · δ = ${deltaMs} ms`);
-    const yTitle = xMode === 'percent'
-      ? (cfg.yAxisLabel || 'Intensity (I)')
-      : (cfg.yAxisLabel || 'ln(I)');
 
     chartRef.current = new Chart(ref.current, {
       type: 'scatter',
@@ -477,6 +479,9 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
       plugins: [errBarPlugin],
       options: {
         responsive: true, maintainAspectRatio: false,
+        // Canvas padding derived from the character size: the axis titles stay
+        // inside the canvas however large the labels are made.
+        layout: { padding: chartJsPadding(cfg) },
         scales: {
           x: {
             type: 'linear',
@@ -505,11 +510,20 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
       }
     });
     return () => { if (chartRef.current) chartRef.current.destroy(); };
-  }, [tables, maxG, deltaMs, bigDeltaMs, cfg, showExcl, thresh, showFit, xMode, gamma, useAll, errMode, fixedSD, manualSD, excluded, update]);
+  }, [tables, maxG, deltaMs, bigDeltaMs, cfg, showExcl, thresh, showFit, xMode, yTitle, gamma, useAll, errMode, fixedSD, manualSD, excluded, update]);
 
   return (
     <div className="w-full">
-      <div style={{ height: '420px' }}><canvas ref={ref} /></div>
+      <ChartJsInspector
+        chartRef={chartRef}
+        cfg={cfg}
+        setCfg={setCfg}
+        series={series}
+        unit={unit}
+        style={{ height: `${chartJsHeightFit(420, cfg, { yTitle })}px` }}
+      >
+        <canvas ref={ref} />
+      </ChartJsInspector>
       {!anyPoint && (
         <p className="text-[10px] text-slate-400 italic mt-1">
           No gradient data yet — enter gradient % and intensities in the Data tab (the chart reads directly from it).
@@ -542,6 +556,11 @@ const DOSYFittingSection = ({ ctx }) => {
       series.push({ key: `col${ti}_${c}`, label: (t.colResidues && t.colResidues[c]) || `Set ${ti + 1} Col ${c + 1}` });
     }
   });
+
+  // Unit shown by the style panel / the double-click editor for this x axis.
+  const xUnit = xMode === 'percent' ? 'Gradient % (0–100)' : xMode === 'g' ? 'G (G/cm)' : 'b (s/mm²)';
+  // The double-click editor writes back into dosyChartCfg, like the 🎨 panel.
+  const setChartCfg = (patch) => update({ dosyChartCfg: { ...chartCfg, ...patch } });
 
   return (
     <div className="flex flex-col gap-6">
@@ -707,9 +726,9 @@ const DOSYFittingSection = ({ ctx }) => {
         cfgPanel={
           <SharedChartStylePanel
             cfg={chartCfg}
-            setCfg={(patch) => update({ dosyChartCfg: { ...chartCfg, ...patch } })}
+            setCfg={setChartCfg}
             series={series}
-            unit={xMode === 'percent' ? 'Gradient % (0–100)' : xMode === 'g' ? 'G (G/cm)' : 'b (s/mm²)'}
+            unit={xUnit}
           />
         }
         headerExtra={
@@ -759,6 +778,9 @@ const DOSYFittingSection = ({ ctx }) => {
             manualSD={ctx.activeTest?.dosyManualSD || {}}
             excluded={ctx.activeTest?.dosyExcluded || {}}
             update={update}
+            setCfg={setChartCfg}
+            series={series}
+            unit={xUnit}
           />
         </div>
       </ChartPanel>

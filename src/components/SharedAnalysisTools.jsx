@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar, ScatterChart, Scatter,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceArea, ReferenceLine,
@@ -467,6 +468,13 @@ export const ChartPanel = ({
     defaultOpenErr = false,
     defaultOpenCfg = false,
     defaultFs = false,
+    // Double-click editing: pass the SAME style object / setter as the
+    // "🎨 Graphical Parameters" panel and every element of the chart body
+    // becomes editable in place (axis, labels, curves…).
+    cfg = null,
+    setCfg = null,
+    series = [],
+    unit
 }) => {
     const [showErr, setShowErr] = useState(defaultOpenErr);
     const [showCfg, setShowCfg] = useState(defaultOpenCfg);
@@ -502,7 +510,9 @@ export const ChartPanel = ({
             )}
 
             <ChartFsContext.Provider value={isFs}>
-                <div className={`flex-1 min-h-0 ${bodyClassName}`}>{children}</div>
+                <ChartInspector cfg={cfg} setCfg={setCfg} series={series} unit={unit} className={`flex-1 min-h-0 ${bodyClassName}`}>
+                    {children}
+                </ChartInspector>
             </ChartFsContext.Provider>
             {footer && <div className="mt-2 shrink-0">{footer}</div>}
         </div>
@@ -592,12 +602,146 @@ export const IntensityControl = ({ value = 1, onChange, className = '' }) => {
   );
 };
 
-export const SharedChartStylePanel = ({ cfg = {}, setCfg, series = [], unit = 'a.u.', showHeightSlider = true }) => {
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTIONS OF THE STYLE PANEL — the same controls, addressable one at a time.
+//
+// The double-click editor (ChartInspector) opens the section that matches what
+// the user double-clicked ("x" / "y" / "label" / "series"), while the
+// "🎨 Graphical Parameters" button keeps opening the full panel. Every helper
+// below returns the very markup the full panel used, so the focused views and
+// the full panel can never drift apart.
+// ─────────────────────────────────────────────────────────────────────────────
+const chartStyleCharacterBlock = (cfg, set, showHeightSlider) => (
+    <div>
+        <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Character size &amp; chart box</p>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 items-end">
+            <NF label="Font size (px) — every label" value={cfg.fontSize ?? 12} onChange={(v) => set({ fontSize: v || 12 })} />
+            <NF label="Aspect ratio W/H" step={0.1} value={cfg.aspect ?? 1.8} onChange={(v) => set({ aspect: v || 1.8 })} />
+            {showHeightSlider && (
+                <div className="flex flex-col gap-1 lg:col-span-2">
+                    <label className="text-[10px] font-bold text-slate-600">Chart height (px) -- {cfg.height || 380}</label>
+                    <input type="range" min="150" max="1000" step="10" value={cfg.height || 380}
+                        onChange={(e) => set({ height: parseInt(e.target.value) })}
+                        className="accent-blue-600 mt-2" />
+                </div>
+            )}
+        </div>
+    </div>
+);
+/** Axis ranges + titles. `section` ('all' | 'x' | 'y') picks the columns shown. */
+const chartStyleRangeBlock = (cfg, set, unit, section) => {
+    const cells = {
+        xRange: (
+            <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-slate-600">X Min / Max</label>
+                <div className="flex gap-1">
+                    <input type="number" placeholder="auto" value={cfg.xMin ?? ''} onChange={(e) => set({ xMin: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none bg-white" />
+                    <input type="number" placeholder="auto" value={cfg.xMax ?? ''} onChange={(e) => set({ xMax: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none bg-white" />
+                </div>
+            </div>
+        ),
+        yRange: (
+            <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-slate-600">Y Min / Max</label>
+                <div className="flex gap-1">
+                    <input type="number" placeholder="auto" value={cfg.yMin ?? ''} onChange={(e) => set({ yMin: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none bg-white" />
+                    <input type="number" placeholder="auto" value={cfg.yMax ?? ''} onChange={(e) => set({ yMax: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none bg-white" />
+                </div>
+            </div>
+        ),
+        xLabel: <TF label="X axis label" value={cfg.xAxisLabel} onChange={(v) => set({ xAxisLabel: v })} placeholder={`e.g. ${unit}`} />,
+        yLabel: <TF label="Y axis label" value={cfg.yAxisLabel} onChange={(v) => set({ yAxisLabel: v })} placeholder="e.g. Intensity (a.u.)" />,
+        xGap: <NF label="X label gap (px)" value={cfg.xAxisLabelGap ?? ''} onChange={(v) => set({ xAxisLabelGap: v })} placeholder="0" />,
+        yGap: <NF label="Y label gap (px)" value={cfg.yAxisLabelGap ?? ''} onChange={(v) => set({ yAxisLabelGap: v })} placeholder="0" />,
+        xStyle: (
+            <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-slate-600">X label style</label>
+                <div className="flex items-center gap-3 h-[30px]">
+                    <CB label="Bold" checked={cfg.xAxisLabelBold} onChange={(v) => set({ xAxisLabelBold: v })} />
+                    <CB label="Italic" checked={cfg.xAxisLabelItalic} onChange={(v) => set({ xAxisLabelItalic: v })} />
+                </div>
+            </div>
+        ),
+        yStyle: (
+            <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-slate-600">Y label style</label>
+                <div className="flex items-center gap-3 h-[30px]">
+                    <CB label="Bold" checked={cfg.yAxisLabelBold} onChange={(v) => set({ yAxisLabelBold: v })} />
+                    <CB label="Italic" checked={cfg.yAxisLabelItalic} onChange={(v) => set({ yAxisLabelItalic: v })} />
+                </div>
+            </div>
+        )
+    };
+    const keys = section === 'x' ? ['xRange', 'xLabel', 'xGap', 'xStyle']
+        : section === 'y' ? ['yRange', 'yLabel', 'yGap', 'yStyle']
+            : section === 'label' ? ['xLabel', 'yLabel', 'xGap', 'yGap', 'xStyle', 'yStyle']
+                : ['xRange', 'yRange', 'xLabel', 'yLabel', 'xGap', 'yGap', 'xStyle', 'yStyle'];
+    const heading = section === 'x' ? 'X axis — range, label, title'
+        : section === 'y' ? 'Y axis — range, label, title'
+            : section === 'label' ? 'Axis titles'
+                : 'Axis Ranges & Labels';
+    return (
+        <div>
+            <p className="text-[10px] font-black text-slate-400 uppercase mb-2">{heading}</p>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                {keys.map((k) => <React.Fragment key={k}>{cells[k]}</React.Fragment>)}
+            </div>
+        </div>
+    );
+};
+
+
+
+/** Tick settings. `section` ('all' | 'x' | 'y') picks the columns shown. */
+const chartStyleTickBlock = (cfg, set, section) => {
+    const cells = {
+        xStep: <TF label="X tick interval (num spacing / cat every N)" value={cfg.xTickStep ?? cfg.tickStep ?? ''} onChange={(v) => set({ xTickStep: v, tickStep: v })} placeholder="auto" />,
+        yStep: <TF label="Y tick interval" value={cfg.yTickStep ?? ''} onChange={(v) => set({ yTickStep: v })} placeholder="auto" />,
+        angle: <SF label="Tick label angle" value={String(cfg.tickAngle ?? 0)} onChange={(v) => set({ tickAngle: Number(v) })}
+            options={[['0', '0 deg (horizontal)'], ['-30', '-30 deg'], ['-45', '-45 deg'], ['-60', '-60 deg'], ['-90', '-90 deg (vertical)'], ['30', '30 deg'], ['45', '45 deg'], ['90', '90 deg']]} />,
+        logs: (
+            <div className="flex flex-col gap-2 mt-1">
+                <CB label="Log X axis" checked={cfg.xLog} onChange={(v) => set({ xLog: v })} />
+                <CB label="Log Y axis" checked={cfg.yLog} onChange={(v) => set({ yLog: v })} />
+            </div>
+        ),
+        xDec: <SF label="X decimals" value={cfg.xDecimals ?? ''} onChange={(v) => set({ xDecimals: v })}
+            options={[['', 'Auto'], ['0', '0'], ['1', '1'], ['2', '2'], ['3', '3'], ['4', '4']]} />,
+        yDec: <SF label="Y decimals" value={cfg.yDecimals ?? ''} onChange={(v) => set({ yDecimals: v })}
+            options={[['', 'Auto'], ['0', '0'], ['1', '1'], ['2', '2'], ['3', '3'], ['4', '4']]} />,
+        scis: (
+            <div className="flex flex-col gap-2 mt-1">
+                <CB label="Sci. notation X" checked={cfg.xSci} onChange={(v) => set({ xSci: v })} />
+                <CB label="Sci. notation Y" checked={cfg.ySci} onChange={(v) => set({ ySci: v })} />
+            </div>
+        )
+    };
+    const keys = section === 'x' ? ['xStep', 'angle', 'xDec', 'scis', 'logs']
+        : section === 'y' ? ['yStep', 'angle', 'yDec', 'scis', 'logs']
+            : ['xStep', 'yStep', 'angle', 'logs', 'xDec', 'yDec', 'scis'];
+    return (
+        <div>
+            <p className="text-[10px] font-black text-slate-400 uppercase mb-2">
+                {section === 'x' ? 'X ticks' : section === 'y' ? 'Y ticks' : 'Tick Settings'}
+            </p>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 items-end">
+                {keys.map((k) => <React.Fragment key={k}>{cells[k]}</React.Fragment>)}
+            </div>
+        </div>
+    );
+};
+
+export const SharedChartStylePanel = ({ cfg = {}, setCfg, series = [], unit = 'a.u.', showHeightSlider = true, section = 'all', highlightKey = null }) => {
     const set = (patch) => setCfg({ ...patch });
+    const show = (name) => section === 'all' || section === name;
+    // Which columns the range block shows: 'x' | 'y' | 'label' | 'all'.
+    // The series section does not show axis ranges at all.
+    const rangeSection = section === 'series' ? null : section;
     return (
         <div className="p-4 bg-white border border-slate-300 rounded-xl flex flex-col gap-4 shadow-sm">
 
             {/* Chart Appearance */}
+            {show('series') && (
             <div>
                 <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Chart Appearance</p>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -607,6 +751,7 @@ export const SharedChartStylePanel = ({ cfg = {}, setCfg, series = [], unit = 'a
                     <SF label="Error bar style" value={cfg.errorBarStyle || 'caps'} onChange={(v) => set({ errorBarStyle: v })}
                         options={[['caps','Caps (standard)'],['no-caps','No caps'],['band','Shaded band'],['none','None']]} />
                     <div className="flex flex-col gap-1">
+
                         <label className="text-[10px] font-bold text-slate-600">Error bar colour</label>
                         <input type="color" value={cfg.errorBarColor || '#94a3b8'}
                             onChange={(e) => set({ errorBarColor: e.target.value })}
@@ -621,70 +766,21 @@ export const SharedChartStylePanel = ({ cfg = {}, setCfg, series = [], unit = 'a
                     <NF label="Font size (px)" value={cfg.fontSize ?? 12} onChange={(v) => set({ fontSize: v || 12 })} />
                 </div>
             </div>
+            )}
 
-            {/* Axis Ranges */}
-            <div>
-                <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Axis Ranges &amp; Labels</p>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                    <div className="flex flex-col gap-1">
-                        <label className="text-[10px] font-bold text-slate-600">X Min / Max</label>
-                        <div className="flex gap-1">
-                            <input type="number" placeholder="auto" value={cfg.xMin ?? ''} onChange={(e) => set({ xMin: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none bg-white" />
-                            <input type="number" placeholder="auto" value={cfg.xMax ?? ''} onChange={(e) => set({ xMax: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none bg-white" />
-                        </div>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                        <label className="text-[10px] font-bold text-slate-600">Y Min / Max</label>
-                        <div className="flex gap-1">
-                            <input type="number" placeholder="auto" value={cfg.yMin ?? ''} onChange={(e) => set({ yMin: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none bg-white" />
-                            <input type="number" placeholder="auto" value={cfg.yMax ?? ''} onChange={(e) => set({ yMax: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none bg-white" />
-                        </div>
-                    </div>
-                    <TF label="X axis label" value={cfg.xAxisLabel} onChange={(v) => set({ xAxisLabel: v })} placeholder={`e.g. ${unit}`} />
-                    <TF label="Y axis label" value={cfg.yAxisLabel} onChange={(v) => set({ yAxisLabel: v })} placeholder="e.g. Intensity (a.u.)" />
-                    <NF label="X label gap (px)" value={cfg.xAxisLabelGap ?? ''} onChange={(v) => set({ xAxisLabelGap: v })} placeholder="0" />
-                    <NF label="Y label gap (px)" value={cfg.yAxisLabelGap ?? ''} onChange={(v) => set({ yAxisLabelGap: v })} placeholder="0" />
-                    <div className="flex flex-col gap-1">
-                        <label className="text-[10px] font-bold text-slate-600">X label style</label>
-                        <div className="flex items-center gap-3 h-[30px]">
-                            <CB label="Bold" checked={cfg.xAxisLabelBold} onChange={(v) => set({ xAxisLabelBold: v })} />
-                            <CB label="Italic" checked={cfg.xAxisLabelItalic} onChange={(v) => set({ xAxisLabelItalic: v })} />
-                        </div>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                        <label className="text-[10px] font-bold text-slate-600">Y label style</label>
-                        <div className="flex items-center gap-3 h-[30px]">
-                            <CB label="Bold" checked={cfg.yAxisLabelBold} onChange={(v) => set({ yAxisLabelBold: v })} />
-                            <CB label="Italic" checked={cfg.yAxisLabelItalic} onChange={(v) => set({ yAxisLabelItalic: v })} />
-                        </div>
-                    </div>
-                </div>
-            </div>
+            {/* Character size — the same command as "Font size (px)", first, in
+                the focused views (a double-click on a label is usually about
+                making the characters fit). */}
+            {section !== 'all' && section !== 'series' && chartStyleCharacterBlock(cfg, set, showHeightSlider)}
+
+            {/* Axis Ranges & Labels — X / Y / both, depending on the section */}
+            {rangeSection && chartStyleRangeBlock(cfg, set, unit, rangeSection)}
 
             {/* Tick Settings */}
-            <div>
-                <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Tick Settings</p>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 items-end">
-                    <TF label="X tick interval (num spacing / cat every N)" value={cfg.xTickStep ?? cfg.tickStep ?? ''} onChange={(v) => set({ xTickStep: v, tickStep: v })} placeholder="auto" />
-                    <TF label="Y tick interval" value={cfg.yTickStep ?? ''} onChange={(v) => set({ yTickStep: v })} placeholder="auto" />
-                    <SF label="Tick label angle" value={String(cfg.tickAngle ?? 0)} onChange={(v) => set({ tickAngle: Number(v) })}
-                        options={[['0','0 deg (horizontal)'],['-30','-30 deg'],['-45','-45 deg'],['-60','-60 deg'],['-90','-90 deg (vertical)'],['30','30 deg'],['45','45 deg'],['90','90 deg']]} />
-                    <div className="flex flex-col gap-2 mt-1">
-                        <CB label="Log X axis" checked={cfg.xLog} onChange={(v) => set({ xLog: v })} />
-                        <CB label="Log Y axis" checked={cfg.yLog} onChange={(v) => set({ yLog: v })} />
-                    </div>
-                    <SF label="X decimals" value={cfg.xDecimals ?? ''} onChange={(v) => set({ xDecimals: v })}
-                        options={[['','Auto'],['0','0'],['1','1'],['2','2'],['3','3'],['4','4']]} />
-                    <SF label="Y decimals" value={cfg.yDecimals ?? ''} onChange={(v) => set({ yDecimals: v })}
-                        options={[['','Auto'],['0','0'],['1','1'],['2','2'],['3','3'],['4','4']]} />
-                    <div className="flex flex-col gap-2 mt-1">
-                        <CB label="Sci. notation X" checked={cfg.xSci} onChange={(v) => set({ xSci: v })} />
-                        <CB label="Sci. notation Y" checked={cfg.ySci} onChange={(v) => set({ ySci: v })} />
-                    </div>
-                </div>
-            </div>
+            {(show('x') || show('y')) && chartStyleTickBlock(cfg, set, section)}
 
-            {/* Layout */}
+            {/* Layout (chart-level commands: the full panel and the curves) */}
+            {show('series') && (
             <div>
                 <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Layout</p>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 items-end">
@@ -701,9 +797,10 @@ export const SharedChartStylePanel = ({ cfg = {}, setCfg, series = [], unit = 'a
                         options={[['top','Top'],['bottom','Bottom'],['none','None']]} />
                 </div>
             </div>
+            )}
 
             {/* Series colours */}
-            {series.length > 0 && (
+            {series.length > 0 && show('series') && (
                 <div className="pt-2 border-t border-slate-100">
                     <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Series palette</p>
 
@@ -747,7 +844,7 @@ export const SharedChartStylePanel = ({ cfg = {}, setCfg, series = [], unit = 'a
 
                     <div className="flex flex-wrap gap-3">
                         {series.map((s, i) => (
-                            <label key={s.key} className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
+                            <label key={s.key} className={`flex items-center gap-2 text-xs font-bold text-slate-700 bg-slate-50 border rounded-lg px-2 py-1 ${highlightKey === s.key ? 'border-amber-400 ring-2 ring-amber-200' : 'border-slate-200'}`}>
                                 <input type="color"
                                     value={(cfg.colors && cfg.colors[s.key]) || (cfg.baseColor ? shadesFromColor(cfg.baseColor, series.length)[i] : rainbowColors(series.length)[i]) || '#3b82f6'}
                                     onChange={(e) => set({ colors: { ...(cfg.colors || {}), [s.key]: e.target.value } })}
@@ -760,7 +857,214 @@ export const SharedChartStylePanel = ({ cfg = {}, setCfg, series = [], unit = 'a
                 </div>
             )}
 
-            <p className="text-[9px] text-slate-400">Drag with the mouse over any graph to zoom. Use Reset Zoom to restore.</p>
+            {section === 'all' && (
+                <p className="text-[9px] text-slate-400">Drag with the mouse over any graph to zoom. Use Reset Zoom to restore. Tip: double-click an axis, a label or a curve to edit exactly that element.</p>
+            )}
+        </div>
+    );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DOUBLE-CLICK EDITING OF A CHART ELEMENT
+//
+// The users' gesture: double-click WHAT they want to change — the axis (min /
+// max, tick interval, numbers size), the axis title (text, character size,
+// style), a curve / the bars / the points (line ↔ histogram, thickness,
+// symbols, colour). The classification below looks at the recharts node under
+// the pointer (it is the SVG element the browser hit-tests, so it always
+// matches what was really clicked), and the dialog then shows only the block of
+// SharedChartStylePanel that applies — the very same commands as the full
+// "🎨 Graphical Parameters" panel.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Which style-panel section matches a double-clicked chart element. */
+export const classifyChartElement = (el) => {
+    if (!el || typeof el.closest !== 'function') return null;
+    const legend = el.closest('.recharts-legend-wrapper, .recharts-legend-item');
+    if (legend) {
+        return { kind: 'legend', section: 'series', axis: null, label: String(legend.textContent || '').trim() };
+    }
+    const axisY = el.closest('.recharts-yAxis');
+    const axisX = el.closest('.recharts-xAxis');
+    const label = el.closest('.recharts-label, .recharts-label-list');
+    if (label) {
+        // A rotated (-90°) title is the Y one; anything else is the X title.
+        const t = String(label.getAttribute && label.getAttribute('transform') || '');
+        const axis = (axisY || t.includes('-90')) ? 'y' : 'x';
+        return { kind: `${axis}Label`, section: 'label', axis, label: String(label.textContent || '').trim() };
+    }
+    if (axisY) return { kind: 'yAxis', section: 'y', axis: 'y', label: '' };
+    if (axisX) return { kind: 'xAxis', section: 'x', axis: 'x', label: '' };
+    const seriesEl = el.closest('.recharts-line, .recharts-bar, .recharts-area, .recharts-scatter, .recharts-radar, .recharts-pie');
+    if (seriesEl) {
+        const name = seriesEl.getAttribute('name') || '';
+        return { kind: 'series', section: 'series', axis: null, label: name };
+    }
+    return null;
+};
+
+export const CHART_ELEMENT_TITLES = {
+    xAxis: 'X axis — min / max, ticks, numbers size',
+    yAxis: 'Y axis — min / max, ticks, numbers size',
+    xLabel: 'X axis label — text, character size, style',
+    yLabel: 'Y axis label — text, character size, style',
+    label: 'Axis label — text, character size, style',
+    series: 'Curves / bars / points — type, thickness, symbols, colour',
+    legend: 'Series colours'
+};
+
+/**
+ * The floating editor opened by a double-click on a chart element. It renders
+ * the matching section of the standard style panel, so every command behaves
+ * exactly as in "🎨 Graphical Parameters".
+ */
+export const ChartElementDialog = ({ target, cfg, setCfg, series = [], unit, onClose }) => {
+    useEffect(() => {
+        const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [onClose]);
+    if (!target) return null;
+    const matched = target.label
+        ? series.find((s) => String(s.label) === target.label || String(s.key) === target.label)
+        : null;
+    return createPortal(
+        <div
+            className="fixed inset-0 z-[9999999] bg-slate-900/40 backdrop-blur-sm flex items-start justify-center overflow-auto p-4"
+            onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+        >
+            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl my-8" onDoubleClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-200 sticky top-0 bg-white rounded-t-2xl z-10">
+                    <span className="text-lg">🖱️</span>
+                    <h4 className="font-black text-slate-800">
+                        {CHART_ELEMENT_TITLES[target.kind] || 'Chart element'}
+                    </h4>
+                    {target.label ? <span className="text-xs text-slate-500 truncate">“{target.label}”</span> : null}
+                    <span className="ml-auto hidden sm:block text-[10px] text-slate-400">Double-click another element to switch · Esc closes</span>
+                    <button type="button" onClick={onClose} className="ml-2 text-slate-400 hover:text-red-600 font-black" title="Close">✕</button>
+                </div>
+                <div className="max-h-[72vh] overflow-y-auto custom-scrollbar">
+                    <SharedChartStylePanel
+                        cfg={cfg}
+                        setCfg={setCfg}
+                        series={series}
+                        unit={unit}
+                        section={target.section}
+                        highlightKey={matched ? matched.key : null}
+                    />
+                </div>
+            </div>
+        </div>,
+        document.body
+    );
+};
+
+
+/**
+ * Wrap ANY chart body with this to get double-click editing.
+ *
+ *   <ChartInspector cfg={cfg} setCfg={setCfg} series={series} unit="nm">
+ *     <ResponsiveContainer>…</ResponsiveContainer>
+ *   </ChartInspector>
+ *
+ * It adds ONE handler and renders the dialog; when `cfg` / `setCfg` are not
+ * available (a chart without style settings) the children are rendered as they
+ * are, so it can be dropped in anywhere without changing the layout.
+ */
+export const ChartInspector = ({
+    cfg, setCfg, series = [], unit,
+    children, className = '', style, containerRef = null, containerProps = null,
+    title = 'Double-click a curve, an axis or a label to edit it'
+}) => {
+    const [target, setTarget] = useState(null);
+    const editable = !!cfg && typeof setCfg === 'function';
+    const handle = (e) => {
+        const t = classifyChartElement(e.target);
+        if (!t) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setTarget(t);
+    };
+    return (
+        <div
+            ref={containerRef}
+            className={className}
+            style={style}
+            onDoubleClick={editable ? handle : undefined}
+            title={title}
+            {...(containerProps || {})}
+        >
+            {children}
+            {editable && target && (
+                <ChartElementDialog
+                    target={target}
+                    cfg={cfg}
+                    setCfg={setCfg}
+                    series={series}
+                    unit={unit}
+                    onClose={() => setTarget(null)}
+                />
+            )}
+        </div>
+    );
+};
+
+/**
+ * Chart.js canvases (Plate dose-response / IC50, DOSY, NMR fittings…) are not
+ * made of DOM elements, so the element under the pointer is found from the
+ * chart geometry: outside the plot area = the axis that side belongs to
+ * (below = X, left = Y), inside = the nearest dataset (curves / bars / points).
+ */
+export const chartJsTargetAt = (chart, evt) => {
+    if (!chart || !evt) return null;
+    const area = chart.chartArea || {};
+    const x = Number(evt.offsetX) || 0;
+    const y = Number(evt.offsetY) || 0;
+    const left = Number(area.left) || 0;
+    const right = Number(area.right) || 0;
+    const top = Number(area.top) || 0;
+    const bottom = Number(area.bottom) || 0;
+    if (!(x >= left && x <= right && y >= top && y <= bottom)) {
+        return y > bottom
+            ? { kind: 'xAxis', section: 'x', axis: 'x', label: '' }
+            : { kind: 'yAxis', section: 'y', axis: 'y', label: '' };
+    }
+    let hit = null;
+    try {
+        hit = (chart.getElementsAtEventForMode(evt, 'nearest', { intersect: false }, true) || [])[0] || null;
+    } catch { hit = null; }
+    const datasets = (chart.data && chart.data.datasets) || [];
+    const ds = hit ? datasets[hit.datasetIndex] : null;
+    return { kind: 'series', section: 'series', axis: null, label: ds ? String(ds.label || '') : '' };
+};
+
+/**
+ * ChartInspector for a Chart.js canvas (pass the ref holding the instance).
+ * It renders the canvas' sizing box, so it can replace that div without
+ * changing the box Chart.js measures (responsive sizing stays identical).
+ */
+export const ChartJsInspector = ({ chartRef, cfg, setCfg, series = [], unit, children, className = '', style = null }) => {
+    const [target, setTarget] = useState(null);
+    const editable = !!cfg && typeof setCfg === 'function';
+    const handle = (e) => {
+        const t = chartJsTargetAt(chartRef && chartRef.current, e.nativeEvent || e);
+        if (!t) return;
+        setTarget(t);
+    };
+    return (
+        <div className={className} style={style} onDoubleClick={editable ? handle : undefined}
+            title="Double-click the plot, an axis or a legend entry to edit it">
+            {children}
+            {editable && target && (
+                <ChartElementDialog
+                    target={target}
+                    cfg={cfg}
+                    setCfg={setCfg}
+                    series={series}
+                    unit={unit}
+                    onClose={() => setTarget(null)}
+                />
+            )}
         </div>
     );
 };
@@ -1123,7 +1427,8 @@ export const SharedChart = ({
   xFormatter,
   referenceLines = [],
   yAxisWidth = 54,
-  height = 260
+  height = 260,
+  setCfg = null
 }) => {
   const safeSeries = Array.isArray(series) && series.length
     ? series
@@ -1314,7 +1619,16 @@ export const SharedChart = ({
 
   return (
     <div className="flex flex-col gap-1">
-      <div ref={chartRef} onMouseDown={zoom.onMouseDown} className="select-none" style={{ height: h }}>
+      <ChartInspector
+        containerRef={chartRef}
+        containerProps={{ onMouseDown: zoom.onMouseDown }}
+        className="select-none"
+        style={{ height: h }}
+        cfg={setCfg ? cfg : null}
+        setCfg={setCfg}
+        series={safeSeries}
+        unit={unit}
+      >
         <ResponsiveContainer width="100%" height="100%">
           {chartType === 'bar' ? (
             <BarChart data={plotData} margin={resolvedMargin}>{children}</BarChart>
@@ -1326,7 +1640,7 @@ export const SharedChart = ({
             <LineChart data={plotData} margin={resolvedMargin}>{children}</LineChart>
           )}
         </ResponsiveContainer>
-      </div>
+      </ChartInspector>
       {zoom.isZoomed && (
         <button type="button" onClick={zoom.reset} className="self-end text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>
       )}
