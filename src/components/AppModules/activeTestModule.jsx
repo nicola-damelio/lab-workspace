@@ -457,7 +457,17 @@ const TestHeader = (
                           <Icon name="trash" size={14} /> Delete
                         </button>
                         
-<React.Fragment>
+                        {/* ── Identification fields — ONE adaptive grid ──────────
+                            Primary/secondary class, experiment type, instance,
+                            date, scientists, box owner… belong to the same
+                            block, so they are laid out by ONE grid:
+                            `repeat(auto-fit, minmax(180px, 1fr))` fits as many
+                            columns as the screen allows (180px = the widest
+                            field's own minimum) instead of letting every field
+                            wrap onto a line of its own. The header used to grow
+                            to four or five rows and push the plots down. */}
+                        <div className="w-full grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-x-3 gap-y-1.5">
+                        <React.Fragment>
   {activeTest.type === 'plate-9x9box' ? (
     <div className="flex flex-col flex-1 min-w-[160px]">
       <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
@@ -647,11 +657,19 @@ const TestHeader = (
                           </label>
                         </div>
                         )}
+                        </div>
+
                       </div>
                     </div>
 
                     {siblingTests.length > 0 && (
-                      <div className="bg-blue-50 border-b border-blue-200 px-4 md:px-6 py-2 flex items-center overflow-x-auto custom-scrollbar gap-2 shadow-inner">
+                      /* Date / Conditions strip — the conditions WRAP onto the next
+                          line instead of pushing a sideways scrollbar: at the full
+                          character size the row was wider than the page on a laptop
+                          screen, which is what forced the whole program to be used at
+                          50% zoom. The chips keep their size; only the row spacing and
+                          the vertical padding are tighter. */
+                      <div className="bg-blue-50 border-b border-blue-200 px-4 md:px-6 py-1.5 flex flex-wrap items-center gap-1.5 shadow-inner">
                         <span className="text-[10px] font-bold text-blue-800 uppercase tracking-wide mr-2 shrink-0">
                           <Icon name="calendar" size={12} className="mr-1 text-blue-700" /> Date / Conditions:
                         </span>

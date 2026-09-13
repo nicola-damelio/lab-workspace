@@ -39,6 +39,18 @@ button [class*=" text-[11px]"] {
 }
 
 /* ---------------------------------------------------------------------------
+   Mid-size tokens (13 / 14 / 15px) restated in `rem`, for exactly the same
+   reason as the floor above: the display scale (src/utils/uiScale.js) moves the
+   ROOT character size, and only `rem` follows it. At the browser's default 16px
+   root these compute to precisely 13, 14 and 15 px, so nothing moves until the
+   user asks for a smaller (or larger) program in Settings → “Display scale”.
+   ------------------------------------------------------------------------- */
+[class^="text-[13px]"], [class*=" text-[13px]"] { font-size: 0.8125rem !important; }
+[class^="text-[14px]"], [class*=" text-[14px]"] { font-size: 0.875rem !important; }
+[class^="text-[15px]"], [class*=" text-[15px]"] { font-size: 0.9375rem !important; }
+
+
+/* ---------------------------------------------------------------------------
    Uniform character dimension inside TABLES (all pages).
    Every header and every cell uses the same base 13px — no more tiny 9–12px
    characters next to normal ones. Small font utilities found inside cells are

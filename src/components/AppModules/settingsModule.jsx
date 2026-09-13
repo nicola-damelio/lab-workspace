@@ -13,6 +13,47 @@ import { CloudStorageSettings } from './cloudStorageSettings';
 import { FigureStylePanel } from '../FigureStylePanel';
 import { normalizeOperators } from '../../utils/auth';
 import { openDrive } from '../../utils/driveNaming';
+import { UI_SCALE_PRESETS, readUiScale, saveUiScale } from '../../utils/uiScale';
+
+/* ── Display scale ─────────────────────────────────────────────────────────
+   Tailwind v4 computes every text size and every spacing step from the ROOT
+   character size (`text-sm` = 0.875rem, `p-3` = 0.75rem, the sidebar `w-64` =
+   16rem), so ONE number rescales the whole program: characters, paddings,
+   gaps, sidebars, modals — every page at once. src/utils/uiScale.js holds the
+   value and main.jsx applies it before the first render. It is a per-BROWSER
+   preference (the size of a screen is not a property of the dataset), which is
+   why this control is shown to EVERY user and not only to the superuser. */
+const DisplayScaleControl = () => {
+  const [scale, setScale] = React.useState(() => readUiScale());
+  const pick = (px) => { setScale(px); saveUiScale(px); };
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {UI_SCALE_PRESETS.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => pick(p.px)}
+            title={`${p.label} — about ${p.hint} of the standard size, applied to every page of the program`}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold border shadow-sm transition-colors ${
+              scale === p.px
+                ? 'bg-blue-600 text-white border-blue-600'
+                : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+            }`}
+          >
+            {p.label} <span className="opacity-70 font-semibold">{p.hint}</span>
+          </button>
+        ))}
+      </div>
+      <p className="text-xs text-slate-500 leading-relaxed">
+        The change applies <b>immediately to every page</b> and is remembered for this browser
+        only. A few elements sized in <b>pixels</b> (some minimum table widths, the chart boxes
+        and the Image Builder canvas) keep their absolute size: they simply take a little more
+        room than the rest.
+      </p>
+    </div>
+  );
+};
 
 export const SettingsModule = ({
   operators, setOperators, authSettings, setAuthSettings,
@@ -34,6 +75,14 @@ export const SettingsModule = ({
   return (
               <div className="h-full min-h-0 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
                 <div className="max-w-6xl mx-auto flex flex-col gap-4 pb-10">
+
+                  <CollapsibleSection
+                    title="Display scale — character size of every page"
+                    subtitle="Rescales the whole program at once — characters, paddings, gaps, the sidebar, the modals — by moving the root character size every Tailwind size is computed from. Use it when the pages are too large (or too small) for your screen. Remembered for this browser only."
+                    defaultOpen={false}
+                  >
+                    <DisplayScaleControl />
+                  </CollapsibleSection>
 
                   <CollapsibleSection
                     title="Scientists / Operators"
