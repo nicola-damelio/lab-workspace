@@ -7,7 +7,7 @@ import {
 enableCellClipboard(); // global multi-cell select / copy / paste for data tables
 import { NMR_FITTING_TAB_CONFIG } from './tabConfigs';
 import { toHex, errBarPlugin } from '../data/constants';
-import { rainbowColors, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, normalizeChartType, seriesVisible, seriesColorOf, chartJsFont, chartJsTitleFont
+import { rainbowColors, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, normalizeChartType, seriesVisible, seriesColorOf, chartJsFont, chartJsTitleFont, chartAspect, chartAspectImposed, DEFAULT_CHART_ASPECT_WIDE
 } from '../utils/chartStyle';
 import { brokenAxisScaleOptions } from '../utils/chartJsBrokenAxis';
 import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
@@ -878,7 +878,9 @@ function DecayChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType = 'l
     }, [table, colFits, chartCfg, chartType, isHist, yLab, errMode, fixedSD, manualSD, excluded, update]);
     return (
         <div className={`flex flex-col ${isFs ? FS_CLASSES + ' p-6' : ''}`}
-            style={isFs ? undefined : { height: `${chartJsHeightFit(350, chartCfg, { yTitle: yLab })}px` }}>
+            style={isFs ? undefined : (chartAspectImposed(chartCfg)
+                ? { aspectRatio: String(chartAspect(chartCfg, DEFAULT_CHART_ASPECT_WIDE)), minHeight: `${chartJsHeightFit(350, chartCfg, { yTitle: yLab })}px` }
+                : { height: `${chartJsHeightFit(350, chartCfg, { yTitle: yLab })}px` })}>
             <div className="flex justify-between items-start mb-2 z-10">
                 <h4 className="text-xs font-bold text-slate-600 uppercase">Decay / Diffusion curves</h4>
                 <button onClick={onToggleFs} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors no-print">{isFs ? '↙️' : '↗️'}</button>
@@ -932,7 +934,9 @@ function ParameterChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType 
     }, [table, colFits, chartCfg, chartType, yLabel]);
     return (
         <div className={`flex flex-col ${isFs ? FS_CLASSES + ' p-6' : ''}`}
-            style={isFs ? undefined : { height: `${chartJsHeightFit(350, chartCfg, { yTitle: yLabel })}px` }}>
+            style={isFs ? undefined : (chartAspectImposed(chartCfg)
+                ? { aspectRatio: String(chartAspect(chartCfg, DEFAULT_CHART_ASPECT_WIDE)), minHeight: `${chartJsHeightFit(350, chartCfg, { yTitle: yLabel })}px` }
+                : { height: `${chartJsHeightFit(350, chartCfg, { yTitle: yLabel })}px` })}>
             <div className="flex justify-between items-start mb-2 z-10">
                 <h4 className="text-xs font-bold text-slate-600 uppercase">Parameter vs Atom</h4>
                 <button onClick={onToggleFs} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors no-print">{isFs ? '↙️' : '↗️'}</button>

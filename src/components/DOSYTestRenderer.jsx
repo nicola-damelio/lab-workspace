@@ -22,7 +22,7 @@ import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
 import { makeTable, stokesEinsteinD, radiusFromMW, GAMMA_H } from './NMRFittingsTestRenderer';
 import { enableCellClipboard, cellAttrs } from '../utils/cellClipboard';
 import { ChartPanel, SharedErrorTreatment, SharedChartStylePanel, ChartJsInspector, cfgTickFormatter } from './SharedAnalysisTools';
-import { shadesFromColor, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, tickSize, chartJsFont, chartJsTitleFont, axisTitleSize
+import { shadesFromColor, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, tickSize, chartJsFont, chartJsTitleFont, axisTitleSize, chartAspect, chartAspectImposed, DEFAULT_CHART_ASPECT_WIDE
 } from '../utils/chartStyle';
 import { StarToggle } from './StarToggle';
 import { isStarred, toggleStarredItem } from '../utils/starredItems';
@@ -534,7 +534,9 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
         setCfg={setCfg}
         series={series}
         unit={unit}
-        style={{ height: `${chartJsHeightFit(420, cfg, { yTitle })}px` }}
+        style={chartAspectImposed(cfg)
+          ? { aspectRatio: String(chartAspect(cfg, DEFAULT_CHART_ASPECT_WIDE)), minHeight: `${chartJsHeightFit(420, cfg, { yTitle })}px` }
+          : { height: `${chartJsHeightFit(420, cfg, { yTitle })}px` }}
       >
         <canvas ref={ref} />
       </ChartJsInspector>

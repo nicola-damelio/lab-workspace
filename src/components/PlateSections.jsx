@@ -10,7 +10,7 @@ import {
     PLATES_DEF, formatConc, concKey, getRegionColor, toHex, lighten, darken, needsDarkText, PALETTE, fit4PL, errBarPlugin
 } from '../data/constants';
 import { PLATE_PRESET_LABELS, PLATE_PRESET_COLORS, isPlatePreset, platePresetColor } from '../utils/platePresets';
-import { FS_CLASSES, OVERLAY_CLASSES, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, normalizeChartType, seriesVisible, seriesColorOf, chartJsFont, chartJsTitleFont
+import { FS_CLASSES, OVERLAY_CLASSES, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, normalizeChartType, seriesVisible, seriesColorOf, chartJsFont, chartJsTitleFont, chartAspect, chartAspectImposed, DEFAULT_CHART_ASPECT_WIDE
 } from '../utils/chartStyle';
 import { brokenAxisScaleOptions } from '../utils/chartJsBrokenAxis';
 
@@ -733,7 +733,7 @@ export function RegionCharts({ regionName, regionData, config }) {
                         series={seriesList}
                         unit={unit}
                         className="flex-1 relative min-h-0"
-                        style={{ minHeight: isDrFs ? '0' : `${chartJsHeightFit(chartH, chartCfg, { yTitle: 'Viability (%)' })}px` }}
+                        style={{ ...(chartAspectImposed(chartCfg) ? { aspectRatio: String(chartAspect(chartCfg, DEFAULT_CHART_ASPECT_WIDE)) } : null), minHeight: isDrFs ? '0' : `${chartJsHeightFit(chartH, chartCfg, { yTitle: 'Viability (%)' })}px` }}
                     >
                         <canvas ref={drRef}></canvas>
                     </ChartJsInspector>
@@ -770,7 +770,7 @@ export function RegionCharts({ regionName, regionData, config }) {
                                 series={seriesList}
                                 unit={unit}
                                 className="flex-1 relative min-h-0"
-                                style={{ minHeight: isIc50Fs ? '0' : `${chartJsHeightFit(chartH, chartCfg, { yTitle: `IC50 (${unit})` })}px` }}
+                                style={{ ...(chartAspectImposed(chartCfg) ? { aspectRatio: String(chartAspect(chartCfg, DEFAULT_CHART_ASPECT_WIDE)) } : null), minHeight: isIc50Fs ? '0' : `${chartJsHeightFit(chartH, chartCfg, { yTitle: `IC50 (${unit})` })}px` }}
                             >
                                 <canvas ref={ic50Ref}></canvas>
                             </ChartJsInspector>

@@ -7,7 +7,7 @@ import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell
 } from 'recharts';
 import { CollapsibleSection } from './ui';
-import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, VIS_PALETTES, PER_ATOM_COLORS, seriesColorFor, chartBoxStyle, chartAspect, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf, tickTextProps, tickSize, fontFamilyOf, legendTextStyle
+import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, VIS_PALETTES, PER_ATOM_COLORS, seriesColorFor, chartBoxStyle, chartAspect, chartRatioBoxStyle, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf, tickTextProps, tickSize, fontFamilyOf, legendTextStyle, chartAspectImposed
 } from '../utils/chartStyle';
 import { SplitChartStack, SplitToggle, SPLIT_CHART_H } from './SplitChartStack';
 import { suggestDriveFileName, driveFolderPath, sanitizeSlug } from '../utils/driveNaming';
@@ -6477,6 +6477,12 @@ let dom = brukerZoomDom || xFull;
     };
 
     const PANEL_H = expandedBruker ? '100%' : (Number(nmr1dCfg.height) > 0 ? Number(nmr1dCfg.height) : 260) + labelAreaH;
+    // Settings → Figure style can impose ONE plot-box shape on every figure of a
+    // page. This panel used to be sized by a HEIGHT, and a definite height
+    // silently cancels `aspect-ratio`, so while a ratio is imposed the box is
+    // sized BY the ratio instead. The historical height stays underneath as a
+    // floor, so a very flat ratio can still not cut the peak labels.
+    const PANEL_ASPECT = (expandedBruker || !chartAspectImposed(nmr1dCfg)) ? 0 : chartAspect(nmr1dCfg, 1.8);
 
     return (
       <div className={'bg-white border border-sky-200 rounded-xl p-3 flex flex-col gap-2' + (expandedBruker ? ' fixed inset-2 z-50 shadow-2xl' : '')}>
@@ -6617,7 +6623,7 @@ let dom = brukerZoomDom || xFull;
             unit="ppm" />
         )}
 
-        <div ref={brukerChartRef} className="select-none" style={{height: PANEL_H, backgroundColor: 'white', position: 'relative'}}
+        <div ref={brukerChartRef} className="select-none" style={{ backgroundColor: 'white', position: 'relative', ...(PANEL_ASPECT ? { aspectRatio: String(PANEL_ASPECT), minHeight: PANEL_H } : { height: PANEL_H }) }}
              onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}>
        <ResponsiveContainer width="100%" height="100%">
          <LineChart data={chartData} margin={{top: topMargin + labelAreaH, right: plotMargin.right, bottom: plotMargin.bottom, left: plotMargin.left}}>
@@ -7927,7 +7933,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                         {paramKeys.map((k) => <option key={k} value={k}>{k}</option>)}
                       </select>
                     </div>
-                    <div style={{ height: Math.min(280, cfg.height), aspectRatio: String(chartAspect(cfg, 2)) }}>
+                    <div style={chartRatioBoxStyle(cfg, 2, { height: Math.min(280, cfg.height) })}>
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={paramData} margin={cfgChartMargin(cfg, { top: 10, right: 10, bottom: 20, left: 10 })}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} />

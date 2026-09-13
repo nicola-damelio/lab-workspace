@@ -118,6 +118,7 @@ const chartJsTargetAt = (chart, evt) => {
 const DEFAULT_CHART_FONT_SIZE = 16;
 const DEFAULT_CHART_ASPECT = 1;
 const DEFAULT_CHART_ASPECT_WIDE = 1.8;
+const FIGURE_ASPECT_KEY = 'figureAspect';
 const textWidthPx = (text, fontSize) =>
   String(text == null ? '' : text).length * (Number(fontSize) || 12) * 0.55;
 const axisTitleRoomPx = (texts, fontSize) => {
@@ -126,16 +127,33 @@ const axisTitleRoomPx = (texts, fontSize) => {
   const fs = (Number(fontSize) || DEFAULT_CHART_FONT_SIZE) + 1;
   return Math.round(Math.max(...list.map((t) => textWidthPx(t, fs))));
 };
+const figureAspectOf = (cfg) => {
+  const n = Number(cfg && cfg[FIGURE_ASPECT_KEY]);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
+// The shape is a DELIBERATE choice only when the profile imposes a ratio or when
+// the panel shows one that is not a historical default — only then may the box
+// height (which cancels `aspect-ratio` in the browser) be dropped.
+const chartAspectImposed = (cfg = {}) => {
+  if (figureAspectOf(cfg) > 0) return true;
+  const own = Number(cfg.aspect);
+  return Number.isFinite(own) && own > 0 && own !== DEFAULT_CHART_ASPECT && own !== DEFAULT_CHART_ASPECT_WIDE;
+};
 const chartBoxStyle = (cfg = {}, opts = {}) => {
   const wide = opts.square === false;
+  const forced = figureAspectOf(cfg);
   const a = Number(cfg.aspect);
   let aspect;
-  if (wide) aspect = (Number.isFinite(a) && a !== DEFAULT_CHART_ASPECT) ? a : DEFAULT_CHART_ASPECT_WIDE;
+  if (forced) aspect = forced;
+  else if (wide) aspect = (Number.isFinite(a) && a !== DEFAULT_CHART_ASPECT) ? a : DEFAULT_CHART_ASPECT_WIDE;
   else aspect = (Number.isFinite(a) && a !== DEFAULT_CHART_ASPECT_WIDE) ? a : DEFAULT_CHART_ASPECT;
   const yRoom = axisTitleRoomPx([opts.yTitle, cfg.yAxisLabel], cfg.fontSize);
   const minHeight = Math.max(220, yRoom + 120);
   const maxHeight = Math.max(Number(cfg.height) || 380, minHeight);
-  return { width: '100%', aspectRatio: String(aspect), maxHeight, minHeight };
+  const out = { width: '100%', aspectRatio: String(aspect) };
+  if (!chartAspectImposed(cfg)) out.maxHeight = maxHeight;
+  out.minHeight = minHeight;
+  return out;
 };
 const chartJsPadding = (cfg = {}, base = 2) => {
   const fs = Number(cfg.fontSize) || DEFAULT_CHART_FONT_SIZE;
@@ -228,7 +246,18 @@ checkTrue('…and the room grows with the character size',
 
 const boxDefault = chartBoxStyle({});
 check('an unlabelled chart keeps its historical box', [boxDefault.minHeight, boxDefault.maxHeight], [220, 380]);
-check('…and a wide spectrum keeps its wide ratio', chartBoxStyle({}, { square: false }).aspectRatio, '1.8');
+checkTrue('…and a wide spectrum keeps its wide ratio', chartBoxStyle({}, { square: false }).aspectRatio === '1.8');
+// A definite height cap CANCELS `aspect-ratio` in the browser: the shape the
+// profile imposes (Settings → Figure style) must not be clamped away by
+// "Chart height (px)" — that is what made the ratio look ignored.
+checkTrue('an imposed ratio drops the height cap',
+  !('maxHeight' in chartBoxStyle({ figureAspect: 1, height: 380, fontSize: 16 })));
+checkTrue('…a ratio typed in the panel drops it too',
+  !('maxHeight' in chartBoxStyle({ aspect: 2.5, height: 380, fontSize: 16 })));
+checkTrue('…a chart nobody reshaped keeps its historical cap',
+  chartBoxStyle({ height: 380, fontSize: 16 }).maxHeight === 380);
+checkTrue('…and the ratio of the profile still reaches the box',
+  chartBoxStyle({ figureAspect: 2, height: 380, fontSize: 16 }).aspectRatio === '2');
 const boxSmall = chartBoxStyle({ fontSize: 16, yAxisLabel: 'Normalized intensity (a.u.)' });
 checkTrue('a labelled chart reserves room for its rotated y title', boxSmall.minHeight > 220);
 checkTrue('…and the max height never clips the min height', boxSmall.maxHeight >= boxSmall.minHeight);

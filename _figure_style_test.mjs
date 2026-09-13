@@ -22,8 +22,8 @@ import {
 // The chart-side clamp: the profile may ask for 160 px, a chart must not cap it.
 // …and the ratio resolver a plot box is sized with.
 import {
-  clampChartFont, chartAspect, figureAspectOf, chartBoxStyle,
-  DEFAULT_CHART_ASPECT_WIDE, FIGURE_ASPECT_KEY
+  clampChartFont, chartAspect, figureAspectOf, chartBoxStyle, chartAspectImposed,
+  chartRatioBoxStyle, DEFAULT_CHART_ASPECT_WIDE, FIGURE_ASPECT_KEY
 } from './src/utils/chartStyle.js';
 
 const results = [];
@@ -386,7 +386,7 @@ check('33 the Settings panel and every chart are wired to the ratio', () => {
   ok(CS2.includes('const forced = figureAspectOf(cfg);'), 'chartBoxStyle ignores the global ratio');
   ['NMRSections', 'ssNMRSections', 'CDSections', 'FlowCytometrySections', 'MDSections'].forEach((f) => {
     const s = readFileSync(`./src/components/${f}.jsx`, 'utf8');
-    ok(/chartAspect\(/.test(s), `${f} does not read the ratio through chartAspect()`);
+    ok(/chartAspect\(|chartRatioBoxStyle\(/.test(s), `${f} does not read the ratio through the shared resolver`);
     ok(!/aspectRatio: String\(cfg\.aspect/.test(s), `${f} still sizes a box with cfg.aspect`);
     ok(!/aspect=\{cfg\.aspect\}/.test(s), `${f} still hands a raw cfg.aspect to recharts`);
     ok(!/cfg\.aspect \|\| /.test(s), `${f} still falls back with "cfg.aspect || x"`);
@@ -395,6 +395,59 @@ check('33 the Settings panel and every chart are wired to the ratio', () => {
   const nmrPanel = readFileSync('./src/components/NMRSections.jsx', 'utf8');
   ok(nmrPanel.includes('setCfg({ aspect: v || 2.5, figureAspect: 0 })'), 'the spectra panel cannot take back control');
   ok(TOOLS.includes('plot box'), 'the 🎨 chip does not tell the ratio');
+});
+
+check('34 the imposed ratio is not cancelled by the height of the box', () => {
+  // A definite `height` — or a `max-height` smaller than the ratio needs —
+  // cancels `aspect-ratio` in the browser. With a 1000 px-wide card and a
+  // "Chart height (px)" of 380, EVERY ratio under 2.63 used to draw the very
+  // same 1000x380 box: the knob looked ignored.
+  eq(chartAspectImposed({}), false);
+  eq(chartAspectImposed({ aspect: 1 }), false, 'the square default is not a choice');
+  eq(chartAspectImposed({ aspect: 1.8 }), false, 'the wide default is not a choice');
+  eq(chartAspectImposed({ aspect: 1.8, figureAspect: 0 }), false);
+  eq(chartAspectImposed({ aspect: 2 }), true, 'a ratio typed in the panel is a choice');
+  eq(chartAspectImposed({ figureAspect: 1.8 }), true, 'the profile imposes a shape');
+  eq(chartBoxStyle({ height: 380, fontSize: 16 }).maxHeight, 380, 'a chart nobody reshaped is untouched');
+  ok(!('maxHeight' in chartBoxStyle({ figureAspect: 1, height: 380, fontSize: 16 })), 'the profile ratio must not be clamped');
+  ok(!('maxHeight' in chartBoxStyle({ aspect: 2.5, height: 380, fontSize: 16 })), '…nor the ratio of the panel');
+  eq(chartBoxStyle({ figureAspect: 1, height: 380, fontSize: 16 }).aspectRatio, '1');
+  eq(chartBoxStyle({ figureAspect: 1.8, height: 380, fontSize: 16 }, { square: false }).aspectRatio, '1.8');
+  eq(chartBoxStyle({ height: 900, fontSize: 16 }).maxHeight, 900, 'the height slider still works without a shape');
+});
+check('35 a box that IS its shape never mixes a height with the ratio', () => {
+  eq(chartRatioBoxStyle({}, 1.8, { width: '100%', height: 380 }),
+    { aspectRatio: '1.8', width: '100%', height: 380 }, 'without a choice the historical style is returned');
+  eq(chartRatioBoxStyle({ figureAspect: 1.8, height: 380 }, 1.8, { width: '100%', height: 380 }),
+    { aspectRatio: '1.8', width: '100%' }, 'a fixed height would cancel the ratio the profile imposes');
+  eq(chartRatioBoxStyle({ aspect: 2.5 }, 1, { maxHeight: 'min(380px, 55vh)' }),
+    { aspectRatio: '2.5' }, 'the layout cap goes with it when the user picks the shape');
+  eq(chartRatioBoxStyle({ aspect: 1 }, 1, { maxHeight: '55vh' }), { aspectRatio: '1', maxHeight: '55vh' });
+  eq(chartRatioBoxStyle({ figureAspect: 1 }, 2, { height: Math.min(280, 500) }), { aspectRatio: '1' });
+});
+check('36 every figure of a page can be reshaped — height-driven ones too', () => {
+  const CS3 = SRC('utils/chartStyle.js');
+  ok(CS3.includes('export const chartAspectImposed = (cfg = {}) => {'), 'no "deliberate shape" test');
+  ok(CS3.includes('export const chartRatioBoxStyle = (cfg = {}, fallback = DEFAULT_CHART_ASPECT, opts = {}) => {'), 'no ratio box helper');
+  ok(CS3.includes('...(chartAspectImposed(cfg) ? {} : { maxHeight }),'), 'chartBoxStyle still clamps an imposed ratio');
+  ['CDSections', 'ssNMRSections', 'NMRSections', 'FlowCytometrySections'].forEach((f) => {
+    const s = readFileSync(`./src/components/${f}.jsx`, 'utf8');
+    ok(!/height: Math\.min\(280, cfg\.height\), aspectRatio/.test(s), `${f} still mixes a fixed height with the ratio`);
+    ok(/chartRatioBoxStyle\(/.test(s), `${f} does not size its ratio box through the helper`);
+  });
+  const fcs = readFileSync('./src/components/FlowCytometrySections.jsx', 'utf8');
+  ok(!/aspectRatio: String\(chartAspect\(cfg, 1\.8\)\), height: cfg\.height/.test(fcs), 'the FCS canvas box still fixes its height');
+  ok(fcs.includes("chartRatioBoxStyle(cfg, 1.8, { width: '100%', height: cfg.height || 380 })"), 'the FCS canvas box does not go through the helper');
+  const nmr = readFileSync('./src/components/NMRSections.jsx', 'utf8');
+  ok(nmr.includes('const PANEL_ASPECT = (expandedBruker || !chartAspectImposed(nmr1dCfg)) ? 0 : chartAspect(nmr1dCfg, 1.8);'),
+    'the 1D spectrum panel cannot be reshaped');
+  ok(nmr.includes('...(PANEL_ASPECT ? { aspectRatio: String(PANEL_ASPECT), minHeight: PANEL_H } : { height: PANEL_H })'),
+    'the 1D spectrum panel still hands a fixed height to the box');
+  ['PlateSections', 'DOSYTestRenderer', 'NMRFittingsTestRenderer'].forEach((f) => {
+    const s = readFileSync(`./src/components/${f}.jsx`, 'utf8');
+    ok(/chartAspectImposed\(/.test(s), `${f} (Chart.js canvas) cannot be reshaped`);
+    ok(/aspectRatio: String\(chartAspect\(/.test(s), `${f} never hands a shape to its canvas box`);
+  });
 });
 
 const failed = results.filter((r) => !r.ok);

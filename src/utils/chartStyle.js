@@ -63,6 +63,50 @@ export const chartAspect = (cfg = {}, fallback = DEFAULT_CHART_ASPECT) => {
   return Number.isFinite(fb) && fb > 0 ? fb : DEFAULT_CHART_ASPECT;
 };
 
+/**
+ * Is the SHAPE of a plot box a DELIBERATE choice?
+ *
+ * True when Settings → Figure style imposes a ratio, or when the ratio shown by
+ * a 🎨 Graphical Parameters panel is not one of the two historical defaults.
+ *
+ * It decides whether the ratio may overrule the box HEIGHT, and it matters
+ * because of a CSS rule: a definite `height` — or a `max-height` smaller than
+ * the ratio needs — silently CANCELS `aspect-ratio`. A box that keeps one can
+ * therefore never be reshaped, which is exactly why imposing a ratio used to
+ * look like it was ignored (see chartBoxStyle / chartRatioBoxStyle).
+ */
+export const chartAspectImposed = (cfg = {}) => {
+  if (figureAspectOf(cfg) > 0) return true;
+  const own = Number(cfg.aspect);
+  return Number.isFinite(own) && own > 0
+    && own !== DEFAULT_CHART_ASPECT && own !== DEFAULT_CHART_ASPECT_WIDE;
+};
+
+/**
+ * Plot box sized by a RATIO only — the inline boxes that ARE about the shape
+ * (the Flow Cytometry canvases, the CD / ssNMR / NMR fit charts…).
+ *
+ *   opts.width      '100%' when the box fills its card
+ *   opts.height     the fixed height of the historical layout (px)
+ *   opts.maxHeight  an extra upper bound that layout used to impose
+ *
+ * A definite height and `aspect-ratio` cannot coexist: the height wins and the
+ * ratio is silently dropped — which is why these boxes ignored the ratio knob.
+ * While the shape is not a DELIBERATE choice (chartAspectImposed) the historical
+ * style is therefore returned UNCHANGED; as soon as the profile — or the panel
+ * of that very chart — asks for a shape, the ratio comes back alone, so it is
+ * really the ratio that sizes the box.
+ */
+export const chartRatioBoxStyle = (cfg = {}, fallback = DEFAULT_CHART_ASPECT, opts = {}) => {
+  const out = { aspectRatio: String(chartAspect(cfg, fallback)) };
+  if (opts.width) out.width = opts.width;
+  if (chartAspectImposed(cfg)) return out;
+  const h = Number(opts.height);
+  if (Number.isFinite(h) && h > 0) out.height = h;
+  if (opts.maxHeight) out.maxHeight = opts.maxHeight;
+  return out;
+};
+
 /* =========================================================================
    AXIS-TITLE ROOM — why a bigger character size used to CUT the y-axis label.
 
@@ -117,7 +161,13 @@ export const chartBoxStyle = (cfg = {}, opts = {}) => {
   return {
     width: '100%',
     aspectRatio: String(aspect),
-    maxHeight,
+    // The height cap ("Chart height (px)") is a SIZE preference and must never
+    // overrule a SHAPE the user asked for: as long as no ratio is imposed the
+    // historical style is returned untouched, but with a ratio the cap would
+    // collapse every value under ~2.6 to the same box (a 1000 px card with a
+    // 380 px cap draws 1000x380 = 1 : 2.6 whatever the ratio says — the ratio
+    // looked ignored because the browser clamps it exactly like that).
+    ...(chartAspectImposed(cfg) ? {} : { maxHeight }),
     minHeight
   };
 };
