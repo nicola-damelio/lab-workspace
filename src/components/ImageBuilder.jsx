@@ -14,6 +14,10 @@ import {
   stopFigureRecaptures
 } from '../utils/figureRecapture';
 import { useFigureStyleProfile } from './FigureStyleTools';
+import { ShadowControls, ArrowPropertiesPanel } from './FigureArrowPanel';
+import {
+  newArrow, normalizeArrow, arrowGeometry, arrowHeadPath, shadowSpec, shadowFilterId, DEFAULT_SHADOW
+} from '../utils/figureArrows';
 
 const ptToMm = (pt) => pt * 0.352778;
 const PX_PER_MM = 96 / 25.4; // CSS: 1 mm ≈ 3.78 px
@@ -241,7 +245,6 @@ export const figureStyleAudit = (objects, currentTag, fallbackProjectId = null, 
   });
   return rows;
 };
-
 export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCanvasOpened, onBackToProject, currentUser = null }) => {
   const storageKey = `labImageBuilder_${projectId || 'global'}`;
   const svgRef = useRef(null);
@@ -271,6 +274,14 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const [showGridLines, setShowGridLines] = useState(true);       // cell divider guides across the canvas
   const [objects, setObjects] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
+  // ARROW ANNOTATIONS — arrows live OUTSIDE `objects` on purpose: a panel is a
+  // letter + a grid cell + a figure, an arrow is none of those. It is a plain
+  // canvas-level list in millimetres (the SVG viewBox space), drawn on top of
+  // the panels, so adding / moving / deleting one never disturbs the panels'
+  // letters, their cells or their figures. See utils/figureArrows for the
+  // geometry and the three shapes (straight, curved, double-ended).
+  const [arrows, setArrows] = useState([]);
+  const [selectedArrowId, setSelectedArrowId] = useState(null);
   const [hydrateTick, setHydrateTick] = useState(0); // bumped to async-fetch Drive-backed images onto the canvas
   const objectsRef = useRef(objects);
   objectsRef.current = objects;
@@ -545,6 +556,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           setHydrateTick((t) => t + 1);
         }
         if (data.globalCaption !== undefined) setGlobalCaption(data.globalCaption);
+        // Arrow annotations: they hold no pixels, so the persisted list IS the
+        // live one — nothing to re-resolve. A canvas saved before arrows
+        // existed simply has no value here and keeps the empty list.
+        if (data.arrows) setArrows((data.arrows || []).map(normalizeArrow));
         // Restore the view the user left — e.g. when returning from the original
         // graph via the test page's ◀ Back button.
         if (data.isFullScreen) setIsFullScreen(true);
@@ -592,7 +607,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       // full-resolution dataURL) so the layout always re-opens after
       // navigating away and back.
       const persisted = (objects || []).map(thumbnailsOf);
-      const payload = { canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects: persisted, focusObjId, globalCaption, isFullScreen };
+      const payload = { canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects: persisted, arrows, focusObjId, globalCaption, isFullScreen };
       // Always keep the freshest copy in memory (survives module remounts even
       // when localStorage is full), then best-effort write localStorage:
       // rememberSessionCanvas keeps BOTH the lightweight payload AND the live
@@ -601,7 +616,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       rememberSessionCanvas(storageKey, payload, objects || []);
       localStorage.setItem(storageKey, JSON.stringify(payload));
     } catch { /* localStorage may be full — the session cache above still holds the state */ }
-  }, [canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects, focusObjId, globalCaption, isFullScreen, storageKey]);
+  }, [canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects, arrows, focusObjId, globalCaption, isFullScreen, storageKey]);
 
   // Async "hydrate" pass — after objects are (re)loaded from a persisted canvas
   // or an undo snapshot, their images may reference Google Drive (the real
@@ -656,9 +671,14 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // ---- undo history -------------------------------------------------------
   // Snapshots keep only thumbnails (full-res dataURLs are re-resolved from the
   // library on undo) so the stack stays light even with large captured images.
+  // The ARROWS ride along in the same snapshot: undoing a change puts the
+  // annotations back exactly as they were (they hold no pixels at all).
   const commitHistory = () => {
     try {
-      const snap = JSON.parse(JSON.stringify((objects || []).map(thumbnailsOf)));
+      const snap = {
+        objects: JSON.parse(JSON.stringify((objects || []).map(thumbnailsOf))),
+        arrows: JSON.parse(JSON.stringify(arrows || []))
+      };
       undoStack.current.push(snap);
       if (undoStack.current.length > 40) undoStack.current.shift();
       setHistTick((t) => t + 1);
@@ -667,8 +687,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const undo = () => {
     const prev = undoStack.current.pop();
     if (!prev) return;
-    setObjects(prev.map(resolveObj));
+    const objs = Array.isArray(prev) ? prev : (prev.objects || []);   // a snapshot taken before the arrows existed
+    setObjects(objs.map(resolveObj));
+    if (!Array.isArray(prev)) setArrows((prev.arrows || []).map(normalizeArrow));
     setSelectedId(null);
+    setSelectedArrowId(null);
     setHistTick((t) => t + 1);
     setHydrateTick((t) => t + 1);
   };
@@ -714,6 +737,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     imgSrc: null, imgFit: 'contain', imgScale: 1, imgPadding: 2,
     imgOffsetX: 0, imgOffsetY: 0,  // shift the image inside the object frame (mm)
     imgRotate: 0,                   // image rotation (degrees)
+    shadow: null,                   // drop shadow of THIS panel — { dx, dy, blur, color, opacity } (mm)
     texts: [],                      // free text overlays [{ id, x, y, text, fontSize, color, bold, italic }]
     src: null,                      // { testId, testName, elementLabel } — link back to the original graph
     images: [],                     // extra figures inside this same object/panel (multi-figure montage)
@@ -789,6 +813,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     commitHistory();                 // the canvas that was open stays one Ctrl+Z away
     const first = blankObject('A');
     setObjects([first]);
+    setArrows([]);                   // a NEW image starts with no annotation either
+    setSelectedArrowId(null);
     setSelectedId(first.id);
     renumberLetters();               // a single panel is always "A"
     setEditingText(null);
@@ -1232,7 +1258,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       updateId: known ? known.id : null,
       canvasData: {
         canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, globalCaption,
-        objects: (objects || []).map(thumbnailsOf)
+        objects: (objects || []).map(thumbnailsOf),
+        arrows: arrows || []
       }
     });
     if (!entry) return null;
@@ -1333,7 +1360,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     if (cd.keepAspect !== undefined) setKeepAspect(!!cd.keepAspect);
     if (cd.globalCaption !== undefined) setGlobalCaption(cd.globalCaption);
     setObjects((cd.objects || []).map((o) => resolveObj(o)));
+    // The saved canvas carries its own annotations (an older canvas has none).
+    setArrows((cd.arrows || []).map(normalizeArrow));
     setSelectedId(null);
+    setSelectedArrowId(null);
     setEditingObjCaption(null);
     setEditingCaption(false);
     setShowLibrary(false);
@@ -1557,6 +1587,27 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         const factor = Math.max(0.3, Math.min(4, 1 + dxMm / figW));
         return { ...o, images: o.images.map((im, i) => i === imgIdx ? { ...im, scale: +(origScale * factor).toFixed(3) } : im) };
       }));
+      return;
+    }
+
+    // Dragging an ARROW annotation: the whole arrow (both ends follow), or ONE
+    // end. Positions are absolute (the snapshot of the ends is kept in the drag
+    // state), so a long drag cannot accumulate rounding.
+    if (type === 'arrowMove') {
+      const st = dragState.current;
+      setArrows(prev => prev.map(a => a.id !== id ? a : {
+        ...a,
+        x1: +(st.a1x + dxMm).toFixed(2), y1: +(st.a1y + dyMm).toFixed(2),
+        x2: +(st.a2x + dxMm).toFixed(2), y2: +(st.a2y + dyMm).toFixed(2)
+      }));
+      return;
+    }
+    if (type === 'arrowEnd') {
+      const st = dragState.current;
+      const grabbingStart = st.end === 'start';
+      setArrows(prev => prev.map(a => a.id !== id ? a : (grabbingStart
+        ? { ...a, x1: +(st.a1x + dxMm).toFixed(2), y1: +(st.a1y + dyMm).toFixed(2) }
+        : { ...a, x2: +(st.a2x + dxMm).toFixed(2), y2: +(st.a2y + dyMm).toFixed(2) })));
       return;
     }
 
@@ -1802,6 +1853,55 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     updateObj({ texts: (obj.texts || []).filter(tx => tx.id !== txId) });
   };
 
+  // ---- ARROW ANNOTATIONS ---------------------------------------------------
+  // One arrow = two ends in mm + how it is drawn (straight / curved, one head /
+  // double). The geometry lives in utils/figureArrows (arrowGeometry) so the
+  // canvas, the export and the tests all draw the same thing. An arrow is
+  // canvas-level: "+ Add arrow" drops a default one across the middle of the
+  // canvas, selected, and the user drags it / its end handles.
+  const addArrow = () => {
+    commitHistory();
+    const id = `arr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const a = newArrow(id, {
+      x1: +(canvasW * 0.4).toFixed(1), y1: +(canvasH * 0.5).toFixed(1),
+      x2: +(canvasW * 0.62).toFixed(1), y2: +(canvasH * 0.5).toFixed(1)
+    });
+    setArrows(prev => [...prev, a]);
+    // One selection at a time: the arrow panel replaces the panel properties.
+    setSelectedId(null);
+    setSelectedArrowId(id);
+  };
+  const updateArrow = (patch) => setArrows(prev => prev.map(a => a.id === selectedArrowId ? { ...a, ...patch } : a));
+  const removeArrow = (id = selectedArrowId) => {
+    if (!id) return;
+    commitHistory();
+    setArrows(prev => prev.filter(a => a.id !== id));
+    setSelectedArrowId(null);
+  };
+  // "Shadow every panel" (toolbar + properties panel): ONE click gives the whole
+  // figure the publication drop shadow, a second click takes it off again.
+  const panelsShadowed = (objects || []).some((o) => !!shadowSpec(o && o.shadow));
+  const togglePanelsShadow = () => {
+    if (!(objects || []).length) return;
+    commitHistory();
+    const on = !panelsShadowed;
+    setObjects(prev => prev.map(o => ({ ...o, shadow: on ? { ...DEFAULT_SHADOW } : null })));
+  };
+  // Drag an arrow (no `end`) or ONE of its ends ('start' | 'end').
+  const startArrowDrag = (e, id, end = null) => {
+    e.stopPropagation();
+    commitHistory();
+    const a = (arrows || []).find(x => x.id === id);
+    if (!a) return;
+    setSelectedId(null);
+    setSelectedArrowId(id);
+    dragState.current = end
+      ? { type: 'arrowEnd', id, end, startX: e.clientX, startY: e.clientY, a1x: a.x1, a1y: a.y1, a2x: a.x2, a2y: a.y2 }
+      : { type: 'arrowMove', id, startX: e.clientX, startY: e.clientY, a1x: a.x1, a1y: a.y1, a2x: a.x2, a2y: a.y2 };
+    window.addEventListener('mousemove', onDrag);
+    window.addEventListener('mouseup', endDrag);
+  };
+
   // ---- zoom fullscreen onto the selected object ----------------------------
   const zoomToObject = (id) => {
     if (!objects.some(o => o.id === id)) return;
@@ -2005,6 +2105,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       // commands of the properties panel would disappear while cropping).
       if (suppressSelectRef.current) { suppressSelectRef.current = false; return; }
       setSelectedId(null);
+      setSelectedArrowId(null);
     }}>
       {/* Grid lines (the cell divider guides between the panels) — switched off
           with the "Grid lines" checkbox, on the canvas and in every export. */}
@@ -2033,6 +2134,30 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             </clipPath>
           );
         }))}
+        {/* SHADOW filters — one <feDropShadow> per shadowed PANEL and per
+            shadowed ARROW, referenced from its group with filter="url(#…)".
+            The filter lives in the composition itself, so Export PNG, Save
+            canvas and Insert into project keep the shadow (they rasterize this
+            very SVG); the region is widened so a large offset / blur is not
+            clipped. Offsets and blur are in millimetres (userSpaceOnUse). */}
+        {objects.map(obj => {
+          const sp = shadowSpec(obj.shadow);
+          if (!sp) return null;
+          return (
+            <filter key={`fsp-${obj.id}`} id={shadowFilterId(obj.id)} x="-25%" y="-25%" width="150%" height="150%">
+              <feDropShadow dx={sp.dx} dy={sp.dy} stdDeviation={sp.blur} floodColor={sp.color} floodOpacity={sp.opacity} />
+            </filter>
+          );
+        })}
+        {arrows.map(a => {
+          const sp = shadowSpec(a.shadow);
+          if (!sp) return null;
+          return (
+            <filter key={`fsa-${a.id}`} id={shadowFilterId(a.id)} x="-25%" y="-25%" width="150%" height="150%">
+              <feDropShadow dx={sp.dx} dy={sp.dy} stdDeviation={sp.blur} floodColor={sp.color} floodOpacity={sp.opacity} />
+            </filter>
+          );
+        })}
       </defs>
       {objects.map(obj => {
         const isSelected = obj.id === selectedId;
@@ -2043,10 +2168,14 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         const oy = obj.y * cellH;
         const ow = obj.w * cellW;
         const oh = obj.h * cellH;
+        // Drop shadow of THIS panel (null when the panel has none) — the whole
+        // panel group below is wrapped in the filter when it is set.
+        const panelShadow = shadowSpec(obj.shadow);
 
         return (
           <g key={obj.id} onClick={(e) => {
             e.stopPropagation();
+            setSelectedArrowId(null);   // one selection at a time (arrow ↔ panel)
             setSelectedId(obj.id);
             // Selecting another object resets the active (draggable) figure.
             setActiveFig(prev => (prev && prev.objId === obj.id) ? prev : null);
@@ -2058,6 +2187,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
               addTextAt(obj, xMm, yMm);
             }
           }}>
+            {/* Panel frame + figure + letter + texts, wrapped in the panel's
+                drop shadow when it has one (screen AND export: the filter is
+                part of the composition, only the selection UI below is
+                screen-only). */}
+            <g filter={panelShadow ? `url(#${shadowFilterId(obj.id)})` : undefined}>
             {/* Panel frame. Its styling must NOT depend on the selection: the
                 exported PNG (Export PNG / Save canvas / Insert into project)
                 rasterizes this very SVG and only strips the elements tagged
@@ -2190,6 +2324,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                 >{tx.text}</text>
               );
             })}
+            </g>
+            {/* — end of the shadowed panel content — */}
 
             {isSelected && (
               <rect data-selection-ui="true" x={ox + ow - 2} y={oy + oh - 2} width={2} height={2} fill="#3b82f6" style={{ cursor: 'nwse-resize' }} onMouseDown={(e) => startResize(e, obj.id)} />
@@ -2245,6 +2381,45 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           </g>
         );
       })}
+      {/* ARROW ANNOTATIONS — drawn ON TOP of the panels (an arrow may point from
+          one panel to another) and BELOW the figure caption. The shaft and the
+          heads carry no `data-selection-ui`, so Export PNG, Save canvas and
+          Insert into project keep the arrow; only the two end handles are
+          screen-only. The geometry comes from arrowGeometry (utils/figureArrows),
+          which is also what the tests exercise. */}
+      {arrows.map(a => {
+        const g = arrowGeometry(a);
+        const sp = shadowSpec(a.shadow);
+        const isArrowsSelected = a.id === selectedArrowId;
+        return (
+          <g key={a.id}
+            filter={sp ? `url(#${shadowFilterId(a.id)})` : undefined}
+            onClick={(e) => { e.stopPropagation(); setSelectedId(null); setSelectedArrowId(a.id); }}
+            title="Arrow — drag it to move it, drag a blue end handle to aim it, or use “Arrow properties”">
+            <path d={g.path} fill="none" stroke={g.arrow.color} strokeWidth={g.arrow.width}
+              strokeLinecap="butt"
+              strokeDasharray={g.arrow.dash ? `${+(g.arrow.width * 3).toFixed(2)} ${+(g.arrow.width * 2).toFixed(2)}` : undefined} />
+            {g.heads.map((h, i) => (
+              <path key={`ah${i}`} d={arrowHeadPath(h.tip, h.dir, g.arrow.headSize)} fill={g.arrow.color} />
+            ))}
+            {/* Invisible but WIDE shaft: an arrow drawn as a hairline is almost
+                impossible to grab, so a transparent stroke takes the mouse. */}
+            <path d={g.path} fill="none" stroke="transparent" strokeWidth={Math.max(4, g.arrow.width * 3)}
+              pointerEvents="stroke" style={{ cursor: 'move' }}
+              onMouseDown={(e) => startArrowDrag(e, a.id)} />
+            {isArrowsSelected && (
+              <g data-selection-ui="true">
+                <circle cx={g.p0.x} cy={g.p0.y} r={1.6} fill="#3b82f6" stroke="white" strokeWidth={0.3}
+                  style={{ cursor: 'crosshair' }} onMouseDown={(e) => startArrowDrag(e, a.id, 'start')}
+                  title="Drag to move this end of the arrow" />
+                <circle cx={g.p2.x} cy={g.p2.y} r={1.6} fill="#3b82f6" stroke="white" strokeWidth={0.3}
+                  style={{ cursor: 'crosshair' }} onMouseDown={(e) => startArrowDrag(e, a.id, 'end')}
+                  title="Drag to move this end of the arrow (the head follows the tangent of the curve)" />
+              </g>
+            )}
+          </g>
+        );
+      })}
       {captionH > 0 && (
         <text x={canvasW / 2} y={canvasH + captionH - 4} fontSize={ptToMm(12)} fill="#1f2937" textAnchor="middle" fontWeight="bold"
           style={{ cursor: 'text', pointerEvents: 'auto' }}
@@ -2262,6 +2437,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const cropPanelOn = !!cropMode && !!selectedObj && cropMode.objId === selectedObj.id;
   const cropPanelRect = selectedObj && cropPanelIdx >= 0 ? cropOf(getObjImages(selectedObj)[cropPanelIdx]) : null;
   const cropPct = (v) => Math.round((Number(v) || 0) * 1000) / 10; // 0.825 → 82.5
+
+  // The selected ARROW annotation. A panel and an arrow are never selected at
+  // the same time — one properties panel is shown, for whichever the user
+  // clicked last.
+  const selectedArrow = (arrows || []).find((a) => a.id === selectedArrowId) || null;
 
   // Properties Panel Component (reused in normal and fullscreen)
   const PropertiesPanel = ({ isFloating = false }) => (
@@ -2437,6 +2617,23 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         </div>
       </div>
 
+      {/* DROP SHADOW of THIS panel — the same control block the arrows use, so
+          both write the same record and both are rendered by the same
+          <feDropShadow> filter. “Same shadow on every panel” applies it to the
+          whole figure in one click (the toolbar has the same shortcut). */}
+      <div className="flex flex-col gap-2 border-t border-slate-200 pt-3">
+        <h5 className="text-xs font-bold text-slate-500 uppercase">Shadow</h5>
+        <ShadowControls value={shadowSpec(selectedObj.shadow)} onChange={(v) => updateObj({ shadow: v })}
+          hint="The whole panel (frame, figure, letter, texts) casts a drop shadow — in the composition and in every export." />
+        <div className="flex">
+          <button type="button" onClick={togglePanelsShadow}
+            className="bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold px-2.5 py-1 rounded text-[10px]"
+            title="Give EVERY panel of the figure the same shadow — click again to take it off all of them">
+            🌓 {panelsShadowed ? 'Remove the shadow from every panel' : 'Same shadow on every panel'}
+          </button>
+        </div>
+      </div>
+
       <div className="flex flex-col gap-2 border-t border-slate-200 pt-3">
         <div className="flex items-center justify-between">
           <h5 className="text-xs font-bold text-slate-500 uppercase">Free Text (anywhere in the object)</h5>
@@ -2513,7 +2710,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                     title="Create a NEW image — a new figure, not a wipe: the editor starts on a blank canvas with one empty panel (A) ready for its first capture, and the next “💾 Save canvas” adds a NEW image to the image library. The figure you were working on stays in the library exactly as it was last saved (its “↩ Load” brings it back). The canvas format — size, grid, borders, aspect ratio, letter size — is kept.">
               ➕ New image
             </button>
-            <button onClick={() => { if(window.confirm('Clear the entire canvas?')) { commitHistory(); setObjects([]); setSelectedId(null); setCanvasEntries({}); setCanvasLabel(''); } }} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100">Clear Canvas</button>
+            <button onClick={() => { if(window.confirm('Clear the entire canvas?')) { commitHistory(); setObjects([]); setArrows([]); setSelectedId(null); setSelectedArrowId(null); setCanvasEntries({}); setCanvasLabel(''); } }} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100">Clear Canvas</button>
           </div>
         </div>
 
@@ -2585,6 +2782,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             <span className="border border-slate-200 rounded p-1 text-xs bg-slate-50 text-slate-600 truncate hover:border-blue-400 hover:bg-blue-50 cursor-text" title={effectiveGlobalCaption} onClick={() => { setSelectedId(null); setEditingCaption(true); }}>{effectiveGlobalCaption || 'Merges the object sub-captions (A: …, B: …)'}</span>
           </label>
           <button onClick={addObject} title="Add a panel — it takes the FIRST FREE cell of the grid, so it never lands on a panel that is already there (a full grid is reported instead of covering a figure)." className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">+ Add Object</button>
+          <button onClick={addArrow} title="Add an ARROW annotation on top of the panels — drag it to place it, drag a blue end handle to aim it; straight or curved, one head or heads at BOTH ends, with its own colour and drop shadow (“Arrow properties”)." className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">↗ Add arrow{arrows.length ? ` (${arrows.length})` : ''}</button>
+          <button onClick={togglePanelsShadow} disabled={!objects.length} title="Drop shadow on every panel of the figure in one click — click again to take it off. One panel at a time: the “Shadow” block of its properties." className={`font-bold px-3 py-1.5 rounded-lg text-xs border disabled:opacity-40 ${panelsShadowed ? 'bg-slate-800 text-white border-slate-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}`}>🌓 Shadow panels</button>
           <button onClick={undo} disabled={!undoStack.current.length || histTick < 0} className="bg-slate-100 border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-200 disabled:opacity-40" title="Undo last change (Ctrl+Z)">↩ Undo</button>
           <button onClick={() => selectedId && zoomToObject(selectedId)} disabled={!selectedId} title={selectedId ? 'Zoom fullscreen on the selected object' : 'Select an object first'}
             className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold px-3 py-1.5 rounded-lg text-xs">⛶ Zoom Object</button>
@@ -2687,7 +2886,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         </div>
 
         {/* Properties Panel (Normal View) */}
+        {/* Properties Panel (Normal View) — the selected PANEL, or the selected
+            ARROW annotation. The two are never selected at the same time: one
+            properties panel is shown, for whatever the user clicked last. */}
         {selectedObj && <PropertiesPanel />}
+        {!selectedObj && selectedArrow && (
+          <ArrowPropertiesPanel arrow={selectedArrow} onChange={updateArrow} onDelete={() => removeArrow()} />
+        )}
       </div>
 
       {/* Inline text editor — type directly on the canvas at the placed position */}
@@ -2797,6 +3002,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
 
               <div className="flex flex-wrap gap-2">
                  <button onClick={addObject} title="Add a panel — it takes the FIRST FREE cell of the grid, so it never lands on a panel that is already there (a full grid is reported instead of covering a figure)." className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">+ Add Object</button>
+                 <button onClick={addArrow} title="Add an ARROW annotation on top of the panels — drag it to place it, drag a blue end handle to aim it; straight or curved, one head or heads at BOTH ends, with its own colour and drop shadow (“Arrow properties”)." className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">↗ Add arrow{arrows.length ? ` (${arrows.length})` : ''}</button>
+                 <button onClick={togglePanelsShadow} disabled={!objects.length} title="Drop shadow on every panel of the figure in one click — click again to take it off." className={`font-bold px-3 py-1.5 rounded-lg text-xs border disabled:opacity-40 ${panelsShadowed ? 'bg-slate-800 text-white border-slate-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}`}>🌓 Shadow panels</button>
                  <button onClick={undo} disabled={!undoStack.current.length || histTick < 0} className="bg-slate-100 border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-200 disabled:opacity-40" title="Undo last change (Ctrl+Z)">↩ Undo</button>
                  <button onClick={() => { setPickMode('replace'); setShowLibrary(true); }}
                    title="Open the image library — browse or upload new images from your computer"
@@ -2830,7 +3037,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           {/* Canvas Area — a REAL scrollable sheet: the inner box is canvas × zoom
               big, so the browser draws its own scrollbars (and the wheel works)
               instead of a transform that leaves nothing to scroll. */}
-          <div ref={fsAreaRef} className="flex-1 min-h-0 overflow-auto relative bg-slate-200 p-8" onClick={() => setSelectedId(null)}>
+          <div ref={fsAreaRef} className="flex-1 min-h-0 overflow-auto relative bg-slate-200 p-8" onClick={() => { setSelectedId(null); setSelectedArrowId(null); }}>
             <div
               style={{
                 width: `calc(${canvasW}mm * ${zoom})`,
@@ -2852,10 +3059,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             </div>
           </div>
 
-          {/* Floating Properties Panel */}
-          {selectedObj && (
+          {/* Floating Properties Panel — of the selected panel, or of the
+              selected arrow annotation. */}
+          {(selectedObj || selectedArrow) && (
             <div className="absolute right-4 bottom-4 md:top-16 md:bottom-4 w-80 z-20 max-h-[55vh] overflow-y-auto custom-scrollbar md:max-h-none md:overflow-visible">
-              <PropertiesPanel isFloating />
+              {selectedObj
+                ? <PropertiesPanel isFloating />
+                : <ArrowPropertiesPanel arrow={selectedArrow} isFloating onChange={updateArrow} onDelete={() => removeArrow()} />}
             </div>
           )}
         </div>

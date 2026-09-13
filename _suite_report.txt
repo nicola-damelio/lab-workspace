@@ -1,6 +1,7 @@
 OK   _axis_aspect_test.cjs  →  ✅ 123/123 checks passed
 OK   _axis_fit_test.cjs  →  ✅ 476/476 checks passed
 OK   _break_test.mjs  →  33/33 checks passed
+OK   _builder_arrows_test.mjs  →  │ (index) │ name                                                                    │ ok   │ error │ | ✅ 106/106 checks passed
 OK   _builder_crop_test.cjs  →  ✅ 61/61 checks passed
 OK   _builder_letters_test.cjs  →  ✅ 56/56 checks passed
 OK   _builder_link_test.cjs  →  │ 39      │ '[App] openImageBuilder is passed to the project page: operatorNames={operatorNames} openImageBuild…'       │ 'true'            │ 'true'  
@@ -27,4 +28,4 @@ OK   _split_test.cjs  →  (no output)
 OK   _src_split_test.cjs  →  (no output)
 OK   _star_group_test.cjs  →  ✅ 33/33 checks passed
 OK   _view_scroll_memory_test.cjs  →  ✅ 41/41 checks passed
-total 29, failed 0
+total 30, failed 0
