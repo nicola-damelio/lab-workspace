@@ -566,6 +566,18 @@ export const ProjectDetailModule = ({
     patchFigures(sec, sectionFigures(sec).map((f) => (f.id === figId ? { ...f, ...patch } : f)));
   const removeSectionFigure = (sec, figId) =>
     patchFigures(sec, sectionFigures(sec).filter((f) => f.id !== figId));
+  // Figures inserted from the Image Builder (“📤 Insert into project…”) carry a
+  // link back into the editor: `canvasId` is the canvas of the image library
+  // holding that composition and `builderProjectId` is the project whose library
+  // it lives in (the builder reads that scope when it loads the canvas). Opening
+  // it loads the panels, captions, grid and canvas size, and “💾 Save canvas”
+  // updates that same entry — so the figure always reopens the latest version.
+  // Figures inserted before the link existed have no canvasId: they still open
+  // the Builder (with this project selected), which resumes its state.
+  const openBuilderForFigure = (fig) => {
+    if (typeof openImageBuilder !== 'function') return;
+    openImageBuilder(fig.builderProjectId || project.id, fig.canvasId || null);
+  };
   // Readable section name used inside file names (full-path naming).
   const sectionLabelOf = (sec) => ({
     background: 'Background',
@@ -917,12 +929,28 @@ export const ProjectDetailModule = ({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {figures.map((fig) => (
                 <div key={fig.id} className="bg-slate-50 border border-slate-200 rounded-xl p-3 shadow-sm flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <span className="text-xs font-bold text-slate-500 flex items-center gap-1.5">
-                      {fig.isSlide ? <span className="text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-1.5 py-0.5">🖼 slide</span> : <span>Figure</span>}
+                      {fig.isSlide
+                        ? <span className="text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-1.5 py-0.5">🖼 slide</span>
+                        : fig.source === 'image-builder'
+                          ? <span className="text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5" title="Composed in the Image Builder — this figure keeps its link back to that canvas">🖼 builder</span>
+                          : <span>Figure</span>}
                     </span>
-                    <button onClick={() => removeSectionFigure(id, fig.id)}
-                            className="bg-red-50 hover:bg-red-100 text-red-500 rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold border border-red-200">×</button>
+                    <span className="flex items-center gap-1.5 ml-auto">
+                      {fig.source === 'image-builder' && typeof openImageBuilder === 'function' && (
+                        <button type="button" onClick={() => openBuilderForFigure(fig)}
+                                className="text-[10px] font-bold rounded-lg bg-amber-500 text-white hover:bg-amber-600 px-2 py-1"
+                                title={fig.canvasId
+                                  ? `Reopen ${fig.canvasLabel ? `“${fig.canvasLabel}”` : 'this composition'} in the Image Builder (this project): the editor loads its panels, captions, grid and canvas size — saving the canvas again updates this same entry`
+                                  : 'Open the Image Builder for this project to modify the composition this figure was made from'}>
+                          ✏️ Modify in Image Builder
+                        </button>
+                      )}
+                      <button onClick={() => removeSectionFigure(id, fig.id)}
+                              className="bg-red-50 hover:bg-red-100 text-red-500 rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold border border-red-200 shrink-0"
+                              title="Remove this figure from the section">×</button>
+                    </span>
                   </div>
                   <input type="text" value={fig.url} onChange={(e) => patchSectionFigure(id, fig.id, { url: e.target.value })}
                          placeholder="Paste image URL here (Google Drive, Dropbox, etc.)"
@@ -1543,7 +1571,9 @@ export const ProjectDetailModule = ({
             Figures composed in the <span className="font-bold">Image Builder</span> (sidebar → 🖼️ Image Builder) while
             this project is open and stored with “💾 Save canvas”. Every canvas below is a
             <span className="font-bold"> link</span>: “Open in Image Builder” reloads its panels, captions and grid into
-            the editor, and saving it again updates this same entry.
+            the editor, and saving it again updates this same entry. A composition inserted straight into a section
+            (“📤 Insert into project…”) is stored here too, and its figure in that section shows the same link as
+            “✏️ Modify in Image Builder”.
           </p>
           {savedCanvases.length === 0 ? (
             <div className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-5 text-center">

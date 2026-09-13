@@ -134,6 +134,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const [insertOpen, setInsertOpen] = useState(false);        // "insert into project section" modal
   const [insertTarget, setInsertTarget] = useState({ projectId: projectId || '', section: 'background' });
   const [insertMsg, setInsertMsg] = useState('');
+  // Inserted figures store the saved canvas they were made from, so the project
+  // page can show a "✏️ Modify in Image Builder" link back to this composition.
+  const [insertLink, setInsertLink] = useState(true);
 
   const allProjects = loadProjects();
   const activeLibProjectId = libProjectId || projectId; // project library scope currently browsed
@@ -719,6 +722,45 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     setLibVersion((v) => v + 1);
   };
 
+  // Publish the CURRENT composition as a canvas entry of the image library.
+  // `targetProjectId` decides the scope: that project's library (the one the
+  // project page reads for its "🖼 Saved canvases" list AND for the figures
+  // inserted into its sections), or the common library when null.
+  // When the target scope is the one this builder is working in, the entry this
+  // canvas came from is UPDATED in place (`updateId`): its id never changes, so
+  // the project-page links keep working and the library does not fill up with
+  // duplicates of the same composition. Returns { entry, drive, updated } or null.
+  // Shared by "💾 Save canvas" and by "📤 Insert into project…" (which stores the
+  // returned entry id on the inserted figure → "✏️ Modify in Image Builder").
+  const publishCanvas = async ({ label, targetProjectId = projectId || null, dataUrl = null }) => {
+    const img = dataUrl || await renderToDataUrl(Math.max(3, 1800 / Math.max(1, canvasW)));
+    if (!img) return null;
+    const target = targetProjectId || null;
+    const sameScope = target === (projectId || null);
+    const driveProject = target ? (allProjects.find((p) => p.id === target) || null) : null;
+    const { entry, drive, updated } = await publishLibraryFigure({
+      scope: target ? 'project' : 'common',
+      projectId: target,
+      projectName: driveProject ? String(driveProject.name || '') : '',
+      dataUrl: img,
+      label: String(label || 'Canvas').trim(),
+      src: null,
+      updateId: sameScope ? canvasLibId : null,
+      canvasData: {
+        canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, globalCaption,
+        objects: (objects || []).map(thumbnailsOf)
+      }
+    });
+    if (!entry) return null;
+    if (sameScope) {
+      // This canvas IS that library entry now (updates + project-page links).
+      setCanvasLibId(entry.id);
+      setCanvasLabel(entry.label || label);
+    }
+    setLibVersion((v) => v + 1);
+    return { entry, drive, updated };
+  };
+
   // Save the WHOLE canvas (composition) as an item in the image library (Project
   // tab when inside a project, Dataset tab otherwise). The rendered image is
   // uploaded to Google Drive (same <project>/images path as every other figure);
@@ -738,36 +780,16 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     );
     if (!label || !label.trim()) return;
     setLibMsg('📤 Saving canvas…');
-    const driveProject = projectId ? (allProjects.find((p) => p.id === projectId) || null) : null;
-    const driveProjectName = driveProject ? String(driveProject.name || '') : '';
+    const driveProjectName = projectId ? String(((allProjects.find((p) => p.id === projectId) || {}).name) || '') : '';
     try {
-      // `updateId` replaces the entry this canvas was opened from instead of
-      // adding a copy — the project page links to that entry, so its id must
-      // never change and the library must not fill up with duplicates.
-      const { entry, drive, updated } = await publishLibraryFigure({
-        scope: projectId ? 'project' : 'common',
-        projectId: projectId || null,
-        projectName: driveProjectName,
-        dataUrl,
-        label: label.trim(),
-        src: null,
-        updateId: canvasLibId,
-        canvasData: {
-          canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, globalCaption,
-          objects: (objects || []).map(thumbnailsOf)
-        }
-      });
-      if (!entry) { window.alert('Could not save the canvas in the library.'); return; }
-      // This canvas IS that library entry now (updates + project-page link).
-      setCanvasLibId(entry.id);
-      setCanvasLabel(entry.label || label.trim());
-      setLibVersion((v) => v + 1);
+      const pub = await publishCanvas({ label: label.trim(), dataUrl });
+      if (!pub) { window.alert('Could not save the canvas in the library.'); return; }
       setLibraryTab(projectId ? 'project' : 'common');
       setShowLibrary(true);
       const folderLabel = driveProjectName ? `projects/${driveProjectName.trim()}/images` : 'projects/_unassigned/images';
-      const what = updated ? 'updated' : 'saved';
+      const what = pub.updated ? 'updated' : 'saved';
       const linked = projectId ? ' · linked on the project page (🖼 Saved canvases)' : '';
-      if (drive && drive.id) setLibMsg(`✅ Canvas ${what} in the image library${linked} · stored on your cloud (${folderLabel})`);
+      if (pub.drive && pub.drive.id) setLibMsg(`✅ Canvas ${what} in the image library${linked} · stored on your cloud (${folderLabel})`);
       else if (!localStorageHealthy()) setLibMsg(`✅ Canvas ${what} in the image library${linked} · browser storage full — connect Google Drive or Nextcloud so it is kept there (works this session)`);
       else setLibMsg(`✅ Canvas ${what} in the image library${linked} · cloud storage not connected — browser copy only`);
     } catch (err) {
@@ -1600,6 +1622,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             title="Open the image library — browse images or upload new ones from your computer (Project or Dataset library)"
             className="bg-teal-600 hover:bg-teal-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">🖼 Image Library</button>
           <button onClick={() => { setInsertTarget({ projectId: projectId || (allProjects[0] && allProjects[0].id) || '', section: 'background' }); setInsertMsg(''); setInsertOpen(true); }}
+            title="Render this composition into a project section (Background / Discussion / Conclusions). The inserted figure keeps a link back to this canvas, so the project page can reopen it here with “✏️ Modify in Image Builder”."
             className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">📤 Insert into project…</button>
         </div>
 
@@ -1878,6 +1901,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Caption (written at the bottom of the image)
               <span className="border border-slate-200 rounded px-2 py-1.5 text-xs bg-slate-50 text-slate-600">{effectiveGlobalCaption || '— click the caption at the bottom of the canvas to write it —'}</span>
             </label>
+            <label className="text-[10px] font-bold text-slate-500 flex items-start gap-2 cursor-pointer"
+                   title="Saves this composition as a canvas of that project's image library and stores that link on the inserted figure, so the project page can show “✏️ Modify in Image Builder” and reopen this very composition (re-saving it updates the same library entry).">
+              <input type="checkbox" className="mt-0.5" checked={insertLink} onChange={(e) => setInsertLink(e.target.checked)} />
+              <span>🔗 Link the figure back to this canvas — the project page then offers “✏️ Modify in Image Builder” on it (the canvas is saved in that project's image library)</span>
+            </label>
             {insertMsg && <p className={`text-xs font-bold ${insertMsg.startsWith('✅') ? 'text-green-600' : 'text-red-500'}`}>{insertMsg}</p>}
             <div className="flex justify-end gap-2">
               <button onClick={() => setInsertOpen(false)} className="text-xs font-bold px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50">Cancel</button>
@@ -1890,6 +1918,25 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                   const prj = projects.find((p) => p.id === insertTarget.projectId);
                   if (!prj) { setInsertMsg('⚠️ Project not found.'); return; }
                   const sec = insertTarget.section || 'background';
+                  // The link back into this editor: the composition is published
+                  // as a canvas of the TARGET project's image library (the one the
+                  // project page reads) and the figure stores that entry id, so
+                  // the page can offer “✏️ Modify in Image Builder”. Re-saving the
+                  // canvas updates this same entry — the link never goes stale.
+                  let link = null;
+                  if (insertLink) {
+                    try {
+                      const label = canvasLabel || (effectiveGlobalCaption && String(effectiveGlobalCaption).trim()
+                        ? `Figure — ${String(effectiveGlobalCaption).trim().slice(0, 60)}`
+                        : `Canvas ${new Date().toLocaleDateString()}`);
+                      const pub = await publishCanvas({ label, targetProjectId: prj.id, dataUrl });
+                      if (pub && pub.entry) {
+                        link = { canvasId: pub.entry.id, builderProjectId: prj.id, canvasLabel: pub.entry.label || label };
+                      }
+                    } catch (err) {
+                      console.warn('Canvas link failed:', err && err.message);
+                    }
+                  }
                   prj.figures = prj.figures || {};
                   prj.figures[sec] = prj.figures[sec] || [];
                   prj.figures[sec].push({
@@ -1897,10 +1944,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                     url: dataUrl,
                     caption: effectiveGlobalCaption || `Image Builder composition (${new Date().toLocaleDateString()})`,
                     addedAt: new Date().toISOString(),
-                    source: 'image-builder'
+                    source: 'image-builder',
+                    ...(link || {})
                   });
                   saveProjects(projects);
-                  setInsertMsg(`✅ Inserted into "${prj.name}" → ${sec}.`);
+                  setInsertMsg(link
+                    ? `✅ Inserted into "${prj.name}" → ${sec}. 🔗 The figure is linked: on the project page use “✏️ Modify in Image Builder” to reopen this composition.`
+                    : `✅ Inserted into "${prj.name}" → ${sec}.`);
                 }}
                 className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-4 py-1.5 rounded-lg text-xs"
               >Insert</button>
