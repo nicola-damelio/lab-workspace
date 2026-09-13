@@ -4,11 +4,16 @@ import {
   FIGURE_FONT_STEPS, FIGURE_ANGLE_MIN, FIGURE_ANGLE_MAX,
   FIGURE_ASPECT_MIN, FIGURE_ASPECT_MAX, FIGURE_ASPECT_STEPS,
   FIGURE_DECIMALS_STEPS, FIGURE_KINDS, FIGURE_KIND_FIELDS, FIGURE_KIND_LABELS,
-  figureAspectSummary,
-  figureStyleTag, writeFigureStyle
+  FIGURE_AXIS_BASES, FIGURE_AXIS_BASE_LABELS, FIGURE_AXIS_HINTS,
+  FIGURE_STYLE_PRESET_MAX,
+  figureAspectSummary, figureAxisFormatField, figureAxisFormatSummary,
+  figureStyleTag, writeFigureStyle,
+  figureStyleConfigForStyle, figureStyleConfigName, figureStyleConfigSummary,
+  saveFigureStyleConfig, renameFigureStyleConfig, deleteFigureStyleConfig,
+  applyFigureStyleConfig, exportFigureStyleConfigs, importFigureStyleConfigs
 } from '../utils/figureStyle';
 import { FIGURE_FONT_CHOICES, DEFAULT_CHART_ASPECT_WIDE } from '../utils/chartStyle';
-import { useFigureStyleProfile } from './FigureStyleTools';
+import { useFigureStyleProfile, useFigureStyleConfigs } from './FigureStyleTools';
 
 /* =========================================================================
    src/components/FigureStylePanel.jsx
@@ -23,13 +28,19 @@ import { useFigureStyleProfile } from './FigureStyleTools';
      • peak / data labels           simLabelFontSize
    …plus the FONT FAMILY every one of them is drawn with.
 
-   And the two commands a figure of a paper always needs next to the sizes:
+   And the commands a figure of a paper always needs next to the sizes:
      • the axis titles in BOLD / ITALIC   (axisTitleBold, axisTitleItalic)
-     • the axis numbers in EXPONENTIAL notation and with a fixed NUMBER OF
-       DECIMALS                            (tickSci, tickDecimals)
+     • the NUMBER OF DECIMALS of the axis numbers (tickDecimals — shared by the
+       X and the Y axis of every chart)
+     • the EXPONENTIAL notation of the axis numbers and the LOGARITHMIC scale of
+       an axis — PER AXIS (X / Y) and PER KIND of figure: the sixteen knobs of
+       FIGURE_AXIS_FORMAT_FIELDS (`xSci` / `ySci` / `xLog` / `yLog` for the
+       graphs, plus the …Spectra / …Atom / …Residue variants), each one shown
+       as its own checkbox under the kind of figure it belongs to.
    They are the same commands as the 🎨 “Graphical Parameters” panel of a single
-   chart (X/Y label style, decimals, scientific notation) — set once here and
-   pushed into every chart by the 🎨 button of the experiment page.
+   chart (X/Y label style, decimals, scientific notation, Log X / Log Y axis) —
+   set once here and pushed into every chart by the 🎨 button of the experiment
+   page.
 
    The plot-box RATIO (x-axis length : y-axis length) is the fifth knob — and it
    comes in FOUR flavours, one per KIND of figure (see FIGURE_KINDS):
@@ -43,6 +54,12 @@ import { useFigureStyleProfile } from './FigureStyleTools';
    on an experiment page by the 🎨 button of the ChartStarLayer — "apply the
    style BEFORE the capture", which is the only way a figure captured here and a
    figure captured on another page end up with the same characters.
+
+   ONE profile at a time is not enough, though: a set of figures often needs
+   characters far bigger than the ones used to read the app. The box at the top
+   therefore SAVES named configurations (`labFigureStyles`, see
+   saveFigureStyleConfig), each one a COMPLETE style, so the “Figure — A4” style
+   and the everyday one live side by side and switching is one click.
    ========================================================================= */
 
 // One hint per KIND of figure: what the ratio lands on, and what 0 means.
@@ -125,13 +142,68 @@ const Row = ({ label, hint, value, min, max, step = 1, unit = 'px', onChange, qu
 };
 
 
+/* One saved configuration: its name, what it changes and the four commands of
+   the list (Use · ⤓ update · ✎ rename · 🗑 delete). The renaming happens IN
+   PLACE, with a small draft — never through a browser prompt dialog. */
+const ROW_BTN = 'text-[10px] font-bold px-1.5 py-0.5 rounded border border-slate-300 bg-white text-slate-600 hover:bg-indigo-50 hover:text-indigo-700';
+
+const ConfigRow = ({ config, applied, onUse, onUpdate, onRename, onDelete }) => {
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState(config.name);
+  React.useEffect(() => { setDraft(config.name); setEditing(false); }, [config.id, config.name]);
+  const commit = () => { onRename(config.id, draft); setEditing(false); };
+  return (
+    <div className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 ${
+      applied ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`}>
+      {editing ? (
+        <>
+          <input
+            type="text" autoFocus value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commit();
+              if (e.key === 'Escape') { setDraft(config.name); setEditing(false); }
+            }}
+            className="flex-1 min-w-0 border border-slate-300 rounded-md px-2 py-0.5 text-[11px] outline-none focus:border-indigo-500"
+          />
+          <button type="button" onClick={commit} title="Rename" className={ROW_BTN}>✔</button>
+          <button type="button" onClick={() => { setDraft(config.name); setEditing(false); }} title="Cancel" className={ROW_BTN}>✕</button>
+        </>
+      ) : (
+        <>
+          <div className="flex-1 min-w-0">
+            <div className="text-[11px] font-bold text-slate-700 truncate">
+              {config.name}{applied ? <span className="text-emerald-600"> ✓ applied</span> : null}
+            </div>
+            <div className="text-[10px] text-slate-500 truncate">{figureStyleConfigSummary(config.style)}</div>
+            <div className="text-[10px] font-mono text-slate-400 truncate">{figureStyleTag(config.style)}</div>
+          </div>
+          <button
+            type="button" onClick={() => onUse(config.id)}
+            title="Make this configuration the profile of the whole app"
+            className="text-[10px] font-bold px-2 py-0.5 rounded border border-indigo-300 bg-white text-indigo-700 hover:bg-indigo-50"
+          >
+            Use
+          </button>
+          <button type="button" onClick={() => onUpdate(config.id)} className={ROW_BTN}
+            title="Save the settings currently set above over this configuration">⤓</button>
+          <button type="button" onClick={() => setEditing(true)} className={ROW_BTN} title="Rename">✎</button>
+          <button type="button" onClick={() => onDelete(config.id)} className={ROW_BTN} title="Delete">🗑</button>
+        </>
+      )}
+    </div>
+  );
+};
+
 // The axis-number sample of the preview: the decimals / exponential commands
 // applied to one value, exactly the way cfgTickFormatter does it on a real axis
-// ('' = automatic → the plain number, as the charts render it today).
+// ('' = automatic → the plain number, as the charts render it today). The
+// exponential switch shown is the one of the X axis of the GRAPHS (the
+// historical `tickSci` knob, now xSci — see FIGURE_AXIS_FORMAT_FIELDS).
 const previewTick = (v, profile) => {
   const n = Number(v);
   if (!Number.isFinite(n)) return String(v);
-  if (profile.tickSci) return n.toExponential(profile.tickDecimals === '' ? 2 : Number(profile.tickDecimals));
+  if (profile.xSci) return n.toExponential(profile.tickDecimals === '' ? 2 : Number(profile.tickDecimals));
   if (profile.tickDecimals !== '') return n.toFixed(Number(profile.tickDecimals));
   return String(n);
 };
@@ -140,6 +212,56 @@ export const FigureStylePanel = () => {
   const profile = useFigureStyleProfile();
   const set = (patch) => writeFigureStyle({ ...profile, ...patch });
   const family = profile.fontFamily;
+
+  // ---- the saved configurations (see utils/figureStyle) --------------------
+  const configs = useFigureStyleConfigs();
+  const applied = figureStyleConfigForStyle(profile);
+  const [configName, setConfigName] = React.useState('');
+  const [notice, setNotice] = React.useState(null);
+  const [backup, setBackup] = React.useState('');
+
+  const saveConfig = () => {
+    const res = saveFigureStyleConfig(configName, profile);
+    setConfigName('');
+    setNotice(`💾 “${res.config.name}” ${res.replaced ? 'updated' : 'saved'}${res.dropped
+      ? ` — the oldest ${res.dropped} configuration was dropped (the list keeps ${FIGURE_STYLE_PRESET_MAX})` : ''}`);
+  };
+  const useConfig = (id) => {
+    const res = applyFigureStyleConfig(id);
+    setNotice(res
+      ? `↔ “${res.config.name}” is now the profile (${res.tag}) — press 🎨 Figure style on an experiment page to push it into its figures`
+      : '↔ That configuration no longer exists');
+  };
+  const updateConfig = (id) => {
+    const row = configs.find((c) => c.id === id);
+    const res = row ? saveFigureStyleConfig(row.name, profile) : null;
+    setNotice(res ? `⤓ “${res.config.name}” updated with the settings above` : '⤓ That configuration no longer exists');
+  };
+  const renameConfig = (id, name) => {
+    const renamed = renameFigureStyleConfig(id, name);
+    setNotice(renamed
+      ? `✎ Renamed to “${renamed.name}”`
+      : '✎ Nothing renamed — the name is empty, or another configuration already uses it');
+  };
+  const deleteConfig = (id) => {
+    const gone = deleteFigureStyleConfig(id);
+    setNotice(gone ? `🗑 “${gone.name}” deleted` : '🗑 That configuration no longer exists');
+  };
+  const showBackup = () => { const text = exportFigureStyleConfigs(); setBackup(text); return text; };
+  const copyBackup = () => {
+    const text = showBackup();
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(text);
+      setNotice('⧉ The backup is in the clipboard');
+    } catch { setNotice('⧉ Copy the text of the box below — the clipboard is unavailable'); }
+  };
+  const doImport = () => {
+    const res = importFigureStyleConfigs(backup);
+    setNotice(res.error
+      ? '⇩ That is not a configuration backup (invalid JSON) — nothing was changed'
+      : `⇩ Imported ${res.added} configuration${res.added === 1 ? '' : 's'}`
+        + `${res.replaced ? `, ${res.replaced} replaced` : ''}${res.skipped ? `, ${res.skipped} skipped (no profile in them)` : ''}`);
+  };
 
   return (
     <div className="flex flex-col gap-3">
@@ -167,6 +289,82 @@ export const FigureStylePanel = () => {
           ↺ Reset
         </button>
         <span className="text-[10px] font-mono text-slate-400">tag: {figureStyleTag(profile)}</span>
+      </div>
+
+      {/* ---- the saved configurations ------------------------------------- */}
+      <div className="bg-white border border-slate-200 rounded-lg p-3 flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-xs font-bold text-slate-700">💾 My saved configurations</div>
+          <span className="text-[10px] text-slate-400">{configs.length} / {FIGURE_STYLE_PRESET_MAX} saved</span>
+        </div>
+        <div className="text-[10px] text-slate-500 leading-snug">
+          A configuration is a COMPLETE style — the four character sizes, the axis-title style, the decimals,
+          the per-axis exponential / log switches and the four plot-box ratios. Save the one a set of figures
+          needs (“Figure — A4”), keep the everyday one, and switch between them in one click: <b>Use</b> makes
+          a configuration the profile of the whole app — the 🎨 Figure style button of an experiment page then
+          pushes it into the figures of that page. Saving under the name of an existing configuration UPDATES it.
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="text" value={configName}
+            onChange={(e) => setConfigName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') saveConfig(); }}
+            placeholder={`Name — default: ${figureStyleConfigName(profile)}`}
+            className="flex-1 min-w-[12rem] border border-slate-300 rounded-md px-2 py-1 text-[11px] outline-none focus:border-indigo-500"
+          />
+          <button
+            type="button" onClick={saveConfig}
+            className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white"
+          >
+            💾 Save the current settings
+          </button>
+          {applied ? (
+            <button
+              type="button" onClick={() => updateConfig(applied.id)}
+              title={`Save the settings above over “${applied.name}”`}
+              className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50"
+            >
+              ⤓ Update “{applied.name}”
+            </button>
+          ) : null}
+        </div>
+        {notice ? <div className="text-[10px] font-bold text-slate-500 leading-snug">{notice}</div> : null}
+        {configs.length ? (
+          <div className="flex flex-col gap-1 max-h-72 overflow-y-auto pr-0.5">
+            {configs.map((c) => (
+              <ConfigRow
+                key={c.id} config={c} applied={!!applied && applied.id === c.id}
+                onUse={useConfig} onUpdate={updateConfig} onRename={renameConfig} onDelete={deleteConfig}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="text-[10px] italic text-slate-400 leading-snug">
+            Nothing saved yet — put the sizes, the axis switches and the ratios above at the values a set of
+            figures needs, type a name and press 💾. You can then come back to your everyday settings in one
+            click, and back to the figure style just as fast.
+          </div>
+        )}
+        <details className="text-[10px] text-slate-500">
+          <summary className="cursor-pointer font-bold">⇄ Backup / move these configurations to another browser</summary>
+          <div className="mt-2 flex flex-col gap-1">
+            <textarea
+              value={backup} onChange={(e) => setBackup(e.target.value)} rows={3}
+              placeholder="[ { name, style, savedAt } … ] — paste a backup here and press ⇩ Import"
+              className="w-full border border-slate-300 rounded-md px-2 py-1 text-[10px] font-mono outline-none focus:border-indigo-500"
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={showBackup} className={ROW_BTN}>⇪ Show the backup here</button>
+              <button type="button" onClick={copyBackup} className={ROW_BTN}>⧉ Copy</button>
+              <button type="button" onClick={doImport} className={ROW_BTN}>⇩ Import</button>
+            </div>
+            <div className="text-[10px] text-slate-400 leading-snug">
+              An import is a merge: a configuration whose name already exists is REPLACED by the imported one,
+              the others are added, so importing the same backup twice changes nothing. The configurations live
+              in this browser only (like the profile), hence the backup.
+            </div>
+          </div>
+        </details>
       </div>
 
       {/* ---- font family -------------------------------------------------- */}
@@ -230,7 +428,7 @@ export const FigureStylePanel = () => {
       />
       {/* ---- axis titles & axis numbers ----------------------------------- */}
       <div className="bg-white border border-slate-200 rounded-lg p-3 flex flex-col gap-3">
-        <div className="text-[10px] font-black text-slate-400 uppercase">Axis titles &amp; axis numbers — style and format</div>
+        <div className="text-[10px] font-black text-slate-400 uppercase">Axis titles &amp; axis numbers — style, format and scale</div>
 
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
           <label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer">
@@ -249,18 +447,10 @@ export const FigureStylePanel = () => {
             />
             Axis titles in <i>italic</i>
           </label>
-          <label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer">
-            <input
-              type="checkbox" checked={profile.tickSci}
-              onChange={(e) => set({ tickSci: e.target.checked })}
-              className="w-3.5 h-3.5 accent-indigo-600"
-            />
-            Axis numbers in exponential notation (1.23 × 10⁴)
-          </label>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-bold text-slate-600">Axis numbers — number of decimals</span>
+          <span className="text-xs font-bold text-slate-600">Axis numbers — decimals (shared by X and Y)</span>
           {FIGURE_DECIMALS_STEPS.map((v) => (
             <button
               key={v === '' ? 'auto' : String(v)}
@@ -281,11 +471,58 @@ export const FigureStylePanel = () => {
           </span>
         </div>
 
+        {/* ---- exponential notation + log scale, PER AXIS × KIND ----------- */}
+        <div className="flex flex-col gap-2 border-t border-slate-100 pt-3">
+          <div className="text-[10px] font-black text-slate-400 uppercase">
+            Exponential notation &amp; logarithmic scale — per axis and per kind of figure
+          </div>
+          <div className="text-[10px] text-slate-500 leading-snug">
+            The <b>exponential notation</b> of the axis numbers (1.23 × 10⁴) and the
+            <b> logarithmic scale</b> of an axis are set for the X axis and the Y axis of ONE kind of
+            figure at a time: a spectrum keeps a linear ppm axis while the per-atom plot of the same page
+            is read on a log y axis. Same commands as the 🎨 <b>Graphical Parameters</b> panel of a single
+            chart (Sci. notation X / Y, Log X / Y axis).
+          </div>
+          {figureAxisFormatSummary(profile).map((row) => (
+            <div
+              key={row.kind}
+              className="flex flex-col gap-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2"
+            >
+              <div className="text-xs font-bold text-slate-700">{row.label}</div>
+              <div className="text-[10px] text-slate-500 leading-snug">{FIGURE_AXIS_HINTS[row.kind]}</div>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                {FIGURE_AXIS_BASES.map((base) => {
+                  const field = figureAxisFormatField(base, row.kind);
+                  return (
+                    <label
+                      key={base}
+                      className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox" checked={!!profile[field]}
+                        onChange={(e) => set({ [field]: e.target.checked })}
+                        className="w-3.5 h-3.5 accent-indigo-600"
+                      />
+                      {FIGURE_AXIS_BASE_LABELS[base]}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          <div className="text-[10px] text-slate-400 leading-snug">
+            A logarithmic axis needs strictly positive values (the charts drop the points at 0 and below);
+            an interrupted (✂) axis is ignored while its own axis is logarithmic.
+          </div>
+        </div>
+
         <div className="text-[10px] text-slate-500 leading-snug">
-          Same commands as the 🎨 <b>Graphical Parameters</b> panel of a single chart (X / Y label style,
-          decimals, scientific notation): set them once here and press 🎨 on the experiment page to push
-          them into every chart and spectrum — so the axis titles and the axis numbers of every captured
-          figure are written the same way. “Auto” leaves the format of each chart exactly as it is today.
+          The axis titles in bold / italic and the NUMBER OF DECIMALS are shared by the two axes of every
+          chart; the exponential notation and the logarithmic scale above are set per axis and per kind of
+          figure. All of them are the commands of the 🎨 <b>Graphical Parameters</b> panel of a single
+          chart: set them once here and press 🎨 on the experiment page to push them into every chart and
+          spectrum — so the axis titles, the axis numbers and the axis scales of every captured figure are
+          written the same way. “Auto” leaves the format of each chart exactly as it is today.
         </div>
       </div>
 

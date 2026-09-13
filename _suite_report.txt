@@ -16,7 +16,7 @@ OK   _docking_sanity.cjs  →  (no output)
 OK   _fcs_restore_match_test.cjs  →  ✅ 7/7 checks passed
 OK   _figure_origin_test.cjs  →  ✅ 64/64 checks passed
 OK   _figure_recapture_test.mjs  →  │ (index) │ name                                                                          │ ok   │ error │ | ✅ 32/32 checks passed
-OK   _figure_style_test.mjs  →  │ (index) │ name                                                                                  │ ok   │ error │ | ✅ 52/52 checks passed
+OK   _figure_style_test.mjs  →  │ (index) │ name                                                                                  │ ok   │ error │ | ✅ 65/65 checks passed
 OK   _new_image_test.cjs  →  ✅ 29/29 checks passed
 OK   _pdb_conect_sanity.cjs  →  (no output)
 OK   _probe_ngl.cjs  →  WROTE _ngl_src/molecularsurface-representation.ts len 10528

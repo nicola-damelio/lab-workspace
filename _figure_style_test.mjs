@@ -15,13 +15,22 @@ import {
   FIGURE_ASPECT_MIN, FIGURE_ASPECT_MAX, FIGURE_ASPECT_STEPS,
   FIGURE_DECIMALS_STEPS, FIGURE_AXIS_CFG_KEYS,
   FIGURE_KINDS, DEFAULT_FIGURE_KIND, FIGURE_KIND_FIELDS, FIGURE_ASPECT_FIELDS, FIGURE_KIND_LABELS,
+  FIGURE_AXIS_BASES, FIGURE_AXIS_KIND_SUFFIX, FIGURE_AXIS_FORMAT_FIELDS, FIGURE_AXIS_BASE_LABELS, FIGURE_AXIS_HINTS,
+  figureAxisFormatField, figureAxisFormatForKind, figureAxisAllSci, figureAxisFormatSummary,
   normalizeFigureKind, figureAspectFieldForKind, figureAspectForKind, figureAspectSummary,
   normalizeFigureStyle, clampFigureFont, clampFigureAngle, clampFigureAspect,
   clampFigureDecimals, figureCfgAcceptsAxisStyle,
   readFigureStyle, writeFigureStyle, figureStyleTag,
   figureStylePatch, figureStyleMatches, applyFigureStyleToCfg,
   registerFigureStyleSlot, figureStyleSlotCount, applyFigureStyleToSlots,
-  undoFigureStyleSlots, figureStyleUndoAvailable
+  undoFigureStyleSlots, figureStyleUndoAvailable,
+  FIGURE_STYLE_LIBRARY_KEY, FIGURE_STYLE_LIBRARY_EVENT,
+  FIGURE_STYLE_PRESET_MAX, FIGURE_STYLE_PRESET_NAME_MAX,
+  normalizeFigureStyleConfigName, figureStyleConfigName, figureStyleConfigSummary, figureStylesEqual,
+  readFigureStyleConfigs, writeFigureStyleConfigs, subscribeFigureStyleConfigs,
+  figureStyleConfigById, figureStyleConfigForStyle,
+  saveFigureStyleConfig, renameFigureStyleConfig, deleteFigureStyleConfig, applyFigureStyleConfig,
+  exportFigureStyleConfigs, importFigureStyleConfigs
 } from './src/utils/figureStyle.js';
 // The chart-side clamp: the profile may ask for 160 px, a chart must not cap it.
 // …and the ratio resolver a plot box is sized with.
@@ -45,10 +54,34 @@ check('1 the default profile is one size per element, no rotation, no ratio, no 
     fontFamily: '', fontSize: 16, axisTitleFontSize: 18, legendFontSize: 16,
     simLabelFontSize: 16, tickAngle: 0,
     axisTitleBold: false, axisTitleItalic: false, tickSci: false, tickDecimals: '',
+    // the sixteen axis format / scale knobs, one per axis × kind (all off):
+    // exponential notation and log scale of the X / the Y axis of each kind.
+    xSci: false, ySci: false, xLog: false, yLog: false,
+    xSciSpectra: false, ySciSpectra: false, xLogSpectra: false, yLogSpectra: false,
+    xSciAtom: false, ySciAtom: false, xLogAtom: false, yLogAtom: false,
+    xSciResidue: false, ySciResidue: false, xLogResidue: false, yLogResidue: false,
     aspect: 0, aspectSpectra: 0, aspectAtom: 0, aspectResidue: 0, applyOnOpen: false
   });
   eq(FIGURE_STYLE_KEY, 'labFigureStyle');
   eq(FIGURE_STYLE_EVENT, 'lab:figure-style-changed');
+});
+check('1b the axis format / scale model: 4 axes × 4 kinds of figure', () => {
+  eq(FIGURE_AXIS_BASES, ['xSci', 'ySci', 'xLog', 'yLog'], 'the two exponential + the two log commands');
+  eq(FIGURE_AXIS_KIND_SUFFIX, { spectra: 'Spectra', atom: 'Atom', residue: 'Residue', graph: '' });
+  eq(FIGURE_AXIS_FORMAT_FIELDS.length, FIGURE_KINDS.length * FIGURE_AXIS_BASES.length);
+  eq(FIGURE_AXIS_FORMAT_FIELDS, [
+    'xSciSpectra', 'ySciSpectra', 'xLogSpectra', 'yLogSpectra',
+    'xSciAtom', 'ySciAtom', 'xLogAtom', 'yLogAtom',
+    'xSciResidue', 'ySciResidue', 'xLogResidue', 'yLogResidue',
+    'xSci', 'ySci', 'xLog', 'yLog'
+  ], 'a stable order, and the graphs keep the bare cfg key names');
+  eq(figureAxisFormatField('xSciSpectra', 'graph'), 'xSciSpectra', 'the base must not be suffixed twice');
+  eq(figureAxisFormatField('xSci', 'atom'), 'xSciAtom');
+  eq(figureAxisFormatField('yLog', 'RESIDUE'), 'yLog', 'the kind is case sensitive — an unknown one is a graph');
+  eq(figureAxisFormatField('yLog', 'nonsense'), 'yLog', 'anything unknown is a graph');
+  eq(figureAxisFormatField('yLog', 'atom'), 'yLogAtom');
+  eq(Object.keys(FIGURE_AXIS_BASE_LABELS).sort(), FIGURE_AXIS_BASES.slice().sort());
+  FIGURE_KINDS.forEach((k) => ok(!!FIGURE_AXIS_HINTS[k], `no hint for ${k}`));
 });
 check('2 anything (null, a string, a partial object) becomes a valid profile', () => {
   eq(normalizeFigureStyle(null), DEFAULT_FIGURE_STYLE);
@@ -76,7 +109,14 @@ check('4 the auto-apply flag is always a real boolean', () => {
 });
 check('5 unknown keys never leak into the stored profile', () => {
   const p = normalizeFigureStyle({ fontSize: 16, colors: { a: '#fff' }, height: 380 });
-  eq(Object.keys(p).sort(), ['applyOnOpen', 'aspect', 'aspectAtom', 'aspectResidue', 'aspectSpectra', 'axisTitleBold', 'axisTitleFontSize', 'axisTitleItalic', 'fontFamily', 'fontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle', 'tickDecimals', 'tickSci']);
+  eq(Object.keys(p).sort(), [
+    'applyOnOpen', 'aspect', 'aspectAtom', 'aspectResidue', 'aspectSpectra',
+    'axisTitleBold', 'axisTitleFontSize', 'axisTitleItalic',
+    'fontFamily', 'fontSize', 'legendFontSize', 'simLabelFontSize',
+    'tickAngle', 'tickDecimals', 'tickSci',
+    // the axis format / scale knobs (see check 1b)
+    ...FIGURE_AXIS_FORMAT_FIELDS.slice().sort()
+  ].sort());
 });
 check('6 read/write round-trip (browser storage is optional in Node)', () => {
   const before = readFigureStyle();
@@ -86,12 +126,19 @@ check('6 read/write round-trip (browser storage is optional in Node)', () => {
     axisTitleBold: true, axisTitleItalic: false, tickSci: true, tickDecimals: 2,
     aspect: 0, applyOnOpen: true
   });
-  eq(readFigureStyle(), {
+  const round = readFigureStyle();
+  eq(round, {
     fontFamily: 'Arial', fontSize: 20, axisTitleFontSize: 22, legendFontSize: 18,
     simLabelFontSize: 18, tickAngle: 45,
     axisTitleBold: true, axisTitleItalic: false, tickSci: true, tickDecimals: 2,
+    // the legacy `tickSci` is expanded onto the eight sci knobs…
+    xSci: true, ySci: true, xLog: false, yLog: false,
+    xSciSpectra: true, ySciSpectra: true, xLogSpectra: false, yLogSpectra: false,
+    xSciAtom: true, ySciAtom: true, xLogAtom: false, yLogAtom: false,
+    xSciResidue: true, ySciResidue: true, xLogResidue: false, yLogResidue: false,
     aspect: 0, aspectSpectra: 0, aspectAtom: 0, aspectResidue: 0, applyOnOpen: true
   });
+  // …and the tag stays the one written before the knobs grew axes / kinds.
   eq(figureStyleTag(), 'fs20-t22-lg18-lb18-rot45-bold-sci-dec2-Arial');
   writeFigureStyle(before);
   eq(readFigureStyle(), before);
@@ -165,9 +212,19 @@ check('13b the font family is written on demand — and cleared when the profile
   ok(!('fontFamily' in applyFigureStyleToCfg(rechart, profile)), 'no empty family injected');
 });
 check('14 the profile fields are the single source of the applied keys', () => {
-  eq(FIGURE_STYLE_FIELDS, ['fontFamily', 'fontSize', 'axisTitleFontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle', 'axisTitleBold', 'axisTitleItalic', 'tickSci', 'tickDecimals', 'aspect', 'aspectSpectra', 'aspectAtom', 'aspectResidue']);
+  eq(FIGURE_STYLE_FIELDS, [
+    'fontFamily', 'fontSize', 'axisTitleFontSize', 'legendFontSize', 'simLabelFontSize',
+    'tickAngle', 'axisTitleBold', 'axisTitleItalic', 'tickSci', 'tickDecimals',
+    'aspect', 'aspectSpectra', 'aspectAtom', 'aspectResidue',
+    'xSciSpectra', 'ySciSpectra', 'xLogSpectra', 'yLogSpectra',
+    'xSciAtom', 'ySciAtom', 'xLogAtom', 'yLogAtom',
+    'xSciResidue', 'ySciResidue', 'xLogResidue', 'yLogResidue',
+    'xSci', 'ySci', 'xLog', 'yLog'
+  ]);
   eq(Object.keys(figureStylePatch(profile, spectra)).sort(), ['fontSize', 'axisTitleFontSize', 'legendFontSize', 'simLabelFontSize', 'tickAngle'].sort());
   eq(FIGURE_AXIS_CFG_KEYS.bold, ['xAxisLabelBold', 'yAxisLabelBold']);
+  eq(FIGURE_AXIS_CFG_KEYS.sci, ['xSci', 'ySci']);
+  eq(FIGURE_AXIS_CFG_KEYS.log, ['xLog', 'yLog']);
   eq(FIGURE_AXIS_CFG_KEYS.decimals, ['xDecimals', 'yDecimals']);
 });
 
@@ -484,6 +541,37 @@ check('37 the four axis knobs are normalised and clamped', () => {
   eq(clampFigureDecimals('abc'), '', 'garbage = auto');
   eq(normalizeFigureStyle({ tickDecimals: '2' }).tickDecimals, 2);
   eq(FIGURE_DECIMALS_STEPS[0], '', 'the first one-click value is Auto');
+  // The sixteen axis format / scale knobs: real booleans, per axis × kind.
+  const legacySci = normalizeFigureStyle({ tickSci: true });
+  FIGURE_KINDS.forEach((kind) => {
+    eq(legacySci[figureAxisFormatField('xSci', kind)], true, `the legacy tickSci must reach the x axis of ${kind}`);
+    eq(legacySci[figureAxisFormatField('ySci', kind)], true, `…and the y axis of ${kind}`);
+    eq(legacySci[figureAxisFormatField('xLog', kind)], false, 'a log scale is never switched on by the legacy knob');
+    eq(legacySci[figureAxisFormatField('yLog', kind)], false);
+  });
+  eq(figureAxisAllSci(legacySci), true, 'a legacy profile still means “exponential everywhere”');
+  const oneAxes = normalizeFigureStyle({ xSciSpectra: true, yLogAtom: 'true' });
+  eq(oneAxes.xSciSpectra, true);
+  eq(oneAxes.yLogAtom, true, 'the same true / \'true\' rule everywhere');
+  eq(oneAxes.xSci, false, 'the spectra knob does not switch the graphs on');
+  eq(oneAxes.tickSci, false, 'tickSci is DERIVED from the eight sci knobs');
+  eq(figureAxisAllSci(oneAxes), false);
+  eq(figureAxisFormatForKind(oneAxes, 'atom'), { xSci: false, ySci: false, xLog: false, yLog: true });
+  eq(figureAxisFormatSummary(oneAxes).map((r) => r.kind), FIGURE_KINDS, 'one row per kind of figure');
+  eq(figureAxisFormatSummary(oneAxes)[1].label, FIGURE_KIND_LABELS.atom);
+});
+check('37b a knob the panel never writes stays readable in the tag', () => {
+  // The legacy profile is tagged exactly as before…
+  ok(figureStyleTag({ fontSize: 16, tickSci: true }).endsWith('-rot0-sci'));
+  // …while a per axis / per kind command names that axis and kind (`s` spectra,
+  // `a` atom, `r` residue, nothing = graphs — the letter of the ratios).
+  const tag = figureStyleTag({ fontSize: 16, xSciSpectra: true, yLogAtom: true, xLog: true });
+  eq(tag, 'fs16-t18-lg16-lb16-rot0-xScis-yLoga-xLog');
+  ok(figureStyleTag({ fontSize: 16, xSciSpectra: true }) !== figureStyleTag({ fontSize: 16, xSciAtom: true }),
+    'the two kinds must be told apart');
+  ok(figureStyleTag({ fontSize: 16, yLog: true }) !== figureStyleTag({ fontSize: 16, ySci: true }),
+    'a log scale and the exponential notation must be told apart');
+  eq(figureStyleTag({ fontSize: 16, yLog: true, tickDecimals: 0 }), 'fs16-t18-lg16-lb16-rot0-yLog-dec0');
 });
 check('38 they only show in the tag when they deviate from the default', () => {
   eq(figureStyleTag({ fontSize: 16 }), 'fs16-t18-lg16-lb16-rot0',
@@ -505,24 +593,67 @@ check('39 ON: they reach the cfg of every chart, on BOTH axes', () => {
   eq(next.ySci, true);
   eq(next.xDecimals, 2);
   eq(next.yDecimals, 2);
+  ok(!('xLog' in next), 'the legacy “both axes in exponential” profile never switches a log scale on');
+  ok(!('yLog' in next));
   eq(next.lineStyle, 'dashed', 'the rest of the cfg is untouched');
   const sp = applyFigureStyleToCfg(spectra, axisProfile);
   eq(sp.xSci, true);
   eq(sp.yDecimals, 2);
   eq(sp.simLabelFormat, 'resNum_code_atom', 'a spectrum keeps its own keys');
 });
+check('39b the exponential / log commands are resolved PER AXIS and PER KIND of figure', () => {
+  const p = {
+    ...DEFAULT_FIGURE_STYLE,
+    xSciSpectra: true, ySciSpectra: true, // the spectra: both axes in exponential
+    yLogAtom: true,                       // the per-atom plots: log y
+    xLog: true                            // the graphs: log x
+  };
+  // A GRAPH takes the bare knobs only.
+  const graph = figureStylePatch(p, { ...rechart, xSci: false, yLog: false }, { kind: 'graph' });
+  eq(graph.xLog, true);
+  eq(graph.xSci, false, 'the spectra knob must not reach a graph');
+  eq(graph.yLog, false, 'nor switch anything else on');
+  ok(!('ySci' in graph), 'a knob that is off is still never injected as dead plumbing');
+  // A SPECTRUM takes the spectra knobs and nothing else.
+  const sp = figureStylePatch(p, { ...rechart, xSci: false, ySci: false, xLog: false, yLog: false }, { kind: 'spectra' });
+  eq([sp.xSci, sp.ySci, sp.xLog, sp.yLog], [true, true, false, false]);
+  // The per-atom plot takes ITS y log knob…
+  const atom = figureStylePatch(p, { ...rechart, yLog: false }, { kind: 'atom' });
+  eq(atom.yLog, true);
+  ok(!('xSci' in atom), 'the spectra / graph knobs never leak into an atom plot');
+  // …and a chart that declares no kind is a GRAPH (the historical behaviour).
+  eq(figureStylePatch(p, { ...rechart, xLog: false }, null).xLog, true);
+  // The shared sizes and the axis-title style are still written everywhere.
+  eq(graph.fontSize, 16);
+  eq(figureStylePatch(p, { ...rechart }, { kind: 'atom' }).axisTitleFontSize, 18);
+});
 check('40 OFF: they only clear the cfg keys that are really there', () => {
   const styled = {
     ...rechart,
-    xAxisLabelBold: true, yAxisLabelBold: true, xSci: true, ySci: true, xDecimals: 2, yDecimals: 2
+    xAxisLabelBold: true, yAxisLabelBold: true, xSci: true, ySci: true, xLog: true, yLog: true,
+    xDecimals: 2, yDecimals: 2
   };
   const cleared = figureStylePatch(DEFAULT_FIGURE_STYLE, styled);
   eq(cleared.xAxisLabelBold, false);
   eq(cleared.ySci, false);
+  eq(cleared.xLog, false);
+  eq(cleared.yLog, false);
   eq(cleared.xDecimals, '');
   const fresh = figureStylePatch(DEFAULT_FIGURE_STYLE, rechart);
-  ['xAxisLabelBold', 'yAxisLabelBold', 'xAxisLabelItalic', 'yAxisLabelItalic', 'xSci', 'ySci', 'xDecimals', 'yDecimals']
+  ['xAxisLabelBold', 'yAxisLabelBold', 'xAxisLabelItalic', 'yAxisLabelItalic',
+    'xSci', 'ySci', 'xLog', 'yLog', 'xDecimals', 'yDecimals']
     .forEach((k) => ok(!(k in fresh), `${k} must not be injected as dead plumbing`));
+});
+check('40b OFF per kind: only the axes / kinds the profile names are cleared', () => {
+  const p = { ...DEFAULT_FIGURE_STYLE, yLogAtom: true };
+  const cfg = { ...rechart, xSci: true, ySci: true, xLog: true, yLog: true };
+  const cleared = figureStylePatch(p, cfg, { kind: 'atom' });
+  eq(cleared.yLog, true, 'the knob the profile asks for stays on');
+  eq(cleared.xSci, false, 'the others are cleared');
+  eq(cleared.ySci, false);
+  eq(cleared.xLog, false);
+  const graph = figureStylePatch(p, cfg, { kind: 'graph' });
+  eq(graph.yLog, false, 'the atom knob is not a graph knob');
 });
 check('41 a cfg that does not speak the panel language never gets the axis keys', () => {
   eq(figureCfgAcceptsAxisStyle(rechart), true, 'every page cfg carries at least one panel key');
@@ -531,8 +662,10 @@ check('41 a cfg that does not speak the panel language never gets the axis keys'
   eq(figureCfgAcceptsAxisStyle([1, 2]), false);
   const foreign = figureStylePatch(axisProfile, { color: '#fff' });
   eq(foreign.fontSize, 16, 'the shared character sizes still reach every registered chart');
-  FIGURE_AXIS_CFG_KEYS.bold.concat(FIGURE_AXIS_CFG_KEYS.italic, FIGURE_AXIS_CFG_KEYS.sci, FIGURE_AXIS_CFG_KEYS.decimals)
+  FIGURE_AXIS_CFG_KEYS.bold.concat(FIGURE_AXIS_CFG_KEYS.italic, FIGURE_AXIS_CFG_KEYS.sci, FIGURE_AXIS_CFG_KEYS.log, FIGURE_AXIS_CFG_KEYS.decimals)
     .forEach((k) => ok(!(k in foreign), `${k} must not be written into a cfg that has no axes panel`));
+  const foreignLog = figureStylePatch({ ...axisProfile, yLogAtom: true, xLog: true }, { color: '#fff' });
+  ok(!('xLog' in foreignLog) && !('yLog' in foreignLog), 'a log scale is no exception');
 });
 check('42 a figure the profile was applied to is recognised as styled', () => {
   const styled = applyFigureStyleToCfg(rechart, axisProfile);
@@ -544,16 +677,26 @@ check('43 the panel, the settings page and the Chart.js figures offer the same c
   const PANEL = SRC('components/FigureStylePanel.jsx');
   ok(PANEL.includes('axisTitleBold'), 'the profile editor has no bold switch');
   ok(PANEL.includes('axisTitleItalic'), 'the profile editor has no italic switch');
-  ok(PANEL.includes('tickSci'), 'the profile editor has no exponential-notation switch');
   ok(PANEL.includes('FIGURE_DECIMALS_STEPS'), 'the profile editor has no decimals control');
+  // …and the exponential / log commands, one checkbox per axis × kind of figure.
+  ok(PANEL.includes('FIGURE_AXIS_BASES') && PANEL.includes('figureAxisFormatField'),
+    'the profile editor has no per-axis / per-kind exponential & log switches');
+  ok(PANEL.includes('figureAxisFormatSummary'), 'the rows are not built from the profile model');
+  ok(PANEL.includes('FIGURE_AXIS_HINTS'), 'the per-kind switches come with no explanation');
+  ok(PANEL.includes('FIGURE_AXIS_BASE_LABELS'), 'the switches have no label of their own');
+  ok(!PANEL.includes('set({ tickSci'), 'the panel must not write the derived legacy knob');
   const CS4 = SRC('utils/chartStyle.js');
   ok(CS4.includes("on('Bold') ? { weight: 'bold' } : {}"), 'Chart.js axis titles ignore the bold command');
   ok(CS4.includes("on('Italic') ? { style: 'italic' } : {}"), 'Chart.js axis titles ignore the italic command');
   const SAT2 = SRC('components/SharedAnalysisTools.jsx');
   ok(SAT2.includes("export const chartJsTickCallback = (cfg = {}, axis = 'x') => (v) => {"), 'no Chart.js tick callback helper');
   ok(SAT2.includes("const sci = axis === 'x' ? !!cfg.xSci : !!cfg.ySci;"), 'cfgTickFormatter does not read the profile keys');
+  // The log scale the profile writes is the very key the charts read.
+  ok(/export const cfgLogScale = \(cfg = \{\}, axis = 'x'\) =>\s+\(\(axis === 'x' \? !!cfg\.xLog : !!cfg\.yLog\) \? 'log' : 'auto'\);/.test(SAT2),
+    'cfgLogScale does not read the xLog / yLog keys');
   const SET = SRC('components/AppModules/settingsModule.jsx');
   ok(SET.includes('exponential notation'), 'the Settings page does not mention the axis commands');
+  ok(SET.includes('logarithmic scale'), 'the Settings page does not mention the log scale');
 });
 
 /* ══ 7. ONE plot-box ratio PER KIND of figure ═══════════════════════════════
@@ -663,6 +806,225 @@ check('49 the four kinds are wired from Settings down to every figure', () => {
   ok(PANEL.includes('FIGURE_KIND_LABELS[kind]'), 'the rows do not name the kinds of figure');
   ok(PANEL.includes('FIGURE_KIND_FIELDS[kind]'), 'the rows are not bound to their own profile field');
   ok(TOOLS.includes('figureAspectSummary(profile)'), 'the 🎨 chip does not list the imposed ratios');
+});
+
+/* ══ 8. THE SAVED CONFIGURATIONS ═════════════════════════════════════════════
+   ONE profile is not enough: a set of figures needs oversized characters while
+   the user reads the app with small ones. Settings → Figure style therefore
+   saves NAMED configurations (`labFigureStyles`), each one a complete profile,
+   and switching is one click — from the Settings page or from the 🎨 chip.   */
+const resetConfigs = () => { writeFigureStyleConfigs([]); eq(readFigureStyleConfigs(), []); };
+
+check('50 the configurations have their own storage, a name and a cap', () => {
+  eq(FIGURE_STYLE_LIBRARY_KEY, 'labFigureStyles');
+  eq(FIGURE_STYLE_LIBRARY_EVENT, 'lab:figure-style-library-changed');
+  ok(FIGURE_STYLE_PRESET_MAX >= 4 && FIGURE_STYLE_PRESET_MAX <= 100, 'a usable cap');
+  eq(FIGURE_STYLE_PRESET_NAME_MAX, 40);
+  resetConfigs();
+  eq(normalizeFigureStyleConfigName('  Figure   —  A4 \n'), 'Figure — A4', 'one line, trimmed, single spaced');
+  eq(normalizeFigureStyleConfigName(null), '');
+  eq(normalizeFigureStyleConfigName('x'.repeat(200)).length, FIGURE_STYLE_PRESET_NAME_MAX);
+  eq(figureStyleConfigName({ fontSize: 36, axisTitleFontSize: 40, legendFontSize: 36, simLabelFontSize: 36 }),
+    '36/40/36/36 px', 'the name a profile suggests');
+  eq(figureStyleConfigName({ ...DEFAULT_FIGURE_STYLE, tickAngle: -45 }), '16/18/16/16 px · rot -45°');
+  eq(figureStyleConfigSummary({ fontSize: 36 }), '36/18/16/16 px');
+  eq(figureStyleConfigSummary({
+    fontSize: 16, axisTitleBold: true, tickDecimals: 2, xLog: true, aspectSpectra: 2, fontFamily: 'Arial'
+  }), '16/18/16/16 px · bold · 2 dec · log ×1 · spectra 2:1 · Arial',
+  'the summary lists the commands the configuration carries');
+});
+check('51 saving: a configuration is a FULL profile, and a known name replaces it', () => {
+  resetConfigs();
+  const figure = {
+    fontSize: 36, axisTitleFontSize: 40, legendFontSize: 36, simLabelFontSize: 36,
+    tickAngle: -30, axisTitleBold: true, tickDecimals: 1, fontFamily: 'Arial',
+    ySciAtom: true, xLog: true, aspectSpectra: 2, aspect: 1.33
+  };
+  const a = saveFigureStyleConfig('Figure — A4', figure);
+  eq([a.created, a.replaced, a.dropped], [true, false, 0]);
+  eq(a.config.name, 'Figure — A4');
+  eq(a.config.style.fontSize, 36);
+  eq(a.config.style.axisTitleFontSize, 40);
+  eq(a.config.style.ySciAtom, true, 'the per-axis exponential switch is saved with the configuration');
+  eq(a.config.style.xLog, true);
+  eq(a.config.style.aspectSpectra, 2);
+  eq(a.config.style.aspect, 1.33);
+  eq(a.config.style.fontFamily, 'Arial');
+  eq(a.config.style.tickAngle, -30);
+  eq(figureStyleTag(a.config.style), figureStyleTag(figure), 'the tag is derived from the style, never saved');
+  eq(figureStyleConfigSummary(a.config.style).includes('spectra 2:1'), true);
+  ok(!!a.config.savedAt, 'a configuration is dated');
+  eq(readFigureStyleConfigs().length, 1);
+  eq(readFigureStyleConfigs()[0].id, a.config.id, 'the list holds the very entry that was saved');
+  // The same name — whatever the case, whatever the spaces — UPDATES it.
+  const b = saveFigureStyleConfig('   figure — a4  ', { fontSize: 12 });
+  eq([b.created, b.replaced], [false, true]);
+  eq(b.config.id, a.config.id, 'the id survives an update (a page can keep pointing at it)');
+  eq(b.config.name, 'figure — a4', 'the name of the last save wins');
+  eq(b.config.style.fontSize, 12);
+  eq(b.config.style.ySciAtom, false, 'an update replaces the WHOLE profile, it does not merge');
+  eq(readFigureStyleConfigs().length, 1);
+  // An empty name falls back to the sizes of the profile.
+  const c = saveFigureStyleConfig('', { fontSize: 20 });
+  eq(c.config.name, '20/18/16/16 px');
+  eq(readFigureStyleConfigs().length, 2);
+  eq(readFigureStyleConfigs()[0].id, c.config.id, 'the newest configuration comes first');
+  eq(readFigureStyleConfigs()[0].name, '20/18/16/16 px');
+});
+check('52 the library is capped: the oldest configuration is dropped', () => {
+  resetConfigs();
+  for (let i = 0; i < FIGURE_STYLE_PRESET_MAX; i += 1) saveFigureStyleConfig(`S${i}`, { fontSize: 10 + i });
+  eq(readFigureStyleConfigs().length, FIGURE_STYLE_PRESET_MAX);
+  eq(readFigureStyleConfigs()[0].name, `S${FIGURE_STYLE_PRESET_MAX - 1}`, 'the newest is first');
+  const over = saveFigureStyleConfig('Extra', { fontSize: 30 });
+  eq(over.dropped, 1, 'the cap pushed exactly one out');
+  eq(readFigureStyleConfigs().length, FIGURE_STYLE_PRESET_MAX);
+  eq(readFigureStyleConfigs().some((c) => c.name === 'Extra'), true);
+  eq(readFigureStyleConfigs().some((c) => c.name === 'S0'), false, 'the oldest one is gone');
+  eq(readFigureStyleConfigs().some((c) => c.name === 'S1'), true, 'the recent ones stay');
+  resetConfigs();
+});
+
+check('53 the configuration the profile currently IS gets recognised', () => {
+  resetConfigs();
+  const before = readFigureStyle();
+  saveFigureStyleConfig('Screen', DEFAULT_FIGURE_STYLE);
+  eq(figureStylesEqual(DEFAULT_FIGURE_STYLE, { fontSize: 16 }), true, 'a partial object normalises before the compare');
+  eq(figureStylesEqual(DEFAULT_FIGURE_STYLE, { fontSize: 20 }), false);
+  eq(figureStylesEqual({ ...DEFAULT_FIGURE_STYLE, applyOnOpen: true }, DEFAULT_FIGURE_STYLE), true,
+    'applyOnOpen says WHEN a page styles itself — it is not part of the look');
+  writeFigureStyle(DEFAULT_FIGURE_STYLE);
+  eq(figureStyleConfigForStyle().name, 'Screen', 'the live profile is recognised');
+  writeFigureStyle({ ...DEFAULT_FIGURE_STYLE, fontSize: 20 });
+  eq(figureStyleConfigForStyle(), null, 'a profile nobody saved has no configuration');
+  eq(figureStyleConfigForStyle({ fontSize: 16 }).name, 'Screen', 'a given profile is recognised too');
+  writeFigureStyle(before);
+  resetConfigs();
+});
+check('54 switching: the configuration BECOMES the profile, and can restyle the page', () => {
+  resetConfigs();
+  const before = readFigureStyle();
+  const c = saveFigureStyleConfig('Figure — big',
+    { fontSize: 36, axisTitleFontSize: 40, aspect: 1.33, xLog: true, fontFamily: 'Arial' }).config;
+  writeFigureStyle(DEFAULT_FIGURE_STYLE);
+  eq(applyFigureStyleConfig('nope'), null, 'an unknown id changes nothing');
+  const res = applyFigureStyleConfig(c.id);
+  eq(res.config.id, c.id);
+  eq(res.tag, figureStyleTag(c.style));
+  eq(res.applied, false, 'without `slots` the Settings page (no chart of its own) is not styled');
+  eq(readFigureStyle().fontSize, 36);
+  eq(readFigureStyle().axisTitleFontSize, 40);
+  eq(readFigureStyle().aspect, 1.33);
+  eq(readFigureStyle().xLog, true);
+  eq(readFigureStyle().fontFamily, 'Arial');
+  eq(figureStyleConfigForStyle().name, 'Figure — big');
+  // …and with `slots` the charts of the open page are rewritten right away:
+  let cfg = { fontSize: 16, height: 300, aspect: 1 };
+  const off = registerFigureStyleSlot({ get: () => cfg, set: (next) => { cfg = next; } });
+  const pushed = applyFigureStyleConfig(c.id, { slots: true });
+  eq([pushed.applied, pushed.changed, pushed.total], [true, 1, 1]);
+  eq(cfg.fontSize, 36, 'the chart takes the characters of the configuration');
+  eq(cfg.figureAspect, 1.33, '…and its plot-box ratio');
+  off();
+  writeFigureStyle(before);
+  resetConfigs();
+});
+check('55 rename / delete: a name identifies a configuration, and it stays unique', () => {
+  resetConfigs();
+  const a = saveFigureStyleConfig('A', { fontSize: 12 }).config;
+  const b = saveFigureStyleConfig('B', { fontSize: 14 }).config;
+  eq(renameFigureStyleConfig(a.id, '  Screen  ').name, 'Screen');
+  eq(figureStyleConfigById(a.id).name, 'Screen');
+  eq(renameFigureStyleConfig(a.id, ''), null, 'a configuration always has a name');
+  eq(renameFigureStyleConfig(a.id, 'B'), null, 'two configurations cannot share a name');
+  eq(renameFigureStyleConfig(a.id, 'b'), null, '…not even in another case');
+  eq(renameFigureStyleConfig('nope', 'X'), null);
+  eq(figureStyleConfigById('nope'), null);
+  eq(renameFigureStyleConfig(a.id, 'Screen').name, 'Screen', 'renaming to its own name is not a clash');
+  eq(deleteFigureStyleConfig(b.id).name, 'B', 'the removed entry is returned');
+  eq(readFigureStyleConfigs().map((c) => c.name), ['Screen']);
+  eq(readFigureStyleConfigs()[0].style.fontSize, 12, 'the configuration that stays is untouched');
+  eq(deleteFigureStyleConfig(b.id), null, 'deleting twice is a no-op, not an error');
+  resetConfigs();
+});
+
+check('56 export / import moves the configurations to another browser', () => {
+  resetConfigs();
+  saveFigureStyleConfig('Screen', { fontSize: 16, yLogAtom: true });
+  const big = { fontSize: 36, axisTitleFontSize: 40, fontFamily: 'Arial', aspectSpectra: 2 };
+  saveFigureStyleConfig('Figure — A4', big);
+  const dump = exportFigureStyleConfigs();
+  ok(typeof dump === 'string' && dump.includes('Figure — A4'), 'the backup names the configurations');
+  eq(dump.includes('figstyle_'), false, 'the ids stay out of a backup — the name is the identity');
+  resetConfigs();
+  const back = importFigureStyleConfigs(dump);
+  eq([back.added, back.replaced, back.skipped, back.error], [2, 0, 0, '']);
+  eq(readFigureStyleConfigs().map((c) => c.name).sort(), ['Figure — A4', 'Screen']);
+  eq(figureStyleConfigForStyle(big).name, 'Figure — A4', 'an imported configuration IS the one that was exported');
+  eq(readFigureStyleConfigs().find((c) => c.name === 'Figure — A4').style.ySciAtom, false,
+    'a full profile — the knobs the export did not set are at their default');
+  // Importing the same backup again REPLACES, it never duplicates:
+  const again = importFigureStyleConfigs(dump);
+  eq([again.added, again.replaced], [0, 2]);
+  eq(readFigureStyleConfigs().length, 2);
+  // One configuration, and a bare profile, are accepted too:
+  eq(importFigureStyleConfigs({ name: 'One', style: { fontSize: 22 } }).added, 1);
+  eq(figureStyleConfigForStyle({ fontSize: 22 }).name, 'One');
+  eq(importFigureStyleConfigs({ fontSize: 24 }).added, 1, 'a bare profile is a configuration too');
+  eq(readFigureStyleConfigs().length, 4);
+  // A corrupt / foreign payload never throws and never wipes the library:
+  eq(importFigureStyleConfigs('not json'), { added: 0, replaced: 0, skipped: 0, error: 'invalid' });
+  eq(readFigureStyleConfigs().length, 4, 'the library survives a corrupt import');
+  eq(importFigureStyleConfigs([{ name: 'Nope' }]).skipped, 1, 'an entry without a profile is skipped');
+  eq(importFigureStyleConfigs([1, null, 'x']).skipped, 3);
+  eq(readFigureStyleConfigs().length, 4);
+  eq(importFigureStyleConfigs(null).added, 0, 'nothing to import is not an error');
+  resetConfigs();
+});
+check('57 a stored library is cleaned on the way in: name, id, unknown keys', () => {
+  resetConfigs();
+  let seen = null;
+  const off = subscribeFigureStyleConfigs((list) => { seen = list; });
+  const saved = saveFigureStyleConfig('Screen', { fontSize: 20 });
+  ok(!!seen && seen.length === 1 && seen[0].id === saved.config.id, 'the subscribers are told about a save');
+  off();
+  writeFigureStyleConfigs([{ id: 'x', name: 'kept', style: { fontSize: 20 }, savedAt: '2024-01-01' }]);
+  eq(readFigureStyleConfigs()[0].name, 'kept');
+  eq(readFigureStyleConfigs()[0].savedAt, '2024-01-01', 'a stored date survives a read');
+  // A half entry, a duplicate id and unknown keys never come back out:
+  writeFigureStyleConfigs([
+    { name: 'no profile' },
+    { id: 'dup', name: 'one', style: { fontSize: 20 } },
+    { id: 'dup', name: 'two', style: { fontSize: 22 } },
+    { id: 'k', style: { fontSize: 24, colors: { a: 1 }, height: 400 } }
+  ]);
+  eq(readFigureStyleConfigs().map((c) => c.name), ['one', '24/18/16/16 px'],
+    'an entry without a name gets the sizes one, and a duplicate id is dropped');
+  eq(readFigureStyleConfigs()[1].style.colors, undefined, 'only the profile fields are kept');
+  eq('height' in readFigureStyleConfigs()[1].style, false);
+  eq(readFigureStyleConfigs()[1].style.fontSize, 24);
+  resetConfigs();
+});
+check('58 Settings and the 🎨 button can both save and switch configurations', () => {
+  const PANEL2 = SRC('components/FigureStylePanel.jsx');
+  ['useFigureStyleConfigs', 'figureStyleConfigForStyle', 'figureStyleConfigName', 'figureStyleConfigSummary',
+    'saveFigureStyleConfig', 'renameFigureStyleConfig', 'deleteFigureStyleConfig', 'applyFigureStyleConfig',
+    'exportFigureStyleConfigs', 'importFigureStyleConfigs', 'FIGURE_STYLE_PRESET_MAX']
+    .forEach((t) => ok(PANEL2.includes(t), `the Settings panel does not use ${t}`));
+  ok(PANEL2.includes('<ConfigRow'), 'the saved configurations are not listed');
+  eq(/window\.prompt/.test(PANEL2), false, 'renaming must not go through a browser prompt');
+  ok(PANEL2.includes('Save the current settings') && PANEL2.includes('⤓ Update'),
+    'there is no way to save what is set above');
+  const TOOLS2 = SRC('components/FigureStyleTools.jsx');
+  ['useFigureStyleConfigs', 'figureStyleConfigForStyle', 'figureStyleConfigName',
+    'saveFigureStyleConfig', 'applyFigureStyleConfig']
+    .forEach((t) => ok(TOOLS2.includes(t), `the 🎨 chip does not use ${t}`));
+  ok(TOOLS2.includes('applyFigureStyleConfig(id, { slots: true })'),
+    'switching a configuration on a page does not restyle that page');
+  ok(TOOLS2.includes('update({ figureStyleTag: res.tag, figureStyleAppliedAt: new Date().toISOString() })'),
+    'a switch is not recorded on the experiment');
+  const SET2 = SRC('components/AppModules/settingsModule.jsx');
+  ok(SET2.includes('SAVES your configurations'), 'the Settings page does not announce the saved configurations');
 });
 
 const failed = results.filter((r) => !r.ok);

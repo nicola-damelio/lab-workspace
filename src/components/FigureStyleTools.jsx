@@ -3,7 +3,9 @@ import {
   readFigureStyle, figureStyleTag, subscribeFigureStyle, subscribeFigureStyleSlots,
   figureStyleSlotCount, registerFigureStyleSlot, applyFigureStyleToSlots,
   applyFigureStyleEverywhere, undoFigureStyleSlots, figureStyleUndoAvailable,
-  normalizeFigureKind, figureAspectSummary
+  normalizeFigureKind, figureAspectSummary,
+  readFigureStyleConfigs, subscribeFigureStyleConfigs, figureStyleConfigForStyle,
+  figureStyleConfigName, saveFigureStyleConfig, applyFigureStyleConfig
 } from '../utils/figureStyle';
 
 /* =========================================================================
@@ -17,6 +19,9 @@ import {
      panels use), can reach the charts of the CLOSED sections ("▸ Expand all"
      first) and can undo the last apply. The profile signature is written on the
      experiment (`test.figureStyleTag`) so a page knows it is already styled.
+     It also carries the SAVED CONFIGURATIONS of Settings → Figure style: the
+     select switches the profile AND restyles the page in the same click, so a
+     figure style with oversized characters is one gesture away.
 
    • <FigureStylePanel> (in FigureStylePanel.jsx) — the profile editor.
    ========================================================================= */
@@ -33,6 +38,13 @@ export const useFigureStyleSlots = () => {
   const [count, setCount] = useState(() => figureStyleSlotCount());
   useEffect(() => subscribeFigureStyleSlots(setCount), []);
   return count;
+};
+
+/** The configurations saved in Settings → Figure style, live. */
+export const useFigureStyleConfigs = () => {
+  const [configs, setConfigs] = useState(() => readFigureStyleConfigs());
+  useEffect(() => subscribeFigureStyleConfigs(setConfigs), []);
+  return configs;
 };
 
 /**
@@ -75,6 +87,10 @@ export const FigureStyleApplyButton = ({ test, update }) => {
   const autoRef = useRef('');                     // experiment already auto-styled
   const tag = figureStyleTag(profile);
   const applied = !!test && test.figureStyleTag === tag;
+  // The configurations saved in Settings → Figure style: switching one here
+  // writes the profile AND pushes it into the charts of this page, in one click.
+  const configs = useFigureStyleConfigs();
+  const current = figureStyleConfigForStyle(profile);
   // ONE plot-box ratio per kind of figure (spectra / per-atom / per-residue /
   // graphs): the chip lists only the ones the profile really imposes.
   const boxRatios = figureAspectSummary(profile).filter((a) => a.ratio > 0);
@@ -117,6 +133,24 @@ export const FigureStyleApplyButton = ({ test, update }) => {
     if (update) update({ figureStyleTag: '' });
     setUndoable(false);
     flash(n > 0, n > 0 ? `↺ Figure style removed from ${n} chart${n > 1 ? 's' : ''}` : '↺ Nothing to undo');
+  };
+
+  /* The one-click switch: the configuration BECOMES the profile — so the next
+     page opens with it — and is pushed into the charts of this page right away,
+     without pressing “Apply”. */
+  const switchConfig = (id) => {
+    const res = applyFigureStyleConfig(id, { slots: true });
+    if (!res) { flash(false, '↔ That configuration no longer exists'); return; }
+    if (update) update({ figureStyleTag: res.tag, figureStyleAppliedAt: new Date().toISOString() });
+    if (res.changed) setUndoable(true);
+    flash(true, `↔ “${res.config.name}” → ${res.changed} chart${res.changed > 1 ? 's' : ''} restyled (${res.total} on the page)`);
+  };
+
+  /* Saving from the page uses the name of the configuration in use when there is
+     one — i.e. it UPDATES it — and the sizes of the profile otherwise. */
+  const saveConfigHere = () => {
+    const res = saveFigureStyleConfig(current ? current.name : '', profile);
+    flash(true, `💾 “${res.config.name}” ${res.replaced ? 'updated' : 'saved'}`);
   };
 
   /* Auto-apply on open (a Settings option): the page is lazy — charts mount while
@@ -166,6 +200,25 @@ export const FigureStyleApplyButton = ({ test, update }) => {
               : null}
             {' '}— {slots} styled chart{slots === 1 ? '' : 's'} on this page.
             Rules: Settings → Figure style.
+          </div>
+          <div className="flex flex-col gap-1.5 mb-2 border-b border-slate-100 pb-2">
+            <div className="text-[10px] font-black text-slate-400 uppercase">Saved configuration</div>
+            <select
+              value={current ? current.id : ''}
+              onChange={(e) => { if (e.target.value) switchConfig(e.target.value); }}
+              title="Switching applies the configuration to the charts of this page immediately"
+              className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] bg-white outline-none focus:border-indigo-500"
+            >
+              <option value="">{current ? `— ${current.name} —` : '— not saved (my own sizes) —'}</option>
+              {configs.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <button type="button" onClick={saveConfigHere}
+              className="rounded-md bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 font-bold py-1">
+              💾 {current ? `Update “${current.name}”` : `Save as “${figureStyleConfigName(profile)}”`}
+            </button>
+            <div className="text-[10px] text-slate-400 leading-snug">
+              The list is managed in Settings → Figure style (rename, delete, backup).
+            </div>
           </div>
           <div className="flex flex-col gap-1.5">
             <button type="button" onClick={applyThisPage}
