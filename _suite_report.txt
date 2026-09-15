@@ -26,9 +26,10 @@ OK   _figure_style_test.mjs  →  │ (index) │ name                          
 OK   _library_restore_test.mjs  →  ✅ 132 tests passés (bibliothèque d’images ↔ sauvegarde)
 OK   _library_transfer_test.cjs  →  │ (index) │ name                                                                                                                   │ ok   │ error │ | 
 OK   _mail_recipients_test.mjs  →  _mail_recipients_test: 47 passed
-OK   _manuscript_import_test.mjs  →  ✅ 224 tests passés (manuscrit — blocs / parties / en-tête / sections / liens / figures)
+OK   _manuscript_import_test.mjs  →  ✅ 256 tests passés (manuscrit — blocs / parties / en-tête / sections / liens / figures)
 OK   _new_image_test.cjs  →  ✅ 29/29 checks passed
 OK   _pdb_conect_sanity.cjs  →  (no output)
+OK   _persist_store_test.mjs  →  ✅ 25 tests passés (import : écriture vérifiée, quota plein, allègement des figures)
 OK   _probe_ngl.cjs  →  WROTE _ngl_src/molecularsurface-representation.ts len 10528
 OK   _project_figures_access_test.cjs  →  │ (index) │ name                                                                                                                       │ ok   │ error 
 OK   _pub_author_style_test.mjs  →  _pub_author_style_test: 108 passed
@@ -41,4 +42,4 @@ OK   _src_split_test.cjs  →  (no output)
 OK   _star_group_test.cjs  →  ✅ 33/33 checks passed
 OK   _ui_scale_test.cjs  →  ✅ 44/44 checks passed
 OK   _view_scroll_memory_test.cjs  →  ✅ 41/41 checks passed
-total 43, failed 0
+total 44, failed 0

@@ -1084,7 +1084,16 @@ export const buildManuscriptPlan = (manuscript, { existingReferences = [] } = {}
     const already = entryKeys(entry).map((k) => known.get(k)).find(Boolean) || null;
     const number = already ? (Number(already.number) || next) : next;
     if (!already) next += 1;
-    numberByKey.set(`#${index + 1}`, number);
+    /* Le numéro que le DOCUMENT donnait à cette entrée (« 12. Rossi… » → 12) est
+       celui que le texte CITE : c'est donc la clé à enregistrer. Le plan
+       retombait sur la POSITION de l'entrée dans la bibliographie
+       (`#index + 1`) : juste tant qu'une bibliographie commence à 1 et se suit,
+       faux pour une bibliographie numérotée 10…40 (article révisé, extrait,
+       bibliographie à trous) où chaque « [12] » désignait alors la 12e entrée.
+       Sans numéro dans le document (auteur-année, RIS, BibTeX), la position
+       reste le seul repère : elle est gardée. */
+    const docNumber = Number(entry && entry.number) > 0 ? Number(entry.number) : index + 1;
+    numberByKey.set(`#${docNumber}`, number);
     const ay = authorYearKeyOf(`${(entry && entry.authors) || ''} ${(entry && entry.year) || ''}`);
     if (ay && !numberByKey.has(ay)) numberByKey.set(ay, number);
     return { index, entry, number, isNew: !already, existing: already };
@@ -1111,6 +1120,46 @@ export const mergeManuscriptBibliography = (projectBib, entries, { project = {} 
     Array.isArray(projectBib) ? projectBib : [],
     (Array.isArray(entries) ? entries : []).map((e) => projectBibEntry(e, project))
   );
+
+/* ── 7. Reconnaître un document DÉJÀ importé (et compter ce qu'il cite) ───── */
+
+/**
+ * EMPREINTE d'un manuscrit (texte normalisé → une chaîne courte et stable).
+ *
+ * Elle est rangée dans le projet (`project.msImports`). Importer DEUX FOIS le
+ * même document collait deux fois tout le texte des sections : la fenêtre
+ * d'import restait ouverte après le premier import et le bouton « ✓ Import »
+ * demeurait actif. Cette empreinte permet de prévenir et de refuser le doublon
+ * au lieu de laisser l'utilisateur découvrir son texte en double.
+ */
+export const manuscriptFingerprint = (text) => {
+  const s = normalizeText(text || '');
+  let h = 5381;
+  for (let i = 0; i < s.length; i += 1) {
+    h = (((h << 5) + h) ^ s.charCodeAt(i)) >>> 0;
+  }
+  return `ms${s.length.toString(36)}-${h.toString(36)}`;
+};
+
+/** Un import déjà enregistré dans le projet qui correspond à cette empreinte. */
+export const previousImportOf = (project, fingerprint) => {
+  const list = (project && Array.isArray(project.msImports)) ? project.msImports : [];
+  return list.find((it) => it && it.hash === fingerprint) || null;
+};
+
+/** Les numéros cités par un texte ([12] → 12 ; [3,4] → 3, 4 ; [5-7] → 5, 6, 7).
+ *  Sert à DIRE ce qui n'a pas pu être lié à une référence. */
+export const citedNumbersInText = (text) => {
+  const out = new Set();
+  const s = String(text || '');
+  NUMERIC_CITATION_RE.lastIndex = 0;
+  let m = NUMERIC_CITATION_RE.exec(s);
+  while (m) {
+    numericCitationNumbers(m[1]).forEach((n) => out.add(n));
+    m = NUMERIC_CITATION_RE.exec(s);
+  }
+  return out;
+};
 
 
 

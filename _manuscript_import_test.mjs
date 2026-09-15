@@ -177,8 +177,14 @@ has(PROJ, 'const converted = convertCitationsInText(p.text, numbers);',
   'le texte écrit dans la section a ses citations converties');
 has(PROJ, 'const merged = mergeManuscriptBibliography(projectBib, pickedEntries, { project });',
   'la bibliographie du document rejoint la « Project bibliography » (Publications → Project bibliography)');
-has(PROJ, 'references: added.length ? [...refs, ...added] : refs',
-  'les papiers cités reçoivent leur numéro dans project.references (comme « 📚 + Reference »)');
+has(PROJ, "const kept = d.plan.entries.filter((e, i) => (",
+  'TOUTES les entrées retenues de la bibliographie reçoivent un numéro —')
+has(PROJ, '|| entryKeys(e.entry).some((k) => inProjectBib.has(k))',
+  '…cochées, déjà numérotées, ou déjà rangées dans la bibliographie du projet (cas du second import)');
+has(PROJ, 'const numbered = numberImportedReferences(kept.map((e) => e.entry), refs, {',
+  '…par le MÊME chemin que « 📄 Import references » (numberImportedReferences, qui garde le numéro du document)');
+has(PROJ, 'const references = numbered.list;',
+  'la liste numérotée remplace project.references (plus de référence citée mais absente du projet)');
 has(PROJ, "patch[c.dest] = c.mode === 'replace' ? html : [previous, html].filter(Boolean).join('\\n');",
   'chaque partie peut remplacer — ou seulement compléter — sa section (et deux parties qui visent la même section s’ajoutent)');
 has(PROJ, 'No other file is uploaded to Drive.',
@@ -418,8 +424,8 @@ ok(IMGB.includes('<option value="funding">Funding</option>')
    reposer sur un texte déjà importé (« 🔗 Link citations to references ») et le
    document exporté ancre chaque référence (#ref-12) pour que le lien aboutisse. */
 has(PROJ, "from '../../utils/referenceLinks'", 'la page projet utilise le module de liens de citation');
-has(PROJ, 'const numberSet = referenceNumbers([...refs, ...added]);',
-  'les numéros venant de l’import comptent comme des références valides');
+has(PROJ, 'const numberSet = referenceNumbers(references);',
+  'les numéros de TOUTES les références retenues comptent comme des références valides');
 has(PROJ, 'linkCitationNumbers(htmlFromText(c.text)', 'à l’import, chaque [n] du texte devient un lien');
 has(PROJ, '🔗 Link citations to references', '…et un bouton rattrape les textes déjà importés');
 has(PROJ, 'const res = linkCitationsInSections(', '…en repassant sur TOUTES les sections de texte');
@@ -579,8 +585,8 @@ eq(MS.htmlManuscriptFromHtml('<p>Aphids.</p>').figures.length, 0, 'une page sans
 
 /* ── 18. LE CÂBLAGE DANS LA PAGE PROJET ────────────────────────────────────── */
 has(PROJ, 'readManuscriptDocument(file)', 'la page lit le document AVEC ses figures');
-has(PROJ, 'const figRes = await attachManuscriptFigures(d.figures, figurePlacements);',
-  'à l’import, les figures sont attachées à leurs sections');
+has(PROJ, 'figRes = await attachManuscriptFigures(d.figures, figurePlacements);',
+  'à l’import, les figures sont attachées à leurs sections (une figure en échec n’emporte ni le texte ni les références)');
 has(PROJ, "source: 'manuscript-import'", '…et gardent leur origine (des figures de l’article)');
 has(PROJ, 'addProjectLibraryItem(project.id',
   '…et rejoignent la bibliothèque d’images du projet (Image Builder → Project Library)');
@@ -588,11 +594,11 @@ has(PROJ, 'uploadFigureToDrive({ full: dataUrl, label, projectName: project.name
   'leurs pixels partent au Drive, avec un repli local (comme « 📄 Word text »)');
 has(PROJ, 'const split = splitAnchoredFigures(linkCitations(repairContentImages(s.html',
   'le document exporté réinsère chaque figure après son paragraphe');
-has(PROJ, 'numericCitationNumbers(cited[1])',
-  'l’import retient AUSSI les numéros d’une plage [5-7] (une seule expression de citation dans tout le module)');
+has(PROJ, 'citedNumbersInText(converted.text).forEach((n) => citedInText.add(n));',
+  'l’import retient les numéros cités — plages [5-7] comprises — par l’expression PARTAGÉE citedNumbersInText');
 has(PROJ, '{renderFigures(s.restFigures || [])}',
   'les figures sans place retrouvée restent affichées après la section (rien n’est perdu)');
-has(PROJ, 'they are printed in the text by “📄 Export document”', 'l’import dit où les figures apparaîtront');
+has(PROJ, '“📄 Export document” prints them where the document had them', 'l’import dit où les figures apparaîtront');
 has(PROJ, '📄 printed in “📄 Export document” after:', 'la page montre après quel paragraphe chaque figure sera imprimée');
 
 /* ── 19. LA FIGURE REVIENT DANS LE TEXTE DU DOCUMENT EXPORTÉ ───────────────── */
@@ -718,10 +724,118 @@ has(PROJ, 'headerTexts.push({ field: p.dest, text: stripFigureMarks(converted.te
   '…son texte est mis en forme pour le champ (voir headerTextFor)');
 has(PROJ, 'headerTextFor(dest.id, h.text, { previous: value, mode: h.mode })',
   '…et s’ajoute au contenu déjà reconnu en tête du document');
-has(PROJ, 'redirected from the text — check “🧾 Title, authors & affiliations”',
+has(PROJ, 'taken from the text — check “🧾 Title, authors & affiliations”',
   'le compte rendu dit quels champs viennent du texte (et où les relire)');
 has(PROJ, 'destLabel(p.dest)', 'le compte rendu nomme les champs d’en-tête comme les sections');
 has(PROJ, 'guessed: p.id || \'\'', 'chaque partie garde la section que son titre visait (repli des figures)');
+
+/* ── 21. LES TROIS DÉFAUTS SIGNALÉS, RÉPARÉS ───────────────────────────────--
+   « quand je clique “Import a manuscript” la fenêtre doit disparaître quand
+     l'opération est finie, sinon l'utilisateur continue d'importer et le texte
+     est importé plusieurs fois » ;
+   « quand le texte est importé, je ferme le projet et je le rouvre : le texte a
+     disparu » ;
+   « les références ne sont toujours pas correctement importées et elles ne sont
+     pas liées au texte ».
+
+   Les trois avaient une racine commune côté données — rien n'était écrit quand
+   le magasin était plein (voir _import_persist_test.mjs, qui le prouve sur le
+   module RÉEL) — et deux défauts propres à l'import : la fenêtre restait
+   ouverte (donc le bouton restait actif), et les références ne venaient que des
+   entrées CITÉES du texte. */
+has(PROJ, 'setMsImport(null);   // la fenêtre se ferme',
+  'la fenêtre d’import se ferme d’elle-même dès que l’import est écrit');
+has(PROJ, '{msResult && (', 'le compte rendu (et le verdict du magasin) s’affiche en haut de la page projet');
+has(PROJ, '📥 Manuscript import — {msResult.ok ? \'done\' : \'NOT SAVED\'}',
+  '…et il dit si l’import a ÉTÉ ENREGISTRÉ');
+has(PROJ, '↩︎ Undo import', '…avec un retour en arrière immédiat');
+has(PROJ, 'const saved = commitProjectVerified(fullPatch, { lighten: true });',
+  'l’import écrit par le chemin VÉRIFIÉ (écriture puis relecture du magasin)');
+has(PROJ, 'res: saveProjectsChecked(list, { projectId: project.id, fields: extra })',
+  'commitProjectVerified relit le projet et compare les champs écrits');
+has(PROJ, 'const light = lightenProjectForStorage({ ...project, ...patch });',
+  'si le navigateur refuse (quota plein), une seconde écriture allège les figures : le TEXTE passe en premier');
+has(PROJ, 'if (msBusyRef.current) return;   // deux clics = un seul import',
+  'deux clics sur « Import » ne font qu’un seul import');
+has(PROJ, 'const previous = previousImportOf(project, hash);',
+  'un document DÉJÀ importé est reconnu (empreinte du texte rangée dans le projet)');
+has(PROJ, 'disabled={msImport.busy || (!!msImport.previous && !msImport.confirmRepeat)}',
+  '…et le second import exige une confirmation explicite');
+has(PROJ, 'msImports: [...history.filter((it) => !it || it.hash !== receipt.hash), receipt].slice(-20)',
+  'l’import laisse son empreinte dans le projet (jamais deux fois la même)');
+has(PROJ, "const [storageWarning, setStorageWarning] = useState('');",
+  'une écriture refusée par le navigateur se dit aussi dans la page');
+
+/* L'empreinte d'un document est stable, et deux documents ne se confondent pas. */
+const FIX_DOC = [
+  'Introduction',
+  'Aphids transmit potyviruses [1]. Another path [3] was proposed.',
+  '',
+  'References',
+  '1. Rossi M, Bianchi A (2018). Characterization of a potyvirus. J Gen Virol 99:1-9.',
+  '2. Dupont J (2020). A paper the text never cites. Virology 500:1-8.',
+  '3. Bianchi A (2021). Vector biology of potyviruses. Viruses 13:55.'
+].join('\n');
+eq(MS.manuscriptFingerprint(FIX_DOC), MS.manuscriptFingerprint(FIX_DOC),
+  'l’empreinte d’un document est stable');
+ok(MS.manuscriptFingerprint(FIX_DOC) !== MS.manuscriptFingerprint(`${FIX_DOC}\n\n\n`),
+  '…et un autre document a une autre empreinte');
+eq([...MS.citedNumbersInText('see [5-7] and [12], not [x]')], [5, 6, 7, 12],
+  'citedNumbersInText rend les numéros cités, plages comprises');
+eq((MS.previousImportOf({ msImports: [{ hash: MS.manuscriptFingerprint(FIX_DOC) }] },
+  MS.manuscriptFingerprint(FIX_DOC)) || {}).hash, MS.manuscriptFingerprint(FIX_DOC),
+  'previousImportOf retrouve l’import du même document');
+eq(MS.previousImportOf({ msImports: [] }, 'inconnu'), null,
+  '…et rien (null) pour un document jamais importé');
+
+/* LES RÉFÉRENCES : toutes les entrées retenues sont numérotées — y compris
+   celle que le texte ne cite jamais (elle doit figurer dans la bibliographie
+   imprimée) — et les citations du texte tombent toujours sur une référence. */
+const fixMs = MS.splitManuscript(MS.blocksFromText(FIX_DOC));
+const fixPlan = MS.buildManuscriptPlan(fixMs, { existingReferences: [] });
+eq(fixPlan.entries.length, 3, 'les trois entrées de la bibliographie sont lues');
+ok(['#1', '#2', '#3'].every((k) => fixPlan.numberByKey.has(k)),
+  'chaque entrée est repérée par SON numéro de document (« 3. Bianchi… » → #3)');
+const fixNumbered = RL.numberImportedReferences(fixPlan.entries.map((e) => e.entry), [], {
+  hints: fixPlan.entries.map((e) => e.number)
+});
+eq(fixNumbered.created.length, 3,
+  'les TROIS entrées deviennent des références numérotées — même celle que le texte ne cite pas');
+eq(fixNumbered.list.map((r) => r.number), [1, 2, 3], '…avec les numéros du document');
+const fixText = MS.convertCitationsInText(
+  MS.stripFigureMarks(fixMs.body.map((b) => b.text).join('\n')), fixPlan.numberByKey
+).text;
+const fixLinked = RL.linkCitationNumbers(MS.htmlFromText(fixText), {
+  numbers: RL.referenceNumbers(fixNumbered.list), titleFor: RL.citationTitleGetter(fixNumbered.list)
+});
+ok(fixLinked.includes('data-ref="1"') && fixLinked.includes('data-ref="3"'),
+  'les « [1] » et « [3] » du texte sont liés à LEURS références');
+eq([...RL.linkedCitationNumbers(fixLinked)].sort(), [1, 3], '…sans lien de trop');
+
+/* DEUXIÈME IMPORT DU MÊME DOCUMENT : plus rien n'est coché (tout est déjà dans
+   la bibliographie du projet) et le plan ne voit plus d'entrée nouvelle — c'est
+   exactement le cas où AUCUNE référence n'était créée et où les liens du texte
+   n'avaient plus de cible. */
+const againPlan = MS.buildManuscriptPlan(fixMs, { existingReferences: fixNumbered.list.map((r) => ({ ...r })) });
+const againKept = againPlan.entries.filter((e) => !!e.existing);
+eq(againKept.length, 3, 'au second import, les trois entrées sont reconnues comme déjà référencées');
+const againNumbered = RL.numberImportedReferences(
+  againKept.map((e) => e.entry), fixNumbered.list.map((r) => ({ ...r })),
+  { hints: againKept.map((e) => e.number) }
+);
+eq(againNumbered.created.length, 0, 'aucune référence dupliquée');
+eq(againNumbered.list.map((r) => r.number), [1, 2, 3], '…et les numéros du projet sont conservés');
+ok(RL.linkCitationNumbers(MS.htmlFromText(fixText), {
+  numbers: RL.referenceNumbers(againNumbered.list)
+}).includes('data-ref="1"'), 'le texte du second import se lie lui aussi à ses références');
+
+/* Un numéro cité que la bibliographie du document n'explique pas ne reçoit AUCUN
+   lien (jamais de lien mort) et l'import le dit. */
+eq(RL.linkCitationNumbers(MS.htmlFromText('See [9].'), {
+  numbers: RL.referenceNumbers(fixNumbered.list)
+}).includes('data-ref'), false, 'un « [9] » sans référence reste un simple nombre');
+has(PROJ, 'citation number(s) have no reference in this project',
+  '…et le compte rendu les liste (avec la marche à suivre)');
 
 console.log(`✅ ${passed} tests passés (manuscrit — blocs / parties / en-tête / sections / liens / figures)`);
 

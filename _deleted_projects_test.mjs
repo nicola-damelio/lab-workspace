@@ -147,7 +147,7 @@ eq(T.withoutDeletedProjects(payload, T.withoutDatasetTombstones(adopted, DS)).ma
 /* ── 7. Les pages appliquent réellement la règle ────────────────────────── */
 has(DETAIL, 'recordProjectDeletion(project);',
   'la page projet note la suppression avant d’enregistrer la liste restante');
-has(DETAIL, 'import { loadProjects, saveProjects, recordProjectDeletion, loadPublications',
+has(DETAIL, 'import { loadProjects, saveProjects, saveProjectsChecked, lightenProjectForStorage, recordProjectDeletion, loadPublications',
   '…en important la fonction de projectsModule');
 has(PROJECTS, 'recordProjectDeletion(target || { id, datasetId: activeProjectDataset });',
   'la liste des projets note la suppression avec le dataset du projet');

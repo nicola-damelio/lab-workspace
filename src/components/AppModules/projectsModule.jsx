@@ -156,7 +156,18 @@ const writeRawProjects = (list) => {
        périmé, un payload rechargé, une sauvegarde restaurée…). */
     const live = withoutDeletedProjects(Array.isArray(list) ? list : [], readDeletedProjects());
     localStorage.setItem(PROJECTS_KEY, JSON.stringify(dedupeProjects(live)));
-  } catch { /* ignore */ }
+    return { ok: true, error: '' };
+  } catch (err) {
+    /* ❗ UNE ÉCRITURE QUI ÉCHOUE DOIT SE SAVOIR.
+       Le quota du navigateur (~5 Mo) est partagé par tout le poste de travail :
+       un manuscrit importé avec ses figures peut le remplir. Jusqu'ici
+       l'échec était avalé (`catch { }`) : la page projet affichait « ✓ 3
+       section(s) filled · 12 numbered reference(s) » alors que RIEN n'avait
+       été écrit — à la réouverture du projet le texte, les références et la
+       bibliographie avaient disparu. Le résultat est maintenant renvoyé à
+       l'appelant, qui peut vérifier (saveProjectsChecked) et le dire. */
+    return { ok: false, error: String((err && err.message) || err || 'the browser refused the write') };
+  }
 };
 
 /** Projects of one dataset — defaults to the currently open one. When no
@@ -171,12 +182,14 @@ export const loadProjects = (datasetArg) => {
 
 /** Persist the projects of the ACTIVE dataset. The list is authoritative for
  *  that scope (a project removed from it is deleted), while projects of the
- *  other datasets and not-yet-adopted legacy projects are left untouched. */
+ *  other datasets and not-yet-adopted legacy projects are left untouched.
+ *  @returns {{ ok:boolean, error:string }} — `ok:false` = the browser REFUSED
+ *  the write (full quota, private mode…). Callers that must not lose data use
+ *  saveProjectsChecked() instead, which relit ce qui a réellement été écrit. */
 export const saveProjects = (list) => {
   const safe = dedupeProjects(Array.isArray(list) ? list : []);
   if (!activeProjectDataset) {
-    writeRawProjects(safe);
-    return;
+    return writeRawProjects(safe);
   }
   const all = readRawProjects();
   const tagged = safe.map((p) => ({
@@ -187,7 +200,105 @@ export const saveProjects = (list) => {
     ...all.filter((p) => !(p && String(p.datasetId) === activeProjectDataset)),
     ...tagged
   ];
-  writeRawProjects(merged);
+  return writeRawProjects(merged);
+};
+
+/** Poids approximatif d'un projet dans le magasin (octets JSON). */
+export const projectFootprint = (project) => {
+  try { return JSON.stringify(project).length; } catch { return Infinity; }
+};
+
+const isDataUrl = (v) => typeof v === 'string' && v.startsWith('data:');
+
+/**
+ * LE POIDS D'UN PROJET QUAND LE NAVIGATEUR EST PRESQUE PLEIN.
+ *
+ * Un manuscrit importé avec ses figures peut dépasser les ~5 Mo de quota du
+ * navigateur : l'écriture entière échouait alors, et TOUT était perdu (texte,
+ * références, bibliographie). Cette fonction n'est appelée QUE lorsqu'une
+ * première écriture a échoué : elle rend une copie du projet plus légère, en
+ * commençant par ce qui est le moins coûteux à perdre :
+ *   1. les copies « pleine résolution » des figures qui ne vivent que dans ce
+ *      navigateur (`data:` URL) — la vignette et/ou le lien Drive restent ;
+ *   2. les vignettes elles-mêmes : l'entrée garde sa place, son nom et sa
+ *      légende (`pixelsMissing: true`), le TEXTE, les RÉFÉRENCES et la mise en
+ *      page du document sont intacts.
+ * Le texte des sections n'est JAMAIS touché.
+ * @returns {{ project:object, ok:boolean, footprint:number, dropped:string[] }}
+ */
+export const lightenProjectForStorage = (project, { budget = 900000 } = {}) => {
+  const footprint = projectFootprint(project);
+  if (!project || typeof project !== 'object' || footprint <= budget) {
+    return { project, ok: true, footprint, dropped: [] };
+  }
+  const figures = project.figures && typeof project.figures === 'object' ? project.figures : null;
+  if (!figures) return { project, ok: false, footprint, dropped: [] };
+  const dropped = [];
+  /* 1 — les copies pleine résolution gardées dans ce navigateur. */
+  const lightFigures = {};
+  let touched = 0;
+  Object.keys(figures).forEach((section) => {
+    const list = Array.isArray(figures[section]) ? figures[section] : [];
+    lightFigures[section] = list.map((entry) => {
+      if (!entry || typeof entry !== 'object') return entry;
+      const copy = { ...entry };
+      if (isDataUrl(copy.full)) {
+        if (copy.driveUrl) copy.full = copy.driveUrl;
+        else delete copy.full;
+        touched += 1;
+      }
+      if (isDataUrl(copy.url) && copy.driveUrl) { copy.url = copy.driveUrl; touched += 1; }
+      return copy;
+    });
+  });
+  let next = { ...project, figures: lightFigures };
+  if (touched) dropped.push(`${touched} full-resolution figure copy(ies) kept only in this browser`);
+  if (projectFootprint(next) > budget) {
+    /* 2 — les pixels eux-mêmes : le document garde la figure à sa place (nom,
+       légende, ancre) et le PDF est réparable en réimportant le document
+       ou en connectant le Drive. */
+    const bare = {};
+    Object.keys(lightFigures).forEach((section) => {
+      bare[section] = (lightFigures[section] || []).map((entry) => {
+        if (!entry || typeof entry !== 'object') return entry;
+        const copy = { ...entry };
+        let changed = false;
+        if (isDataUrl(copy.url)) { copy.url = copy.driveUrl || ''; changed = true; }
+        if (isDataUrl(copy.full)) { copy.full = copy.driveUrl || ''; changed = true; }
+        if (changed) { copy.pixelsMissing = true; touched += 1; }
+        return copy;
+      });
+    });
+    next = { ...next, figures: bare };
+    dropped.push('the figure images themselves (they existed in this browser only)');
+  }
+  const after = projectFootprint(next);
+  return { project: next, ok: after <= budget, footprint: after, dropped };
+};
+
+/**
+ * ÉCRIRE PUIS RELIRE : la seule façon d'affirmer « c'est enregistré ».
+ *
+ * `fields` = ce qui doit se retrouver dans le projet RELU du magasin
+ * ({ background: '…html…', references: [...] }) — la comparaison est faite sur
+ * la valeur JSON, donc un tableau ou un objet se vérifient aussi.
+ * @returns {{ ok:boolean, error:string, stored:object|null, missing:string[] }}
+ *          `missing` = les champs absents ou différents après relecture.
+ */
+export const saveProjectsChecked = (list, { projectId = '', fields = {} } = {}) => {
+  const ids = Object.keys(fields || {});
+  const written = saveProjects(list);
+  if (!written.ok) return { ok: false, error: written.error, stored: null, missing: ids };
+  if (!projectId) return { ok: true, error: '', stored: null, missing: [] };
+  const stored = loadProjects().find((p) => p && String(p.id) === String(projectId)) || null;
+  if (!stored) {
+    return { ok: false, error: 'the project is not in the store after saving', stored: null, missing: ids };
+  }
+  const missing = ids.filter((k) => (
+    JSON.stringify(stored[k] === undefined ? null : stored[k])
+    !== JSON.stringify(fields[k] === undefined ? null : fields[k])
+  ));
+  return { ok: missing.length === 0, error: '', stored, missing };
 };
 
 /** Remove every project of a dataset from this device's cache (dataset

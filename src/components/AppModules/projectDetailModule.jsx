@@ -5,7 +5,7 @@ import {
   loadPubFormat, loadRelevantPapers, matchCoauthors, pubCitationData, pubCitationHtml
 } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
-import { loadProjects, saveProjects, recordProjectDeletion, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor } from './projectsModule';
+import { loadProjects, saveProjects, saveProjectsChecked, lightenProjectForStorage, recordProjectDeletion, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor } from './projectsModule';
 import { suggestDriveFileName, openDrive, projectSectionFolderPath, projectSectionFolderLabel, projectImagesFolderLabel } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
 import { UsefulFilesSection } from '../UsefulFilesSection';
@@ -20,7 +20,7 @@ import {
   HEADER_DESTS, isHeaderDest, headerDestLabel, headerTextFor,
   buildManuscriptPlan, convertCitationsInText, htmlFromText, mergeManuscriptBibliography,
   readManuscriptDocument, figureDataUrl, figureMarksIn, stripFigureMarks,
-  NUMERIC_CITATION_RE, numericCitationNumbers
+  manuscriptFingerprint, previousImportOf, citedNumbersInText
 } from '../../utils/manuscriptImport';
 import {
   citationAnchorId, citationLabel, ensureReferenceEntries, linkCitationsInSections,
@@ -265,6 +265,15 @@ export const ProjectDetailModule = ({
      `body`   = les blocs du document, pour recalculer l'en-tête après correction ;
      `headerPicks` = ceux que l'utilisateur veut ranger dans le projet. */
   const [msImport, setMsImport] = useState(null);
+  /* COMPTE RENDU DU DERNIER IMPORT, affiché EN HAUT de la page projet :
+     la fenêtre d'import se FERME dès que l'import est écrit (elle restait
+     ouverte, le bouton restait actif et un second clic collait le manuscrit
+     une deuxième fois dans les sections). `undoProject` = le projet tel qu'il
+     était AVANT l'import, pour un « ↩︎ Undo import » immédiat. */
+  const [msResult, setMsResult] = useState(null);
+  /* Garde anti double import : `busy` ne suffisait pas (deux clics dans le même
+     rendu, ou un clic pendant que l'écriture est en cours). */
+  const msBusyRef = useRef(false);
   /* Compte rendu du dernier « 🔗 Link citations… » (section Bibliography). */
   const [citationLinkReport, setCitationLinkReport] = useState('');
   const [linkTestId, setLinkTestId] = useState('');
@@ -422,7 +431,23 @@ export const ProjectDetailModule = ({
   const canSee = !!currentUser && !!project && (isOwner || !!myCoworker);
   const canModify = isOwner || (myCoworker && myCoworker.permission === 'modify');
 
-  useEffect(() => { saveProjects(projects); }, [projects]);
+  /* ⚠ UNE ÉCRITURE REFUSÉE SE DIT ICI.
+     Chaque modification (texte, références, figures, commentaires) passe par cet
+     effet. `saveProjects` avalait jusqu'ici l'échec du magasin — quota plein,
+     navigation privée : le texte saisi disparaissait à la réouverture du projet
+     sans le moindre avertissement. Le bandeau reste affiché tant que le
+     navigateur refuse d'écrire. */
+  const [storageWarning, setStorageWarning] = useState('');
+  useEffect(() => {
+    const res = saveProjects(projects);
+    if (res && res.ok === false) {
+      setStorageWarning(`⚠ This browser refused to save this project (${res.error}). `
+        + 'The page keeps working, but changes may be lost when you leave it — '
+        + 'free some space (or save the dataset to Drive), then edit once more to retry.');
+    } else {
+      setStorageWarning((cur) => (cur ? '' : cur));
+    }
+  }, [projects]);
 
   /* Bibliographie / références enregistrées AVANT la prise en charge des
      co-auteurs : leurs champs manquants — les AUTEURS en premier lieu — sont
@@ -504,6 +529,41 @@ export const ProjectDetailModule = ({
     if (!canModify) return; // view-only coworkers cannot change anything
     setProjects((prev) => prev.map((p) =>
       p.id === project.id ? { ...p, ...patch, updatedAt: new Date().toISOString() } : p));
+  };
+
+  /**
+   * ÉCRIRE UN PATCH, PUIS LE RELIRE — la seule écriture dont un import a le droit.
+   *
+   * Le magasin du navigateur peut REFUSER une écriture (quota plein ~5 Mo,
+   * navigation privée) : `saveProjects` avalait cette erreur, la page annonçait
+   * « ✓ importé » et tout disparaissait à la réouverture du projet. Ici :
+   *   1. le patch part avec le reste de la liste (une seule écriture) ;
+   *   2. le projet est RELU du magasin et comparé au patch (saveProjectsChecked) ;
+   *   3. si le navigateur a refusé, et que `lighten` est demandé, une seconde
+   *      écriture part avec les figures allégées (voir lightenProjectForStorage)
+   *      — le texte et les références passent toujours en premier ;
+   *   4. l'état React suit EXACTEMENT ce qui a été écrit.
+   * @returns {{ ok:boolean, error:string, missing:string[], lightened:string[] }}
+   */
+  const commitProjectVerified = (patch, { lighten = false } = {}) => {
+    const commit = (extra) => {
+      const list = projects.map((p) => (p.id === project.id
+        ? { ...p, ...extra, updatedAt: new Date().toISOString() } : p));
+      return { list, res: saveProjectsChecked(list, { projectId: project.id, fields: extra }) };
+    };
+    let attempt = commit(patch);
+    const lightened = [];
+    if (!attempt.res.ok && lighten) {
+      const light = lightenProjectForStorage({ ...project, ...patch });
+      if (light.dropped.length) {
+        lightened.push(...light.dropped);
+        attempt = commit({ ...patch, figures: light.project.figures });
+      }
+    }
+    setProjects(attempt.list);
+    return {
+      ok: attempt.res.ok, error: attempt.res.error, missing: attempt.res.missing || [], lightened
+    };
   };
 
   // ---- Comments & review ----
@@ -1037,11 +1097,14 @@ export const ProjectDetailModule = ({
       PROJECT_TEXT_SECTIONS.map((s) => ({ id: s.id, html: project[s.id] || '' })),
       numbered.list
     );
-    updateProject({
+    /* Écriture VÉRIFIÉE, comme l'import de manuscrit : un magasin plein ne doit
+       pas faire disparaître des références en silence (voir
+       commitProjectVerified). */
+    const saved = commitProjectVerified({
       bibliography: res.list,
       ...(numbered.added ? { references: numbered.list } : {}),
       ...linked.patch
-    });
+    }, { lighten: true });
     if (linked.updated) {
       setCitationLinkReport(`🔗 ${linked.added} citation link(s) added in ${linked.updated} section(s) — the exported document (and its printed PDF) follow them.`);
     }
@@ -1050,7 +1113,9 @@ export const ProjectDetailModule = ({
       status: `✅ ${res.added} reference(s) added to “${project.name}”${res.filled ? ` — ${res.filled} completed` : ''}`
         + `${numbered.added ? ` · ${numbered.added} numbered reference(s) in the project document (Bibliography)` : ''}`
         + `${linked.updated ? ` · 🔗 ${linked.added} citation(s) linked in ${linked.updated} section(s)` : ''}`
-        + '. They also appear in Publications → “Project bibliography”.'
+        + (saved.ok
+          ? '. They also appear in Publications → “Project bibliography”.'
+          : ` · ⚠ NOT SAVED: the browser refused to store this project (${saved.error}) — free some space and import again.`)
     });
   };
 
@@ -1160,11 +1225,15 @@ export const ProjectDetailModule = ({
      dont le titre ne correspond à rien retombent dans CETTE section — l'endroit
      d'où l'utilisateur a cliqué. Ouvert depuis l'en-tête de la page, il reste
      vide : l'utilisateur choisit alors chaque destination. */
-  const openManuscriptImport = (focusSection = '') => setMsImport({
-    text: '', fileName: '', parts: null, plan: null, picks: [], busy: false, status: '', report: '',
-    header: null, headerPicks: null, figures: [],
-    focusSection: typeof focusSection === 'string' ? focusSection : ''
-  });
+  const openManuscriptImport = (focusSection = '') => {
+    msBusyRef.current = false;
+    setMsResult(null);
+    setMsImport({
+      text: '', fileName: '', parts: null, plan: null, picks: [], busy: false, status: '', report: '',
+      header: null, headerPicks: null, figures: [], hash: '', previous: null, confirmRepeat: false,
+      focusSection: typeof focusSection === 'string' ? focusSection : ''
+    });
+  };
 
   const analyseManuscript = (text, fileName, figures = null, focusSection = (msImport && msImport.focusSection) || '') => {
     const src = String(text || '');
@@ -1195,6 +1264,11 @@ export const ProjectDetailModule = ({
       .filter((i) => i !== -1);
     const headerFound = [header.title && 'title', header.authors && 'authors', header.affiliations && 'affiliations']
       .filter(Boolean).length;
+    /* LE MÊME DOCUMENT DÉJÀ IMPORTÉ ? L'empreinte du texte est rangée dans le
+       projet par chaque import réussi : un second import est signalé AVANT
+       d'écrire, au lieu de doubler silencieusement tout le texte. */
+    const hash = manuscriptFingerprint(src);
+    const previous = previousImportOf(project, hash);
     /* Un champ DÉJÀ rempli dans le projet n'est pas coché d'office : un import
        ne doit jamais écraser un titre saisi à la main (même règle que la fusion
        des références, qui ne remplit que les champs vides). */
@@ -1207,9 +1281,11 @@ export const ProjectDetailModule = ({
       ...(d || {}), text: src, fileName: fileName || '', parts, plan, picks, busy: false, report: '',
       focusSection, header, body: manuscript.body, lines: header.lines || [], figures: figs,
       headerPicks: (d && d.headerPicks) || defaultHeaderPicks,
+      hash, previous, confirmRepeat: false,
       status: `${blocks.length} block(s) · ${parts.length} part(s) · ${plan.entries.length} reference(s) · ${plan.citations.length} citation(s)`
         + (figs.length ? ` · ${figs.length} figure(s)` : '')
         + (headerFound ? ` · header: ${headerFound}/3 (title / authors / affiliations)` : '')
+        + (previous ? ' · ⚠ already imported once' : '')
     }));
   };
 
@@ -1368,21 +1444,45 @@ export const ProjectDetailModule = ({
       return { ...d, picks: list.indexOf(i) === -1 ? [...list, i].sort((a, b) => a - b) : list.filter((x) => x !== i) };
     });
 
-  /** Applique le plan : sections + figures + bibliographie + références. */
+  /** Applique le plan : sections + figures + bibliographie + références.
+   *
+   *  ⚠ CE QU'UN IMPORT DOIT FAIRE, ET QUE CE CODE NE FAISAIT PAS :
+   *   1. ÉCRIRE POUR DE VRAI. L'écriture du magasin échouait en silence quand
+   *      le quota du navigateur était plein : la page annonçait « ✓ 3 section(s)
+   *      filled · 12 numbered reference(s) » alors que RIEN n'avait été écrit —
+   *      le texte, les références et la bibliographie disparaissaient à la
+   *      réouverture du projet. L'import écrit maintenant, RELIT, et ne se
+   *      déclare réussi que si le magasin a gardé ce qui a été écrit.
+   *   2. FERMER LA FENÊTRE. Elle restait ouverte, le bouton restait actif : un
+   *      second clic collait le manuscrit une deuxième fois dans les sections.
+   *      Le compte rendu s'affiche désormais EN HAUT de la page, avec le projet
+   *      d'avant (`↩︎ Undo import`).
+   *   3. NUMÉROTER TOUTE LA BIBLIOGRAPHIE. Les références ne venaient que des
+   *      entrées cochées ET citées : les entrées non citées n'entraient pas dans
+   *      project.references (donc n'étaient imprimées nulle part) et, quand rien
+   *      n'était coché — toutes les entrées étant déjà dans la bibliographie du
+   *      projet, ce qui arrive au deuxième import — aucune référence n'était
+   *      créée et plus aucune citation n'était liée. */
   const applyManuscriptImport = async () => {
     const d = msImport;
     if (!d || !d.plan) return;
+    if (msBusyRef.current) return;   // deux clics = un seul import
+    if (d.previous && !d.confirmRepeat) return; // doublon non confirmé
+    msBusyRef.current = true;
     setMsImport((cur) => ({ ...(cur || {}), busy: true, status: 'Applying…' }));
+    const before = { ...project };   // filet de sécurité « ↩︎ Undo import »
     const numbers = d.plan.numberByKey;
     const patch = {};
-    const usedNumbers = new Set();
     /* 1. Les citations du document → les numéros du PROJET ([12] du manuscrit →
-       [5] du projet), et les numéros réellement cités sont retenus. Au passage,
-       les MARQUEURS de figure sortent du texte : la figure rejoint la section de
-       la partie qui la portait, avec l'ANCRE du paragraphe qui la précédait
-       (elle sera réinsérée là dans le document exporté). */
+       [5] du projet) — la table du plan ne convertit que ce qu'elle sait
+       résoudre : une citation non résolue reste telle quelle. Au passage, les
+       MARQUEURS de figure sortent du texte : la figure rejoint la section de la
+       partie qui la portait, avec l'ANCRE du paragraphe qui la précédait (elle
+       sera réinsérée là dans le document exporté). */
     const convertedParts = [];
     const figurePlacements = [];
+    const citedInText = new Set();   // numéros cités (ceux du DOCUMENT)
+    const notConverted = [];         // citations laissées telles quelles
     /* Les parties REDIRIGÉES vers un champ d'en-tête (« 🧾 Authors », « 🧾
        Affiliations », « 🧾 Title », voir HEADER_DESTS) : leur texte ne va pas
        dans une section mais dans « 🧾 Title, authors & affiliations », mis en
@@ -1391,16 +1491,8 @@ export const ProjectDetailModule = ({
     d.parts.forEach((p) => {
       if (!p.dest) return;
       const converted = convertCitationsInText(p.text, numbers);
-      /* Les numéros RÉELLEMENT cités, plages comprises (« [5-7] » → 5, 6, 7) :
-         la même expression que partout ailleurs dans le module, au lieu d'une
-         copie qui les ignorait — seuls ces papiers reçoivent un numéro dans
-         project.references. */
-      NUMERIC_CITATION_RE.lastIndex = 0;
-      let cited = NUMERIC_CITATION_RE.exec(converted.text);
-      while (cited) {
-        numericCitationNumbers(cited[1]).forEach((n) => usedNumbers.add(n));
-        cited = NUMERIC_CITATION_RE.exec(converted.text);
-      }
+      citedNumbersInText(converted.text).forEach((n) => citedInText.add(n));
+      converted.unresolved.forEach((raw) => notConverted.push(raw));
       if (isHeaderDest(p.dest)) {
         headerTexts.push({ field: p.dest, text: stripFigureMarks(converted.text), mode: p.mode });
         /* Les FIGURES de ce paragraphe ne peuvent pas être imprimées dans
@@ -1417,12 +1509,43 @@ export const ProjectDetailModule = ({
       });
       convertedParts.push({ dest: p.dest, mode: p.mode, text: stripFigureMarks(converted.text) });
     });
+    /* LES RÉFÉRENCES NUMÉROTÉES DU PROJET : une par entrée RETENUE de la
+       bibliographie du document — cochée par l'utilisateur, déjà numérotée dans
+       le projet (elle garde son numéro), ou déjà rangée dans la bibliographie du
+       projet (le cas d'un second import : plus rien n'est coché, et c'est
+       précisément là qu'aucune référence n'était créée et que les « [12] » du
+       texte ne se liaient plus à rien). */
+    const picks = d.picks || [];
+    const inProjectBib = bibExistingKeys();
+    const kept = d.plan.entries.filter((e, i) => (
+      picks.indexOf(i) !== -1 || !!e.existing
+      || entryKeys(e.entry).some((k) => inProjectBib.has(k))
+    ));
+    const numbered = numberImportedReferences(kept.map((e) => e.entry), refs, {
+      hints: kept.map((e) => e.number), makeId: genProjectId
+    });
+    const references = numbered.list;
+    const numberSet = referenceNumbers(references);
     const pickedEntries = d.plan.entries
-      .filter((e, i) => (d.picks || []).indexOf(i) !== -1)
+      .filter((e, i) => picks.indexOf(i) !== -1)
       .map((e) => e.entry);
-    /* L'en-tête du document (titre / auteurs / affiliations) rejoint le projet
-       dans les mêmes champs que la section « 🧾 Title, authors & affiliations »
-       — rien n'est écrit si la case est décochée ou le champ vide. */
+    const merged = mergeManuscriptBibliography(projectBib, pickedEntries, { project });
+    /* Les numéros cités dans le texte qui n'ont AUCUNE référence : ils restent
+       tels quels (aucun lien mort, rien d'inventé) et l'utilisateur le lit dans
+       le compte rendu — c'est presque toujours une entrée absente de la
+       bibliographie du document. */
+    const unlinkedNumbers = [...citedInText].filter((n) => !numberSet.has(n)).sort((a, b) => a - b);
+    /* 1 bis. Les FIGURES du document → les figures de LEUR section. C'est la
+       seule étape lente (envoi au Drive, repli en copie locale) — et la seule qui
+       dépend du réseau : une figure qui échoue ne doit JAMAIS emporter le texte
+       et les références (l'import continue, le compte rendu le dit). */
+    let figRes = { figures: project.figures || {}, added: 0, onDrive: 0, local: 0, already: 0 };
+    let figureError = '';
+    try {
+      figRes = await attachManuscriptFigures(d.figures, figurePlacements);
+    } catch (err) {
+      figureError = String((err && err.message) || 'the figures could not be attached');
+    }
     const hp = d.headerPicks || {};
     const hd = d.header || {};
     const headerPatch = {};
@@ -1448,32 +1571,11 @@ export const ProjectDetailModule = ({
       headerFromText.push(dest.short);
       if (headerApplied.indexOf(dest.short) === -1) headerApplied.push(dest.short);
     });
-    const merged = mergeManuscriptBibliography(projectBib, pickedEntries, { project });
-    const added = d.plan.entries
-      .filter((e) => e.isNew && usedNumbers.has(e.number))
-      .map((e) => ({
-        id: genProjectId(),
-        number: e.number,
-        sourceId: '', source: '',
-        title: e.entry.title || 'Untitled',
-        link: e.entry.link || e.entry.doi || '',
-        doi: e.entry.doi || '',
-        authors: e.entry.authors || '',
-        journal: e.entry.journal || '',
-        year: e.entry.year || '',
-        volume: e.entry.volume || '',
-        pages: e.entry.pages || ''
-      }));
-    /* 1 bis. Les FIGURES du document → les figures de LEUR section. C'est la
-       seule étape lente (envoi au Drive, repli en copie locale). */
-    const figRes = await attachManuscriptFigures(d.figures, figurePlacements);
-    /* 2. Le texte → le contenu riche de la section, chaque [n] devenant un LIEN
-       vers la référence n (ancre #ref-n du document exporté + infobulle) : c'est
-       ce qui manquait aux manuscrits importés — les numéros du document
-       restaient des nombres morts dans le texte. Les parties qui visent la MÊME
-       section s'AJOUTENT l'une à l'autre (elles ne s'écrasent plus). */
-    const numberSet = referenceNumbers([...refs, ...added]);
-    const titleFor = citationTitleFor(added);
+    /* 2. Le texte → le contenu riche de la section : chaque [n] devient un LIEN
+       vers la référence n (ancre #ref-n du document exporté + infobulle). Un
+       numéro sans référence reste un nombre simple — jamais de lien mort. Les
+       parties qui visent la MÊME section s'AJOUTENT l'une à l'autre. */
+    const titleFor = citationTitleFor(numbered.created);
     let linkedTotal = 0;
     convertedParts.forEach((c) => {
       const html = linkCitationNumbers(htmlFromText(c.text), {
@@ -1483,35 +1585,95 @@ export const ProjectDetailModule = ({
       const previous = patch[c.dest] !== undefined ? patch[c.dest] : String(project[c.dest] || '').trim();
       patch[c.dest] = c.mode === 'replace' ? html : [previous, html].filter(Boolean).join('\n');
     });
-    updateProject({
+    /* 3. L'ÉCRITURE, VÉRIFIÉE. Le patch part dans le magasin, puis le projet est
+       RELU : si le navigateur a refusé (quota plein), une seconde écriture part
+       avec les figures allégées — et si elle échoue encore, la page le DIT au
+       lieu d'annoncer « ✓ importé » sur un magasin vide. */
+    const receipt = {
+      hash: d.hash || manuscriptFingerprint(d.text),
+      fileName: d.fileName || '',
+      at: new Date().toISOString(),
+      sections: convertedParts.map((c) => c.dest),
+      references: numbered.created.length
+    };
+    const history = Array.isArray(project.msImports) ? project.msImports : [];
+    const fullPatch = {
       ...patch,
       ...headerPatch,
       bibliography: merged.list,
-      references: added.length ? [...refs, ...added] : refs,
-      ...(figRes.added ? { figures: figRes.figures } : {})
-    });
+      references,
+      ...(figRes.added ? { figures: figRes.figures } : {}),
+      msImports: [...history.filter((it) => !it || it.hash !== receipt.hash), receipt].slice(-20)
+    };
+    /* L'écriture vérifiée : elle relit le magasin et n'annonce un succès que si
+       le texte est BIEN là. Si le navigateur refuse (quota plein), elle réessaie
+       une fois avec les figures allégées — le texte et les références d'abord. */
+    const saved = commitProjectVerified(fullPatch, { lighten: true });
+    const stored = saved.ok;
+    const lightened = saved.lightened;
+    msBusyRef.current = false;
+    setMsImport(null);   // la fenêtre se ferme : plus de second import par inadvertance
     const filled = d.parts.filter((p) => p.dest && !isHeaderDest(p.dest));
     const destLabel = (id) => (PROJECT_TEXT_SECTIONS.find((s) => s.id === id)
       || HEADER_DESTS.find((s) => s.id === id) || {}).label || id;
-    setMsImport((cur) => ({
-      ...(cur || {}),
-      busy: false,
-      report: `✓ ${filled.length
-        ? `${filled.length} section(s) filled (${filled.map((p) => destLabel(p.dest)).join(', ')})`
-        : 'no section filled'}`
+    setMsResult({
+      ok: stored,
+      undoProject: before,
+      lines: [
+        `${filled.length
+          ? `${filled.length} section(s) filled (${filled.map((p) => destLabel(p.dest)).join(', ')})`
+          : 'no section filled'}`
         + (headerApplied.length ? ` · header: ${headerApplied.join(' + ')}` : '')
         + (headerFromText.length
-          ? ` (${headerFromText.join(' + ')} redirected from the text — check “🧾 Title, authors & affiliations” above)`
-          : '')
-        + ` · ${merged.added} reference(s) added to the project bibliography`
-        + ` · ${added.length} numbered reference(s)`
-        + (linkedTotal ? ` · ${linkedTotal} citation(s) linked to their reference` : '')
-        + (d.plan.unresolved.length ? ` · ${d.plan.unresolved.length} citation(s) left as they were` : '')
-        + (figRes.added
-          ? ` · ${figRes.added} figure(s) added to the sections (${figRes.onDrive ? `${figRes.onDrive} on Drive` : ''}${figRes.onDrive && figRes.local ? ', ' : ''}${figRes.local ? `${figRes.local} kept in this browser` : ''}) — they are printed in the text by “📄 Export document”`
-          : '')
-        + (figRes.already ? ` · ${figRes.already} figure(s) already in the section (nothing duplicated)` : '')
-    }));
+          ? ` (${headerFromText.join(' + ')} taken from the text — check “🧾 Title, authors & affiliations”)`
+          : ''),
+        `${merged.added} reference(s) added to the project bibliography · `
+        + `${numbered.created.length} new numbered reference(s) — ${references.length} in the project`
+        + (linkedTotal ? ` · 🔗 ${linkedTotal} citation(s) linked to their reference` : ' · no citation to link'),
+        ...(unlinkedNumbers.length
+          ? [`⚠ ${unlinkedNumbers.length} citation number(s) have no reference in this project: `
+            + `${unlinkedNumbers.slice(0, 15).map((n) => `[${n}]`).join(', ')}`
+            + `${unlinkedNumbers.length > 15 ? '…' : ''} — their entry is missing from the document’s `
+            + `bibliography. Add it (“📚 + Reference”) then use “🔗 Link citations…”.`]
+          : []),
+        ...(notConverted.length
+          ? [`⚠ ${notConverted.length} citation(s) could not be matched to the document’s bibliography and were `
+            + `left exactly as they were: ${notConverted.slice(0, 8).join(' · ')}${notConverted.length > 8 ? '…' : ''}`]
+          : []),
+        ...(figureError
+          ? [`⚠ The figures of the document could not be attached (${figureError}) — the text and the references are imported. `
+            + 'Reconnect Google Drive and import the document again, or add the figures from the Image Builder.']
+          : []),
+        ...(figRes.added
+          ? [`${figRes.added} figure(s) added to the sections (${figRes.onDrive ? `${figRes.onDrive} on Drive` : ''}`
+            + `${figRes.onDrive && figRes.local ? ', ' : ''}${figRes.local ? `${figRes.local} kept in this browser` : ''}) `
+            + `— “📄 Export document” prints them where the document had them`
+            + (figRes.already ? ` · ${figRes.already} already there (nothing duplicated)` : '')]
+          : []),
+        stored
+          ? `💾 saved in this browser${lightened.length ? ` — to fit its storage, ${lightened.join(' and ')} could not be kept` : ''}`
+          : `⚠ NOT SAVED: the browser refused to store this project (${saved.error}). `
+            + `It is only in this window and will be lost when you leave the page — free some space `
+            + `(or save the dataset to Drive) and import again.`
+            + (saved.missing.length ? ` Fields not stored: ${saved.missing.join(', ')}.` : '')
+      ]
+    });
+  };
+
+  /** « ↩︎ Undo import » : rend le projet tel qu'il était avant le dernier import. */
+  const undoManuscriptImport = () => {
+    const snapshot = msResult && msResult.undoProject;
+    if (!snapshot || !snapshot.id) return;
+    const list = projects.map((p) => (p.id === snapshot.id ? snapshot : p));
+    const res = saveProjectsChecked(list, { projectId: snapshot.id, fields: {} });
+    setProjects(list);
+    setMsResult({
+      ok: res.ok,
+      undoProject: null,
+      lines: [res.ok
+        ? '↩︎ The import was undone — the project is back as it was before (text, references and bibliography).'
+        : `⚠ The project was restored in this window, but the browser refused to store it (${res.error}).`]
+    });
   };
 
   const renderBibImport = () => {
@@ -1913,21 +2075,40 @@ export const ProjectDetailModule = ({
                   )}
                 </div>
 
+                {/* LE MÊME DOCUMENT DÉJÀ IMPORTÉ : on le DIT et on demande une
+                    confirmation explicite — un second import sans le savoir
+                    collait tout le texte une deuxième fois dans les sections. */}
+                {msImport.previous && (
+                  <div className="border border-red-300 bg-red-50 rounded-lg p-2">
+                    <p className="text-[11px] font-bold text-red-700">
+                      ⚠ This document was already imported into “{project.name}”
+                      {msImport.previous.at ? ` on ${new Date(msImport.previous.at).toLocaleString()}` : ''}
+                      {msImport.previous.fileName ? ` (${msImport.previous.fileName})` : ''}.
+                      Importing it again ADDS its text a second time to the same sections.
+                    </p>
+                    <label className="flex items-center gap-1.5 text-[11px] text-red-700 font-bold mt-1.5">
+                      <input type="checkbox" checked={!!msImport.confirmRepeat}
+                             onChange={(e) => setMsImport((cur) => ({ ...cur, confirmRepeat: e.target.checked }))} />
+                      I know — import it again anyway
+                    </label>
+                    <p className="text-[10px] text-red-600 mt-1">
+                      Nothing has been imported yet: the window only writes when you click the button below.
+                    </p>
+                  </div>
+                )}
+
                 <div className="flex flex-wrap items-center gap-2">
-                  <button type="button" onClick={applyManuscriptImport} disabled={msImport.busy}
+                  <button type="button" onClick={applyManuscriptImport}
+                          disabled={msImport.busy || (!!msImport.previous && !msImport.confirmRepeat)}
                           className="px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
                     {msImport.busy ? '⏳ Importing (figures, references…)' : '✓ Import into this project'}
                   </button>
                   <span className="text-[10px] text-slate-400">
                     Only what is shown above is written — existing section text is kept unless “replace the section” is chosen.
+                    The window closes by itself when the import is stored, and the report appears at the top of the page.
                   </span>
                 </div>
               </>
-            )}
-            {msImport.report && (
-              <div className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
-                {msImport.report}
-              </div>
             )}
           </div>
         </div>
@@ -2865,6 +3046,51 @@ export const ProjectDetailModule = ({
             {renderCoworkers()}
           </div>
         </div>
+
+        {/* ---------- Écriture refusée par le navigateur (quota plein) ---------- */}
+        {storageWarning && (
+          <div className="rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-[11px] font-bold text-red-700">
+            {storageWarning}
+          </div>
+        )}
+
+        {/* ---------- Compte rendu du dernier import de manuscrit ----------
+            La fenêtre d'import se ferme dès que l'import est écrit : le compte
+            rendu — et le verdict du magasin — sont ICI, en haut de la page, avec
+            « ↩︎ Undo import » pour revenir à l'état d'avant. Un import NON
+            enregistré (quota plein) est impossible à manquer. */}
+        {msResult && (
+          <div className={`rounded-xl border p-3 flex flex-col gap-1.5 ${
+            msResult.ok ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-300'
+          }`}>
+            <div className="flex items-start justify-between gap-2">
+              <span className={`text-xs font-black uppercase tracking-wide ${
+                msResult.ok ? 'text-emerald-800' : 'text-red-700'
+              }`}>
+                📥 Manuscript import — {msResult.ok ? 'done' : 'NOT SAVED'}
+              </span>
+              <span className="flex items-center gap-1.5">
+                {msResult.undoProject && (
+                  <button type="button" onClick={undoManuscriptImport}
+                          className="px-2.5 py-1 text-[10px] font-bold rounded-lg bg-white border border-slate-300 text-slate-600 hover:bg-slate-100"
+                          title="Put the project back exactly as it was before this import (text, references and bibliography).">
+                    ↩︎ Undo import
+                  </button>
+                )}
+                <button type="button" onClick={() => setMsResult(null)}
+                        className={`text-sm px-1 ${msResult.ok ? 'text-emerald-600' : 'text-red-500'} hover:opacity-70`}
+                        title="Hide this report">
+                  ✕
+                </button>
+              </span>
+            </div>
+            {(msResult.lines || []).map((line, i) => (
+              <p key={i} className={`text-[11px] leading-relaxed ${
+                msResult.ok ? 'text-emerald-900' : 'text-red-800'
+              }`}>{line}</p>
+            ))}
+          </div>
+        )}
 
         {/* ---------- Title, authors & affiliations of the paper ---------- */}
         <SectionCard title="🧾 Title, authors & affiliations"
