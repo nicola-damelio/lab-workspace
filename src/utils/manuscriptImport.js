@@ -31,6 +31,63 @@ export const MANUSCRIPT_FILE_ACCEPT = '.docx,.html,.htm,.txt,.md';
 
 /* ── 1. Le texte → une suite de BLOCS (une ligne = un paragraphe ou un titre) ─ */
 
+/* ── L'EN-TÊTE d'un manuscrit : titre, auteurs, affiliations ─────────────────
+   Un article commence par son titre, la liste de ses auteurs et leurs
+   affiliations. Ces lignes ressemblent à des titres (courtes, capitalisées…)
+   mais elles ne DÉCOUPENT pas le document : prises pour des sections, elles
+   disparaissaient de l'import et le titre se retrouvait noyé dans la première
+   partie. Les reconnaître sert à deux choses :
+     • `isHeadingLine` refuse de les appeler « section » ;
+     • `parseManuscriptHeader` les range dans les champs Title / Authors /
+       Affiliations du projet (voir la page projet, section « 🧾 Title, authors
+       & affiliations »). */
+
+/** Marqueur d'affiliation en tête de ligne : « 1 … », « * … », « a) … ». */
+export const AFFILIATION_MARK_RE = /^\s*(?:\d{1,2}|[a-e]|[ivx]{1,4}|[*\u2020\u2021\u00a7\u00b6])[.)\]]?\s+\S/i;
+
+/** Mots qui trahissent une affiliation (institution, laboratoire, adresse). */
+export const AFFILIATION_WORDS_RE = /(?:universit|university|dipartimento|department|d[ée]partement|dipartimenti|laborator|laboratoire|faculty|facolt|school of|college|academy|research (?:group|unit|centre|center|institute)|institut|institute|hospital|umr\b|cnrs\b|cnr\b|inserm\b|inrae\b|csic\b|max planck|campus|p\.?o\.? box)/i;
+
+/** Pays / code postal : la fin typique d'une adresse d'affiliation. */
+export const AFFILIATION_PLACE_RE = /\b(?:italy|france|germany|spain|portugal|netherlands|belgium|switzerland|austria|denmark|sweden|norway|poland|greece|united kingdom|england|scotland|ireland|\busa\b|\bcanada\b|\bbrazil\b|\bchina\b|\bjapan\b|\bindia\b|\baustralia\b)\b|\b\d{5}\b/i;
+
+/** Une ligne d'affiliation : un mot d'institution (université, laboratoire…,
+ *  souvent signalée par « 1 », « * »…) ou une adresse postale. Le nom d'un pays
+ *  ne suffit PAS : « … infecting pepper crops in Italy » est un titre. */
+export const looksLikeAffiliationLine = (line) => {
+  const s = String(line || '').trim();
+  if (!s || s.length > 400) return false;
+  if (/^(?:https?:|www\.|doi:|10\.\d)/i.test(s)) return false;
+  const marked = AFFILIATION_MARK_RE.test(s);
+  const commas = s.split(',').length;
+  if (AFFILIATION_WORDS_RE.test(s)) return marked || commas >= 2 || s.length >= 30;
+  if (AFFILIATION_PLACE_RE.test(s)) return (marked || s.length <= 120) && commas >= 2;
+  return false;
+};
+
+/* Un morceau de nom : « Rossi », « Mario Rossi1 », « Ross », « A. » — jamais
+   une phrase (« plant viruses » ne passe pas : minuscule initiale). */
+const NAME_PART_RE = /^[\p{Lu}][\p{L}'\u2019.-]*(?:\s+(?:[\p{Lu}]|[\p{Lu}][\p{L}'\u2019.-]*))?\.?\s*(?:\d{1,2}|[*\u2020\u2021])*$/u;
+
+/** Une ligne de noms : « Mario Rossi1, Anna Bianchi1, Jean Dupont2 »,
+ *  « Rossi, M., Bianchi, A., et al. », « Rossi M, Bianchi A ». Il faut un
+ *  marqueur d'auteur (initiale pointée, exposant, « et al. ») ou une longue
+ *  liste de noms : « Materials and Methods » n'est donc jamais prise pour une
+ *  liste d'auteurs. */
+export const looksLikeAuthorLine = (line) => {
+  const s = String(line || '').trim();
+  if (!s || s.length > 400) return false;
+  const etAl = /\bet\s+al\.?/i.test(s);
+  if (/[.;:!?]$/.test(s) && !/et\s+al\.?$/i.test(s)) return false; // une phrase
+  const parts = s.split(/\s*(?:,|;|\band\b|&)\s*/i).map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2 || !parts.every((p) => NAME_PART_RE.test(p))) return false;
+  if (etAl) return true;
+  const initials = /(?:^|[\s,;&])[\p{Lu}]\.(?:\s|,|;|$|\d)/u.test(s)
+    || /\b[\p{Lu}]\.\s*[\p{Lu}]\./u.test(s);
+  const exponent = /\p{L}\d{1,2}(?=[\s,;&*]|$)/u.test(s) || /[*\u2020\u2021]/.test(s);
+  return initials || exponent || parts.length >= 3;
+};
+
 /** Un titre est une ligne COURTE, sans ponctuation de fin de phrase, qui
  *  ressemble à un intitulé : « 1. Introduction », « INTRODUCTION »,
  *  « Materials and Methods », « References »… Une phrase comme « Le virus a été
@@ -39,6 +96,9 @@ export const isHeadingLine = (line) => {
   const s = String(line || '').trim();
   if (!s || s.length > 90) return false;
   if (/[.;:,]$/.test(s)) return false;
+  /* L'en-tête (auteurs, affiliations) n'est JAMAIS une section : sinon il
+     disparaît du document importé (voir parseManuscriptHeader). */
+  if (looksLikeAuthorLine(s) || looksLikeAffiliationLine(s)) return false;
   if (/^(https?:|www\.|doi:|10\.\d)/i.test(s)) return false;
   const words = s.split(/\s+/).filter(Boolean);
   if (words.length > 12) return false;
@@ -113,14 +173,98 @@ export const guessSectionForHeading = (heading) => {
   return found ? found.id : '';
 };
 
+/* ── 3 bis. L'EN-TÊTE du document : titre, auteurs, affiliations ──────────── */
+
+/** Un titre ne se termine pas par une ponctuation de phrase — sauf quand la
+ *  ligne suivante est une liste d'auteurs (le titre a alors un point final). */
+const isTitleCandidate = (line, nextLine) => {
+  const s = String(line || '').trim();
+  if (!s || s.length < 8 || s.length > 300) return false;
+  if (/^(?:https?:|www\.|doi:|10\.\d)/i.test(s)) return false;
+  if (/^(?:abstract|introduction|references|bibliography|keywords|acknowledg)/i.test(s)) return false;
+  if (s.split(/\s+/).filter(Boolean).length < 2) return false;
+  if (/[.;:,]$/.test(s)) {
+    return !!nextLine && (looksLikeAuthorLine(nextLine) || looksLikeAffiliationLine(nextLine));
+  }
+  return true;
+};
+
+/** Liste de noms « en position d'auteurs » (juste après le titre) : elle n'a
+ *  pas besoin de porter des exposants — « Anna Bianchi, Jean Dupont » suffit. */
+const isAuthorish = (line) => {
+  const s = String(line || '').trim();
+  if (!s || s.length > 300 || /[.;:!?]$/.test(s)) return false;
+  const parts = s.split(/\s*(?:,|;|\band\b|&)\s*/i).map((p) => p.trim()).filter(Boolean);
+  return parts.length >= 2 && parts.every((p) => NAME_PART_RE.test(p));
+};
+
+/** Combien de blocs sont examinés en tête de document. */
+const HEADER_SCAN = 12;
+
+/**
+ * L'EN-TÊTE d'un manuscrit — le titre, les auteurs et leurs affiliations, tels
+ * qu'ils sont écrits en tête du document :
+ *
+ *   Aphid transmission of a new potyvirus infecting pepper crops in Italy
+ *   Mario Rossi1, Anna Bianchi1, Jean Dupont2
+ *   1 Dipartimento di Agraria, Università di Napoli Federico II, Portici, Italy
+ *   2 INRAE, UMR Biologie du Fruit, Villenave d'Ornon, France
+ *
+ * @param {Array} blocks  le corps du document (blocksFromText / splitManuscript)
+ * @returns {{ title: string, authors: string, affiliations: string,
+ *             blocks: Array }}  `affiliations` garde une ligne par affiliation,
+ *             `blocks` = les blocs consommés (à NE PAS réimporter comme texte).
+ */
+export const parseManuscriptHeader = (blocks) => {
+  const list = (Array.isArray(blocks) ? blocks : []).slice(0, HEADER_SCAN);
+  const used = [];
+  let title = '';
+  let authors = '';
+  const affiliationLines = [];
+  for (let i = 0; i < list.length; i += 1) {
+    const b = list[i];
+    const s = String((b && b.text) || '').trim();
+    if (!s) continue;
+    const label = headingLabel(s);
+    /* Une section du projet (ou la bibliographie) = le corps commence là. */
+    if (guessSectionForHeading(label) || REFERENCE_HEADING_RE.test(label)) break;
+    if (looksLikeAffiliationLine(s)
+      || (affiliationLines.length > 0 && !looksLikeAuthorLine(s)
+        && !/[.;:!?]$/.test(s) && s.split(',').length >= 2 && s.split(/\s+/).length <= 25)) {
+      affiliationLines.push(s);
+      used.push(b);
+      continue;
+    }
+    if (looksLikeAuthorLine(s) || (title && !authors && isAuthorish(s))) {
+      if (!authors) { authors = s; used.push(b); continue; }
+      break; // deux listes de noms de suite : la seconde est du texte
+    }
+    if (!title && isTitleCandidate(s, (list[i + 1] || {}).text)) {
+      title = s;
+      used.push(b);
+      continue;
+    }
+    break;
+  }
+  /* Les affiliations ne sont gardées que si elles suivent des auteurs (sinon
+     c'est un paragraphe d'adresse au milieu du texte) — rien n'est inventé. */
+  const affiliations = authors ? affiliationLines.join('\n') : '';
+  return { title, authors, affiliations, blocks: used };
+};
+
 /** Découpe le CORPS du manuscrit en groupes menés par un titre : chaque groupe
  *  est une partie du texte, avec la section du projet devinée. Les blocs qui
  *  précèdent le premier titre forment un groupe sans titre (chapeau / résumé) :
- *  `id` reste vide et l'utilisateur tranche dans la fenêtre d'import. */
-export const groupManuscriptParts = (blocks) => {
+ *  `id` reste vide et l'utilisateur tranche dans la fenêtre d'import.
+ *  `header` (voir parseManuscriptHeader) retire de ces parties les lignes du
+ *  titre / des auteurs / des affiliations : elles vont dans les champs
+ *  « Title, authors & affiliations » du projet, jamais dans une section. */
+export const groupManuscriptParts = (blocks, { header = null } = {}) => {
+  const skip = new Set(header && Array.isArray(header.blocks) ? header.blocks : []);
   const parts = [];
   let current = null;
   (Array.isArray(blocks) ? blocks : []).forEach((b) => {
+    if (skip.has(b)) return;
     if (b.kind === 'heading') {
       const heading = headingLabel(b.text);
       if (REFERENCE_HEADING_RE.test(heading)) return;

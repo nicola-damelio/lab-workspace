@@ -170,5 +170,96 @@ has(PROJ, 'references: added.length ? [...refs, ...added] : refs',
 has(PROJ, 'patch[p.dest] = p.mode === \'replace\'', 'chaque partie peut remplacer — ou seulement compléter — sa section');
 has(PROJ, 'No file is uploaded to Drive.', 'la fenêtre dit que RIEN n’est envoyé au Drive (le texte reste dans le projet)');
 
-console.log(`✅ ${passed} tests passés (manuscrit — blocs / parties)`);
+/* ── 10. L'EN-TÊTE du document : titre / auteurs / affiliations ─────────────
+   Un article commence par son titre, ses auteurs et leurs affiliations. Ces
+   lignes ressemblent à des titres (courtes, capitalisées…) : prises pour des
+   sections, elles disparaissaient et la numérotation des parties n'avait plus
+   ni titre ni sens. Elles sont maintenant reconnues ET rangées dans le projet
+   (section « 🧾 Title, authors & affiliations »). */
+const HEADER_DOC = [
+  'Aphid transmission of a new potyvirus infecting pepper crops in Italy',
+  'Mario Rossi1, Anna Bianchi1, Jean Dupont2',
+  '1 Dipartimento di Agraria, Universita di Napoli Federico II, Portici, Italy',
+  '2 INRAE, UMR Biologie du Fruit, Villenave d Ornon, France',
+  '',
+  'Abstract',
+  'A new potyvirus was isolated from pepper plants showing mosaic symptoms.',
+  '',
+  'Introduction',
+  'Pepper crops are affected by many viruses (Rossi et al., 2018).',
+  '',
+  'References',
+  '[1] Rossi M, Bianchi A, et al. Characterization of a potyvirus. J Virol 2018;12:345-356.'
+].join('\n');
+const headerBlocks = MS.blocksFromText(HEADER_DOC);
+const headerManuscript = MS.splitManuscript(headerBlocks);
+const header = MS.parseManuscriptHeader(headerManuscript.body);
+eq(header.title, 'Aphid transmission of a new potyvirus infecting pepper crops in Italy', 'le TITRE du document est reconnu');
+eq(header.authors, 'Mario Rossi1, Anna Bianchi1, Jean Dupont2', '…la liste des auteurs');
+eq(header.affiliations.split('\n').length, 2, '…et les deux affiliations');
+ok(header.affiliations.includes('Dipartimento') && header.affiliations.includes('INRAE'),
+  'chaque affiliation garde son texte (une ligne par affiliation)');
+eq(header.blocks.length, 4, 'les 4 lignes d’en-tête sont consommées');
+
+/* Les lignes d'en-tête ne sont plus prises pour des SECTIONS du document. */
+ok(!MS.isHeadingLine('Mario Rossi1, Anna Bianchi1, Jean Dupont2'), 'une liste d’auteurs n’est pas un titre de section');
+ok(!MS.isHeadingLine('1 Dipartimento di Agraria, Universita di Napoli Federico II, Portici, Italy'),
+  'une affiliation non plus');
+ok(MS.isHeadingLine('Materials and Methods'), 'un vrai intitulé reste un titre');
+ok(MS.isHeadingLine('Introduction') && MS.isHeadingLine('Abstract'), 'les titres de section sont intacts');
+eq(headerManuscript.body.filter((b) => b.kind === 'heading').map((b) => b.text), ['Abstract', 'Introduction'],
+  'le corps du document ne commence qu’aux vraies sections');
+
+/* …et elles ne sont pas non plus importées comme du TEXTE. */
+const headerParts = MS.groupManuscriptParts(headerManuscript.body, { header });
+eq(headerParts.map((p) => p.heading), ['Abstract', 'Introduction'], 'l’en-tête disparaît des parties à importer');
+ok(!JSON.stringify(headerParts).includes('Mario Rossi1'), 'aucune partie ne recolle la liste des auteurs');
+ok(!JSON.stringify(headerParts).includes('Dipartimento'), '…ni les affiliations');
+eq(headerParts[0].id, 'background', 'Abstract → Scientific background');
+
+/* Style « Nom Initiales » + titre capitalisé (une « section » pour le module) :
+   le titre est reconnu quand même, et les auteurs en position d'auteurs aussi. */
+const header2 = MS.parseManuscriptHeader(MS.splitManuscript(MS.blocksFromText([
+  'A new potyvirus from pepper',
+  'Anna Bianchi, Jean Dupont',
+  'Dipartimento di Agraria, Universita di Napoli, Portici, Italy',
+  '',
+  'Introduction',
+  'Pepper crops are affected (Rossi et al., 2018).'
+].join('\n'))).body);
+eq(header2.title, 'A new potyvirus from pepper', 'titre court et capitalisé reconnu');
+eq(header2.authors, 'Anna Bianchi, Jean Dupont', 'auteurs sans exposant reconnus (position après le titre)');
+eq(header2.affiliations, 'Dipartimento di Agraria, Universita di Napoli, Portici, Italy', 'affiliation reconnue');
+
+/* Rien n'est inventé : un document sans en-tête ne rend aucun champ. */
+eq(MS.parseManuscriptHeader(MS.blocksFromText('Introduction\nDu texte.').slice(1)),
+  { title: '', authors: '', affiliations: '', blocks: [] },
+  'sans en-tête lisible, les trois champs restent vides');
+eq(MS.parseManuscriptHeader(MS.blocksFromText('Aphid transmission of plant viruses\n1. Introduction\nAphids transmit many plant viruses.').slice(0, 1)).title,
+  'Aphid transmission of plant viruses', 'un titre sans auteurs est reconnu seul');
+
+/* ── 11. Câblage : l'en-tête entre dans le PROJET, pas dans une section ───── */
+has(PROJ, 'const header = parseManuscriptHeader(manuscript.body);',
+  'la page projet lit l’en-tête du document');
+has(PROJ, 'const parts = groupManuscriptParts(manuscript.body, { header }).map((p, i) => ({',
+  '…et le retire des parties importées');
+has(PROJ, 'header: null, headerPicks: null,',
+  'la fenêtre d’import part sans en-tête : il est lu à l’analyse du document');
+has(PROJ, 'const defaultHeaderPicks = {',
+  '…et un champ DÉJÀ rempli dans le projet n’est pas coché d’office (rien n’est écrasé)');
+has(PROJ, 'Document header → project (title · authors · affiliations)',
+  'l’en-tête reconnu est montré dans la fenêtre (modifiable, coché/décoché)');
+has(PROJ, 'toggleManuscriptHeaderPick', 'chaque champ peut être coché ou décoché avant l’import');
+has(PROJ, 'paperTitle', 'le titre est enregistré dans le projet');
+has(PROJ, 'paperAuthors', 'les auteurs aussi');
+has(PROJ, 'paperAffiliations', 'les affiliations aussi');
+has(PROJ, '🧾 Title, authors & affiliations', 'la page projet a une section « Title, authors & affiliations »');
+has(PROJ, 'openSections.article', '…ouverte d’emblée (elle est en haut de la page)');
+has(PROJ, 'placeholder="Title of the paper — filled by “📥 Import a manuscript”"',
+  'le titre stocké est modifiable à la main');
+has(PROJ, '{project.paperTitle ? project.paperTitle : `📁 ${project.name}`}',
+  'le document exporté prend le titre du papier (le nom du projet reste en repli)');
+has(PROJ, '{project.paperAffiliations && (', '…et il imprime aussi les affiliations');
+
+console.log(`✅ ${passed} tests passés (manuscrit — blocs / parties / en-tête)`);
 

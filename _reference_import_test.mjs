@@ -17,14 +17,14 @@ import LZString from 'lz-string';
 import {
   BACKUP_BLOB_RE, backupFigureCount, backupPaperCount, bibliographyBlockToEntry, docxTextFromBytes,
   entryKey, extractDoi, extractPmid, extractYear, figuresFromBackupHtml, figuresFromBackupState,
-  formatAuthor, formatAuthors, looksLikeReference, mergePaperLists, mergeProjectBibliographies,
+  formatAuthor, formatAuthors, isMarkerTitle, looksLikeReference, mergePaperLists, mergeProjectBibliographies,
   mergeReferenceEntries, normalizeAuthorList, papersFromBackupHtml, paperKey,
   parseReferences, parseRisRecords, projectBibEntry, readReferenceDocument,
   referenceScore, splitReferenceBlocks
 } from './src/utils/referenceImport.js';
 /* Le moteur de citation RÉEL (sans React) : une référence importée doit
    s'afficher comme n'importe quelle référence du projet. */
-import { buildPubFormat, pubCitationData, pubCitationHtml } from './src/components/pubCitation.js';
+import { buildPubFormat, matchCoauthors, pubCitationData, pubCitationHtml } from './src/components/pubCitation.js';
 
 let passed = 0;
 const eq = (actual, expected, what) => {
@@ -364,6 +364,84 @@ ok(citation.includes('<b>Rossi M</b>'),
   'le membre du laboratoire est reconnu dans la liste importée et reçoit son style');
 ok(citation.includes('10.1016/j.jmb.2021.166789'), 'le DOI importé est cité');
 ok(citation.includes('Journal of Molecular Biology'), 'le journal importé est cité');
+
+/* ── 12. « et al. » est un MARQUEUR D'AUTEURS, jamais un titre ───────────────
+   Style « Nom, Initiales » (Paperpile / EndNote) : la liste d'auteurs se
+   termine par « et al. » et le titre commence juste après. Ce marqueur se
+   retrouvait à la tête du reste du texte : la référence importée s'appelait
+   « , et al » — ou « , et al. (2018) » — et son VRAI titre tombait dans le
+   champ journal. Ce que l'utilisateur constate : « dans certaines le titre
+   était “et al.” ». */
+const etAl1 = parseReferences(
+  'Rossi, M., Bianchi, A., et al. Characterization of a potyvirus infecting pepper. J Virol. 2018;12(3):345-356.',
+  { split: 'line', keepAll: true }
+)[0];
+eq(etAl1.title, 'Characterization of a potyvirus infecting pepper', 'le titre suit le marqueur « et al. »');
+eq(etAl1.authors, 'Rossi M, Bianchi A, et al.', '« et al. » reste dans la liste des auteurs (marqueur conservé)');
+eq(etAl1.journal, 'J Virol', 'le journal ne contient plus l’année');
+eq(etAl1.volume, '12', 'volume');
+eq(etAl1.pages, '345-356', 'pages');
+eq(etAl1.year, '2018', 'année');
+
+const etAl2 = parseReferences(
+  'Rossi, M., Bianchi, A., Costa, L., et al. (2018). Characterization of a potyvirus infecting pepper. Journal of Virology, 12(3), 345-356.',
+  { split: 'line', keepAll: true }
+)[0];
+eq(etAl2.title, 'Characterization of a potyvirus infecting pepper', 'année entre parenthèses APRÈS « et al. » : elle ne devient pas le titre');
+eq(etAl2.authors, 'Rossi M, Bianchi A, Costa L, et al.', 'tous les auteurs gardent le marqueur');
+eq(etAl2.journal, 'Journal of Virology', 'le journal perd sa virgule finale');
+eq(etAl2.volume, '12', 'volume (style « Journal, 12(3), 345-356 »)');
+eq(etAl2.pages, '345-356', 'pages');
+
+const etAl3 = parseReferences(
+  'Esposito, S., et al. Cucumber mosaic virus in tomato fields. J Gen Virol (2021) 102:45-52.',
+  { split: 'line', keepAll: true }
+)[0];
+eq(etAl3.title, 'Cucumber mosaic virus in tomato fields', 'un seul auteur + « et al. » : le titre reste le titre');
+eq(etAl3.authors, 'Esposito S, et al.', 'auteurs + marqueur');
+eq(etAl3.journal, 'J Gen Virol', 'journal');
+eq(etAl3.year, '2021', 'année entre parenthèses dans le journal');
+
+/* Style « Nom Initiales » (sans virgule) : le marqueur est normalisé. */
+const etAl4 = parseReferences(
+  'Bianchi A, Rossi M, et al. A new approach to virus purification. Virology (2020) 540:12-20.',
+  { split: 'line', keepAll: true }
+)[0];
+eq(etAl4.title, 'A new approach to virus purification', 'style « Nom Initiales » : le titre est reconnu');
+eq(etAl4.authors, 'Bianchi A, Rossi M, et al.', '…et le marqueur reste dans les auteurs');
+eq(etAl4.pages, '12-20', 'pages');
+
+/* Un titre réduit à un marqueur (ou sans une seule lettre) est repéré. */
+ok(isMarkerTitle(', et al'), 'un titre réduit à « et al. » est un marqueur');
+ok(isMarkerTitle('(2018)'), '…une année seule aussi');
+ok(!isMarkerTitle('Characterization of a potyvirus'), 'un vrai titre n’est pas un marqueur');
+
+/* Deux autres sorties réelles qui abîmaient le titre :
+   — bibliographie « virgules » de Word / EndNote (aucune phrase ne se termine) ;
+   — un DOI resté devant le titre (export Paperpile). */
+const endNote = parseReferences(
+  'Rossi, M., Bianchi, A., et al., 2019, Characterization of a potyvirus, Journal of Virology, 12, 345-356.',
+  { split: 'line', keepAll: true }
+)[0];
+eq(endNote.title, 'Characterization of a potyvirus', 'style EndNote « Nom, Initiales, Année, Titre, Journal… » : le titre est isolé');
+eq(endNote.journal, 'Journal of Virology', '…le journal aussi');
+eq(endNote.volume, '12', '…le volume');
+eq(endNote.pages, '345-356', '…et les pages');
+eq(endNote.authors, 'Rossi M, Bianchi A, et al.', '…sans perdre le marqueur « et al. »');
+
+const doiFirst = parseReferences(
+  'Rossi, M., Bianchi, A., et al. doi:10.1016/j.virol.2019.01.001 Characterization of a potyvirus. J Virol 12:345-356.',
+  { split: 'line', keepAll: true }
+)[0];
+eq(doiFirst.title, 'Characterization of a potyvirus', 'un DOI resté devant le titre n’entre pas dans le titre');
+eq(doiFirst.doi, '10.1016/j.virol.2019.01.001', '…il est bien enregistré comme DOI');
+
+/* Et le marqueur ne perturbe pas la citation du projet : les auteurs listés
+   restent les vrais auteurs, « et al. » marque seulement la troncature. */
+const etAlBib = projectBibEntry(etAl1, { scientist: 'Rossi M' }, 'bib_etal');
+eq(etAlBib.title, 'Characterization of a potyvirus infecting pepper', 'l’entrée de bibliographie porte le bon titre');
+eq(matchCoauthors(etAlBib.authors, ['Anna Bianchi'], 'Marco Rossi'), ['Anna Bianchi'],
+  'les co-auteurs sont reconnus malgré le marqueur « et al. »');
 
 console.log(`✅ ${passed} tests passés (import de références)`);
 

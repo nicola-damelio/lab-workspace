@@ -439,6 +439,24 @@ const authorPrefix = (s) => {
   return end ? body.slice(0, end) : '';
 };
 
+/* ── Marqueurs d'auteurs (« et al. », « and others ») ────────────────────────
+   Une liste d'auteurs peut se terminer par « et al. ». Quand l'année suit les
+   auteurs de près, le style « Nom, Initiales » laisse ce marqueur en TÊTE du
+   reste : la référence importée s'appelait alors « , et al. » et son vrai titre
+   tombait dans le champ journal. Les deux formes sont donc retirées — fin de la
+   liste d'auteurs ET tête du reste — puis remises, normalisées, dans les
+   auteurs : « et al. » est un marqueur d'auteurs, jamais un titre. */
+const ET_AL_TAIL_RE = /[.,;&]?\s*(?:et\.?\s*al\.?|and\s+others|&\s*others)\s*\.?\s*$/i;
+const ET_AL_HEAD_RE = /^\s*[.,;:&]?\s*(?:(?:,|&|\band\b)\s*)?(?:et\.?\s*al\.?|and\s+others|&\s*others)\s*[.,;:]?\s*/i;
+
+/** Un titre qui n'est en fait qu'un marqueur (« et al. », « (2020) »…) ou qui
+ *  ne contient plus une seule lettre : ce n'est pas un titre. */
+const TITLE_MARKER_RE = /^(?:et\.?\s*al\.?|and\s+others|&\s*others|(?:1[89]|20)\d{2}[a-z]?)[.,;:]?$/i;
+export const isMarkerTitle = (text) => {
+  const s = String(text || '').replace(/\s+/g, ' ').replace(/^[.,;:\s]+/, '').trim();
+  return !s || !/[A-Za-z\u00c0-\u00ff]{2}/.test(s) || TITLE_MARKER_RE.test(s);
+};
+
 /** Une entrée de bibliographie « texte » → référence structurée. */
 export const bibliographyBlockToEntry = (block, _opts = {}) => {
   const raw = String(block || '').replace(/\s+/g, ' ').trim();
@@ -467,12 +485,47 @@ export const bibliographyBlockToEntry = (block, _opts = {}) => {
     const { head, rest: after } = firstSentence(body);
     if (after && head.length >= 6) { authors = head; rest = after; }
   }
+  /* « et al. » collé à la fin des auteurs ou en tête du reste : retiré des
+     deux côtés (il ne doit jamais devenir le titre), puis remis en clair à la
+     fin de la liste d'auteurs — la convention que lit le moteur de citation. */
+  let etAl = false;
+  const etAlTail = authors.match(ET_AL_TAIL_RE);
+  if (etAlTail) { authors = authors.slice(0, etAlTail.index); etAl = true; }
+  const etAlHead = rest.match(ET_AL_HEAD_RE);
+  if (etAlHead) { rest = rest.slice(etAlHead[0].length); etAl = true; }
   authors = normalizeAuthorList(authors.replace(/[\s,&]+$/, ''));
-  /* Année restée en tête après les auteurs (« (2020). Titre… ») : on l'enlève
-     pour que le TITRE ne devienne pas « (2020) ». */
-  rest = rest.replace(/^\s*[.,;:]?\s*\((?:1[89]|20)\d{2}[a-z]?\)\s*[.,;:]?\s*/, ' ').trim();
+  if (etAl && authors) authors = `${authors}, et al.`;
+  /* Un DOI / une URL resté en tête du reste (« doi:10.1016/… Titre… », sortie
+     Paperpile) : il est déjà enregistré dans `doi`, il ne doit pas s'installer
+     dans le titre. */
+  rest = rest.replace(/^\s*(?:https?:\/\/\S+|doi:?\s*10\.\S+|10\.\d{4,9}\/\S+)\s*[.,;:]?\s*/i, ' ');
+  /* Année restée en tête après les auteurs (« (2020). Titre », « 2020. Titre »,
+     « 2019, Titre ») : on l'enlève pour que le TITRE ne devienne pas « (2020) ». */
+  rest = rest.replace(/^\s*[.,;:]?\s*(?:\(\s*(?:1[89]|20)\d{2}[a-z]?\s*\)|(?:1[89]|20)\d{2}[a-z]?)\s*[.,;:\]]?\s*/, ' ').trim();
 
-  const { head: title, rest: afterTitle } = firstSentence(rest.replace(/^[.\s]+/, ''));
+  const firstTry = firstSentence(rest.replace(/^[.\s]+/, ''));
+  let title = firstTry.head;
+  let afterTitle = firstTry.rest;
+  /* Un titre réduit à un marqueur (« , et al » sans le point, une année seule…)
+     signifie que la VRAIE première phrase est la suivante : on la prend, plutôt
+     que d'enregistrer « et al. » comme titre du papier. */
+  if (isMarkerTitle(title) && afterTitle) {
+    const nextSentence = firstSentence(afterTitle.replace(/^[.\s,;:]+/, ''));
+    if (!isMarkerTitle(nextSentence.head)) { title = nextSentence.head; afterTitle = nextSentence.rest; }
+  }
+  /* Style « virgules » des bibliographies Word / EndNote (« … et al., 2019,
+     Titre, Journal, 12, 345-356. ») : la phrase ne se termine jamais, donc la
+     queue bibliographique (journal, volume, pages) est retirée du titre. */
+  let tailJournal = '';
+  let tailVolume = '';
+  let tailPages = '';
+  const titleTail = String(title).match(/^(.*?),\s*([^,]{2,60}),\s*(\d{1,4})\s*,\s*(\d+\s*[-–]\s*[\w.]+)\s*\.?\s*$/);
+  if (titleTail && /[\p{L}]{2}/u.test(titleTail[2])) {
+    title = titleTail[1];
+    tailJournal = titleTail[2].trim();
+    tailVolume = titleTail[3];
+    tailPages = titleTail[4].replace(/\.$/, '');
+  }
 
   const doi = extractDoi(body);
   const urlMatch = body.match(/https?:\/\/\S+/i);
@@ -483,17 +536,24 @@ export const bibliographyBlockToEntry = (block, _opts = {}) => {
     .replace(/\.\s*$/, '')
     .trim();
   const jp = journalParts(journalSrc);
+  /* Quand l'année traînait dans le champ journal (« J Virol. 2018; »), elle en
+     est retirée : elle est déjà dans `year`. Seuls les séparateurs sont
+     nettoyés — le point abrégé fait partie du nom (« J. Biol. Chem. »). */
+  jp.journal = jp.journal
+    .replace(/[.,;:\s]*(?:1[89]|20)\d{2}[a-z]?[.,;:]?\s*$/, '')
+    .replace(/[,\s]+$/, '')
+    .trim();
   const year = (yearParen && yearParen[1]) || extractYear(body);
 
   return makeEntry({
     title,
     authors,
-    journal: jp.journal,
+    journal: jp.journal || tailJournal,
     year,
     doi,
     pmid: extractPmid(body),
-    volume: jp.volume,
-    pages: jp.pages,
+    volume: jp.volume || tailVolume,
+    pages: jp.pages || tailPages,
     link: urlMatch ? urlMatch[0] : '',
     source: 'text',
     raw: body

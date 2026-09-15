@@ -16,8 +16,8 @@ import {
 } from '../../utils/referenceImport';
 import {
   MANUSCRIPT_FILE_ACCEPT, blocksFromText, splitManuscript, groupManuscriptParts,
-  PROJECT_TEXT_SECTIONS, buildManuscriptPlan, convertCitationsInText, htmlFromText,
-  mergeManuscriptBibliography, readManuscriptText
+  parseManuscriptHeader, PROJECT_TEXT_SECTIONS, buildManuscriptPlan, convertCitationsInText,
+  htmlFromText, mergeManuscriptBibliography, readManuscriptText
 } from '../../utils/manuscriptImport';
 import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject, getDriveToken, getDriveRootName, resolveDrivePathFromNames, listDriveChildren } from '../../utils/driveUpload';
 import { repairContentImages } from '../../data/constants';
@@ -233,7 +233,7 @@ export const ProjectDetailModule = ({
      page porte les deux imports (📄 Import references from a paper / 📥 Import a
      manuscript) — la section est donc ouverte dès l'arrivée, sinon ces boutons
      passent inaperçus. */
-  const [openSections, setOpenSections] = useState({ background: true, canvases: true, materials: true, usefulFiles: true, bibliography: true, comments: false });
+  const [openSections, setOpenSections] = useState({ article: true, background: true, canvases: true, materials: true, usefulFiles: true, bibliography: true, comments: false });
   const [refPicker, setRefPicker] = useState(null); // null | { insertText?: fn }
   const [showBibForm, setShowBibForm] = useState(false);
   const [bibDraft, setBibDraft] = useState({ title: '', link: '', authors: '', year: '' });
@@ -244,8 +244,10 @@ export const ProjectDetailModule = ({
      automatiquement dans les deux pages et dans les références du document. */
   const [bibImport, setBibImport] = useState(null); // null | { text, fileName, parsed, picked, onePerLine, busy, status }
   /* 📥 Import d'un MANUSCRIT écrit ailleurs (Google Docs / Word + Paperpile) :
-     { text, fileName, parts, plan, picks, busy, status, report } — voir
-     utils/manuscriptImport.js. */
+     { text, fileName, parts, plan, picks, busy, status, report, header,
+       headerPicks } — voir utils/manuscriptImport.js.
+     `header` = titre / auteurs / affiliations lus en tête du document ;
+     `headerPicks` = ceux que l'utilisateur veut ranger dans le projet. */
   const [msImport, setMsImport] = useState(null);
   const [linkTestId, setLinkTestId] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -1069,6 +1071,7 @@ export const ProjectDetailModule = ({
      vide : l'utilisateur choisit alors chaque destination. */
   const openManuscriptImport = (focusSection = '') => setMsImport({
     text: '', fileName: '', parts: null, plan: null, picks: [], busy: false, status: '', report: '',
+    header: null, headerPicks: null,
     focusSection: typeof focusSection === 'string' ? focusSection : ''
   });
 
@@ -1080,7 +1083,11 @@ export const ProjectDetailModule = ({
     }
     const blocks = blocksFromText(src);
     const manuscript = splitManuscript(blocks);
-    const parts = groupManuscriptParts(manuscript.body).map((p, i) => ({
+    /* L'EN-TÊTE (titre / auteurs / affiliations) est reconnu AVANT le découpage :
+       ces lignes ne sont donc pas proposées comme sections — elles vont dans les
+       champs « 🧾 Title, authors & affiliations » du projet. */
+    const header = parseManuscriptHeader(manuscript.body);
+    const parts = groupManuscriptParts(manuscript.body, { header }).map((p, i) => ({
       key: `part${i}`, heading: p.heading, text: p.text, dest: p.id || focusSection || '', mode: 'append'
     }));
     const plan = buildManuscriptPlan(manuscript, { existingReferences: refs });
@@ -1088,10 +1095,23 @@ export const ProjectDetailModule = ({
     const picks = plan.entries
       .map((e, i) => (entryKeys(e.entry).some((k) => existing.has(k)) ? -1 : i))
       .filter((i) => i !== -1);
-    setMsImport({
-      text: src, fileName: fileName || '', parts, plan, picks, busy: false, report: '', focusSection,
+    const headerFound = [header.title && 'title', header.authors && 'authors', header.affiliations && 'affiliations']
+      .filter(Boolean).length;
+    /* Un champ DÉJÀ rempli dans le projet n'est pas coché d'office : un import
+       ne doit jamais écraser un titre saisi à la main (même règle que la fusion
+       des références, qui ne remplit que les champs vides). */
+    const defaultHeaderPicks = {
+      title: !String(project.paperTitle || '').trim(),
+      authors: !String(project.paperAuthors || '').trim(),
+      affiliations: !String(project.paperAffiliations || '').trim()
+    };
+    setMsImport((d) => ({
+      ...(d || {}), text: src, fileName: fileName || '', parts, plan, picks, busy: false, report: '',
+      focusSection, header,
+      headerPicks: (d && d.headerPicks) || defaultHeaderPicks,
       status: `${blocks.length} block(s) · ${parts.length} part(s) · ${plan.entries.length} reference(s) · ${plan.citations.length} citation(s)`
-    });
+        + (headerFound ? ` · header: ${headerFound}/3 (title / authors / affiliations)` : '')
+    }));
   };
 
   const loadManuscriptFile = async (file) => {
@@ -1107,6 +1127,13 @@ export const ProjectDetailModule = ({
 
   const patchManuscriptPart = (key, patch) =>
     setMsImport((d) => (d ? { ...d, parts: d.parts.map((p) => (p.key === key ? { ...p, ...patch } : p)) } : d));
+
+  /* L'en-tête du document (titre / auteurs / affiliations) — modifiable avant
+     l'import : le texte est celui du document, l'utilisateur peut le corriger. */
+  const patchManuscriptHeader = (field, value) =>
+    setMsImport((d) => (d && d.header ? { ...d, header: { ...d.header, [field]: value } } : d));
+  const toggleManuscriptHeaderPick = (field) =>
+    setMsImport((d) => (d ? { ...d, headerPicks: { ...(d.headerPicks || {}), [field]: !(d.headerPicks || {})[field] } } : d));
 
   const toggleManuscriptPick = (i) =>
     setMsImport((d) => {
@@ -1137,6 +1164,18 @@ export const ProjectDetailModule = ({
     const pickedEntries = d.plan.entries
       .filter((e, i) => (d.picks || []).indexOf(i) !== -1)
       .map((e) => e.entry);
+    /* L'en-tête du document (titre / auteurs / affiliations) rejoint le projet
+       dans les mêmes champs que la section « 🧾 Title, authors & affiliations »
+       — rien n'est écrit si la case est décochée ou le champ vide. */
+    const hp = d.headerPicks || {};
+    const hd = d.header || {};
+    const headerPatch = {};
+    const headerApplied = [];
+    [['title', 'paperTitle', 'title'], ['authors', 'paperAuthors', 'authors'], ['affiliations', 'paperAffiliations', 'affiliations']]
+      .forEach(([pick, field, label]) => {
+        const value = String((hd && hd[pick]) || '').trim();
+        if (hp[pick] && value) { headerPatch[field] = value; headerApplied.push(label); }
+      });
     const merged = mergeManuscriptBibliography(projectBib, pickedEntries, { project });
     const added = d.plan.entries
       .filter((e) => e.isNew && usedNumbers.has(e.number))
@@ -1155,6 +1194,7 @@ export const ProjectDetailModule = ({
       }));
     updateProject({
       ...patch,
+      ...headerPatch,
       bibliography: merged.list,
       references: added.length ? [...refs, ...added] : refs
     });
@@ -1164,6 +1204,7 @@ export const ProjectDetailModule = ({
       report: `✓ ${filled.length
         ? `${filled.length} section(s) filled (${filled.map((p) => (PROJECT_TEXT_SECTIONS.find((s) => s.id === p.dest) || {}).label || p.dest).join(', ')})`
         : 'no section filled'}`
+        + (headerApplied.length ? ` · header: ${headerApplied.join(' + ')}` : '')
         + ` · ${merged.added} reference(s) added to the project bibliography`
         + ` · ${added.length} numbered reference(s)`
         + (d.plan.unresolved.length ? ` · ${d.plan.unresolved.length} citation(s) left as they were` : '')
@@ -1331,6 +1372,49 @@ export const ProjectDetailModule = ({
             )}
             {plan && (
               <>
+                {msImport.header && (msImport.header.title || msImport.header.authors || msImport.header.affiliations) && (
+                  <div className="border border-sky-200 bg-sky-50/40 rounded-lg p-2">
+                    <div className="text-[11px] font-black uppercase tracking-wide text-slate-500 mb-1.5">
+                      Document header → project (title · authors · affiliations)
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      {[
+                        { field: 'title', label: 'Title', rows: 1 },
+                        { field: 'authors', label: 'Authors', rows: 1 },
+                        { field: 'affiliations', label: 'Affiliations', rows: 3 }
+                      ].map((row) => (
+                        <div key={row.field} className="flex items-start gap-2 bg-white border border-slate-200 rounded-lg p-2">
+                          <input type="checkbox" className="mt-1"
+                                 checked={!!(msImport.headerPicks || {})[row.field]}
+                                 onChange={() => toggleManuscriptHeaderPick(row.field)} />
+                          <div className="min-w-0 flex-1 flex flex-col gap-1">
+                            <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wide">{row.label}</span>
+                            {row.rows === 1 ? (
+                              <input value={msImport.header[row.field] || ''}
+                                     onChange={(e) => patchManuscriptHeader(row.field, e.target.value)}
+                                     placeholder={`No ${row.label.toLowerCase()} recognised in the document`}
+                                     className={inputCls} />
+                            ) : (
+                              <textarea value={msImport.header[row.field] || ''}
+                                        onChange={(e) => patchManuscriptHeader(row.field, e.target.value)}
+                                        rows={row.rows}
+                                        placeholder={`No ${row.label.toLowerCase()} recognised in the document`}
+                                        className={`${inputCls} text-xs`} />
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-1.5">
+                      These lines are the paper's title, authors and affiliations: they are stored in the project
+                      (<b>🧾 Title, authors & affiliations</b>, at the top of this page) and printed at the top of
+                      <b> 📄 Export document</b>. They are never imported as section text.
+                      {project.paperTitle && !(msImport.headerPicks || {}).title
+                        ? ' This project already has a title — tick “Title” to replace it.' : ''}
+                    </p>
+                  </div>
+                )}
+
                 <div className="border border-indigo-200 bg-indigo-50/40 rounded-lg p-2">
                   <div className="text-[11px] font-black uppercase tracking-wide text-slate-500 mb-1.5">
                     Text → project sections ({msImport.parts.length} part(s))
@@ -1889,9 +1973,17 @@ export const ProjectDetailModule = ({
               <div dangerouslySetInnerHTML={{ __html: repairContentImages(project.exportDocHtml) }} />
             ) : (
               <>
-            <h1 className="text-2xl font-black text-slate-900 mb-1">📁 {project.name}</h1>
+            <h1 className="text-2xl font-black text-slate-900 mb-1">
+              {project.paperTitle ? project.paperTitle : `📁 ${project.name}`}
+            </h1>
+            {project.paperAuthors && (
+              <p className="text-sm font-semibold text-slate-800 mb-1">{project.paperAuthors}</p>
+            )}
+            {project.paperAffiliations && (
+              <p className="text-[11px] text-slate-500 italic whitespace-pre-line mb-2">{project.paperAffiliations}</p>
+            )}
             <p className="text-xs text-slate-500 mb-6">
-              Scientist: {project.scientist || '—'} · Created: {new Date(project.createdAt).toLocaleDateString()}
+              {project.paperTitle ? `Project: ${project.name} · ` : ''}Scientist: {project.scientist || '—'} · Created: {new Date(project.createdAt).toLocaleDateString()}
             </p>
 
             {sectionBlocks.map((s) => (
@@ -2247,6 +2339,41 @@ export const ProjectDetailModule = ({
             {renderCoworkers()}
           </div>
         </div>
+
+        {/* ---------- Title, authors & affiliations of the paper ---------- */}
+        <SectionCard title="🧾 Title, authors & affiliations"
+                     open={openSections.article} onToggle={() => toggleSection('article')}
+                     badge={(project.paperTitle || project.paperAuthors) ? (
+                       <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">filled</span>
+                     ) : null}>
+          <p className="text-xs text-slate-500 mb-3">
+            The header of the paper this project is about — its <span className="font-bold">title</span>, the
+            <span className="font-bold"> full author list</span> (in the order of the paper) and the
+            <span className="font-bold"> affiliations</span> behind each author.
+            “📥 Import a manuscript” fills these three fields from the first lines of the document, and
+            “📄 Export document” prints them at the top of the exported document. Nothing here is sent to Drive.
+          </p>
+          <div className="flex flex-col gap-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wide">Title</span>
+              <input className={inputCls} value={project.paperTitle || ''} readOnly={!canModify}
+                     onChange={(e) => updateProject({ paperTitle: e.target.value })}
+                     placeholder="Title of the paper — filled by “📥 Import a manuscript”" />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wide">Authors</span>
+              <input className={inputCls} value={project.paperAuthors || ''} readOnly={!canModify}
+                     onChange={(e) => updateProject({ paperAuthors: e.target.value })}
+                     placeholder="All the authors, in order (Rossi M, Bianchi A, Dupont J…)" />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wide">Affiliations</span>
+              <textarea className={`${inputCls} text-xs`} rows={3} value={project.paperAffiliations || ''} readOnly={!canModify}
+                        onChange={(e) => updateProject({ paperAffiliations: e.target.value })}
+                        placeholder={'One affiliation per line, numbered as in the author list\n1 Dipartimento di Agraria, Università di Napoli Federico II, Portici, Italy'} />
+            </label>
+          </div>
+        </SectionCard>
 
         {/* ---------- Saved Image Builder canvases (links back into the editor) ---------- */}
         <SectionCard title="🖼 Saved canvases" open={openSections.canvases} onToggle={() => toggleSection('canvases')}

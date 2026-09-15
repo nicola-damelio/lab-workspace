@@ -371,7 +371,7 @@ has(PROJ, 'projectImagesFolderLabel(project.name || \'\', getDriveRootName())',
   '…et affiche le dossier Drive réel (dataset inclus)');
 has(PROJ, 'const res = await pushLibraryToDrive(figDriveScope());',
   '…et ☁ Save figures to Drive pour les pixels encore locaux');
-has(PROJ, 'setOpenSections] = useState({ background: true, canvases: true,',
+has(PROJ, 'setOpenSections] = useState({ article: true, background: true, canvases: true,',
   'la section « 🖼 Saved canvases » (qui porte ces boutons) est OUVERTE par défaut');
 has(LIB_SRC, 'export const libraryItemsFromDriveListing = (listing, { addedAt = \'\' } = {}) => {',
   'figuresLibrary sait relire un dossier de Drive');
