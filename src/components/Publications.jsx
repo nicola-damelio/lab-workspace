@@ -9,6 +9,11 @@ import { Icon } from './Icons';
 import { DriveUploadButton } from './DriveUpload';
 import { extractDriveFileIds, trashDriveFile } from '../utils/driveUpload';
 import { loadProjects, saveProjects } from './AppModules/projectsModule';
+import {
+  AUTHOR_STYLE_IDS, AUTHOR_STYLES, PUB_FORMAT_KEY, PUB_FORMAT_PRESETS,
+  authorMatchesCandidate, buildPubFormat, loadPubFormat, matchCoauthors,
+  pubCitationHtml, scientistStyleOf
+} from './pubCitation';
 
 const JOURNALS_STORAGE_KEY = 'labWorkspace_journals';
 
@@ -17,183 +22,24 @@ const inputCls =
 const labelCls = 'block text-[10px] font-bold text-slate-400 uppercase mb-1';
 
 /* =========================================================================
-   PUBLICATION FORMAT — how a publication citation is rendered: order of the
-   fields, style of each field, presence/absence of each field, and presets
-   reproducing the reference formats of important journals.
+   PUBLICATION FORMAT — the citation engine lives in ./pubCitation (a
+   React-free module, so the node test _pub_author_style_test.mjs imports the
+   real code). It is re-exported below because the project document renders its
+   bibliography with loadPubFormat / pubCitationHtml.
+
+   Reminder: EVERY author of the paper is listed — only the “et al.” cutoff
+   shortens the list. On top of that the format chooses the STYLE of the lab
+   members' names: each scientist of the user list can be underlined, bold or
+   left as typed, wherever their name appears among the authors (AUTHOR_STYLES
+   / format.scientistStyles).
    ========================================================================= */
-const PUB_FORMAT_KEY = 'labWorkspace_pubFormat';
-
-const PUB_FORMAT_PRESETS = {
-  nature: { label: 'Nature', defs: [['authors', 'normal', '', ''], ['title', 'italic', '', '. '], ['journal', 'normal', '', ', '], ['volume', 'bold', '', ', '], ['pages', 'normal', '', ''], ['year', 'normal', '(', ')']] },
-  science: { label: 'Science', defs: [['authors', 'normal', '', ''], ['title', 'normal', '', '. '], ['journal', 'italic', '', ', '], ['volume', 'bold', '', ', '], ['pages', 'normal', '', ''], ['year', 'normal', '(', ')']] },
-  cell: { label: 'Cell', defs: [['authors', 'normal', '', ''], ['year', 'normal', '(', ')'], ['title', 'normal', '', '. '], ['journal', 'italic', '', ', '], ['volume', 'normal', '', ', '], ['pages', 'normal', '', '.']] },
-  apa: { label: 'APA', defs: [['authors', 'normal', '', ''], ['year', 'normal', '(', ')'], ['title', 'italic', '', '. '], ['journal', 'italic', '', ', '], ['volume', 'italic', '', ''], ['pages', 'normal', '', ', '], ['doi', 'normal', 'https://doi.org/', '']] },
-  pnas: { label: 'PNAS', defs: [['authors', 'normal', '', ''], ['year', 'normal', '(', ')'], ['title', 'normal', '', '. '], ['journal', 'italic', '', ''], ['volume', 'bold', '', ', '], ['pages', 'normal', '', '']] },
-  acs: { label: 'ACS', defs: [['authors', 'normal', '', ''], ['title', 'normal', '', '. '], ['journal', 'italic', '', ''], ['year', 'normal', '', ', '], ['volume', 'bold', '', ', '], ['pages', 'normal', '', '.'], ['doi', 'normal', 'DOI: ', '']] },
-  springer: { label: 'Springer', defs: [['authors', 'normal', '', ''], ['year', 'normal', '(', ')'], ['title', 'normal', '', '. '], ['journal', 'italic', '', ''], ['volume', 'normal', '', ':'], ['pages', 'normal', '', '']] },
-  harvard: { label: 'Harvard', defs: [['authors', 'normal', '', ''], ['year', 'normal', '(', ')'], ['title', 'italic', '‘', '’'], ['journal', 'italic', '', ', '], ['volume', 'normal', '', ', '], ['pages', 'normal', 'pp. ', '']] }
-};
-
-export const buildPubFormat = (presetId) => {
-  const preset = PUB_FORMAT_PRESETS[presetId] || PUB_FORMAT_PRESETS.nature;
-  return {
-    preset: presetId,
-    etAlLimit: 0,                   // after how many authors to truncate with "et al." (0 = never)
-    alwaysShowScientists: false,    // keep the lab scientists (user list) even past the cutoff
-    underlineScientists: false,     // underline the lab scientists' names in the citation
-    fields: preset.defs.map((def, i) => ({
-      id: def[0], enabled: true, order: i, style: def[1], prefix: def[2], suffix: def[3]
-    }))
-  };
-};
-
-export const loadPubFormat = () => {
-  try {
-    const raw = localStorage.getItem(PUB_FORMAT_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && Array.isArray(parsed.fields)) {
-        const n = parseInt(parsed.etAlLimit, 10);
-        return {
-          preset: parsed.preset || 'custom',
-          etAlLimit: Number.isFinite(n) && n >= 0 ? n : 0,
-          alwaysShowScientists: !!parsed.alwaysShowScientists,
-          underlineScientists: !!parsed.underlineScientists,
-          fields: parsed.fields
-        };
-      }
-    }
-  } catch { /* ignore malformed */ }
-  return buildPubFormat('nature');
-};
-
-export const pubFieldValue = (pub, id) => {
-  switch (id) {
-    case 'authors': return pub.authors || '';
-    case 'year': return pub.year || '';
-    case 'title': return pub.title || '';
-    case 'journal': return pub.journal || '';
-    case 'volume': return pub.volume || '';
-    case 'pages': return pub.pages || '';
-    case 'doi': return pub.doi || '';
-    default: return '';
-  }
-};
-
-// Build the link to the paper page from a raw DOI value. Accepts a bare DOI
-// ("10.xxxx/…") or a value that is already a full http(s) URL.
-export const pubDoiUrl = (raw) => {
-  const s = String(raw || '').trim();
-  if (!s) return '';
-  if (/^https?:\/\//i.test(s)) return s;
-  return `https://doi.org/${s}`;
-};
-
-const pubWrap = (val, style) => {
-  if (style === 'bold') return `<b>${val}</b>`;
-  if (style === 'italic') return `<i>${val}</i>`;
-  if (style === 'underline') return `<u>${val}</u>`;
-  if (style === 'bolditalic') return `<b><i>${val}</i></b>`;
-  return val;
-};
-
-const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({
-  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-}[ch]));
-
-// Split a raw authors string ("Rossi M, Bianchi A and Smith J, et al.") into a
-// clean list of author names, dropping any existing "et al." marker.
-const parseAuthorList = (raw) => String(raw || '')
-  .split(/\s*[,;]+\s*|\s+and\s+/i)
-  .map((s) => s.trim())
-  .filter(Boolean)
-  .filter((s) => !/^et\s*al\.?$/i.test(s));
-
-// Is an author a member of the lab (i.e. one of the user-list scientists)?
-const isLabAuthor = (author, scientists) =>
-  Array.isArray(scientists) && scientists.some((s) => s && authorMatchesCandidate(author, s));
-
-// Build the author-name section of a citation, honouring the format's
-// "et al." cutoff, the "always show the lab scientists" option and the
-// "underline their names" option. Returns { html, text }.
-const renderAuthorNames = (pub, fmt, scientists) => {
-  const authors = parseAuthorList(pub.authors);
-  if (authors.length === 0) return null;
-  const limit = fmt.etAlLimit > 0 ? fmt.etAlLimit : null;
-  let shown = authors;
-  let etAl = false;
-  if (limit && authors.length > limit) {
-    const rest = authors.slice(limit);
-    // Lab scientists past the cutoff are kept (in their original order),
-    // everything else is replaced by "et al."
-    const forced = fmt.alwaysShowScientists ? rest.filter((a) => isLabAuthor(a, scientists)) : [];
-    shown = [...authors.slice(0, limit), ...forced];
-    etAl = true;
-  }
-  const html = shown
-    .map((a) => (fmt.underlineScientists && isLabAuthor(a, scientists) ? `<u>${escapeHtml(a)}</u>` : escapeHtml(a)))
-    .join(', ') + (etAl ? ', et al.' : '');
-  const text = shown.join(', ') + (etAl ? ', et al.' : '');
-  return { html, text };
-};
-
-export const pubCitationHtml = (pub, fmt, scientists) => {
-  const ordered = [...fmt.fields].sort((a, b) => a.order - b.order).filter((f) => f.enabled);
-  const parts = [];
-  ordered.forEach((f) => {
-    if (f.id === 'authors') {
-      const names = renderAuthorNames(pub, fmt, scientists);
-      if (!names) return;
-      parts.push(`${f.prefix || ''}${pubWrap(names.html, f.style)}${f.suffix || ''}`);
-      return;
-    }
-    const val = pubFieldValue(pub, f.id);
-    if (!val) return;
-    if (f.id === 'doi') {
-      // The DOI is always a link to the paper page. When linkText is set
-      // (e.g. the literal word "doi"), show that instead of the DOI value.
-      const href = pubDoiUrl(val);
-      const link = `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" class="pub-doi-link">`;
-      if (f.linkText) {
-        // "doi" label option: render just the linked word, ignoring prefix/suffix
-        parts.push(pubWrap(`${link}${escapeHtml(f.linkText)}</a>`, f.style));
-      } else {
-        // Wrap the whole field (prefix + value + suffix) in the link
-        const display = `${escapeHtml(f.prefix || '')}${escapeHtml(val)}${escapeHtml(f.suffix || '')}`;
-        parts.push(pubWrap(`${link}${display}</a>`, f.style));
-      }
-      return;
-    }
-    parts.push(`${f.prefix || ''}${pubWrap(val, f.style)}${f.suffix || ''}`);
-  });
-  return parts.join(' ');
-};
-
-export const pubCitationText = (pub, fmt, scientists) => {
-  const ordered = [...fmt.fields].sort((a, b) => a.order - b.order).filter((f) => f.enabled);
-  const parts = [];
-  ordered.forEach((f) => {
-    if (f.id === 'authors') {
-      const names = renderAuthorNames(pub, fmt, scientists);
-      if (!names) return;
-      parts.push(`${f.prefix || ''}${names.text}${f.suffix || ''}`);
-      return;
-    }
-    const val = pubFieldValue(pub, f.id);
-    if (!val) return;
-    if (f.id === 'doi') {
-      if (f.linkText) {
-        // "doi" label option: render just the word, ignoring prefix/suffix
-        parts.push(f.linkText);
-      } else {
-        parts.push(`${f.prefix || ''}${val}${f.suffix || ''}`);
-      }
-      return;
-    }
-    parts.push(`${f.prefix || ''}${val}${f.suffix || ''}`);
-  });
-  return parts.join(' ');
-};
+export {
+  AUTHOR_STYLES, AUTHOR_STYLE_IDS, PUB_FORMAT_PRESETS,
+  buildPubFormat, loadPubFormat, normalizePubFormat,
+  pubCitationHtml, pubCitationText, pubFieldValue, pubDoiUrl,
+  authorMatchesCandidate, matchCoauthors, isLabAuthor, labMemberOf,
+  scientistStyleOf, authorStyleOf, sanitizeScientistStyles
+} from './pubCitation';
 
 const ifNum = (v) => {
   const n = parseFloat(String(v ?? '').replace(',', '.'));
@@ -347,38 +193,6 @@ const LabelChips = ({ labels, options, onChange, placeholder }) => {
       </div>
     </div>
   );
-};
-
-// Co-author matching: given a raw authors string and a list of candidate names,
-// return the candidates that appear among the authors (so shared papers are
-// found when filtering by any user of the app).
-const authorMatchesCandidate = (author, candidate) => {
-  const tok = (s) => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
-  const cToks = String(candidate || '').split(/[\s,]+/).map(tok).filter(Boolean);
-  const aToks = String(author || '').split(/[\s,]+/).map(tok).filter(Boolean);
-  if (!cToks.length || !aToks.length) return false;
-  const surname = cToks[cToks.length - 1];
-  if (surname.length >= 3 && aToks.includes(surname)) return true;
-  if (cToks.length >= 2) {
-    const full = tok(candidate);
-    if (tok(author).includes(full)) return true;
-  }
-  return false;
-};
-
-const matchCoauthors = (authorStr, candidates, excludeName) => {
-  const out = [];
-  const authors = String(authorStr || '').split(',').map((s) => s.trim()).filter(Boolean);
-  const surnameOf = (n) => String(n || '').trim().split(/[\s,]+/).pop()?.toLowerCase().replace(/[^a-z]/g, '') || '';
-  const exSurname = surnameOf(excludeName);
-  for (const cand of candidates || []) {
-    const c = String(cand).trim();
-    if (!c || c === excludeName) continue;
-    // Same surname as the owner ⇒ same person (e.g. "Maria Ramos" vs "Ramos")
-    if (exSurname && surnameOf(c) === exSurname) continue;
-    if (authors.some((a) => authorMatchesCandidate(a, c))) out.push(c);
-  }
-  return out;
 };
 
 const searchPubMed = async (query) => {
@@ -729,6 +543,17 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     if (p && p.title) return `t:${String(p.title).toLowerCase()}|${String(p.year || '')}`;
     return '';
   };
+
+  // Names recognised as “lab members” inside a citation: the scientists of the
+  // user list plus the names added manually just above (a student, a former
+  // member… even without an account). These are the names the publication
+  // format can underline / put in bold wherever they appear among the authors.
+  const citationScientists = useMemo(() => {
+    const set = new Set();
+    (scientists || []).forEach((s) => { const n = String(s || '').trim(); if (n) set.add(n); });
+    (extraScientists || []).forEach((s) => { const n = String(s || '').trim(); if (n) set.add(n); });
+    return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  }, [scientists, extraScientists]);
 
   const scientistOptions = useMemo(() => {
     const set = new Set((scientists || []).filter(Boolean));
@@ -1653,7 +1478,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                               <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-1">
                                 Formatted citation {pubFormat.preset !== 'custom' ? `(${PUB_FORMAT_PRESETS[pubFormat.preset]?.label || pubFormat.preset})` : '(custom)'}
                               </div>
-                              <div className="text-xs text-slate-800" dangerouslySetInnerHTML={{ __html: pubCitationHtml(p, pubFormat, scientists) || '—' }} />
+                              <div className="text-xs text-slate-800" dangerouslySetInnerHTML={{ __html: pubCitationHtml(p, pubFormat, citationScientists) || '—' }} />
                             </div>
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                               <div>
@@ -2042,13 +1867,33 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     preset: 'custom',
     etAlLimit: activeFormat.etAlLimit || 0,
     alwaysShowScientists: !!activeFormat.alwaysShowScientists,
-    underlineScientists: !!activeFormat.underlineScientists,
+    underlineScientists: !!activeFormat.underlineScientists,   // legacy default style
+    scientistStyles: { ...(activeFormat.scientistStyles || {}) },
     fields
   });
   const pubPatchField = (fieldId, patch) =>
     setActiveFormat(pubCustomFormat(activeFormat.fields.map((f) => (f.id === fieldId ? { ...f, ...patch } : f))));
   const pubPatchFormat = (patch) =>
     setActiveFormat({ ...pubCustomFormat(activeFormat.fields), ...patch });
+  // Style of one lab member in the citation ('none' | 'underline' | 'bold').
+  // All the authors of the paper stay listed: this only decides how that
+  // member's name is dressed up wherever it appears in the author list.
+  const pubSetScientistStyle = (name, style) => {
+    const key = String(name || '').trim();
+    if (!key || !AUTHOR_STYLE_IDS.includes(style)) return;
+    const next = { ...(activeFormat.scientistStyles || {}), [key]: style };
+    setActiveFormat({ ...pubCustomFormat(activeFormat.fields), scientistStyles: next });
+  };
+  // Bulk choice: it writes the style for every known lab member and clears the
+  // legacy « underline all lab scientists » flag it then replaces.
+  const pubSetAllScientistStyles = (style) => {
+    if (!AUTHOR_STYLE_IDS.includes(style)) return;
+    const next = {};
+    citationScientists.forEach((n) => { next[n] = style; });
+    setActiveFormat({
+      ...pubCustomFormat(activeFormat.fields), scientistStyles: next, underlineScientists: false
+    });
+  };
   const pubMoveField = (fieldId, dir) => {
     const fields = [...activeFormat.fields].sort((a, b) => a.order - b.order);
     const idx = fields.findIndex((f) => f.id === fieldId);
@@ -2076,19 +1921,22 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     });
   };
   // Sample citation: a realistic long author list, extended with the current
-  // lab scientists (user list) so the "et al." / always-show / underline
-  // options are visible in the preview.
+  // lab members so the “et al.” / always-show / per-scientist style options are
+  // all visible in the preview. The first lab member sits near the top of the
+  // list, so their underline / bold shows whatever the cutoff is.
   const samplePub = useMemo(() => {
     const baseAuthors = ['Rossi M', 'Bianchi A', 'Smith J', 'Verdi G', 'Müller K', 'Suzuki H', 'Almeida P', 'Costa L'];
-    const mine = (scientists || [])
+    const mine = citationScientists
       .filter((s) => s && !baseAuthors.some((b) => authorMatchesCandidate(b, s)))
-      .slice(0, 2);
+      .slice(0, 3);
+    const authors = [...baseAuthors];
+    if (mine.length) authors.splice(1, 0, mine[0]);
     return {
-      authors: [...baseAuthors, ...mine].join(', '),
+      authors: [...authors, ...mine.slice(1)].join(', '),
       year: '2024', title: 'Structure and dynamics of antimicrobial peptides in lipid bilayers',
       journal: 'Journal of Biological Chemistry', volume: '300', pages: '105678', doi: '10.1016/j.jbc.2024.105678'
     };
-  }, [scientists]);
+  }, [citationScientists]);
 
   const renderPubFormat = () => (
     <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
@@ -2120,18 +1968,19 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
         <p className="text-sm text-slate-500 mb-3">
           Choose how every citation is built: the order of the fields, the style of each field
           (bold / italic / underline / prefix / suffix) and which fields are shown at all.
-          You can also cut long author lists with “et al.” after a given number of authors,
-          always keep the lab scientists (user list) in the citation even past that cutoff,
-          and underline their names. Formats can be set per project (each project keeps its
-          own) or left to the default. The formatted citations are used in the publications
-          table and in the project documents that reference these publications.
+          Every author of the paper is listed; you can cut long author lists with “et al.” after
+          a given number of authors, always keep the lab members (user list) in the citation
+          even past that cutoff, and choose how each of their names is styled — underlined or
+          bold — wherever it appears among the authors. Formats can be set per project (each
+          project keeps its own) or left to the default. The formatted citations are used in the
+          publications table and in the project documents that reference these publications.
         </p>
 
         <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-4">
           <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-1">
             Live preview {pubFormatScope !== 'default' ? `— project “${pubFormatScope}”` : '— default'}
           </div>
-          <div className="text-sm text-slate-800" dangerouslySetInnerHTML={{ __html: pubCitationHtml(samplePub, activeFormat, scientists) || '—' }} />
+          <div className="text-sm text-slate-800" dangerouslySetInnerHTML={{ __html: pubCitationHtml(samplePub, activeFormat, citationScientists) || '—' }} />
         </div>
 
         <div className="bg-white border border-slate-200 rounded-lg p-3 mb-4 flex flex-wrap items-center gap-x-6 gap-y-2">
@@ -2152,13 +2001,66 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                    className="w-3.5 h-3.5 accent-indigo-600" />
             Always show lab scientists even after “et al.”
           </label>
-          <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 cursor-pointer"
-                 title="Underline the names of the scientists from the user list">
-            <input type="checkbox" checked={!!activeFormat.underlineScientists}
-                   onChange={(e) => pubPatchFormat({ underlineScientists: e.target.checked })}
-                   className="w-3.5 h-3.5 accent-indigo-600" />
-            Underline their names
-          </label>
+        </div>
+
+        {/* Every author of the paper is listed (the “et al.” rule above is
+            untouched): here you choose how the lab members' names are dressed
+            up in the citation — each member independently. */}
+        <div className="bg-white border border-slate-200 rounded-lg p-3 mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+            <span className="text-[10px] font-black uppercase tracking-wide text-slate-400">
+              Lab members in the citation ({citationScientists.length})
+            </span>
+            <div className="flex flex-wrap items-center gap-1">
+              <span className="text-[10px] font-bold text-slate-400">Set all to</span>
+              {AUTHOR_STYLES.map((s) => (
+                <button type="button" key={s.id} onClick={() => pubSetAllScientistStyles(s.id)}
+                        title={`${s.title} — for every lab member`}
+                        className="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-[11px] font-bold text-slate-700">
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <p className="text-[11px] text-slate-500 mb-2">
+            This does not remove anybody: it only styles the lab members' names wherever they appear
+            among the authors of a paper.
+            <b className="text-slate-700"> Aa</b> = normal,
+            <b className="text-slate-700"> U</b> = underline,
+            <b className="text-slate-700"> B</b> = bold.
+          </p>
+          {citationScientists.length === 0 ? (
+            <p className="text-xs italic text-slate-400">
+              No lab member yet — the scientists of the user list (plus the names added with ➕ in
+              the publications table) can be styled here.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
+              {citationScientists.map((name) => {
+                const current = scientistStyleOf(name, activeFormat);
+                return (
+                  <div key={name} className="flex items-center justify-between gap-2 border border-slate-200 rounded-lg px-2 py-1">
+                    <span className="text-xs font-semibold text-slate-700 truncate" title={name}>{name}</span>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      {AUTHOR_STYLES.map((s) => (
+                        <button type="button" key={s.id} onClick={() => pubSetScientistStyle(name, s.id)}
+                                title={s.title}
+                                className={`px-1.5 py-0.5 rounded text-[11px] font-bold transition ${current === s.id ? 'bg-indigo-600 text-white shadow' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                          {s.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {!!activeFormat.underlineScientists && (
+            <p className="text-[10px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-2">
+              ⚠ The old “Underline their names” setting of this format is still on: every lab member
+              without a style of its own is underlined. Pick a style (or “Set all to”) to replace it.
+            </p>
+          )}
         </div>
 
         <div className="flex flex-col gap-1.5">
