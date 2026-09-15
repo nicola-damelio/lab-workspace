@@ -17,6 +17,7 @@ import {
 import {
   MANUSCRIPT_FILE_ACCEPT, blocksFromText, splitManuscript, groupManuscriptParts,
   parseManuscriptHeader, headerFromLineRoles, HEADER_ROLES, PROJECT_TEXT_SECTIONS,
+  HEADER_DESTS, isHeaderDest, headerDestLabel, headerTextFor,
   buildManuscriptPlan, convertCitationsInText, htmlFromText, mergeManuscriptBibliography,
   readManuscriptDocument, figureDataUrl, figureMarksIn, stripFigureMarks,
   NUMERIC_CITATION_RE, numericCitationNumbers
@@ -1155,7 +1156,8 @@ export const ProjectDetailModule = ({
        champs « 🧾 Title, authors & affiliations » du projet. */
     const header = parseManuscriptHeader(manuscript.body);
     const parts = groupManuscriptParts(manuscript.body, { header }).map((p, i) => ({
-      key: `part${i}`, heading: p.heading, text: p.text, dest: p.id || focusSection || '', mode: 'append'
+      key: `part${i}`, heading: p.heading, text: p.text, guessed: p.id || '',
+      dest: p.id || focusSection || '', mode: 'append'
     }));
     const plan = buildManuscriptPlan(manuscript, { existingReferences: refs });
     const existing = bibExistingKeys();
@@ -1303,13 +1305,19 @@ export const ProjectDetailModule = ({
       if (!d || !d.lines) return d;
       const lines = d.lines.map((l) => (l.at === at ? { ...l, role } : l));
       const header = headerFromLineRoles(d.body || [], lines);
-      const previous = new Map((d.parts || []).map((p) => [p.heading, p]));
+      /* Les choix déjà faits sont repris partie par partie : d'abord à la MÊME
+         position (le découpage suit l'ordre du document), sinon par intitulé —
+         deux parties peuvent porter le même intitulé (celles sans titre). */
+      const previous = d.parts || [];
+      const byHeading = new Map(previous.map((p) => [p.heading, p]));
       const parts = groupManuscriptParts(d.body || [], { header }).map((p, i) => {
-        const old = previous.get(p.heading) || {};
+        const old = (previous[i] && previous[i].heading === p.heading ? previous[i] : null)
+          || byHeading.get(p.heading) || {};
         return {
           key: `part${i}`,
           heading: p.heading,
           text: p.text,
+          guessed: p.id || '',
           dest: old.dest !== undefined ? old.dest : (p.id || d.focusSection || ''),
           mode: old.mode || 'append'
         };
@@ -1346,6 +1354,11 @@ export const ProjectDetailModule = ({
        (elle sera réinsérée là dans le document exporté). */
     const convertedParts = [];
     const figurePlacements = [];
+    /* Les parties REDIRIGÉES vers un champ d'en-tête (« 🧾 Authors », « 🧾
+       Affiliations », « 🧾 Title », voir HEADER_DESTS) : leur texte ne va pas
+       dans une section mais dans « 🧾 Title, authors & affiliations », mis en
+       forme par headerTextFor (un auteur par ligne → une liste, etc.). */
+    const headerTexts = [];
     d.parts.forEach((p) => {
       if (!p.dest) return;
       const converted = convertCitationsInText(p.text, numbers);
@@ -1358,6 +1371,17 @@ export const ProjectDetailModule = ({
       while (cited) {
         numericCitationNumbers(cited[1]).forEach((n) => usedNumbers.add(n));
         cited = NUMERIC_CITATION_RE.exec(converted.text);
+      }
+      if (isHeaderDest(p.dest)) {
+        headerTexts.push({ field: p.dest, text: stripFigureMarks(converted.text), mode: p.mode });
+        /* Les FIGURES de ce paragraphe ne peuvent pas être imprimées dans
+           l'en-tête : elles rejoignent la section que son titre visait — celle
+           de « 📤 Insert into project… » (rien n'est perdu). */
+        const fallbackFig = p.guessed || d.focusSection || PROJECT_TEXT_SECTIONS[0].id;
+        figureMarksIn(converted.text).forEach((mark) => {
+          figurePlacements.push({ section: fallbackFig, index: mark.index, anchor: mark.anchor });
+        });
+        return;
       }
       figureMarksIn(converted.text).forEach((mark) => {
         figurePlacements.push({ section: p.dest, index: mark.index, anchor: mark.anchor });
@@ -1379,6 +1403,22 @@ export const ProjectDetailModule = ({
         const value = String((hd && hd[pick]) || '').trim();
         if (hp[pick] && value) { headerPatch[field] = value; headerApplied.push(label); }
       });
+    /* Les PARTIES redirigées vers un champ d'en-tête s'ajoutent APRÈS ce que le
+       document avait déjà en tête (elles viennent plus bas dans le document),
+       avec la mise en forme du champ (voir headerTextFor). Le compte rendu dit
+       lesquelles viennent du texte, pour que l'utilisateur sache où regarder. */
+    const headerFromText = [];
+    HEADER_DESTS.forEach((dest) => {
+      const list = headerTexts.filter((h) => h.field === dest.id);
+      if (!list.length) return;
+      let value = String(headerPatch[dest.id] !== undefined ? headerPatch[dest.id] : (project[dest.id] || ''));
+      list.forEach((h) => { value = headerTextFor(dest.id, h.text, { previous: value, mode: h.mode }); });
+      value = String(value || '').trim();
+      if (!value) return;
+      headerPatch[dest.id] = value;
+      headerFromText.push(dest.short);
+      if (headerApplied.indexOf(dest.short) === -1) headerApplied.push(dest.short);
+    });
     const merged = mergeManuscriptBibliography(projectBib, pickedEntries, { project });
     const added = d.plan.entries
       .filter((e) => e.isNew && usedNumbers.has(e.number))
@@ -1421,14 +1461,19 @@ export const ProjectDetailModule = ({
       references: added.length ? [...refs, ...added] : refs,
       ...(figRes.added ? { figures: figRes.figures } : {})
     });
-    const filled = d.parts.filter((p) => p.dest);
+    const filled = d.parts.filter((p) => p.dest && !isHeaderDest(p.dest));
+    const destLabel = (id) => (PROJECT_TEXT_SECTIONS.find((s) => s.id === id)
+      || HEADER_DESTS.find((s) => s.id === id) || {}).label || id;
     setMsImport((cur) => ({
       ...(cur || {}),
       busy: false,
       report: `✓ ${filled.length
-        ? `${filled.length} section(s) filled (${filled.map((p) => (PROJECT_TEXT_SECTIONS.find((s) => s.id === p.dest) || {}).label || p.dest).join(', ')})`
+        ? `${filled.length} section(s) filled (${filled.map((p) => destLabel(p.dest)).join(', ')})`
         : 'no section filled'}`
         + (headerApplied.length ? ` · header: ${headerApplied.join(' + ')}` : '')
+        + (headerFromText.length
+          ? ` (${headerFromText.join(' + ')} redirected from the text — check “🧾 Title, authors & affiliations” above)`
+          : '')
         + ` · ${merged.added} reference(s) added to the project bibliography`
         + ` · ${added.length} numbered reference(s)`
         + (linkedTotal ? ` · ${linkedTotal} citation(s) linked to their reference` : '')
@@ -1554,8 +1599,16 @@ export const ProjectDetailModule = ({
   const renderManuscriptImport = () => {
     if (!msImport) return null;
     const plan = msImport.plan;
-    const destOptions = [{ id: '', label: '— do not import —' }, ...PROJECT_TEXT_SECTIONS];
     const picked = msImport.picks || [];
+    /* Les destinations d'une partie : les trois CHAMPS d'en-tête du projet
+       (« 🧾 Title, authors & affiliations ») puis les sections TEXTE de la page.
+       Un document qui imprime ses auteurs sous le résumé se répare donc en
+       redirigeant le paragraphe, sans le laisser tomber dans « Background »
+       (voir HEADER_DESTS dans utils/manuscriptImport.js). */
+    const destGroups = [
+      { label: '🧾 Project header (title · authors · affiliations)', options: HEADER_DESTS },
+      { label: 'Sections of this page', options: PROJECT_TEXT_SECTIONS }
+    ];
     return (
       <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setMsImport(null)}>
         <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
@@ -1573,6 +1626,10 @@ export const ProjectDetailModule = ({
               The <b>figures</b> of the document are kept too: they become the figures of their section
               (editable, reusable in the Image Builder) and “📄 Export document” prints each one
               <b> at the place it had in the document</b>. No other file is uploaded to Drive.
+              The <b>title, authors and affiliations</b> of the paper are picked out of the text and shown in
+              “Document header” below, line by line — and a part of the text that actually <i>is</i> the author list
+              (a document that prints it under the abstract, for instance) can be redirected to the
+              <b> 🧾 project header</b> instead of being left in a section.
             </p>
             {msImport.focusSection && (
               <p className="text-[11px] text-violet-800 bg-violet-50 border border-violet-200 rounded-lg px-2 py-1.5">
@@ -1614,8 +1671,13 @@ export const ProjectDetailModule = ({
                         plus souvent, et sinon l'utilisateur désigne lui-même le
                         titre / les auteurs / les affiliations. Rien n'est modifié
                         dans le texte du document : on choisit seulement où va la
-                        ligne — ou qu'elle n'est pas importée. */}
-                    <div className="flex flex-col gap-1 mb-2">
+                        ligne — dans un champ du projet, « not imported », ou
+                        « keep in the section text » pour la rendre au texte.
+                        Quand le titre ou les auteurs manquent, les lignes qui y
+                        ressemblent sont proposées elles aussi (voir
+                        extraHeaderLines) : c'est le document qui imprime ses
+                        auteurs sous le résumé. */}
+                    <div className="flex flex-col gap-1 mb-2 max-h-56 overflow-y-auto custom-scrollbar">
                       {msImport.lines.map((l) => (
                         <div key={l.at} className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1">
                           <span className="min-w-0 flex-1 text-[10px] text-slate-500 truncate" title={l.text}>{l.text}</span>
@@ -1626,9 +1688,10 @@ export const ProjectDetailModule = ({
                         </div>
                       ))}
                       <p className="text-[10px] text-slate-500 italic">
-                        These first lines are the header of the paper: a wrong line here (the file name, a date, a
-                        journal…) can be set to “not imported”, and the real title / authors / affiliations picked by
-                        hand. They are never imported as section text.
+                        These lines are the head of the paper: a wrong one (the file name, a date, a journal…) can be set
+                        to “not imported”, and the real title / authors / affiliations picked by hand — “keep in the
+                        section text” gives a line back to the text of its section. A line whose role is guessed wrong
+                        can be changed here, one click, before anything is imported.
                       </p>
                     </div>
                     <div className="flex flex-col gap-1.5">
@@ -1681,26 +1744,46 @@ export const ProjectDetailModule = ({
                           <span className="text-[10px] text-slate-400">{p.text.length} chars</span>
                           {figureMarksIn(p.text).length > 0 && (
                             <span className="text-[10px] font-bold text-sky-700 bg-sky-50 border border-sky-200 rounded-full px-1.5 py-0.5"
-                                  title="The images of the document that stand in this part: they become figures of the section this part goes to, and the exported document prints them at that place.">
+                                  title={isHeaderDest(p.dest)
+                                    ? 'The images of this part: a header field cannot print them, so they become figures of the section this part’s heading points to.'
+                                    : 'The images of the document that stand in this part: they become figures of the section this part goes to, and the exported document prints them at that place.'}>
                               🖼 {figureMarksIn(p.text).length}
                             </span>
                           )}
                           <span className="ml-auto flex items-center gap-1.5">
                             <select value={p.dest} onChange={(e) => patchManuscriptPart(p.key, { dest: e.target.value })}
                                     className="border border-slate-300 rounded px-1.5 py-1 text-[10px] bg-white">
-                              {destOptions.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                              <option value="">— do not import —</option>
+                              {destGroups.map((g) => (
+                                <optgroup key={g.label} label={g.label}>
+                                  {g.options.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                                </optgroup>
+                              ))}
                             </select>
                             <select value={p.mode} onChange={(e) => patchManuscriptPart(p.key, { mode: e.target.value })}
                                     className="border border-slate-300 rounded px-1.5 py-1 text-[10px] bg-white">
                               <option value="append">add at the end</option>
-                              <option value="replace">replace the section</option>
+                              <option value="replace">{isHeaderDest(p.dest) ? 'replace the field' : 'replace the section'}</option>
                             </select>
                           </span>
                         </div>
+                        {isHeaderDest(p.dest) && (
+                          <p className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-1">
+                            🧾 This part is not section text: it goes into
+                            <b> {headerDestLabel(p.dest) === 'affiliations' ? 'the affiliations' : `the ${headerDestLabel(p.dest)}`}</b> of
+                            the project header (🧾 Title, authors & affiliations) — one author per line becomes a list, and
+                            affiliations keep one line each. It disappears from the sections of this page.
+                          </p>
+                        )}
                         <p className="text-[10px] text-slate-400 italic truncate">{p.text.slice(0, 160)}…</p>
                       </div>
                     ))}
                   </div>
+                  <p className="text-[10px] text-slate-500 mt-1.5">
+                    Each part goes to a section of this page — or to the <b>project header</b> when the document put its
+                    authors or affiliations in the middle of the text (choose “🧾 Authors” / “🧾 Affiliations” above):
+                    nothing is left in “Background” by mistake.
+                  </p>
                 </div>
 
                 {/* Les FIGURES du document : elles ne sont pas écrites dans le

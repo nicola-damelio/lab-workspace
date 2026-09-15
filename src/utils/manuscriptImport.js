@@ -184,8 +184,11 @@ export const isHeadingLine = (line) => {
      sinon l'image de l'article deviendrait un intitulé de section. */
   if (isFigureMark(s)) return false;
   /* L'en-tête (auteurs, affiliations) n'est JAMAIS une section : sinon il
-     disparaît du document importé (voir parseManuscriptHeader). */
-  if (looksLikeAuthorLine(s) || looksLikeAffiliationLine(s)) return false;
+     disparaît du document importé (voir parseManuscriptHeader). Une liste de
+     noms NUS (« Anna Bianchi, Mario Rossi ») en fait partie : sans marqueur,
+     elle ressemble à un intitulé, mais ce n'en est pas un — et la prendre pour
+     un titre faisait une partie vide (donc perdue) de la ligne. */
+  if (looksLikeAuthorLine(s) || looksLikeAuthorList(s) || looksLikeAffiliationLine(s)) return false;
   if (/^(https?:|www\.|doi:|10\.\d)/i.test(s)) return false;
   const words = s.split(/\s+/).filter(Boolean);
   if (words.length > 12) return false;
@@ -566,6 +569,10 @@ export const looksLikeAuthorList = (line) => {
   const s = String(line || '').trim();
   if (!s || s.length > 300) return false;
   if (looksLikeAuthorLine(s)) return true;
+  /* Un intitulé commençant par un mot de section (« Results And Discussion »,
+     « Introduction and aims ») n'est PAS une liste de noms, même s'il se coupe
+     en deux comme une liste (« and » est un séparateur d'auteurs). */
+  if (SECTION_WORD_RE.test(s)) return false;
   const parts = authorLineParts(s);
   if (parts.length < 2 || !parts.every((p) => NAME_PART_RE.test(p))) return false;
   if (/[.;:!?]$/.test(s)) return false;
@@ -575,6 +582,12 @@ export const looksLikeAuthorList = (line) => {
 /** Liste de noms « en position d'auteurs » (juste après le titre) : elle n'a
  *  pas besoin de porter des exposants — « Anna Bianchi, Jean Dupont » suffit. */
 const isAuthorish = looksLikeAuthorList;
+
+/** La ligne de noms EN POSITION d'auteur (juste sous le titre) : un nom SEUL y
+ *  suffit — c'est le cas « un auteur par ligne », fréquent dans un article à un
+ *  seul auteur, que la seule liste de noms ne reconnaissait pas. */
+const isAuthorLineAtPosition = (text) => isAuthorish(text)
+  || looksLikeAuthorLine(text, { alone: true });
 
 /** Combien de blocs sont examinés en tête de document. */
 const HEADER_SCAN = 14;
@@ -613,13 +626,54 @@ export const classifyHeaderLine = (line) => {
   return 'text';
 };
 
-/** Les rôles qu'un utilisateur peut donner à une ligne d'en-tête. */
+/** Les rôles qu'un utilisateur peut donner à une ligne d'en-tête. « keep » rend
+ *  la ligne au TEXTE du document : elle reste dans la partie — donc dans la
+ *  section — qui la portait. C'est le rôle par défaut des lignes proposées en
+ *  repli (voir parseManuscriptHeader), et il défait un rôle deviné à tort. */
 export const HEADER_ROLES = [
   { id: 'ignore', label: '— not imported —' },
   { id: 'title', label: 'Title' },
   { id: 'authors', label: 'Authors' },
-  { id: 'affiliations', label: 'Affiliation' }
+  { id: 'affiliations', label: 'Affiliation' },
+  { id: 'keep', label: '— keep in the section text —' }
 ];
+
+/** Le rôle qui n'appartient PAS à l'en-tête : la ligne reste dans le texte. */
+export const KEEP_ROLE = 'keep';
+
+/** Les trois CHAMPS d'en-tête du projet, destinations possibles d'une PARTIE du
+ *  manuscrit (voir la fenêtre d'import, « Text → project sections ») : quand le
+ *  document imprime ses auteurs ailleurs qu'en tête (sous le résumé, dans un
+ *  encadré…), l'utilisateur REDIRIGE le paragraphe vers le champ au lieu de le
+ *  laisser tomber dans « Background ». `id` = le champ du projet lui-même
+ *  (paperTitle / paperAuthors / paperAffiliations, section « 🧾 Title, authors &
+ *  affiliations »), `short` = ce qu'en dit le compte rendu d'import. */
+export const HEADER_DESTS = [
+  { id: 'paperTitle', label: '🧾 Title (project header)', short: 'title' },
+  { id: 'paperAuthors', label: '🧾 Authors (project header)', short: 'authors' },
+  { id: 'paperAffiliations', label: '🧾 Affiliations (project header)', short: 'affiliations' }
+];
+
+export const isHeaderDest = (id) => HEADER_DESTS.some((d) => d.id === id);
+
+export const headerDestLabel = (id) => (HEADER_DESTS.find((d) => d.id === id) || {}).short || '';
+
+/** Le texte d'une PARTIE redirigée vers un champ d'en-tête, tel qu'il entre dans
+ *  « 🧾 Title, authors & affiliations » :
+ *    • le titre tient sur UNE ligne (les retours sont repliés) ;
+ *    • les auteurs forment UNE liste séparée par des virgules (un auteur par
+ *      ligne dans le document devient « Rossi M, Bianchi A ») ;
+ *    • les affiliations gardent une ligne chacune (le champ est une liste).
+ *  `mode` = 'replace' remplace le champ, sinon le texte s'AJOUTE à la suite. */
+export const headerTextFor = (field, text, { previous = '', mode = 'append' } = {}) => {
+  const lines = normalizeText(text).split('\n').map((l) => l.trim()).filter(Boolean);
+  const before = String(previous || '').trim();
+  if (!lines.length) return before;
+  const sep = field === 'paperAffiliations' ? '\n' : field === 'paperTitle' ? ' ' : ', ';
+  const joined = lines.join(sep);
+  if (mode === 'replace' || !before) return joined;
+  return `${before}${sep}${joined}`;
+};
 
 /** Une adresse SANS marqueur qui continue une liste d'affiliations :
  *  « INRAE, UMR Biologie du Fruit, Villenave d'Ornon, France ». */
@@ -631,11 +685,64 @@ export const looksLikeAddressLine = (line) => {
   return s.split(',').length >= 2 && s.split(/\s+/).length <= 25;
 };
 
+/** Combien de blocs sont examinés APRÈS la fenêtre d'en-tête par le REPLI, et
+ *  après combien de paragraphes de corps de texte il s'arrête : les auteurs
+ *  sont dans les premières lignes du document, jamais au milieu de l'article. */
+const HEADER_EXTRA_SCAN = 12;
+const HEADER_EXTRA_BODY_MAX = 2;
+
+/** Les lignes qui SUIVENT la fenêtre d'en-tête et qui ressemblent à des noms —
+ *  ou à une adresse venant juste après eux — avec le rôle deviné. Elles sont
+ *  proposées à l'utilisateur au lieu de retomber dans la première section
+ *  (voir parseManuscriptHeader, point 6). Les intitulés de section sont sautés :
+ *  un document peut imprimer ses auteurs sous le résumé. Une adresse n'est
+ *  reconnue qu'À LA SUITE d'une liste de noms (elle la suit toujours). */
+const extraHeaderLines = (list, window) => {
+  const from = (window.length ? window[window.length - 1].at : -1) + 1;
+  const out = [];
+  let bodies = 0;
+  let names = false;
+  for (let i = from; i < Math.min(list.length, from + HEADER_EXTRA_SCAN); i += 1) {
+    const s = String((list[i] && list[i].text) || '').trim();
+    if (!s || isFigureMark(s)) continue;
+    if (isBodyParagraph(s)) {
+      bodies += 1;
+      names = false;
+      if (bodies >= HEADER_EXTRA_BODY_MAX) break;
+      continue;
+    }
+    const role = classifyHeaderLine(s);
+    /* Un intitulé de section (« Results And Discussion », « Materials and
+       Methods »…) n'est pas une liste d'auteurs, même s'il se lit comme deux
+       noms : c'est le texte de la section, il reste où il est. */
+    if (role === 'section' || guessSectionForHeading(headingLabel(s))) {
+      names = false;
+      continue;
+    }
+    if (role === 'authors' || looksLikeAuthorList(s)) {
+      out.push({ at: i, text: s, role: 'authors' });
+      names = true;
+      continue;
+    }
+    if (role === 'affiliations') {
+      out.push({ at: i, text: s, role: 'affiliations' });
+      continue;
+    }
+    if (names && role !== 'ignore' && looksLikeAddressLine(s)) {
+      out.push({ at: i, text: s, role: 'affiliations' });
+      continue;
+    }
+    names = false;
+  }
+  return out;
+};
+
 /** Les trois champs de l'en-tête à partir des rôles (voir HEADER_ROLES).
  *  `lines` = [{ at, text, role }] : `at` = index du bloc dans `blocks`.
  *  TOUTE la zone d'en-tête est consommée — y compris les lignes « ignore »
  *  (métadonnées, ou ce que l'utilisateur ne veut pas importer) : elle ne doit
- *  jamais retomber dans une section du projet. */
+ *  jamais retomber dans une section du projet. Les lignes rendues au texte
+ *  (« keep ») sont la seule exception : elles restent dans leur partie. */
 export const headerFromLineRoles = (blocks, lines) => {
   const list = Array.isArray(blocks) ? blocks : [];
   const rows = (Array.isArray(lines) ? lines : []).filter((r) => r && typeof r.at === 'number' && list[r.at]);
@@ -645,7 +752,7 @@ export const headerFromLineRoles = (blocks, lines) => {
     title: texts('title')[0] || '',
     authors: texts('authors').join(', '),
     affiliations: texts('affiliations').join('\n'),
-    blocks: rows.map((r) => list[r.at])
+    blocks: rows.filter((r) => r.role !== KEEP_ROLE).map((r) => list[r.at])
   };
 };
 
@@ -666,7 +773,12 @@ export const headerFromLineRoles = (blocks, lines) => {
  *             comprise ({ at, text, role }) — c'est elle que la fenêtre
  *             d'import affiche pour laisser CORRIGER les rôles à la main
  *             (voir headerFromLineRoles). Rien n'est deviné au hasard : sans
- *             ligne reconnaissable, les trois champs restent vides.
+ *             ligne reconnaissable, les trois champs restent vides. Quand il
+ *             MANQUE le titre ou les auteurs, `lines` va plus loin que la
+ *             fenêtre et propose les lignes qui ressemblent à des noms / à une
+ *             adresse (voir extraHeaderLines) : c'est ce qui rattrape les
+ *             documents qui impriment leurs auteurs sous le résumé, au lieu de
+ *             les laisser tomber dans « Background ».
  */
 export const parseManuscriptHeader = (blocks) => {
   const list = Array.isArray(blocks) ? blocks : [];
@@ -714,7 +826,7 @@ export const parseManuscriptHeader = (blocks) => {
   if (firstAuthors === -1 && titleIdx >= 0 && window[titleIdx + 1]
     && window[titleIdx + 1].at === window[titleIdx].at + 1
     && window[titleIdx + 1].role !== 'affiliations'
-    && isAuthorish(window[titleIdx + 1].text)) {
+    && isAuthorLineAtPosition(window[titleIdx + 1].text)) {
     firstAuthors = titleIdx + 1;
   }
 
@@ -727,7 +839,9 @@ export const parseManuscriptHeader = (blocks) => {
          doivent être adjacentes et ressembler encore à des noms. */
       if (!authorIdxs.length && !(first && explicitAuthors === -1)) break;
       if (isCand(roles[i]) && (first || window[i - 1].at === window[i].at - 1)
-        && isAuthorish(window[i].text)) { authorIdxs.push(i); continue; }
+        && (first ? isAuthorLineAtPosition(window[i].text) : isAuthorish(window[i].text))) {
+        authorIdxs.push(i); continue;
+      }
       break;
     }
   }
@@ -750,19 +864,44 @@ export const parseManuscriptHeader = (blocks) => {
      métadonnées qui la suivent (« Keywords: », « Correspondence: ») — elles ne
      sont pas du texte de section. */
   const assigned = [titleIdx, ...authorIdxs, ...affIdxs].filter((i) => i >= 0);
-  const hasMeta = roles.some((r) => r === 'ignore');
-  let end = assigned.length ? Math.max(...assigned) : (hasMeta ? window.length - 1 : -1);
+  const roleOf = (i) => (i === titleIdx ? 'title'
+    : authorIdxs.includes(i) ? 'authors'
+      : affIdxs.includes(i) ? 'affiliations' : 'ignore');
+
+  /* 5 bis. RIEN de reconnu (ni titre, ni auteurs, ni affiliations) : on ne
+     consomme AUCUNE ligne — elles disparaîtraient de l'import — et on les
+     propose telles quelles, en « keep » (elles restent dans le texte tant que
+     l'utilisateur ne les reclasse pas). */
+  if (!assigned.length) {
+    return {
+      ...empty,
+      lines: [
+        ...window.map((w) => ({ at: w.at, text: w.text, role: KEEP_ROLE })),
+        ...extraHeaderLines(list, window)
+      ]
+    };
+  }
+  let end = Math.max(...assigned);
   while (window[end + 1] && roles[end + 1] === 'ignore') end += 1;
-  if (end < 0) return empty;
 
   const lines = window.slice(0, end + 1).map((w, i) => ({
     at: w.at,
     text: w.text,
-    role: i === titleIdx ? 'title'
-      : authorIdxs.includes(i) ? 'authors'
-        : affIdxs.includes(i) ? 'affiliations' : 'ignore'
+    role: roleOf(i)
   }));
-  return { ...headerFromLineRoles(list, lines), lines };
+
+  /* 6. Le REPLI : quand il MANQUE le titre ou les auteurs, les lignes qui
+     ressemblent à des noms — ou à une adresse juste après eux — et qui viennent
+     APRÈS la zone consommée sont proposées elles aussi, avec leur rôle deviné.
+     C'est le document qui imprime ses auteurs sous le résumé, ou une liste de
+     noms sans marqueur : sans ce repli, ces lignes retombaient dans la première
+     section (« Background »). Rien n'est écrit en douce — la fenêtre d'import
+     les montre une par une, et « keep in the section text » les rend au texte. */
+  const found = headerFromLineRoles(list, lines);
+  const more = (found.title && found.authors) ? [] : extraHeaderLines(list, window);
+  return more.length
+    ? { ...headerFromLineRoles(list, [...lines, ...more]), lines: [...lines, ...more] }
+    : { ...found, lines };
 };
 
 /** Découpe le CORPS du manuscrit en groupes menés par un titre : chaque groupe

@@ -366,8 +366,10 @@ const hManual = MS.headerFromLineRoles(
 );
 eq(hManual.authors, '', 'décocher les auteurs les retire du champ…');
 ok(hManual.blocks.length >= 1, '…et la ligne reste hors du texte importé (rien n’est inventé)');
-eq(MS.HEADER_ROLES.map((r) => r.id), ['ignore', 'title', 'authors', 'affiliations'],
-  'les quatre rôles proposés à la main');
+eq(MS.HEADER_ROLES.map((r) => r.id), ['ignore', 'title', 'authors', 'affiliations', 'keep'],
+  'les rôles proposés à la main (… et « keep », qui rend la ligne au texte)');
+ok(MS.HEADER_ROLES[MS.HEADER_ROLES.length - 1].label.includes('keep in the section text'),
+  'le dernier rôle dit clairement que la ligne retourne dans le texte de sa section');
 
 /* ── 13. FUNDING et SUPPORTING INFORMATION ──────────────────────────────────
    Deux sections qui manquaient à un article complet : le financement (bourses,
@@ -607,6 +609,116 @@ ok(exported.html.includes('href="#ref-1"'), 'les citations du texte restent des 
 between(exported.html, 'transmit potyviruses', '<figure', 'la figure est imprimée APRÈS ce paragraphe');
 has(exported.html, 'Transmission rates of the virus.', '…et sa légende l’accompagne');
 eq(exported.html.includes('[[FIGURE'), false, 'aucun marqueur n’apparaît dans le document exporté');
+
+/* ── 20. LES AUTEURS QUE LE DOCUMENT MET AILLEURS QU'EN TÊTE ─────────────────
+   Le cas rapporté : les auteurs et les affiliations n'étaient pas reconnus et
+   retombaient dans la section « Background » — l'utilisateur ne pouvait les
+   rediriger que vers une SECTION, jamais vers les champs
+   « 🧾 Title, authors & affiliations » du projet. Deux corrections :
+     • le programme va CHERCHER les lignes qui ressemblent à des noms / à une
+       adresse juste après la fenêtre d'en-tête (repli) et il les propose ;
+     • à défaut, chaque partie peut être REDIRIGÉE vers un champ d'en-tête
+       (HEADER_DESTS) au lieu d'une section.
+   Rien n'est écrit sans être montré : la fenêtre d'import liste les lignes avec
+   leur rôle, et « keep in the section text » les rend au texte. */
+eq(MS.HEADER_DESTS.map((d) => d.id), ['paperTitle', 'paperAuthors', 'paperAffiliations'],
+  'les trois champs d’en-tête du projet sont des destinations possibles');
+eq(MS.HEADER_DESTS.map((d) => d.short), ['title', 'authors', 'affiliations'],
+  '…et le compte rendu les nomme comme les champs devinés du document');
+ok(MS.isHeaderDest('paperAuthors') && !MS.isHeaderDest('background') && !MS.isHeaderDest(''),
+  'une section du projet n’est PAS un champ d’en-tête');
+
+/* Le texte d'une partie redirigée prend la forme du champ visé. */
+eq(MS.headerTextFor('paperAuthors', 'Mario Rossi\nAnna Bianchi'), 'Mario Rossi, Anna Bianchi',
+  'un auteur par ligne devient la liste du champ Authors');
+eq(MS.headerTextFor('paperAuthors', 'Jean Dupont', { previous: 'Mario Rossi' }), 'Mario Rossi, Jean Dupont',
+  '…et s’ajoute à la suite des auteurs déjà là');
+eq(MS.headerTextFor('paperAffiliations', '1 Dipartimento, Portici\n2 INRAE, Villenave', { previous: '0 CNR, Bari' }),
+  '0 CNR, Bari\n1 Dipartimento, Portici\n2 INRAE, Villenave',
+  'les affiliations gardent une ligne chacune');
+eq(MS.headerTextFor('paperTitle', 'Un titre\nsur deux lignes', { previous: 'Ancien titre' }),
+  'Ancien titre Un titre sur deux lignes', 'un titre tient sur une ligne');
+eq(MS.headerTextFor('paperTitle', 'Le bon titre', { previous: 'Ancien titre', mode: 'replace' }),
+  'Le bon titre', '…et « replace » remplace le champ au lieu de s’ajouter');
+eq(MS.headerTextFor('paperAuthors', '   ', { previous: 'Mario Rossi' }), 'Mario Rossi',
+  'une partie vide ne touche pas au champ');
+
+/* LE REPLI : le document imprime ses auteurs SOUS le résumé. */
+const LATE_DOC = [
+  'Aphid transmission of a new potyvirus infecting pepper crops',
+  'Abstract',
+  'A new potyvirus was isolated from pepper plants showing mosaic symptoms.',
+  'Anna Bianchi1, Mario Rossi2',
+  '1 Dipartimento di Agraria, Universita di Napoli Federico II, Portici, Italy',
+  "2 INRAE, UMR Biologie du Fruit, Villenave d'Ornon, France",
+  '',
+  'Introduction',
+  'Pepper crops are affected by many viruses (Rossi et al., 2018).'
+].join('\n');
+const LATE_MS = MS.splitManuscript(MS.blocksFromText(LATE_DOC));
+const lateHeader = MS.parseManuscriptHeader(LATE_MS.body);
+eq(lateHeader.title, 'Aphid transmission of a new potyvirus infecting pepper crops', 'le titre reste reconnu');
+eq(lateHeader.authors, 'Anna Bianchi1, Mario Rossi2', 'les auteurs sous le résumé sont retrouvés (repli)');
+eq(lateHeader.affiliations.split('\n').length, 2, '…avec leurs deux affiliations');
+ok(lateHeader.lines.some((l) => l.role === 'authors' && l.text.includes('Mario Rossi')),
+  'la ligne des auteurs est PROPOSÉE dans la fenêtre d’import (rôle compris)');
+const lateParts = MS.groupManuscriptParts(LATE_MS.body, { header: lateHeader });
+ok(!JSON.stringify(lateParts).includes('Mario Rossi1'),
+  'elle n’est plus importée dans une section (le « Background » ne l’avale plus)');
+ok(lateParts[0].text.includes('showing mosaic symptoms'),
+  '…et le texte de la section reste intact à côté');
+eq(lateParts[1].id, 'background', 'l’introduction vise toujours sa section');
+
+/* Un article à UN SEUL auteur : la ligne de noms seule, juste sous le titre,
+   suffit — elle n'était pas reconnue du tout auparavant. */
+const SOLO = MS.splitManuscript(MS.blocksFromText([
+  'Aphid transmission of a new potyvirus infecting pepper crops',
+  'Anna Bianchi',
+  'Dipartimento di Agraria, Universita di Napoli Federico II, Portici, Italy',
+  '',
+  'Introduction',
+  'Pepper crops are affected by many viruses (Rossi et al., 2018).'
+].join('\n')));
+const soloHeader = MS.parseManuscriptHeader(SOLO.body);
+eq(soloHeader.authors, 'Anna Bianchi', 'un auteur SEUL en position d’auteur est reconnu');
+eq(soloHeader.affiliations, 'Dipartimento di Agraria, Universita di Napoli Federico II, Portici, Italy',
+  '…et son affiliation suit');
+eq(MS.groupManuscriptParts(SOLO.body, { header: soloHeader }).map((p) => p.heading), ['Introduction'],
+  'le début du document n’est plus une partie à importer');
+
+/* « keep » rend une ligne au texte : elle repart dans sa partie, et le champ
+   d'en-tête redevient vide. */
+const KEPT_TEXT = (dD.header.lines.find((l) => l.role === 'authors') || {}).text || '';
+const keepHeader = MS.headerFromLineRoles(
+  dD.ms.body,
+  dD.header.lines.map((l) => (l.role === 'authors' ? { ...l, role: 'keep' } : l))
+);
+eq(keepHeader.authors, '', 'une ligne d’auteurs rendue au texte quitte le champ Authors');
+ok(KEPT_TEXT && !keepHeader.blocks.some((b) => b.text === KEPT_TEXT), '…et n’est plus consommée par l’en-tête');
+/* Elle retourne dans le texte : comme paragraphe de sa partie si elle reste une
+   ligne de noms (elle n’est jamais un titre de section, voir isHeadingLine),
+   comme intitulé sinon — dans les deux cas elle est bien ré-importée. */
+ok(MS.groupManuscriptParts(dD.ms.body, { header: keepHeader })
+  .some((p) => p.text.includes(KEPT_TEXT) || p.heading === KEPT_TEXT),
+  '…elle se retrouve bien dans une partie du texte');
+
+/* Le câblage : la fenêtre d'import propose ces destinations et les applique. */
+has(PROJ, "{ label: '🧾 Project header (title · authors · affiliations)', options: HEADER_DESTS }",
+  'le menu d’une partie propose les champs d’en-tête');
+has(PROJ, "{ label: 'Sections of this page', options: PROJECT_TEXT_SECTIONS }",
+  '…puis les sections de la page (deux groupes lisibles)');
+has(PROJ, "<optgroup key={g.label} label={g.label}>", '…affichés en groupes');
+has(PROJ, "{isHeaderDest(p.dest) ? 'replace the field' : 'replace the section'}",
+  '« replace » dit exactement ce qu’il remplace');
+has(PROJ, 'if (isHeaderDest(p.dest)) {', 'à l’import, une partie redirigée ne part pas dans une section');
+has(PROJ, 'headerTexts.push({ field: p.dest, text: stripFigureMarks(converted.text), mode: p.mode });',
+  '…son texte est mis en forme pour le champ (voir headerTextFor)');
+has(PROJ, 'headerTextFor(dest.id, h.text, { previous: value, mode: h.mode })',
+  '…et s’ajoute au contenu déjà reconnu en tête du document');
+has(PROJ, 'redirected from the text — check “🧾 Title, authors & affiliations”',
+  'le compte rendu dit quels champs viennent du texte (et où les relire)');
+has(PROJ, 'destLabel(p.dest)', 'le compte rendu nomme les champs d’en-tête comme les sections');
+has(PROJ, 'guessed: p.id || \'\'', 'chaque partie garde la section que son titre visait (repli des figures)');
 
 console.log(`✅ ${passed} tests passés (manuscrit — blocs / parties / en-tête / sections / liens / figures)`);
 
