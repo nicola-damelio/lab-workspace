@@ -122,6 +122,31 @@ export const mergeEmails = (...lists) => {
   return out;
 };
 
+/** Destinataires des notifications adressées AU SUPERUTILISATEUR (nouvelle
+ *  demande à approuver, acceptation / approbation, demande de signature) : les
+ *  superutilisateurs, MOINS la (les) adresse(s) des fiches « Gestionnaire ».
+ *  La (le) gestionnaire peut en effet posséder aussi un compte
+ *  superutilisateur : son adresse figure alors dans `superuserEmails` et elle
+ *  recevrait chaque acceptation. Or ces notifications ne lui demandent aucune
+ *  action — elles visent qui décide / signe — et elle voit de toute façon
+ *  toutes les demandes dans l’application (voir adminSchema.js). Par e-mail,
+ *  elle n’est prévenue qu’au transfert « pour signature » / « pour révision »
+ *  (cible « Achats », voir transferAchats.js) et à la signature d’un devis /
+ *  BC dans « Approbation devis & BC ».
+ *  Si le filtre vidait la liste (le superutilisateur EST la (le) gestionnaire),
+ *  la liste complète est conservée : aucune notification ne part vers
+ *  « personne » par accident (l’envoi reste visible dans la bannière). */
+export const superuserNoticeEmailsOf = (superuserEmails = [], gestionnaireEmails = []) => {
+  const asList = (v) => (Array.isArray(v) ? v : [v])
+    .map((e) => String(e || '').trim())
+    .filter(Boolean);
+  const supers = asList(superuserEmails);
+  const excluded = new Set(asList(gestionnaireEmails).map((e) => e.toLowerCase()));
+  if (!excluded.size) return supers;
+  const kept = supers.filter((e) => !excluded.has(e.toLowerCase()));
+  return kept.length ? kept : supers;
+};
+
 /** URL de base du serveur partagé ('' quand non configuré). */
 export const adminMailServerBase = () =>
   String(GOOGLE_TOKEN_EXCHANGE_URL || '').trim().replace(/\/+$/, '');
@@ -201,6 +226,19 @@ export const summarizeMail = (res, label = 'Notification') => {
     };
   }
   return { text: `${label} : e-mail NON envoyé — ${(res && res.reason) || 'aucune adresse e-mail disponible (fiche Personnel).'}` };
+};
+
+/** Variante de summarizeMail qui nomme les destinataires RÉELS de l’envoi :
+ *  la bannière de confirmation montre ainsi à qui l’e-mail est parti, ce qui
+ *  évite de croire qu’une notification est allée à quelqu’un qui n’était pas
+ *  destinataire (ou qu’elle n’est pas partie du tout). */
+export const summarizeMailTo = (res, label = 'Notification', emails = []) => {
+  const summary = summarizeMail(res, label);
+  if (!(res && res.ok)) return summary;
+  const list = (Array.isArray(emails) ? emails : [emails])
+    .map((e) => String(e || '').trim())
+    .filter(Boolean);
+  return list.length ? { ...summary, text: `${summary.text} — destinataire(s) : ${list.join(', ')}` } : summary;
 };
 
 /** Corps d’e-mail générique (préfixe/suffixe communs du module Administration). */

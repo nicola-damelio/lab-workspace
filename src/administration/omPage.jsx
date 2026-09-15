@@ -31,8 +31,8 @@ import { uploadLocalFile, cloudBackendAvailable } from '../utils/driveUpload';
 import { budgetDocPath, budgetDocFileName } from './driveFiling';
 import { findRecetteTwin, sameCatType } from './recetteLink';
 import {
-  sendAdminMail, superuserEmailsOf,
-  summarizeMail, mailBodyText, notificationTargetOf, personEmailOf,
+  sendAdminMail, superuserEmailsOf, superuserNoticeEmailsOf, personnelEmailsMatching,
+  summarizeMail, summarizeMailTo, mailBodyText, notificationTargetOf, personEmailOf,
 } from './emailNotify';
 import { scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName, scopeSeesAllRows, scopeFonctions } from './ownScope';
 import {
@@ -704,6 +704,16 @@ export const OmPage = () => {
     () => superuserEmailsOf(operators, personnel),
     [operators, personnel]
   );
+  /* Si la (le) gestionnaire dispose AUSSI d’un compte superutilisateur (son
+     adresse apparaît alors dans `superuserEmails`), elle est retirée des
+     notifications adressées au superutilisateur — sinon chaque OM « Acceptée »
+     (et chaque nouvelle demande) lui serait notifiée. Elle reste destinataire
+     des transferts « pour signature » / « pour révision » (voir doTransferOm
+     et superuserNoticeEmailsOf). */
+  const superuserNoticeEmails = useMemo(
+    () => superuserNoticeEmailsOf(superuserEmails, personnelEmailsMatching(personnel, { fonction: 'Gestionnaire' })),
+    [superuserEmails, personnel]
+  );
 
   /* Options de statut : personnalisées dans Setup › Options des listes déroulantes. */
   const omStatutOptions = useMemo(() => {
@@ -827,11 +837,11 @@ export const OmPage = () => {
       `Décision prise par : ${currentName || 'superutilisateur'}`,
     ].filter(Boolean);
     const res = await sendAdminMail({
-      to: superuserEmails,
+      to: superuserNoticeEmails,
       subject,
       text: mailBodyText(lines),
     });
-    const summary = summarizeMail(res, 'Superutilisateur');
+    const summary = summarizeMailTo(res, 'Superutilisateur', superuserNoticeEmails);
     setNotice({
       tone: res && res.ok ? 'ok' : 'warn',
       text: summary.text,
@@ -873,11 +883,11 @@ export const OmPage = () => {
       txt(patch && patch.ligneBudgetaire) ? `Ligne budgétaire : ${txt(patch.ligneBudgetaire)}` : '',
     ].filter(Boolean);
     const res = await sendAdminMail({
-      to: superuserEmails,
+      to: superuserNoticeEmails,
       subject,
       text: mailBodyText(lines),
     });
-    const summary = summarizeMail(res, 'Superutilisateur notifié');
+    const summary = summarizeMailTo(res, 'Superutilisateur notifié', superuserNoticeEmails);
     setNotice({
       tone: res && res.ok ? 'ok' : 'warn',
       text: summary.text,
