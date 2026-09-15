@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { RichTextEditor } from '../RichTextEditor';
 import { SmartImage } from '../TestShellRenderer';
-import { loadPubFormat, pubCitationData, pubCitationHtml } from '../Publications';
+import {
+  loadPubFormat, loadRelevantPapers, matchCoauthors, pubCitationData, pubCitationHtml
+} from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
 import { loadProjects, saveProjects, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor } from './projectsModule';
 import { suggestDriveFileName, openDrive } from '../../utils/driveNaming';
@@ -225,6 +227,11 @@ export const ProjectDetailModule = ({
   const [linkTestId, setLinkTestId] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const pubs = useMemo(loadPublications, []);
+  /* Les « Relevant papers » alimentent eux aussi la bibliographie d'un projet
+     (Publications → « Project bibliography » → Import) : quand une entrée ne
+     porte pas encore ses auteurs, sa publication d'origine peut donc venir des
+     deux listes — c'est dans ce pot commun que puise citeData(). */
+  const citationPool = useMemo(() => [...pubs, ...loadRelevantPapers()], [pubs]);
   const [tableDraft, setTableDraft] = useState(null); // null | { section, insertText }
   const [showExport, setShowExport] = useState(false);
   const [textEditing, setTextEditing] = useState(false); // wide editing (retract side panels)
@@ -309,6 +316,41 @@ export const ProjectDetailModule = ({
   const canModify = isOwner || (myCoworker && myCoworker.permission === 'modify');
 
   useEffect(() => { saveProjects(projects); }, [projects]);
+
+  /* Bibliographie / références enregistrées AVANT la prise en charge des
+     co-auteurs : leurs champs manquants — les AUTEURS en premier lieu — sont
+     recopiés une fois depuis la publication d'origine, puis sauvegardés. Sans
+     cette réparation, Publications → « Project bibliography » et la bibliographie
+     du document du projet n'affichaient que le titulaire du projet, faute
+     d'auteurs dans l'entrée. Un champ déjà rempli n'est jamais écrasé (une
+     correction à la main reste intacte) et rien n'est écrit si rien ne change. */
+  useEffect(() => {
+    if (!canModify || citationPool.length === 0) return;
+    const fillFromOrigin = (entry) => {
+      const data = pubCitationData(entry, citationPool);
+      const next = { ...entry };
+      let touched = false;
+      ['authors', 'journal', 'year', 'doi', 'volume', 'pages'].forEach((key) => {
+        if (String(next[key] || '').trim()) return;
+        if (!String(data[key] || '').trim()) return;
+        next[key] = data[key];
+        touched = true;
+      });
+      return touched ? next : entry;
+    };
+    const fillList = (list) => {
+      if (!Array.isArray(list) || list.length === 0) return list;
+      const filled = list.map(fillFromOrigin);
+      return filled.some((e, i) => e !== list[i]) ? filled : list;
+    };
+    const next = projects.map((p) => {
+      const bibliography = fillList(p.bibliography);
+      const references = fillList(p.references);
+      if (bibliography === p.bibliography && references === p.references) return p;
+      return { ...p, bibliography, references };
+    });
+    if (next.some((p, i) => p !== projects[i])) setProjects(next);
+  }, [projects, citationPool, canModify]);
 
   // Keep the persisted "Materials and Methods" snapshot fresh every time the
   // export document is opened (it pulls the latest Experimental Conditions,
@@ -658,7 +700,15 @@ export const ProjectDetailModule = ({
   // ---- References: from "Project bibliography" + "Publications of the scientist" ----
   const projectBib = project.bibliography || [];
   const scientistPubs = pubs.filter((p) => {
-    const authors = [p.scientist, ...(p.coauthors || [])].filter(Boolean);
+    /* Le titulaire du projet peut n'être qu'un CO-AUTEUR du papier (article
+       importé sous le nom d'un autre membre du laboratoire) : `coauthors` est
+       recalculé ici quand il n'a pas encore été enregistré, exactement comme dans
+       Publications — sinon la liste se limitait aux papiers dont il est le
+       titulaire. */
+    const coauthors = Array.isArray(p.coauthors)
+      ? p.coauthors
+      : matchCoauthors(p.authors || '', operatorNames || [], p.scientist);
+    const authors = [p.scientist, ...coauthors].filter(Boolean);
     return !authors.length || authors.includes(project.scientist);
   });
   const refs = project.references || [];
@@ -667,8 +717,9 @@ export const ProjectDetailModule = ({
      complété par la publication d'origine : les entrées importées AVANT que les
      auteurs ne soient recopiés n'ont qu'un titre, et la citation ne montrait donc
      aucun co-auteur. `pubCitationData` retrouve la liste complète des auteurs
-     (laboratoire ET extérieurs) par identifiant ou par titre. */
-  const citeData = (entry) => pubCitationData(entry, pubs);
+     (laboratoire ET extérieurs) par identifiant, DOI, identifiant PubMed ou
+     titre — dans les publications importées COMME dans les « Relevant papers ». */
+  const citeData = (entry) => pubCitationData(entry, citationPool);
   const pickerItems = (list) => list.map((item) => ({ ...item, ...citeData(item) }));
 
   const findOrAddRef = (paper, insertText) => {
@@ -849,6 +900,11 @@ export const ProjectDetailModule = ({
                             <div className="text-[10px] text-slate-500">
                               {[item.authors, item.journal, item.year].filter(Boolean).join(' · ') || '—'}
                             </div>
+                            {!item.authors && (
+                              <div className="text-[10px] text-amber-600">
+                                ⚠ no authors recorded — complete the paper in Publications → “Project bibliography”
+                              </div>
+                            )}
                             {item.link && <div className="text-[10px] text-blue-600 truncate">{item.link}</div>}
                           </div>
                           <button type="button"
@@ -1953,6 +2009,11 @@ export const ProjectDetailModule = ({
                         <div className="text-[10px] text-slate-500">
                           {[d.authors, d.journal, d.year].filter(Boolean).join(' · ') || '—'}
                         </div>
+                        {!d.authors && (
+                          <div className="text-[10px] text-amber-600">
+                            ⚠ no authors recorded — complete the paper in Publications → “Project bibliography”
+                          </div>
+                        )}
                         {b.link && <a href={b.link} target="_blank" rel="noreferrer"
                                       className="text-[10px] text-blue-600 hover:underline break-all">{b.link}</a>}
                       </div>

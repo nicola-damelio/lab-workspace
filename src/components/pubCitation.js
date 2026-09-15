@@ -119,8 +119,9 @@ export const pubDoiUrl = (raw) => {
    et le nom du titulaire du projet, si bien que la citation ne montrait aucun
    co-auteur. Les champs sont désormais recopiés à l’import, et pour les entrées
    plus anciennes la publication d’origine est retrouvée ici, par identifiant
-   (`sourceId`, posé par les références numérotées) ou par titre — c’est ce que
-   fait `pubCitationData` avant chaque rendu. */
+   (`sourceId`, posé par les références numérotées), par DOI, par identifiant
+   PubMed, ou enfin par titre — c’est ce que fait `pubCitationData` avant chaque
+   rendu. */
 
 /** Titre normalisé pour rapprocher deux entrées (casse, ponctuation, espaces). */
 const pubTitleKey = (s) => String(s || '')
@@ -128,13 +129,55 @@ const pubTitleKey = (s) => String(s || '')
   .replace(/[^a-z0-9]+/g, ' ')
   .trim();
 
-/** Publication d’origine d’une entrée : par `sourceId`, sinon par titre exact. */
+/** DOI contenu dans une valeur : « 10.1000/xyz », « https://doi.org/10.1000/xyz »
+ *  ou n’importe quel lien qui le porte (doi.org / éditeur / PubMed Central). */
+export const pubDoiKey = (value) => {
+  const m = String(value || '').match(/10\.\d{4,9}\/[^\s"'<>()]+/);
+  return m ? m[0].toLowerCase().replace(/[.,;:]+$/, '') : '';
+};
+
+/** Identifiant PubMed contenu dans une valeur : numéro nu ou lien
+ *  « pubmed.ncbi.nlm.nih.gov/12345678 ». */
+export const pubPmidKey = (value) => {
+  const s = String(value || '').trim();
+  const m = s.match(/pubmed\.ncbi\.nlm\.nih\.gov\/(\d+)/i) || s.match(/^(\d{5,9})$/);
+  return m ? m[1] : '';
+};
+
+/* Les identifiants d’une entrée NE vivent PAS toujours dans le même champ : une
+   entrée de bibliographie garde son DOI dans `doi` (copié de la publication) ou
+   dans `link`, une publication importée dans `doi` ou dans `links[].url`. Ces
+   deux lecteurs cherchent donc partout, dans le même ordre. */
+const pubFirstOf = (entry, keys, reader) => {
+  const sources = [entry && entry[keys[0]], entry && entry[keys[1]]];
+  (((entry && entry.links) || [])).forEach((l) => sources.push(l && l.url));
+  const found = sources.map(reader).find(Boolean);
+  return found || '';
+};
+
+const pubDoiOf = (entry) => pubFirstOf(entry, ['doi', 'link'], pubDoiKey);
+const pubPmidOf = (entry) => pubFirstOf(entry, ['pmid', 'link'], pubPmidKey);
+
+/** Publication d’origine d’une entrée : par `sourceId`, sinon par DOI, sinon par
+ *  identifiant PubMed, sinon par titre exact. Le DOI et le PMID sont décisifs
+ *  quand les titres diffèrent (titre retouché à la main, preprint puis version
+ *  publiée) : l’entrée montre alors enfin la liste complète des auteurs. */
 export const pubOriginOf = (entry, pubs = []) => {
   const list = Array.isArray(pubs) ? pubs : [];
   if (!entry || !list.length) return null;
   if (entry.sourceId) {
     const byId = list.find((p) => p && p.id === entry.sourceId);
     if (byId) return byId;
+  }
+  const doi = pubDoiOf(entry);
+  if (doi) {
+    const byDoi = list.find((p) => p && pubDoiOf(p) === doi);
+    if (byDoi) return byDoi;
+  }
+  const pmid = pubPmidOf(entry);
+  if (pmid) {
+    const byPmid = list.find((p) => p && pubPmidOf(p) === pmid);
+    if (byPmid) return byPmid;
   }
   const key = pubTitleKey(entry.title);
   if (!key) return null;
@@ -173,21 +216,36 @@ const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
 }[ch]));
 
-// Co-author matching: given a raw authors string and a list of candidate names,
-// return the candidates that appear among the authors (so shared papers are
-// found when filtering by any user of the app).
+/* Co-author matching: given a raw authors string and a list of candidate names,
+   return the candidates that appear among the authors (so shared papers are
+   found when filtering by any user of the app).
+   TWO conventions coexist in the app: « Rossi M » (the lab user list, PubMed)
+   and « Marco Rossi » (Crossref / OpenAlex / ORCID, which give full names).
+   The surname is therefore located first (a trailing token of 3+ letters, else
+   a leading one), then the given names are checked — written out in both names,
+   or as the initial of a short author token: « Rossi M » ↔ « Marco Rossi »
+   matches, « Rossi M » ↔ « Rossi L » and « Marco Rossi » ↔ « Michele Rossi »
+   do not. */
 export const authorMatchesCandidate = (author, candidate) => {
   const tok = (s) => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
-  const cToks = String(candidate || '').split(/[\s,]+/).map(tok).filter(Boolean);
-  const aToks = String(author || '').split(/[\s,]+/).map(tok).filter(Boolean);
+  const split = (s) => String(s || '').split(/[\s,]+/).map(tok).filter(Boolean);
+  const cToks = split(candidate);
+  const aToks = split(author);
   if (!cToks.length || !aToks.length) return false;
-  const surname = cToks[cToks.length - 1];
-  if (surname.length >= 3 && aToks.includes(surname)) return true;
-  if (cToks.length >= 2) {
-    const full = tok(candidate);
-    if (tok(author).includes(full)) return true;
-  }
-  return false;
+
+  // 1. Same name written the same way (case / punctuation may vary).
+  const full = tok(candidate);
+  if (full && tok(author).includes(full)) return true;
+
+  // 2. Surname first, then the given names (see the rule above).
+  const last = cToks[cToks.length - 1];
+  const surname = last.length >= 3 ? last : (cToks[0].length >= 3 ? cToks[0] : '');
+  if (!surname || !aToks.includes(surname)) return false;
+  const given = cToks.filter((t) => t !== surname);
+  return given.every((g) => aToks.some((t) =>
+    t === g                                // same spelling on both sides
+    || (g.length <= 2 && t.startsWith(g))  // initial ↔ the author's given name
+    || (t.length <= 2 && g.startsWith(t)))); // given name ↔ the author's initial
 };
 
 export const matchCoauthors = (authorStr, candidates, excludeName) => {

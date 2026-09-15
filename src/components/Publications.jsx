@@ -123,6 +123,23 @@ const genPubId = () => `pub_${Date.now()}_${Math.random().toString(36).slice(2, 
 
 const RELEVANT_PAPERS_KEY = 'labWorkspace_relevantPapers';
 const SUBJECTS_KEY = 'labWorkspace_relevant_subjects';
+
+/** PAPIERS « Relevant papers » enregistrés sur cet appareil. Ils alimentent la
+ *  bibliographie d'un projet au même titre que les publications importées : ils
+ *  sont donc une « publication d'origine » possible quand une entrée de
+ *  bibliographie (ou une référence numérotée) n'a pas d'auteurs — voir
+ *  pubCitationData / pubOriginOf, réutilisés par la page de projet. */
+export const loadRelevantPapers = () => {
+  try {
+    const raw = localStorage.getItem(RELEVANT_PAPERS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch { /* ignore malformed */ }
+  return [];
+};
+
 const DEFAULT_SUBJECTS = [
   'MD simulations', 'NMR', 'Docking', 'Antimicrobial peptides (AMPs)',
   'Membrane biophysics', 'Bioinformatics', 'Protein structure', 'Other'
@@ -296,6 +313,9 @@ const searchOrcidByOrcidId = async (orcidId, authorName = '') => {
     const putCode = ws0?.['put-code'] || '';
     out.push({
       title,
+      /* L'API ORCID ne donne QUE le titulaire du profil (aucun contributeur dans
+         son `work-summary`) : les co-auteurs sont récupérés juste après par
+         authorListLookup(), ce nom n'est qu'un repli hors ligne. */
       authors: authorName || '',
       journal: ws0?.['journal-title']?.value || '',
       year,
@@ -308,7 +328,13 @@ const searchOrcidByOrcidId = async (orcidId, authorName = '') => {
       ]
     });
   });
-  return out;
+  /* L'API ORCID ne renvoie AUCUN co-auteur : la liste complète des auteurs est
+     donc récupérée AVANT que ces travaux ne soient proposés puis enregistrés.
+     Sans elle, le membre du laboratoire apparaissait comme SEUL auteur du papier
+     (`authors: authorName` n'est plus qu'un repli, quand le web ne connaît
+     l'identifiant du travail). */
+  const lookup = await authorListLookup(out);
+  return out.map((r) => ({ ...r, authors: lookup(r) || r.authors }));
 };
 
 // Search ORCID by author name (expanded-search).
@@ -332,6 +358,76 @@ const searchOrcidByName = async (query) => {
     } catch { /* skip profiles that fail */ }
   }
   return out;
+};
+
+// ---- Author lists of the imported works -----------------------------------
+/* A search API does NOT always give the co-authors: the public ORCID API, in
+   particular, only returns the profile owner (its `work-summary` has no
+   contributor at all), so a paper imported from an ORCID iD ended up with the
+   lab member's name as its ONLY author. The real list is therefore fetched
+   separately and copied into the result: by DOI from OpenAlex (one request per
+   40 DOIs) and by PubMed id from eSummary (the same source as the search
+   itself). A work with neither identifier keeps what ORCID gave. */
+const AUTHOR_BATCH = 40;
+
+const pubDoiOf = (item) => String((item && item.doi) || '').trim()
+  .replace(/^https?:\/\/(dx\.)?doi\.org\//i, '').toLowerCase();
+const pubPmidOf = (item) => String((item && item.pmid) || '').trim();
+
+const openAlexAuthorList = (authorships) => (Array.isArray(authorships) ? authorships : [])
+  .map((a) => String(a?.author?.display_name || '').trim())
+  .filter(Boolean)
+  .join(', ');
+
+const fetchAuthorsByDoi = async (dois) => {
+  const out = new Map();
+  for (let i = 0; i < dois.length; i += AUTHOR_BATCH) {
+    const chunk = dois.slice(i, i + AUTHOR_BATCH);
+    try {
+      const res = await fetch(
+        `https://api.openalex.org/works?filter=doi:${chunk.map((d) => encodeURIComponent(d)).join('|')}`
+        + `&per-page=${chunk.length}&select=doi,authorships`
+      );
+      if (!res.ok) continue;
+      const j = await res.json();
+      (j?.results || []).forEach((w) => {
+        const key = String(w?.doi || '').replace(/^https?:\/\/(dx\.)?doi\.org\//i, '').toLowerCase();
+        const authors = openAlexAuthorList(w?.authorships);
+        if (key && authors) out.set(key, authors);
+      });
+    } catch { /* réseau indisponible : on garde ce que la recherche a donné */ }
+  }
+  return out;
+};
+
+const fetchAuthorsByPmid = async (pmids) => {
+  const out = new Map();
+  for (let i = 0; i < pmids.length; i += AUTHOR_BATCH * 5) {
+    const chunk = pmids.slice(i, i + AUTHOR_BATCH * 5);
+    try {
+      const res = await fetch(
+        `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${chunk.join(',')}&retmode=json`
+      );
+      if (!res.ok) continue;
+      const j = await res.json();
+      chunk.forEach((id) => {
+        const authors = (j?.result?.[id]?.authors || []).map((a) => a.name).filter(Boolean).join(', ');
+        if (authors) out.set(String(id), authors);
+      });
+    } catch { /* réseau indisponible */ }
+  }
+  return out;
+};
+
+/** Lecture des auteurs RÉELS d'un résultat importé : DOI (OpenAlex) puis
+ *  identifiant PubMed (eSummary). Rend une fonction item → liste d'auteurs
+ *  (chaîne vide quand le web ne connaît pas ce travail). */
+const authorListLookup = async (items) => {
+  const list = Array.isArray(items) ? items : [];
+  const dois = [...new Set(list.map(pubDoiOf).filter(Boolean))];
+  const pmids = [...new Set(list.map(pubPmidOf).filter(Boolean))];
+  const [byDoi, byPmid] = await Promise.all([fetchAuthorsByDoi(dois), fetchAuthorsByPmid(pmids)]);
+  return (item) => byDoi.get(pubDoiOf(item)) || byPmid.get(pubPmidOf(item)) || '';
 };
 
 // ---- Impact-factor lookup (web) ------------------------------------------
@@ -475,6 +571,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     return [];
   });
   const [pubFilter, setPubFilter] = useState('all');
+  const [pubAuthorsFixing, setPubAuthorsFixing] = useState(false); // « ⟳ Complete author lists » running
   const [pubFormat, setPubFormat] = useState(loadPubFormat);
   const [pubFormatScope, setPubFormatScope] = useState('default'); // 'default' | project name
   const [pubAddField, setPubAddField] = useState('doi'); // field id to add via the "+ Add field" control
@@ -739,6 +836,43 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     setUpdateMsg(`✓ ${items.length} publication(s) added · ${pubResults.length - items.length} already in the table.`);
   };
 
+  /* Publications dont la liste d'auteurs manque ou se réduit au titulaire seul
+     (travaux importés depuis ORCID avant que les co-auteurs ne soient récupérés,
+     ou ajoutés à la main) : la liste RÉELLE est redemandée au web — DOI →
+     OpenAlex, identifiant PubMed → eSummary — puis enregistrée, et les
+     co-auteurs du laboratoire sont recalculés pour que le papier apparaisse aussi
+     sous leur nom. Rien n'est écrasé quand le web ne trouve pas le papier. */
+  const refreshPubAuthors = async () => {
+    const targets = pubs.filter((p) => {
+      const authors = String(p.authors || '').trim();
+      if (!authors) return true;
+      return authors === String(p.scientist || '').trim();
+    });
+    if (targets.length === 0) {
+      setUpdateMsg('✓ Every publication already lists its authors.');
+      return;
+    }
+    setPubAuthorsFixing(true);
+    setUpdateMsg('');
+    try {
+      const lookup = await authorListLookup(targets);
+      const updates = new Map();
+      targets.forEach((p) => {
+        const authors = lookup(p);
+        if (!authors || authors === String(p.authors || '').trim()) return;
+        updates.set(p.id, { authors, coauthors: matchCoauthors(authors, scientistOptions, p.scientist) });
+      });
+      if (updates.size > 0) {
+        setPubs((prev) => prev.map((p) => (updates.has(p.id) ? { ...p, ...updates.get(p.id) } : p)));
+      }
+      setUpdateMsg(updates.size
+        ? `✓ ${updates.size} publication(s) completed with their full author list (${targets.length - updates.size} not found online).`
+        : '⛔ No author list found online for these papers (no DOI or PMID stored) — fill them in by hand.');
+    } finally {
+      setPubAuthorsFixing(false);
+    }
+  };
+
   // ---- Relevant papers (subject + scientist classification) ----
   const [papers, setPapers] = useState(() => {
     try {
@@ -921,6 +1055,12 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
         doi: p.doi || '',
         volume: p.volume || '',
         pages: p.pages || '',
+        /* Lien vers la publication d'origine (publication importée ou papier de
+           « Relevant papers ») : elle sera retrouvée par identifiant, DOI ou
+           identifiant PubMed — voir pubOriginOf. */
+        sourceId: p.id || '',
+        source: p.source || '',
+        pmid: p.pmid || '',
         scientist: prj.scientist,
         comments: p.comments || '',
         labels: Array.isArray(p.labels) ? p.labels : (p.subject ? [p.subject] : [])
@@ -1338,6 +1478,11 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                     ? `Search the web (PubMed + Crossref) for new publications of ${defaultScientist} (the logged-in user) and add them to the table`
                     : 'Log in first — publications can only be added under your own name'}>
             {updating ? `⏳ Checking ${updating === 'all' ? defaultScientist : updating}…` : '🔄 Check new publications'}
+          </button>
+          <button type="button" onClick={refreshPubAuthors} disabled={pubAuthorsFixing || pubs.length === 0}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 disabled:opacity-40 transition"
+                  title="Fetch the FULL author list of the papers that show their owner only (older ORCID imports, papers typed by hand): DOI → OpenAlex, PMID → PubMed">
+            {pubAuthorsFixing ? '⏳ Fetching authors…' : '⟳ Complete author lists'}
           </button>
         </div>
       </div>
