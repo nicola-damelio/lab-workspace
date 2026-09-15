@@ -464,6 +464,18 @@ export const cleanupWorkspaceRootFolders = async ({ legacyFolderNames = [], skip
   }
 };
 
+/** The Drive folder name of the open dataset ('' only when NO dataset is open).
+ *  While a dataset is open its folder is ALWAYS used: an unknown title (not
+ *  loaded yet / cleared) used to fall back to the "Lab Workspace" root, which
+ *  dropped uploads BESIDE the dataset folders — mixed with every other dataset,
+ *  outside the folder the app backs up and restores. Such a dataset is anchored
+ *  on its id instead (`dataset_<id>`), and renamed to `<title>` as soon as the
+ *  title is known (see the rename branch of ensureDriveFolder). */
+const datasetFolderName = () => {
+  if (driveRootName) return datasetFolderSlug(driveRootName);
+  return driveRootId ? `dataset_${sanitizeSlug(driveRootId)}` : '';
+};
+
 /** Resolve the upload root folder: "Lab Workspace" → the dataset folder inside
  *  it (when the dataset has a title). The dataset folder ALWAYS gets its own
  *  internal structure — the canonical five-folder tree for scientific datasets
@@ -472,7 +484,7 @@ export const cleanupWorkspaceRootFolders = async ({ legacyFolderNames = [], skip
  *  share one dataset directory and scientific folders are never created inside
  *  an administration base. */
 export const ensureDriveFolder = async () => {
-  const name = driveRootName ? datasetFolderSlug(driveRootName) : '';
+  const name = datasetFolderName();
   const saved = getDriveFolderId();
 
   // Fast path: the cached folder already belongs to this dataset and name.

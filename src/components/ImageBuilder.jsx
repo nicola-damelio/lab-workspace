@@ -7,6 +7,8 @@ import {
   countRecaptureDuplicates, removeRecaptureDuplicates
 } from '../utils/figuresLibrary';
 import { loadProjects, saveProjects, genProjectId, projectAccessFor, visibleProjectsFor } from './AppModules/projectsModule';
+import { getDriveRootName } from '../utils/driveUpload';
+import { projectImagesFolderLabel } from '../utils/driveNaming';
 import { queuePendingFigureScroll } from '../utils/pendingFigureScroll';
 import { figureStyleTag } from '../utils/figureStyle';
 import {
@@ -968,7 +970,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       ? (allProjects.find((p) => p.id === activeLibProjectId) || null)
       : null;
     const driveProjectName = driveProject ? String(driveProject.name || '') : '';
-    const driveFolderLabel = driveProjectName ? `projects/${driveProjectName.trim()}/images` : 'projects/_unassigned/images';
+    const driveFolderLabel = projectImagesFolderLabel(driveProjectName, getDriveRootName());
     const imported = [];
     const failed = [];
     let driveOk = 0;
@@ -1330,7 +1332,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       const where = destProjectId
         ? `in the “${canvasScopeName(destProjectId)}” image library (Image Library → Project tab — and on that project page under “🖼 Saved canvases”, where it reopens here)`
         : 'in the shared dataset image library (Image Library → Dataset tab)';
-      const folderLabel = destProjectId ? `projects/${canvasScopeName(destProjectId).trim()}/images` : 'projects/_unassigned/images';
+      const folderLabel = projectImagesFolderLabel(destProjectId ? canvasScopeName(destProjectId) : '', getDriveRootName());
       let detail;
       if (pub.drive && pub.drive.id) detail = `☁ cloud copy in ${folderLabel}`;
       else if (!localStorageHealthy()) detail = '⚠️ browser storage full — connect Google Drive or Nextcloud so it is kept there (this session still works)';

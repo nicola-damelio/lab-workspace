@@ -46,6 +46,9 @@ const SEL = readFileSync('./src/utils/loadSelection.js', 'utf8');
 const FIG = readFileSync('./src/components/FiguresSlides.jsx', 'utf8');
 const IB = readFileSync('./src/components/ImageBuilder.jsx', 'utf8');
 const DRIVE = readFileSync('./src/utils/driveUpload.js', 'utf8');
+const NAMING = readFileSync('./src/utils/driveNaming.js', 'utf8');
+const PROJ = readFileSync('./src/components/AppModules/projectDetailModule.jsx', 'utf8');
+const NAMING_MOD = await import('./src/utils/driveNaming.js');
 
 let passed = 0;
 const eq = (actual, expected, what) => {
@@ -227,7 +230,7 @@ has(DRIVE, 'export const downloadDriveFileText = async (fileId) => {', '…et re
 
 has(FIG, 'const [recovOpen, setRecovOpen] = useState(false);', 'la page Figures & Slides a sa fenêtre de récupération');
 has(FIG, '>♻️ Recover</button>', 'un bouton ♻️ Recover est offert dans l’en-tête de la bibliothèque');
-has(FIG, '♻️ Recover them from a backup</button>', '…et une phrase explique où vivent les images');
+has(FIG, '♻️ Recover from a backup</button>', '…et une phrase explique où vivent les images (et par où les récupérer)');
 has(FIG, 'const res = mergeLibraryFromSnapshot({', 'la fenêtre passe par la même fusion additive');
 has(FIG, 'loadRecoveryFile(e.target.files && e.target.files[0])', 'un fichier de sauvegarde local peut être choisi');
 has(FIG, 'onClick={loadRecoveryBackups}', 'les sauvegardes Drive peuvent être listées');
@@ -236,5 +239,117 @@ has(FIG, 'setLibrary(readLibrary());', 'les panneaux sont rafraîchis après la 
 has(FIG, 'if (res.common.added > 0) setLibTab(\'common\');', 'la bibliothèque s’ouvre là où les images sont arrivées');
 has(IB, 'Publications → Figures &amp; Slides → ♻️ Recover',
   'l’éditeur d’images dit OÙ récupérer la liste quand elle est vide sur ce poste');
+
+/* ── 9. LA BIBLIOTHÈQUE ⇄ LE DRIVE ──────────────────────────────────────────
+   « Aucune image de la bibliothèque n'est sur le Drive » : soit les images
+   n'ont jamais été envoyées (capturées hors connexion → base64 local, perdues
+   au changement d'ordinateur), soit elles y sont mais la LISTE a été perdue.
+   Les deux gestes qui répondent sont testés ici avec un faux Drive
+   (globalThis.__driveTestMocks, voir _esm_test_hook.mjs). */
+
+// 9a. Le contenu d'un dossier Drive → entrées de bibliothèque (fonction PURE).
+const listing = [
+  { id: 'F1', name: 'CD_spectrum_2026-04.png', mimeType: 'image/png' },
+  { id: 'F2', name: 'images', mimeType: 'application/vnd.google-apps.folder' },
+  { id: 'F3', name: 'notes.pdf', mimeType: 'application/pdf' },
+  { id: 'F4', name: 'Figure_2.svg', mimeType: 'image/svg+xml', webViewLink: 'https://drive.google.com/file/d/F4/view' }
+];
+const mapped = LIB.libraryItemsFromDriveListing(listing, { addedAt: '2026-01-01T00:00:00.000Z' });
+eq(mapped.length, 2, 'seules les IMAGES d’un dossier Drive deviennent des entrées');
+eq(mapped.map((i) => i.id), ['lib_drive_F1', 'lib_drive_F4'], 'elles portent un id DÉTERMINISTE (donc pas de doublon)');
+eq(mapped[0].label, 'CD spectrum 2026-04', 'le libellé vient du nom du fichier');
+eq(mapped[0].drive, true, 'l’entrée sait que ses pixels sont sur le Drive');
+eq(mapped[0].full, 'https://drive.google.com/file/d/F1/view', '…et où les relire');
+eq(mapped[1].full, 'https://drive.google.com/file/d/F4/view', 'le lien Drive fourni est conservé');
+eq(LIB.driveIdOfLibraryItem(mapped[0]), 'F1', 'l’id Drive d’une entrée est retrouvable');
+eq(LIB.driveIdOfLibraryItem({ url: 'https://lh3.googleusercontent.com/d/XYZ' }), 'XYZ', '…même depuis une vignette lh3');
+eq(LIB.driveIdOfLibraryItem({ url: 'data:image/png;base64,aaa' }), '', 'une entrée purement locale n’a pas d’id Drive');
+eq(LIB.driveLibraryItemId('a b/c'), 'lib_drive_abc', 'un id de fichier est nettoyé avant de servir d’id d’entrée');
+
+// 9b. Ce qui n'est PAS encore sur le cloud (ce qui se perd au changement de poste).
+eq(LIB.localOnlyLibraryItems([
+  { id: 'loc1', full: 'data:image/png;base64,aaa', drive: false },
+  { id: 'ok1', full: 'https://drive.google.com/file/d/A/view', drive: true },
+  { id: 'loc2', full: 'data:image/jpeg;base64,bbb' }
+]).map((i) => i.id), ['loc1', 'loc2'], 'les images dont les pixels ne sont que dans le navigateur sont repérées');
+
+// 9c. ☁ Les envoyer — avec un faux Drive.
+LIB.writeLibrary([]);
+LIB.writeProjectLibrary('P1', []);
+LIB.addProjectLibraryItem('P1', { id: 'loc1', label: 'Local only', url: 'data:image/png;base64,thumb', full: 'data:image/png;base64,big', drive: false, driveUrl: null });
+eq(LIB.localOnlyLibraryCount({ scope: 'project', projectId: 'P1' }), 1, '…et comptées par portée');
+
+const listingMock = { cloud: true, dataUrlToBlob: () => ({}),
+  uploadLocalFile: async ({ name }) => ({ id: `UP_${name}`, name, driveUrl: `https://drive.google.com/file/d/UP_${name}/view` }),
+  resolveDrivePathFromNames: (names) => ({ leafId: `leaf_${(names || []).join('_')}`, path: (names || []).map((n, i) => ({ name: n, id: `leaf_${i}` })) }),
+  listDriveChildren: () => listing };
+globalThis.__driveTestMocks = listingMock;
+const pushed = await LIB.pushLibraryToDrive({ scope: 'project', projectId: 'P1', projectName: 'CD project' });
+eq(pushed.total, 1, 'l’envoi ne prend que les images absentes du cloud');
+eq(pushed.uploaded, 1, '…et les y envoie');
+eq(pushed.failed, 0, 'aucun échec');
+eq(pushed.folder, 'projects/CD_project/images', 'le dossier visé est celui du projet, DANS le dossier du dataset');
+eq(LIB.readProjectLibrary('P1')[0].drive, true, 'l’entrée sait maintenant que sa copie est sur le Drive');
+has(String(LIB.readProjectLibrary('P1')[0].full), '/file/d/UP_', '…et pointe sur le fichier envoyé');
+eq(LIB.localOnlyLibraryCount({ scope: 'project', projectId: 'P1' }), 0, 'plus aucune image locale seulement');
+
+// 9d. ⬇ Relire le dossier pour retrouver les images dont la LISTE est perdue.
+const pulled = await LIB.pullLibraryFromDrive({ scope: 'common', projectId: null, projectName: '' });
+eq(pulled.found, 2, 'les images du dossier sont vues');
+eq(pulled.added, 2, '…et ajoutées à la bibliothèque commune (vide ici)');
+eq(LIB.readLibrary().map((i) => i.id), ['lib_drive_F1', 'lib_drive_F4'], 'ajoutées sans rien d’autre modifier');
+const pulled2 = await LIB.pullLibraryFromDrive({ scope: 'common', projectId: null, projectName: '' });
+eq(pulled2.added, 0, 'relire le dossier deux fois n’ajoute aucun doublon');
+eq(LIB.readLibrary().length, 2, '…et ne supprime rien');
+
+// Un fichier déjà référencé par une entrée (id local) n'est pas dupliqué.
+LIB.writeLibrary([{ id: 'mine', label: 'mienne', url: 'data:image/png;base64,t', full: 'https://drive.google.com/file/d/F1/view', drive: true, driveUrl: 'https://drive.google.com/file/d/F1/view' }]);
+const pulled3 = await LIB.pullLibraryFromDrive({ scope: 'common', projectId: null, projectName: '' });
+eq(pulled3.added, 1, 'un fichier déjà présent sous un AUTRE id n’est pas dupliqué');
+eq(LIB.readLibrary().map((i) => i.id), ['mine', 'lib_drive_F4'], 'l’entrée existante est conservée telle quelle');
+
+// Hors connexion : compte rendu explicite, bibliothèque intacte.
+globalThis.__driveTestMocks = { cloud: false };
+const before = LIB.readLibrary().length;
+const off = await LIB.pullLibraryFromDrive({ scope: 'common' });
+ok(!!off.error, 'hors connexion, l’action DIT pourquoi au lieu de ne rien faire');
+eq(LIB.readLibrary().length, before, '…et la bibliothèque reste intacte');
+eq((await LIB.pushLibraryToDrive({ scope: 'common' })).total, 0, '…de même pour l’envoi');
+
+/* ── 10. Le dossier du dataset fait toujours partie du chemin ─────────────── */
+eq(NAMING_MOD.projectSectionFolderPath('CD project', '🔬 Scientific background'),
+  ['CD_project', 'Scientific_background'],
+  'un document de section va dans <projet>/<section> (la même route que l’envoi)');
+eq(NAMING_MOD.projectSectionFolderLabel('CD project', 'Discussion', 'My dataset (2026)'),
+  'My_dataset_2026 / CD_project / Discussion',
+  'l’étiquette affichée commence par le dossier RÉEL du dataset');
+eq(NAMING_MOD.projectImagesFolderLabel('CD project', 'My dataset'),
+  'My_dataset / projects / CD_project / images',
+  '…et celle de la bibliothèque d’images aussi');
+eq(NAMING_MOD.projectImagesFolderPath(''), ['projects', '_unassigned', 'images'],
+  'une figure sans projet va dans projects/_unassigned/images');
+has(NAMING, 'export const projectSectionFolderPath = (projectName, section) =>',
+  'driveNaming expose la route d’un document de section');
+has(NAMING, 'export const projectImagesFolderLabel = (projectName, datasetName = \'\') => {',
+  '…et l’étiquette d’un dossier d’images');
+has(DRIVE, 'const datasetFolderName = () => {', 'le nom du dossier du dataset est centralisé');
+has(DRIVE, 'return driveRootId ? `dataset_${sanitizeSlug(driveRootId)}` : \'\';',
+  'sans titre connu, un dataset ouvert est ancré sur son id — jamais la racine « Lab Workspace »');
+has(FIG, 'const res = await pushLibraryToDrive({', 'Figures & Slides peut envoyer la bibliothèque au cloud');
+has(FIG, 'const res = await pullLibraryFromDrive({', '…et la relire depuis le cloud');
+has(FIG, '⬇ Add missing</button>', 'un bouton ⬇ Add missing est offert');
+has(FIG, '☁ Save to Drive', '…et un bouton ☁ Save to Drive');
+has(FIG, 'projectImagesFolderLabel(libProjectName(), getDriveRootName())',
+  'l’emplacement Drive affiché inclut le dossier du dataset');
+has(LIB_SRC, 'export const libraryItemsFromDriveListing = (listing, { addedAt = \'\' } = {}) => {',
+  'figuresLibrary sait relire un dossier de Drive');
+has(LIB_SRC, 'export const driveLibraryItemId = (fileId) => `lib_drive_${String(fileId || \'\').replace(/[^\\w-]/g, \'\')}`;',
+  'l’id d’une entrée venue du Drive est déterministe');
+has(PROJ, 'const sectionDrivePath = (label) => projectSectionFolderPath(project.name || \'\', label);',
+  'la page projet calcule le dossier Drive d’une section avec la MÊME route que l’envoi');
+has(PROJ, '📁 Drive location:', '…et l’affiche sous les documents de la section');
+has(PROJ, 'verifySectionUpload(label, name);', '…après avoir VÉRIFIÉ que le fichier y est vraiment');
+has(PROJ, 'const children = leafId ? await listDriveChildren(leafId) : [];',
+  'la vérification relit le dossier Drive (pas seulement « envoyé »)');
 
 console.log(`✅ ${passed} tests passés (bibliothèque d’images ↔ sauvegarde)`);

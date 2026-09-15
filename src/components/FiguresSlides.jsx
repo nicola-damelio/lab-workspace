@@ -7,9 +7,10 @@ import {
   readProjectLibrary, writeProjectLibrary, removeProjectLibraryItem, renameProjectLibraryItem, moveLibraryItem,
   addLibraryItem, addProjectLibraryItem,
   readDeck, writeDeck, uid, makeLibraryImage, blobToDataUrl, resolveImageToDataUrl,
-  mergeLibraryFromSnapshot
+  mergeLibraryFromSnapshot, pushLibraryToDrive, pullLibraryFromDrive, localOnlyLibraryItems
 } from '../utils/figuresLibrary';
-import { uploadWorkspaceFile, getDriveToken, listDatasetBackups, downloadDriveFileText } from '../utils/driveUpload';
+import { uploadWorkspaceFile, getDriveToken, getDriveRootName, listDatasetBackups, downloadDriveFileText } from '../utils/driveUpload';
+import { projectImagesFolderLabel } from '../utils/driveNaming';
 import { backupFigureCount, figuresFromBackupHtml } from '../utils/referenceImport';
 import { loadProjects } from './AppModules/projectsModule';
 import { getRenderableDriveUrl } from '../data/constants';
@@ -536,6 +537,9 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
   const [recovBusy, setRecovBusy] = useState(false);
   const [recovStatus, setRecovStatus] = useState('');
   const [recovBackups, setRecovBackups] = useState([]);
+  // ---- Cloud synchronisation of the library (see the push/pull handlers) ----
+  const [driveSyncBusy, setDriveSyncBusy] = useState(false);
+  const [driveSyncStatus, setDriveSyncStatus] = useState('');
   const [regionFullscreen, setRegionFullscreen] = useState(false); // ⛶ fullscreen editing
   const [canvasScale, setCanvasScale] = useState(1);   // canvas zoom (1 = fit, 0.4–4)
   const cropDragRef = useRef(null);   // spectrum drag-to-zoom: { ri, startX, rect }
@@ -1022,6 +1026,66 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     setLibOpen(true);
     if (res.common.added > 0) setLibTab('common');
     else if (res.projectCount > 0) setLibTab('project');
+  };
+
+  /* ---- ☁ ⇄ La bibliothèque et le Drive -------------------------------------
+     Deux gestes qui répondent à « mes images ne sont pas sur le Drive » :
+       • ☁ Save to cloud  → envoie au Drive les images de CETTE portée dont les
+         pixels ne sont encore que dans ce navigateur (base64) : sans cela elles
+         ne suivent pas sur un autre ordinateur.
+       • ⬇ Add missing    → relit <dataset>/projects/<projet>/images et ajoute à
+         la bibliothèque les fichiers qui n'y figurent pas (liste perdue sur ce
+         poste). Les deux sont ADDITIFS : rien n'est supprimé ni écrasé. */
+  const refreshLibs = () => {
+    setLibrary(readLibrary());
+    setProjectLibrary(readProjectLibrary(projectId));
+  };
+  const projectNameOf = (pid) => {
+    const found = (loadProjects() || []).find((p) => String(p && p.id) === String(pid));
+    return (found && found.name) || '';
+  };
+  const libProjectName = () => (libScopeName === 'project' ? projectNameOf(projectId) : '');
+
+  const pushToCloud = async () => {
+    if (driveSyncBusy) return;
+    setDriveSyncBusy(true);
+    setDriveSyncStatus('');
+    try {
+      const res = await pushLibraryToDrive({
+        scope: libScopeName, projectId, projectName: libProjectName()
+      });
+      refreshLibs();
+      setDriveSyncStatus(res.total === 0
+        ? '✓ Every image of this library is already on the cloud.'
+        : res.failed === 0
+          ? `✓ ${res.uploaded} image${res.uploaded === 1 ? '' : 's'} saved to ${res.folder}.`
+          : `⚠ ${res.uploaded} saved to ${res.folder} · ${res.failed} failed — check the connection and try again.`);
+    } catch (err) {
+      setDriveSyncStatus(`⚠ ${(err && err.message) || 'Could not save the images to the cloud'}`);
+    }
+    setDriveSyncBusy(false);
+  };
+
+  const pullFromCloud = async () => {
+    if (driveSyncBusy) return;
+    setDriveSyncBusy(true);
+    setDriveSyncStatus('');
+    try {
+      const res = await pullLibraryFromDrive({
+        scope: libScopeName, projectId, projectName: libProjectName()
+      });
+      refreshLibs();
+      setDriveSyncStatus(res.error
+        ? `⚠ ${res.error}`
+        : res.found === 0
+          ? `No image found in ${res.folder} (nothing has been uploaded there yet).`
+          : res.added === 0
+            ? `✓ ${res.found} image${res.found === 1 ? '' : 's'} in ${res.folder} — all already listed here.`
+            : `✓ ${res.added} image${res.added === 1 ? '' : 's'} added from ${res.folder} (${res.found} file${res.found === 1 ? '' : 's'} in the folder).`);
+    } catch (err) {
+      setDriveSyncStatus(`⚠ ${(err && err.message) || 'Could not read the cloud folder'}`);
+    }
+    setDriveSyncBusy(false);
   };
 
   // Project names of the recovered libraries (the file only stores their ids).
@@ -1667,6 +1731,14 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
             <span className="text-[10px] text-slate-400 hidden sm:inline">drag an image onto a slide to add it · Ctrl+V pastes into the active library</span>
             <button type="button" onClick={(e) => { e.stopPropagation(); if (fileRef.current) fileRef.current.click(); }} className={btnGhost}>⬆ Upload</button>
             <button type="button" onClick={(e) => { e.stopPropagation(); onPaste(); }} className={btnGhost}>📋 Paste</button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setDriveSyncStatus(''); pushToCloud(); }} disabled={driveSyncBusy}
+              className="text-xs font-bold px-2 py-1 rounded-md border border-sky-300 text-sky-700 bg-sky-50 hover:bg-sky-100 disabled:opacity-50"
+              title="Send to the cloud the images of this library whose pixels are still only in this browser (they would not follow you on another computer). Nothing is deleted.">
+              ☁ Save to Drive{localOnlyLibraryItems(libScope).length ? ` (${localOnlyLibraryItems(libScope).length})` : ''}</button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setDriveSyncStatus(''); pullFromCloud(); }} disabled={driveSyncBusy}
+              className="text-xs font-bold px-2 py-1 rounded-md border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50"
+              title="Read this library's images folder on Google Drive and add the figures it contains but this list does not show (e.g. after switching computer). Nothing is replaced.">
+              ⬇ Add missing</button>
             <button type="button" onClick={(e) => { e.stopPropagation(); setRecovStatus(''); setRecovOpen(true); }}
               className="text-xs font-bold px-2 py-1 rounded-md border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100"
               title="Images missing on this computer? The images are on Google Drive, but the list that shows them lives in the browser. Read a backup file here to add the missing images back — nothing is deleted.">♻️ Recover</button>
@@ -1688,11 +1760,23 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
               <span className="text-[10px] text-slate-400 ml-1">Uploads/pastes go to the <b>{libScopeName}</b> library{libTab === 'project' && projectId ? ' · ' + projectId : ''}</span>
             </div>
             <p className="text-[10px] text-slate-400 mb-2">
-              The images themselves are on Google Drive (<code>projects/&lt;project&gt;/images</code>) — this list lives in
-              <b> this browser</b> and travels inside every backup file. Missing images on this computer?
+              The image files live in <b>Google Drive → {projectImagesFolderLabel(libProjectName(), getDriveRootName())}</b>
+              {' '}(the dataset folder is always part of the path). The list below — which images, their labels and their order —
+              lives in <b>this browser</b>{localOnlyLibraryItems(libScope).length > 0 && (
+                <> · <b className="text-amber-600">{localOnlyLibraryItems(libScope).length} image(s) here are not on Drive yet</b></>
+              )}.{' '}
+              <button type="button" onClick={(e) => { e.preventDefault(); setDriveSyncStatus(''); pushToCloud(); }}
+                className="font-bold text-sky-700 hover:underline">☁ Save them to Drive</button>{' · '}
+              <button type="button" onClick={(e) => { e.preventDefault(); setDriveSyncStatus(''); pullFromCloud(); }}
+                className="font-bold text-emerald-700 hover:underline">⬇ Add missing from Drive</button>{' · '}
               <button type="button" onClick={() => { setRecovStatus(''); setRecovOpen(true); }}
-                className="font-bold text-amber-700 hover:underline">♻️ Recover them from a backup</button>.
+                className="font-bold text-amber-700 hover:underline">♻️ Recover from a backup</button>.
             </p>
+            {driveSyncStatus && (
+              <p className="text-[10px] font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded px-2 py-1 mb-2">
+                {driveSyncStatus}
+              </p>
+            )}
             {libScope.length === 0 ? (
               <p className="text-[10px] text-slate-400 italic">Empty {libScopeName} library — upload formulas / structures / logos here to reuse them in slides.</p>
             ) : (

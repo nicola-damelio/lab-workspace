@@ -1,4 +1,4 @@
-import { getDriveToken, uploadLocalFile, dataUrlToBlob, cloudBackendAvailable, getDriveRootName } from './driveUpload';
+import { getDriveToken, uploadLocalFile, dataUrlToBlob, cloudBackendAvailable, getDriveRootName, resolveDrivePathFromNames, listDriveChildren } from './driveUpload';
 import { sanitizeSlug, projectImagesFolderPath } from './driveNaming';
 import { getCloudProvider, isNextcloudUrl, ncFetchBlob, ncUploadFile } from './nextcloud';
 
@@ -665,3 +665,156 @@ export const uploadFigureToDrive = async ({ full, label = 'figure', projectName 
     return null;
   }
 };
+
+/* ────────────────────────────────────────────────────────────────────────────
+   LA BIBLIOTHÈQUE ⇄ LE DRIVE : deux gestes symétriques, ADDITIFS tous les deux.
+
+   « Mes images ne sont pas sur le Drive » a deux causes possibles, et une
+   réponse pour chacune :
+     • les images capturées/importées alors que le Drive n'était PAS connecté
+       vivent en base64 dans le navigateur (`full: 'data:image/…'`) : elles ne
+       survivent pas à un changement d'ordinateur → pushLibraryToDrive() les
+       envoie dans <dataset>/projects/<projet>/images et remplace la copie
+       locale par le lien Drive (la vignette locale est conservée).
+     • les images SONT dans le Drive mais leur LISTE (localStorage) a été perdue
+       (autre poste, navigateur vidé) → pullLibraryFromDrive() relit le dossier
+       et AJOUTE les fichiers qui manquent à la bibliothèque.
+   Ni l'un ni l'autre ne supprime ni n'écrase une entrée : ils complètent.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/** Entrées dont les PIXELS ne sont pas sur le cloud (base64 local seulement). */
+export const localOnlyLibraryItems = (items) => (Array.isArray(items) ? items : [])
+  .filter((i) => i && !i.drive && typeof i.full === 'string' && i.full.startsWith('data:'));
+
+/** Nombre d'images d'une portée qui ne sont pas encore sur le cloud. */
+export const localOnlyLibraryCount = ({ scope = 'common', projectId = null } = {}) =>
+  localOnlyLibraryItems(scope === 'project' ? readProjectLibrary(projectId) : readLibrary()).length;
+
+/** Envoie au cloud les images d'une portée dont les pixels n'y sont pas encore
+ *  (voir l'en-tête ci-dessus) et remplace leur copie locale par le lien Drive.
+ *  La liste est relue à chaque étape : une capture faite pendant l'envoi n'est
+ *  jamais perdue par un tableau périmé.
+ *  @returns {{ total:number, uploaded:number, failed:number, folder:string,
+ *              results:Array<{id:string,ok:boolean,driveUrl?:string}> }} */
+export const pushLibraryToDrive = async ({ scope = 'common', projectId = null, projectName = '' } = {}) => {
+  const out = {
+    total: 0,
+    uploaded: 0,
+    failed: 0,
+    folder: projectImagesFolderPath(projectName).join('/'),
+    results: []
+  };
+  if (!cloudBackendAvailable()) return out;
+  const read = () => (scope === 'project' ? readProjectLibrary(projectId) : readLibrary());
+  const write = (next) => (scope === 'project' ? writeProjectLibrary(projectId, next) : writeLibrary(next));
+  const pending = localOnlyLibraryItems(read());
+  out.total = pending.length;
+  if (!pending.length) return out;
+  for (const item of pending) {
+    let drive = null;
+    try {
+      drive = await uploadFigureToDrive({ full: item.full, label: item.label || 'figure', projectName });
+    } catch { drive = null; }
+    const url = (drive && drive.id && (drive.driveUrl || drive.url)) || '';
+    if (!url) { out.failed += 1; out.results.push({ id: item.id, ok: false }); continue; }
+    write(read().map((i) => (i && i.id === item.id
+      ? { ...i, drive: true, driveUrl: url, full: url, updatedAt: new Date().toISOString() }
+      : i)));
+    out.uploaded += 1;
+    out.results.push({ id: item.id, ok: true, driveUrl: url });
+  }
+  return out;
+};
+
+/** Id d'une entrée construite depuis un fichier de Drive : DÉTERMINISTE, donc
+ *  relire le dossier deux fois n'ajoute jamais de doublon (la fusion d'une
+ *  bibliothèque se fait par `id`). */
+export const driveLibraryItemId = (fileId) => `lib_drive_${String(fileId || '').replace(/[^\w-]/g, '')}`;
+
+/** Id de fichier Drive porté par une entrée de bibliothèque (lien « view »,
+ *  vignette lh3) — '' pour une entrée qui n'a jamais été envoyée au cloud. */
+export const driveIdOfLibraryItem = (item) => {
+  const urls = [item && item.driveUrl, item && item.full, item && item.url].filter(Boolean);
+  for (const u of urls) {
+    const found = driveFileIdFromUrl(u) || String(u).match(/lh3\.googleusercontent\.com\/d\/([^/?#]+)/);
+    if (found) return Array.isArray(found) ? found[1] : String(found);
+  }
+  return '';
+};
+
+/** Le nom de fichier d'un dossier d'images → libellé lisible :
+ *  « CD_spectrum_2026-04.png » → « CD spectrum 2026-04 » (les tirets internes
+ *  sont conservés : ils portent souvent une date ou une référence). */
+export const labelFromDriveFileName = (name) => String(name || '')
+  .replace(/\.[^/.]+$/, '')
+  .replace(/_+/g, ' ')
+  .trim();
+
+/** Transforme le CONTENU d'un dossier Drive d'images en entrées de
+ *  bibliothèque (PUR : testable hors navigateur). Les dossiers et les fichiers
+ *  qui ne sont pas des images sont ignorés. `url` = vignette affichable,
+ *  `full`/`driveUrl` = le lien du fichier (dont l'application sait relire les
+ *  vrais pixels avec son jeton OAuth). */
+export const libraryItemsFromDriveListing = (listing, { addedAt = '' } = {}) => {
+  const out = [];
+  (Array.isArray(listing) ? listing : []).forEach((raw) => {
+    const id = String((raw && raw.id) || '').trim();
+    if (!id) return;
+    const mime = String((raw && raw.mimeType) || '');
+    if (mime === 'application/vnd.google-apps.folder') return;
+    const name = String((raw && raw.name) || '').trim();
+    if (mime && !mime.startsWith('image/') && !/\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(name)) return;
+    const view = String((raw && raw.webViewLink) || '').trim() || `https://drive.google.com/file/d/${id}/view`;
+    out.push({
+      id: driveLibraryItemId(id),
+      label: labelFromDriveFileName(name) || 'Figure',
+      url: `https://lh3.googleusercontent.com/d/${id}`,
+      full: view,
+      drive: true,
+      driveUrl: view,
+      src: null,
+      canvasData: null,
+      addedAt: (raw && raw.createdTime) || addedAt || new Date().toISOString()
+    });
+  });
+  return out;
+};
+
+/** Relit <dataset>/projects/<projet>/images et AJOUTE à la bibliothèque de la
+ *  portée les fichiers qui n'y sont pas encore (ceux dont la liste a été perdue
+ *  sur ce poste). Aucune entrée existante n'est remplacée.
+ *  @returns {{ folder:string, found:number, added:number, filled:number, error:string }} */
+export const pullLibraryFromDrive = async ({ scope = 'common', projectId = null, projectName = '' } = {}) => {
+  const out = {
+    folder: projectImagesFolderPath(projectName).join('/'),
+    found: 0, added: 0, filled: 0, error: ''
+  };
+  if (!cloudBackendAvailable()) { out.error = 'Cloud storage is not connected.'; return out; }
+  let listing = [];
+  try {
+    const resolved = await resolveDrivePathFromNames(projectImagesFolderPath(projectName));
+    if (!resolved || !resolved.leafId) { out.error = `Folder not found: ${out.folder}`; return out; }
+    listing = await listDriveChildren(resolved.leafId);
+  } catch (err) {
+    out.error = (err && err.message) || 'Could not read the Drive folder';
+    return out;
+  }
+  const items = libraryItemsFromDriveListing(listing);
+  out.found = items.length;
+  if (!items.length) return out;
+  const current = scope === 'project' ? readProjectLibrary(projectId) : readLibrary();
+  // Un fichier déjà référencé par une entrée (même si celle-ci n'a pas d'id
+  // `lib_drive_…`) ne crée pas de doublon.
+  const known = new Set(current.map((i) => driveIdOfLibraryItem(i)).filter(Boolean));
+  const missing = items.filter((i) => !known.has(driveIdOfLibraryItem(i)));
+  if (!missing.length) return out;
+  const res = mergeLibraryList(current, missing);
+  if (res.added || res.filled) {
+    if (scope === 'project') writeProjectLibrary(projectId, res.list);
+    else writeLibrary(res.list);
+  }
+  out.added = res.added;
+  out.filled = res.filled;
+  return out;
+};
+

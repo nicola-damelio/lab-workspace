@@ -6,7 +6,7 @@ import {
 } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
 import { loadProjects, saveProjects, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor } from './projectsModule';
-import { suggestDriveFileName, openDrive } from '../../utils/driveNaming';
+import { suggestDriveFileName, openDrive, projectSectionFolderPath, projectSectionFolderLabel } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
 import { UsefulFilesSection } from '../UsefulFilesSection';
 import { normalizeProjectFiles } from '../../utils/projectFiles';
@@ -14,7 +14,12 @@ import {
   REFERENCE_FILE_ACCEPT, entryKeys, mergeReferenceEntries, parseReferences,
   projectBibEntry, readReferenceDocument
 } from '../../utils/referenceImport';
-import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject } from '../../utils/driveUpload';
+import {
+  MANUSCRIPT_FILE_ACCEPT, blocksFromText, splitManuscript, groupManuscriptParts,
+  PROJECT_TEXT_SECTIONS, buildManuscriptPlan, convertCitationsInText, htmlFromText,
+  mergeManuscriptBibliography, readManuscriptText
+} from '../../utils/manuscriptImport';
+import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject, getDriveToken, getDriveRootName, resolveDrivePathFromNames, listDriveChildren } from '../../utils/driveUpload';
 import { repairContentImages } from '../../data/constants';
 import { readDeck, readProjectLibrary, removeProjectLibraryItem } from '../../utils/figuresLibrary';
 import { SlidePreview, renderSlideToDataUrl } from '../FiguresSlides';
@@ -234,6 +239,10 @@ export const ProjectDetailModule = ({
      Publications → « Project bibliography », donc elles apparaissent
      automatiquement dans les deux pages et dans les références du document. */
   const [bibImport, setBibImport] = useState(null); // null | { text, fileName, parsed, picked, onePerLine, busy, status }
+  /* 📥 Import d'un MANUSCRIT écrit ailleurs (Google Docs / Word + Paperpile) :
+     { text, fileName, parts, plan, picks, busy, status, report } — voir
+     utils/manuscriptImport.js. */
+  const [msImport, setMsImport] = useState(null);
   const [linkTestId, setLinkTestId] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const pubs = useMemo(loadPublications, []);
@@ -243,6 +252,11 @@ export const ProjectDetailModule = ({
      deux listes — c'est dans ce pot commun que puise citeData(). */
   const citationPool = useMemo(() => [...pubs, ...loadRelevantPapers()], [pubs]);
   const [tableDraft, setTableDraft] = useState(null); // null | { section, insertText }
+  /* OÙ le dernier document envoyé depuis une section a été rangé sur le Drive :
+     la même chaîne de dossiers que l'envoi est résolue puis RELUE, et le fichier
+     doit y être — l'interface ne dit jamais « enregistré » sans dire où
+     (voir verifySectionUpload / sectionDriveInfo). */
+  const [driveFlash, setDriveFlash] = useState({});
   const [showExport, setShowExport] = useState(false);
   const [textEditing, setTextEditing] = useState(false); // wide editing (retract side panels)
   const [tableRows, setTableRows] = useState(3);
@@ -676,6 +690,52 @@ export const ProjectDetailModule = ({
   const removeSectionDoc = (sec, docId) =>
     patchDocs(sec, sectionDocs(sec).filter((d) => d.id !== docId));
 
+  /* ── Où les documents d'une section vont-ils sur le Drive ? ───────────────
+     La chaîne de dossiers est celle de l'envoi lui-même
+     (driveNaming.projectSectionFolderPath → <projet>/<section>, à l'intérieur
+     du dossier du dataset) : l'étiquette affichée et le dossier réellement créé
+     ne peuvent donc pas diverger. */
+  const sectionDrivePath = (label) => projectSectionFolderPath(project.name || '', label);
+  const sectionDriveLabel = (label) =>
+    projectSectionFolderLabel(project.name || '', label, getDriveRootName());
+
+  /** Ouvre (en la créant au besoin) le dossier Drive d'une section. */
+  const openSectionFolder = async (label) => {
+    if (!getDriveToken()) {
+      setDriveFlash((f) => ({ ...f, [label]: { text: '⚠ Connect Google Drive first (top bar), then the folder can be opened.', ok: false } }));
+      return;
+    }
+    try {
+      const { leafId } = await resolveDrivePathFromNames(sectionDrivePath(label));
+      if (leafId) window.open(`https://drive.google.com/drive/folders/${leafId}`, '_blank', 'noopener,noreferrer');
+      else setDriveFlash((f) => ({ ...f, [label]: { text: '⚠ The folder does not exist yet — upload a document and it will be created.', ok: false } }));
+    } catch (err) {
+      setDriveFlash((f) => ({ ...f, [label]: { text: `⚠ ${(err && err.message) || 'Could not reach Drive'}`, ok: false } }));
+    }
+  };
+
+  /** Relit le dossier de la section et vérifie que le fichier envoyé y est
+   *  vraiment : le compte rendu (et donc l'emplacement réel) est affiché sous la
+   *  liste des documents. */
+  const verifySectionUpload = async (label, fileName) => {
+    const rel = sectionDrivePath(label).join('/');
+    const set = (text, ok) => setDriveFlash((f) => ({ ...f, [label]: { text, ok } }));
+    if (!getDriveToken()) {
+      set('⚠ Not in Drive yet — connect Drive, then upload the document again (or use ☁ Save to Drive in Figures & Slides).', false);
+      return;
+    }
+    set('⏳ Checking where the file landed…', true);
+    try {
+      const { leafId } = await resolveDrivePathFromNames(sectionDrivePath(label));
+      const children = leafId ? await listDriveChildren(leafId) : [];
+      const found = children.some((c) => String((c && c.name) || '') === String(fileName || ''));
+      if (found) set(`✓ In Drive → ${rel}`, true);
+      else set(`⚠ “${fileName}” was not found in ${rel} — check the Drive connection and upload again.`, false);
+    } catch (err) {
+      set(`⚠ ${(err && err.message) || 'Could not check the Drive folder'}`, false);
+    }
+  };
+
   const toggleIncludeGroup = (group) => {
     // One "Include" checkbox per experiment (group of condition instances):
     // toggling it applies to every instance of the same test name at once.
@@ -936,6 +996,117 @@ export const ProjectDetailModule = ({
      Le fichier est lu DANS LE NAVIGATEUR (aucun envoi) : .docx (ZIP → texte),
      texte copié, export RIS/BibTeX, page HTML. L'aperçu montre ce qui a été
      reconnu, ce qui est déjà dans la bibliographie, et laisse décocher. */
+  /* ---- 📥 Importer un MANUSCRIT (Google Docs / Word + Paperpile) ----------
+     Le document garde TOUT son texte : il est découpé par ses titres et chaque
+     partie rejoint la section correspondante de cette page (Background /
+     Discussion / Conclusions), la bibliographie du document rejoint la
+     « Project bibliography » (donc Publications → « Project bibliography »), et
+     les citations du texte deviennent les références NUMÉROTÉES du programme
+     ([1], [2]…) comme le fait « 📚 + Reference ». Toute la logique est pure et
+     testée : voir utils/manuscriptImport.js. Rien n'est envoyé au Drive par
+     cet import — il ne fait que remplir le projet. */
+  const openManuscriptImport = () => setMsImport({
+    text: '', fileName: '', parts: null, plan: null, picks: [], busy: false, status: '', report: ''
+  });
+
+  const analyseManuscript = (text, fileName) => {
+    const src = String(text || '');
+    if (!src.trim()) {
+      setMsImport((d) => ({ ...(d || {}), busy: false, status: 'Paste the document text (or choose a file) first.' }));
+      return;
+    }
+    const blocks = blocksFromText(src);
+    const manuscript = splitManuscript(blocks);
+    const parts = groupManuscriptParts(manuscript.body).map((p, i) => ({
+      key: `part${i}`, heading: p.heading, text: p.text, dest: p.id || '', mode: 'append'
+    }));
+    const plan = buildManuscriptPlan(manuscript, { existingReferences: refs });
+    const existing = bibExistingKeys();
+    const picks = plan.entries
+      .map((e, i) => (entryKeys(e.entry).some((k) => existing.has(k)) ? -1 : i))
+      .filter((i) => i !== -1);
+    setMsImport({
+      text: src, fileName: fileName || '', parts, plan, picks, busy: false, report: '',
+      status: `${blocks.length} block(s) · ${parts.length} part(s) · ${plan.entries.length} reference(s) · ${plan.citations.length} citation(s)`
+    });
+  };
+
+  const loadManuscriptFile = async (file) => {
+    if (!file) return;
+    setMsImport((d) => ({ ...(d || {}), busy: true, status: `Reading ${file.name}…` }));
+    try {
+      const text = await readManuscriptText(file);
+      analyseManuscript(text, file.name);
+    } catch (err) {
+      setMsImport((d) => ({ ...(d || {}), busy: false, status: `⚠ ${(err && err.message) || 'Could not read this document'}` }));
+    }
+  };
+
+  const patchManuscriptPart = (key, patch) =>
+    setMsImport((d) => (d ? { ...d, parts: d.parts.map((p) => (p.key === key ? { ...p, ...patch } : p)) } : d));
+
+  const toggleManuscriptPick = (i) =>
+    setMsImport((d) => {
+      if (!d) return d;
+      const list = d.picks || [];
+      return { ...d, picks: list.indexOf(i) === -1 ? [...list, i].sort((a, b) => a - b) : list.filter((x) => x !== i) };
+    });
+
+  /** Applique le plan : sections + bibliographie + références numérotées. */
+  const applyManuscriptImport = () => {
+    const d = msImport;
+    if (!d || !d.plan) return;
+    const numbers = d.plan.numberByKey;
+    const patch = {};
+    const usedNumbers = new Set();
+    d.parts.forEach((p) => {
+      if (!p.dest) return;
+      const converted = convertCitationsInText(p.text, numbers);
+      converted.text.replace(/\[(\d+(?:,\d+)*)\]/g, (_m, g) => {
+        g.split(',').forEach((n) => usedNumbers.add(Number(n)));
+        return _m;
+      });
+      const html = htmlFromText(converted.text);
+      patch[p.dest] = p.mode === 'replace'
+        ? html
+        : [String(project[p.dest] || '').trim(), html].filter(Boolean).join('\n');
+    });
+    const pickedEntries = d.plan.entries
+      .filter((e, i) => (d.picks || []).indexOf(i) !== -1)
+      .map((e) => e.entry);
+    const merged = mergeManuscriptBibliography(projectBib, pickedEntries, { project });
+    const added = d.plan.entries
+      .filter((e) => e.isNew && usedNumbers.has(e.number))
+      .map((e) => ({
+        id: genProjectId(),
+        number: e.number,
+        sourceId: '', source: '',
+        title: e.entry.title || 'Untitled',
+        link: e.entry.link || e.entry.doi || '',
+        doi: e.entry.doi || '',
+        authors: e.entry.authors || '',
+        journal: e.entry.journal || '',
+        year: e.entry.year || '',
+        volume: e.entry.volume || '',
+        pages: e.entry.pages || ''
+      }));
+    updateProject({
+      ...patch,
+      bibliography: merged.list,
+      references: added.length ? [...refs, ...added] : refs
+    });
+    const filled = d.parts.filter((p) => p.dest);
+    setMsImport((cur) => ({
+      ...(cur || {}),
+      report: `✓ ${filled.length
+        ? `${filled.length} section(s) filled (${filled.map((p) => (PROJECT_TEXT_SECTIONS.find((s) => s.id === p.dest) || {}).label || p.dest).join(', ')})`
+        : 'no section filled'}`
+        + ` · ${merged.added} reference(s) added to the project bibliography`
+        + ` · ${added.length} numbered reference(s)`
+        + (d.plan.unresolved.length ? ` · ${d.plan.unresolved.length} citation(s) left as they were` : '')
+    }));
+  };
+
   const renderBibImport = () => {
     if (!bibImport) return null;
     const parsed = bibImport.parsed || [];
@@ -1046,6 +1217,159 @@ export const ProjectDetailModule = ({
   };
 
   // ---- Reference picker modal ----
+  /* ---- 📥 Fenêtre : importer un manuscrit (Google Docs / Word + Paperpile) -- */
+  const renderManuscriptImport = () => {
+    if (!msImport) return null;
+    const plan = msImport.plan;
+    const destOptions = [{ id: '', label: '— do not import —' }, ...PROJECT_TEXT_SECTIONS];
+    const picked = msImport.picks || [];
+    return (
+      <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setMsImport(null)}>
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+          <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+            <h3 className="text-sm font-black text-slate-800">📥 Import a manuscript — {project.name}</h3>
+            <button onClick={() => setMsImport(null)} className="text-slate-400 hover:text-slate-600 text-sm px-1">✕</button>
+          </div>
+          <div className="p-4 overflow-y-auto custom-scrollbar flex flex-col gap-3">
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Choose the document (Google Docs: <b>Fichier → Télécharger → .docx</b> ou <b>page Web (.html)</b>, fichier Word)
+              or paste its text. The <b>text</b> goes into the project sections you pick below, the document’s
+              <b> bibliography</b> (Paperpile…) is added to the <b>Project bibliography</b>
+              (Publications → “Project bibliography”), and the citations in the text become the program’s
+              <b> numbered references</b> ([1], [2]…) — the same as “📚 + Reference”. No file is uploaded to Drive.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 border border-slate-300 text-slate-700 hover:bg-slate-200 cursor-pointer">
+                📂 Choose a document
+                <input type="file" accept={MANUSCRIPT_FILE_ACCEPT} className="hidden"
+                       onChange={(e) => { loadManuscriptFile(e.target.files && e.target.files[0]); e.target.value = ''; }} />
+              </label>
+              <button type="button" onClick={() => analyseManuscript(msImport.text, msImport.fileName)}
+                      disabled={!String(msImport.text || '').trim()}
+                      className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-700 text-white hover:bg-slate-800 disabled:opacity-40">
+                🔍 Analyse the text
+              </button>
+              {msImport.busy && <span className="text-[11px] text-slate-400">working…</span>}
+              {msImport.status && <span className="text-[11px] text-slate-600">{msImport.status}</span>}
+            </div>
+            {!plan && (
+              <textarea value={msImport.text || ''}
+                        onChange={(e) => setMsImport((d) => ({ ...d, text: e.target.value }))}
+                        placeholder="…or paste the manuscript here"
+                        className={`${inputCls} font-mono text-[11px]`} rows={6} />
+            )}
+            {plan && (
+              <>
+                <div className="border border-indigo-200 bg-indigo-50/40 rounded-lg p-2">
+                  <div className="text-[11px] font-black uppercase tracking-wide text-slate-500 mb-1.5">
+                    Text → project sections ({msImport.parts.length} part(s))
+                  </div>
+                  <div className="flex flex-col gap-1 max-h-56 overflow-y-auto custom-scrollbar">
+                    {msImport.parts.map((p, i) => (
+                      <div key={p.key} className="bg-white border border-slate-200 rounded-lg p-2 flex flex-col gap-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[11px] font-bold text-slate-700">{p.heading || `Part ${i + 1} (no heading)`}</span>
+                          <span className="text-[10px] text-slate-400">{p.text.length} chars</span>
+                          <span className="ml-auto flex items-center gap-1.5">
+                            <select value={p.dest} onChange={(e) => patchManuscriptPart(p.key, { dest: e.target.value })}
+                                    className="border border-slate-300 rounded px-1.5 py-1 text-[10px] bg-white">
+                              {destOptions.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                            </select>
+                            <select value={p.mode} onChange={(e) => patchManuscriptPart(p.key, { mode: e.target.value })}
+                                    className="border border-slate-300 rounded px-1.5 py-1 text-[10px] bg-white">
+                              <option value="append">add at the end</option>
+                              <option value="replace">replace the section</option>
+                            </select>
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 italic truncate">{p.text.slice(0, 160)}…</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="border border-emerald-200 bg-emerald-50/40 rounded-lg p-2">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">
+                      References → Project bibliography ({plan.entries.length} found · {picked.length} to add)
+                    </div>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => setMsImport((d) => ({ ...d, picks: plan.entries.map((_, i) => i) }))}
+                              className="text-[10px] font-bold text-emerald-700 hover:underline">All</button>
+                      <button type="button" onClick={() => setMsImport((d) => ({ ...d, picks: [] }))}
+                              className="text-[10px] font-bold text-emerald-700 hover:underline">None</button>
+                    </div>
+                  </div>
+                  {plan.entries.length === 0 ? (
+                    <p className="text-[10px] text-slate-400 italic">
+                      No reference recognised — this document has no readable “References” list.
+                    </p>
+                  ) : (
+                    <div className="flex flex-col gap-1 max-h-48 overflow-y-auto custom-scrollbar">
+                      {plan.entries.map((e, i) => (
+                        <label key={`${e.index}-${e.number}`}
+                               className="flex items-start gap-2 bg-white border border-slate-200 rounded-lg p-2 cursor-pointer">
+                          <input type="checkbox" checked={picked.indexOf(i) !== -1} className="mt-0.5"
+                                 onChange={() => toggleManuscriptPick(i)} />
+                          <span className="min-w-0">
+                            <span className="text-[11px] font-bold text-slate-700">[{e.number}] {e.entry.title || 'Untitled'}</span>
+                            <span className="block text-[10px] text-slate-500">
+                              {[e.entry.authors, e.entry.year, e.entry.journal, e.entry.doi].filter(Boolean).join(' · ')}
+                              {e.isNew ? '' : ' · already in this project'}
+                            </span>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="border border-amber-200 bg-amber-50/40 rounded-lg p-2">
+                  <div className="text-[11px] font-black uppercase tracking-wide text-slate-500 mb-1.5">
+                    Citations in the text ({plan.citations.length} found · {plan.citations.length - plan.unresolved.length} → [n])
+                  </div>
+                  {plan.citations.length === 0 ? (
+                    <p className="text-[10px] text-slate-400 italic">
+                      No in-text citation recognised — the text is imported exactly as it is.
+                    </p>
+                  ) : (
+                    <p className="text-[10px] text-slate-600">
+                      {plan.unresolved.length
+                        ? `${plan.unresolved.length} citation(s) will be LEFT AS THEY ARE: `
+                        : 'Every citation was matched to the bibliography: '}
+                      <span className="font-mono">{plan.unresolved.slice(0, 12).map((c) => c.raw).join(' · ')}</span>
+                    </p>
+                  )}
+                  {plan.unresolved.length > 0 && (
+                    <p className="text-[10px] text-slate-400 italic mt-1">
+                      An unmatched citation usually means its paper is missing from the document’s bibliography: add it to
+                      the Project bibliography, then convert it by hand with “📚 + Reference”.
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button type="button" onClick={applyManuscriptImport}
+                          className="px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">
+                    ✓ Import into this project
+                  </button>
+                  <span className="text-[10px] text-slate-400">
+                    Only what is shown above is written — existing section text is kept unless “replace the section” is chosen.
+                  </span>
+                </div>
+              </>
+            )}
+            {msImport.report && (
+              <div className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
+                {msImport.report}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderRefPicker = () => {
     if (!refPicker) return null;
     const pickerLabel = refPicker.insertText ? 'Insert reference' : 'Add reference';
@@ -1175,12 +1499,30 @@ export const ProjectDetailModule = ({
         <DriveUploadButton
           suggestedName={suggestDriveFileName({ project: project.name || '', section: label, suffix: 'doc' })}
           naming={{ project: project.name || '', section: label, suffix: 'doc' }}
-          onDone={({ name, dataUrl, drive }) =>
-            patchDocs(id, [...sectionDocs(id), { id: genProjectId(), name, data: drive ? drive.driveUrl : dataUrl }])
-          }
+          onDone={({ name, dataUrl, drive }) => {
+            patchDocs(id, [...sectionDocs(id), { id: genProjectId(), name, data: drive ? drive.driveUrl : dataUrl }]);
+            // Dire OÙ le fichier a été rangé (et le vérifier) : plus de
+            // « enregistré » sans savoir dans quel dossier du Drive il est.
+            verifySectionUpload(label, name);
+          }}
           label="⬆ Upload document"
         />
         )}
+
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-500">
+          <span className="font-bold">📁 Drive location:</span>
+          <span className="font-mono break-all">{sectionDriveLabel(label)}</span>
+          <button type="button" onClick={() => openSectionFolder(label)}
+                  className="font-bold text-blue-600 hover:text-blue-800 underline"
+                  title="Open (creating it if needed) the Drive folder where this section's documents are stored">
+            open folder ↗
+          </button>
+          {driveFlash[label] && (
+            <span className={`font-bold ${driveFlash[label].ok ? 'text-emerald-700' : 'text-amber-700'}`}>
+              {driveFlash[label].text}
+            </span>
+          )}
+        </div>
 
         {figures.length > 0 && (
           <div className="mt-4 pt-4 border-t border-slate-200">
@@ -2137,6 +2479,11 @@ export const ProjectDetailModule = ({
                         className="text-[10px] font-bold text-slate-600 hover:text-slate-900">
                   📄 Import from a paper
                 </button>
+                <button onClick={() => { openManuscriptImport(); }}
+                        className="text-[10px] font-bold text-indigo-700 hover:text-indigo-900"
+                        title="Move a document written in Google Docs / Word INTO this project: its text goes to the project sections, its bibliography (Paperpile…) to the Project bibliography, and its citations become the numbered references [1], [2]…">
+                  📥 Import a manuscript
+                </button>
                 <button onClick={() => setShowBibForm((v) => !v)}
                         className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800">
                   {showBibForm ? 'Cancel' : '+ Add paper'}
@@ -2248,6 +2595,7 @@ export const ProjectDetailModule = ({
       </div>
       {renderRefPicker()}
       {renderBibImport()}
+      {renderManuscriptImport()}
       {renderTableDraft()}
       {renderExport()}
     </div>

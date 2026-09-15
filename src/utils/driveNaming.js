@@ -217,3 +217,37 @@ export const pageSectionOf = (ctx = {}) => {
 export const projectImagesFolderPath = (projectName) => [
   'projects', sanitizeSlug(projectName) || '_unassigned', 'images'
 ];
+
+/** Canonical Drive folder NAMES (relative to the dataset folder) of a PROJECT
+ *  DOCUMENT attached to one of the project page's sections (Scientific
+ *  background / Discussion / Conclusions …):
+ *      <project>/<section>
+ *  Exactly the routing driveFolderPath({ project, section }) gives an upload
+ *  carrying that naming context, so the label shown in the interface and the
+ *  folder where the file really lands can never drift apart. */
+export const projectSectionFolderPath = (projectName, section) =>
+  driveFolderPath({ project: projectName, section });
+
+/** Human-readable location of a project section's documents, with the EXACT
+ *  Drive folder name of the dataset first:
+ *      "My_dataset / CD_project / Scientific_background"
+ *  (`datasetName` is the open dataset's title; it is slugged like
+ *  datasetFolderSlug so what is displayed is what Drive shows.) */
+export const projectSectionFolderLabel = (projectName, section, datasetName = '') => {
+  const segs = [];
+  const ds = String(datasetName || '').trim();
+  if (ds) segs.push(datasetFolderSlug(ds));
+  segs.push(...projectSectionFolderPath(projectName, section));
+  return segs.join(' / ');
+};
+
+/** Human-readable location of a project's IMAGE LIBRARY on Drive:
+ *      "My_dataset / projects / CD_project / images"
+ *  ('' when the dataset folder is not known yet — see driveUpload). */
+export const projectImagesFolderLabel = (projectName, datasetName = '') => {
+  const segs = [];
+  const ds = String(datasetName || '').trim();
+  if (ds) segs.push(datasetFolderSlug(ds));
+  segs.push(...projectImagesFolderPath(projectName));
+  return segs.join(' / ');
+};
