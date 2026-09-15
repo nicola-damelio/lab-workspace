@@ -159,6 +159,45 @@ const initialsOf = (given) => String(given || '')
 const INITIALS = '(?:[A-Z]\\.\\s*|[A-Z](?![a-z\\u00e0-\\u00ff])){1,4}';
 const AUTHOR_PAIR = `([A-Z][\\p{L}'’.-]+),\\s*(${INITIALS})`;
 const AUTHOR_PAIR_RE = () => new RegExp(AUTHOR_PAIR, 'gu');
+/* ── UN AUTEUR, DANS TOUTES LES ÉCRITURES DES ÉDITEURS ───────────────────
+   « Rossi M », « Rossi, M. », « Rossi MA », « M. Rossi », « M.A. Rossi »…
+   Les initiales n'avalent JAMAIS la première lettre du mot suivant
+   (« Costa, L. Antimicrobial » : le « A » commence le titre) ni le nom de
+   l'auteur suivant d'une liste séparée par des points (« Rossi M. Bianchi A. »). */
+const NAME_INITIALS = '(?:[A-Z]\\.?(?![a-z\\u00e0-\\u00ff])){1,4}';
+const NAME_FAMILY = "[A-Z][\\p{L}'’.-]+";
+/* Le nom de famille d'un auteur « Initiales Nom » doit être suivi d'une
+   ponctuation, d'un autre auteur, de « et al. » ou de la fin du texte : sans
+   cela « EPPO. Aphid transmission… » (auteur collectif) se lirait
+   « EPPO. Aphid » et le titre serait amputé du premier mot. */
+const INITIALS_FIRST_LOOKAHEAD =
+  "(?=[,;.&]|\\s+[A-Z][\\p{L}'’.-]+\\s*[,;.&]|\\s+et\\.?\\s*al\\.?|\\s*$)";
+/** Un auteur : « Nom Initiales » (Vancouver / Paperpile). Trois écritures,
+ *  de la plus sûre à la plus risquée — sans ces garde-fous, « Is CMV » (début
+ *  d'un titre) se lisait « auteur Is + initiales CMV » :
+ *   • « Rossi, M. »  (virgule : aucun risque) ;
+ *   • « Rossi M. »   (initiales POINTÉES : le point les identifie) ;
+ *   • « Rossi M »    (sans point : seulement si la liste se ferme là —
+ *     ponctuation, fin du texte ou « et al. »). */
+const NAME_INITIALS_DOTTED = '[A-Z]\\.(?:\\s?[A-Z]\\.)*(?![a-z\\u00e0-\\u00ff])';
+const AUTHOR_CLOSED = '(?=[,;.&]|\\s*$|\\s*\\(\\s*(?:1[89]|20)\\d{2}[a-z]?\\s*\\)|\\s+et\\.?\\s*al\\.?|\\s+(?:and\\s+others|&\\s*others))';
+const FAMILY_FIRST_RE = () => new RegExp(
+  `(?:${NAME_FAMILY}\\s*[,;]\\s*${NAME_INITIALS}`
+  + `|${NAME_FAMILY}\\s+${NAME_INITIALS_DOTTED}`
+  + `|${NAME_FAMILY}\\s+${NAME_INITIALS}${AUTHOR_CLOSED})`, 'uy');
+/** …ou « Initiales Nom » (Elsevier, Harvard). */
+const INITIALS_FIRST_RE = () => new RegExp(
+  `${NAME_INITIALS}[,;.]?\\s+${NAME_FAMILY}${INITIALS_FIRST_LOOKAHEAD}`, 'uy');
+/** Séparateur entre deux auteurs : ponctuation (virgule, point-virgule,
+ *  esperluette, POINT des listes « Rossi M. Bianchi A. »), « and / et », ou
+ *  une simple espace. Le point et l'espace ne sont acceptés que si un AUTEUR
+ *  suit : un titre n'est donc jamais avalé (voir authorList). */
+const AUTHOR_SEP_RE = /^(?:(?:\s*[,;.&]\s*)+|\s*\b(?:and|et)\b\s*|\s+)+/i;
+/** Le marqueur de troncature d'une liste d'auteurs. */
+const ET_AL_ONLY_RE = /^(?:et\.?\s*al\.?|and\s+others|&\s*others)$/i;
+const ET_AL_HEAD_ONLY_RE = /^(?:et\.?\s*al\.?|and\s+others|&\s*others)\b/i;
+
+
 
 /** « Smith, John A. » / « John A. Smith » → « Smith JA » (la convention AUTEUR
  *  utilisée partout ailleurs dans l'application : nom, puis initiales). */
@@ -189,9 +228,71 @@ export const formatAuthors = (list) => (Array.isArray(list) ? list : [])
  * INTACTE : mieux vaut citer la liste telle que l'éditeur l'affiche que la
  * perdre en la reformatant mal.
  */
+/**
+ * Liste d'auteurs en TÊTE d'un texte → `{ text, names, end }`, ou `null` si
+ * le texte ne commence pas par des auteurs. Chaque auteur ajouté doit être
+ * suivi d'un SÉPARATEUR **et** d'un auteur (ou de « et al. ») : c'est ce qui
+ * garantit qu'un titre n'est jamais avalé — le défaut qui mettait un nom
+ * d'auteur dans le champ TITRE (« Rossi M. Bianchi A. Titre… » se lisait
+ * « auteurs = Rossi M », « titre = Bianchi A »).
+ */
+const authorList = (value) => {
+  const body = String(value || '');
+  const familyFirst = FAMILY_FIRST_RE();
+  const initialsFirst = INITIALS_FIRST_RE();
+  const names = [];
+  let end = 0;
+  let pos = 0;
+  while (names.length < 40) {
+    familyFirst.lastIndex = pos;
+    initialsFirst.lastIndex = pos;
+    const m = familyFirst.exec(body) || initialsFirst.exec(body);
+    if (!m) break;
+    /* Un mot TOUT EN MAJUSCULES et SANS POINT n'est jamais un auteur dans un
+       texte capitalisé : « CHARACTERIZATION OF », « OF A POTYVIRUS »
+       (bibliographie en majuscules) — la liste s'arrête là et l'entrée est
+       lue comme avant (auteurs = 1re phrase). Un vrai « ROSSI M. » a un
+       point, un vrai « Rossi M » a une minuscule. */
+    if (!/[a-z\u00e0-\u00ff]/.test(m[0]) && !m[0].includes('.')) break;
+    names.push(m[0]);
+    end = pos + m[0].length;
+    const sep = body.slice(end).match(AUTHOR_SEP_RE);
+    if (!sep) break;
+    const next = end + sep[0].length;
+    if (ET_AL_HEAD_ONLY_RE.test(body.slice(next))) break;
+    pos = next;
+  }
+  return names.length ? { text: body.slice(0, end), names, end } : null;
+};
+
+/** « Rossi, M. » / « M. Rossi » / « Rossi M » → « Rossi M » (convention du
+ *  laboratoire : le nom, puis les initiales). */
+const canonicalAuthor = (value) => {
+  const s = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!s) return '';
+  if (s.includes(',')) return formatAuthor(s);
+  const words = s.split(' ');
+  if (words.length > 1 && /^[A-Z](?:\.?[A-Z])*\.?$/.test(words[0])) {
+    const family = words.slice(1).join(' ').replace(/[.,;]+$/, '');
+    return `${family} ${words[0].replace(/\./g, '')}`.trim();
+  }
+  return s.replace(/[.,;]+$/, '');
+};
+
 export const normalizeAuthorList = (raw) => {
   const text = decodeEntities(String(raw || '')).replace(/\s+/g, ' ').trim().replace(/[.,;]+$/, '');
   if (!text) return '';
+  /* Les écritures lues par authorList (les deux ordres, avec ou sans virgule)
+     sont réécrites dans la convention du laboratoire : « M. Rossi, A. Bianchi »
+     → « Rossi M, Bianchi A ». Le marqueur « et al. » est conservé. */
+  const list = authorList(text);
+  if (list) {
+    const tail = text.slice(list.end).replace(/^[\s,;.&]+/, '').replace(/[\s,;.&]+$/, '');
+    if (!tail || ET_AL_ONLY_RE.test(tail)) {
+      const canonical = list.names.map(canonicalAuthor).filter(Boolean).join(', ');
+      if (canonical) return tail ? `${canonical}, et al.` : canonical;
+    }
+  }
   const pairs = [...text.matchAll(AUTHOR_PAIR_RE())];
   if (!pairs.length) return text;
   const leftovers = text
@@ -427,16 +528,28 @@ const journalParts = (s) => {
     .replace(/\b(?:pp?|pages?)\.?\s*(?=[\d(])/gi, ' ')
     .replace(/\s+/g, ' ').trim();
   /* L'ANNÉE peut s'intercaler entre la revue et le volume
-     (« Journal of Virology, 2018, 12(3), 345-356 »). */
-  const yearBetween = /^(.*?)\s*[,;]?\s*(?:(?:1[89]|20)\d{2}[a-z]?)\s*[,;]?\s*(\d{1,4})\s*(?:\((\d{1,3})\))?\s*[,:]?\s*(\d+)\s*[-–]\s*(\d+)/;
-  const m = src.match(yearBetween) || src.match(/^(.*?)\s*(\d{1,4})\s*(?:\((\d{1,3})\))?\s*[,:]?\s*(\d+)\s*[-–]\s*(\d+)/);
+     (« Journal of Virology, 2018, 12(3), 345-356 »). Les PAGES peuvent
+     commencer par des lettres — c'est un NUMÉRO D'ARTICLE (« e01234-18 »,
+     « S1-9 ») : l'ancien « \d+ » laissait toute la queue dans la revue. */
+  const yearBetween = /^(.*?)\s*[,;]?\s*(?:(?:1[89]|20)\d{2}[a-z]?)\s*[,;]?\s*(\d{1,4})\s*(?:\((\d{1,3})\))?\s*[,:]?\s*([A-Za-z]{0,3}\d+)\s*[-–]\s*([\w]*(?:[.-][\w]+)*)/;
+  const m = src.match(yearBetween) || src.match(/^(.*?)\s*(\d{1,4})\s*(?:\((\d{1,3})\))?\s*[,:]?\s*([A-Za-z]{0,3}\d+)\s*[-–]\s*([\w]*(?:[.-][\w]+)*)/);
   if (!m) {
-    const v = src.match(/^(.*?)\s*(\d{1,4})\s*(?:\((\d{1,3})\))?\s*\.?$/);
-    if (!v) return { journal: '', volume: '', issue: '', pages: '' };
+    /* Sans intervalle de pages : « Journal of Virology, 92(23), e01234. »
+       (APA sans année) → revue, volume, numéro ET numéro d'article. */
+    const v = src.match(/^(.*?)\s*(\d{1,4})\s*(?:\((\d{1,3})\))?\s*[,:]?\s*([A-Za-z]{0,3}\d+(?:\s*[-–]\s*[\w]+(?:\.[\w]+)*)?)?\s*\.?$/);
+    if (!v) {
+      /* Aucun volume : quand il ne reste QUE le nom de la revue
+         (« Journal of General Virology. », une entrée sans année), il est
+         gardé — sinon la citation perdrait sa revue. */
+      if (src && !/\d/.test(src) && src.length <= 70 && /[\p{L}]{3}/u.test(src)) {
+        return { journal: src.replace(/[.,;:\s]+$/, ''), volume: '', issue: '', pages: '' };
+      }
+      return { journal: '', volume: '', issue: '', pages: '' };
+    }
     /* Un « volume » de quatre chiffres qui EST une année n'en est pas un
        (« PhD thesis, University of Naples, 2018 »). */
     if (/^(?:1[89]|20)\d{2}$/.test(v[2])) return { journal: src.replace(/[,\s]+$/, ''), volume: '', issue: '', pages: '' };
-    return { journal: v[1], volume: v[2], issue: v[3] || '', pages: '' };
+    return { journal: v[1], volume: v[2], issue: v[3] || '', pages: v[4] || '' };
   }
   return { journal: m[1], volume: m[2], issue: m[3] || '', pages: `${m[4]}-${m[5]}` };
 };
@@ -470,22 +583,19 @@ export const rotateJournalFirst = (text) => {
 const QUOTED_TITLE_RE = /["\u201c\u201d\u00ab\u00bb]([^"\u201c\u201d\u00ab\u00bb]{10,300})["\u201c\u201d\u00ab\u00bb]/;
 
 /**
- * Liste d'auteurs en tête d'une référence « Smith, J., Rossi, M. & Costa, L. » :
- * la plus longue suite de paires « Nom, Initiales » séparées seulement par
- * « , / & / et / and ». Retourne '' quand la référence ne commence pas ainsi.
+ * Liste d'auteurs en tête d'une référence, dans TOUTES les écritures que
+ * produisent les éditeurs :
+ *   « Smith, J., Rossi, M. & Costa, L. »   (APA / Word / EndNote),
+ *   « Rossi M, Bianchi A, Costa L. »       (Vancouver / Paperpile),
+ *   « Rossi M., Bianchi A., Costa L. »     (initiales pointées),
+ *   « M. Rossi, A. Bianchi, L. Costa. »    (Elsevier / Harvard),
+ *   « Rossi M. Bianchi A. »                (auteurs séparés par des points).
+ * Retourne '' quand la référence ne commence pas par une liste d'auteurs —
+ * voir authorList : la liste ne peut jamais se prolonger dans le TITRE.
  */
 const authorPrefix = (s) => {
-  const body = String(s || '');
-  const re = AUTHOR_PAIR_RE();
-  let end = 0;
-  let m;
-  while ((m = re.exec(body))) {
-    const between = body.slice(end, m.index);
-    if (end && !/^[\s,&;]*(?:and|&|et)?[\s,&;]*$/i.test(between)) break;
-    end = m.index + m[0].length;
-    if (re.lastIndex === m.index) re.lastIndex += 1; // sécurité anti-boucle
-  }
-  return end ? body.slice(0, end) : '';
+  const list = authorList(s);
+  return list ? list.text : '';
 };
 
 /* ── Marqueurs d'auteurs (« et al. », « and others ») ────────────────────────
@@ -505,6 +615,22 @@ export const isMarkerTitle = (text) => {
   const s = String(text || '').replace(/\s+/g, ' ').replace(/^[.,;:\s]+/, '').trim();
   return !s || !/[A-Za-z\u00c0-\u00ff]{2}/.test(s) || TITLE_MARKER_RE.test(s);
 };
+/** Un « titre » qui n'est en fait QU'une liste d'auteurs (« Costa L »,
+ *  « Rossi, M. », « Bianchi A, Costa L ») : beaucoup de bibliographies coupent
+ *  la liste d'auteurs en deux (« Rossi M. Bianchi A. Le titre… ») et le
+ *  morceau restant finissait dans le TITRE du papier. Ce n'est jamais un
+ *  titre : voir bibliographyBlockToEntry, qui rend ces noms aux auteurs et
+ *  prend la phrase suivante comme titre. */
+export const isAuthorListTitle = (value) => {
+  const s = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!s) return false;
+  const list = authorList(s);
+  if (!list || !list.names.length || list.names.length > 6) return false;
+  const tail = s.slice(list.end).replace(/^[\s,;.&]+/, '').replace(/[\s,;.&]+$/, '');
+  return !tail || ET_AL_ONLY_RE.test(tail);
+};
+
+
 
 /** Une entrée de bibliographie « texte » → référence structurée. */
 export const bibliographyBlockToEntry = (block, _opts = {}) => {
@@ -581,19 +707,31 @@ export const bibliographyBlockToEntry = (block, _opts = {}) => {
     const nextSentence = firstSentence(afterTitle.replace(/^[.\s,;:]+/, ''));
     if (!isMarkerTitle(nextSentence.head)) { title = nextSentence.head; afterTitle = nextSentence.rest; }
   }
-  /* Style « virgules » des bibliographies Word / EndNote (« … et al., 2019,
-     Titre, Journal, 12, 345-356. ») : la phrase ne se termine jamais, donc la
-     queue bibliographique (journal, volume, pages) est retirée du titre. */
-  let tailJournal = '';
-  let tailVolume = '';
-  let tailPages = '';
-  const titleTail = String(title).match(/^(.*?),\s*([^,]{2,60}),\s*(\d{1,4})\s*,\s*(\d+\s*[-–]\s*[\w.]+)\s*\.?\s*$/);
-  if (titleTail && /[\p{L}]{2}/u.test(titleTail[2])) {
-    title = titleTail[1];
-    tailJournal = titleTail[2].trim();
-    tailVolume = titleTail[3];
-    tailPages = titleTail[4].replace(/\.$/, '');
+  /* Un titre qui n'est QU'une liste d'auteurs : c'est le morceau d'une liste
+     coupée en deux (« Rossi M. Bianchi A. Le titre… » — le point après la
+     première initiale termine la phrase, le 2e nom devenait le TITRE du
+     papier). Les noms sont rendus aux AUTEURS et le vrai titre est la phrase
+     suivante : aucun article n'est perdu et aucun auteur n'est pris pour un
+     titre. */
+  if (isAuthorListTitle(title) && afterTitle) {
+    const extra = normalizeAuthorList(title);
+    if (extra) {
+      const marker = authors.match(/,\s*((?:et\.?\s*al\.?|and\s+others|&\s*others))$/i);
+      authors = marker
+        ? `${authors.slice(0, marker.index)}, ${extra}, ${marker[1]}`
+        : (authors ? `${authors}, ${extra}` : extra);
+    }
+    const nextSentence = firstSentence(afterTitle.replace(/^[.\s,;:]+/, ''));
+    if (!isMarkerTitle(nextSentence.head)) { title = nextSentence.head; afterTitle = nextSentence.rest; }
+    else title = '';
   }
+  /* Un DOI / une URL resté DANS LA PHRASE du titre (« … pepper. bioRxiv
+     2018:345-356. doi:10.1101/345678 ») : le point du DOI n'est pas suivi
+     d'une majuscule, la phrase ne se coupe jamais et l'identifiant restait
+     dans le titre. Il est déjà enregistré dans `doi` (et dans `link`). */
+  title = String(title)
+    .replace(/\s*(?:https?:\/\/\S+|\bdoi:?\s*10\.\S+|10\.\d{4,9}\/\S+)\s*[.,;:]?/gi, ' ')
+    .replace(/\s+/g, ' ').replace(/[.,;:\s]+$/, '').trim();
 
   const doi = extractDoi(body);
   const urlMatch = body.match(/https?:\/\/\S+/i);
@@ -612,6 +750,41 @@ export const bibliographyBlockToEntry = (block, _opts = {}) => {
     .replace(/[.,;:\s]*(?:1[89]|20)\d{2}[a-z]?(?:\s+[A-Za-z]{3,9}\.?\s*\d{1,2})?[.,;:]?\s*$/, '')
     .replace(/[,\s]+$/, '')
     .trim();
+  /* La queue bibliographique restée DANS le titre — la phrase ne se termine
+     jamais, donc elle n'a pas pu être séparée plus haut :
+       • style « virgules » de Word / EndNote : « … et al., 2019, Titre,
+         Journal, 12, 345-356. » ;
+       • style « revue année;volume(issue):pages » (« Does CMV infect pepper?
+         J Virol 2018;12:345-356. » — un « ? » n'est pas un point : la revue
+         restait dans le TITRE ; « … pepper. bioRxiv 2018:345-356. »).
+     Ces queues ne sont retirées que si la revue n'a PAS pu être lue
+     autrement : le titre passe avant la revue, jamais l'inverse. */
+  let tailJournal = '';
+  let tailVolume = '';
+  let tailPages = '';
+  if (!jp.journal && !jp.volume && !jp.pages) {
+    const commaTail = String(title).match(/^(.*?),\s*([^,]{2,60}),\s*(\d{1,4})\s*,\s*(\d+\s*[-–]\s*[\w.]+)\s*\.?\s*$/);
+    /* La REVUE de cette queue : un nom capitalisé (« J Virol », « Biochim.
+       Biophys. Acta ») ou un nom en UN seul mot commençant par une minuscule
+       (« bioRxiv », « medRxiv ») — jamais un mot de liaison du titre
+       (« in », « and »…), sinon « … in 2018: 12 » amputerait le titre. */
+    const queueTail = String(title).match(
+      /^(.*?)[.!?]?\s+((?:[A-Z][\p{L}.'’\- ]{1,40}?|(?!(?:and|the|for|with|from|into|that|this|than|then|when|where|which|while|also|both|such|some|any|all|not|but|its|their|our|his|her|they|there|these|those|has|have|had|was|were|are|in|on|at|to|by|of|as|is|an|or)\b)[a-z][\p{L}'’\-]{3,19}))\s+((?:1[89]|20)\d{2}[a-z]?)\s*[;:,]\s*((?:\d{1,4}\s*(?:\(\d{1,3}\))?\s*[;:,]\s*)?[A-Za-z]{0,3}\d+(?:\s*[-–]\s*[\w.]+)?)\s*\.?\s*$/u
+    );
+    if (commaTail && /[\p{L}]{2}/u.test(commaTail[2])) {
+      title = commaTail[1];
+      tailJournal = commaTail[2].trim();
+      tailVolume = commaTail[3];
+      tailPages = commaTail[4].replace(/\.$/, '');
+    } else if (queueTail && queueTail[1].length >= 10 && /[\p{L}]{2}/u.test(queueTail[2])) {
+      const queue = queueTail[4].split(/\s*[;:,]\s*/).filter(Boolean);
+      title = queueTail[1];
+      tailJournal = queueTail[2].trim();
+      if (queue.length > 1) { tailVolume = queue[0]; tailPages = queue.slice(1).join('-'); }
+      else tailPages = queue[0] || '';
+    }
+  }
+
   const year = (yearParen && yearParen[1]) || extractYear(body);
 
   return makeEntry({
@@ -659,7 +832,10 @@ export const parseReferences = (rawText, opts = {}) => {
   return splitReferenceBlocks(text, opts)
     .map((block) => bibliographyBlockToEntry(block, opts))
     .filter((entry) => entry && entry.title)
-    .filter((entry) => opts.keepAll || referenceScore(entry.raw || '') >= min);
+    /* Une entrée NUMÉROTÉE par la bibliographie est une référence par
+       construction : le score ne doit jamais la jeter, sinon un article
+       « n'est pas reconnu » à l'import (« 12. EPPO. Note. » par exemple). */
+    .filter((entry) => opts.keepAll || entry.number > 0 || referenceScore(entry.raw || '') >= min);
 };
 
 /* ── Doublons & fusion (jamais destructif) ─────────────────────────────── */

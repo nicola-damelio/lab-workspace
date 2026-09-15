@@ -17,7 +17,7 @@ import LZString from 'lz-string';
 import {
   BACKUP_BLOB_RE, backupFigureCount, backupPaperCount, bibliographyBlockToEntry, docxTextFromBytes,
   entryKey, extractDoi, extractPmid, extractYear, figuresFromBackupHtml, figuresFromBackupState,
-  formatAuthor, formatAuthors, isMarkerTitle, looksLikeReference, mergePaperLists, mergeProjectBibliographies,
+  formatAuthor, formatAuthors, isAuthorListTitle, isMarkerTitle, looksLikeReference, mergePaperLists, mergeProjectBibliographies,
   mergeReferenceEntries, normalizeAuthorList, papersFromBackupHtml, paperKey,
   parseReferences, parseRisRecords, projectBibEntry, readReferenceDocument,
   referenceScore, rotateJournalFirst, splitReferenceBlocks
@@ -502,5 +502,114 @@ const thesis = parseReferences(
 eq(thesis.journal, 'PhD thesis, University of Naples', '« PhD » n’est pas amputé par le préfixe de pages');
 eq(thesis.volume, '', '…et l’année n’est pas prise pour un volume');
 
+/* ── 14. LE NOM D'UN AUTEUR N'EST JAMAIS UN TITRE ───────────────────────────
+   Signalé par l'utilisateur : « parfois je trouve un nom d'auteur importé
+   comme titre ». Quatre écritures réelles le provoquaient — la liste d'auteurs
+   était coupée en deux et le morceau restant (un nom) devenait le TITRE :
+     • « Rossi M., Bianchi A., Costa L. Titre… »  (initiales pointées) ;
+     • « Rossi M. Bianchi A. Titre… »             (auteurs séparés par un POINT) ;
+     • « M. Rossi, A. Bianchi, L. Costa. Titre… » (prénoms en tête, Elsevier) ;
+     • « Rossi M, Bianchi, A. Costa L. Titre… »   (écritures mélangées).
+   Les quatre donnent maintenant les AUTEURS et le vrai titre. */
+const dottedInitials = parseReferences(
+  'Rossi M., Bianchi A., Costa L. Characterization of a potyvirus infecting pepper. J Virol. 2018;12:345-356.',
+  { split: 'line', keepAll: true }
+)[0];
+eq(dottedInitials.title, 'Characterization of a potyvirus infecting pepper', 'initiales pointées : le titre reste le titre');
+eq(dottedInitials.authors, 'Rossi M, Bianchi A, Costa L', '…et l’auteur pointé n’en sort pas');
+
+const dotSeparated = parseReferences(
+  'Rossi M. Bianchi A. Costa L. Characterization of a potyvirus. J Virol 2018;12:345-356.',
+  { split: 'line', keepAll: true }
+)[0];
+eq(dotSeparated.title, 'Characterization of a potyvirus', 'auteurs séparés par des points : le titre est reconnu');
+eq(dotSeparated.authors, 'Rossi M, Bianchi A, Costa L', '…les trois auteurs sont réunis (et non « Rossi M » + un titre « Bianchi A »)');
+
+const givenNameFirst = parseReferences(
+  'M. Rossi, A. Bianchi, L. Costa. Characterization of a potyvirus. J Virol 2018;12:345-356.',
+  { split: 'line', keepAll: true }
+)[0];
+eq(givenNameFirst.title, 'Characterization of a potyvirus', 'prénoms en tête (Elsevier) : le titre est reconnu');
+eq(givenNameFirst.authors, 'Rossi M, Bianchi A, Costa L', '…et les initiales passent APRÈS le nom (convention du labo)');
+
+const mixedList = parseReferences(
+  'Rossi M, Bianchi, A. Costa L. Characterization of a potyvirus. J Virol 2018;12:345-356.',
+  { split: 'line', keepAll: true }
+)[0];
+eq([mixedList.title, mixedList.authors], ['Characterization of a potyvirus', 'Rossi M, Bianchi A, Costa L'],
+  'écritures mélangées dans une même liste : titre et auteurs restent justes');
+
+/* Même quand la liste d'auteurs n'est pas reconnue d'un bloc (« van der Berg »,
+   un nom composé), le morceau tombé dans le titre lui est rendu. */
+const particleName = parseReferences(
+  'van der Berg J. Costa L. Characterization of a potyvirus. J Virol 2018;12:345-356.',
+  { split: 'line', keepAll: true }
+)[0];
+eq(particleName.title, 'Characterization of a potyvirus', 'nom composé + liste coupée : le vrai titre est retrouvé');
+eq(particleName.authors, 'van der Berg J, Costa L', '…et les deux auteurs sont réunis');
+
+ok(isAuthorListTitle('Costa L'), 'une liste d’auteurs seule est reconnue comme telle (jamais un titre)');
+ok(isAuthorListTitle('Rossi, M., Bianchi, A.'), '…quelle que soit l’écriture');
+ok(!isAuthorListTitle('Note on CMV'), 'un vrai titre court n’est pas pris pour une liste d’auteurs');
+ok(!isAuthorListTitle('Aphid transmission of potyviruses'), 'un titre sans nom d’auteur non plus');
+eq(normalizeAuthorList('M. Rossi, A. Bianchi'), 'Rossi M, Bianchi A', 'liste « Initiales Nom » → convention du labo');
+eq(normalizeAuthorList('Rossi M. Bianchi A.'), 'Rossi M, Bianchi A', 'liste séparée par des points → convention du labo');
+
+
 console.log(`✅ ${passed} tests passés (import de références)`);
+/* ── 15. LE TITRE NE DOIT PAS AVALER LA REVUE ───────────────────────────────
+   Un titre qui finit par « ? » n'a pas de point : la phrase ne se coupait
+   jamais et la REVUE entrait dans le titre (le papier perdait sa revue). */
+const questionTitle = parseReferences(
+  'Rossi M. Does virus X infect pepper? J Virol 2018;12:345-356.',
+  { split: 'line', keepAll: true }
+)[0];
+eq(questionTitle.title, 'Does virus X infect pepper', 'un titre en « ? » est reconnu tel quel');
+eq(questionTitle.journal, 'J Virol', '…et la revue sort du titre');
+eq([questionTitle.volume, questionTitle.pages], ['12', '345-356'], '…volume et pages aussi');
+
+const questionTitle2 = parseReferences(
+  'Rossi M, Bianchi A. Is CMV a model for virus evolution? J Virol 2018;12:345-356.',
+  { split: 'line', keepAll: true }
+)[0];
+eq([questionTitle2.title, questionTitle2.journal], ['Is CMV a model for virus evolution', 'J Virol'],
+  'lettre « Is » : ce n’est pas un auteur (l’ancien lecteur lisait « auteur Is + initiales CMV »)');
+
+const preprint = parseReferences(
+  'Rossi M, Bianchi A. Characterization of a potyvirus infecting pepper. bioRxiv 2018:345-356.',
+  { split: 'line', keepAll: true }
+)[0];
+eq([preprint.title, preprint.journal], ['Characterization of a potyvirus infecting pepper', 'bioRxiv'],
+  'préprint (« bioRxiv 2018:345-356 ») : la revue au nom en minuscules sort du titre');
+
+/* ── 16. REVUE / VOLUME / PAGES DES FORMES MODERNES ─────────────────────────
+   Numéro d'article et date complète : la revue avalait la date et le volume
+   devenait « 0123 » (les pages doivent accepter une lettre : « e01234-18 »). */
+const vancouverFull = parseReferences(
+  '12. Rossi M, Bianchi A, Costa L. Characterization of a potyvirus infecting pepper. J Virol. 2018 Dec 1;92(23):e01234-18. doi:10.1128/JVI.01234-18. Epub 2018 Sep 12.',
+  { split: 'line', keepAll: true }
+)[0];
+eq(vancouverFull.journal, 'J Virol', 'date complète (« 2018 Dec 1; ») : elle sort du nom de la revue');
+eq(vancouverFull.volume, '92', '…le volume est le volume');
+eq(vancouverFull.pages, 'e01234-18', '…et le numéro d’article est gardé entier');
+eq(vancouverFull.number, 12, 'le numéro de la bibliographie est conservé (lien avec les « [12] » du texte)');
+eq(vancouverFull.doi, '10.1128/JVI.01234-18', '…le DOI aussi');
+
+const apaNumber = parseReferences(
+  'Rossi, M., & Bianchi, A. (2018). Characterization of a potyvirus infecting pepper. Journal of Virology, 92(23), e01234. https://doi.org/10.1128/JVI.01234-18',
+  { split: 'line', keepAll: true }
+)[0];
+eq(apaNumber.journal, 'Journal of Virology', 'APA avec numéro d’article : la revue est la revue');
+eq(apaNumber.volume, '92', '…le volume est 92 (et non « e01234 »)');
+eq(apaNumber.pages, 'e01234', '…et le numéro d’article va dans les pages');
+
+/* Une entrée NUMÉROTÉE ne doit jamais être jetée par le score : c'est ainsi
+   qu'un article court et sans année « n'était pas reconnu » à l'import. */
+const shortNumbered = parseReferences('12. EPPO. Aphid transmission of potyviruses. EPPO Bulletin.',
+  { split: 'line' });
+eq(shortNumbered.length, 1, 'une référence numérotée est gardée même si son score est faible');
+eq(shortNumbered[0].number, 12, '…avec son numéro (utile pour les citations du texte)');
+eq(shortNumbered[0].journal, 'EPPO Bulletin', '…et sa revue, même sans année ni volume');
+
+
 

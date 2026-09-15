@@ -33,7 +33,7 @@ OK   _probe_ngl.cjs  →  WROTE _ngl_src/molecularsurface-representation.ts len 
 OK   _project_figures_access_test.cjs  →  │ (index) │ name                                                                                                                       │ ok   │ error 
 OK   _pub_author_style_test.mjs  →  _pub_author_style_test: 108 passed
 OK   _rebuild_h_test.mjs  →  PASS
-OK   _reference_import_test.mjs  →  ✅ 168 tests passés (import de références)
+OK   _reference_import_test.mjs  →  ✅ 183 tests passés (import de références)
 OK   _reference_links_test.mjs  →  ✅ 57 tests passés (liens de citation [n] ↔ références, import bibliographique numéroté, document exporté réparé)
 OK   _spectra_split_test.mjs  →  passed 197/197
 OK   _split_test.cjs  →  (no output)

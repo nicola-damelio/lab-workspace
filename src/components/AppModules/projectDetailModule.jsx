@@ -2028,12 +2028,11 @@ export const ProjectDetailModule = ({
             { label: '🖼 + Slide', title: 'Insert a slide from the Figures & Slides deck (Publications)', onClick: () => setSlidePickerFor(id) },
             { label: '▦ + Std Table', title: 'Insert a standard table at the cursor position', onClick: (insertText) => setTableDraft({ section: id, insertText }) },
             { label: '📎 + Document', title: 'Attach a document link', onClick: () => addSectionDoc(id) },
-            { label: '📚 + Reference', title: 'Insert a numbered reference at the cursor position', onClick: (insertText) => setRefPicker({ insertText }) },
-            /* 📥 À CÔTÉ du bouton « 📄 Word » de l'éditeur (qui ne prend que le
-               texte et les figures) : celui-ci fait entrer un manuscrit ENTIER —
-               texte dans les sections, bibliographie Paperpile et citations
-               converties en références numérotées. */
-            { label: '📥 Import a manuscript', title: 'Move a manuscript written in Google Docs / Word into the project: its text goes to the section(s) you pick, its bibliography to the Project bibliography and its citations become the numbered references [1], [2]…', onClick: () => openManuscriptImport(id) }
+            { label: '📚 + Reference', title: 'Insert a numbered reference at the cursor position', onClick: (insertText) => setRefPicker({ insertText }) }
+            /* 📥 L'import d'un MANUSCRIT (texte + bibliographie Paperpile +
+               citations numérotées) n'est proposé qu'UNE fois, en HAUT de la
+               page projet : le répéter dans chaque section et dans la
+               bibliographie encombrait les barres d'outils pour rien. */
           ] : []}
         />
         {slidePickerFor === id && (
@@ -3267,11 +3266,6 @@ export const ProjectDetailModule = ({
                         className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-slate-100 border border-slate-300 text-slate-700 hover:bg-slate-200"
                         title="Import references only (an article's .docx, a RIS/BibTeX/Paperpile export, a Web page, or pasted text): the recognised papers are added to this project's bibliography.">
                   📄 Import references from a paper
-                </button>
-                <button onClick={() => { openManuscriptImport(); }}
-                        className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700"
-                        title="Move a document written in Google Docs / Word INTO this project: its text goes to the project sections, its bibliography (Paperpile…) to the Project bibliography, and its citations become the numbered references [1], [2]…">
-                  📥 Import a manuscript
                 </button>
                 <button onClick={() => setShowBibForm((v) => !v)}
                         className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100">

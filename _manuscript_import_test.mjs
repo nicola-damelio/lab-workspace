@@ -157,15 +157,18 @@ ok(!!bib.list[0].authors, '…et ses champs vides sont complétés par le docume
 /* ── 9. Les sources : l'import est bien branché dans la page projet ──────── */
 has(PROJ, 'blocksFromText, splitManuscript, groupManuscriptParts',
   'la page projet importe les fonctions du module (aucune logique dupliquée)');
-has(PROJ, '📥 Import a manuscript', 'un bouton « 📥 Import a manuscript » est offert à côté des papiers');
+has(PROJ, '📥 Import a manuscript', 'un bouton « 📥 Import a manuscript » est offert en haut de la page projet');
 has(PROJ, 'onClick={() => openManuscriptImport()}', 'l’en-tête de la page projet porte le bouton (toujours visible)');
-has(PROJ, "{ label: '📥 Import a manuscript', title:", 'chaque section de texte en a un aussi — juste à côté du bouton « 📄 Word » de l’éditeur');
-has(PROJ, 'onClick: () => openManuscriptImport(id)', '…et il vise la section d’où il est lancé');
-has(PROJ, 'bibliography: true', 'la section Bibliography est ouverte d’emblée (sinon les boutons d’import restent cachés en bas de page)');
-has(PROJ, 'focusSection', 'la section de départ est mémorisée et rappelée dans la fenêtre');
+ok(!PROJ.includes("{ label: '📥 Import a manuscript'"),
+  'aucune barre d’outil de section ne le répète : une seule porte d’entrée, en haut de la page');
+ok(!PROJ.includes('onClick={() => { openManuscriptImport(); }}'),
+  'ni la section Bibliography (le bouton y a été retiré lui aussi)');
+eq((PROJ.match(/openManuscriptImport\(/g) || []).length, 1,
+  'un seul bouton dans toute la page — celui de l’en-tête');
+has(PROJ, 'bibliography: true', 'la section Bibliography est ouverte d’emblée (elle est en bas d’une longue page)');
+has(PROJ, 'focusSection', 'la section de départ reste mémorisée et rappelée dans la fenêtre');
 has(RTE, 'References are NOT imported here',
   'le bouton « 📄 Word » de l’éditeur prévient qu’il ne prend PAS les références (il renvoie à l’import de manuscrit)');
-has(PROJ, 'onClick={() => { openManuscriptImport(); }}', '…et ouvre la fenêtre d’import');
 has(PROJ, 'const renderManuscriptImport = () => {', 'la fenêtre existe');
 has(PROJ, '{renderManuscriptImport()}', '…et est montée dans la page');
 has(PROJ, 'const plan = buildManuscriptPlan(manuscript, { existingReferences: refs });',
