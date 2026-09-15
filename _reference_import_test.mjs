@@ -15,9 +15,9 @@ import { zipSync, strToU8 } from 'fflate';
 import LZString from 'lz-string';
 
 import {
-  BACKUP_BLOB_RE, backupPaperCount, bibliographyBlockToEntry, docxTextFromBytes,
-  entryKey, extractDoi, extractPmid, extractYear, formatAuthor, formatAuthors,
-  looksLikeReference, mergePaperLists, mergeProjectBibliographies,
+  BACKUP_BLOB_RE, backupFigureCount, backupPaperCount, bibliographyBlockToEntry, docxTextFromBytes,
+  entryKey, extractDoi, extractPmid, extractYear, figuresFromBackupHtml, figuresFromBackupState,
+  formatAuthor, formatAuthors, looksLikeReference, mergePaperLists, mergeProjectBibliographies,
   mergeReferenceEntries, normalizeAuthorList, papersFromBackupHtml, paperKey,
   parseReferences, parseRisRecords, projectBibEntry, readReferenceDocument,
   referenceScore, splitReferenceBlocks
@@ -242,6 +242,10 @@ const backupState = {
   _publications: [{ id: 'pub1', scientist: 'Rossi M', title: 'My publication' }],
   _relevantPapers: [{ id: 'rel1', title: 'Relevant lost paper' }],
   _relevantSubjects: ['NMR'],
+  /* Bibliothèque d'images : les images sont sur le Drive, la LISTE qui les
+     affiche vit dans le navigateur — elle voyage donc aussi dans le fichier. */
+  _figuresLibrary: [{ id: 'img1', label: 'CD spectra', url: 'data:image/png;base64,aa' }],
+  _figuresLibraryProjects: { p1: [{ id: 'img2', label: 'Canvas', url: 'data:image/png;base64,bb' }] },
   storages: [{ id: 's1', name: 'Freezer -80 #3' }]
 };
 const backupHtml = '<!DOCTYPE html><html><body><h2>backup</h2>'
@@ -265,6 +269,19 @@ eq(backupPaperCount(recovered),
   'l’aperçu compte les papiers trouvés');
 eq(papersFromBackupHtml('<html><body>pas une sauvegarde</body></html>', (s) => s), null,
   'un fichier étranger est refusé proprement');
+
+/* La BIBLIOTHÈQUE D'IMAGES du même fichier : elle est lue séparément des papiers
+   (aucune autre section n'est reprise) et son compte-rendu sert à la fenêtre
+   « ♻️ Recover » de la page Figures & Slides. */
+const figures = figuresFromBackupHtml(backupHtml, (s) => LZString.decompressFromUTF16(s));
+eq(figures.common.map((i) => i.id), ['img1'], 'la bibliothèque d’images commune du fichier est lue');
+eq(Object.keys(figures.projects), ['p1'], 'les bibliothèques d’images de projet sont lues');
+eq(figures.projects.p1[0].label, 'Canvas', 'les images d’un projet gardent leur libellé');
+eq(backupFigureCount(figures), { common: 1, projectCount: 1, projectItems: 1, total: 2 },
+  'l’aperçu compte les images trouvées (commune + projets)');
+eq(figuresFromBackupState({}), { common: [], projects: {} }, 'un état sans images rend des listes vides');
+eq(figuresFromBackupHtml('<html><body>pas une sauvegarde</body></html>', (s) => s), null,
+  'un fichier étranger ne rend aucune bibliothèque');
 
 /* La sauvegarde d'un ANCIEN dataset (sans les listes de publications — c'était
    le cas avant que ces listes n'entrent dans le fichier) rend quand même les

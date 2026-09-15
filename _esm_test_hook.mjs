@@ -35,6 +35,12 @@ export async function load(url, context, next) {
         'export const uploadLocalFile = async () => ({ ok: false, reason: "bouchon de test (hors navigateur)" });',
         'export const cloudBackendAvailable = () => false;',
         'export const downloadDriveFileBytes = async () => { throw new Error("bouchon de test"); };',
+        // figuresLibrary.js importe aussi ces trois helpers : ils ne servent
+        // jamais hors navigateur (cloudBackendAvailable() vaut false), mais le
+        // module doit pouvoir être IMPORTÉ par les tests.
+        'export const getDriveToken = () => null;',
+        'export const dataUrlToBlob = () => null;',
+        'export const getDriveRootName = () => "";',
       ].join('\n'),
     };
   }

@@ -165,18 +165,110 @@ export const readAllProjectLibraries = () => {
   }
   return out;
 };
-// Writes a snapshot ({ common, projects }) back to localStorage (used by "Load HTML").
-export const restoreLibraryFromSnapshot = (snap) => {
-  if (!snap) return;
-  try {
-    if (Array.isArray(snap.common)) writeLibrary(snap.common);
-    if (snap.projects && typeof snap.projects === 'object') {
-      Object.entries(snap.projects).forEach(([pid, items]) => {
-        writeProjectLibrary(pid, Array.isArray(items) ? items : []);
-      });
+/* ── Lire une bibliothèque depuis une sauvegarde : AJOUT/FUSION seulement ────
+
+   La LISTE des images (libellés, vignettes, ordre, bibliothèque commune et
+   bibliothèques de projet) vit dans CE navigateur (localStorage `labFiguresLibrary`
+   / `labFiguresLib_<projet>`) ; seules les images elles-mêmes sont sur Google
+   Drive / Nextcloud (<dataset>/projects/<projet>/images). Sur un autre poste la
+   liste est donc vide même si les fichiers sont bien dans le Drive : elle voyage
+   UNIQUEMENT dans les fichiers de sauvegarde (clés `_figuresLibrary` +
+   `_figuresLibraryProjects`), relus ici.
+
+   L'import REMPLAÇAIT autrefois la liste : charger la sauvegarde d'un poste à la
+   bibliothèque vide effaçait donc les images de ce poste (et il n'existe AUCUN
+   index de secours dans le Drive pour les retrouver). L'import est donc
+   strictement ADDITIF, comme les papiers : les entrées absentes sont ajoutées,
+   les champs vides des entrées déjà présentes sont complétés, rien n'est
+   supprimé ni écrasé. */
+
+/** Un champ « vide » peut être complété par la sauvegarde (false compte comme
+ *  vide : `drive:false` redevient `true` quand la copie cloud existe). */
+const isEmptyField = (v) => v === undefined || v === null || v === '' || v === false;
+
+/** Champs recopiés d'une entrée de sauvegarde dans une entrée existante (les
+ *  champs vides SEULEMENT — voir le commentaire ci-dessus). */
+const LIB_MERGE_FIELDS = ['label', 'url', 'full', 'drive', 'driveUrl', 'src', 'canvasData'];
+
+/**
+ * Fusionne une liste de bibliothèque (`current`, celle du navigateur) avec une
+ * liste de sauvegarde (`incoming`). Réponse : `{ list, added, filled }`.
+ * • clé d'identité = `id` (les entrées relues d'un fichier gardent leur id, un
+ *   même fichier réimporté n'ajoute donc jamais de doublon) ;
+ * • les entrées nouvelles sont AJOUTÉES À LA FIN : l'ordre existant est
+ *   conservé tel quel (la bibliothèque n'est pas réordonnée par un import) ;
+ * • une entrée déjà présente n'est jamais remplacée, seulement complétée.
+ * Les objets de `current` sont modifiés EN PLACE : le miroir mémoire
+ * (readLibrary / readProjectLibrary) voit donc les champs complétés.
+ */
+export const mergeLibraryList = (current, incoming) => {
+  const list = Array.isArray(current) ? current.slice() : [];
+  const byId = new Map();
+  list.forEach((it) => { if (it && it.id) byId.set(it.id, it); });
+  let added = 0;
+  let filled = 0;
+  (Array.isArray(incoming) ? incoming : []).forEach((raw) => {
+    if (!raw || typeof raw !== 'object') return;
+    const item = { ...raw };
+    if (!item.id) item.id = uid('lib');
+    const prev = byId.get(item.id);
+    if (!prev) {
+      if (!item.addedAt) item.addedAt = new Date().toISOString();
+      list.push(item);
+      byId.set(item.id, item);
+      added += 1;
+      return;
     }
-  } catch { /* ignore */ }
+    let touched = false;
+    LIB_MERGE_FIELDS.forEach((f) => {
+      if (isEmptyField(prev[f]) && !isEmptyField(item[f])) { prev[f] = item[f]; touched = true; }
+    });
+    if (touched) filled += 1;
+  });
+  return { list, added, filled };
 };
+
+/**
+ * Applique la bibliothèque d'images d'une sauvegarde (`{ common, projects }`,
+ * où `projects` est `{ <idProjet>: [...] }`) à CE navigateur, en AJOUT/FUSION.
+ * Une liste absente ou vide ne fait RIEN : un fichier sans bibliothèque ne peut
+ * pas effacer celle du poste (c'était la façon de perdre des images).
+ * @returns {{added:number, filled:number, common:object,
+ *            perProject:Object<string,object>, projectCount:number}}
+ */
+export const mergeLibraryFromSnapshot = (snap) => {
+  const src = snap && typeof snap === 'object' ? snap : {};
+  const out = { added: 0, filled: 0, common: { added: 0, filled: 0 }, perProject: {}, projectCount: 0 };
+  const common = Array.isArray(src.common) ? src.common : [];
+  if (common.length) {
+    try {
+      const res = mergeLibraryList(readLibrary(), common);
+      if (res.added || res.filled) writeLibrary(res.list);
+      out.common = { added: res.added, filled: res.filled };
+      out.added += res.added;
+      out.filled += res.filled;
+    } catch { /* ignore */ }
+  }
+  const projects = src.projects && typeof src.projects === 'object' && !Array.isArray(src.projects)
+    ? src.projects
+    : {};
+  Object.entries(projects).forEach(([pid, items]) => {
+    if (!Array.isArray(items) || items.length === 0) return;
+    try {
+      const res = mergeLibraryList(readProjectLibrary(pid), items);
+      if (res.added || res.filled) writeProjectLibrary(pid, res.list);
+      out.perProject[pid] = { added: res.added, filled: res.filled };
+      out.projectCount += 1;
+      out.added += res.added;
+      out.filled += res.filled;
+    } catch { /* ignore */ }
+  });
+  return out;
+};
+
+/** Ancien nom de l'import d'une sauvegarde : il est désormais ADDITIF (voir
+ *  mergeLibraryFromSnapshot) — l'appelant reçoit le compte-rendu de la fusion. */
+export const restoreLibraryFromSnapshot = (snap) => mergeLibraryFromSnapshot(snap);
 
 export const readDeck = (projectId) => {
   try {

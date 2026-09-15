@@ -1,13 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { jsPDF } from 'jspdf';
+import LZString from 'lz-string';
 import { getStarredItems } from '../utils/starredItems';
 import {
   readLibrary, writeLibrary, removeLibraryItem, renameLibraryItem,
   readProjectLibrary, writeProjectLibrary, removeProjectLibraryItem, renameProjectLibraryItem, moveLibraryItem,
   addLibraryItem, addProjectLibraryItem,
-  readDeck, writeDeck, uid, makeLibraryImage, blobToDataUrl, resolveImageToDataUrl
+  readDeck, writeDeck, uid, makeLibraryImage, blobToDataUrl, resolveImageToDataUrl,
+  mergeLibraryFromSnapshot
 } from '../utils/figuresLibrary';
-import { uploadWorkspaceFile, getDriveToken } from '../utils/driveUpload';
+import { uploadWorkspaceFile, getDriveToken, listDatasetBackups, downloadDriveFileText } from '../utils/driveUpload';
+import { backupFigureCount, figuresFromBackupHtml } from '../utils/referenceImport';
+import { loadProjects } from './AppModules/projectsModule';
 import { getRenderableDriveUrl } from '../data/constants';
 
 /* =========================================================================
@@ -521,6 +525,17 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
   const [dragRegion, setDragRegion] = useState(null);  // region index being dragged
   const [leftOpen, setLeftOpen] = useState(false);    // ⭐ sidebar tab (retractable)
   const [rightLibOpen, setRightLibOpen] = useState(false); // 📂 dataset images tab
+  /* ♻️ Récupérer la bibliothèque d'images d'une ancienne sauvegarde.
+     Les IMAGES sont sur le Drive, mais la LISTE qui les affiche (libellés,
+     vignettes, ordre, bibliothèque commune + par projet) vit dans CE navigateur :
+     elle ne voyage que dans les fichiers .html de sauvegarde. Sur un autre poste
+     la liste est donc vide alors que les fichiers sont bien dans le Drive — d'où
+     cette fenêtre, qui AJOUTE ce qui manque sans jamais rien effacer. */
+  const [recovOpen, setRecovOpen] = useState(false);
+  const [recovState, setRecovState] = useState(null);   // { figures, source, counts, parts, result }
+  const [recovBusy, setRecovBusy] = useState(false);
+  const [recovStatus, setRecovStatus] = useState('');
+  const [recovBackups, setRecovBackups] = useState([]);
   const [regionFullscreen, setRegionFullscreen] = useState(false); // ⛶ fullscreen editing
   const [canvasScale, setCanvasScale] = useState(1);   // canvas zoom (1 = fit, 0.4–4)
   const cropDragRef = useRef(null);   // spectrum drag-to-zoom: { ri, startX, rect }
@@ -927,6 +942,97 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     setProjectLibrary(readProjectLibrary(projectId));
   };
   const addFromLib = (it) => slide && addBlock(cur, { type: 'image', url: it.url, full: it.full, caption: it.label || '' });
+
+  // ---- ♻️ Recover the image library from an old backup ----------------------
+  // The file is read for its IMAGE LIBRARY only (`_figuresLibrary` +
+  // `_figuresLibraryProjects`): everything else in it (experiments, definitions,
+  // storage, report…) is ignored, so recovering images never costs recent work.
+  const openRecovery = (figures, source) => {
+    if (!figures) {
+      setRecovState(null);
+      setRecovStatus('⚠ This file is not a Lab Workspace backup (no saved-data block inside).');
+      setRecovOpen(true);
+      return;
+    }
+    const counts = backupFigureCount(figures);
+    setRecovState({
+      figures,
+      source: source || 'backup',
+      counts,
+      result: null,
+      parts: { common: counts.common > 0, projects: counts.projectItems > 0 }
+    });
+    setRecovStatus('');
+    setRecovOpen(true);
+  };
+
+  const loadRecoveryFile = async (file) => {
+    if (!file) return;
+    setRecovBusy(true);
+    setRecovStatus(`Reading ${file.name}…`);
+    try {
+      const text = await file.text();
+      openRecovery(figuresFromBackupHtml(text, (s) => LZString.decompressFromUTF16(s)), file.name);
+    } catch (err) {
+      setRecovStatus(`⚠ ${(err && err.message) || 'Could not read this file'}`);
+    }
+    setRecovBusy(false);
+  };
+
+  const loadRecoveryBackups = async () => {
+    setRecovBusy(true);
+    setRecovStatus('Looking for backups in Google Drive…');
+    try {
+      const list = await listDatasetBackups();
+      setRecovBackups(list);
+      setRecovStatus(list.length
+        ? `${list.length} backup${list.length > 1 ? 's' : ''} found in Drive — most recent first.`
+        : 'No backup of this dataset in Drive yet (nothing has been uploaded).');
+    } catch (err) {
+      setRecovStatus(`⚠ ${(err && err.message) || 'Could not list the Drive backups'}`);
+    }
+    setRecovBusy(false);
+  };
+
+  const loadRecoveryBackup = async (backup) => {
+    if (!backup) return;
+    setRecovBusy(true);
+    setRecovStatus(`Downloading ${backup.name}…`);
+    try {
+      const text = await downloadDriveFileText(backup.id);
+      openRecovery(text ? figuresFromBackupHtml(text, (s) => LZString.decompressFromUTF16(s)) : null, backup.name);
+    } catch (err) {
+      setRecovStatus(`⚠ ${(err && err.message) || 'Could not read this backup'}`);
+    }
+    setRecovBusy(false);
+  };
+
+  // The merge itself: ADD/COMPLETE only (figuresLibrary.mergeLibraryFromSnapshot).
+  const runRecovery = () => {
+    if (!recovState || !recovState.figures) return;
+    const { figures, parts } = recovState;
+    const res = mergeLibraryFromSnapshot({
+      common: parts.common ? figures.common : [],
+      projects: parts.projects ? figures.projects : {}
+    });
+    setLibrary(readLibrary());
+    setProjectLibrary(readProjectLibrary(projectId));
+    setRecovState((s) => (s ? { ...s, result: res } : s));
+    setRecovStatus('');
+    setLibOpen(true);
+    if (res.common.added > 0) setLibTab('common');
+    else if (res.projectCount > 0) setLibTab('project');
+  };
+
+  // Project names of the recovered libraries (the file only stores their ids).
+  const recovProjectNames = (figures) => {
+    const projects = (figures && figures.projects) || {};
+    const known = loadProjects() || [];
+    return Object.keys(projects).map((pid) => {
+      const found = known.find((p) => String(p && p.id) === String(pid));
+      return { pid, name: (found && found.name) || pid, count: (projects[pid] || []).length };
+    });
+  };
 
   // ---- fullscreen presentation ---------------------------------------------
   useEffect(() => {
@@ -1552,7 +1658,8 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
       {/* ---- Image library — on TOP, retractable. Common + project scopes ---- */}
       <div className="border border-slate-200 rounded-xl overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 px-3 py-2 cursor-pointer select-none" onClick={() => setLibOpen((v) => !v)}>
-          <span className="text-xs font-bold text-slate-600 uppercase flex items-center gap-2">
+          <span className="text-xs font-bold text-slate-600 uppercase flex items-center gap-2"
+            title="The image files are stored on Google Drive / Nextcloud (projects/<project>/images). This LIST — which images, their labels and their order — lives in this browser and travels inside your backup files: use ♻️ Recover after opening the app on another computer.">
             <span className="inline-block w-2 h-2 rounded-full bg-blue-500" />
             Image library ({library.length} common · {projectLibrary.length} project)
           </span>
@@ -1560,6 +1667,9 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
             <span className="text-[10px] text-slate-400 hidden sm:inline">drag an image onto a slide to add it · Ctrl+V pastes into the active library</span>
             <button type="button" onClick={(e) => { e.stopPropagation(); if (fileRef.current) fileRef.current.click(); }} className={btnGhost}>⬆ Upload</button>
             <button type="button" onClick={(e) => { e.stopPropagation(); onPaste(); }} className={btnGhost}>📋 Paste</button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setRecovStatus(''); setRecovOpen(true); }}
+              className="text-xs font-bold px-2 py-1 rounded-md border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100"
+              title="Images missing on this computer? The images are on Google Drive, but the list that shows them lives in the browser. Read a backup file here to add the missing images back — nothing is deleted.">♻️ Recover</button>
             <span className="text-slate-400">{libOpen ? '▲' : '▼'}</span>
           </span>
         </div>
@@ -1577,6 +1687,12 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
               </button>
               <span className="text-[10px] text-slate-400 ml-1">Uploads/pastes go to the <b>{libScopeName}</b> library{libTab === 'project' && projectId ? ' · ' + projectId : ''}</span>
             </div>
+            <p className="text-[10px] text-slate-400 mb-2">
+              The images themselves are on Google Drive (<code>projects/&lt;project&gt;/images</code>) — this list lives in
+              <b> this browser</b> and travels inside every backup file. Missing images on this computer?
+              <button type="button" onClick={() => { setRecovStatus(''); setRecovOpen(true); }}
+                className="font-bold text-amber-700 hover:underline">♻️ Recover them from a backup</button>.
+            </p>
             {libScope.length === 0 ? (
               <p className="text-[10px] text-slate-400 italic">Empty {libScopeName} library — upload formulas / structures / logos here to reuse them in slides.</p>
             ) : (
@@ -1914,6 +2030,97 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
             <button type="button" onClick={() => setPresenting(false)} className="font-bold px-4 py-1.5 rounded-lg text-xs bg-slate-700 hover:bg-slate-600">✕ Exit (Esc)</button>
             <button type="button" onClick={() => setPi((p) => Math.min(deck.slides.length - 1, p + 1))} disabled={pi >= deck.slides.length - 1}
               className="font-bold px-4 py-1.5 rounded-lg text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-40">Next →</button>
+          </div>
+        </div>
+      )}
+
+      {/* ---- ♻️ Recover the image library from an old backup ------------------
+          Only the image LIBRARY is read out of the file (`_figuresLibrary` +
+          `_figuresLibraryProjects`) — experiments, definitions, storage, report…
+          are ignored. The merge ADDS what is missing and completes empty fields:
+          it can never delete or overwrite an image of this computer. */}
+      {recovOpen && (
+        <div className="fixed inset-0 z-[99999] bg-black/40 flex items-center justify-center p-4" onClick={() => setRecovOpen(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+              <h3 className="text-sm font-black text-slate-800">♻️ Recover the image library from a backup</h3>
+              <button type="button" onClick={() => setRecovOpen(false)} className="text-slate-400 hover:text-slate-600 text-sm px-1">✕</button>
+            </div>
+            <div className="p-4 overflow-y-auto custom-scrollbar flex flex-col gap-3">
+              <p className="text-xs text-slate-500 leading-relaxed">
+                The image <b>files</b> are on Google Drive (<code>…/projects/&lt;project&gt;/images</code>), but the
+                <b> list</b> shown above — which images, their labels, their order — lives in <b>this browser</b>. That is
+                why another computer (or a browser whose storage was emptied) shows fewer images. This list travels inside
+                every backup file: read one here and the missing images come back.
+                <b> Nothing is deleted or overwritten</b> — missing entries are added, empty fields completed.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 border border-slate-300 text-slate-700 hover:bg-slate-200 cursor-pointer">
+                  📂 Choose a backup file (.html)
+                  <input type="file" accept=".html,.htm" className="hidden"
+                    onChange={(e) => { loadRecoveryFile(e.target.files && e.target.files[0]); e.target.value = ''; }} />
+                </label>
+                <button type="button" onClick={loadRecoveryBackups} disabled={recovBusy}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 border border-slate-300 text-slate-700 hover:bg-slate-200 disabled:opacity-50">
+                  🔎 List this dataset’s Drive backups
+                </button>
+                {recovStatus && <span className="text-xs text-slate-600">{recovStatus}</span>}
+              </div>
+              {recovBackups.length > 0 && (
+                <div className="border border-slate-200 rounded-lg max-h-40 overflow-y-auto custom-scrollbar">
+                  {recovBackups.map((b) => (
+                    <button type="button" key={b.id} onClick={() => loadRecoveryBackup(b)} disabled={recovBusy}
+                      className="w-full text-left px-3 py-2 text-xs border-b border-slate-100 last:border-0 hover:bg-slate-50 disabled:opacity-50">
+                      <span className="font-semibold text-slate-700">{b.name}</span>
+                      <span className="text-slate-400"> · {Math.max(1, Math.round((b.size || 0) / 1024))} kB</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {recovState && (
+                <div className="border border-violet-200 bg-violet-50/40 rounded-lg p-3">
+                  <div className="text-xs font-bold text-slate-700 mb-2">What was found in “{recovState.source}”</div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className={`flex items-center gap-2 text-xs ${recovState.counts.common ? 'text-slate-700' : 'text-slate-400'}`}>
+                      <input type="checkbox" checked={recovState.counts.common > 0 && !!recovState.parts.common} disabled={!recovState.counts.common}
+                        onChange={(e) => setRecovState((s) => ({ ...s, parts: { ...s.parts, common: e.target.checked } }))} />
+                      🌐 Shared library (dataset) <span className="font-bold">{recovState.counts.common}</span>
+                    </label>
+                    <label className={`flex items-center gap-2 text-xs ${recovState.counts.projectItems ? 'text-slate-700' : 'text-slate-400'}`}>
+                      <input type="checkbox" checked={recovState.counts.projectItems > 0 && !!recovState.parts.projects} disabled={!recovState.counts.projectItems}
+                        onChange={(e) => setRecovState((s) => ({ ...s, parts: { ...s.parts, projects: e.target.checked } }))} />
+                      📁 Project libraries <span className="font-bold">{recovState.counts.projectItems}</span>
+                      <span className="text-slate-400">in {recovState.counts.projectCount} project(s)</span>
+                    </label>
+                  </div>
+                  {recovState.counts.total === 0 && (
+                    <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-2">
+                      This backup contains no image library — it was written by a version that did not embed it yet, or its
+                      library was already empty. Try an older/newer backup from the other computer (the one that shows the
+                      images).
+                    </p>
+                  )}
+                  {recovState.counts.projectCount > 0 && (
+                    <div className="mt-2 text-[11px] text-slate-500">
+                      {recovProjectNames(recovState.figures).map((p) => `${p.name} (${p.count})`).join(' · ')}
+                      {' '}— each project keeps its own library; a project missing here is restored under its own id.
+                    </div>
+                  )}
+                  <div className="flex flex-wrap items-center justify-between gap-3 mt-3">
+                    <span className="text-[11px] text-slate-500 flex-1 min-w-[220px]">
+                      {recovState.result
+                        ? `✅ ${recovState.result.added} image(s) added · ${recovState.result.filled} completed · ${recovState.result.projectCount} project librar(y/ies) updated — nothing was removed.`
+                        : 'Missing images are appended to the library; entries already there are only completed.'}
+                    </span>
+                    <button type="button" onClick={runRecovery}
+                      disabled={recovBusy || !(recovState.parts.common || recovState.parts.projects) || !!recovState.result}
+                      className="px-3 py-1.5 text-xs font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 shrink-0">
+                      ➕ Add the missing images
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

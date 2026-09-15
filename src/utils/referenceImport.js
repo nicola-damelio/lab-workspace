@@ -22,6 +22,12 @@
       `mergeReferenceEntries` / `mergePaperLists` n'ajoutent que ce qui manque
       et ne remplissent que les champs VIDES d'une entrée déjà présente.
 
+   4. Le même fichier sait aussi rendre sa BIBLIOTHÈQUE D'IMAGES
+      (`figuresFromBackupState` / `figuresFromBackupHtml` + `backupFigureCount`) :
+      les images sont sur le Drive, mais la liste qui les affiche (libellés,
+      vignettes, ordre) ne vit que dans le navigateur — un autre poste la
+      retrouve donc par la sauvegarde.
+
    Aucune dépendance nouvelle : un .docx est un ZIP dont le texte vit dans
    word/document.xml — fflate (déjà utilisé par l'application) le décompresse.
    ========================================================================= */
@@ -721,13 +727,12 @@ export const papersFromBackupState = (state) => {
 };
 
 /**
- * Papiers d'un fichier de sauvegarde HTML complet.
- * @param {string} html        contenu du fichier
- * @param {(s:string)=>string} decompress  décompresseur LZString (fourni par
- *        l'appelant : ce module reste ainsi testable hors navigateur)
- * @returns {null|object}      null quand le fichier n'est pas une sauvegarde
+ * ÉTAT complet d'un fichier de sauvegarde (« Save HTML » / sauvegarde Drive) :
+ * le bloc JSON embarqué, décompressé. Sert aux lecteurs spécialisés ci-dessous
+ * (papiers, bibliothèque d'images) — chacun n'exploite QUE ses clés.
+ * @returns {null|{state:object, title:string, subtitle:string, savedAt:number}}
  */
-export const papersFromBackupHtml = (html, decompress) => {
+export const backupStateFromHtml = (html, decompress) => {
   const match = String(html || '').match(BACKUP_BLOB_RE);
   if (!match) return null;
   let blob = null;
@@ -742,12 +747,79 @@ export const papersFromBackupHtml = (html, decompress) => {
   let state = null;
   try { state = JSON.parse(payload); } catch { return null; }
   return {
-    ...papersFromBackupState(state),
+    state,
     title: (blob && blob.title) || '',
     subtitle: (blob && blob.subtitle) || '',
-    savedAt: (blob && blob.savedAt) || 0,
-    isAdminBase: !!state.administration
+    savedAt: (blob && blob.savedAt) || 0
   };
+};
+
+/**
+ * Papiers d'un fichier de sauvegarde HTML complet.
+ * @param {string} html        contenu du fichier
+ * @param {(s:string)=>string} decompress  décompresseur LZString (fourni par
+ *        l'appelant : ce module reste ainsi testable hors navigateur)
+ * @returns {null|object}      null quand le fichier n'est pas une sauvegarde
+ */
+export const papersFromBackupHtml = (html, decompress) => {
+  const backup = backupStateFromHtml(html, decompress);
+  if (!backup) return null;
+  return {
+    ...papersFromBackupState(backup.state),
+    title: backup.title,
+    subtitle: backup.subtitle,
+    savedAt: backup.savedAt,
+    isAdminBase: !!backup.state.administration
+  };
+};
+
+/* ── Bibliothèque d'images d'un ancien fichier de sauvegarde ───────────────
+   Les IMAGES sont sur le Drive (<dataset>/projects/<projet>/images), mais la
+   LISTE qui les affiche (libellés, vignettes, ordre, bibliothèque commune et
+   bibliothèques de projet) vit dans le navigateur : elle ne voyage que dans les
+   fichiers de sauvegarde. Un autre poste, un navigateur réinitialisé ou un
+   stockage local vidé retrouve donc ses images par ce chemin — sans toucher au
+   reste du fichier (expériences, définitions, stockage, rapport…). */
+
+/** Bibliothèque d'images contenue dans l'ÉTAT d'une sauvegarde (aucune autre
+ *  section). `common` = bibliothèque partagée du dataset, `projects` =
+ *  { <idProjet>: [images] }. */
+export const figuresFromBackupState = (state) => {
+  const src = state && typeof state === 'object' ? state : {};
+  const projects = src._figuresLibraryProjects && typeof src._figuresLibraryProjects === 'object'
+    && !Array.isArray(src._figuresLibraryProjects)
+    ? src._figuresLibraryProjects
+    : {};
+  const out = {};
+  Object.entries(projects).forEach(([pid, items]) => {
+    if (Array.isArray(items) && items.length > 0) out[pid] = items;
+  });
+  return {
+    common: Array.isArray(src._figuresLibrary) ? src._figuresLibrary : [],
+    projects: out
+  };
+};
+
+/** Bibliothèque d'images d'un fichier de sauvegarde HTML complet. */
+export const figuresFromBackupHtml = (html, decompress) => {
+  const backup = backupStateFromHtml(html, decompress);
+  if (!backup) return null;
+  return {
+    ...figuresFromBackupState(backup.state),
+    title: backup.title,
+    savedAt: backup.savedAt,
+    isAdminBase: !!backup.state.administration
+  };
+};
+
+/** Compte-rendu affiché avant/après une récupération d'images. */
+export const backupFigureCount = (figures) => {
+  const f = figures || {};
+  const projects = f.projects && typeof f.projects === 'object' ? f.projects : {};
+  const ids = Object.keys(projects);
+  const projectItems = ids.reduce((n, pid) => n + (Array.isArray(projects[pid]) ? projects[pid].length : 0), 0);
+  const common = Array.isArray(f.common) ? f.common.length : 0;
+  return { common, projectCount: ids.length, projectItems, total: common + projectItems };
 };
 
 /** Nombre de références trouvées dans une sauvegarde (pour l'aperçu). */

@@ -3157,6 +3157,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                   {libProjectBlocked
                     ? '🔒 This project’s figures are private to its team.'
                     : 'No images in this library yet.'}
+                  {!libProjectBlocked && (
+                    <span className="block mt-1 not-italic text-[11px] text-slate-400">
+                      The image files are on Google Drive (<code>projects/&lt;project&gt;/images</code>) — this LIST lives in
+                      this browser and travels inside every backup file. On another computer:
+                      <b> Publications → Figures &amp; Slides → ♻️ Recover</b>.
+                    </span>
+                  )}
                 </p>
               )}
               {libraryItems.map(item => (

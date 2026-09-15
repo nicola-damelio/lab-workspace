@@ -31,7 +31,7 @@ import { applyPapersRecovery, readPublications, readExcludedPubs, readRelevantSu
 import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud, setProjectDatasetScope, removeProjectsOfDataset } from './components/AppModules/projectsModule';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
-import { setActiveProjectId, readLibrary, readAllProjectLibraries, restoreLibraryFromSnapshot } from './utils/figuresLibrary';
+import { setActiveProjectId, readLibrary, readAllProjectLibraries, mergeLibraryFromSnapshot } from './utils/figuresLibrary';
 import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, getLastDriveConnectError, driveBootstrapRequestedAtLoad, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders } from './utils/driveUpload';
 import { sanitizeSlug, datasetFolderSlug } from './utils/driveNaming';
 import { resolveOriginTest } from './utils/pendingFigureScroll';
@@ -2784,12 +2784,9 @@ useEffect(() => {
         setCustomFields(normalizeCustomFields(s.customFields));
       }
 
-      // Restore the Figures & Slides image library embedded in the HTML file
-      // (app-level; on replace the whole library is taken from the file).
-      if (s._figuresLibrary !== undefined || s._figuresLibraryProjects !== undefined) {
-        restoreLibraryFromSnapshot({ common: s._figuresLibrary, projects: s._figuresLibraryProjects });
-        window.dispatchEvent(new CustomEvent('lab:figures-library-restored'));
-      }
+      // NOTE: the Figures & Slides image LIBRARY is not handled here — it is
+      // merged (never replaced) for BOTH modes, together with the papers, see
+      // the `mergeLibraryFromSnapshot` call at the end of this function.
     } else if (mode === 'append') {
       const newTests = loadedTests.map((p) => ({
         ...p,
@@ -2928,6 +2925,26 @@ if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([.
         }
       } catch (err) {
         console.warn('Paper recovery failed:', err && err.message);
+      }
+    }
+
+    /* ── BIBLIOTHÈQUE D'IMAGES : toujours en FUSION, dans les DEUX modes ───────
+       La liste des images (commune + par projet) vit dans ce navigateur, les
+       images elles-mêmes sur le Drive : elle est embarquée dans chaque
+       sauvegarde et relue ici en AJOUT/FUSION. Un fichier dont la bibliothèque
+       est vide (ou un autre poste, qui n'a rien) n'efface donc jamais rien —
+       avant, l'import REMPLAÇAIT la liste, ce qui perdait les images d'un poste
+       (aucun index de secours n'existe dans le Drive). Les images du fichier qui
+       manquent ici sont ajoutées, les champs vides sont complétés. */
+    if (Array.isArray(s._figuresLibrary) || (s._figuresLibraryProjects && typeof s._figuresLibraryProjects === 'object')) {
+      try {
+        const lib = mergeLibraryFromSnapshot({ common: s._figuresLibrary, projects: s._figuresLibraryProjects });
+        if (lib.added || lib.filled) {
+          console.info('Image library merged from the loaded file:', lib);
+          window.dispatchEvent(new CustomEvent('lab:figures-library-restored'));
+        }
+      } catch (err) {
+        console.warn('Image library restore failed:', err && err.message);
       }
     }
 
