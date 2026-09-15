@@ -40,7 +40,7 @@ import {
 } from './adminSchema';
 import { parseEuroAmount, extractNumeroFromDoc } from './importUtils';
 import {
-  sendAdminMail, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
+  sendAdminMail, superuserEmailsOf,
   summarizeMail, mailBodyText, notificationTargetOf, personEmailOf,
 } from './emailNotify';
 import { uploadLocalFile, cloudBackendAvailable } from '../utils/driveUpload';
@@ -529,8 +529,9 @@ const DesiderataModal = ({
       patch.statut = 'En attente'; // nouveau souhait soumis → en attente de décision
     }
     onSave(patch, editing && rec.id);
-    /* Une fois le souhait approuvé, un e-mail prévient le superutilisateur et
-       le(s) gestionnaire(s). */
+    /* Une fois le souhait approuvé, un e-mail prévient le superutilisateur
+       (le/la gestionnaire n’est prévenu(e) qu’au transfert « pour signature » /
+       « pour révision » ou à la signature du devis / BC). */
     if (approvalNow && typeof onApproved === 'function') onApproved(patch, editing && rec.id);
   };
 
@@ -864,14 +865,13 @@ export const DesiderataPage = () => {
   const devisBc = useMemo(() => (Array.isArray(data.devisBc) ? data.devisBc : []), [data.devisBc]);
 
   /* Destinataires des notifications d’approbation : le superutilisateur (fiche
-     Personnel liée de l’opérateur) et, le cas échéant, la fiche « Gestionnaire ». */
+     Personnel liée de l’opérateur). La (le) gestionnaire n’est PAS notifié(e)
+     quand un achat est seulement marqué « Approuvé » : elle/il ne reçoit un
+     e-mail qu’au transfert « pour signature » / « pour révision » et à la
+     signature d’un devis ou d’un BC dans « Approbation devis & BC ». */
   const superuserEmails = useMemo(
     () => superuserEmailsOf(operators, personnel),
     [operators, personnel]
-  );
-  const gestionnaireEmails = useMemo(
-    () => personnelEmailsMatching(personnel, { fonction: 'Gestionnaire' }),
-    [personnel]
   );
 
   const [modal, setModal] = useState(null); // null | { mode:'new' } | { mode:'edit', rec }
@@ -1121,7 +1121,11 @@ export const DesiderataPage = () => {
     setNotice({ tone: 'ok', text: `Achat prévu / souhaité « ${label} » supprimé.` });
   };
 
-  /* E-mail au superutilisateur (et au(x) gestionnaire(s)) quand un souhait passe « Approuvé ». */
+  /* E-mail au superutilisateur quand un achat prévu / souhaité passe
+     « Approuvé ». Le(la) gestionnaire n’est volontairement PAS destinataire :
+     approuver une prévision ne la lui transmet pas. Il/elle n’est prévenu(e)
+     qu’au transfert « ✓ Signature » / « ✎ Révision » et à la signature d’un
+     devis / BC dans la page « Approbation devis & BC ». */
   const notifyApproved = async (patch) => {
     const label = txt(patch && patch.description) || 'achat prévu / souhaité';
     const subject = `[Lab Workspace] Achat prévu / souhaité approuvé — ${label}`;
@@ -1141,11 +1145,11 @@ export const DesiderataPage = () => {
       `Décision prise par : ${(currentUser && currentUser.name) || 'superutilisateur'}`,
     ].filter(Boolean);
     const res = await sendAdminMail({
-      to: mergeEmails(superuserEmails, gestionnaireEmails),
+      to: superuserEmails,
       subject,
       text: mailBodyText(lines),
     });
-    const summary = summarizeMail(res, 'Superutilisateur & gestionnaire(s)');
+    const summary = summarizeMail(res, 'Superutilisateur');
     setNotice({
       tone: res && res.ok ? 'ok' : 'warn',
       text: summary.text,
@@ -1165,7 +1169,9 @@ export const DesiderataPage = () => {
       statutChangedBy: (currentUser && currentUser.name) || '',
       statutChangedAt: Date.now(),
     }, r.id);
-    /* Passage à « Approuvé » → notification au(x) gestionnaire(s). */
+    /* Passage à « Approuvé » → notification au superutilisateur uniquement
+       (voir notifyApproved : la gestionnaire n’est prévenue qu’au transfert
+       « pour signature » ou à la signature du devis / BC). */
     if (isDesiderataApproved(value) && !isDesiderataApproved(previous)) {
       notifyApproved({ ...r, statut: value }, r.id);
     }
@@ -1722,7 +1728,9 @@ export const DesiderataPage = () => {
         à la soumission) — le superutilisateur, qui décide et transfère, voit tout. La <b>première colonne « Décision »</b> affiche la
         décision du superutilisateur : <b>Approuvé / En attente / Test / Pas maintenant</b> (personnalisable dans Setup › Options des listes
         déroulantes). La décision <b>« Test »</b> compte la demande dans les prévisions <b>« Achats prévus »</b> de la page Recettes sans
-        l’accepter réellement (aucune notification, aucun transfert). Pour toute demande en attente, la colonne <b>« Transfert »</b> propose au directeur : <b>« ✓ Signature »</b>
+        l’accepter réellement (aucune notification, aucun transfert). Décider <b>« Approuvé »</b> n’envoie <b>aucun e-mail à la
+        gestionnaire</b> : elle n’est prévenue qu’au transfert ci-dessous (ou à la signature du devis / BC dans « Approbation devis & BC »).
+        Pour toute demande en attente, la colonne <b>« Transfert »</b> propose au directeur : <b>« ✓ Signature »</b>
         (documents complets — un devis « en attente de signature » est créé dans « Approbation devis & BC ») ou <b>« ✎ Révision »</b>
         (documents manquants — un devis « En gestion » est créé pour être complété par la responsable d'achats, puis envoyé pour
         signature). La demande transférée <b>disparaît de cette liste</b> (rétablie via « Afficher les transférées ») et son montant est

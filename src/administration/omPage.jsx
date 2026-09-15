@@ -31,7 +31,7 @@ import { uploadLocalFile, cloudBackendAvailable } from '../utils/driveUpload';
 import { budgetDocPath, budgetDocFileName } from './driveFiling';
 import { findRecetteTwin, sameCatType } from './recetteLink';
 import {
-  sendAdminMail, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
+  sendAdminMail, superuserEmailsOf,
   summarizeMail, mailBodyText, notificationTargetOf, personEmailOf,
 } from './emailNotify';
 import { scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName, scopeSeesAllRows, scopeFonctions } from './ownScope';
@@ -353,7 +353,9 @@ const OmModal = ({
       patch.statutChangedAt = Date.now();
     }
     onSave(patch, editing && rec.id);
-    /* Une fois l’OM « Acceptée », on prévient le superutilisateur et le(s) gestionnaire(s). */
+    /* Une fois l’OM « Acceptée », on prévient le superutilisateur. Le(la)
+       gestionnaire ne reçoit rien à ce stade : seulement au transfert « pour
+       signature » / « pour révision » ou à la signature du devis / BC. */
     if (canDecide && !isOmApproved(previous) && isOmApproved(decided) && typeof onApproved === 'function') {
       onApproved(patch, editing && rec.id);
     }
@@ -694,14 +696,13 @@ export const OmPage = () => {
   );
 
   /* Destinataires des notifications d’approbation : le superutilisateur (fiche
-     Personnel liée de l’opérateur) et, le cas échéant, la fiche « Gestionnaire ». */
+     Personnel liée de l’opérateur). La (le) gestionnaire n’est PAS notifié(e)
+     quand une OM est seulement marquée « Acceptée » : elle/il ne reçoit un
+     e-mail qu’au transfert « pour signature » / « pour révision » et à la
+     signature d’un devis ou d’un BC dans « Approbation devis & BC ». */
   const superuserEmails = useMemo(
     () => superuserEmailsOf(operators, personnel),
     [operators, personnel]
-  );
-  const gestionnaireEmails = useMemo(
-    () => personnelEmailsMatching(personnel, { fonction: 'Gestionnaire' }),
-    [personnel]
   );
 
   /* Options de statut : personnalisées dans Setup › Options des listes déroulantes. */
@@ -801,8 +802,12 @@ export const OmPage = () => {
   }, [rows, showSoldes, omStatusByKey]);
   const hiddenSoldes = rows.length - visibleRows.length;
 
-  /* Envoi d’un e-mail au superutilisateur (et au(x) gestionnaire(s)) quand
-     l’OM passe « Acceptée ». */
+  /* Envoi d’un e-mail au superutilisateur quand l’OM passe « Acceptée ».
+     Le(la) gestionnaire n’est volontairement PAS destinataire ici : marquer une
+     OM « Acceptée » ne fait que l’accepter, sans rien lui transmettre. Il/elle
+     n’est prévenu(e) qu’au moment où le directeur clique « ✓ Signature »
+     (transfert du devis) ou signe un devis / BC dans la page « Approbation
+     devis & BC ». */
   const notifyApproved = async (rec) => {
     const label = missionOf(rec) || txt(rec.description) || 'ordre de mission';
     const ref = txt(rec.numOM);
@@ -822,11 +827,11 @@ export const OmPage = () => {
       `Décision prise par : ${currentName || 'superutilisateur'}`,
     ].filter(Boolean);
     const res = await sendAdminMail({
-      to: mergeEmails(superuserEmails, gestionnaireEmails),
+      to: superuserEmails,
       subject,
       text: mailBodyText(lines),
     });
-    const summary = summarizeMail(res, 'Superutilisateur & gestionnaire(s)');
+    const summary = summarizeMail(res, 'Superutilisateur');
     setNotice({
       tone: res && res.ok ? 'ok' : 'warn',
       text: summary.text,
@@ -1492,7 +1497,9 @@ export const OmPage = () => {
         <b>OM prévus / souhaités :</b> chaque OM décrit une mission à préparer. Chaque membre ne voit que ses propres OM
         (demandeur = lui-même, verrouillé) — le superutilisateur, qui accepte et transfère, voit tout. La <b>première colonne « Statut »</b>
         (En attente / Acceptée / Test / Refusée / Terminée) n’est modifiable que par le superutilisateur. Le statut <b>« Test »</b> compte l’OM
-        dans les prévisions <b>« OM prévus »</b> de la page Recettes sans l’accepter réellement (aucune notification, aucun transfert). Dans le formulaire,
+        dans les prévisions <b>« OM prévus »</b> de la page Recettes sans l’accepter réellement (aucune notification, aucun transfert).
+        Marquer une OM <b>« Acceptée »</b> n’envoie <b>aucun e-mail à la gestionnaire</b> : elle n’est prévenue qu’au transfert
+        <b>« ✓ Signature »</b> / <b>« ✎ Révision »</b> (ou à la signature du devis / BC dans « Approbation devis & BC »). Dans le formulaire,
         chaque <b>poste de coût</b> est étiqueté <b>« BC »</b> (commandé par le laboratoire : devis dans « Approbation
         devis & BC ») ou <b>« Remb. »</b> (frais avancés par le membre puis remboursés : fiche dans Dépenses ›
         Remboursements). Pour une demande en attente, la colonne <b>« Gestion des frais »</b> propose au directeur
