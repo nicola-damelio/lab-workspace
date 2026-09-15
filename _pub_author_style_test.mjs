@@ -20,9 +20,9 @@ register('./_esm_test_hook.mjs', import.meta.url);
 const {
   AUTHOR_STYLES, AUTHOR_STYLE_IDS, PUB_FORMAT_KEY, PUB_FORMAT_PRESETS,
   authorMatchesCandidate, authorStyleOf, buildPubFormat, labMemberOf,
-  loadPubFormat, matchCoauthors, normalizePubFormat, pubCitationHtml,
-  pubCitationText, pubDoiUrl, pubFieldValue, renderAuthorNames,
-  sanitizeScientistStyles, scientistStyleOf
+  loadPubFormat, matchCoauthors, normalizePubFormat, pubCitationData,
+  pubCitationHtml, pubCitationText, pubDoiUrl, pubFieldValue, pubOriginOf,
+  renderAuthorNames, sanitizeScientistStyles, scientistStyleOf
 } = await import('./src/components/pubCitation.js');
 
 let passed = 0;
@@ -167,8 +167,57 @@ ok(!/renderAuthorNames|PUB_FORMAT_PRESETS = \{|const buildPubFormat/.test(src),
   'le moteur n’est plus dupliqué dans Publications.jsx');
 ok(/export \{\r?\n  AUTHOR_STYLES/.test(src) && /\} from '\.\/pubCitation';/.test(src),
   'Publications.jsx réexporte le moteur (les imports existants continuent de marcher)');
-ok(/import \{ loadPubFormat, pubCitationHtml \} from '\.\.\/Publications';/.test(pdm),
-  'la bibliographie des projets continue d’importer depuis Publications');
+ok(/import \{ loadPubFormat, pubCitationData, pubCitationHtml \} from '\.\.\/Publications';/.test(pdm),
+  'la bibliographie des projets importe le moteur depuis Publications');
 ok(!/from 'react'/.test(mod), 'le moteur ne dépend pas de React (testable hors navigateur)');
+/* ── 8. Co-auteurs dans les projets : les entrées de bibliographie sont
+   complétées par la publication d’origine. C’est le cas du papier importé AVANT
+   que les auteurs ne soient recopiés dans la bibliographie : la citation ne
+   montrait alors que le titulaire du projet. ─────────────────────────────── */
+const storedPub = { id: 'pub_1', ...pub, scientist: 'Rossi M' };
+const legacyBib = { id: 'pb_1', title: pub.title, link: '', scientist: 'Rossi M', comments: '' };
+
+eq(pubOriginOf(legacyBib, [storedPub]), storedPub, 'publication d’origine retrouvée par le titre');
+eq(pubOriginOf({ ...legacyBib, sourceId: 'pub_1', title: 'titre corrigé' }, [storedPub]), storedPub,
+  'publication d’origine retrouvée par sourceId, même si le titre a été corrigé');
+eq(pubOriginOf(legacyBib, [{ ...storedPub, title: 'Autre papier' }]), null, 'titre différent ⇒ aucune correspondance');
+eq(pubOriginOf(legacyBib, []), null, 'sans liste de publications ⇒ rien (pas de plantage)');
+eq(pubCitationData(legacyBib, [storedPub]).authors, ALL,
+  'entrée ancienne sans auteurs ⇒ liste COMPLÈTE des auteurs du papier (laboratoire + extérieurs)');
+eq(pubCitationData({ ...legacyBib, authors: 'Rossi M et al.' }, [storedPub]).authors, 'Rossi M et al.',
+  'une correction manuelle des auteurs n’est jamais écrasée');
+eq(pubCitationData({ ...legacyBib, year: '2025' }, [storedPub]).year, '2025', 'champ propre prioritaire');
+eq(pubCitationData({ id: 'pb_2', title: 'Papier inconnu' }, [storedPub]),
+  { authors: '', year: '', title: 'Papier inconnu', journal: '', volume: '', pages: '', doi: '' },
+  'papier absent des publications ⇒ entrée reprise telle quelle');
+const legacyCitation = pubCitationHtml(pubCitationData(legacyBib, [storedPub]), fmt(), scientists);
+ok(legacyCitation.includes('Smith J') && legacyCitation.includes('Costa L'),
+  'la citation du projet cite désormais les co-auteurs extérieurs eux aussi');
+
+/* ── 9. Câblage entre Publications et la bibliographie des projets ──────── */
+ok(/pubCitationHtml\(citeData\(r\), pubFormat, operatorNames\)/.test(pdm),
+  'la bibliographie du document de projet cite les auteurs complets (citeData)');
+ok(/\[d\.authors, d\.journal, d\.year\]/.test(pdm) && /\[d\.authors, d\.journal, d\.year, r\.source\]/.test(pdm),
+  'les listes du projet affichent les auteurs complets, pas seulement le titulaire');
+ok(/const pickerItems = \(list\) => list\.map/.test(pdm) && /items: pickerItems\(projectBib\)/.test(pdm),
+  'le sélecteur de références montre lui aussi les co-auteurs');
+ok(/authors: bibDraft\.authors\.trim\(\)/.test(pdm), 'le formulaire « + Add paper » du projet saisit les auteurs');
+ok(/authors: p\.authors \|\| ''/.test(src), 'l’import en bibliographie de projet recopie les auteurs');
+ok(/authors: pbDraft\.authors\.trim\(\)/.test(src), 'le formulaire « + Add paper » de Publications saisit les auteurs');
+ok(/\.\.\.pubCitationData\(paper, pubs\),/.test(src),
+  'les lignes de la bibliographie de projet sont complétées par la publication d’origine');
+ok(/const citeData = \(entry\) => pubCitationData\(entry, pubs\)/.test(pdm),
+  'le projet résout les auteurs via pubCitationData');
+
+
+/* Les « Relevant papers » (recherche PubMed / Crossref) conservent elles aussi
+   les auteurs : la chaîne complète recherche → bibliographie de projet →
+   citation ne perd plus les co-auteurs. */
+ok(/authors: paperDraft\.authors\.trim\(\)/.test(src), '« + Add paper » (Relevant papers) saisit les auteurs');
+ok(/scientist, authors: r\.authors \|\| '', journal: r\.journal \|\| ''/.test(src),
+  'les résultats de recherche ajoutés aux Relevant papers conservent leurs auteurs');
+ok(/const paperCols = \['Labels', 'Title', 'Authors',/.test(src), 'la table des Relevant papers montre les auteurs');
+
+
 
 console.log(`_pub_author_style_test: ${passed} passed`);

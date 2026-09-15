@@ -42,6 +42,7 @@ import { parseEuroAmount, extractNumeroFromDoc } from './importUtils';
 import {
   sendAdminMail, superuserEmailsOf, superuserNoticeEmailsOf, personnelEmailsMatching,
   summarizeMail, summarizeMailTo, mailBodyText, notificationTargetOf, personEmailOf,
+  actorEmailOf, withoutActorEmails,
 } from './emailNotify';
 import { uploadLocalFile, cloudBackendAvailable } from '../utils/driveUpload';
 import { budgetDocPath, budgetDocFileName } from './driveFiling';
@@ -883,6 +884,18 @@ export const DesiderataPage = () => {
     () => superuserNoticeEmailsOf(superuserEmails, personnelEmailsMatching(personnel, { fonction: 'Gestionnaire' })),
     [superuserEmails, personnel]
   );
+  /* L’AUTEUR de la décision ne se notifie JAMAIS lui-même : approuver une ligne
+     n’envoie donc aucun e-mail au superutilisateur qui vient de cliquer (l’adresse
+     est résolue via sa fiche Personnel, comme pour `superuserEmails`). Sans ce
+     filtre, le directeur recevait un e-mail pour chaque ligne qu’il approuvait. */
+  const actorEmails = useMemo(
+    () => [actorEmailOf(currentUser, personnel), personEmailOf(access.profile && access.profile.person)],
+    [currentUser, personnel, access.profile]
+  );
+  const approvalNoticeEmails = useMemo(
+    () => withoutActorEmails(superuserNoticeEmails, actorEmails),
+    [superuserNoticeEmails, actorEmails]
+  );
 
   const [modal, setModal] = useState(null); // null | { mode:'new' } | { mode:'edit', rec }
   const [importOpen, setImportOpen] = useState(false);
@@ -1135,7 +1148,10 @@ export const DesiderataPage = () => {
      « Approuvé ». Le(la) gestionnaire n’est volontairement PAS destinataire :
      approuver une prévision ne la lui transmet pas. Il/elle n’est prévenu(e)
      qu’au transfert « ✓ Signature » / « ✎ Révision » et à la signature d’un
-     devis / BC dans la page « Approbation devis & BC ». */
+     devis / BC dans la page « Approbation devis & BC ».
+     L’AUTEUR de la décision (le superutilisateur qui clique) n’est pas
+     destinataire non plus — voir approvalNoticeEmails : s’il est le seul à
+     décider, aucun e-mail ne part. */
   const notifyApproved = async (patch) => {
     const label = txt(patch && patch.description) || 'achat prévu / souhaité';
     const subject = `[Lab Workspace] Achat prévu / souhaité approuvé — ${label}`;
@@ -1154,12 +1170,21 @@ export const DesiderataPage = () => {
       txt(patch && patch.codeProduit) ? `Code produit : ${txt(patch.codeProduit)}` : '',
       `Décision prise par : ${(currentUser && currentUser.name) || 'superutilisateur'}`,
     ].filter(Boolean);
+    /* Aucun destinataire restant (l’auteur de la décision est le seul
+       superutilisateur à prévenir) → aucun e-mail, message explicite. */
+    if (!approvalNoticeEmails.length && superuserNoticeEmails.length) {
+      setNotice({
+        tone: 'ok',
+        text: `Achat prévu / souhaité « ${label} » approuvé — aucun e-mail envoyé : vous êtes l’auteur de la décision et le seul superutilisateur à prévenir.`,
+      });
+      return;
+    }
     const res = await sendAdminMail({
-      to: superuserNoticeEmails,
+      to: approvalNoticeEmails,
       subject,
       text: mailBodyText(lines),
     });
-    const summary = summarizeMailTo(res, 'Superutilisateur', superuserNoticeEmails);
+    const summary = summarizeMailTo(res, 'Superutilisateur', approvalNoticeEmails);
     setNotice({
       tone: res && res.ok ? 'ok' : 'warn',
       text: summary.text,

@@ -12,7 +12,7 @@ import { loadProjects, saveProjects } from './AppModules/projectsModule';
 import {
   AUTHOR_STYLE_IDS, AUTHOR_STYLES, PUB_FORMAT_KEY, PUB_FORMAT_PRESETS,
   authorMatchesCandidate, buildPubFormat, loadPubFormat, matchCoauthors,
-  pubCitationHtml, scientistStyleOf
+  pubCitationData, pubCitationHtml, scientistStyleOf
 } from './pubCitation';
 
 const JOURNALS_STORAGE_KEY = 'labWorkspace_journals';
@@ -37,6 +37,7 @@ export {
   AUTHOR_STYLES, AUTHOR_STYLE_IDS, PUB_FORMAT_PRESETS,
   buildPubFormat, loadPubFormat, normalizePubFormat,
   pubCitationHtml, pubCitationText, pubFieldValue, pubDoiUrl,
+  pubCitationData, pubOriginOf,
   authorMatchesCandidate, matchCoauthors, isLabAuthor, labMemberOf,
   scientistStyleOf, authorStyleOf, sanitizeScientistStyles
 } from './pubCitation';
@@ -759,7 +760,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
   const [paperExpanded, setPaperExpanded] = useState(null);
   const [pbTransferStatus, setPbTransferStatus] = useState('');
   const [showAddPaper, setShowAddPaper] = useState(false);
-  const [paperDraft, setPaperDraft] = useState({ title: '', link: '', labels: [], scientist: '', comments: '' });
+  const [paperDraft, setPaperDraft] = useState({ title: '', link: '', labels: [], scientist: '', comments: '', authors: '', year: '' });
   // Custom subjects defined by the user (persisted)
   const [customSubjects, setCustomSubjects] = useState(() => {
     try {
@@ -789,7 +790,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
   });
   const [pbFilter, setPbFilter] = useState('all');
   const [pbShowAdd, setPbShowAdd] = useState(false);
-  const [pbDraft, setPbDraft] = useState({ project: '', title: '', link: '', comments: '' });
+  const [pbDraft, setPbDraft] = useState({ project: '', title: '', link: '', comments: '', authors: '', year: '' });
   const [pbExpanded, setPbExpanded] = useState(null);
   // Import papers (from Relevant papers / Publications of the scientist) into a project
   const [pbImportOpen, setPbImportOpen] = useState(false);
@@ -814,12 +815,24 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     const rows = [];
     myProjects.forEach((prj) => {
       (prj.bibliography || []).forEach((paper) => {
-        rows.push({ ...paper, projectId: prj.id, projectName: prj.name, projectScientist: prj.scientist });
+        /* Chaque ligne est complétée par la publication d'origine : les papiers
+           importés avant la prise en charge des co-auteurs n'ont qu'un titre, et
+           la liste affichait alors le seul titulaire du projet. */
+        rows.push({
+          ...paper,
+          ...pubCitationData(paper, pubs),
+          projectId: prj.id, projectName: prj.name, projectScientist: prj.scientist
+        });
       });
     });
     if (pbFilter !== 'all') return rows.filter((r) => r.projectName === pbFilter);
     return rows;
-  }, [myProjects, pbFilter]);
+  }, [myProjects, pbFilter, pubs]);
+
+  /* Format de citation à appliquer à une ligne : celui du projet concerné
+     (« Publication format » par projet) sinon le format par défaut. */
+  const pbFormatOf = (projectId) =>
+    (myProjects.find((prj) => prj.id === projectId) || {}).pubFormat || pubFormat;
 
   const addPbPaper = () => {
     const title = (pbDraft.title || '').trim();
@@ -830,11 +843,12 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
         ...prj,
         bibliography: [...(prj.bibliography || []), {
           id: 'pb_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
-          title, link: pbDraft.link.trim(), scientist: prj.scientist, comments: pbDraft.comments.trim()
+          title, link: pbDraft.link.trim(), scientist: prj.scientist, comments: pbDraft.comments.trim(),
+          authors: pbDraft.authors.trim(), year: pbDraft.year.trim()
         }]
       };
     }));
-    setPbDraft({ project: '', title: '', link: '', comments: '' });
+    setPbDraft({ project: '', title: '', link: '', comments: '', authors: '', year: '' });
     setPbShowAdd(false);
   };
 
@@ -898,6 +912,15 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
         id: 'pb_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8) + '_' + added,
         title: p.title || 'Untitled',
         link: p.link || p.doi || '',
+        /* La liste COMPLÈTE des auteurs (co-auteurs du laboratoire et auteurs
+           extérieurs) suit le papier : sans elle, la bibliographie du projet ne
+           pouvait afficher que le titulaire du projet. */
+        authors: p.authors || '',
+        journal: p.journal || '',
+        year: p.year || '',
+        doi: p.doi || '',
+        volume: p.volume || '',
+        pages: p.pages || '',
         scientist: prj.scientist,
         comments: p.comments || '',
         labels: Array.isArray(p.labels) ? p.labels : (p.subject ? [p.subject] : [])
@@ -965,10 +988,14 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
       labels: finalLabels,
       subject: finalLabels[0],
       scientist,
+      /* Les auteurs du papier suivent l’entrée : la bibliographie d’un projet
+         (et donc la citation du document) les affiche au complet. */
+      authors: paperDraft.authors.trim(),
+      year: paperDraft.year.trim(),
       comments: paperDraft.comments || '',
       createdAt: Date.now()
     }]);
-    setPaperDraft({ title: '', link: '', labels: [], scientist: '', comments: '' });
+    setPaperDraft({ title: '', link: '', labels: [], scientist: '', comments: '', authors: '', year: '' });
     setShowAddPaper(false);
   };
 
@@ -1009,7 +1036,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     const link = r.doi ? `https://doi.org/${r.doi}` : (r.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${r.pmid}/` : '');
     setPapers((prev) => [...prev, {
       id: genPubId(), title: r.title || '', link, labels: finalLabels, subject: finalLabels[0],
-      scientist, comments: '', createdAt: Date.now()
+      scientist, authors: r.authors || '', journal: r.journal || '', year: r.year || '', comments: '', createdAt: Date.now()
     }]);
     setAddedPaperKeys((prev) => [...prev, paperKey(r)]);
   };
@@ -1026,7 +1053,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
       const k = (link || r.title || '').toLowerCase();
       if (!k || seen.has(k)) continue;
       seen.add(k);
-      items.push({ id: genPubId(), title: r.title || '', link, labels: finalLabels, subject: finalLabels[0], scientist, comments: '', createdAt: Date.now() });
+      items.push({ id: genPubId(), title: r.title || '', link, labels: finalLabels, subject: finalLabels[0], scientist, authors: r.authors || '', journal: r.journal || '', year: r.year || '', comments: '', createdAt: Date.now() });
     }
     if (items.length > 0) setPapers((prev) => [...prev, ...items]);
     setAddedPaperKeys((prev) => [...prev, ...paperResults.map((r) => paperKey(r))]);
@@ -1556,7 +1583,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     </section>
 
   );
-  const paperCols = ['Labels', 'Title', 'Link', 'Scientist', 'PDF', 'Comments', ''];
+  const paperCols = ['Labels', 'Title', 'Authors', 'Link', 'Scientist', 'PDF', 'Comments', ''];
 
   const renderPapers = () => (
     <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
@@ -1715,6 +1742,16 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
               <input className={inputCls} value={paperDraft.link} onChange={(e) => setPaperDraft({ ...paperDraft, link: e.target.value })}
                      placeholder="https://doi.org/… or 10.xxxx/…" />
             </div>
+            <div className="lg:col-span-2">
+              <label className={labelCls}>Authors (all of them — lab members and outside co-authors)</label>
+              <input className={inputCls} value={paperDraft.authors} onChange={(e) => setPaperDraft({ ...paperDraft, authors: e.target.value })}
+                     placeholder="e.g. Rossi M, Bianchi A, Smith J…" />
+            </div>
+            <div>
+              <label className={labelCls}>Year</label>
+              <input className={inputCls} value={paperDraft.year} onChange={(e) => setPaperDraft({ ...paperDraft, year: e.target.value })}
+                     placeholder="2024" />
+            </div>
             <div className="lg:col-span-3">
               <label className={labelCls}>Labels (select one or more — e.g. antimicrobial peptides, structure calculation, NMR methods)</label>
               <LabelChips labels={paperDraft.labels || []} options={paperSubjects}
@@ -1783,6 +1820,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                           </div>
                         </td>
                         <td className="px-3 py-2 border-b border-slate-100 align-top"><span className="text-xs font-semibold text-slate-800">{p.title || '—'}</span></td>
+                        <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600"><span className="line-clamp-2">{p.authors || '—'}</span></td>
                         <td className="px-3 py-2 border-b border-slate-100 align-top" onClick={(e) => e.stopPropagation()}>
                           {p.link ? (
                             <a href={normalizeLink(p.link)} target="_blank" rel="noreferrer"
@@ -1811,6 +1849,15 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                               <div className="lg:col-span-2">
                                 <label className={labelCls}>Title</label>
                                 <input className={inputCls} value={p.title || ''} onChange={(e) => patchPaper(p.id, { title: e.target.value })} />
+                              </div>
+                              <div className="lg:col-span-2">
+                                <label className={labelCls}>Authors (all of them — lab members and outside co-authors)</label>
+                                <input className={inputCls} value={p.authors || ''} onChange={(e) => patchPaper(p.id, { authors: e.target.value })}
+                                       placeholder="e.g. Rossi M, Bianchi A, Smith J…" />
+                              </div>
+                              <div>
+                                <label className={labelCls}>Year</label>
+                                <input className={inputCls} value={p.year || ''} onChange={(e) => patchPaper(p.id, { year: e.target.value })} placeholder="2024" />
                               </div>
                               <div className="lg:col-span-3">
                                 <label className={labelCls}>Labels (select one or more)</label>
@@ -2177,6 +2224,16 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                 <input className={inputCls} value={pbDraft.link} onChange={(e) => setPbDraft({ ...pbDraft, link: e.target.value })}
                        placeholder="https://doi.org/…" />
               </div>
+              <div className="lg:col-span-2">
+                <label className={labelCls}>Authors</label>
+                <input className={inputCls} value={pbDraft.authors} onChange={(e) => setPbDraft({ ...pbDraft, authors: e.target.value })}
+                       placeholder="e.g. Rossi M, Bianchi A…" />
+              </div>
+              <div>
+                <label className={labelCls}>Year</label>
+                <input className={inputCls} value={pbDraft.year} onChange={(e) => setPbDraft({ ...pbDraft, year: e.target.value })}
+                       placeholder="2024" />
+              </div>
               <div className="lg:col-span-3">
                 <label className={labelCls}>Comments (optional)</label>
                 <input className={inputCls} value={pbDraft.comments} onChange={(e) => setPbDraft({ ...pbDraft, comments: e.target.value })}
@@ -2197,14 +2254,14 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
             <table className="w-full text-sm border-collapse">
               <thead className="sticky top-0 bg-slate-100 z-10">
                 <tr>
-                  {['Project', 'Title', 'Link', 'Scientist', 'PDF', 'Comments', ''].map((h, hi) => (
+                  {['Project', 'Title', 'Authors', 'Link', 'Scientist', 'PDF', 'Comments', ''].map((h, hi) => (
                     <th key={hi} className="text-left text-[10px] font-bold text-slate-500 uppercase tracking-wide px-3 py-2 border-b border-slate-200">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {pbRows.length === 0 ? (
-                  <tr><td colSpan={7} className="text-xs text-slate-400 italic px-3 py-3">No project bibliography papers yet — use “+ Add paper” to label a paper with a project name.</td></tr>
+                  <tr><td colSpan={8} className="text-xs text-slate-400 italic px-3 py-3">No project bibliography papers yet — use “+ Add paper” to label a paper with a project name.</td></tr>
                 ) : (
                   pbRows.map((p, idx) => {
                     const isOpen = pbExpanded === p.id;
@@ -2216,6 +2273,9 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                             <span className="inline-flex items-center gap-1 text-[10px] font-bold text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-2 py-0.5">📁 {p.projectName || '—'}</span>
                           </td>
                           <td className="px-3 py-2 border-b border-slate-100 align-top"><span className="text-xs font-semibold text-slate-800">{p.title || '—'}</span></td>
+                          <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600">
+                            <span className="line-clamp-2">{p.authors || '—'}</span>
+                          </td>
                           <td className="px-3 py-2 border-b border-slate-100 align-top" onClick={(e) => e.stopPropagation()}>
                             {p.link ? (
                               <a href={normalizeLink(p.link)} target="_blank" rel="noreferrer"
@@ -2238,7 +2298,14 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
 
                         {isOpen && (
                           <tr className="bg-violet-50/40">
-                            <td colSpan={7} className="px-4 py-3 border-b border-slate-200">
+                            <td colSpan={8} className="px-4 py-3 border-b border-slate-200">
+                              <div className="bg-white border border-slate-200 rounded-lg p-3 mb-3">
+                                <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-1">
+                                  Formatted citation — the project document “Bibliography” uses the same format
+                                </div>
+                                <div className="text-xs text-slate-800"
+                                     dangerouslySetInnerHTML={{ __html: pubCitationHtml(p, pbFormatOf(p.projectId), citationScientists) || '—' }} />
+                              </div>
                               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                                 <div className="lg:col-span-2">
                                   <label className={labelCls}>Title</label>
@@ -2249,6 +2316,15 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                                   <select className={inputCls} value={p.projectName} onChange={(e) => movePbPaper(p.projectId, p.id, e.target.value)}>
                                     {myProjects.map((prj) => <option key={prj.id} value={prj.name}>{prj.name}</option>)}
                                   </select>
+                                </div>
+                                <div className="lg:col-span-2">
+                                  <label className={labelCls}>Authors (all of them — lab members and outside co-authors)</label>
+                                  <input className={inputCls} value={p.authors || ''} onChange={(e) => patchPbPaper(p.projectId, p.id, { authors: e.target.value })}
+                                         placeholder="e.g. Rossi M, Bianchi A, Smith J…" />
+                                </div>
+                                <div>
+                                  <label className={labelCls}>Year</label>
+                                  <input className={inputCls} value={p.year || ''} onChange={(e) => patchPbPaper(p.projectId, p.id, { year: e.target.value })} placeholder="2024" />
                                 </div>
                                 <div className="lg:col-span-2">
                                   <label className={labelCls}>Link / DOI</label>

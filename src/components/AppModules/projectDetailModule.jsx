@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { RichTextEditor } from '../RichTextEditor';
 import { SmartImage } from '../TestShellRenderer';
-import { loadPubFormat, pubCitationHtml } from '../Publications';
+import { loadPubFormat, pubCitationData, pubCitationHtml } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
 import { loadProjects, saveProjects, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor } from './projectsModule';
 import { suggestDriveFileName, openDrive } from '../../utils/driveNaming';
@@ -221,7 +221,7 @@ export const ProjectDetailModule = ({
   const [openSections, setOpenSections] = useState({ background: true, canvases: true, materials: true, usefulFiles: true, comments: false });
   const [refPicker, setRefPicker] = useState(null); // null | { insertText?: fn }
   const [showBibForm, setShowBibForm] = useState(false);
-  const [bibDraft, setBibDraft] = useState({ title: '', link: '' });
+  const [bibDraft, setBibDraft] = useState({ title: '', link: '', authors: '', year: '' });
   const [linkTestId, setLinkTestId] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const pubs = useMemo(loadPublications, []);
@@ -663,10 +663,19 @@ export const ProjectDetailModule = ({
   });
   const refs = project.references || [];
 
+  /* Chaque papier (bibliographie de projet / publication du titulaire) est
+     complété par la publication d'origine : les entrées importées AVANT que les
+     auteurs ne soient recopiés n'ont qu'un titre, et la citation ne montrait donc
+     aucun co-auteur. `pubCitationData` retrouve la liste complète des auteurs
+     (laboratoire ET extérieurs) par identifiant ou par titre. */
+  const citeData = (entry) => pubCitationData(entry, pubs);
+  const pickerItems = (list) => list.map((item) => ({ ...item, ...citeData(item) }));
+
   const findOrAddRef = (paper, insertText) => {
     const existing = refs.find((r) => r.sourceId === paper.id && r.source === paper.source);
     const number = existing ? existing.number : refs.length + 1;
     if (!existing) {
+      const data = citeData(paper);
       setProjects((prev) => prev.map((p) => {
         if (p.id !== project.id) return p;
         return {
@@ -674,12 +683,14 @@ export const ProjectDetailModule = ({
           references: [...(p.references || []), {
             id: genProjectId(), number,
             sourceId: paper.id, source: paper.source,
-            title: paper.title || 'Untitled',
-            link: paper.link || paper.doi || '',
-            doi: paper.doi || '',
-            authors: paper.authors || '',
-            journal: paper.journal || '',
-            year: paper.year || ''
+            title: data.title || 'Untitled',
+            link: paper.link || data.doi || '',
+            doi: data.doi,
+            authors: data.authors,
+            journal: data.journal,
+            year: data.year,
+            volume: data.volume,
+            pages: data.pages
           }],
           updatedAt: new Date().toISOString()
         };
@@ -697,10 +708,11 @@ export const ProjectDetailModule = ({
     updateProject({
       bibliography: [...projectBib, {
         id: genProjectId(), title, link: bibDraft.link.trim(),
+        authors: bibDraft.authors.trim(), year: bibDraft.year.trim(),
         scientist: project.scientist, comments: ''
       }]
     });
-    setBibDraft({ title: '', link: '' });
+    setBibDraft({ title: '', link: '', authors: '', year: '' });
     setShowBibForm(false);
   };
 
@@ -810,8 +822,8 @@ export const ProjectDetailModule = ({
           </div>
           <div className="p-3 overflow-y-auto custom-scrollbar flex flex-col gap-4">
             {[
-              { group: '📄 Project bibliography', items: projectBib },
-              { group: '📰 Publications of the scientist', items: scientistPubs }
+              { group: '📄 Project bibliography', items: pickerItems(projectBib) },
+              { group: '📰 Publications of the scientist', items: pickerItems(scientistPubs) }
             ].map((g) => (
               <div key={g.group}>
                 <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-1.5">
@@ -1336,7 +1348,7 @@ export const ProjectDetailModule = ({
                 <ol className="list-decimal pl-5 text-sm text-slate-800 space-y-1">
                   {refs.map((r) => (
                     <li key={r.id} dangerouslySetInnerHTML={{
-                      __html: pubCitationHtml({ authors: r.authors, year: r.year, title: r.title, journal: r.journal, doi: r.doi, volume: r.volume, pages: r.pages }, pubFormat, operatorNames) || r.title
+                      __html: pubCitationHtml(citeData(r), pubFormat, operatorNames) || r.title
                     }} />
                   ))}
                 </ol>
@@ -1836,25 +1848,31 @@ export const ProjectDetailModule = ({
             </div>
           ) : (
             <div className="flex flex-col gap-1.5 mb-3">
-              {refs.map((r) => (
-                <div key={r.id} className="flex items-start justify-between gap-3 bg-white border border-slate-200 rounded-lg p-2">
-                  <div className="min-w-0">
-                    <div className="text-xs font-bold text-slate-800">
-                      <span className="text-indigo-600 font-black mr-1">[{r.number}]</span>
-                      {r.title || 'Untitled'}
+              {refs.map((r) => {
+                /* Auteurs COMPLETS du papier (co-auteurs compris) : retrouvés
+                   dans la publication d'origine quand la référence ne les
+                   stockait pas encore. */
+                const d = citeData(r);
+                return (
+                  <div key={r.id} className="flex items-start justify-between gap-3 bg-white border border-slate-200 rounded-lg p-2">
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-slate-800">
+                        <span className="text-indigo-600 font-black mr-1">[{r.number}]</span>
+                        {d.title || 'Untitled'}
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        {[d.authors, d.journal, d.year, r.source].filter(Boolean).join(' · ')}
+                      </div>
+                      {r.link && <a href={r.link} target="_blank" rel="noreferrer"
+                                    className="text-[10px] text-blue-600 hover:underline break-all">{r.link}</a>}
                     </div>
-                    <div className="text-[10px] text-slate-500">
-                      {[r.authors, r.journal, r.year, r.source].filter(Boolean).join(' · ')}
-                    </div>
-                    {r.link && <a href={r.link} target="_blank" rel="noreferrer"
-                                  className="text-[10px] text-blue-600 hover:underline break-all">{r.link}</a>}
+                    <button onClick={() => removeRef(r.id)}
+                            className="shrink-0 text-red-400 hover:text-red-600 text-xs px-1.5" title="Remove reference">
+                      ✕
+                    </button>
                   </div>
-                  <button onClick={() => removeRef(r.id)}
-                          className="shrink-0 text-red-400 hover:text-red-600 text-xs px-1.5" title="Remove reference">
-                    ✕
-                  </button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -1886,12 +1904,29 @@ export const ProjectDetailModule = ({
                            placeholder="Paper title" />
                   </div>
                   <div>
+                    <label className="text-[10px] font-bold text-slate-600 mb-1 block">Authors</label>
+                    <input className={inputCls} value={bibDraft.authors}
+                           onChange={(e) => setBibDraft((d) => ({ ...d, authors: e.target.value }))}
+                           placeholder="e.g. Rossi M, Bianchi A…" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-600 mb-1 block">Year</label>
+                    <input className={inputCls} value={bibDraft.year}
+                           onChange={(e) => setBibDraft((d) => ({ ...d, year: e.target.value }))}
+                           placeholder="2024" />
+                  </div>
+                  <div>
                     <label className="text-[10px] font-bold text-slate-600 mb-1 block">Link / DOI</label>
                     <input className={inputCls} value={bibDraft.link}
                            onChange={(e) => setBibDraft((d) => ({ ...d, link: e.target.value }))}
                            placeholder="https://doi.org/…" />
                   </div>
                 </div>
+                <p className="text-[10px] text-slate-400 mt-2">
+                  Every author of the paper belongs here (lab members and outside co-authors): the citation of the
+                  project document lists them all, with the styling chosen for the lab members in Publications →
+                  “Publication format”.
+                </p>
                 <div className="flex justify-end mt-2">
                   <button onClick={addBibPaper} disabled={!bibDraft.title.trim()}
                           className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
@@ -1906,17 +1941,26 @@ export const ProjectDetailModule = ({
               </div>
             ) : (
               <div className="flex flex-col gap-1.5">
-                {projectBib.map((b) => (
-                  <div key={b.id} className="flex items-start justify-between gap-3 bg-white border border-slate-200 rounded-lg p-2">
-                    <div className="min-w-0">
-                      <div className="text-xs font-bold text-slate-800">{b.title}</div>
-                      {b.link && <a href={b.link} target="_blank" rel="noreferrer"
-                                    className="text-[10px] text-blue-600 hover:underline break-all">{b.link}</a>}
+                {projectBib.map((b) => {
+                  /* Auteurs complets du papier (voir citeData) : la ligne les
+                     affiche sous le titre, faute de quoi seul le titulaire du
+                     projet était visible. */
+                  const d = citeData(b);
+                  return (
+                    <div key={b.id} className="flex items-start justify-between gap-3 bg-white border border-slate-200 rounded-lg p-2">
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-800">{d.title || b.title}</div>
+                        <div className="text-[10px] text-slate-500">
+                          {[d.authors, d.journal, d.year].filter(Boolean).join(' · ') || '—'}
+                        </div>
+                        {b.link && <a href={b.link} target="_blank" rel="noreferrer"
+                                      className="text-[10px] text-blue-600 hover:underline break-all">{b.link}</a>}
+                      </div>
+                      <button onClick={() => removeBibPaper(b.id)}
+                              className="shrink-0 text-red-400 hover:text-red-600 text-xs px-1.5" title="Remove paper">✕</button>
                     </div>
-                    <button onClick={() => removeBibPaper(b.id)}
-                            className="shrink-0 text-red-400 hover:text-red-600 text-xs px-1.5" title="Remove paper">✕</button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

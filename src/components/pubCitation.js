@@ -113,6 +113,54 @@ export const pubDoiUrl = (raw) => {
   return `https://doi.org/${s}`;
 };
 
+/* ── Retrouver la publication d’origine d’une entrée enregistrée ──────────
+   Une entrée de bibliographie de projet (ou une référence numérotée d’un
+   document) est une COPIE du papier : elle ne stockait autrefois que son titre
+   et le nom du titulaire du projet, si bien que la citation ne montrait aucun
+   co-auteur. Les champs sont désormais recopiés à l’import, et pour les entrées
+   plus anciennes la publication d’origine est retrouvée ici, par identifiant
+   (`sourceId`, posé par les références numérotées) ou par titre — c’est ce que
+   fait `pubCitationData` avant chaque rendu. */
+
+/** Titre normalisé pour rapprocher deux entrées (casse, ponctuation, espaces). */
+const pubTitleKey = (s) => String(s || '')
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, ' ')
+  .trim();
+
+/** Publication d’origine d’une entrée : par `sourceId`, sinon par titre exact. */
+export const pubOriginOf = (entry, pubs = []) => {
+  const list = Array.isArray(pubs) ? pubs : [];
+  if (!entry || !list.length) return null;
+  if (entry.sourceId) {
+    const byId = list.find((p) => p && p.id === entry.sourceId);
+    if (byId) return byId;
+  }
+  const key = pubTitleKey(entry.title);
+  if (!key) return null;
+  return list.find((p) => p && pubTitleKey(p.title) === key) || null;
+};
+
+/** Données de citation d’une entrée de bibliographie / référence : ses propres
+ *  champs, complétés par ceux de la publication d’origine. Les valeurs de
+ *  l’entrée gagnent toujours (une correction manuelle n’est jamais écrasée) ;
+ *  `authors` en particulier redevient la liste COMPLÈTE des auteurs du papier,
+ *  co-auteurs du laboratoire et auteurs extérieurs compris. */
+export const pubCitationData = (entry, pubs = []) => {
+  const own = entry || {};
+  const origin = pubOriginOf(own, pubs) || {};
+  const pick = (id) => own[id] || origin[id] || '';
+  return {
+    authors: pick('authors'),
+    year: pick('year'),
+    title: pick('title'),
+    journal: pick('journal'),
+    volume: pick('volume'),
+    pages: pick('pages'),
+    doi: pick('doi')
+  };
+};
+
 const pubWrap = (val, style) => {
   if (style === 'bold') return `<b>${val}</b>`;
   if (style === 'italic') return `<i>${val}</i>`;

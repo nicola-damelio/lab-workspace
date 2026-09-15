@@ -20,12 +20,12 @@ OK   _figure_origin_test.cjs  →  ✅ 64/64 checks passed
 OK   _figure_recapture_test.mjs  →  │ (index) │ name                                                                          │ ok   │ error │ | ✅ 32/32 checks passed
 OK   _figure_style_test.mjs  →  │ (index) │ name                                                                                  │ ok   │ error │ | ✅ 71/71 checks passed
 OK   _library_transfer_test.cjs  →  │ (index) │ name                                                                                                                   │ ok   │ error │ | 
-OK   _mail_recipients_test.mjs  →  _mail_recipients_test: 32 passed
+OK   _mail_recipients_test.mjs  →  _mail_recipients_test: 47 passed
 OK   _new_image_test.cjs  →  ✅ 29/29 checks passed
 OK   _pdb_conect_sanity.cjs  →  (no output)
 OK   _probe_ngl.cjs  →  WROTE _ngl_src/molecularsurface-representation.ts len 10528
 OK   _project_figures_access_test.cjs  →  │ (index) │ name                                                                                                                       │ ok   │ error 
-OK   _pub_author_style_test.mjs  →  _pub_author_style_test: 56 passed
+OK   _pub_author_style_test.mjs  →  _pub_author_style_test: 76 passed
 OK   _rebuild_h_test.mjs  →  PASS
 OK   _spectra_split_test.mjs  →  passed 197/197
 OK   _split_test.cjs  →  (no output)

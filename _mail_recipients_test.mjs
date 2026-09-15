@@ -4,9 +4,12 @@
    Le module RÉEL est importé (src/administration/emailNotify.js) : approuver
    une ligne (« Approuvé » / « Acceptée ») ne doit JAMAIS écrire à une fiche
    « Gestionnaire », même quand cette personne possède aussi un compte
-   superutilisateur (son adresse est alors dans `superuserEmails`). Les
-   transferts « pour signature » / « pour révision » et la signature d'un devis
-   / BC continuent de la prévenir (cibles « Achats » / « Gestionnaire »).
+   superutilisateur (son adresse est alors dans `superuserEmails`) — ni à
+   l’AUTEUR de la décision (le superutilisateur qui clique), qui recevait sinon
+   un e-mail pour chaque ligne qu’il approuvait lui-même : s’il est le seul à
+   décider, aucun e-mail ne part. Les transferts « pour signature » / « pour
+   révision » et la signature d'un devis / BC continuent de prévenir la
+   responsable d’achats / la gestionnaire (cibles « Achats » / « Gestionnaire »).
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -17,7 +20,8 @@ import { register } from 'node:module';
    seul le téléversement Drive, navigateur, y est remplacé par un bouchon). */
 register('./_esm_test_hook.mjs', import.meta.url);
 const {
-  superuserNoticeEmailsOf, personnelEmailsMatching, superuserEmailsOf, summarizeMailTo,
+  actorEmailOf, superuserNoticeEmailsOf, withoutActorEmails,
+  personnelEmailsMatching, superuserEmailsOf, summarizeMailTo,
 } = await import('./src/administration/emailNotify.js');
 
 let passed = 0;
@@ -61,6 +65,28 @@ eq(superuserNoticeEmailsOf(['gestion@lab.fr'], ['gestion@lab.fr']), ['gestion@la
 eq(superuserNoticeEmailsOf('dir@lab.fr', 'gestion@lab.fr'), ['dir@lab.fr'], 'une adresse seule (chaîne) est acceptée aussi');
 eq(superuserNoticeEmailsOf([], ['gestion@lab.fr']), [], 'aucun superutilisateur → rien à envoyer');
 
+/* ── 2 bis. L’AUTEUR de la décision ne se notifie jamais lui-même.
+   Second bug signalé : le directeur (superutilisateur) recevait un e-mail pour
+   chaque ligne qu’il approuvait lui-même. Son adresse est résolue via sa fiche
+   Personnel, puis retirée des destinataires — la liste peut alors devenir vide
+   (aucun e-mail du tout, plutôt qu’un e-mail à soi-même). ─────────────────── */
+eq(actorEmailOf(operators[0], personnel), 'dir@lab.fr', 'adresse de l’auteur résolue par personnelId');
+eq(actorEmailOf({ name: 'Sophie Gestion' }, personnel), 'gestion@lab.fr',
+  'sans personnelId, la fiche est retrouvée par correspondance de nom');
+eq(actorEmailOf({ name: 'Inconnu' }, personnel), '', 'aucune fiche correspondante → aucune adresse');
+eq(withoutActorEmails(['dir@lab.fr'], ['dir@lab.fr']), [],
+  'le SEUL destinataire est l’auteur de la décision ⇒ plus personne à prévenir (aucun e-mail)');
+eq(withoutActorEmails(['dir@lab.fr', 'autre@lab.fr'], ['dir@lab.fr']), ['autre@lab.fr'],
+  'un autre superutilisateur reste prévenu');
+eq(withoutActorEmails(['dir@lab.fr'], ['DIR@LAB.FR', '  ']), [], 'comparaison insensible à la casse, adresses vides ignorées');
+eq(withoutActorEmails(['dir@lab.fr'], []), ['dir@lab.fr'], 'sans adresse d’auteur, la liste est inchangée');
+eq(withoutActorEmails([], ['dir@lab.fr']), [], 'liste vide au départ ⇒ liste vide');
+const actorNotice = withoutActorEmails(
+  superuserNoticeEmailsOf(superuserEmails, gestionnaireEmails), ['dir@lab.fr']);
+eq(actorNotice, [],
+  'APPROBATION par le directeur : ni la gestionnaire ni lui-même ne reçoivent d’e-mail');
+
+
 /* ── 3. Bannière : elle nomme les destinataires RÉELS quand l’e-mail part */
 const sent = summarizeMailTo({ ok: true, mode: 'gmail' }, 'Superutilisateur', ['dir@lab.fr']);
 ok(sent.text.includes('e-mail envoyé') && sent.text.includes('destinataire(s) : dir@lab.fr'),
@@ -79,16 +105,25 @@ const appr = readFileSync('src/administration/approbationPage.jsx', 'utf8');
 [['desiderataPage.jsx', desi], ['omPage.jsx', om]].forEach(([name, src]) => {
   ok(/const superuserNoticeEmails = useMemo\(/.test(src) && /superuserNoticeEmailsOf\(superuserEmails, personnelEmailsMatching\(personnel, \{ fonction: 'Gestionnaire' \}\)\)/.test(src),
     `${name} : les notifications « superutilisateur » retirent les fiches « Gestionnaire »`);
+  /* Et l’auteur de la décision : approver une ligne ne s’écrit pas à soi-même. */
+  ok(/const actorEmails = useMemo\(/.test(src)
+    && /actorEmailOf\(currentUser, personnel\)/.test(src)
+    && /personEmailOf\(access\.profile && access\.profile\.person\)/.test(src),
+    `${name} : l’adresse de l’auteur de la décision est résolue (fiche Personnel liée)`);
+  ok(/const approvalNoticeEmails = useMemo\([\s\S]{0,160}withoutActorEmails\(superuserNoticeEmails, actorEmails\)/.test(src),
+    `${name} : l’auteur est retiré des destinataires d’approbation`);
   const i = src.indexOf('const notifyApproved');
-  const approved = src.slice(i, i + 1400);
-  ok(/to: superuserNoticeEmails,/.test(approved), `${name} : notifyApproved envoie à superuserNoticeEmails`);
-  ok(/summarizeMailTo\(res, 'Superutilisateur', superuserNoticeEmails\)/.test(approved),
+  const approved = src.slice(i, i + 2000);
+  ok(/to: approvalNoticeEmails,/.test(approved), `${name} : notifyApproved envoie à approvalNoticeEmails`);
+  ok(/if \(!approvalNoticeEmails\.length && superuserNoticeEmails\.length\)/.test(approved),
+    `${name} : plus aucun destinataire ⇒ aucun envoi, message explicite`);
+  ok(/summarizeMailTo\(res, 'Superutilisateur', approvalNoticeEmails\)/.test(approved),
     `${name} : la bannière d’approbation nomme les destinataires`);
   /* Les NOUVELLES demandes (membre → superutilisateur) n’oublient pas la même exclusion. */
   ok(/summarizeMailTo\(res, 'Superutilisateur notifié', superuserNoticeEmails\)/.test(src),
     `${name} : la bannière de nouvelle demande nomme aussi les destinataires`);
-  ok((src.match(/to: superuserNoticeEmails,/g) || []).length >= 2,
-    `${name} : les deux notifications « superutilisateur » (nouvelle demande + approbation) visent la même liste`);
+  ok((src.match(/to: superuserNoticeEmails,/g) || []).length >= 1,
+    `${name} : la notification de nouvelle demande reste adressée aux superutilisateurs`);
   ok(!/to: mergeEmails\(/.test(src), `${name} : plus aucun envoi fusionné superutilisateur + gestionnaire`);
   ok(!/'Superutilisateur & gestionnaire\(s\)'/.test(src), `${name} : libellé « Superutilisateur & gestionnaire(s) » supprimé`);
 });

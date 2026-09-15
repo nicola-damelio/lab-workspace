@@ -33,6 +33,7 @@ import { findRecetteTwin, sameCatType } from './recetteLink';
 import {
   sendAdminMail, superuserEmailsOf, superuserNoticeEmailsOf, personnelEmailsMatching,
   summarizeMail, summarizeMailTo, mailBodyText, notificationTargetOf, personEmailOf,
+  actorEmailOf, withoutActorEmails,
 } from './emailNotify';
 import { scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName, scopeSeesAllRows, scopeFonctions } from './ownScope';
 import {
@@ -714,6 +715,17 @@ export const OmPage = () => {
     () => superuserNoticeEmailsOf(superuserEmails, personnelEmailsMatching(personnel, { fonction: 'Gestionnaire' })),
     [superuserEmails, personnel]
   );
+  /* L’AUTEUR de la décision ne se notifie JAMAIS lui-même : accepter / approuver
+     une OM n’envoie donc aucun e-mail au superutilisateur qui vient de cliquer
+     (adresse résolue via sa fiche Personnel, comme pour `superuserEmails`). */
+  const actorEmails = useMemo(
+    () => [actorEmailOf(currentUser, personnel), personEmailOf(access.profile && access.profile.person)],
+    [currentUser, personnel, access.profile]
+  );
+  const approvalNoticeEmails = useMemo(
+    () => withoutActorEmails(superuserNoticeEmails, actorEmails),
+    [superuserNoticeEmails, actorEmails]
+  );
 
   /* Options de statut : personnalisées dans Setup › Options des listes déroulantes. */
   const omStatutOptions = useMemo(() => {
@@ -817,7 +829,10 @@ export const OmPage = () => {
      OM « Acceptée » ne fait que l’accepter, sans rien lui transmettre. Il/elle
      n’est prévenu(e) qu’au moment où le directeur clique « ✓ Signature »
      (transfert du devis) ou signe un devis / BC dans la page « Approbation
-     devis & BC ». */
+     devis & BC ».
+     L’AUTEUR de la décision (le superutilisateur qui clique) n’est pas
+     destinataire non plus — voir approvalNoticeEmails : s’il est le seul à
+     décider, aucun e-mail ne part. */
   const notifyApproved = async (rec) => {
     const label = missionOf(rec) || txt(rec.description) || 'ordre de mission';
     const ref = txt(rec.numOM);
@@ -836,12 +851,21 @@ export const OmPage = () => {
       txt(rec.ligneBudgetaire) ? `Ligne budgétaire : ${txt(rec.ligneBudgetaire)}` : '',
       `Décision prise par : ${currentName || 'superutilisateur'}`,
     ].filter(Boolean);
+    /* Aucun destinataire restant (l’auteur de la décision est le seul
+       superutilisateur à prévenir) → aucun e-mail, message explicite. */
+    if (!approvalNoticeEmails.length && superuserNoticeEmails.length) {
+      setNotice({
+        tone: 'ok',
+        text: `OM${ref ? ` ${ref}` : ''} accepté — aucun e-mail envoyé : vous êtes l’auteur de la décision et le seul superutilisateur à prévenir.`,
+      });
+      return;
+    }
     const res = await sendAdminMail({
-      to: superuserNoticeEmails,
+      to: approvalNoticeEmails,
       subject,
       text: mailBodyText(lines),
     });
-    const summary = summarizeMailTo(res, 'Superutilisateur', superuserNoticeEmails);
+    const summary = summarizeMailTo(res, 'Superutilisateur', approvalNoticeEmails);
     setNotice({
       tone: res && res.ok ? 'ok' : 'warn',
       text: summary.text,

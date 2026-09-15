@@ -147,6 +147,30 @@ export const superuserNoticeEmailsOf = (superuserEmails = [], gestionnaireEmails
   return kept.length ? kept : supers;
 };
 
+/** Adresse e-mail de l’AUTEUR d’une action (l’utilisateur connecté), résolue
+ *  via sa fiche Personnel comme pour les superutilisateurs : lien explicite
+ *  (`personnelId`) sinon correspondance de nom (voir personOfOperator). */
+export const actorEmailOf = (currentUser, personnel = []) =>
+  personEmailOf(personOfOperator(currentUser, personnel));
+
+/** Retire d’une liste d’adresses celle(s) de l’AUTEUR de l’action : on ne se
+ *  notifie JAMAIS soi-même. Approuver une ligne n’envoie donc rien au
+ *  superutilisateur qui vient de décider (la gestionnaire est déjà retirée en
+ *  amont par superuserNoticeEmailsOf) — sans ce filtre, le directeur recevait un
+ *  e-mail pour chaque ligne qu’il approuvait lui-même.
+ *  Contrairement à superuserNoticeEmailsOf, la liste PEUT ressortir vide : il n’y
+ *  a alors aucun e-mail à envoyer et l’appelant affiche un message explicite
+ *  (jamais d’envoi vers « personne »). */
+export const withoutActorEmails = (emails = [], actorEmails = []) => {
+  const asList = (v) => (Array.isArray(v) ? v : [v])
+    .map((e) => String(e || '').trim())
+    .filter(Boolean);
+  const list = asList(emails);
+  const drop = new Set(asList(actorEmails).map((e) => e.toLowerCase()));
+  if (!drop.size) return list;
+  return list.filter((e) => !drop.has(e.toLowerCase()));
+};
+
 /** URL de base du serveur partagé ('' quand non configuré). */
 export const adminMailServerBase = () =>
   String(GOOGLE_TOKEN_EXCHANGE_URL || '').trim().replace(/\/+$/, '');
