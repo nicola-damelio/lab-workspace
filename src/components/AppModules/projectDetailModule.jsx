@@ -6,7 +6,7 @@ import {
 } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
 import { loadProjects, saveProjects, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor } from './projectsModule';
-import { suggestDriveFileName, openDrive, projectSectionFolderPath, projectSectionFolderLabel } from '../../utils/driveNaming';
+import { suggestDriveFileName, openDrive, projectSectionFolderPath, projectSectionFolderLabel, projectImagesFolderLabel } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
 import { UsefulFilesSection } from '../UsefulFilesSection';
 import { normalizeProjectFiles } from '../../utils/projectFiles';
@@ -21,7 +21,7 @@ import {
 } from '../../utils/manuscriptImport';
 import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject, getDriveToken, getDriveRootName, resolveDrivePathFromNames, listDriveChildren } from '../../utils/driveUpload';
 import { repairContentImages } from '../../data/constants';
-import { readDeck, readProjectLibrary, removeProjectLibraryItem } from '../../utils/figuresLibrary';
+import { readDeck, readProjectLibrary, removeProjectLibraryItem, pushLibraryToDrive, pullLibraryFromDrive } from '../../utils/figuresLibrary';
 import { SlidePreview, renderSlideToDataUrl } from '../FiguresSlides';
 
 /* =========================================================================
@@ -229,7 +229,11 @@ export const ProjectDetailModule = ({
   const isSuper = currentUser?.role === 'superuser';
   const myName = currentUser?.name || '';
   const [projects, setProjects] = useState(loadProjects);
-  const [openSections, setOpenSections] = useState({ background: true, canvases: true, materials: true, usefulFiles: true, comments: false });
+  /* `bibliography: true` : la ligne « Project bibliography papers (n) » de cette
+     page porte les deux imports (📄 Import references from a paper / 📥 Import a
+     manuscript) — la section est donc ouverte dès l'arrivée, sinon ces boutons
+     passent inaperçus. */
+  const [openSections, setOpenSections] = useState({ background: true, canvases: true, materials: true, usefulFiles: true, bibliography: true, comments: false });
   const [refPicker, setRefPicker] = useState(null); // null | { insertText?: fn }
   const [showBibForm, setShowBibForm] = useState(false);
   const [bibDraft, setBibDraft] = useState({ title: '', link: '', authors: '', year: '' });
@@ -328,6 +332,59 @@ export const ProjectDetailModule = ({
     if (!window.confirm('Remove this canvas from the project image library? The cloud/Drive copy is kept.')) return;
     removeProjectLibraryItem(project.id, id);
     setCanvasLibVersion((v) => v + 1);
+  };
+
+  /* ---- ☁ ⇄ this project's image library against Google Drive -----------------
+     The image FILES are on Drive (<dataset>/projects/<projet>/images) but the
+     LIST that displays them — which figures, their labels, their order, the saved
+     canvases — lives in this browser. These are the two ADDITIVE gestures of the
+     Image Library modal, offered here too because the project page is where one
+     looks for “my figures”:
+       • ⬇ Add missing figures from Drive → relit le dossier et AJOUTE les images
+         qu'il contient et que cette liste n'affiche pas (autre ordinateur, images
+         envoyées par un collègue) ; lecture seule, rien n'est remplacé.
+       • ☁ Save figures to Drive → envoie au Drive les figures dont les pixels ne
+         vivent encore que dans ce navigateur (sinon elles ne suivent pas). */
+  const [figDriveBusy, setFigDriveBusy] = useState(false);
+  const [figDriveMsg, setFigDriveMsg] = useState('');
+  const figDriveScope = () => ({ scope: 'project', projectId: project.id, projectName: project.name || '' });
+
+  const saveFiguresToDrive = async () => {
+    if (figDriveBusy || !canModify) return;
+    setFigDriveBusy(true);
+    setFigDriveMsg('☁ Sending to Drive the figures that are still only in this browser…');
+    try {
+      const res = await pushLibraryToDrive(figDriveScope());
+      setCanvasLibVersion((v) => v + 1);
+      setFigDriveMsg(res.total === 0
+        ? '✓ Every figure of this project is already on Drive.'
+        : res.failed === 0
+          ? `✓ ${res.uploaded} figure${res.uploaded === 1 ? '' : 's'} saved to ${res.folder}.`
+          : `⚠ ${res.uploaded} saved to ${res.folder} · ${res.failed} failed — check the connection and try again.`);
+    } catch (err) {
+      setFigDriveMsg(`⚠ ${(err && err.message) || 'Could not save the figures to Drive'}`);
+    }
+    setFigDriveBusy(false);
+  };
+
+  const addMissingFiguresFromDrive = async () => {
+    if (figDriveBusy) return;
+    setFigDriveBusy(true);
+    setFigDriveMsg('⬇ Reading this project’s images folder on Drive…');
+    try {
+      const res = await pullLibraryFromDrive(figDriveScope());
+      setCanvasLibVersion((v) => v + 1);
+      setFigDriveMsg(res.error
+        ? `⚠ ${res.error}`
+        : res.found === 0
+          ? `No image found in ${res.folder} (nothing has been uploaded there yet — use ☁ Save figures to Drive first).`
+          : res.added === 0
+            ? `✓ ${res.found} image${res.found === 1 ? '' : 's'} in ${res.folder} — all already listed here.`
+            : `✓ ${res.added} figure${res.added === 1 ? '' : 's'} added from ${res.folder} (${res.found} file${res.found === 1 ? '' : 's'} in the folder).`);
+    } catch (err) {
+      setFigDriveMsg(`⚠ ${(err && err.message) || 'Could not read the Drive folder'}`);
+    }
+    setFigDriveBusy(false);
   };
 
   // ---- Coworkers & permissions (computed early so every effect can use them) ----
@@ -1005,11 +1062,17 @@ export const ProjectDetailModule = ({
      ([1], [2]…) comme le fait « 📚 + Reference ». Toute la logique est pure et
      testée : voir utils/manuscriptImport.js. Rien n'est envoyé au Drive par
      cet import — il ne fait que remplir le projet. */
-  const openManuscriptImport = () => setMsImport({
-    text: '', fileName: '', parts: null, plan: null, picks: [], busy: false, status: '', report: ''
+  /* `focusSection` : quand on ouvre l'import DEPUIS la barre d'outils d'une
+     section (Background / Discussion / Conclusions), les parties du manuscrit
+     dont le titre ne correspond à rien retombent dans CETTE section — l'endroit
+     d'où l'utilisateur a cliqué. Ouvert depuis l'en-tête de la page, il reste
+     vide : l'utilisateur choisit alors chaque destination. */
+  const openManuscriptImport = (focusSection = '') => setMsImport({
+    text: '', fileName: '', parts: null, plan: null, picks: [], busy: false, status: '', report: '',
+    focusSection: typeof focusSection === 'string' ? focusSection : ''
   });
 
-  const analyseManuscript = (text, fileName) => {
+  const analyseManuscript = (text, fileName, focusSection = (msImport && msImport.focusSection) || '') => {
     const src = String(text || '');
     if (!src.trim()) {
       setMsImport((d) => ({ ...(d || {}), busy: false, status: 'Paste the document text (or choose a file) first.' }));
@@ -1018,7 +1081,7 @@ export const ProjectDetailModule = ({
     const blocks = blocksFromText(src);
     const manuscript = splitManuscript(blocks);
     const parts = groupManuscriptParts(manuscript.body).map((p, i) => ({
-      key: `part${i}`, heading: p.heading, text: p.text, dest: p.id || '', mode: 'append'
+      key: `part${i}`, heading: p.heading, text: p.text, dest: p.id || focusSection || '', mode: 'append'
     }));
     const plan = buildManuscriptPlan(manuscript, { existingReferences: refs });
     const existing = bibExistingKeys();
@@ -1026,7 +1089,7 @@ export const ProjectDetailModule = ({
       .map((e, i) => (entryKeys(e.entry).some((k) => existing.has(k)) ? -1 : i))
       .filter((i) => i !== -1);
     setMsImport({
-      text: src, fileName: fileName || '', parts, plan, picks, busy: false, report: '',
+      text: src, fileName: fileName || '', parts, plan, picks, busy: false, report: '', focusSection,
       status: `${blocks.length} block(s) · ${parts.length} part(s) · ${plan.entries.length} reference(s) · ${plan.citations.length} citation(s)`
     });
   };
@@ -1238,6 +1301,14 @@ export const ProjectDetailModule = ({
               (Publications → “Project bibliography”), and the citations in the text become the program’s
               <b> numbered references</b> ([1], [2]…) — the same as “📚 + Reference”. No file is uploaded to Drive.
             </p>
+            {msImport.focusSection && (
+              <p className="text-[11px] text-violet-800 bg-violet-50 border border-violet-200 rounded-lg px-2 py-1.5">
+                Opened from the
+                <b> “{(PROJECT_TEXT_SECTIONS.find((s) => s.id === msImport.focusSection) || {}).label || msImport.focusSection}”</b>
+                section: a part of the manuscript whose heading has no equivalent here is added to that section —
+                change it in the dropdown below if you want it somewhere else.
+              </p>
+            )}
             <div className="flex flex-wrap items-center gap-2">
               <label className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 border border-slate-300 text-slate-700 hover:bg-slate-200 cursor-pointer">
                 📂 Choose a document
@@ -1464,7 +1535,12 @@ export const ProjectDetailModule = ({
             { label: '🖼 + Slide', title: 'Insert a slide from the Figures & Slides deck (Publications)', onClick: () => setSlidePickerFor(id) },
             { label: '▦ + Std Table', title: 'Insert a standard table at the cursor position', onClick: (insertText) => setTableDraft({ section: id, insertText }) },
             { label: '📎 + Document', title: 'Attach a document link', onClick: () => addSectionDoc(id) },
-            { label: '📚 + Reference', title: 'Insert a numbered reference at the cursor position', onClick: (insertText) => setRefPicker({ insertText }) }
+            { label: '📚 + Reference', title: 'Insert a numbered reference at the cursor position', onClick: (insertText) => setRefPicker({ insertText }) },
+            /* 📥 À CÔTÉ du bouton « 📄 Word » de l'éditeur (qui ne prend que le
+               texte et les figures) : celui-ci fait entrer un manuscrit ENTIER —
+               texte dans les sections, bibliographie Paperpile et citations
+               converties en références numérotées. */
+            { label: '📥 Import a manuscript', title: 'Move a manuscript written in Google Docs / Word into the project: its text goes to the section(s) you pick, its bibliography to the Project bibliography and its citations become the numbered references [1], [2]…', onClick: () => openManuscriptImport(id) }
           ] : []}
         />
         {slidePickerFor === id && (
@@ -2117,6 +2193,13 @@ export const ProjectDetailModule = ({
                       className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200">
                 Projects list
               </button>
+              {canModify && (
+                <button onClick={() => openManuscriptImport()}
+                        className="px-3 py-1.5 text-xs font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700"
+                        title="Move a document written in Google Docs or Word INTO this project: its text fills the project sections (Background / Discussion / Conclusions), its bibliography (Paperpile…) goes to the Project bibliography, and its citations become the numbered references [1], [2]… Nothing is uploaded to Drive.">
+                  📥 Import a manuscript
+                </button>
+              )}
               <button onClick={() => setShowExport(true)}
                       className="px-3 py-1.5 text-xs font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-700"
                       title="Export the project as a text document (includes figures and text of the tests marked for inclusion)">
@@ -2171,11 +2254,35 @@ export const ProjectDetailModule = ({
           <p className="text-xs text-slate-500 mb-3">
             Compositions stored in this project's image library — with <span className="font-bold">💾 Save canvas</span> (the
             dialog asks where to save: pick this project) or by <span className="font-bold">📤 Insert into project…</span>.
-            Every canvas below is also an image of the library (Figures &amp; Slides → <span className="font-bold">Project</span> tab)
+            Every canvas below is also an image of the library (🖼 Library in the Image Builder →
+            <span className="font-bold"> Project Library</span> tab)
             and a <span className="font-bold">link</span> back into the editor: “Open in Image Builder” reloads its panels, captions
             and grid, and saving it again updates this same entry. A composition inserted into a section keeps showing its
             <span className="font-bold"> image</span> there — the link is added on top, it never replaces the picture.
           </p>
+          {/* The figure FILES are on Drive; this browser holds the LIST that shows
+              them. These two buttons are the same additive gestures as in the
+              Image Library modal, reachable from the project page too. */}
+          <div className="flex flex-wrap items-center gap-2 mb-3 text-[11px]">
+            <span className="text-slate-500">
+              Figures on <span className="font-bold">Google Drive → {projectImagesFolderLabel(project.name || '', getDriveRootName())}</span>
+            </span>
+            <button type="button" onClick={addMissingFiguresFromDrive} disabled={figDriveBusy}
+                    className="font-bold px-2.5 py-1 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                    title="Read this project’s images folder on Drive and ADD the figures it holds but this list does not show (another computer, figures uploaded by a coworker). Nothing is deleted or replaced.">
+              {figDriveBusy ? '⏳ Working…' : '⬇ Add missing figures from Drive'}
+            </button>
+            {canModify && (
+              <button type="button" onClick={saveFiguresToDrive} disabled={figDriveBusy}
+                      className="font-bold px-2.5 py-1 rounded-lg border border-sky-300 bg-sky-50 text-sky-700 hover:bg-sky-100 disabled:opacity-50"
+                      title="Send to Google Drive the figures of this project whose pixels are still only in this browser (they would not follow you on another computer). Nothing is deleted.">
+                ☁ Save figures to Drive
+              </button>
+            )}
+            {figDriveMsg && (
+              <span className="font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded px-2 py-1">{figDriveMsg}</span>
+            )}
+          </div>
           {savedCanvases.length === 0 ? (
             <div className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-5 text-center">
               No canvas yet — in the Image Builder (sidebar → 🖼️ Image Builder) click “💾 Save canvas” and choose
@@ -2470,22 +2577,23 @@ export const ProjectDetailModule = ({
 
 
           <div className="border-t border-slate-200 pt-3">
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
               <div className="text-[10px] font-black uppercase tracking-wide text-slate-400">
                 Project bibliography papers ({projectBib.length}) — also editable in Publications → “Project bibliography”
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-2">
                 <button onClick={() => { openBibImport(); }}
-                        className="text-[10px] font-bold text-slate-600 hover:text-slate-900">
-                  📄 Import from a paper
+                        className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-slate-100 border border-slate-300 text-slate-700 hover:bg-slate-200"
+                        title="Import references only (an article's .docx, a RIS/BibTeX/Paperpile export, a Web page, or pasted text): the recognised papers are added to this project's bibliography.">
+                  📄 Import references from a paper
                 </button>
                 <button onClick={() => { openManuscriptImport(); }}
-                        className="text-[10px] font-bold text-indigo-700 hover:text-indigo-900"
+                        className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700"
                         title="Move a document written in Google Docs / Word INTO this project: its text goes to the project sections, its bibliography (Paperpile…) to the Project bibliography, and its citations become the numbered references [1], [2]…">
                   📥 Import a manuscript
                 </button>
                 <button onClick={() => setShowBibForm((v) => !v)}
-                        className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800">
+                        className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100">
                   {showBibForm ? 'Cancel' : '+ Add paper'}
                 </button>
               </div>

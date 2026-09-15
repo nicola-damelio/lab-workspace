@@ -4,8 +4,11 @@ import {
   readLibrary, readProjectLibrary, readVisibleProjectLibrary, moveLibraryItem,
   renameLibraryItem, removeLibraryItem, renameProjectLibraryItem, removeProjectLibraryItem,
   blobToDataUrl, publishLibraryFigure, resolveImageToDataUrl, localStorageHealthy,
-  countRecaptureDuplicates, removeRecaptureDuplicates
+  countRecaptureDuplicates, removeRecaptureDuplicates,
+  pushLibraryToDrive, pullLibraryFromDrive, localOnlyLibraryItems, mergeLibraryFromSnapshot
 } from '../utils/figuresLibrary';
+import LZString from 'lz-string';
+import { backupFigureCount, figuresFromBackupHtml } from '../utils/referenceImport';
 import { loadProjects, saveProjects, genProjectId, projectAccessFor, visibleProjectsFor } from './AppModules/projectsModule';
 import { getDriveRootName } from '../utils/driveUpload';
 import { projectImagesFolderLabel } from '../utils/driveNaming';
@@ -294,7 +297,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const [libVersion, setLibVersion] = useState(0); // forces a re-read of the library lists after a transfer
   const [libProjectId, setLibProjectId] = useState(null); // which project's library to browse (null = the active one)
   const [libMsg, setLibMsg] = useState('');       // transient feedback after a PC upload / transfer
+  const [libDriveBusy, setLibDriveBusy] = useState(false); // ☁ / ⬇ library ⇄ Drive in progress
   const libFileRef = useRef(null);                // hidden <input type=file> for uploading images from the PC
+  const libRecoverFileRef = useRef(null);         // hidden <input type=file> for ♻️ recovering the library from a backup
   // Log of the library entries this canvas is stored as, keyed by scope
   // ('dataset' → the shared library, otherwise that project's library). A canvas
   // can live in SEVERAL scopes at once (composed in one project and inserted
@@ -1246,6 +1251,107 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     if (libraryTab === 'project') removeProjectLibraryItem(activeLibProjectId, id);
     else removeLibraryItem(id);
     setLibVersion((v) => v + 1);
+  };
+
+  /* ---- ☁ ⇄ La bibliothèque et le Drive (le geste qui manquait) --------------
+     « Mes images ne sont pas sur le Drive » a deux causes, et une réponse pour
+     chacune :
+       • ☁ Save to Drive → les images de CETTE portée dont les pixels ne vivent
+         encore que dans ce navigateur (base64) partent dans
+         <dataset>/projects/<projet>/images ; leur copie locale devient le lien
+         Drive (sans cela elles ne suivent pas sur un autre ordinateur).
+       • ⬇ Add missing   → relit ce dossier et AJOUTE les fichiers qu'il contient
+         mais que cette liste n'affiche pas (liste perdue sur ce poste, autre
+         navigateur) ; « ♻️ Recover » fait de même depuis un fichier de
+         sauvegarde, qui est le seul endroit où voyage la LISTE.
+     Les trois sont ADDITIFS : rien n'est supprimé ni écrasé. Ils n'existaient
+     que dans le panneau « Image library » de Figures & Slides — un écran que
+     l'on n'ouvre jamais depuis l'Image Builder — donc ils sont ICI aussi, dans
+     la fenêtre de bibliothèque que l'on a sous les yeux. */
+  const libScopeInfo = () => ({
+    scope: libraryTab === 'project' ? 'project' : 'common',
+    projectId: libraryTab === 'project' ? activeLibProjectId : null,
+    projectName: libraryTab === 'project' && activeLibProjectId ? canvasScopeName(activeLibProjectId) : ''
+  });
+  const libWriteDenied = () => {
+    if (libraryTab === 'project' && !canWriteLibProject(activeLibProjectId)) {
+      setLibMsg('🔒 You do not have edit access to that project’s image library.');
+      return true;
+    }
+    return false;
+  };
+
+  const libSaveToDrive = async () => {
+    if (libDriveBusy || libWriteDenied()) return;
+    setLibDriveBusy(true);
+    setLibMsg('☁ Sending to Drive the images that are still only in this browser…');
+    try {
+      const res = await pushLibraryToDrive(libScopeInfo());
+      setLibVersion((v) => v + 1);
+      setLibMsg(res.total === 0
+        ? '✓ Every image of this library is already on Drive.'
+        : res.failed === 0
+          ? `✓ ${res.uploaded} image${res.uploaded === 1 ? '' : 's'} saved to ${res.folder}.`
+          : `⚠ ${res.uploaded} saved to ${res.folder} · ${res.failed} failed — check the connection and try again.`);
+    } catch (err) {
+      setLibMsg(`⚠ ${(err && err.message) || 'Could not save the images to Drive'}`);
+    }
+    setLibDriveBusy(false);
+  };
+
+  const libAddMissingFromDrive = async () => {
+    // Reading the folder only ADDS entries to this browser's list (the Drive
+    // folder itself is never touched), so a read-only coworker may do it too —
+    // it is how they see on this computer the figures the others uploaded.
+    if (libDriveBusy) return;
+    if (libraryTab === 'project' && activeLibProjectId && !canSeeLibProject(activeLibProjectId)) {
+      setLibMsg('🔒 That project’s figures are private to its team.');
+      return;
+    }
+    setLibDriveBusy(true);
+    setLibMsg('⬇ Reading this library’s folder on Drive…');
+    try {
+      const res = await pullLibraryFromDrive(libScopeInfo());
+      setLibVersion((v) => v + 1);
+      setLibMsg(res.error
+        ? `⚠ ${res.error}`
+        : res.found === 0
+          ? `No image found in ${res.folder} (nothing has been uploaded there yet — use ☁ Save to Drive first).`
+          : res.added === 0
+            ? `✓ ${res.found} image${res.found === 1 ? '' : 's'} in ${res.folder} — all already listed here.`
+            : `✓ ${res.added} image${res.added === 1 ? '' : 's'} added from ${res.folder} (${res.found} file${res.found === 1 ? '' : 's'} in the folder).`);
+    } catch (err) {
+      setLibMsg(`⚠ ${(err && err.message) || 'Could not read the Drive folder'}`);
+    }
+    setLibDriveBusy(false);
+  };
+
+  // ♻️ Recover the library FROM A BACKUP: only its image list is read out
+  // (`_figuresLibrary` / `_figuresLibraryProjects`), everything else in the file
+  // is ignored, and the merge only ADDS / COMPLETES entries.
+  const libRecoverFromBackup = async (file) => {
+    if (!file) return;
+    setLibMsg(`Reading ${file.name}…`);
+    try {
+      const text = await file.text();
+      const figures = figuresFromBackupHtml(text, (s) => LZString.decompressFromUTF16(s));
+      if (!figures) {
+        setLibMsg('⚠ This file is not a Lab Workspace backup (no saved-data block inside).');
+        return;
+      }
+      const counts = backupFigureCount(figures);
+      if (!counts.total) {
+        setLibMsg('⚠ This backup contains no image library — it was written by a version that did not embed it yet.');
+        return;
+      }
+      const res = mergeLibraryFromSnapshot({ common: figures.common, projects: figures.projects });
+      setLibVersion((v) => v + 1);
+      setLibMsg(`✓ Backup read: ${res.added} image${res.added === 1 ? '' : 's'} added, ${res.filled} completed`
+        + `${counts.projectCount ? ` · ${counts.projectCount} project librar${counts.projectCount === 1 ? 'y' : 'ies'} (${counts.projectItems} image${counts.projectItems === 1 ? '' : 's'})` : ''}`
+        + '. Nothing was deleted — the images themselves stay on Drive.');
+    } catch (err) {
+      setLibMsg(`⚠ ${(err && err.message) || 'Could not read this file'}`);
+    }
   };
 
   // Publish the CURRENT composition as a canvas entry of the image library.
@@ -3027,7 +3133,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                  <button onClick={togglePanelsShadow} disabled={!objects.length} title="Drop shadow on every panel of the figure in one click — click again to take it off." className={`font-bold px-3 py-1.5 rounded-lg text-xs border disabled:opacity-40 ${panelsShadowed ? 'bg-slate-800 text-white border-slate-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}`}>🌓 Shadow panels</button>
                  <button onClick={undo} disabled={!undoStack.current.length || histTick < 0} className="bg-slate-100 border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-200 disabled:opacity-40" title="Undo last change (Ctrl+Z)">↩ Undo</button>
                  <button onClick={() => { setPickMode('replace'); setShowLibrary(true); }}
-                   title="Open the image library — browse or upload new images from your computer"
+                   title="Open the image library — browse or upload new images from your computer, and keep it in sync with Google Drive (☁ Save to Drive · ⬇ Add missing from Drive · ♻️ Recover)"
                    className="bg-teal-600 hover:bg-teal-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">🖼 Library</button>
                  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-600 bg-slate-100 rounded-lg px-2 py-1.5 cursor-pointer"
                    title="Draw a thin frame around every panel (composition setting — exports follow it).">
@@ -3124,6 +3230,40 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                   ➕ New image
                 </button>
               </div>
+              {/* ☁ ⇄ ♻️ the library against Drive / a backup — the three ADDITIVE
+                  gestures. They used to live only in the “Image library” panel of
+                  Figures & Slides, which nobody opens from here: “my images are
+                  not on Drive” had no button anywhere in this window. */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={libSaveToDrive}
+                  disabled={libDriveBusy}
+                  className="bg-sky-50 border border-sky-300 text-sky-700 hover:bg-sky-100 font-bold px-3 py-1.5 rounded text-xs disabled:opacity-50"
+                  title="Send to Google Drive the images of the library currently shown whose pixels are still only in this browser (they would not follow you on another computer). Nothing is deleted."
+                >
+                  ☁ Save to Drive{localOnlyLibraryItems(libraryItems).length ? ` (${localOnlyLibraryItems(libraryItems).length})` : ''}
+                </button>
+                <button
+                  type="button"
+                  onClick={libAddMissingFromDrive}
+                  disabled={libDriveBusy}
+                  className="bg-emerald-50 border border-emerald-300 text-emerald-700 hover:bg-emerald-100 font-bold px-3 py-1.5 rounded text-xs disabled:opacity-50"
+                  title="Read this library’s images folder on Google Drive and ADD the figures it contains but this list does not show (e.g. after switching computer). Nothing is replaced."
+                >
+                  {libDriveBusy ? '⏳ Working…' : '⬇ Add missing from Drive'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => libRecoverFileRef.current && libRecoverFileRef.current.click()}
+                  className="bg-amber-50 border border-amber-300 text-amber-700 hover:bg-amber-100 font-bold px-3 py-1.5 rounded text-xs"
+                  title="Images missing on this computer? The image files are on Drive, but the LIST that shows them lives in the browser. Read a backup file here to add the missing images back — only the image list is read, nothing is deleted."
+                >
+                  ♻️ Recover
+                </button>
+                <input ref={libRecoverFileRef} type="file" accept=".html,.htm,.json,.txt" className="hidden"
+                  onChange={(e) => { const f = (e.target.files || [])[0]; e.target.value = ''; libRecoverFromBackup(f); }} />
+              </div>
               {selectedObj && (
                 <div className="flex gap-1 ml-auto" title="Replace: the selected object shows only this figure. Add: appends the figure to the selected object so several figures share one panel.">
                   <button className={`px-3 py-1 rounded font-bold text-xs ${pickMode === 'replace' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`} onClick={() => setPickMode('replace')}>↺ Replace</button>
@@ -3162,8 +3302,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                   {!libProjectBlocked && (
                     <span className="block mt-1 not-italic text-[11px] text-slate-400">
                       The image files are on Google Drive (<code>projects/&lt;project&gt;/images</code>) — this LIST lives in
-                      this browser and travels inside every backup file. On another computer:
-                      <b> Publications → Figures &amp; Slides → ♻️ Recover</b>.
+                      this browser and travels inside every backup file. Use <b>⬇ Add missing from Drive</b> above to fetch
+                      the figures this list does not show yet, <b>☁ Save to Drive</b> for the ones only in this browser, or
+                      <b> ♻️ Recover</b> to read a backup file.
                     </span>
                   )}
                 </p>

@@ -25,6 +25,7 @@ register('./_esm_test_hook.mjs', import.meta.url);
 
 const MS = await import('./src/utils/manuscriptImport.js');
 const PROJ = readFileSync('./src/components/AppModules/projectDetailModule.jsx', 'utf8');
+const RTE = readFileSync('./src/components/RichTextEditor.jsx', 'utf8');
 
 let passed = 0;
 const eq = (actual, expected, what) => {
@@ -148,6 +149,13 @@ ok(!!bib.list[0].authors, '…et ses champs vides sont complétés par le docume
 has(PROJ, 'blocksFromText, splitManuscript, groupManuscriptParts',
   'la page projet importe les fonctions du module (aucune logique dupliquée)');
 has(PROJ, '📥 Import a manuscript', 'un bouton « 📥 Import a manuscript » est offert à côté des papiers');
+has(PROJ, 'onClick={() => openManuscriptImport()}', 'l’en-tête de la page projet porte le bouton (toujours visible)');
+has(PROJ, "{ label: '📥 Import a manuscript', title:", 'chaque section de texte en a un aussi — juste à côté du bouton « 📄 Word » de l’éditeur');
+has(PROJ, 'onClick: () => openManuscriptImport(id)', '…et il vise la section d’où il est lancé');
+has(PROJ, 'bibliography: true', 'la section Bibliography est ouverte d’emblée (sinon les boutons d’import restent cachés en bas de page)');
+has(PROJ, 'focusSection', 'la section de départ est mémorisée et rappelée dans la fenêtre');
+has(RTE, 'References are NOT imported here',
+  'le bouton « 📄 Word » de l’éditeur prévient qu’il ne prend PAS les références (il renvoie à l’import de manuscrit)');
 has(PROJ, 'onClick={() => { openManuscriptImport(); }}', '…et ouvre la fenêtre d’import');
 has(PROJ, 'const renderManuscriptImport = () => {', 'la fenêtre existe');
 has(PROJ, '{renderManuscriptImport()}', '…et est montée dans la page');

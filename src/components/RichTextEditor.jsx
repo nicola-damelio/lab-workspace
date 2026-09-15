@@ -451,9 +451,9 @@ export const RichTextEditor = ({
                         <input ref={docImportRef} type="file" accept=".docx" onChange={handleDocImport} className="hidden" />
                         <button onClick={() => docImportRef.current && docImportRef.current.click()}
                                 disabled={importingDoc}
-                                title="Import a Word (.docx) document — text, tables and figures are converted; figures are saved to Google Drive"
+                                title="Import a Word (.docx) document INTO THIS TEXT: text, tables and figures are converted (figures are saved to Google Drive). References are NOT imported here — to bring a whole manuscript with its bibliography and its numbered citations, use “📥 Import a manuscript” on the project page (it is the button right here in the toolbar of a project section)."
                                 className="px-2 py-0.5 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 rounded shadow-sm text-xs font-bold transition disabled:opacity-50">
-                            {importingDoc ? '⏳ Importing…' : '📄 Word'}
+                            {importingDoc ? '⏳ Importing…' : '📄 Word text'}
                         </button>
                     </>
                 )}

@@ -316,8 +316,8 @@ ok(/bibliography: res\.list/.test(pdm),
   'les références cochées sont FUSIONNÉES dans la bibliographie du projet (rien n’est remplacé)');
 ok(/Import references — \{project\.name\}/.test(pdm) && /\{renderBibImport\(\)\}/.test(pdm),
   'la fenêtre d’import est rendue par la page');
-ok(/onClick=\{\(\) => \{ openBibImport\(\); \}\}/.test(pdm) && /📄 Import from a paper/.test(pdm),
-  'le bouton « 📄 Import from a paper » ouvre la fenêtre');
+ok(/onClick=\{\(\) => \{ openBibImport\(\); \}\}/.test(pdm) && /📄 Import references from a paper/.test(pdm),
+  'le bouton « 📄 Import references from a paper » ouvre la fenêtre');
 ok(/entryKeys\(e\)\.some\(\(k\) => existing\.has\(k\)\)/.test(pdm),
   'l’aperçu signale les références déjà présentes dans le projet');
 

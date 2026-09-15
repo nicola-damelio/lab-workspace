@@ -237,8 +237,8 @@ has(FIG, 'onClick={loadRecoveryBackups}', 'les sauvegardes Drive peuvent être l
 has(FIG, 'onClick={() => loadRecoveryBackup(b)}', '…et relues une par une');
 has(FIG, 'setLibrary(readLibrary());', 'les panneaux sont rafraîchis après la fusion');
 has(FIG, 'if (res.common.added > 0) setLibTab(\'common\');', 'la bibliothèque s’ouvre là où les images sont arrivées');
-has(IB, 'Publications → Figures &amp; Slides → ♻️ Recover',
-  'l’éditeur d’images dit OÙ récupérer la liste quand elle est vide sur ce poste');
+has(IB, 'Use <b>⬇ Add missing from Drive</b> above to fetch',
+  'l’éditeur d’images dit d’où récupérer la liste quand elle est vide — ICI, plus sur un écran inatteignable');
 
 /* ── 9. LA BIBLIOTHÈQUE ⇄ LE DRIVE ──────────────────────────────────────────
    « Aucune image de la bibliothèque n'est sur le Drive » : soit les images
@@ -341,6 +341,38 @@ has(FIG, '⬇ Add missing</button>', 'un bouton ⬇ Add missing est offert');
 has(FIG, '☁ Save to Drive', '…et un bouton ☁ Save to Drive');
 has(FIG, 'projectImagesFolderLabel(libProjectName(), getDriveRootName())',
   'l’emplacement Drive affiché inclut le dossier du dataset');
+
+/* ── 11. Les gestes ☁ ⇄ ♻️ là où on les CHERCHE ─────────────────────────────
+   Le panneau « Image library » de Figures & Slides n'est monté par AUCUN écran
+   (`FiguresSlidesSection` n'est importé nulle part) : ses boutons ☁ / ⬇ / ♻️
+   ne pouvaient donc être vus par personne — « I don't even see an add missing
+   button ». Les MÊMES gestes doivent être dans la fenêtre de bibliothèque de
+   l'Image Builder (celle qu'on a sous les yeux) ET sur la page projet. */
+has(IB, "import { backupFigureCount, figuresFromBackupHtml } from '../utils/referenceImport';",
+  'l’Image Builder sait relire la bibliothèque d’une sauvegarde');
+has(IB, 'const res = await pushLibraryToDrive(libScopeInfo());',
+  'la fenêtre de bibliothèque envoie la portée affichée au Drive');
+has(IB, 'const res = await pullLibraryFromDrive(libScopeInfo());',
+  '…et relit le dossier Drive de cette portée');
+has(IB, '⬇ Add missing from Drive', '⬇ Add missing from Drive est dans la fenêtre de bibliothèque');
+has(IB, '☁ Save to Drive', '…avec ☁ Save to Drive');
+has(IB, '♻️ Recover', '…et ♻️ Recover');
+has(IB, 'mergeLibraryFromSnapshot({ common: figures.common, projects: figures.projects })',
+  'la récupération est ADDITIVE (fusion, jamais remplacement)');
+has(IB, 'const [libDriveBusy, setLibDriveBusy] = useState(false);',
+  'les deux gestes Drive ont leur état « en cours » (le bouton dit ⏳ Working…)');
+ok(!IB.includes('Publications → Figures &amp; Slides'),
+  'plus aucun renvoi vers un écran que personne ne peut ouvrir');
+
+has(PROJ, 'const res = await pullLibraryFromDrive(figDriveScope());',
+  'la page projet relit aussi le dossier d’images du projet');
+has(PROJ, '⬇ Add missing figures from Drive', '…avec le bouton ⬇ Add missing figures from Drive');
+has(PROJ, 'projectImagesFolderLabel(project.name || \'\', getDriveRootName())',
+  '…et affiche le dossier Drive réel (dataset inclus)');
+has(PROJ, 'const res = await pushLibraryToDrive(figDriveScope());',
+  '…et ☁ Save figures to Drive pour les pixels encore locaux');
+has(PROJ, 'setOpenSections] = useState({ background: true, canvases: true,',
+  'la section « 🖼 Saved canvases » (qui porte ces boutons) est OUVERTE par défaut');
 has(LIB_SRC, 'export const libraryItemsFromDriveListing = (listing, { addedAt = \'\' } = {}) => {',
   'figuresLibrary sait relire un dossier de Drive');
 has(LIB_SRC, 'export const driveLibraryItemId = (fileId) => `lib_drive_${String(fileId || \'\').replace(/[^\\w-]/g, \'\')}`;',
