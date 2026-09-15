@@ -1,5 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { markAttachmentsDeleted } from '../../utils/driveUpload';
+import {
+  DELETED_PROJECTS_KEY, normalizeTombstones, mergeTombstones, tombstonesForDataset,
+  isProjectDeleted, withoutDeletedProjects, addTombstone, withoutDatasetTombstones
+} from '../../utils/projectTombstones';
 
 /* =========================================================================
    PROJECTS — "Scientific background / Experiments / Discussion /
@@ -83,6 +87,58 @@ export const setProjectDatasetScope = (datasetArg) => {
 /** Dataset id of the currently shown projects (null outside a dataset). */
 export const getActiveProjectDataset = () => activeProjectDataset;
 
+/* ------------------------------------------------------------------------
+ * Projets SUPPRIMÉS (« pierres tombales », voir utils/projectTombstones.js).
+ *
+ * Un projet supprimé vit dans DEUX magasins : ce navigateur (`PROJECTS_KEY`)
+ * et le document du dataset (payload cloud / sauvegarde HTML, clé `projects`).
+ * La suppression n'effaçait que le premier : à la réouverture du dataset, la
+ * copie du payload était ré-adoptée et le projet réapparaissait. On garde donc
+ * ici la liste des projets supprimés (localStorage) — elle est appliquée à
+ * CHAQUE lecture, CHAQUE écriture et CHAQUE fusion, et App.jsx la range dans
+ * le payload du dataset pour que la suppression atteigne les autres postes.
+ * ---------------------------------------------------------------------- */
+const readDeletedProjects = () => {
+  try {
+    const raw = localStorage.getItem(DELETED_PROJECTS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch { /* ignore malformed */ }
+  return [];
+};
+const writeDeletedProjects = (list) => {
+  try {
+    localStorage.setItem(DELETED_PROJECTS_KEY, JSON.stringify(normalizeTombstones(list)));
+  } catch { /* ignore */ }
+};
+
+/** Les projets supprimés sur ce navigateur (liste prête à être portée par le
+ *  payload du dataset — voir App.jsx cloudProjectsPayload). */
+export const loadDeletedProjects = () => normalizeTombstones(readDeletedProjects());
+
+/** Enregistre la suppression d'un projet : elle ne sera plus jamais annulée
+ *  par une copie locale, un payload ou une sauvegarde (utils/projectTombstones). */
+export const recordProjectDeletion = (project, deletedAt) => {
+  if (!project || !String(project.id || '').trim()) return loadDeletedProjects();
+  const next = addTombstone(readDeletedProjects(), {
+    id: project.id,
+    datasetId: String(project.datasetId || activeProjectDataset || '')
+  }, deletedAt);
+  writeDeletedProjects(next);
+  return next;
+};
+
+/** Les suppressions portées par un payload de dataset : elles rejoignent celles
+ *  de ce navigateur (et sont donc appliquées à partir de maintenant). */
+export const adoptDeletedProjects = (payloadTombstones, datasetArg) => {
+  const datasetId = datasetArg != null ? String(datasetArg) : (activeProjectDataset || '');
+  const next = mergeTombstones(readDeletedProjects(), tombstonesForDataset(payloadTombstones, datasetId));
+  writeDeletedProjects(next);
+  return normalizeTombstones(next);
+};
+
 const readRawProjects = () => {
   try {
     const raw = localStorage.getItem(PROJECTS_KEY);
@@ -95,7 +151,11 @@ const readRawProjects = () => {
 };
 const writeRawProjects = (list) => {
   try {
-    localStorage.setItem(PROJECTS_KEY, JSON.stringify(dedupeProjects(Array.isArray(list) ? list : [])));
+    /* Une copie d'un projet SUPPRIMÉ ne peut jamais rentrer dans le cache :
+       c'est le dernier rempart contre la « résurrection » (un état React
+       périmé, un payload rechargé, une sauvegarde restaurée…). */
+    const live = withoutDeletedProjects(Array.isArray(list) ? list : [], readDeletedProjects());
+    localStorage.setItem(PROJECTS_KEY, JSON.stringify(dedupeProjects(live)));
   } catch { /* ignore */ }
 };
 
@@ -104,7 +164,7 @@ const writeRawProjects = (list) => {
  *  projects (not yet tagged to a dataset) only appear in that global view. */
 export const loadProjects = (datasetArg) => {
   const datasetId = datasetArg != null ? String(datasetArg) : activeProjectDataset;
-  const all = readRawProjects();
+  const all = withoutDeletedProjects(readRawProjects(), readDeletedProjects());
   if (!datasetId) return dedupeProjects(all);
   return dedupeProjects(all.filter((p) => p && String(p.datasetId) === datasetId));
 };
@@ -131,11 +191,13 @@ export const saveProjects = (list) => {
 };
 
 /** Remove every project of a dataset from this device's cache (dataset
- *  deletion). */
+ *  deletion). The dataset's own tombstones go with it: a dataset recreated
+ *  with the same id must be able to show its projects again. */
 export const removeProjectsOfDataset = (datasetArg) => {
   const datasetId = datasetArg != null ? String(datasetArg) : null;
   if (!datasetId) return;
   try {
+    writeDeletedProjects(withoutDatasetTombstones(readDeletedProjects(), datasetId));
     const kept = readRawProjects().filter((p) => !(p && String(p.datasetId) === datasetId));
     writeRawProjects(kept);
   } catch { /* ignore */ }
@@ -164,18 +226,25 @@ export const mergeProjectsFromCloud = (payloadProjects, opts = {}) => {
     : new Set((Array.isArray(opts.tests) ? opts.tests : []).map((t) => t && t.id).filter(Boolean));
   const adoptAllLegacy = !!opts.adoptAllLegacy;
   const payload = Array.isArray(payloadProjects) ? payloadProjects : [];
+  /* Les SUPPRESSIONS : celles de ce navigateur + celles que le payload porte
+     (`opts.deleted`, écrit par le poste qui a supprimé le projet). Elles sont
+     appliquées ici — c'est exactement l'endroit où la copie du payload faisait
+     « ressusciter » un projet supprimé. */
+  const tombstones = adoptDeletedProjects(opts.deleted, datasetId);
 
+  let changed = false;
   const byId = new Map();
   const nameToId = new Map(); // dataset-scoped name → id
   readRawProjects().forEach((p) => {
     if (!p || typeof p !== 'object' || !p.id) return;
+    if (isProjectDeleted(p, tombstones)) { changed = true; return; } // copie locale d'un projet supprimé : effacée
     byId.set(p.id, p);
     const nk = p && p.name ? datasetNameKey(p) : '';
     if (nk && !nameToId.has(nk)) nameToId.set(nk, p.id);
   });
 
-  let changed = false;
   const remember = (p) => {
+    if (isProjectDeleted(p, tombstones)) return; // supprimé : jamais ré-adopté
     const nk = p && p.name ? datasetNameKey(p) : '';
     const cur = byId.get(p.id);
     if (cur) {
@@ -417,6 +486,11 @@ export const ProjectsModule = ({
   const deleteProject = (id) => {
     const target = projects.find((p) => p.id === id);
     const remaining = projects.filter((p) => p.id !== id);
+    /* LA SUPPRESSION EST DÉFINITIVE : on note d'abord la « pierre tombale » du
+       projet (localStorage + payload du dataset, voir projectTombstones.js).
+       Sans elle, la copie du projet rangée dans le document du dataset était
+       ré-adoptée à la réouverture et le projet réapparaissait. */
+    recordProjectDeletion(target || { id, datasetId: activeProjectDataset });
     setProjects(remaining);
     saveProjects(remaining);
     setConfirmDelete(null);

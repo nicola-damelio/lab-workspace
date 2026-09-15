@@ -28,7 +28,7 @@ import { NotebookModule, CalculationsModule, PublicationsModule, ImageBuilderMod
    sauvegardes et les relit en FUSION lors d'un « Load HTML » (voir
    applyPapersRecovery — rien de ce qui est enregistré n'est écrasé). */
 import { applyPapersRecovery, readPublications, readExcludedPubs, readRelevantSubjects, loadRelevantPapers } from './components/Publications';
-import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud, setProjectDatasetScope, removeProjectsOfDataset } from './components/AppModules/projectsModule';
+import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud, setProjectDatasetScope, removeProjectsOfDataset, loadDeletedProjects, adoptDeletedProjects } from './components/AppModules/projectsModule';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
 import { setActiveProjectId, readLibrary, readAllProjectLibraries, mergeLibraryFromSnapshot } from './utils/figuresLibrary';
@@ -2103,8 +2103,17 @@ const stripOversizedDataUrls = (value) => {
   }
   return value;
 };
+/* Les projets du dataset + la LISTE DES PROJETS SUPPRIMÉS : sans elle, un
+   autre poste (ou ce poste, après rechargement du payload) ré-adoptait la copie
+   du projet supprimé restée dans le document et le projet réapparaissait. La
+   suppression voyage donc avec le payload (voir utils/projectTombstones.js). */
 const cloudProjectsPayload = () => {
-  try { return { projects: stripOversizedDataUrls(loadProjects() || []) }; } catch { return { projects: [] }; }
+  try {
+    return {
+      projects: stripOversizedDataUrls(loadProjects() || []),
+      deletedProjects: loadDeletedProjects()
+    };
+  } catch { return { projects: [], deletedProjects: [] }; }
 };
 
 const compressDatasetForSave = (raw) => {
@@ -2757,6 +2766,10 @@ useEffect(() => {
       if (s.datasetProtocols !== undefined) setDatasetProtocols(s.datasetProtocols);
       if (s.storages !== undefined) setStorages(s.storages);
       // Projects live in localStorage (not React state) — restore them here.
+      // Les SUPPRESSIONS portées par le fichier sont adoptées AVANT la
+      // réécriture des projets : une sauvegarde encore porteuse d'un projet
+      // supprimé ne doit pas le faire revenir.
+      adoptDeletedProjects(s.deletedProjects);
       if (Array.isArray(s.projects)) saveProjects(s.projects);
       // NOTE: operators and authSettings are NEVER imported from HTML
       // They are global app-level identity/security state — not dataset state.
@@ -3273,7 +3286,11 @@ const openDataset = (dset) => {
         mergeProjectsFromCloud(s.projects, {
           datasetId: dset.id,
           testIds: new Set((loadedTests || []).map((t) => t && t.id).filter(Boolean)),
-          adoptAllLegacy: true
+          adoptAllLegacy: true,
+          /* Les suppressions enregistrées dans ce dataset (par ce poste ou un
+             autre) : sans elles, la copie du projet supprimé encore présente
+             dans s.projects serait ré-adoptée (projet qui « revient »). */
+          deleted: s.deletedProjects
         });
       } catch (err) { console.warn('Could not restore projects from dataset:', err && err.message); }
 

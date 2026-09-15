@@ -243,6 +243,12 @@ const makeEntry = (part) => {
     volume: String(part.volume || '').trim(),
     pages: String(part.pages || '').trim(),
     link: String(part.link || '').trim(),
+    /* LE NUMÉRO QUE LA BIBLIOGRAPHIE DONNAIT À CETTE RÉFÉRENCE (« 12. Rossi… »
+       → 12), 0 quand le format n'en porte pas (RIS, BibTeX). C'est ce numéro
+       qui permet de retrouver le « [12] » écrit dans le TEXTE : sans lui, une
+       référence importée pourrait recevoir un autre numéro et le lien du texte
+       mènerait au mauvais papier (voir utils/referenceLinks.js). */
+    number: Number(part.number) || 0,
     /* Texte d'origine : sert seulement à NOTER la référence (sections 1-3 de
        l'analyse) ; `projectBibEntry` ne le recopie jamais dans le projet. */
     raw: String(part.raw || '').trim(),
@@ -620,6 +626,9 @@ export const bibliographyBlockToEntry = (block, _opts = {}) => {
     volume: jp.volume || tailVolume,
     pages: jp.pages || tailPages,
     link: urlMatch ? urlMatch[0] : '',
+    /* « 12. Rossi… » → la référence 12 : le numéro écrit devant l'entrée, celui
+       que le TEXTE cite ([12]) — conservé (voir makeEntry). */
+    number: numberMatch ? Number(numberMatch[1]) : 0,
     source: 'text',
     raw: rawBody
   });

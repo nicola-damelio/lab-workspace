@@ -12,12 +12,16 @@
      • elle ne doit JAMAIS toucher aux balises ni au contenu d'un lien existant.
    ========================================================================= */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { register } from 'node:module';
 
 register('./_esm_test_hook.mjs', import.meta.url);
 
 const RL = await import('./src/utils/referenceLinks.js');
 const MS = await import('./src/utils/manuscriptImport.js');
+/* La page projet est lue telle quelle : les branchements (import → numérotation,
+   export → réparation d'un document enregistré) doivent y être VÉRIFIABLES. */
+const PAGE = readFileSync('./src/components/AppModules/projectDetailModule.jsx', 'utf8');
 
 let passed = 0;
 const eq = (actual, expected, what) => {
@@ -105,4 +109,73 @@ const linkedImport = RL.linkCitationNumbers(`<p>${converted.text}</p>`, { number
 ok(linkedImport.includes('data-ref="2"') && linkedImport.includes('data-ref="1"') && linkedImport.includes('data-ref="5"'),
   'les marqueurs du manuscrit importé deviennent donc des liens (bout en bout)');
 
-console.log(`✅ ${passed} tests passés (liens de citation [n] ↔ références)`);
+/* ── 7. Une bibliographie IMPORTÉE (Paperpile, Word…) devient numérotée ─────
+      Le défaut réparé : la bibliographie arrivait dans « Project bibliography »
+      mais le projet n'avait aucune référence 12 — le « [12] » du texte menait
+      dans le vide et le document exporté n'imprimait rien.               */
+const paper = (title, extra = {}) => ({ title, authors: 'Rossi M', year: '2019', ...extra });
+const fresh = RL.numberImportedReferences(
+  [paper('First'), paper('Second'), paper('Third')], [], { hints: [1, 2, 3] }
+);
+eq(fresh.list.map((r) => r.number), [1, 2, 3],
+  'une bibliographie numérotée « 1. … 2. … 3. … » reçoit CES numéros : le [1] du texte tombe juste');
+eq(fresh.added, 3, 'les trois papiers sont annoncés comme ajoutés');
+eq(fresh.created.length, 3, 'seules les références NOUVELLES sont rendues à part');
+eq([fresh.list[0].title, fresh.list[0].year], ['First', '2019'], 'chaque référence garde son papier');
+ok(fresh.list[0].id && fresh.list[0].id !== fresh.list[1].id, 'chaque référence reçoit un id unique');
+
+const parsed = RL.numberImportedReferences([{ ...paper('Parsed'), number: 4 }], [], { makeId: () => 'r_new' });
+eq([parsed.list[0].number, parsed.list[0].id], [4, 'r_new'],
+  'le numéro lu devant l’entrée (« 12. Rossi… ») devient le numéro de la référence');
+
+const after = RL.numberImportedReferences([paper('Later', { doi: '10.1/x' })], REFS);
+eq(after.list.map((r) => r.number), [1, 2, 5, 6],
+  'sans numéro dans le document, la référence prend le premier numéro APRÈS le plus grand (règle de l’import de manuscrit)');
+eq(after.list[3].doi, '10.1/x', 'le DOI de l’entrée est conservé (les Publications le retrouvent)');
+
+const clash = RL.numberImportedReferences([paper('Clashing')], [{ id: 'r2', number: 2, title: 'Taken' }], { hints: [2] });
+eq(clash.list.map((r) => r.number), [2, 3], 'un numéro déjà pris n’est JAMAIS volé : l’entrée prend le suivant');
+eq(clash.list[0].title, 'Taken', '…et la référence du projet n’est ni renommée ni renumérotée');
+
+const dup = RL.numberImportedReferences(
+  [{ title: 'Aphid transmission of viruses', authors: 'Dupont J' }, paper('Brand new')], REFS
+);
+eq([dup.added, dup.reused], [1, 1], 'un papier déjà référencé n’est pas dupliqué (même titre = même papier)');
+eq(dup.list.length, REFS.length + 1, 'la liste complète ne gagne qu’une référence');
+eq(RL.numberImportedReferences([paper('Twice'), paper('Twice')], []).added, 1,
+  'le même papier deux fois dans un seul import ne fait qu’une référence');
+eq(REFS.length, 3, 'les références du projet ne sont pas modifiées (copie)');
+
+/* ── 8. Le document DÉJÀ ENREGISTRÉ reçoit les références manquantes ─────── */
+const SAVED = '<div><h2 class="text-base">Bibliography (1)</h2><ol class="list-decimal pl-5">'
+  + '<li id="ref-1" value="1">Rossi 2018</li></ol></div>';
+const TO_ADD = [{ number: 2, html: 'Dupont 2020' }, { number: 3, html: 'Bianchi 2021' }];
+const patched = RL.ensureReferenceEntries(SAVED, TO_ADD);
+eq(patched.added, 2, 'les deux références absentes d’un document enregistré sont ajoutées');
+ok(patched.html.includes('<li id="ref-2" value="2">Dupont 2020</li>'),
+  'chaque entrée porte son ancre #ref-n et son numéro réel (l’ordre d’impression reste juste)');
+ok(patched.html.indexOf('id="ref-2"') < patched.html.indexOf('</ol>'), 'elles entrent DANS la liste « Bibliography » existante');
+ok(patched.html.includes('<li id="ref-1" value="1">Rossi 2018</li>'), '…sans toucher au texte déjà enregistré');
+eq(RL.ensureReferenceEntries(patched.html, TO_ADD).added, 0, 'la réparation est idempotente (réexporter ne double rien)');
+eq(RL.ensureReferenceEntries(SAVED, [{ number: 1, html: 'Rossi 2018' }]).added, 0,
+  'une référence déjà présente (ancre #ref-1) n’est pas ajoutée deux fois');
+const noBib = RL.ensureReferenceEntries('<p>Text</p>', [{ number: 9, html: 'Ninth' }]);
+ok(noBib.added === 1 && noBib.html.includes('id="ref-9"'),
+  'sans bibliographie dans le document enregistré, la référence est quand même ajoutée');
+ok(noBib.html.indexOf('Bibliography') > noBib.html.indexOf('<p>Text</p>'), '…dans une bibliographie placée à la fin');
+eq(RL.ensureReferenceEntries('<p>Text</p>', [{ number: 0, html: '' }, null]).added, 0,
+  'une entrée sans numéro ou sans texte est ignorée');
+
+/* ── 9. La page projet applique bien ces deux branchements ──────────────── */
+const has = (needle, what) => ok(PAGE.includes(needle), what);
+has('const pickedEntries = (bibImport.picked || [])', 'l’import garde l’ORDRE du document pour numéroter');
+has('const numbered = numberImportedReferences(pickedEntries, refs)',
+  'le bouton « Import references » numérote les entrées importées');
+has('references: numbered.list', '…et les enregistre dans les références du projet (donc imprimées)');
+has('PROJECT_TEXT_SECTIONS.map((s) => ({ id: s.id, html: project[s.id] || \'\' })),',
+  '…puis il lie les citations déjà écrites dans les sections');
+has('ensureReferenceEntries(bodyHtml, refs.map((r) => ({', 'à l’export, un document enregistré est complété');
+has('bodyHtml = linkCitations(repaired.html)', '…et ses citations sont liées avant l’impression');
+has('<body>${bodyHtml}</body>', 'c’est bien ce document réparé qui part à l’imprimante');
+
+console.log(`✅ ${passed} tests passés (liens de citation [n] ↔ références, import bibliographique numéroté, document exporté réparé)`);

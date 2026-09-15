@@ -13,6 +13,8 @@ OK   _chain_test.cjs  →  RESULT: PASS (two chains separated, contacts do not m
 OK   _chart_dblclick_test.cjs  →  ✅ 101/101 checks passed
 OK   _cov_check.cjs  →  UNWIRED: none - every editable new Chart( site is wrapped in ChartJsInspector.
 OK   _curve_style_test.mjs  →  │ (index) │ name                                                                        │ ok   │ error │ | ✅ 50/50 checks passed
+OK   _deleted_projects_test.mjs  →  ✅ 46 tests passés (projets supprimés : rien ne ressuscite)
+OK   _doc_responsive_test.mjs  →  ✅ 38 tests passés (document exporté et page « document » adaptés à la largeur de l’écran)
 OK   _docking_sanity.cjs  →  (no output)
 OK   _editor_layout_test.cjs  →  _editor_layout_test.cjs — 9 assertions passed
 OK   _esm_test_hook.mjs  →  (no output)
@@ -32,11 +34,11 @@ OK   _project_figures_access_test.cjs  →  │ (index) │ name                
 OK   _pub_author_style_test.mjs  →  _pub_author_style_test: 108 passed
 OK   _rebuild_h_test.mjs  →  PASS
 OK   _reference_import_test.mjs  →  ✅ 168 tests passés (import de références)
-OK   _reference_links_test.mjs  →  ✅ 27 tests passés (liens de citation [n] ↔ références)
+OK   _reference_links_test.mjs  →  ✅ 57 tests passés (liens de citation [n] ↔ références, import bibliographique numéroté, document exporté réparé)
 OK   _spectra_split_test.mjs  →  passed 197/197
 OK   _split_test.cjs  →  (no output)
 OK   _src_split_test.cjs  →  (no output)
 OK   _star_group_test.cjs  →  ✅ 33/33 checks passed
 OK   _ui_scale_test.cjs  →  ✅ 44/44 checks passed
 OK   _view_scroll_memory_test.cjs  →  ✅ 41/41 checks passed
-total 41, failed 0
+total 43, failed 0

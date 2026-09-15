@@ -22,9 +22,19 @@
 
    Tout est PUR (aucune dépendance React, aucun DOM) : la page projet s'en sert
    à l'import, sur le bouton « 🔗 Link citations… » et dans le document exporté.
+
+   LE NUMÉROTAGE DES RÉFÉRENCES IMPORTÉES (bas de ce fichier) : une bibliographie
+   Paperpile/Word importée dans un projet doit avoir les MÊMES numéros que les
+   « [12] » déjà écrits dans le texte — sinon le lien ne mène à rien et le
+   document exporté n'imprime aucune référence. `numberImportedReferences` fait
+   ce travail : chaque entrée importée devient une référence numérotée du projet
+   (project.references, la liste que la section « Bibliography » et le document
+   exporté impriment) en gardant le numéro que le DOCUMENT lui donnait, sans
+   jamais écraser un numéro déjà pris ni dupliquer un papier déjà référencé.
    ========================================================================= */
 
 import { NUMERIC_CITATION_RE, numericCitationNumbers } from './manuscriptImport';
+import { entryKeys } from './referenceImport';
 
 /** Classe CSS des liens de citation (stylée dans le document exporté). */
 export const CITE_LINK_CLASS = 'cite-ref';
@@ -124,4 +134,153 @@ export const linkCitationsInSections = (sections, refs, opts = {}) => {
     added += Math.max(0, linkedCitationNumbers(next).size - linkedCitationNumbers(html).size);
   });
   return { patch, updated, added };
+};
+
+/* ── Les références IMPORTÉES rejoignent la liste NUMÉROTÉE du projet ─────── */
+
+/**
+ * Une entrée de bibliographie importée (Paperpile, RIS, BibTeX, bloc de
+ * références) → une référence de projet numérotée, de la MÊME forme que celles
+ * créées par « 📚 + Reference » (voir projectDetailModule.jsx). C'est cette
+ * liste (`project.references`) que la section « Bibliography » du projet et le
+ * document exporté impriment, et sur laquelle pointent les liens `#ref-<n>`.
+ */
+export const referenceFromEntry = (entry, number, id = '') => {
+  const e = entry || {};
+  return {
+    id: id || `ref_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    number: Number(number) || 0,
+    sourceId: '', source: '',
+    title: String(e.title || '').trim() || 'Untitled',
+    link: String(e.link || e.url || e.doi || '').trim(),
+    doi: String(e.doi || '').trim(),
+    authors: String(e.authors || '').trim(),
+    journal: String(e.journal || '').trim(),
+    year: String(e.year || '').trim(),
+    volume: String(e.volume || '').trim(),
+    pages: String(e.pages || '').trim()
+  };
+};
+
+/**
+ * Les entrées d'une bibliographie importée deviennent les références du projet,
+ * NUMÉROTÉES COMME DANS LE DOCUMENT.
+ *
+ * C'est ce qui manquait : un manuscrit collé dans un projet gardait ses « [12] »
+ * alors que le projet n'avait aucune référence 12 — le texte renvoyait dans le
+ * vide et le document exporté sortait sans bibliographie.
+ *
+ * @param {Array} entries   entrées importées, DANS L'ORDRE DU DOCUMENT
+ * @param {Array} refs      `project.references` (jamais modifiées : copie)
+ * @param {object} [opts]
+ * @param {Array<number>} [opts.hints]  le numéro que le DOCUMENT donnait à
+ *        chaque entrée (« 12. Rossi, … » → 12). À défaut, premier numéro libre.
+ * @param {Function} [opts.makeId]      fabrique d'id (injectable en test)
+ * @returns {{ list: Array, added: number, reused: number, created: Array }}
+ *          `list` = la liste COMPLÈTE à enregistrer, `created` = les seules
+ *          références ajoutées, `reused` = combien d'entrées existaient déjà.
+ *
+ * Règles (jamais destructives) :
+ *   • un papier DÉJÀ référencé (même DOI, PMID ou titre) garde sa référence et
+ *     son numéro : rien n'est dupliqué, rien n'est renuméroté ;
+ *   • un numéro déjà pris n'est JAMAIS volé : l'entrée reçoit le premier numéro
+ *     libre (le « [12] » du document reste donc soit intact — lien mort évité —
+ *     soit correctement lié, jamais faux) ;
+ *   • deux entrées du même papier dans un même import ne créent qu'une
+ *     référence.
+ */
+export const numberImportedReferences = (entries, refs, opts = {}) => {
+  const list = (Array.isArray(refs) ? refs : [])
+    .filter((r) => r && typeof r === 'object')
+    .map((r) => ({ ...r }));
+  const index = new Map();
+  const register = (ref) => {
+    entryKeys(ref).forEach((k) => { if (k && !index.has(k)) index.set(k, ref); });
+  };
+  list.forEach(register);
+  const taken = new Set();
+  list.forEach((r) => {
+    const n = Number(r.number) || 0;
+    if (n > 0) taken.add(n);
+  });
+  /* Numéro par défaut : le PREMIER APRÈS le plus grand déjà attribué — la règle
+     du plan d'import de manuscrit (buildManuscriptPlan), pour que la même
+     bibliographie reçoive les mêmes numéros par les deux chemins. Un numéro
+     déjà pris est sauté (jamais deux références pour un même numéro). */
+  let next = list.reduce((max, r) => Math.max(max, Number(r.number) || 0), 0) + 1;
+  const nextFree = () => {
+    while (taken.has(next)) next += 1;
+    return next;
+  };
+  const makeId = typeof opts.makeId === 'function' ? opts.makeId : undefined;
+  const hints = Array.isArray(opts.hints) ? opts.hints : [];
+  const created = [];
+  let reused = 0;
+  (Array.isArray(entries) ? entries : []).forEach((entry, i) => {
+    if (!entry || typeof entry !== 'object') return;
+    const hit = entryKeys(entry).map((k) => index.get(k)).find(Boolean);
+    if (hit) { reused += 1; return; }
+    /* Le numéro que le DOCUMENT donnait à cette entrée (« 12. Rossi… » → 12) :
+       celui du texte, donc le lien « [12] » tombe juste. À défaut (RIS, BibTeX,
+       bibliographie non numérotée), le prochain numéro libre. */
+    const hint = Number(hints[i]) || Number(entry.number) || 0;
+    const number = hint > 0 && !taken.has(hint) ? hint : nextFree();
+    const ref = referenceFromEntry(entry, number, makeId ? makeId() : '');
+    list.push(ref);
+    created.push(ref);
+    taken.add(number);
+    register(ref);
+  });
+  return { list, added: created.length, reused, created };
+};
+
+/* ── À L'EXPORT : une bibliographie d'instantané se complète ──────────────── */
+
+/** Le titre « Bibliography (n) » d'un document, suivi de l'ouverture de sa liste. */
+const BIB_LIST_RE = /<h[1-3][^>]*>\s*Bibliography\b[^<]*<\/h[1-3]>\s*<ol\b[^>]*>/i;
+
+/**
+ * LES RÉFÉRENCES MANQUANTES D'UN DOCUMENT DÉJÀ ENREGISTRÉ.
+ *
+ * « ✏️ Edit text » → « 💾 Save changes » FIGE le document (`project.exportDocHtml`) :
+ * une bibliographie importée ENSUITE n'y figure pas et ses « [12] » n'y sont pas
+ * liés — le PDF exporté sortait donc sans les références Paperpile, même une fois
+ * la numérotation en place (c'est la deuxième moitié de la plainte : « ni liées,
+ * ni exportées »).
+ *
+ * Cette fonction ne RÉÉCRIT RIEN du texte de l'auteur : elle ajoute à la
+ * bibliographie du document les seules entrées dont l'ancre `#ref-<n>` manque
+ * (`<li id="ref-12" value="12">…</li>`), à la fin de la liste « Bibliography »
+ * existante — ou dans un bloc ajouté à la fin si le document n'en a plus.
+ * Elle est IDEMPOTENTE : un document déjà complet ressort tel quel.
+ *
+ * @param {string} html    le document enregistré (HTML)
+ * @param {Array} entries  `[{ number, html }]` — `html` = intérieur du `<li>`
+ * @returns {{ html: string, added: number }} `added` = entrées ajoutées
+ */
+export const ensureReferenceEntries = (html, entries) => {
+  const source = String(html || '');
+  const wanted = (Array.isArray(entries) ? entries : [])
+    .map((e) => ({ number: Number(e && e.number) || 0, html: String((e && e.html) || '').trim() }))
+    .filter((e) => e.number > 0 && e.html)
+    .sort((a, b) => a.number - b.number);
+  const missing = wanted.filter((e) => !source.includes(`id="${citationAnchorId(e.number)}"`));
+  if (!missing.length) return { html: source, added: 0 };
+  const items = missing
+    .map((e) => `<li id="${citationAnchorId(e.number)}" value="${e.number}">${e.html}</li>`)
+    .join('');
+  const heading = source.match(BIB_LIST_RE);
+  if (heading) {
+    /* `</ol>` de la liste ouverte juste après le titre : la bibliographie n'a pas
+       de sous-liste, la première fermeture est donc la bonne. */
+    const close = source.indexOf('</ol>', heading.index + heading[0].length);
+    if (close !== -1) {
+      return { html: `${source.slice(0, close)}${items}${source.slice(close)}`, added: missing.length };
+    }
+  }
+  return {
+    html: `${source}\n<div class="mb-4"><h2 class="text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">Bibliography</h2>`
+      + `<ol class="list-decimal pl-5 text-sm text-slate-800 space-y-1">${items}</ol></div>`,
+    added: missing.length
+  };
 };

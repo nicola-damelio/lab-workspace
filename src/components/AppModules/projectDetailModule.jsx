@@ -5,7 +5,7 @@ import {
   loadPubFormat, loadRelevantPapers, matchCoauthors, pubCitationData, pubCitationHtml
 } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
-import { loadProjects, saveProjects, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor } from './projectsModule';
+import { loadProjects, saveProjects, recordProjectDeletion, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor } from './projectsModule';
 import { suggestDriveFileName, openDrive, projectSectionFolderPath, projectSectionFolderLabel, projectImagesFolderLabel } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
 import { UsefulFilesSection } from '../UsefulFilesSection';
@@ -23,8 +23,8 @@ import {
   NUMERIC_CITATION_RE, numericCitationNumbers
 } from '../../utils/manuscriptImport';
 import {
-  citationAnchorId, citationLabel, linkCitationsInSections, linkCitationNumbers,
-  referenceNumbers, linkedCitationNumbers
+  citationAnchorId, citationLabel, ensureReferenceEntries, linkCitationsInSections,
+  linkCitationNumbers, numberImportedReferences, referenceNumbers, linkedCitationNumbers
 } from '../../utils/referenceLinks';
 import { splitAnchoredFigures } from '../../utils/figurePlacement';
 import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject, getDriveToken, getDriveRootName, resolveDrivePathFromNames, listDriveChildren } from '../../utils/driveUpload';
@@ -1012,16 +1012,45 @@ export const ProjectDetailModule = ({
 
   const commitBibImport = () => {
     if (!bibImport) return;
-    const chosen = (bibImport.picked || [])
+    /* Les entrées COCHÉES, dans l'ORDRE du document : c'est cet ordre qui porte
+       la numérotation (voir numberImportedReferences). */
+    const pickedEntries = (bibImport.picked || [])
+      .slice()
+      .sort((a, b) => a - b)
       .map((i) => bibImport.parsed[i])
-      .filter(Boolean)
-      .map((entry) => projectBibEntry(entry, project, genProjectId()));
-    if (!chosen.length) return;
+      .filter(Boolean);
+    if (!pickedEntries.length) return;
+    const chosen = pickedEntries.map((entry) => projectBibEntry(entry, project, genProjectId()));
     const res = mergeReferenceEntries(projectBib, chosen);
-    updateProject({ bibliography: res.list });
+    /* LES RÉFÉRENCES NUMÉROTÉES DU PROJET, pas seulement la bibliographie :
+       `project.references` est la liste que le TEXTE cite (« [12] »), que la
+       section « 📚 Bibliography » et le document exporté IMPRIMENT. Sans cette
+       étape, un papier importé de Paperpile n'apparaissait dans AUCUN document et
+       les « [12] » du texte ne menaient nulle part — c'était la plainte : les
+       références importées n'étaient ni liées, ni exportées. Le numéro écrit
+       devant l'entrée (« 12. Rossi… ») est conservé : le lien tombe juste. */
+    const numbered = numberImportedReferences(pickedEntries, refs);
+    /* Et les citations DÉJÀ écrites dans les sections deviennent des liens vers
+       ces références (ancre #ref-n + infobulle) : l'import fait donc les deux
+       d'un coup, sans avoir à retrouver le bouton « 🔗 Link citations… ». */
+    const linked = linkCitationsInSections(
+      PROJECT_TEXT_SECTIONS.map((s) => ({ id: s.id, html: project[s.id] || '' })),
+      numbered.list
+    );
+    updateProject({
+      bibliography: res.list,
+      ...(numbered.added ? { references: numbered.list } : {}),
+      ...linked.patch
+    });
+    if (linked.updated) {
+      setCitationLinkReport(`🔗 ${linked.added} citation link(s) added in ${linked.updated} section(s) — the exported document (and its printed PDF) follow them.`);
+    }
     setBibImport({
       ...bibImport, parsed: [], picked: [],
-      status: `✅ ${res.added} reference(s) added to “${project.name}”${res.filled ? ` — ${res.filled} completed` : ''}. They also appear in Publications → “Project bibliography”.`
+      status: `✅ ${res.added} reference(s) added to “${project.name}”${res.filled ? ` — ${res.filled} completed` : ''}`
+        + `${numbered.added ? ` · ${numbered.added} numbered reference(s) in the project document (Bibliography)` : ''}`
+        + `${linked.updated ? ` · 🔗 ${linked.added} citation(s) linked in ${linked.updated} section(s)` : ''}`
+        + '. They also appear in Publications → “Project bibliography”.'
     });
   };
 
@@ -1504,7 +1533,10 @@ export const ProjectDetailModule = ({
               Drop an article (<b>.docx</b> from Word, Google Docs export, Paperpile export, a <b>.ris</b>/<b>.bib</b>
               file, a text file) or paste the bibliography below. Only what is recognised as a reference is kept — the
               rest of the manuscript is ignored. The papers are added to this project’s bibliography, so they also show
-              up in Publications → “Project bibliography” and in the references of the project document.
+              up in Publications → “Project bibliography”. They also become the <b>numbered references</b> of the project
+              (<b>[1]</b>, <b>[2]</b>… the same as “📚 + Reference”), printed in the document’s <b>Bibliography</b>, and
+              the numbered citations already written in the text sections are turned into links to them — a reference
+              imported from Paperpile as “12. Rossi…” therefore answers the “<b>[12]</b>” of the text.
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <label className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 border border-slate-300 text-slate-700 hover:bg-slate-200 cursor-pointer">
@@ -2153,14 +2185,37 @@ export const ProjectDetailModule = ({
     if (!docEl) return;
     const win = window.open('', '_blank', 'width=960,height=720');
     if (!win) { window.print(); return; }
+    /* CE QUI PART À L'IMPRESSION : le document affiché, RÉPARÉ.
+       Un document enregistré (« ✏️ Edit text » → « 💾 Save changes ») est un
+       INSTANTANÉ : les références importées DEPUIS n'y figurent pas et ses
+       « [12] » n'y sont pas liés — l'export (et son PDF) sortait donc sans les
+       références Paperpile, même une fois la numérotation en place. On ajoute
+       ici les entrées manquantes (ancre `#ref-<n>`) et on relie les citations.
+       Le texte de l'auteur, lui, n'est jamais réécrit. */
+    let bodyHtml = docEl.innerHTML;
+    if (refs.length) {
+      const repaired = ensureReferenceEntries(bodyHtml, refs.map((r) => ({
+        number: Number(r && r.number) || 0,
+        html: pubCitationHtml(citeData(r), pubFormat, operatorNames) || String((r && r.title) || '')
+      })));
+      bodyHtml = linkCitations(repaired.html);
+    }
     const title = `${project.name} — project document`;
     win.document.write(`<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8" />
+  <!-- LA PAGE EXPORTÉE S'ADAPTE À LA LARGEUR DE L'ÉCRAN : sans ce meta, un
+       téléphone (ou une fenêtre étroite) affichait la page en « desktop »
+       dézoomé — texte minuscule et marges de 2 cm qui mangeaient la moitié de
+       l'écran. Voir les règles @media plus bas. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${title}</title>
   <style>
-    body { font-family: Georgia, 'Times New Roman', serif; color: #111; padding: 2cm 2.2cm; line-height: 1.55; font-size: 13px; }
+    body { font-family: Georgia, 'Times New Roman', serif; color: #111; line-height: 1.55; font-size: 15px;
+           margin: 0 auto; max-width: 46rem;
+           padding: clamp(0.8rem, 4vw, 2.2cm) clamp(0.9rem, 5vw, 2.2cm);
+           overflow-wrap: break-word; }
     h1 { font-size: 24px; margin: 0 0 4px; }
     h2 { font-size: 16px; border-bottom: 1px solid #bbb; padding-bottom: 4px; margin: 26px 0 10px; }
     h3 { font-size: 14px; margin: 14px 0 6px; }
@@ -2184,9 +2239,30 @@ export const ProjectDetailModule = ({
     .cite-ref { color: #2563eb; font-weight: 700; text-decoration: none; }
     li:target { background: #fef08a; }
     button { font-family: Georgia, 'Times New Roman', serif; }
+    /* ── LA PAGE S'ADAPTE À LA LARGEUR (téléphone, fenêtre étroite, zoom) ──
+       Rien ne dépasse jamais la page : images et formules se réduisent, un
+       tableau large défile DANS SON CADRE au lieu d'être coupé, un mot très long
+       (URL, séquence) se coupe. À l'impression, ce sont les marges de la feuille
+       (@page) qui s'appliquent et les tableaux reprennent leur mise en page. */
+    img, svg, canvas, video { max-width: 100%; height: auto; }
+    table { max-width: 100%; }
+    pre, code { max-width: 100%; overflow-x: auto; }
+    @media screen and (max-width: 640px) {
+      body { font-size: 14px; }
+      h1 { font-size: 20px; }
+      h2 { font-size: 15px; margin: 20px 0 8px; }
+      table { display: block; overflow-x: auto; }
+      figure { margin: 10px 0; }
+    }
+    @media print {
+      @page { margin: 1.6cm 1.5cm; }
+      body { padding: 0; max-width: none; font-size: 13px; }
+      table { display: table; width: 100%; }
+      h1, h2 { break-after: avoid; }
+    }
   </style>
 </head>
-<body>${docEl.innerHTML}</body>
+<body>${bodyHtml}</body>
 </html>`);
     win.document.close();
     win.focus();
@@ -2279,7 +2355,11 @@ export const ProjectDetailModule = ({
       </ul>
     );
     return (
-      <div className="fixed inset-0 z-[60] bg-slate-100 overflow-y-auto custom-scrollbar">
+      /* LA PAGE S'ADAPTE À LA LARGEUR DE L'ÉCRAN : le conteneur ne défile qu'en
+         vertical (rien n'est coupé sur le côté), les marges se réduisent sur un
+         téléphone, et le contenu du document se replie au lieu de déborder
+         (voir les règles ci-dessous). */
+      <div className="fixed inset-0 z-[60] bg-slate-100 overflow-y-auto overflow-x-hidden custom-scrollbar">
         <style>{`
           .doc-ins { background: #dcfce7; color: #166534; text-decoration: none; }
           .doc-del { background: #fee2e2; color: #991b1b; text-decoration: line-through; }
@@ -2288,8 +2368,21 @@ export const ProjectDetailModule = ({
           .cite-ref { color: #2563eb; text-decoration: none; font-weight: 700; }
           .cite-ref:hover { text-decoration: underline; }
           li:target { background: #fef08a; }
+          /* ── RIEN NE DÉBORDE DE LA PAGE (écran étroit) ──────────────────────
+             Images et formules se réduisent, un tableau large défile DANS SON
+             CADRE au lieu d'être coupé par la page, un mot très long se coupe. */
+          #project-doc-container { overflow-wrap: break-word; }
+          #project-doc-container img, #project-doc-container svg,
+          #project-doc-container canvas, #project-doc-container video { max-width: 100%; height: auto; }
+          #project-doc-container table { max-width: 100%; }
+          #project-doc-container pre { max-width: 100%; overflow-x: auto; }
+          @media (max-width: 640px) {
+            #project-doc-container table { display: block; overflow-x: auto; }
+            #project-doc-container h1 { font-size: 1.25rem; }
+            #project-doc-container h2 { font-size: 0.95rem; }
+          }
         `}</style>
-        <div className="max-w-4xl mx-auto p-4 md:p-8">
+        <div className="w-full max-w-4xl mx-auto px-2.5 py-3 sm:px-6 sm:py-5 md:px-8 md:py-8">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-4 no-print">
             <h2 className="text-lg font-black text-slate-800">📄 {project.name} — document</h2>
             <div className="flex flex-wrap items-center gap-2">
@@ -2376,7 +2469,7 @@ export const ProjectDetailModule = ({
           <div id="project-doc-container"
                contentEditable={docMode !== 'view'}
                suppressContentEditableWarning
-               className={`bg-white rounded-xl shadow-sm p-6 md:p-10 text-slate-900 ${
+               className={`bg-white rounded-xl shadow-sm p-4 sm:p-6 md:p-10 text-slate-900 min-w-0 ${
                  docMode === 'edit' ? 'border-2 border-dashed border-amber-400 outline-none'
                    : docMode === 'suggest' ? 'border-2 border-dashed border-violet-400 outline-none'
                      : 'border border-slate-200'}`}>
@@ -3277,6 +3370,10 @@ export const ProjectDetailModule = ({
                 <button onClick={() => setConfirmDelete(false)}
                         className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300">Cancel</button>
                 <button onClick={() => {
+                  /* Suppression DÉFINITIVE : la « pierre tombale » est notée
+                     avant l'enregistrement, sinon la copie du projet restée
+                     dans le document du dataset le ferait réapparaître. */
+                  recordProjectDeletion(project);
                   const remaining = projects.filter((p) => p.id !== project.id);
                   setProjects(remaining);
                   saveProjects(remaining);
