@@ -23,6 +23,7 @@ import { ADMIN_COLLECTIONS, ADMIN_PAGES, collectionLabel } from '../administrati
 /* ── Éléments d’un dataset scientifique (une entrée = une case à cocher) ─── */
 const DEF_LIB = 'Définitions & bibliothèque';
 const DEF_REP = 'Rapport & étiquettes';
+const PUB = 'Publications';
 const DATA_ELEMENTS = [
   { page: 'Expériences / Tests', keys: ['tests', 'plates'], label: 'Expériences (tests, plaques, cahier de laboratoire)', unit: 'expérience' },
   { page: 'Projets', keys: ['projects'], label: 'Projets (autorisations, publications, bibliothèques)', unit: 'projet' },
@@ -53,6 +54,12 @@ const DATA_ELEMENTS = [
   { page: DEF_REP, keys: ['mandatoryBehavior'], label: 'Comportement des champs obligatoires', unit: 'règle' },
   { page: 'Figures & Slides', keys: ['_figuresLibrary'], label: 'Bibliothèque d’images (partagée)', unit: 'image' },
   { page: 'Figures & Slides', keys: ['_figuresLibraryProjects'], label: 'Bibliothèque d’images (par projet)', unit: 'projet' },
+  /* Papiers : ils sont FUSIONNÉS (jamais remplacés) au chargement — voir
+     confirmLoad dans App.jsx — donc cocher ces éléments ne peut rien effacer. */
+  { page: PUB, keys: ['_publications'], label: 'Publications des scientifiques (tableau)', unit: 'publication' },
+  { page: PUB, keys: ['_relevantPapers'], label: 'Relevant papers', unit: 'papier' },
+  { page: PUB, keys: ['_relevantSubjects'], label: 'Étiquettes des Relevant papers', unit: 'étiquette' },
+  { page: PUB, keys: ['_excludedPubs'], label: 'Publications masquées (exclues)', unit: 'publication' },
 ];
 
 /* ── Éléments d’une base d’administration : UNE PAGE par élément ───────────

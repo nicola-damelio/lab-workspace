@@ -364,6 +364,38 @@ export const listDriveChildren = async (parentId) => {
   } catch { return []; }
 };
 
+/**
+ * Les instantanés HTML (sauvegardes) du dataset actuellement ouvert, du plus
+ * récent au plus ancien — ils vivent dans
+ * <Lab Workspace>/<dataset>/backups/. Sert à RÉCUPÉRER les papiers d'une
+ * ancienne version sans recharger tout le fichier (voir Publications →
+ * « Recover papers »). Le dossier est cherché, jamais créé : si le dataset n'a
+ * pas encore de sauvegarde, la liste est vide.
+ */
+export const listDatasetBackups = async () => {
+  if (!getDriveToken()) return [];
+  try {
+    const rootId = await ensureDriveFolder();
+    if (!rootId) return [];
+    const backupsId = await findFolderByName('backups', rootId);
+    if (!backupsId) return [];
+    const items = await listDriveChildren(backupsId);
+    return items
+      .filter((f) => /\.html?$/i.test(String(f.name || '')))
+      .map((f) => ({ id: f.id, name: f.name || '', size: Number(f.size || 0), webViewLink: f.webViewLink || '' }))
+      .sort((a, b) => String(b.name).localeCompare(String(a.name)));
+  } catch { return []; }
+};
+
+/** Contenu TEXTE d'un fichier de Drive créé par l'application (un instantané
+ *  HTML relu par la fenêtre « Recover papers »). Passe par le jeton OAuth :
+ *  seuls les fichiers de l'application sont accessibles (portée drive.file). */
+export const downloadDriveFileText = async (fileId) => {
+  if (!fileId) return '';
+  const res = await driveFetch(`/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`);
+  return res.text();
+};
+
 /** Ensure the sub-directories a dataset folder needs exist inside it.
  *  Scientific datasets get the canonical five-folder tree
  *  (projects/backups/protocols/storage/publications); an administration

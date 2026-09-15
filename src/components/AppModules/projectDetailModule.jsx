@@ -10,6 +10,10 @@ import { suggestDriveFileName, openDrive } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
 import { UsefulFilesSection } from '../UsefulFilesSection';
 import { normalizeProjectFiles } from '../../utils/projectFiles';
+import {
+  REFERENCE_FILE_ACCEPT, entryKeys, mergeReferenceEntries, parseReferences,
+  projectBibEntry, readReferenceDocument
+} from '../../utils/referenceImport';
 import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject } from '../../utils/driveUpload';
 import { repairContentImages } from '../../data/constants';
 import { readDeck, readProjectLibrary, removeProjectLibraryItem } from '../../utils/figuresLibrary';
@@ -224,6 +228,12 @@ export const ProjectDetailModule = ({
   const [refPicker, setRefPicker] = useState(null); // null | { insertText?: fn }
   const [showBibForm, setShowBibForm] = useState(false);
   const [bibDraft, setBibDraft] = useState({ title: '', link: '', authors: '', year: '' });
+  /* IMPORT DE LA BIBLIOGRAPHIE D'UN DOCUMENT (Paperpile / Word / RIS / BibTeX) :
+     le texte est analysé, les références reconnues sont proposées à la coche
+     puis ajoutées à la « Project bibliography » du projet — la MÊME liste que
+     Publications → « Project bibliography », donc elles apparaissent
+     automatiquement dans les deux pages et dans les références du document. */
+  const [bibImport, setBibImport] = useState(null); // null | { text, fileName, parsed, picked, onePerLine, busy, status }
   const [linkTestId, setLinkTestId] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const pubs = useMemo(loadPublications, []);
@@ -770,6 +780,70 @@ export const ProjectDetailModule = ({
   const removeBibPaper = (paperId) =>
     updateProject({ bibliography: projectBib.filter((b) => b.id !== paperId) });
 
+  /* ---- Import de références depuis un document -------------------------
+     « Import from a paper » : on dépose le document (.docx de Word, export
+     Paperpile, texte copié, fichier RIS/BibTeX) et l'analyse propose les
+     références trouvées. Elles sont ensuite fusionnées dans la bibliographie
+     du projet : rien n'est dupliqué (DOI → PMID → titre) et aucun papier déjà
+     présent n'est écrasé (voir mergeReferenceEntries). */
+
+  /* Note : calculé à la demande (et non via useMemo) car cette page a déjà
+     rendu son JSX plus haut quand aucun projet n'est ouvert — un Hook
+     supplémentaire changerait le nombre de Hooks d'un rendu à l'autre. */
+  const bibExistingKeys = () => {
+    const set = new Set();
+    (projectBib || []).forEach((b) => entryKeys(b).forEach((k) => set.add(k)));
+    return set;
+  };
+
+  const openBibImport = () => setBibImport({ text: '', fileName: '', parsed: [], picked: [], onePerLine: false, busy: false, status: '' });
+
+  const analyseBibImport = (draft) => {
+    const src = draft || bibImport;
+    if (!src) return null;
+    const text = String(src.text || '').trim();
+    if (!text) return null;
+    const parsed = parseReferences(text, { split: src.onePerLine ? 'line' : 'auto' });
+    /* Pré-coché : tout ce qui n'est pas déjà dans la bibliographie du projet. */
+    const existing = bibExistingKeys();
+    const picked = [];
+    parsed.forEach((entry, i) => {
+      const present = entryKeys(entry).some((k) => existing.has(k));
+      if (!present) picked.push(i);
+    });
+    const next = { ...src, parsed, picked, status: parsed.length ? '' : 'No reference recognised — check the text or the file.' };
+    setBibImport(next);
+    return next;
+  };
+
+  const loadBibImportFile = async (file) => {
+    if (!file) return;
+    setBibImport((d) => ({ ...(d || {}), busy: true, status: `Reading ${file.name}…` }));
+    try {
+      const text = await readReferenceDocument(file);
+      const draft = { ...(bibImport || {}), text, fileName: file.name, busy: false, status: '', parsed: [], picked: [] };
+      setBibImport(draft);
+      analyseBibImport(draft);
+    } catch (err) {
+      setBibImport((d) => ({ ...(d || {}), busy: false, status: `⚠ ${(err && err.message) || 'Could not read this file'}` }));
+    }
+  };
+
+  const commitBibImport = () => {
+    if (!bibImport) return;
+    const chosen = (bibImport.picked || [])
+      .map((i) => bibImport.parsed[i])
+      .filter(Boolean)
+      .map((entry) => projectBibEntry(entry, project, genProjectId()));
+    if (!chosen.length) return;
+    const res = mergeReferenceEntries(projectBib, chosen);
+    updateProject({ bibliography: res.list });
+    setBibImport({
+      ...bibImport, parsed: [], picked: [],
+      status: `✅ ${res.added} reference(s) added to “${project.name}”${res.filled ? ` — ${res.filled} completed` : ''}. They also appear in Publications → “Project bibliography”.`
+    });
+  };
+
   // ---- Experiments: create classic tests and link them to the project ----
   const addExperiment = (type) => {
     const id = 't' + Date.now() + Math.floor(Math.random() * 1e4);
@@ -857,6 +931,119 @@ export const ProjectDetailModule = ({
 
   const openTest = (testId) => { if (jumpToTest) jumpToTest(testId); else { setActiveTestId(testId); setCurrentModule('active-test'); } };
 
+
+  /* ---- Import de références depuis un document (Paperpile, Word, RIS…) ----
+     Le fichier est lu DANS LE NAVIGATEUR (aucun envoi) : .docx (ZIP → texte),
+     texte copié, export RIS/BibTeX, page HTML. L'aperçu montre ce qui a été
+     reconnu, ce qui est déjà dans la bibliographie, et laisse décocher. */
+  const renderBibImport = () => {
+    if (!bibImport) return null;
+    const parsed = bibImport.parsed || [];
+    const picked = bibImport.picked || [];
+    const existing = bibExistingKeys();
+    return (
+      <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+           onClick={() => setBibImport(null)}>
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[85vh] flex flex-col"
+             onClick={(e) => e.stopPropagation()}>
+          <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+            <h3 className="text-sm font-black text-slate-800">📄 Import references — {project.name}</h3>
+            <button onClick={() => setBibImport(null)} className="text-slate-400 hover:text-slate-600 text-sm px-1">✕</button>
+          </div>
+          <div className="p-4 overflow-y-auto custom-scrollbar flex flex-col gap-3">
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Drop an article (<b>.docx</b> from Word, Google Docs export, Paperpile export, a <b>.ris</b>/<b>.bib</b>
+              file, a text file) or paste the bibliography below. Only what is recognised as a reference is kept — the
+              rest of the manuscript is ignored. The papers are added to this project’s bibliography, so they also show
+              up in Publications → “Project bibliography” and in the references of the project document.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 border border-slate-300 text-slate-700 hover:bg-slate-200 cursor-pointer">
+                📂 Choose a document
+                <input type="file" accept={REFERENCE_FILE_ACCEPT} className="hidden"
+                       onChange={(e) => { loadBibImportFile(e.target.files && e.target.files[0]); e.target.value = ''; }} />
+              </label>
+              <label className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                <input type="checkbox" checked={!!bibImport.onePerLine}
+                       onChange={(e) => { const next = { ...bibImport, onePerLine: e.target.checked }; setBibImport(next); analyseBibImport(next); }} />
+                One reference per line
+              </label>
+              {bibImport.fileName && <span className="text-[11px] text-slate-400">{bibImport.fileName}</span>}
+              {bibImport.busy && <span className="text-[11px] text-slate-400">working…</span>}
+            </div>
+            <textarea value={bibImport.text}
+                      onChange={(e) => setBibImport((d) => ({ ...d, text: e.target.value }))}
+                      placeholder={'Paste the bibliography here, e.g.\n1. Rossi M, Bianchi A (2018). Peptide-membrane interactions. BBA 1860:1234-1245. doi:10.1016/j.bbamem.2018.01.001'}
+                      className={`${inputCls} font-mono text-[11px]`} rows={6} />
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => analyseBibImport()}
+                      disabled={!String(bibImport.text || '').trim()}
+                      className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-700 text-white hover:bg-slate-800 disabled:opacity-40">
+                🔍 Analyse the text
+              </button>
+              {bibImport.status && <span className="text-[11px] text-slate-600">{bibImport.status}</span>}
+            </div>
+
+            {parsed.length > 0 && (
+              <div className="border border-indigo-200 bg-indigo-50/40 rounded-lg p-2">
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">
+                    {parsed.length} reference(s) found · {picked.length} to add
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setBibImport((d) => ({ ...d, picked: parsed.map((_, i) => i) }))}
+                            className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800">All</button>
+                    <button type="button" onClick={() => setBibImport((d) => ({ ...d, picked: [] }))}
+                            className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800">None</button>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1 max-h-64 overflow-y-auto custom-scrollbar">
+                  {parsed.map((e, i) => {
+                    const already = entryKeys(e).some((k) => existing.has(k));
+                    const on = picked.indexOf(i) !== -1;
+                    return (
+                      <label key={`${e.title}-${i}`}
+                             className={`flex items-start gap-2 rounded-lg border p-2 cursor-pointer ${on ? 'bg-white border-indigo-300' : 'bg-white/60 border-slate-200'}`}>
+                        <input type="checkbox" checked={on} className="mt-0.5"
+                               onChange={() => setBibImport((d) => {
+                                 const list = d.picked || [];
+                                 return {
+                                   ...d,
+                                   picked: list.indexOf(i) === -1
+                                     ? [...list, i].sort((a, b) => a - b)
+                                     : list.filter((x) => x !== i)
+                                 };
+                               })} />
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold text-slate-800 leading-snug">{e.title || 'Untitled'}</div>
+                          <div className="text-[10px] text-slate-500">
+                            {[e.authors, e.journal, e.year].filter(Boolean).join(' · ') || '—'}
+                          </div>
+                          {e.doi && <div className="text-[10px] text-blue-600">doi:{e.doi}</div>}
+                          {!e.authors && <div className="text-[10px] text-amber-600">⚠ no authors recognised — complete them after the import</div>}
+                          {already && <div className="text-[10px] text-emerald-600">✓ already in this project’s bibliography</div>}
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="flex justify-end mt-2">
+                  <button type="button" onClick={commitBibImport} disabled={picked.length === 0}
+                          className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
+                    ➕ Add {picked.length} reference(s) to “{project.name}”
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="px-4 py-3 border-t border-slate-200 text-[10px] text-slate-400">
+            Files are read in the browser only. Duplicates are recognised by DOI, then PubMed ID, then title — an entry
+            already present is never duplicated nor overwritten.
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   // ---- Reference picker modal ----
   const renderRefPicker = () => {
@@ -1945,10 +2132,16 @@ export const ProjectDetailModule = ({
               <div className="text-[10px] font-black uppercase tracking-wide text-slate-400">
                 Project bibliography papers ({projectBib.length}) — also editable in Publications → “Project bibliography”
               </div>
-              <button onClick={() => setShowBibForm((v) => !v)}
-                      className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800">
-                {showBibForm ? 'Cancel' : '+ Add paper'}
-              </button>
+              <div className="flex items-center gap-3">
+                <button onClick={() => { openBibImport(); }}
+                        className="text-[10px] font-bold text-slate-600 hover:text-slate-900">
+                  📄 Import from a paper
+                </button>
+                <button onClick={() => setShowBibForm((v) => !v)}
+                        className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800">
+                  {showBibForm ? 'Cancel' : '+ Add paper'}
+                </button>
+              </div>
             </div>
             {showBibForm && (
               <div className="bg-indigo-50/50 border border-indigo-200 rounded-lg p-3 mb-2">
@@ -2054,6 +2247,7 @@ export const ProjectDetailModule = ({
         )}
       </div>
       {renderRefPicker()}
+      {renderBibImport()}
       {renderTableDraft()}
       {renderExport()}
     </div>

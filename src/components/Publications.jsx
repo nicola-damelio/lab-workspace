@@ -5,10 +5,16 @@
 // Persisted in localStorage under "labWorkspace_journals".
 
 import React, { useEffect, useMemo, useState } from 'react';
+import LZString from 'lz-string';
 import { Icon } from './Icons';
 import { DriveUploadButton } from './DriveUpload';
-import { extractDriveFileIds, trashDriveFile } from '../utils/driveUpload';
+import {
+  extractDriveFileIds, trashDriveFile, listDatasetBackups, downloadDriveFileText, getDriveToken
+} from '../utils/driveUpload';
 import { loadProjects, saveProjects } from './AppModules/projectsModule';
+import {
+  backupPaperCount, mergePaperLists, mergeProjectBibliographies, papersFromBackupHtml
+} from '../utils/referenceImport';
 import {
   AUTHOR_STYLE_IDS, AUTHOR_STYLES, PUB_FORMAT_KEY, PUB_FORMAT_PRESETS,
   authorMatchesCandidate, buildPubFormat, loadPubFormat, matchCoauthors,
@@ -138,6 +144,82 @@ export const loadRelevantPapers = () => {
     }
   } catch { /* ignore malformed */ }
   return [];
+};
+
+/* Les quatre listes de papiers de cette page vivent dans localStorage : elles
+   ne sont donc PAS dans la base du dataset. On les lit ici par leur nom pour
+   que le reste de l'application (sauvegarde HTML, « Load HTML », récupération
+   d'une ancienne version) puisse les sauver et les relire. */
+const readList = (key) => {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+};
+const writeList = (key, list) => {
+  try { localStorage.setItem(key, JSON.stringify(Array.isArray(list) ? list : [])); } catch { /* quota */ }
+};
+
+export const readPublications = () => readList(PUBLICATIONS_STORAGE_KEY);
+export const readExcludedPubs = () => readList(EXCLUDED_PUBS_KEY);
+export const readRelevantSubjects = () => readList(SUBJECTS_KEY);
+export const writePublicationsList = (list) => writeList(PUBLICATIONS_STORAGE_KEY, list);
+export const writeRelevantPapersList = (list) => writeList(RELEVANT_PAPERS_KEY, list);
+export const writeExcludedPubs = (list) => writeList(EXCLUDED_PUBS_KEY, list);
+export const writeRelevantSubjects = (list) => writeList(SUBJECTS_KEY, list);
+
+/**
+ * Applique les papiers d'une ANCIENNE SAUVEGARDE à l'appareil — sans jamais
+ * rien écraser :
+ *   • publications des scientifiques, « Relevant papers », étiquettes et
+ *     publications masquées : on ajoute les absentes et on complète les champs
+ *     vides des présentes (mergePaperLists) ;
+ *   • bibliographies des projets : les références sont fusionnées dans les
+ *     projets qui existent (par id, sinon par nom) ; aucun projet n'est créé,
+ *     remplacé ou supprimé (mergeProjectBibliographies).
+ * Le reste du fichier (expériences, définitions, stockage, rapport…) n'est
+ * JAMAIS touché : c'est le but — récupérer les papiers perdus d'une version
+ * antérieure sans perdre le travail récent des autres sections.
+ * @returns {{publications:number, relevantPapers:number, subjects:number,
+ *            projects:number, refs:number}}
+ */
+export const applyPapersRecovery = (papers, opts = {}) => {
+  const src = papers && typeof papers === 'object' ? papers : {};
+  const want = (key) => opts[key] !== false;
+  const out = { publications: 0, relevantPapers: 0, subjects: 0, excluded: 0, projects: 0, refs: 0, filled: 0 };
+
+  if (want('publications') && Array.isArray(src.publications) && src.publications.length) {
+    const m = mergePaperLists(readPublications(), src.publications);
+    if (m.added || m.filled) writePublicationsList(m.list);
+    out.publications = m.added;
+    out.filled += m.filled;
+  }
+  if (want('relevantPapers') && Array.isArray(src.relevantPapers) && src.relevantPapers.length) {
+    const m = mergePaperLists(loadRelevantPapers(), src.relevantPapers);
+    if (m.added || m.filled) writeRelevantPapersList(m.list);
+    out.relevantPapers = m.added;
+    out.filled += m.filled;
+  }
+  if (want('subjects') && Array.isArray(src.relevantSubjects) && src.relevantSubjects.length) {
+    const cur = readRelevantSubjects();
+    const next = [...new Set([...cur, ...src.relevantSubjects.map((s) => String(s || '').trim()).filter(Boolean)])];
+    if (next.length > cur.length) { writeRelevantSubjects(next); out.subjects = next.length - cur.length; }
+  }
+  if (want('excluded') && Array.isArray(src.excludedPubs) && src.excludedPubs.length) {
+    const cur = readExcludedPubs();
+    const next = [...new Set([...cur, ...src.excludedPubs.map((s) => String(s || '').trim()).filter(Boolean)])];
+    if (next.length > cur.length) { writeExcludedPubs(next); out.excluded = next.length - cur.length; }
+  }
+  if (want('projects') && Array.isArray(src.projects) && src.projects.length) {
+    const res = mergeProjectBibliographies(loadProjects(), src.projects);
+    if (res.projectsTouched) saveProjects(res.projects);
+    out.projects = res.projectsTouched;
+    out.refs = res.added;
+    out.filled += res.filled;
+  }
+  return out;
 };
 
 const DEFAULT_SUBJECTS = [
@@ -930,6 +1012,14 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
   const [pbImportOpen, setPbImportOpen] = useState(false);
   const [pbImportProject, setPbImportProject] = useState('');
   const [pbImportSel, setPbImportSel] = useState(new Set());
+  /* RÉCUPÉRATION DE PAPIERS depuis une ancienne sauvegarde (.html) : on ne relit
+     QUE les papiers du fichier (voir applyPapersRecovery) — les expériences,
+     définitions, stockage, rapport… de la version actuelle ne bougent pas. */
+  const [recovOpen, setRecovOpen] = useState(false);
+  const [recovState, setRecovState] = useState(null); // null | { papers, parts, source, counts, applied }
+  const [recovStatus, setRecovStatus] = useState('');
+  const [recovBusy, setRecovBusy] = useState(false);
+  const [recovBackups, setRecovBackups] = useState(null); // null | [{ id, name, size }]
 
   useEffect(() => {
     try { saveProjects(pbProjects); } catch { /* ignore */ }
@@ -1072,6 +1162,101 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     setPbImportOpen(false);
     setPbImportSel(new Set());
     setPbImportProject('');
+  };
+
+  /* ---- Récupération de papiers depuis une ancienne sauvegarde -------------
+     Un fichier « Save HTML » (ou une sauvegarde hebdomadaire Drive) contient
+     tout le dataset ; ici on n'en extrait QUE les papiers — publications,
+     « Relevant papers », étiquettes, bibliographies de projets — et on les
+     FUSIONNE avec ce qui est déjà enregistré (rien n'est remplacé). Aucune
+     autre section du fichier n'est lue : c'est ce qui permet de récupérer des
+     papiers perdus sans perdre le travail récent ailleurs. */
+
+  const openRecovery = (papers, source) => {
+    if (!papers) {
+      setRecovStatus('⚠ This file is not a Lab Workspace backup (no saved-data block inside).');
+      setRecovOpen(true);
+      return;
+    }
+    const counts = backupPaperCount(papers);
+    setRecovState({
+      papers,
+      source: source || 'backup',
+      counts,
+      applied: false,
+      parts: {
+        publications: counts.publications > 0,
+        relevantPapers: counts.relevantPapers > 0,
+        projects: counts.projectBib > 0,
+        subjects: (papers.relevantSubjects || []).length > 0
+      }
+    });
+    setRecovStatus('');
+    setRecovOpen(true);
+  };
+
+  const loadRecoveryFile = async (file) => {
+    if (!file) return;
+    setRecovBusy(true);
+    setRecovStatus(`Reading ${file.name}…`);
+    try {
+      const text = await file.text();
+      openRecovery(papersFromBackupHtml(text, (s) => LZString.decompressFromUTF16(s)), file.name);
+    } catch (err) {
+      setRecovStatus(`⚠ ${(err && err.message) || 'Could not read this file'}`);
+    }
+    setRecovBusy(false);
+  };
+
+  const loadDriveBackups = async () => {
+    setRecovBusy(true);
+    if (!getDriveToken()) {
+      setRecovBackups([]);
+      setRecovStatus('Google Drive is not connected — use “Choose a backup file” instead (download the .html from Lab Workspace/<dataset>/backups).');
+      setRecovBusy(false);
+      return;
+    }
+    setRecovStatus('Looking for backups in Google Drive…');
+    const list = await listDatasetBackups();
+    setRecovBackups(list);
+    setRecovStatus(list.length
+      ? `${list.length} backup(s) found in this dataset’s Drive “backups” folder.`
+      : 'No backup found in Lab Workspace/<dataset>/backups on Drive.');
+    setRecovBusy(false);
+  };
+
+  const loadDriveBackup = async (item) => {
+    setRecovBusy(true);
+    setRecovStatus(`Downloading ${item.name}…`);
+    try {
+      const text = await downloadDriveFileText(item.id);
+      openRecovery(papersFromBackupHtml(text, (s) => LZString.decompressFromUTF16(s)), item.name);
+    } catch (err) {
+      setRecovStatus(`⚠ ${(err && err.message) || 'Download failed'}`);
+    }
+    setRecovBusy(false);
+  };
+
+  const runRecovery = () => {
+    if (!recovState) return;
+    /* `excluded: false` : la liste des publications masquées de la sauvegarde
+       n'est PAS reprise ici (elle déciderait de ce qui s'affiche ; elle reste
+       disponible via « Load HTML » où l'élément se coche explicitement). */
+    const res = applyPapersRecovery(recovState.papers, { ...recovState.parts, excluded: false });
+    /* La page montre immédiatement ce qui vient d'être relu. */
+    setPbProjects(loadProjects());
+    setPubs(readPublications());
+    setPapers(loadRelevantPapers());
+    setCustomSubjects(readRelevantSubjects());
+    const bits = [];
+    if (res.publications) bits.push(`${res.publications} publication(s)`);
+    if (res.relevantPapers) bits.push(`${res.relevantPapers} relevant paper(s)`);
+    if (res.refs) bits.push(`${res.refs} reference(s) in ${res.projects} project(s)`);
+    if (res.subjects) bits.push(`${res.subjects} label(s)`);
+    setRecovStatus(bits.length
+      ? `✅ Added ${bits.join(', ')}${res.filled ? ` — ${res.filled} existing entr${res.filled > 1 ? 'ies' : 'y'} completed` : ''}. Nothing was removed.`
+      : '✅ Nothing new: the papers of this backup are already here.');
+    setRecovState({ ...recovState, applied: true });
   };
 
   useEffect(() => {
@@ -2314,6 +2499,89 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     </section>
   );
 
+  /* Fenêtre « Recover papers » : on choisit un ancien fichier de sauvegarde
+     (téléchargé depuis Drive, ou listé directement ici) et on n'en reprend que
+     les papiers — voir applyPapersRecovery pour les règles de fusion. */
+  const renderPapersRecovery = () => {
+    if (!recovOpen) return null;
+    const counts = recovState ? recovState.counts : null;
+    const parts = [
+      { key: 'publications', label: '📰 Publications of the scientists', n: counts ? counts.publications : 0 },
+      { key: 'relevantPapers', label: '📄 Relevant papers', n: counts ? counts.relevantPapers : 0 },
+      { key: 'projects', label: '📁 Project bibliographies', n: counts ? counts.projectBib : 0 },
+      { key: 'subjects', label: '🏷 Relevant-paper labels', n: recovState ? (recovState.papers.relevantSubjects || []).length : 0 }
+    ];
+    const fileProjects = recovState ? (recovState.papers.projects || []).filter((p) => (p.bibliography || []).length) : [];
+    return (
+      <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setRecovOpen(false)}>
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+          <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+            <h3 className="text-sm font-black text-slate-800">♻️ Recover papers from an old backup</h3>
+            <button type="button" onClick={() => setRecovOpen(false)} className="text-slate-400 hover:text-slate-600 text-sm px-1">✕</button>
+          </div>
+          <div className="p-4 overflow-y-auto custom-scrollbar flex flex-col gap-3">
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Only the <b>papers</b> are read from the backup: publications, Relevant papers, labels and each project’s
+              bibliography. What is already saved here is kept — missing papers are added and empty fields are completed,
+              nothing is overwritten or deleted. Experiments, definitions, storage, reports… are <b>not</b> touched, so
+              recovering papers never costs you the work done since that backup.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 border border-slate-300 text-slate-700 hover:bg-slate-200 cursor-pointer">
+                📂 Choose a backup file (.html)
+                <input type="file" accept=".html,.htm" className="hidden"
+                       onChange={(e) => { loadRecoveryFile(e.target.files && e.target.files[0]); e.target.value = ''; }} />
+              </label>
+              <button type="button" onClick={loadDriveBackups} disabled={recovBusy}
+                      className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 border border-slate-300 text-slate-700 hover:bg-slate-200 disabled:opacity-50">
+                🔎 List this dataset’s Drive backups
+              </button>
+              {recovStatus && <span className="text-xs text-slate-600">{recovStatus}</span>}
+            </div>
+            {recovBackups && recovBackups.length > 0 && (
+              <div className="border border-slate-200 rounded-lg max-h-48 overflow-y-auto custom-scrollbar">
+                {recovBackups.map((b) => (
+                  <button type="button" key={b.id} onClick={() => loadDriveBackup(b)} disabled={recovBusy}
+                          className="w-full text-left px-3 py-2 text-xs border-b border-slate-100 last:border-0 hover:bg-slate-50 disabled:opacity-50">
+                    <span className="font-semibold text-slate-700">{b.name}</span>
+                    <span className="text-slate-400"> · {Math.max(1, Math.round((b.size || 0) / 1024))} kB</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {recovState && (
+              <div className="border border-violet-200 bg-violet-50/40 rounded-lg p-3">
+                <div className="text-xs font-bold text-slate-700 mb-2">What was found in “{recovState.source}”</div>
+                <div className="flex flex-col gap-1.5">
+                  {parts.map((p) => (
+                    <label key={p.key} className={`flex items-center gap-2 text-xs ${p.n ? 'text-slate-700' : 'text-slate-400'}`}>
+                      <input type="checkbox" checked={p.n > 0 ? !!recovState.parts[p.key] : false} disabled={!p.n}
+                             onChange={(e) => setRecovState((s) => ({ ...s, parts: { ...s.parts, [p.key]: e.target.checked } }))} />
+                      {p.label} <span className="font-bold">{p.n}</span>
+                    </label>
+                  ))}
+                </div>
+                {fileProjects.length > 0 && (
+                  <div className="mt-2 text-[11px] text-slate-500">
+                    Projects in the file: {fileProjects.map((p) => `${p.name || '(unnamed)'} (${p.bibliography.length})`).join(' · ')}
+                    {' '}— a project is only completed if it still exists in the open dataset; no project is created here.
+                  </div>
+                )}
+                <div className="flex justify-end mt-3">
+                  <button type="button" onClick={runRecovery}
+                          disabled={recovBusy || !Object.values(recovState.parts).some(Boolean)}
+                          className="px-3 py-1.5 text-xs font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50">
+                    ➕ Add the missing papers
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderProjectBibliography = () => (
     <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
       <div className="px-4 py-3 bg-violet-50/50 border-b border-violet-100 flex flex-col md:flex-row md:items-center justify-between gap-2">
@@ -2334,6 +2602,11 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                   className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition"
                   title="Import papers from the Relevant papers table or from the scientist's publications">
             ⬇ Import papers
+          </button>
+          <button type="button" onClick={() => { setRecovStatus(''); setRecovOpen(true); }}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-600 text-white hover:bg-amber-700 transition"
+                  title="Recover lost papers from an old Lab Workspace backup (.html). Only the papers are read — experiments, definitions, storage and every other section stay as they are.">
+            ♻️ Recover papers
           </button>
           <button type="button" onClick={() => setPbShowAdd((v) => !v)}
                   className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition">
@@ -2672,6 +2945,8 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
       {renderProjectBibliography()}
 
       {renderPubFormat()}
+
+      {renderPapersRecovery()}
     </div>
   );
 };

@@ -23,6 +23,11 @@ import { ActiveTestModule } from './components/AppModules/activeTestModule';
 // mémorisent leur état ouvert/fermé PAR EXPÉRIENCE (voir src/components/ui.jsx).
 import { SectionsScope } from './components/ui';
 import { NotebookModule, CalculationsModule, PublicationsModule, ImageBuilderModule } from './components/AppModules/miscModules';
+/* Les listes de papiers de Publications (publications des scientifiques,
+   « Relevant papers ») vivent dans localStorage : App les embarque dans les
+   sauvegardes et les relit en FUSION lors d'un « Load HTML » (voir
+   applyPapersRecovery — rien de ce qui est enregistré n'est écrasé). */
+import { applyPapersRecovery, readPublications, readExcludedPubs, readRelevantSubjects, loadRelevantPapers } from './components/Publications';
 import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud, setProjectDatasetScope, removeProjectsOfDataset } from './components/AppModules/projectsModule';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
@@ -1889,7 +1894,19 @@ if (customType === 'dosy') {
       // figures are SHOWN — see ImageBuilder/readVisibleProjectLibrary.
       _figuresLibrary: readLibrary(),
       _figuresLibraryProjects: readAllProjectLibraries(),
-      projects: loadProjects()
+      projects: loadProjects(),
+      /* PAPIERS : publications des scientifiques, « Relevant papers », leurs
+         étiquettes et les publications masquées. Ces listes ne vivaient QUE
+         dans le navigateur — une sauvegarde qui les ignore les perdait pour de
+         bon (des papiers ont déjà été perdus comme ça). Elles suivent donc les
+         bibliothèques d'images : embarquées dans le fichier (comme les clés
+         `_figuresLibrary*`, elles appartiennent à l'appareil, pas au dataset) et
+         relues en AJOUT/FUSION par « Load HTML » et par Publications →
+         « ♻️ Recover papers ». */
+      _publications: readPublications(),
+      _excludedPubs: readExcludedPubs(),
+      _relevantPapers: loadRelevantPapers(),
+      _relevantSubjects: readRelevantSubjects()
     }));
 
   // ── WEEKLY HTML AUTOSAVE TO GOOGLE DRIVE ──────────────────────────────────
@@ -2882,6 +2899,35 @@ if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([.
           const additions = incoming.filter((m) => !existingIds.has(m.id || m.name));
           return [...prev, ...additions];
         });
+      }
+    }
+
+    /* ── PAPIERS : toujours en FUSION, dans les DEUX modes ────────────────────
+       Publications des scientifiques, « Relevant papers », étiquettes,
+       publications masquées et bibliographies de projets ne sont JAMAIS
+       remplacées par le contenu du fichier : elles sont des listes cumulatives
+       (et les papiers ne vivent pas dans la base Firestore). Restaurer un
+       fichier ancien ajoute donc ce qui manque et complète les champs vides —
+       il ne peut pas effacer un papier ajouté depuis. Aucun projet n'est créé,
+       renommé ou supprimé ici, et les autres sections du fichier ne sont
+       représentées par AUCUNE de ces clés. */
+    const papersFromFile = {
+      publications: Array.isArray(s._publications) ? s._publications : [],
+      excludedPubs: Array.isArray(s._excludedPubs) ? s._excludedPubs : [],
+      relevantPapers: Array.isArray(s._relevantPapers) ? s._relevantPapers : [],
+      relevantSubjects: Array.isArray(s._relevantSubjects) ? s._relevantSubjects : [],
+      projects: Array.isArray(s.projects) ? s.projects : []
+    };
+    const hasPapers = ['publications', 'excludedPubs', 'relevantPapers', 'relevantSubjects', 'projects']
+      .some((k) => Array.isArray(papersFromFile[k]) && papersFromFile[k].length > 0);
+    if (hasPapers) {
+      try {
+        const rec = applyPapersRecovery(papersFromFile);
+        if (rec.publications || rec.relevantPapers || rec.refs || rec.filled) {
+          console.info('Papers recovered from the loaded file:', rec);
+        }
+      } catch (err) {
+        console.warn('Paper recovery failed:', err && err.message);
       }
     }
 

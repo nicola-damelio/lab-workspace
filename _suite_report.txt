@@ -25,12 +25,13 @@ OK   _new_image_test.cjs  →  ✅ 29/29 checks passed
 OK   _pdb_conect_sanity.cjs  →  (no output)
 OK   _probe_ngl.cjs  →  WROTE _ngl_src/molecularsurface-representation.ts len 10528
 OK   _project_figures_access_test.cjs  →  │ (index) │ name                                                                                                                       │ ok   │ error 
-OK   _pub_author_style_test.mjs  →  _pub_author_style_test: 76 passed
+OK   _pub_author_style_test.mjs  →  _pub_author_style_test: 108 passed
 OK   _rebuild_h_test.mjs  →  PASS
+OK   _reference_import_test.mjs  →  ✅ 115 tests passés (import de références)
 OK   _spectra_split_test.mjs  →  passed 197/197
 OK   _split_test.cjs  →  (no output)
 OK   _src_split_test.cjs  →  (no output)
 OK   _star_group_test.cjs  →  ✅ 33/33 checks passed
 OK   _ui_scale_test.cjs  →  ✅ 44/44 checks passed
 OK   _view_scroll_memory_test.cjs  →  ✅ 41/41 checks passed
-total 35, failed 0
+total 36, failed 0
