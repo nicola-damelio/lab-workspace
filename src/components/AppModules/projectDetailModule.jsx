@@ -16,12 +16,22 @@ import {
 } from '../../utils/referenceImport';
 import {
   MANUSCRIPT_FILE_ACCEPT, blocksFromText, splitManuscript, groupManuscriptParts,
-  parseManuscriptHeader, PROJECT_TEXT_SECTIONS, buildManuscriptPlan, convertCitationsInText,
-  htmlFromText, mergeManuscriptBibliography, readManuscriptText
+  parseManuscriptHeader, headerFromLineRoles, HEADER_ROLES, PROJECT_TEXT_SECTIONS,
+  buildManuscriptPlan, convertCitationsInText, htmlFromText, mergeManuscriptBibliography,
+  readManuscriptDocument, figureDataUrl, figureMarksIn, stripFigureMarks,
+  NUMERIC_CITATION_RE, numericCitationNumbers
 } from '../../utils/manuscriptImport';
+import {
+  citationAnchorId, citationLabel, linkCitationsInSections, linkCitationNumbers,
+  referenceNumbers, linkedCitationNumbers
+} from '../../utils/referenceLinks';
+import { splitAnchoredFigures } from '../../utils/figurePlacement';
 import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject, getDriveToken, getDriveRootName, resolveDrivePathFromNames, listDriveChildren } from '../../utils/driveUpload';
-import { repairContentImages } from '../../data/constants';
-import { readDeck, readProjectLibrary, removeProjectLibraryItem, pushLibraryToDrive, pullLibraryFromDrive } from '../../utils/figuresLibrary';
+import { repairContentImages, getRenderableDriveUrl } from '../../data/constants';
+import {
+  readDeck, readProjectLibrary, removeProjectLibraryItem, pushLibraryToDrive, pullLibraryFromDrive,
+  addProjectLibraryItem, makeUploadImage, uploadFigureToDrive
+} from '../../utils/figuresLibrary';
 import { SlidePreview, renderSlideToDataUrl } from '../FiguresSlides';
 
 /* =========================================================================
@@ -232,8 +242,10 @@ export const ProjectDetailModule = ({
   /* `bibliography: true` : la ligne « Project bibliography papers (n) » de cette
      page porte les deux imports (📄 Import references from a paper / 📥 Import a
      manuscript) — la section est donc ouverte dès l'arrivée, sinon ces boutons
-     passent inaperçus. */
-  const [openSections, setOpenSections] = useState({ article: true, background: true, canvases: true, materials: true, usefulFiles: true, bibliography: true, comments: false });
+     passent inaperçus. « funding » et « supporting » sont les deux sections
+     ajoutées pour un article complet (financement + matériel supplémentaire) :
+     elles sont ouvertes elles aussi, sinon elles passent inaperçues. */
+  const [openSections, setOpenSections] = useState({ article: true, background: true, canvases: true, materials: true, usefulFiles: true, bibliography: true, funding: true, supporting: true, comments: false });
   const [refPicker, setRefPicker] = useState(null); // null | { insertText?: fn }
   const [showBibForm, setShowBibForm] = useState(false);
   const [bibDraft, setBibDraft] = useState({ title: '', link: '', authors: '', year: '' });
@@ -244,11 +256,16 @@ export const ProjectDetailModule = ({
      automatiquement dans les deux pages et dans les références du document. */
   const [bibImport, setBibImport] = useState(null); // null | { text, fileName, parsed, picked, onePerLine, busy, status }
   /* 📥 Import d'un MANUSCRIT écrit ailleurs (Google Docs / Word + Paperpile) :
-     { text, fileName, parts, plan, picks, busy, status, report, header,
-       headerPicks } — voir utils/manuscriptImport.js.
+     { text, fileName, body, parts, plan, picks, busy, status, report, header,
+       lines, headerPicks } — voir utils/manuscriptImport.js.
      `header` = titre / auteurs / affiliations lus en tête du document ;
+     `lines`  = la zone d'en-tête telle qu'elle a été comprise ({ at, text, role }) :
+                la fenêtre d'import la montre pour laisser CORRIGER les rôles ;
+     `body`   = les blocs du document, pour recalculer l'en-tête après correction ;
      `headerPicks` = ceux que l'utilisateur veut ranger dans le projet. */
   const [msImport, setMsImport] = useState(null);
+  /* Compte rendu du dernier « 🔗 Link citations… » (section Bibliography). */
+  const [citationLinkReport, setCitationLinkReport] = useState('');
   const [linkTestId, setLinkTestId] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const pubs = useMemo(loadPublications, []);
@@ -264,7 +281,13 @@ export const ProjectDetailModule = ({
      (voir verifySectionUpload / sectionDriveInfo). */
   const [driveFlash, setDriveFlash] = useState({});
   const [showExport, setShowExport] = useState(false);
-  const [textEditing, setTextEditing] = useState(false); // wide editing (retract side panels)
+  /* La LARGEUR de la page : « ⤢ Wide editing » choisi par l'utilisateur.
+     Elle changeait AVANT toute seule, à chaque clic dans un texte (élargir) et
+     à chaque clic sur un bouton (rétrécir) : le bouton se déplaçait sous le
+     curseur pendant le clic, donc la commande était perdue et il fallait
+     cliquer deux fois (et la page « sautait » en largeur sans arrêt). Plus rien
+     n'est automatique : voir le bouton dans l'en-tête. */
+  const [wideLayout, setWideLayout] = useState(false);
   const [tableRows, setTableRows] = useState(3);
   const [tableCols, setTableCols] = useState(4);
   const [mmFeedback, setMmFeedback] = useState(''); // "✓ Updated HH:MM" flash after manual M&M refresh
@@ -711,7 +734,9 @@ export const ProjectDetailModule = ({
   const sectionLabelOf = (sec) => ({
     background: 'Background',
     discussion: 'Discussion',
-    conclusions: 'Conclusions'
+    conclusions: 'Conclusions',
+    funding: 'Funding',
+    supporting: 'Supporting information'
   }[sec] || sec);
 
   // ---- Insert a slide from the Figures & Slides deck into a text section ----
@@ -881,6 +906,42 @@ export const ProjectDetailModule = ({
 
   const removeRef = (refId) =>
     updateProject({ references: refs.filter((r) => r.id !== refId) });
+
+  /* ---- Les citations du texte → des LIENS vers les références --------------
+     Le « [12] » d'un manuscrit importé n'est qu'un nombre : on en fait un lien
+     vers la référence 12 (ancre #ref-12 de la liste ci-dessous, rappelée en
+     infobulle « Auteurs · Titre (année) »). Un numéro que le projet ne connaît
+     pas reste intact — aucun lien mort — et la transformation est idempotente
+     (voir utils/referenceLinks.js). `extraRefs` = les références qui viennent
+     d'être importées et ne sont pas encore dans project.references. */
+  const citationTitleFor = (extraRefs = []) => (number) => {
+    const found = [...refs, ...(extraRefs || [])].find((r) => Number(r && r.number) === Number(number));
+    if (!found) return '';
+    return citationLabel(found.sourceId ? { ...found, ...citeData(found) } : found);
+  };
+
+  const linkCitations = (html, extraRefs = []) => linkCitationNumbers(html, {
+    numbers: referenceNumbers([...refs, ...(extraRefs || [])]),
+    hrefFor: (n) => `#${citationAnchorId(n)}`,
+    titleFor: citationTitleFor(extraRefs)
+  });
+
+  /** « 🔗 Link citations to references » : les sections déjà écrites (importées
+   *  avant ce bouton, ou tapées à la main avec des [12]) sont reprises d'un coup. */
+  const linkCitationLinks = () => {
+    const res = linkCitationsInSections(
+      PROJECT_TEXT_SECTIONS.map((s) => ({ id: s.id, html: project[s.id] || '' })),
+      refs
+    );
+    if (!res.updated) {
+      setCitationLinkReport(refs.length
+        ? 'Nothing to link: the text sections hold no numbered citation such as [1], or they are already links.'
+        : 'No reference yet — add them (📄 Import references from a paper / 📥 Import a manuscript) before linking citations.');
+      return;
+    }
+    updateProject(res.patch);
+    setCitationLinkReport(`🔗 ${res.added} citation link(s) added in ${res.updated} section(s) — the exported document (and its printed PDF) follow them.`);
+  };
 
   const addBibPaper = () => {
     const title = bibDraft.title.trim();
@@ -1071,16 +1132,22 @@ export const ProjectDetailModule = ({
      vide : l'utilisateur choisit alors chaque destination. */
   const openManuscriptImport = (focusSection = '') => setMsImport({
     text: '', fileName: '', parts: null, plan: null, picks: [], busy: false, status: '', report: '',
-    header: null, headerPicks: null,
+    header: null, headerPicks: null, figures: [],
     focusSection: typeof focusSection === 'string' ? focusSection : ''
   });
 
-  const analyseManuscript = (text, fileName, focusSection = (msImport && msImport.focusSection) || '') => {
+  const analyseManuscript = (text, fileName, figures = null, focusSection = (msImport && msImport.focusSection) || '') => {
     const src = String(text || '');
     if (!src.trim()) {
       setMsImport((d) => ({ ...(d || {}), busy: false, status: 'Paste the document text (or choose a file) first.' }));
       return;
     }
+    /* Les FIGURES lues dans le document (voir readManuscriptDocument) : la
+       liste reste telle quelle tant que le même document est analysé. Les
+       pixels sont mis en `data:` URL UNE fois (l'aperçu et l'envoi au Drive
+       s'en servent ensuite sans les recalculer). */
+    const figs = (Array.isArray(figures) ? figures : ((msImport && msImport.figures) || []))
+      .map((f) => (f && f.preview === undefined ? { ...f, preview: figureDataUrl(f) } : f));
     const blocks = blocksFromText(src);
     const manuscript = splitManuscript(blocks);
     /* L'EN-TÊTE (titre / auteurs / affiliations) est reconnu AVANT le découpage :
@@ -1107,9 +1174,10 @@ export const ProjectDetailModule = ({
     };
     setMsImport((d) => ({
       ...(d || {}), text: src, fileName: fileName || '', parts, plan, picks, busy: false, report: '',
-      focusSection, header,
+      focusSection, header, body: manuscript.body, lines: header.lines || [], figures: figs,
       headerPicks: (d && d.headerPicks) || defaultHeaderPicks,
       status: `${blocks.length} block(s) · ${parts.length} part(s) · ${plan.entries.length} reference(s) · ${plan.citations.length} citation(s)`
+        + (figs.length ? ` · ${figs.length} figure(s)` : '')
         + (headerFound ? ` · header: ${headerFound}/3 (title / authors / affiliations)` : '')
     }));
   };
@@ -1118,11 +1186,101 @@ export const ProjectDetailModule = ({
     if (!file) return;
     setMsImport((d) => ({ ...(d || {}), busy: true, status: `Reading ${file.name}…` }));
     try {
-      const text = await readManuscriptText(file);
-      analyseManuscript(text, file.name);
+      /* Le document ENTIER : son texte (marqueurs de figure compris) ET ses
+         figures, pour qu'une image de l'article ne soit plus perdue. */
+      const doc = await readManuscriptDocument(file);
+      analyseManuscript(doc.text, file.name, doc.figures);
     } catch (err) {
       setMsImport((d) => ({ ...(d || {}), busy: false, status: `⚠ ${(err && err.message) || 'Could not read this document'}` }));
     }
+  };
+
+  /* ── Les FIGURES d'un manuscrit importé ────────────────────────────────────
+     Elles ne sont PAS écrites dans le texte de la section (elles y resteraient
+     figées et partiraient dans tous les exports) : elles deviennent les figures
+     de LEUR section — `project.figures[section]`, la liste que remplit aussi
+     « 📤 Insert into project… » de l'Image Builder — et l'ANCRE gardée sur
+     chacune (le paragraphe qui la précédait) les remet à leur place dans le
+     document exporté (utils/figurePlacement.js).
+     Les pixels partent au Drive comme le fait « 📄 Word text » ; sans Drive
+     connecté elles restent dans le navigateur, en copie compacte
+     (makeUploadImage) et l'entrée de la bibliothèque du projet pourra être
+     envoyée plus tard par « ☁ Save figures to Drive ». */
+  const figureLabel = (fig, index) => {
+    const caption = String((fig && fig.caption) || '').trim();
+    if (caption) return caption.slice(0, 70);
+    return String((fig && fig.name) || '').trim() || `Figure ${index}`;
+  };
+
+  const figureImageFor = async (fig, label) => {
+    const dataUrl = fig && fig.preview !== undefined ? fig.preview : figureDataUrl(fig);
+    if (!dataUrl) return null;
+    /* Une figure d'une page HTML garde son URL (Google, Drive, …) : rien n'est
+       retéléchargé ni recopié. */
+    if (!dataUrl.startsWith('data:')) {
+      return { url: getRenderableDriveUrl(dataUrl), full: dataUrl, drive: false, driveUrl: '' };
+    }
+    const uploaded = await uploadFigureToDrive({ full: dataUrl, label, projectName: project.name || '' });
+    const link = (uploaded && (uploaded.driveUrl || uploaded.url || uploaded.webLink)) || '';
+    if (link) return { url: getRenderableDriveUrl(link), full: link, drive: true, driveUrl: link };
+    try {
+      const compact = await makeUploadImage(dataUrl);
+      if (compact && compact.url) return { url: compact.url, full: compact.full || compact.url, drive: false, driveUrl: '' };
+    } catch { /* garde la data URL d'origine */ }
+    return { url: dataUrl, full: dataUrl, drive: false, driveUrl: '' };
+  };
+
+  /** Attache les figures du document à leur section, avec leur ancre.
+   *  @returns {{ figures:object, added:number, onDrive:number, local:number,
+   *              already:number }} `already` = figures du même document déjà
+   *           présentes dans la section (un second import ne les duplique pas). */
+  const attachManuscriptFigures = async (list, placements) => {
+    const out = { ...(project.figures || {}) };
+    let added = 0;
+    let onDrive = 0;
+    let local = 0;
+    let already = 0;
+    for (const place of (Array.isArray(placements) ? placements : [])) {
+      const fig = (Array.isArray(list) ? list : []).find((f) => f && f.index === place.index);
+      if (!fig) continue;
+      const label = figureLabel(fig, place.index);
+      /* Le MÊME document importé deux fois (l'utilisateur recommence, ou
+         complète une section déjà remplie) ne duplique pas ses figures : une
+         figure déjà arrivée par un import dans CETTE section est reconnue à son
+         nom de fichier dans le document. */
+      const name = String(fig.name || '').trim();
+      const current = out[place.section] || [];
+      if (name && current.some((f) => f && f.source === 'manuscript-import' && String(f.name || '') === name)) {
+        already += 1;
+        continue;
+      }
+      const image = await figureImageFor(fig, label);
+      if (!image) continue;
+      const entry = {
+        id: genProjectId(),
+        url: image.url,
+        caption: String(fig.caption || '').trim(),
+        addedAt: new Date().toISOString(),
+        source: 'manuscript-import',
+        name,
+        anchor: place.anchor || ''
+      };
+      if (image.full && image.full !== image.url) entry.full = image.full;
+      if (image.drive) { entry.drive = true; entry.driveUrl = image.driveUrl; }
+      out[place.section] = [...current, entry];
+      /* Aussi dans la bibliothèque d'images du projet : l'Image Builder y prend
+         les figures du projet (Project Library) pour ses compositions. */
+      try {
+        addProjectLibraryItem(project.id, {
+          url: image.url, full: image.full || image.url, label,
+          drive: !!image.drive, driveUrl: image.driveUrl || null
+        });
+      } catch { /* la bibliothèque est un cache : la figure est déjà dans la section */ }
+      added += 1;
+      if (image.drive) onDrive += 1;
+      else local += 1;
+    }
+    return { figures: out, added, onDrive, local, already };
   };
 
   const patchManuscriptPart = (key, patch) =>
@@ -1135,6 +1293,37 @@ export const ProjectDetailModule = ({
   const toggleManuscriptHeaderPick = (field) =>
     setMsImport((d) => (d ? { ...d, headerPicks: { ...(d.headerPicks || {}), [field]: !(d.headerPicks || {})[field] } } : d));
 
+  /* LA CORRECTION À LA MAIN des lignes d'en-tête : quand le document est écrit
+     autrement que prévu, l'utilisateur désigne lui-même le titre, les auteurs et
+     les affiliations (voir HEADER_ROLES). Les champs et la zone retirée du texte
+     sont recalculés ; les destinations déjà choisies partie par partie sont
+     conservées (même intitulé = même choix). */
+  const patchManuscriptHeaderRole = (at, role) =>
+    setMsImport((d) => {
+      if (!d || !d.lines) return d;
+      const lines = d.lines.map((l) => (l.at === at ? { ...l, role } : l));
+      const header = headerFromLineRoles(d.body || [], lines);
+      const previous = new Map((d.parts || []).map((p) => [p.heading, p]));
+      const parts = groupManuscriptParts(d.body || [], { header }).map((p, i) => {
+        const old = previous.get(p.heading) || {};
+        return {
+          key: `part${i}`,
+          heading: p.heading,
+          text: p.text,
+          dest: old.dest !== undefined ? old.dest : (p.id || d.focusSection || ''),
+          mode: old.mode || 'append'
+        };
+      });
+      const empty = (field) => !String(project[field] || '').trim();
+      const picks = (d.headerPicks || {});
+      const headerPicks = {
+        title: !!header.title && (empty('paperTitle') || !!picks.title),
+        authors: !!header.authors && (empty('paperAuthors') || !!picks.authors),
+        affiliations: !!header.affiliations && (empty('paperAffiliations') || !!picks.affiliations)
+      };
+      return { ...d, lines, header, parts, headerPicks };
+    });
+
   const toggleManuscriptPick = (i) =>
     setMsImport((d) => {
       if (!d) return d;
@@ -1142,24 +1331,38 @@ export const ProjectDetailModule = ({
       return { ...d, picks: list.indexOf(i) === -1 ? [...list, i].sort((a, b) => a - b) : list.filter((x) => x !== i) };
     });
 
-  /** Applique le plan : sections + bibliographie + références numérotées. */
-  const applyManuscriptImport = () => {
+  /** Applique le plan : sections + figures + bibliographie + références. */
+  const applyManuscriptImport = async () => {
     const d = msImport;
     if (!d || !d.plan) return;
+    setMsImport((cur) => ({ ...(cur || {}), busy: true, status: 'Applying…' }));
     const numbers = d.plan.numberByKey;
     const patch = {};
     const usedNumbers = new Set();
+    /* 1. Les citations du document → les numéros du PROJET ([12] du manuscrit →
+       [5] du projet), et les numéros réellement cités sont retenus. Au passage,
+       les MARQUEURS de figure sortent du texte : la figure rejoint la section de
+       la partie qui la portait, avec l'ANCRE du paragraphe qui la précédait
+       (elle sera réinsérée là dans le document exporté). */
+    const convertedParts = [];
+    const figurePlacements = [];
     d.parts.forEach((p) => {
       if (!p.dest) return;
       const converted = convertCitationsInText(p.text, numbers);
-      converted.text.replace(/\[(\d+(?:,\d+)*)\]/g, (_m, g) => {
-        g.split(',').forEach((n) => usedNumbers.add(Number(n)));
-        return _m;
+      /* Les numéros RÉELLEMENT cités, plages comprises (« [5-7] » → 5, 6, 7) :
+         la même expression que partout ailleurs dans le module, au lieu d'une
+         copie qui les ignorait — seuls ces papiers reçoivent un numéro dans
+         project.references. */
+      NUMERIC_CITATION_RE.lastIndex = 0;
+      let cited = NUMERIC_CITATION_RE.exec(converted.text);
+      while (cited) {
+        numericCitationNumbers(cited[1]).forEach((n) => usedNumbers.add(n));
+        cited = NUMERIC_CITATION_RE.exec(converted.text);
+      }
+      figureMarksIn(converted.text).forEach((mark) => {
+        figurePlacements.push({ section: p.dest, index: mark.index, anchor: mark.anchor });
       });
-      const html = htmlFromText(converted.text);
-      patch[p.dest] = p.mode === 'replace'
-        ? html
-        : [String(project[p.dest] || '').trim(), html].filter(Boolean).join('\n');
+      convertedParts.push({ dest: p.dest, mode: p.mode, text: stripFigureMarks(converted.text) });
     });
     const pickedEntries = d.plan.entries
       .filter((e, i) => (d.picks || []).indexOf(i) !== -1)
@@ -1192,22 +1395,48 @@ export const ProjectDetailModule = ({
         volume: e.entry.volume || '',
         pages: e.entry.pages || ''
       }));
+    /* 1 bis. Les FIGURES du document → les figures de LEUR section. C'est la
+       seule étape lente (envoi au Drive, repli en copie locale). */
+    const figRes = await attachManuscriptFigures(d.figures, figurePlacements);
+    /* 2. Le texte → le contenu riche de la section, chaque [n] devenant un LIEN
+       vers la référence n (ancre #ref-n du document exporté + infobulle) : c'est
+       ce qui manquait aux manuscrits importés — les numéros du document
+       restaient des nombres morts dans le texte. Les parties qui visent la MÊME
+       section s'AJOUTENT l'une à l'autre (elles ne s'écrasent plus). */
+    const numberSet = referenceNumbers([...refs, ...added]);
+    const titleFor = citationTitleFor(added);
+    let linkedTotal = 0;
+    convertedParts.forEach((c) => {
+      const html = linkCitationNumbers(htmlFromText(c.text), {
+        numbers: numberSet, hrefFor: (n) => `#${citationAnchorId(n)}`, titleFor
+      });
+      linkedTotal += linkedCitationNumbers(html).size;
+      const previous = patch[c.dest] !== undefined ? patch[c.dest] : String(project[c.dest] || '').trim();
+      patch[c.dest] = c.mode === 'replace' ? html : [previous, html].filter(Boolean).join('\n');
+    });
     updateProject({
       ...patch,
       ...headerPatch,
       bibliography: merged.list,
-      references: added.length ? [...refs, ...added] : refs
+      references: added.length ? [...refs, ...added] : refs,
+      ...(figRes.added ? { figures: figRes.figures } : {})
     });
     const filled = d.parts.filter((p) => p.dest);
     setMsImport((cur) => ({
       ...(cur || {}),
+      busy: false,
       report: `✓ ${filled.length
         ? `${filled.length} section(s) filled (${filled.map((p) => (PROJECT_TEXT_SECTIONS.find((s) => s.id === p.dest) || {}).label || p.dest).join(', ')})`
         : 'no section filled'}`
         + (headerApplied.length ? ` · header: ${headerApplied.join(' + ')}` : '')
         + ` · ${merged.added} reference(s) added to the project bibliography`
         + ` · ${added.length} numbered reference(s)`
+        + (linkedTotal ? ` · ${linkedTotal} citation(s) linked to their reference` : '')
         + (d.plan.unresolved.length ? ` · ${d.plan.unresolved.length} citation(s) left as they were` : '')
+        + (figRes.added
+          ? ` · ${figRes.added} figure(s) added to the sections (${figRes.onDrive ? `${figRes.onDrive} on Drive` : ''}${figRes.onDrive && figRes.local ? ', ' : ''}${figRes.local ? `${figRes.local} kept in this browser` : ''}) — they are printed in the text by “📄 Export document”`
+          : '')
+        + (figRes.already ? ` · ${figRes.already} figure(s) already in the section (nothing duplicated)` : '')
     }));
   };
 
@@ -1340,7 +1569,10 @@ export const ProjectDetailModule = ({
               or paste its text. The <b>text</b> goes into the project sections you pick below, the document’s
               <b> bibliography</b> (Paperpile…) is added to the <b>Project bibliography</b>
               (Publications → “Project bibliography”), and the citations in the text become the program’s
-              <b> numbered references</b> ([1], [2]…) — the same as “📚 + Reference”. No file is uploaded to Drive.
+              <b> numbered references</b> ([1], [2]…) — the same as “📚 + Reference”.
+              The <b>figures</b> of the document are kept too: they become the figures of their section
+              (editable, reusable in the Image Builder) and “📄 Export document” prints each one
+              <b> at the place it had in the document</b>. No other file is uploaded to Drive.
             </p>
             {msImport.focusSection && (
               <p className="text-[11px] text-violet-800 bg-violet-50 border border-violet-200 rounded-lg px-2 py-1.5">
@@ -1372,10 +1604,32 @@ export const ProjectDetailModule = ({
             )}
             {plan && (
               <>
-                {msImport.header && (msImport.header.title || msImport.header.authors || msImport.header.affiliations) && (
+                {(msImport.lines || []).length > 0 && (
                   <div className="border border-sky-200 bg-sky-50/40 rounded-lg p-2">
                     <div className="text-[11px] font-black uppercase tracking-wide text-slate-500 mb-1.5">
                       Document header → project (title · authors · affiliations)
+                    </div>
+                    {/* La zone d'en-tête ligne par ligne, avec le rôle compris par
+                        le programme : le document tel qu'il est écrit suffit le
+                        plus souvent, et sinon l'utilisateur désigne lui-même le
+                        titre / les auteurs / les affiliations. Rien n'est modifié
+                        dans le texte du document : on choisit seulement où va la
+                        ligne — ou qu'elle n'est pas importée. */}
+                    <div className="flex flex-col gap-1 mb-2">
+                      {msImport.lines.map((l) => (
+                        <div key={l.at} className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1">
+                          <span className="min-w-0 flex-1 text-[10px] text-slate-500 truncate" title={l.text}>{l.text}</span>
+                          <select value={l.role} onChange={(e) => patchManuscriptHeaderRole(l.at, e.target.value)}
+                                  className="shrink-0 border border-slate-300 rounded px-1.5 py-1 text-[10px] bg-white">
+                            {HEADER_ROLES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+                          </select>
+                        </div>
+                      ))}
+                      <p className="text-[10px] text-slate-500 italic">
+                        These first lines are the header of the paper: a wrong line here (the file name, a date, a
+                        journal…) can be set to “not imported”, and the real title / authors / affiliations picked by
+                        hand. They are never imported as section text.
+                      </p>
                     </div>
                     <div className="flex flex-col gap-1.5">
                       {[
@@ -1425,6 +1679,12 @@ export const ProjectDetailModule = ({
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-[11px] font-bold text-slate-700">{p.heading || `Part ${i + 1} (no heading)`}</span>
                           <span className="text-[10px] text-slate-400">{p.text.length} chars</span>
+                          {figureMarksIn(p.text).length > 0 && (
+                            <span className="text-[10px] font-bold text-sky-700 bg-sky-50 border border-sky-200 rounded-full px-1.5 py-0.5"
+                                  title="The images of the document that stand in this part: they become figures of the section this part goes to, and the exported document prints them at that place.">
+                              🖼 {figureMarksIn(p.text).length}
+                            </span>
+                          )}
                           <span className="ml-auto flex items-center gap-1.5">
                             <select value={p.dest} onChange={(e) => patchManuscriptPart(p.key, { dest: e.target.value })}
                                     className="border border-slate-300 rounded px-1.5 py-1 text-[10px] bg-white">
@@ -1442,6 +1702,41 @@ export const ProjectDetailModule = ({
                     ))}
                   </div>
                 </div>
+
+                {/* Les FIGURES du document : elles ne sont pas écrites dans le
+                    texte de la section (elles y seraient figées et
+                    partiraient dans tous les exports) — elles deviennent les
+                    figures de la section de la partie qui les portait, là où
+                    « 📤 Insert into project… » de l'Image Builder range aussi
+                    ses compositions, et le document exporté les réinsère au
+                    paragraphe qui les précédait (voir utils/figurePlacement.js). */}
+                {(msImport.figures || []).length > 0 && (
+                  <div className="border border-sky-200 bg-sky-50/40 rounded-lg p-2">
+                    <div className="text-[11px] font-black uppercase tracking-wide text-slate-500 mb-1.5">
+                      Figures → the sections of their part ({(msImport.figures || []).length} found)
+                    </div>
+                    <div className="flex gap-2 overflow-x-auto custom-scrollbar pb-1">
+                      {(msImport.figures || []).map((f) => (
+                        <div key={f.index} className="shrink-0 w-28 bg-white border border-sky-200 rounded-lg p-1">
+                          <img src={f.preview || figureDataUrl(f)} alt={figureLabel(f, f.index)}
+                               className="w-full h-16 object-contain bg-slate-50 rounded"
+                               referrerPolicy="no-referrer"
+                               onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                          <p className="text-[9px] text-slate-500 truncate" title={f.caption || f.name}>
+                            {figureLabel(f, f.index)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-slate-500 italic mt-1">
+                      They are attached to the section of the part they stand in (the “🖼 n” badge above), and their
+                      caption (“Figure 1. …”) becomes the figure’s caption. “📄 Export document” prints each figure
+                      after the same paragraph as in the document — nothing is written inside the section text.
+                      {(msImport.figures || []).some((f) => f.missing)
+                        ? ' ⚠ Some images could not be read from the file (their place is kept).' : ''}
+                    </p>
+                  </div>
+                )}
 
                 <div className="border border-emerald-200 bg-emerald-50/40 rounded-lg p-2">
                   <div className="flex items-center justify-between mb-1.5">
@@ -1504,9 +1799,9 @@ export const ProjectDetailModule = ({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <button type="button" onClick={applyManuscriptImport}
-                          className="px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">
-                    ✓ Import into this project
+                  <button type="button" onClick={applyManuscriptImport} disabled={msImport.busy}
+                          className="px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
+                    {msImport.busy ? '⏳ Importing (figures, references…)' : '✓ Import into this project'}
                   </button>
                   <span className="text-[10px] text-slate-400">
                     Only what is shown above is written — existing section text is kept unless “replace the section” is chosen.
@@ -1613,7 +1908,6 @@ export const ProjectDetailModule = ({
           readOnly={!canModify}
           minHeight={420}
           maxHeight={6000}
-          onEditFocusChange={setTextEditing}
           fileNaming={{ project: project.name || '', section: label }}
           toolbarExtra={canModify ? [
             { label: '🖼 + Slide', title: 'Insert a slide from the Figures & Slides deck (Publications)', onClick: () => setSlidePickerFor(id) },
@@ -1724,6 +2018,15 @@ export const ProjectDetailModule = ({
                   <textarea value={fig.caption} onChange={(e) => patchSectionFigure(id, fig.id, { caption: e.target.value })}
                             placeholder="Figure caption…" rows={2}
                             className="w-full border border-slate-300 rounded-lg p-2 text-xs outline-none focus:border-blue-500 resize-y bg-white" />
+                  {fig.anchor && (
+                    /* Figure venue d'un manuscrit importé : elle est attachée
+                       ICI (elle reste modifiable) et c'est le document exporté
+                       qui la réinsère dans le texte, après ce paragraphe. */
+                    <p className="text-[10px] text-sky-700 bg-sky-50 border border-sky-200 rounded px-1.5 py-1"
+                       title={fig.anchor}>
+                      📄 printed in “📄 Export document” after: “{fig.anchor.length > 90 ? `${fig.anchor.slice(0, 90)}…` : fig.anchor}”
+                    </p>
+                  )}
                 </div>
               ))}
             </div>
@@ -1792,6 +2095,11 @@ export const ProjectDetailModule = ({
     .no-print { display: none !important; }
     .doc-ins { background: #dcfce7; color: #166534; text-decoration: none; }
     .doc-del { background: #fee2e2; color: #991b1b; text-decoration: line-through; }
+    /* Les citations du texte : le [12] est un lien vers la référence imprimée
+       plus bas (voir utils/referenceLinks.js) — la feuille du document exporté
+       est séparée de celle de l'application, il faut donc la même règle ici. */
+    .cite-ref { color: #2563eb; font-weight: 700; text-decoration: none; }
+    li:target { background: #fef08a; }
     button { font-family: Georgia, 'Times New Roman', serif; }
   </style>
 </head>
@@ -1848,11 +2156,28 @@ export const ProjectDetailModule = ({
   const renderExport = () => {
     if (!showExport) return null;
     const includedExps = (project.experiments || []).filter((e) => e.includeInDocument);
+    /* Chaque section sort avec ses CITATIONS LIÉES (voir utils/referenceLinks.js) :
+       le « [12] » du texte mène à la référence 12 imprimée en fin de document, et
+       l'infobulle rappelle titre et auteurs. Un numéro inconnu reste intact.
+       Funding et Supporting information ne s'impriment que s'ils sont remplis. */
     const sectionBlocks = [
       { id: 'background', title: 'Scientific background', html: project.background || '' },
       { id: 'discussion', title: 'Discussion', html: project.discussion || '' },
-      { id: 'conclusions', title: 'Conclusions', html: project.conclusions || '' }
-    ];
+      { id: 'conclusions', title: 'Conclusions', html: project.conclusions || '' },
+      { id: 'funding', title: 'Funding', html: project.funding || '', optional: true },
+      { id: 'supporting', title: 'Supporting information', html: project.supporting || '', optional: true }
+    ]
+      .filter((s) => !s.optional || String(s.html || '').trim())
+      /* C'est ICI que les figures importées d'un manuscrit reprennent leur
+         place : chacune est posée après le paragraphe qu'elle suivait dans le
+         document (son « anchor »), et le texte de la section reste, lui, sans
+         image. Les figures sans ancre (ajoutées à la main, ancre disparue)
+         restent affichées après la section, comme avant. */
+      .map((s) => {
+        const figures = sectionFigures(s.id).map((f) => ({ ...f, url: getRenderableDriveUrl(f.url) }));
+        const split = splitAnchoredFigures(linkCitations(repairContentImages(s.html || '')), figures);
+        return { ...s, html: split.html, restFigures: split.rest };
+      });
     const renderFigures = (list) => list.filter((f) => (f.url || '').trim() !== '').length > 0 && (
       <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
         {list.filter((f) => (f.url || '').trim() !== '').map((f) => (
@@ -1875,6 +2200,11 @@ export const ProjectDetailModule = ({
         <style>{`
           .doc-ins { background: #dcfce7; color: #166534; text-decoration: none; }
           .doc-del { background: #fee2e2; color: #991b1b; text-decoration: line-through; }
+          /* Les citations du texte : chaque [12] est un lien vers la référence
+             imprimée plus bas (voir utils/referenceLinks.js). */
+          .cite-ref { color: #2563eb; text-decoration: none; font-weight: 700; }
+          .cite-ref:hover { text-decoration: underline; }
+          li:target { background: #fef08a; }
         `}</style>
         <div className="max-w-4xl mx-auto p-4 md:p-8">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-4 no-print">
@@ -1991,7 +2321,7 @@ export const ProjectDetailModule = ({
                 <h2 className="text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{s.title}</h2>
                 {s.html ? <div className="text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: repairContentImages(s.html) }} />
                         : <p className="text-xs italic text-slate-400">—</p>}
-                {renderFigures(sectionFigures(s.id))}
+                {renderFigures(s.restFigures || [])}
                 {renderDocs(sectionDocs(s.id))}
               </div>
             ))}
@@ -2098,12 +2428,22 @@ export const ProjectDetailModule = ({
             <div className="mb-4">
               <h2 className="text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">Bibliography ({refs.length})</h2>
               {refs.length === 0 ? <p className="text-xs italic text-slate-400">No references.</p> : (
+                /* La liste est TRIÉE par numéro et chaque entrée porte son numéro
+                   réel (`value`) : le « [12] » du texte tombe donc toujours sur
+                   la bonne référence, même quand les numéros ne se suivent pas.
+                   `id="ref-12"` = l'ancre sur laquelle le lien du texte arrive. */
                 <ol className="list-decimal pl-5 text-sm text-slate-800 space-y-1">
-                  {refs.map((r) => (
-                    <li key={r.id} dangerouslySetInnerHTML={{
-                      __html: pubCitationHtml(citeData(r), pubFormat, operatorNames) || r.title
-                    }} />
-                  ))}
+                  {[...refs].sort((a, b) => (Number(a.number) || 0) - (Number(b.number) || 0)).map((r) => {
+                    const number = Number(r.number) || 0;
+                    return (
+                      <li key={r.id}
+                          id={number ? citationAnchorId(number) : undefined}
+                          value={number || undefined}
+                          dangerouslySetInnerHTML={{
+                            __html: pubCitationHtml(citeData(r), pubFormat, operatorNames) || r.title
+                          }} />
+                    );
+                  })}
                 </ol>
               )}
             </div>
@@ -2264,7 +2604,7 @@ export const ProjectDetailModule = ({
 
   return (
     <div className="p-4 md:p-6 h-full overflow-y-auto custom-scrollbar bg-slate-50">
-      <div className={`${textEditing ? 'max-w-none' : 'max-w-5xl'} mx-auto flex flex-col gap-4 pb-10`}>
+      <div className={`${wideLayout ? 'max-w-none' : 'max-w-5xl'} mx-auto flex flex-col gap-4 pb-10`}>
 
         {/* ---------- Header ---------- */}
         <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col gap-3">
@@ -2296,6 +2636,17 @@ export const ProjectDetailModule = ({
                       className="px-3 py-1.5 text-xs font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-700"
                       title="Export the project as a text document (includes figures and text of the tests marked for inclusion)">
                 📄 Export document
+              </button>
+              {/* La largeur de la page ne change QUE sur ce clic : ni le fait de
+                  cliquer dans un texte, ni un clic sur un bouton ne doivent
+                  déplacer la page (chaque déplacement faisait perdre le clic en
+                  cours et il fallait cliquer deux fois — voir wideLayout). */}
+              <button onClick={() => setWideLayout((v) => !v)}
+                      className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      title={wideLayout
+                        ? 'Back to the normal, centred page width'
+                        : 'Wide editing: use the full width of the window for the sections below. The width only ever changes here — working in a text or clicking a button never moves the page.'}>
+                {wideLayout ? '⤡ Normal width' : '⤢ Wide editing'}
               </button>
               {isOwner && (
                 <button onClick={() => setConfirmDelete(true)}
@@ -2651,6 +3002,19 @@ export const ProjectDetailModule = ({
           'Main take-aways, significance and next steps of the project.',
           project.conclusions || '', (val) => updateProject({ conclusions: val }))}
 
+        {/* ---------- Funding ----------
+            Le paragraphe de financement d'un article (bourses, contrats, labo
+            d'accueil) vit avec les remerciements : le manuscrit importé le range
+            ici quand son titre est « Funding » / « Acknowledgements »… */}
+        {textSection('funding', '💰 Funding',
+          'Grants, fellowships and financial support — acknowledgements are welcome here too. The manuscript import brings the document’s “Funding” / “Acknowledgements” section into this one.',
+          project.funding || '', (val) => updateProject({ funding: val }))}
+
+        {/* ---------- Supporting information ---------- */}
+        {textSection('supporting', '📎 Supporting information',
+          'Supplementary figures, tables and files of the paper (what goes after the references). The manuscript import brings the document’s “Supporting / Supplementary information” section into this one.',
+          project.supporting || '', (val) => updateProject({ supporting: val }))}
+
 
         {/* ---------- Bibliography ---------- */}
         <SectionCard title="📚 Bibliography" open={openSections.bibliography} onToggle={() => toggleSection('bibliography')}
@@ -2700,6 +3064,20 @@ export const ProjectDetailModule = ({
                     className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
               + Add reference from bibliography / publications
             </button>
+            {/* Les manuscrits importés (ou recollés) gardent les numéros de leur
+                bibliographie : ce bouton rattache chaque « [12] » du texte à la
+                référence 12 de la liste — c'est le même lien que celui posé à
+                l'import, et il est sans danger à relancer. */}
+            <button onClick={linkCitationLinks}
+                    className="px-3 py-1.5 text-xs font-bold rounded-lg bg-sky-50 text-sky-700 border border-sky-300 hover:bg-sky-100"
+                    title="Turn every numbered citation of the text sections ([12], [3,4], [5-7]) into a link to the matching reference of the list below — the exported document and its printed PDF follow it.">
+              🔗 Link citations to references
+            </button>
+            {citationLinkReport && (
+              <span className="text-[10px] font-bold text-sky-700 bg-sky-50 border border-sky-200 rounded px-2 py-1">
+                {citationLinkReport}
+              </span>
+            )}
           </div>
 
 

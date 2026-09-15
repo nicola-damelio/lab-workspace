@@ -91,3 +91,23 @@ table td .text-xs, table th .text-xs {
   overflow: visible;
 }
 
+
+
+/* ---------------------------------------------------------------------------
+   CITED REFERENCES — the « [12] » of a text section.
+
+   The manuscript import turns every numbered citation into a link to its
+   reference (see utils/referenceLinks.js). Inside the rich-text editor the click
+   cannot jump (the caret owns the click), but the number must still LOOK like a
+   link — and on the project page it is the only place where the link shows. The
+   exported document carries its own copy of this style, so a printed/PDF file
+   keeps it too.
+   ------------------------------------------------------------------------- */
+.cite-ref {
+  color: #2563eb;
+  font-weight: 700;
+  text-decoration: none;
+}
+.cite-ref:hover {
+  text-decoration: underline;
+}

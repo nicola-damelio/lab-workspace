@@ -3369,6 +3369,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                 <option value="background">Background</option>
                 <option value="discussion">Discussion</option>
                 <option value="conclusions">Conclusions</option>
+                <option value="funding">Funding</option>
+                <option value="supporting">Supporting information</option>
               </select>
             </label>
             <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Caption (written at the bottom of the image)

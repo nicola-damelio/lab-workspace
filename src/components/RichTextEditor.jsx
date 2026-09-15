@@ -41,6 +41,11 @@ export const RichTextEditor = ({
     const figureSuggestedName = suggestDriveFileName({ ...(fileNaming || {}), title: figureSuffix });
     useEffect(() => { if (editorRef.current && editorRef.current.innerHTML !== value) editorRef.current.innerHTML = repairContentImages(value || ''); }, [value]);
     const execCmd = (cmd, val=null) => { document.execCommand(cmd, false, val); onChange(editorRef.current.innerHTML); editorRef.current.focus(); };
+    /* Un bouton de la barre d'outils ne doit pas VOLER le focus : sans cela le
+       clic sort de la zone de texte, la page se redessine et la commande peut
+       être perdue (il fallait cliquer deux fois). `preventDefault` sur mousedown
+       garde aussi la SÉLECTION : l'insertion se fait donc au curseur. */
+    const keepFocus = (e) => e.preventDefault();
     const storeSel = () => {
         const sel = window.getSelection();
         if (sel && sel.rangeCount > 0 && editorRef.current && editorRef.current.contains(sel.anchorNode)) {
@@ -409,18 +414,18 @@ export const RichTextEditor = ({
             <style>{`.rte-content a { color:#2563eb; text-decoration:underline; } .rte-content a:hover { color:#1d4ed8; } .rte-content img.rte-img-sel { outline: 2px solid #3b82f6; outline-offset: 2px; }`}</style>
             {!readOnly && toolbarOpen && (
             <div className="flex gap-1 p-1 bg-slate-50 border-b border-slate-200 shrink-0 flex-wrap">
-                <button onClick={()=>execCmd('undo')} title="Undo (Ctrl+Z)"
+                <button onClick={()=>execCmd('undo')} onMouseDown={keepFocus} title="Undo (Ctrl+Z)"
                         className="px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition font-bold">↩ Undo</button>
                 <div className="w-px bg-slate-300 mx-1 my-0.5"></div>
-                <button onClick={()=>execCmd('bold')} className="font-bold px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition">B</button>
-                <button onClick={()=>execCmd('italic')} className="italic px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition">I</button>
-                <button onClick={()=>execCmd('underline')} className="underline px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition">U</button>
+                <button onClick={()=>execCmd('bold')} onMouseDown={keepFocus} className="font-bold px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition">B</button>
+                <button onClick={()=>execCmd('italic')} onMouseDown={keepFocus} className="italic px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition">I</button>
+                <button onClick={()=>execCmd('underline')} onMouseDown={keepFocus} className="underline px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition">U</button>
                 <div className="w-px bg-slate-300 mx-1 my-0.5"></div>
-                <button onClick={()=>execCmd('justifyLeft')} className="px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition" title="Align Left">↤</button>
-                <button onClick={()=>execCmd('justifyCenter')} className="px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition" title="Center text">≡ Center</button>
-                <button onClick={()=>execCmd('justifyFull')} className="px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition" title="Justify">▤</button>
+                <button onClick={()=>execCmd('justifyLeft')} onMouseDown={keepFocus} className="px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition" title="Align Left">↤</button>
+                <button onClick={()=>execCmd('justifyCenter')} onMouseDown={keepFocus} className="px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition" title="Center text">≡ Center</button>
+                <button onClick={()=>execCmd('justifyFull')} onMouseDown={keepFocus} className="px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition" title="Justify">▤</button>
                 <div className="w-px bg-slate-300 mx-1 my-0.5"></div>
-                <button onClick={()=>execCmd('insertUnorderedList')} className="px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition font-bold" title="Bullets">• List</button>
+                <button onClick={()=>execCmd('insertUnorderedList')} onMouseDown={keepFocus} className="px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition font-bold" title="Bullets">• List</button>
                 <div className="w-px bg-slate-300 mx-1 my-0.5"></div>
                 <select onChange={e=>execCmd('fontSize', e.target.value)} className="text-xs border border-slate-300 rounded px-1 bg-white text-slate-700 shadow-sm outline-none cursor-pointer">
                     <option value="3">Size...</option>
@@ -435,13 +440,13 @@ export const RichTextEditor = ({
                     <input type="color" className="w-4 h-4 p-0 border-none cursor-pointer" onChange={e => execCmd('foreColor', e.target.value)} />
                 </label>
                 {linkButton && (
-                    <button onClick={openLinkModal} title="Insert a link within the text"
+                    <button onClick={openLinkModal} onMouseDown={keepFocus} title="Insert a link within the text"
                             className="px-2 py-0.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded shadow-sm text-xs font-bold transition">
                         🔗 Link
                     </button>
                 )}
                 {figureButton && (
-                    <button onClick={() => setFigureDraft({ url: '', caption: '' })} title="Insert an image with its caption within the text"
+                    <button onClick={() => setFigureDraft({ url: '', caption: '' })} onMouseDown={keepFocus} title="Insert an image with its caption within the text"
                             className="px-2 py-0.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded shadow-sm text-xs font-bold transition">
                         🖼️ Figure
                     </button>
@@ -450,6 +455,7 @@ export const RichTextEditor = ({
                     <>
                         <input ref={docImportRef} type="file" accept=".docx" onChange={handleDocImport} className="hidden" />
                         <button onClick={() => docImportRef.current && docImportRef.current.click()}
+                                onMouseDown={keepFocus}
                                 disabled={importingDoc}
                                 title="Import a Word (.docx) document INTO THIS TEXT: text, tables and figures are converted (figures are saved to Google Drive). References are NOT imported here — to bring a whole manuscript with its bibliography and its numbered citations, use “📥 Import a manuscript” on the project page (it is the button right here in the toolbar of a project section)."
                                 className="px-2 py-0.5 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 rounded shadow-sm text-xs font-bold transition disabled:opacity-50">
@@ -458,13 +464,13 @@ export const RichTextEditor = ({
                     </>
                 )}
                 {toolbarExtra.map((btn, i) => (
-                    <button key={i} type="button" onClick={() => btn.onClick(insertText)} title={btn.title || btn.label}
+                    <button key={i} type="button" onClick={() => btn.onClick(insertText)} onMouseDown={keepFocus} title={btn.title || btn.label}
                             className="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white border border-indigo-700 rounded shadow-sm text-xs font-bold transition">
                         {btn.label}
                     </button>
                 ))}
                 <div className="flex-1"></div>
-                <button type="button" onClick={() => setToolbarOpen(false)}
+                <button type="button" onClick={() => setToolbarOpen(false)} onMouseDown={keepFocus}
                         title="Collapse toolbar (give more vertical space to the text)"
                         className="px-1.5 py-0.5 text-[10px] font-bold text-slate-400 hover:text-slate-600 bg-white border border-slate-200 rounded shadow-sm transition">▴</button>
             </div>
@@ -478,7 +484,7 @@ export const RichTextEditor = ({
             )}
             {!readOnly && !toolbarOpen && (
             <div className="flex items-center justify-end px-1 py-0.5 bg-slate-50 border-b border-slate-200 shrink-0">
-                <button type="button" onClick={() => setToolbarOpen(true)}
+                <button type="button" onClick={() => setToolbarOpen(true)} onMouseDown={keepFocus}
                         title="Show toolbar"
                         className="px-1.5 py-0.5 text-[10px] font-bold text-slate-400 hover:text-slate-600 bg-white border border-slate-200 rounded shadow-sm transition">▾ Show toolbar</button>
             </div>
@@ -491,13 +497,13 @@ export const RichTextEditor = ({
                            className="w-32 accent-blue-600" title="Drag to resize the figure" />
                     <span className="text-[10px] font-bold text-blue-700 font-mono w-9">{selImgW}%</span>
                     {[25, 50, 75].map((p) => (
-                        <button key={p} type="button" onClick={() => applyImgWidth(p)}
+                        <button key={p} type="button" onClick={() => applyImgWidth(p)} onMouseDown={keepFocus}
                                 className="text-[10px] font-bold bg-white border border-blue-300 text-blue-700 px-1.5 py-0.5 rounded hover:bg-blue-100 shadow-sm">{p}%</button>
                     ))}
-                    <button type="button" onClick={() => applyImgWidth(100)}
+                    <button type="button" onClick={() => applyImgWidth(100)} onMouseDown={keepFocus}
                             className="text-[10px] font-bold bg-white border border-blue-300 text-blue-700 px-1.5 py-0.5 rounded hover:bg-blue-100 shadow-sm">Full</button>
                     <span className="flex-1" />
-                    <button type="button" onClick={clearSelImg}
+                    <button type="button" onClick={clearSelImg} onMouseDown={keepFocus}
                             className="text-xs font-bold text-blue-500 hover:text-blue-700 underline">Done</button>
                 </div>
             )}

@@ -101,7 +101,10 @@ export const htmlToText = (html) => paragraphTextFromDocxXml(String(html || '')
   .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
   .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
   .replace(/<br\b[^>]*\/?>/gi, '\n')
-  .replace(/<\/(p|div|li|tr|h[1-6]|section)>/gi, '\n'));
+  /* Le `<title>` d'un export Google Docs est le NOM DU FICHIER : sans coupure
+     après lui, il se collait au premier paragraphe (« Manuscrit v3 - Google
+     DocsAphid transmission of… ») et le titre du papier devenait illisible. */
+  .replace(/<\/(p|div|li|tr|h[1-6]|section|title|td|th|table|head|header|article|blockquote|figcaption)>/gi, '\n'));
 
 /**
  * Lit un fichier déposé par l'utilisateur et retourne son texte.
@@ -411,14 +414,54 @@ const firstSentence = (s) => {
 
 /** « J. Biol. Chem. 295, 1234-1256 » → journal « J. Biol. Chem. », vol 295, pages… */
 const journalParts = (s) => {
-  const src = String(s || '').replace(/\s+/g, ' ').trim();
-  const m = src.match(/^(.*?)\s*(\d{1,4})\s*(?:\((\d{1,3})\))?\s*[,:]?\s*(\d+)\s*[-–]\s*(\d+)/);
+  const src = String(s || '')
+    /* « pp. 345-356 » / « pages 345-356 » : le préfixe de pages n'est pas une
+       partie du nom de la revue (il finissait dedans). Le préfixe ne compte que
+       devant un nombre — « PhD thesis » n'est pas « p. » + « hD ». */
+    .replace(/\b(?:pp?|pages?)\.?\s*(?=[\d(])/gi, ' ')
+    .replace(/\s+/g, ' ').trim();
+  /* L'ANNÉE peut s'intercaler entre la revue et le volume
+     (« Journal of Virology, 2018, 12(3), 345-356 »). */
+  const yearBetween = /^(.*?)\s*[,;]?\s*(?:(?:1[89]|20)\d{2}[a-z]?)\s*[,;]?\s*(\d{1,4})\s*(?:\((\d{1,3})\))?\s*[,:]?\s*(\d+)\s*[-–]\s*(\d+)/;
+  const m = src.match(yearBetween) || src.match(/^(.*?)\s*(\d{1,4})\s*(?:\((\d{1,3})\))?\s*[,:]?\s*(\d+)\s*[-–]\s*(\d+)/);
   if (!m) {
     const v = src.match(/^(.*?)\s*(\d{1,4})\s*(?:\((\d{1,3})\))?\s*\.?$/);
-    return v ? { journal: v[1], volume: v[2], issue: v[3] || '', pages: '' } : { journal: '', volume: '', issue: '', pages: '' };
+    if (!v) return { journal: '', volume: '', issue: '', pages: '' };
+    /* Un « volume » de quatre chiffres qui EST une année n'en est pas un
+       (« PhD thesis, University of Naples, 2018 »). */
+    if (/^(?:1[89]|20)\d{2}$/.test(v[2])) return { journal: src.replace(/[,\s]+$/, ''), volume: '', issue: '', pages: '' };
+    return { journal: v[1], volume: v[2], issue: v[3] || '', pages: '' };
   }
   return { journal: m[1], volume: m[2], issue: m[3] || '', pages: `${m[4]}-${m[5]}` };
 };
+
+/* ── Deux formes de référence qui donnaient un TITRE FAUX ────────────────────
+   • « J Virol. 2018;12:345-356. Rossi M, et al. Titre. » (PubMed / Vancouver) :
+     la revue vient EN PREMIER et le premier bloc devenait le titre ;
+   • « Rossi M. "Characterization of a potyvirus." J Virol 2018… » : le point
+     final du titre entre guillemets coupe la phrase et l'entrée ENTIÈRE
+     finissait dans le champ titre. */
+
+/** Journal + année + volume:pages en tête de référence. */
+const JOURNAL_FIRST_RE = /^([^.;]{2,60}[.;]?)\s*((?:1[89]|20)\d{2}[a-z]?(?:\s+[A-Za-z]{3,9}\s+\d{1,2})?\s*[;:]\s*\d{1,4}(?:\(\d{1,3}\))?(?:\s*:\s*[\d\-–.\w]+)?)\s*[.,;:]?\s*(.+)$/;
+
+/** Déplace le bloc « revue + année;volume:pages » de la tête vers la QUEUE de la
+ *  référence : le texte redevient « auteurs. titre. revue année;volume:pages. »,
+ *  la forme que tout le reste du module sait lire. */
+export const rotateJournalFirst = (text) => {
+  const s = String(text || '').trim();
+  const m = s.match(JOURNAL_FIRST_RE);
+  if (!m) return s;
+  const head = m[1].trim();
+  const citation = m[2].trim();
+  const rest = m[3].trim().replace(/[.\s]+$/, '');
+  if (!rest || !/\p{L}{2}/u.test(rest)) return s;
+  return `${rest}. ${head} ${citation}.`;
+};
+
+/** Un titre entre guillemets (doubles ou typographiques — jamais l'apostrophe,
+ *  trop fréquente dans les noms). */
+const QUOTED_TITLE_RE = /["\u201c\u201d\u00ab\u00bb]([^"\u201c\u201d\u00ab\u00bb]{10,300})["\u201c\u201d\u00ab\u00bb]/;
 
 /**
  * Liste d'auteurs en tête d'une référence « Smith, J., Rossi, M. & Costa, L. » :
@@ -462,7 +505,23 @@ export const bibliographyBlockToEntry = (block, _opts = {}) => {
   const raw = String(block || '').replace(/\s+/g, ' ').trim();
   if (!raw) return null;
   const numberMatch = raw.match(/^\s*(?:\[|\()?(\d{1,3})[.)\]]?\s+/);
-  const body = numberMatch ? raw.slice(numberMatch[0].length) : raw;
+  /* Notes de statut d'une référence PubMed (« Epub 2018 Nov 3. », « Online ahead
+     of print. ») : ni un titre, ni un journal — elles disparaissent. */
+  let body = (numberMatch ? raw.slice(numberMatch[0].length) : raw)
+    .replace(/\b(?:Epub|Online)\s+(?:ahead of print|first)\b[^.]*\.?\s*/gi, ' ')
+    .replace(/\bEpub\b[^.]*\.?\s*/gi, ' ')
+    .replace(/\s+/g, ' ').trim();
+  /* Revue en tête (PubMed / Vancouver) : déplacée à la fin (voir rotateJournalFirst). */
+  body = rotateJournalFirst(body);
+  /* Titre entre guillemets (« Rossi M. "Characterization of a potyvirus." J Virol
+     2018… ») : le point est AVANT le guillemet fermant, donc la phrase ne se
+     termine jamais là et l'entrée ENTIÈRE finissait dans le champ titre. Le titre
+     est réécrit en clair à sa place — « … potyvirus. J Virol 2018… » — et tout
+     le reste (auteurs, revue, volume, pages) se lit normalement. */
+  const quotedMatch = body.match(QUOTED_TITLE_RE);
+  const quotedTitle = quotedMatch ? quotedMatch[1].replace(/[.,;\s]+$/, '').trim() : '';
+  if (quotedMatch && !isMarkerTitle(quotedTitle)) body = body.replace(QUOTED_TITLE_RE, `${quotedTitle}.`);
+  const rawBody = body;
   const yearParen = body.match(/\(((?:1[89]|20)\d{2})[a-z]?\)/);
   /* Position de la 1re fin de phrase : quand l'année suit immédiatement les
      auteurs (« Smith J, Rossi M (2019)… ») elle est DANS la première phrase ;
@@ -481,9 +540,12 @@ export const bibliographyBlockToEntry = (block, _opts = {}) => {
     rest = body.slice(yearParen.index + yearParen[0].length);
   } else {
     /* Sans liste d'auteurs reconnaissable, les auteurs sont la 1re phrase
-       (« Ross, M. A., Wolf, L. J. Titre. Journal … »). */
+       (« Ross, M. A., Wolf, L. J. Titre. Journal … »). Un SIGLE seul
+       (« EPPO. Aphid transmission… ») est un auteur collectif, pas un titre :
+       on l'accepte même s'il est court. */
     const { head, rest: after } = firstSentence(body);
-    if (after && head.length >= 6) { authors = head; rest = after; }
+    const groupAuthor = /^[\p{Lu}][\p{Lu}0-9&.-]{1,14}$/u.test(head.trim());
+    if (after && (head.length >= 6 || groupAuthor)) { authors = head; rest = after; }
   }
   /* « et al. » collé à la fin des auteurs ou en tête du reste : retiré des
      deux côtés (il ne doit jamais devenir le titre), puis remis en clair à la
@@ -536,17 +598,20 @@ export const bibliographyBlockToEntry = (block, _opts = {}) => {
     .replace(/\.\s*$/, '')
     .trim();
   const jp = journalParts(journalSrc);
-  /* Quand l'année traînait dans le champ journal (« J Virol. 2018; »), elle en
-     est retirée : elle est déjà dans `year`. Seuls les séparateurs sont
-     nettoyés — le point abrégé fait partie du nom (« J. Biol. Chem. »). */
+  /* Quand l'année traînait dans le champ journal (« J Virol. 2018; »,
+     « J Virol. 2018 Dec 1; »), elle en est retirée : elle est déjà dans `year`.
+     Seuls les séparateurs sont nettoyés — le point abrégé fait partie du nom
+     (« J. Biol. Chem. »). */
   jp.journal = jp.journal
-    .replace(/[.,;:\s]*(?:1[89]|20)\d{2}[a-z]?[.,;:]?\s*$/, '')
+    .replace(/[.,;:\s]*(?:1[89]|20)\d{2}[a-z]?(?:\s+[A-Za-z]{3,9}\.?\s*\d{1,2})?[.,;:]?\s*$/, '')
     .replace(/[,\s]+$/, '')
     .trim();
   const year = (yearParen && yearParen[1]) || extractYear(body);
 
   return makeEntry({
-    title,
+    /* Le titre peut être resté un marqueur (« et al. ») : le titre entre
+       guillemets, lui, est toujours la vérité — c'est écrit dans la référence. */
+    title: isMarkerTitle(title) && quotedTitle ? quotedTitle : title,
     authors,
     journal: jp.journal || tailJournal,
     year,
@@ -556,7 +621,7 @@ export const bibliographyBlockToEntry = (block, _opts = {}) => {
     pages: jp.pages || tailPages,
     link: urlMatch ? urlMatch[0] : '',
     source: 'text',
-    raw: body
+    raw: rawBody
   });
 };
 

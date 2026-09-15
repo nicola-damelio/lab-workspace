@@ -24,7 +24,9 @@ import { register } from 'node:module';
 register('./_esm_test_hook.mjs', import.meta.url);
 
 const MS = await import('./src/utils/manuscriptImport.js');
+const RL = await import('./src/utils/referenceLinks.js');
 const PROJ = readFileSync('./src/components/AppModules/projectDetailModule.jsx', 'utf8');
+const IMGB = readFileSync('./src/components/ImageBuilder.jsx', 'utf8');
 const RTE = readFileSync('./src/components/RichTextEditor.jsx', 'utf8');
 
 let passed = 0;
@@ -35,6 +37,13 @@ const eq = (actual, expected, what) => {
 const ok = (cond, what) => { assert.ok(cond, what); passed += 1; };
 const has = (hay, needle, what) => {
   assert.ok(hay.includes(needle), `${what}\n  fragment absent : ${needle}`);
+  passed += 1;
+};
+/* « … » doit venir AVANT « … » (l'ordre compte pour un texte mis en page). */
+const between = (hay, before, after, what) => {
+  const i = String(hay).indexOf(before);
+  const j = String(hay).indexOf(after);
+  assert.ok(i !== -1 && j !== -1 && i < j, `${what}\n  « ${before} » doit précéder « ${after} »`);
   passed += 1;
 };
 
@@ -83,8 +92,8 @@ eq(parts.map((p) => p.id), ['', 'background', 'discussion', 'conclusions'],
 ok(parts[0].text.includes('Aphid transmission'), 'ce qui précède le premier titre reste dans une partie à part');
 eq(parts[1].text.includes('Aphids transmit many plant viruses'), true, 'le texte de chaque partie est disponible');
 eq(MS.guessSectionForHeading('Materials and Methods'), '', 'une section sans équivalent n’est PAS devinée');
-eq(MS.PROJECT_TEXT_SECTIONS.map((s) => s.id), ['background', 'discussion', 'conclusions'],
-  'les sections cibles sont celles de la page projet');
+eq(MS.PROJECT_TEXT_SECTIONS.map((s) => s.id), ['background', 'discussion', 'conclusions', 'funding', 'supporting'],
+  'les sections cibles sont celles de la page projet (Funding et Supporting information comprises)');
 
 /* ── 4. Les citations trouvées dans le texte ─────────────────────────────── */
 const found = MS.collectCitations(parts.map((p) => p.text).join('\n\n'));
@@ -167,8 +176,10 @@ has(PROJ, 'const merged = mergeManuscriptBibliography(projectBib, pickedEntries,
   'la bibliographie du document rejoint la « Project bibliography » (Publications → Project bibliography)');
 has(PROJ, 'references: added.length ? [...refs, ...added] : refs',
   'les papiers cités reçoivent leur numéro dans project.references (comme « 📚 + Reference »)');
-has(PROJ, 'patch[p.dest] = p.mode === \'replace\'', 'chaque partie peut remplacer — ou seulement compléter — sa section');
-has(PROJ, 'No file is uploaded to Drive.', 'la fenêtre dit que RIEN n’est envoyé au Drive (le texte reste dans le projet)');
+has(PROJ, "patch[c.dest] = c.mode === 'replace' ? html : [previous, html].filter(Boolean).join('\\n');",
+  'chaque partie peut remplacer — ou seulement compléter — sa section (et deux parties qui visent la même section s’ajoutent)');
+has(PROJ, 'No other file is uploaded to Drive.',
+  'la fenêtre dit que RIEN d’autre n’est envoyé au Drive (le texte reste dans le projet ; seules les figures du document y montent)');
 
 /* ── 10. L'EN-TÊTE du document : titre / auteurs / affiliations ─────────────
    Un article commence par son titre, ses auteurs et leurs affiliations. Ces
@@ -232,9 +243,13 @@ eq(header2.authors, 'Anna Bianchi, Jean Dupont', 'auteurs sans exposant reconnus
 eq(header2.affiliations, 'Dipartimento di Agraria, Universita di Napoli, Portici, Italy', 'affiliation reconnue');
 
 /* Rien n'est inventé : un document sans en-tête ne rend aucun champ. */
-eq(MS.parseManuscriptHeader(MS.blocksFromText('Introduction\nDu texte.').slice(1)),
+eq(
+  (({ title, authors, affiliations, blocks }) => ({ title, authors, affiliations, blocks }))(
+    MS.parseManuscriptHeader(MS.blocksFromText('Introduction\nDu texte.').slice(1))
+  ),
   { title: '', authors: '', affiliations: '', blocks: [] },
-  'sans en-tête lisible, les trois champs restent vides');
+  'sans en-tête lisible, les trois champs restent vides'
+);
 eq(MS.parseManuscriptHeader(MS.blocksFromText('Aphid transmission of plant viruses\n1. Introduction\nAphids transmit many plant viruses.').slice(0, 1)).title,
   'Aphid transmission of plant viruses', 'un titre sans auteurs est reconnu seul');
 
@@ -261,5 +276,337 @@ has(PROJ, '{project.paperTitle ? project.paperTitle : `📁 ${project.name}`}',
   'le document exporté prend le titre du papier (le nom du projet reste en repli)');
 has(PROJ, '{project.paperAffiliations && (', '…et il imprime aussi les affiliations');
 
-console.log(`✅ ${passed} tests passés (manuscrit — blocs / parties / en-tête)`);
+/* ── 12. L'EN-TÊTE des documents RÉELS ───────────────────────────────────────
+   Aucun manuscrit réel ne commence par un bloc « titre puis auteurs » propre : un
+   DOI, une date de soumission, le nom du fichier exporté (« … - Google Docs »),
+   le nom de la revue, « Research Article », les mots-clés s'intercalent, et les
+   auteurs occupent souvent plusieurs lignes. Ce sont ces formes-là qui étaient
+   ratées — et tout l'en-tête partait alors dans la première section. */
+/** Le document analysé d'un coup : en-tête ET parties (les mêmes blocs — c'est
+ *  leur IDENTITÉ que groupManuscriptParts retire, exactement comme la page). */
+const parseDoc = (lines) => {
+  const ms = MS.splitManuscript(MS.blocksFromText(lines.join('\n')));
+  const header = MS.parseManuscriptHeader(ms.body);
+  return { ms, header, parts: MS.groupManuscriptParts(ms.body, { header }) };
+};
+const headerOf = (lines) => parseDoc(lines).header;
+const TITLE = 'Aphid transmission of a new potyvirus';
+const AFF1 = '1 Dipartimento di Agraria, Universita di Napoli, Italy';
+const AFF2 = '2 INRAE, Villenave d Ornon, France';
+const TAIL = ['', 'Introduction', 'Pepper crops are affected (Rossi et al., 2018).'];
+
+/* Un auteur par ligne : l'export Google Docs / Word coupe la liste. */
+const dB = parseDoc([TITLE, 'Anna Bianchi1', 'Mario Rossi2', AFF1, AFF2, ...TAIL]);
+const hB = dB.header;
+eq(hB.title, TITLE, 'un auteur par ligne : le titre reste le titre');
+eq(hB.authors, 'Anna Bianchi1, Mario Rossi2', '…et les deux auteurs sont réunis');
+eq(hB.affiliations.split('\n').length, 2, '…avec leurs deux affiliations');
+eq(dB.parts.map((p) => p.heading), ['Introduction'], 'seule la vraie section reste à importer');
+ok(!JSON.stringify(dB.parts).includes('Bianchi'), 'les auteurs ne retombent pas dans les sections');
+
+/* Exposants entre parenthèses : « Anna Bianchi (1), Mario Rossi (2) ». */
+eq(headerOf([TITLE, 'Anna Bianchi (1), Mario Rossi (2), Jean Dupont (1)', AFF1, AFF2, ...TAIL]).authors,
+  'Anna Bianchi (1), Mario Rossi (2), Jean Dupont (1)', 'les exposants entre parenthèses sont des auteurs');
+
+/* Deux auteurs SANS initiale pointée ni exposant : c'est la position qui tranche. */
+const dD = parseDoc([TITLE, 'Anna Bianchi, Mario Rossi',
+  'Dipartimento di Agraria, Universita di Napoli, Portici, Italy', ...TAIL]);
+eq(dD.header.authors, 'Anna Bianchi, Mario Rossi', 'deux noms nus sous le titre sont les auteurs');
+eq(dD.header.affiliations, 'Dipartimento di Agraria, Universita di Napoli, Portici, Italy', '…et l’affiliation suit');
+
+/* Journal + type d'article AVANT le titre. */
+const hE = headerOf(['Journal of General Virology', 'Research Article',
+  'Aphid transmission of a new potyvirus infecting pepper crops',
+  'Anna Bianchi1, Mario Rossi2', AFF1, AFF2, ...TAIL]);
+eq(hE.title, 'Aphid transmission of a new potyvirus infecting pepper crops',
+  '« Journal of… » et « Research Article » ne sont pas pris pour le titre');
+eq(hE.authors, 'Anna Bianchi1, Mario Rossi2', '…les auteurs restent reconnus');
+
+/* DOI + date de soumission avant le titre : ils ne sont plus importés non plus. */
+const DOI_DOC = ['https://doi.org/10.1099/jgv.0.001234', 'Received: 12 January 2024',
+  TITLE, 'Anna Bianchi1, Mario Rossi2', AFF1, ...TAIL];
+const dF = parseDoc(DOI_DOC);
+eq(dF.header.title, TITLE, 'le DOI et la date ne cachent plus le titre');
+eq(dF.header.authors, 'Anna Bianchi1, Mario Rossi2', '…ni les auteurs');
+eq(dF.parts.map((p) => p.heading), ['Introduction'], 'DOI et date ne sont pas importés comme du texte');
+
+/* Métadonnées APRÈS les affiliations : elles ne deviennent pas une section. */
+const META_DOC = [TITLE, 'Anna Bianchi1, Mario Rossi2', AFF1,
+  '', 'Correspondence: anna.bianchi@unina.it', 'Keywords: potyvirus, aphid', ...TAIL];
+const dH = parseDoc(META_DOC);
+eq(dH.header.authors, 'Anna Bianchi1, Mario Rossi2', 'les métadonnées après les affiliations ne cassent pas l’en-tête');
+eq(dH.parts.map((p) => p.heading), ['Introduction'], '« Correspondence » et « Keywords » sont écartés de l’import');
+
+/* Style Paperpile « Bianchi, A., Rossi, M., Dupont, J. » et « Bianchi A, et al. ». */
+eq(headerOf([TITLE, 'Bianchi, A., Rossi, M., Dupont, J.',
+  'Dipartimento di Agraria, Universita di Napoli, Portici, Italy', ...TAIL]).authors,
+  'Bianchi, A., Rossi, M., Dupont, J.', 'une liste d’initiales pointées est une liste d’auteurs');
+eq(headerOf([TITLE, 'Bianchi A, et al.',
+  'Dipartimento di Agraria, Universita di Napoli, Portici, Italy', ...TAIL]).authors,
+  'Bianchi A, et al.', 'un auteur suivi de « et al. » est reconnu');
+
+/* Exposants COLLÉS par l'export : « Bianchi1* », « Dupont1,2 », « 1Dipartimento… ». */
+const hK = headerOf([TITLE, 'Anna Bianchi1*, Mario Rossi2, Jean Dupont1,2',
+  '1Dipartimento di Agraria, Universita di Napoli, Italy', '2INRAE, Villenave d Ornon, France', ...TAIL]);
+eq(hK.authors, 'Anna Bianchi1*, Mario Rossi2, Jean Dupont1,2', 'exposants collés et doubles (« 1,2 ») reconnus');
+eq(hK.affiliations.split('\n').length, 2, 'une affiliation collée à son marqueur reste une affiliation');
+
+/* Titre en MAJUSCULES (très fréquent) : ce n'est pas un intitulé de section. */
+eq(headerOf(['APHID TRANSMISSION OF A NEW POTYVIRUS INFECTING PEPPER', 'Anna Bianchi1, Mario Rossi2', AFF1, ...TAIL]).title,
+  'APHID TRANSMISSION OF A NEW POTYVIRUS INFECTING PEPPER', 'un titre en majuscules est reconnu');
+eq(MS.classifyHeaderLine('Abstract'), 'section', 'un vrai intitulé de section arrête l’en-tête');
+eq(MS.classifyHeaderLine('Research Article'), 'ignore', 'un type d’article est une métadonnée');
+eq(MS.looksLikeAuthorList('Anna Bianchi, Mario Rossi'), true, 'une liste de noms nus est reconnue…');
+eq(MS.looksLikeAuthorList('Statistical Analysis'), false, '…mais pas un intitulé de méthode');
+
+/* LA CORRECTION À LA MAIN : les rôles des lignes d'en-tête (fenêtre d'import). */
+const hManual = MS.headerFromLineRoles(
+  dD.ms.body,
+  dD.header.lines.map((l) => (l.role === 'authors' ? { ...l, role: 'ignore' } : l))
+);
+eq(hManual.authors, '', 'décocher les auteurs les retire du champ…');
+ok(hManual.blocks.length >= 1, '…et la ligne reste hors du texte importé (rien n’est inventé)');
+eq(MS.HEADER_ROLES.map((r) => r.id), ['ignore', 'title', 'authors', 'affiliations'],
+  'les quatre rôles proposés à la main');
+
+/* ── 13. FUNDING et SUPPORTING INFORMATION ──────────────────────────────────
+   Deux sections qui manquaient à un article complet : le financement (bourses,
+   contrats, remerciements) et le matériel supplémentaire (figures et tables S1…).
+   Le manuscrit importé les remplit quand il porte ces titres, et le document
+   exporté les imprime — mais seulement si elles sont écrites. */
+eq(MS.guessSectionForHeading('Funding'), 'funding', '« Funding » vise la section Funding');
+eq(MS.guessSectionForHeading('Acknowledgements'), 'funding', '« Acknowledgements » aussi (bourses et remerciements)');
+eq(MS.guessSectionForHeading('Financial support'), 'funding', '…comme « Financial support »');
+eq(MS.guessSectionForHeading('Supporting information'), 'supporting', '« Supporting information » vise la section du même nom');
+eq(MS.guessSectionForHeading('Supplementary Material'), 'supporting', '…comme « Supplementary Material »');
+eq(MS.guessSectionForHeading('Additional file'), 'supporting', '…comme « Additional file »');
+const FUND_DOC = [
+  TITLE, 'Anna Bianchi1, Mario Rossi2', AFF1, '',
+  'Introduction', 'Pepper crops are affected (Rossi et al., 2018).', '',
+  'Funding', 'This work was supported by PRIN 2022 grant 12345.', '',
+  'Supporting information', 'Table S1. Aphid species tested.', '',
+  'References', '[1] Rossi M, et al. Characterization of a potyvirus. J Virol 2018;12:345-356.'
+].join('\n');
+const FUND_MS = MS.splitManuscript(MS.blocksFromText(FUND_DOC));
+const fundParts = MS.groupManuscriptParts(FUND_MS.body, { header: MS.parseManuscriptHeader(FUND_MS.body) });
+eq(fundParts.map((p) => p.id), ['background', 'funding', 'supporting'],
+  'le texte de financement et de matériel supplémentaire vise leurs sections');
+ok(fundParts[1].text.includes('PRIN 2022 grant'), 'le texte de financement est conservé');
+has(PROJ, "textSection('funding', '💰 Funding'", 'la page projet a une section Funding');
+has(PROJ, "textSection('supporting', '📎 Supporting information'", '…et une section Supporting information');
+has(PROJ, 'updateProject({ funding: val })', '…enregistrée dans le projet (project.funding)');
+has(PROJ, 'updateProject({ supporting: val })', '…et project.supporting');
+has(PROJ, 'funding: true, supporting: true', 'les deux sections sont ouvertes d’emblée');
+has(PROJ, "{ id: 'funding', title: 'Funding', html: project.funding || '', optional: true }",
+  'le document exporté imprime le financement');
+has(PROJ, "{ id: 'supporting', title: 'Supporting information', html: project.supporting || '', optional: true }",
+  '…et le matériel supplémentaire');
+has(PROJ, "funding: 'Funding',", 'les figures de ces sections reçoivent un nom lisible');
+ok(IMGB.includes('<option value="funding">Funding</option>')
+  && IMGB.includes('<option value="supporting">Supporting information</option>'),
+'A composition can be inserted into the two new sections');
+
+/* ── 14. LES CITATIONS DU TEXTE DEVIENNENT DES LIENS ────────────────────────
+   Le défaut le plus visible de l'import : la bibliographie arrivait bien, mais
+   les « [12] » du texte restaient des NOMBRES MORTS — impossible de savoir à quel
+   papier ils renvoyaient. La page pose maintenant le lien à l'import, sait le
+   reposer sur un texte déjà importé (« 🔗 Link citations to references ») et le
+   document exporté ancre chaque référence (#ref-12) pour que le lien aboutisse. */
+has(PROJ, "from '../../utils/referenceLinks'", 'la page projet utilise le module de liens de citation');
+has(PROJ, 'const numberSet = referenceNumbers([...refs, ...added]);',
+  'les numéros venant de l’import comptent comme des références valides');
+has(PROJ, 'linkCitationNumbers(htmlFromText(c.text)', 'à l’import, chaque [n] du texte devient un lien');
+has(PROJ, '🔗 Link citations to references', '…et un bouton rattrape les textes déjà importés');
+has(PROJ, 'const res = linkCitationsInSections(', '…en repassant sur TOUTES les sections de texte');
+has(PROJ, 'citation(s) linked to their reference', 'l’import annonce combien de citations ont été liées');
+has(PROJ, 'id={number ? citationAnchorId(number) : undefined}',
+  'chaque référence du document exporté porte son ancre #ref-n');
+has(PROJ, 'value={number || undefined}', '…et son numéro réel (même si les numéros ne se suivent pas)');
+has(PROJ, '.cite-ref { color: #2563eb;', 'les citations liées sont visibles dans le document exporté');
+has(PROJ, 'patchManuscriptHeaderRole', 'la fenêtre d’import laisse corriger le rôle de chaque ligne d’en-tête');
+has(PROJ, 'HEADER_ROLES.map', '…avec les rôles du module (titre / auteurs / affiliation / non importé)');
+
+/* ── 15. LE BOUT EN BOUT : le manuscrit complet d'un article ────────────────
+   Le même chemin que la page projet (analyser → convertir → écrire), en
+   fonctions pures : en-tête, sections (Introduction / Funding / Supporting
+   information), bibliographie et citations LIÉES. C'est ce que l'utilisateur
+   voit dans une section après « ✓ Import into this project ». */
+const FULL_DOC = [
+  'Aphid transmission of a new potyvirus infecting pepper crops',
+  'Anna Bianchi1, Mario Rossi2',
+  '1 Dipartimento di Agraria, Universita di Napoli, Italy',
+  '2 INRAE, Villenave d Ornon, France',
+  '',
+  'Introduction',
+  'Aphids transmit potyviruses [1] and this was confirmed later [1,2].',
+  '',
+  'Funding',
+  'This work was supported by PRIN 2022.',
+  '',
+  'Supporting information',
+  'Table S1. Aphid species.',
+  '',
+  'References',
+  '[1] Rossi M, et al. Characterization of a potyvirus. J Virol 2018;12:345-356.',
+  '[2] Dupont J. Aphid transmission of viruses. J Virol 2020;13:1-9.'
+].join('\n');
+const pageMs = MS.splitManuscript(MS.blocksFromText(FULL_DOC));
+const pageHeader = MS.parseManuscriptHeader(pageMs.body);
+eq([pageHeader.title, pageHeader.authors, pageHeader.affiliations.split('\n').length],
+  ['Aphid transmission of a new potyvirus infecting pepper crops', 'Anna Bianchi1, Mario Rossi2', 2],
+  'l’en-tête de l’article est reconnu (titre / auteurs / affiliations)');
+const pagePlan = MS.buildManuscriptPlan(pageMs, { existingReferences: [] });
+eq(pagePlan.entries.length, 2, 'les deux références de la bibliographie sont lues');
+eq(pagePlan.unresolved.length, 0, 'les citations du texte sont toutes résolues');
+const pageParts = MS.groupManuscriptParts(pageMs.body, { header: pageHeader })
+  .map((p, i) => ({ key: `part${i}`, heading: p.heading, text: p.text, dest: p.id, mode: 'append' }));
+eq(pageParts.map((p) => [p.heading, p.dest]),
+  [['Introduction', 'background'], ['Funding', 'funding'], ['Supporting information', 'supporting']],
+  'chaque partie du manuscrit vise la bonne section (finances et SI comprises)');
+/* Ce que fait applyManuscriptImport : convertir les citations ([12] du document
+   → [n] du projet) PUIS les lier à leur référence. */
+const pageRefs = pagePlan.entries.map((e) => ({
+  id: `r${e.number}`, number: e.number, title: e.entry.title, authors: e.entry.authors, year: e.entry.year
+}));
+const pageHtml = pageParts.map((p) => RL.linkCitationNumbers(
+  MS.htmlFromText(MS.convertCitationsInText(p.text, pagePlan.numberByKey).text),
+  { numbers: RL.referenceNumbers(pageRefs), hrefFor: (n) => `#${RL.citationAnchorId(n)}`, titleFor: RL.citationTitleGetter(pageRefs) }
+));
+ok(pageHtml[0].includes('href="#ref-1"') && pageHtml[0].includes('data-ref="2"'),
+  'les [1] et [2] du texte importé deviennent des liens cliquables');
+ok(pageHtml[0].includes('title="Rossi M, et al. · Characterization of a potyvirus (2018)"'),
+  '…et l’infobulle rappelle la référence (auteurs · titre (année))');
+eq(pageHtml[1].includes('data-ref='), false, 'la section Funding, sans citation, n’est pas réécrite');
+
+/* ── 16. LES FIGURES DU DOCUMENT ─────────────────────────────────────────────
+   Le défaut signalé : « les figures ne sont pas importées ». Un manuscrit
+   (.docx, ou son export « page Web ») contient ses images : elles arrivent
+   maintenant avec le texte, MAIS PAS dans le texte éditable — elles deviennent
+   les figures de LEUR section (la liste que remplit aussi « 📤 Insert into
+   project… » de l'Image Builder) et l'ancre gardée sur chacune les remet à
+   leur place dans le document exporté (utils/figurePlacement.js). */
+const { zipSync, strToU8 } = await import('fflate');
+
+/* Un .docx minimal fabriqué en mémoire : deux sections, une image après le
+   premier paragraphe et sa légende juste en dessous. */
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00]);
+const DOCX = zipSync({
+  'word/document.xml': strToU8([
+    '<?xml version="1.0" encoding="UTF-8"?><w:document><w:body>',
+    '<w:p><w:r><w:t>Introduction</w:t></w:r></w:p>',
+    '<w:p><w:r><w:t>Aphids transmit potyviruses [1].</w:t></w:r></w:p>',
+    '<w:p><w:r><w:drawing><a:blip r:embed="rId9"/></w:drawing></w:r></w:p>',
+    '<w:p><w:r><w:t>Figure 1. Transmission rates of the virus.</w:t></w:r></w:p>',
+    '<w:p><w:r><w:t>Discussion</w:t></w:r></w:p>',
+    '<w:p><w:r><w:t>The rates agree with the literature [2].</w:t></w:r></w:p>',
+    '</w:body></w:document>'
+  ].join('')),
+  'word/_rels/document.xml.rels': strToU8(
+    '<Relationships><Relationship Id="rId9" Type="image" Target="media/image1.png"/></Relationships>'),
+  'word/media/image1.png': PNG
+});
+const docxDoc = MS.docxManuscriptFromBytes(DOCX);
+eq(docxDoc.figures.length, 1, 'l’image du .docx est trouvée');
+eq(docxDoc.figures[0].name, 'image1.png', '…avec son nom dans le ZIP');
+eq(docxDoc.figures[0].mime, 'image/png', '…et son type');
+eq(docxDoc.figures[0].bytes.length, PNG.length, '…et ses pixels (ils partiront au Drive, comme « 📄 Word text »)');
+eq(docxDoc.figures[0].caption, 'Figure 1. Transmission rates of the virus.',
+  'la légende sous l’image devient la légende de la figure');
+ok(docxDoc.text.includes('[[FIGURE 1]]'), 'le TEXTE garde la place de l’image (marqueur [[FIGURE n]])');
+eq(docxDoc.text.includes('Figure 1. Transmission rates'), false, '…et la légende ne reste pas dans le texte');
+ok(MS.figureDataUrl(docxDoc.figures[0]).startsWith('data:image/png;base64,'),
+  'les pixels d’un .docx se transforment en data URL (ce que la page envoie au Drive)');
+
+/* Une image LIÉE (relation externe, courante dans les exports Google Docs /
+   Word) n'a pas de fichier dans le ZIP : son URL est gardée telle quelle. */
+const LINKED_DOCX = zipSync({
+  'word/document.xml': strToU8('<w:document><w:body><w:p><w:r><w:drawing><a:blip r:link="rId7"/></w:drawing></w:r></w:p></w:body></w:document>'),
+  'word/_rels/document.xml.rels': strToU8(
+    '<Relationships><Relationship Id="rId7" Type="image" Target="https://lh7-rt.googleusercontent.com/docsz/XYZ" TargetMode="External"/></Relationships>')
+});
+const linkedDoc = MS.docxManuscriptFromBytes(LINKED_DOCX);
+eq(linkedDoc.figures[0].src, 'https://lh7-rt.googleusercontent.com/docsz/XYZ',
+  'une image liée (r:link) garde son URL au lieu d’être perdue');
+eq(linkedDoc.figures[0].missing, false, '…et elle n’est pas marquée « manquante »');
+
+/* Le marqueur n'est NI un titre NI un candidat de l'en-tête. */
+eq(MS.isHeadingLine('[[FIGURE 1]]'), false, 'la ligne d’un marqueur n’est jamais un titre');
+eq(MS.blocksFromText('Aphids are vectors.\n\n[[FIGURE 1]]\n\nDiscussion').map((b) => b.kind),
+  ['paragraph', 'paragraph', 'heading'], 'le marqueur reste un bloc de texte, entre deux paragraphes');
+eq(MS.parseManuscriptHeader(MS.blocksFromText('[[FIGURE 1]]\n\nAphid transmission of a potyvirus')).title,
+  'Aphid transmission of a potyvirus', 'une image en tête de document ne devient pas le titre');
+
+/* Le même chemin que applyManuscriptImport : la figure rejoint la section de
+   la partie qui la porte, avec l'ancre du paragraphe qui la précédait. */
+const figDoc = MS.splitManuscript(MS.blocksFromText(docxDoc.text));
+const figHeader = MS.parseManuscriptHeader(figDoc.body);
+const figParts = MS.groupManuscriptParts(figDoc.body, { header: figHeader })
+  .map((p, i) => ({ key: `part${i}`, heading: p.heading, text: p.text, dest: p.id }));
+const figPlacements = figParts
+  .filter((p) => p.dest)
+  .flatMap((p) => MS.figureMarksIn(p.text).map((mk) => ({ section: p.dest, index: mk.index, anchor: mk.anchor })));
+eq(figPlacements, [{ section: 'background', index: 1, anchor: 'Aphids transmit potyviruses [1].' }],
+  'la figure vise la section du paragraphe qui la portait, avec ce paragraphe comme ancre');
+eq(figParts[0].text.includes('[[FIGURE'), true, 'la partie contient bien le marqueur (avant import)');
+eq(MS.stripFigureMarks(figParts[1].text).includes('[[FIGURE'), false,
+  'le texte écrit dans la section n’a plus AUCUN marqueur (rien d’invisible ne reste)');
+/* Deux images à la suite (panneaux a et b d'une même figure) partagent le
+   paragraphe d'ancre : elles seront imprimées l'une derrière l'autre. */
+eq(MS.figureMarksIn('Text before.\n\n[[FIGURE 1]]\n\n[[FIGURE 2]]').map((m) => [m.index, m.anchor]),
+  [[1, 'Text before.'], [2, 'Text before.']], 'deux images à la suite gardent la même ancre, dans l’ordre');
+
+/* ── 17. LA PAGE HTML (export Google Docs « page Web ») ────────────────────── */
+const htmlDoc = MS.htmlManuscriptFromHtml([
+  '<h1>Aphid transmission of a potyvirus</h1>',
+  '<p>Aphids transmit potyviruses [1].</p>',
+  '<img src="https://lh7-rt.googleusercontent.com/docsz/ABC123" alt="Figure 1">',
+  '<p>Figure 1. Transmission rates of the virus.</p>',
+  '<p>Discussion</p>',
+  '<p>The rates agree with the literature [2].</p>',
+  '<img src="https://example.com/spacer.gif" width="1" height="1">'
+].join(''));
+eq(htmlDoc.figures.length, 1, 'les images de la page sont trouvées (le pixel de mise en page est ignoré)');
+eq(htmlDoc.figures[0].src, 'https://lh7-rt.googleusercontent.com/docsz/ABC123',
+  'une image de page garde son URL telle quelle (rien n’est retéléchargé)');
+eq(htmlDoc.figures[0].caption, 'Figure 1. Transmission rates of the virus.', 'sa légende est reprise');
+ok(htmlDoc.text.includes('[[FIGURE 1]]'), 'et sa place est marquée dans le texte');
+eq(MS.htmlManuscriptFromHtml('<p>Aphids.</p>').figures.length, 0, 'une page sans image n’a aucune figure');
+
+/* ── 18. LE CÂBLAGE DANS LA PAGE PROJET ────────────────────────────────────── */
+has(PROJ, 'readManuscriptDocument(file)', 'la page lit le document AVEC ses figures');
+has(PROJ, 'const figRes = await attachManuscriptFigures(d.figures, figurePlacements);',
+  'à l’import, les figures sont attachées à leurs sections');
+has(PROJ, "source: 'manuscript-import'", '…et gardent leur origine (des figures de l’article)');
+has(PROJ, 'addProjectLibraryItem(project.id',
+  '…et rejoignent la bibliothèque d’images du projet (Image Builder → Project Library)');
+has(PROJ, 'uploadFigureToDrive({ full: dataUrl, label, projectName: project.name',
+  'leurs pixels partent au Drive, avec un repli local (comme « 📄 Word text »)');
+has(PROJ, 'const split = splitAnchoredFigures(linkCitations(repairContentImages(s.html',
+  'le document exporté réinsère chaque figure après son paragraphe');
+has(PROJ, 'numericCitationNumbers(cited[1])',
+  'l’import retient AUSSI les numéros d’une plage [5-7] (une seule expression de citation dans tout le module)');
+has(PROJ, '{renderFigures(s.restFigures || [])}',
+  'les figures sans place retrouvée restent affichées après la section (rien n’est perdu)');
+has(PROJ, 'they are printed in the text by “📄 Export document”', 'l’import dit où les figures apparaîtront');
+has(PROJ, '📄 printed in “📄 Export document” after:', 'la page montre après quel paragraphe chaque figure sera imprimée');
+
+/* ── 19. LA FIGURE REVIENT DANS LE TEXTE DU DOCUMENT EXPORTÉ ───────────────── */
+const FP = await import('./src/utils/figurePlacement.js');
+const introHtml = RL.linkCitationNumbers(MS.htmlFromText(MS.stripFigureMarks(figParts[0].text)), {
+  numbers: new Set([1]), hrefFor: (n) => `#ref-${n}`
+});
+const exported = FP.splitAnchoredFigures(introHtml, [{
+  id: 'fig1',
+  url: 'https://lh3.googleusercontent.com/d/abc',
+  caption: docxDoc.figures[0].caption,
+  anchor: figPlacements[0].anchor
+}]);
+eq(exported.placed.length, 1, 'la figure importée retrouve son paragraphe dans la section exportée');
+eq(exported.rest.length, 0, '…et n’est pas répétée après la section');
+ok(exported.html.includes('href="#ref-1"'), 'les citations du texte restent des liens cliquables');
+between(exported.html, 'transmit potyviruses', '<figure', 'la figure est imprimée APRÈS ce paragraphe');
+has(exported.html, 'Transmission rates of the virus.', '…et sa légende l’accompagne');
+eq(exported.html.includes('[[FIGURE'), false, 'aucun marqueur n’apparaît dans le document exporté');
+
+console.log(`✅ ${passed} tests passés (manuscrit — blocs / parties / en-tête / sections / liens / figures)`);
 

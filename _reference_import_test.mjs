@@ -20,7 +20,7 @@ import {
   formatAuthor, formatAuthors, isMarkerTitle, looksLikeReference, mergePaperLists, mergeProjectBibliographies,
   mergeReferenceEntries, normalizeAuthorList, papersFromBackupHtml, paperKey,
   parseReferences, parseRisRecords, projectBibEntry, readReferenceDocument,
-  referenceScore, splitReferenceBlocks
+  referenceScore, rotateJournalFirst, splitReferenceBlocks
 } from './src/utils/referenceImport.js';
 /* Le moteur de citation RÉEL (sans React) : une référence importée doit
    s'afficher comme n'importe quelle référence du projet. */
@@ -378,7 +378,7 @@ const etAl1 = parseReferences(
 )[0];
 eq(etAl1.title, 'Characterization of a potyvirus infecting pepper', 'le titre suit le marqueur « et al. »');
 eq(etAl1.authors, 'Rossi M, Bianchi A, et al.', '« et al. » reste dans la liste des auteurs (marqueur conservé)');
-eq(etAl1.journal, 'J Virol', 'le journal ne contient plus l’année');
+eq(etAl1.journal.replace(/\.$/, ''), 'J Virol', 'le journal ne contient plus l’année (ni la date)');
 eq(etAl1.volume, '12', 'volume');
 eq(etAl1.pages, '345-356', 'pages');
 eq(etAl1.year, '2018', 'année');
@@ -442,6 +442,65 @@ const etAlBib = projectBibEntry(etAl1, { scientist: 'Rossi M' }, 'bib_etal');
 eq(etAlBib.title, 'Characterization of a potyvirus infecting pepper', 'l’entrée de bibliographie porte le bon titre');
 eq(matchCoauthors(etAlBib.authors, ['Anna Bianchi'], 'Marco Rossi'), ['Anna Bianchi'],
   'les co-auteurs sont reconnus malgré le marqueur « et al. »');
+
+/* ── 13. LES FORMES DE BIBLIOGRAPHIE QUI DONNAIENT UN TITRE FAUX ─────────────
+   Quatre écritures réelles mettaient autre chose que le titre dans le champ
+   titre (le plus visible des défauts restants de l'import) :
+     • revue EN PREMIER (PubMed / Vancouver) : « J Virol. 2018;12:345-356.
+       Rossi M, et al. Titre. » → le titre était « Rossi M, et al » ;
+     • titre entre guillemets : le point est AVANT le guillemet fermant, donc
+       l'entrée ENTIÈRE devenait le titre ;
+     • auteur COLLECTIF (« EPPO. Aphid transmission… ») → le titre était « EPPO » ;
+     • queue « APA » avec pp. : « Journal of Virology, 2018, 12(3), pp. 345-356 »
+       → la revue avalait l'année, le volume et les pages. */
+const pubmedFirst = parseReferences(
+  'J Virol. 2018;12:345-356. Rossi M, et al. Characterization of a potyvirus.',
+  { split: 'line', keepAll: true }
+)[0];
+eq(pubmedFirst.title, 'Characterization of a potyvirus', 'revue en tête (PubMed) : le titre est reconnu');
+eq(pubmedFirst.authors, 'Rossi M, et al.', '…et les auteurs aussi');
+eq(pubmedFirst.journal.replace(/\.$/, ''), 'J Virol', '…la revue garde son nom (sans l’année)');
+eq([pubmedFirst.volume, pubmedFirst.pages], ['12', '345-356'], '…avec volume et pages');
+eq(rotateJournalFirst('Rossi M. Titre. J Virol 2018;12:345-356.'),
+  'Rossi M. Titre. J Virol 2018;12:345-356.',
+  'une référence DÉJÀ dans le bon ordre n’est pas touchée');
+
+const quotedTitle = parseReferences(
+  'Rossi M, Bianchi A. "Characterization of a potyvirus." J Virol 2018;12:345-356.',
+  { split: 'line', keepAll: true }
+)[0];
+eq(quotedTitle.title, 'Characterization of a potyvirus', 'un titre entre guillemets est reconnu (entier, sans guillemets)');
+eq(quotedTitle.authors, 'Rossi M, Bianchi A', '…et la revue, le volume et les pages restent à leur place');
+eq([quotedTitle.journal, quotedTitle.volume, quotedTitle.pages], ['J Virol', '12', '345-356'], '…journal / volume / pages');
+
+const groupAuthor = parseReferences(
+  'EPPO. Aphid transmission of potyviruses. EPPO Bulletin 2018; 12: 345-356.',
+  { split: 'line', keepAll: true }
+)[0];
+eq(groupAuthor.title, 'Aphid transmission of potyviruses', 'un auteur collectif (« EPPO. ») n’est pas le titre');
+eq(groupAuthor.authors, 'EPPO', '…il est enregistré comme auteur');
+eq(groupAuthor.journal, 'EPPO Bulletin', '…et la revue est lue sans l’année');
+
+const apaTail = parseReferences(
+  'Rossi M, Bianchi A. Characterization of a potyvirus. Journal of Virology, 2018, 12(3), pp. 345-356.',
+  { split: 'line', keepAll: true }
+)[0];
+eq(apaTail.journal, 'Journal of Virology', 'queue « APA » : la revue est la revue (ni année ni pages)');
+eq([apaTail.volume, apaTail.pages], ['12', '345-356'], '…et « pp. » n’entre pas dans les pages');
+
+const pubmedDate = parseReferences(
+  'Rossi M, Bianchi A. Characterization of a potyvirus. J Virol. 2018 Dec 1;12(3):345-56. Epub 2018 Nov 3.',
+  { split: 'line', keepAll: true }
+)[0];
+eq(pubmedDate.journal, 'J Virol', 'la date complète (« 2018 Dec 1; ») et « Epub … » sortent du journal');
+eq([pubmedDate.volume, pubmedDate.pages], ['12', '345-56'], '…volume et pages restent justes');
+
+const thesis = parseReferences(
+  'Rossi M. Characterization of a potyvirus. PhD thesis, University of Naples, 2018.',
+  { split: 'line', keepAll: true }
+)[0];
+eq(thesis.journal, 'PhD thesis, University of Naples', '« PhD » n’est pas amputé par le préfixe de pages');
+eq(thesis.volume, '', '…et l’année n’est pas prise pour un volume');
 
 console.log(`✅ ${passed} tests passés (import de références)`);
 
