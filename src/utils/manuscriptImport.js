@@ -65,8 +65,29 @@ export const MANUSCRIPT_FILE_ACCEPT = '.docx,.html,.htm,.txt,.md';
        Affiliations du projet (voir la page projet, section « 🧾 Title, authors
        & affiliations »). */
 
+/* Les exposants Unicode : les chiffres (« ¹²³ ») et les lettres a–h d'un
+   marqueur d'affiliation Wiley / Springer (« ᵃᵇʰ »). Ce sont les caractères que
+   superscriptAffilMark ÉCRIT — la lecture doit savoir les relire (voir
+   SUP_MARK_CLASS ci-dessous). */
+const SUP_LETTERS = { a: '\u1d43', b: '\u1d47', c: '\u1d9c', d: '\u1d48', e: '\u1d49', f: '\u1da0', g: '\u1d4d', h: '\u02b0' };
+const SUP_DIGIT_CHARS = '\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079';
+
+/* Un marqueur d'affiliation écrit en EXPOSANT UNICODE — « Mario Rossi¹ »,
+   « Anna Bianchi¹,² », « Jean Dupontᵃ ». C'est l'écriture d'un PDF, d'un texte
+   collé d'un Google Docs, ou de la liste d'auteurs que le programme écrit
+   LUI-MÊME (voir superscriptAffilMark, qui produit exactement ces caractères :
+   la lecture doit savoir les relire). Sans cette classe, aucun des trois
+   lecteurs d'en-tête ne reconnaissait « Mario Rossi¹, Anna Bianchi¹², Jean
+   Dupont² » : la liste d'auteurs restait hors du champ « Authors », les
+   affiliations qui la suivaient étaient perdues avec elle, et le tout
+   retombait dans la première section du projet (signalé par l'utilisateur :
+   « la liste des auteurs, juste après le titre et avant les affiliations,
+   n'est toujours pas reconnue »). */
+const SUP_MARK_CLASS = `${SUP_DIGIT_CHARS}${Object.values(SUP_LETTERS).join('')}`;
+
 /** Marqueur d'affiliation en tête de ligne : « 1 … », « 1Dipartimento… » (un
- *  exposant COLLÉ par l'export Google Docs / Word), « * … », « a) … ». */
+ *  exposant COLLÉ par l'export Google Docs / Word), « * … », « a) … »,
+ *  « ¹ Dipartimento… » (exposant Unicode). */
 export const AFFILIATION_MARK_RE = new RegExp([
   '^\\s*\\d{1,2}[.)\\]]?\\s*\\S',                 // « 1 » / « 1. » / « 1Dipartimento… »
   /* « [1] Dipartimento… » : l'exposant d'un .docx devient « [1] » avant la
@@ -75,7 +96,10 @@ export const AFFILIATION_MARK_RE = new RegExp([
   '^\\s*\\[\\s*\\d{1,2}\\s*\\](?:\\s*[,;&-]\\s*\\d{1,2}\\s*\\]*)?\\s*\\S',
   '^\\s*(?:[a-e]|[ivx]{1,4})[.)\\]]\\s*\\S',      // « a) » / « a. » / « iv) »
   '^\\s*(?:[a-e]|[ivx]{1,4})\\s+(?=\\p{Lu})',     // « a Dipartimento »
-  '^\\s*[*\\u2020\\u2021\\u00a7\\u00b6]\\s*\\S'    // « * » / « † » / « ‡ » / « § »
+  '^\\s*[*\\u2020\\u2021\\u00a7\\u00b6]\\s*\\S',    // « * » / « † » / « ‡ » / « § »
+  /* « ¹ Dipartimento… » : le MÊME exposant, écrit en UNICODE (un PDF, un texte
+     collé d'un Google Docs, une liste d'auteurs recopiée du projet). */
+  '^\\s*[' + SUP_MARK_CLASS + ']+\\s*\\S'
 ].join('|'), 'iu');
 
 /** Une adresse e-mail dans une ligne : c'est TOUJOURS l'auteur correspondant
@@ -140,13 +164,15 @@ export const looksLikeAffiliationLine = (line) => {
    reconnue du tout — les auteurs restaient hors du champ « Authors » alors que
    le titre, lui, était trouvé (demande utilisateur : « l'en-tête est ENTRE le
    titre et les affiliations »). */
-const AFFIL_MARK = '(?:\\d{1,2}|[*\\u2020\\u2021\\u00a7\\u00b6]|[a-h](?![\\p{L}\\u2019])|[A-H](?![\\p{L}\\u2019]))';
+const AFFIL_MARK = '(?:\\d{1,2}|[*\\u2020\\u2021\\u00a7\\u00b6]|[a-h](?![\\p{L}\\u2019])|[A-H](?![\\p{L}\\u2019])'
+  + `|[${SUP_MARK_CLASS}]+)`;
 const AFFIL_MARK_BRACKETED = `(?:\\[\\s*${AFFIL_MARK}(?:\\s*[,;&-]\\s*${AFFIL_MARK})*\\s*\\]|\\(\\s*${AFFIL_MARK}(?:\\s*[,;&-]\\s*${AFFIL_MARK})*\\s*\\))`;
 /* Le même marqueur, mais SANS les lettres MAJUSCULES : « Rossi B » est une
    écriture d'auteur (nom + initiale), jamais un marqueur à retirer — au
    contraire de « Rossi b », « Rossi1 », « Rossi[2] », « Rossi (3) ». */
 const AFFIL_MARK_TAIL_RE = new RegExp(
-  `(?:\\s*[,;&]?\\s*(?:${AFFIL_MARK_BRACKETED}|\\d{1,2}|[*\\u2020\\u2021\\u00a7\\u00b6]|[a-h](?![\\p{L}\\u2019])))+\\s*$`, 'u');
+  `(?:\\s*[,;&]?\\s*(?:${AFFIL_MARK_BRACKETED}|\\d{1,2}|[*\\u2020\\u2021\\u00a7\\u00b6]|[a-h](?![\\p{L}\\u2019])`
+  + `|[${SUP_MARK_CLASS}]+))+\\s*$`, 'u');
 
 /** Un MORCEAU de nom, débarrassé de ses marqueurs d'affiliation :
  *  « Rossi b,* » → « Rossi », « Anna Bianchi (2) » → « Anna Bianchi »,
@@ -165,15 +191,11 @@ export const stripAffilMarks = (part) => {
   return s;
 };
 
-/** Les exposants Unicode : les chiffres (voir SUP_DIGITS plus bas) et les
- *  lettres a–h d'un marqueur d'affiliation Wiley / Springer. */
-const SUP_LETTERS = { a: '\u1d43', b: '\u1d47', c: '\u1d9c', d: '\u1d48', e: '\u1d49', f: '\u1da0', g: '\u1d4d', h: '\u02b0' };
-const SUP_DIGIT_CHARS = '\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079';
-
 /** Un marqueur d'affiliation écrit en EXPOSANT : « 1,2 » → « ¹,² », « [3] » →
  *  « ³ », « a » → « ᵃ », « * » → « * » (les crochets et parenthèses du document
  *  disparaissent : un « [1] » collé à un nom se lirait comme un renvoi de
- *  citation). */
+ *  citation). Les caractères produits sont relus par SUP_MARK_CLASS (voir plus
+ *  haut). */
 export const superscriptAffilMark = (mark) => String(mark || '')
   .replace(/[()[\]{}]/g, '')
   .replace(/\d/g, (d) => SUP_DIGIT_CHARS[Number(d)])
@@ -222,7 +244,13 @@ const SECTION_WORD_RE = /^(?:abstract|introduction|background|materials?|methods
  *  « Bianchi1,2, Rossi, M. » le « 2 » qui suit la virgule est la SECONDE
  *  affiliation du même auteur, pas un auteur ; « et al. » n'est pas un nom. */
 export const authorLineParts = (line) => {
+  /* Les marqueurs entre CROCHETS et PARENTHÈSES sont OUVERTS AVANT le
+     découpage : sans cela « Anna Bianchi[1,2] » se coupait en deux morceaux
+     (« Anna Bianchi[1 » et « 2] ») et la ligne d'auteurs n'était PAS reconnue —
+     c'est pourtant l'écriture d'un .docx, où l'import transforme lui-même
+     l'exposant d'affiliation en « [1] » (voir markDocxSuperscriptCitations). */
   const cleaned = String(line || '').trim()
+    .replace(/\[([^[\]]{1,20})\]/g, ' $1 ')
     .replace(/\s*[;,]?\s*\bet\s+al\.?\s*$/i, '')
     .replace(/\s*&\s*$/, '')
     .replace(/\((\d{1,2}(?:\s*,\s*\d{1,2})*)\)/g, ' $1 '); // « Bianchi (1) » → « Bianchi 1 »
@@ -317,17 +345,67 @@ const SECTION_HEADING_FIRST_RE = /^(?:abstract|summary|introduction|background|m
  *  « Results were analysed with R. » reste du texte. */
 const SECTION_SENTENCE_RE = /^(?:results?|findings|methods?|materials?|conclusions?|discussion|introduction|background)\s+(?:were|was|are|is|show|shows|showed|indicate|indicated|reveal|revealed|suggest|suggested|demonstrate|demonstrated|confirm|confirmed|cannot|can|may|might|must|did|do|does|had|has|have|will|would|remain|remained|come|came|give|gave|differ|differed)\b/i;
 
+/** La PUCE ou le tiret qui précède un intitulé (« • Results », « - Methods »). */
+const SECTION_MARK_PREFIX_RE = /^\s*[-–—•*·▪◦]\s*/;
+
+/** Un intitulé de section, prêt à être comparé : numérotation, puce et
+ *  ponctuation finale retirées — « I. INTRODUCTION », « 2. Materials and
+ *  Methods. », « • Results: » deviennent « INTRODUCTION », « Materials and
+ *  Methods », « Results ».
+ *
+ *  POURQUOI ce nettoyage : un manuscrit écrit ses intitulés AINSI (« I. »,
+ *  « 2. », un point final, un deux-points). Sans lui, la ligne échouait à TOUS
+ *  les tests de titre — un intitulé ponctué n'était pas un titre, et un
+ *  intitulé en majuscules précédé d'un numéro romain passait même pour une
+ *  LISTE D'AUTEURS. Son texte se collait alors à la partie précédente et
+ *  partait dans la mauvaise section du projet (signalé par l'utilisateur :
+ *  « le texte commençant par Materials and Methods n'est pas allé dans
+ *  Matériel et méthodes », « l'Introduction n'est pas allée dans Scientific
+ *  background »). */
+export const sectionHeadingKey = (heading) => headingLabel(heading)
+  .replace(SECTION_MARK_PREFIX_RE, '')
+  .replace(/[.;:,]+$/, '')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+/** Le DERNIER mot d'un intitulé ponctué : « Materials and Methods. » finit par
+ *  « Methods », « Conclusions. » par « Conclusions » — alors qu'une PHRASE qui
+ *  commence comme un intitulé finit par son verbe (« Discussion and conclusions
+ *  follow. »). C'est ce qui permet de tolérer la ponctuation finale d'un vrai
+ *  intitulé sans prendre la phrase pour un titre. */
+const SECTION_TAIL_WORD_RE = /\b(?:abstract|summary|materials?|methods?|methodology|results?|findings|discussion|conclusions?|remarks|introduction|background|funding|acknowledg\w*|references?|bibliography|supplementary|supporting|information|appendix|keywords?|perspectives?|outlook|limitations?|aims?|objectives?|r[eé]sum[eé]|mat[eé]riel|m[eé]thodes?|protocole|exp[eé]rimental|r[eé]sultats?)$/i;
+
+/** La ligne EST-ELLE l'intitulé d'une section (court, reconnu, pas une
+ *  phrase) ? « Materials and Methods. » en fait partie, « Materials were
+ *  harvested in 2024. » non. */
+const isSectionHeadingLine = (s) => {
+  const raw = String(s || '').trim();
+  const key = sectionHeadingKey(raw);
+  if (!key || key.split(' ').length > 4) return false;
+  if (!SECTION_HEADING_FIRST_RE.test(key) || SECTION_SENTENCE_RE.test(key)) return false;
+  /* Un intitulé PONCTUÉ est accepté (« Materials and Methods. ») — mais il doit
+     finir sur un mot d'intitulé, jamais sur un verbe. */
+  if (/[.;:,]$/.test(raw) && !SECTION_TAIL_WORD_RE.test(key)) return false;
+  return true;
+};
+
 /** Un titre est une ligne COURTE, sans ponctuation de fin de phrase, qui
  *  ressemble à un intitulé : « 1. Introduction », « INTRODUCTION »,
  *  « Materials and Methods », « References »… Une phrase comme « Le virus a été
- *  purifié. » n'en est donc pas un. */
+ *  purifié. » n'en est donc pas un.
+ *
+ *  L'INTITULÉ D'UNE SECTION passe AVANT tout le reste : reconnu par son seul
+ *  mot (« Materials and Methods. », « II. MATERIALS AND METHODS », « • Results »),
+ *  il est un titre même ponctué ou numéroté — et il n'est jamais pris pour une
+ *  liste d'auteurs (une liste de noms ne commence pas par « Materials »). */
 export const isHeadingLine = (line) => {
   const s = String(line || '').trim();
   if (!s || s.length > 90) return false;
-  if (/[.;:,]$/.test(s)) return false;
   /* La ligne d'un MARQUEUR de figure (voir plus bas) n'est jamais un titre :
      sinon l'image de l'article deviendrait un intitulé de section. */
   if (isFigureMark(s)) return false;
+  if (isSectionHeadingLine(s)) return true;
+  if (/[.;:,]$/.test(s)) return false;
   /* L'en-tête (auteurs, affiliations) n'est JAMAIS une section : sinon il
      disparaît du document importé (voir parseManuscriptHeader). Une liste de
      noms NUS (« Anna Bianchi, Mario Rossi ») en fait partie : sans marqueur,
@@ -341,9 +419,6 @@ export const isHeadingLine = (line) => {
   const letters = s.replace(/[^A-Za-zÀ-ÿ]/g, '');
   const allCaps = letters.length > 3 && letters === letters.toUpperCase();
   const titleCase = words.length <= 8 && words.filter((w) => /^[A-ZÀ-Þ]/.test(w)).length >= Math.ceil(words.length / 2);
-  /* Un intitulé de section écrit en minuscules après son premier mot (voir
-     SECTION_HEADING_FIRST_RE) — mais pas une phrase qui commence comme lui. */
-  if (words.length <= 4 && SECTION_HEADING_FIRST_RE.test(s) && !SECTION_SENTENCE_RE.test(s)) return true;
   return numbered || allCaps || titleCase;
 };
 
@@ -975,7 +1050,13 @@ const INTRO_HEADING_RE = /^(?:abstract|summary|r[ée]sum[ée]|introduction|backg
  */
 export const withDocumentSections = (parts) => {
   const list = (Array.isArray(parts) ? parts : []).map((p) => ({ ...p }));
-  const label = (p) => headingLabel((p && p.heading) || '');
+  /* L'INTITULÉ D'UNE PARTIE, prêt à être comparé : numérotation, puce et
+     ponctuation finale retirées (voir sectionHeadingKey) — « I. INTRODUCTION »,
+     « 2. Materials and Methods. » et « • Results: » se lisent donc comme les
+     intitulés du projet. Sans ce nettoyage, un chapitre ponctué ou numéroté
+     gardait une section vide de sens (son texte partait dans « Results and
+     discussion » au lieu de « Matériel et méthodes », par exemple). */
+  const label = (p) => sectionHeadingKey((p && p.heading) || '');
   /* 1. Où commence le CORPS : après la suite d'intitulés « résumé /
         introduction » du début (le dernier d'entre eux). */
   let startAt = 0;
@@ -1022,8 +1103,17 @@ export const withDocumentSections = (parts) => {
       p.autoSection = METHODS_DEST.id;
       continue;
     }
-    if (!p.id || p.id === 'background') p.id = 'discussion';
-    p.autoSection = 'discussion';
+    /* Une partie qui ne dit RIEN va dans « Results and discussion » (règle de
+       POSITION). Mais un intitulé qui DIT « Abstract » / « Introduction » /
+       « Background » n'est pas retourné en discussion : c'est la section
+       « Scientific background » du projet. Le forcer là était le défaut
+       signalé (« l'Introduction n'est pas allée dans Scientific background ») :
+       dès qu'une ligne d'en-tête mal lue passait pour un titre AVANT
+       l'Introduction, la règle de position s'appliquait à elle aussi. */
+    if (!p.id) {
+      p.id = 'discussion';
+      p.autoSection = 'discussion';
+    }
   }
   return list;
 };
@@ -1104,8 +1194,12 @@ export const looksLikeNameListLine = (line) => {
 };
 
 /** La ligne SUIVANTE d'une liste de noms (positions 2, 3… d'un en-tête) : un
- *  marqueur d'auteur, ou la même lecture par position que la première ligne. */
-const isNameLineContinuing = (text) => isAuthorish(text) || looksLikeNameListLine(text);
+ *  marqueur d'auteur, ou la même lecture par position que la première ligne —
+ *  dans l'écriture « un marqueur par nom » il faut AU MOINS DEUX morceaux, pour
+ *  qu'un intitulé numéroté (« 3 Statistical analysis ») ne devienne pas un
+ *  auteur. */
+const isNameLineContinuing = (text) => isAuthorish(text) || looksLikeNameListLine(text)
+  || looksLikeHeadMarkedNameList(text, { minParts: 2 });
 
 /** La ligne de noms EN POSITION d'auteur (juste sous le titre) : un nom SEUL y
  *  suffit — c'est le cas « un auteur par ligne », fréquent dans un article à un
@@ -1156,6 +1250,68 @@ export const looksLikeLooseAuthorLine = (line) => {
     return words.every((w) => WORD_CAPS_RE.test(w) || WORD_ALLCAPS_RE.test(w) || NAME_PARTICLE_RE.test(w));
   });
 };
+
+/** Le MARQUEUR de TÊTE d'un nom — « 1 Mario Rossi », « ²Anna Bianchi »,
+ *  « [1] M. Rossi » : le numéro de laboratoire écrit AVANT le nom (style de
+ *  quelques éditeurs, et écriture d'un .docx dont l'exposant devient « [1] »).
+ *  Ce n'est JAMAIS une initiale : « M. Rossi » n'est pas touché. */
+const NAME_HEAD_MARK_RE = new RegExp(
+  `^\\s*\\[?\\s*(?:[${SUP_MARK_CLASS}]+|\\d{1,2}|[*\\u2020\\u2021\\u00a7\\u00b6]|[a-e])\\s*[)\\].]?\\s*`, 'u');
+
+/** Les morceaux d'une liste dont chaque nom porte son marqueur EN TÊTE :
+ *  crochets ouverts, exposants détachés par la virgule recollés au nom
+ *  (comme authorLineParts), marqueur de tête et de queue retirés. Chaque
+ *  morceau rendu est un nom NU. */
+const headMarkedNameParts = (line) => {
+  const opened = String(line || '').trim()
+    .replace(/\[([^[\]]{1,20})\]/g, ' $1 ')
+    .replace(/\((\d{1,2}(?:\s*,\s*\d{1,2})*)\)/g, ' $1 ');
+  const merged = [];
+  opened.split(/\s*(?:,|;|\band\b|&)\s*/i).map((p) => p.trim()).filter(Boolean).forEach((part) => {
+    const prev = merged[merged.length - 1];
+    if (prev && EXPONENT_ONLY_RE.test(part) && MARK_TAIL_IN_NAME_RE.test(prev)) {
+      merged[merged.length - 1] = `${prev},${part}`;
+      return;
+    }
+    merged.push(part);
+  });
+  return merged.map((p) => stripAffilMarks(p.replace(NAME_HEAD_MARK_RE, ''))).filter(Boolean);
+};
+
+/** Une LISTE DE NOMS dont le marqueur de laboratoire est écrit EN TÊTE :
+ *  « 1 Mario Rossi, 2 Anna Bianchi », « ¹Mario Rossi, ²Anna Bianchi ». Le
+ *  marqueur de tête retiré, les morceaux se lisent comme des noms — un numéro
+ *  n'est pas un prénom. `minParts` = 2 pour une ligne de CONTINUATION, afin de
+ *  ne jamais prendre un intitulé numéroté (« 3 Statistical analysis ») pour un
+ *  auteur. */
+const looksLikeHeadMarkedNameList = (line, { minParts = 1 } = {}) => {
+  const s = String(line || '').trim();
+  if (!s || s.length > 300) return false;
+  if (HEADER_META_RE.test(s) || SECTION_WORD_RE.test(s)) return false;
+  /* Un INTITULÉ n'est jamais une liste de noms, même numéroté : après retrait du
+     numéro, « 2. Materials and Methods. » se coupe en « Materials » +
+     « Methods » et « 2. Statistical analysis » ressemble à un nom — ce sont des
+     titres de section (voir METHODS_HEADING_RE / RESULTS_HEADING_RE). */
+  const key = sectionHeadingKey(s);
+  if (isSectionHeadingLine(s) || SECTION_WORD_RE.test(key)
+    || METHODS_HEADING_RE.test(key) || RESULTS_HEADING_RE.test(key) || INTRO_HEADING_RE.test(key)) return false;
+  if (looksLikeAffiliationLine(s) || isBodyParagraph(s)) return false;
+  if (/[;:!?]$/.test(s)) return false;
+  const parts = headMarkedNameParts(s);
+  if (parts.length < minParts || parts.length > 40) return false;
+  return parts.every((p) => NAME_ONLY_RE.test(p) && p.split(/\s+/).length <= 5);
+};
+
+/** La ligne EN POSITION d'auteur (celle qui suit le titre) : elle est acceptée
+ *  par l'un des lecteurs qui ont servi à la DÉSIGNER — les trois lectures par
+ *  position, le repli souple (voir looksLikeLooseAuthorLine) et la liste à
+ *  marqueurs de tête. Sans cela, une ligne reconnue au PREMIER pas (elle
+ *  désigne la liste d'auteurs) était REFUSÉE au second — et la liste, pourtant
+ *  entre le titre et les affiliations, restait vide (défaut signalé par
+ *  l'utilisateur : « les auteurs ne sont toujours pas reconnus »). */
+const isFirstAuthorLine = (text) => isAuthorLineAtPosition(text)
+  || looksLikeLooseAuthorLine(text)
+  || looksLikeHeadMarkedNameList(text);
 
 /** Combien de blocs sont examinés en tête de document. */
 const HEADER_SCAN = 14;
@@ -1448,15 +1604,16 @@ export const parseManuscriptHeader = (blocks) => {
          document dont le titre est mal écrit ne doit pas faire perdre les
          auteurs. */
   let firstAuthors = explicitAuthors;
-  if (firstAuthors === -1 && titleIdx >= 0 && window[titleIdx + 1]
-    && window[titleIdx + 1].role !== 'affiliations'
-    && isAuthorLineAtPosition(window[titleIdx + 1].text)) {
-    firstAuthors = titleIdx + 1;
-  }
+  /* La ligne qui SUIT le titre est reconnue par les mêmes lecteurs par position
+     que ceux qui la garderont ensuite (voir isFirstAuthorLine) : les marqueurs
+     d'auteur, la liste de noms NUS, le repli souple (« M. Rossi, A. Bianchi »,
+     « ROSSI M, BIANCHI A ») et la liste dont chaque nom porte son numéro en
+     tête (« 1 Mario Rossi, 2 Anna Bianchi »). Une ligne d'ADRESSE ou un
+     intitulé de section n'est jamais une liste d'auteurs. */
   if (firstAuthors === -1 && titleIdx >= 0 && window[titleIdx + 1]
     && window[titleIdx + 1].role !== 'affiliations'
     && window[titleIdx + 1].role !== 'section'
-    && looksLikeLooseAuthorLine(window[titleIdx + 1].text)) {
+    && isFirstAuthorLine(window[titleIdx + 1].text)) {
     firstAuthors = titleIdx + 1;
   }
   if (firstAuthors === -1 && titleIdx === -1) {
@@ -1484,28 +1641,37 @@ export const parseManuscriptHeader = (blocks) => {
       const first = i === firstAuthors;
       if (roles[i] === 'authors') { authorIdxs.push(i); continue; }
       /* La position seule désigne la PREMIÈRE ligne de noms ; les suivantes
-         doivent être adjacentes et ressembler encore à des noms. */
+         doivent être adjacentes et ressembler encore à des noms. La première
+         est jugée par le MÊME lecteur qui l'a désignée (voir
+         isFirstAuthorLine) : elle ne peut pas être reconnue puis refusée. */
       if (!authorIdxs.length && !(first && explicitAuthors === -1)) break;
       if (isCand(roles[i]) && (first || window[i - 1].at === window[i].at - 1)
-        && (first ? isAuthorLineAtPosition(window[i].text) : isNameLineContinuing(window[i].text))) {
+        && (first ? isFirstAuthorLine(window[i].text) : isNameLineContinuing(window[i].text))) {
         authorIdxs.push(i); continue;
       }
       break;
     }
   }
 
-  /* 4. Les AFFILIATIONS : à la suite des auteurs (les métadonnées qui
-     s'intercalent — « Correspondence: … » — sont sautées, pas arrêtées). */
+  /* 4. Les AFFILIATIONS : TOUTES les lignes d'adresse et d'e-mail de
+     l'en-tête, dans l'ordre du document — et l'e-mail de l'auteur correspondant
+     en DERNIER (voir headerFromLineRoles).
+     POURQUOI on scanne toute la fenêtre au lieu de s'arrêter à la première
+     ligne qui n'est pas une adresse : les métadonnées qui s'intercalent
+     (« Keywords: … », « Correspondence to: … ») coupaient la suite, et la ligne
+     de l'auteur correspondant — celle qui porte les e-mails — se retrouvait
+     consommée en « non importé » : le projet perdait l'adresse de
+     correspondance du papier (signalé par l'utilisateur : « la ligne des
+     auteurs correspondants n'est pas allée à la fin des affiliations »).
+     Une adresse SANS mot d'institution (« 2015 Upper Street, Raleigh, NC
+     27695, USA ») continue l'affiliation qui la précède — elle n'est jamais
+     prise ailleurs, le corps du texte vient après l'en-tête. */
   const affIdxs = [];
-  if (authorIdxs.length) {
-    let started = false;
-    for (let i = authorIdxs[authorIdxs.length - 1] + 1; i < window.length; i += 1) {
-      if (roles[i] === 'affiliations') { affIdxs.push(i); started = true; continue; }
-      if (!started) continue;
-      if (roles[i] === 'text' && window[i].at === window[i - 1].at + 1
-        && looksLikeAddressLine(window[i].text)) { affIdxs.push(i); continue; }
-      break;
-    }
+  const affFrom = titleIdx >= 0 ? titleIdx : 0;
+  for (let i = affFrom; i < window.length; i += 1) {
+    if (roles[i] === 'affiliations') { affIdxs.push(i); continue; }
+    if (!affIdxs.length || window[i].at !== window[i - 1].at + 1) continue;
+    if (roles[i] === 'text' && looksLikeAddressLine(window[i].text)) affIdxs.push(i);
   }
 
   /* 5. La ZONE consommée : jusqu'à la dernière ligne d'en-tête, en emportant les
@@ -1578,6 +1744,77 @@ export const groupManuscriptParts = (blocks, { header = null } = {}) => {
   return parts
     .filter((p) => p.blocks.length > 0)
     .map((p) => ({ ...p, text: p.blocks.map((b) => b.text).join('\n\n') }));
+};
+
+/* ── 3 quater. OÙ VA CHAQUE FIGURE DU DOCUMENT ────────────────────────────────
+
+   La plainte : « avant, l'import du manuscrit importait les figures, maintenant
+   elles sont perdues ». Deux chemins les faisaient disparaître SANS LE DIRE :
+
+     • une partie que l'utilisateur n'a pas dirigée vers une section (« — do not
+       import — », ou le chapeau d'un document sans titre) était sautée en
+       entier — sa figure avec elle : `if (!p.dest) return` ;
+     • une figure dont le marqueur était tombé dans une ligne de l'EN-TÊTE
+       (titre / auteurs / affiliations, ces blocs sont retirés du texte) n'était
+       plus vue du tout : son rang restait dans `figures`, sans place.
+
+   Ici, la place de CHAQUE figure est calculée sur le document entier : la
+   section de la partie qui la porte quand elle en a une (l'en-tête et le champ
+   « Matériel et méthodes », eux, ne peuvent pas afficher d'image : la figure va
+   alors dans la section que sa partie visait, sinon dans la première section de
+   texte), et à défaut la section de la partie la plus proche. Rien n'est jamais
+   perdu en silence : `rerouted` compte les figures ainsi replacées et
+   l'utilisateur le lit dans le compte rendu de l'import.
+
+   @returns {{ placements:Array<{section,index,anchor}>, rerouted:number,
+               orphans:number, sections:Array<string> }}
+              `orphans` = figures du document dont le marqueur n'existe plus
+              dans le texte (elles sont posées quand même).
+*/
+export const manuscriptFigurePlacements = (parts, figures = [], { focusSection = '' } = {}) => {
+  const list = Array.isArray(parts) ? parts : [];
+  const textSections = PROJECT_TEXT_SECTIONS.map((s) => s.id);
+  const fallback = String(focusSection || '').trim() || textSections[0];
+  /* La section qui peut VRAIMENT afficher cette partie : l'en-tête est un champ
+     de texte, « Matériel et méthodes » aussi — la figure va dans la section que
+     la partie visait, ou dans la première section de texte. */
+  const sectionOf = (part) => {
+    const dest = String((part && part.dest) || '').trim();
+    if (!dest) return '';
+    if (isHeaderDest(dest)) return String((part && part.guessed) || '').trim() || fallback;
+    if (dest === METHODS_DEST.id) return 'discussion';
+    return dest;
+  };
+  const perPart = list.map((p) => ({ part: p, section: sectionOf(p), marks: figureMarksIn((p && p.text) || '') }));
+  const placements = [];
+  perPart.forEach(({ section, marks }, i) => {
+    marks.forEach((m) => placements.push({ section, index: m.index, anchor: m.anchor, at: i }));
+  });
+  const placed = new Set(placements.map((p) => p.index));
+  /* Une figure dont le marqueur a disparu du texte (ligne avalée par l'en-tête,
+     document recollé) est posée quand même : on ne perd pas des pixels. */
+  const orphans = (Array.isArray(figures) ? figures : [])
+    .map((f) => Number(f && f.index) || 0)
+    .filter((n) => n > 0 && !placed.has(n));
+  orphans.forEach((n) => placements.push({ section: '', index: n, anchor: '', at: -1 }));
+  const nearestSection = (at) => {
+    if (at < 0) return '';
+    for (let i = at + 1; i < perPart.length; i += 1) if (perPart[i].section) return perPart[i].section;
+    for (let i = at - 1; i >= 0; i -= 1) if (perPart[i].section) return perPart[i].section;
+    return '';
+  };
+  let rerouted = 0;
+  placements.forEach((p) => {
+    if (p.section) return;
+    p.section = nearestSection(p.at) || fallback;
+    rerouted += 1;
+  });
+  return {
+    placements: placements.map(({ section, index, anchor }) => ({ section, index, anchor })),
+    rerouted,
+    orphans: orphans.length,
+    sections: [...new Set(placements.map((p) => p.section))]
+  };
 };
 
 /* ── 4. HTML écrit dans la section du projet ──────────────────────────────── */

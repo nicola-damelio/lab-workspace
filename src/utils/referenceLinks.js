@@ -333,3 +333,36 @@ export const ensureReferenceEntries = (html, entries) => {
     added: missing.length
   };
 };
+
+/**
+ * LA BIBLIOGRAPHIE D'UN DOCUMENT FIGÉ, RETIRÉE.
+ *
+ * « ✏️ Edit text » → « 💾 Save changes » fige le document ENTIER, liste des
+ * références comprise : le « Bibliography (n) » enregistré garde la mise en
+ * forme de la publication (order des champs, styles) telle qu'elle était ce
+ * jour-là, et le format choisi depuis ne s'y voyait donc jamais — la plainte
+ * exacte : « le publication format ne modifie pas le format des références dans
+ * le texte du projet ». Le document figé est donc affiché SANS sa bibliographie
+ * (celle du fichier enregistré, qui a pu vieillir) : la page imprime à la place
+ * la liste VIVANTE des références du projet, rendue avec le format courant à
+ * chaque affichage.
+ *
+ * Ne touche QUE le titre « Bibliography » et la liste qui le suit (le texte de
+ * l'auteur, lui, reste intact) ; idempotente ; sans bibliographie, le document
+ * ressort tel quel.
+ */
+export const withoutBibliographySection = (html) => {
+  const source = String(html || '');
+  const heading = source.match(BIB_LIST_RE);
+  if (!heading) return source;
+  const open = heading.index;
+  const openEnd = heading.index + heading[0].length;
+  const close = source.indexOf('</ol>', openEnd);
+  const end = close === -1 ? source.length : close + '</ol>'.length;
+  /* Le conteneur qui portait le titre (`<div class="mb-4">…`) part avec lui
+     quand c'est LUI qui l'ouvre : sinon il resterait un cadre vide. */
+  const wrap = /<div\b[^>]*>\s*$/i.exec(source.slice(0, open));
+  const left = wrap ? wrap.index : open;
+  const afterEnd = wrap ? (source.slice(end, end + 6) === '</div>' ? end + 6 : end) : end;
+  return (source.slice(0, left) + source.slice(afterEnd)).trim();
+};

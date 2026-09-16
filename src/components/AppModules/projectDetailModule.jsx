@@ -19,13 +19,20 @@ import {
   parseManuscriptHeader, headerFromLineRoles, HEADER_ROLES, PROJECT_TEXT_SECTIONS,
   HEADER_DESTS, isHeaderDest, headerDestLabel, headerTextFor, METHODS_DEST, withDocumentSections,
   buildManuscriptPlan, convertCitationsInText, htmlFromText, htmlFromManuscriptPart,
-  mergeManuscriptBibliography,
+  mergeManuscriptBibliography, manuscriptFigurePlacements,
   readManuscriptDocument, figureDataUrl, figureMarksIn, stripFigureMarks,
   manuscriptFingerprint, previousImportOf, citedNumbersInText
 } from '../../utils/manuscriptImport';
+/* COMPLÉTER UNE RÉFÉRENCE INCOMPLÈTE (auteurs, titre, revue, année manquants) :
+   pot commun des publications du laboratoire puis Crossref — voir
+   utils/referenceEnrich.js. Un import s'en sert tout seul, et le bouton
+   « ✨ Complete missing fields » de la page projet répare les références déjà
+   enregistrées. */
+import { enrichReferences, enrichReport } from '../../utils/referenceEnrich';
 import {
   citationAnchorId, citationLabel, ensureReferenceEntries, linkCitationsInSections,
-  linkCitationNumbers, numberImportedReferences, referenceNumbers, linkedCitationNumbers
+  linkCitationNumbers, numberImportedReferences, referenceNumbers, linkedCitationNumbers,
+  withoutBibliographySection
 } from '../../utils/referenceLinks';
 import { splitAnchoredFigures } from '../../utils/figurePlacement';
 import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject, getDriveToken, getDriveRootName, resolveDrivePathFromNames, listDriveChildren } from '../../utils/driveUpload';
@@ -43,6 +50,15 @@ import {
   addProjectLibraryItem, makeUploadImage, uploadFigureToDrive
 } from '../../utils/figuresLibrary';
 import { SlidePreview, renderSlideToDataUrl } from '../FiguresSlides';
+
+/* Deux comptes de champs remplis (voir utils/referenceEnrich.js : `filled`) mis
+   en un seul : le compte rendu du bouton « ✨ Complete missing fields » travaille
+   sur la bibliographie ET sur les références numérotées du projet. */
+const mergeFieldCounts = (a, b) => {
+  const out = { ...(a || {}) };
+  Object.keys(b || {}).forEach((k) => { out[k] = (out[k] || 0) + b[k]; });
+  return out;
+};
 
 /* =========================================================================
    PROJECT DETAIL — a project page with subsections:
@@ -249,16 +265,21 @@ export const ProjectDetailModule = ({
   const isSuper = currentUser?.role === 'superuser';
   const myName = currentUser?.name || '';
   const [projects, setProjects] = useState(loadProjects);
-  /* `bibliography: true` : la ligne « Project bibliography papers (n) » de cette
-     page porte les deux imports (📄 Import references from a paper / 📥 Import a
-     manuscript) — la section est donc ouverte dès l'arrivée, sinon ces boutons
-     passent inaperçus. « funding » et « supporting » sont les deux sections
-     ajoutées pour un article complet (financement + matériel supplémentaire) :
-     elles sont ouvertes elles aussi, sinon elles passent inaperçues. */
+  /* `bibliography: true` : la section « 📚 Bibliography » de cette page porte les
+     DEUX imports (📄 Import references from a paper / 📥 Import a manuscript, ce
+     dernier en haut de la page) — la section est donc ouverte dès l'arrivée,
+     sinon ces boutons passent inaperçus. « funding » et « supporting » sont les
+     deux sections ajoutées pour un article complet (financement + matériel
+     supplémentaire) : elles sont ouvertes elles aussi, sinon elles passent
+     inaperçues. */
   const [openSections, setOpenSections] = useState({ article: true, background: true, canvases: true, materials: true, usefulFiles: true, bibliography: true, funding: true, supporting: true, comments: false });
   const [refPicker, setRefPicker] = useState(null); // null | { insertText?: fn }
-  const [showBibForm, setShowBibForm] = useState(false);
-  const [bibDraft, setBibDraft] = useState({ title: '', link: '', authors: '', year: '' });
+  /* ✨ « Complete missing fields » : l'avancement et le compte rendu de la
+     recherche des informations manquantes d'une référence (auteurs, titre,
+     revue, année…) — voir utils/referenceEnrich.js. `refFixBusy` bloque le
+     bouton pendant la recherche en ligne. */
+  const [refFixBusy, setRefFixBusy] = useState(false);
+  const [refFixReport, setRefFixReport] = useState('');
   /* IMPORT DE LA BIBLIOGRAPHIE D'UN DOCUMENT (Paperpile / Word / RIS / BibTeX) :
      le texte est analysé, les références reconnues sont proposées à la coche
      puis ajoutées à la « Project bibliography » du projet — la MÊME liste que
@@ -1054,22 +1075,38 @@ export const ProjectDetailModule = ({
     setCitationLinkReport(`🔗 ${res.added} citation link(s) added in ${res.updated} section(s) — the exported document (and its printed PDF) follow them.`);
   };
 
-  const addBibPaper = () => {
-    const title = bibDraft.title.trim();
-    if (!title) return;
-    updateProject({
-      bibliography: [...projectBib, {
-        id: genProjectId(), title, link: bibDraft.link.trim(),
-        authors: bibDraft.authors.trim(), year: bibDraft.year.trim(),
-        scientist: project.scientist, comments: ''
-      }]
-    });
-    setBibDraft({ title: '', link: '', authors: '', year: '' });
-    setShowBibForm(false);
+  /* ── ✨ COMPLÉTER LES RÉFÉRENCES INCOMPLÈTES ────────────────────────────────
+     « L'information incomplète de la référence (auteurs, titre manquants…) n'est
+     pas reconstruite » : ce bouton reprend TOUTES les références du projet
+     (bibliographie ET références numérotées du document), et remplit les champs
+     vides depuis les publications du laboratoire / « Relevant papers », puis
+     depuis Crossref (par DOI, sinon par titre exact). Un champ déjà rempli —
+     corrigé à la main — n'est jamais écrasé (voir utils/referenceEnrich.js), et
+     la recherche en ligne est bornée : elle s'arrête d'elle-même hors ligne. */
+  const completeProjectReferences = async () => {
+    if (!canModify || refFixBusy) return;
+    setRefFixBusy(true);
+    setRefFixReport('⏳ Looking for the missing authors, titles, journals and years…');
+    try {
+      const bib = await enrichReferences(projectBib, { pool: citationPool, all: true });
+      const numbered = await enrichReferences(refs, { pool: citationPool, all: true });
+      const patch = {};
+      if (bib.completed) patch.bibliography = bib.list;
+      if (numbered.completed) patch.references = numbered.list;
+      let saved = { ok: true };
+      if (Object.keys(patch).length) saved = commitProjectVerified(patch, { lighten: true });
+      const done = bib.completed + numbered.completed;
+      setRefFixReport(done
+        ? `${enrichReport({ completed: done, filled: mergeFieldCounts(bib.filled, numbered.filled), sources: [...new Set([...bib.sources, ...numbered.sources])] })}`
+          + ` — the project bibliography, the numbered references and the exported document show them now.`
+          + (saved.ok ? '' : ` · ⚠ NOT SAVED: the browser refused to store this project (${saved.error}).`)
+        : 'Every reference already has its authors, title, journal and year — nothing was missing.'
+          + (bib.offline || numbered.offline ? ' (the online service could not be reached)' : ''));
+    } catch (err) {
+      setRefFixReport(`⚠ ${(err && err.message) || 'the references could not be completed'}`);
+    }
+    setRefFixBusy(false);
   };
-
-  const removeBibPaper = (paperId) =>
-    updateProject({ bibliography: projectBib.filter((b) => b.id !== paperId) });
 
   /* ---- Import de références depuis un document -------------------------
      « Import from a paper » : on dépose le document (.docx de Word, export
@@ -1120,8 +1157,8 @@ export const ProjectDetailModule = ({
     }
   };
 
-  const commitBibImport = () => {
-    if (!bibImport) return;
+  const commitBibImport = async () => {
+    if (!bibImport || bibImport.busy) return;
     /* Les entrées COCHÉES, dans l'ORDRE du document : c'est cet ordre qui porte
        la numérotation (voir numberImportedReferences). */
     const pickedEntries = (bibImport.picked || [])
@@ -1130,7 +1167,17 @@ export const ProjectDetailModule = ({
       .map((i) => bibImport.parsed[i])
       .filter(Boolean);
     if (!pickedEntries.length) return;
-    const chosen = pickedEntries.map((entry) => projectBibEntry(entry, project, genProjectId()));
+    /* ✨ LES RÉFÉRENCES INCOMPLÈTES SE COMPLÈTENT À L'IMPORT : une bibliographie
+       de fin d'article donne souvent des entrées sans auteurs ni titre ; elles
+       sont complétées depuis les publications du laboratoire puis depuis
+       Crossref (par DOI, sinon par titre) AVANT d'être rangées et numérotées —
+       la référence entre donc complète dans le projet, dans la bibliographie
+       comme dans le document (voir utils/referenceEnrich.js). Un champ déjà
+       rempli par le document n'est jamais écrasé. */
+    setBibImport((d) => ({ ...(d || {}), busy: true, status: '✨ Completing the references (authors, titles, journals…)' }));
+    const completed = await enrichReferences(pickedEntries, { pool: citationPool });
+    const filledReport = enrichReport(completed);
+    const chosen = completed.list.map((entry) => projectBibEntry(entry, project, genProjectId()));
     const res = mergeReferenceEntries(projectBib, chosen);
     /* LES RÉFÉRENCES NUMÉROTÉES DU PROJET, pas seulement la bibliographie :
        `project.references` est la liste que le TEXTE cite (« [12] »), que la
@@ -1139,7 +1186,7 @@ export const ProjectDetailModule = ({
        les « [12] » du texte ne menaient nulle part — c'était la plainte : les
        références importées n'étaient ni liées, ni exportées. Le numéro écrit
        devant l'entrée (« 12. Rossi… ») est conservé : le lien tombe juste. */
-    const numbered = numberImportedReferences(pickedEntries, refs);
+    const numbered = numberImportedReferences(completed.list, refs);
     /* Et les citations DÉJÀ écrites dans les sections deviennent des liens vers
        ces références (ancre #ref-n + infobulle) : l'import fait donc les deux
        d'un coup, sans avoir à retrouver le bouton « 🔗 Link citations… ». */
@@ -1158,15 +1205,16 @@ export const ProjectDetailModule = ({
     if (linked.updated) {
       setCitationLinkReport(`🔗 ${linked.added} citation link(s) added in ${linked.updated} section(s) — the exported document (and its printed PDF) follow them.`);
     }
-    setBibImport({
-      ...bibImport, parsed: [], picked: [],
+    setBibImport((d) => ({
+      ...(d || bibImport), parsed: [], picked: [], busy: false,
       status: `✅ ${res.added} reference(s) added to “${project.name}”${res.filled ? ` — ${res.filled} completed` : ''}`
+        + (filledReport ? ` · ${filledReport}` : '')
         + `${numbered.added ? ` · ${numbered.added} numbered reference(s) in the project document (Bibliography)` : ''}`
         + `${linked.updated ? ` · 🔗 ${linked.added} citation(s) linked in ${linked.updated} section(s)` : ''}`
         + (saved.ok
           ? '. They also appear in Publications → “Project bibliography”.'
           : ` · ⚠ NOT SAVED: the browser refused to store this project (${saved.error}) — free some space and import again.`)
-    });
+    }));
   };
 
   // ---- Experiments: create classic tests and link them to the project ----
@@ -1282,6 +1330,11 @@ export const ProjectDetailModule = ({
       text: '', fileName: '', parts: null, plan: null, picks: [], busy: false, status: '', report: '',
       header: null, headerPicks: null, figures: [], hash: '', previous: null, confirmRepeat: false,
       htmlByText: null,
+      /* 🖼 « Figures only » : rattraper les FIGURES d'un document DÉJÀ importé
+         (l'import les avait perdues, ou l'utilisateur les a retirées) sans
+         recoller une deuxième fois le texte. Décidé par l'utilisateur dans la
+         fenêtre, jamais par le programme (voir applyManuscriptImport). */
+      figuresOnly: false,
       focusSection: typeof focusSection === 'string' ? focusSection : ''
     });
   };
@@ -1421,6 +1474,7 @@ export const ProjectDetailModule = ({
     let onDrive = 0;
     let local = 0;
     let already = 0;
+    const failed = [];
     for (const place of (Array.isArray(placements) ? placements : [])) {
       const fig = (Array.isArray(list) ? list : []).find((f) => f && f.index === place.index);
       if (!fig) continue;
@@ -1435,8 +1489,18 @@ export const ProjectDetailModule = ({
         already += 1;
         continue;
       }
-      const image = await figureImageFor(fig, label);
-      if (!image) continue;
+      /* UNE FIGURE QUI ÉCHOUE N'EMPORTE PAS LES AUTRES : l'envoi au Drive est la
+         seule étape qui dépend du réseau, et une exception ici faisait auparavant
+         perdre TOUTES les figures de l'import. */
+      let image = null;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        image = await figureImageFor(fig, label);
+      } catch {
+        failed.push(name || label);
+        continue;
+      }
+      if (!image) { failed.push(name || label); continue; }
       const entry = {
         id: genProjectId(),
         url: image.url,
@@ -1461,7 +1525,7 @@ export const ProjectDetailModule = ({
       if (image.drive) onDrive += 1;
       else local += 1;
     }
-    return { figures: out, added, onDrive, local, already };
+    return { figures: out, added, onDrive, local, already, failed };
   };
 
   const patchManuscriptPart = (key, patch) =>
@@ -1542,11 +1606,62 @@ export const ProjectDetailModule = ({
     const d = msImport;
     if (!d || !d.plan) return;
     if (msBusyRef.current) return;   // deux clics = un seul import
-    if (d.previous && !d.confirmRepeat) return; // doublon non confirmé
+    /* Le doublon doit être confirmé — sauf en « figures seules », qui n'écrit
+       aucun texte : là, le document déjà importé est exactement ce qu'on veut
+       (on vient rechercher ses figures). */
+    if (d.previous && !d.confirmRepeat && !d.figuresOnly) return;
     msBusyRef.current = true;
     setMsImport((cur) => ({ ...(cur || {}), busy: true, status: 'Applying…' }));
     const before = { ...project };   // filet de sécurité « ↩︎ Undo import »
     const numbers = d.plan.numberByKey;
+    /* 🖼 FIGURES SEULES : rattraper les FIGURES d'un document DÉJÀ importé — le
+       cas « avant, l'import importait les figures, maintenant elles sont
+       perdues » — sans recoller son texte une deuxième fois. Le texte, les
+       références et la bibliographie du projet ne sont pas touchés ; les ancres
+       viennent du texte CONVERTI aux numéros du projet (comme dans l'import
+       complet), donc la figure retrouve sa place dans le document exporté. */
+    if (d.figuresOnly) {
+      const anchoredText = {};
+      (d.parts || []).forEach((p) => {
+        if (!p.dest) return;
+        anchoredText[p.key] = convertCitationsInText(p.text, numbers).text;
+      });
+      const place = manuscriptFigurePlacements(
+        (d.parts || []).map((p) => (anchoredText[p.key] !== undefined ? { ...p, text: anchoredText[p.key] } : p)),
+        d.figures,
+        { focusSection: d.focusSection }
+      );
+      let added = 0;
+      let failed = [];
+      let failedAll = '';
+      try {
+        const res = await attachManuscriptFigures(d.figures, place.placements);
+        added = res.added;
+        failed = res.failed || [];
+        if (added) commitProjectVerified({ figures: res.figures }, { lighten: true });
+      } catch (err) {
+        failedAll = String((err && err.message) || 'the figures could not be attached');
+      }
+      msBusyRef.current = false;
+      setMsImport(null);
+      setMsResult({
+        ok: !failedAll,
+        undoProject: before,
+        lines: [
+          added
+            ? `${added} figure(s) attached to ${place.sections.join(', ')} — the text, the references and the`
+              + ' bibliography of this project were NOT touched.'
+            : 'No new figure: they are already in the sections of this project (nothing is ever duplicated).',
+          ...(place.rerouted || place.orphans
+            ? [`📎 ${place.rerouted + place.orphans} figure(s) had no section of their own: they were attached to `
+              + `${place.sections.filter((s) => s).join(', ')} — move them if you want.`]
+            : []),
+          ...(failed.length ? [`⚠ ${failed.length} figure(s) could not be kept (${failed.join(', ')}).`] : []),
+          ...(failedAll ? [`⚠ ${failedAll}`] : [])
+        ]
+      });
+      return;
+    }
     const patch = {};
     /* 1. Les citations du document → les numéros du PROJET ([12] du manuscrit →
        [5] du projet) — la table du plan ne convertit que ce qu'elle sait
@@ -1555,9 +1670,13 @@ export const ProjectDetailModule = ({
        partie qui la portait, avec l'ANCRE du paragraphe qui la précédait (elle
        sera réinsérée là dans le document exporté). */
     const convertedParts = [];
-    const figurePlacements = [];
     const citedInText = new Set();   // numéros cités (ceux du DOCUMENT)
     const notConverted = [];         // citations laissées telles quelles
+    /* Le TEXTE CONVERTI de chaque partie (citations aux numéros du projet) : les
+       ANCRES des figures en viennent, sinon l'ancre « …[12] » du document ne se
+       retrouve pas dans la section (qui montre « [1] ») et la figure perdrait sa
+       place dans le document exporté. */
+    const convertedTextByKey = {};
     /* Les parties REDIRIGÉES vers un champ d'en-tête (« 🧾 Authors », « 🧾
        Affiliations », « 🧾 Title », voir HEADER_DESTS) : leur texte ne va pas
        dans une section mais dans « 🧾 Title, authors & affiliations », mis en
@@ -1571,32 +1690,17 @@ export const ProjectDetailModule = ({
     d.parts.forEach((p) => {
       if (!p.dest) return;
       const converted = convertCitationsInText(p.text, numbers);
+      convertedTextByKey[p.key] = converted.text;
       citedNumbersInText(converted.text).forEach((n) => citedInText.add(n));
       converted.unresolved.forEach((raw) => notConverted.push(raw));
       if (isHeaderDest(p.dest)) {
         headerTexts.push({ field: p.dest, text: stripFigureMarks(converted.text), mode: p.mode });
-        /* Les FIGURES de ce paragraphe ne peuvent pas être imprimées dans
-           l'en-tête : elles rejoignent la section que son titre visait — celle
-           de « 📤 Insert into project… » (rien n'est perdu). */
-        const fallbackFig = p.guessed || d.focusSection || PROJECT_TEXT_SECTIONS[0].id;
-        figureMarksIn(converted.text).forEach((mark) => {
-          figurePlacements.push({ section: fallbackFig, index: mark.index, anchor: mark.anchor });
-        });
         return;
       }
       if (p.dest === METHODS_DEST.id) {
-        /* Les figures d'un M&M importé restent les figures d'une SECTION (le
-           champ Materials and Methods est du texte) : « Results and
-           discussion », d'où l'utilisateur les reprendra. */
-        figureMarksIn(converted.text).forEach((mark) => {
-          figurePlacements.push({ section: 'discussion', index: mark.index, anchor: mark.anchor });
-        });
         mmTexts.push(stripFigureMarks(converted.text));
         return;
       }
-      figureMarksIn(converted.text).forEach((mark) => {
-        figurePlacements.push({ section: p.dest, index: mark.index, anchor: mark.anchor });
-      });
       convertedParts.push({
         dest: p.dest,
         mode: p.mode,
@@ -1607,6 +1711,18 @@ export const ProjectDetailModule = ({
         html: htmlFromManuscriptPart(p.text, { htmlByText: d.htmlByText, numbers })
       });
     });
+    /* OÙ VA CHAQUE FIGURE DU DOCUMENT (voir manuscriptFigurePlacements) : la
+       place est calculée sur le document ENTIER, pas seulement sur les parties
+       dirigées vers une section. Une figure du chapeau (partie sans destination)
+       ou d'une ligne de l'en-tête était auparavant perdue en silence — c'est la
+       plainte « avant, l'import importait les figures, maintenant elles sont
+       perdues ». */
+    const figPlan = manuscriptFigurePlacements(
+      d.parts.map((p) => (convertedTextByKey[p.key] !== undefined ? { ...p, text: convertedTextByKey[p.key] } : p)),
+      d.figures,
+      { focusSection: d.focusSection }
+    );
+    const figurePlacements = figPlan.placements;
     /* LES RÉFÉRENCES NUMÉROTÉES DU PROJET : une par entrée RETENUE de la
        bibliographie du document — cochée par l'utilisateur, déjà numérotée dans
        le projet (elle garde son numéro), ou déjà rangée dans la bibliographie du
@@ -1619,15 +1735,30 @@ export const ProjectDetailModule = ({
       picks.indexOf(i) !== -1 || !!e.existing
       || entryKeys(e.entry).some((k) => inProjectBib.has(k))
     ));
-    const numbered = numberImportedReferences(kept.map((e) => e.entry), refs, {
+    const keptEntries = kept.map((e) => e.entry);
+    const pickedEntries = d.plan.entries
+      .filter((e, i) => picks.indexOf(i) !== -1)
+      .map((e) => e.entry);
+    /* ✨ UNE RÉFÉRENCE INCOMPLÈTE SE COMPLÈTE AVANT D'ENTRER DANS LE PROJET.
+       Les bibliographies de fin d'article donnent souvent une entrée sans
+       auteurs ou sans titre (et une citation sans auteurs ne dit rien) : elle est
+       complétée depuis les publications du laboratoire puis depuis Crossref (par
+       DOI, sinon par titre) AVANT d'être numérotée, donc la référence ET le
+       document montrent tout de suite les vraies informations. Aucun champ
+       écrit par le document n'est écrasé (voir utils/referenceEnrich.js). */
+    const toComplete = [...new Set([...keptEntries, ...pickedEntries])];
+    const completion = await enrichReferences(toComplete, { pool: citationPool });
+    const enrichedLine = enrichReport(completion);
+    const completedOf = (entry) => {
+      const at = toComplete.indexOf(entry);
+      return at === -1 ? entry : completion.list[at];
+    };
+    const numbered = numberImportedReferences(keptEntries.map(completedOf), refs, {
       hints: kept.map((e) => e.number), makeId: genProjectId
     });
     const references = numbered.list;
     const numberSet = referenceNumbers(references);
-    const pickedEntries = d.plan.entries
-      .filter((e, i) => picks.indexOf(i) !== -1)
-      .map((e) => e.entry);
-    const merged = mergeManuscriptBibliography(projectBib, pickedEntries, { project });
+    const merged = mergeManuscriptBibliography(projectBib, pickedEntries.map(completedOf), { project });
     /* Les numéros cités dans le texte qui n'ont AUCUNE référence : ils restent
        tels quels (aucun lien mort, rien d'inventé) et l'utilisateur le lit dans
        le compte rendu — c'est presque toujours une entrée absente de la
@@ -1637,7 +1768,7 @@ export const ProjectDetailModule = ({
        seule étape lente (envoi au Drive, repli en copie locale) — et la seule qui
        dépend du réseau : une figure qui échoue ne doit JAMAIS emporter le texte
        et les références (l'import continue, le compte rendu le dit). */
-    let figRes = { figures: project.figures || {}, added: 0, onDrive: 0, local: 0, already: 0 };
+    let figRes = { figures: project.figures || {}, added: 0, onDrive: 0, local: 0, already: 0, failed: [] };
     let figureError = '';
     try {
       figRes = await attachManuscriptFigures(d.figures, figurePlacements);
@@ -1650,7 +1781,9 @@ export const ProjectDetailModule = ({
     const headerApplied = [];
     [['title', 'paperTitle', 'title'], ['authors', 'paperAuthors', 'authors'], ['affiliations', 'paperAffiliations', 'affiliations']]
       .forEach(([pick, field, label]) => {
-        const value = String((hd && hd[pick]) || '').trim();
+        /* Les marqueurs de figure ne sont pas du texte : une ligne de l'en-tête
+           qui en portait un ne doit pas écrire « [[FIGURE 1]] » dans le titre. */
+        const value = stripFigureMarks(String((hd && hd[pick]) || '').trim());
         if (hp[pick] && value) { headerPatch[field] = value; headerApplied.push(label); }
       });
     /* Les PARTIES redirigées vers un champ d'en-tête s'ajoutent APRÈS ce que le
@@ -1749,7 +1882,8 @@ export const ProjectDetailModule = ({
           : ''),
         `${merged.added} reference(s) added to the project bibliography · `
         + `${numbered.created.length} new numbered reference(s) — ${references.length} in the project`
-        + (linkedTotal ? ` · 🔗 ${linkedTotal} citation(s) linked to their reference` : ' · no citation to link'),
+        + (linkedTotal ? ` · 🔗 ${linkedTotal} citation(s) linked to their reference` : ' · no citation to link')
+        + (enrichedLine ? ` · ${enrichedLine}` : ''),
         ...(unlinkedNumbers.length
           ? [`⚠ ${unlinkedNumbers.length} citation number(s) have no reference in this project: `
             + `${unlinkedNumbers.slice(0, 15).map((n) => `[${n}]`).join(', ')}`
@@ -1769,6 +1903,20 @@ export const ProjectDetailModule = ({
             + `${figRes.onDrive && figRes.local ? ', ' : ''}${figRes.local ? `${figRes.local} kept in this browser` : ''}) `
             + `— “📄 Export document” prints them where the document had them`
             + (figRes.already ? ` · ${figRes.already} already there (nothing duplicated)` : '')]
+          : []),
+        /* Une figure que le document portait dans une partie sans destination (le
+           chapeau, une partie « — do not import — ») ou dans une ligne de
+           l'en-tête est ATTACHÉE QUAND MÊME à la section la plus proche : elle
+           était auparavant perdue sans que rien ne le dise. */
+        ...((figPlan.rerouted || figPlan.orphans)
+          ? [`📎 ${figPlan.rerouted + figPlan.orphans} figure(s) had no section of their own `
+            + '(part not imported, or head of the document): they were attached to '
+            + `${figPlan.sections.filter((s) => s).join(', ')} — nothing is lost, move them if you want.`]
+          : []),
+        ...((figRes.failed || []).length
+          ? [`⚠ ${figRes.failed.length} figure(s) could not be kept `
+            + `(${figRes.failed.slice(0, 6).join(', ')}${figRes.failed.length > 6 ? '…' : ''}) — `
+            + 'the others are attached. Reimport the document with Google Drive connected to keep them in the cloud.']
           : []),
         stored
           ? `💾 saved in this browser${lightened.length ? ` — to fit its storage, ${lightened.join(' and ')} could not be kept` : ''}`
@@ -1894,9 +2042,13 @@ export const ProjectDetailModule = ({
             <p className="text-xs text-slate-500 leading-relaxed">
               Drop an article (<b>.docx</b> from Word, Google Docs export, Paperpile export, a <b>.ris</b>/<b>.bib</b>
               file, a text file) or paste the bibliography below. Only what is recognised as a reference is kept — the
-              rest of the manuscript is ignored. The papers are added to this project’s bibliography, so they also show
+              rest of the manuscript is ignored. <b>An incomplete entry is completed before it is stored</b>: the empty
+              fields (authors, title, journal, year, volume, pages, DOI) are looked up in the lab publications and
+              “Relevant papers”, then in Crossref (by DOI, else by the exact title) — nothing already written is
+              overwritten. The papers are added to this project’s bibliography, so they also show
               up in Publications → “Project bibliography”. They also become the <b>numbered references</b> of the project
-              (<b>[1]</b>, <b>[2]</b>… the same as “📚 + Reference”), printed in the document’s <b>Bibliography</b>, and
+              (<b>[1]</b>, <b>[2]</b>… the same as “📚 + Reference”), printed in the document’s <b>Bibliography</b> with the
+              “Publication format” of the lab, and
               the numbered citations already written in the text sections are turned into links to them — a reference
               imported from Paperpile as “12. Rossi…” therefore answers the “<b>[12]</b>” of the text.
             </p>
@@ -1963,7 +2115,12 @@ export const ProjectDetailModule = ({
                             {[e.authors, e.journal, e.year].filter(Boolean).join(' · ') || '—'}
                           </div>
                           {e.doi && <div className="text-[10px] text-blue-600">doi:{e.doi}</div>}
-                          {!e.authors && <div className="text-[10px] text-amber-600">⚠ no authors recognised — complete them after the import</div>}
+                          {!e.authors && (
+                            <div className="text-[10px] text-amber-600">
+                              ⚠ no authors recognised — they are looked up when you add the reference (the lab
+                              publications, then Crossref by DOI or title)
+                            </div>
+                          )}
                           {already && <div className="text-[10px] text-emerald-600">✓ already in this project’s bibliography</div>}
                         </div>
                       </label>
@@ -1971,9 +2128,11 @@ export const ProjectDetailModule = ({
                   })}
                 </div>
                 <div className="flex justify-end mt-2">
-                  <button type="button" onClick={commitBibImport} disabled={picked.length === 0}
+                  <button type="button" onClick={commitBibImport} disabled={picked.length === 0 || !!bibImport.busy}
                           className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-                    ➕ Add {picked.length} reference(s) to “{project.name}”
+                    {String(bibImport.status || '').startsWith('✨')
+                      ? '⏳ Completing the missing authors / titles…'
+                      : `➕ Add ${picked.length} reference(s) to “${project.name}”`}
                   </button>
                 </div>
               </div>
@@ -2335,15 +2494,33 @@ export const ProjectDetailModule = ({
                     </label>
                     <p className="text-[10px] text-red-600 mt-1">
                       Nothing has been imported yet: the window only writes when you click the button below.
+                      {' '}
+                      <b>“🖼 Figures only”</b> below needs no confirmation: it recovers the images of this document
+                      and leaves the text exactly as it is.
                     </p>
                   </div>
                 )}
 
                 <div className="flex flex-wrap items-center gap-2">
+                  {/* 🖼 FIGURES SEULES : la façon de RATTRAPER les figures d'un
+                      document déjà importé (l'import les avait perdues) sans
+                      recoller son texte. L'utilisateur le décide ici — le
+                      programme ne devine jamais. */}
+                  <label className="flex items-center gap-1.5 text-[11px] text-slate-700 bg-sky-50 border border-sky-200 rounded-lg px-2 py-1.5"
+                         title="Attach the images of this document to their sections and change NOTHING else: the text, the references and the bibliography of this project stay exactly as they are. Use it to recover the figures of a document that was already imported.">
+                    <input type="checkbox" checked={!!msImport.figuresOnly}
+                           onChange={(e) => setMsImport((d) => ({ ...d, figuresOnly: e.target.checked }))} />
+                    🖼 Figures only (recover the images — the text is left as it is)
+                  </label>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
                   <button type="button" onClick={applyManuscriptImport}
-                          disabled={msImport.busy || (!!msImport.previous && !msImport.confirmRepeat)}
+                          disabled={msImport.busy
+                            || (!!msImport.previous && !msImport.confirmRepeat && !msImport.figuresOnly)}
                           className="px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
-                    {msImport.busy ? '⏳ Importing (figures, references…)' : '✓ Import into this project'}
+                    {msImport.busy
+                      ? '⏳ Importing (figures, references…)'
+                      : (msImport.figuresOnly ? '✓ Attach the figures (nothing else)' : '✓ Import into this project')}
                   </button>
                   <span className="text-[10px] text-slate-400">
                     Only what is shown above is written — existing section text is kept unless “replace the section” is chosen.
@@ -2848,11 +3025,21 @@ export const ProjectDetailModule = ({
                   </button>
                 </>
               )}
-              {project.exportDocHtml && docMode === 'view' && (
+              {/* ↩️ REBÂTIR LE TEXTE DU DOCUMENT DEPUIS LES DONNÉES DU PROJET.
+                  Le bouton était caché tant que le document n'avait pas été
+                  figé — l'utilisateur le cherchait et ne le trouvait pas (« there
+                  is no such button “rebuilt from data” that you mentioned »).
+                  Il est donc TOUJOURS là : il fait tomber le texte figé (les
+                  corrections manuelles, d'où la confirmation), le texte des
+                  sections est reconstruit depuis les données du projet et la
+                  bibliographie reprend le « Publication format » courant. */}
+              {canModify && (
                 <button onClick={rebuildDoc}
                         className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-100 text-slate-600 border border-slate-300 hover:bg-slate-200"
-                        title="Discard the saved text edits and rebuild the document from the project data">
-                  ↩️ Rebuild from data
+                        title={project.exportDocHtml
+                          ? 'Discard the saved text edits and rebuild the document from the project data (the Bibliography then follows the current “Publication format”)'
+                          : 'Rebuild the document text from the project data (nothing is frozen: the Bibliography already follows the current “Publication format”)'}>
+                  ↩️ Rebuild from data{project.exportDocHtml ? ' (apply the format)' : ''}
                 </button>
               )}
               <button onClick={printProjectDoc}
@@ -2904,9 +3091,16 @@ export const ProjectDetailModule = ({
                    : docMode === 'suggest' ? 'border-2 border-dashed border-violet-400 outline-none'
                      : 'border border-slate-200'}`}>
             {project.docSuggestion && docMode === 'view' ? (
-              <div dangerouslySetInnerHTML={{ __html: repairContentImages(project.docSuggestion.markedHtml) }} />
+              <div dangerouslySetInnerHTML={{
+                __html: repairContentImages(withoutBibliographySection(project.docSuggestion.markedHtml))
+              }} />
             ) : project.exportDocHtml ? (
-              <div dangerouslySetInnerHTML={{ __html: repairContentImages(project.exportDocHtml) }} />
+              /* La bibliographie FIGÉE du document enregistré est retirée : la
+                 liste vivante imprimée en bas de ce document est rendue avec le
+                 « Publication format » courant (voir withoutBibliographySection). */
+              <div dangerouslySetInnerHTML={{
+                __html: repairContentImages(withoutBibliographySection(project.exportDocHtml))
+              }} />
             ) : (
               <>
             <h1 className="text-2xl font-black text-slate-900 mb-1">
@@ -3030,7 +3224,20 @@ export const ProjectDetailModule = ({
                 })}
               </div>
             )}
+              </>
+            )}
 
+            {/* ── LA BIBLIOGRAPHIE EST TOUJOURS VIVANTE ───────────────────────
+                Elle est rendue ICI, HORS du texte figé : « ✏️ Edit text » →
+                « 💾 Save changes » fige le texte du document (corrections de
+                l'auteur comprises) et, avec lui, la liste des références telle
+                qu'elle était ce jour-là. Le « Publication format » choisi depuis
+                ne s'y voyait donc JAMAIS — la plainte exacte : « le publication
+                format ne modifie pas le format des références dans le texte du
+                projet ». Le document figé est maintenant affiché sans sa propre
+                bibliographie (voir withoutBibliographySection) et la liste des
+                références du projet, rendue avec le format COURANT à chaque
+                affichage, est imprimée à sa place. */}
             <div className="mb-4">
               <h2 className="text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">Bibliography ({refs.length})</h2>
               {/* LE TEXTE EST AUSSI DANS LE DOSSIER DU PROJET SUR LE DRIVE (voir
@@ -3088,8 +3295,6 @@ export const ProjectDetailModule = ({
                 </ol>
               )}
             </div>
-              </>
-            )}
           </div>
         </div>
       </div>
@@ -3677,24 +3882,6 @@ export const ProjectDetailModule = ({
           </p>
         </SectionCard>
 
-        {/* ---------- Useful files (project reference documents on Drive) ---------- */}
-        <SectionCard title="📎 Useful files" open={openSections.usefulFiles} onToggle={() => toggleSection('usefulFiles')}
-                     badge={
-                       <span className="text-[10px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">
-                         {normalizeProjectFiles(project.usefulFiles).length}
-                       </span>
-                     }>
-          <UsefulFilesSection
-            projectName={project.name}
-            files={project.usefulFiles}
-            folderUrl={project.usefulFilesFolderUrl || ''}
-            canModify={canModify}
-            currentUser={currentUser}
-            onChange={(next) => updateProject({ usefulFiles: next })}
-            onFolderUrl={(url) => updateProject({ usefulFilesFolderUrl: url })}
-          />
-        </SectionCard>
-
         {/* ---------- Results and Discussion ---------- */}
         {textSection('discussion', '💬 Results and Discussion',
           'Interpretation of the results, comparisons, limitations and open questions.',
@@ -3726,6 +3913,9 @@ export const ProjectDetailModule = ({
             Numbered references collected from the text sections. They are taken from the
             <strong> “Project bibliography”</strong> (papers labeled with this project in Publications) and the
             <strong> “Publications of the scientist”</strong> (the imported publication list of {project.scientist || 'the project owner'}).
+            Each one is printed with the citation built in Publications →
+            <strong> “Publication format”</strong>: changing the format changes them here, in the text and in the
+            exported document.
           </p>
 
           {refs.length === 0 ? (
@@ -3739,18 +3929,30 @@ export const ProjectDetailModule = ({
                    dans la publication d'origine quand la référence ne les
                    stockait pas encore. */
                 const d = citeData(r);
+                /* LA MISE EN FORME DE LA PUBLICATION ICI AUSSI : c'est la même
+                   fonction que l'affichage des publications et la bibliographie
+                   du document exporté (voir pubCitationHtml) — l'ordre des
+                   champs, les styles, l'« et al. » et les noms du laboratoire
+                   soulignés/graissés suivent donc le format choisi. */
+                const citation = pubCitationHtml(d, pubFormat, operatorNames);
                 return (
                   <div key={r.id} className="flex items-start justify-between gap-3 bg-white border border-slate-200 rounded-lg p-2">
                     <div className="min-w-0">
-                      <div className="text-xs font-bold text-slate-800">
+                      <div className="text-xs text-slate-800">
                         <span className="text-indigo-600 font-black mr-1">[{r.number}]</span>
-                        {d.title || 'Untitled'}
+                        {citation
+                          ? <span dangerouslySetInnerHTML={{ __html: citation }} />
+                          : <span className="font-bold">{d.title || r.title || 'Untitled'}</span>}
                       </div>
                       <div className="text-[10px] text-slate-500">
-                        {[d.authors, d.journal, d.year, r.source].filter(Boolean).join(' · ')}
+                        {[r.source, r.link].filter(Boolean).join(' · ')}
                       </div>
-                      {r.link && <a href={r.link} target="_blank" rel="noreferrer"
-                                    className="text-[10px] text-blue-600 hover:underline break-all">{r.link}</a>}
+                      {!d.authors && (
+                        <div className="text-[10px] text-amber-600">
+                          ⚠ no authors recorded — use “✨ Complete missing fields” below, or fix the paper in
+                          Publications → “Project bibliography”
+                        </div>
+                      )}
                     </div>
                     <button onClick={() => removeRef(r.id)}
                             className="shrink-0 text-red-400 hover:text-red-600 text-xs px-1.5" title="Remove reference">
@@ -3762,10 +3964,15 @@ export const ProjectDetailModule = ({
             </div>
           )}
 
-          <div className="flex flex-wrap items-center gap-2 mb-4">
+          <div className="flex flex-wrap items-center gap-2 mb-3">
             <button onClick={() => setRefPicker({ insertText: null })}
                     className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
               + Add reference from bibliography / publications
+            </button>
+            <button onClick={() => { openBibImport(); }}
+                    className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-100 border border-slate-300 text-slate-700 hover:bg-slate-200"
+                    title="Import references only (an article's .docx, a RIS/BibTeX/Paperpile export, a Web page, or pasted text): the recognised papers are completed (authors, titles, journals…) then added to this project's bibliography and numbered references.">
+              📄 Import references from a paper
             </button>
             {/* Les manuscrits importés (ou recollés) gardent les numéros de leur
                 bibliographie : ce bouton rattache chaque « [12] » du texte à la
@@ -3776,110 +3983,69 @@ export const ProjectDetailModule = ({
                     title="Turn every numbered citation of the text sections — [12], [3,4], [5-7], the EndNote/Word style (12) and superscripts (¹² or <sup>12</sup>) — into a link to the matching reference of the list below. A citation is linked only when ALL its numbers exist here, and a number that is not a reference stays as it is. The exported document and its printed PDF follow it.">
               🔗 Link citations to references
             </button>
+            {/* ✨ LES RÉFÉRENCES INCOMPLÈTES (auteurs, titre, revue, année
+                manquants) : ce bouton va les chercher dans les publications du
+                laboratoire puis dans Crossref — voir utils/referenceEnrich.js.
+                Un champ déjà rempli n'est jamais écrasé. */}
+            <button onClick={completeProjectReferences} disabled={!canModify || refFixBusy}
+                    className="px-3 py-1.5 text-xs font-bold rounded-lg bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100 disabled:opacity-50"
+                    title="Fill the empty fields of every reference of this project (authors, title, journal, year, volume, pages, DOI): first from the lab publications and “Relevant papers”, then from Crossref (by DOI, else by the exact title). Nothing already written is overwritten.">
+              {refFixBusy ? '⏳ Completing…' : '✨ Complete missing fields'}
+            </button>
             {citationLinkReport && (
               <span className="text-[10px] font-bold text-sky-700 bg-sky-50 border border-sky-200 rounded px-2 py-1">
                 {citationLinkReport}
               </span>
             )}
-          </div>
-
-
-          <div className="border-t border-slate-200 pt-3">
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-              <div className="text-[10px] font-black uppercase tracking-wide text-slate-400">
-                Project bibliography papers ({projectBib.length}) — also editable in Publications → “Project bibliography”
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <button onClick={() => { openBibImport(); }}
-                        className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-slate-100 border border-slate-300 text-slate-700 hover:bg-slate-200"
-                        title="Import references only (an article's .docx, a RIS/BibTeX/Paperpile export, a Web page, or pasted text): the recognised papers are added to this project's bibliography.">
-                  📄 Import references from a paper
-                </button>
-                <button onClick={() => setShowBibForm((v) => !v)}
-                        className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100">
-                  {showBibForm ? 'Cancel' : '+ Add paper'}
-                </button>
-              </div>
-            </div>
-            {showBibForm && (
-              <div className="bg-indigo-50/50 border border-indigo-200 rounded-lg p-3 mb-2">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-600 mb-1 block">Title *</label>
-                    <input className={inputCls} value={bibDraft.title}
-                           onChange={(e) => setBibDraft((d) => ({ ...d, title: e.target.value }))}
-                           placeholder="Paper title" />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-600 mb-1 block">Authors</label>
-                    <input className={inputCls} value={bibDraft.authors}
-                           onChange={(e) => setBibDraft((d) => ({ ...d, authors: e.target.value }))}
-                           placeholder="e.g. Rossi M, Bianchi A…" />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-600 mb-1 block">Year</label>
-                    <input className={inputCls} value={bibDraft.year}
-                           onChange={(e) => setBibDraft((d) => ({ ...d, year: e.target.value }))}
-                           placeholder="2024" />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-600 mb-1 block">Link / DOI</label>
-                    <input className={inputCls} value={bibDraft.link}
-                           onChange={(e) => setBibDraft((d) => ({ ...d, link: e.target.value }))}
-                           placeholder="https://doi.org/…" />
-                  </div>
-                </div>
-                <p className="text-[10px] text-slate-400 mt-2">
-                  Every author of the paper belongs here (lab members and outside co-authors): the citation of the
-                  project document lists them all, with the styling chosen for the lab members in Publications →
-                  “Publication format”.
-                </p>
-                <div className="flex justify-end mt-2">
-                  <button onClick={addBibPaper} disabled={!bibDraft.title.trim()}
-                          className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-                    + Add to project bibliography
-                  </button>
-                </div>
-              </div>
-            )}
-            {projectBib.length === 0 ? (
-              <div className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-3 text-center">
-                No papers labeled with “{project.name}” yet.
-              </div>
-            ) : (
-              <div className="flex flex-col gap-1.5">
-                {projectBib.map((b) => {
-                  /* Auteurs complets du papier (voir citeData) : la ligne les
-                     affiche sous le titre, faute de quoi seul le titulaire du
-                     projet était visible. */
-                  const d = citeData(b);
-                  return (
-                    <div key={b.id} className="flex items-start justify-between gap-3 bg-white border border-slate-200 rounded-lg p-2">
-                      <div className="min-w-0">
-                        <div className="text-xs font-bold text-slate-800">{d.title || b.title}</div>
-                        <div className="text-[10px] text-slate-500">
-                          {[d.authors, d.journal, d.year].filter(Boolean).join(' · ') || '—'}
-                        </div>
-                        {!d.authors && (
-                          <div className="text-[10px] text-amber-600">
-                            ⚠ no authors recorded — complete the paper in Publications → “Project bibliography”
-                          </div>
-                        )}
-                        {b.link && <a href={b.link} target="_blank" rel="noreferrer"
-                                      className="text-[10px] text-blue-600 hover:underline break-all">{b.link}</a>}
-                      </div>
-                      <button onClick={() => removeBibPaper(b.id)}
-                              className="shrink-0 text-red-400 hover:text-red-600 text-xs px-1.5" title="Remove paper">✕</button>
-                    </div>
-                  );
-                })}
-              </div>
+            {refFixReport && (
+              <span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                {refFixReport}
+              </span>
             )}
           </div>
+
+          {/* LA « PROJECT BIBLIOGRAPHY » N'EST PLUS RÉ-AFFICHÉE ICI. Elle est la
+              MÊME liste que Publications → « Project bibliography », et les
+              références importées apparaissent déjà, en clair et liées, dans la
+              liste numérotée ci-dessus : la recopier ici ne faisait que
+              brouiller la lecture (« in the project after the references you
+              show the project bibliography but it is only confusing… do not show
+              it »). On ne garde que ce qui AGIT : les imports et le lien des
+              citations, juste au-dessus. */}
+          <p className="text-[10px] text-slate-400">
+            The project bibliography papers themselves ({projectBib.length}) are listed in
+            Publications → “Project bibliography” ({project.scientist || 'the project owner'}), where they can be edited.
+            Every one of them that is cited here appears above, numbered.
+          </p>
         </SectionCard>
 
 
         {renderCommentsSection()}
+
+        {/* ---------- Useful files (project reference documents on Drive) ----------
+            EN DERNIER : les documents de référence d'un projet (protocoles, PDF,
+            tableurs, spectres…) sont des PIÈCES JOINTES — ils se rangent après le
+            texte de l'article et sa revue, pas entre « 📋 Materials and Methods »
+            et « 💬 Results and Discussion » (demande utilisateur : « in the project
+            move the useful files section at the end »). Le contenu de la section,
+            son index et son rangement Drive ne changent pas : elle est simplement
+            lue à la fin de la page. */}
+        <SectionCard title="📎 Useful files" open={openSections.usefulFiles} onToggle={() => toggleSection('usefulFiles')}
+                     badge={
+                       <span className="text-[10px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">
+                         {normalizeProjectFiles(project.usefulFiles).length}
+                       </span>
+                     }>
+          <UsefulFilesSection
+            projectName={project.name}
+            files={project.usefulFiles}
+            folderUrl={project.usefulFilesFolderUrl || ''}
+            canModify={canModify}
+            currentUser={currentUser}
+            onChange={(next) => updateProject({ usefulFiles: next })}
+            onFolderUrl={(url) => updateProject({ usefulFilesFolderUrl: url })}
+          />
+        </SectionCard>
 
         {confirmDelete && (
           <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">

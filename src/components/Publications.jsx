@@ -2365,9 +2365,14 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
           their own format, so changing it here changes what the projects show (choose a project
           in “Format for:” to give ONE project a format of its own).
           {' '}
-          A project document that was already exported (<b>📄 Export document → ✏️ Edit text →
-          💾 Save changes</b>) keeps the citations as they were printed — open it and use
-          “↩️ Rebuild from data” to refresh them with the new format.
+          <b>The reference list follows this format immediately</b>: the numbered references of a project page and
+          the <b>Bibliography</b> printed at the end of its document are rebuilt from the project data on every
+          display, so a change here shows up at once — even for a document whose text was frozen with
+          <b>📄 Export document → ✏️ Edit text → 💾 Save changes</b>.
+          {' '}
+          A document whose TEXT was frozen keeps its own wording and its printed in-text citations: use
+          <b> “↩️ Rebuild from data”</b> in the document’s toolbar (always visible) to rebuild that text from the
+          project data and re-link the citations.
         </p>
 
         <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-4">

@@ -218,11 +218,37 @@ ok(noBib.html.indexOf('Bibliography') > noBib.html.indexOf('<p>Text</p>'), '…d
 eq(RL.ensureReferenceEntries('<p>Text</p>', [{ number: 0, html: '' }, null]).added, 0,
   'une entrée sans numéro ou sans texte est ignorée');
 
+/* ── 8 bis. LE DOCUMENT FIGÉ PERD SA BIBLIOGRAPHIE (elle est rendue À VIVANT) ─
+   « ✏️ Edit text » → « 💾 Save changes » fige le document ENTIER, liste des
+   références comprise : le « Publication format » choisi depuis ne s'y voyait
+   donc jamais (« le publication format ne modifie pas le format des références
+   dans le texte du projet »). La page affiche le document figé SANS sa
+   bibliographie et imprime à sa place la liste vivante, rendue avec le format
+   courant (voir withoutBibliographySection). */
+const FROZEN = `<div class="mb-4"><h1>Titre</h1><p>Texte [1].</p></div>\n`
+  + `<div class="mb-4"><h2 class="text-base">Bibliography (1)</h2>`
+  + `<ol class="list-decimal pl-5"><li id="ref-1" value="1">Rossi 2018, ANCIEN FORMAT</li></ol></div>`;
+const stripped = RL.withoutBibliographySection(FROZEN);
+ok(!stripped.includes('ANCIEN FORMAT') && !stripped.includes('Bibliography'),
+  'la bibliographie figée sort du document (titre, liste ET son cadre)');
+ok(stripped.includes('<h1>Titre</h1>') && stripped.includes('Texte [1].'),
+  '…et le texte de l’auteur reste intact, au caractère près');
+ok(!stripped.includes('</div></div>') && stripped.trim().endsWith('</div>'),
+  'le conteneur vide de la bibliographie ne reste pas non plus');
+eq(RL.withoutBibliographySection(stripped), stripped, 'le nettoyage est idempotent');
+eq(RL.withoutBibliographySection('<p>Un document sans bibliographie.</p>'), '<p>Un document sans bibliographie.</p>',
+  'un document sans bibliographie ressort tel quel');
+eq(RL.withoutBibliographySection(''), '', 'un document vide ne casse rien');
+/* Une bibliographie sans cadre (document écrit à la main) est retirée aussi. */
+const bare = RL.withoutBibliographySection('<p>Texte.</p><h2>Bibliography (2)</h2><ol><li id="ref-1">A</li></ol>');
+ok(!bare.includes('Bibliography') && bare.includes('<p>Texte.</p>'),
+  'un titre « Bibliography » sans cadre emporte quand même sa liste');
+
 /* ── 9. La page projet applique bien ces deux branchements ──────────────── */
 const has = (needle, what) => ok(PAGE.includes(needle), what);
 has('const pickedEntries = (bibImport.picked || [])', 'l’import garde l’ORDRE du document pour numéroter');
-has('const numbered = numberImportedReferences(pickedEntries, refs)',
-  'le bouton « Import references » numérote les entrées importées');
+has('const numbered = numberImportedReferences(completed.list, refs)',
+  'le bouton « Import references » numérote les entrées importées (après les avoir complétées)');
 has('references: numbered.list', '…et les enregistre dans les références du projet (donc imprimées)');
 has('PROJECT_TEXT_SECTIONS.map((s) => ({ id: s.id, html: project[s.id] || \'\' })),',
   '…puis il lie les citations déjà écrites dans les sections');

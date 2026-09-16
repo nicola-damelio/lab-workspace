@@ -206,13 +206,17 @@ has(PROJ, 'const plan = buildManuscriptPlan(manuscript, { existingReferences: re
   'le plan est calculé avec les références DÉJÀ numérotées du projet');
 has(PROJ, 'const converted = convertCitationsInText(p.text, numbers);',
   'le texte écrit dans la section a ses citations converties');
-has(PROJ, 'const merged = mergeManuscriptBibliography(projectBib, pickedEntries, { project });',
+has(PROJ, 'const merged = mergeManuscriptBibliography(projectBib, pickedEntries.map(completedOf), { project });',
   'la bibliographie du document rejoint la « Project bibliography » (Publications → Project bibliography)');
+has(PROJ, 'const completion = await enrichReferences(toComplete, { pool: citationPool });',
+  'chaque entrée du document est COMPLÉTÉE avant d’entrer (auteurs, titre, revue… manquants — voir utils/referenceEnrich.js)');
+has(PROJ, "'✨ Completing the references (authors, titles, journals…)'",
+  '…et la fenêtre dit qu’elle cherche ces informations');
 has(PROJ, "const kept = d.plan.entries.filter((e, i) => (",
   'TOUTES les entrées retenues de la bibliographie reçoivent un numéro —')
 has(PROJ, '|| entryKeys(e.entry).some((k) => inProjectBib.has(k))',
   '…cochées, déjà numérotées, ou déjà rangées dans la bibliographie du projet (cas du second import)');
-has(PROJ, 'const numbered = numberImportedReferences(kept.map((e) => e.entry), refs, {',
+has(PROJ, 'const numbered = numberImportedReferences(keptEntries.map(completedOf), refs, {',
   '…par le MÊME chemin que « 📄 Import references » (numberImportedReferences, qui garde le numéro du document)');
 has(PROJ, 'const references = numbered.list;',
   'la liste numérotée remplace project.references (plus de référence citée mais absente du projet)');
@@ -721,6 +725,57 @@ eq(MS.stripFigureMarks(figParts[1].text).includes('[[FIGURE'), false,
 eq(MS.figureMarksIn('Text before.\n\n[[FIGURE 1]]\n\n[[FIGURE 2]]').map((m) => [m.index, m.anchor]),
   [[1, 'Text before.'], [2, 'Text before.']], 'deux images à la suite gardent la même ancre, dans l’ordre');
 
+/* ── 16 ter. AUCUNE FIGURE PERDUE (la plainte : « avant, l’import importait les
+   figures, maintenant elles sont perdues ») ────────────────────────────────────
+   Deux chemins les faisaient disparaître EN SILENCE :
+     • une partie sans destination (« — do not import — », ou le chapeau d'un
+       document qui commence sans titre) était sautée avec ses figures ;
+     • une figure dont le marqueur était tombé dans une ligne de l'en-tête (ces
+       blocs sortent du texte) n'était plus vue du tout.
+   manuscriptFigurePlacements regarde le document ENTIER : la figure va dans la
+   section de sa partie, sinon dans la section la plus proche, sinon dans la
+   première section de texte — et le compte rendu le dit (rerouted/orphans). */
+const partsOf = (text, { dest = null, focus = '' } = {}) => MS.manuscriptFigurePlacements(
+  MS.withDocumentSections(MS.groupManuscriptParts(MS.blocksFromText(text), {}))
+    .map((p) => ({ heading: p.heading, text: p.text, dest: dest ? dest(p) : p.id })),
+  [], { focusSection: focus }
+);
+eq(partsOf('Aphid transmission of a potyvirus\n\n[[FIGURE 1]]\n\nIntroduction\n\nAphids [1].\n\nConclusions\n\nControl.').placements,
+  [{ section: 'background', index: 1, anchor: 'Aphid transmission of a potyvirus' }],
+  'une figure dans le CHAPEAU (partie sans destination) est attachée à la section la plus proche — plus perdue');
+eq(partsOf('Introduction\n\nAphids [1].\n\n[[FIGURE 1]]\n\nResults\n\nRates [2].').placements,
+  [{ section: 'background', index: 1, anchor: 'Aphids [1].' }],
+  'une figure de l’Introduction reste dans « Scientific background »');
+/* Une partie « Matériel et méthodes » : le champ du projet est du TEXTE, la
+   figure va donc dans « Results and Discussion » (elle y reste modifiable). */
+eq(partsOf('Introduction\n\nA [1].\n\nMaterials and Methods\n\nPlants.\n\n[[FIGURE 1]]\n\nResults\n\nR [2].').placements,
+  [{ section: 'discussion', index: 1, anchor: 'Plants.' }],
+  'une figure du Matériel et méthodes devient une figure de « Results and Discussion »');
+/* Une partie redirigée vers un champ d'en-tête (« 🧾 Authors ») ne peut pas
+   imprimer d'image : la figure va dans la section que son intitulé visait. */
+{
+  const res = MS.manuscriptFigurePlacements([
+    { heading: 'Aphids in pepper', text: 'Aphids in pepper\n\n[[FIGURE 1]]', dest: 'paperAuthors', guessed: 'background' },
+    { heading: 'Conclusions', text: 'Control.', dest: 'conclusions' }
+  ], [], {});
+  eq(res.placements, [{ section: 'background', index: 1, anchor: 'Aphids in pepper' }],
+    'une figure d’une partie envoyée dans l’en-tête ne disparaît pas (elle va dans la section visée)');
+  eq(res.rerouted, 0, '…et elle n’est pas comptée comme « reclassée »');
+}
+eq(MS.manuscriptFigurePlacements([], [{ index: 1, name: 'image1.png' }], {}).placements,
+  [{ section: 'background', index: 1, anchor: '' }],
+  'une figure dont le marqueur a disparu du texte est posée quand même (aucun pixel perdu)');
+eq(MS.manuscriptFigurePlacements([], [{ index: 2 }], {}).orphans, 1, '…et elle est signalée comme orpheline');
+{
+  const res = MS.manuscriptFigurePlacements(
+    [{ heading: '', text: 'Chapeau.\n\n[[FIGURE 1]]', dest: '' }, { heading: 'Results', text: 'R.', dest: 'discussion' }],
+    [{ index: 1 }, { index: 2 }], { focusSection: 'conclusions' }
+  );
+  eq(res.placements.map((p) => [p.section, p.index]), [['discussion', 1], ['conclusions', 2]],
+    'sans destination, la figure suit la section la plus proche ; une orpheline prend la section de départ');
+  eq(res.rerouted, 2, 'les deux sont signalées (jamais perdues en silence)');
+}
+
 /* ── 17. LA PAGE HTML (export Google Docs « page Web ») ────────────────────── */
 const htmlDoc = MS.htmlManuscriptFromHtml([
   '<h1>Aphid transmission of a potyvirus</h1>',
@@ -742,6 +797,14 @@ eq(MS.htmlManuscriptFromHtml('<p>Aphids.</p>').figures.length, 0, 'une page sans
 has(PROJ, 'readManuscriptDocument(file)', 'la page lit le document AVEC ses figures');
 has(PROJ, 'figRes = await attachManuscriptFigures(d.figures, figurePlacements);',
   'à l’import, les figures sont attachées à leurs sections (une figure en échec n’emporte ni le texte ni les références)');
+has(PROJ, 'const figPlan = manuscriptFigurePlacements(',
+  'la place de CHAQUE figure est calculée sur le document entier (figure du chapeau, de l’en-tête, partie non importée)');
+has(PROJ, 'convertedTextByKey[p.key] = converted.text;',
+  '…et l’ancre d’une figure vient du texte CONVERTI : elle se retrouve dans la section [1] du projet (pas [12] du document)');
+has(PROJ, 'image = await figureImageFor(fig, label);',
+  '…et une figure dont l’envoi échoue n’emporte plus les autres (essai par figure)');
+has(PROJ, 'failed.push(name || label);', '…elle est comptée comme non conservée');
+has(PROJ, 'figure(s) had no section of their own', '…et le compte rendu de l’import le dit');
 has(PROJ, "source: 'manuscript-import'", '…et gardent leur origine (des figures de l’article)');
 has(PROJ, 'addProjectLibraryItem(project.id',
   '…et rejoignent la bibliothèque d’images du projet (Image Builder → Project Library)');
@@ -914,8 +977,17 @@ has(PROJ, 'if (msBusyRef.current) return;   // deux clics = un seul import',
   'deux clics sur « Import » ne font qu’un seul import');
 has(PROJ, 'const previous = previousImportOf(project, hash);',
   'un document DÉJÀ importé est reconnu (empreinte du texte rangée dans le projet)');
-has(PROJ, 'disabled={msImport.busy || (!!msImport.previous && !msImport.confirmRepeat)}',
-  '…et le second import exige une confirmation explicite');
+has(PROJ, '|| (!!msImport.previous && !msImport.confirmRepeat && !msImport.figuresOnly)}',
+  '…et le second import exige une confirmation explicite (sauf en « figures seules », qui n’écrit aucun texte)');
+/* 🖼 RATTRAPER LES FIGURES D'UN DOCUMENT DÉJÀ IMPORTÉ : le document déjà
+   importé est justement celui dont on cherche les figures — on ne recolle donc
+   PAS son texte. */
+has(PROJ, '🖼 Figures only (recover the images — the text is left as it is)',
+  'la fenêtre d’import offre « 🖼 Figures only »');
+has(PROJ, 'if (d.figuresOnly) {', '…et l’import suit un chemin à part');
+has(PROJ, 'figures: res.figures }, { lighten: true }',
+  '…qui n’écrit QUE les figures (texte, références et bibliographie intacts)');
+has(PROJ, 'the text, the references and the', '…et le compte rendu le dit');
 has(PROJ, 'msImports: [...history.filter((it) => !it || it.hash !== receipt.hash), receipt].slice(-20)',
   'l’import laisse son empreinte dans le projet (jamais deux fois la même)');
 has(PROJ, "const [storageWarning, setStorageWarning] = useState('');",
@@ -1123,7 +1195,167 @@ const leadPart = MS.withDocumentSections(MS.groupManuscriptParts(
 eq(leadPart.map((p) => [p.heading, p.id]), [['', ''], ['Introduction', 'background']],
   'le chapeau sans intitulé reste à choisir (il n’est pas « Results and discussion »)');
 
-/* ── 24. LA MISE EN FORME DU .docx VA DANS LA SECTION ───────────────────────── */
+/* ── 23 ter. L'EN-TÊTE ET LES INTITULÉS, DANS L'ÉCRITURE D'UN VRAI MANUSCRIT ──
+   Quatre défauts signalés par l'utilisateur sur son propre article :
+     « la liste des auteurs, juste après le titre et avant les affiliations,
+       n'est toujours pas reconnue » ;
+     « le texte commençant par Materials and Methods n'est pas allé dans
+       Matériel et méthodes » ;
+     « la ligne des auteurs correspondants (avec les e-mails) n'est pas allée à
+       la fin des affiliations » ;
+     « l'Introduction n'est pas allée dans Scientific background ».
+   Les causes, chacune vérifiée ici :
+     • les exposants d'affiliation UNICODE (« Rossi¹ », « Rossi¹² ») n'étaient
+       relus par AUCUN lecteur d'en-tête — la ligne d'auteurs restait vide ;
+     • un intitulé PONCTUÉ (« 2. Materials and Methods. ») ou en MAJUSCULES
+       précédé d'un numéro romain (« II. MATERIALS AND METHODS ») n'était pas un
+       titre (il passait même pour une liste d'auteurs) : son texte se collait à
+       la partie précédente ;
+     • une métadonnée intercalée (« Keywords: … ») coupait la liste des
+       affiliations : l'e-mail du correspondant était « consommé » sans être
+       gardé ;
+     • une partie déclarée « Introduction » / « Abstract » était retournée en
+       « Results and discussion » par la règle de position. */
+const AUTHOR_SHAPES = [
+  'Mario Rossi1, Anna Bianchi1, Jean Dupont2',
+  'Maria Grazia Rossi1, Anna Bianchi1',
+  'Mario Rossi\u00b9, Anna Bianchi\u00b9\u00b2, Jean Dupont\u00b2',
+  'Mario Rossi\u1d43, Anna Bianchi\u1d47',
+  'Jan van der Berg1, Anna de la Cruz2',
+  'Jean-Luc Dupont1, Anna O\u2019Brien2',
+  '1 Mario Rossi, 2 Anna Bianchi',
+  'Mario Rossi[1], Anna Bianchi[1,2]',
+  'Mario Rossi, Anna Bianchi',
+  'M. Rossi, A. Bianchi',
+  'ROSSI, M., BIANCHI, A.',
+  'Rossi M, Bianchi A, et al.',
+  'Mario Rossi a, Anna Bianchi b',
+  'Mario Rossi (1), Anna Bianchi (2)'
+];
+const authorShapeFails = AUTHOR_SHAPES.filter((line) => {
+  const h = MS.parseManuscriptHeader(MS.blocksFromText([
+    'Aphid transmission of a new potyvirus in pepper crops',
+    line,
+    '1 Dipartimento di Agraria, Universita di Napoli, Portici, Italy',
+    '*Corresponding author: mario.rossi@unina.it'
+  ].join('\n')));
+  return !h.authors || h.affiliations.split('\n').length !== 2;
+});
+eq(authorShapeFails, [],
+  'toutes les écritures d’une liste d’auteurs sont reconnues (exposants Unicode, numéros en tête, crochets du .docx)');
+eq(MS.stripAffilMarks('Mario Rossi\u00b9'), 'Mario Rossi', '« Rossi¹ » → « Rossi » (exposant Unicode)');
+eq(MS.stripAffilMarks('Mario Rossi\u00b9,\u00b2'), 'Mario Rossi', '…et ses deux exposants');
+
+const UNI_HEADER = MS.parseManuscriptHeader(MS.blocksFromText([
+  'Aphid transmission of a new potyvirus infecting pepper crops',
+  'Mario Rossi\u00b9, Anna Bianchi\u00b9\u00b2, Jean Dupont\u00b2',
+  '\u00b9 Dipartimento di Agraria, Universita di Napoli, Portici, Italy',
+  '\u00b2 INRAE, Villenave d\u2019Ornon, France',
+  '*Corresponding authors: mario.rossi@unina.it; jean.dupont@inrae.fr',
+  'Abstract',
+  'The potyvirus was transmitted by aphids.'
+].join('\n')));
+eq(UNI_HEADER.authors, 'Mario Rossi\u00b9, Anna Bianchi\u00b9\u00b2, Jean Dupont\u00b2',
+  'la liste d’auteurs en exposants Unicode est reconnue (elle était VIDE)');
+eq(UNI_HEADER.affiliations.split('\n').length, 3, '…avec ses deux adresses + l’auteur correspondant');
+eq(UNI_HEADER.affiliations.split('\n')[2], '*Corresponding authors: mario.rossi@unina.it; jean.dupont@inrae.fr',
+  'l’e-mail du correspondant est la DERNIÈRE ligne des affiliations');
+
+const KW_HEADER = MS.parseManuscriptHeader(MS.blocksFromText([
+  'Aphid transmission of a new potyvirus infecting pepper crops',
+  'Mario Rossi1, Anna Bianchi1',
+  '1 Dipartimento di Agraria, Universita di Napoli, Portici, Italy',
+  'Keywords: potyvirus, aphids, pepper',
+  '*Corresponding authors: mario.rossi@unina.it',
+  'Abstract',
+  'The potyvirus was transmitted by aphids.'
+].join('\n')));
+eq(KW_HEADER.affiliations.split('\n'),
+  ['1 Dipartimento di Agraria, Universita di Napoli, Portici, Italy',
+    '*Corresponding authors: mario.rossi@unina.it'],
+  'une métadonnée intercalée ne fait plus perdre la ligne de l’auteur correspondant');
+ok(!KW_HEADER.affiliations.includes('Keywords'), '…et les mots-clés ne deviennent pas une affiliation');
+
+/* Les INTITULÉS tels qu'un manuscrit les écrit : ponctués, numérotés, en
+   majuscules, avec une puce. */
+ok(MS.isHeadingLine('2. Materials and Methods.'), 'un intitulé ponctué est un titre');
+ok(MS.isHeadingLine('1. Introduction.'), '…même en tête de document');
+ok(MS.isHeadingLine('II. MATERIALS AND METHODS'), 'un intitulé en majuscules numéroté est un titre');
+ok(MS.isHeadingLine('• Results'), '…et une puce ne l’empêche pas');
+ok(!MS.isHeadingLine('Discussion and conclusions follow.'), 'une PHRASE qui commence comme un intitulé reste du texte');
+ok(!MS.isHeadingLine('Materials were harvested in 2024.'), '…et un intitulé suivi d’un verbe n’en est pas un');
+eq(MS.sectionHeadingKey('2. Materials and Methods.'), 'Materials and Methods',
+  'la clé d’un intitulé perd numérotation, puce et ponctuation');
+
+const PUNCT_MS = MS.splitManuscript(MS.blocksFromText([
+  'Aphid transmission of a new potyvirus infecting pepper crops',
+  'Mario Rossi1, Anna Bianchi1',
+  '1 Dipartimento di Agraria, Universita di Napoli, Portici, Italy',
+  'Correspondence: mario.rossi@unina.it',
+  '1. Introduction.',
+  'Pepper crops are affected by several viruses [1].',
+  '2. Materials and Methods.',
+  'Plants were grown in a greenhouse.',
+  '3. Results and Discussion.',
+  'Aphids transmitted the virus efficiently.',
+  '4. Conclusions.',
+  'The new potyvirus spreads in southern Italy.'
+].join('\n')));
+eq(MS.withDocumentSections(
+  MS.groupManuscriptParts(PUNCT_MS.body, { header: MS.parseManuscriptHeader(PUNCT_MS.body) })
+).map((p) => [p.heading, p.id]), [
+  ['Introduction.', 'background'],
+  ['Materials and Methods.', MS.METHODS_DEST.id],
+  ['Results and Discussion.', 'discussion'],
+  ['Conclusions.', 'conclusions']
+], 'un document aux intitulés PONCTUÉS va dans les bonnes sections (et non dans une seule partie)');
+
+const CAPS_MS = MS.splitManuscript(MS.blocksFromText([
+  'APHID TRANSMISSION OF A NEW POTYVIRUS IN PEPPER CROPS',
+  'MARIO ROSSI1, ANNA BIANCHI1',
+  '1 DIPARTIMENTO DI AGRARIA, UNIVERSITA DI NAPOLI, PORTICI, ITALY',
+  'I. INTRODUCTION',
+  'PEPPER CROPS ARE AFFECTED BY SEVERAL VIRUSES [1].',
+  'II. MATERIALS AND METHODS',
+  'PLANTS WERE GROWN IN A GREENHOUSE.',
+  'III. RESULTS AND DISCUSSION',
+  'APHIDS TRANSMITTED THE VIRUS EFFICIENTLY.',
+  'IV. CONCLUSIONS',
+  'THE NEW POTYVIRUS SPREADS IN SOUTHERN ITALY.'
+].join('\n')));
+eq(MS.withDocumentSections(
+  MS.groupManuscriptParts(CAPS_MS.body, { header: MS.parseManuscriptHeader(CAPS_MS.body) })
+).map((p) => [p.heading, p.id]), [
+  ['INTRODUCTION', 'background'],
+  ['MATERIALS AND METHODS', MS.METHODS_DEST.id],
+  ['RESULTS AND DISCUSSION', 'discussion'],
+  ['CONCLUSIONS', 'conclusions']
+], 'les intitulés en MAJUSCULES numérotés (I., II.) ne sont pas pris pour des listes d’auteurs');
+
+/* Une partie qui DIT « Introduction » / « Abstract » garde la section
+   « Scientific background » même quand un intitulé la précède : la règle de
+   position ne s'applique qu'aux parties qui ne disent rien. */
+eq(MS.withDocumentSections(MS.groupManuscriptParts(
+  MS.splitManuscript(MS.blocksFromText([
+    'Highlights', 'A new potyvirus was found.', '', 'Introduction', 'Text.',
+    '', 'Materials and Methods', 'Text.'
+  ].join('\n'))).body, {}
+)).map((p) => [p.heading, p.id]), [
+  ['Highlights', 'discussion'],
+  ['Introduction', 'background'],
+  ['Materials and Methods', MS.METHODS_DEST.id]
+], 'l’Introduction garde Scientific background, même précédée d’un autre intitulé');
+
+/* …et la liste à numéros EN TÊTE ne prend jamais un intitulé numéroté pour une
+   liste de noms (« 2. Statistical analysis » se coupe en deux « noms »). */
+eq(MS.parseManuscriptHeader(MS.blocksFromText([
+  'Aphid transmission of a new potyvirus in pepper crops',
+  '2. Statistical analysis',
+  'Data were analysed with R.'
+].join('\n'))).authors, '',
+  'un intitulé de méthode numéroté n’est pas pris pour une liste d’auteurs');
+
+
 const FMT_DOCX = zipSync({
   'word/document.xml': strToU8([
     '<?xml version="1.0" encoding="UTF-8"?><w:document><w:body>',

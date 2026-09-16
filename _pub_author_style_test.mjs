@@ -198,13 +198,28 @@ ok(legacyCitation.includes('Smith J') && legacyCitation.includes('Costa L'),
 /* ── 9. Câblage entre Publications et la bibliographie des projets ──────── */
 ok(/pubCitationHtml\(citeData\(r\), pubFormat, operatorNames\)/.test(pdm),
   'la bibliographie du document de projet cite les auteurs complets (citeData)');
-ok(/\[d\.authors, d\.journal, d\.year\]/.test(pdm) && /\[d\.authors, d\.journal, d\.year, r\.source\]/.test(pdm),
-  'les listes du projet affichent les auteurs complets, pas seulement le titulaire');
+/* LA MISE EN FORME DE LA PUBLICATION S’APPLIQUE PARTOUT OÙ UNE RÉFÉRENCE
+   S’AFFICHE : le document exporté ET la liste numérotée de la page projet
+   (l’utilisateur : « le publication format ne modifie pas le format des
+   références dans le projet »). */
+ok(/const citation = pubCitationHtml\(d, pubFormat, operatorNames\)/.test(pdm),
+  'la liste numérotée de la page projet est rendue avec le publication format (champs, styles, et al.)');
+ok((pdm.match(/pubCitationHtml\(/g) || []).length >= 3,
+  '…comme la bibliographie du document exporté (une seule fonction de rendu partout)');
+/* LA « PROJECT BIBLIOGRAPHY » N’EST PLUS RECOPIÉE dans la page projet : elle
+   doublonnait la liste numérotée (« only confusing… do not show it »). */
+ok(!/Project bibliography papers \(/.test(pdm) && !/No papers labeled with/.test(pdm),
+  'la liste « Project bibliography » n’est plus ré-affichée sur la page projet (elle vit dans Publications)');
+ok(/The project bibliography papers themselves \(\{projectBib\.length\}\)/.test(pdm),
+  '…la page dit seulement où les gérer (Publications → “Project bibliography”)');
+ok(!/const addBibPaper/.test(pdm) && !/const showBibForm/.test(pdm),
+  '…et le formulaire « + Add paper » de la page projet a disparu avec elle (les références s’importent)');
 ok(/const pickerItems = \(list\) => list\.map/.test(pdm) && /items: pickerItems\(projectBib\)/.test(pdm),
   'le sélecteur de références montre lui aussi les co-auteurs');
-ok(/authors: bibDraft\.authors\.trim\(\)/.test(pdm), 'le formulaire « + Add paper » du projet saisit les auteurs');
-ok(/authors: p\.authors \|\| ''/.test(src), 'l’import en bibliographie de projet recopie les auteurs');
 ok(/authors: pbDraft\.authors\.trim\(\)/.test(src), 'le formulaire « + Add paper » de Publications saisit les auteurs');
+ok(/authors: p\.authors \|\| ''/.test(src), 'l’import en bibliographie de projet recopie les auteurs');
+ok(!/authors: bibDraft\.authors\.trim\(\)/.test(pdm),
+  'la page projet n’a plus de formulaire « + Add paper » (la liste dupliquée a été retirée)');
 ok(/\.\.\.pubCitationData\(paper, pubs\),/.test(src),
   'les lignes de la bibliographie de projet sont complétées par la publication d’origine');
 ok(/const citeData = \(entry\) => pubCitationData\(entry, citationPool\)/.test(pdm),
@@ -318,7 +333,34 @@ ok(/p\.name === pubFormatScope \? \{ \.\.\.p, pubFormat: fmt \} : p/.test(src),
   '…alors qu’un format de PROJET ne change que ce projet');
 ok(/project\?\.pubFormat \|\| loadPubFormat\(\)/.test(pdm),
   'la page de projet utilise la copie du projet, sinon le défaut (d’où l’importance de la recopie)');
-ok(/A project document that was already exported/.test(src) && /Rebuild from data/.test(src),
-  'le panneau dit qu’un document DÉJÀ exporté garde ses citations jusqu’à « Rebuild from data »');
+/* ── 12 bis. LA LISTE DES RÉFÉRENCES SUIT LE FORMAT, MÊME DANS UN DOCUMENT FIGÉ ──
+   Signalé ensuite : « le publication format ne modifie toujours pas le format
+   des références dans le texte du projet » ET « il n'y a pas de bouton “rebuilt
+   from data” ». Deux causes : la bibliographie FIGÉE d'un document enregistré
+   (« 💾 Save changes ») était réaffichée telle quelle, et le bouton de
+   reconstruction n'apparaissait que dans un cas. Désormais :
+     • le document figé est affiché SANS sa bibliographie (withoutBibliographySection)
+       et la liste VIVANTE du projet est imprimée à sa place, rendue à chaque
+       affichage avec le format courant ;
+     • le bouton « ↩️ Rebuild from data » est TOUJOURS dans la barre d'outils du
+       document (pour un utilisateur qui peut modifier le projet). */
+ok(/withoutBibliographySection\(project\.exportDocHtml\)/.test(pdm),
+  'le document figé est affiché sans sa bibliographie vieillie');
+ok(/withoutBibliographySection\(project\.docSuggestion\.markedHtml\)/.test(pdm),
+  '…idem pour la version proposée (suggestion)');
+{
+  const frozenAt = pdm.indexOf('withoutBibliographySection(project.exportDocHtml)');
+  const bibAt = pdm.indexOf('Bibliography ({refs.length})</h2>');
+  ok(frozenAt !== -1 && bibAt > frozenAt && pdm.slice(frozenAt, bibAt).includes('</>'),
+    'la liste des références est rendue HORS du texte figé (donc toujours à jour)');
+}
+ok(/<li key=\{r\.id\}/.test(pdm) && /pubCitationHtml\(citeData\(r\), pubFormat, operatorNames\)/.test(pdm),
+  '…et chaque entrée imprimée passe par le publication format');
+ok(/The reference list follows this format immediately/.test(src),
+  'le panneau « Publication format » le dit à l’utilisateur');
+ok(/Rebuild from data/.test(src) && /Rebuild from data/.test(pdm),
+  'le panneau ET la barre d’outils du document nomment le bouton « Rebuild from data »');
+ok(/\{canModify && \(\s*<button onClick=\{rebuildDoc\}/.test(pdm),
+  '…et ce bouton est TOUJOURS là (il n’était visible que sur un document déjà figé)');
 
 console.log(`_pub_author_style_test: ${passed} passed`);
