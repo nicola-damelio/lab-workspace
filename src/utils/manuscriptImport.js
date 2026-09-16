@@ -165,14 +165,39 @@ export const stripAffilMarks = (part) => {
   return s;
 };
 
-/** Une ligne d'AUTEURS prête pour le champ « Authors » du projet : les
- *  marqueurs d'affiliation sont retirés de chaque nom et la liste reste une
- *  liste séparée par des virgules (voir stripAffilMarks). */
-export const cleanAuthorLine = (line) => String(line || '')
-  .split(/\s*[,;]\s*|\s+&\s+|\s+and\s+/i)
-  .map((p) => stripAffilMarks(p))
-  .filter(Boolean)
-  .join(', ');
+/** Les exposants Unicode : les chiffres (voir SUP_DIGITS plus bas) et les
+ *  lettres a–h d'un marqueur d'affiliation Wiley / Springer. */
+const SUP_LETTERS = { a: '\u1d43', b: '\u1d47', c: '\u1d9c', d: '\u1d48', e: '\u1d49', f: '\u1da0', g: '\u1d4d', h: '\u02b0' };
+const SUP_DIGIT_CHARS = '\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079';
+
+/** Un marqueur d'affiliation écrit en EXPOSANT : « 1,2 » → « ¹,² », « [3] » →
+ *  « ³ », « a » → « ᵃ », « * » → « * » (les crochets et parenthèses du document
+ *  disparaissent : un « [1] » collé à un nom se lirait comme un renvoi de
+ *  citation). */
+export const superscriptAffilMark = (mark) => String(mark || '')
+  .replace(/[()[\]{}]/g, '')
+  .replace(/\d/g, (d) => SUP_DIGIT_CHARS[Number(d)])
+  .replace(/[a-h]/g, (c) => SUP_LETTERS[c] || c);
+
+/** Le marqueur d'affiliation de la FIN d'un morceau de nom, écrit en exposant :
+ *  « Mario Rossi 1,2 » → « Mario Rossi ¹,² », « Anna Bianchi [1,2] » →
+ *  « Anna Bianchi ¹,² », « Jean Dupont b » → « Jean Dupont ᵇ ». Les initiales
+ *  (« Rossi M », « Rossi B ») ne bougent jamais : un marqueur n'est fait que de
+ *  chiffres, de symboles ou d'une lettre MINUSCULE seule (voir
+ *  AFFIL_MARK_TAIL_RE). */
+export const superscriptAffilMarkTail = (part) => {
+  let s = String(part || '').trim();
+  for (let i = 0; i < 6; i += 1) {
+    const m = AFFIL_MARK_TAIL_RE.exec(s);
+    if (!m) break;
+    const next = `${s.slice(0, m.index)}${superscriptAffilMark(m[0].trim())}`.trim().replace(/\s{2,}/g, ' ');
+    if (next === s) break;
+    s = next;
+  }
+  return s;
+};
+
+
 
 /* Un morceau de nom : « Rossi », « Mario Rossi1 », « Dupont1,2 », « Bianchi a »,
    « A. » — jamais une phrase (« plant viruses » ne passe pas : minuscule
@@ -215,6 +240,40 @@ export const authorLineParts = (line) => {
   return merged;
 };
 
+/** Une ligne d'AUTEURS prête pour le champ « Authors » du projet : la liste
+ *  reste une liste séparée par des virgules et la MISE EN FORME du document est
+ *  GARDÉE — les exposants d'affiliation deviennent de vrais exposants
+ *  (« Mario Rossi¹, Anna Bianchi¹, Jean Dupont² »), comme dans l'article.
+ *  L'utilisateur ne veut pas les perdre (« c'est dommage de perdre la mise en
+ *  forme, les exposants de la liste des auteurs ») : ils sont conservés, mais
+ *  jamais sous la forme « [1] » d'un renvoi de citation, et les initiales
+ *  (« Rossi M, Bianchi A ») ne bougent pas. Les exposants détachés par la
+ *  virgule du document (« Rossi 1,2 ») sont recollés au nom (même règle que
+ *  authorLineParts) au lieu de devenir un auteur « 2 ». */
+export const cleanAuthorLine = (line) => {
+  /* Les marqueurs entre CROCHETS et PARENTHÈSES sont ouverts AVANT le découpage
+     par virgules : sans cela « Mario Rossi [1,2] » se coupait en deux
+     « auteurs » (« Mario Rossi [1 » et « 2] »). */
+  const cleaned = String(line || '')
+    .replace(/\[([^\][]{1,20})\]/g, ' $1 ')
+    .replace(/\((\d{1,2}(?:\s*,\s*\d{1,2})*)\)/g, ' $1 ');
+  const merged = [];
+  cleaned.split(/\s*(?:,|;|\band\b|&)\s*/i).map((p) => p.trim()).filter(Boolean).forEach((part) => {
+    const prev = merged[merged.length - 1];
+    /* « Rossi b » puis « ,* » : le second morceau est le SECOND marqueur du même
+       auteur, pas un auteur — comme le « 2 » de « Dupont 1,2 ». */
+    if (prev && EXPONENT_ONLY_RE.test(part) && MARK_TAIL_IN_NAME_RE.test(prev)) {
+      merged[merged.length - 1] = `${prev},${part}`;
+      return;
+    }
+    merged.push(part);
+  });
+  /* « et al. » est GARDÉ : la liste du document est peut-être tronquée, et le
+     lecteur de l'article doit le voir (l'import ne devine pas les auteurs
+     manquants). */
+  return merged.map((p) => superscriptAffilMarkTail(p)).filter(Boolean).join(', ');
+};
+
 /** Une ligne de noms : « Mario Rossi1, Anna Bianchi1, Jean Dupont2 »,
  *  « Bianchi, A., Rossi, M. », « Rossi M, Bianchi A, et al. »,
  *  « Anna Bianchi (1), Mario Rossi (2) ». Sans autre indice il faut un marqueur
@@ -246,6 +305,18 @@ export const looksLikeAuthorLine = (line, { alone = false } = {}) => {
   return !!alone && parts.length >= 1 && s.split(/\s+/).length <= 6;
 };
 
+/** Un intitulé de section écrit EN MINUSCULES après son premier mot — « Results
+ *  and discussion », « Materials and methods », « Conclusions and
+ *  perspectives », « Résultats et discussion » : c'est ainsi qu'un manuscrit les
+ *  écrit, et sans cette reconnaissance leur texte se COLLAIT à la partie
+ *  précédente (le « Results and discussion » d'un article partait alors avec le
+ *  Matériel et méthodes). */
+const SECTION_HEADING_FIRST_RE = /^(?:abstract|summary|introduction|background|materials?|methods?|methodology|results?|findings|discussion|conclusions?|concluding remarks|acknowledg\w*|funding|references?|bibliography|supplementary|supporting|appendix|keywords?|perspectives?|outlook|limitations?|r[ée]sum[ée]|mat[ée]riel|m[ée]thodes?|protocole|exp[ée]rimental|r[ée]sultats?)\b/i;
+
+/** …mais une PHRASE qui commence par le même mot n'est pas un intitulé :
+ *  « Results were analysed with R. » reste du texte. */
+const SECTION_SENTENCE_RE = /^(?:results?|findings|methods?|materials?|conclusions?|discussion|introduction|background)\s+(?:were|was|are|is|show|shows|showed|indicate|indicated|reveal|revealed|suggest|suggested|demonstrate|demonstrated|confirm|confirmed|cannot|can|may|might|must|did|do|does|had|has|have|will|would|remain|remained|come|came|give|gave|differ|differed)\b/i;
+
 /** Un titre est une ligne COURTE, sans ponctuation de fin de phrase, qui
  *  ressemble à un intitulé : « 1. Introduction », « INTRODUCTION »,
  *  « Materials and Methods », « References »… Une phrase comme « Le virus a été
@@ -270,15 +341,31 @@ export const isHeadingLine = (line) => {
   const letters = s.replace(/[^A-Za-zÀ-ÿ]/g, '');
   const allCaps = letters.length > 3 && letters === letters.toUpperCase();
   const titleCase = words.length <= 8 && words.filter((w) => /^[A-ZÀ-Þ]/.test(w)).length >= Math.ceil(words.length / 2);
+  /* Un intitulé de section écrit en minuscules après son premier mot (voir
+     SECTION_HEADING_FIRST_RE) — mais pas une phrase qui commence comme lui. */
+  if (words.length <= 4 && SECTION_HEADING_FIRST_RE.test(s) && !SECTION_SENTENCE_RE.test(s)) return true;
   return numbered || allCaps || titleCase;
 };
 
-/** Un bloc = un paragraphe (ou un titre) du manuscrit. */
-export const blocksFromText = (text) => normalizeText(text)
-  .split('\n')
-  .map((line) => line.trim())
-  .filter(Boolean)
-  .map((line) => ({ kind: isHeadingLine(line) ? 'heading' : 'paragraph', text: line }));
+/** Un bloc = un paragraphe (ou un titre) du manuscrit.
+ *  `htmlByText` (facultatif) porte la MISE EN FORME du document (voir
+ *  htmlByTextFromRecords) : chaque paragraphe reçoit alors son `html`, ce qui
+ *  permet d'importer l'article sans perdre ses exposants, ses indices, ses
+ *  italiques. Le texte reste la référence pour TOUT le reste (titres, citations,
+ *  en-tête) : les heuristiques ne lisent jamais le HTML. */
+export const blocksFromText = (text, { htmlByText = null } = {}) => {
+  const htmlFor = lineHtmlReader(htmlByText);
+  return normalizeText(text)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const block = { kind: isHeadingLine(line) ? 'heading' : 'paragraph', text: line };
+      const html = htmlFor(line);
+      if (html && html !== escapeHtml(line)) block.html = html;
+      return block;
+    });
+};
 
 /** Titre d'un bloc, débarrassé de sa numérotation : « 2. Discussion » → « Discussion ». */
 export const headingLabel = (text) => String(text || '')
@@ -355,33 +442,90 @@ export const stripFigureMarks = (text) => normalizeText(text)
  *  par « Figure 2 shows that… » n'est PAS une légende et reste dans le texte. */
 export const FIGURE_LEGEND_RE = /^fig(?:ure)?\.?\s*\d{1,3}\s*[.:\-–—]\s*\S/i;
 
+/** Les lignes d'un document, avec leur HTML quand on le connaît : une entrée de
+ *  `records` = un paragraphe (`{ text, html }`, `html` vide = texte simple). */
+export const recordsFromText = (text) => normalizeText(text).split('\n').map((line) => ({ text: line, html: '' }));
+
+/** Le texte d'un document ET le HTML de chacune de ses lignes : `htmlByText`
+ *  associe un texte de paragraphe au HTML de ses runs (voir docxParagraphHtml),
+ *  ce qui permet à l'import d'écrire la mise en forme de l'article dans la
+ *  section — gras, italique, exposants, indices. `null` quand le document n'en
+ *  a pas (texte collé, .txt, .md). */
+export const htmlByTextFromRecords = (records) => {
+  const map = new Map();
+  (Array.isArray(records) ? records : []).forEach((r) => {
+    const text = String((r && r.text) || '').trim();
+    const html = String((r && r.html) || '').trim();
+    if (!text || !html) return;
+    if (!map.has(text)) map.set(text, []);
+    map.get(text).push(html);
+  });
+  return map.size ? map : null;
+};
+
+/** Les paragraphes non vides d'un document → son texte + `htmlByText`. */
+export const textWithHtmlRecords = (records) => {
+  const kept = (Array.isArray(records) ? records : [])
+    .map((r) => ({ text: String((r && r.text) || '').trim(), html: String((r && r.html) || '').trim() }))
+    .filter((r) => r.text);
+  return { text: kept.map((r) => r.text).join('\n\n'), htmlByText: htmlByTextFromRecords(kept) };
+};
+
+/** Un lecteur de HTML de ligne : chaque texte de paragraphe est servi UNE fois
+ *  (deux paragraphes identiques gardent chacun leur mise en forme), puis le
+ *  suivant. Renvoie `''` quand la ligne n'a pas de HTML connu. */
+export const lineHtmlReader = (htmlByText) => {
+  const used = new Map();
+  return (line) => {
+    const key = String(line || '').trim();
+    const list = htmlByText && htmlByText.get ? htmlByText.get(key) : null;
+    if (!list || !list.length) return '';
+    const at = used.get(key) || 0;
+    used.set(key, at + 1);
+    return list[at] || list[list.length - 1] || '';
+  };
+};
+
 /** Les légendes deviennent les `caption` des figures et SORTENT du texte (elles
  *  sont déjà sous l'image dans le document exporté) — comme le fait
  *  « 📄 Word text ». La légende est cherchée SOUS le marqueur (le cas normal),
  *  puis AU-DESSUS (certaines revues impriment la légende avant l'image).
- *  @returns {{ text: string, figures: Array }} */
-export const figuresWithCaptionsFromText = (text, figures) => {
-  const list = (Array.isArray(figures) ? figures : []).map((f) => ({ ...f }));
-  const lines = normalizeText(text).split('\n');
+ *  Même chose que figuresWithCaptionsFromText, mais sur les paragraphes
+ *  { text, html } : la ligne retirée l'est aussi en HTML. */
+export const figuresWithCaptionsFromRecords = (records, figures) => {
+  const list = (Array.isArray(records) ? records : [])
+    .map((r) => ({ text: String((r && r.text) || ''), html: String((r && r.html) || '') }));
+  const caps = (Array.isArray(figures) ? figures : []).map((f) => ({ ...f }));
+  const at = (i) => String((list[i] || {}).text || '').trim();
   const take = (i) => {
-    const t = String(lines[i] || '').trim();
+    const t = at(i);
     if (!t || isFigureMark(t) || t.length > 400 || !FIGURE_LEGEND_RE.test(t)) return null;
-    lines[i] = '';
+    list[i] = { text: '', html: '' };
     return t;
   };
-  lines.forEach((line, i) => {
-    if (!isFigureMark(line)) return;
-    const fig = list.find((f) => f.index === figureMarkIndex(line));
+  list.forEach((r, i) => {
+    if (!isFigureMark(r.text)) return;
+    const fig = caps.find((f) => f.index === figureMarkIndex(r.text));
     if (!fig || fig.caption) return;
     let caption = null;
-    for (let j = i + 1; j < lines.length && j <= i + 3 && !caption; j += 1) {
-      if (!String(lines[j] || '').trim()) continue;
+    for (let j = i + 1; j < list.length && j <= i + 3 && !caption; j += 1) {
+      if (!at(j)) continue;
       caption = take(j);
     }
     if (!caption) caption = take(i - 1);
     if (caption) fig.caption = caption;
   });
-  return { text: lines.join('\n').replace(/\n{3,}/g, '\n\n').trim(), figures: list };
+  return { records: list, figures: caps };
+};
+
+/** Les légendes des figures d'un TEXTE (compatibilité : voir
+ *  figuresWithCaptionsFromRecords). */
+export const figuresWithCaptionsFromText = (text, figures) => {
+  const res = figuresWithCaptionsFromRecords(recordsFromText(text), figures);
+  return {
+    text: res.records.map((r) => r.text).join('\n').replace(/\n{3,}/g, '\n\n').trim(),
+    figures: res.figures
+  };
 };
 
 /* ── .docx / page HTML → le texte AVEC ses marqueurs + ses figures ─────────── */
@@ -482,14 +626,76 @@ export const markDocxSuperscriptCitations = (xml) => {
   return out + source.slice(last);
 };
 
+/** Ce qui ne doit jamais entrer dans le texte : les CODES DE CHAMP (Paperpile /
+ *  EndNote y rangent le JSON de la citation) et le texte SUPPRIMÉ (révisions
+ *  Word restées dans le fichier). */
+const stripDocxNoise = (xml) => String(xml || '')
+  .replace(/<w:instrText\b[^>]*>[\s\S]*?<\/w:instrText>/g, '')
+  .replace(/<w:delText\b[^>]*>[\s\S]*?<\/w:delText>/g, '')
+  .replace(/<w:del\b[^>]*>[\s\S]*?<\/w:del>/g, '');
+
+/** Un attribut de mise en forme d'un run est-il ACTIF ? Word écrit « <w:b/> »
+ *  pour gras et « <w:b w:val="0"/> » pour « plus gras » : le second ne compte
+ *  pas. */
+const docxFlagOn = (rPr, name) => new RegExp(
+  `<w:${name}\\b(?![^>]*w:val\\s*=\\s*"(?:0|false|none|nil)")[^>]*/?>`, 'i'
+).test(String(rPr || ''));
+
+/** Le texte VISIBLE d'un run, avec ses sauts de ligne et ses tabulations. */
+const docxRunHtmlText = (runXml) => {
+  let out = '';
+  const re = /<w:t\b[^>]*>([\s\S]*?)<\/w:t>|<w:(?:tab|br|cr)\b[^>]*\/?>/gi;
+  let m;
+  while ((m = re.exec(String(runXml || '')))) {
+    if (m[1] !== undefined) out += m[1];
+    else if (/<w:tab\b/i.test(m[0])) out += ' ';
+    else out += '<br>';
+  }
+  return out;
+};
+
+/** UN RUN (.docx) → son HTML : gras, italique, souligné, exposant, indice.
+ *  C'est la MISE EN FORME du document que l'utilisateur refuse de perdre
+ *  (« dommage de perdre la mise en forme… partout dans le texte ») : H₂O garde
+ *  son indice, « 10⁹ » son exposant, les noms d'espèces leur italique.
+ *
+ *  SEULE EXCEPTION : l'exposant qui ne porte qu'un RENVOI (« [12] », déjà
+ *  marqué par markDocxSuperscriptCitations) n'est pas remis en exposant — le
+ *  programme écrit ses citations « [12] », son style, et le lien vers la
+ *  référence doit rester lisible dans la phrase. */
+const docxRunHtml = (runXml) => {
+  const text = docxRunHtmlText(runXml);
+  if (!text) return '';
+  const rPr = (/<w:rPr\b[^>]*>([\s\S]*?)<\/w:rPr>/i.exec(String(runXml || '')) || [])[1] || '';
+  let html = text;
+  if (docxFlagOn(rPr, 'b')) html = `<strong>${html}</strong>`;
+  if (docxFlagOn(rPr, 'i')) html = `<em>${html}</em>`;
+  if (docxFlagOn(rPr, 'u')) html = `<u>${html}</u>`;
+  const citationOnly = /^\[\s*\d{1,4}(?:\s*[,;]\s*\d{1,4})*\s*\]$/.test(text.trim());
+  if (!citationOnly && docxFlagOn(rPr, 'vertAlign') && /superscript/i.test(rPr)) html = `<sup>${html}</sup>`;
+  else if (!citationOnly && docxFlagOn(rPr, 'vertAlign') && /subscript/i.test(rPr)) html = `<sub>${html}</sub>`;
+  return html;
+};
+
+/** Un PARAGRAPHE `.docx` → son HTML (ses runs mis bout à bout). */
+export const docxParagraphHtml = (xml) => {
+  const clean = stripDocxNoise(xml);
+  const out = [];
+  const re = /<w:r\b[^>]*>[\s\S]*?<\/w:r>/g;
+  let m;
+  while ((m = re.exec(clean))) {
+    const html = docxRunHtml(m[0]);
+    if (html) out.push(html);
+  }
+  return out.join('').trim();
+};
+
 /** Les paragraphes d'un `word/document.xml`, dans l'ordre, chacun avec le rId
- *  de l'image qu'il contient (`''` quand il n'y en a pas). PUR : ni DOM ni
- *  navigateur, ce qui permet au test de fabriquer un .docx en mémoire. */
+ *  de l'image qu'il contient (`''` quand il n'y en a pas), son texte et son
+ *  HTML. PUR : ni DOM ni navigateur, ce qui permet au test de fabriquer un
+ *  .docx en mémoire. */
 export const docxParagraphsWithImages = (xml) => {
-  const clean = String(xml || '')
-    .replace(/<w:instrText\b[^>]*>[\s\S]*?<\/w:instrText>/g, '')
-    .replace(/<w:delText\b[^>]*>[\s\S]*?<\/w:delText>/g, '')
-    .replace(/<w:del\b[^>]*>[\s\S]*?<\/w:del>/g, '');
+  const clean = stripDocxNoise(xml);
   const out = [];
   const re = /<w:p\b[^>]*>[\s\S]*?<\/w:p>/g;
   let m;
@@ -497,9 +703,11 @@ export const docxParagraphsWithImages = (xml) => {
     const chunk = m[0];
     const blip = /<(?:a:)?blip\b[^>]*r:(?:embed|link)="([^"]+)"/i.exec(chunk);
     const imagedata = /<(?:v:)?imagedata\b[^>]*r:id="([^"]+)"/i.exec(chunk);
+    const marked = markDocxSuperscriptCitations(chunk);
     out.push({
       rid: (blip && blip[1]) || (imagedata && imagedata[1]) || '',
-      text: paragraphTextFromDocxXml(markDocxSuperscriptCitations(chunk)).trim()
+      text: paragraphTextFromDocxXml(marked).trim(),
+      html: docxParagraphHtml(marked)
     });
   }
   return out;
@@ -519,10 +727,11 @@ export const docxManuscriptFromBytes = (bytes) => {
   const rels = docxRelsFromXml(strFromU8(files['word/_rels/document.xml.rels'] || new Uint8Array()));
 
   const figures = [];
-  const lines = [];
+  const records = [];
   docxParagraphsWithImages(xml).forEach((p) => {
     const text = String(p.text || '').trim();
-    if (!p.rid) { if (text) lines.push(text); return; }
+    const html = String(p.html || '').trim();
+    if (!p.rid) { if (text) records.push({ text, html }); return; }
     /* Une image = une figure, MÊME quand ses octets manquent dans le ZIP (image
        LIÉE plutôt qu'incorporée, relation cassée) : le rang des figures
        suivantes ne doit pas se décaler. Une cible externe (http…, data:) est
@@ -542,10 +751,11 @@ export const docxManuscriptFromBytes = (bytes) => {
       bytes: !external && data && data.length ? data : null,
       missing: !external && !(data && data.length)
     });
-    if (text) lines.push(text);
-    lines.push(figureMark(figures.length));
+    if (text) records.push({ text, html });
+    records.push({ text: figureMark(figures.length), html: '' });
   });
-  return figuresWithCaptionsFromText(lines.join('\n\n'), figures);
+  const withCaptions = figuresWithCaptionsFromRecords(records, figures);
+  return { ...textWithHtmlRecords(withCaptions.records), figures: withCaptions.figures };
 };
 
 /** Le `src` d'une balise `<img …>` d'une page HTML. */
@@ -596,18 +806,21 @@ export const htmlManuscriptFromHtml = (html) => {
 };
 
 /** Le document choisi par l'utilisateur (.docx → ZIP, .html → page, le reste →
- *  texte brut) → `{ text, figures }`. `text` porte les marqueurs de figure
- *  `[[FIGURE n]]` (voir plus haut) ; `figures[n-1]` décrit l'image n. */
+ *  texte brut) → `{ text, figures, htmlByText }`. `text` porte les marqueurs de
+ *  figure `[[FIGURE n]]` (voir plus haut) ; `figures[n-1]` décrit l'image n ;
+ *  `htmlByText` porte la MISE EN FORME des paragraphes quand le document en a
+ *  une (un .docx : gras, italique, exposants, indices — voir
+ *  docxParagraphHtml) et `null` sinon. */
 export const readManuscriptDocument = async (file) => {
-  if (!file) return { text: '', figures: [] };
+  if (!file) return { text: '', figures: [], htmlByText: null };
   const name = String(file.name || '').toLowerCase();
   if (name.endsWith('.docx')) {
     const buf = await file.arrayBuffer();
     return docxManuscriptFromBytes(new Uint8Array(buf));
   }
   const raw = await file.text();
-  if (name.endsWith('.html') || name.endsWith('.htm')) return htmlManuscriptFromHtml(raw);
-  return { text: normalizeText(raw), figures: [] };
+  if (name.endsWith('.html') || name.endsWith('.htm')) return { ...htmlManuscriptFromHtml(raw), htmlByText: null };
+  return { text: normalizeText(raw), figures: [], htmlByText: null };
 };
 
 /** (compatibilité) Le TEXTE du document — marqueurs de figure compris. */
@@ -680,6 +893,139 @@ export const guessSectionForHeading = (heading) => {
   if (!s) return '';
   const found = SECTION_WORDS.find((entry) => entry.words.some((w) => s.includes(w)));
   return found ? found.id : '';
+};
+
+/* ── 3 ter. « Tout ce qui est entre l'Introduction et les Conclusions est le
+   Résultat / Discussion, sauf le Matériel et méthodes » ───────────────────────
+
+   L'utilisateur l'a demandé en clair : « après l'introduction et avant les
+   conclusions, tout sauf le matériel et méthodes (parfois appelé partie
+   expérimentale) doit aller dans Results and discussion ». Un manuscrit écrit
+   pour une revue n'a pas les intitulés de la page projet : il a « Results »,
+   « Results and discussion », « M&M », « Statistical analysis », « Experimental
+   part »… Laisser ces parties sans destination (dest « — do not import — »)
+   revenait à ne PAS importer la moitié de l'article. */
+
+/** Le champ « Matériel et méthodes » du projet : sa destination propre — le
+ *  texte des manipulations n'a rien à faire dans « Results and discussion ». */
+export const METHODS_DEST = { id: 'materialsAndMethods', label: '🧪 Materials & Methods (project)' };
+
+/** Les intitulés de MATÉRIEL ET MÉTHODES (anglais et français) : « Materials and
+ *  Methods », « Methods », « Experimental part » / « Experimental procedures »,
+ *  « Partie expérimentale », « Protocole », « Statistical analysis »… Comme ce
+ *  sont les SOUS-SECTIONS d'un même chapitre, tout ce qui les suit appartient
+ *  encore à cette zone (voir withDocumentSections) jusqu'à « Results ». */
+const METHODS_HEADING_RES = [
+  String.raw`^(?:plant|bacterial|fungal|viral)?\s*materials?\b`,
+  String.raw`^materials?\s*(?:and|&|,)\s*methods?\b`,
+  String.raw`^methods?\b`,
+  String.raw`^methodology\b`,
+  String.raw`^experimental\b`,
+  String.raw`^protocols?\b`,
+  String.raw`^(?:statistical|data)\s+(?:analys\w*|collection|processing|treatment)\b`,
+  String.raw`^reagents?\b`,
+  String.raw`^chemicals?\b`,
+  String.raw`^(?:bacterial|fungal|viral|plant)\s+(?:strains?|isolates?|material)\b`,
+  String.raw`^(?:strains?|bacteria|media)\b`,
+  String.raw`^(?:growth|culture)\s+conditions\b`,
+  String.raw`^(?:dna|rna|protein|plasmid)\s+(?:extraction|isolation|analysis|sequencing|amplification|cloning)\b`,
+  String.raw`^(?:extraction|isolation|cloning|sequencing)\s+of\b`,
+  String.raw`^(?:sampling|sample collection|field (?:experiments?|trials?|work))\b`,
+  String.raw`^(?:molecular|biochemical|microbiological)\s+(?:methods|techniques|analysis|assays?|characteri\w*)\b`,
+  String.raw`^(?:enzyme|antimicrobial|cytotoxicity|viability)\s+assays?\b`,
+  String.raw`^assays?\b`,
+  /* Les manuscrits français du laboratoire écrivent la même chose autrement. */
+  String.raw`^(?:mat[ée]riel|m[ée]thodes?|protocoles?)\b`,
+  String.raw`^(?:partie|section|proc[ée]dures?)\s+exp[ée]rimentales?\b`,
+  String.raw`^exp[ée]rimental\b`,
+  String.raw`^analyses?\s+statistiques?\b`
+];
+export const METHODS_HEADING_RE = new RegExp(METHODS_HEADING_RES.join('|'), 'i');
+
+/** Les intitulés qui OUVRENT le corps de l'article (« Results », « Findings ») :
+ *  ils sortent de la zone Matériel et méthodes. */
+export const RESULTS_HEADING_RE = /^(?:results?|findings|observations|r[ée]sultats?)\b/i;
+
+/** Un intitulé d'INTRODUCTION (ou de résumé) : la zone « Results and
+ *  discussion » commence APRÈS le dernier d'entre eux. */
+const INTRO_HEADING_RE = /^(?:abstract|summary|r[ée]sum[ée]|introduction|background|context|state of the art|literature review)\b/i;
+
+/**
+ * Donne à chaque partie la SECTION du projet que le document implique, en
+ * lisant SA POSITION et pas seulement son intitulé :
+ *
+ *   • les parties qui précèdent le corps (résumé, introduction) ne bougent pas ;
+ *   • entre la fin de l'Introduction et les Conclusions, TOUT va dans
+ *     « Results and discussion » — « Results », « Results and discussion »,
+ *     « Discussion », « Statistical analysis »… — SAUF le Matériel et méthodes
+ *     (voir METHODS_HEADING_RE), qui vise le champ « 🧪 Materials & Methods »
+ *     du projet, et sauf Financement / Supporting information, qui gardent leur
+ *     section ;
+ *   • les sous-sections d'un chapitre Matériel et méthodes (« Statistical
+ *     analysis », « DNA extraction »…) restent avec lui jusqu'à « Results » ;
+ *   • au-delà des Conclusions, rien n'est deviné : « Perspectives »,
+ *     « Funding », une annexe… gardent ce que leur intitulé dit (ou restent à
+ *     choisir quand il ne dit rien).
+ *
+ * Les parties SANS intitulé (le chapeau / résumé imprimé avant le premier titre)
+ * ne sont jamais touchées : c'est la fenêtre d'import qui demande.
+ *
+ * @param {Array} parts  le résultat de groupManuscriptParts
+ * @returns {Array} les mêmes parties, `id` rempli par la règle de position
+ */
+export const withDocumentSections = (parts) => {
+  const list = (Array.isArray(parts) ? parts : []).map((p) => ({ ...p }));
+  const label = (p) => headingLabel((p && p.heading) || '');
+  /* 1. Où commence le CORPS : après la suite d'intitulés « résumé /
+        introduction » du début (le dernier d'entre eux). */
+  let startAt = 0;
+  for (let i = 0; i < list.length; i += 1) {
+    if (!label(list[i])) continue;
+    const guess = guessSectionForHeading(label(list[i]));
+    if (guess === 'background' || INTRO_HEADING_RE.test(label(list[i]))) { startAt = i + 1; continue; }
+    startAt = i;
+    break;
+  }
+  /* 2. Où il s'arrête : les CONCLUSIONS (au-delà, chaque partie garde ce que son
+        intitulé dit). */
+  let stopAt = list.length;
+  for (let i = startAt; i < list.length; i += 1) {
+    if (guessSectionForHeading(label(list[i])) === 'conclusions') { stopAt = i; break; }
+  }
+  /* 3. La zone du corps. */
+  let inMethods = false;
+  for (let i = startAt; i < stopAt; i += 1) {
+    const p = list[i];
+    const head = label(p);
+    if (!head) continue;
+    if (METHODS_HEADING_RE.test(head)) {
+      inMethods = true;
+      if (!p.id) p.id = METHODS_DEST.id;
+      p.autoSection = METHODS_DEST.id;
+      continue;
+    }
+    if (RESULTS_HEADING_RE.test(head)) {
+      inMethods = false;
+      if (!p.id || p.id === 'background') p.id = 'discussion';
+      p.autoSection = 'discussion';
+      continue;
+    }
+    const guess = guessSectionForHeading(head);
+    if (guess && guess !== 'background') {   // Funding, Supporting information…
+      inMethods = false;
+      if (!p.id) p.id = guess;
+      p.autoSection = guess;
+      continue;
+    }
+    if (inMethods) {   // « Statistical analysis », « DNA extraction »… du chapitre
+      if (!p.id) p.id = METHODS_DEST.id;
+      p.autoSection = METHODS_DEST.id;
+      continue;
+    }
+    if (!p.id || p.id === 'background') p.id = 'discussion';
+    p.autoSection = 'discussion';
+  }
+  return list;
 };
 
 /* ── 3 bis. L'EN-TÊTE du document : titre, auteurs, affiliations ──────────── */
@@ -769,6 +1115,47 @@ const isNameLineContinuing = (text) => isAuthorish(text) || looksLikeNameListLin
 const isAuthorLineAtPosition = (text) => isAuthorish(text)
   || looksLikeAuthorLine(text, { alone: true })
   || looksLikeNameListLine(text);
+
+/** Les particules d'un nom (« van der Berg ») : seuls mots en minuscules qui
+ *  peuvent apparaître DANS une liste de noms. Un titre, lui, contient des mots
+ *  de liaison (« in », « of », « the »…) — c'est ce qui le distingue. */
+const NAME_PARTICLE_RE = /^(?:van|von|de|den|der|del|della|di|da|dos|du|la|le|ter|ten|bin|ben|el|al)$/i;
+const WORD_CAPS_RE = /^\p{Lu}[\p{L}'\u2019.-]*$/u;
+const WORD_ALLCAPS_RE = /^[A-Z\u00c0-\u00de]{1,5}\.?$/;
+
+/** DERNIER REPLI de la lecture par position : la ligne qui suit le titre, quand
+ *  elle est écrite comme une liste de noms mais qu'AUCUN des trois lecteurs
+ *  ci-dessus ne la reconnaît — « M. Rossi, A. Bianchi » (initiale AVANT le nom,
+ *  style Nature), « ROSSI M, BIANCHI A » (tout en majuscules), « Mario Rossi »
+ *  seul… Elle est alors PROPOSÉE comme liste d'auteurs dans la fenêtre
+ *  d'import, où l'utilisateur la voit et corrige son rôle d'un clic.
+ *
+ *  Ce repli existe parce qu'un champ « Authors » vide ne dit rien à personne :
+ *  l'utilisateur ne comprend pas pourquoi sa liste d'auteurs n'est pas reconnue
+ *  alors qu'elle est exactement à sa place dans le document. Mieux vaut une
+ *  ligne PROPOSÉE — visible, corrigeable, jamais écrite en douce — que trois
+ *  noms perdus. Ce qui est écarté reste écarté : une phrase (un mot de liaison,
+ *  une minuscule initiale), une adresse, une métadonnée, un intitulé de section,
+ *  une ligne trop longue. */
+export const looksLikeLooseAuthorLine = (line) => {
+  const s = String(line || '').trim();
+  if (!s || s.length > 160) return false;
+  if (HEADER_META_RE.test(s) || SECTION_WORD_RE.test(s)) return false;
+  if (looksLikeAffiliationLine(s) || isBodyParagraph(s)) return false;
+  if (/[;:!?]$/.test(s)) return false;
+  if (/\.$/.test(s) && !/\p{Lu}\.$/u.test(s)) return false;
+  const parts = s.split(/\s*[,;]\s*|\s+&\s+|\s+and\s+/i)
+    .map((p) => stripAffilMarks(p))
+    .filter(Boolean);
+  if (!parts.length || parts.length > 30) return false;
+  /* Chaque morceau est un nom : des mots capitalisés, une initiale, une
+     particule — jamais un mot de liaison, jamais une phrase. */
+  return parts.every((p) => {
+    const words = p.split(/\s+/).filter(Boolean);
+    if (!words.length || words.length > 5 || p.length > 40) return false;
+    return words.every((w) => WORD_CAPS_RE.test(w) || WORD_ALLCAPS_RE.test(w) || NAME_PARTICLE_RE.test(w));
+  });
+};
 
 /** Combien de blocs sont examinés en tête de document. */
 const HEADER_SCAN = 14;
@@ -874,9 +1261,26 @@ export const looksLikeAddressLine = (line) => {
 
 /** Combien de blocs sont examinés APRÈS la fenêtre d'en-tête par le REPLI, et
  *  après combien de paragraphes de corps de texte il s'arrête : les auteurs
- *  sont dans les premières lignes du document, jamais au milieu de l'article. */
+ *  sont dans les premières lignes du document, jamais au milieu de l'article.
+ *  QUATRE paragraphes de corps : un résumé de trois paragraphes est courant, et
+ *  ses auteurs — imprimés SOUS le résumé — étaient auparavant hors d'atteinte
+ *  du repli (il s'arrêtait après deux). */
 const HEADER_EXTRA_SCAN = 12;
-const HEADER_EXTRA_BODY_MAX = 2;
+const HEADER_EXTRA_BODY_MAX = 4;
+
+/** Les premières lignes du document, proposées telles quelles (« keep » : elles
+ *  restent dans le texte) quand AUCUNE ligne d'en-tête n'a été reconnue : la
+ *  fenêtre d'import doit toujours pouvoir montrer à l'utilisateur les lignes
+ *  qu'il peut désigner lui-même comme titre / auteurs / affiliations. */
+const firstHeaderLines = (list) => {
+  const out = [];
+  for (let i = 0; i < Math.min(list.length, 6); i += 1) {
+    const s = String((list[i] && list[i].text) || '').trim();
+    if (!s || isFigureMark(s)) continue;
+    out.push({ at: i, text: s, role: KEEP_ROLE });
+  }
+  return out;
+};
 
 /** Les lignes qui SUIVENT la fenêtre d'en-tête et qui ressemblent à des noms —
  *  ou à une adresse venant juste après eux — avec le rôle deviné. Elles sont
@@ -906,7 +1310,7 @@ const extraHeaderLines = (list, window) => {
       names = false;
       continue;
     }
-    if (role === 'authors' || looksLikeAuthorList(s)) {
+    if (role === 'authors' || looksLikeAuthorList(s) || looksLikeLooseAuthorLine(s)) {
       out.push({ at: i, text: s, role: 'authors' });
       names = true;
       continue;
@@ -1000,7 +1404,15 @@ export const parseManuscriptHeader = (blocks) => {
     if (role !== 'heading' && isBodyParagraph(s)) break;
     window.push({ at: i, text: s, role });
   }
-  if (!window.length) return empty;
+  if (!window.length) {
+    /* AUCUNE ligne d'en-tête reconnue (le document commence par un paragraphe
+       de corps de texte ou par un intitulé de section) : les premières lignes
+       sont quand même MONTRÉES, en « keep » — elles restent dans le texte, mais
+       l'utilisateur peut désigner d'un clic celles qui sont le titre, les
+       auteurs ou les affiliations. Une fenêtre vide ne lui laissait rien à
+       faire. */
+    return { ...empty, lines: firstHeaderLines(list) };
+  }
   const roles = window.map((w) => w.role);
   const isCand = (r) => r === 'text' || r === 'heading';
 
@@ -1024,13 +1436,46 @@ export const parseManuscriptHeader = (blocks) => {
      trahit (« Anna Bianchi, Mario Rossi », deux noms nus) — ou que le marqueur
      est une LETTRE (« Mario Rossi a, Anna Bianchi b », Elsevier / Springer) —
      c'est leur POSITION, entre le titre et les affiliations, qui les désigne
-     (voir looksLikeNameListLine). */
+     (voir looksLikeNameListLine).
+     TROIS rattrapages, appris des documents réels où « les auteurs ne sont
+     toujours pas reconnus » :
+       • la ligne qui suit le titre n'a plus besoin d'être IMMÉDIATEMENT la
+         suivante (une image de page de titre, une ligne sautée la séparaient) ;
+       • le repli de position lit aussi les écritures que les trois lecteurs
+         stricts refusent — « M. Rossi, A. Bianchi », « ROSSI M, BIANCHI A »
+         (voir looksLikeLooseAuthorLine) ;
+       • même SANS titre reconnu, une vraie ligne d'auteurs est retenue : un
+         document dont le titre est mal écrit ne doit pas faire perdre les
+         auteurs. */
   let firstAuthors = explicitAuthors;
   if (firstAuthors === -1 && titleIdx >= 0 && window[titleIdx + 1]
-    && window[titleIdx + 1].at === window[titleIdx].at + 1
     && window[titleIdx + 1].role !== 'affiliations'
     && isAuthorLineAtPosition(window[titleIdx + 1].text)) {
     firstAuthors = titleIdx + 1;
+  }
+  if (firstAuthors === -1 && titleIdx >= 0 && window[titleIdx + 1]
+    && window[titleIdx + 1].role !== 'affiliations'
+    && window[titleIdx + 1].role !== 'section'
+    && looksLikeLooseAuthorLine(window[titleIdx + 1].text)) {
+    firstAuthors = titleIdx + 1;
+  }
+  if (firstAuthors === -1 && titleIdx === -1) {
+    const i = roles.findIndex((r, k) => (r === 'authors' || r === 'heading' || r === 'text')
+      && isAuthorLineAtPosition(window[k].text));
+    if (i !== -1) firstAuthors = i;
+  }
+  /* UNE LISTE DE NOMS N'EST PAS UN TITRE : quand la ligne prise pour le titre
+     EST une liste de noms et que la suivante est une adresse, cette ligne est la
+     liste des AUTEURS — un titre suivi directement d'adresses, sans auteurs, ne
+     se rencontre pas. Sans ce retournement, « Mario Rossi, Anna Bianchi » en tête
+     de document devenait le TITRE du papier et le champ « Authors » restait vide.
+     Le titre, lui, reste vide : l'utilisateur le désigne dans la fenêtre (mieux
+     vaut un champ à remplir qu'un titre faux). */
+  if (firstAuthors === -1 && titleIdx >= 0
+    && looksLikeNameListLine(window[titleIdx].text)
+    && window[titleIdx + 1] && window[titleIdx + 1].role === 'affiliations') {
+    firstAuthors = titleIdx;
+    titleIdx = -1;
   }
 
   const authorIdxs = [];
@@ -1150,6 +1595,30 @@ export const htmlFromText = (text) => String(text || '')
   .filter(Boolean)
   .map((p) => `<p>${escapeHtml(p)}</p>`)
   .join('\n');
+
+/**
+ * Le HTML d'une PARTIE du manuscrit, tel qu'il entre dans la section du projet :
+ *
+ *   • les marqueurs de figure sortent (la figure rejoint les figures de la
+ *     section, voir figureMarksIn) ;
+ *   • chaque paragraphe reprend la MISE EN FORME du document quand elle est
+ *     connue (`htmlByText`, un .docx : gras, italique, exposants, indices) ;
+ *     sinon le texte est simplement échappé ;
+ *   • les citations sont converties dans les numéros du PROJET si `numbers` est
+ *     fourni (c'est le même travail que sur le texte, mais dans le HTML).
+ *
+ * Les heuristiques (titres, citations, en-tête) continuent de lire le TEXTE :
+ * ce HTML ne sert qu'à écrire la section. */
+export const htmlFromManuscriptPart = (text, { htmlByText = null, numbers = null } = {}) => {
+  const htmlFor = lineHtmlReader(htmlByText);
+  const html = normalizeText(stripFigureMarks(text))
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => htmlFor(line) || escapeHtml(line))
+    .join('\n');
+  return numbers ? convertCitationsInText(html, numbers).text : html;
+};
 
 /* ── 5. Les citations du texte → les références NUMÉROTÉES du programme ───── */
 

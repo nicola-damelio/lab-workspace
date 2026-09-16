@@ -27,7 +27,7 @@ OK   _figure_style_test.mjs  →  │ (index) │ name                          
 OK   _library_restore_test.mjs  →  ✅ 135 tests passés (bibliothèque d’images ↔ sauvegarde)
 OK   _library_transfer_test.cjs  →  │ (index) │ name                                                                                                                   │ ok   │ error │ | 
 OK   _mail_recipients_test.mjs  →  _mail_recipients_test: 47 passed
-OK   _manuscript_import_test.mjs  →  ✅ 290 tests passés (manuscrit — blocs / parties / en-tête / sections / liens / figures)
+OK   _manuscript_import_test.mjs  →  ✅ 331 tests passés (manuscrit — blocs / parties / en-tête / sections / liens / figures)
 OK   _new_image_test.cjs  →  ✅ 29/29 checks passed
 OK   _pdb_conect_sanity.cjs  →  (no output)
 OK   _persist_store_test.mjs  →  ✅ 25 tests passés (import : écriture vérifiée, quota plein, allègement des figures)

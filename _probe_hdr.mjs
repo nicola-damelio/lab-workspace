@@ -65,6 +65,19 @@ Dipartimento di Agraria, Universita di Napoli, Portici, Italy
 INRAE, Villenave d'Ornon, France`,
   'two-authors-no-marker': `Aphid transmission of a new potyvirus in pepper crops
 Mario Rossi, Anna Bianchi
+Dipartimento di Agraria, Universita di Napoli, Portici, Italy`,
+  /* Les écritures qui laissaient le champ « Authors » VIDE (demande utilisateur :
+     « les auteurs ne sont toujours pas reconnus »). */
+  'initials-first': `Aphid transmission of a new potyvirus in pepper crops
+M. Rossi, A. Bianchi
+Dipartimento di Agraria, Universita di Napoli, Portici, Italy
+INRAE, Villenave d'Ornon, France`,
+  'all-caps': `APHID TRANSMISSION OF A NEW POTYVIRUS IN PEPPER CROPS
+ROSSI M, BIANCHI A
+Dipartimento di Agraria, Universita di Napoli, Portici, Italy`,
+  'logo-between-title-and-authors': `Aphid transmission of a new potyvirus in pepper crops
+[[FIGURE 1]]
+Mario Rossi, Anna Bianchi
 Dipartimento di Agraria, Universita di Napoli, Portici, Italy`
 };
 console.log('\n=== B. EN-TÊTES DE MANUSCRIT ===');
@@ -76,12 +89,43 @@ Object.entries(headers).forEach(([name, text]) => {
   show('affil', `« ${(h.affiliations || '').replace(/\n/g, ' | ')} »`);
 });
 
-/* ── C. Les AFFILIATIONS : jamais des références ───────────────────────── */
+/* ── C. VOTRE DOCUMENT (usage : node _probe_hdr.mjs chemin\\fichier.docx) ──────
+   Montre, sur VOTRE manuscrit, ce que l'import comprend : les lignes d'en-tête
+   avec leur rôle (titre / auteurs / affiliations / non importé / gardé dans le
+   texte) et la SECTION que chaque partie va remplir (Results and Discussion,
+   Materials & Methods…). Si les auteurs ne sont pas reconnus, la façon dont le
+   document les écrit est ici, ligne par ligne. */
+const fileArg = process.argv[2];
+if (fileArg) {
+  const { readFileSync } = await import('node:fs');
+  const buf = readFileSync(fileArg);
+  const fake = {
+    name: fileArg,
+    arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
+    text: async () => buf.toString('utf8')
+  };
+  const doc = await MI.readManuscriptDocument(fake);
+  const ms = MI.splitManuscript(MI.blocksFromText(doc.text, { htmlByText: doc.htmlByText }));
+  const header = MI.parseManuscriptHeader(ms.body);
+  console.log(`\n=== C. ${fileArg} ===`);
+  show('titre  ', `« ${header.title} »`);
+  show('auteurs', `« ${header.authors} »`);
+  show('affil. ', `« ${(header.affiliations || '').replace(/\n/g, ' | ')} »`);
+  show('mise en forme', doc.htmlByText ? `${doc.htmlByText.size} paragraphe(s)` : 'aucune (texte simple)');
+  console.log('  ── les lignes d’en-tête et leur rôle');
+  (header.lines || []).forEach((l) => console.log(`     [${l.role}] ${l.text.slice(0, 100)}`));
+  console.log('  ── les parties et la section qu’elles remplissent');
+  MI.withDocumentSections(MI.groupManuscriptParts(ms.body, { header })).forEach((p) => {
+    const dest = p.id === MI.METHODS_DEST.id ? 'MATERIALS & METHODS (projet)' : (p.id || '— à choisir —');
+    console.log(`     ${(p.heading || '(sans intitulé)').slice(0, 50)} → ${dest}`);
+  });
+}
+
 const affilText = `1 Dipartimento di Agraria, Universita di Napoli Federico II, Portici, Italy
 2 INRAE, UMR Biologie du Fruit, Villenave d'Ornon, France
 3 Department of Plant Pathology, 2015 Upper Street, Raleigh, NC 27695, USA
 * Corresponding author: mario.rossi@unina.it`;
-console.log('\n=== C. AFFILIATIONS LUES COMME BIBLIOGRAPHIE (attendu : rien) ===');
+console.log('\n=== D. AFFILIATIONS LUES COMME BIBLIOGRAPHIE (attendu : rien) ===');
 const asRefs = RI.parseReferences(affilText, { split: 'line', keepAll: true });
 console.log(asRefs.length
   ? asRefs.map((e) => `  title « ${e.title} » | n°${e.number}`).join('\n')

@@ -17,8 +17,9 @@ import {
 import {
   MANUSCRIPT_FILE_ACCEPT, blocksFromText, splitManuscript, groupManuscriptParts,
   parseManuscriptHeader, headerFromLineRoles, HEADER_ROLES, PROJECT_TEXT_SECTIONS,
-  HEADER_DESTS, isHeaderDest, headerDestLabel, headerTextFor,
-  buildManuscriptPlan, convertCitationsInText, htmlFromText, mergeManuscriptBibliography,
+  HEADER_DESTS, isHeaderDest, headerDestLabel, headerTextFor, METHODS_DEST, withDocumentSections,
+  buildManuscriptPlan, convertCitationsInText, htmlFromText, htmlFromManuscriptPart,
+  mergeManuscriptBibliography,
   readManuscriptDocument, figureDataUrl, figureMarksIn, stripFigureMarks,
   manuscriptFingerprint, previousImportOf, citedNumbersInText
 } from '../../utils/manuscriptImport';
@@ -1280,30 +1281,39 @@ export const ProjectDetailModule = ({
     setMsImport({
       text: '', fileName: '', parts: null, plan: null, picks: [], busy: false, status: '', report: '',
       header: null, headerPicks: null, figures: [], hash: '', previous: null, confirmRepeat: false,
+      htmlByText: null,
       focusSection: typeof focusSection === 'string' ? focusSection : ''
     });
   };
 
-  const analyseManuscript = (text, fileName, figures = null, focusSection = (msImport && msImport.focusSection) || '') => {
+  const analyseManuscript = (text, fileName, figures = null, focusSection = (msImport && msImport.focusSection) || '', htmlByText = null) => {
     const src = String(text || '');
     if (!src.trim()) {
       setMsImport((d) => ({ ...(d || {}), busy: false, status: 'Paste the document text (or choose a file) first.' }));
       return;
     }
+    /* LA MISE EN FORME DU DOCUMENT (un .docx : gras, italique, exposants,
+       indices) : elle suit les paragraphes — voir htmlFromManuscriptPart — pour
+       que le texte importé garde celle de l'article au lieu de la perdre. */
+    const html = htmlByText && typeof htmlByText.get === 'function'
+      ? htmlByText : ((msImport && msImport.htmlByText) || null);
     /* Les FIGURES lues dans le document (voir readManuscriptDocument) : la
        liste reste telle quelle tant que le même document est analysé. Les
        pixels sont mis en `data:` URL UNE fois (l'aperçu et l'envoi au Drive
        s'en servent ensuite sans les recalculer). */
     const figs = (Array.isArray(figures) ? figures : ((msImport && msImport.figures) || []))
       .map((f) => (f && f.preview === undefined ? { ...f, preview: figureDataUrl(f) } : f));
-    const blocks = blocksFromText(src);
+    const blocks = blocksFromText(src, { htmlByText: html });
     const manuscript = splitManuscript(blocks);
     /* L'EN-TÊTE (titre / auteurs / affiliations) est reconnu AVANT le découpage :
        ces lignes ne sont donc pas proposées comme sections — elles vont dans les
        champs « 🧾 Title, authors & affiliations » du projet. */
     const header = parseManuscriptHeader(manuscript.body);
-    const parts = groupManuscriptParts(manuscript.body, { header }).map((p, i) => ({
-      key: `part${i}`, heading: p.heading, text: p.text, guessed: p.id || '',
+    /* LES SECTIONS DU PROJET : la position des parties dans l'article tranche —
+       entre l'Introduction et les Conclusions tout va dans « Results and
+       discussion », sauf le Matériel et méthodes (voir withDocumentSections). */
+    const parts = withDocumentSections(groupManuscriptParts(manuscript.body, { header })).map((p, i) => ({
+      key: `part${i}`, heading: p.heading, text: p.text, guessed: p.id || '', autoSection: p.autoSection || '',
       dest: p.id || focusSection || '', mode: 'append'
     }));
     const plan = buildManuscriptPlan(manuscript, { existingReferences: refs });
@@ -1318,8 +1328,8 @@ export const ProjectDetailModule = ({
     const picks = plan.entries.map((_, i) => i);
     const alreadyThere = plan.entries
       .filter((e) => entryKeys(e.entry).some((k) => existing.has(k))).length;
-    const headerFound = [header.title && 'title', header.authors && 'authors', header.affiliations && 'affiliations']
-      .filter(Boolean).length;
+    const headerMissing = ['title', 'authors', 'affiliations'].filter((f) => !String(header[f] || '').trim());
+    const headerFound = 3 - headerMissing.length;
     /* LE MÊME DOCUMENT DÉJÀ IMPORTÉ ? L'empreinte du texte est rangée dans le
        projet par chaque import réussi : un second import est signalé AVANT
        d'écrire, au lieu de doubler silencieusement tout le texte. */
@@ -1336,13 +1346,17 @@ export const ProjectDetailModule = ({
     setMsImport((d) => ({
       ...(d || {}), text: src, fileName: fileName || '', parts, plan, picks, busy: false, report: '',
       focusSection, header, body: manuscript.body, lines: header.lines || [], figures: figs,
+      htmlByText: html,
       headerPicks: (d && d.headerPicks) || defaultHeaderPicks,
       hash, previous, confirmRepeat: false,
       status: `${blocks.length} block(s) · ${parts.length} part(s) · ${plan.entries.length} reference(s)`
         + (alreadyThere ? ` (${alreadyThere} already in the project)` : '')
         + ` · ${plan.citations.length} citation(s)`
         + (figs.length ? ` · ${figs.length} figure(s)` : '')
-        + (headerFound ? ` · header: ${headerFound}/3 (title / authors / affiliations)` : '')
+        + (headerFound ? ` · header: ${headerFound}/3` : '')
+        + (headerMissing.length
+          ? ` · ⚠ no ${headerMissing.join(' / no ')} recognised — the lines of the document head are listed below, set the right one by hand`
+          : '')
         + (previous ? ' · ⚠ already imported once' : '')
     }));
   };
@@ -1351,10 +1365,12 @@ export const ProjectDetailModule = ({
     if (!file) return;
     setMsImport((d) => ({ ...(d || {}), busy: true, status: `Reading ${file.name}…` }));
     try {
-      /* Le document ENTIER : son texte (marqueurs de figure compris) ET ses
-         figures, pour qu'une image de l'article ne soit plus perdue. */
+      /* Le document ENTIER : son texte (marqueurs de figure compris), ses
+         figures, ET la mise en forme de ses paragraphes (un .docx : gras,
+         italique, exposants, indices) — pour qu'une image de l'article, ou sa
+         typographie, ne soit plus perdue. */
       const doc = await readManuscriptDocument(file);
-      analyseManuscript(doc.text, file.name, doc.figures);
+      analyseManuscript(doc.text, file.name, doc.figures, undefined, doc.htmlByText);
     } catch (err) {
       setMsImport((d) => ({ ...(d || {}), busy: false, status: `⚠ ${(err && err.message) || 'Could not read this document'}` }));
     }
@@ -1473,7 +1489,7 @@ export const ProjectDetailModule = ({
          deux parties peuvent porter le même intitulé (celles sans titre). */
       const previous = d.parts || [];
       const byHeading = new Map(previous.map((p) => [p.heading, p]));
-      const parts = groupManuscriptParts(d.body || [], { header }).map((p, i) => {
+      const parts = withDocumentSections(groupManuscriptParts(d.body || [], { header })).map((p, i) => {
         const old = (previous[i] && previous[i].heading === p.heading ? previous[i] : null)
           || byHeading.get(p.heading) || {};
         return {
@@ -1481,6 +1497,7 @@ export const ProjectDetailModule = ({
           heading: p.heading,
           text: p.text,
           guessed: p.id || '',
+          autoSection: p.autoSection || '',
           dest: old.dest !== undefined ? old.dest : (p.id || d.focusSection || ''),
           mode: old.mode || 'append'
         };
@@ -1546,6 +1563,11 @@ export const ProjectDetailModule = ({
        dans une section mais dans « 🧾 Title, authors & affiliations », mis en
        forme par headerTextFor (un auteur par ligne → une liste, etc.). */
     const headerTexts = [];
+    /* Les parties de MATÉRIEL ET MÉTHODES : leur texte va dans le champ
+       « 📋 Materials and Methods » du projet (celui que « ✏️ Edit text » du
+       projet et le document exporté impriment) — jamais dans « Results and
+       discussion » (voir METHODS_DEST / withDocumentSections). */
+    const mmTexts = [];
     d.parts.forEach((p) => {
       if (!p.dest) return;
       const converted = convertCitationsInText(p.text, numbers);
@@ -1562,10 +1584,28 @@ export const ProjectDetailModule = ({
         });
         return;
       }
+      if (p.dest === METHODS_DEST.id) {
+        /* Les figures d'un M&M importé restent les figures d'une SECTION (le
+           champ Materials and Methods est du texte) : « Results and
+           discussion », d'où l'utilisateur les reprendra. */
+        figureMarksIn(converted.text).forEach((mark) => {
+          figurePlacements.push({ section: 'discussion', index: mark.index, anchor: mark.anchor });
+        });
+        mmTexts.push(stripFigureMarks(converted.text));
+        return;
+      }
       figureMarksIn(converted.text).forEach((mark) => {
         figurePlacements.push({ section: p.dest, index: mark.index, anchor: mark.anchor });
       });
-      convertedParts.push({ dest: p.dest, mode: p.mode, text: stripFigureMarks(converted.text) });
+      convertedParts.push({
+        dest: p.dest,
+        mode: p.mode,
+        text: stripFigureMarks(converted.text),
+        /* LE TEXTE MIS EN FORME : les paragraphes gardent la typographie du
+           document (gras, italique, exposants, indices) et citations converties
+           — voir htmlFromManuscriptPart. */
+        html: htmlFromManuscriptPart(p.text, { htmlByText: d.htmlByText, numbers })
+      });
     });
     /* LES RÉFÉRENCES NUMÉROTÉES DU PROJET : une par entrée RETENUE de la
        bibliographie du document — cochée par l'utilisateur, déjà numérotée dans
@@ -1629,14 +1669,33 @@ export const ProjectDetailModule = ({
       headerFromText.push(dest.short);
       if (headerApplied.indexOf(dest.short) === -1) headerApplied.push(dest.short);
     });
+    /* 1 bis. Le MATÉRIEL ET MÉTHODES du manuscrit → le champ « 📋 Materials and
+       Methods » du projet : il est marqué « ✏️ edited » pour que
+       « 🔄 Update from tests » ne l'écrase pas en douce (l'utilisateur garde la
+       main sur le texte de l'article), et le document exporté l'imprime. */
+    const mmText = mmTexts.map((t) => String(t || '').trim()).filter(Boolean).join('\n\n');
+    const mmPatch = {};
+    if (mmText) {
+      mmPatch.materialsAndMethods = {
+        ...(project.materialsAndMethods || {}),
+        text: mmText,
+        edited: true,
+        editedAt: new Date().toISOString(),
+        imported: true,
+        source: 'manuscript-import'
+      };
+    }
     /* 2. Le texte → le contenu riche de la section : chaque [n] devient un LIEN
        vers la référence n (ancre #ref-n du document exporté + infobulle). Un
        numéro sans référence reste un nombre simple — jamais de lien mort. Les
-       parties qui visent la MÊME section s'AJOUTENT l'une à l'autre. */
+       parties qui visent la MÊME section s'AJOUTENT l'une à l'autre.
+       Le HTML écrit est celui du DOCUMENT quand il est connu (ses exposants, ses
+       indices, ses italiques — voir htmlFromManuscriptPart) : la typographie de
+       l'article ne se perd plus à l'import. */
     const titleFor = citationTitleFor(numbered.created);
     let linkedTotal = 0;
     convertedParts.forEach((c) => {
-      const html = linkCitationNumbers(htmlFromText(c.text), {
+      const html = linkCitationNumbers(c.html || htmlFromText(c.text), {
         numbers: numberSet, hrefFor: (n) => `#${citationAnchorId(n)}`, titleFor
       });
       linkedTotal += linkedCitationNumbers(html).size;
@@ -1651,13 +1710,14 @@ export const ProjectDetailModule = ({
       hash: d.hash || manuscriptFingerprint(d.text),
       fileName: d.fileName || '',
       at: new Date().toISOString(),
-      sections: convertedParts.map((c) => c.dest),
+      sections: [...convertedParts.map((c) => c.dest), ...(mmText ? [METHODS_DEST.id] : [])],
       references: numbered.created.length
     };
     const history = Array.isArray(project.msImports) ? project.msImports : [];
     const fullPatch = {
       ...patch,
       ...headerPatch,
+      ...mmPatch,
       bibliography: merged.list,
       references,
       ...(figRes.added ? { figures: figRes.figures } : {}),
@@ -1673,7 +1733,8 @@ export const ProjectDetailModule = ({
     setMsImport(null);   // la fenêtre se ferme : plus de second import par inadvertance
     const filled = d.parts.filter((p) => p.dest && !isHeaderDest(p.dest));
     const destLabel = (id) => (PROJECT_TEXT_SECTIONS.find((s) => s.id === id)
-      || HEADER_DESTS.find((s) => s.id === id) || {}).label || id;
+      || HEADER_DESTS.find((s) => s.id === id) || (id === METHODS_DEST.id ? METHODS_DEST : null)
+      || {}).label || id;
     setMsResult({
       ok: stored,
       undoProject: before,
@@ -1682,6 +1743,7 @@ export const ProjectDetailModule = ({
           ? `${filled.length} section(s) filled (${filled.map((p) => destLabel(p.dest)).join(', ')})`
           : 'no section filled'}`
         + (headerApplied.length ? ` · header: ${headerApplied.join(' + ')}` : '')
+        + (mmText ? ' · 📋 Materials & Methods replaced by the text of the document' : '')
         + (headerFromText.length
           ? ` (${headerFromText.join(' + ')} taken from the text — check “🧾 Title, authors & affiliations”)`
           : ''),
@@ -1939,7 +2001,12 @@ export const ProjectDetailModule = ({
        (voir HEADER_DESTS dans utils/manuscriptImport.js). */
     const destGroups = [
       { label: '🧾 Project header (title · authors · affiliations)', options: HEADER_DESTS },
-      { label: 'Sections of this page', options: PROJECT_TEXT_SECTIONS }
+      { label: 'Sections of this page', options: PROJECT_TEXT_SECTIONS },
+      /* Le Matériel et méthodes a son propre champ dans le projet (la section
+         « 📋 Materials and Methods » de cette page, que le document exporté
+         imprime) : un manuscrit importé n'a donc pas à verser ses méthodes dans
+         « Results and discussion » — l'article, lui, ne les y met pas non plus. */
+      { label: '📋 Materials & Methods of the project', options: [METHODS_DEST] }
     ];
     return (
       <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setMsImport(null)}>
@@ -1961,7 +2028,17 @@ export const ProjectDetailModule = ({
               The <b>title, authors and affiliations</b> of the paper are picked out of the text and shown in
               “Document header” below, line by line — and a part of the text that actually <i>is</i> the author list
               (a document that prints it under the abstract, for instance) can be redirected to the
-              <b> 🧾 project header</b> instead of being left in a section.
+              <b> 🧾 project header</b> instead of being left in a section. The author line keeps the
+              <b>superscripts</b> of the paper (Rossi¹, Bianchi²).
+            </p>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              <b>Sections are filled by the position of the parts</b>: everything between the Introduction and the
+              Conclusions goes to <b>💬 Results and Discussion</b> — whatever its heading says (“Results”,
+              “Discussion”, “Statistical analysis”…) — <b>except the Materials and Methods</b> (“Methods”,
+              “Experimental part”…), which goes to the project’s <b>📋 Materials and Methods</b> text, and except
+              Funding / Supporting information, which keep their own section. For a <b>.docx</b> the
+              <b> formatting of the document is kept</b> in the section: bold, italic, <sup>superscripts</sup> and
+              <sub>subscripts</sub> are imported as they are.
             </p>
             {msImport.focusSection && (
               <p className="text-[11px] text-violet-800 bg-violet-50 border border-violet-200 rounded-lg px-2 py-1.5">
@@ -2050,6 +2127,12 @@ export const ProjectDetailModule = ({
                                         placeholder={`No ${row.label.toLowerCase()} recognised in the document`}
                                         className={`${inputCls} text-xs`} />
                             )}
+                            {!String(msImport.header[row.field] || '').trim() && (
+                              <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
+                                ⚠ No {row.label.toLowerCase()} recognised in the document — set the role of the right line
+                                in the list above to “{row.label}”, or type {row.label === 'Title' ? 'it' : 'them'} here.
+                              </span>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -2107,6 +2190,19 @@ export const ProjectDetailModule = ({
                             affiliations keep one line each. It disappears from the sections of this page.
                           </p>
                         )}
+                        {p.dest === METHODS_DEST.id && (
+                          <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-1">
+                            📋 The Materials &amp; Methods of the paper go to the project’s own
+                            <b> Materials and Methods</b> text (the “📋 Materials and Methods” section of this page — the
+                            exported document prints it). It is not mixed into “Results and Discussion”.
+                          </p>
+                        )}
+                        {p.dest === 'discussion' && p.autoSection === 'discussion' && (
+                          <p className="text-[10px] text-indigo-700 bg-indigo-50 border border-indigo-200 rounded px-1.5 py-1">
+                            💬 Between the Introduction and the Conclusions, this part goes to
+                            <b> Results and Discussion</b> — its own heading has no equivalent section here.
+                          </p>
+                        )}
                         <p className="text-[10px] text-slate-400 italic truncate">{p.text.slice(0, 160)}…</p>
                       </div>
                     ))}
@@ -2114,7 +2210,10 @@ export const ProjectDetailModule = ({
                   <p className="text-[10px] text-slate-500 mt-1.5">
                     Each part goes to a section of this page — or to the <b>project header</b> when the document put its
                     authors or affiliations in the middle of the text (choose “🧾 Authors” / “🧾 Affiliations” above):
-                    nothing is left in “Background” by mistake.
+                    nothing is left in “Background” by mistake. The destination is already chosen by the <b>position</b>
+                    of the part (Introduction → Conclusions ⇒ <b>Results and Discussion</b>, except the
+                    Materials and Methods ⇒ the project’s <b>📋 Materials and Methods</b> text): change it here if the
+                    document says otherwise.
                   </p>
                 </div>
 

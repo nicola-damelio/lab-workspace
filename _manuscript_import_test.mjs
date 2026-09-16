@@ -248,12 +248,15 @@ const headerBlocks = MS.blocksFromText(HEADER_DOC);
 const headerManuscript = MS.splitManuscript(headerBlocks);
 const header = MS.parseManuscriptHeader(headerManuscript.body);
 eq(header.title, 'Aphid transmission of a new potyvirus infecting pepper crops in Italy', 'le TITRE du document est reconnu');
-/* Le champ « Authors » est une liste de NOMS : les NUMÉROS d'affiliation du
-   document (« Rossi1 ») sont retirés (voir cleanAuthorLine) — un « [1] » resté
-   collé à un nom se lirait comme un renvoi de citation, et le document imprimé
-   montrerait « Rossi[1] » au lieu de « Rossi ». Les affiliations, elles, gardent
-   leur numérotation : c'est là qu'on lit la correspondance. */
-eq(header.authors, 'Mario Rossi, Anna Bianchi, Jean Dupont', '…la liste des auteurs, sans les numéros d’affiliation');
+/* Le champ « Authors » est une liste de noms qui GARDE la mise en forme du
+   document : les numéros d'affiliation deviennent de VRAIS exposants
+   (« Mario Rossi¹ »), comme dans l'article — l'utilisateur refuse de perdre les
+   exposants de la liste des auteurs (« c'est dommage de perdre la mise en
+   forme »). Les crochets disparaissent au passage (« Rossi[1] » → « Rossi¹ ») :
+   un exposant ne se lit jamais comme un renvoi de citation. Les affiliations
+   gardent leur numérotation : c'est là qu'on lit la correspondance. */
+eq(header.authors, 'Mario Rossi\u00b9, Anna Bianchi\u00b9, Jean Dupont\u00b2',
+  '…la liste des auteurs, avec ses exposants d’affiliation');
 eq(header.affiliations.split('\n').length, 2, '…et les deux affiliations');
 ok(header.affiliations.includes('Dipartimento') && header.affiliations.includes('INRAE'),
   'chaque affiliation garde son texte (une ligne par affiliation)');
@@ -321,8 +324,8 @@ const lettersHeader = authorsOf([
   'b INRAE, Villenave d Ornon, France',
   '* Corresponding author: mario.rossi@unina.it'
 ]);
-eq(lettersHeader.authors, 'Mario Rossi, Anna Bianchi, Jean Dupont',
-  'les AUTEURS sont reconnus quand le marqueur d’affiliation est une LETTRE');
+eq(lettersHeader.authors, 'Mario Rossi\u1d43, Anna Bianchi\u1d47,*, Jean Dupont\u1d9c',
+  'les AUTEURS sont reconnus quand le marqueur d’affiliation est une LETTRE (lettres en exposant)');
 eq(lettersHeader.affiliations.split('\n').length, 3, '…et leurs deux adresses + l’auteur correspondant');
 eq(lettersHeader.affiliations.split('\n')[2], '* Corresponding author: mario.rossi@unina.it',
   'l’e-mail du correspondant est la DERNIÈRE ligne des affiliations');
@@ -347,8 +350,8 @@ const docxMarkHeader = authorsOf([
   '1 Dipartimento di Agraria, Universita di Napoli, Portici, Italy',
   '2 INRAE, Villenave d Ornon, France'
 ]);
-eq(docxMarkHeader.authors, 'Mario Rossi, Anna Bianchi, Jean Dupont',
-  'les exposants d’un .docx (« Rossi[1] ») ne restent pas collés aux noms du champ Authors');
+eq(docxMarkHeader.authors, 'Mario Rossi\u00b9, Anna Bianchi\u00b9, Jean Dupont\u00b2',
+  'les exposants d’un .docx (« Rossi[1] ») deviennent des exposants du champ Authors');
 eq(docxMarkHeader.title, 'Aphid transmission of a new potyvirus in pepper crops', '…et le titre reste le titre');
 
 /* Les marqueurs partent, les INITIALES restent : « Rossi B » est un auteur. */
@@ -358,12 +361,24 @@ eq(MS.stripAffilMarks('Jean Dupont (3)'), 'Jean Dupont', '« Dupont (3) » → �
 eq(MS.stripAffilMarks('Rossi B'), 'Rossi B', 'une INITIALE (« Rossi B ») n’est jamais retirée');
 eq(MS.cleanAuthorLine('Rossi M, Bianchi A, Costa L'), 'Rossi M, Bianchi A, Costa L',
   'la convention « Nom Initiales » du laboratoire reste intacte');
+/* La mise en forme d'un nom est GARDÉE, en vrais exposants : c'est la demande de
+   l'utilisateur (« dommage de perdre les exposants de la liste des auteurs »). */
+eq(MS.cleanAuthorLine('Mario Rossi1, Anna Bianchi1, Jean Dupont2'),
+  'Mario Rossi\u00b9, Anna Bianchi\u00b9, Jean Dupont\u00b2', '« Rossi1 » → « Rossi¹ »');
+eq(MS.cleanAuthorLine('Mario Rossi [1,2], Anna Bianchi (3)'),
+  'Mario Rossi\u00b9,\u00b2, Anna Bianchi\u00b3', 'les numéros multiples et entre parenthèses aussi');
+eq(MS.cleanAuthorLine('Mario Rossi a, Anna Bianchi b'),
+  'Mario Rossi\u1d43, Anna Bianchi\u1d47', 'une lettre de laboratoire devient un exposant');
+eq(MS.cleanAuthorLine('Rossi B, Bianchi A'), 'Rossi B, Bianchi A',
+  '…mais une INITIALE en majuscule n’est jamais touchée');
+eq(MS.cleanAuthorLine('Mario Rossi1*, Anna Bianchi2'), 'Mario Rossi\u00b9*, Anna Bianchi\u00b2',
+  'l’astérisque de l’auteur correspondant reste avec son numéro');
 
 /* ── 11. Câblage : l'en-tête entre dans le PROJET, pas dans une section ───── */
 has(PROJ, 'const header = parseManuscriptHeader(manuscript.body);',
   'la page projet lit l’en-tête du document');
-has(PROJ, 'const parts = groupManuscriptParts(manuscript.body, { header }).map((p, i) => ({',
-  '…et le retire des parties importées');
+has(PROJ, 'const parts = withDocumentSections(groupManuscriptParts(manuscript.body, { header })).map((p, i) => ({',
+  '…et le retire des parties importées, en donnant à chacune sa SECTION par sa position');
 has(PROJ, 'header: null, headerPicks: null,',
   'la fenêtre d’import part sans en-tête : il est lu à l’analyse du document');
 has(PROJ, 'const defaultHeaderPicks = {',
@@ -405,16 +420,16 @@ const TAIL = ['', 'Introduction', 'Pepper crops are affected (Rossi et al., 2018
 const dB = parseDoc([TITLE, 'Anna Bianchi1', 'Mario Rossi2', AFF1, AFF2, ...TAIL]);
 const hB = dB.header;
 eq(hB.title, TITLE, 'un auteur par ligne : le titre reste le titre');
-eq(hB.authors, 'Anna Bianchi, Mario Rossi', '…et les deux auteurs sont réunis (leurs n° d’affiliation retirés)');
+eq(hB.authors, 'Anna Bianchi\u00b9, Mario Rossi\u00b2', '…et les deux auteurs sont réunis (leurs n° d’affiliation en exposant)');
 eq(hB.affiliations.split('\n').length, 2, '…avec leurs deux affiliations');
 eq(dB.parts.map((p) => p.heading), ['Introduction'], 'seule la vraie section reste à importer');
 ok(!JSON.stringify(dB.parts).includes('Bianchi'), 'les auteurs ne retombent pas dans les sections');
 
 /* Exposants entre parenthèses : « Anna Bianchi (1), Mario Rossi (2) ». La ligne
-   est bien une liste d'AUTEURS ; le numéro de laboratoire, lui, est retiré du
-   champ « Authors » (il reste lisible dans les affiliations). */
+   est bien une liste d'AUTEURS ; le numéro de laboratoire devient un exposant du
+   nom (il reste aussi, en clair, dans les affiliations). */
 eq(headerOf([TITLE, 'Anna Bianchi (1), Mario Rossi (2), Jean Dupont (1)', AFF1, AFF2, ...TAIL]).authors,
-  'Anna Bianchi, Mario Rossi, Jean Dupont', 'les exposants entre parenthèses sont des auteurs (numéros retirés)');
+  'Anna Bianchi\u00b9, Mario Rossi\u00b2, Jean Dupont\u00b9', 'les exposants entre parenthèses sont des auteurs');
 
 /* Deux auteurs SANS initiale pointée ni exposant : c'est la position qui tranche. */
 const dD = parseDoc([TITLE, 'Anna Bianchi, Mario Rossi',
@@ -428,21 +443,21 @@ const hE = headerOf(['Journal of General Virology', 'Research Article',
   'Anna Bianchi1, Mario Rossi2', AFF1, AFF2, ...TAIL]);
 eq(hE.title, 'Aphid transmission of a new potyvirus infecting pepper crops',
   '« Journal of… » et « Research Article » ne sont pas pris pour le titre');
-eq(hE.authors, 'Anna Bianchi, Mario Rossi', '…les auteurs restent reconnus (numéros d’affiliation retirés)');
+eq(hE.authors, 'Anna Bianchi\u00b9, Mario Rossi\u00b2', '…les auteurs restent reconnus (numéros d’affiliation en exposant)');
 
 /* DOI + date de soumission avant le titre : ils ne sont plus importés non plus. */
 const DOI_DOC = ['https://doi.org/10.1099/jgv.0.001234', 'Received: 12 January 2024',
   TITLE, 'Anna Bianchi1, Mario Rossi2', AFF1, ...TAIL];
 const dF = parseDoc(DOI_DOC);
 eq(dF.header.title, TITLE, 'le DOI et la date ne cachent plus le titre');
-eq(dF.header.authors, 'Anna Bianchi, Mario Rossi', '…ni les auteurs');
+eq(dF.header.authors, 'Anna Bianchi\u00b9, Mario Rossi\u00b2', '…ni les auteurs');
 eq(dF.parts.map((p) => p.heading), ['Introduction'], 'DOI et date ne sont pas importés comme du texte');
 
 /* Métadonnées APRÈS les affiliations : elles ne deviennent pas une section. */
 const META_DOC = [TITLE, 'Anna Bianchi1, Mario Rossi2', AFF1,
   '', 'Correspondence: anna.bianchi@unina.it', 'Keywords: potyvirus, aphid', ...TAIL];
 const dH = parseDoc(META_DOC);
-eq(dH.header.authors, 'Anna Bianchi, Mario Rossi', 'les métadonnées après les affiliations ne cassent pas l’en-tête');
+eq(dH.header.authors, 'Anna Bianchi\u00b9, Mario Rossi\u00b2', 'les métadonnées après les affiliations ne cassent pas l’en-tête');
 eq(dH.header.affiliations.split('\n').length, 2,
   'l’e-mail de correspondance reste une AFFILIATION (il n’est plus jeté comme métadonnée)');
 eq(dH.parts.map((p) => p.heading), ['Introduction'], '« Correspondence » et « Keywords » sont écartés de l’import');
@@ -458,7 +473,7 @@ eq(headerOf([TITLE, 'Bianchi A, et al.',
 /* Exposants COLLÉS par l'export : « Bianchi1* », « Dupont1,2 », « 1Dipartimento… ». */
 const hK = headerOf([TITLE, 'Anna Bianchi1*, Mario Rossi2, Jean Dupont1,2',
   '1Dipartimento di Agraria, Universita di Napoli, Italy', '2INRAE, Villenave d Ornon, France', ...TAIL]);
-eq(hK.authors, 'Anna Bianchi, Mario Rossi, Jean Dupont', 'exposants collés et doubles (« 1,2 ») reconnus, puis retirés des noms');
+eq(hK.authors, 'Anna Bianchi\u00b9*, Mario Rossi\u00b2, Jean Dupont\u00b9,\u00b2', 'exposants collés et doubles (« 1,2 ») reconnus, puis écrits en exposant');
 eq(hK.affiliations.split('\n').length, 2, 'une affiliation collée à son marqueur reste une affiliation');
 
 /* Titre en MAJUSCULES (très fréquent) : ce n'est pas un intitulé de section. */
@@ -527,7 +542,8 @@ ok(IMGB.includes('<option value="funding">Funding</option>')
 has(PROJ, "from '../../utils/referenceLinks'", 'la page projet utilise le module de liens de citation');
 has(PROJ, 'const numberSet = referenceNumbers(references);',
   'les numéros de TOUTES les références retenues comptent comme des références valides');
-has(PROJ, 'linkCitationNumbers(htmlFromText(c.text)', 'à l’import, chaque [n] du texte devient un lien');
+has(PROJ, 'linkCitationNumbers(c.html || htmlFromText(c.text)',
+  'à l’import, chaque [n] du texte devient un lien (avec la mise en forme du document quand elle est connue)');
 has(PROJ, '🔗 Link citations to references', '…et un bouton rattrape les textes déjà importés');
 has(PROJ, 'const res = linkCitationsInSections(', '…en repassant sur TOUTES les sections de texte');
 has(PROJ, 'citation(s) linked to their reference', 'l’import annonce combien de citations ont été liées');
@@ -565,7 +581,7 @@ const FULL_DOC = [
 const pageMs = MS.splitManuscript(MS.blocksFromText(FULL_DOC));
 const pageHeader = MS.parseManuscriptHeader(pageMs.body);
 eq([pageHeader.title, pageHeader.authors, pageHeader.affiliations.split('\n').length],
-  ['Aphid transmission of a new potyvirus infecting pepper crops', 'Anna Bianchi, Mario Rossi', 2],
+  ['Aphid transmission of a new potyvirus infecting pepper crops', 'Anna Bianchi\u00b9, Mario Rossi\u00b2', 2],
   'l’en-tête de l’article est reconnu (titre / auteurs / affiliations)');
 const pagePlan = MS.buildManuscriptPlan(pageMs, { existingReferences: [] });
 eq(pagePlan.entries.length, 2, 'les deux références de la bibliographie sont lues');
@@ -806,7 +822,7 @@ const LATE_DOC = [
 const LATE_MS = MS.splitManuscript(MS.blocksFromText(LATE_DOC));
 const lateHeader = MS.parseManuscriptHeader(LATE_MS.body);
 eq(lateHeader.title, 'Aphid transmission of a new potyvirus infecting pepper crops', 'le titre reste reconnu');
-eq(lateHeader.authors, 'Anna Bianchi, Mario Rossi', 'les auteurs sous le résumé sont retrouvés (repli)');
+eq(lateHeader.authors, 'Anna Bianchi\u00b9, Mario Rossi\u00b2', 'les auteurs sous le résumé sont retrouvés (repli)');
 eq(lateHeader.affiliations.split('\n').length, 2, '…avec leurs deux affiliations');
 ok(lateHeader.lines.some((l) => l.role === 'authors' && l.text.includes('Mario Rossi')),
   'la ligne des auteurs est PROPOSÉE dans la fenêtre d’import (rôle compris)');
@@ -975,6 +991,199 @@ eq(RL.linkCitationNumbers(MS.htmlFromText('See [9].'), {
 }).includes('data-ref'), false, 'un « [9] » sans référence reste un simple nombre');
 has(PROJ, 'citation number(s) have no reference in this project',
   '…et le compte rendu les liste (avec la marche à suivre)');
+
+/* ── 22. LES AUTEURS QU'ON NE RECONNAISSAIT TOUJOURS PAS ──────────────────────
+   « les auteurs ne sont toujours pas reconnus à l'import du manuscrit ». Quatre
+   écritures réelles qui laissaient le champ « Authors » VIDE — un champ vide ne
+   dit rien à personne, et la liste disparaissait même du texte importé. */
+
+/* (a) une image de la page de titre entre le titre et les auteurs : la ligne
+   n'est plus la suivante IMMÉDIATE du titre. */
+const GAP_DOC = [
+  TITLE,
+  '[[FIGURE 1]]',
+  'Mario Rossi, Anna Bianchi',
+  'Dipartimento di Agraria, Universita di Napoli, Portici, Italy',
+  ...TAIL
+];
+const gapHeader = MS.parseManuscriptHeader(MS.blocksFromText(GAP_DOC.join('\n')));
+eq(gapHeader.authors, 'Mario Rossi, Anna Bianchi',
+  'une image entre le titre et les auteurs ne fait plus perdre les auteurs');
+
+/* (b) « M. Rossi, A. Bianchi » (initiale AVANT le nom, style Nature) : les trois
+   lecteurs stricts la refusent, le repli de position la PROPOSE. */
+const iniHeader = MS.parseManuscriptHeader(MS.blocksFromText([TITLE, 'M. Rossi, A. Bianchi', AFF1, AFF2, ...TAIL].join('\n')));
+eq(iniHeader.authors, 'M. Rossi, A. Bianchi', '« M. Rossi, A. Bianchi » est reconnue (initiale avant le nom)');
+ok(iniHeader.lines.some((l) => l.role === 'authors' && l.text.includes('M. Rossi')),
+  '…et la ligne est bien proposée avec le rôle « Authors » dans la fenêtre');
+
+/* (c) tout en majuscules : « ROSSI M, BIANCHI A ». */
+eq(MS.parseManuscriptHeader(MS.blocksFromText([TITLE, 'ROSSI M, BIANCHI A', AFF1, ...TAIL].join('\n'))).authors,
+  'ROSSI M, BIANCHI A', 'une liste d’auteurs en majuscules est reconnue');
+
+/* (d) le TITRE n'est pas reconnu : les auteurs ne doivent pas être perdus pour
+   autant (avant, un titre manquant vidait aussi le champ « Authors »). */
+const noTitleHeader = MS.parseManuscriptHeader(MS.blocksFromText(
+  ['Mario Rossi, Anna Bianchi', AFF1, AFF2, ...TAIL].join('\n')
+));
+ok(noTitleHeader.authors.includes('Mario Rossi'), 'sans titre reconnu, les auteurs sont quand même reconnus');
+
+/* Ce que le repli REFUSE : une seconde ligne de titre (mots de liaison), un
+   intitulé de section, une adresse, une phrase. */
+ok(!MS.looksLikeLooseAuthorLine('A New Virus Species in the Family Potyviridae'),
+  'une seconde ligne de titre (mots de liaison) n’est pas une liste d’auteurs');
+ok(!MS.looksLikeLooseAuthorLine('Statistical analysis'), 'un intitulé de méthode non plus');
+ok(!MS.looksLikeLooseAuthorLine('Dipartimento di Agraria, Universita di Napoli, Portici, Italy'),
+  'une adresse non plus');
+ok(!MS.looksLikeLooseAuthorLine('Plants were grown in a greenhouse at 22 degrees.'), 'une phrase non plus');
+ok(MS.looksLikeLooseAuthorLine('van der Berg, Anna Rossi'), 'mais « van der Berg, Anna Rossi » en est une');
+
+/* (e) AUCUNE ligne d'en-tête reconnue : la fenêtre montre les premières lignes
+   (en « keep ») pour que l'utilisateur désigne lui-même le titre / les auteurs. */
+const noWindowHeader = MS.parseManuscriptHeader(MS.blocksFromText(
+  ['Aphids transmit potyviruses [1]. Pepper crops are affected.', '', 'Introduction', 'More text.'].join('\n')
+));
+eq([noWindowHeader.title, noWindowHeader.authors], ['', ''], 'un document sans en-tête donne trois champs vides');
+ok(noWindowHeader.lines.length > 0 && noWindowHeader.lines.every((l) => l.role === MS.KEEP_ROLE),
+  '…mais ses premières lignes sont MONTRÉES (rôle « keep ») : l’utilisateur peut les désigner');
+
+/* ── 23. « ENTRE L'INTRODUCTION ET LES CONCLUSIONS : RESULTS AND DISCUSSION,
+   SAUF LE MATÉRIEL ET MÉTHODES » ─────────────────────────────────────────── */
+const RULE_DOC = [
+  'Abstract',
+  'Aphids transmit potyviruses.',
+  '',
+  'Introduction',
+  'Potyviruses are a large genus.',
+  '',
+  'Materials and Methods',
+  'Aphids were reared on pepper plants.',
+  '',
+  'Statistical analysis',
+  'Data were analysed with R.',
+  '',
+  'Results',
+  'The virus was detected in 40% of the samples.',
+  '',
+  'Results and discussion',
+  'Our data agree with Rossi et al.',
+  '',
+  'Funding',
+  'PRIN 2022.',
+  '',
+  'Conclusions',
+  'Potyviruses spread through aphids.',
+  '',
+  'References',
+  '[1] Rossi M. Characterization of a potyvirus. J Virol 2018;12:345-356.'
+].join('\n');
+const RULE_MS = MS.splitManuscript(MS.blocksFromText(RULE_DOC));
+const ruleParts = MS.withDocumentSections(
+  MS.groupManuscriptParts(RULE_MS.body, { header: MS.parseManuscriptHeader(RULE_MS.body) })
+);
+eq(ruleParts.map((p) => [p.heading, p.id]), [
+  ['Abstract', 'background'],
+  ['Introduction', 'background'],
+  ['Materials and Methods', MS.METHODS_DEST.id],
+  ['Statistical analysis', MS.METHODS_DEST.id],
+  ['Results', 'discussion'],
+  ['Results and discussion', 'discussion'],
+  ['Funding', 'funding'],
+  ['Conclusions', 'conclusions']
+], 'les parties reçoivent la section que leur POSITION implique (M&M à part)');
+eq(ruleParts.find((p) => p.heading === 'Results').autoSection, 'discussion',
+  '…et la partie sait que c’est la règle de position qui l’a décidée (montrée dans la fenêtre)');
+ok(ruleParts.find((p) => p.heading === 'Statistical analysis').id === MS.METHODS_DEST.id,
+  'une sous-section de méthodes reste avec les méthodes (elle n’est pas des « résultats »)');
+
+/* Les intitulés de Matériel et méthodes, anglais et français. */
+ok(['Materials and Methods', 'Methods', 'Experimental part', 'Experimental procedures',
+  'Partie expérimentale', 'Statistical analysis', 'DNA extraction'].every((h) => MS.METHODS_HEADING_RE.test(h)),
+  'les intitulés de Matériel et méthodes sont reconnus (anglais et français)');
+ok(!MS.METHODS_HEADING_RE.test('Results') && !MS.METHODS_HEADING_RE.test('Discussion'),
+  '« Results » et « Discussion » n’en sont pas');
+eq(MS.METHODS_DEST.id, 'materialsAndMethods',
+  'le Matériel et méthodes vise le champ « Materials and Methods » du projet');
+
+/* Rien n'est deviné HORS de la zone : après les Conclusions, une partie qui ne
+   dit rien à personne reste à choisir (dest « — do not import — »). */
+const afterConc = MS.withDocumentSections(MS.groupManuscriptParts(
+  MS.splitManuscript(MS.blocksFromText([
+    'Introduction', 'Text.', '', 'Results', 'Text.', '', 'Conclusions', 'Text.', '', 'Additional experiments', 'Text.'
+  ].join('\n'))).body, {}
+));
+eq(afterConc.map((p) => [p.heading, p.id]),
+  [['Introduction', 'background'], ['Results', 'discussion'], ['Conclusions', 'conclusions'], ['Additional experiments', '']],
+  'après les Conclusions, aucune section n’est devinée');
+/* Un chapeau sans intitulé (le résumé imprimé avant le premier titre) n'est
+   JAMAIS versé dans « Results and discussion » : la fenêtre demande. */
+const leadPart = MS.withDocumentSections(MS.groupManuscriptParts(
+  MS.splitManuscript(MS.blocksFromText(['Aphids transmit potyviruses.', '', 'Introduction', 'Text.'].join('\n'))).body, {}
+));
+eq(leadPart.map((p) => [p.heading, p.id]), [['', ''], ['Introduction', 'background']],
+  'le chapeau sans intitulé reste à choisir (il n’est pas « Results and discussion »)');
+
+/* ── 24. LA MISE EN FORME DU .docx VA DANS LA SECTION ───────────────────────── */
+const FMT_DOCX = zipSync({
+  'word/document.xml': strToU8([
+    '<?xml version="1.0" encoding="UTF-8"?><w:document><w:body>',
+    '<w:p><w:r><w:t>Introduction</w:t></w:r></w:p>',
+    '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Bold</w:t></w:r>',
+    '<w:r><w:t xml:space="preserve"> and </w:t></w:r>',
+    '<w:r><w:rPr><w:i/></w:rPr><w:t>italics</w:t></w:r>',
+    '<w:r><w:t>, H</w:t></w:r>',
+    '<w:r><w:rPr><w:vertAlign w:val="subscript"/></w:rPr><w:t>2</w:t></w:r>',
+    '<w:r><w:t>O, 10</w:t></w:r>',
+    '<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:t>9</w:t></w:r>',
+    '<w:r><w:t> virions as shown before</w:t></w:r>',
+    '<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:t>12</w:t></w:r>',
+    '<w:r><w:t>.</w:t></w:r></w:p>',
+    '</w:body></w:document>'
+  ].join(''))
+});
+const fmtDoc = MS.docxManuscriptFromBytes(FMT_DOCX);
+const fmtLine = 'Bold and italics, H2O, 109 virions as shown before[12].';
+eq(fmtDoc.text, `Introduction\n\n${fmtLine}`,
+  'le renvoi en exposant devient son marqueur [12] (comme avant), le reste du texte est intact');
+ok(fmtDoc.htmlByText && fmtDoc.htmlByText.get(fmtLine),
+  '…et la MISE EN FORME du paragraphe est gardée à part (htmlByText)');
+eq(fmtDoc.htmlByText.get(fmtLine)[0],
+  '<strong>Bold</strong> and <em>italics</em>, H<sub>2</sub>O, 10<sup>9</sup> virions as shown before[12].',
+  'gras, italique, indice et exposant sont conservés — la citation reste « [12] », pas un exposant');
+ok(!fmtDoc.htmlByText.get(fmtLine)[0].includes('<sup>[12]</sup>'),
+  'la citation ne redevient pas un exposant : le lien vers la référence doit rester lisible');
+
+/* Le HTML d'une partie : marqueurs de figure retirés, mise en forme reprise,
+   citations converties dans les numéros du PROJET. */
+eq(MS.htmlFromManuscriptPart(`[[FIGURE 1]]\n${fmtLine}`,
+  { htmlByText: fmtDoc.htmlByText, numbers: new Map([['#12', 5]]) }),
+'<strong>Bold</strong> and <em>italics</em>, H<sub>2</sub>O, 10<sup>9</sup> virions as shown before[5].',
+'la partie garde sa typographie, perd son marqueur de figure et prend le numéro du projet');
+/* Un document sans mise en forme (texte collé) garde le HTML d'avant. */
+eq(MS.htmlFromManuscriptPart('H2O and [12].', { numbers: new Map([['#12', 5]]) }),
+  'H2O and [5].', 'sans mise en forme connue, le texte est simplement échappé');
+
+/* Les blocs portent leur HTML : c'est lui qui traverse le découpage. */
+const fmtBlocks = MS.blocksFromText(fmtDoc.text, { htmlByText: fmtDoc.htmlByText });
+eq(fmtBlocks.map((b) => [b.text.slice(0, 9), !!b.html]), [['Introduct', false], ['Bold and ', true]],
+  'seul le paragraphe mis en forme porte son HTML');
+
+/* ── 25. CÂBLAGE : sections par position, Matériel et méthodes, typographie ── */
+has(PROJ, 'withDocumentSections(groupManuscriptParts', 'la page projet donne aux parties leur section par position');
+has(PROJ, 'const headerMissing = [\'title\', \'authors\', \'affiliations\'].filter',
+  'la fenêtre d’import dit ce qui N’A PAS été reconnu');
+has(PROJ, 'no ${headerMissing.join(\' / no \')} recognised',
+  '…et elle dit où le reprendre à la main');
+has(PROJ, 'METHODS_DEST.id', 'le Matériel et méthodes a sa destination propre');
+has(PROJ, 'mmPatch.materialsAndMethods = {',
+  'son texte va dans le champ « 📋 Materials and Methods » du projet');
+has(PROJ, 'imported: true', '…et il est marqué comme venu d’un manuscrit (jamais écrasé en douce)');
+has(PROJ, 'html: htmlFromManuscriptPart(p.text, { htmlByText: d.htmlByText, numbers })',
+  'le texte importé reprend la typographie du document');
+has(PROJ, 'analyseManuscript(doc.text, file.name, doc.figures, undefined, doc.htmlByText)',
+  '…et le .docx transmet sa mise en forme à l’analyse');
+has(PROJ, 'No {row.label.toLowerCase()} recognised in the document — set the role of the right line',
+  'un champ d’en-tête vide est signalé dans la fenêtre, avec la marche à suivre');
 
 console.log(`✅ ${passed} tests passés (manuscrit — blocs / parties / en-tête / sections / liens / figures)`);
 
