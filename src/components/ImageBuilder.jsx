@@ -3367,7 +3367,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
               <select value={insertTarget.section} onChange={(e) => setInsertTarget({ ...insertTarget, section: e.target.value })}
                 className="border border-slate-300 rounded px-2 py-1.5 text-xs bg-white">
                 <option value="background">Background</option>
-                <option value="discussion">Discussion</option>
+                <option value="discussion">Results and Discussion</option>
                 <option value="conclusions">Conclusions</option>
                 <option value="funding">Funding</option>
                 <option value="supporting">Supporting information</option>

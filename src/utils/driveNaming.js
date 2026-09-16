@@ -49,6 +49,22 @@ export const suggestDriveFileName = ({
   return slug || kind || 'file';
 };
 
+/** Alias des TITRES de section d'un PROJET → nom de dossier Drive HISTORIQUE.
+ *  Un titre affiché peut évoluer (« Discussion » s'appelle aujourd'hui
+ *  « Results and Discussion ») sans que les documents déjà envoyés changent de
+ *  dossier : le dossier garde le nom d'origine, donc un seul dossier existe et
+ *  l'emplacement affiché (« 📁 Drive location ») est le vrai. */
+const PROJECT_SECTION_FOLDER_ALIASES = {
+  'results and discussion': 'Discussion',
+  'results & discussion': 'Discussion'
+};
+
+/** Le nom de dossier Drive d'une section de projet, indépendant du titre montré. */
+export const projectSectionFolderAlias = (label) => {
+  const raw = String(label || '').trim();
+  return PROJECT_SECTION_FOLDER_ALIASES[raw.toLowerCase()] || raw;
+};
+
 /** The Drive folder path (folder NAMES only) that mirrors the app schema:
  *  [project, test, instance, section] for test files — the instance comes right
  *  after the test and the SECTION (e.g. Data/Setup/Report) is the leaf folder;
@@ -71,7 +87,7 @@ export const driveFolderPath = (ctx = {}) => {
     segs.push(ctx.test);
     if (ctx.instance) segs.push(ctx.instance);
   }
-  if (ctx.section) segs.push(ctx.section);
+  if (ctx.section) segs.push(ctx.test ? ctx.section : projectSectionFolderAlias(ctx.section));
   return segs.map(sanitizeSlug).filter(Boolean);
 };
 

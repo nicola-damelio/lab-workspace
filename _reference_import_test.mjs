@@ -649,6 +649,50 @@ eq(normalizeAuthorList('Rossi M, Bianchi A'), 'Rossi M, Bianchi A', 'deux auteur
 eq(normalizeAuthorList('Lu WJ, Lee NP, Kaul SC, et al.'), 'Lu WJ, Lee NP, Kaul SC, et al.',
   'style Vancouver (initiales sans points) : la liste complète est gardée');
 
+
+/* ── 18. LES RÉFÉRENCES ÉCRITES PARTIELLEMENT ───────────────────────────────
+   Une bibliographie réelle est rarement complète : il manque un titre, un ou
+   plusieurs auteurs, la revue… Tout ce qui est ÉCRIT est lu — rien n'est
+   inventé — et une entrée SANS TITRE n'est plus jetée quand elle porte un
+   NUMÉRO : c'est le « [12] » du texte qui doit pouvoir être lié (sinon le
+   bouton « 🔗 Link citations » répond « Nothing to link »). */
+const noTitle = parseReferences(
+  '12. Smith J, Rossi M. 2019. J Virol 92, 345-356. doi:10.1128/JVI.01234-18',
+  { split: 'line' }
+)[0];
+eq([noTitle.number, noTitle.title, noTitle.journal, noTitle.volume, noTitle.pages, noTitle.year],
+  [12, '', 'J Virol', '92', '345-356', '2019'],
+  'sans titre : la revue, le volume, les pages et l’année écrits sont reconstruits — le titre, lui, n’est pas inventé');
+eq(noTitle.doi, '10.1128/JVI.01234-18', '…et le DOI est gardé');
+
+const titleOnly = parseReferences('Membrane dynamics of antimicrobial peptides (2019).', { split: 'line' })[0];
+eq([titleOnly.title, titleOnly.authors, titleOnly.year],
+  ['Membrane dynamics of antimicrobial peptides', '', '2019'],
+  'sans auteurs : le titre reste le TITRE (il partait dans les auteurs, et l’entrée entière était jetée)');
+
+const etAlOnly = parseReferences('5. Lu W-J, et al. (2011).', { split: 'line' });
+eq([etAlOnly.length, etAlOnly[0].number, etAlOnly[0].title, etAlOnly[0].year], [1, 5, '', '2011'],
+  'une entrée numérotée SANS TITRE est importée : le « [5] » du texte pourra être lié');
+ok(/^Lu W-J/.test(etAlOnly[0].authors) && /et\s*al/i.test(etAlOnly[0].authors),
+  '…avec les auteurs écrits (marqueur « et al. » compris)');
+
+const authorsOnly = parseReferences('Rossi M, Bianchi A. (2019).', { split: 'line' });
+eq([authorsOnly.length, authorsOnly[0].title, authorsOnly[0].authors], [1, '', 'Rossi M, Bianchi A'],
+  'auteurs + année seuls : l’entrée est gardée, son titre (absent de la source) reste vide et se complète à la main');
+
+/* Ce qui n'est PAS une référence ne le devient pas : sans titre, la note exigée
+   est plus haute — une phrase du corps du texte reste ignorée. */
+eq(parseReferences('Aphid transmission of a potyvirus in pepper crops.', { split: 'line' }).length, 0,
+  'une phrase du texte (ni titre reconnu, ni numéro) n’est pas importée');
+
+const partialJournal = parseReferences(
+  '3. Bianchi A, et al. Characterization of a new potyvirus. J Gen Virol 102(4), 001234. 2021.',
+  { split: 'line' }
+)[0];
+eq([partialJournal.journal, partialJournal.volume, partialJournal.pages, partialJournal.year],
+  ['J Gen Virol', '102', '001234', '2021'],
+  'revue + volume(issue) + numéro d’article : l’année en fin de queue ne les avale plus');
+
 console.log(`✅ ${passed} tests passés (import de références)`);
 
 

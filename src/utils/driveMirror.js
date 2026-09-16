@@ -20,8 +20,10 @@
 
      mirrorDeleteDataset  → le dossier <dataset>/ part à la corbeille Drive
      mirrorRenameDataset  → <ancien titre>/ devient <nouveau titre>/
-     mirrorDeleteProject  → <dataset>/projects/<projet>/ part à la corbeille
-                            (+ la pierre tombale du chemin : il ne se recrée pas)
+     mirrorDeleteProject  → <dataset>/projects/<projet>/ ET <dataset>/<projet>/
+                            (le dossier des documents de section) partent à la
+                            corbeille (+ les pierres tombales des deux chemins :
+                            ils ne se recréent pas)
      mirrorRenameProject  → le dossier du projet ET son fichier
                             <projet>_document.json sont renommés
 
@@ -43,7 +45,7 @@ import { projectDocumentFileName } from './projectDocumentDrive';
 import {
   readDriveMirror, writeDriveMirror, addDriveTombstone, rememberDatasetFolder,
   rememberProjectFolder, forgetProjectFolder, findDatasetFolderId, findProjectFolderId,
-  projectFolderPath, datasetFolderNameOf
+  projectFolderPaths, datasetFolderNameOf
 } from './driveMirrorStore';
 
 /** Le nom de dossier d'un dataset ('' si l'on ne sait rien de lui). */
@@ -204,33 +206,69 @@ const findProjectFolder = async ({ datasetId = '', datasetName = '', projectName
   return findFolderByName(sanitizeSlug(projectName), projectsFolderId);
 };
 
+/** Le dossier de PROJET À LA RACINE du dataset (« <dataset>/<projet> »), celui
+ *  qui porte les DOCUMENTS DE SECTION (<projet>/<section> — le dossier affiché
+ *  sous « 📁 Drive location » de chaque section de la page projet). Il n'est pas
+ *  dans « projects/ » : c'est un SECOND dossier de projet, et c'est lui qui
+ *  restait sur le Drive après la suppression d'un projet. '' s'il n'existe pas. */
+const findProjectRootFolder = async ({ datasetId = '', datasetName = '', projectName = '' }) => {
+  /* Le chemin vient de la MÊME liste que les tombes (projectFolderPaths) : un
+     projet nommé comme un dossier partagé du dataset (« projects »…) n'a donc
+     pas de dossier de section à chercher — on ne mettrait pas le conteneur
+     commun à la corbeille. */
+  const rootSlug = projectFolderPaths(projectName)[1] || '';
+  if (!rootSlug) return '';
+  const datasetFolderId = await findDatasetFolder({ id: datasetId, name: datasetName });
+  if (!datasetFolderId) return '';
+  return findFolderByName(rootSlug, datasetFolderId);
+};
+
 /**
- * Supprimer un projet : son dossier Drive (expériences, figures, documents)
- * part à la corbeille et son chemin est mis en pierre tombale
- * (`projects/<projet>`) — l'application ne le recrée donc pas à la prochaine
- * résolution de chemin, et un autre poste ne le voit plus.
+ * Supprimer un projet : SES DEUX dossiers Drive partent à la corbeille — les
+ * expériences, figures et le document (`projects/<projet>`) ET le dossier des
+ * documents de section (`<projet>`, à la racine du dataset, voir
+ * driveNaming.projectSectionFolderPath). Les deux chemins sont mis en pierre
+ * tombale, donc ni l'un ni l'autre ne se recrée, et un autre poste ne les voit
+ * plus. Le compte rendu dit ce qui a été trouvé (`missing`) : un dossier absent
+ * (déjà supprimé, ou projet jamais envoyé sur le Drive) n'est pas une erreur.
  */
 export const mirrorDeleteProject = async ({ datasetId = '', datasetName = '', projectName = '' } = {}) => {
-  const path = projectFolderPath(projectName);
-  const record = () => writeDriveMirror(addDriveTombstone(readDriveMirror(), {
-    id: datasetId, name: datasetName, path, kind: 'project'
-  }, Date.now()));
+  const paths = projectFolderPaths(projectName);
+  const record = () => {
+    let mirror = readDriveMirror();
+    paths.forEach((path) => {
+      mirror = addDriveTombstone(mirror, {
+        id: datasetId, name: datasetName, path, kind: 'project'
+      }, Date.now());
+    });
+    return writeDriveMirror(mirror);
+  };
   if (!projectName) return failed('no-project');
   try {
     if (getCloudProvider() === 'nextcloud') {
       if (!nextcloudConfigured()) { record(); return failed('no-backend'); }
-      const url = ncUrlOf([
-        datasetFolderNameOf(datasetName, datasetId), 'projects', sanitizeSlug(projectName)
-      ]);
-      const deleted = url ? await ncDelete(url) : false;
+      const datasetSlug = datasetFolderNameOf(datasetName, datasetId);
+      const urls = datasetSlug ? [
+        ncUrlOf([datasetSlug, 'projects', sanitizeSlug(projectName)]),
+        ncUrlOf([datasetSlug, sanitizeSlug(projectName)])
+      ] : [];
+      const deleted = [];
+      for (const url of urls) { if (url && await ncDelete(url)) deleted.push(url); }
       record();
-      return deleted ? ok({ folderIds: [url] }) : failed('not-found');
+      return deleted.length ? ok({ folderIds: deleted }) : failed('not-found');
     }
     if (!getDriveToken()) { record(); return failed('no-backend'); }
     const folderId = await findProjectFolder({ datasetId, datasetName, projectName });
-    const trashed = folderId ? await trashDriveFile(folderId) : false;
+    const rootFolderId = await findProjectRootFolder({ datasetId, datasetName, projectName });
+    const trashed = [];
+    if (folderId && await trashDriveFile(folderId)) trashed.push(folderId);
+    if (rootFolderId && rootFolderId !== folderId && await trashDriveFile(rootFolderId)) {
+      trashed.push(rootFolderId);
+    }
     record();
-    return ok({ folderIds: folderId ? [folderId] : [], trashed });
+    return ok({
+      folderIds: trashed, trashed: trashed.length > 0, missing: !folderId && !rootFolderId
+    });
   } catch (err) {
     record();
     return failed(String((err && err.message) || err));
@@ -262,6 +300,11 @@ export const mirrorRenameProject = async ({
           `${to}/${encodeURIComponent(projectDocumentFileName({ name: newName }))}`
         ).catch(() => false);
       }
+      /* Le dossier de SECTION du projet (<ancien>, à la racine du dataset) suit
+         lui aussi le renommage : sinon il restait sous l'ancien nom. */
+      const rootFrom = ncUrlOf([datasetSlug, sanitizeSlug(oldName)]);
+      const rootTo = ncUrlOf([datasetSlug, target]);
+      if (rootFrom && rootTo) await ncMove(rootFrom, rootTo).catch(() => false);
       return moved ? ok({ folderId: to }) : failed('not-found');
     }
     if (!getDriveToken()) return failed('no-backend');
@@ -285,6 +328,18 @@ export const mirrorRenameProject = async ({
       const docId = await findDriveFileByName(projectDocumentFileName({ name: oldName }), folderId);
       if (docId) await renameDriveFile(docId, projectDocumentFileName({ name: newName }));
     } catch { /* le document sera réécrit au prochain archivage */ }
+
+    /* Le dossier de PROJET À LA RACINE du dataset (« <ancien> », celui des
+       documents de section) est renommé AVEC le projet : sans cela il restait
+       sous l'ancien nom et un second dossier apparaissait sous le nouveau — les
+       documents de section semblaient avoir disparu. Best-effort : un dossier
+       absent est simplement recréé au prochain envoi. */
+    try {
+      const rootFolderId = await findProjectRootFolder({
+        datasetId, datasetName, projectName: oldName
+      });
+      if (rootFolderId) await renameDriveFile(rootFolderId, target);
+    } catch { /* ignore */ }
 
     const withoutOld = forgetProjectFolder(readDriveMirror(), { datasetId, datasetName, projectName: oldName });
     writeDriveMirror(rememberProjectFolder(withoutOld, {

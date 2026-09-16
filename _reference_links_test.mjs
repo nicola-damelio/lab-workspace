@@ -19,6 +19,7 @@ register('./_esm_test_hook.mjs', import.meta.url);
 
 const RL = await import('./src/utils/referenceLinks.js');
 const MS = await import('./src/utils/manuscriptImport.js');
+const REF = await import('./src/utils/referenceImport.js');
 /* La page projet est lue telle quelle : les branchements (import → numérotation,
    export → réparation d'un document enregistré) doivent y être VÉRIFIABLES. */
 const PAGE = readFileSync('./src/components/AppModules/projectDetailModule.jsx', 'utf8');
@@ -230,5 +231,20 @@ has('bodyHtml = linkCitations(repaired.html)', '…et ses citations sont liées 
 has('<body>${bodyHtml}</body>', 'c’est bien ce document réparé qui part à l’imprimante');
 has("the text sections hold no numbered citation — [1], (1) or a superscript 1 —",
   'et quand il n’y a rien à lier, le message DIT les trois écritures reconnues (et l’autre cause : un numéro absent des références)');
+
+/* ── 10. Une référence ÉCRITE PARTIELLEMENT se lie comme les autres ──────────
+   « 5. Lu W-J, et al. (2011). » — une entrée SANS TITRE, comme il en arrive
+   dans une bibliographie abrégée. Elle était JETÉE à l'import : le « [5] » du
+   texte n'avait donc plus rien à quoi se lier (« Nothing to link »). */
+const partialEntries = REF.parseReferences('5. Lu W-J, et al. (2011).', { split: 'line' });
+eq(partialEntries.length, 1, 'une référence numérotée sans titre est importée (elle ne disparaît plus)');
+const partialNumbered = RL.numberImportedReferences(partialEntries, [], { makeId: () => 'r_partial' });
+eq(partialNumbered.list[0].number, 5, '…et elle garde le numéro que le document lui donnait');
+eq(partialNumbered.list[0].title, 'Untitled',
+  '…son titre reste vide dans le projet (« Untitled » à l’affichage : rien n’est inventé)');
+const partialLinked = RL.linkCitationNumbers('<p>As shown previously [5].</p>',
+  { numbers: RL.referenceNumbers(partialNumbered.list) });
+ok(partialLinked.includes('data-ref="5"'),
+  '…donc « [5] » devient un lien vers elle (bout en bout) au lieu de « Nothing to link »');
 
 console.log(`✅ ${passed} tests passés (liens de citation [n] ↔ références, import bibliographique numéroté, document exporté réparé)`);

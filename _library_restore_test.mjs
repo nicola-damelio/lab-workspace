@@ -323,6 +323,19 @@ eq(NAMING_MOD.projectSectionFolderPath('CD project', '🔬 Scientific background
 eq(NAMING_MOD.projectSectionFolderLabel('CD project', 'Discussion', 'My dataset (2026)'),
   'My_dataset_2026 / CD_project / Discussion',
   'l’étiquette affichée commence par le dossier RÉEL du dataset');
+/* Le titre affiché d'une section peut changer (« Discussion » → « Results and
+   Discussion ») : le dossier Drive, lui, garde son nom historique — sinon les
+   documents déjà envoyés sembleraient avoir disparu (dossier orphelin) et un
+   second dossier apparaîtrait. */
+eq(NAMING_MOD.projectSectionFolderPath('CD project', 'Results and Discussion'),
+  ['CD_project', 'Discussion'],
+  'la section renommée « Results and Discussion » range ses documents dans le dossier historique « Discussion »');
+eq(NAMING_MOD.projectSectionFolderLabel('CD project', 'Results and Discussion', 'My dataset (2026)'),
+  'My_dataset_2026 / CD_project / Discussion',
+  '…et l’emplacement affiché est celui du dossier réel (aucun dossier fantôme)');
+eq(NAMING_MOD.driveFolderPath({ project: 'CD project', test: 'Exp 1', section: 'Results and Discussion' }),
+  ['CD_project', 'Exp_1', 'Results_and_Discussion'],
+  'un dossier de TEST n’est pas touché par cet alias (les sections de page gardent leur nom)');
 eq(NAMING_MOD.projectImagesFolderLabel('CD project', 'My dataset'),
   'My_dataset / projects / CD_project / images',
   '…et celle de la bibliothèque d’images aussi');

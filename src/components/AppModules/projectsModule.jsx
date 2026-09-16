@@ -7,7 +7,7 @@ import {
 } from '../../utils/projectTombstones';
 
 /* =========================================================================
-   PROJECTS — "Scientific background / Experiments / Discussion /
+   PROJECTS — "Scientific background / Experiments / Results and Discussion /
    Conclusions / Bibliography" workspace pages.
    Data is persisted in localStorage (same pattern as journals/papers).
    Rights: superusers see everything (filterable by scientist); each user
@@ -634,7 +634,7 @@ export const ProjectsModule = ({
           <div>
             <h2 className="text-lg md:text-xl font-black text-slate-800">📁 Projects</h2>
             <p className="text-xs text-slate-500">
-              Scientific projects collecting background, linked experiments, discussion, conclusions and bibliography.
+              Scientific projects collecting background, linked experiments, results and discussion, conclusions and bibliography.
               Each project is a page whose text sections accept bibliographic references from the
               “Project bibliography” and “Publications of the scientist”.
             </p>

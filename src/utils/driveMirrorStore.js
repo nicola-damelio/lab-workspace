@@ -27,7 +27,7 @@
    driveMirror.js. Vérifié par _drive_mirror_test.mjs.
    ========================================================================= */
 
-import { sanitizeSlug, datasetFolderSlug } from './driveNaming';
+import { sanitizeSlug, datasetFolderSlug, DATASET_FOLDER_DIRS } from './driveNaming';
 
 /** Clé localStorage du miroir (tombes + registre des dossiers). */
 export const DRIVE_MIRROR_KEY = 'labDriveMirror';
@@ -189,6 +189,28 @@ const pathUnder = (path, base) => {
 export const projectFolderPath = (projectName) =>
   `projects/${sanitizeSlug(projectName) || '_unassigned'}`;
 
+/** Le chemin Drive du dossier de PROJET À LA RACINE DU DATASET (« <projet> ») :
+ *  c'est là que vivent les DOCUMENTS DE SECTION (<projet>/<section>, voir
+ *  driveNaming.projectSectionFolderPath — « 📁 Drive location » de chaque
+ *  section de la page projet). Un projet a donc DEUX dossiers sur le Drive, et
+ *  supprimer le projet doit emporter les deux : n'en mettre qu'un à la
+ *  corbeille laissait l'autre sur le Drive (« si je supprime un projet, son
+ *  dossier reste »). */
+export const projectRootFolderPath = (projectName) => sanitizeSlug(projectName);
+
+/** Les dossiers Drive d'un projet, du plus imbriqué au plus haut — ceux qu'une
+ *  suppression met à la corbeille et qu'une tombstone marque. Le dossier de
+ *  SECTION n'y est ajouté que s'il ne porte pas le nom d'un dossier PARTAGÉ du
+ *  dataset (« projects », « backups »… : voir DATASET_FOLDER_DIRS) : un projet
+ *  ainsi nommé ne doit jamais faire mettre à la corbeille — ni mettre en tombe —
+ *  le conteneur commun. */
+export const projectFolderPaths = (projectName) => {
+  const slug = sanitizeSlug(projectName);
+  const paths = [projectFolderPath(projectName)];
+  if (slug && !DATASET_FOLDER_DIRS.includes(slug.toLowerCase())) paths.push(slug);
+  return paths;
+};
+
 /** Une tombe de plus (la plus récente) ; le registre des dossiers situés DANS
  *  le chemin supprimé est oublié au passage : réutiliser l'identifiant d'un
  *  dossier mis à la corbeille ferait écrire dans un dossier invisible. */
@@ -211,7 +233,7 @@ export const addDriveTombstone = (
   const projects = {};
   Object.entries(current.projects).forEach(([key, value]) => {
     if (!gonePath && key.indexOf(`${datasetKey}::`) === 0) return;
-    if (gonePath && pathUnder(projectFolderPath(value && value.name), gonePath)) return;
+    if (gonePath && projectFolderPaths(value && value.name).some((p) => pathUnder(p, gonePath))) return;
     projects[key] = value;
   });
 

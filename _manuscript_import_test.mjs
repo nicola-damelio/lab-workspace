@@ -94,6 +94,12 @@ eq(parts[1].text.includes('Aphids transmit many plant viruses'), true, 'le texte
 eq(MS.guessSectionForHeading('Materials and Methods'), '', 'une section sans équivalent n’est PAS devinée');
 eq(MS.PROJECT_TEXT_SECTIONS.map((s) => s.id), ['background', 'discussion', 'conclusions', 'funding', 'supporting'],
   'les sections cibles sont celles de la page projet (Funding et Supporting information comprises)');
+eq(MS.PROJECT_TEXT_SECTIONS.find((s) => s.id === 'discussion').label, 'Results and Discussion',
+  'la section « Discussion » s’appelle désormais « Results and Discussion »');
+eq(MS.guessSectionForHeading('Results and Discussion'), 'discussion',
+  'un manuscrit intitulé « Results and Discussion » rejoint cette section');
+eq(MS.guessSectionForHeading('3. Results and discussion'), 'discussion',
+  '…même numéroté et en minuscules (le titre perd sa numérotation)');
 
 /* ── 4. Les citations trouvées dans le texte ─────────────────────────────── */
 const found = MS.collectCitations(parts.map((p) => p.text).join('\n\n'));

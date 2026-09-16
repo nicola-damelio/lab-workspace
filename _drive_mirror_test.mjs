@@ -120,6 +120,15 @@ eq(Object.keys(afterDelete.projects).length, 0, '…et ceux de ses projets');
 const afterFolder = S.addDriveTombstone(reg, { id: 'ds1', name: 'Pepper', path: 'projects/Aphids' }, 41);
 eq(S.findProjectFolderId(afterFolder, { datasetId: 'ds1', projectName: 'Aphids' }), '',
   'supprimer le dossier d’un projet oublie son identifiant (il est à la corbeille)');
+eq(S.projectFolderPaths('Aphids'), ['projects/Aphids', 'Aphids'],
+  'un projet a DEUX dossiers sur le Drive : projects/<projet> et <projet> (documents de section)');
+eq(S.projectFolderPaths(''), ['projects/_unassigned'],
+  'un projet sans nom ne désigne jamais la racine du dataset (aucune tombe en trop)');
+eq(S.projectFolderPaths('projects'), ['projects/projects'],
+  'un projet nommé comme un dossier PARTAGÉ du dataset ne met jamais le conteneur commun en tombe');
+const afterRootFolder = S.addDriveTombstone(reg, { id: 'ds1', name: 'Pepper', path: 'Aphids' }, 42);
+eq(S.findProjectFolderId(afterRootFolder, { datasetId: 'ds1', projectName: 'Aphids' }), '',
+  '…et supprimer le dossier de SECTION oublie lui aussi l’identifiant du dossier de projet');
 
 /* ── 3. Les tombes VOYAGENT : la fusion ne perd rien ────────────────────── */
 const remote = S.normalizeDriveMirror({
@@ -150,11 +159,21 @@ ok(dispatched.includes(S.DRIVE_MIRROR_EVENT),
   'une modification prévient l’application (le fichier d’état du Drive sera réécrit)');
 
 
-/* ── 5. Le Drive suit : suppression et renommage d’un dataset ───────────── */
+/* ── 5. Le Drive suit : suppression et renommage d’un dataset ─────────────
+   Le faux Drive est ARBORESCENT (« <parent>/<nom> »), comme le vrai : un projet
+   y a bien DEUX dossiers — <dataset>/projects/<projet> pour ses expériences,
+   ses figures et son document, et <dataset>/<projet> pour les documents de
+   section (le dossier affiché sous « 📁 Drive location »). */
 const fake = {
   calls: [],
-  folders: new Map([['Lab Workspace', 'ws'], ['Pepper_viruses', 'F1'], ['projects', 'PF'], ['Aphids', 'P1']]),
-  files: new Map([['Aphids_document.json', 'DOC1']])
+  folders: new Map([
+    ['ws/Pepper_viruses', 'F1'],
+    ['F1/projects', 'PF'],
+    ['PF/Aphids', 'P1'],          // <dataset>/projects/<projet>
+    ['F1/Aphids', 'SEC1'],        // <dataset>/<projet> : documents de section
+    ['F1/Submissions', 'SUB1']    // un autre dossier du dataset, à ne pas toucher
+  ]),
+  files: new Map([['P1/Aphids_document.json', 'DOC1']])
 };
 globalThis.__driveTestMocks = {
   driveToken: 'tok',
@@ -162,11 +181,11 @@ globalThis.__driveTestMocks = {
   ensureLabWorkspaceFolder: async () => 'ws',
   findFolderByName: async (name, parent) => {
     fake.calls.push(['findFolder', name, parent]);
-    return fake.folders.get(String(name)) || '';
+    return fake.folders.get(`${parent}/${name}`) || '';
   },
   findDriveFileByName: async (name, parent) => {
     fake.calls.push(['findFile', name, parent]);
-    return fake.files.get(String(name)) || '';
+    return fake.files.get(`${parent}/${name}`) || '';
   },
   getDriveFileMeta: async (id) => ({ id: String(id), name: 'x', trashed: false }),
   trashDriveFile: async (id) => { fake.calls.push(['trash', id]); return true; },
@@ -199,7 +218,10 @@ const renDeleted = await DRIVE.mirrorRenameDataset({ id: 'dsX', oldName: 'Gone',
 ok(renDeleted.ok === false && !!renDeleted.reason,
   'renommer un dataset supprimé échoue proprement (aucune exception)');
 
-/* ── 6. Projets : dossier + document, suppression et renommage ──────────── */
+/* ── 6. Projets : LES DEUX dossiers, leur document, suppression et renommage ─
+   Le défaut réparé ici : seul <dataset>/projects/<projet> partait à la
+   corbeille, et le dossier des DOCUMENTS DE SECTION (<dataset>/<projet>)
+   restait sur le Drive — « si je supprime un projet, son dossier reste ». */
 store.clear();
 fake.calls.length = 0;
 const projectDel = await DRIVE.mirrorDeleteProject({
@@ -208,8 +230,19 @@ const projectDel = await DRIVE.mirrorDeleteProject({
 ok(projectDel.ok, 'supprimer un projet se termine correctement');
 ok(fake.calls.some((c) => c[0] === 'trash' && c[1] === 'P1'),
   '…le dossier du projet part à la corbeille');
+ok(fake.calls.some((c) => c[0] === 'trash' && c[1] === 'SEC1'),
+  '…ET le dossier des documents de section (celui qui restait sur le Drive)');
+eq(projectDel.folderIds.slice().sort(), ['P1', 'SEC1'], 'les deux dossiers mis à la corbeille sont annoncés');
+ok(!fake.calls.some((c) => c[0] === 'trash' && c[1] === 'SUB1'),
+  'un autre dossier du dataset n’est jamais emporté');
 ok(S.isDrivePathMirrorDeleted(S.readDriveMirror(), { dataset: { id: 'ds1' }, path: 'projects/Aphids' }),
   '…et son chemin devient une tombe (il ne se recrée pas à la prochaine résolution)');
+ok(S.isDrivePathMirrorDeleted(S.readDriveMirror(), { dataset: { id: 'ds1' }, path: 'Aphids' }),
+  '…le dossier de section aussi : il ne réapparaît pas au prochain envoi');
+ok(S.isDrivePathMirrorDeleted(S.readDriveMirror(), { dataset: { id: 'ds1' }, path: 'Aphids/Discussion' }),
+  '…y compris les dossiers de section qu’il contient (la tombe couvre la descendance)');
+ok(!S.isDrivePathMirrorDeleted(S.readDriveMirror(), { dataset: { id: 'ds1' }, path: 'Submissions' }),
+  '…sans transformer les autres dossiers du dataset en dossiers fantômes');
 
 store.clear();
 fake.calls.length = 0;
@@ -221,6 +254,20 @@ ok(fake.calls.some((c) => c[0] === 'rename' && c[1] === 'P1' && c[2] === 'Aphids
   '…le dossier du projet est renommé');
 ok(fake.calls.some((c) => c[0] === 'rename' && c[1] === 'DOC1' && c[2] === 'Aphids_2026_document.json'),
   '…et le document du projet (<projet>_document.json) suit le renommage');
+ok(fake.calls.some((c) => c[0] === 'rename' && c[1] === 'SEC1' && c[2] === 'Aphids_2026'),
+  '…et le dossier des documents de section suit lui aussi (sinon un second dossier apparaîtrait et les documents sembleraient perdus)');
+
+/* Un projet nommé comme un dossier PARTAGÉ du dataset : seul SON dossier part à
+   la corbeille — jamais le conteneur commun « projects ». */
+store.clear();
+fake.calls.length = 0;
+const trickyDel = await DRIVE.mirrorDeleteProject({
+  datasetId: 'ds1', datasetName: 'Pepper viruses', projectName: 'projects'
+});
+ok(trickyDel.ok && !fake.calls.some((c) => c[0] === 'trash' && c[1] === 'PF'),
+  'supprimer un projet nommé « projects » ne met pas le conteneur commun à la corbeille');
+ok(!S.isDrivePathMirrorDeleted(S.readDriveMirror(), { dataset: { id: 'ds1' }, path: 'projects/Aphids' }),
+  '…et les autres projets du dataset restent visibles');
 
 
 /* ── 7. Les branchements réels dans le code ─────────────────────────────── */

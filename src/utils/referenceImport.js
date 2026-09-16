@@ -687,8 +687,16 @@ export const bibliographyBlockToEntry = (block, _opts = {}) => {
     authors = prefix;
     rest = body.slice(prefix.length);
   } else if (yearIsEarly) {
-    authors = body.slice(0, yearParen.index);
-    rest = body.slice(yearParen.index + yearParen[0].length);
+    /* Le morceau devant l'année n'est pris pour des AUTEURS que si c'en est une
+       liste de noms. « Membrane dynamics of antimicrobial peptides (2019). » est
+       une référence écrite SANS AUCUN auteur : le titre entier partait dans le
+       champ auteurs, l'entrée n'avait donc plus de titre — et elle était jetée à
+       l'import. Sans liste reconnue, le texte reste entier : le titre est lu. */
+    const beforeYear = body.slice(0, yearParen.index);
+    if (isAuthorListTitle(beforeYear)) {
+      authors = beforeYear;
+      rest = body.slice(yearParen.index + yearParen[0].length);
+    }
   } else {
     /* Sans liste d'auteurs reconnaissable, les auteurs sont la 1re phrase
        (« Ross, M. A., Wolf, L. J. Titre. Journal … »). Un SIGLE seul
@@ -750,6 +758,7 @@ export const bibliographyBlockToEntry = (block, _opts = {}) => {
      dans le titre. Il est déjà enregistré dans `doi` (et dans `link`). */
   title = String(title)
     .replace(/\s*(?:https?:\/\/\S+|\bdoi:?\s*10\.\S+|10\.\d{4,9}\/\S+)\s*[.,;:]?/gi, ' ')
+    .replace(/\s*\((?:1[89]|20)\d{2}[a-z]?\)\s*[.,;:]?\s*$/, ' ')
     .replace(/\s+/g, ' ').replace(/[.,;:\s]+$/, '').trim();
 
   const doi = extractDoi(body);
@@ -758,6 +767,10 @@ export const bibliographyBlockToEntry = (block, _opts = {}) => {
     .replace(/https?:\/\/\S+/gi, '')
     .replace(/\bdoi:?\s*10\.\S+/gi, '')
     .replace(/\((?:(?:1[89]|20)\d{2})[a-z]?\)/g, '')
+    /* Une année restée à la FIN de la queue (« J Gen Virol 102(4), 001234.
+       2021. ») empêchait la lecture du volume et du numéro d'article : le nom
+       de la revue avalait toute la queue. Elle est déjà dans `year`. */
+    .replace(/\s*(?:1[89]|20)\d{2}[a-z]?\s*[.,;:]?\s*$/, ' ')
     .replace(/\.\s*$/, '')
     .trim();
   const jp = journalParts(journalSrc);
@@ -801,6 +814,23 @@ export const bibliographyBlockToEntry = (block, _opts = {}) => {
       tailJournal = queueTail[2].trim();
       if (queue.length > 1) { tailVolume = queue[0]; tailPages = queue.slice(1).join('-'); }
       else tailPages = queue[0] || '';
+    }
+  }
+  /* La référence a été écrite SANS TITRE : le morceau resté en tête n'est alors
+     QUE la revue avec son volume et ses pages (« 12. Smith J, Rossi M. 2019.
+     J Virol 92, 345-356. »). Le prendre pour un titre importait la référence
+     AMPUTÉE de sa revue, de son volume et de ses pages — et le vrai titre
+     n'existant pas, il n'y a rien à inventer : ces trois champs, eux, sont
+     écrits. La détection est volontairement étroite (nom de revue, volume,
+     virgule, pages, rien d'autre, six mots au plus). */
+  if (!jp.journal && !jp.volume && !jp.pages && !tailJournal) {
+    const journalOnly = String(title)
+      .match(/^([\p{Lu}][\p{L}.'’& -]{1,40}?)\s+(\d{1,4})(?:\((\d{1,3})\))?\s*,\s*([A-Za-z]{0,3}\d+(?:\s*[-–]\s*[\w.]+)?)$/u);
+    if (journalOnly && String(title).split(/\s+/).length <= 6) {
+      title = '';
+      tailJournal = journalOnly[1].trim();
+      tailVolume = journalOnly[2];
+      tailPages = journalOnly[4].replace(/\.$/, '');
     }
   }
 
@@ -850,7 +880,17 @@ export const parseReferences = (rawText, opts = {}) => {
   const min = Number.isFinite(opts.minScore) ? opts.minScore : 2;
   return splitReferenceBlocks(text, opts)
     .map((block) => bibliographyBlockToEntry(block, opts))
-    .filter((entry) => entry && entry.title)
+    /* Une référence ÉCRITE PARTIELLEMENT (sans titre reconnu, ou sans auteurs)
+       a le droit d'entrer elle aussi : c'est le « 5. Lu W-J, et al. (2011). »
+       d'une bibliographie — le papier que le texte cite par « [5] ». La jeter
+       faisait répondre « Nothing to link » au bouton « 🔗 Link citations… ».
+       Une entrée sans titre n'est gardée que si elle porte un NUMÉRO (une
+       référence par construction) ou si son texte ressemble VRAIMENT à une
+       référence (score plus exigeant que pour une entrée titrée) : le reste de
+       la page ne devient jamais une référence. Rien n'est inventé pour autant :
+       les champs absents restent vides et se complètent à la main. */
+    .filter((entry) => entry && (entry.title || entry.number > 0 || opts.keepAll
+      || referenceScore(entry.raw || '') > min))
     /* Une entrée NUMÉROTÉE par la bibliographie est une référence par
        construction : le score ne doit jamais la jeter, sinon un article
        « n'est pas reconnu » à l'import (« 12. EPPO. Note. » par exemple). */

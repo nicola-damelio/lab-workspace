@@ -47,7 +47,7 @@ import { SlidePreview, renderSlideToDataUrl } from '../FiguresSlides';
    PROJECT DETAIL — a project page with subsections:
    • Scientific background (rich text + references)
    • Experiments (add multiple tests → buttons that link to the classic pages)
-   • Discussion (rich text + references)
+   • Results and Discussion (rich text + references)
    • Conclusions (rich text + references)
    • Bibliography (numbered references from Project bibliography and the
      scientist's publications)
@@ -799,7 +799,9 @@ export const ProjectDetailModule = ({
     if (typeof openImageBuilder !== 'function') return;
     openImageBuilder(fig.builderProjectId || project.id, fig.canvasId || null);
   };
-  // Readable section name used inside file names (full-path naming).
+  // Readable section name used inside file names (full-path naming). These are
+  // the STABLE names: the Drive folder of a section keeps its historical name
+  // even when the displayed title changes (see driveNaming.projectSectionFolderAlias).
   const sectionLabelOf = (sec) => ({
     background: 'Background',
     discussion: 'Discussion',
@@ -1224,14 +1226,14 @@ export const ProjectDetailModule = ({
   /* ---- 📥 Importer un MANUSCRIT (Google Docs / Word + Paperpile) ----------
      Le document garde TOUT son texte : il est découpé par ses titres et chaque
      partie rejoint la section correspondante de cette page (Background /
-     Discussion / Conclusions), la bibliographie du document rejoint la
+     Results and Discussion / Conclusions), la bibliographie du document rejoint la
      « Project bibliography » (donc Publications → « Project bibliography »), et
      les citations du texte deviennent les références NUMÉROTÉES du programme
      ([1], [2]…) comme le fait « 📚 + Reference ». Toute la logique est pure et
      testée : voir utils/manuscriptImport.js. Rien n'est envoyé au Drive par
      cet import — il ne fait que remplir le projet. */
   /* `focusSection` : quand on ouvre l'import DEPUIS la barre d'outils d'une
-     section (Background / Discussion / Conclusions), les parties du manuscrit
+     section (Background / Results and Discussion / Conclusions), les parties du manuscrit
      dont le titre ne correspond à rien retombent dans CETTE section — l'endroit
      d'où l'utilisateur a cliqué. Ouvert depuis l'en-tête de la page, il reste
      vide : l'utilisateur choisit alors chaque destination. */
@@ -2605,7 +2607,7 @@ export const ProjectDetailModule = ({
        Funding et Supporting information ne s'impriment que s'ils sont remplis. */
     const sectionBlocks = [
       { id: 'background', title: 'Scientific background', html: project.background || '' },
-      { id: 'discussion', title: 'Discussion', html: project.discussion || '' },
+      { id: 'discussion', title: 'Results and Discussion', html: project.discussion || '' },
       { id: 'conclusions', title: 'Conclusions', html: project.conclusions || '' },
       { id: 'funding', title: 'Funding', html: project.funding || '', optional: true },
       { id: 'supporting', title: 'Supporting information', html: project.supporting || '', optional: true }
@@ -3123,7 +3125,7 @@ export const ProjectDetailModule = ({
               {canModify && (
                 <button onClick={() => openManuscriptImport()}
                         className="px-3 py-1.5 text-xs font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700"
-                        title="Move a document written in Google Docs or Word INTO this project: its text fills the project sections (Background / Discussion / Conclusions), its bibliography (Paperpile…) goes to the Project bibliography, and its citations become the numbered references [1], [2]… Nothing is uploaded to Drive.">
+                        title="Move a document written in Google Docs or Word INTO this project: its text fills the project sections (Background / Results and Discussion / Conclusions), its bibliography (Paperpile…) goes to the Project bibliography, and its citations become the numbered references [1], [2]… Nothing is uploaded to Drive.">
                   📥 Import a manuscript
                 </button>
               )}
@@ -3549,8 +3551,8 @@ export const ProjectDetailModule = ({
           />
         </SectionCard>
 
-        {/* ---------- Discussion ---------- */}
-        {textSection('discussion', '💬 Discussion',
+        {/* ---------- Results and Discussion ---------- */}
+        {textSection('discussion', '💬 Results and Discussion',
           'Interpretation of the results, comparisons, limitations and open questions.',
           project.discussion || '', (val) => updateProject({ discussion: val }))}
 

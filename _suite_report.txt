@@ -16,6 +16,7 @@ OK   _curve_style_test.mjs  →  │ (index) │ name                           
 OK   _deleted_projects_test.mjs  →  ✅ 46 tests passés (projets supprimés : rien ne ressuscite)
 OK   _doc_responsive_test.mjs  →  ✅ 38 tests passés (document exporté et page « document » adaptés à la largeur de l’écran)
 OK   _docking_sanity.cjs  →  (no output)
+OK   _drive_mirror_test.mjs  →  ✅ 71 tests passés (le Drive est le miroir du programme : rien ne ressuscite)
 OK   _editor_layout_test.cjs  →  _editor_layout_test.cjs — 9 assertions passed
 OK   _esm_test_hook.mjs  →  (no output)
 OK   _fcs_restore_match_test.cjs  →  ✅ 7/7 checks passed
@@ -23,23 +24,27 @@ OK   _figure_origin_test.cjs  →  ✅ 64/64 checks passed
 OK   _figure_placement_test.mjs  →  _figure_placement_test.mjs — 27 assertions passed
 OK   _figure_recapture_test.mjs  →  │ (index) │ name                                                                          │ ok   │ error │ | ✅ 32/32 checks passed
 OK   _figure_style_test.mjs  →  │ (index) │ name                                                                                  │ ok   │ error │ | ✅ 71/71 checks passed
-OK   _library_restore_test.mjs  →  ✅ 132 tests passés (bibliothèque d’images ↔ sauvegarde)
+OK   _library_restore_test.mjs  →  ✅ 135 tests passés (bibliothèque d’images ↔ sauvegarde)
 OK   _library_transfer_test.cjs  →  │ (index) │ name                                                                                                                   │ ok   │ error │ | 
 OK   _mail_recipients_test.mjs  →  _mail_recipients_test: 47 passed
-OK   _manuscript_import_test.mjs  →  ✅ 256 tests passés (manuscrit — blocs / parties / en-tête / sections / liens / figures)
+OK   _manuscript_import_test.mjs  →  ✅ 275 tests passés (manuscrit — blocs / parties / en-tête / sections / liens / figures)
 OK   _new_image_test.cjs  →  ✅ 29/29 checks passed
 OK   _pdb_conect_sanity.cjs  →  (no output)
 OK   _persist_store_test.mjs  →  ✅ 25 tests passés (import : écriture vérifiée, quota plein, allègement des figures)
+OK   _probe_cites.mjs  →  already linked           | NO  (rien à lier → message d'erreur)
 OK   _probe_ngl.cjs  →  WROTE _ngl_src/molecularsurface-representation.ts len 10528
+OK   _project_drive_doc_test.mjs  →  ✅ 60 tests passés (références « W.-J. » · import automatique · document du projet sur le Drive)
 OK   _project_figures_access_test.cjs  →  │ (index) │ name                                                                                                                       │ ok   │ error 
 OK   _pub_author_style_test.mjs  →  _pub_author_style_test: 108 passed
 OK   _rebuild_h_test.mjs  →  PASS
-OK   _reference_import_test.mjs  →  ✅ 183 tests passés (import de références)
-OK   _reference_links_test.mjs  →  ✅ 57 tests passés (liens de citation [n] ↔ références, import bibliographique numéroté, document exporté réparé)
+OK   _reference_import_test.mjs  →  ✅ 217 tests passés (import de références)
+OK   _reference_links_test.mjs  →  ✅ 80 tests passés (liens de citation [n] ↔ références, import bibliographique numéroté, document exporté réparé)
 OK   _spectra_split_test.mjs  →  passed 197/197
 OK   _split_test.cjs  →  (no output)
 OK   _src_split_test.cjs  →  (no output)
 OK   _star_group_test.cjs  →  ✅ 33/33 checks passed
 OK   _ui_scale_test.cjs  →  ✅ 44/44 checks passed
 OK   _view_scroll_memory_test.cjs  →  ✅ 41/41 checks passed
-total 44, failed 0
+OK   _workspace_drive_test.mjs  →  ✅ 55 tests passés (l’espace de travail entier vit sur le Drive)
+OK   _workspace_keys_test.mjs  →  ✅ 37 tests passés (les clés du navigateur vivent aussi sur le Drive)
+total 49, failed 0

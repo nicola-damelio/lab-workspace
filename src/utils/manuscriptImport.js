@@ -586,7 +586,7 @@ export const splitManuscript = (blocks) => {
  *  les mêmes que projectDetailModule.textSection(). */
 export const PROJECT_TEXT_SECTIONS = [
   { id: 'background', label: 'Scientific background' },
-  { id: 'discussion', label: 'Discussion' },
+  { id: 'discussion', label: 'Results and Discussion' },
   { id: 'conclusions', label: 'Conclusions' },
   { id: 'funding', label: 'Funding' },
   { id: 'supporting', label: 'Supporting information' }
