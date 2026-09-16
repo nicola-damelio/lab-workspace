@@ -54,6 +54,15 @@ export async function load(url, context, next) {
         'export const getDriveRootName = () => M().driveRootName || "";',
         'export const resolveDrivePathFromNames = async (names) => (typeof M().resolveDrivePathFromNames === "function" ? M().resolveDrivePathFromNames(names) : { leafId: "", path: [] });',
         'export const listDriveChildren = async (id) => (typeof M().listDriveChildren === "function" ? M().listDriveChildren(id) : []);',
+        // Miroir du Drive (driveMirror.js / workspaceDrive.js) : un faux Drive
+        // peut fournir dossiers et fichiers, mettre à la corbeille, renommer…
+        'export const ensureLabWorkspaceFolder = async () => (typeof M().ensureLabWorkspaceFolder === "function" ? M().ensureLabWorkspaceFolder() : "ws_folder");',
+        'export const findFolderByName = async (name, parent) => (typeof M().findFolderByName === "function" ? M().findFolderByName(name, parent) : "");',
+        'export const findDriveFileByName = async (name, parent) => (typeof M().findDriveFileByName === "function" ? M().findDriveFileByName(name, parent) : "");',
+        'export const findOrCreateFolder = async (name, parent) => (typeof M().findOrCreateFolder === "function" ? M().findOrCreateFolder(name, parent) : "");',
+        'export const getDriveFileMeta = async (id) => (typeof M().getDriveFileMeta === "function" ? M().getDriveFileMeta(id) : { id: String(id || ""), name: "", trashed: false });',
+        'export const trashDriveFile = async (id) => (typeof M().trashDriveFile === "function" ? M().trashDriveFile(id) : false);',
+        'export const renameDriveFile = async (id, name) => (typeof M().renameDriveFile === "function" ? M().renameDriveFile(id, name) : false);',
       ].join('\n'),
     };
   }

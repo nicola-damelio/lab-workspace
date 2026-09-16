@@ -2,15 +2,19 @@
    src/utils/referenceLinks.js
    LES CITATIONS D'UN TEXTE DEVIENNENT DES LIENS VERS LEURS RÉFÉRENCES.
 
-   Un manuscrit écrit ailleurs (Google Docs, Word, Paperpile…) cite ses papiers
-   par des NUMÉROS : « … as shown previously [12] » — ou « [3,4] », « [5-7] ».
+   Un manuscrit écrit ailleurs (Google Docs, Word, Paperpile, EndNote…) cite ses
+   papiers par des NUMÉROS : « … as shown previously [12] » — ou « [3,4] »,
+   « [5-7] » quand le journal demande les crochets ; « (12) » quand le style est
+   celui d'EndNote/Word ; et l'EXPOSANT — « previously¹² » ou
+   « previously<sup>12</sup> », la forme la plus courante dans un article.
    Le programme, lui, numérote les références d'un projet (project.references,
    voir « 📚 + Reference ») et affiche la liste dans la section « 📚 Bibliography »
    et dans le document exporté. Sans lien, le lecteur (et l'auteur lui-même !) ne
    peut pas savoir À QUOI correspond le « [12] » resté dans le texte : c'est
    exactement ce que ce module répare.
 
-   `linkCitationNumbers(html, …)` remplace chaque « [12] » par « [12] » cliquable :
+   `linkCitationNumbers(html, …)` transforme ces trois écritures en liens, sans
+   changer l'apparence du texte (un exposant reste un exposant) :
      • le numéro reste VISIBLE (le texte garde son sens, même imprimé) ;
      • le lien pointe sur l'ancre `#ref-12` de la liste bibliographique (le
        document exporté défile jusqu'à la référence) ;
@@ -33,7 +37,11 @@
    jamais écraser un numéro déjà pris ni dupliquer un papier déjà référencé.
    ========================================================================= */
 
-import { NUMERIC_CITATION_RE, numericCitationNumbers } from './manuscriptImport';
+import {
+  NUMERIC_CITATION_RE, PAREN_CITATION_RE, SUPERSCRIPT_CITATION_RE,
+  citationContextOkBefore, citationGuardApplies, numbersOfCitation, numericCitationNumbers,
+  digitsToSuperscript
+} from './manuscriptImport';
 import { entryKeys } from './referenceImport';
 
 /** Classe CSS des liens de citation (stylée dans le document exporté). */
@@ -67,8 +75,29 @@ const isTag = (token) => /^<\/?[a-zA-Z][^>]*>$/.test(token);
 const escapeAttr = (s) => String(s || '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+/** Le contenu d'un `<sup>` : des nombres, et RIEN d'autre (« 12 », « 3,4 »,
+ *  « 5-7 »). « m<sup>2</sup> » ou « 2<sup>nd</sup> » n'y ressemblent pas. */
+const SUP_CONTENT_RE = /^(\s*)(\d{1,4}(?:\s*(?:[,;]|-|–|—|to)\s*\d{1,4})*)(\s*)$/;
+
+/** Les citations d'un groupe → leur HTML cliquable, SÉPARÉES par des virgules.
+ *  `innerFor` décide de ce qui reste VISIBLE (le nombre, ou son exposant). */
+const citationLinks = (nums, { href, titleOf, innerFor }) => nums.map((n) => {
+  const title = titleOf(n);
+  return `<a class="${CITE_LINK_CLASS}" href="${escapeAttr(href(n))}" data-ref="${n}"`
+    + `${title ? ` title="${escapeAttr(title)}"` : ''}>${innerFor ? innerFor(n) : n}</a>`;
+}).join(',');
+
 /**
  * Le TEXTE HTML d'une section, ses citations numérotées transformées en liens.
+ *
+ * Les TROIS écritures d'un même renvoi sont reconnues (elles viennent du
+ * journal, pas de nous) :
+ *   • « [12] »    — crochets (Paperpile, Zotero, la plupart des revues) ;
+ *   • « (12) »    — parenthèses, le style EndNote/Word ;
+ *   • un EXPOSANT — « previously¹² » (chiffres Unicode) ou
+ *                   « previously<sup>12</sup> » (exposant Word/EndNote).
+ * Chacune garde son apparence : le numéro reste visible et à sa place, seule
+ * une ancre `#ref-<n>` (plus une infobulle) lui est ajoutée.
  *
  * @param {string} html    le contenu riche de la section (déjà échappé)
  * @param {object} [opts]
@@ -84,24 +113,44 @@ export const linkCitationNumbers = (html, { numbers, hrefFor, titleFor } = {}) =
   if (!valid.size) return source;
   const href = typeof hrefFor === 'function' ? hrefFor : (n) => `#${citationAnchorId(n)}`;
   const titleOf = typeof titleFor === 'function' ? titleFor : () => '';
-  let anchor = 0; // profondeur : on ne réécrit JAMAIS l'intérieur d'un lien
+  const plain = { href, titleOf };
+  let anchor = 0;   // profondeur de <a> : on ne réécrit JAMAIS l'intérieur d'un lien
+  const sups = [];  // <sup> ouverts : leur contenu est une citation s'il n'a QUE des nombres
+  let offset = 0;   // position du token dans le source (garde-fou de contexte)
   return source.split(/(<[^>]*>)/).map((token) => {
+    const start = offset;
+    offset += token.length;
     if (!token) return token;
     if (isTag(token)) {
       if (/^<a[\s>]/i.test(token)) anchor += 1;
       else if (/^<\/a\s*>/i.test(token)) anchor = Math.max(0, anchor - 1);
+      if (/^<sup[\s>]/i.test(token)) sups.push(source.slice(0, start)); // le texte D'AVANT l'exposant
+      else if (/^<\/sup\s*>/i.test(token)) sups.pop();
       return token;
     }
     if (anchor > 0) return token;
-    return token.replace(NUMERIC_CITATION_RE, (raw, group) => {
-      const nums = numericCitationNumbers(group);
-      if (!nums.length || !nums.every((n) => valid.has(n))) return raw;
-      return `[${nums.map((n) => {
-        const title = titleOf(n);
-        return `<a class="${CITE_LINK_CLASS}" href="${escapeAttr(href(n))}" data-ref="${n}"`
-          + `${title ? ` title="${escapeAttr(title)}"` : ''}>${n}</a>`;
-      }).join(',')}]`;
-    });
+    /* Dans un exposant HTML : le numéro seul est la citation (« …shown<sup>12</sup> »). */
+    if (sups.length) {
+      const m = token.match(SUP_CONTENT_RE);
+      if (!m) return token;
+      const nums = numericCitationNumbers(m[2]);
+      if (!nums.length) return token;
+      if (citationGuardApplies('sup-html', nums) && !citationContextOkBefore(sups[sups.length - 1])) return token;
+      if (!nums.every((n) => valid.has(n))) return token;
+      return `${m[1]}${citationLinks(nums, plain)}${m[3]}`;
+    }
+    /* Crochets, parenthèses et exposants Unicode. */
+    return [[NUMERIC_CITATION_RE, 'bracket'], [PAREN_CITATION_RE, 'paren'], [SUPERSCRIPT_CITATION_RE, 'sup']]
+      .reduce((acc, [re, form]) => acc.replace(new RegExp(re.source, re.flags), (raw, group, at) => {
+        const nums = numbersOfCitation(form, group);
+        if (citationGuardApplies(form, nums) && !citationContextOkBefore(source.slice(0, start + at))) return raw;
+        if (!nums.length || !nums.every((n) => valid.has(n))) return raw;
+        if (form === 'paren') return `(${citationLinks(nums, plain)})`;
+        if (form === 'sup') {
+          return citationLinks(nums, { ...plain, innerFor: (n) => digitsToSuperscript(n) });
+        }
+        return `[${citationLinks(nums, plain)}]`;
+      }), token);
   }).join('');
 };
 

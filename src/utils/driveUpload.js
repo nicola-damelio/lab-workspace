@@ -80,6 +80,10 @@ export const clearDriveToken = () => {
 };
 const FOLDER_NAME_KEY = 'labDriveFolderName';
 import { suggestDriveFileName, sanitizeSlug, driveFolderPath, DATASET_FOLDER_DIRS, datasetFolderSlug, canonicalPageSection, canonicalExperimentPath, projectNamesOf } from './driveNaming';
+import {
+  readDriveMirror, writeDriveMirror, rememberDatasetFolder, rememberProjectFolder,
+  isDatasetMirrorDeleted, isDrivePathMirrorDeleted
+} from './driveMirrorStore';
 import { getCloudProvider, nextcloudConfigured, ncUploadFile } from './nextcloud';
 import {
   enqueuePendingUpload, removePendingUpload, listPendingUploads,
@@ -411,6 +415,10 @@ export const ensureDatasetFolderStructure = async (datasetRootId, dirs = null) =
   if (!datasetRootId || !getDriveToken()) return map;
   const list = Array.isArray(dirs) && dirs.length ? dirs : datasetDirNames();
   for (const dir of list) {
+    /* Un dossier SUPPRIMÉ dans le programme ne se recrée pas : sans ce test,
+       ouvrir le dataset refaisait « projects/ » (ou « backups/ »…) juste après
+       sa suppression — le dossier semblait réapparaître tout seul. */
+    if (datasetDirDeleted(dir)) { map[dir] = ''; continue; }
     try {
       map[dir] = await findOrCreateFolder(dir, datasetRootId);
     } catch { map[dir] = ''; }
@@ -476,6 +484,39 @@ const datasetFolderName = () => {
   return driveRootId ? `dataset_${sanitizeSlug(driveRootId)}` : '';
 };
 
+/** Le dossier `dir` du dataset COURANT (au sens de son dossier Drive) a-t-il été
+ *  SUPPRIMÉ dans le programme ? Dans ce cas il n'est jamais recréé : c'est ce
+ *  qui met fin aux dossiers qui « réapparaissent » après une suppression
+ *  (voir driveMirrorStore.js). */
+const datasetDirDeleted = (dir) => {
+  try {
+    return isDrivePathMirrorDeleted(readDriveMirror(), {
+      dataset: { id: driveRootId, name: driveRootName }, path: dir
+    });
+  } catch { return false; }
+};
+
+/** Le dataset COURANT a-t-il été supprimé ? (un dataset supprimé ne voit pas
+ *  son dossier Drive renaître). */
+const currentDatasetDeleted = () => {
+  try {
+    return !!driveRootId
+      && isDatasetMirrorDeleted(readDriveMirror(), { id: driveRootId, name: driveRootName });
+  } catch { return false; }
+};
+
+/** Noter l'identifiant Drive du dossier d'un dataset (registre partagé sur le
+ *  Drive : sans lui, un autre poste ne peut ni renommer ni supprimer ce dossier
+ *  et en crée un second). Best-effort. */
+const rememberDatasetFolderId = (folderId, name) => {
+  try {
+    if (!driveRootId || !folderId) return;
+    writeDriveMirror(rememberDatasetFolder(readDriveMirror(), {
+      id: driveRootId, name: name || driveRootName, folderId
+    }));
+  } catch { /* la mémoire du miroir est un confort, pas une condition */ }
+};
+
 /** Resolve the upload root folder: "Lab Workspace" → the dataset folder inside
  *  it (when the dataset has a title). The dataset folder ALWAYS gets its own
  *  internal structure — the canonical five-folder tree for scientific datasets
@@ -485,11 +526,17 @@ const datasetFolderName = () => {
  *  an administration base. */
 export const ensureDriveFolder = async () => {
   const name = datasetFolderName();
+  /* UN DOSSIER SUPPRIMÉ NE REVIENT PAS : si le dataset a été supprimé dans le
+     programme (voir driveMirror.js / App.jsx), on ne recrée pas son dossier
+     Drive. C'est ce qui laissait une arborescence fantôme après une
+     suppression. */
+  if (currentDatasetDeleted()) return '';
   const saved = getDriveFolderId();
 
   // Fast path: the cached folder already belongs to this dataset and name.
   if (saved && driveRootResolvedId === driveRootId && driveRootResolvedName === name) {
     if (name) await ensureDatasetFolderStructure(saved).catch(() => {});
+    rememberDatasetFolderId(saved, name);
     return saved;
   }
 
@@ -503,6 +550,7 @@ export const ensureDriveFolder = async () => {
         await renameDriveFile(saved, name);
         driveRootResolvedName = name;
         setDriveFolderName(name);
+        rememberDatasetFolderId(saved, name);
         if (name) await ensureDatasetFolderStructure(saved).catch(() => {});
         return saved;
       }
@@ -523,6 +571,7 @@ export const ensureDriveFolder = async () => {
         setDriveFolderDatasetId(driveRootId);
         setDriveFolderName(name);
         driveRootResolvedName = name;
+        rememberDatasetFolderId(oldId, name);
         if (name) await ensureDatasetFolderStructure(oldId).catch(() => {});
         return oldId;
       }
@@ -544,6 +593,7 @@ export const ensureDriveFolder = async () => {
     setDriveFolderName(name);
     driveRootResolvedId = driveRootId;
     driveRootResolvedName = name;
+    rememberDatasetFolderId(rootId, name);
     if (name) await ensureDatasetFolderStructure(rootId).catch(() => {});
   }
   return rootId;
@@ -636,13 +686,32 @@ export const findOrCreateFolder = async (name, parentId) => {
  *  NAMES (each sanitized; empty segments skipped).
  *  @returns {{ leafId:string, path:Array<{name:string,id:string}> }} */
 export const resolveDrivePathFromNames = async (names) => {
+  const wanted = (names || []).map((n) => sanitizeSlug(n)).filter(Boolean);
+  /* UN DOSSIER SUPPRIMÉ NE SE RECRÉE PAS : si cette branche (ou celle du
+     dataset lui-même) a été supprimée dans le programme, on s'arrête net au
+     lieu de refabriquer une arborescence à côté de celle qui a été effacée.
+     L'erreur porte un code explicite, donc l'appelant n'enfile pas non plus ce
+     fichier dans la file de reprise (le dossier n'existe plus). */
+  if (wanted.length && isDrivePathMirrorDeleted(readDriveMirror(), {
+    dataset: { id: driveRootId, name: driveRootName }, path: wanted.join('/')
+  })) {
+    throwCode('PATH_DELETED', `The Drive folder “${wanted.join('/')}” was deleted — it is not recreated.`);
+  }
   let parent = await ensureDriveFolder();
   const path = [];
-  for (const raw of names || []) {
-    const name = sanitizeSlug(raw);
-    if (!name) continue;
+  for (const name of wanted) {
     parent = await findOrCreateFolder(name, parent);
     path.push({ name, id: parent });
+  }
+  /* Registre partagé : l'identifiant du dossier d'un PROJET est noté pour que
+     renommer ou supprimer ce projet marche depuis n'importe quel poste (sinon
+     l'application cherche le dossier par son nom et en crée un second). */
+  if (wanted[0] === 'projects' && wanted[1] && driveRootId && path[1]) {
+    try {
+      writeDriveMirror(rememberProjectFolder(readDriveMirror(), {
+        datasetId: driveRootId, datasetName: driveRootName, projectName: wanted[1], folderId: path[1].id
+      }));
+    } catch { /* confort */ }
   }
   return { leafId: parent, path };
 };
@@ -1226,6 +1295,7 @@ export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path =
   }
 
   let last = null;
+  let deletedTarget = false;
   for (const singleCtx of folderCtxs) {
     // Explicit path arrays are kept, but the first segment is normalised to the
     // canonical lower-case page section when it is one ("Data" → "data",
@@ -1244,14 +1314,17 @@ export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path =
     } catch (err) {
       // One linked project failing must not hide the others; the caller still
       // receives the last successful upload (or null when all failed).
+      if (err && err.code === 'PATH_DELETED') deletedTarget = true;
       console.warn(`Drive upload failed for project "${(singleCtx && singleCtx.project) || ''}":`, err && err.message);
     }
   }
-  if (!last && !skipQueue) {
+  if (!last && !skipQueue && !deletedTarget) {
     // Every folder copy failed → Drive is unreachable right now (token server
     // down / token expired / network error). Keep the file in the pending
     // queue so flushPendingUploads() replays it as soon as Drive answers
     // again, instead of losing it. The public contract is unchanged (null).
+    // EXCEPTION : la cible a été SUPPRIMÉE dans le programme (PATH_DELETED) —
+    // rien à reprendre, le dossier ne sera pas recréé (voir driveMirrorStore).
     await saveUploadForRetry({ name, mimeType, file, ctx, path, source: 'upload' }).catch(() => null);
   }
   return last;

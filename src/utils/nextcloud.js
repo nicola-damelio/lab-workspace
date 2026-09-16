@@ -200,6 +200,22 @@ export const ncDelete = async (davUrl) => {
   } catch { return false; }
 };
 
+/**
+ * Rename / move a file or folder (WebDAV MOVE): `fromUrl` becomes `toUrl`.
+ * Used by the Drive mirror so a dataset or project RENAME is reflected on
+ * Nextcloud exactly like on Google Drive (never a second folder beside the
+ * old one). Returns true when the move happened (or was already done).
+ */
+export const ncMove = async (fromUrl, toUrl) => {
+  if (!fromUrl || !toUrl || fromUrl === toUrl) return false;
+  try {
+    const res = await ncRequest('MOVE', fromUrl, {
+      headers: { Destination: toUrl, Overwrite: 'F' }
+    });
+    return res.status === 201 || res.status === 204 || res.status === 207;
+  } catch { return false; }
+};
+
 /** Fetch a Nextcloud DAV URL's bytes (with the configured Basic auth). Returns
  *  a Blob, or null when unreachable. */
 export const ncFetchBlob = async (davUrl) => {

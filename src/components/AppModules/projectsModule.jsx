@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { markAttachmentsDeleted } from '../../utils/driveUpload';
+import { markAttachmentsDeleted, getDriveRootName } from '../../utils/driveUpload';
+import { mirrorDeleteProject } from '../../utils/driveMirror';
 import {
   DELETED_PROJECTS_KEY, normalizeTombstones, mergeTombstones, tombstonesForDataset,
   isProjectDeleted, withoutDeletedProjects, addTombstone, withoutDatasetTombstones
@@ -607,6 +608,17 @@ export const ProjectsModule = ({
     setConfirmDelete(null);
     // Mark any Google Drive attachments of this project as deleted.
     if (target) markAttachmentsDeleted(target).catch(() => {});
+    /* LE DRIVE EST LE MIROIR DU PROGRAMME : le dossier du projet
+       (<dataset>/projects/<projet>, avec ses expériences, ses figures et son
+       document) part à la corbeille, et son chemin est mis en pierre tombale —
+       il ne se recrée donc pas et ne réapparaît pas sur les autres postes. */
+    if (target) {
+      mirrorDeleteProject({
+        datasetId: target.datasetId || activeProjectDataset || '',
+        datasetName: getDriveRootName(),
+        projectName: target.name || ''
+      }).catch(() => null);
+    }
   };
 
   // Edit access: owner, superuser, or a coworker with 'modify' permission.

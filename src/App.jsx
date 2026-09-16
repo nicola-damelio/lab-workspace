@@ -32,7 +32,39 @@ import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud, set
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
 import { setActiveProjectId, readLibrary, readAllProjectLibraries, mergeLibraryFromSnapshot } from './utils/figuresLibrary';
-import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, getLastDriveConnectError, driveBootstrapRequestedAtLoad, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders } from './utils/driveUpload';
+import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, getLastDriveConnectError, driveBootstrapRequestedAtLoad, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders, cloudBackendAvailable } from './utils/driveUpload';
+/* ── LE DRIVE EST LE MIROIR DU PROGRAMME (et le même sur chaque poste) ──────
+   driveMirror.js : supprimer ou renommer un dataset / un projet se répercute
+   sur Drive (dossier mis à la corbeille, dossier renommé — jamais de doublon).
+   workspaceDrive.js : l'espace de travail lui-même (liste des datasets,
+   projets, suppressions, dossiers) est écrit dans
+   Lab Workspace/_workspace/state.json et relu au démarrage : un dataset créé
+   ou supprimé sur un poste se voit sur les autres, et RIEN ne ressuscite. */
+import { mirrorDeleteDataset, mirrorRenameDataset } from './utils/driveMirror';
+import {
+  readWorkspaceState, writeDatasetCopy, readDatasetCopy,
+  applyWorkspaceIndex, adoptWorkspaceState, installWorkspaceAutosave
+} from './utils/workspaceDrive';
+import { readDriveMirror, isDatasetMirrorDeleted } from './utils/driveMirrorStore';
+/* TOUT CE QUI VIVAIT DANS LE NAVIGATEUR part aussi sur le Drive : publications
+   des scientifiques, bibliothèque de figures, éléments étoilés, presets…
+   (voir workspaceKeyStore.js). Sans cela, deux postes n'affichaient pas la même
+   chose et vider le navigateur effaçait des données sans copie. */
+import { installKeyObserver, adoptKeysFromDrive, installKeyAutosave, writeKeyState } from './utils/workspaceKeyStore';
+
+/** Les datasets VISIBLES sur ce poste : ceux qui ne portent pas de pierre
+ *  tombale. Une suppression est définitive PARTOUT : la tombe est écrite ici,
+ *  dans le fichier d'état du Drive, et donc connue des autres postes — un
+ *  dataset supprimé (sur celui-ci ou sur un autre) ne réapparaît jamais dans
+ *  la liste, même si Firestore ou le cache local en garde encore une copie. */
+const withoutDeletedDatasets = (list) => {
+  let mirror = null;
+  try { mirror = readDriveMirror(); } catch { mirror = null; }
+  return (Array.isArray(list) ? list : []).filter((d) => {
+    if (!d || !d.id) return true;
+    return !isDatasetMirrorDeleted(mirror, { id: d.id, name: d.title });
+  });
+};
 import { sanitizeSlug, datasetFolderSlug } from './utils/driveNaming';
 import { resolveOriginTest } from './utils/pendingFigureScroll';
 import { RECAPTURE_RETURN_EVENT, RECAPTURE_NEXT_TEST_EVENT } from './utils/figureRecapture';
@@ -1744,6 +1776,12 @@ if (customType === 'dosy') {
      document (un `set(..., {merge:true})` ressuscite un document supprimé). */
   const deletedDatasetIdsRef = useRef(new Set());
 
+  /* Le dernier INDEX lu sur le Drive (liste des datasets de l'espace de
+     travail). Il est ré-appliqué à CHAQUE rafraîchissement de la liste : sinon
+     un snapshot Firestore plus court (dataset créé sur un autre poste et pas
+     encore vu ici) effacerait les datasets que le Drive venait d'ajouter. */
+  const workspaceIndexRef = useRef(null);
+
   useEffect(() => {
     // Cloud datasets live under `artifacts/{appId}/public/data/datasets`.
     // La lecture ET l'écriture exigent désormais un jeton signé par le serveur
@@ -1795,7 +1833,15 @@ if (customType === 'dosy') {
             dsets.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
           } catch { /* quota / parse — the cloud copy is enough */ }
 
-          setDatasetsList(dsets);
+          /* Une suppression connue (ce poste ou un autre) gagne toujours : la
+             copie Firestore/localStorage d'un dataset supprimé ne le ramène
+             pas dans la liste. Et l'index du Drive COMPLÈTE la liste : les
+             datasets créés sur un autre poste y figurent, même si Firestore ne
+             les a pas encore annoncés ici. */
+          setDatasetsList((prev) => withoutDeletedDatasets(applyWorkspaceIndex({
+            datasets: [...dsets, ...(Array.isArray(prev) ? prev : [])],
+            state: workspaceIndexRef.current
+          })));
           setIsCloudReady(true);
         },
         (err) => {
@@ -1806,9 +1852,10 @@ if (customType === 'dosy') {
             const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
 
             if (stored) {
-              setDatasetsList(
-                JSON.parse(stored).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-              );
+              setDatasetsList((prev) => withoutDeletedDatasets(applyWorkspaceIndex({
+                datasets: [...JSON.parse(stored), ...(Array.isArray(prev) ? prev : [])],
+                state: workspaceIndexRef.current
+              })));
             }
           } catch {}
 
@@ -1824,14 +1871,85 @@ if (customType === 'dosy') {
       const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
 
       if (stored) {
-        setDatasetsList(
-          JSON.parse(stored).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-        );
+        setDatasetsList((prev) => withoutDeletedDatasets(applyWorkspaceIndex({
+          datasets: [...JSON.parse(stored), ...(Array.isArray(prev) ? prev : [])],
+          state: workspaceIndexRef.current
+        })));
       }
     } catch {}
 
     setIsCloudReady(true);
   }, [user, serverAuth.ready, serverAuth.checked]);
+
+  /* ── L'ESPACE DE TRAVAIL LU SUR LE DRIVE ───────────────────────────────────
+     Au démarrage (et dès que Drive se connecte), l'application relit
+     Lab Workspace/_workspace/state.json : la liste des datasets du Drive, les
+     projets, les SUPPRESSIONS et le registre des dossiers. C'est ce qui rend
+     les postes identiques — un dataset créé sur le PC du bureau apparaît ici
+     même si Firestore n'a jamais répondu sur ce poste, et un dataset supprimé
+     ailleurs n'y revient pas. */
+  const syncWorkspaceFromDrive = useCallback(async () => {
+    if (!cloudBackendAvailable()) return false;
+    /* Les clés du navigateur d'abord : l'observateur doit être en place AVANT
+       que quoi que ce soit d'autre écrive (sinon une modification n'aurait pas
+       d'horodatage et ne pourrait pas être arbitrée entre deux postes). */
+    installKeyObserver();
+    const keys = await adoptKeysFromDrive().catch(() => ({ adopted: [], state: null }));
+    if (keys && keys.state) writeKeyState(keys.state).catch(() => null);
+    const state = await readWorkspaceState();
+    if (!state) return false;
+    /* L'index est mémorisé : chaque rafraîchissement de la liste (snapshot
+       Firestore, retour du cache local) le ré-applique, donc un dataset connu
+       du Drive ne disparaît jamais parce qu'un autre poste ne l'a pas encore
+       poussé sur Firestore. */
+    workspaceIndexRef.current = state;
+    /* Les tombes d'abord : elles s'ajoutent à celles de ce poste et sont
+       réécrites localement, donc TOUT ce qui suit (liste ci-dessous, projets à
+       l'ouverture d'un dataset) les applique. */
+    const adopted = adoptWorkspaceState(state);
+    try { adoptDeletedProjects(state.deletedProjects); } catch { /* projet hors scope */ }
+    setDatasetsList((prev) => withoutDeletedDatasets(
+      applyWorkspaceIndex({ datasets: prev, state, mirror: adopted.mirror }).filter((d) => d && d.id)
+    ));
+    return true;
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = () => { if (!cancelled) syncWorkspaceFromDrive(); };
+    run();
+    const onConnected = () => run();
+    window.addEventListener('lab:drive-connected', onConnected);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('lab:drive-connected', onConnected);
+    };
+  }, [syncWorkspaceFromDrive]);
+
+  /* ── L'ESPACE DE TRAVAIL RÉÉCRIT SUR LE DRIVE ──────────────────────────────
+     Toute modification (liste des datasets, projets, suppression, renommage)
+     est renvoyée vers state.json en différé : c'est ce qui fait que le poste
+     suivant voit la même chose. Les écritures sont regroupées, jamais en rafale
+     pendant la frappe d'un titre. */
+  useEffect(() => {
+    if (!isCloudReady) return undefined;
+    const uninstall = installWorkspaceAutosave(() => ({
+      datasets: datasetsList,
+      projects: loadProjects(''),
+      deletedProjects: loadDeletedProjects(),
+      mirror: readDriveMirror()
+    }), { delay: 2500 });
+    return () => uninstall();
+  }, [isCloudReady, datasetsList]);
+
+  /* Les AUTRES clés du navigateur (publications, figures, étoiles, presets…)
+     suivent le même chemin, en différé elles aussi : un changement dans une
+     liste est déposé dans _workspace/keys.json, et un poste neuf le reçoit. */
+  useEffect(() => {
+    if (!isCloudReady) return undefined;
+    installKeyObserver();
+    return installKeyAutosave({ delay: 4000 });
+  }, [isCloudReady]);
 
   // ── Derived string array for backward-compatible child components ──
   // All child components (test renderers, LabNotebook, Storage, etc.) still
@@ -2318,6 +2436,11 @@ useEffect(() => {
         payload: compressedPayload,
         isCompressed: true
       };
+      /* Le CONTENU du dataset part aussi sur le Drive
+         (_workspace/datasets/<id>.json) : c'est ce qui permet de le rouvrir sur
+         un autre poste, ou quand Firestore ne répond pas. Best-effort : la
+         sauvegarde Firestore et l'instantané HTML restent la référence. */
+      mirrorDatasetContent(currentDatasetId, updatedPayload);
       if (db) {
         const docRef = db
           .collection(`artifacts/${appId}/public/data/datasets`)
@@ -2392,6 +2515,7 @@ useEffect(() => {
           payload: LZString.compressToUTF16(JSON.stringify({ administration: adminContent })),
           isCompressed: true
         };
+        mirrorDatasetContent(currentDatasetId, updatedPayload);
         if (db) {
           const docRef = db
             .collection(`artifacts/${appId}/public/data/datasets`)
@@ -3114,6 +3238,7 @@ const handleBackToExplorer = async () => {
             isCompressed: true,
             kind: 'scientific'
           };
+      mirrorDatasetContent(currentDatasetId, updatedPayload);
       if (db) {
         await db
           .collection(`artifacts/${appId}/public/data/datasets`)
@@ -3151,6 +3276,35 @@ const handleBackToExplorer = async () => {
   setProjectDatasetScope(null);
 };
 
+/* ── Le CONTENU d'un dataset sur le Drive (le même sur chaque poste) ─────────
+   En plus de Firestore et de l'instantané HTML, le contenu (charge compressée
+   comprise) est déposé dans Lab Workspace/_workspace/datasets/<id>.json. Un
+   poste neuf — ou un poste où Firestore ne répond pas — peut donc rouvrir le
+   dataset directement depuis le Drive (voir openDatasetFromDrive).
+
+   Deux précautions, parce que la charge peut peser plusieurs mégaoctets :
+     • l'écriture est DIFFÉRÉE (elle attend ~8 s de calme : la sauvegarde
+       Firestore, elle, part après 1,5 s) ;
+     • une charge IDENTIQUE n'est jamais renvoyée (empreinte de la chaîne). */
+const DATASET_COPY_DELAY_MS = 8000;
+let datasetCopyTimer = null;
+let datasetCopyFingerprint = '';
+const mirrorDatasetContent = (id, payload) => {
+  try {
+    if (!id || !payload) return;
+    const body = JSON.stringify({ ...payload, id });
+    if (body === datasetCopyFingerprint) return;   // rien de neuf : aucun envoi
+    if (datasetCopyTimer) clearTimeout(datasetCopyTimer);
+    datasetCopyTimer = setTimeout(() => {
+      datasetCopyTimer = null;
+      const current = JSON.stringify({ ...payload, id });
+      if (current === datasetCopyFingerprint) return;
+      datasetCopyFingerprint = current;
+      writeDatasetCopy({ ...payload, id, updatedAt: Date.now() }).catch(() => null);
+    }, DATASET_COPY_DELAY_MS);
+  } catch { /* best-effort : Firestore et l'instantané HTML restent la référence */ }
+};
+
 const openDataset = (dset) => {
   // Chaque dataset n’est visible que par les utilisateurs définis dedans :
   // garde de sécurité, y compris pour l’ouverture directe par URL.
@@ -3161,6 +3315,12 @@ const openDataset = (dset) => {
       title: '🔒 Accès restreint',
       message: `Le dataset « ${(dset && dset.title) || 'sans titre'} » n’est visible que par les utilisateurs définis comme membres. Connectez-vous avec votre compte membre, ou demandez au superutilisateur de vous ajouter.`
     });
+    return;
+  }
+  /* Dataset connu du Drive (index partagé) mais jamais reçu sur CE poste : son
+     contenu n'est pas encore ici. On le relit du Drive, puis on ouvre. */
+  if (!dset.payload) {
+    openDatasetFromDrive(dset);
     return;
   }
   const kind = dset && dset.kind === 'administration' ? 'administration' : 'scientific';
@@ -3308,11 +3468,33 @@ const openDataset = (dset) => {
     }
   };
 
+  /* ── Ouvrir un dataset dont le contenu n'est pas encore sur ce poste ───────
+     L'index du Drive (state.json) liste les datasets de l'espace de travail ;
+     leur CONTENU vit dans Lab Workspace/_workspace/datasets/<id>.json. Ici on
+     le relit, on complète l'entrée et on ouvre normalement. Si le Drive ne
+     répond pas, on le dit clairement au lieu d'afficher une erreur de lecture
+     de structure incompréhensible. */
+  const openDatasetFromDrive = async (dset) => {
+    const id = dset && dset.id;
+    if (!id) return;
+    const copy = await readDatasetCopy(id).catch(() => null);
+    if (!copy || !copy.payload) {
+      setDialog({
+        type: 'alert',
+        title: 'Dataset not on this PC yet',
+        message: `« ${(dset && dset.title) || id} » est listé sur le Drive mais son contenu n'a pas encore été reçu ici.\n\nVérifiez que Google Drive est connecté (barre latérale), puis rouvrez le dataset.`
+      });
+      return;
+    }
+    openDataset({ ...dset, ...copy, id, payload: copy.payload, isCompressed: !!copy.isCompressed });
+  };
+
   const saveDatasetAccess = async (dsetId, access) => {
     const cleanAccess = {
       restricted: !!access && !!access.restricted,
       memberNames: normalizeMemberNames(access && access.memberNames)
     };
+
 
     // Mise à jour optimiste (l’écran reflète immédiatement le changement).
     setDatasetsList((prev) => (Array.isArray(prev) ? prev : []).map((d) =>
@@ -3462,7 +3644,22 @@ const openDataset = (dset) => {
         /* 2) Nettoyage local (cache de l’appareil + liste affichée) et projets
            de ce dataset sur cet appareil. */
         forgetLocalDataset(id);
+
+        /* 3) LE DRIVE EST LE MIROIR DU PROGRAMME : le dossier du dataset (et
+           donc tous ses fichiers) part à la corbeille, et une pierre tombale —
+           partagée avec les autres postes par
+           Lab Workspace/_workspace/state.json — empêche définitivement son
+           retour. Sans cette étape, le dossier restait sur le Drive et
+           l'application le recréait à la prochaine utilisation du même titre. */
+        const deleted = await mirrorDeleteDataset({
+          id, name: label, extraNames: [target && target.title]
+        }).catch(() => null);
         try { removeProjectsOfDataset(id); } catch { /* ignore */ }
+        setDatasetsList((prev) => withoutDeletedDatasets(prev));
+        if (deleted && deleted.ok === false && deleted.reason && deleted.reason !== 'no-backend'
+            && deleted.reason !== 'not-found') {
+          console.warn('The dataset Drive folder could not be removed:', deleted.reason);
+        }
       }
     });
   };
@@ -3477,11 +3674,12 @@ const openDataset = (dset) => {
       defaultValue: currentTitle,
       onConfirm: async (newTitle) => {
         if (newTitle && newTitle.trim() !== currentTitle) {
+          const clean = newTitle.trim();
           if (db) {
             await db
               .collection(`artifacts/${appId}/public/data/datasets`)
               .doc(id)
-              .update({ title: newTitle.trim() });
+              .update({ title: clean });
           } else {
             let stored = [];
 
@@ -3492,11 +3690,16 @@ const openDataset = (dset) => {
             const idx = stored.findIndex((d) => d.id === id);
 
             if (idx >= 0) {
-              stored[idx].title = newTitle.trim();
+              stored[idx].title = clean;
               localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
               setDatasetsList(stored);
             }
           }
+          /* Le dossier Drive suit le titre : il est RENOMMÉ en place (cherché
+             par son identifiant partagé, pas par son nom) — sans cela, un autre
+             poste ne le retrouvait pas sous le nouveau nom et en créait un
+             second, laissant un dossier fantôme à côté de l'ancien. */
+          await mirrorRenameDataset({ id, oldName: currentTitle, newName: clean }).catch(() => null);
         }
       }
     });
@@ -3574,6 +3777,12 @@ const openDataset = (dset) => {
               closeDeletedDataset(dset.id);
               forgetLocalDataset(dset.id);
             });
+            /* Le Drive suit : chaque dossier part à la corbeille et sa tombe
+               (partagée entre les postes) empêche son retour. */
+            for (const dset of emptyDatasets) {
+              await mirrorDeleteDataset({ id: dset.id, name: dset.title || dset.id }).catch(() => null);
+            }
+            setDatasetsList((prev) => withoutDeletedDatasets(prev));
           } catch (e) {
             /* Rien n’a été supprimé : on annule les marqueurs. */
             emptyDatasets.forEach((dset) => deletedDatasetIdsRef.current.delete(String(dset.id)));
@@ -3590,6 +3799,10 @@ const openDataset = (dset) => {
             closeDeletedDataset(dset.id);
             forgetLocalDataset(dset.id);
           });
+          for (const dset of emptyDatasets) {
+            await mirrorDeleteDataset({ id: dset.id, name: dset.title || dset.id }).catch(() => null);
+          }
+          setDatasetsList((prev) => withoutDeletedDatasets(prev));
         }
       }
     });

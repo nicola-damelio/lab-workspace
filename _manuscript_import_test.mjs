@@ -105,6 +105,31 @@ eq(MS.authorYearKeyOf('Rossi et al., 2018'), 'rossi2018', 'la clé d’une citat
 eq(MS.authorYearKeyOf('Smith & Bianchi, 2020'), 'smith2020', '…même avec deux auteurs');
 eq(MS.authorYearKeyOf('Annexe sans année'), '', 'sans année, aucune clé');
 
+/* ── 4 bis. Les TROIS écritures d'une citation, et les exposants qui n'en sont
+   pas. Un article écrit pour une revue au style EndNote/Word ne met jamais de
+   crochets : son renvoi est « (12) » ou un exposant — « previously¹² », ou la
+   même chose en HTML quand le texte vient d'un document enrichi. Ces formes
+   doivent entrer dans le plan d'import comme les « [12] », et les exposants
+   d'unité (« m² », « 10⁻² »), les appels de fonction (« sin(2) ») et les années
+   (« (2021) ») doivent rester ce qu'ils sont : du texte. */
+const FORMES = 'cité (2), puis ³, puis <sup>4</sup>, puis [5] — mais 10⁻², m², sin(2) et (2021) n’en sont pas.';
+const formFound = MS.collectCitations(FORMES);
+eq(formFound.map((c) => c.raw), ['(2)', '³', '<sup>4</sup>', '[5]'],
+  'parenthèses (EndNote), exposant Unicode et exposant HTML sont des citations, au même titre que les crochets');
+eq(formFound.map((c) => c.form), ['paren', 'sup', 'sup-html', 'bracket'], '…et chaque forme est nommée');
+eq(formFound.map((c) => c.keys), [['#2'], ['#3'], ['#4'], ['#5']], '…avec les numéros qu’elles citent');
+eq(MS.findNumericCitations('m² 10⁻² sin(2) (2021)').length, 0,
+  'les exposants d’unité, les puissances, les fonctions et les années ne sont PAS des citations');
+eq([...MS.citedNumbersInText('see (5-7) and ¹², not [x]')], [5, 6, 7, 12],
+  'la lecture des numéros cités comprend les parenthèses, les plages et les exposants');
+const formConv = MS.convertCitationsInText(FORMES, new Map([['#2', 1], ['#3', 2], ['#4', 3], ['#5', 4]]));
+eq(formConv.text, 'cité [1], puis [2], puis [3], puis [4] — mais 10⁻², m², sin(2) et (2021) n’en sont pas.',
+  'à l’import, les trois écritures deviennent le SEUL marqueur [n] du programme');
+eq(formConv.replaced, 4, 'les quatre citations sont comptées');
+eq(formConv.unresolved, [], '…et rien n’est resté non résolu');
+eq(MS.convertCitationsInText('voir (9)', new Map([['#2', 1]])).unresolved, ['(9)'],
+  'un renvoi que la bibliographie n’explique pas est laissé tel quel (rien n’est inventé)');
+
 /* ── 5. Le plan : la numérotation du PROJET, pas celle du document ───────── */
 const plan = MS.buildManuscriptPlan(manuscript, { existingReferences: [] });
 eq(plan.entries.length, 3, 'les 3 références de la bibliographie du document sont analysées');
@@ -529,6 +554,44 @@ ok(docxDoc.text.includes('[[FIGURE 1]]'), 'le TEXTE garde la place de l’image 
 eq(docxDoc.text.includes('Figure 1. Transmission rates'), false, '…et la légende ne reste pas dans le texte');
 ok(MS.figureDataUrl(docxDoc.figures[0]).startsWith('data:image/png;base64,'),
   'les pixels d’un .docx se transforment en data URL (ce que la page envoie au Drive)');
+
+/* ── 16 bis. LES CITATIONS EN EXPOSANT D'UN .docx (Word, Google Docs, EndNote)
+   Le renvoi existe SEULEMENT dans la mise en forme du run
+   (`<w:vertAlign w:val="superscript"/>`) : la lecture du texte la perdait, le
+   renvoi arrivait en nombre nu collé au mot — rien à lier, d'où le « Nothing to
+   link » d'un article Word. Le run exposant devient donc son marqueur [n] DANS
+   le XML, et rien d'autre (units, ordinaux, runs normaux) n'est touché.      */
+const SUPER_DOCX = zipSync({
+  'word/document.xml': strToU8([
+    '<?xml version="1.0" encoding="UTF-8"?><w:document><w:body>',
+    '<w:p><w:r><w:t>Aphids transmit potyviruses</w:t></w:r>',
+    '<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:t>12</w:t></w:r>',
+    '<w:r><w:t> as shown before</w:t></w:r>',
+    '<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:t>3,4</w:t></w:r>',
+    '<w:r><w:t>.</w:t></w:r></w:p>',
+    '<w:p><w:r><w:t>Area in m</w:t></w:r>',
+    '<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:t>2</w:t></w:r>',
+    '<w:r><w:t> and the 2</w:t></w:r>',
+    '<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:t>nd</w:t></w:r>',
+    '<w:r><w:t> time, diluted 10</w:t></w:r>',
+    '<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:t>-3</w:t></w:r>',
+    '<w:r><w:t>.</w:t></w:r></w:p>',
+    '</w:body></w:document>'
+  ].join(''))
+});
+const superDoc = MS.docxManuscriptFromBytes(SUPER_DOCX);
+ok(superDoc.text.includes('Aphids transmit potyviruses[12] as shown before[3,4].'),
+  'un renvoi en exposant d’un .docx devient son marqueur [n] — le nombre n’est plus perdu dans le texte');
+eq(superDoc.text.includes('m[2]'), false,
+  '« m2 » (exposant d’unité) reste du texte : le marqueur n’est pas mis au milieu d’un mot');
+eq(superDoc.text.includes('2[nd]'), false, '« 2nd » (ordinal) n’est pas un renvoi');
+ok(superDoc.text.includes('diluted 10-3.'), 'une puissance « 10-3 » reste une puissance');
+const superRun = MS.markDocxSuperscriptCitations(
+  '<w:p><w:r><w:t>shown</w:t></w:r><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr>'
+  + '<w:t>7</w:t></w:r></w:p>'
+);
+ok(superRun.includes('<w:t>[7]</w:t>'), 'le marqueur remplace le texte du run (le reste du XML est intact)');
+ok(superRun.includes('<w:t>shown</w:t>'), '…et le run normal voisin n’est pas touché');
 
 /* Une image LIÉE (relation externe, courante dans les exports Google Docs /
    Word) n'a pas de fichier dans le ZIP : son URL est gardée telle quelle. */

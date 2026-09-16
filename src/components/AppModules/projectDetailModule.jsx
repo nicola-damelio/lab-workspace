@@ -32,6 +32,10 @@ import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject,
    (Lab Workspace/<dataset>/projects/<projet>/<projet>_document.json) : le
    navigateur n'est qu'un cache (voir utils/projectDocumentDrive.js). */
 import { archiveProjectDocument, restoreProjectDocument } from '../../utils/projectDocumentDrive';
+/* Le Drive est le miroir du programme : supprimer un projet met son dossier
+   Drive à la corbeille (et note son chemin comme définitivement supprimé),
+   renommer un projet renomme son dossier ET son <projet>_document.json. */
+import { mirrorDeleteProject, mirrorRenameProject } from '../../utils/driveMirror';
 import { repairContentImages, getRenderableDriveUrl } from '../../data/constants';
 import {
   readDeck, readProjectLibrary, removeProjectLibraryItem, pushLibraryToDrive, pullLibraryFromDrive,
@@ -973,12 +977,13 @@ export const ProjectDetailModule = ({
     updateProject({ references: refs.filter((r) => r.id !== refId) });
 
   /* ---- Les citations du texte → des LIENS vers les références --------------
-     Le « [12] » d'un manuscrit importé n'est qu'un nombre : on en fait un lien
-     vers la référence 12 (ancre #ref-12 de la liste ci-dessous, rappelée en
-     infobulle « Auteurs · Titre (année) »). Un numéro que le projet ne connaît
-     pas reste intact — aucun lien mort — et la transformation est idempotente
-     (voir utils/referenceLinks.js). `extraRefs` = les références qui viennent
-     d'être importées et ne sont pas encore dans project.references. */
+     Le « [12] » (ou « (12) », ou l'exposant « ¹² ») d'un manuscrit importé n'est
+     qu'un nombre : on en fait un lien vers la référence 12 (ancre #ref-12 de la
+     liste ci-dessous, rappelée en infobulle « Auteurs · Titre (année) »). Un
+     numéro que le projet ne connaît pas reste intact — aucun lien mort — et la
+     transformation est idempotente (voir utils/referenceLinks.js). `extraRefs` =
+     les références qui viennent d'être importées et ne sont pas encore dans
+     project.references. */
   const citationTitleFor = (extraRefs = []) => (number) => {
     const found = [...refs, ...(extraRefs || [])].find((r) => Number(r && r.number) === Number(number));
     if (!found) return '';
@@ -992,7 +997,8 @@ export const ProjectDetailModule = ({
   });
 
   /** « 🔗 Link citations to references » : les sections déjà écrites (importées
-   *  avant ce bouton, ou tapées à la main avec des [12]) sont reprises d'un coup. */
+   *  avant ce bouton, ou tapées à la main avec des [12], des (12) ou des
+   *  exposants ¹²) sont reprises d'un coup. */
   const linkCitationLinks = () => {
     const res = linkCitationsInSections(
       PROJECT_TEXT_SECTIONS.map((s) => ({ id: s.id, html: project[s.id] || '' })),
@@ -1000,7 +1006,7 @@ export const ProjectDetailModule = ({
     );
     if (!res.updated) {
       setCitationLinkReport(refs.length
-        ? 'Nothing to link: the text sections hold no numbered citation such as [1], or they are already links.'
+        ? 'Nothing to link: the text sections hold no numbered citation — [1], (1) or a superscript 1 — or the numbers they show are not references of this project (a citation is linked only when ALL its numbers exist here), or they are already links.'
         : 'No reference yet — add them (📄 Import references from a paper / 📥 Import a manuscript) before linking citations.');
       return;
     }
@@ -3155,6 +3161,16 @@ export const ProjectDetailModule = ({
                    // (never skip '').
                    if (before !== null && before !== project.name) {
                      renameDriveFilesFor({ field: 'project', oldValue: before, newValue: project.name }).catch(() => {});
+                     /* Le DOCUMENT du projet (<projet>_document.json) est
+                        renommé avec son dossier : sans cela, deux copies du
+                        texte cohabiteraient et un autre poste pourrait relire
+                        l'ancienne. */
+                     mirrorRenameProject({
+                       datasetId: project.datasetId || '',
+                       datasetName: getDriveRootName(),
+                       oldName: before,
+                       newName: project.name
+                     }).catch(() => null);
                    }
                    projectNameBeforeEditRef.current = null;
                  }}
@@ -3611,7 +3627,7 @@ export const ProjectDetailModule = ({
                 l'import, et il est sans danger à relancer. */}
             <button onClick={linkCitationLinks}
                     className="px-3 py-1.5 text-xs font-bold rounded-lg bg-sky-50 text-sky-700 border border-sky-300 hover:bg-sky-100"
-                    title="Turn every numbered citation of the text sections ([12], [3,4], [5-7]) into a link to the matching reference of the list below — the exported document and its printed PDF follow it.">
+                    title="Turn every numbered citation of the text sections — [12], [3,4], [5-7], the EndNote/Word style (12) and superscripts (¹² or <sup>12</sup>) — into a link to the matching reference of the list below. A citation is linked only when ALL its numbers exist here, and a number that is not a reference stays as it is. The exported document and its printed PDF follow it.">
               🔗 Link citations to references
             </button>
             {citationLinkReport && (
@@ -3738,6 +3754,13 @@ export const ProjectDetailModule = ({
                   setProjects(remaining);
                   saveProjects(remaining);
                   markAttachmentsDeleted(project).catch(() => {});
+                  /* Le dossier Drive du projet part aussi à la corbeille (et son
+                     chemin est mis en pierre tombale : il ne se recrée pas). */
+                  mirrorDeleteProject({
+                    datasetId: project.datasetId || '',
+                    datasetName: getDriveRootName(),
+                    projectName: project.name || ''
+                  }).catch(() => null);
                   backToList();
                 }}
                         className="px-3 py-1.5 text-xs font-bold rounded-lg bg-red-600 text-white hover:bg-red-700">Delete</button>

@@ -98,6 +98,46 @@ const onceMore = RL.linkCitationsInSections(
 );
 eq([onceMore.updated, onceMore.added], [0, 0], 'un texte déjà lié n’est plus retravaillé');
 
+/* ── 5 bis. Les AUTRES écritures d'une citation : (12) et l'exposant ─────────
+   Le bouton ne servait à rien sur un article écrit au style EndNote/Word : ses
+   renvois sont « (12) » ou un exposant — « previously¹² », « previously<sup>12>
+   </sup> » — jamais des crochets. Ces trois écritures doivent donc être
+   reconnues, et GARDER leur apparence (le numéro reste à sa place).          */
+const endnote = RL.linkCitationNumbers('<p>As shown previously (2) and (1,2).</p>', { numbers: NUMBERS });
+eq((endnote.match(/data-ref="2"/g) || []).length, 2, '« (2) » et « (1,2) » sont liés (style EndNote/Word)');
+ok(endnote.includes('(<a class="cite-ref" href="#ref-2" data-ref="2">2</a>)'),
+  '…et la parenthèse reste une parenthèse autour du numéro');
+eq(RL.linkCitationNumbers('<p>See (9) there.</p>', { numbers: NUMBERS }), '<p>See (9) there.</p>',
+  'un numéro inconnu entre parenthèses reste intact (aucun lien mort)');
+
+const sup = RL.linkCitationNumbers('<p>As shown previously<sup>2</sup>.</p>', { numbers: NUMBERS });
+eq(sup, '<p>As shown previously<sup><a class="cite-ref" href="#ref-2" data-ref="2">2</a></sup>.</p>',
+  'un exposant HTML reste un exposant, avec le lien DEDANS');
+const uni = RL.linkCitationNumbers('<p>As shown previously¹,².</p>', { numbers: NUMBERS });
+eq(uni, '<p>As shown previously<a class="cite-ref" href="#ref-1" data-ref="1">¹</a>,'
+  + '<a class="cite-ref" href="#ref-2" data-ref="2">²</a>.</p>',
+  'un exposant en chiffres Unicode devient un lien qui reste en exposant');
+
+/* Le piège : un manuscrit est plein d’exposants qui ne sont PAS des citations.
+   Les lier abîmerait le texte de l’auteur — ils doivent rester intacts. */
+eq(RL.linkCitationNumbers('<p>Area in m<sup>2</sup>.</p>', { numbers: NUMBERS }), '<p>Area in m<sup>2</sup>.</p>',
+  '« m<sup>2</sup> » (mètre carré) n’est pas une citation, même si la référence 2 existe');
+eq(RL.linkCitationNumbers('<p>The 2<sup>nd</sup> time.</p>', { numbers: NUMBERS }), '<p>The 2<sup>nd</sup> time.</p>',
+  '« 2<sup>nd</sup> » (ordinal) non plus');
+eq(RL.linkCitationNumbers('<p>Area in m² and Ca²⁺.</p>', { numbers: NUMBERS }), '<p>Area in m² and Ca²⁺.</p>',
+  'ni « m² » ni « Ca²⁺ » (exposants Unicode collés à une unité ou un ion)');
+eq(RL.linkCitationNumbers('<p>Diluted 10⁻³.</p>', { numbers: NUMBERS }), '<p>Diluted 10⁻³.</p>',
+  'ni « 10⁻³ » (une puissance, pas un renvoi)');
+eq(RL.linkCitationNumbers('<p>Amplitude sin(2) units.</p>', { numbers: NUMBERS }), '<p>Amplitude sin(2) units.</p>',
+  'ni « sin(2) » : une parenthèse collée à un mot court est un appel de fonction');
+eq(RL.linkCitationNumbers('<p>Published (2021) here.</p>', { numbers: NUMBERS }), '<p>Published (2021) here.</p>',
+  'ni une année « (2021) » : un numéro de référence n’a jamais 4 chiffres');
+ok(RL.linkCitationNumbers('<p>See<sup>1,2</sup> now.</p>', { numbers: NUMBERS }).includes('data-ref="1"'),
+  'mais un exposant qui porte PLUSIEURS numéros est bien une citation');
+eq(RL.linkCitationNumbers(endnote, { numbers: NUMBERS }), endnote, 'rejouer la transformation ne double pas les liens de (12)');
+eq(RL.linkCitationNumbers(sup, { numbers: NUMBERS }), sup, '…ni ceux d’un exposant HTML');
+eq(RL.linkCitationNumbers(uni, { numbers: NUMBERS }), uni, '…ni ceux d’un exposant Unicode');
+
 /* ── 6. Le marqueur [n] est bien celui que produit l'import du manuscrit ──── */
 const converted = MS.convertCitationsInText(
   'Pepper crops are affected [3] and aphids transmit it [2,4].',
@@ -108,6 +148,17 @@ eq(converted.text, 'Pepper crops are affected [2] and aphids transmit it [1,5].'
 const linkedImport = RL.linkCitationNumbers(`<p>${converted.text}</p>`, { numbers: NUMBERS });
 ok(linkedImport.includes('data-ref="2"') && linkedImport.includes('data-ref="1"') && linkedImport.includes('data-ref="5"'),
   'les marqueurs du manuscrit importé deviennent donc des liens (bout en bout)');
+
+/* Le même import, avec les deux autres écritures du document (EndNote/Word :
+   parenthèses et exposant) : elles doivent arriver AU MÊME marqueur [n]. */
+const convertedEndnote = MS.convertCitationsInText(
+  'Aphids transmit it (3) as shown previously² and elsewhere [2].',
+  new Map([['#2', 1], ['#3', 2]])
+);
+eq(convertedEndnote.text, 'Aphids transmit it [2] as shown previously[1] and elsewhere [1].',
+  'parenthèses et exposants sont réécrits comme les [n] — le document exporté n’a plus qu’une écriture');
+eq(convertedEndnote.replaced, 3, 'les trois renvois ont été convertis');
+eq(convertedEndnote.unresolved, [], 'aucun renvoi laissé de côté');
 
 /* ── 7. Une bibliographie IMPORTÉE (Paperpile, Word…) devient numérotée ─────
       Le défaut réparé : la bibliographie arrivait dans « Project bibliography »
@@ -177,5 +228,7 @@ has('PROJECT_TEXT_SECTIONS.map((s) => ({ id: s.id, html: project[s.id] || \'\' }
 has('ensureReferenceEntries(bodyHtml, refs.map((r) => ({', 'à l’export, un document enregistré est complété');
 has('bodyHtml = linkCitations(repaired.html)', '…et ses citations sont liées avant l’impression');
 has('<body>${bodyHtml}</body>', 'c’est bien ce document réparé qui part à l’imprimante');
+has("the text sections hold no numbered citation — [1], (1) or a superscript 1 —",
+  'et quand il n’y a rien à lier, le message DIT les trois écritures reconnues (et l’autre cause : un numéro absent des références)');
 
 console.log(`✅ ${passed} tests passés (liens de citation [n] ↔ références, import bibliographique numéroté, document exporté réparé)`);

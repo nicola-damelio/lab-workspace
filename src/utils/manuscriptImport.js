@@ -17,12 +17,17 @@
         telle que Paperpile l'écrit) est analysée par referenceImport et ses
         entrées rejoignent la « Project bibliography » du projet — donc aussi
         Publications → « Project bibliography » ;
-     4. les CITATIONS dans le texte ([12], [3,4], [5-7], (Rossi et al., 2018),
-        (Smith & Bianchi 2020)…) deviennent les références NUMÉROTÉES du
+     4. les CITATIONS dans le texte ([12], [3,4], [5-7], (12) du style EndNote/
+        Word, l'EXPOSANT ¹² ou <sup>12</sup>, et (Rossi et al., 2018),
+        (Smith & Bianchi 2020)) deviennent les références NUMÉROTÉES du
         programme ([1], [2]…) : c'est exactement ce que fait « 📚 + Reference »
-        à la main (project.references + marqueur [n]). C'est ensuite
-        utils/referenceLinks.js qui transforme chaque marqueur du texte en LIEN
-        vers sa référence (ancre #ref-n du document exporté).
+        à la main (project.references + marqueur [n]). Un renvoi en exposant d'un
+        .docx est repéré SUR LE XML (`w:vertAlign`) : la mise en forme est sinon
+        perdue par la lecture du texte, et le renvoi arrivait en nombre nu —
+        indiscernable d'un « 12 » ordinaire, donc jamais lié (voir
+        markDocxSuperscriptCitations). C'est ensuite utils/referenceLinks.js qui
+        transforme chaque marqueur du texte en LIEN vers sa référence (ancre
+        #ref-n du document exporté).
      5. les FIGURES du document ne se perdent plus : elles rejoignent les
         figures de LEUR section sur la page projet (la liste dans laquelle
         « 📤 Insert into project… » de l'Image Builder range les compositions,
@@ -345,6 +350,69 @@ export const docxRelsFromXml = (relsXml) => {
   return out;
 };
 
+/** Le TEXTE VISIBLE d'un morceau de XML `.docx` : ses `<w:t>`, ses tabulations
+ *  et ses sauts de ligne. Sert à juger le CONTEXTE d'un exposant (voir
+ *  markDocxSuperscriptCitations) — aucun autre nettoyage ici. */
+const docxRunText = (xml) => String(xml || '')
+  .replace(/<w:tab\b[^>]*\/?>/g, ' ')
+  .replace(/<w:(?:br|cr)\b[^>]*\/?>/g, '\n')
+  .replace(/<[^>]+>/g, '');
+
+/** Un run (`<w:r>`) est-il mis en EXPOSANT ? (`<w:vertAlign w:val="superscript"/>`) */
+const isSuperscriptRun = (runXml) =>
+  /<w:vertAlign\b[^>]*w:val\s*=\s*"superscript"/i.test(String(runXml || ''));
+
+/** Le run, son texte remplacé par `[n]` quand c'est un renvoi en exposant ;
+ *  sinon le run inchangé. */
+const superscriptRunMarker = (runXml, before) => {
+  if (!isSuperscriptRun(runXml)) return runXml;
+  const m = /^\s*(\d{1,4}(?:\s*(?:[,;]|-|–|—|to)\s*\d{1,4})*)\s*$/.exec(docxRunText(runXml));
+  if (!m) return runXml;
+  const nums = numericCitationNumbers(m[1]);
+  if (!nums.length) return runXml;
+  /* « m2 », « 10-3 » : exposant d'unité ou de puissance, jamais un renvoi. */
+  if (citationGuardApplies('sup-html', nums) && !citationContextOkBefore(before)) return runXml;
+  let first = true;
+  return runXml.replace(/<w:t\b[^>]*>[\s\S]*?<\/w:t>/g, () => {
+    if (!first) return '';
+    first = false;
+    return `<w:t>[${m[1]}]</w:t>`;
+  });
+};
+
+/**
+ * LES CITATIONS EN EXPOSANT D'UN `.docx` DEVIENNENT LEURS MARQUEURS `[n]`.
+ *
+ * C'est LE défaut qui rendait « 🔗 Link citations » inutile sur un article
+ * écrit pour une revue : Word, Google Docs et EndNote sèment leurs renvois en
+ * EXPOSANT — « …as shown previously12 » avec le 12 en petit et en haut. Cette
+ * information n'existe QUE dans la mise en forme du run
+ * (`<w:vertAlign w:val="superscript"/>`) : la lecture du texte la perd, et le
+ * renvoi arrivait comme un nombre NU collé au mot — indiscernable d'un « 12 »
+ * ordinaire, donc jamais converti au numéro du projet ni lié à sa référence
+ * (le texte n'offrait plus rien à lier : « Nothing to link »).
+ *
+ * Ici le run exposant qui ne porte QU'un numéro devient `[12]` DANS le XML : le
+ * reste du chemin d'import (numérotation de la bibliographie → numéros du
+ * projet → liens `#ref-n`) travaille ensuite exactement comme pour un « [12] »
+ * écrit à la main. Rien d'autre n'est touché : ni les exposants de lettres, ni
+ * les ordinaux (« 2nd »), ni les unités (« m2 »), ni une puissance (« 10-3 »),
+ * ni les runs normaux — le texte de l'auteur reste son texte.
+ */
+export const markDocxSuperscriptCitations = (xml) => {
+  const source = String(xml || '');
+  const re = /<w:r\b[^>]*>[\s\S]*?<\/w:r>/g;
+  let out = '';
+  let last = 0;
+  let m;
+  while ((m = re.exec(source))) {
+    out += source.slice(last, m.index);
+    last = re.lastIndex;
+    out += superscriptRunMarker(m[0], docxRunText(out));
+  }
+  return out + source.slice(last);
+};
+
 /** Les paragraphes d'un `word/document.xml`, dans l'ordre, chacun avec le rId
  *  de l'image qu'il contient (`''` quand il n'y en a pas). PUR : ni DOM ni
  *  navigateur, ce qui permet au test de fabriquer un .docx en mémoire. */
@@ -362,7 +430,7 @@ export const docxParagraphsWithImages = (xml) => {
     const imagedata = /<(?:v:)?imagedata\b[^>]*r:id="([^"]+)"/i.exec(chunk);
     out.push({
       rid: (blip && blip[1]) || (imagedata && imagedata[1]) || '',
-      text: paragraphTextFromDocxXml(chunk).trim()
+      text: paragraphTextFromDocxXml(markDocxSuperscriptCitations(chunk)).trim()
     });
   }
   return out;
@@ -953,6 +1021,36 @@ export const htmlFromText = (text) => String(text || '')
 /** Citation numérique : [12], [3,4], [5-7], [1;2] — espaces tolérés. */
 export const NUMERIC_CITATION_RE = /\[\s*(\d{1,4}(?:\s*(?:[,;]|-|–|—|to)\s*\d{1,4})*)\s*\]/g;
 
+/** Citation numérique entre PARENTHÈSES — le style EndNote/Word : (12), (3,4),
+ *  (5-7). 1 à 3 chiffres SEULEMENT : une année — « (2021) » — n'est donc jamais
+ *  prise pour la référence n° 2021 (aucun numéro de référence n'a 4 chiffres). */
+export const PAREN_CITATION_RE = /\(\s*(\d{1,3}(?:\s*(?:[,;]|-|–|—|to)\s*\d{1,3})*)\s*\)/g;
+
+/** Les chiffres EXPOSANTS Unicode (« ¹² ») — ce qu'un copier-coller depuis
+ *  Word, un PDF ou un export EndNote en exposant laisse dans le texte. */
+const SUP_DIGITS = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+
+/** Citation en EXPOSANT : « …as shown previously¹² », « …see⁵⁻⁷ ». */
+export const SUPERSCRIPT_CITATION_RE = new RegExp(
+  `([${SUP_DIGITS}]+(?:[⁻-][${SUP_DIGITS}]+)?(?:\\s*[,;]\\s*[${SUP_DIGITS}]+(?:[⁻-][${SUP_DIGITS}]+)?)*)`,
+  'g'
+);
+
+/** Citation en exposant écrite en HTML (texte enrichi) : « previously<sup>12</sup> ». */
+export const HTML_SUPERSCRIPT_CITATION_RE =
+  /<sup\b[^>]*>\s*(\d{1,4}(?:\s*(?:[,;]|-|–|—|to)\s*\d{1,4})*)\s*<\/sup>/gi;
+
+/** « ¹² » → « 12 », « ⁵⁻⁷ » → « 5-7 » : l'exposant redevient un nombre lisible. */
+export const superscriptToDigits = (s) => String(s || '')
+  .replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]/g, (c) => String(SUP_DIGITS.indexOf(c)))
+  .replace(/\u207B/g, '-');
+
+/** L'inverse : « 12 » → « ¹² » — pour qu'un lien de citation garde l'EXPOSANT
+ *  que l'auteur avait écrit (le nombre reste lisible, à sa place). */
+export const digitsToSuperscript = (s) => String(s == null ? '' : s)
+  .replace(/\d/g, (d) => SUP_DIGITS[Number(d)])
+  .replace(/-/g, '\u207B');
+
 /** Citation auteur-année : (Rossi et al., 2018) ; (Smith & Bianchi 2020a).
  *  Volontairement bornée (160 caractères, pas de parenthèse imbriquée) pour ne
  *  jamais avaler un paragraphe entier. */
@@ -976,6 +1074,70 @@ export const numericCitationNumbers = (group) => {
     if (/^\d{1,4}$/.test(s)) out.push(Number(s));
   });
   return out;
+};
+
+/* Ce qui, JUSTE AVANT une citation, trahit autre chose qu'une citation : un mot
+   court ou un nombre collé (« m² », « 10⁻³ », « Ca²⁺ »), un appel de fonction
+   (« f(3) », « sin(2) »), un degré. Un manuscrit en est plein : sans ce
+   garde-fou, « m2 » deviendrait « m[2] » et « sin(2) » un lien vers la
+   référence 2. Une vraie citation est précédée d'un mot long, d'une espace ou
+   d'une ponctuation (« …shown previously(12) », « …the data (12) »).
+   Limite assumée : une parenthèse DÉTACHÉE qui n'est pas un renvoi — « as in Eq
+   (3) », « from Fig. (2) » — passe ce garde-fou et est liée si le projet a une
+   référence 3 ou 2. Aucun indice textuel ne permet de trancher, et le lien est
+   bénin : le numéro reste visible, à sa place, et se retire en éditant la
+   section. */
+const UNIT_BEFORE_RE = /(?:^|[^A-Za-z\u00C0-\u024F])(?:[A-Za-z]{1,3}|\d+(?:[.,]\d+)?|°)$/;
+
+/** Le moins exposant Unicode (« 10⁻³ »). */
+const SUP_MINUS = '\u207B';
+
+/** Le texte écrit AVANT la citation permet-il d'en faire une ? (voir ci-dessus) */
+export const citationContextOkBefore = (before) => {
+  const raw = String(before == null ? '' : before);
+  /* « 10⁻³ » : le moins exposant annonce une puissance, jamais une citation. */
+  if (raw.endsWith(SUP_MINUS)) return false;
+  const s = superscriptToDigits(raw); // les exposants redeviennent des chiffres
+  if (!/[0-9A-Za-z_]$/.test(s)) return true;
+  return !UNIT_BEFORE_RE.test(s);
+};
+
+/** Idem, à partir du texte entier et de la position de la citation. */
+export const citationContextOk = (text, index) =>
+  citationContextOkBefore(String(text == null ? '' : text).slice(0, Math.max(0, Number(index) || 0)));
+
+/** Le garde-fou de contexte s'applique-t-il ? Une unité (« m² », « 10⁻³ »), une
+ *  charge (« Ca²⁺ ») ou un ordinal (« 5th ») n'ont qu'UN SEUL nombre : un exposant
+ *  qui en porte plusieurs (« …see³,¹² ») est donc une citation sans discussion. */
+export const citationGuardApplies = (form, nums) =>
+  !((form === 'sup' || form === 'sup-html') && (Array.isArray(nums) ? nums.length : 0) > 1);
+
+/** Les numéros cités par une citation, QUELLE QUE SOIT sa forme
+ *  (« sup » = exposant Unicode, à décoder d'abord). */
+export const numbersOfCitation = (form, group) =>
+  numericCitationNumbers(form === 'sup' ? superscriptToDigits(group) : group);
+
+/** TOUTES les citations NUMÉRIQUES d'un texte, dans l'ordre d'apparition, avec
+ *  leur FORME : 'bracket' [12], 'paren' (12), 'sup' ¹², 'sup-html' <sup>12</sup>.
+ *  Brique commune au plan d'import et au texte enrichi des sections. */
+export const findNumericCitations = (text) => {
+  const s = String(text || '');
+  const out = [];
+  const scan = (re, form) => {
+    const rx = new RegExp(re.source, re.flags);
+    let m = rx.exec(s);
+    while (m) {
+      const nums = numbersOfCitation(form, m[1]);
+      if (citationGuardApplies(form, nums) && !citationContextOk(s, m.index)) { m = rx.exec(s); continue; }
+      out.push({ raw: m[0], group: m[1], offset: m.index, form });
+      m = rx.exec(s);
+    }
+  };
+  scan(NUMERIC_CITATION_RE, 'bracket');
+  scan(PAREN_CITATION_RE, 'paren');
+  scan(HTML_SUPERSCRIPT_CITATION_RE, 'sup-html');
+  scan(SUPERSCRIPT_CITATION_RE, 'sup');
+  return out.sort((a, b) => a.offset - b.offset);
 };
 
 /** Nom de famille du PREMIER auteur d'une liste (« Rossi M, Bianchi A » →
@@ -1022,14 +1184,16 @@ export const lookupNumber = (map, key) => {
 
 /** TOUTES les citations d'un texte, dans l'ordre d'apparition, avec les clés
  *  qui serviront à les résoudre (« #3 » pour [3], « rossi2018 » pour
- *  (Rossi et al., 2018)). */
+ *  (Rossi et al., 2018)) et leur forme (« bracket », « paren », « sup »). */
 export const collectCitations = (text) => {
   const s = String(text || '');
-  const out = [];
-  s.replace(NUMERIC_CITATION_RE, (raw, group, offset) => {
-    out.push({ kind: 'numeric', raw, offset, keys: numericCitationNumbers(group).map((n) => `#${n}`) });
-    return raw;
-  });
+  const out = findNumericCitations(s).map((c) => ({
+    kind: 'numeric',
+    form: c.form,
+    raw: c.raw,
+    offset: c.offset,
+    keys: numbersOfCitation(c.form, c.group).map((n) => `#${n}`)
+  }));
   s.replace(AUTHOR_YEAR_CITATION_RE, (raw, inner, offset) => {
     const key = authorYearKeyOf(inner);
     out.push({ kind: 'author-year', raw, offset, keys: key ? [key] : [] });
@@ -1039,18 +1203,28 @@ export const collectCitations = (text) => {
 };
 
 /** Réécrit un texte pour que ses citations deviennent les marqueurs [n] du
- *  programme. Les citations NON résolues sont laissées telles quelles (rien
- *  n'est inventé) et renvoyées dans `unresolved`. */
+ *  programme — CROCHETS, PARENTHÈSES (« (12) », style EndNote) et EXPOSANTS
+ *  (« ¹² », « <sup>12</sup> ») confondus. Les citations NON résolues sont
+ *  laissées telles quelles (rien n'est inventé) et renvoyées dans `unresolved`. */
 export const convertCitationsInText = (text, numberByKey) => {
   let replaced = 0;
   const unresolved = [];
   let out = String(text || '');
-  out = out.replace(NUMERIC_CITATION_RE, (raw, group) => {
-    const nums = numericCitationNumbers(group).map((n) => lookupNumber(numberByKey, `#${n}`)).filter(Boolean);
-    if (!nums.length) { unresolved.push(raw); return raw; }
-    replaced += 1;
-    return `[${nums.join(',')}]`;
-  });
+  const convertForm = (re, form) => {
+    out = out.replace(new RegExp(re.source, re.flags), (raw, group, offset) => {
+      const cited = numbersOfCitation(form, group);
+      /* « m² », « f(3) », « 10⁻³ » ne sont pas des citations (voir UNIT_BEFORE_RE) */
+      if (citationGuardApplies(form, cited) && !citationContextOk(out, offset)) return raw;
+      const nums = cited.map((n) => lookupNumber(numberByKey, `#${n}`)).filter(Boolean);
+      if (!nums.length) { unresolved.push(raw); return raw; }
+      replaced += 1;
+      return `[${nums.join(',')}]`;
+    });
+  };
+  convertForm(NUMERIC_CITATION_RE, 'bracket');
+  convertForm(PAREN_CITATION_RE, 'paren');
+  convertForm(HTML_SUPERSCRIPT_CITATION_RE, 'sup-html');
+  convertForm(SUPERSCRIPT_CITATION_RE, 'sup');
   out = out.replace(AUTHOR_YEAR_CITATION_RE, (raw, inner) => {
     const key = authorYearKeyOf(inner);
     const num = key ? lookupNumber(numberByKey, key) : 0;
@@ -1147,17 +1321,13 @@ export const previousImportOf = (project, fingerprint) => {
   return list.find((it) => it && it.hash === fingerprint) || null;
 };
 
-/** Les numéros cités par un texte ([12] → 12 ; [3,4] → 3, 4 ; [5-7] → 5, 6, 7).
- *  Sert à DIRE ce qui n'a pas pu être lié à une référence. */
+/** Les numéros cités par un texte ([12] → 12 ; [3,4] → 3, 4 ; [5-7] → 5, 6, 7 ;
+ *  « (12) » et un exposant « ¹² » compris). Sert à DIRE ce qui n'a pas pu être
+ *  lié à une référence. */
 export const citedNumbersInText = (text) => {
   const out = new Set();
-  const s = String(text || '');
-  NUMERIC_CITATION_RE.lastIndex = 0;
-  let m = NUMERIC_CITATION_RE.exec(s);
-  while (m) {
-    numericCitationNumbers(m[1]).forEach((n) => out.add(n));
-    m = NUMERIC_CITATION_RE.exec(s);
-  }
+  findNumericCitations(String(text || ''))
+    .forEach((c) => numbersOfCitation(c.form, c.group).forEach((n) => out.add(n)));
   return out;
 };
 
