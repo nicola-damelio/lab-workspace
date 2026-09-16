@@ -33,8 +33,10 @@ export async function load(url, context, next) {
       source: [
         // `globalThis.__driveTestMocks` laisse un test fournir un faux Drive
         // (cloudBackendAvailable / uploadLocalFile / resolveDrivePathFromNames /
-        // listDriveChildren). Sans mocks : cloud indisponible, dossier vide —
-        // c'est le comportement par défaut des suites existantes.
+        // listDriveChildren / uploadWorkspaceFile / downloadDriveFileText /
+        // driveToken / driveRootName). Sans mocks : cloud indisponible, dossier
+        // vide, aucun jeton — c'est le comportement par défaut des suites
+        // existantes.
         'const M = () => (globalThis.__driveTestMocks && typeof globalThis.__driveTestMocks === "object") ? globalThis.__driveTestMocks : {};',
         'export const sendAdminGmail = async () => ({ ok: false, reason: "bouchon de test (hors navigateur)" });',
         'export const uploadLocalFile = async (arg) => (typeof M().uploadLocalFile === "function" ? M().uploadLocalFile(arg) : { ok: false, reason: "bouchon de test (hors navigateur)" });',
@@ -43,7 +45,11 @@ export async function load(url, context, next) {
         // figuresLibrary.js importe aussi ces helpers : ils ne servent jamais
         // hors navigateur (cloudBackendAvailable() vaut false), mais le module
         // doit pouvoir être IMPORTÉ par les tests.
-        'export const getDriveToken = () => null;',
+        'export const getDriveToken = () => (M().driveToken !== undefined ? M().driveToken : null);',
+        // Upload vers « Lab Workspace/<folder>/<name> » : un faux Drive peut le
+        // capter (voir _project_drive_doc_test.mjs) et relire ce qu'il a reçu.
+        'export const uploadWorkspaceFile = async (arg) => (typeof M().uploadWorkspaceFile === "function" ? M().uploadWorkspaceFile(arg) : null);',
+        'export const downloadDriveFileText = async (id) => (typeof M().downloadDriveFileText === "function" ? M().downloadDriveFileText(id) : "");',
         'export const dataUrlToBlob = (u) => (typeof M().dataUrlToBlob === "function" ? M().dataUrlToBlob(u) : null);',
         'export const getDriveRootName = () => M().driveRootName || "";',
         'export const resolveDrivePathFromNames = async (names) => (typeof M().resolveDrivePathFromNames === "function" ? M().resolveDrivePathFromNames(names) : { leafId: "", path: [] });',

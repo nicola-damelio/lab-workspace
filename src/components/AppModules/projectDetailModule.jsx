@@ -28,6 +28,10 @@ import {
 } from '../../utils/referenceLinks';
 import { splitAnchoredFigures } from '../../utils/figurePlacement';
 import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject, getDriveToken, getDriveRootName, resolveDrivePathFromNames, listDriveChildren } from '../../utils/driveUpload';
+/* Le texte du projet est AUSSI rangé dans le dossier du projet sur le Drive
+   (Lab Workspace/<dataset>/projects/<projet>/<projet>_document.json) : le
+   navigateur n'est qu'un cache (voir utils/projectDocumentDrive.js). */
+import { archiveProjectDocument, restoreProjectDocument } from '../../utils/projectDocumentDrive';
 import { repairContentImages, getRenderableDriveUrl } from '../../data/constants';
 import {
   readDeck, readProjectLibrary, removeProjectLibraryItem, pushLibraryToDrive, pullLibraryFromDrive,
@@ -1258,10 +1262,17 @@ export const ProjectDetailModule = ({
       dest: p.id || focusSection || '', mode: 'append'
     }));
     const plan = buildManuscriptPlan(manuscript, { existingReferences: refs });
+    /* TOUTES les références trouvées dans le manuscrit sont retenues D'OFFICE :
+       l'import les range dans la « Project bibliography » ET tourne les
+       citations du texte en références numérotées liées, sans demander à
+       l'utilisateur de les cocher puis de réclamer la liaison (deux étapes
+       qu'il devait faire lui-même, et une référence oubliée = une citation
+       restée en clair dans le texte). Les cases servent donc à EN RETIRER une,
+       jamais à l'ajouter. */
     const existing = bibExistingKeys();
-    const picks = plan.entries
-      .map((e, i) => (entryKeys(e.entry).some((k) => existing.has(k)) ? -1 : i))
-      .filter((i) => i !== -1);
+    const picks = plan.entries.map((_, i) => i);
+    const alreadyThere = plan.entries
+      .filter((e) => entryKeys(e.entry).some((k) => existing.has(k))).length;
     const headerFound = [header.title && 'title', header.authors && 'authors', header.affiliations && 'affiliations']
       .filter(Boolean).length;
     /* LE MÊME DOCUMENT DÉJÀ IMPORTÉ ? L'empreinte du texte est rangée dans le
@@ -1282,7 +1293,9 @@ export const ProjectDetailModule = ({
       focusSection, header, body: manuscript.body, lines: header.lines || [], figures: figs,
       headerPicks: (d && d.headerPicks) || defaultHeaderPicks,
       hash, previous, confirmRepeat: false,
-      status: `${blocks.length} block(s) · ${parts.length} part(s) · ${plan.entries.length} reference(s) · ${plan.citations.length} citation(s)`
+      status: `${blocks.length} block(s) · ${parts.length} part(s) · ${plan.entries.length} reference(s)`
+        + (alreadyThere ? ` (${alreadyThere} already in the project)` : '')
+        + ` · ${plan.citations.length} citation(s)`
         + (figs.length ? ` · ${figs.length} figure(s)` : '')
         + (headerFound ? ` · header: ${headerFound}/3 (title / authors / affiliations)` : '')
         + (previous ? ' · ⚠ already imported once' : '')
@@ -1658,6 +1671,86 @@ export const ProjectDetailModule = ({
             + (saved.missing.length ? ` Fields not stored: ${saved.missing.join(', ')}.` : '')
       ]
     });
+
+    /* ☁ LE MÊME DOCUMENT PART DANS LE DOSSIER DU PROJET SUR LE DRIVE.
+       Le navigateur n'est qu'un cache : son quota se remplit (les figures) et un
+       autre poste ne verrait rien de ce qui n'y est pas publié. Le document —
+       texte des sections, en-tête de l'article, bibliographie, références
+       numérotées, empreintes des imports ; JAMAIS les pixels des figures — est
+       donc déposé dans
+         Lab Workspace/<dataset>/projects/<projet>/<projet>_document.json
+       L'archivage est BEST-EFFORT : sans Drive connecté l'import reste un
+       succès, mais il a été TENTÉ — c'est le seul filet quand le navigateur,
+       lui, a refusé d'écrire (quota plein). Le compte rendu est complété quand
+       l'envoi a répondu. */
+    const driveCopy = await archiveProjectDocument({
+      project: { ...project, ...fullPatch }, datasetName: getDriveRootName()
+    });
+    /* La référence du fichier entre dans le projet (petite écriture vérifiée) :
+       « ♻ Load the Drive copy » retrouve ainsi le fichier par son identifiant,
+       sans avoir à le chercher par son nom. */
+    if (driveCopy) commitProjectVerified({ driveDocument: driveCopy }, {});
+    setMsResult((r) => {
+      if (!r) return r;
+      const line = driveCopy
+        ? `☁ The text is also filed on Drive — ${driveCopy.folder}/${driveCopy.name} (${Math.max(1, Math.round(driveCopy.bytes / 1024))} kB)`
+          + (r.ok ? '' : ' — this Drive copy is the ONLY complete one: this browser refused to store it.')
+        : '☁ Not filed on Drive (Drive not connected) — the text lives in this browser only.';
+      return { ...r, drive: driveCopy || null, lines: [...(r.lines || []), line] };
+    });
+  };
+
+  /** « ♻ Load the Drive copy » : le document archivé dans le dossier du projet
+   *  sur le Drive redevient le texte, l'en-tête et les références de la page.
+   *  Rien n'est appliqué sans ce clic : la copie du Drive ne peut donc jamais
+   *  écraser un travail plus récent à l'insu de l'utilisateur. */
+  const loadProjectDriveCopy = async () => {
+    const ref = (msResult && msResult.drive) || (project && project.driveDocument) || null;
+    if (!ref || !ref.id || msBusyRef.current) return;
+    msBusyRef.current = true;
+    setMsResult((r) => (r ? { ...r, driveBusy: true } : r));
+    const before = { ...project };
+    const res = await restoreProjectDocument(ref);
+    const saved = res.ok ? commitProjectVerified(res.patch, {}) : { ok: false, error: '' };
+    msBusyRef.current = false;
+    setMsResult((r) => {
+      const base = r || {};
+      const c = res.counts || {};
+      return {
+        ...base,
+        driveBusy: false,
+        ok: !!(res.ok && saved.ok),
+        undoProject: res.ok ? before : (base.undoProject || null),
+        lines: res.ok
+          ? [`♻ Text restored from the Drive copy: ${c.sections} section(s), head ${c.header}/3, `
+            + `${c.references} numbered reference(s), ${c.bibliography} bibliography entr(y|ies)`
+            + (saved.ok ? '' : ` — ⚠ the browser refused to store it (${saved.error}); save the dataset to Drive first.`)]
+          : [`⚠ ${res.error}`]
+      };
+    });
+  };
+
+  /** « ☁ File the text on Drive » : archiver le document du projet À LA DEMANDE
+   *  (Drive était déconnecté pendant l'import, ou le projet vient d'un autre
+   *  poste et son texte n'a jamais été déposé dans son dossier Drive). */
+  const saveProjectDriveCopy = async () => {
+    if (msBusyRef.current) return;
+    msBusyRef.current = true;
+    /* Le compte rendu en cours est CONSERVÉ (et son « Undo import » aussi) :
+       classer le texte sur le Drive n'est pas un nouvel import. */
+    setMsResult((r) => ({ ...(r || {}), ok: true, drive: null, driveBusy: true, lines: ['⏳ Filing the text in this project Drive folder…'] }));
+    const copy = await archiveProjectDocument({ project, datasetName: getDriveRootName() });
+    if (copy) commitProjectVerified({ driveDocument: copy }, {});
+    msBusyRef.current = false;
+    setMsResult((r) => ({
+      ...(r || {}),
+      ok: !!copy,
+      drive: copy || null,
+      driveBusy: false,
+      lines: [copy
+        ? `☁ The text is filed on Drive — ${copy.folder}/${copy.name} (${Math.max(1, Math.round(copy.bytes / 1024))} kB)`
+        : '☁ Nothing was filed: Google Drive is not connected (or it refused). Connect it in the top bar, then try again.']
+    }));
   };
 
   /** « ↩︎ Undo import » : rend le projet tel qu'il était avant le dernier import. */
@@ -1819,7 +1912,7 @@ export const ProjectDetailModule = ({
               <b> numbered references</b> ([1], [2]…) — the same as “📚 + Reference”.
               The <b>figures</b> of the document are kept too: they become the figures of their section
               (editable, reusable in the Image Builder) and “📄 Export document” prints each one
-              <b> at the place it had in the document</b>. No other file is uploaded to Drive.
+              <b> at the place it had in the document</b>. The document itself is never uploaded: the TEXT you import is filed in the project Drive folder (<b>&lt;dataset&gt;/projects/&lt;project&gt;/&lt;project&gt;_document.json</b>) so it also lives on Drive, not only in this browser.
               The <b>title, authors and affiliations</b> of the paper are picked out of the text and shown in
               “Document header” below, line by line — and a part of the text that actually <i>is</i> the author list
               (a document that prints it under the abstract, for instance) can be redirected to the
@@ -2018,7 +2111,7 @@ export const ProjectDetailModule = ({
                 <div className="border border-emerald-200 bg-emerald-50/40 rounded-lg p-2">
                   <div className="flex items-center justify-between mb-1.5">
                     <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">
-                      References → Project bibliography ({plan.entries.length} found · {picked.length} to add)
+                      References → Project bibliography ({plan.entries.length} found · {picked.length} imported)
                     </div>
                     <div className="flex gap-2">
                       <button type="button" onClick={() => setMsImport((d) => ({ ...d, picks: plan.entries.map((_, i) => i) }))}
@@ -2049,6 +2142,11 @@ export const ProjectDetailModule = ({
                       ))}
                     </div>
                   )}
+                  <p className="text-[10px] text-slate-500 mt-1.5">
+                    Every reference of the document is added to the <b>Project bibliography</b> and numbered
+                    automatically, and each citation of the text becomes a link to its reference — nothing to tick.
+                    Untick a line here to leave that paper out (the others are imported all the same).
+                  </p>
                 </div>
 
                 <div className="border border-amber-200 bg-amber-50/40 rounded-lg p-2">
@@ -2783,6 +2881,41 @@ export const ProjectDetailModule = ({
 
             <div className="mb-4">
               <h2 className="text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">Bibliography ({refs.length})</h2>
+              {/* LE TEXTE EST AUSSI DANS LE DOSSIER DU PROJET SUR LE DRIVE (voir
+                  utils/projectDocumentDrive.js) : la page le dit et sait le
+                  relire — le navigateur n'est qu'un cache, et un autre poste
+                  retrouve le texte sans passer par une sauvegarde HTML. */}
+              <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-600 bg-sky-50 border border-sky-200 rounded-lg px-2 py-1.5">
+                {project.driveDocument && project.driveDocument.id ? (
+                  <>
+                    <span className="font-bold">☁ Text filed on Drive</span>
+                    <span className="font-mono text-[10px] text-slate-500">
+                      {project.driveDocument.folder}/{project.driveDocument.name}
+                    </span>
+                    {project.driveDocument.url && (
+                      <a href={project.driveDocument.url} target="_blank" rel="noreferrer"
+                         className="font-bold text-sky-700 hover:underline">open</a>
+                    )}
+                    <button type="button" onClick={loadProjectDriveCopy} disabled={!!(msResult && msResult.driveBusy)}
+                            className="ml-auto px-2.5 py-1 text-[10px] font-bold rounded-lg bg-white border border-sky-300 text-sky-700 hover:bg-sky-100 disabled:opacity-50"
+                            title="Read the archived copy of this project's text from its Drive folder and put it back into the page (text sections, head, bibliography and numbered references). Nothing is applied before this click.">
+                      {msResult && msResult.driveBusy ? '⏳ Reading…' : '♻ Load the Drive copy'}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="font-bold">☁ The text of this project is not filed on Drive yet</span>
+                    <span className="text-[10px] text-slate-500">
+                      (this browser holds it — a full browser quota or another computer would lose the text)
+                    </span>
+                    <button type="button" onClick={saveProjectDriveCopy} disabled={!!(msResult && msResult.driveBusy)}
+                            className="ml-auto px-2.5 py-1 text-[10px] font-bold rounded-lg bg-white border border-sky-300 text-sky-700 hover:bg-sky-100 disabled:opacity-50"
+                            title="Write the text of this project into Lab Workspace/&lt;dataset&gt;/projects/&lt;project&gt;/&lt;project&gt;_document.json on Google Drive.">
+                      {msResult && msResult.driveBusy ? '⏳ Filing…' : '☁ File the text on Drive'}
+                    </button>
+                  </>
+                )}
+              </div>
               {refs.length === 0 ? <p className="text-xs italic text-slate-400">No references.</p> : (
                 /* La liste est TRIÉE par numéro et chaque entrée porte son numéro
                    réel (`value`) : le « [12] » du texte tombe donc toujours sur
@@ -3070,6 +3203,13 @@ export const ProjectDetailModule = ({
                 📥 Manuscript import — {msResult.ok ? 'done' : 'NOT SAVED'}
               </span>
               <span className="flex items-center gap-1.5">
+                {msResult.drive && msResult.drive.id && (
+                  <button type="button" onClick={loadProjectDriveCopy} disabled={!!msResult.driveBusy}
+                          className="px-2.5 py-1 text-[10px] font-bold rounded-lg bg-white border border-slate-300 text-slate-600 hover:bg-slate-100"
+                          title="Read the copy filed in this project's Drive folder and put it into the page (text, head, bibliography, numbered references).">
+                    {msResult.driveBusy ? '⏳ Reading from Drive…' : '♻ Load the Drive copy'}
+                  </button>
+                )}
                 {msResult.undoProject && (
                   <button type="button" onClick={undoManuscriptImport}
                           className="px-2.5 py-1 text-[10px] font-bold rounded-lg bg-white border border-slate-300 text-slate-600 hover:bg-slate-100"

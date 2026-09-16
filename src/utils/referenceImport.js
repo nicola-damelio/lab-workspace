@@ -149,14 +149,22 @@ export const doiUrl = (doi) => (doi ? `https://doi.org/${doi}` : '');
 export const pmidUrl = (pmid) => (pmid ? `https://pubmed.ncbi.nlm.nih.gov/${pmid}/` : '');
 
 const initialsOf = (given) => String(given || '')
-  .split(/[\s.,;]+/)
+  /* « W.-J. » : le trait d'union RELIE deux initiales (« Lu, W.-J. » → « Lu W-J »).
+     Tant qu'il était traité comme un simple séparateur, la liste d'auteurs
+     s'arrêtait après « W. » : le « -J. » resté en tête de la référence devenait
+     le TITRE du papier et les auteurs étaient tronqués — c'est la référence
+     « Lu, W.-J. et al. Mortalin-p53 interaction… » signalée. */
+  .trim()
+  .split(/\s*-\s*/)
+  .map((part) => part.split(/[\s.,;]+/).filter(Boolean).map((w) => w[0].toUpperCase()).join(''))
   .filter(Boolean)
-  .map((w) => w[0].toUpperCase())
-  .join('');
+  .join('-');
 
-/* Initiales d'un auteur : « J. », « JA », « M.A. » — mais jamais la 1re lettre
-   du mot suivant (« Costa, L. Antimicrobial » : le « A » appartient au titre). */
-const INITIALS = '(?:[A-Z]\\.\\s*|[A-Z](?![a-z\\u00e0-\\u00ff])){1,4}';
+/* Initiales d'un auteur : « J. », « JA », « M.A. », « W.-J. » — mais jamais la
+   1re lettre du mot suivant (« Costa, L. Antimicrobial » : le « A » appartient
+   au titre). Le TIRET relie deux initiales d'un même auteur (« W.-J. »), il ne
+   sépare donc jamais deux auteurs. */
+const INITIALS = '(?:[A-Z]\\.\\s*(?:-\\s*)?|[A-Z](?![a-z\\u00e0-\\u00ff])(?:-\\s*)?){1,4}';
 const AUTHOR_PAIR = `([A-Z][\\p{L}'’.-]+),\\s*(${INITIALS})`;
 const AUTHOR_PAIR_RE = () => new RegExp(AUTHOR_PAIR, 'gu');
 /* ── UN AUTEUR, DANS TOUTES LES ÉCRITURES DES ÉDITEURS ───────────────────
@@ -164,7 +172,7 @@ const AUTHOR_PAIR_RE = () => new RegExp(AUTHOR_PAIR, 'gu');
    Les initiales n'avalent JAMAIS la première lettre du mot suivant
    (« Costa, L. Antimicrobial » : le « A » commence le titre) ni le nom de
    l'auteur suivant d'une liste séparée par des points (« Rossi M. Bianchi A. »). */
-const NAME_INITIALS = '(?:[A-Z]\\.?(?![a-z\\u00e0-\\u00ff])){1,4}';
+const NAME_INITIALS = '(?:[A-Z]\\.?(?:-\\s*)?(?![a-z\\u00e0-\\u00ff])){1,4}';
 const NAME_FAMILY = "[A-Z][\\p{L}'’.-]+";
 /* Le nom de famille d'un auteur « Initiales Nom » doit être suivi d'une
    ponctuation, d'un autre auteur, de « et al. » ou de la fin du texte : sans
@@ -179,7 +187,7 @@ const INITIALS_FIRST_LOOKAHEAD =
  *   • « Rossi M. »   (initiales POINTÉES : le point les identifie) ;
  *   • « Rossi M »    (sans point : seulement si la liste se ferme là —
  *     ponctuation, fin du texte ou « et al. »). */
-const NAME_INITIALS_DOTTED = '[A-Z]\\.(?:\\s?[A-Z]\\.)*(?![a-z\\u00e0-\\u00ff])';
+const NAME_INITIALS_DOTTED = '[A-Z]\\.(?:-?\\s*[A-Z]\\.)*(?![a-z\\u00e0-\\u00ff])';
 const AUTHOR_CLOSED = '(?=[,;.&]|\\s*$|\\s*\\(\\s*(?:1[89]|20)\\d{2}[a-z]?\\s*\\)|\\s+et\\.?\\s*al\\.?|\\s+(?:and\\s+others|&\\s*others))';
 const FAMILY_FIRST_RE = () => new RegExp(
   `(?:${NAME_FAMILY}\\s*[,;]\\s*${NAME_INITIALS}`
@@ -272,7 +280,10 @@ const canonicalAuthor = (value) => {
   if (!s) return '';
   if (s.includes(',')) return formatAuthor(s);
   const words = s.split(' ');
-  if (words.length > 1 && /^[A-Z](?:\.?[A-Z])*\.?$/.test(words[0])) {
+  /* « W.-J. Lu » (initiales pointées reliées par un trait d'union) est reconnu
+     comme la forme « initiales Nom » : sans le tiret, le nom restait dans
+     l'ordre de l'éditeur et « W.-J. » devenait un TITRE pour les autres. */
+  if (words.length > 1 && /^[A-Z](?:\.?-?[A-Z])*\.?$/.test(words[0])) {
     const family = words.slice(1).join(' ').replace(/[.,;]+$/, '');
     return `${family} ${words[0].replace(/\./g, '')}`.trim();
   }
@@ -302,7 +313,9 @@ export const normalizeAuthorList = (raw) => {
     .replace(/\b(?:and|et)\b/gi, '')
     .replace(/[\s,;.]+/g, '');
   if (leftovers) return text;
-  return pairs.map((m) => `${m[1]} ${m[2].replace(/[^A-Za-z]/g, '')}`).join(', ');
+  /* Le trait d'union d'« W.-J. » survit à la conversion « Nom, Initiales » :
+     « Lu W-J », jamais « Lu W ». */
+  return pairs.map((m) => `${m[1]} ${m[2].replace(/[^A-Za-z-]/g, '').replace(/-$/, '')}`).join(', ');
 };
 
 /** Titre nettoyé : sans numérotation d'entrée, sans point final, sans balises. */
@@ -592,6 +605,12 @@ const QUOTED_TITLE_RE = /["\u201c\u201d\u00ab\u00bb]([^"\u201c\u201d\u00ab\u00bb
  *   « Rossi M. Bianchi A. »                (auteurs séparés par des points).
  * Retourne '' quand la référence ne commence pas par une liste d'auteurs —
  * voir authorList : la liste ne peut jamais se prolonger dans le TITRE.
+ *
+ * Les INITIALES COMPOSÉES (« W.-J. », « J.-P. », « S.-C. ») appartiennent au
+ * même auteur : c'est le style Nature / Cell / Paperpile (« Lu, W.-J. et al.
+ * Mortalin-p53 interaction… Cell Death Differ 18, 1046-1056 (2011). »). Sans
+ * cette règle, la liste s'arrêtait après « Lu, W. » — le « -J. » resté en tête
+ * devenait le TITRE du papier et la référence perdait son titre ET ses auteurs.
  */
 const authorPrefix = (s) => {
   const list = authorList(s);

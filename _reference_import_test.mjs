@@ -613,3 +613,42 @@ eq(shortNumbered[0].journal, 'EPPO Bulletin', '…et sa revue, même sans année
 
 
 
+/* ── 17. LES INITIALES COMPOSÉES (« W.-J. ») : TITRE ET AUTEURS ──────────────
+   La référence signalée — « Lu, W.-J. et al. Mortalin-p53 interaction in cancer
+   cells… Cell Death Differ 18, 1046-1056 (2011). » — arrivait SANS TITRE (le
+   « -J. » resté en tête était pris pour lui) et avec des auteurs tronqués
+   (« Lu W »). Le trait d'union d'« W.-J. » relie deux initiales du MÊME auteur :
+   la liste d'auteurs ne doit donc jamais s'arrêter avant lui. */
+const luStyle = parseReferences(
+  '\tLu, W.-J. et al. Mortalin-p53 interaction in cancer cells is stress '
+  + 'dependent and constitutes a selective target for cancer therapy. '
+  + 'Cell Death Differ 18, 1046\u20131056 (2011).',
+  { split: 'line', keepAll: true }
+)[0];
+eq(luStyle.title,
+  'Mortalin-p53 interaction in cancer cells is stress dependent and constitutes a selective target for cancer therapy',
+  'style Nature / Cell : le TITRE de « Lu, W.-J. et al. … » est trouvé');
+eq(luStyle.authors, 'Lu W-J, et al.', '…et ses AUTEURS sont là (« W.-J. » entier, marqueur « et al. » gardé)');
+eq([luStyle.journal, luStyle.volume, luStyle.pages, luStyle.year],
+  ['Cell Death Differ', '18', '1046-1056', '2011'],
+  '…avec la revue, le volume, les pages et l’année');
+
+const luApa = parseReferences(
+  'Lu, W.-J., Lee, N.-P., & Kaul, S. C. (2011). Mortalin-p53 interaction in cancer cells. Cell Death Differ, 18(6), 1046-1056.',
+  { split: 'line', keepAll: true }
+)[0];
+eq(luApa.title, 'Mortalin-p53 interaction in cancer cells', 'style APA : le titre est trouvé, lui aussi');
+ok(luApa.authors.startsWith('Lu W-J'), '…et la liste d’auteurs commence par « Lu W-J »');
+
+/* La convention du labo conserve le trait d'union, et ne réunit JAMAIS deux
+   auteurs : c'est la ligne de crête de ce correctif. */
+eq(normalizeAuthorList('Lu, W.-J.'), 'Lu W-J', '« Lu, W.-J. » → « Lu W-J »');
+eq(formatAuthor('Lu, W.-J.'), 'Lu W-J', 'formatAuthor garde le trait d’union');
+eq(formatAuthor('Rossi, J.-P.'), 'Rossi J-P', 'initiales en tête : « Rossi, J.-P. » → « Rossi J-P »');
+eq(normalizeAuthorList('Rossi M, Bianchi A'), 'Rossi M, Bianchi A', 'deux auteurs restent deux auteurs');
+eq(normalizeAuthorList('Lu WJ, Lee NP, Kaul SC, et al.'), 'Lu WJ, Lee NP, Kaul SC, et al.',
+  'style Vancouver (initiales sans points) : la liste complète est gardée');
+
+console.log(`✅ ${passed} tests passés (import de références)`);
+
+

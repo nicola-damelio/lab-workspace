@@ -187,8 +187,10 @@ has(PROJ, 'const references = numbered.list;',
   'la liste numérotée remplace project.references (plus de référence citée mais absente du projet)');
 has(PROJ, "patch[c.dest] = c.mode === 'replace' ? html : [previous, html].filter(Boolean).join('\\n');",
   'chaque partie peut remplacer — ou seulement compléter — sa section (et deux parties qui visent la même section s’ajoutent)');
-has(PROJ, 'No other file is uploaded to Drive.',
-  'la fenêtre dit que RIEN d’autre n’est envoyé au Drive (le texte reste dans le projet ; seules les figures du document y montent)');
+has(PROJ, 'so it also lives on Drive, not only in this browser.',
+  'la fenêtre dit que le TEXTE importé est déposé dans le dossier Drive du projet (le navigateur n’est qu’un cache)');
+has(PROJ, '<b>&lt;dataset&gt;/projects/&lt;project&gt;/&lt;project&gt;_document.json</b>',
+  '…et elle en donne le chemin exact (dossier du projet dans le dataset)');
 
 /* ── 10. L'EN-TÊTE du document : titre / auteurs / affiliations ─────────────
    Un article commence par son titre, ses auteurs et leurs affiliations. Ces
