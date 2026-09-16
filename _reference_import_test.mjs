@@ -17,7 +17,7 @@ import LZString from 'lz-string';
 import {
   BACKUP_BLOB_RE, backupFigureCount, backupPaperCount, bibliographyBlockToEntry, docxTextFromBytes,
   entryKey, extractDoi, extractPmid, extractYear, figuresFromBackupHtml, figuresFromBackupState,
-  formatAuthor, formatAuthors, isAuthorListTitle, isMarkerTitle, looksLikeReference, mergePaperLists, mergeProjectBibliographies,
+  formatAuthor, formatAuthors, isAuthorListTitle, isMarkerTitle, looksLikeAffiliationEntry, looksLikeReference, mergePaperLists, mergeProjectBibliographies,
   mergeReferenceEntries, normalizeAuthorList, papersFromBackupHtml, paperKey,
   parseReferences, parseRisRecords, projectBibEntry, readReferenceDocument,
   referenceScore, rotateJournalFirst, splitReferenceBlocks
@@ -692,6 +692,53 @@ const partialJournal = parseReferences(
 eq([partialJournal.journal, partialJournal.volume, partialJournal.pages, partialJournal.year],
   ['J Gen Virol', '102', '001234', '2021'],
   'revue + volume(issue) + numéro d’article : l’année en fin de queue ne les avale plus');
+
+
+/* ── 19. « Kussie, P. H. et al. … » : DES INITIALES SÉPARÉES PAR UNE ESPACE ─
+   La SECONDE référence signalée : « P. H. » = initiale, POINT, espace, initiale.
+   La liste d'auteurs s'arrêtait après « P. » — « H. et al » devenait le TITRE du
+   papier et la phrase du vrai titre partait dans la REVUE (« Structure of the
+   MDM2 oncoprotein… Science »). La même phrase s'écrit partout dans une
+   bibliographie : dès que « et al. » suit les auteurs, le titre suit. */
+const kussie = parseReferences(
+  'Kussie, P. H. et al. Structure of the MDM2 oncoprotein bound to the p53 tumor '
+  + 'suppressor transactivation domain. Science 274, 948\u2013953 (1996).',
+  { split: 'line', keepAll: true }
+)[0];
+eq(kussie.title, 'Structure of the MDM2 oncoprotein bound to the p53 tumor suppressor transactivation domain',
+  'les initiales espacées (« P. H. ») n’arrêtent plus la liste : le TITRE suit « et al. »');
+eq(kussie.authors, 'Kussie PH, et al.', '…et les auteurs sont complets (« Kussie PH »)');
+eq([kussie.journal, kussie.volume, kussie.pages, kussie.year], ['Science', '274', '948-953', '1996'],
+  '…avec la revue, le volume, les pages et l’année');
+ok(!/Kussie|Structure/.test(kussie.journal), 'le titre ne part plus dans la REVUE');
+
+
+/* ── 20. UNE AFFILIATION NUMÉROTÉE N'EST JAMAIS UNE RÉFÉRENCE ───────────────
+   « S'il y a un numéro dans les affiliations, ce n'est JAMAIS une référence ».
+   Importer les références d'un document qui contient aussi son en-tête (une page
+   copiée d'un PDF, un manuscrit entier) faisait entrer « 1 Dipartimento di
+   Agraria, Università di Napoli, Portici, Italy » dans la bibliographie : le
+   numéro du laboratoire devenait celui d'un papier, et le « [1] » du texte
+   pointait vers une adresse. */
+const affilBlock = [
+  '1 Dipartimento di Agraria, Universita di Napoli Federico II, Portici, Italy',
+  '2 INRAE, UMR Biologie du Fruit, Villenave d Ornon, France',
+  '3 Department of Plant Pathology, 2015 Upper Street, Raleigh, NC 27695, USA',
+  '* Corresponding author: mario.rossi@unina.it'
+].join('\n');
+eq(parseReferences(affilBlock, { split: 'line', keepAll: true }).length, 0,
+  'aucune adresse d’affiliation n’est importée comme référence, même NUMÉROTÉE');
+ok(affilBlock.split('\n').every((l) => looksLikeAffiliationEntry(l)),
+  '…la lecture le dit ligne par ligne (adresse, code postal, e-mail)');
+eq(bibliographyBlockToEntry('1 Dipartimento di Agraria, Universita di Napoli, Portici, Italy'), null,
+  'une adresse numérotée ne produit AUCUNE entrée');
+/* Ce qui reste une référence : les mêmes mots AVEC une année, des pages, un DOI. */
+const numberedRef = parseReferences('1. Rossi M, Bianchi A. A new potyvirus. J Virol 92, 345-356 (2018).',
+  { split: 'line' })[0];
+eq([numberedRef.number, numberedRef.year, numberedRef.pages], [1, '2018', '345-356'],
+  'une référence numérotée à côté d’une adresse reste une référence');
+ok(!looksLikeAffiliationEntry('12. Smith J, Rossi M. 2019. J Virol 92, 345-356. doi:10.1128/JVI.01234-18'),
+  '…et une entrée sans titre (année + pages + DOI) n’est pas prise pour une adresse');
 
 console.log(`✅ ${passed} tests passés (import de références)`);
 

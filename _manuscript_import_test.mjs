@@ -248,7 +248,12 @@ const headerBlocks = MS.blocksFromText(HEADER_DOC);
 const headerManuscript = MS.splitManuscript(headerBlocks);
 const header = MS.parseManuscriptHeader(headerManuscript.body);
 eq(header.title, 'Aphid transmission of a new potyvirus infecting pepper crops in Italy', 'le TITRE du document est reconnu');
-eq(header.authors, 'Mario Rossi1, Anna Bianchi1, Jean Dupont2', '…la liste des auteurs');
+/* Le champ « Authors » est une liste de NOMS : les NUMÉROS d'affiliation du
+   document (« Rossi1 ») sont retirés (voir cleanAuthorLine) — un « [1] » resté
+   collé à un nom se lirait comme un renvoi de citation, et le document imprimé
+   montrerait « Rossi[1] » au lieu de « Rossi ». Les affiliations, elles, gardent
+   leur numérotation : c'est là qu'on lit la correspondance. */
+eq(header.authors, 'Mario Rossi, Anna Bianchi, Jean Dupont', '…la liste des auteurs, sans les numéros d’affiliation');
 eq(header.affiliations.split('\n').length, 2, '…et les deux affiliations');
 ok(header.affiliations.includes('Dipartimento') && header.affiliations.includes('INRAE'),
   'chaque affiliation garde son texte (une ligne par affiliation)');
@@ -294,6 +299,65 @@ eq(
 );
 eq(MS.parseManuscriptHeader(MS.blocksFromText('Aphid transmission of plant viruses\n1. Introduction\nAphids transmit many plant viruses.').slice(0, 1)).title,
   'Aphid transmission of plant viruses', 'un titre sans auteurs est reconnu seul');
+
+/* ── 10 bis. LES AUTEURS SONT ENTRE LE TITRE ET LES AFFILIATIONS ────────────
+   « Je ne comprends pas pourquoi vous ne reconnaissez pas la section des
+   auteurs : elle est ENTRE le titre (que vous reconnaissez) et les affiliations
+   (que vous reconnaissez) ». Quatre écritures d'éditeur ne l'étaient pas :
+     • le marqueur d'affiliation est une LETTRE (« Mario Rossi a, Anna
+       Bianchi b », Elsevier / Springer / Wiley) ;
+     • le marqueur est un astérisque collé (« Rossi b,* » = correspondant) ;
+     • l'exposant d'un .docx est devenu « [1] » avant la lecture du texte
+       (voir markDocxSuperscriptCitations) ;
+     • aucun marqueur du tout — c'est alors la POSITION qui tranche.
+   Et l'adresse de l'auteur CORRESPONDANT (l'e-mail) est rangée à la FIN des
+   affiliations, comme un article l'imprime. */
+const authorsOf = (lines) => MS.parseManuscriptHeader(MS.blocksFromText(lines.join('\n')));
+
+const lettersHeader = authorsOf([
+  'Aphid transmission of a new potyvirus in pepper',
+  'Mario Rossi a, Anna Bianchi b,*, Jean Dupont c',
+  'a Dipartimento di Agraria, Universita di Napoli, Italy',
+  'b INRAE, Villenave d Ornon, France',
+  '* Corresponding author: mario.rossi@unina.it'
+]);
+eq(lettersHeader.authors, 'Mario Rossi, Anna Bianchi, Jean Dupont',
+  'les AUTEURS sont reconnus quand le marqueur d’affiliation est une LETTRE');
+eq(lettersHeader.affiliations.split('\n').length, 3, '…et leurs deux adresses + l’auteur correspondant');
+eq(lettersHeader.affiliations.split('\n')[2], '* Corresponding author: mario.rossi@unina.it',
+  'l’e-mail du correspondant est la DERNIÈRE ligne des affiliations');
+ok(MS.classifyHeaderLine('mario.rossi@unina.it') === 'affiliations',
+  'une adresse e-mail seule est une affiliation (elle était « consommée » sans être gardée)');
+ok(MS.classifyHeaderLine('Correspondence: mario.rossi@unina.it') === 'affiliations',
+  '…comme la ligne « Correspondence: … »');
+
+const noMarkHeader = authorsOf([
+  'Aphid transmission of a new potyvirus in pepper crops',
+  'Mario Rossi, Anna Bianchi, Jean Dupont',
+  'Dipartimento di Agraria, Universita di Napoli, Portici, Italy',
+  'INRAE, Villenave d Ornon, France'
+]);
+eq(noMarkHeader.authors, 'Mario Rossi, Anna Bianchi, Jean Dupont',
+  'sans AUCUN marqueur, la place entre le titre et les adresses désigne les auteurs');
+eq(noMarkHeader.affiliations.split('\n').length, 2, '…et les affiliations suivent');
+
+const docxMarkHeader = authorsOf([
+  'Aphid transmission of a new potyvirus in pepper crops',
+  'Mario Rossi[1], Anna Bianchi[1], Jean Dupont[2]',
+  '1 Dipartimento di Agraria, Universita di Napoli, Portici, Italy',
+  '2 INRAE, Villenave d Ornon, France'
+]);
+eq(docxMarkHeader.authors, 'Mario Rossi, Anna Bianchi, Jean Dupont',
+  'les exposants d’un .docx (« Rossi[1] ») ne restent pas collés aux noms du champ Authors');
+eq(docxMarkHeader.title, 'Aphid transmission of a new potyvirus in pepper crops', '…et le titre reste le titre');
+
+/* Les marqueurs partent, les INITIALES restent : « Rossi B » est un auteur. */
+eq(MS.stripAffilMarks('Mario Rossi1'), 'Mario Rossi', '« Rossi1 » → « Rossi »');
+eq(MS.stripAffilMarks('Anna Bianchi [1,2]'), 'Anna Bianchi', '« Bianchi [1,2] » → « Bianchi »');
+eq(MS.stripAffilMarks('Jean Dupont (3)'), 'Jean Dupont', '« Dupont (3) » → « Dupont »');
+eq(MS.stripAffilMarks('Rossi B'), 'Rossi B', 'une INITIALE (« Rossi B ») n’est jamais retirée');
+eq(MS.cleanAuthorLine('Rossi M, Bianchi A, Costa L'), 'Rossi M, Bianchi A, Costa L',
+  'la convention « Nom Initiales » du laboratoire reste intacte');
 
 /* ── 11. Câblage : l'en-tête entre dans le PROJET, pas dans une section ───── */
 has(PROJ, 'const header = parseManuscriptHeader(manuscript.body);',
@@ -341,14 +405,16 @@ const TAIL = ['', 'Introduction', 'Pepper crops are affected (Rossi et al., 2018
 const dB = parseDoc([TITLE, 'Anna Bianchi1', 'Mario Rossi2', AFF1, AFF2, ...TAIL]);
 const hB = dB.header;
 eq(hB.title, TITLE, 'un auteur par ligne : le titre reste le titre');
-eq(hB.authors, 'Anna Bianchi1, Mario Rossi2', '…et les deux auteurs sont réunis');
+eq(hB.authors, 'Anna Bianchi, Mario Rossi', '…et les deux auteurs sont réunis (leurs n° d’affiliation retirés)');
 eq(hB.affiliations.split('\n').length, 2, '…avec leurs deux affiliations');
 eq(dB.parts.map((p) => p.heading), ['Introduction'], 'seule la vraie section reste à importer');
 ok(!JSON.stringify(dB.parts).includes('Bianchi'), 'les auteurs ne retombent pas dans les sections');
 
-/* Exposants entre parenthèses : « Anna Bianchi (1), Mario Rossi (2) ». */
+/* Exposants entre parenthèses : « Anna Bianchi (1), Mario Rossi (2) ». La ligne
+   est bien une liste d'AUTEURS ; le numéro de laboratoire, lui, est retiré du
+   champ « Authors » (il reste lisible dans les affiliations). */
 eq(headerOf([TITLE, 'Anna Bianchi (1), Mario Rossi (2), Jean Dupont (1)', AFF1, AFF2, ...TAIL]).authors,
-  'Anna Bianchi (1), Mario Rossi (2), Jean Dupont (1)', 'les exposants entre parenthèses sont des auteurs');
+  'Anna Bianchi, Mario Rossi, Jean Dupont', 'les exposants entre parenthèses sont des auteurs (numéros retirés)');
 
 /* Deux auteurs SANS initiale pointée ni exposant : c'est la position qui tranche. */
 const dD = parseDoc([TITLE, 'Anna Bianchi, Mario Rossi',
@@ -362,21 +428,23 @@ const hE = headerOf(['Journal of General Virology', 'Research Article',
   'Anna Bianchi1, Mario Rossi2', AFF1, AFF2, ...TAIL]);
 eq(hE.title, 'Aphid transmission of a new potyvirus infecting pepper crops',
   '« Journal of… » et « Research Article » ne sont pas pris pour le titre');
-eq(hE.authors, 'Anna Bianchi1, Mario Rossi2', '…les auteurs restent reconnus');
+eq(hE.authors, 'Anna Bianchi, Mario Rossi', '…les auteurs restent reconnus (numéros d’affiliation retirés)');
 
 /* DOI + date de soumission avant le titre : ils ne sont plus importés non plus. */
 const DOI_DOC = ['https://doi.org/10.1099/jgv.0.001234', 'Received: 12 January 2024',
   TITLE, 'Anna Bianchi1, Mario Rossi2', AFF1, ...TAIL];
 const dF = parseDoc(DOI_DOC);
 eq(dF.header.title, TITLE, 'le DOI et la date ne cachent plus le titre');
-eq(dF.header.authors, 'Anna Bianchi1, Mario Rossi2', '…ni les auteurs');
+eq(dF.header.authors, 'Anna Bianchi, Mario Rossi', '…ni les auteurs');
 eq(dF.parts.map((p) => p.heading), ['Introduction'], 'DOI et date ne sont pas importés comme du texte');
 
 /* Métadonnées APRÈS les affiliations : elles ne deviennent pas une section. */
 const META_DOC = [TITLE, 'Anna Bianchi1, Mario Rossi2', AFF1,
   '', 'Correspondence: anna.bianchi@unina.it', 'Keywords: potyvirus, aphid', ...TAIL];
 const dH = parseDoc(META_DOC);
-eq(dH.header.authors, 'Anna Bianchi1, Mario Rossi2', 'les métadonnées après les affiliations ne cassent pas l’en-tête');
+eq(dH.header.authors, 'Anna Bianchi, Mario Rossi', 'les métadonnées après les affiliations ne cassent pas l’en-tête');
+eq(dH.header.affiliations.split('\n').length, 2,
+  'l’e-mail de correspondance reste une AFFILIATION (il n’est plus jeté comme métadonnée)');
 eq(dH.parts.map((p) => p.heading), ['Introduction'], '« Correspondence » et « Keywords » sont écartés de l’import');
 
 /* Style Paperpile « Bianchi, A., Rossi, M., Dupont, J. » et « Bianchi A, et al. ». */
@@ -390,7 +458,7 @@ eq(headerOf([TITLE, 'Bianchi A, et al.',
 /* Exposants COLLÉS par l'export : « Bianchi1* », « Dupont1,2 », « 1Dipartimento… ». */
 const hK = headerOf([TITLE, 'Anna Bianchi1*, Mario Rossi2, Jean Dupont1,2',
   '1Dipartimento di Agraria, Universita di Napoli, Italy', '2INRAE, Villenave d Ornon, France', ...TAIL]);
-eq(hK.authors, 'Anna Bianchi1*, Mario Rossi2, Jean Dupont1,2', 'exposants collés et doubles (« 1,2 ») reconnus');
+eq(hK.authors, 'Anna Bianchi, Mario Rossi, Jean Dupont', 'exposants collés et doubles (« 1,2 ») reconnus, puis retirés des noms');
 eq(hK.affiliations.split('\n').length, 2, 'une affiliation collée à son marqueur reste une affiliation');
 
 /* Titre en MAJUSCULES (très fréquent) : ce n'est pas un intitulé de section. */
@@ -497,7 +565,7 @@ const FULL_DOC = [
 const pageMs = MS.splitManuscript(MS.blocksFromText(FULL_DOC));
 const pageHeader = MS.parseManuscriptHeader(pageMs.body);
 eq([pageHeader.title, pageHeader.authors, pageHeader.affiliations.split('\n').length],
-  ['Aphid transmission of a new potyvirus infecting pepper crops', 'Anna Bianchi1, Mario Rossi2', 2],
+  ['Aphid transmission of a new potyvirus infecting pepper crops', 'Anna Bianchi, Mario Rossi', 2],
   'l’en-tête de l’article est reconnu (titre / auteurs / affiliations)');
 const pagePlan = MS.buildManuscriptPlan(pageMs, { existingReferences: [] });
 eq(pagePlan.entries.length, 2, 'les deux références de la bibliographie sont lues');
@@ -738,7 +806,7 @@ const LATE_DOC = [
 const LATE_MS = MS.splitManuscript(MS.blocksFromText(LATE_DOC));
 const lateHeader = MS.parseManuscriptHeader(LATE_MS.body);
 eq(lateHeader.title, 'Aphid transmission of a new potyvirus infecting pepper crops', 'le titre reste reconnu');
-eq(lateHeader.authors, 'Anna Bianchi1, Mario Rossi2', 'les auteurs sous le résumé sont retrouvés (repli)');
+eq(lateHeader.authors, 'Anna Bianchi, Mario Rossi', 'les auteurs sous le résumé sont retrouvés (repli)');
 eq(lateHeader.affiliations.split('\n').length, 2, '…avec leurs deux affiliations');
 ok(lateHeader.lines.some((l) => l.role === 'authors' && l.text.includes('Mario Rossi')),
   'la ligne des auteurs est PROPOSÉE dans la fenêtre d’import (rôle compris)');

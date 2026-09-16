@@ -172,7 +172,14 @@ const AUTHOR_PAIR_RE = () => new RegExp(AUTHOR_PAIR, 'gu');
    Les initiales n'avalent JAMAIS la première lettre du mot suivant
    (« Costa, L. Antimicrobial » : le « A » commence le titre) ni le nom de
    l'auteur suivant d'une liste séparée par des points (« Rossi M. Bianchi A. »). */
-const NAME_INITIALS = '(?:[A-Z]\\.?(?:-\\s*)?(?![a-z\\u00e0-\\u00ff])){1,4}';
+/* Initiales d'un auteur, dans les deux écritures de l'éditeur :
+   « Rossi M », « Rossi MA », « Rossi, M. », « Rossi, M. A. », « Rossi, P. H. ».
+   UNE ESPACE PEUT SÉPARER DEUX INITIALES POINTÉES : « Kussie, P. H. et al. »
+   — c'est la référence signalée. Sans cette espace admise dans le motif, la
+   liste s'arrêtait après « P. » : le « H. et al. » resté en tête devenait le
+   TITRE du papier et toute la vraie phrase du titre partait dans la REVUE
+   (« Structure of the MDM2 oncoprotein… Science » comme journal). */
+const NAME_INITIALS = '(?:[A-Z]\\.\\s*(?:-\\s*)?(?![a-z\\u00e0-\\u00ff])|[A-Z](?![a-z\\u00e0-\\u00ff])(?:-\\s*)?){1,4}';
 const NAME_FAMILY = "[A-Z][\\p{L}'’.-]+";
 /* Le nom de famille d'un auteur « Initiales Nom » doit être suivi d'une
    ponctuation, d'un autre auteur, de « et al. » ou de la fin du texte : sans
@@ -486,6 +493,36 @@ export const parseBibtexRecords = (rawText) => {
 
 const NUMBERED_START = /^\s*(?:\[|\()?\d{1,3}[.)\]]?(?:\s|$)/;
 
+/* ── Ce qui n'est JAMAIS une référence : une AFFILIATION ─────────────────────
+   Un article commence par son titre, ses auteurs, puis leurs ADRESSES — et ces
+   adresses sont NUMÉROTÉES (« 1 Dipartimento di Agraria… », « 2 INRAE… »). Une
+   référence, elle, porte une ANNÉE, un volume/pages ou un DOI. Sans cette
+   lecture, importer les références d'un document qui contient aussi son en-tête
+   (une page copiée d'un PDF, un manuscrit entier) faisait entrer « 1 Dipartimento
+   di Agraria, Universita di Napoli, Portici, Italy » dans la bibliographie du
+   projet : le numéro de l'adresse devenait un numéro de référence, et un « [1] »
+   du texte pointait alors vers une adresse au lieu du papier 1. Demande
+   utilisateur : « s'il y a un numéro dans les affiliations, ce n'est JAMAIS une
+   référence ». */
+export const looksLikeAffiliationEntry = (value) => {
+  const raw = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!raw || raw.length > 400) return false;
+  /* Le numéro d'affiliation (« 1 », « [1] ») n'est pas le numéro d'une entrée :
+     il est retiré avant de juger le texte. */
+  const body = raw.replace(/^\s*(?:\[|\()?\s*\d{1,3}\s*[.)\]]?\s*/, '').trim();
+  if (!body || extractDoi(body)) return false;
+  /* Une référence ÉCRITE porte une année (« (2011). », « 2018; ») et souvent des
+     pages (« 1046-1056 ») : deux indices qui l'emportent sur une adresse. */
+  if (/\(\s*(?:1[89]|20)\d{2}[a-z]?\s*\)|\b(?:1[89]|20)\d{2}\b(?=\s*[.,;,)]|\s*$)/.test(body)) return false;
+  if (/\b\d{3,4}\s*[-–]\s*\d{1,4}\b/.test(body)) return false;
+  const email = /[\w.+-]+@[\w-]+\.[\w.-]+/.test(body);
+  const institution = /(?:universit|university|department|d[ée]partement|dipartiment|laborator|laboratoire|faculty|facolt|school of|college|academy|hospital|umr\b|cnrs\b|cnr\b|inserm\b|inrae\b|csic\b|max planck|campus|p\.?o\.? box)/i.test(body);
+  const place = /\b(?:italy|france|germany|spain|portugal|netherlands|belgium|switzerland|austria|denmark|sweden|norway|poland|greece|england|scotland|ireland|united kingdom|usa|u\.s\.a\.|canada|brazil|china|japan|india|australia)\b/i.test(body);
+  const postcode = /\b\d{4,5}\b/.test(body) || /\b[A-Z]{2}\s*\d{5}(?:-\d{4})?\b/.test(body);
+  if (email) return true;
+  return (institution || place || postcode) && body.split(',').length - 1 >= 2;
+};
+
 /** Note heuristique d'une ligne « qui ressemble à une référence ». */
 export const referenceScore = (line) => {
   const s = String(line || '').trim();
@@ -655,6 +692,10 @@ export const isAuthorListTitle = (value) => {
 export const bibliographyBlockToEntry = (block, _opts = {}) => {
   const raw = String(block || '').replace(/\s+/g, ' ').trim();
   if (!raw) return null;
+  /* Une ADRESSE d'affiliation (même NUMÉROTÉE « 1 Dipartimento… ») n'est pas une
+     référence : le numéro d'un laboratoire n'est pas celui d'un papier (voir
+     looksLikeAffiliationEntry). */
+  if (looksLikeAffiliationEntry(raw)) return null;
   const numberMatch = raw.match(/^\s*(?:\[|\()?(\d{1,3})[.)\]]?\s+/);
   /* Notes de statut d'une référence PubMed (« Epub 2018 Nov 3. », « Online ahead
      of print. ») : ni un titre, ni un journal — elles disparaissent. */

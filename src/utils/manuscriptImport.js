@@ -69,10 +69,20 @@ export const MANUSCRIPT_FILE_ACCEPT = '.docx,.html,.htm,.txt,.md';
  *  exposant COLLÉ par l'export Google Docs / Word), « * … », « a) … ». */
 export const AFFILIATION_MARK_RE = new RegExp([
   '^\\s*\\d{1,2}[.)\\]]?\\s*\\S',                 // « 1 » / « 1. » / « 1Dipartimento… »
+  /* « [1] Dipartimento… » : l'exposant d'un .docx devient « [1] » avant la
+     lecture du texte (voir markDocxSuperscriptCitations) — le marqueur
+     d'affiliation doit donc être reconnu dans cette écriture aussi. */
+  '^\\s*\\[\\s*\\d{1,2}\\s*\\](?:\\s*[,;&-]\\s*\\d{1,2}\\s*\\]*)?\\s*\\S',
   '^\\s*(?:[a-e]|[ivx]{1,4})[.)\\]]\\s*\\S',      // « a) » / « a. » / « iv) »
   '^\\s*(?:[a-e]|[ivx]{1,4})\\s+(?=\\p{Lu})',     // « a Dipartimento »
   '^\\s*[*\\u2020\\u2021\\u00a7\\u00b6]\\s*\\S'    // « * » / « † » / « ‡ » / « § »
 ].join('|'), 'iu');
+
+/** Une adresse e-mail dans une ligne : c'est TOUJOURS l'auteur correspondant
+ *  (« Correspondence: mario.rossi@unina.it », « E-mail: … »), donc une ligne
+ *  d'AFFILIATION — jamais une métadonnée à jeter. Elle est rangée à la FIN des
+ *  affiliations (voir headerFromLineRoles) : c'est là qu'un article l'imprime. */
+export const EMAIL_IN_LINE_RE = /[\w.+-]+@[\w-]+\.[\w.-]+/;
 
 /** Métadonnées d'un article — jamais un titre, jamais une section, jamais une
  *  affiliation : DOI, dates de soumission, adresse de correspondance, mots-clés,
@@ -117,15 +127,67 @@ export const looksLikeAffiliationLine = (line) => {
   return false;
 };
 
-/* Un morceau de nom : « Rossi », « Mario Rossi1 », « Dupont1,2 », « Bianchi1* »,
+/* Un marqueur d'affiliation, tel qu'un éditeur l'écrit APRÈS un nom :
+     « Rossi1 », « Rossi 1,2 »     exposant numérique (Nature, Cell…) ;
+     « Rossi a », « Rossi b,* »    Wiley / Springer : une LETTRE, et l'astérisque
+                                   de l'auteur correspondant ;
+     « Rossi* », « Rossi† »        auteur correspondant ;
+     « Rossi[1] », « Rossi[1,2] »  l'exposant d'un .docx, que l'import transforme
+                                   en « [1] » avant de lire le texte.
+   Une LETTRE n'est un marqueur que si elle est SEULE (« a », « B ») : « Rossia »
+   ou « Mario » ne se coupent jamais. C'est ce qui manquait : une liste d'auteurs
+   écrite « Mario Rossi a, Anna Bianchi b » (Elsevier / Springer) n'était pas
+   reconnue du tout — les auteurs restaient hors du champ « Authors » alors que
+   le titre, lui, était trouvé (demande utilisateur : « l'en-tête est ENTRE le
+   titre et les affiliations »). */
+const AFFIL_MARK = '(?:\\d{1,2}|[*\\u2020\\u2021\\u00a7\\u00b6]|[a-h](?![\\p{L}\\u2019])|[A-H](?![\\p{L}\\u2019]))';
+const AFFIL_MARK_BRACKETED = `(?:\\[\\s*${AFFIL_MARK}(?:\\s*[,;&-]\\s*${AFFIL_MARK})*\\s*\\]|\\(\\s*${AFFIL_MARK}(?:\\s*[,;&-]\\s*${AFFIL_MARK})*\\s*\\))`;
+/* Le même marqueur, mais SANS les lettres MAJUSCULES : « Rossi B » est une
+   écriture d'auteur (nom + initiale), jamais un marqueur à retirer — au
+   contraire de « Rossi b », « Rossi1 », « Rossi[2] », « Rossi (3) ». */
+const AFFIL_MARK_TAIL_RE = new RegExp(
+  `(?:\\s*[,;&]?\\s*(?:${AFFIL_MARK_BRACKETED}|\\d{1,2}|[*\\u2020\\u2021\\u00a7\\u00b6]|[a-h](?![\\p{L}\\u2019])))+\\s*$`, 'u');
+
+/** Un MORCEAU de nom, débarrassé de ses marqueurs d'affiliation :
+ *  « Rossi b,* » → « Rossi », « Anna Bianchi (2) » → « Anna Bianchi »,
+ *  « Jean Dupont[3] » → « Jean Dupont ». Les marqueurs sont les NUMÉROS de
+ *  laboratoire du document : ils n'ont rien à faire dans une liste de noms (et
+ *  un « [1] » resté collé à un nom se lit comme un renvoi de citation — ce que
+ *  l'utilisateur refuse dans l'en-tête). Les initiales sont intactes :
+ *  « Rossi B, Bianchi A » ne bouge pas. */
+export const stripAffilMarks = (part) => {
+  let s = String(part || '').trim();
+  for (let i = 0; i < 6; i += 1) {
+    const next = s.replace(AFFIL_MARK_TAIL_RE, '').trim();
+    if (next === s) break;
+    s = next;
+  }
+  return s;
+};
+
+/** Une ligne d'AUTEURS prête pour le champ « Authors » du projet : les
+ *  marqueurs d'affiliation sont retirés de chaque nom et la liste reste une
+ *  liste séparée par des virgules (voir stripAffilMarks). */
+export const cleanAuthorLine = (line) => String(line || '')
+  .split(/\s*[,;]\s*|\s+&\s+|\s+and\s+/i)
+  .map((p) => stripAffilMarks(p))
+  .filter(Boolean)
+  .join(', ');
+
+/* Un morceau de nom : « Rossi », « Mario Rossi1 », « Dupont1,2 », « Bianchi a »,
    « A. » — jamais une phrase (« plant viruses » ne passe pas : minuscule
-   initiale). Les chiffres/symboles qui suivent sont les exposants d'affiliation
-   et peuvent se suivre (« 1,2 ») ou se cumuler (« 1* » = affiliation + auteur
-   correspondant). */
-const NAME_PART_RE = /^[\p{Lu}][\p{L}'\u2019.-]*(?:\s+(?:[\p{Lu}]|[\p{Lu}][\p{L}'\u2019.-]*))?\.?\s*(?:(?:\d{1,2}|[*\u2020\u2021\u00a7\u00b6])+(?:\s*[,&]\s*(?:\d{1,2}|[*\u2020\u2021\u00a7\u00b6])+)*)?$/u;
+   initiale). Les chiffres/symboles/lettres qui suivent sont les exposants
+   d'affiliation et peuvent se suivre (« 1,2 ») ou se cumuler (« 1* » = 
+   affiliation + auteur correspondant). */
+const NAME_PART_RE = new RegExp(
+  `^[\\p{Lu}][\\p{L}'\\u2019.-]*(?:\\s+(?:[\\p{Lu}]|[\\p{Lu}][\\p{L}'\\u2019.-]*))?\\.?`
+  + `\\s*(?:(?:${AFFIL_MARK_BRACKETED}|${AFFIL_MARK})+(?:\\s*[,&]\\s*(?:${AFFIL_MARK_BRACKETED}|${AFFIL_MARK})+)*)?$`, 'u');
 
 /** Un exposant tout seul : le « 2 » de « Dupont1,2 » (deux affiliations). */
 const EXPONENT_ONLY_RE = /^(?:\d{1,2}|[*\u2020\u2021])+$/;
+
+/** Un marqueur collé au bout d'un nom déjà lu (« …Rossi b » puis « ,* »). */
+const MARK_TAIL_IN_NAME_RE = /(?:\d|[*\u2020\u2021]|[a-h](?![\p{L}]))$/u;
 
 /** Un intitulé de section n'est JAMAIS un nom de personne, même en position
  *  d'auteur : « Materials and Methods » suit parfois le titre de très près. */
@@ -142,7 +204,9 @@ export const authorLineParts = (line) => {
   const merged = [];
   cleaned.split(/\s*(?:,|;|\band\b|&)\s*/i).map((p) => p.trim()).filter(Boolean).forEach((part) => {
     const prev = merged[merged.length - 1];
-    if (prev && EXPONENT_ONLY_RE.test(part) && /(?:\d|[*\u2020\u2021])$/.test(prev)) {
+    /* « Rossi b » puis « ,* » : le second morceau n'est pas un auteur, c'est le
+       second marqueur du même nom (auteur correspondant). */
+    if (prev && EXPONENT_ONLY_RE.test(part) && MARK_TAIL_IN_NAME_RE.test(prev)) {
       merged[merged.length - 1] = `${prev},${part}`;
       return;
     }
@@ -173,7 +237,12 @@ export const looksLikeAuthorLine = (line, { alone = false } = {}) => {
   const initials = /(?:^|[\s,;&])\p{Lu}\.(?:\s|,|;|$|\d)/u.test(s)
     || /\b\p{Lu}\.\s*\p{Lu}\./u.test(s);
   const exponent = /\p{L}\d{1,2}(?=[\s,;&*]|$)/u.test(s) || /[*\u2020\u2021]/u.test(s);
-  if (initials || exponent || parts.length >= 3) return true;
+  /* « Mario Rossi a, Anna Bianchi b » : le marqueur est une LETTRE (Wiley /
+     Springer). Sans cette écriture, la ligne d'auteurs n'était pas reconnue et
+     restait hors du champ « Authors ». */
+  const letterMark = /(?:^|[\s,;&])\[?\s*[a-h](?:\s*[\]),;&]|\s*$)/u.test(s)
+    || /(?:^|[\s,;&])\[\s*\d{1,2}(?:\s*[,;&-]\s*\d{1,2})*\s*\]/u.test(s);
+  if (initials || exponent || letterMark || parts.length >= 3) return true;
   return !!alone && parts.length >= 1 && s.split(/\s+/).length <= 6;
 };
 
@@ -651,11 +720,55 @@ export const looksLikeAuthorList = (line) => {
  *  pas besoin de porter des exposants — « Anna Bianchi, Jean Dupont » suffit. */
 const isAuthorish = looksLikeAuthorList;
 
+/** Le mot d'un nom, particule comprise : « Rossi », « Mario », « W.-J. »,
+ *  « van der Berg ». Écrit en CHAÎNE (et non en RegExp) : une expression
+ *  composée à partir d'un objet RegExp collerait ses barres obliques dans le
+ *  motif (« /…/u »), et la liste de noms ne serait jamais reconnue. */
+const NAME_WORD = '(?:(?:van|von|de|den|der|del|della|di|da|dos|du|la|le|ter|ten|bin|ben|el|al)\\s+)?'
+  + "[\\p{Lu}][\\p{L}'\\u2019.-]*\\.?";
+const NAME_ONLY_RE = new RegExp(`^${NAME_WORD}(?:\\s+${NAME_WORD})*$`, 'u');
+
+/** UNE LIGNE DE NOMS, jugée sur la POSITION plus que sur les marqueurs : les
+ *  noms y sont séparés par des virgules (ou « and » / « & »), chacun fait un ou
+ *  deux mots capitalisés, ses marqueurs d'affiliation sont retirés
+ *  (« Mario Rossi a », « Anna Bianchi[2] » → des noms nus).
+ *
+ *  Pourquoi une seconde lecture, plus permissive : dans un article, l'en-tête
+ *  est écrit DANS UN ORDRE — le titre, PUIS les auteurs, PUIS les affiliations.
+ *  Le titre est reconnu, les adresses sont reconnues (elles portent un mot
+ *  d'institution), et la ligne qui se trouve ENTRE les deux ne peut donc être
+ *  qu'une liste d'auteurs — même quand le marqueur est une lettre (« Rossi a »),
+ *  une croix, ou absent. C'était le défaut signalé : « je ne comprends pas
+ *  pourquoi vous ne reconnaissez pas la section des auteurs alors qu'elle est
+ *  entre le titre et les affiliations ». */
+export const looksLikeNameListLine = (line) => {
+  const s = String(line || '').trim();
+  if (!s || s.length > 300) return false;
+  if (HEADER_META_RE.test(s) || SECTION_WORD_RE.test(s)) return false;
+  if (looksLikeAffiliationLine(s)) return false;
+  if (isBodyParagraph(s)) return false;
+  const parts = s.split(/\s*[,;]\s*|\s+&\s+|\s+and\s+/i)
+    .map((p) => stripAffilMarks(p))
+    .filter(Boolean);
+  if (!parts.length || parts.length > 40) return false;
+  if (!parts.every((p) => NAME_ONLY_RE.test(p) && p.split(/\s+/).length <= 5)) return false;
+  /* Un nom SEUL est accepté (article à un seul auteur), mais pas une phrase. */
+  if (parts.length === 1) return s.split(/\s+/).length <= 4;
+  return true;
+};
+
+/** La ligne SUIVANTE d'une liste de noms (positions 2, 3… d'un en-tête) : un
+ *  marqueur d'auteur, ou la même lecture par position que la première ligne. */
+const isNameLineContinuing = (text) => isAuthorish(text) || looksLikeNameListLine(text);
+
 /** La ligne de noms EN POSITION d'auteur (juste sous le titre) : un nom SEUL y
  *  suffit — c'est le cas « un auteur par ligne », fréquent dans un article à un
- *  seul auteur, que la seule liste de noms ne reconnaissait pas. */
+ *  seul auteur, que la seule liste de noms ne reconnaissait pas. Et quand aucun
+ *  marqueur d'auteur n'est reconnu (« Mario Rossi a, Anna Bianchi b »), la
+ *  POSITION tranche : voir looksLikeNameListLine. */
 const isAuthorLineAtPosition = (text) => isAuthorish(text)
-  || looksLikeAuthorLine(text, { alone: true });
+  || looksLikeAuthorLine(text, { alone: true })
+  || looksLikeNameListLine(text);
 
 /** Combien de blocs sont examinés en tête de document. */
 const HEADER_SCAN = 14;
@@ -683,6 +796,12 @@ const isBodyParagraph = (s) => {
 export const classifyHeaderLine = (line) => {
   const s = String(line || '').trim();
   if (!s) return 'ignore';
+  /* UNE ADRESSE E-MAIL EST UNE AFFILIATION : c'est l'auteur correspondant
+     (« Correspondence: … », « E-mail: … », l'adresse seule). Elle était rangée
+     dans les métadonnées — donc CONSOMMÉE mais jamais gardée : le projet
+     perdait l'adresse de correspondance du papier. Elle rejoint la liste des
+     affiliations, en DERNIÈRE ligne (voir headerFromLineRoles). */
+  if (EMAIL_IN_LINE_RE.test(s)) return 'affiliations';
   if (HEADER_META_RE.test(s)) return 'ignore';
   if (looksLikeAffiliationLine(s)) return 'affiliations';
   if (looksLikeAuthorLine(s)) return 'authors';
@@ -810,16 +929,30 @@ const extraHeaderLines = (list, window) => {
  *  TOUTE la zone d'en-tête est consommée — y compris les lignes « ignore »
  *  (métadonnées, ou ce que l'utilisateur ne veut pas importer) : elle ne doit
  *  jamais retomber dans une section du projet. Les lignes rendues au texte
- *  (« keep ») sont la seule exception : elles restent dans leur partie. */
+ *  (« keep ») sont la seule exception : elles restent dans leur partie.
+ *
+ *  DEUX MISES EN FORME, apprises de l'utilisateur :
+ *    • le champ « Authors » est une liste de NOMS : les marqueurs d'affiliation
+ *      du document (« Mario Rossi1 », « Anna Bianchi b », « Jean Dupont[3] »)
+ *      sont retirés — un « [1] » collé à un nom se lirait comme un renvoi de
+ *      citation, et le document imprimé montrerait « Rossi[1] » au lieu de
+ *      « Rossi » (voir cleanAuthorLine) ;
+ *    • l'adresse de l'auteur CORRESPONDANT (l'e-mail) est la DERNIÈRE ligne des
+ *      affiliations : c'est là qu'un article l'imprime, même quand le document
+ *      la place entre les auteurs et les adresses. L'ordre des affiliations
+ *      elles-mêmes est celui du document. */
 export const headerFromLineRoles = (blocks, lines) => {
   const list = Array.isArray(blocks) ? blocks : [];
   const rows = (Array.isArray(lines) ? lines : []).filter((r) => r && typeof r.at === 'number' && list[r.at]);
   const texts = (role) => rows.filter((r) => r.role === role)
     .map((r) => String(r.text || '').trim()).filter(Boolean);
+  const affiliations = texts('affiliations');
+  const emails = affiliations.filter((t) => EMAIL_IN_LINE_RE.test(t));
+  const addresses = affiliations.filter((t) => !EMAIL_IN_LINE_RE.test(t));
   return {
     title: texts('title')[0] || '',
-    authors: texts('authors').join(', '),
-    affiliations: texts('affiliations').join('\n'),
+    authors: texts('authors').map(cleanAuthorLine).filter(Boolean).join(', '),
+    affiliations: [...addresses, ...emails].join('\n'),
     blocks: rows.filter((r) => r.role !== KEEP_ROLE).map((r) => list[r.at])
   };
 };
@@ -888,8 +1021,10 @@ export const parseManuscriptHeader = (blocks) => {
 
   /* 3. Les AUTEURS : les lignes de noms à la suite du titre (un auteur par
      ligne quand l'export coupe la liste). Quand aucun marqueur d'auteur ne les
-     trahit (« Anna Bianchi, Mario Rossi », deux noms nus), c'est leur POSITION —
-     juste sous le titre — qui les désigne. */
+     trahit (« Anna Bianchi, Mario Rossi », deux noms nus) — ou que le marqueur
+     est une LETTRE (« Mario Rossi a, Anna Bianchi b », Elsevier / Springer) —
+     c'est leur POSITION, entre le titre et les affiliations, qui les désigne
+     (voir looksLikeNameListLine). */
   let firstAuthors = explicitAuthors;
   if (firstAuthors === -1 && titleIdx >= 0 && window[titleIdx + 1]
     && window[titleIdx + 1].at === window[titleIdx].at + 1
@@ -907,7 +1042,7 @@ export const parseManuscriptHeader = (blocks) => {
          doivent être adjacentes et ressembler encore à des noms. */
       if (!authorIdxs.length && !(first && explicitAuthors === -1)) break;
       if (isCand(roles[i]) && (first || window[i - 1].at === window[i].at - 1)
-        && (first ? isAuthorLineAtPosition(window[i].text) : isAuthorish(window[i].text))) {
+        && (first ? isAuthorLineAtPosition(window[i].text) : isNameLineContinuing(window[i].text))) {
         authorIdxs.push(i); continue;
       }
       break;

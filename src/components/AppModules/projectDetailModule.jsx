@@ -310,6 +310,16 @@ export const ProjectDetailModule = ({
   const [tableCols, setTableCols] = useState(4);
   const [mmFeedback, setMmFeedback] = useState(''); // "✓ Updated HH:MM" flash after manual M&M refresh
   const [docMode, setDocMode] = useState('view');   // export doc: 'view' | 'edit' | 'suggest'
+  /* ⛶ « Full screen » de la PAGE DOCUMENT : le document occupait déjà l'écran,
+     mais sa colonne de lecture restait bornée à 4xl — sur un grand écran, la
+     moitié de la largeur était perdue, et « ✏️ Edit text » se faisait dans une
+     colonne étroite. Le bouton élargit le document à TOUT l'écran ET demande le
+     plein écran du navigateur (comme F11, sans quitter la page) ; « ↙️ Exit »
+     (ou Échap) revient à la colonne de lecture. L'IMPRESSION ne bouge pas :
+     « 🖨️ Print / Save as PDF » réimprime la feuille calculée par
+     printProjectDoc, pas la mise en page d'écran. */
+  const [docFull, setDocFull] = useState(false);
+  const docPaneRef = useRef(null);
   const [suggestBaseHtml, setSuggestBaseHtml] = useState(''); // HTML snapshot when suggestion mode starts
   const [mmEditOpen, setMmEditOpen] = useState(false); // edit the M&M text on the project page
   const [slidePickerFor, setSlidePickerFor] = useState(null); // which text section is picking a slide
@@ -329,6 +339,33 @@ export const ProjectDetailModule = ({
 
   const project = projects.find((p) => p.id === currentProjectId);
   const pubFormat = useMemo(() => project?.pubFormat || loadPubFormat(), [project]);
+
+  /* ⛶ PLEIN ÉCRAN DE LA PAGE DOCUMENT (voir aussi le bouton « ⛶ Full screen »).
+     Les deux effets sont déclarés ICI, avant le « projet introuvable » de la fin :
+     un Hook placé après un return ne serait pas appelé à chaque rendu.
+       • Échap referme le plein écran, et sortir du plein écran par le navigateur
+         (F11) rend sa largeur à la colonne de lecture ;
+       • l'entrée/sortie du plein écran du NAVIGATEUR ne vise que notre volet
+         (docPaneRef) : le plein écran d'une autre page n'est jamais refermé. */
+  useEffect(() => {
+    if (!showExport) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setDocFull(false); };
+    const onFsChange = () => setDocFull((prev) => (prev ? !!document.fullscreenElement : prev));
+    window.addEventListener('keydown', onKey);
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.removeEventListener('fullscreenchange', onFsChange);
+    };
+  }, [showExport]);
+
+  useEffect(() => {
+    const pane = docPaneRef.current;
+    try {
+      if (docFull && showExport && pane && !document.fullscreenElement) pane.requestFullscreen?.();
+      else if (document.fullscreenElement === pane && (!docFull || !showExport)) document.exitFullscreen?.();
+    } catch { /* plein écran refusé (permission, iframe) : la LARGEUR suit quand même */ }
+  }, [docFull, showExport]);
 
   // Link-existing-test dropdown: ONE entry per test NAME (the instances of a
   // test share the same name, so a flat per-instance list shows repetitions).
@@ -2645,7 +2682,8 @@ export const ProjectDetailModule = ({
          vertical (rien n'est coupé sur le côté), les marges se réduisent sur un
          téléphone, et le contenu du document se replie au lieu de déborder
          (voir les règles ci-dessous). */
-      <div className="fixed inset-0 z-[60] bg-slate-100 overflow-y-auto overflow-x-hidden custom-scrollbar">
+      <div className="fixed inset-0 z-[60] bg-slate-100 overflow-y-auto overflow-x-hidden custom-scrollbar"
+           ref={docPaneRef}>
         <style>{`
           .doc-ins { background: #dcfce7; color: #166534; text-decoration: none; }
           .doc-del { background: #fee2e2; color: #991b1b; text-decoration: line-through; }
@@ -2668,7 +2706,7 @@ export const ProjectDetailModule = ({
             #project-doc-container h2 { font-size: 0.95rem; }
           }
         `}</style>
-        <div className="w-full max-w-4xl mx-auto px-2.5 py-3 sm:px-6 sm:py-5 md:px-8 md:py-8">
+        <div className={`w-full mx-auto px-2.5 py-3 sm:px-6 sm:py-5 md:px-8 md:py-8 ${docFull ? 'max-w-none' : 'max-w-4xl'}`}>
           <div className="flex flex-wrap items-center justify-between gap-2 mb-4 no-print">
             <h2 className="text-lg font-black text-slate-800">📄 {project.name} — document</h2>
             <div className="flex flex-wrap items-center gap-2">
@@ -2720,6 +2758,13 @@ export const ProjectDetailModule = ({
               )}
               <button onClick={printProjectDoc}
                       className="px-3 py-1.5 text-xs font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-700">🖨️ Print / Save as PDF</button>
+              <button onClick={() => setDocFull((v) => !v)}
+                      className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"
+                      title={docFull
+                        ? 'Back to the reading column (Échap / Esc)'
+                        : 'Read and write the document on the whole screen (the browser goes full screen too)'}>
+                {docFull ? '↙️ Exit full screen' : '⛶ Full screen'}
+              </button>
               <button onClick={() => setShowExport(false)}
                       className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300">Close</button>
             </div>

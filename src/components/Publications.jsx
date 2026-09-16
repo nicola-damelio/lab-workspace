@@ -2236,6 +2236,15 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
   const setActiveFormat = (fmt) => {
     if (pubFormatScope === 'default') {
       setPubFormat(fmt);
+      /* LE FORMAT PAR DÉFAUT VAUT POUR TOUT LE MONDE — y compris les projets qui
+         portaient leur PROPRE copie du format. Cette copie était figée : elle
+         gardait la mise en forme du jour où elle avait été choisie, et changer
+         le format ensuite ne touchait plus les publications du projet
+         (« je change les paramètres et les publications déjà dans le projet ne
+         bougent pas »). Elle suit donc le défaut ; un projet qui doit garder son
+         format à lui se choisit dans « Format for: » — et là, seul ce projet
+         change (voir la ligne du dessous). */
+      setPbProjects((prev) => prev.map((p) => (p.pubFormat ? { ...p, pubFormat: fmt } : p)));
     } else {
       setPbProjects((prev) => prev.map((p) => (p.name === pubFormatScope ? { ...p, pubFormat: fmt } : p)));
     }
@@ -2348,9 +2357,17 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
           Every author of the paper is listed; you can cut long author lists with “et al.” after
           a given number of authors, always keep the lab members (user list) in the citation
           even past that cutoff, and choose how each of their names is styled — underlined or
-          bold — wherever it appears among the authors. Formats can be set per project (each
-          project keeps its own) or left to the default. The formatted citations are used in the
+          bold — wherever it appears among the authors. The formatted citations are used in the
           publications table and in the project documents that reference these publications.
+        </p>
+        <p className="text-[11px] text-slate-500 mb-3">
+          <b>🌍 Default</b> applies to every publication and is copied into the projects that had
+          their own format, so changing it here changes what the projects show (choose a project
+          in “Format for:” to give ONE project a format of its own).
+          {' '}
+          A project document that was already exported (<b>📄 Export document → ✏️ Edit text →
+          💾 Save changes</b>) keeps the citations as they were printed — open it and use
+          “↩️ Rebuild from data” to refresh them with the new format.
         </p>
 
         <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-4">

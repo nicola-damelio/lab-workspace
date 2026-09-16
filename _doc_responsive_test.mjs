@@ -40,8 +40,10 @@ ok(sheet.length > 1000, 'la feuille du document exporté est bien localisée');
 has(sheet, SHEET_START, '…depuis l’écriture de la page jusqu’à sa fermeture');
 has(sheet, SHEET_END, '…bornes incluses');
 
-const OVERLAY_START = '<div className="fixed inset-0 z-[60] bg-slate-100 overflow-y-auto overflow-x-hidden custom-scrollbar">';
-const OVERLAY_END = '<div className="w-full max-w-4xl mx-auto px-2.5 py-3';
+const OVERLAY_START = '<div className="fixed inset-0 z-[60] bg-slate-100 overflow-y-auto overflow-x-hidden custom-scrollbar"';
+/* La fin de la fenêtre d'export est repérée par le DOCUMENT lui-même : la barre
+   d'outils (et son bouton « ⛶ Full screen ») est ainsi DANS la région vérifiée. */
+const OVERLAY_END = '<div id="project-doc-container"';
 const overlay = PAGE.slice(PAGE.indexOf(OVERLAY_START), PAGE.indexOf(OVERLAY_END));
 ok(overlay.length > 300, 'la page « document » plein écran est bien localisée');
 
@@ -100,7 +102,7 @@ has(sheet, 'h1, h2 { break-after: avoid; }', 'un titre ne reste pas seul en bas 
 has(PAGE, OVERLAY_START, 'la page « document » occupe l’écran et ne défile qu’en vertical');
 ok(!/fixed inset-0 z-\[60\][^"]*overflow-x-auto/.test(PAGE),
   '…jamais en horizontal (c’était le contenu coupé sur le côté)');
-has(PAGE, OVERLAY_END, 'ses marges se réduisent aussi sur un téléphone (px-2.5 → sm: → md:)');
+has(PAGE, 'sm:px-6 sm:py-5 md:px-8 md:py-8', 'ses marges se réduisent aussi sur un téléphone (px-2.5 → sm: → md:)');
 has(overlay, '#project-doc-container { overflow-wrap: break-word; }',
   'le document affiché coupe les mots trop longs');
 has(overlay, '#project-doc-container table { max-width: 100%; }',
@@ -121,5 +123,24 @@ has(overlay, '.cite-ref { color: #2563eb; text-decoration: none; font-weight: 70
   '…et la page à l’écran aussi (« 🔗 Link citations » doit se voir immédiatement)');
 has(sheet, 'li:target { background: #fef08a; }',
   'cliquer un [12] met la référence en évidence, à l’écran comme à l’export');
+
+/* ── 8. « ⛶ FULL SCREEN » : LE DOCUMENT S'ÉLARGIT À TOUT L'ÉCRAN ───────────
+   Demandé par l'utilisateur : la page « document » occupait déjà l'écran, mais
+   sa colonne de lecture restait bornée à 4xl (la moitié d'un grand écran perdue,
+   et « ✏️ Edit text » dans une colonne étroite). Le bouton élargit le document à
+   tout l'écran et demande le plein écran du navigateur ; « ↙️ Exit » ou Échap
+   reviennent à la colonne de lecture — et RIEN de tout cela ne touche la feuille
+   imprimée, qui est calculée séparément (voir printProjectDoc). */
+has(overlay, '{docFull ? \'↙️ Exit full screen\' : \'⛶ Full screen\'}',
+  'la barre d’outils offre « ⛶ Full screen » (et « ↙️ Exit full screen » une fois ouvert)');
+has(PAGE, 'const [docFull, setDocFull] = useState(false);', 'l’état du plein écran est celui de la page document');
+has(PAGE, '${docFull ? \'max-w-none\' : \'max-w-4xl\'}',
+  'la colonne de lecture s’élargit à tout l’écran (max-w-4xl → max-w-none) et revient');
+has(PAGE, 'ref={docPaneRef}', 'le volet porte la référence du plein écran (c’est LUI qui passe en plein écran)');
+has(PAGE, 'pane.requestFullscreen?.()', 'le plein écran du NAVIGATEUR est demandé (F11 sans quitter la page)');
+has(PAGE, "document.fullscreenElement === pane", '…et seul ce volet est refermé, jamais celui d’une autre page');
+has(PAGE, "if (e.key === 'Escape') setDocFull(false);", 'Échap referme la colonne élargie');
+ok(!/docFull/.test(sheet),
+  'la feuille imprimée ne dépend PAS de la largeur d’écran (l’impression ne change pas)');
 
 console.log(`✅ ${passed} tests passés (document exporté et page « document » adaptés à la largeur de l’écran)`);

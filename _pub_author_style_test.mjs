@@ -302,4 +302,23 @@ ok(/coauthors: matchCoauthors\(authors, scientistOptions, p\.scientist\)/.test(s
   'les co-auteurs du laboratoire sont recalculés après la correction');
 
 
+/* ── 12. CHANGER LE FORMAT CHANGE AUSSI LES PUBLICATIONS DU PROJET ─────────
+   Signalé : « quand je change les paramètres du format de publication, cela
+   n'affecte pas le format des publications déjà dans le projet ». Chaque projet
+   stocke sa copie du format (`project.pubFormat`, choisie un jour dans
+   « Format for: ») et la page de projet l'utilise EN PRIORITÉ :
+   `project?.pubFormat || loadPubFormat()`. Changer le format PAR DÉFAUT doit
+   donc mettre à jour ces copies — sinon elles restent figées à l'ancienne mise
+   en forme et le défaut ne se voit nulle part. Un format de projet, lui, ne
+   touche QUE ce projet. */
+ok(/const setActiveFormat = \(fmt\) => \{/.test(src), 'le panneau écrit le format par défaut ou celui d’un projet');
+ok(/setPbProjects\(\(prev\) => prev\.map\(\(p\) => \(p\.pubFormat \? \{ \.\.\.p, pubFormat: fmt \} : p\)\)\)/.test(src),
+  'le format PAR DÉFAUT est recopié dans les projets qui avaient leur propre copie');
+ok(/p\.name === pubFormatScope \? \{ \.\.\.p, pubFormat: fmt \} : p/.test(src),
+  '…alors qu’un format de PROJET ne change que ce projet');
+ok(/project\?\.pubFormat \|\| loadPubFormat\(\)/.test(pdm),
+  'la page de projet utilise la copie du projet, sinon le défaut (d’où l’importance de la recopie)');
+ok(/A project document that was already exported/.test(src) && /Rebuild from data/.test(src),
+  'le panneau dit qu’un document DÉJÀ exporté garde ses citations jusqu’à « Rebuild from data »');
+
 console.log(`_pub_author_style_test: ${passed} passed`);
