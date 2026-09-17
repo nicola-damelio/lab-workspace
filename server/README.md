@@ -87,6 +87,16 @@ into one Cloud Shell folder and run:
 sed -i 's/\r$//' ~/cloud-shell-quick-update.sh && bash ~/cloud-shell-quick-update.sh
 ```
 
+> ⚠️ **A route added to `token-server.js` only exists once the service is
+> redeployed.** A deployed build that predates `POST /api/auth/change-password`
+> answers that call with `Unknown grant_type ""` — the request fell through to the
+> token exchange, so *My Account → Change My Password* looks like it does nothing
+> and the old password keeps working. The app now translates that answer into
+> “the token server is older than this feature — redeploy it”, and the server
+> replies `404 not_found` naming the missing route. Redeploy marker:
+> `curl <service-url>/health` → `"authChangePassword": true` (absent on an older
+> build).
+
 Ordered procedure, verification and rollback: **`docs/SECURITY-SETUP.md`**.
 
 Three failures are already handled: a project **without an active billing account**
@@ -256,7 +266,8 @@ apply to Cloud Run exactly as to a self-hosted box.
 | `workspace`               | Mint `{ access_token, expires_in }` from the stored workspace credential (used by the app). |
 | `authorization_code`      | Owner bootstrap — exchanges the GIS code and **stores** the refresh token server-side (never returned to the browser). |
 | `refresh_token`           | Legacy per-user refresh (older builds). |
-| GET `/health`             | Status + `initialized` flag. |
+| GET `/health`             | Status + `initialized` flag + `authChangePassword` (redeploy marker: present only on a build that knows the team-auth routes). |
+| *any other path*          | `404 not_found`, naming the route and the known ones. A POST never falls through to the token exchange, so an app calling a route this build lacks reads “redeploy” instead of the meaningless `Unknown grant_type ""`. |
 
 ## Rotating / resetting the credential
 
@@ -275,3 +286,8 @@ the app tells the owner to re-bootstrap.
 - **Server up, credential missing** → the app explains that the one-time
   owner setup (`?drive-bootstrap=1`) is still required.
 - **Credential revoked** → server clears it; owner repeats the one-time setup.
+- **App calls a route the deployed build lacks** (a freshly added one, e.g.
+  `POST /api/auth/change-password` on an older revision) → the server answers
+  `404 not_found` naming the route and the app says the token server must be
+  redeployed. Before this guard the call fell through to the token exchange and
+  produced `Unknown grant_type ""`, which pointed at nothing.

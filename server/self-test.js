@@ -89,7 +89,9 @@ try {
 
   let res = await fetch(`${base}/health`);
   let json = await res.json();
-  check('GET /health → 200 + initialized:false', res.status === 200 && json.ok === true && json.initialized === false, JSON.stringify(json));
+  check('GET /health → 200 + initialized:false + marqueur change-password',
+    res.status === 200 && json.ok === true && json.initialized === false && json.authChangePassword === true,
+    JSON.stringify(json));
 
   res = await fetch(`${base}/`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -111,6 +113,19 @@ try {
   });
   json = await res.json();
   check('POST unknown grant → 400 unsupported_grant_type', res.status === 400 && json.error === 'unsupported_grant_type', JSON.stringify(json));
+
+  /* Une route INCONNUE ne doit JAMAIS retomber sur l'échange de jeton : un
+     déploiement antérieur à POST /api/auth/change-password répondait sinon
+     « Unknown grant_type "" » — l'erreur ne disait ni quelle route manquait ni
+     qu'il fallait redéployer. */
+  res = await fetch(`${base}/api/nope`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: MEMBER, currentPassword: 'x', newPassword: 'y' })
+  });
+  json = await res.json();
+  check('route inconnue → 404 not_found (jamais « Unknown grant_type »)',
+    res.status === 404 && json.error === 'not_found' && /red[ée]ploy/i.test(String(json.error_description || '')),
+    JSON.stringify(json));
 
   res = await fetch(`${base}/`, { method: 'OPTIONS', headers: { Origin: allowed, 'Access-Control-Request-Method': 'POST' } });
   check('OPTIONS preflight (allowed origin) → 204 + ACAO', res.status === 204 && res.headers.get('access-control-allow-origin') === allowed);
@@ -149,7 +164,9 @@ try {
   /* ── Authentification de l'équipe (docs/SECURITY-SETUP.md) ─────────────── */
   res = await fetch(`${base}/api/auth/status`);
   json = await res.json();
-  check('GET /api/auth/status → configured + 0 compte', res.status === 200 && json.configured === true && json.accounts === 0, JSON.stringify(json));
+  check('GET /api/auth/status → configured + 0 compte + change-password annoncé',
+    res.status === 200 && json.configured === true && json.accounts === 0 && json.authChangePassword === true,
+    JSON.stringify(json));
 
   res = await fetch(`${base}/api/auth/login`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },

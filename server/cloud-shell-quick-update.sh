@@ -334,6 +334,18 @@ has "$BODY" '"authConfigured":true' \
    → relance le script ; si l'erreur persiste, envoie-moi la réponse ci-dessus."
 ok "le serveur peut signer les jetons ($(host_of "$HEALTH_URL"))"
 
+# Marqueur de capacité : /health ne renvoie « authChangePassword » que sur un
+# build qui connaît POST /api/auth/change-password. Sans ce contrôle, un
+# déploiement qui n'a PAS pris le nouveau token-server.js (fichier non
+# re-téléversé, ancienne révision encore servie) passait inaperçu : l'app
+# répondait ensuite « Unknown grant_type "" » et « Change My Password » semblait
+# sans effet. Mieux vaut échouer ICI, au moment du déploiement.
+has "$BODY" '"authChangePassword":true' \
+  || die "Le serveur déployé ne connaît pas POST /api/auth/change-password (marqueur authChangePassword absent de /health).
+   → le token-server.js téléversé est l'ANCIEN : re-dépose-le dans Cloud Shell
+     (avec package.json) puis relance le script."
+ok "le serveur connaît le changement de mot de passe (authChangePassword)"
+
 # CORS — indispensable pour « ⬆ Publier les comptes » : le navigateur n'envoie
 # cet appel (en-tête X-Admin-Token) que si le préflight l'autorise. Sinon il
 # l'annule lui-même et l'app affiche « Serveur de jetons injoignable (Failed to

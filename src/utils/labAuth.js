@@ -86,6 +86,11 @@ export const fetchAuthStatus = async () => {
     configured: !!res.json.configured,
     accounts,
     adminPushEnabled: !!res.json.adminPushEnabled,
+    /* Le serveur annonce les routes qu'il connaît : un déploiement antérieur à
+       POST /api/auth/change-password ne renvoie pas ce marqueur (voir
+       serverChangePassword, qui s'en sert pour expliquer l'échec). */
+    changePasswordEnabled: res.json.authChangePassword === true,
+    version: res.json.version || '',
     savedAt: res.json.savedAt || '',
     ready: !!res.json.configured && accounts > 0
   };
@@ -176,10 +181,22 @@ export const serverChangePassword = async (name, currentPassword, newPassword) =
     body: { name, currentPassword, newPassword }
   });
   if (!res.ok) {
+    /* Serveur ANTÉRIEUR à cette route : le POST n'a été reconnu par personne et
+       est retombé sur l'échange de jeton, qui ne trouve aucun « grant_type »
+       dans notre corps → « Unknown grant_type "" ». (Une fois le garde-fou du
+       serveur en place, le même cas répond 404 not_found.) Le message affiché
+       doit dire QUOI FAIRE : redéployer le serveur de jetons. */
+    const staleDeployment = res.error === 'unsupported_grant_type'
+      || res.error === 'not_found' || res.status === 404;
     return {
       ok: false,
       error: res.error,
-      message: res.message || 'Changement de mot de passe refusé par le serveur.',
+      needsRedeploy: staleDeployment,
+      message: staleDeployment
+        ? `Le serveur de jetons (${authServerBase()}) ne connaît pas encore POST /api/auth/change-password : `
+          + 'il est ANTÉRIEUR à cette fonctionnalité. Redéployez server/token-server.js '
+          + '(voir server/README.md) — sans cela, la connexion continuera d\'accepter l\'ancien mot de passe.'
+        : (res.message || 'Changement de mot de passe refusé par le serveur.'),
       status: res.status
     };
   }

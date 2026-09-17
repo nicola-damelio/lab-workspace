@@ -157,6 +157,25 @@ sed -i 's/\r$//' ~/cloud-shell-quick-update.sh && bash ~/cloud-shell-quick-updat
 Le `sed` corrige d'éventuelles fins de ligne Windows (sans effet si le fichier
 est déjà propre) : les messages `$'\r': command not found` viennent de là.
 
+> 🔁 **Cette étape est OBLIGATOIRE après tout ajout de route dans
+> `token-server.js`.** Le service déployé n'exécute que le code de sa dernière
+> révision : un serveur antérieur à `POST /api/auth/change-password` répond
+> `Unknown grant_type ""` à cet appel (il retombait sur l'échange de jeton), donc
+> « My Account → Change My Password » semblait **sans effet** et l'ancien mot de
+> passe continuait de fonctionner. Depuis, le serveur répond `404 not_found` en
+> nommant la route manquante et l'app explique qu'il faut redéployer.
+>
+> Vérification du déploiement (le champ n'existe QUE sur un serveur à jour) :
+>
+> ```bash
+> curl.exe -s https://drive-token-server-763848765523.europe-west1.run.app/health
+> # … "authChangePassword": true …
+> ```
+>
+> S'il est absent : reprendre l'étape 3 en entier (les fichiers `token-server.js`
+> et `package.json` doivent être **re-déposés** dans Cloud Shell avant de lancer
+> la commande).
+
 Le script se termine par un cadre jaune **ADMIN_TOKEN** : copiez-le (il sert à
 l'étape 4) et passez **directement à l'étape 4**.
 

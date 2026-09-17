@@ -581,6 +581,11 @@ function handleAuthStatus() {
       accounts: store.members.length,
       savedAt: store.savedAt,
       adminPushEnabled: !!ADMIN_TOKEN,
+      // Capacité annoncée à l'application : POST /api/auth/change-password
+      // existe sur CE build. Un déploiement antérieur ne renvoie pas ce champ —
+      // l'app peut alors dire « redéployez » au lieu d'afficher l'erreur
+      // incompréhensible « Unknown grant_type "" ».
+      authChangePassword: true,
       version: CODE_VERSION
     }
   };
@@ -1011,6 +1016,10 @@ const server = http.createServer(async (req, res) => {
       email: store ? store.email : '',
       authConfigured: !!loadServiceAccount(),
       authAccounts: accounts.members.length,
+      // Marqueur de capacité : permet à l'app de distinguer un serveur à jour
+      // d'un déploiement antérieur (voir serverChangePassword dans
+      // src/utils/labAuth.js).
+      authChangePassword: true,
       version: CODE_VERSION
     }, origin);
     return;
@@ -1073,6 +1082,25 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       send(res, 400, { error: 'bad_request', error_description: (err && err.message) || 'Invalid request.' }, origin);
     }
+    return;
+  }
+
+  /* ── Échange de jeton : SEULS les chemins racine y retombent ────────────────
+     Toute autre route inconnue reçoit un 404 explicite. Sans ce garde-fou, un
+     POST vers une route absente du déploiement (p. ex. /api/auth/change-password
+     sur un serveur non redéployé) était traité comme une demande de jeton, qui
+     ne trouvait aucun « grant_type » dans le corps et répondait
+     « Unknown grant_type "" » — une erreur impossible à rattacher à sa cause. */
+  if (url.pathname !== '/' && url.pathname !== '' && url.pathname !== '/token') {
+    send(res, 404, {
+      error: 'not_found',
+      error_description: `Unknown path "${req.method} ${url.pathname}" on this token-server build. `
+        + 'Known routes: POST / (grant_type: workspace|authorization_code|refresh_token|status), '
+        + 'GET /health, GET /api/auth/status, GET /api/auth/roster, POST /api/auth/login, '
+        + 'POST /api/auth/change-password, POST /api/auth/accounts, POST /api/mail. '
+        + 'Si l’application appelle une route listée ici, le service déployé est ANTÉRIEUR à celle-ci : '
+        + 'redéployez server/token-server.js (voir server/README.md).'
+    }, origin);
     return;
   }
 
