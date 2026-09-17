@@ -78,8 +78,11 @@ key with `gcloud iam service-accounts keys create` (**no Firebase Console
 navigation**), mints an `ADMIN_TOKEN`, redeploys with `--update-env-vars` — so
 the `/data` volume, the OAuth secret, `ALLOWED_ORIGINS`, the service account and
 the IAM bindings are left untouched — and then checks `/health` for
-`authConfigured:true` **and the CORS preflight for `X-Admin-Token`** (without
-that header the app's *⬆ Publier les comptes* never leaves the browser). Upload
+`authConfigured:true`, for the `authChangePassword:true` marker of the build that
+knows `POST /api/auth/change-password`, for the **build stamp it just passed**
+(`version` = `qs-<UTC date>`, which proves the *new* revision is the one serving)
+**and the CORS preflight for `X-Admin-Token`** (without that header the app's
+*⬆ Publier les comptes* never leaves the browser). Upload
 `token-server.js`, `package.json` and the script
 into one Cloud Shell folder and run:
 
@@ -97,9 +100,55 @@ sed -i 's/\r$//' ~/cloud-shell-quick-update.sh && bash ~/cloud-shell-quick-updat
 > `curl <service-url>/health` → `"authChangePassword": true` (absent on an older
 > build).
 
+`ADMIN_TOKEN` is **preserved** across updates: the script re-uses the token already
+on the service (or `~/ADMIN_TOKEN.txt`) instead of minting a new one, so a redeploy
+that only brings new code cannot silently invalidate the token stored in your
+browser (*Setup → Server security → Publish accounts* would start replying 401 with
+no apparent link to the update). Rotate it deliberately with
+`ROTATE_ADMIN_TOKEN=1 bash ~/cloud-shell-quick-update.sh`.
+
 Ordered procedure, verification and rollback: **`docs/SECURITY-SETUP.md`**.
 
-Three failures are already handled: a project **without an active billing account**
+> ⚠️ **Which files are actually deployed.** Step 4 runs
+> `gcloud run deploy --source .` from the script's own working directory
+> `~/tsrv`, which it rebuilds on every run by copying **only**
+> `~/token-server.js` and `~/package.json` into it. Anything dropped anywhere
+> else is ignored: `~/tsrv` itself is overwritten each time, and an extra folder
+> (e.g. `~/token-server`) is never read. This is a real trap — dragging the new
+> files into the Cloud Shell window while the terminal was **not** in `~` puts
+> them in a subfolder, the *old* `~/token-server.js` gets deployed, the
+> deployment succeeds, the revision stays old and the app keeps saying *older
+> build*. Step 0/6 therefore now **refuses to deploy** a `token-server.js` that
+> does not carry the literal `authChangePassword: true` (see the three states
+> below), lists any up-to-date copy found elsewhere with the exact `cp` commands
+> to fix it, and prints the SHA-256 of both files it sends to the build (compare
+> with `Get-FileHash .\server\token-server.js -Algorithm SHA256` on the PC).
+>
+> ℹ️ **The script itself can be stale too.** If step 1/6 ends with *"Service
+> « drive-token-server » introuvable parmi tes projets"* while the account and the
+> project are perfectly fine, then `~/cloud-shell-quick-update.sh` is an **older
+> copy**: its `gcloud run services describe` calls have no `--platform=managed`,
+> which a **fresh Cloud Shell requires** (the `run/platform` property is unset)
+> and whose error it swallows with `2>/dev/null`. The current script passes
+> `--platform=managed` everywhere, and prints the active account, the visible
+> projects and each project's Cloud Run services before giving up. Spot it
+> **before** running: step 0/6 of the current script is titled *"0/6 · fichiers
+> source (lus UNIQUEMENT dans $HOME)"* and prints two SHA-256 lines — if it does
+> not, re-drop the script.
+>
+> ℹ️ **Three states of `~/token-server.js`** — `grep -n authChangePassword ~/token-server.js`:
+>
+> * **nothing** → older than `POST /api/auth/change-password`: the route does not
+>   exist at all;
+> * **2 lines, both `handleAuthChangePassword(…)`** → the route exists, but neither
+>   `/health` nor `/api/auth/status` announces `authChangePassword: true`; the app
+>   then calls it *older build* and never sends the POST — `src/utils/labAuth.js`
+>   tests that **value**, not the function name (commit `db07e95` "password");
+> * **4 lines, including two `authChangePassword: true,`** → current build, the app
+>   accepts. Step 0/6 counts exactly this literal, so the middle state is refused
+>   before anything reaches Cloud Run.
+
+Four failures are already handled: a project **without an active billing account**
 (checked at step 1/6, the script stops and says what to link); a **Cloud Build
 service account missing IAM permissions** (recent projects create
 `…-compute@developer.gserviceaccount.com` without the Editor role, so the build
@@ -108,7 +157,25 @@ cannot read the uploaded source), where the script grants `roles/run.builder`,
 `roles/logging.logWriter` to that account, waits for propagation and retries the
 deployment once; and a **deployment into the wrong project**, which would create
 a brand-new empty service (no `/data` volume, no `GOOGLE_CLIENT_SECRET`) whose
-container dies at startup with *"failed to start and listen on the port"*. On any
+container dies at startup with *"failed to start and listen on the port"*; and a
+Cloud Shell session signed in with a **different Google account** than the one
+owning the hosting project, where step 1/6 reports *service not found* even though
+the service still answers at the app's URL (the script now prints the active
+account, the visible projects and each project's services, so the mismatch is
+obvious; fix it with `gcloud auth login` + `gcloud config set account …`, or force
+the project with `TSRV_PROJECT=<id>`). A copy of the script predating the
+2026-09-17 fix fails there for a completely different reason: it read
+`gcloud projects list --format='value(projectId,projectNumber)'` with
+`IFS= read -r p pnum`, and `IFS=` *disables* word splitting — the whole
+tab-separated line landed in `$p` (tab included) while `$pnum` stayed empty, so
+every `run services describe` failed on a project id containing a tab, no
+candidate was collected and step 1/6 announced *service not found* **while its
+own diagnostic listed the service** (seen with
+`drive-token-server-6eq5wljpia-ew.a.run.app` in project number 763848765523).
+The current script reads the list with `read -r p pnum` (no `IFS=`) and proves it
+by printing `✔ projet identifié par le numéro de l'URL utilisée par l'app
+(763848765523)`; until it is re-uploaded, bypass the lookup with
+`TSRV_PROJECT=project-5bef8353-9780-43db-885`. On any
 other failure it prints the last 40 lines of `gcloud` plus a keyword diagnostic
 and keeps the full log in `~/tsrv-deploy.log`.
 
@@ -181,6 +248,26 @@ bash deploy-cloud-run.sh -a "https://your-app.example.com" -p "YOUR_PROJECT_ID" 
   -c "client_secret.json" \
   -i "NEW-CLIENT-ID.apps.googleusercontent.com"   # only if you created a new client
 ```
+
+> 💡 **Lost / deleted `client_secret.json`? Nothing is broken.** That file is read
+> **only** by this full install script, and only *at deploy time*: its value is
+> stored inside the service as the `GOOGLE_CLIENT_SECRET` variable (the very
+> variable `cloud-shell-quick-update.sh` step 1/6 checks before deploying). A
+> missing local copy therefore does not affect ordinary updates and does not stop
+> the running server. It is needed again only to (re)create the service from
+> scratch — and the value can be read back out of the revision already in place:
+>
+> ```bash
+> gcloud run services describe drive-token-server --project <PROJECT_ID> \
+>   --region europe-west1 --platform=managed \
+>   --format='yaml(spec.template.spec.containers[0].env)' | grep -A1 GOOGLE_CLIENT_SECRET
+> # → a `value: "GOCSPX-…"` line: save that value (without the quotes) as a
+> #   plain-text file, e.g. ~/client_secret.txt — `-c` accepts either the
+> #   downloaded JSON or a plain-text secret file. Keep it out of the repo.
+> # If the variable is a secretStore reference instead, read it with:
+> gcloud secrets versions access latest --secret=drive-token-client-secret \
+>   --project <PROJECT_ID>
+> ```
 
 The script enables `run` / `cloudbuild` / `secretmanager`, creates a dedicated
 service account, stores the OAuth client **secret** in Secret Manager, creates

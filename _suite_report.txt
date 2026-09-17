@@ -21,13 +21,13 @@ OK   _editor_layout_test.cjs  →  _editor_layout_test.cjs — 9 assertions pass
 OK   _esm_test_hook.mjs  →  (no output)
 OK   _fcs_restore_match_test.cjs  →  ✅ 7/7 checks passed
 OK   _figure_origin_test.cjs  →  ✅ 64/64 checks passed
-OK   _figure_placement_test.mjs  →  _figure_placement_test.mjs — 27 assertions passed
+OK   _figure_placement_test.mjs  →  _figure_placement_test.mjs — 35 assertions passed
 OK   _figure_recapture_test.mjs  →  │ (index) │ name                                                                          │ ok   │ error │ | ✅ 32/32 checks passed
 OK   _figure_style_test.mjs  →  │ (index) │ name                                                                                  │ ok   │ error │ | ✅ 71/71 checks passed
 OK   _library_restore_test.mjs  →  ✅ 135 tests passés (bibliothèque d’images ↔ sauvegarde)
 OK   _library_transfer_test.cjs  →  │ (index) │ name                                                                                                                   │ ok   │ error │ | 
 OK   _mail_recipients_test.mjs  →  _mail_recipients_test: 47 passed
-OK   _manuscript_import_test.mjs  →  ✅ 370 tests passés (manuscrit — blocs / parties / en-tête / sections / liens / figures)
+OK   _manuscript_import_test.mjs  →  ✅ 376 tests passés (manuscrit — blocs / parties / en-tête / sections / liens / figures)
 OK   _new_image_test.cjs  →  ✅ 29/29 checks passed
 OK   _pdb_conect_sanity.cjs  →  (no output)
 OK   _persist_store_test.mjs  →  ✅ 25 tests passés (import : écriture vérifiée, quota plein, allègement des figures)
@@ -40,7 +40,7 @@ OK   _project_figures_access_test.cjs  →  │ (index) │ name                
 OK   _project_page_order_test.mjs  →  _project_page_order_test.mjs — 31 assertions passed
 OK   _pub_author_style_test.mjs  →  _pub_author_style_test: 123 passed
 OK   _rebuild_h_test.mjs  →  PASS
-OK   _reference_complete_test.mjs  →  _reference_complete_test: 49 passed
+OK   _reference_complete_test.mjs  →  _reference_complete_test: 68 passed
 OK   _reference_import_test.mjs  →  ✅ 226 tests passés (import de références)
 OK   _reference_links_test.mjs  →  ✅ 87 tests passés (liens de citation [n] ↔ références, import bibliographique numéroté, document exporté réparé)
 OK   _spectra_split_test.mjs  →  passed 197/197

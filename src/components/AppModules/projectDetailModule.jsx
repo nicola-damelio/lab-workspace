@@ -1080,28 +1080,43 @@ export const ProjectDetailModule = ({
      pas reconstruite » : ce bouton reprend TOUTES les références du projet
      (bibliographie ET références numérotées du document), et remplit les champs
      vides depuis les publications du laboratoire / « Relevant papers », puis
-     depuis Crossref (par DOI, sinon par titre exact). Un champ déjà rempli —
-     corrigé à la main — n'est jamais écrasé (voir utils/referenceEnrich.js), et
-     la recherche en ligne est bornée : elle s'arrête d'elle-même hors ligne. */
+     depuis Crossref (par DOI, sinon par titre exact). Une liste d'auteurs
+     RÉDUITE — « Fumano, et al. » — compte comme un champ à chercher : c'est ce
+     qui fait revenir les co-auteurs, le DOI et le volume d'un article dont la
+     bibliographie n'avait gardé qu'un nom. Un champ déjà rempli (corrigé à la
+     main) n'est jamais écrasé (voir utils/referenceEnrich.js), et la recherche
+     en ligne est bornée : elle s'arrête d'elle-même hors ligne. */
   const completeProjectReferences = async () => {
     if (!canModify || refFixBusy) return;
     setRefFixBusy(true);
-    setRefFixReport('⏳ Looking for the missing authors, titles, journals and years…');
+    setRefFixReport('⏳ Looking for the missing authors, titles, journals, DOIs and volumes…');
     try {
-      const bib = await enrichReferences(projectBib, { pool: citationPool, all: true });
-      const numbered = await enrichReferences(refs, { pool: citationPool, all: true });
+      /* `all: true` = chercher TOUS les champs qui manquent (DOI, volume,
+         pages…) et pas seulement les auteurs ou le titre ; `max` haut = un
+         projet peut avoir une cinquantaine de références, et l'utilisateur
+         clique justement parce qu'il veut qu'elles soient complètes. La
+         recherche s'arrête d'elle-même après deux échecs (hors ligne). */
+      const bib = await enrichReferences(projectBib, { pool: citationPool, all: true, max: 60 });
+      const numbered = await enrichReferences(refs, { pool: citationPool, all: true, max: 60 });
       const patch = {};
       if (bib.completed) patch.bibliography = bib.list;
       if (numbered.completed) patch.references = numbered.list;
       let saved = { ok: true };
       if (Object.keys(patch).length) saved = commitProjectVerified(patch, { lighten: true });
       const done = bib.completed + numbered.completed;
-      setRefFixReport(done
+      /* Une liste d'auteurs RÉDUITE (« Fumano, et al. ») compte comme un champ
+         manquant : on le dit, même quand la recherche n'a rien trouvé pour
+         elle — l'utilisateur voit ainsi ce qui reste à écrire à la main. */
+      const stillShortened = (bib.stillShortened || 0) + (numbered.stillShortened || 0);
+      setRefFixReport((done
         ? `${enrichReport({ completed: done, filled: mergeFieldCounts(bib.filled, numbered.filled), sources: [...new Set([...bib.sources, ...numbered.sources])] })}`
-          + ` — the project bibliography, the numbered references and the exported document show them now.`
+          + ' — the project bibliography, the numbered references and the exported document show them now.'
           + (saved.ok ? '' : ` · ⚠ NOT SAVED: the browser refused to store this project (${saved.error}).`)
-        : 'Every reference already has its authors, title, journal and year — nothing was missing.'
-          + (bib.offline || numbered.offline ? ' (the online service could not be reached)' : ''));
+        : 'Every reference already has its authors, title, journal, year, volume, pages and DOI — nothing was missing.'
+          + (bib.offline || numbered.offline ? ' (the online service could not be reached)' : ''))
+        + (stillShortened
+          ? ` · ⚠ ${stillShortened} reference(s) still show their authors as “et al.” — write the co-authors by hand in Publications → “Project bibliography”.`
+          : ''));
     } catch (err) {
       setRefFixReport(`⚠ ${(err && err.message) || 'the references could not be completed'}`);
     }
@@ -1168,14 +1183,17 @@ export const ProjectDetailModule = ({
       .filter(Boolean);
     if (!pickedEntries.length) return;
     /* ✨ LES RÉFÉRENCES INCOMPLÈTES SE COMPLÈTENT À L'IMPORT : une bibliographie
-       de fin d'article donne souvent des entrées sans auteurs ni titre ; elles
-       sont complétées depuis les publications du laboratoire puis depuis
-       Crossref (par DOI, sinon par titre) AVANT d'être rangées et numérotées —
-       la référence entre donc complète dans le projet, dans la bibliographie
-       comme dans le document (voir utils/referenceEnrich.js). Un champ déjà
-       rempli par le document n'est jamais écrasé. */
-    setBibImport((d) => ({ ...(d || {}), busy: true, status: '✨ Completing the references (authors, titles, journals…)' }));
-    const completed = await enrichReferences(pickedEntries, { pool: citationPool });
+       de fin d'article donne souvent des entrées sans auteurs ni titre, ou une
+       liste d'auteurs coupée par un « et al. » ; elles sont complétées depuis
+       les publications du laboratoire puis depuis Crossref (par DOI, sinon par
+       titre) AVANT d'être rangées et numérotées — la référence entre donc
+       complète dans le projet, dans la bibliographie comme dans le document
+       (voir utils/referenceEnrich.js). `all: true` : ce sont TOUS les champs
+       qui manquent qui sont cherchés (co-auteurs d'un « et al. », DOI, volume,
+       pages, revue, année), pas seulement les auteurs et le titre. Un champ
+       déjà rempli par le document n'est jamais écrasé. */
+    setBibImport((d) => ({ ...(d || {}), busy: true, status: '✨ Completing the references (authors, titles, journals, DOIs…)' }));
+    const completed = await enrichReferences(pickedEntries, { pool: citationPool, all: true, max: 60 });
     const filledReport = enrichReport(completed);
     const chosen = completed.list.map((entry) => projectBibEntry(entry, project, genProjectId()));
     const res = mergeReferenceEntries(projectBib, chosen);
@@ -1209,6 +1227,9 @@ export const ProjectDetailModule = ({
       ...(d || bibImport), parsed: [], picked: [], busy: false,
       status: `✅ ${res.added} reference(s) added to “${project.name}”${res.filled ? ` — ${res.filled} completed` : ''}`
         + (filledReport ? ` · ${filledReport}` : '')
+        + (completed.stillShortened
+          ? ` · ⚠ ${completed.stillShortened} reference(s) still show “et al.”: write the co-authors in Publications → “Project bibliography”.`
+          : '')
         + `${numbered.added ? ` · ${numbered.added} numbered reference(s) in the project document (Bibliography)` : ''}`
         + `${linked.updated ? ` · 🔗 ${linked.added} citation(s) linked in ${linked.updated} section(s)` : ''}`
         + (saved.ok
@@ -1741,13 +1762,18 @@ export const ProjectDetailModule = ({
       .map((e) => e.entry);
     /* ✨ UNE RÉFÉRENCE INCOMPLÈTE SE COMPLÈTE AVANT D'ENTRER DANS LE PROJET.
        Les bibliographies de fin d'article donnent souvent une entrée sans
-       auteurs ou sans titre (et une citation sans auteurs ne dit rien) : elle est
-       complétée depuis les publications du laboratoire puis depuis Crossref (par
-       DOI, sinon par titre) AVANT d'être numérotée, donc la référence ET le
-       document montrent tout de suite les vraies informations. Aucun champ
-       écrit par le document n'est écrasé (voir utils/referenceEnrich.js). */
+       auteurs ou sans titre, ou une liste d'auteurs coupée par un « et al. » (un
+       seul nom pour un article qui en a six) : elle est complétée depuis les
+       publications du laboratoire puis depuis Crossref (par DOI, sinon par
+       titre) AVANT d'être numérotée, donc la référence ET le document montrent
+       tout de suite les vraies informations. `all: true` : ce sont TOUS les
+       champs qui manquent qui sont cherchés — les co-auteurs d'une liste
+       réduite, le DOI, le volume, les pages —, pas seulement les auteurs et le
+       titre ; `max` couvre une bibliographie entière. Aucun champ écrit par le
+       document n'est écrasé, sauf une liste d'auteurs RÉDUITE, remplacée par la
+       liste complète du même papier (voir utils/referenceEnrich.js). */
     const toComplete = [...new Set([...keptEntries, ...pickedEntries])];
-    const completion = await enrichReferences(toComplete, { pool: citationPool });
+    const completion = await enrichReferences(toComplete, { pool: citationPool, all: true, max: 60 });
     const enrichedLine = enrichReport(completion);
     const completedOf = (entry) => {
       const at = toComplete.indexOf(entry);
@@ -1883,7 +1909,10 @@ export const ProjectDetailModule = ({
         `${merged.added} reference(s) added to the project bibliography · `
         + `${numbered.created.length} new numbered reference(s) — ${references.length} in the project`
         + (linkedTotal ? ` · 🔗 ${linkedTotal} citation(s) linked to their reference` : ' · no citation to link')
-        + (enrichedLine ? ` · ${enrichedLine}` : ''),
+        + (enrichedLine ? ` · ${enrichedLine}` : '')
+        + (completion.stillShortened
+          ? ` · ⚠ ${completion.stillShortened} reference(s) still show “et al.”: write the co-authors in Publications → “Project bibliography”.`
+          : ''),
         ...(unlinkedNumbers.length
           ? [`⚠ ${unlinkedNumbers.length} citation number(s) have no reference in this project: `
             + `${unlinkedNumbers.slice(0, 15).map((n) => `[${n}]`).join(', ')}`

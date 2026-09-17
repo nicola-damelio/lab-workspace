@@ -35,7 +35,12 @@
         de la section — elles y resteraient figées et partiraient dans tous les
         exports : chaque figure garde à la place l'ANCRE du paragraphe qui la
         précédait et le document exporté la remet à cet endroit
-        (utils/figurePlacement.js).
+        (utils/figurePlacement.js) ;
+     6. le TEXTE écrit dans une section est fait de PARAGRAPHES (`<p>…</p>`,
+        voir htmlFromManuscriptPart) : un HTML dont les lignes ne sont séparées
+        que par des « \n » s'affiche COLLÉ dans le navigateur (les sauts de
+        ligne y sont avalés) et empêchait l'ancre d'une figure de retrouver son
+        paragraphe — les figures finissaient toutes à la fin de la section.
 
    Tout est ICI en fonctions PURES (testables hors navigateur) ; la page projet
    ne fait que lire le fichier, afficher l'aperçu et appliquer ce qui a été coché.
@@ -528,12 +533,28 @@ export const recordsFromText = (text) => normalizeText(text).split('\n').map((li
  *  a pas (texte collé, .txt, .md). */
 export const htmlByTextFromRecords = (records) => {
   const map = new Map();
+  const add = (text, html) => {
+    if (!text || !html) return;
+    if (!map.has(text)) map.set(text, []);
+    map.get(text).push(html);
+  };
   (Array.isArray(records) ? records : []).forEach((r) => {
     const text = String((r && r.text) || '').trim();
     const html = String((r && r.html) || '').trim();
     if (!text || !html) return;
-    if (!map.has(text)) map.set(text, []);
-    map.get(text).push(html);
+    /* UN PARAGRAPHE À SAUT DE LIGNE FORCÉ arrive ici avec PLUSIEURS lignes de
+       texte (`<w:br>` du .docx → « \n » dans le texte, → « <br> » dans le
+       HTML) : les heuristiques d'import, elles, travaillent LIGNE PAR LIGNE
+       (voir blocksFromText). Sans cette découpe, la table n'avait pas de clé
+       pour ces lignes et leur mise en forme (gras, italique, exposants) était
+       perdue. Les deux découpes se correspondent une à une. */
+    const lines = text.split('\n').map((l) => l.trim());
+    const pieces = html.split(/<br\b[^>]*>/i).map((p) => p.trim());
+    if (lines.length > 1 && pieces.length === lines.length) {
+      lines.forEach((lineText, i) => add(lineText, pieces[i]));
+      return;
+    }
+    add(text, html);
   });
   return map.size ? map : null;
 };
@@ -1841,6 +1862,14 @@ export const htmlFromText = (text) => String(text || '')
  *   • chaque paragraphe reprend la MISE EN FORME du document quand elle est
  *     connue (`htmlByText`, un .docx : gras, italique, exposants, indices) ;
  *     sinon le texte est simplement échappé ;
+ *   • CHAQUE LIGNE DEVIENT UN PARAGRAPHE (`<p>…</p>`). C'est indispensable :
+ *     un HTML où les paragraphes ne sont séparés que par des « \n » s'affiche
+ *     COLLÉ (le navigateur avale les sauts de ligne) — la plainte « les sauts
+ *     de ligne sont perdus à l'import » — et, comme aucun `</p>` ne suivait
+ *     l'ancre d'une figure, TOUTES les figures du document se retrouvaient à
+ *     la fin de la section dans le document exporté (voir utils/figurePlacement.js,
+ *     blockEndAfter) au lieu de rester à l'endroit où elles étaient dans
+ *     l'article ;
  *   • les citations sont converties dans les numéros du PROJET si `numbers` est
  *     fourni (c'est le même travail que sur le texte, mais dans le HTML).
  *
@@ -1852,7 +1881,7 @@ export const htmlFromManuscriptPart = (text, { htmlByText = null, numbers = null
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => htmlFor(line) || escapeHtml(line))
+    .map((line) => `<p>${htmlFor(line) || escapeHtml(line)}</p>`)
     .join('\n');
   return numbers ? convertCitationsInText(html, numbers).text : html;
 };

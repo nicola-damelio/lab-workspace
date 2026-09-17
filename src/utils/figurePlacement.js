@@ -15,6 +15,11 @@
    la figure est alors imprimée APRÈS la section, comme une figure ajoutée à la
    main. Rien n'est jamais perdu.
 
+   La figure se pose à la fin du BLOC de son ancre (`</p>`, `</li>`…) ou, quand
+   la section n'en a aucun, à la fin de la LIGNE (voir LINE_END_RE /
+   blockEndAfter) : c'est ce repli qui remet à leur place les figures d'un
+   document importé avant le 17/09/2026, dont les sections sont des lignes nues.
+
    Tout est PUR (aucun DOM, aucun React) : la page projet s'en sert à l'export
    et le test _figure_placement_test.mjs vérifie exactement le même code.
    ========================================================================= */
@@ -30,6 +35,24 @@ export const escapeFigureAttr = (s) => String(s ?? '')
 
 /** La fin d'un bloc (un élément de niveau bloc) — la figure s'insère après. */
 const BLOCK_CLOSE_RE = /<\/(?:p|div|li|h[1-6]|figure|figcaption|table|blockquote|section|article|td|th|dd|dt|pre)\s*>/gi;
+
+/** La fin d'une LIGNE : un vrai saut de ligne, ou le `<br>` qui le remplace à
+ *  l'écran. C'est le repère de REPLI quand la section n'a aucun élément de
+ *  niveau bloc — le cas des sections écrites par l'import d'un manuscrit
+ *  jusqu'au 17/09/2026 : `htmlFromManuscriptPart` y mettait ses paragraphes
+ *  côte à côte séparés par « \n », sans `<p>`. Le texte S'AFFICHAIT donc collé
+ *  (le HTML avale les sauts de ligne) et, comme aucun `</p>` ne suivait
+ *  l'ancre, TOUTES les figures du document partaient à la fin de la section —
+ *  la plainte « avant, les figures étaient à leur place » (voir
+ *  _figure_placement_test.mjs, « section héritée »). */
+const LINE_END_RE = /(?:\n|<br\b[^>]*>)/gi;
+
+/** La fin de la ligne qui contient la position `from` (-1 = fin du texte). */
+const lineEndAfter = (html, from) => {
+  LINE_END_RE.lastIndex = from;
+  const m = LINE_END_RE.exec(html);
+  return m ? m.index + m[0].length : -1;
+};
 
 /** Les zones de TEXTE d'un HTML, dans l'ordre, avec leur position d'origine.
  *  Chercher l'ancre sur ce texte (et non sur le HTML brut) est indispensable :
@@ -72,11 +95,21 @@ const htmlIndexOfPlain = (runs, plainIndex) => {
 
 
 /** La fin du bloc qui contient la position `from` (une ancre est toujours dans
- *  un paragraphe : la figure s'insère derrière ce paragraphe entier). */
+ *  un paragraphe : la figure s'insère derrière ce paragraphe entier).
+ *
+ *  DEUX REPÈRES, le plus PROCHE des deux : la balise qui ferme le bloc
+ *  (`</p>`, `</li>`…) et la fin de la ligne (`\n`, `<br>`). Le second est ce
+ *  qui remet une figure à sa place dans une section SANS balises de bloc (voir
+ *  LINE_END_RE) : sans lui, `blockEndAfter` rendait la fin de la section et
+ *  toutes les figures s'y empilaient. */
 const blockEndAfter = (html, from) => {
   BLOCK_CLOSE_RE.lastIndex = from;
   const m = BLOCK_CLOSE_RE.exec(html);
-  return m ? m.index + m[0].length : html.length;
+  const blockEnd = m ? m.index + m[0].length : -1;
+  const lineEnd = lineEndAfter(html, from);
+  if (blockEnd === -1) return lineEnd === -1 ? html.length : lineEnd;
+  if (lineEnd === -1) return blockEnd;
+  return Math.min(blockEnd, lineEnd);
 };
 
 /** Le DÉBUT de l'ancre suffit : la fin du paragraphe a pu changer (un lien de

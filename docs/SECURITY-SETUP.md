@@ -175,9 +175,107 @@ est déjà propre) : les messages `$'\r': command not found` viennent de là.
 > S'il est absent : reprendre l'étape 3 en entier (les fichiers `token-server.js`
 > et `package.json` doivent être **re-déposés** dans Cloud Shell avant de lancer
 > la commande).
+>
+> ⚠️ **Où déposer ces fichiers — cause d'un « old build » déjà rencontré.** Le
+> script ne lit **que** `~/token-server.js` et `~/package.json`, puis les recopie
+> lui-même dans son dossier de travail `~/tsrv` d'où il lance
+> `gcloud run deploy --source .`. Tout ce qui est déposé ailleurs est ignoré :
+> `~/tsrv` est écrasé à chaque lancement, et un sous-dossier
+> (`~/token-server`, …) n'est **jamais** lu. C'est ce qui arrive quand le
+> glisser-déposer a lieu alors que le terminal n'est pas dans `~` : la *nouvelle*
+> version part dans le sous-dossier, l'*ancienne* dans `~` est déployée, le
+> déploiement réussit, la révision reste ancienne et l'app annonce « older
+> build ». Le script **refuse désormais de déployer** (étape 0/6) un
+> `token-server.js` qui ne contient pas le littéral `authChangePassword: true`,
+> affiche les copies à jour trouvées ailleurs avec les `cp` exacts à exécuter,
+> puis les empreintes SHA-256 des deux fichiers envoyés au build.
+>
+> Diagnostic, si un doute subsiste (à coller dans Cloud Shell) :
+>
+> ```bash
+> cd ~ && grep -c 'authChangePassword: true' token-server.js   # attendu : 2
+> find ~ -maxdepth 3 -name token-server.js -printf '%T@ %p\n' | sort -rn
+> # → le fichier le plus récent doit être ~/token-server.js
+> ```
+>
+> Correction type, puis relance de l'étape 3 :
+>
+> ```bash
+> cp ~/<dossier>/token-server.js ~/token-server.js
+> cp ~/<dossier>/package.json    ~/package.json     # si ce dossier en contient un
+> rm -rf ~/tsrv                                     # dossier de travail propre
+> ```
+>
+> ℹ️ **Le SCRIPT lui-même peut être ancien.** Une copie de
+> `cloud-shell-quick-update.sh` antérieure à celle du dépôt échoue à l'étape 1/6
+> en annonçant « Service « drive-token-server » introuvable parmi tes projets »
+> alors que le compte et le projet sont parfaitement bons : ses appels
+> `gcloud run services describe` n'ont pas `--platform=managed`, exigé par un
+> Cloud Shell neuf (propriété `run/platform` absente) — et l'erreur est avalée par
+> `2>/dev/null`. Le script à jour passe `--platform=managed` partout et affiche le
+> compte actif, les projets visibles et les services de chaque projet. À vérifier
+> **avant** de lancer : l'étape 0/6 du script courant s'intitule « 0/6 · fichiers
+> source (lus UNIQUEMENT dans $HOME) » et affiche deux empreintes SHA-256 ; sinon,
+> re-dépose le script.
+>
+> ℹ️ **Deuxième panne du même genre, corrigée le 17/09/2026** (dans les copies
+> antérieures à cette date) : `gcloud projects list
+> --format='value(projectId,projectNumber)'` était lu avec
+> `IFS= read -r p pnum`. Or `IFS=` **désactive** le découpage des champs : toute
+> la ligne (`<projet><TABULATION><numéro>`) partait dans `$p`, `$pnum` restait
+> vide, donc `$p` contenait une tabulation, chaque `gcloud run services describe`
+> échouait, la liste des services trouvés restait vide et l'étape 1/6 annonçait
+> « service introuvable » — **tout en affichant, juste au-dessus, le diagnostic
+> qui liste ce service**. C'est exactement ce qui s'est produit avec
+> `drive-token-server-6eq5wljpia-ew.a.run.app` dans le projet n° 763848765523.
+> Le script courant lit la liste avec `read -r p pnum` (**sans** `IFS=`) et le
+> prouve en affichant
+> `✔ projet identifié par le numéro de l'URL utilisée par l'app (763848765523)`.
+> En attendant de re-déposer le script, le contournement reste :
+>
+> ```bash
+> TSRV_PROJECT=project-5bef8353-9780-43db-885 bash ~/cloud-shell-quick-update.sh
+> ```
+>
+> ℹ️ **Trois états possibles pour `~/token-server.js`** —
+> `grep -n authChangePassword ~/token-server.js` :
+>
+> | Sortie | Build | Conséquence |
+> | --- | --- | --- |
+> | rien | antérieur à `POST /api/auth/change-password` | la route n'existe pas |
+> | 2 lignes, seulement `handleAuthChangePassword(…)` | build « password » (`db07e95`) : la ROUTE existe, mais ni `/health` ni `/api/auth/status` n'annoncent `authChangePassword: true` | l'app le déclare « older build » et n'envoie **jamais** le POST — `src/utils/labAuth.js` teste cette **valeur**, pas le nom de la fonction |
+> | 4 lignes, dont deux `authChangePassword: true,` | build courant | l'app accepte la mise à jour du mot de passe |
+>
+> L'étape 0/6 compte précisément ce littéral : l'état intermédiaire est donc
+> refusé **avant** que quoi que ce soit n'atteigne Cloud Run.
 
-Le script se termine par un cadre jaune **ADMIN_TOKEN** : copiez-le (il sert à
-l'étape 4) et passez **directement à l'étape 4**.
+Le script se termine par un cadre **ADMIN_TOKEN** : il est **réutilisé** (affiché
+*INCHANGÉ*, en vert) tant qu'aucune rotation n'est demandée explicitement
+(`ROTATE_ADMIN_TOKEN=1 bash ~/cloud-shell-quick-update.sh`). C'est volontaire :
+un redéploiement sert à faire entrer du **code** (une route nouvelle), il ne doit
+pas rendre caduc le jeton déjà enregistré dans le navigateur — sinon
+« ⬆ Publier les comptes » se met à répondre **401**, sans lien apparent avec la
+mise à jour. Seul un jeton neuf (première installation, ou rotation volontaire)
+est à coller ; il sert à l'étape 4.
+
+**Après le déploiement**, l'étape 5/6 doit afficher, dans une seule réponse de
+`/health` :
+
+```json
+{"ok":true,…,"authConfigured":true,"authChangePassword":true,"version":"qs-20260917-084500"}
+```
+
+* `authChangePassword:true` — le code **déployé** connaît
+  `POST /api/auth/change-password`. Sans ce champ, l'app refuse d'enregistrer un
+  nouveau mot de passe (« older build ») : c'est le signe que le
+  `token-server.js` envoyé au build était l'ancien ;
+* `version:"qs-…"` — l'étiquette **fabriquée par ce lancement** et passée au
+  service (`CODE_VERSION`) : elle prouve que la révision qui répond est bien
+  celle qui vient d'être construite, et non une ancienne révision restée en
+  service (déploiement interrompu, trafic non basculé). Le script le vérifie et
+  le signale explicitement (`la révision qui répond N'EST PAS celle construite à
+  l'instant`). Un `version` resté à `dev` ou à un hash de commit désigne donc un
+  déploiement **qui n'a pas pris**.
 
 **En cas d'échec du déploiement**, le script affiche tout seul les 40 dernières
 lignes de `gcloud` plus un diagnostic court : c'est **ce texte** qu'il faut me
@@ -188,13 +286,34 @@ message final du script. Le journal complet reste lisible dans Cloud Shell :
 tail -40 ~/tsrv-deploy.log
 ```
 
-##### Trois pannes déjà rencontrées (et déjà gérées)
+> ℹ️ **`client_secret.json` supprimé ? Rien n'est cassé.** Ce fichier n'est lu que
+> par le script d'installation **complète** (`deploy-cloud-run.sh -c …`), et
+> seulement *au moment du déploiement* : sa valeur est ensuite stockée **dans le
+> service** sous la variable `GOOGLE_CLIENT_SECRET` — précisément celle que
+> l'étape 1/6 de `cloud-shell-quick-update.sh` vérifie avant de déployer. Une
+> copie locale disparue n'empêche donc ni les mises à jour ni le fonctionnement
+> du serveur ; elle ne redevient nécessaire que pour (re)créer le service à
+> partir de zéro, et la valeur se **relit depuis la révision en place** :
+>
+> ```bash
+> gcloud run services describe drive-token-server --project <PROJECT_ID> \
+>   --region europe-west1 --platform=managed \
+>   --format='yaml(spec.template.spec.containers[0].env)' | grep -A1 GOOGLE_CLIENT_SECRET
+> # → ligne « value: "GOCSPX-…" » : recopier la valeur (sans les guillemets) dans
+> #   un fichier texte, ex. ~/client_secret.txt (`-c` accepte un fichier texte
+> #   brut aussi bien que le JSON téléchargé). Ne jamais le committer.
+> # Si la variable est un renvoi Secret Manager (`secretKeyRef`), lire plutôt :
+> gcloud secrets versions access latest --secret=drive-token-client-secret --project <PROJECT_ID>
+> ```
+
+##### Quatre pannes déjà rencontrées (et déjà gérées)
 
 | Ligne `ERROR` | Cause | Correction |
 | --- | --- | --- |
 | `FAILED_PRECONDITION: Billing account for project … is not found` | le projet n'a plus de compte de facturation associé (essai terminé, compte supprimé) | associer un compte de facturation actif (lien ci-dessus) puis relancer le script |
 | `PERMISSION_DENIED: Build failed because the default service account is missing required IAM permissions` | sur les projets récents, le compte de service Cloud Build (`…-compute@developer.gserviceaccount.com`) a été créé **sans** le rôle Editor : il ne peut donc plus lire le code source envoyé au build | le script **corrige tout seul** : il accorde `roles/run.builder`, `roles/storage.objectViewer`, `roles/artifactregistry.writer`, `roles/logging.logWriter` à ce compte de service, attend la propagation (20 s) puis **retente le déploiement automatiquement** |
 | `The user-provided container failed to start and listen on the port defined provided by the PORT=8080` | le conteneur se construit mais `node` s'arrête aussitôt — typiquement un service **créé par erreur dans le mauvais projet** : la révision est alors neuve, donc sans volume `/data`, **sans `GOOGLE_CLIENT_SECRET`** (que `token-server.js` exige, sinon `process.exit(1)`), sans compte de service et sans origines autorisées | le script **ne peut plus** provoquer ce cas : l'étape 1/6 localise le projet qui héberge réellement le service (en comparant l'URL publique utilisée par l'app), refuse de continuer si elle ne le trouve pas, et vérifie que le service porte bien `GOOGLE_CLIENT_SECRET` **avant** de déployer. Supprimer le service fantôme éventuel : `gcloud run services delete drive-token-server --project <projet listé> --region europe-west1 --quiet` |
+| `✘ Service « drive-token-server » introuvable parmi les projets visibles de CE compte` | Cloud Shell est ouvert avec un **autre compte Google** que celui qui possède le projet hébergeant le service (`gcloud projects list` ne liste que les projets accessibles à *ce* compte), **ou** le script utilisé dans Cloud Shell est une copie **ancienne** (sans `--platform=managed`, exigé par un Cloud Shell neuf : gcloud échoue, l'erreur est avalée par `2>/dev/null` et se présente comme « introuvable »), **ou** le script est une copie des versions antérieures au 17/09/2026, qui lisaient `gcloud projects list --format='value(projectId,projectNumber)'` avec `IFS= read -r p pnum` : `IFS=` **désactive** le découpage, donc la ligne entière (`<projet><TABULATION><numéro>`) partait dans `$p`, `$pnum` restait vide, aucun `describe` n'aboutissait et le message s'affichait **alors que le diagnostic ci-dessus liste bien le service** — panne réellement rencontrée avec `drive-token-server-6eq5wljpia-ew.a.run.app` dans le projet n° 763848765523 | l'étape 1/6 affiche désormais le **compte actif**, les **projets visibles** et les **services de chaque projet** (donc l'écart est visible) : `gcloud auth login` puis `gcloud config set account <adresse@gmail.com>`, ou forcer le projet : `TSRV_PROJECT=<identifiant> bash ~/cloud-shell-quick-update.sh`. Si le diagnostic affiche « compte actif : aucun » alors que `gcloud auth list` en montre un, c'est bien le **script** qu'il faut re-téléverser (le script courant s'annonce par « 0/6 · fichiers source (lus UNIQUEMENT dans $HOME) ») |
 
 > ⚠️ **Le service ne vit PAS dans le projet Firebase.** L'app Firebase est
 > `cell-experiment-tracker` (n° **855790481107**) — c'est lui qui **signe les

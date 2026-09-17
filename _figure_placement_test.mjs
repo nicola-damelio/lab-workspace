@@ -81,7 +81,35 @@ const LIST = '<ul><li>Aphids feed on phloem.</li><li>They transmit luteoviruses.
 const listed = FP.splitAnchoredFigures(LIST, [{ ...FIG, anchor: 'Aphids feed on phloem.' }]);
 between(listed.html, '<li>Aphids feed on phloem.</li>', '<figure', 'la figure sort après l’élément de liste');
 
-/* ── 3. Repli : ancre disparue, figure sans ancre, ordre conservé ────────── */
+/* ── 4. Une section HÉRITÉE : lignes nues, SANS aucune balise de bloc ─────── */
+/* Ce que l'import d'un manuscrit écrivait dans les sections avant le
+   17/09/2026 : `htmlFromManuscriptPart` mettait les paragraphes côte à côte,
+   séparés par des « \n », sans <p>. Comme aucun « </p> » ne suivait l'ancre,
+   blockEndAfter rendait la FIN DE LA SECTION : toutes les figures du document
+   s'y empilaient — la plainte « avant, les figures étaient à leur place ». */
+const LEGACY = [
+  'Aphids transmit potyviruses [1].',
+  'The virus was purified from infected plants.',
+  'Figure 1. Transmission rates.'
+].join('\n');
+const legacy = FP.splitAnchoredFigures(LEGACY, [
+  { ...FIG, id: 'a', anchor: 'Aphids transmit potyviruses [1].' },
+  { ...FIG, id: 'b', anchor: 'The virus was purified from infected plants.' }
+]);
+eq(legacy.placed.map((f) => f.id), ['a', 'b'], 'sans bloc, les figures restent placées dans l’ordre du document');
+eq(legacy.rest.length, 0, '…aucune n’est renvoyée après la section');
+between(legacy.html, 'Aphids transmit potyviruses [1].', '<figure', 'la première suit SON paragraphe');
+between(legacy.html, '<figure', 'The virus was purified from infected plants.', '…et la seconde suit le sien (ordre du document)');
+eq((legacy.html.match(/<figure/g) || []).length, 2, 'les deux figures sont dans le texte');
+eq(legacy.html.trimEnd().endsWith('Figure 1. Transmission rates.'), true,
+  'la dernière ligne reste la dernière : la section n’est plus une pile de figures');
+
+/* Un `<br>` (section écrite à la main ou texte collé) est aussi une fin de ligne. */
+const brLegacy = FP.splitAnchoredFigures('Ligne une<br>Ligne deux<br>', [{ ...FIG, anchor: 'Ligne une' }]);
+between(brLegacy.html, 'Ligne une<br>', '<figure', 'le <br> sert de repère quand il n’y a pas de bloc');
+eq(brLegacy.rest.length, 0, '…et la figure n’est pas renvoyée à la fin');
+
+/* ── 5. Repli : ancre disparue, figure sans ancre, ordre conservé ────────── */
 const lost = FP.splitAnchoredFigures(SECTION, [{ ...FIG, anchor: 'A paragraph that was rewritten since.' }]);
 eq(lost.placed.length, 0, 'une ancre introuvable n’insère rien');
 eq(lost.html, SECTION, 'le texte de la section est alors inchangé');

@@ -208,9 +208,9 @@ has(PROJ, 'const converted = convertCitationsInText(p.text, numbers);',
   'le texte écrit dans la section a ses citations converties');
 has(PROJ, 'const merged = mergeManuscriptBibliography(projectBib, pickedEntries.map(completedOf), { project });',
   'la bibliographie du document rejoint la « Project bibliography » (Publications → Project bibliography)');
-has(PROJ, 'const completion = await enrichReferences(toComplete, { pool: citationPool });',
-  'chaque entrée du document est COMPLÉTÉE avant d’entrer (auteurs, titre, revue… manquants — voir utils/referenceEnrich.js)');
-has(PROJ, "'✨ Completing the references (authors, titles, journals…)'",
+has(PROJ, 'const completion = await enrichReferences(toComplete, { pool: citationPool, all: true, max: 60 });',
+  'chaque entrée du document est COMPLÉTÉE avant d’entrer — TOUS les champs manquants (co-auteurs d’un « et al. », DOI, volume, revue… — voir utils/referenceEnrich.js)');
+has(PROJ, "'✨ Completing the references (authors, titles, journals, DOIs…)'",
   '…et la fenêtre dit qu’elle cherche ces informations');
 has(PROJ, "const kept = d.plan.entries.filter((e, i) => (",
   'TOUTES les entrées retenues de la bibliographie reçoivent un numéro —')
@@ -821,9 +821,14 @@ has(PROJ, '📄 printed in “📄 Export document” after:', 'la page montre a
 
 /* ── 19. LA FIGURE REVIENT DANS LE TEXTE DU DOCUMENT EXPORTÉ ───────────────── */
 const FP = await import('./src/utils/figurePlacement.js');
-const introHtml = RL.linkCitationNumbers(MS.htmlFromText(MS.stripFigureMarks(figParts[0].text)), {
-  numbers: new Set([1]), hrefFor: (n) => `#ref-${n}`
-});
+/* LE HTML DE LA SECTION TEL QUE L'IMPORT L'ÉCRIT VRAIMENT (htmlFromManuscriptPart) :
+   c'est ce chemin-là qui perdait les sauts de ligne (des lignes nues, sans <p>)
+   et envoyait TOUTES les figures à la fin de la section, faute de « </p> » pour
+   arrêter l'insertion. Le test passait à côté parce qu'il appelait htmlFromText. */
+const introHtml = RL.linkCitationNumbers(
+  MS.htmlFromManuscriptPart(figParts[0].text, { numbers: new Map([['#1', 1]]) }),
+  { numbers: new Set([1]), hrefFor: (n) => `#ref-${n}` }
+);
 const exported = FP.splitAnchoredFigures(introHtml, [{
   id: 'fig1',
   url: 'https://lh3.googleusercontent.com/d/abc',
@@ -836,6 +841,12 @@ ok(exported.html.includes('href="#ref-1"'), 'les citations du texte restent des 
 between(exported.html, 'transmit potyviruses', '<figure', 'la figure est imprimée APRÈS ce paragraphe');
 has(exported.html, 'Transmission rates of the virus.', '…et sa légende l’accompagne');
 eq(exported.html.includes('[[FIGURE'), false, 'aucun marqueur n’apparaît dans le document exporté');
+/* LE REPÈRE DE L'ANCRE EST LE BLOC (`</p>`), PAS LA FIN DE LA SECTION : c'est ce
+   que l'import écrit désormais, et c'est ce qui manquait aux sections importées
+   avant le 17/09/2026 (voir _figure_placement_test.mjs, « section héritée »). */
+has(introHtml, '<p>', 'la section importée est faite de PARAGRAPHES (un HTML de lignes nues s’affiche collé)');
+eq(introHtml.trim().endsWith('</p>'), true, '…chaque paragraphe est un bloc fermé');
+between(exported.html, '</p>', '<figure', 'la figure s’insère APRÈS le bloc de son ancre');
 
 /* ── 20. LES AUTEURS QUE LE DOCUMENT MET AILLEURS QU'EN TÊTE ─────────────────
    Le cas rapporté : les auteurs et les affiliations n'étaient pas reconnus et
@@ -1386,14 +1397,28 @@ ok(!fmtDoc.htmlByText.get(fmtLine)[0].includes('<sup>[12]</sup>'),
   'la citation ne redevient pas un exposant : le lien vers la référence doit rester lisible');
 
 /* Le HTML d'une partie : marqueurs de figure retirés, mise en forme reprise,
-   citations converties dans les numéros du PROJET. */
+   citations converties dans les numéros du PROJET — et CHAQUE LIGNE DANS SON
+   PARAGRAPHE (`<p>…</p>`) : sans ce bloc, les sauts de ligne du document
+   s'affichaient collés et l'ancre d'une figure ne trouvait plus sa fin. */
 eq(MS.htmlFromManuscriptPart(`[[FIGURE 1]]\n${fmtLine}`,
   { htmlByText: fmtDoc.htmlByText, numbers: new Map([['#12', 5]]) }),
-'<strong>Bold</strong> and <em>italics</em>, H<sub>2</sub>O, 10<sup>9</sup> virions as shown before[5].',
+'<p><strong>Bold</strong> and <em>italics</em>, H<sub>2</sub>O, 10<sup>9</sup> virions as shown before[5].</p>',
 'la partie garde sa typographie, perd son marqueur de figure et prend le numéro du projet');
-/* Un document sans mise en forme (texte collé) garde le HTML d'avant. */
-eq(MS.htmlFromManuscriptPart('H2O and [12].', { numbers: new Map([['#12', 5]]) }),
-  'H2O and [5].', 'sans mise en forme connue, le texte est simplement échappé');
+/* Un document sans mise en forme (texte collé) : texte échappé, mêmes blocs. */
+eq(MS.htmlFromManuscriptPart('H2O and [12].\n\nSecond paragraphe.', { numbers: new Map([['#12', 5]]) }),
+  '<p>H2O and [5].</p>\n<p>Second paragraphe.</p>',
+  'sans mise en forme connue, le texte est échappé — et chaque ligne reste un PARAGRAPHE');
+
+/* Un paragraphe coupé par un SAUT DE LIGNE FORCÉ (`<w:br>` → « \n » dans le
+   texte, « <br> » dans le HTML) : ses lignes entrent une à une dans la table de
+   mise en forme, sinon elles ressortaient en texte nu (gras et italique perdus). */
+const brMap = MS.htmlByTextFromRecords([
+  { text: 'Ligne A\nLigne B', html: '<strong>Ligne A</strong><br><em>Ligne B</em>' }
+]);
+eq(brMap.get('Ligne A'), ['<strong>Ligne A</strong>'], 'la 1ʳᵉ ligne d’un paragraphe coupé par un <br> garde sa mise en forme');
+eq(brMap.get('Ligne B'), ['<em>Ligne B</em>'], '…et la 2ᵉ garde la sienne');
+eq(MS.htmlByTextFromRecords([{ text: 'A\nB\nC', html: '<b>A</b>' }]).get('A\nB\nC'), ['<b>A</b>'],
+  'des découpes qui ne correspondent pas (3 lignes contre 1 morceau) laissent la table telle quelle');
 
 /* Les blocs portent leur HTML : c'est lui qui traverse le découpage. */
 const fmtBlocks = MS.blocksFromText(fmtDoc.text, { htmlByText: fmtDoc.htmlByText });

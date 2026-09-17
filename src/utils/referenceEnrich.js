@@ -18,10 +18,23 @@
         bibliographiques — c'est pubCitationData qui tranche, la même règle que
         le rendu des citations ;
      2. CROSSREF (api.crossref.org, sans clé, CORS ouvert) quand il manque
-        toujours les auteurs ou le titre : par DOI quand l'entrée en a un,
-        sinon par recherche bibliographique sur le titre. Le titre trouvé doit
+        encore quelque chose : par DOI quand l'entrée en a un, sinon par
+        recherche bibliographique sur le titre. Le titre trouvé doit
         correspondre (titre normalisé identique, ou l'un contient l'autre) —
         jamais une entrée inventée, jamais un autre papier.
+
+   Une liste d'auteurs RÉDUITE N'EST PAS UNE LISTE REMPLIE. « Fumano, et al. »
+   dit seulement que l'article a d'autres auteurs : la référence a donc un
+   champ à chercher (voir authorsShortened / referenceGaps). C'est la deuxième
+   plainte : « avec un seul auteur, tu me dis que l'information est complète —
+   cherche les autres auteurs, le DOI, le volume ». Une liste trouvée ne
+   remplace la liste réduite que si elle commence par le MÊME premier auteur et
+   compte plus de noms (voir mergeFound).
+
+   `all: true` (les imports et le bouton « ✨ Complete missing fields ») cherche
+   TOUS les champs qui manquent — DOI, volume, pages, revue, année — et pas
+   seulement les auteurs ou le titre : c'est ce qui fait qu'une référence
+   entrée avec son seul titre en ressort complète.
 
    Rien n'est jamais écrasé : un champ déjà rempli (corrigé à la main, choisi
    dans une liste) reste tel quel. Une panne de réseau n'empêche rien : les
@@ -33,7 +46,7 @@
    ========================================================================= */
 
 import { fillMissingFields } from './referenceImport.js';
-import { pubCitationData } from '../components/pubCitation.js';
+import { pubCitationData, pubOriginOf } from '../components/pubCitation.js';
 
 /** Les champs qui rendent une citation utilisable, dans l'ordre d'importance. */
 export const REFERENCE_COMPLETION_FIELDS = [
@@ -42,17 +55,33 @@ export const REFERENCE_COMPLETION_FIELDS = [
 
 const value = (entry, key) => String((entry && entry[key]) || '').trim();
 
-/** Les champs VIDES d'une référence (dans l'ordre ci-dessus). */
-export const referenceGaps = (entry) => REFERENCE_COMPLETION_FIELDS.filter((k) => !value(entry, k));
+/** Un marqueur de liste d'auteurs RÉDUITE : « Fumano, et al. », « and others »… */
+export const SHORTENED_AUTHOR_RE = /(?:\bet\.?\s*al\.?|and\s+others|&\s*others)\b/i;
+
+/** La liste d'auteurs d'une entrée est-elle RÉDUITE ? « Fumano, et al. » n'est
+ *  PAS un champ rempli : c'est un champ à chercher. La bibliographie d'un
+ *  article coupait la liste (le style de la revue le demandait), et la référence
+ *  gardait un seul nom — l'utilisateur ne voyait donc ni ses co-auteurs, ni
+ *  l'ordre réel des noms : « tu me dis que l'information est complète alors
+ *  qu'il n'y a qu'un auteur ». */
+export const authorsShortened = (authors) => SHORTENED_AUTHOR_RE.test(String(authors || ''));
+
+/** Les champs VIDES d'une référence (dans l'ordre ci-dessus). Une liste
+ *  d'auteurs RÉDUITE compte comme un champ à remplir : c'est exactement le cas
+ *  où l'utilisateur attend qu'on cherche les co-auteurs, le DOI et le volume
+ *  manquants. */
+export const referenceGaps = (entry) => REFERENCE_COMPLETION_FIELDS.filter((k) => (
+  !value(entry, k) || (k === 'authors' && authorsShortened(value(entry, k)))
+));
 
 /** Une référence a-t-elle besoin d'être complétée ? Par défaut « il manque les
- *  AUTEURS ou le TITRE » — les deux champs sans lesquels la citation ne dit
- *  rien. Le bouton « ✨ Complete missing fields » demande TOUS les champs vides
- *  (`all: true`). */
+ *  AUTEURS (ou la liste est coupée par un « et al. ») ou le TITRE » — les deux
+ *  champs sans lesquels la citation ne dit rien. Le bouton « ✨ Complete missing
+ *  fields » et les imports demandent TOUS les champs vides (`all: true`). */
 export const referenceNeedsCompletion = (entry, { all = false } = {}) => {
   if (!entry || typeof entry !== 'object') return false;
   if (all) return referenceGaps(entry).length > 0;
-  return !value(entry, 'authors') || !value(entry, 'title');
+  return !value(entry, 'authors') || authorsShortened(value(entry, 'authors')) || !value(entry, 'title');
 };
 
 /** Deux titres parlent-ils du même papier ? (casse, ponctuation, HTML, accents
@@ -84,6 +113,68 @@ const firstSurname = (authors) => {
   return (long[0] || words[0] || '').toLowerCase();
 };
 
+/* ── 0. Ce qu'une source complète remplace ───────────────────────────────── */
+
+/** Le nombre de NOMS d'une liste d'auteurs, marqueurs « et al. » exclus
+ *  (« Marco Rossi, Anna Bianchi » → 2 ; « Fumano, et al. » → 1). */
+const authorCount = (authors) => String(authors || '')
+  .split(/\s*[,;]\s*/)
+  .map((n) => n.trim())
+  .filter((n) => n && !SHORTENED_AUTHOR_RE.test(n)).length;
+
+/** Les mots (3 lettres et plus) du PREMIER nom d'une liste, sans accents ni
+ *  ponctuation : « Fumano, et al. » → ['fumano'], « Marco Fumano » → ['marco',
+ *  'fumano'], « Rossi M » → ['rossi']. */
+const firstAuthorWords = (authors) => String(authors || '')
+  .split(/\s*[,;]\s*/)[0]
+  .toLowerCase()
+  .replace(/[^\p{L}\s]/gu, ' ')
+  .split(/\s+/)
+  .filter((w) => w.length >= 3);
+
+/** Deux listes parlent-elles du MÊME premier auteur ? Les deux écritures de
+ *  l'application coexistent (« Rossi M » comme PubMed, « Marco Rossi » comme
+ *  Crossref) : le premier nom doit donc PARTAGER un mot — « Fumano, et al. » et
+ *  « Marco Fumano » se reconnaissent par « fumano ». */
+const sameFirstAuthor = (a, b) => {
+  const wa = firstAuthorWords(a);
+  const wb = firstAuthorWords(b);
+  return wa.some((w) => wb.indexOf(w) !== -1);
+};
+
+/** Les champs qui ont VRAIMENT changé (remplis, ou liste d'auteurs remplacée). */
+export const filledFields = (before, after) => REFERENCE_COMPLETION_FIELDS
+  .filter((k) => value(after, k) && value(before, k) !== value(after, k));
+
+/**
+ * Recopie dans `entry` ce que la source (`found`) connaît et qui MANQUE — en
+ * remplaçant au passage une liste d'auteurs RÉDUITE par la liste COMPLÈTE.
+ *
+ * C'est la seule exception à « un champ déjà rempli n'est jamais écrasé » :
+ * « Fumano, et al. » n'est pas une valeur choisie, c'est une liste coupée. La
+ * liste trouvée doit être complète, compter PLUS de noms que celle de l'entrée
+ * et commencer par le même premier auteur — sinon rien n'est touché : aucun nom
+ * inventé, aucun papier remplacé par un autre.
+ *
+ * @returns {{ entry:object, filled:string[] }}
+ */
+export const mergeFound = (entry, found, keys = REFERENCE_COMPLETION_FIELDS) => {
+  const e = entry && typeof entry === 'object' ? entry : {};
+  const f = found && typeof found === 'object' ? found : {};
+  let next = fillMissingFields(e, f, keys);
+  const current = value(e, 'authors');
+  const complete = value(f, 'authors');
+  if (authorsShortened(current) && complete
+      && !authorsShortened(complete)
+      && authorCount(complete) > authorCount(current)
+      && sameFirstAuthor(complete, current)) {
+    next = next === e ? { ...e } : next;
+    next.authors = complete;
+  }
+  const filled = filledFields(e, next);
+  return { entry: filled.length ? next : e, filled };
+};
+
 /* ── 1. Le pot commun du laboratoire (hors ligne) ─────────────────────────── */
 
 /**
@@ -96,9 +187,15 @@ export const completeFromPool = (entry, pool = []) => {
   const list = (Array.isArray(pool) ? pool : []).filter((p) => p && typeof p === 'object');
   if (!entry || typeof entry !== 'object' || list.length === 0) return { entry, filled: [] };
   const data = pubCitationData(entry, list);
-  const next = fillMissingFields(entry, data, REFERENCE_COMPLETION_FIELDS);
-  const filled = REFERENCE_COMPLETION_FIELDS.filter((k) => !value(entry, k) && value(next, k));
-  return { entry: filled.length ? next : entry, filled };
+  /* `pubCitationData` laisse GAGNER les champs de l'entrée — une correction à la
+     main n'est jamais écrasée. Mais une liste d'auteurs RÉDUITE n'est pas une
+     correction : la publication du laboratoire, elle, connaît la liste
+     COMPLÈTE de ses auteurs, et c'est elle qui doit servir (voir mergeFound). */
+  const origin = pubOriginOf(entry, list) || {};
+  const source = authorsShortened(entry.authors)
+    ? { ...data, authors: origin.authors || data.authors }
+    : data;
+  return mergeFound(entry, source);
 };
 
 /* ── 2. Crossref (en ligne) ───────────────────────────────────────────────── */
@@ -157,8 +254,11 @@ export const crossrefRequestFor = (entry) => {
   };
 };
 
-/** Les champs que Crossref est appelé à remplir pour cette entrée. */
-const crossrefFields = (entry) => REFERENCE_COMPLETION_FIELDS.filter((k) => !value(entry, k));
+/** Les champs que Crossref est appelé à remplir pour cette entrée : tous ceux
+ *  qui manquent, ET la liste d'auteurs quand elle est réduite (« et al. ») —
+ *  c'est ce qui fait chercher les co-auteurs, le DOI et le volume d'une
+ *  référence qui n'avait que son premier nom. */
+const crossrefFields = (entry) => referenceGaps(entry);
 
 /** Le service n'a pas répondu à temps : sans cela un import resterait bloqué
  *  sur un réseau lent. */
@@ -190,9 +290,8 @@ export const completeFromCrossref = async (entry, { fetchImpl = null, timeoutMs 
     const json = await res.json();
     const found = request.pick(json);
     if (!found) return { entry, filled: [], failed: false };
-    const next = fillMissingFields(entry, found, REFERENCE_COMPLETION_FIELDS);
-    const filled = crossrefFields(entry).filter((k) => value(next, k));
-    return { entry: filled.length ? next : entry, filled, failed: false };
+    const merged = mergeFound(entry, found);
+    return { entry: merged.entry, filled: merged.filled, failed: false };
   } catch {
     return { entry, filled: [], failed: true };
   }
@@ -202,18 +301,25 @@ export const completeFromCrossref = async (entry, { fetchImpl = null, timeoutMs 
 
 /**
  * Complète UNE référence : pot commun du laboratoire d'abord (hors ligne),
- * Crossref ensuite s'il manque encore les auteurs ou le titre.
+ * Crossref ensuite s'il manque encore quelque chose.
+ *
+ * `all` — true = chercher TOUS les champs qui manquent (DOI, volume, pages,
+ * revue, année) et pas seulement les auteurs ou le titre. C'est ce que
+ * demandent les imports et le bouton « ✨ Complete missing fields » : une
+ * référence entrée avec son seul titre restait sans DOI ni volume parce que le
+ * premier champ vide ne déclenchait pas la recherche en ligne.
+ *
  * @returns {{ entry:object, filled:string[], sources:string[], failed:boolean }}
  */
 export const enrichReference = async (entry, {
-  pool = [], online = true, fetchImpl = null, timeoutMs = 8000
+  pool = [], online = true, all = false, fetchImpl = null, timeoutMs = 8000
 } = {}) => {
   const fromPool = completeFromPool(entry, pool);
   const filled = [...fromPool.filled];
   const sources = fromPool.filled.length ? ['the lab publications'] : [];
   let next = fromPool.entry;
   let failed = false;
-  if (online && referenceNeedsCompletion(next)) {
+  if (online && referenceNeedsCompletion(next, { all })) {
     const web = await completeFromCrossref(next, { fetchImpl, timeoutMs });
     failed = web.failed;
     if (web.filled.length) {
@@ -234,13 +340,17 @@ export const enrichReference = async (entry, {
  * @param {object} opts
  *   • `pool`   — publications du laboratoire / « Relevant papers » ;
  *   • `online` — false = hors ligne seulement ;
- *   • `all`    — true = combler TOUS les champs vides (bouton manuel) ; false =
+ *   • `all`    — true = chercher TOUS les champs qui manquent (auteurs coupés
+ *                par un « et al. », DOI, volume, pages, revue, année) ; false =
  *                seulement les entrées auxquelles il manque les auteurs ou le
- *                titre (ce que fait un import tout seul) ;
- *   • `max`    — nombre maximum d'entrées complétées en une fois (12 par
+ *                titre. Les imports et le bouton manuel demandent `true` ;
+ *   • `max`    — nombre maximum d'entrées travaillées en une fois (12 par
  *                défaut : un import ne doit pas attendre indéfiniment).
  * @returns {{ list:Array, completed:number, filled:Object, sources:Array,
- *             skipped:number, offline:boolean }}
+ *             skipped:number, offline:boolean, stillShortened:number }}
+ *          `stillShortened` = références dont la liste d'auteurs porte encore un
+ *          « et al. » après la recherche : l'appelant le dit à l'utilisateur,
+ *          qui complète ces co-auteurs à la main.
  */
 export const enrichReferences = async (entries, {
   pool = [], online = true, all = false, max = 12, fetchImpl = null, timeoutMs = 8000
@@ -260,7 +370,7 @@ export const enrichReferences = async (entries, {
     attempts += 1;
     // eslint-disable-next-line no-await-in-loop
     const res = await enrichReference(entry, {
-      pool, online: online && !offline, fetchImpl, timeoutMs
+      pool, online: online && !offline, all, fetchImpl, timeoutMs
     });
     if (res.failed) {
       failures += 1;
@@ -273,8 +383,17 @@ export const enrichReferences = async (entries, {
     res.filled.forEach((k) => { filled[k] = (filled[k] || 0) + 1; });
     res.sources.forEach((s) => sources.add(s));
   }
-  return { list, completed, filled, sources: [...sources], skipped, offline };
+  return {
+    list, completed, filled, sources: [...sources], skipped, offline,
+    stillShortened: shortenedAuthorCount(list)
+  };
 };
+
+/** Combien de références d'une liste portent encore une liste d'auteurs RÉDUITE
+ *  (« Fumano, et al. ») — ce qu'un import ou le bouton de réparation dit à
+ *  l'utilisateur quand rien, en ligne, ne complétait ces auteurs. */
+export const shortenedAuthorCount = (entries) => (Array.isArray(entries) ? entries : [])
+  .filter((e) => authorsShortened(value(e, 'authors'))).length;
 
 /** Le compte rendu en une phrase du travail d'enrichReferences (une seule
  *  formulation pour l'import, le bouton et les tests). '' quand rien n'a été

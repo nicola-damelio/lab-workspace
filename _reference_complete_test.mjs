@@ -19,8 +19,9 @@ import { readFileSync } from 'node:fs';
 
 import {
   REFERENCE_COMPLETION_FIELDS, referenceGaps, referenceNeedsCompletion, sameTitle,
-  completeFromPool, crossrefReference, crossrefRequestFor, completeFromCrossref,
-  enrichReference, enrichReferences, enrichReport
+  authorsShortened, mergeFound, filledFields, completeFromPool, crossrefReference,
+  crossrefRequestFor, completeFromCrossref, enrichReference, enrichReferences,
+  enrichReport, shortenedAuthorCount
 } from './src/utils/referenceEnrich.js';
 
 let passed = 0;
@@ -140,19 +141,76 @@ const offline = await enrichReferences(
 eq(offline.completed, 0, 'hors ligne, rien n’est inventé');
 eq(offline.offline, true, '…et l’enrichissement s’arrête de lui-même après deux échecs');
 
-/* ── 5. Le câblage dans la page projet ───────────────────────────────────── */
+/* ── 5. UNE LISTE D'AUTEURS RÉDUITE EST UN CHAMP À CHERCHER ──────────────── */
+/* La plainte : « avec un seul auteur — Fumano et al. — tu me dis que
+   l'information est complète : cherche les autres auteurs, le DOI, le volume ». */
+ok(authorsShortened('Fumano, et al.'), '« Fumano, et al. » est reconnue comme une liste COUPÉE');
+ok(authorsShortened('Fumano M, and others'), '…« and others » aussi');
+ok(!authorsShortened('Marco Fumano, Anna Rossi'), 'deux noms écrits sont une liste complète');
+ok(!authorsShortened('Rossi M'), 'un seul nom SANS marqueur reste une liste écrite à la main');
+eq(referenceGaps({ title: 'T', authors: 'Fumano, et al.', journal: 'J', year: '2020', volume: '1', pages: '2', doi: '10.x', pmid: '1' }),
+  ['authors'], '…et les auteurs sont le SEUL champ qui manque : c’est eux qu’il faut chercher');
+ok(referenceNeedsCompletion({ title: 'T', authors: 'Fumano, et al.' }),
+  'une référence réduite à un « et al. » a donc besoin d’être complétée, même à l’import');
+
+const FUMANO = {
+  DOI: '10.1099/jgv.0.001234',
+  title: ['Aphid transmission of a potyvirus'],
+  author: [
+    { given: 'Marco', family: 'Fumano' }, { given: 'Anna', family: 'Rossi' },
+    { given: 'Luca', family: 'Bianchi' }
+  ],
+  'container-title': ['Journal of General Virology'],
+  issued: { 'date-parts': [[2019]] }, volume: '100', page: '1-9'
+};
+const trunc = { id: 'r9', title: 'Aphid transmission of a potyvirus', authors: 'Fumano, et al.' };
+const truncFetch = fetchJson({ message: { items: [FUMANO] } });
+const fixed = await enrichReference(trunc, { fetchImpl: truncFetch });
+eq(fixed.entry.authors, 'Marco Fumano, Anna Rossi, Luca Bianchi',
+  'la liste RÉDUITE est remplacée par la liste COMPLÈTE du même papier');
+eq(fixed.entry.doi, '10.1099/jgv.0.001234', '…et le DOI manquant est trouvé');
+eq(fixed.entry.volume, '100', '…ainsi que le volume');
+eq(fixed.filled, ['authors', 'journal', 'year', 'volume', 'pages', 'doi'], '…et chaque champ complété est compté');
+eq(truncFetch.calls.length, 1, 'une seule requête a suffi (la recherche par titre)');
+
+/* Le pot commun du laboratoire fait exactement la même chose, HORS LIGNE. */
+const fromLab = completeFromPool(
+  { id: 'r10', title: 'Aphid transmission of a potyvirus', authors: 'Fumano, et al.' },
+  [{
+    id: 'pub9', title: 'Aphid transmission of a potyvirus', authors: 'Marco Fumano, Anna Rossi',
+    journal: 'Journal of General Virology', year: '2019', volume: '100', pages: '1-9', doi: '10.1099/jgv.0.001234'
+  }]
+);
+eq(fromLab.entry.authors, 'Marco Fumano, Anna Rossi',
+  'les publications du laboratoire complètent la liste réduite sans réseau');
+eq(fromLab.filled, ['authors', 'journal', 'year', 'volume', 'pages', 'doi'], '…et comptent les champs réparés');
+
+/* GARDE-FOUS : rien n'est inventé, une liste écrite à la main n'est pas écrasée. */
+eq(mergeFound({ authors: 'Fumano, et al.', title: 'T' }, { authors: 'Anna Rossi, Luca Bianchi' }, ['authors']).filled, [],
+  'un premier auteur DIFFÉRENT n’écrase rien (ce n’est pas le même papier)');
+eq(mergeFound({ authors: 'Fumano, et al.' }, { authors: 'Fumano, et al.' }, ['authors']).filled, [],
+  'une source aussi réduite n’écrase rien non plus');
+eq(mergeFound({ authors: 'Anna Rossi, Marco Fumano' }, { authors: 'Anna Rossi' }, ['authors']).filled, [],
+  'une liste complète n’est JAMAIS remplacée par une plus courte');
+eq(filledFields({ authors: '' }, { authors: 'Rossi M' }), ['authors'], 'filledFields voit un champ rempli');
+eq(shortenedAuthorCount([{ authors: 'Fumano, et al.' }, { authors: 'Marco Fumano, Anna Rossi' }]), 1,
+  'le compte rendu sait combien de références restent coupées');
+
+/* ── 6. Le câblage dans la page projet ───────────────────────────────────── */
 const PROJ = readFileSync('./src/components/AppModules/projectDetailModule.jsx', 'utf8');
 ok(PROJ.includes("import { enrichReferences, enrichReport } from '../../utils/referenceEnrich';"),
   'la page projet importe l’enrichissement');
-ok(PROJ.includes('const completed = await enrichReferences(pickedEntries, { pool: citationPool });'),
-  '« 📄 Import references from a paper » complète les entrées cochées AVANT de les ranger');
+ok(PROJ.includes('const completed = await enrichReferences(pickedEntries, { pool: citationPool, all: true, max: 60 });'),
+  '« 📄 Import references from a paper » complète TOUS les champs manquants des entrées cochées AVANT de les ranger');
 ok(PROJ.includes('const chosen = completed.list.map((entry) => projectBibEntry(entry, project, genProjectId()));'),
   '…c’est l’entrée complétée qui rejoint la bibliographie du projet');
 ok(PROJ.includes('const numbered = numberImportedReferences(completed.list, refs);'),
   '…et c’est elle qui reçoit son numéro (le texte et le document la montrent donc complète)');
-ok(PROJ.includes('const bib = await enrichReferences(projectBib, { pool: citationPool, all: true });')
-  && PROJ.includes('const numbered = await enrichReferences(refs, { pool: citationPool, all: true });'),
-  'le bouton « ✨ Complete missing fields » reprend la bibliographie ET les références numérotées du projet');
+ok(PROJ.includes('const bib = await enrichReferences(projectBib, { pool: citationPool, all: true, max: 60 });')
+  && PROJ.includes('const numbered = await enrichReferences(refs, { pool: citationPool, all: true, max: 60 });'),
+  'le bouton « ✨ Complete missing fields » reprend la bibliographie ET les références numérotées du projet (tous les champs manquants)');
+ok(PROJ.includes('const completion = await enrichReferences(toComplete, { pool: citationPool, all: true, max: 60 });'),
+  'l’import d’un MANUSCRIT complète lui aussi tous les champs manquants de sa bibliographie');
 ok(PROJ.includes('✨ Complete missing fields') && PROJ.includes('onClick={completeProjectReferences}'),
   '…et il est offert dans la section « 📚 Bibliography »');
 ok(PROJ.includes('⚠ no authors recorded — use “✨ Complete missing fields” below'),
