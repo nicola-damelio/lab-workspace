@@ -4,7 +4,7 @@
    Scientists/Operators, ScientistLoginGate/Modal) extracted from App.jsx.
    ========================================================================= */
 
-import React, {useState} from 'react';
+import React, {useState, useEffect, useCallback} from 'react';
 import { normalizeOperators, hashPassword } from '../../utils/auth';
 import { Icon } from '../Icons';
 import { SPECIAL_PAGES, CUSTOM_FIELD_TAB_OPTIONS, getSubsectionsForPage } from '../../data/specialPages';
@@ -713,6 +713,22 @@ export const ScientistsOperatorsManager = ({
   const [selfSaving, setSelfSaving] = useState(false);
   const [selfMsg, setSelfMsg] = useState('');
 
+  /* Le serveur de jetons ANNONCE les routes qu'il connaît (/api/auth/status →
+     « authChangePassword »). Un déploiement ANTÉRIEUR à POST
+     /api/auth/change-password ne l'annonce pas : la requête retombe alors sur
+     l'échange de jeton et répond « Unknown grant_type "" » ou 404 not_found —
+     message inquiétant et surtout TROMPEUR, puisque l'ancien mot de passe
+     continue d'être accepté partout. On le dit donc AVANT la saisie (le bouton
+     reste inactif), au lieu de laisser croire que le mot de passe a changé.
+     Après un redéploiement du serveur : « Recheck » (ou recharger la page). */
+  const [serverChangePwOk, setServerChangePwOk] = useState(null);
+  const checkChangePwSupport = useCallback(async () => {
+    if (!serverMode) { setServerChangePwOk(null); return; }
+    const st = await fetchAuthStatus();
+    setServerChangePwOk(!!st.changePasswordEnabled);
+  }, [serverMode]);
+  useEffect(() => { checkChangePwSupport(); }, [checkChangePwSupport]);
+
   /* Changement de mot de passe par la personne elle-même.
      ⚠️ En mode serveur, les mots de passe sont vérifiés PAR LE SERVEUR : écrire
      le nouveau hash seulement dans cette liste ne servait à rien — le serveur
@@ -727,6 +743,10 @@ export const ScientistsOperatorsManager = ({
     if (!selfPw) { setSelfMsg('⚠️ Enter a new password.'); return; }
     if (selfPw !== selfPwConfirm) { setSelfMsg('⚠️ Passwords do not match.'); return; }
     if (serverMode && !selfCurrentPw) { setSelfMsg('⚠️ Enter your current password.'); return; }
+    if (serverMode && serverChangePwOk === false) {
+      setSelfMsg('⚠️ The lab token server is an OLDER build: it does not know POST /api/auth/change-password yet, so no new password can be registered there. Redeploy server/token-server.js first (server/README.md).');
+      return;
+    }
     setSelfSaving(true); setSelfMsg('');
     if (serverMode) {
       const res = await serverChangePassword(op.name, selfCurrentPw, selfPw);
@@ -763,6 +783,21 @@ export const ScientistsOperatorsManager = ({
           </div>
         </div>
         <div>
+          {/* Serveur plus ancien que cette fonctionnalité : le dire AVANT la
+              saisie. Sinon l'échec (« Unknown grant_type "" ») arrive après coup
+              et laisse croire que le mot de passe a été changé alors que le
+              serveur continue d'accepter l'ancien. */}
+          {serverMode && serverChangePwOk === false && (
+            <div className="mb-3 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 leading-relaxed">
+              ⚠️ The lab token server (
+              <code className="px-1 bg-amber-100 rounded break-all">{authServerBase()}</code>
+              ) is an <b>older build</b>: it does not know{' '}
+              <code className="px-1 bg-amber-100 rounded">POST /api/auth/change-password</code>, so a new password cannot be
+              registered there and signing in would keep accepting the old one. Redeploy{' '}
+              <code className="px-1 bg-amber-100 rounded">server/token-server.js</code> (see server/README.md), then{' '}
+              <button type="button" onClick={checkChangePwSupport} className="underline font-bold">Recheck</button>.
+            </div>
+          )}
           <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Change My Password</h4>
           <div className="flex flex-col gap-2">
             {serverMode && (
@@ -779,7 +814,7 @@ export const ScientistsOperatorsManager = ({
               autoComplete="new-password"
               placeholder="Confirm new password"
               className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-full" />
-            <button onClick={saveSelfPassword} disabled={selfSaving}
+            <button onClick={saveSelfPassword} disabled={selfSaving || (serverMode && serverChangePwOk === false)}
               className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm transition-colors disabled:opacity-50 w-full">
               {selfSaving ? 'Saving…' : 'Update Password'}
             </button>
