@@ -212,6 +212,15 @@ function deleteStore() {
      GET  /api/auth/roster                            → { members:[{id,name,role}] }
      POST /api/auth/accounts  { members:[…] }         → remplace la copie serveur
                               (en-tête X-Admin-Token obligatoire)
+     POST /api/auth/change-password { name, currentPassword, newPassword }
+                              → SEUL le propriétaire du compte peut changer SON
+                               mot de passe (ancien mot de passe exigé, vérifié
+                               ici). Aucun ADMIN_TOKEN requis : sans cette route
+                               un changement fait dans l'app restait sans effet
+                               (l'app ne peut pas publier la liste, il faut le
+                               jeton administrateur — l'ancien mot de passe
+                               continuait donc de fonctionner).
+
      GET  /api/auth/status                            → { configured, accounts }
 
    Sans FIREBASE_SERVICE_ACCOUNT / FIREBASE_SA_FILE le serveur répond
@@ -326,18 +335,45 @@ function verifyMemberPassword(member, password) {
   return sha256Hex(password) === legacy ? 'upgrade' : 'invalid';
 }
 
-/** Remplace le hash hérité par un PBKDF2 salé (le mot de passe en clair ne
- *  quitte pas la mémoire du serveur). */
-function upgradeMemberHash(member, password, store) {
+/** Combien d'empreintes remplacées une fiche garde en mémoire : de quoi
+ *  absorber plusieurs publications parties d'un navigateur resté en retard. */
+const SUPERSEDED_HASHES_KEPT = 4;
+
+/** Installe un mot de passe sur une fiche (PBKDF2 salé — le mot de passe en clair
+ *  ne quitte pas la mémoire du serveur) et retient l'empreinte SHA-256
+ *  correspondante : c'est la seule forme que l'application sait calculer, donc la
+ *  publier à nouveau ne doit pas écraser le durcissement.
+ *  `superseded` = le(s) hash(s) du mot de passe REMPLACÉ. Il faut y mettre les
+ *  DEUX formes possibles — la fiche stockée (PBKDF2 après une première connexion,
+ *  ou SHA-256 hérité) ET le SHA-256 du mot de passe, seule forme qu'une liste
+ *  publiée contiendra jamais : sans les deux, une publication tardive passerait
+ *  inaperçue et rétablirait l'ancien mot de passe. */
+function setMemberPassword(member, password, store, { superseded = [], upgraded = false } = {}) {
   const salt = crypto.randomBytes(16).toString('hex');
-  member.legacyHash = String(member.passwordHash || '');
+  const replaced = (Array.isArray(superseded) ? superseded : [superseded])
+    .map((h) => String(h || '').trim().toLowerCase())
+    .filter(Boolean);
+  if (replaced.length) {
+    const known = Array.isArray(member.supersededHashes)
+      ? member.supersededHashes.map((h) => String(h || '').trim().toLowerCase())
+      : [];
+    member.supersededHashes = [...new Set([...replaced, ...known])].slice(0, SUPERSEDED_HASHES_KEPT);
+  }
+  member.legacyHash = sha256Hex(password);
   member.passwordHash = pbkdf2Hex(password, salt, PBKDF2_ITERATIONS);
   member.algo = 'pbkdf2-sha256';
   member.salt = salt;
   member.iterations = PBKDF2_ITERATIONS;
-  member.upgradedAt = new Date().toISOString();
+  member.passwordChangedAt = new Date().toISOString();
+  if (upgraded) member.upgradedAt = member.passwordChangedAt;
   saveAccounts(store);
 }
+
+/** Durcissement du hash SHA-256 hérité (créé par l'app) lors d'une connexion
+ *  réussie : même opération, la fiche n'a simplement aucun mot de passe
+ *  « remplacé » à retenir (le mot de passe n'a pas changé). */
+const upgradeMemberHash = (member, password, store) =>
+  setMemberPassword(member, password, store, { upgraded: true });
 
 /** Jeton personnalisé Firebase (JWT RS256) — format officiel du SDK Admin. */
 function mintCustomToken(member, sa) {
@@ -447,6 +483,77 @@ async function handleAuthLogin(body, ip) {
   };
 }
 
+/** Changement de mot de passe par la personne elle-même (My Account → Change My
+ *  Password dans l'app).
+ *
+ *  ⚠️ C'est LE point qui manquait : la route de publication
+ *  (POST /api/auth/accounts) exige ADMIN_TOKEN, que seuls les superutilisateurs
+ *  possèdent — et l'écran « My Account » s'adresse justement à tout le monde.
+ *  Un changement fait dans l'app ne remplaçait donc que la copie locale : le
+ *  serveur, seul vérificateur des mots de passe, gardait l'ancien — le nouveau
+ *  était refusé et l'ancien continuait de fonctionner (« changer le mot de passe
+ *  n'a aucun effet »). Ici le serveur vérifie L'ANCIEN mot de passe puis remplace
+ *  SA fiche ; aucune empreinte n'est renvoyée au navigateur. */
+function handleAuthChangePassword(body, ip) {
+  const name = String((body && body.name) || '').trim();
+  const currentPassword = String((body && body.currentPassword) || '');
+  const newPassword = String((body && body.newPassword) || '');
+  // Validation AVANT le compteur anti-force brute : une requête mal formée ne
+  // doit pas consommer les tentatives de la personne.
+  if (!newPassword) {
+    return {
+      http: 400,
+      json: { ok: false, error: 'weak_password', error_description: 'Le nouveau mot de passe est vide.' }
+    };
+  }
+  if (newPassword.length > 200) {
+    return {
+      http: 400,
+      json: { ok: false, error: 'weak_password', error_description: 'Nouveau mot de passe trop long (200 caractères maximum).' }
+    };
+  }
+  if (loginRateLimited(ip)) {
+    return {
+      http: 429,
+      json: {
+        ok: false,
+        error: 'too_many_attempts',
+        error_description: 'Trop de tentatives — réessayez dans quelques minutes.'
+      }
+    };
+  }
+  const store = loadAccounts();
+  if (!store.members.length) {
+    return {
+      http: 503,
+      json: {
+        ok: false,
+        error: 'accounts_not_initialized',
+        error_description: "Aucun compte n'a encore été publié sur ce serveur (Setup → Équipe & accès → Publier les comptes)."
+      }
+    };
+  }
+  const member = store.members.find(
+    (m) => normName(m.name) === normName(name) || String(m.id) === String(name)
+  );
+  const verdict = verifyMemberPassword(member, currentPassword);
+  if (!member || (verdict !== 'ok' && verdict !== 'upgrade')) {
+    console.warn(`[auth] changement de mot de passe refusé pour « ${name || '(vide)'} » depuis ${ip}`);
+    return authRejected();
+  }
+  /* Les DEUX formes du mot de passe remplacé — la fiche stockée (PBKDF2 après une
+     première connexion, ou SHA-256 hérité) et son SHA-256, la seule forme qu'une
+     liste publiée par un navigateur contiendra (voir setMemberPassword). */
+  setMemberPassword(member, newPassword, store, {
+    superseded: [String(member.passwordHash || ''), sha256Hex(currentPassword)]
+  });
+  console.log(`[auth] mot de passe changé par « ${member.name} » depuis ${ip}`);
+  return {
+    http: 200,
+    json: { ok: true, id: member.id || '', name: member.name, changedAt: member.passwordChangedAt }
+  };
+}
+
 /** Liste des membres SANS mot de passe ni hash — sert à remplir la liste
  *  déroulante de l'écran de connexion avant toute authentification. */
 function handleAuthRoster() {
@@ -520,10 +627,23 @@ function handleAuthAccounts(body, headers) {
     };
   }
   const previous = loadAccounts();
+  const staleIgnored = [];
   const next = members.map((m) => {
     const old =
       previous.members.find((p) => p.id && m.id && p.id === m.id) ||
       previous.members.find((p) => normName(p.name) === normName(m.name));
+    const superseded = Array.isArray(old && old.supersededHashes)
+      ? old.supersededHashes.map((h) => String(h || '').trim().toLowerCase())
+      : [];
+    if (old && m.passwordHash && superseded.includes(m.passwordHash)) {
+      /* La liste publiée est en RETARD : elle propose un mot de passe déjà
+         remplacé depuis (changement fait par la personne elle-même — voir
+         POST /api/auth/change-password). La copie serveur fait foi : honorer
+         cette publication rendrait le changement sans effet, et l'ancien mot de
+         passe redeviendrait le bon. */
+      staleIgnored.push(old.name || m.name);
+      return { ...old, id: m.id || old.id, name: m.name, role: m.role };
+    }
     const reference = old ? String(old.legacyHash || old.passwordHash || '') : '';
     if (old && reference && reference === m.passwordHash) {
       // Mot de passe inchangé : on garde le durcissement PBKDF2 déjà obtenu.
@@ -538,13 +658,18 @@ function handleAuthAccounts(body, headers) {
     };
   });
   saveAccounts({ members: next });
+  if (staleIgnored.length) {
+    console.warn('[auth] publication ignorée pour', staleIgnored.join(', '),
+      ': un mot de passe plus récent est déjà enregistré (changement fait par la personne elle-même).');
+  }
   return {
     http: 200,
     json: {
       ok: true,
       accounts: next.length,
       withPassword: next.filter((m) => m.passwordHash).length,
-      savedAt: new Date().toISOString()
+      savedAt: new Date().toISOString(),
+      staleIgnored
     }
   };
 }
@@ -920,6 +1045,18 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readBody(req);
       const out = handleAuthAccounts(body, req.headers);
+      send(res, out.http, out.json, origin);
+    } catch (err) {
+      send(res, 400, { ok: false, error: 'bad_request', error_description: (err && err.message) || 'Invalid request.' }, origin);
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/auth/change-password') {
+    try {
+      const body = await readBody(req);
+      const ip = String(req.socket && req.socket.remoteAddress || '');
+      const out = handleAuthChangePassword(body, ip);
       send(res, out.http, out.json, origin);
     } catch (err) {
       send(res, 400, { ok: false, error: 'bad_request', error_description: (err && err.message) || 'Invalid request.' }, origin);

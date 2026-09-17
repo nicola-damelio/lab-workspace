@@ -1,0 +1,6 @@
+﻿::error file=public/vendor/ffmpeg/ffmpeg/worker.js,line=13,endLine=13,col=9,endColumn=22,title=eslint(no-undef)::'importScripts' is not defined.
+::error file=src/components/AppModules/appSidebar.jsx,line=284,endLine=284,col=66,endColumn=80,title=eslint(no-undef)::'__APP_COMMIT__' is not defined.
+::error file=public/vendor/ffmpeg/core/ffmpeg-core.js,line=8,endLine=8,col=20833,endColumn=20841,title=eslint(no-undef)::'readline' is not defined.
+::error file=public/vendor/ffmpeg/core/ffmpeg-core.js,line=8,endLine=8,col=29358,endColumn=29365,title=eslint(no-undef)::'Browser' is not defined.
+::error file=public/vendor/ffmpeg/core/ffmpeg-core.js,line=8,endLine=8,col=30762,endColumn=30776,title=eslint(no-undef)::'FileReaderSync' is not defined.
+::error file=src/App.jsx,line=652,endLine=652,col=86,endColumn=100,title=eslint(no-undef)::'__APP_COMMIT__' is not defined.

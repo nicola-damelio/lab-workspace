@@ -122,7 +122,9 @@ export const serverLogin = async (name, password) => {
 
 /** Publie la copie serveur de l'équipe (superutilisateur). Les hash SHA-256 de
  *  l'application sont acceptés : le serveur les durcit en PBKDF2 dès la
- *  première connexion réussie. */
+ *  première connexion réussie. `staleIgnored` = fiches dont l'empreinte publiée
+ *  est PLUS ANCIENNE que celle enregistrée (la personne a changé son mot de
+ *  passe entre-temps) : le serveur a gardé la sienne. */
 export const publishAccounts = async (operators, adminToken) => {
   const token = String(adminToken || serverAdminToken() || '').trim();
   if (!token) {
@@ -157,8 +159,31 @@ export const publishAccounts = async (operators, adminToken) => {
   return {
     ok: true,
     accounts: Number(res.json.accounts || members.length),
-    withPassword: Number(res.json.withPassword || 0)
+    withPassword: Number(res.json.withPassword || 0),
+    staleIgnored: Array.isArray(res.json.staleIgnored) ? res.json.staleIgnored : []
   };
+};
+
+/** Changement du mot de passe de la personne CONNECTÉE : le serveur vérifie
+ *  l'ancien mot de passe puis remplace SA fiche. Indispensable — la publication
+ *  de l'équipe (publishAccounts) exige le jeton administrateur, réservé aux
+ *  superutilisateurs ; sans cet appel, un changement fait dans l'application ne
+ *  touchait pas la copie du serveur, seul vérificateur des mots de passe : le
+ *  nouveau mot de passe était refusé et l'ancien continuait de fonctionner. */
+export const serverChangePassword = async (name, currentPassword, newPassword) => {
+  const res = await request('/api/auth/change-password', {
+    method: 'POST',
+    body: { name, currentPassword, newPassword }
+  });
+  if (!res.ok) {
+    return {
+      ok: false,
+      error: res.error,
+      message: res.message || 'Changement de mot de passe refusé par le serveur.',
+      status: res.status
+    };
+  }
+  return { ok: true, name: res.json.name || name, changedAt: res.json.changedAt || '' };
 };
 
 /** Échange le jeton du serveur contre une session Firebase (l'identité et le

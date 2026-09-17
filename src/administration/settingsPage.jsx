@@ -354,7 +354,7 @@ const DriveDataPanel = ({ datasetTitle }) => {
     </div>
   );
 };
-export const SettingsPage = ({ operators, setOperators, authSettings, setAuthSettings, currentUser, datasetTitle }) => {
+export const SettingsPage = ({ operators, setOperators, authSettings, setAuthSettings, currentUser, datasetTitle, serverMode = false }) => {
   const { data, settings, updateSettings, access } = useAdmin();
   const personnelList = (Array.isArray(data && data.personnel) ? data.personnel : []).filter((p) => p && p.id);
   const isSuper = !!(access && access.isSuperuser);
@@ -474,6 +474,7 @@ export const SettingsPage = ({ operators, setOperators, authSettings, setAuthSet
           authSettings={authSettings} setAuthSettings={setAuthSettings}
           currentUser={currentUser}
           personnel={data && data.personnel}
+          serverMode={serverMode}
         />
       </div>
 

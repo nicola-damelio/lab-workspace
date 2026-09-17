@@ -1513,6 +1513,14 @@ if (customType === 'dosy') {
     const res = await publishAccounts(list, serverAdminToken());
     if (res.ok) {
       console.info(`[auth] ${res.accounts} compte(s) publié(s) sur le serveur de jetons.`);
+      // La liste locale peut être en retard sur un changement fait par la
+      // personne elle-même (POST /api/auth/change-password) : le serveur garde
+      // alors SA copie et le signale, sinon la publication ferait
+      // silencieusement revenir l'ancien mot de passe.
+      if (Array.isArray(res.staleIgnored) && res.staleIgnored.length) {
+        console.warn('[auth] publication ignorée pour', res.staleIgnored.join(', '),
+          '— un mot de passe plus récent est déjà enregistré sur le serveur (changement fait par la personne elle-même).');
+      }
       await refreshServerAuth();
     } else {
       console.warn('[auth] publication de l’équipe impossible:', res.error, res.message);
@@ -4899,6 +4907,7 @@ const openDataset = (dset) => {
               setCustomCellLines={setCustomCellLines} setCellLineMeta={setCellLineMeta} cellLineMeta={cellLineMeta}
               datasetsList={datasetsList} deleteDataset={deleteDataset} deleteEmptyDatasets={deleteEmptyDatasets}
               datasetTitle={datasetTitle}
+              serverMode={serverLoginMode}
             />)}
 
             {currentModule === 'agenda' && (<AgendaModule
@@ -5002,6 +5011,7 @@ const openDataset = (dset) => {
               onAdminBack={handleAdminBack}
               canAdminUndo={adminHistoryIndex > 0}
               onAdminUndo={handleAdminUndo}
+              serverMode={serverLoginMode}
             />)}
           </div>
         </div>

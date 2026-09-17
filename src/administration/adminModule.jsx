@@ -48,6 +48,10 @@ export const AdministrationModule = ({
   onRequestLogin,
   onNavigateAdmin, adminFocus, onClearFocus,
   canAdminBack, onAdminBack, canAdminUndo, onAdminUndo,
+  // Vrai quand les connexions passent par le serveur de jetons : les mots de
+  // passe sont alors vérifiés par le serveur, et un changement doit y être
+  // envoyé (voir ScientistsOperatorsManager).
+  serverMode = false,
 }) => {
   const team = normalizeOperators(operators || []);
   // Bootstrap : aucun compte scientifique OU aucun superutilisateur n’est
@@ -77,6 +81,7 @@ export const AdministrationModule = ({
         authSettings={authSettings} setAuthSettings={setAuthSettings}
         canAdminBack={canAdminBack} onAdminBack={onAdminBack}
         canAdminUndo={canAdminUndo} onAdminUndo={onAdminUndo}
+        serverMode={serverMode}
       />
     </AdminProvider>
   );
@@ -109,6 +114,7 @@ const AdministrationShell = ({
   datasetTitle, saveStatus, pageId,
   currentUser, operators, setOperators, authSettings, setAuthSettings,
   canAdminBack, onAdminBack, canAdminUndo, onAdminUndo,
+  serverMode = false,
 }) => {
   const { data, ready, access } = useAdmin();
   const visible = ADMIN_PAGES.filter((p) => access.canViewPage(p));
@@ -196,6 +202,7 @@ const AdministrationShell = ({
             authSettings={authSettings} setAuthSettings={setAuthSettings}
             currentUser={currentUser}
             datasetTitle={datasetTitle}
+            serverMode={serverMode}
           />
         ) : active.id === 'librerie' ? (
           <LibreriePage />

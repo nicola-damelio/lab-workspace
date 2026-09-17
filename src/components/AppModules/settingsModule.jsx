@@ -63,7 +63,10 @@ export const SettingsModule = ({
   allCmpds, allCellLines,
   setCustomCmpds, setCompoundMeta, compoundMeta,
   setCustomCellLines, setCellLineMeta, cellLineMeta,
-  datasetsList, deleteDataset, deleteEmptyDatasets, datasetTitle
+  datasetsList, deleteDataset, deleteEmptyDatasets, datasetTitle,
+  // Vrai quand les connexions passent par le serveur de jetons : les mots de
+  // passe sont vérifiés par le serveur, un changement doit donc y être envoyé.
+  serverMode = false
 }) => {
   /* Dans un dataset scientifique, les comptes scientist non superutilisateurs
      ne voient que la section « Scientists / Operators » (en lecture seule) ;
@@ -97,6 +100,7 @@ export const SettingsModule = ({
                       authSettings={authSettings}
                       setAuthSettings={setAuthSettings}
                       currentUser={currentUser}
+                      serverMode={serverMode}
                     />
                   </CollapsibleSection>
 

@@ -1,0 +1,48 @@
+﻿1: # Mise en sécurité du workspace — accès réservé aux comptes de l'équipe
+8: ## 1. Ce qui a été constaté
+27: ## 2. Ce qui protège désormais les données
+40: | `server/token-server.js` → `POST /api/auth/login` | vérifie le mot de passe **côté serveur** et signe le jeton |
+48: ## 3. À faire — dans CET ordre (le désordre peut bloquer l'équipe)
+61: > `authConfigured`, et `GET /api/auth/status` répond `{"error":"method_not_allowed"}` :
+65: ### Étape 0 — déployer la nouvelle version de l'application
+69: # puis le déploiement habituel de l'app (hébergement existant)
+78: ### Étape 1 — clé de compte de service (signature des jetons)
+103: ### Étape 2 — jeton administrateur
+117: ### Étape 3 — redéployer le serveur de jetons
+124: #### Voie A bis — une seule commande (recommandée)
+194: # 1) retrouver le projet qui HÉBERGE le service : c'est celui dont le numéro
+195: #    apparaît dans l'URL (le projet Firebase cell-experiment-tracker porte le
+196: #    n° 855790481107 : ce n'est PAS le même)
+200: # 2) réparer les droits du compte de service Cloud Build
+208: #### Voie A — manuelle (faire les étapes 1 et 2 à la main)
+222: # projet qui HÉBERGE le service (≠ projet Firebase) : celui du numéro de l'URL
+227: # (facultatif) voir les origines déjà autorisées — à NE PAS modifier
+247: # ⚠️ la clé doit venir du projet FIREBASE (celui qui signe les jetons)
+274: # → {"ok":true,…,"authConfigured":true,"authAccounts":0,…}
+276: # l'autre nom du même service (celui que gcloud affiche) doit répondre aussi :
+287: # doit afficher : mountPath: /data  +  serviceAccountName: drive-token-sa@…​.iam.gserviceaccount.com
+301: # → une seule ligne attendue : le projet ci-dessus, avec l'URL …-763848765523…
+302: #   (ou la forme équivalente …-6eq5wljpia-ew.a.run.app : même service)
+303: #   Pour supprimer un service fantôme :
+304: #     gcloud run services delete drive-token-server --project <le fantôme> \
+305: #       --region europe-west1 --quiet
+308: #### Voie B — avec le script complet (si vous avez encore `client_secret.json`)
+332: # → {"ok":true,…,"authConfigured":true,"authAccounts":0,…}
+334: # CORS : le navigateur n'enverra « Publier les comptes » que si le préflight
+335: # autorise l'en-tête X-Admin-Token (sinon « Failed to fetch », sans trace serveur).
+336: curl.exe -s -i -X OPTIONS https://drive-token-server-763848765523.europe-west1.run.app/api/auth/accounts `
+340: # → access-control-allow-headers: Content-Type, X-Admin-Token, Authorization
+343: ### Étape 4 — publier l'équipe sur le serveur
+391: Invoke-RestMethod -Method Post -Uri "$server/api/auth/accounts" `
+396: ### Étape 5 — vérifier la connexion par le serveur
+399: curl.exe https://drive-token-server-763848765523.europe-west1.run.app/api/auth/roster
+400: # → {"ok":true,"members":[{"id":"op_1","name":"…","role":"superuser"}, …]}   (aucun hash)
+402: # mot de passe valide → un jeton (long) ; mot de passe erroné → 401
+403: curl.exe -s -X POST https://drive-token-server-763848765523.europe-west1.run.app/api/auth/login `
+411: ### Étape 6 — publier les règles Firestore (ferme l'accès anonyme)
+420: ### Étape 7 — vérifier que l'accès anonyme est mort
+426: # AVANT : 200      APRÈS : 403
+435: ## 4. Retour arrière (si quelque chose bloque l'équipe)
+452: ## 5. Ce que cela change pour l'équipe
+490: ## 6. Détails de sécurité
+512: ## 7. Riepilogo (italiano)

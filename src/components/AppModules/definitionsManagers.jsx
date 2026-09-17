@@ -9,7 +9,8 @@ import { normalizeOperators, hashPassword } from '../../utils/auth';
 import { Icon } from '../Icons';
 import { SPECIAL_PAGES, CUSTOM_FIELD_TAB_OPTIONS, getSubsectionsForPage } from '../../data/specialPages';
 import {
-  authServerBase, fetchAuthStatus, publishAccounts, serverAdminToken, setServerAdminToken
+  authServerBase, fetchAuthStatus, publishAccounts, serverAdminToken, setServerAdminToken,
+  serverChangePassword
 } from '../../utils/labAuth';
 
 export const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => {
@@ -500,8 +501,17 @@ const ServerSecurityPanel = ({ operators }) => {
     setServerAdminToken(token);
     const res = await publishAccounts(normalizeOperators(operators), token);
     setOk(!!res.ok);
+    /* `staleIgnored` : fiche(s) dont l'empreinte publiée est plus ancienne que
+       celle du serveur (la personne a changé son mot de passe depuis) — le
+       serveur a gardé la sienne, et il faut le DIRE (sinon le refus serait
+       silencieux). */
+    const stale = Array.isArray(res.staleIgnored) ? res.staleIgnored : [];
     setMessage(res.ok
       ? `${res.accounts} compte(s) publié(s) — ${res.withPassword} avec mot de passe.`
+        + (stale.length
+          ? ` ⚠️ Ignoré pour ${stale.join(', ')} : un mot de passe plus récent est déjà enregistré sur le serveur`
+            + ' (changement fait par la personne elle-même dans « Mon compte »). Il faudrait le connaître pour le remplacer ici.'
+          : '')
       : (res.message || 'Publication impossible.'));
     setBusy(false);
     refresh();
@@ -587,6 +597,11 @@ export const ScientistsOperatorsManager = ({
   setAuthSettings,
   currentUser,
   personnel = null,
+  /* Vrai quand les connexions passent par le serveur de jetons : c'est LUI qui
+     vérifie les mots de passe (voir server/token-server.js), donc c'est SA copie
+     qu'il faut remplacer — un changement écrit seulement ici n'aurait aucun
+     effet sur la connexion. */
+  serverMode = false,
 }) => {
   const [draft, setDraft] = useState({ name: '', surname: '', role: 'user', password: '', personnelId: '' });
   const [editingId, setEditingId] = useState(null);
@@ -694,21 +709,43 @@ export const ScientistsOperatorsManager = ({
     : null;
   const [selfPw, setSelfPw] = useState('');
   const [selfPwConfirm, setSelfPwConfirm] = useState('');
+  const [selfCurrentPw, setSelfCurrentPw] = useState('');
   const [selfSaving, setSelfSaving] = useState(false);
   const [selfMsg, setSelfMsg] = useState('');
 
+  /* Changement de mot de passe par la personne elle-même.
+     ⚠️ En mode serveur, les mots de passe sont vérifiés PAR LE SERVEUR : écrire
+     le nouveau hash seulement dans cette liste ne servait à rien — le serveur
+     gardait l'ancien, refusait le nouveau et continuait d'accepter l'ancien
+     (« le changement n'a aucun effet »). L'app ne peut pas publier la liste à sa
+     place (POST /api/auth/accounts exige le jeton administrateur, réservé au
+     superutilisateur) : elle appelle donc POST /api/auth/change-password, qui
+     exige l'ANCIEN mot de passe. Le serveur d'abord, la copie locale ensuite. */
   const saveSelfPassword = async () => {
+    const op = selfServiceOp;
+    if (!op) return;
     if (!selfPw) { setSelfMsg('⚠️ Enter a new password.'); return; }
     if (selfPw !== selfPwConfirm) { setSelfMsg('⚠️ Passwords do not match.'); return; }
+    if (serverMode && !selfCurrentPw) { setSelfMsg('⚠️ Enter your current password.'); return; }
     setSelfSaving(true); setSelfMsg('');
+    if (serverMode) {
+      const res = await serverChangePassword(op.name, selfCurrentPw, selfPw);
+      if (!res.ok) {
+        setSelfSaving(false);
+        setSelfMsg(`⚠️ ${res.message}`);
+        return;
+      }
+    }
     const hash = await hashPassword(selfPw);
-    setOperators((prev) => normalizeOperators(prev).map((op) =>
-      op.id === currentUser.id ? { ...op, passwordHash: hash } : op
+    setOperators((prev) => normalizeOperators(prev).map((o) =>
+      op.id === o.id ? { ...o, passwordHash: hash } : o
     ));
-    setSelfPw(''); setSelfPwConfirm('');
+    setSelfPw(''); setSelfPwConfirm(''); setSelfCurrentPw('');
     setSelfSaving(false);
-    setSelfMsg('✅ Password updated successfully.');
-    setTimeout(() => setSelfMsg(''), 3000);
+    setSelfMsg(serverMode
+      ? '✅ Password changed — the lab server accepts it from now on.'
+      : '✅ Password updated successfully.');
+    setTimeout(() => setSelfMsg(''), 4000);
   };
 
   // Self-service view for normal users
@@ -728,10 +765,18 @@ export const ScientistsOperatorsManager = ({
         <div>
           <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Change My Password</h4>
           <div className="flex flex-col gap-2">
+            {serverMode && (
+              <input type="password" value={selfCurrentPw} onChange={(e) => setSelfCurrentPw(e.target.value)}
+                autoComplete="current-password"
+                placeholder="Current password"
+                className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-full" />
+            )}
             <input type="password" value={selfPw} onChange={(e) => setSelfPw(e.target.value)}
+              autoComplete="new-password"
               placeholder="New password"
               className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-full" />
             <input type="password" value={selfPwConfirm} onChange={(e) => setSelfPwConfirm(e.target.value)}
+              autoComplete="new-password"
               placeholder="Confirm new password"
               className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-full" />
             <button onClick={saveSelfPassword} disabled={selfSaving}
@@ -739,6 +784,12 @@ export const ScientistsOperatorsManager = ({
               {selfSaving ? 'Saving…' : 'Update Password'}
             </button>
             {selfMsg && <p className="text-xs text-center mt-1">{selfMsg}</p>}
+            {serverMode && (
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                Passwords are checked by the <b>lab token server</b>: your current password is required and the new
+                one is registered there immediately — the old password stops working in every browser.
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -747,6 +798,20 @@ export const ScientistsOperatorsManager = ({
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-6">
+      {/* En mode serveur, seuls les mots de passe REÇUS PAR LE SERVEUR sont
+          vérifiés à la connexion, et les publier exige le jeton administrateur.
+          Sans ce jeton dans ce navigateur, tout ce qui est saisi ici (ajouts,
+          remplacements de mots de passe) reste local : le serveur garde les
+          anciens, et les connexions continuent avec eux. */}
+      {serverMode && !serverAdminToken() && (
+        <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 leading-relaxed">
+          ⚠️ Server sign-in is active but no admin token is stored in this browser: password changes made here are
+          <b> not sent</b> to the token server, so everyone keeps signing in with the previous password. Open
+          <b> 🛡️ Server security</b> below and paste the <code className="px-1 bg-amber-100 rounded">ADMIN_TOKEN</code> to
+          publish the team.
+        </div>
+      )}
+
 
       {/* ── ADD SCIENTIST (superuser / bootstrap only) ── */}
       {canManage && (

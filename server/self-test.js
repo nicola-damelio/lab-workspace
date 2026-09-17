@@ -267,6 +267,82 @@ try {
   json = await res.json();
   check('login avec le nouveau mot de passe → 200 role:user', res.status === 200 && json.role === 'user', JSON.stringify(json));
 
+  /* ── Changement de mot de passe par la personne elle-même ──────────────────
+     LE bug « je change mon mot de passe et rien ne change » : l'écran « Mon
+     compte » (ouvert à tous) n'écrivait que la copie locale, alors que publier
+     la liste exige le jeton administrateur (superutilisateur). Le serveur, seul
+     vérificateur des mots de passe, gardait donc l'ancien : le nouveau était
+     refusé ET l'ancien continuait de fonctionner. */
+  const thirdPassword = 'TroisiemeMotDePasse-11';
+  const thirdHash = crypto.createHash('sha256').update(thirdPassword).digest('hex');
+  // La connexion réussie du test précédent a durci la fiche en PBKDF2 : on
+  // compare donc AVANT/APRÈS plutôt qu'à une valeur attendue.
+  const beforeWrongAttempt = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, 'utf8')).members[0];
+  res = await fetch(`${base}/api/auth/change-password`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: MEMBER, currentPassword: 'pas-le-bon', newPassword: thirdPassword })
+  });
+  json = await res.json();
+  stored = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, 'utf8'));
+  check('change-password avec un mauvais mot de passe actuel → 401, aucune modification',
+    res.status === 401 && json.error === 'invalid_credentials'
+      && stored.members[0].passwordHash === beforeWrongAttempt.passwordHash
+      && stored.members[0].legacyHash === beforeWrongAttempt.legacyHash,
+    JSON.stringify(json));
+
+  res = await fetch(`${base}/api/auth/change-password`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: MEMBER, currentPassword: newPassword, newPassword: thirdPassword })
+  });
+  json = await res.json();
+  stored = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, 'utf8'));
+  check('change-password : le serveur remplace SA fiche (PBKDF2 + ancien hash retenu)',
+    res.status === 200 && json.ok === true
+      && stored.members[0].algo === 'pbkdf2-sha256'
+      && stored.members[0].legacyHash === thirdHash
+      && String(stored.members[0].salt || '').length > 0
+      && Array.isArray(stored.members[0].supersededHashes) && stored.members[0].supersededHashes.includes(newHash)
+      && typeof stored.members[0].passwordChangedAt === 'string',
+    JSON.stringify(json));
+
+  res = await fetch(`${base}/api/auth/login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: MEMBER, password: thirdPassword })
+  });
+  json = await res.json();
+  check('login avec le NOUVEAU mot de passe → 200', res.status === 200 && json.ok === true, JSON.stringify(json));
+
+  res = await fetch(`${base}/api/auth/login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: MEMBER, password: newPassword })
+  });
+  json = await res.json();
+  check('login avec l’ANCIEN mot de passe → 401 (le changement a bien pris effet)',
+    res.status === 401 && json.error === 'invalid_credentials', JSON.stringify(json));
+
+  // Un navigateur resté en retard (liste d'équipe d'avant le changement)
+  // republie l'ancienne empreinte : elle est connue comme remplacée → ignorée,
+  // et signalée dans la réponse (sinon le refus serait invisible).
+  res = await fetch(`${base}/api/auth/accounts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
+    body: JSON.stringify({ members: [{ id: 'op_1', name: MEMBER, role: 'user', passwordHash: newHash }] })
+  });
+  json = await res.json();
+  stored = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, 'utf8'));
+  check('publication en retard → ignorée (staleIgnored), le mot de passe récent est conservé',
+    res.status === 200 && Array.isArray(json.staleIgnored) && json.staleIgnored.includes(MEMBER)
+      && stored.members[0].legacyHash === thirdHash && stored.members[0].algo === 'pbkdf2-sha256',
+    JSON.stringify(json));
+
+  res = await fetch(`${base}/api/auth/login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: MEMBER, password: newPassword })
+  });
+  json = await res.json();
+  check('après la publication en retard, l’ancien mot de passe reste refusé (401)',
+    res.status === 401 && json.error === 'invalid_credentials', JSON.stringify(json));
+
   res = await fetch(`${base}/api/auth/accounts`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },

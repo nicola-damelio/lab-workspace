@@ -38,6 +38,7 @@ navigateur ◀──(jeton signé, claims lab/role)──┘
 | Élément | Rôle |
 | --- | --- |
 | `server/token-server.js` → `POST /api/auth/login` | vérifie le mot de passe **côté serveur** et signe le jeton |
+| `server/token-server.js` → `POST /api/auth/change-password` | SEUL le propriétaire d'un compte peut changer SON mot de passe (ancien mot de passe exigé — **pas** de jeton administrateur) |
 | `firestore.rules` | refuse tout ce qui n'est pas porteur de `request.auth.token.lab == true` |
 | `src/utils/labAuth.js` + `App.jsx` | échangent le jeton, reconstruisent nom + rôle depuis les claims signés |
 | `Setup → Équipe & accès → 🛡️ Sécurité serveur` | publie la liste de l'équipe vers le serveur |
@@ -408,6 +409,36 @@ Puis, dans l'application (fenêtre de navigation privée) : l'écran de connexio
 doit afficher « 🔐 Mot de passe vérifié par le serveur sécurisé du laboratoire »
 et la liste des noms doit venir du serveur.
 
+#### Étape 5 bis — vérifier le changement de mot de passe
+
+Chaque membre change **son** mot de passe depuis `My Account → 🔑 Change My
+Password`. En mode serveur, l'écran demande l'**ancien** mot de passe : le
+serveur le vérifie, met à jour SA fiche, puis l'application met à jour la copie
+locale. Aucune empreinte ne circule (le serveur hache lui-même).
+
+```powershell
+# ancien mot de passe erroné → 401 invalid_credentials (aucune modification)
+# ancien mot de passe correct → 200 {"ok":true,…}
+curl.exe -s -X POST https://drive-token-server-763848765523.europe-west1.run.app/api/auth/change-password `
+  -H "Content-Type: application/json" `
+  -d "{\"name\":\"Marie L.\",\"currentPassword\":\"MotDePasseDeMarie\",\"newPassword\":\"NouveauMotDePasseDeMarie\"}"
+
+# puis, la preuve que le changement a bien pris effet :
+#   connexion avec le NOUVEAU mot de passe → 200 (un jeton)
+#   connexion avec l'ANCIEN mot de passe  → 401
+```
+
+> **Pourquoi ce point existait déjà comme bug** : en mode serveur, seul le
+> serveur vérifie les mots de passe. L'écran « My Account » s'adresse à tout le
+> monde mais n'écrivait que la copie locale, et la publication
+> (`POST /api/auth/accounts`) exige `ADMIN_TOKEN`, réservé aux
+> superutilisateurs : le changement était annoncé comme réussi, puis l'ancien
+> mot de passe continuait de fonctionner (et le nouveau était refusé).
+> Le serveur retient désormais les empreintes **remplacées**
+> (`supersededHashes`, 4 maximum) : une liste publiée par un navigateur resté
+> en retard est **ignorée** — et signalée dans la réponse par `staleIgnored` —
+> au lieu de rétablir silencieusement l'ancien mot de passe.
+
 ### Étape 6 — publier les règles Firestore (ferme l'accès anonyme)
 
 Console Firebase → **Firestore Database** → onglet **Règles** → remplacer tout
@@ -458,6 +489,13 @@ secours reste active tant que les règles sont ouvertes.
 * Ajouter/retirer un membre : `Setup → Équipe & accès` (publication automatique
   si le jeton administrateur est enregistré). Un changement de **rôle** prend
   effet à la prochaine connexion de la personne.
+* **Changer son propre mot de passe** : `My Account → 🔑 Change My Password`.
+  L'ancien mot de passe est désormais demandé et vérifié par le serveur (aucune
+  empreinte ne circule, le serveur hache lui-même) ; le changement prend effet
+  **immédiatement** à la connexion suivante. Sans le jeton administrateur
+  enregistré sur ce navigateur, c'est le seul geste qui écrit sur le serveur —
+  l'écran le rappelle (ajouter/retirer un membre reste réservé aux
+  superutilisateurs, car la publication de la liste exige ce jeton).
 * **Verrouiller les données d'une expérience** : dans l'en-tête de chaque
   expérience, un superutilisateur dispose de **🔒 Lock data** — et, si
   l'expérience a plusieurs conditions, de **🔒 Lock all N** — pour figer les
@@ -494,6 +532,16 @@ secours reste active tant que les règles sont ouvertes.
   automatiquement** lors de la première connexion réussie. Aucun mot de passe
   en clair n'est stocké, et plus aucune empreinte n'est lisible publiquement
   (`appConfig` exige un jeton signé).
+* **Changement de mot de passe (self-service)** : `POST
+  /api/auth/change-password` n'accepte aucun jeton administrateur et n'agit que
+  sur le compte dont l'**ancien** mot de passe est fourni (limité à 12
+  tentatives / 5 minutes / adresse IP ; le nouveau mot de passe doit être non
+  vide, 200 caractères maximum).
+  Le serveur **retient les empreintes remplacées** (`supersededHashes`, 4 au
+  plus) : si un navigateur resté en retard republie l'ancienne empreinte, la
+  publication est **ignorée** (`staleIgnored` dans la réponse, avertissement
+  dans l'app) — sans cela, publier la liste aurait rétabli l'ancien mot de
+  passe et rendu le changement inopérant.
 * **Rôles signés** : le rôle (`superuser` / `user`) fait partie du jeton ; le
   modifier dans `localStorage` ou dans la console du navigateur n'a plus aucun
   effet.
