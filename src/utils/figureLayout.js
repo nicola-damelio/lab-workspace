@@ -140,3 +140,61 @@ export const freeSlotFor = (rects) => {
   candidates.sort((a, b) => (b.w * b.h) - (a.w * a.h));
   return candidates[0];
 };
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   L'ORDRE DES FIGURES — « laquelle est PAR-DESSUS les autres ».
+
+   Les figures d'un panneau sont PEINTES dans l'ordre de la liste `images[]` :
+   la DERNIÈRE est donc celle du dessus — c'est elle qu'on voit quand deux
+   figures se chevauchent, et c'est elle que le clic attrape en premier (les
+   zones cliquables et le cyclage du builder partent de là). L'ordre du tableau
+   EST donc l'empilement : remonter une figure = la déplacer vers la fin.
+
+   Ces deux fonctions sont PURES et renvoient la LISTE INCHANGÉE (même
+   référence) quand rien ne bouge — un panneau dont on clique « ⬆ » sur la
+   figure déjà au-dessus ne doit ni s'écrire, ni entrer dans l'historique.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Index de destination d'une figure déplacée dans l'empilement.
+ * @param {number} count  nombre de figures du panneau
+ * @param {number} from   index actuel
+ * @param {'front'|'back'|'up'|'down'|number} to  destination
+ * @returns {number} l'index d'arrivée, ou -1 quand il n'y a rien à faire
+ *                   (index inconnu, une seule figure, ou déjà au bout)
+ */
+export const figureStackIndex = (count, from, to) => {
+  const n = Math.max(0, Number(count) || 0);
+  const i = Number(from);
+  if (n < 2 || !Number.isInteger(i) || i < 0 || i >= n) return -1;
+  if (to === 'front') return n - 1 === i ? -1 : n - 1;   // dernier peint = au-dessus
+  if (to === 'back') return i === 0 ? -1 : 0;
+  if (to === 'up') return i + 1 >= n ? -1 : i + 1;        // un cran vers le dessus
+  if (to === 'down') return i <= 0 ? -1 : i - 1;          // un cran vers le dessous
+  const k = Number(to);
+  if (!Number.isFinite(k)) return -1;
+  const dst = Math.max(0, Math.min(n - 1, Math.round(k)));
+  return dst === i ? -1 : dst;
+};
+
+/**
+ * La liste des figures d'un panneau, avec UNE figure déplacée dans
+ * l'empilement.
+ * @param {Array} images  `obj.images`
+ * @param {number} from   index de la figure à déplacer
+ * @param {'front'|'back'|'up'|'down'|number} to  destination
+ * @returns {{list:Array, index:number, changed:boolean}}
+ *          `list === images` (même référence) et `changed === false` quand rien
+ *          ne bouge ; `index` est l'index de la figure après le déplacement (le
+ *          builder s'en sert pour garder ACTIVE la figure déplacée : sinon les
+ *          poignées sauteraient sur une autre figure).
+ */
+export const moveFigureInList = (images, from, to) => {
+  const list = Array.isArray(images) ? images : [];
+  const dst = figureStackIndex(list.length, from, to);
+  if (dst < 0) return { list, index: Number(from), changed: false };
+  const next = list.slice();
+  const [moved] = next.splice(Number(from), 1);
+  next.splice(dst, 0, moved);
+  return { list: next, index: dst, changed: true };
+};

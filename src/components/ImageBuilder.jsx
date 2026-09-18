@@ -8,7 +8,7 @@ import {
   pushLibraryToDrive, pullLibraryFromDrive, localOnlyLibraryItems, mergeLibraryFromSnapshot
 } from '../utils/figuresLibrary';
 import {
-  freeRectOf, isFreeLayout, pinRectOf, freeSlotFor, RECT_MIN, RECT_MAX
+  freeRectOf, isFreeLayout, pinRectOf, freeSlotFor, RECT_MIN, RECT_MAX, moveFigureInList
 } from '../utils/figureLayout';
 import {
   ERASE_SIZE_MIN, ERASE_SIZE_MAX, ERASE_DEFAULT_SIZE, clampEraseSize,
@@ -28,7 +28,8 @@ import {
 import { useFigureStyleProfile } from './FigureStyleTools';
 import { ShadowControls, ArrowPropertiesPanel } from './FigureArrowPanel';
 import {
-  newArrow, normalizeArrow, arrowGeometry, arrowHeadPath, shadowSpec, shadowFilterId, DEFAULT_SHADOW
+  newArrow, normalizeArrow, arrowGeometry, arrowHeadPath, shadowSpec, shadowFilterId,
+  figureShadowFilterId, DEFAULT_SHADOW
 } from '../utils/figureArrows';
 
 const ptToMm = (pt) => pt * 0.352778;
@@ -1127,6 +1128,50 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const removeObjImage = (idx) => {
     commitHistory();
     setObjects(prev => prev.map(o => o.id === selectedId ? withImages(o, getObjImages(o).filter((_, i) => i !== idx)) : o));
+  };
+
+  // ── STACKING ORDER (« laquelle est par-dessus les autres ») ────────────────
+  // The figures of a panel are PAINTED in the order of `images[]`, so the LAST
+  // one is the one on top: it is what you see where two figures overlap, and
+  // the one a click grabs first (the clickable zones and the click-cycling
+  // below start from it). Moving a figure inside the list therefore re-layers
+  // it — and because the moved figure keeps being the ACTIVE one, its handles
+  // must follow it (`index` below): re-laying a figure must never make the
+  // handles jump to another picture.
+  const moveFigure = (objId, idx, to) => {
+    const obj = (objects || []).find((o) => o.id === objId);
+    if (!obj) return;
+    const res = moveFigureInList(getObjImages(obj), idx, to);
+    if (!res.changed) return;          // already there: nothing to undo, nothing to write
+    commitHistory();
+    setObjects(prev => prev.map(o => (o.id === objId ? withImages(o, res.list) : o)));
+    setActiveFig({ objId, idx: res.index });
+  };
+
+  // Shadow of ONE figure (`obj.images[idx].shadow`, see utils/figureArrows):
+  // the same record a panel and an arrow write, but drawn from the PIXELS of
+  // that figure — the filter sits on a group ABOVE the image, so a PNG with a
+  // transparent background casts a shadow around its content and the parts the
+  // 🧽 eraser removed cast nothing. Unlike the panel shadow (which follows the
+  // white frame), this one hugs the picture itself.
+  const setFigureShadow = (objId, idx, value) => {
+    if (idx < 0) return;
+    commitHistory();
+    setObjects(prev => prev.map(o => (o.id !== objId ? o
+      : withImages(o, getObjImages(o).map((im, i) => (i === idx ? { ...im, shadow: value } : im))))));
+  };
+  // “Same shadow on every figure of this panel” — ONE click gives every figure
+  // of the panel the shadow described by the active one, a second click takes it
+  // off them all (mirrors “Same shadow on every panel” for the panels).
+  const panelFigures = selectedId ? getObjImages((objects || []).find((o) => o.id === selectedId) || {}) : [];
+  const figuresShadowed = panelFigures.some((im) => !!shadowSpec(im && im.shadow));
+  const toggleFiguresShadow = () => {
+    if (!selectedId || !panelFigures.length) return;
+    commitHistory();
+    const on = !figuresShadowed;
+    const model = panelFigures.map((im) => shadowSpec(im && im.shadow)).find(Boolean) || DEFAULT_SHADOW;
+    setObjects(prev => prev.map(o => (o.id !== selectedId ? o
+      : withImages(o, getObjImages(o).map((im) => ({ ...im, shadow: on ? { ...model } : null }))))));
   };
 
   // ---- Multi-figure selection inside overlapping figures ---------------------
@@ -2594,6 +2639,25 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             </filter>
           );
         })}
+        {/* …and one per SHADOWED FIGURE of a panel (`obj.images[i].shadow`) —
+            the shadow asked for the picture ITSELF, not its frame: the filter is
+            applied to a group WRAPPING the <image> (see the figure layer below),
+            so <feDropShadow> works from the pixels of the figure — its own
+            alpha — and not from a bounding box. A PNG screenshot of a molecule
+            on a transparent background therefore gets a shadow around the
+            molecule, and the parts taken off with the 🧽 eraser (whose mask is
+            applied INSIDE the group) cast no shadow at all. A JPEG — a picture
+            with an opaque background — can only cast the shadow of its
+            rectangle: no filter can invent a transparency the file has not. */}
+        {objects.map(obj => getObjImages(obj).map((im, i) => {
+          const sp = shadowSpec(im.shadow);
+          if (!sp) return null;
+          return (
+            <filter key={`fsf-${obj.id}-${i}`} id={figureShadowFilterId(obj.id, i)} x="-25%" y="-25%" width="150%" height="150%">
+              <feDropShadow dx={sp.dx} dy={sp.dy} stdDeviation={sp.blur} floodColor={sp.color} floodOpacity={sp.opacity} />
+            </filter>
+          );
+        }))}
       </defs>
       {objects.map(obj => {
         const isSelected = obj.id === selectedId;
@@ -2661,32 +2725,47 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                     const eraseMask = eraseStrokesFor(obj, i).length ? `url(#${eraseMaskId(svgId, obj.id, i)})` : undefined;
                     const par = keepAspect ? 'xMidYMid meet' : fit === 'cover' ? 'xMidYMid slice' : fit === 'stretch' ? 'none' : 'xMidYMid meet';
                     const center = `${g.iX + g.iW / 2} ${g.iY + g.iH / 2}`;
+                    /* The shadow OF THIS FIGURE (null when it has none): the
+                       filter goes on a group WRAPPING the image, never on the
+                       image itself, so that
+                         • the shadow follows the PIXELS of the picture (its own
+                           transparent background) instead of a bounding box;
+                         • the 🧽 eraser mask — a property of the image — is
+                           applied BEFORE the filter, so what was erased casts
+                           no shadow;
+                         • the rotation of the figure stays on the image, so
+                           dx/dy keep pointing down-right on the CANVAS and are
+                           not turned with the picture. */
+                    const figShadow = shadowSpec(im.shadow);
                     /* CROPPED figure: the FULL image is drawn around the window
                        with an exact pixel mapping (hence preserveAspectRatio
                        "none") and clipped to it. The rotation wraps both so the
                        clip rotates with the figure, like the uncropped image. */
                     if (g.crop) {
                       return (
-                        <g key={im.libId || i} transform={rot ? `rotate(${rot} ${center})` : undefined}>
-                          <image href={src}
-                            x={g.iX} y={g.iY} width={g.iW} height={g.iH}
-                            preserveAspectRatio="none"
-                            clipPath={`url(#figclip-${obj.id}-${i})`}
-                            mask={eraseMask}
-                            style={{ pointerEvents: 'none' }}
-                          />
+                        <g key={im.libId || i} filter={figShadow ? `url(#${figureShadowFilterId(obj.id, i)})` : undefined}>
+                          <g transform={rot ? `rotate(${rot} ${center})` : undefined}>
+                            <image href={src}
+                              x={g.iX} y={g.iY} width={g.iW} height={g.iH}
+                              preserveAspectRatio="none"
+                              clipPath={`url(#figclip-${obj.id}-${i})`}
+                              mask={eraseMask}
+                              style={{ pointerEvents: 'none' }}
+                            />
+                          </g>
                         </g>
                       );
                     }
                     return (
-                      <image key={im.libId || i}
-                        href={src}
-                        x={g.iX} y={g.iY} width={g.iW} height={g.iH}
-                        transform={rot ? `rotate(${rot} ${center})` : undefined}
-                        preserveAspectRatio={par}
-                        mask={eraseMask}
-                        style={{ pointerEvents: 'none' }}
-                      />
+                      <g key={im.libId || i} filter={figShadow ? `url(#${figureShadowFilterId(obj.id, i)})` : undefined}>
+                        <image href={src}
+                          x={g.iX} y={g.iY} width={g.iW} height={g.iH}
+                          transform={rot ? `rotate(${rot} ${center})` : undefined}
+                          preserveAspectRatio={par}
+                          mask={eraseMask}
+                          style={{ pointerEvents: 'none' }}
+                        />
+                      </g>
                     );
                   })}
                   {/* Single figure: classic shift + small resize handle. */}
@@ -2943,15 +3022,45 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
 
           {getObjImages(selectedObj).length > 0 && (
             <div className="flex flex-col gap-1">
-              <span className="text-[10px] font-bold text-slate-500">Figures in this panel: {getObjImages(selectedObj).length}</span>
+              <span className="text-[10px] font-bold text-slate-500">
+                Figures in this panel: {getObjImages(selectedObj).length}
+                {getObjImages(selectedObj).length > 1 && <span className="font-normal text-slate-400"> — the list is the stacking: the last one is ON TOP of the others (⤒ ⬆ ⬇ ⤓ re-layer a figure)</span>}
+              </span>
               {getObjImages(selectedObj).map((im, i) => (
                 <div key={im.libId || i} onClick={() => setActiveFig({ objId: selectedObj.id, idx: i })}
                   className={`flex flex-wrap items-center gap-x-2 gap-y-1 border rounded-lg px-2 py-1 cursor-pointer ${cropPanelIdx === i && getObjImages(selectedObj).length > 1 ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200'}`}
-                  title="Click to make this figure the active one (crop / resize commands apply to the active figure)">
+                  title="Click to make this figure the active one (crop / resize / eraser / shadow commands apply to the active figure)">
                   {im.imgThumb || im.imgSrc
                     ? <img src={im.imgThumb || im.imgSrc} alt="" className="w-8 h-8 shrink-0 object-contain rounded border border-slate-100 bg-slate-50" />
                     : <span className="w-8 h-8 shrink-0 rounded bg-slate-100" />}
                   <span className="text-[10px] font-bold text-slate-600 flex-1 min-w-0 truncate">{im.src && im.src.elementLabel ? im.src.elementLabel : `Figure ${i + 1}`}</span>
+                  {/* Stacking: the list below is painted last → on top, and a
+                      click grabs the topmost figure first. */}
+                  {getObjImages(selectedObj).length > 1 && (
+                    <span className="flex items-center gap-0.5 shrink-0" title="Stacking order inside the panel: the last figure of the list is drawn ON TOP of the others (and is the one a click grabs first where two figures overlap)">
+                      <button type="button" onClick={(e) => { e.stopPropagation(); moveFigure(selectedObj.id, i, 'front'); }} disabled={i === getObjImages(selectedObj).length - 1}
+                        className="text-[10px] font-bold text-slate-500 border border-slate-200 rounded px-1 disabled:opacity-30 hover:bg-slate-100"
+                        title="Bring this figure to the front (on top of every other figure of the panel)">⤒</button>
+                      <button type="button" onClick={(e) => { e.stopPropagation(); moveFigure(selectedObj.id, i, 'up'); }} disabled={i === getObjImages(selectedObj).length - 1}
+                        className="text-[10px] font-bold text-slate-500 border border-slate-200 rounded px-1 disabled:opacity-30 hover:bg-slate-100"
+                        title="One step up in the stacking (a little less hidden by the figures above it)">⬆</button>
+                      <button type="button" onClick={(e) => { e.stopPropagation(); moveFigure(selectedObj.id, i, 'down'); }} disabled={i === 0}
+                        className="text-[10px] font-bold text-slate-500 border border-slate-200 rounded px-1 disabled:opacity-30 hover:bg-slate-100"
+                        title="One step down in the stacking (goes behind the figure just below it)">⬇</button>
+                      <button type="button" onClick={(e) => { e.stopPropagation(); moveFigure(selectedObj.id, i, 'back'); }} disabled={i === 0}
+                        className="text-[10px] font-bold text-slate-500 border border-slate-200 rounded px-1 disabled:opacity-30 hover:bg-slate-100"
+                        title="Send this figure to the back (behind every other figure of the panel)">⤓</button>
+                    </span>
+                  )}
+                  {getObjImages(selectedObj).length > 1 && i === getObjImages(selectedObj).length - 1 && (
+                    <span className="text-[9px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1 shrink-0" title="This figure is on top of the others">on top</span>
+                  )}
+                  {/* Shadow of THIS figure only — the picture itself, not the
+                      panel frame (see the “Figure shadow” block below). */}
+                  <button type="button"
+                    onClick={(e) => { e.stopPropagation(); setActiveFig({ objId: selectedObj.id, idx: i }); setFigureShadow(selectedObj.id, i, im.shadow ? null : { ...DEFAULT_SHADOW }); }}
+                    className={`text-[10px] font-bold shrink-0 border rounded px-1 ${im.shadow ? 'bg-slate-800 text-white border-slate-800' : 'text-slate-500 border-slate-200 hover:bg-slate-100'}`}
+                    title={im.shadow ? 'This figure casts its own drop shadow (click to take it off this figure only)' : 'Give THIS figure only its own drop shadow — the shadow of the picture itself, not of the panel frame'}>🌓</button>
                   {im.src && im.src.testId && (
                     <button type="button" onClick={() => openOriginalGraph(im.src)}
                       className="text-[10px] font-bold text-sky-700 hover:underline shrink-0 border border-sky-200 bg-sky-50 rounded px-1.5 py-0.5"
@@ -3103,6 +3212,37 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                   : 'Turn the eraser on, then drag over the figure: the round brush takes off what is under it (the size above is regulated with the slider or the number).'}
               </span>
             </div>
+            {/* 🌓 SHADOW OF THE FIGURE ITSELF — the shadow asked for: the one
+                that follows the PICTURE, not the (white) frame of the panel.
+                The record is the same one panels and arrows write, the filter is
+                its own (`figureShadowFilterId`) and it is applied to a group
+                ABOVE the <image>, so the shadow is built from the pixels of the
+                figure — its own transparency — and from nothing that the 🧽
+                eraser removed. A JPEG (opaque background) can only cast the
+                shadow of its rectangle: no filter invents a transparency the
+                file does not have — erase the background with the eraser, or use
+                a PNG, to get a shadow that hugs the object. The panel's own
+                shadow is the one of its FRAME: switch it off (block “Shadow”
+                below) to keep only the figures'. */}
+            <div className="col-span-2 flex flex-col gap-1.5 bg-slate-50 border border-slate-300 rounded-lg p-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-bold text-slate-700 flex-1">
+                  🌓 Figure shadow{getObjImages(selectedObj).length > 1 && cropPanelIdx >= 0 ? ` — figure ${cropPanelIdx + 1} of ${getObjImages(selectedObj).length}` : ''}
+                </span>
+                <button type="button" onClick={toggleFiguresShadow} disabled={!getObjImages(selectedObj).length}
+                  className={`font-bold px-2.5 py-1 rounded text-[10px] border ${getObjImages(selectedObj).length ? 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100' : 'bg-slate-100 border-slate-200 text-slate-300'}`}
+                  title="Give EVERY figure of this panel the same shadow — click again to take it off all of them">
+                  🌓 {figuresShadowed ? 'Remove the shadow from every figure' : 'Same shadow on every figure'}
+                </button>
+              </div>
+              {cropPanelIdx >= 0 ? (
+                <ShadowControls value={shadowSpec(getObjImages(selectedObj)[cropPanelIdx].shadow)}
+                  onChange={(v) => setFigureShadow(selectedObj.id, cropPanelIdx, v)}
+                  hint="The FIGURE casts this shadow — its pixels, so a PNG on a transparent background is shadowed around its content and what the 🧽 eraser removed casts nothing. It is drawn in the composition and kept by every export. (The “Shadow” block below is the one of the whole PANEL: its frame, figure, letter and texts.)" />
+              ) : (
+                <span className="text-[10px] text-slate-400 italic">Import a figure into this panel to give it its own shadow.</span>
+              )}
+            </div>
             <label className="text-[10px] font-bold text-slate-500">Rotate (°)
               <div className="flex gap-1">
                 <input type="number" min="-360" max="360" step="1" value={selectedObj.imgRotate || 0} onChange={e => updateObj({ imgRotate: Number(e.target.value) })} className="w-full border rounded p-1 text-xs" title="Rotate the image" />
@@ -3152,11 +3292,15 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       {/* DROP SHADOW of THIS panel — the same control block the arrows use, so
           both write the same record and both are rendered by the same
           <feDropShadow> filter. “Same shadow on every panel” applies it to the
-          whole figure in one click (the toolbar has the same shortcut). */}
+          whole figure in one click (the toolbar has the same shortcut).
+          This one shadows the whole PANEL — its frame included, hence the
+          rectangular shadow of a white box. The “🌓 Figure shadow” block of the
+          object properties shadows each FIGURE separately (its pixels): switch
+          this one off when only the pictures should cast a shadow. */}
       <div className="flex flex-col gap-2 border-t border-slate-200 pt-3">
-        <h5 className="text-xs font-bold text-slate-500 uppercase">Shadow</h5>
+        <h5 className="text-xs font-bold text-slate-500 uppercase" title="Shadow of the whole PANEL — its white frame, the figure, the letter and the texts. One panel at a time; for the shadow of each FIGURE inside it see the “🌓 Figure shadow” block above.">Shadow <span className="font-normal normal-case text-slate-400">(panel frame)</span></h5>
         <ShadowControls value={shadowSpec(selectedObj.shadow)} onChange={(v) => updateObj({ shadow: v })}
-          hint="The whole panel (frame, figure, letter, texts) casts a drop shadow — in the composition and in every export." />
+          hint="The whole panel (frame, figure, letter, texts) casts a drop shadow — in the composition and in every export. For a shadow that follows the PICTURE instead of the frame, use “🌓 Figure shadow” in the object properties above." />
         <div className="flex">
           <button type="button" onClick={togglePanelsShadow}
             className="bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold px-2.5 py-1 rounded text-[10px]"

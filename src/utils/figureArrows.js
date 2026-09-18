@@ -13,11 +13,17 @@
         switches — `style` (straight | curved) and `double` (one head | heads
         at BOTH ends) — so “curved, double-ended” works like the plain cases.
 
-     2. DROP SHADOWS. Panels and arrows can each cast a shadow, stored as one
-        little record `{ dx, dy, blur, color, opacity }` (mm) that is rendered
-        by ONE SVG `<feDropShadow>` filter — so the shadow is part of the
-        composition itself and every export (Export PNG, Save canvas, Insert
-        into project) keeps it: those paths rasterize this very SVG.
+     2. DROP SHADOWS. Panels, ARROWS and — since the shadow of a panel follows
+        its FRAME, not the pictures inside it — every FIGURE of a panel can cast
+        its own shadow. All three store the same little record
+        `{ dx, dy, blur, color, opacity }` (mm) and are rendered by ONE SVG
+        `<feDropShadow>` filter each, so a shadow is part of the composition
+        itself and every export (Export PNG, Save canvas, Insert into project)
+        keeps it: those paths rasterize this very SVG. Because the filter of a
+        FIGURE sits on a group ABOVE the image, the shadow is drawn from the
+        PIXELS of the picture: a PNG with a transparent background casts a
+        shadow around its content (not around a box), and what the 🧽 eraser
+        removed casts nothing at all.
 
    Everything here is PURE (no React, no DOM) and is imported by BOTH
    src/components/ImageBuilder.jsx and the scratch test _builder_arrows_test.mjs,
@@ -63,6 +69,15 @@ export const shadowSpec = (shadow) => {
  * anything that could break an id reference (`#`, spaces…) is replaced.
  */
 export const shadowFilterId = (key) => `fshadow-${String(key == null ? '' : key).replace(/[^\w-]/g, '_')}`;
+
+/**
+ * Id of the `<filter>` of ONE FIGURE inside a panel (`obj.images[i]`, which can
+ * carry its own shadow — see the note at the top of this file). It goes through
+ * `shadowFilterId` like every other shadow, with the figure index appended, so
+ * the filter of figure 0 of a panel can never collide with the filter of the
+ * panel itself nor with the one of figure 1.
+ */
+export const figureShadowFilterId = (objId, figIdx) => shadowFilterId(`${objId}-fig${Math.max(0, Math.round(Number(figIdx) || 0))}`);
 
 /* ── ARROWS ──────────────────────────────────────────────────────────────── */
 

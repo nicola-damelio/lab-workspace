@@ -289,10 +289,12 @@ check('40 dragging moves the whole arrow, or ONE end', () => {
 check('41 the shadow filters are real drop shadows, one per element', () => {
   frag('panel filter def', IB, 'id={shadowFilterId(obj.id)} x="-25%" y="-25%" width="150%" height="150%"');
   frag('arrow filter def', IB, 'id={shadowFilterId(a.id)} x="-25%" y="-25%" width="150%" height="150%"');
-  eq(times(IB, /<feDropShadow dx=\{sp\.dx\} dy=\{sp\.dy\} stdDeviation=\{sp\.blur\} floodColor=\{sp\.color\} floodOpacity=\{sp\.opacity\} \/>/g), 2);
+  frag('figure filter def', IB, 'id={figureShadowFilterId(obj.id, i)} x="-25%" y="-25%" width="150%" height="150%"');
+  eq(times(IB, /<feDropShadow dx=\{sp\.dx\} dy=\{sp\.dy\} stdDeviation=\{sp\.blur\} floodColor=\{sp\.color\} floodOpacity=\{sp\.opacity\} \/>/g), 3);
   frag('the panel group is filtered', IB, '<g filter={panelShadow ? `url(#${shadowFilterId(obj.id)})` : undefined}>');
   frag('a panel with no shadow gets NO filter', IB, 'const panelShadow = shadowSpec(obj.shadow);');
   frag('the arrow group is filtered', IB, 'filter={sp ? `url(#${shadowFilterId(a.id)})` : undefined}');
+  frag('a FIGURE with a shadow gets its own filter', IB, 'filter={figShadow ? `url(#${figureShadowFilterId(obj.id, i)})` : undefined}');
 });
 check('42 the whole panel is shadowed (frame, figure, letter, texts)', () => {
   const open = IB.indexOf('<g filter={panelShadow ?');
@@ -336,7 +338,7 @@ check('45 the two toolbars offer the arrow and the shadow', () => {
   frag('…and it writes the default record', IB, 'setObjects(prev => prev.map(o => ({ ...o, shadow: on ? { ...DEFAULT_SHADOW } : null })));');
 });
 check('46 the panel properties carry the Shadow block', () => {
-  frag('the section', IB, '<h5 className="text-xs font-bold text-slate-500 uppercase">Shadow</h5>');
+  frag('the section', IB, '<h5 className="text-xs font-bold text-slate-500 uppercase" title="Shadow of the whole PANEL');
   frag('wired to THIS panel', IB, '<ShadowControls value={shadowSpec(selectedObj.shadow)} onChange={(v) => updateObj({ shadow: v })}');
   frag('…and to every panel in one click', IB, "panelsShadowed ? 'Remove the shadow from every panel' : 'Same shadow on every panel'");
 });

@@ -1,9 +1,11 @@
 OK   _axis_aspect_test.cjs  →  ✅ 123/123 checks passed
 OK   _axis_fit_test.cjs  →  ✅ 476/476 checks passed
 OK   _break_test.mjs  →  33/33 checks passed
-OK   _builder_arrows_test.mjs  →  │ (index) │ name                                                                    │ ok   │ error │ | ✅ 106/106 checks passed
+OK   _builder_arrows_test.mjs  →  │ (index) │ name                                                                    │ ok   │ error │ | ✅ 108/108 checks passed
 OK   _builder_crop_test.cjs  →  ✅ 61/61 checks passed
 OK   _builder_eraser_test.mjs  →  _builder_eraser_test.mjs — 62 assertions OK
+OK   _builder_figshadow_test.mjs  →  _builder_figshadow_test.mjs — 71 assertions OK
+OK   _builder_figureorder_test.mjs  →  _builder_figureorder_test.mjs — 60 assertions OK
 OK   _builder_letters_test.cjs  →  ✅ 56/56 checks passed
 OK   _builder_link_test.cjs  →  │ 39      │ '[App] openImageBuilder is passed to the project page: operatorNames={operatorNames} openImageBuild…'       │ 'true'            │ 'true'  
 OK   _builder_montage_test.mjs  →  _builder_montage_test.mjs — 48 assertions OK
@@ -55,4 +57,4 @@ OK   _ui_scale_test.cjs  →  ✅ 44/44 checks passed
 OK   _view_scroll_memory_test.cjs  →  ✅ 41/41 checks passed
 OK   _workspace_drive_test.mjs  →  ✅ 55 tests passés (l’espace de travail entier vit sur le Drive)
 OK   _workspace_keys_test.mjs  →  ✅ 37 tests passés (les clés du navigateur vivent aussi sur le Drive)
-total 57, failed 0
+total 59, failed 0
