@@ -198,6 +198,16 @@ const AFFIL_MARK_BRACKETED = `(?:\\[\\s*${AFFIL_MARK}(?:\\s*${AFFIL_MARK_SEP}\\s
    (voir isAuthorMarkLine, relu par utils/referenceLinks.js). */
 const AFFIL_MARK_IN_LINE_RE = new RegExp(
   `\\p{L}\\s?(?:\\d{1,2}|[*\\u2020\\u2021\\u00a7\\u00b6]|[${SUP_MARK_CLASS}]+|\\[\\s*\\d{1,2})`, 'u');
+/* Une MARQUE D'AUTEUR n'importe où dans la ligne : un exposant collé à un nom
+   (« Susini1 », « Susini¹ »), le symbole de l'auteur correspondant (« Rossi* »,
+   « Rossi† ») ou une initiale pointée (« Rossi, M. »). Elle décide qu'une ligne
+   LONGUE est une liste de NOMS et non une ligne de MOTS-CLÉS (« Antibiotics,
+   Resistance, Biofilm, Virulence Factors… »), faite des mêmes mots capitalisés
+   séparés par des virgules. Le premier motif est celui d'AFFIL_MARK_IN_LINE_RE
+   (collé au nom, ou séparé par une espace) : composé depuis `.source`, il reste
+   d'accord avec lui au lieu d'être recopié. */
+const AUTHOR_MARK_IN_LINE_RE = new RegExp(`${AFFIL_MARK_IN_LINE_RE.source}`
+  + `|[*\\u2020\\u2021\\u00a7\\u00b6]|(?<![\\p{L}\\u2019])[\\p{Lu}]\\.(?![\\p{L}])`, 'u');
 /* Le même marqueur, mais SANS les lettres MAJUSCULES : « Rossi B » est une
    écriture d'auteur (nom + initiale), jamais un marqueur à retirer — au
    contraire de « Rossi b », « Rossi1 », « Rossi[2] », « Rossi (3) ». */
@@ -255,10 +265,17 @@ export const superscriptAffilMarkTail = (part) => {
 /* Un morceau de nom : « Rossi », « Mario Rossi1 », « Dupont1,2 », « Bianchi a »,
    « A. » — jamais une phrase (« plant viruses » ne passe pas : minuscule
    initiale). Les chiffres/symboles/lettres qui suivent sont les exposants
-   d'affiliation et peuvent se suivre (« 1,2 ») ou se cumuler (« 1* » = 
-   affiliation + auteur correspondant). */
+   d'affiliation et peuvent se suivre (« 1,2 ») ou se cumuler (« 1* » =
+   affiliation + auteur correspondant).
+   QUATRE MOTS AU PLUS, et non deux : « Bárbara Beatriz Báez Solveira3 » (quatre
+   mots) et « Jorge L. Martinez-Torrecuadrada5,* » (nom, initiale, nom composé)
+   faisaient REFUSER la LIGNE ENTIÈRE d'un consortium de quinze auteurs —
+   parts.every échouait sur ces deux morceaux, et le champ « Authors » restait
+   vide alors que la liste est à sa place, entre le titre et les affiliations.
+   Un nom n'est pas une phrase : la garde qui compte est la CAPITALE initiale de
+   chaque mot, pas le nombre de mots (« plant viruses » ne passe toujours pas). */
 const NAME_PART_RE = new RegExp(
-  `^[\\p{Lu}][\\p{L}'\\u2019.-]*(?:\\s+(?:[\\p{Lu}]|[\\p{Lu}][\\p{L}'\\u2019.-]*))?\\.?`
+  `^[\\p{Lu}][\\p{L}'\\u2019.-]*(?:\\s+(?:[\\p{Lu}]|[\\p{Lu}][\\p{L}'\\u2019.-]*\\.?)){0,3}`
   + `\\s*(?:(?:${AFFIL_MARK_BRACKETED}|${AFFIL_MARK})+(?:\\s*${AFFIL_MARK_SEP}\\s*(?:${AFFIL_MARK_BRACKETED}|${AFFIL_MARK})+)*)?$`, 'u');
 
 /** Un exposant tout seul : le « 2 » de « Dupont1,2 » (deux affiliations), en
@@ -1242,6 +1259,13 @@ const NAME_ONLY_RE = new RegExp(`^${NAME_WORD}(?:\\s+${NAME_WORD})*$`, 'u');
  *  deux mots capitalisés, ses marqueurs d'affiliation sont retirés
  *  (« Mario Rossi a », « Anna Bianchi[2] » → des noms nus).
  *
+ *  ET LA LONGUEUR NE LA JUGE PAS : un consortium de quinze auteurs dépasse les
+ *  200 caractères du « paragraphe de corps de texte », et la ligne était refusée
+ *  AVANT même que ses morceaux ne soient examinés — le champ « Authors » restait
+ *  vide. Ce sont les MORCEAUX qui décident (un NOM chacun) ; une ligne LONGUE
+ *  doit en plus PORTER une marque d'auteur (voir AUTHOR_MARK_IN_LINE_RE), pour
+ *  qu'une longue ligne de mots-clés ne devienne pas une liste de noms.
+ *
  *  Pourquoi une seconde lecture, plus permissive : dans un article, l'en-tête
  *  est écrit DANS UN ORDRE — le titre, PUIS les auteurs, PUIS les affiliations.
  *  Le titre est reconnu, les adresses sont reconnues (elles portent un mot
@@ -1255,12 +1279,17 @@ export const looksLikeNameListLine = (line) => {
   if (!s || s.length > AUTHOR_LINE_MAX) return false;
   if (HEADER_META_RE.test(s) || SECTION_WORD_RE.test(s)) return false;
   if (looksLikeAffiliationLine(s)) return false;
-  if (isBodyParagraph(s)) return false;
   const parts = s.split(/\s*[,;]\s*|\s+&\s+|\s+and\s+/i)
     .map((p) => stripAffilMarks(p))
     .filter(Boolean);
   if (!parts.length || parts.length > 40) return false;
   if (!parts.every((p) => NAME_ONLY_RE.test(p) && p.split(/\s+/).length <= 5)) return false;
+  /* LA LONGUEUR NE TRANCHE PLUS SEULE : elle refusait la ligne AVANT que ses
+     morceaux ne soient examinés. Un vrai paragraphe de corps de texte (ou une
+     ligne de mots-clés) ne passe toujours pas : chaque morceau doit être un NOM,
+     et une ligne LONGUE doit porter une marque d'auteur. Voir « 10 sexies » du
+     test du manuscrit. */
+  if (isBodyParagraph(s) && !AUTHOR_MARK_IN_LINE_RE.test(s)) return false;
   /* Un nom SEUL est accepté (article à un seul auteur), mais pas une phrase. */
   if (parts.length === 1) return s.split(/\s+/).length <= 4;
   return true;

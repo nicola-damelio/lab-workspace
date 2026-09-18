@@ -521,6 +521,90 @@ eq(authorsOf(['Aphid transmission of a new potyvirus in pepper crops', PROSE]).a
 has(PROJ, 'Drive and Firestore hold a COPY of the dataset',
   'un refus d’écrire dit que le Drive ne rend PAS sa place au magasin du navigateur');
 
+/* ── 10 sexies. LA LISTE D'AUTEURS RÉELLE D'UN CONSORTIUM (quinze auteurs) ───
+   C'est la ligne d'un article réel : 292 caractères, quinze auteurs, deux croix
+   « † », un « * » d'auteur correspondant sur trois noms, un « Ł », des accents,
+   une apostrophe typographique, un « and » final et des noms de QUATRE mots.
+   Elle n'était reconnue par AUCUN lecteur d'en-tête, et le champ « Authors »
+   restait vide. Deux causes, toutes deux corrigées :
+     • NAME_PART_RE n'acceptait que DEUX mots par nom : « Bárbara Beatriz Báez
+       Solveira3 » (quatre mots) et « Jorge L. Martinez-Torrecuadrada5,* » (nom,
+       initiale, nom composé) faisaient échouer parts.every — donc la ligne
+       ENTIÈRE, et pas seulement ces deux morceaux ;
+     • looksLikeNameListLine refusait d'emblée toute ligne de plus de 200
+       caractères (« paragraphe de corps de texte ») AVANT d'examiner ses
+       morceaux, alors que c'est justement sa lecture de position (entre le titre
+       et les affiliations) qui doit reconnaître la liste d'auteurs. */
+const REAL_AUTHORS = 'Bianca Susini1,†, Alexis Lancelle2,†, Bárbara Beatriz Báez Solveira3, '
+  + 'Acosta Domingo4, Vasiliki Liaki4, Maria Rivas-Sánchez5, David Sánchez-Alonso5, '
+  + 'Manish Kumar6, Francisco Ramos2, Łukasz Berlicki6, Marco Fragai1,7,*, Carmen Guerra4, '
+  + 'Jorge L. Martinez-Torrecuadrada5,* and Nicola D’Amelio2,*';
+ok(REAL_AUTHORS.length > 200, 'la ligne réelle dépasse les 200 caractères du « paragraphe »');
+ok(MS.isAuthorLine(REAL_AUTHORS), 'la ligne réelle est reconnue comme une ligne d’auteurs');
+ok(MS.looksLikeNameListLine(REAL_AUTHORS), '…par la lecture de POSITION (entre titre et affiliations)');
+eq(MS.classifyHeaderLine(REAL_AUTHORS), 'authors', '…et la fenêtre d’import lui donne le rôle « authors »');
+ok(MS.looksLikeAuthorLine('Bárbara Beatriz Báez Solveira3', { alone: true }),
+  'un nom de QUATRE mots est un nom (« Bárbara Beatriz Báez Solveira3 »)');
+ok(MS.looksLikeAuthorLine('Jorge L. Martinez-Torrecuadrada5,*', { alone: true }),
+  'un nom à initiale et trait d’union aussi (« Jorge L. Martinez-Torrecuadrada5,* »)');
+const realHeader = authorsOf([
+  'Structural basis of the interaction between a bacterial adhesin and a plant lectin',
+  REAL_AUTHORS,
+  '1 Magnetic Resonance Center (CERM), University of Florence, Sesto Fiorentino, Italy',
+  '2 UMR 1332 Biologie du Fruit et Pathologie, INRAE, Villenave d Ornon, France',
+  '3 Universidad de la República, Montevideo, Uruguay'
+]);
+['Bianca Susini', 'Alexis Lancelle', 'Bárbara Beatriz Báez Solveira', 'Acosta Domingo',
+  'Vasiliki Liaki', 'Maria Rivas-Sánchez', 'David Sánchez-Alonso', 'Manish Kumar',
+  'Francisco Ramos', 'Łukasz Berlicki', 'Marco Fragai', 'Carmen Guerra',
+  'Jorge L. Martinez-Torrecuadrada', 'Nicola D'].forEach((name) => {
+  ok(realHeader.authors.includes(name), `les quinze auteurs sont là : « ${name} »`);
+});
+ok(/D['’]Amelio/.test(realHeader.authors), '…apostrophe comprise (« D’Amelio »)');
+eq(realHeader.affiliations.split('\n').length, 3, '…et les trois affiliations suivent, dans l’ordre');
+ok(realHeader.lines.some((l) => l.role === 'authors' && l.text.includes('Bianca Susini') && /Nicola D['’]Amelio/.test(l.text)),
+  'la ligne est PROPOSÉE telle quelle dans la fenêtre d’import (rôle modifiable à la main)');
+/* Les marqueurs du document sont GARDÉS en exposants, jamais écrits « [1] ». */
+eq((realHeader.authors.match(/†/g) || []).length, 2, 'les deux croix « † » de l’article sont gardées');
+ok(!/\[\d/.test(realHeader.authors), '…et aucun marqueur n’est écrit comme un renvoi « [1] »');
+/* UNE LIGNE LONGUE SANS MARQUE N'EST PAS UNE LISTE DE NOMS : les mots-clés d'un
+   article sont eux aussi des mots capitalisés séparés par des virgules, et un
+   morceau de cinq mots suffit à écarter le lecteur d'auteurs — la lecture de
+   position doit alors dire non, elle aussi (voir AUTHOR_MARK_IN_LINE_RE). */
+const LONG_KEYWORDS = 'Antibiotics, Resistance, Two Component Signal Transduction Systems, '
+  + 'Biofilm Formation, Quorum Sensing, Virulence Factors, Efflux Pumps, Outer Membrane, '
+  + 'Secretion Systems, Motility, Adhesion, Invasion, Persistence, Horizontal Gene Transfer, '
+  + 'Mobile Genetic Elements, Integrons, Plasmids, Siderophores, Two Component Systems';
+ok(LONG_KEYWORDS.length > 200 && !MS.looksLikeAuthorLine(LONG_KEYWORDS)
+  && !MS.looksLikeNameListLine(LONG_KEYWORDS) && !MS.isAuthorLine(LONG_KEYWORDS),
+  'une longue ligne de mots-clés reste du texte, jamais une liste d’auteurs');
+/* …et une longue ligne dont la SEULE marque est une croix « † » isolée reste,
+   elle, une liste de noms : le motif de la marque d'auteur est composé de deux
+   lignes (une barre oblique inverse de trop en aurait fait un « | » littéral). */
+const DAGGER_ONLY_MARK = 'Bianca Susini, Alexis Lancelle, Bárbara Beatriz Báez Solveira, '
+  + 'Acosta Domingo, Vasiliki Liaki, Maria Rivas-Sánchez, David Sánchez-Alonso, Manish Kumar, '
+  + 'Francisco Ramos, Łukasz Berlicki, Marco Fragai, Carmen Guerra, '
+  + 'Jorge L. Martinez-Torrecuadrada, †';
+ok(DAGGER_ONLY_MARK.length > 200 && MS.looksLikeNameListLine(DAGGER_ONLY_MARK),
+  'une croix « † » isolée compte comme marque d’auteur sur une longue ligne');
+/* UNE LISTE LONGUE SANS LE MOINDRE MARQUEUR reste reconnue : les noms sont des
+   noms, quelle que soit la longueur de la ligne (troisième lecture, celle du
+   CONTENU) — et les noms de plusieurs mots n'y font plus échouer la ligne. */
+const UNMARKED_CONSORTIUM = 'Bianca Susini, Alexis Lancelle, Bárbara Beatriz Báez Solveira, '
+  + 'Acosta Domingo, Vasiliki Liaki, Maria Rivas-Sánchez, David Sánchez-Alonso, Manish Kumar, '
+  + 'Francisco Ramos, Łukasz Berlicki, Marco Fragai, Carmen Guerra, '
+  + 'Jorge L. Martinez-Torrecuadrada, Nicola D’Amelio';
+ok(UNMARKED_CONSORTIUM.length > 200 && MS.isAuthorLine(UNMARKED_CONSORTIUM),
+  'quinze noms sans le moindre exposant restent une liste d’auteurs');
+const unmarkedHeader = authorsOf([
+  'Structural basis of the interaction between a bacterial adhesin and a plant lectin',
+  UNMARKED_CONSORTIUM,
+  '1 Magnetic Resonance Center (CERM), University of Florence, Sesto Fiorentino, Italy'
+]);
+ok(unmarkedHeader.authors.includes('Bárbara Beatriz Báez Solveira')
+  && unmarkedHeader.authors.includes('Jorge L. Martinez-Torrecuadrada'),
+  '…et le champ « Authors » reçoit la liste (noms de plusieurs mots compris)');
+
 /* ── 11. Câblage : l'en-tête entre dans le PROJET, pas dans une section ───── */
 has(PROJ, 'const header = parseManuscriptHeader(manuscript.body);',
   'la page projet lit l’en-tête du document');
