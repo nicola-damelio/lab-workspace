@@ -495,7 +495,7 @@ const snap = (over = {}) => ({
 {
   const PD = readFileSync('./src/components/AppModules/projectDetailModule.jsx', 'utf8').replace(/\r\n/g, '\n');
   // ── 9a. plus de canvas neuf dans la bibliothèque partagée ────────────────
-  has(IB, 'if (!target && !canvasEntryIn(null)) {',
+  has(IB, 'if (!target && !canvasEntryFor(null)) {',
     'sans projet, la sauvegarde automatique n’écrit RIEN dans la bibliothèque partagée');
   has(IB, "setAutoSaveNote('noproject');", '…la pastille dit que le canvas n’a pas encore de projet');
   has(IB, '🗂 no project yet', '…et invite à en choisir un');

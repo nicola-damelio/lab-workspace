@@ -394,9 +394,9 @@ frag('51 a blank shadow is switched ON with the defaults', PANEL, 'onChange(e.ta
 
 /* ══ 7. PERSISTENCE, UNDO AND THE OTHER CANVAS PATHS ═════════════════════ */
 check('52 the localStorage payload keeps the annotations', () => {
-  frag('saved', IB, 'objects: persisted, arrows, shapes, focusObjId, globalCaption, isFullScreen };');
+  frag('saved', IB, 'objects: persisted, arrows, shapes, focusObjId, globalCaption, isFullScreen, canvasKey, canvasEntries, canvasHome, canvasLabel };');
   frag('re-read', IB, 'if (data.arrows) setArrows((data.arrows || []).map(normalizeArrow));');
-  frag('the effect re-runs when they change', IB, 'keepAspect, objects, arrows, shapes, focusObjId, globalCaption, isFullScreen, storageKey]);');
+  frag('the effect re-runs when they change', IB, 'keepAspect, objects, arrows, shapes, focusObjId, globalCaption, isFullScreen, canvasKey, canvasEntries, canvasHome, canvasLabel, storageKey]);');
 });
 check('53 a saved canvas carries its annotations', () => {
   frag('stored', IB, 'arrows: arrows || []');

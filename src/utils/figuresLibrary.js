@@ -294,8 +294,10 @@ const LIB_MERGE_FIELDS = ['label', 'url', 'full', 'drive', 'driveUrl', 'src', 'c
 /**
  * Fusionne une liste de bibliothèque (`current`, celle du navigateur) avec une
  * liste de sauvegarde (`incoming`). Réponse : `{ list, added, filled }`.
- * • clé d'identité = `id` (les entrées relues d'un fichier gardent leur id, un
- *   même fichier réimporté n'ajoute donc jamais de doublon) ;
+ * • clé d'identité = `id`, puis la clé de COMPOSITION (`canvasData.canvasKey`)
+ *   puis le fichier cloud : un même canvas relu d'un autre poste, ou repris
+ *   d'un dossier Drive sous un autre id, complète son entrée au lieu d'en créer
+ *   une seconde (c'est ce qui remplissait « 🖼 Saved canvases » de copies) ;
  * • les entrées nouvelles sont AJOUTÉES À LA FIN : l'ordre existant est
  *   conservé tel quel (la bibliothèque n'est pas réordonnée par un import) ;
  * • une entrée déjà présente n'est jamais remplacée, seulement complétée.
@@ -305,18 +307,36 @@ const LIB_MERGE_FIELDS = ['label', 'url', 'full', 'drive', 'driveUrl', 'src', 'c
 export const mergeLibraryList = (current, incoming) => {
   const list = Array.isArray(current) ? current.slice() : [];
   const byId = new Map();
-  list.forEach((it) => { if (it && it.id) byId.set(it.id, it); });
+  const byCanvas = new Map();   // même composition (canvasData.canvasKey)
+  const byDrive = new Map();    // même fichier cloud
+  const remember = (it) => {
+    if (!it || !it.id) return;
+    byId.set(it.id, it);
+    const k = canvasKeyOfEntry(it);
+    if (k && !byCanvas.has(k)) byCanvas.set(k, it);
+    const d = driveIdOfLibraryItem(it);
+    if (d && !byDrive.has(d)) byDrive.set(d, it);
+  };
+  list.forEach(remember);
   let added = 0;
   let filled = 0;
   (Array.isArray(incoming) ? incoming : []).forEach((raw) => {
     if (!raw || typeof raw !== 'object') return;
     const item = { ...raw };
     if (!item.id) item.id = uid('lib');
-    const prev = byId.get(item.id);
+    // Même `id`, même COMPOSITION (canvas), même fichier cloud : c'est la même
+    // entrée, on la complète. Seul ce qui n'a ni l'un ni l'autre est un ajout —
+    // c'est ce qui empêche une liste d'un autre poste ou une relecture du Drive
+    // d'empiler des copies du même canvas.
+    const key = canvasKeyOfEntry(item);
+    const d = driveIdOfLibraryItem(item);
+    const prev = byId.get(item.id)
+      || (key ? byCanvas.get(key) : null)
+      || (d ? byDrive.get(d) : null);
     if (!prev) {
       if (!item.addedAt) item.addedAt = new Date().toISOString();
       list.push(item);
-      byId.set(item.id, item);
+      remember(item);
       added += 1;
       return;
     }
@@ -345,9 +365,20 @@ export const mergeLibraryList = (current, incoming) => {
    les champs vides sont complétés par l'autre. PUR et testable hors navigateur.
    ───────────────────────────────────────────────────────────────────────────── */
 
+/** Clé de COMPOSITION d'une entrée : l'identité que la composition porte
+ *  ELLE-MÊME (`canvasData.canvasKey`, posée par l'Image Builder). Deux copies du
+ *  même canvas — deux postes, une liste de navigateur allégée, une relecture du
+ *  dossier Drive — la partagent même quand leurs `id` diffèrent : c'est ce qui
+ *  les fait se FUSIONNER au lieu de s'empiler. `''` pour tout ce qui n'est pas
+ *  un canvas (ou pour un canvas enregistré avant cette clé). PUR. */
+export const canvasKeyOfEntry = (i) => String((i && i.canvasData && i.canvasData.canvasKey) || '').trim();
+
 /** Identité d'une entrée de bibliothèque : deux copies de la MÊME figure que
- *  deux postes nomment différemment restent reconnues par leur fichier cloud. */
+ *  deux postes nomment différemment restent reconnues par leur composition
+ *  (clé de canvas) ou, à défaut, par leur fichier cloud. */
 export const libraryEntryIdentity = (i) => {
+  const cv = canvasKeyOfEntry(i);
+  if (cv) return `canvas:${cv}`;
   const id = String((i && i.id) || '');
   if (id) return `id:${id}`;
   const d = driveIdOfLibraryItem(i);
@@ -519,6 +550,26 @@ export const applyLibraryTrash = (list, trash) => {
   const set = trash instanceof Set ? trash : new Set(Array.isArray(trash) ? trash : []);
   if (!set.size) return Array.isArray(list) ? list : [];
   return (Array.isArray(list) ? list : []).filter((i) => !i || !trashIdsOfEntry(i).some((id) => set.has(id)));
+};
+
+/** EFFACER des pierres tombales — réservé à un geste EXPLICITE de restauration.
+ *
+ *  Une suppression notée est respectée par les deux côtés d'une fusion (voir
+ *  mergeLibraryLists / pullLibraryFromDrive) : c'est ce qui empêche une image
+ *  retirée à la main de revenir. Mais un nettoyage de copies (`🧹 Remove
+ *  duplicate canvases`, qui ne supprime RIEN sur le Drive) note aussi les
+ *  fichiers des copies fusionnées — et quand le poste, plus tard, a perdu sa
+ *  liste (magasin plein, navigateur vidé), plus rien ne peut ramener le canvas
+ *  depuis le Drive : « restore missing from Drive did not revive it ».
+ *
+ *  Quand l'utilisateur dit lui-même « c'est CE canvas que je veux retrouver »
+ *  (📥 Restore a canvas file, ou une entrée que l'on vient de réécrire), ces
+ *  pierres tombales-là n'ont plus de sens : elles partent. @returns {string[]} */
+export const forgetLibraryTrash = (scopeKey, ids) => {
+  const drop = new Set((Array.isArray(ids) ? ids : [ids]).map((x) => String(x || '')).filter(Boolean));
+  const kept = readLibraryTrash(scopeKey).filter((id) => !drop.has(id));
+  try { localStorage.setItem(libraryTrashKey(scopeKey), JSON.stringify(kept)); } catch { /* quota : la liste en mémoire reste juste */ }
+  return kept;
 };
 
 /** Union de deux listes d'ids supprimés (pour le miroir des clés). PUR. */
@@ -762,19 +813,28 @@ const figureThumb = async (dataUrl) => {
    par la passe complète (💾 Save canvas / sauvegarde automatique « cloud »),
    qui met la MÊME entrée à jour sur place.
 
+   `canvasKey` = la clé de composition de ce canvas (voir canvasKeyOfEntry) :
+   elle est posée dans la composition écrite ET sert à retrouver l'entrée quand
+   `updateId` n'est pas connu (page rechargée, autre ordinateur) — sans elle,
+   chaque sauvegarde ajoutait une copie du même canvas.
+
    @returns {{ entry:object|null, updated:boolean }} */
 export const saveCanvasSnapshot = ({
   scope = 'common', projectId = null, label = 'Canvas', updateId = null,
-  canvasData = null, src = null, url = null
+  canvasKey = '', canvasData = null, src = null, url = null
 } = {}) => {
   if (!canvasData) return { entry: null, updated: false };
   const list = scope === 'project' ? readProjectLibrary(projectId) : readLibrary();
-  const prev = updateId ? list.find((i) => i && i.id === updateId) : null;
+  const key = String(canvasKey || canvasData.canvasKey || '').trim();
+  // L'entrée de CE canvas : celle dont l'éditeur se souvient, sinon celle que sa
+  // clé de composition retrouve dans la bibliothèque.
+  const prev = (updateId ? list.find((i) => i && i.id === updateId) : null)
+    || (key ? list.find((i) => canvasKeyOfEntry(i) === key) : null);
   const name = String(label || 'Canvas').trim() || 'Canvas';
   // La date portée par la composition : deux canvas du même nom s'arbitrent par
   // elle (voir mergeLibraryEntryPair), et la fusion l'utilise pour choisir la
   // composition la plus récente.
-  const stamped = { ...canvasData, updatedAt: new Date().toISOString() };
+  const stamped = { ...canvasData, ...(key ? { canvasKey: key } : {}), updatedAt: new Date().toISOString() };
   if (prev) {
     // Les champs prévus pour la copie cloud (`url` / `full` / `drive`) sont
     // CONSERVÉS : le rendu n'a pas encore eu lieu, il ne faut pas effacer
@@ -795,6 +855,18 @@ export const saveCanvasSnapshot = ({
     ? addProjectLibraryItem(projectId, { label: name, url: url || null, full: url || null, src, canvasData: stamped })
     : addLibraryItem({ label: name, url: url || null, full: url || null, src, canvasData: stamped });
   return { entry, updated: false };
+};
+
+/** L'entrée de bibliothèque qui porte DÉJÀ cette composition (`canvasKey`), dans
+ *  la portée demandée — ou null. C'est ce que l'Image Builder interroge avant de
+ *  sauver : un canvas a UNE entrée par bibliothèque, jamais plusieurs. */
+export const findCanvasEntryByKey = ({ scope = 'common', projectId = null, canvasKey = '' } = {}) => {
+  const key = String(canvasKey || '').trim();
+  if (!key) return null;
+  try {
+    const list = scope === 'project' ? readProjectLibrary(projectId) : readLibrary();
+    return (list || []).find((i) => canvasKeyOfEntry(i) === key) || null;
+  } catch { return null; }
 };
 
 // Persist one figure into the image library with the REAL image on Google Drive:
@@ -882,7 +954,14 @@ export const publishLibraryFigure = async ({ scope = 'common', projectId = null,
   // re-capture of a figure uses.
   if (updateId) {
     const list = scope === 'project' ? readProjectLibrary(projectId) : readLibrary();
-    const prev = list.find((i) => i.id === updateId);
+    // `prev` = l'entrée visée, sinon — l'id est perdu mais la COMPOSITION est là
+    // (même clé de canvas) — celle qui porte déjà cette composition : on la met à
+    // jour au lieu d'ajouter une copie de plus (c'est ainsi qu'une bibliothèque
+    // se remplissait de dizaines de copies du même canvas).
+    const prevByKey = canvasData && String(canvasData.canvasKey || '').trim()
+      ? list.find((i) => canvasKeyOfEntry(i) === String(canvasData.canvasKey).trim())
+      : null;
+    const prev = list.find((i) => i.id === updateId) || prevByKey;
     if (prev) {
       const updated = { ...prev, ...item, id: prev.id, addedAt: prev.addedAt, updatedAt: new Date().toISOString() };
       const next = list.map((i) => (i.id === updateId ? updated : i));
@@ -992,6 +1071,116 @@ export const removeRecaptureDuplicates = (opts = {}) => {
     // Ces copies ne doivent pas revenir par la fusion : on les note.
     try {
       const dropped = list.filter((i) => i && ids.has(i.id)).flatMap(trashIdsOfEntry);
+      if (dropped.length) rememberLibraryTrash(g.scope === 'project' ? (g.projectId || 'common') : 'common', dropped);
+    } catch { /* la suppression reste faite */ }
+    if (g.scope === 'project') writeProjectLibrary(g.projectId, next);
+    else writeLibrary(next);
+  });
+  return { removed, groups: groups.length };
+};
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   PLUSIEURS COPIES DU MÊME CANVAS DANS UNE BIBLIOTHÈQUE
+
+   La sauvegarde automatique de l'Image Builder écrit la composition dans
+   l'entrée de bibliothèque de son canvas et la met à jour SUR PLACE… tant que
+   l'éditeur se souvient de cet id. Une page rechargée, un autre poste, une liste
+   de navigateur allégée : le souvenir était perdu et chaque passage ajoutait une
+   copie de plus — « the canvas is saved periodically but not overwritten so I
+   have in the project many saved canvases ». Les compositions portent désormais
+   leur propre clé (`canvasData.canvasKey`) et se fusionnent au lieu de s'empiler
+   (voir canvasKeyOfEntry / libraryEntryIdentity).
+
+   Ces trois fonctions nettoient ce qu'une version précédente a laissé. Aucune
+   copie n'est retirée sans un clic EXPLICITE : elles se contentent de dire
+   combien il y en a, et le retrait garde toujours la composition la plus récente
+   ainsi que les entrées que des figures référencent.
+   ──────────────────────────────────────────────────────────────────────────── */
+// Sans clé de composition (canvas enregistré avant), deux copies portant le même
+// nom comptent comme la même toile À PARTIR DE TROIS : deux copies, c'est un
+// travail refait à la main, pas une boucle.
+const CANVAS_DUP_MIN = 3;
+
+/**
+ * Groupes de copies d'un même canvas :
+ * `[{ scope, projectId, label, keepId, newestId, removeIds, count }]`.
+ * `keepIds` = entrées à ne JAMAIS retirer (une figure pointe dessus) ;
+ * `allowedProjectIds` limite l'analyse aux projets que l'utilisateur peut ouvrir.
+ * Rien n'est supprimé ici. PUR (lecture seule).
+ */
+export const findCanvasDuplicates = ({ allowedProjectIds = null, keepIds = null } = {}) => {
+  const keep = keepIds instanceof Set ? keepIds : new Set(Array.isArray(keepIds) ? keepIds : []);
+  const allowed = allowedProjectFilter(allowedProjectIds);
+  const out = [];
+  const scan = (scope, projectId, items) => {
+    const groups = new Map();
+    (items || []).forEach((i) => {
+      if (!i || !i.id || !i.canvasData) return;
+      const key = canvasKeyOfEntry(i);
+      const label = String(i.label || '').trim();
+      if (!key && !label) return;              // sans clé ni nom : jamais regroupé
+      const g = key ? `k:${key}` : `l:${label}`;
+      if (!groups.has(g)) groups.set(g, { keyed: !!key, list: [] });
+      groups.get(g).list.push(i);
+    });
+    groups.forEach((group, key) => {
+      if (group.list.length < (group.keyed ? 2 : CANVAS_DUP_MIN)) return;
+      const sorted = group.list.slice().sort((a, b) => libraryEntryTime(b) - libraryEntryTime(a));
+      const newest = sorted[0];
+      // Une copie qu'une figure référence est GARDÉE (son id est le lien
+      // « ✏️ Modify in Image Builder ») : elle recevra la composition la plus
+      // récente, voir removeCanvasDuplicates.
+      const kept = sorted.find((i) => keep.has(i.id)) || newest;
+      const remove = sorted.filter((i) => i.id !== kept.id && !keep.has(i.id));
+      if (!remove.length) return;
+      out.push({
+        scope,
+        projectId: projectId || null,
+        key,
+        label: newest.label || 'Canvas',
+        keepId: kept.id,
+        newestId: newest.id,
+        removeIds: remove.map((i) => i.id),
+        count: remove.length
+      });
+    });
+  };
+  try { scan('common', null, readLibrary()); } catch { /* ignore */ }
+  try {
+    Object.entries(readAllProjectLibraries()).forEach(([pid, items]) => {
+      if (allowed && !allowed(pid)) return;   // la bibliothèque d'une autre équipe
+      scan('project', pid, items);
+    });
+  } catch { /* ignore */ }
+  return out;
+};
+
+/** Nombre de copies que removeCanvasDuplicates() retirerait. */
+export const countCanvasDuplicates = (opts = {}) => findCanvasDuplicates(opts).reduce((n, g) => n + g.count, 0);
+
+/** Retire ces copies : une seule entrée reste par canvas, avec la composition la
+ *  plus récente. Les repères des copies retirées partent dans les pierres
+ *  tombales (elles ne reviennent ni par la fusion ni par la relecture du Drive).
+ *  @returns {{ removed:number, groups:number }} */
+export const removeCanvasDuplicates = (opts = {}) => {
+  const groups = findCanvasDuplicates(opts);
+  let removed = 0;
+  groups.forEach((g) => {
+    const list = g.scope === 'project' ? readProjectLibrary(g.projectId) : readLibrary();
+    const kept = list.find((i) => i && i.id === g.keepId);
+    const newest = list.find((i) => i && i.id === g.newestId);
+    if (!kept) return;
+    const ids = new Set(g.removeIds);
+    // Le TRAVAIL le plus récent ne part pas avec les copies : l'entrée gardée
+    // reçoit la composition la plus récente (et les champs que l'autre portait,
+    // comme son lien cloud). Son `id`, lui, ne change pas.
+    const merged = newest && newest.id !== kept.id ? mergeLibraryEntryPair(kept, newest) : kept;
+    const next = list.filter((i) => i && !ids.has(i.id)).map((i) => (i && i.id === kept.id ? merged : i));
+    removed += list.length - next.length;
+    try {
+      const stillThere = new Set(trashIdsOfEntry(merged));
+      const dropped = [...new Set(list.filter((i) => i && ids.has(i.id))
+        .flatMap(trashIdsOfEntry).filter((id) => !stillThere.has(id)))];
       if (dropped.length) rememberLibraryTrash(g.scope === 'project' ? (g.projectId || 'common') : 'common', dropped);
     } catch { /* la suppression reste faite */ }
     if (g.scope === 'project') writeProjectLibrary(g.projectId, next);
@@ -1123,6 +1312,162 @@ export const parseFigureMeta = (text) => {
     const d = typeof text === 'string' ? JSON.parse(text) : text;
     return d && typeof d === 'object' ? d : null;
   } catch { return null; }
+};
+
+/* ── RESTAURER UN CANVAS DEPUIS SON FICHIER (« <image>.meta.json ») ───────────
+
+   « j'ai fait un rafraîchissement forcé et j'ai perdu mon canvas, et je venais
+   de le finir » — la composition que l'on vient de finir pèse plusieurs
+   mégaoctets (chaque panneau garde ses pixels EN CLAIR dans la composition), et
+   le magasin du navigateur est plafonné (~10 Mo par site, partagé avec les
+   projets, les publications et toutes les bibliothèques). Quand elle ne rentre
+   pas, l'entrée ne vit QUE en mémoire : le rafraîchissement l'emporte, et le
+   seul exemplaire complet qui reste est le sidecar déposé À CÔTÉ de l'image sur
+   le Drive.
+
+   Ces fonctions rendent ce fichier utilisable directement — c'est le dernier
+   recours, et il ne dépend d'aucun jeton, d'aucune liste, d'aucun horodatage :
+   le fichier EST la composition. */
+
+/** Composition éditable portée par un sidecar, en forme utilisable par l'Image
+ *  Builder (les trois listes existent toujours, comme dans toute composition).
+ *  `null` quand le fichier n'en porte pas — un sidecar de simple figure n'est
+ *  pas un canvas. PUR. */
+export const canvasDataOfFigureMeta = (meta) => {
+  const cd = meta && typeof meta === 'object' ? meta.canvasData : null;
+  if (!cd || typeof cd !== 'object') return null;
+  return {
+    ...cd,
+    objects: Array.isArray(cd.objects) ? cd.objects : [],
+    arrows: Array.isArray(cd.arrows) ? cd.arrows : [],
+    shapes: Array.isArray(cd.shapes) ? cd.shapes : []
+  };
+};
+
+/** Allège les pixels d'une composition avant de la ranger dans le magasin du
+ *  navigateur : les MÊMES pixels y sont écrits plusieurs fois (le panneau garde
+ *  `imgSrc`, `imgThumb` ET son tableau `images[]`, tous remplis de la même
+ *  image), et un canvas de quatre panneaux atteint ainsi les 4 Mo. Chaque image
+ *  n'est réduite QU'UNE fois (même source → même copie), les SVG restent
+ *  vectoriels, et une copie qui ne gagne rien est laissée telle quelle : on ne
+ *  dégrade jamais une image pour rien. La composition complète, elle, reste
+ *  entière sur le Drive (le sidecar n'est jamais touché).
+ *  @returns {{ canvasData:object|null, changed:boolean, bytes:number }} */
+export const lightenCanvasDataPixels = async (canvasData, { maxSide = 1200, quality = 0.85 } = {}) => {
+  const cd = canvasData && typeof canvasData === 'object' ? canvasData : null;
+  if (!cd) return { canvasData: null, changed: false, bytes: 0 };
+  const before = JSON.stringify(cd).length;
+  const done = new Map();  // source → copie allégée (faite une fois par source)
+  const shrink = async (src) => {
+    const s = String(src || '');
+    if (!s.startsWith('data:image/') || s.startsWith('data:image/svg+xml')) return s;
+    if (done.has(s)) return done.get(s);
+    const keepAlpha = s.startsWith('data:image/png');
+    let out = s;
+    try {
+      const next = await downscaleImage(s, maxSide, keepAlpha ? 'image/png' : 'image/jpeg', quality, true);
+      if (next && next.length < s.length) out = next;
+    } catch { /* on garde la source */ }
+    done.set(s, out);
+    return out;
+  };
+  const objects = [];
+  for (const o of (Array.isArray(cd.objects) ? cd.objects : [])) {
+    if (!o || typeof o !== 'object') { objects.push(o); continue; }
+    const one = { ...o };
+    if (Array.isArray(o.images) && o.images.length) {
+      const images = [];
+      for (const im of o.images) {
+        if (!im || typeof im !== 'object') { images.push(im); continue; }
+        const imgSrc = await shrink(im.imgSrc);
+        images.push({
+          ...im,
+          imgSrc,
+          imgThumb: String(im.imgThumb || '') === String(im.imgSrc || '') ? imgSrc : await shrink(im.imgThumb)
+        });
+      }
+      one.images = images;
+      const first = images[0] || {};
+      one.imgSrc = first.imgSrc != null ? first.imgSrc : one.imgSrc;
+      one.imgThumb = first.imgThumb || first.imgSrc || one.imgThumb;
+    } else {
+      const imgSrc = await shrink(o.imgSrc);
+      one.imgSrc = imgSrc;
+      one.imgThumb = String(o.imgThumb || '') === String(o.imgSrc || '') ? imgSrc : await shrink(o.imgThumb);
+    }
+    objects.push(one);
+  }
+  const next = { ...cd, objects };
+  const bytes = JSON.stringify(next).length;
+  return { canvasData: next, changed: bytes < before, bytes };
+};
+
+/** LA RESTAURATION D'UN CANVAS depuis le fichier de sa composition.
+ *
+ *  Le fichier vient de n'importe où (Téléchargements, une copie du Drive, le
+ *  poste d'un collègue) : il est relu, allégé, puis rangé dans la bibliothèque de
+ *  la portée demandée sous la MÊME forme que n'importe quel canvas — avec une clé
+ *  de composition (`canvasData.canvasKey`), donc « 💾 Save now » met à jour
+ *  cette entrée-là au lieu d'en ajouter une autre. Réimporter le même fichier met
+ *  l'entrée à jour (elle est reconnue par son sidecar), et les pierres tombales
+ *  de cette entrée sont effacées : l'utilisateur vient de dire qu'il la veut.
+ *
+ *  @returns {{ ok:boolean, entry:object|null, created:boolean, lightened:boolean,
+ *              bytes:number, persisted:boolean, error:string }} */
+export const restoreCanvasFromFigureMeta = async ({
+  text = '', fileName = '', scope = 'project', projectId = null, label = '', maxSide = 1200
+} = {}) => {
+  const fail = (error) => ({ ok: false, entry: null, created: false, lightened: false, bytes: 0, persisted: false, error });
+  const meta = parseFigureMeta(text);
+  const canvasData = canvasDataOfFigureMeta(meta);
+  if (!canvasData) {
+    return fail('This file carries no canvas composition — pick the “<image>.meta.json” written next to a figure saved by the Image Builder.');
+  }
+  const imageName = imageNameOfSidecarName(fileName) || String((meta && meta.imageName) || '');
+  const metaName = isFigureMetaFileName(fileName) ? String(fileName) : (imageName ? sidecarNameOfImageName(imageName) : '');
+  const name = String(label || (meta && meta.label) || imageName || 'Canvas').trim() || 'Canvas';
+  const list = scope === 'project' ? readProjectLibrary(projectId) : readLibrary();
+  // L'entrée de CE canvas : celle que son sidecar désigne (réimporter le même
+  // fichier ne fabrique donc pas une seconde copie).
+  const key = canvasKeyOfEntry(meta);
+  const prev = (metaName ? list.find((i) => i && String(i.metaName || '') === metaName) : null)
+    || (key ? list.find((i) => canvasKeyOfEntry(i) === key) : null)
+    || null;
+  const light = await lightenCanvasDataPixels(canvasData, { maxSide });
+  const stamped = {
+    ...light.canvasData,
+    canvasKey: canvasKeyOfEntry(prev) || uid('cv'),
+    updatedAt: new Date().toISOString()
+  };
+  const entry = {
+    ...(prev || {}),
+    id: (prev && prev.id) || uid('lib'),
+    label: name,
+    url: (prev && prev.url) || null,
+    full: (prev && prev.full) || null,
+    src: (prev && prev.src) || (meta && meta.src) || null,
+    canvasData: stamped,
+    metaName: metaName || (prev && prev.metaName) || null,
+    addedAt: (prev && prev.addedAt) || String((meta && meta.savedAt) || '') || new Date().toISOString(),
+    updatedAt: stamped.updatedAt
+  };
+  const next = prev ? list.map((i) => (i && i.id === prev.id ? entry : i)) : [entry, ...list];
+  if (scope === 'project') writeProjectLibrary(projectId, next);
+  else writeLibrary(next);
+  // Un geste EXPLICITE : les pierres tombales de cette entrée ne doivent plus
+  // empêcher ni la fusion des clés ni la relecture du dossier Drive.
+  forgetLibraryTrash(scope === 'project' ? (projectId || 'common') : 'common', trashIdsOfEntry(entry));
+  /* CE QUI A ÉTÉ ÉCRIT EST-IL VRAIMENT GARDÉ ? Le magasin du navigateur est
+     plafonné (~10 Mo par site, partagé) : une liste trop lourde reste en MÉMOIRE
+     — donc perdue au prochain rafraîchissement, exactement le défaut d'origine.
+     On le DIT à l'appelant (la page projet prévient et propose de faire de la
+     place) au lieu de laisser croire que c'est enregistré. */
+  let persisted = false;
+  try {
+    const raw = localStorage.getItem(scope === 'project' ? projectLibraryKey(projectId) : LIBRARY_KEY) || '';
+    persisted = raw.includes(entry.id);
+  } catch { persisted = false; }
+  return { ok: true, entry, created: !prev, lightened: !!light.changed, bytes: light.bytes, persisted, error: '' };
 };
 
 /** Dépose le sidecar à côté de l'image (même dossier `<project>/images`).

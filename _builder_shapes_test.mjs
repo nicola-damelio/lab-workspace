@@ -330,7 +330,7 @@ eq(times(IB, /<feFuncG type="linear" slope=\{adj\.slope\} intercept=\{adj\.inter
 
 /* ── 4f. La persistance : le canvas sauvé, l'annulation, les remises à zéro ── */
 has(IB, 'if (data.shapes) setShapes((data.shapes || []).map(normalizeShape));', 'les formes reviennent avec le canvas de la session');
-has(IB, 'objects: persisted, arrows, shapes, focusObjId, globalCaption, isFullScreen };', '…et sont enregistrées avec lui');
+has(IB, 'objects: persisted, arrows, shapes, focusObjId, globalCaption, isFullScreen, canvasKey, canvasEntries, canvasHome, canvasLabel };', '…et sont enregistrées avec lui (avec l’identité du canvas : voir _canvas_identity_test)');
 has(IB, 'shapes: shapes || []', 'la composition sauvée (💾 Save canvas / 📤 Insert) porte aussi les formes');
 has(IB, 'setShapes((cd.shapes || []).map(normalizeShape));', '…et elles sont rechargées à la réouverture');
 has(IB, 'shapes: JSON.parse(JSON.stringify(shapes || []))', 'l’annulation garde les formes dans son instantané');

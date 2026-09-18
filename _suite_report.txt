@@ -19,6 +19,8 @@ OK   _builder_shapes_test.mjs  →  _builder_shapes_test : 180 vérifications pa
 OK   _builder_uibar_test.mjs  →  _builder_uibar_test.mjs — 106 assertions OK
 OK   _builder_zoom_test.cjs  →  ✅ 31/31 checks passed
 OK   _canvas_autosave_test.mjs  →  ✅ _canvas_autosave_test : 138 vérifications passées
+OK   _canvas_file_restore_test.mjs  →  ✅ _canvas_file_restore_test : 52 vérifications passées
+OK   _canvas_identity_test.mjs  →  ✅ _canvas_identity_test : 78 vérifications passées
 OK   _capture_fix_test.mjs  →  passed 70/70
 OK   _chain_test.cjs  →  RESULT: PASS (two chains separated, contacts do not merge them)
 OK   _chart_dblclick_test.cjs  →  ✅ 101/101 checks passed
@@ -66,4 +68,4 @@ OK   _ui_scale_test.cjs  →  ✅ 44/44 checks passed
 OK   _view_scroll_memory_test.cjs  →  ✅ 41/41 checks passed
 OK   _workspace_drive_test.mjs  →  ✅ 55 tests passés (l’espace de travail entier vit sur le Drive)
 OK   _workspace_keys_test.mjs  →  ✅ 37 tests passés (les clés du navigateur vivent aussi sur le Drive)
-total 68, failed 0
+total 70, failed 0

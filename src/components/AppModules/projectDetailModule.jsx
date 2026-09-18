@@ -49,7 +49,8 @@ import { mirrorDeleteProject, mirrorRenameProject } from '../../utils/driveMirro
 import { repairContentImages, getRenderableDriveUrl } from '../../data/constants';
 import {
   readDeck, readProjectLibrary, removeProjectLibraryItem, pushLibraryToDrive, pullLibraryFromDrive,
-  addProjectLibraryItem, makeUploadImage, uploadFigureToDrive
+  addProjectLibraryItem, makeUploadImage, uploadFigureToDrive,
+  countCanvasDuplicates, removeCanvasDuplicates, restoreCanvasFromFigureMeta
 } from '../../utils/figuresLibrary';
 import { SlidePreview, renderSlideToDataUrl } from '../FiguresSlides';
 
@@ -500,6 +501,80 @@ export const ProjectDetailModule = ({
     if (!window.confirm('Remove this canvas from the project image library? The cloud/Drive copy is kept.')) return;
     removeProjectLibraryItem(project.id, id);
     setCanvasLibVersion((v) => v + 1);
+  };
+
+  /* ---- 🧹 LES COPIES DU MÊME CANVAS -------------------------------------------
+     La sauvegarde automatique de l'Image Builder écrit dans l'entrée de SON
+     canvas — tant qu'elle se souvient de son id. Page rechargée, autre poste,
+     liste de navigateur allégée : le souvenir était perdu et chaque passage
+     AJOUTAIT une copie ; la liste ci-dessous se remplissait de « Canvas
+     18/09/2026 » identiques. Les compositions portent désormais leur clé et se
+     fusionnent (voir figuresLibrary) ; ce bouton nettoie ce qu'une version
+     précédente a laissé — la composition la plus récente de chaque canvas
+     survit, et toute entrée qu'une figure de cette page référence (son lien
+     « ✏️ Modify in Image Builder ») est GARDÉE. Rien n'est retiré du Drive. */
+  const referencedCanvasIds = () => {
+    const out = [];
+    Object.keys(project.figures || {}).forEach((sec) => {
+      (project.figures[sec] || []).forEach((fig) => { if (fig && fig.canvasId) out.push(fig.canvasId); });
+    });
+    return out;
+  };
+  const canvasDupCount = useMemo(() => {
+    if (!projectAccessFor(project, myName, isSuper)) return 0;
+    try { return countCanvasDuplicates({ allowedProjectIds: [project.id], keepIds: referencedCanvasIds() }); } catch { return 0; }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project, canvasLibVersion, myName, isSuper]);
+
+  const cleanCanvasDuplicates = () => {
+    if (!canModify) return;
+    const keepIds = referencedCanvasIds();
+    const n = countCanvasDuplicates({ allowedProjectIds: [project.id], keepIds });
+    if (!n) return;
+    if (!window.confirm(`Remove ${n} duplicate cop${n === 1 ? 'y' : 'ies'} of a canvas saved again and again?\n\nThe most recent composition of each canvas is kept, along with every entry a figure of this page points at. Nothing is deleted from Google Drive.`)) return;
+    const res = removeCanvasDuplicates({ allowedProjectIds: [project.id], keepIds });
+    setCanvasLibVersion((v) => v + 1);
+    setFigDriveMsg(res.removed
+      ? `🧹 ${res.removed} duplicate canvas cop${res.removed === 1 ? 'y' : 'ies'} removed — the newest composition of each canvas was kept.`
+      : '✓ No duplicate canvas left.');
+  };
+
+  /* ---- 📥 RESTAURER UN CANVAS DEPUIS SON FICHIER ----------------------------
+     « j'ai fait un rafraîchissement forcé et j'ai perdu mon canvas, et je venais
+     de le finir » : la composition d'un canvas est écrite ENTIÈRE (les pixels de
+     chaque panneau) et ne rentre pas toujours dans le magasin du navigateur —
+     elle vivait alors en mémoire seulement, et le rafraîchissement l'emporte. Le
+     seul exemplaire complet qui reste est le fichier « <image>.meta.json » posé
+     À CÔTÉ de l'image sur le Drive. Ce bouton le reprend là où il est
+     (Téléchargements, copie du Drive, poste d'un collègue) et remet la
+     composition dans la bibliothèque de CE projet — avec sa clé, donc « 💾 Save
+     now » la remettra dans la MÊME entrée. Rien n'est supprimé, rien n'est
+     envoyé : c'est la composition qui revient, et l'image repart au Drive à la
+     première sauvegarde. */
+  const canvasFileRef = useRef(null);
+  const [canvasRestoreBusy, setCanvasRestoreBusy] = useState(false);
+
+  const restoreCanvasFromFile = async (file) => {
+    if (!file || !canModify) return;
+    setCanvasRestoreBusy(true);
+    setFigDriveMsg('📥 Reading the canvas file…');
+    try {
+      const text = await file.text();
+      const res = await restoreCanvasFromFigureMeta({
+        text, fileName: file.name || '', scope: 'project', projectId: project.id
+      });
+      if (!res.ok) { setFigDriveMsg(`⚠ ${res.error}`); return; }
+      setCanvasLibVersion((v) => v + 1);
+      setFigDriveMsg(`✅ “${res.entry.label}” ${res.created ? 'restored into' : 'updated in'} this project’s library`
+        + `${res.lightened ? ' (its panels were compressed so the composition fits this browser)' : ''}`
+        + (res.persisted
+          ? ' — click 🖼 Open in Image Builder below, then 💾 Save now to put its image back on Drive.'
+          : ' — ⚠ but this browser’s store is FULL, so the canvas is only here for this session: free space with “☁ Save figures to Drive” above (it moves the figures whose pixels live only here), then import the file again.'));
+    } catch (err) {
+      setFigDriveMsg(`⚠ ${(err && err.message) || 'Could not read that file'}`);
+    } finally {
+      setCanvasRestoreBusy(false);
+    }
   };
 
   /* ---- ☁ ⇄ this project's image library against Google Drive -----------------
@@ -4009,6 +4084,13 @@ export const ProjectDetailModule = ({
             and a <span className="font-bold">link</span> back into the editor: “Open in Image Builder” reloads its panels, captions
             and grid, and saving it again updates this same entry. A composition inserted into a section keeps showing its
             <span className="font-bold"> image</span> there — the link is added on top, it never replaces the picture.
+            A canvas saved by an older version could be stored <span className="font-bold">several times</span>: the
+            <span className="font-bold"> 🧹 Remove duplicate canvases</span> button below merges those copies — the most
+            recent composition of each canvas wins, and nothing is deleted from Google Drive.
+            If a canvas vanished from this browser (a forced refresh while its composition was too big for the browser
+            store), <span className="font-bold">📥 Restore a canvas file</span> brings it back from the
+            <span className="font-bold"> &lt;image&gt;.meta.json</span> that sits next to its image on Google Drive — no
+            list, no timestamp, no cloud connection needed: the file <span className="font-bold">is</span> the composition.
           </p>
           {/* The figure FILES are on Drive; this browser holds the LIST that shows
               them. These two buttons are the same additive gestures as in the
@@ -4028,6 +4110,29 @@ export const ProjectDetailModule = ({
                       title="Send to Google Drive the figures of this project whose pixels are still only in this browser (they would not follow you on another computer). Nothing is deleted.">
                 ☁ Save figures to Drive
               </button>
+            )}
+            {canModify && canvasDupCount > 0 && (
+              <button type="button" onClick={cleanCanvasDuplicates}
+                      className="font-bold px-2.5 py-1 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                      title="The automatic save of the Image Builder used to add one entry per pass once it had lost track of the canvas: this removes the extra copies. The most recent composition of each canvas is kept, along with every entry a figure of this page points at. Nothing is deleted from Google Drive.">
+                🧹 Remove {canvasDupCount} duplicate canvas cop{canvasDupCount === 1 ? 'y' : 'ies'}
+              </button>
+            )}
+            {canModify && (
+              <>
+                <button type="button" onClick={() => { if (canvasFileRef.current) canvasFileRef.current.click(); }}
+                        disabled={canvasRestoreBusy}
+                        className="font-bold px-2.5 py-1 rounded-lg border border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100 disabled:opacity-50"
+                        title="Lost a canvas (browser refresh, empty store, another computer)? Pick the “<image>.meta.json” file that sits NEXT TO its image on Google Drive: its composition — panels, figures, letters, captions, grid, arrows — comes back into this project’s library, where “🖼 Open in Image Builder” can reopen it. The panels are compressed so the composition fits the browser store; the full-size file stays on Drive and “💾 Save now” re-uploads the image.">
+                  {canvasRestoreBusy ? '⏳ Restoring…' : '📥 Restore a canvas file'}
+                </button>
+                <input ref={canvasFileRef} type="file" accept=".json,application/json" className="hidden"
+                       onChange={(e) => {
+                         const f = e.target.files && e.target.files[0];
+                         e.target.value = '';
+                         restoreCanvasFromFile(f);
+                       }} />
+              </>
             )}
             {figDriveMsg && (
               <span className="font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded px-2 py-1">{figDriveMsg}</span>

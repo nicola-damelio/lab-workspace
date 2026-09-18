@@ -35,7 +35,7 @@ const frag = (name, hay, needle) => checkTrue(`${name}: ${needle.slice(0, 44)}â€
 // ===========================================================================
 frag('[ImageBuilder] publishCanvas', IB, 'const publishCanvas = async ({ label, targetProjectId = projectId || null, dataUrl = null }) => {');
 frag('[ImageBuilder] target scope', IB, `scope: target ? 'project' : 'common',`);
-frag('[ImageBuilder] per-scope entry lookup', IB, 'const known = canvasEntryIn(target);');
+frag('[ImageBuilder] per-scope entry lookup (id kept, else the composition key)', IB, 'const known = canvasEntryFor(target);');
 frag('[ImageBuilder] in-place update of THAT scope copy', IB, 'updateId: known ? known.id : null,');
 frag('[ImageBuilder] scope key helper', IB, "const canvasScopeKey = (scopeProjectId) => scopeProjectId || 'dataset';");
 frag('[ImageBuilder] entry remembered per scope', IB, 'rememberCanvasEntry(target, entry);');
@@ -60,7 +60,7 @@ frag('[ImageBuilder] the library opens on the destination tab', IB, "setLibraryT
 frag('[ImageBuilder] the library opens on the destination project', IB, 'setLibProjectId(destProjectId);');
 frag('[ImageBuilder] re-homing is announced', IB, 'Saving it here stores a');
 frag('[ImageBuilder] render reused (no second render)', IB, 'const img = dataUrl || await renderToDataUrl(');
-frag('[ImageBuilder] canvas badge shows the home scope', IB, 'const homeEntry = canvasEntryIn(canvasHome);');
+frag('[ImageBuilder] canvas badge shows the home scope', IB, 'const homeEntry = useMemo(');
 frag('[ImageBuilder] bookkeeping is reset per canvas/project', IB, 'setCanvasEntries({});');
 frag('[ImageBuilder] reset also re-homes the dialog default', IB, 'setCanvasHome(projectId || null);');
 frag('[ImageBuilder] loading a canvas binds it to THAT library', IB, 'restoreCanvasFromItem(here.item, { confirm: false, scopeProjectId: here.scopeProjectId })');
@@ -334,7 +334,7 @@ const snap = (gridCols, gridRows, objectCount) => ({
 check('S6 a plain figure shows no builder link', showsModifyLink({ id: 'f', url: 'u' }, true), false);
 checkTrue('S6 a builder figure shows the link', showsModifyLink({ id: 'f', url: 'u', source: 'image-builder' }, true));
 checkTrue('S6 an unknown canvasId resolves to nothing (no crash)', loadRequestedCanvas(makeStore(), 'P', 'ghost') === null);
-frag('[figuresLibrary] update-in-place semantics still there', LIB, 'const prev = list.find((i) => i.id === updateId);');
+frag('[figuresLibrary] update-in-place semantics still there', LIB, 'const prev = list.find((i) => i.id === updateId) || prevByKey;');
 frag('[figuresLibrary] id preserved on update', LIB, 'id: prev.id, addedAt: prev.addedAt, updatedAt: new Date().toISOString()');
 frag('[ImageBuilder] the editor restores the snapshot', IB, 'if (cd.gridCols) setGridCols(cd.gridCols);');
 frag('[ImageBuilder] ...and its objects', IB, 'setObjects((cd.objects || []).map((o) => resolveObj(o)));');

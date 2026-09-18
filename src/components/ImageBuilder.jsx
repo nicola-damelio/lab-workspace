@@ -6,7 +6,8 @@ import {
   blobToDataUrl, publishLibraryFigure, resolveImageToDataUrl, localStorageHealthy,
   saveCanvasSnapshot, uploadFigureToDrive,
   countRecaptureDuplicates, removeRecaptureDuplicates,
-  pushLibraryToDrive, pullLibraryFromDrive, localOnlyLibraryItems, mergeLibraryFromSnapshot
+  pushLibraryToDrive, pullLibraryFromDrive, localOnlyLibraryItems, mergeLibraryFromSnapshot,
+  uid, canvasKeyOfEntry, findCanvasEntryByKey
 } from '../utils/figuresLibrary';
 import {
   freeRectOf, isFreeLayout, pinRectOf, freeSlotFor, RECT_MIN, RECT_MAX, moveFigureInList
@@ -141,6 +142,35 @@ const thumbnailsOf = (obj) => {
 // scopes at once (composed in one project and inserted into another), so the
 // library entries are tracked PER SCOPE — see canvasEntries below.
 const canvasScopeKey = (scopeProjectId) => scopeProjectId || 'dataset';
+
+/* ── L'IDENTITÉ D'UN CANVAS EST SEMÉE AVANT LE PREMIER RENDU ─────────────────
+   Le payload persisté (cache de session puis localStorage) porte, avec la
+   composition, l'identité de son canvas : sa clé de composition
+   (`canvasData.canvasKey`) et les entrées de bibliothèque où il est déjà
+   enregistré. La lire dès l'initialisation des états est NÉCESSAIRE : l'effet qui
+   écrit ce payload tourne au montage, avec l'état encore à ses valeurs initiales.
+   Sans ce semis il écrivait une identité VIDE, et React.StrictMode — qui monte,
+   démonte et remonte chaque composant en développement — faisait alors perdre à
+   la composition l'entrée de bibliothèque qu'elle venait de retrouver : une copie
+   de plus dans le projet à chaque aller-retour. */
+const canvasIdentityOf = (payload) => {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  return {
+    canvasKey: String(p.canvasKey || '').trim(),
+    canvasEntries: p.canvasEntries && typeof p.canvasEntries === 'object' ? p.canvasEntries : null,
+    canvasHome: p.canvasHome !== undefined ? (p.canvasHome || null) : undefined,
+    canvasLabel: String(p.canvasLabel || '')
+  };
+};
+const storedCanvasIdentity = (storageKey) => {
+  try {
+    const cached = imageBuilderSessionCache.get(storageKey) || null;
+    const payload = (cached && cached.payload) || (() => {
+      try { return JSON.parse(localStorage.getItem(storageKey) || 'null'); } catch { return null; }
+    })();
+    return canvasIdentityOf(payload);
+  } catch { return canvasIdentityOf(null); }
+};
 
 // ---- panel letters (A, B, C, …) --------------------------------------------
 // The letters label the panels in reading order (top→bottom, left→right — see
@@ -368,10 +398,27 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // and each "📤 Insert into project…" updates the copy of THAT scope in place,
   // which is what keeps the project pages' "🖼 Saved canvases" links pointing at
   // the current composition without piling up duplicates.
-  const [canvasEntries, setCanvasEntries] = useState({});
+  // L'identité du canvas est SEMÉE depuis le payload persisté, AVANT le premier
+  // rendu (voir storedCanvasIdentity) : l'effet de persistance écrit ce payload
+  // dès le montage et ne peut donc pas effacer la clé de composition stockée.
+  const initialCanvasIdentity = useMemo(
+    () => storedCanvasIdentity(storageKey),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
+  const [canvasEntries, setCanvasEntries] = useState(() => initialCanvasIdentity.canvasEntries || {});
+  // La CLÉ DE COMPOSITION de ce canvas : l'identité que la composition porte
+  // elle-même (`canvasData.canvasKey`, donc la copie éditable du Drive aussi).
+  // Elle survit à un rechargement de page, à un autre ordinateur et à une liste
+  // de navigateur allégée — c'est elle qui rend l'entrée de bibliothèque à ce
+  // canvas, sinon la sauvegarde automatique en ajoutait une copie à chaque
+  // passage (« plusieurs canvas dans le projet »). Voir canvasEntryFor.
+  const [canvasKey, setCanvasKey] = useState(() => initialCanvasIdentity.canvasKey || uid('cv'));
   // Scope touched last — where the "💾 Save canvas" dialog proposes to save.
-  const [canvasHome, setCanvasHome] = useState(projectId || null);
-  const [canvasLabel, setCanvasLabel] = useState('');
+  const [canvasHome, setCanvasHome] = useState(() => (
+    initialCanvasIdentity.canvasHome === undefined ? (projectId || null) : initialCanvasIdentity.canvasHome
+  ));
+  const [canvasLabel, setCanvasLabel] = useState(() => initialCanvasIdentity.canvasLabel);
   // "💾 Save canvas" dialog: name of the canvas + the library it goes into
   // ('' = the shared dataset library, a project id = that project's library).
   const [saveOpen, setSaveOpen] = useState(false);
@@ -449,6 +496,22 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const canvasScopeName = (scopeProjectId) => (scopeProjectId
     ? String((allProjects.find((p) => p.id === scopeProjectId) || {}).name || 'project')
     : 'the dataset library');
+  // L'entrée de bibliothèque de CE canvas dans cette portée : celle dont l'éditeur
+  // se souvient, sinon celle que sa CLÉ DE COMPOSITION retrouve dans la
+  // bibliothèque. Le second cas est celui qui manquait : après un rechargement de
+  // page — ou sur un autre poste — l'id était oublié et la sauvegarde automatique
+  // ajoutait une copie du même canvas à chaque passage.
+  const canvasEntryFor = (scopeProjectId) => {
+    const known = canvasEntryIn(scopeProjectId);
+    if (known) return known;
+    if (!canvasKey) return null;
+    const found = findCanvasEntryByKey({
+      scope: scopeProjectId ? 'project' : 'common',
+      projectId: scopeProjectId || null,
+      canvasKey
+    });
+    return found ? { id: found.id, label: found.label || canvasLabel || 'Canvas' } : null;
+  };
   // Record that this canvas is stored as `entry` in that scope (and as the scope
   // touched last), so the next save updates that very entry.
   const rememberCanvasEntry = (scopeProjectId, entry) => {
@@ -458,8 +521,19 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     setCanvasEntries((m) => ({ ...m, [key]: { id: entry.id, label } }));
     setCanvasHome(scopeProjectId || null);
     setCanvasLabel(label);
+    // La composition reprise apporte SA clé (un canvas enregistré avant elle n'en
+    // a pas : il en reçoit une) — c'est elle qui le reliera à cette entrée.
+    const k = canvasKeyOfEntry(entry);
+    if (k) setCanvasKey(k);
   };
-  const homeEntry = canvasEntryIn(canvasHome);
+  // Le badge de l'éditeur nomme l'entrée du canvas : il n'interroge la clé (une
+  // lecture de bibliothèque) que quand le carnet d'adresses ne sait rien, et on
+  // garde le résultat tant que rien de tout cela ne change.
+  const homeEntry = useMemo(
+    () => canvasEntryIn(canvasHome) || (canvasKey ? canvasEntryFor(canvasHome) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canvasEntries, canvasKey, canvasHome, libVersion, projectId]
+  );
   const storedScopeCount = Object.keys(canvasEntries).length;
 
   // Clear transient library feedback whenever the modal is closed.
@@ -621,6 +695,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // Load persisted state — the in-memory session cache (freshest, immune to the
   // localStorage quota) wins; localStorage is the fallback / cross-reload source.
   useEffect(() => {
+    // L'identité de la composition (clé de canvas + entrées de bibliothèque)
+    // voyage AVEC elle : elle vient du payload, il n'y a donc rien à remettre à
+    // zéro — sauf pour un canvas NEUF (aucun payload), qui repart de rien.
+    let restoredIdentity = false;
     try {
       const cached = imageBuilderSessionCache.get(storageKey) || null;
       const saved = (cached && cached.payload) || (() => {
@@ -673,14 +751,33 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           setFocusObjId(data.focusObjId);
           setIsFullScreen(true);
         }
+        // L'identité de CE canvas : sa clé de composition et les entrées de
+        // bibliothèque où il est déjà enregistré. Elle est REPRISE du payload —
+        // c'est ce qui fait qu'un aller-retour par un autre module (ou un
+        // rechargement de page) n'oublie plus l'entrée du canvas, donc ne laisse
+        // plus la sauvegarde automatique en créer une copie à chaque séjour.
+        // Les états en sont déjà semés au premier rendu (voir initialCanvasIdentity) ;
+        // cet effet tourne AUSSI quand on change de projet (storageKey) : il pose
+        // alors celle de CE payload-ci.
+        const identity = canvasIdentityOf(data);
+        setCanvasKey(identity.canvasKey || uid('cv'));
+        setCanvasEntries(identity.canvasEntries || {});
+        setCanvasLabel(identity.canvasLabel);
+        if (identity.canvasHome !== undefined) setCanvasHome(identity.canvasHome);
+        restoredIdentity = true;
       }
     } catch {}
-    // The canvas bookkeeping is per CANVAS, not per session: this component
-    // instance is reused when the user switches project, so the library entries
-    // (and the name) of the previous composition must not leak into the next one.
-    setCanvasEntries({});
-    setCanvasHome(projectId || null);
-    setCanvasLabel('');
+    // Ce que le payload ne portait PAS appartient à un canvas NEUF : aucune entrée
+    // connue, le projet de l'éditeur comme destination, une clé de composition
+    // neuve (l'identité d'un canvas ne se réutilise jamais). This component
+    // instance is reused when the user switches project, so the bookkeeping of the
+    // previous composition must not leak into the next one.
+    if (!restoredIdentity) {
+      setCanvasEntries({});
+      setCanvasHome(projectId || null);
+      setCanvasLabel('');
+      setCanvasKey(uid('cv'));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storageKey]);
 
@@ -787,7 +884,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       // full-resolution dataURL) so the layout always re-opens after
       // navigating away and back.
       const persisted = (objects || []).map(thumbnailsOf);
-      const payload = { canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects: persisted, arrows, shapes, focusObjId, globalCaption, isFullScreen };
+      // Le payload porte aussi l'IDENTITÉ de la composition (clé de canvas, nom,
+      // entrées de bibliothèque où ce canvas est enregistré) : sans elle, revenir
+      // sur la page faisait oublier l'entrée et la sauvegarde automatique en
+      // ajoutait une copie — « j'ai plusieurs canvas enregistrés dans le projet ».
+      const payload = { canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects: persisted, arrows, shapes, focusObjId, globalCaption, isFullScreen, canvasKey, canvasEntries, canvasHome, canvasLabel };
       // Always keep the freshest copy in memory (survives module remounts even
       // when localStorage is full), then best-effort write localStorage:
       // rememberSessionCanvas keeps BOTH the lightweight payload AND the live
@@ -796,7 +897,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       rememberSessionCanvas(storageKey, payload, objects || []);
       localStorage.setItem(storageKey, JSON.stringify(payload));
     } catch { /* localStorage may be full — the session cache above still holds the state */ }
-  }, [canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects, arrows, shapes, focusObjId, globalCaption, isFullScreen, storageKey]);
+  }, [canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects, arrows, shapes, focusObjId, globalCaption, isFullScreen, canvasKey, canvasEntries, canvasHome, canvasLabel, storageKey]);
 
   // Async "hydrate" pass — after objects are (re)loaded from a persisted canvas
   // or an undo snapshot, their images may reference Google Drive (the real
@@ -1129,8 +1230,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     // Detach from the stored canvas: with no known entry the next "💾 Save
     // canvas" adds a NEW image to the library (the one that was open is left
     // untouched) while the save dialog still proposes the same destination.
+    // Une CLÉ de composition NEUVE va avec : sans elle, la sauvegarde
+    // reconnaîtrait ce canvas neuf comme… l'ancien, et l'écraserait.
     setCanvasEntries({});
     setCanvasLabel('');
+    setCanvasKey(uid('cv'));
     setCanvasHome(projectId || null);
     setPickMode('replace');
     setShowLibrary(false);
@@ -2321,7 +2425,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     const img = dataUrl || await renderToDataUrl(Math.max(3, 1800 / Math.max(1, canvasW)));
     if (!img) return null;
     const driveProject = target ? (allProjects.find((p) => p.id === target) || null) : null;
-    const known = canvasEntryIn(target);
+    // L'entrée de CE canvas dans cette portée (souvenir, sinon clé de composition
+    // — voir canvasEntryFor) : la publication la met à jour sur place.
+    const known = canvasEntryFor(target);
     const { entry, drive, updated } = await publishLibraryFigure({
       scope: target ? 'project' : 'common',
       projectId: target,
@@ -2331,6 +2437,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       src: null,
       updateId: known ? known.id : null,
       canvasData: {
+        // La clé de composition part avec la composition (et donc dans le
+        // sidecar `.meta.json` du Drive) : c'est l'identité qui permet de la
+        // retrouver — une copie, jamais deux.
+        canvasKey,
         canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, globalCaption,
         // La définition GÉNÉRALE des lettres (taille, couleur, gras) fait partie
         // du canvas : un canvas rouvert — même vide — retrouve ses lettres.
@@ -2492,7 +2602,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // l'éditeur, sinon RIEN : un canvas NEUF n'est jamais écrit dans la
   // bibliothèque partagée du dataset (voir le garde de autoSaveRef.current).
   const autoSaveScope = () => {
-    if (canvasEntryIn(canvasHome)) return canvasHome;
+    if (canvasEntryFor(canvasHome)) return canvasHome;
     const first = Object.keys(canvasEntries)[0];
     if (first) return first === 'dataset' ? null : first;
     return (projectId && canWriteLibProject(projectId)) ? projectId : null;
@@ -2524,7 +2634,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
        cache de session) et la pastille dit quoi faire. Un canvas HISTORIQUE du
        dataset (target === null mais son entrée existe déjà) est le seul cas qui
        continue d'être mis à jour là où il est : on ne l'abandonne pas. */
-    if (!target && !canvasEntryIn(null)) {
+    if (!target && !canvasEntryFor(null)) {
       setAutoSaveNote('noproject');
       setAutoSaveAt(new Date().toISOString());
       return null;
@@ -2532,6 +2642,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     if (target && !canWriteLibProject(target)) return null;
     const label = autoSaveLabel();
     const canvasData = {
+      // La clé de composition part avec chaque copie de la composition.
+      canvasKey,
       canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, globalCaption,
       // La définition GÉNÉRALE des lettres (taille, couleur, gras) voyage avec la
       // composition : elle se retrouve à la réouverture (voir restoreCanvasFromItem).
@@ -2551,12 +2663,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       setAutoSaveNote(pub.drive && pub.drive.id ? 'cloud' : (pub.driveQueued ? 'queued' : 'browser'));
       return pub;
     }
-    const known = canvasEntryIn(target);
+    const known = canvasEntryFor(target);
     const res = saveCanvasSnapshot({
       scope: target ? 'project' : 'common',
       projectId: target,
       label,
       updateId: known ? known.id : null,
+      canvasKey,
       canvasData,
       url: autoSavePreview()
     });
@@ -2573,7 +2686,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   useEffect(() => {
     const t = setTimeout(() => { try { if (autoSaveRef.current) autoSaveRef.current({}); } catch { /* ignore */ } }, AUTO_SNAPSHOT_MS);
     return () => clearTimeout(t);
-  }, [objects, arrows, canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, globalCaption, canvasLabel, canvasHome, canvasEntries, projectId]);
+  }, [objects, arrows, canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, globalCaption, canvasLabel, canvasHome, canvasEntries, canvasKey, projectId]);
 
   // Passe cloud : après 8 s de calme, et au plus une fois par minute.
   useEffect(() => {
@@ -2583,7 +2696,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       try { if (autoSaveRef.current) autoSaveRef.current({ publish: true }); } catch { /* ignore */ }
     }, AUTO_PUBLISH_QUIET_MS);
     return () => clearTimeout(t);
-  }, [objects, arrows, canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, globalCaption, canvasLabel, canvasHome, canvasEntries, projectId]);
+  }, [objects, arrows, canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, globalCaption, canvasLabel, canvasHome, canvasEntries, canvasKey, projectId]);
 
   // On quitte (autre module, rechargement, onglet fermé) : la dernière
   // composition est écrite TOUT DE SUITE — la passe différée ne partirait
@@ -2660,6 +2773,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     if (opts.confirm !== false && !window.confirm(`Replace the current canvas with “${item.label}”?`)) return;
     commitHistory();
     const cd = item.canvasData;
+    // La composition reprise apporte sa CLÉ de composition — sinon elle en reçoit
+    // une NEUVE (canvas enregistré avant cette clé) : l'entrée qui vient d'être
+    // reconnue reste la sienne et la sauvegarde suivante l'y met à jour.
+    setCanvasKey(canvasKeyOfEntry(item) || uid('cv'));
     if (cd.canvasW) setCanvasW(cd.canvasW);
     if (cd.canvasH) setCanvasH(cd.canvasH);
     if (cd.gridCols) setGridCols(cd.gridCols);
@@ -5124,7 +5241,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                     title="Create a NEW image — a new figure, not a wipe: the editor starts on a blank canvas with one empty panel (A) ready for its first capture, and the next “💾 Save now” adds a NEW image to the image library. The figure you were working on stays in the library exactly as it was last saved (its “↩ Load” brings it back). The canvas format — size, grid, borders, aspect ratio, letter size — is kept.">
               ➕ New image
             </button>
-            <button onClick={() => { if(window.confirm('Clear the entire canvas?')) { commitHistory(); setObjects([]); setArrows([]); setSelectedId(null); setSelectedArrowId(null); setShapes([]); setSelectedShapeId(null); setCanvasEntries({}); setCanvasLabel(''); } }} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100">Clear Canvas</button>
+            <button onClick={() => { if(window.confirm('Clear the entire canvas?')) { commitHistory(); setObjects([]); setArrows([]); setSelectedId(null); setSelectedArrowId(null); setShapes([]); setSelectedShapeId(null); setCanvasEntries({}); setCanvasLabel(''); setCanvasKey(uid('cv')); } }} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100">Clear Canvas</button>
           </div>
         </div>
 
