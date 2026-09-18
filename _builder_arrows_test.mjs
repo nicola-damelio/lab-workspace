@@ -349,6 +349,24 @@ check('47 the arrow properties panel is shown in BOTH views', () => {
   frag('the selection is looked up', IB, 'const selectedArrow = (arrows || []).find((a) => a.id === selectedArrowId) || null;');
   frag('delete is undoable', IB, 'const removeArrow = (id = selectedArrowId) => {');
 });
+check('47b a Delete click in “Arrow properties” really removes the arrow', () => {
+  /* ⛔ LE DÉFAUT SIGNALÉ : « when I add an arrow in the panel I cannot delete
+     it ». `onClick={onDelete}` passait l'ÉVÉNEMENT DE CLIC comme premier
+     argument de removeArrow(id = selectedArrowId) : `id` devenait un objet React
+     (toujours vrai, donc jamais le `return`), `a.id !== id` était vrai pour
+     TOUTES les flèches, et le panneau se refermait sans rien supprimer. */
+  frag('the panel calls the handler with NO argument', PANEL, 'onClick={() => onDelete()}');
+  check('…and no button receives that handler directly', () => {
+    /* `onClick={onDelete}` ferait de l'ÉVÉNEMENT DE CLIC le premier argument —
+       donc l'identifiant de la flèche à supprimer (voir le commentaire de la
+       source). On teste la STRUCTURE (un <button … onClick={onDelete}>) et non
+       la simple présence du texte : le commentaire, lui, doit pouvoir le citer. */
+    assert.ok(!/<button[^>]*onClick=\{onDelete\}/.test(PANEL),
+      'a button must never be handed the handler directly');
+  });
+  frag('removeArrow only accepts a real id', IB, "const target = typeof id === 'string' ? id : selectedArrowId;");
+  frag('…and filters on THAT id', IB, 'setArrows(prev => prev.filter(a => a.id !== target));');
+});
 check('48 the shadow controls are defined ONCE, at module level (focus!)', () => {
   eq(times(PANEL, /export const ShadowControls = /g), 1);
   eq(times(IB, /const ShadowControls = /g), 0);

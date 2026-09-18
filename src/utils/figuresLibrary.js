@@ -51,7 +51,40 @@ const loadLS = (k) => {
   } catch { return []; }
 };
 const saveLS = (k, items) => {
-  try { localStorage.setItem(k, JSON.stringify(items)); } catch { /* quota full — memory keeps the copy */ }
+  try { localStorage.setItem(k, JSON.stringify(items)); return; }
+  catch { /* magasin plein → on essaie de faire de la place, sans rien perdre (ci-dessous) */ }
+  /* ── UN MAGASIN PLEIN NE DOIT PLUS FAIRE DISPARAÎTRE UNE LISTE ──────────────
+     ⛔ LE DÉFAUT. `catch { }` avalait le refus du navigateur : la liste restait
+        en MÉMOIRE, donc complète jusqu'au rechargement… puis vide. C'est très
+        exactement « je sauve, je quitte, mon travail n'y est plus, il faut
+        aller le rechercher dans la bibliothèque », et le seul recours était
+        « ⬇ Add missing from Drive ».
+     ✅ CE QUI EST FAIT ICI. On libère d'abord ce qui est DÉJÀ ailleurs, en
+        gardant TOUTES les entrées (libellé, ordre, `canvasData`, lien Drive) :
+          1. la copie haute résolution (`full`) des entrées dont le FICHIER EST
+             SUR LE CLOUD devient son lien — les pixels se relisent du Drive
+             (voir resolveImageToDataUrl), c'est le chemin prévu ;
+          2. si ça ne suffit pas, la vignette (`url`) de ces mêmes entrées —
+             elles s'affichent alors depuis le cloud.
+        Une entrée dont les pixels ne vivent que dans ce navigateur (pas de lien
+        cloud) n'est JAMAIS touchée : elle serait perdue pour de bon.
+        Un refus définitif laisse la liste en mémoire, comme avant. */
+  const slim = shrinkLibraryEntryPixels(items);
+  if (slim.freed) {
+    rememberLibraryList(k, slim.items);
+    try { localStorage.setItem(k, JSON.stringify(slim.items)); return; } catch { /* encore plein */ }
+  }
+  const thinner = shrinkLibraryEntryPixels(slim.items, { dropThumbs: true });
+  if (thinner.freed) {
+    rememberLibraryList(k, thinner.items);
+    try { localStorage.setItem(k, JSON.stringify(thinner.items)); return; } catch { /* mémoire seulement */ }
+  }
+};
+/** La liste EN MÉMOIRE suit exactement ce qui a pu être écrit (sinon la
+ *  première écriture suivante remettrait le poids qui vient d'être libéré). */
+const rememberLibraryList = (k, items) => {
+  if (k === LIBRARY_KEY) memCommon = items;
+  else memProjects.set(k, items);
 };
 const memCommonList = () => {
   if (memCommon === null) memCommon = loadLS(LIBRARY_KEY);
@@ -1209,6 +1242,53 @@ export const driveIdOfLibraryItem = (item) => {
     if (found) return Array.isArray(found) ? found[1] : String(found);
   }
   return '';
+};
+
+/* ── ALLÉGER UNE LISTE SANS RIEN PERDRE ──────────────────────────────────────
+   Le magasin du navigateur (~5 Mo par site) est partagé par TOUT le poste : les
+   listes de figures y pèsent vite plus de 4 Mo parce qu'une entrée garde ses
+   pixels encodés (`full` — la copie haute résolution — et parfois `url`). Or
+   une entrée dont le FICHIER EST SUR LE CLOUD n'a pas besoin de les garder :
+   `resolveImageToDataUrl` les relit du Drive avec le jeton OAuth, exactement
+   comme n'importe quelle autre image de la bibliothèque.
+
+   Cette fonction rend donc une liste où, pour CES entrées-là seulement :
+     1. `full` (haute résolution) devient le lien du fichier ;
+     2. avec `dropThumbs`, `url` (la vignette) aussi — l'entrée s'affiche alors
+        depuis le cloud.
+   RIEN d'autre ne bouge : libellé, `id`, ordre, `canvasData` (la composition
+   éditable) et l'horodatage restent — une entrée ne disparaît jamais d'ici
+   (pruneRecoverableLibraryCaches, lui, oublie des entrées : c'est un autre
+   métier, réservé au dernier recours de l'écriture des projets).
+
+   Une entrée dont les pixels ne vivent QUE dans ce navigateur (aucun
+   identifiant de fichier cloud) est renvoyée TELLE QUELLE : la toucher serait
+   la perdre pour de bon.
+
+   @returns {{ items:Array, freed:number }} `freed` en CARACTÈRES — l'unité du
+   quota du navigateur (voir utils/localStoreRoom.js). */
+export const shrinkLibraryEntryPixels = (items, { dropThumbs = false } = {}) => {
+  let freed = 0;
+  const list = Array.isArray(items) ? items : [];
+  const next = list.map((item) => {
+    if (!item || typeof item !== 'object') return item;
+    if (!driveIdOfLibraryItem(item)) return item;
+    const link = [item.driveUrl, item.full, item.url]
+      .find((v) => typeof v === 'string' && /^https?:\/\//i.test(v));
+    if (!link) return item;
+    let copy = null;
+    const shrink = (field) => {
+      const v = (copy || item)[field];
+      if (typeof v !== 'string' || v.indexOf('data:') !== 0) return;
+      if (!copy) copy = { ...item };
+      freed += v.length;
+      copy[field] = link;
+    };
+    shrink('full');
+    if (dropThumbs) shrink('url');
+    return copy || item;
+  });
+  return { items: next, freed };
 };
 
 /* ── QUAND LE MAGASIN DU NAVIGATEUR EST PLEIN ───────────────────────────────

@@ -4,7 +4,7 @@ import {
   readLibrary, readProjectLibrary, readVisibleProjectLibrary, moveLibraryItem, reorderLibraryItem,
   renameLibraryItem, removeLibraryItem, renameProjectLibraryItem, removeProjectLibraryItem,
   blobToDataUrl, publishLibraryFigure, resolveImageToDataUrl, localStorageHealthy,
-  saveCanvasSnapshot,
+  saveCanvasSnapshot, uploadFigureToDrive,
   countRecaptureDuplicates, removeRecaptureDuplicates,
   pushLibraryToDrive, pullLibraryFromDrive, localOnlyLibraryItems, mergeLibraryFromSnapshot
 } from '../utils/figuresLibrary';
@@ -28,7 +28,7 @@ import {
 } from '../utils/figureBackground';
 import LZString from 'lz-string';
 import { backupFigureCount, figuresFromBackupHtml } from '../utils/referenceImport';
-import { loadProjects, saveProjects, genProjectId, projectAccessFor, visibleProjectsFor } from './AppModules/projectsModule';
+import { loadProjects, saveProjectsRescued, genProjectId, projectAccessFor, visibleProjectsFor } from './AppModules/projectsModule';
 import { getDriveRootName } from '../utils/driveUpload';
 import { projectImagesFolderLabel } from '../utils/driveNaming';
 import { queuePendingFigureScroll } from '../utils/pendingFigureScroll';
@@ -3094,9 +3094,16 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   };
   const updateArrow = (patch) => setArrows(prev => prev.map(a => a.id === selectedArrowId ? { ...a, ...patch } : a));
   const removeArrow = (id = selectedArrowId) => {
-    if (!id) return;
+    /* ⛔ LE BOUTON « Delete » DU PANNEAU DES FLÈCHES NE POUVAIT PAS SUPPRIMER.
+       `onClick={onDelete}` passait l'ÉVÉNEMENT DE CLIC en premier argument :
+       `id` devenait un objet React (toujours vrai, donc jamais le `return`
+       ci-dessous), et `a.id !== id` était vrai pour TOUTES les flèches — le
+       panneau se refermait, la flèche restait. On n'accepte donc qu'un
+       identifiant RÉEL (une chaîne) : tout le reste retombe sur la sélection. */
+    const target = typeof id === 'string' ? id : selectedArrowId;
+    if (!target) return;
     commitHistory();
-    setArrows(prev => prev.filter(a => a.id !== id));
+    setArrows(prev => prev.filter(a => a.id !== target));
     setSelectedArrowId(null);
   };
   // "Shadow every panel" (toolbar + properties panel): ONE click gives the whole
@@ -3810,14 +3817,30 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
      directement, ses éléments font partie de l'arbre du parent : rien n'est
      remonté, la saisie et le défilement restent où ils sont. (Même remède que
      `renderSvg`, dont le contenu partage tout le contexte du composant.) */
+  /* ── LA COLONNE D'UN GROUPE DE LA FENÊTRE D'OBJET (voir `bar` dans PropertiesPanel)
+     En PLEIN ÉCRAN la fenêtre de l'objet est une GRILLE DE 6 COLONNES : chaque
+     groupe de commandes occupe une colonne — identité + pastilles des panneaux,
+     pile / copie / suppression / vue, figures du panneau, taille + ajustement,
+     outils de la figure (rotation, précision, recadrage, gomme, ombre), textes —
+     au lieu de s'empiler sur toute la largeur. La même information tient donc en
+     UNE ligne au lieu de quatre : c'est l'espace vertical rendu au canvas.
+     SEULE LA LÉGENDE DU PANNEAU (son sous-titre) prend toute la largeur, et elle
+     est placée EN DERNIER (`order-last col-span-full`).
+     `min-w-0` est indispensable : sans lui une colonne de grille refuse de
+     descendre sous la largeur de son contenu et la grille déborde. */
+  const panelCellCls = (bar, extra = '') => `flex flex-wrap items-center gap-x-1.5 gap-y-1 ${extra}${bar ? ' min-w-0' : ''}`;
+
   const PropertiesPanel = ({ bar = false } = {}) => (
-    <div className={`flex ${bar ? 'flex-row flex-wrap items-start gap-x-3 gap-y-1.5' : 'flex-col gap-1 border-t border-slate-200 pt-1.5'}`}>
-      {/* ── LIGNE 1 · QUEL PANNEAU, ET TOUT CE QUI VAUT POUR LE PANNEAU ────────
+    <div className={bar
+      ? 'grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 items-start gap-x-3 gap-y-1.5'
+      : 'flex flex-col gap-1 border-t border-slate-200 pt-1.5'}>
+      {/* ── COLONNE 1 · QUEL PANNEAU, ET TOUT CE QUI VAUT POUR LE PANNEAU ───────
           Une barre, pas une page : identité, pastilles « Panels » (sélection
-          multiple), copier / coller, profondeur, suppression, plein écran sur
-          l'objet, retour au graphe d'origine — et le repli « ▾ More options ».
-          Chaque ligne se replie d'elle-même si la place manque. */}
-      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+          multiple), copier / coller — puis, dans la colonne suivante, profondeur,
+          suppression, plein écran sur l'objet et retour au graphe d'origine. En
+          plein écran ces deux colonnes se placent côte à côte (voir
+          panelCellCls) : la même barre tient en une ligne. */}
+      <div className={panelCellCls(bar)}>
         <span className="text-[11px] font-bold text-slate-700 shrink-0"
           title="The selected panel. Its letter is assigned by its position in the grid and re-numbered automatically — it is never typed in.">
           Panel {selectedObj.letter || '—'}
@@ -3866,6 +3889,12 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             title="Keep only the first selected panel: the others leave the selection">✕ Others</button>
         )}
         <span className="w-px h-4 bg-slate-300 shrink-0" />
+      </div>
+      {/* ── COLONNE 2 · LA PROFONDEUR, LA SUPPRESSION ET LA VUE ─────────────────
+          La suite de la première colonne : où ce panneau se trouve dans la pile,
+          les copies, la suppression, le plein écran sur l'objet, le retour au
+          graphe d'origine et le repli « ▾ More options ». */}
+      <div className={panelCellCls(bar)}>
         {/* 🗂 QUEL PANNEAU EST AU-DESSUS — les panneaux sont peints dans l'ordre
             de la liste : ces deux commandes font passer ce panneau devant ses
             voisins (ou le rangent derrière). Les lettres (A, B, C …) sont
@@ -3902,11 +3931,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           {panelMore ? '▴ Fewer options' : '▾ More options'}
         </button>
       </div>
-      {/* ── LIGNE 2 · LES FIGURES DU PANNEAU, ET CE QU'ON LEUR FAIT ─────────────
-          Importer / ajouter, la liste des figures (la dernière est AU-DESSUS),
-          la taille exacte, l'ajustement, l'échelle, la rotation, 🎯 Precision,
-          le recadrage et la gomme. */}
-      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+      {/* ── COLONNE 3 · LES FIGURES DU PANNEAU, ET CE QU'ON LEUR FAIT ───────────
+          Importer / ajouter / échanger, la liste des figures (la dernière est
+          AU-DESSUS), la sélection multiple de figures et les commandes ⇹ qui les
+          alignent et les répartissent. La TAILLE exacte et l'ajustement sont dans
+          la colonne suivante ; les outils de la figure (rotation, 🎯 Precision,
+          recadrage, gomme, ombre) dans celle d'après. */}
+      <div className={panelCellCls(bar)}>
         <button onClick={() => { setPickMode('replace'); setShowLibrary(true); }}
           className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-2 py-0.5 rounded text-[10px] shrink-0"
           title="Import Image (High-Res) — replace the figure of this panel with a capture taken from the image library">🖼 Import</button>
@@ -4041,6 +4072,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             </span>
           );
         })()}
+      </div>
+      {/* ── COLONNE 4 · LA TAILLE EXACTE ET L'AJUSTEMENT ────────────────────────
+          La largeur / hauteur tapables (en % du panneau) et la façon dont la
+          figure remplit sa case (Fit / Scale). */}
+      <div className={panelCellCls(bar)}>
         {cropPanelIdx >= 0 && (() => {
           /* 🎯 EXACT SIZE OF THE ACTIVE FIGURE (keyboard) — see setActiveFigBox:
              on a small figure the corner handle is quicker than the hand, so the
@@ -4094,6 +4130,12 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           <input type="number" min="10" max="500" disabled={selectedFreeLayout} value={Math.round((selectedObj.imgScale || 1) * 100)} onChange={e => updateObj({ imgScale: Number(e.target.value) / 100 })}
             className={`w-14 border rounded px-0.5 py-px text-[10px] ${selectedFreeLayout ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}`} />
         </label>
+      </div>
+      {/* ── COLONNE 5 · LES OUTILS DE LA FIGURE ─────────────────────────────────
+          Rotation, 🎯 Precision (le geste de la souris au quart), recadrage,
+          gomme et l'ombre de la figure — l'IMAGE elle-même, jamais le cadre du
+          panneau (celle du panneau est dans « ▾ More options »). */}
+      <div className={panelCellCls(bar)}>
         <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 shrink-0" title="Turn the figure inside its panel (°) — ↻90° does a quarter turn">
           Rotate (°)
           <input type="number" min="-360" max="360" step="1" value={selectedObj.imgRotate || 0} onChange={e => updateObj({ imgRotate: Number(e.target.value) })} className="w-14 border rounded px-0.5 py-px text-[10px]" />
@@ -4170,13 +4212,18 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           🌓 {figShadowOn ? 'Figure shadow ✓' : 'Figure shadow'}
         </button>
       </div>
-      {/* ── LIGNE 3 · LA LÉGENDE DU PANNEAU ET LES TEXTES POSÉS DESSUS ──────────
-          Le nom de la lettre n'est plus ici : il est attribué AUTOMATIQUEMENT
-          par la position du panneau (renumberLetters), et sa taille — comme sa
-          couleur et son gras — est une définition GÉNÉRALE du canvas, réglée une
-          fois pour tous les panneaux dans les options du canvas (barre d'outils
-          de l'éditeur, et barre du plein écran). */}
-      <div className={`flex flex-wrap items-center gap-x-1.5 gap-y-1 ${bar ? '' : 'border-t border-slate-200 pt-1'}`}>
+      {/* ── LA LÉGENDE DU PANNEAU — LA SEULE COLONNE DE TOUTE LA LARGEUR ────────
+          Elle est placée EN DERNIER, tout en bas de la fenêtre (`order-last
+          col-span-full` en plein écran) : c'est le seul élément qui a besoin de
+          toute la largeur — un sous-titre s'écrit — et le mettre en bas laisse la
+          ligne du haut aux commandes. Le nom de la lettre n'est plus ici : il est
+          attribué AUTOMATIQUEMENT par la position du panneau (renumberLetters), et
+          sa taille — comme sa couleur et son gras — est une définition GÉNÉRALE du
+          canvas, réglée une fois pour tous les panneaux dans les options du canvas
+          (barre d'outils de l'éditeur, et barre du plein écran). */}
+      <div className={bar
+        ? 'flex flex-wrap items-start gap-x-1.5 gap-y-1 min-w-0 order-last col-span-full border-t border-slate-200 pt-1'
+        : 'flex flex-wrap items-center gap-x-1.5 gap-y-1 border-t border-slate-200 pt-1'}>
         <span className="text-[10px] font-bold text-slate-500 uppercase shrink-0"
           title={`Caption of panel ${selectedObj.letter || '—'} — a SUB-caption: it is never drawn inside the panel, it is merged into the figure caption at the bottom. The letter itself is automatic (by position) · size / colour / bold: canvas options.`}>
           Caption {selectedObj.letter || '—'}
@@ -4188,7 +4235,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         <button type="button" onClick={() => setEditingObjCaption(selectedObj.id)}
           className="shrink-0 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold px-1.5 py-0.5 rounded text-[10px]"
           title="Open the floating caption editor">✎ Edit in place</button>
-        <span className="w-px h-4 bg-slate-300 shrink-0" />
+      </div>
+      {/* ── COLONNE 6 · LES TEXTES POSÉS SUR LE PANNEAU ───────────────────────── */}
+      <div className={panelCellCls(bar)}>
+        {!bar && <span className="w-px h-4 bg-slate-300 shrink-0" />}
         <span className="text-[10px] font-bold text-slate-500 uppercase shrink-0">Text</span>
         <button onClick={addText} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-1.5 py-0.5 rounded text-[10px] shrink-0"
           title="Add a text in the middle of the panel — then drag it on the object where you want it">+ Add Text</button>
@@ -4227,7 +4277,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         ))}
       </div>
       {panelMore && (
-        <div className={`flex flex-wrap items-start gap-x-4 gap-y-1.5 ${bar ? '' : 'border-t border-slate-200 pt-1.5'}`}>
+        /* Le repli ne prend pas toute la largeur non plus : en plein écran il
+           occupe DEUX colonnes (la légende reste le seul élément pleine largeur). */
+        <div className={`flex flex-wrap items-start gap-x-4 gap-y-1.5 ${bar ? 'min-w-0 xl:col-span-2' : 'border-t border-slate-200 pt-1.5'}`}>
           {/* L'OMBRE DU PANNEAU — un PANNEAU projette une ombre (cadre, figure,
               lettre, textes) : « 🌓 Same shadow on every panel » l'applique à
               toute la figure en un clic, et le même bloc de contrôles sert aux
@@ -5087,11 +5139,38 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                   // the same composition twice into one project reuses it instead
                   // of adding a second copy to that library.
                   let link = null;
+                  const label = canvasLabel || (effectiveGlobalCaption && String(effectiveGlobalCaption).trim()
+                    ? `Figure — ${String(effectiveGlobalCaption).trim().slice(0, 60)}`
+                    : `Canvas ${new Date().toLocaleDateString()}`);
+                  /* ── LES PIXELS PARTENT AU DRIVE *AVANT* D'ÊTRE ÉCRITS ICI ───────
+                     ⛔ LE DÉFAUT (cinquième signalement : « je sauve, je quitte,
+                        mes images n'y sont plus »). La composition était écrite
+                        dans le document du projet SOUS FORME D'IMAGE ENCODÉE
+                        (plusieurs mégaoctets) et SEULEMENT là : le magasin du
+                        navigateur (~5 Mo par site, partagé avec les listes de
+                        figures) ne pouvait pas la garder. L'écriture d'urgence
+                        (saveProjectsRescued) faisait alors de la place en
+                        remplaçant les pixels par leur lien Drive… un lien que
+                        cette figure n'avait JAMAIS eu : `url` devenait vide. La
+                        page du projet montrait donc l'emplacement de la figure
+                        sans son image, et il fallait la réimporter à la main
+                        depuis le Drive.
+                     ✅ La copie cloud est faite d'abord : la figure insérée
+                        garde `driveUrl`, donc (a) la page la remonte du Drive si
+                        les pixels locaux ont dû partir, (b) l'allègement devient
+                        SANS PERTE (l'étape 1 de saveProjectsRescued transforme
+                        l'image en lien, elle ne jette rien). Si le cloud n'est
+                        pas connecté, on continue comme avant — mais on le DIT. */
+                  let cloud = null;
+                  try {
+                    cloud = await uploadFigureToDrive({ full: dataUrl, label, projectName: prj.name || '' });
+                  } catch (err) {
+                    console.warn('Project insert → Drive failed:', err && err.message);
+                    cloud = null;
+                  }
+                  const cloudUrl = (cloud && (cloud.driveUrl || cloud.url)) || '';
                   if (insertLink) {
                     try {
-                      const label = canvasLabel || (effectiveGlobalCaption && String(effectiveGlobalCaption).trim()
-                        ? `Figure — ${String(effectiveGlobalCaption).trim().slice(0, 60)}`
-                        : `Canvas ${new Date().toLocaleDateString()}`);
                       const pub = await publishCanvas({ label, targetProjectId: prj.id, dataUrl });
                       if (pub && pub.entry) {
                         link = { canvasId: pub.entry.id, builderProjectId: prj.id, canvasLabel: pub.entry.label || label };
@@ -5108,12 +5187,30 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                     caption: effectiveGlobalCaption || `Image Builder composition (${new Date().toLocaleDateString()})`,
                     addedAt: new Date().toISOString(),
                     source: 'image-builder',
+                    // Le lien de la copie cloud : c'est lui qui rend la figure
+                    // indestructible (voir le commentaire ci-dessus).
+                    ...(cloudUrl ? { drive: true, driveUrl: cloudUrl, full: cloudUrl } : {}),
                     ...(link || {})
                   });
-                  saveProjects(projects);
-                  setInsertMsg(link
-                    ? `✅ The image is now shown in "${prj.name}" → ${sec} (it stays there). 🔗 Its canvas was stored in that project's image library, so the project page offers “✏️ Modify in Image Builder” to reopen this composition.`
-                    : `✅ The image is now shown in "${prj.name}" → ${sec} (it stays there). No canvas link was stored (the checkbox is off).`);
+                  /* ⛔ L'ÉCRITURE SE VÉRIFIE. `saveProjects()` rendait un
+                     { ok:false } que personne ne lisait : le dialogue annonçait
+                     « The image is now shown in … » alors que RIEN n'avait été
+                     écrit. saveProjectsRescued écrit, vérifie, et fait de la
+                     place DANS le navigateur si le magasin refuse — en gardant
+                     alors le lien Drive (aucune perte). */
+                  const saved = saveProjectsRescued(projects, { projectId: prj.id, fields: {} });
+                  const where = `"${prj.name}" → ${sec}`;
+                  if (!saved.ok) {
+                    setInsertMsg(`⚠️ This browser refused to store the project (${saved.error || 'the store is full'}): the image is in ${where} on this page only and would NOT survive a reload. Free some room (☁ Save canvas, or delete a dataset you no longer need) and insert again.`);
+                  } else if (saved.droppedImages) {
+                    setInsertMsg(`✅ The image is in ${where}. ⚠️ This browser's store was FULL: ${saved.droppedImages} locally kept image copy(ies) were replaced by their Drive link — the picture is still shown (it is read from Drive), and the figure keeps its place, its name and its caption.`);
+                  } else if (!cloudUrl) {
+                    setInsertMsg(`✅ The image is in ${where}. ⚠️ No cloud copy could be made (Google Drive / Nextcloud not connected): the pixels live in this browser only — connect the cloud from the sidebar so the picture follows you.`);
+                  } else if (link) {
+                    setInsertMsg(`✅ The image is now shown in ${where} (it stays there), and it is kept on Drive. 🔗 Its canvas was stored in that project's image library, so the project page offers “✏️ Modify in Image Builder” to reopen this composition.`);
+                  } else {
+                    setInsertMsg(`✅ The image is now shown in ${where} (it stays there), and it is kept on Drive. No canvas link was stored (the checkbox is off).`);
+                  }
                 }}
                 className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-4 py-1.5 rounded-lg text-xs"
               >Insert</button>

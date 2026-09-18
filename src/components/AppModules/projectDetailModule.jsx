@@ -272,6 +272,30 @@ const mmPartsFor = (project, tests, onlyIncluded) =>
    avec la mesure, et sont importées ci-dessus : la LISTE DES PROJETS et la PAGE
    PROJET disent donc exactement la même chose du magasin. */
 
+/* ── LE LIEN DRIVE D'UNE FIGURE DE SECTION ────────────────────────────────────
+   Les pixels d'une figure de section peuvent ne plus être dans ce navigateur :
+   le magasin était plein et l'écriture d'urgence a remplacé l'image encodée par
+   son lien Drive (voir saveProjectsRescued / dropOneFigurePixels). Ils peuvent
+   aussi n'avoir JAMAIS été liés — les compositions insérées avant que l'Image
+   Builder ne dépose la copie cloud sur le Drive. Dans les deux cas il faut
+   retrouver de quoi RÉAFFICHER l'image : le lien de son fichier. Il vit
+     (1) sur la figure elle-même (`driveUrl`, ou `full` quand c'est déjà un lien) ;
+     (2) sur l'entrée de bibliothèque du canvas dont elle vient (`canvasId` —
+         c'est le même fichier, avec son `.meta.json` à côté, voir
+         utils/figuresLibrary.js).
+   '' quand rien n'est connu : on ne devine jamais une adresse. PUR (hors la
+   lecture de la bibliothèque), donc éprouvable hors navigateur. */
+export const figureDriveLink = (fig, projectId = '') => {
+  const asLink = (v) => (/^https?:\/\//i.test(String(v || '')) ? String(v) : '');
+  if (!fig || typeof fig !== 'object') return '';
+  const own = asLink(fig.driveUrl) || asLink(fig.full);
+  if (own) return own;
+  const from = String(fig.builderProjectId || projectId || '');
+  if (!fig.canvasId || !from) return '';
+  const entry = readProjectLibrary(from).find((i) => i && i.id === fig.canvasId);
+  return entry ? (asLink(entry.driveUrl) || asLink(entry.full)) : '';
+};
+
 export const ProjectDetailModule = ({
   currentUser, setCurrentModule, setCurrentProjectId, currentProjectId,
   createEmptyTest, tests, setTests, setActiveTestId, jumpToTest, operatorNames,
@@ -572,6 +596,63 @@ export const ProjectDetailModule = ({
        nouveau à chaque modification — exactement la boucle sans issue signalée. */
     if (res.scopedChanged) replaceProjects(res.list);
   }, [projects]);
+
+  /* ── LES IMAGES DES FIGURES SE REMONTENT TOUTES SEULES DU DRIVE ────────────
+     ⚠️ CET EFFET VIT ICI, AVEC LES AUTRES HOOKS, ET AVANT LE `return` DE LA PAGE
+     « Project not found » (plus bas) : un hook après ce retour conditionnel
+     n'aurait pas été appelé à chaque rendu — React exige le même ordre.
+
+     Une figure de section peut n'avoir plus de pixels ici : le magasin du
+     navigateur était plein et l'écriture d'urgence a remplacé l'image encodée
+     par son lien Drive (voir saveProjectsRescued). Et quand ce lien manquait —
+     c'est le cas des compositions insérées avant que l'Image Builder ne le pose
+     — il ne restait RIEN à afficher : « le projet est là, mais sans les
+     images », la seule issue étant de les réimporter à la main depuis le Drive.
+
+     Ici, chaque figure sans pixels dont le lien Drive est CONNU récupère
+     immédiatement une URL AFFICHABLE (getRenderableDriveUrl : le lien « view »
+     d'un fichier ne se dessine pas dans un <img>, la vignette Drive si) — sans
+     recopier un seul octet dans le magasin du navigateur. La marque « pixels
+     perdus » tombe, et la figure redevient une image.
+
+     Une figure dont le lien n'est pas encore connu (la liste de la bibliothèque
+     a été allégée elle aussi) n'est pas perdue pour autant : « ⬇ Add missing
+     figures from Drive » relit le dossier du projet, l'entrée du canvas revient
+     avec son lien, et la passe suivante la remonte. */
+  const restoredFigRef = useRef(new Set());
+  useEffect(() => {
+    if (!canModify || !project) return;
+    const sections = Object.keys(project.figures || {});
+    if (!sections.length) return;
+    const patches = [];
+    sections.forEach((sec) => {
+      (project.figures[sec] || []).forEach((fig) => {
+        if (!fig || typeof fig !== 'object' || !fig.id) return;
+        const hasPixels = fig.pixelsMissing !== true && !!String(fig.url || '').trim();
+        if (hasPixels || restoredFigRef.current.has(fig.id)) return;
+        const link = figureDriveLink(fig, project.id);
+        if (!link) return;                  // rien de connu : on retentera après la relecture du Drive
+        restoredFigRef.current.add(fig.id);
+        patches.push({
+          sec,
+          figId: fig.id,
+          patch: { url: getRenderableDriveUrl(link), full: link, driveUrl: link, pixelsMissing: false }
+        });
+      });
+    });
+    if (!patches.length) return;
+    const figures = { ...(project.figures || {}) };
+    patches.forEach(({ sec, figId, patch }) => {
+      figures[sec] = (figures[sec] || []).map((f) => (f.id === figId ? { ...f, ...patch } : f));
+    });
+    /* Même écriture que le bouton « commit » de la page (replaceProjects, voir
+       commitProjectVerified) : l'état React et la liste vivante avancent
+       ENSEMBLE, et l'effet de sauvegarde ci-dessus écrit derrière. */
+    replaceProjects((prev) => prev.map((p) => (p.id === project.id
+      ? { ...p, figures, updatedAt: new Date().toISOString() }
+      : p)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects, canModify]);
 
   /* Bibliographie / références enregistrées AVANT la prise en charge des
      co-auteurs : leurs champs manquants — les AUTEURS en premier lieu — sont
@@ -2898,11 +2979,16 @@ export const ProjectDetailModule = ({
                        magasin de ce navigateur (il était plein : voir
                        saveProjectsRescued). Sa place, son nom, sa légende et sa
                        position dans le document exporté sont INTACTS — c'est ce
-                       qui se réimporte, alors que le texte, lui, ne se réécrit pas. */
+                       qui se réimporte, alors que le texte, lui, ne se réécrit pas.
+                       Et depuis que le lien Drive est posé à l'insertion (voir
+                       Image Builder) ET que la page remonte d'elle-même ce lien
+                       (figureDriveLink + l'effet des figures), l'image se
+                       réaffiche TOUTE SEULE : ce cadre est un état transitoire. */
                     <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-1">
-                      🖼 The image itself is not kept on this device (the browser’s store was full).
-                      The figure keeps its place, name, caption and its spot in “📄 Export document”.
-                      Send it to Drive (☁ Save figures to Drive) or import it again to get the pixels back.
+                      🖼 The image itself is not kept on this device (the browser’s store was full) — it is
+                      read back from its Drive copy as soon as that file is known here: press
+                      “⬇ Add missing figures from Drive” above if the picture stays empty. The figure keeps its
+                      place, name, caption and its spot in “📄 Export document”.
                     </p>
                   )}
                   <textarea value={fig.caption} onChange={(e) => patchSectionFigure(id, fig.id, { caption: e.target.value })}

@@ -88,8 +88,14 @@ export const ArrowPropertiesPanel = ({ arrow, isFloating = false, onChange, onDe
     <div className={`bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col gap-3 ${isFloating ? 'shadow-2xl max-h-[calc(100vh-8rem)] overflow-y-auto custom-scrollbar' : ''}`}>
       <div className="flex justify-between items-center">
         <h4 className="font-bold text-slate-700">↗ Arrow properties</h4>
-        <button onClick={onDelete}
-          className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100">Delete</button>
+        {/* ⚠️ `onClick={() => onDelete()}` — et NON `onClick={onDelete}` : le
+            gestionnaire recevrait l'ÉVÉNEMENT DE CLIC comme premier argument,
+            c'est-à-dire comme identifiant de la flèche à supprimer. Le bouton
+            semblait alors ne rien faire (le panneau se refermait, la flèche
+            restait sur le canevas). */}
+        <button type="button" onClick={() => onDelete()}
+          className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100"
+          title="Remove this arrow from the canvas (Ctrl+Z brings it back)">Delete</button>
       </div>
 
       <div className="flex flex-col gap-1">

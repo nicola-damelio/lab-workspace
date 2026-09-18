@@ -132,10 +132,12 @@ has(IB, 'const writeFigureRect = (objId, idx, rect) => {', 'l’écriture passe 
 has(IB, 'onFocus={() => commitHistory()}', 'un Ctrl+Z par session d’édition (jamais un par caractère)');
 has(IB, 'This figure is still laid out by the panel grid', '…et une figure encore en grille dit pourquoi le champ est vide');
 
-/* ══ 4. PLEIN ÉCRAN : UNE BARRE HORIZONTALE EN BAS ═══════════════════════ */
+/* ══ 4. PLEIN ÉCRAN : UNE GRILLE DE 6 COLONNES EN BAS ════════════════════ */
 has(IB, 'const PropertiesPanel = ({ bar = false } = {}) => (', 'le panneau sait se présenter en barre');
-has(IB, "bar ? 'flex-row flex-wrap items-start gap-x-3 gap-y-1.5' : 'flex-col gap-1 border-t border-slate-200 pt-1.5'",
-  '…en ligne, et non en colonne (barre d’outils)');
+has(IB, "'grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 items-start gap-x-3 gap-y-1.5'",
+  '…en GRILLE DE 6 COLONNES (et non en colonne)');
+has(IB, "'flex flex-col gap-1 border-t border-slate-200 pt-1.5'",
+  '…tandis que la vue normale reste une colonne');
 has(IB, 'absolute inset-x-0 bottom-0 z-20 border-t border-slate-300 bg-white/95 shadow-2xl',
   '…collée en BAS de la fenêtre, sur toute la largeur');
 has(IB, 'max-h-[38vh] overflow-y-auto custom-scrollbar px-2 py-1.5', '…et défilante au besoin (jamais la moitié de l’écran)');
@@ -171,20 +173,32 @@ has(IB, 'togglePanelsShadow', 'l’ombre des panneaux');
 has(IB, 'onClick={addText}', 'le texte libre');
 has(IB, '📤 Insert into a project section…', '…et l’insertion dans une section de projet, depuis le dialogue de sauvegarde');
 
-/* ══ 7. LA FENÊTRE EST COMPACTE : TROIS LIGNES, LE RESTE REPLIÉ ═══════════
-   « the object window is not enough compacted, it takes up half of the
-   screen » : elle ne peut plus. Trois lignes courtes sont toujours là — le
-   panneau (identité, sélection, copier / coller, profondeur, suppression), sa
-   figure (importer / ajouter, liste, taille, ajustement, échelle, rotation,
-   précision, recadrage, gomme) et sa légende / ses textes. Tout le reste —
-   l'ombre du panneau, la disposition libre, les longues explications — vit
+/* ══ 7. SIX COLONNES, LA LÉGENDE SEULE SUR TOUTE LA LARGEUR, TOUT EN BAS ══
+   « you divided the space in two columns but you must use 6 columns … the only
+   element that should take the full horizontal width is the sub-caption space.
+   It should go at the very bottom. » Chaque groupe de commandes occupe donc UNE
+   colonne — leur hauteur ne s'additionne plus (c'est l'espace vertical rendu au
+   canevas) — et la légende du panneau (son sous-titre) est seule à prendre
+   toute la largeur, placée EN DERNIER. Le reste des réglages rares vit toujours
    derrière « ▾ More options ». Rien n'a été supprimé : seulement rangé. */
 has(IB, 'const [panelMore, setPanelMore] = useState(false);',
   'le repli « More options » est un état du COMPOSANT (jamais un hook du panneau)');
-eq(times(IB, /<div className="flex flex-wrap items-center gap-x-1\.5 gap-y-1">/g), 2,
-  'deux lignes courtes toujours visibles : le panneau, puis ses figures');
-has(IB, "`flex flex-wrap items-center gap-x-1.5 gap-y-1 ${bar ? '' : 'border-t border-slate-200 pt-1'}`",
-  '…et la troisième (légende + textes), séparée par un filet');
+has(IB, "const panelCellCls = (bar, extra = '') => `flex flex-wrap items-center gap-x-1.5 gap-y-1 ${extra}${bar ? ' min-w-0' : ''}`;",
+  'une seule définition de colonne (min-w-0 : sans lui la grille déborde)');
+eq(times(IB, /panelCellCls\(bar\)/g), 6,
+  'six colonnes de commandes : panneau, vue, figures, taille, outils de la figure, textes');
+['COLONNE 1', 'COLONNE 2', 'COLONNE 3', 'COLONNE 4', 'COLONNE 5', 'COLONNE 6'].forEach((mark) => {
+  has(IB, mark, `…${mark} est nommée (la fenêtre se lit comme une grille)`);
+});
+has(IB, "? 'flex flex-wrap items-start gap-x-1.5 gap-y-1 min-w-0 order-last col-span-full border-t border-slate-200 pt-1'",
+  '…et la LÉGENDE est la seule à prendre toute la largeur (order-last col-span-full)');
+eq(times(IB, /min-w-0 order-last col-span-full border-t/g), 1,
+  'un SEUL élément pleine largeur dans toute la fenêtre : le sous-titre');
+ok(IB.indexOf('min-w-0 order-last col-span-full border-t') < IB.indexOf('{panelMore && ('),
+  '…déclarée avant le repli, donc placée après lui : bien tout en bas');
+has(IB, "? 'min-w-0 xl:col-span-2'", 'le repli « More options » reste une colonne (deux de large au plus)');
+eq(times(IB, /<div className="flex flex-wrap items-center gap-x-1\.5 gap-y-1">/g), 0,
+  'plus aucune ligne pleine largeur écrite à la main');
 has(IB, "{panelMore ? '▴ Fewer options' : '▾ More options'}",
   'un seul repli, dont le libellé dit ce qu’il cache');
 has(IB, 'onClick={() => setPanelMore((v) => !v)}', '…et qui se referme en un clic');

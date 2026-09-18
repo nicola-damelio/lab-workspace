@@ -25,11 +25,27 @@ import LZString from 'lz-string';
    importable par node (voir _esm_test_hook.mjs). */
 register('./_esm_test_hook.mjs', import.meta.url);
 
-/* ── un localStorage minimal pour exercer les VRAIS helpers ────────────────── */
+/* ── un localStorage minimal pour exercer les VRAIS helpers ──────────────────
+   …avec un QUOTA, comme un vrai navigateur : c'est lui qui refusait les
+   écritures des listes de figures quand le magasin du poste était plein (voir
+   la dernière section). `Infinity` par défaut : les autres sections ne le
+   sentent pas. */
 const store = new Map();
+let quota = Infinity;
+const setQuota = (n) => { quota = n; };
+const usedBytes = () => { let t = 0; store.forEach((v) => { t += String(v).length; }); return t; };
 globalThis.localStorage = {
   getItem: (k) => (store.has(k) ? store.get(k) : null),
-  setItem: (k, v) => { store.set(k, String(v)); },
+  setItem: (k, v) => {
+    const next = String(v);
+    const without = usedBytes() - String(store.get(k) || '').length;
+    if (without + next.length > quota) {
+      const err = new Error('quota exceeded');
+      err.name = 'QuotaExceededError';
+      throw err;
+    }
+    store.set(k, next);
+  },
   removeItem: (k) => { store.delete(k); },
   clear: () => store.clear(),
   get length() { return store.size; },
@@ -396,5 +412,101 @@ has(PROJ, '📁 Drive location:', '…et l’affiche sous les documents de la se
 has(PROJ, 'verifySectionUpload(label, name);', '…après avoir VÉRIFIÉ que le fichier y est vraiment');
 has(PROJ, 'const children = leafId ? await listDriveChildren(leafId) : [];',
   'la vérification relit le dossier Drive (pas seulement « envoyé »)');
+
+/* ══ 7. LE MAGASIN PLEIN NE FAIT PLUS DISPARAÎTRE UNE LISTE ═══════════════════
+   « Je sauve, je quitte, mon travail n'y est plus — et pour le retrouver je dois
+   aller le chercher depuis le Drive. » Les LISTES de figures vivent dans le
+   navigateur (`labFiguresLibrary` / `labFiguresLib_<projet>`) et elles pèsent
+   vite des mégaoctets parce qu'une entrée garde ses pixels encodés. Quand le
+   magasin du poste (~5 Mo par site, partagé avec le payload des datasets) est
+   plein, `setItem` lève — et ce `catch { }` laissait la liste EN MÉMOIRE
+   seulement : complète jusqu'au rechargement, puis vide.
+
+   Ce n'est plus un échec muet : la haute résolution des entrées dont le FICHIER
+   EST SUR LE CLOUD est d'abord rendue à son lien Drive (le chemin prévu :
+   resolveImageToDataUrl les relit avec le jeton OAuth), la liste s'écrit, et
+   AUCUNE entrée n'est perdue. Une entrée dont les pixels ne vivent que dans ce
+   navigateur n'est jamais touchée. */
+const CLOUD_FULL = `data:image/png;base64,${'F'.repeat(40000)}`;
+const LOCAL_FULL = `data:image/png;base64,${'L'.repeat(20000)}`;
+const CLOUD_ENTRY = {
+  id: 'lib_cloud', label: 'Cloud figure', url: 'data:image/png;base64,thumb',
+  full: CLOUD_FULL, drive: true, driveUrl: 'https://drive.google.com/file/d/CLOUD1/view',
+  canvasData: { objects: [{ id: 'o1' }] }, addedAt: '2026-01-01T00:00:00.000Z'
+};
+const LOCAL_ENTRY = {
+  id: 'lib_local', label: 'Local figure', url: 'data:image/png;base64,thumb2',
+  full: LOCAL_FULL, drive: false, driveUrl: null, canvasData: null, addedAt: '2026-01-01T00:00:00.000Z'
+};
+
+has(LIB_SRC, 'export const shrinkLibraryEntryPixels = (items, { dropThumbs = false } = {}) => {',
+  'figuresLibrary sait alléger une liste sans perdre une seule entrée');
+ok(!LIB_SRC.includes('catch { /* quota full — memory keeps the copy */ }'),
+  'l’échec muet de l’écriture des listes a disparu');
+has(LIB_SRC, 'const slim = shrinkLibraryEntryPixels(items);',
+  '…une écriture refusée rend d’abord la haute résolution des entrées du cloud');
+has(LIB_SRC, 'const thinner = shrinkLibraryEntryPixels(slim.items, { dropThumbs: true });',
+  '…et, en second recours, leur vignette aussi');
+
+const shrunk = LIB.shrinkLibraryEntryPixels([CLOUD_ENTRY, LOCAL_ENTRY]);
+eq(shrunk.items.length, 2, 'alléger une liste ne retire AUCUNE entrée');
+eq(shrunk.items[0].full, CLOUD_ENTRY.driveUrl, 'la haute résolution d’une entrée du cloud devient son LIEN Drive');
+eq(shrunk.items[0].canvasData, CLOUD_ENTRY.canvasData, '…sa composition éditable n’est pas touchée');
+eq(shrunk.items[0].url, CLOUD_ENTRY.url, '…ni sa vignette au premier passage');
+eq(shrunk.freed, CLOUD_FULL.length, '…et la place rendue est chiffrée (en caractères, l’unité du quota)');
+ok(shrunk.items[1] === LOCAL_ENTRY, 'une entrée dont les pixels ne vivent QUE ici est rendue TELLE QUELLE');
+eq(LIB.shrinkLibraryEntryPixels([CLOUD_ENTRY], { dropThumbs: true }).items[0].url, CLOUD_ENTRY.driveUrl,
+  'en second recours, la vignette se lit du cloud elle aussi');
+
+/* …et la VRAIE écriture, sur un magasin plein : la liste arrive quand même. */
+const roomKey = projectKey('prj_room');
+LIB.writeProjectLibrary('prj_room', [CLOUD_ENTRY, LOCAL_ENTRY]);
+ok(!!store.get(roomKey), 'la liste s’écrit normalement tant qu’il y a de la place');
+const bytesBefore = String(store.get(roomKey)).length;
+setQuota(usedBytes());   // plein au caractère près : plus une seule écriture ne passe
+LIB.writeProjectLibrary('prj_room', [CLOUD_ENTRY, LOCAL_ENTRY, { ...CLOUD_ENTRY, id: 'lib_cloud2' }]);
+const stored = JSON.parse(String(store.get(roomKey) || '[]'));
+eq(stored.length, 3, 'un magasin PLEIN n’empêche plus la liste de s’écrire');
+eq(stored[0].full, CLOUD_ENTRY.driveUrl, '…la copie locale devenue inutile est remplacée par son lien Drive');
+eq(stored[0].canvasData, CLOUD_ENTRY.canvasData, '…la composition éditable est intacte');
+eq(stored[1].full, LOCAL_FULL, 'et une entrée sans copie cloud garde ses pixels (la toucher serait la perdre)');
+ok(stored.every((i) => !!i.label), 'aucune entrée n’est perdue : elles gardent toutes leur libellé');
+setQuota(Infinity);
+
+/* ══ 8. UNE FIGURE INSÉRÉE PORTE TOUJOURS SA COPIE CLOUD ═════════════════════
+   « Je construis une image, je la sauve dans le projet, je quitte : mes images
+   ne sont plus là. » La composition était écrite dans le document du projet
+   SOUS FORME D'IMAGE ENCODÉE et SEULEMENT là. Le magasin plein, l'écriture
+   d'urgence remplaçait les pixels par leur lien Drive… un lien que la figure
+   n'avait jamais eu : `url` vide, donc un cadre sans image sur la page projet.
+
+   L'insertion envoie donc les pixels au Drive AVANT d'écrire la figure, garde
+   ce lien sur l'entrée, et VÉRIFIE son écriture. */
+has(IB, "cloud = await uploadFigureToDrive({ full: dataUrl, label, projectName: prj.name || '' });",
+  'l’Image Builder dépose la composition au Drive avant d’insérer la figure');
+has(IB, '...(cloudUrl ? { drive: true, driveUrl: cloudUrl, full: cloudUrl } : {}),',
+  '…et la figure insérée garde ce lien (la page peut donc toujours la remontrer)');
+has(IB, 'const saved = saveProjectsRescued(projects, { projectId: prj.id, fields: {} });',
+  'l’insertion VÉRIFIE son écriture (et fait de la place si le magasin refuse)');
+ok(!IB.includes('saveProjects(projects);'),
+  'plus d’écriture d’insertion dont le refus est ignoré');
+has(IB, 'if (!saved.ok) {', '…et le dialogue dit la VÉRITÉ quand rien n’a pu être écrit');
+has(IB, '} else if (saved.droppedImages) {', '…comme quand seul le lien Drive a pu être gardé');
+has(IB, '} else if (!cloudUrl) {', '…et quand aucune copie cloud n’a pu être faite');
+has(IB, 'No cloud copy could be made (Google Drive / Nextcloud not connected)',
+  '…en le disant clairement plutôt qu’en annonçant un succès');
+
+/* ══ 9. LA PAGE PROJET RÉAFFICHE L'IMAGE TOUTE SEULE ═════════════════════════ */
+has(PROJ, "export const figureDriveLink = (fig, projectId = '') => {",
+  'la page projet sait retrouver le lien Drive d’une figure');
+has(PROJ, 'const entry = readProjectLibrary(from).find((i) => i && i.id === fig.canvasId);',
+  '…y compris par l’entrée de bibliothèque du canvas dont elle vient');
+has(PROJ, 'const link = figureDriveLink(fig, project.id);', '…et s’en sert pour les figures sans pixels');
+has(PROJ, 'url: getRenderableDriveUrl(link), full: link, driveUrl: link, pixelsMissing: false',
+  '…en posant une URL AFFICHABLE (un lien « view » ne se dessine pas dans un <img>)');
+has(PROJ, 'if (hasPixels || restoredFigRef.current.has(fig.id)) return;',
+  '…une seule fois par figure (jamais une écriture en boucle)');
+has(PROJ, '“⬇ Add missing figures from Drive” above if the picture stays empty',
+  '…et l’avis renvoie au bouton qui relit le dossier du Drive');
 
 console.log(`✅ ${passed} tests passés (bibliothèque d’images ↔ sauvegarde)`);

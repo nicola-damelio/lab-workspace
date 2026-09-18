@@ -1,7 +1,7 @@
 OK   _axis_aspect_test.cjs  →  ✅ 123/123 checks passed
 OK   _axis_fit_test.cjs  →  ✅ 476/476 checks passed
 OK   _break_test.mjs  →  33/33 checks passed
-OK   _builder_arrows_test.mjs  →  │ (index) │ name                                                                    │ ok   │ error │ | ✅ 108/108 checks passed
+OK   _builder_arrows_test.mjs  →  │ (index) │ name                                                                    │ ok   │ error │ | ✅ 113/113 checks passed
 OK   _builder_copy_paste_test.mjs  →  _builder_copy_paste_test.mjs — 98 assertions OK
 OK   _builder_crop_test.cjs  →  ✅ 67/67 checks passed
 OK   _builder_eraser_test.mjs  →  _builder_eraser_test.mjs — 62 assertions OK
@@ -14,7 +14,7 @@ OK   _builder_montage_test.mjs  →  _builder_montage_test.mjs — 50 assertions
 OK   _builder_multiselect_test.mjs  →  _builder_multiselect_test.mjs — 103 assertions OK
 OK   _builder_pixels_test.cjs  →  ✅ 41/41 checks passed
 OK   _builder_place_test.cjs  →  ✅ 53/53 checks passed
-OK   _builder_uibar_test.mjs  →  _builder_uibar_test.mjs — 82 assertions OK
+OK   _builder_uibar_test.mjs  →  _builder_uibar_test.mjs — 94 assertions OK
 OK   _builder_zoom_test.cjs  →  ✅ 31/31 checks passed
 OK   _canvas_autosave_test.mjs  →  ✅ _canvas_autosave_test : 122 vérifications passées
 OK   _capture_fix_test.mjs  →  passed 70/70
@@ -35,7 +35,7 @@ OK   _figure_placement_test.mjs  →  _figure_placement_test.mjs — 35 assertio
 OK   _figure_recapture_test.mjs  →  │ (index) │ name                                                                          │ ok   │ error │ | ✅ 32/32 checks passed
 OK   _figure_style_test.mjs  →  │ (index) │ name                                                                                  │ ok   │ error │ | ✅ 71/71 checks passed
 OK   _library_reorder_test.mjs  →  _library_reorder_test.mjs — 41 assertions OK
-OK   _library_restore_test.mjs  →  ✅ 135 tests passés (bibliothèque d’images ↔ sauvegarde)
+OK   _library_restore_test.mjs  →  ✅ 166 tests passés (bibliothèque d’images ↔ sauvegarde)
 OK   _library_transfer_test.cjs  →  │ (index) │ name                                                                                                                   │ ok   │ error │ | 
 OK   _mail_recipients_test.mjs  →  _mail_recipients_test: 47 passed
 OK   _manuscript_import_test.mjs  →  ✅ 468 tests passés (manuscrit — blocs / parties / en-tête / sections / liens / figures)
