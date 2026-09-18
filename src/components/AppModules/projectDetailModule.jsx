@@ -6,7 +6,7 @@ import {
 } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
 import { loadProjects, saveProjects, saveProjectsChecked, lightenProjectForStorage, recordProjectDeletion, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor, saveProjectsRescued } from './projectsModule';
-import { formatStoreSize, describeTopConsumers } from '../../utils/localStoreRoom';
+import { storageFreedText, storageRefusedText } from '../../utils/localStoreRoom';
 import { suggestDriveFileName, openDrive, projectSectionFolderPath, projectSectionFolderLabel, projectImagesFolderLabel } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
 import { UsefulFilesSection } from '../UsefulFilesSection';
@@ -258,44 +258,10 @@ const mmPartsFor = (project, tests, onlyIncluded) =>
     })
     .filter(Boolean);
 
-/* =========================================================================
-   LES DEUX PHRASES DU MAGASIN DU NAVIGATEUR.
-   Une écriture sauvée (de la place a été faite) et un échec VRAI ne se disent
-   pas de la même façon : le premier est une bonne nouvelle à expliquer, le
-   second doit donner la MESURE de ce qui occupe la place et la marche à suivre.
-   ========================================================================= */
-
-/** Ce qu'une écriture SAUVÉE a coûté, calmement et sans jargon. */
-const storageFreedText = (res) => [
-  res.linked
-    ? `${res.linked} high-resolution image copy(ies) now read from their Drive file instead of being kept here — nothing was lost`
-    : '',
-  res.droppedImages
-    ? `${res.droppedImages} image copy(ies) that existed only in this browser were left out of the project copy — every figure keeps its place, its name, its caption and its spot in the printed document; press ☁ Save figures to Drive (or import them again) to get the pixels back`
-    : '',
-  res.forgotten
-    ? `${res.forgotten} figure-list entr${res.forgotten === 1 ? 'y' : 'ies'} whose files are already on Drive were forgotten on this device — “⬇ Add missing from Drive” brings them back`
-    : ''
-].filter(Boolean).join(' · ');
-
-/** L'ÉCHEC VRAI : rien n'a pu être écrit — la mesure, puis ce qui libère. */
-const storageRefusedText = (res) => {
-  const usage = res.usage || { total: 0, keys: [] };
-  const consumers = describeTopConsumers(usage, 4);
-  const tried = [
-    res.linked ? `${res.linked} image copy(ies) linked to their Drive file` : '',
-    res.droppedImages ? `${res.droppedImages} local image copy(ies) dropped` : '',
-    res.forgotten ? `${res.forgotten} recoverable figure-list entry(ies) forgotten` : ''
-  ].filter(Boolean).join(', ');
-  return `⚠ This browser refused the write and no room could be freed (${res.error}). `
-    + 'Your work is still on this page — nothing is lost while it stays open — but it is NOT stored on this device yet. '
-    + `What occupies the browser’s own store: ${formatStoreSize(usage.total)}`
-    + (consumers ? ` — ${consumers}. ` : '. ')
-    + 'Drive and Firestore hold a COPY of the dataset, but a copy never returns room to this store. '
-    + (tried ? `Tried automatically: ${tried}. ` : '')
-    + 'To free room for real: in “Figures & slides”, press ☁ Save to Drive so the images leave this store, '
-    + 'or delete from this device a dataset you no longer need.';
-};
+/* LES DEUX PHRASES DU MAGASIN DU NAVIGATEUR — « de la place a été faite » et
+   « le navigateur a refusé » — vivent maintenant dans utils/localStoreRoom.js,
+   avec la mesure, et sont importées ci-dessus : la LISTE DES PROJETS et la PAGE
+   PROJET disent donc exactement la même chose du magasin. */
 
 export const ProjectDetailModule = ({
   currentUser, setCurrentModule, setCurrentProjectId, currentProjectId,

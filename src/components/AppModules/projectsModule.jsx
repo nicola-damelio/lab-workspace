@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { markAttachmentsDeleted, getDriveRootName } from '../../utils/driveUpload';
 import { mirrorDeleteProject } from '../../utils/driveMirror';
-import { readLocalStoreUsage } from '../../utils/localStoreRoom';
+import { readLocalStoreUsage, storageFreedText, storageRefusedText } from '../../utils/localStoreRoom';
 import { pruneRecoverableLibraryCaches } from '../../utils/figuresLibrary';
 import {
   DELETED_PROJECTS_KEY, normalizeTombstones, mergeTombstones, tombstonesForDataset,
@@ -19,8 +19,6 @@ import {
 export const PROJECTS_KEY = 'labWorkspace_projects';
 
 export const genProjectId = () => `prj_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
-const normProjectName = (p) => String((p && p.name) || '').trim().toLowerCase();
 
 /** Rough "how much content does this project hold" measure — used to keep the
  *  fullest copy when the same project (same id or same name) exists twice on a
@@ -772,9 +770,21 @@ export const ProjectsModule = ({
   const [showNewForm, setShowNewForm] = useState(false);
   const [newName, setNewName] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(null);
+  /* ⚠ UNE ÉCRITURE REFUSÉE SE DIT ICI — ET ELLE N'EST PLUS UN CUL-DE-SAC.
+     saveProjectsRescued refait de la place DANS le magasin du navigateur (liens
+     Drive, puis pixels, puis listes récupérables du cloud) avant de se résoudre
+     à échouer ; l'échec, LUI, s'affiche avec la mesure du magasin. */
+  const [storageWarning, setStorageWarning] = useState('');
+  const [storageNote, setStorageNote] = useState('');
 
   useEffect(() => {
     const res = saveProjectsRescued(projects);
+    if (!res.ok) {
+      setStorageWarning(storageRefusedText(res));
+    } else {
+      setStorageWarning('');
+      if (res.linked || res.droppedImages || res.forgotten) setStorageNote(storageFreedText(res));
+    }
     /* ⚠ L'ÉTAT SUIT CE QUI A ÉTÉ ÉCRIT. Quand le magasin du navigateur est plein,
        l'écriture est sauvée en allégeant la liste (voir saveProjectsRescued) :
        repartir de la version NON allégée à l'écriture suivante remettrait le
@@ -800,7 +810,34 @@ export const ProjectsModule = ({
 
   const createProject = () => {
     const name = newName.trim();
-    if (!name) return;
+    if (!name) {
+      /* Un clic qui ne fait RIEN est un cul-de-sac : il se dit. */
+      setStorageWarning('⚠ Type the project name first — “Create project” only works once the name box is filled.');
+      return;
+    }
+    /* ⚠ UN PROJET PORTE SON NOM DANS UN DATASET (voir dedupeProjects) : deux
+       projets du même nom dans le même dataset sont UN SEUL projet — c'est
+       ainsi que deux copies du même projet (un poste et un autre) se
+       rejoignent, et c'est le nom qui nomme son dossier sur le Drive. Créer un
+       jumeau ne créait donc RIEN DU TOUT : la liste relue ne contenait que
+       l'ancien projet, l'id du nouveau n'existait nulle part, la page projet
+       affichait « Project not found » et, de retour à la liste, la carte
+       n'apparaissait jamais — exactement « le bouton ne crée plus de projet ».
+       On OUVRE le projet existant, et on le dit. */
+    const twin = projects.find(
+      (p) => String((p && p.name) || '').trim().toLowerCase() === name.toLowerCase()
+    );
+    if (twin) {
+      setStorageWarning('');
+      setNewName('');
+      setShowNewForm(false);
+      setCurrentProjectId(twin.id);
+      setCurrentModule('project-detail');
+      window.alert(`A project called “${twin.name}” already exists in this dataset — it has just been opened.\n\n`
+        + 'Two projects of the same dataset cannot carry the same name: the name IS the project — its Drive folder is named '
+        + 'after it (rename that one from its own page, or give this project a different name).');
+      return;
+    }
     const now = new Date().toISOString();
     const prj = {
       id: genProjectId(),
@@ -826,12 +863,48 @@ export const ProjectsModule = ({
       figureCaptionOverrides: {}
     };
     const nextProjects = [...projects, prj];
+    /* L'ÉCRITURE PASSE PAR LE SAUVETAGE ET SE VÉRIFIE (saveProjectsRescued) : le
+       projet créé est RELU du magasin, ce qui prouve qu'il y est vraiment. Un
+       magasin plein ne peut donc plus faire disparaître un projet neuf — la
+       place se fait ici, dans le navigateur. Le verdict est ensuite AFFICHÉ, et
+       l'écriture est sous try/catch : même un magasin inaccessible (navigation
+       privée) ne laisse pas le clic sans effet. */
+    let res;
+    try {
+      res = saveProjectsRescued(nextProjects, { projectId: prj.id, fields: {} });
+    } catch (err) {
+      res = {
+        ok: false,
+        error: String((err && err.message) || err || 'the write failed'),
+        linked: 0,
+        droppedImages: 0,
+        forgotten: 0,
+        list: nextProjects,
+        scopedChanged: false,
+        usage: readLocalStoreUsage()
+      };
+    }
+    if (res.ok) {
+      /* L'état suit ce qui a été écrit (allégé s'il a fallu de la place) : comme
+         l'effet ci-dessus, sinon l'écriture suivante remettrait le poids en place. */
+      setProjects(res.scopedChanged ? res.list : nextProjects);
+      setStorageWarning('');
+      if (res.linked || res.droppedImages || res.forgotten) setStorageNote(storageFreedText(res));
+      setNewName('');
+      setShowNewForm(false);
+      setCurrentProjectId(prj.id);
+      setCurrentModule('project-detail');
+      return;
+    }
+    /* LE MAGASIN N'A PAS GARDÉ LE PROJET : la carte reste à l'écran (elle est
+       dans l'état de cette page) mais on NE VA PAS sur une page projet dont les
+       données ne sont pas enregistrées — elle afficherait « Project not found »,
+       le cul-de-sac signalé. On reste ICI, avec la mesure de ce qui occupe la
+       place et la marche à suivre. */
     setProjects(nextProjects);
-    saveProjects(nextProjects);
+    setStorageWarning(storageRefusedText(res));
     setNewName('');
     setShowNewForm(false);
-    setCurrentProjectId(prj.id);
-    setCurrentModule('project-detail');
   };
 
   const deleteProject = (id) => {
@@ -891,6 +964,28 @@ export const ProjectsModule = ({
             )}
           </div>
         </div>
+
+        {/* Écriture REFUSÉE par le navigateur : la mesure de ce qui occupe la
+            place, puis la marche à suivre (localStoreRoom.storageRefusedText).
+            Un échec définitif n'est jamais silencieux. */}
+        {storageWarning && (
+          <div className="rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-[11px] font-bold text-red-700">
+            {storageWarning}
+          </div>
+        )}
+
+        {/* Écriture SAUVÉE : de la place a été faite dans le magasin du
+            navigateur — on le dit, et on dit ce que cela a coûté. */}
+        {storageNote && (
+          <div className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 flex items-start gap-2">
+            <span className="flex-1">
+              <b>🧹 Saved — room had to be made in this browser’s store.</b> {storageNote}
+            </span>
+            <button type="button" onClick={() => setStorageNote('')}
+                    className="shrink-0 font-bold text-amber-700 hover:text-amber-900"
+                    title="Hide this note — the change is saved either way.">✕</button>
+          </div>
+        )}
 
 
 

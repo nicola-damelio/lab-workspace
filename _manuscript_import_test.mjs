@@ -26,6 +26,11 @@ register('./_esm_test_hook.mjs', import.meta.url);
 const MS = await import('./src/utils/manuscriptImport.js');
 const RL = await import('./src/utils/referenceLinks.js');
 const PROJ = readFileSync('./src/components/AppModules/projectDetailModule.jsx', 'utf8');
+/* Les deux phrases du magasin du navigateur (« de la place a été faite » et
+   « le navigateur a refusé ») vivent dans utils/localStoreRoom.js, avec la
+   mesure : la LISTE DES PROJETS et la PAGE PROJET les importent et disent donc
+   exactement la même chose du magasin. */
+const ROOM = readFileSync('./src/utils/localStoreRoom.js', 'utf8');
 const IMGB = readFileSync('./src/components/ImageBuilder.jsx', 'utf8');
 const RTE = readFileSync('./src/components/RichTextEditor.jsx', 'utf8');
 
@@ -518,8 +523,10 @@ ok(PROSE.length > 200 && !MS.looksLikeAuthorLine(PROSE),
   'un long paragraphe reste hors des lecteurs d’auteurs');
 eq(authorsOf(['Aphid transmission of a new potyvirus in pepper crops', PROSE]).authors, '',
   '…et l’en-tête s’arrête avant lui, sans inventer d’auteurs');
-has(PROJ, 'Drive and Firestore hold a COPY of the dataset',
+has(ROOM, 'Drive and Firestore hold a COPY of the dataset',
   'un refus d’écrire dit que le Drive ne rend PAS sa place au magasin du navigateur');
+has(PROJ, 'import { storageFreedText, storageRefusedText } from',
+  '…et c’est cette phrase-là que la page projet affiche (elle l’importe)');
 
 /* ── 10 sexies. LA LISTE D'AUTEURS RÉELLE D'UN CONSORTIUM (quinze auteurs) ───
    C'est la ligne d'un article réel : 292 caractères, quinze auteurs, deux croix
