@@ -555,7 +555,7 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
       const projectName = projectNameFor(test);
       // The real image is stored on Google Drive (projects/<project>/images), only a
       // small local preview + metadata remain in the browser.
-      const { entry, drive } = await publishLibraryFigure({
+      const { entry, drive, driveError, driveQueued } = await publishLibraryFigure({
         scope: pid ? 'project' : 'common',
         projectId: pid,
         projectName,
@@ -564,9 +564,18 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
         src
       });
       void entry;
-      const driveMsg = pid && projectName
-        ? (drive && drive.id ? ` · Drive: projects/${projectName}/images` : ' · Drive upload failed — browser copy only')
-        : (drive && drive.id ? ' · Drive: projects/_unassigned/images' : ' · Drive not connected — library copy only');
+      // Où la figure est ALLÉE — et, si la copie cloud manque, POURQUOI :
+      // « en attente d'envoi » (elle repartira toute seule) n'est pas la même
+      // chose qu'un échec, et « browser copy only » tout court laissait croire
+      // que le travail n'était gardé nulle part.
+      const folder = pid && projectName
+        ? `projects/${projectName}/images`
+        : 'projects/_unassigned/images';
+      let driveMsg;
+      if (drive && drive.id) driveMsg = ` · ☁ ${folder}`;
+      else if (driveQueued) driveMsg = ` · ⏳ cloud copy queued for ${folder} (${driveError || 'cloud unreachable'}) — it uploads by itself as soon as Drive answers, nothing is lost`;
+      else if (driveError === 'cloud storage is not connected') driveMsg = ' · 💾 kept in this browser (Google Drive / Nextcloud not connected) — connect it in the sidebar so the figure follows you';
+      else driveMsg = ` · 💾 kept in this browser — cloud upload failed${driveError ? ` (${driveError})` : ''}`;
       setFigStatus({ key: t.key, ok: true, msg: `📷 Figure saved to ${where}${driveMsg}` });
     } catch {
       setFigStatus({ key: t.key, ok: false, msg: '⚠️ Figure capture failed' });

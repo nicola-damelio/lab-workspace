@@ -138,8 +138,35 @@ has(IB, '} disabled={i === getObjImages(selectedObj).length - 1}\n              
   '⤒ (et ⬆) sont désactivés sur la figure du dessus');
 has(IB, '} disabled={i === 0}\n                        className="text-[10px] font-bold text-slate-500 border border-slate-200 rounded px-1 disabled:opacity-30 hover:bg-slate-100"\n                        title="One step down',
   '⬇ (et ⤓) sont désactivés sur la figure du dessous');
-ok(IB.indexOf('{getObjImages(selectedObj).length > 1 && (\n                    <span className="flex items-center gap-0.5 shrink-0"') > 0,
-  'l’empilement n’apparaît qu’à partir de deux figures (une seule figure : rien à ordonner)');
+/* L'empilement est TOUJOURS affiché : il n'apparaissait qu'à partir de la
+   DEUXIÈME figure, donc « mettre la figure sélectionnée par-dessus les autres »
+   restait introuvable sur un panneau qui n'en porte qu'une. Les commandes
+   impossibles sont simplement inactives. */
+ok(IB.indexOf('{/* 🗂 STACKING — TOUJOURS VISIBLE.') > 0,
+  'la liste des figures porte l’empilement dès la première figure');
+has(IB, ' — the list is the stacking: the last one is ON TOP of the others (⤒ ⬆ ⬇ ⤓ re-layer a figure)',
+  '…et la ligne des figures dit lequel est au-dessus');
+has(IB, ' — ⤒ ⬆ ⬇ ⤓ re-layer it as soon as the panel holds several',
+  '…même quand il n’y a qu’une figure (la commande se voit)');
+
+/* ── 5. METTRE LE PANNEAU SÉLECTIONNÉ PAR-DESSUS LES AUTRES ──────────────── */
+// Les panneaux sont PEINTS dans l'ordre de `objects` : le dernier couvre les
+// autres là où ils se chevauchent (une figure qui déborde de son panneau). Ces
+// deux commandes changent donc la PROFONDEUR, sans renommer les panneaux : les
+// lettres suivent la POSITION (renumberLetters), pas l'ordre de la liste.
+has(IB, 'const moveObjInStack = (objId, to) => {', 'le panneau sait passer devant / derrière');
+has(IB, "const dst = to === 'front' ? objects.length - 1 : 0;",
+  '…« front » = la fin de la liste (peinte en dernier → au-dessus)');
+has(IB, 'if (dst === i) return;   // already there: nothing to undo, nothing to write',
+  'ne fait RIEN quand le panneau y est déjà (ni écriture, ni historique)');
+has(IB, "onClick={() => moveObjInStack(selectedObj.id, 'front')}", 'le bouton « ⤒ Front » de la fenêtre de l’objet');
+has(IB, "onClick={() => moveObjInStack(selectedObj.id, 'back')}", '…et son « ⤓ Back »');
+has(IB, 'title="Put this panel ON TOP of the others', '…dont l’infobulle dit ce qu’ils font');
+{
+  const block = IB.slice(IB.indexOf('const moveObjInStack'), IB.indexOf('const writeFigureRect'));
+  ok(!block.includes('renumberLetters'), '…sans renuméroter les lettres (elles suivent la position, pas la liste)');
+  ok(block.length > 0 && block.includes('setObjects'), '…et le nouvel ordre est bien écrit dans la liste du canvas');
+}
 
 /* Les commandes par figure (recadrage, gomme, ombre) visent la figure ACTIVE, et
    son index par défaut est la PLUS HAUTE — cohérent avec l'ordre de la liste. */

@@ -41,6 +41,9 @@ export async function load(url, context, next) {
         'export const sendAdminGmail = async () => ({ ok: false, reason: "bouchon de test (hors navigateur)" });',
         'export const uploadLocalFile = async (arg) => (typeof M().uploadLocalFile === "function" ? M().uploadLocalFile(arg) : { ok: false, reason: "bouchon de test (hors navigateur)" });',
         'export const cloudBackendAvailable = () => M().cloud === true;',
+        // Ce qui vient d’arriver au dernier upload (« mis en file de reprise ? ») :
+        // figuresLibrary s’en sert pour DIRE pourquoi la copie cloud manque.
+        'export const takeLastUploadQueueInfo = () => (typeof M().takeLastUploadQueueInfo === "function" ? M().takeLastUploadQueueInfo() : null);',
         'export const downloadDriveFileBytes = async () => { throw new Error("bouchon de test"); };',
         // figuresLibrary.js importe aussi ces helpers : ils ne servent jamais
         // hors navigateur (cloudBackendAvailable() vaut false), mais le module

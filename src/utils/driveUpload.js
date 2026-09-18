@@ -1325,9 +1325,31 @@ export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path =
     // again, instead of losing it. The public contract is unchanged (null).
     // EXCEPTION : la cible a été SUPPRIMÉE dans le programme (PATH_DELETED) —
     // rien à reprendre, le dossier ne sera pas recréé (voir driveMirrorStore).
-    await saveUploadForRetry({ name, mimeType, file, ctx, path, source: 'upload' }).catch(() => null);
+    const q = await saveUploadForRetry({ name, mimeType, file, ctx, path, source: 'upload' }).catch(() => null);
+    // Le sort du fichier est retenu ici : l'appelant peut alors DIRE ce qui
+    // s'est passé (« envoyé », « en attente de reprise ») au lieu d'un
+    // « échec » indistinct. Voir takeLastUploadQueueInfo().
+    lastUploadQueueInfo = { queued: !!(q && q.queued), reason: (q && q.reason) || 'error', at: Date.now() };
+  } else {
+    lastUploadQueueInfo = {
+      queued: false,
+      reason: last ? 'uploaded' : (deletedTarget ? 'path_deleted' : 'not_queued'),
+      at: Date.now()
+    };
   }
   return last;
+};
+
+/** Ce qui vient d'arriver au DERNIER uploadLocalFile : `{ queued, reason }`.
+ *  `queued: true` = le fichier est dans la file d'attente d'IndexedDB et
+ *  repartira tout seul dès que le Drive répond (voir pendingUploads.js) — donc
+ *  rien n'est perdu, ce qui n'est PAS la même chose qu'un échec définitif.
+ *  La lecture CONSOMME l'information (chaque appel concerne un envoi). */
+let lastUploadQueueInfo = null;
+export const takeLastUploadQueueInfo = () => {
+  const info = lastUploadQueueInfo;
+  lastUploadQueueInfo = null;
+  return info;
 };
 
 let flushPendingInFlight = false;

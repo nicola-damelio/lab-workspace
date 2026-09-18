@@ -36,7 +36,8 @@ const frag = (name, hay, needle) => checkTrue(`${name}: ${needle.slice(0, 44)}â€
 frag('[ImageBuilder] the empty-panel factory', IB, 'const blankObject = (letter) => ({');
 frag('[ImageBuilder] "+ Add Object" uses it', IB, 'const newObj = blankObject(nextLetter);');
 frag('[ImageBuilder] ...and the new panel gets selected', IB, 'setSelectedId(newObj.id);');
-frag('[ImageBuilder] the letter size still follows the figure-wide control', IB, "letterStyle: { fontSize: currentLetterPt(), color: '#000000', bold: true },");
+frag('[new-image] the letter style of a new panel follows the GENERAL definition', IB,
+  "letterStyle: { fontSize: currentLetterPt(), color: currentLetterColor(), bold: currentLetterBold() },");
 
 // ===========================================================================
 // 2) "âž• New image": a blank figure with ONE panel ready for a capture

@@ -214,23 +214,78 @@ export const parseKeyState = (raw) => {
   return { kind: KEY_STATE_KIND, v: 1, at: String(data.at || ''), keys };
 };
 
+/* ── Fusion PAR CONTENU (au-delà de l'horodatage) ─────────────────────────────
+
+   L'horodatage arbitre des VALEURS : le dernier réglage écrit gagne. Pour une
+   LISTE (la bibliothèque d'images), c'est faux : une copie plus récente mais
+   PLUS PAUVRE (magasin plein, navigateur vidé, autre appareil) n'a rien à
+   écraser — elle doit ÊTRE COMPLÉTÉE. Le module qui connaît la forme de ses
+   données enregistre donc son propre fusionneur :
+
+       registerKeyValueMerger(matchesKey, (key, localJson, remoteJson) => json)
+
+   `mergeKeyStates` l'utilise : la valeur publiée (et adoptée localement) devient
+   l'UNION des deux copies. Sans fusionneur enregistré, la règle d'horodatage
+   reste appliquée — les clés secrètes et les réglages ne changent pas de
+   comportement. */
+const keyValueMergers = [];
+
+/** Enregistre un fusionneur par contenu. PUR : rien n'est lu ni écrit. */
+export const registerKeyValueMerger = (matcher, merge) => {
+  if (typeof matcher !== 'function' || typeof merge !== 'function') return false;
+  keyValueMergers.push({ matcher, merge });
+  return true;
+};
+
+/** L'union des deux copies d'une clé, quand un fusionneur la connaît — `null`
+ *  sinon (l'appelant retombe sur la règle d'horodatage). */
+export const mergedKeyValue = (key, localRaw, remoteRaw) => {
+  for (const { matcher, merge } of keyValueMergers) {
+    let owned = false;
+    try { owned = !!matcher(key); } catch { owned = false; }
+    if (!owned) continue;
+    try {
+      const v = merge(key, localRaw, remoteRaw);
+      if (typeof v === 'string' && v) return v;
+    } catch { /* fusionneur en échec → horodatage */ }
+  }
+  return null;
+};
+
+/* ── Fusion par horodatage ──────────────────────────────────────────────────── */
+
 /**
  * Ce qu'il faut ADOPTER du Drive, et la photographie à y déposer.
  * L'horodatage par clé arbitre : la copie la plus récente gagne, et une clé
  * absente en local est adoptée. Rien n'est jamais supprimé. PUR.
+ *
+ * Une clé servie par un fusionneur (registerKeyValueMerger) suit l'UNION des
+ * deux copies au lieu de la plus récente : une liste de bibliothèque ne peut
+ * donc plus être écrasée par une copie plus pauvre.
  */
 export const mergeKeyStates = ({ local = null, remote = null } = {}) => {
   const a = local && local.keys ? local : { keys: {} };
   const b = remote && remote.keys ? remote : { keys: {} };
   const adopt = {};
+  const merged = { ...a.keys };
+  // Clés réunies PAR CONTENU (les listes de bibliothèque) : leur valeur publiée
+  // est l'union, et leur horodatage devient MAINTENANT — une union n'est pas
+  // « ancienne » (sinon une copie plus pauvre la remplacerait au tour suivant).
+  const unionKeys = new Set();
   Object.entries(b.keys).forEach(([key, entry]) => {
     const mine = a.keys[key];
-    if (!mine) { adopt[key] = entry.v; return; }
+    if (!mine) { adopt[key] = entry.v; merged[key] = { v: entry.v, at: Number(entry.at) || Date.now() }; return; }
+    const union = mergedKeyValue(key, mine.v, entry.v);
+    if (union !== null) {
+      merged[key] = { v: union, at: Date.now() };
+      unionKeys.add(key);
+      if (union !== mine.v) adopt[key] = union;
+      return;
+    }
     if ((Number(entry.at) || 0) > (Number(mine.at) || 0)) adopt[key] = entry.v;
   });
-  const merged = { ...a.keys };
   Object.entries(adopt).forEach(([key, v]) => {
-    merged[key] = { v, at: Number((b.keys[key] || {}).at) || Date.now() };
+    merged[key] = { v, at: unionKeys.has(key) ? Date.now() : (Number((b.keys[key] || {}).at) || Date.now()) };
   });
   return { adopt, state: { kind: KEY_STATE_KIND, v: 1, at: '', keys: merged } };
 };
@@ -327,7 +382,20 @@ export const installKeyAutosave = ({ delay = 3000 } = {}) => {
   let stopped = false;
   const flush = async () => {
     if (stopped) return null;
-    const state = localKeyState();
+    const local = localKeyState();
+    /* LE DRIVE EST RELU AVANT CHAQUE ENVOI.
+       `keys.json` est la mémoire PARTAGÉE de tous les postes : y déposer la
+       seule photographie locale effaçait les clés (et les entrées de
+       bibliothèque d'images) que ce poste n'a pas mais qu'un autre y avait
+       déposées — c'est ainsi qu'un canvas « disparaissait » du Drive. On écrit
+       donc l'UNION (fusion par contenu pour les listes, par horodatage sinon,
+       voir mergeKeyStates). Si la relecture échoue (hors ligne), l'écriture
+       échouera presque toujours aussi : rien n'est écrasé. */
+    let state = local;
+    try {
+      const remote = await readKeyState();
+      if (remote) state = mergeKeyStates({ local, remote }).state;
+    } catch { /* Drive injoignable : on garde la copie locale */ }
     const json = JSON.stringify(state);
     if (json === lastWritten) return null;
     const res = await writeKeyState(state);

@@ -222,11 +222,18 @@ check('40 the plate histogram is no longer undone by the panel "bar"', () => {
   assert.ok(s.includes("const isHistogram = normalizeChartType(chartType) === 'bar';"));
   assert.ok(s.includes("? 'histogram' : 'dose-response'"));
 });
-check('41 the builder crop is available without a drag (numeric window)', () => {
+check('41 the builder crop is a MOUSE gesture (the numeric window was removed)', () => {
   const s = readFileSync('./src/components/ImageBuilder.jsx', 'utf8');
-  assert.ok(s.includes('{cropPanelIdx >= 0 && ('));
-  assert.ok(s.includes('const cur = cropPanelRect || { x1: 0, y1: 0, x2: 1, y2: 1 };'));
-  assert.ok(s.includes('or type the four % below'));
+  // « remove commands like the left, right, top, bottom values of crop (crop only
+  // by mouse) » : le mode s'arme, le glissement dessine la fenêtre et le relâchement
+  // l'applique — les quatre champs numériques (et leur bloc `cur`) ont disparu.
+  assert.ok(s.includes('onClick={() => toggleCropMode(selectedObj.id, cropPanelIdx)}'));
+  assert.ok(s.includes('Drag a rectangle on the canvas over the figure'));
+  assert.ok(!s.includes('const cur = cropPanelRect || { x1: 0, y1: 0, x2: 1, y2: 1 };'));
+  assert.ok(!s.includes('or type the four % below'));
+  // …et la précision demandée (« cropping … goes too fast and I cannot be
+  // precise ») : 🎯 Precision (ou Shift) suit un quart du pointeur.
+  assert.ok(s.includes("const nx = fineDrag ? st.from.x + (rawX - st.from.x) * FINE_GAIN : rawX;"));
 });
 check('42 …and the crop release keeps the object selected', () => {
   const s = readFileSync('./src/components/ImageBuilder.jsx', 'utf8');

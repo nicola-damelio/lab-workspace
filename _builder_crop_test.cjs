@@ -8,20 +8,25 @@
 //     stack and the localStorage copy. On the canvas, "✂️ Crop" arms the mode
 //     and a DRAG over the figure draws the window (mouse release applies it);
 //     a crop only ever REFINES the current window (the parts already removed
-//     never come back), and the numeric % fields give the same command to the
-//     pixel. The figure is drawn with the crop window filling its panel.
+//     never come back). The figure is drawn with the crop window filling its
+//     panel.
 //
 //  2) THE "SHIFT X / SHIFT Y" NUMBER COMMANDS ARE GONE — the image is shifted
 //     by dragging it on the canvas (or Shift+drag the object frame), which is
 //     the natural gesture.
 //
-//  3) THE LETTER SIZE IS STILL A FIGURE-WIDE SETTING (no per-panel resize).
+//  3) THE "LEFT / RIGHT / TOP / BOTTOM (%)" NUMBER FIELDS ARE GONE TOO — « remove
+//     commands like the left, right, top, bottom values of crop (crop only by
+//     mouse) ». A crop is drawn on the canvas, and 🎯 Precision (or Shift) gives
+//     the gesture the tenth of a percent (see FINE_GAIN in onDrag).
+//
+//  4) THE LETTER SIZE IS A FIGURE-WIDE SETTING (no per-panel resize) — and so are
+//     the colour and the bold of the letters.
 //
 // The component cannot be imported here (JSX module), so the rules under test
 // are mirrored verbatim from src/components/ImageBuilder.jsx — keep both in sync:
 //   * cropOf()            (validation of a stored window)
 //   * objFigureGeom()     (visible window vs drawn rect of a cropped figure)
-//   * setCropEdge()       (the numeric fields)
 //   * the crop drag math  (startCropDrag / onDrag 'crop' / endDrag)
 const fs = require('fs');
 const path = require('path');
@@ -79,16 +84,6 @@ const figureGeom = ({ cellW, cellH, pad = 0, scale = 1, aspect = 0, fit = 'conta
 };
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const setCropEdge = (rect, edge, pct) => {
-  const cur = rect || { x1: 0, y1: 0, x2: 1, y2: 1 };
-  const v = Math.max(0, Math.min(100, Number(pct) || 0)) / 100;
-  const next = { ...cur, [edge]: v };
-  if (edge === 'x1') next.x1 = Math.min(v, next.x2 - CROP_MIN);
-  if (edge === 'y1') next.y1 = Math.min(v, next.y2 - CROP_MIN);
-  if (edge === 'x2') next.x2 = Math.max(v, next.x1 + CROP_MIN);
-  if (edge === 'y2') next.y2 = Math.max(v, next.y1 + CROP_MIN);
-  return next;
-};
 
 // Pointer → source units (through the DRAWN rect) and the refine-only window.
 const toSrc = (clientPt, view) => ({
@@ -145,14 +140,26 @@ check('cropped + Stretch: the window fills the cell', [stretched.vW, stretched.v
 const noCanvasAspect = figureGeom({ cellW: 200, cellH: 100, aspect: 4 / 3, keepAspectOnCanvas: false });
 check('uncropped + no “Keep aspect ratio”: the cell is used as before', [noCanvasAspect.iW, noCanvasAspect.iH], [200, 100]);
 
-/* ══ 4. the numeric % fields ══════════════════════════════════════════════ */
-const start = { x1: 0.1, y1: 0.1, x2: 0.9, y2: 0.9 };
-check('field: Left 25 %', setCropEdge(start, 'x1', 25).x1, 0.25);
-check('field: Bottom 40 %', setCropEdge(start, 'y2', 40).y2, 0.4);
-check('field: an edge cannot cross the opposite one (2 % kept)', setCropEdge(start, 'x1', 95).x1, 0.88);
-checkTrue('field: …the same for the right edge', close(setCropEdge(start, 'x2', 5).x2, 0.12));
-check('field: values are clamped to 0…100 %', setCropEdge(start, 'y1', -50).y1, 0);
-check('field: an empty field is read as 0 %', setCropEdge(start, 'y1', '').y1, 0);
+/* ══ 4. the numeric % fields are GONE (crop by mouse only) ═════════════════ */
+// « remove commands like the left, right, top, bottom values of crop (crop only
+// by mouse) » : the four fields used to write an edge of the window at the
+// keyboard (setCropEdge); the crop is now drawn on the canvas and refined with
+// 🎯 Precision, so the fields — and their clamping rules — have no caller left.
+checkTrue('the numeric crop fields are gone from the component',
+  !IB.includes('onChange={(e) => setCropEdge(selectedObj.id, cropPanelIdx, edge, e.target.value)}'));
+checkTrue('…and so is their writer', !IB.includes('const setCropEdge = (objId, idx, edge, pct) => {'));
+checkTrue('no “Left (%)” / “Bottom (%)” label survives', !/\['x1', 'Left'\]/.test(IB));
+// Ce qui RESTE du recadrage : le mode, la remise à zéro et le compte-rendu.
+checkTrue('the crop mode is still armed from the properties panel',
+  IB.includes('onClick={() => toggleCropMode(selectedObj.id, cropPanelIdx)}'));
+checkTrue('“Reset crop” is still there', IB.includes('⟲ Reset crop'));
+checkTrue('the window that is kept is still reported',
+  IB.includes('const cropPct = (v) => Math.round((Number(v) || 0) * 1000) / 10;'));
+checkTrue('…and the gesture is still documented where it is triggered',
+  IB.includes('Drag a rectangle on the canvas over the figure'));
+// 🎯 Precision : le geste de recadrage suit un QUART du pointeur quand il est on.
+checkTrue('the crop drag knows the fine mode', IB.includes('const nx = fineDrag ? st.from.x + (rawX - st.from.x) * FINE_GAIN : rawX;'));
+checkTrue('…and Shift arms it without the keyboard leaving the mouse', IB.includes('const fineDrag = !!(fineModeRef.current || e.shiftKey);'));
 
 /* ══ 5. the crop drag ════════════════════════════════════════════════════ */
 const view = { left: 100, top: 50, w: 400, h: 300 };
@@ -187,7 +194,8 @@ frag('[crop] the window is written on the right figure', IB,
 frag('[crop] the dimmed overlay + dashed window are screen-only', IB, 'data-selection-ui="true" clipPath={`url(#clip-${obj.id})`}');
 frag('[crop] the button arms the mode', IB, 'onClick={() => toggleCropMode(selectedObj.id, cropPanelIdx)}');
 frag('[crop] “Reset crop”', IB, '⟲ Reset crop');
-frag('[crop] the numeric fields', IB, 'onChange={(e) => setCropEdge(selectedObj.id, cropPanelIdx, edge, e.target.value)}');
+checkTrue('the numeric crop fields are gone from the component',
+  !IB.includes('onChange={(e) => setCropEdge(selectedObj.id, cropPanelIdx, edge, e.target.value)}'));
 frag('[crop] the figure list picks the active figure', IB, 'onClick={() => setActiveFig({ objId: selectedObj.id, idx: i })}');
 frag('[crop] the % shown in the panel', IB, 'const cropPct = (v) => Math.round((Number(v) || 0) * 1000) / 10;');
 frag('[crop] the crop survives the localStorage / undo copy', IB,
@@ -205,10 +213,16 @@ checkTrue('…but dragging the image on the canvas still shifts it',
 checkTrue('…and Shift+drag still does',
   IB.includes('Hold Shift while dragging the object frame to SHIFT the image instead.'));
 
-/* ══ 8. the letter size is still figure-wide ═════════════════════════════ */
-check('the letter size is written to every panel at once', IB.split('onChange={e => setLetterSizeAll(e.target.value)}').length - 1, 3);
+/* ══ 8. the letter style is figure-wide (size / colour / bold) ═══════════ */
+check('the letter size is written to every panel at once', IB.split('onChange={e => setLetterSizeAll(e.target.value)}').length - 1, 2);
 checkTrue('no per-panel letter resize survives',
   !IB.includes('letterStyle: { ...selectedObj.letterStyle, fontSize:'));
+checkTrue('the colour of every letter is written the same way',
+  IB.includes('setObjects(prev => prev.map(o => ({ ...o, letterStyle: { ...(o.letterStyle || {}), color: c } })));'));
+checkTrue('…and so is the bold',
+  IB.includes('setObjects(prev => prev.map(o => ({ ...o, letterStyle: { ...(o.letterStyle || {}), bold: b } })));'));
+checkTrue('the object window no longer carries a per-panel colour / bold',
+  !IB.includes('Letter Color') && !IB.includes('Colour of THIS panel'));
 
 const failed = results.filter((r) => !r.ok);
 console.table(results);

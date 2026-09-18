@@ -179,7 +179,7 @@ check('the field still shows a panel size once a panel exists',
 // The panels added afterwards adopt the shared size, so a new panel never
 // breaks the uniform look of the figure.
 frag('[ImageBuilder] new panels adopt the shared size', IB,
-  "letterStyle: { fontSize: currentLetterPt(), color: '#000000', bold: true },");
+  "letterStyle: { fontSize: currentLetterPt(), color: currentLetterColor(), bold: currentLetterBold() },");
 frag('[ImageBuilder] the shared size helper', IB, 'const currentLetterPt = () => {');
 frag('[ImageBuilder] the shared setter writes to EVERY object', IB,
   'setObjects(prev => prev.map(o => ({ ...o, letterStyle: { ...(o.letterStyle || {}), fontSize: size } })));');
@@ -187,12 +187,14 @@ frag('[ImageBuilder] an invalid field is ignored', IB, 'if (!Number.isFinite(siz
 frag('[ImageBuilder] the letters are drawn at that size', IB, 'fontSize={ptToMm(obj.letterStyle.fontSize)}');
 frag('[ImageBuilder] the size is a figure setting (why)', IB, 'The letters of a figure always read alike, so the size is a FIGURE setting,');
 
-// All three controls (canvas toolbar, fullscreen toolbar, “Labels & Captions”)
-// drive the shared setter — none of them writes a single panel any more.
+// The TWO controls that are left (canvas toolbar + fullscreen toolbar) drive the
+// shared setter — none of them writes a single panel any more. The object window
+// has no letter field left: the name (A, B, C …) is automatic, and the size is a
+// general definition of the canvas.
 const wired = IB.split('onChange={e => setLetterSizeAll(e.target.value)}').length - 1;
 const shown = IB.split('value={letterPt}').length - 1;
-check('the three letter-size controls use the shared setter', wired, 3);
-check('…and all three show the shared size', shown, 3);
+check('the two letter-size controls use the shared setter', wired, 2);
+check('…and both show the shared size', shown, 2);
 checkTrue('the old per-panel size handler is gone',
   !IB.includes('letterStyle: { ...selectedObj.letterStyle, fontSize: Number(e.target.value) }'));
 const letterPtDecl = IB.split('const letterPt = currentLetterPt();').length - 1;
@@ -200,12 +202,74 @@ check('the shared size is read once per render', letterPtDecl, 1);
 frag('[ImageBuilder] the shared size is remembered for an empty canvas', IB, 'const [letterPtFallback, setLetterPtFallback] = useState(DEFAULT_LETTER_PT);');
 frag('[ImageBuilder] …and written by the control', IB, 'setLetterPtFallback(size); // remembered for an empty canvas / a new panel');
 frag('[ImageBuilder] canvas toolbar control', IB, 'Letter size (pt)');
-frag('[ImageBuilder] “Labels & Captions” control', IB, 'Letter Size — all panels (pt)');
 frag('[ImageBuilder] fullscreen toolbar control', IB,
   '<input type="number" min="4" max="48" value={letterPt} onChange={e => setLetterSizeAll(e.target.value)} className="border border-slate-300 rounded px-1 py-0.5 text-[11px] w-14 bg-white font-normal" />');
-frag('[ImageBuilder] the per-panel fields say so', IB, 'Letter size is shared by every panel; colour and bold are per panel.');
 frag('[ImageBuilder] the size field explains it on hover', IB,
   'changing it rescales every panel letter (A, B, C …) at once — no need to set it panel by panel');
+checkTrue('the object window no longer carries a letter name / size',
+  !IB.includes('Letter Size — all panels (pt)'));
+
+/* ══════════════════════════════════════════════════════════════════════════
+   3) THE COLOUR AND THE BOLD ARE GENERAL DEFINITIONS TOO
+   — « move the bold and colour option as a general definition » : ils ne sont
+   plus réglés panneau par panneau dans la fenêtre de l'objet, mais une fois pour
+   tous les panneaux dans les options du canvas (barre d'outils de l'éditeur, et
+   barre du plein écran). Mêmes règles que la taille, miroir de
+   setLetterColorAll / setLetterBoldAll / currentLetterColor / currentLetterBold.
+   ══════════════════════════════════════════════════════════════════════════ */
+const setLetterColorAll = (objs, color) => {
+  const c = String(color || '').trim() || '#000000';
+  return objs.map((o) => ({ ...o, letterStyle: { ...(o.letterStyle || {}), color: c } }));
+};
+const setLetterBoldAll = (objs, bold) => objs.map((o) => ({ ...o, letterStyle: { ...(o.letterStyle || {}), bold: !!bold } }));
+const currentLetterColor = (objs, selId, fallback = '#000000') => {
+  const sel = (objs || []).find((o) => o.id === selId);
+  const c = sel && sel.letterStyle ? String(sel.letterStyle.color || '').trim() : '';
+  if (c) return c;
+  const first = (objs || []).find((o) => o && o.letterStyle && String(o.letterStyle.color || '').trim());
+  return first ? String(first.letterStyle.color) : fallback;
+};
+const currentLetterBold = (objs, selId, fallback = true) => {
+  const sel = (objs || []).find((o) => o.id === selId);
+  if (sel && sel.letterStyle && sel.letterStyle.bold !== undefined) return !!sel.letterStyle.bold;
+  const first = (objs || []).find((o) => o && o.letterStyle && o.letterStyle.bold !== undefined);
+  return first ? !!first.letterStyle.bold : fallback;
+};
+check('one colour change repaints every panel letter',
+  setLetterColorAll(three, '#ff0000').map((o) => o.letterStyle.color), ['#ff0000', '#ff0000', '#ff0000']);
+check('…and leaves the size alone',
+  setLetterColorAll(three, '#00ff00').map((o) => o.letterStyle.fontSize), [14, 14, 14]);
+check('an emptied colour falls back to black',
+  setLetterColorAll(three, '   ').map((o) => o.letterStyle.color), ['#000000', '#000000', '#000000']);
+check('an object without a letterStyle is fixed up by the colour too',
+  setLetterColorAll([{ id: 'legacy' }], '#123456')[0].letterStyle.color, '#123456');
+check('bold follows the same “every panel at once” rule',
+  setLetterBoldAll(three, true).map((o) => o.letterStyle.bold), [true, true, true]);
+check('…and can be taken off everywhere', setLetterBoldAll(three, 0).map((o) => o.letterStyle.bold), [false, false, false]);
+check('the control shows the selected panel colour', currentLetterColor(highlighted, 'obj_A_0_0'), '#ff0000');
+check('…the first panel when nothing is selected', currentLetterColor(three, null), '#000000');
+check('…and the general value on an empty canvas', currentLetterColor([], null, '#abcdef'), '#abcdef');
+check('bold: the selected panel wins',
+  currentLetterBold([panel('A', 'x', 0, 0, { bold: false }), panel('B', 'y', 1, 0)], 'obj_A_0_0'), false);
+check('bold: the general value on an empty canvas', currentLetterBold([], null, false), false);
+
+frag('[ImageBuilder] the general colour helper', IB, 'const currentLetterColor = () => {');
+frag('[ImageBuilder] …its writer', IB, 'const setLetterColorAll = (color) => {');
+frag('[ImageBuilder] the general bold helper', IB, 'const currentLetterBold = () => {');
+frag('[ImageBuilder] …its writer', IB, 'const setLetterBoldAll = (bold) => {');
+frag('[ImageBuilder] canvas toolbar: the letter colour', IB, 'Letter colour');
+frag('[ImageBuilder] canvas toolbar: the letter bold', IB,
+  '<input type="checkbox" checked={currentLetterBold()} onChange={e => setLetterBoldAll(e.target.checked)} /> Letters bold');
+frag('[ImageBuilder] fullscreen toolbar: the colour', IB, 'title="Colour of every panel letter (figure setting)"');
+frag('[ImageBuilder] fullscreen toolbar: the bold', IB, 'title="Bold for every panel letter (figure setting)"');
+frag('[ImageBuilder] the object window points at the canvas options', IB,
+  'automatic (by position) · size / colour / bold: canvas options');
+checkTrue('…and no per-panel colour / bold is left there',
+  !IB.includes('Letter Color') && !IB.includes('colour and bold are per panel'));
+checkTrue('a new panel adopts the general colour and bold',
+  IB.includes("letterStyle: { fontSize: currentLetterPt(), color: currentLetterColor(), bold: currentLetterBold() },"));
+checkTrue('the general definition travels with the saved canvas',
+  IB.includes('if (cd.letterStyle) setLetterStyleDefaults((prev) => ({'));
 
 console.table(results);
 const failed = results.filter((r) => !r.ok);

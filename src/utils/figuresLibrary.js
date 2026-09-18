@@ -1,6 +1,7 @@
-import { getDriveToken, uploadLocalFile, dataUrlToBlob, cloudBackendAvailable, getDriveRootName, resolveDrivePathFromNames, listDriveChildren } from './driveUpload';
+import { getDriveToken, uploadLocalFile, dataUrlToBlob, cloudBackendAvailable, getDriveRootName, resolveDrivePathFromNames, listDriveChildren, downloadDriveFileText, takeLastUploadQueueInfo } from './driveUpload';
 import { sanitizeSlug, projectImagesFolderPath } from './driveNaming';
 import { getCloudProvider, isNextcloudUrl, ncFetchBlob, ncUploadFile } from './nextcloud';
+import { registerKeyValueMerger } from './workspaceKeyStore';
 
 /* =========================================================================
    src/utils/figuresLibrary.js
@@ -8,6 +9,26 @@ import { getCloudProvider, isNextcloudUrl, ncFetchBlob, ncUploadFile } from './n
    • image library (app-wide, localStorage): formulas, logos, viewer captures…
    • slide decks (per project, localStorage): a PowerPoint-like set of slides
      with image + text blocks.
+
+   WHERE A FIGURE REALLY LIVES (and why a canvas was "lost"):
+     1. the PIXELS go to the cloud — <dataset>/projects/<project>/images/<name>
+        (Drive or Nextcloud). Everything with a `drive: true` entry can be shown
+        again on any computer.
+     2. the LIST of entries (label, link, `canvasData` snapshot) lived ONLY in
+        this browser's localStorage — and localStorage fills up (~5 MB shared
+        with the dataset payload), at which point an entry existed in MEMORY
+        ONLY. Leaving the page (or another computer) then showed the rendered
+        image on Drive but no entry to reopen it in the Image Builder: the bug
+        this module now closes from three sides —
+          • `saveCanvasSnapshot()` writes the editable composition WITHOUT
+            rendering/uploading, so leaving the builder never loses the layout;
+          • every published figure ALSO gets a small `<name>.meta.json` SIDECAR
+            next to its image, holding the label/stamp/`canvasData` — so the
+            editable canvas (and the "back to the original graph" stamp) can be
+            rebuilt from Drive alone, even after the browser was wiped;
+          • the browser keys mirror (`_workspace/keys.json`, see
+            workspaceKeyStore.js) merges the library LISTS entry by entry
+            instead of letting a poorer copy overwrite a richer one.
    ========================================================================= */
 
 const LIBRARY_KEY = 'labFiguresLibrary';
@@ -113,6 +134,7 @@ const toEntry = (urlOrItem, label) => {
     canvasData: item.canvasData || null, // Image Builder canvas snapshot (editable) — saved/recalled canvases
     drive: !!item.drive,              // true when a Drive copy exists
     driveUrl: item.driveUrl || null,  // Drive web link to the stored image
+    metaName: item.metaName || null,  // name of the "<image>.meta.json" sidecar holding the snapshot
     addedAt: new Date().toISOString()
   };
 };
@@ -127,7 +149,15 @@ export const addProjectLibraryItem = (projectId, urlOrItem, label) => {
   writeProjectLibrary(projectId, [entry, ...readProjectLibrary(projectId)]);
   return entry;
 };
-export const removeLibraryItem = (id) => writeLibrary(readLibrary().filter((i) => i.id !== id));
+/* Supprimer une image est un geste EXPLICITE : l'id part dans les pierres
+   tombales de la portée (voir rememberLibraryTrash), sinon la fusion par contenu
+   la ramènerait du Drive au prochain démarrage. */
+export const removeLibraryItem = (id) => {
+  const list = readLibrary();
+  const gone = list.find((i) => i && i.id === id);
+  if (gone) rememberLibraryTrash('common', trashIdsOfEntry(gone));
+  writeLibrary(list.filter((i) => !i || i.id !== id));
+};
 /* ── DÉPLACER UNE IMAGE DANS LA BIBLIOTHÈQUE (le glisser-déposer) ─────────────
    L'ORDRE de la liste EST celui qu'affichent la bibliothèque d'images (panneau
    « Image library » de Figures & Slides, modale 🖼 de l'Image Builder) et tous
@@ -164,8 +194,12 @@ export const reorderLibraryItem = (scope, projectId, id, beforeId = '') => {
 };
 export const renameLibraryItem = (id, label) =>
   writeLibrary(readLibrary().map((i) => (i.id === id ? { ...i, label } : i)));
-export const removeProjectLibraryItem = (projectId, id) =>
-  writeProjectLibrary(projectId, readProjectLibrary(projectId).filter((i) => i.id !== id));
+export const removeProjectLibraryItem = (projectId, id) => {
+  const list = readProjectLibrary(projectId);
+  const gone = list.find((i) => i && i.id === id);
+  if (gone) rememberLibraryTrash(projectId || 'common', trashIdsOfEntry(gone));
+  return writeProjectLibrary(projectId, list.filter((i) => !i || i.id !== id));
+};
 export const renameProjectLibraryItem = (projectId, id, label) =>
   writeProjectLibrary(projectId, readProjectLibrary(projectId).map((i) => (i.id === id ? { ...i, label } : i)));
 // Move an item between scopes (e.g. save a common figure into a project).
@@ -222,7 +256,7 @@ const isEmptyField = (v) => v === undefined || v === null || v === '' || v === f
 
 /** Champs recopiés d'une entrée de sauvegarde dans une entrée existante (les
  *  champs vides SEULEMENT — voir le commentaire ci-dessus). */
-const LIB_MERGE_FIELDS = ['label', 'url', 'full', 'drive', 'driveUrl', 'src', 'canvasData'];
+const LIB_MERGE_FIELDS = ['label', 'url', 'full', 'drive', 'driveUrl', 'src', 'canvasData', 'metaName'];
 
 /**
  * Fusionne une liste de bibliothèque (`current`, celle du navigateur) avec une
@@ -261,6 +295,219 @@ export const mergeLibraryList = (current, incoming) => {
   });
   return { list, added, filled };
 };
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   LA LISTE D'UNE BIBLIOTHÈQUE NE SE PERD PLUS (fusion PAR CONTENU)
+
+   `_workspace/keys.json` sur le Drive est la mémoire PARTAGÉE des clés du
+   navigateur : chaque poste y dépose sa photographie. La règle « la copie la
+   plus récente gagne » suffit pour un réglage, jamais pour une LISTE : un poste
+   dont la bibliothèque est pauvre (magasin plein, navigateur vidé, autre
+   appareil) écrasait la liste riche et les entrées de canvas disparaissaient —
+   l'image restait sur le Drive, mais plus rien pour la rouvrir dans l'éditeur.
+
+   Ces fonctions fusionnent deux listes ENTRÉE PAR ENTRÉE (union par `id`, puis
+   par fichier Drive, puis par libellé+date) : l'entrée la plus RICHE gagne
+   (celle qui porte un `canvasData` éditable, une copie cloud, une origine), et
+   les champs vides sont complétés par l'autre. PUR et testable hors navigateur.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/** Identité d'une entrée de bibliothèque : deux copies de la MÊME figure que
+ *  deux postes nomment différemment restent reconnues par leur fichier cloud. */
+export const libraryEntryIdentity = (i) => {
+  const id = String((i && i.id) || '');
+  if (id) return `id:${id}`;
+  const d = driveIdOfLibraryItem(i);
+  if (d) return `drive:${d}`;
+  return `label:${String((i && i.label) || '')}|${String((i && i.addedAt) || '')}`;
+};
+
+/** Score de richesse d'une entrée : ce qu'une copie peut apporter et que
+ *  l'autre n'a pas. Un canvas éditable vaut plus que tout le reste — c'est
+ *  exactement ce qu'une fusion ne doit jamais perdre. */
+const libraryEntryScore = (i) => (
+  (i && i.canvasData ? 4 : 0)
+  + (i && i.drive ? 2 : 0)
+  + (i && i.full && !String(i.full).startsWith('data:') ? 2 : 0)
+  + (i && i.src ? 1 : 0)
+  + (i && i.metaName ? 1 : 0)
+  + (i && String(i.label || '').trim() ? 1 : 0)
+);
+
+/** Date « la plus récente » portée par une entrée (la composition sauvegardée
+ *  porte sa propre date : deux canvas du même nom s'arbitrent par elle). */
+const libraryEntryTime = (i) => {
+  const t = Date.parse((i && (i.updatedAt || (i.canvasData && i.canvasData.updatedAt) || i.addedAt)) || '');
+  return Number.isFinite(t) ? t : 0;
+};
+
+/** Deux copies de la MÊME entrée → une seule, la plus riche, complétée par les
+ *  champs que l'autre possède. `a` garde son `id` (les liens des pages de projet
+ *  pointent dessus) et, à richesse ÉGALE, c'est `a` (la copie locale) qui reste :
+ *  une fusion ne réécrit jamais un libellé de ce poste. La seule exception est
+ *  une COMPOSITION des deux côtés : la plus récente gagne (c'est le travail).
+ *  PUR. */
+export const mergeLibraryEntryPair = (a, b) => {
+  const scoreA = libraryEntryScore(a);
+  const scoreB = libraryEntryScore(b);
+  let base = scoreB > scoreA ? b : a;
+  // Égalité de richesse sur un canvas : la composition la plus récente gagne.
+  if (scoreA === scoreB && a && b && a.canvasData && b.canvasData && libraryEntryTime(b) > libraryEntryTime(a)) base = b;
+  const other = base === b ? a : b;
+  const merged = { ...(other || {}), ...(base || {}) };
+  LIB_MERGE_FIELDS.forEach((f) => {
+    if (isEmptyField(merged[f]) && other && !isEmptyField(other[f])) merged[f] = other[f];
+  });
+  if (a && a.id) merged.id = a.id;
+  return merged;
+};
+
+/** Union de deux listes de bibliothèque : l'ordre LOCAL est conservé, les
+ *  entrées que seul le Drive a sont AJOUTÉES à la fin, et une même figure
+ *  reconnue sous deux `id` (relecture du dossier Drive) est fusionnée, jamais
+ *  dupliquée. `opts.trash` (ids supprimés à la main, voir rememberLibraryTrash)
+ *  écarte ce qui a été EFFACÉ : une union ne doit pas ressusciter une image que
+ *  l'utilisateur a retirée. PUR. */
+export const mergeLibraryLists = (local, remote, { trash = null } = {}) => {
+  const out = [];
+  const byIdentity = new Map();
+  const push = (item) => {
+    if (!item || typeof item !== 'object') return;
+    const key = libraryEntryIdentity(item);
+    const at = byIdentity.get(key);
+    if (at === undefined) { byIdentity.set(key, out.length); out.push(item); return; }
+    out[at] = mergeLibraryEntryPair(out[at], item);
+  };
+  applyLibraryTrash(local, trash).forEach(push);
+  applyLibraryTrash(remote, trash).forEach((raw) => {
+    if (!raw || typeof raw !== 'object') return;
+    // Même figure, autre identité : le fichier cloud tranche.
+    const d = driveIdOfLibraryItem(raw);
+    if (d) {
+      const at = out.findIndex((i) => i && driveIdOfLibraryItem(i) === d);
+      if (at >= 0) { out[at] = mergeLibraryEntryPair(out[at], raw); return; }
+    }
+    push(raw);
+  });
+  return out;
+};
+
+/** Valeur à écrire pour une clé de bibliothèque : l'UNION des deux copies (les
+ *  suppressions explicites de cette portée en sont écartées). `''` quand la clé
+ *  ne contient pas de listes JSON (l'appelant retombe alors sur la règle
+ *  d'horodatage). PUR. */
+export const mergeLibraryKeyValues = (key, localRaw, remoteRaw) => {
+  const parse = (raw) => {
+    if (typeof raw !== 'string' || !raw.trim()) return null;
+    try { const v = JSON.parse(raw); return Array.isArray(v) ? v : null; } catch { return null; }
+  };
+  /** Une liste de bibliothèque ne contient que des OBJETS : tout autre contenu
+   *  (une liste de chaînes, par exemple) n'est pas à nous — on ne la touche pas. */
+  const isEntryList = (arr) => Array.isArray(arr) && arr.every((i) => i && typeof i === 'object' && !Array.isArray(i));
+  const local = parse(localRaw);
+  const remote = parse(remoteRaw);
+  if (!local && !remote) return '';
+  if (local && !isEntryList(local)) return '';
+  if (remote && !isEntryList(remote)) return '';
+  const trash = readLibraryTrash(libraryScopeKeyOfKey(key) || 'common');
+  if (!local) return JSON.stringify(applyLibraryTrash(remote, trash));
+  if (!remote) return JSON.stringify(applyLibraryTrash(local, trash));
+  const merged = mergeLibraryLists(local, remote, { trash });
+  return JSON.stringify(merged) === JSON.stringify(local) ? String(localRaw) : JSON.stringify(merged);
+};
+
+/** Clés du navigateur qui portent une LISTE de bibliothèque d'images
+ *  (`labFiguresLibrary`, `labFiguresLib_<projet>`). Les diapositives
+ *  (`labFiguresDeck_*`) sont des objets, pas des listes : elles gardent la règle
+ *  d'horodatage. */
+export const isLibraryListKey = (key) => /^labFiguresLib/.test(String(key || ''));
+
+// Enregistré ICI (le module connaît la forme des entrées) : le miroir des clés
+// (workspaceKeyStore.js) l'appelle pour fusionner au lieu d'écraser.
+registerKeyValueMerger(isLibraryListKey, mergeLibraryKeyValues);
+
+/* ── LES SUPPRESSIONS EXPLICITES (pierres tombales) ──────────────────────────
+
+   Une union d'entrées ne sait pas distinguer « ce poste n'a jamais eu cette
+   image » (à compléter depuis le Drive) de « ce poste l'a SUPPRIMÉE » (à ne
+   surtout pas ramener). Sans cette liste, la fusion par contenu ferait
+   réapparaître une image que l'on vient de retirer de la bibliothèque — et une
+   suppression ne se propagerait plus d'un poste à l'autre.
+
+   Chaque portée (commune, ou un projet) note donc les identifiants supprimés à
+   la main dans `labFiguresTrash_<portée>` : cette petite liste voyage dans le
+   miroir des clés comme les autres (elle commence par « lab »), et les deux
+   côtés d'une fusion la respectent. Elle est bornée, et un id enregistré est
+   forcément celui d'une entrée que l'on ne veut plus voir. */
+
+export const LIBRARY_TRASH_PREFIX = 'labFiguresTrash_';
+const LIBRARY_TRASH_MAX = 500;
+
+/** La portée d'une clé de bibliothèque (`labFiguresLibrary` → 'common'). */
+export const libraryScopeKeyOfKey = (key) => {
+  const k = String(key || '');
+  if (k === 'labFiguresLibrary') return 'common';
+  if (k.startsWith('labFiguresLib_')) return k.slice('labFiguresLib_'.length) || 'common';
+  return '';
+};
+export const libraryTrashKey = (scopeKey) => `${LIBRARY_TRASH_PREFIX}${scopeKey || 'common'}`;
+export const isLibraryTrashKey = (key) => String(key || '').startsWith(LIBRARY_TRASH_PREFIX);
+
+export const readLibraryTrash = (scopeKey) => {
+  try {
+    const a = JSON.parse(localStorage.getItem(libraryTrashKey(scopeKey)) || '[]');
+    return Array.isArray(a) ? a.filter((x) => typeof x === 'string' && x) : [];
+  } catch { return []; }
+};
+
+/** Ce qu'il faut retenir d'une entrée supprimée : son `id`, ET l'identifiant de
+ *  son fichier cloud (`d:<id>`) — la même image peut revenir d'un dossier Drive
+ *  sous un autre id (`lib_drive_…`), et c'est CE fichier qu'on ne veut pas
+ *  revoir dans la liste. */
+export const trashIdsOfEntry = (entry) => {
+  const out = [];
+  if (entry && entry.id) out.push(String(entry.id));
+  const d = driveIdOfLibraryItem(entry);
+  if (d) out.push(`d:${d}`);
+  return out;
+};
+
+/** Note des suppressions (union avec ce qui était déjà noté). @returns {string[]} */
+export const rememberLibraryTrash = (scopeKey, ids) => {
+  const add = (Array.isArray(ids) ? ids : [ids]).map((x) => String(x || '')).filter(Boolean);
+  if (!add.length) return readLibraryTrash(scopeKey);
+  const next = [...new Set([...add, ...readLibraryTrash(scopeKey)])].slice(0, LIBRARY_TRASH_MAX);
+  try { localStorage.setItem(libraryTrashKey(scopeKey), JSON.stringify(next)); } catch { /* quota : la fusion reste correcte, la suppression est juste locale */ }
+  return next;
+};
+
+/** Retire les entrées tombstonées d'une liste (pur). */
+export const applyLibraryTrash = (list, trash) => {
+  const set = trash instanceof Set ? trash : new Set(Array.isArray(trash) ? trash : []);
+  if (!set.size) return Array.isArray(list) ? list : [];
+  return (Array.isArray(list) ? list : []).filter((i) => !i || !trashIdsOfEntry(i).some((id) => set.has(id)));
+};
+
+/** Union de deux listes d'ids supprimés (pour le miroir des clés). PUR. */
+export const mergeLibraryTrashValues = (key, localRaw, remoteRaw) => {
+  const parse = (raw) => {
+    if (typeof raw !== 'string' || !raw.trim()) return null;
+    try { const v = JSON.parse(raw); return Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x) : null; } catch { return null; }
+  };
+  const local = parse(localRaw);
+  const remote = parse(remoteRaw);
+  if (!local && !remote) return '';
+  if (!local) return String(remoteRaw);
+  if (!remote) return String(localRaw);
+  const union = [...new Set([...local, ...remote])].slice(0, LIBRARY_TRASH_MAX);
+  return JSON.stringify(union);
+};
+
+// Les pierres tombales sont l'UNION des deux côtés : une suppression faite sur
+// un poste doit être connue des autres, sinon l'image reviendrait au prochain
+// démarrage. (Enregistré APRÈS la définition des deux fonctions — le module les
+// évalue dans l'ordre.)
+registerKeyValueMerger(isLibraryTrashKey, mergeLibraryTrashValues);
 
 /**
  * Applique la bibliothèque d'images d'une sauvegarde (`{ common, projects }`,
@@ -473,6 +720,50 @@ const figureThumb = async (dataUrl) => {
   return downscaleImage(dataUrl, 240, type, keepAlpha ? 0.9 : 0.8, !keepAlpha);
 };
 
+/* ── LA COMPOSITION ÉDITABLE, SANS RENDU NI ENVOI ────────────────────────────
+   « 💾 Save canvas » rend l'image (lourd) et l'envoie au Drive. Ce raccourci-ci
+   écrit SEULEMENT la composition éditable (`canvasData`) dans l'entrée de
+   bibliothèque : c'est ce qui permet à la sauvegarde automatique de l'Image
+   Builder — et au moment où l'on quitte la page — de ne rien perdre sans
+   rendre une image à chaque frappe. L'aperçu (`url`) et les pixels sont posés
+   par la passe complète (💾 Save canvas / sauvegarde automatique « cloud »),
+   qui met la MÊME entrée à jour sur place.
+
+   @returns {{ entry:object|null, updated:boolean }} */
+export const saveCanvasSnapshot = ({
+  scope = 'common', projectId = null, label = 'Canvas', updateId = null,
+  canvasData = null, src = null, url = null
+} = {}) => {
+  if (!canvasData) return { entry: null, updated: false };
+  const list = scope === 'project' ? readProjectLibrary(projectId) : readLibrary();
+  const prev = updateId ? list.find((i) => i && i.id === updateId) : null;
+  const name = String(label || 'Canvas').trim() || 'Canvas';
+  // La date portée par la composition : deux canvas du même nom s'arbitrent par
+  // elle (voir mergeLibraryEntryPair), et la fusion l'utilise pour choisir la
+  // composition la plus récente.
+  const stamped = { ...canvasData, updatedAt: new Date().toISOString() };
+  if (prev) {
+    // Les champs prévus pour la copie cloud (`url` / `full` / `drive`) sont
+    // CONSERVÉS : le rendu n'a pas encore eu lieu, il ne faut pas effacer
+    // l'aperçu ni le lien de la version publiée.
+    const next = {
+      ...prev,
+      label: name,
+      canvasData: stamped,
+      updatedAt: stamped.updatedAt
+    };
+    if (src && !next.src) next.src = src;
+    if (url && !next.url) next.url = url;
+    if (scope === 'project') writeProjectLibrary(projectId, list.map((i) => (i && i.id === prev.id ? next : i)));
+    else writeLibrary(list.map((i) => (i && i.id === prev.id ? next : i)));
+    return { entry: next, updated: true };
+  }
+  const entry = scope === 'project'
+    ? addProjectLibraryItem(projectId, { label: name, url: url || null, full: url || null, src, canvasData: stamped })
+    : addLibraryItem({ label: name, url: url || null, full: url || null, src, canvasData: stamped });
+  return { entry, updated: false };
+};
+
 // Persist one figure into the image library with the REAL image on Google Drive:
 //   • dataUrl          – self-contained high-resolution source (PNG/JPEG/SVG)
 //   • scope/projectId  – 'project' → that project's library, 'common' → general
@@ -496,8 +787,29 @@ export const publishLibraryFigure = async ({ scope = 'common', projectId = null,
     hi = await downscaleImage(srcData, 2400, keepAlpha ? 'image/png' : 'image/jpeg', keepAlpha ? 0.92 : 0.88, !keepAlpha);
   }
   let drive = null;
-  if (cloudBackendAvailable() && hi && String(hi).startsWith('data:')) {
-    drive = await uploadFigureToDrive({ full: hi, label, projectName }).catch(() => null);
+  // Pourquoi la copie cloud a échoué, et si elle est DÉJÀ en file de reprise :
+  // l'appelant peut ainsi dire « en attente, elle repartira toute seule » au
+  // lieu du « drive upload failed — browser copy only » qui laissait croire
+  // que rien n'était gardé.
+  let driveError = '';
+  let driveQueued = false;
+  if (hi && String(hi).startsWith('data:')) {
+    if (!cloudBackendAvailable()) {
+      driveError = 'cloud storage is not connected';
+    } else {
+      try {
+        drive = await uploadFigureToDrive({ full: hi, label, projectName });
+      } catch (err) {
+        drive = null;
+        driveError = (err && err.message) || 'cloud upload failed';
+      }
+      if (!drive) {
+        const q = takeLastUploadQueueInfo() || {};
+        driveQueued = !!q.queued;
+        if (!driveError) driveError = lastFigureUploadError()
+          || (q.reason === 'too_large' ? 'the image is too large for the retry queue' : 'cloud upload failed');
+      }
+    }
   }
   // The app must be able to fetch the real pixels back:
   //  • Google Drive → the driveUrl (file id is resolved with the OAuth token)
@@ -510,7 +822,19 @@ export const publishLibraryFigure = async ({ scope = 'common', projectId = null,
   const humanUrl = drive && drive.id ? (drive.driveUrl || (ncMode ? srcFull : null)) : null;
   const url = isSvg ? srcData : await figureThumb(srcData);
   const full = isSvg ? srcData : srcFull;
-  const item = { url, full, label, src, canvasData, drive: !!drive, driveUrl: humanUrl };
+  // La copie ÉDITABLE part À CÔTÉ de l'image (petit fichier `<image>.meta.json`
+  // dans le même dossier) : la composition du canvas ET le repère « d'où vient
+  // cette figure » se relisent ainsi depuis le Drive seul — donc sur un autre
+  // ordinateur, ou après avoir vidé le navigateur. Sans elle, une bibliothèque
+  // reconstruite depuis le Drive ne sait plus rouvrir un canvas dans l'éditeur.
+  const metaName = (drive && drive.id)
+    ? await uploadFigureMetaToDrive({
+      meta: buildFigureMeta({ label, src, canvasData, imageName: drive.name || '' }),
+      imageName: drive.name || '',
+      projectName
+    }).then((r) => (r && r.name) || '').catch(() => '')
+    : '';
+  const item = { url, full, label, src, canvasData, drive: !!drive, driveUrl: humanUrl, metaName: metaName || null };
   // `updateId` patches an EXISTING entry in place instead of adding a copy.
   // Used by the Image Builder when it re-saves a canvas that was opened from the
   // library: the project page links to that entry id, so the id must not change
@@ -531,7 +855,7 @@ export const publishLibraryFigure = async ({ scope = 'common', projectId = null,
       const next = list.map((i) => (i.id === updateId ? updated : i));
       if (scope === 'project') writeProjectLibrary(projectId, next);
       else writeLibrary(next);
-      return { entry: updated, drive, driveUrl: humanUrl, updated: true, missing: false };
+      return { entry: updated, drive, driveUrl: humanUrl, driveError, driveQueued, metaName: metaName || null, updated: true, missing: false };
     }
     if (insertIfMissing === false) {
       // The entry the caller asked to update is GONE. Do not add a copy: the
@@ -542,7 +866,7 @@ export const publishLibraryFigure = async ({ scope = 'common', projectId = null,
   const entry = scope === 'project'
     ? addProjectLibraryItem(projectId, item)
     : addLibraryItem(item);
-  return { entry, drive, driveUrl: humanUrl, updated: false, missing: !!updateId };
+  return { entry, drive, driveUrl: humanUrl, driveError, driveQueued, metaName: metaName || null, updated: false, missing: !!updateId };
 };
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -632,6 +956,11 @@ export const removeRecaptureDuplicates = (opts = {}) => {
     const list = g.scope === 'project' ? readProjectLibrary(g.projectId) : readLibrary();
     const next = list.filter((i) => !ids.has(i.id));
     removed += list.length - next.length;
+    // Ces copies ne doivent pas revenir par la fusion : on les note.
+    try {
+      const dropped = list.filter((i) => i && ids.has(i.id)).flatMap(trashIdsOfEntry);
+      if (dropped.length) rememberLibraryTrash(g.scope === 'project' ? (g.projectId || 'common') : 'common', dropped);
+    } catch { /* la suppression reste faite */ }
     if (g.scope === 'project') writeProjectLibrary(g.projectId, next);
     else writeLibrary(next);
   });
@@ -648,7 +977,18 @@ export const removeRecaptureDuplicates = (opts = {}) => {
 // their actual type (PNG/JPEG/WebP…). Returns the upload result (Drive-like
 // { id, name, driveUrl }) or null when the provider is not available / the
 // source is not a self-contained data URL.
+/** Dernière erreur d'envoi d'une FIGURE (vide après un envoi réussi). Permet à
+ *  l'appelant de dire POURQUOI la copie cloud manque (hors ligne, jeton expiré,
+ *  dossier supprimé…) au lieu d'un « échec » muet. */
+let lastFigureDriveError = '';
+export const lastFigureUploadError = () => lastFigureDriveError;
+
 export const uploadFigureToDrive = async ({ full, label = 'figure', projectName = '' }) => {
+  lastFigureDriveError = '';
+  // L'information « mis en file de reprise ? » est consommée par la tentative
+  // précédente : la vider ici garantit que le compte-rendu lu juste après
+  // concerne BIEN cet envoi-ci.
+  takeLastUploadQueueInfo();
   if (!cloudBackendAvailable() || !full) return null;
   const src = String(full);
   if (src.indexOf('data:') !== 0) return null;
@@ -674,6 +1014,7 @@ export const uploadFigureToDrive = async ({ full, label = 'figure', projectName 
         file: src
       });
     } catch (err) {
+      lastFigureDriveError = (err && err.message) || 'upload failed';
       console.warn('Figure → Nextcloud upload failed:', err && err.message);
       return null;
     }
@@ -695,9 +1036,103 @@ export const uploadFigureToDrive = async ({ full, label = 'figure', projectName 
       ctx
     });
   } catch (err) {
+    lastFigureDriveError = (err && err.message) || 'upload failed';
     console.warn('Figure → Drive upload failed:', err && err.message);
     return null;
   }
+};
+
+/* ── LA COPIE ÉDITABLE D'UNE FIGURE (« sidecar ») ─────────────────────────────
+
+   L'image d'une figure se relit du Drive, mais rouvrir un CANVAS dans l'Image
+   Builder demande bien plus que ses pixels : il faut sa composition (panneaux,
+   positions, légendes, flèches). Ce petit fichier — `<image>.meta.json`, déposé
+   DANS LE MÊME dossier que l'image — porte exactement cela (et le repère
+   `src` « d'où vient cette figure » d'une capture).
+
+   Il rend la bibliothèque d'images reconstructible DEPUIS LE DRIVE : c'est ce
+   qui fait qu'une composition se retrouve et se rouvre même sur un ordinateur
+   qui n'a jamais vu cette bibliothèque, ou après un navigateur vidé (voir
+   libraryItemsFromDriveListing / pullLibraryFromDrive). */
+
+export const FIGURE_META_KIND = 'lab-workspace/figure-meta';
+export const FIGURE_META_SUFFIX = '.meta.json';
+/** Combien de sidecars « ⬇ Add missing from Drive » relit au plus en un clic
+ *  (un canvas pèse quelques centaines de Ko : le geste doit rester un clic). */
+export const META_RESTORE_MAX = 40;
+/** Nom du sidecar d'une image : `<image>.meta.json` (l'extension de l'image est
+ *  conservée, la paire se retrouve donc sans deviner le format). */
+export const sidecarNameOfImageName = (imageName) => (imageName ? `${String(imageName)}${FIGURE_META_SUFFIX}` : '');
+/** Le nom d'image porté par un sidecar (`''` si ce n'est pas un sidecar). */
+export const imageNameOfSidecarName = (name) => (/\.meta\.json$/i.test(String(name || '')) ? String(name).replace(/\.meta\.json$/i, '') : '');
+/** Ce fichier est-il le sidecar d'une image (et non une image) ? */
+export const isFigureMetaFileName = (name) => /\.meta\.json$/i.test(String(name || ''));
+
+/** Contenu du sidecar — `null` quand il n'y a rien à sauver (une image sans
+ *  composition ni origine n'a pas besoin de sidecar). PUR. */
+export const buildFigureMeta = ({ label = 'Figure', src = null, canvasData = null, imageName = '' } = {}) => {
+  if (!canvasData && !src) return null;
+  return {
+    kind: FIGURE_META_KIND,
+    v: 1,
+    label: String(label || 'Figure'),
+    src: src || null,
+    canvasData: canvasData || null,
+    imageName: String(imageName || ''),
+    savedAt: new Date().toISOString()
+  };
+};
+
+/** Relit un sidecar (texte JSON) — jamais d'exception, `null` si illisible. */
+export const parseFigureMeta = (text) => {
+  if (!text) return null;
+  try {
+    const d = typeof text === 'string' ? JSON.parse(text) : text;
+    return d && typeof d === 'object' ? d : null;
+  } catch { return null; }
+};
+
+/** Dépose le sidecar à côté de l'image (même dossier `<project>/images`).
+ *  Best-effort : un sidecar manquant ne fait jamais échouer la figure, l'image
+ *  et l'entrée de bibliothèque de ce poste restent valables. */
+export const uploadFigureMetaToDrive = async ({ meta = null, imageName = '', projectName = '' } = {}) => {
+  if (!meta || !imageName || !cloudBackendAvailable()) return null;
+  const name = sidecarNameOfImageName(imageName);
+  const body = JSON.stringify(meta);
+  if (getCloudProvider() === 'nextcloud') {
+    const parts = ['Lab Workspace'];
+    const ds = getDriveRootName();
+    if (ds) parts.push(sanitizeSlug(ds));
+    parts.push(...projectImagesFolderPath(projectName));
+    try {
+      return await ncUploadFile({ parts, name, mimeType: 'application/json', file: body });
+    } catch (err) {
+      console.warn('Figure meta → Nextcloud upload failed:', err && err.message);
+      return null;
+    }
+  }
+  try {
+    const ctx = { section: 'images' };
+    if (projectName) ctx.project = projectName;
+    return await uploadLocalFile({
+      name,
+      mimeType: 'application/json',
+      file: new Blob([body], { type: 'application/json' }),
+      path: projectImagesFolderPath(projectName),
+      ctx
+    });
+  } catch (err) {
+    console.warn('Figure meta → Drive upload failed:', err && err.message);
+    return null;
+  }
+};
+
+/** Relit le sidecar d'une image depuis le Drive (par identifiant de fichier). */
+export const fetchFigureMetaFromDrive = async (fileId) => {
+  if (!fileId) return null;
+  try {
+    return parseFigureMeta(await downloadDriveFileText(fileId));
+  } catch { return null; }
 };
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -836,19 +1271,27 @@ export const labelFromDriveFileName = (name) => String(name || '')
 
 /** Transforme le CONTENU d'un dossier Drive d'images en entrées de
  *  bibliothèque (PUR : testable hors navigateur). Les dossiers et les fichiers
- *  qui ne sont pas des images sont ignorés. `url` = vignette affichable,
+ *  qui ne sont pas des images sont ignorés — y compris les sidecars
+ *  `<image>.meta.json` (voir buildFigureMeta), qui ne sont PAS des images mais
+ *  la composition éditable de l'image à côté de laquelle ils vivent : ils sont
+ *  signalés sur l'entrée par `metaName`. `url` = vignette affichable,
  *  `full`/`driveUrl` = le lien du fichier (dont l'application sait relire les
  *  vrais pixels avec son jeton OAuth). */
 export const libraryItemsFromDriveListing = (listing, { addedAt = '' } = {}) => {
   const out = [];
-  (Array.isArray(listing) ? listing : []).forEach((raw) => {
+  const files = (Array.isArray(listing) ? listing : []).filter((f) => f && f.id && !(f.mimeType === 'application/vnd.google-apps.folder'));
+  const names = new Set(files.map((f) => String(f.name || '').trim()));
+  files.forEach((raw) => {
     const id = String((raw && raw.id) || '').trim();
     if (!id) return;
     const mime = String((raw && raw.mimeType) || '');
-    if (mime === 'application/vnd.google-apps.folder') return;
     const name = String((raw && raw.name) || '').trim();
+    // Le sidecar d'une image n'est pas une image : il est relu par
+    // pullLibraryFromDrive pour rendre le canvas rouvable dans l'éditeur.
+    if (isFigureMetaFileName(name)) return;
     if (mime && !mime.startsWith('image/') && !/\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(name)) return;
     const view = String((raw && raw.webViewLink) || '').trim() || `https://drive.google.com/file/d/${id}/view`;
+    const sidecar = sidecarNameOfImageName(name);
     out.push({
       id: driveLibraryItemId(id),
       label: labelFromDriveFileName(name) || 'Figure',
@@ -858,6 +1301,7 @@ export const libraryItemsFromDriveListing = (listing, { addedAt = '' } = {}) => 
       driveUrl: view,
       src: null,
       canvasData: null,
+      metaName: sidecar && names.has(sidecar) ? sidecar : null,
       addedAt: (raw && raw.createdTime) || addedAt || new Date().toISOString()
     });
   });
@@ -867,11 +1311,19 @@ export const libraryItemsFromDriveListing = (listing, { addedAt = '' } = {}) => 
 /** Relit <dataset>/projects/<projet>/images et AJOUTE à la bibliothèque de la
  *  portée les fichiers qui n'y sont pas encore (ceux dont la liste a été perdue
  *  sur ce poste). Aucune entrée existante n'est remplacée.
- *  @returns {{ folder:string, found:number, added:number, filled:number, error:string }} */
+ *
+ *  Les sidecars `<image>.meta.json` y sont relus aussi : la composition
+ *  ÉDITABLE d'un canvas (`canvasData`) et le repère d'origine d'une capture
+ *  reviennent donc avec l'image. Sans cela, « ⬇ Add missing from Drive »
+ *  ramenait un canvas comme une simple image — reconnue, mais plus modifiable :
+ *  c'était la seconde moitié du bug « je ne retrouve pas mes canvas ».
+ *
+ *  @returns {{ folder:string, found:number, added:number, filled:number,
+ *              restored:number, error:string }} */
 export const pullLibraryFromDrive = async ({ scope = 'common', projectId = null, projectName = '' } = {}) => {
   const out = {
     folder: projectImagesFolderPath(projectName).join('/'),
-    found: 0, added: 0, filled: 0, error: ''
+    found: 0, added: 0, filled: 0, restored: 0, error: ''
   };
   if (!cloudBackendAvailable()) { out.error = 'Cloud storage is not connected.'; return out; }
   let listing = [];
@@ -884,16 +1336,54 @@ export const pullLibraryFromDrive = async ({ scope = 'common', projectId = null,
     return out;
   }
   const items = libraryItemsFromDriveListing(listing);
+  // Ce qui a été SUPPRIMÉ à la main ne revient pas : la lecture du dossier est
+  // additive, mais pas au point de ressusciter une image retirée (voir
+  // rememberLibraryTrash).
+  const trash = new Set(readLibraryTrash(scope === 'project' ? (projectId || 'common') : 'common'));
+  const tombstoned = (it) => trashIdsOfEntry(it).some((id) => trash.has(id));
   out.found = items.length;
-  if (!items.length) return out;
   const current = scope === 'project' ? readProjectLibrary(projectId) : readLibrary();
   // Un fichier déjà référencé par une entrée (même si celle-ci n'a pas d'id
   // `lib_drive_…`) ne crée pas de doublon.
   const known = new Set(current.map((i) => driveIdOfLibraryItem(i)).filter(Boolean));
-  const missing = items.filter((i) => !known.has(driveIdOfLibraryItem(i)));
-  if (!missing.length) return out;
+  const missing = items.filter((i) => !known.has(driveIdOfLibraryItem(i)) && !tombstoned(i));
+  // Les sidecars présents dans le dossier : { nom du sidecar → id de fichier }.
+  const sidecarIdByName = new Map();
+  const fileNameById = new Map();
+  (Array.isArray(listing) ? listing : []).forEach((f) => {
+    if (!f || !f.id) return;
+    const name = String(f.name || '');
+    if (name) fileNameById.set(String(f.id), name);
+    if (isFigureMetaFileName(name)) sidecarIdByName.set(name, String(f.id));
+  });
+  if (!items.length && !sidecarIdByName.size) return out;
+  if (sidecarIdByName.size) {
+    // Ce qu'il faut compléter : les entrées qui arrivent SANS composition, plus
+    // les entrées déjà présentes mais sans `canvasData` (liste reconstruite
+    // depuis le Drive par une version précédente, ou perdue par ce poste).
+    const candidates = [...missing, ...current.filter((i) => i && !i.canvasData && !tombstoned(i))];
+    const seen = new Set();
+    for (const it of candidates) {
+      if (!it) continue;
+      const imageName = isFigureMetaFileName(it.metaName || '')
+        ? imageNameOfSidecarName(it.metaName)
+        : String(fileNameById.get(driveIdOfLibraryItem(it)) || '');
+      const metaName = it.metaName || (imageName ? sidecarNameOfImageName(imageName) : '');
+      const fileId = metaName ? sidecarIdByName.get(metaName) : '';
+      if (!fileId || seen.has(fileId)) continue;
+      seen.add(fileId);
+      if (seen.size > META_RESTORE_MAX) break;   // borné : le geste reste un clic
+      const meta = await fetchFigureMetaFromDrive(fileId).catch(() => null);
+      if (!meta) continue;
+      if (meta.canvasData) { it.canvasData = meta.canvasData; out.restored += 1; }
+      if (!it.src && meta.src) it.src = meta.src;
+      if (meta.label && !it.label) it.label = meta.label;
+      it.metaName = metaName;
+    }
+  }
+  if (!missing.length && !out.restored) return out;
   const res = mergeLibraryList(current, missing);
-  if (res.added || res.filled) {
+  if (res.added || res.filled || out.restored) {
     if (scope === 'project') writeProjectLibrary(projectId, res.list);
     else writeLibrary(res.list);
   }

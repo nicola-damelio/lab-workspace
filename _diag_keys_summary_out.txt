@@ -1,0 +1,27 @@
+﻿kind = lab-workspace/browser-keys | at = 2026-09-18T16:56:13.711Z | bytes = 5166907
+total keys: 53
+labFiguresLib_prj_1787824980875_ttrxuk  at=2026-09-18T16:56:06.435Z  entries=16  canvases=1  drive=9  localOnly=7  biggestEntry=736539B
+labFiguresLib_prj_1789597208594_zt1ewk  at=2026-09-18T15:17:03.250Z  entries=22  canvases=0  drive=22  localOnly=0  biggestEntry=443B
+labFiguresLib_prj_1789588078528_udtkb2  at=2026-09-16T20:53:36.840Z  entries=11  canvases=0  drive=11  localOnly=0  biggestEntry=443B
+labFiguresLib_prj_1789718166941_s17u95  at=2026-09-18T08:39:00.021Z  entries=11  canvases=0  drive=11  localOnly=0  biggestEntry=443B
+labFiguresLib_prj_1789589502333_p681i5  at=2026-09-16T20:13:55.936Z  entries=11  canvases=0  drive=11  localOnly=0  biggestEntry=443B
+labFiguresLib_prj_1789720708481_tbcclq  at=2026-09-18T08:41:42.732Z  entries=11  canvases=0  drive=11  localOnly=0  biggestEntry=443B
+labFiguresLib_prj_1789496800947_sesih6  at=2026-09-18T08:38:20.167Z  entries=11  canvases=0  drive=11  localOnly=0  biggestEntry=443B
+labFiguresLib_prj_1789726282249_6gvbic  at=2026-09-18T16:56:06.442Z  entries=11  canvases=0  drive=11  localOnly=0  biggestEntry=443B
+labFiguresLib_prj_1789588364071_etcvx8  at=2026-09-16T20:53:36.843Z  entries=11  canvases=0  drive=11  localOnly=0  biggestEntry=443B
+labFiguresLib_prj_1789505611145_hvp6yf  at=2026-09-16T20:53:36.857Z  entries=11  canvases=0  drive=11  localOnly=0  biggestEntry=443B
+labFiguresLib_prj_1789641869782_rghjks  at=2026-09-17T10:46:53.875Z  entries=11  canvases=0  drive=11  localOnly=0  biggestEntry=443B
+labFiguresLibrary  at=2026-09-18T16:56:06.440Z  entries=8  canvases=0  drive=0  localOnly=1  biggestEntry=223592B
+labFiguresLib_prj_1789641723254_glozu7  at=2026-09-17T10:43:57.423Z  entries=8  canvases=0  drive=8  localOnly=0  biggestEntry=443B
+labFiguresLib_prj_1789593778414_8vp4e4  at=2026-09-16T21:24:48.270Z  entries=6  canvases=0  drive=0  localOnly=6  biggestEntry=247601B
+labFiguresLib_prj_1789131353652_9jetx1  at=2026-09-16T20:53:36.843Z  entries=4  canvases=0  drive=4  localOnly=0  biggestEntry=33679B
+labFiguresLib_prj_1789591906930_urwsl7  at=2026-09-16T21:00:21.537Z  entries=3  canvases=0  drive=3  localOnly=0  biggestEntry=383B
+labFiguresLib_prj_1788195167823_3pxp43  at=2026-09-18T16:56:06.450Z  entries=2  canvases=0  drive=0  localOnly=2  biggestEntry=290648B
+labFiguresLib_prj_1789722769167_y6l2tv  at=2026-09-18T09:15:46.597Z  entries=1  canvases=0  drive=1  localOnly=0  biggestEntry=382B
+labFiguresLib_prj_1789596982259_wa2k1w  at=2026-09-18T08:39:00.022Z  entries=1  canvases=0  drive=0  localOnly=1  biggestEntry=126023B
+labFiguresLib_prj_1789504076450_fxortc  at=2026-09-16T20:53:36.840Z  entries=1  canvases=0  drive=1  localOnly=0  biggestEntry=383B
+labFiguresLib_global  at=2026-09-16T20:53:36.840Z  entries=0  canvases=0  drive=0  localOnly=0  biggestEntry=0B
+TOTALS: figures=170 canvases=1 entriesWithoutCloudPixels=17
+
+== labFiguresLib_prj_1787824980875_ttrxuk ΓÇö 1 canvas(es)
+   ΓÇó "Fig1" drive=true pxObjects=6 images=7 thumbnailsOnly=true addedAt=2026-09-13T01:06:14.160Z updatedAt=2026-09-16T18:54:29.040Z
