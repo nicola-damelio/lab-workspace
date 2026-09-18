@@ -36,7 +36,7 @@ import {
   linkCitationNumbers, numberImportedReferences, referenceNumbers, linkedCitationNumbers,
   applyInTextStyle, withoutBibliographySection
 } from '../../utils/referenceLinks';
-import { splitAnchoredFigures } from '../../utils/figurePlacement';
+import { moveFigureTo, splitAnchoredFigures } from '../../utils/figurePlacement';
 import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject, getDriveToken, getDriveRootName, resolveDrivePathFromNames, listDriveChildren } from '../../utils/driveUpload';
 /* Le texte du projet est AUSSI rangé dans le dossier du projet sur le Drive
    (Lab Workspace/<dataset>/projects/<projet>/<projet>_document.json) : le
@@ -76,7 +76,7 @@ const mergeFieldCounts = (a, b) => {
    • Experiments (add multiple tests → buttons that link to the classic pages)
    • Results and Discussion (rich text + references)
    • Conclusions (rich text + references)
-   • Bibliography (numbered references from Project bibliography and the
+   • References (numbered references from Project bibliography and the
      scientist's publications)
    ========================================================================= */
 
@@ -307,7 +307,7 @@ export const ProjectDetailModule = ({
     projectsRef.current = list;
     setProjects(list);
   };
-  /* `bibliography: true` : la section « 📚 Bibliography » de cette page porte les
+  /* `bibliography: true` : la section « 📚 References » de cette page porte les
      DEUX imports (📄 Import references from a paper / 📥 Import a manuscript, ce
      dernier en haut de la page) — la section est donc ouverte dès l'arrivée,
      sinon ces boutons passent inaperçus. « funding » et « supporting » sont les
@@ -346,7 +346,7 @@ export const ProjectDetailModule = ({
   /* Garde anti double import : `busy` ne suffisait pas (deux clics dans le même
      rendu, ou un clic pendant que l'écriture est en cours). */
   const msBusyRef = useRef(false);
-  /* Compte rendu du dernier « 🔗 Link citations… » (section Bibliography). */
+  /* Compte rendu du dernier « 🔗 Link citations… » (section References). */
   const [citationLinkReport, setCitationLinkReport] = useState('');
   const [linkTestId, setLinkTestId] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -491,6 +491,13 @@ export const ProjectDetailModule = ({
          vivent encore que dans ce navigateur (sinon elles ne suivent pas). */
   const [figDriveBusy, setFigDriveBusy] = useState(false);
   const [figDriveMsg, setFigDriveMsg] = useState('');
+  /* Glisser-déposer des figures d'une section : `figDrag` = la figure TENUE par
+     le pointeur, `figOver` = celle qui est DESSOUS (voir dropFigure, plus bas).
+     Déclarés ICI, avec les autres états : un crochet ne peut pas vivre après le
+     `if (!project)` de la page (l'ordre des crochets doit être le même à chaque
+     rendu). */
+  const [figDrag, setFigDrag] = useState(null);
+  const [figOver, setFigOver] = useState('');
   const figDriveScope = () => ({ scope: 'project', projectId: project.id, projectName: project.name || '' });
 
   const saveFiguresToDrive = async () => {
@@ -912,6 +919,28 @@ export const ProjectDetailModule = ({
     patchFigures(sec, sectionFigures(sec).map((f) => (f.id === figId ? { ...f, ...patch } : f)));
   const removeSectionFigure = (sec, figId) =>
     patchFigures(sec, sectionFigures(sec).filter((f) => f.id !== figId));
+  /* ── DÉPLACER UNE FIGURE À LA SOURIS ──────────────────────────────────────
+     `figDrag` = la figure tenue par le pointeur (`{ sec, id }`), `figOver` =
+     celle qui est dessous (pour montrer OÙ elle tombera). L'ordre des figures
+     d'une section est celui du document exporté (voir splitAnchoredFigures) :
+     `dropFigure` réécrit donc `project.figures` — une figure déposée sur une
+     figure d'une AUTRE section change de section, avec sa légende et sa place
+     dans le document. Le déplacement lui-même est un util pur (moveFigureTo). */
+  const dropFigure = (sec, beforeId) => {
+    const held = figDrag;
+    setFigDrag(null);
+    setFigOver('');
+    if (!held || !canModify) return;
+    const current = project.figures || {};
+    const next = moveFigureTo(current, { from: held.sec, to: sec, id: held.id, before: beforeId });
+    /* Rien à écrire quand la figure retombe à sa place (moveFigureTo rend
+       l'objet reçu tel quel, on compare donc les références). */
+    if (next === current) return;
+    updateProject({ figures: next });
+    setMmFeedback(held.sec === sec
+      ? '↕ Figure moved'
+      : `↕ Figure moved to “${sectionLabelOf(sec)}”`);
+  };
   // Figures inserted from the Image Builder (“📤 Insert into project…”) carry a
   // link back into the editor: `canvasId` is the canvas of the image library
   // holding that composition and `builderProjectId` is the project whose library
@@ -1274,7 +1303,7 @@ export const ProjectDetailModule = ({
     const res = mergeReferenceEntries(projectBib, chosen);
     /* LES RÉFÉRENCES NUMÉROTÉES DU PROJET, pas seulement la bibliographie :
        `project.references` est la liste que le TEXTE cite (« [12] »), que la
-       section « 📚 Bibliography » et le document exporté IMPRIMENT. Sans cette
+       section « 📚 References » et le document exporté IMPRIMENT. Sans cette
        étape, un papier importé de Paperpile n'apparaissait dans AUCUN document et
        les « [12] » du texte ne menaient nulle part — c'était la plainte : les
        références importées n'étaient ni liées, ni exportées. Le numéro écrit
@@ -1305,7 +1334,7 @@ export const ProjectDetailModule = ({
         + (completed.stillShortened
           ? ` · ⚠ ${completed.stillShortened} reference(s) still show “et al.”: write the co-authors in Publications → “Project bibliography”.`
           : '')
-        + `${numbered.added ? ` · ${numbered.added} numbered reference(s) in the project document (Bibliography)` : ''}`
+        + `${numbered.added ? ` · ${numbered.added} numbered reference(s) in the project document (References)` : ''}`
         + `${linked.updated ? ` · 🔗 ${linked.added} citation(s) linked in ${linked.updated} section(s)` : ''}`
         + (saved.ok
           ? '. They also appear in Publications → “Project bibliography”.'
@@ -2150,7 +2179,7 @@ export const ProjectDetailModule = ({
               “Relevant papers”, then in Crossref (by DOI, else by the exact title) — nothing already written is
               overwritten. The papers are added to this project’s bibliography, so they also show
               up in Publications → “Project bibliography”. They also become the <b>numbered references</b> of the project
-              (<b>[1]</b>, <b>[2]</b>… the same as “📚 + Reference”), printed in the document’s <b>Bibliography</b> with the
+              (<b>[1]</b>, <b>[2]</b>… the same as “📚 + Reference”), printed in the document’s <b>References</b> with the
               “Publication format” of the lab, and
               the numbered citations already written in the text sections are turned into links to them — a reference
               imported from Paperpile as “12. Rossi…” therefore answers the “<b>[12]</b>” of the text.
@@ -2797,12 +2826,44 @@ export const ProjectDetailModule = ({
 
         {figures.length > 0 && (
           <div className="mt-4 pt-4 border-t border-slate-200">
-            <h4 className="text-sm font-bold text-slate-700 mb-2">Figures</h4>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <h4 className="text-sm font-bold text-slate-700">Figures</h4>
+              {/* LE GLISSER-DÉPOSER est annoncé : sans un mot, personne ne
+                  devine que les cartes se prennent à la souris. */}
+              {canModify && (
+                <span className="text-[10px] text-slate-400">
+                  ⋮⋮ drag a figure to change its place — or drop it on a figure of another section to move it there
+                </span>
+              )}
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {figures.map((fig) => (
-                <div key={fig.id} className="bg-slate-50 border border-slate-200 rounded-xl p-3 shadow-sm flex flex-col gap-2">
+                <div key={fig.id}
+                     draggable={canModify}
+                     onDragStart={(e) => {
+                       setFigDrag({ sec: id, id: fig.id });
+                       try { e.dataTransfer.setData('text/plain', fig.id); } catch { /* navigateur sans dataTransfer */ }
+                       e.dataTransfer.effectAllowed = 'move';
+                     }}
+                     onDragEnd={() => { setFigDrag(null); setFigOver(''); }}
+                     onDragOver={(e) => {
+                       if (!figDrag) return;
+                       e.preventDefault();
+                       e.dataTransfer.dropEffect = 'move';
+                       if (figOver !== fig.id) setFigOver(fig.id);
+                     }}
+                     onDragLeave={() => { if (figOver === fig.id) setFigOver(''); }}
+                     onDrop={(e) => { e.preventDefault(); dropFigure(id, fig.id); }}
+                     className={`bg-slate-50 border rounded-xl p-3 shadow-sm flex flex-col gap-2 ${
+                       figDrag && figDrag.id === fig.id ? 'opacity-40 border-slate-300'
+                         : figOver === fig.id ? 'border-blue-400 ring-2 ring-blue-200'
+                           : 'border-slate-200'} ${canModify ? 'cursor-grab active:cursor-grabbing' : ''}`}>
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs font-bold text-slate-500 flex items-center gap-1.5">
+                      {canModify && (
+                        <span className="text-slate-400 text-sm font-black select-none"
+                              title="Drag this figure to change its place in the section (or drop it on another section's figures)">⋮⋮</span>
+                      )}
                       {fig.isSlide
                         ? <span className="text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-1.5 py-0.5">🖼 slide</span>
                         : fig.source === 'image-builder'
@@ -3173,8 +3234,8 @@ export const ProjectDetailModule = ({
                 <button onClick={rebuildDoc}
                         className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-100 text-slate-600 border border-slate-300 hover:bg-slate-200"
                         title={project.exportDocHtml
-                          ? 'Discard the saved text edits and rebuild the document from the project data (the Bibliography then follows the current “Publication format”)'
-                          : 'Rebuild the document text from the project data (nothing is frozen: the Bibliography already follows the current “Publication format”)'}>
+                          ? 'Discard the saved text edits and rebuild the document from the project data (the References then follow the current “Publication format”)'
+                          : 'Rebuild the document text from the project data (nothing is frozen: the References already follow the current “Publication format”)'}>
                   ↩️ Rebuild from data{project.exportDocHtml ? ' (apply the format)' : ''}
                 </button>
               )}
@@ -3370,7 +3431,7 @@ export const ProjectDetailModule = ({
               </>
             )}
 
-            {/* ── LA BIBLIOGRAPHIE EST TOUJOURS VIVANTE ───────────────────────
+            {/* ── LA LISTE DES RÉFÉRENCES EST TOUJOURS VIVANTE ────────────────
                 Elle est rendue ICI, HORS du texte figé : « ✏️ Edit text » →
                 « 💾 Save changes » fige le texte du document (corrections de
                 l'auteur comprises) et, avec lui, la liste des références telle
@@ -3382,7 +3443,7 @@ export const ProjectDetailModule = ({
                 références du projet, rendue avec le format COURANT à chaque
                 affichage, est imprimée à sa place. */}
             <div className="mb-4">
-              <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">Bibliography ({refs.length})</h2>
+              <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">References ({refs.length})</h2>
               {/* LE TEXTE EST AUSSI DANS LE DOSSIER DU PROJET SUR LE DRIVE (voir
                   utils/projectDocumentDrive.js) : la page le dit et sait le
                   relire — le navigateur n'est qu'un cache, et un autre poste
@@ -4065,8 +4126,8 @@ export const ProjectDetailModule = ({
           project.supporting || '', (val) => updateProject({ supporting: val }))}
 
 
-        {/* ---------- Bibliography ---------- */}
-        <SectionCard title="📚 Bibliography" open={openSections.bibliography} onToggle={() => toggleSection('bibliography')}
+        {/* ---------- References ---------- */}
+        <SectionCard title="📚 References" open={openSections.bibliography} onToggle={() => toggleSection('bibliography')}
                      badge={<span className="text-[10px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">{refs.length}</span>}>
           <p className="text-xs text-slate-500 mb-3">
             Numbered references collected from the text sections. They are taken from the

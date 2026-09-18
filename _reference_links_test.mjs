@@ -239,7 +239,22 @@ eq(RL.ensureReferenceEntries(SAVED, [{ number: 1, html: 'Rossi 2018' }]).added, 
 const noBib = RL.ensureReferenceEntries('<p>Text</p>', [{ number: 9, html: 'Ninth' }]);
 ok(noBib.added === 1 && noBib.html.includes('id="ref-9"'),
   'sans bibliographie dans le document enregistré, la référence est quand même ajoutée');
-ok(noBib.html.indexOf('Bibliography') > noBib.html.indexOf('<p>Text</p>'), '…dans une bibliographie placée à la fin');
+ok(noBib.html.indexOf('References') > noBib.html.indexOf('<p>Text</p>'),
+  '…dans une liste « References » placée à la fin');
+/* LE TITRE A CHANGÉ (« Bibliography » → « References ») : un document
+   enregistré AVANT le renommage garde son ancien titre et doit continuer d'être
+   complété — et un document enregistré APRÈS (donc avec « References ») aussi.
+   Les deux noms vivent dans BIB_LIST_RE, rien n'est à migrer. */
+const newer = RL.ensureReferenceEntries(
+  '<div><h2>References (1)</h2><ol class="list-decimal"><li id="ref-1" value="1">Rossi</li></ol></div>',
+  [{ number: 2, html: 'Dupont' }]
+);
+ok(newer.added === 1 && newer.html.includes('<li id="ref-2" value="2">Dupont</li>')
+  && newer.html.indexOf('id="ref-2"') < newer.html.indexOf('</ol>'),
+  'la liste « References » (nouveau titre) reçoit aussi ses entrées manquantes');
+eq(RL.withoutBibliographySection(
+  '<div class="mb-4"><h2>References (1)</h2><ol><li id="ref-1">A</li></ol></div>'
+), '', 'et le nouveau titre est retiré du document figé comme l’ancien');
 eq(RL.ensureReferenceEntries('<p>Text</p>', [{ number: 0, html: '' }, null]).added, 0,
   'une entrée sans numéro ou sans texte est ignorée');
 

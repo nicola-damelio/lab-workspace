@@ -206,3 +206,44 @@ export const splitAnchoredFigures = (html, figures) => {
  *  texte) — utilisé par l'aperçu de l'import. */
 export const anchoredFigureCount = (figures) => (Array.isArray(figures) ? figures : [])
   .filter((f) => f && String(f.anchor || '').trim()).length;
+
+/* ── DÉPLACER UNE FIGURE (le glisser-déposer de la page projet) ─────────────
+   L'ORDRE de `project.figures[section]` est celui dans lequel le document
+   exporté imprime les figures de la section (voir splitAnchoredFigures : les
+   figures ancrées reprennent leur place dans le texte, celles qui suivent
+   s'impriment dans cet ordre). C'est donc cette liste que la souris réécrit
+   quand on fait glisser une figure — dans sa section, ou vers une autre. */
+
+/** Le déplacement demandé, appliqué aux listes de figures d'un projet.
+ *  @param {object} lists  `project.figures` : `{ section: [figures] }`
+ *  @param {object} move   `{ from, to, id, before }` — `from`/`to` = section
+ *                         d'origine / d'arrivée, `id` = la figure déplacée,
+ *                         `before` = la figure DEVANT laquelle elle se pose
+ *                         ('' = à la fin de la liste d'arrivée)
+ *  @returns {object} les listes d'après déplacement. Rien n'est modifié sur
+ *           place, et l'objet REÇU est renvoyé tel quel quand le déplacement ne
+ *           change rien (même figure, même place) : l'appelant peut donc
+ *           comparer les références et n'écrire que si c'est utile.
+ *  Pur (aucun DOM) : _project_section_editing_test.mjs vérifie ce code-ci. */
+export const moveFigureTo = (lists, { from = '', to = '', id = '', before = '' } = {}) => {
+  const all = lists || {};
+  const source = Array.isArray(all[from]) ? all[from] : [];
+  const at = source.findIndex((f) => f && f.id === id);
+  if (at < 0 || !to || (to === from && before === id)) return all;
+  const moved = source[at];
+  const rest = source.filter((f) => f !== moved);
+  const out = { ...all };
+  if (to === from) {
+    const dest = before ? rest.findIndex((f) => f && f.id === before) : -1;
+    rest.splice(dest < 0 ? rest.length : dest, 0, moved);
+    if (rest.length === source.length && rest.every((f, i) => f === source[i])) return all;
+    out[from] = rest;
+    return out;
+  }
+  out[from] = rest;
+  const target = Array.isArray(all[to]) ? [...all[to]] : [];
+  const dest = before ? target.findIndex((f) => f && f.id === before) : -1;
+  target.splice(dest < 0 ? target.length : dest, 0, moved);
+  out[to] = target;
+  return out;
+};

@@ -8,7 +8,7 @@
    celui d'EndNote/Word ; et l'EXPOSANT — « previously¹² » ou
    « previously<sup>12</sup> », la forme la plus courante dans un article.
    Le programme, lui, numérote les références d'un projet (project.references,
-   voir « 📚 + Reference ») et affiche la liste dans la section « 📚 Bibliography »
+   voir « 📚 + Reference ») et affiche la liste dans la section « 📚 References »
    et dans le document exporté. Sans lien, le lecteur (et l'auteur lui-même !) ne
    peut pas savoir À QUOI correspond le « [12] » resté dans le texte : c'est
    exactement ce que ce module répare.
@@ -36,7 +36,7 @@
    « [12] » déjà écrits dans le texte — sinon le lien ne mène à rien et le
    document exporté n'imprime aucune référence. `numberImportedReferences` fait
    ce travail : chaque entrée importée devient une référence numérotée du projet
-   (project.references, la liste que la section « Bibliography » et le document
+   (project.references, la liste que la section « References » et le document
    exporté impriment) en gardant le numéro que le DOCUMENT lui donnait, sans
    jamais écraser un numéro déjà pris ni dupliquer un papier déjà référencé.
    ========================================================================= */
@@ -391,7 +391,7 @@ export const applyInTextStyle = (html, opts = {}) => {
  * Une entrée de bibliographie importée (Paperpile, RIS, BibTeX, bloc de
  * références) → une référence de projet numérotée, de la MÊME forme que celles
  * créées par « 📚 + Reference » (voir projectDetailModule.jsx). C'est cette
- * liste (`project.references`) que la section « Bibliography » du projet et le
+ * liste (`project.references`) que la section « References » du projet et le
  * document exporté impriment, et sur laquelle pointent les liens `#ref-<n>`.
  */
 export const referenceFromEntry = (entry, number, id = '') => {
@@ -485,8 +485,12 @@ export const numberImportedReferences = (entries, refs, opts = {}) => {
 
 /* ── À L'EXPORT : une bibliographie d'instantané se complète ──────────────── */
 
-/** Le titre « Bibliography (n) » d'un document, suivi de l'ouverture de sa liste. */
-const BIB_LIST_RE = /<h[1-3][^>]*>\s*Bibliography\b[^<]*<\/h[1-3]>\s*<ol\b[^>]*>/i;
+/** Le titre « References (n) » d'un document, suivi de l'ouverture de sa liste.
+ *  L'ANCIEN nom (« Bibliography ») est accepté aussi : les documents d'un projet
+ *  enregistrés AVANT le renommage portent ce titre-là dans leur instantané
+ *  (`project.exportDocHtml`) et leur liste doit continuer d'être complétée et
+ *  retirée comme avant. Rien à migrer, donc : les deux titres vivent ici. */
+const BIB_LIST_RE = /<h[1-3][^>]*>\s*(?:References|Bibliography)\b[^<]*<\/h[1-3]>\s*<ol\b[^>]*>/i;
 
 /**
  * LES RÉFÉRENCES MANQUANTES D'UN DOCUMENT DÉJÀ ENREGISTRÉ.
@@ -499,7 +503,7 @@ const BIB_LIST_RE = /<h[1-3][^>]*>\s*Bibliography\b[^<]*<\/h[1-3]>\s*<ol\b[^>]*>
  *
  * Cette fonction ne RÉÉCRIT RIEN du texte de l'auteur : elle ajoute à la
  * bibliographie du document les seules entrées dont l'ancre `#ref-<n>` manque
- * (`<li id="ref-12" value="12">…</li>`), à la fin de la liste « Bibliography »
+ * (`<li id="ref-12" value="12">…</li>`), à la fin de la liste « References »
  * existante — ou dans un bloc ajouté à la fin si le document n'en a plus.
  * Elle est IDEMPOTENTE : un document déjà complet ressort tel quel.
  *
@@ -528,7 +532,7 @@ export const ensureReferenceEntries = (html, entries) => {
     }
   }
   return {
-    html: `${source}\n<div class="mb-4"><h2 class="text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">Bibliography</h2>`
+    html: `${source}\n<div class="mb-4"><h2 class="text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">References</h2>`
       + `<ol class="list-decimal pl-5 text-sm text-slate-800 space-y-1">${items}</ol></div>`,
     added: missing.length
   };
@@ -538,7 +542,7 @@ export const ensureReferenceEntries = (html, entries) => {
  * LA BIBLIOGRAPHIE D'UN DOCUMENT FIGÉ, RETIRÉE.
  *
  * « ✏️ Edit text » → « 💾 Save changes » fige le document ENTIER, liste des
- * références comprise : le « Bibliography (n) » enregistré garde la mise en
+ * références comprise : le « References (n) » enregistré garde la mise en
  * forme de la publication (order des champs, styles) telle qu'elle était ce
  * jour-là, et le format choisi depuis ne s'y voyait donc jamais — la plainte
  * exacte : « le publication format ne modifie pas le format des références dans
@@ -547,7 +551,8 @@ export const ensureReferenceEntries = (html, entries) => {
  * la liste VIVANTE des références du projet, rendue avec le format courant à
  * chaque affichage.
  *
- * Ne touche QUE le titre « Bibliography » et la liste qui le suit (le texte de
+ * Ne touche QUE le titre « References » (ou « Bibliography », l'ancien nom d'un
+ * document enregistré avant le renommage) et la liste qui le suit (le texte de
  * l'auteur, lui, reste intact) ; idempotente ; sans bibliographie, le document
  * ressort tel quel.
  */

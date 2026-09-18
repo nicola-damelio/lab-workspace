@@ -4,6 +4,10 @@ import { DriveUploadButton } from './DriveUpload';
 import { docxToHtml } from '../utils/docxImport';
 import { getRenderableDriveUrl, repairContentImages } from '../data/constants';
 import { archiveFileToDrive, uploadLocalFile, dataUrlToBlob, withExtension, getDriveToken, saveUploadForRetry } from '../utils/driveUpload';
+/* LA LISTE DES POLICES est celle du « Publication format » (pubCitation.js) :
+   une famille choisie dans une section se retrouve donc telle quelle dans le
+   document du projet, et aucun poste ne télécharge rien. */
+import { PUB_FONTS } from './pubCitation';
 
 export const RichTextEditor = ({
   value, onChange, placeholder, toolbarExtra = [],
@@ -22,6 +26,12 @@ export const RichTextEditor = ({
     const [pasteNotice, setPasteNotice] = useState(''); // shown when an image had to stay LOCAL (Drive unavailable)
     const [selImg, setSelImg] = useState(null);   // currently selected image (for resizing)
     const [selImgW, setSelImgW] = useState(100);  // its display width (%)
+    /* POLICE / TAILLE DU TEXTE de la barre d'outils : la famille vient de
+       PUB_FONTS (comme le « Publication format ») et la taille est un NOMBRE de
+       points (« 11 »), pas un mot (Small / Normal / Large). '' = « As in the
+       app » : aucune règle écrite, le texte garde la police du programme. */
+    const [fontFamily, setFontFamily] = useState('');
+    const [fontSizePt, setFontSizePt] = useState('');
     // Pasted/dropped images that had to stay LOCAL because Drive was down are
     // queued for an automatic re-upload; this map remembers the exact data URL
     // that was inserted (by queue id) so it can be swapped for the Drive URL.
@@ -409,6 +419,114 @@ export const RichTextEditor = ({
         setSelImgW(pct >= 100 ? 100 : pct);
         if (editorRef.current) onChange(editorRef.current.innerHTML);
     };
+
+    /* ── POLICE ET TAILLE DU TEXTE (« police in numbers ») ────────────────────
+       L'ancien menu ne proposait que les tailles 1…7 d'execCommand (Small /
+       Normal / Large / Huge) : impossible d'écrire « 11 ». Les règles sont donc
+       posées ICI, en style EN LIGNE — ce que le document du projet sait relire :
+         • ce qui est sélectionné passe dans un `<span style="font-size:11pt">` ;
+         • un CURSEUR sans sélection prend tout le paragraphe où l'on écrit
+           (comportement d'un traitement de texte) ;
+         • une sélection qui traverse plusieurs paragraphes est traitée bloc par
+           bloc : jamais de `<p>` imbriqué dans un `<span>` (le HTML enregistré
+           doit se relire tel quel à l'export) ;
+         • la règle déjà posée sur la sélection est RETIRÉE avant d'en poser une
+           autre (poser « 14 » sur du « 8 » ne doit pas laisser deux règles) et
+           un choix vide (« As in the app ») enlève vraiment la règle ;
+         • la sélection est CONSERVÉE d'un réglage à l'autre (police, puis
+           taille), et la plage mémorisée (selRef) sert quand le clic vient d'un
+           menu de la barre d'outils, qui sort du texte sans perdre la sélection.
+       Renvoie le `<span>` posé (null quand il n'y avait que des règles à
+       enlever). */
+    const styleRange = (el, range, styles) => {
+        const props = Object.keys(styles);
+        /* 1. Enlever d'abord la règle partout où elle vaut pour cette sélection
+              (l'ancêtre qui la porte ET les éléments qu'elle traverse). */
+        let node = range.startContainer;
+        while (node && node !== el) {
+            if (node.nodeType === 1) props.forEach((p) => node.style.removeProperty(p));
+            node = node.parentNode;
+        }
+        Array.from(el.querySelectorAll('*')).forEach((n) => {
+            if (range.intersectsNode(n)) props.forEach((p) => n.style.removeProperty(p));
+        });
+        const set = props.filter((p) => styles[p]);
+        if (!set.length || range.collapsed) return null;
+        /* 2. Le texte sélectionné passe dans un `<span>` qui porte les règles. */
+        const frag = range.extractContents();
+        const span = document.createElement('span');
+        set.forEach((p) => span.style.setProperty(p, styles[p]));
+        span.appendChild(frag);
+        range.insertNode(span);
+        return span;
+    };
+    /** Applique `{ fontFamily, fontSize }` ('' = retirer la règle) au texte
+     *  sélectionné, ou au paragraphe courant. */
+    const applyTextStyle = (styles) => {
+        const el = editorRef.current;
+        if (!el || readOnly) return;
+        const clean = {};
+        if ('fontFamily' in styles) clean.fontFamily = String(styles.fontFamily || '');
+        if ('fontSize' in styles) clean.fontSize = String(styles.fontSize || '');
+        if (!Object.keys(clean).length) return;
+        const sel = window.getSelection();
+        const range = getEditorRange(el, sel);
+        if (!range) return;
+        const wasCaret = range.collapsed;
+        const blocks = Array.from(el.children).filter((ch) => range.intersectsNode(ch));
+        const targets = [];
+        if (range.collapsed) {
+            const block = blocks.find((ch) => ch === range.startContainer || ch.contains(range.startContainer));
+            if (!block) return;              // curseur hors de tout paragraphe
+            const whole = document.createRange();
+            whole.selectNodeContents(block);
+            targets.push(whole);
+        } else if (blocks.length > 1) {
+            blocks.forEach((block) => {
+                const part = document.createRange();
+                part.selectNodeContents(block);
+                if (block.contains(range.startContainer)) part.setStart(range.startContainer, range.startOffset);
+                if (block.contains(range.endContainer)) part.setEnd(range.endContainer, range.endOffset);
+                if (!part.collapsed) targets.push(part);
+            });
+        } else {
+            targets.push(range);
+        }
+        let last = null;
+        targets.forEach((r) => { const span = styleRange(el, r, clean); if (span) last = span; });
+        /* Un `<span>` qui n'a plus aucune règle n'a plus de raison d'être : le
+           texte enregistré ne se remplit pas de balises vides. */
+        Array.from(el.querySelectorAll('span[style]')).forEach((n) => {
+            if (!n.style.length) n.replaceWith(...Array.from(n.childNodes));
+        });
+        if (last) {
+            /* La sélection reste sur ce qui vient d'être réglé : on peut
+               enchaîner « police » puis « taille ». Quand l'utilisateur avait
+               seulement posé son CURSEUR (le paragraphe entier a été réglé), le
+               curseur revient à sa place : sélectionner tout le paragraphe ferait
+               effacer le texte à la première touche. Aucun `focus()` : le clic
+               est dans un champ de la barre d'outils, on ne le lui vole pas. */
+            const after = document.createRange();
+            if (wasCaret) {
+                after.setStart(range.startContainer, range.startOffset);
+                after.collapse(true);
+            } else if (targets.length === 1) {
+                after.selectNodeContents(last);
+            } else {
+                after.setStartAfter(last);
+                after.collapse(true);
+            }
+            selRef.current = after.cloneRange();
+            sel.removeAllRanges();
+            sel.addRange(after);
+        }
+        onChange(el.innerHTML);
+    };
+    /** La taille en POINTS (un nombre) : '' = « as in the app ». */
+    const applyFontSize = (raw) => {
+        const v = Number(raw);
+        applyTextStyle({ fontSize: raw !== '' && Number.isFinite(v) && v > 0 ? `${v}pt` : '' });
+    };
     return (
         <div className={`w-full ${fillHeight ? 'flex-1 min-h-0' : ''} flex flex-col border border-slate-300 rounded-md bg-white overflow-hidden shadow-sm transition-shadow focus-within:ring-1 focus-within:ring-blue-500 focus-within:border-blue-500`}>
             <style>{`.rte-content a { color:#2563eb; text-decoration:underline; } .rte-content a:hover { color:#1d4ed8; } .rte-content img.rte-img-sel { outline: 2px solid #3b82f6; outline-offset: 2px; }`}</style>
@@ -427,13 +545,22 @@ export const RichTextEditor = ({
                 <div className="w-px bg-slate-300 mx-1 my-0.5"></div>
                 <button onClick={()=>execCmd('insertUnorderedList')} onMouseDown={keepFocus} className="px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition font-bold" title="Bullets">• List</button>
                 <div className="w-px bg-slate-300 mx-1 my-0.5"></div>
-                <select onChange={e=>execCmd('fontSize', e.target.value)} className="text-xs border border-slate-300 rounded px-1 bg-white text-slate-700 shadow-sm outline-none cursor-pointer">
-                    <option value="3">Size...</option>
-                    <option value="1">Small</option>
-                    <option value="3">Normal</option>
-                    <option value="5">Large</option>
-                    <option value="7">Huge</option>
+                <select value={fontFamily}
+                        onChange={(e) => { setFontFamily(e.target.value); applyTextStyle({ fontFamily: e.target.value }); }}
+                        title="Font of the selected text (or of the paragraph where you are writing) — the same list as the “Publication format”"
+                        className="text-xs border border-slate-300 rounded px-1 bg-white text-slate-700 shadow-sm outline-none cursor-pointer max-w-[9.5rem]">
+                    {PUB_FONTS.map((f) => (
+                        <option key={f.id || 'app'} value={f.id}>{f.label}</option>
+                    ))}
                 </select>
+                <label className="flex items-center gap-1 text-xs text-slate-600 bg-white border border-slate-300 rounded shadow-sm px-1"
+                       title="Character size, as a NUMBER of points (e.g. 11) — applied to the selected text, or to the paragraph where you are writing. Empty = as in the app.">
+                    <input type="number" min="4" max="96" step="0.5" value={fontSizePt}
+                           onChange={(e) => { setFontSizePt(e.target.value); applyFontSize(e.target.value); }}
+                           placeholder="—"
+                           className="w-12 text-xs bg-transparent text-slate-700 outline-none" />
+                    <span className="text-[10px] text-slate-400">pt</span>
+                </label>
                 <div className="w-px bg-slate-300 mx-1 my-0.5"></div>
                 <label className="flex items-center gap-1 text-xs text-slate-600 bg-white border border-slate-300 rounded shadow-sm px-1 cursor-pointer hover:bg-slate-100 transition">
                     <span>Color:</span>

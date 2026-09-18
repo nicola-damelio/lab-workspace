@@ -107,7 +107,7 @@ export const DashboardModule = ({ datasetTitle, setDatasetTitle, datasetSubtitle
                         id: 'projects',
                         icon: '📁',
                         title: 'Projects',
-                        desc: 'Scientific background, experiments, results and discussion, conclusions and bibliography.'
+                        desc: 'Scientific background, experiments, results and discussion, conclusions and references.'
                       },
                       {
                         id: 'tests',

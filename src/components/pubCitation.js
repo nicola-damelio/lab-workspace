@@ -7,7 +7,7 @@
    Kept in this React-free module so that (a) the engine can be checked by node
    (see _pub_author_style_test.mjs) and (b) both consumers share one renderer:
      • PublicationsSection → the « Formatted citation » of every paper;
-     • projectDetailModule → the « Bibliography » of a project document.
+     • projectDetailModule → the « References » of a project document.
 
    EVERY author of the paper is listed: the only rule that shortens the list is
    the “et al.” cutoff (etAlLimit). What the format chooses on top of that is
@@ -139,7 +139,7 @@ export const PUB_LAYOUT_PARTS = [
     caption: ['.pf-caption', 'figcaption'],
     width: true
   },
-  { id: 'bibliography', label: 'Bibliography', selectors: ['.pf-bib', '.pf-bib li'] }
+  { id: 'bibliography', label: 'References', selectors: ['.pf-bib', '.pf-bib li'] }
 ];
 export const PUB_LAYOUT_PART_IDS = PUB_LAYOUT_PARTS.map((p) => p.id);
 

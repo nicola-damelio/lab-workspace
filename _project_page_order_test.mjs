@@ -47,7 +47,7 @@ const CARDS = [
   ['✅ Conclusions', 'les conclusions'],
   ['💰 Funding', 'le financement'],
   ['📎 Supporting information', 'les informations supplémentaires'],
-  ['📚 Bibliography', 'la bibliographie'],
+  ['📚 References', 'la liste des références'],
   ['💬 Comments & review', 'la revue (appel de renderCommentsSection)'],
   ['📎 Useful files', 'les fichiers utiles — EN DERNIER']
 ];
@@ -79,7 +79,7 @@ eq(after, [], 'aucune carte ne suit « 📎 Useful files » (elle est bien à la
    « Results and Discussion », ni avant la bibliographie. */
 const mm = positionOf('📋 Materials and Methods');
 const discussion = positionOf('💬 Results and Discussion');
-const bib = positionOf('📚 Bibliography');
+const bib = positionOf('📚 References');
 ok(useful > discussion, 'les fichiers utiles ne coupent plus la lecture avant les résultats');
 ok(useful > bib, '…ni avant la bibliographie');
 eq([mm < discussion, useful > mm], [true, true],

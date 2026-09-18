@@ -10,7 +10,7 @@ import {
 
 /* =========================================================================
    PROJECTS — "Scientific background / Experiments / Results and Discussion /
-   Conclusions / Bibliography" workspace pages.
+   Conclusions / References" workspace pages.
    Data is persisted in localStorage (same pattern as journals/papers).
    Rights: superusers see everything (filterable by scientist); each user
    sees only their own projects.

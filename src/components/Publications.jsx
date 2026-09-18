@@ -2450,7 +2450,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
           in “Format for:” to give ONE project a format of its own).
           {' '}
           <b>The reference list follows this format immediately</b>: the numbered references of a project page and
-          the <b>Bibliography</b> printed at the end of its document are rebuilt from the project data on every
+          the <b>References</b> list printed at the end of its document are rebuilt from the project data on every
           display, so a change here shows up at once — even for a document whose text was frozen with
           <b>📄 Export document → ✏️ Edit text → 💾 Save changes</b>.
           {' '}
@@ -2999,7 +2999,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                             <td colSpan={8} className="px-4 py-3 border-b border-slate-200">
                               <div className="bg-white border border-slate-200 rounded-lg p-3 mb-3">
                                 <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-1">
-                                  Formatted citation — the project document “Bibliography” uses the same format
+                                  Formatted citation — the project document “References” uses the same format
                                 </div>
                                 <div className="text-xs text-slate-800"
                                      dangerouslySetInnerHTML={{ __html: pubCitationHtml(p, pbFormatOf(p.projectId), citationScientists) || '—' }} />
