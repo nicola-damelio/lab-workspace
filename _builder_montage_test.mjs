@@ -25,6 +25,10 @@ register('./_esm_test_hook.mjs', import.meta.url);
 const FL = await import('./src/utils/figureLayout.js');
 // CRLF → LF : les fragments vérifiés plus bas contiennent des sauts de ligne.
 const IB = readFileSync('./src/components/ImageBuilder.jsx', 'utf8').replace(/\r\n/g, '\n');
+// La géométrie d'une sélection multiple (déplacer / redimensionner PLUSIEURS
+// panneaux ou figures d'un coup) vit dans utils/panelSelection.js : quelques
+// formules vérifiées ici sont donc lues là-bas.
+const PS = readFileSync('./src/utils/panelSelection.js', 'utf8').replace(/\r\n/g, '\n');
 
 let passed = 0;
 const eq = (actual, expected, what) => {
@@ -161,9 +165,13 @@ has(IB, 'const baseW = rect ? rect.w * obj.w * cellW : cw - pad * 2;', '…qui r
 has(IB, 'const figScale = rect ? 1 : (obj.imgScale || 1) * (im.scale || 1);',
   '…l’échelle du panneau est déjà dans le rectangle (pas comptée deux fois)');
 has(IB, 'const rect = freeRectOf(im);\n    const baseX', 'la géométrie libre est lue avant la boîte');
-has(IB, 'if (!r) return { ...im, dx: +(origX + dxMm).toFixed(2)',
-  'une figure gelée se déplace par son rectangle — même geste, mêmes chiffres');
-has(IB, 'if (!r) return { ...im, scale: +(origScale * factor).toFixed(3) };',
+has(IB, 'const patches = moveFiguresPatches(figs, { dxMm, dyMm, panelWmm: o.w * cellW, panelHmm: o.h * cellH });',
+  'une figure gelée se déplace par son rectangle — même geste, mêmes chiffres (le calcul vit dans utils/panelSelection)');
+has(PS, 'x: round4(Math.max(RECT_MIN - num(r.w), Math.min(1 - RECT_MIN, num(r.x) + dx / pw))),',
+  '…et la formule est bien celle d’avant (bornée à la lisière de 2 % qui reste attrapable)');
+has(PS, 'out[fig.idx] = { dx: +(num(fig.dx) + dx).toFixed(2), dy: +(num(fig.dy) + dy).toFixed(2) };',
+  'une figure restée en grille se déplace toujours en dx/dy millimètres (le repli d’avant)');
+has(IB, 'const patches = resizeFiguresPatches(figs, imgIdx, factor);',
   'idem pour la poignée de redimensionnement');
 has(IB, 'if (r && imgs.length === 1)', 'un panneau à une seule figure gelée se déplace aussi par son rectangle');
 has(IB, '⊞ Free layout — every figure of this panel keeps its own place', 'l’écran explique la géométrie libre');

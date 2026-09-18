@@ -94,9 +94,17 @@ const spot = (objects, cols, rows, w = 1, h = 1) => firstFreeCell(objects, cols,
 // 1) The fix is wired in the component
 // ===========================================================================
 frag('[ImageBuilder] the first-free-cell helper', IB, 'const firstFreeCell = (list, w = 1, h = 1) => {');
-frag('[ImageBuilder] it scans the grid row by row', IB, 'for (let y = 0; y + h <= gridRows; y++) {');
-frag('[ImageBuilder] ...and cell by cell', IB, 'for (let x = 0; x + w <= gridCols; x++) {');
-frag('[ImageBuilder] a cell is free only when NO panel covers it', IB, 'return x < ox + ow && x + w > ox && y < oy + oh && y + h > oy;');
+// La règle elle-même vit dans utils/objectClipboard.js (firstFreeCellIn) : le
+// builder ne fait que lui donner la grille courante. Le corps recopié plus haut
+// continue de décrire exactement ce comportement, et le module est vérifié à
+// fond par _builder_copy_paste_test.mjs.
+frag('[ImageBuilder] il délègue au helper pur (une seule règle de placement)',
+  IB, 'return firstFreeCellIn(list, gridCols, gridRows, w, h);');
+const OBJCLIP = read('src/utils/objectClipboard.js');
+frag('[utils/objectClipboard] it scans the grid row by row', OBJCLIP, 'for (let y = 0; y + bh <= rows; y++) {');
+frag('[utils/objectClipboard] ...and cell by cell', OBJCLIP, 'for (let x = 0; x + bw <= cols; x++) {');
+frag('[utils/objectClipboard] a cell is free only when NO panel covers it', OBJCLIP,
+  'return x < ox + ow && x + bw > ox && y < oy + oh && y + bh > oy;');
 frag('[ImageBuilder] "+ Add Object" asks for that cell', IB, 'const spot = firstFreeCell(objects);');
 frag('[ImageBuilder] the new panel is placed there', IB, 'newObj.x = spot.x;');
 frag('[ImageBuilder] ...instead of the factory default', IB, 'newObj.y = spot.y;');

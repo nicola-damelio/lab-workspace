@@ -11,6 +11,13 @@ import {
   freeRectOf, isFreeLayout, pinRectOf, freeSlotFor, RECT_MIN, RECT_MAX, moveFigureInList
 } from '../utils/figureLayout';
 import {
+  firstFreeCellIn, buildCopyPayload, parseCopyPayload, pastePanels
+} from '../utils/objectClipboard';
+import {
+  moveSelectionPatches, moveFiguresPatches, resizedBox, resizeSelectionPatches,
+  figureResizeFactor, resizeFiguresPatches
+} from '../utils/panelSelection';
+import {
   ERASE_SIZE_MIN, ERASE_SIZE_MAX, ERASE_DEFAULT_SIZE, clampEraseSize,
   eraseStrokesOf, mmStrokeHits, pushStrokePoint, mmStrokeToSource, maskStrokesMm, eraseMaskId
 } from '../utils/figureErase';
@@ -137,6 +144,12 @@ const comparePanelLetters = (a, b) => {
 
 // Size of the panel letters (pt) when a canvas has no letter at all yet.
 const DEFAULT_LETTER_PT = 14;
+
+// « 1st, 2nd, 3rd… » — the rank of a panel inside a MULTI-SELECTION. The FIRST
+// selected panel is the reference: the properties panel shows it, it carries the
+// resize handle, and it is whose size every other selected panel takes.
+const ORDINALS = ['1st', '2nd', '3rd'];
+const ordinalOf = (k) => ORDINALS[k] || `${k + 1}th`;
 
 // Natural width/height ratio of every figure already measured, keyed by source
 // (data URL / Drive URL). The canvas "🔒 Keep aspect ratio" option draws each
@@ -286,7 +299,19 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const [showPanelBorders, setShowPanelBorders] = useState(true); // thin frame around each panel
   const [showGridLines, setShowGridLines] = useState(true);       // cell divider guides across the canvas
   const [objects, setObjects] = useState([]);
-  const [selectedId, setSelectedId] = useState(null);
+  // MULTI-SÉLECTION DES PANNEAUX. La liste est ORDONNÉE : l'élément 0 est le
+  // PREMIER panneau sélectionné — la RÉFÉRENCE de la sélection. C'est lui que
+  // montrent les propriétés, lui qui porte les poignées, et SA taille que
+  // prennent les autres quand on le redimensionne (« resize them all as the
+  // first selected » : voir startResize / resizeSelectionPatches).
+  // Une sélection simple reste `[id]`, et `selectedId` garde son nom PARTOUT
+  // ailleurs : le sélecteur ci-dessous ramène la multi-sélection à un seul
+  // panneau, donc « je sélectionne ceci » (une figure de la bibliothèque, un
+  // texte du canvas, un clic dans le vide…) veut toujours dire un seul panneau,
+  // exactement comme avant.
+  const [selectedIds, setSelectedIds] = useState([]);
+  const selectedId = selectedIds[0] || null;
+  const setSelectedId = (id) => setSelectedIds(id ? [id] : []);
   // ARROW ANNOTATIONS — arrows live OUTSIDE `objects` on purpose: a panel is a
   // letter + a grid cell + a figure, an arrow is none of those. It is a plain
   // canvas-level list in millimetres (the SVG viewBox space), drawn on top of
@@ -750,6 +775,117 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     });
   };
 
+  // ---- SÉLECTION MULTIPLE + COPIER / COLLER ----------------------------------
+  // A click on the canvas selects ONE panel (exactly as before); Ctrl/Cmd + click
+  // (or a chip of the “Panels” strip of the properties panel) ADDS / REMOVES a
+  // panel, so several can be moved and resized as one. The FIRST selected panel
+  // stays the REFERENCE — see startResize and utils/panelSelection.
+  const toggleSelectedId = (id) => setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  const makeReference = (id) => setSelectedIds((prev) => [id, ...prev.filter((x) => x !== id)]);
+  // For a command driven by ONE handle: the whole selection when the panel held
+  // is part of it (it IS the reference), else that panel alone — grabbing a
+  // handle must never act on panels the user did not select.
+  const selectionWith = (id) => (selectedIds.includes(id) ? selectedIds : [id]);
+  const boxesOf = (ids) => {
+    const out = {};
+    (ids || []).forEach((i) => {
+      const o = (objects || []).find((x) => x.id === i);
+      if (o) out[i] = { x: o.x, y: o.y, w: o.w, h: o.h };
+    });
+    return out;
+  };
+  // A panel that was deleted (or undone away) must never stay “selected”.
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      if (!prev.length) return prev;
+      const next = prev.filter((id) => (objects || []).some((o) => o.id === id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [objects]);
+
+  // ── COPIER / COLLER UN PANNEAU (Ctrl+C / Ctrl+V) ────────────────────────────
+  // The copy carries the figures AND the free texts of the panel (see
+  // utils/objectClipboard), so an identical panel comes back in one gesture —
+  // its letters re-numbered by the position, exactly like an added panel.
+  const clipboardRef = useRef(null);
+  const [clipCount, setClipCount] = useState(0);   // panels in the clipboard (“📋 Paste” button)
+  const copySelection = (ids = selectedIds) => {
+    const list = (objects || []).filter((o) => ids.includes(o.id));
+    if (!list.length) return null;
+    const payload = buildCopyPayload(list);
+    clipboardRef.current = payload;
+    setClipCount(payload.objects.length);
+    return payload;
+  };
+  const pastePayload = (payload) => {
+    const res = pastePanels(objects, payload, { gridCols, gridRows, seed: Date.now() });
+    if (!res.added.length) {
+      window.alert('The grid has no free cell left for the copied panel: increase “Grid Cols” / “Grid Rows” (canvas format) or delete a panel — pasting never covers a panel that is already there.');
+      return 0;
+    }
+    commitHistory();
+    setObjects(res.objects);
+    setSelectedArrowId(null);
+    setSelectedIds(res.ids);      // the copies are selected: ready to be placed / resized together
+    setActiveFig(null);
+    setFigGroup({ objId: null, idxs: [] });
+    renumberLetters();
+    return res.added.length;
+  };
+  const pasteClipboard = () => {
+    if (!clipboardRef.current) {
+      window.alert('Nothing to paste yet: copy a panel first (Ctrl+C on the canvas, or the “⧉ Copy” button of the object properties).');
+      return 0;
+    }
+    return pastePayload(clipboardRef.current);
+  };
+  const deleteSelection = () => {
+    const ids = selectedIds.length ? selectedIds : (selectedId ? [selectedId] : []);
+    if (!ids.length) return;
+    commitHistory();
+    setObjects(objects.filter((o) => !ids.includes(o.id)));
+    setSelectedIds([]);
+    setActiveFig(null);
+    setFigGroup({ objId: null, idxs: [] });
+    renumberLetters();
+  };
+  // The copy / paste EVENTS of the browser are the only clipboard route that
+  // needs NO permission: they carry our JSON both ways, so a copy made in another
+  // tab (or before a reload) pastes here. The internal copy above is what the
+  // “📋 Paste” button uses, and the fallback when the system clipboard cannot be
+  // read. The handlers run the LAST version of these commands (a ref, like the
+  // Ctrl+Z effect above), so this effect subscribes once and never goes stale.
+  const clipActions = useRef({});
+  clipActions.current = { copySelection, pastePayload };
+  useEffect(() => {
+    // A field being edited (a sub-caption, a text of the canvas…) keeps the
+    // BROWSER copy / paste: Ctrl+C / Ctrl+V are never stolen from someone typing.
+    const typing = (el) => !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
+    const onCopy = (e) => {
+      if (typing(e.target)) return;
+      const payload = clipActions.current.copySelection();
+      if (!payload || !e.clipboardData) return;
+      try {
+        e.clipboardData.setData('text/plain', JSON.stringify(payload));
+        e.preventDefault();          // the copy is OURS, not the page selection
+      } catch { /* clipboard refused: the internal copy still works */ }
+    };
+    const onPaste = (e) => {
+      if (typing(e.target)) return;
+      const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+      const fromClipboard = parseCopyPayload(text);
+      if (fromClipboard) { e.preventDefault(); clipActions.current.pastePayload(fromClipboard); return; }
+      if (String(text || '').trim()) return;   // text from elsewhere: not our copy, leave it alone
+      if (clipboardRef.current) { e.preventDefault(); clipActions.current.pastePayload(clipboardRef.current); }
+    };
+    document.addEventListener('copy', onCopy);
+    document.addEventListener('paste', onPaste);
+    return () => {
+      document.removeEventListener('copy', onCopy);
+      document.removeEventListener('paste', onPaste);
+    };
+  }, []);
+
   // A brand-new EMPTY panel — a letter (A, B, …) plus the figure-wide letter
   // size, no figure yet. ONE factory for both creation paths: "+ Add Object"
   // (one more panel of the figure being built) and "➕ New image" (a new figure
@@ -785,19 +921,12 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // the panel would occupy is tested, so it can never half-cover an existing one.
   // Returns null when the grid has no free cell left: the caller must not stack
   // the panel on an occupied cell, it reports the full grid instead (addObject).
+  // ONE implementation of that rule for the whole app: the pure helper of
+  // utils/objectClipboard is what “+ Add Object” and “📋 Paste” (Ctrl+V) both
+  // ask — a pasted panel lands exactly where an added one would, and neither can
+  // ever cover a panel that is already there.
   const firstFreeCell = (list, w = 1, h = 1) => {
-    const occupied = (x, y) => (list || []).some((o) => {
-      if (!o) return false;
-      const ox = Number(o.x) || 0, oy = Number(o.y) || 0;
-      const ow = Math.max(1, Number(o.w) || 1), oh = Math.max(1, Number(o.h) || 1);
-      return x < ox + ow && x + w > ox && y < oy + oh && y + h > oy;
-    });
-    for (let y = 0; y + h <= gridRows; y++) {
-      for (let x = 0; x + w <= gridCols; x++) {
-        if (!occupied(x, y)) return { x, y };
-      }
-    }
-    return null;
+    return firstFreeCellIn(list, gridCols, gridRows, w, h);
   };
 
   const addObject = () => {
@@ -1182,6 +1311,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // next one below. Only the active figure shows the move/resize handles, drawn
   // ON TOP so it is always grabbable.
   const [activeFig, setActiveFig] = useState(null); // { objId, idx }
+  // SÉLECTION MULTIPLE DE FIGURES — « resize them all as the first selected »
+  // vaut aussi DANS un panneau : la figure qui porte les poignées (l'ACTIVE, donc
+  // la première sélectionnée) est la référence, et les figures cochées « ☑ » dans
+  // la liste « Figures in this panel » prennent SA taille quand on la
+  // redimensionne (elles suivent aussi ses déplacements), chacune à SA place.
+  // Voir startFigureResize / utils/panelSelection.
+  const [figGroup, setFigGroup] = useState({ objId: null, idxs: [] });
   const suppressCycleRef = useRef(false);           // a drag just happened → the trailing click must NOT cycle
   // A crop drag also ends with a click on the canvas; that click must not
   // DESELECT the object (which would close the crop panel mid-work).
@@ -1340,6 +1476,36 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     return (activeFig && activeFig.objId === obj.id && activeFig.idx >= 0 && activeFig.idx < imgs.length)
       ? activeFig.idx : imgs.length - 1;
   };
+
+  // ── sélection multiple de FIGURES (dans un même panneau) ────────────────────
+  // The figures ticked “☑” in the “Figures in this panel” list are the ones that
+  // follow the ACTIVE figure (the reference). This helper is what the two drag
+  // handlers ask — an empty list simply means “the active figure alone”.
+  const figGroupOf = (objId) => (figGroup.objId === objId ? figGroup.idxs : []);
+  const toggleFigGroup = (objId, idx) => setFigGroup((prev) => {
+    const cur = prev.objId === objId ? prev.idxs : [];
+    return { objId, idxs: cur.includes(idx) ? cur.filter((i) => i !== idx) : [...cur, idx] };
+  });
+  // The snapshot of every figure involved in a drag (the one held + the ticked
+  // ones), taken when the mouse goes down: the geometry is then written in
+  // ABSOLUTE values, so a long drag cannot accumulate rounding, and releasing
+  // then grabbing again starts from the same base.
+  const figureSnapshot = (obj, refIdx) => {
+    const imgs = getObjImages(obj);
+    const idxs = [refIdx, ...figGroupOf(obj.id).filter((i) => i !== refIdx)];
+    return idxs.filter((i) => i >= 0 && i < imgs.length).map((i) => ({
+      idx: i,
+      rect: freeRectOf(imgs[i]),
+      scale: Number(imgs[i] && imgs[i].scale) || 1,
+      dx: Number(imgs[i] && imgs[i].dx) || 0,
+      dy: Number(imgs[i] && imgs[i].dy) || 0
+    }));
+  };
+  // Selecting another panel (or deleting one) resets the figure selection: its
+  // indices only mean something inside the panel they were taken in.
+  useEffect(() => {
+    setFigGroup((prev) => (prev.objId && prev.objId !== selectedId ? { objId: null, idxs: [] } : prev));
+  }, [selectedId]);
 
   // Figure indices whose bounds contain the point (mm, absolute), topmost first.
   const figuresAt = (obj, xMm, yMm) => {
@@ -1860,7 +2026,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       window.addEventListener('mouseup', endDrag);
       return;
     }
-    dragState.current = { type: 'move', id, startX: e.clientX, startY: e.clientY, origX: obj.x, origY: obj.y };
+    // MULTI-SELECTION: the panel being dragged is the REFERENCE (the first
+    // selected one) and every selected panel follows by the same offset — the
+    // snapshot of each box is taken now, so the drag writes absolute cells.
+    dragState.current = { type: 'move', id, startX: e.clientX, startY: e.clientY, origX: obj.x, origY: obj.y, orig: boxesOf(selectionWith(id)) };
     window.addEventListener('mousemove', onDrag);
     window.addEventListener('mouseup', endDrag);
   };
@@ -1869,7 +2038,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     e.stopPropagation();
     commitHistory();
     const obj = objects.find(o => o.id === id);
-    dragState.current = { type: 'resize', id, startX: e.clientX, startY: e.clientY, origW: obj.w, origH: obj.h, origX: obj.x, origY: obj.y };
+    // MULTI-SELECTION: the handle belongs to the FIRST selected panel (the
+    // reference) and EVERY selected panel takes its size (“resize them all as
+    // the first selected”, see utils/panelSelection). The box of each one is
+    // snapshotted now: the drag then writes absolute sizes.
+    dragState.current = { type: 'resize', id, startX: e.clientX, startY: e.clientY, origW: obj.w, origH: obj.h, origX: obj.x, origY: obj.y, orig: boxesOf(selectionWith(id)) };
     window.addEventListener('mousemove', onDrag);
     window.addEventListener('mouseup', endDrag);
   };
@@ -1931,50 +2104,35 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       return;
     }
 
-    // Move ONE figure of a multi-figure object independently (drag the figure).
+    // Move the figures of a panel: the one HELD (the active figure — the first
+    // selected) and the ticked ones follow the same offset, each in ITS own
+    // coordinate — a free box in fractions of the panel, a grid figure in dx/dy
+    // millimetres (see utils/panelSelection).
     if (type === 'figMove') {
+      const st = dragState.current;
       setObjects(prev => prev.map(o => {
         if (o.id !== id || !Array.isArray(o.images)) return o;
-        return { ...o, images: o.images.map((im, i) => {
-          if (i !== imgIdx) return im;
-          // FREE layout (im.rect — see utils/figureLayout.js): the very same
-          // gesture, written in fractions of the panel, so a figure that was
-          // frozen in place can be moved again without disturbing the others.
-          const r = freeRectOf(im);
-          if (!r) return { ...im, dx: +(origX + dxMm).toFixed(2), dy: +(origY + dyMm).toFixed(2) };
-          /* The rectangle may leave the panel (a part of the figure is hidden
-             by hand) but never entirely: a 2 % sliver always stays reachable. */
-          const px = origX + dxMm / Math.max(1e-6, o.w * cellW);
-          const py = origY + dyMm / Math.max(1e-6, o.h * cellH);
-          return { ...im, rect: {
-            ...r,
-            x: +Math.max(RECT_MIN - r.w, Math.min(1 - RECT_MIN, px)).toFixed(4),
-            y: +Math.max(RECT_MIN - r.h, Math.min(1 - RECT_MIN, py)).toFixed(4)
-          } };
-        }) };
+        const figs = (st && st.figs) || [{ idx: imgIdx, rect: freeRectOf(getObjImages(o)[imgIdx]), dx: origX, dy: origY, scale: origScale }];
+        const patches = moveFiguresPatches(figs, { dxMm, dyMm, panelWmm: o.w * cellW, panelHmm: o.h * cellH });
+        return { ...o, images: o.images.map((im, i) => (patches[i] ? { ...im, ...patches[i] } : im)) };
       }));
       return;
     }
 
-    // Resize ONE figure of a multi-figure object (drag its corner handle).
+    // Resize the figure whose handle was grabbed (the ACTIVE figure — the first
+    // selected one): the ticked figures of the panel take ITS size, each one
+    // keeping its own place (“resize them all as the first selected”, see
+    // resizeFiguresPatches). A figure still laid out in the panel grid has no
+    // box of its own: it grows by the same factor.
     if (type === 'figResize') {
+      const st = dragState.current;
       setObjects(prev => prev.map(o => {
         if (o.id !== id || !Array.isArray(o.images)) return o;
-        const figW = Math.max(10, (o.w * cellW) / Math.max(1, o.imgCols || 2));
-        const factor = Math.max(0.3, Math.min(4, 1 + dxMm / figW));
-        return { ...o, images: o.images.map((im, i) => {
-          if (i !== imgIdx) return im;
-          const r = freeRectOf(im);
-          if (!r) return { ...im, scale: +(origScale * factor).toFixed(3) };
-          // FREE layout: the corner stick grows the figure's own rectangle.
-          const base = Math.max(2, r.w * o.w * cellW);
-          const f = Math.max(0.1, Math.min(6, (base + dxMm) / base));
-          return { ...im, rect: {
-            ...r,
-            w: +Math.max(RECT_MIN, Math.min(RECT_MAX, r.w * f)).toFixed(4),
-            h: +Math.max(RECT_MIN, Math.min(RECT_MAX, r.h * f)).toFixed(4)
-          } };
-        }) };
+        const figs = (st && st.figs) || [{ idx: imgIdx, rect: freeRectOf(getObjImages(o)[imgIdx]), scale: origScale }];
+        const ref = figs.find((f) => f.idx === imgIdx) || figs[0];
+        const factor = figureResizeFactor(ref, { dxMm, cellW, panelW: o.w, imgCols: o.imgCols });
+        const patches = resizeFiguresPatches(figs, imgIdx, factor);
+        return { ...o, images: o.images.map((im, i) => (patches[i] ? { ...im, ...patches[i] } : im)) };
       }));
       return;
     }
@@ -2062,14 +2220,17 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     const dCols = Math.round(dxMm / cellW);
     const dRows = Math.round(dyMm / cellH);
 
-    setObjects(prev => prev.map(o => {
-      if (o.id !== id) return o;
-      if (type === 'move') {
-        return { ...o, x: Math.max(0, Math.min(gridCols - o.w, origX + dCols)), y: Math.max(0, Math.min(gridRows - o.h, origY + dRows)) };
-      } else {
-        return { ...o, w: Math.max(1, Math.min(gridCols - origX, origW + dCols)), h: Math.max(1, Math.min(gridRows - origY, origH + dRows)) };
-      }
-    }));
+    // One gesture for the WHOLE selection: the reference (the panel whose frame
+    // was grabbed) gives the measure, the others follow — the same offset for a
+    // move, its size for a resize. Nobody may leave the grid: the offset is
+    // clamped by the most constrained panel of the group, and a panel that the
+    // new size would push out is moved back in (see utils/panelSelection). A
+    // single selection lands exactly on the old formula.
+    const orig = (dragState.current && dragState.current.orig) || { [id]: { x: origX, y: origY, w: origW, h: origH } };
+    const patches = type === 'move'
+      ? moveSelectionPatches(orig, dCols, dRows, gridCols, gridRows)
+      : resizeSelectionPatches(orig, id, resizedBox(orig[id], dCols, dRows, gridCols, gridRows), gridCols, gridRows);
+    setObjects(prev => prev.map(o => (patches[o.id] ? { ...o, ...patches[o.id] } : o)));
   };
 
   const endDrag = () => {
@@ -2249,7 +2410,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     window.addEventListener('mouseup', endDrag);
   };
 
-  // Move ONE figure of a multi-figure object independently (drag the figure).
+  // Move ONE figure of a multi-figure object independently (drag the figure) —
+  // or the whole ticked group when the figure held is the reference.
   const startFigureDrag = (e, objId, imgIdx) => {
     e.stopPropagation();
     commitHistory();
@@ -2257,19 +2419,28 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     const im = obj && getObjImages(obj)[imgIdx];
     if (!im) return;
     const free = freeRectOf(im);
-    dragState.current = { type: 'figMove', id: objId, imgIdx, startX: e.clientX, startY: e.clientY, origX: free ? free.x : (im.dx || 0), origY: free ? free.y : (im.dy || 0) };
+    dragState.current = {
+      type: 'figMove', id: objId, imgIdx, startX: e.clientX, startY: e.clientY,
+      origX: free ? free.x : (im.dx || 0), origY: free ? free.y : (im.dy || 0),
+      figs: figureSnapshot(obj, imgIdx)
+    };
     window.addEventListener('mousemove', onDrag);
     window.addEventListener('mouseup', endDrag);
   };
 
-  // Resize ONE figure of a multi-figure object (drag its corner handle).
+  // Resize ONE figure of a multi-figure object (drag its corner handle) — or the
+  // whole ticked group, whose figures then take ITS size.
   const startFigureResize = (e, objId, imgIdx) => {
     e.stopPropagation();
     commitHistory();
     const obj = objects.find(o => o.id === objId);
     const im = obj && getObjImages(obj)[imgIdx];
     if (!im) return;
-    dragState.current = { type: 'figResize', id: objId, imgIdx, startX: e.clientX, startY: e.clientY, origScale: im.scale || 1 };
+    dragState.current = {
+      type: 'figResize', id: objId, imgIdx, startX: e.clientX, startY: e.clientY,
+      origScale: im.scale || 1,
+      figs: figureSnapshot(obj, imgIdx)
+    };
     window.addEventListener('mousemove', onDrag);
     window.addEventListener('mouseup', endDrag);
   };
@@ -2660,7 +2831,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         }))}
       </defs>
       {objects.map(obj => {
-        const isSelected = obj.id === selectedId;
+        const isSelected = obj.id === selectedId;      // THE REFERENCE: properties, handles, crop, texts
+        const selRank = selectedIds.indexOf(obj.id);   // 0 = the FIRST selected (the reference)
+        const inSelection = selRank >= 0;              // any panel of the (multi-)selection
         // Crop mode belongs to ONE object: the dimmed window + the drag catcher
         // below are drawn only for that one.
         const cropOn = !!cropMode && cropMode.objId === obj.id;
@@ -2676,7 +2849,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           <g key={obj.id} onClick={(e) => {
             e.stopPropagation();
             setSelectedArrowId(null);   // one selection at a time (arrow ↔ panel)
-            setSelectedId(obj.id);
+            // MULTI-SELECTION: Ctrl/Cmd + click (or a chip of the “Panels” strip
+            // of the properties panel) ADDS / REMOVES this panel — the FIRST
+            // selected stays the reference, so resizing it gives the others its
+            // size. A plain click keeps meaning “this panel, and only this one”.
+            if (e.ctrlKey || e.metaKey) toggleSelectedId(obj.id); else setSelectedId(obj.id);
             // Selecting another object resets the active (draggable) figure.
             setActiveFig(prev => (prev && prev.objId === obj.id) ? prev : null);
             // "Place by click": add a text exactly where the user clicked.
@@ -2855,9 +3032,21 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                 data-selection-ui, so renderToDataUrl drops it from Export PNG,
                 "Save canvas" and "Insert into project". Drawn last (on top of the
                 figure) and transparent to the mouse, so the panel frame below
-                keeps receiving the drag. */}
-            {isSelected && (
-              <rect data-selection-ui="true" x={ox} y={oy} width={ow} height={oh} fill="none" stroke="#3b82f6" strokeWidth={0.5} style={{ pointerEvents: 'none' }} />
+                keeps receiving the drag. EVERY selected panel gets one: solid
+                blue for the REFERENCE (the first selected — the one whose size
+                the others take), dashed indigo for the ones that follow it. */}
+            {inSelection && (
+              <rect data-selection-ui="true" x={ox} y={oy} width={ow} height={oh} fill="none"
+                stroke={isSelected ? '#3b82f6' : '#6366f1'} strokeWidth={isSelected ? 0.5 : 0.35}
+                strokeDasharray={isSelected ? undefined : '1.6,1.2'} style={{ pointerEvents: 'none' }} />
+            )}
+            {/* Rank in the selection (screen only): the FIRST selected panel is
+                the reference — it is whose size is written on the others. */}
+            {inSelection && selectedIds.length > 1 && (
+              <text data-selection-ui="true" x={ox + ow - 1.2} y={oy + 3} fontSize={2.6} textAnchor="end"
+                fill={isSelected ? '#1d4ed8' : '#4f46e5'} fontWeight="bold" style={{ pointerEvents: 'none' }}>
+                {selRank === 0 ? '🎯 1st' : ordinalOf(selRank)}
+              </text>
             )}
 
             {/* CROP (screen only): the dimmed bands show what the crop removes,
@@ -2993,9 +3182,65 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // Properties Panel Component (reused in normal and fullscreen)
   const PropertiesPanel = ({ isFloating = false }) => (
     <div className={`bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col gap-3 ${isFloating ? 'shadow-2xl max-h-[calc(100vh-8rem)] overflow-y-auto custom-scrollbar' : ''}`}>
-      <div className="flex justify-between items-center">
-        <h4 className="font-bold text-slate-700">Object Properties ({selectedObj.letter || 'No Letter'})</h4>
-        <button onClick={() => { commitHistory(); setObjects(objects.filter(o => o.id !== selectedObj.id)); setSelectedId(null); renumberLetters(); }} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100">Delete</button>
+      {/* MULTI-SELECTION + COPY / PASTE. The chips are the panels of the canvas:
+          click one to add / remove it from the selection, the “🎯” chip of a
+          selected panel makes it the FIRST selected — the REFERENCE whose size
+          the others take (Ctrl+click on the canvas does the same, without coming
+          back here). The “📋” pair copies the selection and pastes it into the
+          first free cell of the grid; Ctrl+C / Ctrl+V work anywhere on the page. */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border border-slate-200 rounded-lg bg-white px-2 py-1.5">
+        <span className="text-[10px] font-bold text-slate-500 uppercase shrink-0">Panels</span>
+        {objects.map((o, i) => {
+          const rank = selectedIds.indexOf(o.id);
+          const label = o.letter || (i + 1);
+          return (
+            <span key={o.id} className="inline-flex items-center">
+              <button type="button" onClick={() => toggleSelectedId(o.id)}
+                className={`font-bold text-[10px] px-2 py-0.5 border ${rank === 0 ? 'bg-blue-600 text-white border-blue-700 rounded' : (rank > 0 ? 'bg-indigo-50 text-indigo-800 border-indigo-300 rounded-l' : 'bg-white text-slate-600 border-slate-300 rounded hover:bg-slate-50')}`}
+                title={rank === 0
+                  ? 'The FIRST selected panel — the reference: resizing it gives EVERY selected panel its size, and moving it moves them all. Click to remove it from the selection.'
+                  : (rank > 0
+                    ? `Selected (${ordinalOf(rank)}): it follows the first selected one — click to take it out of the selection.`
+                    : `Add panel ${label} to the selection. The FIRST one selected is the reference (the “🎯” chip): its size is what the others take. Ctrl+click on the canvas does the same.`)}>
+                {label}{rank === 0 ? ' 🎯' : ''}
+              </button>
+              {rank > 0 && (
+                <button type="button" onClick={() => makeReference(o.id)}
+                  className="font-bold text-[10px] px-1 py-0.5 border border-l-0 border-indigo-300 bg-white text-indigo-700 rounded-r hover:bg-indigo-50"
+                  title="Make it the FIRST selected — the reference whose size every other selected panel takes">🎯</button>
+              )}
+            </span>
+          );
+        })}
+        <div className="ml-auto flex items-center gap-1.5">
+          <button type="button" onClick={() => copySelection()}
+            className="font-bold text-[10px] bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 px-2 py-0.5 rounded"
+            title="Copy the selected panel(s) — figures, texts and shadows included. Ctrl+C does the same, and “📋 Paste” brings an identical panel back.">📋 Copy</button>
+          <button type="button" onClick={() => pasteClipboard()}
+            className="font-bold text-[10px] bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 px-2 py-0.5 rounded"
+            title={`Paste the copied panel(s) into the FIRST FREE cell of the grid (never on top of a panel that is already there) — Ctrl+V does the same${clipCount ? ` (${clipCount} panel${clipCount === 1 ? '' : 's'} in the clipboard)` : ' (nothing copied yet)'}`}>
+            📋 Paste{clipCount ? ` (${clipCount})` : ''}
+          </button>
+          {selectedIds.length > 1 && (
+            <button type="button" onClick={() => setSelectedId(selectedId)}
+              className="font-bold text-[10px] bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 px-2 py-0.5 rounded"
+              title="Keep only the first selected panel: the others leave the selection">✕ Others</button>
+          )}
+        </div>
+      </div>
+      <div className="flex justify-between items-center gap-2">
+        <h4 className="font-bold text-slate-700">
+          Object Properties ({selectedObj.letter || 'No Letter'})
+          {selectedIds.length > 1 ? <span className="font-normal text-slate-500"> — {selectedIds.length} panels selected</span> : null}
+        </h4>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button onClick={() => copySelection()} className="text-xs bg-white text-slate-700 border border-slate-300 px-2 py-1 rounded font-bold hover:bg-slate-100"
+            title="Copy this panel — its figure(s), its texts and its shadows — Ctrl+C does the same">⧉ Copy</button>
+          <button onClick={deleteSelection} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100"
+            title={selectedIds.length > 1 ? `Delete the ${selectedIds.length} selected panels` : 'Delete this panel'}>
+            {selectedIds.length > 1 ? `Delete ${selectedIds.length} panels` : 'Delete'}
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -3033,6 +3278,29 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                   {im.imgThumb || im.imgSrc
                     ? <img src={im.imgThumb || im.imgSrc} alt="" className="w-8 h-8 shrink-0 object-contain rounded border border-slate-100 bg-slate-50" />
                     : <span className="w-8 h-8 shrink-0 rounded bg-slate-100" />}
+                  {/* SÉLECTION MULTIPLE DE FIGURES — « resize them all as the
+                      first selected » vaut AUSSI dans le panneau : la figure
+                      ACTIVE (celle qui porte les poignées, marquée 🎯) est la
+                      référence, et chaque figure cochée « ☑ » prend SA taille
+                      quand on la redimensionne (elle suit aussi ses
+                      déplacements), chacune à sa propre place. */}
+                  {getObjImages(selectedObj).length > 1 && (() => {
+                    const isRefFig = i === activeFigIdx(selectedObj);
+                    const ticked = isRefFig || figGroupOf(selectedObj.id).includes(i);
+                    return (
+                      <button type="button"
+                        onClick={(e) => { e.stopPropagation(); if (!isRefFig) toggleFigGroup(selectedObj.id, i); }}
+                        disabled={isRefFig}
+                        className={`shrink-0 text-[10px] font-bold border rounded px-1 ${isRefFig ? 'bg-blue-600 text-white border-blue-700' : (ticked ? 'bg-indigo-50 text-indigo-800 border-indigo-300' : 'text-slate-400 border-slate-200 hover:bg-slate-100')}`}
+                        title={isRefFig
+                          ? 'The ACTIVE figure — the first selected: it carries the handles, and every ticked figure takes ITS size when you resize it.'
+                          : (ticked
+                            ? 'This figure follows the active one: it takes its size when you resize it (click to untick).'
+                            : 'Tick this figure to resize it WITH the active one — it then takes the active figure’s size, keeping its own place.')}>
+                        {isRefFig ? '🎯 1st' : (ticked ? '☑' : '☐')}
+                      </button>
+                    );
+                  })()}
                   <span className="text-[10px] font-bold text-slate-600 flex-1 min-w-0 truncate">{im.src && im.src.elementLabel ? im.src.elementLabel : `Figure ${i + 1}`}</span>
                   {/* Stacking: the list below is painted last → on top, and a
                       click grabs the topmost figure first. */}
@@ -3071,6 +3339,14 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                   <button type="button" onClick={() => removeObjImage(i)} className="text-[10px] font-bold text-red-400 hover:text-red-600 shrink-0 border border-transparent hover:border-red-200 rounded px-1" title="Remove this figure from the panel">✕</button>
                 </div>
               ))}
+              {/* La règle de la sélection multiple, dite là où on la déclenche :
+                  la figure ACTIVE est la première sélectionnée, donc c'est SA
+                  taille que prennent les figures cochées. */}
+              {getObjImages(selectedObj).length > 1 && figGroupOf(selectedObj.id).length > 0 && (
+                <span className="text-[10px] font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 rounded px-2 py-1">
+                  🎯 {figGroupOf(selectedObj.id).length + 1} figures selected — the ACTIVE one is the first selected: resizing it gives EVERY selected figure its size (each one keeps its own place), and dragging it moves them all.
+                </span>
+              )}
               {getObjImages(selectedObj).length > 1 && !selectedFreeLayout && (
                 <label className="text-[10px] font-bold text-slate-500">Grid columns
                   <select value={selectedObj.imgCols || 2} onChange={e => updateObj({ imgCols: Number(e.target.value) })} className="w-full border rounded p-1 text-xs">
@@ -3249,7 +3525,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                 <button type="button" onClick={() => updateObj({ imgRotate: ((selectedObj.imgRotate || 0) + 90) % 360 })} className="bg-slate-100 border border-slate-300 rounded px-1.5 text-xs font-bold hover:bg-slate-200 shrink-0" title="Rotate 90°">↻90°</button>
               </div>
             </label>
-            <span className="col-span-2 text-[9px] text-slate-400 italic">Drag the image directly on the canvas to shift it (or hold Shift + drag the object frame); drag its corner to resize it.</span>
+            <span className="col-span-2 text-[9px] text-slate-400 italic">Drag the image directly on the canvas to shift it (or hold Shift + drag the object frame); drag its corner to resize it. With several panels selected (Ctrl+click on the canvas, or the “Panels” chips above), the FIRST selected is the reference: dragging its handle gives every selected panel its size, and dragging its frame moves them all.</span>
             {keepAspect && (
               <span className="col-span-2 text-[9px] font-bold text-emerald-700">
                 🔒 Keep aspect ratio is on (canvas option): the figure keeps its own width/height ratio, whatever the number of panels or the canvas size.
@@ -3460,6 +3736,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           <button onClick={addObject} title="Add a panel — it takes the FIRST FREE cell of the grid, so it never lands on a panel that is already there (a full grid is reported instead of covering a figure)." className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">+ Add Object</button>
           <button onClick={addArrow} title="Add an ARROW annotation on top of the panels — drag it to place it, drag a blue end handle to aim it; straight or curved, one head or heads at BOTH ends, with its own colour and drop shadow (“Arrow properties”)." className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">↗ Add arrow{arrows.length ? ` (${arrows.length})` : ''}</button>
           <button onClick={togglePanelsShadow} disabled={!objects.length} title="Drop shadow on every panel of the figure in one click — click again to take it off. One panel at a time: the “Shadow” block of its properties." className={`font-bold px-3 py-1.5 rounded-lg text-xs border disabled:opacity-40 ${panelsShadowed ? 'bg-slate-800 text-white border-slate-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}`}>🌓 Shadow panels</button>
+          {/* COLLER (Ctrl+V) : la copie d'un panneau revient telle quelle — ses
+              figures, ses textes et ses ombres — dans la première case libre. */}
+          <button onClick={() => pasteClipboard()}
+            title={`Paste a copied panel (Ctrl+V): its figures, its texts and its shadows come back, and its letter is re-numbered by position. It lands in the FIRST FREE cell of the grid — never on top of a panel that is there.${clipCount ? ` (${clipCount} panel${clipCount === 1 ? '' : 's'} copied)` : ' Copy a panel first: Ctrl+C on the canvas, or “⧉ Copy” in the object properties.'}`}
+            className={`font-bold px-3 py-1.5 rounded-lg text-xs border ${clipCount ? 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50' : 'bg-slate-100 border-slate-200 text-slate-400'}`}>📋 Paste{clipCount ? ` (${clipCount})` : ''}</button>
           <button onClick={undo} disabled={!undoStack.current.length || histTick < 0} className="bg-slate-100 border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-200 disabled:opacity-40" title="Undo last change (Ctrl+Z)">↩ Undo</button>
           <button onClick={() => selectedId && zoomToObject(selectedId)} disabled={!selectedId} title={selectedId ? 'Zoom fullscreen on the selected object' : 'Select an object first'}
             className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold px-3 py-1.5 rounded-lg text-xs">⛶ Zoom Object</button>
@@ -3679,6 +3960,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
               <div className="flex flex-wrap gap-2">
                  <button onClick={addObject} title="Add a panel — it takes the FIRST FREE cell of the grid, so it never lands on a panel that is already there (a full grid is reported instead of covering a figure)." className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">+ Add Object</button>
                  <button onClick={addArrow} title="Add an ARROW annotation on top of the panels — drag it to place it, drag a blue end handle to aim it; straight or curved, one head or heads at BOTH ends, with its own colour and drop shadow (“Arrow properties”)." className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">↗ Add arrow{arrows.length ? ` (${arrows.length})` : ''}</button>
+                 <button onClick={() => pasteClipboard()}
+                   title={`Paste a copied panel (Ctrl+V): its figures, its texts and its shadows come back, into the FIRST FREE cell of the grid.${clipCount ? ` (${clipCount} panel${clipCount === 1 ? '' : 's'} copied)` : ' Copy a panel first: Ctrl+C on the canvas, or “⧉ Copy” in the object properties.'}`}
+                   className={`font-bold px-3 py-1.5 rounded-lg text-xs border ${clipCount ? 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50' : 'bg-slate-100 border-slate-200 text-slate-400'}`}>📋 Paste{clipCount ? ` (${clipCount})` : ''}</button>
                  <button onClick={togglePanelsShadow} disabled={!objects.length} title="Drop shadow on every panel of the figure in one click — click again to take it off." className={`font-bold px-3 py-1.5 rounded-lg text-xs border disabled:opacity-40 ${panelsShadowed ? 'bg-slate-800 text-white border-slate-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}`}>🌓 Shadow panels</button>
                  <button onClick={undo} disabled={!undoStack.current.length || histTick < 0} className="bg-slate-100 border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-200 disabled:opacity-40" title="Undo last change (Ctrl+Z)">↩ Undo</button>
                  <button onClick={() => { setPickMode('replace'); setShowLibrary(true); }}
