@@ -121,6 +121,16 @@ eq(uni, '<p>As shown previously<a class="cite-ref" href="#ref-1" data-ref="1">¹
 
 /* Le piège : un manuscrit est plein d’exposants qui ne sont PAS des citations.
    Les lier abîmerait le texte de l’auteur — ils doivent rester intacts. */
+/* …et le DÉNOMINATEUR d'une FRACTION D'EXPOSANT n'en est pas un non plus : dans
+   « x¹/² » (la racine carrée), le « ² » suit une barre — ni un mot ni une unité
+   ne l'arrêtait, et il était lié à la référence 2 (défaut signalé :
+   « hai considerato il 2 come riferimento bibliografico mentre era parte
+   dell'esponente »). Voir opensFractionExponent (utils/manuscriptImport.js). */
+eq(RL.linkCitationNumbers('<p>The factor is x¹/².</p>', { numbers: NUMBERS }), '<p>The factor is x¹/².</p>',
+  '« x¹/² » (racine carrée) reste intact, même avec les références 1 et 2 dans le projet');
+eq(RL.linkCitationNumbers('<p>The factor is x<sup>1</sup>/<sup>2</sup>.</p>', { numbers: NUMBERS }),
+  '<p>The factor is x<sup>1</sup>/<sup>2</sup>.</p>',
+  '…et la même fraction écrite en HTML (deux exposants séparés par la barre) aussi');
 eq(RL.linkCitationNumbers('<p>Area in m<sup>2</sup>.</p>', { numbers: NUMBERS }), '<p>Area in m<sup>2</sup>.</p>',
   '« m<sup>2</sup> » (mètre carré) n’est pas une citation, même si la référence 2 existe');
 eq(RL.linkCitationNumbers('<p>The 2<sup>nd</sup> time.</p>', { numbers: NUMBERS }), '<p>The 2<sup>nd</sup> time.</p>',
@@ -333,7 +343,8 @@ has('PROJECT_TEXT_SECTIONS.map((s) => ({ id: s.id, html: project[s.id] || \'\' }
   '…puis il lie les citations déjà écrites dans les sections');
 has('ensureReferenceEntries(bodyHtml, refs.map((r) => ({', 'à l’export, un document enregistré est complété');
 has('bodyHtml = linkCitations(repaired.html)', '…et ses citations sont liées avant l’impression');
-has('<body>${bodyHtml}</body>', 'c’est bien ce document réparé qui part à l’imprimante');
+has('<body><div id="${DOC_CONTAINER_ID}">${bodyHtml}</div></body>',
+  'c’est bien ce document réparé qui part à l’imprimante, dans le conteneur qui porte la mise en forme du « Publication format »');
 has("the text sections hold no numbered citation — [1], (1) or a superscript 1 —",
   'et quand il n’y a rien à lier, le message DIT les trois écritures reconnues (et l’autre cause : un numéro absent des références)');
 

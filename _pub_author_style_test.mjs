@@ -19,10 +19,12 @@ import { register } from 'node:module';
 register('./_esm_test_hook.mjs', import.meta.url);
 const {
   AUTHOR_STYLES, AUTHOR_STYLE_IDS, IN_TEXT_STYLES, IN_TEXT_STYLE_IDS, PUB_FORMAT_KEY, PUB_FORMAT_PRESETS,
-  authorMatchesCandidate, authorStyleOf, buildPubFormat, labMemberOf,
-  loadPubFormat, matchCoauthors, normalizeInTextStyle, normalizePubFormat, pubCitationData,
-  pubCitationHtml, pubCitationText, pubDoiKey, pubDoiUrl, pubFieldValue,
-  pubOriginOf, pubPmidKey, renderAuthorNames, sanitizeScientistStyles, scientistStyleOf
+  PUB_FONTS, PUB_LAYOUT_PARTS, PUB_LAYOUT_PART_IDS, PUB_TEXT_ALIGNMENTS,
+  authorMatchesCandidate, authorStyleOf, buildPubFormat, buildPubLayout, labMemberOf,
+  loadPubFormat, matchCoauthors, normalizeInTextStyle, normalizePubFormat, normalizePubLayout,
+  pubCitationData, pubCitationHtml, pubCitationText, pubDoiKey, pubDoiUrl, pubFieldValue,
+  pubLayoutCss, pubOriginOf, pubPmidKey, pubTextStyleIsSet, renderAuthorNames,
+  sanitizeScientistStyles, scientistStyleOf
 } = await import('./src/components/pubCitation.js');
 
 let passed = 0;
@@ -404,5 +406,117 @@ ok(/style: citeStyle, refs: \[\.\.\.refs, \.\.\.\(extraRefs \|\| \[\]\)\]/.test(
   '…avec les références du projet (le libellé auteur-année en a besoin)');
 ok(/linkCitations\(repairContentImages\(withoutBibliographySection\(project\.exportDocHtml\)\)\)/.test(pdm),
   'le document FIGÉ reçoit la forme à l’affichage (comme sa liste de références)');
+
+/* ── 14. LA MISE EN FORME DU DOCUMENT : « il formato del testo per le varie
+   sezioni … per le figure le stesse cose … dovrebbero applicarsi al progetto,
+   come è adesso per le citazioni » ─────────────────────────────────────────
+   Police, taille, position (gauche / centré / droite / justifié), style (gras,
+   italique, souligné) et couleur de chaque PARTIE du document d'un projet —
+   figures comprises. Le choix vit dans le format (`layout`), exactement comme
+   la forme des renvois, et il est appliqué par une feuille de style (voir
+   pubLayoutCss) : la page du projet, le document imprimé et son PDF — document
+   figé compris. Un réglage laissé vide n'écrit RIEN. */
+eq(PUB_LAYOUT_PART_IDS, ['title', 'authors', 'affiliations', 'heading', 'body', 'figure', 'bibliography'],
+  'chaque partie d’un document a ses réglages (titre, auteurs, affiliations, intitulés, texte, figures, bibliographie)');
+eq(PUB_TEXT_ALIGNMENTS.map((a) => a.id), ['left', 'center', 'right', 'justify'],
+  'les quatre positions demandées : gauche, centré, droite, justifié');
+ok(PUB_TEXT_ALIGNMENTS.every((a) => a.label && a.title), '…chacune expliquée (infobulle du bouton)');
+ok(PUB_FONTS.length >= 5 && PUB_FONTS[0].id === '',
+  'des polices sont proposées, la première étant « comme le programme » (aucune règle écrite)');
+ok(PUB_LAYOUT_PARTS.every((p) => p.label && Array.isArray(p.selectors) && p.selectors.length),
+  'chaque partie a un nom lisible et les sélecteurs qui la visent');
+eq(PUB_LAYOUT_PARTS.filter((p) => p.width).map((p) => p.id), ['figure'],
+  'seule la figure a une largeur (c’est une image, pas du texte)');
+
+const freshFmt = buildPubFormat('nature');
+eq(pubLayoutCss(freshFmt), '', 'un format neuf n’écrit AUCUNE règle : le document garde l’aspect du programme');
+ok(PUB_LAYOUT_PART_IDS.every((id) => freshFmt.layout[id]),
+  '…mais les réglages existent, prêts à être choisis (une entrée par partie)');
+eq(Object.keys(normalizePubLayout(undefined)).length, PUB_LAYOUT_PART_IDS.length,
+  'un format enregistré AVANT cette version n’impose rien non plus (mise en forme vierge)');
+eq(normalizePubLayout(undefined).body.align, '', '…son alignement reste « comme le programme »');
+eq(normalizePubLayout({}).figure.width, 100, 'et sa figure fait toute la largeur tant qu’on ne dit rien');
+eq(normalizePubFormat({ fields: buildPubFormat('nature').fields }).layout.body.align, '',
+  'le format relu d’un projet est complété sans rien imposer');
+
+/* Le TEXTE d'une section : police, taille, position, style, couleur. */
+const cssBody = pubLayoutCss({
+  layout: { body: { font: 'Georgia, serif', size: 11.5, align: 'justify', bold: false, italic: true, underline: false, color: '#123456' } }
+});
+ok(cssBody.includes('#project-doc-container .pf-body'), 'le texte des sections est visé par sa classe');
+ok(cssBody.includes('#project-doc-container p:not(.pf-authors):not(.pf-affiliations):not(.pf-meta):not(.pf-caption)'),
+  '…et par ses paragraphes — en excluant l’en-tête, la ligne d’information et les légendes de figure');
+ok(cssBody.includes('font-family: Georgia, serif !important;'), 'la police choisie est écrite');
+ok(cssBody.includes('font-size: 11.5pt !important;'), 'la taille (en points, pour l’impression) aussi');
+ok(cssBody.includes('text-align: justify !important;'), 'la position (justifié) aussi');
+ok(cssBody.includes('font-style: italic !important;'), 'l’italique choisi aussi');
+ok(cssBody.includes('font-weight: 400 !important;'),
+  'un style explicitement RETIRÉ l’est vraiment (un titre écrit en gras redevient normal)');
+ok(cssBody.includes('text-decoration: none !important;'), '…comme un souligné retiré');
+ok(cssBody.includes('color: #123456 !important;'), '…et la couleur choisie');
+ok(pubLayoutCss({ layout: { body: { bold: true } } }).includes('font-weight: 700 !important;'),
+  'un style imposé passe devant la feuille du programme (et devant un style en ligne)');
+eq((pubLayoutCss(freshFmt).match(/!important/g) || []).length, 0,
+  'aucune règle n’est écrite sans un choix de l’utilisateur (pas de !important gratuit)');
+
+/* Les FIGURES : les mêmes réglages — l’alignement place le cadre, la largeur
+   dimensionne l’image, et le reste habille la LÉGENDE, le seul texte d’une figure. */
+const cssFig = pubLayoutCss({
+  layout: { figure: { align: 'center', width: 60, font: 'Arial, sans-serif', size: 9, color: '#777777', italic: true } }
+});
+ok(cssFig.includes('#project-doc-container .pf-figure, #project-doc-container figure { text-align: center !important; }'),
+  'la position choisie pour les figures (ici au centre) est écrite');
+ok(/\.pf-figure img[\s\S]*width: 60% !important;/.test(cssFig),
+  'la largeur de la figure s’applique à l’IMAGE (60 % de la colonne)');
+ok(cssFig.includes('#project-doc-container .pf-caption, #project-doc-container figcaption'),
+  'la légende est visée elle aussi');
+ok(cssFig.includes('font-size: 9pt !important;') && cssFig.includes('color: #777777 !important;'),
+  '…et reçoit la police, la taille, la couleur et le style choisis pour les figures');
+ok(!/width: 100%/.test(cssFig), 'une largeur de 100 % n’écrit rien (c’est déjà celle du document)');
+
+/* LE NETTOYAGE : une copie de format venue d'un autre poste (localStorage,
+   document d'un collègue) ne peut pas apporter de CSS dans le document. */
+const nasty = normalizePubLayout({
+  body: { font: 'x; } body { display:none } a {', size: 999, align: 'middle', color: 'red', bold: 'yes', italic: 'true', underline: 'false' },
+  figure: { width: 5 }
+});
+ok(!/[;{}]/.test(nasty.body.font) && nasty.body.font.startsWith('x'),
+  'une police ne peut pas porter de CSS (la ponctuation dangereuse est retirée)');
+eq(nasty.body.size, 0, 'une taille invraisemblable est ignorée');
+eq(nasty.body.align, '', 'une position inconnue est ignorée');
+eq(nasty.body.color, '', 'une couleur qui n’est pas un code #rrggbb est ignorée');
+eq(nasty.body.bold, null, 'un style illisible laisse le texte tel quel');
+eq(nasty.body.italic, true, '…alors qu’un « true » écrit en texte est bien relu (format d’un fichier)');
+eq(nasty.body.underline, false, '…et un « false » aussi (le style est retiré, pas oublié)');
+eq(nasty.figure.width, 100, 'une largeur hors bornes retombe sur la largeur du document');
+ok(pubTextStyleIsSet(nasty.body) && !pubTextStyleIsSet(buildPubLayout().body),
+  'un réglage se voit (badge du panneau) et un réglage vierge ne se voit pas');
+
+/* LE PANNEAU : une ligne par partie, l'aperçu vivant — et la mise en forme
+   survit à chaque autre modification du format (comme la forme des renvois). */
+ok(/PUB_LAYOUT_PARTS\.map/.test(src), 'le panneau itère sur les parties du document');
+ok(/pubSetLayout\(part\.id, \{ align: st\.align === a\.id \? '' : a\.id \}\)/.test(src),
+  '…un bouton par position, recliquable pour l’enlever');
+ok(/pubToggleLayoutStyle\(part\.id, 'bold'\)/.test(src) && /const pubToggleLayoutStyle = \(partId, key\) =>/.test(src),
+  '…et gras / italique / souligné à trois états (imposé, retiré, comme le programme)');
+ok(/pubTextStyleIsSet\(st\)/.test(src), '…la partie réglée est mise en évidence');
+ok(/pubLayoutCss\(activeFormat, '#pub-layout-preview'\)/.test(src),
+  'l’aperçu du panneau est rendu par la feuille RÉELLE du document (il ne peut pas mentir)');
+eq((src.match(/layout: normalizePubLayout\(activeFormat\.layout\)/g) || []).length >= 1, true,
+  'la mise en forme survit aux autres modifications du format (champs, et al., styles des noms)');
+ok(/const pubSetPreset = \(presetId\) =>/.test(src) && /pubSetPreset\(e\.target\.value\)/.test(src),
+  'changer de preset refait la citation mais GARDE la mise en forme du document');
+
+/* LA PAGE PROJET : la feuille part du format du projet (`project.pubFormat`,
+   sinon le défaut) et vaut pour l'affichage — document figé compris — et pour
+   l'export imprimé / PDF. */
+eq((pdm.match(/pubLayoutCss\(pubFormat, DOC_CONTAINER_SELECTOR\)/g) || []).length, 2,
+  'la feuille est écrite deux fois : à l’écran (page et document figé) et dans la page exportée');
+ok(/const pubFormat = useMemo\(\(\) => project\?\.pubFormat \|\| loadPubFormat\(\), \[project\]\);/.test(pdm),
+  '…depuis le format du projet, sinon le format par défaut');
+ok(/<body><div id="\$\{DOC_CONTAINER_ID\}">\$\{bodyHtml\}<\/div><\/body>/.test(pdm),
+  'l’export remet le document dans le même conteneur : les règles s’y appliquent (impression / PDF)');
+['pf-title', 'pf-authors', 'pf-affiliations', 'pf-heading', 'pf-body', 'pf-figure', 'pf-caption', 'pf-bib']
+  .forEach((cls) => ok(pdm.includes(cls), `le document porte la classe .${cls} que la feuille vise`));
 
 console.log(`_pub_author_style_test: ${passed} passed`);

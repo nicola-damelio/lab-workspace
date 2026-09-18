@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { RichTextEditor } from '../RichTextEditor';
 import { SmartImage } from '../TestShellRenderer';
 import {
-  loadPubFormat, loadRelevantPapers, matchCoauthors, pubCitationData, pubCitationHtml
+  loadPubFormat, loadRelevantPapers, matchCoauthors, pubCitationData, pubCitationHtml,
+  pubLayoutCss
 } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
 import { loadProjects, saveProjects, saveProjectsChecked, lightenProjectForStorage, recordProjectDeletion, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor, saveProjectsRescued } from './projectsModule';
@@ -22,7 +23,7 @@ import {
   buildManuscriptPlan, convertCitationsInText, htmlFromText, htmlFromManuscriptPart,
   mergeManuscriptBibliography, manuscriptFigurePlacements,
   readManuscriptDocument, figureDataUrl, figureMarksIn, stripFigureMarks,
-  manuscriptFingerprint, previousImportOf, citedNumbersInText
+  manuscriptFingerprint, previousImportOf, citedNumbersInText, superscriptMarksHtml
 } from '../../utils/manuscriptImport';
 /* COMPLÉTER UNE RÉFÉRENCE INCOMPLÈTE (auteurs, titre, revue, année manquants) :
    pot commun des publications du laboratoire puis Crossref — voir
@@ -51,6 +52,14 @@ import {
   addProjectLibraryItem, makeUploadImage, uploadFigureToDrive
 } from '../../utils/figuresLibrary';
 import { SlidePreview, renderSlideToDataUrl } from '../FiguresSlides';
+
+/* L'IDENTIFIANT DU CONTENEUR DU DOCUMENT. La page le porte (`#project-doc-container`,
+   plus bas) et la page EXPORTÉE le remet autour du texte copié : c'est ce
+   conteneur que visent les règles de mise en forme du « Publication format »
+   (voir pubLayoutCss dans components/pubCitation.js), donc l'écran, l'impression
+   et le PDF obéissent au même format. */
+const DOC_CONTAINER_ID = 'project-doc-container';
+const DOC_CONTAINER_SELECTOR = `#${DOC_CONTAINER_ID}`;
 
 /* Deux comptes de champs remplis (voir utils/referenceEnrich.js : `filled`) mis
    en un seul : le compte rendu du bouton « ✨ Complete missing fields » travaille
@@ -193,7 +202,7 @@ const renderStarredItem = (item, test, opts = {}) => {
   const isEditing = opts.editKey === `${test?.id}:${item.id}`;
 
   const capElement = (
-    <figcaption className="text-xs text-slate-500 mt-1 flex flex-wrap items-start gap-1.5">
+    <figcaption className="pf-caption text-xs text-slate-500 mt-1 flex flex-wrap items-start gap-1.5">
       <span className="min-w-0">{cap}</span>
       {opts.onEditCaption && (
         <button type="button"
@@ -210,7 +219,7 @@ const renderStarredItem = (item, test, opts = {}) => {
     const rows = Array.isArray(item.rows) ? item.rows : [];
     if (cols.length === 0 || rows.length === 0) return null;
     return (
-      <figure key={item.id} className="mb-4">
+      <figure key={item.id} className="pf-figure mb-4">
         <div className="overflow-x-auto border border-slate-200 rounded-lg">
           <table className="w-full text-xs border-collapse">
             <thead>
@@ -238,7 +247,7 @@ const renderStarredItem = (item, test, opts = {}) => {
 
   if (!item.url) return null;
   return (
-    <figure key={item.id} className="mb-4">
+    <figure key={item.id} className="pf-figure mb-4">
       <SmartImage src={item.url} alt={item.label || 'Figure'} style={{ maxWidth: '100%', minHeight: '120px', maxHeight: '500px' }} />
       {capElement}
     </figure>
@@ -2906,6 +2915,12 @@ export const ProjectDetailModule = ({
       bodyHtml = linkCitations(repaired.html);
     }
     const title = `${project.name} — project document`;
+    /* LA MISE EN FORME DU DOCUMENT (« Publication format ») PART AVEC L'EXPORT :
+       sa feuille vit dans la page de l'application (`#project-doc-container`),
+       elle n'est donc pas dans le HTML copié — on la réécrit ici et le corps
+       est remis dans le même conteneur, pour que ses règles s'appliquent
+       (police, taille, position, style, couleur de chaque partie, figures
+       comprises — voir pubLayoutCss). */
     win.document.write(`<!DOCTYPE html>
 <html>
 <head>
@@ -2944,6 +2959,11 @@ export const ProjectDetailModule = ({
     .cite-ref { color: #2563eb; font-weight: 700; text-decoration: none; }
     li:target { background: #fef08a; }
     button { font-family: Georgia, 'Times New Roman', serif; }
+    /* LA MISE EN FORME CHOISIE DANS LE « PUBLICATION FORMAT » (voir
+       pubLayoutCss) : elle est écrite ici parce que la page exportée est
+       séparée de celle de l'application. Rien n'est écrit quand rien n'a été
+       choisi : la feuille ci-dessus fait alors tout le travail. */
+    ${pubLayoutCss(pubFormat, DOC_CONTAINER_SELECTOR)}
     /* ── LA PAGE S'ADAPTE À LA LARGEUR (téléphone, fenêtre étroite, zoom) ──
        Rien ne dépasse jamais la page : images et formules se réduisent, un
        tableau large défile DANS SON CADRE au lieu d'être coupé, un mot très long
@@ -2967,7 +2987,7 @@ export const ProjectDetailModule = ({
     }
   </style>
 </head>
-<body>${bodyHtml}</body>
+<body><div id="${DOC_CONTAINER_ID}">${bodyHtml}</div></body>
 </html>`);
     win.document.close();
     win.focus();
@@ -3045,9 +3065,9 @@ export const ProjectDetailModule = ({
     const renderFigures = (list) => list.filter((f) => (f.url || '').trim() !== '').length > 0 && (
       <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
         {list.filter((f) => (f.url || '').trim() !== '').map((f) => (
-          <figure key={f.id}>
+          <figure key={f.id} className="pf-figure">
             <img src={f.url} alt={f.caption || 'Figure'} style={{ maxWidth: '100%', border: '1px solid #e2e8f0', borderRadius: '8px' }} />
-            {f.caption && <figcaption className="text-xs text-slate-500 mt-1">{f.caption}</figcaption>}
+            {f.caption && <figcaption className="pf-caption text-xs text-slate-500 mt-1">{f.caption}</figcaption>}
           </figure>
         ))}
       </div>
@@ -3087,6 +3107,16 @@ export const ProjectDetailModule = ({
             #project-doc-container h1 { font-size: 1.25rem; }
             #project-doc-container h2 { font-size: 0.95rem; }
           }
+          /* ── LA MISE EN FORME DU DOCUMENT SUIT LE « PUBLICATION FORMAT » ────
+             Police, taille, position (gauche / centré / droite / justifié),
+             style (gras, italique, souligné) et couleur de chaque partie —
+             figures comprises. La feuille est écrite par pubLayoutCss à partir
+             du format du projet (« project.pubFormat », sinon le défaut) et
+             elle est VIDE tant que rien n'a été choisi : le document garde
+             alors exactement l'aspect du programme. Les règles visent les
+             classes « .pf-… » posées ici et, en repli, les balises du document
+             (un texte figé avant cette version n'a pas les classes). */
+          ${pubLayoutCss(pubFormat, DOC_CONTAINER_SELECTOR)}
         `}</style>
         <div className={`w-full mx-auto px-2.5 py-3 sm:px-6 sm:py-5 md:px-8 md:py-8 ${docFull ? 'max-w-none' : 'max-w-4xl'}`}>
           <div className="flex flex-wrap items-center justify-between gap-2 mb-4 no-print">
@@ -3209,23 +3239,30 @@ export const ProjectDetailModule = ({
               }} />
             ) : (
               <>
-            <h1 className="text-2xl font-black text-slate-900 mb-1">
+            <h1 className="pf-title text-2xl font-black text-slate-900 mb-1">
               {project.paperTitle ? project.paperTitle : `📁 ${project.name}`}
             </h1>
             {project.paperAuthors && (
-              <p className="text-sm font-semibold text-slate-800 mb-1">{project.paperAuthors}</p>
+              /* LES MARQUEURS D'AFFILIATION RESTENT DES EXPOSANTS, virgule
+                 comprise : « Rossi¹,² » s'affiche « Rossi<sup>1,2</sup> » (voir
+                 superscriptMarksHtml). La virgule entre deux affiliations était
+                 en exposant dans le document, elle le reste ici — et le champ
+                 enregistré, lui, n'est jamais réécrit (il reste éditable). */
+              <p className="pf-authors text-sm font-semibold text-slate-800 mb-1"
+                 dangerouslySetInnerHTML={{ __html: superscriptMarksHtml(project.paperAuthors) }} />
             )}
             {project.paperAffiliations && (
-              <p className="text-[11px] text-slate-500 italic whitespace-pre-line mb-2">{project.paperAffiliations}</p>
+              <p className="pf-affiliations text-[11px] text-slate-500 italic whitespace-pre-line mb-2"
+                 dangerouslySetInnerHTML={{ __html: superscriptMarksHtml(project.paperAffiliations) }} />
             )}
-            <p className="text-xs text-slate-500 mb-6">
+            <p className="pf-meta text-xs text-slate-500 mb-6">
               {project.paperTitle ? `Project: ${project.name} · ` : ''}Scientist: {project.scientist || '—'} · Created: {new Date(project.createdAt).toLocaleDateString()}
             </p>
 
             {sectionBlocks.map((s) => (
               <div key={s.id} className="mb-6">
-                <h2 className="text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{s.title}</h2>
-                {s.html ? <div className="text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: repairContentImages(s.html) }} />
+                <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{s.title}</h2>
+                {s.html ? <div className="pf-body text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: repairContentImages(s.html) }} />
                         : <p className="text-xs italic text-slate-400">—</p>}
                 {renderFigures(s.restFigures || [])}
                 {renderDocs(sectionDocs(s.id))}
@@ -3236,7 +3273,7 @@ export const ProjectDetailModule = ({
             {includedExps.length > 0 && (
               <div className="mb-6">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-1 mb-2">
-                  <h2 className="text-base font-black text-slate-800">Materials and Methods</h2>
+                  <h2 className="pf-heading text-base font-black text-slate-800">Materials and Methods</h2>
                   <div className="flex items-center gap-2 no-print">
                     {project.materialsAndMethods?.edited && (
                       <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
@@ -3260,7 +3297,7 @@ export const ProjectDetailModule = ({
                       ? ` · last updated ${new Date(project.materialsAndMethods.generatedAt).toLocaleString()}`
                       : ''}.
                 </p>
-                <div className="flex flex-col gap-2">
+                <div className="pf-body flex flex-col gap-2">
                   {project.materialsAndMethods?.text ? (
                     String(project.materialsAndMethods.text).split('\n').filter(Boolean).map((para, i) => (
                       <p key={i} className="text-sm text-slate-800 text-justify leading-relaxed">{para}</p>
@@ -3283,7 +3320,7 @@ export const ProjectDetailModule = ({
 
             {includedExps.length > 0 && (
               <div className="mb-6">
-                <h2 className="text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">Experiments ({includedExps.length})</h2>
+                <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">Experiments ({includedExps.length})</h2>
                 <p className="text-[10px] text-slate-400 mb-3">
                   Only the figures, plots and tables you ⭐-starred on the test pages are imported here.
                   Click the ✏️ next to a caption to edit it before export.
@@ -3295,7 +3332,7 @@ export const ProjectDetailModule = ({
                   let figCount = 0;
                   return (
                     <div key={exp.id} className="mb-6 border-b border-slate-100 pb-4">
-                      <h3 className="text-sm font-black text-slate-800 flex flex-wrap items-center gap-2">
+                      <h3 className="pf-heading text-sm font-black text-slate-800 flex flex-wrap items-center gap-2">
                         <button onClick={() => { setShowExport(false); openTest(test.id); }}
                                 className="hover:text-blue-600 hover:underline text-left">
                           {exp.label}: {test.name}
@@ -3345,7 +3382,7 @@ export const ProjectDetailModule = ({
                 références du projet, rendue avec le format COURANT à chaque
                 affichage, est imprimée à sa place. */}
             <div className="mb-4">
-              <h2 className="text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">Bibliography ({refs.length})</h2>
+              <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">Bibliography ({refs.length})</h2>
               {/* LE TEXTE EST AUSSI DANS LE DOSSIER DU PROJET SUR LE DRIVE (voir
                   utils/projectDocumentDrive.js) : la page le dit et sait le
                   relire — le navigateur n'est qu'un cache, et un autre poste
@@ -3386,7 +3423,7 @@ export const ProjectDetailModule = ({
                    réel (`value`) : le « [12] » du texte tombe donc toujours sur
                    la bonne référence, même quand les numéros ne se suivent pas.
                    `id="ref-12"` = l'ancre sur laquelle le lien du texte arrive. */
-                <ol className="list-decimal pl-5 text-sm text-slate-800 space-y-1">
+                <ol className="pf-bib list-decimal pl-5 text-sm text-slate-800 space-y-1">
                   {[...refs].sort((a, b) => (Number(a.number) || 0) - (Number(b.number) || 0)).map((r) => {
                     const number = Number(r.number) || 0;
                     return (

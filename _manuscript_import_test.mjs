@@ -169,8 +169,56 @@ eq(MS.findNumericCitations('As reviewed (see the review)¹³ and more')[0].raw, 
   'un exposant après une parenthèse NON mathématique reste une citation');
 eq(MS.findNumericCitations('see previously¹³,¹⁴ and ¹³.').length, 2,
   '…comme un exposant suivi d’une virgule ou d’un point (liste de renvois)');
+
 eq(MS.convertCitationsInText('see previously¹³,¹⁴ and ¹³.', new Map([['#13', 1], ['#14', 2]])).text,
   'see previously[1,2] and [1].', '…et les vraies citations du même texte sont bien converties');
+
+/* ── 4 quater. L'exposant d'une FRACTION n'est pas un renvoi ─────────────────
+   Signalé par l'utilisateur : « nella formula c'era un elevato alla 1/2 e hai
+   considerato il 2 come riferimento bibliografico mentre era parte
+   dell'esponente (radice quadrata) ». Le DÉNOMINATEUR d'une fraction
+   d'exposant — « x¹/² », « x<sup>1</sup>/<sup>2</sup> » — suit une BARRE :
+   citationContextOkBefore ne la connaissait pas (ni mot court, ni unité, ni
+   moins exposant ne l'arrêtaient), et le « 2 » de la racine carrée était donc
+   lié à la référence 2. Voir opensFractionExponent
+   (utils/manuscriptImport.js). */
+const FRACTION = 'The correction factor is x¹/² and R<sup>1</sup>/<sup>2</sup> throughout.';
+eq(MS.findNumericCitations('x¹/²').length, 0, '« x¹/² » (racine carrée) n’est pas une citation');
+eq(MS.findNumericCitations('x¹ᐟ²').length, 0, '…ni la même fraction avec la barre ᐟ d’un PDF');
+eq(MS.findNumericCitations('x<sup>1</sup>/<sup>2</sup>').length, 0,
+  '…ni la fraction écrite en HTML (deux exposants séparés par la barre)');
+eq(MS.findNumericCitations(FRACTION).length, 0, 'aucun exposant d’une fraction n’est un renvoi');
+eq(MS.convertCitationsInText(FRACTION, new Map([['#1', 1], ['#2', 2]])).text, FRACTION,
+  '…et l’import laisse la formule EXACTEMENT telle quelle, même avec les références 1 et 2');
+/* Le veto ne doit pas emporter les vraies citations : un renvoi normal (sans
+   barre devant) reste un renvoi. */
+eq(MS.findNumericCitations('see previously¹,² and elsewhere.').length, 1,
+  'une liste de renvois « ¹,² » reste une citation (aucune barre devant)');
+
+/* ── 4 quinquies. LA VIRGULE ENTRE DEUX AFFILIATIONS RESTE UN EXPOSANT ──────
+   « la virgola tra due affiliazioni nella sezione degli autori deve rimanere
+   apice se era in apice nel testo ». Le champ « Authors » garde le texte du
+   document, où les exposants sont des caractères Unicode : or il n'existe pas
+   de virgule en exposant Unicode, l'écran montrait donc une virgule PLEINE
+   TAILLE entre « ¹ » et « ² ». superscriptMarksHtml remet toute la série —
+   ponctuation comprise — dans une balise <sup>, sans réécrire le texte
+   enregistré (voir utils/manuscriptImport.js). */
+eq(MS.superscriptMarkToPlain('¹,²'), '1,2', 'un exposant Unicode redevient du texte (« ¹,² » → « 1,2 »)');
+eq(MS.superscriptMarkToPlain('ᵃ'), 'a', '…comme la lettre d’un marqueur Wiley / Springer');
+eq(MS.superscriptMarksHtml('Mario Rossi\u00b9,\u00b2, Anna Bianchi\u00b3'),
+  'Mario Rossi<sup>1,2</sup>, Anna Bianchi<sup>3</sup>',
+  'la virgule ENTRE deux affiliations est dans la même balise <sup> que les numéros');
+eq(MS.superscriptMarksHtml('Mario Rossi\u00b9, Anna Bianchi\u00b2'),
+  'Mario Rossi<sup>1</sup>, Anna Bianchi<sup>2</sup>',
+  'la virgule qui SÉPARE deux auteurs n’est jamais avalée (un nom la suit)');
+eq(MS.superscriptMarksHtml('Mario Rossi\u00b9\u00b7\u00b2'), 'Mario Rossi<sup>1·2</sup>',
+  '…et le point médian d’un PDF reste, lui aussi, en exposant');
+eq(MS.superscriptMarksHtml('Mario Rossi\u00b9*'), 'Mario Rossi<sup>1</sup>*',
+  'l’astérisque de l’auteur correspondant reste DEHORS (ce n’est pas un numéro)');
+eq(MS.superscriptMarksHtml('Rossi M, Bianchi A'), 'Rossi M, Bianchi A',
+  'une liste sans marqueur ressort inchangée (une initiale « Rossi M » n’est pas un exposant)');
+eq(MS.superscriptMarksHtml('Rossi M < Bianchi A'), 'Rossi M &lt; Bianchi A',
+  'tout le reste est échappé : un document importé n’apporte jamais de HTML au projet');
 
 /* ── 5. Le plan : la numérotation du PROJET, pas celle du document ───────── */
 const plan = MS.buildManuscriptPlan(manuscript, { existingReferences: [] });
@@ -634,6 +682,10 @@ has(PROJ, 'placeholder="Title of the paper — filled by “📥 Import a manusc
 has(PROJ, '{project.paperTitle ? project.paperTitle : `📁 ${project.name}`}',
   'le document exporté prend le titre du papier (le nom du projet reste en repli)');
 has(PROJ, '{project.paperAffiliations && (', '…et il imprime aussi les affiliations');
+has(PROJ, 'dangerouslySetInnerHTML={{ __html: superscriptMarksHtml(project.paperAuthors) }}',
+  'la liste des auteurs est écrite avec ses VRAIS exposants — la virgule entre deux affiliations reste un apice');
+has(PROJ, 'dangerouslySetInnerHTML={{ __html: superscriptMarksHtml(project.paperAffiliations) }}',
+  '…et les lignes d’affiliation aussi (rien n’est réécrit dans le champ enregistré)');
 
 /* ── 12. L'EN-TÊTE des documents RÉELS ───────────────────────────────────────
    Aucun manuscrit réel ne commence par un bloc « titre puis auteurs » propre : un

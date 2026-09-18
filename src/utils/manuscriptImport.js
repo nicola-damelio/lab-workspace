@@ -242,6 +242,53 @@ export const superscriptAffilMark = (mark) => String(mark || '')
   .replace(/\d/g, (d) => SUP_DIGIT_CHARS[Number(d)])
   .replace(/[a-h]/g, (c) => SUP_LETTERS[c] || c);
 
+/** L'INVERSE DE superscriptAffilMark, pour l'AFFICHAGE : « ¹,² » → « 1,2 ».
+ *  Les caractères exposants redeviennent des caractères ordinaires, que la
+ *  balise `<sup>` remettra en exposant : c'est le navigateur (et l'imprimante)
+ *  qui l'écrit alors, exactement comme dans l'article. */
+export const superscriptMarkToPlain = (s) => String(s == null ? '' : s)
+  .replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]/g, (c) => String(SUP_DIGIT_CHARS.indexOf(c)))
+  .replace(/\u207B/g, '-')
+  .replace(/[\u1d43\u1d47\u1d9c\u1d48\u1d49\u1da0\u1d4d\u02b0]/g, (c) => {
+    const hit = Object.entries(SUP_LETTERS).find(([, ch]) => ch === c);
+    return hit ? hit[0] : c;
+  });
+
+/* UNE SÉRIE DE MARQUEURS D'AFFILIATION dans un texte d'auteurs : un exposant,
+ *  puis les autres exposants du même auteur s'ils sont séparés par la
+ *  ponctuation d'un marqueur — « ¹,² », « ¹⁻² », « ᵃ,ᵇ », « ¹·² ». La VIRGULE
+ *  ENTRE DEUX AFFILIATIONS fait partie de la série : elle était en exposant
+ *  dans le document, elle doit le rester à l'écran et à l'impression (demande
+ *  de l'utilisateur : « la virgola tra due affiliazioni nella sezione degli
+ *  autori deve rimanere apice se era in apice nel testo »). La virgule qui
+ *  SÉPARE DEUX AUTEURS (« Rossi¹, Anna Bianchi² ») est suivie d'un nom, pas
+ *  d'un exposant : elle n'est donc jamais prise dans la série. */
+const AFFIL_MARK_RUN_RE = new RegExp(
+  `[${SUP_MARK_CLASS}]+(?:${AFFIL_MARK_SEP}[${SUP_MARK_CLASS}]+)*`, 'g'
+);
+
+/**
+ * LE TEXTE D'UNE LISTE D'AUTEURS (ou d'une ligne d'affiliations) → du HTML, où
+ * chaque SÉRIE de marqueurs d'affiliation redevient un VRAI exposant :
+ *
+ *   'Mario Rossi¹,², Anna Bianchi³'
+ *     → 'Mario Rossi<sup>1,2</sup>, Anna Bianchi<sup>3</sup>'
+ *
+ *  Pourquoi : le champ « Authors » d'un projet garde le texte du document, où
+ *  les exposants sont des caractères Unicode (« ¹ »). Un caractère Unicode n'a
+ *  pas de virgule en exposant — le rendu d'écran montrait donc « Rossi¹,² » avec
+ *  une virgule PLEINE TAILLE au milieu des deux exposants, alors que le document
+ *  d'origine l'écrivait en exposant. Ici, toute la série repasse dans la même
+ *  balise `<sup>`, ponctuation comprise : l'écran, l'impression et l'export
+ *  montrent ce que montrait l'article, sans rien changer au texte enregistré
+ *  (le champ reste éditable, une correction manuelle n'est jamais réécrite).
+ *  Un texte sans marqueur (une initiale « Rossi M », un nom nu) ressort
+ *  INCHANGÉ, et tout le reste est échappé : rien d'un document importé ne peut
+ *  apporter du HTML.
+ */
+export const superscriptMarksHtml = (text) => escapeHtml(text)
+  .replace(AFFIL_MARK_RUN_RE, (run) => `<sup>${superscriptMarkToPlain(run)}</sup>`);
+
 /** Le marqueur d'affiliation de la FIN d'un morceau de nom, écrit en exposant :
  *  « Mario Rossi 1,2 » → « Mario Rossi ¹,² », « Anna Bianchi [1,2] » →
  *  « Anna Bianchi ¹,² », « Jean Dupont b » → « Jean Dupont ᵇ ». Les initiales
@@ -2121,6 +2168,30 @@ const closesMathGroup = (before) => {
 /** Le moins exposant Unicode (« 10⁻³ »). */
 const SUP_MINUS = '\u207B';
 
+/* LE SIGNE DE FRACTION d'un exposant : « / » et les barres de fraction que
+   laissent un PDF ou un copier-coller (« ⁄ » U+2044, « ᐟ » U+141F — la barre
+   des exposants écrits en texte simple, « x¹ᐟ² »). */
+const FRACTION_SLASH_RE = /[/\u2044\u141f]\s*$/;
+/* Un exposant qui écrit le NUMÉRATEUR d'une fraction : « x¹/… », « x<sup>1</sup>/… ». */
+const FRACTION_NUMERATOR_RE = new RegExp(
+  `(?:[${SUP_DIGIT_CHARS}]+|<sup\\b[^>]*>\\s*\\d{1,4}\\s*<\\/sup>)\\s*$`, 'i'
+);
+
+/** L'exposant écrit-il la suite d'une FRACTION D'EXPOSANT — la racine carrée
+ *  « x^{1/2} », écrite « x¹/² » ou « x<sup>1</sup>/<sup>2</sup> » ?
+ *
+ *  Défaut signalé : « nella formula c'era un elevato alla 1/2 e hai considerato
+ *  il 2 come riferimento bibliografico mentre era parte dell'esponente (radice
+ *  quadrata) ». Le « ² » qui suit « ¹/ » n'est pas un renvoi : il termine
+ *  l'exposant 1/2. Le NUMÉRATEUR, lui, était déjà écarté par le garde-fou de
+ *  contexte (« x¹ » : mot court collé), mais le DÉNOMINATEUR arrivait nu, après
+ *  une barre — et « / » n'est ni un mot ni une unité : rien ne l'arrêtait. */
+const opensFractionExponent = (before) => {
+  const s = String(before == null ? '' : before);
+  if (!FRACTION_SLASH_RE.test(s)) return false;
+  return FRACTION_NUMERATOR_RE.test(s.replace(FRACTION_SLASH_RE, ''));
+};
+
 /** Le texte écrit AVANT la citation permet-il d'en faire une ? (voir ci-dessus) */
 export const citationContextOkBefore = (before) => {
   const raw = String(before == null ? '' : before);
@@ -2164,8 +2235,10 @@ export const citationPassesGuards = (before, after, { form = '', nums = [] } = {
   if (!citationContextOkBefore(before)) return false;
   if (!isSuperscriptForm(form)) return true;
   /* Les deux pièges de l'exposant : il FERME une formule (« (x + y)² ») ou il
-     OUVRE un mot (« ¹³C »). */
+     OUVRE un mot (« ¹³C »). Un troisième : il écrit la suite d'une fraction
+     d'exposant (« x¹/² », la racine carrée). */
   if (closesMathGroup(before)) return false;
+  if (opensFractionExponent(before)) return false;
   return citationContextOkAfter(after);
 };
 

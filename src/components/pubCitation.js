@@ -62,6 +62,233 @@ export const IN_TEXT_STYLE_IDS = IN_TEXT_STYLES.map((s) => s.id);
 export const normalizeInTextStyle = (value) =>
   (IN_TEXT_STYLE_IDS.includes(value) ? value : 'keep');
 
+/* ── LA MISE EN FORME DU DOCUMENT D'UN PROJET ───────────────────────────────
+
+   « nella parte publication format, si può implementare il formato del testo
+   per le varie sezioni? vorrei poter scegliere font, police, posizione
+   (giustificato, centrato, a sinistra, a destra), stile (grassetto, corsivo,
+   sottolineato), colore. Per le figure vorrei poter scegliere le stesse cose.
+   Una volta implementate nel publication format dovrebbero applicarsi al
+   progetto, come è adesso per le citazioni. »
+
+   C'est exactement le même principe que la forme des renvois (`inTextStyle`) :
+   le choix vit DANS le format (`format.layout`), il ne réécrit jamais le texte
+   de l'auteur, et il est appliqué à l'AFFICHAGE — la page du projet, le
+   document imprimé et son PDF — par `pubLayoutCss` (la feuille de style du
+   document, voir projectDetailModule). Changer le format change donc tout de
+   suite ce que le projet montre, document figé compris, et un projet qui a sa
+   PROPRE copie du format (`project.pubFormat`) garde la sienne.
+
+   Chaque PARTIE du document a ses réglages — les mêmes qu'une feuille de styles
+   de traitement de texte : titre, auteurs, affiliations, intitulés de section,
+   texte des sections, figures et légendes, bibliographie. Un réglage absent
+   (« As in the app », taille vide, style non touché) ne produit AUCUNE règle :
+   sans choix de l'utilisateur, le document s'affiche comme avant. */
+
+export const PUB_TEXT_ALIGNMENTS = [
+  { id: 'left', label: 'Left', title: 'Align this part to the left' },
+  { id: 'center', label: 'Center', title: 'Centre this part' },
+  { id: 'right', label: 'Right', title: 'Align this part to the right' },
+  { id: 'justify', label: 'Justified', title: 'Justify this part (both margins)' }
+];
+export const PUB_ALIGNMENT_IDS = PUB_TEXT_ALIGNMENTS.map((a) => a.id);
+
+/* Les polices proposées : des familles que tout poste a déjà (aucun
+   téléchargement, aucun appel réseau — le document s'imprime et s'exporte
+   partout pareil). « As in the app » = aucune règle écrite, on garde la police
+   du programme. */
+export const PUB_FONTS = [
+  { id: '', label: 'As in the app' },
+  { id: 'Georgia, "Times New Roman", serif', label: 'Georgia' },
+  { id: '"Times New Roman", Times, serif', label: 'Times New Roman' },
+  { id: 'Garamond, Georgia, serif', label: 'Garamond' },
+  { id: 'Arial, Helvetica, sans-serif', label: 'Arial' },
+  { id: 'Helvetica, Arial, sans-serif', label: 'Helvetica' },
+  { id: '"Segoe UI", Roboto, sans-serif', label: 'Segoe UI' },
+  { id: 'Calibri, Carlito, sans-serif', label: 'Calibri' },
+  { id: 'Verdana, Geneva, sans-serif', label: 'Verdana' },
+  { id: '"Courier New", monospace', label: 'Courier New' }
+];
+
+/* Les parties du document, dans l'ordre où elles s'impriment. `selectors` = ce
+   que la feuille de style vise : une CLASSE que le programme pose lui-même
+   (`.pf-…`, toujours présente dans le document vivant) et, en repli, la BALISE
+   du document — un document figé avant cette version n'a pas les classes, la
+   balise le rattrape. `caption` (figures seulement) = la légende, et `width` =
+   la largeur de l'image (pourcentage de la colonne). */
+export const PUB_LAYOUT_PARTS = [
+  { id: 'title', label: 'Title', selectors: ['.pf-title', 'h1'] },
+  { id: 'authors', label: 'Authors', selectors: ['.pf-authors'] },
+  { id: 'affiliations', label: 'Affiliations', selectors: ['.pf-affiliations'] },
+  { id: 'heading', label: 'Section headings', selectors: ['.pf-heading', 'h2'] },
+  {
+    id: 'body',
+    label: 'Section text',
+    /* Le texte d'une section : ses paragraphes, où qu'ils soient (le HTML d'un
+       manuscrit importé n'a pas de classe), plus le cadre `.pf-body` pour ce qui
+       HÉRITE de la mise en forme. Les lignes de l'en-tête, la ligne
+       d'information et les légendes de figure sont EXCLUES : elles ont leur
+       propre partie. */
+    selectors: ['.pf-body',
+      'p:not(.pf-authors):not(.pf-affiliations):not(.pf-meta):not(.pf-caption)']
+  },
+  {
+    id: 'figure',
+    label: 'Figures & captions',
+    selectors: ['.pf-figure', 'figure'],
+    caption: ['.pf-caption', 'figcaption'],
+    width: true
+  },
+  { id: 'bibliography', label: 'Bibliography', selectors: ['.pf-bib', '.pf-bib li'] }
+];
+export const PUB_LAYOUT_PART_IDS = PUB_LAYOUT_PARTS.map((p) => p.id);
+
+/** Un réglage vierge : aucun style imposé, le document s'affiche comme avant.
+ *  `bold` / `italic` / `underline` sont à TROIS états — `null` = laissé tel
+ *  quel, `true` = imposé, `false` = explicitement retiré (utile pour un titre,
+ *  que le programme écrit en gras). */
+export const emptyPubTextStyle = () => ({
+  font: '', size: 0, align: '', bold: null, italic: null, underline: null, color: ''
+});
+
+/** Les réglages d'un format neuf : une entrée vierge par partie du document. */
+export const buildPubLayout = () => {
+  const out = {};
+  PUB_LAYOUT_PARTS.forEach((part) => {
+    out[part.id] = { ...emptyPubTextStyle(), ...(part.width ? { width: 100 } : {}) };
+  });
+  return out;
+};
+
+/* Les valeurs d'un format enregistré (localStorage, document d'un autre poste,
+   copie d'un projet) sont NETTOYÉES avant de devenir une feuille de style :
+   seule une valeur connue passe. Une police ne peut pas apporter de CSS (ni
+   « ; », ni « { »), une taille reste entre 4 et 96 pt, une couleur est un code
+   #rrggbb, un alignement est dans la liste, un style est vrai / faux / non
+   touché, une largeur reste entre 10 et 100 %. */
+const cleanPubFont = (v) => String(v || '').replace(/[^\w\s,"'.-]/g, '').trim().slice(0, 120);
+const cleanPubSize = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 4 && n <= 96 ? Math.round(n * 10) / 10 : 0;
+};
+const cleanPubAlign = (v) => (PUB_ALIGNMENT_IDS.includes(v) ? v : '');
+const cleanPubColor = (v) => {
+  const s = String(v || '').trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(s) ? s : '';
+};
+const cleanPubTri = (v) => {
+  if (v === true || v === false) return v;
+  if (v === 'true') return true;
+  if (v === 'false') return false;
+  return null;
+};
+const cleanPubWidth = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 10 && n <= 100 ? Math.round(n) : 100;
+};
+
+const cleanPubTextStyle = (raw, { width = false } = {}) => {
+  const st = raw && typeof raw === 'object' ? raw : {};
+  return {
+    font: cleanPubFont(st.font),
+    size: cleanPubSize(st.size),
+    align: cleanPubAlign(st.align),
+    bold: cleanPubTri(st.bold),
+    italic: cleanPubTri(st.italic),
+    underline: cleanPubTri(st.underline),
+    color: cleanPubColor(st.color),
+    ...(width ? { width: cleanPubWidth(st.width) } : {})
+  };
+};
+
+/** La mise en forme d'un format, telle qu'elle est relue d'un enregistrement :
+ *  chaque partie connue est gardée, tout le reste est ignoré. Un format sans
+ *  mise en forme (enregistré avant cette version) donne les réglages vierges —
+ *  le document d'un projet ne change donc pas tout seul. */
+export const normalizePubLayout = (raw) => {
+  const out = buildPubLayout();
+  PUB_LAYOUT_PARTS.forEach((part) => {
+    out[part.id] = cleanPubTextStyle(raw && raw[part.id], { width: !!part.width });
+  });
+  return out;
+};
+
+/** Cette partie a-t-elle un réglage ? (badge « ✎ » du panneau, tests). */
+export const pubTextStyleIsSet = (style) => !!style && (
+  !!style.font || Number(style.size) > 0 || !!style.align
+  || style.bold !== null || style.italic !== null || style.underline !== null
+  || !!style.color || (Number(style.width) > 0 && Number(style.width) !== 100)
+);
+
+const cssTri = (value, on, off) => {
+  if (value === true) return `${on} !important;`;
+  if (value === false) return `${off} !important;`;
+  return '';
+};
+
+/** Les déclarations d'une partie : chaque réglage CHOISI devient une règle,
+ *  `!important` compris — le choix de l'utilisateur doit passer devant la
+ *  feuille du programme et devant le style en ligne d'une figure importée d'un
+ *  .docx. Un réglage vide n'écrit rien du tout. */
+const pubTextStyleCss = (style) => {
+  const st = style || {};
+  const out = [];
+  if (st.font) out.push(`font-family: ${st.font} !important;`);
+  if (Number(st.size) > 0) out.push(`font-size: ${Number(st.size)}pt !important;`);
+  if (st.align) out.push(`text-align: ${st.align} !important;`);
+  const b = cssTri(st.bold, 'font-weight: 700', 'font-weight: 400');
+  if (b) out.push(b);
+  const i = cssTri(st.italic, 'font-style: italic', 'font-style: normal');
+  if (i) out.push(i);
+  const u = cssTri(st.underline, 'text-decoration: underline', 'text-decoration: none');
+  if (u) out.push(u);
+  if (st.color) out.push(`color: ${st.color} !important;`);
+  return out.join(' ');
+};
+
+/**
+ * LA FEUILLE DE STYLE DU DOCUMENT D'UN PROJET, écrite d'après le « Publication
+ * format ». Rien n'est écrit pour un format sans mise en forme : la feuille est
+ * alors VIDE et le document s'affiche exactement comme avant.
+ *
+ * Toutes les règles sont portées par le conteneur du document
+ * (`#project-doc-container`) : elles valent donc pour le document affiché, pour
+ * le document FIGÉ (le texte enregistré, rendu dans le même conteneur) et pour
+ * la page imprimée de l'export, qui remet ce même conteneur (voir
+ * projectDetailModule). Les parties du document y sont repérées par les classes
+ * `.pf-…` que le programme pose lui-même, et par leur balise en repli.
+ *
+ * @param {object} fmt    le « Publication format » (project.pubFormat ou défaut)
+ * @param {string} [scope] sélecteur du conteneur (défaut #project-doc-container)
+ * @returns {string} le CSS (chaîne vide quand rien n'a été choisi)
+ */
+export const pubLayoutCss = (fmt, scope = '#project-doc-container') => {
+  const layout = normalizePubLayout(fmt && fmt.layout);
+  const rules = [];
+  const rule = (selectors, body) => {
+    if (!body) return;
+    const list = (selectors || []).filter(Boolean).map((s) => `${scope} ${s}`).join(', ');
+    if (list) rules.push(`${list} { ${body} }`);
+  };
+  PUB_LAYOUT_PARTS.forEach((part) => {
+    const st = layout[part.id];
+    if (part.id === 'figure') {
+      /* LA FIGURE : l'alignement va au cadre (la figure se place à gauche, au
+         centre…), la largeur à l'IMAGE — et tout le reste à la LÉGENDE, le seul
+         texte d'une figure. */
+      if (st.align) rule(part.selectors, `text-align: ${st.align} !important;`);
+      if (Number(st.width) > 0 && Number(st.width) !== 100) {
+        rule([...(part.selectors || []), ...(part.caption || [])].map((s) => `${s} img`),
+          `width: ${Number(st.width)}% !important;`);
+      }
+      rule(part.caption, pubTextStyleCss(st));
+      return;
+    }
+    rule(part.selectors, pubTextStyleCss(st));
+  });
+  return rules.join('\n');
+};
+
 /* `format.scientistStyles` = { "Rossi M": "underline" | "bold" | "none" } :
    unknown names/values coming from localStorage or a project document are
    dropped here, and the name is trimmed so it matches the user list. */
@@ -85,6 +312,7 @@ export const buildPubFormat = (presetId) => {
     underlineScientists: false,     // legacy: underline EVERY lab scientist (see scientistStyles)
     scientistStyles: {},            // per lab member: 'none' | 'underline' | 'bold'
     inTextStyle: 'keep',            // in-text citation form (see IN_TEXT_STYLES)
+    layout: buildPubLayout(),       // font / size / align / style / colour of each part (see pubLayoutCss)
     fields: preset.defs.map((def, i) => ({
       id: def[0], enabled: true, order: i, style: def[1], prefix: def[2], suffix: def[3]
     }))
@@ -102,6 +330,7 @@ export const normalizePubFormat = (parsed) => {
     underlineScientists: !!(parsed && parsed.underlineScientists),
     scientistStyles: sanitizeScientistStyles(parsed && parsed.scientistStyles),
     inTextStyle: normalizeInTextStyle(parsed && parsed.inTextStyle),
+    layout: normalizePubLayout(parsed && parsed.layout),
     fields: (parsed && parsed.fields) || buildPubFormat('nature').fields
   };
 };

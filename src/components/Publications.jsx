@@ -22,8 +22,10 @@ import { inTextCitationHtml } from '../utils/referenceLinks';
 import {
   AUTHOR_STYLE_IDS, AUTHOR_STYLES, IN_TEXT_STYLES, normalizeInTextStyle,
   PUB_FORMAT_KEY, PUB_FORMAT_PRESETS,
-  authorMatchesCandidate, buildPubFormat, loadPubFormat, matchCoauthors,
-  pubCitationData, pubCitationHtml, scientistStyleOf
+  PUB_FONTS, PUB_LAYOUT_PARTS, PUB_TEXT_ALIGNMENTS,
+  authorMatchesCandidate, buildPubFormat, buildPubLayout, loadPubFormat, matchCoauthors,
+  normalizePubLayout, pubCitationData, pubCitationHtml, pubLayoutCss, pubTextStyleIsSet,
+  scientistStyleOf
 } from './pubCitation';
 
 const JOURNALS_STORAGE_KEY = 'labWorkspace_journals';
@@ -31,6 +33,22 @@ const JOURNALS_STORAGE_KEY = 'labWorkspace_journals';
 const inputCls =
   'w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white';
 const labelCls = 'block text-[10px] font-bold text-slate-400 uppercase mb-1';
+
+/* Un bouton de style à TROIS états (voir pubToggleLayoutStyle) : laissé comme
+   le programme (gris clair), imposé (bleu), ou explicitement retiré (barré) —
+   le titre d'une section, que le programme écrit en gras, doit pouvoir
+   redevenir normal. Le panneau « Publication format » en a trois par partie du
+   document : gras, italique, souligné. */
+const PubTriButton = ({ state, label, title, onClick }) => (
+  <button type="button" onClick={onClick} title={title}
+          aria-pressed={state === true}
+          className={`w-6 h-6 rounded text-[11px] font-bold border transition ${
+            state === true ? 'bg-indigo-600 text-white border-indigo-600'
+              : state === false ? 'bg-white text-slate-400 border-slate-300 line-through'
+                : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+    {label}
+  </button>
+);
 
 /* =========================================================================
    PUBLICATION FORMAT — the citation engine lives in ./pubCitation (a
@@ -47,7 +65,9 @@ const labelCls = 'block text-[10px] font-bold text-slate-400 uppercase mb-1';
 export {
   AUTHOR_STYLES, AUTHOR_STYLE_IDS, IN_TEXT_STYLES, IN_TEXT_STYLE_IDS, PUB_FORMAT_PRESETS,
   normalizeInTextStyle,
-  buildPubFormat, loadPubFormat, normalizePubFormat,
+  PUB_FONTS, PUB_LAYOUT_PARTS, PUB_TEXT_ALIGNMENTS,
+  buildPubFormat, buildPubLayout, loadPubFormat, normalizePubFormat, normalizePubLayout,
+  pubLayoutCss, pubTextStyleIsSet, emptyPubTextStyle,
   pubCitationHtml, pubCitationText, pubFieldValue, pubDoiUrl,
   pubCitationData, pubOriginOf,
   authorMatchesCandidate, matchCoauthors, isLabAuthor, labMemberOf,
@@ -2262,6 +2282,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     underlineScientists: !!activeFormat.underlineScientists,   // legacy default style
     scientistStyles: { ...(activeFormat.scientistStyles || {}) },
     inTextStyle: normalizeInTextStyle(activeFormat.inTextStyle),
+    layout: normalizePubLayout(activeFormat.layout),
     fields
   });
   const pubPatchField = (fieldId, patch) =>
@@ -2287,6 +2308,42 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
       ...pubCustomFormat(activeFormat.fields), scientistStyles: next, underlineScientists: false
     });
   };
+  /* ── LA MISE EN FORME DU DOCUMENT D'UN PROJET (voir pubLayoutCss) ──────────
+     « vorrei poter scegliere font, police, posizione, stile, colore … per le
+     figure le stesse cose », et que cela « si applichi al progetto come per le
+     citazioni ». Chaque réglage vit dans le format (`layout.<partie>`) : le
+     panneau en montre une ligne par partie du document, avec un aperçu vivant,
+     et la page du projet — document imprimé et PDF compris — le suit. */
+  const pubSetLayout = (partId, patch) => {
+    const layout = normalizePubLayout(activeFormat.layout);
+    if (!layout[partId]) return;
+    setActiveFormat({
+      ...pubCustomFormat(activeFormat.fields),
+      layout: { ...layout, [partId]: { ...layout[partId], ...patch } }
+    });
+  };
+  /* Le style d'un texte a TROIS états : non touché (comme le programme),
+     imposé, ou explicitement retiré — un titre, que le programme écrit en gras,
+     doit pouvoir redevenir normal. Un clic avance d'un état. */
+  const pubToggleLayoutStyle = (partId, key) => {
+    const layout = normalizePubLayout(activeFormat.layout);
+    const current = layout[partId] ? layout[partId][key] : null;
+    pubSetLayout(partId, { [key]: current === true ? false : current === false ? null : true });
+  };
+  const pubResetLayout = (partId) => {
+    const layout = normalizePubLayout(activeFormat.layout);
+    setActiveFormat({
+      ...pubCustomFormat(activeFormat.fields),
+      layout: { ...layout, [partId]: buildPubLayout()[partId] }
+    });
+  };
+  const pubResetAllLayout = () => setActiveFormat({ ...pubCustomFormat(activeFormat.fields), layout: buildPubLayout() });
+  /* Le choix du preset d'un journal refait la CITATION : la mise en forme du
+     document, elle, a été réglée partie par partie et n'a aucune raison de
+     disparaître avec le preset. */
+  const pubSetPreset = (presetId) =>
+    setActiveFormat({ ...buildPubFormat(presetId), layout: normalizePubLayout(activeFormat.layout) });
+
   const pubMoveField = (fieldId, dir) => {
     const fields = [...activeFormat.fields].sort((a, b) => a.order - b.order);
     const idx = fields.findIndex((f) => f.id === fieldId);
@@ -2366,7 +2423,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
             ))}
           </select>
           <label className="text-[10px] font-black uppercase tracking-wide text-slate-400">Journal preset:</label>
-          <select value={activeFormat.preset} onChange={(e) => setActiveFormat(buildPubFormat(e.target.value))}
+          <select value={activeFormat.preset} onChange={(e) => pubSetPreset(e.target.value)}
                   className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-semibold text-slate-700">
             {Object.entries(PUB_FORMAT_PRESETS).map(([id, p]) => (
               <option key={id} value={id}>{p.label}</option>
@@ -2382,8 +2439,10 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
           Every author of the paper is listed; you can cut long author lists with “et al.” after
           a given number of authors, always keep the lab members (user list) in the citation
           even past that cutoff, and choose how each of their names is styled — underlined or
-          bold — wherever it appears among the authors. The formatted citations are used in the
-          publications table and in the project documents that reference these publications.
+          bold — wherever it appears among the authors. The same format decides the <b>layout of a
+          project document</b> below (font, size, position, bold / italic / underlined, colour —
+          figures included). The formatted citations are used in the publications table and in the
+          project documents that reference these publications.
         </p>
         <p className="text-[11px] text-slate-500 mb-3">
           <b>🌍 Default</b> applies to every publication and is copied into the projects that had
@@ -2524,6 +2583,141 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
               without a style of its own is underlined. Pick a style (or “Set all to”) to replace it.
             </p>
           )}
+        </div>
+
+        {/* LA MISE EN FORME DU DOCUMENT — « il formato del testo per le varie
+            sezioni » : police, taille, position (gauche / centré / droite /
+            justifié), style (gras, italique, souligné) et couleur de chaque
+            partie du document, et la même chose pour les FIGURES. Comme la
+            forme des renvois, le choix vit dans le format et s'applique à la
+            page du projet, à son document imprimé et à son PDF (voir
+            pubLayoutCss : une seule feuille de style, écrite ici). */}
+        <div className="bg-white border border-slate-200 rounded-lg p-3 mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <span className="text-[10px] font-black uppercase tracking-wide text-slate-400"
+                  title="Formatting of the project document: font, size, position (left / centre / right / justified), style (bold, italic, underlined) and colour of every part of the document — figures included. Nothing is imposed until you choose it.">
+              Document layout (project document)
+            </span>
+            <button type="button" onClick={pubResetAllLayout}
+                    className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-300 hover:bg-slate-200"
+                    title="Remove every formatting choice: the project document goes back to the look of the app">
+              ↺ Reset all
+            </button>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            {PUB_LAYOUT_PARTS.map((part) => {
+              const st = normalizePubLayout(activeFormat.layout)[part.id];
+              const styled = pubTextStyleIsSet(st);
+              return (
+                <div key={part.id}
+                     className={`flex flex-wrap items-center gap-1.5 border rounded-lg px-2 py-1.5 ${
+                       styled ? 'border-indigo-200 bg-indigo-50/40' : 'border-slate-100'}`}>
+                  <span className="w-32 text-xs font-bold text-slate-700">{part.label}</span>
+                  <select value={st.font} onChange={(e) => pubSetLayout(part.id, { font: e.target.value })}
+                          title="Font family"
+                          className="border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none w-40">
+                    {PUB_FONTS.map((f) => <option key={f.id || 'app'} value={f.id}>{f.label}</option>)}
+                    {st.font && !PUB_FONTS.some((f) => f.id === st.font) && (
+                      <option value={st.font}>{st.font}</option>
+                    )}
+                  </select>
+                  <input type="number" min="4" max="96" step="0.5" value={st.size || ''}
+                         onChange={(e) => pubSetLayout(part.id, { size: Number(e.target.value) || 0 })}
+                         placeholder="—" title="Font size in points (empty = as in the app)"
+                         className="w-14 border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none" />
+                  <span className="text-[10px] text-slate-400">pt</span>
+                  <div className="flex items-center gap-0.5">
+                    {PUB_TEXT_ALIGNMENTS.map((a) => (
+                      <button type="button" key={a.id} title={a.title}
+                              onClick={() => pubSetLayout(part.id, { align: st.align === a.id ? '' : a.id })}
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition ${
+                                st.align === a.id ? 'bg-indigo-600 text-white border-indigo-600'
+                                  : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+                        {a.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-0.5">
+                    <PubTriButton state={st.bold} label="B"
+                                  title={`Bold — ${part.label} (click again: normal, then as in the app)`}
+                                  onClick={() => pubToggleLayoutStyle(part.id, 'bold')} />
+                    <PubTriButton state={st.italic} label="I"
+                                  title={`Italic — ${part.label} (click again: normal, then as in the app)`}
+                                  onClick={() => pubToggleLayoutStyle(part.id, 'italic')} />
+                    <PubTriButton state={st.underline} label="U"
+                                  title={`Underlined — ${part.label} (click again: normal, then as in the app)`}
+                                  onClick={() => pubToggleLayoutStyle(part.id, 'underline')} />
+                  </div>
+                  <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500"
+                         title={`Colour of the ${part.id === 'figure' ? 'figure caption' : 'text'}`}>
+                    <input type="color" value={st.color || '#1e293b'}
+                           onChange={(e) => pubSetLayout(part.id, { color: e.target.value })}
+                           className="w-6 h-6 rounded border border-slate-300 bg-white cursor-pointer p-0" />
+                    {st.color ? (
+                      <button type="button" onClick={() => pubSetLayout(part.id, { color: '' })}
+                              className="text-slate-400 hover:text-red-600" title="No colour of its own">
+                        ✖
+                      </button>
+                    ) : 'colour'}
+                  </label>
+                  {part.width && (
+                    <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500"
+                           title="Width of the figure image, as a percentage of the column">
+                      <input type="range" min="10" max="100" step="5" value={st.width}
+                             onChange={(e) => pubSetLayout(part.id, { width: Number(e.target.value) })}
+                             className="w-24 accent-indigo-600" />
+                      {st.width}%
+                    </label>
+                  )}
+                  <button type="button" onClick={() => pubResetLayout(part.id)}
+                          className="ml-auto px-2 py-0.5 rounded-lg text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-300 hover:bg-slate-200"
+                          title={`Reset the ${part.label} formatting`}>
+                    ↺
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          {/* L'APERÇU VIVANT : le même texte qu'un document de projet, rendu par
+              la feuille de style en cours de réglage — c'est la MÊME fonction
+              que la page du projet (voir pubLayoutCss) : ce qui se voit ici est
+              ce que le document montrera. */}
+          <div className="mt-3">
+            <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-1">
+              Live preview — project document
+            </div>
+            <div id="pub-layout-preview" className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+              <style>{pubLayoutCss(activeFormat, '#pub-layout-preview')}</style>
+              <h1 className="pf-title text-lg font-black text-slate-800 mb-1">Antimicrobial peptides in lipid bilayers</h1>
+              <p className="pf-authors text-xs font-semibold text-slate-700">
+                Rossi M<sup>1,2</sup>, Bianchi A<sup>3</sup>, Smith J<sup>1</sup>
+              </p>
+              <p className="pf-affiliations text-[10px] text-slate-500 italic whitespace-pre-line mb-2">
+                1 Dipartimento di Agraria, Portici, Italy{'\n'}3 INRAE, Villenave d’Ornon, France
+              </p>
+              <h2 className="pf-heading text-sm font-black text-slate-800 border-b border-slate-200 pb-1 mb-1">Results and Discussion</h2>
+              <p className="pf-body text-xs text-slate-800 mb-2">
+                The peptides were tested against <i>M. persicae</i>; the activity was confirmed previously
+                <sup><a className="cite-ref" href="#ref-1" data-ref="1">1</a></sup>.
+              </p>
+              <figure className="pf-figure m-0">
+                <div className="border border-slate-200 rounded bg-white h-10 flex items-center justify-center text-[10px] text-slate-400">
+                  🖼 figure
+                </div>
+                <figcaption className="pf-caption text-[10px] text-slate-500 mt-1">
+                  Figure 1. Aphid transmission of the virus.
+                </figcaption>
+              </figure>
+              <ol className="pf-bib list-decimal pl-4 text-[10px] text-slate-800 mt-2 space-y-0.5">
+                <li>Rossi M, Bianchi A. <i>J. Biol. Chem.</i> 2024, 300, 105678.</li>
+              </ol>
+            </div>
+          </div>
+          <p className="text-[10px] text-slate-400 mt-2">
+            The layout applies to the PROJECT document — the page, the printed document and its PDF, frozen
+            text included (use “↩️ Rebuild from data” to give an old frozen text the new layout). Leave a
+            setting empty (“As in the app”) and nothing is written: the document keeps the look of the app.
+          </p>
         </div>
 
         <div className="flex flex-col gap-1.5">
