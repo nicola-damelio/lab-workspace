@@ -27,22 +27,22 @@ OK   _figure_style_test.mjs  →  │ (index) │ name                          
 OK   _library_restore_test.mjs  →  ✅ 135 tests passés (bibliothèque d’images ↔ sauvegarde)
 OK   _library_transfer_test.cjs  →  │ (index) │ name                                                                                                                   │ ok   │ error │ | 
 OK   _mail_recipients_test.mjs  →  _mail_recipients_test: 47 passed
-OK   _manuscript_import_test.mjs  →  ✅ 376 tests passés (manuscrit — blocs / parties / en-tête / sections / liens / figures)
+OK   _manuscript_import_test.mjs  →  ✅ 452 tests passés (manuscrit — blocs / parties / en-tête / sections / liens / figures)
 OK   _new_image_test.cjs  →  ✅ 29/29 checks passed
 OK   _pdb_conect_sanity.cjs  →  (no output)
-OK   _persist_store_test.mjs  →  ✅ 25 tests passés (import : écriture vérifiée, quota plein, allègement des figures)
+OK   _persist_store_test.mjs  →  ✅ 92 tests passés (écriture vérifiée, quota plein, allègement des figures, écriture sauvée sans place libre, garde-fous du code)
 OK   _probe_cites.mjs  →  already linked           | NO  (rien à lier → message d'erreur)
 OK   _probe_hdr.mjs  →  aucune référence : c’est le comportement voulu
 OK   _probe_ngl.cjs  →  WROTE _ngl_src/molecularsurface-representation.ts len 10528
 OK   _probe_sections.mjs  →  -> « Mario Rossi¹†, Anna Bianchi¹‡ » | affil. 2 ligne(s)
-OK   _project_drive_doc_test.mjs  →  ✅ 60 tests passés (références « W.-J. » · import automatique · document du projet sur le Drive)
+OK   _project_drive_doc_test.mjs  →  ✅ 61 tests passés (références « W.-J. » · import automatique · document du projet sur le Drive)
 OK   _project_figures_access_test.cjs  →  │ (index) │ name                                                                                                                       │ ok   │ error 
 OK   _project_page_order_test.mjs  →  _project_page_order_test.mjs — 31 assertions passed
-OK   _pub_author_style_test.mjs  →  _pub_author_style_test: 123 passed
+OK   _pub_author_style_test.mjs  →  _pub_author_style_test: 139 passed
 OK   _rebuild_h_test.mjs  →  PASS
 OK   _reference_complete_test.mjs  →  _reference_complete_test: 68 passed
 OK   _reference_import_test.mjs  →  ✅ 226 tests passés (import de références)
-OK   _reference_links_test.mjs  →  ✅ 87 tests passés (liens de citation [n] ↔ références, import bibliographique numéroté, document exporté réparé)
+OK   _reference_links_test.mjs  →  ✅ 110 tests passés (liens de citation [n] ↔ références, import bibliographique numéroté, document exporté réparé)
 OK   _spectra_split_test.mjs  →  passed 197/197
 OK   _split_test.cjs  →  (no output)
 OK   _src_split_test.cjs  →  (no output)
