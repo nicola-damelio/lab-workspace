@@ -16,7 +16,8 @@ import {
 } from '../utils/objectClipboard';
 import {
   moveSelectionPatches, moveFiguresPatches, resizedBox, resizeSelectionPatches,
-  figureResizeFactor, resizeFiguresPatches, alignFiguresPatches, distributeFiguresPatches
+  figureResizeFactor, resizeFiguresPatches, alignFiguresPatches, distributeFiguresPatches,
+  alignBoxesPatches, distributeBoxesPatches
 } from '../utils/panelSelection';
 import {
   ERASE_SIZE_MIN, ERASE_SIZE_MAX, ERASE_DEFAULT_SIZE, clampEraseSize,
@@ -38,11 +39,19 @@ import {
   stopFigureRecaptures
 } from '../utils/figureRecapture';
 import { useFigureStyleProfile } from './FigureStyleTools';
-import { ShadowControls, ArrowPropertiesPanel } from './FigureArrowPanel';
+import { ShadowControls, ArrowPropertiesPanel, ShapePropertiesPanel } from './FigureArrowPanel';
 import {
   newArrow, normalizeArrow, arrowGeometry, arrowHeadPath, shadowSpec, shadowFilterId,
   figureShadowFilterId, DEFAULT_SHADOW
 } from '../utils/figureArrows';
+import {
+  SHAPE_KINDS, SHAPE_LABELS, newShape, normalizeShape, shapeGeometry,
+  shapeShadowFilterId, shapeDashArray, shapeFillOf, shapeHandles, resizedShapeCorners,
+  defaultShapeRect
+} from '../utils/figureShapes';
+import {
+  ADJUST_FIELDS, adjustSpec, adjustRecordOf, adjustFilterId, ADJUST_NEUTRAL
+} from '../utils/figureAdjust';
 import { getRenderableDriveUrl } from '../data/constants';
 
 const ptToMm = (pt) => pt * 0.352778;
@@ -330,6 +339,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // geometry and the three shapes (straight, curved, double-ended).
   const [arrows, setArrows] = useState([]);
   const [selectedArrowId, setSelectedArrowId] = useState(null);
+  /* LES FORMES GÉOMÉTRIQUES — lignes, rectangles, cercles. Même famille que les
+     flèches : une liste de CANVAS en millimètres (`x1,y1` – `x2,y2` = deux coins
+     opposés), donc aucune lettre, aucune cellule, et jamais un panneau dérangé.
+     La géométrie et le modèle vivent dans utils/figureShapes.js (purs), le
+     panneau de la forme choisie dans FigureArrowPanel.jsx. */
+  const [shapes, setShapes] = useState([]);
+  const [selectedShapeId, setSelectedShapeId] = useState(null);
   const [hydrateTick, setHydrateTick] = useState(0); // bumped to async-fetch Drive-backed images onto the canvas
   const objectsRef = useRef(objects);
   objectsRef.current = objects;
@@ -372,6 +388,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // ce dernier est appelé comme une fonction (voir plus bas) et ne doit porter
   // aucun hook.
   const [panelMore, setPanelMore] = useState(false);
+  // LA FENÊTRE DE L'OBJET SE PLIE ENTIÈREMENT : `panelOpen` est son titre-bouton
+  // (▾ / ▸). Repliée, elle ne laisse qu'une ligne — le canvas garde toute la
+  // hauteur — et la composition affichée n'est pas modifiée pour autant.
+  const [panelOpen, setPanelOpen] = useState(true);
   const [globalCaption, setGlobalCaption] = useState('');     // figure-wide caption at the bottom
   // Size the figure-wide letter-size control falls back to when the canvas holds
   // no panel yet: a size typed before the first panel is added is remembered for
@@ -642,8 +662,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         if (data.globalCaption !== undefined) setGlobalCaption(data.globalCaption);
         // Arrow annotations: they hold no pixels, so the persisted list IS the
         // live one — nothing to re-resolve. A canvas saved before arrows
-        // existed simply has no value here and keeps the empty list.
+        // existed simply has no value here and keeps the empty list. The SHAPES
+        // (lines, rectangles, circles) are exactly the same kind of record.
         if (data.arrows) setArrows((data.arrows || []).map(normalizeArrow));
+        if (data.shapes) setShapes((data.shapes || []).map(normalizeShape));
         // Restore the view the user left — e.g. when returning from the original
         // graph via the test page's ◀ Back button.
         if (data.isFullScreen) setIsFullScreen(true);
@@ -662,11 +684,31 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storageKey]);
 
-  // Open a saved canvas requested by the project page ("🖼 Saved canvases" →
-  // "Open in Image Builder"): App.jsx passes the library entry id here and the
-  // module remounts, so this runs after the session-cache restore above and
-  // wins. The request is consumed right away, so visiting the Image Builder
-  // afterwards keeps whatever the user was working on.
+  // Open a saved canvas requested by the project page ("🖼 Saved canvases" or
+  // "✏️ Modify in Image Builder" on a figure inserted from the editor): App.jsx
+  // passes the library entry id here and the module remounts, so this runs after
+  // the session-cache restore above and wins. The request is consumed at the end,
+  // so visiting the Image Builder afterwards keeps whatever the user was working
+  // on.
+  //
+  // ⛔ CE QUI ÉTAIT SIGNALÉ (« je rouvre le canvas enregistré dans le projet, il
+  //    est ENCORE VIDE ; il ne réapparaît que si je vais dans la bibliothèque
+  //    cliquer ⬇ Add missing from Drive »). Cette ouverture ne lisait QUE la
+  //    liste de CE navigateur (`readProjectLibrary` : mémoire → localStorage,
+  //    ~5 Mo par site partagés avec les projets et les figures) ET exigeait
+  //    l'entrée AVEC sa composition (`i.canvasData`). Quand la liste avait dû
+  //    être allégée — ou sur un autre poste — l'entrée n'était plus là : le
+  //    `if (item)` était simplement SAUTÉ, la demande consommée, et l'éditeur
+  //    s'ouvrait sur un canvas VIDE sans rien dire. Les pixels et le sidecar
+  //    éditable `<image>.meta.json` étaient pourtant sur le Drive depuis
+  //    l'insertion : la seule lecture qui les ramène est celle du bouton.
+  // ✅ La réouverture se RÉPARE donc elle-même, en trois temps :
+  //    1. la liste du navigateur (portée du projet, puis bibliothèque partagée) ;
+  //    2. sinon, on relit le dossier d'images du projet sur le Drive — le MÊME
+  //       appel que « ⬇ Add missing figures from Drive », sidecars compris ;
+  //    3. on cherche de nouveau, et si la composition reste introuvable on le
+  //       DIT (fenêtre de bibliothèque ouverte sur le bon onglet, dossier nommé)
+  //       au lieu de laisser un canvas vide et muet.
   useEffect(() => {
     if (!openCanvasId) return;
     // A saved canvas that lives in the library of a project this user may not
@@ -678,10 +720,64 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       if (typeof onCanvasOpened === 'function') onCanvasOpened(openCanvasId);
       return;
     }
-    const list = projectId ? readProjectLibrary(projectId) : readLibrary();
-    const item = list.find((i) => i.id === openCanvasId && i.canvasData);
-    if (item) restoreCanvasFromItem(item, { confirm: false, scopeProjectId: projectId || null });
-    if (typeof onCanvasOpened === 'function') onCanvasOpened(openCanvasId);
+    const consume = () => { if (typeof onCanvasOpened === 'function') onCanvasOpened(openCanvasId); };
+    /* Where the canvas IS, in this browser: it comes from the project's library —
+       or, for a canvas saved before the projects were scoped, from the shared
+       dataset library. The scope travelled back with it: re-saving the canvas
+       updates THAT entry (see restoreCanvasFromItem). */
+    const locate = () => {
+      const own = (projectId ? readProjectLibrary(projectId) : readLibrary())
+        .find((i) => i && i.id === openCanvasId && i.canvasData);
+      if (own) return { item: own, scopeProjectId: projectId || null };
+      const shared = readLibrary().find((i) => i && i.id === openCanvasId && i.canvasData);
+      return shared ? { item: shared, scopeProjectId: null } : null;
+    };
+    const here = locate();
+    if (here) {
+      restoreCanvasFromItem(here.item, { confirm: false, scopeProjectId: here.scopeProjectId });
+      consume();
+      return;
+    }
+    // Not listed here (or listed without its composition) → read the images
+    // folder on Drive ONCE — it also re-reads the `.meta.json` sidecars, which
+    // is exactly what makes an editable canvas come back — then look again.
+    let alive = true;
+    const scopeInfo = {
+      scope: projectId ? 'project' : 'common',
+      projectId: projectId || null,
+      projectName: projectId ? canvasScopeName(projectId) : ''
+    };
+    (async () => {
+      setLibDriveBusy(true);
+      setLibMsg(`⬇ This canvas is not in this browser — reading ${scopeInfo.scope === 'project' ? 'the project’s' : 'the dataset’s'} images folder on Drive…`);
+      let res = null;
+      try {
+        res = await pullLibraryFromDrive(scopeInfo);
+      } catch (err) {
+        res = { error: (err && err.message) || 'Could not read the Drive folder', folder: '' };
+      }
+      if (!alive) return;
+      setLibDriveBusy(false);
+      setLibVersion((v) => v + 1);
+      const after = locate();
+      if (after) {
+        restoreCanvasFromItem(after.item, { confirm: false, scopeProjectId: after.scopeProjectId });
+        setLibMsg('✓ The canvas was found on Drive: its panels, figures, captions and grid are back.');
+        consume();
+        return;
+      }
+      // Nothing anywhere: SAY it, with the folder that was read — a silent empty
+      // canvas is what made this look like a lost composition.
+      const where = (res && res.folder) || (scopeInfo.scope === 'project' ? 'this project’s images folder' : 'the dataset images folder');
+      setLibMsg(res && res.error
+        ? `⚠ ${res.error} — “${openCanvasId}” could not be reopened here. Check Settings → cloud storage, then “⬇ Add missing from Drive”.`
+        : `⚠ “${openCanvasId}” is not in this browser and not in ${where}: that canvas was never saved to the cloud. Re-insert the composition with “📤 Insert into project…” (it uploads the image FIRST) and it will always come back; “⬇ Add missing from Drive” re-reads the folder right now.`);
+      if (projectId) setLibProjectId(projectId);
+      setLibraryTab(scopeInfo.scope);
+      setShowLibrary(true);
+      consume();
+    })();
+    return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openCanvasId]);
 
@@ -691,7 +787,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       // full-resolution dataURL) so the layout always re-opens after
       // navigating away and back.
       const persisted = (objects || []).map(thumbnailsOf);
-      const payload = { canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects: persisted, arrows, focusObjId, globalCaption, isFullScreen };
+      const payload = { canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects: persisted, arrows, shapes, focusObjId, globalCaption, isFullScreen };
       // Always keep the freshest copy in memory (survives module remounts even
       // when localStorage is full), then best-effort write localStorage:
       // rememberSessionCanvas keeps BOTH the lightweight payload AND the live
@@ -700,7 +796,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       rememberSessionCanvas(storageKey, payload, objects || []);
       localStorage.setItem(storageKey, JSON.stringify(payload));
     } catch { /* localStorage may be full — the session cache above still holds the state */ }
-  }, [canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects, arrows, focusObjId, globalCaption, isFullScreen, storageKey]);
+  }, [canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects, arrows, shapes, focusObjId, globalCaption, isFullScreen, storageKey]);
 
   // Async "hydrate" pass — after objects are (re)loaded from a persisted canvas
   // or an undo snapshot, their images may reference Google Drive (the real
@@ -755,13 +851,14 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // ---- undo history -------------------------------------------------------
   // Snapshots keep only thumbnails (full-res dataURLs are re-resolved from the
   // library on undo) so the stack stays light even with large captured images.
-  // The ARROWS ride along in the same snapshot: undoing a change puts the
-  // annotations back exactly as they were (they hold no pixels at all).
+  // The ARROWS and the SHAPES ride along in the same snapshot: undoing a change
+  // puts the annotations back exactly as they were (they hold no pixels at all).
   const commitHistory = () => {
     try {
       const snap = {
         objects: JSON.parse(JSON.stringify((objects || []).map(thumbnailsOf))),
-        arrows: JSON.parse(JSON.stringify(arrows || []))
+        arrows: JSON.parse(JSON.stringify(arrows || [])),
+        shapes: JSON.parse(JSON.stringify(shapes || []))
       };
       undoStack.current.push(snap);
       if (undoStack.current.length > 40) undoStack.current.shift();
@@ -774,8 +871,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     const objs = Array.isArray(prev) ? prev : (prev.objects || []);   // a snapshot taken before the arrows existed
     setObjects(objs.map(resolveObj));
     if (!Array.isArray(prev)) setArrows((prev.arrows || []).map(normalizeArrow));
+    if (!Array.isArray(prev)) setShapes((prev.shapes || []).map(normalizeShape));
     setSelectedId(null);
     setSelectedArrowId(null);
+    setSelectedShapeId(null);
     setHistTick((t) => t + 1);
     setHydrateTick((t) => t + 1);
   };
@@ -1016,7 +1115,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     const first = blankObject('A');
     setObjects([first]);
     setArrows([]);                   // a NEW image starts with no annotation either
+    setShapes([]);                   // …nor a line / rectangle / circle
     setSelectedArrowId(null);
+    setSelectedShapeId(null);
     setSelectedId(first.id);
     renumberLetters();               // a single panel is always "A"
     setEditingText(null);
@@ -2116,7 +2217,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         // du canvas : un canvas rouvert — même vide — retrouve ses lettres.
         letterStyle: { fontSize: currentLetterPt(), color: currentLetterColor(), bold: currentLetterBold() },
         objects: (objects || []).map(thumbnailsOf),
-        arrows: arrows || []
+        arrows: arrows || [],
+        shapes: shapes || []
       }
     });
     if (!entry) return null;
@@ -2288,6 +2390,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       letterStyle: { fontSize: currentLetterPt(), color: currentLetterColor(), bold: currentLetterBold() },
       objects: (objects || []).map(thumbnailsOf),
       arrows: arrows || [],
+      shapes: shapes || [],
       updatedAt: new Date().toISOString()
     };
     const key = `${target || 'dataset'}|${label}|${JSON.stringify(canvasData)}`;
@@ -2423,8 +2526,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     setObjects((cd.objects || []).map((o) => resolveObj(o)));
     // The saved canvas carries its own annotations (an older canvas has none).
     setArrows((cd.arrows || []).map(normalizeArrow));
+    setShapes((cd.shapes || []).map(normalizeShape));
     setSelectedId(null);
     setSelectedArrowId(null);
+    setSelectedShapeId(null);
     setEditingObjCaption(null);
     setEditingCaption(false);
     setShowLibrary(false);
@@ -2726,6 +2831,26 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       setArrows(prev => prev.map(a => a.id !== id ? a : (grabbingStart
         ? { ...a, x1: +(st.a1x + dxMm).toFixed(2), y1: +(st.a1y + dyMm).toFixed(2) }
         : { ...a, x2: +(st.a2x + dxMm).toFixed(2), y2: +(st.a2y + dyMm).toFixed(2) })));
+      return;
+    }
+
+    // Dragging a SHAPE (line / rectangle / circle): the whole shape (both corners
+    // follow) or ONE corner — the opposite one stays put (resizedShapeCorners).
+    // Positions are absolute (the snapshot of the corners is kept in the drag
+    // state), so a long drag cannot accumulate rounding, exactly like an arrow.
+    if (type === 'shapeMove') {
+      const st = dragState.current;
+      setShapes(prev => prev.map(sh => sh.id !== id ? sh : {
+        ...sh,
+        x1: +(st.sh.x1 + dxMm).toFixed(2), y1: +(st.sh.y1 + dyMm).toFixed(2),
+        x2: +(st.sh.x2 + dxMm).toFixed(2), y2: +(st.sh.y2 + dyMm).toFixed(2)
+      }));
+      return;
+    }
+    if (type === 'shapeCorner') {
+      const st = dragState.current;
+      const corners = resizedShapeCorners(st.sh, st.corner, dxMm, dyMm);
+      setShapes(prev => prev.map(sh => sh.id !== id ? sh : { ...sh, ...corners }));
       return;
     }
 
@@ -3106,6 +3231,80 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     setArrows(prev => prev.filter(a => a.id !== target));
     setSelectedArrowId(null);
   };
+
+  /* ── LES FORMES : LIGNE, RECTANGLE, CERCLE ─────────────────────────────────
+     Même famille que les flèches (voir utils/figureShapes) : un objet de CANVAS
+     en millimètres, sans lettre ni cellule — ajouter une forme ne renumérote
+     aucun panneau. « ▭ Rectangle » (et « ◯ Circle ») déposent une forme
+     sélectionnée au milieu du canvas, que l'on déplace et dont on tire les deux
+     coins ; « ╱ Line » dépose un segment horizontal. Le panneau de la forme
+     choisie (FigureArrowPanel.jsx → ShapePropertiesPanel) porte couleur,
+     épaisseur, pointillés, remplissage, courbure et ombre. */
+  const addShape = (kind) => {
+    const k = SHAPE_KINDS.includes(kind) ? kind : 'rect';
+    commitHistory();
+    const id = `shp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const sh = newShape(k, id, defaultShapeRect(k, canvasW, canvasH));
+    setShapes(prev => [...prev, sh]);
+    // Une seule sélection à la fois : le panneau de la forme remplace celui du
+    // panneau / de la flèche.
+    setSelectedId(null);
+    setSelectedArrowId(null);
+    setSelectedShapeId(id);
+  };
+  const updateShape = (patch) => setShapes(prev => prev.map(sh => (sh.id === selectedShapeId ? { ...sh, ...patch } : sh)));
+  const removeShape = (id = selectedShapeId) => {
+    // Comme pour les flèches : le bouton du panneau passe parfois l'ÉVÉNEMENT de
+    // clic — un identifiant RÉEL (une chaîne) est seul accepté, sinon la sélection.
+    const target = typeof id === 'string' ? id : selectedShapeId;
+    if (!target) return;
+    commitHistory();
+    setShapes(prev => prev.filter(sh => sh.id !== target));
+    setSelectedShapeId(null);
+  };
+  // Glisser une forme (sans `corner`) ou L'UN de ses deux coins.
+  const startShapeDrag = (e, id, corner = null) => {
+    e.stopPropagation();
+    commitHistory();
+    const sh = (shapes || []).find(x => x.id === id);
+    if (!sh) return;
+    setSelectedId(null);
+    setSelectedArrowId(null);
+    setSelectedShapeId(id);
+    dragState.current = {
+      type: corner ? 'shapeCorner' : 'shapeMove',
+      id,
+      corner,
+      startX: e.clientX,
+      startY: e.clientY,
+      sh: { x1: sh.x1, y1: sh.y1, x2: sh.x2, y2: sh.y2, kind: sh.kind }
+    };
+    window.addEventListener('mousemove', onDrag);
+    window.addEventListener('mouseup', endDrag);
+  };
+
+  /* ── ALIGNER / RÉPARTIR LES PANNEAUX (« objets ») ──────────────────────────
+     Les ⇹ des FIGURES alignent les figures D'UN panneau ; ces commandes-ci
+     alignent et répartissent les PANNEAUX eux-mêmes sur la grille (voir
+     alignBoxesPatches / distributeBoxesPatches). Une seule sélection ne suffit
+     pas (il n'y a rien à aligner) : les commandes demandent deux panneaux
+     sélectionnés — Ctrl+clic sur le canvas, ou les pastilles « Panels » — et la
+     RÉPARTITION en demande trois. Rien à faire → `{}` : ni écriture, ni étape
+     d'historique (comme ⬆ / ⬇ de l'empilement). */
+  const applyPanelLayout = (kind, mode) => {
+    const grid = { gridCols, gridRows };
+    // Les boîtes de la sélection (un instantané : rien de la liste live n'est
+    // relu pendant que les patchs se calculent).
+    const snapshot = boxesOf(selectedIds);
+    const boxes = Object.keys(snapshot).map((id) => ({ id, ...snapshot[id] }));
+    if (boxes.length < 2) return;
+    const patches = kind === 'align'
+      ? alignBoxesPatches(boxes, mode, grid)
+      : distributeBoxesPatches(boxes, mode, grid);
+    if (!Object.keys(patches).length) return;
+    commitHistory();
+    setObjects(prev => prev.map((o) => (patches[o.id] ? { ...o, ...patches[o.id] } : o)));
+  };
   // "Shadow every panel" (toolbar + properties panel): ONE click gives the whole
   // figure the publication drop shadow, a second click takes it off again.
   const panelsShadowed = (objects || []).some((o) => !!shadowSpec(o && o.shadow));
@@ -3334,6 +3533,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       if (suppressSelectRef.current) { suppressSelectRef.current = false; return; }
       setSelectedId(null);
       setSelectedArrowId(null);
+      setSelectedShapeId(null);
     }}>
       {/* Grid lines (the cell divider guides between the panels) — switched off
           with the "Grid lines" checkbox, on the canvas and in every export. */}
@@ -3425,6 +3625,51 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             </filter>
           );
         }))}
+        {/* ── L'OMBRE D'UNE FORME (ligne, rectangle, cercle) ──────────────────
+            La même primitive que les panneaux, les flèches et les figures : une
+            forme projette SA propre ombre, décrite par le même enregistrement et
+            définie dans la composition — donc présente dans chaque export. */}
+        {shapes.map((sh) => {
+          const sp = shadowSpec(sh.shadow);
+          if (!sp) return null;
+          return (
+            <filter key={`fss-${sh.id}`} id={shapeShadowFilterId(sh.id)} x="-25%" y="-25%" width="150%" height="150%">
+              <feDropShadow dx={sp.dx} dy={sp.dy} stdDeviation={sp.blur} floodColor={sp.color} floodOpacity={sp.opacity} />
+            </filter>
+          );
+        })}
+        {/* ── LE RÉGLAGE D'IMAGE D'UNE FIGURE (contraste, luminosité, couleur) ─
+            Voir utils/figureAdjust.js : la teinte et la saturation par des
+            <feColorMatrix>, le contraste (pivot au gris moyen) et la luminosité
+            par <feComponentTransfer>, et la teinte (un <feFlood> détouré sur
+            les pixels de la figure) fusionnée par-dessus la source. Le filtre
+            est posé sur l'IMAGE elle-même : il travaille les PIXELS, jamais le
+            cadre du panneau. Pas de réglage → pas de filtre du tout. */}
+        {objects.map(obj => getObjImages(obj).map((im, i) => {
+          const adj = adjustSpec(adjustRecordOf(im));
+          if (!adj) return null;
+          return (
+            <filter key={`fadj-${obj.id}-${i}`} id={adjustFilterId(obj.id, i)} x="-10%" y="-10%" width="120%" height="120%">
+              {adj.saturation !== 1 ? <feColorMatrix type="saturate" values={adj.saturate} /> : null}
+              {adj.hueRotate ? <feColorMatrix type="hueRotate" values={adj.hueRotate} /> : null}
+              <feComponentTransfer>
+                <feFuncR type="linear" slope={adj.slope} intercept={adj.intercept} />
+                <feFuncG type="linear" slope={adj.slope} intercept={adj.intercept} />
+                <feFuncB type="linear" slope={adj.slope} intercept={adj.intercept} />
+              </feComponentTransfer>
+              {adj.tint && adj.tintAmount > 0 ? (
+                <>
+                  <feFlood floodColor={adj.tint} floodOpacity={adj.tintAmount} result="adjTint" />
+                  <feComposite in="adjTint" in2="SourceGraphic" operator="in" result="adjTintClipped" />
+                  <feMerge>
+                    <feMergeNode in="SourceGraphic" />
+                    <feMergeNode in="adjTintClipped" />
+                  </feMerge>
+                </>
+              ) : null}
+            </filter>
+          );
+        }))}
       </defs>
       {objects.map(obj => {
         const isSelected = obj.id === selectedId;      // THE REFERENCE: properties, handles, crop, texts
@@ -3510,6 +3755,14 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                            dx/dy keep pointing down-right on the CANVAS and are
                            not turned with the picture. */
                     const figShadow = shadowSpec(im.shadow);
+                    /* LE RÉGLAGE D'IMAGE (contraste, luminosité, saturation,
+                       teinte) : son `<filter>` est posé sur l'IMAGE elle-même —
+                       il travaille les pixels de la figure et suit donc son
+                       alpha, son recadrage, sa rotation et sa gomme. `undefined`
+                       quand rien n'est demandé : le SVG est alors exactement
+                       celui d'avant. */
+                    const figAdjust = adjustSpec(adjustRecordOf(im));
+                    const adjustFilter = figAdjust ? `url(#${adjustFilterId(obj.id, i)})` : undefined;
                     /* CROPPED figure: the FULL image is drawn around the window
                        with an exact pixel mapping (hence preserveAspectRatio
                        "none") and clipped to it. The rotation wraps both so the
@@ -3522,6 +3775,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                               x={g.iX} y={g.iY} width={g.iW} height={g.iH}
                               preserveAspectRatio="none"
                               clipPath={`url(#figclip-${obj.id}-${i})`}
+                              filter={adjustFilter}
                               mask={eraseMask}
                               style={{ pointerEvents: 'none' }}
                             />
@@ -3535,6 +3789,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                           x={g.iX} y={g.iY} width={g.iW} height={g.iH}
                           transform={rot ? `rotate(${rot} ${center})` : undefined}
                           preserveAspectRatio={par}
+                          filter={adjustFilter}
                           mask={eraseMask}
                           style={{ pointerEvents: 'none' }}
                         />
@@ -3705,6 +3960,66 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           </g>
         );
       })}
+      {/* SHAPES — lines, rectangles, circles. Same family as the arrows: canvas
+          level, in millimetres, drawn ON TOP of the panels and BELOW the arrows
+          (“a shape frames a region, an arrow points at it”). The shape carries no
+          `data-selection-ui`, so Export PNG / Save canvas / Insert into project
+          keep it; only the corner handles are screen-only. The geometry comes
+          from shapeGeometry (utils/figureShapes), which is also what the tests
+          exercise. */}
+      {shapes.map(sh => {
+        const g = shapeGeometry(sh);
+        const sp = shadowSpec(sh.shadow);
+        const isShapeSelected = sh.id === selectedShapeId;
+        const tint = shapeFillOf(g.shape);
+        const strokeProps = {
+          stroke: g.shape.stroke,
+          strokeWidth: g.shape.width,
+          strokeDasharray: shapeDashArray(g.shape)
+        };
+        return (
+          <g key={sh.id}
+            filter={sp ? `url(#${shapeShadowFilterId(sh.id)})` : undefined}
+            onClick={(e) => { e.stopPropagation(); setSelectedId(null); setSelectedArrowId(null); setSelectedShapeId(sh.id); }}
+            title={`${SHAPE_LABELS[g.shape.kind] || 'Shape'} — drag it to move it, drag a blue corner handle to resize it, or use “Shape properties”`}>
+            {g.shape.kind === 'line' && (
+              <path d={g.path} fill="none" strokeLinecap="butt" {...strokeProps} />
+            )}
+            {g.shape.kind === 'rect' && (
+              <rect x={g.box.x} y={g.box.y} width={g.box.w} height={g.box.h}
+                fill={tint || 'none'} fillOpacity={tint ? g.shape.fillOpacity : undefined} {...strokeProps} />
+            )}
+            {g.shape.kind === 'ellipse' && (
+              <ellipse cx={g.box.cx} cy={g.box.cy} rx={g.box.w / 2} ry={g.box.h / 2}
+                fill={tint || 'none'} fillOpacity={tint ? g.shape.fillOpacity : undefined} {...strokeProps} />
+            )}
+            {/* Invisible but WIDE outline: a hairline is almost impossible to grab
+                (the same trick as the arrows' shaft). An unfilled shape is grabbed
+                by its OUTLINE only, so it never steals a click from a panel below. */}
+            {g.shape.kind === 'line' ? (
+              <path d={g.path} fill="none" stroke="transparent" strokeWidth={Math.max(4, g.shape.width * 3)}
+                pointerEvents="stroke" style={{ cursor: 'move' }}
+                onMouseDown={(e) => startShapeDrag(e, sh.id)} />
+            ) : (
+              <rect x={g.box.x} y={g.box.y} width={g.box.w} height={g.box.h} fill="transparent"
+                stroke="transparent" strokeWidth={Math.max(4, g.shape.width * 3)}
+                pointerEvents={tint ? 'all' : 'stroke'} style={{ cursor: 'move' }}
+                onMouseDown={(e) => startShapeDrag(e, sh.id)} />
+            )}
+            {isShapeSelected && (
+              <g data-selection-ui="true">
+                <rect x={g.box.x} y={g.box.y} width={g.box.w} height={g.box.h} fill="none" stroke="#3b82f6"
+                  strokeWidth={0.2} strokeDasharray="1 1" pointerEvents="none" />
+                {shapeHandles(g.shape).map((h) => (
+                  <circle key={h.key} cx={h.x} cy={h.y} r={1.6} fill="#3b82f6" stroke="white" strokeWidth={0.3}
+                    style={{ cursor: 'crosshair' }} onMouseDown={(e) => startShapeDrag(e, sh.id, h.key)}
+                    title="Drag to move this corner of the shape (the opposite corner stays where it is)" />
+                ))}
+              </g>
+            )}
+          </g>
+        );
+      })}
       {/* ARROW ANNOTATIONS — drawn ON TOP of the panels (an arrow may point from
           one panel to another) and BELOW the figure caption. The shaft and the
           heads carry no `data-selection-ui`, so Export PNG, Save canvas and
@@ -3794,6 +4109,17 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // Détourage déjà fait sur la figure active (`im.bg`, voir utils/figureBackground.js) :
   // sa couleur, sa tolérance et son mode sont relus dans « ▾ More options ».
   const figBgRecord = cropPanelIdx >= 0 ? bgRecordOf(selectedImgs[cropPanelIdx]) : null;
+  // Le réglage d'IMAGE de la figure active (contraste, luminosité, saturation,
+  // teinte) : `null` quand rien n'est demandé — aucun `<filter>` n'est alors
+  // dessiné, le SVG reste celui d'avant. Voir utils/figureAdjust.js.
+  const activeAdjust = cropPanelIdx >= 0 ? ((selectedImgs[cropPanelIdx] || {}).adjust || null) : null;
+  const activeAdjustSpec = adjustSpec(activeAdjust);
+  // Écrire un réglage : le bouton « ↺ Reset » remet la fiche NEUTRE (les six
+  // champs à zéro), que `adjustSpec` traduit en « pas de filtre ».
+  const setFigAdjust = (patch) => {
+    if (cropPanelIdx < 0) return;
+    patchFigure(selectedObj.id, cropPanelIdx, { adjust: { ...ADJUST_NEUTRAL, ...(activeAdjust || {}), ...patch } });
+  };
   // L'aperçu cliquable du détourage : les pixels de la figure active (c'est la
   // SOURCE qui est affichée, pas la vignette — on clique une couleur exacte).
   const figBgSrc = cropPanelIdx >= 0 ? bgFigSrcOf(selectedImgs[cropPanelIdx]) : '';
@@ -3802,6 +4128,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // the same time — one properties panel is shown, for whichever the user
   // clicked last.
   const selectedArrow = (arrows || []).find((a) => a.id === selectedArrowId) || null;
+  // La FORME sélectionnée (ligne, rectangle, cercle) — sa fenêtre remplace celle
+  // du panneau exactement comme celle d'une flèche, et jamais en même temps.
+  const selectedShape = (shapes || []).find((sh) => sh.id === selectedShapeId) || null;
 
   /* ── LE PANNEAU D'OBJET (barre de commandes du panneau sélectionné) ──────────
      NORMAL VIEW : une barre COMPACTE sous le canvas.
@@ -3817,35 +4146,217 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
      directement, ses éléments font partie de l'arbre du parent : rien n'est
      remonté, la saisie et le défilement restent où ils sont. (Même remède que
      `renderSvg`, dont le contenu partage tout le contexte du composant.) */
-  /* ── LA COLONNE D'UN GROUPE DE LA FENÊTRE D'OBJET (voir `bar` dans PropertiesPanel)
-     En PLEIN ÉCRAN la fenêtre de l'objet est une GRILLE DE 6 COLONNES : chaque
-     groupe de commandes occupe une colonne — identité + pastilles des panneaux,
-     pile / copie / suppression / vue, figures du panneau, taille + ajustement,
-     outils de la figure (rotation, précision, recadrage, gomme, ombre), textes —
-     au lieu de s'empiler sur toute la largeur. La même information tient donc en
-     UNE ligne au lieu de quatre : c'est l'espace vertical rendu au canvas.
-     SEULE LA LÉGENDE DU PANNEAU (son sous-titre) prend toute la largeur, et elle
-     est placée EN DERNIER (`order-last col-span-full`).
-     `min-w-0` est indispensable : sans lui une colonne de grille refuse de
-     descendre sous la largeur de son contenu et la grille déborde. */
+  /* ── LA FENÊTRE DE L'OBJET : TROIS COLONNES TITRÉES (voir `bar`) ───────────
+     FIGURES · MODIFY IMAGE · OBJECTS. En plein écran la fenêtre est une GRILLE
+     DE TROIS COLONNES, et non plus six cellules d'autant de groupes (elles
+     laissaient la première colonne presque vide sur un écran moyen) :
+
+       FIGURES           MODIFY IMAGE                  OBJECTS
+       ➕ Add figure      🎨 Transparent background      Arrow · Line · Rectangle · Circle
+       ↔ Swap image      🌓 Shadow (figure)             ⇹ Align · Distribute
+       ⊞ Lay in a grid   ✂ Crop · ↻ Rotate · 🧽 Eraser  + Add text · ✏️ Place by click
+       la liste des      Contrast / Brightness /        la liste des textes, l'un
+       figures           Saturation / Hue · Tint         sous l'autre
+                         PANELS : A B C · Copy · Paste · Delete
+
+     L'ORDRE VISUEL NE DÉPEND PAS DE L'ORDRE DU SOURCE : chaque élément porte sa
+     COLONNE (`md:col-start-1|2|3`) et son RANG (`order-*`), et la grille se
+     remplit en « dense » — les commandes ont donc été regroupées PAR SUJET sans
+     déplacer d'énormes blocs de JSX. La LÉGENDE (sous-titre du panneau) reste le
+     seul élément de TOUTE la largeur, placé EN DERNIER, et « ▾ More options »
+     vient après elle.
+     `min-w-0` est indispensable : sans lui une colonne refuse de descendre sous
+     la largeur de son contenu et la fenêtre déborde. Les deux LISTES (figures et
+     textes) défilent chez elles (`max-h-… overflow-y-auto`) : une liste longue
+     n'étire donc jamais la ligne qu'elle partage avec les autres colonnes.
+     Le TITRE de la fenêtre EST son pli (`panelOpen`) : repliée, elle ne laisse
+     qu'une ligne et le canvas garde toute la hauteur. */
   const panelCellCls = (bar, extra = '') => `flex flex-wrap items-center gap-x-1.5 gap-y-1 ${extra}${bar ? ' min-w-0' : ''}`;
+  // Le titre d'une colonne ; `where` = sa colonne et son rang en plein écran.
+  const panelTitle = (text, where) => (
+    <h5 className={`text-[10px] font-black uppercase tracking-wide text-slate-500 shrink-0 ${where || ''}`}>{text}</h5>
+  );
 
   const PropertiesPanel = ({ bar = false } = {}) => (
-    <div className={bar
-      ? 'grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 items-start gap-x-3 gap-y-1.5'
-      : 'flex flex-col gap-1 border-t border-slate-200 pt-1.5'}>
-      {/* ── COLONNE 1 · QUEL PANNEAU, ET TOUT CE QUI VAUT POUR LE PANNEAU ───────
-          Une barre, pas une page : identité, pastilles « Panels » (sélection
-          multiple), copier / coller — puis, dans la colonne suivante, profondeur,
-          suppression, plein écran sur l'objet et retour au graphe d'origine. En
-          plein écran ces deux colonnes se placent côte à côte (voir
-          panelCellCls) : la même barre tient en une ligne. */}
-      <div className={panelCellCls(bar)}>
+    <div className={bar ? 'flex flex-col gap-1.5' : 'flex flex-col gap-1.5 border-t border-slate-200 pt-1.5'}>
+      {/* ── LE TITRE EST LE PLI DE LA FENÊTRE (▾ ouverte / ▸ repliée) ────────── */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <button type="button" onClick={() => setPanelOpen((v) => !v)}
+          className={`font-black text-[11px] px-1.5 py-0.5 rounded border shrink-0 ${panelOpen ? 'bg-slate-700 text-white border-slate-700' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+          title={panelOpen
+            ? 'Fold the whole object window away — the canvas keeps all the height (this same click brings it back, with its state)'
+            : 'Show the object window: the figures of this panel, the image tools, the panels and the objects'}>
+          {panelOpen ? '▾' : '▸'} Object window
+        </button>
         <span className="text-[11px] font-bold text-slate-700 shrink-0"
           title="The selected panel. Its letter is assigned by its position in the grid and re-numbered automatically — it is never typed in.">
           Panel {selectedObj.letter || '—'}
         </span>
-        {selectedIds.length > 1 ? <span className="text-[10px] font-normal text-slate-500 shrink-0">— {selectedIds.length} panels selected</span> : null}
+        {selectedIds.length > 1 ? (
+          <span className="text-[10px] font-normal text-slate-500 shrink-0">— {selectedIds.length} panels selected</span>
+        ) : null}
+        {!panelOpen && (
+          <span className="text-[10px] text-slate-500 truncate min-w-0" title={selectedObj.caption || ''}>
+            {selectedObj.caption ? `· ${selectedObj.caption}` : '· no sub-caption yet'}
+          </span>
+        )}
+      </div>
+      {panelOpen && (
+      <div className={bar
+        ? 'grid grid-cols-1 md:grid-cols-3 grid-flow-row-dense items-start gap-x-4 gap-y-1.5'
+        : 'flex flex-col gap-1.5'}>
+      {/* ── LES TROIS TITRES DE COLONNE ───────────────────────────────────────── */}
+      {panelTitle('Figures', bar ? 'order-1 md:col-start-1' : '')}
+      {panelTitle('Modify image', bar ? 'order-1 md:col-start-2' : '')}
+      {panelTitle('Objects', bar ? 'order-1 md:col-start-3' : '')}
+      {/* ── OBJECTS · LIGNE 1 : LES FORMES ──────────────────────────────────────
+          Une FLÈCHE, une LIGNE, un RECTANGLE et un CERCLE : quatre objets de
+          canvas (en millimètres, sans lettre ni cellule) posés PAR-DESSUS les
+          panneaux. Chacun arrive sélectionné au milieu du canvas, avec sa
+          poignée de déplacement et ses deux coins ; ses réglages — couleur,
+          épaisseur, pointillés, remplissage, courbure, ombre — sont dans
+          « Shape properties », exactement comme ceux d'une flèche.
+          C'est ICI que « ↗ Arrow » vit désormais : il a quitté la barre du haut
+          (et celle du plein écran), avec « 🌓 Shadow panels ». */}
+      <div className={panelCellCls(bar, bar ? 'order-2 md:col-start-3' : '')}>
+        <button type="button" onClick={addArrow}
+          className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-1.5 py-0.5 rounded text-[10px] shrink-0"
+          title="Add an ARROW annotation on top of the panels — drag it to place it, drag a blue end handle to aim it; straight or curved, one head or heads at BOTH ends, with its own colour and drop shadow (“Arrow properties”).">
+          ↗ Arrow{arrows.length ? ` (${arrows.length})` : ''}
+        </button>
+        {SHAPE_KINDS.map((k) => (
+          <button key={k} type="button" onClick={() => addShape(k)}
+            className="bg-white border border-rose-300 text-rose-700 hover:bg-rose-50 font-bold px-1.5 py-0.5 rounded text-[10px] shrink-0"
+            title={`Add a ${SHAPE_LABELS[k].toLowerCase()} on top of the panels — drag it to place it, drag a blue corner handle to resize it, or use “Shape properties” (colour, thickness, dashed, fill, curve, shadow). It takes no panel letter and never disturbs the panels' numbering.`}>
+            {k === 'line' ? '╱ Line' : k === 'rect' ? '▭ Rectangle' : '◯ Circle'}
+          </button>
+        ))}
+        {shapes.length > 0 && (
+          <span className="text-[9px] font-bold text-slate-600 bg-slate-100 border border-slate-200 rounded px-1 shrink-0"
+            title="The shapes of this canvas are drawn on top of the panels. Click one on the canvas to select it: its “Shape properties” replace this window, exactly like an arrow's.">
+            ⇱ {shapes.length} shape{shapes.length === 1 ? '' : 's'} — click one on the canvas
+          </span>
+        )}
+      </div>
+      {/* ── OBJECTS · LIGNE 2 : ALIGNER / RÉPARTIR LES PANNEAUX ─────────────────
+          Les ⇹ de la colonne FIGURES alignent les figures D'UN panneau ; ceux-ci
+          alignent et répartissent les PANNEAUX eux-mêmes sur la grille (voir
+          alignBoxesPatches / distributeBoxesPatches). Il faut au moins DEUX
+          panneaux sélectionnés — Ctrl+clic sur le canvas, ou les pastilles
+          « Panels » de la colonne voisine — et la RÉPARTITION en demande trois ;
+          les commandes s'expliquent alors au lieu de ne rien faire. */}
+      <div className={panelCellCls(bar, bar ? 'order-3 md:col-start-3' : '')}>
+        {(() => {
+          const n = selectedIds.length;
+          const enough = n >= 2;
+          const glyph = `text-[10px] font-bold border rounded px-0.5 shrink-0 ${enough ? 'text-indigo-700 border-indigo-200 bg-white hover:bg-indigo-100' : 'text-slate-300 border-slate-200 bg-slate-50'}`;
+          return (
+            <span className="inline-flex items-center gap-x-0.5 border border-indigo-200 bg-indigo-50 rounded px-1 py-0.5 shrink-0"
+              title={enough
+                ? `Align and spread the ${n} selected PANELS on the grid — the first selected panel is the reference, exactly like a move or a resize of several panels. Nothing moves when there is nothing to do.`
+                : 'Align and spread the PANELS themselves: select at least TWO panels (Ctrl+click on the canvas, or the “Panels” chips of this window) — the first selected is the reference.'}>
+              <span className="text-[9px] font-black text-indigo-700 shrink-0">⇹ panels {n}</span>
+              <button type="button" onClick={() => applyPanelLayout('align', 'left')} disabled={!enough} className={glyph}
+                title="Align the selected panels on the LEFT — they all take the first column of the selection (the leftmost panel does not move).">⬅</button>
+              <button type="button" onClick={() => applyPanelLayout('align', 'hcenter')} disabled={!enough} className={glyph}
+                title="Centre the selected panels HORIZONTALLY on the selection — their middles land on one vertical line.">⬌</button>
+              <button type="button" onClick={() => applyPanelLayout('align', 'right')} disabled={!enough} className={glyph}
+                title="Align the selected panels on the RIGHT edge of the selection — their right edges on one vertical line (the rightmost does not move).">➡</button>
+              <button type="button" onClick={() => applyPanelLayout('align', 'top')} disabled={!enough} className={glyph}
+                title="Align the selected panels on the TOP of the selection — they all take the first row (the highest panel does not move).">⬆</button>
+              <button type="button" onClick={() => applyPanelLayout('align', 'vcenter')} disabled={!enough} className={glyph}
+                title="Centre the selected panels VERTICALLY on the selection — their middles land on one horizontal line.">⬍</button>
+              <button type="button" onClick={() => applyPanelLayout('align', 'bottom')} disabled={!enough} className={glyph}
+                title="Align the selected panels on the BOTTOM edge of the selection — their bottom edges on one horizontal line (the lowest does not move).">⬇</button>
+              <button type="button" onClick={() => applyPanelLayout('distribute', 'h')} disabled={n < 3} className={`${glyph} ${n < 3 ? 'opacity-60' : ''}`}
+                title={n < 3
+                  ? 'Spreading the panels out needs THREE panels at least (with two there is only one gap to set).'
+                  : 'Spread the selected panels HORIZONTALLY: the same gap between neighbours, left to right — the two extreme panels keep their place.'}>↔</button>
+              <button type="button" onClick={() => applyPanelLayout('distribute', 'v')} disabled={n < 3} className={`${glyph} ${n < 3 ? 'opacity-60' : ''}`}
+                title={n < 3
+                  ? 'Spreading the panels out needs THREE panels at least (with two there is only one gap to set).'
+                  : 'Spread the selected panels VERTICALLY: the same gap between neighbours, top to bottom — the two extreme panels keep their place.'}>↕</button>
+            </span>
+          );
+        })()}
+        {selectedIds.length < 2 && (
+          <span className="text-[9px] text-slate-400 italic shrink-0">Ctrl+click two panels on the canvas to align them (three to spread them out)</span>
+        )}
+      </div>
+      {/* ── MODIFY IMAGE · LIGNE 1 : le fond et l'ombre de LA FIGURE ────────────
+          « 🎨 Transparent background » mène à l'outil de détourage de la figure
+          ACTIVE (son aperçu cliquable, la tolérance et « les quatre coins » sont
+          dans « ▾ More options », que ce bouton ouvre) ; « 🌓 Figure shadow »
+          donne et retire l'ombre de l'IMAGE — jamais celle du cadre du panneau,
+          qui a la sienne dans le repli. Ces deux commandes étaient au milieu des
+          outils de la figure : elles ouvrent maintenant la colonne. */}
+      <div className={panelCellCls(bar, bar ? 'order-2 md:col-start-2' : '')}>
+        <button type="button" onClick={() => setPanelMore(true)} disabled={cropPanelIdx < 0}
+          className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${cropPanelIdx < 0 ? 'bg-slate-100 border-slate-200 text-slate-300' : (figBgRecord ? 'bg-teal-600 text-white border-teal-700' : 'bg-white border-teal-300 text-teal-700 hover:bg-teal-100')}`}
+          title={cropPanelIdx < 0
+            ? 'Add a figure to this panel first: a background is removed from a PICTURE.'
+            : 'Make the background of the active figure transparent — click the colour on the preview, then “🎨 Remove background”; the preview, the tolerance and “Auto: the four corners” sit in “▾ More options”, which this click opens.'}>
+          🎨 Transparent background{figBgRecord ? ' ✓' : ''}
+        </button>
+        <button type="button" onClick={toggleActiveFigureShadow} disabled={cropPanelIdx < 0}
+          className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${cropPanelIdx < 0 ? 'bg-slate-100 border-slate-200 text-slate-300' : (figShadowOn ? 'bg-slate-800 text-white border-slate-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100')}`}
+          title={cropPanelIdx < 0
+            ? 'Add a figure to this panel first: the shadow is a setting of a PICTURE.'
+            : (figShadowOn
+              ? 'Take the shadow off this figure — the panel keeps its own shadow (a panel shadow is a separate setting).'
+              : 'Give the ACTIVE figure its own drop shadow — the picture, not the panel frame: it follows the pixels of the figure, so a cut-out background gives the shadow OF WHAT THE IMAGE SHOWS instead of a rectangle. Offsets, blur and colour: “▾ More options”.')}>
+          🌓 {figShadowOn ? 'Figure shadow ✓' : 'Figure shadow'}
+        </button>
+      </div>
+      {/* ── MODIFY IMAGE · LIGNE 3 : LE RÉGLAGE D'IMAGE ─────────────────────────
+          Contraste, luminosité, saturation, teinte et coloration : le réglage
+          porte sur les PIXELS de la figure ACTIVE (utils/figureAdjust.js) et
+          voyage avec elle — sauvegarde du canvas, annulation, Export PNG,
+          Insert into project (le `<filter>` est dans la composition).
+          « ↺ Reset » ramène tout à zéro : le filtre disparaît alors du SVG,
+          exactement comme avant. */}
+      <div className={panelCellCls(bar, bar ? 'order-6 md:col-start-2' : '')}>
+        {cropPanelIdx < 0 ? (
+          <span className="text-[10px] text-slate-400 italic shrink-0">Add a figure to this panel to adjust contrast, brightness, colours…</span>
+        ) : (
+          <>
+            {ADJUST_FIELDS.map((f) => (
+              <label key={f.key} className="flex items-center gap-1 text-[10px] font-bold text-slate-500 shrink-0"
+                title={`${f.label} of the ACTIVE figure (figure ${cropPanelIdx + 1}) — the PICTURE, not the panel frame. It is part of the composition, so every export keeps it.`}>
+                {f.label}
+                <input type="range" min={f.min} max={f.max} step={f.step} value={Number((activeAdjust || {})[f.key]) || 0}
+                  onChange={(e) => setFigAdjust({ [f.key]: Number(e.target.value) })}
+                  className="w-16 accent-slate-600" />
+                <input type="number" min={f.min} max={f.max} step={f.step} value={Number((activeAdjust || {})[f.key]) || 0}
+                  onChange={(e) => setFigAdjust({ [f.key]: Number(e.target.value) })}
+                  className="w-11 border rounded px-0.5 py-px text-[10px]" />
+              </label>
+            ))}
+            <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 shrink-0"
+              title="Recolour the figure: this colour is merged over its pixels at the amount on the right (0 = not at all, 0.4 = a clear tint) — the usual way to bring a scheme back onto the colour of the caption.">
+              Tint
+              <input type="color" value={(activeAdjust && activeAdjust.tint) || '#ffcc00'}
+                onChange={(e) => setFigAdjust({ tint: e.target.value })}
+                className="w-6 h-5 rounded border cursor-pointer shrink-0" />
+              <input type="number" min="0" max="1" step="0.05" value={Number((activeAdjust || {}).tintAmount) || 0}
+                onChange={(e) => setFigAdjust({ tintAmount: Number(e.target.value) })}
+                className="w-11 border rounded px-0.5 py-px text-[10px]" />
+            </label>
+            <button type="button" onClick={() => setFigAdjust({ ...ADJUST_NEUTRAL })} disabled={!activeAdjustSpec}
+              className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${activeAdjustSpec ? 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100' : 'bg-slate-100 border-slate-200 text-slate-300'}`}
+              title="Back to the original pixels of this figure (contrast, brightness, saturation, hue and tint at zero) — Ctrl+Z undoes it like any other command">
+              ↺ Reset
+            </button>
+          </>
+        )}
+      </div>
+      {/* ── PANELS : CE QUI AGIT SUR LE PANNEAU LUI-MÊME ────────────────────────
+          Les pastilles « A B C … » (sélection multiple), copier / coller /
+          supprimer, la profondeur (devant / derrière), le plein écran sur
+          l'objet et le retour au graphe d'origine : tout ce qui vise LE panneau,
+          et non sa figure. Dernière section de la colonne « Modify image »,
+          juste avant la légende. */}
+      <div className={panelCellCls(bar, bar ? 'order-9 md:col-start-2' : '')}>
         <span className="w-px h-4 bg-slate-300 shrink-0" />
         {/* MULTI-SELECTION. The chips are the panels of the canvas: click one to
             add / remove it from the selection, the “🎯” chip of a selected panel
@@ -3890,11 +4401,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         )}
         <span className="w-px h-4 bg-slate-300 shrink-0" />
       </div>
-      {/* ── COLONNE 2 · LA PROFONDEUR, LA SUPPRESSION ET LA VUE ─────────────────
-          La suite de la première colonne : où ce panneau se trouve dans la pile,
-          les copies, la suppression, le plein écran sur l'objet, le retour au
-          graphe d'origine et le repli « ▾ More options ». */}
-      <div className={panelCellCls(bar)}>
+      {/* ── PANELS (suite) · PROFONDEUR, SUPPRESSION, VUE ───────────────────────
+          Où ce panneau se trouve dans la pile, les copies, la suppression, le
+          plein écran sur l'objet, le retour au graphe d'origine et le repli
+          « ▾ More options ». */}
+      <div className={panelCellCls(bar, bar ? 'order-10 md:col-start-2' : '')}>
         {/* 🗂 QUEL PANNEAU EST AU-DESSUS — les panneaux sont peints dans l'ordre
             de la liste : ces deux commandes font passer ce panneau devant ses
             voisins (ou le rangent derrière). Les lettres (A, B, C …) sont
@@ -3931,16 +4442,18 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           {panelMore ? '▴ Fewer options' : '▾ More options'}
         </button>
       </div>
-      {/* ── COLONNE 3 · LES FIGURES DU PANNEAU, ET CE QU'ON LEUR FAIT ───────────
-          Importer / ajouter / échanger, la liste des figures (la dernière est
-          AU-DESSUS), la sélection multiple de figures et les commandes ⇹ qui les
-          alignent et les répartissent. La TAILLE exacte et l'ajustement sont dans
-          la colonne suivante ; les outils de la figure (rotation, 🎯 Precision,
-          recadrage, gomme, ombre) dans celle d'après. */}
-      <div className={panelCellCls(bar)}>
-        <button onClick={() => { setPickMode('replace'); setShowLibrary(true); }}
-          className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-2 py-0.5 rounded text-[10px] shrink-0"
-          title="Import Image (High-Res) — replace the figure of this panel with a capture taken from the image library">🖼 Import</button>
+      {/* ── FIGURES : LES FIGURES DU PANNEAU, ET CE QU'ON LEUR FAIT ─────────────
+          Ajouter / échanger / remettre en grille, la liste des figures (la
+          dernière est AU-DESSUS ; elle défile au-delà de quelques lignes pour
+          qu'une longue liste n'étire pas la fenêtre), la sélection multiple de
+          figures et les commandes ⇹ qui les alignent et les répartissent entre
+          elles. La TAILLE exacte et l'ajustement sont dans « Modify image » ; les
+          outils de la figure (rotation, recadrage, gomme, réglage d'image,
+          ombre) aussi. « 🖼 Import » a été retiré : « ➕ Add figure » et
+          « ↔ Swap image » font les deux gestes (ajouter une figure / changer les
+          pixels de celle qui est là), et la bibliothèque garde son « ↺ Replace »
+          pour recommencer un panneau avec une seule figure. */}
+      <div className={panelCellCls(bar, bar ? 'order-3 md:col-start-1' : '')}>
         <button onClick={() => { setPickMode('add'); setShowLibrary(true); }}
           className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-2 py-0.5 rounded text-[10px] shrink-0"
           title="Add another figure to this same object/panel: the figures already there are FROZEN (each one keeps exactly the place and size it has now) and the new one lands in the biggest free space — nothing has to be laid out again. “⊞ Lay the figures out in a grid” re-flows the panel side by side if you prefer.">➕ Add figure</button>
@@ -3972,6 +4485,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           </button>
         )}
         {getObjImages(selectedObj).length > 0 && <span className="w-px h-4 bg-slate-300 shrink-0" />}
+        {/* LA LISTE DES FIGURES — une par ligne, dans son propre bloc DÉFILANT :
+            une figure = une vignette, son libellé, la sélection 🎯/☑, l'empilement
+            ⤒ ⬆ ⬇ ⤓, le lien ↗ vers le graphe d'origine et ✕ pour la retirer.
+            Elle défile au-delà de quelques lignes (`max-h-[8rem]`) : une longue
+            liste ne peut donc pas étirer la ligne que cette colonne partage avec
+            les deux autres. */}
+        <div className="basis-full flex flex-wrap items-center gap-x-1.5 gap-y-1 max-h-[8rem] overflow-y-auto custom-scrollbar min-w-0">
         {getObjImages(selectedObj).map((im, i) => (
           <span key={im.libId || i} onClick={() => setActiveFig({ objId: selectedObj.id, idx: i })}
             className={`inline-flex items-center gap-x-1 border rounded px-1 py-0.5 cursor-pointer shrink-0 ${cropPanelIdx === i && getObjImages(selectedObj).length > 1 ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200'}`}
@@ -4035,6 +4555,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             <button type="button" onClick={() => removeObjImage(i)} className="text-[11px] font-bold text-red-400 hover:text-red-600 shrink-0 rounded px-0.5" title="Remove this figure from the panel">✕</button>
           </span>
         ))}
+        </div>
         {getObjImages(selectedObj).length > 1 && figGroupOf(selectedObj.id).length > 0 && (
           <span className="text-[10px] font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 rounded px-1.5 py-0.5 shrink-0"
             title={`${figGroupOf(selectedObj.id).length + 1} figures selected — the ACTIVE one is the first selected: resizing it gives EVERY selected figure its size (each one keeps its own place), and dragging it moves them all. The ⇹ commands beside it align and spread them.`}>
@@ -4073,10 +4594,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           );
         })()}
       </div>
-      {/* ── COLONNE 4 · LA TAILLE EXACTE ET L'AJUSTEMENT ────────────────────────
+      {/* ── MODIFY IMAGE · LIGNE 4 : LA TAILLE EXACTE ET L'AJUSTEMENT ───────────
           La largeur / hauteur tapables (en % du panneau) et la façon dont la
           figure remplit sa case (Fit / Scale). */}
-      <div className={panelCellCls(bar)}>
+      <div className={panelCellCls(bar, bar ? 'order-7 md:col-start-2' : '')}>
         {cropPanelIdx >= 0 && (() => {
           /* 🎯 EXACT SIZE OF THE ACTIVE FIGURE (keyboard) — see setActiveFigBox:
              on a small figure the corner handle is quicker than the hand, so the
@@ -4131,11 +4652,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             className={`w-14 border rounded px-0.5 py-px text-[10px] ${selectedFreeLayout ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}`} />
         </label>
       </div>
-      {/* ── COLONNE 5 · LES OUTILS DE LA FIGURE ─────────────────────────────────
-          Rotation, 🎯 Precision (le geste de la souris au quart), recadrage,
-          gomme et l'ombre de la figure — l'IMAGE elle-même, jamais le cadre du
-          panneau (celle du panneau est dans « ▾ More options »). */}
-      <div className={panelCellCls(bar)}>
+      {/* ── MODIFY IMAGE · LIGNE 2 : LES OUTILS DE LA FIGURE ───────────────────
+          Rotation, 🎯 Precision (le geste de la souris au quart), recadrage et
+          gomme — et les ⟲ qui remettent le recadrage ou les gommages à zéro.
+          C'est l'IMAGE elle-même, jamais le cadre du panneau (dont l'ombre vit
+          dans « ▾ More options »). L'ombre de la FIGURE et le détourage ont leur
+          bouton en tête de colonne. */}
+      <div className={panelCellCls(bar, bar ? 'order-5 md:col-start-2' : '')}>
         <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 shrink-0" title="Turn the figure inside its panel (°) — ↻90° does a quarter turn">
           Rotate (°)
           <input type="number" min="-360" max="360" step="1" value={selectedObj.imgRotate || 0} onChange={e => updateObj({ imgRotate: Number(e.target.value) })} className="w-14 border rounded px-0.5 py-px text-[10px]" />
@@ -4198,19 +4721,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             className="w-12 border rounded px-0.5 py-px text-[10px]"
             title="Diameter of the brush in millimetres of the canvas (0.5 to 30 mm)" />
         </label>
-        {/* 🌓 L'OMBRE DE LA FIGURE — l'IMAGE elle-même, pas le cadre du panneau
-            (le bloc complet est dans « ▾ More options »). Elle suit les PIXELS de
-            la figure, donc son alpha : une image détourée (🎨, ou un PNG à fond
-            transparent) projette l'ombre de ce qu'elle MONTRE, pas un rectangle. */}
-        <button type="button" onClick={toggleActiveFigureShadow} disabled={cropPanelIdx < 0}
-          className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${cropPanelIdx < 0 ? 'bg-slate-100 border-slate-200 text-slate-300' : (figShadowOn ? 'bg-slate-800 text-white border-slate-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100')}`}
-          title={cropPanelIdx < 0
-            ? 'Add a figure to this panel first: the shadow is a setting of a PICTURE.'
-            : (figShadowOn
-              ? 'Take the shadow off this figure — the panel keeps its own shadow (a panel shadow is a separate setting).'
-              : 'Give the ACTIVE figure its own drop shadow — the picture, not the panel frame: it follows the pixels of the figure, so a cut-out background (🎨 in “▾ More options”) gives the shadow OF WHAT THE IMAGE SHOWS instead of a rectangle. Offsets, blur and colour: “▾ More options → Shadow (figure)”.')}>
-          🌓 {figShadowOn ? 'Figure shadow ✓' : 'Figure shadow'}
-        </button>
+        {/* 🌓 L'OMBRE DE LA FIGURE a son bouton EN TÊTE DE COLONNE (à côté de
+            « 🎨 Transparent background ») : elle y est un geste d'un clic, et
+            ses réglages fins restent dans « ▾ More options ». La ligne des
+            outils ne la répète donc pas. */}
       </div>
       {/* ── LA LÉGENDE DU PANNEAU — LA SEULE COLONNE DE TOUTE LA LARGEUR ────────
           Elle est placée EN DERNIER, tout en bas de la fenêtre (`order-last
@@ -4236,10 +4750,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           className="shrink-0 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold px-1.5 py-0.5 rounded text-[10px]"
           title="Open the floating caption editor">✎ Edit in place</button>
       </div>
-      {/* ── COLONNE 6 · LES TEXTES POSÉS SUR LE PANNEAU ───────────────────────── */}
-      <div className={panelCellCls(bar)}>
-        {!bar && <span className="w-px h-4 bg-slate-300 shrink-0" />}
-        <span className="text-[10px] font-bold text-slate-500 uppercase shrink-0">Text</span>
+      {/* ── OBJECTS · LES OUTILS ET LA LISTE DES TEXTES ─────────────────────────
+          « + Add Text » pose un texte au milieu du panneau, « ✏️ Place by click »
+          le pose exactement où l'on clique ; chaque texte ajouté apparaît ensuite
+          dans la liste, l'un sous l'autre, avec SES réglages (contenu, X / Y en
+          mm, corps, couleur, gras, italique, ⧉ Copy, ✕). La liste défile
+          au-delà de quelques lignes, pour ne pas étirer la fenêtre. */}
+      <div className={panelCellCls(bar, bar ? 'order-4 md:col-start-3' : '')}>
         <button onClick={addText} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-1.5 py-0.5 rounded text-[10px] shrink-0"
           title="Add a text in the middle of the panel — then drag it on the object where you want it">+ Add Text</button>
         <button onClick={() => setPlaceTextMode(v => !v)}
@@ -4249,6 +4766,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         {(selectedObj.texts || []).length === 0 && (
           <span className="text-[9px] text-slate-400 italic">“+ Add Text” (or “✏️ Place by click”), then drag it on the object</span>
         )}
+        <div className="basis-full flex flex-wrap items-center gap-x-1.5 gap-y-1 max-h-[8rem] overflow-y-auto custom-scrollbar min-w-0">
         {(selectedObj.texts || []).map((tx, i) => (
           <span key={tx.id} className={`inline-flex flex-wrap items-center gap-x-1 border rounded px-1 py-0.5 ${activeText && activeText.txId === tx.id ? 'border-sky-400 ring-1 ring-sky-300 bg-sky-50' : 'border-slate-200 bg-white'}`}>
             <button type="button" onClick={() => setActiveText({ objId: selectedObj.id, txId: tx.id })}
@@ -4275,11 +4793,12 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             <button onClick={() => deleteText(tx.id)} className="text-red-400 hover:text-red-600 font-bold text-[11px] px-0.5 shrink-0" title="Delete text">✕</button>
           </span>
         ))}
+        </div>
       </div>
       {panelMore && (
         /* Le repli ne prend pas toute la largeur non plus : en plein écran il
            occupe DEUX colonnes (la légende reste le seul élément pleine largeur). */
-        <div className={`flex flex-wrap items-start gap-x-4 gap-y-1.5 ${bar ? 'min-w-0 xl:col-span-2' : 'border-t border-slate-200 pt-1.5'}`}>
+        <div className={`flex flex-wrap items-start gap-x-4 gap-y-1.5 ${bar ? 'min-w-0 order-12 md:col-span-full' : 'border-t border-slate-200 pt-1.5'}`}>
           {/* L'OMBRE DU PANNEAU — un PANNEAU projette une ombre (cadre, figure,
               lettre, textes) : « 🌓 Same shadow on every panel » l'applique à
               toute la figure en un clic, et le même bloc de contrôles sert aux
@@ -4436,6 +4955,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           </div>
         </div>
       )}
+      </div>
+      )}
     </div>
   );
 
@@ -4467,7 +4988,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                     title="Create a NEW image — a new figure, not a wipe: the editor starts on a blank canvas with one empty panel (A) ready for its first capture, and the next “💾 Save canvas” adds a NEW image to the image library. The figure you were working on stays in the library exactly as it was last saved (its “↩ Load” brings it back). The canvas format — size, grid, borders, aspect ratio, letter size — is kept.">
               ➕ New image
             </button>
-            <button onClick={() => { if(window.confirm('Clear the entire canvas?')) { commitHistory(); setObjects([]); setArrows([]); setSelectedId(null); setSelectedArrowId(null); setCanvasEntries({}); setCanvasLabel(''); } }} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100">Clear Canvas</button>
+            <button onClick={() => { if(window.confirm('Clear the entire canvas?')) { commitHistory(); setObjects([]); setArrows([]); setSelectedId(null); setSelectedArrowId(null); setShapes([]); setSelectedShapeId(null); setCanvasEntries({}); setCanvasLabel(''); } }} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100">Clear Canvas</button>
           </div>
         </div>
 
@@ -4550,17 +5071,26 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           <label className="text-[10px] font-bold text-slate-500 flex flex-col flex-1 min-w-[220px]" title="The caption written at the bottom of the figure. By default it merges the panel sub-captions in LETTER order (A: … · B: … · C: …), whatever order the panels were created in.">Global caption (click to edit — merges the object sub-captions in letter order)
             <span className="border border-slate-200 rounded p-1 text-xs bg-slate-50 text-slate-600 truncate hover:border-blue-400 hover:bg-blue-50 cursor-text" title={effectiveGlobalCaption} onClick={() => { setSelectedId(null); setEditingCaption(true); }}>{effectiveGlobalCaption || 'Merges the object sub-captions (A: …, B: …)'}</span>
           </label>
+          {/* « ↗ Add arrow » et « 🌓 Shadow panels » ONT QUITTÉ CETTE BARRE : les
+              deux commandes vivent maintenant dans la FENÊTRE DE L'OBJET, où
+              elles se trouvaient déjà — « ↗ Arrow · ╱ Line · ▭ Rectangle ·
+              ◯ Circle » ouvre la colonne OBJETS, et l'ombre des panneaux est
+              dans « ▾ More options » (la barre de plein écran les a perdus de la
+              même façon). Une seule porte d'entrée par commande, au même endroit
+              quel que soit l'affichage. */}
           <button onClick={addObject} title="Add a panel — it takes the FIRST FREE cell of the grid, so it never lands on a panel that is already there (a full grid is reported instead of covering a figure)." className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">+ Add Object</button>
-          <button onClick={addArrow} title="Add an ARROW annotation on top of the panels — drag it to place it, drag a blue end handle to aim it; straight or curved, one head or heads at BOTH ends, with its own colour and drop shadow (“Arrow properties”)." className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">↗ Add arrow{arrows.length ? ` (${arrows.length})` : ''}</button>
-          <button onClick={togglePanelsShadow} disabled={!objects.length} title="Drop shadow on every panel of the figure in one click — click again to take it off. One panel at a time: the “Shadow” block of its properties." className={`font-bold px-3 py-1.5 rounded-lg text-xs border disabled:opacity-40 ${panelsShadowed ? 'bg-slate-800 text-white border-slate-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}`}>🌓 Shadow panels</button>
-          {/* COLLER (Ctrl+V) : la copie d'un panneau revient telle quelle — ses
-              figures, ses textes et ses ombres — dans la première case libre. */}
-          <button onClick={() => pasteClipboard()}
-            title={`Paste a copied panel (Ctrl+V): its figures, its texts and its shadows come back, and its letter is re-numbered by position. It lands in the FIRST FREE cell of the grid — never on top of a panel that is there.${clipCount ? ` (${clipCount} panel${clipCount === 1 ? '' : 's'} copied)` : ' Copy a panel first: Ctrl+C on the canvas, or “⧉ Copy” in the object properties.'}`}
-            className={`font-bold px-3 py-1.5 rounded-lg text-xs border ${clipCount ? 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50' : 'bg-slate-100 border-slate-200 text-slate-400'}`}>📋 Paste{clipCount ? ` (${clipCount})` : ''}</button>
+          {/* ⛶ PLEIN ÉCRAN SUR L'OBJET — c'est le bouton qui REMPLACE
+              « 📋 Paste » dans cette barre : coller un panneau vit dans la
+              fenêtre de l'objet (section PANELS → « 📋 Paste ») et Ctrl+V marche
+              partout, alors que passer en plein écran sur un panneau n'était
+              atteignable que par « ⛶ Zoom Object », plus loin dans la même
+              ligne. Un seul bouton, à la place demandée. */}
+          <button onClick={() => selectedId && zoomToObject(selectedId)} disabled={!selectedId}
+            title={selectedId
+              ? 'Full screen on the selected object — the canvas zooms on that panel alone; “✕ Exit Full Screen” brings the whole figure back'
+              : 'Select a panel first (Ctrl+click selects several)'}
+            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold px-3 py-1.5 rounded-lg text-xs">⛶ Fullscreen on object</button>
           <button onClick={undo} disabled={!undoStack.current.length || histTick < 0} className="bg-slate-100 border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-200 disabled:opacity-40" title="Undo last change (Ctrl+Z)">↩ Undo</button>
-          <button onClick={() => selectedId && zoomToObject(selectedId)} disabled={!selectedId} title={selectedId ? 'Zoom fullscreen on the selected object' : 'Select an object first'}
-            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold px-3 py-1.5 rounded-lg text-xs">⛶ Zoom Object</button>
           <button onClick={exportPng} title="300 DPI PNG of the composition — the blue selection square and resize handles are never included; panel borders and grid lines follow the checkboxes." className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">Export PNG (300 DPI)</button>
           <button onClick={saveCanvasNow} disabled={saveBusy}
             title={canvasSaveProject()
@@ -4688,6 +5218,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         {!selectedObj && selectedArrow && (
           <ArrowPropertiesPanel arrow={selectedArrow} onChange={updateArrow} onDelete={() => removeArrow()} />
         )}
+        {!selectedObj && !selectedArrow && selectedShape && (
+          <ShapePropertiesPanel shape={selectedShape} onChange={updateShape} onDelete={() => removeShape()} />
+        )}
       </div>
 
       {/* Inline text editor — type directly on the canvas at the placed position */}
@@ -4797,11 +5330,15 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
 
               <div className="flex flex-wrap gap-2">
                  <button onClick={addObject} title="Add a panel — it takes the FIRST FREE cell of the grid, so it never lands on a panel that is already there (a full grid is reported instead of covering a figure)." className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">+ Add Object</button>
-                 <button onClick={addArrow} title="Add an ARROW annotation on top of the panels — drag it to place it, drag a blue end handle to aim it; straight or curved, one head or heads at BOTH ends, with its own colour and drop shadow (“Arrow properties”)." className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">↗ Add arrow{arrows.length ? ` (${arrows.length})` : ''}</button>
-                 <button onClick={() => pasteClipboard()}
-                   title={`Paste a copied panel (Ctrl+V): its figures, its texts and its shadows come back, into the FIRST FREE cell of the grid.${clipCount ? ` (${clipCount} panel${clipCount === 1 ? '' : 's'} copied)` : ' Copy a panel first: Ctrl+C on the canvas, or “⧉ Copy” in the object properties.'}`}
-                   className={`font-bold px-3 py-1.5 rounded-lg text-xs border ${clipCount ? 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50' : 'bg-slate-100 border-slate-200 text-slate-400'}`}>📋 Paste{clipCount ? ` (${clipCount})` : ''}</button>
-                 <button onClick={togglePanelsShadow} disabled={!objects.length} title="Drop shadow on every panel of the figure in one click — click again to take it off." className={`font-bold px-3 py-1.5 rounded-lg text-xs border disabled:opacity-40 ${panelsShadowed ? 'bg-slate-800 text-white border-slate-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}`}>🌓 Shadow panels</button>
+                 {/* « ↗ Add arrow » et « 🌓 Shadow panels » ont quitté cette
+                     barre comme celle de la vue normale : les deux commandes
+                     sont dans la fenêtre de l'objet (colonne OBJETS / « ▾ More
+                     options »), au même endroit dans les deux affichages. */}
+                 <button onClick={() => selectedId && zoomToObject(selectedId)} disabled={!selectedId}
+                   title={selectedId
+                     ? 'Re-centre and zoom the full screen view on the selected object'
+                     : 'Select a panel first (Ctrl+click selects several)'}
+                   className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold px-3 py-1.5 rounded-lg text-xs">⛶ Fullscreen on object</button>
                  <button onClick={undo} disabled={!undoStack.current.length || histTick < 0} className="bg-slate-100 border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-200 disabled:opacity-40" title="Undo last change (Ctrl+Z)">↩ Undo</button>
                  <button onClick={() => { setPickMode('replace'); setShowLibrary(true); }}
                    title="Open the image library — browse or upload new images from your computer, and keep it in sync with Google Drive (☁ Save to Drive · ⬇ Add missing from Drive · ♻️ Recover)"
@@ -4837,7 +5374,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           {/* Canvas Area — a REAL scrollable sheet: the inner box is canvas × zoom
               big, so the browser draws its own scrollbars (and the wheel works)
               instead of a transform that leaves nothing to scroll. */}
-          <div ref={fsAreaRef} className="flex-1 min-h-0 overflow-auto relative bg-slate-200 p-8" onClick={() => { setSelectedId(null); setSelectedArrowId(null); }}>
+          <div ref={fsAreaRef} className="flex-1 min-h-0 overflow-auto relative bg-slate-200 p-8" onClick={() => { setSelectedId(null); setSelectedArrowId(null); setSelectedShapeId(null); }}>
             <div
               style={{
                 width: `calc(${canvasW}mm * ${zoom})`,
@@ -4864,12 +5401,14 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
               règlent sur toute la largeur, juste sous le canvas, et rien ne
               recouvre plus la moitié droite de l'écran. Le panneau des flèches
               garde sa forme (quelques champs seulement). */}
-          {(selectedObj || selectedArrow) && (
+          {(selectedObj || selectedArrow || selectedShape) && (
             <div className={`absolute inset-x-0 bottom-0 z-20 border-t border-slate-300 bg-white/95 shadow-2xl max-h-[38vh] overflow-y-auto custom-scrollbar px-2 py-1.5 ${selectedObj ? '' : 'flex justify-end'}`}>
               {selectedObj
                 ? PropertiesPanel({ bar: true })
                 : <div className="w-80 max-h-[48vh] overflow-y-auto custom-scrollbar">
-                    <ArrowPropertiesPanel arrow={selectedArrow} isFloating onChange={updateArrow} onDelete={() => removeArrow()} />
+                    {selectedArrow
+                      ? <ArrowPropertiesPanel arrow={selectedArrow} isFloating onChange={updateArrow} onDelete={() => removeArrow()} />
+                      : <ShapePropertiesPanel shape={selectedShape} isFloating onChange={updateShape} onDelete={() => removeShape()} />}
                   </div>}
             </div>
           )}

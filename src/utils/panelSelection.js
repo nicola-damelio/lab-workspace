@@ -316,3 +316,96 @@ export const distributeFiguresPatches = (figs, axis = 'h') => {
   });
   return out;
 };
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ALIGNER / RÉPARTIR LES PANNEAUX (les “objets” du canvas) — même grammaire que
+   pour les figures, mais sur la GRILLE : un panneau occupe des CELLULES entières
+   (`{ x, y, w, h }` en cellules, voir blankObject), donc ces commandes rendent
+   des positions de cellules, arrondies et ramenées DANS la grille.
+   `gridCols` / `gridRows` bornent le résultat : un panneau aligné ne peut pas
+   sortir du canvas (il serait inatteignable à la souris).
+
+   Les deux extrêmes ne bougent pas quand on répartit (la commande répartit ce
+   qui est ENTRE eux), et rien à faire → `{}` : ni écriture, ni étape
+   d'historique.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/** Une boîte de panneau utilisable : cellules entières, taille ≥ 1 cellule. */
+const cellBox = (b) => {
+  if (!b) return null;
+  return {
+    id: String(b.id == null ? '' : b.id),
+    w: Math.max(1, Math.round(num(b.w, 1))),
+    h: Math.max(1, Math.round(num(b.h, 1))),
+    x: Math.round(num(b.x, 0)),
+    y: Math.round(num(b.y, 0))
+  };
+};
+const cellList = (boxes) => (Array.isArray(boxes) ? boxes : []).map(cellBox).filter((b) => b && b.id);
+
+/**
+ * Les nouvelles positions (cellules) d'un groupe de PANNEAUX aligné.
+ * @param {Array} boxes  `[{ id, x, y, w, h }]` en cellules
+ * @param {'left'|'hcenter'|'right'|'top'|'vcenter'|'bottom'} mode
+ * @param {{gridCols?:number, gridRows?:number}} grid  bornes du canvas
+ * @returns {object} `{ [id]: { x, y } }` — vide s'il n'y a rien à faire
+ */
+export const alignBoxesPatches = (boxes, mode, { gridCols = 99, gridRows = 99 } = {}) => {
+  const list = cellList(boxes);
+  if (list.length < 2 || !ALIGN_MODES.includes(mode)) return {};
+  const left = Math.min(...list.map((b) => b.x));
+  const right = Math.max(...list.map((b) => b.x + b.w));
+  const top = Math.min(...list.map((b) => b.y));
+  const bottom = Math.max(...list.map((b) => b.y + b.h));
+  const out = {};
+  list.forEach((b) => {
+    let x = b.x;
+    let y = b.y;
+    if (mode === 'left') x = left;
+    else if (mode === 'right') x = right - b.w;
+    else if (mode === 'hcenter') x = Math.round((left + right) / 2 - b.w / 2);
+    else if (mode === 'top') y = top;
+    else if (mode === 'bottom') y = bottom - b.h;
+    else y = Math.round((top + bottom) / 2 - b.h / 2);
+    const nx = Math.max(0, Math.min(Math.max(0, gridCols - b.w), x));
+    const ny = Math.max(0, Math.min(Math.max(0, gridRows - b.h), y));
+    if (nx !== b.x || ny !== b.y) out[b.id] = { x: nx, y: ny };
+  });
+  return out;
+};
+
+/**
+ * Les nouvelles positions (cellules) d'un groupe de PANNEAUX réparti : le même
+ * intervalle entre deux voisins, le long d'un axe. Les deux extrêmes ne bougent
+ * pas. Sous trois panneaux, ou quand rien ne bouge → `{}`.
+ * @param {Array} boxes  `[{ id, x, y, w, h }]` en cellules
+ * @param {'h'|'v'} axis  horizontal (colonnes) ou vertical (lignes)
+ * @param {{gridCols?:number, gridRows?:number}} grid
+ */
+export const distributeBoxesPatches = (boxes, axis = 'h', { gridCols = 99, gridRows = 99 } = {}) => {
+  const list = cellList(boxes);
+  if (list.length < 3 || !DISTRIBUTE_AXES.includes(axis)) return {};
+  const k = axis === 'h' ? 'x' : 'y';
+  const s = axis === 'h' ? 'w' : 'h';
+  const bound = axis === 'h' ? gridCols : gridRows;
+  const sorted = list.slice().sort((a, b) => (a[k] - b[k]) || a.id.localeCompare(b.id));
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  const start = first[k];
+  const span = (last[k] + last[s]) - start;      // du bord du premier au bord opposé du dernier
+  const total = sorted.reduce((acc, b) => acc + b[s], 0);
+  // L'intervalle commun peut être NÉGATIF (des panneaux se chevauchent) : ils se
+  // chevauchent alors également, ce qui est le sens de la commande.
+  const gap = (span - total) / (sorted.length - 1);
+  const out = {};
+  let cursor = start;
+  sorted.forEach((b, i) => {
+    if (i > 0 && i < sorted.length - 1) {
+      const nv = Math.max(0, Math.min(Math.max(0, bound - b[s]), Math.round(cursor)));
+      if (nv !== b[k]) out[b.id] = { [k]: nv };
+    }
+    cursor += b[s] + gap;
+  });
+  return out;
+};
+

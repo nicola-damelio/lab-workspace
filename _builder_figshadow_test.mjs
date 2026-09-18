@@ -96,7 +96,7 @@ has(defs, '<filter key={`fsf-${obj.id}-${i}`} id={figureShadowFilterId(obj.id, i
   'la région du filtre est élargie (un grand décalage / flou n’est pas coupé)');
 has(defs, '<feDropShadow dx={sp.dx} dy={sp.dy} stdDeviation={sp.blur} floodColor={sp.color} floodOpacity={sp.opacity} />',
   'c’est un vrai <feDropShadow> (il suit l’alpha de la source), pas un rectangle gris');
-eq(count(defs, /<feDropShadow /g), 3, 'les trois ombres (panneau, flèche, figure) partagent la même primitive');
+eq(count(defs, /<feDropShadow /g), 4, 'les QUATRE ombres (panneau, flèche, figure, forme) partagent la même primitive');
 ok(defs.indexOf('figureShadowFilterId') > defs.indexOf('shadowFilterId(a.id)'),
   'le filtre des figures est défini avec les autres (dans le MÊME <defs>)');
 ok(defs.indexOf('fsf-') < defs.indexOf('</defs>'), '…et donc présent dans chaque export (le SVG est rastérisé tel quel)');
@@ -136,8 +136,15 @@ ok(plain.indexOf('</g>') > plain.indexOf('mask={eraseMask}'),
   'le groupe filtré se referme APRÈS l’image masquée → le filtre voit ce qui reste');
 ok(plain.indexOf('transform={rot ? `rotate(${rot} ${center})` : undefined}') > plain.indexOf('<image href={src}'),
   'la rotation reste sur l’IMAGE : dx/dy ne tournent pas avec la figure');
-ok(imageEls.every((el) => !el.includes('filter=')),
-  'le filtre n’est JAMAIS posé sur une image directement (toujours sur son groupe)');
+ok(imageEls.every((el) => !el.includes('filter={figShadow ?')),
+  'l’ombre n’est JAMAIS posée sur une image directement (toujours sur son groupe qui l’enveloppe)');
+ok(imageEls.every((el) => !el.includes('filter={`url(#${figureShadowFilterId')),
+  '…et le filtre d’ombre d’une figure n’est jamais sur l’<image> elle-même');
+/* Le filtre de RÉGLAGE d’image (contraste, luminosité, couleur — voir
+   utils/figureAdjust), lui, EST sur l’<image> : il travaille les PIXELS, et il
+   doit s’appliquer AVANT l’ombre du groupe qui l’enveloppe. */
+ok(imageEls.some((el) => el.includes('filter={adjustFilter}')),
+  'le réglage d’image, lui, est bien posé sur l’image (il travaille ses pixels)');
 
 /* Le chemin RECADRÉ a, lui aussi, le groupe filtré au-dessus du groupe tourné. */
 const cropSlice = layer.slice(cropOpen, layer.indexOf('</g>', cropOpen) + '</g>'.length);

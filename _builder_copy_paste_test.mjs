@@ -238,11 +238,11 @@ has(IB, 'clipboardRef.current = buildCopyPayload(list, { thumbnails: false });',
 has(IB, 'clipActions.current.pastePayload(clipboardRef.current || fromClipboard);',
   'Ctrl+V prend la copie interne quand elle est là, sinon celle du presse-papiers');
 has(IB, '>📋 Copy</button>', 'le bouton « 📋 Copy » de la bande « Panels »');
-has(IB, ">📋 Paste{clipCount ? ` (${clipCount})` : ''}</button>", 'le bouton « 📋 Paste », avec le nombre de panneaux copiés');
+has(IB, "📋 Paste{clipCount ? ` (${clipCount})` : ''}", 'le bouton « 📋 Paste », avec le nombre de panneaux copiés');
 has(IB, 'title="Copy this panel — its figure(s), its texts and its shadows — Ctrl+C does the same">⧉ Copy</button>',
   'les propriétés offrent « ⧉ Copy » à côté de Delete');
-ok(times(IB, /onClick=\{\(\) => pasteClipboard\(\)\}/g) >= 2,
-  'on peut coller depuis la barre d’outils ET depuis la bande « Panels »');
+ok(times(IB, /onClick=\{\(\) => pasteClipboard\(\)\}/g) >= 1,
+  'on peut coller depuis la fenêtre de l’objet (« Panels » → 📋 Paste ; Ctrl+V marche partout)');
 has(IB, '📋 Paste', 'le collage est visible dans l’interface');
 
 console.log(`_builder_copy_paste_test.mjs — ${passed} assertions OK`);

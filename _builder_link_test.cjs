@@ -62,7 +62,8 @@ frag('[ImageBuilder] render reused (no second render)', IB, 'const img = dataUrl
 frag('[ImageBuilder] canvas badge shows the home scope', IB, 'const homeEntry = canvasEntryIn(canvasHome);');
 frag('[ImageBuilder] bookkeeping is reset per canvas/project', IB, 'setCanvasEntries({});');
 frag('[ImageBuilder] reset also re-homes the dialog default', IB, 'setCanvasHome(projectId || null);');
-frag('[ImageBuilder] loading a canvas binds it to THAT library', IB, 'restoreCanvasFromItem(item, { confirm: false, scopeProjectId: projectId || null })');
+frag('[ImageBuilder] loading a canvas binds it to THAT library', IB, 'restoreCanvasFromItem(here.item, { confirm: false, scopeProjectId: here.scopeProjectId })');
+frag('[ImageBuilder] …and a canvas whose list entry is missing is fetched from Drive', IB, 'res = await pullLibraryFromDrive(scopeInfo);');
 frag('[ImageBuilder] library "Load" binds the browsed scope', IB, "restoreCanvasFromItem(item, { scopeProjectId: libraryTab === 'project' ? activeLibProjectId : null })");
 frag('[projectDetail] the project page says the picture stays', PD, 'there — the link is added on top, it never replaces the picture.');
 

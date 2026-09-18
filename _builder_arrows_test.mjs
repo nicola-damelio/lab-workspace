@@ -253,7 +253,7 @@ check('32 arrowHeads() is the head list of arrowGeometry()', () => {
 
 /* ══ 6. THE CANVAS: how the builder is wired ══════════════════════════════ */
 frag('33 the builder imports the geometry from the shared module', IB, "from '../utils/figureArrows'");
-frag('34 …and the two controls from the arrow panel module', IB, "import { ShadowControls, ArrowPropertiesPanel } from './FigureArrowPanel';");
+frag('34 …and the controls of the two annotation panels', IB, "import { ShadowControls, ArrowPropertiesPanel, ShapePropertiesPanel } from './FigureArrowPanel';");
 frag('35 the arrow panel imports the same module', PANEL, "from '../utils/figureArrows'");
 check('36 the shadow filter id only ever comes from shadowFilterId()', () => {
   eq(times(IB, /fshadow-/g), 0);                       // a hard-coded id could drift from the <filter>
@@ -270,7 +270,7 @@ check('38 a panel and an arrow are never selected at the same time', () => {
   frag('clicking a panel clears the arrow', IB, 'setSelectedArrowId(null);   // one selection at a time (arrow ↔ panel)');
   frag('clicking an arrow clears the panel', IB, "onClick={(e) => { e.stopPropagation(); setSelectedId(null); setSelectedArrowId(a.id); }}");
   frag('the empty canvas clears both (normal view)', IB, '      setSelectedId(null);\n      setSelectedArrowId(null);');
-  frag('the empty canvas clears both (fullscreen)', IB, 'onClick={() => { setSelectedId(null); setSelectedArrowId(null); }}');
+  frag('the empty canvas clears both (fullscreen)', IB, 'onClick={() => { setSelectedId(null); setSelectedArrowId(null); setSelectedShapeId(null); }}');
 });
 check('39 “+ Add arrow” drops a default arrow across the canvas, selected', () => {
   frag('the handler', IB, 'const addArrow = () => {');
@@ -290,11 +290,13 @@ check('41 the shadow filters are real drop shadows, one per element', () => {
   frag('panel filter def', IB, 'id={shadowFilterId(obj.id)} x="-25%" y="-25%" width="150%" height="150%"');
   frag('arrow filter def', IB, 'id={shadowFilterId(a.id)} x="-25%" y="-25%" width="150%" height="150%"');
   frag('figure filter def', IB, 'id={figureShadowFilterId(obj.id, i)} x="-25%" y="-25%" width="150%" height="150%"');
-  eq(times(IB, /<feDropShadow dx=\{sp\.dx\} dy=\{sp\.dy\} stdDeviation=\{sp\.blur\} floodColor=\{sp\.color\} floodOpacity=\{sp\.opacity\} \/>/g), 3);
+  frag('shape filter def', IB, 'id={shapeShadowFilterId(sh.id)} x="-25%" y="-25%" width="150%" height="150%"');
+  eq(times(IB, /<feDropShadow dx=\{sp\.dx\} dy=\{sp\.dy\} stdDeviation=\{sp\.blur\} floodColor=\{sp\.color\} floodOpacity=\{sp\.opacity\} \/>/g), 4);
   frag('the panel group is filtered', IB, '<g filter={panelShadow ? `url(#${shadowFilterId(obj.id)})` : undefined}>');
   frag('a panel with no shadow gets NO filter', IB, 'const panelShadow = shadowSpec(obj.shadow);');
   frag('the arrow group is filtered', IB, 'filter={sp ? `url(#${shadowFilterId(a.id)})` : undefined}');
   frag('a FIGURE with a shadow gets its own filter', IB, 'filter={figShadow ? `url(#${figureShadowFilterId(obj.id, i)})` : undefined}');
+  frag('a SHAPE with a shadow gets its own filter', IB, 'filter={sp ? `url(#${shapeShadowFilterId(sh.id)})` : undefined}');
 });
 check('42 the whole panel is shadowed (frame, figure, letter, texts)', () => {
   const open = IB.indexOf('<g filter={panelShadow ?');
@@ -330,10 +332,16 @@ check('44 the arrow IS exported, the handles never are', () => {
   frag('a wide invisible shaft makes it grabbable', slice, 'stroke="transparent" strokeWidth={Math.max(4, g.arrow.width * 3)}');
 });
 
-check('45 the two toolbars offer the arrow and the shadow', () => {
-  eq(times(IB, /↗ Add arrow\{arrows\.length/g), 2);      // normal view + fullscreen
-  eq(times(IB, /🌓 Shadow panels<\/button>/g), 2);
-  frag('the shadow button is a toggle', IB, "${panelsShadowed ? 'bg-slate-800 text-white border-slate-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}");
+check('45 the arrow lives in the object window, not in the toolbars', () => {
+  /* « ↗ Add arrow » et « 🌓 Shadow panels » ont quitté les DEUX barres du haut :
+     les deux commandes sont dans la fenêtre de l'objet (colonne OBJETS pour la
+     flèche, « ▾ More options » pour l'ombre des panneaux) — une seule porte
+     d'entrée, au même endroit dans les deux affichages. */
+  eq(times(IB, /↗ Add arrow\{arrows\.length/g), 0);
+  eq(times(IB, /🌓 Shadow panels<\/button>/g), 0);
+  frag('the arrow is offered by the object window', IB, '↗ Arrow{arrows.length ? ` (${arrows.length})` : \'\'}');
+  frag('…in the OBJECTS column', IB, "{panelTitle('Objects', bar ? 'order-1 md:col-start-3' : '')}");
+  frag('the panel-shadow command is still there (More options)', IB, "panelsShadowed ? 'Remove the shadow from every panel' : 'Same shadow on every panel'");
   frag('the one-click command exists', IB, 'const togglePanelsShadow = () => {');
   frag('…and it writes the default record', IB, 'setObjects(prev => prev.map(o => ({ ...o, shadow: on ? { ...DEFAULT_SHADOW } : null })));');
 });
@@ -385,10 +393,10 @@ frag('50 the shadow block is shared by both panels', PANEL, '<ShadowControls val
 frag('51 a blank shadow is switched ON with the defaults', PANEL, 'onChange(e.target.checked ? { ...DEFAULT_SHADOW } : null)');
 
 /* ══ 7. PERSISTENCE, UNDO AND THE OTHER CANVAS PATHS ═════════════════════ */
-check('52 the localStorage payload keeps the arrows', () => {
-  frag('saved', IB, 'objects: persisted, arrows, focusObjId, globalCaption, isFullScreen };');
+check('52 the localStorage payload keeps the annotations', () => {
+  frag('saved', IB, 'objects: persisted, arrows, shapes, focusObjId, globalCaption, isFullScreen };');
   frag('re-read', IB, 'if (data.arrows) setArrows((data.arrows || []).map(normalizeArrow));');
-  frag('the effect re-runs when they change', IB, 'keepAspect, objects, arrows, focusObjId, globalCaption, isFullScreen, storageKey]);');
+  frag('the effect re-runs when they change', IB, 'keepAspect, objects, arrows, shapes, focusObjId, globalCaption, isFullScreen, storageKey]);');
 });
 check('53 a saved canvas carries its annotations', () => {
   frag('stored', IB, 'arrows: arrows || []');
@@ -397,7 +405,7 @@ check('53 a saved canvas carries its annotations', () => {
 check('54 undo restores the arrows with the panels', () => {
   frag('snapshotted', IB, 'arrows: JSON.parse(JSON.stringify(arrows || []))');
   frag('put back', IB, 'if (!Array.isArray(prev)) setArrows((prev.arrows || []).map(normalizeArrow));');
-  frag('the selection is dropped', IB, 'setSelectedId(null);\n    setSelectedArrowId(null);\n    setHistTick((t) => t + 1);');
+  frag('the selection is dropped', IB, 'setSelectedId(null);\n    setSelectedArrowId(null);\n    setSelectedShapeId(null);\n    setHistTick((t) => t + 1);');
 });
 check('55 emptying the canvas empties the annotations too', () => {
   frag('Clear Canvas', IB, 'commitHistory(); setObjects([]); setArrows([]); setSelectedId(null); setSelectedArrowId(null);');

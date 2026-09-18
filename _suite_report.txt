@@ -1,20 +1,22 @@
 OK   _axis_aspect_test.cjs  →  ✅ 123/123 checks passed
 OK   _axis_fit_test.cjs  →  ✅ 476/476 checks passed
 OK   _break_test.mjs  →  33/33 checks passed
-OK   _builder_arrows_test.mjs  →  │ (index) │ name                                                                    │ ok   │ error │ | ✅ 113/113 checks passed
+OK   _builder_arrows_test.mjs  →  │ (index) │ name                                                                    │ ok   │ error │ | ✅ 117/117 checks passed
 OK   _builder_copy_paste_test.mjs  →  _builder_copy_paste_test.mjs — 98 assertions OK
 OK   _builder_crop_test.cjs  →  ✅ 67/67 checks passed
 OK   _builder_eraser_test.mjs  →  _builder_eraser_test.mjs — 62 assertions OK
-OK   _builder_figshadow_test.mjs  →  _builder_figshadow_test.mjs — 68 assertions OK
+OK   _builder_figshadow_test.mjs  →  _builder_figshadow_test.mjs — 70 assertions OK
 OK   _builder_figtools_test.mjs  →  _builder_figtools_test.mjs — 111 assertions OK
 OK   _builder_figureorder_test.mjs  →  _builder_figureorder_test.mjs — 70 assertions OK
 OK   _builder_letters_test.cjs  →  ✅ 78/78 checks passed
-OK   _builder_link_test.cjs  →  │ 39      │ '[App] openImageBuilder is passed to the project page: operatorNames={operatorNames} openImageBuild…'       │ 'true'            │ 'true'  
+OK   _builder_link_test.cjs  →  │ 40      │ '[App] openImageBuilder is passed to the project page: operatorNames={operatorNames} openImageBuild…'                           │ 'true'  
 OK   _builder_montage_test.mjs  →  _builder_montage_test.mjs — 50 assertions OK
 OK   _builder_multiselect_test.mjs  →  _builder_multiselect_test.mjs — 103 assertions OK
 OK   _builder_pixels_test.cjs  →  ✅ 41/41 checks passed
 OK   _builder_place_test.cjs  →  ✅ 53/53 checks passed
-OK   _builder_uibar_test.mjs  →  _builder_uibar_test.mjs — 94 assertions OK
+OK   _builder_recall_test.mjs  →  _builder_recall_test : 25 vérifications passées
+OK   _builder_shapes_test.mjs  →  _builder_shapes_test : 185 vérifications passées
+OK   _builder_uibar_test.mjs  →  _builder_uibar_test.mjs — 106 assertions OK
 OK   _builder_zoom_test.cjs  →  ✅ 31/31 checks passed
 OK   _canvas_autosave_test.mjs  →  ✅ _canvas_autosave_test : 122 vérifications passées
 OK   _capture_fix_test.mjs  →  passed 70/70
@@ -63,4 +65,4 @@ OK   _ui_scale_test.cjs  →  ✅ 44/44 checks passed
 OK   _view_scroll_memory_test.cjs  →  ✅ 41/41 checks passed
 OK   _workspace_drive_test.mjs  →  ✅ 55 tests passés (l’espace de travail entier vit sur le Drive)
 OK   _workspace_keys_test.mjs  →  ✅ 37 tests passés (les clés du navigateur vivent aussi sur le Drive)
-total 65, failed 0
+total 67, failed 0

@@ -132,19 +132,31 @@ has(IB, 'const writeFigureRect = (objId, idx, rect) => {', 'l’écriture passe 
 has(IB, 'onFocus={() => commitHistory()}', 'un Ctrl+Z par session d’édition (jamais un par caractère)');
 has(IB, 'This figure is still laid out by the panel grid', '…et une figure encore en grille dit pourquoi le champ est vide');
 
-/* ══ 4. PLEIN ÉCRAN : UNE GRILLE DE 6 COLONNES EN BAS ════════════════════ */
+/* ══ 4. PLEIN ÉCRAN : TROIS COLONNES TITRÉES, ET LA FENÊTRE SE PLIE ═══════ */
 has(IB, 'const PropertiesPanel = ({ bar = false } = {}) => (', 'le panneau sait se présenter en barre');
-has(IB, "'grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 items-start gap-x-3 gap-y-1.5'",
-  '…en GRILLE DE 6 COLONNES (et non en colonne)');
-has(IB, "'flex flex-col gap-1 border-t border-slate-200 pt-1.5'",
+has(IB, "'grid grid-cols-1 md:grid-cols-3 grid-flow-row-dense items-start gap-x-4 gap-y-1.5'",
+  '…en GRILLE DE TROIS COLONNES (remplie en `dense` : l’ordre visuel vient du `order` de chaque ligne, jamais de l’ordre du source)');
+has(IB, "'flex flex-col gap-1.5 border-t border-slate-200 pt-1.5'",
   '…tandis que la vue normale reste une colonne');
+has(IB, "{panelTitle('Figures', bar ? 'order-1 md:col-start-1' : '')}", '…la colonne FIGURES est titrée');
+has(IB, "{panelTitle('Modify image', bar ? 'order-1 md:col-start-2' : '')}", '…la colonne MODIFY IMAGE');
+has(IB, "{panelTitle('Objects', bar ? 'order-1 md:col-start-3' : '')}", '…et la colonne OBJECTS');
 has(IB, 'absolute inset-x-0 bottom-0 z-20 border-t border-slate-300 bg-white/95 shadow-2xl',
   '…collée en BAS de la fenêtre, sur toute la largeur');
 has(IB, 'max-h-[38vh] overflow-y-auto custom-scrollbar px-2 py-1.5', '…et défilante au besoin (jamais la moitié de l’écran)');
 has(IB, '? PropertiesPanel({ bar: true })', 'le plein écran utilise la barre');
+/* LA FENÊTRE SE PLIE : son titre est le bouton (▾ / ▸) — repliée elle ne laisse
+   qu’une ligne, et le canvas garde toute la hauteur. */
+has(IB, 'const [panelOpen, setPanelOpen] = useState(true);', 'la fenêtre de l’objet sait se replier (état du COMPOSANT)');
+has(IB, 'onClick={() => setPanelOpen((v) => !v)}', '…et son titre EST le pli');
+has(IB, "{panelOpen ? '▾' : '▸'} Object window", '…qui dit d’un coup d’œil si elle est ouverte');
+ok(IB.indexOf('{panelOpen && (') < IB.indexOf("{panelTitle('Figures'"),
+  'repliée : ni colonnes ni titres — une seule ligne reste');
 ok(!IB.includes('absolute right-4 bottom-4 md:top-16 md:bottom-4 w-80 z-20'), 'l’ancienne fenêtre flottante à droite a disparu');
 has(IB, '<ArrowPropertiesPanel arrow={selectedArrow} isFloating onChange={updateArrow} onDelete={() => removeArrow()} />',
   'le panneau des flèches, lui, garde sa forme (quelques champs seulement)');
+has(IB, '<ShapePropertiesPanel shape={selectedShape} isFloating onChange={updateShape} onDelete={() => removeShape()} />',
+  '…et celui d’une forme (ligne, rectangle, cercle) aussi');
 
 /* ══ 5. MOINS D'ÉCRITURES : CE QUI A QUITTÉ LA FENÊTRE D'OBJET ═══════════ */
 ok(!IB.includes('>Padding (mm)'), 'le RÉGLAGE « Padding (mm) » a disparu de la fenêtre (un commentaire le mentionne encore : c’est voulu)');
@@ -173,22 +185,32 @@ has(IB, 'togglePanelsShadow', 'l’ombre des panneaux');
 has(IB, 'onClick={addText}', 'le texte libre');
 has(IB, '📤 Insert into a project section…', '…et l’insertion dans une section de projet, depuis le dialogue de sauvegarde');
 
-/* ══ 7. SIX COLONNES, LA LÉGENDE SEULE SUR TOUTE LA LARGEUR, TOUT EN BAS ══
-   « you divided the space in two columns but you must use 6 columns … the only
-   element that should take the full horizontal width is the sub-caption space.
-   It should go at the very bottom. » Chaque groupe de commandes occupe donc UNE
-   colonne — leur hauteur ne s'additionne plus (c'est l'espace vertical rendu au
-   canevas) — et la légende du panneau (son sous-titre) est seule à prendre
-   toute la largeur, placée EN DERNIER. Le reste des réglages rares vit toujours
-   derrière « ▾ More options ». Rien n'a été supprimé : seulement rangé. */
+/* ══ 7. LES TROIS COLONNES — FIGURES · MODIFY IMAGE · OBJECTS — ET LA LÉGENDE
+   SEULE SUR TOUTE LA LARGEUR, TOUT EN BAS ═════════════════════════════════
+   « it is ok but the first column is almost empty … first column: Figures …
+   Second column: Modify image … Third column called objects ». Chaque ligne de
+   commandes porte donc SA colonne (`md:col-start-*`) et SON rang (`order-*`), la
+   grille se remplit en `dense`, et la légende du panneau (son sous-titre) reste
+   seule à prendre toute la largeur, placée EN DERNIER. Le reste des réglages
+   rares vit toujours derrière « ▾ More options ». Rien n'a été supprimé :
+   seulement rangé. */
 has(IB, 'const [panelMore, setPanelMore] = useState(false);',
   'le repli « More options » est un état du COMPOSANT (jamais un hook du panneau)');
 has(IB, "const panelCellCls = (bar, extra = '') => `flex flex-wrap items-center gap-x-1.5 gap-y-1 ${extra}${bar ? ' min-w-0' : ''}`;",
-  'une seule définition de colonne (min-w-0 : sans lui la grille déborde)');
-eq(times(IB, /panelCellCls\(bar\)/g), 6,
-  'six colonnes de commandes : panneau, vue, figures, taille, outils de la figure, textes');
-['COLONNE 1', 'COLONNE 2', 'COLONNE 3', 'COLONNE 4', 'COLONNE 5', 'COLONNE 6'].forEach((mark) => {
-  has(IB, mark, `…${mark} est nommée (la fenêtre se lit comme une grille)`);
+  'une seule définition de LIGNE (min-w-0 : sans lui la grille déborde)');
+eq(times(IB, /panelCellCls\(bar, bar \? 'order-/g), 10,
+  'dix lignes de commandes, chacune avec SA colonne et SON rang');
+[["'order-3 md:col-start-1'", 'la liste des FIGURES (sous le titre Figures)'],
+  ["'order-2 md:col-start-2'", 'MODIFY IMAGE : fond transparent + ombre de la figure'],
+  ["'order-5 md:col-start-2'", 'MODIFY IMAGE : recadrage / rotation / gomme'],
+  ["'order-6 md:col-start-2'", 'MODIFY IMAGE : le réglage d’image (contraste, luminosité, couleur)'],
+  ["'order-7 md:col-start-2'", 'MODIFY IMAGE : taille exacte + ajustement'],
+  ["'order-9 md:col-start-2'", 'PANELS : les pastilles A B C + copier / coller'],
+  ["'order-10 md:col-start-2'", 'PANELS : profondeur, suppression, plein écran, More options'],
+  ["'order-2 md:col-start-3'", 'OBJECTS : flèche · ligne · rectangle · cercle'],
+  ["'order-3 md:col-start-3'", 'OBJECTS : aligner / répartir les panneaux'],
+  ["'order-4 md:col-start-3'", 'OBJECTS : les textes, l’un sous l’autre']].forEach(([mark, what]) => {
+  has(IB, mark, `…${what}`);
 });
 has(IB, "? 'flex flex-wrap items-start gap-x-1.5 gap-y-1 min-w-0 order-last col-span-full border-t border-slate-200 pt-1'",
   '…et la LÉGENDE est la seule à prendre toute la largeur (order-last col-span-full)');
@@ -196,7 +218,8 @@ eq(times(IB, /min-w-0 order-last col-span-full border-t/g), 1,
   'un SEUL élément pleine largeur dans toute la fenêtre : le sous-titre');
 ok(IB.indexOf('min-w-0 order-last col-span-full border-t') < IB.indexOf('{panelMore && ('),
   '…déclarée avant le repli, donc placée après lui : bien tout en bas');
-has(IB, "? 'min-w-0 xl:col-span-2'", 'le repli « More options » reste une colonne (deux de large au plus)');
+has(IB, "? 'min-w-0 order-12 md:col-span-full'",
+  'le repli « More options », lui, vient APRÈS la légende (order-12) et prend toute la largeur');
 eq(times(IB, /<div className="flex flex-wrap items-center gap-x-1\.5 gap-y-1">/g), 0,
   'plus aucune ligne pleine largeur écrite à la main');
 has(IB, "{panelMore ? '▴ Fewer options' : '▾ More options'}",

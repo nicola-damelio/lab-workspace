@@ -1,5 +1,8 @@
 import React from 'react';
 import { DEFAULT_ARROW, DEFAULT_SHADOW, normalizeArrow, shadowSpec } from '../utils/figureArrows';
+import {
+  DEFAULT_SHAPE, SHAPE_LABELS, normalizeShape, shapeFillOf
+} from '../utils/figureShapes';
 
 /* ============================================================================
    FIGURE ANNOTATIONS — the properties of a SHADOW and of an ARROW, for the
@@ -173,6 +176,120 @@ export const ArrowPropertiesPanel = ({ arrow, isFloating = false, onChange, onDe
         On the canvas: drag the arrow to move it, drag a blue end handle to aim it. The arrow is drawn on top of the
         panels and IS part of Export PNG / Save canvas / Insert into project — the selection handles never are.
       </span>
+    </div>
+  );
+};
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   SHAPE PROPERTIES — le panneau d'UNE forme sélectionnée (ligne, rectangle,
+   cercle).
+
+   Même famille que « Arrow properties », et pour la même raison : une forme est
+   un objet de CANVAS (utils/figureShapes) — ni lettre, ni cellule — donc sa
+   fenêtre est celle d'une annotation, et elle remplace celle du panneau (une
+   seule sélection à la fois), exactement comme celle d'une flèche.
+
+   Ce qui s'y règle : couleur, épaisseur, pointillés, remplissage (un rectangle
+   ou un cercle peut être teinté), la courbure d'une LIGNE, ses deux coins en
+   millimètres et son ombre — le même enregistrement que celui des panneaux et
+   des flèches. Le dessin (et son ombre) est dans la composition, donc dans
+   chaque export ; seules les poignées bleues restent à l'écran.
+   ──────────────────────────────────────────────────────────────────────────── */
+export const ShapePropertiesPanel = ({ shape, isFloating = false, onChange, onDelete }) => {
+  if (!shape) return null;
+  const sh = normalizeShape(shape);
+  const cell = 'text-[10px] font-bold text-slate-500';
+  const tinted = !!shapeFillOf(sh);
+  return (
+    <div className={`bg-white border border-slate-300 rounded-lg shadow-xl p-3 flex flex-col gap-2.5 ${isFloating ? 'w-80 max-h-[48vh] overflow-y-auto custom-scrollbar' : 'w-full'}`}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <h4 className="text-sm font-black text-slate-800 flex items-center gap-1.5">
+          <span className="text-base leading-none">{sh.kind === 'line' ? '╱' : sh.kind === 'rect' ? '▭' : '◯'}</span>
+          {SHAPE_LABELS[sh.kind] || 'Shape'} properties
+        </h4>
+        <span className="text-[9px] font-mono text-slate-400">{sh.id}</span>
+        <button type="button" onClick={() => onDelete()}
+          className="ml-auto text-red-500 hover:text-red-700 border border-red-200 bg-red-50 hover:bg-red-100 font-bold px-2 py-0.5 rounded text-[11px]"
+          title="Delete this shape (Ctrl+Z puts it back)">🗑 Delete</button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        {[['x1', 'X1 (mm)'], ['y1', 'Y1 (mm)'], ['x2', 'X2 (mm)'], ['y2', 'Y2 (mm)']].map(([key, label]) => (
+          <label key={key} className={cell}>{label}
+            <input type="number" step="0.5" value={+Number(sh[key]).toFixed(1)} onWheel={(e) => e.target.blur()}
+              onChange={(e) => onChange({ [key]: Number(e.target.value) })}
+              className="w-full border rounded p-1 text-xs" />
+          </label>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <label className={cell}>Thickness (mm)
+          <input type="number" min="0.05" max="6" step="0.05" value={sh.width} onWheel={(e) => e.target.blur()}
+            onChange={(e) => onChange({ width: Number(e.target.value) })} className="w-full border rounded p-1 text-xs" />
+        </label>
+        <label className={cell}>Fill opacity
+          <input type="number" min="0" max="1" step="0.05" value={sh.fillOpacity} disabled={!tinted}
+            onChange={(e) => onChange({ fillOpacity: Number(e.target.value) })}
+            className="w-full border rounded p-1 text-xs disabled:bg-slate-100 disabled:text-slate-400" />
+        </label>
+      </div>
+
+      <div className="flex items-center gap-3 flex-wrap">
+        <label className={`${cell} flex items-center gap-1`} title="Colour of the outline (and of a dashed outline)">Colour
+          <input type="color" value={sh.stroke} onChange={(e) => onChange({ stroke: e.target.value })}
+            className="w-8 h-6 rounded border cursor-pointer" />
+        </label>
+        {sh.kind !== 'line' && (
+          <label className={`${cell} flex items-center gap-1`} title="The tint INSIDE the rectangle / circle. “no fill” makes it a plain frame again.">Fill
+            <input type="color" value={tinted ? sh.fill : '#ffcc00'} onChange={(e) => onChange({ fill: e.target.value })}
+              className="w-8 h-6 rounded border cursor-pointer" />
+            <button type="button" onClick={() => onChange({ fill: tinted ? 'none' : '#ffcc00' })}
+              className={`font-bold px-1.5 py-0.5 rounded text-[10px] border ${tinted ? 'bg-amber-500 text-white border-amber-600' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}
+              title={tinted ? 'Take the tint off: the shape becomes a frame again (the outline stays)' : 'Tint the inside of this shape'}>{tinted ? 'filled' : 'no fill'}</button>
+          </label>
+        )}
+        <label className={`${cell} flex items-center gap-1 cursor-pointer`} title="Dashed outline — the dashes follow the thickness of the pen, like an arrow's">Das
+          <input type="checkbox" checked={sh.dash} onChange={(e) => onChange({ dash: e.target.checked })} />
+        </label>
+      </div>
+
+      {sh.kind === 'line' && (
+        <div className="grid grid-cols-3 gap-2 items-end">
+          <label className={cell} title="A straight line, or a curve bowed by “Curve (mm)”">Shape
+            <select value={sh.style} onChange={(e) => onChange({ style: e.target.value })} className="w-full border rounded p-1 text-xs">
+              <option value="straight">Straight</option>
+              <option value="curved">Curved</option>
+            </select>
+          </label>
+          <label className={cell}>Curve (mm)
+            <input type="number" min="-200" max="200" step="0.5" value={sh.curve} disabled={sh.style !== 'curved'}
+              onWheel={(e) => e.target.blur()}
+              onChange={(e) => onChange({ curve: Number(e.target.value) })}
+              className="w-full border rounded p-1 text-xs disabled:bg-slate-100 disabled:text-slate-400" />
+          </label>
+          <button type="button" onClick={() => onChange({ curve: -sh.curve })} disabled={sh.style !== 'curved'}
+            className="bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold px-2 py-1 rounded text-[11px] disabled:opacity-40"
+            title="Bow it the other way">⇅ Flip</button>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <button type="button" onClick={() => onChange({ ...DEFAULT_SHAPE, shadow: sh.shadow, fill: sh.fill, fillOpacity: sh.fillOpacity })}
+          className="bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold px-2 py-0.5 rounded text-[10px]"
+          title="Back to the default look (red, 0.7 mm, no fill, straight) — the corners and the shadow stay">↺ Defaults</button>
+        <span className="text-[9px] text-slate-400 italic">
+          {SHAPE_LABELS[sh.kind] || 'Shape'} — drawn ON TOP of the panels and part of Export PNG / Save canvas / Insert into project;
+          the blue handles never are. On the canvas: drag the shape to move it, drag a corner handle to resize it (the opposite corner stays put).
+        </span>
+      </div>
+
+      <div className="flex flex-col gap-1.5 border-t border-slate-200 pt-2">
+        <span className="text-xs font-bold text-slate-500 uppercase">Shadow</span>
+        <ShadowControls value={shadowSpec(sh.shadow)} onChange={(v) => onChange({ shadow: v })}
+          hint="The shape casts its own drop shadow — in the composition and in every export." />
+      </div>
     </div>
   );
 };

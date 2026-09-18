@@ -218,17 +218,17 @@ has(IB, 'Auto: the four corners', '…et le réglage automatique par les quatre 
 has(IB, '🎨 cut out · {figBgRecord.color}', 'la fenêtre rappelle ce que ces pixels portent');
 has(IB, 'Click the background on the picture, then “🎨 Remove background”. Place, size, crop, erasures and shadow are untouched',
   'et dit ce qui n’est PAS touché, en clair');
-ok(IB.indexOf('{panelMore && (') > 0 && IB.indexOf('{panelMore && (') < IB.indexOf('🎨 Transparent background'),
-  'tout cela vit dans le repli « ▾ More options » (les trois lignes courtes restent courtes)');
-ok(IB.indexOf('{cropPanelIdx >= 0 && (') < IB.indexOf('🎨 Transparent background'),
+ok(IB.indexOf('{panelMore && (') > 0 && IB.indexOf('{panelMore && (') < IB.lastIndexOf('🎨 Transparent background'),
+  'le BLOC détaillé du détourage vit dans le repli « ▾ More options » (son bouton, lui, ouvre la colonne « Modify image »)');
+ok(IB.indexOf('{cropPanelIdx >= 0 && (') < IB.lastIndexOf('🎨 Transparent background'),
   '…et le bloc ne s’affiche que pour une figure ACTIVE');
 
 /* ── 3. L'OMBRE DE LA FIGURE (l'IMAGE, pas le cadre) ──────────────────────── */
 has(IB, 'const toggleActiveFigureShadow = () => {', 'l’ombre de la figure se donne / s’enlève sur la figure ACTIVE…');
 has(IB, "🌓 {figShadowOn ? 'Figure shadow ✓' : 'Figure shadow'}", '…d’un bouton qui dit si elle en a une');
 has(IB, 'the picture, not the panel frame', '…et dont l’infobulle dit que c’est l’IMAGE (pas le cadre)');
-ok(IB.indexOf('onClick={toggleActiveFigureShadow}') < IB.indexOf('🎨 Transparent background'),
-  'le bouton est sur la ligne des figures (pas caché dans le repli)');
+ok(IB.indexOf('onClick={toggleActiveFigureShadow}') < IB.indexOf('{panelMore && ('),
+  'le bouton est atteignable SANS ouvrir le repli (il ouvre la colonne « Modify image »)');
 
 /* ── 4. ÉCHANGER L'IMAGE EN GARDANT PLACE ET TAILLE ──────────────────────── */
 has(IB, 'const handleSwapImage = async (item) => {', '« ↔ Swap » a sa propre commande');
