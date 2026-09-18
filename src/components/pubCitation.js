@@ -38,6 +38,30 @@ export const AUTHOR_STYLES = [
 ];
 export const AUTHOR_STYLE_IDS = AUTHOR_STYLES.map((s) => s.id);
 
+/* LA FORME DES RENVOIS DANS LE TEXTE (« come appaiono I riferimenti
+   bibliografici nel testo »). Le choix est stocké dans le format lui-même
+   (`format.inTextStyle`) et appliqué partout où un renvoi s'affiche : le
+   document du projet, sa version imprimée, son PDF et son export (voir
+   applyInTextStyle dans utils/referenceLinks.js).
+     • « keep »  — le renvoi garde l'écriture du document (¹², [12], (12)) ;
+     • « sup »   — exposant, la forme de Nature / Science ;
+     • « bracket » — crochets, la forme de Paperpile / Zotero ;
+     • « paren »  — parenthèses, la forme d'EndNote / Word ;
+     • « author-date » — le nom des auteurs et l'année, la forme APA / Harvard. */
+export const IN_TEXT_STYLES = [
+  { id: 'keep', label: 'as written', title: 'Keep the citation as the document wrote it (¹², [12], (12)) — nothing is rewritten' },
+  { id: 'sup', label: 'Superscript', title: 'Exponent — “as shown previously¹²” (Nature, Science…)' },
+  { id: 'bracket', label: 'Square brackets', title: 'Square brackets — “as shown previously [12]” (Paperpile, Zotero…)' },
+  { id: 'paren', label: 'Parentheses', title: 'Parentheses — “as shown previously (12)” (EndNote / Word)' },
+  { id: 'author-date', label: 'Author + year', title: 'Author and year — “as shown previously (Rossi & Bianchi, 2018)” (APA, Harvard…)' }
+];
+export const IN_TEXT_STYLE_IDS = IN_TEXT_STYLES.map((s) => s.id);
+
+/** Une forme de renvoi inconnue (localStorage, document d'un autre poste) vaut
+ *  « keep » : le renvoi garde l'écriture du document, rien n'est inventé. */
+export const normalizeInTextStyle = (value) =>
+  (IN_TEXT_STYLE_IDS.includes(value) ? value : 'keep');
+
 /* `format.scientistStyles` = { "Rossi M": "underline" | "bold" | "none" } :
    unknown names/values coming from localStorage or a project document are
    dropped here, and the name is trimmed so it matches the user list. */
@@ -60,6 +84,7 @@ export const buildPubFormat = (presetId) => {
     alwaysShowScientists: false,    // keep the lab scientists (user list) even past the cutoff
     underlineScientists: false,     // legacy: underline EVERY lab scientist (see scientistStyles)
     scientistStyles: {},            // per lab member: 'none' | 'underline' | 'bold'
+    inTextStyle: 'keep',            // in-text citation form (see IN_TEXT_STYLES)
     fields: preset.defs.map((def, i) => ({
       id: def[0], enabled: true, order: i, style: def[1], prefix: def[2], suffix: def[3]
     }))
@@ -76,6 +101,7 @@ export const normalizePubFormat = (parsed) => {
     alwaysShowScientists: !!(parsed && parsed.alwaysShowScientists),
     underlineScientists: !!(parsed && parsed.underlineScientists),
     scientistStyles: sanitizeScientistStyles(parsed && parsed.scientistStyles),
+    inTextStyle: normalizeInTextStyle(parsed && parsed.inTextStyle),
     fields: (parsed && parsed.fields) || buildPubFormat('nature').fields
   };
 };

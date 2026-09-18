@@ -136,6 +136,37 @@ eq(formConv.unresolved, [], '…et rien n’est resté non résolu');
 eq(MS.convertCitationsInText('voir (9)', new Map([['#2', 1]])).unresolved, ['(9)'],
   'un renvoi que la bibliographie n’explique pas est laissé tel quel (rien n’est inventé)');
 
+/* ── 4 ter. Un exposant n'est PAS toujours un renvoi : ISOTOPES et FORMULES ─
+   Deux exposants d'un article de laboratoire ne furent jamais des citations, et
+   les lier abîmait le texte de l'auteur :
+     • l'ISOTOPE — « ¹³C NMR », « ¹H », « ³¹P », « ¹³C-labelled » : l'exposant y
+       est un nombre de MASSE et il OUVRE le mot de l'atome, alors qu'un renvoi
+       vient toujours APRÈS le mot qu'il documente. Une espace devant suffisait
+       pour que « The ¹³C NMR spectrum » devienne « The [13]C NMR » ;
+     • l'exposant d'une FORMULE — « (x + y)² », « χ² », « α² » — qui élève au
+       carré l'opérande qu'il suit, sans renvoyer à rien.
+   Les deux règles sont dans citationPassesGuards (utils/manuscriptImport.js). */
+const ISOTOPES = 'The ¹³C NMR and ¹H spectra of ¹³C-labelled ²H₂O and ³¹P were recorded.';
+eq(MS.findNumericCitations(ISOTOPES).length, 0,
+  'un isotope (« ¹³C », « ¹H », « ¹³C-labelled ») n’est pas une citation : l’exposant y ouvre un mot');
+eq([...MS.citedNumbersInText(ISOTOPES)], [], '…donc aucun numéro n’est « cité » par un isotope');
+eq(MS.convertCitationsInText(ISOTOPES, new Map([['#13', 1], ['#1', 2], ['#2', 3], ['#31', 4]])).text,
+  ISOTOPES, '…et l’import laisse un texte d’isotopes EXACTEMENT tel quel');
+const FORMULAS = 'The χ² test gives (x + y)² = x² + 2xy + y², and the α² and β² terms.';
+eq(MS.findNumericCitations(FORMULAS).length, 0,
+  'les exposants d’une formule (« (x + y)² », « χ² », « α² ») ne sont pas des citations');
+eq(MS.convertCitationsInText(FORMULAS, new Map([['#2', 1]])).text, FORMULAS,
+  '…et l’import ne les touche pas, même quand la référence 2 existe');
+/* Le veto ne doit PAS emporter les vraies citations : un exposant suivi d’une
+   espace, d’une virgule ou d’un point reste un renvoi, même après une
+   parenthèse — pourvu qu’elle ne porte pas un calcul. */
+eq(MS.findNumericCitations('As reviewed (see the review)¹³ and more')[0].raw, '¹³',
+  'un exposant après une parenthèse NON mathématique reste une citation');
+eq(MS.findNumericCitations('see previously¹³,¹⁴ and ¹³.').length, 2,
+  '…comme un exposant suivi d’une virgule ou d’un point (liste de renvois)');
+eq(MS.convertCitationsInText('see previously¹³,¹⁴ and ¹³.', new Map([['#13', 1], ['#14', 2]])).text,
+  'see previously[1,2] and [1].', '…et les vraies citations du même texte sont bien converties');
+
 /* ── 5. Le plan : la numérotation du PROJET, pas celle du document ───────── */
 const plan = MS.buildManuscriptPlan(manuscript, { existingReferences: [] });
 eq(plan.entries.length, 3, 'les 3 références de la bibliographie du document sont analysées');
@@ -377,6 +408,66 @@ eq(MS.cleanAuthorLine('Rossi B, Bianchi A'), 'Rossi B, Bianchi A',
   '…mais une INITIALE en majuscule n’est jamais touchée');
 eq(MS.cleanAuthorLine('Mario Rossi1*, Anna Bianchi2'), 'Mario Rossi\u00b9*, Anna Bianchi\u00b2',
   'l’astérisque de l’auteur correspondant reste avec son numéro');
+
+/* ── 10 ter. LES NUMÉROS DES AFFILIATIONS ÉCRITS EN EXPOSANT ─────────────────
+   « forse il fatto che sono seguiti da numeri in apice? » — oui : les marqueurs
+   de laboratoire d'une liste d'auteurs sont des EXPOSANTS, et la liste n'était
+   pas reconnue quand deux marqueurs n'étaient pas séparés par une virgule
+   (« Rossi¹·² » : le point médian d'un PDF, « Rossi¹/² ») ou quand la marque
+   restait collée à la virgule (« Rossi¹,² »). Ils sont importés COMME EXPOSANTS
+   (le champ « Authors » garde la mise en forme de l'article), et ils ne sont
+   jamais confondus avec des renvois (voir 10 quater). */
+const MARKS = [
+  ['Mario Rossi\u00b9\u00b7\u00b2, Anna Bianchi\u00b2', 'Mario Rossi\u00b9\u00b7\u00b2, Anna Bianchi\u00b2',
+    'le point médian d’un PDF, entre deux exposants'],
+  ['Mario Rossi\u00b9,\u00b2, Anna Bianchi\u00b2', 'Mario Rossi\u00b9,\u00b2, Anna Bianchi\u00b2',
+    'la virgule collée à l’exposant (« Rossi¹,² »)'],
+  ['Mario Rossi \u00b9,\u00b2, Anna Bianchi \u00b2', 'Mario Rossi\u00b9,\u00b2, Anna Bianchi\u00b2',
+    'l’exposant détaché par une espace'],
+  ['Mario Rossi1/2, Anna Bianchi2', 'Mario Rossi\u00b9/\u00b2, Anna Bianchi\u00b2',
+    'la barre oblique entre deux numéros'],
+  ['Mario Rossi[1,2]*, Anna Bianchi[2]', 'Mario Rossi\u00b9,\u00b2*, Anna Bianchi\u00b2',
+    'l’astérisque de l’auteur correspondant'],
+  ['Mario Rossi\u00b9 and Anna Bianchi\u00b2', 'Mario Rossi\u00b9, Anna Bianchi\u00b2',
+    'le « and » qui sépare deux noms'],
+  ['Rossi M\u00b9, Bianchi A\u00b2', 'Rossi M\u00b9, Bianchi A\u00b2',
+    'la convention « Nom Initiales » avec exposants']
+];
+MARKS.forEach(([line, authors, what]) => {
+  const h = authorsOf([
+    'Aphid transmission of a new potyvirus in pepper',
+    line,
+    '1 Dipartimento di Agraria, Universita di Napoli, Italy',
+    '2 INRAE, Villenave d Ornon, France'
+  ]);
+  eq(h.authors, authors, `les AUTEURS sont reconnus avec ${what}`);
+});
+/* Un nom de famille qui finit par une lettre de marque (« Bernard ») ne doit pas
+   être rogné : « Lucie Bernard⁴ » restait « Lucie Bernarᵈ⁴ ». */
+eq(MS.cleanAuthorLine('Lucie Bernard4, Paul Martin3'), 'Lucie Bernard\u2074, Paul Martin\u00b3',
+  'un nom terminé par « d » (« Bernard⁴ ») n’est jamais rogné par l’exposant');
+
+/* ── 10 quater. CES EXPOSANTS NE SONT JAMAIS DES CITATIONS ───────────────────
+   « Questi apici non sono mai riferimenti bibliografici ma si riferiscono alle
+   affiliazioni » : quand la ligne d'auteurs est gardée dans le texte de la
+   section (« keep in the section text »), la convertir écrivait
+   « Mario Rossi[1], Anna Bianchi[2] » — alors même que les références 1 et 2
+   existent. Elle ressort donc telle quelle ; une PHRASE, elle, reste citée. */
+const KNOWN_NUMBERS = new Map([['#1', 1], ['#2', 2]]);
+['Mario Rossi\u00b9, Anna Bianchi\u00b2',
+  'Rossi M\u00b9, Bianchi A\u00b2',
+  'Mario Rossi\u00b9,\u00b2, Anna Bianchi\u00b2'].forEach((line) => {
+  eq(MS.convertCitationsInText(line, KNOWN_NUMBERS).text, line,
+    `« ${line} » reste intact (numéros d’affiliation, pas des renvois)`);
+  ok(MS.isAuthorMarkLine(line), '…et la ligne est bien reconnue comme une liste d’auteurs');
+});
+eq(MS.convertCitationsInText('Aphids transmit the virus\u00b9, as shown before\u00b2.', KNOWN_NUMBERS).text,
+  'Aphids transmit the virus[1], as shown before[2].',
+  '…alors que les renvois d’une PHRASE sont convertis comme avant');
+ok(!MS.isAuthorMarkLine('Aphids transmit the virus\u00b9, as shown before\u00b2.'),
+  'une phrase qui cite n’est pas une liste d’auteurs');
+ok(MS.isAuthorLine('Mario Rossi, Anna Bianchi') && !MS.isAuthorLine('Materials and Methods'),
+  'un intitulé de section n’est jamais pris pour une ligne d’auteurs');
 
 /* ── 11. Câblage : l'en-tête entre dans le PROJET, pas dans une section ───── */
 has(PROJ, 'const header = parseManuscriptHeader(manuscript.body);',
@@ -686,6 +777,25 @@ const superRun = MS.markDocxSuperscriptCitations(
 );
 ok(superRun.includes('<w:t>[7]</w:t>'), 'le marqueur remplace le texte du run (le reste du XML est intact)');
 ok(superRun.includes('<w:t>shown</w:t>'), '…et le run normal voisin n’est pas touché');
+
+/* L'ISOTOPE d'un .docx — « 13C » écrit avec son « 13 » en exposant : le run qui
+   ouvre le mot de l'atome n'est pas un renvoi (sinon « [13]C NMR »). */
+const isoRun = MS.markDocxSuperscriptCitations(
+  '<w:p><w:r><w:t>The </w:t></w:r><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr>'
+  + '<w:t>13</w:t></w:r><w:r><w:t>C NMR spectrum</w:t></w:r></w:p>'
+);
+eq(isoRun.includes('[13]'), false,
+  'un isotope d’un .docx (« 13 » en exposant devant « C ») n’est pas un renvoi');
+ok(isoRun.includes('<w:t>C NMR spectrum</w:t>'), '…et le texte de l’auteur reste intact');
+/* …mais une citation en FIN de paragraphe reste un renvoi : le premier mot du
+   paragraphe suivant ne doit pas la disqualifier. */
+const endRun = MS.markDocxSuperscriptCitations(
+  '<w:p><w:r><w:t>as shown before</w:t></w:r><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr>'
+  + '<w:t>7</w:t></w:r></w:p>'
+  + '<w:p><w:r><w:t>Next paragraph starts here</w:t></w:r></w:p>'
+);
+ok(endRun.includes('<w:t>[7]</w:t>'),
+  'une citation en fin de paragraphe reste un renvoi (le paragraphe suivant ne compte pas)');
 
 /* Une image LIÉE (relation externe, courante dans les exports Google Docs /
    Word) n'a pas de fichier dans le ZIP : son URL est gardée telle quelle. */

@@ -139,6 +139,21 @@ eq(RL.linkCitationNumbers(endnote, { numbers: NUMBERS }), endnote, 'rejouer la t
 eq(RL.linkCitationNumbers(sup, { numbers: NUMBERS }), sup, '…ni ceux d’un exposant HTML');
 eq(RL.linkCitationNumbers(uni, { numbers: NUMBERS }), uni, '…ni ceux d’un exposant Unicode');
 
+/* L'exposant qui n'est PAS un renvoi, dans le texte HTML d'une section : il
+   OUVRE le mot (ISOTOPE « <sup>2</sup>C ») ou il FERME une FORMULE
+   (« (x + y)<sup>2</sup> », « χ² »). La référence 2 existe pourtant. */
+eq(RL.linkCitationNumbers('<p>The <sup>2</sup>C NMR spectrum.</p>', { numbers: NUMBERS }),
+  '<p>The <sup>2</sup>C NMR spectrum.</p>',
+  '« <sup>2</sup>C » (isotope de Word : l’exposant ouvre le mot) reste intact, même avec la référence 2');
+eq(RL.linkCitationNumbers('<p>The ²H NMR spectrum.</p>', { numbers: NUMBERS }),
+  '<p>The ²H NMR spectrum.</p>', '…et « ²H », son écriture en chiffres Unicode, aussi');
+eq(RL.linkCitationNumbers('<p>Area of (x + y)<sup>2</sup> and χ² here.</p>', { numbers: NUMBERS }),
+  '<p>Area of (x + y)<sup>2</sup> and χ² here.</p>',
+  '« (x + y)<sup>2</sup> » et « χ² » (formules) ne sont pas des citations');
+ok(RL.linkCitationNumbers('<p>previously<sup>2</sup> and elsewhere<sup>2</sup>.</p>', { numbers: NUMBERS })
+  .split('data-ref="2"').length === 3,
+  '…alors que les vrais exposants du même texte restent liés (deux fois)');
+
 /* ── 6. Le marqueur [n] est bien celui que produit l'import du manuscrit ──── */
 const converted = MS.convertCitationsInText(
   'Pepper crops are affected [3] and aphids transmit it [2,4].',
@@ -243,6 +258,70 @@ eq(RL.withoutBibliographySection(''), '', 'un document vide ne casse rien');
 const bare = RL.withoutBibliographySection('<p>Texte.</p><h2>Bibliography (2)</h2><ol><li id="ref-1">A</li></ol>');
 ok(!bare.includes('Bibliography') && bare.includes('<p>Texte.</p>'),
   'un titre « Bibliography » sans cadre emporte quand même sa liste');
+
+/* ── 8 ter. LA FORME DES RENVOIS DANS LE TEXTE (« Publication format ») ──────
+   « nella sezione publication format, aggiungi la possibilità di controllare
+   come i riferimenti bibliografici appaiono nel testo » : exposant, crochets,
+   parenthèses, ou le nom des auteurs suivi de l'année. La forme est appliquée à
+   l'AFFICHAGE (applyInTextStyle) : le texte des sections garde l'écriture de
+   l'auteur, le numéro reste un LIEN vers sa référence, et rejouer la
+   transformation (le document est réaffiché à chaque rendu) ne change plus rien. */
+const FORM_REFS = [
+  { number: 1, authors: 'Rossi M, Bianchi A', year: '2018' },
+  { number: 2, authors: 'Dupont J', year: '2020' },
+  { number: 12, authors: 'Bernard L, Costa P, Li Z', year: '2021' }
+];
+const FORM_NUMBERS = RL.referenceNumbers(FORM_REFS);
+const formOpts = (style) => ({
+  numbers: FORM_NUMBERS, style, refs: FORM_REFS, hrefFor: (n) => `#ref-${n}`
+});
+const FORM_DOC = '<p>As shown previously[1] and (2), and <sup>12</sup>.</p>';
+eq(RL.applyInTextStyle(FORM_DOC, formOpts('keep')), FORM_DOC,
+  '« as written » : le document garde l’écriture de ses renvois, rien n’est réécrit');
+const asSup = RL.applyInTextStyle(FORM_DOC, formOpts('sup'));
+ok(asSup.includes('<sup><a class="cite-ref" href="#ref-1" data-ref="1">\u00b9</a></sup>'),
+  'la forme « exposant » : le numéro monte en exposant sans perdre son lien');
+eq((asSup.match(/data-ref="/g) || []).length, 3, '…et les TROIS renvois du texte sont traités');
+ok(RL.applyInTextStyle(FORM_DOC, formOpts('bracket'))
+  .includes('[<a class="cite-ref" href="#ref-1" data-ref="1">1</a>]'), 'la forme « crochets »');
+ok(RL.applyInTextStyle(FORM_DOC, formOpts('paren'))
+  .includes('(<a class="cite-ref" href="#ref-1" data-ref="1">1</a>)'), 'la forme « parenthèses »');
+eq(RL.applyInTextStyle(FORM_DOC, formOpts('author-date')),
+  '<p>As shown previously(<a class="cite-ref" href="#ref-1" data-ref="1">Rossi &amp; Bianchi, 2018</a>) '
+  + 'and (<a class="cite-ref" href="#ref-2" data-ref="2">Dupont, 2020</a>), '
+  + 'and (<a class="cite-ref" href="#ref-12" data-ref="12">Bernard et al., 2021</a>).</p>',
+  'la forme « auteur + année » : le libellé remplace le numéro, chacun lié à SA référence');
+eq(RL.citeAuthorYearLabel(FORM_REFS[0]), 'Rossi & Bianchi, 2018', 'deux auteurs → « Nom & Nom, année »');
+eq(RL.citeAuthorYearLabel(FORM_REFS[2]), 'Bernard et al., 2021', 'trois auteurs → « et al. »');
+eq(RL.citeAuthorYearLabel({ number: 9 }), '', 'sans auteurs ni année, aucun libellé (le numéro est gardé)');
+eq(RL.inTextCitationHtml([1, 2], { style: 'author-date', refs: FORM_REFS }),
+  '(<a class="cite-ref" href="#ref-1" data-ref="1">Rossi &amp; Bianchi, 2018</a>; '
+  + '<a class="cite-ref" href="#ref-2" data-ref="2">Dupont, 2020</a>)',
+  'deux renvois en auteur-année se suivent dans UNE parenthèse, séparés par « ; »');
+['sup', 'bracket', 'paren', 'author-date'].forEach((style) => {
+  const once = RL.applyInTextStyle(FORM_DOC, formOpts(style));
+  eq(RL.applyInTextStyle(once, formOpts(style)), once,
+    `« ${style} » est IDEMPOTENTE (le document est réaffiché à chaque rendu)`);
+});
+eq(RL.applyInTextStyle('<p>As shown in [12].</p>', { ...formOpts('sup'), numbers: new Set([1]) }),
+  '<p>As shown in [12].</p>',
+  'aucune forme n’est écrite pour un numéro que le projet ne connaît pas (pas de lien mort)');
+
+/* ── 8 quater. UNE LIGNE D'AUTEURS N'EST JAMAIS CITÉE ────────────────────────
+   « Questi apici non sono mai riferimenti bibliografici ma si riferiscono alle
+   affiliazioni » : « Mario Rossi¹, Anna Bianchi² » porte les numéros des
+   laboratoires. Les lier écrivait « Rossi[1] » dans la liste des auteurs du
+   document — voir isAuthorMarkLine (utils/manuscriptImport.js). */
+const AUTHOR_LINE = '<p>Mario Rossi\u00b9, Anna Bianchi\u00b2</p>';
+eq(RL.linkCitationNumbers(AUTHOR_LINE, { numbers: FORM_NUMBERS }), AUTHOR_LINE,
+  'la ligne d’auteurs garde ses exposants : ce sont des numéros d’affiliation');
+eq(RL.applyInTextStyle(AUTHOR_LINE, formOpts('bracket')), AUTHOR_LINE,
+  '…et aucune forme ne la réécrit');
+eq(RL.linkCitationNumbers('<p>Introduction</p><p>Mario Rossi\u00b9, Anna Bianchi\u00b2</p><p>Shown\u00b9.</p>',
+  { numbers: FORM_NUMBERS }).includes('data-ref="1"'), true,
+  '…alors que la MÊME page garde ses vraies citations ailleurs');
+ok(RL.linkCitationNumbers('<p>Aphids transmit the virus\u00b9 and more\u00b2.</p>', { numbers: FORM_NUMBERS })
+  .includes('data-ref="1"'), 'une PHRASE qui cite reste liée comme avant');
 
 /* ── 9. La page projet applique bien ces deux branchements ──────────────── */
 const has = (needle, what) => ok(PAGE.includes(needle), what);

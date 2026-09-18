@@ -169,14 +169,28 @@ export const looksLikeAffiliationLine = (line) => {
    reconnue du tout — les auteurs restaient hors du champ « Authors » alors que
    le titre, lui, était trouvé (demande utilisateur : « l'en-tête est ENTRE le
    titre et les affiliations »). */
-const AFFIL_MARK = '(?:\\d{1,2}|[*\\u2020\\u2021\\u00a7\\u00b6]|[a-h](?![\\p{L}\\u2019])|[A-H](?![\\p{L}\\u2019])'
+const AFFIL_MARK = '(?:(?<![\\p{L}\\u2019])[A-H](?![\\p{L}\\u2019])|(?<![\\p{L}\\u2019])[a-h](?![\\p{L}\\u2019])|\\d{1,2}|[*\\u2020\\u2021\\u00a7\\u00b6]'
   + `|[${SUP_MARK_CLASS}]+)`;
-const AFFIL_MARK_BRACKETED = `(?:\\[\\s*${AFFIL_MARK}(?:\\s*[,;&-]\\s*${AFFIL_MARK})*\\s*\\]|\\(\\s*${AFFIL_MARK}(?:\\s*[,;&-]\\s*${AFFIL_MARK})*\\s*\\))`;
+/* LE SÉPARATEUR entre deux marqueurs du même nom : « Rossi¹,² », « Rossi1,2 »,
+   « Rossi 1-2 », « Rossi1/2 », « Rossi¹·² » (le point médian d'un PDF),
+   « Rossi*† » (auteur correspondant ET affiliation). Il manquait : une liste
+   d'auteurs écrite « Mario Rossi¹·², Anna Bianchi² » n'était reconnue par AUCUN
+   lecteur d'en-tête — les auteurs restaient hors du champ « Authors » alors
+   qu'ils étaient bien entre le titre et les affiliations (le défaut signalé par
+   l'utilisateur : « la lista degli autori », qui est entre les deux). */
+const AFFIL_MARK_SEP = '[,;&*/\\u2020\\u2021\\u00a7\\u00b6\\u00b7-]';
+const AFFIL_MARK_BRACKETED = `(?:\\[\\s*${AFFIL_MARK}(?:\\s*${AFFIL_MARK_SEP}\\s*${AFFIL_MARK})*\\s*\\]|\\(\\s*${AFFIL_MARK}(?:\\s*${AFFIL_MARK_SEP}\\s*${AFFIL_MARK})*\\s*\\))`;
+/* Un marqueur d'affiliation COLLÉ au nom (ou séparé par UNE espace) : « Rossi1 »,
+   « Rossi¹ », « Rossi* », « Rossi[1] », « Rossi 1 ». C'est la marque qui dit
+   « ce nombre est le numéro de mon laboratoire » — jamais un renvoi de citation
+   (voir isAuthorMarkLine, relu par utils/referenceLinks.js). */
+const AFFIL_MARK_IN_LINE_RE = new RegExp(
+  `\\p{L}\\s?(?:\\d{1,2}|[*\\u2020\\u2021\\u00a7\\u00b6]|[${SUP_MARK_CLASS}]+|\\[\\s*\\d{1,2})`, 'u');
 /* Le même marqueur, mais SANS les lettres MAJUSCULES : « Rossi B » est une
    écriture d'auteur (nom + initiale), jamais un marqueur à retirer — au
    contraire de « Rossi b », « Rossi1 », « Rossi[2] », « Rossi (3) ». */
 const AFFIL_MARK_TAIL_RE = new RegExp(
-  `(?:\\s*[,;&]?\\s*(?:${AFFIL_MARK_BRACKETED}|\\d{1,2}|[*\\u2020\\u2021\\u00a7\\u00b6]|[a-h](?![\\p{L}\\u2019])`
+  `(?:\\s*${AFFIL_MARK_SEP}?\\s*(?:${AFFIL_MARK_BRACKETED}|\\d{1,2}|[*\\u2020\\u2021\\u00a7\\u00b6]|(?<![\\p{L}\\u2019])[a-h](?![\\p{L}\\u2019])`
   + `|[${SUP_MARK_CLASS}]+))+\\s*$`, 'u');
 
 /** Un MORCEAU de nom, débarrassé de ses marqueurs d'affiliation :
@@ -233,13 +247,15 @@ export const superscriptAffilMarkTail = (part) => {
    affiliation + auteur correspondant). */
 const NAME_PART_RE = new RegExp(
   `^[\\p{Lu}][\\p{L}'\\u2019.-]*(?:\\s+(?:[\\p{Lu}]|[\\p{Lu}][\\p{L}'\\u2019.-]*))?\\.?`
-  + `\\s*(?:(?:${AFFIL_MARK_BRACKETED}|${AFFIL_MARK})+(?:\\s*[,&]\\s*(?:${AFFIL_MARK_BRACKETED}|${AFFIL_MARK})+)*)?$`, 'u');
+  + `\\s*(?:(?:${AFFIL_MARK_BRACKETED}|${AFFIL_MARK})+(?:\\s*${AFFIL_MARK_SEP}\\s*(?:${AFFIL_MARK_BRACKETED}|${AFFIL_MARK})+)*)?$`, 'u');
 
-/** Un exposant tout seul : le « 2 » de « Dupont1,2 » (deux affiliations). */
-const EXPONENT_ONLY_RE = /^(?:\d{1,2}|[*\u2020\u2021])+$/;
+/** Un exposant tout seul : le « 2 » de « Dupont1,2 » (deux affiliations), en
+ *  chiffres ASCII (« 1,2 ») comme en EXPOSANTS Unicode (« Rossi¹,² » — la
+ *  virgule du document coupe la marque en deux morceaux, qui se recollent). */
+const EXPONENT_ONLY_RE = new RegExp(`^(?:\\d{1,2}|[*\\u2020\\u2021]|[${SUP_MARK_CLASS}]+)+$`, 'u');
 
 /** Un marqueur collé au bout d'un nom déjà lu (« …Rossi b » puis « ,* »). */
-const MARK_TAIL_IN_NAME_RE = /(?:\d|[*\u2020\u2021]|[a-h](?![\p{L}]))$/u;
+const MARK_TAIL_IN_NAME_RE = new RegExp(`(?:\\d|[*\\u2020\\u2021]|[a-h](?![\\p{L}])|[${SUP_MARK_CLASS}])$`, 'u');
 
 /** Un intitulé de section n'est JAMAIS un nom de personne, même en position
  *  d'auteur : « Materials and Methods » suit parfois le titre de très près. */
@@ -255,10 +271,13 @@ export const authorLineParts = (line) => {
      c'est pourtant l'écriture d'un .docx, où l'import transforme lui-même
      l'exposant d'affiliation en « [1] » (voir markDocxSuperscriptCitations). */
   const cleaned = String(line || '').trim()
-    .replace(/\[([^[\]]{1,20})\]/g, ' $1 ')
+    /* Le SYMBOLE qui suit un marqueur (« Rossi[1,2]* » : l'auteur
+       correspondant) est emporté AVEC lui : sinon l'astérisque restait seul et
+       devenait un auteur à part entière. */
+    .replace(/\[\s*([^[\]]{1,20}?)\s*\]\s*([*\u2020\u2021\u00a7\u00b6]?)/g, ' $1$2 ')
     .replace(/\s*[;,]?\s*\bet\s+al\.?\s*$/i, '')
     .replace(/\s*&\s*$/, '')
-    .replace(/\((\d{1,2}(?:\s*,\s*\d{1,2})*)\)/g, ' $1 '); // « Bianchi (1) » → « Bianchi 1 »
+    .replace(/\(\s*(\d{1,2}(?:\s*,\s*\d{1,2})*)\s*\)\s*([*\u2020\u2021\u00a7\u00b6]?)/g, ' $1$2 '); // « Bianchi (1) » → « Bianchi 1 »
   const merged = [];
   cleaned.split(/\s*(?:,|;|\band\b|&)\s*/i).map((p) => p.trim()).filter(Boolean).forEach((part) => {
     const prev = merged[merged.length - 1];
@@ -288,8 +307,11 @@ export const cleanAuthorLine = (line) => {
      par virgules : sans cela « Mario Rossi [1,2] » se coupait en deux
      « auteurs » (« Mario Rossi [1 » et « 2] »). */
   const cleaned = String(line || '')
-    .replace(/\[([^\][]{1,20})\]/g, ' $1 ')
-    .replace(/\((\d{1,2}(?:\s*,\s*\d{1,2})*)\)/g, ' $1 ');
+    /* Le SYMBOLE qui suit un marqueur (« Rossi[1,2]* » : l'auteur
+       correspondant) est emporté AVEC lui : sinon l'astérisque restait seul et
+       devenait un auteur à part entière. */
+    .replace(/\[\s*([^\][]{1,20}?)\s*\]\s*([*\u2020\u2021\u00a7\u00b6]?)/g, ' $1$2 ')
+    .replace(/\(\s*(\d{1,2}(?:\s*,\s*\d{1,2})*)\s*\)\s*([*\u2020\u2021\u00a7\u00b6]?)/g, ' $1$2 ');
   const merged = [];
   cleaned.split(/\s*(?:,|;|\band\b|&)\s*/i).map((p) => p.trim()).filter(Boolean).forEach((part) => {
     const prev = merged[merged.length - 1];
@@ -329,12 +351,19 @@ export const looksLikeAuthorLine = (line, { alone = false } = {}) => {
   const initials = /(?:^|[\s,;&])\p{Lu}\.(?:\s|,|;|$|\d)/u.test(s)
     || /\b\p{Lu}\.\s*\p{Lu}\./u.test(s);
   const exponent = /\p{L}\d{1,2}(?=[\s,;&*]|$)/u.test(s) || /[*\u2020\u2021]/u.test(s);
+  /* Le marqueur écrit EN EXPOSANT (« Mario Rossi¹, Anna Bianchi² ») ou COLLÉ
+     entre crochets (« Rossi[1] », l'écriture d'un .docx juste avant la lecture
+     du texte) : c'est la marque d'auteur la plus courante dans un article, et
+     sans elle une liste de DEUX noms n'était pas reconnue (défaut signalé :
+     « la lista degli autori non viene riconosciuta »). */
+  const supMark = new RegExp(`\\p{L}[${SUP_MARK_CLASS}]`, 'u').test(s);
+  const gluedBracket = /\p{L}\[\s*\d{1,2}/u.test(s);
   /* « Mario Rossi a, Anna Bianchi b » : le marqueur est une LETTRE (Wiley /
      Springer). Sans cette écriture, la ligne d'auteurs n'était pas reconnue et
      restait hors du champ « Authors ». */
   const letterMark = /(?:^|[\s,;&])\[?\s*[a-h](?:\s*[\]),;&]|\s*$)/u.test(s)
     || /(?:^|[\s,;&])\[\s*\d{1,2}(?:\s*[,;&-]\s*\d{1,2})*\s*\]/u.test(s);
-  if (initials || exponent || letterMark || parts.length >= 3) return true;
+  if (initials || exponent || supMark || gluedBracket || letterMark || parts.length >= 3) return true;
   return !!alone && parts.length >= 1 && s.split(/\s+/).length <= 6;
 };
 
@@ -667,20 +696,31 @@ const docxRunText = (xml) => String(xml || '')
   .replace(/<w:(?:br|cr)\b[^>]*\/?>/g, '\n')
   .replace(/<[^>]+>/g, '');
 
+/** Le texte VISIBLE qui SUIT un run, dans son PARAGRAPHE seulement : au-delà,
+ *  c'est le paragraphe suivant — et une citation en fin de paragraphe serait
+ *  alors jugée sur le premier mot du suivant (voir citationContextOkAfter). */
+const docxRestText = (source, from) => {
+  const s = String(source || '');
+  const stop = s.indexOf('</w:p>', from);
+  return docxRunText(s.slice(from, stop === -1 ? s.length : stop));
+};
+
 /** Un run (`<w:r>`) est-il mis en EXPOSANT ? (`<w:vertAlign w:val="superscript"/>`) */
 const isSuperscriptRun = (runXml) =>
   /<w:vertAlign\b[^>]*w:val\s*=\s*"superscript"/i.test(String(runXml || ''));
 
 /** Le run, son texte remplacé par `[n]` quand c'est un renvoi en exposant ;
- *  sinon le run inchangé. */
-const superscriptRunMarker = (runXml, before) => {
+ *  sinon le run inchangé. `before` / `after` = le texte visible qui l'entoure
+ *  (les garde-fous de contexte en ont besoin : « 13C » est un isotope). */
+const superscriptRunMarker = (runXml, before, after) => {
   if (!isSuperscriptRun(runXml)) return runXml;
   const m = /^\s*(\d{1,4}(?:\s*(?:[,;]|-|–|—|to)\s*\d{1,4})*)\s*$/.exec(docxRunText(runXml));
   if (!m) return runXml;
   const nums = numericCitationNumbers(m[1]);
   if (!nums.length) return runXml;
-  /* « m2 », « 10-3 » : exposant d'unité ou de puissance, jamais un renvoi. */
-  if (citationGuardApplies('sup-html', nums) && !citationContextOkBefore(before)) return runXml;
+  /* « m2 », « 10-3 » : exposant d'unité ou de puissance ; « 13C » : un ISOTOPE —
+     l'exposant y ouvre un mot, un renvoi ne le fait jamais. */
+  if (!citationPassesGuards(before, after, { form: 'sup-html', nums })) return runXml;
   let first = true;
   return runXml.replace(/<w:t\b[^>]*>[\s\S]*?<\/w:t>/g, () => {
     if (!first) return '';
@@ -717,7 +757,7 @@ export const markDocxSuperscriptCitations = (xml) => {
   while ((m = re.exec(source))) {
     out += source.slice(last, m.index);
     last = re.lastIndex;
-    out += superscriptRunMarker(m[0], docxRunText(out));
+    out += superscriptRunMarker(m[0], docxRunText(out), docxRestText(source, re.lastIndex));
   }
   return out + source.slice(last);
 };
@@ -1231,6 +1271,29 @@ const isAuthorLineAtPosition = (text) => isAuthorish(text)
   || looksLikeAuthorLine(text, { alone: true })
   || looksLikeNameListLine(text);
 
+/** LA LIGNE EST-ELLE UNE LIGNE D'AUTEURS ? (titre et intitulé de section mis à
+ *  part). C'est la même question que se pose le rattachement des citations : les
+ *  exposants d'une liste de noms sont les numéros des AFFILIATIONS, jamais des
+ *  renvois bibliographiques (voir isAuthorMarkLine). */
+export const isAuthorLine = (line) => isAuthorLineAtPosition(String(line || '').trim());
+
+/**
+ * Cette ligne est-elle une ligne d'AUTEURS QUI PORTE SES MARQUEURS D'AFFILIATION
+ * (« Mario Rossi¹, Anna Bianchi² », « Rossi M1, Bianchi A2 », « Rossi[1], … ») ?
+ *
+ * Ces marqueurs sont des NUMÉROS DE LABORATOIRE : ils n'ont jamais le sens d'un
+ * renvoi (« Questi apici non sono mai riferimenti bibliografici ma si
+ * riferiscono alle affiliazioni »). La question est donc posée AVANT de convertir
+ * ou de lier la moindre citation d'un texte (voir utils/referenceLinks.js) :
+ * sans elle, la ligne d'auteurs gardée dans le texte (« keep in the section
+ * text ») ressortait en « Mario Rossi[1], Anna Bianchi[2] » — le défaut signalé.
+ */
+export const isAuthorMarkLine = (line) => {
+  const s = String(line || '').trim();
+  if (!s || !AFFIL_MARK_IN_LINE_RE.test(s)) return false;
+  return isAuthorLine(s);
+};
+
 /** Les particules d'un nom (« van der Berg ») : seuls mots en minuscules qui
  *  peuvent apparaître DANS une liste de noms. Un titre, lui, contient des mots
  *  de liaison (« in », « of », « the »…) — c'est ce qui le distingue. */
@@ -1285,8 +1348,11 @@ const NAME_HEAD_MARK_RE = new RegExp(
  *  morceau rendu est un nom NU. */
 const headMarkedNameParts = (line) => {
   const opened = String(line || '').trim()
-    .replace(/\[([^[\]]{1,20})\]/g, ' $1 ')
-    .replace(/\((\d{1,2}(?:\s*,\s*\d{1,2})*)\)/g, ' $1 ');
+    /* Le SYMBOLE qui suit un marqueur (« Rossi[1,2]* » : l'auteur
+       correspondant) est emporté AVEC lui : sinon l'astérisque restait seul et
+       devenait un auteur à part entière. */
+    .replace(/\[\s*([^[\]]{1,20}?)\s*\]\s*([*\u2020\u2021\u00a7\u00b6]?)/g, ' $1$2 ')
+    .replace(/\(\s*(\d{1,2}(?:\s*,\s*\d{1,2})*)\s*\)\s*([*\u2020\u2021\u00a7\u00b6]?)/g, ' $1$2 ');
   const merged = [];
   opened.split(/\s*(?:,|;|\band\b|&)\s*/i).map((p) => p.trim()).filter(Boolean).forEach((part) => {
     const prev = merged[merged.length - 1];
@@ -1957,7 +2023,49 @@ export const numericCitationNumbers = (group) => {
    référence 3 ou 2. Aucun indice textuel ne permet de trancher, et le lien est
    bénin : le numéro reste visible, à sa place, et se retire en éditant la
    section. */
-const UNIT_BEFORE_RE = /(?:^|[^A-Za-z\u00C0-\u024F])(?:[A-Za-z]{1,3}|\d+(?:[.,]\d+)?|°)$/;
+/* Les LETTRES d'un mot : latin (accents compris), grec, cyrillique. Les
+   exposants Unicode (« ¹³ », « ᵃ ») n'en font pas partie, et une écriture sans
+   espace entre les mots (chinois, japonais) non plus : là, rien ne distinguerait
+   un isotope d'un renvoi collé au mot suivant. */
+const WORD_LETTER = 'A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF';
+const UNIT_BEFORE_RE = new RegExp(`(?:^|[^${WORD_LETTER}])(?:[${WORD_LETTER}]{1,3}|\\d+(?:[.,]\\d+)?|°)$`);
+/** Le dernier caractère d'un MOT : une lettre, un chiffre ou « _ ». */
+const WORD_TAIL_RE = new RegExp(`[${WORD_LETTER}\\d_]$`);
+/** Un caractère qui OUVRE un mot — « ¹³C NMR », « ¹H » (voir
+ *  citationContextOkAfter : un renvoi ne précède jamais le mot qu'il cite). */
+const OPENS_WORD_RE = new RegExp(`^[${WORD_LETTER}]`);
+/** Un opérateur — la signature d'un CALCUL (« x + y », « m·s⁻¹ »). */
+const MATH_OPERATOR_RE = /[=+\-×÷·*/^<>≈≤≥±→]/;
+/** Trois lettres suivies : un MOT (donc pas une expression). */
+const WORDY_RE = new RegExp(`[${WORD_LETTER}]{3,}`);
+
+/** L'indice de l'ouvrante qui correspond à la FERMANTE finale, ou -1 :
+ *  « (x + y) » → l'indice de sa parenthèse (même paire seulement). */
+const matchingOpenIndex = (s) => {
+  const text = String(s == null ? '' : s);
+  const close = text[text.length - 1];
+  const open = { ')': '(', ']': '[', '}': '{' }[close];
+  if (!open) return -1;
+  let depth = 0;
+  for (let i = text.length - 1; i >= 0; i -= 1) {
+    if (text[i] === close) depth += 1;
+    else if (text[i] === open) { depth -= 1; if (!depth) return i; }
+  }
+  return -1;
+};
+
+/** L'exposant ferme-t-il une EXPRESSION entre parenthèses — « (x + y)² » ?
+ *  Le groupe doit être un CALCUL (un opérateur y suffit) ou ne contenir aucun
+ *  mot (« (2) ») ; « (see the review)¹² » reste donc une citation. */
+const closesMathGroup = (before) => {
+  const s = String(before == null ? '' : before);
+  const close = s[s.length - 1];
+  if (close !== ')' && close !== ']' && close !== '}') return false;
+  const open = matchingOpenIndex(s);
+  if (open === -1) return false;
+  const inner = s.slice(open + 1, -1);
+  return MATH_OPERATOR_RE.test(inner) || !WORDY_RE.test(inner);
+};
 
 /** Le moins exposant Unicode (« 10⁻³ »). */
 const SUP_MINUS = '\u207B';
@@ -1968,13 +2076,55 @@ export const citationContextOkBefore = (before) => {
   /* « 10⁻³ » : le moins exposant annonce une puissance, jamais une citation. */
   if (raw.endsWith(SUP_MINUS)) return false;
   const s = superscriptToDigits(raw); // les exposants redeviennent des chiffres
-  if (!/[0-9A-Za-z_]$/.test(s)) return true;
+  if (!WORD_TAIL_RE.test(s)) return true;
   return !UNIT_BEFORE_RE.test(s);
 };
 
-/** Idem, à partir du texte entier et de la position de la citation. */
-export const citationContextOk = (text, index) =>
-  citationContextOkBefore(String(text == null ? '' : text).slice(0, Math.max(0, Number(index) || 0)));
+/**
+ * Le texte écrit APRÈS la citation permet-il d'en faire une ?
+ *
+ * Un renvoi vient APRÈS le mot qu'il documente — « …as shown previously¹² and
+ * elsewhere » — et JAMAIS avant. Un exposant suivi d'une LETTRE ouvre donc un
+ * mot, et non un renvoi : « ¹³C NMR », « ¹H », « ³¹P », « ¹⁹F », « ¹³C-labelled »
+ * sont des ISOTOPES (le petit nombre y est le nombre de MASSE), « ²H₂O » un
+ * composé. Les lier écrivait « [13]C NMR » dans le texte de l'auteur — le défaut
+ * signalé. Aucun style bibliographique n'écrit un renvoi AVANT le mot qu'il
+ * documente : la lettre qui suit est donc un veto. (Suivi d'une espace, d'une
+ * ponctuation, d'un chiffre ou de la fin du texte, l'exposant reste une
+ * citation : « previously¹²,¹³ », « previously¹². », « previously ¹² at ».)
+ */
+export const citationContextOkAfter = (after) => !OPENS_WORD_RE.test(String(after == null ? '' : after));
+
+/** Un EXPOSANT — la seule écriture d'un renvoi qui puisse être autre chose :
+ *  un isotope (« ¹³C »), un exposant d'unité (« m² ») ou de formule (« χ² »). */
+export const isSuperscriptForm = (form) => form === 'sup' || form === 'sup-html';
+
+/**
+ * LES GARDE-FOUS DE CONTEXTE RÉUNIS : ce renvoi en est-il vraiment un ?
+ * `before` = le texte qui précède la citation, `after` = celui qui la suit
+ * (voir citationContextOkBefore et citationContextOkAfter ci-dessus).
+ *
+ * Ils ne s'appliquent qu'aux EXPOSANTS qui ne portent qu'UN SEUL nombre (voir
+ * citationGuardApplies) : un « [12] » entre crochets n'est jamais un isotope, et
+ * « …see³,¹² » est une citation sans discussion.
+ */
+export const citationPassesGuards = (before, after, { form = '', nums = [] } = {}) => {
+  if (!citationGuardApplies(form, nums)) return true;
+  if (!citationContextOkBefore(before)) return false;
+  if (!isSuperscriptForm(form)) return true;
+  /* Les deux pièges de l'exposant : il FERME une formule (« (x + y)² ») ou il
+     OUVRE un mot (« ¹³C »). */
+  if (closesMathGroup(before)) return false;
+  return citationContextOkAfter(after);
+};
+
+/** Idem, à partir du texte entier, de la position et de la LONGUEUR du renvoi. */
+export const citationContextOk = (text, index, length, form, nums) => {
+  const s = String(text == null ? '' : text);
+  const from = Math.max(0, Number(index) || 0);
+  const to = from + Math.max(0, Number(length) || 0);
+  return citationPassesGuards(s.slice(0, from), s.slice(to), { form, nums });
+};
 
 /** Le garde-fou de contexte s'applique-t-il ? Une unité (« m² », « 10⁻³ »), une
  *  charge (« Ca²⁺ ») ou un ordinal (« 5th ») n'ont qu'UN SEUL nombre : un exposant
@@ -1998,7 +2148,7 @@ export const findNumericCitations = (text) => {
     let m = rx.exec(s);
     while (m) {
       const nums = numbersOfCitation(form, m[1]);
-      if (citationGuardApplies(form, nums) && !citationContextOk(s, m.index)) { m = rx.exec(s); continue; }
+      if (!citationContextOk(s, m.index, m[0].length, form, nums)) { m = rx.exec(s); continue; }
       out.push({ raw: m[0], group: m[1], offset: m.index, form });
       m = rx.exec(s);
     }
@@ -2080,11 +2230,18 @@ export const convertCitationsInText = (text, numberByKey) => {
   let replaced = 0;
   const unresolved = [];
   let out = String(text || '');
+  /* UNE LIGNE D'AUTEURS N'EST PAS DU TEXTE CITÉ : ses exposants sont les numéros
+     des AFFILIATIONS (« Mario Rossi¹, Anna Bianchi² »). Quand l'utilisateur la
+     garde dans la section (« keep in the section text »), la convertir écrivait
+     « Mario Rossi[1], Anna Bianchi[2] » — jamais ce que l'auteur a écrit. Elle
+     ressort donc telle quelle, quel que soit le numéro de référence en face. */
+  if (isAuthorMarkLine(out)) return { text: out, replaced, unresolved };
   const convertForm = (re, form) => {
     out = out.replace(new RegExp(re.source, re.flags), (raw, group, offset) => {
       const cited = numbersOfCitation(form, group);
-      /* « m² », « f(3) », « 10⁻³ » ne sont pas des citations (voir UNIT_BEFORE_RE) */
-      if (citationGuardApplies(form, cited) && !citationContextOk(out, offset)) return raw;
+      /* « m² », « f(3) », « 10⁻³ », « (x + y)² », « ¹³C » ne sont pas des
+         citations (voir les garde-fous de contexte ci-dessus). */
+      if (!citationContextOk(out, offset, raw.length, form, cited)) return raw;
       const nums = cited.map((n) => lookupNumber(numberByKey, `#${n}`)).filter(Boolean);
       if (!nums.length) { unresolved.push(raw); return raw; }
       replaced += 1;

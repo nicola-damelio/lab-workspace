@@ -18,9 +18,9 @@ import { register } from 'node:module';
    crochet rend le module RÉEL importable par node (voir _esm_test_hook.mjs). */
 register('./_esm_test_hook.mjs', import.meta.url);
 const {
-  AUTHOR_STYLES, AUTHOR_STYLE_IDS, PUB_FORMAT_KEY, PUB_FORMAT_PRESETS,
+  AUTHOR_STYLES, AUTHOR_STYLE_IDS, IN_TEXT_STYLES, IN_TEXT_STYLE_IDS, PUB_FORMAT_KEY, PUB_FORMAT_PRESETS,
   authorMatchesCandidate, authorStyleOf, buildPubFormat, labMemberOf,
-  loadPubFormat, matchCoauthors, normalizePubFormat, pubCitationData,
+  loadPubFormat, matchCoauthors, normalizeInTextStyle, normalizePubFormat, pubCitationData,
   pubCitationHtml, pubCitationText, pubDoiKey, pubDoiUrl, pubFieldValue,
   pubOriginOf, pubPmidKey, renderAuthorNames, sanitizeScientistStyles, scientistStyleOf
 } = await import('./src/components/pubCitation.js');
@@ -362,5 +362,47 @@ ok(/Rebuild from data/.test(src) && /Rebuild from data/.test(pdm),
   'le panneau ET la barre d’outils du document nomment le bouton « Rebuild from data »');
 ok(/\{canModify && \(\s*<button onClick=\{rebuildDoc\}/.test(pdm),
   '…et ce bouton est TOUJOURS là (il n’était visible que sur un document déjà figé)');
+
+/* ── 13. LA FORME DES RENVOIS DANS LE TEXTE SUIT LE FORMAT ───────────────────
+   « nella sezione publication format, aggiungi la possibilità di controllare
+   come i riferimenti bibliografici appaiono nel testo (come apici, tra
+   parentesi quadre, tra parentesi tonde o come nome autore seguito da data) ».
+   La forme est une propriété du FORMAT : elle suit donc le projet quand il a
+   son propre format, et elle est appliquée partout où un renvoi s'affiche (voir
+   applyInTextStyle, utils/referenceLinks.js). */
+eq(IN_TEXT_STYLE_IDS, ['keep', 'sup', 'bracket', 'paren', 'author-date'],
+  'les cinq formes proposées — dont « as written », qui ne réécrit jamais rien');
+eq(IN_TEXT_STYLES.map((s) => s.label), ['as written', 'Superscript', 'Square brackets', 'Parentheses', 'Author + year'],
+  'les libellés des boutons du panneau');
+ok(IN_TEXT_STYLES.every((s) => s.id && s.label && s.title),
+  'chaque forme est expliquée (infobulle du bouton)');
+eq(buildPubFormat('nature').inTextStyle, 'keep',
+  'un format neuf garde l’écriture du document : rien ne change sans le vouloir');
+eq(normalizePubFormat({ fields: buildPubFormat('nature').fields, inTextStyle: 'paren' }).inTextStyle, 'paren',
+  'une forme connue est gardée (le choix vit dans le format, donc dans le projet)');
+eq(normalizePubFormat({ fields: buildPubFormat('nature').fields, inTextStyle: 'nonsense' }).inTextStyle, 'keep',
+  'une forme inconnue (localStorage d’une autre version) retombe sur « as written »');
+eq(normalizeInTextStyle(undefined), 'keep', 'sans choix enregistré, aucune forme n’est imposée');
+
+/* Le panneau : les boutons, l'exemple rendu par le VRAI moteur, et la forme
+   conservée à chaque autre modification du format. */
+ok(/IN_TEXT_STYLES\.map/.test(src), 'le panneau itère sur les formes (boutons)');
+ok(/pubPatchFormat\(\{ inTextStyle: s\.id \}\)/.test(src), '…et chaque bouton écrit la forme dans le format');
+ok(/inTextStyle: normalizeInTextStyle\(activeFormat\.inTextStyle\)/.test(src),
+  'la forme choisie survit aux autres modifications du format');
+ok(/inTextSample\(activeFormat\.inTextStyle\)/.test(src),
+  'l’aperçu du panneau montre la forme choisie');
+ok(/import \{ inTextCitationHtml \} from '\.\.\/utils\/referenceLinks';/.test(src),
+  '…rendue par le moteur RÉEL (l’aperçu ne peut pas mentir sur le document)');
+/* La page projet : la forme est lue dans le format du projet et appliquée à
+   l'affichage, à l'impression, à l'export et au document figé. */
+ok(/const citeStyle = \(pubFormat && pubFormat\.inTextStyle\) \|\| 'keep';/.test(pdm),
+  'la page projet lit la forme du format du projet');
+ok(/const linkCitations = \(html, extraRefs = \[\]\) => applyInTextStyle\(/.test(pdm),
+  '…et linkCitations l’applique (rendu du document, impression, export)');
+ok(/style: citeStyle, refs: \[\.\.\.refs, \.\.\.\(extraRefs \|\| \[\]\)\]/.test(pdm),
+  '…avec les références du projet (le libellé auteur-année en a besoin)');
+ok(/linkCitations\(repairContentImages\(withoutBibliographySection\(project\.exportDocHtml\)\)\)/.test(pdm),
+  'le document FIGÉ reçoit la forme à l’affichage (comme sa liste de références)');
 
 console.log(`_pub_author_style_test: ${passed} passed`);

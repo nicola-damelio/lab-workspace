@@ -32,7 +32,7 @@ import { enrichReferences, enrichReport } from '../../utils/referenceEnrich';
 import {
   citationAnchorId, citationLabel, ensureReferenceEntries, linkCitationsInSections,
   linkCitationNumbers, numberImportedReferences, referenceNumbers, linkedCitationNumbers,
-  withoutBibliographySection
+  applyInTextStyle, withoutBibliographySection
 } from '../../utils/referenceLinks';
 import { splitAnchoredFigures } from '../../utils/figurePlacement';
 import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject, getDriveToken, getDriveRootName, resolveDrivePathFromNames, listDriveChildren } from '../../utils/driveUpload';
@@ -1094,7 +1094,16 @@ export const ProjectDetailModule = ({
     return citationLabel(found.sourceId ? { ...found, ...citeData(found) } : found);
   };
 
-  const linkCitations = (html, extraRefs = []) => linkCitationNumbers(html, {
+  /* LA FORME DES RENVOIS DANS LE TEXTE suit le « Publication format »
+     (`pubFormat.inTextStyle`) : le texte des sections garde l'écriture de
+     l'auteur, et c'est ICI — à l'affichage, à l'impression et à l'export — que la
+     forme choisie est appliquée (voir applyInTextStyle). */
+  const citeStyle = (pubFormat && pubFormat.inTextStyle) || 'keep';
+  const linkCitations = (html, extraRefs = []) => applyInTextStyle(
+    linkCitationNumbers(html, citationOpts(extraRefs)),
+    { ...citationOpts(extraRefs), style: citeStyle, refs: [...refs, ...(extraRefs || [])] }
+  );
+  const citationOpts = (extraRefs = []) => ({
     numbers: referenceNumbers([...refs, ...(extraRefs || [])]),
     hrefFor: (n) => `#${citationAnchorId(n)}`,
     titleFor: citationTitleFor(extraRefs)
@@ -3170,7 +3179,7 @@ export const ProjectDetailModule = ({
                  liste vivante imprimée en bas de ce document est rendue avec le
                  « Publication format » courant (voir withoutBibliographySection). */
               <div dangerouslySetInnerHTML={{
-                __html: repairContentImages(withoutBibliographySection(project.exportDocHtml))
+                __html: linkCitations(repairContentImages(withoutBibliographySection(project.exportDocHtml)))
               }} />
             ) : (
               <>

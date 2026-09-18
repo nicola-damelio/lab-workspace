@@ -15,8 +15,13 @@ import { loadProjects, saveProjects } from './AppModules/projectsModule';
 import {
   backupPaperCount, mergePaperLists, mergeProjectBibliographies, papersFromBackupHtml
 } from '../utils/referenceImport';
+/* LA FORME DES RENVOIS DANS LE TEXTE : rendue par le VRAI moteur — l'aperçu du
+   panneau « Publication format » ne peut donc pas mentir sur ce que le document
+   imprimera (voir applyInTextStyle). */
+import { inTextCitationHtml } from '../utils/referenceLinks';
 import {
-  AUTHOR_STYLE_IDS, AUTHOR_STYLES, PUB_FORMAT_KEY, PUB_FORMAT_PRESETS,
+  AUTHOR_STYLE_IDS, AUTHOR_STYLES, IN_TEXT_STYLES, normalizeInTextStyle,
+  PUB_FORMAT_KEY, PUB_FORMAT_PRESETS,
   authorMatchesCandidate, buildPubFormat, loadPubFormat, matchCoauthors,
   pubCitationData, pubCitationHtml, scientistStyleOf
 } from './pubCitation';
@@ -40,7 +45,8 @@ const labelCls = 'block text-[10px] font-bold text-slate-400 uppercase mb-1';
    / format.scientistStyles).
    ========================================================================= */
 export {
-  AUTHOR_STYLES, AUTHOR_STYLE_IDS, PUB_FORMAT_PRESETS,
+  AUTHOR_STYLES, AUTHOR_STYLE_IDS, IN_TEXT_STYLES, IN_TEXT_STYLE_IDS, PUB_FORMAT_PRESETS,
+  normalizeInTextStyle,
   buildPubFormat, loadPubFormat, normalizePubFormat,
   pubCitationHtml, pubCitationText, pubFieldValue, pubDoiUrl,
   pubCitationData, pubOriginOf,
@@ -2255,6 +2261,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     alwaysShowScientists: !!activeFormat.alwaysShowScientists,
     underlineScientists: !!activeFormat.underlineScientists,   // legacy default style
     scientistStyles: { ...(activeFormat.scientistStyles || {}) },
+    inTextStyle: normalizeInTextStyle(activeFormat.inTextStyle),
     fields
   });
   const pubPatchField = (fieldId, patch) =>
@@ -2324,6 +2331,24 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     };
   }, [citationScientists]);
 
+  /* L'APERÇU de la forme choisie pour les renvois du texte : il passe par le
+     moteur RÉEL (inTextCitationHtml, utils/referenceLinks.js) sur deux
+     références de démonstration. « as written », lui, n'a pas de forme à
+     montrer : l'exemple dit simplement que le document garde son écriture. */
+  const inTextSampleRefs = [
+    { number: 1, authors: 'Rossi M, Bianchi A', year: '2018' },
+    { number: 2, authors: 'Dupont J', year: '2020' }
+  ];
+  const inTextSample = (style) => {
+    if (!style || style === 'keep') {
+      return 'As shown previously\u00b9\u00b2 — or [12], or (12) — exactly as the document wrote it.';
+    }
+    const one = (n) => inTextCitationHtml([n], {
+      style, refs: inTextSampleRefs, hrefFor: () => '#ref-1'
+    });
+    return `As shown previously${one(1)}, and elsewhere${one(2)}.`;
+  };
+
   const renderPubFormat = () => (
     <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
       <div className="px-4 py-3 bg-indigo-50/50 border-b border-indigo-100 flex flex-col md:flex-row md:items-center justify-between gap-2">
@@ -2370,7 +2395,8 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
           display, so a change here shows up at once — even for a document whose text was frozen with
           <b>📄 Export document → ✏️ Edit text → 💾 Save changes</b>.
           {' '}
-          A document whose TEXT was frozen keeps its own wording and its printed in-text citations: use
+          A document whose TEXT was frozen keeps its own wording. Its in-text citations are re-formed here like the
+          reference list — choose above how they print (superscript, brackets, parentheses, author + year). Use
           <b> “↩️ Rebuild from data”</b> in the document’s toolbar (always visible) to rebuild that text from the
           project data and re-link the citations.
         </p>
@@ -2400,6 +2426,44 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                    className="w-3.5 h-3.5 accent-indigo-600" />
             Always show lab scientists even after “et al.”
           </label>
+        </div>
+
+        {/* LA FORME DES RENVOIS DANS LE TEXTE (« come appaiono i riferimenti
+            bibliografici nel testo ») : exposant, crochets, parenthèses, ou le
+            nom des auteurs suivi de l'année. C'est une propriété du FORMAT, donc
+            elle vaut pour le document du projet, sa version imprimée et son
+            export — document figé compris, où les renvois sont reformés à
+            l'affichage (voir applyInTextStyle dans utils/referenceLinks.js). */}
+        <div className="bg-white border border-slate-200 rounded-lg p-3 mb-4">
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <span className="text-[10px] font-black uppercase tracking-wide text-slate-400"
+                  title="How every numbered citation of the project document is printed in the text">
+              In-text citations (project document)
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {IN_TEXT_STYLES.map((s) => {
+              const current = normalizeInTextStyle(activeFormat.inTextStyle) === s.id;
+              return (
+                <button type="button" key={s.id} onClick={() => pubPatchFormat({ inTextStyle: s.id })}
+                        title={s.title}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
+                          current ? 'bg-indigo-600 text-white border-indigo-600'
+                            : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'}`}>
+                  {s.label}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-slate-500 mt-2">
+            Example:{' '}
+            <span className="text-slate-800"
+                  dangerouslySetInnerHTML={{ __html: inTextSample(activeFormat.inTextStyle) }} />
+          </p>
+          <p className="text-[10px] text-slate-400 mt-1">
+            The numbers keep their link to the reference (and its tooltip) whatever the form; a number the project
+            does not know stays untouched.
+          </p>
         </div>
 
         {/* Every author of the paper is listed (the “et al.” rule above is

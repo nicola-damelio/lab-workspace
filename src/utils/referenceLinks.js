@@ -21,6 +21,10 @@
      • la référence est rappelée en infobulle (`title`) ;
      • un numéro qui n'existe PAS dans le projet reste intact : rien n'est
        inventé, on n'ajoute jamais de lien mort ;
+     • un exposant qui n'est PAS un renvoi reste du texte : l'ISOTOPE « ¹³C »
+       (l'exposant y OUVRE le mot de l'atome, un renvoi ne précède jamais le mot
+       qu'il cite), l'exposant d'une FORMULE (« (x + y)² ») ou d'une unité
+       (« m² ») — voir citationPassesGuards dans utils/manuscriptImport.js ;
      • la fonction est IDEMPOTENTE et ne touche ni les balises, ni le contenu
        d'un lien existant (un texte déjà traité peut être retraité sans dégât).
 
@@ -39,8 +43,8 @@
 
 import {
   NUMERIC_CITATION_RE, PAREN_CITATION_RE, SUPERSCRIPT_CITATION_RE,
-  citationContextOkBefore, citationGuardApplies, numbersOfCitation, numericCitationNumbers,
-  digitsToSuperscript
+  citationPassesGuards, numbersOfCitation, numericCitationNumbers,
+  digitsToSuperscript, isAuthorMarkLine
 } from './manuscriptImport';
 import { entryKeys } from './referenceImport';
 
@@ -79,13 +83,44 @@ const escapeAttr = (s) => String(s || '')
  *  « 5-7 »). « m<sup>2</sup> » ou « 2<sup>nd</sup> » n'y ressemblent pas. */
 const SUP_CONTENT_RE = /^(\s*)(\d{1,4}(?:\s*(?:[,;]|-|–|—|to)\s*\d{1,4})*)(\s*)$/;
 
-/** Les citations d'un groupe → leur HTML cliquable, SÉPARÉES par des virgules.
- *  `innerFor` décide de ce qui reste VISIBLE (le nombre, ou son exposant). */
-const citationLinks = (nums, { href, titleOf, innerFor }) => nums.map((n) => {
+/** Le texte qui SUIT la fermeture d'un exposant HTML (« </sup> ») — le contexte
+ *  APRÈS la citation, et non le nom de la balise : « <sup>2</sup>C » est un
+ *  isotope (voir citationPassesGuards). */
+const afterSupClose = (source, from) => String(source || '').slice(from).replace(/^<\/sup\s*>/i, '');
+
+/* La fin d'un bloc de texte : c'est là que s'arrête « la ligne » dont parle le
+   garde-fou de la ligne d'auteurs. */
+const BLOCK_BREAK_RE = /<\/p>|<br\s*\/?>|<\/li>|<\/h[1-6]>|<\/div>|\n/gi;
+
+/** Le TEXTE de la ligne qui porte la position `at` (balises retirées) : le bloc
+ *  (`<p>…</p>`, `<li>…</li>`, une ligne après `<br>`) dans lequel elle tombe. */
+const lineTextAt = (source, at) => {
+  BLOCK_BREAK_RE.lastIndex = 0;
+  let start = 0;
+  let m = BLOCK_BREAK_RE.exec(source);
+  while (m && m.index < at) {
+    start = m.index + m[0].length;
+    m = BLOCK_BREAK_RE.exec(source);
+  }
+  const end = m ? m.index : source.length;
+  return source.slice(start, end).replace(/<[^>]*>/g, '');
+};
+
+/** L'ANCRE d'un renvoi : le numéro visible, son lien vers la référence, son
+ *  infobulle. UNE seule écriture, partagée par le rattachement des citations
+ *  (citationLinks) et par les FORMES du « Publication format »
+ *  (inTextCitationHtml) : les deux ne peuvent pas diverger. */
+const citeAnchor = (n, inner, { href, titleOf }) => {
   const title = titleOf(n);
   return `<a class="${CITE_LINK_CLASS}" href="${escapeAttr(href(n))}" data-ref="${n}"`
-    + `${title ? ` title="${escapeAttr(title)}"` : ''}>${innerFor ? innerFor(n) : n}</a>`;
-}).join(',');
+    + `${title ? ` title="${escapeAttr(title)}"` : ''}>${inner}</a>`;
+};
+
+/** Les citations d'un groupe → leur HTML cliquable, SÉPARÉES par des virgules.
+ *  `innerFor` décide de ce qui reste VISIBLE (le nombre, ou son exposant). */
+const citationLinks = (nums, { href, titleOf, innerFor }) => nums
+  .map((n) => citeAnchor(n, innerFor ? innerFor(n) : n, { href, titleOf }))
+  .join(',');
 
 /**
  * Le TEXTE HTML d'une section, ses citations numérotées transformées en liens.
@@ -117,6 +152,17 @@ export const linkCitationNumbers = (html, { numbers, hrefFor, titleFor } = {}) =
   let anchor = 0;   // profondeur de <a> : on ne réécrit JAMAIS l'intérieur d'un lien
   const sups = [];  // <sup> ouverts : leur contenu est une citation s'il n'a QUE des nombres
   let offset = 0;   // position du token dans le source (garde-fou de contexte)
+  /* LA LIGNE QUI PORTE LA CITATION : une ligne d'AUTEURS n'est jamais citée —
+     ses exposants sont les numéros des AFFILIATIONS (« Mario Rossi¹, Anna
+     Bianchi² »), jamais des renvois (voir isAuthorMarkLine dans
+     utils/manuscriptImport.js). Les lier écrivait « Rossi[1] » dans la liste des
+     auteurs du document. Une PHRASE, elle, reste du texte cité. */
+  const authorLines = new Map();   // « la ligne est-elle une liste d'auteurs ? »
+  const inAuthorLine = (at) => {
+    const line = lineTextAt(source, at);
+    if (!authorLines.has(line)) authorLines.set(line, isAuthorMarkLine(line));
+    return authorLines.get(line);
+  };
   return source.split(/(<[^>]*>)/).map((token) => {
     const start = offset;
     offset += token.length;
@@ -135,7 +181,9 @@ export const linkCitationNumbers = (html, { numbers, hrefFor, titleFor } = {}) =
       if (!m) return token;
       const nums = numericCitationNumbers(m[2]);
       if (!nums.length) return token;
-      if (citationGuardApplies('sup-html', nums) && !citationContextOkBefore(sups[sups.length - 1])) return token;
+      if (inAuthorLine(start)) return token;
+      if (!citationPassesGuards(sups[sups.length - 1], afterSupClose(source, start + token.length),
+        { form: 'sup-html', nums })) return token;
       if (!nums.every((n) => valid.has(n))) return token;
       return `${m[1]}${citationLinks(nums, plain)}${m[3]}`;
     }
@@ -143,7 +191,9 @@ export const linkCitationNumbers = (html, { numbers, hrefFor, titleFor } = {}) =
     return [[NUMERIC_CITATION_RE, 'bracket'], [PAREN_CITATION_RE, 'paren'], [SUPERSCRIPT_CITATION_RE, 'sup']]
       .reduce((acc, [re, form]) => acc.replace(new RegExp(re.source, re.flags), (raw, group, at) => {
         const nums = numbersOfCitation(form, group);
-        if (citationGuardApplies(form, nums) && !citationContextOkBefore(source.slice(0, start + at))) return raw;
+        if (inAuthorLine(start + at)) return raw;
+        if (!citationPassesGuards(source.slice(0, start + at),
+          source.slice(start + at + raw.length), { form, nums })) return raw;
         if (!nums.length || !nums.every((n) => valid.has(n))) return raw;
         if (form === 'paren') return `(${citationLinks(nums, plain)})`;
         if (form === 'sup') {
@@ -183,6 +233,156 @@ export const linkCitationsInSections = (sections, refs, opts = {}) => {
     added += Math.max(0, linkedCitationNumbers(next).size - linkedCitationNumbers(html).size);
   });
   return { patch, updated, added };
+};
+
+/* ── LA FORME DES RENVOIS DANS LE TEXTE (« Publication format ») ─────────────
+
+   Le numéro reste VU par le lecteur, mais sa FORME suit le journal :
+   l'exposant (« previously¹² », Nature), les crochets (« [12] », Paperpile), les
+   parenthèses (« (12) », style EndNote/Word) ou le nom d'auteur suivi de l'année
+   (« (Rossi & Bianchi, 2018) », APA / Harvard). Le choix vit dans le
+   « Publication format » (`format.inTextStyle`, voir components/pubCitation.js,
+   panneau « Publication format » des Publications), et il vaut PARTOUT où un
+   renvoi s'affiche.
+
+   Le texte des sections garde, lui, l'écriture de l'auteur : c'est à
+   l'AFFICHAGE que la forme est appliquée (applyInTextStyle), donc changer le
+   format change tout de suite le document affiché, le document imprimé et son
+   PDF — comme la liste des références (voir pubCitationHtml). */
+
+/** Le nom de famille d'un auteur (« Rossi M » → « Rossi », « W.-J. Lu » → « Lu »). */
+const authorSurnameOf = (name) => {
+  const words = String(name || '').split(/\s+/).filter(Boolean)
+    /* Une INITIALE (« M. », « W.-J. », « A ») n'est pas un nom de famille. */
+    .filter((w) => !/^(?:\p{Lu}\.?-?){1,4}$/u.test(w));
+  return words.length ? words[words.length - 1] : '';
+};
+
+/** Le libellé auteur-année d'une référence : « Rossi & Bianchi, 2018 »,
+ *  « Rossi et al., 2018 » au-delà de deux auteurs. '' quand on ne peut pas le
+ *  construire (le numéro reste alors affiché à sa place). */
+export const citeAuthorYearLabel = (ref) => {
+  const surnames = String((ref && ref.authors) || '')
+    .split(/\s*[,;]+\s*|\s+and\s+/i)
+    .map((s) => s.trim()).filter(Boolean)
+    .filter((s) => !/^et\s*al\.?$/i.test(s))
+    .map(authorSurnameOf).filter(Boolean);
+  const who = surnames.length === 0 ? ''
+    : surnames.length === 1 ? surnames[0]
+      : surnames.length === 2 ? `${surnames[0]} & ${surnames[1]}`
+        : `${surnames[0]} et al.`;
+  if (!who) return '';
+  const year = String((ref && ref.year) || '').trim();
+  return year ? `${who}, ${year}` : who;
+};
+
+/**
+ * UN RENVOI DU TEXTE DANS LA FORME CHOISIE : « ¹² » (sup), « [12] » (bracket),
+ * « (12) » (paren) ou « (Rossi & Bianchi, 2018) » (author-date). Les numéros
+ * restent des LIENS vers leur référence (`#ref-12`) : changer de forme ne casse
+ * jamais le rattachement.
+ *
+ * @param {Array<number>} nums  les numéros du renvoi, dans l'ordre du texte
+ * @param {object} [opts]  `style`, `refs` (références du projet, pour le libellé
+ *                         auteur-année), `hrefFor`, `titleFor`
+ */
+export const inTextCitationHtml = (nums, opts = {}) => {
+  const list = (Array.isArray(nums) ? nums : []).map(Number).filter((n) => n > 0);
+  if (!list.length) return '';
+  const style = String(opts.style || '');
+  const href = typeof opts.hrefFor === 'function' ? opts.hrefFor : (n) => `#${citationAnchorId(n)}`;
+  const titleOf = typeof opts.titleFor === 'function' ? opts.titleFor : () => '';
+  const refs = Array.isArray(opts.refs) ? opts.refs : [];
+  const plain = { href, titleOf };
+  if (style === 'author-date') {
+    /* Un renvoi = un auteur et une année : « (Rossi & Bianchi, 2018; Dupont,
+       2020) ». La référence est cherchée par son NUMÉRO (celui du texte), et un
+       renvoi sans auteurs lisibles garde son numéro. */
+    return `(${list.map((n) => {
+      const ref = refs.find((r) => Number(r && r.number) === n);
+      return citeAnchor(n, escapeAttr(citeAuthorYearLabel(ref) || String(n)), plain);
+    }).join('; ')})`;
+  }
+  const inner = list
+    .map((n) => citeAnchor(n, style === 'sup' ? digitsToSuperscript(n) : n, plain))
+    .join(',');
+  if (style === 'sup') return `<sup>${inner}</sup>`;
+  if (style === 'bracket') return `[${inner}]`;
+  if (style === 'paren') return `(${inner})`;
+  return inner;
+};
+
+/** L'ancre d'un renvoi DÉJÀ lié : c'est exactement ainsi que linkCitationNumbers
+ *  l'écrit (même classe, même href, même `data-ref`). */
+const CITE_ANCHOR_SRC = '<a class="' + CITE_LINK_CLASS + '" href="[^"]*" data-ref="(\\d{1,4})"'
+  + '(?: title="[^"]*")?>[\\s\\S]*?<\\/a>';
+const CITE_ANCHOR_ANY = CITE_ANCHOR_SRC.replace('(\\d{1,4})', '\\d{1,4}');
+/* Un GROUPE de renvois liés : les numéros sont séparés par des virgules (ou des
+   points-virgules, la forme auteur-année). */
+const CITE_RUN_RE = new RegExp(`${CITE_ANCHOR_ANY}(?:\\s*[,;]\\s*${CITE_ANCHOR_ANY})*`, 'g');
+const CITE_RUN_NUMS_RE = new RegExp(CITE_ANCHOR_SRC, 'g');
+
+/** La forme qui ENCADRE un groupe de renvois : « <sup> » + « </sup> », les
+ *  crochets, les parenthèses — celles que linkCitationNumbers a écrites. Rien
+ *  n'est retiré quand les DEUX côtés ne sont pas là : une parenthèse de l'auteur
+ *  (« (see ¹²) ») ne part pas avec le renvoi. */
+const runWrapper = (before, after) => {
+  const sup = /<sup>\s*$/i.exec(before);
+  if (sup && /^\s*<\/sup>/i.test(after)) {
+    return { left: sup[0].length, right: /^\s*<\/sup>/i.exec(after)[0].length };
+  }
+  if (/\[$/.test(before) && /^\]/.test(after)) return { left: 1, right: 1 };
+  if (/\($/.test(before) && /^\)/.test(after)) return { left: 1, right: 1 };
+  return { left: 0, right: 0 };
+};
+
+/**
+ * LES RENVOIS D'UN TEXTE HTML DANS LA FORME DU « Publication format ».
+ *
+ * Le texte de l'auteur n'est pas réécrit : la forme est appliquée À L'AFFICHAGE
+ * (page du projet, document imprimé, export). `style` absent ou « keep » rend le
+ * texte inchangé — le renvoi garde alors l'écriture du document.
+ *
+ * Les renvois pas encore liés le sont d'abord (mêmes règles : un numéro inconnu
+ * du projet reste intact), sauf avec `link: false`.
+ *
+ * IDEMPOTENTE : rejouer la transformation avec la même forme rend le même HTML.
+ *
+ * @param {string} html  le texte de la section (HTML)
+ * @param {object} [opts]  `style`, `refs`, `numbers`, `hrefFor`, `titleFor`, `link`
+ * @returns {string} le texte avec ses renvois dans la forme choisie
+ */
+export const applyInTextStyle = (html, opts = {}) => {
+  const source = String(html || '');
+  const style = String(opts.style || '');
+  if (!style || style === 'keep') return source;
+  const linked = opts.link === false ? source : linkCitationNumbers(source, opts);
+  if (!linked.includes(CITE_LINK_CLASS)) return linked;
+  const cuts = [];
+  CITE_RUN_RE.lastIndex = 0;
+  let m = CITE_RUN_RE.exec(linked);
+  while (m) {
+    const nums = [];
+    m[0].replace(CITE_RUN_NUMS_RE, (all, n) => { nums.push(Number(n)); return all; });
+    if (nums.length) {
+      const rest = m.index + m[0].length;
+      const { left, right } = runWrapper(linked.slice(0, m.index), linked.slice(rest));
+      cuts.push({
+        from: m.index - left,
+        to: rest + right,
+        html: inTextCitationHtml(nums, opts)
+      });
+    }
+    m = CITE_RUN_RE.exec(linked);
+  }
+  if (!cuts.length) return linked;
+  let out = '';
+  let at = 0;
+  cuts.forEach((c) => {
+    out += linked.slice(at, c.from) + c.html;
+    at = c.to;
+  });
+  return out + linked.slice(at);
 };
 
 /* ── Les références IMPORTÉES rejoignent la liste NUMÉROTÉE du projet ─────── */
