@@ -469,6 +469,58 @@ ok(!MS.isAuthorMarkLine('Aphids transmit the virus\u00b9, as shown before\u00b2.
 ok(MS.isAuthorLine('Mario Rossi, Anna Bianchi') && !MS.isAuthorLine('Materials and Methods'),
   'un intitulé de section n’est jamais pris pour une ligne d’auteurs');
 
+/* ── 10 quinquies. UNE LONGUE LISTE D'AUTEURS N'EST PAS UN PARAGRAPHE ────────
+   Un consortium de dix-huit auteurs et de leurs exposants dépasse les 200
+   caractères : la fenêtre d'en-tête jugeait la ligne « paragraphe de corps de
+   texte » et S'ARRÊTAIT AVANT ELLE — la ligne n'était donc jamais lue, et le
+   champ « Authors » restait vide (défaut signalé : « la lista degli autori non
+   viene riconosciuta »). Les plafonds de longueur des lecteurs (300 / 400
+   caractères) tombaient en plus avant une vraie liste de consortium. */
+const CONSORTIUM = ['Lucie Bernard\u2074', 'Camille Petit\u00b9', 'Julien Moreau\u00b9',
+  'Sophie Lambert\u00b2', 'Antoine Girard\u00b2', 'Marie Sanchez\u00b3', 'Paul Martin\u00b3',
+  'Claire Dubois\u2074', 'Hugo Lefevre\u00b9', 'Elodie Marchand\u00b2', 'Nicolas Fontaine\u00b3',
+  'Sarah Roussel\u2074', 'Mathieu Barbier\u00b9', 'Julie Charpentier\u00b2', 'Pierre Legrand\u00b3',
+  'Amandine Rousseau\u2074', 'Thomas Mercier\u00b9', 'Lea Fournier\u00b2'];
+const consortiumLine = CONSORTIUM.join(', ');
+ok(consortiumLine.length > 200,
+  'la liste des dix-huit auteurs dépasse bien les 200 caractères du « paragraphe »');
+ok(MS.looksLikeAuthorLine(consortiumLine),
+  'un lecteur d’auteurs lit cette liste, quelle que soit sa longueur');
+const consortiumHeader = authorsOf([
+  'Aphid transmission of a new potyvirus infecting pepper crops',
+  consortiumLine,
+  '1 Dipartimento di Agraria, Universita di Napoli, Portici, Italy',
+  '2 INRAE, Villenave d’Ornon, France'
+]);
+eq(consortiumHeader.authors, consortiumLine,
+  'les DIX-HUIT auteurs sont reconnus : la ligne n’est plus prise pour un paragraphe');
+eq(consortiumHeader.affiliations.split('\n').length, 2, '…et les affiliations suivent, comme avant');
+ok(consortiumHeader.lines.some((l) => l.role === 'authors'),
+  '…la ligne est PROPOSÉE comme « authors » dans la fenêtre d’import');
+ok(consortiumHeader.lines.some((l) => l.text === consortiumLine),
+  '…et l’utilisateur la voit dans la fenêtre (il peut corriger son rôle à la main)');
+/* Le même jugement vaut quand les auteurs sont imprimés APRÈS la zone d'en-tête
+   (le repli « extraHeaderLines » les jugeait, lui aussi, à leur longueur). */
+const lateConsortium = authorsOf([
+  'Aphid transmission of a new potyvirus infecting pepper crops',
+  '1 Dipartimento di Agraria, Universita di Napoli, Portici, Italy',
+  'Abstract',
+  'The potyvirus was transmitted by aphids.',
+  consortiumLine
+]);
+eq(lateConsortium.authors, consortiumLine,
+  'une liste d’auteurs imprimée sous le résumé est reconnue elle aussi');
+/* UN PARAGRAPHE, LUI, RESTE UN PARAGRAPHE : la fenêtre s'arrête avant lui. */
+const PROSE = 'Aphids transmit the virus. The plants were grown in a greenhouse during the winter, and the '
+  + 'leaves were collected after three weeks of infestation, then frozen, ground in liquid nitrogen and '
+  + 'stored at minus eighty degrees until they were used for the extraction of total RNA.';
+ok(PROSE.length > 200 && !MS.looksLikeAuthorLine(PROSE),
+  'un long paragraphe reste hors des lecteurs d’auteurs');
+eq(authorsOf(['Aphid transmission of a new potyvirus in pepper crops', PROSE]).authors, '',
+  '…et l’en-tête s’arrête avant lui, sans inventer d’auteurs');
+has(PROJ, 'Drive and Firestore hold a COPY of the dataset',
+  'un refus d’écrire dit que le Drive ne rend PAS sa place au magasin du navigateur');
+
 /* ── 11. Câblage : l'en-tête entre dans le PROJET, pas dans une section ───── */
 has(PROJ, 'const header = parseManuscriptHeader(manuscript.body);',
   'la page projet lit l’en-tête du document');

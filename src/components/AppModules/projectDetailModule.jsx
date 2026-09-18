@@ -535,9 +535,19 @@ export const ProjectDetailModule = ({
   useEffect(() => {
     const res = saveProjects(projects);
     if (res && res.ok === false) {
+      /* POURQUOI ce texte ne dit plus « enregistrez le dataset sur le Drive » :
+         les deux magasins sont INDÉPENDANTS. Firestore et le Drive gardent une
+         COPIE du dataset ; la page, elle, travaille sur le magasin du
+         navigateur (~5 Mo par site, partagé par tous les datasets du poste).
+         « Enregistrer sur le Drive » met donc le travail à l'abri — mais ne rend
+         pas un octet au navigateur, et le conseiller laissait l'utilisateur
+         tourner en rond (question posée : « ma se scrive su google drive come fa
+         a finire lo spazio? »). Ce qui LIBÈRE la place est dit ici. */
       setStorageWarning(`⚠ This browser refused to save this project (${res.error}). `
-        + 'The page keeps working, but changes may be lost when you leave it — '
-        + 'free some space (or save the dataset to Drive), then edit once more to retry.');
+        + 'The page keeps working, but changes may be lost when you leave it. '
+        + 'Drive and Firestore hold a COPY of the dataset — they do not give the browser’s own store '
+        + '(~5 MB per site) its space back. To free room, remove from THIS device a dataset (or its '
+        + 'figure images) you no longer need, then edit once more to retry.');
     } else {
       setStorageWarning((cur) => (cur ? '' : cur));
     }

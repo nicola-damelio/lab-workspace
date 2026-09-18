@@ -142,6 +142,18 @@ export const AFFILIATION_WORDS_RE = /(?:universit|university|dipartimento|depart
 /** Pays / code postal : la fin typique d'une adresse d'affiliation. */
 export const AFFILIATION_PLACE_RE = /\b(?:italy|france|germany|spain|portugal|netherlands|belgium|switzerland|austria|denmark|sweden|norway|poland|greece|united kingdom|england|scotland|ireland|\busa\b|\bcanada\b|\bbrazil\b|\bchina\b|\bjapan\b|\bindia\b|\baustralia\b)\b|\b\d{5}\b/i;
 
+/** LA LONGUEUR MAXIMALE D'UNE LIGNE D'AUTEURS. Elle était plafonnée à 300
+ *  caractères (400 pour la lecture par marqueurs) : au-delà, un consortium
+ *  entier — dix-huit noms et leurs exposants — n'était reconnu par AUCUN
+ *  lecteur, et la ligne, jugée « paragraphe de corps de texte », n'entrait même
+ *  pas dans la fenêtre de l'en-tête : le champ « Authors » restait vide alors
+ *  que les auteurs sont exactement à leur place, entre le titre et les
+ *  affiliations (défaut signalé : « la lista degli autori non viene
+ *  riconosciuta »). Les lecteurs, eux, ne se relâchent pas — chaque morceau doit
+ *  rester un NOM — donc allonger la limite n'ouvre pas la porte à un paragraphe
+ *  de corps de texte. */
+const AUTHOR_LINE_MAX = 800;
+
 /** Une ligne d'affiliation : un mot d'institution (université, laboratoire…,
  *  souvent signalée par « 1 », « * »…) ou une adresse postale. Le nom d'un pays
  *  ne suffit PAS : « … infecting pepper crops in Italy » est un titre. */
@@ -338,7 +350,7 @@ export const cleanAuthorLine = (line) => {
  *  seul y suffit — c'est le cas « un auteur par ligne ». */
 export const looksLikeAuthorLine = (line, { alone = false } = {}) => {
   const s = String(line || '').trim();
-  if (!s || s.length > 400) return false;
+  if (!s || s.length > AUTHOR_LINE_MAX) return false;
   if (HEADER_META_RE.test(s) || SECTION_WORD_RE.test(s)) return false;
   const etAl = /\bet\s+al\.?/i.test(s);
   const parts = authorLineParts(s);
@@ -1201,7 +1213,7 @@ const isTitleCandidate = (line, nextLine) => {
  *  and Methods » ou « Statistical Analysis » n'en sont pas. */
 export const looksLikeAuthorList = (line) => {
   const s = String(line || '').trim();
-  if (!s || s.length > 300) return false;
+  if (!s || s.length > AUTHOR_LINE_MAX) return false;
   if (looksLikeAuthorLine(s)) return true;
   /* Un intitulé commençant par un mot de section (« Results And Discussion »,
      « Introduction and aims ») n'est PAS une liste de noms, même s'il se coupe
@@ -1240,7 +1252,7 @@ const NAME_ONLY_RE = new RegExp(`^${NAME_WORD}(?:\\s+${NAME_WORD})*$`, 'u');
  *  entre le titre et les affiliations ». */
 export const looksLikeNameListLine = (line) => {
   const s = String(line || '').trim();
-  if (!s || s.length > 300) return false;
+  if (!s || s.length > AUTHOR_LINE_MAX) return false;
   if (HEADER_META_RE.test(s) || SECTION_WORD_RE.test(s)) return false;
   if (looksLikeAffiliationLine(s)) return false;
   if (isBodyParagraph(s)) return false;
@@ -1373,7 +1385,7 @@ const headMarkedNameParts = (line) => {
  *  auteur. */
 const looksLikeHeadMarkedNameList = (line, { minParts = 1 } = {}) => {
   const s = String(line || '').trim();
-  if (!s || s.length > 300) return false;
+  if (!s || s.length > AUTHOR_LINE_MAX) return false;
   if (HEADER_META_RE.test(s) || SECTION_WORD_RE.test(s)) return false;
   /* Un INTITULÉ n'est jamais une liste de noms, même numéroté : après retrait du
      numéro, « 2. Materials and Methods. » se coupe en « Materials » +
@@ -1539,7 +1551,10 @@ const extraHeaderLines = (list, window) => {
   for (let i = from; i < Math.min(list.length, from + HEADER_EXTRA_SCAN); i += 1) {
     const s = String((list[i] && list[i].text) || '').trim();
     if (!s || isFigureMark(s)) continue;
-    if (isBodyParagraph(s)) {
+    /* Même jugement pour le repli : une longue liste de noms n'est pas un
+       paragraphe de corps de texte — elle compte comme une liste d'auteurs
+       (voir le point 3 de parseManuscriptHeader). */
+    if (isBodyParagraph(s) && !isAuthorLineAtPosition(s)) {
       bodies += 1;
       names = false;
       if (bodies >= HEADER_EXTRA_BODY_MAX) break;
@@ -1644,7 +1659,14 @@ export const parseManuscriptHeader = (blocks) => {
     const role = classifyHeaderLine(s);
     const label = headingLabel(s);
     if (role === 'section' || guessSectionForHeading(label) || REFERENCE_HEADING_RE.test(label)) break;
-    if (role !== 'heading' && isBodyParagraph(s)) break;
+    /* UNE LONGUE LISTE D'AUTEURS N'ARRÊTE PAS L'EN-TÊTE. « Paragraphe de corps
+       de texte » se juge à la LONGUEUR (plus de 200 caractères) : une liste de
+       dix-huit auteurs et de leurs exposants la dépasse, et la fenêtre
+       s'arrêtait AVANT elle — la ligne n'était donc jamais examinée, et le
+       champ « Authors » restait vide (défaut signalé). Ce qui est vraiment du
+       corps de texte, lui, ne passe pas les lecteurs d'auteurs : chaque
+       morceau doit être un NOM (voir isAuthorLineAtPosition). */
+    if (role !== 'heading' && isBodyParagraph(s) && !isAuthorLineAtPosition(s)) break;
     window.push({ at: i, text: s, role });
   }
   if (!window.length) {
