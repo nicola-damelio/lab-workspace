@@ -128,6 +128,40 @@ export const addProjectLibraryItem = (projectId, urlOrItem, label) => {
   return entry;
 };
 export const removeLibraryItem = (id) => writeLibrary(readLibrary().filter((i) => i.id !== id));
+/* ── DÉPLACER UNE IMAGE DANS LA BIBLIOTHÈQUE (le glisser-déposer) ─────────────
+   L'ORDRE de la liste EST celui qu'affichent la bibliothèque d'images (panneau
+   « Image library » de Figures & Slides, modale 🖼 de l'Image Builder) et tous
+   les sélecteurs qui la parcourent. La souris peut donc le réécrire : on fait
+   glisser une vignette DEVANT une autre. Pur, pour que les deux écrans
+   partagent le même geste — et pour être testable hors navigateur. */
+
+/** La liste d'arrivée, `id` posé juste AVANT `beforeId` (à la fin quand
+ *  `beforeId` est absent, vide ou introuvable). L'objet REÇU est renvoyé tel
+ *  quel quand rien ne bouge (déjà à cette place) : l'appelant peut comparer les
+ *  références et éviter une écriture inutile. */
+export const reorderLibraryList = (list, id, beforeId = '') => {
+  const src = Array.isArray(list) ? list : [];
+  const at = src.findIndex((i) => i && i.id === id);
+  if (at < 0 || id === beforeId) return list;
+  const moved = src[at];
+  const rest = src.filter((_, i) => i !== at);
+  const dest = beforeId ? rest.findIndex((i) => i && i.id === beforeId) : -1;
+  rest.splice(dest < 0 ? rest.length : dest, 0, moved);
+  if (rest.length === src.length && rest.every((i, k) => i === src[k])) return list;
+  return rest;
+};
+
+/** Le même déplacement, écrit dans la portée demandée ('common' = bibliothèque
+ *  partagée, 'project' = celle d'un projet). @returns {boolean} true si la
+ *  liste a réellement changé (donc si quelque chose a été écrit). */
+export const reorderLibraryItem = (scope, projectId, id, beforeId = '') => {
+  const current = scope === 'project' ? readProjectLibrary(projectId) : readLibrary();
+  const next = reorderLibraryList(current, id, beforeId);
+  if (next === current) return false;
+  if (scope === 'project') writeProjectLibrary(projectId, next);
+  else writeLibrary(next);
+  return true;
+};
 export const renameLibraryItem = (id, label) =>
   writeLibrary(readLibrary().map((i) => (i.id === id ? { ...i, label } : i)));
 export const removeProjectLibraryItem = (projectId, id) =>

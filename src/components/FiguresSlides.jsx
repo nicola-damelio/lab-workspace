@@ -4,7 +4,7 @@ import LZString from 'lz-string';
 import { getStarredItems } from '../utils/starredItems';
 import {
   readLibrary, writeLibrary, removeLibraryItem, renameLibraryItem,
-  readProjectLibrary, writeProjectLibrary, removeProjectLibraryItem, renameProjectLibraryItem, moveLibraryItem,
+  readProjectLibrary, writeProjectLibrary, removeProjectLibraryItem, renameProjectLibraryItem, moveLibraryItem, reorderLibraryItem,
   addLibraryItem, addProjectLibraryItem,
   readDeck, writeDeck, uid, makeLibraryImage, blobToDataUrl, resolveImageToDataUrl,
   mergeLibraryFromSnapshot, pushLibraryToDrive, pullLibraryFromDrive, localOnlyLibraryItems
@@ -510,6 +510,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
   const [library, setLibrary] = useState(readLibrary);
   const [projectLibrary, setProjectLibrary] = useState(() => readProjectLibrary(projectId));
   const [libTab, setLibTab] = useState('common');   // 'common' | 'project'
+  const [libOver, setLibOver] = useState('');       // library card under the pointer while dragging one
   const [deck, setDeck] = useState(() => readDeck(projectId));
   const [cur, setCur] = useState(() => readDeck(projectId).cur || 0);
   const [sel, setSel] = useState(null);          // selected block index
@@ -944,6 +945,38 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     moveLibraryItem(from, to, projectId, id);
     setLibrary(readLibrary());
     setProjectLibrary(readProjectLibrary(projectId));
+  };
+  /* ── DÉPLACER UNE IMAGE DANS LA BIBLIOTHÈQUE (glisser-déposer) ─────────────
+     L'ORDRE de la liste est celui que suivent le panneau et tous les
+     sélecteurs ; le bouton 🌐 / 📁, lui, change une image de bibliothèque. La
+     souris fait les deux :
+       • lâcher une vignette sur une AUTRE → elle prend cette place ;
+       • la lâcher sur l'autre ONGLET     → elle part dans cette bibliothèque.
+     Le geste porte sur la LISTE (localStorage), pas sur les pixels : les
+     fichiers restent sur le Drive. */
+  const dropOnLibCard = (id) => (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const d = dragData.current;
+    dragData.current = null;
+    setLibOver('');
+    if (!d || d.kind !== 'lib' || d.id === id) return;
+    if (d.scope !== libScopeName) moveLibraryItem(d.scope, libScopeName, projectId, d.id);
+    if (reorderLibraryItem(libScopeName, projectId, d.id, id) || d.scope !== libScopeName) {
+      setLibrary(readLibrary());
+      setProjectLibrary(readProjectLibrary(projectId));
+    }
+  };
+  const dropOnLibTab = (scope) => (e) => {
+    e.preventDefault();
+    const d = dragData.current;
+    dragData.current = null;
+    setLibOver('');
+    if (!d || d.kind !== 'lib' || d.scope === scope) return;
+    moveLibraryItem(d.scope, scope, projectId, d.id);
+    setLibrary(readLibrary());
+    setProjectLibrary(readProjectLibrary(projectId));
+    setLibTab(scope);
   };
   const addFromLib = (it) => slide && addBlock(cur, { type: 'image', url: it.url, full: it.full, caption: it.label || '' });
 
@@ -1750,15 +1783,24 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
             <input ref={fileRef} type="file" accept="image/*" onChange={onUpload} className="hidden" />
             <div className="flex items-center gap-1 mb-2">
               <button type="button" onClick={() => setLibTab('common')}
+                onDragOver={(e) => { if (dragData.current && dragData.current.kind === 'lib' && dragData.current.scope !== 'common') { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } }}
+                onDrop={dropOnLibTab('common')}
+                title="Common library — also a DROP TARGET: drag a project image onto this tab to move it into the common library"
                 className={`text-[10px] font-bold px-2.5 py-1 rounded-md border ${libTab === 'common' ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
                 🌐 Common ({library.length})
               </button>
               <button type="button" onClick={() => setLibTab('project')}
+                onDragOver={(e) => { if (dragData.current && dragData.current.kind === 'lib' && dragData.current.scope !== 'project') { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } }}
+                onDrop={dropOnLibTab('project')}
+                title="Project library — also a DROP TARGET: drag a common image onto this tab to move it into this project's library"
                 className={`text-[10px] font-bold px-2.5 py-1 rounded-md border ${libTab === 'project' ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
                 📁 Project ({projectLibrary.length})
               </button>
               <span className="text-[10px] text-slate-400 ml-1">Uploads/pastes go to the <b>{libScopeName}</b> library{libTab === 'project' && projectId ? ' · ' + projectId : ''}</span>
             </div>
+            <p className="text-[10px] text-slate-400 mb-1">
+              <b>Drag a thumbnail onto another one</b> to change its order in this list, or <b>onto the 🌐 / 📁 tab</b> to move the image into that library (the files stay on the Drive — only the list moves).
+            </p>
             <p className="text-[10px] text-slate-400 mb-2">
               The image files live in <b>Google Drive → {projectImagesFolderLabel(libProjectName(), getDriveRootName())}</b>
               {' '}(the dataset folder is always part of the path). The list below — which images, their labels and their order —
@@ -1784,7 +1826,17 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                 {libScope.map((it) => (
                   <div key={it.id} draggable
                     onDragStart={onDragStart('lib', it.id, null, libScopeName)}
-                    className="flex flex-col gap-1 bg-white border border-slate-200 rounded-lg p-1.5 cursor-grab active:cursor-grabbing hover:border-blue-300">
+                    onDragEnd={() => setLibOver('')}
+                    onDragOver={(e) => {
+                      if (!dragData.current || dragData.current.kind !== 'lib' || dragData.current.id === it.id) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                      if (libOver !== it.id) setLibOver(it.id);
+                    }}
+                    onDragLeave={() => { if (libOver === it.id) setLibOver(''); }}
+                    onDrop={dropOnLibCard(it.id)}
+                    className={`flex flex-col gap-1 bg-white border rounded-lg p-1.5 cursor-grab active:cursor-grabbing ${libOver === it.id ? 'border-blue-600 ring-2 ring-blue-200 bg-blue-50' : 'border-slate-200 hover:border-blue-300'}`}
+                    title="Drag this image onto a slide to use it — or onto another thumbnail to change its place in the list, or onto the other tab to move it into that library">
                     <img src={getRenderableDriveUrl(it.url)} alt={it.label} className="w-full h-14 object-contain rounded border border-slate-100" />
                     <input value={it.label || ''} onChange={(e) => renameLib(it.id, e.target.value)}
                       className="w-full text-[10px] font-bold text-slate-600 bg-transparent outline-none" />

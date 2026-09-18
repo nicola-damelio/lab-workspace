@@ -1,12 +1,19 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  readLibrary, readProjectLibrary, readVisibleProjectLibrary, moveLibraryItem,
+  readLibrary, readProjectLibrary, readVisibleProjectLibrary, moveLibraryItem, reorderLibraryItem,
   renameLibraryItem, removeLibraryItem, renameProjectLibraryItem, removeProjectLibraryItem,
   blobToDataUrl, publishLibraryFigure, resolveImageToDataUrl, localStorageHealthy,
   countRecaptureDuplicates, removeRecaptureDuplicates,
   pushLibraryToDrive, pullLibraryFromDrive, localOnlyLibraryItems, mergeLibraryFromSnapshot
 } from '../utils/figuresLibrary';
+import {
+  freeRectOf, isFreeLayout, pinRectOf, freeSlotFor, RECT_MIN, RECT_MAX
+} from '../utils/figureLayout';
+import {
+  ERASE_SIZE_MIN, ERASE_SIZE_MAX, ERASE_DEFAULT_SIZE, clampEraseSize,
+  eraseStrokesOf, mmStrokeHits, pushStrokePoint, mmStrokeToSource, maskStrokesMm, eraseMaskId
+} from '../utils/figureErase';
 import LZString from 'lz-string';
 import { backupFigureCount, figuresFromBackupHtml } from '../utils/referenceImport';
 import { loadProjects, saveProjects, genProjectId, projectAccessFor, visibleProjectsFor } from './AppModules/projectsModule';
@@ -297,6 +304,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const [libVersion, setLibVersion] = useState(0); // forces a re-read of the library lists after a transfer
   const [libProjectId, setLibProjectId] = useState(null); // which project's library to browse (null = the active one)
   const [libMsg, setLibMsg] = useState('');       // transient feedback after a PC upload / transfer
+  const [libOver, setLibOver] = useState('');     // library card under the pointer while DRAGGING one
+  const libDragRef = useRef(null);                // library card being dragged: { id, scope, projectId }
   const [libDriveBusy, setLibDriveBusy] = useState(false); // ☁ / ⬇ library ⇄ Drive in progress
   const libFileRef = useRef(null);                // hidden <input type=file> for uploading images from the PC
   const libRecoverFileRef = useRef(null);         // hidden <input type=file> for ♻️ recovering the library from a backup
@@ -513,6 +522,19 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
 
   // The SVG that is actually visible (fullscreen overlay when open).
   const activeSvgEl = () => (isFullScreen ? svgFsRef : svgRef).current;
+
+  // Where the pointer is, in CANVAS MILLIMETRES. The viewBox carries the
+  // caption band (`canvasH + captionH`), so the vertical scale uses it: the
+  // eraser has to land exactly under the cursor (the historical drag math only
+  // used `canvasH` — a gesture tolerates that, a brush does not).
+  const mmAtPointer = (clientX, clientY, svgEl = activeSvgEl()) => {
+    if (!svgEl) return null;
+    const r = svgEl.getBoundingClientRect();
+    return {
+      x: (clientX - r.left) * (canvasW / Math.max(1, r.width)),
+      y: (clientY - r.top) * ((canvasH + captionH) / Math.max(1, r.height))
+    };
+  };
 
   // Fullscreen & Zoom states
   const [isFullScreen, setIsFullScreen] = useState(false);
@@ -1032,27 +1054,72 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     setLibMsg(msg);
   };
 
-  // Add mode: append another figure to the selected object — every figure
-  // already in the panel is kept, so several figures share one lettered panel.
+  /* ── MULTI-FIGURE PANELS: FREEZING the figures already there ────────────────
+     See utils/figureLayout.js. A figure that carries `im.rect` (fractions of
+     the panel) keeps exactly the box it shows on screen: adding a figure to a
+     panel used to RE-FLOW every figure already there (they shrank and jumped
+     into a grid cell) and all the layout work had to be redone. `freezeFigures`
+     writes that rectangle on every figure of the panel, so the newcomer
+     disturbs nobody. */
+  const panelBoxOf = (obj) => ({ x: obj.x * cellW, y: obj.y * cellH, w: obj.w * cellW, h: obj.h * cellH });
+  const freezeFigures = (obj, imgs) => {
+    const box = panelBoxOf(obj);
+    return (imgs || []).map((im, i) => {
+      if (freeRectOf(im)) return im;                       // already free: untouched
+      const g = objFigureGeom(obj, i);
+      return {
+        ...im,
+        rect: pinRectOf({ x: g.vX, y: g.vY, w: g.vW, h: g.vH }, box),
+        scale: 1, dx: 0, dy: 0                             // baked into the rectangle
+      };
+    });
+  };
+  /* “⊞ Grid layout”: forget the free rectangles and lay the figures out in the
+     panel grid again (obj.imgCols columns) — the historical behaviour, now a
+     deliberate choice instead of the side effect of adding a figure. */
+  const relayoutInGrid = (obj) => {
+    if (!obj) return;
+    commitHistory();
+    setObjects(prev => prev.map(o => (o.id === obj.id
+      ? withImages(o, getObjImages(o).map((im) => ({ ...im, rect: null })))
+      : o)));
+    setCropMode(null);
+    setEraseMode(false);
+  };
+
+  // Add mode: append another figure to the selected object — the figures already
+  // in the panel are FROZEN first (each keeps its own rectangle), so none of
+  // them moves or shrinks; the new one lands in the biggest free space left.
   const handleAddImage = async (item) => {
+    const obj = objects.find((o) => o.id === selectedId);
+    if (!obj) { setLibMsg('Select a panel first (click it), then add a figure to it.'); return; }
     commitHistory();
     const fullSrc = item.full || item.url;
     const resolved = await resolveImageToDataUrl(fullSrc).catch(() => fullSrc);
     const src = String(resolved || '').startsWith('data:')
       ? resolved
       : (item.url && String(item.url).startsWith('data:') ? item.url : resolved);
+    const wasCount = getObjImages(obj).length;
     setObjects(prev => prev.map(o => {
-      if (o.id !== selectedId) return o;
-      return withImages(o, [...getObjImages(o), {
+      if (o.id !== obj.id) return o;
+      const pinned = freezeFigures(o, getObjImages(o));
+      const slot = freeSlotFor(pinned.map(freeRectOf));
+      return withImages(o, [...pinned, {
         imgSrc: src,
         imgThumb: (item.url && String(item.url).startsWith('data:')) ? item.url : src,
         libScope: libraryTab,
         libProjectId: libraryTab === 'project' ? activeLibProjectId : null,
         libId: item.id,
         src: item.src || null,
-        dx: 0, dy: 0, scale: 1
+        dx: 0, dy: 0, scale: 1,
+        rect: slot                                        // the new figure's own box
       }]);
     }));
+    // The new figure is the ACTIVE one: its handles are right there to drag it.
+    setActiveFig({ objId: obj.id, idx: wasCount });
+    setLibMsg(wasCount
+      ? `✅ Figure added — the ${wasCount} figure${wasCount === 1 ? '' : 's'} already in panel ${obj.letter || ''} kept their exact place (each one has its own rectangle now) and the new figure is selected: drag or resize it. “⊞ Lay the figures out in a grid” (properties panel) re-flows the panel side by side if you prefer.`
+      : `✅ Figure placed on panel ${obj.letter || ''}.`);
     // The library modal stays open so several figures can be added in a row.
   };
 
@@ -1086,6 +1153,57 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const [cropDraft, setCropDraft] = useState(null); // live rectangle { x1, y1, x2, y2 }
   const CROP_MIN = 0.02;                            // smallest window: 2 % of the source
 
+  // ── ERASER ─────────────────────────────────────────────────────────────────
+  // « Remove parts » with a round brush whose SIZE is adjustable — the brush
+  // takes pixels off the figures it is dragged over. The strokes are stored in
+  // the coordinates of each figure (`im.erase`, see utils/figureErase.js) and
+  // painted as an SVG mask: the erased parts are really TRANSPARENT (in the
+  // composition and in every export), they survive a reload (the canvas only
+  // persists thumbnails) and they follow the figure when it is resized. The
+  // whole canvas is the drawing area while the eraser is armed, and the brush
+  // cursor shows the exact diameter.
+  const [eraseMode, setEraseMode] = useState(false);
+  const [eraseSize, setEraseSize] = useState(ERASE_DEFAULT_SIZE); // brush diameter (mm)
+  const [eraseDraft, setEraseDraft] = useState(null);             // stroke being drawn (canvas mm)
+  const [eraseCursor, setEraseCursor] = useState(null);           // { x, y } mm — brush preview
+
+  // The strokes to paint on figure `i`: the stored ones PLUS the stroke being
+  // drawn right now (instant feedback, before it is dropped on the figures).
+  const eraseStrokesFor = (obj, i) => {
+    const stored = eraseStrokesOf(getObjImages(obj)[i]);
+    if (!eraseDraft) return stored;
+    const geom = objFigureGeom(obj, i);
+    if (!mmStrokeHits(eraseDraft, { x: geom.iX, y: geom.iY, w: geom.iW, h: geom.iH })) return stored;
+    const live = mmStrokeToSource(eraseDraft, geom);
+    return live ? [...stored, live] : stored;
+  };
+  // Drop a finished stroke: EVERY figure the brush went over is erased (a
+  // rubber removes what is under it), each one in its own coordinates.
+  const applyEraseStroke = (stroke) => {
+    setObjects(prev => prev.map(o => {
+      const imgs = getObjImages(o);
+      if (!imgs.length) return o;
+      let touched = false;
+      const next = imgs.map((im, i) => {
+        if (!im || !im.imgSrc) return im;
+        const src = mmStrokeToSource(stroke, objFigureGeom(o, i));
+        if (!src) return im;
+        touched = true;
+        return { ...im, erase: [...eraseStrokesOf(im), src] };
+      });
+      return touched ? withImages(o, next) : o;
+    }));
+  };
+  // « ⟲ Clear erasures » — put the pixels of ONE figure back.
+  const clearErase = (objId, idx) => {
+    if (idx < 0) return;
+    commitHistory();
+    setObjects(prev => prev.map(o => {
+      if (o.id !== objId) return o;
+      return withImages(o, getObjImages(o).map((im, i) => (i === idx ? { ...im, erase: [] } : im)));
+    }));
+  };
+
   // Valid crop window of a figure (null when the figure is not cropped).
   const cropOf = (im) => {
     const c = im && im.crop;
@@ -1110,12 +1228,25 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     const cw = (obj.w * cellW) / cols;
     const ch = (obj.h * cellH) / rows;
     const pad = obj.imgPadding || 0;
-    const figScale = (obj.imgScale || 1) * (im.scale || 1);
+    /* FREE LAYOUT — see utils/figureLayout.js. A figure carrying an `im.rect`
+       keeps THAT box (fractions of the panel): neither the number of figures in
+       the panel, nor the grid columns, nor a panel resize moves it any more.
+       `➕ Add figure` writes it on the figures ALREADY there (baked from what
+       they occupy on screen), so adding a figure never disturbs them — it used
+       to re-flow the whole panel and everything had to be laid out again.
+       The rect IS the visible box: no padding, no panel scale and no per-figure
+       shift are applied on top of it (all of them were baked into it). */
+    const rect = freeRectOf(im);
+    const baseX = rect ? (obj.x * cellW) + rect.x * obj.w * cellW : obj.x * cellW + (i % cols) * cw + pad;
+    const baseY = rect ? (obj.y * cellH) + rect.y * obj.h * cellH : obj.y * cellH + Math.floor(i / cols) * ch + pad;
+    const baseW = rect ? rect.w * obj.w * cellW : cw - pad * 2;
+    const baseH = rect ? rect.h * obj.h * cellH : ch - pad * 2;
+    const figScale = rect ? 1 : (obj.imgScale || 1) * (im.scale || 1);
     const crop = cropOf(im);
     const cropW = crop ? crop.x2 - crop.x1 : 1;
     const cropH = crop ? crop.y2 - crop.y1 : 1;
-    let iW = (cw - pad * 2) * figScale;
-    let iH = (ch - pad * 2) * figScale;
+    let iW = baseW * figScale;
+    let iH = baseH * figScale;
     /* Canvas option "🔒 Keep aspect ratio": the figure is drawn with its OWN
        width/height ratio inside its panel instead of being stretched to the
        panel cell — so changing the number of panels (grid) or the canvas
@@ -1133,11 +1264,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       if (iW / iH > boxAspect) iW = iH * boxAspect;
       else iH = iW / boxAspect;
     }
-    const cellX = obj.x * cellW + (i % cols) * cw;
-    const cellY = obj.y * cellH + Math.floor(i / cols) * ch;
-    // The VISIBLE window (what the user sees, clicks and drags).
-    const vX = cellX + pad + (cw - pad * 2 - iW) / 2 + (obj.imgOffsetX || 0) + (im.dx || 0);
-    const vY = cellY + pad + (ch - pad * 2 - iH) / 2 + (obj.imgOffsetY || 0) + (im.dy || 0);
+    // The VISIBLE window (what the user sees, clicks and drags): the figure is
+    // centred in its box, then shifted by the panel-wide offset and its own
+    // (both zero for a free-layout figure — they were baked into its rect).
+    const vX = baseX + (baseW - iW) / 2 + (rect ? 0 : (obj.imgOffsetX || 0) + (im.dx || 0));
+    const vY = baseY + (baseH - iH) / 2 + (rect ? 0 : (obj.imgOffsetY || 0) + (im.dy || 0));
     if (!crop) {
       return { iX: vX, iY: vY, iW, iH, vX, vY, vW: iW, vH: iH, crop: null };
     }
@@ -1226,6 +1357,45 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       ? `✅ “${item.label || 'Image'}” is now in the “${canvasScopeName(destProjectId)}” project library (Project tab — and that project page’s “🖼 Saved canvases”).`
       : `✅ “${item.label || 'Image'}” is now in the shared dataset library.`);
     setLibVersion((v) => v + 1);
+  };
+
+  /* ---- DÉPLACER UNE IMAGE DANS LA BIBLIOTHÈQUE (glisser-déposer) ------------
+     The ORDER of the library list is what the pickers show, and the ⇄ button
+     moves an entry between the project library and the shared dataset one. The
+     mouse now does both, exactly like the figures on a project page:
+       • drop a thumbnail on ANOTHER one  → it takes that place in the list;
+       • drop it on the OTHER TAB         → it moves into that library. */
+  const libScopeOf = () => (libraryTab === 'project' ? 'project' : 'common');
+  const libScopeProjectId = () => (libraryTab === 'project' ? activeLibProjectId : null);
+  const dropOnLibCard = (item) => (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const d = libDragRef.current;
+    libDragRef.current = null;
+    setLibOver('');
+    if (!d || !item || d.id === item.id) return;
+    const scope = libScopeOf();
+    const pid = libScopeProjectId();
+    if (d.scope !== scope || d.projectId !== pid) {
+      // Came from the other library: it lands HERE, at the dropped place.
+      moveLibraryItem(d.scope, scope, activeLibProjectId, d.id);
+    }
+    if (reorderLibraryItem(scope, pid, d.id, item.id)) setLibVersion((v) => v + 1);
+    setLibMsg(`↔ “${item.label || 'Image'}” changed place in the library.`);
+  };
+  const dropOnLibTab = (scope) => (e) => {
+    e.preventDefault();
+    const d = libDragRef.current;
+    libDragRef.current = null;
+    setLibOver('');
+    if (!d || d.scope === scope) return;
+    const label = (libraryItems.find((x) => x.id === d.id) || {}).label || 'Image';
+    moveLibraryItem(d.scope, scope, activeLibProjectId, d.id);
+    setLibraryTab(scope);
+    setLibVersion((v) => v + 1);
+    setLibMsg(scope === 'project'
+      ? `⇄ “${label}” moved into the “${canvasScopeName(activeLibProjectId)}” project library (its Project tab — and that project page’s “🖼 Saved canvases”).`
+      : `⇄ “${label}” moved into the shared dataset library.`);
   };
 
   // Rename / delete a library image.
@@ -1697,11 +1867,46 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       return;
     }
 
+    // ── ERASER: the pointer paints a stroke with the brush of the chosen size ──
+    // The points are kept in canvas millimetres; they are turned into the
+    // coordinates of every figure the brush crosses when the mouse is released
+    // (and, live, by `eraseStrokesFor` so the hole appears while drawing).
+    if (type === 'erase') {
+      const st = dragState.current;
+      const pt = mmAtPointer(e.clientX, e.clientY, svgEl);
+      if (pt && st.stroke) {
+        const next = pushStrokePoint(st.stroke, pt.x, pt.y);
+        if (next !== st.stroke) {
+          st.stroke = next;
+          st.moved = true;
+          setEraseDraft(next);
+        }
+      }
+      setEraseCursor(pt);
+      return;
+    }
+
     // Move ONE figure of a multi-figure object independently (drag the figure).
     if (type === 'figMove') {
       setObjects(prev => prev.map(o => {
         if (o.id !== id || !Array.isArray(o.images)) return o;
-        return { ...o, images: o.images.map((im, i) => i === imgIdx ? { ...im, dx: +(origX + dxMm).toFixed(2), dy: +(origY + dyMm).toFixed(2) } : im) };
+        return { ...o, images: o.images.map((im, i) => {
+          if (i !== imgIdx) return im;
+          // FREE layout (im.rect — see utils/figureLayout.js): the very same
+          // gesture, written in fractions of the panel, so a figure that was
+          // frozen in place can be moved again without disturbing the others.
+          const r = freeRectOf(im);
+          if (!r) return { ...im, dx: +(origX + dxMm).toFixed(2), dy: +(origY + dyMm).toFixed(2) };
+          /* The rectangle may leave the panel (a part of the figure is hidden
+             by hand) but never entirely: a 2 % sliver always stays reachable. */
+          const px = origX + dxMm / Math.max(1e-6, o.w * cellW);
+          const py = origY + dyMm / Math.max(1e-6, o.h * cellH);
+          return { ...im, rect: {
+            ...r,
+            x: +Math.max(RECT_MIN - r.w, Math.min(1 - RECT_MIN, px)).toFixed(4),
+            y: +Math.max(RECT_MIN - r.h, Math.min(1 - RECT_MIN, py)).toFixed(4)
+          } };
+        }) };
       }));
       return;
     }
@@ -1712,7 +1917,19 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         if (o.id !== id || !Array.isArray(o.images)) return o;
         const figW = Math.max(10, (o.w * cellW) / Math.max(1, o.imgCols || 2));
         const factor = Math.max(0.3, Math.min(4, 1 + dxMm / figW));
-        return { ...o, images: o.images.map((im, i) => i === imgIdx ? { ...im, scale: +(origScale * factor).toFixed(3) } : im) };
+        return { ...o, images: o.images.map((im, i) => {
+          if (i !== imgIdx) return im;
+          const r = freeRectOf(im);
+          if (!r) return { ...im, scale: +(origScale * factor).toFixed(3) };
+          // FREE layout: the corner stick grows the figure's own rectangle.
+          const base = Math.max(2, r.w * o.w * cellW);
+          const f = Math.max(0.1, Math.min(6, (base + dxMm) / base));
+          return { ...im, rect: {
+            ...r,
+            w: +Math.max(RECT_MIN, Math.min(RECT_MAX, r.w * f)).toFixed(4),
+            h: +Math.max(RECT_MIN, Math.min(RECT_MAX, r.h * f)).toFixed(4)
+          } };
+        }) };
       }));
       return;
     }
@@ -1742,6 +1959,22 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     if (type === 'imgShift') {
       setObjects(prev => prev.map(o => {
         if (o.id !== id) return o;
+        // FREE layout: the panel holds a single figure which keeps its own
+        // rectangle (it was frozen before) — the pan moves THAT rectangle.
+        const imgs = getObjImages(o);
+        const r = freeRectOf(imgs[0]);
+        if (r && imgs.length === 1) {
+          const px = origX + dxMm / Math.max(1e-6, o.w * cellW);
+          const py = origY + dyMm / Math.max(1e-6, o.h * cellH);
+          return withImages(o, [{
+            ...imgs[0],
+            rect: {
+              ...r,
+              x: +Math.max(RECT_MIN - r.w, Math.min(1 - RECT_MIN, px)).toFixed(4),
+              y: +Math.max(RECT_MIN - r.h, Math.min(1 - RECT_MIN, py)).toFixed(4)
+            }
+          }]);
+        }
         return { ...o, imgOffsetX: +(origX + dxMm).toFixed(2), imgOffsetY: +(origY + dyMm).toFixed(2) };
       }));
       return;
@@ -1751,6 +1984,20 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     if (type === 'imgResize') {
       setObjects(prev => prev.map(o => {
         if (o.id !== id) return o;
+        const imgs = getObjImages(o);
+        const r = freeRectOf(imgs[0]);
+        if (r && imgs.length === 1) {
+          const base = Math.max(2, r.w * o.w * cellW);
+          const f = Math.max(0.1, Math.min(6, (base + dxMm) / base));
+          return withImages(o, [{
+            ...imgs[0],
+            rect: {
+              ...r,
+              w: +Math.max(RECT_MIN, Math.min(RECT_MAX, r.w * f)).toFixed(4),
+              h: +Math.max(RECT_MIN, Math.min(RECT_MAX, r.h * f)).toFixed(4)
+            }
+          }]);
+        }
         const baseW = Math.max(1, (o.w * cellW) - (o.imgPadding || 0) * 2);
         const factor = Math.max(0.1, Math.min(5, (baseW + dxMm) / baseW));
         return { ...o, imgScale: +(origScale * factor).toFixed(3) };
@@ -1808,6 +2055,14 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         });
       }
     }
+    // Releasing the mouse DROPS the eraser stroke on every figure it crossed.
+    if (type === 'erase') {
+      setEraseDraft(null);
+      // The click that follows this release must not deselect the panel (the
+      // eraser commands would vanish mid-work).
+      suppressSelectRef.current = true;
+      if (st.stroke && st.stroke.pts.length) applyEraseStroke(st.stroke);
+    }
   };
 
   // Start dragging a free text overlay (millimetre coordinates inside the object).
@@ -1828,7 +2083,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     commitHistory();
     const obj = objects.find(o => o.id === objId);
     if (!obj || !obj.imgSrc) return;
-    dragState.current = { type: 'imgShift', id: objId, startX: e.clientX, startY: e.clientY, origX: obj.imgOffsetX || 0, origY: obj.imgOffsetY || 0 };
+    // A single figure that keeps its own rectangle (FREE layout) is panned by
+    // its rectangle: same gesture, same numbers.
+    const free = getObjImages(obj).length === 1 ? freeRectOf(getObjImages(obj)[0]) : null;
+    dragState.current = { type: 'imgShift', id: objId, startX: e.clientX, startY: e.clientY, origX: free ? free.x : (obj.imgOffsetX || 0), origY: free ? free.y : (obj.imgOffsetY || 0) };
     window.addEventListener('mousemove', onDrag);
     window.addEventListener('mouseup', endDrag);
   };
@@ -1864,7 +2122,37 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     if (idx < 0) return;
     setSelectedId(objId);
     setCropDraft(null);
+    setEraseMode(false);   // the two drawing tools never fight for the mouse
+    setEraseCursor(null);
     setCropMode(prev => (prev && prev.objId === objId && prev.idx === idx ? null : { objId, idx }));
+  };
+
+  // Arm / disarm the ERASER. It works on the whole canvas (a rubber takes off
+  // what is under it, whatever panel that is), so it only needs a selection to
+  // have something to work on — and the properties panel shows its brush size.
+  const toggleEraseMode = () => {
+    setEraseMode(v => {
+      if (!v) { setCropMode(null); setCropDraft(null); }
+      else setEraseCursor(null);
+      return !v;
+    });
+  };
+
+  // Start a gomme stroke at the pointer (canvas mm). The stroke grows with
+  // `pushStrokePoint` while the mouse moves; releasing it writes it on the
+  // figures (see applyEraseStroke).
+  const startEraseDrag = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const pt = mmAtPointer(e.clientX, e.clientY);
+    if (!pt) return;
+    commitHistory();
+    const stroke = { sizeMm: clampEraseSize(eraseSize), pts: [[+pt.x.toFixed(3), +pt.y.toFixed(3)]] };
+    dragState.current = { type: 'erase', stroke };
+    setEraseDraft(stroke);
+    setEraseCursor(pt);
+    window.addEventListener('mousemove', onDrag);
+    window.addEventListener('mouseup', endDrag);
   };
 
   // One edge of the numeric crop fields (value in % of the original image).
@@ -1923,7 +2211,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     const obj = objects.find(o => o.id === objId);
     const im = obj && getObjImages(obj)[imgIdx];
     if (!im) return;
-    dragState.current = { type: 'figMove', id: objId, imgIdx, startX: e.clientX, startY: e.clientY, origX: im.dx || 0, origY: im.dy || 0 };
+    const free = freeRectOf(im);
+    dragState.current = { type: 'figMove', id: objId, imgIdx, startX: e.clientX, startY: e.clientY, origX: free ? free.x : (im.dx || 0), origY: free ? free.y : (im.dy || 0) };
     window.addEventListener('mousemove', onDrag);
     window.addEventListener('mouseup', endDrag);
   };
@@ -2225,7 +2514,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const libProjectBlocked = libraryTab === 'project' && !!activeLibProjectId && !canSeeLibProject(activeLibProjectId);
 
   // Helper to render the SVG content (shared between normal and fullscreen)
-  const renderSvg = (svgElRef) => (
+  const renderSvg = (svgElRef, svgId = 'in') => (
     <svg ref={svgElRef} viewBox={`0 0 ${canvasW} ${canvasH + captionH}`} width="100%" height="100%" onClick={(e) => {
       e.stopPropagation();
       // The click that follows a crop drag must not deselect the panel (the crop
@@ -2259,6 +2548,26 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             <clipPath key={`fcp-${obj.id}-${i}`} id={`figclip-${obj.id}-${i}`}>
               <rect x={g.vX} y={g.vY} width={g.vW} height={g.vH} />
             </clipPath>
+          );
+        }))}
+        {/* ERASE masks (the 🧽 eraser) — one per figure that carries gomme
+            strokes, or that is being erased right now. White keeps the pixel,
+            black removes it: the hole is TRANSPARENT everywhere, at screen
+            resolution as well as at 300 DPI, because the mask is part of the
+            composition. `svgId` keeps the two SVGs of the screen (normal view
+            and fullscreen are mounted together) from sharing an id. */}
+        {objects.map(obj => getObjImages(obj).map((im, i) => {
+          const g = objFigureGeom(obj, i);
+          const painted = maskStrokesMm(eraseStrokesFor(obj, i), g);
+          if (!painted.length) return null;
+          return (
+            <mask key={`fem-${obj.id}-${i}`} id={eraseMaskId(svgId, obj.id, i)} maskUnits="userSpaceOnUse"
+              x={g.iX} y={g.iY} width={g.iW} height={g.iH}>
+              <rect x={g.iX} y={g.iY} width={g.iW} height={g.iH} fill="#ffffff" />
+              {painted.map((st, k) => (
+                <path key={`p${k}`} d={st.d} stroke="#000000" strokeWidth={st.w} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+              ))}
+            </mask>
           );
         }))}
         {/* SHADOW filters — one <feDropShadow> per shadowed PANEL and per
@@ -2347,6 +2656,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                     const src = im.imgSrc;
                     if (!src) return null;
                     const g = objFigureGeom(obj, i);
+                    // The 🧽 eraser mask of THIS figure (undefined when nothing
+                    // was erased: the image is then drawn exactly as before).
+                    const eraseMask = eraseStrokesFor(obj, i).length ? `url(#${eraseMaskId(svgId, obj.id, i)})` : undefined;
                     const par = keepAspect ? 'xMidYMid meet' : fit === 'cover' ? 'xMidYMid slice' : fit === 'stretch' ? 'none' : 'xMidYMid meet';
                     const center = `${g.iX + g.iW / 2} ${g.iY + g.iH / 2}`;
                     /* CROPPED figure: the FULL image is drawn around the window
@@ -2360,6 +2672,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                             x={g.iX} y={g.iY} width={g.iW} height={g.iH}
                             preserveAspectRatio="none"
                             clipPath={`url(#figclip-${obj.id}-${i})`}
+                            mask={eraseMask}
                             style={{ pointerEvents: 'none' }}
                           />
                         </g>
@@ -2371,6 +2684,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                         x={g.iX} y={g.iY} width={g.iW} height={g.iH}
                         transform={rot ? `rotate(${rot} ${center})` : undefined}
                         preserveAspectRatio={par}
+                        mask={eraseMask}
                         style={{ pointerEvents: 'none' }}
                       />
                     );
@@ -2554,6 +2868,24 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           onClick={(e) => { e.stopPropagation(); setSelectedId(null); setEditingCaption(true); }}
         >{effectiveGlobalCaption}</text>
       )}
+      {/* 🧽 ERASER — while it is armed the WHOLE canvas becomes the drawing
+          area (a rubber takes off whatever is under it, whichever panel that
+          is). Screen-only: `data-selection-ui` keeps it out of every export. */}
+      {eraseMode && (
+        <g data-selection-ui="true">
+          <rect x={0} y={0} width={canvasW} height={canvasH + captionH} fill="transparent"
+            style={{ cursor: 'crosshair' }}
+            onMouseDown={startEraseDrag}
+            onMouseMove={(e) => setEraseCursor(mmAtPointer(e.clientX, e.clientY, svgElRef.current))}
+            onMouseLeave={() => setEraseCursor(null)}
+            title={`Eraser — press and drag over the figure to remove what is under the brush (${clampEraseSize(eraseSize)} mm). Set the brush size in “🧽 Eraser” of the properties panel; click the eraser button again to leave the tool.`} />
+          {/* The brush itself: a circle of the exact diameter, at the pointer. */}
+          {eraseCursor && (
+            <circle cx={eraseCursor.x} cy={eraseCursor.y} r={clampEraseSize(eraseSize) / 2}
+              fill="none" stroke="#0284c7" strokeWidth={0.25} pointerEvents="none" />
+          )}
+        </g>
+      )}
     </svg>
   );
 
@@ -2564,6 +2896,15 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const cropPanelOn = !!cropMode && !!selectedObj && cropMode.objId === selectedObj.id;
   const cropPanelRect = selectedObj && cropPanelIdx >= 0 ? cropOf(getObjImages(selectedObj)[cropPanelIdx]) : null;
   const cropPct = (v) => Math.round((Number(v) || 0) * 1000) / 10; // 0.825 → 82.5
+  // FREE layout of the selected panel (see utils/figureLayout.js): as soon as
+  // ONE of its figures keeps its own rectangle, the grid columns and the
+  // panel-wide scale / padding no longer act on it — the commands below are
+  // then explained and disabled instead of silently doing nothing.
+  const selectedImgs = selectedObj ? getObjImages(selectedObj) : [];
+  const selectedFreeLayout = isFreeLayout(selectedImgs);
+  // Gomme : nombre de traits déjà posés sur la figure active (le bouton
+  // « ⟲ Clear erasures » ne s'active que s'il y a quelque chose à reprendre).
+  const erasePanelCount = (cropPanelIdx >= 0 ? eraseStrokesOf(selectedImgs[cropPanelIdx]).length : 0);
 
   // The selected ARROW annotation. A panel and an arrow are never selected at
   // the same time — one properties panel is shown, for whichever the user
@@ -2597,7 +2938,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
               one (replace or add) and remove single figures. */}
           <div className="flex gap-2">
             <button onClick={() => { setPickMode('replace'); setShowLibrary(true); }} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-2 rounded-lg text-xs flex-1">Import Image (High-Res)</button>
-            <button onClick={() => { setPickMode('add'); setShowLibrary(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-2 rounded-lg text-xs" title="Add another figure to this same object/panel (they are laid out side by side)">➕ Add figure</button>
+            <button onClick={() => { setPickMode('add'); setShowLibrary(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-2 rounded-lg text-xs" title="Add another figure to this same object/panel: the figures already there are FROZEN (each one keeps exactly the place and size it has now) and the new one lands in the biggest free space — nothing has to be laid out again. “⊞ Lay the figures out in a grid” re-flows the panel side by side if you prefer.">➕ Add figure</button>
           </div>
 
           {getObjImages(selectedObj).length > 0 && (
@@ -2621,12 +2962,32 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                   <button type="button" onClick={() => removeObjImage(i)} className="text-[10px] font-bold text-red-400 hover:text-red-600 shrink-0 border border-transparent hover:border-red-200 rounded px-1" title="Remove this figure from the panel">✕</button>
                 </div>
               ))}
-              {getObjImages(selectedObj).length > 1 && (
+              {getObjImages(selectedObj).length > 1 && !selectedFreeLayout && (
                 <label className="text-[10px] font-bold text-slate-500">Grid columns
                   <select value={selectedObj.imgCols || 2} onChange={e => updateObj({ imgCols: Number(e.target.value) })} className="w-full border rounded p-1 text-xs">
                     {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
                   </select>
                 </label>
+              )}
+              {/* FREE layout: the figures of this panel each keep their own
+                  rectangle (that is what “➕ Add figure” writes, so adding a
+                  figure never moves the ones already there). The panel-wide
+                  scale / padding / grid columns no longer act on them — the
+                  banner explains it and offers the way back to the grid. */}
+              {selectedFreeLayout && (
+                <div className="flex flex-col gap-1 bg-indigo-50 border border-indigo-200 rounded-lg p-2">
+                  <span className="text-[10px] font-bold text-indigo-800">
+                    ⊞ Free layout — every figure of this panel keeps its own place (drag or resize it on the canvas).
+                  </span>
+                  <span className="text-[9px] text-indigo-700">
+                    That is why adding a figure no longer moves the ones already here. Scale, padding and grid columns act on the GRID layout only.
+                  </span>
+                  <button type="button" onClick={() => relayoutInGrid(selectedObj)}
+                    className="self-start bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-100 font-bold px-2.5 py-1 rounded text-[10px]"
+                    title="Forget the free rectangles and lay the figures out side by side in the panel grid again (obj “Grid columns” columns)">
+                    ⊞ Lay the figures out in a grid
+                  </button>
+                </div>
               )}
             </div>
           )}
@@ -2642,10 +3003,14 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
               </select>
             </label>
             <label className="text-[10px] font-bold text-slate-500">Scale (%)
-              <input type="number" min="10" max="500" value={Math.round((selectedObj.imgScale || 1) * 100)} onChange={e => updateObj({ imgScale: Number(e.target.value) / 100 })} className="w-full border rounded p-1 text-xs" />
+              <input type="number" min="10" max="500" disabled={selectedFreeLayout} value={Math.round((selectedObj.imgScale || 1) * 100)} onChange={e => updateObj({ imgScale: Number(e.target.value) / 100 })}
+                className={`w-full border rounded p-1 text-xs ${selectedFreeLayout ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}`}
+                title={selectedFreeLayout ? 'This panel is in FREE layout: every figure keeps its own rectangle, so the panel-wide scale no longer moves it — drag the figure’s corner handle on the canvas (or “⊞ Lay the figures out in a grid”).' : 'Scale of the figure inside its cell (grid layout).'} />
             </label>
             <label className="text-[10px] font-bold text-slate-500">Padding (mm)
-              <input type="number" min="0" max="20" step="0.5" value={selectedObj.imgPadding} onChange={e => updateObj({ imgPadding: Number(e.target.value) })} className="w-full border rounded p-1 text-xs" />
+              <input type="number" min="0" max="20" step="0.5" disabled={selectedFreeLayout} value={selectedObj.imgPadding} onChange={e => updateObj({ imgPadding: Number(e.target.value) })}
+                className={`w-full border rounded p-1 text-xs ${selectedFreeLayout ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}`}
+                title={selectedFreeLayout ? 'This panel is in FREE layout: the padding of the panel grid no longer applies — the rectangle of every figure is its own box.' : 'Margin kept around the figure inside its cell.'} />
             </label>
             {/* CROP — the "Shift X / Shift Y" number commands were removed: the
                 image is shifted by DRAGGING it on the canvas (or Shift+drag
@@ -2697,6 +3062,46 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                   })}
                 </div>
               )}
+            </div>
+            {/* 🧽 ERASER — remove PARTS of a figure with a round brush whose
+                size is adjustable (a rubber, not a crop: the stroke removes
+                whatever it touches). The strokes live on the figure, in ITS
+                coordinates (utils/figureErase.js), and are painted as an SVG
+                mask: the hole is transparent in the composition AND in every
+                export, it follows the figure when it is resized, and it
+                survives a reload (a raster retouch would be lost: the canvas
+                only persists thumbnails). */}
+            <div className="col-span-2 flex flex-col gap-1 bg-sky-50 border border-sky-200 rounded-lg p-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-bold text-sky-900 flex-1">
+                  🧽 Eraser{erasePanelCount ? ` — ${erasePanelCount} stroke${erasePanelCount === 1 ? '' : 's'} on this figure` : ''}
+                </span>
+                <button type="button" onClick={toggleEraseMode} disabled={cropPanelIdx < 0}
+                  className={`font-bold px-2.5 py-1 rounded text-[10px] border ${cropPanelIdx < 0 ? 'bg-slate-100 border-slate-200 text-slate-300' : eraseMode ? 'bg-sky-600 text-white border-sky-700' : 'bg-white border-sky-300 text-sky-700 hover:bg-sky-100'}`}
+                  title="Remove parts of the figure — a round brush of the size below; press and drag on the canvas and everything the brush touches is taken off (the erasing of the panel above is armed; Ctrl+Z undoes a stroke)">
+                  {eraseMode ? '🧽 Eraser ON — click to exit' : '🧽 Eraser'}
+                </button>
+                <button type="button" onClick={() => clearErase(selectedObj.id, cropPanelIdx)} disabled={!erasePanelCount}
+                  className={`font-bold px-2.5 py-1 rounded text-[10px] border ${erasePanelCount ? 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100' : 'bg-slate-100 border-slate-200 text-slate-300'}`}
+                  title="Put the pixels removed from this figure back (the eraser strokes are forgotten)">
+                  ⟲ Clear erasures
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-[9px] font-bold text-slate-500 flex-1">Brush size (mm) — {clampEraseSize(eraseSize)} mm
+                  <input type="range" min={ERASE_SIZE_MIN} max={ERASE_SIZE_MAX} step="0.5" value={eraseSize}
+                    onChange={(e) => setEraseSize(clampEraseSize(e.target.value))} className="w-full accent-sky-600" />
+                </label>
+                <input type="number" min={ERASE_SIZE_MIN} max={ERASE_SIZE_MAX} step="0.5" value={eraseSize}
+                  onChange={(e) => setEraseSize(clampEraseSize(e.target.value))}
+                  className="w-16 border rounded p-0.5 text-[10px]"
+                  title="Diameter of the brush in millimetres of the canvas (0.5 to 30 mm)" />
+              </div>
+              <span className={`text-[10px] italic ${eraseMode ? 'font-bold text-sky-800' : 'text-slate-600'}`}>
+                {eraseMode
+                  ? 'Drag on the canvas: everything the round brush touches is removed — one stroke = one Ctrl+Z. Click the button again to leave the tool.'
+                  : 'Turn the eraser on, then drag over the figure: the round brush takes off what is under it (the size above is regulated with the slider or the number).'}
+              </span>
             </div>
             <label className="text-[10px] font-bold text-slate-500">Rotate (°)
               <div className="flex gap-1">
@@ -3008,7 +3413,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         {/* SVG Canvas (Normal View) */}
         <div className="border border-slate-300 rounded-lg bg-slate-100 p-2 flex justify-center overflow-auto">
           <div style={{ width: '100%', maxWidth: '800px', aspectRatio: `${canvasW} / ${canvasH + captionH}` }} className="bg-white shadow-md">
-            {renderSvg(svgRef)}
+            {renderSvg(svgRef, 'in')}
           </div>
         </div>
 
@@ -3181,7 +3586,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                 }}
                 className="absolute top-0 left-0 shadow-2xl bg-white"
               >
-                {renderSvg(svgFsRef)}
+                {renderSvg(svgFsRef, 'fs')}
               </div>
             </div>
           </div>
@@ -3208,8 +3613,16 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             </div>
             <div className="p-4 border-b flex flex-wrap gap-3 items-center">
               <div className="flex gap-2">
-                <button className={`px-3 py-1 rounded font-bold text-xs ${libraryTab === 'project' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`} onClick={() => { setLibraryTab('project'); setLibMsg(''); }}>Project Library</button>
-                <button className={`px-3 py-1 rounded font-bold text-xs ${libraryTab === 'common' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`} onClick={() => { setLibraryTab('common'); setLibMsg(''); }}>Dataset Library</button>
+                <button className={`px-3 py-1 rounded font-bold text-xs ${libraryTab === 'project' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}
+                  onDragOver={(e) => { if (libDragRef.current && libDragRef.current.scope !== 'project') { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } }}
+                  onDrop={dropOnLibTab('project')}
+                  title="The project library — and a DROP TARGET: drag a thumbnail from the Dataset Library onto this tab to move that image into the project library"
+                  onClick={() => { setLibraryTab('project'); setLibMsg(''); }}>Project Library</button>
+                <button className={`px-3 py-1 rounded font-bold text-xs ${libraryTab === 'common' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}
+                  onDragOver={(e) => { if (libDragRef.current && libDragRef.current.scope !== 'common') { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } }}
+                  onDrop={dropOnLibTab('common')}
+                  title="The shared dataset library — and a DROP TARGET: drag a thumbnail from the Project Library onto this tab to move that image into the shared library"
+                  onClick={() => { setLibraryTab('common'); setLibMsg(''); }}>Dataset Library</button>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -3287,8 +3700,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                 </select>
               </label>
               {pickMode === 'add' && (
-                <span className="text-[10px] font-bold text-indigo-700">Click figures to add them to this panel — the window stays open so you can add several.</span>
+                <span className="text-[10px] font-bold text-indigo-700">Click figures to add them to this panel — the window stays open so you can add several. The figures already in the panel keep exactly their place.</span>
               )}
+              <span className="w-full text-[10px] text-slate-400">
+                Drag a thumbnail onto <b>another one</b> to change its place in the library, or onto the <b>other library tab</b> (Project Library ⇄ Dataset Library) to move the image into that library.
+              </span>
               {libMsg && (
                 <div className="w-full text-[11px] font-bold text-emerald-700">{libMsg}</div>
               )}
@@ -3310,7 +3726,25 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                 </p>
               )}
               {libraryItems.map(item => (
-                <div key={item.id} className="border rounded-lg p-2 cursor-pointer hover:border-blue-500 flex flex-col items-center hover:shadow-md transition-all" onClick={() => (pickMode === 'add' ? handleAddImage(item) : handlePickImage(item))}>
+                <div key={item.id} draggable
+                  onDragStart={(e) => {
+                    libDragRef.current = { id: item.id, scope: libScopeOf(), projectId: libScopeProjectId() };
+                    e.dataTransfer.effectAllowed = 'move';
+                    try { e.dataTransfer.setData('text/plain', item.id); } catch { /* browser without dataTransfer */ }
+                    setLibOver('');
+                  }}
+                  onDragEnd={() => { libDragRef.current = null; setLibOver(''); }}
+                  onDragOver={(e) => {
+                    if (!libDragRef.current || libDragRef.current.id === item.id) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    if (libOver !== item.id) setLibOver(item.id);
+                  }}
+                  onDragLeave={() => { if (libOver === item.id) setLibOver(''); }}
+                  onDrop={dropOnLibCard(item)}
+                  className={`border rounded-lg p-2 cursor-pointer flex flex-col items-center transition-all ${libOver === item.id ? 'border-blue-600 ring-2 ring-blue-200 bg-blue-50' : 'hover:border-blue-500 hover:shadow-md'}`}
+                  title="Click to place this image on the selected panel • drag it onto another thumbnail to change its place in the list, or onto the other library tab to move it there"
+                  onClick={() => (pickMode === 'add' ? handleAddImage(item) : handlePickImage(item))}>
                   <img src={item.url} alt={item.label} className="w-full h-24 object-contain bg-slate-50 rounded" />
                   <span className="text-xs mt-1 truncate w-full text-center font-bold">{item.label}</span>
                   {item.canvasData && (
