@@ -298,6 +298,47 @@ eq(PS.distributeFiguresPatches([
   ok(!out[1] || out[1].rect.y <= 1 - 0.02 + 1e-9, 'la répartition garde chaque boîte attrapable à la souris');
 }
 
+/* ── 4bis. LE GROUPE MIXTE : FIGURES **ET** TEXTES D'UN PANNEAU ──────────────
+   « the alignment and distribute tool should not be for panels but for figures
+   or text in a panel » : les mêmes commandes rangent les deux. Les boîtes sont
+   en FRACTIONS du panneau — l'appelant (ImageBuilder) convertit la position mm
+   d'un texte et sa largeur estimée, la figure apporte son rectangle. ─────── */
+const duoMix = [
+  { id: 'f0', box: { x: 0.10, y: 0.20, w: 0.30, h: 0.30 } },
+  { id: 'tcap', box: { x: 0.55, y: 0.24, w: 0.20, h: 0.05 } }
+];
+eq(PS.alignGroupPatches(duoMix, 'left'), { tcap: { x: 0.1, y: 0.24 } },
+  'une figure et un texte s’alignent sur leur bord gauche (seul le texte se déplace)');
+eq(PS.alignGroupPatches(duoMix, 'vcenter'), { tcap: { x: 0.55, y: 0.325 } },
+  '…et sur leur milieu vertical (le texte descend au milieu de la figure)');
+eq(PS.alignGroupPatches(duoMix, 'nowhere'), {}, 'un mode inconnu ne fait rien');
+eq(PS.alignGroupPatches([duoMix[0]], 'left'), {}, 'une boîte seule n’a rien à aligner');
+eq(PS.alignGroupPatches([], 'left'), {}, 'un groupe vide ne fait rien');
+eq(PS.alignGroupPatches([{ id: '', box: { x: 1, y: 1, w: 1, h: 1 } }, duoMix[0]], 'left'), {},
+  'une boîte sans identifiant est ignorée (jamais d’écriture sur une clé vide)');
+const trioMix = [
+  { id: 'f0', box: { x: 0, y: 0, w: 0.2, h: 0.2 } },
+  { id: 't1', box: { x: 0.4, y: 0.4, w: 0.2, h: 0.1 } },
+  { id: 'f1', box: { x: 0.9, y: 0.8, w: 0.1, h: 0.2 } }
+];
+eq(PS.distributeGroupPatches(trioMix, 'v'), { t1: { y: 0.45 } },
+  'répartir verticalement ne déplace que ce qui est ENTRE les deux extrêmes (le texte)');
+eq(PS.distributeGroupPatches(trioMix.slice(0, 2), 'v'), {},
+  'sous trois éléments, répartir ne fait rien (il n’y a qu’un intervalle)');
+eq(PS.distributeGroupPatches([...trioMix, { id: 'f2', box: { x: 0.5, y: 0.5, w: 0.1, h: 0.1 } }], 'v'),
+  { t1: { y: 0.3333 }, f2: { y: 0.5667 } },
+  'quatre éléments : les voisins du milieu se partagent les intervalles égaux');
+/* Les boîtes des FIGURES passent toujours par les mêmes fonctions pures : ce que
+   `alignFiguresPatches` rend, c’est `alignGroupPatches` remballé en `{ rect }`. */
+{
+  const grp = PS.alignGroupPatches(trio.map((f) => ({ id: String(f.idx), box: f.rect })), 'right');
+  const wrap = PS.alignFiguresPatches(trio, 'right');
+  eq(Object.keys(wrap).sort(), Object.keys(grp).sort(),
+    'l’enveloppe des figures ne touche que les boîtes du groupe (mêmes index)');
+  ok(Object.keys(wrap).every((k) => wrap[k].rect.x === grp[String(k)].x && wrap[k].rect.y === grp[String(k)].y),
+    '…et leur écrit EXACTEMENT les mêmes x / y que la fonction de groupe');
+}
+
 /* Le branchement dans ImageBuilder : une seule commande, les huit boutons, et le
    GEL du panneau avant (une figure en grille reçoit d'abord sa boîte exacte). */
 has(IB, 'const figGroupIdxs = (obj) => {', 'le groupe = la figure ACTIVE + les figures cochées');
@@ -320,10 +361,16 @@ has(IB, '>⬍</button>', 'le centre vertical');
 has(IB, '>⬇</button>', 'et le bord bas');
 has(IB, "onClick={() => applyFigureLayout('distribute', 'v')} disabled={n < 3}",
   'la répartition verticale est désactivée sous trois figures (comme l’horizontale)');
-has(IB, 'title={`Align the ${n} selected figures on the LEFT edge of the selection',
-  'chaque bouton dit ce qu’il fait et sur quoi il s’aligne');
-has(IB, 'Aligned on the BOXES the figures have now',
-  '…et que le panneau passe en géométrie libre pour y arriver (rien n’est perdu)');
+has(IB, 'title={`Align the ${what} on the LEFT edge of the selection',
+  'chaque bouton dit ce qu’il fait et sur quoi il s’aligne (figures, textes, ou les deux)');
+has(IB, 'Aligned on the BOXES they have now',
+  '…et que les figures en grille sont gelées pour y arriver (rien n’est perdu)');
+has(IB, 'const what = nt && nf',
+  '…le libellé du groupe dit EXACTEMENT ce qui va être rangé (figures, textes, les deux)');
+has(IB, 'selectedTextGroup(selectedObj).length',
+  'les TEXTES cochés « ☑ » du panneau font partie du groupe (demande : figures OU textes)');
+has(IB, '☑ {textGroupOf(selectedObj.id).length} text',
+  '…et une pastille dit combien de textes sont cochés');
 
 console.log(`_builder_multiselect_test.mjs — ${passed} assertions OK`);
 

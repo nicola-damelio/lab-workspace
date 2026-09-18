@@ -246,23 +246,45 @@ const rectList = (figs) => (Array.isArray(figs) ? figs : [])
   .map((f) => (f ? { idx: Number(f.idx), rect: normFreeRect(f.rect) } : null))
   .filter((f) => f && f.rect && Number.isFinite(f.idx));
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   ALIGNER ET RÉPARTIR UN GROUPE **MIXTE** : LES FIGURES **ET** LES TEXTES.
+
+   Un panneau porte des FIGURES et des TEXTES, et « ⇹ » range les deux (c'est
+   la demande : « l'outil d'alignement doit servir aux figures ou aux textes
+   d'un panneau »). L'appelant (ImageBuilder.jsx) convertit chaque élément en une
+   BOÎTE exprimée en FRACTIONS du panneau — le rectangle libre d'une figure, ou
+   la boîte d'un texte (sa position en mm, sa largeur estimée et son corps de
+   police) — et donne à chacun un identifiant. Ces deux fonctions-ci ne
+   connaissent QUE des boîtes : elles servent donc à une figure, à un texte, ou
+   aux deux à la fois, sans le savoir.
+
+   Les fonctions historiques (alignFiguresPatches / distributeFiguresPatches,
+   vérifiées par _builder_multiselect_test.mjs) sont désormais de minces
+   enveloppes autour de celles-ci : une seule géométrie, deux emballages.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/** Les boîtes utilisables d'un groupe mixte : `[{ id, box }]`, boîtes validées. */
+const boxList = (boxes) => (Array.isArray(boxes) ? boxes : [])
+  .map((b) => (b && b.id != null && String(b.id) ? { id: String(b.id), box: normFreeRect(b.box) } : null))
+  .filter((b) => b && b.box);
+
 /**
- * Les nouvelles boîtes des figures d'un groupe ALIGNÉ sur la boîte du groupe.
- * @param {Array} figs  instantané `[{ idx, rect }]` (toutes avec un rectangle)
+ * Les nouvelles positions d'un groupe MIXTE aligné sur la boîte du groupe.
+ * @param {Array} boxes  `[{ id, box: {x,y,w,h} }]` — fractions du panneau
  * @param {'left'|'hcenter'|'right'|'top'|'vcenter'|'bottom'} mode
- * @returns {object} `{ [idx]: { rect } }` — vide quand il n'y a rien à faire
- *                   (moins de deux figures, mode inconnu, ou déjà alignées)
+ * @returns {object} `{ [id]: { x, y } }` — vide quand il n'y a rien à faire
+ *                   (moins de deux boîtes, mode inconnu, ou déjà alignées)
  */
-export const alignFiguresPatches = (figs, mode) => {
-  const list = rectList(figs);
+export const alignGroupPatches = (boxes, mode) => {
+  const list = boxList(boxes);
   if (list.length < 2 || !ALIGN_MODES.includes(mode)) return {};
-  const left = Math.min(...list.map((f) => f.rect.x));
-  const right = Math.max(...list.map((f) => f.rect.x + f.rect.w));
-  const top = Math.min(...list.map((f) => f.rect.y));
-  const bottom = Math.max(...list.map((f) => f.rect.y + f.rect.h));
+  const left = Math.min(...list.map((b) => b.box.x));
+  const right = Math.max(...list.map((b) => b.box.x + b.box.w));
+  const top = Math.min(...list.map((b) => b.box.y));
+  const bottom = Math.max(...list.map((b) => b.box.y + b.box.h));
   const out = {};
-  list.forEach((f) => {
-    const r = f.rect;
+  list.forEach((b) => {
+    const r = b.box;
     let x = r.x;
     let y = r.y;
     if (mode === 'left') x = left;
@@ -273,11 +295,70 @@ export const alignFiguresPatches = (figs, mode) => {
     else y = (top + bottom) / 2 - r.h / 2;
     const nx = rectPos(x, r.w);
     const ny = rectPos(y, r.h);
-    if (Math.abs(nx - r.x) > 1e-4 || Math.abs(ny - r.y) > 1e-4) {
-      out[f.idx] = { rect: { ...r, x: nx, y: ny } };
-    }
+    if (Math.abs(nx - r.x) > 1e-4 || Math.abs(ny - r.y) > 1e-4) out[b.id] = { x: nx, y: ny };
   });
   return out;
+};
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   RÉPARTIR UN GROUPE MIXTE : le même intervalle entre deux voisins, le long
+   d'un axe. Les deux extrêmes ne bougent pas — c'est ce qui rend la commande
+   prévisible (elle répartit ce qui est ENTRE eux). Sous trois éléments, ou quand
+   rien ne bouge → `{}`.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Les nouvelles positions d'un groupe MIXTE réparti le long d'un axe.
+ * @param {Array} boxes  `[{ id, box: {x,y,w,h} }]` — fractions du panneau
+ * @param {'h'|'v'} axis  horizontal (l'axe des x) ou vertical (l'axe des y)
+ * @returns {object} `{ [id]: { x } }` ou `{ [id]: { y } }` selon l'axe
+ */
+export const distributeGroupPatches = (boxes, axis = 'h') => {
+  const list = boxList(boxes);
+  if (list.length < 3 || !DISTRIBUTE_AXES.includes(axis)) return {};
+  const k = axis === 'h' ? 'x' : 'y';
+  const s = axis === 'h' ? 'w' : 'h';
+  // Départage stable : à positions égales, l'identifiant décide (deux textes
+  // posés au même endroit gardent donc le même ordre d'un clic à l'autre).
+  const sorted = list.slice().sort((a, b) => (a.box[k] - b.box[k]) || a.id.localeCompare(b.id));
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  const start = first.box[k];
+  const span = (last.box[k] + last.box[s]) - start;
+  const total = sorted.reduce((acc, b) => acc + b.box[s], 0);
+  const gap = (span - total) / (sorted.length - 1);
+  const out = {};
+  let cursor = start;
+  sorted.forEach((b, i) => {
+    if (i > 0 && i < sorted.length - 1) {
+      const nv = rectPos(cursor, b.box[s]);
+      if (Math.abs(nv - b.box[k]) > 1e-4) out[b.id] = { [k]: nv };
+    }
+    cursor += b.box[s] + gap;
+  });
+  return out;
+};
+
+/** Les patchs d'un groupe mixte remis en patchs de FIGURES : `{ [idx]: { rect } }`. */
+const numberedPatches = (list, patches) => {
+  const out = {};
+  list.forEach((f) => {
+    const p = patches[String(f.idx)];
+    if (p) out[f.idx] = { rect: { ...f.rect, ...p } };
+  });
+  return out;
+};
+
+/**
+ * Les nouvelles boîtes des figures d'un groupe ALIGNÉ sur la boîte du groupe.
+ * @param {Array} figs  instantané `[{ idx, rect }]` (toutes avec un rectangle)
+ * @param {'left'|'hcenter'|'right'|'top'|'vcenter'|'bottom'} mode
+ * @returns {object} `{ [idx]: { rect } }` — vide quand il n'y a rien à faire
+ *                   (moins de deux figures, mode inconnu, ou déjà alignées)
+ */
+export const alignFiguresPatches = (figs, mode) => {
+  const list = rectList(figs);
+  return numberedPatches(list, alignGroupPatches(list.map((f) => ({ id: String(f.idx), box: f.rect })), mode));
 };
 
 /**
@@ -291,30 +372,7 @@ export const alignFiguresPatches = (figs, mode) => {
  */
 export const distributeFiguresPatches = (figs, axis = 'h') => {
   const list = rectList(figs);
-  if (list.length < 3 || !DISTRIBUTE_AXES.includes(axis)) return {};
-  const k = axis === 'h' ? 'x' : 'y';
-  const s = axis === 'h' ? 'w' : 'h';
-  const sorted = list.slice().sort((a, b) => (a.rect[k] - b.rect[k]) || (a.idx - b.idx));
-  const first = sorted[0];
-  const last = sorted[sorted.length - 1];
-  const start = first.rect[k];
-  const span = (last.rect[k] + last.rect[s]) - start;      // du bord du premier au bord opposé du dernier
-  const total = sorted.reduce((acc, f) => acc + f.rect[s], 0);
-  // L'intervalle commun ; il peut être NÉGATIF (les figures se chevauchent
-  // largement) : elles se chevauchent alors également, ce qui est le sens de la
-  // commande — mieux vaut cela qu'un refus silencieux.
-  const gap = (span - total) / (sorted.length - 1);
-  const out = {};
-  let cursor = start;
-  sorted.forEach((f, i) => {
-    if (i > 0 && i < sorted.length - 1) {
-      const r = f.rect;
-      const nv = rectPos(cursor, r[s]);
-      if (Math.abs(nv - r[k]) > 1e-4) out[f.idx] = { rect: { ...r, [k]: nv } };
-    }
-    cursor += f.rect[s] + gap;
-  });
-  return out;
+  return numberedPatches(list, distributeGroupPatches(list.map((f) => ({ id: String(f.idx), box: f.rect })), axis));
 };
 
 /* ════════════════════════════════════════════════════════════════════════════

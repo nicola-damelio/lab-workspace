@@ -274,24 +274,30 @@ has(IB, '{shapeHandles(g.shape).map((h) => (', '…une par coin');
 has(IB, 'id={shapeShadowFilterId(sh.id)} x="-25%" y="-25%" width="150%" height="150%"',
   'le filtre d’ombre d’une forme est défini dans le MÊME <defs> (donc dans chaque export)');
 
-/* ── 4d. La colonne OBJETS : aligner / répartir les PANNEAUX ───────────── */
-has(IB, 'const applyPanelLayout = (kind, mode) => {', 'aligner / répartir les panneaux est une commande à part');
-has(IB, 'const snapshot = boxesOf(selectedIds);', '…qui part d’un INSTANTANÉ de la sélection');
-has(IB, '? alignBoxesPatches(boxes, mode, grid)', '…et passe par les fonctions PURES (cellules de la grille)');
-has(IB, ': distributeBoxesPatches(boxes, mode, grid);', '…les deux, aligner et répartir');
-has(IB, 'if (!Object.keys(patches).length) return;', 'rien à faire → ni écriture, ni étape d’historique');
-has(IB, 'setObjects(prev => prev.map((o) => (patches[o.id] ? { ...o, ...patches[o.id] } : o)));',
-  '…sinon la nouvelle place est écrite sur les panneaux concernés');
-[["applyPanelLayout('align', 'left')", 'aligner à gauche'], ["applyPanelLayout('align', 'hcenter')", 'centrer'],
-  ["applyPanelLayout('align', 'right')", 'aligner à droite'], ["applyPanelLayout('align', 'top')", 'aligner en haut'],
-  ["applyPanelLayout('align', 'vcenter')", 'centrer verticalement'], ["applyPanelLayout('align', 'bottom')", 'aligner en bas'],
-  ["applyPanelLayout('distribute', 'h')", 'répartir horizontalement'], ["applyPanelLayout('distribute', 'v')", 'répartir verticalement']]
-  .forEach(([call, what]) => has(IB, call, `…${what}`));
-has(IB, '⇹ panels {n}', 'la ligne dit combien de panneaux elle alignera');
-has(IB, 'Ctrl+click two panels on the canvas to align them (three to spread them out)',
-  '…et explique comment sélectionner quand il n’y en a pas assez');
-has(IB, 'disabled={!enough}', 'sous deux panneaux, les alignements sont inactifs (aucun refus muet)');
-has(IB, 'disabled={n < 3}', '…et sous trois, les répartitions');
+/* ── 4d. L'OUTIL ⇹ SERT AUX FIGURES **ET** AUX TEXTES D'UN PANNEAU — PLUS AUX
+   PANNEAUX (demande : « the alignment and distribute tool should not be for
+   panels but for figures or text in a panel ») ──────────────────────────── */
+ok(!IB.includes('const applyPanelLayout'), 'aligner / répartir les PANNEAUX n’est plus une commande du builder');
+ok(!IB.includes("applyPanelLayout('align'") && !IB.includes('⇹ panels {n}'),
+  '…ni ses huit boutons, ni sa ligne « ⇹ panels » : la colonne OBJECTS ne les propose plus');
+ok(!IB.includes('? alignBoxesPatches(') && !IB.includes(': distributeBoxesPatches('),
+  '…plus aucun APPEL aux fonctions de PANNEAUX dans le builder (elles restent dans utils/panelSelection)');
+eq(PS.alignBoxesPatches([{ id: 'A', x: 0, y: 0, w: 3, h: 1 }, { id: 'B', x: 6, y: 1, w: 3, h: 1 }],
+  'left', { gridCols: 12, gridRows: 3 }),
+  { B: { x: 0, y: 1 } },
+  '…mais les fonctions PURES de panneaux restent dans utils/panelSelection (testées, disponibles)');
+has(IB, 'alignGroupPatches', 'l’alignement du builder passe maintenant par les fonctions de GROUPE (figures + textes)');
+has(IB, 'distributeGroupPatches', '…les deux, aligner et répartir');
+has(IB, 'const [textGroup, setTextGroup] = useState({ objId: null, ids: [] });',
+  'les TEXTES d’un panneau se cochent « ☑ », comme les figures');
+has(IB, 'toggleTextGroup(selectedObj.id, tx.id)', '…et rejoignent le groupe que ⇹ range');
+has(IB, 'const selectedTextGroup = (obj) => (obj', 'seuls les textes qui existent encore entrent dans le groupe');
+has(IB, 'const textBoxOf = (obj, tx) => {',
+  'la boîte d’un texte est calculée (position en mm + largeur estimée × hauteur de ligne)');
+has(IB, 'const layoutGroupSize = (obj) =>',
+  'le groupe = figures sélectionnées + textes cochés (deux éléments suffisent à ranger)');
+has(IB, '{layoutGroupSize(selectedObj) >= 2 && (() => {', '…et les commandes ⇹ apparaissent dès qu’il y a deux choses à ranger');
+has(IB, 'disabled={n < 3}', '…les répartitions restant inactives sous trois éléments');
 
 /* ── 4e. La colonne MODIFY IMAGE : le réglage d'image ──────────────────── */
 has(IB, 'const activeAdjust = cropPanelIdx >= 0 ? ((selectedImgs[cropPanelIdx] || {}).adjust || null) : null;',

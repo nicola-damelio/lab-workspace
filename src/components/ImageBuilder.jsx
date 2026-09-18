@@ -17,7 +17,7 @@ import {
 import {
   moveSelectionPatches, moveFiguresPatches, resizedBox, resizeSelectionPatches,
   figureResizeFactor, resizeFiguresPatches, alignFiguresPatches, distributeFiguresPatches,
-  alignBoxesPatches, distributeBoxesPatches
+  alignGroupPatches, distributeGroupPatches
 } from '../utils/panelSelection';
 import {
   ERASE_SIZE_MIN, ERASE_SIZE_MAX, ERASE_DEFAULT_SIZE, clampEraseSize,
@@ -1518,6 +1518,14 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // redimensionne (elles suivent aussi ses déplacements), chacune à SA place.
   // Voir startFigureResize / utils/panelSelection.
   const [figGroup, setFigGroup] = useState({ objId: null, idxs: [] });
+  /* SÉLECTION MULTIPLE DE TEXTES — même grammaire que pour les figures : les
+     textes cochés « ☑ » d'un panneau rejoignent le groupe que les commandes ⇹
+     rangent (avec les figures sélectionnées du MÊME panneau). L'outil
+     d'alignement sert donc aux FIGURES et aux TEXTES d'un panneau — jamais aux
+     PANNEAUX eux-mêmes : une grille de panneaux se règle en les déplaçant ou en
+     les redimensionnant, pas en les alignant (voir utils/panelSelection.js,
+     alignGroupPatches / distributeGroupPatches). */
+  const [textGroup, setTextGroup] = useState({ objId: null, ids: [] });
   const suppressCycleRef = useRef(false);           // a drag just happened → the trailing click must NOT cycle
   // A crop drag also ends with a click on the canvas; that click must not
   // DESELECT the object (which would close the crop panel mid-work).
@@ -1757,10 +1765,16 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   /* ── ↔ ÉCHANGER L'IMAGE D'UNE FIGURE (même place, même taille) ──────────────
      « ↺ Replace » remplace TOUT le panneau (une seule figure, remise à
      l'échelle du cadre) : ce n'est pas ce qu'on veut quand la figure est déjà
-     réglée. « ↔ Swap » ne change QUE les pixels : le rectangle libre, le
-     décalage, l'échelle, le recadrage, la gomme et l'ombre de la figure
-     restent — la nouvelle image se pose exactement là où l'ancienne était, à la
-     même taille. Le détourage (`im.bg`) est oublié : il décrivait les anciens
+     réglée. « ↔ Swap » ne change QUE les pixels : le CADRE de la figure (son
+     rectangle libre, ou la cellule de la grille) ne bouge pas — on SUBSTITUE
+     l'image, on ne refait pas le panneau. En revanche tout ce qui décrivait les
+     ANCIENS pixels est oublié : la fenêtre de recadrage, le décalage, l'échelle,
+     les traits de gomme et le détourage. Les garder montrait un MORCEAU de la
+     nouvelle image, décalé, ou gommé ailleurs — c'est le « l'aperçu ne
+     correspond pas à ce qui est inséré dans l'objet » signalé. La nouvelle image
+     s'affiche donc entière, dans le même cadre, avec ses propres proportions.
+     L'ombre de la figure et son réglage d'image (contraste, saturation…)
+     restent : ce sont des réglages esthétiques, ils ne décrivent pas les
      pixels. */
   const handleSwapImage = async (item) => {
     const obj = (objects || []).find((o) => o.id === selectedId);
@@ -1779,10 +1793,22 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       libProjectId: libraryTab === 'project' ? activeLibProjectId : null,
       libId: item.id,
       src: item.src || null,
+      /* Seule la figure change de pixels (voir le commentaire de la commande) :
+         le CADRE reste, mais tout ce qui décrivait les ANCIENS pixels s'en va.
+         `crop` : la fenêtre de recadrage de l'ancienne image ne veut plus rien
+         dire — la garder montrait un MORCEAU de la nouvelle (c'est exactement
+         « l'aperçu ne correspond pas à ce qui est inséré »).
+         `dx` / `dy` / `scale` : le décalage et le zoom de l'ancienne image.
+         `erase` : les traits de gomme sont en coordonnées de l'ANCIENNE image,
+         ils gommeraient n'importe où.
+         `bg` (détourage) : il décrivait la couleur de fond de l'ancienne. */
+      crop: null,
+      dx: 0, dy: 0, scale: 1,
+      erase: null,
       bg: null
     });
     bgPixelsRef.current = null;
-    setLibMsg(`↔ Figure ${idx + 1} of panel ${obj.letter || ''} now shows “${item.label || 'the new image'}” — its place, size, crop, erasures and shadow are unchanged (Ctrl+Z puts the old image back). The window stays open: swap another figure, or pick “➕ Add” / “↺ Replace”.`);
+    setLibMsg(`↔ Figure ${idx + 1} of panel ${obj.letter || ''} now shows “${item.label || 'the new image'}” — same frame (place and size kept), and the crop window, the shift/zoom and the eraser strokes of the OLD picture were cleared, so you see the WHOLE new image with its own proportions (Ctrl+Z puts the old image back). The window stays open: swap another figure, or pick “➕ Add” / “↺ Replace”.`);
   };
 
   // Valid crop window of a figure (null when the figure is not cropped).
@@ -1886,6 +1912,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     const cur = prev.objId === objId ? prev.idxs : [];
     return { objId, idxs: cur.includes(idx) ? cur.filter((i) => i !== idx) : [...cur, idx] };
   });
+  /* Les TEXTES cochés « ☑ » du panneau : même forme que la sélection de
+     figures, autre liste (l'id d'un texte, pas son index). */
+  const textGroupOf = (objId) => (textGroup.objId === objId ? textGroup.ids : []);
+  const toggleTextGroup = (objId, txId) => setTextGroup((prev) => {
+    const cur = prev.objId === objId ? prev.ids : [];
+    return { objId, ids: cur.includes(txId) ? cur.filter((t) => t !== txId) : [...cur, txId] };
+  });
   // The snapshot of every figure involved in a drag (the one held + the ticked
   // ones), taken when the mouse goes down: the geometry is then written in
   // ABSOLUTE values, so a long drag cannot accumulate rounding, and releasing
@@ -1906,6 +1939,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // chosen in the panel follows the same rule (its id belongs to that panel).
   useEffect(() => {
     setFigGroup((prev) => (prev.objId && prev.objId !== selectedId ? { objId: null, idxs: [] } : prev));
+    setTextGroup((prev) => (prev.objId && prev.objId !== selectedId ? { objId: null, ids: [] } : prev));
     setActiveText((prev) => (prev && prev.objId !== selectedId ? null : prev));
   }, [selectedId]);
 
@@ -1929,26 +1963,107 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     const ref = activeFigIdx(obj);
     return [ref, ...figGroupOf(obj.id).filter((i) => i !== ref)].filter((i) => i >= 0);
   };
+  /* Ce que les commandes ⇹ rangent dans ce panneau : les TEXTES cochés « ☑ »
+     qui existent encore (un texte supprimé ne doit pas rester dans le groupe) et,
+     avec eux, la figure ACTIVE plus les figures cochées. */
+  const selectedTextGroup = (obj) => (obj
+    ? textGroupOf(obj.id).filter((id) => (obj.texts || []).some((tx) => tx.id === id))
+    : []);
+  const layoutGroupSize = (obj) => (obj ? figGroupIdxs(obj).length + selectedTextGroup(obj).length : 0);
+  /* La boîte d'un TEXTE, en fractions du panneau — le MÊME repère que le
+     rectangle libre d'une figure : `x` / `y` sont les millimètres du texte dans
+     le panneau, la largeur est ESTIMÉE (le navigateur garde la mesure pour lui,
+     exactement comme pour le cadre de sélection du texte : 0,58 × le corps par
+     caractère) et la hauteur est celle de la ligne (corps × 1,3). Un texte se
+     range donc avec des figures sans rien mesurer. */
+  const textBoxOf = (obj, tx) => {
+    const panelW = Math.max(1, obj.w * cellW);
+    const panelH = Math.max(1, obj.h * cellH);
+    const fs = ptToMm(tx.fontSize || 12);
+    const estW = Math.max(4, String(tx.text || '').length * fs * 0.58);
+    return {
+      x: (Number(tx.x) || 0) / panelW,
+      y: ((Number(tx.y) || 0) - fs) / panelH,
+      w: estW / panelW,
+      h: (fs * 1.3) / panelH
+    };
+  };
+  /* Les boîtes du groupe mixte d'un panneau : les figures (gelées au passage,
+     donc chacune porte la boîte exacte qu'elle montre) et les textes cochés.
+     L'identifiant dit de quoi il s'agit : `f3` = figure 3, `t<id>` = texte. */
+  const layoutItemsOf = (obj, pinned, group, texts) => {
+    const items = [];
+    group.forEach((i) => {
+      const r = freeRectOf(pinned[i]);
+      if (r) items.push({ id: `f${i}`, box: r });
+    });
+    const byId = new Map((obj.texts || []).map((tx) => [tx.id, tx]));
+    texts.forEach((id) => {
+      const tx = byId.get(id);
+      if (tx) items.push({ id: `t${id}`, box: textBoxOf(obj, tx) });
+    });
+    return items;
+  };
   const applyFigureLayout = (kind, mode) => {
     const obj = selectedObj;
     if (!obj) return;
     const group = figGroupIdxs(obj);
-    if (group.length < 2) return;
-    const patchesOn = (list) => {
-      const figs = group.map((i) => ({ idx: i, rect: freeRectOf(list[i]) })).filter((f) => f.rect);
-      return kind === 'align' ? alignFiguresPatches(figs, mode) : distributeFiguresPatches(figs, mode);
-    };
-    // Déjà rangées → ni écriture, ni étape d'historique (comme ⬆ / ⬇ de
-    // l'empilement : une commande sans effet ne doit rien coûter).
-    if (!Object.keys(patchesOn(freezeFigures(obj, getObjImages(obj)))).length) return;
-    commitHistory();
-    setObjects(prev => prev.map((o) => {
+    const texts = selectedTextGroup(obj);
+    if (group.length + texts.length < 2) return;
+    /* ── FIGURES SEULES : le chemin historique, inchangé. Tout le panneau est
+       d'abord GELÉ (une figure encore rangée par la grille reçoit la boîte
+       exacte qu'elle montre) : aligner n'est jamais le moment où le panneau se
+       re-flowe. ── */
+    if (!texts.length) {
+      const patchesOn = (list) => {
+        const figs = group.map((i) => ({ idx: i, rect: freeRectOf(list[i]) })).filter((f) => f.rect);
+        return kind === 'align' ? alignFiguresPatches(figs, mode) : distributeFiguresPatches(figs, mode);
+      };
+      // Déjà rangées → ni écriture, ni étape d'historique (comme ⬆ / ⬇ de
+      // l'empilement : une commande sans effet ne doit rien coûter).
+      if (!Object.keys(patchesOn(freezeFigures(obj, getObjImages(obj)))).length) return;
+      commitHistory();
+      setObjects(prev => prev.map((o) => {
+        if (o.id !== obj.id) return o;
+        const pinned = freezeFigures(o, getObjImages(o));
+        const patches = patchesOn(pinned);
+        if (!Object.keys(patches).length) return o;
+        return withImages(o, pinned.map((im, i) => (patches[i] ? { ...im, ...patches[i] } : im)));
+      }));
+      return;
+    }
+    /* ── FIGURES **ET** TEXTES (ou textes seuls) : toutes les boîtes dans le
+       même repère, puis les MÊMES commandes pures que pour les figures seules
+       (utils/panelSelection → alignGroupPatches / distributeGroupPatches). ── */
+    let changed = false;
+    const next = (objects || []).map((o) => {
       if (o.id !== obj.id) return o;
       const pinned = freezeFigures(o, getObjImages(o));
-      const patches = patchesOn(pinned);
+      const patches = kind === 'align'
+        ? alignGroupPatches(layoutItemsOf(o, pinned, group, texts), mode)
+        : distributeGroupPatches(layoutItemsOf(o, pinned, group, texts), mode);
       if (!Object.keys(patches).length) return o;
-      return withImages(o, pinned.map((im, i) => (patches[i] ? { ...im, ...patches[i] } : im)));
-    }));
+      changed = true;
+      const panelW = Math.max(1, o.w * cellW);
+      const panelH = Math.max(1, o.h * cellH);
+      // Les figures reçoivent x / y du patch (leur taille ne change pas).
+      const images = pinned.map((im, i) => {
+        const p = patches[`f${i}`];
+        return p ? { ...im, rect: { ...freeRectOf(im), ...p } } : im;
+      });
+      // Les textes repassent en millimètres : y est le HAUT de leur boîte, or un
+      // texte se pose par sa LIGNE DE BASE (la même que le canvas dessine).
+      const nextTexts = (o.texts || []).map((tx) => {
+        const p = patches[`t${tx.id}`];
+        if (!p) return tx;
+        const fs = ptToMm(tx.fontSize || 12);
+        return { ...tx, x: +(p.x * panelW).toFixed(1), y: +((p.y * panelH) + fs).toFixed(1) };
+      });
+      return { ...withImages(o, images), texts: nextTexts };
+    });
+    if (!changed) return;
+    commitHistory();
+    setObjects(next);
   };
 
   // Figure indices whose bounds contain the point (mm, absolute), topmost first.
@@ -2115,9 +2230,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       setLibVersion((v) => v + 1);
       setLibMsg(res.total === 0
         ? '✓ Every image of this library is already on Drive.'
-        : res.failed === 0
+        : res.failed === 0 && res.queued === 0
           ? `✓ ${res.uploaded} image${res.uploaded === 1 ? '' : 's'} saved to ${res.folder}.`
-          : `⚠ ${res.uploaded} saved to ${res.folder} · ${res.failed} failed — check the connection and try again.`);
+          : `${res.failed ? '⚠' : '⏳'} ${[
+            res.uploaded ? `${res.uploaded} image${res.uploaded === 1 ? '' : 's'} saved to ${res.folder}` : '',
+            res.queued ? `${res.queued} queued for ${res.folder} — they upload by themselves as soon as Drive answers, nothing is lost` : '',
+            res.failed ? `${res.failed} failed — check the connection and try again` : ''
+          ].filter(Boolean).join(' · ')}.`);
     } catch (err) {
       setLibMsg(`⚠ ${(err && err.message) || 'Could not save the images to Drive'}`);
     }
@@ -2239,11 +2358,18 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       ? `Figure — ${String(globalCaption).trim().slice(0, 60)}`
       : `Canvas ${new Date().toLocaleDateString()}`);
     setSaveName(fallback);
-    setSaveDest(storedScopeCount ? (canvasHome || '') : (projectId || ''));
-    // The dialog only offers the projects this user may WRITE to, so a project
-    // they cannot edit must not stay proposed: fall back to the shared library.
-    const proposed = storedScopeCount ? (canvasHome || '') : (projectId || '');
-    if (!canWriteLibProject(proposed)) setSaveDest('');
+    /* QUEL PROJET — il n'y a plus d'autre destination : un canvas vit dans le
+       projet qui le porte (demande : « les canvas ne doivent pas être
+       enregistrés dans la bibliothèque, mais seulement dans le projet
+       associé »). On propose, dans l'ordre, le projet qui porte DÉJÀ ce canvas,
+       celui avec lequel l'éditeur a été ouvert, celui d'une copie enregistrée
+       ailleurs, puis le premier projet où l'on peut écrire. Seuls les projets
+       MODIFIABLES sont proposés : un projet en lecture seule ne reçoit rien. */
+    const own = [canvasHome, projectId, ...Object.keys(canvasEntries || {})]
+      .filter((id) => id && id !== 'dataset');
+    const proposed = own.find((id) => canWriteLibProject(id))
+      || ((myWritableProjects[0] && myWritableProjects[0].id) || '');
+    setSaveDest(proposed);
     setSaveMsg('');
     setSaveOpen(true);
   };
@@ -2252,24 +2378,29 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // rendered image is uploaded to the cloud (same <project>/images path as every
   // other figure); only a small local preview + the editable canvas snapshot are
   // kept in the browser, so a full localStorage quota never blocks a save.
-  // Shared by the dialog (“▾ Choose where…” → “💾 Save canvas”) and by the
-  // one-click “💾 Save canvas” into the canvas' own project (saveCanvasNow).
+  // Shared by the dialog (“▾ Choose where…” → “💾 Save now”) and by the
+  // one-click “💾 Save now” into the canvas' own project (saveCanvasNow).
+  // ⛔ SANS PROJET, RIEN N'EST ÉCRIT : le canvas n'a plus de destination
+  //    « bibliothèque partagée du dataset » (voir le commentaire de
+  //    openSaveDialog) — on le dit, on ne l'écrit pas ailleurs en douce.
   const finishCanvasSave = async (destProjectId, label) => {
+    if (!destProjectId) {
+      setSaveMsg('📁 Choose the PROJECT that owns this canvas first: a canvas is stored in a project’s image library (its Project tab, that project page’s “🖼 Saved canvases”, and the cloud) — it is never stored in the shared dataset library.');
+      return;
+    }
     setSaveBusy(true);
-    setSaveMsg('📤 Saving the canvas…');
+    setSaveMsg('📤 Saving the canvas (image + editable copy, right now)…');
     try {
       const pub = await publishCanvas({ label, targetProjectId: destProjectId, dataUrl: null });
       if (!pub || !pub.entry) {
         setSaveMsg(destProjectId && !canWriteLibProject(destProjectId)
-          ? '🔒 You do not have edit access to that project’s image library — save into the shared dataset library instead.'
-          : '⚠️ Could not save the canvas in the library.');
+          ? '🔒 You do not have edit access to that project’s image library — pick another project (a canvas lives in a project).'
+          : '⚠️ Could not save the canvas in that project’s library.');
         return;
       }
       const what = pub.updated ? 'updated' : 'saved';
-      const where = destProjectId
-        ? `in the “${canvasScopeName(destProjectId)}” image library (Image Library → Project tab — and on that project page under “🖼 Saved canvases”, where it reopens here)`
-        : 'in the shared dataset image library (Image Library → Dataset tab)';
-      const folderLabel = projectImagesFolderLabel(destProjectId ? canvasScopeName(destProjectId) : '', getDriveRootName());
+      const where = `in the “${canvasScopeName(destProjectId)}” image library (Image Library → Project tab — and on that project page under “🖼 Saved canvases”, where it reopens here)`;
+      const folderLabel = projectImagesFolderLabel(canvasScopeName(destProjectId), getDriveRootName());
       // Où la copie cloud a abouti — et sinon POURQUOI, en distinguant « mis en
       // file d'attente » (l'image repartira toute seule) d'un échec définitif :
       // un « browser copy only » muet ne dit pas si le travail est en sécurité.
@@ -2278,11 +2409,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       else if (pub.driveQueued) detail = `⏳ cloud copy not sent yet (${pub.driveError || 'cloud unreachable'}) — it is QUEUED and will be uploaded automatically; nothing is lost`;
       else if (!localStorageHealthy()) detail = `⚠️ browser storage full and no cloud copy${pub.driveError ? ` (${pub.driveError})` : ''} — connect Google Drive or Nextcloud so it is kept there (this session still works)`;
       else detail = `💾 browser copy only${pub.driveError ? ` — ${pub.driveError}` : ''} (connect Google Drive or Nextcloud so it follows you to another computer)`;
-      // Show the user WHERE it landed: the library opens on that very tab.
-      setLibraryTab(destProjectId ? 'project' : 'common');
+      // Show the user WHERE it landed: the library opens on that project's tab.
+      setLibraryTab('project');
       setLibProjectId(destProjectId);
       setShowLibrary(true);
-      setLibMsg(`✅ Canvas ${what} ${where} · ${detail}`);
+      setLibMsg(`✅ Canvas ${what} right now ${where} · ${detail}`);
       setSaveOpen(false);
       setSaveMsg('');
     } catch (err) {
@@ -2331,9 +2462,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
      Deux passes, pour ne jamais payer un rendu pour une frappe :
        • instantanée (2,5 s après la dernière modification, et au moment où l'on
          quitte la page) : la composition ÉDITABLE est écrite dans l'entrée de
-         bibliothèque — celle du canvas s'il en a une, sinon la bibliothèque du
-         projet ouvert (quand on peut y écrire), sinon celle du dataset. Aucun
-         rendu, aucun envoi : rien à attendre, rien à perdre si l'on ferme.
+         bibliothèque — celle du canvas s'il en a une, sinon celle du projet
+         ouvert (quand on peut y écrire). Sans projet : RIEN n'est écrit dans la
+         bibliothèque partagée du dataset (les canvas vivent dans un projet) —
+         la composition reste dans ce navigateur et la pastille le dit.
+         Aucun rendu, aucun envoi : rien à attendre, rien à perdre si l'on ferme.
        • cloud (au plus une fois par minute, après 8 s de calme) : la MÊME
          entrée est publiée par le chemin de « 💾 Save canvas » — l'image part
          dans projects/<projet>/images avec sa copie éditable `.meta.json` (voir
@@ -2354,8 +2487,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const autoSaveKeyRef = useRef('');
 
   // Où cette composition doit vivre : l'entrée qu'elle a déjà (un canvas est
-  // « chez lui » là où on l'a repris), sinon le projet de l'éditeur, sinon la
-  // bibliothèque partagée du dataset.
+  // « chez lui » là où on l'a repris — y compris un canvas HISTORIQUE du dataset,
+  // dont l'entrée continue d'être mise à jour là où elle est), sinon le projet de
+  // l'éditeur, sinon RIEN : un canvas NEUF n'est jamais écrit dans la
+  // bibliothèque partagée du dataset (voir le garde de autoSaveRef.current).
   const autoSaveScope = () => {
     if (canvasEntryIn(canvasHome)) return canvasHome;
     const first = Object.keys(canvasEntries)[0];
@@ -2381,6 +2516,19 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   autoSaveRef.current = async ({ publish = false, force = false } = {}) => {
     if (!objectsRef.current || !objectsRef.current.length) return null;
     const target = autoSaveScope();
+    /* ⛔ UN CANVAS NEUF NE VA PLUS DANS LA BIBLIOTHÈQUE PARTAGÉE DU DATASET
+       (demande : « les canvas ne doivent pas être enregistrés dans la
+       bibliothèque, mais seulement dans le projet associé »). Sans projet — le
+       builder s'ouvre aussi sans projet — RIEN n'est écrit dans la
+       bibliothèque : la composition reste dans le navigateur (localStorage +
+       cache de session) et la pastille dit quoi faire. Un canvas HISTORIQUE du
+       dataset (target === null mais son entrée existe déjà) est le seul cas qui
+       continue d'être mis à jour là où il est : on ne l'abandonne pas. */
+    if (!target && !canvasEntryIn(null)) {
+      setAutoSaveNote('noproject');
+      setAutoSaveAt(new Date().toISOString());
+      return null;
+    }
     if (target && !canWriteLibProject(target)) return null;
     const label = autoSaveLabel();
     const canvasData = {
@@ -2466,6 +2614,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         title: `Saved automatically ${time} — the composition is in ${where} (project page “🖼 Saved canvases”) and its image + editable copy are on the cloud. Reopen it any time with “↩ Load”, or from the project page.`
       };
     }
+    if (autoSaveNote === 'noproject') {
+      return {
+        text: `🖼 kept in this browser ${time} · 🗂 no project yet`,
+        tone: 'warn',
+        title: `The composition is safe in this browser (it comes back when you reopen the Image Builder), but it is NOT stored in any image library: canvases belong to a PROJECT. Press “💾 Save now” and pick the project it belongs to — it is then listed on that project page under “🖼 Saved canvases”, in its Image Library → Project tab, and it goes to the cloud.`
+      };
+    }
     if (autoSaveNote === 'queued') {
       return {
         text: `🖼 auto-saved ${time} · ⏳ cloud transfer queued`,
@@ -2483,7 +2638,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     return {
       text: `🖼 auto-saved ${time}`,
       tone: 'ok',
-      title: `The composition is written into ${where} automatically — no need to press “💾 Save canvas” to be able to reopen it.`
+      title: `The composition is written into ${where} automatically — no need to press “💾 Save now” to be able to reopen it.`
     };
   })();
 
@@ -3283,28 +3438,18 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     window.addEventListener('mouseup', endDrag);
   };
 
-  /* ── ALIGNER / RÉPARTIR LES PANNEAUX (« objets ») ──────────────────────────
-     Les ⇹ des FIGURES alignent les figures D'UN panneau ; ces commandes-ci
-     alignent et répartissent les PANNEAUX eux-mêmes sur la grille (voir
-     alignBoxesPatches / distributeBoxesPatches). Une seule sélection ne suffit
-     pas (il n'y a rien à aligner) : les commandes demandent deux panneaux
-     sélectionnés — Ctrl+clic sur le canvas, ou les pastilles « Panels » — et la
-     RÉPARTITION en demande trois. Rien à faire → `{}` : ni écriture, ni étape
-     d'historique (comme ⬆ / ⬇ de l'empilement). */
-  const applyPanelLayout = (kind, mode) => {
-    const grid = { gridCols, gridRows };
-    // Les boîtes de la sélection (un instantané : rien de la liste live n'est
-    // relu pendant que les patchs se calculent).
-    const snapshot = boxesOf(selectedIds);
-    const boxes = Object.keys(snapshot).map((id) => ({ id, ...snapshot[id] }));
-    if (boxes.length < 2) return;
-    const patches = kind === 'align'
-      ? alignBoxesPatches(boxes, mode, grid)
-      : distributeBoxesPatches(boxes, mode, grid);
-    if (!Object.keys(patches).length) return;
-    commitHistory();
-    setObjects(prev => prev.map((o) => (patches[o.id] ? { ...o, ...patches[o.id] } : o)));
-  };
+  /* ⛔ LES COMMANDES ⇹ DES PANNEAUX ONT ÉTÉ RETIRÉES (demande : « l'outil
+     d'alignement et de répartition ne doit pas servir aux panneaux, mais aux
+     figures ou aux textes d'un panneau »). Aligner une grille de panneaux se
+     fait autrement, et mieux : Ctrl+clic pour en sélectionner plusieurs, puis le
+     PREMIER tient la référence — le déplacer les déplace tous du même écart, le
+     redimensionner leur donne SA taille (voir moveSelectionPatches /
+     resizeSelectionPatches). Les commandes ⇹ vivent maintenant dans la colonne
+     FIGURES et rangent les figures ET les textes du panneau sélectionné
+     (applyFigureLayout → alignGroupPatches / distributeGroupPatches).
+     Les fonctions pures alignBoxesPatches / distributeBoxesPatches restent dans
+     utils/panelSelection.js : elles restent testées et disponibles, simplement
+     plus branchées sur un bouton. */
   // "Shadow every panel" (toolbar + properties panel): ONE click gives the whole
   // figure the publication drop shadow, a second click takes it off again.
   const panelsShadowed = (objects || []).some((o) => !!shadowSpec(o && o.shadow));
@@ -4238,51 +4383,12 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           </span>
         )}
       </div>
-      {/* ── OBJECTS · LIGNE 2 : ALIGNER / RÉPARTIR LES PANNEAUX ─────────────────
-          Les ⇹ de la colonne FIGURES alignent les figures D'UN panneau ; ceux-ci
-          alignent et répartissent les PANNEAUX eux-mêmes sur la grille (voir
-          alignBoxesPatches / distributeBoxesPatches). Il faut au moins DEUX
-          panneaux sélectionnés — Ctrl+clic sur le canvas, ou les pastilles
-          « Panels » de la colonne voisine — et la RÉPARTITION en demande trois ;
-          les commandes s'expliquent alors au lieu de ne rien faire. */}
-      <div className={panelCellCls(bar, bar ? 'order-3 md:col-start-3' : '')}>
-        {(() => {
-          const n = selectedIds.length;
-          const enough = n >= 2;
-          const glyph = `text-[10px] font-bold border rounded px-0.5 shrink-0 ${enough ? 'text-indigo-700 border-indigo-200 bg-white hover:bg-indigo-100' : 'text-slate-300 border-slate-200 bg-slate-50'}`;
-          return (
-            <span className="inline-flex items-center gap-x-0.5 border border-indigo-200 bg-indigo-50 rounded px-1 py-0.5 shrink-0"
-              title={enough
-                ? `Align and spread the ${n} selected PANELS on the grid — the first selected panel is the reference, exactly like a move or a resize of several panels. Nothing moves when there is nothing to do.`
-                : 'Align and spread the PANELS themselves: select at least TWO panels (Ctrl+click on the canvas, or the “Panels” chips of this window) — the first selected is the reference.'}>
-              <span className="text-[9px] font-black text-indigo-700 shrink-0">⇹ panels {n}</span>
-              <button type="button" onClick={() => applyPanelLayout('align', 'left')} disabled={!enough} className={glyph}
-                title="Align the selected panels on the LEFT — they all take the first column of the selection (the leftmost panel does not move).">⬅</button>
-              <button type="button" onClick={() => applyPanelLayout('align', 'hcenter')} disabled={!enough} className={glyph}
-                title="Centre the selected panels HORIZONTALLY on the selection — their middles land on one vertical line.">⬌</button>
-              <button type="button" onClick={() => applyPanelLayout('align', 'right')} disabled={!enough} className={glyph}
-                title="Align the selected panels on the RIGHT edge of the selection — their right edges on one vertical line (the rightmost does not move).">➡</button>
-              <button type="button" onClick={() => applyPanelLayout('align', 'top')} disabled={!enough} className={glyph}
-                title="Align the selected panels on the TOP of the selection — they all take the first row (the highest panel does not move).">⬆</button>
-              <button type="button" onClick={() => applyPanelLayout('align', 'vcenter')} disabled={!enough} className={glyph}
-                title="Centre the selected panels VERTICALLY on the selection — their middles land on one horizontal line.">⬍</button>
-              <button type="button" onClick={() => applyPanelLayout('align', 'bottom')} disabled={!enough} className={glyph}
-                title="Align the selected panels on the BOTTOM edge of the selection — their bottom edges on one horizontal line (the lowest does not move).">⬇</button>
-              <button type="button" onClick={() => applyPanelLayout('distribute', 'h')} disabled={n < 3} className={`${glyph} ${n < 3 ? 'opacity-60' : ''}`}
-                title={n < 3
-                  ? 'Spreading the panels out needs THREE panels at least (with two there is only one gap to set).'
-                  : 'Spread the selected panels HORIZONTALLY: the same gap between neighbours, left to right — the two extreme panels keep their place.'}>↔</button>
-              <button type="button" onClick={() => applyPanelLayout('distribute', 'v')} disabled={n < 3} className={`${glyph} ${n < 3 ? 'opacity-60' : ''}`}
-                title={n < 3
-                  ? 'Spreading the panels out needs THREE panels at least (with two there is only one gap to set).'
-                  : 'Spread the selected panels VERTICALLY: the same gap between neighbours, top to bottom — the two extreme panels keep their place.'}>↕</button>
-            </span>
-          );
-        })()}
-        {selectedIds.length < 2 && (
-          <span className="text-[9px] text-slate-400 italic shrink-0">Ctrl+click two panels on the canvas to align them (three to spread them out)</span>
-        )}
-      </div>
+      {/* ⛔ OBJECTS · LIGNE 2 ALIGNAIT LES PANNEAUX — RETIRÉ (demande : l'outil
+          d'alignement doit servir aux FIGURES ou aux TEXTES d'un panneau, pas
+          aux panneaux). Plusieurs panneaux se règlent toujours au Ctrl+clic :
+          le premier sélectionné est la référence, le déplacer les déplace tous du
+          même écart, le redimensionner leur donne sa taille. Les commandes ⇹
+          sont dans la colonne FIGURES, juste à côté de la liste des figures. */}
       {/* ── MODIFY IMAGE · LIGNE 1 : le fond et l'ombre de LA FIGURE ────────────
           « 🎨 Transparent background » mène à l'outil de détourage de la figure
           ACTIVE (son aperçu cliquable, la tolérance et « les quatre coins » sont
@@ -4457,12 +4563,15 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         <button onClick={() => { setPickMode('add'); setShowLibrary(true); }}
           className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-2 py-0.5 rounded text-[10px] shrink-0"
           title="Add another figure to this same object/panel: the figures already there are FROZEN (each one keeps exactly the place and size it has now) and the new one lands in the biggest free space — nothing has to be laid out again. “⊞ Lay the figures out in a grid” re-flows the panel side by side if you prefer.">➕ Add figure</button>
-        {/* ↔ ÉCHANGER L'IMAGE D'UNE FIGURE (même place, même taille) : seule la
-            figure ACTIVE change de pixels — son rectangle, son échelle, son
-            recadrage, sa gomme et son ombre restent (voir handleSwapImage). */}
+        {/* ↔ SUBSTITUER L'IMAGE D'UNE FIGURE (même cadre, mêmes dimensions) :
+            seule la figure ACTIVE change de pixels — son cadre (rectangle libre
+            ou cellule) et sa place restent, mais le recadrage, le décalage,
+            l'échelle, les traits de gomme et le détourage de l'ANCIENNE image
+            sont oubliés (ils décrivaient ses pixels — voir handleSwapImage).
+            L'ombre et le réglage d'image restent : réglages esthétiques. */}
         <button type="button" onClick={() => { setPickMode('swap'); setShowLibrary(true); }} disabled={cropPanelIdx < 0}
           className={`font-bold px-2 py-0.5 rounded text-[10px] shrink-0 ${cropPanelIdx < 0 ? 'bg-slate-100 text-slate-300' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}
-          title="Swap the IMAGE of the active figure for another one of the library: it keeps exactly its place, size, crop, erasures and shadow — only the pixels change (a capture redone with better settings, the same curve on another condition…). “↺ Replace” in the library is the other command: it starts the panel over with a single full-panel figure.">↔ Swap image</button>
+          title="SUBSTITUTE the image of the active figure: the frame — its place and its dimensions — does not move, only the pixels change, and the crop window, the shift/zoom and the eraser strokes of the old picture are cleared so the new image is shown whole with its own proportions (a capture redone with better settings, the same curve on another condition…). “↺ Replace” in the library is the other command: it starts the panel over with a single full-panel figure.">↔ Swap image</button>
         {getObjImages(selectedObj).length > 1 && !selectedFreeLayout && (
           <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 shrink-0"
             title="Grid layout: how many columns the figures of this panel are laid out in">
@@ -4562,34 +4671,48 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             🎯 {figGroupOf(selectedObj.id).length + 1} figures selected
           </span>
         )}
-        {getObjImages(selectedObj).length > 1 && figGroupOf(selectedObj.id).length > 0 && (() => {
-          const n = figGroupOf(selectedObj.id).length + 1;
+        {/* LES TEXTES COCHÉS « ☑ » rejoignent le groupe que ⇹ range : l'outil
+            d'alignement sert aux FIGURES **et** aux TEXTES d'un panneau (jamais
+            aux panneaux — voir la note de la colonne OBJECTS). */}
+        {textGroupOf(selectedObj.id).length > 0 && (
+          <span className="text-[10px] font-bold text-sky-800 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5 shrink-0"
+            title={`${textGroupOf(selectedObj.id).length} text${textGroupOf(selectedObj.id).length === 1 ? '' : 's'} ticked — the ⇹ commands beside them align and spread them TOGETHER WITH the figures selected in this panel. Only the POSITION of a text is set: its size (the number of characters × its pt size) is its own.`}>
+            ☑ {textGroupOf(selectedObj.id).length} text{textGroupOf(selectedObj.id).length === 1 ? '' : 's'} ticked
+          </span>
+        )}
+        {layoutGroupSize(selectedObj) >= 2 && (() => {
+          const n = layoutGroupSize(selectedObj);
+          const nf = figGroupIdxs(selectedObj).length;
+          const nt = selectedTextGroup(selectedObj).length;
+          const what = nt && nf
+            ? `${nf} figure${nf === 1 ? '' : 's'} and ${nt} text${nt === 1 ? '' : 's'}`
+            : nt ? `${nt} text${nt === 1 ? '' : 's'}` : `${nf} figures`;
           const glyph = 'text-[10px] font-bold text-indigo-700 border border-indigo-200 bg-white rounded px-0.5 disabled:opacity-30 hover:bg-indigo-100 shrink-0';
-          const free = 'Aligned on the BOXES the figures have now: the panel switches to the FREE layout first (each figure keeps exactly the place and size it shows — nothing is re-flowed), and “⊞ Lay the figures out in a grid” puts the grid back whenever you want.';
+          const free = 'Aligned on the BOXES they have now: a figure still on the grid is FROZEN first (it keeps exactly the place and size it shows — nothing is re-flowed) and a text counts as a box of its own (its estimated width × its line height), so figures and texts line up together. “⊞ Lay the figures out in a grid” puts the grid back whenever you want.';
           return (
             <span className="inline-flex items-center gap-x-0.5 border border-indigo-200 bg-indigo-50 rounded px-1 py-0.5 shrink-0"
-              title={`⇹ Align and spread the ${n} selected figures. ${free}`}>
+              title={`⇹ Align and spread the ${what} selected in this panel. ${free}`}>
               <span className="text-[9px] font-black text-indigo-700 shrink-0">⇹ {n}</span>
               <button type="button" onClick={() => applyFigureLayout('align', 'left')} className={glyph}
-                title={`Align the ${n} selected figures on the LEFT edge of the selection (their left edges on one vertical line). The leftmost of them does not move.`}>⬅</button>
+                title={`Align the ${what} on the LEFT edge of the selection (their left edges on one vertical line). The leftmost of them does not move.`}>⬅</button>
               <button type="button" onClick={() => applyFigureLayout('align', 'hcenter')} className={glyph}
-                title={`Centre the ${n} selected figures HORIZONTALLY: their middles land on one vertical line through the centre of the selection.`}>⬌</button>
+                title={`Centre the ${what} HORIZONTALLY: their middles land on one vertical line through the centre of the selection.`}>⬌</button>
               <button type="button" onClick={() => applyFigureLayout('align', 'right')} className={glyph}
-                title={`Align the ${n} selected figures on the RIGHT edge of the selection (their right edges on one vertical line). The rightmost of them does not move.`}>➡</button>
+                title={`Align the ${what} on the RIGHT edge of the selection (their right edges on one vertical line). The rightmost of them does not move.`}>➡</button>
               <button type="button" onClick={() => applyFigureLayout('align', 'top')} className={glyph}
-                title={`Align the ${n} selected figures on the TOP edge of the selection (their tops on one horizontal line). The highest of them does not move.`}>⬆</button>
+                title={`Align the ${what} on the TOP edge of the selection (their tops on one horizontal line). The highest of them does not move.`}>⬆</button>
               <button type="button" onClick={() => applyFigureLayout('align', 'vcenter')} className={glyph}
-                title={`Centre the ${n} selected figures VERTICALLY: their middles land on one horizontal line through the centre of the selection.`}>⬍</button>
+                title={`Centre the ${what} VERTICALLY: their middles land on one horizontal line through the centre of the selection.`}>⬍</button>
               <button type="button" onClick={() => applyFigureLayout('align', 'bottom')} className={glyph}
-                title={`Align the ${n} selected figures on the BOTTOM edge of the selection (their bottoms on one horizontal line). The lowest of them does not move.`}>⬇</button>
+                title={`Align the ${what} on the BOTTOM edge of the selection (their bottoms on one horizontal line). The lowest of them does not move.`}>⬇</button>
               <button type="button" onClick={() => applyFigureLayout('distribute', 'h')} disabled={n < 3} className={glyph}
                 title={n < 3
-                  ? 'Distributing needs three figures at least (with two there is only one gap to set).'
-                  : `Distribute the ${n} selected figures HORIZONTALLY: the same gap between neighbours, left to right — the two extreme figures keep their place.`}>↔</button>
+                  ? 'Distributing needs three items at least (with two there is only one gap to set).'
+                  : `Distribute the ${what} HORIZONTALLY: the same gap between neighbours, left to right — the two extremes keep their place.`}>↔</button>
               <button type="button" onClick={() => applyFigureLayout('distribute', 'v')} disabled={n < 3} className={glyph}
                 title={n < 3
-                  ? 'Distributing needs three figures at least (with two there is only one gap to set).'
-                  : `Distribute the ${n} selected figures VERTICALLY: the same gap between neighbours, top to bottom — the two extreme figures keep their place.`}>↕</button>
+                  ? 'Distributing needs three items at least (with two there is only one gap to set).'
+                  : `Distribute the ${what} VERTICALLY: the same gap between neighbours, top to bottom — the two extremes keep their place.`}>↕</button>
             </span>
           );
         })()}
@@ -4769,6 +4892,19 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         <div className="basis-full flex flex-wrap items-center gap-x-1.5 gap-y-1 max-h-[8rem] overflow-y-auto custom-scrollbar min-w-0">
         {(selectedObj.texts || []).map((tx, i) => (
           <span key={tx.id} className={`inline-flex flex-wrap items-center gap-x-1 border rounded px-1 py-0.5 ${activeText && activeText.txId === tx.id ? 'border-sky-400 ring-1 ring-sky-300 bg-sky-50' : 'border-slate-200 bg-white'}`}>
+            {/* ☑ CE TEXTE REJOINT LE GROUPE DES COMMANDES ⇹ (avec les figures
+                sélectionnées du même panneau) : un texte coché avec une figure
+                suffit à les aligner l'un sur l'autre. Seule la POSITION est
+                réglée — la taille d'un texte est la sienne (nombre de
+                caractères × son corps). */}
+            <button type="button"
+              onClick={(e) => { e.stopPropagation(); toggleTextGroup(selectedObj.id, tx.id); }}
+              className={`shrink-0 text-[10px] font-bold border rounded px-1 ${textGroupOf(selectedObj.id).includes(tx.id) ? 'bg-indigo-50 text-indigo-800 border-indigo-300' : 'text-slate-400 border-slate-200 hover:bg-slate-100'}`}
+              title={textGroupOf(selectedObj.id).includes(tx.id)
+                ? 'This text is ticked: the ⇹ Align / Distribute commands of the Figures column range it too (click to untick).'
+                : 'Tick this text so the ⇹ Align / Distribute commands of the Figures column include it — together with the figures selected in this panel (only its position is set).'}>
+              {textGroupOf(selectedObj.id).includes(tx.id) ? '☑' : '☐'}
+            </button>
             <button type="button" onClick={() => setActiveText({ objId: selectedObj.id, txId: tx.id })}
               className="text-[9px] font-black text-slate-400 hover:text-sky-600 w-3 text-center shrink-0"
               title="Select THIS text — it is boxed on the canvas and its row lights up; “⧉ Copy” duplicates that one. A click on the text itself, on the canvas, does the same.">{i + 1}</button>
@@ -4969,8 +5105,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           <div className="flex gap-2 items-center flex-wrap">
             {homeEntry && (
               <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-1"
-                    title={`Saved canvas — “💾 Save canvas” updates this entry in place, so every link that opens it (project page “🖼 Saved canvases”, “↩ Load” in the image library) always gets the latest version. Stored ${canvasHome ? `in the “${canvasScopeName(canvasHome)}” image library` : 'in the shared dataset image library'}${storedScopeCount > 1 ? ` (and in ${storedScopeCount - 1} other ${storedScopeCount - 1 === 1 ? 'library' : 'libraries'})` : ''}.`}>
-                🖼 {canvasLabel || homeEntry.label || 'saved canvas'} · {canvasHome ? `📁 ${canvasScopeName(canvasHome)}` : '🌐 dataset'}
+                    title={`Saved canvas — “💾 Save now” updates this entry in place, so every link that opens it (project page “🖼 Saved canvases”, “↩ Load” in the image library) always gets the latest version. Stored ${canvasHome ? `in the “${canvasScopeName(canvasHome)}” image library` : 'in the shared dataset image library — a LEGACY canvas: it keeps being updated there, but new canvases are stored in a project'}${storedScopeCount > 1 ? ` (and in ${storedScopeCount - 1} other ${storedScopeCount - 1 === 1 ? 'library' : 'libraries'})` : ''}.`}>
+                🖼 {canvasLabel || homeEntry.label || 'saved canvas'} · {canvasHome ? `📁 ${canvasScopeName(canvasHome)}` : '🗂 dataset (kept as it was)'}
               </span>
             )}
             {projectId && typeof onBackToProject === 'function' && (
@@ -4985,7 +5121,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             </button>
             <button onClick={startNewImage}
                     className="text-xs bg-amber-500 hover:bg-amber-600 text-white border border-amber-500 px-3 py-1.5 rounded-lg font-bold"
-                    title="Create a NEW image — a new figure, not a wipe: the editor starts on a blank canvas with one empty panel (A) ready for its first capture, and the next “💾 Save canvas” adds a NEW image to the image library. The figure you were working on stays in the library exactly as it was last saved (its “↩ Load” brings it back). The canvas format — size, grid, borders, aspect ratio, letter size — is kept.">
+                    title="Create a NEW image — a new figure, not a wipe: the editor starts on a blank canvas with one empty panel (A) ready for its first capture, and the next “💾 Save now” adds a NEW image to the image library. The figure you were working on stays in the library exactly as it was last saved (its “↩ Load” brings it back). The canvas format — size, grid, borders, aspect ratio, letter size — is kept.">
               ➕ New image
             </button>
             <button onClick={() => { if(window.confirm('Clear the entire canvas?')) { commitHistory(); setObjects([]); setArrows([]); setSelectedId(null); setSelectedArrowId(null); setShapes([]); setSelectedShapeId(null); setCanvasEntries({}); setCanvasLabel(''); } }} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100">Clear Canvas</button>
@@ -5041,11 +5177,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             <input type="number" min="1" max="20" value={gridRows} onChange={e => setGridRows(Number(e.target.value))} className="border rounded p-1 text-xs w-16" />
           </label>
           <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 pb-2 cursor-pointer"
-            title="Draw a thin frame around every panel. It is part of the composition, so Export PNG, Save canvas and Insert into project follow this choice.">
+            title="Draw a thin frame around every panel. It is part of the composition, so Export PNG, Save now and Insert into project follow this choice.">
             <input type="checkbox" checked={showPanelBorders} onChange={e => setShowPanelBorders(e.target.checked)} /> Panel borders
           </label>
           <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 pb-2 cursor-pointer"
-            title="Draw the cell divider guides across the canvas (layout guides). They are part of the composition, so Export PNG, Save canvas and Insert into project follow this choice.">
+            title="Draw the cell divider guides across the canvas (layout guides). They are part of the composition, so Export PNG, Save now and Insert into project follow this choice.">
             <input type="checkbox" checked={showGridLines} onChange={e => setShowGridLines(e.target.checked)} /> Grid lines
           </label>
           <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 pb-2 cursor-pointer"
@@ -5094,16 +5230,16 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           <button onClick={exportPng} title="300 DPI PNG of the composition — the blue selection square and resize handles are never included; panel borders and grid lines follow the checkboxes." className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">Export PNG (300 DPI)</button>
           <button onClick={saveCanvasNow} disabled={saveBusy}
             title={canvasSaveProject()
-              ? `Save this canvas in “${canvasScopeName(canvasSaveProject() || '')}” — its project library (Image Library → Project tab) and that project page's “🖼 Saved canvases”, where it reopens in this editor. Re-saving UPDATES that entry in place: nothing is duplicated, and every link that opens the canvas shows the latest version.`
-              : 'Save this canvas — it has no project yet: the dialog opens and asks WHICH project (or the shared dataset library) to save it in. Re-saving updates that same entry in place; nothing is duplicated.'}
-            className="bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white font-bold px-3 py-1.5 rounded-lg text-xs">💾 Save canvas{saveBusy ? '…' : ''}</button>
-          {/* Le même enregistrement, mais en choisissant OÙ : c'est le dialogue
-              qui porte le choix (un autre projet, ou la bibliothèque partagée du
-              dataset) — le bouton au-dessus, lui, sauve dans le projet du canvas. */}
-          <button onClick={openSaveDialog} title="Save the whole canvas in the image library — the dialog asks WHERE: a project's library (its Project tab + that project page's “🖼 Saved canvases”, where it can be reopened in this editor) or the shared dataset library. Re-saving a canvas updates the copy of the place you pick; nothing is duplicated."
-            className="bg-white border border-amber-300 text-amber-700 hover:bg-amber-50 font-bold px-3 py-1.5 rounded-lg text-xs">▾ Choose where…</button>
+              ? `Save this canvas NOW, without waiting for the automatic save: the rendered image (300 DPI) and its editable copy are written immediately into “${canvasScopeName(canvasSaveProject() || '')}” — that project's image library (Image Library → Project tab) and its project page under “🖼 Saved canvases”, where it reopens in this editor. Re-saving UPDATES that entry in place: nothing is duplicated, and every link that opens the canvas shows the latest version.`
+              : 'Save this canvas NOW, without waiting for the automatic save — it has no project yet, so the dialog opens and asks WHICH project it belongs to (a canvas is always stored in a project’s image library). Re-saving updates that same entry in place; nothing is duplicated.'}
+            className="bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white font-bold px-3 py-1.5 rounded-lg text-xs">💾 Save now{saveBusy ? '…' : ''}</button>
+          {/* Le même enregistrement, mais en choisissant LE PROJET : c'est le
+              dialogue qui porte le choix (un autre projet que celui du canvas) —
+              le bouton au-dessus, lui, sauve dans le projet du canvas. */}
+          <button onClick={openSaveDialog} title="Save the whole canvas now and choose WHICH PROJECT owns it — a canvas is stored in a project's image library (its Project tab + that project page's “🖼 Saved canvases”, where it can be reopened in this editor) and uploaded to that project's images folder on the cloud. Re-saving a canvas updates that same entry; nothing is duplicated."
+            className="bg-white border border-amber-300 text-amber-700 hover:bg-amber-50 font-bold px-3 py-1.5 rounded-lg text-xs">▾ Save in another project…</button>
           {/* Où en est la sauvegarde AUTOMATIQUE (elle rend le canvas rouvable
-              même si l'on oublie « 💾 Save canvas ») : l'écrire ici évite de
+              même si l'on oublie « 💾 Save now ») : l'écrire ici évite de
               croire qu'une composition a été perdue. */}
           {autoSaveBadgeInfo && (
             <span title={autoSaveBadgeInfo.title}
@@ -5450,7 +5586,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                   type="button"
                   onClick={startNewImage}
                   className="bg-amber-500 hover:bg-amber-600 text-white font-bold px-3 py-1.5 rounded text-xs flex items-center gap-1"
-                  title="Nothing in the library fits? Close it and start a NEW image (a blank canvas with one empty panel). The figure you were working on stays in the library as it was last saved, and the next “💾 Save canvas” creates a new library entry."
+                  title="Nothing in the library fits? Close it and start a NEW image (a blank canvas with one empty panel). The figure you were working on stays in the library as it was last saved, and the next “💾 Save now” creates a new library entry."
                 >
                   ➕ New image
                 </button>
@@ -5516,7 +5652,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                 <span className="text-[10px] font-bold text-indigo-700">Click figures to add them to this panel — the window stays open so you can add several. The figures already in the panel keep exactly their place.</span>
               )}
               {pickMode === 'swap' && (
-                <span className="text-[10px] font-bold text-emerald-700">Click the image that replaces the ACTIVE figure — its place, size, crop, erasures and shadow are kept, only the pixels change. Pick the figure to change first (🎯 in “Figures”, or click it on the canvas).</span>
+                <span className="text-[10px] font-bold text-emerald-700">Click the image that SUBSTITUTES the ACTIVE figure: its frame — place and size — does not move, only the pixels change, and the crop window, shift, zoom and eraser strokes of the old picture are cleared so the new one is shown whole (its own proportions, in the same frame). Pick the figure to change first (🎯 in “Figures”, or click it on the canvas).</span>
               )}
               <span className="w-full text-[10px] text-slate-400">
                 Drag a thumbnail onto <b>another one</b> to change its place in the library, or onto the <b>other library tab</b> (Project Library ⇄ Dataset Library) to move the image into that library.
@@ -5570,7 +5706,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                     ? <img src={getRenderableDriveUrl(item.url || item.full)} alt={item.label}
                         className="w-full h-24 object-contain bg-slate-50 rounded" />
                     : <span className="w-full h-24 flex items-center justify-center bg-slate-50 rounded text-slate-300 text-3xl"
-                        title="No preview yet — the image is written on the next cloud pass (💾 Save canvas forces it right now)">🖼</span>}
+                        title="No preview yet — the image is written on the next cloud pass (💾 Save now forces it right now)">🖼</span>}
                   <span className="text-xs mt-1 truncate w-full text-center font-bold">{item.label}</span>
                   {item.canvasData && (
                     <span className="text-[9px] font-bold text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5 mt-0.5" title="This library item is a saved Image Builder canvas — click ↩ Load to restore it into the editor (clicking the image still adds it as a figure)">
@@ -5581,7 +5717,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                       encore de rendu : on le dit, plutôt que d'afficher une
                       vignette cassée ou un « High-Res » qui n'existe pas. */}
                   {item.canvasData && !item.drive && (
-                    <span className="text-[8px] text-amber-600 font-bold" title="The editable composition is here; the rendered image is written on the next cloud pass (💾 Save canvas forces it right now).">⏳ image on its way</span>
+                    <span className="text-[8px] text-amber-600 font-bold" title="The editable composition is here; the rendered image is written on the next cloud pass (💾 Save now forces it right now).">⏳ image on its way</span>
                   )}
                   <div className="flex items-center gap-1 mt-0.5 flex-wrap justify-center">
                     {item.canvasData && (
@@ -5740,7 +5876,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                   const saved = saveProjectsRescued(projects, { projectId: prj.id, fields: {} });
                   const where = `"${prj.name}" → ${sec}`;
                   if (!saved.ok) {
-                    setInsertMsg(`⚠️ This browser refused to store the project (${saved.error || 'the store is full'}): the image is in ${where} on this page only and would NOT survive a reload. Free some room (☁ Save canvas, or delete a dataset you no longer need) and insert again.`);
+                    setInsertMsg(`⚠️ This browser refused to store the project (${saved.error || 'the store is full'}): the image is in ${where} on this page only and would NOT survive a reload. Free some room (💾 Save now, or delete a dataset you no longer need) and insert again.`);
                   } else if (saved.droppedImages) {
                     setInsertMsg(`✅ The image is in ${where}. ⚠️ This browser's store was FULL: ${saved.droppedImages} locally kept image copy(ies) were replaced by their Drive link — the picture is still shown (it is read from Drive), and the figure keeps its place, its name and its caption.`);
                   } else if (!cloudUrl) {
@@ -5766,7 +5902,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
              onClick={() => { if (!saveBusy) setSaveOpen(false); }}>
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md flex flex-col gap-3 p-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center">
-              <h3 className="font-bold text-lg">💾 Save canvas in the image library</h3>
+              <h3 className="font-bold text-lg">💾 Save canvas — which project?</h3>
               <button onClick={() => setSaveOpen(false)} className="text-slate-400 hover:text-slate-700">✕</button>
             </div>
             <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Canvas name
@@ -5774,10 +5910,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                 className="border border-slate-300 rounded px-2 py-1.5 text-xs font-normal text-slate-700 outline-none focus:border-amber-500"
                 placeholder="Figure — …" />
             </label>
-            <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Save in
+            <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Project that owns it
               <select value={saveDest} onChange={(e) => { setSaveDest(e.target.value); setSaveMsg(''); }}
                 className="border border-slate-300 rounded px-2 py-1.5 text-xs bg-white font-normal text-slate-700">
-                <option value="">🌐 Dataset library — shared by every project (Image Library → Dataset tab)</option>
+                {!myWritableProjects.length && <option value="">— no project you may write to —</option>}
                 {myWritableProjects.map((p) => <option key={p.id} value={p.id}>📁 {p.name} — its Project tab + “🖼 Saved canvases”</option>)}
               </select>
             </label>
@@ -5787,14 +5923,17 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                     (<span className="font-bold">Image Library → Project</span> tab) and listed on that project page under
                     <span className="font-bold"> “🖼 Saved canvases”</span>, where it reopens in this editor. Figures inserted into that
                     project's sections keep showing the image itself.</>
-                : <>The composition is stored as an image in the <span className="font-bold">shared dataset library</span>
-                    (<span className="font-bold">Image Library → Dataset</span> tab), available to every project.</>}
+                : <>A canvas lives in <span className="font-bold">a project</span>'s image library — it is never stored in the shared dataset
+                    library any more ({' '}<span className="font-bold">Image Library → Project</span> tab, and the project page under
+                    <span className="font-bold"> “🖼 Saved canvases”</span>).{myWritableProjects.length
+                      ? ' Pick a project above.'
+                      : ' No project you may write to was found: create one (or ask its owner for “modify” access) and save again.'}</>}
             </p>
             {homeEntry && canvasScopeKey(saveDest) !== canvasScopeKey(canvasHome) && (
               <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
                 ⚠️ This canvas is already saved in {canvasScopeName(canvasHome)}. Saving it here stores a
-                <span className="font-bold"> copy</span> in the new place; each place keeps its own entry, and “💾 Save canvas”
-                always updates the copy of the destination you pick.
+                <span className="font-bold"> copy</span> in the new project; each project keeps its own entry, and “💾 Save now”
+                always updates the copy of the project you pick.
               </p>
             )}
             {saveMsg && <p className={`text-xs font-bold ${saveMsg.startsWith('✅') ? 'text-green-600' : 'text-slate-600'}`}>{saveMsg}</p>}
@@ -5817,7 +5956,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                 className="text-xs font-bold px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-40">Cancel</button>
               <button onClick={doSaveCanvas} disabled={saveBusy}
                 className="bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white font-bold px-4 py-1.5 rounded-lg text-xs">
-                {saveBusy ? '⏳ Saving…' : '💾 Save canvas'}
+                {saveBusy ? '⏳ Saving…' : '💾 Save now'}
               </button>
             </div>
           </div>

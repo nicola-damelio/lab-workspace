@@ -198,8 +198,8 @@ has(IB, 'const [panelMore, setPanelMore] = useState(false);',
   'le repli « More options » est un état du COMPOSANT (jamais un hook du panneau)');
 has(IB, "const panelCellCls = (bar, extra = '') => `flex flex-wrap items-center gap-x-1.5 gap-y-1 ${extra}${bar ? ' min-w-0' : ''}`;",
   'une seule définition de LIGNE (min-w-0 : sans lui la grille déborde)');
-eq(times(IB, /panelCellCls\(bar, bar \? 'order-/g), 10,
-  'dix lignes de commandes, chacune avec SA colonne et SON rang');
+eq(times(IB, /panelCellCls\(bar, bar \? 'order-/g), 9,
+  'neuf lignes de commandes, chacune avec SA colonne et SON rang (la ligne « OBJECTS · aligner / répartir les PANNEAUX » a été RETIRÉE : l’outil ⇹ sert aux FIGURES et aux TEXTES d’un panneau, jamais aux panneaux)');
 [["'order-3 md:col-start-1'", 'la liste des FIGURES (sous le titre Figures)'],
   ["'order-2 md:col-start-2'", 'MODIFY IMAGE : fond transparent + ombre de la figure'],
   ["'order-5 md:col-start-2'", 'MODIFY IMAGE : recadrage / rotation / gomme'],
@@ -208,10 +208,11 @@ eq(times(IB, /panelCellCls\(bar, bar \? 'order-/g), 10,
   ["'order-9 md:col-start-2'", 'PANELS : les pastilles A B C + copier / coller'],
   ["'order-10 md:col-start-2'", 'PANELS : profondeur, suppression, plein écran, More options'],
   ["'order-2 md:col-start-3'", 'OBJECTS : flèche · ligne · rectangle · cercle'],
-  ["'order-3 md:col-start-3'", 'OBJECTS : aligner / répartir les panneaux'],
   ["'order-4 md:col-start-3'", 'OBJECTS : les textes, l’un sous l’autre']].forEach(([mark, what]) => {
   has(IB, mark, `…${what}`);
 });
+ok(!/panelCellCls\(bar, bar \? 'order-3 md:col-start-3'/.test(IB),
+  '…et la ligne « OBJECTS · aligner / répartir les PANNEAUX » a bien disparu (les ⇹ rangent les FIGURES et les TEXTES d’un panneau — voir _builder_shapes_test)');
 has(IB, "? 'flex flex-wrap items-start gap-x-1.5 gap-y-1 min-w-0 order-last col-span-full border-t border-slate-200 pt-1'",
   '…et la LÉGENDE est la seule à prendre toute la largeur (order-last col-span-full)');
 eq(times(IB, /min-w-0 order-last col-span-full border-t/g), 1,

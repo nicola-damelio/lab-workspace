@@ -1196,13 +1196,19 @@ export const localOnlyLibraryCount = ({ scope = 'common', projectId = null } = {
  *  (voir l'en-tête ci-dessus) et remplace leur copie locale par le lien Drive.
  *  La liste est relue à chaque étape : une capture faite pendant l'envoi n'est
  *  jamais perdue par un tableau périmé.
- *  @returns {{ total:number, uploaded:number, failed:number, folder:string,
- *              results:Array<{id:string,ok:boolean,driveUrl?:string}> }} */
+ *  `queued` compte les fichiers mis EN FILE DE REPRISE (l'envoi a été refusé
+ *  sur le moment mais il repartira tout seul — voir utils/pendingUploads.js) :
+ *  ce ne sont PAS des échecs, et les trois écrans qui affichent ce compte-rendu
+ *  le disent ainsi au lieu d'envoyer chercher une connexion qui va bien.
+ *  @returns {{ total:number, uploaded:number, failed:number, queued:number,
+ *              folder:string,
+ *              results:Array<{id:string,ok:boolean,queued?:boolean,driveUrl?:string}> }} */
 export const pushLibraryToDrive = async ({ scope = 'common', projectId = null, projectName = '' } = {}) => {
   const out = {
     total: 0,
     uploaded: 0,
     failed: 0,
+    queued: 0,
     folder: projectImagesFolderPath(projectName).join('/'),
     results: []
   };
@@ -1218,7 +1224,19 @@ export const pushLibraryToDrive = async ({ scope = 'common', projectId = null, p
       drive = await uploadFigureToDrive({ full: item.full, label: item.label || 'figure', projectName });
     } catch { drive = null; }
     const url = (drive && drive.id && (drive.driveUrl || drive.url)) || '';
-    if (!url) { out.failed += 1; out.results.push({ id: item.id, ok: false }); continue; }
+    if (!url) {
+      // « Mis en file de reprise » n'est pas « échoué » : le fichier repartira
+      // seul dès que le fournisseur répondra. On le compte À PART.
+      const q = takeLastUploadQueueInfo() || {};
+      if (q.queued) {
+        out.queued += 1;
+        out.results.push({ id: item.id, ok: false, queued: true, reason: q.reason || 'queued' });
+        continue;
+      }
+      out.failed += 1;
+      out.results.push({ id: item.id, ok: false });
+      continue;
+    }
     write(read().map((i) => (i && i.id === item.id
       ? { ...i, drive: true, driveUrl: url, full: url, updatedAt: new Date().toISOString() }
       : i)));

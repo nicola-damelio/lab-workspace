@@ -25,6 +25,13 @@
    still receives the file as a data URL (temporary in-app attachment).
    ========================================================================= */
 
+// Tolerant data:URL → bytes (base64 OR percent-encoded — the saved figures of the
+// VECTOR charts are the latter: 'data:image/svg+xml;charset=utf-8,' +
+// encodeURIComponent(xml)). An unconditional atob() on that payload is what made
+// every SVG figure fail its Drive upload with "Failed to execute 'atob' on
+// 'Window'…" and stay browser-only; see utils/dataUrlBytes.
+import { dataUrlToBytes, dataUrlMime } from './dataUrlBytes';
+
 const TOKEN_KEY = 'labDriveAccessToken';
 const TOKEN_EXPIRY_KEY = 'labDriveAccessTokenExpiresAt';
 const FOLDER_ID_KEY = 'labDriveFolderId';
@@ -166,14 +173,8 @@ const throwCode = (code, message) => {
 
 /** Convert a data URL into a Blob (for the multipart upload body). */
 export const dataUrlToBlob = (dataUrl) => {
-  const comma = String(dataUrl).indexOf(',');
-  const meta = String(dataUrl).slice(0, comma);
-  const b64 = String(dataUrl).slice(comma + 1);
-  const mime = (/^data:([^;]+)/.exec(meta) || [])[1] || 'application/octet-stream';
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new Blob([bytes], { type: mime });
+  const type = dataUrlMime(dataUrl) || 'application/octet-stream';
+  return new Blob([dataUrlToBytes(dataUrl)], { type });
 };
 
 export const driveFetch = async (path, opts = {}) => {

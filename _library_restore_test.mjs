@@ -309,6 +309,28 @@ eq(LIB.readProjectLibrary('P1')[0].drive, true, 'l’entrée sait maintenant que
 has(String(LIB.readProjectLibrary('P1')[0].full), '/file/d/UP_', '…et pointe sur le fichier envoyé');
 eq(LIB.localOnlyLibraryCount({ scope: 'project', projectId: 'P1' }), 0, 'plus aucune image locale seulement');
 
+// 9c-bis. MISE EN FILE DE REPRISE ≠ ÉCHEC. Le Drive refuse sur le moment : le
+// fichier part en file d'attente (il repartira tout seul). L'écran annonçait
+// « N failed — check the connection and try again » et envoyait donc chercher
+// une panne qui n'existe pas — précisément ce qu'on croyait en lisant la
+// Cytométrie restée « drive:false ».
+const queuedItem = LIB.addProjectLibraryItem('P1', { label: 'Queued only', url: 'data:image/png;base64,thumb2', full: 'data:image/png;base64,big2', drive: false });
+globalThis.__driveTestMocks = {
+  ...listingMock,
+  uploadLocalFile: async () => { throw new Error('Cannot reach Google Drive (network error).'); },
+  takeLastUploadQueueInfo: () => ({ queued: true, reason: 'error' })
+};
+const queuedPush = await LIB.pushLibraryToDrive({ scope: 'project', projectId: 'P1', projectName: 'CD project' });
+eq(queuedPush.total, 1, 'la figure restée locale est bien reprise');
+eq(queuedPush.uploaded, 0, 'aucune copie cloud n’est rapportée');
+eq(queuedPush.queued, 1, '…mais elle est comptée EN FILE DE REPRISE');
+eq(queuedPush.failed, 0, '…et surtout PAS comme un échec définitif');
+const queuedEntry = LIB.readProjectLibrary('P1').find((i) => i.id === queuedItem.id);
+ok(!!queuedEntry, 'l’entrée est toujours dans la bibliothèque');
+eq(queuedEntry.drive, false, 'ses pixels restent locaux tant que la copie n’est pas RÉELLEMENT partie');
+eq(LIB.localOnlyLibraryCount({ scope: 'project', projectId: 'P1' }), 1, '…donc elle reste à rattraper');
+globalThis.__driveTestMocks = listingMock;
+
 // 9d. ⬇ Relire le dossier pour retrouver les images dont la LISTE est perdue.
 const pulled = await LIB.pullLibraryFromDrive({ scope: 'common', projectId: null, projectName: '' });
 eq(pulled.found, 2, 'les images du dossier sont vues');

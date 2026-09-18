@@ -49,13 +49,14 @@ frag('[ImageBuilder] opt-out switch (on by default)', IB, 'const [insertLink, se
 frag('[ImageBuilder] opt-out checkbox', IB, 'checked={insertLink}');
 frag('[ImageBuilder] the figure keeps its image (pushed as a normal figure)', IB, 'url: dataUrl,');
 frag('[ImageBuilder] insert says the image stays in the section', IB, 'it stays visible in that section on');
-frag('[ImageBuilder] "Save canvas" opens the destination dialog', IB, '<button onClick={openSaveDialog} title="Save the whole canvas in the image library');
-frag('[ImageBuilder] save dialog proposes where the canvas lives', IB, `setSaveDest(storedScopeCount ? (canvasHome || '') : (projectId || ''));`);
+frag('[ImageBuilder] "Save now" opens the destination dialog', IB, '<button onClick={openSaveDialog} title="Save the whole canvas now and choose WHICH PROJECT owns it');
+frag('[ImageBuilder] save dialog proposes the canvas\' project', IB, `const own = [canvasHome, projectId, ...Object.keys(canvasEntries || {})]`);
 frag('[ImageBuilder] save dialog lists every project', IB, '📁 {p.name} — its Project tab + “🖼 Saved canvases”');
-frag('[ImageBuilder] save dialog can choose the dataset library', IB, '<option value="">🌐 Dataset library — shared by every project (Image Library → Dataset tab)</option>');
+frag('[ImageBuilder] save dialog has NO dataset library any more (canvases live in a project)',
+  IB, '<option value="">— no project you may write to —</option>');
 frag('[ImageBuilder] save goes to the CHOSEN destination', IB, 'const pub = await publishCanvas({ label, targetProjectId: destProjectId, dataUrl: null });');
 frag('[ImageBuilder] save tells where it landed', IB, 'Image Library → Project tab — and on that project page under “🖼 Saved canvases”');
-frag('[ImageBuilder] the library opens on the destination tab', IB, "setLibraryTab(destProjectId ? 'project' : 'common');");
+frag('[ImageBuilder] the library opens on the destination tab', IB, "setLibraryTab('project');");
 frag('[ImageBuilder] the library opens on the destination project', IB, 'setLibProjectId(destProjectId);');
 frag('[ImageBuilder] re-homing is announced', IB, 'Saving it here stores a');
 frag('[ImageBuilder] render reused (no second render)', IB, 'const img = dataUrl || await renderToDataUrl(');

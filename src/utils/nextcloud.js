@@ -16,8 +16,11 @@
 
    Nothing in this module imports other app modules (it is the leaf of the
    storage stack), so both driveUpload.js and figuresLibrary.js can depend on
-   it without creating import cycles.
+   it without creating import cycles. (Only utils/dataUrlBytes, which itself
+   imports nothing, is pulled in — see ncUploadFile.)
    ========================================================================= */
+
+import { dataUrlToBytes, dataUrlMime } from './dataUrlBytes';
 
 const PROVIDER_KEY = 'labCloudProvider';           // 'google' | 'nextcloud'
 const NC_URL_KEY = 'labNcServer';
@@ -162,18 +165,16 @@ export const ncUploadFile = async ({ parts = [], name = 'file', mimeType = 'appl
   const davUrl = `${leaf}/${enc(name)}`;
   let blob = file;
   if (typeof file === 'string') {
-    const m = String(file).match(/^data:([^;,]*)(;base64)?,(.*)$/s);
-    const mime = mimeType || (m ? m[1] : 'application/octet-stream');
-    if (m && m[2]) {
-      const bin = atob(m[3]);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      blob = new Blob([bytes], { type: mime });
-    } else if (m) {
-      blob = new Blob([decodeURIComponent(m[3])], { type: mime });
-    } else {
-      blob = new Blob([file], { type: mimeType });
-    }
+    // Bytes come from the SHARED data:URL decoder (utils/dataUrlBytes): a data:URL
+    // is not always base64 — a saved figure of a VECTOR chart is
+    // 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml). The old
+    // inline regex only matched ';[;base64,]' payloads, so such a URL fell through
+    // to the raw-string branch and the SVG was uploaded as a text file containing
+    // the data:URL itself. The MIME of the call site still wins, then the one
+    // declared by the data:URL, then binary. (dataUrlBytes imports nothing, so
+    // this module stays the cycle-free leaf of the storage stack.)
+    const mime = mimeType || dataUrlMime(file) || 'application/octet-stream';
+    blob = new Blob([dataUrlToBytes(file)], { type: mime });
   }
   const type = mimeType || blob.type || 'application/octet-stream';
   const res = await ncRequest('PUT', davUrl, {

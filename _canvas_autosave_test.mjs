@@ -431,7 +431,7 @@ const snap = (over = {}) => ({
   has(IB, 'saveCanvasSnapshot({', 'la passe instantanée écrit la composition éditable, sans rendu');
   has(IB, 'updateId: known ? known.id : null,', 'elle MET À JOUR l’entrée connue (aucune copie empilée)');
   has(IB, 'rememberCanvasEntry(target, res.entry);', 'l’entrée créée devient celle du canvas');
-  has(IB, 'const autoSaveScope = () => {', 'la destination est choisie (canvas repris › projet › dataset)');
+  has(IB, 'const autoSaveScope = () => {', 'la destination est choisie (canvas repris › projet › RIEN : jamais le dataset pour un canvas neuf)');
   has(IB, 'autoSaveBadgeInfo', 'l’utilisateur VOIT que la composition est sauvegardée');
   has(IB, '⏳ cloud transfer queued', '…y compris quand l’envoi est en attente de reprise');
   has(IB, "setAutoSaveNote(pub.drive && pub.drive.id ? 'cloud' : (pub.driveQueued ? 'queued' : 'browser'));",
@@ -463,7 +463,7 @@ const snap = (over = {}) => ({
   has(IB, '<img src={getRenderableDriveUrl(item.url || item.full)}',
     'la carte prend la copie locale, sinon la copie cloud RENDUE AFFICHABLE');
   has(IB, '"No preview yet', '…et sans rien à dessiner, un cadre neutre (jamais une vignette cassée)');
-  has(IB, '💾 Save canvas forces it right now', '…qui dit comment forcer le rendu tout de suite');
+  has(IB, '💾 Save now forces it right now', '…qui dit comment forcer le rendu tout de suite');
   has(IB, '⏳ image on its way', 'une composition pas encore rendue le DIT aussi');
   has(IB, "{item.drive ? 'High-Res' : 'this browser'}", '…et la carte dit si la haute résolution est au cloud ou ici');
   has(IB, "import { getRenderableDriveUrl } from '../data/constants';",
@@ -476,6 +476,51 @@ const snap = (over = {}) => ({
   eq(CON.getRenderableDriveUrl('data:image/png;base64,AAAA'), 'data:image/png;base64,AAAA',
     'une vignette locale reste INCHANGÉE (le cas normal n’est pas touché)');
   eq(CON.getRenderableDriveUrl(null), '', 'sans aucune copie, il n’y a rien à dessiner (cadre neutre)');
+}
+
+/* =========================================================================
+   9. LES CANVAS VIVENT DANS UN PROJET — ET SE REMONTENT TOUT SEULS
+      « Canvases should not be saved in the library but only in the associated
+        project and should be available without clicking on “restore from the
+        drive” button » — les deux moitiés de la demande :
+      9a. un canvas NEUF n'est plus écrit dans la bibliothèque PARTAGÉE du
+          dataset : sa place est la bibliothèque du projet qui le porte ;
+      9b. « 💾 Save now » sauve TOUT DE SUITE (image + copie éditable) au lieu
+          d'attendre la passe automatique (2,5 s de calme, puis 8 s, puis au
+          plus un envoi par minute) ;
+      9c. la page du projet relit son dossier d'images d'elle-même quand un
+          canvas est attendu et manque : plus besoin de cliquer
+          « ⬇ Add missing figures from Drive » pour VOIR ses compositions.
+   ========================================================================= */
+{
+  const PD = readFileSync('./src/components/AppModules/projectDetailModule.jsx', 'utf8').replace(/\r\n/g, '\n');
+  // ── 9a. plus de canvas neuf dans la bibliothèque partagée ────────────────
+  has(IB, 'if (!target && !canvasEntryIn(null)) {',
+    'sans projet, la sauvegarde automatique n’écrit RIEN dans la bibliothèque partagée');
+  has(IB, "setAutoSaveNote('noproject');", '…la pastille dit que le canvas n’a pas encore de projet');
+  has(IB, '🗂 no project yet', '…et invite à en choisir un');
+  has(IB, 'is never stored in the shared dataset library',
+    '« Save now » sans projet le DIT au lieu d’écrire ailleurs en douce');
+  has(IB, 'Project that owns it', 'le dialogue de sauvegarde demande LE PROJET');
+  ok(!IB.includes('🌐 Dataset library — shared by every project'),
+    '…et la bibliothèque du dataset n’est plus proposée comme destination d’un canvas');
+  has(IB, "setLibraryTab('project');", 'après un enregistrement, la bibliothèque s’ouvre sur l’onglet du projet');
+  has(IB, 'canvas HISTORIQUE du dataset', 'un canvas DÉJÀ stocké dans le dataset continue d’être mis à jour là où il est');
+  // ── 9b. un bouton qui n’attend pas ──────────────────────────────────────
+  has(IB, '>💾 Save now{saveBusy ?', 'la barre d’outils porte « 💾 Save now »');
+  has(IB, 'without waiting for the automatic save', '…dont l’infobulle dit qu’il n’attend PAS la passe automatique');
+  has(IB, 'Saving the canvas (image + editable copy, right now)',
+    '…et qui annonce le rendu + l’envoi immédiats');
+  // ── 9c. les compositions reviennent sans rien cliquer ───────────────────
+  has(PD, 'const autoCanvasPullRef = useRef(new Set());',
+    'la page du projet relit le dossier d’images UNE fois par projet et par session');
+  has(PD, 'const missing = expected.filter((id) => !known.has(id));',
+    '…quand un canvas est ATTENDU (une figure de la page porte son canvasId) et manque');
+  has(PD, 'if (!missing.length && known.size) return;',
+    '…ou quand la bibliothèque du projet n’a AUCUN canvas (poste neuf, navigateur vidé)');
+  has(PD, 'const res = await pullLibraryFromDrive(figDriveScope());',
+    '…avec la MÊME lecture additive que « ⬇ Add missing figures from Drive »');
+  has(PD, 'nothing to click.', '…et le résultat est annoncé sans rien demander à l’utilisateur');
 }
 
 console.log(`✅ _canvas_autosave_test : ${passed} vérifications passées`);

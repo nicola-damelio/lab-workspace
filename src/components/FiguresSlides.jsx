@@ -1090,9 +1090,13 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
       refreshLibs();
       setDriveSyncStatus(res.total === 0
         ? '✓ Every image of this library is already on the cloud.'
-        : res.failed === 0
+        : res.failed === 0 && res.queued === 0
           ? `✓ ${res.uploaded} image${res.uploaded === 1 ? '' : 's'} saved to ${res.folder}.`
-          : `⚠ ${res.uploaded} saved to ${res.folder} · ${res.failed} failed — check the connection and try again.`);
+          : `${res.failed ? '⚠' : '⏳'} ${[
+            res.uploaded ? `${res.uploaded} image${res.uploaded === 1 ? '' : 's'} saved to ${res.folder}` : '',
+            res.queued ? `${res.queued} queued for ${res.folder} — they upload by themselves as soon as the cloud answers, nothing is lost` : '',
+            res.failed ? `${res.failed} failed — check the connection and try again` : ''
+          ].filter(Boolean).join(' · ')}.`);
     } catch (err) {
       setDriveSyncStatus(`⚠ ${(err && err.message) || 'Could not save the images to the cloud'}`);
     }

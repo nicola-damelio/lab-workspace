@@ -533,9 +533,13 @@ export const ProjectDetailModule = ({
       setCanvasLibVersion((v) => v + 1);
       setFigDriveMsg(res.total === 0
         ? '✓ Every figure of this project is already on Drive.'
-        : res.failed === 0
+        : res.failed === 0 && res.queued === 0
           ? `✓ ${res.uploaded} figure${res.uploaded === 1 ? '' : 's'} saved to ${res.folder}.`
-          : `⚠ ${res.uploaded} saved to ${res.folder} · ${res.failed} failed — check the connection and try again.`);
+          : `${res.failed ? '⚠' : '⏳'} ${[
+            res.uploaded ? `${res.uploaded} figure${res.uploaded === 1 ? '' : 's'} saved to ${res.folder}` : '',
+            res.queued ? `${res.queued} queued for ${res.folder} — they upload by themselves as soon as Drive answers, nothing is lost` : '',
+            res.failed ? `${res.failed} failed — check the connection and try again` : ''
+          ].filter(Boolean).join(' · ')}.`);
     } catch (err) {
       setFigDriveMsg(`⚠ ${(err && err.message) || 'Could not save the figures to Drive'}`);
     }
@@ -653,6 +657,60 @@ export const ProjectDetailModule = ({
       : p)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projects, canModify]);
+
+  /* ── LES CANVAS SE REMONTENT TOUT SEULS (sans cliquer « ⬇ Add missing figures
+     from Drive ») ───────────────────────────────────────────────────────────
+     ⛔ CE QUI ÉTAIT SIGNALÉ : « mes canvas ne sont là que si je clique le
+        bouton » — « Canvases should… be available without clicking on “restore
+        from the drive” button ». La liste des compositions vit dans le
+        navigateur (clé `labFiguresLib_<projet>`, fusionnée par contenu entre
+        postes, voir utils/figuresLibrary + workspaceKeyStore) ; elle arrive donc
+        EN RETARD sur un poste neuf, un navigateur vidé, ou après l'allègement
+        d'un magasin plein — et pendant ce temps la page affichait « 🖼 Saved
+        canvases · 0 » alors que les compositions étaient sur le Drive.
+
+     ✅ La page relit donc le dossier d'images du projet ELLE-MÊME, UNE FOIS par
+        projet et par session, quand un canvas est ATTENDU ici :
+          • une figure de la page porte son lien (`canvasId`) et la liste ne le
+            montre pas → c'est le cas d'un canvas inséré depuis un autre poste ;
+          • ou la bibliothèque du projet n'a AUCUN canvas (poste neuf) : on ne
+            peut pas savoir s'il en existe, alors on regarde une fois.
+        C'est la MÊME lecture que le bouton (additive, elle ne supprime ni
+        n'écrase rien), et elle n'a lieu qu'une fois : si le Drive est coupé ou
+        le dossier vide, le bouton reste là et rien ne boucle. */
+  const autoCanvasPullRef = useRef(new Set());
+  useEffect(() => {
+    if (!project) return;
+    const pid = project.id;
+    if (autoCanvasPullRef.current.has(pid)) return;
+    const lib = readProjectLibrary(pid) || [];
+    const known = new Set(lib.filter((i) => i && i.canvasData).map((i) => i.id));
+    const expected = [];
+    Object.keys(project.figures || {}).forEach((sec) => {
+      (project.figures[sec] || []).forEach((fig) => { if (fig && fig.canvasId) expected.push(fig.canvasId); });
+    });
+    const missing = expected.filter((id) => !known.has(id));
+    if (!missing.length && known.size) return;
+    autoCanvasPullRef.current.add(pid);
+    (async () => {
+      setFigDriveBusy(true);
+      setFigDriveMsg('⬇ Reading this project’s images folder on Drive — its saved canvases come back on their own…');
+      try {
+        const res = await pullLibraryFromDrive(figDriveScope());
+        setCanvasLibVersion((v) => v + 1);
+        setFigDriveMsg(res && res.error
+          ? `⚠ ${res.error}`
+          : res && res.restored
+            ? `✓ ${res.restored} saved canvas${res.restored === 1 ? '' : 'es'} brought back from ${res.folder} — nothing to click.`
+            : '');
+      } catch (err) {
+        setFigDriveMsg(`⚠ ${(err && err.message) || 'Could not read the Drive folder'}`);
+      } finally {
+        setFigDriveBusy(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id, canvasLibVersion]);
 
   /* Bibliographie / références enregistrées AVANT la prise en charge des
      co-auteurs : leurs champs manquants — les AUTEURS en premier lieu — sont
@@ -3944,8 +4002,8 @@ export const ProjectDetailModule = ({
         <SectionCard title="🖼 Saved canvases" open={openSections.canvases} onToggle={() => toggleSection('canvases')}
                      badge={<span className="text-[10px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">{savedCanvases.length}</span>}>
           <p className="text-xs text-slate-500 mb-3">
-            Compositions stored in this project's image library — with <span className="font-bold">💾 Save canvas</span> (the
-            dialog asks where to save: pick this project) or by <span className="font-bold">📤 Insert into project…</span>.
+            Compositions stored in this project's image library — with <span className="font-bold">💾 Save now</span> (the
+            dialog asks which project owns the canvas: pick this one) or by <span className="font-bold">📤 Insert into project…</span>.
             Every canvas below is also an image of the library (🖼 Library in the Image Builder →
             <span className="font-bold"> Project Library</span> tab)
             and a <span className="font-bold">link</span> back into the editor: “Open in Image Builder” reloads its panels, captions
@@ -3977,8 +4035,8 @@ export const ProjectDetailModule = ({
           </div>
           {savedCanvases.length === 0 ? (
             <div className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-5 text-center">
-              No canvas yet — in the Image Builder (sidebar → 🖼️ Image Builder) click “💾 Save canvas” and choose
-              <span className="font-bold"> this project</span> as the destination, or insert a composition with
+              No canvas yet — in the Image Builder (sidebar → 🖼️ Image Builder) click “💾 Save now” and choose
+              <span className="font-bold"> this project</span> as the project that owns it, or insert a composition with
               “📤 Insert into project…”: it appears here and in the image library's Project tab.
             </div>
           ) : (

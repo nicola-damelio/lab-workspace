@@ -245,8 +245,11 @@ has(IB, 'pickMode === \'swap\' ? handleSwapImage(item) : handlePickImage(item)',
   has(body, 'patchFigure(obj.id, idx, {', 'l’échange écrit sur la figure, par le même chemin que le reste');
   has(body, 'imgSrc: src,', '…il change les pixels');
   has(body, 'bg: null', '…et oublie le détourage : il décrivait les ANCIENS pixels');
-  ok(!/(^|\s)(rect|scale|dx|dy|crop|erase|shadow):/m.test(body),
-    '…mais JAMAIS la géométrie : même place, même taille, même recadrage, même gomme, même ombre');
+  has(body, 'crop: null,', '…ainsi que la fenêtre de recadrage (elle ne décrit pas la nouvelle image)');
+  has(body, 'dx: 0, dy: 0, scale: 1,', '…le décalage et le zoom de l’ancienne image');
+  has(body, 'erase: null,', '…et les traits de gomme, exprimés dans SES coordonnées');
+  ok(!/(^|\s)(rect|shadow):/m.test(body),
+    '…mais JAMAIS le CADRE (rect) ni l’ombre : l’image se SUBSTITUE dans la même boîte, aux mêmes dimensions');
   has(body, 'commitHistory();', '…et Ctrl+Z remet l’ancienne image');
 }
 
