@@ -265,6 +265,33 @@ export const ProjectDetailModule = ({
   const isSuper = currentUser?.role === 'superuser';
   const myName = currentUser?.name || '';
   const [projects, setProjects] = useState(loadProjects);
+  /* ⚠ LA LISTE VIVANTE (`projectsRef`) — POURQUOI ELLE EXISTE.
+     Un gestionnaire qui ATTEND quelque chose reste figé sur la liste du rendu
+     qui l'a créé : `projects`, dans sa fermeture, est la liste d'AVANT. L'import
+     de manuscrit écrit le texte, les références, la bibliographie et les figures,
+     PUIS attend l'archivage Drive et écrit la référence du fichier déposé —
+     cette seconde écriture repartait de la liste périmée : elle réécrivait
+     l'ANCIEN projet par-dessus l'import. Le texte et les figures disparaissaient
+     donc sous les yeux de l'utilisateur juste après l'import (« après l'import,
+     tout disparaît »), le magasin gardait l'ancienne version, et seule la copie
+     du Drive — envoyée avec le patch COMPLET — avait encore le texte : d'où le
+     « je dois cliquer sur ♻ Load the Drive copy », puis le second import
+     (« 🖼 Figures only ») qu'il fallait faire pour retrouver les figures (elles
+     ne sont jamais dans le document du Drive : on n'y dépose pas les pixels).
+
+     `projectsRef` suit la liste RÉELLE : toute écriture passe par
+     replaceProjects() (le ref ET l'état, ensemble), et le ref est resynchronisé à
+     chaque rendu. Une écriture qui suit un `await` repart donc de ce qui vient
+     d'être écrit — jamais de l'ancien projet. */
+  const projectsRef = useRef(projects);
+  useEffect(() => { projectsRef.current = projects; }, [projects]);
+  /** Écrire la liste des projets : l'état React ET la liste vivante, toujours
+   *  ensemble (voir commitProjectVerified, qui écrit après un `await`). */
+  const replaceProjects = (next) => {
+    const list = typeof next === 'function' ? next(projectsRef.current) : next;
+    projectsRef.current = list;
+    setProjects(list);
+  };
   /* `bibliography: true` : la section « 📚 Bibliography » de cette page porte les
      DEUX imports (📄 Import references from a paper / 📥 Import a manuscript, ce
      dernier en haut de la page) — la section est donc ouverte dès l'arrivée,
@@ -548,7 +575,7 @@ export const ProjectDetailModule = ({
       if (bibliography === p.bibliography && references === p.references) return p;
       return { ...p, bibliography, references };
     });
-    if (next.some((p, i) => p !== projects[i])) setProjects(next);
+    if (next.some((p, i) => p !== projects[i])) replaceProjects(next);
   }, [projects, citationPool, canModify]);
 
   // Keep the persisted "Materials and Methods" snapshot fresh every time the
@@ -560,7 +587,7 @@ export const ProjectDetailModule = ({
     // Never overwrite a manually edited Materials & Methods text.
     if (project.materialsAndMethods?.edited) return;
     const parts = mmPartsFor(project, tests, true);
-    setProjects((prev) => prev.map((p) =>
+    replaceProjects((prev) => prev.map((p) =>
       p.id === project.id
         ? {
             ...p,
@@ -594,9 +621,15 @@ export const ProjectDetailModule = ({
 
   const updateProject = (patch) => {
     if (!canModify) return; // view-only coworkers cannot change anything
-    setProjects((prev) => prev.map((p) =>
+    replaceProjects((prev) => prev.map((p) =>
       p.id === project.id ? { ...p, ...patch, updatedAt: new Date().toISOString() } : p));
   };
+
+  /** LE PROJET VIVANT : tel qu'il est en mémoire MAINTENANT, pas tel qu'il était
+   *  dans le rendu qui a créé le gestionnaire en cours. C'est lui qui doit servir
+   *  de base dès qu'un `await` s'est glissé avant l'écriture (import de
+   *  manuscrit, archivage Drive) — voir projectsRef. */
+  const liveProject = () => projectsRef.current.find((p) => p.id === project.id) || project;
 
   /**
    * ÉCRIRE UN PATCH, PUIS LE RELIRE — la seule écriture dont un import a le droit.
@@ -614,20 +647,30 @@ export const ProjectDetailModule = ({
    */
   const commitProjectVerified = (patch, { lighten = false } = {}) => {
     const commit = (extra) => {
-      const list = projects.map((p) => (p.id === project.id
+      /* ⚠ LA BASE EST LA LISTE VIVANTE, PAS LA FERMETURE. Un import de manuscrit
+         fait DEUX écritures séparées par un `await` (le texte, les références et
+         les figures, puis la référence du document déposé sur le Drive) : la
+         seconde repartait de la liste capturée AVANT l'import, donc elle
+         réécrivait l'ancien projet — l'import disparaissait de l'écran et du
+         magasin, et il fallait « ♻ Load the Drive copy » pour retrouver le texte
+         (voir projectsRef pour le détail). */
+      const list = projectsRef.current.map((p) => (p.id === project.id
         ? { ...p, ...extra, updatedAt: new Date().toISOString() } : p));
       return { list, res: saveProjectsChecked(list, { projectId: project.id, fields: extra }) };
     };
     let attempt = commit(patch);
     const lightened = [];
     if (!attempt.res.ok && lighten) {
-      const light = lightenProjectForStorage({ ...project, ...patch });
+      /* L'allègement part aussi du projet VIVANT : sans cela, l'écriture de
+         secours d'un second commit (la référence du fichier Drive) aurait allégé
+         et réécrit les figures d'AVANT l'import. */
+      const light = lightenProjectForStorage({ ...liveProject(), ...patch });
       if (light.dropped.length) {
         lightened.push(...light.dropped);
         attempt = commit({ ...patch, figures: light.project.figures });
       }
     }
-    setProjects(attempt.list);
+    replaceProjects(attempt.list);
     return {
       ok: attempt.res.ok, error: attempt.res.error, missing: attempt.res.missing || [], lightened
     };
@@ -1011,7 +1054,7 @@ export const ProjectDetailModule = ({
     const number = existing ? existing.number : refs.length + 1;
     if (!existing) {
       const data = citeData(paper);
-      setProjects((prev) => prev.map((p) => {
+      replaceProjects((prev) => prev.map((p) => {
         if (p.id !== project.id) return p;
         return {
           ...p,
@@ -1244,7 +1287,7 @@ export const ProjectDetailModule = ({
     const created = createEmptyTest(id, tests.length + 1, type);
     created.projectNames = [...new Set([...(created.projectNames || []), project.name])];
     setTests((prev) => [...prev, created]);
-    const nextProjects = projects.map((p) => {
+    replaceProjects(projectsRef.current.map((p) => {
       if (p.id !== project.id) return p;
       return {
         ...p,
@@ -1254,9 +1297,8 @@ export const ProjectDetailModule = ({
         }],
         updatedAt: new Date().toISOString()
       };
-    });
-    setProjects(nextProjects);
-    saveProjects(nextProjects);
+    }));
+    saveProjects(projectsRef.current);
     // Navigate through openTest so "◀ Back" returns to this project page.
     openTest(created.id);
   };
@@ -2041,9 +2083,9 @@ export const ProjectDetailModule = ({
   const undoManuscriptImport = () => {
     const snapshot = msResult && msResult.undoProject;
     if (!snapshot || !snapshot.id) return;
-    const list = projects.map((p) => (p.id === snapshot.id ? snapshot : p));
+    const list = projectsRef.current.map((p) => (p.id === snapshot.id ? snapshot : p));
     const res = saveProjectsChecked(list, { projectId: snapshot.id, fields: {} });
-    setProjects(list);
+    replaceProjects(list);
     setMsResult({
       ok: res.ok,
       undoProject: null,
@@ -4091,8 +4133,8 @@ export const ProjectDetailModule = ({
                      avant l'enregistrement, sinon la copie du projet restée
                      dans le document du dataset le ferait réapparaître. */
                   recordProjectDeletion(project);
-                  const remaining = projects.filter((p) => p.id !== project.id);
-                  setProjects(remaining);
+                  const remaining = projectsRef.current.filter((p) => p.id !== project.id);
+                  replaceProjects(remaining);
                   saveProjects(remaining);
                   markAttachmentsDeleted(project).catch(() => {});
                   /* Le dossier Drive du projet part aussi à la corbeille (et son

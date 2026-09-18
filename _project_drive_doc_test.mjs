@@ -221,6 +221,8 @@ globalThis.__driveTestMocks.driveToken = keepToken;
 ok(PAGE.includes('await archiveProjectDocument({'), 'l’import dépose le document dans le dossier Drive du projet');
 ok(PAGE.includes('commitProjectVerified({ driveDocument: driveCopy }, {})'),
   '…et garde l’identifiant du fichier dans le projet (pour le relire ensuite)');
+ok(PAGE.includes('const list = projectsRef.current.map((p) => (p.id === project.id'),
+  '…sur la liste VIVANTE : cette écriture, qui suit l’import (un `await`), ne réécrit jamais l’ancien projet par-dessus');
 ok(PAGE.includes('The text is also filed on Drive'), '…le compte rendu le dit');
 ok(PAGE.includes('♻ Load the Drive copy'), '…et « ♻ Load the Drive copy » peut le remettre dans la page');
 ok(PAGE.includes('☁ File the text on Drive'),

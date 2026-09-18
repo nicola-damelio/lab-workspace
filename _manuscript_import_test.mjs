@@ -982,8 +982,8 @@ has(PROJ, 'const saved = commitProjectVerified(fullPatch, { lighten: true });',
   'l’import écrit par le chemin VÉRIFIÉ (écriture puis relecture du magasin)');
 has(PROJ, 'res: saveProjectsChecked(list, { projectId: project.id, fields: extra })',
   'commitProjectVerified relit le projet et compare les champs écrits');
-has(PROJ, 'const light = lightenProjectForStorage({ ...project, ...patch });',
-  'si le navigateur refuse (quota plein), une seconde écriture allège les figures : le TEXTE passe en premier');
+has(PROJ, 'const light = lightenProjectForStorage({ ...liveProject(), ...patch });',
+  'si le navigateur refuse (quota plein), une seconde écriture allège les figures — à partir du projet VIVANT : le TEXTE passe en premier');
 has(PROJ, 'if (msBusyRef.current) return;   // deux clics = un seul import',
   'deux clics sur « Import » ne font qu’un seul import');
 has(PROJ, 'const previous = previousImportOf(project, hash);',
@@ -1003,6 +1003,40 @@ has(PROJ, 'msImports: [...history.filter((it) => !it || it.hash !== receipt.hash
   'l’import laisse son empreinte dans le projet (jamais deux fois la même)');
 has(PROJ, "const [storageWarning, setStorageWarning] = useState('');",
   'une écriture refusée par le navigateur se dit aussi dans la page');
+
+/* ── 22. « APRÈS L'IMPORT, TOUT DISPARAÎT » ───────────────────────────────---
+   L'import écrit DEUX fois, séparées par un `await` : le texte, les références,
+   la bibliographie et les figures, PUIS la référence du document que l'archivage
+   vient de déposer sur le Drive. La seconde écriture repartait de `projects`
+   capturé dans la fermeture du gestionnaire — donc de la liste d'AVANT l'import :
+   elle réécrivait l'ancien projet par-dessus (texte, références et figures) et
+   `setProjects` remettait cet ancien projet à l'écran. Le magasin retombait sur
+   l'ancienne version, et seule la copie du Drive — envoyée avec le patch COMPLET
+   — avait encore le texte : d'où le « je dois cliquer sur ♻ Load the Drive copy »
+   pour le texte, et le second import « 🖼 Figures only » qu'il fallait faire pour
+   retrouver les figures (les pixels ne sont JAMAIS dans le document du Drive).
+   La base des écritures est donc la liste VIVANTE (projectsRef), que tout passe
+   par replaceProjects() — et le test du magasin RÉEL rejoue les deux écritures :
+   voir _persist_store_test.mjs, section 5. */
+has(PROJ, 'const projectsRef = useRef(projects);',
+  'la page garde une liste VIVANTE des projets, au lieu de sa seule fermeture');
+has(PROJ, 'useEffect(() => { projectsRef.current = projects; }, [projects]);',
+  '…resynchronisée à chaque rendu');
+has(PROJ, "const list = typeof next === 'function' ? next(projectsRef.current) : next;",
+  'replaceProjects() écrit l’état React ET la liste vivante ensemble');
+has(PROJ, 'const list = projectsRef.current.map((p) => (p.id === project.id',
+  'commitProjectVerified écrit sur la liste VIVANTE : le second commit de l’import ne réécrit plus l’ancien projet');
+has(PROJ, 'const liveProject = () => projectsRef.current.find((p) => p.id === project.id) || project;',
+  'l’allègement d’urgence part du projet vivant (jamais des figures d’avant l’import)');
+has(PROJ, 'if (driveCopy) commitProjectVerified({ driveDocument: driveCopy }, {});',
+  'la référence du document Drive est le commit QUI SUIT l’import — le cas qui effaçait tout');
+/* Une seule écriture directe de `setProjects` : celle du helper. Toute autre
+   écriture de la liste passerait à côté du ref et ramènerait le défaut. */
+eq(PROJ.split('setProjects(').length - 1, 1,
+  'la liste ne s’écrit QUE par replaceProjects() (une seule écriture directe : le helper)');
+ok(PROJ.includes('replaceProjects(remaining);') && PROJ.includes('replaceProjects(attempt.list);')
+  && PROJ.includes('replaceProjects(list);') && PROJ.includes('saveProjects(projectsRef.current);'),
+  'les écritures de la page (commit vérifié, retour en arrière, suppression, ajout d’expérience) passent toutes par là');
 
 /* L'empreinte d'un document est stable, et deux documents ne se confondent pas. */
 const FIX_DOC = [
