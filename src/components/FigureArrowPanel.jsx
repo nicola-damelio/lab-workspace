@@ -12,8 +12,9 @@ import { DEFAULT_ARROW, DEFAULT_SHADOW, normalizeArrow, shadowSpec } from '../ut
    fields would lose focus as soon as the canvas re-rendered.
 
    • ShadowControls — ONE control block for every shadowed element: a PANEL
-     (Object Properties) and an ARROW share it, and both write the very same
-     record `{ dx, dy, blur, color, opacity }` (mm) that the canvas renders with
+     (Object Properties), a FIGURE of a panel and an ARROW share it, and all
+     three write the very same record `{ dx, dy, blur, color, opacity }` (mm)
+     that the canvas renders with
      ONE <feDropShadow> filter (see utils/figureArrows). The filter is part of
      the composition SVG, so Export PNG / Save canvas / Insert into project keep
      the shadow — those paths rasterize that very SVG.

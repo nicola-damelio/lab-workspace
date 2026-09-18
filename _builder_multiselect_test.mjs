@@ -204,6 +204,127 @@ has(IB, 'const patches = resizeFiguresPatches(figs, imgIdx, factor);',
 has(IB, 'setFigGroup((prev) => (prev.objId && prev.objId !== selectedId ? { objId: null, idxs: [] } : prev));',
   'changer de panneau remet la sélection de figures à zéro (les index n’y ont plus de sens)');
 
+/* ── 7. ⇹ ALIGNER / RÉPARTIR LES FIGURES SÉLECTIONNÉES ────────────────────────
+   « when I select multiple figures of objects allow me to align them
+   horizontally, vertically or center them. Allow me to distribute them
+   horizontally or vertically. » — les MÊMES figures cochées que ci-dessus, mais
+   rangées les unes par rapport aux autres. La géométrie est calculée par le VRAI
+   module (PS.alignFiguresPatches / PS.distributeFiguresPatches, importé plus
+   haut), et le branchement est vérifié dans ImageBuilder.jsx. */
+const trio = [
+  { idx: 0, rect: { x: 0.1, y: 0.1, w: 0.2, h: 0.2 } },
+  { idx: 1, rect: { x: 0.5, y: 0.4, w: 0.2, h: 0.2 } },
+  { idx: 2, rect: { x: 0.9, y: 0.7, w: 0.1, h: 0.1 } }
+];
+eq(PS.ALIGN_MODES, ['left', 'hcenter', 'right', 'top', 'vcenter', 'bottom'], 'les six alignements');
+eq(PS.DISTRIBUTE_AXES, ['h', 'v'], '…et les deux axes de répartition');
+
+/* Aligner à GAUCHE : tout le monde au bord gauche du GROUPE, et le plus à
+   gauche ne bouge pas (0.1). */
+eq(PS.alignFiguresPatches(trio, 'left'), {
+  1: { rect: { ...trio[1].rect, x: 0.1 } },
+  2: { rect: { ...trio[2].rect, x: 0.1 } }
+}, 'aligner à gauche met tout au bord gauche de la sélection (l’extrême ne bouge pas)');
+/* Aligner à DROITE : le bord droit du groupe est 0.9 + 0.1 = 1.0. */
+eq(PS.alignFiguresPatches(trio, 'right'), {
+  0: { rect: { ...trio[0].rect, x: 0.8 } },
+  1: { rect: { ...trio[1].rect, x: 0.8 } }
+}, '…à droite, sur le bord droit du groupe (1.0)');
+/* Centrer HORIZONTALEMENT : le milieu du groupe — (0.1 + 1.0) / 2 = 0.55. */
+eq(PS.alignFiguresPatches(trio, 'hcenter'), {
+  0: { rect: { ...trio[0].rect, x: 0.45 } },
+  1: { rect: { ...trio[1].rect, x: 0.45 } },
+  2: { rect: { ...trio[2].rect, x: 0.5 } }
+}, 'centrer horizontalement : les milieux tombent sur l’axe du groupe');
+eq(PS.alignFiguresPatches(trio, 'top'), {
+  1: { rect: { ...trio[1].rect, y: 0.1 } },
+  2: { rect: { ...trio[2].rect, y: 0.1 } }
+}, 'aligner en haut : tout au bord haut du groupe');
+eq(PS.alignFiguresPatches(trio, 'bottom'), {
+  0: { rect: { ...trio[0].rect, y: 0.6 } },
+  1: { rect: { ...trio[1].rect, y: 0.6 } }
+}, '…en bas (le bord bas du groupe est 0.8, moins la hauteur de chacun)');
+eq(PS.alignFiguresPatches(trio, 'vcenter'), {
+  0: { rect: { ...trio[0].rect, y: 0.35 } },
+  1: { rect: { ...trio[1].rect, y: 0.35 } },
+  2: { rect: { ...trio[2].rect, y: 0.4 } }
+}, 'centrer verticalement : les milieux tombent sur l’axe horizontal du groupe');
+/* Une commande ne touche QUE l’axe qu’elle vise : le côté opposé (et la taille)
+   des boîtes ne bouge jamais. */
+{
+  const left = PS.alignFiguresPatches(trio, 'left');
+  ok(Math.abs(left[1].rect.w - trio[1].rect.w) < 1e-9 && left[1].rect.y === trio[1].rect.y,
+    'aligner ne change ni la taille ni l’autre axe des figures');
+}
+/* Un groupe déjà aligné ne bouge pas : aucune écriture, aucune étape d’histoire. */
+eq(PS.alignFiguresPatches([
+  { idx: 0, rect: { x: 0.2, y: 0.2, w: 0.1, h: 0.1 } },
+  { idx: 1, rect: { x: 0.2, y: 0.5, w: 0.1, h: 0.1 } }
+], 'left'), {}, 'déjà alignées → rien à faire');
+eq(PS.alignFiguresPatches(trio, 'nowhere'), {}, 'un mode inconnu ne fait rien');
+eq(PS.alignFiguresPatches([{ idx: 0, rect: trio[0].rect }], 'left'), {}, 'une figure seule n’a rien à aligner');
+
+/* RÉPARTIR : même intervalle entre voisines, les deux extrêmes intacts.
+   0.1 → 1.0 de bord à bord, 0.5 de matière, 2 intervalles → 0.2 : le groupe
+   `trio` est donc DÉJÀ réparti, on décale d'abord sa figure du milieu pour voir
+   la commande travailler. */
+const spread = [
+  { idx: 0, rect: { x: 0.1, y: 0.1, w: 0.2, h: 0.2 } },
+  { idx: 1, rect: { x: 0.32, y: 0.4, w: 0.2, h: 0.2 } },
+  { idx: 2, rect: { x: 0.9, y: 0.7, w: 0.1, h: 0.1 } }
+];
+eq(PS.distributeFiguresPatches(spread, 'h'), { 1: { rect: { ...spread[1].rect, x: 0.5 } } },
+  'répartir horizontalement : même intervalle, les extrêmes ne bougent pas');
+eq(PS.distributeFiguresPatches(trio, 'h'), {}, 'un groupe déjà réparti ne bouge pas');
+{
+  /* [0.1→0.3] 0.2 [0.5→0.7] 0.2 [0.8→0.9] : les deux intervalles sont ÉGAUX. */
+  const p = PS.distributeFiguresPatches(spread, 'h');
+  const xs = [spread[0].rect, p[1].rect, spread[2].rect];
+  const gaps = [xs[1].x - (xs[0].x + xs[0].w), xs[2].x - (xs[1].x + xs[1].w)];
+  ok(Math.abs(gaps[0] - gaps[1]) < 1e-9, '…et les intervalles mesurés après coup sont identiques');
+}
+eq(PS.distributeFiguresPatches([
+  { idx: 0, rect: { x: 0.1, y: 0.1, w: 0.2, h: 0.2 } },
+  { idx: 1, rect: { x: 0.6, y: 0.1, w: 0.2, h: 0.2 } }
+], 'h'), {}, 'répartir DEUX figures n’a pas de sens (un seul intervalle à régler)');
+{
+  /* Une figure qui dépasse du panneau peut y être ramenée mais jamais rendue
+     inatteignable : elle garde toujours une lisière (RECT_MIN) dedans. */
+  const out = PS.distributeFiguresPatches([
+    { idx: 0, rect: { x: -0.5, y: 0.1, w: 0.6, h: 0.2 } },
+    { idx: 1, rect: { x: 0.2, y: 0.4, w: 0.2, h: 0.2 } },
+    { idx: 2, rect: { x: 0.9, y: 0.7, w: 0.1, h: 0.1 } }
+  ], 'v');
+  ok(!out[1] || out[1].rect.y <= 1 - 0.02 + 1e-9, 'la répartition garde chaque boîte attrapable à la souris');
+}
+
+/* Le branchement dans ImageBuilder : une seule commande, les huit boutons, et le
+   GEL du panneau avant (une figure en grille reçoit d'abord sa boîte exacte). */
+has(IB, 'const figGroupIdxs = (obj) => {', 'le groupe = la figure ACTIVE + les figures cochées');
+has(IB, 'return [ref, ...figGroupOf(obj.id).filter((i) => i !== ref)].filter((i) => i >= 0);',
+  '…sans doublon et sans index invalide');
+has(IB, 'const applyFigureLayout = (kind, mode) => {', 'une seule commande pour aligner / répartir');
+has(IB, "return kind === 'align' ? alignFiguresPatches(figs, mode) : distributeFiguresPatches(figs, mode);",
+  '…qui passe par les fonctions PURES (mêmes chiffres que ci-dessus)');
+has(IB, 'const pinned = freezeFigures(o, getObjImages(o));',
+  'le panneau est GELÉ avant : rien n’est re-flowé, chaque figure garde la boîte qu’elle montre');
+has(IB, 'if (!Object.keys(patchesOn(freezeFigures(obj, getObjImages(obj)))).length) return;',
+  'déjà rangées → ni écriture, ni étape d’historique');
+eq(times(IB, /applyFigureLayout\('align', '/g), 6, 'six boutons d’alignement (les deux bords, les deux centres, haut et bas)');
+eq(times(IB, /applyFigureLayout\('distribute', '/g), 2, '…et deux de répartition (horizontale / verticale)');
+has(IB, '>⬅</button>', 'le bord gauche est là');
+has(IB, '>⬌</button>', 'le centre horizontal aussi');
+has(IB, '>➡</button>', 'le bord droit');
+has(IB, '>⬆</button>', 'le bord haut');
+has(IB, '>⬍</button>', 'le centre vertical');
+has(IB, '>⬇</button>', 'et le bord bas');
+has(IB, "onClick={() => applyFigureLayout('distribute', 'v')} disabled={n < 3}",
+  'la répartition verticale est désactivée sous trois figures (comme l’horizontale)');
+has(IB, 'title={`Align the ${n} selected figures on the LEFT edge of the selection',
+  'chaque bouton dit ce qu’il fait et sur quoi il s’aligne');
+has(IB, 'Aligned on the BOXES the figures have now',
+  '…et que le panneau passe en géométrie libre pour y arriver (rien n’est perdu)');
+
 console.log(`_builder_multiselect_test.mjs — ${passed} assertions OK`);
 
 

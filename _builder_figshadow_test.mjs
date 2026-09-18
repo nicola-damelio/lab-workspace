@@ -152,33 +152,51 @@ has(layer, "const par = keepAspect ? 'xMidYMid meet'", 'l’ajustement de l’im
 has(layer, 'if (g.crop) {', 'le chemin « figure recadrée » existe toujours');
 has(layer, 'if (!src) return null;', 'une figure sans pixels n’est toujours pas dessinée');
 
-/* ── 5. Le composant : les commandes et leur câblage ─────────────────────── */
-/* ── 4. LE RÉGLAGE PAR FIGURE A ÉTÉ RETIRÉ DE LA FENÊTRE DE L'OBJET ──────────
+/* ── 5. Le composant : les commandes d'ombre ─────────────────────────────── */
+/* ── 4. DEUX OMBRES INDÉPENDANTES, CHACUNE AVEC SON BLOC DE CONTRÔLES ────────
    « fix the shadow: now only cast shadows on panels and not on objects as it
-   claims ». L'ombre est un réglage du PANNEAU et de lui seul : les commandes par
-   figure (le bloc « 🌓 Figure shadow » et sa pastille 🌓 dans la liste des
-   figures) ne sont plus là, et le bloc « Shadow » des propriétés ne renvoie plus
-   à elles. Le DESSIN, lui, est INCHANGÉ : un canvas plus ancien qui porte une
-   ombre de figure reste dessiné exactement pareil (voir les assertions du dessin
-   ci-dessus, qui n'ont pas bougé). */
-ok(!IB.includes('const setFigureShadow = (objId, idx, value) => {'),
-  'plus de commande « ombre d’UNE figure »');
-ok(!IB.includes('const toggleFiguresShadow = () => {'), '…ni de commande groupée sur les figures');
-ok(!IB.includes('🌓 Figure shadow{'), '…ni de bloc « Figure shadow » dans les propriétés');
-ok(!IB.includes('Import a figure into this panel to give it its own shadow.'),
-  '…ni de texte qui promettait une ombre par figure');
-ok(!IB.includes('For a shadow that follows the PICTURE instead of the frame'),
-  '…et le bloc du panneau ne renvoie plus à une ombre de figure');
-ok(!IB.includes('setFigureShadow(selectedObj.id, i, im.shadow'), 'la pastille 🌓 de chaque ligne est partie');
+   claims » avait RETIRÉ la commande d'ombre par figure ; elle est revenue sur
+   demande explicite — « allow to add a shadow (I am talking about the image and
+   not about the panel of the object) ». Ce qui est vérifié ici, c'est la forme
+   de ce retour :
 
-has(IB, 'const moveObjInStack = (objId, to) => {', 'la fenêtre de l’objet ne règle plus que l’ombre du PANNEAU (et l’empilement)');
+     • l'ombre de la FIGURE vise la figure ACTIVE (celle des poignées, comme le
+       recadrage et la gomme) : un bouton 🌓 sur la ligne des figures, et TOUS
+       ses réglages dans « ▾ More options » — jamais une pastille 🌓 sur chaque
+       ligne de la liste des figures, ni une commande « ombre de toutes les
+       figures » ;
+     • l'ombre du PANNEAU garde son bloc et son intitulé (« panel frame ») ;
+     • le DESSIN est INCHANGÉ depuis le début (section 3 ci-dessus) : les deux
+       ombres sont des filtres <feDropShadow> de la composition, donc elles
+       sortent dans tous les exports. */
+ok(!IB.includes('setFigureShadow(selectedObj.id, i, im.shadow'),
+  'pas de pastille 🌓 sur chaque ligne de figure (la commande vise la figure active)');
+ok(!IB.includes('const toggleFiguresShadow = () => {'), '…ni de commande groupée « ombre de toutes les figures »');
+ok(!IB.includes('🌓 Figure shadow{'), '…ni de troisième bloc d’ombre ailleurs dans les propriétés');
+ok(!IB.includes('Import a figure into this panel to give it its own shadow.'),
+  '…ni de texte qui promettait une ombre par figure à l’ancienne');
+has(IB, 'const toggleActiveFigureShadow = () => {',
+  'l’ombre de la FIGURE se donne et s’enlève en un clic…');
+has(IB, "patchFigure(selectedObj.id, cropPanelIdx, { shadow: shadowSpec(im.shadow) ? null : { ...DEFAULT_SHADOW } })",
+  '…sur la figure ACTIVE (DEFAULT_SHADOW quand elle n’en a pas)');
+has(IB, "onChange={(v) => patchFigure(selectedObj.id, cropPanelIdx, { shadow: v })}",
+  'ses réglages fins s’écrivent DANS la figure, jamais dans le panneau');
+has(IB, 'hint="The PICTURE casts its own drop shadow',
+  '…et son texte dit que c’est l’IMAGE qui projette l’ombre (ses pixels, pas son rectangle)');
+has(IB, "🌓 {figShadowOn ? 'Figure shadow ✓' : 'Figure shadow'}",
+  'le bouton de la ligne des figures dit aussi si cette figure en a une');
+has(IB, 'const figShadowOn = cropPanelIdx >= 0 && !!shadowSpec((selectedImgs[cropPanelIdx] || {}).shadow);',
+  '…d’après l’ombre de la figure active, et d’elle seule');
+
+has(IB, 'const moveObjInStack = (objId, to) => {', 'la fenêtre de l’objet empile toujours les panneaux');
 has(IB, 'Shadow <span className="font-normal normal-case text-slate-400">(panel frame)</span>',
-  'le bloc « Shadow » est explicitement étiqueté « panel frame »');
+  'le bloc « Shadow » du panneau est explicitement étiqueté « panel frame »');
 has(IB, 'hint="The whole panel (frame, figure, letter, texts) casts a drop shadow — in the composition and in every export." />',
-  '…et il dit ce que l’ombre couvre');
-eq(count(IB, /<ShadowControls /g), 1, 'le bloc de contrôles partagé n’est plus utilisé que pour le panneau (jamais recopié)');
+  '…et il dit ce que l’ombre du panneau couvre');
+eq(count(IB, /<ShadowControls /g), 2,
+  'DEUX blocs de contrôles partagent la MÊME primitive : le panneau et la figure (jamais un troisième)');
 has(IB, '<feDropShadow dx={sp.dx} dy={sp.dy} stdDeviation={sp.blur} floodColor={sp.color} floodOpacity={sp.opacity} />',
-  'les filtres d’ombre (panneau, flèche, figure d’un canvas plus ancien) sont toujours définis');
+  'les filtres d’ombre (panneau, flèche, figure) sont toujours définis de la même façon');
 
 /* Les ombres de figure sont dans le SVG de composition : elles sortent donc
    dans les exports (le clone ne retire que l’outillage de sélection). */

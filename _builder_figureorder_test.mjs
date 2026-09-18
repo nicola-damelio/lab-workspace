@@ -134,9 +134,9 @@ has(IB, 'title="Click to make this figure the active one (crop / resize / eraser
 eq((IB.match(/moveFigure\(selectedObj\.id, i, '/g) || []).length, 4, 'les quatre commandes sont dans la liste des figures');
 has(IB, 'onClick={(e) => { e.stopPropagation(); moveFigure(selectedObj.id, i, \'front\'); }}',
   'la commande n’active pas la figure au passage (le clic ne change pas la sélection)');
-has(IB, '} disabled={i === getObjImages(selectedObj).length - 1}\n                        className="text-[10px] font-bold text-slate-500 border border-slate-200 rounded px-1 disabled:opacity-30 hover:bg-slate-100"\n                        title="Bring this figure to the front',
+has(IB, 'disabled={i === getObjImages(selectedObj).length - 1}\n                className="text-[10px] font-bold text-slate-500 border border-slate-200 rounded px-0.5 disabled:opacity-30 hover:bg-slate-100"\n                title="Bring this figure to the front',
   '⤒ (et ⬆) sont désactivés sur la figure du dessus');
-has(IB, '} disabled={i === 0}\n                        className="text-[10px] font-bold text-slate-500 border border-slate-200 rounded px-1 disabled:opacity-30 hover:bg-slate-100"\n                        title="One step down',
+has(IB, 'disabled={i === 0}\n                className="text-[10px] font-bold text-slate-500 border border-slate-200 rounded px-0.5 disabled:opacity-30 hover:bg-slate-100"\n                title="One step down',
   '⬇ (et ⤓) sont désactivés sur la figure du dessous');
 /* L'empilement est TOUJOURS affiché : il n'apparaissait qu'à partir de la
    DEUXIÈME figure, donc « mettre la figure sélectionnée par-dessus les autres »

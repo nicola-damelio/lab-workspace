@@ -28,7 +28,7 @@
    Tout est PUR (aucun DOM) : _builder_multiselect_test.mjs vérifie ce code-ci.
    ========================================================================= */
 
-import { RECT_MIN, RECT_MAX } from './figureLayout';
+import { RECT_MIN, RECT_MAX, normFreeRect } from './figureLayout';
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const round4 = (v) => +num(v).toFixed(4);
@@ -205,6 +205,114 @@ export const moveFiguresPatches = (figs, { dxMm, dyMm, panelWmm, panelHmm } = {}
         y: round4(Math.max(RECT_MIN - num(r.h), Math.min(1 - RECT_MIN, num(r.y) + dy / ph)))
       }
     };
+  });
+  return out;
+};
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ALIGNER ET RÉPARTIR PLUSIEURS FIGURES D'UN PANNEAU.
+
+   Les figures cochées « ☑ » d'un panneau (avec la figure ACTIVE pour référence,
+   voir ImageBuilder) peuvent être rangées les unes PAR RAPPORT AUX AUTRES :
+   alignées sur un bord du GROUPE — le plus à gauche de tous, son milieu… — ou
+   réparties à intervalles ÉGAUX.
+
+   Deux règles :
+
+     • la référence est la BOÎTE DU GROUPE, jamais la figure tenue : l'extrême
+       ne bouge donc pas, et la commande est symétrique (aligner à gauche puis à
+       droite ramène les figures exactement où elles étaient, au dix-millième) ;
+     • les deux fonctions travaillent sur les rectangles des figures DÉJÀ gelées
+       (l'appelant appelle freezeFigures avant — voir utils/figureLayout.js) :
+       une figure encore rangée par la grille reçoit d'abord la boîte EXACTE
+       qu'elle montre à l'écran, sinon « aligner » serait le moment où le
+       panneau se re-flowe.
+
+   Comme moveFiguresPatches, une boîte peut dépasser du panneau mais jamais le
+   quitter entièrement (il en reste toujours une lisière attrapable), et rien ne
+   bouge → `{}` : ni écriture, ni étape d'historique.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/** Les six alignements et les deux axes de répartition acceptés. */
+export const ALIGN_MODES = ['left', 'hcenter', 'right', 'top', 'vcenter', 'bottom'];
+export const DISTRIBUTE_AXES = ['h', 'v'];
+
+/** Une position de boîte libre (fractions du panneau) : finie, jamais assez
+ *  loin pour qu'une figure quitte entièrement son panneau (voir moveFiguresPatches). */
+const rectPos = (v, size) => round4(Math.max(RECT_MIN - num(size), Math.min(1 - RECT_MIN, num(v))));
+
+/** L'instantané utilisable d'un groupe : `[{ idx, rect }]`, boîtes validées. */
+const rectList = (figs) => (Array.isArray(figs) ? figs : [])
+  .map((f) => (f ? { idx: Number(f.idx), rect: normFreeRect(f.rect) } : null))
+  .filter((f) => f && f.rect && Number.isFinite(f.idx));
+
+/**
+ * Les nouvelles boîtes des figures d'un groupe ALIGNÉ sur la boîte du groupe.
+ * @param {Array} figs  instantané `[{ idx, rect }]` (toutes avec un rectangle)
+ * @param {'left'|'hcenter'|'right'|'top'|'vcenter'|'bottom'} mode
+ * @returns {object} `{ [idx]: { rect } }` — vide quand il n'y a rien à faire
+ *                   (moins de deux figures, mode inconnu, ou déjà alignées)
+ */
+export const alignFiguresPatches = (figs, mode) => {
+  const list = rectList(figs);
+  if (list.length < 2 || !ALIGN_MODES.includes(mode)) return {};
+  const left = Math.min(...list.map((f) => f.rect.x));
+  const right = Math.max(...list.map((f) => f.rect.x + f.rect.w));
+  const top = Math.min(...list.map((f) => f.rect.y));
+  const bottom = Math.max(...list.map((f) => f.rect.y + f.rect.h));
+  const out = {};
+  list.forEach((f) => {
+    const r = f.rect;
+    let x = r.x;
+    let y = r.y;
+    if (mode === 'left') x = left;
+    else if (mode === 'right') x = right - r.w;
+    else if (mode === 'hcenter') x = (left + right) / 2 - r.w / 2;
+    else if (mode === 'top') y = top;
+    else if (mode === 'bottom') y = bottom - r.h;
+    else y = (top + bottom) / 2 - r.h / 2;
+    const nx = rectPos(x, r.w);
+    const ny = rectPos(y, r.h);
+    if (Math.abs(nx - r.x) > 1e-4 || Math.abs(ny - r.y) > 1e-4) {
+      out[f.idx] = { rect: { ...r, x: nx, y: ny } };
+    }
+  });
+  return out;
+};
+
+/**
+ * Les nouvelles boîtes d'un groupe RÉPARTI : le même intervalle entre deux
+ * figures voisines, le long d'un axe. Les deux extrêmes ne bougent pas — c'est
+ * ce qui rend la commande prévisible (elle répartit ce qui est entre eux).
+ * @param {Array} figs  instantané `[{ idx, rect }]`
+ * @param {'h'|'v'} axis  horizontal (l'axe des x, colonnes) ou vertical (y)
+ * @returns {object} `{ [idx]: { rect } }` — vide sous trois figures (répartir
+ *                   deux figures n'a aucun sens) ou quand rien ne bouge
+ */
+export const distributeFiguresPatches = (figs, axis = 'h') => {
+  const list = rectList(figs);
+  if (list.length < 3 || !DISTRIBUTE_AXES.includes(axis)) return {};
+  const k = axis === 'h' ? 'x' : 'y';
+  const s = axis === 'h' ? 'w' : 'h';
+  const sorted = list.slice().sort((a, b) => (a.rect[k] - b.rect[k]) || (a.idx - b.idx));
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  const start = first.rect[k];
+  const span = (last.rect[k] + last.rect[s]) - start;      // du bord du premier au bord opposé du dernier
+  const total = sorted.reduce((acc, f) => acc + f.rect[s], 0);
+  // L'intervalle commun ; il peut être NÉGATIF (les figures se chevauchent
+  // largement) : elles se chevauchent alors également, ce qui est le sens de la
+  // commande — mieux vaut cela qu'un refus silencieux.
+  const gap = (span - total) / (sorted.length - 1);
+  const out = {};
+  let cursor = start;
+  sorted.forEach((f, i) => {
+    if (i > 0 && i < sorted.length - 1) {
+      const r = f.rect;
+      const nv = rectPos(cursor, r[s]);
+      if (Math.abs(nv - r[k]) > 1e-4) out[f.idx] = { rect: { ...r, [k]: nv } };
+    }
+    cursor += f.rect[s] + gap;
   });
   return out;
 };

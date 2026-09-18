@@ -25,7 +25,16 @@
         bas de la fenêtre.
 
      5) MOINS D'ÉCRITURES : plus de padding, plus de champs numériques de
-        recadrage, plus de nom / taille de lettre, plus d'ombre par figure.
+        recadrage, plus de nom / taille de lettre. L'ombre de la FIGURE est là —
+        mais sur la figure ACTIVE seulement (un bouton 🌓 sur la ligne des
+        figures, ses réglages dans le repli), jamais en pastille sur chaque ligne.
+
+     6) LA FENÊTRE NE MANGE PLUS LA MOITIÉ DE L'ÉCRAN (« the object window is
+        not enough compacted, it takes up half of the screen! ») : trois lignes
+        courtes toujours visibles (le panneau, ses figures, sa légende / ses
+        textes) et tout le reste — l'ombre, la disposition libre, la taille du
+        pinceau de la gomme, les longues explications — derrière « ▾ More
+        options ».
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -125,11 +134,11 @@ has(IB, 'This figure is still laid out by the panel grid', '…et une figure enc
 
 /* ══ 4. PLEIN ÉCRAN : UNE BARRE HORIZONTALE EN BAS ═══════════════════════ */
 has(IB, 'const PropertiesPanel = ({ bar = false } = {}) => (', 'le panneau sait se présenter en barre');
-has(IB, "bar ? 'flex-row flex-wrap items-start gap-x-3 gap-y-2' : 'flex-col gap-2'",
+has(IB, "bar ? 'flex-row flex-wrap items-start gap-x-3 gap-y-1.5' : 'flex-col gap-1 border-t border-slate-200 pt-1.5'",
   '…en ligne, et non en colonne (barre d’outils)');
 has(IB, 'absolute inset-x-0 bottom-0 z-20 border-t border-slate-300 bg-white/95 shadow-2xl',
   '…collée en BAS de la fenêtre, sur toute la largeur');
-has(IB, 'max-h-[52vh] overflow-y-auto custom-scrollbar px-3 py-2', '…et défilante au besoin (jamais plus de la moitié de l’écran)');
+has(IB, 'max-h-[38vh] overflow-y-auto custom-scrollbar px-2 py-1.5', '…et défilante au besoin (jamais la moitié de l’écran)');
 has(IB, '? PropertiesPanel({ bar: true })', 'le plein écran utilise la barre');
 ok(!IB.includes('absolute right-4 bottom-4 md:top-16 md:bottom-4 w-80 z-20'), 'l’ancienne fenêtre flottante à droite a disparu');
 has(IB, '<ArrowPropertiesPanel arrow={selectedArrow} isFloating onChange={updateArrow} onDelete={() => removeArrow()} />',
@@ -140,7 +149,10 @@ ok(!IB.includes('>Padding (mm)'), 'le RÉGLAGE « Padding (mm) » a disparu de l
 ok(!IB.includes("['x1', 'Left'], ['x2', 'Right']"), 'plus de champs numériques Left / Right / Top / Bottom du recadrage');
 ok(!IB.includes('Letter Size — all panels (pt)'), 'plus de taille de lettre par panneau (elle est générale)');
 ok(!IB.includes('>Letter\n              <input type="text" value={selectedObj.letter}'), 'plus de nom de lettre à saisir (il est automatique)');
-ok(!IB.includes('🌓 Figure shadow'), 'plus d’ombre par figure (l’ombre est un réglage de PANNEAU)');
+ok(!IB.includes('setFigureShadow(selectedObj.id, i, im.shadow'),
+  'pas de pastille 🌓 sur chaque ligne de figure — l’ombre de figure vise la figure ACTIVE');
+has(IB, "🌓 {figShadowOn ? 'Figure shadow ✓' : 'Figure shadow'}",
+  '…d’un seul bouton, sur la ligne des figures');
 has(IB, 'Panel {selectedObj.letter || \'—\'}', 'l’en-tête est court : « Panel A », pas trois lignes');
 ok(!IB.includes('Object Properties'), '…et l’ancien titre « Object Properties » a disparu');
 has(IB, "letterStyle: { fontSize: currentLetterPt(), color: currentLetterColor(), bold: currentLetterBold() },",
@@ -158,5 +170,35 @@ has(IB, 'toggleEraseMode', 'la gomme');
 has(IB, 'togglePanelsShadow', 'l’ombre des panneaux');
 has(IB, 'onClick={addText}', 'le texte libre');
 has(IB, '📤 Insert into a project section…', '…et l’insertion dans une section de projet, depuis le dialogue de sauvegarde');
+
+/* ══ 7. LA FENÊTRE EST COMPACTE : TROIS LIGNES, LE RESTE REPLIÉ ═══════════
+   « the object window is not enough compacted, it takes up half of the
+   screen » : elle ne peut plus. Trois lignes courtes sont toujours là — le
+   panneau (identité, sélection, copier / coller, profondeur, suppression), sa
+   figure (importer / ajouter, liste, taille, ajustement, échelle, rotation,
+   précision, recadrage, gomme) et sa légende / ses textes. Tout le reste —
+   l'ombre du panneau, la disposition libre, les longues explications — vit
+   derrière « ▾ More options ». Rien n'a été supprimé : seulement rangé. */
+has(IB, 'const [panelMore, setPanelMore] = useState(false);',
+  'le repli « More options » est un état du COMPOSANT (jamais un hook du panneau)');
+eq(times(IB, /<div className="flex flex-wrap items-center gap-x-1\.5 gap-y-1">/g), 2,
+  'deux lignes courtes toujours visibles : le panneau, puis ses figures');
+has(IB, "`flex flex-wrap items-center gap-x-1.5 gap-y-1 ${bar ? '' : 'border-t border-slate-200 pt-1'}`",
+  '…et la troisième (légende + textes), séparée par un filet');
+has(IB, "{panelMore ? '▴ Fewer options' : '▾ More options'}",
+  'un seul repli, dont le libellé dit ce qu’il cache');
+has(IB, 'onClick={() => setPanelMore((v) => !v)}', '…et qui se referme en un clic');
+ok(IB.indexOf('{panelMore && (') > 0 && IB.indexOf('{panelMore && (') < IB.indexOf('<ShadowControls '),
+  'l’ombre du panneau est DANS le repli (un réglage qu’on pose une fois)');
+has(IB, '🧽 {clampEraseSize(eraseSize)} mm', 'la taille du pinceau dit sa valeur en clair');
+ok(!IB.includes('grid grid-cols-1 md:grid-cols-2 gap-4'),
+  'plus de grille à deux colonnes : la fenêtre n’est plus une page');
+ok(!IB.includes('<h5 className="text-xs font-bold text-slate-500 uppercase">Image & Layout</h5>'),
+  'plus de titre « Image & Layout » (les commandes sont dans la ligne)');
+ok(!IB.includes('<h5 className="text-xs font-bold text-slate-500 uppercase">Caption</h5>'),
+  'plus de titre « Caption »');
+ok(!IB.includes('<h5 className="text-xs font-bold text-slate-500 uppercase">Text</h5>'),
+  'plus de titre « Text »');
+ok(!IB.includes('Figures in this panel:'), 'plus de ligne « Figures in this panel: » (la liste est la ligne)');
 
 console.log(`_builder_uibar_test.mjs — ${passed} assertions OK`);
