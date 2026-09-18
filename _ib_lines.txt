@@ -1,0 +1,39 @@
+﻿162: canvasLabel: String(p.canvasLabel || '')
+421: const [canvasLabel, setCanvasLabel] = useState(() => initialCanvasIdentity.canvasLabel);
+513: return found ? { id: found.id, label: found.label || canvasLabel || 'Canvas' } : null;
+520: const label = entry.label || canvasLabel || 'Canvas';
+523: setCanvasLabel(label);
+765: setCanvasLabel(identity.canvasLabel);
+778: setCanvasLabel('');
+891: const payload = { canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects: persisted, arrows, shapes, focusObjId, globalCaption, isFullScreen, canvasKey, canvasEntries, canvasHome, canvasLabel };
+900: }, [canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects, arrows, shapes, focusObjId, globalCaption, isFullScreen, canvasKey, canvasEntries, canvasHome, canvasLabel, storageKey]);
+1209: const savedLabel = canvasLabel || (homeEntry && homeEntry.label) || '';
+1236: setCanvasLabel('');
+2466: const openSaveDialog = () => {
+2467: const fallback = canvasLabel || (globalCaption && String(globalCaption).trim()
+2491: // Shared by the dialog (“▾ Choose where…” → “💾 Save now”) and by the
+2492: // one-click “💾 Save now” into the canvas' own project (saveCanvasNow).
+2496: const finishCanvasSave = async (destProjectId, label) => {
+2552: const saveCanvasNow = async () => {
+2555: await finishCanvasSave(dest, canvasLabel || autoSaveLabel());
+2610: const autoSaveLabel = () => (canvasLabel || (effectiveGlobalCaption && String(effectiveGlobalCaption).trim()
+2643: const label = autoSaveLabel();
+2689: }, [objects, arrows, canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, globalCaption, canvasLabel, canvasHome, canvasEntries, canvasKey, projectId]);
+2699: }, [objects, arrows, canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, globalCaption, canvasLabel, canvasHome, canvasEntries, canvasKey, projectId]);
+2734: title: `The composition is safe in this browser (it comes back when you reopen the Image Builder), but it is NOT stored in any image library: canvases belong to a PROJECT. Press “💾 Save now” and pick the project it belongs to — it is then listed on that project page under “🖼 Saved canvases”, in its Image Library → Project tab, and it goes to the cloud.`
+2754: title: `The composition is written into ${where} automatically — no need to press “💾 Save now” to be able to reopen it.`
+5225: title={`Saved canvas — “💾 Save now” updates this entry in place, so every link that opens it (project page “🖼 Saved canvases”, “↩ Load” in the image library) always gets the latest version. Stored ${canvasHome ? `in the “${canvasScopeName(canvasHome)}” image library` : 'in the shared dataset image library — a LEGACY canvas: it keeps being updated there, but new canvases are stored in a project'}${storedScopeCount > 1 ? ` (and in ${storedScopeCount - 1} other ${storedScopeCount - 1 === 1 ? 'library' : 'libraries'})` : ''}.`}>
+5226: 🖼 {canvasLabel || homeEntry.label || 'saved canvas'} · {canvasHome ? `📁 ${canvasScopeName(canvasHome)}` : '🗂 dataset (kept as it was)'}
+5241: title="Create a NEW image — a new figure, not a wipe: the editor starts on a blank canvas with one empty panel (A) ready for its first capture, and the next “💾 Save now” adds a NEW image to the image library. The figure you were working on stays in the library exactly as it was last saved (its “↩ Load” brings it back). The canvas format — size, grid, borders, aspect ratio, letter size — is kept.">
+5244: <button onClick={() => { if(window.confirm('Clear the entire canvas?')) { commitHistory(); setObjects([]); setArrows([]); setSelectedId(null); setSelectedArrowId(null); setShapes([]); setSelectedShapeId(null); setCanvasEntries({}); setCanvasLabel(''); setCanvasKey(uid('cv')); } }} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100">Clear Canvas</button>
+5352: className="bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white font-bold px-3 py-1.5 rounded-lg text-xs">💾 Save now{saveBusy ? '…' : ''}</button>
+5359: même si l'on oublie « 💾 Save now ») : l'écrire ici évite de
+5706: title="Nothing in the library fits? Close it and start a NEW image (a blank canvas with one empty panel). The figure you were working on stays in the library as it was last saved, and the next “💾 Save now” creates a new library entry."
+5826: title="No preview yet — the image is written on the next cloud pass (💾 Save now forces it right now)">🖼</span>}
+5837: <span className="text-[8px] text-amber-600 font-bold" title="The editable composition is here; the rendered image is written on the next cloud pass (💾 Save now forces it right now).">⏳ image on its way</span>
+5934: const label = canvasLabel || (effectiveGlobalCaption && String(effectiveGlobalCaption).trim()
+5968: link = { canvasId: pub.entry.id, builderProjectId: prj.id, canvasLabel: pub.entry.label || label };
+5996: setInsertMsg(`⚠️ This browser refused to store the project (${saved.error || 'the store is full'}): the image is in ${where} on this page only and would NOT survive a reload. Free some room (💾 Save now, or delete a dataset you no longer need) and insert again.`);
+6030: <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Project that owns it
+6052: <span className="font-bold"> copy</span> in the new project; each project keeps its own entry, and “💾 Save now”
+6076: {saveBusy ? '⏳ Saving…' : '💾 Save now'}

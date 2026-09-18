@@ -1,0 +1,89 @@
+﻿
+======================================================================
+Canvas_18_09_2026__lib_1789763225552_13c569fe1695a8.meta.json  ┬╖  label="Canvas 18/09/2026"  image=  saved=2026-09-18T20:36:11.988Z
+ [0] A cell(0,0) 1x1 libId=- scope=- proj=-
+     imgSrc=0 chars  imgThumb=0  imgFit=contain  imgCols=2  imgPx=x
+     src=null
+     images=0 []
+     texts=0 []
+ arrows=0 shapes=0 letterStyle={"fontSize":14,"color":"#000000","bold":true}
+
+======================================================================
+Canvas_18_09_2026__lib_1789766494222_9338faadd4ae2.meta.json  ┬╖  label="Canvas 18/09/2026"  image=  saved=2026-09-18T22:36:53.363Z
+ [0] A cell(0,0) 1x1 libId=- scope=- proj=-
+     imgSrc=0 chars  imgThumb=0  imgFit=contain  imgCols=2  imgPx=x
+     src=null
+     images=0 []
+     texts=0 []
+ arrows=0 shapes=0 letterStyle={"fontSize":14,"color":"#000000","bold":true}
+
+======================================================================
+Canvas_19_09_2026__lib_1789771118554_2f9f2c949517.meta.json  ┬╖  label="Canvas 19/09/2026"  image=  saved=2026-09-18T22:57:09.907Z
+ [0] A cell(0,0) 1x1 libId=lib_1789749262827_e4f7550fde12c8 scope=project proj=prj_1787824980875_ttrxuk
+     imgSrc=33009 chars  imgThumb=33009  imgFit=contain  imgCols=2  imgPx=783x783
+     src={"testId":"t1788096796858","testName":"flow_cyt_p53H_p53R","instanceName":"DMSO_H12_H12","date":"2026-08-30","elementLabel":"1D Histogram (Data Analysis)","elementKey":"1D Histogram (Data Analysis) ┬╖ 
+     images=3 [{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale|","u":"data:image/svg+xml;charset=utf-8,%3Csvg%20role%3D%","l":"lib_1789749262827_e4f7550fde12c8"},{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale|","u":"data:image/svg+xml;charset=utf-8,%3Csvg%20role%3D%","l":"lib_1789749248601_1588984df2e94"},{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale|","u":"data:image/svg+xml;charset=utf-8,%3Csvg%20role%3D%","l":"lib_1789746101107_6ed8bcf24d4cd8"}]
+     texts=0 []
+ arrows=0 shapes=0 letterStyle={"fontSize":14,"color":"#000000","bold":true}
+
+======================================================================
+Fig1__lib_1789261574160_712f12ea5dce.meta.json  ┬╖  label="Fig1"  image=  saved=2026-09-18T22:42:32.129Z
+ [0] D cell(0,1) 1x1 libId=lib_1789254412299_c824163f6bf148 scope=project proj=prj_1787824980875_ttrxuk
+     imgSrc=7434 chars  imgThumb=7434  imgFit=contain  imgCols=2  imgPx=1367x260
+     src={"testId":"t1789236552145","testName":"CD","elementLabel":"≡ƒÑº Composition ΓÇö Manual Entry (Ring Chart)","elementKey":"≡ƒÑº Composition ΓÇö Manual Entry (Ring Chart) ┬╖ Chart ┬╖ 7"}
+     images=2 [{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale|","u":"data:image/svg+xml;charset=utf-8,%3Csvg%20cx%3D%22","l":"lib_1789254412299_c824163f6bf148"},{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale","u":"data:image/svg+xml;charset=utf-8,%3Csvg%20role%3D%","l":"lib_1789259263843_a6c58a6bfe271"}]
+     texts=0 []
+     caption=Circular dichroism spectrum of p53_H peptide and fitting by BeStSel web server.
+ [1] B cell(1,0) 1x1 libId=lib_1789235365195_55a386d05d51f8 scope=project proj=prj_1787824980875_ttrxuk
+     imgSrc=54618 chars  imgThumb=54618  imgFit=contain  imgCols=2  imgPx=497x623
+     src=null
+     images=1 [{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale|","u":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAL8A","l":"lib_1789235365195_55a386d05d51f8"}]
+     texts=0 []
+     caption=B rystal structure of Mdm2 protein in complex with p53R peptide inhibitor (pdb code 3LNZ).
+ [2] A cell(0,0) 1x1 libId=lib_1789235371730_d9b8157e35cdc8 scope=project proj=prj_1787824980875_ttrxuk
+     imgSrc=14935 chars  imgThumb=14935  imgFit=contain  imgCols=2  imgPx=471x602
+     src=null
+     images=1 [{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale|","u":"data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD","l":"lib_1789235371730_d9b8157e35cdc8"}]
+     texts=0 []
+     caption=Crystal structure of Mdm2 protein in complex with the transactivation domain of p53 (pdb code 1YCR).
+ [3] C cell(2,0) 1x1 libId=lib_1789235358742_1fb88f899715 scope=project proj=prj_1787824980875_ttrxuk
+     imgSrc=29550 chars  imgThumb=29550  imgFit=contain  imgCols=2  imgPx=430x596
+     src=null
+     images=1 [{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale|","u":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAK0A","l":"lib_1789235358742_1fb88f899715"}]
+     texts=0 []
+     caption=AlphaFold-predicted structure of the p53H peptide. The Penetratin domain is highlighted in blue, the disulfide bridge-fo
+ [4] E cell(1,1) 1x1 libId=lib_1789341051284_dacc71d803308 scope=project proj=prj_1787824980875_ttrxuk
+     imgSrc=29062 chars  imgThumb=29062  imgFit=contain  imgCols=2  imgPx=2175x2175
+     src={"testId":"t1789246074022","testName":"Activity_U2OS","instanceName":"Bianca","date":"2026-09-12","elementLabel":"Dose-Response Plot","elementKey":"Dose-Response Plot ┬╖ Chart ┬╖ 1","styleTag":"fs16-t24
+     images=1 [{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale|","u":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAA","l":"lib_1789341051284_dacc71d803308"}]
+     texts=0 []
+ [5] F cell(2,1) 1x1 libId=lib_1789330370626_1868a500d6cd38 scope=project proj=prj_1787824980875_ttrxuk
+     imgSrc=9454 chars  imgThumb=9454  imgFit=contain  imgCols=2  imgPx=1883x2400
+     src={"testId":"t1789246074022","testName":"Activity_U2OS","instanceName":"Bianca","date":"2026-09-12","elementLabel":"IC50 Comparison","elementKey":"IC50 Comparison ┬╖ Chart ┬╖ 2","styleTag":"fs56-t80-lg20-
+     images=1 [{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale|","u":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALwA","l":"lib_1789330370626_1868a500d6cd38"}]
+     texts=0 []
+ arrows=0 shapes=0 letterStyle={"fontSize":30,"color":"#000000","bold":true}
+
+======================================================================
+C:\Users\nicol\Downloads\Copia di Canvas_18092026.jpg.meta.json  ┬╖  label="Canvas 18/09/2026"  image=Canvas_18092026.jpg  saved=2026-09-18T22:01:45.074Z
+ [0] B cell(4,0) 4x2 libId=lib_1789767419984_f33b4fc0216f6 scope=project proj=prj_1787824980875_ttrxuk
+     imgSrc=151535 chars  imgThumb=151535  imgFit=contain  imgCols=2  imgPx=1040x1400
+     src={"testId":"t1788095568252","testName":"flow_cyt_p53H_p53R","instanceName":"p53 R_H4_H04","date":"2026-08-30","elementLabel":"Split view ΓÇö single curves","elementKey":"Split view ΓÇö single curves ┬╖ Pane
+     images=3 [{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale|","u":"data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD","l":"lib_1789767419984_f33b4fc0216f6"},{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale|","u":"data:image/svg+xml;charset=utf-8,%3Csvg%20role%3D%","l":"lib_1789745949458_c578606872ee58"},{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale|","u":"data:image/svg+xml;charset=utf-8,%3Csvg%20role%3D%","l":"lib_1789749262827_e4f7550fde12c8"}]
+     texts=7 ["p53_R 200 ┬╡M","p53_R 22.2 ┬╡M","p53_R 66.7 ┬╡M","p53_R 7.4 ┬╡M","p53_R 2.5 ┬╡M","p53_R 0.8 ┬╡M","p53_R 0.3 ┬╡M"]
+ [1] A cell(0,0) 4x2 libId=lib_1789743488129_60cdb6c33112a scope=project proj=prj_1787824980875_ttrxuk
+     imgSrc=154867 chars  imgThumb=154867  imgFit=contain  imgCols=2  imgPx=1040x1400
+     src={"testId":"t1788095538270","testName":"flow_cyt_p53H_p53R","instanceName":"p53 H_H3_H03","date":"2026-08-30","elementLabel":"Split view ΓÇö single curves","elementKey":"Split view ΓÇö single curves ┬╖ Pane
+     images=3 [{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale|","u":"data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD","l":"lib_1789743488129_60cdb6c33112a"},{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale|","u":"data:image/svg+xml;charset=utf-8,%3Csvg%20role%3D%","l":"lib_1789746101107_6ed8bcf24d4cd8"},{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale|","u":"https://lh3.googleusercontent.com/d/1J3liDPzrMl4Tq","l":"lib_1789767269677_6b417777289058"}]
+     texts=7 ["p53_H 200 ┬╡M","p53_H 22.2 ┬╡M","p53_H 66.7 ┬╡M","p53_H 7.4 ┬╡M","p53_H 2.5 ┬╡M","p53_H 0.8 ┬╡M","p53_H 0.3 ┬╡M"]
+ [2] C cell(0,2) 4x2 libId=lib_1789767407821_47d285f57615f scope=project proj=prj_1787824980875_ttrxuk
+     imgSrc=69 chars  imgThumb=69  imgFit=contain  imgCols=2  imgPx=1040x1400
+     src={"testId":"t1788095538270","testName":"flow_cyt_p53H_p53R","instanceName":"p53 H_H3_H03","date":"2026-08-30","elementLabel":"Split view ΓÇö single curves","elementKey":"Split view ΓÇö single curves ┬╖ Pane
+     images=3 [{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale|","u":"https://lh3.googleusercontent.com/d/1J3liDPzrMl4Tq","l":"lib_1789767407821_47d285f57615f"},{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale|","u":"data:image/svg+xml;charset=utf-8,%3Csvg%20role%3D%","l":"lib_1789767382285_49c65e22ac975"},{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale|","u":"data:image/svg+xml;charset=utf-8,%3Csvg%20role%3D%","l":"lib_1789749262827_e4f7550fde12c8"}]
+     texts=7 ["p53_H 200 ┬╡M","p53_H 22.2 ┬╡M","p53_H 66.7 ┬╡M","p53_H 7.4 ┬╡M","p53_H 2.5 ┬╡M","p53_H 0.8 ┬╡M","p53_H 0.3 ┬╡M"]
+ [3] D cell(4,2) 4x2 libId=lib_1789767989947_2f10c7df64b0a scope=project proj=prj_1787824980875_ttrxuk
+     imgSrc=154867 chars  imgThumb=154867  imgFit=contain  imgCols=2  imgPx=1040x1400
+     src={"testId":"t1788095568252","testName":"flow_cyt_p53H_p53R","instanceName":"p53 R_H4_H04","date":"2026-08-30","elementLabel":"Split view ΓÇö single curves","elementKey":"Split view ΓÇö single curves ┬╖ Pane
+     images=3 [{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale|","u":"data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD","l":"lib_1789767989947_2f10c7df64b0a"},{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale|","u":"data:image/svg+xml;charset=utf-8,%3Csvg%20role%3D%","l":"lib_1789767934031_86bdc0a5314a5"},{"k":"imgSrc|imgThumb|libScope|libProjectId|libId|src|dx|dy|scale|","u":"data:image/svg+xml;charset=utf-8,%3Csvg%20role%3D%","l":"lib_1789749262827_e4f7550fde12c8"}]
+     texts=7 ["p53_R 200 ┬╡M","p53_R 22.2 ┬╡M","p53_R 66.7 ┬╡M","p53_R 7.4 ┬╡M","p53_R 2.5 ┬╡M","p53_R 0.8 ┬╡M","p53_R 0.3 ┬╡M"]
+ arrows=0 shapes=0 letterStyle={"fontSize":14,"color":"#000000","bold":true}

@@ -48,11 +48,27 @@ import { archiveProjectDocument, restoreProjectDocument } from '../../utils/proj
 import { mirrorDeleteProject, mirrorRenameProject } from '../../utils/driveMirror';
 import { repairContentImages, getRenderableDriveUrl } from '../../data/constants';
 import {
-  readDeck, readProjectLibrary, removeProjectLibraryItem, pushLibraryToDrive, pullLibraryFromDrive,
+  readDeck, readProjectLibrary, removeProjectLibraryItem, renameProjectLibraryItem, pushLibraryToDrive, pullLibraryFromDrive,
   addProjectLibraryItem, makeUploadImage, uploadFigureToDrive,
-  countCanvasDuplicates, removeCanvasDuplicates, restoreCanvasFromFigureMeta
+  countCanvasDuplicates, removeCanvasDuplicates, restoreCanvasFromFigureMeta, canvasPreviewFromComposition,
+  lastLibraryListWrite
 } from '../../utils/figuresLibrary';
 import { SlidePreview, renderSlideToDataUrl } from '../FiguresSlides';
+
+/* ── L'APERÇU D'UNE CARTE DE CANVAS ──────────────────────────────────────────
+   Signalé tel quel : « the preview of the images in the project does not work ».
+   Une carte de canvas n'affichait QUE son rendu (`url`) : un canvas restauré
+   depuis son fichier (📥 Restore a canvas file) n'en a pas — le sidecar ne porte
+   que la composition — et sa carte restait un cadre vide « no preview », alors
+   que ses panneaux sont bel et bien là. On retombe donc sur l'aperçu reconstruit
+   depuis la COMPOSITION (`canvasPreviewFromComposition` : la première vignette
+   des panneaux), et l'on réécrit au passage un lien de partage Drive en lien
+   affichable. Pourquoi AU RENDU et pas seulement à l'import : les entrées déjà
+   restaurées n'ont toujours pas d'`url`, et le magasin plein refuse d'en écrire
+   un — ce repli-ci n'écrit pas une ligne. PUR. */
+const canvasPreviewOf = (c) => getRenderableDriveUrl(
+  (c && (c.url || c.full || canvasPreviewFromComposition(c.canvasData))) || ''
+);
 
 /* L'IDENTIFIANT DU CONTENEUR DU DOCUMENT. La page le porte (`#project-doc-container`,
    plus bas) et la page EXPORTÉE le remet autour du texte copié : c'est ce
@@ -501,6 +517,46 @@ export const ProjectDetailModule = ({
     if (!window.confirm('Remove this canvas from the project image library? The cloud/Drive copy is kept.')) return;
     removeProjectLibraryItem(project.id, id);
     setCanvasLibVersion((v) => v + 1);
+  };
+
+  /* ---- ✏️ RENOMMER UN CANVAS -------------------------------------------------
+     « in no places it is possible to rename canvases » : le libellé d'une toile
+     ne se changeait que depuis la modale 🖼 Library de l'Image Builder (bouton ✎
+     sur une vignette) — pas là où on les VOIT (cette page). Le libellé vit sur
+     l'entrée de la bibliothèque du projet ; les figures qui renvoient à ce canvas
+     gardent leur `canvasLabel` (c'est lui que montrent les infobulles
+     « ✏️ Modify in Image Builder »), donc on le met à jour du même geste.
+     Le nom du fichier déjà sur le Drive ne bouge pas : la prochaine sauvegarde
+     (💾 Save now) dépose l'image sous le nouveau nom. */
+  const renameCanvas = (c) => {
+    if (!canModify) return;
+    const name = window.prompt('Canvas name:', c.label || 'Canvas');
+    const label = String(name || '').trim();
+    if (!label || label === c.label) return;
+    // Le navigateur peut REFUSER l'écriture (magasin plein) : on le DIT, sinon le
+    // nom paraît changé et revient tout seul au rechargement suivant.
+    const kept = renameProjectLibraryItem(project.id, c.id, label);
+    const figures = project.figures || {};
+    const nextFigures = {};
+    let touched = false;
+    Object.keys(figures).forEach((sec) => {
+      nextFigures[sec] = (figures[sec] || []).map((fig) => {
+        if (!fig || fig.canvasId !== c.id || fig.canvasLabel === label) return fig;
+        touched = true;
+        return { ...fig, canvasLabel: label };
+      });
+    });
+    if (touched) updateProject({ figures: nextFigures });
+    setCanvasLibVersion((v) => v + 1);
+    /* Le nom est gardé même quand la liste ne rentre pas (rememberCanvasName) :
+       `kept === false` ne veut plus dire « perdu », mais « le magasin est plein ».
+       On le dit exactement comme ça, au lieu de laisser croire au pire. */
+    const full = kept === false || lastLibraryListWrite().kept === false;
+    setFigDriveMsg(!kept
+      ? `⚠️ “${label}” could not be written anywhere (this browser’s store refused even the small name record): that name lives in this session only. Free some room with “☁ Save figures to Drive” above, then rename again.`
+      : (full
+        ? `✏️ “${c.label}” is now called “${label}” — the figures that point at it follow, and the name is remembered (it survives a refresh). ⚠️ This browser’s store is FULL, though: the image lists themselves could not be rewritten, so free some room with “☁ Save figures to Drive” above before adding more.`
+        : `✏️ “${c.label}” is now called “${label}” (the figures that point at it follow, and the next “💾 Save now” names the image that way).`));
   };
 
   /* ---- 🧹 LES COPIES DU MÊME CANVAS -------------------------------------------
@@ -4091,6 +4147,10 @@ export const ProjectDetailModule = ({
             store), <span className="font-bold">📥 Restore a canvas file</span> brings it back from the
             <span className="font-bold"> &lt;image&gt;.meta.json</span> that sits next to its image on Google Drive — no
             list, no timestamp, no cloud connection needed: the file <span className="font-bold">is</span> the composition.
+            <span className="font-bold"> ✏️ Rename</span> on a card renames that canvas (the figures that link to it follow, and
+            the next <span className="font-bold">💾 Save now</span> names the image that way; canvases can also be
+            renamed in the Image Builder — its toolbar’s <span className="font-bold">✏️ Rename</span> button, and the
+            <span className="font-bold"> ✎</span> button on a thumbnail in the <span className="font-bold">🖼 Library</span> modal).
           </p>
           {/* The figure FILES are on Drive; this browser holds the LIST that shows
               them. These two buttons are the same additive gestures as in the
@@ -4149,9 +4209,11 @@ export const ProjectDetailModule = ({
               {savedCanvases.map((c) => (
                 <div key={c.id} className="bg-slate-50 border border-amber-200 rounded-xl p-3 flex flex-col gap-2">
                   <div className="bg-white border border-slate-200 rounded-lg h-28 flex items-center justify-center overflow-hidden">
-                    {c.url
-                      ? <img src={c.url} alt={c.label || 'Canvas'} className="max-h-28 max-w-full object-contain" />
-                      : <span className="text-[10px] italic text-slate-400">no preview</span>}
+                    {canvasPreviewOf(c)
+                      ? <img src={canvasPreviewOf(c)} alt={c.label || 'Canvas'} className="max-h-28 max-w-full object-contain"
+                             title="Preview of this canvas — the rendered image when this browser has it, otherwise the first panel of its saved composition" />
+                      : <span className="text-[10px] italic text-slate-400 text-center px-2"
+                              title="This canvas holds its panels but no picture this browser can draw — open it (🖼 Open in Image Builder) and click “💾 Save now” to write its rendered image">composition only — 🖼 open it</span>}
                   </div>
                   <span className="text-xs font-bold text-slate-700 truncate" title={c.label || 'Canvas'}>{c.label || 'Canvas'}</span>
                   <span className="text-[10px] text-slate-400">
@@ -4165,6 +4227,11 @@ export const ProjectDetailModule = ({
                             title="Reopen this canvas in the Image Builder (this project) — the editor loads the saved panels, captions and grid">
                       🖼 Open in Image Builder
                     </button>
+                    {canModify && (
+                      <button type="button" onClick={() => renameCanvas(c)}
+                              className="text-slate-600 hover:text-slate-800 border border-slate-200 bg-white rounded-lg px-2 py-1.5 text-xs font-bold"
+                              title="Rename this canvas — the name is what this page, the image library and the “✏️ Modify in Image Builder” links show. The figures that point at it follow, and the next “💾 Save now” names the image that way. The image already on Drive keeps its file name until then. If this browser’s store is full the write is refused and the message above says so.">✏️ Rename</button>
+                    )}
                     {canModify && (
                       <button type="button" onClick={() => removeCanvasLink(c.id)}
                               className="text-red-400 hover:text-red-600 border border-red-200 bg-red-50 rounded-lg px-2 py-1.5 text-xs font-bold"

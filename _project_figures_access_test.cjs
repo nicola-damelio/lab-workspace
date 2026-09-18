@@ -56,7 +56,7 @@ frag('[projectsModule] a coworker keeps its own permission', PM, "return coworke
 
 frag('[figuresLibrary] a guarded read for display', LIB, 'export const readVisibleProjectLibrary = (projectId, allowedProjectIds = null) => {');
 frag('[figuresLibrary] hidden project → empty list', LIB, 'return allowed(projectId) ? readProjectLibrary(projectId) : [];');
-frag('[figuresLibrary] the raw API stays unfiltered', LIB, 'export const readProjectLibrary = (projectId) => memProjectList(projectId);');
+frag('[figuresLibrary] the raw API stays unfiltered', LIB, 'export const readProjectLibrary = (projectId) => withCanvasNames(memProjectList(projectId));');
 frag('[figuresLibrary] the duplicate scan can be limited', LIB, 'export const findRecaptureDuplicates = ({ allowedProjectIds = null } = {}) => {');
 frag('[figuresLibrary] …and skips other teams', LIB, "if (allowed && !allowed(pid)) return; // another team's project library");
 

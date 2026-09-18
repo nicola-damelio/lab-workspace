@@ -19,7 +19,7 @@ OK   _builder_shapes_test.mjs  →  _builder_shapes_test : 180 vérifications pa
 OK   _builder_uibar_test.mjs  →  _builder_uibar_test.mjs — 106 assertions OK
 OK   _builder_zoom_test.cjs  →  ✅ 31/31 checks passed
 OK   _canvas_autosave_test.mjs  →  ✅ _canvas_autosave_test : 138 vérifications passées
-OK   _canvas_file_restore_test.mjs  →  ✅ _canvas_file_restore_test : 52 vérifications passées
+OK   _canvas_file_restore_test.mjs  →  ✅ _canvas_file_restore_test : 64 vérifications passées
 OK   _canvas_identity_test.mjs  →  ✅ _canvas_identity_test : 78 vérifications passées
 OK   _capture_fix_test.mjs  →  passed 70/70
 OK   _chain_test.cjs  →  RESULT: PASS (two chains separated, contacts do not merge them)

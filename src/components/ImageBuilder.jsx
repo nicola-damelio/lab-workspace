@@ -7,7 +7,7 @@ import {
   saveCanvasSnapshot, uploadFigureToDrive,
   countRecaptureDuplicates, removeRecaptureDuplicates,
   pushLibraryToDrive, pullLibraryFromDrive, localOnlyLibraryItems, mergeLibraryFromSnapshot,
-  uid, canvasKeyOfEntry, findCanvasEntryByKey
+  uid, canvasKeyOfEntry, findCanvasEntryByKey, canvasPreviewFromComposition, lastLibraryListWrite
 } from '../utils/figuresLibrary';
 import {
   freeRectOf, isFreeLayout, pinRectOf, freeSlotFor, RECT_MIN, RECT_MAX, moveFigureInList
@@ -142,6 +142,16 @@ const thumbnailsOf = (obj) => {
 // scopes at once (composed in one project and inserted into another), so the
 // library entries are tracked PER SCOPE — see canvasEntries below.
 const canvasScopeKey = (scopeProjectId) => scopeProjectId || 'dataset';
+
+/* ── LA VIGNETTE D'UNE ENTRÉE DE BIBLIOTHÈQUE ────────────────────────────────
+   `url` (la copie locale) sinon `full` (la copie cloud) — et, ce qui manquait à
+   un canvas restauré depuis son fichier : le PREMIER PANNEAU DE SA COMPOSITION
+   (`canvasPreviewFromComposition`), parce que le sidecar ne porte que la
+   composition et que sa vignette restait un cadre neutre alors que ses panneaux
+   sont là. Un lien de partage Drive est réécrit en lien affichable. PUR. */
+const libThumbOf = (item) => getRenderableDriveUrl(
+  (item && (item.url || item.full || canvasPreviewFromComposition(item.canvasData))) || ''
+);
 
 /* ── L'IDENTITÉ D'UN CANVAS EST SEMÉE AVANT LE PREMIER RENDU ─────────────────
    Le payload persisté (cache de session puis localStorage) porte, avec la
@@ -386,6 +396,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const [libVersion, setLibVersion] = useState(0); // forces a re-read of the library lists after a transfer
   const [libProjectId, setLibProjectId] = useState(null); // which project's library to browse (null = the active one)
   const [libMsg, setLibMsg] = useState('');       // transient feedback after a PC upload / transfer
+  const [canvasNameMsg, setCanvasNameMsg] = useState(''); // feedback of the toolbar “✏️ Rename”
   const [libOver, setLibOver] = useState('');     // library card under the pointer while DRAGGING one
   const libDragRef = useRef(null);                // library card being dragged: { id, scope, projectId }
   const [libDriveBusy, setLibDriveBusy] = useState(false); // ☁ / ⬇ library ⇄ Drive in progress
@@ -535,6 +546,62 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     [canvasEntries, canvasKey, canvasHome, libVersion, projectId]
   );
   const storedScopeCount = Object.keys(canvasEntries).length;
+
+  /* ── ✏️ RENOMMER CE CANVAS — LE CRAYON QUI MANQUAIT ──────────────────────────
+     Signalé tel quel : « the rename function does not work. there is no pencil ».
+     Le nom d'une toile ne se changeait que depuis la modale 🖼 Library (bouton ✎
+     sur une vignette) — jamais LÀ où l'on travaille, sur le canvas ouvert. Le nom
+     vit à deux endroits, on écrit donc les deux :
+       • dans l'éditeur (`canvasLabel`) : c'est lui que porte la composition et
+         que la prochaine sauvegarde (💾 Save now / la passe automatique) enverra
+         au Drive, donc le nom du fichier de l'image ;
+       • dans CHAQUE entrée de bibliothèque déjà écrite pour ce canvas (le carnet
+         d'adresses `canvasEntries` : une entrée par portée). L'id, la composition
+         et la clé de canvas ne bougent pas — les liens « ✏️ Modify in Image
+         Builder » de la page projet continuent de viser la même entrée.
+     Le navigateur peut REFUSER l'écriture (magasin plein) : on le DIT alors
+     franchement, au lieu de laisser croire que le renommage a marché. */
+  const renameThisCanvas = () => {
+    const current = canvasLabel || (homeEntry && homeEntry.label) || '';
+    const typed = window.prompt('Canvas name:', current || `Canvas ${new Date().toLocaleDateString()}`);
+    if (typed === null) return;                       // annulé
+    const label = String(typed || '').trim();
+    if (!label || label === current) return;
+    setCanvasLabel(label);
+    const scopes = Object.keys(canvasEntries || {});
+    let renamed = 0;
+    let refused = 0;
+    scopes.forEach((k) => {
+      const id = (canvasEntries[k] || {}).id;
+      if (!id) return;
+      const kept = k === 'dataset'
+        ? renameLibraryItem(id, label)
+        : renameProjectLibraryItem(k, id, label);
+      if (kept === false) refused += 1; else renamed += 1;
+    });
+    if (renamed) {
+      setCanvasEntries((m) => {
+        const next = { ...m };
+        Object.keys(next).forEach((k) => {
+          if (next[k] && next[k].id) next[k] = { ...next[k], label };
+        });
+        return next;
+      });
+      setLibVersion((v) => v + 1);
+    }
+    /* Le NOM est gardé même quand la liste ne rentre pas (voir
+       rememberCanvasName) : « kept » veut dire « il survit au rafraîchissement ».
+       Ce qui reste à dire, c'est si le magasin est PLEIN — sinon l'avertissement
+       ferait croire que le renommage a échoué. */
+    const full = lastLibraryListWrite().kept === false;
+    setCanvasNameMsg((scopes.length && !renamed)
+      ? `⚠️ “${label}” could not be written anywhere (this browser’s store refused even the small name record): that name lives in this session only. Free some room (☁ Save figures to Drive, or delete images you no longer need), then rename again.`
+      : (full
+        ? `✏️ “${current || 'Canvas'}” is now called “${label}”${scopes.length ? ` — ${renamed} library ${renamed === 1 ? 'entry' : 'entries'} renamed in place` : ''}, and the name is remembered (it survives a refresh). ⚠️ This browser’s store is FULL, though: the image lists themselves could not be rewritten — free some room with “☁ Save figures to Drive” before adding more.`
+        : (scopes.length
+          ? `✏️ “${current || 'Canvas'}” is now called “${label}” — ${renamed} library ${renamed === 1 ? 'entry' : 'entries'} renamed in place (the image already on Drive keeps its file name until the next save).`
+          : `✏️ This canvas will be called “${label}”. It has no library entry yet: press “💾 Save now” to store it under that name.`)));
+  };
 
   // Clear transient library feedback whenever the modal is closed.
   useEffect(() => {
@@ -2280,10 +2347,17 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     }
     const current = (libraryTab === 'project' ? readProjectLibrary(activeLibProjectId) : readLibrary()).find((i) => i.id === id);
     const name = window.prompt('Image label:', (current && current.label) || '');
-    if (name && name.trim()) {
-      if (libraryTab === 'project') renameProjectLibraryItem(activeLibProjectId, id, name.trim());
-      else renameLibraryItem(id, name.trim());
+    const label = String(name || '').trim();
+    if (label) {
+      // Le refus du navigateur (magasin plein) se DIT : sinon le libellé paraît
+      // changé puis revient tout seul au rechargement suivant.
+      const kept = libraryTab === 'project'
+        ? renameProjectLibraryItem(activeLibProjectId, id, label)
+        : renameLibraryItem(id, label);
       setLibVersion((v) => v + 1);
+      setLibMsg(kept === false
+        ? `⚠️ “${label}” is kept in this session only: this browser’s store is full, so the new name would be lost on a refresh. Free room (☁ Save figures to Drive, or delete images you no longer need), then rename again.`
+        : `✏️ Renamed to “${label}”.`);
     }
   };
   const deleteLib = (id) => {
@@ -5226,6 +5300,14 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                 🖼 {canvasLabel || homeEntry.label || 'saved canvas'} · {canvasHome ? `📁 ${canvasScopeName(canvasHome)}` : '🗂 dataset (kept as it was)'}
               </span>
             )}
+            {/* ✏️ LE CRAYON. Toujours là — sur une toile jamais encore enregistrée
+                il nomme le canvas pour la prochaine sauvegarde ; sur une toile
+                déjà dans une bibliothèque il renomme SON entrée sur place. */}
+            <button onClick={renameThisCanvas}
+                    className="text-xs bg-white border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg font-bold hover:bg-slate-50"
+                    title="Rename this canvas (the name shown on the badge here, in the image library, on the project page under “🖼 Saved canvases” and in the “✏️ Modify in Image Builder” links). Every library entry that already holds this composition is renamed in place — the figures that point at it follow. The image already on Drive keeps its file name until the next “💾 Save now”. If the browser store is full the new name is kept for this session only, and the message says so.">
+              ✏️ Rename
+            </button>
             {projectId && typeof onBackToProject === 'function' && (
               <button onClick={onBackToProject}
                       className="text-xs bg-slate-100 border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg font-bold hover:bg-slate-200"
@@ -5244,6 +5326,14 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             <button onClick={() => { if(window.confirm('Clear the entire canvas?')) { commitHistory(); setObjects([]); setArrows([]); setSelectedId(null); setSelectedArrowId(null); setShapes([]); setSelectedShapeId(null); setCanvasEntries({}); setCanvasLabel(''); setCanvasKey(uid('cv')); } }} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100">Clear Canvas</button>
           </div>
         </div>
+
+        {/* ✏️ Ce que le renommage a donné — le magasin plein se dit ici, jamais
+            en silence (« le renommage ne marche pas »). */}
+        {canvasNameMsg && (
+          <p className={`text-[11px] font-bold rounded-lg border px-3 py-2 ${canvasNameMsg.includes('⚠️') ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-emerald-700 bg-emerald-50 border-emerald-200'}`}>
+            {canvasNameMsg}
+          </p>
+        )}
 
         {/* Automatic re-capture report — the figures were redone on their own
             experiment page and this canvas already shows the new pixels. */}
@@ -5819,8 +5909,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                       partage Drive ne s'affiche pas tel quel, on le réécrit. Sans
                       rien à dessiner (composition pas encore rendue), un cadre
                       neutre remplace la vignette cassée. */}
-                  {getRenderableDriveUrl(item.url || item.full)
-                    ? <img src={getRenderableDriveUrl(item.url || item.full)} alt={item.label}
+                  {libThumbOf(item)
+                    ? <img src={libThumbOf(item)} alt={item.label}
                         className="w-full h-24 object-contain bg-slate-50 rounded" />
                     : <span className="w-full h-24 flex items-center justify-center bg-slate-50 rounded text-slate-300 text-3xl"
                         title="No preview yet — the image is written on the next cloud pass (💾 Save now forces it right now)">🖼</span>}

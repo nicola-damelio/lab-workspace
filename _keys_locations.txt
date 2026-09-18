@@ -1,0 +1,11 @@
+﻿.git
+.vscode
+dist
+docs
+node_modules
+public
+Restored_canvases
+scripts
+server
+src
+_ngl_src

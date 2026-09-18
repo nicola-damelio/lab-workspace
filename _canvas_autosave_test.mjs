@@ -460,8 +460,14 @@ const snap = (over = {}) => ({
   // (f) la vignette d'une entrée de bibliothèque est TOUJOURS dessinable :
   //     `url` (copie locale) et `full` (copie cloud) peuvent manquer l'une OU
   //     l'autre, et un lien de partage Drive ne s'affiche pas dans un <img>.
-  has(IB, '<img src={getRenderableDriveUrl(item.url || item.full)}',
+  has(IB, '{libThumbOf(item)',
     'la carte prend la copie locale, sinon la copie cloud RENDUE AFFICHABLE');
+  has(IB, 'const libThumbOf = (item) => getRenderableDriveUrl(',
+    '…par le même réécrivain d’URL que toute l’appli, et avec le panneau de la composition en dernier recours');
+  has(IB, 'item.url || item.full || canvasPreviewFromComposition(item.canvasData)',
+    '…(un canvas restauré de son fichier n’a QUE sa composition à montrer)');
+  has(IB, 'findCanvasEntryByKey, canvasPreviewFromComposition',
+    'l’Image Builder importe l’aperçu de composition');
   has(IB, '"No preview yet', '…et sans rien à dessiner, un cadre neutre (jamais une vignette cassée)');
   has(IB, '💾 Save now forces it right now', '…qui dit comment forcer le rendu tout de suite');
   has(IB, '⏳ image on its way', 'une composition pas encore rendue le DIT aussi');

@@ -63,6 +63,7 @@ globalThis.document = {
 const LIB = await import('./src/utils/figuresLibrary.js');
 const LIB_SRC = readFileSync('./src/utils/figuresLibrary.js', 'utf8').replace(/\r\n/g, '\n');
 const PD = readFileSync('./src/components/AppModules/projectDetailModule.jsx', 'utf8').replace(/\r\n/g, '\n');
+const IB = readFileSync('./src/components/ImageBuilder.jsx', 'utf8').replace(/\r\n/g, '\n');
 
 let passed = 0;
 const eq = (actual, expected, what) => {
@@ -228,5 +229,144 @@ const reset = () => {
   has(PD, 'setCanvasLibVersion((v) => v + 1);', 'la liste des canvases est rafraîchie juste après');
 }
 
+/* =========================================================================
+   5. RENOMMER UN CANVAS (« in no places it is possible to rename canvases »)
+   ========================================================================= */
+{
+  has(PD, 'const renameCanvas = (c) => {', 'la page projet sait renommer un canvas');
+  has(PD, 'const kept = renameProjectLibraryItem(project.id, c.id, label);',
+    '…en réécrivant le libellé de SON entrée, et en gardant la réponse du magasin');
+  has(PD, 'setFigDriveMsg(!kept', '…pour DIRE ce qui s’est passé quand rien n’a pu être écrit');
+  has(PD, 'this browser’s store refused even the small name record', '…au lieu de laisser croire que le nom est gardé');
+  has(PD, 'const full = kept === false || lastLibraryListWrite().kept === false;',
+    '…et pour distinguer « magasin plein » de « perdu » (le nom est gardé à part)');
+  has(PD, 'if (!label || label === c.label) return;', '…sans écrire pour rien (nom vide ou identique)');
+  has(PD, 'return { ...fig, canvasLabel: label };',
+    '…et les figures qui renvoient à ce canvas suivent (libellé des liens ✏️ Modify in Image Builder)');
+  has(PD, 'if (touched) updateProject({ figures: nextFigures });', 'les figures ne sont enregistrées que si elles changent');
+  has(PD, 'onClick={() => renameCanvas(c)}', '…avec son bouton sur la carte du canvas');
+  has(PD, 'title="Rename this canvas — the name is what this page, the image library and the “✏️ Modify in Image Builder” links show.',
+    '…et une infobulle qui dit ce que le nom change');
+  has(PD, 'canvases can also be\n            renamed in the Image Builder — its toolbar’s',
+    'le texte d’aide rappelle où renommer ailleurs (la barre de l’éditeur et la modale 🖼 Library)');
+  has(PD, '>✏️ Rename</button>', '…et le bouton dit « Rename » au lieu d’un crayon seul');
+
+  // La fonction de bibliothèque existe et garde TOUT le reste de l’entrée.
+  reset();
+  LIB.writeProjectLibrary('P1', [{
+    id: 'lib_1', label: 'Canvas 18/09/2026', canvasData: { canvasKey: 'cv_1', objects: [{ id: 'o' }] }, metaName: 'A.jpg.meta.json', url: 'data:image/png;base64,t'
+  }]);
+  LIB.renameProjectLibraryItem('P1', 'lib_1', 'p53H — histograms');
+  const renamed = LIB.readProjectLibrary('P1')[0];
+  eq(renamed.label, 'p53H — histograms', 'le libellé est changé');
+  eq(renamed.id, 'lib_1', '…sans changer l’id (les liens des figures continuent de le viser)');
+  eq(!!renamed.canvasData, true, '…ni perdre la composition');
+  eq(LIB.canvasKeyOfEntry(renamed), 'cv_1', '…ni sa clé de canvas');
+}
+
+/* =========================================================================
+   6. LE CRAYON DE L'ÉDITEUR ET LES APERÇUS DES CARTES
+      (« I cannot rename it » + « the preview of the images in the project does
+      not work » : même manque des deux côtés — ce que l'écran montrait était
+      TOUT ce qu'il y avait. Un canvas restauré depuis son fichier n'a pas de
+      rendu — le sidecar ne porte que la composition — et l'éditeur n'offrait
+      aucun crayon. On vérifie les deux gestes.)
+   ========================================================================= */
+{
+  has(IB, 'const renameThisCanvas = () => {', 'l’éditeur sait renommer le canvas OUVERT (le crayon qui manquait)');
+  has(IB, 'onClick={renameThisCanvas}', '…branché sur un bouton de la barre d’outils');
+  has(IB, '✏️ Rename', '…qui se voit (le crayon seul ne se lisait pas)');
+  has(IB, '{canvasNameMsg && (', '…et dont le résultat est DIT à l’écran');
+  has(IB, 'const [canvasNameMsg, setCanvasNameMsg] = useState(\'\');', 'l’état du message existe');
+  has(IB, "const kept = k === 'dataset'", 'le renommage part de l’entrée DU CANVAS, portée par portée');
+  has(IB, '? renameLibraryItem(id, label)', '…dans la bibliothèque commune');
+  has(IB, ': renameProjectLibraryItem(k, id, label);', '…et dans celle d’un projet');
+  has(IB, 'setCanvasLabel(label);',
+    'et il écrit AUSSI le nom de l’éditeur (c’est lui que la prochaine sauvegarde envoie au Drive)');
+  has(IB, 'const full = lastLibraryListWrite().kept === false;',
+    'le renommage distingue « magasin plein » de « rien n’a pu être écrit »');
+  has(IB, 'this browser’s store refused even the small name record',
+    '…et le dit franchement (« the rename does not work » ne reste plus muet)');
+
+  // L'aperçu des cartes : le rendu quand il existe, sinon le premier panneau de
+  // la composition — sinon on ne peut pas reconnaître SON canvas restauré.
+  eq(LIB.canvasPreviewFromComposition({ objects: [{ imgThumb: PIXELS }] }), PIXELS,
+    'l’aperçu d’une composition sans rendu est le premier panneau');
+  eq(LIB.canvasPreviewFromComposition({ objects: [{ images: [{ imgSrc: 'data:image/png;base64,eA==' }] }] }),
+    'data:image/png;base64,eA==', '…y compris une image d’un panneau multi-figures');
+  eq(LIB.canvasPreviewFromComposition({ objects: [{ imgThumb: '' }, { imgSrc: 'data:image/jpeg;base64,QQ==' }] }),
+    'data:image/jpeg;base64,QQ==', '…le premier panneau QUI a des pixels');
+  eq(LIB.canvasPreviewFromComposition(null), '', 'aucune composition → aucun aperçu');
+  eq(LIB.canvasPreviewFromComposition({ objects: [] }), '', 'composition sans panneau → aucun aperçu');
+  has(PD, 'const canvasPreviewOf = (c) => getRenderableDriveUrl(', 'la carte d’un canvas a son repli d’aperçu');
+  has(PD, '{canvasPreviewOf(c)', '…et c’est lui que l’image de la carte affiche');
+  ok(!PD.includes('text-slate-400">no preview<'),
+    'un canvas restauré n’est plus un cadre vide « no preview »');
+  has(PD, 'composition only — 🖼 open it', 'quand rien n’est dessinable, la carte le dit et renvoie au geste');
+  has(IB, 'const libThumbOf = (item) => getRenderableDriveUrl(', 'la vignette de la modale 🖼 Library a le même repli');
+  has(IB, '{libThumbOf(item)', '…et l’utilise');
+
+  // À l'import aussi : le fichier restauré arrive avec son aperçu.
+  reset();
+  const res = await LIB.restoreCanvasFromFigureMeta({ text: sidecarText(), fileName: SIDECAR_FILE, projectId: 'P1' });
+  ok(String(res.entry.url || '').startsWith('data:image/'),
+    'l’entrée restaurée arrive AVEC un aperçu (la carte se reconnaît tout de suite)');
+}
+
+/* =========================================================================
+   7. UN NOM SURVIT À UN MAGASIN PLEIN (pourquoi « le renommage ne marche pas »)
+      Renommer réécrit TOUTE la liste — ici des mégaoctets de pixels — et le
+      magasin la refuse : la liste ne vivait que dans cette session, donc le
+      prochain rafraîchissement repartait de l'ancien libellé. Un nom pèse
+      quelques octets : gardé dans une petite clé, il s'applique à la lecture.
+   ========================================================================= */
+{
+  reset();
+  LIB.writeProjectLibrary('P1', [{
+    id: 'lib_big', label: 'Canvas 18/09/2026', url: PIXELS,
+    canvasData: { canvasKey: 'cv_big', objects: [{ id: 'o', imgThumb: PIXELS }] }
+  }]);
+  // Un magasin qui refuse tout ce qui est gros (les listes) mais garde le petit
+  // (le nom) : c'est exactement le « magasin plein » de l'utilisateur.
+  const realSet = globalThis.localStorage.setItem;
+  const big = (v) => String(v).length > 400;
+  globalThis.localStorage.setItem = (k, v) => {
+    if (big(v)) throw new Error('QuotaExceededError');
+    return realSet.call(globalThis.localStorage, k, v);
+  };
+  eq(LIB.renameProjectLibraryItem('P1', 'lib_big', 'p53H — histograms'), true,
+    'le renommage est GARDÉ même quand la liste ne rentre pas (le nom tient en quelques octets)');
+  eq(LIB.lastLibraryListWrite().kept, false,
+    '…et l’appelant SAIT que la liste, elle, n’a pas pu être réécrite (magasin plein)');
+  eq(LIB.readProjectLibrary('P1')[0].label, 'p53H — histograms', 'le nom s’applique à la lecture');
+  eq(JSON.parse(store.get('labFiguresLib_P1'))[0].label, 'Canvas 18/09/2026',
+    '…alors que la liste RANGÉE porte encore l’ancien nom : c’est lui qui revenait au rafraîchissement');
+
+  // Le rafraîchissement : une liste relue DU MAGASIN (jamais lue en mémoire dans
+  // cette session) reçoit le nom gardé — c’est très exactement ce qui se passe à
+  // l’ouverture suivante, quand la liste revient de localStorage avec l’ancien
+  // libellé.
+  realSet.call(globalThis.localStorage, 'labFiguresLib_P2',
+    JSON.stringify([{ id: 'lib_big', label: 'Canvas 18/09/2026', url: PIXELS }]));
+  eq(LIB.readProjectLibrary('P2')[0].label, 'p53H — histograms',
+    'une liste relue du magasin reçoit le nom gardé à part (le nom survit au rafraîchissement)');
+
+  // Quand le magasin accepte de nouveau, c’est la LISTE qui fait foi : le nom
+  // gardé à part est effacé (aucune ligne qui traîne, aucun doublon).
+  globalThis.localStorage.setItem = realSet;
+  eq(LIB.renameProjectLibraryItem('P2', 'lib_big', 'Nom rangé'), true, 'le magasin accepte : la liste est écrite');
+  eq(JSON.parse(store.get('labFiguresLib_P2'))[0].label, 'Nom rangé', '…avec le nouveau nom dedans');
+  eq(Object.keys(JSON.parse(store.get('labCanvasNames') || '{}')).includes('lib_big'), false,
+    '…et le nom gardé à part est oublié (la liste prime)');
+  eq(LIB.readProjectLibrary('P2')[0].label, 'Nom rangé', 'le nom affiché reste le bon');
+
+  // Une entrée supprimée ne laisse pas son nom à part derrière elle.
+  LIB.rememberCanvasName('lib_big', 'Nom fantôme');
+  LIB.removeProjectLibraryItem('P2', 'lib_big');
+  eq(Object.keys(JSON.parse(store.get('labCanvasNames') || '{}')).includes('lib_big'), false,
+    'supprimer l’entrée oublie aussi son nom gardé à part');
+}
+
 console.log(`✅ _canvas_file_restore_test : ${passed} vérifications passées`);
+
 

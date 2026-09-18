@@ -34,6 +34,8 @@ import { registerKeyValueMerger } from './workspaceKeyStore';
 const LIBRARY_KEY = 'labFiguresLibrary';
 const deckKey = (projectId) => `labFiguresDeck_${projectId || 'global'}`;
 const projectLibraryKey = (projectId) => `labFiguresLib_${projectId || 'global'}`;
+/** Les NOMS de canvas gardés À PART (voir plus bas) : `{ <id d'entrée>: <nom> }`. */
+const CANVAS_NAMES_KEY = 'labCanvasNames';
 
 // ---- in-memory mirrors of the figure libraries -------------------------------
 // The lists always live in memory FIRST. localStorage is only a best-effort
@@ -50,8 +52,21 @@ const loadLS = (k) => {
     return Array.isArray(arr) ? arr : [];
   } catch { return []; }
 };
-const saveLS = (k, items) => {
-  try { localStorage.setItem(k, JSON.stringify(items)); return; }
+/** @returns {boolean} true quand le NAVIGATEUR a réellement gardé la liste
+ *  (donc qu'elle survivra à un rafraîchissement), false quand le magasin a
+ *  refusé TOUT (liste gardée en mémoire pour la session seulement). L'appelant
+ *  peut alors le DIRE au lieu de laisser croire que c'est enregistré — un
+ *  renommage qui « ne marche pas » est presque toujours cette écriture-là. */
+/** Sort de la DERNIÈRE écriture de liste (voir saveLS ci-dessous) : `kept:false`
+ *  = le navigateur a REFUSÉ la liste (elle ne vit que dans cette session). Les
+ *  appelants qui doivent avertir (« magasin plein ») le lisent ici — c'est utile
+ *  quand le geste lui-même a pu aboutir par un autre chemin (un renommage garde
+ *  le NOM à part, voir rememberCanvasName). */
+let lastListWrite = { key: '', kept: true };
+export const lastLibraryListWrite = () => ({ ...lastListWrite });
+
+const saveLSRaw = (k, items) => {
+  try { localStorage.setItem(k, JSON.stringify(items)); return true; }
   catch { /* magasin plein → on essaie de faire de la place, sans rien perdre (ci-dessous) */ }
   /* ── UN MAGASIN PLEIN NE DOIT PLUS FAIRE DISPARAÎTRE UNE LISTE ──────────────
      ⛔ LE DÉFAUT. `catch { }` avalait le refus du navigateur : la liste restait
@@ -72,13 +87,20 @@ const saveLS = (k, items) => {
   const slim = shrinkLibraryEntryPixels(items);
   if (slim.freed) {
     rememberLibraryList(k, slim.items);
-    try { localStorage.setItem(k, JSON.stringify(slim.items)); return; } catch { /* encore plein */ }
+    try { localStorage.setItem(k, JSON.stringify(slim.items)); return true; } catch { /* encore plein */ }
   }
   const thinner = shrinkLibraryEntryPixels(slim.items, { dropThumbs: true });
   if (thinner.freed) {
     rememberLibraryList(k, thinner.items);
-    try { localStorage.setItem(k, JSON.stringify(thinner.items)); return; } catch { /* mémoire seulement */ }
+    try { localStorage.setItem(k, JSON.stringify(thinner.items)); return true; } catch { /* mémoire seulement */ }
   }
+  return false;
+};
+/** L'écriture RÉELLE, avec son sort retenu (voir lastLibraryListWrite). */
+const saveLS = (k, items) => {
+  const kept = saveLSRaw(k, items);
+  lastListWrite = { key: k, kept };
+  return kept;
 };
 /** La liste EN MÉMOIRE suit exactement ce qui a pu être écrit (sinon la
  *  première écriture suivante remettrait le poids qui vient d'être libéré). */
@@ -96,6 +118,100 @@ const memProjectList = (projectId) => {
   return memProjects.get(k);
 };
 
+/* ── LES NOMS DE CANVAS, DANS UN COIN À PART ──────────────────────────────────
+   « the rename function does not work » : le nom changeait à l'écran, puis
+   revenait tout seul. La cause n'est pas le renommage — c'est le magasin du
+   navigateur, plein (des mégaoctets de pixels y sont écrits plusieurs fois par
+   composition), qui REFUSE de réécrire TOUTE la liste. La liste ne survit alors
+   que dans cette session, et le prochain rafraîchissement repart du libellé
+   écrit la dernière fois.
+
+   Un nom pèse quelques octets : on le garde donc AUSSI dans une petite clé
+   dédiée (`labCanvasNames`, `{ <id d'entrée>: <nom> }`) — celle-là rentre même
+   quand la liste ne rentre plus — et on l'APPLIQUE À LA LECTURE des listes. La
+   liste reste la source quand son écriture passe (un renommage réussi efface la
+   ligne de l'overlay : c'est la liste qui fait foi), et l'overlay ne couvre que
+   ce que le magasin a refusé. Un renommage ne se perd donc plus au
+   rafraîchissement, même avec un magasin saturé.
+
+   Cette clé commence par « lab » : elle voyage dans le miroir des clés comme les
+   autres, et la fusion est l'union des deux copies (voir plus bas). */
+let memNames = null;
+let namesVersion = 0;               // change à chaque écriture de l'overlay
+const namedCache = new WeakMap();   // liste d'entrée → liste nommée (même version)
+const nameOverlay = () => {
+  if (memNames === null) {
+    try {
+      const o = JSON.parse(localStorage.getItem(CANVAS_NAMES_KEY));
+      memNames = (o && typeof o === 'object' && !Array.isArray(o)) ? o : {};
+    } catch { memNames = {}; }
+  }
+  return memNames;
+};
+/** Garde un nom à part (quelques octets : ça rentre même dans un magasin plein).
+ *  @returns {boolean} true quand le NAVIGATEUR l'a gardé (donc qu'il survit au
+ *  rafraîchissement). */
+export const rememberCanvasName = (id, label) => {
+  const k = String(id || '').trim();
+  const v = String(label || '').trim();
+  if (!k || !v) return false;
+  memNames = { ...nameOverlay(), [k]: v };
+  namesVersion += 1;   // les listes déjà nommées seront recalculées (cache par version)
+  try { localStorage.setItem(CANVAS_NAMES_KEY, JSON.stringify(memNames)); return true; }
+  catch { return false; }
+};
+/** Oublie le nom gardé à part d'une entrée : quand la liste elle-même a été
+ *  écrite (elle fait foi), ou quand l'entrée est supprimée. */
+export const forgetCanvasName = (id) => {
+  const k = String(id || '').trim();
+  const map = nameOverlay();
+  if (!k || !(k in map)) return;
+  const next = { ...map };
+  delete next[k];
+  memNames = next;
+  namesVersion += 1;
+  try { localStorage.setItem(CANVAS_NAMES_KEY, JSON.stringify(next)); } catch { /* la liste reste juste */ }
+};
+/** Applique les noms gardés à part à une liste. PUR, et de plus STABLE : la même
+ *  liste (même référence) et le même overlay rendent la MÊME liste — les écrans
+ *  qui lisent la bibliothèque pendant leur rendu ne sont donc pas secoués par un
+ *  tableau neuf à chaque appel. */
+export const withCanvasNames = (items) => {
+  if (!Array.isArray(items) || !items.length) return items;
+  const map = nameOverlay();
+  if (!Object.keys(map).length) return items;
+  const hit = namedCache.get(items);
+  if (hit && hit.version === namesVersion) return hit.list;
+  let touched = false;
+  const out = items.map((i) => {
+    const want = i ? map[i.id] : null;
+    if (!want || want === i.label) return i;
+    touched = true;
+    return { ...i, label: want };
+  });
+  const list = touched ? out : items;
+  namedCache.set(items, { version: namesVersion, list });
+  return list;
+};
+/** Union de deux copies de l'overlay (miroir des clés). Pour un même id il n'y a
+ *  pas d'horodatage à comparer : la copie LOCALE gagne (c'est le nom que l'on
+ *  vient de taper sur ce poste), l'autre poste adopte le résultat. PUR. */
+export const mergeCanvasNameValues = (key, localRaw, remoteRaw) => {
+  const parse = (raw) => {
+    if (typeof raw !== 'string' || !raw.trim()) return null;
+    try { const v = JSON.parse(raw); return (v && typeof v === 'object' && !Array.isArray(v)) ? v : null; } catch { return null; }
+  };
+  const local = parse(localRaw);
+  const remote = parse(remoteRaw);
+  if (!local && !remote) return '';
+  if (!local) return String(remoteRaw);
+  if (!remote) return String(localRaw);
+  const out = { ...remote, ...local };
+  return JSON.stringify(out) === JSON.stringify(local) ? String(localRaw) : JSON.stringify(out);
+};
+export const isCanvasNamesKey = (key) => String(key || '') === CANVAS_NAMES_KEY;
+registerKeyValueMerger(isCanvasNamesKey, mergeCanvasNameValues);
+
 // ---- active project context (kept in sync by App.jsx) -----------------------
 // Lets the molecule viewer / experiment pages know which project's library an
 // exported image should go to without threading a prop through every section.
@@ -104,18 +220,21 @@ export const setActiveProjectId = (id) => { activeProjectId = id || null; };
 export const getActiveProjectId = () => activeProjectId;
 
 // ---- common (app-wide) library ----------------------------------------------
-export const readLibrary = () => memCommonList();
+// Les noms gardés à part s'appliquent ICI : c'est le SEUL chemin de lecture des
+// listes, donc tout l'écran (page projet, modale 🖼 Library, panneau Image
+// library) voit le nom renommé, même quand la liste n'a pas pu être réécrite.
+export const readLibrary = () => withCanvasNames(memCommonList());
 export const writeLibrary = (items) => {
   memCommon = Array.isArray(items) ? items : [];
-  saveLS(LIBRARY_KEY, memCommon);
+  return saveLS(LIBRARY_KEY, memCommon);
 };
 
 // ---- project-scoped library ---------------------------------------------------
-export const readProjectLibrary = (projectId) => memProjectList(projectId);
+export const readProjectLibrary = (projectId) => withCanvasNames(memProjectList(projectId));
 export const writeProjectLibrary = (projectId, items) => {
   const k = projectLibraryKey(projectId);
   memProjects.set(k, Array.isArray(items) ? items : []);
-  saveLS(k, memProjects.get(k));
+  return saveLS(k, memProjects.get(k));
 };
 
 /* ---- who may SEE a project's figures ----------------------------------------
@@ -189,6 +308,7 @@ export const removeLibraryItem = (id) => {
   const list = readLibrary();
   const gone = list.find((i) => i && i.id === id);
   if (gone) rememberLibraryTrash('common', trashIdsOfEntry(gone));
+  forgetCanvasName(id);   // l'entrée n'existe plus : son nom à part n'a plus d'objet
   writeLibrary(list.filter((i) => !i || i.id !== id));
 };
 /* ── DÉPLACER UNE IMAGE DANS LA BIBLIOTHÈQUE (le glisser-déposer) ─────────────
@@ -225,16 +345,37 @@ export const reorderLibraryItem = (scope, projectId, id, beforeId = '') => {
   else writeLibrary(next);
   return true;
 };
-export const renameLibraryItem = (id, label) =>
-  writeLibrary(readLibrary().map((i) => (i.id === id ? { ...i, label } : i)));
+/** Renommer une entrée de la bibliothèque partagée.
+ *  Le nom est écrit DANS la liste ; si le magasin refuse cette écriture (plein),
+ *  il est gardé à part (`rememberCanvasName`) et s'appliquera à la lecture : le
+ *  nom survit donc au rafraîchissement dans les deux cas.
+ *  @returns {boolean} true quand le nom est GARDÉ (liste ou nom à part), false
+ *  quand le magasin a refusé LES DEUX (le nom ne vit que dans cette session —
+ *  l'appelant doit le dire : c'est le « le renommage ne marche pas »). */
+export const renameLibraryItem = (id, label) => {
+  const kept = writeLibrary(readLibrary().map((i) => (i.id === id ? { ...i, label } : i)));
+  // La liste fait foi quand elle a pu être écrite ; sinon le nom tient seul.
+  if (kept) { forgetCanvasName(id); return true; }
+  return rememberCanvasName(id, label);
+};
 export const removeProjectLibraryItem = (projectId, id) => {
   const list = readProjectLibrary(projectId);
   const gone = list.find((i) => i && i.id === id);
   if (gone) rememberLibraryTrash(projectId || 'common', trashIdsOfEntry(gone));
+  forgetCanvasName(id);   // l'entrée n'existe plus : son nom à part n'a plus d'objet
   return writeProjectLibrary(projectId, list.filter((i) => !i || i.id !== id));
 };
-export const renameProjectLibraryItem = (projectId, id, label) =>
-  writeProjectLibrary(projectId, readProjectLibrary(projectId).map((i) => (i.id === id ? { ...i, label } : i)));
+/** Renommer l'entrée d'un canvas (ou de n'importe quelle image) dans la
+ *  bibliothèque d'un projet. L'id, la composition (`canvasData`) et la clé de
+ *  canvas ne bougent pas : les liens des figures continuent de viser cette
+ *  entrée-là.
+ *  @returns {boolean} true quand le nom est GARDÉ (la liste, ou le nom gardé à
+ *  part quand le magasin est plein), false quand RIEN n'a pu être écrit. */
+export const renameProjectLibraryItem = (projectId, id, label) => {
+  const kept = writeProjectLibrary(projectId, readProjectLibrary(projectId).map((i) => (i.id === id ? { ...i, label } : i)));
+  if (kept) { forgetCanvasName(id); return true; }
+  return rememberCanvasName(id, label);
+};
 // Move an item between scopes (e.g. save a common figure into a project).
 export const moveLibraryItem = (fromScope, toScope, projectId, id) => {
   const src = fromScope === 'project' ? readProjectLibrary(projectId) : readLibrary();
@@ -1344,6 +1485,26 @@ export const canvasDataOfFigureMeta = (meta) => {
   };
 };
 
+/** L'APERÇU d'un canvas reconstruit depuis son fichier : le PREMIER panneau qui
+ *  a des pixels (sa vignette, sa source, ou son lien cloud). `''` quand la
+ *  composition n'en porte aucun. C'est ce qui rend la carte d'un canvas
+ *  restauré RECONNAISSABLE au lieu du cadre vide « no preview » — sans lui on
+ *  ne peut pas dire « c'est le mien » dans la bibliothèque. PUR. */
+export const canvasPreviewFromComposition = (canvasData) => {
+  const objs = (canvasData && Array.isArray(canvasData.objects)) ? canvasData.objects : [];
+  const candidates = [];
+  for (const o of objs) {
+    if (!o || typeof o !== 'object') continue;
+    for (const im of (Array.isArray(o.images) ? o.images : [])) {
+      if (im && typeof im === 'object') candidates.push(im.imgThumb, im.imgSrc);
+    }
+    candidates.push(o.imgThumb, o.imgSrc);
+  }
+  return candidates
+    .map((c) => String(c || '').trim())
+    .find((c) => c.startsWith('data:image/') || /^https?:\/\//.test(c)) || '';
+};
+
 /** Allège les pixels d'une composition avant de la ranger dans le magasin du
  *  navigateur : les MÊMES pixels y sont écrits plusieurs fois (le panneau garde
  *  `imgSrc`, `imgThumb` ET son tableau `images[]`, tous remplis de la même
@@ -1443,7 +1604,13 @@ export const restoreCanvasFromFigureMeta = async ({
     ...(prev || {}),
     id: (prev && prev.id) || uid('lib'),
     label: name,
-    url: (prev && prev.url) || null,
+    /* Un sidecar ne porte PAS l'image rendue du canvas (c'est le fichier voisin,
+       sur le Drive) : la carte restait donc un cadre vide — impossible de
+       reconnaître SON canvas dans la bibliothèque (« ce n'est pas le mien »).
+       Une entrée NEUVE montre le premier panneau de la composition ; une entrée
+       déjà là garde son image. `full` n'est jamais inventé : les pixels haute
+       résolution du canvas restent ceux du Drive, que « 💾 Save now » réécrit. */
+    url: (prev && prev.url) || (prev && prev.full) || canvasPreviewFromComposition(stamped) || null,
     full: (prev && prev.full) || null,
     src: (prev && prev.src) || (meta && meta.src) || null,
     canvasData: stamped,

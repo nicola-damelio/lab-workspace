@@ -1,0 +1,13 @@
+﻿_builder_recall_test.mjs:6: la page du projet (« ✏️ Modify in Image Builder »), et il ne réapparaît que
+_canvas_file_restore_test.mjs:235: has(PD, 'const renameCanvas = (c) => {', 'la page projet sait renommer un canvas');
+_canvas_file_restore_test.mjs:236: has(PD, 'renameProjectLibraryItem(project.id, c.id, label);', '…en réécrivant le libellé de SON entrée');
+_canvas_file_restore_test.mjs:239: '…et les figures qui renvoient à ce canvas suivent (libellé des liens ✏️ Modify in Image Builder)');
+_canvas_file_restore_test.mjs:241: has(PD, 'onClick={() => renameCanvas(c)}', '…avec son bouton sur la carte du canvas');
+_canvas_file_restore_test.mjs:242: has(PD, 'title="Rename this canvas — the name is what this page, the image library and the “✏️ Modify in Image Builder” 
+_canvas_file_restore_test.mjs:251: LIB.renameProjectLibraryItem('P1', 'lib_1', 'p53H — histograms');
+_canvas_identity_test.mjs:232: //     « ✏️ Modify in Image Builder ») — et elle reçoit la composition récente.
+_doc_responsive_test.mjs:130: et « ✏️ Edit text » dans une colonne étroite). Le bouton élargit le document à
+_reference_links_test.mjs:262: « ✏️ Edit text » → « 💾 Save changes » fige le document ENTIER, liste des
+_builder_link_test.cjs:12: //       project.id, fig.canvasId || null)   (“✏️ Modify in Image Builder”)
+_builder_link_test.cjs:81: frag('[projectDetail] button label', PD, '✏️ Modify in Image Builder');
+_project_figures_access_test.cjs:106: if (!project || !name.trim()) return null;
