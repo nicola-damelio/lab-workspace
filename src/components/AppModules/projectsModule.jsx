@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { markAttachmentsDeleted, getDriveRootName } from '../../utils/driveUpload';
 import { mirrorDeleteProject } from '../../utils/driveMirror';
+import { readLocalStoreUsage } from '../../utils/localStoreRoom';
+import { pruneRecoverableLibraryCaches } from '../../utils/figuresLibrary';
 import {
   DELETED_PROJECTS_KEY, normalizeTombstones, mergeTombstones, tombstonesForDataset,
   isProjectDeleted, withoutDeletedProjects, addTombstone, withoutDatasetTombstones
@@ -211,13 +213,88 @@ export const projectFootprint = (project) => {
 
 const isDataUrl = (v) => typeof v === 'string' && v.startsWith('data:');
 
+/* ---------------------------------------------------------------------------
+ * LES DEUX FAÇONS D'ALLÉGER UNE FIGURE — séparées pour que l'urgence les
+ * applique dans le bon ordre (voir saveProjectsRescued) :
+ *   1. linkProjectFiguresToDrive — SANS PERTE : le Drive a la copie, on garde le
+ *      lien au lieu de l'image encodée ;
+ *   2. dropOneFigurePixels — DERNIER RECOURS : les pixels nés dans ce navigateur
+ *      disparaissent, l'entrée garde sa place, son nom, sa légende et son ancre
+ *      (`pixelsMissing`).
+ * Le TEXTE, les références et la mise en page ne sont touchés par AUCUNE des
+ * deux : le travail écrit ne se perd jamais pour faire de la place à des pixels,
+ * qui eux se retéléchargent ou se réimportent.
+ * ------------------------------------------------------------------------ */
+
+/** Les sections de figures d'un projet ({ background: [...], results: [...] }). */
+const figureSectionsOf = (project) => (
+  project && project.figures && typeof project.figures === 'object' ? Object.keys(project.figures) : []
+);
+
+/** Applique `map(entrée, section, index)` à toutes les figures du projet.
+ *  `map` renvoie la copie modifiée, ou null quand rien ne change.
+ *  @returns {{ project:object, touched:number, changed:boolean }} */
+const mapProjectFigures = (project, map) => {
+  const sections = figureSectionsOf(project);
+  if (!sections.length) return { project, touched: 0, changed: false };
+  let touched = 0;
+  let changed = false;
+  const figures = {};
+  sections.forEach((section) => {
+    const list = Array.isArray(project.figures[section]) ? project.figures[section] : [];
+    figures[section] = list.map((entry, index) => {
+      if (!entry || typeof entry !== 'object') return entry;
+      const out = map({ ...entry }, entry, section, index);
+      if (!out) return entry;
+      changed = true;
+      touched += 1;
+      return out;
+    });
+  });
+  return { project: changed ? { ...project, figures } : project, touched, changed };
+};
+
+/** ÉTAPE 1 — le LIEN au lieu des pixels, quand le Drive a déjà la copie.
+ *  Rien n'est perdu : le lien ouvre la même image.
+ *  @returns {{ project:object, touched:number }} */
+export const linkProjectFiguresToDrive = (project) => {
+  const out = mapProjectFigures(project, (copy) => {
+    let changed = false;
+    if (isDataUrl(copy.full) && copy.driveUrl) { copy.full = copy.driveUrl; changed = true; }
+    if (isDataUrl(copy.url) && copy.driveUrl) { copy.url = copy.driveUrl; changed = true; }
+    return changed ? copy : null;
+  });
+  return { project: out.project, touched: out.touched };
+};
+
+/** ÉTAPE 2 — les pixels d'UNE SEULE figure (section + index) : l'allègement
+ *  d'urgence ne jette que le nécessaire, du plus gros au plus petit. L'entrée
+ *  garde sa place, son nom, sa légende et son ancre.
+ *  @returns {{ project:object, dropped:number, bytes:number }} */
+export const dropOneFigurePixels = (project, section, index) => {
+  const list = Array.isArray(((project && project.figures) || {})[section]) ? project.figures[section] : null;
+  const entry = list && list[index];
+  if (!entry || typeof entry !== 'object') return { project, dropped: 0, bytes: 0 };
+  const copy = { ...entry };
+  let bytes = 0;
+  let changed = false;
+  if (isDataUrl(copy.url)) { bytes += copy.url.length; copy.url = copy.driveUrl || ''; changed = true; }
+  if (isDataUrl(copy.full)) { bytes += copy.full.length; copy.full = copy.driveUrl || ''; changed = true; }
+  if (!changed) return { project, dropped: 0, bytes: 0 };
+  copy.pixelsMissing = true;
+  const figures = {
+    ...project.figures,
+    [section]: [...list.slice(0, index), copy, ...list.slice(index + 1)]
+  };
+  return { project: { ...project, figures }, dropped: 1, bytes };
+};
+
 /**
  * LE POIDS D'UN PROJET QUAND LE NAVIGATEUR EST PRESQUE PLEIN.
  *
  * Un manuscrit importé avec ses figures peut dépasser les ~5 Mo de quota du
  * navigateur : l'écriture entière échouait alors, et TOUT était perdu (texte,
- * références, bibliographie). Cette fonction n'est appelée QUE lorsqu'une
- * première écriture a échoué : elle rend une copie du projet plus légère, en
+ * références, bibliographie). Elle rend une copie du projet plus légère, en
  * commençant par ce qui est le moins coûteux à perdre :
  *   1. les copies « pleine résolution » des figures qui ne vivent que dans ce
  *      navigateur (`data:` URL) — la vignette et/ou le lien Drive restent ;
@@ -225,6 +302,13 @@ const isDataUrl = (v) => typeof v === 'string' && v.startsWith('data:');
  *      légende (`pixelsMissing: true`), le TEXTE, les RÉFÉRENCES et la mise en
  *      page du document sont intacts.
  * Le texte des sections n'est JAMAIS touché.
+ *
+ * ⚠ L'URGENCE N'ATTEND PAS CE BUDGET. Quand le navigateur REFUSE une écriture,
+ *   c'est saveProjectsRescued qui prend la main et fait le strict minimum —
+ *   les deux étapes ci-dessus, figure par figure, de la plus lourde à la plus
+ *   légère — en réessayant après CHAQUE figure : c'est là que « ça enregistre
+ *   quand même », et c'est ce qui manquait quand la page se contentait de dire
+ *   « this browser refused to save this project ».
  * @returns {{ project:object, ok:boolean, footprint:number, dropped:string[] }}
  */
 export const lightenProjectForStorage = (project, { budget = 900000 } = {}) => {
@@ -232,46 +316,28 @@ export const lightenProjectForStorage = (project, { budget = 900000 } = {}) => {
   if (!project || typeof project !== 'object' || footprint <= budget) {
     return { project, ok: true, footprint, dropped: [] };
   }
-  const figures = project.figures && typeof project.figures === 'object' ? project.figures : null;
-  if (!figures) return { project, ok: false, footprint, dropped: [] };
+  if (!figureSectionsOf(project).length) return { project, ok: false, footprint, dropped: [] };
   const dropped = [];
   /* 1 — les copies pleine résolution gardées dans ce navigateur. */
-  const lightFigures = {};
-  let touched = 0;
-  Object.keys(figures).forEach((section) => {
-    const list = Array.isArray(figures[section]) ? figures[section] : [];
-    lightFigures[section] = list.map((entry) => {
-      if (!entry || typeof entry !== 'object') return entry;
-      const copy = { ...entry };
-      if (isDataUrl(copy.full)) {
-        if (copy.driveUrl) copy.full = copy.driveUrl;
-        else delete copy.full;
-        touched += 1;
-      }
-      if (isDataUrl(copy.url) && copy.driveUrl) { copy.url = copy.driveUrl; touched += 1; }
-      return copy;
-    });
-  });
-  let next = { ...project, figures: lightFigures };
-  if (touched) dropped.push(`${touched} full-resolution figure copy(ies) kept only in this browser`);
+  const linked = linkProjectFiguresToDrive(project);
+  let next = linked.project;
+  if (linked.touched) dropped.push(`${linked.touched} full-resolution figure copy(ies) kept only in this browser`);
   if (projectFootprint(next) > budget) {
     /* 2 — les pixels eux-mêmes : le document garde la figure à sa place (nom,
        légende, ancre) et le PDF est réparable en réimportant le document
        ou en connectant le Drive. */
-    const bare = {};
-    Object.keys(lightFigures).forEach((section) => {
-      bare[section] = (lightFigures[section] || []).map((entry) => {
-        if (!entry || typeof entry !== 'object') return entry;
-        const copy = { ...entry };
-        let changed = false;
-        if (isDataUrl(copy.url)) { copy.url = copy.driveUrl || ''; changed = true; }
-        if (isDataUrl(copy.full)) { copy.full = copy.driveUrl || ''; changed = true; }
-        if (changed) { copy.pixelsMissing = true; touched += 1; }
-        return copy;
-      });
+    const bare = mapProjectFigures(next, (copy) => {
+      let changed = false;
+      if (isDataUrl(copy.url)) { copy.url = copy.driveUrl || ''; changed = true; }
+      if (isDataUrl(copy.full)) { copy.full = copy.driveUrl || ''; changed = true; }
+      if (!changed) return null;
+      copy.pixelsMissing = true;
+      return copy;
     });
-    next = { ...next, figures: bare };
-    dropped.push('the figure images themselves (they existed in this browser only)');
+    if (bare.changed) {
+      next = bare.project;
+      dropped.push('the figure images themselves (they existed in this browser only)');
+    }
   }
   const after = projectFootprint(next);
   return { project: next, ok: after <= budget, footprint: after, dropped };
@@ -286,10 +352,12 @@ export const lightenProjectForStorage = (project, { budget = 900000 } = {}) => {
  * @returns {{ ok:boolean, error:string, stored:object|null, missing:string[] }}
  *          `missing` = les champs absents ou différents après relecture.
  */
-export const saveProjectsChecked = (list, { projectId = '', fields = {} } = {}) => {
+/** RELIRE LE MAGASIN et dire si `fields` y sont — la seule preuve d'une
+ *  écriture. Aucune écriture ici : saveProjectsChecked l'appelle après avoir
+ *  écrit, et saveProjectsRescued après CHACUNE de ses tentatives.
+ *  @returns {{ ok:boolean, error:string, stored:object|null, missing:string[] }} */
+const verifyStored = (projectId, fields) => {
   const ids = Object.keys(fields || {});
-  const written = saveProjects(list);
-  if (!written.ok) return { ok: false, error: written.error, stored: null, missing: ids };
   if (!projectId) return { ok: true, error: '', stored: null, missing: [] };
   const stored = loadProjects().find((p) => p && String(p.id) === String(projectId)) || null;
   if (!stored) {
@@ -300,6 +368,170 @@ export const saveProjectsChecked = (list, { projectId = '', fields = {} } = {}) 
     !== JSON.stringify(fields[k] === undefined ? null : fields[k])
   ));
   return { ok: missing.length === 0, error: '', stored, missing };
+};
+
+export const saveProjectsChecked = (list, { projectId = '', fields = {} } = {}) => {
+  const ids = Object.keys(fields || {});
+  const written = saveProjects(list);
+  if (!written.ok) return { ok: false, error: written.error, stored: null, missing: ids };
+  return verifyStored(projectId, fields);
+};
+
+/**
+ * ÉCRIRE MALGRÉ UN MAGASIN PLEIN — la place se fait DANS le navigateur, pas
+ * dans le cloud.
+ *
+ * ⛔ LE DÉFAUT (signalé deux fois). Tout le travail de la page vit dans le
+ *    magasin du navigateur : ~5 Mo PAR SITE, partagés par tous les datasets du
+ *    poste. Une fois plein, CHAQUE modification était refusée et la page se
+ *    contentait d'avertir — « this browser refused to save this project » — en
+ *    conseillant de supprimer un dataset, c'est-à-dire de perdre du travail
+ *    pour pouvoir en écrire. Drive et Firestore en gardent une COPIE, mais une
+ *    copie ne rend pas un octet à ce magasin : d'où un message qui revenait
+ *    quoi qu'on fasse.
+ *
+ * ✅ CE QUE FAIT CETTE FONCTION : écrire, VÉRIFIER, et si le navigateur refuse,
+ *    refaire de la place par ordre de coût, en s'arrêtant DÈS que ça passe :
+ *      1. une copie pleine résolution dont le Drive a déjà le fichier devient un
+ *         LIEN (linkProjectFiguresToDrive) — rien n'est perdu ;
+ *      2. les pixels d'une figure qui ne vivent que dans ce navigateur, de la
+ *         plus lourde à la plus légère, UNE PAR UNE (dropOneFigurePixels) :
+ *         l'entrée garde sa place, son nom, sa légende et son ancre ;
+ *      3. les listes de figures dont les pixels sont déjà sur le cloud
+ *         (pruneRecoverableLibraryCaches) : elles se relisent du Drive.
+ *    Les projets des AUTRES datasets sont allégés eux aussi quand il le faut
+ *    (c'est la SOMME qui doit rentrer) ; le TEXTE, les références, la
+ *    bibliographie et la mise en page ne sont JAMAIS touchés.
+ *
+ * @returns {{ ok:boolean, error:string, list:Array, missing:string[],
+ *             scopedChanged:boolean, linked:number, droppedImages:number,
+ *             forgotten:number, usedBefore:number,
+ *             usage:{total:number, keys:Array<{key:string,bytes:number}>} }}
+ *   `list` = la liste de portée à adopter (allégée si besoin : l'état React doit
+ *   suivre EXACTEMENT ce qui a été écrit, sinon l'écriture suivante ramène le
+ *   poids qui vient d'être libéré). En échec, c'est la liste DONNÉE : rien n'a
+ *   été écrit, la page garde ce qu'elle avait.
+ */
+export const saveProjectsRescued = (list, { projectId = '', fields = {} } = {}) => {
+  const scoped = dedupeProjects(Array.isArray(list) ? list : []);
+  const lightScoped = new Map();   // id → version allégée des projets DE CETTE LISTE
+  const lightForeign = new Map();  // id → version allégée des projets DES AUTRES datasets
+  const usedBefore = readLocalStoreUsage().total;
+  let linked = 0;
+  let droppedImages = 0;
+  let forgotten = 0;
+
+  /** La version courante (allégée si elle l'a déjà été) d'un projet du magasin. */
+  const versionOf = (row) => (row.where === 'scope' ? lightScoped : lightForeign).get(row.project.id)
+    || row.project;
+
+  /** Les projets du magasin à examiner, du plus lourd au plus léger. */
+  const heaviestFirst = () => {
+    const rows = [];
+    scoped.forEach((p) => { if (p && p.id) rows.push({ where: 'scope', project: p }); });
+    readRawProjects().forEach((p) => {
+      if (!p || !p.id) return;
+      if (String(p.datasetId || '') === String(activeProjectDataset || '')) return;
+      if (scoped.some((s) => s && s.id === p.id)) return;
+      rows.push({ where: 'other', project: p });
+    });
+    return rows.sort((a, b) => projectFootprint(versionOf(b)) - projectFootprint(versionOf(a)));
+  };
+
+  /** La plus grosse figure dont les pixels sont encore encodés dans ce magasin. */
+  const biggestInlineFigure = () => {
+    let best = null;
+    heaviestFirst().forEach((row) => {
+      const project = versionOf(row);
+      Object.keys(project.figures || {}).forEach((section) => {
+        (project.figures[section] || []).forEach((entry, index) => {
+          if (!entry || typeof entry !== 'object') return;
+          const bytes = (isDataUrl(entry.url) ? entry.url.length : 0)
+            + (isDataUrl(entry.full) ? entry.full.length : 0);
+          if (!bytes || (best && bytes <= best.bytes)) return;
+          best = {
+            ...row, project, section, index, bytes
+          };
+        });
+      });
+    });
+    return best;
+  };
+
+  /* LE MAGASIN ENTIER, EN UNE ÉCRITURE : la liste de portée (avec ses versions
+     allégées) + les projets des autres datasets (remplacés par leur version
+     allégée quand on en a une) — exactement la fusion de saveProjects. */
+  const mergedStore = () => {
+    const tagged = scoped.map((p) => ({
+      ...(lightScoped.get(p && p.id) || p),
+      datasetId: (p && String(p.datasetId)) || activeProjectDataset
+    }));
+    if (!activeProjectDataset) return tagged;
+    const foreign = readRawProjects()
+      .filter((p) => !(p && String(p.datasetId) === activeProjectDataset))
+      .map((p) => (p && lightForeign.get(p.id)) || p);
+    return [...foreign, ...tagged];
+  };
+
+  const writeOnce = () => {
+    if (!lightForeign.size) {
+      return saveProjectsChecked(scoped.map((p) => lightScoped.get(p && p.id) || p), { projectId, fields });
+    }
+    const written = writeRawProjects(mergedStore());
+    if (!written.ok) return { ok: false, error: written.error, stored: null, missing: Object.keys(fields || {}) };
+    return verifyStored(projectId, fields);
+  };
+
+  const done = (res) => ({
+    ok: res.ok,
+    error: res.ok ? '' : String(res.error || ''),
+    missing: res.missing || [],
+    list: res.ok ? scoped.map((p) => lightScoped.get(p && p.id) || p) : scoped,
+    /* ⚠ SEULEMENT QUAND ÇA A ÉTÉ ÉCRIT. Après un échec, annoncer « la liste a
+       changé » ferait adopter par la page une liste identique mais NOUVELLE :
+       l'effet de sauvegarde repartirait, échouerait, ré-adopterait… une boucle
+       sans fin. En échec on rend la liste DONNÉE et `scopedChanged` est faux. */
+    scopedChanged: res.ok && lightScoped.size > 0,
+    linked,
+    droppedImages,
+    forgotten,
+    usedBefore,
+    usage: readLocalStoreUsage()
+  });
+
+  let res = writeOnce();
+  if (res.ok) return done(res);
+
+  /* 1 — LE LIEN PLUTÔT QUE LES PIXELS (aucune perte : le Drive a la copie). */
+  heaviestFirst().forEach((row) => {
+    const out = linkProjectFiguresToDrive(versionOf(row));
+    if (!out.touched) return;
+    (row.where === 'scope' ? lightScoped : lightForeign).set(row.project.id, out.project);
+    linked += out.touched;
+  });
+  if (linked) res = writeOnce();
+
+  /* 2 — LES PIXELS, UNE FIGURE À LA FOIS, DE LA PLUS LOURDE À LA PLUS LÉGÈRE :
+     l'écriture passe dès qu'elle peut, donc on ne jette que le nécessaire. */
+  while (!res.ok) {
+    const biggest = biggestInlineFigure();
+    if (!biggest) break;
+    const out = dropOneFigurePixels(biggest.project, biggest.section, biggest.index);
+    if (!out.dropped) break;   // plus rien à jeter : aucune boucle sans fin
+    (biggest.where === 'scope' ? lightScoped : lightForeign).set(biggest.project.id, out.project);
+    droppedImages += out.dropped;
+    res = writeOnce();
+  }
+
+  /* 3 — LES LISTES DE FIGURES DÉJÀ SUR LE CLOUD : elles se relisent du Drive
+     (« ⬇ Add missing from Drive »), c'est le dernier poste qu'on peut rendre. */
+  if (!res.ok) {
+    const pruned = pruneRecoverableLibraryCaches();
+    forgotten = pruned.forgotten;
+    if (forgotten) res = writeOnce();
+  }
+
+  return done(res);
 };
 
 /** Remove every project of a dataset from this device's cache (dataset
@@ -541,7 +773,14 @@ export const ProjectsModule = ({
   const [newName, setNewName] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(null);
 
-  useEffect(() => { saveProjects(projects); }, [projects]);
+  useEffect(() => {
+    const res = saveProjectsRescued(projects);
+    /* ⚠ L'ÉTAT SUIT CE QUI A ÉTÉ ÉCRIT. Quand le magasin du navigateur est plein,
+       l'écriture est sauvée en allégeant la liste (voir saveProjectsRescued) :
+       repartir de la version NON allégée à l'écriture suivante remettrait le
+       poids en place et l'écriture échouerait de nouveau, indéfiniment. */
+    if (res.scopedChanged) setProjects(res.list);
+  }, [projects]);
 
   const scientists = useMemo(() =>
     [...new Set(projects.map((p) => p.scientist).filter(Boolean))].sort((a, b) => a.localeCompare(b)),

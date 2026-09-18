@@ -5,7 +5,8 @@ import {
   loadPubFormat, loadRelevantPapers, matchCoauthors, pubCitationData, pubCitationHtml
 } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
-import { loadProjects, saveProjects, saveProjectsChecked, lightenProjectForStorage, recordProjectDeletion, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor } from './projectsModule';
+import { loadProjects, saveProjects, saveProjectsChecked, lightenProjectForStorage, recordProjectDeletion, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor, saveProjectsRescued } from './projectsModule';
+import { formatStoreSize, describeTopConsumers } from '../../utils/localStoreRoom';
 import { suggestDriveFileName, openDrive, projectSectionFolderPath, projectSectionFolderLabel, projectImagesFolderLabel } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
 import { UsefulFilesSection } from '../UsefulFilesSection';
@@ -256,6 +257,45 @@ const mmPartsFor = (project, tests, onlyIncluded) =>
       return { name: test.name || exp.label, text: buildMaterialsAndMethods(test, tabConfigForType(test.type)) };
     })
     .filter(Boolean);
+
+/* =========================================================================
+   LES DEUX PHRASES DU MAGASIN DU NAVIGATEUR.
+   Une écriture sauvée (de la place a été faite) et un échec VRAI ne se disent
+   pas de la même façon : le premier est une bonne nouvelle à expliquer, le
+   second doit donner la MESURE de ce qui occupe la place et la marche à suivre.
+   ========================================================================= */
+
+/** Ce qu'une écriture SAUVÉE a coûté, calmement et sans jargon. */
+const storageFreedText = (res) => [
+  res.linked
+    ? `${res.linked} high-resolution image copy(ies) now read from their Drive file instead of being kept here — nothing was lost`
+    : '',
+  res.droppedImages
+    ? `${res.droppedImages} image copy(ies) that existed only in this browser were left out of the project copy — every figure keeps its place, its name, its caption and its spot in the printed document; press ☁ Save figures to Drive (or import them again) to get the pixels back`
+    : '',
+  res.forgotten
+    ? `${res.forgotten} figure-list entr${res.forgotten === 1 ? 'y' : 'ies'} whose files are already on Drive were forgotten on this device — “⬇ Add missing from Drive” brings them back`
+    : ''
+].filter(Boolean).join(' · ');
+
+/** L'ÉCHEC VRAI : rien n'a pu être écrit — la mesure, puis ce qui libère. */
+const storageRefusedText = (res) => {
+  const usage = res.usage || { total: 0, keys: [] };
+  const consumers = describeTopConsumers(usage, 4);
+  const tried = [
+    res.linked ? `${res.linked} image copy(ies) linked to their Drive file` : '',
+    res.droppedImages ? `${res.droppedImages} local image copy(ies) dropped` : '',
+    res.forgotten ? `${res.forgotten} recoverable figure-list entry(ies) forgotten` : ''
+  ].filter(Boolean).join(', ');
+  return `⚠ This browser refused the write and no room could be freed (${res.error}). `
+    + 'Your work is still on this page — nothing is lost while it stays open — but it is NOT stored on this device yet. '
+    + `What occupies the browser’s own store: ${formatStoreSize(usage.total)}`
+    + (consumers ? ` — ${consumers}. ` : '. ')
+    + 'Drive and Firestore hold a COPY of the dataset, but a copy never returns room to this store. '
+    + (tried ? `Tried automatically: ${tried}. ` : '')
+    + 'To free room for real: in “Figures & slides”, press ☁ Save to Drive so the images leave this store, '
+    + 'or delete from this device a dataset you no longer need.';
+};
 
 export const ProjectDetailModule = ({
   currentUser, setCurrentModule, setCurrentProjectId, currentProjectId,
@@ -525,32 +565,30 @@ export const ProjectDetailModule = ({
   const canSee = !!currentUser && !!project && (isOwner || !!myCoworker);
   const canModify = isOwner || (myCoworker && myCoworker.permission === 'modify');
 
-  /* ⚠ UNE ÉCRITURE REFUSÉE SE DIT ICI.
-     Chaque modification (texte, références, figures, commentaires) passe par cet
-     effet. `saveProjects` avalait jusqu'ici l'échec du magasin — quota plein,
-     navigation privée : le texte saisi disparaissait à la réouverture du projet
-     sans le moindre avertissement. Le bandeau reste affiché tant que le
-     navigateur refuse d'écrire. */
   const [storageWarning, setStorageWarning] = useState('');
+  /* ⚠ UNE ÉCRITURE REFUSÉE SE DIT ICI — ET ELLE N'EST PLUS UN CUL-DE-SAC.
+     Chaque modification (texte, références, figures, commentaires) passe par cet
+     effet. `saveProjects` avalait l'échec du magasin (quota plein, navigation
+     privée) : le texte saisi disparaissait à la réouverture du projet sans le
+     moindre avertissement. L'échec est maintenant rapporté — mais surtout, il
+     est D'ABORD RÉPARÉ : saveProjectsRescued refait de la place DANS le magasin
+     du navigateur (copies de figures liées à leur fichier Drive, puis, en
+     dernier recours, images qui n'existaient que dans ce navigateur) et
+     l'écriture repart. Ce qui a été libéré est dit (storageNote), et l'échec
+     définitif parle en chiffres : ce que le magasin contient vraiment. */
+  const [storageNote, setStorageNote] = useState('');
   useEffect(() => {
-    const res = saveProjects(projects);
-    if (res && res.ok === false) {
-      /* POURQUOI ce texte ne dit plus « enregistrez le dataset sur le Drive » :
-         les deux magasins sont INDÉPENDANTS. Firestore et le Drive gardent une
-         COPIE du dataset ; la page, elle, travaille sur le magasin du
-         navigateur (~5 Mo par site, partagé par tous les datasets du poste).
-         « Enregistrer sur le Drive » met donc le travail à l'abri — mais ne rend
-         pas un octet au navigateur, et le conseiller laissait l'utilisateur
-         tourner en rond (question posée : « ma se scrive su google drive come fa
-         a finire lo spazio? »). Ce qui LIBÈRE la place est dit ici. */
-      setStorageWarning(`⚠ This browser refused to save this project (${res.error}). `
-        + 'The page keeps working, but changes may be lost when you leave it. '
-        + 'Drive and Firestore hold a COPY of the dataset — they do not give the browser’s own store '
-        + '(~5 MB per site) its space back. To free room, remove from THIS device a dataset (or its '
-        + 'figure images) you no longer need, then edit once more to retry.');
-    } else {
-      setStorageWarning((cur) => (cur ? '' : cur));
+    const res = saveProjectsRescued(projects);
+    if (!res.ok) {
+      setStorageWarning(storageRefusedText(res));
+      return;
     }
+    setStorageWarning('');
+    if (res.linked || res.droppedImages || res.forgotten) setStorageNote(storageFreedText(res));
+    /* L'ÉTAT SUIT CE QUI A ÉTÉ ÉCRIT (voir commitProjectVerified) : sans cela,
+       l'écriture suivante repartirait de la liste lourde, et échouerait de
+       nouveau à chaque modification — exactement la boucle sans issue signalée. */
+    if (res.scopedChanged) replaceProjects(res.list);
   }, [projects]);
 
   /* Bibliographie / références enregistrées AVANT la prise en charge des
@@ -2819,6 +2857,18 @@ export const ProjectDetailModule = ({
                       <SmartImage src={fig.url} alt="Figure" />
                     </div>
                   )}
+                  {fig.pixelsMissing && (
+                    /* Les pixels de cette image ne sont plus gardés dans le
+                       magasin de ce navigateur (il était plein : voir
+                       saveProjectsRescued). Sa place, son nom, sa légende et sa
+                       position dans le document exporté sont INTACTS — c'est ce
+                       qui se réimporte, alors que le texte, lui, ne se réécrit pas. */
+                    <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-1">
+                      🖼 The image itself is not kept on this device (the browser’s store was full).
+                      The figure keeps its place, name, caption and its spot in “📄 Export document”.
+                      Send it to Drive (☁ Save figures to Drive) or import it again to get the pixels back.
+                    </p>
+                  )}
                   <textarea value={fig.caption} onChange={(e) => patchSectionFigure(id, fig.id, { caption: e.target.value })}
                             placeholder="Figure caption…" rows={2}
                             className="w-full border border-slate-300 rounded-lg p-2 text-xs outline-none focus:border-blue-500 resize-y bg-white" />
@@ -3641,6 +3691,22 @@ export const ProjectDetailModule = ({
         {storageWarning && (
           <div className="rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-[11px] font-bold text-red-700">
             {storageWarning}
+          </div>
+        )}
+
+        {/* ---------- Écriture SAUVÉE : de la place a été faite ----------
+            Le magasin du navigateur était plein (ou presque) : l'écriture est
+            passée en allégeant des copies d'images (voir saveProjectsRescued).
+            Le texte, les références et la mise en page n'ont pas bougé — on le
+            dit, et on dit ce qui est parti, pour que rien ne soit silencieux. */}
+        {storageNote && (
+          <div className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 flex items-start gap-2">
+            <span className="flex-1">
+              <b>🧹 Saved — room had to be made in this browser’s store.</b> {storageNote}
+            </span>
+            <button type="button" onClick={() => setStorageNote('')}
+                    className="shrink-0 font-bold text-amber-700 hover:text-amber-900"
+                    title="Hide this note — the change is saved either way.">✕</button>
           </div>
         )}
 

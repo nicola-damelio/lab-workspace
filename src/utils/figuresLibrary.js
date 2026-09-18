@@ -742,6 +742,56 @@ export const driveIdOfLibraryItem = (item) => {
   return '';
 };
 
+/* ── QUAND LE MAGASIN DU NAVIGATEUR EST PLEIN ───────────────────────────────
+   Les listes de la bibliothèque (commune `labFiguresLibrary`, et une par projet
+   `labFiguresLib_<projet>`) sont un CACHE : leurs pixels sont sur le cloud. Une
+   fois le magasin du navigateur plein (~5 Mo par site), c'est le plus gros
+   poste qu'on peut rendre SANS RIEN PERDRE — à une condition : n'oublier que
+   les entrées dont les pixels sont DÉJÀ sur le cloud et dont l'identifiant de
+   fichier Drive se relit de l'entrée (elles reviennent avec « ⬇ Add missing
+   from Drive », pullLibraryFromDrive ré-AJOUTE ce qui manque). Une entrée dont
+   les pixels ne vivent que dans ce navigateur (localOnlyLibraryItems) n'est
+   JAMAIS touchée : elle serait perdue pour de bon.
+
+   Les listes EN MÉMOIRE suivent le magasin : sans cela, la première écriture de
+   la bibliothèque (une capture, un renommage…) remettrait tout le poids en
+   place et l'écriture des projets échouerait à nouveau.
+
+   @returns {{ forgotten:number, freed:number, left:number, keys:string[] }} */
+export const pruneRecoverableLibraryCaches = ({ storage } = {}) => {
+  const out = { forgotten: 0, freed: 0, left: 0, keys: [] };
+  let ls = storage;
+  if (!ls) { try { ls = typeof localStorage !== 'undefined' ? localStorage : null; } catch { ls = null; } }
+  if (!ls) return out;
+  const keys = [];
+  try {
+    for (let i = 0; i < ls.length; i += 1) {
+      const k = String(ls.key(i) || '');
+      if (k === LIBRARY_KEY || k.startsWith('labFiguresLib_')) keys.push(k);
+    }
+  } catch { return out; }
+  keys.forEach((k) => {
+    let items = null;
+    try {
+      const parsed = JSON.parse(ls.getItem(k));
+      items = Array.isArray(parsed) ? parsed : null;
+    } catch { items = null; }
+    if (!items || !items.length) return;
+    const kept = items.filter((i) => !(i && i.drive === true && driveIdOfLibraryItem(i)));
+    const forgotten = items.length - kept.length;
+    out.left += kept.length;
+    if (!forgotten) return;
+    out.forgotten += forgotten;
+    out.keys.push(k);
+    const before = JSON.stringify(items).length;
+    try { ls.setItem(k, JSON.stringify(kept)); } catch { /* le magasin refuse encore : la mémoire suit quand même */ }
+    out.freed += Math.max(0, before - JSON.stringify(kept).length);
+    if (k === LIBRARY_KEY) memCommon = kept;
+    else memProjects.set(k, kept);
+  });
+  return out;
+};
+
 /** Le nom de fichier d'un dossier d'images → libellé lisible :
  *  « CD_spectrum_2026-04.png » → « CD spectrum 2026-04 » (les tirets internes
  *  sont conservés : ils portent souvent une date ou une référence). */
