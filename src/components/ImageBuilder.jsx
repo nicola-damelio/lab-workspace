@@ -812,8 +812,15 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const copySelection = (ids = selectedIds) => {
     const list = (objects || []).filter((o) => ids.includes(o.id));
     if (!list.length) return null;
+    // TWO copies of the same panel:
+    //  • the INTERNAL one (an in-memory variable) keeps the full-resolution
+    //    pixels, so pasting inside this tab loses nothing;
+    //  • the one handed to the BROWSER clipboard only carries the thumbnails —
+    //    megabytes of data-URL have no place in a system clipboard, and the
+    //    sharpness comes back through `libId` (resolveLibImage) exactly as it
+    //    does for a reloaded canvas.
+    clipboardRef.current = buildCopyPayload(list, { thumbnails: false });
     const payload = buildCopyPayload(list);
-    clipboardRef.current = payload;
     setClipCount(payload.objects.length);
     return payload;
   };
@@ -874,7 +881,14 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       if (typing(e.target)) return;
       const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
       const fromClipboard = parseCopyPayload(text);
-      if (fromClipboard) { e.preventDefault(); clipActions.current.pastePayload(fromClipboard); return; }
+      if (fromClipboard) {
+        // Our own copy is in the clipboard: paste the INTERNAL copy when this tab
+        // has it (same copy, full-resolution pixels), else the one that travelled
+        // through the clipboard (another tab, or a fresh page).
+        e.preventDefault();
+        clipActions.current.pastePayload(clipboardRef.current || fromClipboard);
+        return;
+      }
       if (String(text || '').trim()) return;   // text from elsewhere: not our copy, leave it alone
       if (clipboardRef.current) { e.preventDefault(); clipActions.current.pastePayload(clipboardRef.current); }
     };

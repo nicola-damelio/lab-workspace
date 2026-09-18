@@ -112,6 +112,15 @@ eq(legacyCopy.images.length, 1, 'un panneau hérité (imgSrc direct) donne bien 
 eq(legacyCopy.images[0].imgSrc, THUMB, '…avec la vignette comme pixels');
 eq(legacyCopy.images[0].libId, 'lib_L', '…et sa référence de bibliothèque');
 
+/* La copie INTERNE (celle que le builder garde en mémoire) garde, elle, les
+   pixels pleine résolution : coller dans le même onglet ne perd aucune finesse. */
+const full = buildCopyPayload([panel()], { thumbnails: false });
+eq(full.objects[0].images[0].imgSrc, LARGE, 'la copie interne garde les pixels pleine résolution');
+ok(JSON.stringify(full).includes('PLAINEFULRESOLUTION'), '…et ne s’en cache pas (elle ne part jamais dans un presse-papiers système)');
+eq(lightweightPanel(panel(), { thumbnails: false }).images[0].imgSrc, LARGE,
+  'lightweightPanel({ thumbnails: false }) est la même copie, en pleine résolution');
+eq(lightweightPanel(panel()).images[0].imgSrc, THUMB, '…alors que par défaut elle est allégée (vignette)');
+
 /* ── 3. La boîte englobante d'un lot ----------------------------------------- */
 eq(payloadBounds([{ x: 2, y: 1, w: 1, h: 1 }]), { x: 2, y: 1, w: 1, h: 1 }, 'la boîte d’une copie d’un seul panneau est sa case');
 eq(payloadBounds([{ x: 2, y: 1, w: 1, h: 1 }, { x: 3, y: 1, w: 2, h: 3 }]), { x: 2, y: 1, w: 3, h: 3 },
@@ -224,7 +233,10 @@ has(pasteFn, "window.alert('The grid has no free cell left for the copied panel"
   'une grille sans place libre est DITE à l’utilisateur, jamais contournée');
 
 has(IB, 'const copySelection = (ids = selectedIds) => {', 'la copie prend la sélection courante (ou celle qu’on lui passe)');
-has(IB, 'clipboardRef.current = payload;', 'la copie est gardée en mémoire pour le bouton « 📋 Paste »');
+has(IB, 'clipboardRef.current = buildCopyPayload(list, { thumbnails: false });',
+  'la copie INTERNE garde la pleine résolution (coller dans le même onglet ne perd rien)');
+has(IB, 'clipActions.current.pastePayload(clipboardRef.current || fromClipboard);',
+  'Ctrl+V prend la copie interne quand elle est là, sinon celle du presse-papiers');
 has(IB, '>📋 Copy</button>', 'le bouton « 📋 Copy » de la bande « Panels »');
 has(IB, ">📋 Paste{clipCount ? ` (${clipCount})` : ''}</button>", 'le bouton « 📋 Paste », avec le nombre de panneaux copiés');
 has(IB, 'title="Copy this panel — its figure(s), its texts and its shadows — Ctrl+C does the same">⧉ Copy</button>',

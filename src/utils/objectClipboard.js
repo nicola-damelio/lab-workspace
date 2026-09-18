@@ -13,11 +13,14 @@
    rechargement, et « 📋 Paste » la reprend quand le presse-papiers système n'est
    pas lisible).
 
-   La copie ne garde que les pixels LÉGERS — la vignette (`imgThumb`) : la
-   data-URL pleine résolution d'une capture pèse des mégaoctets et n'a pas sa
-   place dans un presse-papiers. Rien n'est perdu pour autant : `libId` voyage
-   avec, donc le collage retrouve la pleine résolution dans la bibliothèque
-   d'images (resolveLibImage côté builder), exactement comme un canvas rechargé.
+   Ce qui part dans le presse-papiers du NAVIGATEUR ne garde que les pixels
+   LÉGERS — la vignette (`imgThumb`) : la data-URL pleine résolution d'une
+   capture pèse des mégaoctets et n'a pas sa place dans un presse-papiers. Rien
+   n'est perdu pour autant : `libId` voyage avec, donc le collage retrouve la
+   pleine résolution dans la bibliothèque d'images (resolveLibImage côté
+   builder), exactement comme un canvas rechargé. La copie INTERNE du builder
+   (une variable en mémoire, jamais sérialisée) garde, elle, la pleine
+   résolution : `buildCopyPayload(list, { thumbnails: false })`.
 
    Le collage pose les copies dans la PREMIÈRE PLACE LIBRE de la grille — la
    règle même de « + Add Object » (firstFreeCellIn) : coller ne recouvre JAMAIS
@@ -82,19 +85,25 @@ const imagesOf = (obj) => {
 };
 
 /**
- * La copie LÉGÈRE d'un panneau : tout ce qui le décrit (case, lettre, textes,
- * ombres, figures, recadrages, gomme, décorations…) sauf les pixels pleine
- * résolution, remplacés par la vignette. Le résultat est un objet JSON autonome
- * — rien n'est partagé avec le panneau VIVANT, donc éditer le canvas après la
- * copie ne modifie pas la copie.
+ * La copie d'un panneau : tout ce qui le décrit (case, lettre, textes, ombres,
+ * figures, recadrages, gomme, décorations…) avec, par défaut, la VIGNETTE comme
+ * pixels (`thumbnails: true` — la copie qui part dans le presse-papiers du
+ * navigateur ne peut pas transporter des mégaoctets de data-URL).
+ * `thumbnails: false` garde les pixels pleine résolution : c'est la copie
+ * INTERNE du builder (une variable en mémoire), donc coller dans le même onglet
+ * ne perd aucune finesse.
+ * Le résultat est un objet JSON autonome — rien n'est partagé avec le panneau
+ * VIVANT, donc éditer le canvas après la copie ne modifie pas la copie.
  * @returns {object} un enregistrement de panneau, prêt pour JSON.stringify
  */
-export const lightweightPanel = (obj) => {
+export const lightweightPanel = (obj, { thumbnails = true } = {}) => {
   const source = obj || {};
   const images = imagesOf(source).map((im) => {
     const record = { ...(im || {}) };
-    record.imgSrc = record.imgThumb || record.imgSrc || null;  // la vignette devient les pixels
-    record._srcHint = null;                                     // pas d'URL de Drive à re-résoudre
+    if (thumbnails) {
+      record.imgSrc = record.imgThumb || record.imgSrc || null;  // la vignette devient les pixels
+      record._srcHint = null;                                     // pas d'URL de Drive à re-résoudre
+    }
     return record;
   });
   const first = images[0] || {};
@@ -106,11 +115,13 @@ export const lightweightPanel = (obj) => {
   }));
 };
 
-/** La charge utile du presse-papiers pour les panneaux `list`. */
-export const buildCopyPayload = (list) => ({
+/** La charge utile du presse-papiers pour les panneaux `list`.
+ *  @param {object} [opts] `{ thumbnails }` — false pour garder la pleine
+ *         résolution (copie INTERNE du builder, jamais sérialisée). */
+export const buildCopyPayload = (list, opts = {}) => ({
   kind: OBJECT_COPY_KIND,
   version: OBJECT_COPY_VERSION,
-  objects: (Array.isArray(list) ? list : []).filter(Boolean).map(lightweightPanel)
+  objects: (Array.isArray(list) ? list : []).filter(Boolean).map((o) => lightweightPanel(o, opts))
 });
 
 /**
