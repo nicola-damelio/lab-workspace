@@ -7,7 +7,8 @@ import {
   saveCanvasSnapshot, uploadFigureToDrive,
   countRecaptureDuplicates, removeRecaptureDuplicates,
   pushLibraryToDrive, pullLibraryFromDrive, localOnlyLibraryItems, mergeLibraryFromSnapshot,
-  uid, canvasKeyOfEntry, findCanvasEntryByKey, canvasPreviewFromComposition, lastLibraryListWrite
+  uid, canvasKeyOfEntry, findCanvasEntryByKey, canvasPreviewFromComposition, lastLibraryListWrite,
+  figureFileIdentity
 } from '../utils/figuresLibrary';
 import {
   freeRectOf, isFreeLayout, pinRectOf, freeSlotFor, RECT_MIN, RECT_MAX, moveFigureInList
@@ -1479,6 +1480,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       try {
         const dataUrl = await blobToDataUrl(f);
         const label = (f.name || 'Image').replace(/\.[^.]+$/, '') || 'Image';
+        // Deux fichiers différents portent souvent le même nom (« Capture.png ») :
+        // l'identité est donc celle du FICHIER (nom + taille + date), pour que le
+        // second import ne remplace pas les pixels du premier dans le cloud, et
+        // pour qu'un ré-import du même fichier réécrive bien le sien.
+        const identity = `${f.name || ''}|${f.size || 0}|${f.lastModified || 0}`;
         // publishLibraryFigure uploads the real image to Drive and keeps only a
         // small local preview — the library list itself is memory-first, so a
         // full localStorage quota can never block an import again.
@@ -1488,7 +1494,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           projectName: driveProjectName,
           dataUrl,
           label,
-          src: null
+          src: null,
+          identity
         });
         if (!entry) { failed.push(f.name || 'unknown file'); continue; }
         if (drive && drive.id) driveOk++;
@@ -6045,7 +6052,16 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                         pas connecté, on continue comme avant — mais on le DIT. */
                   let cloud = null;
                   try {
-                    cloud = await uploadFigureToDrive({ full: dataUrl, label, projectName: prj.name || '' });
+                    // Même nom que « 💾 Save canvas » pour CETTE composition (clé de
+                    // canvas) : la figure insérée et l'entrée de bibliothèque
+                    // partagent leur fichier, et deux canvas du même libellé ne
+                    // s'écrasent pas (voir « UNE FIGURE = UN FICHIER »).
+                    cloud = await uploadFigureToDrive({
+                      full: dataUrl,
+                      label,
+                      projectName: prj.name || '',
+                      identity: figureFileIdentity({ canvasData: { canvasKey } })
+                    });
                   } catch (err) {
                     console.warn('Project insert → Drive failed:', err && err.message);
                     cloud = null;

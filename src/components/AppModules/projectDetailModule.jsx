@@ -1840,7 +1840,7 @@ export const ProjectDetailModule = ({
     return String((fig && fig.name) || '').trim() || `Figure ${index}`;
   };
 
-  const figureImageFor = async (fig, label) => {
+  const figureImageFor = async (fig, label, identity = '') => {
     const dataUrl = fig && fig.preview !== undefined ? fig.preview : figureDataUrl(fig);
     if (!dataUrl) return null;
     /* Une figure d'une page HTML garde son URL (Google, Drive, …) : rien n'est
@@ -1848,7 +1848,9 @@ export const ProjectDetailModule = ({
     if (!dataUrl.startsWith('data:')) {
       return { url: getRenderableDriveUrl(dataUrl), full: dataUrl, drive: false, driveUrl: '' };
     }
-    const uploaded = await uploadFigureToDrive({ full: dataUrl, label, projectName: project.name || '' });
+    const uploaded = await uploadFigureToDrive({
+      full: dataUrl, label, projectName: project.name || '', identity
+    });
     const link = (uploaded && (uploaded.driveUrl || uploaded.url || uploaded.webLink)) || '';
     if (link) return { url: getRenderableDriveUrl(link), full: link, drive: true, driveUrl: link };
     try {
@@ -1889,7 +1891,7 @@ export const ProjectDetailModule = ({
       let image = null;
       try {
         // eslint-disable-next-line no-await-in-loop
-        image = await figureImageFor(fig, label);
+        image = await figureImageFor(fig, label, `${place.section || ''}|${name || label}`);
       } catch {
         failed.push(name || label);
         continue;

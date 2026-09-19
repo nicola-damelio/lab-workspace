@@ -241,6 +241,111 @@ checkTrue('[bout en bout] …et pointe sur le fichier envoyé',
 check('[bout en bout] elle n’est plus « locale seulement »',
   LIB_MOD.localOnlyLibraryCount({ scope: 'project', projectId: 'P1' }), 0);
 
+/* ── 9. UNE FIGURE = UN FICHIER ───────────────────────────────────────────────
+   « the same image whatever graph I click ». Le nom déposé n'était fait QUE du
+   libellé — or le libellé d'une capture est le TITRE de sa section, donc tous
+   les graphes d'une même section, et tous les canvas appelés « Canvas 18/09/
+   2026 », déposaient LE MÊME nom. L'envoi ÉCRASE le fichier existant du même
+   nom (uploadDriveFileToFolderOnce cherche `name='…'` avant d'écrire) : la
+   seconde capture remplaçait la première, toutes les entrées pointaient sur ce
+   seul fichier (même la vignette Drive), le sidecar `.meta.json` de la
+   composition était partagé — et la fusion des listes, qui reconnaît une figure
+   à son id de fichier, fusionnait ces figures distinctes en une seule.
+
+   Le faux fournisseur ci-dessous imite le Drive : un nom déjà déposé garde son
+   id (écrasement), un nom nouveau en reçoit un. C'est exactement ce qui
+   distingue « deux figures » de « deux copies de la même figure ». */
+
+const cloudNames = [];
+const cloudIds = new Map();  // nom du fichier → id Drive (un nom = UN fichier)
+let cloudSeq = 0;
+globalThis.__driveTestMocks.uploadLocalFile = async (arg) => {
+  const name = String(arg && arg.name);
+  if (!cloudIds.has(name)) { cloudSeq += 1; cloudIds.set(name, `F${cloudSeq}`); }
+  cloudNames.push(name);
+  const id = cloudIds.get(name);
+  return { id, name, driveUrl: `https://drive.google.com/file/d/${id}/view` };
+};
+const NAME_LABEL = '1D Histogram (Data Analysis) · flow_cyt_p53H_p53R';
+const CHART_1 = { testId: 'T1', testName: 'flow_cyt', instanceName: 'run1', elementKey: `${NAME_LABEL} · Chart · 1` };
+const CHART_2 = { testId: 'T1', testName: 'flow_cyt', instanceName: 'run1', elementKey: `${NAME_LABEL} · Chart · 2` };
+const publish = (src, extra = {}) => LIB_MOD.publishLibraryFigure({
+  scope: 'project', projectId: 'P1', projectName: 'CD project',
+  dataUrl: SVG_URL, label: NAME_LABEL, src, ...extra
+});
+
+/* 9a. l'empreinte est STABLE, courte, et le nom reste lisible. */
+checkTrue('[nom] l’empreinte est courte (≤ 7 caractères)', LIB_MOD.fileTagOf('peu importe').length <= 7);
+check('[nom] la même identité donne la même empreinte',
+  LIB_MOD.fileTagOf('canvas:cv_1'), LIB_MOD.fileTagOf('canvas:cv_1'));
+checkTrue('[nom] deux identités différentes donnent deux empreintes',
+  LIB_MOD.fileTagOf('canvas:cv_1') !== LIB_MOD.fileTagOf('canvas:cv_2'));
+
+/* 9b. sans identité, RIEN ne change pour les envois qui n'en ont pas. */
+check('[nom] sans identité, le nom reste le libellé slugifié + l’extension',
+  LIB_MOD.figureFileName('Fig 1', 'png'), 'Fig_1.png');
+checkTrue('[nom] …et l’identité ne sert qu’à le distinguer',
+  LIB_MOD.figureFileName('Fig 1', 'png', 'x') !== 'Fig_1.png'
+  && /^Fig_1-[0-9a-z]+\.png$/.test(LIB_MOD.figureFileName('Fig 1', 'png', 'x')));
+
+/* 9c. l'identité d'une figure : la composition d'un canvas, sinon l'origine. */
+check('[ident] un canvas → sa clé de composition',
+  LIB_MOD.figureFileIdentity({ canvasData: { canvasKey: 'cv_1' } }), 'canvas:cv_1');
+check('[ident] la composition passe avant l’origine',
+  LIB_MOD.figureFileIdentity({ src: CHART_1, canvasData: { canvasKey: 'cv_1' } }), 'canvas:cv_1');
+check('[ident] une capture → expérience + instance + graphe',
+  LIB_MOD.figureFileIdentity({ src: CHART_1 }), `T1|run1|${CHART_1.elementKey}`);
+check('[ident] une image sans origine → aucune identité (nom inchangé)',
+  LIB_MOD.figureFileIdentity({ src: null }), '');
+check('[ident] …une origine sans graphe non plus',
+  LIB_MOD.figureFileIdentity({ src: { testName: 'flow_cyt' } }), '');
+
+/* 9d. le geste : deux graphes de la même section → DEUX fichiers, et leurs
+       sidecars de composition aussi. */
+const figA = await publish(CHART_1);
+const figB = await publish(CHART_2);
+checkTrue('[geste] les deux figures sont bien deux entrées', figA.entry.id !== figB.entry.id);
+checkTrue('[geste] …deux FICHIERS différents dans le dossier', figA.drive.id !== figB.drive.id);
+checkTrue('[geste] …et deux noms de fichier différents',
+  cloudNames.length >= 2 && cloudNames[0] !== cloudNames[1]);
+checkTrue('[geste] …les sidecars de composition aussi',
+  !!String(figA.entry.metaName || '') && String(figA.entry.metaName) !== String(figB.entry.metaName));
+checkTrue('[geste] le nom reste lisible (le titre de la section est dedans)',
+  /^1D_Histogram_Data_Analysis_flow_cyt_p53H_p53R-[0-9a-z]+\.svg$/.test(String(figA.drive.name)));
+checkTrue('[geste] …l’empreinte vient APRÈS le libellé (jamais tronquée)',
+  String(figA.drive.name).length > '1D_Histogram_Data_Analysis_flow_cyt_p53H_p53R'.length + 4);
+
+/* 9e. …mais RE-CAPTURER le même graphe réécrit SON fichier (aucune copie de
+       plus, ni dans le dossier ni dans la bibliothèque). */
+const figA2 = await publish(CHART_1);
+check('[geste] re-capture du même graphe → le MÊME fichier', figA2.drive.id, figA.drive.id);
+
+/* 9f. deux canvas du même libellé ne s'écrasent plus (leurs compositions non
+       plus : c'était le sidecar qui rendait la mauvaise composition). */
+const cvA = await publish(null, { label: 'Canvas 18/09/2026', canvasData: { canvasKey: 'cv_a', objects: [] } });
+const cvB = await publish(null, { label: 'Canvas 18/09/2026', canvasData: { canvasKey: 'cv_b', objects: [] } });
+checkTrue('[geste] deux canvas du même nom → deux fichiers', cvA.drive.id !== cvB.drive.id);
+checkTrue('[geste] …et deux compositions distinctes sur le Drive',
+  String(cvA.entry.metaName || '') !== String(cvB.entry.metaName || ''));
+const cvA2 = await publish(null, { label: 'Canvas 18/09/2026', canvasData: { canvasKey: 'cv_a', objects: [] } });
+check('[geste] le même canvas re-sauvé → le MÊME fichier', cvA2.drive.id, cvA.drive.id);
+
+/* 9g. les autres chemins d'envoi portent la même règle : « ☁ Save to Drive »
+       d'une figure restée locale, l'import d'un fichier par l'Image Builder, et
+       la copie cloud d'un canvas inséré dans un projet. */
+checkTrue('[appelants] ☁ Save to Drive transmet l’identité de l’entrée',
+  LIB.includes('identity: figureFileIdentity({ src: item.src, canvasData: item.canvasData })'));
+checkTrue('[appelants] la publication aussi',
+  LIB.includes("identity: String(identity || '').trim() || figureFileIdentity({ src, canvasData })"));
+checkTrue('[appelants] l’import d’un fichier porte l’identité du FICHIER (nom + taille + date)',
+  IB.includes('const identity = `${f.name || \'\'}|${f.size || 0}|${f.lastModified || 0}`;'));
+checkTrue('[appelants] …et la transmet à la publication',
+  /dataUrl,\r?\n          label,\r?\n          src: null,\r?\n          identity\r?\n        \}\)/.test(IB));
+checkTrue('[appelants] la copie cloud d’un canvas inséré porte sa clé de composition',
+  IB.includes('identity: figureFileIdentity({ canvasData: { canvasKey } })'));
+checkTrue('[appelants] les figures d’un manuscrit portent leur section + leur nom de fichier',
+  PROJ.includes('figureImageFor(fig, label, `${place.section || \'\'}|${name || label}`)'));
+
 const total = passed + results.length;
 const body = results.length ? results.join('\n') : 'all checks passed';
 fs.writeFileSync('_figure_svg_drive_out.txt', `passed ${passed}/${total}\n${body}\n`, 'utf8');

@@ -504,8 +504,12 @@ setQuota(Infinity);
 
    L'insertion envoie donc les pixels au Drive AVANT d'écrire la figure, garde
    ce lien sur l'entrée, et VÉRIFIE son écriture. */
-has(IB, "cloud = await uploadFigureToDrive({ full: dataUrl, label, projectName: prj.name || '' });",
+has(IB, 'cloud = await uploadFigureToDrive({',
   'l’Image Builder dépose la composition au Drive avant d’insérer la figure');
+has(IB, 'projectName: prj.name || \'\',',
+  '…dans le dossier du projet');
+has(IB, 'identity: figureFileIdentity({ canvasData: { canvasKey } })',
+  '…et sous un nom qui distingue ce canvas des autres (voir « UNE FIGURE = UN FICHIER »)');
 has(IB, '...(cloudUrl ? { drive: true, driveUrl: cloudUrl, full: cloudUrl } : {}),',
   '…et la figure insérée garde ce lien (la page peut donc toujours la remontrer)');
 has(IB, 'const saved = saveProjectsRescued(projects, { projectId: prj.id, fields: {} });',

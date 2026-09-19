@@ -1106,15 +1106,17 @@ has(PROJ, 'const figPlan = manuscriptFigurePlacements(',
   'la place de CHAQUE figure est calculée sur le document entier (figure du chapeau, de l’en-tête, partie non importée)');
 has(PROJ, 'convertedTextByKey[p.key] = converted.text;',
   '…et l’ancre d’une figure vient du texte CONVERTI : elle se retrouve dans la section [1] du projet (pas [12] du document)');
-has(PROJ, 'image = await figureImageFor(fig, label);',
+has(PROJ, 'image = await figureImageFor(fig, label, `${place.section || \'\'}|${name || label}`);',
   '…et une figure dont l’envoi échoue n’emporte plus les autres (essai par figure)');
 has(PROJ, 'failed.push(name || label);', '…elle est comptée comme non conservée');
 has(PROJ, 'figure(s) had no section of their own', '…et le compte rendu de l’import le dit');
 has(PROJ, "source: 'manuscript-import'", '…et gardent leur origine (des figures de l’article)');
 has(PROJ, 'addProjectLibraryItem(project.id',
   '…et rejoignent la bibliothèque d’images du projet (Image Builder → Project Library)');
-has(PROJ, 'uploadFigureToDrive({ full: dataUrl, label, projectName: project.name',
+has(PROJ, 'uploadFigureToDrive({',
   'leurs pixels partent au Drive, avec un repli local (comme « 📄 Word text »)');
+has(PROJ, "full: dataUrl, label, projectName: project.name || '', identity",
+  '…sous un nom qui distingue chaque figure du document');
 has(PROJ, 'const split = splitAnchoredFigures(linkCitations(repairContentImages(s.html',
   'le document exporté réinsère chaque figure après son paragraphe');
 has(PROJ, 'citedNumbersInText(converted.text).forEach((n) => citedInText.add(n));',

@@ -1022,7 +1022,7 @@ export const findCanvasEntryByKey = ({ scope = 'common', projectId = null, canva
 // Only a small local thumbnail + metadata are kept in the browser (the library
 // list is memory-first and localStorage is a best-effort cache, so even a full
 // 5 MB quota cannot block an import). Returns { entry, drive, updated, missing }.
-export const publishLibraryFigure = async ({ scope = 'common', projectId = null, projectName = '', dataUrl, label = 'Figure', src = null, canvasData = null, updateId = null, insertIfMissing = true }) => {
+export const publishLibraryFigure = async ({ scope = 'common', projectId = null, projectName = '', dataUrl, label = 'Figure', src = null, canvasData = null, updateId = null, insertIfMissing = true, identity = '' }) => {
   const srcData = await resolveImageToDataUrl(dataUrl);
   const isSvg = typeof srcData === 'string' && (srcData.startsWith('data:image/svg+xml') || srcData.includes('<svg'));
   // High-resolution copy (uploaded to Drive / kept as fallback): capped raster,
@@ -1044,7 +1044,17 @@ export const publishLibraryFigure = async ({ scope = 'common', projectId = null,
       driveError = 'cloud storage is not connected';
     } else {
       try {
-        drive = await uploadFigureToDrive({ full: hi, label, projectName });
+        // Le nom du fichier porte l'identité de la figure (clé de composition du
+        // canvas, ou origine du graphe capturé) : sans elle, deux figures du même
+        // libellé écrites dans le même dossier seraient LE MÊME fichier — la
+        // seconde capture remplaçant la première (« la même image quel que soit
+        // le graphe cliqué »). Voir « UNE FIGURE = UN FICHIER ».
+        drive = await uploadFigureToDrive({
+          full: hi,
+          label,
+          projectName,
+          identity: String(identity || '').trim() || figureFileIdentity({ src, canvasData })
+        });
       } catch (err) {
         drive = null;
         driveError = (err && err.message) || 'cloud upload failed';
@@ -1346,7 +1356,65 @@ export const removeCanvasDuplicates = (opts = {}) => {
 let lastFigureDriveError = '';
 export const lastFigureUploadError = () => lastFigureDriveError;
 
-export const uploadFigureToDrive = async ({ full, label = 'figure', projectName = '' }) => {
+/* ── UNE FIGURE = UN FICHIER (le nom déposé sur le cloud) ─────────────────────
+
+   « the same image whatever graph I click ». Le nom du fichier déposé n'était
+   fait QUE du libellé (`sanitizeSlug(label)`) — et le libellé d'une capture est
+   le TITRE de sa section : les graphes de « 1D Histogram (Data Analysis) »
+   s'appellent donc tous pareil, comme deux canvas nommés « Canvas 18/09/2026 ».
+   Or l'envoi ÉCRASE le fichier qui porte déjà ce nom dans le dossier (voir
+   uploadDriveFileToFolderOnce : il cherche `name='…'` AVANT d'écrire, pour ne
+   pas empiler des doublons). La seconde capture remplaçait donc la première :
+   toutes les entrées de cette section pointaient vers LE MÊME fichier — la
+   même image partout, quel que soit le graphe cliqué — et, comme la fusion des
+   listes reconnaît une figure à son id de fichier (driveIdOfLibraryItem),
+   plusieurs figures distinctes finissaient même par n'en faire qu'une.
+
+   Le nom porte donc, APRÈS le libellé lisible, une empreinte COURTE de
+   l'identité de la figure :
+
+       1D_Histogram_Data_Analysis-1f3k9a2b.svg
+
+   Deux figures différentes ne peuvent plus se recouvrir. L'empreinte est STABLE
+   pour une même figure (le même graphe de la même page, la même composition de
+   canvas) : une re-capture, un « 💾 Save canvas » répété ou un « ☁ Save to
+   Drive » réécrivent bien LEUR fichier au lieu d'en empiler un nouveau.
+
+   Sans identité connue (une image sans origine, un appelant qui n'en fournit
+   pas), le nom reste celui d'avant : rien ne change pour ces envois-là. PUR. */
+
+/** Empreinte courte (base 36) d'une chaîne — même famille que le hash djb2 de
+ *  driveUpload (payloadTagOf), assez courte pour un nom de fichier. */
+export const fileTagOf = (s) => {
+  let h = 5381;
+  const t = String(s || '');
+  for (let i = 0; i < t.length; i += 1) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+};
+
+/** L'identité de FICHIER d'une figure : la clé de composition d'un canvas,
+ *  sinon l'origine d'une capture (expérience + instance + graphe). `''` quand
+ *  rien de stable n'est connu — le nom reste alors le libellé seul. PUR. */
+export const figureFileIdentity = ({ src = null, canvasData = null } = {}) => {
+  const canvas = canvasKeyOfEntry({ canvasData });
+  if (canvas) return `canvas:${canvas}`;
+  const s = src && typeof src === 'object' ? src : null;
+  if (!s) return '';
+  const where = String(s.elementKey || s.elementLabel || '').trim();
+  if (!where) return '';
+  const who = String(s.testId || s.testName || '').trim();
+  const when = String(s.instanceName || s.date || '').trim();
+  return [who, when, where].join('|');
+};
+
+/** Le nom du fichier déposé pour une figure : `<libellé>[-<empreinte>].<ext>`. PUR. */
+export const figureFileName = (label, ext, identity = '') => {
+  const base = sanitizeSlug(label) || 'figure';
+  const tag = String(identity || '').trim() ? `-${fileTagOf(identity)}` : '';
+  return `${base}${tag}.${ext}`;
+};
+
+export const uploadFigureToDrive = async ({ full, label = 'figure', projectName = '', identity = '' }) => {
   lastFigureDriveError = '';
   // L'information « mis en file de reprise ? » est consommée par la tentative
   // précédente : la vider ici garantit que le compte-rendu lu juste après
@@ -1359,7 +1427,9 @@ export const uploadFigureToDrive = async ({ full, label = 'figure', projectName 
   const isSvg = mime === 'image/svg+xml' || src.includes('<svg');
   const extByMime = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/svg+xml': 'svg' };
   const ext = isSvg ? 'svg' : (extByMime[mime] || 'png');
-  const base = sanitizeSlug(label) || 'figure';
+  // Le nom porte l'identité de la figure (voir « UNE FIGURE = UN FICHIER ») :
+  // deux graphes du même titre ne s'écrasent plus l'un l'autre.
+  const name = figureFileName(label, ext, identity);
 
   // ── Nextcloud ──────────────────────────────────────────────────────────────
   if (getCloudProvider() === 'nextcloud') {
@@ -1372,7 +1442,7 @@ export const uploadFigureToDrive = async ({ full, label = 'figure', projectName 
     try {
       return await ncUploadFile({
         parts,
-        name: `${base}.${ext}`,
+        name,
         mimeType: isSvg ? 'image/svg+xml' : (mime || 'image/png'),
         file: src
       });
@@ -1392,7 +1462,7 @@ export const uploadFigureToDrive = async ({ full, label = 'figure', projectName 
     const ctx = { section: 'images' };
     if (projectName) ctx.project = projectName;
     return await uploadLocalFile({
-      name: `${base}.${ext}`,
+      name,
       mimeType: isSvg ? 'image/svg+xml' : (mime || 'image/png'),
       file: dataUrlToBlob(src),
       path: projectImagesFolderPath(projectName),
@@ -1733,7 +1803,14 @@ export const pushLibraryToDrive = async ({ scope = 'common', projectId = null, p
   for (const item of pending) {
     let drive = null;
     try {
-      drive = await uploadFigureToDrive({ full: item.full, label: item.label || 'figure', projectName });
+      // Même règle de nom que la publication (voir « UNE FIGURE = UN FICHIER ») :
+      // l'entrée garde son fichier, deux figures ne se recouvrent pas.
+      drive = await uploadFigureToDrive({
+        full: item.full,
+        label: item.label || 'figure',
+        projectName,
+        identity: figureFileIdentity({ src: item.src, canvasData: item.canvasData })
+      });
     } catch { drive = null; }
     const url = (drive && drive.id && (drive.driveUrl || drive.url)) || '';
     if (!url) {
