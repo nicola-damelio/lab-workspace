@@ -15,6 +15,8 @@ import { suggestDriveFileName, canonicalExperimentPath, sanitizeSlug } from '../
 import { uploadLocalFile, getDriveToken, archiveFileToDrive } from '../utils/driveUpload';
 import { storeJson, loadJson } from '../utils/pdbStore';
 import { blobStore } from '../utils/blobStore';
+import { archiveRestoreJson, isMissingValue, restoreJsonFor, restoreStems } from '../utils/driveRestore';
+import { useDriveAutoRestore } from './useDriveAutoRestore';
 import {
   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, CARBON_RANGE_DB,
   SS_CORRECTIONS, SS_META, DNA_FORM_OFFSETS, SUGAR_ANOMER_OFFSETS,
@@ -48,6 +50,51 @@ const downsampleSpectrum = (xs, ys, ysImag, maxPts = 4000) => {
   }
   return { xs: outX, ys: outY, ysImag: outI };
 };
+
+/* ── Copie de RÉFÉRENCE du spectre 1D sur le Drive ─────────────────────────
+   Le document du dataset ne peut pas porter un spectre complet (limite
+   Firestore ~1 Mo) : compressDatasetForSave finit par le remplacer par le
+   marqueur « […] omitted ». La version plein format est donc archivée sur le
+   Drive en JSON gzip, dans le dossier canonique de l'instance (le même que les
+   fichiers bruts de l'import Bruker), et le test n'en garde qu'un pointeur de
+   ~80 octets (`nmr1dDrive`) qui voyage avec le dataset — donc d'un poste à
+   l'autre. Sur un poste vierge, la restauration retrouve le fichier par son
+   NOM (`<instance>_nmr1d_restore.json.gz`) : ni la cache IndexedDB ni le
+   registre local du navigateur ne sont nécessaires. */
+const NMR1D_RESTORE_KIND = 'nmr1d';
+const nmr1dDriveCtx = (test = {}, instance = '') => ({
+  project: (test.projectNames || [])[0] || '',
+  test: test.name || '',
+  scientist: test.operator || '',
+  section: 'Data',
+  subsection: 'Bruker 1r',
+  instance: instance || test.instanceName || ''
+});
+/* Pointeurs de restauration en attente d'écriture : l'archivage se termine
+   parfois APRÈS un changement d'onglet, et le NMR n'a pas d'écriture ciblée
+   (`updateInstance`). Le pointeur est donc mis de côté puis posé sur
+   l'instance dès qu'elle redevient active — au pire, la recherche par nom
+   retrouve le fichier. */
+const nmr1dPendingRefs = new Map();
+
+/** Archive la copie de référence du spectre 1D et rend son pointeur
+ *  (`{ id, name, url, driveUrl, at }`), ou null quand le Drive n'est pas
+ *  joignable — un import ne doit JAMAIS échouer pour cette raison. */
+const archiveNmr1dSpectrum = async ({ test, instance, fullSpec, source = {} }) => (
+  archiveRestoreJson({
+    kind: NMR1D_RESTORE_KIND,
+    suffix: NMR1D_RESTORE_KIND,
+    stem: instance,
+    data: {
+      spectrum: fullSpec,
+      instanceName: instance || '',
+      source
+    },
+    ctx: nmr1dDriveCtx(test, instance)
+  })
+);
+
+
 // ================= RDKit Auto-Loader & Singleton =================
 const _rdkitListeners = new Set();
 let _rdkitStatus = 'loading'; 
@@ -5786,6 +5833,98 @@ export const DataSection = ({ ctx }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTest.id, activeTest.nmr1dSpectrum && activeTest.nmr1dSpectrum.fullStore]);
 
+  // ── RESTAURATION AUTOMATIQUE DU SPECTRE DEPUIS LE DRIVE ──────────────────
+  // (mécanisme général : src/utils/driveRestore.js + useDriveAutoRestore.js)
+  // Le spectre vit dans le document du dataset, qui ne peut PAS le porter en
+  // entier : compressDatasetForSave le remplace par un marqueur quand il faut
+  // faire de la place, et la copie plein format n'existe alors que dans la
+  // cache du navigateur qui a importé. Le Drive est donc la copie de
+  // RÉFÉRENCE : à l'ouverture de la page, un spectre manquant est
+  // re-téléchargé TOUT SEUL (autre poste, cache vidée, données retirées par la
+  // limite Firestore) puis réinjecté ici et dans la cache — l'utilisateur n'a
+  // rien à faire, et rien ne dépend de la cache du navigateur.
+  const nmrActiveIdRef = useRef(activeTest.id);
+  nmrActiveIdRef.current = activeTest.id;
+
+  const nmr1dDefaultStems = () => restoreStems(
+    activeTest.instanceName,
+    activeTest.nmrFileTitle,
+    Array.isArray(activeTest.instrumentalDatasets) && activeTest.instrumentalDatasets[0]
+      ? activeTest.instrumentalDatasets[0].name : ''
+  );
+
+  const nmr1dDriveMissing = async () => {
+    const spec = activeTest.nmr1dSpectrum;
+    if (isMissingValue(spec)) return true;                 // absent, ou marqueur « omitted »
+    if (typeof spec === 'object' && spec.fullStore) {
+      // La copie d'affichage est là : la version PLEIN FORMAT (zoom, « Chart
+      // Parameters », calibrage) est-elle dans CE navigateur ?
+      const full = await loadJson(NMR_SPECTRUM_KEY(activeTest.id)).catch(() => null);
+      return !(full && Array.isArray(full.xs) && full.xs.length);
+    }
+    return false;
+  };
+
+  const restoreNmr1dFromDrive = async () => {
+    const pointer = activeTest.nmr1dDrive || null;
+    const stems = (pointer && Array.isArray(pointer.stems) && pointer.stems.length
+      ? pointer.stems
+      : nmr1dDefaultStems());
+    const found = await restoreJsonFor({
+      kind: NMR1D_RESTORE_KIND, suffix: NMR1D_RESTORE_KIND, stems,
+      ctx: nmr1dDriveCtx(activeTest), pointer
+    });
+    if (!found) {
+      return {
+        ok: false,
+        message: '⚠️ The 1D spectrum is not in this browser and no copy was found on Google Drive. Connect Google Drive, then re-import the Bruker folder: the raw files AND the spectrum are archived at import.'
+      };
+    }
+    const full = found.data && found.data.spectrum;
+    if (!full || !Array.isArray(full.xs) || !Array.isArray(full.ys) || !full.xs.length) {
+      return { ok: false, message: `⚠️ The spectrum copy found on Google Drive (${found.name}) is unreadable — re-import the Bruker folder.` };
+    }
+    // La cache du navigateur d'abord : le rendu (zoom, paramètres de tracé) lit
+    // la version plein format, pas la copie d'affichage.
+    await storeJson(NMR_SPECTRUM_KEY(activeTest.id), full);
+    setFullNmrSpec(full);
+    const small = downsampleSpectrum(full.xs, full.ys, full.ysImag);
+    updateActiveTest({
+      nmr1dSpectrum: {
+        ...small,
+        meta: full.meta,
+        title: full.title || found.data.instanceName || 'Imported 1r',
+        calibration: Number(full.calibration) || 0,
+        phaseDeg: Number(full.phaseDeg) || 0,
+        phase1Deg: Number(full.phase1Deg) || 0,
+        fullStore: true
+      },
+      nmr1dDrive: {
+        ...(activeTest.nmr1dDrive || {}),
+        id: found.id, name: found.name, at: Date.now(), stems, restoredAt: Date.now()
+      }
+    });
+    return { ok: true, message: `✅ Spectrum restored from Google Drive (${found.name}).` };
+  };
+
+  const nmr1dRestore = useDriveAutoRestore({
+    kind: NMR1D_RESTORE_KIND,
+    testId: activeTest.id,
+    missing: nmr1dDriveMissing,
+    restore: restoreNmr1dFromDrive
+  });
+
+  // Pointeur d'archivage arrivé APRÈS un changement d'onglet : il est posé sur
+  // l'instance dès qu'elle redevient active. (Le pointeur n'est qu'un raccourci
+  // de recherche : la restauration marche aussi sans lui, par le nom du fichier.)
+  useEffect(() => {
+    const pending = nmr1dPendingRefs.get(activeTest.id);
+    if (!pending) return;
+    nmr1dPendingRefs.delete(activeTest.id);
+    updateActiveTest(pending);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTest.id]);
+
   // ---- 1D spectrum calibration & phase state ----
   const [calibPicking, setCalibPicking] = useState(false);
   const [calibPickedPpm, setCalibPickedPpm] = useState(null);
@@ -6141,6 +6280,36 @@ export const DataSection = ({ ctx }) => {
     updateActiveTest(updates);
     setBrukerZoomDom(null);
     setCalibPickedPpm(null);
+
+    // Copie de RÉFÉRENCE sur le Drive (JSON gzip) : c'est elle qui permet de
+    // retrouver ce spectre depuis un autre poste, et c'est pourquoi l'import
+    // n'est pas terminé tant qu'elle n'est pas lancée. Le pointeur minuscule
+    // qui l'accompagne voyage avec le dataset ; s'il arrive après un changement
+    // d'onglet, il attend son instance (nmr1dPendingRefs).
+    const archiveStem = updates.instanceName || activeTest.instanceName
+      || parsed.datasetName || parsed.filename || NMR1D_RESTORE_KIND;
+    const archiveTargetId = activeTest.id;
+    void (async () => {
+      const pointer = await archiveNmr1dSpectrum({
+        test: activeTest,
+        instance: archiveStem,
+        fullSpec,
+        source: {
+          title: parsed.fileTitle || '',
+          datasetName: parsed.datasetName || '',
+          expno: parsed.expNum || ''
+        }
+      });
+      if (!pointer || !pointer.id) return;
+      const patch = {
+        nmr1dDrive: {
+          ...pointer,
+          stems: restoreStems(archiveStem, activeTest.instanceName, parsed.datasetName)
+        }
+      };
+      if (nmrActiveIdRef.current === archiveTargetId) updateActiveTest(patch);
+      else nmr1dPendingRefs.set(archiveTargetId, patch);
+    })();
   };
 
   // Folder Import logic
@@ -6255,8 +6424,12 @@ export const DataSection = ({ ctx }) => {
     applyNmrBruker(selected[0].parsed, selected[0].filename);
 
     if (selected.length > 1 && ctx.setTests) {
-       ctx.setTests(prev => {
-         const newTests = [];
+       // Les clones sont construits AVANT l'écriture (un updater de setTests
+       // doit rester SANS effet de bord) : leurs ids sont connus du premier
+       // coup, ce qui permet de rattacher à chacun son pointeur de restauration
+       // Drive — la copie de référence du spectre.
+       const clones = [];
+       {
          for (let i = 1; i < selected.length; i++) {
            const p = selected[i].parsed;
            const cloned = JSON.parse(JSON.stringify(activeTest));
@@ -6267,6 +6440,31 @@ export const DataSection = ({ ctx }) => {
              const small = downsampleSpectrum(fullSpec.xs, fullSpec.ys, fullSpec.ysImag);
              cloned.nmr1dSpectrum = { ...small, meta: fullSpec.meta, title: fullSpec.title, calibration: 0, phaseDeg: 0, phase1Deg: 0, fullStore: true };
              storeJson(NMR_SPECTRUM_KEY(cloned.id), fullSpec);
+
+             // Copie de RÉFÉRENCE du spectre sur le Drive + pointeur (il sera
+             // posé sur cette condition dès qu'elle sera ouverte : voir
+             // nmr1dPendingRefs et l'effet du même nom). Sans elle, un autre
+             // poste ne retrouverait que les fichiers bruts.
+             const cloneId = cloned.id;
+             const cloneStem = cloned.instanceName || p.datasetName || NMR1D_RESTORE_KIND;
+             void (async () => {
+               const pointer = await archiveNmr1dSpectrum({
+                 test: cloned,
+                 instance: cloneStem,
+                 fullSpec,
+                 source: {
+                   title: p.fileTitle || '',
+                   datasetName: p.datasetName || '',
+                   expno: p.expNum || ''
+                 }
+               });
+               if (!pointer || !pointer.id) return;
+               const patch = {
+                 nmr1dDrive: { ...pointer, stems: restoreStems(cloneStem, p.datasetName) }
+               };
+               if (nmrActiveIdRef.current === cloneId) updateActiveTest(patch);
+               else nmr1dPendingRefs.set(cloneId, patch);
+             })();
            }
            // Same auto-fill as the first import: Experimental Conditions title +
            // Instrumental Setup dataset row (experiment number + dataset name).
@@ -6290,10 +6488,10 @@ export const DataSection = ({ ctx }) => {
                }
              ];
            }
-           newTests.push(cloned);
+           clones.push(cloned);
          }
-         return [...prev, ...newTests];
-       });
+       }
+       ctx.setTests(prev => [...prev, ...clones]);
     }
 
     setPendingSpectra([]);
@@ -6953,7 +7151,30 @@ let dom = brukerZoomDom || xFull;
         <div className="flex items-center justify-between flex-wrap gap-2">
           <h4 className="text-sm font-bold text-sky-900">{String.fromCodePoint(0x1F4E5)} Bruker Import — 1r processed spectrum (ppm axis)</h4>
           {activeTest.nmr1dSpectrum && Array.isArray(activeTest.nmr1dSpectrum.xs) && activeTest.nmr1dSpectrum.xs.length > 0 && <span className="text-[9px] bg-green-100 text-green-800 px-2 py-0.5 rounded font-bold">Spectrum loaded</span>}
+          {!(activeTest.nmr1dSpectrum && Array.isArray(activeTest.nmr1dSpectrum.xs) && activeTest.nmr1dSpectrum.xs.length > 0) && (
+            <button type="button" onClick={() => nmr1dRestore.attempt('manual')} disabled={nmr1dRestore.status === 'restoring'}
+              title="Download the archived copy of this spectrum from Google Drive (it is saved automatically at import) — it also happens by itself when the page opens"
+              className="text-[10px] font-bold bg-white border border-sky-300 text-sky-700 hover:bg-sky-100 px-2 py-0.5 rounded-md shadow-sm disabled:opacity-50">
+              {nmr1dRestore.status === 'restoring' ? '⬇️ Downloading…' : '⬇️ Restore from Drive'}
+            </button>
+          )}
         </div>
+
+        {(nmr1dRestore.status === 'restoring' || nmr1dRestore.message) && (
+          <div className={`text-[11px] font-semibold rounded-lg px-3 py-1.5 border ${nmr1dRestore.status === 'restored'
+            ? 'bg-green-50 border-green-200 text-green-800'
+            : nmr1dRestore.status === 'failed'
+              ? 'bg-amber-50 border-amber-200 text-amber-800'
+              : 'bg-sky-50 border-sky-200 text-sky-800'}`}>
+            {nmr1dRestore.status === 'restoring'
+              ? '⬇️ The spectrum is not in this browser — restoring the archived copy from Google Drive…'
+              : nmr1dRestore.message}
+            {nmr1dRestore.status === 'failed' && (
+              <button type="button" onClick={() => nmr1dRestore.attempt('manual')}
+                className="ml-2 underline font-bold">Try again</button>
+            )}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="bg-white border border-sky-200 rounded-lg p-3 flex flex-col gap-2">

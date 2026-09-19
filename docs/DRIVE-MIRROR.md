@@ -424,3 +424,80 @@ retrouve par son nom et enregistre son identifiant (`projects/<projet>`, voir
 Sur le Drive, après un renommage de dataset, il ne doit y avoir **qu'un seul**
 dossier portant ce titre ; après une suppression, le dossier doit être dans la
 **corbeille** et ne jamais réapparaître à l'ouverture suivante.
+
+## Restauration automatique : le Drive est la copie de référence
+
+### Le défaut
+
+Une donnée trop grosse pour le document du dataset (spectre 1D complet,
+événements FCS, trajectoire MD, structures de docking, vidéo…) n'était **pas
+perdue** : elle vivait dans la cache du navigateur (IndexedDB / localStorage) et
+les fichiers bruts sur le Drive. Mais la cache est **par navigateur et par
+poste** : sur un autre ordinateur, ou après un nettoyage, la page affichait
+« vide » alors que les données existaient. Pire, `compressDatasetForSave`
+(App.jsx) retire les valeurs lourdes qui dépassent le budget Firestore et les
+remplace par un marqueur texte
+(`[nmr1dSpectrum omitted — kept in browser cache / Drive or re-uploadable]`) :
+le marqueur n'est pas une donnée, c'est un aveu d'absence.
+
+Rien ne doit donc **dépendre** de la cache : la cache ne sert qu'à éviter un
+téléchargement, jamais à justifier une absence.
+
+### Le mécanisme (un seul, pour tous les modules)
+
+`src/utils/driveRestore.js` (logique + entrées/sorties) et
+`src/components/useDriveAutoRestore.js` (déclencheur React) :
+
+1. **ÉCRITURE** — au moment où la donnée est produite, le module en archive une
+   copie JSON gzip sur le Drive, dans le dossier canonique de l'instance
+   (`projects/<projet>/<expérience>/<instance>/data/…`), sous un nom
+   **déterministe** : `<instance>_<type>_restore.json.gz`
+   (`Sample_1_nmr1d_restore.json.gz`). Le test ne garde qu'un **pointeur**
+   minuscule (`nmr1dDrive = { id, name, stems }`) qui voyage avec le dataset,
+   donc d'un poste à l'autre.
+2. **LECTURE** — à l'ouverture de la page, si la donnée manque (absente, vide,
+   remplacée par un marqueur, ou présente sans sa copie plein format), la copie
+   est re-téléchargée **toute seule** puis réinjectée dans le test et dans la
+   cache. Le portillon habituel s'applique : **une tentative par expérience et
+   par session**, plus une reprise automatique dès que le Drive est connecté
+   (`lab:drive-connected`), plus un bouton « ⬇️ Restore from Drive » comme repli
+   explicite.
+
+### Où le fichier est cherché (dans cet ordre)
+
+| # | Source | Marche sur un autre poste ? |
+|---|--------|-----------------------------|
+| a | le pointeur du test (id exact) | oui (il voyage dans le dataset) |
+| b | le registre local des envois | non (il est dans `localStorage`) |
+| c | une recherche par **nom** sur le Drive | **oui** — c'est elle qui sauve un poste vierge |
+
+Le même nom sert de clé : `isRestoreFileName()` n'accepte que
+`<stem>_<type>_restore.json(.gz)`, donc le spectre d'une autre condition
+(`Sample_10`) ou d'un autre type de mesure (ssNMR) n'est jamais restauré à la
+place d'un spectre 1D. Un fichier tombé dans la **corbeille** Drive est d'abord
+remis en place (ses octets sont intacts). Un fichier dont le `kind` ne
+correspond pas est **refusé**. La lecture ne résout (donc ne crée) aucun
+dossier : une page ouverte ne sème pas d'arborescence fantôme.
+
+### Modules branchés
+
+* **NMR 1D** — `NMRSections.jsx` (`applyNmrBruker` + l'import dossier) archive la
+  copie de référence du spectre complet ; la page la restaure seule. Le pointeur
+  d'un import arrivé pendant un changement d'onglet est posé sur la bonne
+  instance dès qu'elle est ouverte (`nmr1dPendingRefs`).
+* **Flow Cytometry** — avait déjà ce comportement (`handleRestoreFromDrive`) :
+  il reste le modèle, rien n'a régressé.
+* **MD** — `MDSections.jsx` rapatrie déjà structure et trajectoire du Drive
+  quand la cache locale est vide (`downloadArchivedMDFile`).
+* Restent à brancher sur le même mécanisme : **ssNMR**, **CD (Jasco)**,
+  **docking** (structures / molécules / CAPRI) et **microscopie** (vidéos).
+  La mécanique ne change pas : archiver une copie JSON au moment de l'import,
+  poser le pointeur sur le test, appeler `useDriveAutoRestore` dans la page.
+
+### Vérifier soi-même
+
+* `node _drive_restore_test.mjs` — la logique pure (marqueurs, noms, portillon,
+  refus des types croisés) et le cycle archivage → restauration sur un faux
+  Drive, y compris un pointeur périmé, un fichier mis à la corbeille et un autre
+  poste sans registre local ; puis le câblage du NMR 1D.
+

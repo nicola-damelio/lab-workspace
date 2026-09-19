@@ -85,6 +85,11 @@ export async function load(url, context, next) {
         'export const getDriveFileRegistry = () => (typeof M().getDriveFileRegistry === "function" ? M().getDriveFileRegistry() : {});',
         'export const registerDriveFile = (id, name, ctx, path) => (typeof M().registerDriveFile === "function" ? M().registerDriveFile(id, name, ctx, path) : undefined);',
         'export const trashDriveFile = async (id) => (typeof M().trashDriveFile === "function" ? M().trashDriveFile(id) : false);',
+        // Téléchargement et recherche Drive : la restauration automatique
+        // (utils/driveRestore.js) s'en sert ; un faux Drive les fournit pour que
+        // le mécanisme soit vérifié de bout en bout hors navigateur.
+        'export const driveFetch = async (path, opts) => (typeof M().driveFetch === "function" ? M().driveFetch(path, opts) : { ok: false, status: 501, json: async () => ({}), blob: async () => new Blob([]) });',
+        'export const untrashDriveFile = async (id) => (typeof M().untrashDriveFile === "function" ? M().untrashDriveFile(id) : false);',
         'export const renameDriveFile = async (id, name) => (typeof M().renameDriveFile === "function" ? M().renameDriveFile(id, name) : false);',
       ].join('\n'),
     };
