@@ -11,7 +11,7 @@ import { useFigureStyleSlot } from './FigureStyleTools';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, VIS_PALETTES, PER_ATOM_COLORS, seriesColorFor, chartBoxStyle, chartAspect, chartRatioBoxStyle, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf, tickTextProps, tickSize, fontFamilyOf, legendTextStyle, chartAspectImposed, tickColorOf
 } from '../utils/chartStyle';
 import { SplitChartStack, SplitLayoutControls, SplitToggle, splitRowBoxStyle, splitChartClass, splitChartMargin, splitLayoutOf, splitXAxisHidden, splitYAxisProps, withSplitLayout, hiddenSeriesOf, withoutSeries } from './SplitChartStack';
-import { suggestDriveFileName, driveFolderPath, sanitizeSlug } from '../utils/driveNaming';
+import { suggestDriveFileName, canonicalExperimentPath, sanitizeSlug } from '../utils/driveNaming';
 import { uploadLocalFile, getDriveToken, archiveFileToDrive } from '../utils/driveUpload';
 import { storeJson, loadJson } from '../utils/pdbStore';
 import { blobStore } from '../utils/blobStore';
@@ -6321,7 +6321,13 @@ export const DataSection = ({ ctx }) => {
           const instanceForFile = String(selected[i].filename || '').trim() || activeTest.instanceName || '';
           const expNum = p.expNum || `exp${i + 1}`;
           const expFiles = (Array.isArray(p.expFiles) && p.expFiles.length > 0) ? p.expFiles : [p.rawFile];
-          const basePath = driveFolderPath({ ...driveCtx, instance: instanceForFile });
+          // Le chemin de base est le chemin CANONIQUE de l'expérience
+          // (projects/<projet>/<expérience>/<instance>/Data/Bruker 1r) : l'ancien
+          // driveFolderPath omettait le conteneur « projects », donc le dossier
+          // de l'expérience était créé AU NIVEAU DU DATASET
+          // (<dataset>/<projet>/…), à côté de projects/ — l'expérience semblait
+          // n'appartenir à aucun projet.
+          const basePath = canonicalExperimentPath({ ...driveCtx, instance: instanceForFile });
           for (const f of expFiles) {
             const rel = (p.expDir && String(f.webkitRelativePath || '').startsWith(p.expDir))
               ? String(f.webkitRelativePath).slice(p.expDir.length).replace(/^\/+/, '')

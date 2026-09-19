@@ -39,6 +39,7 @@ OK   _docking_sanity.cjs  →  (no output)
 OK   _drive_mirror_test.mjs  →  ✅ 78 tests passés (le Drive est le miroir du programme : rien ne ressuscite)
 OK   _editor_layout_test.cjs  →  _editor_layout_test.cjs — 9 assertions passed
 OK   _esm_test_hook.mjs  →  (no output)
+OK   _experiment_drive_root_test.mjs  →  _experiment_drive_root_test: 41 passed
 OK   _fcs_restore_match_test.cjs  →  ✅ 7/7 checks passed
 OK   _figure_origin_test.cjs  →  ✅ 64/64 checks passed
 OK   _figure_placement_test.mjs  →  _figure_placement_test.mjs — 35 assertions passed
@@ -74,6 +75,7 @@ OK   _spectra_split_test.mjs  →  passed 238/238
 OK   _split_test.cjs  →  (no output)
 OK   _src_split_test.cjs  →  (no output)
 OK   _star_group_test.cjs  →  ✅ 34/34 checks passed
+OK   _storage_drive_layout_test.mjs  →  _storage_drive_layout_test: 82 passed
 OK   _sum_canvases.mjs  →  meta keys: kind, v, label, src, canvasData, imageName, savedAt
 OK   _sum_one_meta.mjs  →  usage: node _sum_one_meta.mjs "<fichier .meta.json>"
 OK   _sum_panels.mjs  →  arrows=0 shapes=0 letterStyle={"fontSize":30,"color":"#000000","bold":true}
@@ -81,4 +83,4 @@ OK   _ui_scale_test.cjs  →  ✅ 44/44 checks passed
 OK   _view_scroll_memory_test.cjs  →  ✅ 41/41 checks passed
 OK   _workspace_drive_test.mjs  →  ✅ 55 tests passés (l’espace de travail entier vit sur le Drive)
 OK   _workspace_keys_test.mjs  →  ✅ 37 tests passés (les clés du navigateur vivent aussi sur le Drive)
-total 83, failed 0
+total 85, failed 0

@@ -17,7 +17,9 @@ Lab Workspace/
 │   ├── projects/<projet>/           ← expériences, figures, <projet>_document.json, useful_files
 │   ├── protocols/<protocole>/
 │   ├── backups/                     ← instantanés HTML du dataset
-│   ├── storage/
+│   ├── storage/<storage>/images/<fichier>          ← image de référence du storage
+│   ├── storage/<storage>/boxes/<boîte>/images/<f>  ← photos de la boîte
+│   ├── storage/<storage>/boxes/<boîte>/label.pdf   ← étiquette de la boîte (automatique)
 │   └── publications/
 └── ...
 ```
@@ -34,6 +36,8 @@ jamais mélangés à cette mémoire.
 | Renommer un dataset | `<ancien titre>/` est **renommé** en `<nouveau titre>/` (jamais un second dossier) |
 | Renommer un projet | le dossier du projet **et** son `<projet>_document.json` sont renommés |
 | Supprimer une expérience / un protocole | le dossier de l'expérience / du protocole part à la corbeille |
+| Renommer un storage / une boîte | son dossier Drive (`storage/<storage>`, `storage/<storage>/boxes/<boîte>`) est **renommé** — une boîte ne garde jamais le « Test 74 » de sa création |
+| Modifier le contenu d'une boîte | `storage/<storage>/boxes/<boîte>/label.pdf` est réécrit (différé, ~2 s après la dernière modification) |
 | Créer ou modifier un dataset | son contenu est déposé dans `_workspace/datasets/ds_<id>.json` (différé, ~8 s après la dernière frappe) |
 | Modifier un texte, une figure, une liste | `_workspace/state.json` / `_workspace/keys.json` sont réécrits (différé) |
 
@@ -304,6 +308,99 @@ Le diagnostic correspondant est `_diag_library_move.mjs` (lecture seule : où
 vit chaque entrée, par portée, dans `_workspace/keys.json`), vérifié par
 `_library_move_test.mjs`.
 
+## Le rangement d'un storage et de ses boîtes
+
+Une **boîte de stockage n'est pas une expérience** : c'est un emplacement. Elle
+n'a donc ni niveau « instance » ni « section », et son dossier porte le **nom de
+la boîte** — jamais le « Test 74 » de sa création. Le rangement est :
+
+```
+<dataset>/storage/<storage>/images/<fichier>          ← image de référence du storage
+<dataset>/storage/<storage>/boxes/<boîte>/images/<f>  ← photos de la boîte (Box Photo, Inside Photo)
+<dataset>/storage/<storage>/boxes/<boîte>/label.pdf   ← étiquette de la boîte, réécrite automatiquement
+```
+
+Ce que cela change, geste par geste (`Storage.jsx`, `utils/storageDrive.js`,
+`utils/driveNaming.js`, `utils/boxLabel.js`) :
+
+* **les fichiers gardent leur nom** (`file1.jpg`, `file2.jpg`) : seul le dossier
+  est imposé par l'application (`DriveUploadButton nameFor`) ;
+* **renommer une boîte renomme son dossier** (`renameStorageBoxDriveFolder`) —
+  photos et `label.pdf` suivent le dossier, donc les liens déjà enregistrés dans
+  la boîte continuent de fonctionner ; renommer un storage renomme
+  `storage/<storage>` (`renameStorageDriveFolder`) ;
+* **l'étiquette est fabriquée et déposée toute seule** (`components/BoxLabelFile.jsx`,
+  `utils/boxLabelPdf.js`) : ~2 s après la dernière modification de la boîte,
+  `label.pdf` remplace le précédent. Rien n'est envoyé si le contenu n'a pas
+  changé (la boîte garde la signature du dernier envoi) ni si le Drive ne répond
+  pas — le bouton « Save to Drive now » réessaie à la demande. Le bouton
+  « Print Label » imprime, lui, la **sélection** de puits ; l'étiquette archivée
+  est la table complète des puits **remplis** (même table, même code) ;
+* **l'ancienne arborescence est rapatriée** (`tidyStorageFiles`) : à l'ouverture
+  d'un storage ou d'une boîte, les fichiers déjà envoyés sous
+  `storage/<boîte>/<instance>/image/…` ou `storage/<storage>/image/…` sont
+  **déplacés** — par identifiant de fichier, donc le lien enregistré ne change
+  pas — vers les dossiers ci-dessus. Un fichier déjà bien rangé n'est jamais
+  touché, et rien n'est déplacé quand le Drive est injoignable.
+
+Le diagnostic correspondant est `_storage_drive_layout_test.mjs` (chemins,
+contenu de l'étiquette, renommages et rangement, sur un faux Drive).
+
+## Pourquoi une expérience ne sème plus de dossier à la racine du dataset
+
+L'import Bruker d'un spectre 1D (NMR) ou d'un spectre solide (ssNMR) archive
+l'expérience entière sur le Drive. Il construisait le chemin visé avec
+`driveFolderPath`, c'est-à-dire l'ancienne forme
+
+```
+<projet>/<expérience>/<instance>/Data/…
+```
+
+qui n'a **pas** le conteneur `projects/`. Comme un `path` explicite est utilisé
+tel quel par `uploadLocalFile`, l'envoi créait
+
+```
+<dataset>/<projet>/…          ← ce qui arrivait : un dossier de projet À CÔTÉ de projects/
+```
+
+au lieu de
+
+```
+<dataset>/projects/<projet>/<expérience>/<instance>/data/Bruker_1r/<expno>/…
+```
+
+Conséquence visible (constatée le 19/09/2026) : « l'expérience n'appartient à
+aucun projet » sur le Drive — une seconde arborescence de projet poussait à la
+racine du dataset, dans un dossier que le registre partagé ne connaissait pas
+(donc pas de renommage / suppression cohérents pour ces fichiers).
+
+Ce qui a été corrigé :
+
+* `driveNaming.canonicalizeExperimentPath(path, ctx)` — **pur** : un chemin
+  d'expérience explicite reçoit la tête canonique `projects/<projet>`, l'ancienne
+  forme `<projet>/<expérience>/…` étant reconnue puis re-préfixée ; le nom du
+  projet est remplacé par celui du projet visé à chaque copie, donc un fichier
+  partagé entre plusieurs projets est déposé sous **chacun** d'eux. Un chemin
+  non-expérimental (bibliothèque, protocole, document de projet, storage) n'est
+  jamais touché ;
+* `driveUpload.uploadLocalFile` applique ce normalisateur à tout `path`
+  explicite : plus aucun appelant ne peut semer un dossier d'expérience à la
+  racine du dataset ;
+* les deux importateurs Bruker partent du chemin canonique
+  (`canonicalExperimentPath`), donc l'archive se range désormais au même endroit
+  que les envois du bouton « ⬆ Archive spectra to Drive » — y compris le niveau
+  `<data>/Bruker_1r` que l'ancienne forme omettait ;
+* `migrateTestImages.js` (« ⬆ Import test images from Drive ») visait lui aussi
+  l'ancienne forme : il passe par le même `folderPathOf`.
+
+L'import CD (Jasco) et les boutons « ⬆ Archive… » passaient déjà `ctx` seul —
+donc par `canonicalExperimentPath` — et n'ont jamais eu ce défaut.
+
+Réparer un Drive déjà touché : le dossier du projet posé à la racine du dataset
+n'a qu'à être **glissé dans `projects/`** (même nom). La résolution suivante le
+retrouve par son nom et enregistre son identifiant (`projects/<projet>`, voir
+`resolveDrivePathFromNames`) : aucun fichier à re-téléverser.
+
 ## Ce qui reste propre à un appareil (volontairement)
 
 * les jetons d'accès et la session de connexion ;
@@ -316,6 +413,11 @@ vit chaque entrée, par portée, dans `_workspace/keys.json`), vérifié par
 ## Vérifier soi-même
 
 * `node _drive_mirror_test.mjs` — suppressions / renommages / rien ne ressuscite.
+* `node _storage_drive_layout_test.mjs` — le rangement `storage/<storage>/boxes/<boîte>`
+  (chemins, étiquette automatique, renommages, rapatriement de l'ancienne arborescence).
+* `node _experiment_drive_root_test.mjs` — l'archive d'une expérience (import
+  Bruker NMR 1D / ssNMR, migration des images) atterrit sous `projects/`, jamais
+  dans un dossier de projet posé à la racine du dataset.
 * `node _workspace_drive_test.mjs` — l'espace de travail écrit, relu, fusionné.
 * `node _workspace_keys_test.mjs` — les clés du navigateur, et les secrets exclus.
 

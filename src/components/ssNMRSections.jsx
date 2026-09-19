@@ -15,7 +15,7 @@ import { SplitChartStack, SplitLayoutControls, SplitToggle, splitRowBoxStyle, sp
 export { CollapsibleSection };
 export { VIS_PALETTES };
 import { DriveUploadButton } from './DriveUpload';
-import { suggestDriveFileName, driveFolderPath, sanitizeSlug } from '../utils/driveNaming';
+import { suggestDriveFileName, canonicalExperimentPath, sanitizeSlug } from '../utils/driveNaming';
 import { uploadLocalFile, getDriveToken } from '../utils/driveUpload';
 
 const HAS_EB = typeof ErrorBar !== 'undefined';
@@ -1313,7 +1313,11 @@ export const Data = ({ ctx }) => {
           const instanceForFile = String(selected[i].filename || '').trim() || activeTest.instanceName || '';
           const expNum = p.expNum || `exp${i + 1}`;
           const expFiles = (Array.isArray(p.expFiles) && p.expFiles.length > 0) ? p.expFiles : [p.rawFile];
-          const basePath = driveFolderPath({ ...driveCtx, instance: instanceForFile });
+          // Chemin CANONIQUE de l'expérience (projects/<projet>/<expérience>/…).
+          // L'ancien driveFolderPath n'avait pas le conteneur « projects » : le
+          // dossier de l'expérience était créé au niveau du dataset, à côté de
+          // projects/, comme s'il n'appartenait à aucun projet.
+          const basePath = canonicalExperimentPath({ ...driveCtx, instance: instanceForFile });
           for (const f of expFiles) {
             const rel = (p.expDir && String(f.webkitRelativePath || '').startsWith(p.expDir))
               ? String(f.webkitRelativePath).slice(p.expDir.length).replace(/^\/+/, '')

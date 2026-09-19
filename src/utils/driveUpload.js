@@ -86,7 +86,7 @@ export const clearDriveToken = () => {
   } catch { /* ignore */ }
 };
 const FOLDER_NAME_KEY = 'labDriveFolderName';
-import { suggestDriveFileName, sanitizeSlug, driveFolderPath, DATASET_FOLDER_DIRS, datasetFolderSlug, canonicalPageSection, canonicalExperimentPath, projectNamesOf } from './driveNaming';
+import { suggestDriveFileName, sanitizeSlug, driveFolderPath, DATASET_FOLDER_DIRS, datasetFolderSlug, canonicalPageSection, canonicalExperimentPath, canonicalizeExperimentPath, projectNamesOf } from './driveNaming';
 import {
   readDriveMirror, writeDriveMirror, rememberDatasetFolder, rememberProjectFolder,
   rememberDatasetDir, findDatasetDirId,
@@ -1456,7 +1456,15 @@ export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path =
     // "Experimental Conditions" → "experimental conditions", …).
     let folderNames = null;
     if (Array.isArray(path) && path.length > 0) {
-      folderNames = [canonicalPageSection(path[0]), ...path.slice(1)];
+      /* Un chemin explicite d'EXPÉRIENCE doit commencer par le conteneur
+         canonique « projects/ » : l'ancienne forme (celle de driveFolderPath,
+         [<projet>, <expérience>, …], utilisée par l'import Bruker du NMR 1D et
+         du ssNMR) créait le dossier de l'expérience AU NIVEAU DU DATASET, à côté
+         de projects/ — comme si l'expérience n'était liée à aucun projet.
+         Voir driveNaming.canonicalizeExperimentPath. */
+      folderNames = canonicalizeExperimentPath(
+        [canonicalPageSection(path[0]), ...path.slice(1)], singleCtx
+      );
     } else if (singleCtx && typeof singleCtx === 'object' && String(singleCtx.test || '').trim()) {
       folderNames = canonicalExperimentPath(singleCtx);
     }

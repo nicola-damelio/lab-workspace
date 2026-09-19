@@ -1,10 +1,13 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { getDirectImageUrl, BOX_ROW_LABELS, DEF_COMPOUNDS } from '../data/constants';
 import { RichTextEditor } from './RichTextEditor';
 import { Icon } from './Icons';
 import { markAttachmentsDeleted } from '../utils/driveUpload';
 import { DriveUploadButton } from './DriveUpload';
-import { sanitizeSlug } from '../utils/driveNaming';
+import { sanitizeSlug, storageBoxImagesFolderPath, storageFileCtx, storageImagesFolderPath } from '../utils/driveNaming';
+import { boxLabelRows, boxLabelSignature, buildBoxLabelHtml, filledWells, labelWellsFor } from '../utils/boxLabel';
+import { renameStorageDriveFolder, tidyStorageFiles } from '../utils/storageDrive';
+import { BoxLabelFile } from './BoxLabelFile';
 
 // Helper to bypass Google Drive CORS blocks
 const getProxiedImage = (url) => {
@@ -16,12 +19,22 @@ const getProxiedImage = (url) => {
     return directUrl;
 };
 
+// Le fichier garde SON nom (file1.jpg, file2.jpg) : seule sa PLACE sur le Drive
+// (le dossier) est imposée par l'application. Un fichier sans nom retombe sur le
+// nom suggéré (Box_photo, Storage_image…).
+const originalBaseName = (file, fallback = 'file') => {
+    const raw = String((file && file.name) || '').trim();
+    return sanitizeSlug(raw.replace(/\.[^/.]+$/, '')) || fallback;
+};
+
 // One photo slot for a box: preview + upload-from-PC (saved to Drive) + remove.
 // Used twice per box — "Box Photo" (external, to locate it) and "Inside Photo"
-// (to see its contents). Both live under storage/<box>/[<instance>/]image/.
-// The preview is 2x the old size and clickable to open a full-screen zoom.
-const BoxPhotoSlot = ({ url, label, hint, path, suggestedName, onSet, onClear }) => {
+// (to see its contents). Both live under
+// storage/<storage>/boxes/<box>/images/ and keep the name of the file they came
+// from. The preview is clickable to open a full-screen zoom.
+const BoxPhotoSlot = ({ url, label, hint, storageName, boxName, kind, onSet, onClear }) => {
     const [zoom, setZoom] = useState(false);
+    const fallback = sanitizeSlug(`${boxName || 'box'}_${kind || 'photo'}`) || 'box_photo';
     return (
         <>
             <div className="flex items-center gap-3">
@@ -37,8 +50,10 @@ const BoxPhotoSlot = ({ url, label, hint, path, suggestedName, onSet, onClear })
                     <DriveUploadButton
                         label={url ? '⬆ Replace' : '⬆ Upload'}
                         accept="image/*"
-                        suggestedName={suggestedName}
-                        path={path}
+                        suggestedName={fallback}
+                        nameFor={(file) => originalBaseName(file, fallback)}
+                        path={storageBoxImagesFolderPath(storageName, boxName || 'box')}
+                        naming={storageFileCtx({ storage: storageName, box: boxName || 'box', title: fallback })}
                         onDone={({ dataUrl, drive }) => onSet(drive ? drive.driveUrl : dataUrl)}
                     />
                     {url && (
@@ -75,6 +90,9 @@ export const StorageModals = ({ storageModal, setStorageModal, storages, setStor
     const saveStorage = (e) => {
         e.preventDefault(); 
         const formData = new FormData(e.target);
+        // Le NOM du storage est aussi le nom de son dossier sur le Drive : le
+        // renommage doit renommer le dossier (voir utils/storageDrive.js).
+        const previousName = storageModal.id ? (storages.find(s => s.id === storageModal.id)?.name || '') : '';
         const newStorage = { 
             id: storageModal.id || 'st_' + Date.now(), 
             name: formData.get('name'), 
@@ -87,6 +105,9 @@ export const StorageModals = ({ storageModal, setStorageModal, storages, setStor
             setStorages(prev => prev.map(s => s.id === storageModal.id ? newStorage : s)); 
         } else { 
             setStorages(prev => [...prev, newStorage]); 
+        }
+        if (previousName && newStorage.name && previousName !== newStorage.name) {
+            renameStorageDriveFolder({ oldName: previousName, newName: newStorage.name }).catch(() => {});
         }
         setStorageModal(null);
     };
@@ -262,6 +283,18 @@ export const StorageList = ({ storages, tests, setStorageModal, setActiveStorage
 // --- STORAGE DETAIL VIEW ---
 export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setStorages, setCurrentModule, handlePrint, jumpToTest, setMoveModal, createEmptyTest, setActiveTestId }) => {
     const st = storages.find(s => s.id === activeStorageId);
+    const storageName = st ? String(st.name || '') : '';
+    const storageImageUrl = st ? String(st.imageUrl || '') : '';
+    /* L'image de référence a pu être envoyée AVANT cette structure
+       (storage/<storage>/image/…) : on la ramène sous storage/<storage>/images/.
+       Le déplacement se fait par identifiant de fichier, donc le lien enregistré
+       dans le storage ne change pas. */
+    useEffect(() => {
+        if (!storageImageUrl || !storageName) return;
+        tidyStorageFiles({ storage: storageName, urls: [storageImageUrl] })
+            .then((moved) => { if (moved > 0) console.info(`Storage image moved into ${storageImagesFolderPath(storageName).join('/')}`); })
+            .catch(() => {});
+    }, [storageImageUrl, storageName]);
     if (!st) return <div className="p-6">Storage not found.</div>;
     
     const boxesInStorage = tests.filter(t => t.type === 'plate-9x9box' && t.storageId === st.id);
@@ -309,7 +342,9 @@ export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setS
                         label={st.imageUrl ? '⬆ Replace image' : '⬆ Upload image'}
                         accept="image/*"
                         suggestedName={sanitizeSlug(st.name) + '_image'}
-                        path={['storage', st.name, 'image']}
+                        path={storageImagesFolderPath(st.name)}
+                        naming={storageFileCtx({ storage: st.name, title: sanitizeSlug(st.name) + '_image' })}
+                        nameFor={(file) => originalBaseName(file, sanitizeSlug(st.name) + '_image')}
                         onDone={({ dataUrl, drive }) =>
                             setStorages(prev => prev.map(s => s.id === st.id ? { ...s, imageUrl: drive ? drive.driveUrl : dataUrl } : s))
                         }
@@ -388,6 +423,33 @@ export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setS
 
 // --- BOX DETAIL VIEW ---
 export const BoxDetail = ({ activeTest, updateActiveTest, storages, expandedGroups, setExpandedGroups, customCmpds, TestHeader, operators = [] }) => {
+    /* ── Étiquette de la boîte ───────────────────────────────────────────────
+       storage/<storage>/boxes/<boîte>/label.pdf est fabriquée et déposée sur le
+       Drive TOUT SEUL (voir BoxLabelFile) à partir de la table des puits REMPLIS
+       de la boîte : le PDF archivé ne dépend donc pas des clics de sélection,
+       alors que le bouton « Print Label » ci-dessous imprime la SÉLECTION. */
+    const boxStorageName = ((storages || []).find((s) => s.id === activeTest.storageId)?.name) || '';
+    const boxPosition = activeTest.storageIndex === null || activeTest.storageIndex === undefined
+      ? null
+      : activeTest.storageIndex + 1;
+    const labelRows = boxLabelRows(activeTest, filledWells(activeTest));
+    const labelSignature = boxLabelSignature({
+      storage: boxStorageName, position: boxPosition, box: activeTest.name || '', rows: labelRows
+    });
+    /* Les photos envoyées AVANT cette structure
+       (storage/<boîte>/<instance>/image/…) sont ramenées dans
+       storage/<storage>/boxes/<boîte>/images/ — le lien enregistré dans la boîte
+       ne change pas (déplacement par identifiant de fichier) et un fichier déjà
+       rangé au bon endroit n'est jamais touché. */
+    const boxPhotoKeys = [activeTest.boxImageUrl || '', activeTest.boxContentsImageUrl || ''].filter(Boolean).join('|');
+    useEffect(() => {
+        if (!boxPhotoKeys || !boxStorageName) return;
+        tidyStorageFiles({ storage: boxStorageName, box: activeTest.name || 'box', urls: boxPhotoKeys.split('|') })
+            .then((moved) => {
+                if (moved > 0) console.info(`Box files moved into ${storageBoxImagesFolderPath(boxStorageName, activeTest.name || 'box').join('/')}`);
+            })
+            .catch(() => {});
+    }, [boxPhotoKeys, boxStorageName, activeTest.name]);
     const getVal = (key, def) => expandedGroups[key] !== undefined ? expandedGroups[key] : def;
     const setVal = (key, val) => setExpandedGroups(p => {
         let current = p[key];
@@ -479,71 +541,15 @@ const printBoxLabel = () => {
       return;
     }
 
-    const safe = (v) => (v === null || v === undefined ? '' : String(v));
-
-    const storageName =
-      storages.find((s) => s.id === activeTest.storageId)?.name ||
-      activeTest.storageLabel ||
-      'Unassigned';
-
-    const posLabel =
-      activeTest.storageIndex !== null && activeTest.storageIndex !== undefined
-        ? activeTest.storageIndex + 1
-        : 'N/A';
-
-    let html = `<!DOCTYPE html><html><head><title>Label Print</title><style>
-        @page { size: 12cm 12cm; margin: 0; }
-        body { font-family: 'Inter', Arial, sans-serif; padding: 15px; font-size: 11px; color: #000; box-sizing: border-box; width: 12cm; height: 12cm; }
-        h3 { margin-top: 0; margin-bottom: 10px; font-size: 14px; border-bottom: 1px solid #000; padding-bottom: 5px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th, td { border: 1px solid #000; padding: 4px; text-align: left; font-size: 10px; }
-        th { background-color: #f3f4f6; }
-    </style></head><body>
-    <h3>Storage: ${safe(storageName)} (Pos: ${posLabel})</h3>
-    <p><strong>Box:</strong> ${safe(activeTest.name)}${
-      activeTest.instanceName ? ' - ' + safe(activeTest.instanceName) : ''
-    }</p>
-    <table>
-      <tr>
-        <th>Pos</th>
-        <th>Compound</th>
-        <th>Sample Owner</th>
-        <th>Solvent</th>
-        <th>Conc.</th>
-        <th>Vol.</th>
-        <th>Date</th>
-        <th>Weight</th>
-        <th>Notes</th>
-      </tr>`;
-
-    const sortedWells = [...selectedWells].sort((a, b) =>
-      a.r === b.r ? a.c - b.c : a.r - b.r
-    );
-
-    sortedWells.forEach(({ r, c }) => {
-      const d = getWellData(r, c);
-
-      const rowLabel =
-        BOX_ROW_LABELS && BOX_ROW_LABELS[r]
-          ? BOX_ROW_LABELS[r]
-          : String.fromCharCode(65 + r);
-
-      const pos = `${rowLabel}${c + 1}`;
-
-      html += `<tr>
-        <td>${pos}</td>
-        <td>${safe(d.compound)}</td>
-        <td>${safe(d.sampleOwner || d.operator)}</td>
-        <td>${safe(d.solvent)}</td>
-        <td>${safe(d.concentration)} ${safe(d.concUnit || 'µM')}</td>
-        <td>${safe(d.volume)} ${safe(d.volUnit || 'µL')}</td>
-        <td>${safe(d.date)}</td>
-        <td>${safe(d.weight)} ${safe(d.weightUnit || 'mg')}</td>
-        <td>${safe(d.description)}</td>
-      </tr>`;
+    /* La table imprimée est celle de l'étiquette (utils/boxLabel.js) — la MÊME
+       que celle déposée sur le Drive en label.pdf — et elle contient ici la
+       SÉLECTION (le bouton est désactivé sans sélection). */
+    const html = buildBoxLabelHtml({
+      storageName: boxStorageName || activeTest.storageLabel || 'Unassigned',
+      position: boxPosition,
+      boxName: activeTest.name || '',
+      rows: boxLabelRows(activeTest, labelWellsFor(activeTest, selectedWells))
     });
-
-    html += `</table></body></html>`;
 
     printWin.document.write(html);
     printWin.document.close();
@@ -571,8 +577,9 @@ const printBoxLabel = () => {
                         url={activeTest.boxImageUrl}
                         label="Box Photo (locate)"
                         hint="No photo"
-                        path={['storage', activeTest.name || 'box', activeTest.instanceName || '', 'image']}
-                        suggestedName={sanitizeSlug((activeTest.name || 'box') + (activeTest.instanceName ? '_' + activeTest.instanceName : '')) + '_photo'}
+                        storageName={boxStorageName}
+                        boxName={activeTest.name || 'box'}
+                        kind="photo"
                         onSet={(v) => updateActiveTest({ boxImageUrl: v })}
                         onClear={() => updateActiveTest({ boxImageUrl: '' })}
                     />
@@ -580,10 +587,21 @@ const printBoxLabel = () => {
                         url={activeTest.boxContentsImageUrl}
                         label="Inside Photo (contents)"
                         hint="No photo"
-                        path={['storage', activeTest.name || 'box', activeTest.instanceName || '', 'image']}
-                        suggestedName={sanitizeSlug((activeTest.name || 'box') + (activeTest.instanceName ? '_' + activeTest.instanceName : '')) + '_contents'}
+                        storageName={boxStorageName}
+                        boxName={activeTest.name || 'box'}
+                        kind="contents"
                         onSet={(v) => updateActiveTest({ boxContentsImageUrl: v })}
                         onClear={() => updateActiveTest({ boxContentsImageUrl: '' })}
+                    />
+                    <BoxLabelFile
+                        storageName={boxStorageName}
+                        boxName={activeTest.name || 'box'}
+                        position={boxPosition}
+                        rows={labelRows}
+                        signature={labelSignature}
+                        savedSignature={activeTest.boxLabelSignature || ''}
+                        savedUrl={activeTest.boxLabelUrl || ''}
+                        onSaved={({ url, signature }) => updateActiveTest({ boxLabelUrl: url, boxLabelAt: Date.now(), boxLabelSignature: signature })}
                     />
                 </div>
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap gap-4 items-center mb-6 no-print">

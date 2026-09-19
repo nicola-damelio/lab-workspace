@@ -7,6 +7,7 @@ import React, { lazy, useRef, useState, useEffect } from 'react';
 import { BoxDetail } from '../Storage';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES, EXPERIMENT_TYPES } from '../../data/testTypes';
 import { markAttachmentsDeleted, renameDriveFilesFor, deleteTestDriveFolder } from '../../utils/driveUpload';
+import { renameStorageBoxDriveFolder } from '../../utils/storageDrive';
 import { removeTestFcsBlobs } from '../../utils/fcsBlobStore';
 import { setSectionsCommand } from '../ui';
 import { testProjectAccess } from './projectsModule';
@@ -337,7 +338,20 @@ const TestHeader = (
                               // Rename the Drive folder even when the old name
                               // was EMPTY (never skip '').
                               if (before !== null && before !== activeTest.name) {
-                                renameDriveFilesFor({ field: 'test', oldValue: before, newValue: activeTest.name }).catch(() => {});
+                                /* Une BOÎTE de stockage n'est pas une
+                                   expérience : son dossier est
+                                   storage/<storage>/boxes/<nom>, donc c'est CE
+                                   dossier qu'il faut renommer (le nom « Test 74 »
+                                   de la création ne doit pas rester). */
+                                if (isBox) {
+                                  renameStorageBoxDriveFolder({
+                                    storage: ((storages || []).find((s) => s.id === activeTest.storageId)?.name) || '',
+                                    oldName: before,
+                                    newName: activeTest.name
+                                  }).catch(() => {});
+                                } else {
+                                  renameDriveFilesFor({ field: 'test', oldValue: before, newValue: activeTest.name }).catch(() => {});
+                                }
                               }
                               testNameBeforeEditRef.current = null;
                             }}

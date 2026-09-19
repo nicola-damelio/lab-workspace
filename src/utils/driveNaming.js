@@ -16,6 +16,10 @@
        protocols/<protocol>/<title>.<ext>
    A test that is not part of any project lives at:
        <test>/<instance>/<section>/<title>_<scientist>.<ext>
+   A storage and its boxes are NOT experiments (a box is a location):
+       storage/<storage>/images/<file>
+       storage/<storage>/boxes/<box>/images/<file>
+       storage/<storage>/boxes/<box>/label.pdf
    ========================================================================= */
 
 /** Shared slug-maker for folder and file names. */
@@ -65,12 +69,75 @@ export const projectSectionFolderAlias = (label) => {
   return PROJECT_SECTION_FOLDER_ALIASES[raw.toLowerCase()] || raw;
 };
 
+/* ── Le rangement d'un STORAGE et de ses BOÎTES ─────────────────────────────
+   Une boîte de stockage n'est PAS une expérience : c'est un EMPLACEMENT. Elle
+   ne suit donc pas l'architecture d'une expérience (ni « instance », ni
+   « section ») et son dossier porte le NOM de la boîte — jamais le numéro
+   « Test 74 » de sa création. Dans le dossier du dataset :
+
+       storage/<storage>/images/<fichier>          ← image de référence du storage
+       storage/<storage>/boxes/<boîte>/images/<f>  ← photos d'une boîte
+       storage/<storage>/boxes/<boîte>/label.pdf   ← étiquette d'une boîte
+
+   Un storage sans nom tombe dans le bac « unassigned » (le « _ » de tête du nom
+   canonique tombe à la création, exactement comme projects/_unassigned). */
+export const STORAGE_DIR = 'storage';
+export const STORAGE_BOXES_DIR = 'boxes';
+export const STORAGE_IMAGES_DIR = 'images';
+/** Nom du PDF d'étiquette d'une boîte (rangé dans le dossier de la boîte). */
+export const BOX_LABEL_FILE_NAME = 'label.pdf';
+
+/** Le nom de dossier d'un storage (« _unassigned » quand il n'a pas de nom). */
+const storageSlug = (name) => sanitizeSlug(name) || '_unassigned';
+
+/** Noms de dossiers Drive d'un storage : storage/<storage>. */
+export const storageFolderPath = (storageName) => [STORAGE_DIR, storageSlug(storageName)];
+
+/** storage/<storage>/images — l'image de référence du storage. */
+export const storageImagesFolderPath = (storageName) =>
+  [...storageFolderPath(storageName), STORAGE_IMAGES_DIR];
+
+/** storage/<storage>/boxes/<boîte> — le dossier d'UNE boîte. */
+export const storageBoxFolderPath = (storageName, boxName) => [
+  ...storageFolderPath(storageName), STORAGE_BOXES_DIR, sanitizeSlug(boxName) || 'box'
+];
+
+/** storage/<storage>/boxes/<boîte>/images — les photos d'une boîte. */
+export const storageBoxImagesFolderPath = (storageName, boxName) =>
+  [...storageBoxFolderPath(storageName, boxName), STORAGE_IMAGES_DIR];
+
+/** Contexte de nommage d'un fichier rangé sous un storage / une boîte : il sert
+ *  à la fois à RÉSOUDRE le dossier (driveFolderPath) et à tenir le REGISTRE des
+ *  fichiers (renommage, suppression, reprise d'envoi suivent le dossier).
+ *  `title` est le nom du fichier : un renommage de storage/boîte recalcule donc
+ *  le même nom et ne renomme pas le fichier. */
+export const storageFileCtx = ({ storage, box = '', title = '' }) => ({
+  storage, box, title, section: STORAGE_IMAGES_DIR
+});
+
+/** « image » (singulier, l'ancien nom de dossier) est le dossier « images ». */
+const storageSectionSlug = (raw) => {
+  const section = sanitizeSlug(canonicalPageSection(raw));
+  return section === 'image' ? STORAGE_IMAGES_DIR : section;
+};
+
+
 /** The Drive folder path (folder NAMES only) that mirrors the app schema:
  *  [project, test, instance, section] for test files — the instance comes right
  *  after the test and the SECTION (e.g. Data/Setup/Report) is the leaf folder;
  *  [project, section] for project documents; [protocols, <protocol>]
  *  for protocols (the folder is named after the protocol only). */
 export const driveFolderPath = (ctx = {}) => {
+  /* STORAGE / BOÎTES : un contexte { storage, box? } vise la structure
+     storage/<storage>/boxes/<boîte>/images (voir les helpers ci-dessus). L'ordre
+     est celui de la structure canonique — aucun niveau « instance ». */
+  if (ctx && typeof ctx === 'object' && ctx.storage !== undefined) {
+    const segs = storageFolderPath(ctx.storage);
+    if (String(ctx.box || '').trim()) segs.push(STORAGE_BOXES_DIR, sanitizeSlug(ctx.box));
+    const section = storageSectionSlug(ctx.section || ctx.pagesection || '');
+    if (section) segs.push(section);
+    return segs.filter(Boolean);
+  }
   if (!ctx || typeof ctx !== 'object') return [];
   if (ctx.protocol !== undefined) {
     // Protocols live in their own container, in a folder named after the
@@ -149,8 +216,13 @@ export const copyText = async (text) => {
    Subsections are created dynamically when a page section has them.
    ========================================================================= */
 
+/** Le conteneur canonique des EXPÉRIENCES : c'est le premier segment de tout
+ *  envoi d'expérience — projects/<projet>/<expérience>/… (voir
+ *  canonicalExperimentPath). */
+export const PROJECTS_CONTAINER = 'projects';
+
 /** The only sub-directories allowed directly inside a dataset folder. */
-export const DATASET_FOLDER_DIRS = ['projects', 'backups', 'protocols', 'storage', 'publications'];
+export const DATASET_FOLDER_DIRS = [PROJECTS_CONTAINER, 'backups', 'protocols', 'storage', 'publications'];
 
 /** Canonical dataset directory name (used for uploads AND backups, so a dataset
  *  never fragments into several sibling folders at the workspace root). */
@@ -212,6 +284,45 @@ export const canonicalExperimentPath = (ctx = {}) => {
   const subsection = canonicalSubSection(ctx.subsection || ctx.pagesubsection || '');
   if (subsection) segs.push(subsection);
   return segs.filter(Boolean);
+};
+
+/** Rétablit la tête CANONIQUE d'un chemin d'envoi d'EXPÉRIENCE.
+ *
+ *  Un `path` explicite peut arriver dans l'ancienne forme de driveFolderPath —
+ *      [<projet>, <expérience>, <instance?>, <section?>…]
+ *  — qui n'a PAS le conteneur « projects ». L'envoi créait alors un dossier au
+ *  NIVEAU DU DATASET (« <dataset>/<projet>/… ») à côté de projects/, comme si
+ *  l'expérience n'était liée à aucun projet (constaté sur l'import Bruker du
+ *  NMR 1D et du ssNMR : deux spectres importés dans une expérience d'un projet
+ *  laissaient le dossier du projet à la racine du dataset).
+ *
+ *  Un chemin DÉJÀ canonique est conservé : seul le nom du projet est remplacé
+ *  par celui du projet visé, donc un fichier partagé entre plusieurs projets est
+ *  déposé sous CHACUN d'eux (l'appelant boucle projet par projet).
+ *  Sans `ctx.test` (protocole, figure, document de projet, storage) le chemin
+ *  est rendu tel quel. PUR. */
+export const canonicalizeExperimentPath = (path, ctx = {}) => {
+  const segs = Array.isArray(path) ? path.filter(Boolean) : [];
+  if (segs.length === 0) return segs;
+  const test = String((ctx && ctx.test) || '').trim();
+  if (!test) return segs;
+  const projects = projectNamesOf(ctx);
+  const projectSeg = sanitizeSlug(projects[0] || '_unassigned');
+  if (segs[0] === PROJECTS_CONTAINER) {
+    // Déjà canonique : on ne remplace que le projet (envoi multi-projets).
+    return segs[1] ? [PROJECTS_CONTAINER, projectSeg, ...segs.slice(2)] : segs;
+  }
+  const testSeg = sanitizeSlug(test);
+  const projectSlug = projects.length ? sanitizeSlug(projects[0]) : '';
+  if (projectSlug && segs[0] === projectSlug && segs[1] === testSeg) {
+    // <projet>/<expérience>/… → projects/<projet visé>/<expérience>/…
+    return [PROJECTS_CONTAINER, projectSeg, ...segs.slice(1)];
+  }
+  if (segs[0] === testSeg) {
+    // <expérience>/… (ancienne forme sans projet, ou projet absent du chemin)
+    return [PROJECTS_CONTAINER, projectSeg, ...segs];
+  }
+  return segs;
 };
 
 /** Same as canonicalExperimentPath but returns the plain canonical page-section

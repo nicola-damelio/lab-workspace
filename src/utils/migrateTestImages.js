@@ -34,7 +34,18 @@ import {
   untrashDriveFile,
   uploadLocalFile
 } from './driveUpload';
-import { driveFolderPath, suggestDriveFileName, sanitizeSlug } from './driveNaming';
+import { driveFolderPath, canonicalExperimentPath, suggestDriveFileName, sanitizeSlug } from './driveNaming';
+
+/** Le chemin Drive RÉEL d'un contexte d'envoi : une EXPÉRIENCE passe par le
+ *  conteneur canonique `projects/` (canonicalExperimentPath → projects/<projet>/
+ *  <expérience>/…) ; les autres contextes (documents de projet, figures…)
+ *  gardent le routage historique. Passer par driveFolderPath pour une expérience
+ *  créait son dossier AU NIVEAU DU DATASET, à côté de projects/ (voir
+ *  driveNaming.canonicalizeExperimentPath). */
+const folderPathOf = (ctx) => {
+  const canonical = canonicalExperimentPath(ctx);
+  return canonical.length > 0 ? canonical : driveFolderPath(ctx);
+};
 
 /** Matches every Google-Drive URL form the app stores, capturing the file id.
  *  Consumes the scheme + any query/trailing junk (up to a quote/space) so the
@@ -240,7 +251,7 @@ export const previewTestDriveFiles = (tests) =>
         id: t.id || '',
         instanceName: effectiveInstanceName(t, tests),
         autoNamed: !named,
-        folder: ['Lab Workspace', '<dataset>', ...driveFolderPath(ctx)].join('/'),
+        folder: ['Lab Workspace', '<dataset>', ...folderPathOf(ctx)].join('/'),
         files: refs.map((r) => ({ title: r.title || '(link)', url: r.url }))
       };
     })
@@ -416,7 +427,7 @@ export const migrateTestDriveImages = async ({ tests, onProgress = () => {} } = 
     const first = refs[0];
     const ctx = first.ctx;
     const testName = (first.test && first.test.name) || '';
-    const folderPath = driveFolderPath(ctx);
+    const folderPath = folderPathOf(ctx);
     const folderLabel = folderPath.join('/');
     let newUrl = '';
     let status = '';
