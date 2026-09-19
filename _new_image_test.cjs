@@ -37,7 +37,7 @@ frag('[ImageBuilder] the empty-panel factory', IB, 'const blankObject = (letter)
 frag('[ImageBuilder] "+ Add Object" uses it', IB, 'const newObj = blankObject(nextLetter);');
 frag('[ImageBuilder] ...and the new panel gets selected', IB, 'setSelectedId(newObj.id);');
 frag('[new-image] the letter style of a new panel follows the GENERAL definition', IB,
-  "letterStyle: { fontSize: currentLetterPt(), color: currentLetterColor(), bold: currentLetterBold() },");
+  'letterStyle: letterStyleNow(),');
 
 // ===========================================================================
 // 2) "➕ New image": a blank figure with ONE panel ready for a capture

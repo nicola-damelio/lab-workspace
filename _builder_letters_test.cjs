@@ -176,10 +176,12 @@ check('…and also when every panel was cleared afterwards',
 check('the field still shows a panel size once a panel exists',
   currentLetterPt(setLetterSizeAllWithMemory({ objects: mixed, fallbackPt: 14 }, 18).objects, 'obj_B_1_0', 18), 18);
 
-// The panels added afterwards adopt the shared size, so a new panel never
-// breaks the uniform look of the figure.
-frag('[ImageBuilder] new panels adopt the shared size', IB,
-  "letterStyle: { fontSize: currentLetterPt(), color: currentLetterColor(), bold: currentLetterBold() },");
+// The panels added afterwards adopt the shared definition, so a new panel never
+// breaks the uniform look of the figure. Les QUATRE réglages généraux des
+// lettres (taille, couleur, gras, POLICE) sont écrits UNE fois, par
+// `letterStyleNow()` : ses trois appelants ne peuvent pas en oublier un.
+frag('[ImageBuilder] new panels adopt the shared definition', IB, 'letterStyle: letterStyleNow(),');
+frag('[ImageBuilder] …written once for every one of them', IB, 'const letterStyleNow = () => ({');
 frag('[ImageBuilder] the shared size helper', IB, 'const currentLetterPt = () => {');
 frag('[ImageBuilder] the shared setter writes to EVERY object', IB,
   'setObjects(prev => prev.map(o => ({ ...o, letterStyle: { ...(o.letterStyle || {}), fontSize: size } })));');
@@ -263,13 +265,71 @@ frag('[ImageBuilder] canvas toolbar: the letter bold', IB,
 frag('[ImageBuilder] fullscreen toolbar: the colour', IB, 'title="Colour of every panel letter (figure setting)"');
 frag('[ImageBuilder] fullscreen toolbar: the bold', IB, 'title="Bold for every panel letter (figure setting)"');
 frag('[ImageBuilder] the object window points at the canvas options', IB,
-  'automatic (by position) · size / colour / bold: canvas options');
+  'automatic (by position) · size / colour / bold / font: canvas options');
 checkTrue('…and no per-panel colour / bold is left there',
   !IB.includes('Letter Color') && !IB.includes('colour and bold are per panel'));
 checkTrue('a new panel adopts the general colour and bold',
-  IB.includes("letterStyle: { fontSize: currentLetterPt(), color: currentLetterColor(), bold: currentLetterBold() },"));
+  IB.includes('letterStyle: letterStyleNow(),'));
 checkTrue('the general definition travels with the saved canvas',
   IB.includes('if (cd.letterStyle) setLetterStyleDefaults((prev) => ({'));
+
+/* ══════════════════════════════════════════════════════════════════════════
+   4) LA POLICE DES LETTRES EST UNE DÉFINITION GÉNÉRALE, ELLE AUSSI
+   — « in the image builder I would like to be able to select the font for the
+   letters of the objects, to be chosen in the top bar, next to the character
+   size » : la liste offerte est celle du profil de figure / du format de
+   publication (FIGURE_FONT_CHOICES), elle se règle JUSTE À CÔTÉ DE LA TAILLE
+   (options du canvas ET barre du plein écran), et chaque lettre porte la police
+   EXPLICITEMENT — un export (PNG 300 DPI, SVG inséré) est rendu HORS du CSS de
+   la page, où une police héritée retomberait sur le serif du SVG.
+   ══════════════════════════════════════════════════════════════════════════ */
+// Miroir de setLetterFontAll / currentLetterFont (keep both in sync).
+const setLetterFontAll = (objects, font) => {
+  const f = String(font || '').trim();
+  return objects.map((o) => ({ ...o, letterStyle: { ...(o.letterStyle || {}), font: f } }));
+};
+const currentLetterFont = (objects, selectedId, fallback = '') => {
+  const sel = (objects || []).find((o) => o.id === selectedId);
+  const f = sel && sel.letterStyle ? String(sel.letterStyle.font || '').trim() : '';
+  if (f) return f;
+  const first = (objects || []).find((o) => o && o.letterStyle && String(o.letterStyle.font || '').trim());
+  return first ? String(first.letterStyle.font) : fallback;
+};
+check('one font change re-writes every panel letter',
+  setLetterFontAll(three, 'Georgia, serif').map((o) => o.letterStyle.font),
+  Array(3).fill('Georgia, serif'));
+check('…and leaves the size, the colour and the bold alone',
+  setLetterFontAll(three, 'Arial').map((o) => `${o.letterStyle.fontSize},${o.letterStyle.color},${o.letterStyle.bold}`),
+  ['14,#000000,true', '14,#000000,true', '14,#000000,true']);
+check('an object without a letterStyle is fixed up by the font too',
+  setLetterFontAll([{ id: 'legacy' }], 'Verdana, Geneva, sans-serif')[0].letterStyle.font,
+  'Verdana, Geneva, sans-serif');
+check('the control shows the selected panel font',
+  currentLetterFont([panel('A', 'x', 0, 0, { font: 'Georgia, serif' }), panel('B', 'y', 1, 0)], 'obj_A_0_0'),
+  'Georgia, serif');
+check('…the first panel when nothing is selected', currentLetterFont(three, null), '');
+check('…and the general value on an empty canvas', currentLetterFont([], null, 'Courier New'), 'Courier New');
+frag('[ImageBuilder] the general font helper', IB, 'const currentLetterFont = () => {');
+frag('[ImageBuilder] …its writer', IB, 'const setLetterFontAll = (font) => {');
+frag('[ImageBuilder] the writer only lets a real font stack in', IB,
+  'const f = normalizeFigureStyle({ fontFamily: font }).fontFamily;');
+frag('[ImageBuilder] the list is the one of the figure style / publication format', IB,
+  'FIGURE_FONT_CHOICES.map((f) => (');
+frag('[ImageBuilder] canvas toolbar: the letters font', IB, 'Letters font');
+frag('[ImageBuilder] the app default is a stack, not “whatever the browser does”', IB,
+  "const LETTER_FONT_APP = 'Inter, Arial, Helvetica, sans-serif';");
+frag('[ImageBuilder] the letters carry the font EXPLICITLY (an export has no CSS)', IB,
+  'fontFamily={letterFontCss(obj.letterStyle.font)}');
+frag('[ImageBuilder] …and the free texts of a panel follow its letters', IB,
+  'fontFamily={letterFontCss(tx.font || (obj.letterStyle || {}).font)}');
+frag('[ImageBuilder] the font is remembered for an empty canvas / a new panel', IB,
+  "const [letterFontFallback, setLetterFontFallback] = useState('');");
+frag('[ImageBuilder] the font travels with the saved canvas', IB,
+  'font: cd.letterStyle.font === undefined ? prev.font : normalizeFigureStyle({ fontFamily: cd.letterStyle.font }).fontFamily');
+checkTrue('…and a canvas saved before the font keeps the font of this computer',
+  IB.includes('if (cd.letterStyle && cd.letterStyle.font !== undefined) {'));
+checkTrue('…and the new panels take the four settings from one factory',
+  IB.includes("font: currentLetterFont()"));
 
 console.table(results);
 const failed = results.filter((r) => !r.ok);

@@ -60,7 +60,7 @@ const times = (hay, re) => (String(hay).match(re) || []).length;
 ok(!IB.includes('&& <PropertiesPanel'), 'le panneau d’objet n’est plus rendu comme un élément JSX (vue normale)');
 ok(!IB.includes('<PropertiesPanel isFloating'), '…ni en plein écran');
 has(IB, '{selectedObj && PropertiesPanel({})}', 'il est APPELÉ (vue normale) : ses éléments font partie de l’arbre du parent');
-has(IB, '? PropertiesPanel({ bar: true })', '…idem en plein écran, en mode barre');
+has(IB, '? PropertiesPanel({ bar: !dockIsSide })', '…idem en plein écran : en mode barre en haut / en bas, en colonne sur un côté');
 has(IB, 'const PropertiesPanel = ({ bar = false } = {}) => (', 'la signature porte le mode barre');
 ok(IB.indexOf('⚠️ IL EST APPELÉ COMME UNE FONCTION') > 0, 'la raison est écrite là où on lira la prochaine fois');
 has(IB, 'JAMAIS écrit `<PropertiesPanel />`', '…et le piège est nommé');
@@ -151,10 +151,24 @@ has(IB, "{panelTitle('Modify image')}", '…la colonne MODIFY IMAGE');
 has(IB, "{panelTitle('Panels & objects')}", '…et la colonne PANELS & OBJECTS (le panneau + ce qui est posé dessus)');
 ok(!IB.includes("bar ? 'order-"), '…et plus AUCUN `order-*` : l’ordre est celui des piles, plus celui du source');
 ok(!/panelCellCls\(bar, bar \?/.test(IB), '…ni de ligne qui déclare sa colonne à la main');
-has(IB, 'absolute inset-x-0 bottom-0 z-20 border-t border-slate-300 bg-white/95 shadow-2xl',
-  '…collée en BAS de la fenêtre, sur toute la largeur');
-has(IB, 'max-h-[38vh] overflow-y-auto custom-scrollbar px-2 py-1.5', '…et défilante au besoin (jamais la moitié de l’écran)');
-has(IB, '? PropertiesPanel({ bar: true })', 'le plein écran utilise la barre');
+/* LA FENÊTRE EST DOCKABLE : en bas (la place historique), en haut, ou d'un côté.
+   La place est celle de `panelDock` (utils/objectWindowDock.js) et le plein
+   écran la suit — la barre du bas n'est plus une barre ABSOLUE collée au bas de
+   la fenêtre (elle recouvrait le bas du canvas) : elle prend sa place dans le
+   flux, et le canvas garde tout le reste. */
+has(IB, "{panelDock === 'bottom' && (", 'en bas : la fenêtre se pose sous le canvas');
+has(IB, "className=\"shrink-0 border-t border-slate-300 bg-white/95 shadow-2xl max-h-[38vh] overflow-y-auto custom-scrollbar px-2 py-1.5\"",
+  '…en barre sur toute la largeur, défilante au besoin (jamais la moitié de l’écran)');
+has(IB, "{panelDock === 'top' && (", 'en haut : la même barre AU-DESSUS du canvas');
+has(IB, "{panelDock === 'left' && (", 'à gauche : une colonne le long du canvas');
+has(IB, "{panelDock === 'right' && (", '…comme à droite');
+has(IB, "{OBJECT_WINDOW_DOCK_CHOICES.map((c) => (", 'les quatre places sont offertes par l’en-tête de la fenêtre');
+has(IB, 'const choosePanelDock = (dock) => setPanelDock(saveObjectWindowDock(dock));',
+  '…et le choix est GARDÉ par le navigateur (jamais écrit dans une figure)');
+has(IB, 'const [panelDock, setPanelDock] = useState(() => readObjectWindowDock());',
+  'la place est relue au premier rendu');
+has(IB, 'const dockIsSide = objectWindowDockIsSide(panelDock);',
+  'un côté change la mise en page (colonne) et la forme de la fenêtre (`bar`)');
 /* LA FENÊTRE SE PLIE : son titre est le bouton (▾ / ▸) — repliée elle ne laisse
    qu’une ligne, et le canvas garde toute la hauteur. */
 has(IB, 'const [panelOpen, setPanelOpen] = useState(true);', 'la fenêtre de l’objet sait se replier (état du COMPOSANT)');
@@ -179,8 +193,8 @@ has(IB, "🌓 {figShadowOn ? 'Figure shadow ✓' : 'Figure shadow'}",
   '…d’un seul bouton, sur la ligne des figures');
 has(IB, 'Panel {selectedObj.letter || \'—\'}', 'l’en-tête est court : « Panel A », pas trois lignes');
 ok(!IB.includes('Object Properties'), '…et l’ancien titre « Object Properties » a disparu');
-has(IB, "letterStyle: { fontSize: currentLetterPt(), color: currentLetterColor(), bold: currentLetterBold() },",
-  'taille + couleur + gras des lettres : une définition GÉNÉRALE (options du canvas)');
+has(IB, "letterStyle: letterStyleNow(),",
+  'taille + couleur + gras + POLICE des lettres : une définition GÉNÉRALE (options du canvas)');
 has(IB, 'Letter colour', '…régée dans les options du canvas');
 has(IB, 'onChange={e => setLetterBoldAll(e.target.checked)} /> Letters bold', '…avec le gras juste à côté');
 

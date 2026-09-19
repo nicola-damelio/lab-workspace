@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   readLibrary, readProjectLibrary, readVisibleProjectLibrary, moveLibraryItem, reorderLibraryItem,
   renameLibraryItem, removeLibraryItem, renameProjectLibraryItem, removeProjectLibraryItem,
-  blobToDataUrl, publishLibraryFigure, resolveImageToDataUrl, localStorageHealthy,
+  blobToDataUrl, downscaleImage, publishLibraryFigure, resolveImageToDataUrl, localStorageHealthy,
   saveCanvasSnapshot, uploadFigureToDrive,
   countRecaptureDuplicates, removeRecaptureDuplicates,
   pushLibraryToDrive, pullLibraryFromDrive, localOnlyLibraryItems, mergeLibraryFromSnapshot,
@@ -36,7 +36,7 @@ import { loadProjects, saveProjectsRescued, genProjectId, projectAccessFor, visi
 import { getDriveRootName } from '../utils/driveUpload';
 import { projectImagesFolderLabel } from '../utils/driveNaming';
 import { queuePendingFigureScroll } from '../utils/pendingFigureScroll';
-import { figureStyleTag } from '../utils/figureStyle';
+import { figureStyleTag, normalizeFigureStyle } from '../utils/figureStyle';
 import {
   queueFigureRecaptures, figureRecaptureSummary, subscribeFigureRecapture, hasFreshFigureRecapture,
   stopFigureRecaptures
@@ -56,9 +56,27 @@ import {
   ADJUST_FIELDS, ADJUST_OPACITY, adjustValue, adjustSpec, adjustRecordOf, adjustFilterId, ADJUST_NEUTRAL
 } from '../utils/figureAdjust';
 import { getRenderableDriveUrl } from '../data/constants';
+import { FIGURE_FONT_CHOICES } from '../utils/chartStyle';
+import {
+  UPSCALE_FACTORS, UPSCALE_DEFAULT_FACTOR, UPSCALE_DEFAULT_STRENGTH, UPSCALE_KEY,
+  UPSCALE_MIN_STRENGTH, UPSCALE_MAX_STRENGTH, UPSCALE_MAX_PIXELS, clampUpscaleFactor, clampUpscaleStrength,
+  upscaleTargetSize, upscaleRecordOf, upscaleSummary, upscaleFactorLabel, enhanceRgbaInPlace
+} from '../utils/figureUpscale';
+import {
+  OBJECT_WINDOW_DOCK_CHOICES, objectWindowDockIsSide, readObjectWindowDock, saveObjectWindowDock
+} from '../utils/objectWindowDock';
 
 const ptToMm = (pt) => pt * 0.352778;
 const PX_PER_MM = 96 / 25.4; // CSS: 1 mm ≈ 3.78 px
+// LA POLICE DES LETTRES D'UN PANNEAU (A, B, C …) quand le canvas ne dit rien :
+// une PILE DE POLICES écrite EXPLICITEMENT sur chaque <text>, jamais « ce que
+// le navigateur fera ». Un export (PNG 300 DPI, SVG inséré dans un projet) est
+// rendu HORS du CSS de cette page : une police héritée y retomberait en silence
+// sur celle du SVG (un serif), et la lettre exportée ne ressemblerait plus à
+// celle de l'écran. `''` dans la composition (« App default (Inter) ») = cette
+// pile-ci, celle que l'écran montre déjà.
+const LETTER_FONT_APP = 'Inter, Arial, Helvetica, sans-serif';
+const letterFontCss = (font) => String(font == null ? '' : font).trim() || LETTER_FONT_APP;
 // Décalage de la COPIE d'un texte (⧉ Copy) : la copie se pose à 3 mm vers le
 // bas-droite — assez pour ne pas se cacher sous l'original, assez peu pour
 // rester « juste à côté ».
@@ -457,19 +475,41 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // background » était auparavant à l'autre bout de la fenêtre, dans le repli
   // « ▾ More options » : la commande et son outil ne sont plus séparés.
   const [bgTool, setBgTool] = useState(false);
+  // ✨ L'OUTIL D'AMÉLIORATION DE RÉSOLUTION S'OUVRE SOUS SON BOUTON (`upTool`),
+  // exactement comme le détourage : le facteur, la force et le bouton « ✨ Enhance »
+  // ne prennent de la place que quand on améliore vraiment une figure. Ce qui a
+  // été fait est gardé SUR la figure (`im.upscale`, voir utils/figureUpscale.js)
+  // et Ctrl+Z remet les pixels d'origine (une seule étape).
+  const [upTool, setUpTool] = useState(false);
+  const [upFactor, setUpFactor] = useState(UPSCALE_DEFAULT_FACTOR);
+  const [upStrength, setUpStrength] = useState(UPSCALE_DEFAULT_STRENGTH);
+  const [upMsg, setUpMsg] = useState('');
+  const [upBusy, setUpBusy] = useState(false);
   // LA FENÊTRE DE L'OBJET SE PLIE ENTIÈREMENT : `panelOpen` est son titre-bouton
   // (▾ / ▸). Repliée, elle ne laisse qu'une ligne — le canvas garde toute la
   // hauteur — et la composition affichée n'est pas modifiée pour autant.
   const [panelOpen, setPanelOpen] = useState(true);
+  // OÙ VIT LA FENÊTRE DE L'OBJET — en bas (sa place historique), en haut, ou
+  // d'un côté du canvas. C'est une propriété de l'ÉCRAN (comme l'échelle
+  // d'affichage, voir utils/uiScale.js), donc gardée PAR NAVIGATEUR : elle ne
+  // voyage dans aucun fichier, aucune composition. Les boutons ⬇ ⬆ ⬅ ➡ de
+  // l'en-tête de la fenêtre la déplacent (`choosePanelDock`).
+  const [panelDock, setPanelDock] = useState(() => readObjectWindowDock());
+  const choosePanelDock = (dock) => setPanelDock(saveObjectWindowDock(dock));
+  const dockIsSide = objectWindowDockIsSide(panelDock);
   const [globalCaption, setGlobalCaption] = useState('');     // figure-wide caption at the bottom
   // Size the figure-wide letter-size control falls back to when the canvas holds
   // no panel yet: a size typed before the first panel is added is remembered for
   // it (see setLetterSizeAll / currentLetterPt).
   const [letterPtFallback, setLetterPtFallback] = useState(DEFAULT_LETTER_PT);
-  // Colour and bold of the panel letters are a GENERAL definition too (see
-  // setLetterColorAll / setLetterBoldAll): they apply to every panel at once —
-  // the object window no longer carries them, the canvas options do.
-  const [letterStyleDefaults, setLetterStyleDefaults] = useState({ color: '#000000', bold: true });
+  // The FONT of the letters is remembered the same way: a canvas with no panel
+  // left still holds the choice, and the next panel adopts it.
+  const [letterFontFallback, setLetterFontFallback] = useState('');
+  // Colour, bold and FONT of the panel letters are a GENERAL definition too (see
+  // setLetterColorAll / setLetterBoldAll / setLetterFontAll): they apply to every
+  // panel at once — the object window no longer carries them, the canvas options
+  // do.
+  const [letterStyleDefaults, setLetterStyleDefaults] = useState({ color: '#000000', bold: true, font: '' });
   const [editingText, setEditingText] = useState(null);       // { objId, txId, mmX, mmY, value } — type directly on the canvas
   const [editingCaption, setEditingCaption] = useState(false); // edit the figure caption directly at the bottom
   const [editingObjCaption, setEditingObjCaption] = useState(null); // objId — floating sub-caption editor (opened from the properties panel)
@@ -1241,7 +1281,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     id: `obj_${Date.now()}`,
     x: 0, y: 0, w: 1, h: 1,
     letter: letter || 'A',
-    letterStyle: { fontSize: currentLetterPt(), color: currentLetterColor(), bold: currentLetterBold() },
+    letterStyle: letterStyleNow(),
     caption: '',
     captionStyle: { fontSize: 10, color: '#000000', bold: false }, // kept for canvases saved before the panel caption was hidden (never drawn)
     imgSrc: null, imgFit: 'contain', imgScale: 1, imgPadding: 2,
@@ -1398,13 +1438,14 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     setObjects(prev => prev.map(o => o.id === objId ? { ...o, caption } : o));
   };
 
-  // ── letter style: size / colour / bold are FIGURE settings ─────────────────
+  // ── letter style: size / colour / bold / font are FIGURE settings ──────────
   // The letters of a figure always read alike, so the size is a FIGURE setting,
   // not a per-panel one: the controls (canvas options + fullscreen toolbar) write
   // the new size to ALL the objects at once — the user never has to repeat it
-  // panel by panel. Colour and bold follow the very same rule: they are general
-  // definitions of the figure too (the object window no longer offers them), so
-  // no panel can be left looking different from its neighbours by accident.
+  // panel by panel. Colour, bold and FONT follow the very same rule: they are
+  // general definitions of the figure too (the object window no longer offers
+  // them), so no panel can be left looking different from its neighbours by
+  // accident.
   const setLetterSizeAll = (pt) => {
     const size = Number(pt);
     if (!Number.isFinite(size) || size <= 0) return; // empty / invalid field → keep the current size
@@ -1448,6 +1489,34 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     setLetterStyleDefaults((prev) => ({ ...prev, bold: b }));
     setObjects(prev => prev.map(o => ({ ...o, letterStyle: { ...(o.letterStyle || {}), bold: b } })));
   };
+  // La POLICE suit la même règle que la taille, la couleur et le gras : UNE
+  // définition pour toute la figure. `''` = « App default (Inter) », c'est-à-dire
+  // la pile LETTER_FONT_APP écrite sur chaque lettre. La valeur passe par
+  // normalizeFigureStyle — la porte du profil de figure : une pile de polices
+  // valide entre, du CSS injecté reste dehors.
+  const setLetterFontAll = (font) => {
+    const f = normalizeFigureStyle({ fontFamily: font }).fontFamily;
+    setLetterFontFallback(f);
+    setLetterStyleDefaults((prev) => ({ ...prev, font: f }));
+    setObjects(prev => prev.map(o => ({ ...o, letterStyle: { ...(o.letterStyle || {}), font: f } })));
+  };
+  const currentLetterFont = () => {
+    const sel = (objects || []).find((o) => o.id === selectedId);
+    const f = sel && sel.letterStyle ? String(sel.letterStyle.font || '').trim() : '';
+    if (f) return f;
+    const first = (objects || []).find((o) => o && o.letterStyle && String(o.letterStyle.font || '').trim());
+    return first ? String(first.letterStyle.font) : letterFontFallback;
+  };
+  // LE STYLE D'UN PANNEAU NOUVEAU — les quatre réglages généraux de la figure
+  // (taille, couleur, gras, police) écrits une seule fois, pour ses trois
+  // appelants comme pour la composition enregistrée : un panneau ajouté après un
+  // réglage ne peut plus en oublier un.
+  const letterStyleNow = () => ({
+    fontSize: currentLetterPt(),
+    color: currentLetterColor(),
+    bold: currentLetterBold(),
+    font: currentLetterFont()
+  });
 
   // Replace-mode click: the object shows exactly this one figure (also clears
   // any previously-added extra figures). With keepOpen=true the window stays
@@ -2011,6 +2080,116 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       setBgMsg(`⚠️ The background could not be removed: ${(err && err.message) || 'unknown error'}`);
     } finally {
       setBgBusy(false);
+    }
+  };
+
+  /* ── ✨ AMÉLIORER LA RÉSOLUTION D'UNE FIGURE FLOUE ───────────────────────────
+     See utils/figureUpscale.js. Deux gestes, dans cet ordre, et la fenêtre dit
+     ensuite exactement ce qui a été fait :
+       1. la figure est relue à sa taille NATURELLE puis ré-échantillonnée vers le
+          haut en pas de ×2 (le navigateur ré-échantillonne en qualité « high ») :
+          un saut unique de ×4 ferait un escalier ;
+       2. `enhanceRgbaInPlace` travaille les PIXELS : le bruit des zones plates
+          s'en va, un masque flou À SEUIL remet le contraste des traits et des
+          caractères.
+     L'image obtenue devient celle de la figure (`imgSrc` ET `imgThumb`, donc la
+     vignette persistée : elle reste PETITE, la composition ne doit pas
+     transporter des mégaoctets) et `im.upscale` garde la trace du réglage — comme
+     `im.bg` pour le détourage. RIEN D'AUTRE NE BOUGE : recadrage, décalage,
+     échelle, gomme et détourage décrivent des FRACTIONS de la source, et la
+     source a seulement plus de pixels. Ctrl+Z remet l'image d'origine (une
+     seule étape d'historique).
+     ⚠️ Il n'y a AUCUN service d'IA dans ce programme (pas de clé, pas d'envoi) :
+     l'amélioration se fait sur ce poste, et l'infobulle le dit. */
+  const upImgEl = (src) => new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+  const enhanceActiveFigure = async () => {
+    const { obj, idx, im } = bgActiveFig();
+    const src = bgFigSrcOf(im);
+    if (!obj || idx < 0 || !src) return;
+    const full = await resolveImageToDataUrl(src).catch(() => src);
+    if (typeof full === 'string' && (full.startsWith('data:image/svg+xml') || full.includes('<svg'))) {
+      setUpMsg('ℹ️ This figure is a VECTOR (SVG): it has no pixels to enlarge — every size re-draws it sharp, so there is nothing to improve here.');
+      return;
+    }
+    setUpBusy(true);
+    setUpMsg('');
+    try {
+      const img = await upImgEl(full);
+      const sw = img ? (img.naturalWidth || img.width || 0) : 0;
+      const sh = img ? (img.naturalHeight || img.height || 0) : 0;
+      if (!sw || !sh) { setUpMsg(bgUnreadableMsg()); return; }
+      /* Une figure DÉJÀ énorme n'a pas de résolution à rattraper, et la lire
+         pour la retravailler demanderait des centaines de Mo de tampons : on le
+         dit, au lieu de figer l'onglet. (La borne est celle du module : elle
+         vaut pour la source comme pour le résultat.) */
+      if (sw * sh > UPSCALE_MAX_PIXELS) {
+        setUpMsg(`ℹ️ This figure is already ${sw} × ${sh} px — more than the ${Math.round(UPSCALE_MAX_PIXELS / 1000000)} Mpx the tool works on, and a figure that big has no lack of resolution to make up. Crop it (✂️ Crop) or capture it smaller, then enhance THAT one.`);
+        return;
+      }
+      const target = upscaleTargetSize(sw, sh, upFactor);
+      // 1. L'AGRANDISSEMENT — par pas de ×2 au plus, chacun ré-échantillonné en
+      //    qualité « high » (c'est ce qui évite l'escalier d'un saut unique).
+      let cv = document.createElement('canvas');
+      cv.width = sw;
+      cv.height = sh;
+      let ctx = cv.getContext('2d', { willReadFrequently: true });
+      if (!ctx) { setUpMsg('⚠️ This browser cannot work on the pixels of a figure.'); return; }
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, sw, sh);
+      let cw = sw;
+      let ch = sh;
+      while (cw * 2 <= target.w && ch * 2 <= target.h) {
+        const next = document.createElement('canvas');
+        next.width = cw * 2;
+        next.height = ch * 2;
+        const nctx = next.getContext('2d');
+        nctx.imageSmoothingEnabled = true;
+        nctx.imageSmoothingQuality = 'high';
+        nctx.drawImage(cv, 0, 0, next.width, next.height);
+        cv = next; cw = next.width; ch = next.height;
+      }
+      if (cw !== target.w || ch !== target.h) {
+        const next = document.createElement('canvas');
+        next.width = target.w;
+        next.height = target.h;
+        const nctx = next.getContext('2d');
+        nctx.imageSmoothingEnabled = true;
+        nctx.imageSmoothingQuality = 'high';
+        nctx.drawImage(cv, 0, 0, target.w, target.h);
+        cv = next;
+      }
+      // 2. LES PIXELS EUX-MÊMES (voir utils/figureUpscale.js).
+      ctx = cv.getContext('2d', { willReadFrequently: true });
+      const frame = ctx.getImageData(0, 0, target.w, target.h);
+      const stats = enhanceRgbaInPlace(frame.data, target.w, target.h, { strength: upStrength });
+      ctx.putImageData(frame, 0, 0);
+      const out = cv.toDataURL('image/png');
+      const thumb = await downscaleImage(out, 480, 'image/png', 0.92, true).catch(() => out);
+      commitHistory();
+      patchFigure(obj.id, idx, {
+        imgSrc: out,
+        imgThumb: thumb || out,
+        // La trace du réglage, sous la clé que utils/figureUpscale.js POSSÈDE
+        // (UPSCALE_KEY) : ce nom de propriété n'est écrit qu'ici, et lu par
+        // `upscaleRecordOf` — un renommage ne peut pas les désaccorder.
+        [UPSCALE_KEY]: {
+          factor: target.factor, strength: clampUpscaleStrength(upStrength),
+          w: target.w, h: target.h
+        }
+      });
+      setUpMsg(`✅ ${target.factor > 1
+        ? `Enlarged ${target.factor}× — ${sw} × ${sh} → ${target.w} × ${target.h} px`
+        : `Kept at ${target.w} × ${target.h} px (already at the practical limit)`}${stats.sharpened ? `, ${stats.sharpened} channel${stats.sharpened === 1 ? '' : 's'} sharpened and ${stats.denoised} flattened` : ''}${target.bounded ? ` — the ${target.wanted}× you asked for was capped so the browser stays responsive` : ''}. Place, size, crop, erasures and cut-out are untouched; Ctrl+Z puts the original image back.`);
+    } catch (err) {
+      setUpMsg(`⚠️ The figure could not be improved: ${(err && err.message) || 'unknown error'}`);
+    } finally {
+      setUpBusy(false);
     }
   };
 
@@ -2748,9 +2927,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         // retrouver — une copie, jamais deux.
         canvasKey,
         canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, globalCaption,
-        // La définition GÉNÉRALE des lettres (taille, couleur, gras) fait partie
-        // du canvas : un canvas rouvert — même vide — retrouve ses lettres.
-        letterStyle: { fontSize: currentLetterPt(), color: currentLetterColor(), bold: currentLetterBold() },
+        // La définition GÉNÉRALE des lettres (taille, couleur, gras, police) fait
+        // partie du canvas : un canvas rouvert — même vide — retrouve ses lettres.
+        letterStyle: letterStyleNow(),
         objects: (objects || []).map(thumbnailsOf),
         arrows: arrows || [],
         shapes: shapes || []
@@ -2968,9 +3147,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       // La clé de composition part avec chaque copie de la composition.
       canvasKey,
       canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, globalCaption,
-      // La définition GÉNÉRALE des lettres (taille, couleur, gras) voyage avec la
-      // composition : elle se retrouve à la réouverture (voir restoreCanvasFromItem).
-      letterStyle: { fontSize: currentLetterPt(), color: currentLetterColor(), bold: currentLetterBold() },
+      // La définition GÉNÉRALE des lettres (taille, couleur, gras, police)
+      // voyage avec la composition : elle se retrouve à la réouverture (voir
+      // restoreCanvasFromItem).
+      letterStyle: letterStyleNow(),
       objects: (objects || []).map(thumbnailsOf),
       arrows: arrows || [],
       shapes: shapes || [],
@@ -3129,13 +3309,20 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     if (cd.showGridLines !== undefined) setShowGridLines(!!cd.showGridLines);
     if (cd.keepAspect !== undefined) setKeepAspect(!!cd.keepAspect);
     if (cd.globalCaption !== undefined) setGlobalCaption(cd.globalCaption);
-    // The canvas-wide LETTER definition (size / colour / bold) is part of the
-    // saved canvas: it comes back with the panels, and a canvas saved with no
+    // The canvas-wide LETTER definition (size / colour / bold / FONT) is part of
+    // the saved canvas: it comes back with the panels, and a canvas saved with no
     // panel left still remembers it.
     if (cd.letterStyle && Number(cd.letterStyle.fontSize) > 0) setLetterPtFallback(Number(cd.letterStyle.fontSize));
+    // La POLICE arrive avec les compositions qui la portent : un canvas
+    // enregistré AVANT qu'elle existe n'a pas la clé, et garde alors le choix du
+    // poste — aucune composition existante ne change de police en s'ouvrant.
+    if (cd.letterStyle && cd.letterStyle.font !== undefined) {
+      setLetterFontFallback(normalizeFigureStyle({ fontFamily: cd.letterStyle.font }).fontFamily);
+    }
     if (cd.letterStyle) setLetterStyleDefaults((prev) => ({
       color: String(cd.letterStyle.color || prev.color),
-      bold: cd.letterStyle.bold === undefined ? prev.bold : !!cd.letterStyle.bold
+      bold: cd.letterStyle.bold === undefined ? prev.bold : !!cd.letterStyle.bold,
+      font: cd.letterStyle.font === undefined ? prev.font : normalizeFigureStyle({ fontFamily: cd.letterStyle.font }).fontFamily
     }));
     setObjects((cd.objects || []).map((o) => resolveObj(o)));
     // The saved canvas carries its own annotations (an older canvas has none).
@@ -4106,6 +4293,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // The size every panel letter is drawn at — the value shown by the letter-size
   // controls of the toolbar and of "Labels & Captions" (see setLetterSizeAll).
   const letterPt = currentLetterPt();
+  // La police choisie, lue UNE fois par rendu : elle est recopiée dans le
+  // <select> des options du canvas et dans celui de la barre du plein écran.
+  const letterFont = currentLetterFont();
   void libVersion; // re-read the library lists on every transfer (the bump triggers a re-render)
   // The Project tab only ever lists libraries of the projects this user may open
   // (readVisibleProjectLibrary returns [] otherwise: the entries are not ours to
@@ -4437,7 +4627,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             })()}
 
             {obj.letter && (
-              <text x={ox + 1.5} y={oy + ptToMm(obj.letterStyle.fontSize) + 1} fontSize={ptToMm(obj.letterStyle.fontSize)} fill={obj.letterStyle.color} fontWeight={obj.letterStyle.bold ? 'bold' : 'normal'} style={{ pointerEvents: 'none' }}>
+              <text x={ox + 1.5} y={oy + ptToMm(obj.letterStyle.fontSize) + 1} fontSize={ptToMm(obj.letterStyle.fontSize)} fill={obj.letterStyle.color} fontFamily={letterFontCss(obj.letterStyle.font)} fontWeight={obj.letterStyle.bold ? 'bold' : 'normal'} style={{ pointerEvents: 'none' }}>
                 {obj.letter}
               </text>
             )}
@@ -4449,7 +4639,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                 editable in the properties panel and in the floating caption
                 editor ("✎ Edit in place"). */}
 
-            {/* Free text overlays — draggable anywhere inside the object; double-click to edit in place */}
+            {/* Free text overlays — draggable anywhere inside the object; double-click to edit in place.
+                LA POLICE est celle du PANNEAU (`obj.letterStyle.font`, la définition
+                générale de la figure), sauf si ce texte porte la sienne (`tx.font`,
+                que rien n'écrit encore) : une légende posée sur un panneau ne doit
+                pas jurer avec la lettre de ce panneau. */}
             {(obj.texts || []).map(tx => {
               const isEditing = editingText && editingText.txId === tx.id;
               return (
@@ -4461,6 +4655,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                   fill={tx.color || '#000000'}
                   fontWeight={tx.bold ? 'bold' : 'normal'}
                   fontStyle={tx.italic ? 'italic' : 'normal'}
+                  fontFamily={letterFontCss(tx.font || (obj.letterStyle || {}).font)}
                   opacity={isEditing ? 0 : 1}
                   style={{ pointerEvents: isSelected ? 'auto' : 'none', cursor: isSelected ? 'move' : 'default' }}
                   onMouseDown={isSelected && !isEditing ? (e) => startTextDrag(e, obj.id, tx.id) : undefined}
@@ -4706,6 +4901,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // sa couleur, sa tolérance et son mode sont relus dans l’outil, sous le bouton
   // « 🎨 Transparent background » (`bgTool`).
   const figBgRecord = cropPanelIdx >= 0 ? bgRecordOf(selectedImgs[cropPanelIdx]) : null;
+  // ✨ L'amélioration de résolution DÉJÀ faite sur la figure active (`im.upscale`,
+  // voir utils/figureUpscale.js) : le bouton en porte la marque (« ✓ 3× ») et
+  // l'outil rappelle la taille obtenue — un même geste, deux fois, agrandirait
+  // l'image une seconde fois sans rien y gagner.
+  const figUpRecord = cropPanelIdx >= 0 ? upscaleRecordOf(selectedImgs[cropPanelIdx]) : null;
   // Le réglage d'IMAGE de la figure active (contraste, luminosité, saturation,
   // teinte) : `null` quand rien n'est demandé — aucun `<filter>` n'est alors
   // dessiné, le SVG reste celui d'avant. Voir utils/figureAdjust.js.
@@ -4788,6 +4988,24 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             {selectedObj.caption ? `· ${selectedObj.caption}` : '· no sub-caption yet'}
           </span>
         )}
+        {/* OÙ POSER CETTE FENÊTRE — les quatre boutons sont DANS l'en-tête, donc
+            atteignables depuis les deux affichages (vue normale et plein écran) :
+            en bas (la place historique), en haut, ou d'un côté du canvas. Le
+            choix est GARDÉ PAR CE NAVIGATEUR (utils/objectWindowDock.js) : il
+            vaut pour les prochains canvas ouverts ici, et il ne voyage dans aucun
+            fichier — une figure n'a pas à savoir sur quel écran elle a été
+            écrite. */}
+        <span className="flex items-center gap-0.5 shrink-0 ml-auto"
+          title="Where the object window sits: bottom (its historical place, under the canvas), top, or a side of the canvas — where it becomes a narrow scrolling column and the canvas keeps all its height. The choice is remembered by THIS BROWSER and applies to every canvas opened here; it is never written into a figure or a project.">
+          <span className="text-[9px] font-bold text-slate-400 uppercase mr-0.5">Dock</span>
+          {OBJECT_WINDOW_DOCK_CHOICES.map((c) => (
+            <button key={c.id} type="button" onClick={() => choosePanelDock(c.id)}
+              className={`w-5 h-5 leading-none rounded border text-[11px] shrink-0 ${panelDock === c.id ? 'bg-slate-700 text-white border-slate-700' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}
+              title={`${c.hint}${panelDock === c.id ? ' — this is where the window is now.' : ''}`}>
+              {c.icon}
+            </button>
+          ))}
+        </span>
       </div>
       {panelOpen && (
       <div className={bar
@@ -5029,7 +5247,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
          D’IMAGE (contraste, luminosité, saturation, teinte, coloration).
          Les commandes du PANNEAU, elles, ont rejoint la troisième colonne : une
          colonne = un sujet, et « Modify image » ne mélange plus deux d’entre eux.
-         ⬇️ LES DEUX OUTILS DE L’IMAGE SONT SOUS LEUR BOUTON : le détourage
+         ⬇️ LES TROIS OUTILS DE L’IMAGE SONT SOUS LEUR BOUTON : le détourage
          (🎨 Remove background, déplié par « 🎨 Transparent background ») et les
          réglages de l’ombre de la figure sont écrits JUSTE EN DESSOUS de la ligne
          des outils, dans la même colonne. « 🎨 Remove background » vivait à
@@ -5049,6 +5267,19 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
               ? 'Fold the tool away again — the pixels of this figure are untouched. The “✓” says this figure has already been cut out.'
               : 'Make the background of the active figure transparent: this click opens the tool JUST UNDER this button — click the colour on the preview, then “🎨 Remove background”. The “✓” says the figure has already been cut out.')}>
           🎨 Transparent background{figBgRecord ? ' ✓' : ''}{bgTool ? ' ▴' : ' ▾'}
+        </button>
+        {/* ✨ AMÉLIORER LA RÉSOLUTION — le troisième outil qui travaille les PIXELS
+            de la figure active, à côté du détourage ; son outil se déplie JUSTE
+            SOUS ce bouton (`upTool`), comme le détourage et l'ombre. Le « ✓ »
+            porte le facteur DÉJÀ appliqué (« ✓ 2× »). */}
+        <button type="button" onClick={() => setUpTool((v) => !v)} disabled={cropPanelIdx < 0}
+          className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${cropPanelIdx < 0 ? 'bg-slate-100 border-slate-200 text-slate-300' : (figUpRecord ? 'bg-violet-600 text-white border-violet-700' : (upTool ? 'bg-violet-50 border-violet-400 text-violet-800' : 'bg-white border-violet-300 text-violet-700 hover:bg-violet-100'))}`}
+          title={cropPanelIdx < 0
+            ? 'Add a figure to this panel first: the resolution of a PICTURE is improved.'
+            : (upTool
+              ? 'Fold the tool away again — the pixels of this figure are untouched.'
+              : `Make THIS figure clearer: it is enlarged (2× / 3× / 4×) and its pixels are then sharpened — lines, axes and characters get their contrast back. Everything happens ON THIS COMPUTER (no image is uploaded anywhere: this program has no AI service), and Ctrl+Z puts the original image back.${figUpRecord ? ` Already improved: ${upscaleSummary(figUpRecord)}.` : ''}`)}>
+          ✨ Enhance resolution{figUpRecord ? ` ✓ ${upscaleFactorLabel(figUpRecord.factor)}` : ''}{upTool ? ' ▴' : ' ▾'}
         </button>
         <button type="button" onClick={toggleActiveFigureShadow} disabled={cropPanelIdx < 0}
           className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${cropPanelIdx < 0 ? 'bg-slate-100 border-slate-200 text-slate-300' : (figShadowOn ? 'bg-slate-800 text-white border-slate-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100')}`}
@@ -5150,21 +5381,24 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             ses réglages fins sont JUSTE SOUS ce bouton (la ligne suivante). La
             ligne des outils ne la répète donc pas. */}
       </div>
-      {/* ── LES DEUX OUTILS DE L’IMAGE VIVENT SOUS LEURS BOUTONS ────────────────
+      {/* ── LES TROIS OUTILS DE L’IMAGE VIVENT SOUS LEURS BOUTONS ───────────────
          C’est ici qu’on cherchait « 🎨 Remove background » : il était DANS le
          repli « ▾ More options », donc à l’autre bout de la fenêtre, alors que
          son bouton est dans la ligne du dessus. Le détourage s’ouvre maintenant
          SOUS ce bouton (`bgTool`, replié par défaut : on ne détoure pas à chaque
-         figure), et les réglages de l’ombre de la figure SOUS « 🌓 Figure
-         shadow », qui la donne ou l’enlève d’un clic.
-         AUCUNE phrase d’explication dans ces deux blocs (« no need to write their
+         figure), l’AMÉLIORATION DE RÉSOLUTION sous « ✨ Enhance resolution »
+         (`upTool`, voir utils/figureUpscale.js : agrandissement en pas de ×2 puis
+         masque flou à seuil, tout sur ce poste), et les réglages de l’ombre de la
+         figure SOUS « 🌓 Figure shadow », qui la donne ou l’enlève d’un clic.
+         AUCUNE phrase d’explication dans ces trois blocs (« no need to write their
          way of usage — it takes too much space ») : elles sont UNE PAR UNE dans
          l’infobulle du titre de chaque bloc.
-         Les deux blocs sont alignés en haut (`self-start`) : l’aperçu du
+         Les trois blocs sont alignés en haut (`self-start`) : l’aperçu du
          détourage est plus haut que les champs de l’ombre. */}
       {cropPanelIdx >= 0 && (
         <div className={panelCellCls(bar)}>
-          {/* LES DEUX OUTILS, DANS L'ORDRE DES BOUTONS : le détourage (🎨) puis
+          {/* LES TROIS OUTILS, DANS L'ORDRE DES BOUTONS : le détourage (🎨),
+              l'amélioration de résolution (✨) puis
               les réglages de l'ombre de la figure (🌓) — celui qui est ouvert
               n'est jamais à la place de l'autre, et chacun reste sous son
               bouton. */}
@@ -5234,6 +5468,61 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                   {bgMsg && <span className="text-[9px] font-bold text-slate-600">{bgMsg}</span>}
                 </div>
               </div>
+            </div>
+          )}
+          {/* ✨ L'AMÉLIORATION DE RÉSOLUTION — le troisième outil « sous son
+              bouton », dans l'ordre de la ligne (🎨 · ✨ · 🌓). Voir
+              utils/figureUpscale.js et enhanceActiveFigure.
+              ⚠️ L'INFOBULLE DIT QUE TOUT SE PASSE ICI : ce programme n'a aucun
+              service d'IA, aucune clé et n'envoie aucune image ; ce que l'outil
+              fait est un vrai calcul sur les pixels (agrandissement en pas de ×2
+              + masque flou à seuil), pas une devinette. Dire « AI » sans le dire
+              serait la seule chose malhonnête de cet outil. */}
+          {upTool && (
+            <div className="flex flex-col gap-1 border border-slate-200 rounded px-2 py-1 bg-white shrink-0 self-start max-w-[24rem]">
+              <span className="text-[10px] font-bold text-slate-600 shrink-0"
+                title="Enlarge and sharpen FIGURE 1 / 2 / … of this panel, on this computer: nothing is uploaded and no AI service is called (there is none in this program). The figure is re-sampled up in steps of ×2 (the browser's high-quality resampling) and its pixels are then worked: the noise of the flat areas is flattened and a THRESHOLDED unsharp mask gives the lines, the axes and the characters their contrast back. Place, size, crop, erasures and cut-out are untouched — Ctrl+Z puts the original image back (one step).">
+                ✨ Enhance resolution — on this computer
+              </span>
+              <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 shrink-0"
+                title="How much BIGGER the figure becomes: the pixel matrix is multiplied by this factor, in steps of ×2 (a single jump of ×4 would leave a staircase). 2× doubles the number of pixels in each direction, so a matrix four times bigger; the ratio of the figure never changes. The tool stops at the point where the browser stays responsive (6000 px a side, 12 Mpx) and says so.">
+                Enlarge
+                {UPSCALE_FACTORS.map((f) => (
+                  <button key={f} type="button" onClick={() => setUpFactor(clampUpscaleFactor(f))}
+                    className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${clampUpscaleFactor(upFactor) === f ? 'bg-violet-600 text-white border-violet-700' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}
+                    title={`${upscaleFactorLabel(f)} — the figure becomes ${f}× bigger in each direction`}>
+                    {upscaleFactorLabel(f)}
+                  </button>
+                ))}
+              </label>
+              <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 shrink-0"
+                title="How hard the pixels are worked AFTER the enlargement. 0 = the enlargement alone (nothing is touched: interpolation only). 100 = the strongest sharpening. The mask has a threshold and a noise floor, so a plain noisy background is flattened instead of being amplified — that is what separates “sharper” from “granier”.">
+                Sharpen {clampUpscaleStrength(upStrength)}%
+                <input type="range" min={UPSCALE_MIN_STRENGTH} max={UPSCALE_MAX_STRENGTH} step="5"
+                  value={clampUpscaleStrength(upStrength)}
+                  onChange={(e) => setUpStrength(clampUpscaleStrength(e.target.value))}
+                  className="w-24 accent-violet-600" />
+              </label>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button type="button" onClick={enhanceActiveFigure} disabled={upBusy || cropPanelIdx < 0}
+                  className={`font-bold px-2 py-0.5 rounded text-[10px] border ${upBusy || cropPanelIdx < 0 ? 'bg-slate-100 border-slate-200 text-slate-300' : 'bg-violet-600 text-white border-violet-700 hover:bg-violet-700'}`}
+                  title="Do it now: the figure is enlarged and its pixels sharpened, in place. A figure already at the size limit is only sharpened (the message says so). Ctrl+Z brings the original image back.">
+                  {upBusy ? '✨ Working…' : '✨ Enhance this figure'}
+                </button>
+                {figUpRecord ? (
+                  <span className="text-[9px] font-bold text-violet-700"
+                    title="What was done to this figure — kept ON the figure (im.upscale), so it survives a reload and travels with the saved canvas. Enhancing it again would enlarge the ALREADY enlarged pixels: use Ctrl+Z first if you want to start over.">
+                    already {upscaleSummary(figUpRecord)}
+                  </span>
+                ) : (
+                  <span className="text-[9px] text-slate-400" title="This figure still carries the pixels it was captured with — nothing has been done to them.">
+                    original pixels
+                  </span>
+                )}
+              </div>
+              {upMsg ? (
+                <span className="text-[9px] text-slate-600 leading-snug max-w-[22rem]" title={upMsg}>{upMsg}</span>
+              ) : null}
             </div>
           )}
           <div className="flex flex-col gap-1 border border-slate-200 rounded px-2 py-1 bg-white shrink-0 self-start">
@@ -5556,7 +5845,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         ? 'flex flex-wrap items-start gap-x-1.5 gap-y-1 min-w-0 col-span-full border-t border-slate-200 pt-1'
         : 'flex flex-wrap items-center gap-x-1.5 gap-y-1 border-t border-slate-200 pt-1'}>
         <span className="text-[10px] font-bold text-slate-500 uppercase shrink-0"
-          title={`Caption of panel ${selectedObj.letter || '—'} — a SUB-caption: it is never drawn inside the panel, it is merged into the figure caption at the bottom. The letter itself is automatic (by position) · size / colour / bold: canvas options.`}>
+          title={`Caption of panel ${selectedObj.letter || '—'} — a SUB-caption: it is never drawn inside the panel, it is merged into the figure caption at the bottom. The letter itself is automatic (by position) · size / colour / bold / font: canvas options.`}>
           Caption {selectedObj.letter || '—'}
         </span>
         <textarea rows={1} value={selectedObj.caption} onChange={e => updateObj({ caption: e.target.value })}
@@ -5619,6 +5908,41 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       )}
     </div>
   );
+
+  /* ── LA FENÊTRE DE L'OBJET, PRÊTE À ÊTRE POSÉE LÀ OÙ ELLE VIT ───────────────
+     Elle est écrite UNE SEULE FOIS et posée à la place que `panelDock` demande
+     (voir le conteneur « canvas + fenêtre » plus bas, et le plein écran). Trois
+     occupants possibles, jamais deux à la fois : le panneau d'objet, celui d'une
+     flèche, celui d'une forme.
+     ⚠️ Les composants sont APPELÉS comme des fonctions (voir la note de
+     `PropertiesPanel`) : ces deux variables ne portent donc AUCUN hook et ne
+     créent aucune frontière de rendu — c'est ce qui garde le focus dans un champ
+     pendant qu'on tape. */
+  const objectWindowNormal = (
+    <>
+      {selectedObj && PropertiesPanel({})}
+      {!selectedObj && selectedArrow && (
+        <ArrowPropertiesPanel arrow={selectedArrow} onChange={updateArrow} onDelete={() => removeArrow()} />
+      )}
+      {!selectedObj && !selectedArrow && selectedShape && (
+        <ShapePropertiesPanel shape={selectedShape} onChange={updateShape} onDelete={() => removeShape()} />
+      )}
+    </>
+  );
+  // Le plein écran : la fenêtre en BARRE (haut / bas) présente ses trois piles
+  // côte à côte (`bar: true`) ; sur un CÔTÉ (`bar: !dockIsSide`) elle garde la
+  // colonne empilée — elle n'a pas la largeur pour trois colonnes.
+  const fullscreenObjectWindow = (selectedObj || selectedArrow || selectedShape) ? (
+    <>
+      {selectedObj
+        ? PropertiesPanel({ bar: !dockIsSide })
+        : <div className="w-80 max-h-[48vh] overflow-y-auto custom-scrollbar">
+            {selectedArrow
+              ? <ArrowPropertiesPanel arrow={selectedArrow} isFloating onChange={updateArrow} onDelete={() => removeArrow()} />
+              : <ShapePropertiesPanel shape={selectedShape} isFloating onChange={updateShape} onDelete={() => removeShape()} />}
+          </div>}
+    </>
+  ) : null;
 
   return (
     <>
@@ -5731,6 +6055,23 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           <label className="text-[10px] font-bold text-slate-500 flex flex-col" title="Size of the panel letters (A, B, C …). It is a FIGURE setting: changing it rescales every panel letter (A, B, C …) at once — no need to set it panel by panel, and the panels added later adopt it.">
             Letter size (pt)
             <input type="number" min="4" max="48" value={letterPt} onChange={e => setLetterSizeAll(e.target.value)} className="border rounded p-1 text-xs w-20" />
+          </label>
+          {/* LA POLICE DES LETTRES, JUSTE À CÔTÉ DE LEUR TAILLE (c'est là qu'on la
+              cherche) et avec la même règle : c'est une définition GÉNÉRALE de la
+              figure. La liste est celle du profil de figure / du format de
+              publication : des familles que tout poste possède déjà — aucun
+              téléchargement, aucun appel réseau, donc un export montre vraiment la
+              police choisie. */}
+          <label className="text-[10px] font-bold text-slate-500 flex flex-col" title="FONT of the panel letters (A, B, C …) — a FIGURE setting like the size: every panel letter AND every free text of the figure follows it at once, and the panels added later adopt it. Same list as the figure style / publication format (families every computer already has — nothing to download, so an exported PNG really shows the font you chose). “App default (Inter)” keeps the font of the app.">
+            Letters font
+            <select value={letterFont} onChange={e => setLetterFontAll(e.target.value)} className="border rounded p-1 text-xs w-40 bg-white">
+              {FIGURE_FONT_CHOICES.map((f) => (
+                <option key={f.value || 'app'} value={f.value}>{f.label}</option>
+              ))}
+              {letterFont && !FIGURE_FONT_CHOICES.some((f) => f.value === letterFont) ? (
+                <option value={letterFont}>{letterFont}</option>
+              ) : null}
+            </select>
           </label>
           {/* LA DÉFINITION GÉNÉRALE DES LETTRES EST ICI (taille, couleur, gras) et
               non plus dans la fenêtre de l'objet : elle vaut pour TOUS les panneaux
@@ -5879,24 +6220,36 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           )}
         </div>
 
-        {/* SVG Canvas (Normal View) */}
-        <div className="border border-slate-300 rounded-lg bg-slate-100 p-2 flex justify-center overflow-auto">
-          <div style={{ width: '100%', maxWidth: '800px', aspectRatio: `${canvasW} / ${canvasH + captionH}` }} className="bg-white shadow-md">
-            {renderSvg(svgRef, 'in')}
+        {/* ── LE CANVAS ET LA FENÊTRE DE L'OBJET, ENSEMBLE ─────────────────────
+            La fenêtre se pose là où `panelDock` la demande : AU-DESSUS du canvas,
+            AU-DESSOUS (sa place historique), ou d'un CÔTÉ — une colonne étroite et
+            défilante, où le canvas garde le reste de la largeur et la fenêtre
+            garde toute sa hauteur. Le panneau d'objet est le MÊME objet
+            (`objectWindowNormal`, écrit une seule fois) que React DÉPLACE : rien
+            n'est dupliqué, donc rien ne peut diverger entre les deux places.
+            Les trois occupants (panneau, flèche, forme) sont ceux d'avant. */}
+        <div className={`flex gap-3 ${dockIsSide ? 'flex-row flex-wrap xl:flex-nowrap items-start' : 'flex-col'}`}>
+          {panelDock === 'top' && <div className="w-full min-w-0">{objectWindowNormal}</div>}
+          {panelDock === 'left' && (
+            <div className="w-[22rem] max-w-full shrink-0 max-h-[70vh] overflow-y-auto custom-scrollbar border border-slate-200 rounded-lg p-2">
+              {objectWindowNormal}
+            </div>
+          )}
+          <div className={dockIsSide ? 'flex-1 min-w-0' : 'w-full min-w-0'}>
+            {/* SVG Canvas (Normal View) */}
+            <div className="border border-slate-300 rounded-lg bg-slate-100 p-2 flex justify-center overflow-auto">
+              <div style={{ width: '100%', maxWidth: '800px', aspectRatio: `${canvasW} / ${canvasH + captionH}` }} className="bg-white shadow-md">
+                {renderSvg(svgRef, 'in')}
+              </div>
+            </div>
           </div>
+          {panelDock === 'right' && (
+            <div className="w-[22rem] max-w-full shrink-0 max-h-[70vh] overflow-y-auto custom-scrollbar border border-slate-200 rounded-lg p-2">
+              {objectWindowNormal}
+            </div>
+          )}
+          {panelDock === 'bottom' && <div className="w-full min-w-0">{objectWindowNormal}</div>}
         </div>
-
-        {/* Properties Panel (Normal View) */}
-        {/* Properties Panel (Normal View) — the selected PANEL, or the selected
-            ARROW annotation. The two are never selected at the same time: one
-            properties panel is shown, for whatever the user clicked last. */}
-        {selectedObj && PropertiesPanel({})}
-        {!selectedObj && selectedArrow && (
-          <ArrowPropertiesPanel arrow={selectedArrow} onChange={updateArrow} onDelete={() => removeArrow()} />
-        )}
-        {!selectedObj && !selectedArrow && selectedShape && (
-          <ShapePropertiesPanel shape={selectedShape} onChange={updateShape} onDelete={() => removeShape()} />
-        )}
       </div>
 
       {/* Inline text editor — type directly on the canvas at the placed position */}
@@ -6032,10 +6385,20 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                    <input type="checkbox" checked={showGridLines} onChange={e => setShowGridLines(e.target.checked)} /> Grid
                  </label>
                  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-600 bg-slate-100 rounded-lg px-2 py-1.5"
-                   title="The LETTERS of the figure: size (pt), colour and bold. All three are FIGURE settings — they apply to every panel letter (A, B, C …) at once, never to one panel alone.">
+                   title="The LETTERS of the figure: size (pt), colour, bold and font. All four are FIGURE settings — they apply to every panel letter (A, B, C …) at once, never to one panel alone.">
                    Letters
                    <input type="number" min="4" max="48" value={letterPt} onChange={e => setLetterSizeAll(e.target.value)} className="border border-slate-300 rounded px-1 py-0.5 text-[11px] w-14 bg-white font-normal" />
                    pt
+                   <select value={letterFont} onChange={e => setLetterFontAll(e.target.value)}
+                     className="border border-slate-300 rounded px-1 py-0.5 text-[11px] bg-white font-normal max-w-[8.5rem]"
+                     title="Font of every panel letter (figure setting) — the same list as the figure style / publication format: families every computer already has, so an export shows this font">
+                     {FIGURE_FONT_CHOICES.map((f) => (
+                       <option key={f.value || 'app'} value={f.value}>{f.label}</option>
+                     ))}
+                     {letterFont && !FIGURE_FONT_CHOICES.some((f) => f.value === letterFont) ? (
+                       <option value={letterFont}>{letterFont}</option>
+                     ) : null}
+                   </select>
                    <input type="color" value={currentLetterColor()} onChange={e => setLetterColorAll(e.target.value)} className="w-7 h-5 rounded border border-slate-300 bg-white cursor-pointer" title="Colour of every panel letter (figure setting)" />
                    <input type="checkbox" checked={currentLetterBold()} onChange={e => setLetterBoldAll(e.target.checked)} title="Bold for every panel letter (figure setting)" />
                  </label>
@@ -6047,6 +6410,25 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             </button>
           </div>
 
+          {/* ── LA ZONE DE TRAVAIL (plein écran) : LE CANVAS ET LA FENÊTRE DE
+              L'OBJET, CÔTE À CÔTE OU EMPILÉS ──────────────────────────────────
+              La fenêtre ne RECOUVRE plus le canvas — l'ancienne barre absolue du
+              bas cachait le bas de la figure. Elle prend sa place DANS LE FLUX
+              (au-dessus, au-dessous, ou d'un côté) et le canvas garde tout le
+              reste. `panelDock` est le MÊME réglage que celui de la vue normale :
+              les boutons ⬇ ⬆ ⬅ ➡ de l'en-tête de la fenêtre le changent ici
+              comme là. */}
+          <div className={`flex-1 min-h-0 flex ${dockIsSide ? 'flex-row' : 'flex-col'}`}>
+          {panelDock === 'top' && (
+            <div className="shrink-0 border-b border-slate-300 bg-white/95 shadow-2xl max-h-[38vh] overflow-y-auto custom-scrollbar px-2 py-1.5">
+              {fullscreenObjectWindow}
+            </div>
+          )}
+          {panelDock === 'left' && (
+            <div className="w-[26rem] max-w-[45vw] shrink-0 overflow-y-auto custom-scrollbar border-r border-slate-300 bg-white/95 px-2 py-1.5">
+              {fullscreenObjectWindow}
+            </div>
+          )}
           {/* Canvas Area — a REAL scrollable sheet: the inner box is canvas × zoom
               big, so the browser draws its own scrollbars (and the wheel works)
               instead of a transform that leaves nothing to scroll. */}
@@ -6072,22 +6454,23 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             </div>
           </div>
 
-          {/* LA BARRE DU BAS (plein écran) — le panneau d'objet devient une barre
-              d'outils HORIZONTALE collée en bas de la fenêtre : les figures se
-              règlent sur toute la largeur, juste sous le canvas, et rien ne
-              recouvre plus la moitié droite de l'écran. Le panneau des flèches
-              garde sa forme (quelques champs seulement). */}
-          {(selectedObj || selectedArrow || selectedShape) && (
-            <div className={`absolute inset-x-0 bottom-0 z-20 border-t border-slate-300 bg-white/95 shadow-2xl max-h-[38vh] overflow-y-auto custom-scrollbar px-2 py-1.5 ${selectedObj ? '' : 'flex justify-end'}`}>
-              {selectedObj
-                ? PropertiesPanel({ bar: true })
-                : <div className="w-80 max-h-[48vh] overflow-y-auto custom-scrollbar">
-                    {selectedArrow
-                      ? <ArrowPropertiesPanel arrow={selectedArrow} isFloating onChange={updateArrow} onDelete={() => removeArrow()} />
-                      : <ShapePropertiesPanel shape={selectedShape} isFloating onChange={updateShape} onDelete={() => removeShape()} />}
-                  </div>}
+          {/* LA FENÊTRE DE L'OBJET EN BAS (sa place historique) — une barre
+              HORIZONTALE sous le canvas : les figures se règlent sur toute la
+              largeur, et le canvas garde toute la hauteur au-dessus. En haut
+              c'est la même barre au-dessus du canvas ; sur un côté une colonne
+              (voir plus haut). Le contenu est le même partout
+              (`fullscreenObjectWindow`). */}
+          {panelDock === 'bottom' && (
+            <div className="shrink-0 border-t border-slate-300 bg-white/95 shadow-2xl max-h-[38vh] overflow-y-auto custom-scrollbar px-2 py-1.5">
+              {fullscreenObjectWindow}
             </div>
           )}
+          {panelDock === 'right' && (
+            <div className="w-[26rem] max-w-[45vw] shrink-0 overflow-y-auto custom-scrollbar border-l border-slate-300 bg-white/95 px-2 py-1.5">
+              {fullscreenObjectWindow}
+            </div>
+          )}
+          </div>
         </div>
       )}
 
