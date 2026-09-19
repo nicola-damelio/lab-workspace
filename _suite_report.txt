@@ -76,7 +76,7 @@ OK   _spectra_split_test.mjs  →  passed 238/238
 OK   _split_test.cjs  →  (no output)
 OK   _src_split_test.cjs  →  (no output)
 OK   _star_group_test.cjs  →  ✅ 34/34 checks passed
-OK   _storage_drive_layout_test.mjs  →  _storage_drive_layout_test: 82 passed
+OK   _storage_drive_layout_test.mjs  →  _storage_drive_layout_test: 103 passed
 OK   _sum_canvases.mjs  →  meta keys: kind, v, label, src, canvasData, imageName, savedAt
 OK   _sum_one_meta.mjs  →  usage: node _sum_one_meta.mjs "<fichier .meta.json>"
 OK   _sum_panels.mjs  →  arrows=0 shapes=0 letterStyle={"fontSize":30,"color":"#000000","bold":true}

@@ -806,10 +806,18 @@ export const canonicalDatasetDirId = async (dir, {
   return keep.id;
 };
 
-/** Resolve (creating as needed) the folder chain described by explicit folder
- *  NAMES (each sanitized; empty segments skipped).
+/** Resolve the folder chain described by explicit folder NAMES (each sanitized;
+ *  empty segments skipped). Creates the missing folders — unless `create:false`,
+ *  in which case the chain is only SEARCHED: it stops at the first missing
+ *  segment and `leafId` is '' (nothing is invented below). C'est ce que demande
+ *  un geste de RANGEMENT : déplacer des fichiers déjà envoyés ne doit jamais
+ *  fabriquer d'arborescence — sans cela, un chemin recalculé à chaque frappe
+ *  (renommer une boîte laissait « j », « ja », « jac » derrière soi) créait un
+ *  dossier par lettre (voir storageDrive.tidyStorageFiles).
+ *  @param {string[]} names
+ *  @param {{create?: boolean}} [opts]
  *  @returns {{ leafId:string, path:Array<{name:string,id:string}> }} */
-export const resolveDrivePathFromNames = async (names) => {
+export const resolveDrivePathFromNames = async (names, { create = true } = {}) => {
   const wanted = (names || []).map((n) => sanitizeSlug(n)).filter(Boolean);
   /* UN DOSSIER SUPPRIMÉ NE SE RECRÉE PAS : si cette branche (ou celle du
      dataset lui-même) a été supprimée dans le programme, on s'arrête net au
@@ -829,9 +837,13 @@ export const resolveDrivePathFromNames = async (names) => {
        CONTENEUR canonique (projects/, protocols/) : il est résolu comme tel —
        identifiant retenu, jumeaux départagés par leur contenu — et non « le
        premier dossier du nom », qui pouvait être un jumeau vide. */
-    parent = (i === 0 && isCanonicalDatasetDir(name))
-      ? await canonicalDatasetDirId(name, { rootId: parent })
-      : await findOrCreateFolder(name, parent);
+    const next = (i === 0 && isCanonicalDatasetDir(name))
+      ? await canonicalDatasetDirId(name, { rootId: parent, create })
+      : create ? await findOrCreateFolder(name, parent) : await findFolderByName(name, parent);
+    /* RECHERCHE SEULE : le premier dossier absent arrête la chaîne, et rien
+       n'est créé — un rangement ne fabrique pas de dossier. */
+    if (!next && !create) return { leafId: '', path };
+    parent = next;
     path.push({ name, id: parent });
   }
   /* Registre partagé : l'identifiant du dossier d'un PROJET est noté pour que

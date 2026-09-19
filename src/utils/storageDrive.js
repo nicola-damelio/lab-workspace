@@ -73,25 +73,39 @@ const datasetRoot = async () => ensureDriveFolder().catch(() => '');
  *  Le déplacement se fait par IDENTIFIANT de fichier (un déplacement ne change
  *  pas le lien stocké dans la boîte), et un fichier déjà au bon endroit n'est
  *  jamais touché : rouvrir une boîte ne provoque aucun déplacement.
+ *
+ *  Le dossier visé est d'abord CHERCHÉ (jamais créé) : ranger ne fabrique pas
+ *  d'arborescence. Il n'est créé qu'au moment où un fichier a VRAIMENT besoin
+ *  d'y entrer — un dossier vide laissé derrière soi est exactement ce que
+ *  produisait un chemin recalculé pendant la frappe du nom (renommer une boîte
+ *  laissait « j », « ja », « jac » sous storage/<storage>/boxes/).
  *  @returns {Promise<number>} nombre de fichiers déplacés */
 export const tidyStorageFiles = async ({ storage, box = '', urls = [] }) => {
   if (!cloudBackendAvailable()) return 0;
   const ids = [...new Set((Array.isArray(urls) ? urls : [urls]).flatMap((u) => driveFileIdsIn(u)))];
   if (!ids.length) return 0;
   const names = box ? storageBoxImagesFolderPath(storage, box) : storageImagesFolderPath(storage);
+  /* 1. Le dossier visé existe-t-il ? (recherche seule : rien n'est créé). Un
+     chemin SUPPRIMÉ ne se recrée pas, donc on s'arrête là s'il lève. */
   let target = '';
+  try {
+    const found = await resolveDrivePathFromNames(names, { create: false });
+    target = found && found.leafId ? String(found.leafId) : '';
+  } catch { return 0; }
   let moved = 0;
   for (const id of ids) {
     try {
       const meta = await getDriveFileMeta(id);
       if (!meta || !meta.id || meta.trashed) continue;
+      const parents = Array.isArray(meta.parents) ? meta.parents.map(String) : [];
+      if (target && parents.includes(target)) continue;
       if (!target) {
+        /* 2. Création À LA DEMANDE : seulement parce qu'un fichier va entrer. */
         const resolved = await resolveDrivePathFromNames(names);
         target = resolved && resolved.leafId ? String(resolved.leafId) : '';
+        if (!target) return moved;
+        if (parents.includes(target)) continue;
       }
-      if (!target) return moved;
-      const parents = Array.isArray(meta.parents) ? meta.parents.map(String) : [];
-      if (parents.includes(target)) continue;
       if (await moveDriveFile(id, target)) moved += 1;
     } catch { /* au mieux : un fichier inaccessible n'empêche pas les autres */ }
   }

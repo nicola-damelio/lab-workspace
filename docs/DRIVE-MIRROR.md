@@ -341,7 +341,16 @@ Ce que cela change, geste par geste (`Storage.jsx`, `utils/storageDrive.js`,
   `storage/<boîte>/<instance>/image/…` ou `storage/<storage>/image/…` sont
   **déplacés** — par identifiant de fichier, donc le lien enregistré ne change
   pas — vers les dossiers ci-dessus. Un fichier déjà bien rangé n'est jamais
-  touché, et rien n'est déplacé quand le Drive est injoignable.
+  touché, et rien n'est déplacé quand le Drive est injoignable ;
+* **un geste de rangement ne FABRIQUE rien** : le dossier visé est d'abord
+  seulement CHERCHÉ (`resolveDrivePathFromNames(names, { create: false })`), et
+  il n'est créé que si un fichier a vraiment besoin d'y entrer. Le nom d'une
+  boîte change à chaque frappe : recalculer son dossier pendant la saisie — le
+  nom était une dépendance de l'effet de rangement — laissait `boxes/j`,
+  `boxes/ja`, `boxes/jac` (un dossier par lettre, parfois déjà rempli de photos).
+  Le rangement suit donc l'**ouverture** de la boîte (et ses photos), et le
+  renommage est un geste du **dossier**, une seule fois, à la fin de la saisie
+  (`renameStorageBoxDriveFolder`, puis un rangement unique avec le nom définitif).
 
 Le diagnostic correspondant est `_storage_drive_layout_test.mjs` (chemins,
 contenu de l'étiquette, renommages et rangement, sur un faux Drive).

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { getDirectImageUrl, BOX_ROW_LABELS, DEF_COMPOUNDS } from '../data/constants';
 import { RichTextEditor } from './RichTextEditor';
 import { Icon } from './Icons';
@@ -442,14 +442,22 @@ export const BoxDetail = ({ activeTest, updateActiveTest, storages, expandedGrou
        ne change pas (déplacement par identifiant de fichier) et un fichier déjà
        rangé au bon endroit n'est jamais touché. */
     const boxPhotoKeys = [activeTest.boxImageUrl || '', activeTest.boxContentsImageUrl || ''].filter(Boolean).join('|');
+    /* Le nom de la boîte est lu dans une REF, et n'est PAS une dépendance de
+       l'effet : il change à chaque frappe, et recalculer le dossier à chaque
+       lettre créait un dossier par nom intermédiaire (renommer une boîte en
+       « jac » laissait storage/<storage>/boxes/j, …/ja, …/jac). Le rangement
+       suit donc l'OUVERTURE de la boîte et ses photos ; le renommage, lui, est
+       un geste du DOSSIER (une seule fois, au blur — voir activeTestModule). */
+    const boxNameRef = useRef(activeTest.name || 'box');
+    boxNameRef.current = activeTest.name || 'box';
     useEffect(() => {
         if (!boxPhotoKeys || !boxStorageName) return;
-        tidyStorageFiles({ storage: boxStorageName, box: activeTest.name || 'box', urls: boxPhotoKeys.split('|') })
+        tidyStorageFiles({ storage: boxStorageName, box: boxNameRef.current, urls: boxPhotoKeys.split('|') })
             .then((moved) => {
-                if (moved > 0) console.info(`Box files moved into ${storageBoxImagesFolderPath(boxStorageName, activeTest.name || 'box').join('/')}`);
+                if (moved > 0) console.info(`Box files moved into ${storageBoxImagesFolderPath(boxStorageName, boxNameRef.current).join('/')}`);
             })
             .catch(() => {});
-    }, [boxPhotoKeys, boxStorageName, activeTest.name]);
+    }, [boxPhotoKeys, boxStorageName, activeTest.id]);
     const getVal = (key, def) => expandedGroups[key] !== undefined ? expandedGroups[key] : def;
     const setVal = (key, val) => setExpandedGroups(p => {
         let current = p[key];

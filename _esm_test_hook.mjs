@@ -55,7 +55,7 @@ export async function load(url, context, next) {
         'export const downloadDriveFileText = async (id) => (typeof M().downloadDriveFileText === "function" ? M().downloadDriveFileText(id) : "");',
         'export const dataUrlToBlob = (u) => (typeof M().dataUrlToBlob === "function" ? M().dataUrlToBlob(u) : null);',
         'export const getDriveRootName = () => M().driveRootName || "";',
-        'export const resolveDrivePathFromNames = async (names) => (typeof M().resolveDrivePathFromNames === "function" ? M().resolveDrivePathFromNames(names) : { leafId: "", path: [] });',
+        'export const resolveDrivePathFromNames = async (names, opts) => (typeof M().resolveDrivePathFromNames === "function" ? M().resolveDrivePathFromNames(names, opts) : { leafId: "", path: [] });',
         'export const listDriveChildren = async (id) => (typeof M().listDriveChildren === "function" ? M().listDriveChildren(id) : []);',
         // Miroir du Drive (driveMirror.js / workspaceDrive.js) : un faux Drive
         // peut fournir dossiers et fichiers, mettre à la corbeille, renommer…

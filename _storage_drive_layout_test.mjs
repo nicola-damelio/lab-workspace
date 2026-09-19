@@ -115,12 +115,17 @@ globalThis.__driveTestMocks = {
   ensureDriveFolder: async () => 'root',
   canonicalDatasetDirId: async (dir) => folderId(dir, 'root'),
   findFolderByName: async (name, parent) => folderId(String(name), String(parent)),
-  resolveDrivePathFromNames: async (names) => {
+  resolveDrivePathFromNames: async (names, opts = {}) => {
+    const create = opts.create !== false;
     let parent = 'root';
     const path = [];
     for (const raw of names) {
       const name = String(raw);
-      const id = folderId(name, parent) || addFolder(name, parent);
+      const existing = folderId(name, parent);
+      /* En RECHERCHE SEULE, le premier dossier absent arrête la chaîne (rien
+         n'est fabriqué) — comme le vrai resolveDrivePathFromNames. */
+      if (!existing && !create) return { leafId: '', path };
+      const id = existing || addFolder(name, parent);
       parent = id;
       path.push({ name, id });
     }
@@ -202,11 +207,47 @@ eq(await DRIVE.tidyStorageFiles({ storage: 'storage1', urls: [driveUrlOf(storage
 eq(parentFolderOf(storageFile).name, 'images', '…dans « images »');
 eq(grandparentOf(storageFile).name, 'storage1', '…sous le storage');
 
+/* ── 4 bis. Chercher ne fabrique RIEN (le bug des dossiers « j », « ja », …) ─
+   Ce qui était faux : le chemin du dossier était recalculé pendant la frappe du
+   nom de la boîte, et chaque recalcul CRÉAIT le dossier du nom en cours — taper
+   « jac » laissait storage/<storage>/boxes/j, …/ja, …/jac sur le Drive. Un geste
+   de RANGEMENT ne doit donc jamais créer d'arborescence : il la CHERCHE, et ne
+   crée le dossier que si un fichier a vraiment besoin d'y entrer. */
+const UP = await import('./src/utils/driveUpload.js');
+const virginPath = ['storage', 'storage1', 'boxes', 'Boite_vierge', 'images'];
+const idsBeforeProbe = new Set(folders.keys());
+eq((await UP.resolveDrivePathFromNames(virginPath, { create: false })).leafId, '', 'en recherche seule, un dossier absent est signalé absent');
+eq(folders.size, idsBeforeProbe.size, '…et rien n’est créé pour autant (ni « Boite_vierge » ni son « images »)');
+eq((await UP.resolveDrivePathFromNames(virginPath)).leafId.length > 0, true, 'l’envoi d’un fichier, lui, fabrique bien le dossier');
+const createdByProbe = [...folders.keys()].filter((id) => !idsBeforeProbe.has(id));
+eq(createdByProbe.length, 2, '…exactement les deux dossiers du chemin (celui de la boîte et son « images »)');
+/* le faux Drive repart exactement comme avant ces deux vérifications */
+for (const id of createdByProbe) folders.delete(id);
+eq(folders.size, idsBeforeProbe.size, 'le faux Drive est revenu à son état d’avant la recherche');
+
+/* ranger : le dossier de la boîte n'est créé QUE parce qu'un fichier y entre */
+const emptyBoxFolder = addFolder('Boite_a_ranger', folderId('boxes', folderId('storage1', containerId)));
+const strayFile = addFile('file3.jpg', [emptyBoxFolder]);
+eq(await DRIVE.tidyStorageFiles({ storage: 'storage1', box: 'Boite_a_ranger', urls: [driveUrlOf(strayFile)] }), 1, 'un fichier posé dans le dossier de la boîte rejoint son « images »');
+eq(parentFolderOf(strayFile).name, 'images', '…dans un dossier « images » créé pour l’occasion');
+eq(folders.get(parentFolderOf(strayFile).parent).name, 'Boite_a_ranger', '…sous le dossier de la boîte');
+const movesNow = upstream.moves.length;
+eq(await DRIVE.tidyStorageFiles({ storage: 'storage1', box: 'Boite_a_ranger', urls: [driveUrlOf(strayFile)] }), 0, 'une fois rangé, il n’y a plus rien à faire');
+eq(upstream.moves.length, movesNow, '…aucun déplacement de plus');
+
 /* ── 5. Renommages : le dossier suit le nom ──────────────────────────────── */
+const foldersBeforeRenames = folders.size;
 eq(await DRIVE.renameStorageBoxDriveFolder({ storage: 'storage1', oldName: 'Test 74', newName: 'Antibodies' }), false, 'renommer une boîte sans dossier ne fabrique rien');
 eq(await DRIVE.renameStorageBoxDriveFolder({ storage: 'storage1', oldName: 'Antibodies', newName: 'Antibody stocks' }), true, 'renommer une boîte renomme SON dossier');
 eq(childFolder('Antibody_stocks', folderId('boxes', folderId('storage1', containerId))).name, 'Antibody_stocks', '…au nom slugé de la boîte');
 eq(await DRIVE.renameStorageBoxDriveFolder({ storage: 'storage1', oldName: 'Antibody stocks', newName: 'Antibody stocks' }), false, 'un renommage identique ne touche à rien');
+
+/* Le bug des dossiers « j », « ja », « jac » : un renommage ne FABRIQUE rien,
+   il renomme UN dossier — et les fichiers suivent leur dossier, donc le
+   rangement n'a plus rien à faire une fois le nom définitif. */
+eq(folders.size, foldersBeforeRenames, 'renommer une boîte ne crée aucun dossier (ni « j », ni « ja », ni « jac »)');
+eq(await DRIVE.tidyStorageFiles({ storage: 'storage1', box: 'Antibody stocks', urls: [driveUrlOf(legacyFile)] }), 0, 'après renommage, la photo est déjà dans le dossier de la boîte');
+eq(folders.size, foldersBeforeRenames, '…et le rangement non plus n’a rien créé');
 
 eq(await DRIVE.renameStorageDriveFolder({ oldName: 'storage1', newName: 'Freezer -80' }), true, 'renommer un storage renomme son dossier');
 eq(childFolder('Freezer_-80', containerId).name, 'Freezer_-80', '…au nouveau nom slugé');
@@ -233,6 +274,23 @@ ok(LABEL_COMP.includes('saveBoxLabelFile({ storage: storageName, box: boxName, b
 ok(LABEL_COMP.includes('buildBoxLabelPdf({ storageName, position, boxName, rows })'), '…et fabriquée à partir de la même table');
 ok(PDF_SRC.includes("doc.output('blob')"), 'le PDF est un blob (donc envoyable)');
 ok(PDF_SRC.includes('format: [LABEL_PAGE_MM, LABEL_PAGE_MM]'), 'le format du papier est celui de l’étiquette imprimée');
+
+/* Le bug corrigé : le dossier d'une boîte était recalculé à CHAQUE FRAPPE (le
+   nom était une dépendance de l'effet de rangement), donc taper « jac » laissait
+   storage/<storage>/boxes/j, …/ja, …/jac. Le nom est maintenant lu dans une ref,
+   l'effet suit la BOÎTE ouverte, et le renommage (un seul geste, au blur) range
+   les photos une fois avec le nom définitif. */
+const DRIVE_SRC = read('./src/utils/storageDrive.js');
+const UP_SRC = read('./src/utils/driveUpload.js');
+ok(!/\}, \[boxPhotoKeys, boxStorageName, activeTest\.name\]\)/.test(STORAGE_SRC), 'le rangement de la boîte ne dépend PLUS du nom en cours de frappe');
+ok(STORAGE_SRC.includes('const boxNameRef = useRef(activeTest.name'), '…le nom de la boîte est lu dans une ref');
+ok(STORAGE_SRC.includes('}, [boxPhotoKeys, boxStorageName, activeTest.id]);'), '…et l’effet suit la BOÎTE ouverte et ses photos');
+ok(ATM_SRC.includes('tidyStorageFiles({'), 'renommer une boîte range ses photos, une seule fois, à la fin de la saisie');
+ok(ATM_SRC.includes("box: activeTest.name || 'box',"), '…avec le nom DÉFINITIF de la boîte');
+ok(DRIVE_SRC.includes('resolveDrivePathFromNames(names, { create: false })'), 'le rangement CHERCHE le dossier visé avant de le créer');
+ok(DRIVE_SRC.includes('const resolved = await resolveDrivePathFromNames(names);'), '…et ne le crée que parce qu’un fichier a vraiment besoin d’y entrer');
+ok(UP_SRC.includes("if (!next && !create) return { leafId: '', path };"), 'en recherche seule, driveUpload ne fabrique aucun dossier');
+
 const pkg = JSON.parse(read('./package.json'));
 ok(!!pkg.dependencies.jspdf, 'jspdf est installé (aucun service externe)');
 

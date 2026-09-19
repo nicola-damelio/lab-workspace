@@ -7,7 +7,7 @@ import React, { lazy, useRef, useState, useEffect } from 'react';
 import { BoxDetail } from '../Storage';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES, EXPERIMENT_TYPES } from '../../data/testTypes';
 import { markAttachmentsDeleted, renameDriveFilesFor, deleteTestDriveFolder } from '../../utils/driveUpload';
-import { renameStorageBoxDriveFolder } from '../../utils/storageDrive';
+import { renameStorageBoxDriveFolder, tidyStorageFiles } from '../../utils/storageDrive';
 import { removeTestFcsBlobs } from '../../utils/fcsBlobStore';
 import { setSectionsCommand } from '../ui';
 import { testProjectAccess } from './projectsModule';
@@ -344,10 +344,21 @@ const TestHeader = (
                                    dossier qu'il faut renommer (le nom « Test 74 »
                                    de la création ne doit pas rester). */
                                 if (isBox) {
+                                  const boxStorageName = ((storages || []).find((s) => s.id === activeTest.storageId)?.name) || '';
                                   renameStorageBoxDriveFolder({
-                                    storage: ((storages || []).find((s) => s.id === activeTest.storageId)?.name) || '',
+                                    storage: boxStorageName,
                                     oldName: before,
                                     newName: activeTest.name
+                                  }).catch(() => {});
+                                  /* Le dossier de la boîte vient de prendre son nom
+                                     DÉFINITIF : c'est MAINTENANT (une fois, pas à
+                                     chaque lettre) qu'on range ses photos sous ce
+                                     nom — un dossier par nom intermédiaire restait
+                                     sinon sur le Drive (j, ja, jac). */
+                                  tidyStorageFiles({
+                                    storage: boxStorageName,
+                                    box: activeTest.name || 'box',
+                                    urls: [activeTest.boxImageUrl || '', activeTest.boxContentsImageUrl || '']
                                   }).catch(() => {});
                                 } else {
                                   renameDriveFilesFor({ field: 'test', oldValue: before, newValue: activeTest.name }).catch(() => {});
