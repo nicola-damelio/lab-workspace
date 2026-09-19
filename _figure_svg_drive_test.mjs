@@ -258,12 +258,17 @@ check('[bout en bout] elle n’est plus « locale seulement »',
 
 const cloudNames = [];
 const cloudIds = new Map();  // nom du fichier → id Drive (un nom = UN fichier)
+const metaById = new Map();  // id Drive → { id, name } (ce que le Drive sait du fichier)
+const sidecarsInFolder = new Map(); // nom du sidecar → id Drive (le dossier d'images)
+const renames = [];          // [ancien nom, nouveau nom] — les renommages DÉJÀ faits
 let cloudSeq = 0;
 globalThis.__driveTestMocks.uploadLocalFile = async (arg) => {
   const name = String(arg && arg.name);
   if (!cloudIds.has(name)) { cloudSeq += 1; cloudIds.set(name, `F${cloudSeq}`); }
   cloudNames.push(name);
   const id = cloudIds.get(name);
+  metaById.set(id, { id, name });
+  if (/\.meta\.json$/i.test(name)) sidecarsInFolder.set(name, id);
   return { id, name, driveUrl: `https://drive.google.com/file/d/${id}/view` };
 };
 const NAME_LABEL = '1D Histogram (Data Analysis) · flow_cyt_p53H_p53R';
@@ -336,7 +341,7 @@ check('[geste] le même canvas re-sauvé → le MÊME fichier', cvA2.drive.id, c
 checkTrue('[appelants] ☁ Save to Drive transmet l’identité de l’entrée',
   LIB.includes('identity: figureFileIdentity({ src: item.src, canvasData: item.canvasData })'));
 checkTrue('[appelants] la publication aussi',
-  LIB.includes("identity: String(identity || '').trim() || figureFileIdentity({ src, canvasData })"));
+  LIB.includes("const ident = String(identity || '').trim() || figureFileIdentity({ src, canvasData });"));
 checkTrue('[appelants] l’import d’un fichier porte l’identité du FICHIER (nom + taille + date)',
   IB.includes('const identity = `${f.name || \'\'}|${f.size || 0}|${f.lastModified || 0}`;'));
 checkTrue('[appelants] …et la transmet à la publication',
@@ -345,6 +350,205 @@ checkTrue('[appelants] la copie cloud d’un canvas inséré porte sa clé de co
   IB.includes('identity: figureFileIdentity({ canvasData: { canvasKey } })'));
 checkTrue('[appelants] les figures d’un manuscrit portent leur section + leur nom de fichier',
   PROJ.includes('figureImageFor(fig, label, `${place.section || \'\'}|${name || label}`)'));
+
+/* ── 10. LE NOM SUR LE DRIVE SUIT LE NOM DU CANVAS ────────────────────────────
+   « I cannot find my renamed canvas in Drive ». Renommer une toile ne changeait
+   que le libellé de son ENTRÉE : le fichier du Drive gardait le nom de sa
+   première écriture, donc on le cherchait sous un nom qu'il ne portait pas. Et
+   comme le nom avait changé, la sauvegarde suivante ne retrouvait plus le
+   fichier à écraser : elle en déposait un SECOND et laissait l'ancien, orphelin.
+
+   Le faux Drive ci-dessous sait désormais RENOMMER : le nom change, l'id ne
+   bouge pas — c'est exactement ce qui distingue « le même fichier renommé » de
+   « un second fichier ». */
+globalThis.__driveTestMocks.getDriveFileMeta = async (id) =>
+  (metaById.get(String(id)) || { id: String(id), name: '', trashed: false });
+globalThis.__driveTestMocks.renameDriveFile = async (id, name) => {
+  const key = String(id);
+  const before = metaById.get(key) || { id: key, name: '' };
+  if (before.name) {
+    cloudIds.delete(before.name);
+    if (sidecarsInFolder.get(before.name) === key) sidecarsInFolder.delete(before.name);
+  }
+  metaById.set(key, { id: key, name: String(name) });
+  cloudIds.set(String(name), key);
+  if (/\.meta\.json$/i.test(String(name))) sidecarsInFolder.set(String(name), key);
+  renames.push([before.name, String(name)]);
+  return true;
+};
+globalThis.__driveTestMocks.resolveDrivePathFromNames = async () => ({ leafId: 'images_folder', path: [] });
+globalThis.__driveTestMocks.findDriveFileByName = async (name, parent) =>
+  (parent === 'images_folder' ? String(sidecarsInFolder.get(String(name)) || '') : '');
+
+/* 10a. les helpers purs du nom (l'extension du fichier ACTUEL est conservée). */
+check('[nom] extension lue', LIB_MOD.fileExtensionOf('A.JPG'), 'jpg');
+check('[nom] aucune extension', LIB_MOD.fileExtensionOf('A'), '');
+check('[nom] la cible garde l’extension du fichier actuel',
+  LIB_MOD.figureRenameTarget({ label: 'p53H hist', previousName: 'Canvas_18092026.svg' }).name,
+  LIB_MOD.figureFileName('p53H hist', 'svg'));
+check('[nom] sans nom connu, l’extension par défaut ne casse pas le nom',
+  LIB_MOD.figureRenameTarget({ label: 'p53H hist', previousName: '' }).name,
+  LIB_MOD.figureFileName('p53H hist', 'png'));
+check('[url] le dernier segment, décodé',
+  LIB_MOD.fileNameOfUrl('https://nc/remote.php/dav/files/u/a%20b.svg'), 'a b.svg');
+check('[url] remplacer le nom garde le dossier (et la requête)',
+  LIB_MOD.urlWithFileName('https://nc/remote.php/dav/files/u/a.svg?x=1', 'b c.svg'),
+  'https://nc/remote.php/dav/files/u/b%20c.svg?x=1');
+
+/* 10b. le geste : une toile publiée, puis RENOMMÉE. */
+const beforeRename = await publish(null, { label: 'Canvas 18/09/2026', canvasData: { canvasKey: 'cv_ren', objects: [] } });
+const oldName = String(beforeRename.drive.name);
+const oldSidecar = String(beforeRename.entry.metaName || '');
+checkTrue('[rename] le fichier et son sidecar sont sur le faux Drive',
+  cloudIds.has(oldName) && cloudIds.has(oldSidecar));
+const NEW_LABEL = 'p53H — histograms';
+const ren = await LIB_MOD.renameFigureOnDrive({
+  scope: 'project', projectId: 'P1', projectName: 'CD project', id: beforeRename.entry.id, label: NEW_LABEL
+});
+check('[rename] le renommage aboutit', ren.ok, true);
+check('[rename] le nom visé = libellé + empreinte de l’identité',
+  ren.name, `p53H_histograms-${LIB_MOD.fileTagOf('canvas:cv_ren')}.svg`);
+check('[rename] le fichier garde son IDENTIFIANT (les liens des figures ne bougent pas)',
+  cloudIds.get(ren.name), beforeRename.drive.id);
+check('[rename] l’ancien nom n’existe plus dans le dossier', cloudIds.has(oldName), false);
+check('[rename] le nom du fichier a bien changé sur le Drive',
+  metaById.get(beforeRename.drive.id).name, ren.name);
+check('[rename] le sidecar de composition suit', ren.metaMoved, true);
+check('[rename] …sous le nouveau nom d’image', ren.metaName, `${ren.name}.meta.json`);
+checkTrue('[rename] …et plus sous l’ancien', cloudIds.has(oldSidecar) === false);
+check('[rename] l’entrée sait où est sa composition maintenant',
+  (LIB_MOD.readProjectLibrary('P1').find((i) => i.id === beforeRename.entry.id) || {}).metaName,
+  `${ren.name}.meta.json`);
+
+/* 10c. idempotence : renommer deux fois avec le MÊME nom ne touche à rien. */
+const same = await LIB_MOD.renameFigureOnDrive({
+  scope: 'project', projectId: 'P1', projectName: 'CD project', id: beforeRename.entry.id, label: NEW_LABEL
+});
+check('[rename] déjà sous ce nom → aucun renommage', same.unchanged, true);
+check('[rename] …et aucune requête de renommage de plus (l’image + son sidecar)',
+  renames.length, 2);
+
+/* 10d. la sauvegarde suivante réécrit LE MÊME fichier (aucune copie nouvelle). */
+const saved = await LIB_MOD.publishLibraryFigure({
+  scope: 'project', projectId: 'P1', projectName: 'CD project',
+  dataUrl: SVG_URL, label: NEW_LABEL, canvasData: { canvasKey: 'cv_ren', objects: [] },
+  updateId: beforeRename.entry.id
+});
+check('[rename] « 💾 Save now » réécrit le fichier renommé', saved.drive.id, beforeRename.drive.id);
+check('[rename] …sans renommage supplémentaire (même nom)', renames.length, 2);
+
+/* 10e. RATTRAPAGE : le nom a changé sans que le Drive suive (cloud hors ligne au
+        moment du renommage, ou fichier déposé AVANT cette correction). La
+        sauvegarde suivante renomme d'abord, puis réécrit CE fichier-là. */
+const lag = await publish(null, { label: 'Canvas brouillon', canvasData: { canvasKey: 'cv_lag', objects: [] } });
+const lagName = String(lag.drive.name);
+LIB_MOD.renameProjectLibraryItem('P1', lag.entry.id, 'Nom tardif');   // le local seul
+const caught = await LIB_MOD.publishLibraryFigure({
+  scope: 'project', projectId: 'P1', projectName: 'CD project',
+  dataUrl: SVG_URL, label: 'Nom tardif', canvasData: { canvasKey: 'cv_lag', objects: [] },
+  updateId: lag.entry.id
+});
+check('[rattrapage] le fichier prend le nom du libellé + l’identité',
+  caught.drive.name, `Nom_tardif-${LIB_MOD.fileTagOf('canvas:cv_lag')}.svg`);
+check('[rattrapage] …en gardant l’identifiant du fichier (donc aucune copie)',
+  caught.drive.id, lag.drive.id);
+check('[rattrapage] …et l’ancien nom a disparu du dossier', cloudIds.has(lagName), false);
+check('[rattrapage] …le sidecar de composition aussi', cloudIds.has(`${lagName}.meta.json`), false);
+
+/* 10f. les gestes de l'app appellent bien ce renommage — page projet, barre de
+        l'éditeur, modale 🖼 Library et bibliothèque de Figures & Slides. */
+checkTrue('[appelants] la page projet renomme aussi le fichier du Drive',
+  PROJ.includes("renameFigureOnDrive({ scope: 'project', projectId: project.id, projectName: project.name || '', id: c.id, label })"));
+checkTrue('[appelants] la barre de l’éditeur aussi (une entrée par portée)',
+  IB.includes('renameFigureOnDrive({ ...s, label })'));
+checkTrue('[appelants] la modale 🖼 Library aussi',
+  IB.includes('renameFigureOnDrive({ ...cloudScope, id, label })'));
+checkTrue('[appelants] la bibliothèque de Figures & Slides aussi',
+  FIG.includes('renameFigureOnDrive({'));
+checkTrue('[appelants] et la sauvegarde rattrape un nom qui n’a pas suivi',
+  LIB.includes('await renameFigureOnDrive({ scope, projectId, projectName, id: prevEntry.id, label, identity: ident });'));
+checkTrue('[appelants] …les quatre gestes DIsent ce qui est arrivé au fichier',
+  PROJ.includes('📁 On Drive, “') && IB.includes('📁 On Drive, “') && FIG.includes('renameFigureOnDrive({'));
+
+/* ── 11. RE-CAPTURER LE MÊME GRAPHE MET À JOUR SON ENTRÉE (une seule) ─────────
+   « la vignette de la bibliothèque ne correspond pas à l'image qu'on insère : on
+   croit prendre l'un et c'est l'autre ».
+
+   Une capture porte son identité dans le NOM de son fichier (une figure = un
+   fichier) : deux captures du MÊME graphe — l'axe X passé de DAPI à l'annexine —
+   écrivent donc LE MÊME fichier. Mais le bouton AJOUTAIT une entrée à chaque
+   fois : la première gardait sa vignette d'hier (le graphe DAPI) en pointant sur
+   un fichier qui portait désormais l'autre graphe, tandis que l'insertion, elle,
+   lit les pixels du FICHIER. La vignette montrait un graphe, on en insérait un
+   autre.
+
+   La correction : l'identité RETROUVE l'entrée qui possède déjà ce fichier
+   (`findLibraryEntryByIdentity`) et la capture MET À JOUR cette entrée-là
+   (`updateId`). Vérifié ici sur le VRAI chemin (publishLibraryFigure + le faux
+   Drive) : une seule entrée, les pixels d'aujourd'hui, le MÊME fichier. */
+const AXIS_XML = XML.replace('1D Histogram (Data Analysis)', '1D Histogram annexin (Data Analysis)');
+const AXIS_URL = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(AXIS_XML);
+checkTrue('[re-capture] le second graphe est bien un autre contenu', AXIS_URL !== SVG_URL);
+const CHART_3 = { testId: 'T7', testName: 'flow_cyt', instanceName: 'run9', elementKey: `${NAME_LABEL} · Chart · 7` };
+const ident3 = LIB_MOD.figureFileIdentity({ src: CHART_3 });
+check('[re-capture] l’identité du graphe est celle qui nomme son fichier',
+  ident3, `T7|run9|${CHART_3.elementKey}`);
+const capA = await LIB_MOD.publishLibraryFigure({
+  scope: 'project', projectId: 'P1', projectName: 'CD project',
+  dataUrl: SVG_URL, label: NAME_LABEL, src: CHART_3
+});
+const found3 = LIB_MOD.findLibraryEntryByIdentity({ scope: 'project', projectId: 'P1', identity: ident3 });
+check('[re-capture] la capture suivante retrouve SON entrée', found3 && found3.id, capA.entry.id);
+checkTrue('[re-capture] …celle du premier graphe, avec ses pixels d’hier',
+  String(found3 && found3.url) === SVG_URL && found3 && found3.drive === true);
+check('[re-capture] un graphe jamais capturé ne correspond à rien',
+  LIB_MOD.findLibraryEntryByIdentity({ scope: 'project', projectId: 'P1', identity: 'T9|run9|jamais · Chart · 1' }), null);
+check('[re-capture] sans identité, rien ne correspond (nom inchangé → entrée neuve)',
+  LIB_MOD.findLibraryEntryByIdentity({ scope: 'project', projectId: 'P1', identity: '' }), null);
+check('[re-capture] la portée compte : le fichier d’un canvas vit dans SON dossier',
+  LIB_MOD.findLibraryEntryByIdentity({ scope: 'common', identity: ident3 }), null);
+// 2e capture du MÊME graphe, axe X changé : c'est ce que fait le 📷.
+const capB = await LIB_MOD.publishLibraryFigure({
+  scope: 'project', projectId: 'P1', projectName: 'CD project',
+  dataUrl: AXIS_URL, label: NAME_LABEL, src: CHART_3,
+  identity: ident3, updateId: found3 ? found3.id : null
+});
+check('[re-capture] la seconde capture MET À JOUR la même entrée', capB.entry.id, capA.entry.id);
+check('[re-capture] …elle n’en ajoute pas une seconde',
+  LIB_MOD.readProjectLibrary('P1').filter((i) => LIB_MOD.figureFileIdentity(i) === ident3).length, 1);
+check('[re-capture] …et le fichier cloud reste le MÊME (aucune copie)',
+  capB.drive.id, capA.drive.id);
+checkTrue('[re-capture] …la vignette suit le NOUVEAU graphe (vignette = image insérée)',
+  String(capB.entry.url || '').includes('annexin') && !String(capB.entry.url || '').includes('<title>1D Histogram (Data Analysis)'));
+check('[re-capture] …et l’entrée pointe toujours sur ses pixels à jour',
+  String(LIB_MOD.readProjectLibrary('P1').find((i) => i.id === capA.entry.id).url).includes('annexin'), true);
+
+/* Le BRANCHEMENT : c'est le 📷 qui doit faire cette mise à jour (sinon le même
+   scénario recommence à chaque capture). */
+checkTrue('[star] la capture calcule l’identité de fichier',
+  STAR.includes('const ident = figureFileIdentity({ src });'));
+checkTrue('[star] …retrouve l’entrée qui possède déjà ce fichier',
+  STAR.includes('findLibraryEntryByIdentity({'));
+checkTrue('[star] …et met à jour CETTE entrée (jamais une seconde)',
+  STAR.includes('updateId: existing ? existing.id : null'));
+checkTrue('[star] …en transmettant l’identité (même nom que le renommage et le 🔄 Recapture)',
+  STAR.includes('identity: ident,'));
+checkTrue('[star] findLibraryEntryByIdentity est importé du module de bibliothèque',
+  STAR.includes('figureFileIdentity, findLibraryEntryByIdentity'));
+checkTrue('[star] la barre de statut dit si la figure a été MISE À JOUR ou créée',
+  STAR.includes("`📷 Figure ${existing ? 'updated in' : 'saved to'} ${where}${driveMsg}`"));
+
+/* Les pixels INSÉRÉS doivent être ceux du fichier d'aujourd'hui : une figure
+   réécrite sur place garde son identifiant, donc la MÊME URL, et le navigateur
+   peut en avoir une copie d'avant. */
+checkTrue('[lib] la lecture peut ignorer le cache du navigateur',
+  LIB.includes("const cacheOpt = fresh ? { cache: 'no-store' } : {};"));
+checkTrue('[lib] …en option seulement (les vignettes gardent le cache)',
+  LIB.includes('export const resolveImageToDataUrl = async (src, { fresh = false } = {}) => {'));
+checkTrue('[builder] insérer une figure lit les pixels SANS le cache (vignette cliquée = image obtenue)',
+  IB.includes('resolveImageToDataUrl(fullSrc, { fresh: true })'));
+check('[builder] …les trois gestes d’insertion (clic, ➕ Add figure, ↔ Swap)',
+  (IB.match(/resolveImageToDataUrl\(fullSrc, \{ fresh: true \}\)/g) || []).length, 3);
 
 const total = passed + results.length;
 const body = results.length ? results.join('\n') : 'all checks passed';

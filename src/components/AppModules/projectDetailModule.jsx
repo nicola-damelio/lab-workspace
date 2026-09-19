@@ -49,7 +49,7 @@ import { mirrorDeleteProject, mirrorRenameProject } from '../../utils/driveMirro
 import { repairContentImages, getRenderableDriveUrl } from '../../data/constants';
 import {
   readDeck, readProjectLibrary, removeProjectLibraryItem, renameProjectLibraryItem, pushLibraryToDrive, pullLibraryFromDrive,
-  addProjectLibraryItem, makeUploadImage, uploadFigureToDrive,
+  addProjectLibraryItem, makeUploadImage, uploadFigureToDrive, renameFigureOnDrive,
   countCanvasDuplicates, removeCanvasDuplicates, restoreCanvasFromFigureMeta, canvasPreviewFromComposition,
   lastLibraryListWrite
 } from '../../utils/figuresLibrary';
@@ -526,8 +526,11 @@ export const ProjectDetailModule = ({
      l'entrée de la bibliothèque du projet ; les figures qui renvoient à ce canvas
      gardent leur `canvasLabel` (c'est lui que montrent les infobulles
      « ✏️ Modify in Image Builder »), donc on le met à jour du même geste.
-     Le nom du fichier déjà sur le Drive ne bouge pas : la prochaine sauvegarde
-     (💾 Save now) dépose l'image sous le nouveau nom. */
+     LE FICHIER DU DRIVE SUIT AUSSI (renameFigureOnDrive) : « I cannot find my
+     renamed canvas in Drive » — le fichier gardait le nom de sa première
+     écriture, et la sauvegarde suivante, le nom ayant changé, ne le retrouvait
+     plus à écraser : elle en déposait un second. Le fichier est renommé SUR
+     PLACE (même identifiant), donc les liens et la composition suivent. */
   const renameCanvas = (c) => {
     if (!canModify) return;
     const name = window.prompt('Canvas name:', c.label || 'Canvas');
@@ -556,7 +559,20 @@ export const ProjectDetailModule = ({
       ? `⚠️ “${label}” could not be written anywhere (this browser’s store refused even the small name record): that name lives in this session only. Free some room with “☁ Save figures to Drive” above, then rename again.`
       : (full
         ? `✏️ “${c.label}” is now called “${label}” — the figures that point at it follow, and the name is remembered (it survives a refresh). ⚠️ This browser’s store is FULL, though: the image lists themselves could not be rewritten, so free some room with “☁ Save figures to Drive” above before adding more.`
-        : `✏️ “${c.label}” is now called “${label}” (the figures that point at it follow, and the next “💾 Save now” names the image that way).`));
+        : `✏️ “${c.label}” is now called “${label}” (the figures that point at it follow).`));
+    /* LE NOM DU FICHIER SUR LE DRIVE SUIT — c'est le geste qui manquait : on
+       cherchait la toile dans le dossier sous un nom que le Drive ne portait
+       pas. Le fichier garde son identifiant, donc les figures qui le visent
+       continuent de fonctionner ; son sidecar de composition est renommé avec
+       lui. Ce qui s'est passé est DIT (renommé / déjà sous ce nom / refusé). */
+    renameFigureOnDrive({ scope: 'project', projectId: project.id, projectName: project.name || '', id: c.id, label })
+      .then((r) => {
+        if (!r || !r.ok) return;                       // le message local reste : il dit déjà l'essentiel
+        setFigDriveMsg((m) => (r.unchanged
+          ? `${m} 📁 On Drive the image is already called “${r.name}”.`
+          : `${m} 📁 On Drive, “${r.from}” is now “${r.name}” — same file (its link and its composition sidecar follow it), so no copy is left behind.`));
+      })
+      .catch(() => {});
   };
 
   /* ---- 🧹 LES COPIES DU MÊME CANVAS -------------------------------------------
@@ -4149,8 +4165,8 @@ export const ProjectDetailModule = ({
             store), <span className="font-bold">📥 Restore a canvas file</span> brings it back from the
             <span className="font-bold"> &lt;image&gt;.meta.json</span> that sits next to its image on Google Drive — no
             list, no timestamp, no cloud connection needed: the file <span className="font-bold">is</span> the composition.
-            <span className="font-bold"> ✏️ Rename</span> on a card renames that canvas (the figures that link to it follow, and
-            the next <span className="font-bold">💾 Save now</span> names the image that way; canvases can also be
+            <span className="font-bold"> ✏️ Rename</span> on a card renames that canvas AND its file on Drive (the same file takes the new name, so the
+            figures that link to it keep working); canvases can also be
             renamed in the Image Builder — its toolbar’s <span className="font-bold">✏️ Rename</span> button, and the
             <span className="font-bold"> ✎</span> button on a thumbnail in the <span className="font-bold">🖼 Library</span> modal).
           </p>
@@ -4232,7 +4248,7 @@ export const ProjectDetailModule = ({
                     {canModify && (
                       <button type="button" onClick={() => renameCanvas(c)}
                               className="text-slate-600 hover:text-slate-800 border border-slate-200 bg-white rounded-lg px-2 py-1.5 text-xs font-bold"
-                              title="Rename this canvas — the name is what this page, the image library and the “✏️ Modify in Image Builder” links show. The figures that point at it follow, and the next “💾 Save now” names the image that way. The image already on Drive keeps its file name until then. If this browser’s store is full the write is refused and the message above says so.">✏️ Rename</button>
+                              title="Rename this canvas — the name is what this page, the image library and the “✏️ Modify in Image Builder” links show. The figures that point at it follow, and the file already on Drive is renamed with it (same file, same link — nothing is left behind under the old name). If the cloud is not connected, the next “💾 Save now” names the image that way; if this browser’s store is full the write is refused and the message above says so.">✏️ Rename</button>
                     )}
                     {canModify && (
                       <button type="button" onClick={() => removeCanvasLink(c.id)}

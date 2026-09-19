@@ -8,7 +8,7 @@ import {
   countRecaptureDuplicates, removeRecaptureDuplicates,
   pushLibraryToDrive, pullLibraryFromDrive, localOnlyLibraryItems, mergeLibraryFromSnapshot,
   uid, canvasKeyOfEntry, findCanvasEntryByKey, canvasPreviewFromComposition, lastLibraryListWrite,
-  figureFileIdentity
+  figureFileIdentity, renameFigureOnDrive
 } from '../utils/figuresLibrary';
 import {
   freeRectOf, isFreeLayout, pinRectOf, freeSlotFor, RECT_MIN, RECT_MAX, moveFigureInList
@@ -572,6 +572,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     const scopes = Object.keys(canvasEntries || {});
     let renamed = 0;
     let refused = 0;
+    /* Les portées de ce canvas, pour le RENOMMAGE DU FICHIER SUR LE CLOUD plus
+       bas : c'est l'entrée de bibliothèque qui porte son lien Drive. */
+    const cloudScopes = [];
     scopes.forEach((k) => {
       const id = (canvasEntries[k] || {}).id;
       if (!id) return;
@@ -579,6 +582,12 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         ? renameLibraryItem(id, label)
         : renameProjectLibraryItem(k, id, label);
       if (kept === false) refused += 1; else renamed += 1;
+      cloudScopes.push({
+        scope: k === 'dataset' ? 'common' : 'project',
+        projectId: k === 'dataset' ? null : k,
+        projectName: k === 'dataset' ? '' : String((allProjects.find((p) => p.id === k) || {}).name || ''),
+        id
+      });
     });
     if (renamed) {
       setCanvasEntries((m) => {
@@ -600,8 +609,22 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       : (full
         ? `✏️ “${current || 'Canvas'}” is now called “${label}”${scopes.length ? ` — ${renamed} library ${renamed === 1 ? 'entry' : 'entries'} renamed in place` : ''}, and the name is remembered (it survives a refresh). ⚠️ This browser’s store is FULL, though: the image lists themselves could not be rewritten — free some room with “☁ Save figures to Drive” before adding more.`
         : (scopes.length
-          ? `✏️ “${current || 'Canvas'}” is now called “${label}” — ${renamed} library ${renamed === 1 ? 'entry' : 'entries'} renamed in place (the image already on Drive keeps its file name until the next save).`
+          ? `✏️ “${current || 'Canvas'}” is now called “${label}” — ${renamed} library ${renamed === 1 ? 'entry' : 'entries'} renamed in place.`
           : `✏️ This canvas will be called “${label}”. It has no library entry yet: press “💾 Save now” to store it under that name.`)));
+    /* LE NOM DU FICHIER SUR LE DRIVE SUIT — c'est ce qui manquait : on cherchait
+       la toile dans le dossier sous un nom que le Drive ne portait pas, et la
+       sauvegarde suivante, le nom ayant changé, ne retrouvait plus le fichier à
+       écraser : elle en déposait un SECOND. Ici le fichier est renommé SUR PLACE
+       (même identifiant de fichier) et son sidecar de composition avec lui, donc
+       les liens « ✏️ Modify in Image Builder » continuent de fonctionner. */
+    cloudScopes.forEach((s) => {
+      renameFigureOnDrive({ ...s, label })
+        .then((r) => {
+          if (!r || !r.ok || r.unchanged) return;
+          setCanvasNameMsg((m) => `${m} 📁 On Drive, “${r.from}” is now “${r.name}” — same file (its link and its composition sidecar follow it).`);
+        })
+        .catch(() => {});
+    });
   };
 
   // Clear transient library feedback whenever the modal is closed.
@@ -1432,8 +1455,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     // Library figures are stored on Google Drive — fetch the real pixels into a
     // dataURL (fast when it is already a dataURL) before drawing them on canvas.
     // Offline / no token: keep the local thumbnail so the panel still shows.
+    //
+    // `fresh: true` = les pixels d'AUJOURD'HUI : une figure réécrite SUR PLACE
+    // sur le Drive garde son identifiant, donc la même URL, et le navigateur peut
+    // en avoir une copie d'avant. La vignette cliquée doit être l'image
+    // OBTENUE — sans quoi on croit insérer un graphe et on en insère un autre.
     const fullSrc = item.full || item.url;
-    const resolved = await resolveImageToDataUrl(fullSrc).catch(() => fullSrc);
+    const resolved = await resolveImageToDataUrl(fullSrc, { fresh: true }).catch(() => fullSrc);
     const src = String(resolved || '').startsWith('data:')
       ? resolved
       : (item.url && String(item.url).startsWith('data:') ? item.url : resolved);
@@ -1574,8 +1602,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     const obj = objects.find((o) => o.id === selectedId);
     if (!obj) { setLibMsg('Select a panel first (click it), then add a figure to it.'); return; }
     commitHistory();
+    // `fresh: true` : la vignette cliquée est l'image INSÉRÉE (voir handlePickImage).
     const fullSrc = item.full || item.url;
-    const resolved = await resolveImageToDataUrl(fullSrc).catch(() => fullSrc);
+    const resolved = await resolveImageToDataUrl(fullSrc, { fresh: true }).catch(() => fullSrc);
     const src = String(resolved || '').startsWith('data:')
       ? resolved
       : (item.url && String(item.url).startsWith('data:') ? item.url : resolved);
@@ -1959,8 +1988,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     const idx = obj ? activeFigIdx(obj) : -1;
     if (!obj || idx < 0) { setLibMsg('Select a panel and one of its figures first, then ↔ Swap replaces that figure’s image.'); return; }
     commitHistory();
+    // `fresh: true` : la vignette cliquée est l'image INSÉRÉE (voir handlePickImage).
     const fullSrc = item.full || item.url;
-    const resolved = await resolveImageToDataUrl(fullSrc).catch(() => fullSrc);
+    const resolved = await resolveImageToDataUrl(fullSrc, { fresh: true }).catch(() => fullSrc);
     const src = String(resolved || '').startsWith('data:')
       ? resolved
       : (item.url && String(item.url).startsWith('data:') ? item.url : resolved);
@@ -2121,10 +2151,12 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     setActiveText((prev) => (prev && prev.objId !== selectedId ? null : prev));
   }, [selectedId]);
 
-  /* ── ⇹ ALIGNER / RÉPARTIR LES FIGURES SÉLECTIONNÉES ─────────────────────────
+  /* ── ⇹ ALIGNER / RÉPARTIR LES ÉLÉMENTS SÉLECTIONNÉS ─────────────────────────
      « Align them horizontally, vertically or center them » et « distribute them
-     horizontally or vertically » : les figures cochées « ☑ » de la liste (avec
-     la figure ACTIVE) se rangent les unes par rapport aux autres.
+     horizontally or vertically » : les éléments COCHÉS « ☑ » se rangent les uns
+     par rapport aux autres — les figures cochées (la figure ACTIVE l'est
+     d'office, elle en sort d'un clic) ET les textes cochés. Le groupe peut donc
+     être fait de plusieurs textes sans figure, de plusieurs figures, ou des deux.
 
      Deux points que le code doit dire :
 
@@ -2137,17 +2169,37 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
          exacte qu'elle montre). Aligner ne doit pas être le moment où le panneau
          se re-flowe : rien ne bouge, on ne fait que rendre les boîtes réglables.
          « ⊞ Lay the figures out in a grid » remet la grille quand on veut. */
-  const figGroupIdxs = (obj) => {
-    const ref = activeFigIdx(obj);
-    return [ref, ...figGroupOf(obj.id).filter((i) => i !== ref)].filter((i) => i >= 0);
-  };
+  const figGroupIdxs = (obj) => figGroupOf(obj.id)
+    .filter((i) => Number.isInteger(i) && i >= 0 && i < getObjImages(obj).length);
   /* Ce que les commandes ⇹ rangent dans ce panneau : les TEXTES cochés « ☑ »
      qui existent encore (un texte supprimé ne doit pas rester dans le groupe) et,
-     avec eux, la figure ACTIVE plus les figures cochées. */
+     avec eux, les figures COCHÉES. Un groupe peut donc être fait de figures
+     seules, de textes seuls, ou des deux — c'est la demande : « il peut aussi
+     s'agir de plusieurs textes sans figure, ou de plusieurs figures ». */
   const selectedTextGroup = (obj) => (obj
     ? textGroupOf(obj.id).filter((id) => (obj.texts || []).some((tx) => tx.id === id))
     : []);
   const layoutGroupSize = (obj) => (obj ? figGroupIdxs(obj).length + selectedTextGroup(obj).length : 0);
+  /* LA FIGURE ACTIVE EST COCHÉE D'OFFICE — mais elle PEUT être décochée. Sans
+     cela, un panneau qui porte une figure ne pouvait jamais ranger ses TEXTES
+     seuls : la figure active était d'office du groupe, donc un « 1 figure et 1
+     texte » qu'on ne pouvait pas défaire. Elle reste la référence des poignées
+     (🎯), elle sort seulement du groupe que ⇹ range. */
+  useEffect(() => {
+    const obj = (objectsRef.current || []).find((o) => o.id === selectedId);
+    if (!obj) return;
+    const ref = activeFigIdx(obj);
+    if (ref < 0) return;
+    setFigGroup((prev) => {
+      const cur = prev.objId === obj.id ? prev.idxs : [];
+      if (cur.includes(ref)) return prev;
+      return { objId: obj.id, idxs: [...cur, ref] };
+    });
+    // Le panneau tenu ou la référence changent SEULS : c'est ce qui (re)met la
+    // figure active dans le groupe. Dépendre de `objects` la remettrait à chaque
+    // déplacement — impossible alors de la sortir du groupe.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, activeFig && activeFig.objId, activeFig && activeFig.idx]);
   /* La boîte d'un TEXTE, en fractions du panneau — le MÊME repère que le
      rectangle libre d'une figure : `x` / `y` sont les millimètres du texte dans
      le panneau, la largeur est ESTIMÉE (le navigateur garde la mesure pour lui,
@@ -2243,6 +2295,76 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     commitHistory();
     setObjects(next);
   };
+
+  /* ── DÉPLACER LE GROUPE TOUT ENTIER, PAR PETITS PAS (clavier) ────────────────
+     « Quand ils sont sélectionnés et alignés, j'aimerais pouvoir les déplacer
+     progressivement, tous ensemble. » Les flèches du clavier décalent de la MÊME
+     quantité TOUT ce que ⇹ range — les figures cochées ET les textes cochés — de
+     0,5 mm par appui (5 mm avec Shift). L'écart posé par l'alignement est donc
+     conservé pendant le déplacement, que l'on peut faire « au millimètre près »
+     au lieu de tout re-glisser à la souris. Chaque appui est une étape
+     d'historique (Ctrl+Z revient d'un cran).
+     Les fonctions pures de utils/panelSelection font le calcul, exactement comme
+     le glissement groupé à la souris : une figure libre reçoit son rectangle, une
+     figure encore en grille son décalage en millimètres. */
+  const NUDGE_MM = 0.5;
+  const NUDGE_MM_COARSE = 5;
+  const nudgeFigureGroup = (dxMm, dyMm) => {
+    const obj = selectedObj;
+    if (!obj || dragState.current) return false;          // jamais pendant un glissement
+    const group = figGroupIdxs(obj);
+    const texts = selectedTextGroup(obj);
+    // Moins de deux éléments : il n'y a pas de groupe à déplacer « ensemble » —
+    // le clavier reste alors au reste de la page.
+    if (group.length + texts.length < 2) return false;
+    commitHistory();
+    setObjects((prev) => prev.map((o) => {
+      if (o.id !== obj.id) return o;
+      const imgs = getObjImages(o);
+      const figs = group
+        .filter((i) => i >= 0 && i < imgs.length)
+        .map((i) => ({
+          idx: i,
+          rect: freeRectOf(imgs[i]),
+          dx: Number(imgs[i] && imgs[i].dx) || 0,
+          dy: Number(imgs[i] && imgs[i].dy) || 0
+        }));
+      const patches = figs.length
+        ? moveFiguresPatches(figs, { dxMm, dyMm, panelWmm: o.w * cellW, panelHmm: o.h * cellH })
+        : {};
+      const moved = withImages(o, imgs.map((im, i) => (patches[i] ? { ...im, ...patches[i] } : im)));
+      if (!texts.length) return moved;
+      // Un texte se déplace en millimètres, comme sous la souris (type « text »).
+      return {
+        ...moved,
+        texts: (o.texts || []).map((tx) => (texts.includes(tx.id)
+          ? { ...tx, x: +((Number(tx.x) || 0) + dxMm).toFixed(2), y: +((Number(tx.y) || 0) + dyMm).toFixed(2) }
+          : tx))
+      };
+    }));
+    return true;
+  };
+  // Le clavier du groupe : installé avec l'état qu'il lit (sélection, groupe,
+  // panneau tenu), donc un appui agit toujours sur ce qui est à l'écran. Jamais
+  // pendant une saisie (un champ, un texte en cours d'édition) : les flèches y
+  // déplacent le curseur.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;      // Ctrl+Z & co. restent à eux
+      const step = e.shiftKey ? NUDGE_MM_COARSE : NUDGE_MM;
+      const dxMm = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+      const dyMm = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+      if (!dxMm && !dyMm) return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      if (editingText || editingObjCaption || editingCaption) return;
+      if (!nudgeFigureGroup(dxMm, dyMm)) return;
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [objects, selectedIds, figGroup, textGroup, activeFig, editingText, editingObjCaption, editingCaption]);
 
   // Figure indices whose bounds contain the point (mm, absolute), topmost first.
   const figuresAt = (obj, xMm, yMm) => {
@@ -2365,6 +2487,23 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       setLibMsg(kept === false
         ? `⚠️ “${label}” is kept in this session only: this browser’s store is full, so the new name would be lost on a refresh. Free room (☁ Save figures to Drive, or delete images you no longer need), then rename again.`
         : `✏️ Renamed to “${label}”.`);
+      /* LE NOM DU FICHIER SUR LE DRIVE SUIT ce renommage (voir
+         renameFigureOnDrive) : une image déjà sur le cloud est renommée SUR
+         PLACE — même fichier, donc aucun lien ne casse et aucune copie ne reste
+         dans le dossier sous l’ancien nom. */
+      const cloudScope = libraryTab === 'project'
+        ? {
+          scope: 'project',
+          projectId: activeLibProjectId,
+          projectName: String((allProjects.find((p) => p.id === activeLibProjectId) || {}).name || '')
+        }
+        : { scope: 'common', projectId: null, projectName: '' };
+      renameFigureOnDrive({ ...cloudScope, id, label })
+        .then((r) => {
+          if (!r || !r.ok || r.unchanged) return;
+          setLibMsg((m) => `${m} 📁 On Drive, “${r.from}” is now “${r.name}” (same file — its link and its composition follow it).`);
+        })
+        .catch(() => {});
     }
   };
   const deleteLib = (id) => {
@@ -4586,7 +4725,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           aux panneaux). Plusieurs panneaux se règlent toujours au Ctrl+clic :
           le premier sélectionné est la référence, le déplacer les déplace tous du
           même écart, le redimensionner leur donne sa taille. Les commandes ⇹
-          sont dans la colonne FIGURES, juste à côté de la liste des figures. */}
+          sont dans la colonne FIGURES, juste à côté de la liste des figures, et
+          elles rangent EXACTEMENT ce qui est coché « ☑ » — figures, textes, ou
+          les deux (décocher la figure 🎯 1st pour ranger les textes seuls) ; les
+          flèches du clavier déplacent ensuite tout le groupe par pas de 0,5 mm
+          (5 mm avec Shift), voir nudgeFigureGroup. */}
       {/* ── MODIFY IMAGE · LIGNE 1 : le fond et l'ombre de LA FIGURE ────────────
           « 🎨 Transparent background » mène à l'outil de détourage de la figure
           ACTIVE (son aperçu cliquable, la tolérance et « les quatre coins » sont
@@ -4809,21 +4952,25 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             {/* SÉLECTION MULTIPLE DE FIGURES — « resize them all as the first
                 selected » vaut AUSSI dans le panneau : la figure ACTIVE (celle
                 qui porte les poignées, marquée 🎯) est la référence, et chaque
-                figure cochée « ☑ » prend SA taille quand on la redimensionne. */}
-            {getObjImages(selectedObj).length > 1 && (() => {
+                figure cochée « ☑ » prend SA taille quand on la redimensionne.
+                Depuis, « ⇹ » range ce qui est COCHÉ : la figure active l'est
+                d'office, mais elle peut en SORTIR d'un clic — c'est ainsi qu'un
+                panneau qui porte une figure range ses TEXTES seuls. */}
+            {(() => {
               const isRefFig = i === activeFigIdx(selectedObj);
-              const ticked = isRefFig || figGroupOf(selectedObj.id).includes(i);
+              const ticked = figGroupOf(selectedObj.id).includes(i);
               return (
                 <button type="button"
-                  onClick={(e) => { e.stopPropagation(); if (!isRefFig) toggleFigGroup(selectedObj.id, i); }}
-                  disabled={isRefFig}
-                  className={`shrink-0 text-[10px] font-bold border rounded px-1 ${isRefFig ? 'bg-blue-600 text-white border-blue-700' : (ticked ? 'bg-indigo-50 text-indigo-800 border-indigo-300' : 'text-slate-400 border-slate-200 hover:bg-slate-100')}`}
+                  onClick={(e) => { e.stopPropagation(); toggleFigGroup(selectedObj.id, i); }}
+                  className={`shrink-0 text-[10px] font-bold border rounded px-1 ${ticked && isRefFig ? 'bg-blue-600 text-white border-blue-700' : (ticked ? 'bg-indigo-50 text-indigo-800 border-indigo-300' : 'text-slate-400 border-slate-200 hover:bg-slate-100')}`}
                   title={isRefFig
-                    ? 'The ACTIVE figure — the first selected: it carries the handles, and every ticked figure takes ITS size when you resize it.'
+                    ? (ticked
+                      ? 'The ACTIVE figure — the first selected: it carries the handles, every ticked figure takes ITS size when you resize it, and it is part of the ⇹ Align / Distribute group. Click to take it OUT of that group — the ⇹ commands then range only the texts you ticked (it keeps the handles).'
+                      : 'The ACTIVE figure — it carries the handles but it is OUT of the ⇹ Align / Distribute group. Click to put it back in (every ticked figure follows it, and takes its size when you resize it).')
                     : (ticked
-                      ? 'This figure follows the active one: it takes its size when you resize it (click to untick).'
-                      : 'Tick this figure to resize it WITH the active one — it then takes the active figure’s size, keeping its own place.')}>
-                  {isRefFig ? '🎯 1st' : (ticked ? '☑' : '☐')}
+                      ? 'This figure is in the ⇹ Align / Distribute group (and it takes the active figure’s size when you resize it). Click to take it out.'
+                      : 'Tick this figure to range it with ⇹ Align / Distribute — and to have it take the active figure’s size when you resize it, keeping its own place.')}>
+                  {isRefFig ? (ticked ? '🎯 1st' : '🎯 out') : (ticked ? '☑' : '☐')}
                 </button>
               );
             })()}
@@ -4863,18 +5010,20 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           </span>
         ))}
         </div>
-        {getObjImages(selectedObj).length > 1 && figGroupOf(selectedObj.id).length > 0 && (
+        {figGroupIdxs(selectedObj).length > 1 && (
           <span className="text-[10px] font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 rounded px-1.5 py-0.5 shrink-0"
-            title={`${figGroupOf(selectedObj.id).length + 1} figures selected — the ACTIVE one is the first selected: resizing it gives EVERY selected figure its size (each one keeps its own place), and dragging it moves them all. The ⇹ commands beside it align and spread them.`}>
-            🎯 {figGroupOf(selectedObj.id).length + 1} figures selected
+            title={`${figGroupIdxs(selectedObj).length} figures ticked « ☑ » — the ACTIVE one (🎯 1st) is the first selected: resizing it gives EVERY ticked figure its size (each one keeps its own place), and dragging it moves them all. The ⇹ commands beside it align and spread them (together with the ticked texts).`}>
+            🎯 {figGroupIdxs(selectedObj).length} figures ticked
           </span>
         )}
         {/* LES TEXTES COCHÉS « ☑ » rejoignent le groupe que ⇹ range : l'outil
             d'alignement sert aux FIGURES **et** aux TEXTES d'un panneau (jamais
-            aux panneaux — voir la note de la colonne OBJECTS). */}
+            aux panneaux — voir la note de la colonne OBJECTS). Un groupe peut
+            donc être fait de textes SEULS (la figure active sort du groupe d'un
+            clic sur 🎯 1st), de figures seules, ou des deux. */}
         {textGroupOf(selectedObj.id).length > 0 && (
           <span className="text-[10px] font-bold text-sky-800 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5 shrink-0"
-            title={`${textGroupOf(selectedObj.id).length} text${textGroupOf(selectedObj.id).length === 1 ? '' : 's'} ticked — the ⇹ commands beside them align and spread them TOGETHER WITH the figures selected in this panel. Only the POSITION of a text is set: its size (the number of characters × its pt size) is its own.`}>
+            title={`${textGroupOf(selectedObj.id).length} text${textGroupOf(selectedObj.id).length === 1 ? '' : 's'} ticked — the ⇹ commands beside them align and spread them TOGETHER WITH the figures ticked in this panel (untick the 🎯 figure to range the TEXTS alone). Only the POSITION of a text is set: its size (the number of characters × its pt size) is its own.`}>
             ☑ {textGroupOf(selectedObj.id).length} text{textGroupOf(selectedObj.id).length === 1 ? '' : 's'} ticked
           </span>
         )}
@@ -4887,9 +5036,14 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             : nt ? `${nt} text${nt === 1 ? '' : 's'}` : `${nf} figures`;
           const glyph = 'text-[10px] font-bold text-indigo-700 border border-indigo-200 bg-white rounded px-0.5 disabled:opacity-30 hover:bg-indigo-100 shrink-0';
           const free = 'Aligned on the BOXES they have now: a figure still on the grid is FROZEN first (it keeps exactly the place and size it shows — nothing is re-flowed) and a text counts as a box of its own (its estimated width × its line height), so figures and texts line up together. “⊞ Lay the figures out in a grid” puts the grid back whenever you want.';
+          const picked = nt && nf
+            ? 'The group is exactly what is TICKED: the figures carrying ☑ and the texts carrying ☑. Untick the figure marked 🎯 1st to range the TEXTS ALONE; tick several figures with no text to range the FIGURES alone.'
+            : nt
+              ? 'The group is exactly what is TICKED: here the ticked TEXTS alone (no figure of this panel is ticked — the 🎯 figure is out of the group).'
+              : 'The group is exactly what is TICKED: here the ticked FIGURES alone (no text of this panel is ticked).';
           return (
             <span className="inline-flex items-center gap-x-0.5 border border-indigo-200 bg-indigo-50 rounded px-1 py-0.5 shrink-0"
-              title={`⇹ Align and spread the ${what} selected in this panel. ${free}`}>
+              title={`⇹ Align and spread the ${what} selected in this panel. ${picked} ${free}`}>
               <span className="text-[9px] font-black text-indigo-700 shrink-0">⇹ {n}</span>
               <button type="button" onClick={() => applyFigureLayout('align', 'left')} className={glyph}
                 title={`Align the ${what} on the LEFT edge of the selection (their left edges on one vertical line). The leftmost of them does not move.`}>⬅</button>
@@ -4911,6 +5065,12 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                 title={n < 3
                   ? 'Distributing needs three items at least (with two there is only one gap to set).'
                   : `Distribute the ${what} VERTICALLY: the same gap between neighbours, top to bottom — the two extremes keep their place.`}>↕</button>
+              {/* LE DÉPLACEMENT DU GROUPE, PAR PETITS PAS : une fois rangés, les
+                  éléments s'avancent ENSEMBLE — au clavier, 0,5 mm par appui
+                  (5 mm avec Shift) — sans rien re-glisser à la souris, et le
+                  décalage posé par l'alignement est conservé. */}
+              <span className="text-[9px] font-bold text-indigo-500 shrink-0 cursor-help px-0.5"
+                title={`Arrow keys move the ${what} GRADUALLY, ALL TOGETHER: one press = 0.5 mm (Shift = 5 mm), keeping exactly the alignment you have just set. Each press is one undo step (Ctrl+Z). Click the canvas or a figure first, so the keyboard is not in a text field.`}>⌨ ←↑→↓</span>
             </span>
           );
         })()}
@@ -5312,7 +5472,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                 déjà dans une bibliothèque il renomme SON entrée sur place. */}
             <button onClick={renameThisCanvas}
                     className="text-xs bg-white border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg font-bold hover:bg-slate-50"
-                    title="Rename this canvas (the name shown on the badge here, in the image library, on the project page under “🖼 Saved canvases” and in the “✏️ Modify in Image Builder” links). Every library entry that already holds this composition is renamed in place — the figures that point at it follow. The image already on Drive keeps its file name until the next “💾 Save now”. If the browser store is full the new name is kept for this session only, and the message says so.">
+                    title="Rename this canvas (the name shown on the badge here, in the image library, on the project page under “🖼 Saved canvases” and in the “✏️ Modify in Image Builder” links). Every library entry that already holds this composition is renamed in place — the figures that point at it follow. The file on Drive is renamed with it — SAME file, so its link and its composition sidecar follow and nothing is left behind under the old name (if the cloud is not connected, the next “💾 Save now” names it). If the browser store is full the new name is kept for this session only, and the message says so.">
               ✏️ Rename
             </button>
             {projectId && typeof onBackToProject === 'function' && (
@@ -5942,7 +6102,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                       </button>
                     )}
                     <button type="button" onClick={(e) => { e.stopPropagation(); renameLib(item.id); }}
-                      className="text-[9px] font-bold text-slate-500 hover:text-blue-600 border border-slate-200 rounded px-1.5 py-0.5 hover:border-blue-300" title="Rename this image">✎</button>
+                      className="text-[9px] font-bold text-slate-500 hover:text-blue-600 border border-slate-200 rounded px-1.5 py-0.5 hover:border-blue-300" title="Rename this image — if it is already on Drive the file there is renamed too (same file: its link and its composition sidecar follow it, so no copy is left under the old name)">✎</button>
                     <button type="button" onClick={(e) => { e.stopPropagation(); deleteLib(item.id); }}
                       className="text-[9px] font-bold text-red-400 hover:text-red-600 border border-slate-200 rounded px-1.5 py-0.5 hover:border-red-300" title="Delete this image from the library">🗑</button>
                     <button type="button" onClick={(e) => { e.stopPropagation(); transferItem(item); }}

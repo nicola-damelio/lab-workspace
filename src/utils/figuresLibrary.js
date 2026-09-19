@@ -1,6 +1,6 @@
-import { getDriveToken, uploadLocalFile, dataUrlToBlob, cloudBackendAvailable, getDriveRootName, resolveDrivePathFromNames, listDriveChildren, downloadDriveFileText, takeLastUploadQueueInfo } from './driveUpload';
+import { getDriveToken, uploadLocalFile, dataUrlToBlob, cloudBackendAvailable, getDriveRootName, resolveDrivePathFromNames, listDriveChildren, downloadDriveFileText, takeLastUploadQueueInfo, renameDriveFile, getDriveFileMeta, findDriveFileByName } from './driveUpload';
 import { sanitizeSlug, projectImagesFolderPath } from './driveNaming';
-import { getCloudProvider, isNextcloudUrl, ncFetchBlob, ncUploadFile } from './nextcloud';
+import { getCloudProvider, isNextcloudUrl, ncFetchBlob, ncMove, ncUploadFile } from './nextcloud';
 import { registerKeyValueMerger } from './workspaceKeyStore';
 
 /* =========================================================================
@@ -800,10 +800,18 @@ const driveFileIdFromUrl = (url) => {
 // Drive private files are fetched through the Drive API with the auth token;
 // anything else is fetched as a plain blob. On failure the original URL is
 // returned so the <img> still gets a chance to render.
-export const resolveImageToDataUrl = async (src) => {
+//
+// `opts.fresh` = « les VRAIS pixels d'AUJOURD'HUI, même si le navigateur en a
+// une copie » (`cache: 'no-store'`). Une figure réécrite SUR PLACE sur le Drive
+// garde son identifiant, donc la MÊME URL : c'est ce qu'il faut quand les pixels
+// vont être INSÉRÉS dans un canvas (la vignette cliquée doit être l'image
+// obtenue), et ce qu'il ne faut PAS pour un simple affichage — d'où l'option
+// plutôt qu'un réglage global.
+export const resolveImageToDataUrl = async (src, { fresh = false } = {}) => {
   const s = String(src || '');
   if (s.startsWith('data:image/')) return s;
   if (!/^https?:\/\//i.test(s)) return s;
+  const cacheOpt = fresh ? { cache: 'no-store' } : {};
   // Nextcloud files need the configured Basic auth — plain <img>/fetch would 401.
   if (isNextcloudUrl(s)) {
     try {
@@ -816,13 +824,13 @@ export const resolveImageToDataUrl = async (src) => {
     const fid = driveFileIdFromUrl(s);
     const token = getDriveToken();
     if (fid && token) {
-      const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fid}?alt=media`, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fid}?alt=media`, { headers: { Authorization: `Bearer ${token}` }, ...cacheOpt });
       if (res && res.ok) {
         const blob = await res.blob();
         if (blob && blob.size > 0) return await blobToDataUrl(blob);
       }
     }
-    const res2 = await fetch(s, { mode: 'cors' });
+    const res2 = await fetch(s, { mode: 'cors', ...cacheOpt });
     if (res2 && res2.ok) {
       const blob = await res2.blob();
       if (blob && blob.size > 0) return await blobToDataUrl(blob);
@@ -1010,6 +1018,25 @@ export const findCanvasEntryByKey = ({ scope = 'common', projectId = null, canva
   } catch { return null; }
 };
 
+/** L'ENTRÉE de bibliothèque qui possède DÉJÀ le fichier cloud d'une figure : son
+ *  identité (`figureFileIdentity` : la clé de composition d'un canvas, ou
+ *  l'origine d'une capture) est celle qui donne le NOM du fichier envoyé par
+ *  publishLibraryFigure. Deux captures du même graphe écrivent donc LE MÊME
+ *  fichier : la seconde DOIT mettre à jour cette entrée-là, sinon l'ancienne
+ *  garderait sa vignette et ses pixels d'hier en pointant sur un fichier qui
+ *  n'est plus elle — c'est exactement le « la vignette de la bibliothèque ne
+ *  correspond pas à l'image que j'insère : je crois prendre l'un et j'obtiens
+ *  l'autre ». `null` quand rien ne correspond : la figure n'a jamais été
+ *  capturée, elle crée alors son entrée comme avant. PUR (lecture seule). */
+export const findLibraryEntryByIdentity = ({ scope = 'common', projectId = null, identity = '' } = {}) => {
+  const ident = String(identity || '').trim();
+  if (!ident) return null;
+  try {
+    const list = scope === 'project' ? readProjectLibrary(projectId) : readLibrary();
+    return (list || []).find((i) => i && figureFileIdentity(i) === ident) || null;
+  } catch { return null; }
+};
+
 // Persist one figure into the image library with the REAL image on Google Drive:
 //   • dataUrl          – self-contained high-resolution source (PNG/JPEG/SVG)
 //   • scope/projectId  – 'project' → that project's library, 'common' → general
@@ -1032,6 +1059,34 @@ export const publishLibraryFigure = async ({ scope = 'common', projectId = null,
     const keepAlpha = await hasTransparency(srcData);
     hi = await downscaleImage(srcData, 2400, keepAlpha ? 'image/png' : 'image/jpeg', keepAlpha ? 0.92 : 0.88, !keepAlpha);
   }
+  // L'identité de fichier de CETTE publication : le nom du fichier en dépend, et
+  // le renommage préalable doit viser EXACTEMENT le même nom que l'envoi.
+  const ident = String(identity || '').trim() || figureFileIdentity({ src, canvasData });
+  /* L'ENTRÉE VISÉE, LUE AVANT L'ENVOI : son fichier cloud porte peut-être encore
+     le nom d'AVANT (une toile renommée — voir renameFigureOnDrive). On le
+     renomme D'ABORD, sinon l'envoi ci-dessous ne retrouve plus le fichier par
+     son nom : il en dépose un SECOND et laisse l'ancien dans le dossier. C'est
+     aussi ce qui rattrape les envois d'avant cette correction (nom sans
+     empreinte) : la prochaine sauvegarde les ramène au nom d'aujourd'hui, avec
+     leur identifiant de fichier — donc sans casser les liens des figures. */
+  let prevEntry = null;
+  if (updateId) {
+    const before = scope === 'project' ? readProjectLibrary(projectId) : readLibrary();
+    const key = canvasData && String(canvasData.canvasKey || '').trim();
+    prevEntry = (before || []).find((i) => i && i.id === updateId)
+      || (key ? (before || []).find((i) => canvasKeyOfEntry(i) === key) : null)
+      || null;
+    // Rien à faire quand l'entrée s'appelle déjà comme on le demande ET que rien
+    // ne nous dit qu'elle porte un autre nom sur le cloud (son sidecar, lui, le
+    // dit gratuitement) : aucune requête n'est faite dans ce cas-là.
+    if (prevEntry && prevEntry.driveUrl
+      && (String(prevEntry.label || '') !== String(label || '')
+        || !!imageNameOfSidecarName(prevEntry.metaName || ''))) {
+      try {
+        await renameFigureOnDrive({ scope, projectId, projectName, id: prevEntry.id, label, identity: ident });
+      } catch { /* le nom actuel reste celui de l'envoi ci-dessous */ }
+    }
+  }
   let drive = null;
   // Pourquoi la copie cloud a échoué, et si elle est DÉJÀ en file de reprise :
   // l'appelant peut ainsi dire « en attente, elle repartira toute seule » au
@@ -1053,7 +1108,7 @@ export const publishLibraryFigure = async ({ scope = 'common', projectId = null,
           full: hi,
           label,
           projectName,
-          identity: String(identity || '').trim() || figureFileIdentity({ src, canvasData })
+          identity: ident
         });
       } catch (err) {
         drive = null;
@@ -1748,6 +1803,133 @@ export const fetchFigureMetaFromDrive = async (fileId) => {
   try {
     return parseFigureMeta(await downloadDriveFileText(fileId));
   } catch { return null; }
+};
+
+/* ── LE NOM SUR LE DRIVE SUIT LE NOM DU CANVAS ────────────────────────────────
+
+   « I cannot find my renamed canvas in Drive ». Renommer une toile ne changeait
+   que le LIBELLÉ de son entrée : le fichier du Drive, lui, gardait le nom de sa
+   première écriture. On cherchait donc dans le dossier un nom que le Drive ne
+   connaissait pas — et, le nom ayant changé, la sauvegarde suivante ne
+   retrouvait plus le fichier à écraser : elle en déposait un SECOND et laissait
+   l'ancien, orphelin, sous son ancien nom.
+
+   `figureRenameTarget` dit quel nom le fichier doit porter (LA MÊME règle que
+   l'envoi : voir figureFileName, empreinte d'identité comprise), et
+   `renameFigureOnDrive` renomme le fichier ET son sidecar de composition
+   `<image>.meta.json` EN GARDANT L'IDENTIFIANT du fichier : les liens des
+   figures continuent de viser le même fichier, la composition reste trouvée à
+   côté, et le dossier ne se remplit pas de copies. Appelé par les gestes
+   « ✏️ Rename » (page projet, barre de l'éditeur, modale 🖼 Library) et, en
+   filet de sécurité, AVANT chaque envoi qui réécrit une entrée déjà sur le
+   cloud (voir publishLibraryFigure) — c'est là que l'ancienne version laissait
+   le doublon. */
+
+/** Extension d'un nom de fichier (`''` s'il n'en porte pas). PUR. */
+export const fileExtensionOf = (name) => {
+  const m = /\.([A-Za-z0-9]{1,8})$/.exec(String(name || '').trim());
+  return m ? m[1].toLowerCase() : '';
+};
+
+/** Le nom de fichier que porte une URL (dernier segment, décodé). Un lien
+ *  Nextcloud/WebDAV porte son nom, un lien Drive non (il n'a qu'un id). PUR. */
+export const fileNameOfUrl = (url) => {
+  const clean = String(url || '').split(/[?#]/)[0];
+  const seg = clean.slice(clean.lastIndexOf('/') + 1);
+  try { return decodeURIComponent(seg); } catch { return seg; }
+};
+
+/** La même URL avec un autre nom de fichier (dernier segment). PUR. */
+export const urlWithFileName = (url, name) => {
+  const s = String(url || '');
+  const cut = s.search(/[?#]/);
+  const head = cut >= 0 ? s.slice(0, cut) : s;
+  const tail = cut >= 0 ? s.slice(cut) : '';
+  const at = head.lastIndexOf('/');
+  if (at < 0 || !name) return s;
+  return `${head.slice(0, at + 1)}${encodeURIComponent(name)}${tail}`;
+};
+
+/** Nom de fichier visé pour une figure renommée : le libellé + l'empreinte de
+ *  son identité (même règle que l'envoi), et l'extension du fichier qu'elle a
+ *  DÉJÀ sur le cloud — un PNG reste un PNG. `from` = le nom actuel connu ('' si
+ *  on ne le connaît pas encore : voir renameFigureOnDrive). PUR. */
+export const figureRenameTarget = ({ label = '', previousName = '', identity = '' } = {}) => {
+  const from = String(previousName || '').trim();
+  return { from, name: figureFileName(label, fileExtensionOf(from) || 'png', identity) };
+};
+
+/** Renomme le fichier cloud de CETTE entrée de bibliothèque (et son sidecar de
+ *  composition) pour qu'il porte le libellé donné. L'identifiant du fichier ne
+ *  bouge pas : les figures qui pointent dessus continuent de le viser.
+ *
+ *  @returns {Promise<{ ok:boolean, reason?:string, from:string, name:string,
+ *                      unchanged?:boolean, metaName?:string|null,
+ *                      metaMoved?:boolean }>} `from` = nom actuel, `name` = nom
+ *  visé (toujours calculé, même quand le renommage est refusé : l'appelant peut
+ *  le DIRE au lieu de laisser croire que le Drive a suivi). */
+export const renameFigureOnDrive = async ({
+  scope = 'common', projectId = null, projectName = '', id = '', label = '', identity = ''
+} = {}) => {
+  const name = String(label || '').trim();
+  const list = scope === 'project' ? readProjectLibrary(projectId) : readLibrary();
+  const entry = (list || []).find((i) => i && i.id === id);
+  if (!entry) return { ok: false, reason: 'no-entry', from: '', name };
+  if (!name) return { ok: false, reason: 'no-name', from: '', name };
+  if (!cloudBackendAvailable()) return { ok: false, reason: 'cloud-off', from: '', name };
+  const fileId = driveIdOfLibraryItem(entry);
+  const ncUrl = (getCloudProvider() === 'nextcloud' && isNextcloudUrl(entry.full)) ? String(entry.full) : '';
+  if (!fileId && !ncUrl) return { ok: false, reason: 'no-cloud-file', from: '', name };
+  /* Le nom ACTUEL du fichier : le sidecar le porte (`<image>.meta.json`) — donc
+     gratuitement pour toute entrée qui a une composition. Sinon on le DEMANDE au
+     cloud (un appel, seulement quand il faut vraiment renommer). */
+  let from = imageNameOfSidecarName(entry.metaName || '');
+  if (!from && fileId) {
+    try { from = String((await getDriveFileMeta(fileId)).name || ''); } catch { from = ''; }
+  }
+  if (!from && ncUrl) from = fileNameOfUrl(ncUrl);
+  const to = figureRenameTarget({
+    label: name,
+    previousName: from,
+    identity: String(identity || '').trim() || figureFileIdentity(entry)
+  }).name;
+  if (!from) return { ok: false, reason: 'name-unknown', from: '', name: to };
+  if (from === to) return { ok: true, unchanged: true, from, name: to };
+  // 1. LE FICHIER de l'image (Drive : PATCH du nom ; Nextcloud : MOVE WebDAV).
+  let moved = false;
+  try {
+    moved = fileId
+      ? await renameDriveFile(fileId, to)
+      : await ncMove(ncUrl, urlWithFileName(ncUrl, to));
+  } catch { moved = false; }
+  if (!moved) return { ok: false, reason: 'rename-refused', from, name: to };
+  // 2. LE SIDECAR DE COMPOSITION, juste à côté : sans lui, « ⬇ Add missing from
+  //    Drive » relirait plus tard une composition pour un fichier disparu — la
+  //    toile paraîtrait alors modifiable mais son image serait introuvable.
+  const fromMeta = sidecarNameOfImageName(from);
+  const toMeta = sidecarNameOfImageName(to);
+  let metaMoved = false;
+  try {
+    if (fileId) {
+      const resolved = await resolveDrivePathFromNames(projectImagesFolderPath(projectName));
+      const sidecarId = (resolved && resolved.leafId)
+        ? await findDriveFileByName(fromMeta, resolved.leafId)
+        : '';
+      metaMoved = !!sidecarId && await renameDriveFile(sidecarId, toMeta);
+    } else {
+      metaMoved = await ncMove(urlWithFileName(ncUrl, fromMeta), urlWithFileName(ncUrl, toMeta));
+    }
+  } catch { metaMoved = false; }
+  // 3. L'ENTRÉE (mémoire + cache du navigateur) : c'est elle que l'app relit
+  //    pour retrouver le sidecar de cette composition.
+  if (metaMoved) {
+    const next = (list || []).map((i) => (i && i.id === id
+      ? { ...i, metaName: toMeta, updatedAt: new Date().toISOString() }
+      : i));
+    if (scope === 'project') writeProjectLibrary(projectId, next);
+    else writeLibrary(next);
+  }
+  return { ok: true, from, name: to, metaName: metaMoved ? toMeta : (entry.metaName || null), metaMoved };
 };
 
 /* ────────────────────────────────────────────────────────────────────────────

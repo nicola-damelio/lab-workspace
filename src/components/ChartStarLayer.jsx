@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { isStarred, toggleStarredItem } from '../utils/starredItems';
 import Chart from 'chart.js/auto';
 import {
-  getActiveProjectId, publishLibraryFigure
+  getActiveProjectId, publishLibraryFigure, figureFileIdentity, findLibraryEntryByIdentity
 } from '../utils/figuresLibrary';
 import { clearPendingFigureScroll, peekPendingFigureScroll } from '../utils/pendingFigureScroll';
 import { FigureStyleApplyButton } from './FigureStyleTools';
@@ -553,6 +553,22 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
         src.pxH = Math.round(el.naturalHeight || el.height || r.height || 0);
       } catch { /* ignore */ }
       const projectName = projectNameFor(test);
+      /* Une FIGURE = UN FICHIER : l'identité ci-dessus donne le NOM du fichier
+         cloud de cette capture, donc deux captures du même graphe (le même
+         élément de la même instance) écrivent LE MÊME fichier. La seconde doit
+         donc mettre à jour l'entrée de bibliothèque qui le possède DÉJÀ, et non
+         en ajouter une : l'ancienne garderait sinon sa vignette (le graphe d'il
+         y a cinq minutes) et ses pixels en pointant sur un fichier qui porte
+         désormais l'autre graphe — « la vignette de la bibliothèque ne
+         correspond pas à l'image que j'insère ». Une entrée neuve n'est créée
+         que pour un graphe jamais capturé (et si l'entrée retrouvée a disparu,
+         publishLibraryFigure en refait une : insertIfMissing reste vrai ici). */
+      const ident = figureFileIdentity({ src });
+      const existing = findLibraryEntryByIdentity({
+        scope: pid ? 'project' : 'common',
+        projectId: pid,
+        identity: ident
+      });
       // The real image is stored on Google Drive (projects/<project>/images), only a
       // small local preview + metadata remain in the browser.
       const { entry, drive, driveError, driveQueued } = await publishLibraryFigure({
@@ -561,7 +577,9 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
         projectName,
         dataUrl: url,
         label,
-        src
+        src,
+        identity: ident,
+        updateId: existing ? existing.id : null
       });
       void entry;
       // Où la figure est ALLÉE — et, si la copie cloud manque, POURQUOI :
@@ -576,7 +594,10 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
       else if (driveQueued) driveMsg = ` · ⏳ cloud copy queued for ${folder} (${driveError || 'cloud unreachable'}) — it uploads by itself as soon as Drive answers, nothing is lost`;
       else if (driveError === 'cloud storage is not connected') driveMsg = ' · 💾 kept in this browser (Google Drive / Nextcloud not connected) — connect it in the sidebar so the figure follows you';
       else driveMsg = ` · 💾 kept in this browser — cloud upload failed${driveError ? ` (${driveError})` : ''}`;
-      setFigStatus({ key: t.key, ok: true, msg: `📷 Figure saved to ${where}${driveMsg}` });
+      // Dire si la capture a REMPLACÉ la figure de ce graphe (le cas normal d'une
+      // re-capture : une seule entrée par graphe, donc la vignette ET l'image
+      // insérée restent le même graphe) ou si elle en a créé une.
+      setFigStatus({ key: t.key, ok: true, msg: `📷 Figure ${existing ? 'updated in' : 'saved to'} ${where}${driveMsg}` });
     } catch {
       setFigStatus({ key: t.key, ok: false, msg: '⚠️ Figure capture failed' });
     } finally {

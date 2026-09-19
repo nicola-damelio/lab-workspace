@@ -330,8 +330,8 @@ const legacyEntry = (id, at, rows, over = {}) => ({
   has(PD, 'removeCanvasDuplicates({ allowedProjectIds: [project.id], keepIds })',
     'et le clic appelle le nettoyage du projet');
   has(PD, '🧹 Remove {canvasDupCount} duplicate canvas cop', 'un bouton le propose (seulement s’il y en a)');
-  has(PD, 'makeUploadImage, uploadFigureToDrive,\n  countCanvasDuplicates, removeCanvasDuplicates',
-    'les deux fonctions viennent de figuresLibrary');
+  has(PD, 'makeUploadImage, uploadFigureToDrive, renameFigureOnDrive,\n  countCanvasDuplicates, removeCanvasDuplicates',
+    'les deux fonctions viennent de figuresLibrary (et le renommage sur le Drive aussi)');
 }
 
 console.log(`✅ _canvas_identity_test : ${passed} vérifications passées`);

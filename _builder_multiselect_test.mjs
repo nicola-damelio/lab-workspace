@@ -188,11 +188,24 @@ has(IB, 'const [figGroup, setFigGroup] = useState({ objId: null, idxs: [] });',
 has(IB, 'const figGroupOf = (objId) => (figGroup.objId === objId ? figGroup.idxs : []);',
   '…qui ne vaut que pour le panneau où elles ont été cochées');
 has(IB, 'const toggleFigGroup = (objId, idx) => setFigGroup((prev) => {', 'la case « ☐ / ☑ » d’une figure');
-has(IB, 'const ticked = isRefFig || figGroupOf(selectedObj.id).includes(i);',
-  'la figure ACTIVE est celle qui porte les poignées : elle est déjà « cochée » (référence)');
-has(IB, "{isRefFig ? '🎯 1st' : (ticked ? '☑' : '☐')}", 'chaque figure montre si elle suit la figure active');
-has(IB, 'figures selected — the ACTIVE one is the first selected: resizing it gives EVERY selected figure its size',
+has(IB, 'const ticked = figGroupOf(selectedObj.id).includes(i);',
+  'la figure ACTIVE est cochée d’OFFICE (elle porte les poignées)…');
+has(IB, 'onClick={(e) => { e.stopPropagation(); toggleFigGroup(selectedObj.id, i); }}',
+  '…mais son ☑ est un VRAI bouton : elle peut SORTIR du groupe (demande : ranger les TEXTES seuls)');
+ok(!IB.includes("onClick={(e) => { e.stopPropagation(); if (!isRefFig) toggleFigGroup(selectedObj.id, i); }}"),
+  '…l’ancien bouton de la référence était DÉSACTIVÉ : impossible alors de ranger les textes sans la figure → c’est corrigé');
+has(IB, "{isRefFig ? (ticked ? '🎯 1st' : '🎯 out') : (ticked ? '☑' : '☐')}",
+  'chaque figure dit si elle est DANS le groupe (🎯 1st / ☑) ou en DEHORS (🎯 out / ☐)');
+has(IB, 'it is part of the ⇹ Align / Distribute group. Click to take it OUT of that group',
+  '…et le survol explique comment la sortir du groupe ⇹');
+has(IB, 'figures ticked « ☑ » — the ACTIVE one (🎯 1st) is the first selected: resizing it gives EVERY ticked figure its size',
   'la règle est dite là où on la déclenche');
+has(IB, 'const cur = prev.objId === obj.id ? prev.idxs : [];', 'la sélection de figures ne vaut que pour son panneau');
+has(IB, 'if (cur.includes(ref)) return prev;', 'la figure active entre d’office dans le groupe (une seule fois)');
+has(IB, '(objectsRef.current || []).find((o) => o.id === selectedId)',
+  '…en lisant le canvas COURANT (dépendre de `objects` la remettrait à chaque déplacement)');
+has(IB, '}, [selectedId, activeFig && activeFig.objId, activeFig && activeFig.idx]);',
+  '…et seulement quand le panneau tenu ou la référence changent');
 has(IB, 'figs: figureSnapshot(obj, imgIdx)', 'le geste photographie les figures concernées (tenue + cochées)');
 eq(times(IB, /figs: figureSnapshot\(obj, imgIdx\)/g), 2, '…au début du déplacement ET du redimensionnement');
 has(IB, 'const patches = moveFiguresPatches(figs, { dxMm, dyMm, panelWmm: o.w * cellW, panelHmm: o.h * cellH });',
@@ -341,9 +354,10 @@ eq(PS.distributeGroupPatches([...trioMix, { id: 'f2', box: { x: 0.5, y: 0.5, w: 
 
 /* Le branchement dans ImageBuilder : une seule commande, les huit boutons, et le
    GEL du panneau avant (une figure en grille reçoit d'abord sa boîte exacte). */
-has(IB, 'const figGroupIdxs = (obj) => {', 'le groupe = la figure ACTIVE + les figures cochées');
-has(IB, 'return [ref, ...figGroupOf(obj.id).filter((i) => i !== ref)].filter((i) => i >= 0);',
-  '…sans doublon et sans index invalide');
+has(IB, 'const figGroupIdxs = (obj) => figGroupOf(obj.id)\n    .filter((i) => Number.isInteger(i) && i >= 0 && i < getObjImages(obj).length);',
+  'le groupe = EXACTEMENT ce qui est coché (figures seules, textes seuls, ou les deux)');
+ok(!/const ref = activeFigIdx\(obj\);\n  return \[ref, \.\.\./.test(IB),
+  '…plus de « la figure active EST le groupe » : elle pouvait alors imposer un « 1 figure et 1 texte » inreversible');
 has(IB, 'const applyFigureLayout = (kind, mode) => {', 'une seule commande pour aligner / répartir');
 has(IB, "return kind === 'align' ? alignFiguresPatches(figs, mode) : distributeFiguresPatches(figs, mode);",
   '…qui passe par les fonctions PURES (mêmes chiffres que ci-dessus)');
@@ -371,6 +385,46 @@ has(IB, 'selectedTextGroup(selectedObj).length',
   'les TEXTES cochés « ☑ » du panneau font partie du groupe (demande : figures OU textes)');
 has(IB, '☑ {textGroupOf(selectedObj.id).length} text',
   '…et une pastille dit combien de textes sont cochés');
+
+/* ── 7. LE GROUPE, C'EST CE QUI EST COCHÉ — ET IL SE DÉPLACE TOUT ENTIER ──────
+   Demande : « l'alignement part du principe qu'une figure et un texte se rangent
+   ensemble, alors qu'il peut aussi s'agir de plusieurs textes sans figure, ou de
+   plusieurs figures. Et une fois sélectionnés et alignés, j'aimerais pouvoir les
+   déplacer progressivement, tous ensemble. »
+
+   Les deux bouts sont donc vérifiés ici : (a) la figure active peut SORTIR du
+   groupe (un panneau qui porte une figure range alors ses TEXTES seuls) ;
+   (b) les flèches du clavier déplacent le groupe entier de 0,5 mm (5 mm avec
+   Shift), par les mêmes fonctions pures que le glissement groupé. */
+has(IB, 'const picked = nt && nf',
+  'la barre ⇹ DIT que le groupe est exactement ce qui est coché');
+has(IB, 'Untick the figure marked 🎯 1st to range the TEXTS ALONE',
+  '…y compris comment ranger les TEXTES seuls (décocher la figure active)');
+has(IB, 'here the ticked TEXTS alone (no figure of this panel is ticked',
+  '…et elle le confirme quand le groupe ne contient que des textes');
+has(IB, 'const NUDGE_MM = 0.5;', 'le pas fin du déplacement au clavier (0,5 mm)');
+has(IB, 'const NUDGE_MM_COARSE = 5;', '…et le pas large (5 mm, touche Shift)');
+has(IB, 'const nudgeFigureGroup = (dxMm, dyMm) => {', 'une seule commande déplace TOUT le groupe');
+has(IB, 'const group = figGroupIdxs(obj);', '…les figures cochées');
+has(IB, 'const texts = selectedTextGroup(obj);', '…ET les textes cochés, ensemble');
+ok(/if \(group\.length \+ texts\.length < 2\) return false;/.test(IB),
+  '…sans groupe (moins de deux éléments) le clavier ne fait rien');
+has(IB, 'patches[i] ? { ...im, ...patches[i] } : im',
+  '…les figures passent par les patches purs (boîte libre ou décalage de grille)');
+has(IB, 'rect: freeRectOf(imgs[i]),', '…avec la boîte qu’elles montrent à l’écran (gel implicite)');
+has(IB, 'texts.includes(tx.id)', '…et les textes se décalent en millimètres, comme sous la souris');
+has(IB, "window.addEventListener('keydown', onKey);", 'le déplacement est au clavier (flèches)');
+has(IB, "e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0",
+  'les quatre flèches sont branchées');
+has(IB, "t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable",
+  '…jamais pendant une saisie (les flèches y déplacent le curseur)');
+has(IB, 'if (editingText || editingObjCaption || editingCaption) return;',
+  '…ni pendant l’édition d’un texte ou d’une légende');
+has(IB, 'Arrow keys move the ${what} GRADUALLY, ALL TOGETHER',
+  '…et le geste est ANNONCÉ là où les éléments sont cochés');
+has(IB, 'keeping exactly the alignment you have just set',
+  '…en disant que l’alignement posé est conservé pendant le déplacement');
+eq(times(IB, /const NUDGE_MM/g), 2, 'un seul endroit définit les deux pas');
 
 console.log(`_builder_multiselect_test.mjs — ${passed} assertions OK`);
 

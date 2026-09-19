@@ -7,7 +7,8 @@ import {
   readProjectLibrary, writeProjectLibrary, removeProjectLibraryItem, renameProjectLibraryItem, moveLibraryItem, reorderLibraryItem,
   addLibraryItem, addProjectLibraryItem,
   readDeck, writeDeck, uid, makeLibraryImage, blobToDataUrl, resolveImageToDataUrl,
-  mergeLibraryFromSnapshot, pushLibraryToDrive, pullLibraryFromDrive, localOnlyLibraryItems
+  mergeLibraryFromSnapshot, pushLibraryToDrive, pullLibraryFromDrive, localOnlyLibraryItems,
+  renameFigureOnDrive
 } from '../utils/figuresLibrary';
 import { uploadWorkspaceFile, getDriveToken, getDriveRootName, listDatasetBackups, downloadDriveFileText } from '../utils/driveUpload';
 import { projectImagesFolderLabel } from '../utils/driveNaming';
@@ -935,6 +936,20 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
   const renameLib = (id, label) => {
     if (libTab === 'project') { renameProjectLibraryItem(projectId, id, label); setProjectLibrary((p) => p.map((i) => (i.id === id ? { ...i, label } : i))); }
     else { renameLibraryItem(id, label); setLibrary((p) => p.map((i) => (i.id === id ? { ...i, label } : i))); }
+    /* LE NOM DU FICHIER SUR LE DRIVE SUIT CE RENOMMAGE (voir
+       renameFigureOnDrive) : une image déjà sur le cloud est renommée SUR PLACE
+       — même fichier, donc les liens qui la visent continuent de fonctionner et
+       aucune copie ne reste dans le dossier sous l’ancien nom. */
+    const scope = libTab === 'project' ? 'project' : 'common';
+    renameFigureOnDrive({
+      scope,
+      projectId: scope === 'project' ? projectId : null,
+      projectName: scope === 'project'
+        ? String((loadProjects().find((p) => p.id === projectId) || {}).name || '')
+        : '',
+      id,
+      label
+    }).catch(() => {});
   };
   const removeLib = (id) => {
     if (libTab === 'project') { removeProjectLibraryItem(projectId, id); setProjectLibrary(readProjectLibrary(projectId)); }

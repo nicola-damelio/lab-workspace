@@ -250,6 +250,15 @@ const reset = () => {
   has(PD, 'canvases can also be\n            renamed in the Image Builder — its toolbar’s',
     'le texte d’aide rappelle où renommer ailleurs (la barre de l’éditeur et la modale 🖼 Library)');
   has(PD, '>✏️ Rename</button>', '…et le bouton dit « Rename » au lieu d’un crayon seul');
+  has(PD, "renameFigureOnDrive({ scope: 'project', projectId: project.id, projectName: project.name || '', id: c.id, label })",
+    '…et le FICHIER DU DRIVE suit le renommage (« I cannot find my renamed canvas in Drive »)');
+  has(PD, 'if (!r || !r.ok) return;', '…sans effacer le message local quand le cloud n’a rien pu faire');
+  has(PD, '📁 On Drive, “', '…et en DISANT ce que le fichier est devenu (renommé, ou déjà sous ce nom)');
+  eq(LIB.figureRenameTarget({ label: 'p53H — histograms', previousName: 'Canvas_18092026.jpg', identity: 'canvas:cv_1' }).name,
+    LIB.figureFileName('p53H — histograms', 'jpg', 'canvas:cv_1'),
+    'le nom visé = libellé + empreinte, en GARDANT l’extension du fichier déjà déposé (un JPG reste un JPG)');
+  eq(LIB.fileNameOfUrl('https://nc/remote.php/dav/files/u/a%20b.svg'), 'a b.svg',
+    'le nom d’un fichier Nextcloud se lit dans son URL (le Drive, lui, n’a qu’un id)');
 
   // La fonction de bibliothèque existe et garde TOUT le reste de l’entrée.
   reset();
@@ -287,6 +296,10 @@ const reset = () => {
     'le renommage distingue « magasin plein » de « rien n’a pu être écrit »');
   has(IB, 'this browser’s store refused even the small name record',
     '…et le dit franchement (« the rename does not work » ne reste plus muet)');
+  has(IB, 'renameFigureOnDrive({ ...s, label })',
+    'et le fichier de CHAQUE portée est renommé sur le Drive (même fichier, nouveau nom)');
+  has(IB, 'renameFigureOnDrive({ ...cloudScope, id, label })',
+    'la modale 🖼 Library renomme elle aussi le fichier du Drive — une image renommée se retrouve LÀ-BAS sous son nom');
 
   // L'aperçu des cartes : le rendu quand il existe, sinon le premier panneau de
   // la composition — sinon on ne peut pas reconnaître SON canvas restauré.
