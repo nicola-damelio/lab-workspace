@@ -270,6 +270,31 @@ ok(!S.isDrivePathMirrorDeleted(S.readDriveMirror(), { dataset: { id: 'ds1' }, pa
   '…et les autres projets du dataset restent visibles');
 
 
+/* ── 6-ter. Le dossier `images` d’un projet est retenu PAR IDENTIFIANT ──────
+   Deux dossiers du même nom peuvent coexister sur le Drive (« deux dossiers
+   images et l’un est vide ») : le miroir garde donc l’identifiant de celui qui
+   PORTE les figures, et il l’oublie quand le dossier du projet change (l’ancien
+   ne vaut plus rien) — voir utils/figuresFolder.js. */
+store.clear();
+const scopeDup = { datasetId: 'ds1', datasetName: 'Pepper viruses', projectName: 'Aphids' };
+ok(S.findProjectImagesId(S.readDriveMirror(), scopeDup) === '', 'aucun dossier `images` retenu au départ');
+S.writeDriveMirror(S.rememberProjectFolder(S.readDriveMirror(), { ...scopeDup, folderId: 'PF', imagesId: 'IMG_FULL' }));
+ok(S.findProjectImagesId(S.readDriveMirror(), scopeDup) === 'IMG_FULL',
+  'le dossier `images` retenu se relit par identifiant');
+S.writeDriveMirror(S.rememberProjectFolder(S.readDriveMirror(), { ...scopeDup, folderId: 'PF' }));
+ok(S.findProjectImagesId(S.readDriveMirror(), scopeDup) === 'IMG_FULL',
+  'même dossier de projet : l’identifiant n’est pas perdu');
+S.writeDriveMirror(S.rememberProjectFolder(S.readDriveMirror(), { ...scopeDup, folderId: 'PF2', imagesId: 'IMG_VIDE' }));
+ok(S.findProjectImagesId(S.readDriveMirror(), scopeDup) === 'IMG_VIDE',
+  'le dossier `images` retenu peut être remplacé (celui qui porte les figures gagne)');
+S.writeDriveMirror(S.rememberProjectFolder(S.readDriveMirror(), { ...scopeDup, folderId: 'PF3' }));
+ok(S.findProjectImagesId(S.readDriveMirror(), scopeDup) === '',
+  'dossier de projet remplacé : l’ancien `images` n’est pas traîné derrière (il ne vaut plus rien)');
+ok(S.findProjectFolderId(S.readDriveMirror(), scopeDup) === 'PF3', 'le dossier du projet, lui, est bien le nouveau');
+ok(S.normalizeDriveMirror({ projects: { k: { folderId: 'F', imagesId: 42 } } }).projects.k.imagesId === '42',
+  'un identifiant abîmé (nombre) est nettoyé, jamais propagé tel quel');
+
+
 /* ── 7. Les branchements réels dans le code ─────────────────────────────── */
 has(UPLOAD, "if (currentDatasetDeleted()) return '';",
   'driveUpload ne recrée pas le dossier d’un dataset supprimé');

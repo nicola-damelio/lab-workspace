@@ -143,7 +143,15 @@ export const normalizeDriveMirror = (raw) => {
       : null)),
     projects: cleanMap(src.projects, (v) => (v && text(v.folderId)
       ? {
-        name: text(v.name), dataset: text(v.dataset), folderId: text(v.folderId), at: Number(v.at) || 0
+        name: text(v.name),
+        dataset: text(v.dataset),
+        folderId: text(v.folderId),
+        /* Le dossier `images` RETENU dans ce dossier de projet. Le Drive peut
+           contenir DEUX dossiers du même nom (une recherche qui tombe à côté en
+           fabrique un jumeau) : sans cette identité, la résolution reprendrait
+           « le premier du nom » et pourrait relire le jumeau vide. */
+        imagesId: text(v.imagesId) || '',
+        at: Number(v.at) || 0
       }
       : null))
   };
@@ -298,21 +306,33 @@ export const rememberDatasetFolder = (mirror, { id = '', name = '', folderId = '
   });
 };
 
-/** Retenir l'identifiant Drive du dossier d'un projet. */
+/** Retenir l'identifiant Drive du dossier d'un projet (et, quand on le connaît,
+ *  celui de son dossier `images` — deux dossiers du même nom peuvent coexister
+ *  sur le Drive, seul l'identifiant tranche : voir figuresFolder.js). */
 export const rememberProjectFolder = (mirror, {
-  datasetId = '', datasetName = '', projectName = '', folderId = ''
+  datasetId = '', datasetName = '', projectName = '', folderId = '', imagesId = ''
 } = {}, at = Date.now()) => {
   const datasetKey = datasetRegistryKey({ id: datasetId, name: datasetName });
   const folder = text(folderId);
   const current = normalizeDriveMirror(mirror);
   if (!datasetKey || !folder || !sanitizeSlug(projectName)) return current;
+  const key = projectRegistryKey(datasetKey, projectName);
+  const prev = current.projects[key] || {};
+  /* Le dossier du projet n'a pas bougé : son dossier `images` non plus. S'il a
+     changé (renommage, réparation), l'ancien identifiant `images` ne vaut plus
+     rien — on ne le traîne pas derrière soi. */
+  const images = text(imagesId) || (text(prev.folderId) === folder ? text(prev.imagesId) : '');
   return normalizeDriveMirror({
     tombstones: current.tombstones,
     datasets: current.datasets,
     projects: {
       ...current.projects,
-      [projectRegistryKey(datasetKey, projectName)]: {
-        name: text(projectName), dataset: datasetKey, folderId: folder, at: Number(at) || Date.now()
+      [key]: {
+        name: text(projectName),
+        dataset: datasetKey,
+        folderId: folder,
+        imagesId: images,
+        at: Number(at) || Date.now()
       }
     }
   });
@@ -343,6 +363,17 @@ export const findProjectFolderId = (
   const current = normalizeDriveMirror(mirror);
   const key = projectRegistryKey(datasetRegistryKey({ id: datasetId, name: datasetName }), projectName);
   return text((current.projects[key] || {}).folderId);
+};
+
+/** L'identifiant Drive du dossier `images` RETENU pour un projet ('' s'il n'a
+ *  jamais été désigné : on retombe alors sur la recherche par nom, qui peut
+ *  tomber sur un jumeau vide — voir figuresFolder.findProjectFiguresFolder). */
+export const findProjectImagesId = (
+  mirror, { datasetId = '', datasetName = '', projectName = '' } = {}
+) => {
+  const current = normalizeDriveMirror(mirror);
+  const key = projectRegistryKey(datasetRegistryKey({ id: datasetId, name: datasetName }), projectName);
+  return text((current.projects[key] || {}).imagesId);
 };
 
 /* ── Lecture / écriture locales + notification ───────────────────────────── */

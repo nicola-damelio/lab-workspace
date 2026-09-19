@@ -1517,11 +1517,24 @@ export const figureFileIdentity = ({ src = null, canvasData = null } = {}) => {
   return content ? `${base}|${content}` : base;
 };
 
-/** Le nom du fichier déposé pour une figure : `<libellé>[-<empreinte>].<ext>`. PUR. */
+/** Le nom du fichier déposé pour une figure : `<libellé>[-<empreinte>].<ext>`. PUR.
+ *
+ *  IDEMPOTENT — c'est le défaut qui a coûté cinq empreintes au même fichier :
+ *  quand le libellé d'une entrée vient du NOM DU FICHIER sur le Drive
+ *  (`labelFromDriveFileName`, une bibliothèque reconstruite par une lecture), il
+ *  porte DÉJÀ l'empreinte d'hier ; l'écriture suivante la rajoutait à la fin,
+ *  puis la lecture suivante relisait ce nom-là, et ainsi de suite :
+ *
+ *      Fig2-1b5tpha-1b5tpha-1b5tpha-1b5tpha-1b5tpha.jpg.meta.json
+ *
+ *  Une empreinte déjà présente à la FIN du libellé n'est donc jamais répétée, et
+ *  un nom déjà abîmé est RAMENÉ au bon dès la prochaine écriture (l'empreinte est
+ *  stable pour une même figure : même composition, même origine, même image). */
 export const figureFileName = (label, ext, identity = '') => {
-  const base = sanitizeSlug(label) || 'figure';
   const tag = String(identity || '').trim() ? `-${fileTagOf(identity)}` : '';
-  return `${base}${tag}.${ext}`;
+  let base = sanitizeSlug(label) || 'figure';
+  while (tag && base.endsWith(tag)) base = base.slice(0, -tag.length);
+  return `${base || 'figure'}${tag}.${ext}`;
 };
 
 /** LE dossier d'images à utiliser pour ce projet — celui qui EXISTE.
@@ -1626,7 +1639,11 @@ export const uploadFigureToDrive = async ({ full, label = 'figure', projectName 
       mimeType: isSvg ? 'image/svg+xml' : (mime || 'image/png'),
       file: dataUrlToBlob(src),
       path: projectImagesFolderPath(target.name || projectName),
-      ctx
+      ctx,
+      /* Le dossier RETENU par identifiant : deux dossiers `images` du même nom
+         peuvent coexister sur le Drive, et une résolution par nom écrirait dans
+         l'autre — celui que personne ne lit (voir utils/figuresFolder.js). */
+      folderId: target.leafId || ''
     });
   } catch (err) {
     lastFigureDriveError = (err && err.message) || 'upload failed';
@@ -1910,7 +1927,9 @@ export const uploadFigureMetaToDrive = async ({ meta = null, imageName = '', pro
       mimeType: 'application/json',
       file: new Blob([body], { type: 'application/json' }),
       path: projectImagesFolderPath(target.name || projectName),
-      ctx
+      ctx,
+      // Le MÊME dossier que l'image, par identifiant (voir uploadFigureToDrive).
+      folderId: target.leafId || ''
     });
   } catch (err) {
     console.warn('Figure meta → Drive upload failed:', err && err.message);
@@ -2412,6 +2431,12 @@ export const pullLibraryFromDrive = async ({
     // les entrées déjà présentes mais sans `canvasData` (liste reconstruite
     // depuis le Drive par une version précédente, ou perdue par ce poste).
     const candidates = [...missing, ...current.filter((i) => i && !i.canvasData && !tombstoned(i))];
+    /* Les entrées DÉCOUVERTES par cette lecture : leur libellé vient du NOM DU
+       FICHIER (voir libraryItemsFromDriveListing), donc l'empreinte d'identité y
+       est comprise — « Fig2-1b5tpha ». Le sidecar, lui, porte le libellé VRAI
+       (« Fig2 ») : c'est lui qu'il faut adopter, sinon l'écriture suivante
+       remettait cette empreinte dans le nom (voir figureFileName). */
+    const freshIds = new Set(missing.map((i) => String((i && i.id) || '')));
     const seen = new Set();
     for (const it of candidates) {
       if (!it) continue;
@@ -2427,7 +2452,9 @@ export const pullLibraryFromDrive = async ({
       if (!meta) continue;
       if (meta.canvasData) { it.canvasData = meta.canvasData; out.restored += 1; }
       if (!it.src && meta.src) it.src = meta.src;
-      if (meta.label && !it.label) it.label = meta.label;
+      // Une entrée DÉJÀ connue de ce poste garde son libellé : l'utilisateur a pu
+      // la renommer (voir freshIds).
+      if (meta.label && (freshIds.has(String(it.id || '')) || !it.label)) it.label = meta.label;
       it.metaName = metaName;
     }
   }

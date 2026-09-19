@@ -72,12 +72,23 @@ deux dossiers images et l'un est vide ».
 `src/utils/figuresFolder.js` remplace cette résolution pour tout ce qui lit un
 dossier de figures :
 
-1. le **registre partagé** (`labDriveMirror` → dossier du projet par
+1. le dossier `images` **déjà retenu, par son identifiant** (`labDriveMirror` →
+   `imagesId`) : une recherche par nom rend le *premier* des jumeaux, dans un
+   ordre que le Drive ne garantit pas — souvent le plus récent, donc le **vide** ;
+2. le **registre partagé** (`labDriveMirror` → dossier du projet par
    *identifiant*) : il survit à un renommage, le dossier étant renommé sur place ;
-2. le **nom canonique** — un simple test d'existence, jamais une création ;
-3. un dossier de projet **voisin dont le nom ressemble encore** (score ≥ 2 :
+3. le **nom canonique** — un simple test d'existence, jamais une création ;
+4. un dossier de projet **voisin dont le nom ressemble encore** (score ≥ 2 :
    même nom au séparateur près, ou l'un contient l'autre ; un simple mot commun ne
    suffit pas, ni deux candidats à égalité).
+
+**Les jumeaux sont départagés par ce qu'ils contiennent.** Quand un dossier de
+projet porte DEUX dossiers `images` (un vide créé par une version précédente,
+l'autre avec les fichiers), le résolveur les compare : celui qui **porte les
+figures** gagne, et il est retenu par identifiant (`imagesId`) dans le miroir.
+Un miroir qui retient le dossier vide est donc corrigé de lui-même à la lecture
+suivante. Le dossier trouvé est toujours **retenu par identifiant**, donc la
+recherche par nom ne revient pas au coup d'après.
 
 Quand rien n'est identifiable avec certitude (renommage complet), le geste **ne
 devine pas** : il rend `candidates` (les dossiers de projet du dataset et ce que
@@ -86,9 +97,56 @@ projet (`fromFolderName`), donc les lectures **et** les envois suivants visent
 celui-là.
 
 Les gestes qui écrivent (publier une figure, déposer son sidecar éditable)
-utilisent le même résolveur : une nouvelle figure rejoint le dossier existant au
-lieu d'ouvrir un dossier parallèle. L'emplacement canonique n'est créé que s'il
-n'existe vraiment aucun dossier pour ce projet.
+utilisent le même résolveur **et visent le dossier par identifiant**
+(`uploadLocalFile({ folderId })`, y compris par la file de reprise) : une
+résolution par nom écrirait dans le jumeau que personne ne lit. Une nouvelle
+figure rejoint donc le dossier existant au lieu d'ouvrir un dossier parallèle, et
+l'emplacement canonique n'est créé que s'il n'existe vraiment aucun dossier pour
+ce projet.
+
+## Pourquoi un nom de fichier ne s'allonge plus tout seul
+
+Le nom d'une figure sur le Drive porte, après le libellé, une **empreinte courte
+de l'identité** de la figure (`1D_Histogram…-1j0o9d1.svg`, voir
+`figuresLibrary.figureFileName`) : sans elle, deux figures du même libellé
+seraient le même fichier.
+
+Le défaut venait du **libellé** : quand la liste des figures est reconstruite
+depuis le Drive, le libellé d'une entrée est déduit du *nom du fichier*
+(`labelFromDriveFileName`) — donc empreinte comprise. L'écriture suivante
+ajoutait l'empreinte à ce libellé qui la portait déjà, et ainsi de suite :
+
+```
+Fig2-1b5tpha-1b5tpha-1b5tpha-1b5tpha-1b5tpha.jpg.meta.json
+```
+
+Deux corrections :
+
+* `figureFileName` est **idempotent** : une empreinte déjà présente à la fin du
+  libellé n'est jamais répétée, et un nom déjà abîmé est **ramené au bon** dès la
+  prochaine écriture (l'empreinte est stable pour une même figure), sidecar
+  `.meta.json` compris ;
+* une entrée **découverte** par une lecture prend son libellé du **sidecar**
+  (`<image>.meta.json` → `label`), qui est le nom vrai de la toile. Une entrée
+  déjà connue de ce poste garde le sien — l'utilisateur a pu la renommer.
+
+## Quelle copie fait vivre une figure
+
+Une figure sur le Drive, c'est **deux fichiers** dans le même dossier
+`projects/<projet>/images` :
+
+* `<image>.jpg|png|svg` — l'image : c'est **elle** que la bibliothèque liste
+  (les fichiers `.meta.json` sont ignorés comme images) ;
+* `<image>.<ext>.meta.json` — la **copie éditable** : composition du canvas
+  (panneaux, légendes, flèches, grille) et origine d'une capture. Sans elle,
+  l'image revient comme une simple image : visible, mais **non rouvrable** dans
+  l'Image Builder. C'est ce que compte `noComposition` dans le compte-rendu de
+  « ⬇ Add missing from Drive ».
+
+La bibliothèque se reconstruit depuis le Drive avec « ⬇ Add missing figures from
+Drive » (page projet) ou « ⬇ Add missing from Drive » (fenêtre 🖼 Library) ; un
+sidecar isolé se réimporte par « 📥 Restore a canvas file ». Les deux copies
+vivent ensemble : renommer une figure renomme le sidecar juste à côté.
 
 ## Pourquoi les renommages suivent sur tous les postes
 

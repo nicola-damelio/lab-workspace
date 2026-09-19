@@ -272,6 +272,63 @@ ok(!!fresh, 'l’envoi aboutit pour un projet sans dossier');
 eq(uploads[0].path.join('/'), 'projects/Projet_neuf/images', 'l’emplacement canonique est utilisé');
 ok(creations.length > 0, '…et c’est la SEULE situation où un dossier est créé');
 
+/* ── g. DEUX dossiers `images` DU MÊME NOM, « et l’un est vide » ────────────
+   C’est l’état réel du Drive de l’utilisateur : une lecture qui a créé un
+   jumeau, puis une recherche par nom qui rend le PREMIER — le vide. Ce qui est
+   vérifié ici : c’est le dossier QUI PORTE LES FIGURES qui est lu, il est
+   retenu par IDENTIFIANT, et l’envoi suivant va là — pas dans le vide. */
+store.clear();
+creations.length = 0;
+uploads.length = 0;
+const TWIN_PROJECT = addFolder('Dup_projet', PROJECTS);
+const EMPTY_IMG = addFolder('images', TWIN_PROJECT);   // le jumeau VIDE
+const FULL_IMG = addFolder('images', TWIN_PROJECT);    // celui qui porte les figures
+addFile('Fig2-1b5tpha-1b5tpha.jpg', FULL_IMG, 'image/jpeg');
+const TWIN_SIDECAR = addFile('Fig2-1b5tpha-1b5tpha.jpg.meta.json', FULL_IMG, 'application/json');
+sidecarText.set(TWIN_SIDECAR, JSON.stringify({
+  kind: 'lab-workspace/figure-meta', v: 1, label: 'Fig2', src: null,
+  canvasData: { canvasW: 10, canvasH: 10, gridCols: 1, gridRows: 1, canvasKey: 'cv_dup', objects: [] },
+  imageName: 'Fig2-1b5tpha-1b5tpha.jpg', savedAt: '2026-09-19T11:15:07.659Z'
+}));
+eq(folderIdNamed('images', TWIN_PROJECT), EMPTY_IMG, 'la recherche par nom rend bien le jumeau VIDE en premier');
+LIB.writeProjectLibrary('P5', []);
+const twinRead = await LIB.pullLibraryFromDrive({ scope: 'project', projectId: 'P5', projectName: 'Dup projet' });
+eq(twinRead.error, '', 'deux dossiers du même nom : la lecture ne s’arrête plus dessus');
+eq(twinRead.added, 1, 'c’est le jumeau PEUPLÉ qui est lu (la figure est retrouvée)');
+eq(twinRead.restored, 1, '…et sa composition éditable avec elle');
+eq(twinRead.via, 'name', 'trouvé au nom canonique du projet');
+eq(creations.length, 0, 'aucun dossier créé — surtout pas un troisième jumeau');
+eq(LIB.readProjectLibrary('P5')[0].label, 'Fig2',
+  'le libellé vient du SIDECAR, jamais du nom de fichier (qui porte l’empreinte d’identité)');
+eq(MIRROR.findProjectImagesId(MIRROR.readDriveMirror(), {
+  datasetId: 'DS1', datasetName: 'My dataset', projectName: 'Dup projet'
+}), FULL_IMG, 'le dossier lu est RETENU par identifiant dans le miroir partagé');
+const again = await LIB.pullLibraryFromDrive({ scope: 'project', projectId: 'P5', projectName: 'Dup projet' });
+eq(again.via, 'remembered', 'la lecture suivante vise l’identifiant retenu (plus de recherche par nom)');
+/* L’ÉCRITURE va dans ce dossier-là, par identifiant : une résolution par nom
+   écrirait dans le jumeau vide et les nouvelles figures seraient illisibles. */
+allowCreation = true;
+const twinPush = await LIB.uploadFigureToDrive({
+  full: 'data:image/png;base64,AAAA', label: 'Fig2', projectName: 'Dup projet', identity: 'canvas:cv_dup'
+});
+allowCreation = false;
+ok(!!twinPush, 'l’envoi suivant aboutit');
+eq(uploads[0].folderId, FULL_IMG, 'l’image rejoint le dossier RETENU, par identifiant');
+eq(uploads[0].path.join('/'), 'projects/Dup_projet/images', '…et garde son chemin canonique (miroir de l’arborescence)');
+/* Un miroir qui retient le jumeau VIDE (écrit par une version précédente) est
+   corrigé : le dossier qui PORTE les figures gagne, et il est retenu à son tour. */
+MIRROR.writeDriveMirror(MIRROR.rememberProjectFolder(MIRROR.readDriveMirror(), {
+  datasetId: 'DS1', datasetName: 'My dataset', projectName: 'Dup projet',
+  folderId: TWIN_PROJECT, imagesId: EMPTY_IMG
+}));
+const fixed = await LIB.pullLibraryFromDrive({ scope: 'project', projectId: 'P5', projectName: 'Dup projet' });
+eq(fixed.via, 'twin', 'le jumeau PEUPLÉ prend la place du dossier vide retenu');
+eq(fixed.added, 0, 'la figure était déjà dans la bibliothèque (rien n’est dupliqué)');
+eq(MIRROR.findProjectImagesId(MIRROR.readDriveMirror(), {
+  datasetId: 'DS1', datasetName: 'My dataset', projectName: 'Dup projet'
+}), FULL_IMG, '…et c’est lui qui est retenu désormais');
+eq(creations.length, 0, 'toujours aucune création');
+
 /* ── g. Contrats de code : ce qui a été corrigé ne peut pas revenir ──────── */
 ok(FOLDER_SRC.includes('ne crée RIEN'), 'le résolveur documente qu’il ne crée rien');
 ok(!/resolveDrivePathFromNames\s*\(/.test(FOLDER_SRC), 'il n’appelle même pas la résolution qui crée');

@@ -393,12 +393,12 @@ has(IB, '{!selectedObj && !selectedArrow && selectedShape && (', 'une seule fen�
 has(IB, '↗ Arrow', 'la flèche est offerte par la colonne OBJETS');
 eq(times(IB, /↗ Add arrow\{arrows\.length/g), 0, '…et plus par les barres du haut');
 eq(times(IB, /🌓 Shadow panels<\/button>/g), 0, '« 🌓 Shadow panels » a aussi quitté les barres');
-eq(times(IB, /⛶ Fullscreen on object/g), 3,
-  '« ⛶ Fullscreen on object » est dans les DEUX barres du haut (vue normale + plein écran) ET dans la section PANELS de la fenêtre de l’objet');
+eq(IB.split('>⛶ Fullscreen on object</button>').length - 1, 2,
+  '« ⛶ Fullscreen on object » n’est plus QUE dans les DEUX barres du haut (vue normale + plein écran) : celui de la fenêtre de l’objet a été RETIRÉ (double emploi — sa place est prise par l’ombre du panneau)');
 eq(times(IB, />⛶ Zoom Object<\/button>/g), 0, '…et il n’y a plus deux boutons pour la même chose (le commentaire, lui, l’explique)');
 eq(times(IB, /📋 Paste\{clipCount/g), 1, '« 📋 Paste » ne vit plus que dans la section PANELS (la barre du haut est libérée)');
 has(IB, '🌓 {panelsShadowed ? \'Remove the shadow from every panel\' : \'Same shadow on every panel\'}',
-  '…et l’ombre de tous les panneaux reste atteignable dans « ▾ More options »');
+  '…et l’ombre de tous les panneaux reste atteignable, dans la section PANELS (là où elle agit : c’est elle qui a remplacé le plein écran)');
 
 console.log(`\n_builder_shapes_test : ${passed} vérifications passées`);
 

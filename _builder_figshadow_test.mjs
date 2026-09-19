@@ -188,8 +188,8 @@ has(IB, "patchFigure(selectedObj.id, cropPanelIdx, { shadow: shadowSpec(im.shado
   '…sur la figure ACTIVE (DEFAULT_SHADOW quand elle n’en a pas)');
 has(IB, "onChange={(v) => patchFigure(selectedObj.id, cropPanelIdx, { shadow: v })}",
   'ses réglages fins s’écrivent DANS la figure, jamais dans le panneau');
-has(IB, 'hint="The PICTURE casts its own drop shadow',
-  '…et son texte dit que c’est l’IMAGE qui projette l’ombre (ses pixels, pas son rectangle)');
+has(IB, 'The PICTURE casts its own drop shadow, so a cut-out background gives the shadow of what the image shows instead of a rectangle',
+  '…et son texte dit que c’est l’IMAGE qui projette l’ombre (ses pixels, pas son rectangle) — dans l’INFOBULLE du bloc, sous le bouton');
 has(IB, "🌓 {figShadowOn ? 'Figure shadow ✓' : 'Figure shadow'}",
   'le bouton de la ligne des figures dit aussi si cette figure en a une');
 has(IB, 'const figShadowOn = cropPanelIdx >= 0 && !!shadowSpec((selectedImgs[cropPanelIdx] || {}).shadow);',
@@ -198,10 +198,16 @@ has(IB, 'const figShadowOn = cropPanelIdx >= 0 && !!shadowSpec((selectedImgs[cro
 has(IB, 'const moveObjInStack = (objId, to) => {', 'la fenêtre de l’objet empile toujours les panneaux');
 has(IB, 'Shadow <span className="font-normal normal-case text-slate-400">(panel frame)</span>',
   'le bloc « Shadow » du panneau est explicitement étiqueté « panel frame »');
-has(IB, 'hint="The whole PANEL casts this shadow — frame, figure, letter and texts — and every export keeps it." />',
-  '…et il dit ce que l’ombre du panneau couvre, en UNE ligne (les longues descriptions mangeaient la fenêtre)');
-ok(IB.indexOf('hint="The whole PANEL casts this shadow') < IB.indexOf('hint="The PICTURE casts its own drop shadow'),
-  '…et les deux ombres se SUIVENT dans la même colonne du repli : plus rien ne s’intercale entre elles');
+has(IB, 'title="Shadow of the whole PANEL — its frame, the figure, the letter and the texts.',
+  '…et il dit ce que l’ombre du panneau couvre — dans l’infobulle du bloc (plus de ligne d’explication à l’écran)');
+ok(IB.indexOf("{panelTitle('Modify image')}") < IB.indexOf('🌓 Shadow of figure {cropPanelIdx + 1}'),
+  'les réglages de l’ombre de la FIGURE sont dans la colonne « Modify image », SOUS « 🌓 Figure shadow »');
+ok(IB.indexOf('onClick={toggleActiveFigureShadow}') < IB.indexOf('🌓 Shadow of figure {cropPanelIdx + 1}'),
+  '…écrits JUSTE APRÈS ce bouton : la commande et son réglage ne sont plus à deux bouts de la fenêtre');
+ok(IB.indexOf('🌓 Shadow of figure {cropPanelIdx + 1}') < IB.indexOf("{panelTitle('Panels & objects')}"),
+  '…tandis que l’ombre du PANNEAU (qui a pris la place de « ⛶ Fullscreen on object ») est dans la section « Panels & objects »');
+ok(!IB.includes('No shadow on this figure yet'),
+  'plus la phrase « No shadow on this figure yet » à l’écran : elle est dans l’infobulle du bloc');
 ok(!IB.includes('(a cut-out background gives the shadow of what the image shows, not of its rectangle)'),
   'plus le paragraphe qui allongeait l’ombre de la figure (son détail tient dans la même phrase)');
 eq(count(IB, /<ShadowControls /g), 2,

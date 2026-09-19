@@ -5,8 +5,8 @@ OK   _builder_arrows_test.mjs  →  │ (index) │ name                        
 OK   _builder_copy_paste_test.mjs  →  _builder_copy_paste_test.mjs — 98 assertions OK
 OK   _builder_crop_test.cjs  →  ✅ 67/67 checks passed
 OK   _builder_eraser_test.mjs  →  _builder_eraser_test.mjs — 62 assertions OK
-OK   _builder_figshadow_test.mjs  →  _builder_figshadow_test.mjs — 72 assertions OK
-OK   _builder_figtools_test.mjs  →  _builder_figtools_test.mjs — 114 assertions OK
+OK   _builder_figshadow_test.mjs  →  _builder_figshadow_test.mjs — 75 assertions OK
+OK   _builder_figtools_test.mjs  →  _builder_figtools_test.mjs — 117 assertions OK
 OK   _builder_figureorder_test.mjs  →  _builder_figureorder_test.mjs — 70 assertions OK
 OK   _builder_letters_test.cjs  →  ✅ 78/78 checks passed
 OK   _builder_link_test.cjs  →  │ 40      │ '[App] openImageBuilder is passed to the project page: operatorNames={operatorNames} openImageBuild…'                                    │
@@ -16,7 +16,7 @@ OK   _builder_pixels_test.cjs  →  ✅ 41/41 checks passed
 OK   _builder_place_test.cjs  →  ✅ 53/53 checks passed
 OK   _builder_recall_test.mjs  →  _builder_recall_test : 25 vérifications passées
 OK   _builder_shapes_test.mjs  →  _builder_shapes_test : 201 vérifications passées
-OK   _builder_uibar_test.mjs  →  _builder_uibar_test.mjs — 115 assertions OK
+OK   _builder_uibar_test.mjs  →  _builder_uibar_test.mjs — 118 assertions OK
 OK   _builder_zoom_test.cjs  →  ✅ 31/31 checks passed
 OK   _canvas_autosave_test.mjs  →  ✅ _canvas_autosave_test : 142 vérifications passées
 OK   _canvas_composition_safety_test.mjs  →  ✅ _canvas_composition_safety_test : 32 vérifications passées
@@ -31,7 +31,7 @@ OK   _deleted_projects_test.mjs  →  ✅ 46 tests passés (projets supprimés :
 OK   _diag_keys_summary.cjs  →  • "Fig1" drive=true pxObjects=6 images=7 thumbnailsOnly=true addedAt=2026-09-13T01:06:14.160Z updatedAt=2026-09-16T18:54:29.040Z
 OK   _doc_responsive_test.mjs  →  ✅ 46 tests passés (document exporté et page « document » adaptés à la largeur de l’écran)
 OK   _docking_sanity.cjs  →  (no output)
-OK   _drive_mirror_test.mjs  →  ✅ 71 tests passés (le Drive est le miroir du programme : rien ne ressuscite)
+OK   _drive_mirror_test.mjs  →  ✅ 78 tests passés (le Drive est le miroir du programme : rien ne ressuscite)
 OK   _editor_layout_test.cjs  →  _editor_layout_test.cjs — 9 assertions passed
 OK   _esm_test_hook.mjs  →  (no output)
 OK   _fcs_restore_match_test.cjs  →  ✅ 7/7 checks passed
@@ -39,7 +39,8 @@ OK   _figure_origin_test.cjs  →  ✅ 64/64 checks passed
 OK   _figure_placement_test.mjs  →  _figure_placement_test.mjs — 35 assertions passed
 OK   _figure_recapture_test.mjs  →  │ (index) │ name                                                                          │ ok   │ error │ | ✅ 32/32 checks passed
 OK   _figure_style_test.mjs  →  │ (index) │ name                                                                                  │ ok   │ error │ | ✅ 71/71 checks passed
-OK   _figure_svg_drive_test.mjs  →  passed 156/156
+OK   _figure_svg_drive_test.mjs  →  passed 162/162
+OK   _figures_folder_mismatch_test.mjs  →  ✓ 64 vérifications passées — le dossier d’images d’un projet est CHERCHÉ, jamais fabriqué.
 OK   _library_reorder_test.mjs  →  _library_reorder_test.mjs — 41 assertions OK
 OK   _library_restore_test.mjs  →  ✅ 175 tests passés (bibliothèque d’images ↔ sauvegarde)
 OK   _library_transfer_test.cjs  →  │ (index) │ name                                                                                                                   │ ok   │ error │ | 
@@ -58,7 +59,7 @@ OK   _project_page_order_test.mjs  →  _project_page_order_test.mjs — 31 asse
 OK   _project_section_editing_test.mjs  →  _project_section_editing_test.mjs — 60 assertions passed
 OK   _pub_author_style_test.mjs  →  _pub_author_style_test: 194 passed
 OK   _rebuild_h_test.mjs  →  PASS
-OK   _recover_canvas_files.mjs  →  6 fichier(s) : 5 avec composition, 1 sans.
+OK   _recover_canvas_files.mjs  →  9 fichier(s) : 6 avec composition, 3 sans.
 OK   _reference_complete_test.mjs  →  _reference_complete_test: 68 passed
 OK   _reference_import_test.mjs  →  ✅ 226 tests passés (import de références)
 OK   _reference_links_test.mjs  →  ✅ 114 tests passés (liens de citation [n] ↔ références, import bibliographique numéroté, document exporté réparé)
@@ -67,10 +68,10 @@ OK   _split_test.cjs  →  (no output)
 OK   _src_split_test.cjs  →  (no output)
 OK   _star_group_test.cjs  →  ✅ 34/34 checks passed
 OK   _sum_canvases.mjs  →  meta keys: kind, v, label, src, canvasData, imageName, savedAt
-BAD  _sum_one_meta.mjs  →  TypeError [ERR_INVALID_ARG_TYPE]: The "path" argument must be of type string or an instance of Buffer or URL. Received undefined
+OK   _sum_one_meta.mjs  →  usage: node _sum_one_meta.mjs "<fichier .meta.json>"
 OK   _sum_panels.mjs  →  arrows=0 shapes=0 letterStyle={"fontSize":30,"color":"#000000","bold":true}
 OK   _ui_scale_test.cjs  →  ✅ 44/44 checks passed
 OK   _view_scroll_memory_test.cjs  →  ✅ 41/41 checks passed
 OK   _workspace_drive_test.mjs  →  ✅ 55 tests passés (l’espace de travail entier vit sur le Drive)
 OK   _workspace_keys_test.mjs  →  ✅ 37 tests passés (les clés du navigateur vivent aussi sur le Drive)
-total 75, failed 1
+total 76, failed 0

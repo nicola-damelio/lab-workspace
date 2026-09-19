@@ -441,13 +441,22 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const [saveBusy, setSaveBusy] = useState(false);
   const [placeTextMode, setPlaceTextMode] = useState(false); // click on the object to add text there
   // LA FENÊTRE DE L'OBJET EST REPLIÉE PAR DÉFAUT au strict nécessaire (trois
-  // lignes : le panneau, sa figure, sa légende / ses textes). Tout le reste —
-  // l'ombre du panneau, la disposition libre, la taille du pinceau de la gomme
-  // et les longues explications — vit derrière « ▾ More options ». L'état est
-  // gardé ICI, au niveau du composant, et surtout PAS dans `PropertiesPanel` :
-  // ce dernier est appelé comme une fonction (voir plus bas) et ne doit porter
-  // aucun hook.
+  // lignes : le panneau, sa figure, sa légende / ses textes). Les commandes,
+  // elles, sont TOUTES dans la fenêtre : chaque outil vit SOUS son bouton (le
+  // détourage sous « 🎨 Transparent background », les réglages de l'ombre sous
+  // « 🌓 Figure shadow », l'ombre du cadre dans la section PANELS). « ▾ More
+  // options » ne garde donc que ce qui n'est PAS une commande — la disposition
+  // libre et les longs rappels. L'état est gardé ICI, au niveau du composant, et
+  // surtout PAS dans `PropertiesPanel` : ce dernier est appelé comme une fonction
+  // (voir plus bas) et ne doit porter aucun hook.
   const [panelMore, setPanelMore] = useState(false);
+  // L'OUTIL DE DÉTOURAGE S'OUVRE SOUS SON BOUTON (`bgTool`) : le bouton
+  // « 🎨 Transparent background » de la ligne des outils le déplie et le replie.
+  // Il est REPLIÉ par défaut — l'aperçu, la tolérance et les deux boutons
+  // prennent de la place, et on ne détoure pas à chaque figure. « 🎨 Remove
+  // background » était auparavant à l'autre bout de la fenêtre, dans le repli
+  // « ▾ More options » : la commande et son outil ne sont plus séparés.
+  const [bgTool, setBgTool] = useState(false);
   // LA FENÊTRE DE L'OBJET SE PLIE ENTIÈREMENT : `panelOpen` est son titre-bouton
   // (▾ / ▸). Repliée, elle ne laisse qu'une ligne — le canvas garde toute la
   // hauteur — et la composition affichée n'est pas modifiée pour autant.
@@ -1887,8 +1896,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
      Le dessin existait déjà (filtre <feDropShadow> posé sur un groupe qui
      ENVELOPPE l'image : l'ombre suit les pixels — donc l'alpha — de la figure,
      pas son rectangle, ce que le 🎨 détourage rend enfin visible sur un JPEG).
-     Il ne manquait que la commande : elle vit sur la ligne des figures (le
-     bouton 🌓, un seul clic) et dans « ▾ More options » (tous les réglages).
+     Il ne manquait que la commande : elle vit sur la ligne des outils (le
+     bouton 🌓, un seul clic) et TOUS ses réglages sont JUSTE SOUS ce bouton
+     (voir la colonne « Modify image »).
      Le réglage est PAR FIGURE — un panneau peut montrer une molécule détourée
      avec son ombre à côté d'un graphe qui n'en a pas. */
   const toggleActiveFigureShadow = () => {
@@ -4693,7 +4703,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // le bouton 🌓 de la ligne des figures dit d'un coup d'œil si elle en a une.
   const figShadowOn = cropPanelIdx >= 0 && !!shadowSpec((selectedImgs[cropPanelIdx] || {}).shadow);
   // Détourage déjà fait sur la figure active (`im.bg`, voir utils/figureBackground.js) :
-  // sa couleur, sa tolérance et son mode sont relus dans « ▾ More options ».
+  // sa couleur, sa tolérance et son mode sont relus dans l’outil, sous le bouton
+  // « 🎨 Transparent background » (`bgTool`).
   const figBgRecord = cropPanelIdx >= 0 ? bgRecordOf(selectedImgs[cropPanelIdx]) : null;
   // Le réglage d'IMAGE de la figure active (contraste, luminosité, saturation,
   // teinte) : `null` quand rien n'est demandé — aucun `<filter>` n'est alors
@@ -4803,7 +4814,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
          (figures et textes) défilent chez elles (`max-h-… overflow-y-auto`) :
          une longue liste n’étire donc jamais sa colonne.
          La LÉGENDE du panneau (son sous-titre) et le repli « ▾ More options »
-         sont les deux SEULS blocs de toute la largeur, placés en dernier.
+         sont les deux SEULS blocs de toute la largeur, placés en dernier — le
+         repli ne cache plus AUCUNE commande (les outils vivent sous leur bouton
+         depuis la réorganisation) : il ne garde que la disposition libre et les
+         rappels, qui n'ont pas à être lus deux fois.
          Le TITRE de la fenêtre EST son pli (`panelOpen`) : repliée, elle ne
          laisse qu’une ligne et le canvas garde toute la hauteur. */}
       {/* ── COLONNE 1 · FIGURES — ce que ce panneau MONTRE ─────────────────────
@@ -5015,18 +5029,26 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
          D’IMAGE (contraste, luminosité, saturation, teinte, coloration).
          Les commandes du PANNEAU, elles, ont rejoint la troisième colonne : une
          colonne = un sujet, et « Modify image » ne mélange plus deux d’entre eux.
-         « ▾ More options » (dernier bouton de la troisième colonne) ouvre le repli
-         des réglages qu’on ne pose qu’une fois : les ombres, le détourage en
-         détail, l’opacité… */}
+         ⬇️ LES DEUX OUTILS DE L’IMAGE SONT SOUS LEUR BOUTON : le détourage
+         (🎨 Remove background, déplié par « 🎨 Transparent background ») et les
+         réglages de l’ombre de la figure sont écrits JUSTE EN DESSOUS de la ligne
+         des outils, dans la même colonne. « 🎨 Remove background » vivait à
+         l’autre bout de la fenêtre (dans le repli « ▾ More options ») : la
+         commande et son outil ne sont plus séparés — et l’ombre du CADRE, elle,
+         est partie dans la section PANELS (là où elle agit).
+         Aucune phrase d’explication ici (elles mangeaient la fenêtre) : le
+         pourquoi et le comment sont dans l’infobulle du titre de chaque bloc. */}
       <div className={panelColCls(bar)}>
       {panelTitle('Modify image')}
       <div className={panelCellCls(bar)}>
-        <button type="button" onClick={() => setPanelMore(true)} disabled={cropPanelIdx < 0}
-          className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${cropPanelIdx < 0 ? 'bg-slate-100 border-slate-200 text-slate-300' : (figBgRecord ? 'bg-teal-600 text-white border-teal-700' : 'bg-white border-teal-300 text-teal-700 hover:bg-teal-100')}`}
+        <button type="button" onClick={() => setBgTool((v) => !v)} disabled={cropPanelIdx < 0}
+          className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${cropPanelIdx < 0 ? 'bg-slate-100 border-slate-200 text-slate-300' : (figBgRecord ? 'bg-teal-600 text-white border-teal-700' : (bgTool ? 'bg-teal-50 border-teal-400 text-teal-800' : 'bg-white border-teal-300 text-teal-700 hover:bg-teal-100'))}`}
           title={cropPanelIdx < 0
             ? 'Add a figure to this panel first: a background is removed from a PICTURE.'
-            : 'Make the background of the active figure transparent — click the colour on the preview, then “🎨 Remove background”; the preview, the tolerance and “Auto: the four corners” sit in “▾ More options”, which this click opens.'}>
-          🎨 Transparent background{figBgRecord ? ' ✓' : ''}
+            : (bgTool
+              ? 'Fold the tool away again — the pixels of this figure are untouched. The “✓” says this figure has already been cut out.'
+              : 'Make the background of the active figure transparent: this click opens the tool JUST UNDER this button — click the colour on the preview, then “🎨 Remove background”. The “✓” says the figure has already been cut out.')}>
+          🎨 Transparent background{figBgRecord ? ' ✓' : ''}{bgTool ? ' ▴' : ' ▾'}
         </button>
         <button type="button" onClick={toggleActiveFigureShadow} disabled={cropPanelIdx < 0}
           className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${cropPanelIdx < 0 ? 'bg-slate-100 border-slate-200 text-slate-300' : (figShadowOn ? 'bg-slate-800 text-white border-slate-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100')}`}
@@ -5034,7 +5056,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             ? 'Add a figure to this panel first: the shadow is a setting of a PICTURE.'
             : (figShadowOn
               ? 'Take the shadow off this figure — the panel keeps its own shadow (a panel shadow is a separate setting).'
-              : 'Give the ACTIVE figure its own drop shadow — the picture, not the panel frame: it follows the pixels of the figure, so a cut-out background gives the shadow OF WHAT THE IMAGE SHOWS instead of a rectangle. Offsets, blur and colour: “▾ More options”.')}>
+              : 'Give the ACTIVE figure its own drop shadow — the picture, not the panel frame: it follows the pixels of the figure, so a cut-out background gives the shadow OF WHAT THE IMAGE SHOWS instead of a rectangle. Offsets, blur and colour: in the block JUST UNDER this button.')}>
           🌓 {figShadowOn ? 'Figure shadow ✓' : 'Figure shadow'}
         </button>
         {/* 🔆 L'OPACITÉ — la TRANSPARENCE DE L'IMAGE ELLE-MÊME (le fond, lui,
@@ -5125,9 +5147,105 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         </label>
         {/* 🌓 L'OMBRE DE LA FIGURE a son bouton EN TÊTE DE COLONNE (à côté de
             « 🎨 Transparent background ») : elle y est un geste d'un clic, et
-            ses réglages fins restent dans « ▾ More options ». La ligne des
-            outils ne la répète donc pas. */}
+            ses réglages fins sont JUSTE SOUS ce bouton (la ligne suivante). La
+            ligne des outils ne la répète donc pas. */}
       </div>
+      {/* ── LES DEUX OUTILS DE L’IMAGE VIVENT SOUS LEURS BOUTONS ────────────────
+         C’est ici qu’on cherchait « 🎨 Remove background » : il était DANS le
+         repli « ▾ More options », donc à l’autre bout de la fenêtre, alors que
+         son bouton est dans la ligne du dessus. Le détourage s’ouvre maintenant
+         SOUS ce bouton (`bgTool`, replié par défaut : on ne détoure pas à chaque
+         figure), et les réglages de l’ombre de la figure SOUS « 🌓 Figure
+         shadow », qui la donne ou l’enlève d’un clic.
+         AUCUNE phrase d’explication dans ces deux blocs (« no need to write their
+         way of usage — it takes too much space ») : elles sont UNE PAR UNE dans
+         l’infobulle du titre de chaque bloc.
+         Les deux blocs sont alignés en haut (`self-start`) : l’aperçu du
+         détourage est plus haut que les champs de l’ombre. */}
+      {cropPanelIdx >= 0 && (
+        <div className={panelCellCls(bar)}>
+          {/* LES DEUX OUTILS, DANS L'ORDRE DES BOUTONS : le détourage (🎨) puis
+              les réglages de l'ombre de la figure (🌓) — celui qui est ouvert
+              n'est jamais à la place de l'autre, et chacun reste sous son
+              bouton. */}
+          {bgTool && (
+            /* 🎨 LE DÉTOURAGE — un vrai travail sur les PIXELS
+               (utils/figureBackground.js) : l’aperçu clique la SOURCE de la
+               figure (jamais sa vignette), la tolérance absorbe le bruit du JPEG
+               et « 🎨 Remove background » écrit un PNG transparent en place. */
+            <div className="flex flex-col gap-1 border border-slate-200 rounded px-2 py-1 bg-white shrink-0 self-start">
+              <span className="text-[10px] font-bold text-slate-600 shrink-0"
+                title="Click the background on the picture, then “🎨 Remove background” — place, size, crop and erasures are untouched; Ctrl+Z brings the ORIGINAL image back (one step) and the shadow of the figure then follows the NEW pixels.">
+                🎨 Transparent background
+              </span>
+              <div className="flex items-start gap-2">
+                {figBgSrc ? (
+                  <img src={figBgSrc} alt="" onClick={pickBackgroundAt}
+                    className="w-[7.5rem] h-[7.5rem] object-contain border border-slate-300 rounded cursor-crosshair shrink-0"
+                    style={{ backgroundImage: 'repeating-conic-gradient(#e2e8f0 0% 25%, #ffffff 0% 50%)', backgroundSize: '12px 12px' }}
+                    title="Click the colour that must disappear — the background of this figure. Click in a corner of the image: those pixels (and everything of that colour reachable from the borders) become transparent. The chequered background shows what “transparent” means." />
+                ) : (
+                  <span className="text-[9px] text-slate-400 italic shrink-0 w-[7.5rem]">No pixels to show — put a figure in this panel first.</span>
+                )}
+                <div className="flex flex-col gap-1 min-w-[10rem]">
+                  <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500"
+                    title="How far from the clicked colour a pixel still counts as “background” (0 = the exact colour only). A JPEG shifts the background by a few units: 20–45 is the usual range. Raise it and the light greys next to the background go too.">
+                    Tolerance {clampBgTol(bgTol)}
+                    <input type="range" min={BG_TOL_MIN} max={BG_TOL_MAX} step="1" value={bgTol}
+                      onChange={(e) => setBgTol(clampBgTol(e.target.value))} className="w-20 accent-teal-600" />
+                    <input type="number" min={BG_TOL_MIN} max={BG_TOL_MAX} value={bgTol}
+                      onChange={(e) => setBgTol(clampBgTol(e.target.value))} className="w-12 border rounded px-0.5 py-px text-[10px]" />
+                  </label>
+                  <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500"
+                    title="“Touching the borders”: the colour goes only where it is REACHABLE from an edge — a white label inside a drawing is kept (the usual case). “Everywhere”: every pixel of that colour goes, even inside the drawing — for a background made of several pieces.">
+                    What goes
+                    <select value={bgMode} onChange={(e) => setBgMode(e.target.value)} className="border rounded px-0.5 py-px text-[10px]">
+                      <option value="flood">touching the borders</option>
+                      <option value="all">everywhere</option>
+                    </select>
+                  </label>
+                  <div className="flex flex-wrap items-center gap-1">
+                    <button type="button" onClick={() => removeFigureBackground(false)} disabled={bgBusy || !figBgSrc}
+                      className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${bgBusy || !figBgSrc ? 'bg-slate-100 border-slate-200 text-slate-300' : 'bg-teal-600 text-white border-teal-700 hover:bg-teal-700'}`}
+                      title="Take the clicked colour off this figure: those pixels become TRANSPARENT (a PNG is written in their place) — the panel shows through, and the figure's shadow then follows what the picture shows. Ctrl+Z puts the original image back.">
+                      {bgBusy ? '⏳ Working…' : '🎨 Remove background'}
+                    </button>
+                    <button type="button" onClick={() => removeFigureBackground(true)} disabled={bgBusy || !figBgSrc}
+                      className="font-bold px-1.5 py-0.5 rounded text-[10px] border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 shrink-0"
+                      title="Automatic: the colours found in the four CORNERS are taken off in one go — a graph saved on a white background has them all. Nothing happens on an image whose background is not clear.">
+                      Auto: the four corners
+                    </button>
+                  </div>
+                  {(bgKey || figBgRecord) && (
+                    <span className="flex items-center gap-1 text-[10px] font-bold text-slate-600">
+                      {bgKey && (
+                        <>
+                          <span className="w-4 h-4 rounded border border-slate-300 shrink-0" style={{ background: bgKey }} />
+                          <code className="text-[10px]">{bgKey}</code>
+                        </>
+                      )}
+                      {figBgRecord && (
+                        <span className="text-[9px] font-bold text-teal-700" title="What these pixels carry: the figure keeps this mark, and Ctrl+Z undoes the whole cut-out.">
+                          🎨 cut out · {figBgRecord.color} ±{figBgRecord.tol} · {figBgRecord.mode === 'all' ? 'everywhere' : 'borders'}
+                        </span>
+                      )}
+                    </span>
+                  )}
+                  {bgMsg && <span className="text-[9px] font-bold text-slate-600">{bgMsg}</span>}
+                </div>
+              </div>
+            </div>
+          )}
+          <div className="flex flex-col gap-1 border border-slate-200 rounded px-2 py-1 bg-white shrink-0 self-start">
+            <span className="text-[10px] font-bold text-slate-600 shrink-0"
+              title={`Settings of the shadow of FIGURE ${cropPanelIdx + 1} of this panel — the picture ITSELF, never the panel frame (“Shadow (panel frame)” lives in the Panels section: the two are independent). The PICTURE casts its own drop shadow, so a cut-out background gives the shadow of what the image shows instead of a rectangle, and what the 🧽 eraser removed casts nothing at all.`}>
+              🌓 Shadow of figure {cropPanelIdx + 1}
+            </span>
+            <ShadowControls value={shadowSpec((selectedImgs[cropPanelIdx] || {}).shadow)}
+              onChange={(v) => patchFigure(selectedObj.id, cropPanelIdx, { shadow: v })} />
+          </div>
+        </div>
+      )}
       <div className={panelCellCls(bar)}>
         {cropPanelIdx >= 0 && (() => {
           /* 🎯 EXACT SIZE OF THE ACTIVE FIGURE (keyboard) — see setActiveFigBox:
@@ -5225,11 +5343,12 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
          dans la numérotation des panneaux), puis les TEXTES, l’un sous l’autre,
          avec leurs réglages. Ensuite LE PANNEAU lui-même : ses pastilles
          « A B C » (la sélection multiple — le premier sélectionné donne sa taille
-         aux autres), copier / coller / supprimer, la profondeur, le plein écran
-         sur l’objet, le retour au graphe d’origine, et « ▾ More options » — le
-         repli des ombres et du détourage, qui est donc bien le DERNIER mot de la
-         fenêtre. Tout ce qui vise LE panneau est ici : « Modify image » ne garde
-         que la figure.
+         aux autres), copier / coller / supprimer, la profondeur, L'OMBRE DU
+         PANNEAU (son cadre : là où était « ⛶ Fullscreen on object », retiré — les
+         deux barres du haut l'offrent déjà), le retour au graphe d'origine, et
+         « ▾ More options » — le repli de la disposition libre et des rappels, qui
+         est donc bien le DERNIER mot de la fenêtre. Tout ce qui vise LE panneau
+         est ici : « Modify image » ne garde que la figure.
          (Cette colonne s’appelait « Objects » : elle porte maintenant les deux.)
 
          ⛔ L’ancienne ligne « ⇹ aligner / répartir les PANNEAUX » n’est pas
@@ -5391,8 +5510,25 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           {selectedIds.length > 1 ? `Delete ${selectedIds.length} panels` : 'Delete'}
         </button>
         <span className="w-px h-4 bg-slate-300 shrink-0" />
-        <button onClick={() => zoomToObject(selectedObj.id)} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-1.5 py-0.5 rounded text-[10px] shrink-0"
-          title="Zoom the canvas on this panel alone — a full screen view of this object, nothing else">⛶ Fullscreen on object</button>
+        {/* 🌓 L'OMBRE DU PANNEAU — ICI, À LA PLACE DE « ⛶ Fullscreen on object ».
+            Ce bouton-là a été RETIRÉ de la fenêtre : les DEUX barres du haut
+            l'offrent déjà (« it is useless as it is already in the top bar »).
+            L'ombre du panneau quitte donc le repli et rejoint LA SECTION DU
+            PANNEAU : son CADRE (la figure, la lettre et les textes suivent),
+            réglé par la MÊME primitive <feDropShadow> que l'ombre d'une figure,
+            d'une flèche ou d'une forme. */}
+        <div className="flex flex-col gap-1 border border-slate-200 rounded px-2 py-1 bg-white shrink-0 self-start"
+          title="Shadow of the whole PANEL — its frame, the figure, the letter and the texts. The whole PANEL casts this shadow, and every export keeps it. The PICTURE can have its own too (“🌓 Shadow of figure …”, in the “Modify image” column): the two are INDEPENDENT settings, and this one belongs to the panel.">
+          <span className="text-[10px] font-bold text-slate-600 shrink-0">Shadow <span className="font-normal normal-case text-slate-400">(panel frame)</span></span>
+          <ShadowControls value={shadowSpec(selectedObj.shadow)} onChange={(v) => updateObj({ shadow: v })} />
+          <div className="flex">
+            <button type="button" onClick={togglePanelsShadow}
+              className="bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold px-2.5 py-1 rounded text-[10px]"
+              title="Give EVERY panel of the figure the same shadow — click again to take it off all of them">
+              🌓 {panelsShadowed ? 'Remove the shadow from every panel' : 'Same shadow on every panel'}
+            </button>
+          </div>
+        </div>
         {selectedObj.src && selectedObj.src.testId && (
           <button onClick={() => openOriginalGraph(selectedObj.src)}
             className="bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-300 font-bold px-1.5 py-0.5 rounded text-[10px] shrink-0"
@@ -5403,8 +5539,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         <button type="button" onClick={() => setPanelMore((v) => !v)}
           className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${panelMore ? 'bg-slate-700 text-white border-slate-700' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}
           title={panelMore
-            ? 'Fold the rarely used settings away again (panel shadow, free layout, eraser brush size, the long hints)'
-            : 'Show the rarely used settings: the panel SHADOW, the free layout, the eraser brush size and the long hints — everything else is already here'}>
+            ? 'Fold the long reminders away again — the free layout and the hints (no command hides here: every tool is in the window, under its own button)'
+            : 'Show the long reminders: the free layout and the reminders about the figure tools — every COMMAND is already in the window, and each tool explains itself on hover'}>
           {panelMore ? '▴ Fewer options' : '▾ More options'}
         </button>
       </div>
@@ -5432,129 +5568,18 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           title="Open the floating caption editor">✎ Edit in place</button>
       </div>
       {panelMore && (
-        /* ── LES OMBRES ET LE FOND, CÔTE À CÔTE ──────────────────────────────
-           Ce repli garde les réglages qu’on pose une fois. Les voici GROUPÉS,
-           et sans les longs paragraphes qui les séparaient :
-             • les DEUX ombres dans la même colonne — celle du PANNEAU (son cadre,
-               la figure, la lettre, les textes) puis celle de la FIGURE ACTIVE,
-               réglées par le MÊME bloc de contrôles et la même primitive
-               <feDropShadow> : rien ne vient plus s’intercaler entre elles ;
-             • le FOND de la figure juste à côté : le détourage est un vrai
-               travail sur les PIXELS (utils/figureBackground.js) — l’aperçu
-               clique la SOURCE de la figure (pas sa vignette), la tolérance
-               absorbe le bruit du JPEG et « 🎨 Remove background » écrit un PNG
-           transparent ;
-             • et les rappels, UNE ligne chacun — le détail est dans l’infobulle.
-           Le repli prend toute la largeur (`md:col-span-full`) : c’est un bloc
-           de réglages fins, pas une quatrième colonne. */
+        /* ── LE REPLI « ▾ MORE OPTIONS » — CE QUI N'EST PAS UNE COMMANDE ───────
+           Les OMBRES et le DÉTOURAGE en sont SORTIS : chaque outil vit maintenant
+           SOUS SON BOUTON (colonne « Modify image » pour l'image et son ombre,
+           section PANELS pour le cadre du panneau) — la commande et son réglage
+           ne sont plus à deux bouts de la fenêtre. Il ne reste donc ici que ce
+           qui n'est PAS une commande :
+             • la DISPOSITION LIBRE — une information d'état (en disposition
+               libre, la grille et « Scale (%) » ne règlent plus rien) ;
+             • et les RAPPELS, UNE ligne chacun — le détail est dans l'infobulle.
+           Le repli prend toute la largeur (`md:col-span-full`) : c'est un bloc
+           de rappels, pas une quatrième colonne. */
         <div className={`flex flex-wrap items-start gap-x-4 gap-y-1.5 ${bar ? 'min-w-0 md:col-span-full' : 'border-t border-slate-200 pt-1.5'}`}>
-          {/* LES DEUX OMBRES — le panneau, puis la figure : jamais séparées. */}
-          <div className="flex flex-col gap-1.5 shrink-0 min-w-[16rem] max-w-[24rem]">
-            <div className="flex flex-col gap-1 shrink-0">
-              <h5 className="text-xs font-bold text-slate-500 uppercase" title="Shadow of the whole PANEL — its white frame, the figure, the letter and the texts. The PICTURE can have its own too (“Shadow (figure)”, right below): the two are independent settings.">Shadow <span className="font-normal normal-case text-slate-400">(panel frame)</span></h5>
-              <ShadowControls value={shadowSpec(selectedObj.shadow)} onChange={(v) => updateObj({ shadow: v })}
-                hint="The whole PANEL casts this shadow — frame, figure, letter and texts — and every export keeps it." />
-              <div className="flex">
-                <button type="button" onClick={togglePanelsShadow}
-                  className="bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold px-2.5 py-1 rounded text-[10px]"
-                  title="Give EVERY panel of the figure the same shadow — click again to take it off all of them">
-                  🌓 {panelsShadowed ? 'Remove the shadow from every panel' : 'Same shadow on every panel'}
-                </button>
-              </div>
-            </div>
-            {cropPanelIdx >= 0 && (
-              <>
-                <h5 className="text-xs font-bold text-slate-500 uppercase"
-                  title={`Settings of FIGURE ${cropPanelIdx + 1} of this panel — the 🎯 chip in the figure list changes which one is active. Everything here belongs to the picture itself (its pixels, its shadow), never to the panel frame.`}>
-                  Figure {cropPanelIdx + 1} <span className="font-normal normal-case text-slate-400">(image itself)</span>
-                </h5>
-                <div className="flex flex-col gap-1 border border-slate-200 rounded px-2 py-1 bg-white">
-                  <span className="text-[10px] font-bold text-slate-600 flex items-center gap-1">
-                    🌓 Shadow of this figure
-                    <button type="button" onClick={toggleActiveFigureShadow}
-                      className="ml-auto font-bold text-[10px] border border-slate-300 rounded px-1.5 py-px text-slate-600 hover:bg-slate-50 shrink-0"
-                      title={figShadowOn ? 'Take the shadow off this figure' : 'Give this figure the standard shadow (1.5 mm down-right, 1.2 mm blur)'}>
-                      {figShadowOn ? '✕ remove' : '+ add'}
-                    </button>
-                  </span>
-                  <ShadowControls value={shadowSpec((selectedImgs[cropPanelIdx] || {}).shadow)}
-                    onChange={(v) => patchFigure(selectedObj.id, cropPanelIdx, { shadow: v })}
-                    hint="The PICTURE casts its own drop shadow: it follows its pixels, so a cut-out background gives the shadow of what the image shows." />
-                  {!figShadowOn && (
-                    <span className="text-[9px] text-slate-400 italic">
-                      No shadow on this figure yet — “+ add” puts the standard one on it, and the panel keeps its own.
-                    </span>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-          {/* LE FOND DE LA FIGURE — le détourage, juste à côté de son ombre. */}
-          {cropPanelIdx >= 0 && (
-            <div className="flex flex-col gap-1 border border-slate-200 rounded px-2 py-1 bg-white">
-              <span className="text-[10px] font-bold text-slate-600">🎨 Transparent background</span>
-              <div className="flex items-start gap-2">
-                {figBgSrc ? (
-                  <img src={figBgSrc} alt="" onClick={pickBackgroundAt}
-                    className="w-[7.5rem] h-[7.5rem] object-contain border border-slate-300 rounded cursor-crosshair shrink-0"
-                    style={{ backgroundImage: 'repeating-conic-gradient(#e2e8f0 0% 25%, #ffffff 0% 50%)', backgroundSize: '12px 12px' }}
-                    title="Click the colour that must disappear — the background of this figure. Click in a corner of the image: those pixels (and everything of that colour reachable from the borders) become transparent. The chequered background shows what “transparent” means." />
-                ) : (
-                  <span className="text-[9px] text-slate-400 italic shrink-0 w-[7.5rem]">No pixels to show — put a figure in this panel first.</span>
-                )}
-                <div className="flex flex-col gap-1 min-w-[10rem]">
-                  <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500"
-                    title="How far from the clicked colour a pixel still counts as “background” (0 = the exact colour only). A JPEG shifts the background by a few units: 20–45 is the usual range. Raise it and the light greys next to the background go too.">
-                    Tolerance {clampBgTol(bgTol)}
-                    <input type="range" min={BG_TOL_MIN} max={BG_TOL_MAX} step="1" value={bgTol}
-                      onChange={(e) => setBgTol(clampBgTol(e.target.value))} className="w-20 accent-teal-600" />
-                    <input type="number" min={BG_TOL_MIN} max={BG_TOL_MAX} value={bgTol}
-                      onChange={(e) => setBgTol(clampBgTol(e.target.value))} className="w-12 border rounded px-0.5 py-px text-[10px]" />
-                  </label>
-                  <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500"
-                    title="“Touching the borders”: the colour goes only where it is REACHABLE from an edge — a white label inside a drawing is kept (the usual case). “Everywhere”: every pixel of that colour goes, even inside the drawing — for a background made of several pieces.">
-                    What goes
-                    <select value={bgMode} onChange={(e) => setBgMode(e.target.value)} className="border rounded px-0.5 py-px text-[10px]">
-                      <option value="flood">touching the borders</option>
-                      <option value="all">everywhere</option>
-                    </select>
-                  </label>
-                  <div className="flex flex-wrap items-center gap-1">
-                    <button type="button" onClick={() => removeFigureBackground(false)} disabled={bgBusy || !figBgSrc}
-                      className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${bgBusy || !figBgSrc ? 'bg-slate-100 border-slate-200 text-slate-300' : 'bg-teal-600 text-white border-teal-700 hover:bg-teal-700'}`}
-                      title="Take the clicked colour off this figure: those pixels become TRANSPARENT (a PNG is written in their place) — the panel shows through, and the figure's shadow then follows what the picture shows. Ctrl+Z puts the original image back.">
-                      {bgBusy ? '⏳ Working…' : '🎨 Remove background'}
-                    </button>
-                    <button type="button" onClick={() => removeFigureBackground(true)} disabled={bgBusy || !figBgSrc}
-                      className="font-bold px-1.5 py-0.5 rounded text-[10px] border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 shrink-0"
-                      title="Automatic: the colours found in the four CORNERS are taken off in one go — a graph saved on a white background has them all. Nothing happens on an image whose background is not clear.">
-                      Auto: the four corners
-                    </button>
-                  </div>
-                  {(bgKey || figBgRecord) && (
-                    <span className="flex items-center gap-1 text-[10px] font-bold text-slate-600">
-                      {bgKey && (
-                        <>
-                          <span className="w-4 h-4 rounded border border-slate-300 shrink-0" style={{ background: bgKey }} />
-                          <code className="text-[10px]">{bgKey}</code>
-                        </>
-                      )}
-                      {figBgRecord && (
-                        <span className="text-[9px] font-bold text-teal-700" title="What these pixels carry: the figure keeps this mark, and Ctrl+Z undoes the whole cut-out.">
-                          🎨 cut out · {figBgRecord.color} ±{figBgRecord.tol} · {figBgRecord.mode === 'all' ? 'everywhere' : 'borders'}
-                        </span>
-                      )}
-                    </span>
-                  )}
-                  {bgMsg && <span className="text-[9px] font-bold text-slate-600">{bgMsg}</span>}
-                  <span className="text-[9px] text-slate-400 italic"
-                      title="Ctrl+Z brings the original image back (one step) — the shadow of the figure follows the NEW pixels.">
-                    Click the background on the picture, then “🎨 Remove background” — place, size, crop and erasures are untouched.
-                  </span>
-                </div>
-              </div>
-            </div>
-          )}
           <div className="flex flex-col gap-1 min-w-[18rem] flex-1">
             {selectedFreeLayout && (
               <div className="flex flex-col gap-1 bg-indigo-50 border border-indigo-200 rounded px-2 py-1">

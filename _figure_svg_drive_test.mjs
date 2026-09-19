@@ -394,6 +394,33 @@ check('[nom] la cible garde l’extension du fichier actuel',
 check('[nom] sans nom connu, l’extension par défaut ne casse pas le nom',
   LIB_MOD.figureRenameTarget({ label: 'p53H hist', previousName: '' }).name,
   LIB_MOD.figureFileName('p53H hist', 'png'));
+
+/* 10a-bis. IDEMPOTENCE DU NOM. Un libellé repris du NOM DU FICHIER sur le Drive
+   (une bibliothèque reconstruite par une lecture : labelFromDriveFileName) porte
+   DÉJÀ l'empreinte d'identité — « Fig2-1b5tpha ». L'écriture suivante la
+   remettait dans le nom à chaque aller-retour ; cinq lectures plus tard le
+   fichier s'appelait Fig2-1b5tpha-1b5tpha-1b5tpha-1b5tpha-1b5tpha.jpg (et son
+   sidecar .meta.json, 5,7 Mo). */
+const DUP_IDENT = 'canvas:cv_dup';
+const DUP_TAG = LIB_MOD.fileTagOf(DUP_IDENT);
+check('[nom] une empreinte déjà à la fin du libellé n’est pas répétée',
+  LIB_MOD.figureFileName(`Fig2-${DUP_TAG}`, 'jpg', DUP_IDENT), `Fig2-${DUP_TAG}.jpg`);
+check('[nom] …et un nom DÉJÀ abîmé est RAMENÉ au bon',
+  LIB_MOD.figureFileName(`Fig2-${DUP_TAG}-${DUP_TAG}-${DUP_TAG}-${DUP_TAG}-${DUP_TAG}`, 'jpg', DUP_IDENT),
+  `Fig2-${DUP_TAG}.jpg`);
+check('[nom] un libellé sans empreinte n’en reçoit qu’une',
+  LIB_MOD.figureFileName('Fig2', 'jpg', DUP_IDENT), `Fig2-${DUP_TAG}.jpg`);
+check('[nom] sans identité connue, rien n’est ajouté (l’envoi reste comme avant)',
+  LIB_MOD.figureFileName(`Fig2-${DUP_TAG}`, 'jpg'), `Fig2-${DUP_TAG}.jpg`);
+check('[nom] une AUTRE identité garde sa propre empreinte (les noms restent distincts)',
+  LIB_MOD.figureFileName(`Fig2-${DUP_TAG}`, 'jpg', 'canvas:cv_other'),
+  `Fig2-${DUP_TAG}-${LIB_MOD.fileTagOf('canvas:cv_other')}.jpg`);
+check('[rename] renommer une toile abîmée vise le nom sain',
+  LIB_MOD.figureRenameTarget({
+    label: `Fig2-${DUP_TAG}-${DUP_TAG}`,
+    previousName: `Fig2-${DUP_TAG}-${DUP_TAG}.jpg`,
+    identity: DUP_IDENT
+  }).name, `Fig2-${DUP_TAG}.jpg`);
 check('[url] le dernier segment, décodé',
   LIB_MOD.fileNameOfUrl('https://nc/remote.php/dav/files/u/a%20b.svg'), 'a b.svg');
 check('[url] remplacer le nom garde le dossier (et la requête)',

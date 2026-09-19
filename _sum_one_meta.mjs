@@ -2,6 +2,13 @@
 import { readFileSync } from 'node:fs';
 
 const file = process.argv[2];
+if (!file) {
+  /* Sonde jouet : aucun fichier désigné n'est pas une ERREUR (c'est ainsi
+     qu'elle est lancée par le balayage de la suite, sans argument) — on dit
+     comment s'en servir et on sort proprement. */
+  console.log('usage: node _sum_one_meta.mjs "<fichier .meta.json>"');
+  process.exit(0);
+}
 const meta = JSON.parse(readFileSync(file, 'utf8'));
 const cd = meta.canvasData || {};
 const out = [];

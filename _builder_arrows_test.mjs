@@ -334,9 +334,11 @@ check('44 the arrow IS exported, the handles never are', () => {
 
 check('45 the arrow lives in the object window, not in the toolbars', () => {
   /* « ↗ Add arrow » et « 🌓 Shadow panels » ont quitté les DEUX barres du haut :
-     les deux commandes sont dans la fenêtre de l'objet (colonne OBJETS pour la
-     flèche, « ▾ More options » pour l'ombre des panneaux) — une seule porte
-     d'entrée, au même endroit dans les deux affichages. */
+     les deux commandes sont dans la fenêtre de l'objet, dans la TROISIÈME pile
+     (« Panels & objects ») : la flèche, et l'ombre des panneaux — qui y a
+     remplacé « ⛶ Fullscreen on object » (inutile dans la fenêtre : les DEUX
+     barres du haut l'offrent déjà). Une seule porte d'entrée, au même endroit
+     dans les deux affichages. */
   eq(times(IB, /↗ Add arrow\{arrows\.length/g), 0);
   eq(times(IB, /🌓 Shadow panels<\/button>/g), 0);
   frag('the arrow is offered by the object window', IB, '↗ Arrow{arrows.length ? ` (${arrows.length})` : \'\'}');
@@ -347,12 +349,12 @@ check('45 the arrow lives in the object window, not in the toolbars', () => {
   assert.ok(objectsStack > 0, 'la colonne OBJECTS est titrée (troisième pile)');
   assert.ok(IB.indexOf('↗ Arrow{arrows.length') > objectsStack,
     '…et la flèche est offerte DANS cette pile, pas dans la barre du haut');
-  frag('the panel-shadow command is still there (More options)', IB, "panelsShadowed ? 'Remove the shadow from every panel' : 'Same shadow on every panel'");
+  frag('the panel-shadow command is still there (the PANELS section)', IB, "panelsShadowed ? 'Remove the shadow from every panel' : 'Same shadow on every panel'");
   frag('the one-click command exists', IB, 'const togglePanelsShadow = () => {');
   frag('…and it writes the default record', IB, 'setObjects(prev => prev.map(o => ({ ...o, shadow: on ? { ...DEFAULT_SHADOW } : null })));');
 });
 check('46 the panel properties carry the Shadow block', () => {
-  frag('the section', IB, '<h5 className="text-xs font-bold text-slate-500 uppercase" title="Shadow of the whole PANEL');
+  frag('the section', IB, 'Shadow <span className="font-normal normal-case text-slate-400">(panel frame)</span>');
   frag('wired to THIS panel', IB, '<ShadowControls value={shadowSpec(selectedObj.shadow)} onChange={(v) => updateObj({ shadow: v })}');
   frag('…and to every panel in one click', IB, "panelsShadowed ? 'Remove the shadow from every panel' : 'Same shadow on every panel'");
 });

@@ -26,15 +26,18 @@
 
      5) MOINS D'ÉCRITURES : plus de padding, plus de champs numériques de
         recadrage, plus de nom / taille de lettre. L'ombre de la FIGURE est là —
-        mais sur la figure ACTIVE seulement (un bouton 🌓 sur la ligne des
-        figures, ses réglages dans le repli), jamais en pastille sur chaque ligne.
+        mais sur la figure ACTIVE seulement (un bouton 🌓 dans la colonne
+        « Modify image », ses réglages JUSTE SOUS ce bouton), jamais en pastille
+        sur chaque ligne.
 
      6) LA FENÊTRE NE MANGE PLUS LA MOITIÉ DE L'ÉCRAN (« the object window is
         not enough compacted, it takes up half of the screen! ») : trois lignes
         courtes toujours visibles (le panneau, ses figures, sa légende / ses
-        textes) et tout le reste — l'ombre, la disposition libre, la taille du
-        pinceau de la gomme, les longues explications — derrière « ▾ More
-        options ».
+        textes), chaque OUTIL SOUS SON BOUTON (le détourage, l'ombre de la
+        figure, l'ombre du cadre — qui a remplacé « ⛶ Fullscreen on object »,
+        inutile ici), et derrière « ▾ More options » ce qui n'est PAS une
+        commande : la disposition libre et les longs rappels. Aucune phrase
+        d'explication à l'écran : « the explanation by hovering ».
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -202,7 +205,7 @@ has(IB, '📤 Insert into a project section…', '…et l’insertion dans une s
    prend la hauteur de son plus haut occupant) mais TROIS PILES : chacune
    grandit, se replie et se lit toute seule. Chaque ligne de commandes n'a donc
    plus de `order-*` ni de `md:col-start-*` — sa place est SA PILE. Le panneau
-   lui-même (pastilles A B C, profondeur, suppression, plein écran) a rejoint la
+   lui-même (pastilles A B C, profondeur, suppression, l'ombre du CADRE) a rejoint la
    troisième pile, qui s'appelle « Panels & objects ». La légende du panneau (son
    sous-titre) reste seule à prendre toute la largeur, placée EN DERNIER, et le
    repli « ▾ More options » juste après elle. */
@@ -210,8 +213,8 @@ has(IB, 'const [panelMore, setPanelMore] = useState(false);',
   'le repli « More options » est un état du COMPOSANT (jamais un hook du panneau)');
 has(IB, "const panelCellCls = (bar) => `flex flex-wrap items-center gap-x-1.5 gap-y-1${bar ? ' min-w-0' : ''}`;",
   'une seule définition de LIGNE (min-w-0 : sans lui une colonne déborde)');
-eq(times(IB, /panelCellCls\(bar\)/g), 9,
-  'neuf lignes de commandes, réparties dans les trois piles (la ligne « OBJECTS · aligner / répartir les PANNEAUX » a été RETIRÉE : l’outil ⇹ sert aux FIGURES et aux TEXTES d’un panneau, jamais aux panneaux)');
+eq(times(IB, /panelCellCls\(bar\)/g), 10,
+  'dix lignes de commandes, réparties dans les trois piles (les neuf d’avant, plus LA NOUVELLE ligne des OUTILS DE L’IMAGE : le détourage et les réglages de l’ombre de la figure y sont écrits SOUS leurs boutons — la ligne « OBJECTS · aligner / répartir les PANNEAUX », elle, reste RETIRÉE)');
 /* L'ORDRE DE LECTURE EST CELUI DES PILES : on vérifie que chaque ligne de
    commandes tombe ENTRE l'ouverture de sa pile et celle de la suivante. */
 {
@@ -225,12 +228,14 @@ eq(times(IB, /panelCellCls\(bar\)/g), 9,
   const rows = [
     ["setPickMode('add')", stack1, stack2, 'la ligne des FIGURES (sa liste, ses ⇹) est dans la PREMIÈRE pile'],
     ['🎨 Transparent background{figBgRecord', stack2, stack3, 'le détourage + l’ombre + l’opacité dans la pile MODIFY IMAGE'],
+    ['Tolerance {clampBgTol(bgTol)}', stack2, stack3, '…avec l’OUTIL de détourage SOUS son bouton : l’aperçu, la tolérance, « Remove background », « Auto: the four corners »'],
+    ['🌓 Shadow of figure {cropPanelIdx + 1}', stack2, stack3, '…et les réglages de l’ombre de la FIGURE SOUS « 🌓 Figure shadow »'],
     ['🎯 Precision{fineMode', stack2, stack3, 'les outils de la figure (rotation, recadrage, gomme) aussi'],
     ['⟲ Reset crop</button>', stack2, stack3, '…avec la remise à zéro du recadrage'],
     ['H (% of panel)', stack2, stack3, 'la taille exacte et l’ajustement aussi'],
     ['{ADJUST_FIELDS.map((f) => (', stack2, stack3, 'le réglage d’image (contraste, luminosité, couleur) aussi'],
     ['onClick={() => toggleSelectedId(o.id)}', stack3, caption, 'les pastilles A B C DU PANNEAU sont dans la TROISIÈME pile (« Panels & objects »), pas dans « Modify image »'],
-    ['⤒ Front', stack3, caption, '…avec la profondeur, la suppression, le plein écran et « ▾ More options » (dernier mot de la fenêtre)'],
+    ['⤒ Front', stack3, caption, '…avec la profondeur, la suppression, l’OMBRE DU PANNEAU (à la place du plein écran, déjà dans les deux barres du haut) et « ▾ More options » (dernier mot de la fenêtre)'],
     ['↗ Arrow{arrows.length', stack3, caption, 'la flèche est dans la TROISIÈME pile (les annotations du canvas)'],
     ['onClick={addText}', stack3, caption, '…avec les textes, l’un sous l’autre']
   ];
@@ -253,8 +258,10 @@ eq(times(IB, /<div className="flex flex-wrap items-center gap-x-1\.5 gap-y-1">/g
 has(IB, "{panelMore ? '▴ Fewer options' : '▾ More options'}",
   'un seul repli, dont le libellé dit ce qu’il cache');
 has(IB, 'onClick={() => setPanelMore((v) => !v)}', '…et qui se referme en un clic');
-ok(IB.indexOf('{panelMore && (') > 0 && IB.indexOf('{panelMore && (') < IB.indexOf('<ShadowControls '),
-  'l’ombre du panneau est DANS le repli (un réglage qu’on pose une fois)');
+ok(IB.indexOf('<ShadowControls ') < IB.indexOf('{panelMore && ('),
+  'les DEUX ombres sont SORTIES du repli : celle du PANNEAU vit dans la section PANELS (elle y a remplacé le plein écran), celle de la FIGURE sous son bouton');
+ok(IB.indexOf('<ShadowControls ') < IB.indexOf("{panelTitle('Panels & objects')}"),
+  '…et le premier bloc d’ombres du fichier est déjà celui du panneau, dans la troisième pile');
 has(IB, '🧽 {clampEraseSize(eraseSize)} mm', 'la taille du pinceau dit sa valeur en clair');
 ok(!IB.includes('grid grid-cols-1 md:grid-cols-2 gap-4'),
   'plus de grille à deux colonnes : la fenêtre n’est plus une page');

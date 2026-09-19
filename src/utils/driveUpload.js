@@ -1118,7 +1118,7 @@ export const moveTestFolderOutOfProject = async ({ testName, projectName }) => {
  *  `path` is an explicit path array or `ctx` still describes a legacy folder
  *  (non-experiment uploads such as library figures or project documents).
  *  @returns {{ id:string, name:string, driveUrl:string }} */
-const uploadDriveFileToFolderOnce = async ({ name, mimeType, file, ctx = null, path = null, folderNames = null }) => {
+const uploadDriveFileToFolderOnce = async ({ name, mimeType, file, ctx = null, path = null, folderNames = null, folderId = '' }) => {
   // ── Nextcloud provider ─────────────────────────────────────────────────────
   // Mirror the Drive folder layout on the WebDAV tree:
   //   <user>/Lab Workspace/<dataset>/<project>/<test>/<page section>/[<subsection>]
@@ -1144,19 +1144,39 @@ const uploadDriveFileToFolderOnce = async ({ name, mimeType, file, ctx = null, p
   // Upload into the leaf folder that mirrors the canonical app schema
   // (projects/<project>/<experiment>/<instance>/<page section>/[<subsection>]
   // or an explicit `path` like publications/<scientist>/own_publications).
-  let folderId = await ensureDriveFolder();
+  /* LE DOSSIER DÉJÀ RÉSOLU par son IDENTIFIANT (figures d'un projet) : deux
+     dossiers du même nom peuvent coexister sur le Drive, et une résolution par
+     nom (`findOrCreateFolder`) tombe sur « le premier du nom » — parfois le
+     jumeau VIDE. Les envois visent donc EXACTEMENT le dossier que la lecture
+     utilise (voir utils/figuresFolder.js). Un dossier inaccessible (Drive muet)
+     ne fait pas échouer l'envoi : on retombe sur le chemin par nom. */
+  const pinnedId = String(folderId || '').trim();
+  let pinned = '';
+  if (pinnedId) {
+    const pinnedMeta = await getDriveFileMeta(pinnedId).catch(() => null);
+    if (pinnedMeta && pinnedMeta.id) {
+      if (pinnedMeta.trashed) throwCode('PATH_DELETED', 'The target folder is gone.');
+      pinned = pinnedId;
+    }
+  }
+  let targetId = await ensureDriveFolder();
   let drivePath = null;
-  if (Array.isArray(folderNames) && folderNames.length > 0) {
+  if (pinned) {
+    targetId = pinned;
+    drivePath = Array.isArray(path) && path.length
+      ? path.map((seg, i) => ({ name: sanitizeSlug(String(seg)), id: i === path.length - 1 ? pinned : '' }))
+      : null;
+  } else if (Array.isArray(folderNames) && folderNames.length > 0) {
     const resolved = await resolveDrivePathFromNames(folderNames);
-    folderId = resolved.leafId;
+    targetId = resolved.leafId;
     drivePath = resolved.path;
   } else if (Array.isArray(path) && path.length > 0) {
     const resolved = await resolveDrivePathFromNames(path);
-    folderId = resolved.leafId;
+    targetId = resolved.leafId;
     drivePath = resolved.path;
   } else if (ctx && typeof ctx === 'object' && driveFolderPath(ctx).length > 0) {
     const resolved = await resolveDrivePath(ctx);
-    folderId = resolved.leafId;
+    targetId = resolved.leafId;
     drivePath = resolved.path;
   }
   // Accept a raw Blob/File (streamed directly, no base64 overhead) or a data URL.
@@ -1168,7 +1188,7 @@ const uploadDriveFileToFolderOnce = async ({ name, mimeType, file, ctx = null, p
   let existingId = '';
   try {
     const safeName = String(name).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    const q = encodeURIComponent(`name='${safeName}' and '${folderId}' in parents and trashed=false`);
+    const q = encodeURIComponent(`name='${safeName}' and '${targetId}' in parents and trashed=false`);
     const listRes = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=10`);
     const list = await listRes.json();
     existingId = ((list.files || [])[0] || {}).id || '';
@@ -1178,7 +1198,7 @@ const uploadDriveFileToFolderOnce = async ({ name, mimeType, file, ctx = null, p
   // For an update the file is already in the folder, so omit `parents`.
   const meta = JSON.stringify(existingId
     ? { name, mimeType: type }
-    : { name, mimeType: type, parents: [folderId] });
+    : { name, mimeType: type, parents: [targetId] });
 
   const pre = new Blob(
     [`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${type}\r\n\r\n`],
@@ -1251,7 +1271,7 @@ const payloadTagOf = (file) => {
  * Google Drive provider only (Nextcloud failures are reported as-is).
  * @returns {Promise<{queued:boolean,id?:string,reason?:string}>}
  */
-export const saveUploadForRetry = async ({ name, mimeType, file, ctx = null, path = null, source = 'upload' } = {}) => {
+export const saveUploadForRetry = async ({ name, mimeType, file, ctx = null, path = null, source = 'upload', folderId = '' } = {}) => {
   try {
     if (!name || !file || getCloudProvider() === 'nextcloud') return { queued: false, reason: 'unsupported' };
     const isDataUrl = typeof file === 'string' && String(file).indexOf('data:') === 0;
@@ -1260,7 +1280,7 @@ export const saveUploadForRetry = async ({ name, mimeType, file, ctx = null, pat
     const approxBytes = isDataUrl ? Math.ceil(String(file).length * 0.75) : (Number(file.size) || 0);
     if (approxBytes > MAX_SINGLE_BYTES) return { queued: false, reason: 'too_large' };
     const tag = payloadTagOf(file);
-    const id = `pq_${hashQueueId([name, JSON.stringify(ctx || null), JSON.stringify(path || null), tag].join('|'))}`;
+    const id = `pq_${hashQueueId([name, JSON.stringify(ctx || null), JSON.stringify(path || null), String(folderId || ''), tag].join('|'))}`;
     return await enqueuePendingUpload({
       id,
       name,
@@ -1268,6 +1288,9 @@ export const saveUploadForRetry = async ({ name, mimeType, file, ctx = null, pat
       payload: file,
       ctx: ctx && typeof ctx === 'object' ? { ...ctx } : null,
       path: Array.isArray(path) ? path.slice() : null,
+      // Le dossier visé par IDENTIFIANT (figures d'un projet) : la reprise écrit
+      // alors dans le MÊME dossier que l'envoi, jumeaux compris.
+      folderId: String(folderId || ''),
       source,
       ...getDriveRootAnchor()
     });
@@ -1289,7 +1312,7 @@ export const saveUploadForRetry = async ({ name, mimeType, file, ctx = null, pat
  *  Non-experiment uploads (protocols, publications, figures, imports that pass
  *  an explicit `path`) are routed exactly as before.
  */
-export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path = null, skipQueue = false }) => {
+export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path = null, skipQueue = false, folderId = '' }) => {
   const folderCtxs = [];
   if (ctx && typeof ctx === 'object' && String(ctx.test || '').trim() && ctx.protocol === undefined) {
     const projects = projectNamesOf(ctx);
@@ -1315,7 +1338,11 @@ export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path =
     }
     try {
       const res = await uploadDriveFileToFolderOnce({
-        name, mimeType, file, ctx: singleCtx, path: folderNames ? null : path, folderNames
+        name, mimeType, file, ctx: singleCtx, path: folderNames ? null : path, folderNames,
+        /* Le dossier résolu par IDENTIFIANT ne vaut que pour une SEULE cible (les
+           figures d'un projet). Un fichier déposé dans plusieurs projets a un
+           chemin PAR PROJET : il n'y a alors pas d'identifiant unique à viser. */
+        folderId: folderCtxs.length === 1 ? folderId : ''
       });
       if (res) last = res;
     } catch (err) {
@@ -1332,7 +1359,10 @@ export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path =
     // again, instead of losing it. The public contract is unchanged (null).
     // EXCEPTION : la cible a été SUPPRIMÉE dans le programme (PATH_DELETED) —
     // rien à reprendre, le dossier ne sera pas recréé (voir driveMirrorStore).
-    const q = await saveUploadForRetry({ name, mimeType, file, ctx, path, source: 'upload' }).catch(() => null);
+    const q = await saveUploadForRetry({
+      name, mimeType, file, ctx, path, source: 'upload',
+      folderId: folderCtxs.length === 1 ? folderId : ''
+    }).catch(() => null);
     // Le sort du fichier est retenu ici : l'appelant peut alors DIRE ce qui
     // s'est passé (« envoyé », « en attente de reprise ») au lieu d'un
     // « échec » indistinct. Voir takeLastUploadQueueInfo().
@@ -1415,6 +1445,10 @@ export const flushPendingUploads = async () => {
           file: item.payload,
           ctx: item.ctx || null,
           path: item.path || null,
+          // Le dossier retenu au moment de l'envoi (figures d'un projet) : la
+          // reprise écrit dans le MÊME dossier, même si un jumeau du même nom
+          // est apparu entre-temps (voir utils/figuresFolder.js).
+          folderId: item.folderId || '',
           skipQueue: true
         });
         if (drive && drive.id) {

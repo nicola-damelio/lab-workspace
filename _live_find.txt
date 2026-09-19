@@ -1,0 +1,524 @@
+﻿=== CHILDREN of dataset folder GEC-UPJV-projects (visible) ===
+  folder 'protocols' [1a4AOFG34Ug3DZ_Ju9DrM0FKd3I03Vb5c] created=2026-09-19T11:44:08.770Z mod=2026-09-19T11:44:08.770Z
+  folder 'projects' [1-77Jv9_k0vnpJsRlUEGGaXRNOFe42b1J] created=2026-09-19T11:42:30.517Z mod=2026-09-19T11:42:30.517Z
+  folder 'publications' [1dteNFD3brk55X53DD2YcXIhcH-yunTGg] created=2026-09-11T15:29:37.650Z mod=2026-09-11T15:29:37.650Z
+  folder 'storage' [1AOKzJ-w3ssjFXTPFbd2zAqqYF7fRdgpY] created=2026-09-11T15:29:36.608Z mod=2026-09-11T15:29:36.608Z
+  folder 'protocols' [1zInvjpCkUE0Nxv_ufXcMzdgZ6NphKwxc] created=2026-09-11T15:29:35.362Z mod=2026-09-11T15:29:35.362Z
+  folder 'backups' [1lMfDN3YJ-O0VYZNDa5uxxhis0SZBIz3r] created=2026-09-11T15:29:34.221Z mod=2026-09-11T15:29:34.221Z
+  folder 'projects' [1kYVKEVPEtGukfuRntrfbML8HTqmptaRm] created=2026-09-11T15:29:33.104Z mod=2026-09-11T15:29:33.104Z
+=== CHILDREN of dataset folder GEC-UPJV-projects (TRASHED) ===
+  TRASH folder 'pr' [1mZ3msWC5GM9JbcJV2oJZZiiDL1c3B17C] created=2026-09-16T22:35:16.349Z mod=2026-09-16T22:35:16.349Z
+  TRASH folder 'prova' [1wGcfw4kamAyxZ1ymRtu9s3wooUk4nP_w] created=2026-09-15T15:18:04.643Z mod=2026-09-15T15:18:04.643Z
+  TRASH folder 'NATURAL_ARSENAL_Antibiotics' [18eYDblr4jvvTdHjAcPxf4SWVWWzygP0z] created=2026-09-13T00:43:32.279Z mod=2026-09-13T00:43:32.279Z
+  TRASH folder 'images' [1CnX-3VZD7GYcMr7Pc3vnHFeKOR18-QG4] created=2026-09-12T21:18:59.150Z mod=2026-09-12T21:18:59.150Z
+  TRASH folder 'p53H' [1evL5k8QyMcoANMOksEHsXtkZhfnkKBQC] created=2026-09-12T17:49:12.459Z mod=2026-09-12T17:49:12.459Z
+=== Any folder named 'projects' (visible) ===
+  'projects' [1-77Jv9_k0vnpJsRlUEGGaXRNOFe42b1J] parents=1fiiNoFCfioYFP1rt_1IwV1PZ3d0jlwil created=2026-09-19T11:42:30.517Z
+  'projects' [1kYVKEVPEtGukfuRntrfbML8HTqmptaRm] parents=1fiiNoFCfioYFP1rt_1IwV1PZ3d0jlwil created=2026-09-11T15:29:33.104Z
+  'projects' [1abqDjUnWDKZbp2rH77ylmf5KfzEoO9_Z] parents=1xcrEvJJrs0jR5xiq5xKs4WT4V5N1q133 created=2026-09-06T16:52:56.518Z
+  'projects' [1b19Ro8W5HAZSIqru7gacMJGKWdjTJrBI] parents=1hgH4qEgyVvIWw28olt-KNpaEO9LJRyMk created=2026-09-04T10:57:27.195Z
+=== Any folder named 'projects' (TRASHED) ===
+  TRASH 'projects' [13pP26Wc4Kvx_je1PO6hnhs_j28yxsXHP] parents=1XNsaM34oC6bPxlKG1nHMVgE8Rltpd3cA created=2026-09-17T12:45:25.434Z mod=2026-09-17T12:45:25.434Z
+  TRASH 'projects' [1ESk1LNSlU2xhboUGiKR4O7oIdPU7C17o] parents=1j2cYHSlQbrU1_D3mNbD3L5XNAqmUVGtt created=2026-09-10T11:53:25.503Z mod=2026-09-10T11:53:25.503Z
+  TRASH 'projects' [1iILeeynrSq4urNe8rOtsMYO0GA3Gf1Dp] parents=1cTxJWugOKl2fHVk6gLUpQap83KOe0zx3 created=2026-09-06T17:22:20.505Z mod=2026-09-06T17:22:20.505Z
+  TRASH 'projects' [1iI3_0z1MPIwOvBja4Ya63vsqag-wYYsJ] parents=1cTxJWugOKl2fHVk6gLUpQap83KOe0zx3 created=2026-09-05T22:36:40.202Z mod=2026-09-05T22:36:40.202Z
+  TRASH 'projects' [1jRl4AtSmvcwHBgqD4d4E0CHazBgMAmNJ] parents=1cTxJWugOKl2fHVk6gLUpQap83KOe0zx3 created=2026-09-05T02:25:17.540Z mod=2026-09-05T02:25:17.540Z
+  TRASH 'projects' [1btsAqyCjGRi9Xz2Aqf9sENVJLMn4kyFS] parents=1yV4Yg716PBNp4w3z_Vb-uW3bTP-iuC7U created=2026-09-04T17:00:58.581Z mod=2026-09-04T17:00:58.581Z
+  TRASH 'projects' [17LQK8rgWSB6rGbIP7pJ6glzMK3NG496N] parents=1-o8nsIhSU0XKtTwqK4KMBN0DqlNBeAeE created=2026-09-03T16:40:31.696Z mod=2026-09-03T16:40:31.696Z
+=== Search: Canvas_18092026 (visible) ===
+  'Canvas_18092026-1b5tpha.jpg.meta.json' [1d8_8MHAhr5d_s_8_z2RMjjztCYZ4ZQxV] parents=1xMMGSCFbLPgnet2fdyIxylJ1PNRSSp8p mod=2026-09-19T00:41:25.287Z
+  'Canvas_18092026-1b5tpha.jpg' [1rESGAtbrzB5uB32rOm2BennZhRiZIz_m] parents=1xMMGSCFbLPgnet2fdyIxylJ1PNRSSp8p mod=2026-09-19T00:41:17.877Z
+  'Canvas_18092026.jpg.meta.json' [1m8ZWxvzzASR7wkE8mhO3pzSrG6ncQynu] parents=1xMMGSCFbLPgnet2fdyIxylJ1PNRSSp8p mod=2026-09-18T23:43:24.944Z
+  'Canvas_18092026.jpg' [1BO06i7oNF-CVuqS9evbEYN8tAHTi6ERO] parents=1xMMGSCFbLPgnet2fdyIxylJ1PNRSSp8p mod=2026-09-18T23:43:18.294Z
+  'Canvas_18092026_panel_B-1.jpg' [1o-9p7uNvlkwemWl7BkqHoCH6tNZDvlqA] parents=1279zlxNa_NF0i3I5ebo3JdR68rq62XJF mod=2026-09-18T23:04:57.537Z
+  'Canvas_18092026_panel_D-2.svg' [1hkrFP4wjrZI4ENfV_FaRw0YH_ypDraFL] parents=1279zlxNa_NF0i3I5ebo3JdR68rq62XJF mod=2026-09-18T23:00:13.132Z
+  'Canvas_18092026_panel_C-2.svg' [1lg8Bx3VZuY5IPMUqhoEHIbL95yjfHy8r] parents=1279zlxNa_NF0i3I5ebo3JdR68rq62XJF mod=2026-09-18T23:00:10.642Z
+  'Canvas_18092026_panel_A-2.svg' [1hfw4p4Y9_RyZItsxLchsTSj__3IG5L0N] parents=1279zlxNa_NF0i3I5ebo3JdR68rq62XJF mod=2026-09-18T23:00:07.785Z
+  'Canvas_18092026_panel_A-1.jpg' [1xB0Uo2mthNB0kzzD5m9i4HQSo7RTtjHR] parents=1279zlxNa_NF0i3I5ebo3JdR68rq62XJF mod=2026-09-18T23:00:03.343Z
+  'Canvas_18092026_panel_B-3.svg' [1QEtjhabEVDfPTxiNXAjnTrNIURLKhzOp] parents=1279zlxNa_NF0i3I5ebo3JdR68rq62XJF mod=2026-09-18T23:00:00.846Z
+  'Canvas_18092026_panel_B-2.svg' [1zvWYFEwLNwV03H0HYhuTIfJ1ZcR3ceJF] parents=1279zlxNa_NF0i3I5ebo3JdR68rq62XJF mod=2026-09-18T22:59:58.281Z
+  'Canvas_18092026-panels' [1279zlxNa_NF0i3I5ebo3JdR68rq62XJF] parents=1xMMGSCFbLPgnet2fdyIxylJ1PNRSSp8p mod=2026-09-18T22:59:33.628Z
+=== Search: Canvas_18092026 (TRASHED) ===
+=== Search: images folders with 2+ (TRASHED) ===
+  TRASH 'images' [1WH8LRus7-1qDdUoWsWtpXmGfc7FpHfSp] parents=1RqpQijeZ0G9RtEEicMh9Sepf2RNaPiZi mod=2026-09-18T10:13:11.225Z
+  TRASH 'images' [1wJigMoS1p1e-znhaQVcUvyBgmcGMF2cc] parents=1ewt66tqoKTSTr8iaQu72mo-oCuJ5wHIW mod=2026-09-18T09:15:41.980Z
+  TRASH 'images' [1gCHs70N4-BzadqPoZ7aIshXPEq_ajrH3] parents=1Gfah7Tl2AB-CoTUg4FW6jpn4bM3uH808 mod=2026-09-18T08:40:13.112Z
+  TRASH 'images' [1CwdZc9xRhVkfp5omaC1m9C8IYkU0d47Z] parents=11CKCLTT5UQParTrGdAoM7gjEPJmLaqif mod=2026-09-18T07:57:18.812Z
+  TRASH 'images' [1s1C3nkXsGJRtIzzOrX224HnTJUIHbbl3] parents=1V5Ns4RgdxNISUF-3zWkp8-qR1KsdPxeE mod=2026-09-17T10:45:34.565Z
+  TRASH 'images' [1DSyeufF7Kaec8giKy7QaOC3UKTKdXyaR] parents=1fdvBkzh-HifJDlpPx3N2ggqV9ZtBKZ0A mod=2026-09-17T10:42:59.272Z
+  TRASH 'images' [1oebTuwmMEdIpEQmp2pZ548fwxtzMcPaN] parents=1zBPXwNrOy1lYI-RTe1cZZ7EBEOBcmm0L mod=2026-09-16T22:20:46.210Z
+  TRASH 'images' [1L5LlXRXyXX_x-uQDUliHWS7HFjXd0dlx] parents=1rgMRLwQ6nBjHtBbY2wQCmrrtk6lg7NPK mod=2026-09-16T21:00:01.340Z
+  TRASH 'images' [1Xqv9NfJ1JIARZOXTiZMUvcVyh39dcBrs] parents=1N5d2LXZuB_lNVzJadognf2IzaagqWSIO mod=2026-09-16T20:51:09.715Z
+  TRASH 'images' [1B00FtMTQnOgoqjWeppWLSnAuSOLQ1_mM] parents=1x7_6Q--ehMEWZnS_JaJWKIOp53QkPO0_ mod=2026-09-16T20:12:27.507Z
+  TRASH 'images' [1gictgrw9f9Bg2ab2X3genYy2_t_OM4hG] parents=1lRmpIvMyajXz-y3R-MvMbzH-5oWuvX5M mod=2026-09-16T19:53:18.758Z
+  TRASH 'images' [10ObaE_AX0fp7-89gy_61l8dRaWne-G43] parents=1oIA6c-muO6wisZqbcZ7cb7HGgA_0SGTu mod=2026-09-15T20:54:45.909Z
+  TRASH 'images' [1zfoQpHHAtUL8__OQMoxvuktE47vB3mUg] parents=13vQUK7SqbwWJVFBDvJLpbqD_0mBOVMGB mod=2026-09-15T20:41:36.292Z
+  TRASH 'images' [10QYpS8RP8jiGJKRpi65iIQ4ou-7ZHYFM] parents=1Fi9VLip3gFbiQYhpbOOyS6tumMIyNmPG mod=2026-09-15T20:29:11.092Z
+  TRASH 'images' [1MdubTqbUp_5Dq0fzke8KPujB-y5mdh3I] parents=1X2HXMVV1mzsBazv8JdtYz6WnLJJacfzJ mod=2026-09-15T18:42:00.247Z
+  TRASH 'images' [1li-dzWDL2ry_IxNnh4CgjF8_rFfQnh-4] parents=1C3pFCf6Y5n42BSocLOrtM-hslLFlSj98 mod=2026-09-15T18:30:12.265Z
+  TRASH 'images' [1DfFYLAQ3jsv_HPFjVRcYXpFEr9S9Kiyo] parents=1tRzk4oC456hq2SKToSr6dnRVLXf4TjIm mod=2026-09-15T17:03:40.229Z
+  TRASH 'images' [1CnX-3VZD7GYcMr7Pc3vnHFeKOR18-QG4] parents=1fiiNoFCfioYFP1rt_1IwV1PZ3d0jlwil mod=2026-09-12T21:18:59.150Z
+  TRASH 'images' [1G-WHj9LGlbxA7FUSZzKrhBH9F5epB70T] parents=1evL5k8QyMcoANMOksEHsXtkZhfnkKBQC mod=2026-09-12T17:49:13.641Z
+  TRASH 'images' [1iTQ5eAyOloSXVI3fZZPejHtgtvegjQoH] parents=1DYz56CIjXg4p1inCYeAzM9QZtgXzRxNO mod=2026-09-03T12:32:16.098Z
+  TRASH 'images' [1rTgDYi1kMqZ2ZDj4YZfmt3IqZ4Bs4cxl] parents=1Jmofl-vFbcdU1kelehOiGWloVRqphXfD mod=2026-08-31T17:10:10.920Z
+=== Trash overview (first 40) ===
+  TRASH 'fgh_document_deleted.json' [1QqnS5N2tdsIF-4scNx2vLkPbksfEHsG8] mod=2026-09-19T08:19:24.588Z
+  TRASH 'image5.png_deleted.png' [1efMi-WYQkUoUUlYL0skoo4MCQ4dmArpj] mod=2026-09-19T08:19:23.497Z
+  TRASH 'image7.png_deleted.png' [17ae70vYtUau4duwDHLgXUarM1vdaevMt] mod=2026-09-19T08:19:22.252Z
+  TRASH 'Figure_2._Zoom_on_two_residues_which_are_not_located_within__deleted.png' [1dfm5GKNANqfbJ2xI02zfuclNTrI9_QNu] mod=2026-09-19T08:19:21.167Z
+  TRASH 'Figure_7._Flow_cytometry_analysis_on_MCF-7_cancer_cell_lines_deleted.png' [1-Bt4tgg8zfraL8N29KL_8a8t1WfKDL9F] mod=2026-09-19T08:19:20.030Z
+  TRASH 'Figure_6._Flow_cytometry_analysis_on_U2OS_cancer_cell_lines__deleted.png' [1W7sedqY_C9jkVCMCetkjj7_tmZthePDL] mod=2026-09-19T08:19:19.011Z
+  TRASH 'Figure_5._Cell_culture_scheme_for_flow_cytometry_analysis_on_deleted.png' [1m3dvMY1GGFZoa7ysUIUCJYm98iagWtAW] mod=2026-09-19T08:19:17.987Z
+  TRASH 'Figure_4._Western_blot._First_well_only_cells_2nd_well_cells_deleted.png' [1f3v2zrrnRGxn_ihryGmk68ZnRsAlU8bU] mod=2026-09-19T08:19:17.015Z
+  TRASH 'Figure_3._IC50_curve_of_p53H_red_Doxorubicin_green_and_the_p_deleted.png' [140mB4wp7QToJgmnduQZ-4MRM7Aua2GTc] mod=2026-09-19T08:19:15.887Z
+  TRASH 'pr_document_deleted.json' [1wEGe64RCiV-QVRh4SZBd_xViiemmq1_P] mod=2026-09-19T08:19:15.261Z
+  TRASH 'image3.png_deleted.png' [1oU4z2n6XBi3wrZMKL-OPQ8aq6hSeb0x9] mod=2026-09-19T08:19:14.887Z
+  TRASH 'image5.png_deleted.png' [1f7Js2U1D_zIWoAtGwPSzlfOy33SfH1Lb] mod=2026-09-19T08:19:14.221Z
+  TRASH 'image10.png_deleted.png' [1W13GWO7hGGY9H_E_IcRuy1pM3JMKw2Jn] mod=2026-09-19T08:19:13.930Z
+  TRASH 'image7.png_deleted.png' [1FzhQZLgi_EPgfPDVnvEtKyEApJ3VEcV9] mod=2026-09-19T08:19:13.245Z
+  TRASH 'image9.png_deleted.png' [1ZqiSvfDQJpwhrpsI4txR9EwEdmWouIJa] mod=2026-09-19T08:19:12.843Z
+  TRASH 'Figure_2._Zoom_on_two_residues_which_are_not_located_within__deleted.png' [1f2uElL1_mym1BHUhgd3BahxKlUmbdlGs] mod=2026-09-19T08:19:12.228Z
+  TRASH 'Figure_7._Flow_cytometry_analysis_on_MCF-7_cancer_cell_lines_deleted.png' [1fxJa7-L2C4iTUInaiyIyq32Cuawx1XX8] mod=2026-09-19T08:19:11.082Z
+  TRASH 'Figure_6._Flow_cytometry_analysis_on_U2OS_cancer_cell_lines__deleted.png' [1dVvpIyPNOvUlwBIZK2Uv3qZz0Vx_5R8i] mod=2026-09-19T08:19:10.063Z
+  TRASH 'Figure_5._Cell_culture_scheme_for_flow_cytometry_analysis_on_deleted.png' [1sSd4hbg7GYaDbkA9g5BZkADgwxgqD2DF] mod=2026-09-19T08:19:09.138Z
+  TRASH 'Figure_4._Western_blot._First_well_only_cells_2nd_well_cells_deleted.png' [1pYHQLxfOgnYgMjP5yCAw9nPr4dghT5V3] mod=2026-09-19T08:19:07.543Z
+  TRASH 'Figure_3._IC50_curve_of_p53H_red_Doxorubicin_green_and_the_p_deleted.png' [1SMCTsJmd5_nVl9r6UGqCpQGwiYha_haU] mod=2026-09-19T08:19:06.204Z
+  TRASH 'image3.png_deleted.png' [1pGduEdubZ8Uwbv9VRatq5f0sAm7OW3WO] mod=2026-09-19T08:19:05.218Z
+  TRASH 'image10.png_deleted.png' [1aOKzRLmgWY6e5Rdh6Nfm7bCIMAXA6GA9] mod=2026-09-19T08:19:04.187Z
+  TRASH 'image9.png_deleted.png' [1yTDHL9YBFjUvd3pF9Np36N0yqKThHtSF] mod=2026-09-19T08:19:03.141Z
+  TRASH 'useful_files_deleted' [1x7dNnSUunc4Narif1q-fwl-SRi0MA8q4] mod=2026-09-19T08:19:02.045Z
+  TRASH '1D Histogram (Data Analysis) - flow_cyt_p53H.svg' [1Tg1IfS76uxutXA9K3QkxtngzMFvfPjPl] mod=2026-09-18T22:06:08.433Z
+  TRASH '_svgcheck_tmp' [1foLi0ctXxGyqeNIN2H-Ln2ugkfovcguC] mod=2026-09-18T22:06:07.328Z
+  TRASH '1D Histogram (Data Analysis) - flow_cyt_p53H.svg' [1fnQ75yE4wbFb04wLba9Fycya4XSR_kRJ] mod=2026-09-18T22:05:22.323Z
+  TRASH '_svgcheck_tmp' [1WbIkBv-QMP-oYhordXWGJiVUfC9fsW9F] mod=2026-09-18T22:05:21.202Z
+  TRASH 'images' [1WH8LRus7-1qDdUoWsWtpXmGfc7FpHfSp] mod=2026-09-18T10:13:11.225Z
+  TRASH 'fgh' [1RqpQijeZ0G9RtEEicMh9Sepf2RNaPiZi] mod=2026-09-18T10:13:09.948Z
+  TRASH 'ert_document.json' [1K02QqFyPVgqCYs2Ij0Xo62Xc9nCusCKR] mod=2026-09-18T09:16:55.323Z
+  TRASH 'image5.png.png' [1nJd-cmq6cT1ABQUBtZF5wEO6AL2JErR1] mod=2026-09-18T09:16:51.901Z
+  TRASH 'image7.png.png' [1MYtpMuBuf7inD_b4jiTYbG8Fe_WrHeES] mod=2026-09-18T09:16:45.423Z
+  TRASH 'Figure_2._Zoom_on_two_residues_which_are_not_located_within_.png' [1xsQCOaiOhY9hzl-e1_e0cMOp9yjNXWRB] mod=2026-09-18T09:16:38.824Z
+  TRASH 'Figure_7._Flow_cytometry_analysis_on_MCF-7_cancer_cell_lines.png' [1lPcqq2ya4cDT7gAJNNCVakEU6-sRNEIC] mod=2026-09-18T09:16:32.280Z
+  TRASH 'Figure_6._Flow_cytometry_analysis_on_U2OS_cancer_cell_lines_.png' [1YFrV8KyKtm0pd_2o3j4wZaCoZqxqUQxT] mod=2026-09-18T09:16:25.595Z
+  TRASH 'Figure_5._Cell_culture_scheme_for_flow_cytometry_analysis_on.png' [1byzToJ9HfEQYPgTLmZves8htJk8-sfOH] mod=2026-09-18T09:16:18.811Z
+  TRASH 'Figure_4._Western_blot._First_well_only_cells_2nd_well_cells.png' [1adRzyEVVQ2dbgUliMMFY4FrKgRNVddwO] mod=2026-09-18T09:16:12.550Z
+  TRASH 'Figure_3._IC50_curve_of_p53H_red_Doxorubicin_green_and_the_p.png' [1JdHwgBjKsEvRnGSEMzjC1_SCJSXpKL_5] mod=2026-09-18T09:16:06.373Z
+  TRASH 'image3.png.png' [1NbrxfE82XGey4tx-E0p0oGJzt5_LMW4e] mod=2026-09-18T09:15:59.942Z
+  TRASH 'image10.png.png' [1V_s3CW_mB-vP6m2YGagz9fl_K8P6Yyp6] mod=2026-09-18T09:15:52.489Z
+  TRASH 'image9.png.png' [18GsyPitXiot0tKzLcS89Ilcc0nG6XOIj] mod=2026-09-18T09:15:45.376Z
+  TRASH 'images' [1wJigMoS1p1e-znhaQVcUvyBgmcGMF2cc] mod=2026-09-18T09:15:41.980Z
+  TRASH 'ert' [1ewt66tqoKTSTr8iaQu72mo-oCuJ5wHIW] mod=2026-09-18T09:15:40.803Z
+  TRASH 'zar_document.json' [1tB6PQ1id00zlCweMij_Of7PMJ9LjGDmo] mod=2026-09-18T08:45:01.161Z
+  TRASH 'zar' [1IcNHIbB5TMLU5nsX0zm5F03MHu4k9sL2] mod=2026-09-18T08:44:59.517Z
+  TRASH 'zar_document_deleted.json' [1Lpd1PVvvcoyq3zuJuMCB-E8ncqDwYIT3] mod=2026-09-18T08:43:36.446Z
+  TRASH 'image5.png_deleted.png' [1IDzcpsdhYxolkYLFMsbKi1k2fVNkMCeE] mod=2026-09-18T08:43:34.313Z
+  TRASH 'image7.png_deleted.png' [1bnkicSC80PsbEqJJNoG06ovVIZ0eDXSt] mod=2026-09-18T08:43:33.252Z
+  TRASH 'Figure_2._Zoom_on_two_residues_which_are_not_located_within__deleted.png' [1luOzXuRsOdYqMdG5oo35GXgAIJNfHVRm] mod=2026-09-18T08:43:32.204Z
+  TRASH 'Figure_7._Flow_cytometry_analysis_on_MCF-7_cancer_cell_lines_deleted.png' [1C-SklLKw3STNODzT_mlCy3KvdED1vQDh] mod=2026-09-18T08:43:30.968Z
+  TRASH 'Figure_6._Flow_cytometry_analysis_on_U2OS_cancer_cell_lines__deleted.png' [1iF0GrbMWP5YBJ3XSWieXfsIbl2IKL0Xc] mod=2026-09-18T08:43:29.889Z
+  TRASH 'Figure_5._Cell_culture_scheme_for_flow_cytometry_analysis_on_deleted.png' [1K8xToq9grkmXn3EYPmNuxWoOhc46scp4] mod=2026-09-18T08:43:28.772Z
+  TRASH 'Figure_4._Western_blot._First_well_only_cells_2nd_well_cells_deleted.png' [10Zjc0Y-w8-Izz4EhELoCihXJSdQ6PgQC] mod=2026-09-18T08:43:27.656Z
+  TRASH 'Figure_3._IC50_curve_of_p53H_red_Doxorubicin_green_and_the_p_deleted.png' [1dqpK7LtdMU5E3lXBz8BmEPkLA1deaVbf] mod=2026-09-18T08:43:26.584Z
+  TRASH 'image3.png_deleted.png' [1w_SB9VmB6SrddrWvitT2vZx-anrfuaLH] mod=2026-09-18T08:43:25.438Z
+  TRASH 'image10.png_deleted.png' [1U7FflU-W6_nrn-XF07AoGkTYqIlZMd1-] mod=2026-09-18T08:43:24.299Z
+  TRASH 'image9.png_deleted.png' [1feI4ytVGzvEzGdvrrrclw6vb5lz3bET5] mod=2026-09-18T08:43:23.136Z
+  TRASH 'images' [1gCHs70N4-BzadqPoZ7aIshXPEq_ajrH3] mod=2026-09-18T08:40:13.112Z
+  TRASH 'zar' [1Gfah7Tl2AB-CoTUg4FW6jpn4bM3uH808] mod=2026-09-18T08:40:12.069Z
+  TRASH 'image7.png_deleted.png' [1NfzEllSVXxnT-A2aCVzXgARq6flFnOGX] mod=2026-09-18T08:38:06.063Z
+  TRASH 'Figure_2._Zoom_on_two_residues_which_are_not_located_within__deleted.png' [1oW5TQLG_hhsBl2ijWEceexX59JgbDvCL] mod=2026-09-18T08:38:04.872Z
+  TRASH 'Figure_7._Flow_cytometry_analysis_on_MCF-7_cancer_cell_lines_deleted.png' [1IQ0JNOeHOCNK25_sQGisomgSf9sxhKZz] mod=2026-09-18T08:38:03.565Z
+  TRASH 'Figure_6._Flow_cytometry_analysis_on_U2OS_cancer_cell_lines__deleted.png' [1qg0gFckAPDoN4nmIFgnr_phwO5vIsKb9] mod=2026-09-18T08:38:02.284Z
+  TRASH 'Figure_5._Cell_culture_scheme_for_flow_cytometry_analysis_on_deleted.png' [1aYuvQeiThhnGCRL0k59TdonROCV6Tskn] mod=2026-09-18T08:38:01.062Z
+  TRASH 'Figure_4._Western_blot._First_well_only_cells_2nd_well_cells_deleted.png' [1SAIfXjfDXJxSOW60IBo-y5mi-rdYs1bL] mod=2026-09-18T08:37:59.726Z
+  TRASH 'Figure_3._IC50_curve_of_p53H_red_Doxorubicin_green_and_the_p_deleted.png' [1cP-LJbj9UhpgeHIdfR-NRYbdIQHbN782] mod=2026-09-18T08:37:58.486Z
+  TRASH 'image3.png_deleted.png' [1c37fPp1eY0z4ePulbLR-sF4NPXVX158i] mod=2026-09-18T08:37:57.284Z
+  TRASH 'image10.png_deleted.png' [1m6Y9h0knkNbp3hnWOlOTRqIavfTmHQDB] mod=2026-09-18T08:37:56.087Z
+  TRASH 'image9.png_deleted.png' [1t3nRY_YlgeT395695i0iHYYShu4nJpK7] mod=2026-09-18T08:37:54.779Z
+  TRASH 'rty_document.json' [1oX96n5C54OR12Apu2Y6_vjncsMDUULda] mod=2026-09-18T07:58:51.106Z
+  TRASH 'image5.png.png' [1klN0gzzKCSEcUDcaQJCqKf4RNEQsV7Dq] mod=2026-09-18T07:58:46.429Z
+  TRASH 'images' [1CwdZc9xRhVkfp5omaC1m9C8IYkU0d47Z] mod=2026-09-18T07:57:18.812Z
+  TRASH 'rty' [11CKCLTT5UQParTrGdAoM7gjEPJmLaqif] mod=2026-09-18T07:57:17.652Z
+  TRASH 'fghj_document_deleted.json' [1QtbW6U5Vifclc5OIQ-QG-2DD3lQKKaLy] mod=2026-09-18T07:56:00.150Z
+  TRASH 'fold_tachyplesin_i_model_0_Nicola_DAMELIO.cif' [1uME7GMG6WCUSvbzqKqYu20YU39txfzpl] mod=2026-09-17T15:10:24.116Z
+  TRASH 'Structure' [1566ZGJ98Hvk7-E-7j6eBC6nqnvBez5yU] mod=2026-09-17T15:10:21.420Z
+  TRASH 'data' [1bmLd3kSPP3HcWip8HHhbLx5690m963or] mod=2026-09-17T15:10:20.410Z
+  TRASH 'instance1' [1WMy29Wran_kn55JAJfc5vKkXUJgRTQAH] mod=2026-09-17T15:10:19.451Z
+  TRASH 'Test_76' [10fUoev2FllDmEKmHsAvK-imxpXOdtk_y] mod=2026-09-17T15:10:18.250Z
+  TRASH 'publications' [1v2SBcfdHHQhcpQEEg08lwKQ7TQg9z4d4] mod=2026-09-17T12:45:30.900Z
+  TRASH 'storage' [1fC4c9-auc53-Hl-hcXLXo0_m_U8_J6hY] mod=2026-09-17T12:45:29.248Z
+  TRASH 'protocols' [1qWgEX9j9ALyQkuIR7kBSwDULZbCljm-P] mod=2026-09-17T12:45:27.729Z
+  TRASH 'backups' [1T1F0v1TbmKfpGnoRy9wGut_D4Ff71-1Z] mod=2026-09-17T12:45:26.540Z
+  TRASH 'projects' [13pP26Wc4Kvx_je1PO6hnhs_j28yxsXHP] mod=2026-09-17T12:45:25.434Z
+  TRASH 'New_Dataset' [1XNsaM34oC6bPxlKG1nHMVgE8Rltpd3cA] mod=2026-09-17T12:45:24.252Z
+  TRASH 'image5.png.png' [13voO02vA6u5NZcjssSonqIKx7vaDDg28] mod=2026-09-17T10:46:53.879Z
+  TRASH 'image7.png.png' [1EKKBsJp1xJO50FlCKS97KNeqrQoKEzoQ] mod=2026-09-17T10:46:45.388Z
+  TRASH 'Figure_2._Zoom_on_two_residues_which_are_not_located_within_.png' [1dPEL_R20VNaclYENZCxW96cQxwGseXLU] mod=2026-09-17T10:46:36.779Z
+  TRASH 'Figure_7._Flow_cytometry_analysis_on_MCF-7_cancer_cell_lines.png' [11f5phzoKopg5fo4KsMVs_N7dROGSPngI] mod=2026-09-17T10:46:29.522Z
+  TRASH 'Figure_6._Flow_cytometry_analysis_on_U2OS_cancer_cell_lines_.png' [1C-XB-go0L07FfhM_WC38X5a6vYtdF4cT] mod=2026-09-17T10:46:23.060Z
+  TRASH 'Figure_5._Cell_culture_scheme_for_flow_cytometry_analysis_on.png' [1ENgbRQHrk8Sdg9k4ZgX2uWJQV5uH1iBp] mod=2026-09-17T10:46:15.666Z
+  TRASH 'Figure_4._Western_blot._First_well_only_cells_2nd_well_cells.png' [19sR3busgeryYQqPaUbdRiKXfTDvPoOLY] mod=2026-09-17T10:46:07.844Z
+  TRASH 'Figure_3._IC50_curve_of_p53H_red_Doxorubicin_green_and_the_p.png' [1BZYLYqMmR9s_pQcfz91IMlkQG2kOgpkN] mod=2026-09-17T10:45:58.777Z
+  TRASH 'image3.png.png' [1S2JTLdTsDA6NWy88euiVLgEOItE4cct7] mod=2026-09-17T10:45:51.695Z
+  TRASH 'image10.png.png' [17w8DdLgTGd3JPChAIohi4uTMxxCDSC3d] mod=2026-09-17T10:45:44.134Z
+  TRASH 'image9.png.png' [1iK-gjDUiDEUB7QIMVgonsp63euXzCEF1] mod=2026-09-17T10:45:37.677Z
+  TRASH 'images' [1s1C3nkXsGJRtIzzOrX224HnTJUIHbbl3] mod=2026-09-17T10:45:34.565Z
+  TRASH 'fghj' [1V5Ns4RgdxNISUF-3zWkp8-qR1KsdPxeE] mod=2026-09-17T10:45:33.539Z
+  TRASH 'Figure_2._Zoom_on_two_residues_which_are_not_located_within_.png' [1TedB875KhcDLbw2yP-N61uRnJuWofcuj] mod=2026-09-17T10:44:06.643Z
+  TRASH 'Figure_7._Flow_cytometry_analysis_on_MCF-7_cancer_cell_lines.png' [1VTMMhdx2va8iDlmTHNqB7o6n0OayBNKh] mod=2026-09-17T10:43:57.451Z
+  TRASH 'Figure_6._Flow_cytometry_analysis_on_U2OS_cancer_cell_lines_.png' [1Y-LGM5eW-LqKgyf6eWLa3D-7WLz3hNZ0] mod=2026-09-17T10:43:48.884Z
+  TRASH 'Figure_5._Cell_culture_scheme_for_flow_cytometry_analysis_on.png' [15Gcmhxce66PZctNMLYIIlTsVPRWt6Zeh] mod=2026-09-17T10:43:39.848Z
+  TRASH 'Figure_4._Western_blot._First_well_only_cells_2nd_well_cells.png' [1uf9_jeEAlwNm0HI_1D8RzYHKhb9x2ZM8] mod=2026-09-17T10:43:32.790Z
+  TRASH 'Figure_3._IC50_curve_of_p53H_red_Doxorubicin_green_and_the_p.png' [1nP1qduk6ssbj1ze9b5yv3q7iDNjKiZ8y] mod=2026-09-17T10:43:25.690Z
+  TRASH 'image3.png.png' [1_yv7jWbrvndxAqFLeISU69J3n8weSKpI] mod=2026-09-17T10:43:17.091Z
+  TRASH 'image10.png.png' [1wMaHnRwbwEOsMTYUunrpXFM5gFzRQGCj] mod=2026-09-17T10:43:09.363Z
+  TRASH 'image9.png.png' [1J3VvoFCZKvWRqEMSlLC9KylTAlkJ3WwT] mod=2026-09-17T10:43:02.764Z
+  TRASH 'images' [1DSyeufF7Kaec8giKy7QaOC3UKTKdXyaR] mod=2026-09-17T10:42:59.272Z
+  TRASH 'ttrree' [1fdvBkzh-HifJDlpPx3N2ggqV9ZtBKZ0A] mod=2026-09-17T10:42:58.192Z
+  TRASH 'Results_and_Discussion' [113YFmLkUyb6h101hPHpUEDTq4oRxJ1i4] mod=2026-09-16T22:35:37.991Z
+  TRASH 'Funding' [1sEGIksQGrP-vH-l62xMou9SiNtG9wLGW] mod=2026-09-16T22:35:17.368Z
+  TRASH 'pr' [1mZ3msWC5GM9JbcJV2oJZZiiDL1c3B17C] mod=2026-09-16T22:35:16.349Z
+  TRASH 'images' [1oebTuwmMEdIpEQmp2pZ548fwxtzMcPaN] mod=2026-09-16T22:20:46.210Z
+  TRASH 'pr' [1zBPXwNrOy1lYI-RTe1cZZ7EBEOBcmm0L] mod=2026-09-16T22:20:45.111Z
+  TRASH 'rtg_document_deleted.json' [1vPtqO1h9pOSAVOC1htRZF7Q1M8CY2out] mod=2026-09-16T22:20:01.669Z
+  TRASH 'rtg' [1Epzjhqxq7gEtGwZgUp0WVm2TKnUC5utU] mod=2026-09-16T22:19:43.130Z
+  TRASH 'yyy_document_deleted.json' [1UhgMfKleUbKuX-b2urFnrXZ4lI6HBzXi] mod=2026-09-16T21:32:13.184Z
+  TRASH 'yyy' [17LEZK8H6t0o_kk58xjzkuWnMOCHY9NrO] mod=2026-09-16T21:24:56.856Z
+  TRASH 'rtg_document_deleted.json' [1s70psQFpltVS841AOK6mbDOla4qna2ix] mod=2026-09-16T21:22:45.002Z
+  TRASH 'ds_ds_1788383774488.json' [1qeLdeYrO-Dqk-EusMY6HpUY5Ru0GbfS7] mod=2026-09-16T21:21:45.906Z
+  TRASH 'state.json' [1jYDztvO5CPb_ycLQ4DLzxT5xt4yiG8Im] mod=2026-09-16T21:21:41.650Z
+  TRASH 'keys.json' [1P1wPsddnwX-XJ_rfvZXWhg29_mj5848l] mod=2026-09-16T21:10:28.495Z
+  TRASH 'ttt_document_deleted.json' [1XyvmSdqyWCEVfXrfpXaSETV9mktlpeH_] mod=2026-09-16T21:03:47.922Z
+  TRASH 'image3.png.png' [1CuYwXZqI0MBCo398hgxhZIRhfB_OMufe] mod=2026-09-16T21:00:20.826Z
+  TRASH 'image10.png.png' [1APZKr7UdauptfZxNLDUu0VLJUp6uKd5y] mod=2026-09-16T21:00:12.179Z
+  TRASH 'image9.png.png' [1RAN5Q2xsaeJ2xQGKbGLgAVFuGHKmL5OB] mod=2026-09-16T21:00:04.930Z
+  TRASH 'images' [1L5LlXRXyXX_x-uQDUliHWS7HFjXd0dlx] mod=2026-09-16T21:00:01.340Z
+  TRASH 'rtg' [1rgMRLwQ6nBjHtBbY2wQCmrrtk6lg7NPK] mod=2026-09-16T21:00:00.135Z
+  TRASH 'images' [1Xqv9NfJ1JIARZOXTiZMUvcVyh39dcBrs] mod=2026-09-16T20:51:09.715Z
+  TRASH 'ttt' [1N5d2LXZuB_lNVzJadognf2IzaagqWSIO] mod=2026-09-16T20:51:08.530Z
+  TRASH 'pp_document_deleted.json' [1i3sv5oXHnKT-2fGEAbO2T_7NNrLVOZqL] mod=2026-09-16T20:27:45.278Z
+  TRASH 'image5.png.png' [1GtB2hLKPKb2pdjPliuSfCwFjh_V7X6PI] mod=2026-09-16T20:13:55.203Z
+  TRASH 'Figure_2._Zoom_on_two_residues_which_are_not_located_within_.png' [1HqSXmI8nvQUr-0dCFsPuLtrYcn--09Kd] mod=2026-09-16T20:13:45.309Z
+  TRASH 'image8.png.png' [1ZybXW0ffv3ElujJ4_xPeu8QeCp8vfzqn] mod=2026-09-16T20:13:37.572Z
+  TRASH 'Figure_7._Flow_cytometry_analysis_on_MCF-7_cancer_cell_lines.png' [1hy-wDszKtr7XNJbZP6F3YE0QhM_i60_L] mod=2026-09-16T20:13:30.185Z
+  TRASH 'Figure_6._Flow_cytometry_analysis_on_U2OS_cancer_cell_lines_.png' [1PIY-yYGAVzS58JrLDR0RmaIRL4JNxtPg] mod=2026-09-16T20:13:22.466Z
+  TRASH 'Figure_5._Cell_culture_scheme_for_flow_cytometry_analysis_on.png' [1_JVnoONRCv0CBFTASoevexzVMSFj9fVd] mod=2026-09-16T20:13:12.986Z
+  TRASH 'Figure_4._Western_blot._First_well_only_cells_2nd_well_cells.png' [1nth3rJPMDIRwZ6oihsncBRXp6A8wz9j9] mod=2026-09-16T20:13:03.252Z
+  TRASH 'Figure_3._IC50_curve_of_p53H_red_Doxorubicin_green_and_the_p.png' [10OT4tBySX1_Sa72bgaiZElmXPHcNKCv-] mod=2026-09-16T20:12:55.772Z
+  TRASH 'image3.png.png' [1jzwRF774blOrCZ95j3LX0PVm4De0RTCP] mod=2026-09-16T20:12:46.530Z
+  TRASH 'image10.png.png' [1iYFUlqCkH6pqHcIKN2XdxO1HFp4IvCkc] mod=2026-09-16T20:12:38.199Z
+  TRASH 'image9.png.png' [1SGzZYQrhidzPxSMYFNjgCrD45EwBOil1] mod=2026-09-16T20:12:30.715Z
+  TRASH 'images' [1B00FtMTQnOgoqjWeppWLSnAuSOLQ1_mM] mod=2026-09-16T20:12:27.507Z
+  TRASH 'ttt' [1x7_6Q--ehMEWZnS_JaJWKIOp53QkPO0_] mod=2026-09-16T20:12:26.346Z
+  TRASH 'datasets' [1KNZr_WIM41VJb6fF_PUSVr-gMyWJauA1] mod=2026-09-16T20:11:43.735Z
+  TRASH '_workspace' [1hfHqSXUqFLbWCcL_Fr8jOrIOfg6H99D5] mod=2026-09-16T20:11:28.084Z
+  TRASH 'ppp_document_deleted.json' [130ZwkWpljYhsQRw6CJ4l2ovzZF88cLGB] mod=2026-09-16T20:03:30.445Z
+  TRASH 'p_document.json' [1mBbYh-30oFnWsFymROaEFaXiE6bIem3r] mod=2026-09-16T19:54:40.945Z
+  TRASH 'image10.png.png' [1R45uI3OF8nt6fAWNZt3Q-kfrr_NZDPKx] mod=2026-09-16T19:54:38.088Z
+  TRASH 'Figure_2._Zoom_on_two_residues_which_are_not_located_within_.png' [1_QJvyf4vzVSqwH0ce1YqfJEBAPhPAjlk] mod=2026-09-16T19:54:31.066Z
+  TRASH 'image6.png.png' [1XReWnhHmfvdEpy6ik7PTTAWsnwGj35C9] mod=2026-09-16T19:54:24.740Z
+  TRASH 'Figure_7._Flow_cytometry_analysis_on_MCF-7_cancer_cell_lines.png' [1p4rWGm-Rod6K8HcJ19bqkN4QDwdhUHxX] mod=2026-09-16T19:54:18.200Z
+  TRASH 'Figure_6._Flow_cytometry_analysis_on_U2OS_cancer_cell_lines_.png' [1P7-Ol1_Cd2ASf-rzUu_X5s4KEjUKpBiW] mod=2026-09-16T19:54:11.333Z
+  TRASH 'Figure_5._Cell_culture_scheme_for_flow_cytometry_analysis_on.png' [1E2d6eooDLFPHUUohkoCXFi7jcCgvs48j] mod=2026-09-16T19:54:03.810Z
+  TRASH 'Figure_4._Western_blot._First_well_only_cells_2nd_well_cells.png' [1Ojzh9CKVyRca9DxHDs-GjvGH78E5APGi] mod=2026-09-16T19:53:57.155Z
+  TRASH 'Figure_3._IC50_curve_of_p53H_red_Doxorubicin_green_and_the_p.png' [1M_YFp4B0cN24ZY7V62v_u46osVuR8Iw8] mod=2026-09-16T19:53:49.108Z
+  TRASH 'image4.png.png' [1awyT39iLDsUF7HI72cP-HI9rzZ9MkssX] mod=2026-09-16T19:53:40.147Z
+  TRASH 'image7.png.png' [1n_LX6FZJEuh4Xwbj08WNiJiPF8Yqy4PI] mod=2026-09-16T19:53:32.397Z
+  TRASH 'image1.png.png' [1vpBg5H1hYaz2phrbxIqbELvgEg50QFEx] mod=2026-09-16T19:53:21.937Z
+  TRASH 'images' [1gictgrw9f9Bg2ab2X3genYy2_t_OM4hG] mod=2026-09-16T19:53:18.758Z
+  TRASH 'p' [1lRmpIvMyajXz-y3R-MvMbzH-5oWuvX5M] mod=2026-09-16T19:53:17.548Z
+  TRASH 'image5.png.png' [14qC6_KEWoLzY7TW3Zzmi0CH_UhlaXbG0] mod=2026-09-16T19:49:50.936Z
+  TRASH 'Figure_2._Zoom_on_two_residues_which_are_not_located_within_.png' [1ucbvPzFiEA_meR_e0JXmU7bF3XAxZ7K7] mod=2026-09-16T19:49:43.080Z
+  TRASH 'image8.png.png' [1mxoRl-_sZAI9vv3YkZAadF6obEHqYrzZ] mod=2026-09-16T19:49:36.917Z
+  TRASH 'Figure_7._Flow_cytometry_analysis_on_MCF-7_cancer_cell_lines.png' [1nWtLiy4xM9KKsgNmIAMoJ6A6Uto2hwRY] mod=2026-09-16T19:49:27.527Z
+  TRASH 'Figure_6._Flow_cytometry_analysis_on_U2OS_cancer_cell_lines_.png' [1FMnAmf8ymXvP21L_4ae3USwj2LpDO9FB] mod=2026-09-16T19:49:20.227Z
+  TRASH 'Figure_5._Cell_culture_scheme_for_flow_cytometry_analysis_on.png' [1lVFGtvO-FJWVRJLb2Hm-9Xxo4u30g7lX] mod=2026-09-16T19:49:13.549Z
+  TRASH 'Figure_4._Western_blot._First_well_only_cells_2nd_well_cells.png' [1fFj3yzvD5SoZw7TAy5i6G3bzdBiiZx0Z] mod=2026-09-16T19:49:05.883Z
+  TRASH 'Figure_3._IC50_curve_of_p53H_red_Doxorubicin_green_and_the_p.png' [1MbsHAYCbica8Qut3yzXjeB9ltvUuKwnF] mod=2026-09-16T19:48:58.512Z
+  TRASH 'image3.png.png' [1cDIj-cMl94qjvSI5YKlyplahJcHFECEH] mod=2026-09-16T19:48:52.346Z
+  TRASH 'image10.png.png' [1F3kfu6fHlSPdD6449WS-M_qaRU0Ju1j7] mod=2026-09-16T19:48:46.470Z
+  TRASH 'image9.png.png' [14qhZjBZHK9CJPzfnw7wwzqY8h7aP-Osw] mod=2026-09-16T19:48:36.061Z
+  TRASH 'image1.png.png' [1h6W5AjHQQpHVZV9EWcdz8krAjCvmNyUY] mod=2026-09-16T19:14:59.702Z
+  TRASH 'Figure_2._Zoom_on_two_residues_which_are_not_located_within_.png' [1Dg4m6DNAsJt0ZZr_YQXTdDw3F_jLXKCN] mod=2026-09-16T19:14:53.368Z
+  TRASH 'image8.png.png' [1H9yl4nuoTTAjhqSQ5e2b0y0rfZ8K4gBU] mod=2026-09-16T19:14:47.030Z
+  TRASH 'Figure_7._Flow_cytometry_analysis_on_MCF-7_cancer_cell_lines.png' [12dNfrAg7VAaudbaQBWWmt_v377dT_7Mo] mod=2026-09-16T19:14:39.950Z
+  TRASH 'Figure_6._Flow_cytometry_analysis_on_U2OS_cancer_cell_lines_.png' [1greBMN96nam1uQrGrq4ZZLZaqk-C81uM] mod=2026-09-16T19:14:32.293Z
+  TRASH 'Figure_5._Cell_culture_scheme_for_flow_cytometry_analysis_on.png' [1NpTOzQpFw8Ebxpxck8HeSSM1ViK_iGz7] mod=2026-09-16T19:14:26.122Z
+  TRASH 'Figure_4._Western_blot._First_well_only_cells_2nd_well_cells.png' [1QM6EeOS1MkyRB-ssIKPMaEfhMjr9XFtL] mod=2026-09-16T19:14:19.526Z
+  TRASH 'Figure_3._IC50_curve_of_p53H_red_Doxorubicin_green_and_the_p.png' [1EVvxG3UUvzgE0ivYFX2IgW42OklnEP8N] mod=2026-09-16T19:14:12.531Z
+  TRASH 'image3.png.png' [1swWPkDsNAxxDjGeyeARUdp2i8EG6Bf26] mod=2026-09-16T19:14:06.082Z
+  TRASH 'image9.png.png' [1nQrbUyeoXcyBVZCVxhCxs5IL_VHNQo2Z] mod=2026-09-16T19:13:58.536Z
+  TRASH 'image4.png.png' [10yMUzg6qL-wYIA5osSkz1MbEOACIbz4t] mod=2026-09-16T19:13:50.994Z
+  TRASH 'Fig1.jpg' [1YZgib_2Pxbz-ZZeVlIUz2ASxaCqnGPS5] mod=2026-09-15T21:26:37.348Z
+  TRASH 'images' [10ObaE_AX0fp7-89gy_61l8dRaWne-G43] mod=2026-09-15T20:54:45.909Z
+  TRASH 'ppp' [1oIA6c-muO6wisZqbcZ7cb7HGgA_0SGTu] mod=2026-09-15T20:54:44.809Z
+  TRASH 'image3.png.png' [1uqJkjKnyx7RSVWLKg6hfg6ioD4JfW_Jd] mod=2026-09-15T20:41:53.866Z
+  TRASH 'image9.png.png' [1N6GwzGJ3qvsYDc-kUjlQUi84Hnu-CjHf] mod=2026-09-15T20:41:46.792Z
+  TRASH 'image4.png.png' [1iirt7SFa68xWp5OkUGmzsCBOYvhKqXR6] mod=2026-09-15T20:41:39.354Z
+  TRASH 'images' [1zfoQpHHAtUL8__OQMoxvuktE47vB3mUg] mod=2026-09-15T20:41:36.292Z
+  TRASH 'ppppp' [13vQUK7SqbwWJVFBDvJLpbqD_0mBOVMGB] mod=2026-09-15T20:41:35.151Z
+  TRASH 'image4.png.png' [1qu3fUbSe7dSKOG84l5N39VkAuYZgni7w] mod=2026-09-15T20:37:55.850Z
+  TRASH 'image1.png.png' [16d7wJ0wOp1Bgi7wVvesNlX5kKfZzBjHo] mod=2026-09-15T20:31:01.648Z
+  TRASH 'images' [10QYpS8RP8jiGJKRpi65iIQ4ou-7ZHYFM] mod=2026-09-15T20:29:11.092Z
+  TRASH 'pp' [1Fi9VLip3gFbiQYhpbOOyS6tumMIyNmPG] mod=2026-09-15T20:29:09.907Z
+  TRASH 'image11.png.png' [1hsfSDTyKZDXa0pMI3l7pPtenuW2T4TNs] mod=2026-09-15T18:43:12.011Z
+  TRASH 'Figure_2._Zoom_on_two_residues_which_are_not_located_within_.png' [1EnyfRiiHiWuvZHXhgGuJOfUKw5ef3fxi] mod=2026-09-15T18:43:06.050Z
+  TRASH 'image3.png.png' [1w-AhfOjC9TzeTzKr1a7YLEpQjTIypDYQ] mod=2026-09-15T18:42:59.629Z
+  TRASH 'Figure_7._Flow_cytometry_analysis_on_MCF-7_cancer_cell_lines.png' [1OR0BANqjOqpWZ2i0QZdnJy8YfeWFyKdN] mod=2026-09-15T18:42:52.955Z
+  TRASH 'Figure_6._Flow_cytometry_analysis_on_U2OS_cancer_cell_lines_.png' [1WUk4kx6iuTy_8oQ6Ldj8GnsZDvk4NE3L] mod=2026-09-15T18:42:45.399Z
+  TRASH 'Figure_5._Cell_culture_scheme_for_flow_cytometry_analysis_on.png' [1V4ATSetMVgVHCuk0VBxOQ7Y9p_cBY0Re] mod=2026-09-15T18:42:38.493Z
+  TRASH 'Figure_4._Western_blot._First_well_only_cells_2nd_well_cells.png' [1Ozu4-8g-JYyK_Q1MgU5bGlS8NNBO12vn] mod=2026-09-15T18:42:32.234Z
+  TRASH 'Figure_3._IC50_curve_of_p53H_red_Doxorubicin_green_and_the_p.png' [1hVJe5n5b0EEYops1htOQo73hKgVnxLGR] mod=2026-09-15T18:42:24.635Z
+  TRASH 'image4.png.png' [1DAnKRxjpyhzXTkIVddKljBLauzyeXcaw] mod=2026-09-15T18:42:18.427Z
+  TRASH 'image12.png.png' [13BztAmxvhyKV8vx10fnAIPorppCnp3pW] mod=2026-09-15T18:42:11.248Z
+  TRASH 'image2.png.png' [1ofMX6mBsyagi726p2_GUALzYJcGGlrjT] mod=2026-09-15T18:42:03.326Z
+  TRASH 'images' [1MdubTqbUp_5Dq0fzke8KPujB-y5mdh3I] mod=2026-09-15T18:42:00.247Z
+  TRASH 'prova3' [1X2HXMVV1mzsBazv8JdtYz6WnLJJacfzJ] mod=2026-09-15T18:41:59.160Z
+  TRASH 'p53H_paper_new_deleted_deleted_deleted_deleted_deleted.docx' [1svPxn12tCsPJhMqojyjL-WE5ZTNJVjKr] mod=2026-09-15T18:40:12.038Z
+  TRASH 'Figure_6._Flow_cytometry_analysis_on_U2OS_cancer_cell_lines__deleted.png' [1qinEaUVuubk7JmJcrnWIUTy2L9e0zVeF] mod=2026-09-15T18:35:21.288Z
+  TRASH 'Figure_5._Cell_culture_scheme_for_flow_cytometry_analysis_on_deleted.png' [1m1ZSq2CjIvfurOm42ABBu1TnmmQLimZL] mod=2026-09-15T18:35:20.106Z
+  TRASH 'Figure_4._Western_blot._First_well_only_cells_2nd_well_cells_deleted.png' [1b2DPxZvIcYhptv9v4KRoRsO31pyrhrnF] mod=2026-09-15T18:35:19.044Z
+  TRASH 'Figure_3._IC50_curve_of_p53H_red_Doxorubicin_green_and_the_p_deleted.png' [1xByvHflnZpDZlltBo27tFHx-XTIkXmCa] mod=2026-09-15T18:35:17.978Z
+  TRASH 'image4.png_deleted.png' [1iOo3cVenpD9_1v2tCfpahuxFs3m7offI] mod=2026-09-15T18:35:16.645Z
+  TRASH 'image12.png_deleted.png' [1pc93kqyFwWSCP3QpslxFlRKa9_nbN1z7] mod=2026-09-15T18:35:15.417Z
+  TRASH 'image2.png_deleted.png' [1vjkEGF7hLyJ_b4j7-5-wMNqLZ5KlzWI_] mod=2026-09-15T18:35:14.318Z
+  TRASH 'image11.png.png' [1l3gdGxp9venV9a_QK5LTKE3fGzK9xTW8] mod=2026-09-15T18:31:28.083Z
+  TRASH 'Figure_2._Zoom_on_two_residues_which_are_not_located_within_.png' [1agyw85iwgwk_dTsCHn_rJARilB4OD1Ij] mod=2026-09-15T18:31:20.564Z
+  TRASH 'image3.png.png' [1IyftmTaqjGZ5edBWW1ylE7wwf7uG1yUp] mod=2026-09-15T18:31:11.780Z
+  TRASH 'Figure_7._Flow_cytometry_analysis_on_MCF-7_cancer_cell_lines.png' [1ykBfftL38mrJXqSirlS14U_7gGDNjTll] mod=2026-09-15T18:31:05.597Z
+  TRASH 'images' [1li-dzWDL2ry_IxNnh4CgjF8_rFfQnh-4] mod=2026-09-15T18:30:12.265Z
+  TRASH 'prova2' [1C3pFCf6Y5n42BSocLOrtM-hslLFlSj98] mod=2026-09-15T18:30:11.184Z
+  TRASH 'images' [1DfFYLAQ3jsv_HPFjVRcYXpFEr9S9Kiyo] mod=2026-09-15T17:03:40.229Z
+  TRASH 'prova' [1tRzk4oC456hq2SKToSr6dnRVLXf4TjIm] mod=2026-09-15T17:03:39.256Z
+  TRASH 'figure11.png' [1pvE6B4oDmbUOc9gDUeqTqINwIXHl15eK] mod=2026-09-15T16:10:25.109Z
+  TRASH 'figure10.png' [1YhnWdxVyMKV81YOt7ztBUKJyYBLntH9E] mod=2026-09-15T16:10:19.106Z
+  TRASH 'figure9.png' [1a1L8YQJ21YrilkdDNX5XQKwhNxjeJBl4] mod=2026-09-15T16:10:13.294Z
+  TRASH 'figure8.png' [1ztmzPqAS__RU3uKXcQbhFDBHCVBDJfa3] mod=2026-09-15T16:10:07.331Z
+  TRASH 'figure7.png' [19NK4JGAAs1dtc6rzky9iKNLHJA75VmKY] mod=2026-09-15T16:10:00.944Z
+  TRASH 'figure6.png' [1ufp7DKCACLX_QtJnp_NQUC7jD5toim0e] mod=2026-09-15T16:09:54.917Z
+  TRASH 'figure5.png' [1QmG7xg8EbhZ15oYL8N8DZXNMwd7szG4A] mod=2026-09-15T16:09:48.788Z
+  TRASH 'figure4.png' [1EcticCGqpYo6wRFUCXybEZApsVQo1ZNW] mod=2026-09-15T16:09:42.060Z
+  TRASH 'figure3.png' [16-vQ3nKmWsX-khPu6r7pxiKVP6DIKwnd] mod=2026-09-15T16:09:35.820Z
+  TRASH 'figure2.png' [1wIZlU2hfDgWAg_tBPwE3UqmoQdfjpY_C] mod=2026-09-15T16:09:29.681Z
+  TRASH 'figure1.png' [14rqE4-tWm2RFcO_nfL9Zdfju4XzvGjeY] mod=2026-09-15T16:09:22.666Z
+  TRASH 'Scientific_background' [1YT_4sRzPKjU206dvcYJ55Go5cCAWVO5J] mod=2026-09-15T15:18:05.866Z
+  TRASH 'prova' [1wGcfw4kamAyxZ1ymRtu9s3wooUk4nP_w] mod=2026-09-15T15:18:04.643Z
+  TRASH 'Nicola_DAMELIO.pdb' [14mE8MWY6Dza8hp-Oj69RahqqWhQJnwJG] mod=2026-09-13T00:48:32.378Z
+  TRASH 'Nicola_DAMELIO.pdb' [12klquXov2iJJnsdZwKLzGmSUMfzTOCMv] mod=2026-09-13T00:48:31.727Z
+  TRASH 'Nicola_DAMELIO.pdb' [1lIWxfCjBWI_jfO1WBmkJWZw0BtzQUxrw] mod=2026-09-13T00:48:31.031Z
+  TRASH 'Nicola_DAMELIO.pdb' [1U1cdFAjtwJdk_dLashtJILsmEvReJFJI] mod=2026-09-13T00:48:30.367Z
+  TRASH 'Nicola_DAMELIO.pdb' [1KWe0ztnqS6b13XxnRxXl3LLaL7Fk_5sv] mod=2026-09-13T00:48:29.692Z
+  TRASH 'Nicola_DAMELIO.pdb' [1sMjvGvFLIzwgRtrJqBEWKBdZvO83SLzT] mod=2026-09-13T00:48:29.056Z
+  TRASH 'Nicola_DAMELIO.toml' [1BBSZhsWKVdFlBuWIwX9B4ixWhTavC0jk] mod=2026-09-13T00:48:28.404Z
+  TRASH 'Nicola_DAMELIO.tsv' [1IBQckuzXyrVtXaCXqIpx9FuM_ljjlGda] mod=2026-09-13T00:48:27.751Z
+  TRASH 'instance1' [145FfuIiYGLqR8wEPPbQZm3ewiHI5MjZ_] mod=2026-09-13T00:48:27.074Z
+  TRASH 'pdb_files' [1imGySC-gnKgW67PpRqP4v2uLzM9OPsrI] mod=2026-09-13T00:44:09.139Z
+  TRASH 'Experimental_Conditions' [1eFSYBqph2osgMKpyoCwgFEFh9wMfGmQ9] mod=2026-09-13T00:43:53.160Z
+  TRASH 'Instrumental_Setup' [1XE7gKju2sEx7dPMAuzUGU8kV3iLy-f1D] mod=2026-09-13T00:43:44.528Z
+  TRASH 'Data' [1XwkBK-1Xh-Y2jOAr_sVlx8rVSHlZ3tMB] mod=2026-09-13T00:43:35.603Z
+  TRASH 'instance1' [1bojGAQmZ3G1V73riqmEgkYtpBOtvJxmJ] mod=2026-09-13T00:43:34.310Z
+  TRASH 'NATURAL_ARSENAL_Antibiotics' [18eYDblr4jvvTdHjAcPxf4SWVWWzygP0z] mod=2026-09-13T00:43:32.279Z
+  TRASH 'Fig1.jpg' [1hIwTxHcPRGsSmr652RC1q61kYGLNP9Ky] mod=2026-09-12T21:19:02.949Z
+  TRASH 'images' [1CnX-3VZD7GYcMr7Pc3vnHFeKOR18-QG4] mod=2026-09-12T21:18:59.150Z
+  TRASH 'IC50_Comparison_Toxicity_HEK293.png' [18v9o2FlImPo8SDA9I3g5Sf-KaOx69zSN] mod=2026-09-12T19:57:04.983Z
+  TRASH 'Nutlin_Toxicity_HEK293.png' [1xnJWEdJ1gWFuti8_sxxc7ynIfjIHlz-1] mod=2026-09-12T19:50:30.151Z
+  TRASH 'Figure1_p53_H.jpg' [1Hjdt7kM1InhmX7c1F8NPltKsUjNl0YfE] mod=2026-09-12T18:42:32.584Z
+  TRASH 'Data' [1ir2Q98U7R9bCMW5_TUv3oW6D34KLMM9a] mod=2026-09-12T18:00:11.017Z
+  TRASH '1A.jpg' [1N7xjgOjzSFyZnqWLntbGAczAtNdkHgBV] mod=2026-09-12T17:49:29.680Z
+  TRASH '1B.png' [1TjyHrrR62xXakqNT5BcpMycw2I3d3-gp] mod=2026-09-12T17:49:23.138Z
+  TRASH '1C.png' [1CYNE1UjbbqvP8Dd76fpMM2pBThzEi4RI] mod=2026-09-12T17:49:16.663Z
+  TRASH 'images' [1G-WHj9LGlbxA7FUSZzKrhBH9F5epB70T] mod=2026-09-12T17:49:13.641Z
+  TRASH 'p53H' [1evL5k8QyMcoANMOksEHsXtkZhfnkKBQC] mod=2026-09-12T17:49:12.459Z
+  TRASH 'BC_4444_GEC NA (NA)_FISHER SCIENTIFIC_Francisco Ramos_2026-09-11_BG07 Compiègne - Repas_approuvé.pdf' [1ieWnxO4__yuipCQ8d_M5qgP7vthNqdr9] mod=2026-09-11T14:19:18.802Z
+  TRASH 'BC_22_GEC NA (NA)_HP_Francisco Ramos_2026-09-11_Computer for Nour_approuvé.pdf' [1KDtmlHc_-Ki57VqG31eX-lIAou2Ar0U0] mod=2026-09-11T14:19:18.107Z
+  TRASH 'Devis_21_GEC NA (NA)_Francisco Ramos_2026-09-11_BG07 Compiègne - Logement_approuvé' [1xms85L9D-T5E0ENShzqTv-XtbiKVYMui] mod=2026-09-11T14:18:22.620Z
+  TRASH 'GEC-UPJV_774488_backup_2026-09-11.html' [1ze5bVn5_ndnUbbVB1EyXQ8B3ynMtibN9] mod=2026-09-11T14:07:33.772Z
+  TRASH 'GEC-UPJV_administration2_182223_backup_2026-09-11.html' [1XrEyantHGFVxu_wxug84aMIOXaVMkhyU] mod=2026-09-11T14:07:29.360Z
+  TRASH 'prova_371512_backup_2026-09-11.html' [1LWq9I0eq1NSIQYvUDVxqhGOiqcHjwBB8] mod=2026-09-11T14:07:26.317Z
+  TRASH 'Devis_007_GEC NA (NA)_HP_Francisco Ramos_2026-09-11_Computer for Nour_approuvé.pdf' [1oNrDbRDe8f_7YQcXbEq0Kx9S8OqB6B3z] mod=2026-09-11T13:57:10.423Z
+  TRASH 'Devis2_GEC NA (NA)_HP_Francisco Ramos_2026-09-11.pdf' [1iOngBjS3QFzqCa90Z88Pphk3AnKhkGCA] mod=2026-09-11T13:46:55.094Z
+  TRASH 'auditp.txt' [1ce76pVbmwJgp1gHCy3eJu2ioj5yFIRl0] mod=2026-09-11T13:22:21.762Z
+  TRASH 'procs' [1rvd8RxpOZqCC6PGU1q0PB0fcbfliokLh] mod=2026-09-11T13:22:14.823Z
+  TRASH 'proc' [15JqydhZqvNE1o_zguUEUfxOSlETeUjm-] mod=2026-09-11T13:22:06.184Z
+  TRASH 'outd' [1BIHulss6330BCJkruiafaHadLUxnyogz] mod=2026-09-11T13:21:59.271Z
+  TRASH 'thumb.png' [1RCSduxxBpQn0vOaWrjd2hGV2CbruXxDO] mod=2026-09-11T13:21:51.591Z
+  TRASH '1r' [1jU7UvnmEvR6aaHmXoMeXBhGsV2Q7t4j6] mod=2026-09-11T13:21:44.733Z
+  TRASH 'auditp.txt' [10UD_VmnzhwSYL18D6QLiuLmAo2T5eOaD] mod=2026-09-11T13:21:39.757Z
+  TRASH '1i' [1jt2b7fUkZ6QdvGHazUFPDDbiupSpmTGy] mod=2026-09-11T13:21:37.933Z
+  TRASH '1' [1BGWDXVEAEa1GHQ4zPqdso1h3CWf0H97k] mod=2026-09-11T13:21:34.945Z
+  TRASH 'pdata' [1-PD8W5C_NWzmSiXpiiN5edSeOLc00iQX] mod=2026-09-11T13:21:33.989Z
+  TRASH 'procs' [1ivjmhXqSbGPJ_BHqtOhdIPkXZdHT1bC7] mod=2026-09-11T13:21:32.644Z
+  TRASH 'specpar' [1GLrMspKE28dYWORyQx6v3E722JvH23OM] mod=2026-09-11T13:21:29.049Z
+  TRASH 'proc' [1udnM8C9gJqb7YB29RTC61g3NPfxjQPSb] mod=2026-09-11T13:21:25.146Z
+  TRASH 'pulseprogram.precomp' [1B5DPhHGoPRF6PJzUOrYpVAxt1TH912Xa] mod=2026-09-11T13:21:22.950Z
+  TRASH 'outd' [1lm_oq448epxsTb7rbBgZDZgx2YQVWBiv] mod=2026-09-11T13:21:18.935Z
+  TRASH 'fid' [17Mu_QgzWBHVHonBeB1_aCeRm2S6nT7Yj] mod=2026-09-11T13:21:16.949Z
+  TRASH 'thumb.png' [1MGvNC9Gg1mdOtzszIz9Dst0HncDfBN6a] mod=2026-09-11T13:21:11.846Z
+  TRASH 'adcInfo_TRX2.xml' [1Lv5zonAeouP2OllyJuuT95b-j_qjKhDZ] mod=2026-09-11T13:21:10.718Z
+  TRASH '1r' [1FLTThQZoAxoc7K0X07HBdyTBdWPu9Ew8] mod=2026-09-11T13:21:04.435Z
+  TRASH 'acqu' [16FOl5ieOnP--1Td8puf2_dAYhT33q3r1] mod=2026-09-11T13:21:04.212Z
+  TRASH 'audita.txt' [1QCK7Z0twaj9dkCul_aQG1gSrxH2acXDZ] mod=2026-09-11T13:20:57.929Z
+  TRASH '1i' [16jOgkjAvCsCh0J1NjNpuzsN6Q0FGYQmp] mod=2026-09-11T13:20:57.519Z
+  TRASH '1' [1ZbvSLicPbXwf7KJj9ldc9o7ZwMkD0AQT] mod=2026-09-11T13:20:55.090Z
+  TRASH 'pdata' [1K8A3KvZ6XFODrItcu7n5tbD4pnntwAyR] mod=2026-09-11T13:20:53.939Z
+  TRASH 'scon2' [1An_cyW2BuG7KdMrCbssWmC989SZHGYf6] mod=2026-09-11T13:20:51.634Z
+  TRASH 'specpar' [1raqIrlRK62t4fcXcFMCg68Y-MmhhMgep] mod=2026-09-11T13:20:49.264Z
+  TRASH 'step7_Nicola_DAMELIO.xtc' [1OJ5eD-BF6mDncnuqKrHznbbpmqabRRxy] mod=2026-09-11T13:20:46.368Z
+  TRASH 'uxnmr.info' [19gqtRLf_MMdTFty80Aqq8o2DvK-2Qu5Z] mod=2026-09-11T13:20:45.256Z
+  TRASH 'pulseprogram.precomp' [11oTGWbc9_i2yKkMLb81gJ6SuHKEK9CgY] mod=2026-09-11T13:20:41.200Z
+  TRASH 'shimvalues' [1y9RevVYgagSYtOOZlgyPwwZdvS7eDMUx] mod=2026-09-11T13:20:38.161Z
+  TRASH 'fid' [1VTF8-DEd64J1HfRolyr-nekLz5XTRomc] mod=2026-09-11T13:20:34.337Z
+  TRASH 'adcInfo_TRX2.xml' [1pfk32k3hiB42fXQzgA_gU3vOZbVpEF95] mod=2026-09-11T13:20:27.704Z
+  TRASH 'uxnmr.par' [1rTl4pjyGR1cx9u6kbnazVDpLCfLh82lP] mod=2026-09-11T13:20:27.542Z
+  TRASH 'format.temp' [1YZmtJ_mXPiLCM2IZhOJ4fGWhrhbTjuX7] mod=2026-09-11T13:20:20.972Z
+  TRASH 'acqu' [1i1y60gimtOJKBIjBcJoxjxWXxd6JNmTL] mod=2026-09-11T13:20:20.338Z
+  TRASH 'acqus' [1A4w-qM3loFV2R7HDJ0YejQeT1-LF4So_] mod=2026-09-11T13:20:14.213Z
+  TRASH 'audita.txt' [1RfyjBIPLMEOY37uXh6ziNEsGgL3CwihY] mod=2026-09-11T13:20:12.243Z
+  TRASH 'vtc_pid_settings' [1C7AqNXQtxCia9ou7SiUq-B7vyebbGzUL] mod=2026-09-11T13:20:07.406Z
+  TRASH 'scon2' [1MVCmr9F1Ys7pBPM8eDp_Dj1sqWTOWjUu] mod=2026-09-11T13:20:04.918Z
+  TRASH '28' [1wEwJaWeofuJBba-Ld9ndaeN09v96dfB7] mod=2026-09-11T13:20:04.693Z
+  TRASH 'Data' [125rQMWtmbryNPZdTLZAqxnm2YUBfRyEg] mod=2026-09-11T13:20:03.433Z
+  TRASH 'cpmas7mm-TackyI11A_Exp_28' [1hZWKE4DdfHuIT7RRxNCQ9TRRPb_ppPKh] mod=2026-09-11T13:20:02.300Z
+  TRASH 'step7_Nicola_DAMELIO.xtc' [1SD_j8bpoznI_VgvmtaSK6bt_YgyCHvah] mod=2026-09-11T13:20:02.231Z
+  TRASH 'uxnmr.info' [1yHP5ryUG0mDyPOsjUt_HUud6KqGsE1YB] mod=2026-09-11T13:19:50.842Z
+  TRASH 'shimvalues' [1wGTpuPVJ57m-JiVePYWmOPixbX4mMDSd] mod=2026-09-11T13:19:43.983Z
+  TRASH 'uxnmr.par' [1_1VfYpn9yhfuCQtyXledxLAJ_SiczsrL] mod=2026-09-11T13:19:37.288Z
+  TRASH 'format.temp' [1MjmFSLMDZCvO8Q2DEI1wX4TKr15IYb__] mod=2026-09-11T13:19:26.418Z
+  TRASH 'acqus' [15fIGA8cq2adKhRGuN9S0qaLs_VGOK34H] mod=2026-09-11T13:19:17.966Z
+  TRASH 'vtc_pid_settings' [1fpLBMtnkyKuEcGcSSu3tOTSA7dP1cUiB] mod=2026-09-11T13:19:09.944Z
+  TRASH '27' [1OE5l08r8Q5cUT3BdBdWq7Zz2A0HGbxKZ] mod=2026-09-11T13:19:06.795Z
+  TRASH 'Data' [1pdQOM92BbmAzPD8eAEhC16n-oFuOFO57] mod=2026-09-11T13:19:05.591Z
+  TRASH 'cpmas7mm-QBP1_VSPA109_Exp_27' [1U2sLEv5rhbysYLOo46nGJKeIY_yrNL2z] mod=2026-09-11T13:19:04.058Z
+  TRASH 'Test_77' [1rpdwpKqKyEE3EKI-BaIT7Kddi97Eg2gp] mod=2026-09-11T13:19:02.702Z
+  TRASH 'qbp1' [15Yhqaac8PVjXUCrNHxZm0mstWlMx1tau] mod=2026-09-11T13:19:01.562Z
+  TRASH 'step7_Nicola_DAMELIO.gro' [1fyZITnrSFRWQxD-3hP9ytq9qbyw4AA_W] mod=2026-09-11T13:13:48.400Z
+  TRASH 'Trajectory' [1vQ2hnwRzRqzifXM0OFoVr80OdJzFwHvH] mod=2026-09-11T13:11:39.882Z
+  TRASH '6pep3_VSPA109_Nicola_DAMELIO.pdb' [1MMeR77_mz2Z10DT3qi6k5CHOCE9Yo3j_] mod=2026-09-11T13:10:45.405Z
+  TRASH 'Structure' [1-6zik0Us6z3_VkWFRNK8ImU8FjHUULct] mod=2026-09-11T13:10:42.563Z
+  TRASH 'experiment_setup' [1woCS0uZXbvZyx-JnrVM6eeBhJPNblDI8] mod=2026-09-11T13:10:41.222Z
+  TRASH 'instance1' [1v-_wDU8e82SEgT7I-vq3QlQIyYe34q-Y] mod=2026-09-11T13:10:40.121Z
+  TRASH 'MD' [10soSCHubKIVme9KfFPyk0-jP33O9TiBa] mod=2026-09-11T13:10:38.924Z
+  TRASH 'Budget_labo' [1OB9PMGY7HOqTulegGymkgxa45OK0vB4G] mod=2026-09-11T09:40:28.741Z
+  TRASH 'backups' [1ngzoF7HejrS1CK_CEgtIHhqegfMgIaKT] mod=2026-09-11T09:40:27.575Z
+  TRASH 'prova' [1PQrtvI0Q7df555hrhuwk3WmjE5C4t6wq] mod=2026-09-11T09:40:26.362Z
+  TRASH 'GEC-UPJV_administration2' [1bnKMLLCVDxeYP8xNI1afwGFszvhVwqyp] mod=2026-09-11T09:36:04.119Z
+  TRASH 'GEC-UPJV_administration2_182223_save_2026-09-11.html' [1jWIudYIyilvR4UdiVb9aCcgCtzAs0aZC] mod=2026-09-11T09:34:53.290Z
+  TRASH 'Budget_labo' [1GMLUwZJyW5iOXwuWOAMlrFRQ1UjWG0Vs] mod=2026-09-11T09:19:36.218Z
+  TRASH 'backups' [18XB_rM28wujeZzr6e2hj3NLyinqACVz7] mod=2026-09-11T09:19:34.841Z
+  TRASH 'Devis_GEC NA (NA)_FISHER SCIENTIFIC_Francisco Ramos_2026-09-11.pdf' [1MTVDfMpGICGosAJOjxtdgi2beZh0Fl_A] mod=2026-09-11T08:18:43.118Z
+  TRASH 'GEC-UPJV_administration2_182223_backup_2026-09-11.html' [1KtF38a2eeABx-ysjmbpw8cTwGyWrscSB] mod=2026-09-11T08:16:36.338Z
+  TRASH 'Budget_labo' [12Tzy2FGtaprPvOFTwXSmOk7z76ICP5wz] mod=2026-09-11T08:08:19.190Z
+  TRASH 'backups' [197yjFPDf6rNYQAHph79zBHi_39WZMzeM] mod=2026-09-11T08:08:18.190Z
+  TRASH 'GEC-UPJV_administration2' [1XCtRF-XxO9Ig1lsF9ONg7meXBSlZJn88] mod=2026-09-11T08:08:17.107Z
+  TRASH 'Budget_labo' [1zWPhzya9AIz1qC0sOAzeOIvMPcxHZk3P] mod=2026-09-10T18:51:38.110Z
+  TRASH 'backups' [1pwAN-Os1uCSUEsIFIGznvVARU4SlsByk] mod=2026-09-10T18:51:37.066Z
+  TRASH 'GEC-UPJV_administration_old' [1VcpXtWbGOFycUynVvoadruWhbyNT06Zq] mod=2026-09-10T18:51:36.026Z
+  TRASH 'GEC-UPJV_774488_backup_2026-09-10.html' [1nSnIXZJqwK-Z58iDSsVd4Uayoa-fXDfz] mod=2026-09-10T15:51:33.738Z
+  TRASH 'GEC-UPJV_administration_255238_backup_2026-09-10.html' [1ObPRDEhg-VFI_xYWcLVf_4O1LcixfuL4] mod=2026-09-10T15:51:24.666Z
+  TRASH 'publications' [1iQyhA1xKhHmyisvGE3pbx23rKOHsAhuY] mod=2026-09-10T11:53:30.819Z
+  TRASH 'storage' [1Umjgzf2RqdmyEQY1kSNRvLVpsYaQDaMe] mod=2026-09-10T11:53:29.421Z
+  TRASH 'protocols' [1SdfHqBKP7xR--Y22yz3EwpETuzKM2heY] mod=2026-09-10T11:53:28.088Z
+  TRASH 'backups' [1Sev3xHv2zW5ZdmuoWZegbszJDQ6lVb6v] mod=2026-09-10T11:53:26.820Z
+  TRASH 'projects' [1ESk1LNSlU2xhboUGiKR4O7oIdPU7C17o] mod=2026-09-10T11:53:25.503Z
+  TRASH 'data_GEC-UPJV' [1j2cYHSlQbrU1_D3mNbD3L5XNAqmUVGtt] mod=2026-09-10T11:53:24.107Z
+  TRASH 'Devis_DF7393_GEC NA (NA)_MEDIPLAN_Virginie Lambertyn_2026-09-10.pdf' [1ck5CS4NuAEsLdrzD03oEz6cw2CGnV9Jc] mod=2026-09-10T07:45:36.907Z
+  TRASH 'Devis_22642809_GEC NA (NA)_THERMO ELECTRON SAS_Virginie Lambertyn_2026-09-10.pdf' [1Je2W8WXgVxPWq77VXGsudBwyzXjirL51] mod=2026-09-10T07:39:40.677Z
+  TRASH 'GEC-UPJV_administration' [1z5_v5vhdrT0NRK3unMzlrGQxbW75mFlp] mod=2026-09-09T23:59:13.510Z
+  TRASH 'Budget_labo' [1hnNqSFwjOpbCckqkxOBAxn7Xu9UnR_Lm] mod=2026-09-09T23:57:24.954Z
+  TRASH 'backups' [1sIzwZchnKnYRF060QECjXFl_8SEfs1yj] mod=2026-09-09T23:57:23.888Z
+  TRASH 'GEC-UPJV_administration_255238_save_2026-09-09.html' [1mObvjEAJqQM2m3THweXHJbsnMC3BVoMH] mod=2026-09-09T23:57:01.993Z
+  TRASH 'publications' [1yfIhxezUsiBJcfUMEq-qJ3HRYmnyagYH] mod=2026-09-09T21:52:45.621Z
+  TRASH 'storage' [1YaJ9FpkH3pilidj0CINSKfyHFB6DJ8lE] mod=2026-09-09T21:52:44.747Z
+  TRASH 'protocols' [1BFbVGl5LgSBwDVuehaupPXsvvNi9YPXe] mod=2026-09-09T21:52:43.772Z
+  TRASH 'Devis_2_GEC NA (NA)_HAVAS_service_2026-05-04_HAVAS PATRICIA DU 25 AU 27 MAI.png' [13NrzhZb6GIltw8yRFQpH9zTdddffrqRd] mod=2026-09-09T21:51:38.671Z
+  TRASH 'Devis' [1VR8cbXM1W0BSw_vGthZUacVEWJFEAnxA] mod=2026-09-09T21:51:23.059Z
+  TRASH '2026' [1KaiP8s5eioiTO9IcL285ImxAemQpyd6P] mod=2026-09-09T21:51:21.762Z
+  TRASH 'Budget_labo' [1AVu9nFO9NVk1Zfvnr6PMGPGU2Y7wjA57] mod=2026-09-09T21:51:18.128Z
+  TRASH 'SF_500014448_Valcelmat (FED25001)_HAVAS_Fatme Awada_2026-05-06_HAVAS FATIMA DU 28-06 AU 03-07.png' [1vqt63gz71BxVgGwA5OP8XB3Z8mHkx5XS] mod=2026-09-09T21:51:16.577Z
+  TRASH 'SF_500026741_GEC NA (NA)_UGAP_Guillaume Guillard_2026-06-24_Dpx (p-xylene-bis-pyridinium).png' [1MSZGYBW664uYMGhw8Esv-08GOqkYAv06] mod=2026-09-09T21:50:58.226Z
+  TRASH 'BC_4500335135_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-07-01_PRODUITS ISA.png' [1PmfSPAiVoROkwdpnMc9OJrerRkOnDc0Z] mod=2026-09-09T20:32:25.965Z
+  TRASH 'Devis_303759304_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-07-01_PRODUITS ISA.png' [1DZViuzzEtwwqW1bt-t8Z_iQpSAOJ2rEL] mod=2026-09-09T20:32:25.276Z
+  TRASH 'BC_4500333624_Valcelmat (FED25001)_SOCOLDIS_service_2026-06-08_BOBINE ESSUI-TOUT.png' [1WqWG9Pi7fXKF-rb_xItshvOrNxvtETNP] mod=2026-09-09T20:32:20.190Z
+  TRASH 'Devis_113028625_Valcelmat (FED25001)_SOCOLDIS_service_2026-06-04_BOBINE ESSUI-TOUT.png' [1KIpeVVDtntOLVqYyaymLEi0pBoZxFP1E] mod=2026-09-09T20:32:19.083Z
+  TRASH 'BC_4500331710_Valcelmat (FED25001)_MOULIN DES ECREVISSES_Isabelle Gosselin_2026-05-04_PLATEAUX REPAS.png' [1R0KE9hQH-9QoWaGQvTPD-etT1820bsuS] mod=2026-09-09T20:32:16.381Z
+  TRASH 'Devis_2026-000530_Valcelmat (FED25001)_MOULIN DES ECREVISSES_Isabelle Gosselin_2026-04-30_PLATEAUX REPAS.png' [1qMEKmjNhpKKImgtv8td_Ss33SW2yNRB0] mod=2026-09-09T20:32:13.519Z
+  TRASH 'BC_4500331967_Valcelmat (FED25001)_DSMZ_Isabelle Gosselin_2026-05-06_BACTERIES DSMZ.png' [1sFQUUZtbQF0IW3wRdBagBf-om5TaA_8x] mod=2026-09-09T20:32:10.182Z
+  TRASH 'Devis_3_Valcelmat (FED25001)_DSMZ_Isabelle Gosselin_2026-04-07_BACTERIES DSMZ.png' [1-EdRderkLqmU4I-Dj4FrS6IEOAhr6dWV] mod=2026-09-09T20:32:09.639Z
+  TRASH 'BL_144271_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-04-22_CONSOMMABLES.png' [1YDfPBM5Y_EFSyrZTo7LtLGc_CWpbTmde] mod=2026-09-09T20:32:03.511Z
+  TRASH 'BL_5961413-1_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-04-20_CONSOMMABLES.png' [1KB9MOCAGDA8OghncJ5I-owMNAUgOQpFC] mod=2026-09-09T20:32:00.331Z
+  TRASH 'BL_3175446942_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-04-14_CONSOMMABLES.png' [1nH3Vql61OkPRacWyrzyH22_YJ0R8sQmz] mod=2026-09-09T20:32:00.094Z
+  TRASH 'BL_5961410-1_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-04-14_CONSOMMABLES.png' [1hBObsT3jyUYwLDRfsAX1ct_BmopWs0F0] mod=2026-09-09T20:31:55.742Z
+  TRASH 'BC_4500330033_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-04-02_CONSOMMABLES.png' [1AWfOIDLMenHOJXsmlxepYMAWBNjhoiMi] mod=2026-09-09T20:31:52.990Z
+  TRASH 'BL_467480771_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-05-11_CONSOMMABLES.png' [1M76LSDQ5SVgXxhlJ6iX3srkUbIov2H5k] mod=2026-09-09T20:31:45.249Z
+  TRASH 'BL_5977217-1_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-05-07_CONSOMMABLES.png' [1PTqw_klKjZr3DhHLot95AKSr-_zhUJtg] mod=2026-09-09T20:31:42.756Z
+  TRASH 'BL_8100470827_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-05-11_CONSOMMABLES.png' [1LOQIV7spwYhYZ3GJ6w3EdkzwOe684UNd] mod=2026-09-09T20:31:39.377Z
+  TRASH 'BL_35024372_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-05-07_CONSOMMABLES.png' [1Ibk0-CdkiYSIcWJDd7fyhJFG6DkoWpwa] mod=2026-09-09T20:31:32.798Z
+  TRASH 'BL_35024372_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-05-07_CONSOMMABLES.png' [19a0VRY2Z-FY6t3XKRzsDs4h5sArpKUNj] mod=2026-09-09T20:31:31.738Z
+  TRASH 'BL_5977216-1_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-05-05_CONSOMMABLES.png' [1Kq4mqfu1a0P6R-EuYgMyJdfeONwC_58T] mod=2026-09-09T20:31:30.148Z
+  TRASH 'BL_4086525338_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-05-05_CONSOMMABLES.png' [19nM8iIsJ7Dn_yjcQjgJjOHabEleoFtu-] mod=2026-09-09T20:31:25.103Z
+  TRASH 'BL_LV26S0110834_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-05-05_CONSOMMABLES.png' [1j5N5KX_fVYO7Cwx6aFZQwej0CrgfYXay] mod=2026-09-09T20:31:24.900Z
+  TRASH 'BL_4086522986_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-05-04_CONSOMMABLES.png' [1i_v_DzTqqEhNZBU4nGBfRa4dz9JHgUt2] mod=2026-09-09T20:31:17.756Z
+  TRASH 'BC_4500331288_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-04-23_CONSOMMABLES.png' [1WiKKOrMrIbMRRl0ozY6PAEIyUaYOkAXY] mod=2026-09-09T20:31:17.553Z
+  TRASH 'BL_5952598-2_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-06-26_CONSOMMABLES.png' [1l4RORfLJCMNmTXb6pW-t5wdIwYsV9VGb] mod=2026-09-09T20:31:14.208Z
+  TRASH 'BL_5952599-3_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-04-14_CONSOMMABLES.png' [1MW87Kc-m5AxcL8nvYQIMQlgdQyOp3ELg] mod=2026-09-09T20:31:08.949Z
+  TRASH 'BL_5952599-2_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-04-14_CONSOMMABLES.png' [1G68pqO7V227isrcFNNgfBA62mR73_Hz5] mod=2026-09-09T20:31:08.191Z
+  TRASH 'BL_159563-000_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-04-08_CONSOMMABLES.png' [16SBRiLkvFLxYZ1j6cMYza7BCdxe6IRWZ] mod=2026-09-09T20:31:00.712Z
+  TRASH 'BL_LV26S0107881_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-04-02_CONSOMMABLES.png' [18cGyAHUY-p9tpy9HnaFdUwQjvQRhLh9K] mod=2026-09-09T20:30:59.713Z
+  TRASH 'BL_603420_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-03-31_CONSOMMABLES.png' [1SmwnxvsWG4qeUEiZgwo7lKSy_uK7Y1Hc] mod=2026-09-09T20:30:58.407Z
+  TRASH 'SF_467215328_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-03-31_CONSOMMABLES.png' [1WQ52PNU9sVu1wtrKYRCOyQ8aXJyfrHj_] mod=2026-09-09T20:30:46.931Z
+  TRASH 'BL_77619_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-03-26_CONSOMMABLES.png' [1RBFFEEbxJPaTwxSURvpr3DqWknGEezds] mod=2026-09-09T20:30:43.748Z
+  TRASH 'BL_4086468950_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-03-26_CONSOMMABLES.png' [1ZFb25pI3X50njGD9pndLkTbfTmjHGTgU] mod=2026-09-09T20:30:41.547Z
+  TRASH 'BL_4086468951_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-03-26_CONSOMMABLES.png' [1v6_muTS2drVzYI_g0yNSMNKftiHbyBdS] mod=2026-09-09T20:30:39.002Z
+  TRASH 'BL_0030058890_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-03-26_CONSOMMABLES.png' [1zYFc_q711lJ6p5x5vSGNh8Ttn1Z8BI87] mod=2026-09-09T20:30:36.693Z
+  TRASH 'BL_5952601-1_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-03-26_CONSOMMABLES.png' [1-Y-NWg7Incm7I5Hkj2UTAPpH--Qur5Dn] mod=2026-09-09T20:30:34.784Z
+  TRASH 'BL_5952600-1_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-03-26_CONSOMMABLES.png' [12SWDUj2NeSte2HLYnI13cIaf_1WU0uZz] mod=2026-09-09T20:30:30.428Z
+  TRASH 'BC_4500328931_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-03-23_CONSOMMABLES.png' [1GDSutzrtpARQux9HlCB_kA-6dDnUDt-o] mod=2026-09-09T20:30:27.826Z
+  TRASH 'Devis_303581535_Valcelmat (FED25001)_UGAP_Isabelle Gosselin_2026-03-09_CONSOMMABLES.png' [1SR27lsVu2a5gz7gYfFtxkxXBTz2C7mMP] mod=2026-09-09T20:30:23.059Z
+  TRASH 'BC_4500328577_Valcelmat (FED25001)_SOCOLDIS_Isabelle Gosselin_2026-03-16_DETERGENTS.png' [1Z0cnNWefgqRGv4BzAOxn5_2kCt8_A4Hf] mod=2026-09-09T20:30:21.013Z
+  TRASH 'Devis_100345_Valcelmat (FED25001)_SOCOLDIS_Isabelle Gosselin_2026-03-09_DETERGENTS.png' [19BWHxYBQeayA6RNp1B7izUqxrqwiADK8] mod=2026-09-09T20:30:19.400Z
+  TRASH 'BC_4500313469_Valcelmat (FED25001)_AUDIT ET CONSEIL STC_Isabelle Gosselin_2026-02-16_AUDIT VALCELMAT.png' [1_PK0Aja_tLnXm7JXdQuBF1_y-xZb5Lt4] mod=2026-09-09T20:30:13.434Z
+  TRASH 'BC_4500335449_S2R06GEC_CARLO-ERBA_Isabelle Gosselin_2026-07-15_Armpire séchante.png' [1aLmjLHX7dK7EhUC8ar475kEYipfUwWuF] mod=2026-09-09T20:30:12.897Z
+  TRASH 'Devis_20260617001_S2R06GEC_CARLO-ERBA_Isabelle Gosselin_2026-07-15_Armpire séchante.png' [1cWyAW7f6d1K2hRf0s-zrXmFl-gr6r0F-] mod=2026-09-09T20:30:06.769Z
+  TRASH 'BL_IF337156_S2R01GEC (INTRUDE)_FLUORCHEM_service_2026-05-28_materiel plateforme peptide UTC.png' [1DiusDcLeYlocJoUw3sQL1xflbEp3kk_e] mod=2026-09-09T20:30:06.533Z
+  TRASH 'BC_4500332460_S2R01GEC (INTRUDE)_FLUORCHEM_service_2026-05-19_materiel plateforme peptide UTC.png' [19EiQvyULhbqZzTZhYrekUl6mSqDlM4Pu] mod=2026-09-09T20:30:06.078Z
+  TRASH 'BL_467263463_S2R01GEC (INTRUDE)_UGAP_Francisco Ramos_2026-04-02_produits pour Pacho.png' [1jYmIobAHIt8097hGxIMAe_Tyx9k_2rDt] mod=2026-09-09T20:29:58.358Z
+  TRASH 'BC_4500329400_S2R01GEC (INTRUDE)_UGAP_Francisco Ramos_2026-03-25_produits pour Pacho.png' [1Z7jSv26kcXCAvhS_j15_lcWBtOBFgVuo] mod=2026-09-09T20:29:57.236Z
+  TRASH 'Devis_303606708_S2R01GEC (INTRUDE)_UGAP_Francisco Ramos_2026-03-20_produits pour Pacho.png' [1yWxpeUXLW-jD5yj47l7bC0YeLljmGAPR] mod=2026-09-09T20:29:54.818Z
+  TRASH 'BC_4500335513_Molimat3D (ICAM2301)_MERCK SIGMA_Asmina Chanfiou_2026-07-16_PHOSPHATE.png' [1oyLu7uZFofpSECctDkyEgq9tPLtEMw7k] mod=2026-09-09T20:29:50.873Z
+  TRASH 'Devis_8206963906_Molimat3D (ICAM2301)_MERCK SIGMA_Asmina Chanfiou_2026-07-15_PHOSPHATE.png' [1vadYlKJEeCwsXULaH5NXrIYugpOKDxeC] mod=2026-09-09T20:29:50.394Z
+  TRASH 'BC_4500335111_Molimat3D (ICAM2301)_UGAP_Eric Husson_2026-07-07_PRODUITS ERIC.png' [1cJ687pAO21umWBEIQXemq6zkLrFavGJP] mod=2026-09-09T20:29:46.860Z
+  TRASH 'Devis_303757924_Molimat3D (ICAM2301)_UGAP_Eric Husson_2026-07-01_PRODUITS ERIC.png' [1vs_-Zdg7dMKjYx8gsrb8iLVz3Dnby1yp] mod=2026-09-09T20:29:43.118Z
+  TRASH 'BC_4500334677_Molimat3D (ICAM2301)_MERCK SIGMA_Eric Husson_2026-06-25_PRODUITS ERIC.png' [1oIx_qTvxu1dtPBCE1YnjEycNKldGArOx] mod=2026-09-09T20:29:41.391Z
+  TRASH 'Devis_8206956747_Molimat3D (ICAM2301)_MERCK SIGMA_Eric Husson_2026-06-25_PRODUITS ERIC.png' [1Ydgj7Gf2zUYkblLyTr2mcfQPbCP9cOvn] mod=2026-09-09T20:29:40.066Z
+  TRASH 'BC_4500332839_Molimat3D (ICAM2301)_MERCK SIGMA_Eric Husson_2026-05-27_PRODUITS ERIC.png' [1sBS54zR6gX4qB68QoBX1qzPhgIv2bQ5B] mod=2026-09-09T20:29:35.856Z
+  TRASH 'BC_4500332662_Molimat3D (ICAM2301)_CARLO-ERBA_Eric Husson_2026-05-26_ACIDES.png' [1DKBoHftQgxU-p25LUYkT7Btk8TDdT5Ib] mod=2026-09-09T20:29:31.062Z
+  TRASH 'Devis_9001085443_Molimat3D (ICAM2301)_CARLO-ERBA_Eric Husson_2026-05-20_ACIDES.png' [1mLjXt27ZaNeJwY--WKQzydsA_CIaBhQL] mod=2026-09-09T20:29:30.786Z
+  TRASH 'BC_4500332521_Molimat3D (ICAM2301)_FISHER SCIENTIFIC_Eric Husson_2026-05-21_ACIDES.png' [1MNL5dFjaWl-SrDlGzlqjmDzwWV2fdTPK] mod=2026-09-09T20:29:26.470Z
+  TRASH 'Devis_2217984935-00_Molimat3D (ICAM2301)_FISHER SCIENTIFIC_Eric Husson_2026-05-20_ACIDES.png' [1jo-u3AFZrLaJoR14GMGLg5fVIn-RuCge] mod=2026-09-09T20:29:24.774Z
+  TRASH 'BC_4500329408_Molimat3D (ICAM2301)_AUTRE_Eric Husson_2026-03-25_Gratification Sanae.png' [1UfPxUP6FvgmeXrukCPpbCsDRLQ_ymKFR] mod=2026-09-09T20:29:19.839Z
+  TRASH 'Devis_gratification-stagiaire-1_Molimat3D (ICAM2301)_AUTRE_Eric Husson_2026-03-25_Gratification Sanae.png' [1GPF0JICiyeOGh-eWAIeSpt9cwJdTCOUS] mod=2026-09-09T20:29:19.756Z
+  TRASH 'BC_4500329200_Molimat3D (ICAM2301)_UGAP_Eric Husson_2026-03-23_Produits pour Eric UGAP.png' [1vBTc0yzRC2c6FRcbDN4e3bFXv6_ACo-U] mod=2026-09-09T20:29:12.153Z
+  TRASH 'Devis_303608094_Molimat3D (ICAM2301)_UGAP_Eric Husson_2026-03-23_Produits pour Eric UGAP.png' [1gZKBpsEA7XY0hsFbB90aWRbMba-gRUV9] mod=2026-09-09T20:29:11.962Z
+  TRASH 'BC_4500329082_Molimat3D (ICAM2301)_ABLIANCE_Eric Husson_2026-03-23_CONSOMMABLES.png' [1dWhgIl81MTA57Zit_JNtEBmffYP0Hnl_] mod=2026-09-09T20:29:08.102Z
+  TRASH 'Devis_26092v00_Molimat3D (ICAM2301)_ABLIANCE_Eric Husson_2026-03-17_CONSOMMABLES.png' [1HATJEGiucVfwkLYDkkSReQ-LAHf0sTEh] mod=2026-09-09T20:29:05.099Z
+  TRASH 'BL_9104538010_GEC NA (NA)_CARLO-ERBA_Guillaume Guillard_2026-07-07_Pyranine.png' [1sxj-22yOB9Iv1tGjF4zNJ2Spur3kKdUV] mod=2026-09-09T20:29:04.795Z
+  TRASH 'BC_4500334247_GEC NA (NA)_CARLO-ERBA_Guillaume Guillard_2026-06-18_Pyranine.png' [1gFdGdLVq5Cpby3Lvo6EHaWiRAGIQYWup] mod=2026-09-09T20:29:00.653Z
+  TRASH 'Devis_9001085997_GEC NA (NA)_CARLO-ERBA_Guillaume Guillard_2026-06-17_Pyranine.png' [10JcDDE8F3xAFe3qXrrJjOZI8FT_J0tKv] mod=2026-09-09T20:28:58.337Z
+  TRASH 'Devis_0011-0002558023_GEC NA (NA)_LYRECO_service_2026-06-15_Fournitures de bureau (commande groupée).png' [19zT1FJEwOdCo_8cbxyssAUko7Ul-oIfk] mod=2026-09-09T20:28:57.767Z
+  TRASH 'BC_4500333099_GEC NA (NA)_UGAP_Nicola D'Amelio_2026-05-29_Ventilateur et micro onde.png' [1-VFkPG3sIkJREXBvq_ifHeV0BYYSQMzG] mod=2026-09-09T20:28:54.041Z
+  TRASH 'Devis_303704650_GEC NA (NA)_UGAP_Nicola D'Amelio_2026-05-28_Ventilateur et micro onde.png' [1vBc0_I2p28X0Hud7KAsMV76eZtZbL6CA] mod=2026-09-09T20:28:50.353Z
+  TRASH 'BL_4500332354_GEC NA (NA)_MOULIN DES ECREVISSES_service_2026-05-26_Plateaux repas 26 mai.png' [1mCR_kv1cZMxEKhcT8gHtzaEE3UE2QBSZ] mod=2026-09-09T20:28:48.382Z
+  TRASH 'BC_4500332354_GEC NA (NA)_MOULIN DES ECREVISSES_service_2026-05-19_Plateaux repas 26 mai.png' [1SoCqAC6-rCXIVCE7DPdbW8rQM-nH_sJH] mod=2026-09-09T20:28:47.101Z
+  TRASH 'Devis_2026-000570_GEC NA (NA)_MOULIN DES ECREVISSES_service_2026-05-18_Plateaux repas 26 mai.png' [1cxK2_N4UzM9rxksp4a0qbetYTCxZrT90] mod=2026-09-09T20:28:43.763Z
+  TRASH 'BL_7005989103_GEC NA (NA)_UGAP_service_2026-04-27_Recap ancien copieur.png' [1VmBDCmgeBvZX3FCjVfKVGljk3Nvtz0pX] mod=2026-09-09T20:28:41.144Z
+  TRASH 'BC_4500331389_GEC NA (NA)_UGAP_service_2026-04-27_Recap ancien copieur.png' [1z-UEx-Q_6aoj1Ik6Q9AjfkE_t8otrbCj] mod=2026-09-09T20:28:40.180Z
+  TRASH 'BC_4500330029_GEC NA (NA)_Jasco_Francisco Ramos_2026-04-02_CUVE 1cm 3-Q-10.png' [1-ossk-YbKpYBBpGHLlGxrKVXlfbc5Zbv] mod=2026-09-09T20:28:36.793Z
+  TRASH 'BC_4500330028_GEC NA (NA)_Jasco_Francisco Ramos_2026-04-02_cuve 1mm 21-Q-1.png' [1g2nmLjEYwo0IWEhx_u-eYtsQlX5_xfef] mod=2026-09-09T20:28:34.202Z
+  TRASH 'BC_4500330784_GEC NA (NA)_AUTRE_Asmina Chanfiou_2026-04-15_Insciption congrès.png' [12MpqSoJa-5rze80pui5utyNCn9jwXS5T] mod=2026-09-09T20:28:30.684Z
+  TRASH 'BC_4500331383_GEC NA (NA)_HAVAS_Asmina Chanfiou_2026-04-27_Réservation hôtel.png' [1m_9IEeSNU129eX8WiBtfARb9unrKnagR] mod=2026-09-09T20:28:27.448Z
+  TRASH 'BL_4500331755_GEC NA (NA)_HAVAS_service_2026-05-04_HAVAS PATRICIA DU 25 AU 27 MAI.png' [1duyndVzoy30pnxC9VcDCdwuEc2CArgiC] mod=2026-09-09T20:28:25.370Z
+  TRASH 'BC_4500331755_GEC NA (NA)_HAVAS_service_2026-05-04_HAVAS PATRICIA DU 25 AU 27 MAI.png' [1o4fONJlO5JcSE-nqWLVlx085yxerB9p3] mod=2026-09-09T20:28:22.045Z
+  TRASH 'Devis_2_GEC NA (NA)_HAVAS_service_2026-05-04_HAVAS PATRICIA DU 25 AU 27 MAI.png' [19RKs3jfaX8ZnjgJdXP4uDjlm9cX7-7qC] mod=2026-09-09T20:28:18.482Z
+  TRASH 'BL_4500331915_Valcelmat (FED25001)_HAVAS_Fatme Awada_2026-05-06_HAVAS FATIMA DU 28-06 AU 03-07.png' [1uGJcchOX8zdn6mJQguVWAUvUV0aNF0se] mod=2026-09-09T20:28:18.446Z
+  TRASH 'BC_4500331915_Valcelmat (FED25001)_HAVAS_Fatme Awada_2026-05-06_HAVAS FATIMA DU 28-06 AU 03-07.png' [1r_0qUVVXPU_23ZstphoyBzIlA6b2a4VT] mod=2026-09-09T20:28:14.610Z
+  TRASH 'Devis_DEVIS-I-26-05-9-UPJV_SVT_Le Quai_service_2026-05-12_Repas 26 mai diner.png' [1Q0JCaXxeMPvpnMdvd0EhpizaTKdLrjb9] mod=2026-09-09T20:28:11.454Z
+  TRASH 'BC_4500336089_GEC NA (NA)_Université Lyon_Guillaume Guillard_2026-08-31_Inscrption congrès GEM.png' [19oae-pAZytAuaH_aeUfTy9rR4jJUIYa9] mod=2026-09-09T20:28:11.267Z
+  TRASH 'Devis_N°454_GEC NA (NA)_Université Lyon_Guillaume Guillard_2026-08-28_Inscrption congrès GEM.png' [1ckb72IrbKlyBNc9IWmZJht8uAzHz5_Ic] mod=2026-09-09T20:28:06.234Z
