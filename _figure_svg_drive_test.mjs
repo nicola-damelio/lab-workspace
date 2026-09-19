@@ -470,63 +470,123 @@ checkTrue('[appelants] et la sauvegarde rattrape un nom qui n’a pas suivi',
 checkTrue('[appelants] …les quatre gestes DIsent ce qui est arrivé au fichier',
   PROJ.includes('📁 On Drive, “') && IB.includes('📁 On Drive, “') && FIG.includes('renameFigureOnDrive({'));
 
-/* ── 11. RE-CAPTURER LE MÊME GRAPHE MET À JOUR SON ENTRÉE (une seule) ─────────
-   « la vignette de la bibliothèque ne correspond pas à l'image qu'on insère : on
-   croit prendre l'un et c'est l'autre ».
+/* ── 11. DEUX CAPTURES DU MÊME GRAPHE = DEUX FIGURES SI L'IMAGE CHANGE ───────
+   « Image overwrite and preview thumbnail mismatch in the Image Library ».
 
-   Une capture porte son identité dans le NOM de son fichier (une figure = un
-   fichier) : deux captures du MÊME graphe — l'axe X passé de DAPI à l'annexine —
-   écrivent donc LE MÊME fichier. Mais le bouton AJOUTAIT une entrée à chaque
-   fois : la première gardait sa vignette d'hier (le graphe DAPI) en pointant sur
-   un fichier qui portait désormais l'autre graphe, tandis que l'insertion, elle,
-   lit les pixels du FICHIER. La vignette montrait un graphe, on en insérait un
-   autre.
+   Le graphe d'un test est le MÊME conteneur quand on passe l'axe X de DAPI à
+   l'annexine : même origine (expérience + instance + « 2D Scatter · Canvas · 1 »),
+   donc — avant cette correction — LE MÊME nom de fichier cloud et LA MÊME entrée
+   de bibliothèque. La seconde capture écrasait la première (le fichier « DAPI »
+   portait désormais l'annexin) et l'entrée, elle, gardait sa vignette d'hier :
+   « la vignette montre le graphe DAPI alors que le fichier en porte un autre ».
 
-   La correction : l'identité RETROUVE l'entrée qui possède déjà ce fichier
-   (`findLibraryEntryByIdentity`) et la capture MET À JOUR cette entrée-là
-   (`updateId`). Vérifié ici sur le VRAI chemin (publishLibraryFigure + le faux
-   Drive) : une seule entrée, les pixels d'aujourd'hui, le MÊME fichier. */
+   L'identité porte désormais l'empreinte du CONTENU (`figureContentTag`, posée
+   par le 📷) : une autre image est une AUTRE figure — un fichier de plus, une
+   entrée de plus, SA vignette — tandis que re-capturer la MÊME image garde son
+   identité et met à jour l'entrée existante au lieu de la dupliquer.
+
+   Vérifié ici sur le VRAI chemin (publishLibraryFigure + le faux Drive). */
 const AXIS_XML = XML.replace('1D Histogram (Data Analysis)', '1D Histogram annexin (Data Analysis)');
 const AXIS_URL = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(AXIS_XML);
 checkTrue('[re-capture] le second graphe est bien un autre contenu', AXIS_URL !== SVG_URL);
-const CHART_3 = { testId: 'T7', testName: 'flow_cyt', instanceName: 'run9', elementKey: `${NAME_LABEL} · Chart · 7` };
-const ident3 = LIB_MOD.figureFileIdentity({ src: CHART_3 });
-check('[re-capture] l’identité du graphe est celle qui nomme son fichier',
-  ident3, `T7|run9|${CHART_3.elementKey}`);
+
+/* 11a. l'empreinte du contenu : stable pour une image, autre pour une autre. */
+check('[contenu] la même image donne la même empreinte',
+  LIB_MOD.figureContentTag(SVG_URL), LIB_MOD.figureContentTag(SVG_URL));
+checkTrue('[contenu] une AUTRE image donne une autre empreinte',
+  LIB_MOD.figureContentTag(SVG_URL) !== LIB_MOD.figureContentTag(AXIS_URL));
+check('[contenu] rien à lire → aucune empreinte (identité inchangée)', LIB_MOD.figureContentTag(''), '');
+check('[contenu] …et hors d’une chaîne aussi', LIB_MOD.figureContentTag(null), '');
+checkTrue('[contenu] elle est courte (elle entre dans un nom de fichier)',
+  LIB_MOD.figureContentTag(SVG_URL).length <= 7);
+
+const CHART_3 = { testId: 'T7', testName: 'flow_cyt', instanceName: 'run9', elementKey: `${NAME_LABEL} · Canvas · 1` };
+const DAPI_SRC = { ...CHART_3, contentTag: LIB_MOD.figureContentTag(SVG_URL) };
+const ANNEXIN_SRC = { ...CHART_3, contentTag: LIB_MOD.figureContentTag(AXIS_URL) };
+const ident3 = LIB_MOD.figureFileIdentity({ src: DAPI_SRC });
+check('[re-capture] l’identité du graphe = son origine + son IMAGE',
+  ident3, `T7|run9|${CHART_3.elementKey}|${DAPI_SRC.contentTag}`);
+checkTrue('[re-capture] une autre image du MÊME graphe n’a pas la même identité',
+  LIB_MOD.figureFileIdentity({ src: ANNEXIN_SRC }) !== ident3);
+check('[re-capture] sans empreinte (entrée d’hier), l’identité reste celle d’avant',
+  LIB_MOD.figureFileIdentity({ src: CHART_3 }), `T7|run9|${CHART_3.elementKey}`);
+
 const capA = await LIB_MOD.publishLibraryFigure({
   scope: 'project', projectId: 'P1', projectName: 'CD project',
-  dataUrl: SVG_URL, label: NAME_LABEL, src: CHART_3
+  dataUrl: SVG_URL, label: NAME_LABEL, src: DAPI_SRC
 });
 const found3 = LIB_MOD.findLibraryEntryByIdentity({ scope: 'project', projectId: 'P1', identity: ident3 });
 check('[re-capture] la capture suivante retrouve SON entrée', found3 && found3.id, capA.entry.id);
 checkTrue('[re-capture] …celle du premier graphe, avec ses pixels d’hier',
   String(found3 && found3.url) === SVG_URL && found3 && found3.drive === true);
 check('[re-capture] un graphe jamais capturé ne correspond à rien',
-  LIB_MOD.findLibraryEntryByIdentity({ scope: 'project', projectId: 'P1', identity: 'T9|run9|jamais · Chart · 1' }), null);
+  LIB_MOD.findLibraryEntryByIdentity({ scope: 'project', projectId: 'P1', identity: 'T9|run9|jamais · Canvas · 1' }), null);
 check('[re-capture] sans identité, rien ne correspond (nom inchangé → entrée neuve)',
   LIB_MOD.findLibraryEntryByIdentity({ scope: 'project', projectId: 'P1', identity: '' }), null);
 check('[re-capture] la portée compte : le fichier d’un canvas vit dans SON dossier',
   LIB_MOD.findLibraryEntryByIdentity({ scope: 'common', identity: ident3 }), null);
-// 2e capture du MÊME graphe, axe X changé : c'est ce que fait le 📷.
+/* 11b. l'AXE X CHANGE : c'est une autre image, donc une autre figure — rien
+        n'est écrasé, et la vignette de chacune est la sienne. */
+const identB = LIB_MOD.figureFileIdentity({ src: ANNEXIN_SRC });
+const foundB = LIB_MOD.findLibraryEntryByIdentity({ scope: 'project', projectId: 'P1', identity: identB });
+check('[overwrite] l’autre image ne retrouve PAS l’entrée du premier graphe', foundB, null);
 const capB = await LIB_MOD.publishLibraryFigure({
   scope: 'project', projectId: 'P1', projectName: 'CD project',
-  dataUrl: AXIS_URL, label: NAME_LABEL, src: CHART_3,
-  identity: ident3, updateId: found3 ? found3.id : null
+  dataUrl: AXIS_URL, label: NAME_LABEL, src: ANNEXIN_SRC,
+  updateId: foundB ? foundB.id : null
 });
-check('[re-capture] la seconde capture MET À JOUR la même entrée', capB.entry.id, capA.entry.id);
-check('[re-capture] …elle n’en ajoute pas une seconde',
-  LIB_MOD.readProjectLibrary('P1').filter((i) => LIB_MOD.figureFileIdentity(i) === ident3).length, 1);
-check('[re-capture] …et le fichier cloud reste le MÊME (aucune copie)',
-  capB.drive.id, capA.drive.id);
-checkTrue('[re-capture] …la vignette suit le NOUVEAU graphe (vignette = image insérée)',
-  String(capB.entry.url || '').includes('annexin') && !String(capB.entry.url || '').includes('<title>1D Histogram (Data Analysis)'));
-check('[re-capture] …et l’entrée pointe toujours sur ses pixels à jour',
-  String(LIB_MOD.readProjectLibrary('P1').find((i) => i.id === capA.entry.id).url).includes('annexin'), true);
+checkTrue('[overwrite] la seconde capture est une entrée DE PLUS', capB.entry.id !== capA.entry.id);
+checkTrue('[overwrite] …et un FICHIER de plus : la première n’est plus écrasée',
+  capB.drive.id !== capA.drive.id);
+checkTrue('[overwrite] …sous un autre nom (l’empreinte de l’image est dedans)',
+  String(capB.drive.name) !== String(capA.drive.name));
+checkTrue('[overwrite] la vignette de la NOUVELLE figure est bien l’annexin',
+  String(capB.entry.url || '').includes('annexin'));
+const dapiAfter = LIB_MOD.readProjectLibrary('P1').find((i) => i.id === capA.entry.id);
+checkTrue('[overwrite] la PREMIÈRE figure est intacte (mêmes pixels, même fichier)',
+  !!dapiAfter && String(dapiAfter.url) === SVG_URL && dapiAfter.drive === true);
+check('[overwrite] les deux captures du même conteneur cohabitent',
+  LIB_MOD.readProjectLibrary('P1').filter((i) => i.src && String(i.src.elementKey) === CHART_3.elementKey).length, 2);
 
-/* Le BRANCHEMENT : c'est le 📷 qui doit faire cette mise à jour (sinon le même
+/* 11c. …mais re-capturer la MÊME image réécrit SON entrée (aucune copie). */
+const capA2 = await LIB_MOD.publishLibraryFigure({
+  scope: 'project', projectId: 'P1', projectName: 'CD project',
+  dataUrl: SVG_URL, label: NAME_LABEL, src: DAPI_SRC, updateId: capA.entry.id
+});
+check('[re-capture] même image re-capturée → la même entrée', capA2.entry.id, capA.entry.id);
+check('[re-capture] …le même fichier cloud (aucune copie)', capA2.drive.id, capA.drive.id);
+check('[re-capture] …et toujours DEUX entrées, pas trois',
+  LIB_MOD.readProjectLibrary('P1').filter((i) => i.src && String(i.src.elementKey) === CHART_3.elementKey).length, 2);
+check('[re-capture] …la liste porte bien les pixels/vignette d’aujourd’hui',
+  String((LIB_MOD.readProjectLibrary('P1').find((i) => i.id === capA.entry.id) || {}).url), SVG_URL);
+
+/* 11d. L'ENTRÉE RETROUVÉE PAR SA COMPOSITION EST VRAIMENT RÉÉCRITE.
+   `updateId` peut être périmé (page rechargée, autre poste) alors que la clé de
+   composition, elle, retrouve l'entrée : le filtre sur `updateId` ne remplaçait
+   alors RIEN dans la liste, tout en annonçant « mise à jour » — les pixels et la
+   vignette d'aujourd'hui n'arrivaient jamais dans la liste (« la vignette ne se
+   met pas à jour »), alors que le fichier cloud, lui, avait bien été réécrit. */
+const rekeyed = await publish(null, { label: 'Canvas 18/09/2026', canvasData: { canvasKey: 'cv_rekey', objects: [] } });
+const patched = await LIB_MOD.publishLibraryFigure({
+  scope: 'project', projectId: 'P1', projectName: 'CD project',
+  dataUrl: AXIS_URL, label: 'Canvas 18/09/2026', canvasData: { canvasKey: 'cv_rekey', objects: [] },
+  updateId: 'lib_inexistant'
+});
+check('[prév. id] l’entrée est retrouvée par sa composition', patched.entry.id, rekeyed.entry.id);
+checkTrue('[prév. id] …et la nouvelle image est bien ÉCRITE dans la liste',
+  patched.updated === true
+  && String((LIB_MOD.readProjectLibrary('P1').find((i) => i.id === rekeyed.entry.id) || {}).url) === AXIS_URL);
+
+/* Le BRANCHEMENT : c'est le 📷 qui pose l'empreinte de l'image (sinon le même
    scénario recommence à chaque capture). */
 checkTrue('[star] la capture calcule l’identité de fichier',
   STAR.includes('const ident = figureFileIdentity({ src });'));
+checkTrue('[star] …en y mettant l’EMPREINTE DE L’IMAGE capturée (sinon l’axe X changé = la même figure)',
+  STAR.includes('contentTag: figureContentTag(url)'));
+checkTrue('[star] …l’aide vient du module de bibliothèque',
+  STAR.includes('figureContentTag') && STAR.includes('getActiveProjectId, publishLibraryFigure, figureFileIdentity, findLibraryEntryByIdentity,'));
+checkTrue('[star] …et le 🔄 Recapture (mise à jour d’une entrée connue) la pose aussi',
+  (STAR.match(/contentTag: figureContentTag\(url\)/g) || []).length === 2);
 checkTrue('[star] …retrouve l’entrée qui possède déjà ce fichier',
   STAR.includes('findLibraryEntryByIdentity({'));
 checkTrue('[star] …et met à jour CETTE entrée (jamais une seconde)',
@@ -537,6 +597,8 @@ checkTrue('[star] findLibraryEntryByIdentity est importé du module de biblioth�
   STAR.includes('figureFileIdentity, findLibraryEntryByIdentity'));
 checkTrue('[star] la barre de statut dit si la figure a été MISE À JOUR ou créée',
   STAR.includes("`📷 Figure ${existing ? 'updated in' : 'saved to'} ${where}${driveMsg}`"));
+checkTrue('[lib] l’identité d’une figure porte l’empreinte du contenu (quand elle l’a)',
+  LIB.includes('return content ? `${base}|${content}` : base;'));
 
 /* Les pixels INSÉRÉS doivent être ceux du fichier d'aujourd'hui : une figure
    réécrite sur place garde son identifiant, donc la MÊME URL, et le navigateur

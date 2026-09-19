@@ -216,6 +216,26 @@ eq(AJ.isNeutralAdjust({ contrast: 0, brightness: 0 }), true, '…et le bouton «
   eq(clamped.saturate, 0, '…la désaturation totale vaut 0');
 }
 
+/* 🔆 L'OPACITÉ DE L'IMAGE (« can you also add the possibility to modulate the
+   transparency of the image itself? ») : le seul contrôle du réglage qui ne soit
+   pas une couleur, donc sa valeur NEUTRE est 100 et non 0 — et il se dessine
+   par une pente sur le canal ALPHA, dans le MÊME <feComponentTransfer>. */
+eq(AJ.ADJUST_OPACITY, { key: 'opacity', label: 'Opacity', min: 0, max: 100, step: 1 },
+  'le contrôle va de 0 à 100 % (l’opacité d’une OMBRE, elle, va de 0,02 à 1 : deux réglages, deux plages)');
+eq(AJ.ADJUST_FIELDS.map((f) => f.key).includes('opacity'), false,
+  '…il n’est pas dans la ligne des COULEURS : il vit sur la ligne de l’image, à côté du détourage');
+eq(AJ.ADJUST_NEUTRAL.opacity, 100, 'la fiche neutre laisse l’image à 100 %');
+eq(AJ.adjustSpec({ opacity: 40 }).alpha, 0.4, 'l’opacité est une pente sur le canal ALPHA (une <feFuncA>)');
+eq(AJ.adjustSpec({ opacity: 40 }).opacity, 40, '…et la valeur d’écran est gardée telle quelle');
+eq(AJ.adjustSpec({ ...AJ.ADJUST_NEUTRAL }), null, 'à 100 % elle ne demande RIEN : aucun filtre n’est dessiné');
+eq(AJ.adjustSpec({ opacity: 999, contrast: 10 }).opacity, 100, '…et une valeur hors bornes est ramenée à 100 %');
+eq(AJ.adjustSpec({ opacity: -5, contrast: 10 }).opacity, 0, '…comme une valeur négative, ramenée à 0 %');
+eq(AJ.adjustRecordOf({ adjust: { opacity: 20 } }), { opacity: 20 }, 'une fiche qui ne porte QUE l’opacité compte comme un réglage');
+eq(AJ.adjustValue({}, 'opacity'), 100, 'un contrôle sans valeur montre la valeur NEUTRE du champ…');
+eq(AJ.adjustValue({}, 'contrast'), 0, '…0 pour les couleurs, 100 pour l’opacité : les curseurs ne mentent pas');
+eq(AJ.adjustValue({ opacity: 35 }, 'opacity'), 35, 'la valeur rangée est relue');
+eq(AJ.stepAdjust({ opacity: 100 }, 'opacity', -1), 99, 'un cran de moins vaut 99 % (le pas du contrôle)');
+
 eq(AJ.adjustFilterId('obj_1', 0), 'fadjust-obj_1-fig0', 'chaque FIGURE a son propre filtre de réglage');
 eq(AJ.adjustFilterId('a b/c', 2), 'fadjust-a_b_c-fig2', 'un identifiant est nettoyé avant de servir de référence');
 eq(AJ.adjustRecordOf({ adjust: { contrast: 10 } }), { contrast: 10 }, 'la fiche rangée sur une figure est relue');
@@ -223,15 +243,17 @@ eq(AJ.adjustRecordOf({ adjust: { ...AJ.ADJUST_NEUTRAL } }), null, 'une fiche neu
 eq(AJ.adjustRecordOf({}), null, 'une figure sans réglage n’en a pas');
 
 /* ══ 4. LE BRANCHEMENT : LES TROIS COLONNES, LES FORMES, LES COMMANDES ═══ */
-/* ── 4a. Les trois colonnes titrées et la fenêtre repliable ─────────────── */
+/* ── 4a. Les trois piles titrées et la fenêtre repliable ────────────────── */
 has(IB, "const [panelOpen, setPanelOpen] = useState(true);", 'la fenêtre de l’objet sait se replier');
 has(IB, "{panelOpen ? '▾' : '▸'} Object window", '…son titre EST le pli (▾ / ▸)');
 has(IB, 'onClick={() => setPanelOpen((v) => !v)}', '…et il se referme en un clic');
-has(IB, "'grid grid-cols-1 md:grid-cols-3 grid-flow-row-dense items-start gap-x-4 gap-y-1.5'",
-  'la fenêtre est une GRILLE DE TROIS COLONNES, remplie en dense');
-has(IB, "{panelTitle('Figures', bar ? 'order-1 md:col-start-1' : '')}", '…colonne FIGURES');
-has(IB, "{panelTitle('Modify image', bar ? 'order-1 md:col-start-2' : '')}", '…colonne MODIFY IMAGE');
-has(IB, "{panelTitle('Objects', bar ? 'order-1 md:col-start-3' : '')}", '…colonne OBJECTS');
+has(IB, "? 'grid grid-cols-1 md:grid-cols-3 items-start gap-x-4 gap-y-2'",
+  'la fenêtre est une GRILLE DE TROIS COLONNES : les trois sections côte à côte');
+has(IB, "const panelColCls = (bar, first = false) => `flex flex-col gap-1.5 min-w-0${bar && !first ? ' md:border-l md:border-slate-200 md:pl-3' : ''}`;",
+  '…et chaque section est SA PROPRE PILE : la liste des figures ne décale plus les commandes de « Modify image » (une ligne de grille est PARTAGÉE entre ses colonnes — c’est ce qui laissait du vide et décalait tout à chaque figure ajoutée)');
+has(IB, "<div className={panelColCls(bar, true)}>", '…colonne FIGURES');
+has(IB, "{panelTitle('Modify image')}", '…colonne MODIFY IMAGE');
+has(IB, "{panelTitle('Panels & objects')}", '…colonne PANELS & OBJECTS (les annotations, les textes ET les commandes du panneau)');
 eq(times(IB, /<div className="basis-full flex flex-wrap items-center gap-x-1\.5 gap-y-1 max-h-\[8rem\] overflow-y-auto custom-scrollbar min-w-0">/g), 2,
   'les deux LISTES (figures et textes) défilent chez elles : une longue liste n’étire pas la ligne partagée');
 
@@ -327,6 +349,21 @@ has(IB, '<feComposite in="adjTint" in2="SourceGraphic" operator="in" result="adj
   '…détouré sur les pixels de la figure');
 eq(times(IB, /<feFuncG type="linear" slope=\{adj\.slope\} intercept=\{adj\.intercept\} \/>/g), 1,
   'un seul jeu de primitives par figure (pas de doublon)');
+/* 🔆 LE BRANCHEMENT DE L'OPACITÉ : le contrôle est sur la ligne de l'IMAGE
+   (détourage + ombre), il écrit dans la MÊME fiche que le reste du réglage, et
+   la primitive n'est dessinée que si elle sert. */
+has(IB, 'ADJUST_FIELDS, ADJUST_OPACITY, adjustValue, adjustSpec',
+  'le builder importe le contrôle d’opacité du module PUR');
+has(IB, "{adj.alpha < 1 ? <feFuncA type=\"linear\" slope={adj.alpha} /> : null}",
+  'la primitive d’opacité n’existe que si elle sert (à 100 %, le SVG reste celui d’avant)');
+has(IB, "value={adjustValue(activeAdjust, f.key)}",
+  'les curseurs lisent la valeur NEUTRE de leur champ quand la figure n’en porte pas');
+has(IB, "onChange={(e) => setFigAdjust({ opacity: Number(e.target.value) })}",
+  'le curseur d’opacité écrit par le MÊME chemin que les couleurs (setFigAdjust)');
+has(IB, "value={adjustValue(activeAdjust, 'opacity')}", '…et il affiche l’opacité de la figure active');
+has(IB, 'Opacity of the ACTIVE figure (figure ${cropPanelIdx + 1}) — the PICTURE, not the panel frame',
+  'son infobulle dit que c’est l’IMAGE, et la distingue du détourage (« 🎨 Transparent background » enlève la couleur de fond, l’opacité efface toute l’image)');
+has(IB, 'opacity back to 100 %', '« ↺ Reset » remet aussi l’opacité à 100 %');
 
 /* ── 4f. La persistance : le canvas sauvé, l'annulation, les remises à zéro ── */
 has(IB, 'if (data.shapes) setShapes((data.shapes || []).map(normalizeShape));', 'les formes reviennent avec le canvas de la session');

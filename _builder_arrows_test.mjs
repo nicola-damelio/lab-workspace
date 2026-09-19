@@ -340,7 +340,13 @@ check('45 the arrow lives in the object window, not in the toolbars', () => {
   eq(times(IB, /↗ Add arrow\{arrows\.length/g), 0);
   eq(times(IB, /🌓 Shadow panels<\/button>/g), 0);
   frag('the arrow is offered by the object window', IB, '↗ Arrow{arrows.length ? ` (${arrows.length})` : \'\'}');
-  frag('…in the OBJECTS column', IB, "{panelTitle('Objects', bar ? 'order-1 md:col-start-3' : '')}");
+  /* LA FLÈCHE EST DANS LA TROISIÈME PILE (colonne PANELS & OBJECTS) : les trois
+     sections sont trois piles indépendantes, donc ce qui suit le titre
+     « Panels & objects » lui appartient — plus de `md:col-start-*` à vérifier. */
+  const objectsStack = IB.indexOf("{panelTitle('Panels & objects')}");
+  assert.ok(objectsStack > 0, 'la colonne OBJECTS est titrée (troisième pile)');
+  assert.ok(IB.indexOf('↗ Arrow{arrows.length') > objectsStack,
+    '…et la flèche est offerte DANS cette pile, pas dans la barre du haut');
   frag('the panel-shadow command is still there (More options)', IB, "panelsShadowed ? 'Remove the shadow from every panel' : 'Same shadow on every panel'");
   frag('the one-click command exists', IB, 'const togglePanelsShadow = () => {');
   frag('…and it writes the default record', IB, 'setObjects(prev => prev.map(o => ({ ...o, shadow: on ? { ...DEFAULT_SHADOW } : null })));');

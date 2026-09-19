@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { isStarred, toggleStarredItem } from '../utils/starredItems';
 import Chart from 'chart.js/auto';
 import {
-  getActiveProjectId, publishLibraryFigure, figureFileIdentity, findLibraryEntryByIdentity
+  getActiveProjectId, publishLibraryFigure, figureFileIdentity, findLibraryEntryByIdentity,
+  figureContentTag
 } from '../utils/figuresLibrary';
 import { clearPendingFigureScroll, peekPendingFigureScroll } from '../utils/pendingFigureScroll';
 import { FigureStyleApplyButton } from './FigureStyleTools';
@@ -541,7 +542,15 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
         instanceName: (test && test.instanceName) || '',
         date: (test && test.date) || '',
         elementLabel: t.label,
-        elementKey: t.key
+        elementKey: t.key,
+        /* L'EMPREINTE DES PIXELS de CETTE capture (voir figureContentTag). Sans
+           elle, deux captures du MÊME conteneur — l'axe X passé de DAPI à
+           l'annexine, même élément, même titre de section — partageaient leur
+           identité : la seconde écrasait le fichier de la première ET son entrée
+           de bibliothèque, qui gardait en plus sa vignette d'hier. Avec elle, une
+           autre image est une AUTRE figure (fichier + entrée + vignette), et une
+           capture du même graphe sans rien changer retrouve SON entrée. */
+        contentTag: figureContentTag(url)
       };
       // The global figure style this figure was RENDERED with + its pixel size:
       // the Image Builder audits them (⚖️ Character sizes) to warn when figures
@@ -553,16 +562,18 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
         src.pxH = Math.round(el.naturalHeight || el.height || r.height || 0);
       } catch { /* ignore */ }
       const projectName = projectNameFor(test);
-      /* Une FIGURE = UN FICHIER : l'identité ci-dessus donne le NOM du fichier
-         cloud de cette capture, donc deux captures du même graphe (le même
-         élément de la même instance) écrivent LE MÊME fichier. La seconde doit
-         donc mettre à jour l'entrée de bibliothèque qui le possède DÉJÀ, et non
-         en ajouter une : l'ancienne garderait sinon sa vignette (le graphe d'il
-         y a cinq minutes) et ses pixels en pointant sur un fichier qui porte
-         désormais l'autre graphe — « la vignette de la bibliothèque ne
-         correspond pas à l'image que j'insère ». Une entrée neuve n'est créée
-         que pour un graphe jamais capturé (et si l'entrée retrouvée a disparu,
-         publishLibraryFigure en refait une : insertIfMissing reste vrai ici). */
+      /* Une FIGURE = UN FICHIER = UNE IMAGE : l'identité ci-dessus (le graphe ET
+         l'empreinte des pixels) donne le NOM du fichier cloud de cette capture.
+         Re-capturer la même image retrouve donc l'entrée de bibliothèque qui la
+         possède DÉJÀ, et la met à jour — l'ancienne garderait sinon sa vignette
+         (le graphe d'il y a cinq minutes) et ses pixels en pointant sur un
+         fichier qui porte désormais l'autre graphe — « la vignette de la
+         bibliothèque ne correspond pas à l'image que j'insère ».
+         Un graphe dont on a CHANGÉ les axes est, lui, une autre image : son
+         identité diffère, donc il ne retrouve rien ici → une entrée NEUVE (et un
+         fichier de plus, jamais l'écrasement de la capture précédente). Si
+         l'entrée retrouvée a disparu, publishLibraryFigure en refait une :
+         insertIfMissing reste vrai ici. */
       const ident = figureFileIdentity({ src });
       const existing = findLibraryEntryByIdentity({
         scope: pid ? 'project' : 'common',
@@ -773,6 +784,10 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
         date: test.date || '',
         elementLabel: item.label,
         elementKey: item.elementKey,
+        // L'empreinte de l'image RE-CAPTURÉE (voir figureContentTag) : l'entrée
+        // reste celle de l'image qu'elle porte, donc un 📷 de ce même graphe la
+        // retrouve (et la met à jour) au lieu d'en ajouter une seconde.
+        contentTag: figureContentTag(url),
         styleTag: figureStyleTag(),
         pxW,
         pxH,

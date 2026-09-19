@@ -1018,16 +1018,21 @@ export const findCanvasEntryByKey = ({ scope = 'common', projectId = null, canva
   } catch { return null; }
 };
 
-/** L'ENTRÉE de bibliothèque qui possède DÉJÀ le fichier cloud d'une figure : son
- *  identité (`figureFileIdentity` : la clé de composition d'un canvas, ou
- *  l'origine d'une capture) est celle qui donne le NOM du fichier envoyé par
- *  publishLibraryFigure. Deux captures du même graphe écrivent donc LE MÊME
- *  fichier : la seconde DOIT mettre à jour cette entrée-là, sinon l'ancienne
- *  garderait sa vignette et ses pixels d'hier en pointant sur un fichier qui
- *  n'est plus elle — c'est exactement le « la vignette de la bibliothèque ne
- *  correspond pas à l'image que j'insère : je crois prendre l'un et j'obtiens
- *  l'autre ». `null` quand rien ne correspond : la figure n'a jamais été
- *  capturée, elle crée alors son entrée comme avant. PUR (lecture seule). */
+/** L'ENTRÉE de bibliothèque qui possède DÉJÀ le fichier cloud de cette FIGURE :
+ *  son identité (`figureFileIdentity` : la clé de composition d'un canvas, ou
+ *  l'origine d'une capture — expérience, instance, graphe ET image capturée) est
+ *  celle qui donne le NOM du fichier envoyé par publishLibraryFigure. Deux
+ *  captures de la MÊME image écrivent donc LE MÊME fichier : la seconde DOIT
+ *  mettre à jour cette entrée-là, sinon l'ancienne garderait sa vignette et ses
+ *  pixels d'hier en pointant sur un fichier qui n'est plus elle — c'est
+ *  exactement le « la vignette de la bibliothèque ne correspond pas à l'image
+ *  que j'insère : je crois prendre l'un et j'obtiens l'autre ».
+ *
+ *  Deux images DIFFÉRENTES du même graphe (l'axe X passé de DAPI à l'annexine)
+ *  n'ont pas la même identité (l'empreinte du contenu en fait partie) : elles ne
+ *  se retrouvent pas ici, et la seconde devient une figure de plus au lieu
+ *  d'écraser la première. `null` quand rien ne correspond : la figure n'a jamais
+ *  été capturée, elle crée alors son entrée comme avant. PUR (lecture seule). */
 export const findLibraryEntryByIdentity = ({ scope = 'common', projectId = null, identity = '' } = {}) => {
   const ident = String(identity || '').trim();
   if (!ident) return null;
@@ -1170,7 +1175,13 @@ export const publishLibraryFigure = async ({ scope = 'common', projectId = null,
     const prev = list.find((i) => i.id === updateId) || prevByKey;
     if (prev) {
       const updated = { ...prev, ...item, id: prev.id, addedAt: prev.addedAt, updatedAt: new Date().toISOString() };
-      const next = list.map((i) => (i.id === updateId ? updated : i));
+      // ⚠ C'est `prev.id` — PAS `updateId` — qui désigne la ligne à réécrire :
+      // quand l'entrée a été retrouvée par sa COMPOSITION (l'id était perdu), le
+      // filtre sur `updateId` ne remplaçait RIEN et la fonction annonçait pourtant
+      // « mise à jour » : les pixels et la vignette d'aujourd'hui n'arrivaient
+      // jamais dans la liste (« la vignette de la bibliothèque ne se met pas à
+      // jour »), alors que le fichier cloud, lui, avait bien été réécrit.
+      const next = list.map((i) => (i.id === prev.id ? updated : i));
       if (scope === 'project') writeProjectLibrary(projectId, next);
       else writeLibrary(next);
       return { entry: updated, drive, driveUrl: humanUrl, driveError, driveQueued, metaName: metaName || null, updated: true, missing: false };
@@ -1199,9 +1210,12 @@ export const publishLibraryFigure = async ({ scope = 'common', projectId = null,
    only ever called from an explicit click in the Image Builder.
    ──────────────────────────────────────────────────────────────────────────── */
 // Two copies are considered the SAME figure when they carry the same label and
-// the same origin stamp (experiment + condition + element), and they were added
-// within this window: a runaway loop writes its copies seconds apart, while a
-// user working on one figure over days/weeks does not.
+// the same origin stamp (experiment + condition + element + IMAGE), and they
+// were added within this window: a runaway loop writes its copies seconds apart,
+// while a user working on one figure over days/weeks does not.
+// ⚠ L'empreinte de l'IMAGE en fait partie : deux captures du même graphe dont on
+// a changé les axes sont deux figures DISTINCTES (une par image, voir
+// figureContentTag), pas les copies d'une boucle — le 🧹 ne doit pas en jeter une.
 const RECAPTURE_DUP_WINDOW_MS = 10 * 60 * 1000;
 // …and they must be at least this many. Two copies are a normal re-do.
 const RECAPTURE_DUP_MIN = 3;
@@ -1210,7 +1224,8 @@ const duplicateKeyOf = (i) => [
   (i && i.label) || '',
   (i && i.src && i.src.testId) || '',
   (i && i.src && i.src.elementKey) || '',
-  (i && i.src && i.src.instanceName) || ''
+  (i && i.src && i.src.instanceName) || '',
+  (i && i.src && i.src.contentTag) || ''
 ].join('|');
 
 const addedMsOf = (i) => {
@@ -1435,6 +1450,18 @@ export const lastFigureUploadError = () => lastFigureDriveError;
    canvas) : une re-capture, un « 💾 Save canvas » répété ou un « ☁ Save to
    Drive » réécrivent bien LEUR fichier au lieu d'en empiler un nouveau.
 
+   ⚠ « LE MÊME GRAPHE » VEUT DIRE LA MÊME IMAGE. Le titre d'une section ne
+   distingue pas deux captures d'un graphique dont on a CHANGE LES AXES : le
+   conteneur de « Cell Count vs DAPI » et celui de « Cell Count vs Annexin »
+   sont le MÊME élément, donc la même origine, donc le même nom de fichier — la
+   seconde capture écrasait la première (et son entrée de bibliothèque gardait
+   la vignette d'hier : « la vignette montre un graphe, le fichier en porte un
+   autre »). L'identité porte donc aussi l'empreinte du CONTENU de la capture
+   (`figureContentTag`, posée par le 📷 de ChartStarLayer dans `src.contentTag`) :
+   une autre image devient une AUTRE figure — un fichier de plus, une entrée de
+   plus, chacune avec SA vignette — tandis que re-capturer la même image garde
+   la même empreinte et met à jour l'entrée existante au lieu de la dupliquer.
+
    Sans identité connue (une image sans origine, un appelant qui n'en fournit
    pas), le nom reste celui d'avant : rien ne change pour ces envois-là. PUR. */
 
@@ -1447,9 +1474,29 @@ export const fileTagOf = (s) => {
   return h.toString(36);
 };
 
+/** L'empreinte du CONTENU d'une capture : deux images identiques la partagent,
+ *  deux images différentes ne l'ont JAMAIS. `''` quand il n'y a rien à lire (un
+ *  appelant qui ne capture pas d'image — toiles, envois d'un fichier importé).
+ *
+ *  C'est ce qui distingue deux captures d'un MÊME graphique dont on a changé les
+ *  axes (« Cell Count vs DAPI » puis « Cell Count vs Annexin ») : sans elle,
+ *  elles partageaient l'origine de l'élément — donc le même nom de fichier cloud
+ *  et la même entrée de bibliothèque — et la seconde écrasait la première, en
+ *  laissant l'ancienne vignette sur le nouveau graphe. PUR (le hash coûte un
+ *  passage sur la chaîne, une seule fois, au moment de la capture). */
+export const figureContentTag = (dataUrl) => {
+  const s = typeof dataUrl === 'string' ? dataUrl : '';
+  return s ? fileTagOf(`${s.length}:${s}`) : '';
+};
+
 /** L'identité de FICHIER d'une figure : la clé de composition d'un canvas,
- *  sinon l'origine d'une capture (expérience + instance + graphe). `''` quand
- *  rien de stable n'est connu — le nom reste alors le libellé seul. PUR. */
+ *  sinon l'origine d'une capture (expérience + instance + graphe + image).
+ *  `''` quand rien de stable n'est connu — le nom reste alors le libellé seul.
+ *
+ *  L'empreinte du contenu (`src.contentTag`, voir figureContentTag) n'est
+ *  ajoutée QUE si elle est là : une entrée écrite avant cette correction, ou un
+ *  appelant qui n'en pose pas, garde exactement l'identité — donc le nom de
+ *  fichier — qu'elle avait. PUR. */
 export const figureFileIdentity = ({ src = null, canvasData = null } = {}) => {
   const canvas = canvasKeyOfEntry({ canvasData });
   if (canvas) return `canvas:${canvas}`;
@@ -1459,7 +1506,9 @@ export const figureFileIdentity = ({ src = null, canvasData = null } = {}) => {
   if (!where) return '';
   const who = String(s.testId || s.testName || '').trim();
   const when = String(s.instanceName || s.date || '').trim();
-  return [who, when, where].join('|');
+  const content = String(s.contentTag || '').trim();
+  const base = [who, when, where].join('|');
+  return content ? `${base}|${content}` : base;
 };
 
 /** Le nom du fichier déposé pour une figure : `<libellé>[-<empreinte>].<ext>`. PUR. */

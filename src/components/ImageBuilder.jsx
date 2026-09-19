@@ -52,7 +52,7 @@ import {
   defaultShapeRect
 } from '../utils/figureShapes';
 import {
-  ADJUST_FIELDS, adjustSpec, adjustRecordOf, adjustFilterId, ADJUST_NEUTRAL
+  ADJUST_FIELDS, ADJUST_OPACITY, adjustValue, adjustSpec, adjustRecordOf, adjustFilterId, ADJUST_NEUTRAL
 } from '../utils/figureAdjust';
 import { getRenderableDriveUrl } from '../data/constants';
 
@@ -4138,6 +4138,12 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                 <feFuncR type="linear" slope={adj.slope} intercept={adj.intercept} />
                 <feFuncG type="linear" slope={adj.slope} intercept={adj.intercept} />
                 <feFuncB type="linear" slope={adj.slope} intercept={adj.intercept} />
+                {/* L'🔆 OPACITÉ de la figure (le réglage « Opacity » de la
+                    fenêtre) : la MÊME primitive, une pente sur le canal ALPHA —
+                    l'image s'efface sans que le panneau ni sa lettre changent.
+                    `alpha` vaut 1 tant que rien n'est demandé : la primitive
+                    n'existe alors pas dans le SVG. */}
+                {adj.alpha < 1 ? <feFuncA type="linear" slope={adj.alpha} /> : null}
               </feComponentTransfer>
               {adj.tint && adj.tintAmount > 0 ? (
                 <>
@@ -4628,35 +4634,26 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
      directement, ses éléments font partie de l'arbre du parent : rien n'est
      remonté, la saisie et le défilement restent où ils sont. (Même remède que
      `renderSvg`, dont le contenu partage tout le contexte du composant.) */
-  /* ── LA FENÊTRE DE L'OBJET : TROIS COLONNES TITRÉES (voir `bar`) ───────────
-     FIGURES · MODIFY IMAGE · OBJECTS. En plein écran la fenêtre est une GRILLE
-     DE TROIS COLONNES, et non plus six cellules d'autant de groupes (elles
-     laissaient la première colonne presque vide sur un écran moyen) :
-
-       FIGURES           MODIFY IMAGE                  OBJECTS
-       ➕ Add figure      🎨 Transparent background      Arrow · Line · Rectangle · Circle
-       ↔ Swap image      🌓 Shadow (figure)             ⇹ Align · Distribute
-       ⊞ Lay in a grid   ✂ Crop · ↻ Rotate · 🧽 Eraser  + Add text · ✏️ Place by click
-       la liste des      Contrast / Brightness /        la liste des textes, l'un
-       figures           Saturation / Hue · Tint         sous l'autre
-                         PANELS : A B C · Copy · Paste · Delete
-
-     L'ORDRE VISUEL NE DÉPEND PAS DE L'ORDRE DU SOURCE : chaque élément porte sa
-     COLONNE (`md:col-start-1|2|3`) et son RANG (`order-*`), et la grille se
-     remplit en « dense » — les commandes ont donc été regroupées PAR SUJET sans
-     déplacer d'énormes blocs de JSX. La LÉGENDE (sous-titre du panneau) reste le
-     seul élément de TOUTE la largeur, placé EN DERNIER, et « ▾ More options »
-     vient après elle.
-     `min-w-0` est indispensable : sans lui une colonne refuse de descendre sous
-     la largeur de son contenu et la fenêtre déborde. Les deux LISTES (figures et
-     textes) défilent chez elles (`max-h-… overflow-y-auto`) : une liste longue
-     n'étire donc jamais la ligne qu'elle partage avec les autres colonnes.
-     Le TITRE de la fenêtre EST son pli (`panelOpen`) : repliée, elle ne laisse
-     qu'une ligne et le canvas garde toute la hauteur. */
-  const panelCellCls = (bar, extra = '') => `flex flex-wrap items-center gap-x-1.5 gap-y-1 ${extra}${bar ? ' min-w-0' : ''}`;
-  // Le titre d'une colonne ; `where` = sa colonne et son rang en plein écran.
-  const panelTitle = (text, where) => (
-    <h5 className={`text-[10px] font-black uppercase tracking-wide text-slate-500 shrink-0 ${where || ''}`}>{text}</h5>
+  /* ── LA FENÊTRE DE L'OBJET : TROIS SECTIONS, TROIS PILES INDÉPENDANTES ───────
+     FIGURES · MODIFY IMAGE · OBJECTS, chacune titrée et écrite DANS SA PROPRE
+     PILE (`panelColCls`) : en plein écran elles sont côte à côte, en vue normale
+     elles s'empilent dans cet ordre. Le POURQUOI — une grille unique partageait
+     ses lignes, donc la plus haute creusait un vide sous les autres et chaque
+     figure ajoutée décalait les commandes de la colonne voisine — est expliqué
+     au moment où la fenêtre s'écrit, juste en dessous. */
+  // UNE LIGNE de commandes : `min-w-0` est indispensable en plein écran — sans
+  // lui, une colonne refuse de descendre sous la largeur de son contenu.
+  const panelCellCls = (bar) => `flex flex-wrap items-center gap-x-1.5 gap-y-1${bar ? ' min-w-0' : ''}`;
+  // UNE COLONNE de la fenêtre : SA PROPRE PILE. Deux sections ne partagent donc
+  // jamais une ligne — c'était le défaut de la grille unique (la plus haute
+  // laissait du vide sous les autres, et chaque figure ajoutée décalait les
+  // commandes de la colonne voisine). `first` = la première pile : pas de filet
+  // à sa gauche ; les suivantes sont séparées par un filet qui dit où finit une
+  // section et où commence la suivante.
+  const panelColCls = (bar, first = false) => `flex flex-col gap-1.5 min-w-0${bar && !first ? ' md:border-l md:border-slate-200 md:pl-3' : ''}`;
+  // Le titre d'une colonne. Il vit DANS la pile : il ne peut pas en être séparé.
+  const panelTitle = (text) => (
+    <h5 className="text-[10px] font-black uppercase tracking-wide text-slate-500 shrink-0">{text}</h5>
   );
 
   const PropertiesPanel = ({ bar = false } = {}) => (
@@ -4685,222 +4682,41 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       </div>
       {panelOpen && (
       <div className={bar
-        ? 'grid grid-cols-1 md:grid-cols-3 grid-flow-row-dense items-start gap-x-4 gap-y-1.5'
+        ? 'grid grid-cols-1 md:grid-cols-3 items-start gap-x-4 gap-y-2'
         : 'flex flex-col gap-1.5'}>
-      {/* ── LES TROIS TITRES DE COLONNE ───────────────────────────────────────── */}
-      {panelTitle('Figures', bar ? 'order-1 md:col-start-1' : '')}
-      {panelTitle('Modify image', bar ? 'order-1 md:col-start-2' : '')}
-      {panelTitle('Objects', bar ? 'order-1 md:col-start-3' : '')}
-      {/* ── OBJECTS · LIGNE 1 : LES FORMES ──────────────────────────────────────
-          Une FLÈCHE, une LIGNE, un RECTANGLE et un CERCLE : quatre objets de
-          canvas (en millimètres, sans lettre ni cellule) posés PAR-DESSUS les
-          panneaux. Chacun arrive sélectionné au milieu du canvas, avec sa
-          poignée de déplacement et ses deux coins ; ses réglages — couleur,
-          épaisseur, pointillés, remplissage, courbure, ombre — sont dans
-          « Shape properties », exactement comme ceux d'une flèche.
-          C'est ICI que « ↗ Arrow » vit désormais : il a quitté la barre du haut
-          (et celle du plein écran), avec « 🌓 Shadow panels ». */}
-      <div className={panelCellCls(bar, bar ? 'order-2 md:col-start-3' : '')}>
-        <button type="button" onClick={addArrow}
-          className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-1.5 py-0.5 rounded text-[10px] shrink-0"
-          title="Add an ARROW annotation on top of the panels — drag it to place it, drag a blue end handle to aim it; straight or curved, one head or heads at BOTH ends, with its own colour and drop shadow (“Arrow properties”).">
-          ↗ Arrow{arrows.length ? ` (${arrows.length})` : ''}
-        </button>
-        {SHAPE_KINDS.map((k) => (
-          <button key={k} type="button" onClick={() => addShape(k)}
-            className="bg-white border border-rose-300 text-rose-700 hover:bg-rose-50 font-bold px-1.5 py-0.5 rounded text-[10px] shrink-0"
-            title={`Add a ${SHAPE_LABELS[k].toLowerCase()} on top of the panels — drag it to place it, drag a blue corner handle to resize it, or use “Shape properties” (colour, thickness, dashed, fill, curve, shadow). It takes no panel letter and never disturbs the panels' numbering.`}>
-            {k === 'line' ? '╱ Line' : k === 'rect' ? '▭ Rectangle' : '◯ Circle'}
-          </button>
-        ))}
-        {shapes.length > 0 && (
-          <span className="text-[9px] font-bold text-slate-600 bg-slate-100 border border-slate-200 rounded px-1 shrink-0"
-            title="The shapes of this canvas are drawn on top of the panels. Click one on the canvas to select it: its “Shape properties” replace this window, exactly like an arrow's.">
-            ⇱ {shapes.length} shape{shapes.length === 1 ? '' : 's'} — click one on the canvas
-          </span>
-        )}
-      </div>
-      {/* ⛔ OBJECTS · LIGNE 2 ALIGNAIT LES PANNEAUX — RETIRÉ (demande : l'outil
-          d'alignement doit servir aux FIGURES ou aux TEXTES d'un panneau, pas
-          aux panneaux). Plusieurs panneaux se règlent toujours au Ctrl+clic :
-          le premier sélectionné est la référence, le déplacer les déplace tous du
-          même écart, le redimensionner leur donne sa taille. Les commandes ⇹
-          sont dans la colonne FIGURES, juste à côté de la liste des figures, et
-          elles rangent EXACTEMENT ce qui est coché « ☑ » — figures, textes, ou
-          les deux (décocher la figure 🎯 1st pour ranger les textes seuls) ; les
-          flèches du clavier déplacent ensuite tout le groupe par pas de 0,5 mm
-          (5 mm avec Shift), voir nudgeFigureGroup. */}
-      {/* ── MODIFY IMAGE · LIGNE 1 : le fond et l'ombre de LA FIGURE ────────────
-          « 🎨 Transparent background » mène à l'outil de détourage de la figure
-          ACTIVE (son aperçu cliquable, la tolérance et « les quatre coins » sont
-          dans « ▾ More options », que ce bouton ouvre) ; « 🌓 Figure shadow »
-          donne et retire l'ombre de l'IMAGE — jamais celle du cadre du panneau,
-          qui a la sienne dans le repli. Ces deux commandes étaient au milieu des
-          outils de la figure : elles ouvrent maintenant la colonne. */}
-      <div className={panelCellCls(bar, bar ? 'order-2 md:col-start-2' : '')}>
-        <button type="button" onClick={() => setPanelMore(true)} disabled={cropPanelIdx < 0}
-          className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${cropPanelIdx < 0 ? 'bg-slate-100 border-slate-200 text-slate-300' : (figBgRecord ? 'bg-teal-600 text-white border-teal-700' : 'bg-white border-teal-300 text-teal-700 hover:bg-teal-100')}`}
-          title={cropPanelIdx < 0
-            ? 'Add a figure to this panel first: a background is removed from a PICTURE.'
-            : 'Make the background of the active figure transparent — click the colour on the preview, then “🎨 Remove background”; the preview, the tolerance and “Auto: the four corners” sit in “▾ More options”, which this click opens.'}>
-          🎨 Transparent background{figBgRecord ? ' ✓' : ''}
-        </button>
-        <button type="button" onClick={toggleActiveFigureShadow} disabled={cropPanelIdx < 0}
-          className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${cropPanelIdx < 0 ? 'bg-slate-100 border-slate-200 text-slate-300' : (figShadowOn ? 'bg-slate-800 text-white border-slate-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100')}`}
-          title={cropPanelIdx < 0
-            ? 'Add a figure to this panel first: the shadow is a setting of a PICTURE.'
-            : (figShadowOn
-              ? 'Take the shadow off this figure — the panel keeps its own shadow (a panel shadow is a separate setting).'
-              : 'Give the ACTIVE figure its own drop shadow — the picture, not the panel frame: it follows the pixels of the figure, so a cut-out background gives the shadow OF WHAT THE IMAGE SHOWS instead of a rectangle. Offsets, blur and colour: “▾ More options”.')}>
-          🌓 {figShadowOn ? 'Figure shadow ✓' : 'Figure shadow'}
-        </button>
-      </div>
-      {/* ── MODIFY IMAGE · LIGNE 3 : LE RÉGLAGE D'IMAGE ─────────────────────────
-          Contraste, luminosité, saturation, teinte et coloration : le réglage
-          porte sur les PIXELS de la figure ACTIVE (utils/figureAdjust.js) et
-          voyage avec elle — sauvegarde du canvas, annulation, Export PNG,
-          Insert into project (le `<filter>` est dans la composition).
-          « ↺ Reset » ramène tout à zéro : le filtre disparaît alors du SVG,
-          exactement comme avant. */}
-      <div className={panelCellCls(bar, bar ? 'order-6 md:col-start-2' : '')}>
-        {cropPanelIdx < 0 ? (
-          <span className="text-[10px] text-slate-400 italic shrink-0">Add a figure to this panel to adjust contrast, brightness, colours…</span>
-        ) : (
-          <>
-            {ADJUST_FIELDS.map((f) => (
-              <label key={f.key} className="flex items-center gap-1 text-[10px] font-bold text-slate-500 shrink-0"
-                title={`${f.label} of the ACTIVE figure (figure ${cropPanelIdx + 1}) — the PICTURE, not the panel frame. It is part of the composition, so every export keeps it.`}>
-                {f.label}
-                <input type="range" min={f.min} max={f.max} step={f.step} value={Number((activeAdjust || {})[f.key]) || 0}
-                  onChange={(e) => setFigAdjust({ [f.key]: Number(e.target.value) })}
-                  className="w-16 accent-slate-600" />
-                <input type="number" min={f.min} max={f.max} step={f.step} value={Number((activeAdjust || {})[f.key]) || 0}
-                  onChange={(e) => setFigAdjust({ [f.key]: Number(e.target.value) })}
-                  className="w-11 border rounded px-0.5 py-px text-[10px]" />
-              </label>
-            ))}
-            <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 shrink-0"
-              title="Recolour the figure: this colour is merged over its pixels at the amount on the right (0 = not at all, 0.4 = a clear tint) — the usual way to bring a scheme back onto the colour of the caption.">
-              Tint
-              <input type="color" value={(activeAdjust && activeAdjust.tint) || '#ffcc00'}
-                onChange={(e) => setFigAdjust({ tint: e.target.value })}
-                className="w-6 h-5 rounded border cursor-pointer shrink-0" />
-              <input type="number" min="0" max="1" step="0.05" value={Number((activeAdjust || {}).tintAmount) || 0}
-                onChange={(e) => setFigAdjust({ tintAmount: Number(e.target.value) })}
-                className="w-11 border rounded px-0.5 py-px text-[10px]" />
-            </label>
-            <button type="button" onClick={() => setFigAdjust({ ...ADJUST_NEUTRAL })} disabled={!activeAdjustSpec}
-              className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${activeAdjustSpec ? 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100' : 'bg-slate-100 border-slate-200 text-slate-300'}`}
-              title="Back to the original pixels of this figure (contrast, brightness, saturation, hue and tint at zero) — Ctrl+Z undoes it like any other command">
-              ↺ Reset
-            </button>
-          </>
-        )}
-      </div>
-      {/* ── PANELS : CE QUI AGIT SUR LE PANNEAU LUI-MÊME ────────────────────────
-          Les pastilles « A B C … » (sélection multiple), copier / coller /
-          supprimer, la profondeur (devant / derrière), le plein écran sur
-          l'objet et le retour au graphe d'origine : tout ce qui vise LE panneau,
-          et non sa figure. Dernière section de la colonne « Modify image »,
-          juste avant la légende. */}
-      <div className={panelCellCls(bar, bar ? 'order-9 md:col-start-2' : '')}>
-        <span className="w-px h-4 bg-slate-300 shrink-0" />
-        {/* MULTI-SELECTION. The chips are the panels of the canvas: click one to
-            add / remove it from the selection, the “🎯” chip of a selected panel
-            makes it the FIRST selected — the REFERENCE whose size the others
-            take (Ctrl+click on the canvas does the same, without coming back
-            here). The “📋” pair copies the selection and pastes it into the
-            first free cell of the grid; Ctrl+C / Ctrl+V work anywhere. */}
-        {objects.map((o, i) => {
-          const rank = selectedIds.indexOf(o.id);
-          const label = o.letter || (i + 1);
-          return (
-            <span key={o.id} className="inline-flex items-center">
-              <button type="button" onClick={() => toggleSelectedId(o.id)}
-                className={`font-bold text-[10px] px-1.5 py-0.5 border ${rank === 0 ? 'bg-blue-600 text-white border-blue-700 rounded' : (rank > 0 ? 'bg-indigo-50 text-indigo-800 border-indigo-300 rounded-l' : 'bg-white text-slate-600 border-slate-300 rounded hover:bg-slate-50')}`}
-                title={rank === 0
-                  ? 'The FIRST selected panel — the reference: resizing it gives EVERY selected panel its size, and moving it moves them all. Click to remove it from the selection.'
-                  : (rank > 0
-                    ? `Selected (${ordinalOf(rank)}): it follows the first selected one — click to take it out of the selection.`
-                    : `Add panel ${label} to the selection. The FIRST one selected is the reference (the “🎯” chip): its size is what the others take. Ctrl+click on the canvas does the same.`)}>
-                {label}{rank === 0 ? ' 🎯' : ''}
-              </button>
-              {rank > 0 && (
-                <button type="button" onClick={() => makeReference(o.id)}
-                  className="font-bold text-[10px] px-1 py-0.5 border border-l-0 border-indigo-300 bg-white text-indigo-700 rounded-r hover:bg-indigo-50"
-                  title="Make it the FIRST selected — the reference whose size every other selected panel takes">🎯</button>
-              )}
-            </span>
-          );
-        })}
-        <button type="button" onClick={() => copySelection()}
-          className="font-bold text-[10px] bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 px-1.5 py-0.5 rounded shrink-0"
-          title="Copy the selected panel(s) — figures, texts and shadows included. Ctrl+C does the same, and “📋 Paste” brings an identical panel back.">📋 Copy</button>
-        <button type="button" onClick={() => pasteClipboard()}
-          className="font-bold text-[10px] bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 px-1.5 py-0.5 rounded shrink-0"
-          title={`Paste the copied panel(s) into the FIRST FREE cell of the grid (never on top of a panel that is already there) — Ctrl+V does the same${clipCount ? ` (${clipCount} panel${clipCount === 1 ? '' : 's'} in the clipboard)` : ' (nothing copied yet)'}`}>
-          📋 Paste{clipCount ? ` (${clipCount})` : ''}
-        </button>
-        {selectedIds.length > 1 && (
-          <button type="button" onClick={() => setSelectedId(selectedId)}
-            className="font-bold text-[10px] bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 px-1.5 py-0.5 rounded shrink-0"
-            title="Keep only the first selected panel: the others leave the selection">✕ Others</button>
-        )}
-        <span className="w-px h-4 bg-slate-300 shrink-0" />
-      </div>
-      {/* ── PANELS (suite) · PROFONDEUR, SUPPRESSION, VUE ───────────────────────
-          Où ce panneau se trouve dans la pile, les copies, la suppression, le
-          plein écran sur l'objet, le retour au graphe d'origine et le repli
-          « ▾ More options ». */}
-      <div className={panelCellCls(bar, bar ? 'order-10 md:col-start-2' : '')}>
-        {/* 🗂 QUEL PANNEAU EST AU-DESSUS — les panneaux sont peints dans l'ordre
-            de la liste : ces deux commandes font passer ce panneau devant ses
-            voisins (ou le rangent derrière). Les lettres (A, B, C …) sont
-            attribuées par POSITION et ne bougent pas. */}
-        <button type="button" onClick={() => moveObjInStack(selectedObj.id, 'front')}
-          disabled={objects.indexOf(selectedObj) === objects.length - 1}
-          className="text-[10px] bg-white text-slate-700 border border-slate-300 px-1.5 py-0.5 rounded font-bold hover:bg-slate-100 disabled:opacity-40 shrink-0"
-          title="Put this panel ON TOP of the others — wherever two panels overlap (a figure sticking out of its panel), this one covers its neighbour. The letters are not renumbered.">⤒ Front</button>
-        <button type="button" onClick={() => moveObjInStack(selectedObj.id, 'back')}
-          disabled={objects.indexOf(selectedObj) === 0}
-          className="text-[10px] bg-white text-slate-700 border border-slate-300 px-1.5 py-0.5 rounded font-bold hover:bg-slate-100 disabled:opacity-40 shrink-0"
-          title="Put this panel BEHIND the others — its neighbour covers it wherever they overlap. The letters are not renumbered.">⤓ Back</button>
-        <button onClick={() => copySelection()} className="text-[10px] bg-white text-slate-700 border border-slate-300 px-1.5 py-0.5 rounded font-bold hover:bg-slate-100 shrink-0"
-          title="Copy this panel — its figure(s), its texts and its shadows — Ctrl+C does the same">⧉ Copy</button>
-        <button onClick={deleteSelection} className="text-[10px] bg-red-50 text-red-600 border border-red-200 px-1.5 py-0.5 rounded font-bold hover:bg-red-100 shrink-0"
-          title={selectedIds.length > 1 ? `Delete the ${selectedIds.length} selected panels` : 'Delete this panel'}>
-          {selectedIds.length > 1 ? `Delete ${selectedIds.length} panels` : 'Delete'}
-        </button>
-        <span className="w-px h-4 bg-slate-300 shrink-0" />
-        <button onClick={() => zoomToObject(selectedObj.id)} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-1.5 py-0.5 rounded text-[10px] shrink-0"
-          title="Zoom the canvas on this panel alone — a full screen view of this object, nothing else">⛶ Fullscreen on object</button>
-        {selectedObj.src && selectedObj.src.testId && (
-          <button onClick={() => openOriginalGraph(selectedObj.src)}
-            className="bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-300 font-bold px-1.5 py-0.5 rounded text-[10px] shrink-0"
-            title={`Open ${originLabelOf(selectedObj.src) || 'the original experiment'} right on the graph this image was captured from${selectedObj.src.elementLabel ? ` (${selectedObj.src.elementLabel})` : ''}`}>
-            ↗ Open original graph{originLabelOf(selectedObj.src) ? ` · ${originLabelOf(selectedObj.src)}` : ''}
-          </button>
-        )}
-        <button type="button" onClick={() => setPanelMore((v) => !v)}
-          className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${panelMore ? 'bg-slate-700 text-white border-slate-700' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}
-          title={panelMore
-            ? 'Fold the rarely used settings away again (panel shadow, free layout, eraser brush size, the long hints)'
-            : 'Show the rarely used settings: the panel SHADOW, the free layout, the eraser brush size and the long hints — everything else is already here'}>
-          {panelMore ? '▴ Fewer options' : '▾ More options'}
-        </button>
-      </div>
-      {/* ── FIGURES : LES FIGURES DU PANNEAU, ET CE QU'ON LEUR FAIT ─────────────
-          Ajouter / échanger / remettre en grille, la liste des figures (la
-          dernière est AU-DESSUS ; elle défile au-delà de quelques lignes pour
-          qu'une longue liste n'étire pas la fenêtre), la sélection multiple de
-          figures et les commandes ⇹ qui les alignent et les répartissent entre
-          elles. La TAILLE exacte et l'ajustement sont dans « Modify image » ; les
-          outils de la figure (rotation, recadrage, gomme, réglage d'image,
-          ombre) aussi. « 🖼 Import » a été retiré : « ➕ Add figure » et
-          « ↔ Swap image » font les deux gestes (ajouter une figure / changer les
-          pixels de celle qui est là), et la bibliothèque garde son « ↺ Replace »
-          pour recommencer un panneau avec une seule figure. */}
-      <div className={panelCellCls(bar, bar ? 'order-3 md:col-start-1' : '')}>
+      {/* ── TROIS SECTIONS, TROIS PILES INDÉPENDANTES ──────────────────────────
+         FIGURES · MODIFY IMAGE · OBJECTS. En plein écran les trois piles sont
+         côte à côte (`md:grid-cols-3`), séparées par un filet et titrées ; en vue
+         normale elles s’empilent dans cet ordre.
+
+         ⚠️ CE NE SONT PLUS LES LIGNES D’UNE MÊME GRILLE — c’est ce qui n’allait
+         pas : dans une grille, une LIGNE est PARTAGÉE par ses trois colonnes, la
+         plus haute décidant de la hauteur de toute la ligne. La ligne des
+         figures (ses boutons, sa liste défilante et ses commandes ⇹) est la plus
+         haute des trois : elle laissait donc un VIDE sous les commandes de
+         « Modify image », et AJOUTER UNE FIGURE (la liste gagne une ligne)
+         décalait ces commandes d’une ligne sans rien y changer. Chaque section
+         est maintenant SA PROPRE PILE (`panelColCls`) : elle grandit, se replie
+         et se lit toute seule — rien de ce qui se passe dans une colonne ne
+         déplace plus quoi que ce soit dans les autres.
+
+         `min-w-0` est indispensable : sans lui une colonne refuse de descendre
+         sous la largeur de son contenu et la fenêtre déborde. Les deux LISTES
+         (figures et textes) défilent chez elles (`max-h-… overflow-y-auto`) :
+         une longue liste n’étire donc jamais sa colonne.
+         La LÉGENDE du panneau (son sous-titre) et le repli « ▾ More options »
+         sont les deux SEULS blocs de toute la largeur, placés en dernier.
+         Le TITRE de la fenêtre EST son pli (`panelOpen`) : repliée, elle ne
+         laisse qu’une ligne et le canvas garde toute la hauteur. */}
+      {/* ── COLONNE 1 · FIGURES — ce que ce panneau MONTRE ─────────────────────
+         Ajouter / échanger / remettre en grille, la LISTE des figures (une par
+         ligne, elle défile), la sélection multiple et les commandes ⇹ qui
+         alignent et répartissent EXACTEMENT ce qui est coché « ☑ » — figures,
+         textes, ou les deux. La TAILLE exacte et l’ajustement sont dans la
+         colonne suivante, avec le reste de ce qui touche à l’image. */}
+      <div className={panelColCls(bar, true)}>
+      {panelTitle('Figures')}
+      <div className={panelCellCls(bar)}>
         <button onClick={() => { setPickMode('add'); setShowLibrary(true); }}
           className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-2 py-0.5 rounded text-[10px] shrink-0"
           title="Add another figure to this same object/panel: the figures already there are FROZEN (each one keeps exactly the place and size it has now) and the new one lands in the biggest free space — nothing has to be laid out again. “⊞ Lay the figures out in a grid” re-flows the panel side by side if you prefer.">➕ Add figure</button>
@@ -5075,71 +4891,60 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           );
         })()}
       </div>
-      {/* ── MODIFY IMAGE · LIGNE 4 : LA TAILLE EXACTE ET L'AJUSTEMENT ───────────
-          La largeur / hauteur tapables (en % du panneau) et la façon dont la
-          figure remplit sa case (Fit / Scale). */}
-      <div className={panelCellCls(bar, bar ? 'order-7 md:col-start-2' : '')}>
-        {cropPanelIdx >= 0 && (() => {
-          /* 🎯 EXACT SIZE OF THE ACTIVE FIGURE (keyboard) — see setActiveFigBox:
-             on a small figure the corner handle is quicker than the hand, so the
-             box is also typeable as a % of the panel. Only a figure that carries
-             its own rectangle (free geometry: “➕ Add figure”) has a box to type
-             into; one still laid out by the panel grid uses “Scale (%)”. */
-          const box = freeRectOf(getObjImages(selectedObj)[cropPanelIdx]);
-          const pct = (v) => Math.round(v * 1000) / 10;
-          const fieldCls = `w-14 border rounded px-0.5 py-px text-[10px] ${box ? '' : 'bg-slate-100 text-slate-400'}`;
-          return (
-            <>
-              <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 shrink-0">
-                W (% of panel)
-                <input type="number" min="2" max="400" step="0.5" disabled={!box}
-                  value={box ? pct(box.w) : ''}
-                  onFocus={() => commitHistory()}
-                  onChange={(e) => setActiveFigBox({ w: e.target.value })}
-                  className={fieldCls}
-                  title="Exact WIDTH of the active figure, in % of its panel — the keyboard answer to a corner handle that is too quick on a small figure (one snapshot per edit, Ctrl+Z undoes it)." />
-              </label>
-              <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 shrink-0">
-                H (% of panel)
-                <input type="number" min="2" max="400" step="0.5" disabled={!box}
-                  value={box ? pct(box.h) : ''}
-                  onFocus={() => commitHistory()}
-                  onChange={(e) => setActiveFigBox({ h: e.target.value })}
-                  className={fieldCls}
-                  title="Exact HEIGHT of the active figure, in % of its panel." />
-              </label>
-              {!box && (
-                <span className="text-[9px] text-slate-400 italic shrink-0" title="This figure is still laid out by the panel grid — “➕ Add figure” gives every figure its own box, and the panel-wide “Scale (%)” is what sizes it today.">
-                  (grid layout: “Scale (%)”)
-                </span>
-              )}
-            </>
-          );
-        })()}
+      </div>
+      {/* ── COLONNE 2 · MODIFY IMAGE — ce qu’on fait À LA FIGURE ───────────────
+         Rien que la FIGURE, du haut en bas : l’IMAGE elle-même (🎨 fond
+         transparent, 🌓 ombre, Opacity), ses OUTILS (rotation, précision,
+         recadrage, gomme), sa TAILLE exacte et son ajustement, puis son RÉGLAGE
+         D’IMAGE (contraste, luminosité, saturation, teinte, coloration).
+         Les commandes du PANNEAU, elles, ont rejoint la troisième colonne : une
+         colonne = un sujet, et « Modify image » ne mélange plus deux d’entre eux.
+         « ▾ More options » (dernier bouton de la troisième colonne) ouvre le repli
+         des réglages qu’on ne pose qu’une fois : les ombres, le détourage en
+         détail, l’opacité… */}
+      <div className={panelColCls(bar)}>
+      {panelTitle('Modify image')}
+      <div className={panelCellCls(bar)}>
+        <button type="button" onClick={() => setPanelMore(true)} disabled={cropPanelIdx < 0}
+          className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${cropPanelIdx < 0 ? 'bg-slate-100 border-slate-200 text-slate-300' : (figBgRecord ? 'bg-teal-600 text-white border-teal-700' : 'bg-white border-teal-300 text-teal-700 hover:bg-teal-100')}`}
+          title={cropPanelIdx < 0
+            ? 'Add a figure to this panel first: a background is removed from a PICTURE.'
+            : 'Make the background of the active figure transparent — click the colour on the preview, then “🎨 Remove background”; the preview, the tolerance and “Auto: the four corners” sit in “▾ More options”, which this click opens.'}>
+          🎨 Transparent background{figBgRecord ? ' ✓' : ''}
+        </button>
+        <button type="button" onClick={toggleActiveFigureShadow} disabled={cropPanelIdx < 0}
+          className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${cropPanelIdx < 0 ? 'bg-slate-100 border-slate-200 text-slate-300' : (figShadowOn ? 'bg-slate-800 text-white border-slate-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100')}`}
+          title={cropPanelIdx < 0
+            ? 'Add a figure to this panel first: the shadow is a setting of a PICTURE.'
+            : (figShadowOn
+              ? 'Take the shadow off this figure — the panel keeps its own shadow (a panel shadow is a separate setting).'
+              : 'Give the ACTIVE figure its own drop shadow — the picture, not the panel frame: it follows the pixels of the figure, so a cut-out background gives the shadow OF WHAT THE IMAGE SHOWS instead of a rectangle. Offsets, blur and colour: “▾ More options”.')}>
+          🌓 {figShadowOn ? 'Figure shadow ✓' : 'Figure shadow'}
+        </button>
+        {/* 🔆 L'OPACITÉ — la TRANSPARENCE DE L'IMAGE ELLE-MÊME (le fond, lui,
+            c'est « 🎨 Transparent background »). Elle se range dans la MÊME fiche
+            que le réglage d'image (`im.adjust.opacity`, voir utils/figureAdjust.js)
+            et se dessine donc par le même `<filter>`, avec une `<feFuncA>`
+            linéaire : Export PNG, Save canvas et Insert into project la gardent.
+            100 % = l'image telle quelle : la fiche redevient NEUTRE et la
+            primitive disparaît du SVG. */}
         <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 shrink-0"
-          title={keepAspect ? 'The canvas option “🔒 Keep aspect ratio” is on: every figure is fitted with its own width/height ratio. Untick it to choose Contain / Cover / Stretch per panel.' : 'How the figure fills its panel cell: Contain / Cover / Stretch'}>
-          Fit
-          <select value={keepAspect ? 'contain' : selectedObj.imgFit} disabled={keepAspect} onChange={e => updateObj({ imgFit: e.target.value })}
-            className={`border rounded px-0.5 py-px text-[10px] ${keepAspect ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}`}>
-            <option value="contain">Contain</option>
-            <option value="cover">Cover</option>
-            <option value="stretch">Stretch</option>
-          </select>
-        </label>
-        <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 shrink-0"
-          title={selectedFreeLayout ? 'This panel is in FREE layout: every figure keeps its own rectangle, so the panel-wide scale no longer moves it — drag the figure’s corner handle on the canvas (or “⊞ Lay the figures out in a grid”).' : 'Scale of the figure inside its cell (grid layout).'}>
-          Scale (%)
-          <input type="number" min="10" max="500" disabled={selectedFreeLayout} value={Math.round((selectedObj.imgScale || 1) * 100)} onChange={e => updateObj({ imgScale: Number(e.target.value) / 100 })}
-            className={`w-14 border rounded px-0.5 py-px text-[10px] ${selectedFreeLayout ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}`} />
+          title={cropPanelIdx < 0
+            ? 'Add a figure to this panel first: opacity is a setting of a PICTURE.'
+            : `Opacity of the ACTIVE figure (figure ${cropPanelIdx + 1}) — the PICTURE, not the panel frame. 100 % is the image as it is, 0 % makes it invisible; it is also how a figure is faded over the one under it. “🎨 Transparent background” removes the background COLOUR, this fades the whole image.`}>
+          Opacity
+          <input type="range" min={ADJUST_OPACITY.min} max={ADJUST_OPACITY.max} step={ADJUST_OPACITY.step}
+            disabled={cropPanelIdx < 0} value={adjustValue(activeAdjust, 'opacity')}
+            onChange={(e) => setFigAdjust({ opacity: Number(e.target.value) })}
+            className="w-16 accent-slate-600" />
+          <input type="number" min={ADJUST_OPACITY.min} max={ADJUST_OPACITY.max} step={ADJUST_OPACITY.step}
+            disabled={cropPanelIdx < 0} value={adjustValue(activeAdjust, 'opacity')}
+            onChange={(e) => setFigAdjust({ opacity: Number(e.target.value) })}
+            className="w-11 border rounded px-0.5 py-px text-[10px]" />
+          <span className="text-[9px] text-slate-400">%</span>
         </label>
       </div>
-      {/* ── MODIFY IMAGE · LIGNE 2 : LES OUTILS DE LA FIGURE ───────────────────
-          Rotation, 🎯 Precision (le geste de la souris au quart), recadrage et
-          gomme — et les ⟲ qui remettent le recadrage ou les gommages à zéro.
-          C'est l'IMAGE elle-même, jamais le cadre du panneau (dont l'ombre vit
-          dans « ▾ More options »). L'ombre de la FIGURE et le détourage ont leur
-          bouton en tête de colonne. */}
-      <div className={panelCellCls(bar, bar ? 'order-5 md:col-start-2' : '')}>
+      <div className={panelCellCls(bar)}>
         <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 shrink-0" title="Turn the figure inside its panel (°) — ↻90° does a quarter turn">
           Rotate (°)
           <input type="number" min="-360" max="360" step="1" value={selectedObj.imgRotate || 0} onChange={e => updateObj({ imgRotate: Number(e.target.value) })} className="w-14 border rounded px-0.5 py-px text-[10px]" />
@@ -5207,37 +5012,138 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
             ses réglages fins restent dans « ▾ More options ». La ligne des
             outils ne la répète donc pas. */}
       </div>
-      {/* ── LA LÉGENDE DU PANNEAU — LA SEULE COLONNE DE TOUTE LA LARGEUR ────────
-          Elle est placée EN DERNIER, tout en bas de la fenêtre (`order-last
-          col-span-full` en plein écran) : c'est le seul élément qui a besoin de
-          toute la largeur — un sous-titre s'écrit — et le mettre en bas laisse la
-          ligne du haut aux commandes. Le nom de la lettre n'est plus ici : il est
-          attribué AUTOMATIQUEMENT par la position du panneau (renumberLetters), et
-          sa taille — comme sa couleur et son gras — est une définition GÉNÉRALE du
-          canvas, réglée une fois pour tous les panneaux dans les options du canvas
-          (barre d'outils de l'éditeur, et barre du plein écran). */}
-      <div className={bar
-        ? 'flex flex-wrap items-start gap-x-1.5 gap-y-1 min-w-0 order-last col-span-full border-t border-slate-200 pt-1'
-        : 'flex flex-wrap items-center gap-x-1.5 gap-y-1 border-t border-slate-200 pt-1'}>
-        <span className="text-[10px] font-bold text-slate-500 uppercase shrink-0"
-          title={`Caption of panel ${selectedObj.letter || '—'} — a SUB-caption: it is never drawn inside the panel, it is merged into the figure caption at the bottom. The letter itself is automatic (by position) · size / colour / bold: canvas options.`}>
-          Caption {selectedObj.letter || '—'}
-        </span>
-        <textarea rows={1} value={selectedObj.caption} onChange={e => updateObj({ caption: e.target.value })}
-          placeholder={`Sub-caption for panel ${selectedObj.letter || ''} — merged into the figure caption at the bottom`}
-          className="flex-1 min-w-[12rem] border rounded px-1 py-0.5 text-[11px] resize-y"
-          title="Caption of this panel: written at the bottom of the figure, never inside the panel. “✎ Edit in place” opens it as a floating editor; the box can also be dragged taller." />
-        <button type="button" onClick={() => setEditingObjCaption(selectedObj.id)}
-          className="shrink-0 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold px-1.5 py-0.5 rounded text-[10px]"
-          title="Open the floating caption editor">✎ Edit in place</button>
+      <div className={panelCellCls(bar)}>
+        {cropPanelIdx >= 0 && (() => {
+          /* 🎯 EXACT SIZE OF THE ACTIVE FIGURE (keyboard) — see setActiveFigBox:
+             on a small figure the corner handle is quicker than the hand, so the
+             box is also typeable as a % of the panel. Only a figure that carries
+             its own rectangle (free geometry: “➕ Add figure”) has a box to type
+             into; one still laid out by the panel grid uses “Scale (%)”. */
+          const box = freeRectOf(getObjImages(selectedObj)[cropPanelIdx]);
+          const pct = (v) => Math.round(v * 1000) / 10;
+          const fieldCls = `w-14 border rounded px-0.5 py-px text-[10px] ${box ? '' : 'bg-slate-100 text-slate-400'}`;
+          return (
+            <>
+              <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 shrink-0">
+                W (% of panel)
+                <input type="number" min="2" max="400" step="0.5" disabled={!box}
+                  value={box ? pct(box.w) : ''}
+                  onFocus={() => commitHistory()}
+                  onChange={(e) => setActiveFigBox({ w: e.target.value })}
+                  className={fieldCls}
+                  title="Exact WIDTH of the active figure, in % of its panel — the keyboard answer to a corner handle that is too quick on a small figure (one snapshot per edit, Ctrl+Z undoes it)." />
+              </label>
+              <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 shrink-0">
+                H (% of panel)
+                <input type="number" min="2" max="400" step="0.5" disabled={!box}
+                  value={box ? pct(box.h) : ''}
+                  onFocus={() => commitHistory()}
+                  onChange={(e) => setActiveFigBox({ h: e.target.value })}
+                  className={fieldCls}
+                  title="Exact HEIGHT of the active figure, in % of its panel." />
+              </label>
+              {!box && (
+                <span className="text-[9px] text-slate-400 italic shrink-0" title="This figure is still laid out by the panel grid — “➕ Add figure” gives every figure its own box, and the panel-wide “Scale (%)” is what sizes it today.">
+                  (grid layout: “Scale (%)”)
+                </span>
+              )}
+            </>
+          );
+        })()}
+        <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 shrink-0"
+          title={keepAspect ? 'The canvas option “🔒 Keep aspect ratio” is on: every figure is fitted with its own width/height ratio. Untick it to choose Contain / Cover / Stretch per panel.' : 'How the figure fills its panel cell: Contain / Cover / Stretch'}>
+          Fit
+          <select value={keepAspect ? 'contain' : selectedObj.imgFit} disabled={keepAspect} onChange={e => updateObj({ imgFit: e.target.value })}
+            className={`border rounded px-0.5 py-px text-[10px] ${keepAspect ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}`}>
+            <option value="contain">Contain</option>
+            <option value="cover">Cover</option>
+            <option value="stretch">Stretch</option>
+          </select>
+        </label>
+        <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 shrink-0"
+          title={selectedFreeLayout ? 'This panel is in FREE layout: every figure keeps its own rectangle, so the panel-wide scale no longer moves it — drag the figure’s corner handle on the canvas (or “⊞ Lay the figures out in a grid”).' : 'Scale of the figure inside its cell (grid layout).'}>
+          Scale (%)
+          <input type="number" min="10" max="500" disabled={selectedFreeLayout} value={Math.round((selectedObj.imgScale || 1) * 100)} onChange={e => updateObj({ imgScale: Number(e.target.value) / 100 })}
+            className={`w-14 border rounded px-0.5 py-px text-[10px] ${selectedFreeLayout ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}`} />
+        </label>
       </div>
-      {/* ── OBJECTS · LES OUTILS ET LA LISTE DES TEXTES ─────────────────────────
-          « + Add Text » pose un texte au milieu du panneau, « ✏️ Place by click »
-          le pose exactement où l'on clique ; chaque texte ajouté apparaît ensuite
-          dans la liste, l'un sous l'autre, avec SES réglages (contenu, X / Y en
-          mm, corps, couleur, gras, italique, ⧉ Copy, ✕). La liste défile
-          au-delà de quelques lignes, pour ne pas étirer la fenêtre. */}
-      <div className={panelCellCls(bar, bar ? 'order-4 md:col-start-3' : '')}>
+      <div className={panelCellCls(bar)}>
+        {cropPanelIdx < 0 ? (
+          <span className="text-[10px] text-slate-400 italic shrink-0">Add a figure to this panel to adjust contrast, brightness, colours…</span>
+        ) : (
+          <>
+            {ADJUST_FIELDS.map((f) => (
+              <label key={f.key} className="flex items-center gap-1 text-[10px] font-bold text-slate-500 shrink-0"
+                title={`${f.label} of the ACTIVE figure (figure ${cropPanelIdx + 1}) — the PICTURE, not the panel frame. It is part of the composition, so every export keeps it.`}>
+                {f.label}
+                <input type="range" min={f.min} max={f.max} step={f.step} value={adjustValue(activeAdjust, f.key)}
+                  onChange={(e) => setFigAdjust({ [f.key]: Number(e.target.value) })}
+                  className="w-16 accent-slate-600" />
+                <input type="number" min={f.min} max={f.max} step={f.step} value={adjustValue(activeAdjust, f.key)}
+                  onChange={(e) => setFigAdjust({ [f.key]: Number(e.target.value) })}
+                  className="w-11 border rounded px-0.5 py-px text-[10px]" />
+              </label>
+            ))}
+            <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 shrink-0"
+              title="Recolour the figure: this colour is merged over its pixels at the amount on the right (0 = not at all, 0.4 = a clear tint) — the usual way to bring a scheme back onto the colour of the caption.">
+              Tint
+              <input type="color" value={(activeAdjust && activeAdjust.tint) || '#ffcc00'}
+                onChange={(e) => setFigAdjust({ tint: e.target.value })}
+                className="w-6 h-5 rounded border cursor-pointer shrink-0" />
+              <input type="number" min="0" max="1" step="0.05" value={Number((activeAdjust || {}).tintAmount) || 0}
+                onChange={(e) => setFigAdjust({ tintAmount: Number(e.target.value) })}
+                className="w-11 border rounded px-0.5 py-px text-[10px]" />
+            </label>
+            <button type="button" onClick={() => setFigAdjust({ ...ADJUST_NEUTRAL })} disabled={!activeAdjustSpec}
+              className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${activeAdjustSpec ? 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100' : 'bg-slate-100 border-slate-200 text-slate-300'}`}
+              title="Back to the original pixels of this figure (contrast, brightness, saturation, hue and tint at zero, opacity back to 100 %) — Ctrl+Z undoes it like any other command">
+              ↺ Reset
+            </button>
+          </>
+        )}
+      </div>
+      </div>
+      {/* ── COLONNE 3 · PANELS & OBJECTS — LE PANNEAU ET CE QUI EST PAR-DESSUS ──
+         D’abord les OBJETS posés sur le panneau : les annotations du canvas
+         (flèche, ligne, rectangle, cercle : ni lettre ni cellule, donc jamais
+         dans la numérotation des panneaux), puis les TEXTES, l’un sous l’autre,
+         avec leurs réglages. Ensuite LE PANNEAU lui-même : ses pastilles
+         « A B C » (la sélection multiple — le premier sélectionné donne sa taille
+         aux autres), copier / coller / supprimer, la profondeur, le plein écran
+         sur l’objet, le retour au graphe d’origine, et « ▾ More options » — le
+         repli des ombres et du détourage, qui est donc bien le DERNIER mot de la
+         fenêtre. Tout ce qui vise LE panneau est ici : « Modify image » ne garde
+         que la figure.
+         (Cette colonne s’appelait « Objects » : elle porte maintenant les deux.)
+
+         ⛔ L’ancienne ligne « ⇹ aligner / répartir les PANNEAUX » n’est pas
+         revenue : les ⇹ rangent les FIGURES et les TEXTES d’un panneau (colonne
+         FIGURES). Plusieurs PANNEAUX se règlent toujours au Ctrl+clic : le
+         premier sélectionné est la référence, le déplacer les déplace tous du
+         même écart, le redimensionner leur donne sa taille. */}
+      <div className={panelColCls(bar)}>
+      {panelTitle('Panels & objects')}
+      <div className={panelCellCls(bar)}>
+        <button type="button" onClick={addArrow}
+          className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-1.5 py-0.5 rounded text-[10px] shrink-0"
+          title="Add an ARROW annotation on top of the panels — drag it to place it, drag a blue end handle to aim it; straight or curved, one head or heads at BOTH ends, with its own colour and drop shadow (“Arrow properties”).">
+          ↗ Arrow{arrows.length ? ` (${arrows.length})` : ''}
+        </button>
+        {SHAPE_KINDS.map((k) => (
+          <button key={k} type="button" onClick={() => addShape(k)}
+            className="bg-white border border-rose-300 text-rose-700 hover:bg-rose-50 font-bold px-1.5 py-0.5 rounded text-[10px] shrink-0"
+            title={`Add a ${SHAPE_LABELS[k].toLowerCase()} on top of the panels — drag it to place it, drag a blue corner handle to resize it, or use “Shape properties” (colour, thickness, dashed, fill, curve, shadow). It takes no panel letter and never disturbs the panels' numbering.`}>
+            {k === 'line' ? '╱ Line' : k === 'rect' ? '▭ Rectangle' : '◯ Circle'}
+          </button>
+        ))}
+        {shapes.length > 0 && (
+          <span className="text-[9px] font-bold text-slate-600 bg-slate-100 border border-slate-200 rounded px-1 shrink-0"
+            title="The shapes of this canvas are drawn on top of the panels. Click one on the canvas to select it: its “Shape properties” replace this window, exactly like an arrow's.">
+            ⇱ {shapes.length} shape{shapes.length === 1 ? '' : 's'} — click one on the canvas
+          </span>
+        )}
+      </div>
+      <div className={panelCellCls(bar)}>
         <button onClick={addText} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-1.5 py-0.5 rounded text-[10px] shrink-0"
           title="Add a text in the middle of the panel — then drag it on the object where you want it">+ Add Text</button>
         <button onClick={() => setPlaceTextMode(v => !v)}
@@ -5289,161 +5195,263 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         ))}
         </div>
       </div>
-      {panelMore && (
-        /* Le repli ne prend pas toute la largeur non plus : en plein écran il
-           occupe DEUX colonnes (la légende reste le seul élément pleine largeur). */
-        <div className={`flex flex-wrap items-start gap-x-4 gap-y-1.5 ${bar ? 'min-w-0 order-12 md:col-span-full' : 'border-t border-slate-200 pt-1.5'}`}>
-          {/* L'OMBRE DU PANNEAU — un PANNEAU projette une ombre (cadre, figure,
-              lettre, textes) : « 🌓 Same shadow on every panel » l'applique à
-              toute la figure en un clic, et le même bloc de contrôles sert aux
-              flèches (même enregistrement, même filtre <feDropShadow>). La
-              FIGURE a la sienne, juste à côté : c'est une autre commande (l'image
-              seule, et son ombre suit ses pixels — voir 🌓 sur la ligne des
-              figures). */}
-          <div className="flex flex-col gap-1 shrink-0">
-            <h5 className="text-xs font-bold text-slate-500 uppercase" title="Shadow of the whole PANEL — its white frame, the figure, the letter and the texts. The PICTURE can have its own too (“Shadow (figure)”, right below): the two are independent settings.">Shadow <span className="font-normal normal-case text-slate-400">(panel frame)</span></h5>
-            <ShadowControls value={shadowSpec(selectedObj.shadow)} onChange={(v) => updateObj({ shadow: v })}
-              hint="The whole panel (frame, figure, letter, texts) casts a drop shadow — in the composition and in every export." />
-            <div className="flex">
-              <button type="button" onClick={togglePanelsShadow}
-                className="bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold px-2.5 py-1 rounded text-[10px]"
-                title="Give EVERY panel of the figure the same shadow — click again to take it off all of them">
-                🌓 {panelsShadowed ? 'Remove the shadow from every panel' : 'Same shadow on every panel'}
+      <div className={panelCellCls(bar)}>
+        {/* MULTI-SELECTION. The chips are the panels of the canvas: click one to
+            add / remove it from the selection, the “🎯” chip of a selected panel
+            makes it the FIRST selected — the REFERENCE whose size the others
+            take (Ctrl+click on the canvas does the same, without coming back
+            here). The “📋” pair copies the selection and pastes it into the
+            first free cell of the grid; Ctrl+C / Ctrl+V work anywhere. */}
+        {objects.map((o, i) => {
+          const rank = selectedIds.indexOf(o.id);
+          const label = o.letter || (i + 1);
+          return (
+            <span key={o.id} className="inline-flex items-center">
+              <button type="button" onClick={() => toggleSelectedId(o.id)}
+                className={`font-bold text-[10px] px-1.5 py-0.5 border ${rank === 0 ? 'bg-blue-600 text-white border-blue-700 rounded' : (rank > 0 ? 'bg-indigo-50 text-indigo-800 border-indigo-300 rounded-l' : 'bg-white text-slate-600 border-slate-300 rounded hover:bg-slate-50')}`}
+                title={rank === 0
+                  ? 'The FIRST selected panel — the reference: resizing it gives EVERY selected panel its size, and moving it moves them all. Click to remove it from the selection.'
+                  : (rank > 0
+                    ? `Selected (${ordinalOf(rank)}): it follows the first selected one — click to take it out of the selection.`
+                    : `Add panel ${label} to the selection. The FIRST one selected is the reference (the “🎯” chip): its size is what the others take. Ctrl+click on the canvas does the same.`)}>
+                {label}{rank === 0 ? ' 🎯' : ''}
               </button>
-            </div>
-          </div>
-          {/* ── LA FIGURE ACTIVE : SON OMBRE ET SON FOND ────────────────────────
-              Deux réglages qui portent sur l'IMAGE (l'active, celle qui porte les
-              poignées et le 🎯), pas sur le panneau. Ils vivent dans le repli —
-              le bouton d'UN clic (🌓 Figure shadow) reste sur la ligne des
-              figures — et le détourage a besoin de place : un aperçu large, une
-              tolérance, deux boutons. */}
-          {cropPanelIdx >= 0 && (
-            <div className="flex flex-col gap-1.5 shrink-0 max-w-[24rem]">
-              <h5 className="text-xs font-bold text-slate-500 uppercase"
-                title={`Settings of FIGURE ${cropPanelIdx + 1} of this panel — the 🎯 chip in the figure list changes which one is active. Everything here belongs to the picture itself (its pixels, its shadow), never to the panel frame.`}>
-                Figure {cropPanelIdx + 1} <span className="font-normal normal-case text-slate-400">(image itself)</span>
-              </h5>
-              {/* 🌓 L'OMBRE DE LA FIGURE — le filtre <feDropShadow> est posé sur un
-                  groupe qui ENVELOPPE l'image : l'ombre suit les pixels de la
-                  figure, donc son alpha (une image détourée projette l'ombre de
-                  ce qu'elle MONTRE, pas celle de son rectangle). */}
-              <div className="flex flex-col gap-1 border border-slate-200 rounded px-2 py-1 bg-white">
-                <span className="text-[10px] font-bold text-slate-600 flex items-center gap-1">
-                  🌓 Shadow of this figure
-                  <button type="button" onClick={toggleActiveFigureShadow}
-                    className="ml-auto font-bold text-[10px] border border-slate-300 rounded px-1.5 py-px text-slate-600 hover:bg-slate-50 shrink-0"
-                    title={figShadowOn ? 'Take the shadow off this figure' : 'Give this figure the standard shadow (1.5 mm down-right, 1.2 mm blur)'}>
-                    {figShadowOn ? '✕ remove' : '+ add'}
-                  </button>
-                </span>
-                <ShadowControls value={shadowSpec((selectedImgs[cropPanelIdx] || {}).shadow)}
-                  onChange={(v) => patchFigure(selectedObj.id, cropPanelIdx, { shadow: v })}
-                  hint="The PICTURE casts its own drop shadow — it follows its pixels (a cut-out background gives the shadow of what the image shows, not of its rectangle) and it comes out in the composition and in every export." />
-                {!figShadowOn && (
-                  <span className="text-[9px] text-slate-400 italic">
-                    No shadow on this figure yet — “+ add” puts the standard one on it, and the panel keeps its own.
-                  </span>
-                )}
+              {rank > 0 && (
+                <button type="button" onClick={() => makeReference(o.id)}
+                  className="font-bold text-[10px] px-1 py-0.5 border border-l-0 border-indigo-300 bg-white text-indigo-700 rounded-r hover:bg-indigo-50"
+                  title="Make it the FIRST selected — the reference whose size every other selected panel takes">🎯</button>
+              )}
+            </span>
+          );
+        })}
+        <button type="button" onClick={() => copySelection()}
+          className="font-bold text-[10px] bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 px-1.5 py-0.5 rounded shrink-0"
+          title="Copy the selected panel(s) — figures, texts and shadows included. Ctrl+C does the same, and “📋 Paste” brings an identical panel back.">📋 Copy</button>
+        <button type="button" onClick={() => pasteClipboard()}
+          className="font-bold text-[10px] bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 px-1.5 py-0.5 rounded shrink-0"
+          title={`Paste the copied panel(s) into the FIRST FREE cell of the grid (never on top of a panel that is already there) — Ctrl+V does the same${clipCount ? ` (${clipCount} panel${clipCount === 1 ? '' : 's'} in the clipboard)` : ' (nothing copied yet)'}`}>
+          📋 Paste{clipCount ? ` (${clipCount})` : ''}
+        </button>
+        {selectedIds.length > 1 && (
+          <button type="button" onClick={() => setSelectedId(selectedId)}
+            className="font-bold text-[10px] bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 px-1.5 py-0.5 rounded shrink-0"
+            title="Keep only the first selected panel: the others leave the selection">✕ Others</button>
+        )}
+      </div>
+      <div className={panelCellCls(bar)}>
+        {/* 🗂 QUEL PANNEAU EST AU-DESSUS — les panneaux sont peints dans l'ordre
+            de la liste : ces deux commandes font passer ce panneau devant ses
+            voisins (ou le rangent derrière). Les lettres (A, B, C …) sont
+            attribuées par POSITION et ne bougent pas. */}
+        <button type="button" onClick={() => moveObjInStack(selectedObj.id, 'front')}
+          disabled={objects.indexOf(selectedObj) === objects.length - 1}
+          className="text-[10px] bg-white text-slate-700 border border-slate-300 px-1.5 py-0.5 rounded font-bold hover:bg-slate-100 disabled:opacity-40 shrink-0"
+          title="Put this panel ON TOP of the others — wherever two panels overlap (a figure sticking out of its panel), this one covers its neighbour. The letters are not renumbered.">⤒ Front</button>
+        <button type="button" onClick={() => moveObjInStack(selectedObj.id, 'back')}
+          disabled={objects.indexOf(selectedObj) === 0}
+          className="text-[10px] bg-white text-slate-700 border border-slate-300 px-1.5 py-0.5 rounded font-bold hover:bg-slate-100 disabled:opacity-40 shrink-0"
+          title="Put this panel BEHIND the others — its neighbour covers it wherever they overlap. The letters are not renumbered.">⤓ Back</button>
+        <button onClick={() => copySelection()} className="text-[10px] bg-white text-slate-700 border border-slate-300 px-1.5 py-0.5 rounded font-bold hover:bg-slate-100 shrink-0"
+          title="Copy this panel — its figure(s), its texts and its shadows — Ctrl+C does the same">⧉ Copy</button>
+        <button onClick={deleteSelection} className="text-[10px] bg-red-50 text-red-600 border border-red-200 px-1.5 py-0.5 rounded font-bold hover:bg-red-100 shrink-0"
+          title={selectedIds.length > 1 ? `Delete the ${selectedIds.length} selected panels` : 'Delete this panel'}>
+          {selectedIds.length > 1 ? `Delete ${selectedIds.length} panels` : 'Delete'}
+        </button>
+        <span className="w-px h-4 bg-slate-300 shrink-0" />
+        <button onClick={() => zoomToObject(selectedObj.id)} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-1.5 py-0.5 rounded text-[10px] shrink-0"
+          title="Zoom the canvas on this panel alone — a full screen view of this object, nothing else">⛶ Fullscreen on object</button>
+        {selectedObj.src && selectedObj.src.testId && (
+          <button onClick={() => openOriginalGraph(selectedObj.src)}
+            className="bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-300 font-bold px-1.5 py-0.5 rounded text-[10px] shrink-0"
+            title={`Open ${originLabelOf(selectedObj.src) || 'the original experiment'} right on the graph this image was captured from${selectedObj.src.elementLabel ? ` (${selectedObj.src.elementLabel})` : ''}`}>
+            ↗ Open original graph{originLabelOf(selectedObj.src) ? ` · ${originLabelOf(selectedObj.src)}` : ''}
+          </button>
+        )}
+        <button type="button" onClick={() => setPanelMore((v) => !v)}
+          className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${panelMore ? 'bg-slate-700 text-white border-slate-700' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}
+          title={panelMore
+            ? 'Fold the rarely used settings away again (panel shadow, free layout, eraser brush size, the long hints)'
+            : 'Show the rarely used settings: the panel SHADOW, the free layout, the eraser brush size and the long hints — everything else is already here'}>
+          {panelMore ? '▴ Fewer options' : '▾ More options'}
+        </button>
+      </div>
+      </div>
+      {/* ── LA LÉGENDE DU PANNEAU — LE SEUL BLOC PLEINE LARGEUR, TOUT EN BAS ────
+         Un sous-titre s’écrit : c’est le seul élément qui a besoin de toute la
+         largeur (`col-span-full`), et il est placé en dernier. Le NOM de la
+         lettre n’est plus ici : il est attribué AUTOMATIQUEMENT par la position
+         du panneau (renumberLetters), et sa taille — comme sa couleur et son
+         gras — est une définition GÉNÉRALE du canvas, réglée une fois pour tous
+         les panneaux dans les options du canvas. */}
+      <div className={bar
+        ? 'flex flex-wrap items-start gap-x-1.5 gap-y-1 min-w-0 col-span-full border-t border-slate-200 pt-1'
+        : 'flex flex-wrap items-center gap-x-1.5 gap-y-1 border-t border-slate-200 pt-1'}>
+        <span className="text-[10px] font-bold text-slate-500 uppercase shrink-0"
+          title={`Caption of panel ${selectedObj.letter || '—'} — a SUB-caption: it is never drawn inside the panel, it is merged into the figure caption at the bottom. The letter itself is automatic (by position) · size / colour / bold: canvas options.`}>
+          Caption {selectedObj.letter || '—'}
+        </span>
+        <textarea rows={1} value={selectedObj.caption} onChange={e => updateObj({ caption: e.target.value })}
+          placeholder={`Sub-caption for panel ${selectedObj.letter || ''} — merged into the figure caption at the bottom`}
+          className="flex-1 min-w-[12rem] border rounded px-1 py-0.5 text-[11px] resize-y"
+          title="Caption of this panel: written at the bottom of the figure, never inside the panel. “✎ Edit in place” opens it as a floating editor; the box can also be dragged taller." />
+        <button type="button" onClick={() => setEditingObjCaption(selectedObj.id)}
+          className="shrink-0 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold px-1.5 py-0.5 rounded text-[10px]"
+          title="Open the floating caption editor">✎ Edit in place</button>
+      </div>
+      {panelMore && (
+        /* ── LES OMBRES ET LE FOND, CÔTE À CÔTE ──────────────────────────────
+           Ce repli garde les réglages qu’on pose une fois. Les voici GROUPÉS,
+           et sans les longs paragraphes qui les séparaient :
+             • les DEUX ombres dans la même colonne — celle du PANNEAU (son cadre,
+               la figure, la lettre, les textes) puis celle de la FIGURE ACTIVE,
+               réglées par le MÊME bloc de contrôles et la même primitive
+               <feDropShadow> : rien ne vient plus s’intercaler entre elles ;
+             • le FOND de la figure juste à côté : le détourage est un vrai
+               travail sur les PIXELS (utils/figureBackground.js) — l’aperçu
+               clique la SOURCE de la figure (pas sa vignette), la tolérance
+               absorbe le bruit du JPEG et « 🎨 Remove background » écrit un PNG
+           transparent ;
+             • et les rappels, UNE ligne chacun — le détail est dans l’infobulle.
+           Le repli prend toute la largeur (`md:col-span-full`) : c’est un bloc
+           de réglages fins, pas une quatrième colonne. */
+        <div className={`flex flex-wrap items-start gap-x-4 gap-y-1.5 ${bar ? 'min-w-0 md:col-span-full' : 'border-t border-slate-200 pt-1.5'}`}>
+          {/* LES DEUX OMBRES — le panneau, puis la figure : jamais séparées. */}
+          <div className="flex flex-col gap-1.5 shrink-0 min-w-[16rem] max-w-[24rem]">
+            <div className="flex flex-col gap-1 shrink-0">
+              <h5 className="text-xs font-bold text-slate-500 uppercase" title="Shadow of the whole PANEL — its white frame, the figure, the letter and the texts. The PICTURE can have its own too (“Shadow (figure)”, right below): the two are independent settings.">Shadow <span className="font-normal normal-case text-slate-400">(panel frame)</span></h5>
+              <ShadowControls value={shadowSpec(selectedObj.shadow)} onChange={(v) => updateObj({ shadow: v })}
+                hint="The whole PANEL casts this shadow — frame, figure, letter and texts — and every export keeps it." />
+              <div className="flex">
+                <button type="button" onClick={togglePanelsShadow}
+                  className="bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold px-2.5 py-1 rounded text-[10px]"
+                  title="Give EVERY panel of the figure the same shadow — click again to take it off all of them">
+                  🌓 {panelsShadowed ? 'Remove the shadow from every panel' : 'Same shadow on every panel'}
+                </button>
               </div>
-              {/* 🎨 LE FOND DEVIENT TRANSPARENT — un vrai travail sur les PIXELS
-                  (utils/figureBackground.js) : on clique la couleur du fond sur
-                  l'aperçu (c'est la SOURCE qui est montrée, pas la vignette), la
-                  tolérance absorbe le bruit du JPEG, et le PNG ré-écrit sur la
-                  figure rend le fond transparent — le panneau passe au travers et
-                  l'ombre de la figure épouse enfin ce qu'elle montre. */}
-              <div className="flex flex-col gap-1 border border-slate-200 rounded px-2 py-1 bg-white">
-                <span className="text-[10px] font-bold text-slate-600">🎨 Transparent background</span>
-                <div className="flex items-start gap-2">
-                  {figBgSrc ? (
-                    <img src={figBgSrc} alt="" onClick={pickBackgroundAt}
-                      className="w-[7.5rem] h-[7.5rem] object-contain border border-slate-300 rounded cursor-crosshair shrink-0"
-                      style={{ backgroundImage: 'repeating-conic-gradient(#e2e8f0 0% 25%, #ffffff 0% 50%)', backgroundSize: '12px 12px' }}
-                      title="Click the colour that must disappear — the background of this figure. Click in a corner of the image: those pixels (and everything of that colour reachable from the borders) become transparent. The chequered background shows what “transparent” means." />
-                  ) : (
-                    <span className="text-[9px] text-slate-400 italic shrink-0 w-[7.5rem]">No pixels to show — put a figure in this panel first.</span>
-                  )}
-                  <div className="flex flex-col gap-1 min-w-[10rem]">
-                    <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500"
-                      title="How far from the clicked colour a pixel still counts as “background” (0 = the exact colour only). A JPEG shifts the background by a few units: 20–45 is the usual range. Raise it and the light greys next to the background go too.">
-                      Tolerance {clampBgTol(bgTol)}
-                      <input type="range" min={BG_TOL_MIN} max={BG_TOL_MAX} step="1" value={bgTol}
-                        onChange={(e) => setBgTol(clampBgTol(e.target.value))} className="w-20 accent-teal-600" />
-                      <input type="number" min={BG_TOL_MIN} max={BG_TOL_MAX} value={bgTol}
-                        onChange={(e) => setBgTol(clampBgTol(e.target.value))} className="w-12 border rounded px-0.5 py-px text-[10px]" />
-                    </label>
-                    <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500"
-                      title="“Touching the borders”: the colour goes only where it is REACHABLE from an edge — a white label inside a drawing is kept (the usual case). “Everywhere”: every pixel of that colour goes, even inside the drawing — for a background made of several pieces.">
-                      What goes
-                      <select value={bgMode} onChange={(e) => setBgMode(e.target.value)} className="border rounded px-0.5 py-px text-[10px]">
-                        <option value="flood">touching the borders</option>
-                        <option value="all">everywhere</option>
-                      </select>
-                    </label>
-                    <div className="flex flex-wrap items-center gap-1">
-                      <button type="button" onClick={() => removeFigureBackground(false)} disabled={bgBusy || !figBgSrc}
-                        className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${bgBusy || !figBgSrc ? 'bg-slate-100 border-slate-200 text-slate-300' : 'bg-teal-600 text-white border-teal-700 hover:bg-teal-700'}`}
-                        title="Take the clicked colour off this figure: those pixels become TRANSPARENT (a PNG is written in their place) — the panel shows through, and the figure's shadow then follows what the picture shows. Ctrl+Z puts the original image back.">
-                        {bgBusy ? '⏳ Working…' : '🎨 Remove background'}
-                      </button>
-                      <button type="button" onClick={() => removeFigureBackground(true)} disabled={bgBusy || !figBgSrc}
-                        className="font-bold px-1.5 py-0.5 rounded text-[10px] border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 shrink-0"
-                        title="Automatic: the colours found in the four CORNERS are taken off in one go — a graph saved on a white background has them all. Nothing happens on an image whose background is not clear.">
-                        Auto: the four corners
-                      </button>
-                    </div>
-                    {(bgKey || figBgRecord) && (
-                      <span className="flex items-center gap-1 text-[10px] font-bold text-slate-600">
-                        {bgKey && (
-                          <>
-                            <span className="w-4 h-4 rounded border border-slate-300 shrink-0" style={{ background: bgKey }} />
-                            <code className="text-[10px]">{bgKey}</code>
-                          </>
-                        )}
-                        {figBgRecord && (
-                          <span className="text-[9px] font-bold text-teal-700" title="What these pixels carry: the figure keeps this mark, and Ctrl+Z undoes the whole cut-out.">
-                            🎨 cut out · {figBgRecord.color} ±{figBgRecord.tol} · {figBgRecord.mode === 'all' ? 'everywhere' : 'borders'}
-                          </span>
-                        )}
-                      </span>
-                    )}
-                    {bgMsg && <span className="text-[9px] font-bold text-slate-600">{bgMsg}</span>}
+            </div>
+            {cropPanelIdx >= 0 && (
+              <>
+                <h5 className="text-xs font-bold text-slate-500 uppercase"
+                  title={`Settings of FIGURE ${cropPanelIdx + 1} of this panel — the 🎯 chip in the figure list changes which one is active. Everything here belongs to the picture itself (its pixels, its shadow), never to the panel frame.`}>
+                  Figure {cropPanelIdx + 1} <span className="font-normal normal-case text-slate-400">(image itself)</span>
+                </h5>
+                <div className="flex flex-col gap-1 border border-slate-200 rounded px-2 py-1 bg-white">
+                  <span className="text-[10px] font-bold text-slate-600 flex items-center gap-1">
+                    🌓 Shadow of this figure
+                    <button type="button" onClick={toggleActiveFigureShadow}
+                      className="ml-auto font-bold text-[10px] border border-slate-300 rounded px-1.5 py-px text-slate-600 hover:bg-slate-50 shrink-0"
+                      title={figShadowOn ? 'Take the shadow off this figure' : 'Give this figure the standard shadow (1.5 mm down-right, 1.2 mm blur)'}>
+                      {figShadowOn ? '✕ remove' : '+ add'}
+                    </button>
+                  </span>
+                  <ShadowControls value={shadowSpec((selectedImgs[cropPanelIdx] || {}).shadow)}
+                    onChange={(v) => patchFigure(selectedObj.id, cropPanelIdx, { shadow: v })}
+                    hint="The PICTURE casts its own drop shadow: it follows its pixels, so a cut-out background gives the shadow of what the image shows." />
+                  {!figShadowOn && (
                     <span className="text-[9px] text-slate-400 italic">
-                      Click the background on the picture, then “🎨 Remove background”. Place, size, crop, erasures and shadow are untouched — Ctrl+Z restores the original image (one step).
+                      No shadow on this figure yet — “+ add” puts the standard one on it, and the panel keeps its own.
                     </span>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+          {/* LE FOND DE LA FIGURE — le détourage, juste à côté de son ombre. */}
+          {cropPanelIdx >= 0 && (
+            <div className="flex flex-col gap-1 border border-slate-200 rounded px-2 py-1 bg-white">
+              <span className="text-[10px] font-bold text-slate-600">🎨 Transparent background</span>
+              <div className="flex items-start gap-2">
+                {figBgSrc ? (
+                  <img src={figBgSrc} alt="" onClick={pickBackgroundAt}
+                    className="w-[7.5rem] h-[7.5rem] object-contain border border-slate-300 rounded cursor-crosshair shrink-0"
+                    style={{ backgroundImage: 'repeating-conic-gradient(#e2e8f0 0% 25%, #ffffff 0% 50%)', backgroundSize: '12px 12px' }}
+                    title="Click the colour that must disappear — the background of this figure. Click in a corner of the image: those pixels (and everything of that colour reachable from the borders) become transparent. The chequered background shows what “transparent” means." />
+                ) : (
+                  <span className="text-[9px] text-slate-400 italic shrink-0 w-[7.5rem]">No pixels to show — put a figure in this panel first.</span>
+                )}
+                <div className="flex flex-col gap-1 min-w-[10rem]">
+                  <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500"
+                    title="How far from the clicked colour a pixel still counts as “background” (0 = the exact colour only). A JPEG shifts the background by a few units: 20–45 is the usual range. Raise it and the light greys next to the background go too.">
+                    Tolerance {clampBgTol(bgTol)}
+                    <input type="range" min={BG_TOL_MIN} max={BG_TOL_MAX} step="1" value={bgTol}
+                      onChange={(e) => setBgTol(clampBgTol(e.target.value))} className="w-20 accent-teal-600" />
+                    <input type="number" min={BG_TOL_MIN} max={BG_TOL_MAX} value={bgTol}
+                      onChange={(e) => setBgTol(clampBgTol(e.target.value))} className="w-12 border rounded px-0.5 py-px text-[10px]" />
+                  </label>
+                  <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500"
+                    title="“Touching the borders”: the colour goes only where it is REACHABLE from an edge — a white label inside a drawing is kept (the usual case). “Everywhere”: every pixel of that colour goes, even inside the drawing — for a background made of several pieces.">
+                    What goes
+                    <select value={bgMode} onChange={(e) => setBgMode(e.target.value)} className="border rounded px-0.5 py-px text-[10px]">
+                      <option value="flood">touching the borders</option>
+                      <option value="all">everywhere</option>
+                    </select>
+                  </label>
+                  <div className="flex flex-wrap items-center gap-1">
+                    <button type="button" onClick={() => removeFigureBackground(false)} disabled={bgBusy || !figBgSrc}
+                      className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${bgBusy || !figBgSrc ? 'bg-slate-100 border-slate-200 text-slate-300' : 'bg-teal-600 text-white border-teal-700 hover:bg-teal-700'}`}
+                      title="Take the clicked colour off this figure: those pixels become TRANSPARENT (a PNG is written in their place) — the panel shows through, and the figure's shadow then follows what the picture shows. Ctrl+Z puts the original image back.">
+                      {bgBusy ? '⏳ Working…' : '🎨 Remove background'}
+                    </button>
+                    <button type="button" onClick={() => removeFigureBackground(true)} disabled={bgBusy || !figBgSrc}
+                      className="font-bold px-1.5 py-0.5 rounded text-[10px] border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 shrink-0"
+                      title="Automatic: the colours found in the four CORNERS are taken off in one go — a graph saved on a white background has them all. Nothing happens on an image whose background is not clear.">
+                      Auto: the four corners
+                    </button>
                   </div>
+                  {(bgKey || figBgRecord) && (
+                    <span className="flex items-center gap-1 text-[10px] font-bold text-slate-600">
+                      {bgKey && (
+                        <>
+                          <span className="w-4 h-4 rounded border border-slate-300 shrink-0" style={{ background: bgKey }} />
+                          <code className="text-[10px]">{bgKey}</code>
+                        </>
+                      )}
+                      {figBgRecord && (
+                        <span className="text-[9px] font-bold text-teal-700" title="What these pixels carry: the figure keeps this mark, and Ctrl+Z undoes the whole cut-out.">
+                          🎨 cut out · {figBgRecord.color} ±{figBgRecord.tol} · {figBgRecord.mode === 'all' ? 'everywhere' : 'borders'}
+                        </span>
+                      )}
+                    </span>
+                  )}
+                  {bgMsg && <span className="text-[9px] font-bold text-slate-600">{bgMsg}</span>}
+                  <span className="text-[9px] text-slate-400 italic"
+                      title="Ctrl+Z brings the original image back (one step) — the shadow of the figure follows the NEW pixels.">
+                    Click the background on the picture, then “🎨 Remove background” — place, size, crop and erasures are untouched.
+                  </span>
                 </div>
               </div>
             </div>
           )}
-          {/* LA DISPOSITION LIBRE, LES AVERTISSEMENTS ET LES EXPLICATIONS : hors
-              du chemin, ici. Rien n'a été retiré — seulement rangé. */}
           <div className="flex flex-col gap-1 min-w-[18rem] flex-1">
             {selectedFreeLayout && (
               <div className="flex flex-col gap-1 bg-indigo-50 border border-indigo-200 rounded px-2 py-1">
                 <span className="text-[10px] font-bold text-indigo-800">⊞ Free layout — every figure of this panel keeps its own place (drag or resize it on the canvas).</span>
-                <span className="text-[9px] text-indigo-700">
-                  That is why adding a figure no longer moves the ones already here. Scale and grid columns act on the GRID layout only —
-                  “⊞ Lay the figures out in a grid”, on the figure line just above, re-flows the panel when you want it back.
+                <span className="text-[9px] text-indigo-700"
+                  title="“⊞ Lay the figures out in a grid”, on the figure line, re-flows the panel whenever you want it back.">
+                  Scale and grid columns act on the GRID layout only.
                 </span>
               </div>
             )}
-            <span className="text-[9px] text-slate-400 italic">
-              Drag the figure on the canvas to shift it, drag its corner to resize it — 🎯 Precision (or Shift) makes both finer. With several panels selected (Ctrl+click), the first selected is the reference.
+            <span className="text-[9px] text-slate-400 italic"
+              title="With several panels selected (Ctrl+click), the first selected is the reference: it gives its size to the others, and moving it moves them all.">
+              Drag the figure to shift it, its corner to resize it — 🎯 Precision (or Shift) makes both finer.
             </span>
             {keepAspect && (
-              <span className="text-[9px] font-bold text-emerald-700">
-                🔒 Keep aspect ratio is on (canvas option): the figure keeps its own width/height ratio, whatever the number of panels or the canvas size.
+              <span className="text-[9px] font-bold text-emerald-700"
+                title="Canvas option: the figure keeps its own width/height ratio, whatever the number of panels or the canvas size.">
+                🔒 Keep aspect ratio is on (canvas option).
               </span>
             )}
             {cropPanelOn && (
-              <span className="text-[9px] font-bold text-amber-700">
-                Drag a rectangle on the canvas over the figure — the mouse release applies it (Shift or 🎯 Precision for the tenth of a percent). A crop only ever keeps what is left, so the parts already removed never come back.
+              <span className="text-[9px] font-bold text-amber-700"
+                title="Shift or 🎯 Precision gives the tenth of a percent. A crop only ever keeps what is left, so the parts already removed never come back.">
+                Drag a rectangle on the canvas over the figure — the mouse release applies the crop.
               </span>
             )}
             {eraseMode && (
-              <span className="text-[9px] font-bold text-sky-800">
-                Drag on the canvas: everything the round brush touches is removed — one stroke = one Ctrl+Z. Click the eraser button again to leave the tool.
+              <span className="text-[9px] font-bold text-sky-800"
+                title="Click the eraser button again to leave the tool, and Ctrl+Z undoes one stroke at a time.">
+                Drag on the canvas: the round brush removes what it touches — one stroke = one Ctrl+Z.
               </span>
             )}
           </div>

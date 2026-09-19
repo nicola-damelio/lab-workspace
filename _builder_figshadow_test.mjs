@@ -198,8 +198,12 @@ has(IB, 'const figShadowOn = cropPanelIdx >= 0 && !!shadowSpec((selectedImgs[cro
 has(IB, 'const moveObjInStack = (objId, to) => {', 'la fenêtre de l’objet empile toujours les panneaux');
 has(IB, 'Shadow <span className="font-normal normal-case text-slate-400">(panel frame)</span>',
   'le bloc « Shadow » du panneau est explicitement étiqueté « panel frame »');
-has(IB, 'hint="The whole panel (frame, figure, letter, texts) casts a drop shadow — in the composition and in every export." />',
-  '…et il dit ce que l’ombre du panneau couvre');
+has(IB, 'hint="The whole PANEL casts this shadow — frame, figure, letter and texts — and every export keeps it." />',
+  '…et il dit ce que l’ombre du panneau couvre, en UNE ligne (les longues descriptions mangeaient la fenêtre)');
+ok(IB.indexOf('hint="The whole PANEL casts this shadow') < IB.indexOf('hint="The PICTURE casts its own drop shadow'),
+  '…et les deux ombres se SUIVENT dans la même colonne du repli : plus rien ne s’intercale entre elles');
+ok(!IB.includes('(a cut-out background gives the shadow of what the image shows, not of its rectangle)'),
+  'plus le paragraphe qui allongeait l’ombre de la figure (son détail tient dans la même phrase)');
 eq(count(IB, /<ShadowControls /g), 2,
   'DEUX blocs de contrôles partagent la MÊME primitive : le panneau et la figure (jamais un troisième)');
 has(IB, '<feDropShadow dx={sp.dx} dy={sp.dy} stdDeviation={sp.blur} floodColor={sp.color} floodOpacity={sp.opacity} />',

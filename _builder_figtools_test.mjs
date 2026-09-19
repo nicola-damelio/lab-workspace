@@ -216,8 +216,8 @@ has(IB, '<option value="all">everywhere</option>', '…comme le fond partout (ce
 has(IB, 'onClick={() => removeFigureBackground(false)}', 'le bouton « Remove background »');
 has(IB, 'Auto: the four corners', '…et le réglage automatique par les quatre coins');
 has(IB, '🎨 cut out · {figBgRecord.color}', 'la fenêtre rappelle ce que ces pixels portent');
-has(IB, 'Click the background on the picture, then “🎨 Remove background”. Place, size, crop, erasures and shadow are untouched',
-  'et dit ce qui n’est PAS touché, en clair');
+has(IB, 'Click the background on the picture, then “🎨 Remove background” — place, size, crop and erasures are untouched',
+  'et dit ce qui n’est PAS touché, en clair — en UNE ligne (le « Ctrl+Z » et le reste sont dans son infobulle)');
 ok(IB.indexOf('{panelMore && (') > 0 && IB.indexOf('{panelMore && (') < IB.lastIndexOf('🎨 Transparent background'),
   'le BLOC détaillé du détourage vit dans le repli « ▾ More options » (son bouton, lui, ouvre la colonne « Modify image »)');
 ok(IB.indexOf('{cropPanelIdx >= 0 && (') < IB.lastIndexOf('🎨 Transparent background'),

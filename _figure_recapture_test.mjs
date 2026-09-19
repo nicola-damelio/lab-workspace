@@ -284,6 +284,8 @@ check('32 the duplicates a runaway run left behind can be cleaned in one click',
   ok(LIB2.includes("if (allowed && !allowed(pid)) return; // another team's project library"), 'the scan cannot be limited to the projects the user may open');
   ok(LIB2.includes('const RECAPTURE_DUP_MIN = 3;'), 'two hand-made copies must never be treated as a runaway loop');
   ok(LIB2.includes("const RECAPTURE_DUP_WINDOW_MS = 10 * 60 * 1000;"), 'the copies must be close in time');
+  ok(LIB2.includes("(i && i.src && i.src.contentTag) || ''"),
+    'two DIFFERENT images of the same graph (axis X changed) are distinct figures, not duplicates of a runaway loop');
 });
 
 const failed = results.filter((r) => !r.ok);
