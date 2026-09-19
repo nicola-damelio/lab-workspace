@@ -1,0 +1,173 @@
+﻿== Conteneurs visibles dans le dataset
+  'projects' [1kYVKEVPEtGukfuRntrfbML8HTqmptaRm] created=2026-09-11T15:29:33.104Z
+  'protocols' [1zInvjpCkUE0Nxv_ufXcMzdgZ6NphKwxc] created=2026-09-11T15:29:35.362Z
+== Contenu du conteneur RETENU projects [1kYVKEVPEtGukfuRntrfbML8HTqmptaRm]
+  unassigned/
+     images/ : 4 fichier(s), 715485 octets
+        dont  avec mod > 2026-09-19T11:42Z (ceux du jumeau fusionnAc)
+  bianca/
+     images/ : 3 fichier(s), 762468 octets
+        dont 0 avec mod > 2026-09-19T11:42Z (ceux du jumeau fusionnAc)
+  tests/
+     images/ : 0 fichier(s),  octets
+        dont 0 avec mod > 2026-09-19T11:42Z (ceux du jumeau fusionnAc)
+  p53H/
+Measure-Object : 
+La propriété «
+size» est 
+introuvable dans 
+les entrées 
+d'objets.
+Au caractère C:\U
+sers\nicol\lab-wo
+rkspace\_diag_ver
+ify_merge.ps1:31 
+: 24
++     $bytes = 
+($files | 
+Measure-Object 
+-Property size 
+-Sum).Sum
++                
+        ~~~~~~~~~
+~~~~~~~~~~~~~~~~~
+~~~~~~~~
+    + CategoryIn 
+   fo            
+  : InvalidArg   
+ ument : (:)     
+[Measure-Obj    
+ect], PSArgu    
+mentExceptio    n
+    + FullyQuali 
+   fiedErrorId   
+  : GenericMea   
+ sureProperty    
+NotFound,Mic    
+rosoft.Power    
+Shell.Comman    
+ds.MeasureOb    
+jectCommand
+     Time_Laps_p53HMycH-Alexa488/ : 1 fichier(s),  octets
+        dont 0 avec mod > 2026-09-19T11:42Z (ceux du jumeau fusionnAc)
+Measure-Object : 
+La propriété «
+size» est 
+introuvable dans 
+les entrées 
+d'objets.
+Au caractère C:\U
+sers\nicol\lab-wo
+rkspace\_diag_ver
+ify_merge.ps1:31 
+: 24
++     $bytes = 
+($files | 
+Measure-Object 
+-Property size 
+-Sum).Sum
++                
+        ~~~~~~~~~
+~~~~~~~~~~~~~~~~~
+~~~~~~~~
+    + CategoryIn 
+   fo            
+  : InvalidArg   
+ ument : (:)     
+[Measure-Obj    
+ect], PSArgu    
+mentExceptio    n
+    + FullyQuali 
+   fiedErrorId   
+  : GenericMea   
+ sureProperty    
+NotFound,Mic    
+rosoft.Power    
+Shell.Comman    
+ds.MeasureOb    
+jectCommand
+     Test_76/ : 1 fichier(s),  octets
+        dont 0 avec mod > 2026-09-19T11:42Z (ceux du jumeau fusionnAc)
+     images/ : 119 fichier(s), 52125155 octets
+        dont 38 avec mod > 2026-09-19T11:42Z (ceux du jumeau fusionnAc)
+Measure-Object : 
+La propriété «
+size» est 
+introuvable dans 
+les entrées 
+d'objets.
+Au caractère C:\U
+sers\nicol\lab-wo
+rkspace\_diag_ver
+ify_merge.ps1:31 
+: 24
++     $bytes = 
+($files | 
+Measure-Object 
+-Property size 
+-Sum).Sum
++                
+        ~~~~~~~~~
+~~~~~~~~~~~~~~~~~
+~~~~~~~~
+    + CategoryIn 
+   fo            
+  : InvalidArg   
+ ument : (:)     
+[Measure-Obj    
+ect], PSArgu    
+mentExceptio    n
+    + FullyQuali 
+   fiedErrorId   
+  : GenericMea   
+ sureProperty    
+NotFound,Mic    
+rosoft.Power    
+Shell.Comman    
+ds.MeasureOb    
+jectCommand
+     flow_cyt_p53H_p53R/ : 49 fichier(s),  octets
+        dont 0 avec mod > 2026-09-19T11:42Z (ceux du jumeau fusionnAc)
+     useful_files/ : 1 fichier(s), 2669528 octets
+        dont 0 avec mod > 2026-09-19T11:42Z (ceux du jumeau fusionnAc)
+Measure-Object : 
+La propriété «
+size» est 
+introuvable dans 
+les entrées 
+d'objets.
+Au caractère C:\U
+sers\nicol\lab-wo
+rkspace\_diag_ver
+ify_merge.ps1:31 
+: 24
++     $bytes = 
+($files | 
+Measure-Object 
+-Property size 
+-Sum).Sum
++                
+        ~~~~~~~~~
+~~~~~~~~~~~~~~~~~
+~~~~~~~~
+    + CategoryIn 
+   fo            
+  : InvalidArg   
+ ument : (:)     
+[Measure-Obj    
+ect], PSArgu    
+mentExceptio    n
+    + FullyQuali 
+   fiedErrorId   
+  : GenericMea   
+ sureProperty    
+NotFound,Mic    
+rosoft.Power    
+Shell.Comman    
+ds.MeasureOb    
+jectCommand
+     CD/ : 2 fichier(s),  octets
+        dont 0 avec mod > 2026-09-19T11:42Z (ceux du jumeau fusionnAc)
+== Jumeaux dans la CORBEILLE (rien n'a ActAc supprimAc dAcfinitivement)
+  [1-77Jv9_k0vnpJsRlUEGGaXRNOFe42b1J] name='projects' trashed=True
+  [1a4AOFG34Ug3DZ_Ju9DrM0FKd3I03Vb5c] name='protocols' trashed=True

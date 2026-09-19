@@ -238,14 +238,20 @@ export const registerKeyValueMerger = (matcher, merge) => {
 };
 
 /** L'union des deux copies d'une clé, quand un fusionneur la connaît — `null`
- *  sinon (l'appelant retombe sur la règle d'horodatage). */
-export const mergedKeyValue = (key, localRaw, remoteRaw) => {
+ *  sinon (l'appelant retombe sur la règle d'horodatage).
+ *  `ctx` (facultatif) porte de quoi lire les AUTRES clés des deux copies en
+ *  cours de fusion — les listes de bibliothèque y lisent les pierres tombales de
+ *  leur portée, y compris celles qui viennent d'arriver du Drive (voir
+ *  figuresLibrary.effectiveLibraryTrash : sans cela, un poste qui reçoit un
+ *  déplacement pour la première fois fusionnait la liste AVANT d'avoir lu la
+ *  note, et republiait une fois l'image dans la bibliothèque qu'elle a quittée). */
+export const mergedKeyValue = (key, localRaw, remoteRaw, ctx = null) => {
   for (const { matcher, merge } of keyValueMergers) {
     let owned = false;
     try { owned = !!matcher(key); } catch { owned = false; }
     if (!owned) continue;
     try {
-      const v = merge(key, localRaw, remoteRaw);
+      const v = merge(key, localRaw, remoteRaw, ctx);
       if (typeof v === 'string' && v) return v;
     } catch { /* fusionneur en échec → horodatage */ }
   }
@@ -272,10 +278,19 @@ export const mergeKeyStates = ({ local = null, remote = null } = {}) => {
   // est l'union, et leur horodatage devient MAINTENANT — une union n'est pas
   // « ancienne » (sinon une copie plus pauvre la remplacerait au tour suivant).
   const unionKeys = new Set();
+  /* Les AUTRES clés des DEUX copies, lisibles par un fusionneur (voir
+     mergedKeyValue) : les pierres tombales d'une portée y sont lues AU MOMENT
+     où sa liste est fusionnée, même quand la note arrive dans cette fusion-ci. */
+  const ctx = {
+    rawValuesOf: (k) => [
+      (a.keys[k] && a.keys[k].v) || '',
+      (b.keys[k] && b.keys[k].v) || ''
+    ]
+  };
   Object.entries(b.keys).forEach(([key, entry]) => {
     const mine = a.keys[key];
     if (!mine) { adopt[key] = entry.v; merged[key] = { v: entry.v, at: Number(entry.at) || Date.now() }; return; }
-    const union = mergedKeyValue(key, mine.v, entry.v);
+    const union = mergedKeyValue(key, mine.v, entry.v, ctx);
     if (union !== null) {
       merged[key] = { v: union, at: Date.now() };
       unionKeys.add(key);

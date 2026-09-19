@@ -27,6 +27,12 @@ const {
   sanitizeScientistStyles, scientistStyleOf
 } = await import('./src/components/pubCitation.js');
 
+/* LE MOTEUR DE COMPLÉTION DES RÉFÉRENCES (src/utils/referenceEnrich.js) : c'est
+   lui qui sait qu'une liste d'auteurs VIDE ou coupée par un « et al. » n'est
+   pas une liste remplie, et qui va la chercher — pot commun du laboratoire puis
+   Crossref. Les trois listes de papiers s'en servent (voir section 15). */
+const { authorsIncomplete } = await import('./src/utils/referenceEnrich.js');
+
 let passed = 0;
 const eq = (actual, expected, what) => {
   assert.deepEqual(actual, expected, `${what}\n  attendu : ${JSON.stringify(expected)}\n  obtenu  : ${JSON.stringify(actual)}`);
@@ -518,5 +524,51 @@ ok(/<body><div id="\$\{DOC_CONTAINER_ID\}">\$\{bodyHtml\}<\/div><\/body>/.test(p
   'l’export remet le document dans le même conteneur : les règles s’y appliquent (impression / PDF)');
 ['pf-title', 'pf-authors', 'pf-affiliations', 'pf-heading', 'pf-body', 'pf-figure', 'pf-caption', 'pf-bib']
   .forEach((cls) => ok(pdm.includes(cls), `le document porte la classe .${cls} que la feuille vise`));
+
+
+/* ── 15. « ⟳ COMPLETE AUTHOR LISTS » DANS LES TROIS LISTES DE PAPIERS ─────────
+   Signalé : « relevant paper and project bibliography sections do not find all
+   authors of the publication. You could provide a “complete author list” button
+   as in the “publication of the scientist” section ». Les deux sections ont donc
+   le même bouton, et il travaille avec le moteur de référence du laboratoire
+   (utils/referenceEnrich.js) — le seul qui sache qu'une liste coupée par un
+   « et al. » n'est PAS une liste remplie, et qui la remplace par la liste
+   complète du même article (pot commun, puis Crossref). ──────────────────── */
+eq(authorsIncomplete({ authors: '' }), true, 'un papier sans auteurs est à compléter');
+eq(authorsIncomplete({}), true, 'un papier qui n’a même pas le champ non plus');
+eq(authorsIncomplete({ authors: 'Fumano, et al.' }), true,
+  'une liste COUPÉE par un « et al. » est à compléter : c’est le défaut signalé');
+eq(authorsIncomplete({ authors: 'Fumano M, and others' }), true, '…« and others » aussi');
+eq(authorsIncomplete({ authors: 'Rossi M' }), false,
+  'un seul nom écrit SANS marqueur reste une liste voulue (on n’y touche pas)');
+eq(authorsIncomplete({ authors: 'Rossi M, Bianchi A, Smith J' }), false,
+  'une liste complète n’est jamais retouchée');
+
+ok(/import \{ authorsIncomplete, enrichReferences \} from '\.\.\/utils\/referenceEnrich';/.test(src),
+  'Publications importe le moteur de référence (auteurs incomplets)');
+ok(/const completePaperAuthors = async \(\) => \{/.test(src) &&
+   /const pending = papers\.filter\(authorsIncomplete\);/.test(src),
+  'les « Relevant papers » ne cherchent QUE les listes vides ou coupées');
+ok(/const res = await enrichReferences\(pending, \{ pool: pubs, all: false, max: 60 \}\);/.test(src),
+  '…dans les publications du laboratoire d’abord, puis sur le web (Crossref)');
+ok(/if \(byId\.size > 0\) setPapers\(\(prev\) => prev\.map\(\(p\) => \(byId\.has\(p\.id\) \? \{ \.\.\.p, \.\.\.byId\.get\(p\.id\) \} : p\)\)\);/.test(src),
+  'les listes trouvées sont ENREGISTRÉES dans les Relevant papers (pas seulement affichées)');
+ok(/const completePbAuthorLists = async \(\) => \{/.test(src) &&
+   /pool: \[\.\.\.pubs, \.\.\.papers\], all: false, max: 60/.test(src),
+  'la bibliographie des projets cherche dans les publications ET les Relevant papers (comme la page projet)');
+ok(/if \(authorsIncomplete\(paper\)\) pending\.push\(\{ paper, projectId: prj\.id \}\);/.test(src),
+  '…pour chaque entrée du projet dont la liste d’auteurs est incomplète');
+ok(/bibliography: \(prj\.bibliography \|\| \[\]\)\.map\(\(b\) => \(byPaper\.has\(b\.id\) \? \{ \.\.\.b, \.\.\.byPaper\.get\(b\.id\) \} : b\)\)/.test(src),
+  '…et la liste complétée est écrite dans la bibliographie du projet, entrée par entrée');
+eq((src.match(/'⟳ Complete author lists'/g) || []).length, 3,
+  'le bouton existe dans les TROIS sections (publications, Relevant papers, bibliographie des projets)');
+ok(/onClick=\{completePaperAuthors\}/.test(src) && /onClick=\{completePbAuthorLists\}/.test(src),
+  '…chaque section appelle son propre complètement');
+ok(/⏳ Fetching authors…/.test(src), '…et le bouton dit qu’il travaille');
+ok(/paperAuthorsMsg && <div className="px-4 pt-3 text-xs font-semibold text-emerald-700">/.test(src),
+  'les Relevant papers affichent le compte rendu (trouvés, introuvables, « et al. » restants)');
+ok(/Every relevant paper already lists all its authors\./.test(src) &&
+   /Every project paper already lists all its authors\./.test(src),
+  '…et ne font rien quand toutes les listes sont déjà là');
 
 console.log(`_pub_author_style_test: ${passed} passed`);

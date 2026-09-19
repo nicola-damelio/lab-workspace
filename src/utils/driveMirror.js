@@ -35,7 +35,8 @@
 
 import {
   getDriveToken, ensureLabWorkspaceFolder, findFolderByName,
-  findDriveFileByName, getDriveFileMeta, trashDriveFile, renameDriveFile
+  findDriveFileByName, getDriveFileMeta, trashDriveFile, renameDriveFile,
+  canonicalDatasetDirId
 } from './driveUpload';
 import {
   getCloudProvider, nextcloudConfigured, nextcloudDavBase, ncDelete, ncMove
@@ -183,7 +184,17 @@ export const mirrorRenameDataset = async ({ id = '', oldName = '', newName = '' 
 const findProjectsFolder = async (dataset) => {
   const datasetFolderId = await findDatasetFolder(dataset);
   if (!datasetFolderId) return '';
-  return findFolderByName('projects', datasetFolderId);
+  /* Un CONTENEUR canonique se résout par son IDENTITÉ (registre partagé, jumeaux
+     départagés par leur contenu — voir datasetDirTwins.js) : « le premier du
+     nom » pouvait être le jumeau vide, donc renommer ou supprimer le mauvais
+     dossier. LECTURE SEULE : rien n'est créé ici. */
+  const canonical = await canonicalDatasetDirId('projects', {
+    rootId: datasetFolderId,
+    datasetId: (dataset && (dataset.id || dataset.datasetId)) || '',
+    datasetName: (dataset && (dataset.name || dataset.datasetName)) || '',
+    create: false
+  }).catch(() => '');
+  return canonical || findFolderByName('projects', datasetFolderId);
 };
 
 /** Le dossier Drive d'un projet : registre partagé, puis nom exact. */

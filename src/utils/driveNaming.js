@@ -259,11 +259,16 @@ export const projectSectionFolderLabel = (projectName, section, datasetName = ''
 
 /** Human-readable location of a project's IMAGE LIBRARY on Drive:
  *      "My_dataset / projects / CD_project / images"
+ *  Chaque segment est affiché tel que le Drive le NOMME : la création d'un
+ *  chemin sanitise les noms de dossiers (driveUpload.resolveDrivePathFromNames),
+ *  donc la bibliothèque COMMUNE vit dans `projects/unassigned/images` — le `_`
+ *  de tête du nom canonique `_unassigned` tombe. Afficher le nom canonique
+ *  envoyait l'utilisateur chercher un dossier qui n'existe pas sur son Drive.
  *  ('' when the dataset folder is not known yet — see driveUpload). */
 export const projectImagesFolderLabel = (projectName, datasetName = '') => {
   const segs = [];
   const ds = String(datasetName || '').trim();
   if (ds) segs.push(datasetFolderSlug(ds));
-  segs.push(...projectImagesFolderPath(projectName));
+  segs.push(...projectImagesFolderPath(projectName).map((s) => sanitizeSlug(s) || s));
   return segs.join(' / ');
 };

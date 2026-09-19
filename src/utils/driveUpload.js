@@ -89,8 +89,10 @@ const FOLDER_NAME_KEY = 'labDriveFolderName';
 import { suggestDriveFileName, sanitizeSlug, driveFolderPath, DATASET_FOLDER_DIRS, datasetFolderSlug, canonicalPageSection, canonicalExperimentPath, projectNamesOf } from './driveNaming';
 import {
   readDriveMirror, writeDriveMirror, rememberDatasetFolder, rememberProjectFolder,
+  rememberDatasetDir, findDatasetDirId,
   isDatasetMirrorDeleted, isDrivePathMirrorDeleted
 } from './driveMirrorStore';
+import { pickCanonicalFolder, emptyTwinIds, isCanonicalDatasetDir } from './datasetDirTwins';
 import { getCloudProvider, nextcloudConfigured, ncUploadFile } from './nextcloud';
 import {
   enqueuePendingUpload, removePendingUpload, listPendingUploads,
@@ -388,7 +390,8 @@ export const listDatasetBackups = async () => {
   try {
     const rootId = await ensureDriveFolder();
     if (!rootId) return [];
-    const backupsId = await findFolderByName('backups', rootId);
+    const backupsId = (await canonicalDatasetDirId('backups', { rootId, create: false }).catch(() => ''))
+      || await findFolderByName('backups', rootId);
     if (!backupsId) return [];
     const items = await listDriveChildren(backupsId);
     return items
@@ -427,7 +430,10 @@ export const ensureDatasetFolderStructure = async (datasetRootId, dirs = null) =
        sa suppression — le dossier semblait réapparaître tout seul. */
     if (datasetDirDeleted(dir)) { map[dir] = ''; continue; }
     try {
-      map[dir] = await findOrCreateFolder(dir, datasetRootId);
+      /* Chaque conteneur canonique passe par le résolveur UNIQUE : il retient
+         l'identifiant, départage les JUMEAUX par leur contenu et range les
+         jumeaux vides à la corbeille — au lieu de « le premier du nom ». */
+      map[dir] = await canonicalDatasetDirId(dir, { rootId: datasetRootId });
     } catch { map[dir] = ''; }
   }
   if (driveRootKind === 'administration') {
@@ -495,13 +501,15 @@ const datasetFolderName = () => {
  *  SUPPRIMÉ dans le programme ? Dans ce cas il n'est jamais recréé : c'est ce
  *  qui met fin aux dossiers qui « réapparaissent » après une suppression
  *  (voir driveMirrorStore.js). */
-const datasetDirDeleted = (dir) => {
+const datasetDirDeletedFor = (dir, datasetId = '', datasetName = '') => {
   try {
     return isDrivePathMirrorDeleted(readDriveMirror(), {
-      dataset: { id: driveRootId, name: driveRootName }, path: dir
+      dataset: { id: datasetId || driveRootId, name: datasetName || driveRootName }, path: dir
     });
   } catch { return false; }
 };
+
+const datasetDirDeleted = (dir) => datasetDirDeletedFor(dir);
 
 /** Le dataset COURANT a-t-il été supprimé ? (un dataset supprimé ne voit pas
  *  son dossier Drive renaître). */
@@ -615,17 +623,27 @@ export const ensureDriveFolder = async () => {
 /** Escape a value for a Drive files.list `q` query. */
 const escapeDriveQuery = (v) => String(v || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
+/** TOUS les dossiers appartenant à l'application qui portent EXACTEMENT ce nom
+ *  dans `parentId` (le Drive peut en contenir plusieurs : des JUMEAUX).
+ *  Un ÉCHEC de recherche REMONTE (quota 403, 5xx, délai) : c'est la seule façon
+ *  de ne jamais confondre « le Drive n'a pas répondu » avec « le dossier n'existe
+ *  pas » — cette confusion fabriquait un second `projects/` à côté du premier
+ *  (voir datasetDirTwins.js et docs/DRIVE-MIRROR.md). */
+export const listFoldersByName = async (name, parentId) => {
+  if (!name || !parentId) return [];
+  const q = encodeURIComponent(
+    `name='${escapeDriveQuery(name)}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`
+  );
+  const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name,createdTime)&pageSize=100`);
+  const j = await res.json();
+  return (Array.isArray(j.files) ? j.files : []).filter((f) => f && f.name === name);
+};
+
 /** Find an existing app-created folder by exact name inside `parentId` ('' if missing). */
 export const findFolderByName = async (name, parentId) => {
-  if (!name || !parentId) return '';
   try {
-    const q = encodeURIComponent(
-      `name='${escapeDriveQuery(name)}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`
-    );
-    const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=10`);
-    const j = await res.json();
-    const found = (j.files || []).find((f) => f.name === name);
-    return found ? String(found.id) : '';
+    const all = await listFoldersByName(name, parentId);
+    return all.length ? String(all[0].id) : '';
   } catch { return ''; }
 };
 
@@ -643,14 +661,20 @@ export const findDriveFileByName = async (name, parentId) => {
   } catch { return ''; }
 };
 
-/** Fetch a Drive file's id + name. Only files the app created are readable
- *  under the drive.file scope — external files throw and should be skipped. */
+/** Fetch a Drive file's id + name (+ its PARENT folders: `parents` dit dans quel
+ *  dossier le fichier vit VRAIMENT — c'est ce que lit le déplacement d'une image
+ *  de bibliothèque d'une portée à l'autre, voir figuresLibrary.moveLibraryItemOnDrive).
+ *  Only files the app created are readable under the drive.file scope — external
+ *  files throw and should be skipped. */
 export const getDriveFileMeta = async (fileId) => {
   if (!fileId) throw new Error('No file id');
-  const res = await driveFetch(`/drive/v3/files/${fileId}?fields=id,name,trashed`);
+  const res = await driveFetch(`/drive/v3/files/${fileId}?fields=id,name,trashed,parents`);
   const meta = await res.json();
   if (!meta || !meta.id) throw new Error('File not found');
-  return { id: String(meta.id), name: String(meta.name || ''), trashed: Boolean(meta.trashed) };
+  return {
+    id: String(meta.id), name: String(meta.name || ''), trashed: Boolean(meta.trashed),
+    parents: Array.isArray(meta.parents) ? meta.parents.map(String) : []
+  };
 };
 
 /** Restore a trashed Drive file (e.g. after the user deleted its old folder —
@@ -671,10 +695,14 @@ export const untrashDriveFile = async (fileId) => {
   }
 };
 
-/** Find a folder or create it (app-owned) inside `parentId`. */
+/** Find a folder or create it (app-owned) inside `parentId`.
+ *  La RECHERCHE est STRICTE : si le Drive ne répond pas (quota 403, 5xx, délai),
+ *  l'échec remonte au lieu de passer pour « le dossier n'existe pas ». Sans
+ *  cela, un `projects/` déjà présent était recréé à côté du premier — les
+ *  jumeaux `projects`/`protocols` constatés sur le Drive réel le 19/09/2026. */
 export const findOrCreateFolder = async (name, parentId) => {
-  const existing = await findFolderByName(name, parentId);
-  if (existing) return existing;
+  const all = await listFoldersByName(name, parentId);
+  if (all.length) return String(all[0].id);
   const c = await driveFetch('/drive/v3/files?fields=id,name', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -687,6 +715,95 @@ export const findOrCreateFolder = async (name, parentId) => {
   const created = await c.json();
   if (!created || !created.id) throwCode('DRIVE_ERROR', 'Drive returned no folder.');
   return String(created.id);
+};
+
+/** Nombre d'éléments d'un dossier, lu STRICTEMENT : `null` quand le Drive ne
+ *  répond pas. Un contenu inconnu n'est jamais « vide » — donc jamais rangé à la
+ *  corbeille (voir datasetDirTwins.js). */
+const strictChildCount = async (folderId) => {
+  const q = encodeURIComponent(`'${folderId}' in parents and trashed=false`);
+  const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id)&pageSize=1000`);
+  const j = await res.json();
+  return Array.isArray(j.files) ? j.files.length : null;
+};
+
+/** Noter l'identifiant Drive d'un conteneur canonique dans le registre partagé
+ *  (il voyage dans _workspace/state.json, donc vaut sur tous les postes).
+ *  Best-effort : la mémoire du miroir est un confort, pas une condition. */
+const rememberDatasetDirId = (folderId, dir, datasetId = '', datasetName = '') => {
+  try {
+    if (!folderId || !dir) return;
+    writeDriveMirror(rememberDatasetDir(readDriveMirror(), {
+      datasetId: datasetId || driveRootId,
+      datasetName: datasetName || driveRootName,
+      dir,
+      folderId
+    }));
+  } catch { /* confort */ }
+};
+
+/** Le conteneur canonique `dir` d'un dataset (`projects`, `backups`,
+ *  `protocols`, `storage`, `publications`) — UN SEUL, toujours le même :
+ *
+ *   1. l'identifiant RETENU dans le registre partagé, s'il est encore vivant ;
+ *   2. sinon les JUMEAUX portant ce nom : `pickCanonicalFolder` retient celui
+ *      qui PORTE du contenu (à contenu égal le plus ancien — c'est
+ *      l'arborescence d'origine), il est noté par identifiant, et les jumeaux
+ *      connus VIDES partent à la corbeille (best-effort, jamais un jumeau
+ *      rempli ni de contenu inconnu) ;
+ *   3. sinon création — jamais si le dossier a été supprimé dans le programme,
+ *      et jamais quand `create:false` (lecture seule).
+ *
+ *  @param {string} dir nom du conteneur
+ *  @param {{rootId?:string,datasetId?:string,datasetName?:string,create?:boolean,cleanup?:boolean}} options
+ *  `rootId` évite un `ensureDriveFolder()` inutile (et la récursion quand on
+ *  vient de `ensureDatasetFolderStructure`).
+ *  @returns {Promise<string>} l'identifiant du conteneur ('' si introuvable). */
+export const canonicalDatasetDirId = async (dir, {
+  rootId = '', datasetId = '', datasetName = '', create = true, cleanup = true
+} = {}) => {
+  const name = String(dir || '').trim();
+  if (!name) return '';
+  const scope = {
+    datasetId: datasetId || driveRootId,
+    datasetName: datasetName || driveRootName,
+    dir: name
+  };
+  /* 1. L'identité retenue : elle suit un renommage et ne tombe jamais sur un
+     jumeau, contrairement à une recherche par nom. */
+  const remembered = findDatasetDirId(readDriveMirror(), scope);
+  if (remembered) {
+    const meta = await getDriveFileMeta(remembered).catch(() => null);
+    if (meta && meta.id && !meta.trashed) return remembered;
+  }
+  const parent = rootId || await ensureDriveFolder();
+  if (!parent) return '';
+
+  // 2. TOUS les jumeaux (une recherche qui échoue remonte ici — rien n'est créé).
+  const twins = await listFoldersByName(name, parent);
+  if (!twins.length) {
+    if (!create || datasetDirDeletedFor(name, scope.datasetId, scope.datasetName)) return '';
+    const made = await findOrCreateFolder(name, parent);
+    rememberDatasetDirId(made, name, scope.datasetId, scope.datasetName);
+    return made;
+  }
+
+  const scored = [];
+  for (const twin of twins) {
+    let items = null;
+    try { items = await strictChildCount(twin.id); } catch { items = null; }
+    scored.push({ id: String(twin.id), createdTime: twin.createdTime || '', items });
+  }
+  const keep = pickCanonicalFolder(scored);
+  if (!keep) return '';
+  rememberDatasetDirId(keep.id, name, scope.datasetId, scope.datasetName);
+
+  if (cleanup && scored.length > 1) {
+    for (const twinId of emptyTwinIds(scored, keep.id)) {
+      try { await trashDriveFile(twinId); } catch { /* hygiène, au mieux */ }
+    }
+  }
+  return keep.id;
 };
 
 /** Resolve (creating as needed) the folder chain described by explicit folder
@@ -706,8 +823,15 @@ export const resolveDrivePathFromNames = async (names) => {
   }
   let parent = await ensureDriveFolder();
   const path = [];
-  for (const name of wanted) {
-    parent = await findOrCreateFolder(name, parent);
+  for (let i = 0; i < wanted.length; i++) {
+    const name = wanted[i];
+    /* Le PREMIER segment d'un chemin d'expérience / de protocole est un
+       CONTENEUR canonique (projects/, protocols/) : il est résolu comme tel —
+       identifiant retenu, jumeaux départagés par leur contenu — et non « le
+       premier dossier du nom », qui pouvait être un jumeau vide. */
+    parent = (i === 0 && isCanonicalDatasetDir(name))
+      ? await canonicalDatasetDirId(name, { rootId: parent })
+      : await findOrCreateFolder(name, parent);
     path.push({ name, id: parent });
   }
   /* Registre partagé : l'identifiant du dossier d'un PROJET est noté pour que
@@ -954,7 +1078,7 @@ export const moveTestFolderIntoProject = async ({ testName, projectName }) => {
     }
     if (!testFolderId) return 0; // no standalone test folder on Drive — nothing to move
 
-    const projectsContainerId = await findOrCreateFolder('projects', root);
+    const projectsContainerId = await canonicalDatasetDirId('projects', { rootId: root });
     const projectFolderId = await findOrCreateFolder(sanitizeSlug(projectName), projectsContainerId);
     // Already inside the project folder → nothing to do.
     if ((await findFolderByName(sanitizeSlug(testName), projectFolderId)) === testFolderId) return 0;
@@ -1011,7 +1135,7 @@ export const moveTestFolderOutOfProject = async ({ testName, projectName }) => {
   try {
     const root = await ensureDriveFolder();
     if (!root) return 0;
-    const projectsContainerId = await findFolderByName('projects', root);
+    const projectsContainerId = await canonicalDatasetDirId('projects', { rootId: root, create: false }).catch(() => '');
 
     // Locate the experiment folder inside the project (canonical container
     // first, then legacy dataset-root layout).
@@ -1036,7 +1160,7 @@ export const moveTestFolderOutOfProject = async ({ testName, projectName }) => {
     // Experiments must ALWAYS belong to a project, so "removed from this
     // project" means "moved into the dataset's _unassigned project bucket"
     // (a hidden bucket inside projects/, never a stray folder at the root).
-    const projectsFolderId = projectsContainerId || await findOrCreateFolder('projects', root);
+    const projectsFolderId = projectsContainerId || await canonicalDatasetDirId('projects', { rootId: root });
     const unassignedFolderId = await findOrCreateFolder('_unassigned', projectsFolderId);
     const existingThere = await findFolderByName(sanitizeSlug(testName), unassignedFolderId);
     if (existingThere !== testFolderId) {

@@ -15,6 +15,13 @@ import { loadProjects, saveProjects } from './AppModules/projectsModule';
 import {
   backupPaperCount, mergePaperLists, mergeProjectBibliographies, papersFromBackupHtml
 } from '../utils/referenceImport';
+/* COMPLÉTER LA LISTE D'AUTEURS D'UN PAPIER : le pot commun du laboratoire
+   (publications des scientifiques, « Relevant papers ») puis Crossref — le même
+   moteur que le bouton « ✨ Complete missing fields » de la page projet. Les
+   trois listes de papiers s'en servent (voir completePaperAuthors /
+   completePbAuthorLists) : il sait aussi remplacer une liste coupée par un
+   « et al. » par la liste complète du même article. */
+import { authorsIncomplete, enrichReferences } from '../utils/referenceEnrich';
 /* LA FORME DES RENVOIS DANS LE TEXTE : rendue par le VRAI moteur — l'aperçu du
    panneau « Publication format » ne peut donc pas mentir sur ce que le document
    imprimera (voir applyInTextStyle). */
@@ -1000,6 +1007,10 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
   const [paperFilterLabels, setPaperFilterLabels] = useState([]); // all selected labels must be on the paper (AND)
   const [paperFilterScientist, setPaperFilterScientist] = useState('all');
   const [paperExpanded, setPaperExpanded] = useState(null);
+  /* ⟳ « Complete author lists » DES « RELEVANT PAPERS » (voir plus bas) : l'état
+     du bouton et son compte rendu, affiché en tête de la section. */
+  const [paperAuthorsFixing, setPaperAuthorsFixing] = useState(false);
+  const [paperAuthorsMsg, setPaperAuthorsMsg] = useState('');
   const [pbTransferStatus, setPbTransferStatus] = useState('');
   const [showAddPaper, setShowAddPaper] = useState(false);
   const [paperDraft, setPaperDraft] = useState({ title: '', link: '', labels: [], scientist: '', comments: '', authors: '', year: '' });
@@ -1034,6 +1045,11 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
   const [pbShowAdd, setPbShowAdd] = useState(false);
   const [pbDraft, setPbDraft] = useState({ project: '', title: '', link: '', comments: '', authors: '', year: '' });
   const [pbExpanded, setPbExpanded] = useState(null);
+  /* ⟳ « Complete author lists » DE LA BIBLIOGRAPHIE DES PROJETS : le bouton
+     travaille (voir completePbAuthorLists) pendant que les auteurs sont
+     cherchés ; le compte rendu passe par le statut déjà affiché pour les
+     imports de la section. */
+  const [pbAuthorsFixing, setPbAuthorsFixing] = useState(false);
   // Import papers (from Relevant papers / Publications of the scientist) into a project
   const [pbImportOpen, setPbImportOpen] = useState(false);
   const [pbImportProject, setPbImportProject] = useState('');
@@ -1188,6 +1204,67 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     setPbImportOpen(false);
     setPbImportSel(new Set());
     setPbImportProject('');
+  };
+
+  /* ⟳ « COMPLETE AUTHOR LISTS » DE LA BIBLIOGRAPHIE DES PROJETS.
+     Signalé : « project bibliography does not find all authors of the
+     publication — il faudrait un bouton “complete author list” comme dans la
+     section “publication of the scientist” ». Chaque entrée dont la liste
+     d'auteurs est VIDE (papier ajouté à la main) ou COUPÉE par un « et al. »
+     (la revue abrégeait la liste) est donc complétée par le moteur de référence
+     du laboratoire : la publication d'origine d'abord — les publications des
+     scientifiques ET les « Relevant papers », hors ligne, une entrée importée
+     gardant l'identifiant de son papier (voir pubOriginOf) — puis Crossref (par
+     DOI, sinon par titre exact, voir utils/referenceEnrich.js). Les autres
+     champs vides de ces entrées (revue, année, volume, pages, DOI) en profitent :
+     c'est le bouton « ✨ Complete missing fields » de la page projet, ici pour
+     cette liste. Les listes trouvées sont ÉCRITES dans la bibliographie du
+     projet — pas seulement affichées — et un papier dont la liste est déjà
+     écrite en entier n'est jamais touché. */
+  const completePbAuthorLists = async () => {
+    if (pbAuthorsFixing) return;
+    const pending = [];
+    myProjects.forEach((prj) => (prj.bibliography || []).forEach((paper) => {
+      if (authorsIncomplete(paper)) pending.push({ paper, projectId: prj.id });
+    }));
+    if (pending.length === 0) {
+      setPbTransferStatus('✓ Every project paper already lists all its authors.');
+      return;
+    }
+    setPbAuthorsFixing(true);
+    setPbTransferStatus(`⏳ Looking for the author lists of ${pending.length} paper(s)…`);
+    try {
+      const res = await enrichReferences(pending.map((t) => t.paper), { pool: [...pubs, ...papers], all: false, max: 60 });
+      /* La liste complétée porte le MÊME id : elle remplace son entrée dans la
+         bibliographie du projet concerné (rien d'autre n'est réécrit). */
+      const patches = new Map(); // projectId → Map(paperId → entrée complétée)
+      res.list.forEach((entry, i) => {
+        if (entry === pending[i].paper) return;
+        const projectId = pending[i].projectId;
+        if (!patches.has(projectId)) patches.set(projectId, new Map());
+        patches.get(projectId).set(entry.id, entry);
+      });
+      if (patches.size > 0) {
+        setPbProjects((prev) => prev.map((prj) => {
+          const byPaper = patches.get(prj.id);
+          if (!byPaper) return prj;
+          return {
+            ...prj,
+            bibliography: (prj.bibliography || []).map((b) => (byPaper.has(b.id) ? { ...b, ...byPaper.get(b.id) } : b))
+          };
+        }));
+      }
+      setPbTransferStatus(res.completed
+        ? `✓ ${res.completed} project paper(s) completed with their full author list`
+          + (pending.length - res.completed ? ` (${pending.length - res.completed} not found in the publications or on Crossref)` : '')
+          + (res.offline ? ' — the online service could not be reached' : '')
+          + (res.stillShortened ? ` · ⚠ ${res.stillShortened} paper(s) still show “et al.”: write the co-authors by hand.` : '')
+        : '⛔ No author list found for these papers (no DOI in the link, and the title found nothing) — write the co-authors by hand.');
+    } catch (err) {
+      setPbTransferStatus(`⚠ ${(err && err.message) || 'Author lookup failed'}`);
+    } finally {
+      setPbAuthorsFixing(false);
+    }
   };
 
   /* ---- Récupération de papiers depuis une ancienne sauvegarde -------------
@@ -1408,6 +1485,43 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     }
     if (items.length > 0) setPapers((prev) => [...prev, ...items]);
     setAddedPaperKeys((prev) => [...prev, ...paperResults.map((r) => paperKey(r))]);
+  };
+
+  /* ⟳ « COMPLETE AUTHOR LISTS » DES « RELEVANT PAPERS ».
+     Signalé : « relevant paper … does not find all authors of the publication —
+     il faudrait un bouton “complete author list” comme dans la section
+     “publication of the scientist” ». Les papiers dont la liste d'auteurs est
+     VIDE (ajoutés à la main, import ancien) ou COUPÉE par un « et al. » sont
+     donc repris par le moteur de référence du laboratoire : la publication
+     d'origine (les publications des scientifiques, hors ligne — voir
+     pubCitationData) puis Crossref, par DOI sinon par titre exact. Les autres
+     champs vides de ces papiers (revue, année, DOI…) suivent le même chemin.
+     Une liste écrite en entier n'est jamais retouchée. */
+  const completePaperAuthors = async () => {
+    if (paperAuthorsFixing) return;
+    const pending = papers.filter(authorsIncomplete);
+    if (pending.length === 0) {
+      setPaperAuthorsMsg('✓ Every relevant paper already lists all its authors.');
+      return;
+    }
+    setPaperAuthorsFixing(true);
+    setPaperAuthorsMsg('');
+    try {
+      const res = await enrichReferences(pending, { pool: pubs, all: false, max: 60 });
+      const byId = new Map();
+      res.list.forEach((entry, i) => { if (entry !== pending[i]) byId.set(entry.id, entry); });
+      if (byId.size > 0) setPapers((prev) => prev.map((p) => (byId.has(p.id) ? { ...p, ...byId.get(p.id) } : p)));
+      setPaperAuthorsMsg(res.completed
+        ? `✓ ${res.completed} relevant paper(s) completed with their full author list`
+          + (pending.length - res.completed ? ` (${pending.length - res.completed} not found in the publications or on Crossref)` : '')
+          + (res.offline ? ' — the online service could not be reached' : '')
+          + (res.stillShortened ? ` · ⚠ ${res.stillShortened} paper(s) still show “et al.”: write the co-authors by hand.` : '')
+        : '⛔ No author list found for these papers (no DOI in the link, and the title found nothing) — write the co-authors by hand.');
+    } catch (err) {
+      setPaperAuthorsMsg(`⚠ ${(err && err.message) || 'Author lookup failed'}`);
+    } finally {
+      setPaperAuthorsFixing(false);
+    }
   };
 
   const patch = (id, p) =>
@@ -1977,8 +2091,17 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                   className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 transition">
             {showSubjectsMgr ? 'Close' : '⚙️ Subjects'}
           </button>
+          {/* ⟳ Le même bouton que les publications des scientifiques : les
+              papiers dont la liste d'auteurs est vide ou coupée par un « et al. »
+              sont complétés — publications du laboratoire puis Crossref. */}
+          <button type="button" onClick={completePaperAuthors} disabled={paperAuthorsFixing || papers.length === 0}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 disabled:opacity-40 transition"
+                  title="Fetch the FULL author list of the relevant papers that show none, or that a journal cut with “et al.”: the lab publications first (offline), then Crossref by DOI — read in the link too — else by exact title. Their other empty fields (journal, year, volume, pages, DOI) are filled the same way.">
+            {paperAuthorsFixing ? '⏳ Fetching authors…' : '⟳ Complete author lists'}
+          </button>
         </div>
       </div>
+      {paperAuthorsMsg && <div className="px-4 pt-3 text-xs font-semibold text-emerald-700">{paperAuthorsMsg}</div>}
       <div className="p-4 flex flex-col gap-3">
         <p className="text-sm text-slate-500">
           Curated relevant papers — add a publication with its link, label it with one or more topics
@@ -2891,6 +3014,15 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
           <button type="button" onClick={() => setPbShowAdd((v) => !v)}
                   className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition">
             {pbShowAdd ? 'Cancel' : '+ Add paper'}
+          </button>
+          {/* ⟳ Même bouton que les publications des scientifiques : les entrées
+              dont la liste d'auteurs est vide ou coupée par un « et al. » sont
+              complétées — publications du laboratoire + « Relevant papers »,
+              puis Crossref — et la liste trouvée est écrite dans le projet. */}
+          <button type="button" onClick={completePbAuthorLists} disabled={pbAuthorsFixing || myProjects.length === 0}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 disabled:opacity-40 transition"
+                  title="Fetch the FULL author list of the project papers that show none, or that a journal cut with “et al.”: the lab publications and the “Relevant papers” first (offline), then Crossref by DOI — read in the link too — else by exact title. Their other empty fields (journal, year, volume, pages, DOI) are filled the same way, and the result is saved in the project.">
+            {pbAuthorsFixing ? '⏳ Fetching authors…' : '⟳ Complete author lists'}
           </button>
         </div>
       </div>

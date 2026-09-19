@@ -107,7 +107,9 @@ export const driveTombstoneKey = (entry) => {
   return `${mirrorDatasetKey(t)}::${t.path}`;
 };
 
-export const emptyDriveMirror = () => ({ v: 1, tombstones: [], datasets: {}, projects: {} });
+export const emptyDriveMirror = () => ({
+  v: 1, tombstones: [], datasets: {}, projects: {}, datasetDirs: {}
+});
 
 /** Un miroir propre et utilisable, quelle que soit la source (localStorage d'une
  *  ancienne version, fichier d'état abîmé…). */
@@ -153,6 +155,13 @@ export const normalizeDriveMirror = (raw) => {
         imagesId: text(v.imagesId) || '',
         at: Number(v.at) || 0
       }
+      : null)),
+    /* Les CONTENEURS canoniques d'un dataset (`projects`, `protocols`, …) : leur
+       identifiant est retenu pour qu'une résolution ne reprenne jamais « le
+       premier dossier du nom », qui peut être un JUMEAU vide (voir
+       driveUpload.canonicalDatasetDirId et datasetDirTwins.js). */
+    datasetDirs: cleanMap(src.datasetDirs, (v) => (v && text(v.folderId)
+      ? { dir: text(v.dir), folderId: text(v.folderId), at: Number(v.at) || 0 }
       : null))
   };
 };
@@ -182,7 +191,8 @@ export const mergeDriveMirrors = (current, incoming) => {
   return normalizeDriveMirror({
     tombstones: Array.from(tombstones.values()),
     datasets: newest(a.datasets, b.datasets),
-    projects: newest(a.projects, b.projects)
+    projects: newest(a.projects, b.projects),
+    datasetDirs: newest(a.datasetDirs, b.datasetDirs)
   });
 };
 
@@ -244,11 +254,22 @@ export const addDriveTombstone = (
     if (gonePath && projectFolderPaths(value && value.name).some((p) => pathUnder(p, gonePath))) return;
     projects[key] = value;
   });
+  /* Le registre des CONTENEURS suit la même règle : un conteneur supprimé (ou
+     dont le dataset entier a été supprimé) ne garde pas son identifiant, sinon
+     une résolution écrirait dans un dossier invisible. */
+  const datasetDirs = {};
+  Object.entries(current.datasetDirs).forEach(([key, value]) => {
+    const sameDataset = key.indexOf(`${datasetKey}::`) === 0;
+    if (!gonePath && sameDataset) return;                                   // dataset supprimé
+    if (gonePath && sameDataset && pathUnder(text(value && value.dir), gonePath)) return;
+    datasetDirs[key] = value;
+  });
 
   return normalizeDriveMirror({
     tombstones: [entry, ...current.tombstones.filter((t) => driveTombstoneKey(t) !== driveTombstoneKey(entry))],
     datasets,
-    projects
+    projects,
+    datasetDirs
   });
 };
 
@@ -374,6 +395,42 @@ export const findProjectImagesId = (
   const current = normalizeDriveMirror(mirror);
   const key = projectRegistryKey(datasetRegistryKey({ id: datasetId, name: datasetName }), projectName);
   return text((current.projects[key] || {}).imagesId);
+};
+
+/** `<dataset>::<conteneur>` — la clé d'un CONTENEUR canonique (`projects`,
+ *  `protocols`, `backups`, `storage`, `publications`). */
+export const datasetDirRegistryKey = (datasetKey, dir) =>
+  `${text(datasetKey)}::${sanitizeSlug(dir) || text(dir)}`;
+
+/** Retenir l'identifiant Drive d'un CONTENEUR canonique d'un dataset.
+ *  C'est ce qui met fin aux jumeaux : la résolution repart de l'identifiant
+ *  (qui suit un renommage et ne se trompe jamais) au lieu du « premier dossier
+ *  du nom », dans un ordre que le Drive ne garantit pas. */
+export const rememberDatasetDir = (mirror, {
+  datasetId = '', datasetName = '', dir = '', folderId = ''
+} = {}, at = Date.now()) => {
+  const key = datasetDirRegistryKey(datasetRegistryKey({ id: datasetId, name: datasetName }), dir);
+  const name = text(dir);
+  const folder = text(folderId);
+  const current = normalizeDriveMirror(mirror);
+  if (!key || !name || !folder) return current;
+  return normalizeDriveMirror({
+    tombstones: current.tombstones,
+    datasets: current.datasets,
+    projects: current.projects,
+    datasetDirs: {
+      ...current.datasetDirs,
+      [key]: { dir: name, folderId: folder, at: Number(at) || Date.now() }
+    }
+  });
+};
+
+/** L'identifiant RETENU d'un conteneur canonique ('' s'il n'a jamais été
+ *  désigné : la résolution reprend alors les jumeaux par leur contenu). */
+export const findDatasetDirId = (mirror, { datasetId = '', datasetName = '', dir = '' } = {}) => {
+  const current = normalizeDriveMirror(mirror);
+  const key = datasetDirRegistryKey(datasetRegistryKey({ id: datasetId, name: datasetName }), dir);
+  return text((current.datasetDirs[key] || {}).folderId);
 };
 
 /* ── Lecture / écriture locales + notification ───────────────────────────── */

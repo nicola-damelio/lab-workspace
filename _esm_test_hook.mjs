@@ -66,9 +66,24 @@ export async function load(url, context, next) {
         'export const ensureDriveFolder = async () => (typeof M().ensureDriveFolder === "function" ? M().ensureDriveFolder() : "ds_folder");',
         'export const getDriveRootId = () => M().driveRootId || "";',
         'export const findFolderByName = async (name, parent) => (typeof M().findFolderByName === "function" ? M().findFolderByName(name, parent) : "");',
+        // TOUS les jumeaux d'un nom (voir datasetDirTwins.js) : un faux Drive peut
+        // en fournir plusieurs pour vérifier qu'on ne crée pas un second conteneur.
+        'export const listFoldersByName = async (name, parent) => (typeof M().listFoldersByName === "function" ? M().listFoldersByName(name, parent) : []);',
+        // Le conteneur canonique (projects / protocols / …) résolu par identité ;
+        // sans mock il est « introuvable », donc les appelants retombent sur la
+        // recherche par nom (comportement des suites existantes).
+        'export const canonicalDatasetDirId = async (dir, opts) => (typeof M().canonicalDatasetDirId === "function" ? M().canonicalDatasetDirId(dir, opts) : "");',
         'export const findDriveFileByName = async (name, parent) => (typeof M().findDriveFileByName === "function" ? M().findDriveFileByName(name, parent) : "");',
         'export const findOrCreateFolder = async (name, parent) => (typeof M().findOrCreateFolder === "function" ? M().findOrCreateFolder(name, parent) : "");',
-        'export const getDriveFileMeta = async (id) => (typeof M().getDriveFileMeta === "function" ? M().getDriveFileMeta(id) : { id: String(id || ""), name: "", trashed: false });',
+        'export const getDriveFileMeta = async (id) => (typeof M().getDriveFileMeta === "function" ? M().getDriveFileMeta(id) : { id: String(id || ""), name: "", trashed: false, parents: [] });',
+        // Déplacer un FICHIER d'un dossier à l'autre (figuresLibrary : une image
+        // de bibliothèque qui change de portée suit son dossier sur le Drive).
+        'export const moveDriveFile = async (id, parent) => (typeof M().moveDriveFile === "function" ? M().moveDriveFile(id, parent) : false);',
+        // Le REGISTRE local des fichiers (nom + contexte de nommage) : un
+        // déplacement de bibliothèque le réécrit pour que le dossier suive le
+        // projet (voir driveUpload.renameDriveFilesFor).
+        'export const getDriveFileRegistry = () => (typeof M().getDriveFileRegistry === "function" ? M().getDriveFileRegistry() : {});',
+        'export const registerDriveFile = (id, name, ctx, path) => (typeof M().registerDriveFile === "function" ? M().registerDriveFile(id, name, ctx, path) : undefined);',
         'export const trashDriveFile = async (id) => (typeof M().trashDriveFile === "function" ? M().trashDriveFile(id) : false);',
         'export const renameDriveFile = async (id, name) => (typeof M().renameDriveFile === "function" ? M().renameDriveFile(id, name) : false);',
       ].join('\n'),

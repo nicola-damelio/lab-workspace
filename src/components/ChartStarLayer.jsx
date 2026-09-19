@@ -6,6 +6,7 @@ import {
   figureContentTag
 } from '../utils/figuresLibrary';
 import { clearPendingFigureScroll, peekPendingFigureScroll } from '../utils/pendingFigureScroll';
+import { imagesFolderPathOnDrive } from '../utils/figuresFolder';
 import { FigureStyleApplyButton } from './FigureStyleTools';
 import { figureStyleTag, readFigureStyle, applyFigureStyleEverywhere } from '../utils/figureStyle';
 import {
@@ -625,9 +626,7 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
       // « en attente d'envoi » (elle repartira toute seule) n'est pas la même
       // chose qu'un échec, et « browser copy only » tout court laissait croire
       // que le travail n'était gardé nulle part.
-      const folder = pid && projectName
-        ? `projects/${projectName}/images`
-        : 'projects/_unassigned/images';
+      const folder = imagesFolderPathOnDrive(pid && projectName ? projectName : '');
       let driveMsg;
       if (drive && drive.id) driveMsg = ` · ☁ ${folder}`;
       else if (driveQueued) driveMsg = ` · ⏳ cloud copy queued for ${folder} (${driveError || 'cloud unreachable'}) — it uploads by itself as soon as Drive answers, nothing is lost`;

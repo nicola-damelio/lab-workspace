@@ -1,11 +1,11 @@
-import { getDriveToken, uploadLocalFile, dataUrlToBlob, cloudBackendAvailable, getDriveRootName, resolveDrivePathFromNames, listDriveChildren, downloadDriveFileText, takeLastUploadQueueInfo, renameDriveFile, getDriveFileMeta, findDriveFileByName } from './driveUpload';
+import { getDriveToken, uploadLocalFile, dataUrlToBlob, cloudBackendAvailable, getDriveRootName, resolveDrivePathFromNames, listDriveChildren, downloadDriveFileText, takeLastUploadQueueInfo, renameDriveFile, getDriveFileMeta, findDriveFileByName, moveDriveFile, registerDriveFile, getDriveFileRegistry } from './driveUpload';
 import { sanitizeSlug, projectImagesFolderPath } from './driveNaming';
 /* Où est VRAIMENT le dossier d'images d'un projet (voir utils/figuresFolder.js) :
    l'emplacement canonique est dérivé du NOM du projet, donc un renommage — ou un
    dossier renommé à la main — laissait les fichiers ailleurs pendant que
    l'application en créait un jumeau vide. Ce résolveur cherche, ne crée rien, et
    sait demander à l'utilisateur plutôt que de deviner. */
-import { findProjectFiguresFolder, adoptProjectFiguresFolder, listProjectFiguresFolders } from './figuresFolder';
+import { findProjectFiguresFolder, adoptProjectFiguresFolder, listProjectFiguresFolders, imagesFolderPathOnDrive, unassignedFolderNames } from './figuresFolder';
 import { getCloudProvider, isNextcloudUrl, ncFetchBlob, ncMove, ncUploadFile } from './nextcloud';
 import { registerKeyValueMerger } from './workspaceKeyStore';
 
@@ -387,11 +387,62 @@ export const moveLibraryItem = (fromScope, toScope, projectId, id) => {
   const src = fromScope === 'project' ? readProjectLibrary(projectId) : readLibrary();
   const it = src.find((i) => i.id === id);
   if (!it) return;
-  if (toScope === 'project') writeProjectLibrary(projectId, [it, ...readProjectLibrary(projectId)]);
-  else writeLibrary([it, ...readLibrary()]);
+  /* Le déplacement est IDEMPOTENT : si l'entrée est DÉJÀ dans la bibliothèque
+     d'arrivée (c'est le cas d'une image que l'ancien défaut d'union avait
+     laissée dans deux bibliothèques à la fois), elle y est remise en tête au
+     lieu d'être empilée deux fois — rejouer le geste pour réparer ne fabrique
+     donc pas un doublon. */
+  const keepId = (list) => (Array.isArray(list) ? list : []).filter((i) => !i || String(i.id || '') !== String(id));
+  if (toScope === 'project') writeProjectLibrary(projectId, [it, ...keepId(readProjectLibrary(projectId))]);
+  else writeLibrary([it, ...keepId(readLibrary())]);
   if (fromScope === 'project') writeProjectLibrary(projectId, src.filter((i) => i.id !== id));
   else writeLibrary(src.filter((i) => i.id !== id));
+  /* ── UN DÉPLACEMENT SE NOTE — sinon il ne survit pas au miroir des clés ──────
+     ⛔ LE DÉFAUT. Les listes de bibliothèque voyagent dans `_workspace/keys.json`
+     et leur fusion est une UNION (voir mergeLibraryKeyValues / mergeLibraryLists).
+     Une union sait écarter ce qui a été SUPPRIMÉ (les pierres tombales de la
+     corbeille) mais pas ce qui a été DÉPLACÉ : la copie de l'autre poste, qui a
+     encore l'image dans la bibliothèque d'origine, la faisait revenir au
+     démarrage suivant. C'est très exactement « j'ai déplacé des images de la
+     bibliothèque générale vers celle d'un projet, et sur l'autre poste elles
+     sont ENCORE dans la générale » — et la même image se retrouvait alors dans
+     deux, puis trois portées à la fois.
+     ✅ CE QUI EST FAIT ICI. La note de la portée QUITTÉE est posée (même
+     mécanisme que la corbeille : elle écarte l'entrée des DEUX côtés d'une
+     fusion) et celle de la portée REJOINTE est effacée — un déplacement en sens
+     inverse reste donc possible, et une image déplacée peut être relue du
+     dossier Drive de sa nouvelle portée (voir moveLibraryItemOnDrive). */
+  const leaving = fromScope === 'project' ? (projectId || 'common') : 'common';
+  const arriving = toScope === 'project' ? (projectId || 'common') : 'common';
+  const ids = trashIdsOfEntry(it);
+  rememberLibraryTrash(leaving, ids);
+  if (arriving !== leaving) forgetLibraryTrash(arriving, ids);
 };
+
+/** ⛔ LA LISTE ADOPTÉE DU DRIVE N'ATTEIGNAIT PAS L'ÉCRAN.
+ *
+ *  `adoptKeysFromDrive` (workspaceKeyStore) écrit les valeurs adoptées DIRECTEMENT
+ *  dans `localStorage`. Or les listes de bibliothèque vivent D'ABORD dans le
+ *  miroir mémoire de ce module (`memCommon`, `memProjects`) : remplies une fois,
+ *  elles ne sont plus relues du magasin de la session. Un poste qui avait déjà
+ *  affiché sa bibliothèque (le cas courant : le Drive se connecte APRÈS
+ *  l'ouverture de la page, ou l'adoption se termine après le premier rendu)
+ *  gardait donc l'ANCIENNE liste jusqu'au rechargement suivant — « les images
+ *  déplacées ne sont pas dans la bibliothèque du projet », même quand le Drive
+ *  les y avait bien mises.
+ *
+ *  Cette fonction vide les miroirs (la prochaine lecture repart du magasin, donc
+ *  des valeurs adoptées) et prévient les écrans (même événement qu'une
+ *  restauration de sauvegarde, que les panneaux écoutent déjà). Appelée par
+ *  App.jsx dès que des clés ont été adoptées. */
+export const refreshLibraryFromStorage = () => {
+  memCommon = null;
+  memProjects.clear();
+  memNames = null;       // les noms de canvas adoptés, eux aussi, doivent se voir
+  namesVersion += 1;
+  try { window.dispatchEvent(new CustomEvent('lab:figures-library-restored')); } catch { /* hors navigateur */ }
+};
+
 
 // ---- full snapshot helpers (for HTML save / weekly Drive backups) -------------
 // Collects every project-scoped library as { projectId: [...] } (memory first,
@@ -607,7 +658,7 @@ export const mergeLibraryLists = (local, remote, { trash = null } = {}) => {
  *  suppressions explicites de cette portée en sont écartées). `''` quand la clé
  *  ne contient pas de listes JSON (l'appelant retombe alors sur la règle
  *  d'horodatage). PUR. */
-export const mergeLibraryKeyValues = (key, localRaw, remoteRaw) => {
+export const mergeLibraryKeyValues = (key, localRaw, remoteRaw, ctx = null) => {
   const parse = (raw) => {
     if (typeof raw !== 'string' || !raw.trim()) return null;
     try { const v = JSON.parse(raw); return Array.isArray(v) ? v : null; } catch { return null; }
@@ -620,7 +671,9 @@ export const mergeLibraryKeyValues = (key, localRaw, remoteRaw) => {
   if (!local && !remote) return '';
   if (local && !isEntryList(local)) return '';
   if (remote && !isEntryList(remote)) return '';
-  const trash = readLibraryTrash(libraryScopeKeyOfKey(key) || 'common');
+  /* Les notes de CETTE portée — celles du magasin local ET celles qui arrivent
+     dans cette fusion (déplacement ou suppression faits sur un autre poste). */
+  const trash = effectiveLibraryTrash(libraryScopeKeyOfKey(key) || 'common', ctx);
   if (!local) return JSON.stringify(applyLibraryTrash(remote, trash));
   if (!remote) return JSON.stringify(applyLibraryTrash(local, trash));
   const merged = mergeLibraryLists(local, remote, { trash });
@@ -717,6 +770,33 @@ export const forgetLibraryTrash = (scopeKey, ids) => {
   const kept = readLibraryTrash(scopeKey).filter((id) => !drop.has(id));
   try { localStorage.setItem(libraryTrashKey(scopeKey), JSON.stringify(kept)); } catch { /* quota : la liste en mémoire reste juste */ }
   return kept;
+};
+
+/** TOUTES les pierres tombales d'une portée, y compris celles qui viennent
+ *  d'ARRIVER dans la fusion en cours (`ctx.rawValuesOf`, voir
+ *  workspaceKeyStore.mergedKeyValue), en plus de celles du magasin local.
+ *
+ *  ⛔ POURQUOI. `mergeLibraryKeyValues` filtrait avec les seules notes LOCALES.
+ *  Un poste qui recevait un déplacement pour la PREMIÈRE fois (autre navigateur,
+ *  navigateur vidé, Drive qui se connecte après coup) fusionnait donc sa liste
+ *  AVANT d'avoir enregistré la note correspondante — et republiait une fois
+ *  l'image dans la bibliothèque qu'elle venait de quitter (« les images
+ *  déplacées sont encore dans la bibliothèque générale sur l'autre poste »),
+ *  jusqu'à un second tour de synchronisation. Les deux côtés d'une fusion
+ *  respectent maintenant la MÊME union de notes, comme le fait déjà la clé de
+ *  corbeille elle-même (mergeLibraryTrashValues).
+ *  @returns {string[]} identifiants à écarter de cette portée */
+export const effectiveLibraryTrash = (scopeKey, ctx = null) => {
+  const ids = new Set(readLibraryTrash(scopeKey));
+  const raws = (ctx && typeof ctx.rawValuesOf === 'function') ? ctx.rawValuesOf(libraryTrashKey(scopeKey)) : [];
+  (Array.isArray(raws) ? raws : []).forEach((raw) => {
+    if (typeof raw !== 'string' || !raw.trim()) return;
+    try {
+      const a = JSON.parse(raw);
+      if (Array.isArray(a)) a.forEach((x) => { if (typeof x === 'string' && x) ids.add(x); });
+    } catch { /* note illisible : le magasin local fait foi */ }
+  });
+  return [...ids];
 };
 
 /** Union de deux listes d'ids supprimés (pour le miroir des clés). PUR. */
@@ -1551,7 +1631,10 @@ export const figureFileName = (label, ext, identity = '') => {
  *  @returns {Promise<{ name:string, leafId:string, exact:boolean, via:string,
  *                      folder:string, candidates:Array }>} */
 const figuresFolderFor = async (projectName, { create = false } = {}) => {
-  const wanted = projectImagesFolderPath(projectName).join('/');
+  /* Le chemin annoncé est celui qui EXISTE sur le Drive (seau commun : « unassigned »,
+     `unassigned`, voir imagesFolderPathOnDrive) : l'écran dit alors exactement ce
+     que le Drive montre. */
+  const wanted = imagesFolderPathOnDrive(projectName);
   const found = await findProjectFiguresFolder(projectName).catch(() => null);
   if (found && found.leafId) return found;
   if (!create) {
@@ -1561,10 +1644,17 @@ const figuresFolderFor = async (projectName, { create = false } = {}) => {
     };
   }
   const resolved = await resolveDrivePathFromNames(projectImagesFolderPath(projectName)).catch(() => null);
-  const name = sanitizeSlug(projectName) || '_unassigned';
+  /* La résolution rend les noms RÉELS de chaque segment : `projects`, puis le nom
+     du dossier de projet (celui du Drive — le seau `unassigned` quand il n'y a pas
+     de projet), puis `images`. */
+  const realPath = (resolved && Array.isArray(resolved.path) ? resolved.path : [])
+    .map((p) => String((p && p.name) || '')).filter(Boolean);
+  const name = realPath.length > 1
+    ? realPath[1]
+    : (sanitizeSlug(projectName) || unassignedFolderNames()[0]);
   return {
     name, leafId: (resolved && resolved.leafId) || '', exact: true, via: 'created',
-    folder: `projects/${name}/images`, candidates: []
+    folder: realPath.length ? realPath.join('/') : wanted, candidates: []
   };
 };
 
@@ -2072,6 +2162,124 @@ export const renameFigureOnDrive = async ({
   return { ok: true, from, name: to, metaName: metaMoved ? toMeta : (entry.metaName || null), metaMoved };
 };
 
+/* ── LE FICHIER SUIT SON ENTRÉE (déplacement entre bibliothèques) ─────────────
+
+   Une entrée de bibliothèque et le FICHIER qui la porte ne vivent PAS dans le
+   même dossier selon la portée :
+
+       bibliothèque commune      →  <dataset>/projects/_unassigned/images
+       bibliothèque d'un projet  →  <dataset>/projects/<slug>/images
+
+   `moveLibraryItem` ne déplace que la LISTE (geste local, immédiat). Sans le
+   déplacement du fichier, une image passée dans la bibliothèque d'un projet
+   gardait son fichier dans le dossier de la commune :
+
+     • « ⬇ Add missing from Drive » sur ce projet ne la retrouvait JAMAIS — le
+       dossier lu n'est pas celui qui la contient. C'est la seconde moitié du
+       « et même en cliquant Add missing from Drive, ça ne se règle pas » ;
+     • un poste neuf (liste perdue, navigateur vidé) ne pouvait la reconstruire
+       que depuis la commune, où elle n'est plus censée être.
+
+   Le geste est BEST-EFFORT et ne touche RIEN d'autre : l'identifiant du fichier
+   ne change pas (les figures qui pointent dessus continuent de le viser), le
+   sidecar `<image>.meta.json` suit l'image (la composition éditable vit à côté
+   d'elle), et le registre des fichiers suit le nouveau contexte — sans quoi un
+   renommage de l'ANCIEN projet ramènerait le fichier dans son ancien dossier.
+   Un échec réseau laisse l'entrée déplacée : l'appelant le DIT (voir les écrans)
+   au lieu de laisser croire que le Drive a suivi.
+
+   @returns {Promise<{ moved:boolean, reason:string, folder:string,
+                       metaMoved:boolean, fileId:string }>}
+            `reason` : '' quand tout a suivi, 'local-only' (les pixels ne sont
+            encore que dans le navigateur — c'est ☁ Save to Drive qui les
+            enverra), 'cloud-off', 'no-entry', 'no-folder', 'already-there'
+            (déjà dans le bon dossier), 'move-refused', 'nc-shape'. */
+
+/** URL WebDAV du même fichier, rangée dans le dossier d'images d'une portée.
+ *  Le segment du DATASET est repris de l'URL d'origine (c'est le même dataset) :
+ *  seule la fin `projects/<projet>/images/<fichier>` est réécrite. '' quand
+ *  l'URL n'a pas la forme attendue (l'appelant le DIT au lieu de deviner). PUR. */
+export const ncUrlInFiguresFolder = (url, projectName, fileName = '') => {
+  const s = String(url || '');
+  const at = s.search(/\/projects\//i);
+  if (at <= 0) return '';
+  const name = String(fileName || fileNameOfUrl(s) || '');
+  if (!name) return '';
+  const tail = projectImagesFolderPath(projectName).map((seg) => encodeURIComponent(seg)).join('/');
+  return `${s.slice(0, at)}/${tail}/${encodeURIComponent(name)}`;
+};
+
+export const moveLibraryItemOnDrive = async ({ id = '', toScope = 'project', projectId = null, projectName = '' } = {}) => {
+  const out = { moved: false, reason: '', folder: '', metaMoved: false, fileId: '' };
+  const list = toScope === 'project' ? readProjectLibrary(projectId) : readLibrary();
+  const entry = (list || []).find((i) => i && i.id === id);
+  if (!entry) { out.reason = 'no-entry'; return out; }
+  const ncUrl = (getCloudProvider() === 'nextcloud' && isNextcloudUrl(entry.full)) ? String(entry.full) : '';
+  const fileId = ncUrl ? '' : driveIdOfLibraryItem(entry);
+  out.fileId = fileId;
+  if (!fileId && !ncUrl) { out.reason = 'local-only'; return out; }
+  if (!cloudBackendAvailable()) { out.reason = 'cloud-off'; return out; }
+
+  /* ── Nextcloud : WebDAV MOVE (le segment du dataset est repris de l'URL) ──── */
+  if (ncUrl) {
+    out.folder = projectImagesFolderPath(projectName).join('/');
+    try {
+      const to = ncUrlInFiguresFolder(ncUrl, projectName);
+      if (!to) { out.reason = 'nc-shape'; return out; }
+      out.moved = await ncMove(ncUrl, to);
+      if (!out.moved) { out.reason = 'move-refused'; return out; }
+      const metaName = String(entry.metaName || '').trim();
+      if (metaName) {
+        const toMeta = ncUrlInFiguresFolder(ncUrl, projectName, metaName);
+        if (toMeta) out.metaMoved = await ncMove(urlWithFileName(ncUrl, metaName), toMeta);
+      }
+      return out;
+    } catch (err) { out.reason = (err && err.message) || 'nc-error'; return out; }
+  }
+
+  /* ── Google Drive : le dossier d'arrivée est CRÉÉ (c'est là qu'on range),
+        l'ancien dossier n'est pas touché par ce geste. ─────────────────────── */
+  let from = '';
+  let toFolderId = '';
+  let targetName = '';
+  try {
+    const target = await figuresFolderFor(projectName, { create: true });
+    targetName = target.name || projectName;
+    out.folder = target.folder || projectImagesFolderPath(projectName).join('/');
+    toFolderId = target.leafId || '';
+    if (!toFolderId) { out.reason = 'no-folder'; return out; }
+    /* Le dossier d'ORIGINE : demandé au fichier lui-même (`parents`) — c'est là
+       que vit le sidecar, et il n'y a pas d'autre moyen de le retrouver sans
+       supposer un nom de projet (que l'entrée ne porte pas). */
+    from = ((await getDriveFileMeta(fileId).catch(() => ({}))).parents || [])[0] || '';
+    if (from && from === toFolderId) { out.moved = true; out.reason = 'already-there'; return out; }
+    out.moved = await moveDriveFile(fileId, toFolderId);
+    if (!out.moved) { out.reason = 'move-refused'; return out; }
+  } catch (err) { out.reason = (err && err.message) || 'drive-error'; return out; }
+
+  const metaName = String(entry.metaName || '').trim();
+  let sidecarId = '';
+  if (metaName && from) {
+    try {
+      sidecarId = await findDriveFileByName(metaName, from);
+      if (sidecarId) out.metaMoved = await moveDriveFile(sidecarId, toFolderId);
+    } catch { /* le sidecar reste où il est : l'image, elle, a suivi */ }
+  }
+  /* Le REGISTRE des fichiers suit le nouveau contexte (dossier du projet visé) :
+     sinon un renommage de l'ancien projet déplacerait le fichier… dans l'ancien
+     dossier (voir driveUpload.renameDriveFilesFor), et la portée ne
+     correspondrait plus à son dossier. Best-effort : jamais bloquant. */
+  try {
+    const ctx = { section: 'images' };
+    if (projectName) ctx.project = projectName;
+    const path = projectImagesFolderPath(targetName).map((n) => ({ name: n, id: '' }));
+    const reg = getDriveFileRegistry() || {};
+    registerDriveFile(fileId, (reg[fileId] || {}).name || '', ctx, path);
+    if (sidecarId) registerDriveFile(sidecarId, (reg[sidecarId] || {}).name || metaName, ctx, path);
+  } catch { /* registre local indisponible : le déplacement du fichier reste acquis */ }
+  return out;
+};
+
 /* ────────────────────────────────────────────────────────────────────────────
    LA BIBLIOTHÈQUE ⇄ LE DRIVE : deux gestes symétriques, ADDITIFS tous les deux.
 
@@ -2364,7 +2572,7 @@ export const pullLibraryFromDrive = async ({
   scope = 'common', projectId = null, projectName = '', fromFolderName = ''
 } = {}) => {
   const out = {
-    folder: projectImagesFolderPath(projectName).join('/'),
+    folder: imagesFolderPathOnDrive(projectName),
     found: 0, added: 0, filled: 0, restored: 0, noComposition: 0, error: '',
     /* Ce que le geste a vu d'autre : les autres dossiers de projet du dataset,
        avec leur contenu. Ils ne sont PAS lus d'office (un renommage complet ne se

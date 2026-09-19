@@ -38,19 +38,50 @@
 
 import {
   getDriveToken, getDriveRootId, getDriveRootName, ensureDriveFolder,
-  findFolderByName, listDriveChildren, getDriveFileMeta
+  findFolderByName, listDriveChildren, getDriveFileMeta, canonicalDatasetDirId
 } from './driveUpload';
 import {
   readDriveMirror, writeDriveMirror, findProjectFolderId, findDatasetFolderId,
   findProjectImagesId, rememberProjectFolder
 } from './driveMirrorStore';
-import { sanitizeSlug, projectImagesFolderPath } from './driveNaming';
+import { sanitizeSlug } from './driveNaming';
 
 /* ── Comparaison de noms (PUR, testable) ───────────────────────────────────── */
 
 /** Clé de comparaison d'un nom de dossier : minuscules, sans séparateurs — donc
  *  « Canvas 18/09 » et « Canvas_18-09 » se comparent. PUR. */
 export const folderNameKey = (name) => String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+/** Les noms que peut porter le SEAU COMMUN (« aucune figure de projet ») sur le
+ *  Drive, dans l'ordre où il faut les chercher.
+ *
+ *  Le nom CANONIQUE est `_unassigned` — celui des docs et celui de Nextcloud
+ *  (les segments passés à WebDAV ne sont pas re-slugés) —, mais une ÉCRITURE sur
+ *  Google Drive passe par `resolveDrivePathFromNames`, qui sanitise CHAQUE
+ *  segment : `sanitizeSlug('_unassigned')` vaut `unassigned` (le `_` de tête
+ *  tombe). Le dossier qui EXISTE vraiment sur le Drive s'appelle donc
+ *  `unassigned`, alors que la lecture ne cherchait que `_unassigned` : la
+ *  bibliothèque COMMUNE n'était retrouvée que sur un poste où le miroir
+ *  `labDriveMirror` l'avait déjà retenue — ailleurs (« Add missing from Drive »
+ *  depuis un autre navigateur), le dossier était déclaré introuvable. PUR. */
+export const unassignedFolderNames = () => ['unassigned', '_unassigned'];
+
+/** Ce nom est-il celui du seau commun ? (`unassigned` = `_unassigned`). PUR. */
+export const isUnassignedFolderName = (name) => folderNameKey(name) === 'unassigned';
+
+/** Le chemin (noms de dossiers, relatif au dossier du dataset) du dossier
+ *  d'images d'un projet tel qu'il EXISTE sur le Drive :
+ *      projects/<slug(projet)>/images      , et
+ *      projects/unassigned/images          quand il n'y a pas de projet.
+ *  Le seau commun s'appelle `unassigned` (sans `_`) parce que la création
+ *  sanitise chaque segment du chemin (voir unassignedFolderNames) — c'est le nom
+ *  que l'écran doit MONTRER, celui que le Drive affiche. PUR. */
+export const imagesFolderPathOnDrive = (projectName) =>
+  `projects/${sanitizeSlug(projectName) || unassignedFolderNames()[0]}/images`;
+
+/** Le nom cherché correspond-il à celui de CE projet / de cette portée ? PUR. */
+export const folderNameIsWanted = (name, projectName) =>
+  (sanitizeSlug(projectName) ? String(name) === sanitizeSlug(projectName) : isUnassignedFolderName(name));
 
 /** Les mots d'un nom (pour un renommage qui garde la moitié du titre). PUR. */
 const folderNameWords = (name) => sanitizeSlug(name).toLowerCase().split(/[_-]+/).filter(Boolean);
@@ -79,8 +110,15 @@ export const projectFolderNameScore = (folderName, projectName) => {
 export const pickFiguresFolder = (candidates, projectName) => {
   const list = (Array.isArray(candidates) ? candidates : []).filter((c) => c && c.name && c.imagesId);
   if (!list.length) return null;
+  /* Portée COMMUNE (aucun projet) : le dossier attendu est le SEAU `unassigned`.
+     Son nom est une CONVENTION, pas une supposition — le reconnaître vaut donc 3
+     au lieu de 0 (`projectFolderNameScore(x, '')` vaut toujours 0, si bien que la
+     bibliothèque commune ne pouvait JAMAIS être retrouvée par ce chemin). */
+  const scoreOf = (name) => (sanitizeSlug(projectName)
+    ? projectFolderNameScore(name, projectName)
+    : (isUnassignedFolderName(name) ? 3 : 0));
   const scored = list
-    .map((c) => ({ c, score: projectFolderNameScore(c.name, projectName), files: Number(c.files || 0) }))
+    .map((c) => ({ c, score: scoreOf(c.name), files: Number(c.files || 0) }))
     .sort((x, y) => (y.score - x.score) || (y.files - x.files));
   const best = scored[0];
   if (!best || best.score < 2) return null;
@@ -298,15 +336,19 @@ const rememberFiguresLeafOnce = (projectName, { folderId = '', imagesId = '' } =
  *           `null` = aucun jumeau peuplé (le dossier vide est bien le seul). */
 export const recoverFiguresFolderWithFiles = async (projectName, { exceptLeafId = '' } = {}) => {
   const skip = String(exceptLeafId || '');
-  const leaves = await scanFiguresLeaves(projectName);
+  /* Portée COMMUNE : seuls les dossiers du seau `unassigned` sont candidats.
+     Sans ce filtre, le « dossier peuplé » choisi pouvait être celui d'un PROJET
+     et la bibliothèque commune se mettait à lire — puis à écrire — les figures
+     d'un projet. */
+  const leaves = (await scanFiguresLeaves(projectName))
+    .filter((l) => !sanitizeSlug(projectName) ? isUnassignedFolderName(l.name) : true);
   const best = bestFiguresLeaf(leaves.filter((l) => l.imagesId !== skip && l.files > 0));
   if (!best) return null;
   rememberFiguresLeaf(projectName, best);
-  const wanted = sanitizeSlug(projectName) || '_unassigned';
   return {
     name: best.name,
     leafId: best.imagesId,
-    exact: best.name === wanted,
+    exact: folderNameIsWanted(best.name, projectName),
     via: 'twin',
     folder: `projects/${best.name}/${best.imagesName}`,
     files: best.files,
@@ -327,11 +369,15 @@ export const recoverFiguresFolderWithFiles = async (projectName, { exceptLeafId 
  *                l'écran puisse proposer le bon dossier au lieu de deviner).
  */
 export const findProjectFiguresFolder = async (projectName) => {
-  const wanted = sanitizeSlug(projectName) || '_unassigned';
+  /* Le ou les noms du dossier cherché. Portée COMMUNE : les DEUX noms du seau
+     (voir unassignedFolderNames) — le réel d'abord, car c'est celui que la
+     création fabrique sur le Drive. */
+  const wantedNames = sanitizeSlug(projectName) ? [sanitizeSlug(projectName)] : unassignedFolderNames();
+  const wanted = wantedNames[0];
   const scope = { datasetId: getDriveRootId(), datasetName: getDriveRootName(), projectName };
   const none = {
     name: '', leafId: '', exact: false, via: '',
-    folder: projectImagesFolderPath(projectName).join('/'), candidates: []
+    folder: imagesFolderPathOnDrive(projectName), candidates: []
   };
   if (!getDriveToken()) return none;
   try {
@@ -348,7 +394,7 @@ export const findProjectFiguresFolder = async (projectName) => {
         if (twin) return twin;
         const name = await projectFolderNameOf(scope, wanted);
         return {
-          name, leafId: remembered, exact: name === wanted, via: 'remembered',
+          name, leafId: remembered, exact: folderNameIsWanted(name, projectName), via: 'remembered',
           folder: `projects/${name}/images`, candidates: []
         };
       }
@@ -370,27 +416,38 @@ export const findProjectFiguresFolder = async (projectName) => {
           // Le dossier est trouvé : on le RETIENT par identifiant, pour que la
           // prochaine lecture ne repasse pas par la recherche par nom.
           rememberFiguresLeafOnce(projectName, { folderId, imagesId: leaf.imagesId });
-          return { name, leafId: leaf.imagesId, exact: name === wanted, via: 'mirror', folder: `projects/${name}/images`, candidates: [] };
+          return { name, leafId: leaf.imagesId, exact: folderNameIsWanted(name, projectName), via: 'mirror', folder: `projects/${name}/images`, candidates: [] };
         }
       }
     }
     // 2. LE NOM CANONIQUE — existence seulement : c'est ici que l'ancien code
     //    créait un jumeau vide quand le dossier portait un autre nom.
     const root = await datasetRootId();
-    const projectsId = root ? await findFolderByName('projects', root) : '';
+    /* `projects` est un CONTENEUR CANONIQUE : il est résolu par son identité
+       (registre partagé, jumeaux départagés par leur contenu — voir
+       datasetDirTwins.js), car une recherche par nom rend « le premier du nom »
+       dans un ordre que le Drive ne garantit pas — donc souvent le jumeau VIDE.
+       LECTURE SEULE : rien n'est créé ici. */
+    const projectsId = root
+      ? (await canonicalDatasetDirId('projects', { rootId: root, create: false }).catch(() => ''))
+        || await findFolderByName('projects', root)
+      : '';
     if (projectsId) {
-      const exactId = await findFolderByName(wanted, projectsId);
-      if (exactId) {
+      /* Plusieurs noms possibles pour la portée COMMUNE (`unassigned` puis
+         `_unassigned`) : le premier dossier qui EXISTE gagne, et c'est son nom
+         réel qui est rendu — l'écran affiche donc ce que le Drive montre. */
+      for (const wantedName of wantedNames) {
+        const exactId = await findFolderByName(wantedName, projectsId);
+        if (!exactId) continue;
         const leaf = await bestLeafOfProjectFolder(exactId);
-        if (leaf) {
-          const twin = await preferPopulatedTwin(projectName, leaf.imagesId);
-          if (twin) return twin;
-          // Retenu par identifiant : la recherche par nom ne revient plus (c'est
-          // elle qui, dans l'ordre non garanti du Drive, tombait sur le jumeau
-          // vide).
-          rememberFiguresLeafOnce(projectName, { folderId: exactId, imagesId: leaf.imagesId });
-          return { name: wanted, leafId: leaf.imagesId, exact: true, via: 'name', folder: `projects/${wanted}/images`, candidates: [] };
-        }
+        if (!leaf) continue;
+        const twin = await preferPopulatedTwin(projectName, leaf.imagesId);
+        if (twin) return twin;
+        // Retenu par identifiant : la recherche par nom ne revient plus (c'est
+        // elle qui, dans l'ordre non garanti du Drive, tombait sur le jumeau
+        // vide).
+        rememberFiguresLeafOnce(projectName, { folderId: exactId, imagesId: leaf.imagesId });
+        return { name: wantedName, leafId: leaf.imagesId, exact: true, via: 'name', folder: `projects/${wantedName}/images`, candidates: [] };
       }
     }
     // 3. UN DOSSIER VOISIN qui ressemble encore au nom du projet. Le dossier

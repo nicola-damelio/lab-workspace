@@ -66,6 +66,14 @@ export const SHORTENED_AUTHOR_RE = /(?:\bet\.?\s*al\.?|and\s+others|&\s*others)\
  *  qu'il n'y a qu'un auteur ». */
 export const authorsShortened = (authors) => SHORTENED_AUTHOR_RE.test(String(authors || ''));
 
+/** La liste d'auteurs d'une entrée est-elle INCOMPLÈTE ? Vide (papier ajouté à
+ *  la main, import ancien) ou RÉDUITE par un marqueur « et al. » — « Fumano,
+ *  et al. » n'est PAS une liste remplie. C'est exactement ce que cherche un
+ *  bouton « ⟳ Complete author lists » : signalé dans les « Relevant papers » et
+ *  la bibliographie des projets, où la liste complète de la publication
+ *  manquait (« do not find all authors of the publication »). */
+export const authorsIncomplete = (entry) => !value(entry, 'authors') || authorsShortened(value(entry, 'authors'));
+
 /** Les champs VIDES d'une référence (dans l'ordre ci-dessus). Une liste
  *  d'auteurs RÉDUITE compte comme un champ à remplir : c'est exactement le cas
  *  où l'utilisateur attend qu'on cherche les co-auteurs, le DOI et le volume
@@ -81,7 +89,7 @@ export const referenceGaps = (entry) => REFERENCE_COMPLETION_FIELDS.filter((k) =
 export const referenceNeedsCompletion = (entry, { all = false } = {}) => {
   if (!entry || typeof entry !== 'object') return false;
   if (all) return referenceGaps(entry).length > 0;
-  return !value(entry, 'authors') || authorsShortened(value(entry, 'authors')) || !value(entry, 'title');
+  return authorsIncomplete(entry) || !value(entry, 'title');
 };
 
 /** Deux titres parlent-ils du même papier ? (casse, ponctuation, HTML, accents

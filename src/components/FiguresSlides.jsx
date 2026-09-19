@@ -4,7 +4,7 @@ import LZString from 'lz-string';
 import { getStarredItems } from '../utils/starredItems';
 import {
   readLibrary, writeLibrary, removeLibraryItem, renameLibraryItem,
-  readProjectLibrary, writeProjectLibrary, removeProjectLibraryItem, renameProjectLibraryItem, moveLibraryItem, reorderLibraryItem,
+  readProjectLibrary, writeProjectLibrary, removeProjectLibraryItem, renameProjectLibraryItem, moveLibraryItem, moveLibraryItemOnDrive, reorderLibraryItem,
   addLibraryItem, addProjectLibraryItem,
   readDeck, writeDeck, uid, makeLibraryImage, blobToDataUrl, resolveImageToDataUrl,
   mergeLibraryFromSnapshot, pushLibraryToDrive, pullLibraryFromDrive, localOnlyLibraryItems,
@@ -951,6 +951,22 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
       label
     }).catch(() => {});
   };
+  /* ── LE FICHIER SUIT LE DÉPLACEMENT (voir figuresLibrary.moveLibraryItemOnDrive)
+     Une image déjà sur le Drive change de dossier EN MÊME TEMPS que d'entrée :
+     sans cela, « ⬇ Add missing from Drive » sur la bibliothèque d'ARRIVÉE ne
+     pouvait jamais la retrouver (le dossier lu n'est pas celui du fichier).
+     L'entrée, elle, est déplacée quoi qu'il arrive : quand le fichier n'a pas pu
+     suivre, l'écran le DIT au lieu de laisser croire que le Drive a suivi. */
+  const moveLibFileTo = (id, scope) => {
+    const pid = scope === 'project' ? projectId : null;
+    const projectName = pid ? String((loadProjects().find((p) => p.id === pid) || {}).name || '') : '';
+    void moveLibraryItemOnDrive({ id, toScope: scope === 'project' ? 'project' : 'common', projectId: pid, projectName })
+      .then((res) => {
+        if (!res || res.moved || !res.reason || res.reason === 'local-only') return;
+        setDriveSyncStatus(`⚠ The image moved, but its Drive file did not (${res.reason}) — it stays in its former images folder. Retry the move once the cloud answers.`);
+      })
+      .catch(() => {});
+  };
   const removeLib = (id) => {
     if (libTab === 'project') { removeProjectLibraryItem(projectId, id); setProjectLibrary(readProjectLibrary(projectId)); }
     else { removeLibraryItem(id); setLibrary(readLibrary()); }
@@ -958,6 +974,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
   const moveLib = (id) => {
     const from = libScopeName, to = from === 'project' ? 'common' : 'project';
     moveLibraryItem(from, to, projectId, id);
+    moveLibFileTo(id, to);
     setLibrary(readLibrary());
     setProjectLibrary(readProjectLibrary(projectId));
   };
@@ -967,8 +984,9 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
      souris fait les deux :
        • lâcher une vignette sur une AUTRE → elle prend cette place ;
        • la lâcher sur l'autre ONGLET     → elle part dans cette bibliothèque.
-     Le geste porte sur la LISTE (localStorage), pas sur les pixels : les
-     fichiers restent sur le Drive. */
+     Le geste change la LISTE (localStorage) ET, pour une image déjà sur le
+     Drive, le DOSSIER du fichier (voir moveLibFileTo ci-dessus) : une entrée et
+     son fichier restent dans la même portée. */
   const dropOnLibCard = (id) => (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -976,7 +994,10 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     dragData.current = null;
     setLibOver('');
     if (!d || d.kind !== 'lib' || d.id === id) return;
-    if (d.scope !== libScopeName) moveLibraryItem(d.scope, libScopeName, projectId, d.id);
+    if (d.scope !== libScopeName) {
+      moveLibraryItem(d.scope, libScopeName, projectId, d.id);
+      moveLibFileTo(d.id, libScopeName);
+    }
     if (reorderLibraryItem(libScopeName, projectId, d.id, id) || d.scope !== libScopeName) {
       setLibrary(readLibrary());
       setProjectLibrary(readProjectLibrary(projectId));
@@ -989,6 +1010,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     setLibOver('');
     if (!d || d.kind !== 'lib' || d.scope === scope) return;
     moveLibraryItem(d.scope, scope, projectId, d.id);
+    moveLibFileTo(d.id, scope);
     setLibrary(readLibrary());
     setProjectLibrary(readProjectLibrary(projectId));
     setLibTab(scope);

@@ -104,6 +104,61 @@ figure rejoint donc le dossier existant au lieu d'ouvrir un dossier parallèle, 
 l'emplacement canonique n'est créé que s'il n'existe vraiment aucun dossier pour
 ce projet.
 
+## Pourquoi un dataset n'a qu'UN `projects/` et qu'UN `protocols/`
+
+Les **conteneurs canoniques** d'un dataset (`projects`, `backups`, `protocols`,
+`storage`, `publications`, voir `driveNaming.DATASET_FOLDER_DIRS`) avaient le
+même défaut que les dossiers `images`, un étage plus haut — constaté sur le
+Drive réel le 19/09/2026 (dataset « GEC-UPJV-projects ») :
+
+* deux `projects/` à la racine du dataset : celui du 11/09 (4 sous-dossiers :
+  `bianca`, `p53H`, `tests`, `unassigned`) et un **jumeau** créé le 19/09 à
+  11:42 (2 sous-dossiers) ;
+* deux `protocols/`, tous les deux vides ;
+* la bibliothèque d'images du projet `p53H` **éparpillée** entre les deux :
+  les figures jusqu'à 11:29 dans l'ancien, **38 fichiers** de 13:48 à 17:55 dans
+  le nouveau — donc « mes figures sont sur le Drive mais le programme ne les voit
+  plus ».
+
+La cause est une **recherche confondue avec une absence** : `findOrCreateFolder`
+créait quand `findFolderByName` rendait `''`, or ce `''` valait aussi bien pour
+« le dossier n'existe pas » que pour « le Drive n'a pas répondu » (quota 403,
+5xx, délai) — un `catch` unique rendait les deux identiques. Un `projects/`
+parfaitement présent passait donc pour absent, et un second était créé à côté.
+
+Ce qui a changé (`src/utils/driveUpload.js`) :
+
+1. **`listFoldersByName`** rend TOUS les dossiers d'un même nom (les jumeaux) et
+   **remonte l'échec** : plus aucun `catch` ne transforme une panne en « pas
+   trouvé » ;
+2. **`findOrCreateFolder`** cherche STRICTEMENT (`listFoldersByName`) : si la
+   recherche échoue, l'erreur remonte et **rien n'est créé** ;
+3. **`canonicalDatasetDirId(dir)`** est le résolveur unique d'un conteneur
+   canonique : l'identifiant **retenu** dans le registre partagé
+   (`labDriveMirror` → `datasetDirs`, donc `_workspace/state.json`) s'il est
+   encore vivant, sinon les jumeaux sont **départagés par ce qu'ils contiennent**
+   (`src/utils/datasetDirTwins.js` : celui qui porte du contenu gagne, à contenu
+   égal le plus ancien — l'arborescence d'origine), le gagnant est retenu par
+   identifiant, et un jumeau **connu vide** part à la corbeille. Un contenu
+   *inconnu* (Drive muet) ne fait jamais perdre un conteneur et n'autorise jamais
+   sa mise à la corbeille ; un conteneur supprimé dans le programme n'est jamais
+   recréé (`create:false` = lecture seule) ;
+4. ce résolveur est utilisé partout où un conteneur canonique est visé :
+   `ensureDatasetFolderStructure` (ouverture du dataset),
+   `resolveDrivePathFromNames` (premier segment d'un envoi), lecture des
+   sauvegardes, liaison d'un test à un projet, `figuresFolder` (le `projects/`
+   d'une bibliothèque d'images) et `driveMirror` (renommer / supprimer un projet).
+
+**Réparer un Drive déjà abîmé** — `_repair_drive_twins.mjs` (lecture seule sans
+argument, `--apply` pour exécuter) : il retient le conteneur canonique, **déplace**
+(jamais ne copie ni n'écrase) les éléments des jumeaux dedans — un dossier de même
+nom est fusionné récursivement, un fichier de même nom déjà présent est laissé en
+place et signalé —, range à la corbeille les dossiers vidés par la fusion puis le
+jumeau s'il ne reste rien, et vérifie qu'il ne reste qu'un conteneur par nom. Le
+19/09/2026 il a remis 38 figures dans `projects/p53H/images` (119 fichiers au
+total) + 1 dans `projects/unassigned/images`, et mis les deux jumeaux à la
+corbeille (récupérables). Vérifié par `_dataset_dir_twins_test.mjs`.
+
 ## Pourquoi un nom de fichier ne s'allonge plus tout seul
 
 Le nom d'une figure sur le Drive porte, après le libellé, une **empreinte courte
@@ -167,6 +222,87 @@ presets…). Règles de sécurité (`src/utils/workspaceKeyStore.js`) :
 * une clé absente en local est adoptée ; une clé présente n'est remplacée que si
   la copie du Drive est **plus récente** (horodatage par clé) ;
 * rien n'est jamais supprimé du navigateur.
+
+## Déplacer une image d'une bibliothèque à l'autre (et ce qui partait de travers)
+
+Une image vit dans **une** portée, et chaque portée a **son dossier** :
+
+| portée | liste (navigateur, miroir `_workspace/keys.json`) | dossier Drive |
+| --- | --- | --- |
+| bibliothèque commune | `labFiguresLibrary` | `projects/unassigned/images` |
+| bibliothèque d'un projet | `labFiguresLib_<idProjet>` | `projects/<slug>/images` |
+
+Le nom CANONIQUE du seau commun est `_unassigned` (`driveNaming.projectImagesFolderPath`,
+le nom que portent les chemins Nextcloud et la documentation), mais **la création
+d'un dossier sur Google Drive sanitise chaque segment**
+(`driveUpload.resolveDrivePathFromNames`) et `sanitizeSlug('_unassigned')` vaut
+`unassigned` : le dossier qui existe vraiment sur le Drive s'appelle donc
+`unassigned`. Les deux noms sont acceptés en LECTURE (`figuresFolder.unassignedFolderNames`,
+le réel d'abord), et l'écran affiche celui du Drive. **Ne supprimez pas ce
+dossier** : il porte les figures de la bibliothèque commune (celles enregistrées
+sans projet ouvert) ; sans lui, « ⬇ Add missing from Drive » n'a plus rien à
+relire et les images ne reviennent que par la copie restée dans un navigateur.
+
+Ce que la recherche de ce dossier faisait de travers (corrigé le 20/09/2026) : une
+LECTURE ne cherchait que `_unassigned` — donc jamais le dossier réel — et la
+bibliothèque commune n'était retrouvée que sur un poste où le miroir
+`labDriveMirror` l'avait déjà retenue (« sur l'autre navigateur, ⬇ Add missing
+from Drive ne trouve rien »). Pire, quand aucun dossier n'était identifié, la
+portée commune pouvait adopter le dossier `images` PEUPLÉ d'un **projet** voisin :
+la bibliothèque générale se mettait alors à lire — et à écrire — les figures d'un
+projet. Désormais : les deux noms du seau sont cherchés (le réel d'abord), le seau
+commun est reconnu à son nom (jamais un projet), et le `images` d'un projet n'est
+jamais retenu pour la portée commune.
+
+Le geste « ⇄ » (et le lâcher sur l'autre onglet) change **la liste** ET, pour une
+image déjà sur le Drive, **le dossier du fichier** — image et sidecar ensemble
+(`figuresLibrary.moveLibraryItemOnDrive`). Une image dont les pixels ne sont
+encore que dans le navigateur n'a rien à déplacer : « ☁ Save to Drive » l'envoie
+ensuite dans le dossier de sa nouvelle portée.
+
+Ce que le geste fait d'autre, et pourquoi c'est nécessaire
+(`figuresLibrary.moveLibraryItem` → `rememberLibraryTrash` / `forgetLibraryTrash`) :
+
+* la liste de la portée **quittée** note l'identifiant de l'entrée *et* celui de
+  son fichier (`d:<idFichier>`), exactement comme une suppression. Sans cette
+  note, la fusion des clés — qui est une **union** — ramenait l'image depuis la
+  copie de l'autre poste : « j'ai déplacé mes images dans la bibliothèque du
+  projet, et sur l'autre ordinateur elles sont ENCORE dans la bibliothèque
+  générale » (constaté sur le Drive réel le 19/09/2026 : trois images présentes à
+  la fois dans `labFiguresLibrary` et dans deux bibliothèques de projet, même id
+  et même fichier) ;
+* la portée **rejointe** voit sa note effacée : on peut donc déplacer en sens
+  inverse, et « ⬇ Add missing from Drive » peut relire le dossier de la nouvelle
+  portée (c'est lui qui porte désormais le fichier) ;
+* la note arrivant du Drive est lue **dans la fusion elle-même**
+  (`figuresLibrary.effectiveLibraryTrash`, `workspaceKeyStore.mergedKeyValue`) :
+  un poste qui reçoit un déplacement pour la première fois ne republie pas une
+  fois de plus l'ancienne liste avant de respecter la note ;
+* le déplacement est **idempotent** : rejouer le geste sur une image restée dans
+  deux bibliothèques ne fabrique pas de doublon, et la copie en trop dans la
+  portée quittée repart avec sa note.
+
+Deux autres défauts du même incident, corrigés en même temps :
+
+* les listes **adoptées du Drive n'atteignaient pas l'écran** tant que la page
+  n'était pas rechargée, le miroir mémoire de `figuresLibrary` n'étant jamais
+  relu du magasin après une adoption (`refreshLibraryFromStorage`, appelé par
+  `App.jsx` dès que des clés ont été adoptées) ;
+* les métadonnées d'un fichier (`getDriveFileMeta`) portent maintenant ses
+  **dossiers parents** : c'est ce qui permet de retrouver le sidecar resté dans
+  l'ancien dossier pour le faire suivre.
+
+**Réparer une image déjà déplacée de travers** (état laissé par l'ancien
+comportement) : la rejouer depuis la bibliothèque où elle est en trop. L'onglet
+« Dataset » → « ⇄ » sur l'image (« Move into » vers le projet) écrit la note dans
+la commune ET déplace le fichier ; les copies restées dans une autre bibliothèque
+de projet se retirent avec 🗑 dans la bibliothèque de CE projet. Rien n'est
+perdu : une copie retirée se note comme une suppression (elle ne revient pas), et
+le fichier, lui, ne bouge que lors d'un déplacement.
+
+Le diagnostic correspondant est `_diag_library_move.mjs` (lecture seule : où
+vit chaque entrée, par portée, dans `_workspace/keys.json`), vérifié par
+`_library_move_test.mjs`.
 
 ## Ce qui reste propre à un appareil (volontairement)
 

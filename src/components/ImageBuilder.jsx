@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  readLibrary, readProjectLibrary, readVisibleProjectLibrary, moveLibraryItem, reorderLibraryItem,
+  readLibrary, readProjectLibrary, readVisibleProjectLibrary, moveLibraryItem, moveLibraryItemOnDrive, reorderLibraryItem,
   renameLibraryItem, removeLibraryItem, renameProjectLibraryItem, removeProjectLibraryItem,
   blobToDataUrl, downscaleImage, publishLibraryFigure, resolveImageToDataUrl, localStorageHealthy,
   saveCanvasSnapshot, uploadFigureToDrive,
@@ -2661,6 +2661,23 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     });
   };
 
+  /* ── LE FICHIER SUIT LE DÉPLACEMENT (voir figuresLibrary.moveLibraryItemOnDrive)
+     Une image déjà sur le Drive change de dossier EN MÊME TEMPS que d'entrée.
+     Sans cela, « ⬇ Add missing from Drive » sur la bibliothèque d'ARRIVÉE ne
+     pouvait jamais la retrouver : le dossier lu n'est pas celui qui porte le
+     fichier (c'est la seconde moitié du « et même Add missing ne règle rien »).
+     L'entrée, elle, est déplacée quoi qu'il arrive : quand le fichier n'a pas pu
+     suivre, l'écran le DIT au lieu de laisser croire que le Drive a suivi. */
+  const moveLibFileToScope = (id, scope, pid) => {
+    const projectName = scope === 'project' && pid ? canvasScopeName(pid) : '';
+    void moveLibraryItemOnDrive({ id, toScope: scope, projectId: scope === 'project' ? pid : null, projectName })
+      .then((res) => {
+        if (!res || res.moved || !res.reason || res.reason === 'local-only') return;
+        setLibMsg(`⚠ The entry moved, but its Drive file did not (${res.reason}) — it stays in its former images folder. Retry the move once Drive answers.`);
+      })
+      .catch(() => {});
+  };
+
   // Move an image between a project library and the common (dataset) library.
   // The destination project is the one picked in the modal's project list
   // (`libProjectId`, defaulting to the project this editor was opened with) — the
@@ -2688,6 +2705,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       return;
     }
     moveLibraryItem(from, to, to === 'project' ? destProjectId : srcProjectId, item.id);
+    moveLibFileToScope(item.id, to, to === 'project' ? destProjectId : null);
     setLibMsg(to === 'project'
       ? `✅ “${item.label || 'Image'}” is now in the “${canvasScopeName(destProjectId)}” project library (Project tab — and that project page’s “🖼 Saved canvases”).`
       : `✅ “${item.label || 'Image'}” is now in the shared dataset library.`);
@@ -2714,6 +2732,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     if (d.scope !== scope || d.projectId !== pid) {
       // Came from the other library: it lands HERE, at the dropped place.
       moveLibraryItem(d.scope, scope, activeLibProjectId, d.id);
+      moveLibFileToScope(d.id, scope, pid);
     }
     if (reorderLibraryItem(scope, pid, d.id, item.id)) setLibVersion((v) => v + 1);
     setLibMsg(`↔ “${item.label || 'Image'}” changed place in the library.`);
@@ -2726,6 +2745,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     if (!d || d.scope === scope) return;
     const label = (libraryItems.find((x) => x.id === d.id) || {}).label || 'Image';
     moveLibraryItem(d.scope, scope, activeLibProjectId, d.id);
+    moveLibFileToScope(d.id, scope, activeLibProjectId);
     setLibraryTab(scope);
     setLibVersion((v) => v + 1);
     setLibMsg(scope === 'project'

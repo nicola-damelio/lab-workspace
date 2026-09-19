@@ -31,7 +31,7 @@ import { applyPapersRecovery, readPublications, readExcludedPubs, readRelevantSu
 import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud, setProjectDatasetScope, removeProjectsOfDataset, loadDeletedProjects, adoptDeletedProjects } from './components/AppModules/projectsModule';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
-import { setActiveProjectId, readLibrary, readAllProjectLibraries, mergeLibraryFromSnapshot } from './utils/figuresLibrary';
+import { setActiveProjectId, readLibrary, readAllProjectLibraries, mergeLibraryFromSnapshot, refreshLibraryFromStorage } from './utils/figuresLibrary';
 import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, getLastDriveConnectError, driveBootstrapRequestedAtLoad, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders, cloudBackendAvailable } from './utils/driveUpload';
 /* ── LE DRIVE EST LE MIROIR DU PROGRAMME (et le même sur chaque poste) ──────
    driveMirror.js : supprimer ou renommer un dataset / un projet se répercute
@@ -1904,6 +1904,15 @@ if (customType === 'dosy') {
     installKeyObserver();
     const keys = await adoptKeysFromDrive().catch(() => ({ adopted: [], state: null }));
     if (keys && keys.state) writeKeyState(keys.state).catch(() => null);
+    /* LES LISTES ADOPTÉES DOIVENT ATTEINDRE L'ÉCRAN. `adoptKeysFromDrive` écrit
+       les valeurs du Drive directement dans le magasin du navigateur, alors que
+       les listes de la bibliothèque d'images vivent d'abord dans un miroir
+       mémoire (voir figuresLibrary.refreshLibraryFromStorage) : sans ce
+       rafraîchissement, un poste qui a déjà affiché sa bibliothèque — le cas
+       courant, le Drive se connectant APRÈS l'ouverture de la page — restait sur
+       l'ancienne liste jusqu'au rechargement (« les images que j'ai déplacées
+       dans la bibliothèque du projet n'y sont pas »). */
+    if (keys && Array.isArray(keys.adopted) && keys.adopted.length) refreshLibraryFromStorage();
     const state = await readWorkspaceState();
     if (!state) return false;
     /* L'index est mémorisé : chaque rafraîchissement de la liste (snapshot

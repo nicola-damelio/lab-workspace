@@ -1,0 +1,24 @@
+﻿Lab Workspace folders found: 1
+== 'Lab Workspace' [1knL_lFTZpYW2jch3uA7deJd6br-_9q5f]
+   (memoire app) _workspace [13VZ8PXZoZbVtWSalMjx92ZkZuDhcv7hH]
+   dataset: 'GEC-UPJV-projects' [1fiiNoFCfioYFP1rt_1IwV1PZ3d0jlwil] created=2026-09-11T15:29:31.975Z
+      'projects' [1-77Jv9_k0vnpJsRlUEGGaXRNOFe42b1J] created=2026-09-19T11:42:30.517Z items=2 -> unassigned, p53H
+      'projects' [1kYVKEVPEtGukfuRntrfbML8HTqmptaRm] created=2026-09-11T15:29:33.104Z items=4 -> unassigned, bianca, tests, p53H
+      !! DOUBLON: 'projects' x2 dans 'GEC-UPJV-projects'
+      'backups' [1lMfDN3YJ-O0VYZNDa5uxxhis0SZBIz3r] created=2026-09-11T15:29:34.221Z items=5 -> GEC-UPJV-projects_774488_backup_2026-09-16.html, GEC-UPJV-projects_774488_save_2026-09-15.html, GEC-UPJV-projects_774488_backup_2026-09-15.html, GEC-UPJV-projects_774488_backup_2026-09-13.html, GEC-UPJV-projects_774488_backup_2026-09-11.html
+      'protocols' [1a4AOFG34Ug3DZ_Ju9DrM0FKd3I03Vb5c] created=2026-09-19T11:44:08.770Z items=0
+      'protocols' [1zInvjpCkUE0Nxv_ufXcMzdgZ6NphKwxc] created=2026-09-11T15:29:35.362Z items=0
+      !! DOUBLON: 'protocols' x2 dans 'GEC-UPJV-projects'
+      'storage' [1AOKzJ-w3ssjFXTPFbd2zAqqYF7fRdgpY] created=2026-09-11T15:29:36.608Z items=0
+      'publications' [1dteNFD3brk55X53DD2YcXIhcH-yunTGg] created=2026-09-11T15:29:37.650Z items=1 -> Nicola_DAMELIO
+   dataset: 'GEC-UPJV_administration_ok' [1HmXXxCwSXaY4ocVJnRK2CjEKYGbEPfFJ] created=2026-09-10T18:49:44.541Z
+      'backups' [1HTn6wuAVuW70Ha6a1rEqVS_5b4EKD2KR] created=2026-09-10T18:49:45.630Z items=7 -> GEC-UPJV_administration_ok_255238_backup_2026-09-16.html, GEC-UPJV_administration_ok_255238_backup_2026-09-15.html, GEC-UPJV_administration_ok_255238_backup_2026-09-13.html, GEC-UPJV_administration_ok_255238_backup_2026-09-11.html, GEC-UPJV_administration_255238_save_2026-09-11.html, GEC-UPJV_administration_255238_backup_2026-09-11.html, GEC-UPJV_administration_182223_save_2026-09-10.html
+      'Budget_labo' [1tcQog69xkDJGmrAA__-yQYKE64cIDUuS] created=2026-09-10T18:49:47.073Z items=1 -> 2026
+   dataset: 'BG04' [1xcrEvJJrs0jR5xiq5xKs4WT4V5N1q133] created=2026-09-06T16:52:55.342Z
+      'projects' [1abqDjUnWDKZbp2rH77ylmf5KfzEoO9_Z] created=2026-09-06T16:52:56.518Z items=1 -> BG04
+      'backups' [1FN3lIj608p8p8A0VICL9OcMbz6pWxFUt] created=2026-09-06T16:52:57.834Z items=7 -> BG04_576525_backup_2026-09-16.html, BG04_576525_backup_2026-09-15.html, BG04_576525_backup_2026-09-13.html, BG04_576525_backup_2026-09-11.html, BG04_576525_backup_2026-09-10.html, BG04_576525_backup_2026-09-08.html, BG04_576525_backup_2026-09-07.html
+      'protocols' [1y72Hy9oaUKPGX40tdMTgDv75M6sY5LMo] created=2026-09-09T22:29:12.863Z items=0
+      'storage' [1Jm_D5JS63vzBzkyq28XmozdPsYRSzDas] created=2026-09-09T22:29:13.792Z items=0
+      'publications' [1OcryXz3x23-XTyX6pzZuMSr3_ucSG47u] created=2026-09-09T22:29:14.936Z items=0
+      'Budget_labo' [1SL8c1M2pJlHn4JbMSDVx7vGqusX61c9X] created=2026-09-09T21:51:24.531Z items=1 -> 2026
+TOTAL conteneurs dupliques: 2
