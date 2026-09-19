@@ -108,14 +108,15 @@ eq(canvasSaveProjectM({ canvasHome: null, projectId: null, canvasEntries: { data
 /* ══ 3. 🎯 PRECISION (la souris ne va plus trop vite) ════════════════════ */
 has(IB, 'const FINE_GAIN = 0.25;            // ÷4 while 🎯 Precision (or Shift) is on',
   '🎯 Precision (ou Shift) divise le geste par quatre');
-has(IB, 'const FIGURE_RESIZE_GAIN = 0.5;    // a figure’s corner follows ½ of the pointer',
-  'la poignée d’une figure ne suit que la MOITIÉ du pointeur (la plainte « goes too fast »)');
+ok(!IB.includes('FIGURE_RESIZE_GAIN'),
+  'la poignée d’une figure ne prend plus la MOITIÉ du geste : le coin suit le pointeur (la plainte « it goes too slow » succède à « it goes too fast », et 🎯 Precision est là pour ça)');
 has(IB, 'const fineDrag = !!(fineModeRef.current || e.shiftKey);',
   'le mode fin se lit en direct (un glissement survit à un rendu)');
-has(IB, "const gridQuantised = type === 'move' || type === 'resize';",
+has(IB, 'const gridQuantised = type === \'move\' || type === \'resize\';',
   'un PANNEAU reste à la case entière : la réduction ne le rendrait que plus dur à bouger');
-has(IB, 'const gain = gridQuantised ? 1 : (fineDrag ? FINE_GAIN : 1) * (type === \'figResize\' ? FIGURE_RESIZE_GAIN : 1);',
-  '…et le gain s’applique à tout le reste (figure, recadrage, texte, flèche, décalage d’image)');
+has(IB, 'const dxMm = gain === 1 ? mmX : +(mmX * gain).toFixed(3);', 'le déplacement écrit est celui du gain');
+has(IB, 'const gain = gridQuantised ? 1 : (fineDrag ? FINE_GAIN : 1);',
+  '…et le gain s’applique à tout le reste (figure, recadrage, texte, flèche, décalage d’image), SANS ralentir la figure');
 has(IB, 'const dxMm = gain === 1 ? mmX : +(mmX * gain).toFixed(3);', 'le déplacement écrit est celui du gain');
 has(IB, 'const nx = fineDrag ? st.from.x + (rawX - st.from.x) * FINE_GAIN : rawX;',
   'le recadrage prend le quart du mouvement, ancré là où le glissement a commencé');

@@ -11,14 +11,15 @@ OK   _builder_figureorder_test.mjs  →  _builder_figureorder_test.mjs — 70 as
 OK   _builder_letters_test.cjs  →  ✅ 78/78 checks passed
 OK   _builder_link_test.cjs  →  │ 40      │ '[App] openImageBuilder is passed to the project page: operatorNames={operatorNames} openImageBuild…'                                    │
 OK   _builder_montage_test.mjs  →  _builder_montage_test.mjs — 50 assertions OK
-OK   _builder_multiselect_test.mjs  →  _builder_multiselect_test.mjs — 168 assertions OK
+OK   _builder_multiselect_test.mjs  →  _builder_multiselect_test.mjs — 193 assertions OK
 OK   _builder_pixels_test.cjs  →  ✅ 41/41 checks passed
 OK   _builder_place_test.cjs  →  ✅ 53/53 checks passed
 OK   _builder_recall_test.mjs  →  _builder_recall_test : 25 vérifications passées
 OK   _builder_shapes_test.mjs  →  _builder_shapes_test : 201 vérifications passées
-OK   _builder_uibar_test.mjs  →  _builder_uibar_test.mjs — 114 assertions OK
+OK   _builder_uibar_test.mjs  →  _builder_uibar_test.mjs — 115 assertions OK
 OK   _builder_zoom_test.cjs  →  ✅ 31/31 checks passed
-OK   _canvas_autosave_test.mjs  →  ✅ _canvas_autosave_test : 141 vérifications passées
+OK   _canvas_autosave_test.mjs  →  ✅ _canvas_autosave_test : 142 vérifications passées
+OK   _canvas_composition_safety_test.mjs  →  ✅ _canvas_composition_safety_test : 32 vérifications passées
 OK   _canvas_file_restore_test.mjs  →  ✅ _canvas_file_restore_test : 108 vérifications passées
 OK   _canvas_identity_test.mjs  →  ✅ _canvas_identity_test : 78 vérifications passées
 OK   _capture_fix_test.mjs  →  passed 73/73
@@ -57,6 +58,7 @@ OK   _project_page_order_test.mjs  →  _project_page_order_test.mjs — 31 asse
 OK   _project_section_editing_test.mjs  →  _project_section_editing_test.mjs — 60 assertions passed
 OK   _pub_author_style_test.mjs  →  _pub_author_style_test: 194 passed
 OK   _rebuild_h_test.mjs  →  PASS
+OK   _recover_canvas_files.mjs  →  6 fichier(s) : 5 avec composition, 1 sans.
 OK   _reference_complete_test.mjs  →  _reference_complete_test: 68 passed
 OK   _reference_import_test.mjs  →  ✅ 226 tests passés (import de références)
 OK   _reference_links_test.mjs  →  ✅ 114 tests passés (liens de citation [n] ↔ références, import bibliographique numéroté, document exporté réparé)
@@ -71,4 +73,4 @@ OK   _ui_scale_test.cjs  →  ✅ 44/44 checks passed
 OK   _view_scroll_memory_test.cjs  →  ✅ 41/41 checks passed
 OK   _workspace_drive_test.mjs  →  ✅ 55 tests passés (l’espace de travail entier vit sur le Drive)
 OK   _workspace_keys_test.mjs  →  ✅ 37 tests passés (les clés du navigateur vivent aussi sur le Drive)
-total 73, failed 1
+total 75, failed 1

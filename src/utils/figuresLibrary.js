@@ -1,5 +1,11 @@
 import { getDriveToken, uploadLocalFile, dataUrlToBlob, cloudBackendAvailable, getDriveRootName, resolveDrivePathFromNames, listDriveChildren, downloadDriveFileText, takeLastUploadQueueInfo, renameDriveFile, getDriveFileMeta, findDriveFileByName } from './driveUpload';
 import { sanitizeSlug, projectImagesFolderPath } from './driveNaming';
+/* Où est VRAIMENT le dossier d'images d'un projet (voir utils/figuresFolder.js) :
+   l'emplacement canonique est dérivé du NOM du projet, donc un renommage — ou un
+   dossier renommé à la main — laissait les fichiers ailleurs pendant que
+   l'application en créait un jumeau vide. Ce résolveur cherche, ne crée rien, et
+   sait demander à l'utilisateur plutôt que de deviner. */
+import { findProjectFiguresFolder, adoptProjectFiguresFolder, listProjectFiguresFolders } from './figuresFolder';
 import { getCloudProvider, isNextcloudUrl, ncFetchBlob, ncMove, ncUploadFile } from './nextcloud';
 import { registerKeyValueMerger } from './workspaceKeyStore';
 
@@ -1518,6 +1524,51 @@ export const figureFileName = (label, ext, identity = '') => {
   return `${base}${tag}.${ext}`;
 };
 
+/** LE dossier d'images à utiliser pour ce projet — celui qui EXISTE.
+ *
+ *  `create:false` (toutes les LECTURES : relire la bibliothèque, retrouver un
+ *  sidecar) ne crée jamais rien : quand aucun dossier n'est identifié, on
+ *  retourne `leafId:''` et l'appelant dit ce qu'il a vu (`candidates`) au lieu de
+ *  fabriquer un dossier vide à côté des fichiers.
+ *
+ *  `create:true` (les ÉCRITURES : publier une figure, déposer son sidecar)
+ *  rejoint le dossier existant — sous son ancien nom s'il a été renommé — et ne
+ *  crée l'emplacement canonique que s'il n'y a vraiment rien.
+ *
+ *  @returns {Promise<{ name:string, leafId:string, exact:boolean, via:string,
+ *                      folder:string, candidates:Array }>} */
+const figuresFolderFor = async (projectName, { create = false } = {}) => {
+  const wanted = projectImagesFolderPath(projectName).join('/');
+  const found = await findProjectFiguresFolder(projectName).catch(() => null);
+  if (found && found.leafId) return found;
+  if (!create) {
+    return {
+      name: '', leafId: '', exact: false, via: '', folder: wanted,
+      candidates: (found && found.candidates) || []
+    };
+  }
+  const resolved = await resolveDrivePathFromNames(projectImagesFolderPath(projectName)).catch(() => null);
+  const name = sanitizeSlug(projectName) || '_unassigned';
+  return {
+    name, leafId: (resolved && resolved.leafId) || '', exact: true, via: 'created',
+    folder: `projects/${name}/images`, candidates: []
+  };
+};
+
+/** Où le dossier d'images d'un projet a été trouvé ('' = nulle part).
+ *  Sert aux écrans : ils peuvent DIRE quel dossier sera lu, et proposer les
+ *  autres quand le renommage a été total. */
+export const projectFiguresFolderInfo = async (projectName = '') => figuresFolderFor(projectName, { create: false });
+
+/** Tous les dossiers de projet du dataset avec leur contenu — pour laisser
+ *  l'utilisateur désigner celui qui porte ses figures. */
+export const projectFiguresFolderChoices = async () => listProjectFiguresFolders();
+
+/** Désigner ce dossier comme LE dossier d'images de ce projet (le miroir
+ *  partagé le retient : lectures et envois suivants l'utilisent). */
+export const chooseProjectFiguresFolder = async ({ projectName = '', folderName = '' } = {}) =>
+  adoptProjectFiguresFolder({ projectName, folderName });
+
 export const uploadFigureToDrive = async ({ full, label = 'figure', projectName = '', identity = '' }) => {
   lastFigureDriveError = '';
   // L'information « mis en file de reprise ? » est consommée par la tentative
@@ -1559,17 +1610,22 @@ export const uploadFigureToDrive = async ({ full, label = 'figure', projectName 
 
   // ── Google Drive ──────────────────────────────────────────────────────────
   try {
-    // The EXPLICIT path picks the folder for both providers, so the figure
-    // always goes to <dataset>/projects/<project>/images (only the Drive file
-    // registry still needs the naming context: future project renames move the
-    // file and its folder with the project).
+    /* LE DOSSIER QUI EXISTE D'ABORD (voir utils/figuresFolder.js) : si ce projet
+       a déjà un dossier d'images sur le Drive — fût-ce sous un ancien nom, après
+       un renommage ou un miroir perdu — la figure y entre. Résoudre par le seul
+       nom canonique ouvrait un dossier PARALLÈLE : les nouvelles figures
+       arrivaient dans un dossier vide pendant que les anciennes restaient dans
+       l'autre, invisibles.
+       Le contexte de nommage garde le VRAI nom du projet : c'est lui que le
+       registre compare pour suivre un renommage plus tard. */
+    const target = await figuresFolderFor(projectName, { create: true });
     const ctx = { section: 'images' };
     if (projectName) ctx.project = projectName;
     return await uploadLocalFile({
       name,
       mimeType: isSvg ? 'image/svg+xml' : (mime || 'image/png'),
       file: dataUrlToBlob(src),
-      path: projectImagesFolderPath(projectName),
+      path: projectImagesFolderPath(target.name || projectName),
       ctx
     });
   } catch (err) {
@@ -1756,7 +1812,19 @@ export const restoreCanvasFromFigureMeta = async ({
   const meta = parseFigureMeta(text);
   const canvasData = canvasDataOfFigureMeta(meta);
   if (!canvasData) {
-    return fail('This file carries no canvas composition — pick the “<image>.meta.json” written next to a figure saved by the Image Builder.');
+    /* ✅ DIRE CE QUE LE FICHIER EST — pas seulement ce qu'il n'est pas.
+       « J'ai trouvé un `.meta.json` et il ne s'ouvre pas » : un sidecar de
+       CAPTURE (le graphe aplati d'une figure, décrit par `src`) n'a JAMAIS
+       porté de composition ; sans le dire, on le croit perdu et on le
+       réessaie. Les deux fichiers portent le même nom — c'est le CONTENU qui
+       tranche (`canvasData` pour un canvas, `src` pour une capture). */
+    const s = (meta && meta.src) || null;
+    const when = meta && meta.savedAt ? ` (saved ${String(meta.savedAt).slice(0, 16).replace('T', ' ')})` : '';
+    const what = s
+      ? `This is the sidecar of a CAPTURED FIGURE — “${s.elementLabel || s.elementKey || 'figure'}”`
+        + `${s.testName ? ` of ${s.testName}${s.instanceName ? ` · ${s.instanceName}` : ''}` : ''}${when}.`
+      : 'This file carries no canvas composition.';
+    return fail(`${what} A capture keeps that picture’s origin and no canvas composition: there is nothing to reopen in the Image Builder. The editable canvas file is the OTHER “<image>.meta.json” — the one written next to a canvas image saved by the Image Builder (its content has a “canvasData” key).`);
   }
   const imageName = imageNameOfSidecarName(fileName) || String((meta && meta.imageName) || '');
   const metaName = isFigureMetaFileName(fileName) ? String(fileName) : (imageName ? sidecarNameOfImageName(imageName) : '');
@@ -1831,13 +1899,17 @@ export const uploadFigureMetaToDrive = async ({ meta = null, imageName = '', pro
     }
   }
   try {
+    // Le sidecar va DANS LE MÊME DOSSIER que l'image : celui que le résolveur a
+    // trouvé pour ce projet (voir figuresFolderFor) — sinon une composition
+    // atterrirait dans un dossier et son image dans un autre.
+    const target = await figuresFolderFor(projectName, { create: true });
     const ctx = { section: 'images' };
     if (projectName) ctx.project = projectName;
     return await uploadLocalFile({
       name,
       mimeType: 'application/json',
       file: new Blob([body], { type: 'application/json' }),
-      path: projectImagesFolderPath(projectName),
+      path: projectImagesFolderPath(target.name || projectName),
       ctx
     });
   } catch (err) {
@@ -1960,10 +2032,10 @@ export const renameFigureOnDrive = async ({
   let metaMoved = false;
   try {
     if (fileId) {
-      const resolved = await resolveDrivePathFromNames(projectImagesFolderPath(projectName));
-      const sidecarId = (resolved && resolved.leafId)
-        ? await findDriveFileByName(fromMeta, resolved.leafId)
-        : '';
+      // Le dossier est CHERCHÉ, jamais créé : renommer une figure ne doit pas
+      // fabriquer un dossier d'images vide (voir utils/figuresFolder.js).
+      const folder = await figuresFolderFor(projectName, { create: false });
+      const sidecarId = folder.leafId ? await findDriveFileByName(fromMeta, folder.leafId) : '';
       metaMoved = !!sidecarId && await renameDriveFile(sidecarId, toMeta);
     } else {
       metaMoved = await ncMove(urlWithFileName(ncUrl, fromMeta), urlWithFileName(ncUrl, toMeta));
@@ -2164,7 +2236,19 @@ export const pruneRecoverableLibraryCaches = ({ storage } = {}) => {
       items = Array.isArray(parsed) ? parsed : null;
     } catch { items = null; }
     if (!items || !items.length) return;
-    const kept = items.filter((i) => !(i && i.drive === true && driveIdOfLibraryItem(i)));
+    /* ⛔ ON N'OUBLIE QUE CE QUI REVIENT VRAIMENT DU DRIVE.
+       Les pixels reviennent par « ⬇ Add missing from Drive », mais l'entrée
+       RÉ-AJOUTÉE ne porte que ce que le sidecar `<image>.meta.json` lui rend
+       (voir buildFigureMeta) : sans sidecar, elle revient comme une simple image
+       — sans sa composition (`canvasData`) ni son origine de capture (`src`).
+       Ces deux-là ne vivent QUE dans ce navigateur : les oublier ici les
+       détruisait pour de bon (l'image restait sur le Drive, la copie ÉDITABLE
+       non — le canvas ne se rouvrait plus dans l'éditeur). `metaName` non vide
+       = la copie éditable EST sur le Drive, posée par publishLibraryFigure :
+       c'est la seule entrée dont on peut vraiment se passer ici. */
+    const recoverable = (i) => !!(i && i.drive === true && driveIdOfLibraryItem(i)
+      && (!(i.canvasData || i.src) || !!String(i.metaName || '').trim()));
+    const kept = items.filter((i) => !recoverable(i));
     const forgotten = items.length - kept.length;
     out.left += kept.length;
     if (!forgotten) return;
@@ -2236,19 +2320,67 @@ export const libraryItemsFromDriveListing = (listing, { addedAt = '' } = {}) => 
  *  ramenait un canvas comme une simple image — reconnue, mais plus modifiable :
  *  c'était la seconde moitié du bug « je ne retrouve pas mes canvas ».
  *
+ *  LE DOSSIER EST CHERCHÉ, JAMAIS CRÉÉ (voir utils/figuresFolder.js). Le chemin
+ *  canonique est dérivé du NOM du projet : quand le dossier du projet a été
+ *  renommé, cette lecture créait autrefois un dossier vide à côté des fichiers et
+ *  lisait celui-là — « mes figures sont sur le Drive mais le programme ne les voit
+ *  plus, il y a deux dossiers images et l'un est vide ». On lit maintenant le
+ *  dossier qui EXISTE (miroir partagé → nom canonique → dossier voisin au nom
+ *  proche) ; quand aucun n'est identifiable avec certitude, le geste ne devine
+ *  pas : il rend `candidates` (tous les dossiers de projet du dataset et ce qu'ils
+ *  contiennent) et l'écran laisse choisir, `fromFolderName` désignant le bon
+ *  dossier pour de bon (il est retenu pour ce projet).
+ *
  *  @returns {{ folder:string, found:number, added:number, filled:number,
- *              restored:number, error:string }} */
-export const pullLibraryFromDrive = async ({ scope = 'common', projectId = null, projectName = '' } = {}) => {
+ *              restored:number, noComposition:number, error:string,
+ *              via:string, adopted:string, candidates:Array }}
+ *            `noComposition` = images ramenées du Drive SANS sidecar : il n'y a
+ *            RIEN à rouvrir dans l'éditeur (ni composition de canvas, ni origine
+ *            de capture). Le geste le DIT (page projet) : sans ce chiffre,
+ *            l'image « revient » et l'on ne comprend pas pourquoi elle ne
+ *            s'ouvre plus.
+ *            `folder` = le dossier RÉELLEMENT lu (`via` dit comment il a été
+ *            trouvé : 'mirror', 'name', 'similar', 'chosen'). */
+export const pullLibraryFromDrive = async ({
+  scope = 'common', projectId = null, projectName = '', fromFolderName = ''
+} = {}) => {
   const out = {
     folder: projectImagesFolderPath(projectName).join('/'),
-    found: 0, added: 0, filled: 0, restored: 0, error: ''
+    found: 0, added: 0, filled: 0, restored: 0, noComposition: 0, error: '',
+    /* Ce que le geste a vu d'autre : les autres dossiers de projet du dataset,
+       avec leur contenu. Ils ne sont PAS lus d'office (un renommage complet ne se
+       devine pas), mais l'écran les propose — et `fromFolderName` fait le
+       contraire : lire celui-là et le retenir pour ce projet. */
+    via: '', adopted: '', candidates: []
   };
   if (!cloudBackendAvailable()) { out.error = 'Cloud storage is not connected.'; return out; }
   let listing = [];
   try {
-    const resolved = await resolveDrivePathFromNames(projectImagesFolderPath(projectName));
-    if (!resolved || !resolved.leafId) { out.error = `Folder not found: ${out.folder}`; return out; }
-    listing = await listDriveChildren(resolved.leafId);
+    let target = null;
+    if (fromFolderName) {
+      // CHOIX EXPLICITE : l'utilisateur a désigné le dossier (page projet →
+      // « Read from this folder »). On le retient pour ce projet, puis on le lit.
+      const imagesId = await chooseProjectFiguresFolder({ projectName, folderName: fromFolderName });
+      if (!imagesId) { out.error = `Folder not found: ${fromFolderName}`; return out; }
+      target = { name: fromFolderName, leafId: imagesId, exact: true, via: 'chosen', folder: `projects/${fromFolderName}/images` };
+      out.adopted = fromFolderName;
+    } else {
+      // LECTURE : le dossier qui EXISTE (miroir → nom canonique → dossier voisin
+      // au nom proche). Rien n'est créé — c'est ce qui évitait de fabriquer un
+      // dossier vide à côté des fichiers qu'on cherchait.
+      target = await figuresFolderFor(projectName, { create: false });
+    }
+    out.folder = target.folder || out.folder;
+    out.via = target.via || '';
+    out.candidates = target.candidates || [];
+    if (!target.leafId) {
+      // Aucun dossier identifié : on le DIT, et on montre ce qui existe pour que
+      // l'utilisateur désigne le bon dossier (fromFolderName) au lieu de laisser
+      // l'application en fabriquer un vide.
+      out.error = `Folder not found: ${out.folder}`;
+      return out;
+    }
+    listing = await listDriveChildren(target.leafId);
   } catch (err) {
     out.error = (err && err.message) || 'Could not read the Drive folder';
     return out;
@@ -2299,6 +2431,10 @@ export const pullLibraryFromDrive = async ({ scope = 'common', projectId = null,
       it.metaName = metaName;
     }
   }
+  // Ce qui revient SANS rien à rouvrir (aucun sidecar dans le dossier) : le
+  // geste le dit — c'est la différence entre « mon canvas est revenu » et
+  // « l'image est revenue, la composition n'existe nulle part ».
+  out.noComposition = missing.filter((i) => i && !i.canvasData && !i.src).length;
   if (!missing.length && !out.restored) return out;
   const res = mergeLibraryList(current, missing);
   if (res.added || res.filled || out.restored) {

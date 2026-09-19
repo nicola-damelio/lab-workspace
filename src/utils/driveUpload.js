@@ -316,6 +316,12 @@ export const setDriveRootContext = ({ id = '', name = '', kind = '' } = {}) => {
   if (nextId && nextId !== driveRootResolvedId) setDriveFolderId('');
 };
 
+/** L'id du dataset ouvert — le dossier d'un dataset sur le Drive est ancré
+ *  dessus (voir datasetFolderName), donc les helpers qui cherchent un dossier
+ *  DÉJÀ existant en ont besoin pour retrouver le même ancrage que les envois
+ *  (voir utils/figuresFolder.js). */
+export const getDriveRootId = () => driveRootId;
+
 /** Which dataset the CURRENT Drive context points to (for the pending-upload
  *  queue: an upload enqueued while dataset A was open must be flushed into
  *  dataset A's folder even if the user has opened dataset B in the meantime). */

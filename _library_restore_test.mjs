@@ -295,9 +295,14 @@ LIB.writeProjectLibrary('P1', []);
 LIB.addProjectLibraryItem('P1', { id: 'loc1', label: 'Local only', url: 'data:image/png;base64,thumb', full: 'data:image/png;base64,big', drive: false, driveUrl: null });
 eq(LIB.localOnlyLibraryCount({ scope: 'project', projectId: 'P1' }), 1, '…et comptées par portée');
 
-const listingMock = { cloud: true, dataUrlToBlob: () => ({}),
+const listingMock = { cloud: true, driveToken: 'tok', dataUrlToBlob: () => ({}),
   uploadLocalFile: async ({ name }) => ({ id: `UP_${name}`, name, driveUrl: `https://drive.google.com/file/d/UP_${name}/view` }),
   resolveDrivePathFromNames: (names) => ({ leafId: `leaf_${(names || []).join('_')}`, path: (names || []).map((n, i) => ({ name: n, id: `leaf_${i}` })) }),
+  /* Le dossier des figures EXISTE : la lecture le CHERCHE (voir
+     utils/figuresFolder.js) au lieu de le créer, donc le faux Drive doit le
+     retrouver par son nom. */
+  findFolderByName: async (name) => (name === 'images' ? 'IMAGES_FOLDER' : `DIR_${name}`),
+  getDriveFileMeta: async () => ({ id: '', name: '', trashed: true }),
   listDriveChildren: () => listing };
 globalThis.__driveTestMocks = listingMock;
 const pushed = await LIB.pushLibraryToDrive({ scope: 'project', projectId: 'P1', projectName: 'CD project' });

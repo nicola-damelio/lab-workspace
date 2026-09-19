@@ -109,7 +109,7 @@ ok(defs.indexOf('fsf-') < defs.indexOf('</defs>'), '…et donc présent dans cha
    propriétés SVG est filtre → clip → masque) : ce qui a été effacé aurait
    continué à projeter son ombre. */
 const layerStart = IB.indexOf('{imgs.map((im, i) => {');
-const layerEnd = IB.indexOf('{/* Single figure: classic shift + small resize handle. */}');
+const layerEnd = IB.indexOf('{/* Single figure: shift + the FOUR corner handles (a plain');
 ok(layerStart > 0 && layerEnd > layerStart, 'la couche des figures est identifiable');
 const layer = IB.slice(layerStart, layerEnd);
 

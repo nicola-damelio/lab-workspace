@@ -18,7 +18,8 @@ import {
 } from '../utils/objectClipboard';
 import {
   moveSelectionPatches, moveFiguresPatches, resizedBox, resizeSelectionPatches,
-  figureResizeFactor, resizeFiguresPatches, alignFiguresPatches, distributeFiguresPatches,
+  figureResizeFactor, resizeFiguresPatches, figureCornerPoints,
+  alignFiguresPatches, distributeFiguresPatches,
   alignGroupPatches, distributeGroupPatches
 } from '../utils/panelSelection';
 import {
@@ -1753,13 +1754,47 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // Sizing a figure or drawing a crop window by mouse is meant to land on the
   // exact tenth of a millimetre, but the pointer only moves in screen pixels —
   // whatever the zoom — and a small figure grows a lot from a small movement of
-  // the hand. “🎯 Precision” (or holding SHIFT during the gesture) divides every
-  // mouse delta by four, and a FIGURE handle follows only HALF of the pointer
-  // (FIGURE_RESIZE_GAIN) so a twitch no longer flings the corner across the
-  // panel. The exact size stays reachable at the keyboard: the “W % / H %”
-  // fields of the active figure in the object window.
+  // the hand. A figure’s corner handle follows the pointer ONE TO ONE — it used
+  // to follow only HALF of it (“it goes too slow”), and only the bottom-right
+  // corner was a handle: all FOUR of them are now (see FigureHandles below).
+  // “🎯 Precision” (or holding SHIFT during the gesture) divides every mouse
+  // delta by four for the last tenth of a millimetre, and the exact size stays
+  // reachable at the keyboard: the “W % / H %” fields of the active figure in
+  // the object window.
   const FINE_GAIN = 0.25;            // ÷4 while 🎯 Precision (or Shift) is on
-  const FIGURE_RESIZE_GAIN = 0.5;    // a figure’s corner follows ½ of the pointer
+  // ── LES QUATRE POIGNÉES D'UNE FIGURE ───────────────────────────────────────
+  // Une poignée par COIN, comme celles d'une FORME (un petit cercle bleu cerclé
+  // de blanc, CENTRÉ sur le coin) : la marque visible ne couvre donc plus
+  // l'image — l'ancien carré de 3 mm était posé à l'INTÉRIEUR du coin et
+  // mangeait le coin de la figure. Elle est saisie par un anneau INVISIBLE un
+  // peu plus large, mais qui reste plus PETIT que ce carré d'avant (2,2 mm vers
+  // l'intérieur du coin contre 3) : plus rien n'est recouvert, et la poignée
+  // s'attrape quand même.
+  const FIG_HANDLE_DOT = 1.2;        // rayon de la marque visible (mm)
+  const FIG_HANDLE_GRAB = 2.2;       // rayon de la zone de saisie invisible (mm)
+  // Le curseur dit dans quel SENS le coin va bouger (`nw` et `se` sont sur la
+  // même diagonale, `ne` et `sw` sur l'autre).
+  const FIG_CURSOR = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize' };
+  /* Les QUATRE poignées d'une figure — la seule façon de la redimensionner :
+     le coin tenu est tiré vers l'intérieur ou vers l'extérieur, le coin OPPOSÉ
+     ne bouge pas (l'ancre est calculée par utils/panelSelection). Une figure
+     poussée hors de son panneau est DÉCOUPÉE par lui : `figureCornerPoints`
+     ramène donc sa poignée dans le cadre — sinon elle serait invisible et
+     impossible à reprendre. */
+  const FigureHandles = ({ geom, panel, onStart }) => (
+    <g data-selection-ui="true">
+      {figureCornerPoints({ x: geom.vX, y: geom.vY, w: geom.vW, h: geom.vH }, panel, FIG_HANDLE_GRAB).map((h) => (
+        <g key={h.corner}>
+          <circle cx={h.x} cy={h.y} r={FIG_HANDLE_GRAB} fill="transparent" stroke="none" pointerEvents="all"
+            style={{ cursor: FIG_CURSOR[h.corner] }}
+            onMouseDown={(e) => onStart(e, h.corner)}
+            onClick={(e) => e.stopPropagation()}
+            title="Drag to resize this figure from this CORNER — the opposite corner stays exactly where it is" />
+          <circle cx={h.x} cy={h.y} r={FIG_HANDLE_DOT} fill="#3b82f6" stroke="white" strokeWidth={0.25} pointerEvents="none" />
+        </g>
+      ))}
+    </g>
+  );
   const [fineMode, setFineMode] = useState(false);
   // `onDrag` is a closure captured when the drag starts: a ref keeps the switch
   // readable live, so flipping it (or pressing Shift) hones the gesture already
@@ -2149,16 +2184,19 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   // The snapshot of every figure involved in a drag (the one held + the ticked
   // ones), taken when the mouse goes down: the geometry is then written in
   // ABSOLUTE values, so a long drag cannot accumulate rounding, and releasing
-  // then grabbing again starts from the same base.
-  const figureSnapshot = (obj, refIdx) => {
-    const imgs = getObjImages(obj);
+  // then grabbing again starts from the same base. `imgs` is the panel's figures
+  // when the caller already has its own copy of them — the corner handle passes
+  // the FROZEN ones (see startFigureResize), so the snapshot and the object the
+  // drag writes are the same geometry.
+  const figureSnapshot = (obj, refIdx, imgs = null) => {
+    const list = imgs || getObjImages(obj);
     const idxs = [refIdx, ...figGroupOf(obj.id).filter((i) => i !== refIdx)];
-    return idxs.filter((i) => i >= 0 && i < imgs.length).map((i) => ({
+    return idxs.filter((i) => i >= 0 && i < list.length).map((i) => ({
       idx: i,
-      rect: freeRectOf(imgs[i]),
-      scale: Number(imgs[i] && imgs[i].scale) || 1,
-      dx: Number(imgs[i] && imgs[i].dx) || 0,
-      dy: Number(imgs[i] && imgs[i].dy) || 0
+      rect: freeRectOf(list[i]),
+      scale: Number(list[i] && list[i].scale) || 1,
+      dx: Number(list[i] && list[i].dx) || 0,
+      dy: Number(list[i] && list[i].dy) || 0
     }));
   };
   // Selecting another panel (or deleting one) resets the figure selection: its
@@ -2686,7 +2724,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     // L'entrée de CE canvas dans cette portée (souvenir, sinon clé de composition
     // — voir canvasEntryFor) : la publication la met à jour sur place.
     const known = canvasEntryFor(target);
-    const { entry, drive, updated } = await publishLibraryFigure({
+    const { entry, drive, updated, metaName } = await publishLibraryFigure({
       scope: target ? 'project' : 'common',
       projectId: target,
       projectName: driveProject ? String(driveProject.name || '') : '',
@@ -2713,7 +2751,18 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     // so a later save of this scope updates it in place.
     rememberCanvasEntry(target, entry);
     setLibVersion((v) => v + 1);
-    return { entry, drive, updated };
+    /* 🔴 LA COPIE ÉDITABLE EST-ELLE SUR LE DRIVE ? `metaName` non vide = le
+       sidecar `<image>.meta.json` a bien été déposé à côté de l'image (voir
+       uploadFigureMetaToDrive), donc la composition se relit du Drive seule.
+       Vide = l'IMAGE est partie mais PAS la composition : elle n'existe plus que
+       dans ce navigateur, et « mon canvas a encore disparu » commence là. Les
+       deux appelants DOIVENT le dire au lieu d'annoncer « ☁ cloud copy … with
+       its editable copy » (ce qui était faux, et rassurait à tort). */
+    return {
+      entry, drive, updated,
+      metaName: metaName || entry.metaName || null,
+      compositionOnDrive: !!(metaName || entry.metaName)
+    };
   };
 
   // Open the "💾 Save canvas" dialog. Its DESTINATION is the point of it: the
@@ -2773,7 +2822,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       // file d'attente » (l'image repartira toute seule) d'un échec définitif :
       // un « browser copy only » muet ne dit pas si le travail est en sécurité.
       let detail;
-      if (pub.drive && pub.drive.id) detail = `☁ cloud copy in ${folderLabel} (with its editable copy, so it reopens on any computer)`;
+      if (pub.drive && pub.drive.id && pub.compositionOnDrive) detail = `☁ cloud copy in ${folderLabel} (with its editable copy, so it reopens on any computer)`;
+      /* ⚠️ L'IMAGE EST PARTIE, LA COMPOSITION NON. Le dire ICI est ce qui
+         manquait : l'écran annonçait « with its editable copy » alors que le
+         sidecar n'était pas monté, et le seul exemplaire éditable restait dans
+         ce navigateur (le nettoyage du magasin pouvait ensuite l'oublier : le
+         Drive ne gardait que l'image, plus rien à rouvrir). */
+      else if (pub.drive && pub.drive.id) detail = `⚠️ cloud copy in ${folderLabel} — but its EDITABLE copy (.meta.json) did not reach Drive${pub.driveError ? ` (${pub.driveError})` : ''}: keep this tab open, press 💾 Save now again in a moment, and do NOT clear this browser’s storage until the badge up here says “☁ … + Drive”`;
       else if (pub.driveQueued) detail = `⏳ cloud copy not sent yet (${pub.driveError || 'cloud unreachable'}) — it is QUEUED and will be uploaded automatically; nothing is lost`;
       else if (!localStorageHealthy()) detail = `⚠️ browser storage full and no cloud copy${pub.driveError ? ` (${pub.driveError})` : ''} — connect Google Drive or Nextcloud so it is kept there (this session still works)`;
       else detail = `💾 browser copy only${pub.driveError ? ` — ${pub.driveError}` : ''} (connect Google Drive or Nextcloud so it follows you to another computer)`;
@@ -2849,7 +2904,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const AUTO_PUBLISH_QUIET_MS = 8000; // calme avant d'envoyer l'image au cloud
   const AUTO_PUBLISH_MS = 60000;      // intervalle minimum entre deux envois
   const [autoSaveAt, setAutoSaveAt] = useState('');
-  const [autoSaveNote, setAutoSaveNote] = useState('');   // 'draft' | 'cloud' | 'queued' | 'browser'
+  const [autoSaveNote, setAutoSaveNote] = useState('');   // 'draft' | 'cloud' | 'image-only' | 'queued' | 'browser' | 'noproject'
   const autoSaveRef = useRef(null);
   const lastPublishAtRef = useRef(0);
   const autoSaveKeyRef = useRef('');
@@ -2916,9 +2971,21 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     if (publish) {
       const pub = await publishCanvas({ label, targetProjectId: target, dataUrl: null });
       if (!pub || !pub.entry) return null;
-      autoSaveKeyRef.current = key;
+      /* 🔁 ON NE MARQUE LA VERSION « EN SÉCURITÉ » QUE SI ELLE L'EST VRAIMENT.
+         `autoSaveKeyRef.current = key` veut dire « le cloud a cette version,
+         inutile d'y revenir » : la passe cloud (au plus une par minute) sautait
+         donc toute composition dont l'IMAGE était partie, MÊME quand sa copie
+         ÉDITABLE (`.meta.json`) n'était pas montée — la composition restait dans
+         ce navigateur seul, sans nouvelle tentative, et le nettoyage du magasin
+         pouvait ensuite l'oublier (le Drive ne gardait que l'image). On ne
+         l'avance plus dans ce cas : la passe suivante réessaie le sidecar toute
+         seule, sans que l'utilisateur ait à retoucher son canvas. */
+      const onDrive = !!(pub.drive && pub.drive.id);
+      if (onDrive && pub.compositionOnDrive) autoSaveKeyRef.current = key;
       setAutoSaveAt(new Date().toISOString());
-      setAutoSaveNote(pub.drive && pub.drive.id ? 'cloud' : (pub.driveQueued ? 'queued' : 'browser'));
+      setAutoSaveNote(onDrive
+        ? (pub.compositionOnDrive ? 'cloud' : 'image-only')
+        : (pub.driveQueued ? 'queued' : 'browser'));
       return pub;
     }
     const known = canvasEntryFor(target);
@@ -2936,7 +3003,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     setLibVersion((v) => v + 1);
     autoSaveKeyRef.current = key;
     setAutoSaveAt(new Date().toISOString());
-    setAutoSaveNote((prev) => (prev === 'cloud' ? prev : 'draft'));
+    setAutoSaveNote((prev) => ((prev === 'cloud' || prev === 'image-only') ? prev : 'draft'));
     return res;
   };
 
@@ -2983,6 +3050,13 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         text: `🖼 auto-saved ${time} · ☁ in ${where} + Drive`,
         tone: 'ok',
         title: `Saved automatically ${time} — the composition is in ${where} (project page “🖼 Saved canvases”) and its image + editable copy are on the cloud. Reopen it any time with “↩ Load”, or from the project page.`
+      };
+    }
+    if (autoSaveNote === 'image-only') {
+      return {
+        text: `🖼 auto-saved ${time} · ⚠ editable copy not on Drive yet`,
+        tone: 'warn',
+        title: `Saved automatically ${time} into ${where}. The image reached the cloud, but its EDITABLE copy (“<image>.meta.json”, the one that reopens the canvas here and on another computer) did not — so the only editable copy is this browser’s. Nothing is lost: the next automatic pass retries it (about once a minute, after a pause) and this badge switches to “☁ … + Drive” when it lands. Do not empty this browser’s storage in the meantime, and press “💾 Save now” once Drive answers again.`
       };
     }
     if (autoSaveNote === 'noproject') {
@@ -3248,13 +3322,14 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     const mmX = (e.clientX - startX) * scaleX;
     const mmY = (e.clientY - startY) * scaleY;
     // 🎯 PRECISION: “🎯 Precision” (or Shift held) divides the movement by four,
-    // and a FIGURE handle follows only half of the pointer (FIGURE_RESIZE_GAIN):
-    // a small figure is then sized to the tenth of a millimetre instead of
-    // jumping. A PANEL still lands on WHOLE grid cells, so the gain would only
-    // make it harder to move — it is left untouched.
+    // for the last tenth of a millimetre on a small figure. Everything else
+    // follows the pointer ONE TO ONE — a FIGURE in particular (its corner used
+    // to take only HALF of the gesture: “it goes too slow”). A PANEL still
+    // lands on WHOLE grid cells, so the gain would only make it harder to move —
+    // it is left untouched.
     const gridQuantised = type === 'move' || type === 'resize';
     const fineDrag = !!(fineModeRef.current || e.shiftKey);
-    const gain = gridQuantised ? 1 : (fineDrag ? FINE_GAIN : 1) * (type === 'figResize' ? FIGURE_RESIZE_GAIN : 1);
+    const gain = gridQuantised ? 1 : (fineDrag ? FINE_GAIN : 1);
     const dxMm = gain === 1 ? mmX : +(mmX * gain).toFixed(3);
     const dyMm = gain === 1 ? mmY : +(mmY * gain).toFixed(3);
     if (Math.abs(dxMm) > 0.05 || Math.abs(dyMm) > 0.05) {
@@ -3326,18 +3401,22 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     }
 
     // Resize the figure whose handle was grabbed (the ACTIVE figure — the first
-    // selected one): the ticked figures of the panel take ITS size, each one
-    // keeping its own place (“resize them all as the first selected”, see
-    // resizeFiguresPatches). A figure still laid out in the panel grid has no
-    // box of its own: it grows by the same factor.
+    // selected one) by the CORNER that was grabbed: the OPPOSITE corner stays
+    // exactly where it is (see resizeFiguresPatches). The ticked figures of the
+    // panel take ITS size, each one keeping its own place (“resize them all as
+    // the first selected”). The panel was FROZEN when the mouse went down, so
+    // the figure held has a rectangle of its own — that is what makes any of the
+    // four corners possible (a figure still laid out in the panel grid has no
+    // box: it only has an index in the grid).
     if (type === 'figResize') {
       const st = dragState.current;
+      const corner = st && st.corner;
       setObjects(prev => prev.map(o => {
         if (o.id !== id || !Array.isArray(o.images)) return o;
         const figs = (st && st.figs) || [{ idx: imgIdx, rect: freeRectOf(getObjImages(o)[imgIdx]), scale: origScale }];
         const ref = figs.find((f) => f.idx === imgIdx) || figs[0];
-        const factor = figureResizeFactor(ref, { dxMm, cellW, panelW: o.w, imgCols: o.imgCols });
-        const patches = resizeFiguresPatches(figs, imgIdx, factor);
+        const factor = figureResizeFactor(ref, { dxMm, dyMm, corner, cellW, panelW: o.w, imgCols: o.imgCols });
+        const patches = resizeFiguresPatches(figs, imgIdx, factor, corner);
         return { ...o, images: o.images.map((im, i) => (patches[i] ? { ...im, ...patches[i] } : im)) };
       }));
       return;
@@ -3409,30 +3488,6 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       return;
     }
 
-    // Dragging the image resize handle → resize the image by drag & drop.
-    if (type === 'imgResize') {
-      setObjects(prev => prev.map(o => {
-        if (o.id !== id) return o;
-        const imgs = getObjImages(o);
-        const r = freeRectOf(imgs[0]);
-        if (r && imgs.length === 1) {
-          const base = Math.max(2, r.w * o.w * cellW);
-          const f = Math.max(0.1, Math.min(6, (base + dxMm) / base));
-          return withImages(o, [{
-            ...imgs[0],
-            rect: {
-              ...r,
-              w: +Math.max(RECT_MIN, Math.min(RECT_MAX, r.w * f)).toFixed(4),
-              h: +Math.max(RECT_MIN, Math.min(RECT_MAX, r.h * f)).toFixed(4)
-            }
-          }]);
-        }
-        const baseW = Math.max(1, (o.w * cellW) - (o.imgPadding || 0) * 2);
-        const factor = Math.max(0.1, Math.min(5, (baseW + dxMm) / baseW));
-        return { ...o, imgScale: +(origScale * factor).toFixed(3) };
-      }));
-      return;
-    }
 
     // Dragging a free text overlay → move it by millimetres inside the object.
     if (type === 'text') {
@@ -3519,17 +3574,6 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     // its rectangle: same gesture, same numbers.
     const free = getObjImages(obj).length === 1 ? freeRectOf(getObjImages(obj)[0]) : null;
     dragState.current = { type: 'imgShift', id: objId, startX: e.clientX, startY: e.clientY, origX: free ? free.x : (obj.imgOffsetX || 0), origY: free ? free.y : (obj.imgOffsetY || 0) };
-    window.addEventListener('mousemove', onDrag);
-    window.addEventListener('mouseup', endDrag);
-  };
-
-  // Start dragging the IMAGE RESIZE handle (bottom-right corner of the image).
-  const startImageResize = (e, objId) => {
-    e.stopPropagation();
-    commitHistory();
-    const obj = objects.find(o => o.id === objId);
-    if (!obj || !obj.imgSrc) return;
-    dragState.current = { type: 'imgResize', id: objId, startX: e.clientX, startY: e.clientY, origScale: obj.imgScale || 1 };
     window.addEventListener('mousemove', onDrag);
     window.addEventListener('mouseup', endDrag);
   };
@@ -3644,22 +3688,39 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     window.addEventListener('mouseup', endDrag);
   };
 
-  // Resize ONE figure of a multi-figure object (drag its corner handle) — or the
-  // whole ticked group, whose figures then take ITS size.
-  const startFigureResize = (e, objId, imgIdx) => {
+  // Resize a figure by the handle of ONE of its four CORNERS — the OPPOSITE
+  // corner stays exactly where it was (the maths lives in utils/panelSelection)
+  // — together with the ticked figures of the panel, which then take ITS size.
+  //
+  // THE PANEL IS FROZEN FIRST: every figure receives the exact rectangle it
+  // shows (freezeFigures). A figure still laid out by the panel grid has NO box
+  // of its own — only an index, not a corner — and without a box there is
+  // nothing to anchor the gesture on. Nothing moves: the freeze bakes what is
+  // already drawn, and the drag itself writes ABSOLUTE rectangles. “⊞ Lay the
+  // figures out in a grid” gives the grid back when it is wanted.
+  const startFigureResize = (e, objId, imgIdx, corner = 'se') => {
     e.stopPropagation();
-    commitHistory();
     const obj = objects.find(o => o.id === objId);
-    const im = obj && getObjImages(obj)[imgIdx];
-    if (!im) return;
+    const imgs = obj ? getObjImages(obj) : [];
+    if (!imgs[imgIdx]) return;
+    const frozen = freezeFigures(obj, imgs);
+    commitHistory();
+    if (frozen.some((im, i) => im !== imgs[i])) {
+      setObjects(prev => prev.map(o => (o.id === objId ? withImages(o, freezeFigures(o, getObjImages(o))) : o)));
+    }
     dragState.current = {
-      type: 'figResize', id: objId, imgIdx, startX: e.clientX, startY: e.clientY,
-      origScale: im.scale || 1,
-      figs: figureSnapshot(obj, imgIdx)
+      type: 'figResize', id: objId, imgIdx, corner,
+      startX: e.clientX, startY: e.clientY,
+      origScale: imgs[imgIdx].scale || 1,
+      figs: figureSnapshot(obj, imgIdx, frozen)
     };
     window.addEventListener('mousemove', onDrag);
     window.addEventListener('mouseup', endDrag);
   };
+
+  // The corner handle of a SINGLE-figure panel is the very same gesture: one
+  // figure, four corners, one code path (the figure is index 0).
+  const startImageResize = (e, objId, corner = 'se') => startFigureResize(e, objId, 0, corner);
 
   // ---- free text overlays --------------------------------------------------
   // Add a text at a given position (mm inside the object) — used by the
@@ -4322,15 +4383,16 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                       </g>
                     );
                   })}
-                  {/* Single figure: classic shift + small resize handle. */}
+                  {/* Single figure: shift + the FOUR corner handles (a plain
+                      panel with one figure resizes through the very same
+                      gesture as a multi-figure one). */}
                   {isSelected && single && (
                     <g data-selection-ui="true">
                       <rect x={Math.max(ox, activeGeom.iX)} y={Math.max(oy, activeGeom.iY)} width={Math.min(ow, activeGeom.iW)} height={Math.min(oh, activeGeom.iH)} fill="transparent"
                         style={{ cursor: 'move' }} onMouseDown={(e) => startImageShift(e, obj.id)}
                         title="Drag to shift the image inside the frame (or hold Shift while dragging anywhere on the object)" />
-                      <rect x={Math.max(ox, activeGeom.iX) + Math.min(ow, activeGeom.iW) - 3} y={Math.max(oy, activeGeom.iY) + Math.min(oh, activeGeom.iH) - 3} width={3} height={3} fill="#3b82f6"
-                        style={{ cursor: 'nwse-resize' }} onMouseDown={(e) => startImageResize(e, obj.id)}
-                        title="Drag to resize the image" />
+                      <FigureHandles geom={activeGeom} panel={{ x: ox, y: oy, w: ow, h: oh }}
+                        onStart={(e, corner) => startImageResize(e, obj.id, corner)} />
                     </g>
                   )}
                   {/* Multi-figure: a clickable zone for EVERY figure (click picks
@@ -4353,10 +4415,8 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                               style={{ cursor: 'move' }} onMouseDown={(e) => startFigureDrag(e, obj.id, i)}
                               onClick={(e) => { e.stopPropagation(); setSelectedId(obj.id); if (!suppressCycleRef.current) cycleFigureAt(obj, e); else suppressCycleRef.current = false; }}
                               title="Drag to move this figure within the panel" />
-                            <rect data-selection-ui="true" x={g.iX + g.iW - 3} y={g.iY + g.iH - 3} width={3} height={3} fill="#3b82f6"
-                              style={{ cursor: 'nwse-resize' }} onMouseDown={(e) => startFigureResize(e, obj.id, i)}
-                              onClick={(e) => e.stopPropagation()}
-                              title="Drag to resize this figure" />
+                            <FigureHandles geom={g} panel={{ x: ox, y: oy, w: ow, h: oh }}
+                              onStart={(e, corner) => startFigureResize(e, obj.id, i, corner)} />
                           </g>
                         )}
                       </g>

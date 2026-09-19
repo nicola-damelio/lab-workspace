@@ -57,6 +57,39 @@ Un dossier supprimé et recréé à l'identique par la suite est distingué par
 l'**identifiant** du dataset : deux datasets peuvent porter le même titre, le
 nouveau doit pouvoir créer son dossier.
 
+## Pourquoi les lectures ne fabriquent plus de dossier
+
+Le dossier d'images d'un projet est **dérivé de son nom**
+(`projects/<slug(projet)>/images`, voir `driveNaming.projectImagesFolderPath`).
+`resolveDrivePathFromNames` utilise `findOrCreateFolder` : il **crée**. Comme la
+lecture de la bibliothèque (`pullLibraryFromDrive`) passait par là *pour lire*,
+un dossier de projet portant un autre nom (projet renommé, dossier renommé sur le
+Drive, registre `labDriveMirror` perdu parce que le navigateur a été vidé) faisait
+créer un **jumeau vide** à côté des fichiers — et c'est ce jumeau vide qui était
+lu : « mes figures sont sur le Drive mais le programme ne les voit plus, il y a
+deux dossiers images et l'un est vide ».
+
+`src/utils/figuresFolder.js` remplace cette résolution pour tout ce qui lit un
+dossier de figures :
+
+1. le **registre partagé** (`labDriveMirror` → dossier du projet par
+   *identifiant*) : il survit à un renommage, le dossier étant renommé sur place ;
+2. le **nom canonique** — un simple test d'existence, jamais une création ;
+3. un dossier de projet **voisin dont le nom ressemble encore** (score ≥ 2 :
+   même nom au séparateur près, ou l'un contient l'autre ; un simple mot commun ne
+   suffit pas, ni deux candidats à égalité).
+
+Quand rien n'est identifiable avec certitude (renommage complet), le geste **ne
+devine pas** : il rend `candidates` (les dossiers de projet du dataset et ce que
+chacun contient) et l'écran laisse choisir. Le dossier désigné est retenu pour le
+projet (`fromFolderName`), donc les lectures **et** les envois suivants visent
+celui-là.
+
+Les gestes qui écrivent (publier une figure, déposer son sidecar éditable)
+utilisent le même résolveur : une nouvelle figure rejoint le dossier existant au
+lieu d'ouvrir un dossier parallèle. L'emplacement canonique n'est créé que s'il
+n'existe vraiment aucun dossier pour ce projet.
+
 ## Pourquoi les renommages suivent sur tous les postes
 
 Le nom d'un dossier ne suffit pas à le retrouver après un renommage : le

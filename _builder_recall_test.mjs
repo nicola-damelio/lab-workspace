@@ -83,7 +83,13 @@ const SIDECAR = {
    (c'est lui qui porte la composition). */
 const driveWith = (imgId, metaId) => ({
   cloud: true,
+  driveToken: 'tok',
   resolveDrivePathFromNames: (names) => ({ leafId: `leaf_${(names || []).join('_')}`, path: (names || []).map((nm, i) => ({ name: nm, id: `leaf_${i}` })) }),
+  /* LE DOSSIER EXISTE (les fichiers sont dedans) : la lecture le CHERCHE au lieu
+     de le créer (voir utils/figuresFolder.js), donc un faux Drive doit savoir le
+     retrouver par son nom — comme le vrai. */
+  findFolderByName: async (name) => (name === 'images' ? 'IMAGES_FOLDER' : `DIR_${name}`),
+  getDriveFileMeta: async () => ({ id: '', name: '', trashed: true }),
   listDriveChildren: () => ([
     { id: `folder_${imgId}`, name: 'images', mimeType: 'application/vnd.google-apps.folder' },
     { id: imgId, name: 'Canvas_A.jpg', mimeType: 'image/jpeg', webViewLink: `https://drive.google.com/file/d/${imgId}/view` },

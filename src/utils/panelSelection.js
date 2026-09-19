@@ -134,36 +134,119 @@ export const resizeSelectionPatches = (boxes, refId, size, gridCols, gridRows) =
    BOÎTE de la référence (sa taille exacte) ; une figure en grille grandit du
    même FACTEUR — elle n'a pas de boîte à copier. */
 
+/* ── LES QUATRE COINS D'UNE FIGURE ───────────────────────────────────────────
+   La poignée d'une figure ne se trouvait qu'au coin BAS-DROITE et ne suivait
+   que la moitié du pointeur (deux plaintes : « I can only resize from the
+   bottom-right corner » et « it goes too slow »). Les quatre coins sont
+   désormais des poignées, et le coin TENU suit le pointeur ONE TO ONE : `dxMm`
+   et `dyMm` sont exactement le déplacement de la souris en millimètres. */
+
+/** Les quatre coins d'une figure, dans l'ordre d'affichage — `n` = haut,
+ *  `w` = gauche (le vocabulaire des poignées : `nw`, `ne`, `sw`, `se`). */
+export const FIGURE_CORNERS = ['nw', 'ne', 'sw', 'se'];
+
+/** Est-ce un coin connu ? Ce qui n'en est pas un retombe sur `se`, le geste
+ *  d'avant (la poignée du coin bas-droite). */
+export const isFigureCorner = (corner) => FIGURE_CORNERS.includes(corner);
+
+/** Les quatre CENTRES de poignée d'une figure, calculés sur sa boîte VISIBLE
+ *  (mm de canevas — `objFigureGeom` fournit `vX/vY/vW/vH`). `panel` et `margin`
+ *  ramènent une poignée DANS le panneau : une figure poussée hors de son cadre
+ *  est découpée par le panneau, sa poignée le serait aussi — invisible, donc
+ *  impossible à reprendre. `margin` = le rayon de la zone de saisie.
+ *  @param {{x,y,w,h}} box    boîte visible de la figure (mm)
+ *  @param {{x,y,w,h}} [panel]  boîte du panneau (mm) — facultative
+ *  @param {number} [margin]  rayon de la poignée (mm)
+ *  @returns {Array<{corner:string,x:number,y:number}>} */
+export const figureCornerPoints = (box, panel = null, margin = 0) => {
+  const b = box || {};
+  const x1 = num(b.x), y1 = num(b.y);
+  const x2 = x1 + num(b.w), y2 = y1 + num(b.h);
+  const pts = [
+    { corner: 'nw', x: x1, y: y1 },
+    { corner: 'ne', x: x2, y: y1 },
+    { corner: 'sw', x: x1, y: y2 },
+    { corner: 'se', x: x2, y: y2 }
+  ];
+  if (!panel) return pts;
+  const m = Math.max(0, num(margin));
+  const loX = num(panel.x) + m, hiX = num(panel.x) + num(panel.w) - m;
+  const loY = num(panel.y) + m, hiY = num(panel.y) + num(panel.h) - m;
+  const inside = (v, lo, hi) => +Math.min(Math.max(v, Math.min(lo, hi)), Math.max(lo, hi)).toFixed(3);
+  return pts.map((p) => ({ corner: p.corner, x: inside(p.x, loX, hiX), y: inside(p.y, loY, hiY) }));
+};
+
 /** Le facteur de redimensionnement de la FIGURE tenue, lu sur l'instantané du
- *  début du glissement (`dxMm` = déplacement horizontal de la souris en mm).
+ *  début du glissement (`dxMm`/`dyMm` = déplacement de la souris en mm).
+ *  `corner` est le coin TENU : chaque axe est signé par la direction qui
+ *  AGRANDIT (tirer vers la gauche agrandit un coin `w`, vers la droite un coin
+ *  `e`) et c'est l'axe le plus franchement tiré qui donne le facteur — un geste
+ *  franchement horizontal agrandit donc autant qu'un geste diagonal, un geste
+ *  franchement vertical agrandit aussi (l'ancienne formule ignorait `dyMm`), et
+ *  jamais « au ralenti » (l'ancienne moitié de pointeur). La taille reste
+ *  PROPORTIONNELLE : un seul facteur pour la largeur et la hauteur.
  *  Les bornes sont celles de la poignée d'une figure seule : jamais moins de
  *  10 % / plus de 600 % pour une figure libre, 30 %…400 % pour une figure en
  *  grille. */
-export const figureResizeFactor = (refFig, { dxMm, cellW, panelW, imgCols } = {}) => {
-  const dx = num(dxMm);
+export const figureResizeFactor = (refFig, { dxMm, dyMm, corner = 'se', cellW, panelW, imgCols } = {}) => {
   const panel = Math.max(1e-6, num(panelW, 1));
   const cell = Math.max(1e-6, num(cellW, 1));
+  const sx = String(corner).includes('w') ? -1 : 1;
+  const sy = String(corner).includes('n') ? -1 : 1;
   const rect = refFig && refFig.rect;
   if (rect) {
-    const base = Math.max(2, num(rect.w) * panel * cell);
-    return Math.max(0.1, Math.min(6, (base + dx) / base));
+    const baseW = Math.max(2, num(rect.w) * panel * cell);
+    const baseH = Math.max(2, num(rect.h) * panel * cell);
+    return clampFactor(1 + pulledMost(sx * num(dxMm), baseW, sy * num(dyMm), baseH), 0.1, 6);
   }
+  /* Repli : une figure qui n'a PAS de rectangle (elle est encore rangée par la
+     grille du panneau). La grille ne connaît qu'une largeur de cellule — les
+     deux axes partagent donc la même base. */
   const figW = Math.max(10, (panel * cell) / Math.max(1, Math.round(num(imgCols, 2))));
-  return Math.max(0.3, Math.min(4, 1 + dx / figW));
+  return clampFactor(1 + pulledMost(sx * num(dxMm), figW, sy * num(dyMm), figW), 0.3, 4);
 };
+
+/** L'axe le plus franchement tiré, en proportion de SA base : `vx` mm sur
+ *  `baseX` mm d'un côté, `vy` mm sur `baseY` mm de l'autre. Un geste d'un seul
+ *  axe (l'autre à zéro) gagne toujours — c'est lui qui est franc — et un geste
+ *  diagonal donne le même facteur des deux côtés. */
+const pulledMost = (vx, baseX, vy, baseY) => {
+  const rx = num(vx) / Math.max(1e-6, num(baseX, 1));
+  const ry = num(vy) / Math.max(1e-6, num(baseY, 1));
+  return Math.abs(rx) >= Math.abs(ry) ? rx : ry;
+};
+const clampFactor = (v, lo, hi) => Math.max(lo, Math.min(hi, num(v, 1)));
 
 const rectSide = (v) => round4(Math.max(RECT_MIN, Math.min(RECT_MAX, num(v))));
 
+/** La boîte d'une figure au coin tenu : elle reçoit la taille `(w, h)` et le
+ *  coin OPPOSÉ à la poignée reste exactement où il était — c'est l'ANCRE du
+ *  geste (le coin ne fuit jamais sous la main). Une figure `nw` grandit donc
+ *  vers le haut-gauche : son bord droit et son bord bas ne bougent pas. */
+const cornerRect = (rect, corner, w, h) => {
+  const side = rectSide(w), other = rectSide(h);
+  return {
+    x: round4(corner.includes('w') ? num(rect.x) + num(rect.w) - side : num(rect.x)),
+    y: round4(corner.includes('n') ? num(rect.y) + num(rect.h) - other : num(rect.y)),
+    w: side,
+    h: other
+  };
+};
+
 /** Les nouvelles boîtes des figures d'une sélection multiple : la RÉFÉRENCE
  *  (celle qu'on tient) donne SA taille, chaque autre figure garde sa place.
+ *  `corner` est le coin TENU (voir cornerRect) : une figure `nw` grandit vers
+ *  le haut-gauche, son coin bas-droite ne bougeant pas.
  *  @param {Array} figs   instantané `[{ idx, rect|null, scale }]` (voir figureSnapshot)
  *  @param {number} refIdx  l'index de la figure tenue (la première sélectionnée)
  *  @param {number} factor  son facteur de redimensionnement
+ *  @param {string} [corner]  le coin de la poignée tenue (`se` par défaut)
  *  @returns {object} `{ [idx]: patch }` — `{ rect }` pour une figure libre,
  *  `{ scale }` pour une figure encore en grille */
-export const resizeFiguresPatches = (figs, refIdx, factor) => {
+export const resizeFiguresPatches = (figs, refIdx, factor, corner = 'se') => {
   const list = (Array.isArray(figs) ? figs : []).filter(Boolean);
   const f = Math.max(0.05, num(factor, 1));
+  const c = isFigureCorner(corner) ? corner : 'se';
   const ref = list.find((x) => x.idx === refIdx) || null;
   const size = ref && ref.rect
     ? { w: rectSide(num(ref.rect.w) * f), h: rectSide(num(ref.rect.h) * f) }
@@ -171,8 +254,8 @@ export const resizeFiguresPatches = (figs, refIdx, factor) => {
   const out = {};
   list.forEach((fig) => {
     const rect = fig.rect;
-    if (rect && size) out[fig.idx] = { rect: { ...rect, w: size.w, h: size.h } };
-    else if (rect) out[fig.idx] = { rect: { ...rect, w: rectSide(num(rect.w) * f), h: rectSide(num(rect.h) * f) } };
+    if (rect && size) out[fig.idx] = { rect: cornerRect(rect, c, size.w, size.h) };
+    else if (rect) out[fig.idx] = { rect: cornerRect(rect, c, num(rect.w) * f, num(rect.h) * f) };
     else out[fig.idx] = { scale: +(num(fig.scale, 1) * f).toFixed(3) };
   });
   return out;

@@ -203,6 +203,7 @@ globalThis.localStorage = {
 let sent = null;
 globalThis.__driveTestMocks = {
   cloud: true,
+  driveToken: 'tok',
   // le VRAI décodeur (driveUpload est remplacé, pas dataUrlBytes) : le Blob reçu
   // est donc celui que le navigateur enverrait.
   dataUrlToBlob: (u) => dataUrlToBlob(u),
@@ -377,6 +378,10 @@ globalThis.__driveTestMocks.renameDriveFile = async (id, name) => {
   return true;
 };
 globalThis.__driveTestMocks.resolveDrivePathFromNames = async () => ({ leafId: 'images_folder', path: [] });
+/* Le dossier des figures est CHERCHÉ par son nom, jamais créé (voir
+   utils/figuresFolder.js) : le faux Drive doit savoir le retrouver. */
+globalThis.__driveTestMocks.findFolderByName = async (name) =>
+  (name === 'images' ? 'images_folder' : `dir_${String(name)}`);
 globalThis.__driveTestMocks.findDriveFileByName = async (name, parent) =>
   (parent === 'images_folder' ? String(sidecarsInFolder.get(String(name)) || '') : '');
 

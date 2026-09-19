@@ -662,6 +662,11 @@ export const ProjectDetailModule = ({
          vivent encore que dans ce navigateur (sinon elles ne suivent pas). */
   const [figDriveBusy, setFigDriveBusy] = useState(false);
   const [figDriveMsg, setFigDriveMsg] = useState('');
+  /* LES AUTRES DOSSIERS DE PROJET DU DATASET (voir utils/figuresFolder.js) : le
+     dossier d'images est dérivé du NOM du projet, donc un projet renommé laisse
+     ses fichiers dans l'ancien dossier. Ces entrées permettent de DÉSIGNER le bon
+     dossier au lieu de laisser l'application en fabriquer un vide à côté. */
+  const [figFolderChoices, setFigFolderChoices] = useState([]);
   /* Glisser-déposer des figures d'une section : `figDrag` = la figure TENUE par
      le pointeur, `figOver` = celle qui est DESSOUS (voir dropFigure, plus bas).
      Déclarés ICI, avec les autres états : un crochet ne peut pas vivre après le
@@ -693,20 +698,43 @@ export const ProjectDetailModule = ({
     setFigDriveBusy(false);
   };
 
-  const addMissingFiguresFromDrive = async () => {
+  /* ⬇ RELIRE LE DOSSIER DU PROJET — et DIRE lequel a été lu.
+     `fromFolder` vide = laisser chercher (miroir partagé → nom canonique →
+     dossier voisin au nom proche, voir utils/figuresFolder.js : la lecture ne
+     crée plus de dossier). `fromFolder` nommé = l'utilisateur a désigné le
+     dossier qui porte ses figures ; il est alors retenu pour ce projet, donc les
+     lectures ET les envois suivants visent celui-là (« deux dossiers images, l'un
+     vide » cesse de se reproduire). */
+  const addMissingFiguresFromDrive = async (fromFolder = '') => {
     if (figDriveBusy) return;
     setFigDriveBusy(true);
-    setFigDriveMsg('⬇ Reading this project’s images folder on Drive…');
+    setFigDriveMsg(fromFolder
+      ? `⬇ Reading “${fromFolder}” on Drive and adopting it for this project…`
+      : '⬇ Reading this project’s images folder on Drive…');
     try {
-      const res = await pullLibraryFromDrive(figDriveScope());
+      const res = await pullLibraryFromDrive({ ...figDriveScope(), fromFolderName: fromFolder || '' });
       setCanvasLibVersion((v) => v + 1);
+      setFigFolderChoices((res.candidates || []).filter((c) => c.name !== fromFolder));
+      const noCompo = res.noComposition
+        ? ` ⚠ ${res.noComposition} of them have NO editable copy on Drive (no “<image>.meta.json” beside the image), so they cannot be reopened in the Image Builder — a canvas whose editable copy never reached Drive cannot be brought back by this button.`
+        : '';
+      const adoptedNote = res.adopted
+        ? ` ✓ This folder is now the one this project uses on Drive — nothing else is read or written there.`
+        : '';
+      const movedNote = (!res.adopted && (res.via === 'mirror' || res.via === 'similar'))
+        ? ` (the Drive folder is still named “${res.folder.split('/')[1] || ''}”, not like the project — reading it — pick a folder below, or rename the project folder on Drive, to have both agree)`
+        : '';
       setFigDriveMsg(res.error
         ? `⚠ ${res.error}`
+          + (res.candidates && res.candidates.length
+            ? ` The dataset HAS ${res.candidates.length} project folder(s) with images — pick the one holding your figures below: reading it adopts it for this project. Nothing is deleted.`
+            : '')
         : res.found === 0
           ? `No image found in ${res.folder} (nothing has been uploaded there yet — use ☁ Save figures to Drive first).`
+            + (res.candidates && res.candidates.length ? ` Other project folders do hold figures — see below.` : '')
           : res.added === 0
-            ? `✓ ${res.found} image${res.found === 1 ? '' : 's'} in ${res.folder} — all already listed here.`
-            : `✓ ${res.added} figure${res.added === 1 ? '' : 's'} added from ${res.folder} (${res.found} file${res.found === 1 ? '' : 's'} in the folder).`);
+            ? `✓ ${res.found} image${res.found === 1 ? '' : 's'} in ${res.folder}${movedNote} — all already listed here.` + noCompo + adoptedNote
+            : `✓ ${res.added} figure${res.added === 1 ? '' : 's'} added from ${res.folder} (${res.found} file${res.found === 1 ? '' : 's'} in the folder)${movedNote}.` + noCompo + adoptedNote);
     } catch (err) {
       setFigDriveMsg(`⚠ ${(err && err.message) || 'Could not read the Drive folder'}`);
     }
@@ -849,6 +877,7 @@ export const ProjectDetailModule = ({
           ? `⚠ ${res.error}`
           : res && res.restored
             ? `✓ ${res.restored} saved canvas${res.restored === 1 ? '' : 'es'} brought back from ${res.folder} — nothing to click.`
+              + (res.noComposition ? ` ⚠ ${res.noComposition} image${res.noComposition === 1 ? '' : 's'} came back WITHOUT an editable copy (no “<image>.meta.json” next to it): those cannot be reopened here — only their picture is left.` : '')
             : '');
       } catch (err) {
         setFigDriveMsg(`⚠ ${(err && err.message) || 'Could not read the Drive folder'}`);
@@ -4177,9 +4206,9 @@ export const ProjectDetailModule = ({
             <span className="text-slate-500">
               Figures on <span className="font-bold">Google Drive → {projectImagesFolderLabel(project.name || '', getDriveRootName())}</span>
             </span>
-            <button type="button" onClick={addMissingFiguresFromDrive} disabled={figDriveBusy}
+            <button type="button" onClick={() => addMissingFiguresFromDrive()} disabled={figDriveBusy}
                     className="font-bold px-2.5 py-1 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
-                    title="Read this project’s images folder on Drive and ADD the figures it holds but this list does not show (another computer, figures uploaded by a coworker). Nothing is deleted or replaced.">
+                    title="Read this project’s images folder on Drive and ADD the figures it holds but this list does not show (another computer, figures uploaded by a coworker). Nothing is deleted or replaced. The folder is SEARCHED (shared registry, then its name, then the closest project folder) — it is never created, so a renamed project folder no longer produces an empty twin beside your files.">
               {figDriveBusy ? '⏳ Working…' : '⬇ Add missing figures from Drive'}
             </button>
             {canModify && (
@@ -4216,6 +4245,32 @@ export const ProjectDetailModule = ({
               <span className="font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded px-2 py-1">{figDriveMsg}</span>
             )}
           </div>
+          {/* LE DOSSIER D'IMAGES EST DÉRIVÉ DU NOM DU PROJET : quand il a été
+              renommé (ou renommé à la main sur le Drive), les fichiers sont
+              restés dans l'ancien dossier. Plutôt que de deviner — ou de créer un
+              dossier vide à côté — on MONTRE les dossiers de projet du dataset
+              avec leur contenu : lire le bon le retient pour ce projet, et les
+              envois suivants y vont aussi (voir utils/figuresFolder.js). */}
+          {figFolderChoices.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1 mb-3 text-[11px] bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+              <span className="font-bold text-amber-800">
+                📁 Other folders of this dataset on Drive (choose the one holding your figures):
+              </span>
+              {figFolderChoices.slice(0, 10).map((c) => (
+                <button key={c.folderId || c.name} type="button" disabled={figDriveBusy}
+                        onClick={() => addMissingFiguresFromDrive(c.name)}
+                        className="font-bold px-2 py-0.5 rounded border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                        title={`Read “projects/${c.name}/images” on Drive (${c.files} file(s), ${c.sidecars} editable composition(s)) and make it THIS project’s images folder. Nothing is deleted; the figures it holds are ADDED to this list.`}>
+                  {c.name} ({c.files})
+                </button>
+              ))}
+              <button type="button" onClick={() => setFigFolderChoices([])}
+                      className="px-1.5 py-0.5 rounded border border-amber-200 bg-white text-amber-700 hover:bg-amber-100"
+                      title="Hide this list (it comes back the next time a Drive read finds no folder for this project).">
+                ✕
+              </button>
+            </div>
+          )}
           {savedCanvases.length === 0 ? (
             <div className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-5 text-center">
               No canvas yet — in the Image Builder (sidebar → 🖼️ Image Builder) click “💾 Save now” and choose

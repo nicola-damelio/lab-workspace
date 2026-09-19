@@ -125,6 +125,55 @@ eq(PS.resizeFiguresPatches([{ idx: 0, rect: { x: 0, y: 0, w: 0.5, h: 0.5 }, scal
   'un facteur ridiculement petit est lui-même borné (5 %), avant même la taille de la boîte');
 eq(PS.resizeFiguresPatches([{ idx: 0, rect: { x: 0, y: 0, w: 0.3, h: 0.3 }, scale: 1 }], 0, 0.001)[0].rect.w, 0.02,
   '…et une boîte ne descend jamais sous RECT_MIN (2 % : plus petite, elle serait impossible à reprendre)');
+/* ── 3bis. LES QUATRE COINS : le coin tenu suit le pointeur, le coin OPPOSÉ ne
+   bouge pas — et le geste n'est jamais ralenti (plaintes : « I can only resize
+   from the bottom right corner » puis « it goes too slow »). ──────────────── */
+eq(PS.FIGURE_CORNERS, ['nw', 'ne', 'sw', 'se'], 'les quatre coins d’une figure, dans l’ordre d’affichage');
+eq(PS.isFigureCorner('sw'), true, 'un coin connu…');
+eq(PS.isFigureCorner('middle'), false, '…et ce qui n’en est pas un retombe sur le geste d’avant');
+eq(PS.figureResizeFactor(freeFig, { ...geom, dxMm: 15 }), 1.5,
+  'le coin bas-droite suit le pointeur ONE TO ONE : 15 mm sur une boîte de 30 mm font +50 % (la moitié de pointeur d’avant aurait donné 1,25)');
+eq(PS.figureResizeFactor(freeFig, { ...geom, dxMm: -30, corner: 'nw' }), 2,
+  'un coin HAUT-GAUCHE grandit en tirant vers la GAUCHE (l’axe est signé par le coin)');
+eq(PS.figureResizeFactor(freeFig, { ...geom, dyMm: 30, corner: 'se' }), 2,
+  '…et tirer vers le BAS agrandit aussi (l’ancienne formule ignorait dy : la moitié des gestes ne faisait rien)');
+eq(PS.figureResizeFactor(freeFig, { ...geom, dyMm: 30, corner: 'nw' }), 0.1,
+  'tirer vers le bas sur un coin HAUT-GAUCHE rétrécit (et reste borné à 10 %)');
+const wideFig = { idx: 0, rect: { x: 0, y: 0, w: 1, h: 0.2 }, scale: 1 };   // 60 × 12 mm
+eq(PS.figureResizeFactor(wideFig, { ...geom, dyMm: 12, corner: 'se' }), 2,
+  'sur une figure LARGE, c’est la hauteur tirée qui donne le facteur (12 mm sur 12 doublent)');
+eq(PS.figureResizeFactor(wideFig, { ...geom, dxMm: 60, corner: 'se' }), 2,
+  '…et la largeur autant (60 mm sur 60) : le geste le plus franc gagne, jamais un demi-geste');
+ok(Math.abs(PS.figureResizeFactor(freeFig, { ...geom, dyMm: 1, corner: 'sw' }) - (1 + 1 / 30)) < 1e-12,
+  'chaque axe est mesuré en PROPORTION de sa base (1 mm sur 30 de haut)');
+
+const anchorFig = [{ idx: 0, rect: { x: 0.2, y: 0.2, w: 0.4, h: 0.4 }, scale: 1 }];
+eq(PS.resizeFiguresPatches(anchorFig, 0, 2, 'nw')[0].rect, { x: -0.2, y: -0.2, w: 0.8, h: 0.8 },
+  'coin HAUT-GAUCHE tenu : la boîte grandit vers le haut-gauche, son coin bas-droite ne bouge pas');
+eq(PS.resizeFiguresPatches(anchorFig, 0, 2, 'ne')[0].rect, { x: 0.2, y: -0.2, w: 0.8, h: 0.8 },
+  'coin HAUT-DROITE : le coin bas-gauche reste (seul le haut bouge)');
+eq(PS.resizeFiguresPatches(anchorFig, 0, 2, 'sw')[0].rect, { x: -0.2, y: 0.2, w: 0.8, h: 0.8 },
+  'coin BAS-GAUCHE : le coin haut-droite reste (seule la gauche bouge)');
+eq(PS.resizeFiguresPatches(anchorFig, 0, 2, 'se')[0].rect, { x: 0.2, y: 0.2, w: 0.8, h: 0.8 },
+  'coin BAS-DROITE (le geste d’origine) : rien d’autre que la taille ne change');
+
+const groupCorner = PS.resizeFiguresPatches([
+  { idx: 0, rect: { x: 0, y: 0, w: 0.5, h: 0.5 }, scale: 1 },
+  { idx: 1, rect: { x: 0.5, y: 0.5, w: 0.2, h: 0.2 }, scale: 1 }
+], 0, 2, 'nw');
+eq(groupCorner[1].rect, { x: -0.3, y: -0.3, w: 1, h: 1 },
+  'les figures cochées prennent SA taille, chacune autour de SON coin opposé (la 2e garde son coin bas-droite)');
+
+eq(PS.figureCornerPoints({ x: 10, y: 20, w: 30, h: 40 }).map((p) => p.corner), ['nw', 'ne', 'sw', 'se'],
+  'une poignée par COIN de la boîte visible (plus seulement le bas-droite)');
+eq(PS.figureCornerPoints({ x: 10, y: 20, w: 30, h: 40 }, { x: 0, y: 0, w: 100, h: 100 }, 2)[3],
+  { corner: 'se', x: 40, y: 60 },
+  'chaque poignée est CENTRÉE sur son coin (elle ne couvre donc plus l’image)');
+eq(PS.figureCornerPoints({ x: -20, y: 20, w: 30, h: 40 }, { x: 0, y: 0, w: 100, h: 100 }, 2)[0],
+  { corner: 'nw', x: 2, y: 20 },
+  'une poignée est ramenée DANS le panneau : une figure découpée garderait sinon une poignée invisible');
+
+
 
 /* ── 4. DÉPLACER des figures : le même écart, chacune dans SA coordonnée ────── */
 const mm = { dxMm: 6, dyMm: -3, panelWmm: 60, panelHmm: 40 };
@@ -207,13 +256,27 @@ has(IB, '(objectsRef.current || []).find((o) => o.id === selectedId)',
 has(IB, '}, [selectedId, activeFig && activeFig.objId, activeFig && activeFig.idx]);',
   '…et seulement quand le panneau tenu ou la référence changent');
 has(IB, 'figs: figureSnapshot(obj, imgIdx)', 'le geste photographie les figures concernées (tenue + cochées)');
-eq(times(IB, /figs: figureSnapshot\(obj, imgIdx\)/g), 2, '…au début du déplacement ET du redimensionnement');
+eq(times(IB, /figs: figureSnapshot\(obj, imgIdx[,)]/g), 2, '…au début du déplacement ET du redimensionnement');
 has(IB, 'const patches = moveFiguresPatches(figs, { dxMm, dyMm, panelWmm: o.w * cellW, panelHmm: o.h * cellH });',
   'le déplacement groupé des figures passe par la fonction pure (même écart pour toutes)');
-has(IB, 'const factor = figureResizeFactor(ref, { dxMm, cellW, panelW: o.w, imgCols: o.imgCols });',
-  'le facteur est celui de la figure TENUE, lu sur l’instantané');
-has(IB, 'const patches = resizeFiguresPatches(figs, imgIdx, factor);',
+has(IB, 'const factor = figureResizeFactor(ref, { dxMm, dyMm, corner, cellW, panelW: o.w, imgCols: o.imgCols });',
+  'le facteur est celui de la figure TENUE, lu sur l’instantané, avec le COIN tenu');
+has(IB, 'const patches = resizeFiguresPatches(figs, imgIdx, factor, corner);',
   '…et il est écrit sur TOUTES les figures de la sélection');
+has(IB, 'const startFigureResize = (e, objId, imgIdx, corner = \'se\') => {',
+  'la poignée d’une figure connaît le COIN tenu (les quatre coins, plus le seul bas-droite)');
+has(IB, 'const startImageResize = (e, objId, corner = \'se\') => startFigureResize(e, objId, 0, corner);',
+  'une figure SEULE passe par le MÊME geste : une seule géométrie, quatre poignées');
+has(IB, 'const frozen = freezeFigures(obj, imgs);',
+  'le panneau est GELÉ avant le geste : chaque figure reçoit la boîte qu’elle montre (sans boîte, aucun coin où s’ancrer)');
+has(IB, 'figs: figureSnapshot(obj, imgIdx, frozen)',
+  'l’instantané du geste est celui des figures GELÉES (le même que celui qu’il écrit)');
+has(IB, 'figureCornerPoints({ x: geom.vX, y: geom.vY, w: geom.vW, h: geom.vH }, panel, FIG_HANDLE_GRAB)',
+  'les quatre poignées sont posées sur la boîte VISIBLE de la figure, pas sur sa cellule');
+has(IB, 'const FIG_HANDLE_DOT = 1.2;        // rayon de la marque visible (mm)',
+  'la marque visible est petite et CENTRÉE sur le coin : elle ne couvre plus l’image');
+has(IB, 'const FIG_HANDLE_GRAB = 2.2;       // rayon de la zone de saisie invisible (mm)',
+  '…et la zone de saisie INVISIBLE reste plus petite que l’ancien carré de 3 mm');
 has(IB, 'setFigGroup((prev) => (prev.objId && prev.objId !== selectedId ? { objId: null, idxs: [] } : prev));',
   'changer de panneau remet la sélection de figures à zéro (les index n’y ont plus de sens)');
 

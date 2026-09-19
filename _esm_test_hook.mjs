@@ -60,6 +60,11 @@ export async function load(url, context, next) {
         // Miroir du Drive (driveMirror.js / workspaceDrive.js) : un faux Drive
         // peut fournir dossiers et fichiers, mettre à la corbeille, renommer…
         'export const ensureLabWorkspaceFolder = async () => (typeof M().ensureLabWorkspaceFolder === "function" ? M().ensureLabWorkspaceFolder() : "ws_folder");',
+        // Racine du DATASET (dossier du dataset dans « Lab Workspace ») : un faux
+        // Drive la fournit pour que les helpers qui CHERCHENT un dossier existant
+        // (utils/figuresFolder.js) restent testables hors navigateur.
+        'export const ensureDriveFolder = async () => (typeof M().ensureDriveFolder === "function" ? M().ensureDriveFolder() : "ds_folder");',
+        'export const getDriveRootId = () => M().driveRootId || "";',
         'export const findFolderByName = async (name, parent) => (typeof M().findFolderByName === "function" ? M().findFolderByName(name, parent) : "");',
         'export const findDriveFileByName = async (name, parent) => (typeof M().findDriveFileByName === "function" ? M().findDriveFileByName(name, parent) : "");',
         'export const findOrCreateFolder = async (name, parent) => (typeof M().findOrCreateFolder === "function" ? M().findOrCreateFolder(name, parent) : "");',

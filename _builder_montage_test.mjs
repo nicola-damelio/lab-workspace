@@ -171,8 +171,8 @@ has(PS, 'x: round4(Math.max(RECT_MIN - num(r.w), Math.min(1 - RECT_MIN, num(r.x)
   '…et la formule est bien celle d’avant (bornée à la lisière de 2 % qui reste attrapable)');
 has(PS, 'out[fig.idx] = { dx: +(num(fig.dx) + dx).toFixed(2), dy: +(num(fig.dy) + dy).toFixed(2) };',
   'une figure restée en grille se déplace toujours en dx/dy millimètres (le repli d’avant)');
-has(IB, 'const patches = resizeFiguresPatches(figs, imgIdx, factor);',
-  'idem pour la poignée de redimensionnement');
+has(IB, 'const patches = resizeFiguresPatches(figs, imgIdx, factor, corner);',
+  'idem pour la poignée de redimensionnement : le MÊME calcul, dans le même module');
 has(IB, 'if (r && imgs.length === 1)', 'un panneau à une seule figure gelée se déplace aussi par son rectangle');
 has(IB, '⊞ Free layout — every figure of this panel keeps its own place', 'l’écran explique la géométrie libre');
 has(IB, '⊞ Lay the figures out in a grid', '…et offre le retour à la grille');

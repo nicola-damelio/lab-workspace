@@ -188,7 +188,11 @@ const snap = (over = {}) => ({
   const sidecar = JSON.stringify(LIB.buildFigureMeta({ label: 'Canvas A', canvasData: snap({ gridRows: 4 }), imageName: 'Canvas_A.jpg' }));
   globalThis.__driveTestMocks = {
     cloud: true,
+    driveToken: 'tok',
     resolveDrivePathFromNames: async () => ({ leafId: 'IMG_FOLDER', path: [] }),
+    /* Le dossier est CHERCHÉ, pas créé (voir utils/figuresFolder.js). */
+    findFolderByName: async (name) => (name === 'images' ? 'IMG_FOLDER' : `DIR_${name}`),
+    getDriveFileMeta: async () => ({ id: '', name: '', trashed: true }),
     listDriveChildren: async () => ([
       { id: 'IMG1', name: 'Canvas_A.jpg', mimeType: 'image/jpeg', webViewLink: 'https://drive.google.com/file/d/IMG1/view' },
       { id: 'META1', name: 'Canvas_A.jpg.meta.json', mimeType: 'application/json' },
@@ -404,7 +408,10 @@ const snap = (over = {}) => ({
   LIB.rememberLibraryTrash('P1', ['d:IMG1']);
   globalThis.__driveTestMocks = {
     cloud: true,
+    driveToken: 'tok',
     resolveDrivePathFromNames: async () => ({ leafId: 'IMG_FOLDER', path: [] }),
+    findFolderByName: async (name) => (name === 'images' ? 'IMG_FOLDER' : `DIR_${name}`),
+    getDriveFileMeta: async () => ({ id: '', name: '', trashed: true }),
     listDriveChildren: async () => ([
       { id: 'IMG1', name: 'Image retiree.jpg', mimeType: 'image/jpeg', webViewLink: 'https://drive.google.com/file/d/IMG1/view' },
       { id: 'IMG2', name: 'Autre.png', mimeType: 'image/png', webViewLink: 'https://drive.google.com/file/d/IMG2/view' }
@@ -434,8 +441,9 @@ const snap = (over = {}) => ({
   has(IB, 'const autoSaveScope = () => {', 'la destination est choisie (canvas repris › projet › RIEN : jamais le dataset pour un canvas neuf)');
   has(IB, 'autoSaveBadgeInfo', 'l’utilisateur VOIT que la composition est sauvegardée');
   has(IB, '⏳ cloud transfer queued', '…y compris quand l’envoi est en attente de reprise');
-  has(IB, "setAutoSaveNote(pub.drive && pub.drive.id ? 'cloud' : (pub.driveQueued ? 'queued' : 'browser'));",
-    'la pastille est mise à jour après un envoi cloud');
+  has(IB, 'setAutoSaveNote(onDrive', 'la pastille est mise à jour après un envoi cloud');
+  has(IB, "pub.compositionOnDrive ? 'cloud' : 'image-only'",
+    '…et elle distingue « image partie, copie éditable non » (voir _canvas_composition_safety_test.mjs)');
   has(IB, 'res.restored', '« Add missing from Drive » annonce les canvas récupérés');
   // (b) côté figures : le sidecar, la raison d'un échec, la relecture
   has(LIB_SRC, 'await uploadFigureMetaToDrive({', 'la publication dépose le sidecar éditable');
