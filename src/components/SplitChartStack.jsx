@@ -44,6 +44,11 @@
    can never end up in the captured figure. The Flow Cytometry split panel uses
    the same helpers (its “own” box height is its own Graphical-Parameters
    height, see splitOwnHeight), so the four split views cannot drift apart.
+   The panel's TITLE BAR sits outside the tagged element as well: a captured
+   stack therefore starts at the first curve, with no “📚 Split view …” strip in
+   the 📷 figure — and the per-row 🚫 / ↩️ switches of a page are marked
+   `data-star-skip`, which ChartStarLayer hides while it snapshots the panel, so
+   a figure holds the curves and their names and never a control.
    ========================================================================= */
 import React from 'react';
 
@@ -225,6 +230,24 @@ export const splitRowBoxStyle = (layout = {}, i = 0, count = 1, baseHeight = SPL
   return { ...box, height: lane + SPLIT_RULER_H };
 };
 
+/* ── WHICH CURVES A PAGE HAS TAKEN OUT OF ITS FIGURES ─────────────────────
+   ONE map per experiment — `hiddenSeries`, the very key the Flow Cytometry
+   panel has always used — so that taking a condition out survives a page
+   switch and reaches BOTH the overlay chart and the split view of the same
+   page: the chart drops the curve, the split view keeps its row (struck
+   through, ↩️ to put it back) and leaves it out of the figure. */
+export const hiddenSeriesOf = (exp) => (exp && exp.hiddenSeries) || {};
+
+// The map to store after flipping ONE key. A curve that comes back is REMOVED
+// from the map (no `false` entry is left behind, so a saved experiment stays
+// readable), and the map handed in is never modified.
+export const withoutSeries = (exp, key) => {
+  const next = { ...hiddenSeriesOf(exp) };
+  if (next[key]) delete next[key];
+  else next[key] = true;
+  return next;
+};
+
 /**
  * The separation between two rows. `undefined` at gap 0, so a stack that never
  * touched the knob renders (and captures) exactly as it always did.
@@ -236,11 +259,21 @@ export const splitRowGapStyle = (layout = {}) => {
 
 export const SplitChartStack = ({
   id, label, series = [], renderChart, extraHeader = null, className = '',
+  // The curves the page has taken OUT of its figures — the `{ [key]: true }`
+  // map read with hiddenSeriesOf — and the switch that puts one back. With
+  // `onToggleExclude(key)` given, every row carries a small 🚫 button and an
+  // excluded curve KEEPS its row (struck through, ↩. to restore) instead of
+  // silently disappearing, so nothing is ever lost out of sight. The row and
+  // the button are marked `data-star-skip`: ChartStarLayer hides those marks
+  // for a 📷 capture, so a figure of the stack holds the CURVES ONLY.
+  // Without the switch the panel renders exactly as it did before.
+  excluded = null, onToggleExclude = null,
   // The shape / size / separation / axes of the graphs: `{ aspect, rowH, gap,
   // yAxis }`, see above. Left out (or 0 / 0 / 0 / true) the stack renders
   // exactly as it did before the knobs existed.
   //
-  // `renderChart(s, i)` gets the index of the row it draws, so the page can size
+  // `renderChart(s, i, count)` gets the RANK of the row among the curves KEPT
+  // in the stack (and how many of them there are), so the page can size
   // the box of that row with splitRowBoxStyle(layout, i, count) and keep the X
   // ruler on the last one — the two helpers that make the ruler a strip at the
   // bottom of the pack.
@@ -250,33 +283,65 @@ export const SplitChartStack = ({
   // “No Y axis” (layout.yAxis === false): the caption of a row moves over its
   // box and the box itself is unpadded — see splitYAxisHidden.
   const packed = splitYAxisHidden(layout);
+  // The curves the stack really DRAWS, and each one's rank among them: a curve
+  // the page has taken out keeps a struck-through row (so it can be put back),
+  // but it takes no lane and no X ruler — the rank and the count handed to
+  // `renderChart` are those of the KEPT curves, exactly like the page's own
+  // `visible` list, so the two can never drift apart.
+  const canToggle = typeof onToggleExclude === 'function';
+  const isOut = (s) => !!(canToggle && excluded && excluded[s.key]);
+  const kept = series.filter((s) => !isOut(s));
+  const rankOf = new Map(kept.map((s, i) => [s.key, i]));
+  // A curve that is out is greyed AND struck through, so the panel says at a
+  // glance which rows are not in the figure.
+  const labelClassOf = (s) => (isOut(s)
+    ? `text-slate-400 line-through${packed ? '' : ' truncate'}`
+    : packed ? 'text-slate-400' : 'text-slate-700 truncate');
   return (
-    <div
-      data-star-group={id}
-      data-star-label={label}
-      className={`flex flex-col gap-2 min-w-0 ${className}`}>
+    <div className={`flex flex-col gap-2 min-w-0 ${className}`}>
       <div className="bg-white rounded border border-slate-200 flex flex-col overflow-hidden max-h-[70vh]">
         <div className="shrink-0 px-2.5 py-1.5 bg-slate-100 border-b border-slate-200 text-[10px] font-black uppercase tracking-wide text-slate-500 flex items-center justify-between gap-2">
           <span className="flex items-center gap-2">
             📚 {label}
             {extraHeader}
           </span>
-          <span className="text-slate-400">{series.length} {series.length === 1 ? 'curve' : 'curves'}</span>
+          <span className="text-slate-400">{kept.length} {kept.length === 1 ? 'curve' : 'curves'}</span>
         </div>
-        <div className="overflow-y-auto custom-scrollbar flex-1">
+        {/* The title bar above is a CONTROL: it sits OUTSIDE the tagged element,
+            so a 📷 figure of the stack starts at the first curve — the “📚 Split
+            view — …” strip is never part of the captured image. */}
+        <div
+          data-star-group={id}
+          data-star-label={label}
+          className="overflow-y-auto custom-scrollbar flex-1">
           {series.map((s, i) => (
             // The SEPARATION between two graphs: the extra space the layout
             // asks for (undefined at 0 → the hairlines alone, as before). A
             // PACKED row (no Y axis) puts its caption OVER the box instead of
             // above it, so no line of text is left between two curves.
-            <div key={s.key || i} className="relative border-b border-slate-100 last:border-b-0" style={rowGap}>
+            <div key={s.key || i} className="relative border-b border-slate-100 last:border-b-0" style={rowGap}
+                 data-star-skip={isOut(s) ? '1' : undefined}>
               <div className={packed
                 ? 'absolute top-0 left-1 z-10 max-w-[70%] text-[9px] font-bold truncate flex items-center gap-1 pointer-events-none'
                 : 'px-2.5 pt-1.5 pb-0.5 text-[10px] font-bold truncate flex items-center gap-1.5'}>
-                <span className={packed ? 'hidden' : 'w-2 h-2 rounded-full shrink-0'} style={{ backgroundColor: s.color }} />
-                <span className={packed ? 'text-slate-400' : 'text-slate-700 truncate'} title={s.label}>{s.label}</span>
+                <span className={packed ? 'hidden' : 'w-2 h-2 rounded-full shrink-0'} style={{ backgroundColor: isOut(s) ? '#cbd5e1' : s.color }} />
+                <span className={labelClassOf(s)} title={s.label}>{s.label}</span>
+                {canToggle && (
+                  // The per-row switch (and the row of a curve that is out) is a
+                  // CONTROL, marked `data-star-skip`: ChartStarLayer hides every
+                  // such mark while it snapshots the panel, so a 📷 figure holds
+                  // the curves and their names — never a button.
+                  <button type="button" data-star-skip="1"
+                          onClick={() => onToggleExclude(s.key)}
+                          className="pointer-events-auto ml-auto shrink-0 px-1 rounded text-[10px] leading-none font-bold text-slate-400 hover:text-red-600 hover:bg-red-50"
+                          title={isOut(s)
+                            ? `Put “${s.label}” back in the stack and in the overlay`
+                            : `Take “${s.label}” out of the stack and of the overlay — its row stays here, struck through, until you put it back`}>
+                    {isOut(s) ? '↩️' : '🚫'}
+                  </button>
+                )}
               </div>
-              {renderChart(s, i)}
+              {isOut(s) ? null : renderChart(s, rankOf.get(s.key) ?? 0, kept.length)}
             </div>
           ))}
         </div>

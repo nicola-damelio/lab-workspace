@@ -103,7 +103,8 @@ frag('[FCS] …and the header text is the label', FCS, '📚 Split view — sing
 const tagAt = FCS.indexOf('data-star-group="fcs-split"');
 const tagBlock = FCS.slice(tagAt, tagAt + 260);
 check('the tag opens the panel wrapper', /data-star-group="fcs-split"\s*\r?\n\s*data-star-label=/.test(tagBlock), true);
-check('the tag precedes the panel card', tagBlock.includes('flex flex-col gap-2 min-w-0'), true);
+check('the tag wraps the curves (its title bar stays outside)', tagBlock.includes('flex flex-col gap-2 min-w-0'), true);
+check('the title bar is OUTSIDE the captured panel', FCS.indexOf('📚 Split view — single curves') < tagAt, true);
 check('the tag is inside the splitStack block', FCS.slice(0, tagAt).lastIndexOf('{splitStack && (') > FCS.slice(0, tagAt).lastIndexOf('</ChartInspector>'), true);
 check('one split panel only', FCS.split('data-star-group=').length - 1, 1);
 

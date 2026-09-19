@@ -47,7 +47,8 @@ const {
   SPLIT_ASPECT_STEPS, SPLIT_GAP_MAX, SPLIT_ROW_H_MIN, SPLIT_ROW_H_MAX, SPLIT_PACK_H,
   SPLIT_RULER_H, splitChartBoxStyle, splitRowBoxStyle, splitRowGapStyle, splitLayoutOf,
   withSplitLayout, normalizeSplitLayout, splitYAxisHidden, splitYAxisProps, splitXAxisHidden,
-  splitXAxisKept, splitChartMargin, splitChartClass, splitOwnHeight
+  splitXAxisKept, splitChartMargin, splitChartClass, splitOwnHeight,
+  hiddenSeriesOf, withoutSeries
 } = await import(`./${bundleFile}`);
 
 const SERIES = [
@@ -308,6 +309,46 @@ check('[ruler] a ratio-sized box keeps its ratio (it is tall enough already)',
   splitRowBoxStyle({ yAxis: false, aspect: 3 }, 1, 2),
   { width: '100%', aspectRatio: '3', minHeight: SPLIT_CHART_MIN_H });
 
+/* ── 4b. taking a condition OUT of the split view ─────────────────────────
+   Every row carries a small 🚫 switch; a curve that is out keeps its row
+   (struck through, ↩️ to put it back) but takes NO lane, so the rank + count
+   handed to `renderChart` are those of the curves really drawn and the X ruler
+   stays on the last lane the user sees. The switch and the struck-through row
+   are marked `data-star-skip`, which ChartStarLayer hides while it snapshots
+   the panel — and the TITLE BAR sits outside the tagged element — so neither
+   the “📚 Split view …” strip nor a switch can end up in a 📷 figure. */
+const HIDDEN = { c2: true };
+const drawn = [];
+const withSwitches = renderToStaticMarkup(React.createElement(SplitChartStack, {
+  id: 'cd-split', label: 'Split', series: SERIES, excluded: HIDDEN, onToggleExclude: () => {},
+  renderChart: (s, i, count) => {
+    drawn.push([s.key, i, count]);
+    return React.createElement('svg', { 'data-chart': s.key, key: s.key });
+  }
+}));
+checkTrue('[exclude] the title bar is OUTSIDE the captured element',
+  html.indexOf('📚 Split view — individual spectra') < html.indexOf('data-star-group'));
+check('[exclude] a stack nobody excludes carries no switch', html.includes('data-star-skip'), false);
+check('[exclude] a page that offers the switch gets one on EVERY row',
+  [withSwitches.split('title="Take').length - 1, withSwitches.split('title="Put').length - 1], [1, 1]);
+checkTrue('[exclude] …and each one is marked for the capture (row + switch)',
+  withSwitches.split('data-star-skip="1"').length - 1 >= 3);
+check('[exclude] the curve that is out takes no lane', withSwitches.includes('data-chart="c2"'), false);
+checkTrue('[exclude] …while the kept one is drawn', withSwitches.includes('data-chart="c1"'));
+check('[exclude] …and the rank + count follow the curves really drawn', drawn, [['c1', 0, 1]]);
+check('[exclude] the row of a curve that is out stays, struck through',
+  [withSwitches.includes('line-through'), withSwitches.includes('Condition B — Spectrum')], [true, true]);
+checkTrue('[exclude] …asking to be put back', withSwitches.includes('↩️'));
+checkTrue('[exclude] the header counts the curves really drawn', withSwitches.includes('>1 curve<'));
+check('[exclude] the series list itself is never touched', SERIES.length, 2);
+check('[exclude] the stored map is read safely',
+  [hiddenSeriesOf(null), hiddenSeriesOf({}), hiddenSeriesOf({ hiddenSeries: HIDDEN })], [{}, {}, HIDDEN]);
+check('[exclude] flipping a key adds it', withoutSeries({}, 'b'), { b: true });
+check('[exclude] …and removes it again', withoutSeries({ hiddenSeries: HIDDEN }, 'c2'), {});
+const storedMap = { c2: true };
+withoutSeries({ hiddenSeries: storedMap }, 'c1');
+check('[exclude] …without ever touching the map handed in', storedMap, { c2: true });
+
 /* ── 5. each spectra page mounts its own stack ──────────────────────────── */
 const PAGES = [
   {
@@ -315,7 +356,7 @@ const PAGES = [
     file: 'src/components/NMRSections.jsx',
     id: 'nmr-split',
     label: 'Split view — 1D spectra',
-    seriesVar: 'visibleSeries',
+    feed: ['series={seriesList}', 'excluded={hiddenSeries}', 'onToggleExclude={toggleHiddenSeries}'],
     font: 'const splitFontSize = Math.max(9, Number((activeTest.nmr1dChartCfg || {}).fontSize) || 9);',
     yShared: "splitSharedY ? yDomain : ['dataMin', 'dataMax']",
     extras: [
@@ -330,7 +371,7 @@ const PAGES = [
     file: 'src/components/ssNMRSections.jsx',
     id: 'ssnmr-split',
     label: 'Split view — individual spectra',
-    seriesVar: 'visible',
+    feed: ['series={seriesList}', 'excluded={hiddenSeries}', 'onToggleExclude={toggleHiddenSeries}'],
     font: 'const splitFontSize = Math.max(9, Number(tickSize(cfg)) || 16);',
     yShared: 'splitSharedY ? [yAutoMin, yAutoMax]',
     extras: [
@@ -343,7 +384,7 @@ const PAGES = [
     file: 'src/components/CDSections.jsx',
     id: 'cd-split',
     label: 'Split view — individual spectra',
-    seriesVar: 'visible',
+    feed: ['series={seriesList}', 'excluded={hiddenSeries}', 'onToggleExclude={toggleHiddenSeries}'],
     font: 'const splitFontSize = Math.max(9, Number(tickSize(cfg)) || 16);',
     yShared: 'splitSharedY ? [yDataMin, yDataMax]',
     extras: [
@@ -356,13 +397,25 @@ const PAGES = [
 PAGES.forEach((p) => {
   const src = fs.readFileSync(p.file, 'utf8');
   const count = (needle) => src.split(needle).length - 1;
-  checkTrue(`[${p.tag}] imports the shared stack`, src.includes("import { SplitChartStack, SplitLayoutControls, SplitToggle, splitRowBoxStyle, splitChartClass, splitChartMargin, splitLayoutOf, splitXAxisHidden, splitYAxisProps, withSplitLayout } from './SplitChartStack';"));
+  checkTrue(`[${p.tag}] imports the shared stack`, src.includes("import { SplitChartStack, SplitLayoutControls, SplitToggle, splitRowBoxStyle, splitChartClass, splitChartMargin, splitLayoutOf, splitXAxisHidden, splitYAxisProps, withSplitLayout, hiddenSeriesOf, withoutSeries } from './SplitChartStack';"));
   checkTrue(`[${p.tag}] mounts the stack`, count('<SplitChartStack') === 1);
   checkTrue(`[${p.tag}] …with its own id`, src.includes(`id="${p.id}"`));
   checkTrue(`[${p.tag}] …named for the user`, src.includes(`label="${p.label}"`));
-  checkTrue(`[${p.tag}] …fed with the VISIBLE series only`, src.includes(`series={${p.seriesVar}}`));
-  checkTrue(`[${p.tag}] …one chart per series`, src.includes('renderChart={(s, i) => ('));
+  // The stack is fed EVERY condition plus the map of those taken out, so a row
+  // can be excluded — and put back — right from the split view, and that
+  // exclusion lives on the experiment (the same `hiddenSeries` key the Flow
+  // Cytometry panel has always used).
+  p.feed.forEach((needle) => checkTrue(`[${p.tag}] …${needle}`, src.includes(needle)));
+  checkTrue(`[${p.tag}] the exclusions are read from the experiment`,
+    src.includes('const hiddenSeries = hiddenSeriesOf(activeTest);'));
+  checkTrue(`[${p.tag}] …and written straight back`,
+    src.includes('const toggleHiddenSeries = (key) => updateActiveTest({ hiddenSeries: withoutSeries(activeTest, key) });'));
+  checkTrue(`[${p.tag}] the condition chips share that ONE map`,
+    src.includes('onChange={() => toggleHiddenSeries(s.key)}'));
+  checkTrue(`[${p.tag}] …one chart per series`, src.includes('renderChart={(s, i, count) => ('));
   checkTrue(`[${p.tag}] …sized by the shared layout helper`, src.includes('splitRowBoxStyle(splitLayout, i, '));
+  checkTrue(`[${p.tag}] …with the count the stack hands it (the curves really drawn)`,
+    src.includes('splitRowBoxStyle(splitLayout, i, count)'));
   checkTrue(`[${p.tag}] …handed to the box of EVERY row (the ruler row included)`,
     src.includes('style={splitRowBoxStyle(splitLayout, i, ') && !src.includes('style={splitBoxStyle}'));
   checkTrue(`[${p.tag}] the stack is handed that layout`, src.includes('layout={splitLayout}'));
@@ -406,7 +459,7 @@ check('[FCS] is not double-tagged by this change', FCS.split('data-star-group=')
 // experiment, so the four split views of a test share one shape), with the
 // panel's own “Height” as the size of its “own” box.
 checkTrue('[FCS] imports the shared knobs', FCS.includes(
-  "import { SplitLayoutControls, splitRowBoxStyle, splitChartClass, splitChartMargin, splitRowGapStyle, splitLayoutOf, splitYAxisHidden, splitYAxisProps, withSplitLayout, splitOwnHeight } from './SplitChartStack';"));
+  "import { SplitLayoutControls, splitRowBoxStyle, splitChartClass, splitChartMargin, splitRowGapStyle, splitLayoutOf, splitYAxisHidden, splitYAxisProps, withSplitLayout, splitOwnHeight, hiddenSeriesOf, withoutSeries } from './SplitChartStack';"));
 checkTrue('[FCS] the layout is read from the experiment',
   FCS.includes('const splitLayout = splitLayoutOf(activeTest);'));
 checkTrue('[FCS] …and written straight back',
@@ -439,6 +492,23 @@ checkTrue('[FCS] …and the box loses its padding',
   FCS.includes("splitChartClass(splitLayout, 'w-1/2 mx-auto pb-1')"));
 checkTrue('[FCS] …with the margins of the hidden axes gone',
   FCS.includes('splitChartMargin(splitLayout, cfgChartMargin(cfgSplit,'));
+
+/* ── 8. the FCS panel excludes a condition the very same way ────────────── */
+checkTrue('[FCS] the title bar sits OUTSIDE the captured panel',
+  FCS.indexOf('📚 Split view — single curves') < FCS.indexOf('data-star-group="fcs-split"'));
+checkTrue('[FCS] every curve of the stack can be taken out of the figures',
+  FCS.includes('onClick={() => toggleHiddenSeries(s.id)}'));
+checkTrue('[FCS] …keeping a struck-through row to put it back',
+  FCS.includes('{outInstances.map((inst) => (') && FCS.includes('line-through'));
+checkTrue('[FCS] …with its own ↩️ switch', FCS.includes('onClick={() => toggleHiddenSeries(inst.id)}'));
+checkTrue('[FCS] …and the row of an exclusion never reaches the panel',
+  FCS.includes('const outInstances = loadedInstances.filter(inst => hiddenSeries[inst.id]);'));
+checkTrue('[FCS] the exclusions live on the experiment',
+  FCS.includes('const toggleHiddenSeries = (id) => updateActiveTest({ hiddenSeries: withoutSeries(activeTest, id) });'));
+check('[FCS] …and BOTH panels read that ONE map',
+  FCS.split('const hiddenSeries = hiddenSeriesOf(activeTest);').length - 1, 2);
+checkTrue('[FCS] the switches and the struck-through rows are marked for the capture',
+  FCS.split('data-star-skip="1"').length - 1 >= 2);
 
 /* ── report ─────────────────────────────────────────────────────────────── */
 try { fs.unlinkSync(bundleFile); } catch { /* ignore */ }

@@ -164,13 +164,28 @@ const visibleCharts = (el) => {
   return found;
 };
 
-// Nearest short text above a sub-chart — the series name of a split row.
+// Nearest short text above a sub-chart — the series name of a split row. The
+// text of the row's own CONTROLS (the 🚫 / ↩️ switches a page marks
+// `data-star-skip`) is left out, so a captured row is named after its curve.
+const rowTextOf = (n) => {
+  let txt = '';
+  const walk = (node) => {
+    if (!node) return;
+    if (node.nodeType === 3) { txt += node.nodeValue; return; }
+    if (node.nodeType !== 1) return;
+    if (node.hasAttribute && node.hasAttribute('data-star-skip')) return;
+    if (node.childNodes) Array.from(node.childNodes).forEach(walk);
+  };
+  walk(n);
+  return txt.replace(/\s+/g, ' ').trim();
+};
+
 const rowLabelOf = (node) => {
   let n = node;
   for (let depth = 0; depth < 3 && n; depth += 1) {
     let sib = n.previousElementSibling;
     while (sib) {
-      const txt = (sib.textContent || '').replace(/\s+/g, ' ').trim();
+      const txt = rowTextOf(sib);
       if (txt && txt.length <= 90 && !sib.querySelector('svg, canvas, img')) return txt;
       sib = sib.previousElementSibling;
     }
@@ -254,6 +269,18 @@ const htmlToDataUrl = async (el) => {
   };
   expand(el);
   try { el.querySelectorAll('*').forEach(expand); } catch { /* ignore */ }
+  // The panel's own CONTROLS — the 🚫 / ↩️ switches of a split view, and the
+  // rows a page has taken out of the figure — are marked `data-star-skip` and
+  // hidden while the snapshot is taken: a figure holds the curves and their
+  // names, never a button. (The TITLE BAR of a split view is not even inside
+  // the tagged element — see SplitChartStack.) Hidden inline, restored below.
+  const unskip = [];
+  const skip = (n) => {
+    if (!n || !n.style) return;
+    unskip.push({ n, display: n.style.display });
+    n.style.display = 'none';
+  };
+  try { el.querySelectorAll('[data-star-skip]').forEach(skip); } catch { /* ignore */ }
   try {
     await nextFrames();
     captureReason = '';
@@ -269,6 +296,7 @@ const htmlToDataUrl = async (el) => {
       n.style.overflow = overflow;
       n.style.overflowY = overflowY;
     });
+    unskip.forEach(({ n, display }) => { n.style.display = display; });
     await nextFrames();
   }
 };

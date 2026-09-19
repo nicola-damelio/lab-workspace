@@ -10,7 +10,7 @@ import { ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES, seriesColorFor, tickSize, fontFamilyOf, chartRatioBoxStyle, tickColorOf, axisTitleColorOf
 } from '../utils/chartStyle';
-import { SplitLayoutControls, splitRowBoxStyle, splitChartClass, splitChartMargin, splitRowGapStyle, splitLayoutOf, splitYAxisHidden, splitYAxisProps, withSplitLayout, splitOwnHeight } from './SplitChartStack';
+import { SplitLayoutControls, splitRowBoxStyle, splitChartClass, splitChartMargin, splitRowGapStyle, splitLayoutOf, splitYAxisHidden, splitYAxisProps, withSplitLayout, splitOwnHeight, hiddenSeriesOf, withoutSeries } from './SplitChartStack';
 import { PLATES_DEF, formatConc, getRegionColor } from '../data/constants';
 export { VIS_PALETTES };
 
@@ -664,7 +664,14 @@ export const FCSOverlayVisualization = ({ ctx }) => {
   const [fs, setFs] = useState(false);
   const [showCfg, setShowCfg] = useState(false);
 
-  const hiddenSeries = activeTest.hiddenSeries || {}; 
+  // The conditions taken OUT of the figures: ONE `hiddenSeries` map per
+  // experiment — the key this panel has always read — so an exclusion survives
+  // a page switch and reaches the overlay, the Data-tab charts AND the split
+  // view at once. A curve that is out keeps its row here (struck through, ↩️ to
+  // put it back) and is left out of a 📷 figure (see SplitChartStack /
+  // ChartStarLayer).
+  const hiddenSeries = hiddenSeriesOf(activeTest);
+  const toggleHiddenSeries = (id) => updateActiveTest({ hiddenSeries: withoutSeries(activeTest, id) });
   const paramRenames = activeTest.paramRenames || {};
   const panelArray = activeTest.fcPanel || [];
 
@@ -703,6 +710,10 @@ export const FCSOverlayVisualization = ({ ctx }) => {
     const fcs = globalFcsCache[inst.id];
     return { ...inst, fcs, name: fcs.filename || inst.name, color: resolveFcsColor(cfgAna, localColors, inst, idx, visibleList.length) };
   });
+  // …and the conditions the user has TAKEN OUT of the figures: the split view
+  // keeps one struck-through row per exclusion (with the ↩️ that puts it back),
+  // so nothing disappears from the panel without a way home.
+  const outInstances = loadedInstances.filter(inst => hiddenSeries[inst.id]);
 
   const rawSharedParams = useMemo(() => {
     if (!loadedInstances.length) return [];
@@ -955,11 +966,11 @@ export const FCSOverlayVisualization = ({ ctx }) => {
             // — the very rule the spectra split stacks follow.
             <div className={`flex flex-col gap-2 min-w-0 ${fs ? 'w-[46%] min-h-0' : 'w-full lg:w-[46%]'}`}>
               <SplitLayoutControls layout={splitLayout} onChange={changeSplitLayout} baseHeight={splitOwnBoxH} />
-              <div
-                data-star-group="fcs-split"
-                data-star-label="Split view — single curves"
-                className={`flex flex-col gap-2 min-w-0 ${fs ? 'min-h-0 flex-1' : ''}`}>
-                <div className={`bg-white rounded border border-slate-200 flex flex-col overflow-hidden ${fs ? 'min-h-0 flex-1' : 'max-h-[560px]'}`}>
+              <div className={`bg-white rounded border border-slate-200 flex flex-col overflow-hidden ${fs ? 'min-h-0 flex-1' : 'max-h-[560px]'}`}>
+                {/* The title bar is a CONTROL and sits OUTSIDE the tagged element
+                    (which starts at the first curve): a 📷 figure of the panel
+                    never shows the “📚 Split view …” strip nor the switches in
+                    it — the rule the spectra split stacks follow too. */}
                 <div className="shrink-0 px-2.5 py-1.5 bg-slate-100 border-b border-slate-200 text-[10px] font-black uppercase tracking-wide text-slate-500 flex items-center justify-between gap-2">
                   <span className="flex items-center gap-2">
                     📚 Split view — single curves
@@ -971,6 +982,10 @@ export const FCSOverlayVisualization = ({ ctx }) => {
                   </span>
                   <span className="text-slate-400">{visibleInstances.length} {visibleInstances.length === 1 ? 'curve' : 'curves'}</span>
                 </div>
+                <div
+                  data-star-group="fcs-split"
+                  data-star-label="Split view — single curves"
+                  className={`flex flex-col gap-2 min-w-0 min-h-0 ${fs ? 'flex-1' : ''}`}>
                 <div className="overflow-y-auto custom-scrollbar flex-1">
                   {visibleInstances.map((s, i) => (
                     // The SEPARATION between two graphs: the extra space the
@@ -983,6 +998,10 @@ export const FCSOverlayVisualization = ({ ctx }) => {
                         : 'px-2.5 pt-1.5 pb-0.5 text-[10px] font-bold truncate flex items-center gap-1.5'}>
                         <span className={packed ? 'hidden' : 'w-2 h-2 rounded-full shrink-0'} style={{ backgroundColor: s.color }} />
                         <span className={packed ? 'text-slate-400' : 'text-slate-700 truncate'}>{s.name}</span>
+                        <button type="button" data-star-skip="1"
+                                onClick={() => toggleHiddenSeries(s.id)}
+                                className="pointer-events-auto ml-auto shrink-0 px-1 rounded text-[10px] leading-none font-bold text-slate-400 hover:text-red-600 hover:bg-red-50"
+                                title={`Take “${s.name}” out of the panel and of the overlay — its row stays here, struck through, until you put it back`}>🚫</button>
                       </div>
                       {/* The box of ONE mini chart, sized by its ROW: its
                           SHAPE is the one the panel asks for — a width : height
@@ -1009,6 +1028,21 @@ export const FCSOverlayVisualization = ({ ctx }) => {
                           </ComposedChart>
                         </ResponsiveContainer>
                       </ChartInspector>
+                    </div>
+                  ))}
+                  {outInstances.map((inst) => (
+                    // A condition that is OUT of the figures: its row stays,
+                    // struck through, with the ↩️ that puts it back. The whole row
+                    // is a control (`data-star-skip`), so a 📷 figure never shows
+                    // it — a captured panel holds the curves kept only.
+                    <div key={inst.id} data-star-skip="1"
+                         className="flex items-center gap-1.5 px-2.5 py-1 border-b border-dashed border-slate-200 last:border-b-0 text-[10px] font-bold text-slate-400 min-w-0">
+                      <span className="w-2 h-2 rounded-full shrink-0 bg-slate-300" />
+                      <span className="truncate line-through"
+                            title={globalFcsCache[inst.id]?.filename || inst.name}>{globalFcsCache[inst.id]?.filename || inst.name}</span>
+                      <button type="button" onClick={() => toggleHiddenSeries(inst.id)}
+                              className="ml-auto shrink-0 px-1 rounded text-[10px] font-bold text-slate-400 hover:text-blue-600 hover:bg-blue-50"
+                              title="Put this condition back in the panel and in the overlay">↩️</button>
                     </div>
                   ))}
                 </div>
@@ -1051,7 +1085,11 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
   const [showCfg2D, setShowCfg2D] = useState(false);
   
   const [showRenamer, setShowRenamer] = useState(false);
-  const [hiddenSeries, setHiddenSeries] = useState({});
+  // The very `hiddenSeries` map the Data Analysis panel and the split view read:
+  // taking a condition out of the figures is ONE gesture for the whole page, and
+  // it is stored on the experiment (so it survives a page switch).
+  const hiddenSeries = hiddenSeriesOf(activeTest);
+  const toggleHiddenSeries = (id) => updateActiveTest({ hiddenSeries: withoutSeries(activeTest, id) });
   const [gates, setGates] = useState([]);
 
   // Automatic treatment ("🤖 Auto treatment"): singlets, debris, manual filter.
@@ -1423,9 +1461,9 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
             const displayName = globalFcsCache[inst.id]?.filename || inst.name;
             return (
               <div key={inst.id} className={`flex items-center gap-2 px-2 py-1 rounded-lg text-xs font-bold border ${isHidden ? 'bg-slate-200 border-slate-300 text-slate-400' : 'bg-white border-slate-300 text-slate-700 shadow-sm'}`}>
-                <input type="checkbox" checked={!isHidden} onChange={() => setHiddenSeries(p => ({ ...p, [inst.id]: !p[inst.id] }))} className="w-3.5 h-3.5 accent-blue-600 cursor-pointer" />
+                <input type="checkbox" checked={!isHidden} onChange={() => toggleHiddenSeries(inst.id)} className="w-3.5 h-3.5 accent-blue-600 cursor-pointer" />
                 <input type="color" value={c} onChange={(e) => updateColor(inst.id, e.target.value)} className="w-5 h-5 rounded cursor-pointer border border-slate-300 p-0" />
-                <span className="truncate max-w-[200px] cursor-pointer select-none" onClick={() => setHiddenSeries(p => ({ ...p, [inst.id]: !p[inst.id] }))}>{displayName}</span>
+                <span className="truncate max-w-[200px] cursor-pointer select-none" onClick={() => toggleHiddenSeries(inst.id)}>{displayName}</span>
                 {inst.extra && (
                   <button onClick={() => removeExtraFile(inst.id)} className="text-red-400 hover:text-red-600 font-black px-1" title="Remove this spectrum from the instance">×</button>
                 )}

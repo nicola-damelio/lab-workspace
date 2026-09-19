@@ -12,7 +12,7 @@ import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, ChartInsp
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor, chartBoxStyle, chartRatioBoxStyle, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf, tickTextProps, tickSize, fontFamilyOf, legendTextStyle, axisTitleSize, tickColorOf
 } from '../utils/chartStyle';
-import { SplitChartStack, SplitLayoutControls, SplitToggle, splitRowBoxStyle, splitChartClass, splitChartMargin, splitLayoutOf, splitXAxisHidden, splitYAxisProps, withSplitLayout } from './SplitChartStack';
+import { SplitChartStack, SplitLayoutControls, SplitToggle, splitRowBoxStyle, splitChartClass, splitChartMargin, splitLayoutOf, splitXAxisHidden, splitYAxisProps, withSplitLayout, hiddenSeriesOf, withoutSeries } from './SplitChartStack';
 import { parseJascoJwsBinary, isJascoJwsBinary } from '../utils/jascoJws';
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
@@ -2226,7 +2226,13 @@ export const SpectraVisualization = ({ ctx }) => {
   const [showCfg, setShowCfg] = useState(false);
   const [fs, setFs] = useState(false);
   const [fsSmall, setFsSmall] = useState(null);
-  const [hidden, setHidden] = useState({});
+  // The conditions taken OUT of the figures: ONE `hiddenSeries` map per
+  // experiment (the very key the Flow Cytometry panel has always used), so an
+  // exclusion survives a page switch and reaches BOTH the overlaid chart and
+  // the split view — the stack then strikes the row through and the 📷 figure
+  // leaves it out (see SplitChartStack / ChartStarLayer).
+  const hiddenSeries = hiddenSeriesOf(activeTest);
+  const toggleHiddenSeries = (key) => updateActiveTest({ hiddenSeries: withoutSeries(activeTest, key) });
   // “Split view” — one graph per condition, stacked in a single card that is
   // captured / starred as ONE image (data-star-group). Persisted on the test so
   // the layout survives page switches (same keys as the FCS split view).
@@ -2292,7 +2298,7 @@ export const SpectraVisualization = ({ ctx }) => {
     return out;
   }, [instances, activeTest.id, localColors]);
 
-  const visible = seriesList.filter((s) => !hidden[s.key]);
+  const visible = seriesList.filter((s) => !hiddenSeries[s.key]);
   const allXs = visible.flatMap((s) => s.data.map((p) => p.x));
   const padX = allXs.length ? ((Math.max(...allXs) - Math.min(...allXs)) * 0.03 || 1) : 1;
   const dataDomain = allXs.length ? [Math.min(...allXs) - padX, Math.max(...allXs) + padX] : [190, 260];
@@ -2386,8 +2392,8 @@ export const SpectraVisualization = ({ ctx }) => {
       {seriesList.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {seriesList.map((s) => (
-            <label key={s.key} className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-bold border cursor-pointer ${hidden[s.key] ? 'bg-slate-100 border-slate-200 text-slate-400' : 'bg-white border-slate-200 text-slate-700'}`}>
-              <input type="checkbox" checked={!hidden[s.key]} onChange={() => setHidden((p) => ({ ...p, [s.key]: !p[s.key] }))} className="w-3.5 h-3.5 accent-blue-600" />
+            <label key={s.key} className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-bold border cursor-pointer ${hiddenSeries[s.key] ? 'bg-slate-100 border-slate-200 text-slate-400' : 'bg-white border-slate-200 text-slate-700'}`}>
+              <input type="checkbox" checked={!hiddenSeries[s.key]} onChange={() => toggleHiddenSeries(s.key)} className="w-3.5 h-3.5 accent-blue-600" />
               <span className="w-3 h-3 rounded-full inline-block" style={{ backgroundColor: s.color }} />
               <span className="truncate max-w-[220px]">{s.label}</span>
             </label>
@@ -2419,15 +2425,17 @@ export const SpectraVisualization = ({ ctx }) => {
           <SplitChartStack
             id="cd-split"
             label="Split view — individual spectra"
-            series={visible}
+            series={seriesList}
+            excluded={hiddenSeries}
+            onToggleExclude={toggleHiddenSeries}
             layout={splitLayout}
             className={fs ? 'lg:w-[46%]' : 'w-full lg:w-[46%]'}
-            renderChart={(s, i) => (
-              <div style={splitRowBoxStyle(splitLayout, i, visible.length)} className={splitChartClass(splitLayout)}>
+            renderChart={(s, i, count) => (
+              <div style={splitRowBoxStyle(splitLayout, i, count)} className={splitChartClass(splitLayout)}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={s.data} margin={splitChartMargin(splitLayout, cfgChartMargin(cfg, { top: 5, right: 8, bottom: 18, left: 2 }), i, visible.length)}>
+                  <LineChart data={s.data} margin={splitChartMargin(splitLayout, cfgChartMargin(cfg, { top: 5, right: 8, bottom: 18, left: 2 }), i, count)}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis type="number" dataKey="x" tick={{ fontSize: splitFontSize, fill: tickColorOf(cfg) }} domain={['dataMin', 'dataMax']} hide={splitXAxisHidden(splitLayout, i, visible.length)} />
+                    <XAxis type="number" dataKey="x" tick={{ fontSize: splitFontSize, fill: tickColorOf(cfg) }} domain={['dataMin', 'dataMax']} hide={splitXAxisHidden(splitLayout, i, count)} />
                     <YAxis {...splitYAxisProps(splitLayout, 44)} domain={splitSharedY ? [yDataMin, yDataMax] : ['dataMin', 'dataMax']} tick={{ fontSize: splitFontSize, fill: tickColorOf(cfg) }} />
                     <Line type="monotone" dataKey="y" stroke={s.color} strokeWidth={cfg.lineThickness || 2} strokeDasharray={lineDash(cfg.lineStyle)} dot={false} isAnimationActive={false} />
                   </LineChart>

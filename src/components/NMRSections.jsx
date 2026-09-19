@@ -10,7 +10,7 @@ import { CollapsibleSection } from './ui';
 import { useFigureStyleSlot } from './FigureStyleTools';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, VIS_PALETTES, PER_ATOM_COLORS, seriesColorFor, chartBoxStyle, chartAspect, chartRatioBoxStyle, seriesPointStyle, seriesPtSize, seriesLineThickness, seriesDash, seriesLabelOf, tickTextProps, tickSize, fontFamilyOf, legendTextStyle, chartAspectImposed, tickColorOf
 } from '../utils/chartStyle';
-import { SplitChartStack, SplitLayoutControls, SplitToggle, splitRowBoxStyle, splitChartClass, splitChartMargin, splitLayoutOf, splitXAxisHidden, splitYAxisProps, withSplitLayout } from './SplitChartStack';
+import { SplitChartStack, SplitLayoutControls, SplitToggle, splitRowBoxStyle, splitChartClass, splitChartMargin, splitLayoutOf, splitXAxisHidden, splitYAxisProps, withSplitLayout, hiddenSeriesOf, withoutSeries } from './SplitChartStack';
 import { suggestDriveFileName, driveFolderPath, sanitizeSlug } from '../utils/driveNaming';
 import { uploadLocalFile, getDriveToken, archiveFileToDrive } from '../utils/driveUpload';
 import { storeJson, loadJson } from '../utils/pdbStore';
@@ -5023,7 +5023,13 @@ const NMRSpectraVisualization = ({ ctx }) => {
   // page's 1D chart cfg — so the layout survives a page switch.
   const splitLayout = splitLayoutOf(activeTest);
   const changeSplitLayout = (patch) => updateActiveTest({ splitLayout: withSplitLayout(activeTest, patch) });
-  const [hiddenSeries, setHiddenSeries] = useState({});
+  // The conditions taken OUT of the figures: ONE `hiddenSeries` map per
+  // experiment (the very key the Flow Cytometry panel has always used), so an
+  // exclusion survives a page switch and reaches BOTH the overlaid chart and
+  // the split view — the stack then strikes the row through and the 📷 figure
+  // leaves it out (see SplitChartStack / ChartStarLayer).
+  const hiddenSeries = hiddenSeriesOf(activeTest);
+  const toggleHiddenSeries = (key) => updateActiveTest({ hiddenSeries: withoutSeries(activeTest, key) });
   const [localColors, setLocalColors] = useState(activeTest.nmrInstanceColors || {});
 const [savedPalettes, setSavedPalettes] = useState(activeTest.nmrSavedPalettes || {});
 const [newPaletteName, setNewPaletteName] = useState('');
@@ -5218,15 +5224,17 @@ const onUp = () => {
        <SplitChartStack
          id="nmr-split"
          label="Split view — 1D spectra"
-         series={visibleSeries}
+         series={seriesList}
+         excluded={hiddenSeries}
+         onToggleExclude={toggleHiddenSeries}
          layout={splitLayout}
          className="w-full lg:w-[46%]"
-         renderChart={(s, i) => (
-           <div style={splitRowBoxStyle(splitLayout, i, visibleSeries.length)} className={splitChartClass(splitLayout)}>
+         renderChart={(s, i, count) => (
+           <div style={splitRowBoxStyle(splitLayout, i, count)} className={splitChartClass(splitLayout)}>
              <ResponsiveContainer width="100%" height="100%">
-               <LineChart data={s.data} margin={splitChartMargin(splitLayout, { top: 4, right: 10, bottom: 16, left: 2 }, i, visibleSeries.length)}>
+               <LineChart data={s.data} margin={splitChartMargin(splitLayout, { top: 4, right: 10, bottom: 16, left: 2 }, i, count)}>
                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                 <XAxis type="number" dataKey="x" domain={dom} reversed={true} allowDataOverflow hide={splitXAxisHidden(splitLayout, i, visibleSeries.length)}
+                 <XAxis type="number" dataKey="x" domain={dom} reversed={true} allowDataOverflow hide={splitXAxisHidden(splitLayout, i, count)}
                    tickFormatter={v => Number(v).toFixed(2)} tick={{ fontSize: splitFontSize, fill: tickColorOf(activeTest.nmr1dChartCfg) }} />
                  <YAxis {...splitYAxisProps(splitLayout, 40)} domain={splitSharedY ? yDomain : ['dataMin', 'dataMax']} tick={{ fontSize: splitFontSize, fill: tickColorOf(activeTest.nmr1dChartCfg) }} />
                  <Line data={s.data} type="monotone" dataKey="y" stroke={s.color} strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls />
@@ -5277,7 +5285,7 @@ const onUp = () => {
         <div className="flex flex-wrap gap-2">
           {seriesList.map(s => (
             <div key={s.key} className={`flex items-center gap-2 px-2 py-1 rounded-lg text-xs font-bold border ${hiddenSeries[s.key] ? 'bg-slate-200 border-slate-300 text-slate-400' : 'bg-white border-slate-300 text-slate-700 shadow-sm'}`}>
-              <input type="checkbox" checked={!hiddenSeries[s.key]} onChange={() => setHiddenSeries(p => ({ ...p, [s.key]: !p[s.key] }))} className="w-3.5 h-3.5 accent-blue-600 cursor-pointer" />
+              <input type="checkbox" checked={!hiddenSeries[s.key]} onChange={() => toggleHiddenSeries(s.key)} className="w-3.5 h-3.5 accent-blue-600 cursor-pointer" />
               <input type="color" value={s.color} onChange={e => updateColor(s.key, e.target.value)} className="w-6 h-6 rounded cursor-pointer border border-slate-300 p-0" title="Click to pick color" />
               <span className="truncate max-w-[150px]">{s.label}</span>
             </div>

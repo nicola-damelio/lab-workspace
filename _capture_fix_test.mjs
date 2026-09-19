@@ -109,6 +109,15 @@ checkTrue('[CSL] a serialised chart keeps the app font', at('clone.style.fontFam
 checkTrue('[CSL] the compositor re-renders vectors at 2×', at('svgToDataUrl(it.node, 2)') > 0);
 checkTrue('[CSL] the old scroller expansion is untouched (older test)', at('if (!scrolls && cs.maxHeight === \'none\') return;') > 0);
 checkTrue('[CSL] …and still restores it', at('n.style.maxHeight = maxHeight;') > 0);
+/* A split view marks its own controls (the per-row 🚫 / ↩️ switches, and a row
+   the page has taken out of the figure) `data-star-skip`: the snapshot hides
+   them inline and puts them back, so a 📷 figure holds the curves and their
+   names — and a captured row is named after its curve, never after a button. */
+checkTrue('[CSL] the marks that must not be captured are hidden for the snapshot',
+  at("el.querySelectorAll('[data-star-skip]').forEach(skip);") > 0);
+checkTrue('[CSL] …and put back right after it',
+  at('unskip.forEach(({ n, display }) => { n.style.display = display; });') > 0);
+checkTrue('[CSL] a row is named after its curve, never after a switch', at('const txt = rowTextOf(sib);') > 0);
 
 /* ── 7. the dependency is really installed ───────────────────────────────── */
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
