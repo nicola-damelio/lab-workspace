@@ -426,6 +426,94 @@ has(IB, 'keeping exactly the alignment you have just set',
   '…en disant que l’alignement posé est conservé pendant le déplacement');
 eq(times(IB, /const NUDGE_MM/g), 2, 'un seul endroit définit les deux pas');
 
+/* ── 8. ⇹ RÉPARTIR NE PERD PERSONNE, ET « ☑ ALL » COCHE TOUTE UNE LISTE ──────
+   Deux demandes d'un même écran :
+
+     • « the distribute button in the object window of image builder does not
+       work. If I select 7 elements and I click, only two remain and the other
+       objects disappear. » La cause n'était pas la géométrie mais la LECTURE du
+       patch : une RÉPARTITION n'écrit QUE l'axe qu'elle règle (`{ x }` en
+       horizontal) et ne touche même pas les deux extrêmes. La branche mixte
+       d'applyFigureLayout lisait `p.x` ET `p.y` sur ce patch PARTIEL →
+       `undefined` → NaN millimètres écrits sur chaque objet DU MILIEU, qui
+       disparaissait du panneau ; seuls les deux extrêmes, jamais patchés,
+       restaient visibles. C'est exactement « il n'en reste que deux ».
+     • « can you add a select all tick for the text object and another for the
+       figure? » Deux interrupteurs — les figures, les textes — qui cochent (ou
+       décochent) toute la liste d'un clic : la figure active étant cochée
+       d'office, ranger ou déplacer les TEXTES seuls obligeait à la décocher à la
+       main à chaque fois. */
+
+/* 8a. LE PATCH DE RÉPARTITION EST PARTIEL — sept boîtes, cinq patchs, un seul axe. */
+const sevenBoxes = [1, 3, 20, 22, 40, 41, 55].map((x, i) => ({
+  id: `t${i}`,
+  box: { x: x / 60, y: 0.2, w: 0.12, h: 0.05 }
+}));
+{
+  const patch = PS.distributeGroupPatches(sevenBoxes, 'h');
+  eq(Object.keys(patch).sort(), ['t1', 't2', 't3', 't4', 't5'],
+    'répartir sept éléments ne règle que les cinq du MILIEU (les deux extrêmes gardent leur place)');
+  eq(Object.keys(patch.t3), ['x'],
+    '…et un patch ne porte QUE l’axe réparti : l’autre coordonnée vient de la boîte (fusion obligatoire)');
+  /* La lecture de l'ANCIEN code, pour mémoire : elle prenait le patch pour une
+     boîte complète — d'où les cinq textes partis en NaN. */
+  const asBox = (p, w, h, fs) => ({ x: +(p.x * w).toFixed(1), y: +((p.y * h) + fs).toFixed(1) });
+  ok(!Number.isFinite(asBox(patch.t3, 60, 40, 4.2).y),
+    'lire `p.y` sur un patch de répartition donne NaN (l’objet disparaissait)');
+  /* La FUSION `{ ...boîte, ...patch }` : c'est tout ce que le builder devait faire. */
+  const fused = sevenBoxes.map((it) => ({ ...it.box, ...(patch[it.id] || {}) }));
+  ok(fused.every((b) => Number.isFinite(b.x) && Number.isFinite(b.y)),
+    'fusionner le patch dans la boîte garde les DEUX coordonnées (plus aucun objet perdu)');
+  ok(fused.every((b) => b.y === 0.2),
+    '…et répartir HORIZONTALEMENT ne bouge pas l’ordonnée (chaque texte garde sa ligne)');
+  eq(fused.filter((b, i) => b.x !== sevenBoxes[i].box.x).length, 5,
+    '…les cinq du milieu sont bien déplacés : la commande fait son travail');
+  ok(fused.every((b, i) => Number.isFinite(sevenBoxes[i].box.x)),
+    '…sur des boîtes qui restent des nombres finis (aucune écriture en NaN)');
+}
+
+/* 8b. LE BUILDER : les boîtes gardées, la fusion faite, et JAMAIS de NaN écrit. */
+has(IB, 'const items = layoutItemsOf(o, pinned, group, texts);',
+  'le builder garde les boîtes qu’il envoie aux fonctions pures…');
+has(IB, 'const boxById = new Map(items.map((it) => [it.id, it.box]));',
+  '…dans une table id → boîte (figures ET textes, par leur identifiant de patch)');
+ok(!IB.includes('p.x * panelW') && !IB.includes('p.y * panelH'),
+  '…et ne lit PLUS un patch comme une boîte complète (la cause des objets disparus)');
+has(IB, 'const box = { ...(boxById.get(`t${tx.id}`) || {}), ...p };',
+  'un patch de TEXTE est fusionné avec la boîte du texte (un seul axe est patché)');
+has(IB, 'if (!Number.isFinite(x) || !Number.isFinite(y)) return tx;',
+  '…et un texte dont une coordonnée ne serait pas un nombre n’est JAMAIS écrit');
+has(IB, 'const rect = { ...freeRectOf(im), ...p };',
+  'les FIGURES fusionnent aussi (aligner donne x et y, répartir un seul axe)');
+has(IB, 'if (!Number.isFinite(rect.x) || !Number.isFinite(rect.y)) return im;',
+  '…avec le même garde-fou : aucun objet ne part avec un NaN');
+{
+  const PSS = readFileSync('./src/utils/panelSelection.js', 'utf8').replace(/\r\n/g, '\n');
+  has(PSS, 'Le patch ne porte QUE',
+    'la fonction pure DIT que son patch est partiel, là où il est fabriqué');
+}
+
+/* 8c. « ☑ ALL » — UN INTERRUPTEUR PAR LISTE (les figures / les textes). */
+has(IB, 'const tickAllFigures = (obj, on) => setFigGroup({',
+  'un clic coche TOUTES les figures du panneau');
+has(IB, 'idxs: on ? getObjImages(obj).map((_, i) => i) : []',
+  '…et le clic suivant les décoche toutes (le groupe se vide)');
+has(IB, 'const tickAllTexts = (obj, on) => setTextGroup({',
+  'même paire pour les TEXTES du panneau');
+has(IB, 'ids: on ? (obj.texts || []).map((tx) => tx.id) : []',
+  '…par leur id : exactement les cases ☑ de la liste des textes');
+has(IB, 'onClick={() => tickAllFigures(selectedObj, !all)}',
+  'le bouton des figures est branché dans la colonne FIGURES');
+has(IB, 'onClick={() => tickAllTexts(selectedObj, !all)}',
+  '…et celui des textes, dans la colonne des objets');
+has(IB, "} all figures", 'les deux libellés se lisent (figures)');
+has(IB, "} all texts", '…et (textes)');
+has(IB, 'the arrow keys move only the texts you tick',
+  'le bouton DIT ce qu’il apporte : ranger / déplacer les textes seuls');
+has(IB, 'Click again to untick them all.',
+  '…et qu’un second clic défait tout (aucun état caché)');
+
+
 console.log(`_builder_multiselect_test.mjs — ${passed} assertions OK`);
 
 

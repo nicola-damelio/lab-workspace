@@ -2127,6 +2127,25 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     const cur = prev.objId === objId ? prev.ids : [];
     return { objId, ids: cur.includes(txId) ? cur.filter((t) => t !== txId) : [...cur, txId] };
   });
+  /* ── ☑ TOUT COCHER : LES FIGURES D'UN CLIC, LES TEXTES D'UN CLIC ────────────
+     « These ordering tools (distribute, align) select by default an image and
+     this is annoying because I always have to deselect it if I want to move only
+     the text object. » La figure ACTIVE est cochée d'office — elle est la
+     référence des poignées et de la taille du groupe — donc ranger, ou déplacer
+     au clavier, les TEXTES SEULS demandait un clic de décoche à chaque fois.
+     Ces deux commandes font le tour de la liste en un clic, et le clic suivant
+     la vide : « tout cocher » puis « tout décocher » est la façon la plus courte
+     de dire « seulement mes textes » ou « seulement mes figures ».
+     Deux listes, deux interrupteurs, exactement ce que ⇹ range : les figures par
+     leur index (figGroupIdxs) et les textes par leur id (selectedTextGroup). */
+  const tickAllFigures = (obj, on) => setFigGroup({
+    objId: obj.id,
+    idxs: on ? getObjImages(obj).map((_, i) => i) : []
+  });
+  const tickAllTexts = (obj, on) => setTextGroup({
+    objId: obj.id,
+    ids: on ? (obj.texts || []).map((tx) => tx.id) : []
+  });
   // The snapshot of every figure involved in a drag (the one held + the ticked
   // ones), taken when the mouse goes down: the geometry is then written in
   // ABSOLUTE values, so a long drag cannot accumulate rounding, and releasing
@@ -2269,25 +2288,44 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     const next = (objects || []).map((o) => {
       if (o.id !== obj.id) return o;
       const pinned = freezeFigures(o, getObjImages(o));
+      /* Les boîtes envoyées aux fonctions pures, ET de quoi les retrouver par
+         identifiant : un patch est un DELTA de coordonnées, jamais une boîte
+         complète. Un ALIGNEMENT écrit x ET y, une RÉPARTITION n'écrit QUE son
+         axe (`{ x }` en horizontal, `{ y }` en vertical) et ne touche même pas
+         les deux extrêmes. C'est la fusion `{ ...boîte, ...patch }` qui donne
+         l'autre coordonnée : sans elle, les 7 éléments d'un groupe réparti
+         horizontalement recevaient `undefined` pour y → NaN millimètres écrits
+         sur chaque objet DU MILIEU, qui disparaissait du panneau — seuls les
+         deux extrêmes, jamais patchés, restaient visibles. */
+      const items = layoutItemsOf(o, pinned, group, texts);
+      const boxById = new Map(items.map((it) => [it.id, it.box]));
       const patches = kind === 'align'
-        ? alignGroupPatches(layoutItemsOf(o, pinned, group, texts), mode)
-        : distributeGroupPatches(layoutItemsOf(o, pinned, group, texts), mode);
+        ? alignGroupPatches(items, mode)
+        : distributeGroupPatches(items, mode);
       if (!Object.keys(patches).length) return o;
       changed = true;
       const panelW = Math.max(1, o.w * cellW);
       const panelH = Math.max(1, o.h * cellH);
-      // Les figures reçoivent x / y du patch (leur taille ne change pas).
+      // Les figures reçoivent x / y du patch (leur taille ne change pas) ; la
+      // fusion garde la coordonnée qu'une répartition ne règle pas.
       const images = pinned.map((im, i) => {
         const p = patches[`f${i}`];
-        return p ? { ...im, rect: { ...freeRectOf(im), ...p } } : im;
+        if (!p) return im;
+        const rect = { ...freeRectOf(im), ...p };
+        if (!Number.isFinite(rect.x) || !Number.isFinite(rect.y)) return im;   // jamais de NaN écrit
+        return { ...im, rect };
       });
       // Les textes repassent en millimètres : y est le HAUT de leur boîte, or un
       // texte se pose par sa LIGNE DE BASE (la même que le canvas dessine).
       const nextTexts = (o.texts || []).map((tx) => {
         const p = patches[`t${tx.id}`];
         if (!p) return tx;
+        const box = { ...(boxById.get(`t${tx.id}`) || {}), ...p };
         const fs = ptToMm(tx.fontSize || 12);
-        return { ...tx, x: +(p.x * panelW).toFixed(1), y: +((p.y * panelH) + fs).toFixed(1) };
+        const x = box.x * panelW;
+        const y = (box.y * panelH) + fs;
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return tx;             // jamais de NaN écrit
+        return { ...tx, x: +x.toFixed(1), y: +y.toFixed(1) };
       });
       return { ...withImages(o, images), texts: nextTexts };
     });
@@ -4826,6 +4864,24 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           </span>
         ))}
         </div>
+        {/* ☑ TOUT COCHER — LES FIGURES DU PANNEAU, D'UN CLIC. La figure active
+            est cochée d'office : ce bouton est le moyen le plus court de la/les
+            décocher toutes (le clic suivant les recoche) — donc de passer à un
+            groupe fait de TEXTES SEULS, celui que déplacent aussi les flèches du
+            clavier. Voir tickAllFigures. */}
+        {getObjImages(selectedObj).length > 0 && (() => {
+          const figs = getObjImages(selectedObj);
+          const all = figGroupIdxs(selectedObj).length === figs.length;
+          return (
+            <button type="button" onClick={() => tickAllFigures(selectedObj, !all)}
+              className={`text-[10px] font-bold border rounded px-1 shrink-0 ${all ? 'bg-indigo-50 text-indigo-800 border-indigo-300' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-100'}`}
+              title={all
+                ? `Untick EVERY figure of this panel (${figs.length}) in one click: the ⇹ Align / Distribute group is then empty and the arrow keys move only the texts you tick. Click again to tick them all back.`
+                : `Tick every figure of this panel (${figs.length}) in one click: they then follow the active one (🎯 — its size when you resize) and the ⇹ commands range them together with the ticked texts. Click again to untick them all.`}>
+              {all ? '☑' : '☐'} all figures
+            </button>
+          );
+        })()}
         {figGroupIdxs(selectedObj).length > 1 && (
           <span className="text-[10px] font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 rounded px-1.5 py-0.5 shrink-0"
             title={`${figGroupIdxs(selectedObj).length} figures ticked « ☑ » — the ACTIVE one (🎯 1st) is the first selected: resizing it gives EVERY ticked figure its size (each one keeps its own place), and dragging it moves them all. The ⇹ commands beside it align and spread them (together with the ticked texts).`}>
@@ -5150,6 +5206,23 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${placeTextMode ? 'bg-amber-500 text-white border-amber-600' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}
           title="Click on the object to place text exactly where you click">✏️ Place by click</button>
         {placeTextMode && <span className="text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 shrink-0">now click where the text should go</span>}
+        {/* ☑ TOUT COCHER — LES TEXTES DU PANNEAU, D'UN CLIC (et le clic suivant
+            les décoche tous) : le ⇹ Align / Distribute de la colonne FIGURES les
+            range alors avec les figures cochées, et les flèches du clavier
+            déplacent tout le groupe. Voir tickAllTexts. */}
+        {(selectedObj.texts || []).length > 0 && (() => {
+          const texts = selectedObj.texts || [];
+          const all = selectedTextGroup(selectedObj).length === texts.length;
+          return (
+            <button type="button" onClick={() => tickAllTexts(selectedObj, !all)}
+              className={`font-bold px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${all ? 'bg-indigo-50 text-indigo-800 border-indigo-300' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}
+              title={all
+                ? `Untick EVERY text of this panel (${texts.length}) in one click — the ⇹ Align / Distribute commands then range the ticked figures alone. Click again to tick them all back.`
+                : `Tick every text of this panel (${texts.length}) in one click: the ⇹ Align / Distribute commands of the FIGURES column then range them too — with the figures ticked in this panel — and the arrow keys move them all together. Click again to untick them all.`}>
+              {all ? '☑' : '☐'} all texts{texts.length > 1 ? ` (${texts.length})` : ''}
+            </button>
+          );
+        })()}
         {(selectedObj.texts || []).length === 0 && (
           <span className="text-[9px] text-slate-400 italic">“+ Add Text” (or “✏️ Place by click”), then drag it on the object</span>
         )}

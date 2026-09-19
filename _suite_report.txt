@@ -11,7 +11,7 @@ OK   _builder_figureorder_test.mjs  →  _builder_figureorder_test.mjs — 70 as
 OK   _builder_letters_test.cjs  →  ✅ 78/78 checks passed
 OK   _builder_link_test.cjs  →  │ 40      │ '[App] openImageBuilder is passed to the project page: operatorNames={operatorNames} openImageBuild…'                                    │
 OK   _builder_montage_test.mjs  →  _builder_montage_test.mjs — 50 assertions OK
-OK   _builder_multiselect_test.mjs  →  _builder_multiselect_test.mjs — 143 assertions OK
+OK   _builder_multiselect_test.mjs  →  _builder_multiselect_test.mjs — 168 assertions OK
 OK   _builder_pixels_test.cjs  →  ✅ 41/41 checks passed
 OK   _builder_place_test.cjs  →  ✅ 53/53 checks passed
 OK   _builder_recall_test.mjs  →  _builder_recall_test : 25 vérifications passées

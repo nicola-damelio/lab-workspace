@@ -332,6 +332,13 @@ export const distributeGroupPatches = (boxes, axis = 'h') => {
   sorted.forEach((b, i) => {
     if (i > 0 && i < sorted.length - 1) {
       const nv = rectPos(cursor, b.box[s]);
+      /* Le patch ne porte QUE l'axe réparti : l'autre coordonnée n'est pas
+         écrite, et les deux extrêmes n'ont aucun patch. C'est un DELTA, pas une
+         boîte — l'appelant le FUSIONNE donc avec la boîte de l'élément
+         (`{ ...boîte, ...patch }`). Lire `patch.x` et `patch.y` comme une boîte
+         complète donne `undefined` → NaN millimètres → l'élément disparaît
+         (c'est ce que faisait ImageBuilder pour les textes : 7 objets répartis,
+         5 disparus, seuls les deux extrêmes restaient). */
       if (Math.abs(nv - b.box[k]) > 1e-4) out[b.id] = { [k]: nv };
     }
     cursor += b.box[s] + gap;
