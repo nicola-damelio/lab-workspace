@@ -6,10 +6,54 @@ import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
 import { getDriveToken, uploadLocalFile } from '../utils/driveUpload';
 import { storeJson, loadJson } from '../utils/pdbStore';
+import { archiveRestoreJson, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';
+import { useDriveAutoRestore } from './useDriveAutoRestore';
 import { gunzipSync } from 'fflate';
 // One character size per element + the font family of the shared figure style
 // (the axis numbers keep riding on cfg.fontSize, see utils/chartStyle.js).
 import { tickTextProps } from '../utils/chartStyle';
+
+/* ── RESTAURATION AUTOMATIQUE DES STRUCTURES DOCKING DEPUIS LE DRIVE ────────
+   (mécanisme général : src/utils/driveRestore.js + useDriveAutoRestore.js)
+   Les textes PDB d'un docking (structures 8_seletopclusts et molécules
+   raw_input.toml) ne peuvent PAS vivre dans le document du dataset : ils sont
+   rangés dans la base du navigateur (`pdbStore` → IndexedDB, sinon
+   localStorage), qui est LOCALE. Le Drive est donc la copie de RÉFÉRENCE :
+   l'import d'un répertoire de calcul y dépose un JSON gzip (structures +
+   molécules) et le test n'en garde qu'un pointeur minuscule (`dockingDrive`),
+   qui voyage avec le dataset — donc d'un poste à l'autre. Sur un poste vierge,
+   la restauration retrouve le fichier par son NOM
+   (`<instance>_docking_restore.json.gz`) et le remet dans la base du
+   navigateur : le viewer 3D et « Molecules to be docked » fonctionnent. */
+const DOCKING_RESTORE_KIND = 'docking';
+const dockingDriveCtx = (test = {}, instance = '') => ({
+  project: (test.projectNames || [])[0] || '',
+  test: test.name || '',
+  scientist: test.operator || '',
+  section: 'Data',
+  subsection: 'pdb files',
+  instance: instance || test.instanceName || ''
+});
+
+/** Archive la copie de référence des structures / molécules d'un docking et
+ *  rend son pointeur, ou null quand le Drive n'est pas joignable — un import ne
+ *  doit JAMAIS échouer pour cette raison. */
+const archiveDockingData = async ({
+  test, instance, structures = [], molecules = [], source = {}
+}) => (
+  archiveRestoreJson({
+    kind: DOCKING_RESTORE_KIND,
+    suffix: DOCKING_RESTORE_KIND,
+    stem: instance,
+    data: {
+      structures: Array.isArray(structures) ? structures : [],
+      molecules: Array.isArray(molecules) ? molecules : [],
+      instanceName: instance || '',
+      source
+    },
+    ctx: dockingDriveCtx(test, instance)
+  })
+);
 
 import NMRMoleculeViewer from './NMRMoleculeViewer';
 import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, DOCK_CHART_MARGIN} from './DockingData';
@@ -583,6 +627,10 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
   const [pasteText, setPasteText] = useState('');
   const [report, setReport] = useState(null);
   const [calcDirBusy, setCalcDirBusy] = useState(false);
+  /* Expérience affichée : dit si le pointeur d'une archive (asynchrone) peut
+     être posé tout de suite, ou s'il doit attendre qu'on revienne dessus. */
+  const dockingActiveIdRef = useRef((ctx.activeTest && ctx.activeTest.id) || '');
+  dockingActiveIdRef.current = (ctx.activeTest && ctx.activeTest.id) || '';
 
   const handleText = (text, filename) => {
     const parsed = parseDockingFile(text, filename || 'pasted.txt');
@@ -830,6 +878,26 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
       warnings.push('No .pdb / .pdb.gz structures found — expected them under 8_seletopclusts/ (or anywhere in the picked folder)');
     }
 
+    /* Copie de RÉFÉRENCE sur le Drive : les textes PDB vivent dans la base du
+       navigateur (IndexedDB → localStorage), qui n'existe sur aucun autre
+       poste. Les molécules sont relues de la base (c'est là que l'import les a
+       rangées) ; les structures sont celles qu'on vient de lire. Best-effort :
+       un Drive injoignable ne casse pas l'import. */
+    void (async () => {
+      const molecules = await loadJson(`labDockingMolecules_${test.id || 'global'}`).catch(() => null);
+      const pointer = await archiveDockingData({
+        test,
+        instance: String(test.instanceName || '').trim(),
+        structures: structs,
+        molecules: Array.isArray(molecules) ? molecules : [],
+        source: { files: list.length }
+      });
+      placeRestorePointer({
+        field: 'dockingDrive', pointer, key: test.id || 'global',
+        activeKey: dockingActiveIdRef.current, patch: updateActiveTest
+      });
+    })();
+
     setCalcDirBusy(false);
     setReport({ ok: done.length, items: done, notes, warnings });
   };
@@ -970,6 +1038,84 @@ export const DockingDataSection = ({ ctx }) => {
     });
   };
 
+  // ── RESTAURATION AUTOMATIQUE DES STRUCTURES DEPUIS LE DRIVE ──────────────
+  // (mécanisme général : src/utils/driveRestore.js + useDriveAutoRestore.js)
+  // Les textes PDB vivent dans la base du navigateur (IndexedDB), qui est
+  // LOCALE : sur un autre poste, la page n'aurait que des noms de fichiers. Le
+  // Drive est donc la copie de RÉFÉRENCE — dès que les métadonnées d'un import
+  // sont là mais pas leur contenu, l'archive est re-téléchargée TOUTE SEULE et
+  // remise dans la base, et l'utilisateur n'a rien à faire.
+  const dockingStructKey = `labDockingStructures_${activeTest.id || 'global'}`;
+  const dockingMolKey = `labDockingMolecules_${activeTest.id || 'global'}`;
+  const dockingActiveIdRef = useRef(activeTest.id || '');
+  dockingActiveIdRef.current = activeTest.id || '';
+  useEffect(() => {
+    const pending = takePendingRestorePointer({ field: 'dockingDrive', key: activeTest.id || 'global' });
+    if (!pending) return;
+    updateActiveTest(pending);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTest.id]);
+
+  const dockingHasMeta = (
+    (Array.isArray(activeTest.dockingStructures) && activeTest.dockingStructures.length > 0)
+    || (Array.isArray(activeTest.dockingMolecules) && activeTest.dockingMolecules.length > 0)
+  );
+
+  const dockingDefaultStems = () => restoreStems(activeTest.instanceName, activeTest.name);
+
+  const dockingDriveMissing = async () => {
+    if (!dockingHasMeta) return false; // aucun import : rien à restaurer
+    const structs = await loadJson(dockingStructKey).catch(() => null);
+    const mols = await loadJson(dockingMolKey).catch(() => null);
+    const hasStructs = Array.isArray(structs) && structs.length > 0;
+    const hasMols = Array.isArray(mols) && mols.length > 0;
+    return !hasStructs && !hasMols;
+  };
+
+  const restoreDockingFromDrive = async () => {
+    const pointer = activeTest.dockingDrive || null;
+    const stems = (pointer && Array.isArray(pointer.stems) && pointer.stems.length
+      ? pointer.stems
+      : dockingDefaultStems());
+    const found = await restoreJsonFor({
+      kind: DOCKING_RESTORE_KIND, suffix: DOCKING_RESTORE_KIND, stems,
+      ctx: dockingDriveCtx(activeTest, activeTest.instanceName), pointer
+    });
+    if (!found) {
+      return {
+        ok: false,
+        message: '⚠️ The docking structures are not in this browser and no copy was found on Google Drive. Connect Google Drive, then re-import the calculation directory: it archives the structures AND the molecules.'
+      };
+    }
+    const data = (found.data && typeof found.data === 'object') ? found.data : {};
+    const structs = Array.isArray(data.structures) ? data.structures : [];
+    const mols = Array.isArray(data.molecules) ? data.molecules : [];
+    if (!structs.length && !mols.length) {
+      return { ok: false, message: `⚠️ The copy found on Google Drive (${found.name}) holds no structures — re-import the calculation directory.` };
+    }
+    /* La base du navigateur est réapprovisionnée AVANT l'état : c'est elle que
+       le viewer 3D et « Molecules to be docked » relisent. */
+    if (structs.length) await storeJson(dockingStructKey, structs);
+    if (mols.length) await storeJson(dockingMolKey, mols);
+    updateActiveTest({
+      ...(structs.length
+        ? { dockingStructures: structs.map((s) => ({ name: s.name, driveUrl: s.driveUrl || '' })) }
+        : {}),
+      dockingDrive: {
+        ...(activeTest.dockingDrive || {}),
+        id: found.id, name: found.name, at: Date.now(), stems, restoredAt: Date.now()
+      }
+    });
+    return { ok: true, message: `✅ Docking structures restored from Google Drive (${found.name}).` };
+  };
+
+  const dockingRestore = useDriveAutoRestore({
+    kind: DOCKING_RESTORE_KIND,
+    testId: activeTest.id,
+    missing: dockingDriveMissing,
+    restore: restoreDockingFromDrive
+  });
+
   const bestPose = d.poses.length ? d.poses.reduce((a, b) => (a.affinity < b.affinity ? a : b)) : null;
 
   const metricCols = DOCKING_METRICS.filter((m) =>
@@ -1000,6 +1146,37 @@ export const DockingDataSection = ({ ctx }) => {
           </span>
         )}
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          {/* Restauration automatique des structures depuis le Drive (voir
+              DOCKING_RESTORE_KIND en tête de ce fichier) : l'archive est
+              déposée TOUTE SEULE à l'import d'un répertoire de calcul, donc ce
+              bouton n'est qu'un secours manuel. */}
+          <button
+            type="button"
+            onClick={() => dockingRestore.attempt('manual')}
+            disabled={dockingRestore.status === 'restoring'}
+            title="Download the archived copy of these structures from Google Drive (it is saved automatically when a calculation directory is imported) — it also happens by itself when the page opens"
+            className="text-[10px] font-bold bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 px-2 py-1.5 rounded-lg shadow-sm disabled:opacity-50"
+          >
+            {dockingRestore.status === 'restoring' ? '⬇️ Downloading…' : '⬇️ Restore from Drive'}
+          </button>
+          {activeTest.dockingDrive && !dockingRestore.message && (
+            <span className="text-[10px] font-bold text-emerald-700">☁ Archived copy on Google Drive</span>
+          )}
+          {(dockingRestore.status === 'restoring' || dockingRestore.message) && (
+            <span className={`text-[10px] font-semibold rounded-lg px-3 py-1.5 border ${dockingRestore.status === 'restored'
+              ? 'bg-green-50 border-green-200 text-green-800'
+              : dockingRestore.status === 'failed'
+                ? 'bg-amber-50 border-amber-200 text-amber-800'
+                : 'bg-sky-50 border-sky-200 text-sky-800'}`}>
+              {dockingRestore.status === 'restoring'
+                ? '⬇️ These structures are not in this browser — restoring the archived copy from Google Drive…'
+                : dockingRestore.message}
+              {dockingRestore.status === 'failed' && (
+                <button type="button" onClick={() => dockingRestore.attempt('manual')}
+                  className="ml-2 underline font-bold">Try again</button>
+              )}
+            </span>
+          )}
           <button
             onClick={() => { setShowImport(true); setTimeout(() => document.getElementById('docking-import-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80); }}
             className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm"

@@ -514,12 +514,19 @@ dossier : une page ouverte ne sème pas d'arborescence fantôme.
   conversion [θ] quand elle existe. Les conditions clonées par l'import
   multiple sont construites hors de l'updater d'état, donc archivées elles
   aussi.
+* **Docking (HADDOCK / AutoDock)** — `DockingSections.jsx` archive les textes
+  PDB du docking — structures `8_seletopclusts` **et** molécules de
+  `raw_input.toml` (`<instance>_docking_restore.json.gz`, pointeur
+  `dockingDrive`, dossier `Data/pdb files`) au moment où un répertoire de calcul
+  est importé : ces textes vivent dans la base du navigateur (IndexedDB), pas
+  dans le document, donc ils n'existaient que sur le poste qui a importé. La
+  page Data réapprovisionne cette base depuis l'archive avant de rendre la main
+  au viewer 3D.
 * **Flow Cytometry** — avait déjà ce comportement (`handleRestoreFromDrive`) :
   il reste le modèle, rien n'a régressé.
 * **MD** — `MDSections.jsx` rapatrie déjà structure et trajectoire du Drive
   quand la cache locale est vide (`downloadArchivedMDFile`).
-* Restent à brancher sur le même mécanisme : **docking** (structures /
-  molécules / CAPRI) et **microscopie** (vidéos).
+* Reste à brancher sur le même mécanisme : **microscopie** (vidéos).
   La mécanique ne change pas : archiver une copie JSON au moment de l'import,
   poser le pointeur sur le test, appeler `useDriveAutoRestore` dans la page.
 
@@ -529,5 +536,5 @@ dossier : une page ouverte ne sème pas d'arborescence fantôme.
   pointeurs en attente, refus des types croisés) et le cycle archivage →
   restauration sur un faux Drive, y compris un pointeur périmé, un fichier mis à
   la corbeille et un autre poste sans registre local ; puis le câblage des
-  modules branchés : NMR 1D, ssNMR et CD.
+  modules branchés : NMR 1D, ssNMR, CD et docking.
 

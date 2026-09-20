@@ -323,6 +323,42 @@ ok(CDSRC.includes("takePendingRestorePointer({ field: 'cdDrive', key: activeTest
   'un pointeur arrivé après un changement de condition attend son tour');
 ok(!/cdDrive[^\n]*localStorage/.test(CDSRC), 'aucun pointeur rangé dans le navigateur (il doit voyager)');
 
+/* ══ 3 quater. LE QUATRIÈME MODULE BRANCHÉ (docking — structures en IndexedDB) ══
+   Les textes PDB d'un docking vivent dans la base du NAVIGATEUR (pdbStore →
+   IndexedDB), pas dans le document : c'est donc eux qu'il faut archiver, et
+   remettre dans la base en restaurant. */
+
+const DOCKSRC = readFileSync('src/components/DockingSections.jsx', 'utf8');
+
+ok(DOCKSRC.includes("import { archiveRestoreJson, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';"),
+  'DockingSections passe par le mécanisme GÉNÉRAL (aucune restauration maison)');
+ok(DOCKSRC.includes("import { useDriveAutoRestore } from './useDriveAutoRestore';"),
+  '…et par le déclencheur automatique partagé');
+ok(DOCKSRC.includes("const DOCKING_RESTORE_KIND = 'docking';"), 'le type de donnée docking est déclaré une fois');
+ok(DOCKSRC.includes("const dockingDriveCtx = (test = {}, instance = '') => ({"),
+  'le dossier d’archive est le dossier canonique de l’instance');
+ok(/subsection: 'pdb files'/.test(DOCKSRC), '…la même sous-section que les .pdb importés');
+ok(DOCKSRC.includes('stem: instance,'), 'le nom archivé est le nom DÉCLARÉ de l’instance');
+ok(DOCKSRC.includes('structures: Array.isArray(structures) ? structures : [],'),
+  'l’archive porte les STRUCTURES (les textes PDB, qui vivent hors du document)');
+ok(DOCKSRC.includes('molecules: Array.isArray(molecules) ? molecules : [],'), '…et les molécules à docker');
+ok(DOCKSRC.includes('const pointer = await archiveDockingData({'),
+  'l’import d’un répertoire de calcul archive la copie de référence');
+ok(DOCKSRC.includes("field: 'dockingDrive', pointer, key: test.id || 'global',"),
+  '…et pose le pointeur sur l’expérience');
+ok(DOCKSRC.includes('const structs = await loadJson(dockingStructKey).catch(() => null);'),
+  'la restauration regarde la BASE DU NAVIGATEUR (IndexedDB) avant de télécharger');
+ok(DOCKSRC.includes('if (structs.length) await storeJson(dockingStructKey, structs);'),
+  '…et y remet ce qu’elle a restauré (le viewer relit la base)');
+ok(DOCKSRC.includes('if (mols.length) await storeJson(dockingMolKey, mols);'),
+  '…molécules comprises');
+ok(DOCKSRC.includes('const dockingRestore = useDriveAutoRestore({'), 'la page attache le déclencheur automatique');
+ok(DOCKSRC.includes('restore: restoreDockingFromDrive'), '…avec sa restauration métier');
+ok(DOCKSRC.includes('dockingDrive: {'), 'le pointeur de restauration voyage sur l’expérience');
+ok(DOCKSRC.includes("takePendingRestorePointer({ field: 'dockingDrive', key: activeTest.id || 'global' })"),
+  'un pointeur arrivé après un changement d’expérience attend son tour');
+ok(!/dockingDrive[^\n]*localStorage/.test(DOCKSRC), 'aucun pointeur rangé dans le navigateur (il doit voyager)');
+
 /* La mécanique partagée : un déclencheur, un portillon, un événement. */
 ok(HOOKSRC.includes('const forced = reason !== \'open\' && reason !== \'cloud-connected\';'),
   'un essai MANUEL libère la réservation (sinon « Try again » ne ferait rien)');
