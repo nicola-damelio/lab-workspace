@@ -4628,17 +4628,22 @@ export const MolecularStructureSection = ({ ctx }) => {
 
   // Locally-generated structures (no network round trip): idealized protein backbone from
   // sequence + secondary structure (or fully-extended fallback), and a simplified extended
-  // sugar-phosphate backbone trace for DNA/RNA. Only used when the user hasn't provided an
-  // explicit override (structureSrc/pdbId) and there's an actual sequence to build from.
-const generatedStructure = useMemo(() => {
-  if (hasExplicitOverride) {
-    console.log('⚠️ 3D Generation skipped: hasExplicitOverride is true (check PDB ID / Structure Src inputs)');
-    return null;
-  }
-  
+  // sugar-phosphate backbone trace for DNA/RNA.
+  //
+  // LE MODÈLE EST TOUJOURS FABRIQUÉ, même quand un PDB est déclaré plus bas : une
+  // séquence tapée dans « Molecular structure and visualization » doit pouvoir donner
+  // sa structure. Deux sorties, deux rôles :
+  //   • `sequenceStructure` — le modèle déduit de la séquence, disponible en
+  //     permanence ; c'est lui que le viewer 3D sert dès que RIEN n'est chargé dans
+  //     cette section, et que le bouton « 🧬 Build from sequence » (groupe Modify du
+  //     viewer) reconstruit à la demande ;
+  //   • `generatedStructure` — ce que la PAGE sert d'elle-même : quand un PDB est
+  //     déclaré (structureSrc / pdbId / structureFileName), ce PDB gagne et la page
+  //     ne pousse rien, comme avant.
+const sequenceStructure = useMemo(() => {
   try {
     console.log('🔄 3D Generation attempt. moleculeType:', d.moleculeType, 'seq length:', d.seq?.length);
-    
+
     if (d.moleculeType === 'protein' && d.seq) {
       console.log('✅ Generating protein structure...');
       // University test mode: the molecule must NOT fold from the secondary
@@ -4647,19 +4652,27 @@ const generatedStructure = useMemo(() => {
       const ssFor3D = univTestMode ? '' : (activeTest.secondaryStructure || '');
       return { text: proteinSequenceToPdbText(d.seq, ssFor3D, activeTest.name || 'PROTEIN'), ext: 'pdb' };
     }
-    
+
     if ((d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.seq) {
       console.log('✅ Generating nucleic acid structure...');
       return { text: nucleicSequenceToPdbText(d.seq, d.moleculeType, activeTest.name || 'NUCLEIC_ACID'), ext: 'pdb' };
     }
-    
+
     console.log('ℹ️ 3D Generation skipped: No valid sequence provided for this molecule type.');
   } catch (e) {
     console.error('❌ 3D structure generation failed with error:', e);
   }
-  
+
   return null;
-}, [hasExplicitOverride, d.moleculeType, d.seq, activeTest.secondaryStructure, activeTest.name, univTestMode]);
+}, [d.moleculeType, d.seq, activeTest.secondaryStructure, activeTest.name, univTestMode]);
+
+const generatedStructure = useMemo(() => {
+  if (hasExplicitOverride) {
+    console.log('⚠️ 3D Generation not served: hasExplicitOverride is true (check PDB ID / Structure Src inputs) — the declared PDB wins, the sequence model stays one click away in the viewer.');
+    return null;
+  }
+  return sequenceStructure;
+}, [hasExplicitOverride, sequenceStructure]);
 
   // Organic molecules with no override: fetch + validate a real 3D structure ourselves (Cactus,
   // falling back to PubChem) instead of handing NGL a raw URL to fetch on its own -- this is what
@@ -5006,7 +5019,7 @@ const generatedStructure = useMemo(() => {
         <div style={{ display: structureMode === '3d' ? 'block' : 'none' }} aria-hidden={structureMode !== '3d'}>
           {hasOpened3D && (
             <div className="flex flex-col gap-2">
-              <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq) => { if (seq && !activeTest.proteinSequence && ['protein', 'dna', 'rna'].includes(d.moleculeType)) updateActiveTest({ proteinSequence: seq }); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
+              <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq) => { if (seq && !activeTest.proteinSequence && ['protein', 'dna', 'rna'].includes(d.moleculeType)) updateActiveTest({ proteinSequence: seq }); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
               <button onClick={downloadPdbFile} className="self-center mt-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg hover:bg-indigo-100 transition-colors shadow-sm">📥 Download 3D PDB File</button>
               {activeTest.structureFileName && (!structureFile || nmrStructRestore.message) && (
                 <div className="flex flex-wrap items-center justify-center gap-2 text-[11px]">

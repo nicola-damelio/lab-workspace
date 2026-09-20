@@ -32,6 +32,11 @@ const DockingTestRenderer = lazy(() => import('../DockingTestRenderer'));
 const FlowCytometryTestRenderer = lazy(() => import('../FlowCytometryTestRenderer').then(m => ({ default: m.FlowCytometryTestRenderer })));
 const MicroscopyTestRenderer = lazy(() => import('../MicroscopyTestRenderer').then(m => ({ default: m.MicroscopyTestRenderer })));
 
+/* Clé sessionStorage du repli de l'en-tête d'expérience : « ▸ More details » /
+   « ▾ Fewer details ». Le choix suit l'onglet (comme la mémoire « où j'étais »)
+   et survit donc aussi au re-render du 🔄 Refresh. */
+const EXPERIMENT_HEADER_KEY = 'labExperimentHeaderOpen';
+
 export const ActiveTestModule = ({
   activeTestId, additives, allCellLines, allCmpds, appClipboard, buffers,
   cmpColors, compoundMeta, createEmptyTest, currentUser, customCmpds, customConc, customFields,
@@ -41,7 +46,12 @@ export const ActiveTestModule = ({
   setCmpColors, setCurrentModule, setCurrentProjectId,
   setCustomCmpds, setCustomConc, setExpandedGroups, setMoveModal, setTests,
   solvents, storages, testCategories, tests, unlockedTestIds,
-  MDTestRenderer
+  MDTestRenderer,
+  // « 🔄 Refresh » de CETTE page (fourni par App) et l'horodatage du dernier
+  // rafraîchissement : App re-monte le contenu de la page, la barre fine
+  // confirme l'opération, et l'utilisateur ne quitte jamais sa page.
+  onRefreshPage = () => {},
+  refreshedAt = 0
 }) => {
                 const dragInstanceId = React.useRef(null); // dragged instance tab (for reordering)
                 const testNameBeforeEditRef = useRef(null); // Drive-file rename tracking
@@ -51,6 +61,28 @@ export const ActiveTestModule = ({
                 // Switching to a different test resets the toggle (its sections
                 // all start collapsed again).
                 useEffect(() => { setAllSectionsOpen(false); }, [activeTestId]);
+                // ── COLLAPSIBLE experiment chrome ──────────────────────────────
+                // The top bar (identity + identification fields + Date/Conditions)
+                // is worth a third of the screen, so it is FOLDED by default: the
+                // thin bar above keeps ◀ Back, the name, the condition, 🔄 Refresh,
+                // ▸ Expand all and this toggle. The choice is remembered for the
+                // browser session (and therefore survives the 🔄 Refresh re-mount).
+                const [headerOpen, setHeaderOpen] = useState(() => {
+                  try { return sessionStorage.getItem(EXPERIMENT_HEADER_KEY) === '1'; } catch { return false; }
+                });
+                useEffect(() => {
+                  try { sessionStorage.setItem(EXPERIMENT_HEADER_KEY, headerOpen ? '1' : '0'); } catch { /* storage unavailable */ }
+                }, [headerOpen]);
+                // Confirmation of « 🔄 Refresh » : App re-monte le contenu de la
+                // page, cet effet repart donc sur un montage neuf et le message
+                // s'efface tout seul.
+                const [showRefreshDone, setShowRefreshDone] = useState(false);
+                useEffect(() => {
+                  if (!refreshedAt) return undefined;
+                  setShowRefreshDone(true);
+                  const id = setTimeout(() => setShowRefreshDone(false), 2500);
+                  return () => clearTimeout(id);
+                }, [refreshedAt]);
                 const activeTest = tests.find((t) => t.id === activeTestId);
 
                 if (!activeTest) return <div className="p-6">Test not found.</div>;
@@ -292,16 +324,16 @@ export const ActiveTestModule = ({
                    puits rempli. Affiché dans la barre d'identité, jamais bloquant. */
                 const boxIssues = activeTest.type === 'plate-9x9box' ? requiredBoxIssues(activeTest) : [];
 
-const TestHeader = (
-                  <div className="flex flex-col shrink-0 z-20 no-print">
-                    {/* ── Bar 1 — identity + actions on ONE wrapping line ─────
-                        Everything above the plots is chrome: every row the
-                        header adds is a row of plot it takes away, so the name,
-                        the classification chips, “◀ Back” and the action buttons
-                        share ONE line instead of stacking (the wrap only kicks in
-                        on a really narrow window). */}
-                    <div className="bg-white border-b border-slate-200 px-3 md:px-4 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 shadow-sm">
-                      <div className="flex flex-1 min-w-[240px] items-center gap-2 md:gap-3">
+                // Condition (date / instance) currently displayed — shown on the
+                // thin bar so the page still says WHICH condition it shows while
+                // the Date / Conditions strip is folded.
+                const conditionLabel = String(activeTest.instanceName || activeTest.date || '').trim();
+
+                /* « ◀ Back » — returns to where the user came from (project page,
+                   storage, publications…) instead of always the experiment list.
+                   It lives in the THIN BAR, which is always visible, so navigation
+                   stays one click away while the rest of the chrome is folded. */
+                const backButton = (
                         <button
                           onClick={() => {
                             // "◀ Back" returns to where the user came from
@@ -345,7 +377,101 @@ const TestHeader = (
                         >
                           ◀ Back
                         </button>
+                );
 
+const TestHeader = (
+                  <div className="flex flex-col shrink-0 z-20 no-print">
+                    {/* ══ THIN BAR — THE ONLY LINE THAT IS ALWAYS SHOWN ═══════
+                        The chrome of an experiment page (identity, identification
+                        fields, Date / Conditions chips, actions) used to eat a
+                        third of the screen before the first plot ever appeared. It
+                        is COLLAPSIBLE (« ▸ More details ») and folded by default:
+                        this one thin line keeps the way back (◀ Back), the name,
+                        the condition on screen, « 🔄 Refresh », « ▸ Expand all » and
+                        the toggle itself. The open/folded choice is remembered for
+                        the browser session. */}
+                    <div className="bg-white border-b border-slate-200 px-3 md:px-4 py-1 flex flex-wrap items-center gap-x-2 gap-y-1 shadow-sm">
+                      {backButton}
+                      <span
+                        className={`flex-1 min-w-[120px] truncate text-sm font-black ${String(activeTest.name || '').trim() ? 'text-slate-800' : 'text-red-500 italic'}`}
+                        title={isBox ? 'Box name' : 'Experiment name'}
+                      >
+                        {String(activeTest.name || '').trim() || (isBox ? 'Untitled box' : 'Untitled experiment')}
+                      </span>
+                      {conditionLabel && (
+                        <span className="shrink-0 text-[11px] font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-2 py-0.5 whitespace-nowrap" title="Condition (date / instance) shown on this page">
+                          <Icon name="calendar" size={11} className="mr-1 text-blue-700" />{conditionLabel}
+                        </span>
+                      )}
+                      {/* A box that cannot be identified must keep saying so even
+                          while the chrome is folded: the warning lives in the
+                          identification bar below (Bar 2), which is hidden. */}
+                      {boxIssues.length > 0 && (
+                        <span
+                          className="shrink-0 max-w-[260px] truncate text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-300 rounded-lg px-2 py-0.5"
+                          title={`${describeBoxIssues(boxIssues)}\n\nA box must be identifiable: sample name, owner and date — on the box and in every filled well.`}
+                        >
+                          ⚠ {describeBoxIssues(boxIssues)}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={onRefreshPage}
+                        title="Refresh this page: every section, plot, table and 3D viewer is rebuilt from the experiment's data. You STAY on this page — no path to walk back (a reload from the browser bar loses the experiment you were on)."
+                        className="shrink-0 font-bold py-1 px-2 rounded-lg text-xs border border-slate-300 bg-white text-slate-600 shadow-sm hover:bg-slate-50 transition-colors whitespace-nowrap"
+                      >
+                        🔄 Refresh
+                      </button>
+                      {showRefreshDone && (
+                        <span className="shrink-0 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-0.5 whitespace-nowrap">
+                          ✓ page refreshed
+                        </span>
+                      )}
+                      {!isBox && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = !allSectionsOpen;
+                            setAllSectionsOpen(next);
+                            setSectionsCommand(next);
+                          }}
+                          // Stable hook: the Image Builder's "↗ Open original graph"
+                          // opens the page with this button when the captured chart
+                          // sits inside a CLOSED section (it would not be in the DOM
+                          // otherwise, so it could not be scrolled to). Only exposed
+                          // while it would EXPAND the page.
+                          data-expand-all={allSectionsOpen ? undefined : '1'}
+                          className={`shrink-0 font-bold py-1 px-2 rounded-lg text-xs border shadow-sm transition-colors whitespace-nowrap ${allSectionsOpen ? 'bg-slate-100 text-slate-600 border-slate-300 hover:bg-slate-200' : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'}`}
+                          title={allSectionsOpen ? 'Close all sections and subsections' : 'Expand all sections and subsections'}
+                        >
+                          {allSectionsOpen ? '▾ Collapse all' : '▸ Expand all'}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setHeaderOpen((v) => !v)}
+                        aria-expanded={headerOpen}
+                        data-experiment-chrome={headerOpen ? 'open' : 'closed'}
+                        title={headerOpen
+                          ? 'Fold the experiment chrome (name, identification fields, conditions, actions) — the plots get the whole screen'
+                          : 'Show the experiment chrome: name, identification fields (classification, type, date, scientists…), Date / Conditions and the actions (lock, delete)'}
+                        className={`shrink-0 font-bold py-1 px-2 rounded-lg text-xs border shadow-sm transition-colors whitespace-nowrap ${headerOpen ? 'bg-slate-100 text-slate-600 border-slate-300 hover:bg-slate-200' : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'}`}
+                      >
+                        {headerOpen ? '▾ Fewer details' : '▸ More details'}
+                      </button>
+                    </div>
+
+                    {headerOpen && (
+                      <>
+
+                    {/* ── Bar 1 — identity + actions on ONE wrapping line ─────
+                        Everything above the plots is chrome: every row the
+                        header adds is a row of plot it takes away, so the name,
+                        the classification chips, “◀ Back” and the action buttons
+                        share ONE line instead of stacking (the wrap only kicks in
+                        on a really narrow window). */}
+                    <div className="bg-white border-b border-slate-200 px-3 md:px-4 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 shadow-sm">
+                      <div className="flex flex-1 min-w-[240px] items-center gap-2 md:gap-3">
                         <div className="flex flex-1 min-w-[200px] flex-wrap items-center gap-x-2 gap-y-0.5">
                           <input
                             value={activeTest.name}
@@ -451,26 +577,9 @@ const TestHeader = (
                             )}
                           </div>
                         )}
-                        {!isBox && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const next = !allSectionsOpen;
-                              setAllSectionsOpen(next);
-                              setSectionsCommand(next);
-                            }}
-                            // Stable hook: the Image Builder's "↗ Open original graph"
-                            // opens the page with this button when the captured chart
-                            // sits inside a CLOSED section (it would not be in the DOM
-                            // otherwise, so it could not be scrolled to). Only exposed
-                            // while it would EXPAND the page.
-                            data-expand-all={allSectionsOpen ? undefined : '1'}
-                            className={`font-bold py-1 px-2 rounded-lg text-xs border shadow-sm transition-colors ${allSectionsOpen ? 'bg-slate-100 text-slate-600 border-slate-300 hover:bg-slate-200' : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'}`}
-                            title={allSectionsOpen ? 'Close all sections and subsections' : 'Expand all sections and subsections'}
-                          >
-                            {allSectionsOpen ? '▾ Collapse all' : '▸ Expand all'}
-                          </button>
-                        )}
+                        {/* (« ▸ Expand all » now lives in the thin bar at the top
+                            of the page, so it stays reachable while the chrome is
+                            folded — see TestHeader.) */}
                         <button
                           disabled={dataReadOnly}
                           title={dataReadOnly
@@ -867,6 +976,8 @@ const TestHeader = (
                           ⧉ Copy the data to a new instance
                         </button>
                       </div>
+                    )}
+                      </>
                     )}
                   </div>
                 );

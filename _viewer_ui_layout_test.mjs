@@ -103,8 +103,40 @@ has('onClick={handlePdbIdLoad}', '[§1] bouton Load');
 has('📂 Trajectory', '[§1] bouton Trajectory');
 has('if (f) handleTrajFileChosen(f);', '[§1] …branché sur handleTrajFileChosen');
 has('onClick={handleClearViewer}', '[§1] bouton Clear');
+/* 🗑 Delete PDB / ↩ Restore PDB — UN bouton, deux états : le PDB chargé dans
+   CETTE section est mis de côté (jamais perdu : le même bouton le ressuscite,
+   sa trajectoire avec lui) et la structure de la séquence de la page reprend la
+   place pendant ce temps. */
+has("const [structOrigin, setStructOrigin] = useState('none');", '[§1] le viewer sait ce qui est à l\'écran (rien / PDB chargé / modèle de la séquence)');
+has('const [stashedPdb, setStashedPdb] = useState(null);', '[§1] le PDB mis de côté est gardé — rien n\'est perdu');
+has("const pdbAsideIsRestore = !!stashedPdb && structOrigin !== 'external';", '[§1] le bouton suit l\'état réel (deux libellés)');
+has('onClick={pdbAsideIsRestore ? restoreStashedPdb : deleteLoadedPdb}', '[§1] un seul bouton : 🗑 Delete PDB ⇄ ↩ Restore PDB');
+has("'↩ Restore PDB' : '🗑 Delete PDB'", '[§1] …avec ses deux libellés');
+has('const deleteLoadedPdb = () => {', '[§1] suppression du PDB chargé');
+has('const restoreStashedPdb = () => {', '[§1] …et sa résurrection');
+has('const stash = pdbSourceOfCurrent();', '[§1] la source mise de côté (fichier / URL / texte + trajectoire)');
+has('if (traj) setTrajFile(traj);', '[§1] la trajectoire du PDB rangé revient AVEC lui');
+has('file: (!text && stashedFile) ? stashedFile : null,', '[§1] la résurrection repasse par l\'entonnoir habituel (fichier / URL / texte)');
+has("setStructOrigin('external');", '[§1] un chargement (fichier / URL / src de la page) marque une structure « chargée »');
+has("setStructOrigin('generated');", '[§1] …et le modèle déduit de la séquence a son propre marqueur');
+has("setStructAsideMsg('');", '[§1] « 🗑 Clear » efface aussi le PDB rangé et son message');
 has('onClick={captureScene}', '[§1] bouton Figure');
 has('{captureMsg && (', '[§1] message de capture');
+// ⬇ PDB — le PDB de CE QUI EST AFFICHÉ : le PdbWriter de NGL lit les atomes de
+// la structure avec les coordonnées de la frame courante de la trajectoire.
+has('onClick={downloadFramePdb}', '[§1] bouton ⬇ PDB');
+has('const downloadFramePdb = async () => {', '[§1] …son implémentation');
+has('const writer = new NS.PdbWriter(structure);', '[§1] le fichier est écrit par le PdbWriter de NGL (coordonnées AFFICHÉES)');
+has('? `Download a PDB file of the frame displayed right now (frame ${toActualFrame(currentFrame)} of ${numFrames})', '[§1] l’infobulle nomme la frame en cours');
+has('const name = frameNo >= 0 ? `${base}_frame_${frameNo}.pdb` : `${base}.pdb`;', '[§1] le nom du fichier porte le numéro de frame');
+// Hauteur du canevas : RÉGLABLE (poignée de redimensionnement) mais réduite
+// d’un TIERS à l’ouverture d’une page (1000 px → 667 px, 1100 px → 733 px).
+has('const OPEN_HEIGHT_FACTOR = 2 / 3;', '[§0] la hauteur d’ouverture est réduite d’un tiers');
+has('return Math.max(240, Math.round(wanted * OPEN_HEIGHT_FACTOR));', '[§0] …appliquée à la hauteur demandée par la page');
+has('onMouseDown={(e) => { resizeRef.current = { startY: e.clientY, startH: viewH }; e.preventDefault(); }}', '[§0] …la poignée de redimensionnement reste intacte');
+// La phrase « Clipping Off = camera bounds… » n’existe plus (elle prenait de la
+// place ; le bouton « ↺ No cut (0 · 100000 · 0 Å) » et son infobulle suffisent).
+gone('Clipping Off = camera bounds at the extremes', '[§3] la phrase sur le clipping est supprimée');
 
 /* ── 4. §2 : docking, hide everything, cinq menus ───────────────────────── */
 has('{(moleculeType === \'protein\' || extraMols.length > 0 || dockStyleMode) && (', '[§2] contrôle Docking conservé');
@@ -116,9 +148,17 @@ has('{hideAll ? \'👁️ Show default\' : \'🙈 Hide everything\'}', '[§2] Hi
 has('label="A · Proteins"', '[§2] menu A · Proteins');
 has('label="B · Nucleic acids"', '[§2] menu B · Nucleic acids');
 has('label="C · Lipids"', '[§2] menu C · Lipids');
-has('label="D · Sugars (carbohydrates)"', '[§2] menu D · Sugars');
-has('label="E · Organic molecules (ligands)"', '[§2] menu E · Organic molecules');
-has('label="F · Others (ions · solvent / water)"', '[§2] menu F · Others');
+has('label="D · Sugars"', '[§2] menu D · Sugars (nom raccourci)');
+has('label="E · Ligands"', '[§2] menu E · Ligands (nom raccourci)');
+has('label="F · Others · water"', '[§2] menu F · Others (nom raccourci)');
+// Les six menus sont alignés HORIZONTALEMENT : une GRILLE responsive (elle
+// retombe sur une colonne quand ça ne rentre pas) et un en-tête sur DEUX
+// lignes (nom court au-dessus, résumé limité à deux lignes) au lieu d'un
+// bandeau pleine largeur par menu.
+has('grid-cols-[repeat(auto-fit,minmax(17rem,1fr))]', '[§2] les menus A–F sont alignés dans une grille');
+has('className="w-full grid gap-1 items-start grid-cols-[repeat(auto-fit,minmax(17rem,1fr))]"', '[§2] …une cellule par menu (items-start = les menus fermés restent compacts)');
+has('className={`w-full flex flex-col rounded-lg border ${open ? tone.on : tone.off}`}', '[§2] chaque menu occupe sa cellule');
+has('break-words line-clamp-2', '[§2] le résumé d’un menu tient sur deux lignes au maximum');
 
 /* ── 5. Les listes d'options demandées, menu par menu ───────────────────── */
 // A · Proteins
@@ -217,6 +257,21 @@ has('const routeCategorySelections = (sels, moleculeType) => {', '[rendu] UNE fo
 has('onClick={() => setDragMove((v) => !v)}', '[conservé] ✋ Drag');
 has('onClick={rebuildHydrogensNow}', '[conservé] ⚗️ Rebuild H');
 has('onClick={() => setShowAtomPanel((v) => !v)}', '[conservé] ✏️ panneau Atom names (renommage)');
+/* ── La SÉQUENCE de la page donne sa structure ──────────────────────────────
+   Une séquence tapée dans « Molecular structure and visualization » (sous-
+   section Proteins / DNA / RNA) doit montrer son modèle dès que RIEN n'est
+   chargé dans cette section : la page le fournit par `sequenceStructureText`,
+   le bouton « 🧬 From sequence » du groupe Modify le reconstruit à la demande,
+   et un PDB déjà chargé est rangé (↩ Restore PDB), jamais écrasé. */
+has('sequenceStructureText = null,', '[séquence] le modèle déduit de la séquence arrive par la page');
+has('sequenceStructureExt = null,', '[séquence] …avec son extension (pdb / sdf)');
+has("if (structOrigin === 'external') return;   // un PDB chargé par l'utilisateur occupe l'écran", '[séquence] un PDB chargé garde la priorité');
+has('if (sequenceStructureText === lastLoadedTextRef.current) return;', '[séquence] …et le modèle n\'est jamais rechargé deux fois');
+has("requestStructureLoad({ file: null, url: null, text: sequenceStructureText, ext: sequenceStructureExt || 'pdb', ts: Date.now() });", '[séquence] il passe par l\'entonnoir habituel (styles, séquence, tables d\'atomes)');
+has('onClick={buildFromSequence}', '[modify] bouton 🧬 From sequence');
+has('disabled={!sequenceStructureText}', '[modify] …inactif tant qu\'aucune séquence n\'est saisie');
+has('const buildFromSequence = () => {', '[modify] …son implémentation (le PDB affiché est rangé, jamais perdu)');
+has('🧬 From sequence', '[modify] libellé du bouton');
 has('onClick={autoNameFrom2D}', '[conservé] auto-nommage depuis la 2D');
 has('onClick={toggleMeasureMode}', '[conservé] 📏 Measure');
 has('onClick={clearMeasurements}', '[conservé] ✕ Clear distances');
@@ -230,7 +285,13 @@ has('onClick={applyRenumberFrom}', '[conservé] « Renumber from »');
 has('helix: parseInt(e.target.value.slice(1), 16)', '[conservé] couleurs 2° structure (hélices)');
 has('onChange={(e) => setAssignedAtomColor(parseInt(e.target.value.slice(1), 16))}', '[conservé] couleur des atomes assigned');
 has('onClick={() => setViewerCollapsed((v) => !v)}', '[conservé] repli de la fenêtre 3D');
-has('onClick={useFullDetail}', '[conservé] ✨ Full detail (grands systèmes)');
+// Le bouton « ✨ Full detail » (et son helper) est SUPPRIMÉ : cliquer dessus
+// figeait la visualisation d’un gros système. Le mode léger reste le seul
+// rendu possible d’un tel système — c’est ce qui permet de l’afficher du tout.
+gone('onClick={useFullDetail}', '[supprimé] le bouton ✨ Full detail n’est plus rendu');
+gone('const useFullDetail', '[supprimé] …ni son helper de bascule');
+has('there is no « ✨ Full detail » escape hatch any more', '[supprimé] …et le code explique pourquoi');
+has('There is no « ✨ Full detail » button any', '[supprimé] le bandeau « large structure » ne le propose plus');
 has('onClick={togglePlay}', '[conservé] ▶ Play de la trajectoire');
 has('onChange={(e) => setExtraMolStyle(m.id, e.target.value)}', '[conservé] style par molécule (barre Molecules)');
 has('onClick={applyActiveStyleToAll}', '[conservé] 🎨 Copy de la barre Molecules');

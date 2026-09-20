@@ -1332,8 +1332,11 @@ const VSection = ({ title, hint, right = null, children }) => (
   </section>
 );
 
-// One accordion menu of §2 (A–E). The header always shows the CURRENT summary of
-// the menu, so a closed menu still tells what it does.
+// One accordion menu of §2 (A–F). The header stacks the SHORT menu name over
+// the CURRENT summary, so the six menus line up horizontally in the §2 grid
+// (their names have very different lengths): the name wraps on two lines
+// instead of being cut, and the summary is clamped to two lines — that is what
+// keeps every closed header the same, small height.
 const VMenu = ({ open, onToggle, id, label, summary, accent = 'blue', children }) => {
   const tone = {
     blue: { on: 'border-blue-400 bg-blue-50/60', off: 'border-slate-200 bg-white', text: 'text-blue-800' },
@@ -1344,12 +1347,14 @@ const VMenu = ({ open, onToggle, id, label, summary, accent = 'blue', children }
     rose: { on: 'border-rose-400 bg-rose-50/60', off: 'border-slate-200 bg-white', text: 'text-rose-800' },
   }[accent] || {};
   return (
-    <div className={`w-full rounded-lg border ${open ? tone.on : tone.off}`}>
-      <button type="button" id={id} onClick={onToggle}
-        className={`w-full flex items-center gap-2 px-1.5 py-0.5 text-left ${tone.text}`}>
-        <span className="text-[11px] font-black whitespace-nowrap">{label}</span>
-        <span className="text-[10px] font-bold text-slate-500 truncate flex-1 text-left">{summary}</span>
-        <span className="text-[10px] font-black shrink-0">{open ? '▲' : '▼'}</span>
+    <div className={`w-full flex flex-col rounded-lg border ${open ? tone.on : tone.off}`}>
+      <button type="button" id={id} onClick={onToggle} title={summary}
+        className={`w-full flex items-start gap-1 px-1.5 py-0.5 text-left ${tone.text}`}>
+        <span className="flex-1 min-w-0 flex flex-col">
+          <span className="text-[11px] font-black leading-tight break-words">{label}</span>
+          <span className="text-[10px] font-bold text-slate-500 leading-tight break-words line-clamp-2">{summary}</span>
+        </span>
+        <span className="text-[10px] font-black shrink-0 leading-tight">{open ? '▲' : '▼'}</span>
       </button>
       {open && <div className="flex flex-col gap-1 px-1.5 pb-1.5">{children}</div>}
     </div>
@@ -1379,6 +1384,13 @@ const NMRMoleculeViewer = ({
 src,
 structureText,
 structureTextExt,
+// Structure built by the PAGE from the sequence typed on it (protein / DNA /
+// RNA). It is served whenever the viewer has NOTHING loaded of its own — a
+// sequence entered in the page must show its model — and it is rebuilt on
+// demand by « 🧬 Build from sequence » (Modify group). A PDB the user loaded
+// still wins on screen; the model simply stays one click away.
+sequenceStructureText = null,
+sequenceStructureExt = null,
 externalLoading = false,
 externalError = null,
 structureFileData,
@@ -1410,9 +1422,15 @@ onStructureSequence,
 height = '520px',
 }) => {
 // 3D viewport height — the viewer is RESIZABLE via the drag handle below it.
+// OPENING A PAGE starts the canvas a THIRD SHORTER than the height the page
+// asks for (NMR asks 1000 px, DNA/RNA 1100 px): the command bars above and the
+// plots below then all fit on screen, and the drag handle still sets whatever
+// the user wants for that page — the adjustable height itself is unchanged.
+const OPEN_HEIGHT_FACTOR = 2 / 3;   // −1/3 at page open
 const [viewH, setViewH] = useState(() => {
   const m = /^(\d+)/.exec(String(height || '520px'));
-  return m ? Math.max(240, parseInt(m[1], 10)) : 520;
+  const wanted = m ? parseInt(m[1], 10) : 520;
+  return Math.max(240, Math.round(wanted * OPEN_HEIGHT_FACTOR));
 });
 const resizeRef = useRef(null); // { startY, startH } while dragging
 
@@ -1427,6 +1445,8 @@ const [viewerCollapsed, setViewerCollapsed] = useState(false);
 // current styles are, so a closed section is never silent).
 const [stylingOpen, setStylingOpen] = useState(false);
 const [captureMsg, setCaptureMsg] = useState('');
+// Message of the §1 « ⬇ PDB » button (structure / current-frame snapshot).
+const [pdbMsg, setPdbMsg] = useState('');
 useEffect(() => {
   const move = (ev) => {
     if (!resizeRef.current) return;
@@ -1694,7 +1714,10 @@ useEffect(() => {
 // ---- Lightweight-rendering mode (large structures) -------------------------
 // Large systems (protein in membrane + explicit solvent) are rendered in FULL
 // but with lightweight instanced representations so the browser stays
-// responsive. This flag simply switches the DEFAULT representation set.
+// responsive. This flag simply switches the DEFAULT representation set, and
+// there is no « ✨ Full detail » escape hatch any more: rebuilding the category
+// representations of a ~130 000-atom system froze the page, so such a system
+// stays in this mode (see the §2 → F · Others « Large system » row).
 const [lightRender, setLightRender] = useState(false);  // true → lightweight reps for big systems
 const [lightInfo, setLightInfo] = useState(null);       // { nAtoms, size } → small info line
 const lightRenderRef = useRef(false);                   // synchronous mirror for addDefaultReps / sidechain effect
@@ -1736,11 +1759,11 @@ useEffect(() => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [lightRender, largeStyle, showLargeWater, status]);
 
-const useFullDetail = () => {
-  lightRenderRef.current = false;
-  setLightRender(false);
-  setLightInfo(null);
-};
+// (The former « ✨ Full detail » helper lived here: it switched a large system
+// back to the category representations. On a 100 000-atom MD system that
+// rebuild froze the page, so the button AND its logic were removed — a large
+// structure simply stays in the lightweight mode described by the §2 →
+// F · Others « Large system » row.)
 const [renameMode, setRenameMode] = useState(false);
 const [renameTarget, setRenameTarget] = useState(null); // atom index being renamed
 const [renameDraft, setRenameDraft] = useState('');
@@ -2290,6 +2313,40 @@ const loadedPdbTextRef = useRef(null); // raw PDB text of the currently loaded s
 const lastSeenSrcRef = useRef(undefined);
 const lastSeenTextRef = useRef(undefined);
 
+// ── WHAT IS ON SCREEN, AND WHERE IT CAME FROM ────────────────────────────────
+//   'none'      nothing (empty viewer)
+//   'external'  a structure the user LOADED (file, PDB ID / URL, file or src
+//               handed over by the page)
+//   'generated' the model built from the sequence typed on the page
+// It drives the « 🗑 Delete PDB / ↩ Restore PDB » toggle of §1 General and lets
+// the sequence model come back by itself whenever the viewer is empty.
+const [structOrigin, setStructOrigin] = useState('none');
+// The PDB put aside by « 🗑 Delete PDB »: everything needed to bring it back
+// (file / URL / text, its extension and name) plus the trajectory that goes
+// with it.
+const [stashedPdb, setStashedPdb] = useState(null);
+// Feedback of the two new gestures — « 🗑 Delete / ↩ Restore PDB » (§1 General)
+// and « 🧬 Build from sequence » (Modify group). Each one times out on its own.
+const [structAsideMsg, setStructAsideMsg] = useState('');
+const structAsideTimerRef = useRef(null);
+const flashStructAsideMsg = (m) => {
+  setStructAsideMsg(m);
+  clearTimeout(structAsideTimerRef.current);
+  structAsideTimerRef.current = setTimeout(() => setStructAsideMsg(''), 6000);
+};
+const [seqBuildMsg, setSeqBuildMsg] = useState('');
+const seqBuildTimerRef = useRef(null);
+const flashSeqBuildMsg = (m) => {
+  setSeqBuildMsg(m);
+  clearTimeout(seqBuildTimerRef.current);
+  seqBuildTimerRef.current = setTimeout(() => setSeqBuildMsg(''), 6000);
+};
+// The « 🗑 Delete PDB / ↩ Restore PDB » toggle of §1 General: the button DELETES
+// while a PDB the user loaded is on screen, and RESTORES once that PDB has been
+// put aside (and nothing else has taken its place on screen since).
+const pdbAsideIsRestore = !!stashedPdb && structOrigin !== 'external';
+const pdbAsideVisible = structOrigin === 'external' || !!stashedPdb;
+
 useEffect(() => {
 if (src !== lastSeenSrcRef.current) {
 lastSeenSrcRef.current = src;
@@ -2322,6 +2379,7 @@ try {
 } catch { /* keep going */ }
 clearExtraMolecules();
 setManualOverride(true);
+setStructOrigin('external');
 setFile(null);
 try {
 const [meta, b64] = String(structureFileData).split(',');
@@ -2354,6 +2412,7 @@ try {
 } catch { /* keep going */ }
 clearExtraMolecules();
 setManualOverride(true);
+setStructOrigin('external');
 setFile(null);
 requestStructureLoad({ file: structureFile, url: null, ts: Date.now() });
 // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2400,9 +2459,35 @@ if (structureText !== lastLoadedTextRef.current) {
 lastLoadedTextRef.current = structureText;
 clearExtraMolecules();
 setFile(null);
+setStructOrigin('generated');
 requestStructureLoad({ file: null, url: null, text: structureText, ext: structureTextExt || 'pdb', ts: Date.now() });
 }
 }, [structureText, structureTextExt, manualOverride, clearExtraMolecules, src, structureFile, structureFileData]);
+
+/* ── LA STRUCTURE DE LA SÉQUENCE, QUAND RIEN N'EST CHARGÉ ────────────────────
+   Une séquence tapée dans la page (« Molecular structure and visualization »,
+   sous-section Proteins / DNA / RNA) doit donner sa structure, exactement comme
+   une structure qu'on charge : la page fournit ce modèle en permanence
+   (`sequenceStructureText`) et le viewer ne s'en sert que si RIEN d'autre
+   n'occupe l'écran. Toute autre source garde la priorité :
+     • le texte servi par la page est chargé par l'effet ci-dessus (déclaré
+       AVANT celui-ci, il pose `lastLoadedTextRef`) ;
+     • un PDB déclaré (`src`), un fichier (`structureFile` / `structureFileData`)
+       a son propre effet, déclaré APRÈS : c'est lui qui gagne le `loadRequest`
+       quand plusieurs sources arrivent dans le même rendu.
+   Le modèle suit aussi la séquence : éditer la séquence pendant qu'il est à
+   l'écran le reconstruit, et « 🧬 Build from sequence » (groupe Modify) le
+   redemande à tout moment. */
+useEffect(() => {
+  if (structOrigin === 'external') return;   // un PDB chargé par l'utilisateur occupe l'écran
+  if (!sequenceStructureText) return;        // pas de séquence sur la page : rien à bâtir
+  if (sequenceStructureText === lastLoadedTextRef.current) return;  // c'est DÉJÀ ce modèle qui est affiché
+  if (loadRequest && loadRequest.text === sequenceStructureText) return;  // …ou il est en train de charger
+  lastLoadedTextRef.current = sequenceStructureText;
+  setStructOrigin('generated');
+  console.log('🧬 Nothing loaded in the viewer — showing the structure built from the page sequence.');
+  requestStructureLoad({ file: null, url: null, text: sequenceStructureText, ext: sequenceStructureExt || 'pdb', ts: Date.now() });
+}, [structOrigin, sequenceStructureText, sequenceStructureExt, loadRequest]);
 
 useEffect(() => {
 if (!src) return;
@@ -2424,6 +2509,7 @@ if (!src) return;
   lastAskedSrcRef.current = s;
   setFile(null);
   clearExtraMolecules();
+  setStructOrigin('external');
   setLoadRequest({ file: null, url: src, ts: Date.now() });
 }, [src, clearExtraMolecules]);
 
@@ -3461,6 +3547,48 @@ const idx = parseInt(e.target.value, 10);
 if (Number.isNaN(idx)) return;
 setCurrentFrame(idx);
 setFrameSafe(trajRef.current, toActualFrame(idx));
+};
+
+// ---- ⬇ PDB of the structure / of the frame ON SCREEN -----------------------
+// §1 · General. NGL's own PdbWriter walks the atoms of the loaded structure and
+// writes the coordinates NGL is displaying RIGHT NOW — AtomProxy x/y/z follow
+// the active trajectory frame — together with resname / chain / resno /
+// element / occupancy, so the file is exactly the picture on screen (one MD
+// snapshot) and can be re-opened in PyMOL, VMD or back in this viewer. Without
+// a trajectory it simply saves the loaded structure. The frame number is both
+// written in the REMARK lines and appended to the file name.
+const downloadFramePdb = async () => {
+  const component = componentRef.current;
+  const structure = component && component.structure;
+  if (!structure) {
+    setPdbMsg('⚠️ Load a structure first');
+    return;
+  }
+  const onFrame = !!trajRef.current;
+  const frameNo = onFrame ? toActualFrame(currentFrame) : -1;
+  try {
+    const NS = await ensureNGL();
+    const writer = new NS.PdbWriter(structure);
+    const text = writer.getData();
+    const base = String(
+      (file && file.name) || (structure.name || '') || trajectoryName || 'structure'
+    ).replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_') || 'structure';
+    const name = frameNo >= 0 ? `${base}_frame_${frameNo}.pdb` : `${base}.pdb`;
+    const blob = new Blob([text], { type: 'chemical/x-pdb' });
+    const url = URL.createObjectURL(blob);
+    blobUrlsRef.current.push(url); // released with the viewer's other blob URLs
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setPdbMsg(frameNo >= 0
+      ? `⬇ ${name} — frame ${frameNo} of ${numFrames}`
+      : `⬇ ${name}`);
+  } catch (err) {
+    setPdbMsg(`⚠️ ${(err && err.message) || 'Could not write the PDB file'}`);
+  }
 };
 
 // ---- Large-trajectory confirmation ----------------------------------------
@@ -4682,6 +4810,7 @@ const loadExtraStructureFile = useCallback(async (file) => {
 const doReplaceLoad = useCallback((files) => {
   clearExtraMolecules();
   setManualOverride(true);
+  setStructOrigin('external');
   setTrajFile(null);
   const [first, ...rest] = files;
   setFile(first);
@@ -4772,6 +4901,7 @@ const doReplaceSrc = useCallback((rawSrc) => {
   setPendingSrc(null);
   clearExtraMolecules();
   setManualOverride(true);
+  setStructOrigin('external');
   setFile(null);
   setTrajFile(null);
   requestStructureLoad({ file: null, url: rawSrc, ts: Date.now() });
@@ -4832,6 +4962,7 @@ if (componentRef.current && statusRef.current === 'ready' && lastAskedSrcRef.cur
 }
 clearExtraMolecules();
 setManualOverride(true);
+setStructOrigin('external');
 setFile(null);
 setTrajFile(null);
 setLoadRequest({ file: null, url: value, ts: Date.now() });
@@ -4862,6 +4993,15 @@ const handleClearViewer = () => {
   loadedPdbTextRef.current = null;
   setPdbId('');
   setLoadRequest(null);
+  // « 🗑 Clear » vide le viewer POUR DE BON : un PDB rangé par « 🗑 Delete PDB »
+  // est oublié lui aussi (rien ne « revient tout seul »). La page reprend la
+  // main : sa structure générée — ou le modèle de sa séquence — est resservi,
+  // exactement comme si l'on ouvrait la page pour la première fois.
+  setStructOrigin('none');
+  setStashedPdb(null);
+  setStructAsideMsg('');
+  setManualOverride(false);
+  lastLoadedTextRef.current = null;
   setStatus('idle');
   setErrorMsg('');
   setResidueTicks([]);
@@ -4886,6 +5026,135 @@ const handleClearViewer = () => {
   setExtraMols([]);
   setVisibleMolKeys(new Set(['main']));
   try { if (stageRef.current && typeof stageRef.current.handleResize === 'function') stageRef.current.handleResize(); } catch {}
+};
+
+/* ── §1 General · « 🗑 Delete PDB » / « ↩ Restore PDB » ──────────────────────
+   Un PDB chargé ici (fichier, PDB ID / URL, fichier fourni par la page) peut
+   être RETIRÉ du viewer sans rien perdre : sa source est mise de côté et le
+   même bouton le RESSUSCITE ensuite — le fichier / l'URL / le texte repasse par
+   l'entonnoir habituel (donc les styles, la séquence, les tables d'atomes se
+   reconstruisent comme pour n'importe quel chargement) et la trajectoire qui
+   allait avec revient avec lui. Dès que le PDB est rangé, la structure de la
+   séquence de la page reprend sa place : c'est le geste « je veux voir le
+   modèle, pas le PDB ». */
+const pdbSourceOfCurrent = () => {
+  const source = loadRequest || {};
+  const traj = trajFile || trajectoryFile || null;
+  const ext = source.ext && String(source.ext).toLowerCase() !== 'auto'
+    ? String(source.ext).toLowerCase()
+    : 'pdb';
+  return {
+    file: source.file || file || structureFile || null,
+    url: (!source.file && (source.url || lastAskedSrcRef.current)) || null,
+    text: source.text || loadedPdbTextRef.current || null,
+    ext,
+    name: (source.file && source.file.name) || structureFileName || (source.url ? String(source.url) : '') || 'the loaded structure',
+    traj,
+    trajName: (traj && traj.name) || '',
+  };
+};
+
+const deleteLoadedPdb = () => {
+  if (structOrigin !== 'external') return;
+  const stash = pdbSourceOfCurrent();
+  if (!stash.file && !stash.url && !stash.text) {
+    flashStructAsideMsg('⚠️ Nothing to put aside — load a PDB with 📂 PDB file(s) or a PDB ID / URL first.');
+    return;
+  }
+  abortControl.abortAll();
+  clearExtraMolecules();
+  try { if (stageRef.current) stageRef.current.removeAllComponents(); } catch {}
+  clearMeasurements();          // distance lines belong to the removed components
+  espResetAll();                // …and so do the ⚡ ESP overlays
+  componentRef.current = null;
+  highlightCompRef.current = null;
+  manualHighlightCompRef.current = null;
+  stripHighlightCompRef.current = null;
+  stripResidueRiRef.current = null;
+  labelCompRef.current = null;
+  sidechainCompRef.current = null;
+  loadedPdbTextRef.current = null;
+  lastLoadedTextRef.current = null;
+  setFile(null);
+  setPdbId('');
+  setLoadRequest(null);
+  setStatus('idle');
+  setErrorMsg('');
+  setSelections([]);
+  setResidueTicks([]);
+  setHasNonProtein(false);
+  setCatInfo(null);
+  setTrajFile(null);            // the trajectory goes with the PDB (kept in the stash)
+  setTrajStatus('none');
+  setNumFrames(0);
+  setCurrentFrame(0);
+  setPlaying(false);
+  setManualOverride(false);     // the page may serve its own structure again
+  setStashedPdb(stash);
+  if (sequenceStructureText) {
+    // The sequence typed on the page takes the PDB's place, right away.
+    lastLoadedTextRef.current = sequenceStructureText;
+    setStructOrigin('generated');
+    requestStructureLoad({ file: null, url: null, text: sequenceStructureText, ext: sequenceStructureExt || 'pdb', ts: Date.now() });
+    flashStructAsideMsg(`🗑 ${stash.name} deleted — the structure built from the sequence is shown instead. Click ↩ Restore PDB to bring it back.`);
+  } else {
+    setStructOrigin('none');
+    flashStructAsideMsg(`🗑 ${stash.name} deleted — click ↩ Restore PDB to bring it back.`);
+  }
+  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
+};
+
+const restoreStashedPdb = () => {
+  if (!stashedPdb) return;
+  const { file: stashedFile, url, text, ext, name, traj } = stashedPdb;
+  abortControl.abortAll();
+  clearExtraMolecules();
+  lastLoadedTextRef.current = null;
+  setManualOverride(true);
+  setStructOrigin('external');
+  setFile(stashedFile || null);
+  setPdbId(url || '');
+  setStashedPdb(null);
+  // Les OCTETS affichés gagnent sur le fichier d'origine : un jeu d'hydrogènes
+  // reconstruit (⚗️ Rebuild H) ou un PDB retouché revient tel qu'il était.
+  requestStructureLoad({
+    file: (!text && stashedFile) ? stashedFile : null,
+    url: (!text && !stashedFile) ? (url || null) : null,
+    text: text || null,
+    ext: ext || 'pdb',
+    ts: Date.now(),
+  });
+  // Sa trajectoire revient avec lui : l'effet de trajectoire la rattache dès que
+  // la structure est « ready ».
+  if (traj) setTrajFile(traj);
+  flashStructAsideMsg(`↩ ${name} restored${traj ? ` with its trajectory (${traj.name || 'trajectory'})` : ''}.`);
+};
+
+/* ── ✏️ Modify · « 🧬 Build from sequence » ──────────────────────────────────
+   Reconstruit la structure À PARTIR DE LA SÉQUENCE tapée dans la page, à tout
+   moment — même quand un PDB est chargé : le PDB est alors rangé (mêmes règles
+   que « 🗑 Delete PDB ») et le bouton ↩ Restore PDB de §1 General le ramène. Le
+   texte est fabriqué par la page (proteinSequenceToPdbText /
+   nucleicSequenceToPdbText) : aucun aller-retour réseau. */
+const buildFromSequence = () => {
+  if (!sequenceStructureText) {
+    flashSeqBuildMsg('⚠️ No sequence on this page — type the Protein / DNA / RNA sequence in “Molecular structure and visualization” first.');
+    return;
+  }
+  if (structOrigin === 'external' && !stashedPdb) {
+    const stash = pdbSourceOfCurrent();
+    if (stash.file || stash.url || stash.text) setStashedPdb(stash);
+  }
+  abortControl.abortAll();
+  clearExtraMolecules();
+  setFile(null);
+  setPdbId('');
+  setManualOverride(false);
+  setStructOrigin('generated');
+  lastLoadedTextRef.current = sequenceStructureText;
+  requestStructureLoad({ file: null, url: null, text: sequenceStructureText, ext: sequenceStructureExt || 'pdb', ts: Date.now() });
+  const atoms = (sequenceStructureText.match(/^(ATOM|HETATM)/gm) || []).length;
+  flashSeqBuildMsg(`🧬 Structure rebuilt from the sequence — ${atoms.toLocaleString()} atoms, ${sequenceStructureText.length.toLocaleString()} PDB characters.`);
 };
 
 // ---- Abort the current long-running operation (vertical-bar / global Stop) ----
@@ -5135,6 +5404,23 @@ className="hidden"
 {(trajFile || trajectoryFile).name}
 </span>
 )}
+{/* ⬇ PDB — the structure as a file, with the coordinates of the frame the
+    ▶ playback bar is displaying right now (a trajectory snapshot); without a
+    trajectory it simply saves the loaded structure. See downloadFramePdb. */}
+<button
+type="button"
+onClick={downloadFramePdb}
+disabled={status !== 'ready'}
+title={trajStatus === 'ready'
+  ? `Download a PDB file of the frame displayed right now (frame ${toActualFrame(currentFrame)} of ${numFrames}) — the structure's own names / residues / chains with the coordinates of that snapshot`
+  : 'Download the loaded structure as a PDB file (load a trajectory to save the frame on screen instead)'}
+className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-teal-300 text-teal-700 hover:bg-teal-50 disabled:opacity-40 disabled:cursor-not-allowed"
+>
+⬇ PDB{trajStatus === 'ready' ? ' (frame)' : ''}
+</button>
+{pdbMsg && (
+<span className="text-[10px] font-bold text-teal-700 bg-teal-50 border border-teal-200 rounded-md px-2 py-1 max-w-[320px] truncate" title={pdbMsg}>{pdbMsg}</span>
+)}
 {(file || residueTicks.length > 0 || extraMols.length > 0 || trajFile || trajectoryFile || status === 'ready' || status === 'loading' || status === 'error') && (
 <button
 type="button"
@@ -5144,6 +5430,26 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 >
 🗑 Clear
 </button>
+)}
+{/* 🗑 Delete PDB / ↩ Restore PDB — ONE button, two states: it removes the PDB
+    loaded in THIS section (nothing else: the trajectory goes with it) and, once
+    the PDB is aside, it brings it back EXACTLY as it was. Deleting a PDB when a
+    sequence is typed on the page shows the structure built from that sequence
+    instead — the usual « I want the model, not the PDB » gesture. */}
+{pdbAsideVisible && (
+<button
+type="button"
+onClick={pdbAsideIsRestore ? restoreStashedPdb : deleteLoadedPdb}
+title={pdbAsideIsRestore
+  ? `Bring back ${(stashedPdb && stashedPdb.name) || 'the PDB'} that was deleted — the file / URL / model is loaded again, with the trajectory it had.`
+  : 'Remove the PDB loaded in this section (nothing is lost: the button then says ↩ Restore PDB and brings it back as it was). If a sequence is typed on the page, its own structure is shown in the meantime.'}
+className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${pdbAsideIsRestore ? 'bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50' : 'bg-white border-red-300 text-red-600 hover:bg-red-50'}`}
+>
+{pdbAsideIsRestore ? '↩ Restore PDB' : '🗑 Delete PDB'}
+</button>
+)}
+{structAsideMsg && (
+<span className="text-[10px] font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-md px-2 py-1 max-w-[380px] truncate" title={structAsideMsg}>{structAsideMsg}</span>
 )}
 <button
 type="button"
@@ -5215,6 +5521,13 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
   title="Hide every representation of the whole scene (all molecules, side chains, selections, ESP surfaces). Click again to restore them exactly as the styling menus describe.">
   {hideAll ? '👁️ Show default' : '🙈 Hide everything'}
 </button>
+
+{/* ── The SIX menus, aligned HORIZONTALLY ───────────────────────────────
+    A responsive grid instead of one full-width banner per row: the headers
+    line up in columns (as many as fit a 17 rem column) and each one stacks
+    its short name over its summary, so nothing has to be cut. On a narrow
+    window the grid degrades to a single column, exactly as before. */}
+<div className="w-full grid gap-1 items-start grid-cols-[repeat(auto-fit,minmax(17rem,1fr))]">
 
 {/* ── A · Proteins ─────────────────────────────────────────────────────── */}
 <VMenu open={openMenu === 'protein'} onToggle={() => setOpenMenu(openMenu === 'protein' ? null : 'protein')}
@@ -5373,7 +5686,7 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
 
 {/* ── D · Sugars (carbohydrates) ──────────────────────────────────────── */}
 <VMenu open={openMenu === 'sugar'} onToggle={() => setOpenMenu(openMenu === 'sugar' ? null : 'sugar')}
-  id="viewer-menu-sugars" label="D · Sugars (carbohydrates)" accent="rose"
+  id="viewer-menu-sugars" label="D · Sugars" accent="rose"
   summary={`Style: ${catStyles.sugar.style} · Surface: ${catStyles.sugar.surface} · ${sugarHint}`}>
   <VRow label="Style" title="Representation of the sugars / glycans ONLY. NGL 2.4 has no « carbohydrate » keyword — the real one is « saccharide », to which the explicit residue list [GLC] [NAG] [MAN] [BMA] [SIA] [GAL] [FUC] is added, so an N-glycan, a glycolipid head or a free monosaccharide is styled here and NEVER as a generic ligand.">
     <VSel value={catStyles.sugar.style} onChange={(e) => setCatStyle('sugar', 'style', e.target.value)} title="Sugar representation" width="w-44">
@@ -5403,7 +5716,7 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
 
 {/* ── E · Organic molecules (ligands / small molecules) ───────────────── */}
 <VMenu open={openMenu === 'organic'} onToggle={() => setOpenMenu(openMenu === 'organic' ? null : 'organic')}
-  id="viewer-menu-organic" label="E · Organic molecules (ligands)" accent="emerald"
+  id="viewer-menu-organic" label="E · Ligands" accent="emerald"
   summary={`Style: ${catStyles.organic.style} · Surface: ${catStyles.organic.surface}${catStyles.organic.surfaceColor === 'esp' ? ' (ESP)' : ''}`}>
   <VRow label="Style" title="Representation of the ligands / small molecules. The selection is strictly « hetero and not water and not ion » MINUS the lipids and MINUS the sugars (both have their own menu), and it becomes everything that is not polymer / lipid / sugar / water / ion when the condition itself is a small organic compound.">
     <VSel value={catStyles.organic.style} onChange={(e) => setCatStyle('organic', 'style', e.target.value)} title="Ligand representation" width="w-44">
@@ -5438,7 +5751,7 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
 
 {/* ── E · Others (ions, solvent / water) ─────────────────────────────── */}
 <VMenu open={openMenu === 'other'} onToggle={() => setOpenMenu(openMenu === 'other' ? null : 'other')}
-  id="viewer-menu-others" label="F · Others (ions · solvent / water)" accent="sky"
+  id="viewer-menu-others" label="F · Others · water" accent="sky"
   summary={`Ions: ${catStyles.other.ion} · Water: ${catStyles.other.water} · Water surface: ${catStyles.other.surface}`}>
   <VRow label="Ions" title="Metal / halide ions (Na⁺, K⁺, Cl⁻, Mg²⁺, Ca²⁺, Zn²⁺ …). Spheres = spacefill on the ion selection.">
     <VSel value={catStyles.other.ion} onChange={(e) => setCatStyle('other', 'ion', e.target.value)} title="Ion representation" width="w-44">
@@ -5471,10 +5784,10 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
   </VRow>
   {renderSurfaceOpacity('other', 'Water opacity')}
   {/* Large systems keep their ★ lightweight mode (everything in ONE cheap
-      style, water off unless ticked): the category menus above describe the
-      full-detail rendering, which ✨ Full detail restores. */}
+      style, water off unless ticked): THIS row is the way to change how such a
+      system is drawn — there is no « ✨ Full detail » switch any more. */}
   {lightRender && (
-    <VRow label="Large system" title="Large systems (>25 000 atoms or a >1.5 MB structure) are drawn with ONE lightweight style for every atom; water is left out unless 💧 Water is ticked. ✨ Full detail (banner above the viewer) goes back to the category menus.">
+    <VRow label="Large system" title="Large systems (>25 000 atoms or a >1.5 MB structure) are drawn with ONE lightweight style for every atom; water is left out unless 💧 Water is ticked. This row is the only way to change how such a system is drawn (the old « ✨ Full detail » button was removed: rebuilding the category representations of a system this big froze the page).">
       <select
         title="Large structure style (lightweight mode): the style of EVERY atom — water is not drawn unless you tick 💧 Water"
         value={largeStyle}
@@ -5498,6 +5811,9 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
   )}
   {renderCatLabels('other')}
 </VMenu>
+
+</div>
+{/* ── end of the A–F grid ───────────────────────────────────────────────── */}
 
 <button
 type="button"
@@ -5747,11 +6063,28 @@ title="New residue number (blank = keep the original)"
     </button>
   </>
 )}
-<span className="text-[9px] text-slate-400 italic">Clipping Off = camera bounds at the extremes (0 · 100000 · 0) so nothing is ever cut · saved and persistent.</span>
-
 {/* ── Modify ─────────────────────────────────────────────────────────────── */}
 <span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
 <span className="text-[9px] font-black text-amber-700 uppercase tracking-wide whitespace-nowrap">✏️ Modify</span>
+{/* 🧬 From sequence — the page's sequence (Proteins / DNA / RNA) becomes a 3D
+    structure at any moment, even over a loaded PDB (which is put aside: the
+    ↩ Restore PDB button of §1 General brings it back). No network round trip:
+    the page builds the backbone from the sequence and the secondary structure
+    painted on it. */}
+<button
+type="button"
+onClick={buildFromSequence}
+disabled={!sequenceStructureText}
+title="Build the 3D structure from the sequence typed in “Molecular structure and visualization” (Proteins / DNA / RNA) — the model the viewer shows whenever no PDB is loaded. A PDB already on screen is put aside, not lost: ↩ Restore PDB (§1 General) brings it back."
+className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40 disabled:cursor-not-allowed"
+>
+🧬 From sequence
+</button>
+{seqBuildMsg && (
+<span title={seqBuildMsg} className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
+{seqBuildMsg}
+</span>
+)}
 <button type="button" onClick={() => setDragMove((v) => !v)}
   disabled={status !== 'ready'}
   className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${dragMove ? 'bg-amber-400 border-amber-500 text-amber-950' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'}`}
@@ -6079,20 +6412,14 @@ className="border border-indigo-300 rounded-md px-1.5 py-0.5 text-[11px] bg-whit
 {/* Large-structure info line (non-blocking): the whole system is rendered,
     just with lightweight representations so the browser stays responsive.
     Kept at the TOP of the viewer window so the "water hidden" note is visible
-    without scrolling to the bottom. */}
+    without scrolling to the bottom. There is no « ✨ Full detail » button any
+    more: switching a very large system back to the category representations
+    froze the page, so a big structure now simply stays in this mode. */}
 {lightInfo && (
 <div className="flex flex-wrap items-center gap-2 bg-sky-50 border border-sky-200 text-sky-900 rounded-lg px-3 py-2 text-xs font-bold shadow-sm">
 <span>
-ℹ️ Large structure{lightInfo.nAtoms ? ` (${lightInfo.nAtoms.toLocaleString()} atoms)` : ''}: every atom is drawn in {largeStyle === 'dots' ? 'dots (one point per atom)' : largeStyle === 'spheres' ? 'spheres' : 'lines'} — water is not drawn, tick 💧 Water to show it (§2 → E · Others).
+ℹ️ Large structure{lightInfo.nAtoms ? ` (${lightInfo.nAtoms.toLocaleString()} atoms)` : ''}: every atom is drawn in {largeStyle === 'dots' ? 'dots (one point per atom)' : largeStyle === 'spheres' ? 'spheres' : 'lines'} — water is not drawn, tick 💧 Water to show it (§2 → F · Others).
 </span>
-<button
-type="button"
-onClick={useFullDetail}
-className="text-xs font-bold bg-white border border-sky-300 text-sky-800 hover:bg-sky-100 px-2.5 py-1 rounded-lg transition-colors"
-title="Switch to the full-detail representations (ball+stick, high quality) — can be slower on large systems"
->
-✨ Full detail
-</button>
 </div>
 )}
 

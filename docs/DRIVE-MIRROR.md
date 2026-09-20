@@ -1014,3 +1014,35 @@ retirer.
 * `node _drive_restore_test.mjs` — `sameRawFileFor` et le câblage des modules
   (le pointeur de la condition est toujours ce que la page envoie au noyau).
 
+## La barre « 🧬 System files » a été RETIRÉE (20/09/2026)
+
+Demandé tel quel : « la section *System files — loaded with the 3D viewer buttons
+below* peut être entièrement supprimée ». Elle regroupait, juste au-dessus du
+viewer 3D de la page MD : l'état des deux fichiers, les deux boutons **⬇️ Bring
+it back from Google Drive**, les sélecteurs **Topology format / Atom labels /
+Trajectory format**, le champ **🎞️ Trajectory online link** et **⬆ Archive
+trajectory to Drive**. Tout cela a disparu : les fichiers se chargent et se
+règlent désormais uniquement par les commandes du viewer 3D — 📂 PDB file(s) /
+PDB ID · URL / 📂 Trajectory / ⬇ PDB (frame) / 🗑 Delete PDB ⇄ ↩ Restore PDB /
+🗑 Clear / 📷 Figure (voir §1 General).
+
+Ce qui n'a **pas** changé :
+
+* **Le format reste reconnu TOUT SEUL.** Le viewer reçoit toujours
+  `structureFormat={activeTest.structureFormat || 'auto'}` (NGL déduit le format
+  du fichier lui-même) et `trajectoryFormat={d.trajectoryFormat}`
+  (`detectTrajectoryFormat` suit le nom du fichier ou de l'URL) : rien à régler
+  pour un `.xtc`, `.trr`, `.dcd`, `.gro`, `.pdb` ou `.cif`.
+* **Les deux reprises automatiques restent branchées**, par les mêmes fonctions
+  (`restoreTrajectoryFromDrive` / `restoreStructureFromDrive`) et dans le même
+  ordre : base du navigateur → Google Drive. Seul le geste **à la demande** a
+  disparu avec la barre qui l'hébergeait.
+* Les états qui racontaient la recherche (`trajPhase`, `structPhase`,
+  `trajDriveMsg`, `structRestoreMsg`) sont **toujours écrits** par ces fonctions
+  et gardent leur nom préfixé d'un `_` : plus rien ne les affiche, mais l'ordre
+  de la recherche et ses constats restent dans le code.
+
+*Vérifier :* `node _condition_page_test.mjs` — la barre est absente
+(`🧬 System files`), le format reste auto-détecté, et les deux reprises
+automatiques sont toujours appelées.
+

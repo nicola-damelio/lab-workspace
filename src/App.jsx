@@ -1233,6 +1233,17 @@ if (customType === 'dosy') {
   // Where the user came from before opening a test page (used by the active
   // test's "◀ Back" button), e.g. { module: 'project-detail', projectId }.
   const [returnTarget, setReturnTarget] = useState(null);
+  /* « 🔄 Refresh » d'une page d'expérience (voir TestHeader dans
+     activeTestModule) : le CONTENU de la page est re-monté (clé React) au lieu
+     de recharger l'onglet — la base ouverte, la session Drive et le chemin de
+     navigation restent en place, donc l'utilisateur n'a jamais à refaire le
+     trajet pour retrouver sa page. */
+  const [testPageNonce, setTestPageNonce] = useState(0);
+  const [testPageRefreshedAt, setTestPageRefreshedAt] = useState(0);
+  const refreshTestPage = useCallback(() => {
+    setTestPageRefreshedAt(Date.now());
+    setTestPageNonce((n) => n + 1);
+  }, []);
   // Dernière expérience ouverte de cette base (voir readLastExperiment
   // ci-dessus) : alimente le bouton « ↩ Retour à l'expérience » de la barre
   // latérale, disponible depuis n'importe quelle autre page.
@@ -5071,6 +5082,9 @@ const openDataset = (dset) => {
               tests={tests}
             />)}
             {currentModule === 'active-test' && (<SectionsScope value={activeTestId}><ActiveTestModule
+              key={`test-page-${testPageNonce}`}
+              onRefreshPage={refreshTestPage}
+              refreshedAt={testPageRefreshedAt}
               activeTestId={activeTestId} additives={additives} allCellLines={allCellLines} allCmpds={allCmpds}
               appClipboard={appClipboard} buffers={buffers} cmpColors={cmpColors} compoundMeta={compoundMeta}
               createEmptyTest={createEmptyTest} currentUser={currentUser} customCmpds={customCmpds} customConc={customConc} customFields={customFields}

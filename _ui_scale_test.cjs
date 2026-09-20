@@ -9,10 +9,14 @@
  *   src/index.css          restates the arbitrary text tokens in `rem` (the
  *      8–11px readability floor AND 13/14/15px), otherwise only `rem` follows.
  *   settingsModule.jsx     offers the presets to EVERY user (per-browser pref).
- *   activeTestModule.jsx   the chrome of the experiment page: TWO compact bars
- *      (identity + actions on ONE wrapping line, then the identification fields
- *      on a full-width grid of COMPACT inline-label fields) and the
- *      Date/Conditions chips that wrap instead of pushing a sideways scrollbar.
+ *   activeTestModule.jsx   the chrome of the experiment page: a REPLIABLE header
+ *      — a thin bar that is ALWAYS visible (◀ Back · experiment name · condition
+ *      on screen · 🔄 Refresh · ▸ Expand all · ▸ More details) over the TWO
+ *      compact bars it folds away (identity + actions on ONE wrapping line, then
+ *      the identification fields on a full-width grid of COMPACT inline-label
+ *      fields) and the Date/Conditions chips that wrap instead of pushing a
+ *      sideways scrollbar. « 🔄 Refresh » re-mounts the page (key in App.jsx)
+ *      instead of reloading the tab, so the path to the page is never lost.
  */
 const fs = require('fs');
 const path = require('path');
@@ -173,6 +177,44 @@ const frag = (name, hay, needle) => checkTrue(`${name}: ${needle.slice(0, 46)}�
     ATM.includes('overflow-x-auto custom-scrollbar gap-2 shadow-inner'), false);
   check('5h the strip comment is a JS comment — a JSX `{/* … */}` inside `&& (` would not compile',
     ATM.includes('/* Date / Conditions strip') && !ATM.includes('{/* Date / Conditions strip'), true);
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     6) LA BARRE DU HAUT SE REPLIE, ET LA PAGE SE RAFRAÎCHIT SUR PLACE
+
+        Deux demandes : (a) la barre horizontale du haut doit être repliable —
+        elle prenait un tiers de l'écran ; (b) chaque page d'expérience doit
+        porter un bouton « 🔄 Refresh », car un rechargement depuis la barre du
+        navigateur obligeait à refaire tout le chemin jusqu'à la page.
+     ══════════════════════════════════════════════════════════════════════════ */
+  const APP = read('src/App.jsx');
+  const ATML = ATM.replace(/\r\n/g, '\n');
+  const APPL = APP.replace(/\r\n/g, '\n');
+
+  frag('the header folds', ATML, 'const [headerOpen, setHeaderOpen] = useState(() => {');
+  frag('…and starts FOLDED (only the thin bar is shown)', ATML,
+    "try { return sessionStorage.getItem(EXPERIMENT_HEADER_KEY) === '1'; } catch { return false; }");
+  frag('the fold is remembered for the browser session', ATML,
+    "sessionStorage.setItem(EXPERIMENT_HEADER_KEY, headerOpen ? '1' : '0')");
+  frag('the whole chrome is behind that toggle', ATML, '{headerOpen && (\n                      <>');
+  frag('the thin bar holds ◀ Back', ATML, '{backButton}');
+  frag('…the experiment name', ATML,
+    "{String(activeTest.name || '').trim() || (isBox ? 'Untitled box' : 'Untitled experiment')}");
+  frag('…the condition displayed on the page', ATML,
+    "const conditionLabel = String(activeTest.instanceName || activeTest.date || '').trim();");
+  frag('…the 🔄 Refresh button', ATML, '🔄 Refresh');
+  frag('…wired to App', ATML, 'onClick={onRefreshPage}');
+  frag('…with a “✓ page refreshed” confirmation', ATML, '✓ page refreshed');
+  frag('…and the ▸ More details toggle', ATML, "{headerOpen ? '▾ Fewer details' : '▸ More details'}");
+  check('5j a box that cannot be identified still warns while folded',
+    ATML.indexOf('{boxIssues.length > 0 && (') < ATML.indexOf('{headerOpen && ('), true);
+  frag('…the ▸ Expand all hook stays OUTSIDE the folded block', ATML,
+    "data-expand-all={allSectionsOpen ? undefined : '1'}");
+  check('5i …so the Image Builder can still open a closed section while folded',
+    ATML.indexOf("data-expand-all={allSectionsOpen ? undefined : '1'}") < ATML.indexOf('{headerOpen && ('), true);
+
+  frag('App re-mounts the page instead of reloading the tab', APPL, 'key={`test-page-${testPageNonce}`}');
+  frag('…through a single refresh funnel', APPL, 'const refreshTestPage = useCallback(() => {');
+  frag('…passed down to the page', APPL, 'onRefreshPage={refreshTestPage}');
 
   /* ══════════════════════════════════════════════════════════════════════════ */
   const failed = results.filter((r) => !r.ok);

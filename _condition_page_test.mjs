@@ -204,8 +204,19 @@ has(MD, 'trajectoryDrive: null, trajectoryDriveName: null',
   '[MD] retirer la trajectoire efface aussi le pointeur (rien ne « revient tout seul »)');
 has(MD, 'structureDrive: null, structureDriveName: null',
   '[MD] …et retirer la topologie aussi');
-has(MD, 'const trajDeclared = !!(activeTest.trajectoryFileName || activeTest.trajectoryDriveName || trajPointerId);',
+/* La barre « 🧬 System files — loaded with the 3D viewer buttons below » a été
+   RETIRÉE à la demande (états des deux fichiers, reprises Drive, réglages de
+   format, lien de trajectoire) : ce qui reste, et qui compte, c’est que les
+   deux reprises s’appuient toujours sur un NOM **ou** un POINTEUR, et que le
+   format des fichiers est toujours reconnu TOUT SEUL. */
+ok(!MD.includes('🧬 System files — loaded with the 3D viewer buttons below'),
+  '[MD] la barre « System files » est retirée');
+has(MD, "const trajPointerId = (activeTest.trajectoryDrive && activeTest.trajectoryDrive.id) || '';",
   '[MD] la page sait qu’un fichier est DÉCLARÉ dès qu’un nom OU un pointeur en parle');
+has(MD, "structureFormat={activeTest.structureFormat || 'auto'}",
+  '[MD] le format de la topologie est toujours détecté TOUT SEUL (auto)');
+has(MD, 'trajectoryFormat={d.trajectoryFormat}',
+  '[MD] …celui de la trajectoire aussi (detectTrajectoryFormat suit le nom du fichier / de l’URL)');
 
 /* ══ 5. LE FICHIER VIENT DU DRIVE — ET LA PAGE LE DIT ══════════════════════ */
 
@@ -213,18 +224,25 @@ has(MD, 'const trajDeclared = !!(activeTest.trajectoryFileName || activeTest.tra
    menée (base du navigateur → Drive, ou « le Drive n'est pas connecté ICI »). */
 ok(!MD.includes('The file is being brought back from this browser'),
   '[MD] la phrase « le fichier revient de la base du navigateur » a disparu');
-has(MD, "const [trajPhase, setTrajPhase] = useState('browser');",
-  '[MD] la reprise de la trajectoire a un état lisible');
-has(MD, "const [structPhase, setStructPhase] = useState('browser');",
+/* Les quatre états qui racontaient la recherche (phase + message) survivent sous
+   leur nom « _ » : les fonctions de reprise — seule tentative automatique
+   désormais, le bouton à la demande ayant disparu avec la barre — continuent de
+   les écrire. L’ORDRE de la recherche, lui, n’a pas bougé. */
+has(MD, "const [_trajPhase, setTrajPhase] = useState('browser');",
+  '[MD] la reprise de la trajectoire a toujours son état lisible');
+has(MD, "const [_structPhase, setStructPhase] = useState('browser');",
   '[MD] …la topologie aussi');
-has(MD, "const trajSourceHint = trajPhase === 'drive'", '[MD] le texte affiché suit cet état');
+ok(!MD.includes('const trajSourceHint = trajPhase'),
+  '[MD] la phrase qui racontait cette recherche vivait dans la barre retirée');
 has(MD, "setTrajPhase('nocloud');",
-  '[MD] sans Drive connecté dans CE navigateur, la page le dit au lieu de promettre');
+  '[MD] sans Drive connecté dans CE navigateur, la reprise le constate au lieu de promettre');
 has(MD, "setTrajDriveMsg(`✅ ${restored.name} brought back from this browser.`);",
-  '[MD] …et dit de quelle source le fichier est revenu');
-has(MD, 'onClick={() => { restoreTrajectoryFromDrive(); }}',
-  '[MD] un geste à la demande pour reprendre la trajectoire depuis le Drive');
-has(MD, 'onClick={() => { restoreStructureFromDrive(); }}',
+  '[MD] …et note de quelle source le fichier est revenu');
+ok(!MD.includes('onClick={() => { restoreTrajectoryFromDrive(); }}'),
+  '[MD] plus de bouton « à la demande » (il vivait dans la barre retirée)');
+has(MD, 'await restoreTrajectoryFromDrive();',
+  '[MD] la reprise AUTOMATIQUE reste branchée (base du navigateur → Drive)');
+has(MD, 'await restoreStructureFromDrive();',
   '[MD] …et pour la topologie');
 has(MD, 'const restoreTrajectoryFromDrive = async () => {',
   '[MD] la tentative automatique et le bouton passent par la MÊME fonction');
@@ -273,5 +291,37 @@ has(DOC, '## « Le fichier revient de la base du navigateur » — la page dit e
   'la cause et la correction du message trompeur sont documentées');
 has(DOC, '## La barre de lecture appartient à la CONDITION, pas seulement au fichier en main',
   '…et la barre de lecture qui n’apparaissait que pour un fichier en main');
+
+/* ══ 8. LA SÉQUENCE DE LA PAGE DONNE SA STRUCTURE (viewer 3D) ═══════════════
+   Signalé le 20/09/2026 : « quand j'écris une séquence dans Molecular structure
+   and visualization, le programme doit générer le PDB correspondant — à moins
+   qu'un PDB ne soit déjà chargé dans cette section. Il le faisait avant, il ne
+   le fait plus. » Le modèle est donc TOUJOURS fabriqué par la page
+   (`sequenceStructure`) et confié au viewer (`sequenceStructureText`) : le
+   viewer le sert dès que RIEN n'est chargé dans cette section, le bouton
+   « 🧬 From sequence » (groupe Modify) le reconstruit à la demande, et un PDB
+   chargé garde la priorité — il est RANGÉ, jamais écrasé (voir
+   « 🗑 Delete PDB / ↩ Restore PDB » de §1 General). */
+
+has(NMR, 'const sequenceStructure = useMemo(() => {',
+  '[NMR] le modèle déduit de la séquence est fabriqué EN PERMANENCE (même quand un PDB est déclaré)');
+has(NMR, '⚠️ 3D Generation not served: hasExplicitOverride is true',
+  '[NMR] …mais la PAGE ne sert que le PDB déclaré quand il y en a un');
+has(NMR, 'return sequenceStructure;',
+  '[NMR] …sinon c’est le modèle de la séquence qui est servi (comportement d’origine rétabli)');
+has(NMR, 'sequenceStructureText={sequenceStructure?.text || null}',
+  '[NMR] le modèle part vers le viewer 3D');
+has(NMR, 'sequenceStructureExt={sequenceStructure?.ext || null}',
+  '[NMR] …avec son extension');
+has(VIEW, 'sequenceStructureText = null,',
+  'le viewer reçoit le modèle de la séquence comme une source distincte');
+has(VIEW, "if (structOrigin === 'external') return;   // un PDB chargé par l'utilisateur occupe l'écran",
+  'un PDB chargé empêche le modèle de la séquence de s’imposer (il reste chargé)');
+has(VIEW, "const [structOrigin, setStructOrigin] = useState('none');",
+  'le viewer distingue « rien », « PDB chargé » et « modèle de la séquence »');
+has(VIEW, 'onClick={pdbAsideIsRestore ? restoreStashedPdb : deleteLoadedPdb}',
+  'le PDB chargé peut être supprimé puis ressuscité par le MÊME bouton');
+has(VIEW, 'const buildFromSequence = () => {',
+  '« 🧬 From sequence » reconstruit la structure de la séquence à tout moment');
 
 console.log(`${passed} passed`);

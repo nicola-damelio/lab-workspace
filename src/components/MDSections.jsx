@@ -22,7 +22,7 @@ import {
   computeSecondaryStructure, SS_CODE_ORDER, SS_COLORS, SS_GROUP_COLORS
 } from './MDSecondaryStructure';
 
-import { AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, FORM_META, RESIDUE_COLORS, buildKeys, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, SequencePaintStrip, getSelectedKeys, selectionLabel, getManualKeys, FORCE_FIELDS, WATER_MODELS, MD_ENSEMBLES, MD_INTEGRATORS, MD_THERMOSTATS, MD_BAROSTATS, TRAJECTORY_FORMATS, parseMDValue, getForceFieldInfo, getFFVersions, getWaterModelInfo, getFFBackboneAtoms, normalizeTrajectoryUrl, detectTrajectoryFormat, getTrajectoryFormatInfo, getMDInstances, getMDActiveInstance, getMDLayers, getMDActiveLayerKey, getMDLayerValues, writeMDCellValue, MD_ANALYSIS_LAYERS, DEFAULT_MD_CHART_STYLE, mdLineDash, mdDom} from './MDData';
+import { AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, FORM_META, RESIDUE_COLORS, buildKeys, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, SequencePaintStrip, getSelectedKeys, selectionLabel, getManualKeys, FORCE_FIELDS, WATER_MODELS, MD_ENSEMBLES, MD_INTEGRATORS, MD_THERMOSTATS, MD_BAROSTATS, parseMDValue, getForceFieldInfo, getFFVersions, getWaterModelInfo, getFFBackboneAtoms, normalizeTrajectoryUrl, detectTrajectoryFormat, getTrajectoryFormatInfo, getMDInstances, getMDActiveInstance, getMDLayers, getMDActiveLayerKey, getMDLayerValues, writeMDCellValue, MD_ANALYSIS_LAYERS, DEFAULT_MD_CHART_STYLE, mdLineDash, mdDom} from './MDData';
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
 import { archiveFileToDrive, archiveFileToDriveWithPointer, getDriveToken, getDriveFileRegistry, driveFetch } from '../utils/driveUpload';
@@ -791,15 +791,17 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   
   const [trajectoryFile, setTrajectoryFile] = useState(() => localFileCache.get(activeTest.id)?.trajectory || null);
   const [structureFile, setStructureFile] = useState(() => localFileCache.get(activeTest.id)?.structure || null);
-  const [trajDriveMsg, setTrajDriveMsg] = useState('');
-  const [structRestoreMsg, setStructRestoreMsg] = useState('');
-  // OÙ LA RECHERCHE EN EST VRAIMENT. La page annonçait en dur « le fichier
-  // revient de la base du navigateur » — même dans une fenêtre de navigation
-  // privée où il n'y a RIEN : l'utilisateur lisait donc une reprise locale qui
-  // n'avait pas lieu, pendant que la copie de référence dormait sur le Drive.
-  // Ces deux états pilotent le texte affiché ET l'état du bouton de reprise.
-  const [trajPhase, setTrajPhase] = useState('browser');
-  const [structPhase, setStructPhase] = useState('browser');
+  // OÙ LA RECHERCHE EN EST VRAIMENT, et ce qu'elle a répondu. Ces quatre états
+  // étaient affichés par la barre « 🧬 System files » — barre RETIRÉE (les
+  // fichiers se chargent désormais uniquement par les commandes du viewer 3D).
+  // Les fonctions de reprise (seule tentative automatique, plus aucun bouton)
+  // continuent de les écrire : on les garde donc sous leur nom « _ » : rien de
+  // l'ordre de recherche (base du navigateur → Drive) n'a changé, seule la
+  // ligne qui le racontait a disparu.
+  const [_trajDriveMsg, setTrajDriveMsg] = useState('');
+  const [_structRestoreMsg, setStructRestoreMsg] = useState('');
+  const [_trajPhase, setTrajPhase] = useState('browser');
+  const [_structPhase, setStructPhase] = useState('browser');
   // Re-run the restore effects when Google Drive connects (their Drive fallback
   // may have found nothing while Drive was still disconnected).
   const [driveConnectedAt, setDriveConnectedAt] = useState(() => Date.now());
@@ -986,16 +988,11 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   const extOf = (name) => (String(name || '').match(/\.[A-Za-z0-9]{1,6}$/) || [''])[0].toLowerCase();
 
   /* UN FICHIER EST « DÉCLARÉ » dès qu'un NOM ou un POINTEUR en parle — pas
-     seulement son nom local. Un dataset dont la sauvegarde a perdu le nom garde
-     souvent le pointeur de la copie de référence : la ligne doit alors dire la
-     vérité (elle est en train de le reprendre) et offrir le geste qui la force,
-     au lieu d'afficher « aucun fichier » comme si le dataset n'en avait jamais
-     eu. C'est aussi ce libellé qui est montré à l'utilisateur quand il n'y a pas
-     de nom local à afficher. */
-  const trajDeclared = !!(activeTest.trajectoryFileName || activeTest.trajectoryDriveName || trajPointerId);
-  const structDeclared = !!(activeTest.structureFileName || activeTest.structureDriveName || structPointerId);
-  const trajLabel = activeTest.trajectoryFileName || activeTest.trajectoryDriveName || 'the archived trajectory';
-  const structLabel = activeTest.structureFileName || activeTest.structureDriveName || 'the archived topology';
+     seulement son nom local : les deux restaurations ci-dessus s'appuient sur
+     `trajPointerId` / `structPointerId` (un dataset dont la sauvegarde a perdu
+     le nom garde souvent le pointeur de la copie de référence). Le libellé qui
+     l'annonçait à l'écran vivait dans la barre « 🧬 System files », retirée avec
+     elle : la reprise reste identique, seul l'affichage a disparu. */
 
   const applyReloadedFile = async ({ kind, testId, wantedName, file, paint }) => {
     // Le fichier ramené du Drive porte le nom du Drive (`<radical>_<scientifique>.<ext>`) :
@@ -1297,25 +1294,11 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     return () => { cancelled = true; };
   }, [needsOrganicFetch, activeSmiles]);
 
-  /* CE QUI EST VRAI DE LA RECHERCHE EN COURS : par où on cherche, et ce qu'il
-     reste à faire. La phrase historique (« le fichier revient de la base du
-     navigateur ») était écrite en dur : sur un poste neuf elle annonçait une
-     reprise locale qui n'avait pas lieu. */
-  const trajSourceHint = trajPhase === 'drive'
-    ? 'Not in this browser — downloading the archived copy from Google Drive (the reference copy that brings it back on any PC)…'
-    : trajPhase === 'nocloud'
-      ? 'Not in this browser, and Google Drive is NOT connected in this browser: nothing can be fetched here yet. Connect Google Drive (sidebar) — the download then starts by itself — or press the button above once it is connected.'
-      : trajPhase === 'notfound'
-        ? 'Not in this browser, and no archived copy was found on Google Drive under this name (renamed? never archived?). Re-select it with “Choose XTC / TRR”: the upload archives it again.'
-        : 'Looking in this browser’s storage first, then on Google Drive — the reference copy that brings the file back on any PC.';
-
-  const structSourceHint = structPhase === 'drive'
-    ? 'Not in this browser — downloading the archived topology from Google Drive (the reference copy that brings it back on any PC)…'
-    : structPhase === 'nocloud'
-      ? 'Not in this browser, and Google Drive is NOT connected in this browser: nothing can be fetched here yet. Connect Google Drive (sidebar) — the download then starts by itself — or press the button above once it is connected.'
-      : structPhase === 'notfound'
-        ? 'Not in this browser, and no archived copy was found on Google Drive under this name. Re-select it with “Choose PDB/CIF”: the upload archives it again.'
-        : 'Looking in this browser’s storage first, then on Google Drive — the reference copy that brings the topology back on any PC.';
+  /* CE QUI EST VRAI DE LA RECHERCHE EN COURS (par où on cherche, ce qu'il reste
+     à faire) : ces deux phrases vivaient dans la barre « 🧬 System files »,
+     retirée à la demande — l'ordre de recherche lui-même (base du navigateur →
+     Drive → « pas de copie archivée ») est inchangé dans les deux fonctions de
+     reprise ci-dessus. */
 
   return (
     <div className="flex flex-col gap-6">
@@ -1448,179 +1431,17 @@ export const MDExperimentSetupSection = ({ ctx }) => {
             </div>
           </div>
 
-          {structureMode === '3d' && (
-            <div className="mb-2 flex flex-col gap-2 bg-slate-50 border border-slate-200 rounded-lg p-2">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <span className="text-[10px] font-bold text-slate-500 uppercase">
-                  🧬 System files — loaded with the 3D viewer buttons below
-                </span>
-                <div className="flex items-center gap-3 flex-wrap text-[10px] font-bold">
-                  {structDeclared ? (
-                    structureFile ? (
-                      <span className="text-emerald-700">✓ Topology: {structLabel}</span>
-                    ) : (
-                      <span className="text-amber-600">♻️ Topology: restoring {structLabel}…</span>
-                    )
-                  ) : activeTest.structureSrc ? (
-                    <span className="text-emerald-700">✓ Topology (web): {activeTest.structureSrc}</span>
-                  ) : (
-                    <span className="text-slate-400">No topology yet — use "Choose PDB/CIF" or "PDB ID or URL"</span>
-                  )}
-                  {trajectoryFile ? (
-                    <span className="text-emerald-700">✓ Trajectory: {trajectoryFile.name}</span>
-                  ) : trajDeclared ? (
-                    <span className="text-amber-600">♻️ Trajectory: restoring {trajLabel}…</span>
-                  ) : (
-                    <span className="text-slate-400">No trajectory yet — use "Choose XTC / TRR"</span>
-                  )}
-                  {/* Un nom déclaré ne veut PAS dire « en main » : sur un poste
-                      neuf la ligne annonçait une topologie « ✓ » alors que le
-                      viewer n'avait rien. On dit où en est la reprise, et on
-                      donne le geste qui la force (copie de référence = Drive).
-                      Les deux fichiers (topologie ET trajectoire) sont traités
-                      ici : c'est juste au-dessus du viewer 3D que l'utilisateur
-                      attend sa barre de lecture. */}
-                  {structDeclared && !structureFile && (
-                    <span className="w-full text-amber-600 flex flex-col">
-                      <span className="font-normal text-slate-500">{structSourceHint}</span>
-                      <span className="flex items-center gap-2 mt-1 flex-wrap">
-                        <button type="button" onClick={() => { restoreStructureFromDrive(); }} disabled={structPhase === 'drive'}
-                          className="px-2 py-1 rounded-lg text-[10px] font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 disabled:opacity-60">
-                          {structPhase === 'drive' ? '⬇️ Downloading…' : '⬇️ Bring it back from Google Drive'}
-                        </button>
-                      </span>
-                    </span>
-                  )}
-                  {trajDeclared && !trajectoryFile && (
-                    <span className="w-full text-amber-600 flex flex-col">
-                      <span className="font-normal text-slate-500">{trajSourceHint}</span>
-                      <span className="flex items-center gap-2 mt-1 flex-wrap">
-                        <button type="button" onClick={() => { restoreTrajectoryFromDrive(); }} disabled={trajPhase === 'drive'}
-                          className="px-2 py-1 rounded-lg text-[10px] font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 disabled:opacity-60">
-                          {trajPhase === 'drive' ? '⬇️ Downloading…' : '⬇️ Bring the trajectory back from Google Drive'}
-                        </button>
-                      </span>
-                    </span>
-                  )}
-                  {structRestoreMsg && (
-                    <span className={`w-full text-[10px] font-bold ${structRestoreMsg.startsWith('✅') ? 'text-emerald-700' : structRestoreMsg.startsWith('⚠️') ? 'text-amber-700' : 'text-blue-600'}`}>{structRestoreMsg}</span>
-                  )}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                <div className="flex flex-col gap-0.5">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">Topology format</label>
-                  <select value={activeTest.structureFormat || 'auto'} onChange={(e) => updateActiveTest({ structureFormat: e.target.value })}
-                    className="border border-slate-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-blue-500">
-                    <option value="auto">Auto-detect</option>
-                    <option value="pdb">PDB</option>
-                    <option value="gro">GRO</option>
-                    <option value="cif">CIF</option>
-                    <option value="mmcif">mmCIF</option>
-                    <option value="mol2">MOL2</option>
-                    <option value="sdf">SDF</option>
-                  </select>
-                </div>
-
-                <div className="flex flex-col gap-0.5">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">Atom labels</label>
-                  <select value={atomLabelMode} onChange={(e) => updateActiveTest({ atomLabelMode: e.target.value })} className="border border-slate-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-blue-500">
-                    <option value="none">No labels</option>
-                    <option value="selected">Selected labels</option>
-                    <option value="all">All labels</option>
-                  </select>
-                </div>
-
-                <div className="flex flex-col gap-0.5">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">Trajectory format</label>
-                  <select value={d.trajectoryFormat} onChange={(e) => updateActiveTest({ trajectoryFormat: e.target.value })} className="border border-slate-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-blue-500">
-                    {TRAJECTORY_FORMATS.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-1 pt-2 border-t border-slate-200">
-                <div className="flex flex-col gap-0.5">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">🎞️ Trajectory online link (web / Drive)</label>
-                  <input 
-                    type="text" 
-                    value={d.trajectoryUrl} 
-                    onChange={(e) => updateActiveTest({ trajectoryUrl: e.target.value })}
-                    placeholder="https://…/trajectory.xtc (or Google Drive link)"
-                    className="border border-slate-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-mono" 
-                  />
-                  <div className="flex items-center gap-2 flex-wrap mt-0.5">
-                    <span className="text-[10px] text-slate-400">Detected: <b>{getTrajectoryFormatInfo(d.trajectoryFormat).label}</b></span>
-                    {d.trajectoryUrl && (
-                      <a 
-                        href={d.trajectoryUrl} 
-                        target="_blank" 
-                        rel="noopener noreferrer" 
-                        className="text-[10px] text-blue-600 hover:text-blue-800 font-bold underline bg-blue-50 px-2 py-0.5 rounded border border-blue-200"
-                        title="Open this link in a new tab to download the file"
-                      >
-                        ⬇️ Download File
-                      </a>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">Trajectory from PC</label>
-                  {trajectoryFile ? (
-                    <span className="text-[10px] font-bold text-emerald-700 mt-0.5 flex items-center">
-                      ✓ {trajectoryFile.name} (Ready)
-                      <button type="button" onClick={() => handleTrajectoryFile(null)} className="ml-2 text-red-500 hover:text-red-700 font-black">✕</button>
-                    </span>
-                  ) : trajDeclared ? (
-                    <span className="text-[10px] font-bold text-amber-600 mt-0.5 flex flex-col">
-                      <span>♻️ Restoring {trajLabel}…</span>
-                      <span className="font-normal text-slate-500">{trajSourceHint}</span>
-                      <span className="flex items-center gap-2 mt-1 flex-wrap">
-                        <button type="button" onClick={() => { restoreTrajectoryFromDrive(); }} disabled={trajPhase === 'drive'}
-                          className="px-2 py-1 rounded-lg text-[10px] font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 disabled:opacity-60">
-                          {trajPhase === 'drive' ? '⬇️ Downloading…' : '⬇️ Bring it back from Google Drive'}
-                        </button>
-                        <button type="button" onClick={() => handleTrajectoryFile(null)} className="text-red-500 hover:text-red-700 font-bold underline">Remove this trajectory</button>
-                      </span>
-                    </span>
-                  ) : (
-                    <span className="text-[10px] text-slate-400 mt-0.5">Use the "Choose XTC / TRR" button in the 3D viewer below.</span>
-                  )}
-
-                  {trajDriveMsg && (
-                    <span className={`text-[10px] font-bold mt-1 ${trajDriveMsg.startsWith('✅') ? 'text-emerald-700' : trajDriveMsg.startsWith('⚠️') ? 'text-amber-700' : 'text-blue-600'}`}>{trajDriveMsg}</span>
-                  )}
-
-                  <div className="mt-1">
-                    <DriveUploadButton
-                      suggestedName={suggestDriveFileName({
-                        project: (activeTest.projectNames || [])[0] || '',
-                        test: activeTest.name || '',
-                        instance: activeTest.instanceName || '',
-                        section: 'Setup',
-                        subsection: 'Trajectory',
-                        suffix: 'trajectory'
-                      })}
-                      naming={{
-                        project: (activeTest.projectNames || [])[0] || '',
-                        test: activeTest.name || '',
-                        instance: activeTest.instanceName || '',
-                        scientist: activeTest.operator || '',
-                        section: 'Setup',
-                        subsection: 'Trajectory',
-                        suffix: 'trajectory'
-                      }}
-                      preloadedFile={trajectoryFile || null}
-                      label="⬆ Archive trajectory to Drive"
-                      className="bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+          {/* La barre d'état des deux fichiers (« System files », au-dessus du
+              viewer) — état des fichiers, boutons de reprise Drive, réglages de
+              format et lien de trajectoire — a été RETIRÉE à la demande : les
+              fichiers se chargent et se règlent désormais uniquement avec les
+              commandes du viewer 3D ci-dessous — 📂 PDB file(s) / PDB ID · URL /
+              📂 Trajectory / ⬇ PDB (frame) / 🗑 Delete PDB · ↩ Restore PDB /
+              🗑 Clear / 📷 Figure.
+              Ce qui ne change PAS : le format reste détecté TOUT SEUL
+              (structureFormat 'auto', detectTrajectoryFormat sur le nom du fichier
+              ou de l'URL) et les restaurations Drive automatiques (useDriveAutoRestore)
+              continuent exactement comme avant. */}
 
           <p className="text-xs text-slate-400 mb-2">💡 Click an atom in the {structureMode === '2d' ? 'formula' : '3D viewer'} to highlight its cell in the atom table.</p>
 
