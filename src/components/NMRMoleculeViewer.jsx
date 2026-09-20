@@ -3829,7 +3829,14 @@ const doReplaceLoad = useCallback((files) => {
   setPdbId('');
   requestStructureLoad({ file: first, url: null, ts: Date.now() });
   onStructureFile?.(first);   // share the chosen topology with the analysis sections
-  if (driveNaming) archiveFileToDrive({ file: first, ctx: driveNaming }).catch(() => {});
+  // Le fichier PRINCIPAL est archivé par la PAGE quand elle fournit
+  // `onStructureFile` (NMR, MD) : elle y joint le POINTEUR de restauration
+  // (`structureDrive`) qui permet de le retrouver depuis un autre poste. Ici on
+  // n'envoie donc que ce que personne d'autre n'envoie : le fichier principal
+  // pour les pages qui n'ont pas de handler (Docking) et, plus bas, les
+  // molécules supplémentaires — sinon le même fichier partait deux fois et
+  // pouvait se dupliquer sur le Drive (deux envois du même nom en parallèle).
+  if (driveNaming && !onStructureFile) archiveFileToDrive({ file: first, ctx: driveNaming }).catch(() => {});
   // Additional structures (docking complexes / clusters / poses) are loaded as
   // separate NGL components and shown via the "Molecules" bar (right side,
   // multi-select — any combination can be displayed together).

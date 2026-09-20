@@ -2190,12 +2190,56 @@ export const archiveFileToDrive = async ({ file, ctx = {}, title = '', suffix = 
   if (!file || !getDriveToken()) return false;
   try {
     const base = title || String(file.name || '').replace(/\.[^/.]+$/, '');
-    const name = withExtension(suggestDriveFileName({ ...ctx, title: base, suffix }), file.name || 'file');
+    const name = archiveFileDriveName({ file, ctx, title, suffix });
     await uploadLocalFile({ name, mimeType: file.type || 'application/octet-stream', file, ctx: { ...ctx, title: base, suffix } });
     return true;
   } catch (err) {
     console.warn('Drive archive failed:', err && err.message);
     return false;
+  }
+};
+
+/** Le nom que PORTERA sur le Drive un fichier archivé par
+ *  `archiveFileToDrive` : `<titre>_<scientifique>` + extension d'origine. Un
+ *  module le calcule AVANT l'envoi pour pouvoir le RETENIR dans le dataset (le
+ *  nom déposé est ce que la recherche par nom retrouve depuis un autre poste,
+ *  même si l'envoi part en file de reprise). */
+export const archiveFileDriveName = ({ file, ctx = {}, title = '', suffix = 'file' }) => {
+  const base = title || String((file && file.name) || '').replace(/\.[^/.]+$/, '');
+  return withExtension(suggestDriveFileName({ ...ctx, title: base, suffix }), (file && file.name) || 'file');
+};
+
+/** Pointeur minuscule (il voyage dans le dataset) vers une copie Drive — `null`
+ *  quand l'envoi n'a pas abouti (hors ligne : la recherche par nom le retrouvera
+ *  dès que la file de reprise l'aura déposé). `id` = l'identifiant exact, donc
+ *  insensible à un renommage du fichier sur le Drive. */
+export const driveFilePointer = (res, fallbackName = '') => (
+  res && (res.id || res.url || res.driveUrl)
+    ? {
+      id: String(res.id || ''),
+      name: String(res.name || fallbackName || ''),
+      url: String(res.url || res.driveUrl || '')
+    }
+    : null
+);
+
+/** Comme `archiveFileToDrive`, mais rend de quoi écrire un POINTEUR de
+ *  restauration : `{ name, pointer }`. Le nom (celui du Drive) est rendu même
+ *  quand l'envoi échoue — c'est lui que cherchera la restauration par nom sur un
+ *  poste vierge ; `pointer` est null dans ce cas (rien à viser par id).
+ *  Le nommage reste EXACTEMENT celui d'`archiveFileToDrive` : rien ne change
+ *  dans l'arborescence du Drive.
+ *  @returns {Promise<{ name: string, pointer: {id:string,name:string,url:string}|null }>} */
+export const archiveFileToDriveWithPointer = async ({ file, ctx = {}, title = '', suffix = 'file' }) => {
+  const name = archiveFileDriveName({ file, ctx, title, suffix });
+  if (!file || !getDriveToken()) return { name, pointer: null };
+  const base = title || String(file.name || '').replace(/\.[^/.]+$/, '');
+  try {
+    const res = await uploadLocalFile({ name, mimeType: file.type || 'application/octet-stream', file, ctx: { ...ctx, title: base, suffix } });
+    return { name, pointer: driveFilePointer(res, name) };
+  } catch (err) {
+    console.warn('Drive archive failed:', err && err.message);
+    return { name, pointer: null };
   }
 };
 

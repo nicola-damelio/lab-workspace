@@ -240,7 +240,7 @@ MOCKS.mediaBlob = realMedia;
 
 /* ══ 3. LE CÂBLAGE DU PREMIER MODULE (NMR 1D — le cas réel signalé) ════════ */
 
-ok(NMRSRC.includes("import { archiveRestoreJson, isMissingValue, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';"),
+ok(NMRSRC.includes("import { archiveRestoreJson, isMissingValue, placeRestorePointer, restoreJsonFor, restoreRawFileFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';"),
   'NMRSections passe par le mécanisme GÉNÉRAL (aucune restauration maison)');
 ok(NMRSRC.includes("import { useDriveAutoRestore } from './useDriveAutoRestore';"),
   '…et par le déclencheur automatique partagé');
@@ -399,6 +399,66 @@ ok(FLOWSRC.includes('const handleRestoreFromDrive = async () => {'),
   'le flow cytometry garde sa restauration automatique (modèle de départ)');
 ok(FLOWSRC.includes('autoDriveRestoreDone') && FLOWSRC.includes("'lab:drive-connected'"),
   '…avec le même portillon par session et le même événement de connexion');
+
+/* ══ 3 sexies. UN FICHIER 3D N'EST PAS UNE VALEUR (structure, trajectoire) ══
+   Le PDB choisi dans le viewer 3D et la trajectoire MD ne vivent que dans la
+   base du navigateur du poste qui les a importés : la copie de référence est le
+   FICHIER déposé au Drive, et chacun laisse un POINTEUR qui voyage — donc le
+   viewer, la séquence 1 lettre qu'il en déduit et les tables de déplacements
+   reviennent sur n'importe quel poste. */
+
+const MDSRC = readFileSync('src/components/MDSections.jsx', 'utf8');
+const VIEWSRC = readFileSync('src/components/NMRMoleculeViewer.jsx', 'utf8');
+const UPLOADSRC = readFileSync('src/utils/driveUpload.js', 'utf8');
+
+ok(NMRSRC.includes("const NMR_STRUCT_KIND = 'nmrstruct';"),
+  'le fichier de structure est un type de donnée à part entière');
+ok(NMRSRC.includes('const nmrStructDriveCtx = (test = {}) => ({'),
+  'sa copie de référence va dans le dossier canonique de l’expérience');
+ok(NMRSRC.includes('const nmrStructNames = (test = {}) => ['),
+  'la recherche essaie le pointeur, puis le nom DÉPOSÉ, puis le nom d’origine');
+ok(NMRSRC.includes('await archiveFileToDriveWithPointer({'),
+  'l’envoi rend de quoi écrire un pointeur (archiveFileToDrive ne rendait qu’un booléen)');
+ok(NMRSRC.includes('field: \'structureDrive\''),
+  'le pointeur de la structure voyage sur la condition');
+ok(NMRSRC.includes('const restoreNmrStructureFromDrive = async () => {'),
+  'la page sait re-télécharger la copie de référence');
+ok(NMRSRC.includes('const nmrStructRestore = useDriveAutoRestore({'),
+  '…et l’attache au déclencheur automatique partagé');
+ok(NMRSRC.includes('restore: restoreNmrStructureFromDrive'), '…avec sa restauration métier');
+ok(NMRSRC.includes('await blobStore.save(nmrStructBlobKey(activeTest.id), restored);'),
+  'le fichier restauré est REMIS dans la base du navigateur');
+ok(NMRSRC.includes('setStructureFile(restored);'),
+  '…et donné au viewer, qui en déduit la séquence 1 lettre');
+ok(NMRSRC.includes("takePendingRestorePointer({ field: 'structureDrive', key: activeTest.id })"),
+  'un pointeur arrivé après un changement de condition est posé sur la bonne');
+ok(NMRSRC.includes('⚠️ {Object.keys(d.shifts).length} chemical shift value(s)'),
+  'des déplacements stockés sans séquence sont DITS à l’écran (invisibles ≠ perdus)');
+ok(!/structureDrive[^\n]*localStorage/.test(NMRSRC),
+  'aucun pointeur de structure rangé dans le navigateur (il doit voyager)');
+
+ok(MDSRC.includes("const restoreMDFile = async ({ pointer = null, driveName = '', nameStem = '', suffix = '', ctx = {} }) => {"),
+  'MD lit par le noyau partagé (pointeur → registre → nom)');
+ok(MDSRC.includes('return downloadArchivedMDFile({ suffix, nameStem, ctx });'),
+  '…et garde la recherche historique en repli (datasets d’avant le pointeur)');
+ok(MDSRC.includes('pointer: activeTest.trajectoryDrive || null'),
+  'la trajectoire MD remonte par son id exact');
+ok(MDSRC.includes('pointer: activeTest.structureDrive || null'),
+  '…la topologie aussi');
+ok(MDSRC.includes("field: 'trajectoryDrive'") && MDSRC.includes("field: 'structureDrive'"),
+  'les deux pointeurs voyagent sur la condition');
+ok(MDSRC.includes("takePendingRestorePointer({ field: 'trajectoryDrive', key: activeTest.id })"),
+  'un pointeur en attente est posé sur SA condition dès qu’elle revient');
+
+ok(VIEWSRC.includes('if (driveNaming && !onStructureFile) archiveFileToDrive({ file: first, ctx: driveNaming }).catch(() => {});'),
+  'le viewer n’envoie le fichier PRINCIPAL que si la page ne le fait pas (aucun doublon Drive)');
+
+ok(UPLOADSRC.includes("export const archiveFileToDriveWithPointer = async ({ file, ctx = {}, title = '', suffix = 'file' }) => {"),
+  'le nommage + le pointeur vivent en un seul endroit (lib/driveUpload)');
+ok(UPLOADSRC.includes("export const driveFilePointer = (res, fallbackName = '') => ("),
+  '…avec un constructeur de pointeur unique');
+ok(UPLOADSRC.includes('const name = archiveFileDriveName({ file, ctx, title, suffix });'),
+  'archiveFileToDrive et la variante à pointeur portent le MÊME nom (rien ne change sur le Drive)');
 
 /* ══ 3 quinquies. LE CINQUIÈME MODULE BRANCHÉ (microscopie — médias binaires) ══
    Une vidéo de microscope n'est pas une série de nombres : c'est un FICHIER.

@@ -25,7 +25,8 @@ import {
 import { AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, FORM_META, RESIDUE_COLORS, buildKeys, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, SequencePaintStrip, getSelectedKeys, selectionLabel, getManualKeys, FORCE_FIELDS, WATER_MODELS, MD_ENSEMBLES, MD_INTEGRATORS, MD_THERMOSTATS, MD_BAROSTATS, TRAJECTORY_FORMATS, parseMDValue, getForceFieldInfo, getFFVersions, getWaterModelInfo, getFFBackboneAtoms, normalizeTrajectoryUrl, detectTrajectoryFormat, getTrajectoryFormatInfo, getMDInstances, getMDActiveInstance, getMDLayers, getMDActiveLayerKey, getMDLayerValues, writeMDCellValue, MD_ANALYSIS_LAYERS, DEFAULT_MD_CHART_STYLE, mdLineDash, mdDom} from './MDData';
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
-import { archiveFileToDrive, getDriveToken, getDriveFileRegistry, driveFetch } from '../utils/driveUpload';
+import { archiveFileToDrive, archiveFileToDriveWithPointer, getDriveToken, getDriveFileRegistry, driveFetch } from '../utils/driveUpload';
+import { placeRestorePointer, restoreRawFileFor, takePendingRestorePointer } from '../utils/driveRestore';
 
 // Cache to retain local File objects when switching tabs within the same session
 const localFileCache = new Map();
@@ -99,6 +100,18 @@ const downloadArchivedMDFile = async ({ suffix, nameStem, ctx }) => {
     console.warn('MD Drive file download failed:', err && err.message);
     return null;
   }
+};
+
+/* Le noyau partagé d'abord (pointeur de la condition → registre local → nom sur
+   le Drive : voir utils/driveRestore.restoreRawFileFor), puis la recherche
+   historique de cette page (« le nom Drive CONTIENT le radical déclaré ») pour
+   les datasets plus anciens, enregistrés avant que le pointeur ne voyage.
+   Aucune donnée n'est perdue : le repli d'hier reste en place. */
+const restoreMDFile = async ({ pointer = null, driveName = '', nameStem = '', suffix = '', ctx = {} }) => {
+  const names = [pointer && pointer.name, driveName, nameStem].filter(Boolean);
+  const viaCore = await restoreRawFileFor({ pointer, ctx: { ...ctx, suffix }, names }).catch(() => null);
+  if (viaCore && viaCore.file) return viaCore.file;
+  return downloadArchivedMDFile({ suffix, nameStem, ctx });
 };
 
 /* ---- Lab Notebook chart snapshots ----------------------------------------
@@ -757,6 +770,19 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     return () => window.removeEventListener('lab:drive-connected', onConnected);
   }, []);
 
+  // Condition affichée, lue par l'archivage asynchrone : un pointeur qui arrive
+  // après un changement de condition attend SA page (voir
+  // driveRestore.placeRestorePointer) au lieu d'être posé sur la nouvelle.
+  const mdActiveIdRef = useRef(activeTest.id);
+  mdActiveIdRef.current = activeTest.id;
+  // Puis le pointeur en attente est posé sur SA condition dès qu'elle revient.
+  useEffect(() => {
+    const pending = takePendingRestorePointer({ field: 'structureDrive', key: activeTest.id })
+      || takePendingRestorePointer({ field: 'trajectoryDrive', key: activeTest.id });
+    if (pending) updateActiveTest(pending);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTest.id]);
+
   const handleStructureFile = (file) => {
     if (!file) {
       updateActiveTest({ structureFileData: null, structureFileName: null });
@@ -764,7 +790,23 @@ export const MDExperimentSetupSection = ({ ctx }) => {
       blobStore.remove(structBlobKey(activeTest.id));
       return;
     }
-    archiveFileToDrive({ file, ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Setup', subsection: 'Structure', suffix: 'structure' } }).catch(() => {});
+    // Le fichier DÉPOSÉ est la copie de référence : on garde son POINTEUR sur la
+    // condition (id exact + nom déposé) pour qu'un autre poste le retrouve, au
+    // lieu de dépendre de la base du navigateur de CE poste.
+    (async () => {
+      const { name: driveName, pointer } = await archiveFileToDriveWithPointer({
+        file,
+        ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Setup', subsection: 'Structure' },
+        suffix: 'structure'
+      });
+      placeRestorePointer({
+        field: 'structureDrive',
+        pointer: { structureDriveName: driveName, ...(pointer ? { structureDrive: pointer } : {}) },
+        key: activeTest.id,
+        activeKey: mdActiveIdRef.current,
+        patch: updateActiveTest
+      });
+    })();
     setStructureFile(file);
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -792,13 +834,27 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     }
     // Archive the raw trajectory to Google Drive automatically (best-effort).
     // Trajectory files are large, so this can take a while — the upload is
-    // given a long timeout and its result is shown to the user.
+    // given a long timeout and its result is shown to the user. Le POINTEUR du
+    // fichier reste dans le dataset : c'est lui qui le ramène sur un autre poste.
     setTrajDriveMsg(`⬆️ Archiving ${file.name} to Google Drive…`);
-    archiveFileToDrive({ file, ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Setup', subsection: 'Trajectory', suffix: 'trajectory' } }).then((ok) => {
-      setTrajDriveMsg(ok
+    (async () => {
+      const { name: driveName, pointer } = await archiveFileToDriveWithPointer({
+        file,
+        ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Setup', subsection: 'Trajectory' },
+        suffix: 'trajectory'
+      }).catch(() => null);
+      if (!driveName) return;
+      placeRestorePointer({
+        field: 'trajectoryDrive',
+        pointer: { trajectoryDriveName: driveName, ...(pointer ? { trajectoryDrive: pointer } : {}) },
+        key: activeTest.id,
+        activeKey: mdActiveIdRef.current,
+        patch: updateActiveTest
+      });
+      setTrajDriveMsg(pointer
         ? `✅ ${file.name} archived to Google Drive.`
         : `⚠️ ${file.name} was loaded, but the Drive upload failed. Use “Archive trajectory to Drive” to retry (check the Drive connection first).`);
-    });
+    })();
     setTrajectoryFile(file);
     updateActiveTest({ trajectoryFileName: file.name });
     const cache = localFileCache.get(activeTest.id) || {};
@@ -829,9 +885,11 @@ export const MDExperimentSetupSection = ({ ctx }) => {
       // 2) Drive fallback.
       if (getDriveToken()) {
         setTrajDriveMsg(`🔎 ${activeTest.trajectoryFileName} not in this browser — checking Google Drive…`);
-        const driveFile = await downloadArchivedMDFile({
+        const driveFile = await restoreMDFile({
           suffix: 'trajectory',
           nameStem: activeTest.trajectoryFileName,
+          pointer: activeTest.trajectoryDrive || null,
+          driveName: activeTest.trajectoryDriveName || '',
           ctx: { test: activeTest.name || '', instance: activeTest.instanceName || '' },
         });
         if (cancelled) return;
@@ -876,9 +934,11 @@ export const MDExperimentSetupSection = ({ ctx }) => {
       // 2) Drive fallback.
       if (getDriveToken()) {
         setStructRestoreMsg(`🔎 ${activeTest.structureFileName} not in this browser — checking Google Drive…`);
-        const driveFile = await downloadArchivedMDFile({
+        const driveFile = await restoreMDFile({
           suffix: 'structure',
           nameStem: activeTest.structureFileName,
+          pointer: activeTest.structureDrive || null,
+          driveName: activeTest.structureDriveName || '',
           ctx: { test: activeTest.name || '', instance: activeTest.instanceName || '' },
         });
         if (cancelled) return;

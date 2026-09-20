@@ -12,10 +12,10 @@ import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLO
 } from '../utils/chartStyle';
 import { SplitChartStack, SplitLayoutControls, SplitToggle, splitRowBoxStyle, splitChartClass, splitChartMargin, splitLayoutOf, splitXAxisHidden, splitYAxisProps, withSplitLayout, hiddenSeriesOf, withoutSeries } from './SplitChartStack';
 import { suggestDriveFileName, canonicalExperimentPath, sanitizeSlug } from '../utils/driveNaming';
-import { uploadLocalFile, getDriveToken, archiveFileToDrive } from '../utils/driveUpload';
+import { uploadLocalFile, getDriveToken, archiveFileToDriveWithPointer } from '../utils/driveUpload';
 import { storeJson, loadJson } from '../utils/pdbStore';
 import { blobStore } from '../utils/blobStore';
-import { archiveRestoreJson, isMissingValue, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';
+import { archiveRestoreJson, isMissingValue, placeRestorePointer, restoreJsonFor, restoreRawFileFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';
 import { useDriveAutoRestore } from './useDriveAutoRestore';
 import {
   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, CARBON_RANGE_DB,
@@ -30,6 +30,37 @@ export { VIS_PALETTES };
 // files also travel on the test as a data URL (structureFileData).
 const nmrLocalFileCache = new Map();
 const nmrStructBlobKey = (testId) => `nmr_struct_${testId}`;
+
+/* ── RESTAURATION AUTOMATIQUE DU FICHIER DE STRUCTURE DEPUIS LE DRIVE ────────
+   (mécanisme général : src/utils/driveRestore.js + useDriveAutoRestore.js)
+   Le fichier de structure choisi dans le viewer 3D (« 📂 PDB file(s) ») n'entre
+   PAS dans le document du dataset : seuls son nom (`structureFileName`) et — s'il
+   est minuscule — son data URL y vivent ; ses OCTETS sont dans la base du
+   navigateur (blobStore → IndexedDB), donc sur le poste qui les a importés, et
+   nulle part ailleurs. Le Drive est la copie de RÉFÉRENCE : l'envoi de l'import
+   laisse un POINTEUR minuscule (`structureDrive = { id, name, url }`) qui voyage
+   avec le dataset ; à l'ouverture de la page, un fichier absent de la base est
+   re-téléchargé TOUT SEUL (id exact → nom déposé → nom d'origine) et remis dans
+   la base. Le viewer 3D le recharge, en déduit la séquence 1 lettre — celle qui
+   alimente TOUTES les tables de déplacements — et la séquence est alors
+   persistée avec le dataset : le poste qui a importé cesse d'être indispensable. */
+const NMR_STRUCT_KIND = 'nmrstruct';
+const nmrStructDriveCtx = (test = {}) => ({
+  project: (test.projectNames || [])[0] || '',
+  test: test.name || '',
+  instance: test.instanceName || '',
+  scientist: test.operator || '',
+  section: 'Data',
+  subsection: 'Structure'
+});
+
+/** Noms sous lesquels chercher le fichier : pointeur, nom déposé à l'envoi,
+ *  puis nom d'origine du fichier importé. Le nom déposé est le nom COMPLET sur
+ *  le Drive (`<radical>_<scientifique>.pdb`) : c'est lui dont le radical coïncide
+ *  avec le fichier trouvé (voir driveRestore.matchesRawName). */
+const nmrStructNames = (test = {}) => [
+  test.structureDrive?.name, test.structureDriveName, test.structureFileName
+].filter(Boolean);
 
 const HAS_EB = typeof ErrorBar !== 'undefined';
 
@@ -4394,6 +4425,11 @@ export const MolecularStructureSection = ({ ctx }) => {
   // session cache + IndexedDB so switching away and back (or reloading) does NOT
   // force the user to re-pick their PDB (same pattern as the MD page).
   const [structureFile, setStructureFile] = useState(() => nmrLocalFileCache.get(activeTest.id)?.structure || null);
+  // Condition affichée, lue par l'archivage asynchrone : un pointeur qui arrive
+  // après un changement de condition doit attendre SA page (voir
+  // driveRestore.placeRestorePointer) au lieu d'être posé sur la nouvelle.
+  const structActiveIdRef = useRef(activeTest.id);
+  structActiveIdRef.current = activeTest.id;
   const handleStructureFile = (file) => {
     if (!file) {
       updateActiveTest({ structureFileData: null, structureFileName: null });
@@ -4401,7 +4437,22 @@ export const MolecularStructureSection = ({ ctx }) => {
       blobStore.remove(nmrStructBlobKey(activeTest.id));
       return;
     }
-    archiveFileToDrive({ file, ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure', suffix: 'structure' } }).catch(() => {});
+    // Le fichier DÉPOSÉ est la copie de référence : on l'envoie au Drive et on
+    // garde son POINTEUR sur la condition (id exact + nom déposé), pour qu'un
+    // autre poste le retrouve par id — et par nom si l'envoi est parti en file
+    // de reprise. Sans ce pointeur, le PDB n'existait que sur ce poste.
+    (async () => {
+      const { name: driveName, pointer } = await archiveFileToDriveWithPointer({
+        file, ctx: nmrStructDriveCtx(activeTest), suffix: 'structure'
+      });
+      placeRestorePointer({
+        field: 'structureDrive',
+        pointer: { structureDriveName: driveName, ...(pointer ? { structureDrive: pointer } : {}) },
+        key: activeTest.id,
+        activeKey: structActiveIdRef.current,
+        patch: updateActiveTest
+      });
+    })();
     // A picked file replaces any previously-set PDB code / URL as the structure
     // source, so going back to the page shows THE FILE (not the older code).
     updateActiveTest({ structureSrc: null, pdbId: null });
@@ -4440,6 +4491,64 @@ export const MolecularStructureSection = ({ ctx }) => {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTest.id, activeTest.structureFileName]);
+
+  // Un pointeur resté en attente (l'envoi s'est terminé après un changement de
+  // condition) est posé sur SA condition dès qu'elle revient à l'écran : c'est
+  // le mécanisme du noyau, pas une carte de pointeurs locale au module.
+  useEffect(() => {
+    const pending = takePendingRestorePointer({ field: 'structureDrive', key: activeTest.id });
+    if (pending) updateActiveTest(pending);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTest.id]);
+
+  // ── RESTAURATION AUTOMATIQUE DU FICHIER DE STRUCTURE DEPUIS LE DRIVE ─────
+  // (mécanisme général : src/utils/driveRestore.js + useDriveAutoRestore.js)
+  // La structure déclarée sur la condition (`structureFileName`) mais absente de
+  // la base du navigateur n'est PAS une structure perdue : le Drive en a la copie
+  // de référence. Elle est re-téléchargée seule, remise dans la base, et le
+  // viewer 3D la recharge — ce qui restaure du même coup la séquence 1 lettre
+  // (auto-remplie par le viewer) et donc les tables de déplacements.
+  const nmrStructDriveMissing = async () => {
+    if (!activeTest.structureFileName) return false;      // aucune structure déclarée
+    if (structureFile) return false;                      // déjà en main
+    if (typeof activeTest.structureFileData === 'string' && !isMissingValue(activeTest.structureFileData)) return false;
+    const blob = await blobStore.load(nmrStructBlobKey(activeTest.id)).catch(() => null);
+    return !blob;
+  };
+
+  const restoreNmrStructureFromDrive = async () => {
+    const found = await restoreRawFileFor({
+      pointer: activeTest.structureDrive || null,
+      ctx: nmrStructDriveCtx(activeTest),
+      names: nmrStructNames(activeTest)
+    });
+    if (!found) {
+      return {
+        ok: false,
+        message: `⚠️ ${activeTest.structureFileName} is not in this browser and no copy was found on Google Drive. Connect Google Drive (sidebar) or re-pick the file with “📂 PDB file(s)” — it is archived again on upload.`
+      };
+    }
+    const restored = new File(
+      [found.file],
+      found.file.name || activeTest.structureFileName || 'structure.pdb',
+      { type: found.file.type || 'application/octet-stream' }
+    );
+    await blobStore.save(nmrStructBlobKey(activeTest.id), restored);
+    const cache = nmrLocalFileCache.get(activeTest.id) || {};
+    nmrLocalFileCache.set(activeTest.id, { ...cache, structure: restored });
+    setStructureFile(restored);
+    return {
+      ok: true,
+      message: `✅ ${found.name || restored.name} restored from Google Drive — the 3D view, the sequence and the per-atom tables are back.`
+    };
+  };
+
+  const nmrStructRestore = useDriveAutoRestore({
+    kind: NMR_STRUCT_KIND,
+    testId: activeTest.id,
+    missing: nmrStructDriveMissing,
+    restore: restoreNmrStructureFromDrive
+  });
 
   // Locally-generated structures (no network round trip): idealized protein backbone from
   // sequence + secondary structure (or fully-extended fallback), and a simplified extended
@@ -4623,6 +4732,11 @@ const generatedStructure = useMemo(() => {
                 className="w-full border border-slate-300 rounded-lg p-3 font-mono text-sm tracking-widest outline-none focus:border-blue-500 uppercase h-24 custom-scrollbar shadow-inner"
                 placeholder={d.moleculeType === 'protein' ? 'e.g. MKWVTFISLL...' : d.moleculeType === 'dna' ? 'e.g. ATGCGTAC...' : 'e.g. AUGCGUAC...'} />
               <p className="text-[10px] text-slate-400 mt-1 font-bold">Length: {d.seq.length} {d.moleculeType === 'protein' ? 'residues' : 'nucleotides'} (valid: {d.validChars.split('').join(' ')})</p>
+              {!d.seq && Object.keys(d.shifts || {}).length > 0 && (
+                <p className="text-[10px] text-amber-700 mt-1 font-bold">
+                  ⚠️ {Object.keys(d.shifts).length} chemical shift value(s) are stored for this condition, but the sequence is empty — so the per-atom tables have no row to show them. Restore the structure file in the 3D viewer above (or type the sequence): the values themselves are NOT lost.
+                </p>
+              )}
               {d.moleculeType === 'protein' && (() => {
                 const cysPositions = d.parsedSeq
                   .map((r, idx) => (r.char === 'C' ? idx + 1 : null))
@@ -4818,6 +4932,25 @@ const generatedStructure = useMemo(() => {
             <div className="flex flex-col gap-2">
               <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq) => { if (seq && !activeTest.proteinSequence && ['protein', 'dna', 'rna'].includes(d.moleculeType)) updateActiveTest({ proteinSequence: seq }); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
               <button onClick={downloadPdbFile} className="self-center mt-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg hover:bg-indigo-100 transition-colors shadow-sm">📥 Download 3D PDB File</button>
+              {activeTest.structureFileName && (!structureFile || nmrStructRestore.message) && (
+                <div className="flex flex-wrap items-center justify-center gap-2 text-[11px]">
+                  {nmrStructRestore.message ? (
+                    <span className={`font-bold ${nmrStructRestore.status === 'failed' ? 'text-amber-700' : 'text-emerald-700'}`}>{nmrStructRestore.message}</span>
+                  ) : (
+                    <span className="font-bold text-slate-500">
+                      🔎 {activeTest.structureFileName} is not in this browser — checking Google Drive…
+                    </span>
+                  )}
+                  {!structureFile && (
+                    <button
+                      type="button"
+                      onClick={() => nmrStructRestore.attempt('manual')}
+                      title={`Fetch ${activeTest.structureFileName} from Google Drive again`}
+                      className="px-3 py-1.5 bg-emerald-50 border border-emerald-300 text-emerald-800 font-bold rounded-lg hover:bg-emerald-100 transition-colors shadow-sm"
+                    >⬇️ Restore from Drive</button>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

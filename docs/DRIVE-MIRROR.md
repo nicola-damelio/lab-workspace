@@ -452,6 +452,25 @@ le marqueur n'est pas une donnée, c'est un aveu d'absence.
 Rien ne doit donc **dépendre** de la cache : la cache ne sert qu'à éviter un
 téléchargement, jamais à justifier une absence.
 
+### Une valeur ne doit pas dépendre d'un fichier
+
+Un cas signalé le 19/09/2026 : sur un autre poste, la page NMR n'avait plus le
+PDB, la trajectoire, **ni la séquence** — et donc pas les tables de déplacements,
+qui se construisent à partir d'elle. La chaîne était : le PDB n'existait que dans
+la base du navigateur du poste qui l'avait importé → le viewer 3D, seul à savoir
+en **déduire** la séquence 1 lettre, ne la déduisait plus → la séquence n'étant
+pas remplie, `parsedSeq` était vide et les déplacements stockés (eux bien dans le
+dataset) n'avaient plus de ligne où s'afficher. Deux garde-fous en découlent :
+
+* le fichier de structure (et la trajectoire MD) est **restaurable** du Drive —
+  voir « Structure 3D du viewer » ci-dessous — donc la séquence se redéduit toute
+  seule, puis est **réécrite sur la condition** (elle voyage ensuite comme
+  n'importe quelle valeur) ;
+* si des déplacements existent sans séquence, la page NMR le **dit** à l'écran
+  (« N chemical shift value(s) are stored … but the sequence is empty ») : une
+  valeur invisible à cause d'un fichier manquant n'est jamais présentée comme une
+  valeur perdue.
+
 ### Le mécanisme (un seul, pour tous les modules)
 
 `src/utils/driveRestore.js` (logique + entrées/sorties) et
@@ -475,10 +494,10 @@ téléchargement, jamais à justifier une absence.
 La copie de référence a deux formes, selon la **nature** de la donnée : une
 archive **JSON gzip** quand c'est une *valeur* (spectre, colonnes de spectres,
 textes PDB) — `archiveRestoreJson()` / `restoreJsonFor()` — et le **fichier
-lui-même** quand c'est un *média* (vidéos et clips de microscopie) —
-`restoreRawFileFor()`, qui cherche un fichier brut par pointeur, registre local
-puis nom. Dans les deux cas c'est le Drive qui fait foi ; la cache ne fait
-qu'éviter un téléchargement.
+lui-même** quand c'est un *fichier* (vidéos et clips de microscopie, structure
+3D du viewer, topologie et trajectoire MD) — `restoreRawFileFor()`, qui cherche
+un fichier brut par pointeur, registre local puis nom. Dans les deux cas c'est
+le Drive qui fait foi ; la cache ne fait qu'éviter un téléchargement.
 
 L'écriture est **asynchrone** : un pointeur qui arrive après un changement
 d'onglet / de condition est mis en attente et posé sur **sa** page quand elle
@@ -540,7 +559,29 @@ autre expérience.
 * **Flow Cytometry** — avait déjà ce comportement (`handleRestoreFromDrive`) :
   il reste le modèle, rien n'a régressé.
 * **MD** — `MDSections.jsx` rapatrie déjà structure et trajectoire du Drive
-  quand la cache locale est vide (`downloadArchivedMDFile`).
+  quand la cache locale est vide (`downloadArchivedMDFile`). Depuis, les deux
+  envois de l'import (topologie `.gro/.pdb/.cif`, trajectoire `.xtc/.trr/.dcd`)
+  passent par `archiveFileToDriveWithPointer()` : le nom Drive et le **pointeur**
+  (`structureDrive` / `trajectoryDrive = { id, name, url }`) restent sur la
+  condition, donc l'**id exact** passe avant le registre local (qui vit dans le
+  `localStorage` de chaque poste) et avant le nom. La recherche historique
+  (« le nom Drive CONTIENT le radical déclaré ») reste le repli des datasets
+  enregistrés avant que le pointeur ne voyage : rien n'est perdu.
+* **Structure 3D du viewer (NMR, MD)** — le PDB choisi dans le viewer
+  (`📂 PDB file(s)`) n'entrait PAS dans le dataset : seuls son nom
+  (`structureFileName`) et, s'il était minuscule, son data URL y vivaient ; les
+  octets restaient dans la base du navigateur du poste qui les avait importés.
+  La page qui possède le fichier l'archive désormais **avec son pointeur**
+  (`structureDrive`, dossier canonique `Data/Structure` pour le NMR,
+  `Setup/Structure` pour le MD) et le re-télécharge seule à l'ouverture
+  (`NMR_STRUCT_KIND = 'nmrstruct'`), puis le remet dans IndexedDB. Conséquence
+  directe : le viewer 3D se recharge, **la séquence 1 lettre qu'il en déduit** est
+  réécrite sur la condition (elle alimente toutes les tables de déplacements) —
+  une page ouverte sur un autre poste ne montre donc plus une séquence vide avec
+  des déplacements orphelins. Le viewer n'envoie plus lui-même le fichier
+  principal quand la page le fait (sinon le même PDB partait deux fois et
+  pouvait se dupliquer sur le Drive) ; il continue d'envoyer le fichier principal
+  des pages sans handler (Docking) et les molécules supplémentaires.
 * **Microscopie (vidéos de microscope et clips)** — `MicroscopySections.jsx` suit
   le même mécanisme avec une différence de **nature** : un média n'est pas une
   série de nombres, c'est un **fichier**. Rien à archiver en JSON (un clip de
@@ -562,5 +603,8 @@ autre expérience.
   pointeurs en attente, refus des types croisés) et le cycle archivage →
   restauration sur un faux Drive, y compris un pointeur périmé, un fichier mis à
   la corbeille et un autre poste sans registre local ; puis le câblage des
-  modules branchés : NMR 1D, ssNMR, CD, docking et microscopie.
+  modules branchés : NMR 1D, ssNMR, CD, docking, microscopie — et, pour les
+  **fichiers** (structure 3D du viewer, topologie et trajectoire MD), le pointeur
+  qui voyage avec le dataset, le nom déposé qui sauve un poste vierge et la
+  remise du fichier dans la base du navigateur (aucun doublon d'envoi).
 
