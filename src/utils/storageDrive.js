@@ -5,7 +5,8 @@
 
        storage/<storage>/images/<fichier>          ← image de référence
        storage/<storage>/boxes/<boîte>/images/<f>  ← photos de la boîte
-       storage/<storage>/boxes/<boîte>/label.pdf   ← étiquette de la boîte
+       storage/<storage>/boxes/<boîte>/<date>_<propriétaire>_boxlabel.pdf
+                                                   ← étiquette de la boîte
 
    Pourquoi ce module : les gestes qui écrivent sur le Drive (déposer
    l'étiquette, ranger un fichier envoyé avant cette structure, renommer le
@@ -18,10 +19,11 @@
    ========================================================================= */
 import {
   canonicalDatasetDirId, cloudBackendAvailable, ensureDriveFolder, findFolderByName,
-  getDriveFileMeta, moveDriveFile, renameDriveFile, resolveDrivePathFromNames, uploadLocalFile
+  getDriveFileMeta, listDriveChildren, moveDriveFile, renameDriveFile,
+  resolveDrivePathFromNames, trashDriveFile, uploadLocalFile
 } from './driveUpload';
 import {
-  BOX_LABEL_FILE_NAME, STORAGE_BOXES_DIR, STORAGE_DIR, sanitizeSlug,
+  LEGACY_BOX_LABEL_FILE_NAME, STORAGE_BOXES_DIR, STORAGE_DIR, boxLabelFileName, sanitizeSlug,
   storageBoxFolderPath, storageBoxImagesFolderPath, storageImagesFolderPath
 } from './driveNaming';
 
@@ -41,13 +43,43 @@ export const driveFileIdsIn = (value) => {
   return [...ids];
 };
 
-/** Dépose (ou remplace) label.pdf dans storage/<storage>/boxes/<boîte>/.
- *  Le nom reste « label.pdf » : réenvoyer la même étiquette écrase la
- *  précédente au lieu d'empiler des copies.
+/** Range à la CORBEILLE l'ancienne étiquette « label.pdf » d'une boîte : depuis
+ *  que l'étiquette s'appelle <date>_<propriétaire>_boxlabel.pdf (voir
+ *  driveNaming.boxLabelFileName), le dossier d'une boîte ne doit pas garder deux
+ *  étiquettes — celle d'avant part à la corbeille (récupérable) dès que la
+ *  nouvelle est déposée. Le fichier GARDÉ (`keepName`) n'est jamais touché.
+ *  Au mieux : sans Drive, ou sans dossier, rien ne change.
+ *  @returns {Promise<number>} le nombre d'anciennes étiquettes rangées */
+export const clearLegacyBoxLabels = async ({ storage, box, keepName = '' }) => {
+  if (!cloudBackendAvailable()) return 0;
+  let leafId = '';
+  try {
+    /* RECHERCHE SEULE : le geste ne doit jamais fabriquer un dossier de boîte. */
+    const found = await resolveDrivePathFromNames(storageBoxFolderPath(storage, box), { create: false });
+    leafId = found && found.leafId ? String(found.leafId) : '';
+  } catch { return 0; }
+  if (!leafId) return 0;
+  let children = [];
+  try { children = await listDriveChildren(leafId); } catch { return 0; }
+  let removed = 0;
+  for (const child of (Array.isArray(children) ? children : [])) {
+    const name = String((child && child.name) || '');
+    if (name !== LEGACY_BOX_LABEL_FILE_NAME || name === String(keepName || '')) continue;
+    try { if (await trashDriveFile(child.id)) removed += 1; } catch { /* au mieux */ }
+  }
+  return removed;
+};
+
+/** Dépose (ou remplace) l'étiquette d'une boîte dans storage/<storage>/boxes/<boîte>/.
+ *  Le nom est celui de la boîte — <date>_<propriétaire>_boxlabel.pdf, construit
+ *  par l'appelant avec driveNaming.boxLabelFileName — donc réenvoyer la même
+ *  étiquette écrase la précédente ; une étiquette qui portait l'ANCIEN nom
+ *  (« label.pdf ») est rangée, pour qu'un dossier de boîte ne porte jamais deux
+ *  étiquettes.
  *  @returns {Promise<{id:string,name:string,driveUrl:string}|null>} */
-export const saveBoxLabelFile = async ({ storage, box, blob, name = BOX_LABEL_FILE_NAME }) => {
+export const saveBoxLabelFile = async ({ storage, box, blob, name = boxLabelFileName() }) => {
   if (!blob || !cloudBackendAvailable()) return null;
-  return uploadLocalFile({
+  const saved = await uploadLocalFile({
     name,
     mimeType: 'application/pdf',
     file: blob,
@@ -57,6 +89,10 @@ export const saveBoxLabelFile = async ({ storage, box, blob, name = BOX_LABEL_FI
        `title` garantit qu'un futur renommage recalcule le MÊME nom. */
     ctx: { storage, box, title: String(name).replace(/\.[^/.]+$/, ''), section: '' }
   });
+  /* Seulement si l'étiquette est vraiment arrivée : sans Drive on ne range rien
+     (on ne sait pas ce qu'il y a dans le dossier). */
+  if (saved && saved.driveUrl) await clearLegacyBoxLabels({ storage, box, keepName: name });
+  return saved;
 };
 
 /** Le dossier du conteneur « storage » du dataset ('' s'il n'existe pas). */
@@ -132,7 +168,7 @@ export const renameStorageDriveFolder = async ({ oldName, newName }) => {
 /** Renomme le dossier Drive d'UNE boîte :
  *  storage/<storage>/boxes/<ancien nom> → …/<nouveau nom>. Une boîte garde donc
  *  le nom qu'on lui donne, jamais le « Test 74 » de sa création — et tout ce
- *  qu'elle contient (photos, label.pdf) suit le dossier automatiquement.
+ *  qu'elle contient (photos, étiquette boxlabel.pdf) suit le dossier automatiquement.
  *  @returns {Promise<boolean>} true quand le dossier a été renommé */
 export const renameStorageBoxDriveFolder = async ({ storage, oldName, newName }) => {
   const oldSlug = sanitizeSlug(oldName);

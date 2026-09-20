@@ -53,8 +53,8 @@ eq(NAMING.canonicalizeExperimentPath(LEGACY, CTX),
   'l’ancienne forme reçoit le conteneur « projects »');
 
 eq(NAMING.canonicalizeExperimentPath(['Test_74', 'instance1', 'image'], { test: 'Test 74' }),
-  ['projects', 'unassigned', 'Test_74', 'instance1', 'image'],
-  'sans projet : le bac « unassigned » (comme projectImagesFolderPath)');
+  ['projects', 'test', 'Test_74', 'instance1', 'image'],
+  'sans projet : le projet par DÉFAUT « test » (le bac « unassigned » n’existe plus)');
 
 eq(NAMING.canonicalizeExperimentPath(['projects', 'P1', 'Exp', 'i1', 'data'], { test: 'Exp', projectNames: ['P1', 'P2'] }),
   ['projects', 'P1', 'Exp', 'i1', 'data'], 'un chemin canonique du 1er projet lié reste inchangé');
@@ -111,7 +111,7 @@ const makeDrive = () => {
      par projet lié (le nom du projet est remplacé à chaque copie). */
   const simulateUpload = ({ ctx, path, file }) => {
     const projects = ctx.test
-      ? (NAMING.projectNamesOf(ctx).length ? NAMING.projectNamesOf(ctx) : ['_unassigned'])
+      ? (NAMING.projectNamesOf(ctx).length ? NAMING.projectNamesOf(ctx) : [NAMING.DEFAULT_PROJECT_NAME])
       : [''];
     const targets = [];
     for (const projectName of projects) {
@@ -161,12 +161,12 @@ eq(shared.simulateUpload({
 ], 'un fichier partagé atterrit sous CHAQUE projet lié (jamais deux fois sous le premier)');
 eq(shared.rootNames(), ['projects'], '…et toujours sous projects/');
 
-/* 3d. Expérience sans projet : bac « unassigned », jamais la racine. */
+/* 3d. Expérience sans projet : le projet par DÉFAUT « test », jamais la racine. */
 const orphan = makeDrive();
 eq(orphan.simulateUpload({
   ctx: { test: 'Test 74', scientist: 'Nicolas', section: 'Data', subsection: 'Bruker 1r', instance: 'file1' },
   path: ['Test_74', 'file1', 'Data', '10', 'pdata', '1'], file: '1r'
-}), ['projects/unassigned/Test_74/file1/Data/10/pdata/1'], 'une expérience sans projet va dans projects/unassigned');
+}), ['projects/test/Test_74/file1/Data/10/pdata/1'], 'une expérience sans projet va dans projects/test');
 ok(!orphan.rootNames().includes('Test_74'), '…sans laisser la moindre trace à la racine');
 
 /* ── 4. Les contrats de code (ce qui a été corrigé ne peut pas revenir) ──── */

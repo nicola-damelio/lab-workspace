@@ -1,0 +1,130 @@
+﻿    writeDriveMirror(rememberProjectFolder(readDriveMirror(), {
+      datasetId: getDriveRootId(),
+      datasetName: getDriveRootName(),
+      projectName,
+      folderId: leaf.folderId,
+      imagesId: leaf.imagesId
+    }));
+  } catch { /* registre local indisponible : la lecture reste possible */ }
+};
+
+/** Retenir le dossier `images` que la rÃ©solution vient de TROUVER â€” sans bruit.
+ *
+ *  C'est ce qui remplace dÃ©finitivement la recherche par nom : la prochaine
+ *  lecture (et le prochain envoi) visent l'IDENTIFIANT retenu, donc plus jamais
+ *  Â« le premier dossier du nom Â» quand deux jumeaux coexistent.
+ *
+ *  Si le miroir connaÃ®t dÃ©jÃ  ce dossier `images`, RIEN n'est Ã©crit : une lecture
+ *  ne doit pas faire rÃ©Ã©crire le fichier d'Ã©tat du Drive Ã  chaque fois. */
+const rememberFiguresLeafOnce = (projectName, { folderId = '', imagesId = '' } = {}) => {
+  if (!folderId || !imagesId) return;
+  const scope = { datasetId: getDriveRootId(), datasetName: getDriveRootName(), projectName };
+  if (findProjectImagesId(readDriveMirror(), scope) === String(imagesId)) return;
+  rememberFiguresLeaf(projectName, { folderId, imagesId });
+};
+
+/** LE JUMEAU QUI PORTE LES FIGURES.
+ *
+ *  Le dossier rÃ©solu Ã©tait VIDE : au mÃªme endroit, un dossier du MÃŠME nom (ou
+ *  d'un autre conteneur `projects`, ou d'un autre dossier du nom du projet)
+ *  porte les fichiers â€” c'est exactement l'Ã©tat Â« deux dossiers images dont un
+ *  vide Â» oÃ¹ le programme ne voyait plus rien. On les COMPARE, on retient celui
+ *  qui a des figures et on le note dans le miroir : plus rien ne sÃ©pare ensuite
+ *  les lectures des envois.
+ *
+ *  @returns {Promise<null | { leafId:string, name:string, folder:string,
+ *                             files:number, candidates:Array }>}
+ *           `null` = aucun jumeau peuplÃ© (le dossier vide est bien le seul). */
+export const recoverFiguresFolderWithFiles = async (projectName, { exceptLeafId = '' } = {}) => {
+  const skip = String(exceptLeafId || '');
+  /* PortÃ©e COMMUNE : seuls les dossiers du seau `unassigned` sont candidats.
+     Sans ce filtre, le Â« dossier peuplÃ© Â» choisi pouvait Ãªtre celui d'un PROJET
+     et la bibliothÃ¨que commune se mettait Ã  lire â€” puis Ã  Ã©crire â€” les figures
+     d'un projet. */
+  const leaves = (await scanFiguresLeaves(projectName))
+    .filter((l) => !sanitizeSlug(projectName) ? isUnassignedFolderName(l.name) : true);
+  const best = bestFiguresLeaf(leaves.filter((l) => l.imagesId !== skip && l.files > 0));
+  if (!best) return null;
+  rememberFiguresLeaf(projectName, best);
+  return {
+    name: best.name,
+    leafId: best.imagesId,
+    exact: folderNameIsWanted(best.name, projectName),
+    via: 'twin',
+    folder: `projects/${best.name}/${best.imagesName}`,
+    files: best.files,
+    candidates: leaves.filter((l) => l.imagesId !== best.imagesId)
+  };
+};
+
+/**
+ * Le dossier d'images de CE projet, cherchÃ© sans rien crÃ©er.
+ *
+ * @returns {Promise<{ name:string, leafId:string, exact:boolean, via:string,
+ *                     folder:string, candidates:Array }>}
+ *   `name`       nom RÃ‰EL du dossier du projet sur le Drive (peut diffÃ©rer du
+ *                nom du projet : c'est tout l'intÃ©rÃªt) ;
+ *   `leafId`     identifiant du dossier `images` â€” '' quand on n'a rien trouvÃ© ;
+ *   `via`        'mirror' | 'name' | 'similar' | '' (comment il a Ã©tÃ© trouvÃ©) ;
+ *   `candidates` ce qui a Ã©tÃ© vu (renseignÃ© quand rien n'est certain, pour que
+ *                l'Ã©cran puisse proposer le bon dossier au lieu de deviner).
+ */
+export const findProjectFiguresFolder = async (projectName) => {
+  /* Le ou les noms du dossier cherchÃ©. PortÃ©e COMMUNE : les DEUX noms du seau
+     (voir unassignedFolderNames) â€” le rÃ©el d'abord, car c'est celui que la
+     crÃ©ation fabrique sur le Drive. */
+  const wantedNames = sanitizeSlug(projectName) ? [sanitizeSlug(projectName)] : unassignedFolderNames();
+  const wanted = wantedNames[0];
+  const scope = { datasetId: getDriveRootId(), datasetName: getDriveRootName(), projectName };
+  const none = {
+    name: '', leafId: '', exact: false, via: '',
+    folder: imagesFolderPathOnDrive(projectName), candidates: []
+  };
+  if (!getDriveToken()) return none;
+  try {
+    // 0. LE DOSSIER `images` DÃ‰JÃ€ RETENU, par son IDENTIFIANT. Une recherche par
+    //    NOM rend le PREMIER des jumeaux, dans un ordre que le Drive ne garantit
+    //    pas â€” souvent le plus rÃ©cent, donc le VIDE : c'est ce chemin-lÃ  qui
+    //    relisait un dossier vide pendant que les figures Ã©taient Ã  cÃ´tÃ©. Un
+    //    identifiant, lui, ne se trompe jamais (et suit un renommage).
+    const remembered = findProjectImagesId(readDriveMirror(), scope);
+    if (remembered) {
+      const meta = await getDriveFileMeta(remembered).catch(() => null);
+      if (meta && meta.id && !meta.trashed) {
+        const twin = await preferPopulatedTwin(projectName, remembered);
+        if (twin) return twin;
+        const name = await projectFolderNameOf(scope, wanted);
+        return {
+          name, leafId: remembered, exact: folderNameIsWanted(name, projectName), via: 'remembered',
+          folder: `projects/${name}/images`, candidates: []
+        };
+      }
+    }
+    // 1. LE MIROIR : l'identifiant Drive du dossier du projet. Il est renommÃ© SUR
+    //    PLACE quand le projet est renommÃ©, donc il reste juste â€” c'est la seule
+    //    source qui survit Ã  un renommage complet. Son dossier `images` est
+    //    choisi parmi les JUMEAUX (`bestLeafOfProjectFolder`), pas Â« le premier
+    //    du nom Â».
+    const folderId = findProjectFolderId(readDriveMirror(), scope);
+    if (folderId) {
+      const meta = await getDriveFileMeta(folderId).catch(() => null);
+      if (meta && meta.id && !meta.trashed) {
+        const name = String(meta.name || wanted);
+        const leaf = await bestLeafOfProjectFolder(folderId);
+        if (leaf) {
+          const twin = await preferPopulatedTwin(projectName, leaf.imagesId);
+          if (twin) return twin;
+          // Le dossier est trouvÃ© : on le RETIENT par identifiant, pour que la
+          // prochaine lecture ne repasse pas par la recherche par nom.
+          rememberFiguresLeafOnce(projectName, { folderId, imagesId: leaf.imagesId });
+          return { name, leafId: leaf.imagesId, exact: folderNameIsWanted(name, projectName), via: 'mirror', folder: `projects/${name}/images`, candidates: [] };
+        }
+      }
+    }
+    // 2. LE NOM CANONIQUE â€” existence seulement : c'est ici que l'ancien code
+    //    crÃ©ait un jumeau vide quand le dossier portait un autre nom.
+    const root = await datasetRootId();
+    /* `projects` est un CONTENEUR CANONIQUE : il est rÃ©solu par son identitÃ©
+       (registre partagÃ©, jumeaux dÃ©partagÃ©s par leur contenu â€” voir
+       datasetDirTwins.js), car une recherche par nom rend Â« le premier du nom Â»
+       dans un ordre que le Drive ne garantit pas â€” donc souvent le jumeau VIDE.

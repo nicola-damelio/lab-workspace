@@ -215,11 +215,16 @@ eq(same.reason, 'already-there', 'déjà dans le bon dossier : rien à faire, et
 eq(moves, [], '…aucun appel de déplacement n’est fait');
 
 /* Nextcloud : le WebDAV MOVE vise le dossier de la nouvelle portée. */
-const dav = 'https://nc.example/remote.php/dav/files/me/Lab%20Workspace/DS/projects/_unassigned/images/image5.png';
+const dav = 'https://nc.example/remote.php/dav/files/me/Lab%20Workspace/DS/general_library_images/image5.png';
 const tail = NAMING.projectImagesFolderPath('CD project').join('/');
 eq(LIB.ncUrlInFiguresFolder(dav, 'CD project'),
   `https://nc.example/remote.php/dav/files/me/Lab%20Workspace/DS/${tail}/image5.png`,
-  'Nextcloud : l’URL du fichier rangé dans le dossier d’images du projet');
+  'Nextcloud : l’URL du fichier rangé dans la bibliothèque COMMUNE part dans le projet');
+eq(LIB.ncUrlInFiguresFolder(
+  'https://nc.example/remote.php/dav/files/me/Lab%20Workspace/DS/projects/_unassigned/images/image5.png', 'CD project'
+),
+  `https://nc.example/remote.php/dav/files/me/Lab%20Workspace/DS/${tail}/image5.png`,
+  '…et un fichier resté dans l’ANCIEN bac commun suit aussi (l’emplacement d’avant est encore lu)');
 eq(LIB.ncUrlInFiguresFolder(dav, 'CD project', 'image5.png.meta.json'),
   `https://nc.example/remote.php/dav/files/me/Lab%20Workspace/DS/${tail}/image5.png.meta.json`,
   '…et celle de son sidecar');

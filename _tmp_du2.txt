@@ -1,0 +1,14 @@
+﻿95: import { pickCanonicalFolder, emptyTwinIds, isCanonicalDatasetDir } from './datasetDirTwins';
+285: let driveRootKind = 'scientific'; // 'scientific' | 'administration' (folder layout choice)
+295: const datasetDirNames = () =>
+296: driveRootKind === 'administration'
+309: if (nextId === driveRootId && nextName === driveRootName && nextKind === driveRootKind) return;
+312: if (nextKind) driveRootKind = nextKind;
+333: kind: driveRootKind
+426: const list = Array.isArray(dirs) && dirs.length ? dirs : datasetDirNames();
+431: if (datasetDirDeleted(dir)) { map[dir] = ''; continue; }
+439: if (driveRootKind === 'administration') {
+504: const datasetDirDeletedFor = (dir, datasetId = '', datasetName = '') => {
+512: const datasetDirDeleted = (dir) => datasetDirDeletedFor(dir);
+785: if (!create || datasetDirDeletedFor(name, scope.datasetId, scope.datasetName)) return '';
+840: const next = (i === 0 && isCanonicalDatasetDir(name))

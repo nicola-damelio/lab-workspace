@@ -38,6 +38,7 @@ import {normalizeOperators} from './utils/auth';
 import { repairBoxPlacements } from './utils/storageBoxes';
 import { setActiveProjectId, readLibrary, readAllProjectLibraries, mergeLibraryFromSnapshot, refreshLibraryFromStorage } from './utils/figuresLibrary';
 import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, getLastDriveConnectError, driveBootstrapRequestedAtLoad, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders, cloudBackendAvailable } from './utils/driveUpload';
+import { migrateCommonLibraryOnce } from './utils/commonLibraryMigrate';
 /* ── LE DRIVE EST LE MIROIR DU PROGRAMME (et le même sur chaque poste) ──────
    driveMirror.js : supprimer ou renommer un dataset / un projet se répercute
    sur Drive (dossier mis à la corbeille, dossier renommé — jamais de doublon).
@@ -1164,7 +1165,15 @@ if (customType === 'dosy') {
     if (!currentDatasetId || !getDriveToken()) return;
     if (driveRenameTimeoutRef.current) clearTimeout(driveRenameTimeoutRef.current);
     driveRenameTimeoutRef.current = setTimeout(() => {
-      ensureDriveFolder().catch(() => {});
+      ensureDriveFolder()
+        /* Le dossier de la bibliothèque COMMUNE de figures a changé de place
+           (`<dataset>/general_library_images`, et les expériences sans projet
+           vont dans `projects/test`) : le déménagement se fait ICI, une seule
+           fois par dataset, quand le Drive est prêt — silencieux, best-effort, et
+           la lecture continue de fonctionner sur les anciens emplacements
+           entre-temps (voir utils/commonLibraryMigrate.js). */
+        .then(() => migrateCommonLibraryOnce())
+        .catch(() => {});
     }, 800);
     return () => {
       if (driveRenameTimeoutRef.current) clearTimeout(driveRenameTimeoutRef.current);

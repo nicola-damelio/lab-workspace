@@ -1,0 +1,120 @@
+﻿export const unassignedFolderNames = () => ['unassigned', '_unassigned'];
+
+/** Ce nom est-il celui du seau commun ? (`unassigned` = `_unassigned`). PUR. */
+export const isUnassignedFolderName = (name) => folderNameKey(name) === 'unassigned';
+
+/** Le chemin (noms de dossiers, relatif au dossier du dataset) du dossier
+ *  d'images d'un projet tel qu'il EXISTE sur le Drive :
+ *      projects/<slug(projet)>/images      , et
+ *      projects/unassigned/images          quand il n'y a pas de projet.
+ *  Le seau commun s'appelle `unassigned` (sans `_`) parce que la crÃ©ation
+ *  sanitise chaque segment du chemin (voir unassignedFolderNames) â€” c'est le nom
+ *  que l'Ã©cran doit MONTRER, celui que le Drive affiche. PUR. */
+export const imagesFolderPathOnDrive = (projectName) =>
+  `projects/${sanitizeSlug(projectName) || unassignedFolderNames()[0]}/images`;
+
+/** Le nom cherchÃ© correspond-il Ã  celui de CE projet / de cette portÃ©e ? PUR. */
+export const folderNameIsWanted = (name, projectName) =>
+  (sanitizeSlug(projectName) ? String(name) === sanitizeSlug(projectName) : isUnassignedFolderName(name));
+
+/** Les mots d'un nom (pour un renommage qui garde la moitiÃ© du titre). PUR. */
+const folderNameWords = (name) => sanitizeSlug(name).toLowerCase().split(/[_-]+/).filter(Boolean);
+
+/** Deux noms dÃ©signent-ils le MÃŠME dossier de projet ?
+ *  3 = mÃªme nom au sÃ©parateur/casse prÃ¨s (Â« Canvas_18_09 Â» = Â« canvas 18 09 Â»),
+ *  2 = l'un contient l'autre (Â« Figure_p53H Â» âŠƒ Â« Figure_p53H_old Â»),
+ *  1 = ils partagent des mots (Â« Canvas 18/09 Â» â†” Â« Canvas 19/09 Â»),
+ *  0 = rien en commun (un vrai renommage : Ã  l'utilisateur de trancher). PUR. */
+export const projectFolderNameScore = (folderName, projectName) => {
+  const a = folderNameKey(folderName);
+  const b = folderNameKey(projectName);
+  if (!a || !b) return 0;
+  if (a === b) return 3;
+  if (a.indexOf(b) !== -1 || b.indexOf(a) !== -1) return 2;
+  const wordsA = folderNameWords(folderName);
+  const wordsB = folderNameWords(projectName);
+  return wordsA.some((w) => wordsB.indexOf(w) !== -1) ? 1 : 0;
+};
+
+/** Le dossier qui est SÃ›REMENT celui de ce projet, sinon `null`.
+ *  Un score â‰¥ 2 (nom identique ou contenu) suffit ; un score de 1 (mots communs)
+ *  ne suffit PAS â€” deux projets peuvent partager des mots â€” et deux candidats Ã 
+ *  Ã©galitÃ© ne suffisent pas non plus : dans ces cas l'appelant montre la liste
+ *  au lieu de choisir Ã  l'aveugle. PUR. */
+export const pickFiguresFolder = (candidates, projectName) => {
+  const list = (Array.isArray(candidates) ? candidates : []).filter((c) => c && c.name && c.imagesId);
+  if (!list.length) return null;
+  /* PortÃ©e COMMUNE (aucun projet) : le dossier attendu est le SEAU `unassigned`.
+     Son nom est une CONVENTION, pas une supposition â€” le reconnaÃ®tre vaut donc 3
+     au lieu de 0 (`projectFolderNameScore(x, '')` vaut toujours 0, si bien que la
+     bibliothÃ¨que commune ne pouvait JAMAIS Ãªtre retrouvÃ©e par ce chemin). */
+  const scoreOf = (name) => (sanitizeSlug(projectName)
+    ? projectFolderNameScore(name, projectName)
+    : (isUnassignedFolderName(name) ? 3 : 0));
+  const scored = list
+    .map((c) => ({ c, score: scoreOf(c.name), files: Number(c.files || 0) }))
+    .sort((x, y) => (y.score - x.score) || (y.files - x.files));
+  const best = scored[0];
+  if (!best || best.score < 2) return null;
+  if (scored[1] && scored[1].score === best.score) return null;
+  return best.c;
+};
+
+/* â”€â”€ Les JUMEAUX d'un dossier (PUR) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+
+/** Â« J'ai deux dossiers images sur le Drive et l'un est vide Â» : deux dossiers du
+ *  MÃŠME nom, au MÃŠME endroit, existent â€” et `findFolderByName` rend le PREMIER,
+ *  que le Drive choisit sans ordre garanti (souvent le plus rÃ©cent, donc le vide).
+ *  Le classement des jumeaux est PUR : celui qui CONTIENT des figures gagne, puis
+ *  celui qui en contient le plus, puis le nom (deux dossiers vides sont
+ *  interchangeables, mais leur ordre doit rester stable). */
+export const rankFiguresLeaves = (leaves) => (Array.isArray(leaves) ? leaves : [])
+  .filter((l) => l && l.imagesId)
+  .map((l) => ({ ...l, files: Number(l.files || 0) }))
+  .sort((a, b) => (b.files - a.files)
+    || String(a.imagesName || '').localeCompare(String(b.imagesName || '')));
+
+/** Le dossier `images` Ã  retenir parmi des jumeaux (`null` si aucun). PUR. */
+export const bestFiguresLeaf = (leaves) => rankFiguresLeaves(leaves)[0] || null;
+
+/* â”€â”€ Lecture du Drive (aucun dossier crÃ©Ã©) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+
+/** La racine du dataset : l'identifiant retenu dans le miroir s'il existe
+ *  encore, sinon le dossier du dataset (seul endroit oÃ¹ l'on accepte une
+ *  crÃ©ation : sans lui, il n'y a rien Ã  lire). */
+const datasetRootId = async () => {
+  try {
+    const remembered = findDatasetFolderId(readDriveMirror(), {
+      id: getDriveRootId(), name: getDriveRootName()
+    });
+    if (remembered) {
+      const meta = await getDriveFileMeta(remembered);
+      if (meta && meta.id && !meta.trashed) return remembered;
+    }
+  } catch { /* miroir illisible â†’ dossier du dataset */ }
+  return await ensureDriveFolder();
+};
+
+const DRIVE_FOLDER_MIME = 'application/vnd.google-apps.folder';
+/** Un dossier du Drive (et non un fichier). */
+const isFolderNode = (f) => !!f && !!f.id && String(f.mimeType || '') === DRIVE_FOLDER_MIME;
+/** Le dossier s'appelle-t-il `images` ? Un jumeau fabriquÃ© Ã  cÃ´tÃ© porte souvent
+ *  un nom dÃ©rivÃ© (Â« Images Â», Â« images_2 Â») : on les prend tous. */
+const isImagesFolderNode = (f) => isFolderNode(f) && folderNameKey(f.name).indexOf('images') === 0;
+/** Les sous-dossiers d'un parent dont le nom (au sÃ©parateur/casse prÃ¨s) est `key`. */
+const childFoldersNamed = async (parentId, key) =>
+  (await listDriveChildren(parentId).catch(() => []))
+    .filter((f) => isFolderNode(f) && folderNameKey(f.name) === String(key || ''));
+
+/** Le meilleur dossier `images` d'un dossier de projet : un seul â†’ lui, sans
+ *  aucun appel de plus ; PLUSIEURS (des jumeaux) â†’ on compare ce qu'ils
+ *  contiennent, sans quoi la lecture tombe sur le premier du nom â€” le vide. */
+const bestLeafOfProjectFolder = async (projectFolderId) => {
+  const leaves = (await listDriveChildren(projectFolderId).catch(() => [])).filter(isImagesFolderNode);
+  if (!leaves.length) {
+    /* La liste n'a rien donnÃ© (Drive muet, ou faux Drive d'une sonde qui
+       n'Ã©numÃ¨re pas les dossiers) : on retombe sur la recherche par nom â€” le
+       chemin d'avant, qui rend Â« le premier du nom Â». Mieux vaut lire un dossier
+       que plus rien du tout. */
+    const byName = await findFolderByName('images', projectFolderId).catch(() => '');
+    return byName ? { imagesId: String(byName), imagesName: 'images' } : null;

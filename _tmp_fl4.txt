@@ -1,0 +1,16 @@
+﻿  const name = figureFileName(label, ext, identity);
+
+  // â”€â”€ Nextcloud â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  if (getCloudProvider() === 'nextcloud') {
+    const parts = ['Lab Workspace'];
+    const ds = getDriveRootName();
+    if (ds) parts.push(sanitizeSlug(ds));
+    // Canonical location, INSIDE the projects container:
+    //   <dataset>/projects/<project>/images (/_unassigned when no project).
+    parts.push(...projectImagesFolderPath(projectName));
+    try {
+      return await ncUploadFile({
+        parts,
+        name,
+        mimeType: isSvg ? 'image/svg+xml' : (mime || 'image/png'),
+        file: src

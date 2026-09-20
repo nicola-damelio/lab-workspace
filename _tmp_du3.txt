@@ -1,0 +1,22 @@
+﻿let driveRootKind = 'scientific'; // 'scientific' | 'administration' (folder layout choice)
+let driveRootResolvedId = getDriveFolderDatasetId();   // dataset id of the cached labDriveFolderId
+let driveRootResolvedName = getDriveFolderName();      // dataset-name the cached labDriveFolderId was created with
+
+/** Sub-directories that may exist directly inside a dataset folder. Scientific
+ *  datasets keep the canonical five-folder tree (projects / backups / protocols
+ *  / storage / publications). An ADMINISTRATION dataset only needs its own
+ *  `backups` folder (weekly HTML snapshots) and the `Budget_labo` container
+ *  created by the expense/Document filing helpers â€” never projects, protocols,
+ *  storage or publications (which belong to the scientific datasets only). */
+const datasetDirNames = () =>
+  driveRootKind === 'administration'
+    ? ['backups', 'Budget_labo']
+    : DATASET_FOLDER_DIRS;
+
+/** Tell the Drive layer which main file (dataset) is currently open, so the
+ *  dataset folder on Drive (inside "Lab Workspace") is named after it, and
+ *  which internal folder layout it expects (`kind` = 'scientific' |
+ *  'administration'). Called by App.jsx whenever the current dataset id,
+ *  title or kind changes. */
+export const setDriveRootContext = ({ id = '', name = '', kind = '' } = {}) => {
+  const nextId = String(id || '');

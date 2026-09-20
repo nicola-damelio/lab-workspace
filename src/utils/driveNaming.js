@@ -19,7 +19,7 @@
    A storage and its boxes are NOT experiments (a box is a location):
        storage/<storage>/images/<file>
        storage/<storage>/boxes/<box>/images/<file>
-       storage/<storage>/boxes/<box>/label.pdf
+       storage/<storage>/boxes/<box>/<date>_<owner>_boxlabel.pdf
    ========================================================================= */
 
 /** Shared slug-maker for folder and file names. */
@@ -77,15 +77,33 @@ export const projectSectionFolderAlias = (label) => {
 
        storage/<storage>/images/<fichier>          ← image de référence du storage
        storage/<storage>/boxes/<boîte>/images/<f>  ← photos d'une boîte
-       storage/<storage>/boxes/<boîte>/label.pdf   ← étiquette d'une boîte
+       storage/<storage>/boxes/<boîte>/<date>_<propriétaire>_boxlabel.pdf
+                                                  ← étiquette d'une boîte (automatique)
 
    Un storage sans nom tombe dans le bac « unassigned » (le « _ » de tête du nom
    canonique tombe à la création, exactement comme projects/_unassigned). */
 export const STORAGE_DIR = 'storage';
 export const STORAGE_BOXES_DIR = 'boxes';
 export const STORAGE_IMAGES_DIR = 'images';
-/** Nom du PDF d'étiquette d'une boîte (rangé dans le dossier de la boîte). */
-export const BOX_LABEL_FILE_NAME = 'label.pdf';
+/** Dernier mot du nom d'une étiquette de boîte : « 2026-01-15_Anna_boxlabel.pdf ». */
+export const BOX_LABEL_NAME_SUFFIX = 'boxlabel';
+/** Ancien nom du PDF d'étiquette — encore LU pour nettoyer un dossier de boîte
+ *  (l'étiquette qui porte ce nom part à la corbeille dès que la nouvelle est
+ *  déposée : voir storageDrive.clearLegacyBoxLabels). */
+export const LEGACY_BOX_LABEL_FILE_NAME = 'label.pdf';
+
+/** Nom du PDF d'étiquette déposé dans le dossier d'une boîte :
+ *      <date>_<propriétaire>_boxlabel.pdf
+ *  `date` et `owner` sont les champs OBLIGATOIRES de la boîte (BoxDetail : « Date »
+ *  et « Box Owner » — ce sont eux qui n'apparaissaient pas sur l'étiquette) : un
+ *  PDF sorti de son dossier s'identifie donc tout seul. Une partie vide est
+ *  simplement omise (« 2026-01-15_boxlabel.pdf », ou « Anna_boxlabel.pdf ») et le
+ *  nom reste STABLE tant que la boîte ne change pas — la même étiquette réenvoyée
+ *  écrase la précédente au lieu d'empiler des copies. */
+export const boxLabelFileName = (date = '', owner = '') => {
+  const parts = [sanitizeSlug(date), sanitizeSlug(owner), BOX_LABEL_NAME_SUFFIX].filter(Boolean);
+  return `${parts.join('_')}.pdf`;
+};
 
 /** Le nom de dossier d'un storage (« _unassigned » quand il n'a pas de nom). */
 const storageSlug = (name) => sanitizeSlug(name) || '_unassigned';
@@ -205,6 +223,10 @@ export const copyText = async (text) => {
 
    Every dataset directory follows a strict, fixed structure:
      <dataset>/projects     → <project>/<experiment>/<instance>/<page section>/[<page subsection>]
+     <dataset>/general_library_images → the figures of the COMMON library
+                              (figures that belong to no project — they are
+                              written/read DIRECTLY here: this folder IS the
+                              images folder)
      <dataset>/backups      → weekly HTML saves of the dataset
      <dataset>/protocols    → shared protocol library
      <dataset>/storage      → shared storage / sample-location resources
@@ -221,8 +243,23 @@ export const copyText = async (text) => {
  *  canonicalExperimentPath). */
 export const PROJECTS_CONTAINER = 'projects';
 
+/** Le dossier canonique de la BIBLIOTHÈQUE COMMUNE de figures — celles qui
+ *  n'appartiennent à AUCUN projet. C'est un dossier de PREMIER NIVEAU du dataset,
+ *  à côté de `projects/` : une figure commune n'est pas un projet, donc elle ne
+ *  vit pas dans le conteneur des projets. Il porte les figures DIRECTEMENT (ce
+ *  dossier EST le dossier d'images, contrairement à `projects/<projet>/images`).
+ *  Son ancien emplacement — `projects/unassigned/images` — est encore LU le temps
+ *  de la migration : voir utils/commonLibraryMigrate.js. */
+export const GENERAL_LIBRARY_DIR = 'general_library_images';
+
+/** Le PROJET par défaut : un test (ou une figure) sans projet n'est plus
+ *  « unassigned » — le programme le range dans `projects/test`. Une seule source
+ *  de vérité pour ce nom (chemin d'une expérience, dossier d'images d'un projet,
+ *  bac « hors projet »). */
+export const DEFAULT_PROJECT_NAME = 'test';
+
 /** The only sub-directories allowed directly inside a dataset folder. */
-export const DATASET_FOLDER_DIRS = [PROJECTS_CONTAINER, 'backups', 'protocols', 'storage', 'publications'];
+export const DATASET_FOLDER_DIRS = [PROJECTS_CONTAINER, GENERAL_LIBRARY_DIR, 'backups', 'protocols', 'storage', 'publications'];
 
 /** Canonical dataset directory name (used for uploads AND backups, so a dataset
  *  never fragments into several sibling folders at the workspace root). */
@@ -276,7 +313,7 @@ export const canonicalExperimentPath = (ctx = {}) => {
   const test = String(ctx.test || '').trim();
   if (!test) return []; // project documents / library figures keep legacy routing
   const projects = projectNamesOf(ctx);
-  const project = (projects[0] || '_unassigned'); // validation forbids missing projects
+  const project = (projects[0] || DEFAULT_PROJECT_NAME); // validation forbids missing projects
   const segs = ['projects', sanitizeSlug(project), sanitizeSlug(test)];
   if (String(ctx.instance || '').trim()) segs.push(sanitizeSlug(ctx.instance));
   const section = canonicalPageSection(ctx.section || ctx.pagesection || '');
@@ -307,7 +344,7 @@ export const canonicalizeExperimentPath = (path, ctx = {}) => {
   const test = String((ctx && ctx.test) || '').trim();
   if (!test) return segs;
   const projects = projectNamesOf(ctx);
-  const projectSeg = sanitizeSlug(projects[0] || '_unassigned');
+  const projectSeg = sanitizeSlug(projects[0] || DEFAULT_PROJECT_NAME);
   if (segs[0] === PROJECTS_CONTAINER) {
     // Déjà canonique : on ne remplace que le projet (envoi multi-projets).
     return segs[1] ? [PROJECTS_CONTAINER, projectSeg, ...segs.slice(2)] : segs;
@@ -337,13 +374,14 @@ export const pageSectionOf = (ctx = {}) => {
  *  IMAGE LIBRARY — the figures captured in the app (Image Builder canvases,
  *  ⭐ chart captures, molecule-viewer captures):
  *      projects/<project>/images
- *  The figures folder always lives INSIDE the canonical "projects" container:
- *  a figure saved with no project goes to the "_unassigned" bucket, exactly
- *  like an experiment with no project, so a dataset folder never grows a stray
- *  directory beside projects/backups/protocols/storage/publications. */
-export const projectImagesFolderPath = (projectName) => [
-  'projects', sanitizeSlug(projectName) || '_unassigned', 'images'
-];
+ *  A figure saved with NO project belongs to the COMMON library, which is NOT a
+ *  project: it lives in its own first-level folder of the dataset:
+ *      general_library_images          (the figures are DIRECTLY inside)
+ *  so a dataset folder never grows a stray directory beside
+ *  projects/general_library_images/backups/protocols/storage/publications. */
+export const projectImagesFolderPath = (projectName) => (sanitizeSlug(projectName)
+  ? ['projects', sanitizeSlug(projectName), 'images']
+  : [GENERAL_LIBRARY_DIR]);
 
 /** Canonical Drive folder NAMES (relative to the dataset folder) of a PROJECT
  *  DOCUMENT attached to one of the project page's sections (Scientific
@@ -370,11 +408,12 @@ export const projectSectionFolderLabel = (projectName, section, datasetName = ''
 
 /** Human-readable location of a project's IMAGE LIBRARY on Drive:
  *      "My_dataset / projects / CD_project / images"
- *  Chaque segment est affiché tel que le Drive le NOMME : la création d'un
- *  chemin sanitise les noms de dossiers (driveUpload.resolveDrivePathFromNames),
- *  donc la bibliothèque COMMUNE vit dans `projects/unassigned/images` — le `_`
- *  de tête du nom canonique `_unassigned` tombe. Afficher le nom canonique
- *  envoyait l'utilisateur chercher un dossier qui n'existe pas sur son Drive.
+ *      "My_dataset / general_library_images"        (bibliothèque COMMUNE)
+ *  Chaque segment est affiché tel que le Drive le NOMME (la création d'un chemin
+ *  sanitise les noms de dossiers — driveUpload.resolveDrivePathFromNames) : la
+ *  bibliothèque commune s'affiche donc « general_library_images », le dossier
+ *  de PREMIER NIVEAU qui la porte — plus le bac `projects/unassigned/images`
+ *  d'avant, qui envoyait chercher un dossier qui n'existe plus.
  *  ('' when the dataset folder is not known yet — see driveUpload). */
 export const projectImagesFolderLabel = (projectName, datasetName = '') => {
   const segs = [];

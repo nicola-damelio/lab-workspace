@@ -1,0 +1,6 @@
+﻿src\utils\driveUpload.js:423: export const ensureDatasetFolderStructure = async (datasetRootId, dirs = null) => {
+src\utils\driveUpload.js:553: if (name) await ensureDatasetFolderStructure(saved).catch(() => {});
+src\utils\driveUpload.js:569: if (name) await ensureDatasetFolderStructure(saved).catch(() => {});
+src\utils\driveUpload.js:590: if (name) await ensureDatasetFolderStructure(oldId).catch(() => {});
+src\utils\driveUpload.js:612: if (name) await ensureDatasetFolderStructure(rootId).catch(() => {});
+src\utils\driveUpload.js:760: *  vient de `ensureDatasetFolderStructure`).

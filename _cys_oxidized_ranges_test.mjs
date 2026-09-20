@@ -17,6 +17,11 @@
      • le drapeau « oxydée » ne fuit NI sur les autres résidus (Ala, etc.) NI
        sur les autres atomes (¹³C′ inchangé), et les ¹H ne bougent pas ;
      • l'infobulle d'une barre nomme l'état pris en compte (note) ;
+     • la référence RANDOM-COIL d'un résidu suit le MÊME état redox partout où
+       elle est montrée ou soustraite : l'infobulle « 🧪 Random coil » sous les
+       cellules de déplacements, la table / le graphe Δδ (CSI) et les
+       déplacements simulés — une Cys oxydée est référencée sur ¹³Cβ 39.6 ppm,
+       jamais sur la valeur réduite 28.0 ;
      • les deux tables + la résolution redox sont bien celles du rendu.
 
    Les tables et les fonctions pures sont RÉELLEMENT exécutées (extraction du
@@ -82,13 +87,14 @@ const code = [
   grabObject(DATA, 'RANDOM_COIL_DB'),
   grabFn(SEC, 'getCarbonRangeFor'),
   grabFn(SEC, 'cysIsOxidized'),
-  grabFn(SEC, 'cysCarbonRange')
+  grabFn(SEC, 'cysCarbonRange'),
+  grabFn(SEC, 'randomCoilRefOf')
 ].join('\n');
 const {
   CARBON_RANGE_DB, CYS_OXIDIZED_CARBON_RANGE, CYS_OXIDIZED_RC, RANDOM_COIL_DB,
-  getCarbonRangeFor, cysIsOxidized, cysCarbonRange
+  getCarbonRangeFor, cysIsOxidized, cysCarbonRange, randomCoilRefOf
 } = new Function(
-  `${code}\nreturn { CARBON_RANGE_DB, CYS_OXIDIZED_CARBON_RANGE, CYS_OXIDIZED_RC, RANDOM_COIL_DB, getCarbonRangeFor, cysIsOxidized, cysCarbonRange };`
+  `${code}\nreturn { CARBON_RANGE_DB, CYS_OXIDIZED_CARBON_RANGE, CYS_OXIDIZED_RC, RANDOM_COIL_DB, getCarbonRangeFor, cysIsOxidized, cysCarbonRange, randomCoilRefOf };`
 )();
 
 /* ══ 1. Les deux fenêtres théoriques de la cystéine ════════════════════════ */
@@ -154,7 +160,42 @@ eq(cysCarbonRange('Cα', { oxidized: true, reduced: true }),
 eq(cysCarbonRange("C'", { oxidized: true, reduced: false }), { min: 171, max: 178 },
   'un atome insensible au redox (¹³C′) n\'est pas annoté');
 
-/* ══ 5. La page affiche bien ces valeurs ══════════════════════════════════ */
+/* ══ 5. La référence random-coil d'UN résidu (infobulle 🧪, Δδ / CSI, shifts) ══
+   Un point d'entrée UNIQUE (`randomCoilRefOf`) : l'infobulle « 🧪 Random coil »
+   sous les cellules, la table/le graphe Δδ de la section Secondary Shifts et les
+   déplacements simulés. Sans lui, une Cys oxydée était référencée sur la table
+   RÉDUITE (¹³Cβ 28.0 au lieu de 39.6 : ~12 ppm d'erreur dans le CSI). */
+
+ok(randomCoilRefOf('protein', 'C', true) === CYS_OXIDIZED_RC,
+  'Cys oxydée → table CYS_OXIDIZED_RC (¹³Cβ 39.6 ppm)');
+ok(randomCoilRefOf('protein', 'C', false) === RANDOM_COIL_DB.C,
+  'Cys réduite → table random-coil habituelle (¹³Cβ 28.0 ppm)');
+ok(Math.abs(randomCoilRefOf('protein', 'C', true).CB - 39.6) < 1e-9
+  && Math.abs(randomCoilRefOf('protein', 'C', false).CB - 28.0) < 1e-9,
+  '…~12 ppm d\'écart selon l\'état redox : plus aucun panneau ne montre la valeur réduite d\'une Cys oxydée');
+ok(randomCoilRefOf('protein', 'A', true) === RANDOM_COIL_DB.A,
+  'le drapeau « oxydée » ne fuite pas sur les autres résidus');
+eq(randomCoilRefOf('dna', 'C', true), {},
+  'une cytosine d\'ADN ne reçoit JAMAIS la table cystéine (la table est indexée par code 1 lettre d\'acide aminé)');
+eq(randomCoilRefOf('protein', 'X', false), {}, 'une lettre hors table ne rend aucune valeur (jamais NaN dans le CSI)');
+
+/* …et les TROIS panneaux passent bien par elle. */
+has(SEC, 'const rcEntry = randomCoilRefOf(moleculeType, char, cysOxidizedHere);',
+  'les déplacements simulés résolvent l\'état redox par résidu');
+has(SEC, 'const rcEntry = randomCoilRefOf(d.moleculeType, res.char, res.cysOxidized);',
+  'l\'infobulle 🧪 Random coil lit l\'état PORTÉ PAR LE RÉSIDU');
+has(SEC, 'const rc = randomCoilRefOf(moleculeType, res.char, res.cysOxidized);',
+  'la table Δδ / CSI aussi');
+has(SEC, 'cysOxidized: cysOxidizedHere',
+  '…l\'état redox voyage AVEC le résidu (estSeq), donc tous les panneaux voient le même');
+has(SEC, 'const rc = randomCoilRefOf(moleculeType, res.char, res.cysOxidized);',
+  '…sans qu\'aucun panneau ne relise la table à la main');
+eq((SEC.match(/RANDOM_COIL_DB\[/g) || []).length, 1,
+  'une SEULE lecture de la table random-coil subsiste dans la page : la fonction randomCoilRefOf');
+has(SEC, "return char === 'C' && cysOxidized ? CYS_OXIDIZED_RC : (RANDOM_COIL_DB[char] || {});",
+  '…et c\'est bien elle qui choisit la table');
+
+/* ══ 6. La page affiche bien ces valeurs ══════════════════════════════════ */
 
 has(SEC, 'CYS_OXIDIZED_RC, CYS_OXIDIZED_CARBON_RANGE,', 'la table oxydée est importée dans NMRSections.jsx');
 has(SEC, "const rg = char === 'C' && cysRedox ? cysCarbonRange(cn, cysRedox) : getCarbonRangeFor(moleculeType, char, cn);",

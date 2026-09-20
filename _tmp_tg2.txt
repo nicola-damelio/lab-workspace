@@ -1,0 +1,24 @@
+﻿=== _drive_mirror_test.mjs:125
+eq(S.projectFolderPaths(''), ['projects/_unassigned'],
+=== _experiment_drive_root_test.mjs:49
+eq(NAMING.DATASET_FOLDER_DIRS[0], NAMING.PROJECTS_CONTAINER, '…et c’est le premier conteneur canonique du dataset');
+=== _experiment_drive_root_test.mjs:57
+'sans projet : le bac « unassigned » (comme projectImagesFolderPath)');
+=== _experiment_drive_root_test.mjs:114
+? (NAMING.projectNamesOf(ctx).length ? NAMING.projectNamesOf(ctx) : ['_unassigned'])
+=== _experiment_drive_root_test.mjs:169
+}), ['projects/unassigned/Test_74/file1/Data/10/pdata/1'], 'une expérience sans projet va dans projects/unassigned');
+=== _figures_folder_mismatch_test.mjs:340
+ok(LIB_SRC.includes('projectImagesFolderPath(target.name || projectName)'), 'les envois visent le dossier TROUVÉ, pas le nom du projet');
+=== _library_move_test.mjs:16
+`projects/_unassigned/images`) : « ⬇ Add missing from Drive » sur le projet
+=== _library_move_test.mjs:218
+const dav = 'https://nc.example/remote.php/dav/files/me/Lab%20Workspace/DS/projects/_unassigned/images/image5.png';
+=== _library_move_test.mjs:219
+const tail = NAMING.projectImagesFolderPath('CD project').join('/');
+=== _library_restore_test.mjs:385
+eq(NAMING_MOD.projectImagesFolderPath(''), ['projects', '_unassigned', 'images'],
+=== _library_restore_test.mjs:386
+'une figure sans projet va dans projects/_unassigned/images');
+=== _storage_drive_layout_test.mjs:49
+eq(NAMING.storageImagesFolderPath(''), ['storage', '_unassigned', 'images'], 'un storage sans nom tombe dans « unassigned »');

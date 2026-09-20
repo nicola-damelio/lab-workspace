@@ -1,0 +1,14 @@
+﻿110: export const folderNameIsWanted = (name, projectName) =>
+446: exact: folderNameIsWanted(best.name, projectName),
+524: const wanted = sanitizeSlug(projectName);
+531: if (!wanted) return findCommonFiguresFolder();
+544: const name = await projectFolderNameOf(scope, wanted);
+546: name, leafId: remembered, exact: folderNameIsWanted(name, projectName), via: 'remembered',
+560: const name = String(meta.name || wanted);
+568: return { name, leafId: leaf.imagesId, exact: folderNameIsWanted(name, projectName), via: 'mirror', folder: `projects/${name}/images`, candidates: [] };
+588: for (const wantedName of wantedNames) {
+589: const exactId = await findFolderByName(wantedName, projectsId);
+599: return { name: wantedName, leafId: leaf.imagesId, exact: true, via: 'name', folder: `projects/${wantedName}/images`, candidates: [] };
+623: const wanted = sanitizeSlug(folderName);
+624: if (!wanted) return '';
+626: const found = all.find((c) => sanitizeSlug(c.name) === wanted);

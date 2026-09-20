@@ -1,0 +1,72 @@
+﻿        if (String(ctx.project || '') !== String(projectName)) continue;
+        const seg = (entry.path || []).find((s) => s && s.name === sanitizeSlug(testName));
+        if (seg && seg.id) { testFolderId = seg.id; break; }
+      }
+    }
+    if (!testFolderId) return 0; // test not inside this project folder
+
+    // Experiments must ALWAYS belong to a project, so "removed from this
+    // project" means "moved into the dataset's _unassigned project bucket"
+    // (a hidden bucket inside projects/, never a stray folder at the root).
+    const projectsFolderId = projectsContainerId || await canonicalDatasetDirId('projects', { rootId: root });
+    const unassignedFolderId = await findOrCreateFolder('_unassigned', projectsFolderId);
+    const existingThere = await findFolderByName(sanitizeSlug(testName), unassignedFolderId);
+    if (existingThere !== testFolderId) {
+      // moveDriveFile removes the folder from ALL its current parents, so the
+      // move can never leave a copy inside the project (no duplicate).
+      await moveDriveFile(testFolderId, unassignedFolderId);
+    }
+
+    // The project folder may now be empty (last test moved out) â€” trash it so
+    // Drive stays tidy. Folders that still hold project docs are kept.
+    try {
+      const projectFolderId = await findFolderByName(sanitizeSlug(projectName), projectsFolderId);
+      if (projectFolderId) {
+        await trashEmptyFolderChain([{ name: sanitizeSlug(projectName), id: projectFolderId }]);
+      }
+    } catch { /* keep the project folder */ }
+
+    // Keep the registry in sync: drop ctx.project and rewrite paths to the
+    // canonical projects/_unassigned/<test>/â€¦ layout.
+    const unassignedSeg = { name: '_unassigned', id: unassignedFolderId };
+    const projectsSeg = { name: 'projects', id: projectsFolderId };
+    const reg = getDriveFileRegistry();
+    let count = 0;
+    for (const [fileId, entry] of Object.entries(reg)) {
+      if (!entry || entry.deleted) continue;
+      const ctx = entry.ctx || {};
+      if (String(ctx.test || '') !== String(testName)) continue;
+      if (String(ctx.project || '') !== String(projectName)) continue;
+      const newCtx = { ...ctx, project: '' };
+      const base = (Array.isArray(entry.path) ? entry.path : [])
+        .filter((seg) => seg && seg.name !== 'projects' && seg.name !== '_unassigned' && seg.name !== sanitizeSlug(projectName));
+      reg[fileId] = { ...entry, ctx: newCtx, path: [projectsSeg, unassignedSeg, ...base], at: Date.now() };
+      count++;
+    }
+    if (count > 0) saveDriveFileRegistry(reg);
+    return count;
+  } catch (err) {
+    console.warn('moveTestFolderOutOfProject failed:', err && err.message);
+    // Fallback: move the individual files into projects/_unassigned/<test>.
+    let moved = 0;
+    try {
+      const root = await ensureDriveFolder();
+      const projectsFolderId = root ? await findOrCreateFolder('projects', root) : '';
+      const unassignedFolderId = projectsFolderId ? await findOrCreateFolder('_unassigned', projectsFolderId) : '';
+      const reg = getDriveFileRegistry();
+      for (const [fileId, entry] of Object.entries(reg)) {
+        if (!entry || entry.deleted) continue;
+        const ctx = entry.ctx || {};
+        if (String(ctx.test || '') !== String(testName)) continue;
+        if (String(ctx.project || '') !== String(projectName)) continue;
+        try {
+          const newCtx = { ...ctx, project: '' };
+          const resolved = await resolveDrivePath(newCtx);
+          await moveDriveFile(fileId, unassignedFolderId || resolved.leafId);
+          const chain = Array.isArray(entry.path) ? entry.path : [];
+          reg[fileId] = { ...entry, ctx: newCtx, path: resolved.path, at: Date.now() };
+          if (chain.length) { try { await trashEmptyFolderChain(chain); } catch { /* keep going */ } }
+          moved++;
+        } catch { /* keep going */ }
+      }
+      if (moved > 0) saveDriveFileRegistry(reg);

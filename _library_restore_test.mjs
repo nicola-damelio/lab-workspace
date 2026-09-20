@@ -382,8 +382,8 @@ eq(NAMING_MOD.driveFolderPath({ project: 'CD project', test: 'Exp 1', section: '
 eq(NAMING_MOD.projectImagesFolderLabel('CD project', 'My dataset'),
   'My_dataset / projects / CD_project / images',
   '…et celle de la bibliothèque d’images aussi');
-eq(NAMING_MOD.projectImagesFolderPath(''), ['projects', '_unassigned', 'images'],
-  'une figure sans projet va dans projects/_unassigned/images');
+eq(NAMING_MOD.projectImagesFolderPath(''), ['general_library_images'],
+  'une figure sans projet va dans la bibliothèque COMMUNE, à la racine du dataset');
 has(NAMING, 'export const projectSectionFolderPath = (projectName, section) =>',
   'driveNaming expose la route d’un document de section');
 has(NAMING, 'export const projectImagesFolderLabel = (projectName, datasetName = \'\') => {',

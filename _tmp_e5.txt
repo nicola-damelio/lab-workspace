@@ -1,0 +1,14 @@
+﻿eq(same.reason, 'already-there', 'dÃ©jÃ  dans le bon dossier : rien Ã  faire, et le geste le dit');
+eq(moves, [], 'â€¦aucun appel de dÃ©placement nâ€™est fait');
+
+/* Nextcloud : le WebDAV MOVE vise le dossier de la nouvelle portÃ©e. */
+const dav = 'https://nc.example/remote.php/dav/files/me/Lab%20Workspace/DS/projects/_unassigned/images/image5.png';
+const tail = NAMING.projectImagesFolderPath('CD project').join('/');
+eq(LIB.ncUrlInFiguresFolder(dav, 'CD project'),
+  `https://nc.example/remote.php/dav/files/me/Lab%20Workspace/DS/${tail}/image5.png`,
+  'Nextcloud : lâ€™URL du fichier rangÃ© dans le dossier dâ€™images du projet');
+eq(LIB.ncUrlInFiguresFolder(dav, 'CD project', 'image5.png.meta.json'),
+  `https://nc.example/remote.php/dav/files/me/Lab%20Workspace/DS/${tail}/image5.png.meta.json`,
+  'â€¦et celle de son sidecar');
+eq(LIB.ncUrlInFiguresFolder('https://nc.example/remote.php/dav/files/me/a.png', 'P'), '',
+  'une URL sans /projects/ nâ€™est pas devinÃ©e : le geste le DIT au lieu de dÃ©placer nâ€™importe quoi');

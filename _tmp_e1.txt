@@ -1,0 +1,20 @@
+﻿   sous-section : le dossier s'arrÃªtait Ã  la section). */
+const LEGACY = NAMING.driveFolderPath({ ...CTX, instance: 'file1' });
+eq(LEGACY, ['CD_project', 'Exp_1', 'file1', 'Data'], 'driveFolderPath : la forme historique, sans conteneur');
+ok(!LEGACY.includes(NAMING.PROJECTS_CONTAINER), 'â€¦elle ne contient PAS Â« projects Â» (dâ€™oÃ¹ le dossier parasite)');
+eq(NAMING.PROJECTS_CONTAINER, 'projects', 'le conteneur canonique est nommÃ© Â« projects Â»');
+eq(NAMING.DATASET_FOLDER_DIRS[0], NAMING.PROJECTS_CONTAINER, 'â€¦et câ€™est le premier conteneur canonique du dataset');
+
+eq(NAMING.canonicalizeExperimentPath(LEGACY, CTX),
+  ['projects', 'CD_project', 'Exp_1', 'file1', 'Data'],
+  'lâ€™ancienne forme reÃ§oit le conteneur Â« projects Â»');
+
+eq(NAMING.canonicalizeExperimentPath(['Test_74', 'instance1', 'image'], { test: 'Test 74' }),
+  ['projects', 'unassigned', 'Test_74', 'instance1', 'image'],
+  'sans projet : le bac Â« unassigned Â» (comme projectImagesFolderPath)');
+
+eq(NAMING.canonicalizeExperimentPath(['projects', 'P1', 'Exp', 'i1', 'data'], { test: 'Exp', projectNames: ['P1', 'P2'] }),
+  ['projects', 'P1', 'Exp', 'i1', 'data'], 'un chemin canonique du 1er projet liÃ© reste inchangÃ©');
+eq(NAMING.canonicalizeExperimentPath(['projects', 'P1', 'Exp', 'i1', 'data'], { test: 'Exp', projectNames: ['P2'] }),
+  ['projects', 'P2', 'Exp', 'i1', 'data'], 'la copie du 2e projet suit le projet visÃ© (pas celui du chemin)');
+

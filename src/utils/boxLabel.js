@@ -12,6 +12,11 @@
    (ancien format : le composé), soit un objet JSON (format actuel : compound,
    sampleOwner/operator, solvent, concentration, concUnit, volume, volUnit,
    date, weight, weightUnit, description).
+
+   La colonne « Notes » d'une ligne (`description`) ne tient qu'une ligne de
+   11 mm sur l'étiquette PDF : `boxLabelNotes` rend ces notes AVEC la position du
+   puits (« B7 »), et le PDF les reprend EN CALCE (voir boxLabelPdf) ; les
+   commentaires généraux de la boîte passent par `plainBoxNotes`.
    ========================================================================= */
 import { BOX_ROW_LABELS } from '../data/constants';
 
@@ -115,12 +120,58 @@ export const boxLabelRowCells = (row) => [
   row.pos, row.compound, row.owner, row.solvent, row.conc, row.vol, row.date, row.weight, row.notes
 ];
 
-/** Empreinte de l'étiquette : identique ⇔ rien à renvoyer sur le Drive. */
-export const boxLabelSignature = ({ storage = '', position = null, box = '', rows = [] }) =>
+/** Le propriétaire d'une boîte — le champ OBLIGATOIRE « Box Owner » de la boîte,
+ *  à défaut l'opérateur qui l'a créée (même règle que storageModules
+ *  .getBoxOwner) : c'est lui qui nomme l'étiquette sur le Drive. PUR. */
+export const boxLabelOwner = (box) => String((box && (box.boxOwner || box.operator)) || '').trim();
+
+/** La date d'une boîte — son champ OBLIGATOIRE « Date », en ISO (2026-01-15). PUR. */
+export const boxLabelDate = (box) => String((box && box.date) || '').trim();
+
+/** Les NOTES des puits, dans l'ordre du tableau, avec la POSITION de la ligne
+ *  (« B7 »). La colonne « Notes » de l'étiquette ne tient qu'une ligne de 11 mm,
+ *  donc illisible : le PDF reprend ces notes EN CALCE, rappelées par la position
+ *  du puits auquel elles se rapportent (voir boxLabelPdf.writeNotesBlock). PUR. */
+export const boxLabelNotes = (rows) => (Array.isArray(rows) ? rows : [])
+  .map((row) => ({
+    pos: String((row && row.pos) || '').trim(),
+    text: String((row && row.notes) || '').trim()
+  }))
+  .filter((note) => note.text);
+
+/** Le texte PLAT d'un commentaire de boîte (« General Box Notes », un
+ *  RichTextEditor) : ses balises ne sont pas imprimables. Les fins de bloc
+ *  deviennent des retours à la ligne, pour que le commentaire reste lisible en
+ *  calce de l'étiquette PDF. PUR. */
+export const plainBoxNotes = (html) => String(html == null ? '' : html)
+  .replace(/<br\s*\/?>/gi, '\n')
+  .replace(/<\/(p|div|li|h[1-6]|tr)>/gi, '\n')
+  .replace(/<[^>]*>/g, '')
+  .replace(/&nbsp;/gi, ' ')
+  .replace(/&amp;/gi, '&')
+  .replace(/&lt;/gi, '<')
+  .replace(/&gt;/gi, '>')
+  .replace(/&quot;/gi, '"')
+  .replace(/&#39;/gi, "'")
+  .replace(/[ \t]+/g, ' ')
+  .replace(/ *\n */g, '\n')
+  .replace(/\n{3,}/g, '\n\n')
+  .trim();
+
+/** Empreinte de l'étiquette : identique ⇔ rien à renvoyer sur le Drive.
+ *  `date` / `owner` / `notes` en font partie parce qu'ils apparaissent sur le
+ *  PDF (la date et le propriétaire jusque dans son NOM, voir boxLabelFileName) :
+ *  changer l'un des trois doit réécrire l'étiquette. */
+export const boxLabelSignature = ({
+  storage = '', position = null, box = '', rows = [], date = '', owner = '', notes = ''
+}) =>
   JSON.stringify({
     storage: String(storage || ''),
     position: position === null || position === undefined ? '' : String(position),
     box: String(box || ''),
+    date: String(date || ''),
+    owner: String(owner || ''),
+    notes: String(notes || ''),
     rows
   });
 

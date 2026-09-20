@@ -1,0 +1,16 @@
+﻿  });
+  return { removed, groups: groups.length };
+};
+
+// Upload a high-resolution figure copy to the active cloud provider under the
+// canonical project image directory:
+//   <Lab Workspace>/<dataset>/projects/<project>/images/<file>
+// (projects/_unassigned/images when the figure has no project). The folder is
+// decided by the explicit PATH below â€” for Google Drive AND Nextcloud â€” so a
+// figure never lands in a stray <dataset>/<project> folder beside the canonical
+// projects container. SVG figures keep their vector form; raster figures keep
+// their actual type (PNG/JPEG/WebPâ€¦). Returns the upload result (Drive-like
+// { id, name, driveUrl }) or null when the provider is not available / the
+// source is not a self-contained data URL.
+/** DerniÃ¨re erreur d'envoi d'une FIGURE (vide aprÃ¨s un envoi rÃ©ussi). Permet Ã 
+ *  l'appelant de dire POURQUOI la copie cloud manque (hors ligne, jeton expirÃ©,

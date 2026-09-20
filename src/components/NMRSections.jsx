@@ -3367,6 +3367,18 @@ const cysIsOxidized = (cysOxidized, cysStates, cysDisulfides, pos) => {
   return !!cysOxidized;
 };
 
+// Random-coil reference of ONE residue — the single place that decides WHICH
+// baseline a panel shows or subtracts (the 🧪 Random coil button under the shift
+// cells, the Δδ / CSI table and chart, and the simulated shifts themselves). An
+// oxidised cysteine (disulphide-bonded) must never fall back on the reduced −SH
+// table: ¹³Cβ 39.6 against 28.0 ppm, ~12 ppm out (Wishart RefDB). The table is
+// keyed by the AMINO-ACID 1-letter code, so it is protein-only — a nucleic 'C'
+// is a cytosine, never a cysteine. PUR (extrait et exécuté par les tests).
+const randomCoilRefOf = (moleculeType, char, cysOxidized) => {
+  if (moleculeType !== 'protein') return {};
+  return char === 'C' && cysOxidized ? CYS_OXIDIZED_RC : (RANDOM_COIL_DB[char] || {});
+};
+
 // Theoretical ¹³C range of ONE cysteine atom with the redox state of the thiol
 // side chain taken into account: a disulphide-bonded Cys has ¹³Cβ ≈ 40 ppm and
 // ¹³Cα ≈ 53.5 ppm, against ¹³Cβ 26–32 and ¹³Cα 54.5–60 ppm for the free −SH
@@ -3483,9 +3495,9 @@ const useNmrDerived = (activeTest, ctx = {}) => {
       // ¹³Cα/¹³Cβ from the reduced thiol. Each Cys can be set individually and
       // disulphide pairs defined in the molecule setup — the state is resolved
       // per residue position here and the simulated shifts follow.
-      const rcEntry = (moleculeType === 'protein' && char === 'C' && cysIsOxidized(activeTest.cysOxidized, activeTest.cysStates, activeTest.cysDisulfides, index + 1))
-        ? CYS_OXIDIZED_RC
-        : RANDOM_COIL_DB[char];
+      const cysOxidizedHere = moleculeType === 'protein' && char === 'C'
+        && cysIsOxidized(activeTest.cysOxidized, activeTest.cysStates, activeTest.cysDisulfides, index + 1);
+      const rcEntry = randomCoilRefOf(moleculeType, char, cysOxidizedHere);
       const generatedShifts = {};
       Object.keys(entry.ranges).forEach((atom) => {
         const r = entry.ranges[atom];
@@ -3534,6 +3546,15 @@ const useNmrDerived = (activeTest, ctx = {}) => {
   }, [seq, moleculeType, activeTest.sugarChoice, activeTest.lipidChoice, activeTest.smiles, activeTest.cysOxidized, activeTest.cysStates, activeTest.cysDisulfides]);
   
   const estSeq = useMemo(() => parsedSeq.map((res, idx) => {
+    /* Redox state of THIS cysteine (1-based sequence position = idx + 1),
+       carried ON the residue: every panel that needs a random-coil baseline
+       (the 🧪 Random coil tooltip, the Δδ / CSI table and chart) then reads the
+       SAME state as the simulated shifts, so no panel can show the reduced −SH
+       value for a disulphide-bonded Cys. `false` for every other residue and
+       for every non-protein letter (a DNA 'C' is a cytosine, not a cysteine). */
+    const cysOxidizedHere = moleculeType === 'protein' && res.char === 'C'
+      ? cysIsOxidized(activeTest.cysOxidized, activeTest.cysStates, activeTest.cysDisulfides, idx + 1)
+      : false;
     const ssLetter = moleculeType === 'protein' ? getSSAt(idx) : 'C';
     const ssKey = { C: 'coil', H: 'helix', E: 'sheet' }[ssLetter];
     const corr = SS_CORRECTIONS[ssKey];
@@ -3567,8 +3588,8 @@ const useNmrDerived = (activeTest, ctx = {}) => {
     const origNo = idx + 1 + (activeTest.residueOffset || 0);
     const ren = (activeTest.resRenumber || {})[String(origNo)];
     const displayNo = ren != null && ren !== '' ? Number(ren) : origNo;
-    return { ...res, id: `${res.code3 || res.char}${displayNo}`, estShifts, estUniqueC, estShifts13C, estN, estCP, ssLetter, formLetter: getFormAt(idx), residueNo: displayNo };
-  }), [parsedSeq, moleculeType, sugarAnomer, sugarConf, ssRaw, formsRaw, dnaFormDefault, activeTest.residueOffset, activeTest.resRenumber]);
+    return { ...res, id: `${res.code3 || res.char}${displayNo}`, estShifts, estUniqueC, estShifts13C, estN, estCP, cysOxidized: cysOxidizedHere, ssLetter, formLetter: getFormAt(idx), residueNo: displayNo };
+  }), [parsedSeq, moleculeType, sugarAnomer, sugarConf, ssRaw, formsRaw, dnaFormDefault, activeTest.residueOffset, activeTest.resRenumber, activeTest.cysOxidized, activeTest.cysStates, activeTest.cysDisulfides]);
   
   const simSeq = useMemo(() => {
     const getMan = (idx, name) => {
@@ -7277,8 +7298,11 @@ let dom = brukerZoomDom || xFull;
                   if (d.moleculeType === 'protein') {
                     const rcKey = RC_ATOM_DB_KEY[atomName];
                     if (rcKey) {
-                      const rcEntry = RANDOM_COIL_DB[res.char];
-                      if (rcEntry && rcEntry[rcKey] != null) rcVal = rcEntry[rcKey];
+                      /* The residue carries its OWN redox state (see estSeq): an
+                         oxidised Cys is referenced on ¹³Cβ 39.6 ppm, not on the
+                         reduced −SH 28.0, exactly like the simulated shifts. */
+                      const rcEntry = randomCoilRefOf(d.moleculeType, res.char, res.cysOxidized);
+                      if (rcEntry[rcKey] != null) rcVal = rcEntry[rcKey];
                     }
                   }
 
@@ -7681,9 +7705,12 @@ let dom = brukerZoomDom || xFull;
 // ================= SECONDARY SHIFTS SECTION =================
 const SCS_INST_COLORS = PER_ATOM_COLORS.slice(0, 8);
 
-const computeSCSRows = (estSeq, cs, focusIdx) =>
+const computeSCSRows = (estSeq, cs, focusIdx, moleculeType = 'protein') =>
   estSeq.map((res, idx) => {
-    const rc = RANDOM_COIL_DB[res.char] || {};
+    /* Random-coil baseline of THIS residue — oxidised cysteines included, so the
+       Δδ (CSI) of a disulphide-bonded Cys is never computed against the reduced
+       −SH reference (¹³Cβ 28.0 instead of 39.6, ~12 ppm out). */
+    const rc = randomCoilRefOf(moleculeType, res.char, res.cysOxidized);
     const getVal = (k, estVal) => { const m = parseManual(cs[`${idx}-${k}`]); return m !== null ? m : estVal; };
     const HA = getVal('Hα', res.estShifts?.['Hα']);
     const CA = getVal('Cα', res.estUniqueC?.['Cα']);
@@ -7739,20 +7766,20 @@ export const SecondaryShiftsSection = ({ ctx }) => {
 
   const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
   const cs = d.shifts;
-  const rows = computeSCSRows(d.estSeq, cs, focusIdx);
+  const rows = computeSCSRows(d.estSeq, cs, focusIdx, d.moleculeType);
   const mk = (k) => rows.map((r) => ({ label: r.label, v: r[k] })).filter(x => x.v !== null);
 
   const mkDiff = (k) => {
     if (!refInst) return [];
     const refCs = refInst.values?.cs || {};
-    const refRows = computeSCSRows(d.estSeq, refCs, focusIdx);
+    const refRows = computeSCSRows(d.estSeq, refCs, focusIdx, d.moleculeType);
     const refMap = Object.fromEntries(refRows.map(r => [r.label, r[k]]));
     return allInsts
       .filter(i => i.id !== effectiveRefId)
       .map(inst => ({
         name: inst.name,
         color: localColors[inst.id] || SCS_INST_COLORS[allInsts.findIndex(x => x.id === inst.id) % SCS_INST_COLORS.length],
-        data: computeSCSRows(d.estSeq, inst.values?.cs || {}, focusIdx)
+        data: computeSCSRows(d.estSeq, inst.values?.cs || {}, focusIdx, d.moleculeType)
           .map(r => ({ label: r.label, v: r[k] != null && refMap[r.label] != null ? +(r[k] - refMap[r.label]).toFixed(3) : null }))
           .filter(x => x.v !== null)
       }))

@@ -5,7 +5,7 @@ import { Icon } from './Icons';
 import { markAttachmentsDeleted } from '../utils/driveUpload';
 import { DriveUploadButton } from './DriveUpload';
 import { sanitizeSlug, storageBoxImagesFolderPath, storageFileCtx, storageImagesFolderPath } from '../utils/driveNaming';
-import { boxLabelRows, boxLabelSignature, buildBoxLabelHtml, filledWells, labelWellsFor, wellIsFilled, wellPositionLabel } from '../utils/boxLabel';
+import { boxLabelDate, boxLabelOwner, boxLabelRows, boxLabelSignature, buildBoxLabelHtml, filledWells, labelWellsFor, wellIsFilled, wellPositionLabel } from '../utils/boxLabel';
 /* Les règles des BOÎTES (plusieurs boîtes par emplacement, boîte 1 × 1 =
    échantillon en vrac, champs obligatoires, suppression d'un meuble) vivent
    dans src/utils/storageBoxes.js — testables sans écran. */
@@ -762,17 +762,23 @@ export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setS
 // --- BOX DETAIL VIEW ---
 export const BoxDetail = ({ activeTest, updateActiveTest, storages, expandedGroups, setExpandedGroups, customCmpds, TestHeader, operators = [] }) => {
     /* ── Étiquette de la boîte ───────────────────────────────────────────────
-       storage/<storage>/boxes/<boîte>/label.pdf est fabriquée et déposée sur le
-       Drive TOUT SEUL (voir BoxLabelFile) à partir de la table des puits REMPLIS
-       de la boîte : le PDF archivé ne dépend donc pas des clics de sélection,
-       alors que le bouton « Print Label » ci-dessous imprime la SÉLECTION. */
+       storage/<storage>/boxes/<boîte>/<date>_<propriétaire>_boxlabel.pdf est
+       fabriquée et déposée sur le Drive TOUT SEUL (voir BoxLabelFile) à partir de
+       la table des puits REMPLIS de la boîte : le PDF archivé ne dépend donc pas
+       des clics de sélection, alors que le bouton « Print Label » ci-dessous
+       imprime la SÉLECTION. La date et le propriétaire de la boîte — ses deux
+       champs obligatoires — donnent son NOM au fichier et entrent dans la
+       signature : les changer réécrit l'étiquette. */
     const boxStorageName = ((storages || []).find((s) => s.id === activeTest.storageId)?.name) || '';
     const boxPosition = activeTest.storageIndex === null || activeTest.storageIndex === undefined
       ? null
       : activeTest.storageIndex + 1;
     const labelRows = boxLabelRows(activeTest, filledWells(activeTest));
+    const labelOwner = boxLabelOwner(activeTest);
+    const labelDate = boxLabelDate(activeTest);
     const labelSignature = boxLabelSignature({
-      storage: boxStorageName, position: boxPosition, box: activeTest.name || '', rows: labelRows
+      storage: boxStorageName, position: boxPosition, box: activeTest.name || '', rows: labelRows,
+      date: labelDate, owner: labelOwner, notes: activeTest.comments || ''
     });
     /* Les photos envoyées AVANT cette structure
        (storage/<boîte>/<instance>/image/…) sont ramenées dans
@@ -935,8 +941,10 @@ const printBoxLabel = () => {
     }
 
     /* La table imprimée est celle de l'étiquette (utils/boxLabel.js) — la MÊME
-       que celle déposée sur le Drive en label.pdf — et elle contient ici la
-       SÉLECTION (le bouton est désactivé sans sélection). */
+       que celle déposée sur le Drive en boxlabel.pdf — et elle contient ici la
+       SÉLECTION (le bouton est désactivé sans sélection) ; ses nombreuses
+       colonnes laissent lire les notes ENTIÈRES, alors que le PDF les reprend
+       en calce, rappelées par la position du puits (voir boxLabelPdf). */
     const html = buildBoxLabelHtml({
       storageName: boxStorageName || activeTest.storageLabel || 'Unassigned',
       position: boxPosition,
@@ -1015,6 +1023,9 @@ const printBoxLabel = () => {
                         boxName={activeTest.name || 'box'}
                         position={boxPosition}
                         rows={labelRows}
+                        owner={labelOwner}
+                        date={labelDate}
+                        boxNotes={activeTest.comments || ''}
                         signature={labelSignature}
                         savedSignature={activeTest.boxLabelSignature || ''}
                         savedUrl={activeTest.boxLabelUrl || ''}

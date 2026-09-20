@@ -1,0 +1,34 @@
+﻿  { id: 'loc1', full: 'data:image/png;base64,aaa', drive: false },
+  { id: 'ok1', full: 'https://drive.google.com/file/d/A/view', drive: true },
+  { id: 'loc2', full: 'data:image/jpeg;base64,bbb' }
+]).map((i) => i.id), ['loc1', 'loc2'], 'les images dont les pixels ne sont que dans le navigateur sont repÃ©rÃ©es');
+
+// 9c. â˜ Les envoyer â€” avec un faux Drive.
+LIB.writeLibrary([]);
+LIB.writeProjectLibrary('P1', []);
+LIB.addProjectLibraryItem('P1', { id: 'loc1', label: 'Local only', url: 'data:image/png;base64,thumb', full: 'data:image/png;base64,big', drive: false, driveUrl: null });
+eq(LIB.localOnlyLibraryCount({ scope: 'project', projectId: 'P1' }), 1, 'â€¦et comptÃ©es par portÃ©e');
+
+const listingMock = { cloud: true, driveToken: 'tok', dataUrlToBlob: () => ({}),
+  uploadLocalFile: async ({ name }) => ({ id: `UP_${name}`, name, driveUrl: `https://drive.google.com/file/d/UP_${name}/view` }),
+  resolveDrivePathFromNames: (names) => ({ leafId: `leaf_${(names || []).join('_')}`, path: (names || []).map((n, i) => ({ name: n, id: `leaf_${i}` })) }),
+  /* Le dossier des figures EXISTE : la lecture le CHERCHE (voir
+     utils/figuresFolder.js) au lieu de le crÃ©er, donc le faux Drive doit le
+     retrouver par son nom. */
+  findFolderByName: async (name) => (name === 'images' ? 'IMAGES_FOLDER' : `DIR_${name}`),
+  getDriveFileMeta: async () => ({ id: '', name: '', trashed: true }),
+  listDriveChildren: () => listing };
+globalThis.__driveTestMocks = listingMock;
+const pushed = await LIB.pushLibraryToDrive({ scope: 'project', projectId: 'P1', projectName: 'CD project' });
+eq(pushed.total, 1, 'lâ€™envoi ne prend que les images absentes du cloud');
+eq(pushed.uploaded, 1, 'â€¦et les y envoie');
+eq(pushed.failed, 0, 'aucun Ã©chec');
+eq(pushed.folder, 'projects/CD_project/images', 'le dossier visÃ© est celui du projet, DANS le dossier du dataset');
+eq(LIB.readProjectLibrary('P1')[0].drive, true, 'lâ€™entrÃ©e sait maintenant que sa copie est sur le Drive');
+has(String(LIB.readProjectLibrary('P1')[0].full), '/file/d/UP_', 'â€¦et pointe sur le fichier envoyÃ©');
+eq(LIB.localOnlyLibraryCount({ scope: 'project', projectId: 'P1' }), 0, 'plus aucune image locale seulement');
+
+// 9c-bis. MISE EN FILE DE REPRISE â‰  Ã‰CHEC. Le Drive refuse sur le moment : le
+// fichier part en file d'attente (il repartira tout seul). L'Ã©cran annonÃ§ait
+// Â« N failed â€” check the connection and try again Â» et envoyait donc chercher
+// une panne qui n'existe pas â€” prÃ©cisÃ©ment ce qu'on croyait en lisant la

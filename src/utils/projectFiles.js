@@ -16,15 +16,17 @@
    unit-tested and reused by the project page, the Drive helpers and imports.
    ========================================================================= */
 
-import { sanitizeSlug } from './driveNaming';
+import { DEFAULT_PROJECT_NAME, sanitizeSlug } from './driveNaming';
 
 /** Container folder of the canonical Drive architecture. */
 export const PROJECTS_DIR = 'projects';
 /** Per-project directory holding the project's reference documents. */
 export const USEFUL_FILES_DIR = 'useful_files';
 
-/** Drive folder name of a project (the SAME slug the test uploads use). */
-export const projectFolderSlug = (projectName) => sanitizeSlug(projectName) || '_unassigned';
+/** Drive folder name of a project (the SAME slug the test uploads use). A file
+ *  with no project goes to the DEFAULT project folder (`test`) — the bucket
+ *  that used to be called `_unassigned`, which no longer means anything. */
+export const projectFolderSlug = (projectName) => sanitizeSlug(projectName) || DEFAULT_PROJECT_NAME;
 
 /** Folder path (folder NAMES, relative to the dataset folder) of a project's
  *  useful files: projects/<project>/useful_files. */

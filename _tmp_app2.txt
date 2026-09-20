@@ -1,0 +1,2 @@
+﻿40: import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, getLastDriveConnectError, driveBootstrapRequestedAtLoad, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders, cloudBackendAvailable } from './utils/driveUpload';
+1159: setDriveRootContext({

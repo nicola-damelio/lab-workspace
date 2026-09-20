@@ -5,7 +5,7 @@ import { sanitizeSlug, projectImagesFolderPath } from './driveNaming';
    dossier renommé à la main — laissait les fichiers ailleurs pendant que
    l'application en créait un jumeau vide. Ce résolveur cherche, ne crée rien, et
    sait demander à l'utilisateur plutôt que de deviner. */
-import { findProjectFiguresFolder, adoptProjectFiguresFolder, listProjectFiguresFolders, imagesFolderPathOnDrive, unassignedFolderNames } from './figuresFolder';
+import { findProjectFiguresFolder, adoptProjectFiguresFolder, listProjectFiguresFolders, imagesFolderPathOnDrive, commonLibraryFolderName, commonLibraryFolderNames } from './figuresFolder';
 import { getCloudProvider, isNextcloudUrl, ncFetchBlob, ncMove, ncUploadFile } from './nextcloud';
 import { registerKeyValueMerger } from './workspaceKeyStore';
 
@@ -1499,13 +1499,13 @@ export const removeCanvasDuplicates = (opts = {}) => {
 // Upload a high-resolution figure copy to the active cloud provider under the
 // canonical project image directory:
 //   <Lab Workspace>/<dataset>/projects/<project>/images/<file>
-// (projects/_unassigned/images when the figure has no project). The folder is
-// decided by the explicit PATH below — for Google Drive AND Nextcloud — so a
-// figure never lands in a stray <dataset>/<project> folder beside the canonical
-// projects container. SVG figures keep their vector form; raster figures keep
-// their actual type (PNG/JPEG/WebP…). Returns the upload result (Drive-like
-// { id, name, driveUrl }) or null when the provider is not available / the
-// source is not a self-contained data URL.
+// (the dataset's COMMON library — <dataset>/general_library_images — when the
+// figure has no project). The folder is decided by the explicit PATH below — for
+// Google Drive AND Nextcloud — so a figure never lands in a stray
+// <dataset>/<project> folder beside the canonical projects container. SVG figures
+// keep their vector form; raster figures keep their actual type (PNG/JPEG/WebP…).
+// Returns the upload result (Drive-like { id, name, driveUrl }) or null when the
+// provider is not available / the source is not a self-contained data URL.
 /** Dernière erreur d'envoi d'une FIGURE (vide après un envoi réussi). Permet à
  *  l'appelant de dire POURQUOI la copie cloud manque (hors ligne, jeton expiré,
  *  dossier supprimé…) au lieu d'un « échec » muet. */
@@ -1631,9 +1631,9 @@ export const figureFileName = (label, ext, identity = '') => {
  *  @returns {Promise<{ name:string, leafId:string, exact:boolean, via:string,
  *                      folder:string, candidates:Array }>} */
 const figuresFolderFor = async (projectName, { create = false } = {}) => {
-  /* Le chemin annoncé est celui qui EXISTE sur le Drive (seau commun : « unassigned »,
-     `unassigned`, voir imagesFolderPathOnDrive) : l'écran dit alors exactement ce
-     que le Drive montre. */
+  /* Le chemin annoncé est celui qui EXISTE sur le Drive — `projects/<projet>/images`,
+     ou `general_library_images` pour la bibliothèque COMMUNE (voir
+     imagesFolderPathOnDrive) : l'écran dit alors exactement ce que le Drive montre. */
   const wanted = imagesFolderPathOnDrive(projectName);
   const found = await findProjectFiguresFolder(projectName).catch(() => null);
   if (found && found.leafId) return found;
@@ -1645,13 +1645,13 @@ const figuresFolderFor = async (projectName, { create = false } = {}) => {
   }
   const resolved = await resolveDrivePathFromNames(projectImagesFolderPath(projectName)).catch(() => null);
   /* La résolution rend les noms RÉELS de chaque segment : `projects`, puis le nom
-     du dossier de projet (celui du Drive — le seau `unassigned` quand il n'y a pas
-     de projet), puis `images`. */
+     du dossier de projet, puis `images` — ou, pour la bibliothèque COMMUNE, le
+     nom de son dossier de premier niveau (`general_library_images`). */
   const realPath = (resolved && Array.isArray(resolved.path) ? resolved.path : [])
     .map((p) => String((p && p.name) || '')).filter(Boolean);
   const name = realPath.length > 1
     ? realPath[1]
-    : (sanitizeSlug(projectName) || unassignedFolderNames()[0]);
+    : (sanitizeSlug(projectName) || commonLibraryFolderName());
   return {
     name, leafId: (resolved && resolved.leafId) || '', exact: true, via: 'created',
     folder: realPath.length ? realPath.join('/') : wanted, candidates: []
@@ -1694,8 +1694,10 @@ export const uploadFigureToDrive = async ({ full, label = 'figure', projectName 
     const parts = ['Lab Workspace'];
     const ds = getDriveRootName();
     if (ds) parts.push(sanitizeSlug(ds));
-    // Canonical location, INSIDE the projects container:
-    //   <dataset>/projects/<project>/images (/_unassigned when no project).
+    // Canonical location: inside the projects container for a project,
+    //   <dataset>/projects/<project>/images
+    // or the COMMON library at the dataset root when there is no project:
+    //   <dataset>/general_library_images
     parts.push(...projectImagesFolderPath(projectName));
     try {
       return await ncUploadFile({
@@ -2167,7 +2169,8 @@ export const renameFigureOnDrive = async ({
    Une entrée de bibliothèque et le FICHIER qui la porte ne vivent PAS dans le
    même dossier selon la portée :
 
-       bibliothèque commune      →  <dataset>/projects/_unassigned/images
+       bibliothèque commune      →  <dataset>/general_library_images
+                                    (les figures y sont DIRECTEMENT)
        bibliothèque d'un projet  →  <dataset>/projects/<slug>/images
 
    `moveLibraryItem` ne déplace que la LISTE (geste local, immédiat). Sans le
@@ -2197,16 +2200,32 @@ export const renameFigureOnDrive = async ({
 
 /** URL WebDAV du même fichier, rangée dans le dossier d'images d'une portée.
  *  Le segment du DATASET est repris de l'URL d'origine (c'est le même dataset) :
- *  seule la fin `projects/<projet>/images/<fichier>` est réécrite. '' quand
- *  l'URL n'a pas la forme attendue (l'appelant le DIT au lieu de deviner). PUR. */
+ *  seule la fin — `projects/<projet>/images/<fichier>` ou le dossier de la
+ *  bibliothèque COMMUNE — est réécrite. '' quand l'URL n'a pas la forme attendue
+ *  (l'appelant le DIT au lieu de deviner). PUR. */
 export const ncUrlInFiguresFolder = (url, projectName, fileName = '') => {
   const s = String(url || '');
-  const at = s.search(/\/projects\//i);
-  if (at <= 0) return '';
   const name = String(fileName || fileNameOfUrl(s) || '');
   if (!name) return '';
+  const at = figuresPathStartInUrl(s);
+  if (at <= 0) return '';
   const tail = projectImagesFolderPath(projectName).map((seg) => encodeURIComponent(seg)).join('/');
   return `${s.slice(0, at)}/${tail}/${encodeURIComponent(name)}`;
+};
+
+/** Où commence le chemin d'un dossier d'images dans une URL Nextcloud :
+ *  le conteneur `/projects/…` (dossier d'un projet) ou le dossier de la
+ *  bibliothèque COMMUNE (`/general_library_images/…`, ou son ancien nom
+ *  `/unassigned/…`). -1 quand l'URL n'est ni l'un ni l'autre. PUR. */
+const figuresPathStartInUrl = (url) => {
+  const s = String(url || '');
+  const at = s.search(/\/projects\//i);
+  if (at > 0) return at;
+  for (const seg of commonLibraryFolderNames()) {
+    const m = s.search(new RegExp(`/${seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`, 'i'));
+    if (m > 0) return m;
+  }
+  return -1;
 };
 
 export const moveLibraryItemOnDrive = async ({ id = '', toScope = 'project', projectId = null, projectName = '' } = {}) => {

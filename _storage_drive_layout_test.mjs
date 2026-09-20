@@ -9,8 +9,13 @@
        NOM de la boîte (jamais le « Test 74 » de sa création) ;
      • les fichiers gardent leur nom (file1.jpg, file2.jpg) et vont dans un
        dossier « images » (l'ancien nom « image » est rapatrié) ;
-     • l'étiquette de la boîte est déposée TOUTE SEULE dans son dossier
-       (label.pdf), à partir de la même table que le bouton « Print Label » ;
+     • l'étiquette de la boîte est déposée TOUTE SEULE dans son dossier, sous le
+       nom <date>_<propriétaire>_boxlabel.pdf (les deux champs OBLIGATOIRES de la
+       boîte), à partir de la même table que le bouton « Print Label » — et
+       l'ancienne étiquette « label.pdf » part à la corbeille ;
+     • ses NOTES sont reprises EN CALCE dans le PDF, rappelées par la POSITION du
+       puits auquel elles se rapportent (la colonne « Notes » ne tient qu'une
+       ligne de 11 mm) ;
      • renommer un storage / une boîte renomme son dossier sur le Drive.
 
    Les VRAIS modules sont importés : src/utils/driveNaming.js et
@@ -42,7 +47,12 @@ eq(NAMING.storageImagesFolderPath('storage1'), ['storage', 'storage1', 'images']
 eq(NAMING.storageBoxFolderPath('storage1', 'Antibodies box'), ['storage', 'storage1', 'boxes', 'Antibodies_box'], 'une boîte est sous son storage, dans « boxes »');
 eq(NAMING.storageBoxImagesFolderPath('storage1', 'Box 1'), ['storage', 'storage1', 'boxes', 'Box_1', 'images'], 'les photos d’une boîte');
 eq(NAMING.storageImagesFolderPath(''), ['storage', '_unassigned', 'images'], 'un storage sans nom tombe dans « unassigned »');
-eq(NAMING.BOX_LABEL_FILE_NAME, 'label.pdf', 'le nom du PDF d’étiquette');
+eq(NAMING.boxLabelFileName('2026-01-15', 'Anna'), '2026-01-15_Anna_boxlabel.pdf',
+  'le PDF d’étiquette porte la date ET le propriétaire de la BOÎTE dans son nom');
+eq(NAMING.boxLabelFileName('2026-01-15', ''), '2026-01-15_boxlabel.pdf', 'une partie vide est omise (aucun « _ » orphelin)');
+eq(NAMING.boxLabelFileName('', ''), 'boxlabel.pdf', '…et sans date ni propriétaire le nom reste lisible');
+eq(NAMING.boxLabelFileName('2026-01-15', "O'Neil / lab"), '2026-01-15_ONeil_lab_boxlabel.pdf', 'le nom est slugué comme le reste de l’arborescence');
+eq(NAMING.LEGACY_BOX_LABEL_FILE_NAME, 'label.pdf', 'l’ANCIEN nom reste connu, pour ranger l’étiquette d’avant');
 
 eq(NAMING.driveFolderPath({ storage: 'storage1', box: 'Box 1', section: 'images' }), ['storage', 'storage1', 'boxes', 'Box_1', 'images'], 'un contexte { storage, box } résout le chemin de la boîte');
 eq(NAMING.driveFolderPath({ storage: 'storage1', section: 'image' }), ['storage', 'storage1', 'images'], 'l’ancien dossier « image » (singulier) devient « images »');
@@ -87,6 +97,37 @@ eq(sig, LABEL.boxLabelSignature({ storage: 'storage1', position: 3, box: 'Antibo
 ok(sig !== LABEL.boxLabelSignature({ storage: 'storage1', position: 3, box: 'Antibodies', rows: rows.slice(0, 1) }), 'un puits de plus ⇒ signature différente ⇒ nouvel envoi');
 ok(sig !== LABEL.boxLabelSignature({ storage: 'storage1', position: 4, box: 'Antibodies', rows }), 'un déplacement de la boîte change l’étiquette');
 
+/* La date, le propriétaire et les commentaires de la boîte apparaissent sur le
+   PDF — la date et le propriétaire jusque dans son NOM : les changer doit donc
+   réécrire l’étiquette (sinon le fichier garderait un nom qui ne correspond
+   plus à la boîte). */
+ok(sig !== LABEL.boxLabelSignature({ storage: 'storage1', position: 3, box: 'Antibodies', rows, date: '2026-01-15' }),
+  'la date de la boîte entre dans la signature');
+ok(sig !== LABEL.boxLabelSignature({ storage: 'storage1', position: 3, box: 'Antibodies', rows, owner: 'Anna' }),
+  '…comme son propriétaire (« Box Owner »)');
+ok(sig !== LABEL.boxLabelSignature({ storage: 'storage1', position: 3, box: 'Antibodies', rows, notes: '<p>aliquots</p>' }),
+  '…et ses commentaires, puisqu’ils sont imprimés');
+
+/* ── Les notes des puits : reprises EN CALCE, rappelées par leur POSITION ──── */
+eq(LABEL.boxLabelNotes(rows), [{ pos: 'A1', text: 'aliquot 1' }],
+  'seules les lignes qui PORTENT une note sont reprises, avec la position du puits');
+eq(LABEL.boxLabelNotes([{ pos: 'B2', notes: '   ' }, { pos: 'C3' }, null]), [],
+  'une note vide (ou une ligne absente) n’imprime rien — pas de « B2: » vide');
+eq(LABEL.boxLabelNotes(null), [], 'une table absente ne casse pas l’étiquette');
+
+/* Le commentaire général de la boîte (« General Box Notes ») est du HTML : il
+   part en texte plat, les fins de bloc devenant des retours à la ligne. */
+eq(LABEL.plainBoxNotes('<p>aliquots in DMSO&nbsp;: 3</p><p>keep at −20&nbsp;°C</p>'),
+  'aliquots in DMSO : 3\nkeep at −20 °C', 'les balises tombent, les paragraphes restent des lignes');
+eq(LABEL.plainBoxNotes('<b>x</b><br>y'), 'x\ny', 'une mise en forme simple ne laisse aucune balise');
+eq(LABEL.plainBoxNotes(''), '', 'sans commentaire, rien à imprimer');
+
+/* Le propriétaire et la date sont ceux de la BOÎTE (mêmes règles que l’écran) */
+eq(LABEL.boxLabelOwner({ boxOwner: 'Anna', operator: 'Nico' }), 'Anna', 'le propriétaire est « Box Owner »');
+eq(LABEL.boxLabelOwner({ operator: 'Nico' }), 'Nico', '…à défaut l’opérateur de la boîte');
+eq(LABEL.boxLabelOwner({}), '', 'sans propriétaire : chaîne vide (jamais « undefined »)');
+eq(LABEL.boxLabelDate({ date: ' 2026-01-15 ' }), '2026-01-15', 'la date de la boîte est nettoyée');
+
 const html = LABEL.buildBoxLabelHtml({ storageName: 'storage1', position: 3, boxName: 'Antibodies', rows });
 ok(html.includes('Storage: storage1 (Pos: 3)'), 'l’étiquette nomme le storage et la position');
 ok(html.includes('<strong>Box:</strong> Antibodies'), '…et la boîte');
@@ -94,11 +135,57 @@ ok(html.includes('<td>A1</td>') && html.includes('<td>10 µM</td>'), '…et la t
 ok(!html.includes('instance1'), 'l’étiquette d’une boîte ne parle pas d’« instance »');
 ok(LABEL.buildBoxLabelHtml({ storageName: '<b>x</b>', position: 1, boxName: 'a', rows: [] }).includes('&lt;b&gt;x&lt;/b&gt;'), 'le HTML est échappé');
 
-/* ── 3. storageDrive contre un FAUX Drive ─────────────────────────────────── */
+/* ── 2b. Le PDF lui-même est FABRIQUÉ (jsPDF tourne aussi sous Node) ────────
+   Les vérifications ci-dessus lisent la source ; celles-ci EXÉCUTENT le
+   générateur : une erreur dans le bloc de notes (une fonction mal importée, un
+   `doc.text` sur une valeur indéfinie) ne pouvait pas être vue en lisant. Le PDF
+   produit n'est pas compressé, donc son texte se relit. */
+const PDF = await import('./src/utils/boxLabelPdf.js');
+const labelPdf = PDF.buildBoxLabelPdf({
+  storageName: 'storage1', position: 3, boxName: 'Antibodies',
+  owner: 'Anna', date: '2026-01-15', rows, boxNotes: '<p>aliquots in DMSO</p>'
+});
+ok(labelPdf && labelPdf.size > 1000, 'le PDF de l’étiquette est fabriqué et n’est pas vide');
+const labelText = await labelPdf.text();
+ok(labelText.includes('Box Owner: Anna'), 'l’en-tête du PDF porte le PROPRIÉTAIRE de la boîte');
+ok(labelText.includes('Date: 2026-01-15'), '…et sa DATE');
+ok(labelText.includes('A1: aliquot 1'), 'la note du puits descend EN CALCE, rappelée par sa POSITION');
+ok(labelText.includes('aliquots in DMSO'), '…et le commentaire général de la boîte est imprimé lui aussi');
+ok(labelText.includes('Notes'), 'le bloc de notes s’annonce « Notes »');
+
+/* Beaucoup de notes très longues : le bloc ajoute des pages au lieu de rogner. */
+const longRows = Array.from({ length: 30 }, (_, i) => ({
+  pos: `A${i + 1}`, compound: 'x', owner: '', solvent: '', conc: '', vol: '', date: '', weight: '',
+  notes: 'a very long aliquot note that has to wrap over several lines to stay readable on paper'
+}));
+const longPdf = PDF.buildBoxLabelPdf({
+  storageName: 'storage1', position: 1, boxName: 'Antibodies', owner: 'Anna', date: '2026-01-15',
+  rows: longRows, boxNotes: ''
+});
+ok(longPdf.size > labelPdf.size, 'une boîte très annotée donne un PDF plus long');
+ok(((await longPdf.text()).match(/\/Type \/Page\b/g) || []).length > 1,
+  '…et une nouvelle page quand le bas de l’étiquette est atteint');
+
+/* Sans AUCUNE note à imprimer, le bloc en calce n’existe pas. */
+const noNotesPdf = PDF.buildBoxLabelPdf({
+  storageName: 'storage1', position: 3, boxName: 'Antibodies', owner: 'Anna', date: '2026-01-15',
+  rows: rows.map((r) => ({ ...r, notes: '' }))
+});
+const noNotesText = await noNotesPdf.text();
+ok(!noNotesText.includes('A1: '), 'sans note de puits, aucune ligne en calce');
+ok(!noNotesText.includes('Box notes'), '…et aucun bloc « Box notes »');
+ok(noNotesText.length < labelText.length, '…le PDF est donc plus court que celui qui porte les notes');
+
+/* La colonne « Notes » de la table n’était JAMAIS dessinée (largeur négative :
+   109 mm de colonnes fixes sur 108 mm utiles) : son titre doit être là, et les
+   autres colonnes ne doivent pas être rognées pour autant. */
+ok(labelText.includes('Notes'), 'la colonne « Notes » de la table est dessinée, elle aussi');
+ok(labelText.includes('2026-09-19') && labelText.includes('1.5 mg') && labelText.includes('p53H'),
+  '…sans rogner les autres colonnes (date, poids et composé passent en entier)');
 const folders = new Map();  // id → { id, name, parent }
 const files = new Map();    // id → { id, name, parents }
 let seq = 0;
-const upstream = { uploads: [], moves: [], renames: [] };
+const upstream = { uploads: [], moves: [], renames: [], trashed: [] };
 /* Des identifiants de 20 caractères, comme en vrai : les liens Drive en
    contiennent toujours au moins dix. */
 const mkId = (prefix) => `${prefix}${String(++seq).padStart(9, '0')}abcdefghij`;
@@ -151,6 +238,24 @@ globalThis.__driveTestMocks = {
     f.name = String(name);
     return true;
   },
+  /* Les enfants d'un dossier (dossiers ET fichiers) : c'est ce que lit
+     clearLegacyBoxLabels pour retrouver l'étiquette d'avant. */
+  listDriveChildren: async (parent) => [
+    ...[...folders.values()]
+      .filter((f) => f.parent === String(parent))
+      .map((f) => ({ id: f.id, name: f.name, mimeType: 'application/vnd.google-apps.folder' })),
+    ...[...files.values()]
+      .filter((f) => (f.parents || []).includes(String(parent)))
+      .map((f) => ({ id: f.id, name: f.name, mimeType: 'application/pdf' }))
+  ],
+  trashDriveFile: async (id) => {
+    const key = String(id);
+    const file = files.get(key) || folders.get(key);
+    if (!file) return false;
+    upstream.trashed.push(file.name);
+    if (files.has(key)) files.delete(key);
+    return true;
+  },
   uploadLocalFile: async (arg) => {
     upstream.uploads.push(arg);
     return { id: mkId('u'), name: arg.name, driveUrl: 'https://drive.google.com/file/d/up1/view' };
@@ -166,22 +271,42 @@ eq(DRIVE.driveFileIdsIn('https://drive.google.com/file/d/1AbCdEfGhIjKlMnOp/view'
 eq(DRIVE.driveFileIdsIn('voir https://drive.google.com/open?id=1AbCdEfGhIjKlMnOp puis https://drive.google.com/file/d/1ZzYyXxWwVvUuTtSs/view').length, 2, 'deux liens ⇒ deux identifiants');
 eq(DRIVE.driveFileIdsIn(''), [], 'rien à extraire d’une valeur vide');
 
-/* l’étiquette part dans storage/<storage>/boxes/<boîte>/ */
+/* l’étiquette part dans storage/<storage>/boxes/<boîte>/ SOUS LE NOM DE LA BOÎTE */
 const blob = { size: 1234, type: 'application/pdf' };
-const saved = await DRIVE.saveBoxLabelFile({ storage: 'storage1', box: 'Antibodies', blob });
-eq(upstream.uploads.length, 1, 'label.pdf est envoyé');
-eq(upstream.uploads[0].name, 'label.pdf', '…sous le nom label.pdf (réécrit, jamais empilé)');
+const labelName = NAMING.boxLabelFileName('2026-01-15', 'Anna');
+const saved = await DRIVE.saveBoxLabelFile({ storage: 'storage1', box: 'Antibodies', blob, name: labelName });
+eq(upstream.uploads.length, 1, 'l’étiquette est envoyée');
+eq(upstream.uploads[0].name, '2026-01-15_Anna_boxlabel.pdf', '…sous le nom <date>_<propriétaire>_boxlabel.pdf (jamais « label.pdf »)');
 eq(upstream.uploads[0].mimeType, 'application/pdf', '…en PDF');
 eq(upstream.uploads[0].path, ['storage', 'storage1', 'boxes', 'Antibodies'], '…dans le dossier de la boîte');
 eq(upstream.uploads[0].ctx.storage, 'storage1', 'le contexte enregistré porte le storage');
 eq(upstream.uploads[0].ctx.box, 'Antibodies', '…et la boîte');
-eq(upstream.uploads[0].ctx.title, 'label', '…et le nom du fichier (un renommage ne le change pas)');
+eq(upstream.uploads[0].ctx.title, '2026-01-15_Anna_boxlabel', '…et le nom du fichier, sans son extension (renommage/recalcul)');
 ok(!!saved && saved.driveUrl.includes('/up1/'), 'l’appelant reçoit le lien Drive');
+
+/* ── L’ancienne étiquette ne reste pas à côté de la nouvelle ──────────────── */
+const ensureFolder = (name, parent) => folderId(name, parent) || addFolder(name, parent);
+const boxFolder = ensureFolder('Antibodies', ensureFolder('boxes', ensureFolder('storage1', containerId)));
+const keptLabel = addFile(labelName, [boxFolder]);
+addFile(NAMING.LEGACY_BOX_LABEL_FILE_NAME, [boxFolder]);
+eq(await DRIVE.clearLegacyBoxLabels({ storage: 'storage1', box: 'Antibodies', keepName: labelName }), 1,
+  'l’ancienne étiquette « label.pdf » part à la corbeille');
+eq(upstream.trashed, ['label.pdf'], '…c’est bien elle, et l’étiquette actuelle n’est jamais touchée');
+ok(files.has(keptLabel), '…elle est toujours dans le dossier');
+eq(await DRIVE.clearLegacyBoxLabels({ storage: 'storage1', box: 'Antibodies', keepName: labelName }), 0,
+  'une deuxième passe ne trouve plus rien à ranger');
+
+/* C’est saveBoxLabelFile lui-même qui range, dès que l’étiquette est arrivée :
+   aucun geste de nettoyage n’est demandé à l’utilisateur. */
+addFile(NAMING.LEGACY_BOX_LABEL_FILE_NAME, [boxFolder]);
+upstream.trashed.length = 0;
+await DRIVE.saveBoxLabelFile({ storage: 'storage1', box: 'Antibodies', blob, name: labelName });
+eq(upstream.trashed, ['label.pdf'], 'déposer l’étiquette range celle d’avant (un seul geste)');
 
 /* Drive injoignable : rien n’est envoyé (et rien n’est perdu de travers) */
 globalThis.__driveTestMocks.cloud = false;
-eq(await DRIVE.saveBoxLabelFile({ storage: 'storage1', box: 'Antibodies', blob }), null, 'sans Drive, l’étiquette n’est pas envoyée');
-eq(upstream.uploads.length, 1, '…aucune tentative d’envoi de plus');
+eq(await DRIVE.saveBoxLabelFile({ storage: 'storage1', box: 'Antibodies', blob, name: labelName }), null, 'sans Drive, l’étiquette n’est pas envoyée');
+eq(upstream.uploads.length, 2, '…aucune tentative d’envoi de plus');
 globalThis.__driveTestMocks.cloud = true;
 
 /* ── 4. Rangement : l’ancienne arborescence est rapatriée ─────────────────── */
@@ -270,10 +395,32 @@ ok(STORAGE_SRC.includes('tidyStorageFiles({ storage: storageName, urls: [storage
 ok(STORAGE_SRC.includes('renameStorageDriveFolder({ oldName: previousName, newName: newStorage.name })'), 'renommer un storage renomme son dossier');
 ok(ATM_SRC.includes('renameStorageBoxDriveFolder({'), 'renommer une boîte passe par renameStorageBoxDriveFolder');
 ok(ATM_SRC.includes('if (isBox) {'), '…et seulement pour une boîte (une expérience garde renameDriveFilesFor)');
-ok(LABEL_COMP.includes('saveBoxLabelFile({ storage: storageName, box: boxName, blob })'), 'l’étiquette est déposée par storageDrive');
-ok(LABEL_COMP.includes('buildBoxLabelPdf({ storageName, position, boxName, rows })'), '…et fabriquée à partir de la même table');
+ok(LABEL_COMP.includes('const fileName = boxLabelFileName(date, owner);'),
+  'le nom du fichier vient de la DATE et du PROPRIÉTAIRE de la boîte');
+ok(LABEL_COMP.includes('saveBoxLabelFile({ storage: storageName, box: boxName, blob, name: fileName })'),
+  'l’étiquette est déposée par storageDrive SOUS CE NOM (jamais « label.pdf »)');
+ok(LABEL_COMP.includes('buildBoxLabelPdf({ storageName, position, boxName, owner, date, rows, boxNotes })'),
+  '…et fabriquée à partir de la même table, avec la date, le propriétaire et les commentaires');
+ok(LABEL_COMP.includes('{filePath}'), 'l’écran MONTRE le nom exact du fichier déposé');
+ok(PDF_SRC.includes('writeNotesBlock(doc, ['), 'les notes sont reprises EN CALCE dans le PDF');
+ok(PDF_SRC.includes('boxLabelNotes(rows).map((note) => ({ prefix: `${note.pos}: `, text: note.text }))'),
+  '…chacune rappelée par la POSITION du puits auquel elle se rapporte');
+ok(PDF_SRC.includes('plainBoxNotes(boxNotes)'), '…et le commentaire général de la boîte ferme le bloc');
 ok(PDF_SRC.includes("doc.output('blob')"), 'le PDF est un blob (donc envoyable)');
 ok(PDF_SRC.includes('format: [LABEL_PAGE_MM, LABEL_PAGE_MM]'), 'le format du papier est celui de l’étiquette imprimée');
+
+/* La boîte passe à l’étiquette SA date, SON propriétaire et SES commentaires —
+   les mêmes règles que l’écran (storageModules.getBoxOwner : Box Owner, à défaut
+   l’opérateur) — et ils entrent dans la signature, sinon les changer laisserait
+   un fichier dont le nom ne correspond plus à la boîte. */
+ok(STORAGE_SRC.includes('const labelOwner = boxLabelOwner(activeTest);')
+  && STORAGE_SRC.includes('const labelDate = boxLabelDate(activeTest);'),
+  'la boîte résout son propriétaire et sa date avec les helpers de boxLabel');
+ok(STORAGE_SRC.includes('owner={labelOwner}') && STORAGE_SRC.includes('date={labelDate}')
+  && STORAGE_SRC.includes('boxNotes={activeTest.comments || \'\'}'),
+  '…et les passe à l’étiquette (en-tête, nom du fichier et notes en calce)');
+ok(STORAGE_SRC.includes('date: labelDate, owner: labelOwner, notes: activeTest.comments || \'\''),
+  '…les trois entrent dans la signature de l’étiquette');
 
 /* Le bug corrigé : le dossier d'une boîte était recalculé à CHAQUE FRAPPE (le
    nom était une dépendance de l'effet de rangement), donc taper « jac » laissait
@@ -290,6 +437,11 @@ ok(ATM_SRC.includes("box: activeTest.name || 'box',"), '…avec le nom DÉFINITI
 ok(DRIVE_SRC.includes('resolveDrivePathFromNames(names, { create: false })'), 'le rangement CHERCHE le dossier visé avant de le créer');
 ok(DRIVE_SRC.includes('const resolved = await resolveDrivePathFromNames(names);'), '…et ne le crée que parce qu’un fichier a vraiment besoin d’y entrer');
 ok(UP_SRC.includes("if (!next && !create) return { leafId: '', path };"), 'en recherche seule, driveUpload ne fabrique aucun dossier');
+ok(DRIVE_SRC.includes('export const clearLegacyBoxLabels = async ({ storage, box, keepName = \'\' }) =>'),
+  'storageDrive sait ranger l’étiquette qui portait l’ANCIEN nom');
+ok(DRIVE_SRC.includes('if (saved && saved.driveUrl) await clearLegacyBoxLabels({ storage, box, keepName: name });'),
+  '…et le fait dès que la nouvelle étiquette est arrivée (jamais sans Drive)');
+ok(DRIVE_SRC.includes('LEGACY_BOX_LABEL_FILE_NAME'), '…l’ancien nom est connu du rangement, jamais réécrit');
 
 const pkg = JSON.parse(read('./package.json'));
 ok(!!pkg.dependencies.jspdf, 'jspdf est installé (aucun service externe)');

@@ -4,9 +4,18 @@
 
    L'emplacement canonique d'une figure est
 
-       <dataset>/projects/<slug(projet)>/images
+       <dataset>/projects/<slug(projet)>/images        (figure d'un PROJET)
 
-   donc DÉRIVÉ DU NOM du projet (voir driveNaming.projectImagesFolderPath). Un
+   et, pour une figure qui n'appartient à AUCUN projet, le dossier de la
+   bibliothèque COMMUNE — un dossier de PREMIER NIVEAU du dataset, qui porte les
+   figures DIRECTEMENT :
+
+       <dataset>/general_library_images
+
+   Le dossier d'un projet est donc DÉRIVÉ DU NOM du projet (voir
+   driveNaming.projectImagesFolderPath) ; le dossier commun, lui, n'est pas un
+   dossier de projet. Son ancien emplacement — `projects/unassigned/images` — est
+   encore LU le temps de la migration (voir utils/commonLibraryMigrate.js). Un
    projet renommé, un dossier renommé à la main sur le Drive, ou un miroir perdu
    (navigateur vidé, magasin plein — `labDriveMirror` n'est pas synchronisé)
    laissent les fichiers dans l'ANCIEN dossier pendant que le programme cherche le
@@ -44,7 +53,7 @@ import {
   readDriveMirror, writeDriveMirror, findProjectFolderId, findDatasetFolderId,
   findProjectImagesId, rememberProjectFolder
 } from './driveMirrorStore';
-import { sanitizeSlug } from './driveNaming';
+import { GENERAL_LIBRARY_DIR, sanitizeSlug } from './driveNaming';
 
 /* ── Comparaison de noms (PUR, testable) ───────────────────────────────────── */
 
@@ -52,36 +61,54 @@ import { sanitizeSlug } from './driveNaming';
  *  « Canvas 18/09 » et « Canvas_18-09 » se comparent. PUR. */
 export const folderNameKey = (name) => String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 
-/** Les noms que peut porter le SEAU COMMUN (« aucune figure de projet ») sur le
- *  Drive, dans l'ordre où il faut les chercher.
+/** Les noms que portait le SEAU COMMUN d'avant (« aucune figure de projet ») —
+ *  encore LUS, jamais écrits : le dossier commun vit maintenant à la racine du
+ *  dataset (voir commonLibraryFolderName).
  *
- *  Le nom CANONIQUE est `_unassigned` — celui des docs et celui de Nextcloud
+ *  Le nom CANONIQUE était `_unassigned` — celui des docs et celui de Nextcloud
  *  (les segments passés à WebDAV ne sont pas re-slugés) —, mais une ÉCRITURE sur
  *  Google Drive passe par `resolveDrivePathFromNames`, qui sanitise CHAQUE
  *  segment : `sanitizeSlug('_unassigned')` vaut `unassigned` (le `_` de tête
- *  tombe). Le dossier qui EXISTE vraiment sur le Drive s'appelle donc
- *  `unassigned`, alors que la lecture ne cherchait que `_unassigned` : la
- *  bibliothèque COMMUNE n'était retrouvée que sur un poste où le miroir
- *  `labDriveMirror` l'avait déjà retenue — ailleurs (« Add missing from Drive »
- *  depuis un autre navigateur), le dossier était déclaré introuvable. PUR. */
-export const unassignedFolderNames = () => ['unassigned', '_unassigned'];
+ *  tombe). Les deux noms sont donc acceptés (le réel d'abord). PUR. */
+export const legacyCommonFolderNames = () => ['unassigned', '_unassigned'];
 
-/** Ce nom est-il celui du seau commun ? (`unassigned` = `_unassigned`). PUR. */
-export const isUnassignedFolderName = (name) => folderNameKey(name) === 'unassigned';
+/** Le nom du dossier de la bibliothèque COMMUNE : `<dataset>/general_library_images`
+ *  (un dossier de PREMIER NIVEAU du dataset, à côté de `projects/`). PUR. */
+export const commonLibraryFolderName = () => GENERAL_LIBRARY_DIR;
+
+/** Les noms que peut porter le dossier de la bibliothèque COMMUNE : celui
+ *  d'aujourd'hui d'abord (`general_library_images`), puis les anciens
+ *  (`unassigned`, `_unassigned`) — c'est l'ordre dans lequel il faut chercher. PUR. */
+export const commonLibraryFolderNames = () => [GENERAL_LIBRARY_DIR, ...legacyCommonFolderNames()];
+
+/** Ce nom est-il celui de la bibliothèque COMMUNE — le nom d'aujourd'hui ou un
+ *  ancien ? C'est ce qui distingue « les figures sans projet » d'un dossier de
+ *  PROJET : sans cette reconnaissance, la portée commune lirait (puis écrirait)
+ *  les figures d'un projet. PUR. */
+export const isCommonLibraryName = (name) =>
+  commonLibraryFolderNames().some((n) => folderNameKey(n) === folderNameKey(name));
+
+/** Ce nom est-il celui de l'ANCIEN seau commun (`unassigned` = `_unassigned`) —
+ *  un dossier qui n'a plus lieu d'exister, et que la migration vide ? PUR. */
+export const isLegacyCommonFolderName = (name) => {
+  const key = folderNameKey(name);
+  return legacyCommonFolderNames().some((n) => folderNameKey(n) === key);
+};
 
 /** Le chemin (noms de dossiers, relatif au dossier du dataset) du dossier
- *  d'images d'un projet tel qu'il EXISTE sur le Drive :
- *      projects/<slug(projet)>/images      , et
- *      projects/unassigned/images          quand il n'y a pas de projet.
- *  Le seau commun s'appelle `unassigned` (sans `_`) parce que la création
- *  sanitise chaque segment du chemin (voir unassignedFolderNames) — c'est le nom
- *  que l'écran doit MONTRER, celui que le Drive affiche. PUR. */
-export const imagesFolderPathOnDrive = (projectName) =>
-  `projects/${sanitizeSlug(projectName) || unassignedFolderNames()[0]}/images`;
+ *  d'images d'une portée, tel qu'il EXISTE sur le Drive :
+ *      projects/<slug(projet)>/images      pour une figure de ce projet,
+ *      general_library_images              pour la bibliothèque COMMUNE.
+ *  Le dossier commun vit À LA RACINE du dataset et porte les figures
+ *  DIRECTEMENT (ce dossier EST le dossier d'images) : c'est le nom que l'écran
+ *  doit MONTRER, celui que le Drive affiche. PUR. */
+export const imagesFolderPathOnDrive = (projectName) => (sanitizeSlug(projectName)
+  ? `projects/${sanitizeSlug(projectName)}/images`
+  : GENERAL_LIBRARY_DIR);
 
 /** Le nom cherché correspond-il à celui de CE projet / de cette portée ? PUR. */
 export const folderNameIsWanted = (name, projectName) =>
-  (sanitizeSlug(projectName) ? String(name) === sanitizeSlug(projectName) : isUnassignedFolderName(name));
+  (sanitizeSlug(projectName) ? String(name) === sanitizeSlug(projectName) : isCommonLibraryName(name));
 
 /** Les mots d'un nom (pour un renommage qui garde la moitié du titre). PUR. */
 const folderNameWords = (name) => sanitizeSlug(name).toLowerCase().split(/[_-]+/).filter(Boolean);
@@ -110,13 +137,15 @@ export const projectFolderNameScore = (folderName, projectName) => {
 export const pickFiguresFolder = (candidates, projectName) => {
   const list = (Array.isArray(candidates) ? candidates : []).filter((c) => c && c.name && c.imagesId);
   if (!list.length) return null;
-  /* Portée COMMUNE (aucun projet) : le dossier attendu est le SEAU `unassigned`.
-     Son nom est une CONVENTION, pas une supposition — le reconnaître vaut donc 3
-     au lieu de 0 (`projectFolderNameScore(x, '')` vaut toujours 0, si bien que la
-     bibliothèque commune ne pouvait JAMAIS être retrouvée par ce chemin). */
+  /* Portée COMMUNE (aucun projet) : le dossier attendu est la BIBLIOTHÈQUE
+     COMMUNE — son nom d'aujourd'hui (`general_library_images`) ou celui du bac
+     historique (`unassigned`). Son nom est une CONVENTION, pas une supposition —
+     le reconnaître vaut donc 3 au lieu de 0 (`projectFolderNameScore(x, '')`
+     vaut toujours 0, si bien que la bibliothèque commune ne pouvait JAMAIS être
+     retrouvée par ce chemin). */
   const scoreOf = (name) => (sanitizeSlug(projectName)
     ? projectFolderNameScore(name, projectName)
-    : (isUnassignedFolderName(name) ? 3 : 0));
+    : (isCommonLibraryName(name) ? 3 : 0));
   const scored = list
     .map((c) => ({ c, score: scoreOf(c.name), files: Number(c.files || 0) }))
     .sort((x, y) => (y.score - x.score) || (y.files - x.files));
@@ -227,10 +256,75 @@ const preferPopulatedTwin = async (projectName, leafId) => {
   return recoverFiguresFolderWithFiles(projectName, { exceptLeafId: leafId });
 };
 
+/** Une entrée de la portée COMMUNE, dans la MÊME forme que celle d'un projet
+ *  (`name`, `folderId`, `imagesId`, `files`, `sidecars`), PLUS `folder` : le
+ *  chemin réel à MONTRER. Le dossier commun d'aujourd'hui vit à la racine du
+ *  dataset et porte les figures DIRECTEMENT — son `imagesId` est lui-même, et
+ *  `folderId` est la racine où il est rangé ; le bac historique, lui, avait un
+ *  dossier `images` à l'intérieur (`projects/unassigned/images`). */
+const commonLeafEntry = async ({ leaf, folderId, folderName, via }) => {
+  const files = await listDriveChildren(leaf.id).catch(() => []);
+  const leafName = String((leaf && leaf.name) || GENERAL_LIBRARY_DIR);
+  return {
+    name: via === 'legacy' ? String(folderName || '') : leafName,
+    folderName: String(folderName || ''),
+    folderId: String(folderId || ''),
+    containerId: String(folderId || ''),
+    imagesName: leafName,
+    imagesId: String(leaf.id),
+    folder: via === 'legacy' ? `projects/${folderName}/images` : leafName,
+    via,
+    files: files.length,
+    sidecars: files.filter((f) => /\.meta\.json$/i.test(String((f && f.name) || ''))).length
+  };
+};
+
+/** TOUS les dossiers d'images de la portée COMMUNE : le nom d'aujourd'hui, à la
+ *  racine du dataset (`<dataset>/general_library_images`), PUIS les emplacements
+ *  historiques (`projects/unassigned/images` et `_unassigned`) encore présents —
+ *  c'est ce qui permet de continuer à lire la bibliothèque commune tant que la
+ *  migration ne l'a pas déplacée.
+ *  LECTURE SEULE : rien n'est créé, même quand la bibliothèque n'existe pas. */
+const scanCommonLeaves = async () => {
+  const out = [];
+  if (!getDriveToken()) return out;
+  try {
+    const root = await datasetRootId();
+    if (!root) return out;
+    /* Le dossier du nouveau nom : ÉNUMÉRÉ d'abord (il peut y avoir des jumeaux),
+       puis, s'il n'apparaît pas — lecture muette, ou faux Drive d'une sonde qui
+       n'énumère pas les dossiers — cherché PAR SON NOM, le chemin d'avant. */
+    const todayLeaves = new Map();
+    for (const leaf of await childFoldersNamed(root, folderNameKey(GENERAL_LIBRARY_DIR))) {
+      todayLeaves.set(String(leaf.id), leaf);
+    }
+    if (!todayLeaves.size) {
+      const byName = await findFolderByName(GENERAL_LIBRARY_DIR, root).catch(() => '');
+      if (byName) todayLeaves.set(String(byName), { id: String(byName), name: GENERAL_LIBRARY_DIR });
+    }
+    for (const leaf of todayLeaves.values()) {
+      out.push(await commonLeafEntry({ leaf, folderId: root, folderName: '', via: 'name' }));
+    }
+    for (const container of await childFoldersNamed(root, 'projects')) {
+      for (const bucketName of legacyCommonFolderNames()) {
+        for (const bucket of await childFoldersNamed(container.id, folderNameKey(bucketName))) {
+          const leaves = (await listDriveChildren(bucket.id).catch(() => [])).filter(isImagesFolderNode);
+          for (const leaf of leaves) {
+            out.push(await commonLeafEntry({ leaf, folderId: bucket.id, folderName: bucket.name, via: 'legacy' }));
+          }
+        }
+      }
+    }
+  } catch { /* pas de Drive / pas de jeton : liste vide, jamais une erreur */ }
+  return out;
+};
+
 /** TOUS les dossiers `images` du dataset vus par tous les chemins possibles —
  *  plusieurs conteneurs `projects`, plusieurs dossiers du nom du projet, et
- *  JUMEAUX d'un même dossier `images` — avec ce que chacun contient.
- *  `projectName` vide → tous les dossiers de projet du dataset.
+ *  JUMEAUX d'un même dossier `images` — avec ce que chacun contient. Pour la
+ *  portée COMMUNE (aucun projet), les dossiers de la bibliothèque commune sont
+ *  ajoutés : elle n'est PAS sous `projects/`, donc la boucle ci-dessous ne les
+ *  voit pas (et les jumeaux déjà vus ne sont pas comptés deux fois).
  *  LECTURE SEULE : rien n'est créé, même quand le dossier n'existe pas. */
 const scanFiguresLeaves = async (projectName = '') => {
   const out = [];
@@ -254,10 +348,20 @@ const scanFiguresLeaves = async (projectName = '') => {
             containerId: String(container.id),
             imagesName: String(leaf.name || 'images'),  // nom du dossier `images`
             imagesId: String(leaf.id),
+            folder: `projects/${folder.name}/${leaf.name}`,
+            via: 'project',
             files: files.length,
             sidecars: files.filter((f) => /\.meta\.json$/i.test(String((f && f.name) || ''))).length
           });
         }
+      }
+    }
+    if (!key) {
+      const seen = new Set(out.map((l) => l.imagesId));
+      for (const leaf of await scanCommonLeaves()) {
+        if (seen.has(leaf.imagesId)) continue;
+        seen.add(leaf.imagesId);
+        out.push(leaf);
       }
     }
   } catch { /* pas de Drive / pas de jeton : liste vide, jamais une erreur */ }
@@ -336,12 +440,14 @@ const rememberFiguresLeafOnce = (projectName, { folderId = '', imagesId = '' } =
  *           `null` = aucun jumeau peuplé (le dossier vide est bien le seul). */
 export const recoverFiguresFolderWithFiles = async (projectName, { exceptLeafId = '' } = {}) => {
   const skip = String(exceptLeafId || '');
-  /* Portée COMMUNE : seuls les dossiers du seau `unassigned` sont candidats.
-     Sans ce filtre, le « dossier peuplé » choisi pouvait être celui d'un PROJET
-     et la bibliothèque commune se mettait à lire — puis à écrire — les figures
-     d'un projet. */
-  const leaves = (await scanFiguresLeaves(projectName))
-    .filter((l) => !sanitizeSlug(projectName) ? isUnassignedFolderName(l.name) : true);
+  /* Portée COMMUNE : seuls les dossiers de la BIBLIOTHÈQUE COMMUNE sont
+     candidats (le nom d'aujourd'hui, à la racine du dataset, ou le bac
+     historique `projects/unassigned/images`). Sans ce filtre, le « dossier
+     peuplé » choisi pouvait être celui d'un PROJET et la bibliothèque commune se
+     mettait à lire — puis à écrire — les figures d'un projet. */
+  const leaves = sanitizeSlug(projectName)
+    ? await scanFiguresLeaves(projectName)
+    : await scanCommonLeaves();
   const best = bestFiguresLeaf(leaves.filter((l) => l.imagesId !== skip && l.files > 0));
   if (!best) return null;
   rememberFiguresLeaf(projectName, best);
@@ -350,10 +456,64 @@ export const recoverFiguresFolderWithFiles = async (projectName, { exceptLeafId 
     leafId: best.imagesId,
     exact: folderNameIsWanted(best.name, projectName),
     via: 'twin',
-    folder: `projects/${best.name}/${best.imagesName}`,
+    folder: String(best.folder || `projects/${best.name}/${best.imagesName}`),
     files: best.files,
     candidates: leaves.filter((l) => l.imagesId !== best.imagesId)
   };
+};
+
+/** LA bibliothèque COMMUNE — le dossier d'images des figures sans projet —
+ *  cherchée SANS RIEN CRÉER.
+ *
+ *   1. le dossier DÉJÀ RETENU, par son identifiant : c'est la seule source qui
+ *      survit à un renommage fait à la main sur le Drive ;
+ *   2. le nom d'aujourd'hui, à la racine du dataset :
+ *      <dataset>/general_library_images ;
+ *   3. les emplacements historiques (`projects/unassigned/images`) : la
+ *      bibliothèque commune reste LISIBLE — et les envois y entrent — tant que la
+ *      migration ne l'a pas déplacée (voir utils/commonLibraryMigrate.js), donc
+ *      aucune figure ne se perd entre les deux dossiers.
+ *
+ *  Le dossier du nouveau nom existe mais est VIDE tandis qu'un ancien porte les
+ *  figures : c'est l'ancien qui gagne (le jumeau peuplé), sans quoi la
+ *  bibliothèque paraîtrait vide juste avant la migration.
+ *
+ *  @returns {Promise<{ name:string, leafId:string, exact:boolean, via:string,
+ *                      folder:string, candidates:Array }>} */
+const findCommonFiguresFolder = async () => {
+  const scope = { datasetId: getDriveRootId(), datasetName: getDriveRootName(), projectName: '' };
+  const none = {
+    name: '', leafId: '', exact: false, via: '', folder: GENERAL_LIBRARY_DIR, candidates: []
+  };
+  try {
+    const remembered = findProjectImagesId(readDriveMirror(), scope);
+    if (remembered) {
+      const meta = await getDriveFileMeta(remembered).catch(() => null);
+      if (meta && meta.id && !meta.trashed) {
+        const leaf = (await scanCommonLeaves()).find((l) => l.imagesId === String(remembered));
+        const name = String(meta.name || (leaf && leaf.imagesName) || GENERAL_LIBRARY_DIR);
+        return {
+          name, leafId: String(remembered), exact: true, via: 'remembered',
+          folder: (leaf && leaf.folder) || name, candidates: []
+        };
+      }
+    }
+    const leaves = await scanCommonLeaves();
+    if (!leaves.length) return none;
+    const today = leaves.find((l) => l.via === 'name') || null;
+    const chosen = (today && today.files > 0) ? today : (bestFiguresLeaf(leaves) || today);
+    if (!chosen) return none;
+    rememberFiguresLeafOnce('', { folderId: chosen.folderId, imagesId: chosen.imagesId });
+    return {
+      name: chosen.name,
+      leafId: chosen.imagesId,
+      exact: isCommonLibraryName(chosen.name),
+      via: chosen.via,
+      folder: chosen.folder,
+      files: chosen.files,
+      candidates: leaves.filter((l) => l.imagesId !== chosen.imagesId)
+    };
+  } catch { return none; }
 };
 
 /**
@@ -369,17 +529,17 @@ export const recoverFiguresFolderWithFiles = async (projectName, { exceptLeafId 
  *                l'écran puisse proposer le bon dossier au lieu de deviner).
  */
 export const findProjectFiguresFolder = async (projectName) => {
-  /* Le ou les noms du dossier cherché. Portée COMMUNE : les DEUX noms du seau
-     (voir unassignedFolderNames) — le réel d'abord, car c'est celui que la
-     création fabrique sur le Drive. */
-  const wantedNames = sanitizeSlug(projectName) ? [sanitizeSlug(projectName)] : unassignedFolderNames();
-  const wanted = wantedNames[0];
+  /* Le dossier cherché est celui du PROJET, sous son nom slugé. La portée
+     COMMUNE est traitée à part (voir findCommonFiguresFolder) : sa bibliothèque
+     n'est pas un dossier de projet, elle vit à la racine du dataset. */
+  const wanted = sanitizeSlug(projectName);
   const scope = { datasetId: getDriveRootId(), datasetName: getDriveRootName(), projectName };
   const none = {
     name: '', leafId: '', exact: false, via: '',
     folder: imagesFolderPathOnDrive(projectName), candidates: []
   };
   if (!getDriveToken()) return none;
+  if (!wanted) return findCommonFiguresFolder();
   try {
     // 0. LE DOSSIER `images` DÉJÀ RETENU, par son IDENTIFIANT. Une recherche par
     //    NOM rend le PREMIER des jumeaux, dans un ordre que le Drive ne garantit
@@ -433,21 +593,20 @@ export const findProjectFiguresFolder = async (projectName) => {
         || await findFolderByName('projects', root)
       : '';
     if (projectsId) {
-      /* Plusieurs noms possibles pour la portée COMMUNE (`unassigned` puis
-         `_unassigned`) : le premier dossier qui EXISTE gagne, et c'est son nom
-         réel qui est rendu — l'écran affiche donc ce que le Drive montre. */
-      for (const wantedName of wantedNames) {
-        const exactId = await findFolderByName(wantedName, projectsId);
-        if (!exactId) continue;
+      /* Le dossier du projet, PAR SON NOM : celui qui existe gagne, et c'est son
+         nom réel qui est rendu — l'écran affiche donc ce que le Drive montre. */
+      const exactId = await findFolderByName(wanted, projectsId);
+      if (exactId) {
         const leaf = await bestLeafOfProjectFolder(exactId);
-        if (!leaf) continue;
-        const twin = await preferPopulatedTwin(projectName, leaf.imagesId);
-        if (twin) return twin;
-        // Retenu par identifiant : la recherche par nom ne revient plus (c'est
-        // elle qui, dans l'ordre non garanti du Drive, tombait sur le jumeau
-        // vide).
-        rememberFiguresLeafOnce(projectName, { folderId: exactId, imagesId: leaf.imagesId });
-        return { name: wantedName, leafId: leaf.imagesId, exact: true, via: 'name', folder: `projects/${wantedName}/images`, candidates: [] };
+        if (leaf) {
+          const twin = await preferPopulatedTwin(projectName, leaf.imagesId);
+          if (twin) return twin;
+          // Retenu par identifiant : la recherche par nom ne revient plus (c'est
+          // elle qui, dans l'ordre non garanti du Drive, tombait sur le jumeau
+          // vide).
+          rememberFiguresLeafOnce(projectName, { folderId: exactId, imagesId: leaf.imagesId });
+          return { name: wanted, leafId: leaf.imagesId, exact: true, via: 'name', folder: `projects/${wanted}/images`, candidates: [] };
+        }
       }
     }
     // 3. UN DOSSIER VOISIN qui ressemble encore au nom du projet. Le dossier

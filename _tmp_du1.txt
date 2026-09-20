@@ -1,0 +1,50 @@
+﻿ *  dataset only gets its own `backups` + `Budget_labo` containers (the
+ *  budget-document helpers create Budget_labo/<year>/â€¦ on demand).
+ *  For an administration base the empty legacy scientific containers
+ *  (projects / protocols / storage / publications) possibly left behind by
+ *  older app versions are trashed â€” they are never created any more, and a
+ *  non-empty folder is always kept untouched.
+ *  Returns the {name â†’ id} map of the created folder structure. */
+export const ensureDatasetFolderStructure = async (datasetRootId, dirs = null) => {
+  const map = {};
+  if (!datasetRootId || !getDriveToken()) return map;
+  const list = Array.isArray(dirs) && dirs.length ? dirs : datasetDirNames();
+  for (const dir of list) {
+    /* Un dossier SUPPRIMÃ‰ dans le programme ne se recrÃ©e pas : sans ce test,
+       ouvrir le dataset refaisait Â« projects/ Â» (ou Â« backups/ Â»â€¦) juste aprÃ¨s
+       sa suppression â€” le dossier semblait rÃ©apparaÃ®tre tout seul. */
+    if (datasetDirDeleted(dir)) { map[dir] = ''; continue; }
+    try {
+      /* Chaque conteneur canonique passe par le rÃ©solveur UNIQUE : il retient
+         l'identifiant, dÃ©partage les JUMEAUX par leur contenu et range les
+         jumeaux vides Ã  la corbeille â€” au lieu de Â« le premier du nom Â». */
+      map[dir] = await canonicalDatasetDirId(dir, { rootId: datasetRootId });
+    } catch { map[dir] = ''; }
+  }
+  if (driveRootKind === 'administration') {
+    const SCIENTIFIC_ONLY = ['projects', 'protocols', 'storage', 'publications'];
+    try {
+      const children = await listDriveChildren(datasetRootId);
+      for (const child of children) {
+        if (!child || child.mimeType !== 'application/vnd.google-apps.folder') continue;
+        if (SCIENTIFIC_ONLY.indexOf(child.name) === -1) continue;
+        const inside = await listDriveChildren(child.id);
+        if (inside.length > 0) continue; // only empty leftovers are removed
+        await driveFetch(`/drive/v3/files/${child.id}?fields=id`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ trashed: true })
+        });
+      }
+    } catch { /* hygiene is best-effort */ }
+  }
+  return map;
+};
+
+/** Best-effort workspace-root hygiene:
+ *  1. A root-level "backups" folder (old shared backup location) is trashed
+ *     once empty.
+ *  2. A root-level dataset folder named "<dataset>_<idTag>" (legacy weekly
+ *     backup layout) is trashed â€” its current dataset/backups backup was just
+ *     written to the canonical dataset folder by the caller.
+ *  Never touches anything else under Lab Workspace. */

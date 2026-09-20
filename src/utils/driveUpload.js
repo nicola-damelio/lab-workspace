@@ -86,7 +86,7 @@ export const clearDriveToken = () => {
   } catch { /* ignore */ }
 };
 const FOLDER_NAME_KEY = 'labDriveFolderName';
-import { suggestDriveFileName, sanitizeSlug, driveFolderPath, DATASET_FOLDER_DIRS, datasetFolderSlug, canonicalPageSection, canonicalExperimentPath, canonicalizeExperimentPath, projectNamesOf } from './driveNaming';
+import { suggestDriveFileName, sanitizeSlug, driveFolderPath, DATASET_FOLDER_DIRS, DEFAULT_PROJECT_NAME, datasetFolderSlug, canonicalPageSection, canonicalExperimentPath, canonicalizeExperimentPath, projectNamesOf } from './driveNaming';
 import {
   readDriveMirror, writeDriveMirror, rememberDatasetFolder, rememberProjectFolder,
   rememberDatasetDir, findDatasetDirId,
@@ -966,6 +966,7 @@ export const trashEmptyFolderChain = async (path) => {
 /** Locate an experiment (test) folder on Drive, looking first in the canonical
  *  "projects" container, then in the legacy dataset-root layout:
  *    <dataset>/projects/<project>/<test>            (canonical)
+ *    <dataset>/projects/test/<test>                 (experiment with no project)
  *    <dataset>/projects/_unassigned/<test>          (legacy standalone)
  *    <dataset>/<project>/<test> and <dataset>/<test> (pre-architecture layout)
  *  @returns {{ id:string, pathNames:string[] }|null} */
@@ -977,6 +978,7 @@ const findProjectTestFolder = async (root, testName, projectName) => {
     rels.push(`projects/${sanitizeSlug(projectName)}/${testSlug}`);
     rels.push(`${sanitizeSlug(projectName)}/${testSlug}`); // legacy
   }
+  rels.push(`projects/${DEFAULT_PROJECT_NAME}/${testSlug}`);
   rels.push(`projects/_unassigned/${testSlug}`);
   rels.push(testSlug); // legacy standalone
   for (const rel of rels) {
@@ -1170,15 +1172,16 @@ export const moveTestFolderOutOfProject = async ({ testName, projectName }) => {
     if (!testFolderId) return 0; // test not inside this project folder
 
     // Experiments must ALWAYS belong to a project, so "removed from this
-    // project" means "moved into the dataset's _unassigned project bucket"
-    // (a hidden bucket inside projects/, never a stray folder at the root).
+    // project" means "moved into the DEFAULT project folder" — `projects/test`,
+    // exactement le même bac qu'un test sans projet (jamais un dossier errant à
+    // la racine, jamais un projet qui n'existe pas).
     const projectsFolderId = projectsContainerId || await canonicalDatasetDirId('projects', { rootId: root });
-    const unassignedFolderId = await findOrCreateFolder('_unassigned', projectsFolderId);
-    const existingThere = await findFolderByName(sanitizeSlug(testName), unassignedFolderId);
+    const outOfProjectFolderId = await findOrCreateFolder(DEFAULT_PROJECT_NAME, projectsFolderId);
+    const existingThere = await findFolderByName(sanitizeSlug(testName), outOfProjectFolderId);
     if (existingThere !== testFolderId) {
       // moveDriveFile removes the folder from ALL its current parents, so the
       // move can never leave a copy inside the project (no duplicate).
-      await moveDriveFile(testFolderId, unassignedFolderId);
+      await moveDriveFile(testFolderId, outOfProjectFolderId);
     }
 
     // The project folder may now be empty (last test moved out) — trash it so
@@ -1191,8 +1194,8 @@ export const moveTestFolderOutOfProject = async ({ testName, projectName }) => {
     } catch { /* keep the project folder */ }
 
     // Keep the registry in sync: drop ctx.project and rewrite paths to the
-    // canonical projects/_unassigned/<test>/… layout.
-    const unassignedSeg = { name: '_unassigned', id: unassignedFolderId };
+    // canonical projects/<projet par défaut>/<test>/… layout.
+    const outOfProjectSeg = { name: DEFAULT_PROJECT_NAME, id: outOfProjectFolderId };
     const projectsSeg = { name: 'projects', id: projectsFolderId };
     const reg = getDriveFileRegistry();
     let count = 0;
@@ -1202,21 +1205,25 @@ export const moveTestFolderOutOfProject = async ({ testName, projectName }) => {
       if (String(ctx.test || '') !== String(testName)) continue;
       if (String(ctx.project || '') !== String(projectName)) continue;
       const newCtx = { ...ctx, project: '' };
+      /* Les segments du CHEMIN sont refaits : on retire le conteneur, le bac
+         (« test » — et son ancien nom « _unassigned », encore présent sur les
+         dossiers d'avant) et l'ancien projet. */
       const base = (Array.isArray(entry.path) ? entry.path : [])
-        .filter((seg) => seg && seg.name !== 'projects' && seg.name !== '_unassigned' && seg.name !== sanitizeSlug(projectName));
-      reg[fileId] = { ...entry, ctx: newCtx, path: [projectsSeg, unassignedSeg, ...base], at: Date.now() };
+        .filter((seg) => seg && seg.name !== 'projects' && seg.name !== '_unassigned'
+          && seg.name !== DEFAULT_PROJECT_NAME && seg.name !== sanitizeSlug(projectName));
+      reg[fileId] = { ...entry, ctx: newCtx, path: [projectsSeg, outOfProjectSeg, ...base], at: Date.now() };
       count++;
     }
     if (count > 0) saveDriveFileRegistry(reg);
     return count;
   } catch (err) {
     console.warn('moveTestFolderOutOfProject failed:', err && err.message);
-    // Fallback: move the individual files into projects/_unassigned/<test>.
+    // Fallback: move the individual files into projects/<projet par défaut>/<test>.
     let moved = 0;
     try {
       const root = await ensureDriveFolder();
       const projectsFolderId = root ? await findOrCreateFolder('projects', root) : '';
-      const unassignedFolderId = projectsFolderId ? await findOrCreateFolder('_unassigned', projectsFolderId) : '';
+      const outOfProjectFolderId = projectsFolderId ? await findOrCreateFolder(DEFAULT_PROJECT_NAME, projectsFolderId) : '';
       const reg = getDriveFileRegistry();
       for (const [fileId, entry] of Object.entries(reg)) {
         if (!entry || entry.deleted) continue;
@@ -1226,7 +1233,7 @@ export const moveTestFolderOutOfProject = async ({ testName, projectName }) => {
         try {
           const newCtx = { ...ctx, project: '' };
           const resolved = await resolveDrivePath(newCtx);
-          await moveDriveFile(fileId, unassignedFolderId || resolved.leafId);
+          await moveDriveFile(fileId, outOfProjectFolderId || resolved.leafId);
           const chain = Array.isArray(entry.path) ? entry.path : [];
           reg[fileId] = { ...entry, ctx: newCtx, path: resolved.path, at: Date.now() };
           if (chain.length) { try { await trashEmptyFolderChain(chain); } catch { /* keep going */ } }
@@ -1452,7 +1459,7 @@ export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path =
   const folderCtxs = [];
   if (ctx && typeof ctx === 'object' && String(ctx.test || '').trim() && ctx.protocol === undefined) {
     const projects = projectNamesOf(ctx);
-    const projectList = projects.length ? projects : ['_unassigned']; // legacy safety net
+    const projectList = projects.length ? projects : [DEFAULT_PROJECT_NAME]; // projet par défaut
     projectList.forEach((projectName) => {
       folderCtxs.push({ ...ctx, project: projectName, projectNames: [projectName] });
     });

@@ -1,0 +1,7 @@
+﻿const has = (src, needle, what) => ok(src.includes(needle), what);
+
+
+/* ── 1. La décision entre jumeaux (PUR) ──────────────────────────────────── */
+
+eq(TWINS.CANONICAL_DATASET_DIRS, ['projects', 'backups', 'protocols', 'storage', 'publications'],
+  'seuls ces conteneurs peuvent vivre directement dans un dataset');

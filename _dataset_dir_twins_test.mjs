@@ -64,7 +64,7 @@ const has = (src, needle, what) => ok(src.includes(needle), what);
 
 /* ── 1. La décision entre jumeaux (PUR) ──────────────────────────────────── */
 
-eq(TWINS.CANONICAL_DATASET_DIRS, ['projects', 'backups', 'protocols', 'storage', 'publications'],
+eq(TWINS.CANONICAL_DATASET_DIRS, ['projects', 'general_library_images', 'backups', 'protocols', 'storage', 'publications'],
   'seuls ces conteneurs peuvent vivre directement dans un dataset');
 ok(TWINS.isCanonicalDatasetDir('projects') && TWINS.isCanonicalDatasetDir('protocols'),
   'projects / protocols sont des conteneurs canoniques');

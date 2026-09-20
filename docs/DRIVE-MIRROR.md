@@ -15,11 +15,12 @@ Lab Workspace/
 │       └── ds_<dataset>.json        ← le CONTENU d'un dataset (charge compressée comprise)
 ├── <dataset>/                       ← nommé d'après le titre du dataset (le dossier est RENOMMÉ avec lui)
 │   ├── projects/<projet>/           ← expériences, figures, <projet>_document.json, useful_files
+│   ├── general_library_images/      ← figures de la bibliothèque COMMUNE (celles d'aucun projet)
 │   ├── protocols/<protocole>/
 │   ├── backups/                     ← instantanés HTML du dataset
 │   ├── storage/<storage>/images/<fichier>          ← image de référence du storage
 │   ├── storage/<storage>/boxes/<boîte>/images/<f>  ← photos de la boîte
-│   ├── storage/<storage>/boxes/<boîte>/label.pdf   ← étiquette de la boîte (automatique)
+│   ├── storage/<storage>/boxes/<boîte>/<date>_<propriétaire>_boxlabel.pdf   ← étiquette de la boîte (automatique)
 │   └── publications/
 └── ...
 ```
@@ -37,7 +38,9 @@ jamais mélangés à cette mémoire.
 | Renommer un projet | le dossier du projet **et** son `<projet>_document.json` sont renommés |
 | Supprimer une expérience / un protocole | le dossier de l'expérience / du protocole part à la corbeille |
 | Renommer un storage / une boîte | son dossier Drive (`storage/<storage>`, `storage/<storage>/boxes/<boîte>`) est **renommé** — une boîte ne garde jamais le « Test 74 » de sa création |
-| Modifier le contenu d'une boîte | `storage/<storage>/boxes/<boîte>/label.pdf` est réécrit (différé, ~2 s après la dernière modification) |
+| Modifier le contenu d'une boîte | `storage/<storage>/boxes/<boîte>/<date>_<propriétaire>_boxlabel.pdf` est réécrit (différé, ~2 s après la dernière modification) — et l'ancienne étiquette `label.pdf` part à la corbeille |
+| Enregistrer une figure sans projet | elle est écrite et relue dans `<dataset>/general_library_images/` — la bibliothèque COMMUNE n'est pas un projet |
+| Ouvrir un dataset (une seule fois) | le bac `projects/unassigned/` est vidé : son `images` devient `general_library_images/`, **à la racine du dataset**, ses expériences vont dans `projects/test/`, et le bac vidé part à la corbeille |
 | Créer ou modifier un dataset | son contenu est déposé dans `_workspace/datasets/ds_<id>.json` (différé, ~8 s après la dernière frappe — et **tout de suite** quand on quitte la page) |
 | Modifier un texte, une figure, une liste | `_workspace/state.json` / `_workspace/keys.json` sont réécrits (différé) |
 
@@ -110,10 +113,11 @@ ce projet.
 
 ## Pourquoi un dataset n'a qu'UN `projects/` et qu'UN `protocols/`
 
-Les **conteneurs canoniques** d'un dataset (`projects`, `backups`, `protocols`,
-`storage`, `publications`, voir `driveNaming.DATASET_FOLDER_DIRS`) avaient le
-même défaut que les dossiers `images`, un étage plus haut — constaté sur le
-Drive réel le 19/09/2026 (dataset « GEC-UPJV-projects ») :
+Les **conteneurs canoniques** d'un dataset (`projects`, `general_library_images`
+— à la racine, c'est lui qui porte les figures communes —, `backups`,
+`protocols`, `storage`, `publications`, voir `driveNaming.DATASET_FOLDER_DIRS`)
+avaient le même défaut que les dossiers `images`, un étage plus haut — constaté sur
+le Drive réel le 19/09/2026 (dataset « GEC-UPJV-projects ») :
 
 * deux `projects/` à la racine du dataset : celui du 11/09 (4 sous-dossiers :
   `bianca`, `p53H`, `tests`, `unassigned`) et un **jumeau** créé le 19/09 à
@@ -161,7 +165,10 @@ place et signalé —, range à la corbeille les dossiers vidés par la fusion p
 jumeau s'il ne reste rien, et vérifie qu'il ne reste qu'un conteneur par nom. Le
 19/09/2026 il a remis 38 figures dans `projects/p53H/images` (119 fichiers au
 total) + 1 dans `projects/unassigned/images`, et mis les deux jumeaux à la
-corbeille (récupérables). Vérifié par `_dataset_dir_twins_test.mjs`.
+corbeille (récupérables). Vérifié par `_dataset_dir_twins_test.mjs`. Ces deux
+emplacements-là n'ont plus cours : `projects/unassigned/images` a depuis été
+déménagé en `general_library_images/`, à la racine du dataset (voir « Le
+déménagement du bac `unassigned` »).
 
 ## Pourquoi un nom de fichier ne s'allonge plus tout seul
 
@@ -233,30 +240,70 @@ Une image vit dans **une** portée, et chaque portée a **son dossier** :
 
 | portée | liste (navigateur, miroir `_workspace/keys.json`) | dossier Drive |
 | --- | --- | --- |
-| bibliothèque commune | `labFiguresLibrary` | `projects/unassigned/images` |
+| bibliothèque commune | `labFiguresLibrary` | `general_library_images` — à la RACINE du dataset |
 | bibliothèque d'un projet | `labFiguresLib_<idProjet>` | `projects/<slug>/images` |
 
-Le nom CANONIQUE du seau commun est `_unassigned` (`driveNaming.projectImagesFolderPath`,
-le nom que portent les chemins Nextcloud et la documentation), mais **la création
-d'un dossier sur Google Drive sanitise chaque segment**
-(`driveUpload.resolveDrivePathFromNames`) et `sanitizeSlug('_unassigned')` vaut
-`unassigned` : le dossier qui existe vraiment sur le Drive s'appelle donc
-`unassigned`. Les deux noms sont acceptés en LECTURE (`figuresFolder.unassignedFolderNames`,
-le réel d'abord), et l'écran affiche celui du Drive. **Ne supprimez pas ce
-dossier** : il porte les figures de la bibliothèque commune (celles enregistrées
-sans projet ouvert) ; sans lui, « ⬇ Add missing from Drive » n'a plus rien à
-relire et les images ne reviennent que par la copie restée dans un navigateur.
+Le dossier commun est un **conteneur de PREMIER NIVEAU du dataset**
+(`driveNaming.GENERAL_LIBRARY_DIR`, `projectImagesFolderPath('')`, et il fait
+partie de `DATASET_FOLDER_DIRS`) : une figure sans projet n'appartient à aucun
+projet, donc elle ne vit pas dans le conteneur des projets — et ce dossier porte
+les figures **directement** (il EST le dossier d'images, contrairement à
+`projects/<projet>/images`). L'écran affiche donc
+« My_dataset / general_library_images » (`projectImagesFolderLabel`).
+**Ne supprimez pas ce dossier** : il porte les figures enregistrées sans projet
+ouvert ; sans lui, « ⬇ Add missing from Drive » n'a plus rien à relire et les
+images ne reviennent que par la copie restée dans un navigateur.
 
-Ce que la recherche de ce dossier faisait de travers (corrigé le 20/09/2026) : une
-LECTURE ne cherchait que `_unassigned` — donc jamais le dossier réel — et la
+### Le déménagement du bac `unassigned` (une seule fois par dataset)
+
+Le dossier commun vivait avant dans un **bac** `projects/unassigned/` — qui
+portait aussi les **expériences sans projet**, à côté de son `images/`.
+`unassigned` a disparu du vocabulaire : tout fichier appartient à un projet (à
+défaut au projet `test`, voir `driveNaming.DEFAULT_PROJECT_NAME`), et les figures
+communes ne sont pas un projet. `utils/commonLibraryMigrate.js` range donc chaque
+dataset la première fois qu'il est ouvert avec le Drive prêt (`App.jsx`, juste
+après `ensureDriveFolder()`) :
+
+| avant | après |
+| --- | --- |
+| `projects/unassigned/images/…` | `general_library_images/…` — le dossier est **DÉPLACÉ** à la racine, puis **renommé** |
+| `projects/unassigned/<expérience>/` | `projects/test/<expérience>/` |
+| `projects/unassigned/` (vidé) | corbeille (récupérable) |
+
+Un **déplacement** et un **renommage** gardent l'identifiant Drive : les liens
+déjà enregistrés dans la bibliothèque (et l'index des figures) continuent de
+viser les mêmes fichiers, sans réenvoi. Ce qui n'est jamais fait, en revanche :
+**rien n'est écrasé** — une expérience dont le nom est déjà pris dans
+`projects/test` est LAISSÉE en place et **annoncée** (`kept` du rapport), un bac
+qui porte encore quelque chose n'est pas mis à la corbeille, et un dossier vide du
+nouveau nom n'est pas une bibliothèque (les figures de l'ancien emplacement y sont
+alors **rapatriées**, fichier par fichier — `merged`).
+
+Tout est « au mieux », et rien n'est bloquant : sans Drive (`cloud-off`) ou sans
+dossier de dataset (`no-dataset`), le rapport le dit et le geste repart au
+démarrage suivant — et une fois le geste abouti, le drapeau
+`labCommonLibraryMigrated::<datasetId>` épargne toute lecture du Drive de plus.
+Entre-temps la LECTURE continue de fonctionner sur les anciens emplacements :
+`figuresFolder.commonLibraryFolderNames()` cherche `general_library_images`
+d'abord, puis `unassigned`, puis `_unassigned` — le nom canonique des chemins
+Nextcloud, que Google Drive ne peut pas porter (`sanitizeSlug('_unassigned')` vaut
+`unassigned`, le `_` de tête tombe). Et quand le dossier du nouveau nom existe
+mais est **vide** tandis qu'un ancien porte les figures, c'est **l'ancien qui
+gagne** (le jumeau peuplé) : la bibliothèque ne paraît jamais vide juste avant la
+migration.
+
+### Ce que la recherche de ce dossier faisait de travers (corrigé le 20/09/2026)
+
+Une LECTURE ne cherchait que `_unassigned` — donc jamais le dossier réel — et la
 bibliothèque commune n'était retrouvée que sur un poste où le miroir
 `labDriveMirror` l'avait déjà retenue (« sur l'autre navigateur, ⬇ Add missing
 from Drive ne trouve rien »). Pire, quand aucun dossier n'était identifié, la
 portée commune pouvait adopter le dossier `images` PEUPLÉ d'un **projet** voisin :
 la bibliothèque générale se mettait alors à lire — et à écrire — les figures d'un
-projet. Désormais : les deux noms du seau sont cherchés (le réel d'abord), le seau
-commun est reconnu à son nom (jamais un projet), et le `images` d'un projet n'est
-jamais retenu pour la portée commune.
+projet. Désormais : les noms du seau sont cherchés dans l'ordre (celui
+d'aujourd'hui d'abord), le seau commun est reconnu à son nom (jamais un projet),
+et le `images` d'un projet n'est jamais retenu pour la portée commune —
+`findCommonFiguresFolder` ne regarde QUE les dossiers de la bibliothèque commune.
 
 Le geste « ⇄ » (et le lâcher sur l'autre onglet) change **la liste** ET, pour une
 image déjà sur le Drive, **le dossier du fichier** — image et sidecar ensemble
@@ -317,7 +364,7 @@ la boîte** — jamais le « Test 74 » de sa création. Le rangement est :
 ```
 <dataset>/storage/<storage>/images/<fichier>          ← image de référence du storage
 <dataset>/storage/<storage>/boxes/<boîte>/images/<f>  ← photos de la boîte (Box Photo, Inside Photo)
-<dataset>/storage/<storage>/boxes/<boîte>/label.pdf   ← étiquette de la boîte, réécrite automatiquement
+<dataset>/storage/<storage>/boxes/<boîte>/<date>_<propriétaire>_boxlabel.pdf   ← étiquette de la boîte, réécrite automatiquement
 ```
 
 Ce que cela change, geste par geste (`Storage.jsx`, `utils/storageDrive.js`,
@@ -326,16 +373,35 @@ Ce que cela change, geste par geste (`Storage.jsx`, `utils/storageDrive.js`,
 * **les fichiers gardent leur nom** (`file1.jpg`, `file2.jpg`) : seul le dossier
   est imposé par l'application (`DriveUploadButton nameFor`) ;
 * **renommer une boîte renomme son dossier** (`renameStorageBoxDriveFolder`) —
-  photos et `label.pdf` suivent le dossier, donc les liens déjà enregistrés dans
+  photos et étiquette `boxlabel.pdf` suivent le dossier, donc les liens déjà enregistrés dans
   la boîte continuent de fonctionner ; renommer un storage renomme
   `storage/<storage>` (`renameStorageDriveFolder`) ;
 * **l'étiquette est fabriquée et déposée toute seule** (`components/BoxLabelFile.jsx`,
   `utils/boxLabelPdf.js`) : ~2 s après la dernière modification de la boîte,
-  `label.pdf` remplace le précédent. Rien n'est envoyé si le contenu n'a pas
+  `<date>_<propriétaire>_boxlabel.pdf` remplace la précédente. Rien n'est envoyé si le contenu n'a pas
   changé (la boîte garde la signature du dernier envoi) ni si le Drive ne répond
   pas — le bouton « Save to Drive now » réessaie à la demande. Le bouton
   « Print Label » imprime, lui, la **sélection** de puits ; l'étiquette archivée
   est la table complète des puits **remplis** (même table, même code) ;
+* **le NOM de l'étiquette dit de quelle boîte il s'agit**
+  (`driveNaming.boxLabelFileName`) : `<date>_<propriétaire>_boxlabel.pdf`, bâti
+  avec les deux champs OBLIGATOIRES de la boîte (« Date » et « Box Owner », à
+  défaut l'opérateur). Un PDF sorti de son dossier s'identifie donc tout seul, et
+  changer la date ou le propriétaire RÉÉCRIT l'étiquette (les deux entrent dans la
+  signature, avec les commentaires). Une étiquette qui portait l'ancien nom
+  `label.pdf` part à la corbeille dès que la nouvelle est déposée
+  (`storageDrive.clearLegacyBoxLabels`) : un dossier de boîte ne porte jamais
+  deux étiquettes ;
+* **les NOTES sont reprises EN CALCE** (`boxLabel.boxLabelNotes`,
+  `boxLabelPdf.writeNotesBlock`) : la colonne « Notes » de la table ne tient
+  qu'une ligne d'une dizaine de mm — elle recevait même une largeur NÉGATIVE
+  (109 mm de colonnes fixes sur 108 mm utiles), donc jsPDF ne la dessinait pas du
+  tout. Chaque note est donc reprise en bas du PDF, EN ENTIER, rappelée par la
+  POSITION du puits auquel elle se rapporte (« B7: … ») ; le commentaire général
+  de la boîte (« General Box Notes ») ferme le bloc, rappelé par sa position.
+  L'en-tête du PDF porte désormais le propriétaire (« Box Owner: … ») et la date
+  de la boîte, à côté de la date de fabrication. La fenêtre « Print Label », elle,
+  garde sa table large, où les notes sont déjà entières ;
 * **l'ancienne arborescence est rapatriée** (`tidyStorageFiles`) : à l'ouverture
   d'un storage ou d'une boîte, les fichiers déjà envoyés sous
   `storage/<boîte>/<instance>/image/…` ou `storage/<storage>/image/…` sont
@@ -524,6 +590,11 @@ mécanique est maintenant isolée dans `src/utils/datasetCopyMirror.js` :
 * `node _drive_mirror_test.mjs` — suppressions / renommages / rien ne ressuscite.
 * `node _storage_drive_layout_test.mjs` — le rangement `storage/<storage>/boxes/<boîte>`
   (chemins, étiquette automatique, renommages, rapatriement de l'ancienne arborescence).
+* `node _common_library_folder_test.mjs` — la bibliothèque commune à la racine du
+  dataset, le déménagement du bac `unassigned` (déplacement, expériences →
+  `projects/test`, bac vidé à la corbeille) et ce qui reste lisible entre-temps.
+* `node _dataset_dir_twins_test.mjs` — un seul conteneur par nom dans un dataset
+  (dont `general_library_images`), les jumeaux départagés par leur contenu.
 * `node _experiment_drive_root_test.mjs` — l'archive d'une expérience (import
   Bruker NMR 1D / ssNMR, migration des images) atterrit sous `projects/`, jamais
   dans un dossier de projet posé à la racine du dataset.

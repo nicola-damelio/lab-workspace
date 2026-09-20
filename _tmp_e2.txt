@@ -1,0 +1,16 @@
+﻿    }
+    return { leafId: parent, chain };
+  };
+  /* Ce que fait uploadLocalFile : `path` explicite â†’ noms canoniques, une copie
+     par projet liÃ© (le nom du projet est remplacÃ© Ã  chaque copie). */
+  const simulateUpload = ({ ctx, path, file }) => {
+    const projects = ctx.test
+      ? (NAMING.projectNamesOf(ctx).length ? NAMING.projectNamesOf(ctx) : ['_unassigned'])
+      : [''];
+    const targets = [];
+    for (const projectName of projects) {
+      const single = projectName
+        ? { ...ctx, project: projectName, projectNames: [projectName] }
+        : { ...ctx, project: '', projectNames: [] };
+      const folderNames = Array.isArray(path) && path.length > 0
+        ? NAMING.canonicalizeExperimentPath([NAMING.canonicalPageSection(path[0]), ...path.slice(1)], single)

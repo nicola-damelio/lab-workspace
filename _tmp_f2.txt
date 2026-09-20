@@ -1,0 +1,18 @@
+﻿};
+const queuedPush = await LIB.pushLibraryToDrive({ scope: 'project', projectId: 'P1', projectName: 'CD project' });
+eq(queuedPush.total, 1, 'la figure restée locale est bien reprise');
+eq(queuedPush.uploaded, 0, 'aucune copie cloud n’est rapportée');
+eq(queuedPush.queued, 1, '…mais elle est comptée EN FILE DE REPRISE');
+eq(queuedPush.failed, 0, '…et surtout PAS comme un échec définitif');
+const queuedEntry = LIB.readProjectLibrary('P1').find((i) => i.id === queuedItem.id);
+ok(!!queuedEntry, 'l’entrée est toujours dans la bibliothèque');
+eq(queuedEntry.drive, false, 'ses pixels restent locaux tant que la copie n’est pas RÉELLEMENT partie');
+eq(LIB.localOnlyLibraryCount({ scope: 'project', projectId: 'P1' }), 1, '…donc elle reste à rattraper');
+globalThis.__driveTestMocks = listingMock;
+
+// 9d. ⬇ Relire le dossier pour retrouver les images dont la LISTE est perdue.
+const pulled = await LIB.pullLibraryFromDrive({ scope: 'common', projectId: null, projectName: '' });
+eq(pulled.found, 2, 'les images du dossier sont vues');
+eq(pulled.added, 2, '…et ajoutées à la bibliothèque commune (vide ici)');
+eq(LIB.readLibrary().map((i) => i.id), ['lib_drive_F1', 'lib_drive_F4'], 'ajoutées sans rien d’autre modifier');
+const pulled2 = await LIB.pullLibraryFromDrive({ scope: 'common', projectId: null, projectName: '' });

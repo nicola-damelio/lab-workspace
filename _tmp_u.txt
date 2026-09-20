@@ -1,0 +1,73 @@
+﻿src\utils\boxLabel.js:183: storageName = 'Unassigned', position = null, boxName = '', instanceName = '', rows = []
+src\utils\boxLabelPdf.js:80: storageName = 'Unassigned', position = null, boxName = '', owner = '', date = '',
+src\utils\driveMirrorStore.js:208: `projects/${sanitizeSlug(projectName) || '_unassigned'}`;
+src\utils\driveMirrorStore.js:312: `${text(datasetKey)}::${sanitizeSlug(projectName) || '_unassigned'}`;
+src\utils\driveNaming.js:83: Un storage sans nom tombe dans le bac « unassigned » (le « _ » de tête du nom
+src\utils\driveNaming.js:84: canonique tombe à la création, exactement comme projects/_unassigned). */
+src\utils\driveNaming.js:108: /** Le nom de dossier d'un storage (« _unassigned » quand il n'a pas de nom). */
+src\utils\driveNaming.js:109: const storageSlug = (name) => sanitizeSlug(name) || '_unassigned';
+src\utils\driveNaming.js:297: const project = (projects[0] || '_unassigned'); // validation forbids missing projects
+src\utils\driveNaming.js:328: const projectSeg = sanitizeSlug(projects[0] || '_unassigned');
+src\utils\driveNaming.js:359: *  a figure saved with no project goes to the "_unassigned" bucket, exactly
+src\utils\driveNaming.js:363: 'projects', sanitizeSlug(projectName) || '_unassigned', 'images'
+src\utils\driveNaming.js:393: *  donc la bibliothèque COMMUNE vit dans `projects/unassigned/images` — le `_`
+src\utils\driveNaming.js:394: *  de tête du nom canonique `_unassigned` tombe. Afficher le nom canonique
+src\utils\driveUpload.js:969: *    <dataset>/projects/_unassigned/<test>          (legacy standalone)
+src\utils\driveUpload.js:980: rels.push(`projects/_unassigned/${testSlug}`);
+src\utils\driveUpload.js:1074: // projects/_unassigned container or any legacy dataset-root layout).
+src\utils\driveUpload.js:1117: .filter((seg) => seg && seg.name !== 'projects' && seg.name !== '_unassigned');
+src\utils\driveUpload.js:1173: // project" means "moved into the dataset's _unassigned project bucket"
+src\utils\driveUpload.js:1176: const unassignedFolderId = await findOrCreateFolder('_unassigned', projectsFolderId);
+src\utils\driveUpload.js:1177: const existingThere = await findFolderByName(sanitizeSlug(testName), unassignedFolderId);
+src\utils\driveUpload.js:1181: await moveDriveFile(testFolderId, unassignedFolderId);
+src\utils\driveUpload.js:1194: // canonical projects/_unassigned/<test>/… layout.
+src\utils\driveUpload.js:1195: const unassignedSeg = { name: '_unassigned', id: unassignedFolderId };
+src\utils\driveUpload.js:1206: .filter((seg) => seg && seg.name !== 'projects' && seg.name !== '_unassigned' && seg.name !== sanitizeSlug(projectName));
+src\utils\driveUpload.js:1207: reg[fileId] = { ...entry, ctx: newCtx, path: [projectsSeg, unassignedSeg, ...base], at: Date.now() };
+src\utils\driveUpload.js:1214: // Fallback: move the individual files into projects/_unassigned/<test>.
+src\utils\driveUpload.js:1219: const unassignedFolderId = projectsFolderId ? await findOrCreateFolder('_unassigned', projectsFolderId) : '';
+src\utils\driveUpload.js:1229: await moveDriveFile(fileId, unassignedFolderId || resolved.leafId);
+src\utils\driveUpload.js:1455: const projectList = projects.length ? projects : ['_unassigned']; // legacy safety net
+src\utils\experimentRules.js:42: export const assignUnassignedExperimentsToProject = (tests, projectName) => {
+src\utils\figuresFolder.js:58: *  Le nom CANONIQUE est `_unassigned` — celui des docs et celui de Nextcloud
+src\utils\figuresFolder.js:61: *  segment : `sanitizeSlug('_unassigned')` vaut `unassigned` (le `_` de tête
+src\utils\figuresFolder.js:63: *  `unassigned`, alors que la lecture ne cherchait que `_unassigned` : la
+src\utils\figuresFolder.js:67: export const unassignedFolderNames = () => ['unassigned', '_unassigned'];
+src\utils\figuresFolder.js:69: /** Ce nom est-il celui du seau commun ? (`unassigned` = `_unassigned`). PUR. */
+src\utils\figuresFolder.js:70: export const isUnassignedFolderName = (name) => folderNameKey(name) === 'unassigned';
+src\utils\figuresFolder.js:75: *      projects/unassigned/images          quand il n'y a pas de projet.
+src\utils\figuresFolder.js:76: *  Le seau commun s'appelle `unassigned` (sans `_`) parce que la création
+src\utils\figuresFolder.js:77: *  sanitise chaque segment du chemin (voir unassignedFolderNames) — c'est le nom
+src\utils\figuresFolder.js:80: `projects/${sanitizeSlug(projectName) || unassignedFolderNames()[0]}/images`;
+src\utils\figuresFolder.js:84: (sanitizeSlug(projectName) ? String(name) === sanitizeSlug(projectName) : isUnassignedFolderName(name));
+src\utils\figuresFolder.js:113: /* Portée COMMUNE (aucun projet) : le dossier attendu est le SEAU `unassigned`.
+src\utils\figuresFolder.js:119: : (isUnassignedFolderName(name) ? 3 : 0));
+src\utils\figuresFolder.js:339: /* Portée COMMUNE : seuls les dossiers du seau `unassigned` sont candidats.
+src\utils\figuresFolder.js:344: .filter((l) => !sanitizeSlug(projectName) ? isUnassignedFolderName(l.name) : true);
+src\utils\figuresFolder.js:373: (voir unassignedFolderNames) — le réel d'abord, car c'est celui que la
+src\utils\figuresFolder.js:375: const wantedNames = sanitizeSlug(projectName) ? [sanitizeSlug(projectName)] : unassignedFolderNames();
+src\utils\figuresFolder.js:436: /* Plusieurs noms possibles pour la portée COMMUNE (`unassigned` puis
+src\utils\figuresFolder.js:437: `_unassigned`) : le premier dossier qui EXISTE gagne, et c'est son nom
+src\utils\figuresLibrary.js:8: import { findProjectFiguresFolder, adoptProjectFiguresFolder, listProjectFiguresFolders, imagesFolderPathOnDrive, unassignedFolderNames } from './figuresFolder';
+src\utils\figuresLibrary.js:263: *  projects the user may open (`allowedProjectIds`). The unassigned/global
+src\utils\figuresLibrary.js:1502: // (projects/_unassigned/images when the figure has no project). The folder is
+src\utils\figuresLibrary.js:1634: /* Le chemin annoncé est celui qui EXISTE sur le Drive (seau commun : « unassigned »,
+src\utils\figuresLibrary.js:1635: `unassigned`, voir imagesFolderPathOnDrive) : l'écran dit alors exactement ce
+src\utils\figuresLibrary.js:1648: du dossier de projet (celui du Drive — le seau `unassigned` quand il n'y a pas
+src\utils\figuresLibrary.js:1654: : (sanitizeSlug(projectName) || unassignedFolderNames()[0]);
+src\utils\figuresLibrary.js:1698: //   <dataset>/projects/<project>/images (/_unassigned when no project).
+src\utils\figuresLibrary.js:2170: bibliothèque commune      →  <dataset>/projects/_unassigned/images
+src\utils\projectFiles.js:27: export const projectFolderSlug = (projectName) => sanitizeSlug(projectName) || '_unassigned';
+src\utils\storageDrive.js:181: const storageFolder = await findFolderByName(sanitizeSlug(storage) || '_unassigned', container).catch(() => '');
+src\components\ImageBuilder.jsx:2685: // builder opened without a project used to send the image to the unassigned
+src\components\ImageBuilder.jsx:6582: unassigned scope when there is none) and the figure vanished. */}
+src\components\LabNotebook.jsx:878: // Unassigned tests (no scientists) are superuser-only.
+src\components\NMRMoleculeViewer.jsx:5270: // projects/_unassigned/images when no project is open); only a small local
+src\components\Storage.jsx:949: storageName: boxStorageName || activeTest.storageLabel || 'Unassigned',
+src\components\AppModules\activeTestModule.jsx:114: // an instance without any assigned scientist (boxes / unassigned).
+src\components\AppModules\activeTestModule.jsx:137: // the test is unlocked or unassigned) can open the experiment but
+src\components\AppModules\projectDetailModule.jsx:3990: 👤 {project.scientist || 'Unassigned'}
+src\components\AppModules\projectsModule.jsx:1055: 👤 {p.scientist || 'Unassigned'}
+src\components\AppModules\protocolsModule.jsx:1253: Unassigned
+src\components\AppModules\storageModules.jsx:199: 'Unassigned storage';
+src\components\AppModules\testsModule.jsx:110: if (scientists.length === 0) return false; // unassigned → only superuser

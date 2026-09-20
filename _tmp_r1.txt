@@ -1,0 +1,4 @@
+﻿Figure ΓåÆ Drive upload failed: Cannot reach Google Drive (network error).
+Γ£à 175 tests pass├⌐s (biblioth├¿que dΓÇÖimages Γåö sauvegarde)
+(node:17600) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
