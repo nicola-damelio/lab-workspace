@@ -600,6 +600,11 @@ mécanique est maintenant isolée dans `src/utils/datasetCopyMirror.js` :
   dans un dossier de projet posé à la racine du dataset.
 * `node _workspace_drive_test.mjs` — l'espace de travail écrit, relu, fusionné.
 * `node _workspace_keys_test.mjs` — les clés du navigateur, et les secrets exclus.
+* `node _nmr1d_processing_test.mjs` — le réglage du spectre 1D NMR (calibration +
+  phase) vit à PART des tableaux du spectre : il survit à la compression du
+  document du dataset, aucune écriture de la page ne passe plus par la copie
+  d'affichage, la restauration Drive ne remet plus le réglage à zéro, et la page
+  dessine encore le spectre quand seule la copie plein format est dans la cache.
 
 Sur le Drive, après un renommage de dataset, il ne doit y avoir **qu'un seul**
 dossier portant ce titre ; après une suppression, le dossier doit être dans la
@@ -641,6 +646,33 @@ dataset) n'avaient plus de ligne où s'afficher. Deux garde-fous en découlent :
   (« N chemical shift value(s) are stored … but the sequence is empty ») : une
   valeur invisible à cause d'un fichier manquant n'est jamais présentée comme une
   valeur perdue.
+
+### Le réglage du spectre suit le dataset, pas la copie d'affichage
+
+Un cas signalé le 20/09/2026 : phaser / calibrer un spectre 1D NMR (et saisir des
+déplacements dans la table) puis quitter la page et revenir → le spectre
+**revenait non phasé** ; en navigation privée, il n'était pas phasé non plus. La
+calibration et la phase étaient écrites DANS la copie d'affichage
+(`nmr1dSpectrum.calibration / phaseDeg / phase1Deg`). Or cette copie est une
+« unité lourde » pour `compressDatasetForSave` (trois tableaux de 4 000 nombres,
+plus de 50 Ko) : Stage 5 la remplace **entièrement** par le marqueur
+`[nmr1dSpectrum omitted …]` dès que le document du dataset doit maigrir — phase,
+calibration, titre et drapeau `fullStore` avec elle. À la réouverture, la copie
+manquante déclenchait la restauration automatique, qui réinjectait l'archive
+**figée à l'import** (`calibration: 0, phaseDeg: 0`). Trois règles en découlent :
+
+* le réglage (calibration, PH0, PH1) vit dans **son propre champ**, fait de
+  quelques **nombres** — `nmr1dProcessing = { calibration, phaseDeg, phase1Deg,
+  at }`. Aucune règle de compression ne touche un scalaire : il voyage donc avec
+  le dataset d'un poste à l'autre, et il est là aussi en navigation privée ;
+* **aucune écriture d'interface** ne passe plus par la copie d'affichage (y
+  écrire quand elle a été remplacée par un marqueur recréerait un spectre en
+  texte), et la restauration Drive **ne remet jamais** ce réglage à zéro :
+  l'archive est plus ancienne que le travail de l'utilisateur ;
+* la copie d'affichage absente n'**empêche plus d'afficher** le spectre quand la
+  version plein format est encore dans la cache du navigateur : la page le
+  dessine et dit d'où vient la copie (« full copy from this browser ») au lieu de
+  rester vide en attendant le Drive.
 
 ### Le mécanisme (un seul, pour tous les modules)
 

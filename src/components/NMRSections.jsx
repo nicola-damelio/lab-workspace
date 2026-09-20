@@ -86,6 +86,59 @@ const downsampleSpectrum = (xs, ys, ysImag, maxPts = 4000) => {
   return { xs: outX, ys: outY, ysImag: outI };
 };
 
+/* ── Le RÉGLAGE de traitement (calibration + phase), un champ À PART ───────
+   La calibration et la phase PH0/PH1 étaient écrites DANS la copie d'affichage
+   du spectre (`nmr1dSpectrum`). Or cette copie est une « unité lourde » pour
+   compressDatasetForSave : trois tableaux (xs / ys / ysImag) de plus de 400
+   nombres et de plus de 50 Ko au total, que Stage 5 remplace ENTIÈREMENT par le
+   marqueur « [nmr1dSpectrum omitted …] » quand le document du dataset doit
+   maigrir — en emportant avec elle la phase, la calibration, le titre et le
+   drapeau `fullStore`.
+
+   À la réouverture, la copie d'affichage manquante déclenchait donc la
+   restauration automatique, qui réinjectait l'archive Drive **figée à
+   l'import** (`calibration: 0, phaseDeg: 0, phase1Deg: 0`) : le spectre
+   revenait non phasé — dans le même navigateur comme en navigation privée.
+
+   Trois NOMBRES, eux, ne sont jamais touchés par la compression : ils voyagent
+   donc avec le dataset d'un poste à l'autre. `nmr1dProcessing` est la source de
+   vérité du réglage, appliquée à la copie affichée, qu'elle vienne de la cache
+   du navigateur ou du Drive. Les champs homonymes restent recopiés DANS la
+   copie d'affichage pour les lecteurs historiques (LabNotebook, aperçus du
+   cahier de laboratoire). */
+const NMR1D_PROCESSING = 'nmr1dProcessing';
+const isNmr1dProcessing = (v) => Boolean(v && typeof v === 'object' && !Array.isArray(v));
+/** Réglage effectif : celui du TEST s'il existe, sinon celui porté par la copie
+ *  de spectre passée (copie d'affichage, ou archive restaurée du Drive). */
+export const nmr1dProcessingOf = (spec, test = null) => {
+  const stored = test ? test[NMR1D_PROCESSING] : null;
+  const src = isNmr1dProcessing(stored)
+    ? stored
+    : (isNmr1dProcessing(spec) ? spec : null);
+  return {
+    calibration: Number(src && src.calibration) || 0,
+    phaseDeg: Number(src && src.phaseDeg) || 0,
+    phase1Deg: Number(src && src.phase1Deg) || 0
+  };
+};
+/** Patch à passer à `updateActiveTest` : enregistre le réglage sur le test (et
+ *  le recopie dans la copie d'affichage — jamais l'inverse : écrire dans une
+ *  copie remplacée par le marqueur « omitted » recréerait un spectre en texte). */
+export const nmr1dProcessingPatch = (test = {}, patch = {}) => {
+  const spec = test ? test.nmr1dSpectrum : null;
+  const next = { ...nmr1dProcessingOf(spec, test), ...patch, at: Date.now() };
+  const out = { [NMR1D_PROCESSING]: next };
+  if (isNmr1dProcessing(spec) && !isMissingValue(spec)) {
+    out.nmr1dSpectrum = {
+      ...spec,
+      calibration: next.calibration,
+      phaseDeg: next.phaseDeg,
+      phase1Deg: next.phase1Deg
+    };
+  }
+  return out;
+};
+
 /* ── Copie de RÉFÉRENCE du spectre 1D sur le Drive ─────────────────────────
    Le document du dataset ne peut pas porter un spectre complet (limite
    Firestore ~1 Mo) : compressDatasetForSave finit par le remplacer par le
@@ -5264,11 +5317,16 @@ const importBruker1rPpm = ({dataBuffer, imagBuffer=null, acqusText='', manualSWp
 };
 // Display-ready 1D spectrum: applies the ppm calibration offset and, when the
 // imaginary part was imported (1i file), the zero-order phase correction.
-export const getNmr1dDisplay = (spec) => {
+// `processing` (le `nmr1dProcessing` du test) est la SOURCE DE VÉRITÉ du réglage
+// quand il est fourni : c'est lui qui survit à la compression du document du
+// dataset, donc un spectre restauré du Drive (archive figée à l'import, phase 0)
+// est quand même dessiné tel que l'utilisateur l'avait phasé.
+export const getNmr1dDisplay = (spec, processing = null) => {
   if (!spec || !Array.isArray(spec.xs) || !Array.isArray(spec.ys)) return null;
-  const cal = Number(spec.calibration) || 0;
-  const ph0 = Number(spec.phaseDeg) || 0;
-  const ph1 = Number(spec.phase1Deg) || 0;
+  const proc = (processing && typeof processing === 'object') ? processing : spec;
+  const cal = Number(proc.calibration) || 0;
+  const ph0 = Number(proc.phaseDeg) || 0;
+  const ph1 = Number(proc.phase1Deg) || 0;
   const hasImag = Array.isArray(spec.ysImag) && spec.ysImag.length === spec.ys.length;
   let xs = spec.xs;
   let ys = spec.ys;
@@ -5423,7 +5481,9 @@ const chartRef = useRef(null);
     const defaultColors = VIS_PALETTES.default;
     instances.forEach((inst, idx) => {
       const spec = inst.test.nmr1dSpectrum;
-      const disp = getNmr1dDisplay(spec);
+      // Chaque condition porte SON réglage (calibration + phase) sur le test :
+      // l'overlay doit l'appliquer, sinon une courbe phasée se redessine droite.
+      const disp = getNmr1dDisplay(spec, inst.test && inst.test.nmr1dProcessing);
       if (!disp || !disp.xs.length) return;
       
       const step = Math.max(1, Math.floor(disp.xs.length / 2000));
@@ -6092,16 +6152,24 @@ export const DataSection = ({ ctx }) => {
   // display always uses the real imported data, while the test object keeps
   // only a light copy that stays well under the Firestore ~1 MB limit.
   const [fullNmrSpec, setFullNmrSpec] = useState(null);
+  /* La copie d'affichage est-elle SUR LE TEST ? compressDatasetForSave la
+     remplace par le marqueur « [nmr1dSpectrum omitted …] » quand le document du
+     dataset doit maigrir : la version plein format de la cache du navigateur
+     doit alors être lue quand même, sinon la page n'a plus rien à dessiner alors
+     que le spectre est là. */
+  const nmr1dSpecRaw = activeTest ? activeTest.nmr1dSpectrum : null;
+  const nmr1dLightHere = isNmr1dProcessing(nmr1dSpecRaw) && !isMissingValue(nmr1dSpecRaw);
+  const nmr1dFullHere = !!(fullNmrSpec && Array.isArray(fullNmrSpec.xs) && fullNmrSpec.xs.length);
   useEffect(() => {
-    const spec = activeTest && activeTest.nmr1dSpectrum;
-    if (!spec || !spec.fullStore) { setFullNmrSpec(null); return; }
+    if (nmr1dLightHere && !nmr1dSpecRaw.fullStore) { setFullNmrSpec(null); return; }
+    if (!activeTest.id) return;
     let cancelled = false;
     loadJson(NMR_SPECTRUM_KEY(activeTest.id))
       .then((full) => { if (!cancelled && full && Array.isArray(full.xs) && full.xs.length) setFullNmrSpec(full); })
       .catch(() => {});
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTest.id, activeTest.nmr1dSpectrum && activeTest.nmr1dSpectrum.fullStore]);
+  }, [activeTest.id, nmr1dLightHere, nmr1dLightHere && nmr1dSpecRaw && nmr1dSpecRaw.fullStore]);
 
   // ── RESTAURATION AUTOMATIQUE DU SPECTRE DEPUIS LE DRIVE ──────────────────
   // (mécanisme général : src/utils/driveRestore.js + useDriveAutoRestore.js)
@@ -6154,6 +6222,12 @@ export const DataSection = ({ ctx }) => {
     if (!full || !Array.isArray(full.xs) || !Array.isArray(full.ys) || !full.xs.length) {
       return { ok: false, message: `⚠️ The spectrum copy found on Google Drive (${found.name}) is unreadable — re-import the Bruker folder.` };
     }
+    // Le réglage de traitement (calibration + phase) vit sur le TEST et il est
+    // plus récent que cette archive, figée à l'import : le réinitialiser à zéro
+    // effaçait le travail de l'utilisateur — c'est le « spectre revenu non
+    // phasé » à chaque réouverture. Les valeurs de l'archive ne servent que si
+    // le test n'en a jamais enregistré aucune.
+    const proc = nmr1dProcessingOf(full, activeTest);
     // La cache du navigateur d'abord : le rendu (zoom, paramètres de tracé) lit
     // la version plein format, pas la copie d'affichage.
     await storeJson(NMR_SPECTRUM_KEY(activeTest.id), full);
@@ -6164,11 +6238,10 @@ export const DataSection = ({ ctx }) => {
         ...small,
         meta: full.meta,
         title: full.title || found.data.instanceName || 'Imported 1r',
-        calibration: Number(full.calibration) || 0,
-        phaseDeg: Number(full.phaseDeg) || 0,
-        phase1Deg: Number(full.phase1Deg) || 0,
+        ...proc,
         fullStore: true
       },
+      nmr1dProcessing: { ...proc, at: Date.now() },
       nmr1dDrive: {
         ...(activeTest.nmr1dDrive || {}),
         id: found.id, name: found.name, at: Date.now(), stems, restoredAt: Date.now()
@@ -6511,7 +6584,13 @@ export const DataSection = ({ ctx }) => {
     // imported spectrum on save (which previously made the spectrum and its
     // "Chart Parameters" button disappear after leaving/reopening the page).
     const small = downsampleSpectrum(fullSpec.xs, fullSpec.ys, fullSpec.ysImag);
-    const updates = { nmr1dSpectrum: { ...small, meta: fullSpec.meta, title: fullSpec.title, calibration: 0, phaseDeg: 0, phase1Deg: 0, fullStore: true } };
+    // Un import repart d'un spectre SANS réglage : le champ qui fait foi
+    // (`nmr1dProcessing`, celui qui survit au document du dataset) est posé en
+    // même temps que la copie d'affichage.
+    const updates = {
+      nmr1dSpectrum: { ...small, meta: fullSpec.meta, title: fullSpec.title, calibration: 0, phaseDeg: 0, phase1Deg: 0, fullStore: true },
+      nmr1dProcessing: { calibration: 0, phaseDeg: 0, phase1Deg: 0, at: Date.now() }
+    };
     if (activeTest && activeTest.id) storeJson(NMR_SPECTRUM_KEY(activeTest.id), fullSpec);
     if (filename) updates.instanceName = filename;
     
@@ -6706,6 +6785,9 @@ export const DataSection = ({ ctx }) => {
              const fullSpec = { xs: p.xs, ys: p.ys, ysImag: p.ysImag || null, meta: p.meta, title: p.meta.title || 'Imported 1r', calibration: 0, phaseDeg: 0, phase1Deg: 0 };
              const small = downsampleSpectrum(fullSpec.xs, fullSpec.ys, fullSpec.ysImag);
              cloned.nmr1dSpectrum = { ...small, meta: fullSpec.meta, title: fullSpec.title, calibration: 0, phaseDeg: 0, phase1Deg: 0, fullStore: true };
+             // Le clone hérite du réglage de la condition source : il repart de
+             // SES propres mesures, sans calibration ni phase.
+             cloned.nmr1dProcessing = { calibration: 0, phaseDeg: 0, phase1Deg: 0, at: Date.now() };
              storeJson(NMR_SPECTRUM_KEY(cloned.id), fullSpec);
 
              // Copie de RÉFÉRENCE du spectre sur le Drive + pointeur (il sera
@@ -6820,18 +6902,38 @@ export const DataSection = ({ ctx }) => {
   };
 
 
+  /* Le spectre est-il DESSINABLE sur ce poste ? La copie d'affichage peut avoir
+     été remplacée par le marqueur « omitted » du document du dataset alors que
+     la version plein format est encore dans la cache du navigateur : « chargé »
+     veut dire « l'une des deux est là ». Sans cela, la page annonçait « pas de
+     spectre » juste au-dessus d'un spectre qu'elle dessinait. */
+  const nmr1dDrawable = () => (
+    (nmr1dLightHere && Array.isArray(nmr1dSpecRaw.xs) && nmr1dSpecRaw.xs.length > 0)
+    || nmr1dFullHere
+  );
+
   const renderSpectrum = () => {
-    const spec = activeTest.nmr1dSpectrum;
-    // Prefer the FULL data cached in the browser store — the test object only
-    // holds a light display copy, so it stays well under the Firestore ~1 MB
-    // limit and the imported spectrum (and its Chart Parameters button) always
-    // reappears when the page is reopened.
-    const dispBase = (spec && spec.fullStore && fullNmrSpec && Array.isArray(fullNmrSpec.xs) && fullNmrSpec.xs.length)
-      ? { ...spec, xs: fullNmrSpec.xs, ys: fullNmrSpec.ys, ysImag: fullNmrSpec.ysImag || spec.ysImag || null }
-      : spec;
+    // Copie d'affichage du test, et — quand elle existe — la version PLEIN FORMAT
+    // de la cache du navigateur : le test ne porte qu'une copie légère pour
+    // rester sous la limite du document Firestore (~1 Mo), donc le rendu lit la
+    // copie légère SI elle est là, sinon la copie complète. La copie légère peut
+    // manquer : compressDatasetForSave la remplace par un marqueur quand le
+    // document du dataset doit maigrir — le spectre n'en reste pas moins
+    // dessinable ici, sans dépendre du Drive.
+    const dispBase = nmr1dLightHere
+      ? (nmr1dSpecRaw.fullStore && nmr1dFullHere
+        ? { ...nmr1dSpecRaw, xs: fullNmrSpec.xs, ys: fullNmrSpec.ys, ysImag: fullNmrSpec.ysImag || nmr1dSpecRaw.ysImag || null }
+        : nmr1dSpecRaw)
+      : (nmr1dFullHere ? { ...fullNmrSpec, fullStore: true } : null);
     const hasSpec = dispBase && Array.isArray(dispBase.xs) && dispBase.xs.length > 0;
     if (!hasSpec) return null;
-    const disp = getNmr1dDisplay(dispBase) || { xs: dispBase.xs, ys: dispBase.ys };
+    // Le RÉGLAGE (calibration + phase) vient du TEST (`nmr1dProcessing`) : c'est
+    // le seul endroit qui survit au document du dataset et qui voyage d'un poste
+    // à l'autre — la copie de spectre, elle, peut avoir été restaurée du Drive
+    // avec la phase de l'import (0).
+    const proc = nmr1dProcessingOf(nmr1dSpecRaw, activeTest);
+    const hasImag = Array.isArray(dispBase.ysImag) && dispBase.ysImag.length === dispBase.ys.length;
+    const disp = getNmr1dDisplay(dispBase, proc) || { xs: dispBase.xs, ys: dispBase.ys };
     const xs = disp.xs, ys = disp.ys;
    const xFull = [Math.min(...xs), Math.max(...xs)];
 let dom = brukerZoomDom || xFull;
@@ -6969,9 +7071,9 @@ let dom = brukerZoomDom || xFull;
         {expandedBruker && <div className="fixed inset-0 bg-black/40 -z-10" onClick={() => setExpandedBruker(false)} />}
         <div className="flex items-center justify-between flex-wrap gap-2">
           <h5 className="text-xs font-bold text-slate-700">
-            {String.fromCodePoint(0x1F4C8)} {spec.title || 'Imported 1r'}
-            {spec.meta?.nucleus ? ' — ' + spec.meta.nucleus : ''}
-            {spec.meta?.sfo1 ? ' (' + spec.meta.sfo1.toFixed(0) + ' MHz)' : ''}
+            {String.fromCodePoint(0x1F4C8)} {dispBase.title || 'Imported 1r'}
+            {dispBase.meta?.nucleus ? ' — ' + dispBase.meta.nucleus : ''}
+            {dispBase.meta?.sfo1 ? ' (' + dispBase.meta.sfo1.toFixed(0) + ' MHz)' : ''}
           </h5>
           <div className="flex items-center gap-2 flex-wrap">
             {isZoomed && <button type="button" onClick={() => { setBrukerZoomDom(null); setBrukerYZoomDom(null); }} className="text-xs bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded font-bold">Reset zoom</button>}
@@ -7010,7 +7112,7 @@ let dom = brukerZoomDom || xFull;
               ⚙️ Chart Parameters
             </button>
             <button type="button" onClick={() => setExpandedBruker(b => !b)} className="text-slate-400 hover:text-blue-600 text-lg px-1" title={expandedBruker ? 'Collapse' : 'Expand'}>{expandedBruker ? '\u2199\ufe0f' : '\u2197\ufe0f'}</button>
-            <button type="button" onClick={() => { updateActiveTest({nmr1dSpectrum: null}); setBrukerZoomDom(null); setBrukerYZoomDom(null); setNmrBrukerMsg(''); }} className="text-[10px] text-red-400 hover:text-red-600 font-bold">× Remove</button>
+            <button type="button" onClick={() => { updateActiveTest({nmr1dSpectrum: null, nmr1dProcessing: null}); setBrukerZoomDom(null); setBrukerYZoomDom(null); setNmrBrukerMsg(''); }} className="text-[10px] text-red-400 hover:text-red-600 font-bold">× Remove</button>
           </div>
         </div>
 
@@ -7037,8 +7139,8 @@ let dom = brukerZoomDom || xFull;
                 onClick={() => {
                   const t = parseFloat(calibTarget);
                   if (Number.isFinite(t) && calibPickedPpm !== null) {
-                    const cur = Number(spec.calibration) || 0;
-                    updateActiveTest({ nmr1dSpectrum: { ...spec, calibration: cur + (t - calibPickedPpm) } });
+                    const cur = Number(proc.calibration) || 0;
+                    updateActiveTest(nmr1dProcessingPatch(activeTest, { calibration: cur + (t - calibPickedPpm) }));
                     setBrukerZoomDom(null);
                     setCalibPickedPpm(null);
                     setCalibTarget('');
@@ -7052,28 +7154,28 @@ let dom = brukerZoomDom || xFull;
             <input type="number" step="0.001" value={calibManual}
               onChange={(e) => setCalibManual(e.target.value)}
               onWheel={(e) => e.target.blur()}
-              placeholder={(Number(spec.calibration) || 0).toFixed(3)}
+              placeholder={(Number(proc.calibration) || 0).toFixed(3)}
               className="w-20 border border-sky-300 rounded px-1.5 py-0.5 text-[11px] font-mono bg-white outline-none focus:border-sky-500" />
             <button type="button"
               onClick={() => {
                 const v = parseFloat(calibManual);
-                if (Number.isFinite(v)) { updateActiveTest({ nmr1dSpectrum: { ...spec, calibration: v } }); setBrukerZoomDom(null); setCalibManual(''); }
+                if (Number.isFinite(v)) { updateActiveTest(nmr1dProcessingPatch(activeTest, { calibration: v })); setBrukerZoomDom(null); setCalibManual(''); }
               }}
               className="bg-white border border-sky-300 hover:bg-sky-100 text-sky-700 font-bold px-2 py-1 rounded shadow-sm">Set</button>
             <button type="button"
-              onClick={() => { updateActiveTest({ nmr1dSpectrum: { ...spec, calibration: 0 } }); setBrukerZoomDom(null); }}
+              onClick={() => { updateActiveTest(nmr1dProcessingPatch(activeTest, { calibration: 0 })); setBrukerZoomDom(null); }}
               className="text-slate-400 hover:text-slate-600 underline">reset</button>
           </span>
-          <span className="text-slate-500">calib = <b className="font-mono">{(Number(spec.calibration) || 0) >= 0 ? '+' : ''}{(Number(spec.calibration) || 0).toFixed(3)} ppm</b></span>
+          <span className="text-slate-500">calib = <b className="font-mono">{(Number(proc.calibration) || 0) >= 0 ? '+' : ''}{(Number(proc.calibration) || 0).toFixed(3)} ppm</b></span>
 
           <span className="font-bold text-sky-800 uppercase text-[10px] ml-2">Phase PH0</span>
-          {Array.isArray(spec.ysImag) && spec.ysImag.length === spec.ys.length ? (
+          {hasImag ? (
             <span className="flex items-center gap-1">
-              <input type="range" min="-180" max="180" step="1" value={Number(spec.phaseDeg) || 0}
-                onChange={(e) => updateActiveTest({ nmr1dSpectrum: { ...spec, phaseDeg: parseInt(e.target.value, 10) || 0 } })}
+              <input type="range" min="-180" max="180" step="1" value={Number(proc.phaseDeg) || 0}
+                onChange={(e) => updateActiveTest(nmr1dProcessingPatch(activeTest, { phaseDeg: parseInt(e.target.value, 10) || 0 }))}
                 className="w-24 accent-sky-600" />
-              <input type="number" min="-180" max="180" step="1" value={Number(spec.phaseDeg) || 0}
-                onChange={(e) => updateActiveTest({ nmr1dSpectrum: { ...spec, phaseDeg: parseInt(e.target.value, 10) || 0 } })}
+              <input type="number" min="-180" max="180" step="1" value={Number(proc.phaseDeg) || 0}
+                onChange={(e) => updateActiveTest(nmr1dProcessingPatch(activeTest, { phaseDeg: parseInt(e.target.value, 10) || 0 }))}
                 onWheel={(e) => e.target.blur()}
                 className="w-14 border border-sky-300 rounded px-1.5 py-0.5 text-[11px] font-mono bg-white outline-none focus:border-sky-500" />°
             </span>
@@ -7081,17 +7183,17 @@ let dom = brukerZoomDom || xFull;
             <span className="text-amber-600 italic">needs the 1i imaginary file (re-import the Bruker folder to enable)</span>
           )}
           <span className="font-bold text-sky-800 uppercase text-[10px]">PH1</span>
-          {Array.isArray(spec.ysImag) && spec.ysImag.length === spec.ys.length ? (
+          {hasImag ? (
             <span className="flex items-center gap-1">
-              <input type="range" min="-180" max="180" step="1" value={Number(spec.phase1Deg) || 0}
-                onChange={(e) => updateActiveTest({ nmr1dSpectrum: { ...spec, phase1Deg: parseInt(e.target.value, 10) || 0 } })}
+              <input type="range" min="-180" max="180" step="1" value={Number(proc.phase1Deg) || 0}
+                onChange={(e) => updateActiveTest(nmr1dProcessingPatch(activeTest, { phase1Deg: parseInt(e.target.value, 10) || 0 }))}
                 className="w-24 accent-sky-600" />
-              <input type="number" min="-180" max="180" step="1" value={Number(spec.phase1Deg) || 0}
-                onChange={(e) => updateActiveTest({ nmr1dSpectrum: { ...spec, phase1Deg: parseInt(e.target.value, 10) || 0 } })}
+              <input type="number" min="-180" max="180" step="1" value={Number(proc.phase1Deg) || 0}
+                onChange={(e) => updateActiveTest(nmr1dProcessingPatch(activeTest, { phase1Deg: parseInt(e.target.value, 10) || 0 }))}
                 onWheel={(e) => e.target.blur()}
                 className="w-14 border border-sky-300 rounded px-1.5 py-0.5 text-[11px] font-mono bg-white outline-none focus:border-sky-500" />°
               <button type="button"
-                onClick={() => updateActiveTest({ nmr1dSpectrum: { ...spec, phaseDeg: 0, phase1Deg: 0 } })}
+                onClick={() => updateActiveTest(nmr1dProcessingPatch(activeTest, { phaseDeg: 0, phase1Deg: 0 }))}
                 className="text-slate-400 hover:text-slate-600 underline">reset</button>
             </span>
           ) : null}
@@ -7145,7 +7247,7 @@ let dom = brukerZoomDom || xFull;
           )}
         </div>
         <p className="text-[9px] text-slate-400">
-          {xs.length.toLocaleString()} pts · SW={spec.meta?.swPpm ? spec.meta.swPpm.toFixed(2) : '?'} ppm ·
+          {xs.length.toLocaleString()} pts · SW={dispBase.meta?.swPpm ? dispBase.meta.swPpm.toFixed(2) : '?'} ppm ·
           {isZoomed ? ' Zoomed — drag to re-zoom' : ' Drag to zoom'}
         </p>
       </div>
@@ -7404,8 +7506,14 @@ let dom = brukerZoomDom || xFull;
    <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <h4 className="text-sm font-bold text-sky-900 shrink-0">{String.fromCodePoint(0x1F4E5)} Bruker Import — 1r processed spectrum (ppm axis)</h4>
-          {activeTest.nmr1dSpectrum && Array.isArray(activeTest.nmr1dSpectrum.xs) && activeTest.nmr1dSpectrum.xs.length > 0 && <span className="text-[9px] bg-green-100 text-green-800 px-2 py-0.5 rounded font-bold">Spectrum loaded</span>}
-          {!(activeTest.nmr1dSpectrum && Array.isArray(activeTest.nmr1dSpectrum.xs) && activeTest.nmr1dSpectrum.xs.length > 0) && (
+          {nmr1dDrawable() && <span className="text-[9px] bg-green-100 text-green-800 px-2 py-0.5 rounded font-bold">Spectrum loaded</span>}
+          {nmr1dDrawable() && !nmr1dLightHere && nmr1dFullHere && (
+            <span className="text-[9px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-bold"
+              title="The shared dataset document cannot carry a whole spectrum (it is replaced by an « omitted » marker when it has to shrink): the full copy still lives in this browser AND on Google Drive, so the spectrum keeps showing here — and re-downloads by itself on another PC.">
+              full copy from this browser
+            </span>
+          )}
+          {!nmr1dDrawable() && (
             <button type="button" onClick={() => nmr1dRestore.attempt('manual')} disabled={nmr1dRestore.status === 'restoring'}
               title="Download the archived copy of this spectrum from Google Drive (it is saved automatically at import) — it also happens by itself when the page opens"
               className="text-[10px] font-bold bg-white border border-sky-300 text-sky-700 hover:bg-sky-100 px-2 py-0.5 rounded-md shadow-sm disabled:opacity-50">

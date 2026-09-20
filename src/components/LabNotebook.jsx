@@ -518,7 +518,10 @@ export const NotebookTestItem = ({
            {/* 1D imported Bruker spectrum in LabNotebook (Data tick) */}
            {isNMR && localTest.nmr1dSpectrum && localTest.nmr1dSpectrum.xs && localTest.nmr1dSpectrum.xs.length > 0 && (() => {
              const spec = localTest.nmr1dSpectrum;
-             const disp = getNmr1dDisplay(spec) || { xs: spec.xs, ys: spec.ys };
+             // Le réglage (calibration + phase) vit dans `nmr1dProcessing` : il
+             // survit au document du dataset, là où la copie d'affichage peut
+             // être remplacée par un marqueur « omitted ».
+             const disp = getNmr1dDisplay(spec, localTest.nmr1dProcessing) || { xs: spec.xs, ys: spec.ys };
              const xs = disp.xs, ys = disp.ys;
              const maxY = Math.max(...ys.map(Math.abs), 1);
              const svgW = 480, plotH = 100, axisH = 26, totalH = plotH + axisH;
