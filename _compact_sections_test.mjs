@@ -27,6 +27,12 @@
        Analysis » (plus de sous-section « Per Atom Plot ») et ils tracent LE
        TABLEAU DE RÉSULTATS (valeurs éditées + colonnes CAPRI brutes), pas la
        liste brute des poses qui les laissait vides.
+     • page Docking : renommer une colonne (et son unité) ne perd AUCUNE valeur
+       — les cellules relisent la colonne CAPRI brute et l'ancienne clé de la
+       métrique renommée, une colonne importée n'est jamais masquée sans que la
+       métrique qui la porte soit rendue, et le graphique trace la grandeur que
+       le tableau porte (score en a.u. pour HADDOCK, énergie en kcal/mol) au
+       lieu de rester vide.
 
    Les fonctions pures de DockingData.jsx sont RÉELLEMENT exécutées (extraction
    + new Function, comme _docking_sanity.cjs) ; le reste est vérifié sur la
@@ -65,16 +71,24 @@ const grab = (name, end) => {
 };
 const { parseCapriTsv, posesFromCapri, parseDockingValue, normMetricColumn,
   DOCKING_METRICS, dockingMetricOf, dockingMetricLabel, dockingMetricUnit,
-  poseBindingEnergy, poseDeviation, haddockScoreTerms } = new Function(
+  poseBindingEnergy, poseDeviation, haddockScoreTerms, CAPRI_RAW_PREFIX,
+  poseRawMetric, LEGACY_POSE_KEYS, poseMetricValue, capriColumnMetricKey,
+  chartEnergyMetricKey, poseChartValue } = new Function(
   [grab('parseCapriTsv', '\n};'), grab('CAPRI_METRIC_SYNONYMS', '\n};'),
    grab('normMetricColumn', ';'), grab('posesFromCapri', '\n};'),
    grab('parseDockingValue', '\n};'), grab('DOCKING_METRICS', '\n];'),
    grab('dockingMetricOf', '\n};'), grab('dockingMetricLabel', ';'),
    grab('dockingMetricUnit', ';'), grab('poseBindingEnergy', '\n};'),
-   grab('poseDeviation', '\n};'), grab('haddockScoreTerms', '\n};')].join('\n')
+   grab('poseDeviation', '\n};'), grab('haddockScoreTerms', '\n};'),
+   grab('CAPRI_RAW_PREFIX', ';'), grab('poseRawMetric', '\n};'),
+   grab('LEGACY_POSE_KEYS', '\n};'), grab('poseMetricValue', '\n};'),
+   grab('capriColumnMetricKey', '\n};'), grab('chartEnergyMetricKey', ';'),
+   grab('poseChartValue', '\n};')].join('\n')
   + '\nreturn { parseCapriTsv, posesFromCapri, parseDockingValue, normMetricColumn,'
   + ' DOCKING_METRICS, dockingMetricOf, dockingMetricLabel, dockingMetricUnit,'
-  + ' poseBindingEnergy, poseDeviation, haddockScoreTerms };'
+  + ' poseBindingEnergy, poseDeviation, haddockScoreTerms, CAPRI_RAW_PREFIX,'
+  + ' poseRawMetric, LEGACY_POSE_KEYS, poseMetricValue, capriColumnMetricKey,'
+  + ' chartEnergyMetricKey, poseChartValue };'
 )();
 
 eq(normMetricColumn('RMSD l.b.'), 'rmsdlb', 'les noms de colonnes sont comparés sous forme canonique');
@@ -131,6 +145,76 @@ eq(parseDockingValue(POSES3[0].affinity), -8.5, 'les valeurs présentes sont tra
 eq(posesFromCapri(null), [], 'un TSV illisible ne produit aucune pose');
 eq(posesFromCapri({ columns: ['score'], rows: [] }), [], 'un TSV sans ligne ne produit aucune pose');
 
+/* ══ 1b. RENOMMER UNE COLONNE NE PERD AUCUNE VALEUR ════════════════════════
+   Un jeu de données importé AVANT le renommage des colonnes garde ses valeurs
+   sous l'ancienne clé (« rmsd_lb » portait le l-RMSD d'un capri_ss.tsv, et
+   « rmsd_ub » l'i-l-RMSD : c'est ce que le renommage corrige) et sous la
+   colonne brute (« capri_lrmsd »). Tableau ET graphiques relisent par
+   poseMetricValue : une cellule ne se vide plus parce qu'une colonne a changé
+   de nom. */
+const OLD_POSE = {
+  mode: 1, label: 'cluster_1_1.pdb', program: 'haddock',
+  affinity: -52.31, rmsd_lb: 0.912, rmsd_ub: 1.404, rmsd: 1.404,
+  capri_lrmsd: '0.912', capri_ilrmsd: '1.404', capri_irmsd: '0.5', capri_cluster_id: '1'
+};
+eq(CAPRI_RAW_PREFIX, 'capri_', 'les colonnes brutes du fichier importé vivent sous ce préfixe');
+eq(LEGACY_POSE_KEYS.lrmsd, ['rmsd_lb'], 'l’ancienne clé du l-RMSD est documentée (renommage des colonnes)');
+eq(poseRawMetric(OLD_POSE, 'lrmsd'), '0.912', 'la colonne brute d’un import se lit directement');
+eq(poseMetricValue(OLD_POSE, 'lrmsd', 'haddock'), '0.912',
+  'une pose d’avant le renommage retrouve son l-RMSD par la colonne brute');
+eq(poseMetricValue(OLD_POSE, 'ilrmsd', 'haddock'), '1.404',
+  '…et son i-l-RMSD : aucune colonne CAPRI n’est perdue');
+eq(poseMetricValue(OLD_POSE, 'irmsd', 'haddock'), '0.5',
+  '…ni son i-RMSD (aucune colonne n’a de nom de métrique)');
+eq(poseMetricValue({ rmsd_lb: 1.5, program: 'haddock' }, 'lrmsd', 'haddock'), 1.5,
+  'sans colonne brute, l’ANCIENNE clé « RMSD l.b. » rend le l-RMSD');
+eq(poseMetricValue({ rmsd_ub: 2.5, program: 'haddock' }, 'ilrmsd', 'haddock'), 2.5,
+  '…et « RMSD u.b. » l’i-l-RMSD');
+eq(poseMetricValue({ rmsd_lb: 1.5, program: 'vina' }, 'lrmsd', 'vina'), undefined,
+  'une pose Vina garde « RMSD l.b. » pour elle : aucun l-RMSD inventé');
+eq(poseMetricValue({ lrmsd: 2, capri_lrmsd: '9' }, 'lrmsd', 'haddock'), 2,
+  'la clé canonique passe avant la colonne brute');
+eq(poseMetricValue(posesFromCapri(parseCapriTsv('score\tlrmsd\n-8.5\t1.2'))[0], 'energy_vdw', 'haddock'), '',
+  'une métrique absente d’un TSV importé reste vide — jamais 0');
+
+eq(capriColumnMetricKey('lrmsd'), 'lrmsd', 'la colonne « lrmsd » alimente la métrique l-RMSD');
+eq(capriColumnMetricKey('HADDOCK score'), 'affinity', '« HADDOCK score » alimente le score du programme');
+eq(capriColumnMetricKey('E_vdw'), 'energy_vdw', '« E_vdw » alimente E vdW');
+eq(capriColumnMetricKey('energy_torsional'), 'energy_torsional',
+  'une colonne nommée comme la clé alimente sa clé');
+eq(capriColumnMetricKey('md5'), null, 'une colonne inconnue n’est la colonne de personne (elle s’affiche brute)');
+
+/* L'INVARIANT DU TABLEAU : toute colonne du fichier importé a un endroit où
+   s'afficher — soit sa métrique (rendue parce que la colonne l'alimente), soit
+   la colonne brute elle-même. C'est ce que fait DockingDataSection avec
+   `capriFedKeys` / `renderedMetricKeys` ; ici, la même règle calculée sur le
+   vrai capri_ss.tsv, pour qu'aucune colonne ne puisse disparaître. */
+const CAPRI_COLUMNS = parsedCapri.columns;
+const fedKeys = new Set(CAPRI_COLUMNS.map(capriColumnMetricKey).filter(Boolean));
+const capriRendered = new Set(DOCKING_METRICS.filter((m) => fedKeys.has(m.key)).map((m) => m.key));
+const shownRaw = CAPRI_COLUMNS.filter((c) => { const k = capriColumnMetricKey(c); return !(k && capriRendered.has(k)); });
+eq(shownRaw, ['structure', 'model'],
+  'seules les colonnes que PERSONNE ne réclame s’affichent en plus (le reste est déjà une métrique du tableau)');
+ok(CAPRI_COLUMNS.every((c) => { const k = capriColumnMetricKey(c); return (k && capriRendered.has(k)) || shownRaw.includes(c); }),
+  'aucune colonne du capri_ss.tsv ne disparaît du tableau');
+eq(DOCKING_METRICS.filter((m) => fedKeys.has(m.key)).length, 10,
+  'les dix colonnes reconnues du capri_ss.tsv sont rendues comme métriques');
+
+/* Le graphique trace la grandeur que LE TABLEAU porte. */
+const CAPRI_ROWS = posesFromCapri(parseCapriTsv(CAPRI));
+eq(chartEnergyMetricKey(CAPRI_ROWS), 'affinity',
+  'un capri_ss.tsv (aucune colonne « total ») trace son SCORE : le graphique n’est plus vide');
+eq(chartEnergyMetricKey([{ affinity: -52.31, energy_total: -60 }]), 'energy_total',
+  '…et l’énergie totale dès que le tableau en porte une');
+eq(chartEnergyMetricKey([]), 'affinity', 'un tableau vide ne fait pas planter le choix de la grandeur');
+eq(poseChartValue(CAPRI_ROWS[0], 'affinity', 'haddock'), -52.31, 'la barre trace le score HADDOCK lu dans le tableau');
+eq(poseChartValue({ affinity: -8.5 }, 'energy_total', 'vina'), -8.5,
+  'Vina / AutoDock : l’affinité EST l’énergie de liaison (kcal/mol)');
+eq(poseChartValue({ affinity: -52.31 }, 'energy_total', 'haddock'), null,
+  'HADDOCK : un score en a.u. ne devient jamais une énergie en kcal/mol');
+eq(dockingMetricOf(DOCKING_METRICS.find((m) => m.key === 'affinity'), 'haddock').unit, 'a.u.',
+  'l’axe porte l’unité de la grandeur tracée : a.u. pour le score HADDOCK');
+
 /* ══ 2. LES DEUX IMPORTS REMPLISSENT LE MÊME TABLEAU ══════════════════════ */
 has(DATA, 'poses: posesFromCapri(capri),', '[capri_ss.tsv] un fichier importé seul remplit AUSSI le tableau');
 ok(!DATA.includes('poses: [], capri,'), '[capri_ss.tsv] le tableau n’est plus laissé vide');
@@ -141,7 +225,20 @@ has(SEC, 'if (updateCount) updateActiveTest(parsed.updates);', '…ET les param�
 
 /* ══ 3. LES GRAPHIQUES LISENT LE TABLEAU ══════════════════════════════════ */
 has(SEC, 'const raw = d.activeValues[`${i}-${m.key}`];', 'les graphiques partent des cellules éditées du tableau');
-has(SEC, 'const fallback = capriFallback(p, m.key);', '…avec les colonnes CAPRI brutes en repli');
+has(SEC, 'const v = poseMetricValue(p, m.key, d.dockingProgram);',
+  '…avec la lecture partagée des valeurs (colonne CAPRI brute + ancienne clé de la métrique)');
+has(SEC, 'const energyKey = chartEnergyMetricKey(rows);',
+  'la grandeur tracée est celle du tableau (score, sinon énergie totale)');
+has(SEC, 'const rowEnergy = (p) => poseChartValue(p, energyKey, d.dockingProgram);',
+  '…traduite en nombre par poseChartValue (jamais a.u. sur un axe kcal/mol)');
+has(SEC, 'const affinityUnit = energyMetric.unit || unit;', 'l’unité de l’axe suit la métrique tracée');
+has(SEC, 'poseMetricValue(pose, m.key, program)', '[tableau] une cellule relit la colonne brute / l’ancienne clé');
+has(SEC, 'const capriFedKeys = new Set(capriColumns.map(capriColumnMetricKey).filter(Boolean));',
+  'une colonne importée force la métrique qui la porte dans le tableau');
+has(SEC, 'return !(key && renderedMetricKeys.has(key));',
+  '…et une colonne brute ne se cache que si sa métrique est RENDUE dans le tableau');
+ok(!SEC.includes('capriMetricMapKeys'),
+  'plus de liste noire de colonnes : aucune colonne importée ne peut disparaître');
 has(SEC, 'const affinityData = rows.map((p, i) => ({', 'le graphique d’affinité lit les lignes du tableau');
 has(SEC, 'const rmsdData = rows', 'le nuage Affinity vs RMSD lit les lignes du tableau');
 has(SEC, 'const energyBreakdownData = rows.slice(0, 10).map(', 'la décomposition d’énergie aussi');

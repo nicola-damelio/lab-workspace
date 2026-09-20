@@ -56,7 +56,7 @@ const archiveDockingData = async ({
 );
 
 import NMRMoleculeViewer from './NMRMoleculeViewer';
-import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, posesFromCapri, CAPRI_METRIC_SYNONYMS, normMetricColumn, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, dockDom, DOCK_CHART_MARGIN, dockingMetricOf, poseBindingEnergy, poseDeviation, HADDOCK_SCORE_TERM_KEYS, haddockScoreTerms} from './DockingData';
+import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, posesFromCapri, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, dockDom, DOCK_CHART_MARGIN, dockingMetricOf, poseMetricValue, capriColumnMetricKey, chartEnergyMetricKey, poseChartValue, poseDeviation, HADDOCK_SCORE_TERM_KEYS, haddockScoreTerms} from './DockingData';
 
 
 /* ============================================================================
@@ -1118,25 +1118,32 @@ export const DockingDataSection = ({ ctx }) => {
   /* Les colonnes du tableau : ce que les poses portent DÉJÀ, plus — pour le
      programme actif — les grandeurs qu'il produit, même absentes de l'import
      (la colonne, son UNITÉ et la cellule éditable sont alors visibles : c'est
-     ainsi qu'on saisit les valeurs d'un terme que le fichier n'avait pas). */
+     ainsi qu'on saisit les valeurs d'un terme que le fichier n'avait pas) —
+     ET les métriques qu'une colonne du fichier importé alimente : sans elles,
+     une colonne reconnue (donc masquée comme doublon) disparaîtrait du tableau
+     avec sa valeur. */
+  const capriColumns = (activeTest.dockingCapri && activeTest.dockingCapri.columns) || [];
+  const capriFedKeys = new Set(capriColumns.map(capriColumnMetricKey).filter(Boolean));
+  const hasValue = (p, key) => {
+    const v = poseMetricValue(p, key, program);
+    return v !== undefined && v !== null && v !== '';
+  };
   const metricCols = DOCKING_METRICS.filter((m) =>
     (Array.isArray(m.programs) && m.programs.includes(program))
-    || d.poses.some((p) => p[m.key] !== undefined && p[m.key] !== null)
+    || capriFedKeys.has(m.key)
+    || d.poses.some((p) => hasValue(p, m.key))
   ).map((m) => dockingMetricOf(m, program));
+  const renderedMetricKeys = new Set(metricCols.map((m) => m.key));
 
   // CAPRI columns that are NOT shown as a mapped metric still appear in the
-  // results table (e.g. irmsd, fnat, dockq, cluster_id, energy components…).
-  // La liste des colonnes DÉJÀ ramenées sur une métrique est déduite des
-  // synonymes : une colonne reconnue ne s'affiche pas deux fois (une fois
-  // éditable, une fois brute).
-  const capriMetricMapKeys = new Set([
-    ...Object.keys(CAPRI_METRIC_SYNONYMS),
-    ...Object.values(CAPRI_METRIC_SYNONYMS).flat(),
-    ...DOCKING_METRICS.map((m) => m.key)
-  ]);
-  const capriExtraCols = (activeTest.dockingCapri && activeTest.dockingCapri.columns || []).filter(
-    (c) => !capriMetricMapKeys.has(normMetricColumn(c))
-  );
+  // results table (e.g. model, md5, fnonnat…) : une colonne du fichier
+  // s'affiche donc TOUJOURS — soit sous le nom (et l'unité) de sa métrique,
+  // soit telle quelle. Elle ne disparaît que si la métrique qui la porte est
+  // réellement rendue dans le tableau.
+  const capriExtraCols = capriColumns.filter((c) => {
+    const key = capriColumnMetricKey(c);
+    return !(key && renderedMetricKeys.has(key));
+  });
 
   return (
     <div className="flex flex-col gap-4">
@@ -1257,7 +1264,7 @@ export const DockingDataSection = ({ ctx }) => {
                 {metricCols.map((m) => {
                   const cellKey = `${idx}-${m.key}`;
                   const raw = d.activeValues[cellKey];
-                  const val = raw !== undefined ? raw : pose[m.key];
+                  const val = raw !== undefined ? raw : poseMetricValue(pose, m.key, program);
                   const isAffinity = m.key === 'affinity';
                   return (
                     <td key={m.key} className="px-3 py-1">
@@ -1305,41 +1312,38 @@ export const DockingAnalysisSection = ({ ctx }) => {
      poses : chaque cellule du tableau est éditable et sa valeur vit dans la
      couche active (`activeValues`, clé "<index>-<métrique>"). En lisant
      `d.poses` seul, un graphique ignorait ce que l'utilisateur voyait — ou
-     restait vide quand la valeur n'existait que dans le tableau. À défaut de
-     valeur mappée, la colonne CAPRI brute correspondante (affichée elle aussi
-     dans le tableau) sert de repli. */
-  const capriFallback = (p, key) => {
-    const names = CAPRI_METRIC_SYNONYMS[key] || [];
-    for (const n of names) {
-      const hit = Object.keys(p).find((k) => k.startsWith('capri_')
-        && normMetricColumn(k.slice(6)) === n);
-      if (hit && p[hit] !== '' && p[hit] !== undefined && p[hit] !== null) return p[hit];
-    }
-    return undefined;
-  };
+     restait vide quand la valeur n'existait que dans le tableau. Le repli est
+     `poseMetricValue`, LA MÊME lecture que celle des cellules du tableau : la
+     colonne CAPRI brute (« capri_lrmsd ») et l'ancienne clé d'une métrique
+     renommée (« rmsd_lb ») y ramènent la valeur importée. */
   const rows = d.poses.map((p, i) => {
     const merged = { ...p };
     DOCKING_METRICS.forEach((m) => {
       const raw = d.activeValues[`${i}-${m.key}`];
       if (raw !== undefined && raw !== '') { merged[m.key] = raw; return; }
-      if (merged[m.key] === undefined || merged[m.key] === '' || merged[m.key] === null) {
-        const fallback = capriFallback(p, m.key);
-        if (fallback !== undefined) merged[m.key] = fallback;
-      }
+      const v = poseMetricValue(p, m.key, d.dockingProgram);
+      if (v !== undefined) merged[m.key] = v;
     });
     return merged;
   });
 
-  const rowEnergy = (p) => poseBindingEnergy(p, d.dockingProgram);
+  /* La grandeur tracée EST celle du tableau (voir chartEnergyMetricKey) : le
+     score du programme quand la table n'a pas d'énergie totale — la seule
+     façon de ne pas laisser le graphique vide sur un capri_ss.tsv. */
+  const energyKey = chartEnergyMetricKey(rows);
+  const energyMetric = dockingMetricOf(DOCKING_METRICS.find((m) => m.key === energyKey), d.dockingProgram);
+  const rowEnergy = (p) => poseChartValue(p, energyKey, d.dockingProgram);
 
   /* ── CE QUE TRACENT LES GRAPHIQUES ──────────────────────────────────────────
-     Le graphique d'affinité trace l'ÉNERGIE DE LIAISON en kcal/mol : le terme
-     « total » du score HADDOCK quand il existe, l'affinité pour Vina / AutoDock.
-     Le SCORE HADDOCK (a.u.) — la colonne « HADDOCK score » du tableau — n'est
-     JAMAIS tracé sur un axe en kcal/mol : deux grandeurs qui ne se comparent
-     pas. Une valeur absente ne devient pas un 0 : elle sort du graphique (et la
-     légende dit quoi importer / saisir). */
-  const affinityUnit = isHADDOCK ? 'kcal/mol' : unit;
+     Le graphique trace ce que LE TABLEAU porte : l'énergie de liaison totale
+     (kcal/mol) quand la table a un terme « total », sinon le SCORE du programme
+     — « HADDOCK score (a.u.) » pour HADDOCK, l'affinité (kcal/mol) pour Vina /
+     AutoDock. L'unité de l'axe est celle de la métrique RÉELLEMENT tracée
+     (dockingMetricOf) : un score HADDOCK n'est jamais étiqueté kcal/mol, et le
+     graphique n'est jamais vide alors que le tableau porte une valeur. Une
+     valeur absente ne devient pas un 0 : elle sort du graphique (et la légende
+     dit quoi importer / saisir). */
+  const affinityUnit = energyMetric.unit || unit;
   const affinityData = rows.map((p, i) => ({
     mode: p.mode ?? i + 1,
     affinity: rowEnergy(p)
@@ -1380,7 +1384,7 @@ export const DockingAnalysisSection = ({ ctx }) => {
   }));
 
   const dockSeries = [
-    { key: 'affinity', label: `Affinity (${affinityUnit})` },
+    { key: 'affinity', label: `${energyMetric.label} (${affinityUnit})` },
     { key: 'vdW', label: 'vdW / Hbond / desolv' },
     { key: 'elec', label: 'Electrostatic' },
     { key: 'torsional', label: 'Torsional' },
@@ -1402,8 +1406,8 @@ export const DockingAnalysisSection = ({ ctx }) => {
       {showCfg && <SharedChartStylePanel cfg={cfg} setCfg={setCfg} series={[]} />}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* Affinity bar chart — l'ÉNERGIE DE LIAISON (kcal/mol) */}
-        <CollapsibleSection title={`Binding Energy per Pose (${affinityUnit})`} icon="📊" defaultOpen={false}>
+        {/* Bar chart — la grandeur du tableau : énergie totale (kcal/mol) ou score */}
+        <CollapsibleSection title={`${energyMetric.label} per Pose (${affinityUnit})`} icon="📊" defaultOpen={false}>
           <ChartInspector cfg={cfg} setCfg={setCfg} series={dockSeries} unit={affinityUnit} style={dockChartBoxStyle(cfg)}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={affinityData} margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
@@ -1415,7 +1419,7 @@ export const DockingAnalysisSection = ({ ctx }) => {
                   label={cfgAxisLabel(cfg, 'y', cfg.yAxisLabel || affinityUnit, 0)} />
                 <Tooltip />
                 {brkAff.marks}
-                <Bar dataKey="affinity" name={`Binding energy (${affinityUnit})`} radius={cfg.barRadius ? [cfg.barRadius, cfg.barRadius, 0, 0] : 0}>
+                <Bar dataKey="affinity" name={`${energyMetric.label} (${affinityUnit})`} radius={cfg.barRadius ? [cfg.barRadius, cfg.barRadius, 0, 0] : 0}>
                   {affinityData.map((entry, i) => (
                     <Cell key={i} fill={seriesColorFor(cfg, `pose-${entry.mode}`, i, affinityData.length)} />
                   ))}
@@ -1425,15 +1429,15 @@ export const DockingAnalysisSection = ({ ctx }) => {
           </ChartInspector>
           {missingEnergy && (
             <p className="text-xs text-slate-400 italic text-center mt-2">
-              No total energy in the results table: for HADDOCK this graph plots the <b>total</b> energy
-              (kcal/mol), not the score (a.u.). Import the HADDOCK score file — it carries
-              vdW / elec / desolv / air / total — or type the values in the <b>Total energy</b> column above.
+              No score in the results table: this graph plots the <b>{energyMetric.label}</b>
+              {affinityUnit ? ` (${affinityUnit})` : ''} — import the CAPRI file
+              (score / HADDOCK score) or type the values in the <b>{energyMetric.label}</b> column above.
             </p>
           )}
         </CollapsibleSection>
 
-        {/* Binding energy vs RMSD scatter */}
-        <CollapsibleSection title="Energy vs. RMSD" icon="🎯" defaultOpen={false}>
+        {/* La grandeur du tableau en fonction de l'écart à la référence */}
+        <CollapsibleSection title={`${energyMetric.label} vs. RMSD`} icon="🎯" defaultOpen={false}>
           <ChartInspector containerRef={scatterRef} cfg={cfg} setCfg={setCfg} series={dockSeries} unit={affinityUnit} style={dockChartBoxStyle(cfg)} className="select-none relative">
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
@@ -1454,7 +1458,7 @@ export const DockingAnalysisSection = ({ ctx }) => {
           {rmsdData.length === 0 && (
             <p className="text-xs text-slate-400 italic text-center mt-2">
               {missingEnergy
-                ? 'No total energy in the results table: the Y axis is the binding energy (kcal/mol) — see the note under “Binding Energy per Pose”.'
+                ? `No score in the results table: the Y axis is ${energyMetric.label}${affinityUnit ? ` (${affinityUnit})` : ''} — see the note under “${energyMetric.label} per Pose”.`
                 : 'No RMSD in the results table: import the CAPRI file (l-RMSD / i-RMSD / i-l-RMSD / RMSD) or type a value in a RMSD column above.'}
             </p>
           )}
@@ -1634,8 +1638,8 @@ export const NotebookExtra = ({ ctx, checkId }) => {
     d.poses.forEach((p) => {
       html += `<tr>
         <td style="padding:6px;border:1px solid #e2e8f0;"><b>${p.mode}</b></td>
-        <td style="padding:6px;border:1px solid #e2e8f0;">${p.affinity ?? ''}</td>
-        <td style="padding:6px;border:1px solid #e2e8f0;">${p[nbDev.key] ?? p.rmsd_lb ?? ''}</td>
+        <td style="padding:6px;border:1px solid #e2e8f0;">${poseMetricValue(p, 'affinity', nbProgram) ?? ''}</td>
+        <td style="padding:6px;border:1px solid #e2e8f0;">${poseMetricValue(p, nbDev.key, nbProgram) ?? ''}</td>
       </tr>`;
     });
     html += '</table>';

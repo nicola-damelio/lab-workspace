@@ -641,6 +641,89 @@ export const posesFromCapri = (parsed) => {
     return pose;
   });
 };
+/* ── LIRE LA VALEUR D'UNE MÉTRIQUE DANS UNE POSE — AUCUNE VALEUR PERDUE ─────
+   Une pose peut porter la valeur d'une métrique de trois façons :
+     1) la cellule éditable du tableau (clé « <index>-<métrique> » de la couche) ;
+     2) la clé canonique de la métrique (`pose.lrmsd`) ;
+     3) la COLONNE BRUTE du fichier importé (`pose.capri_lrmsd`), reconnue par les
+        synonymes — la colonne s'affiche dans le tableau, la valeur y retourne.
+   S'y ajoute l'ancienne clé d'une métrique RENOMMÉE : le parseur CAPRI rangeait
+   autrefois le l-RMSD sous « RMSD l.b. » et l'i-l-RMSD sous « RMSD u.b. » (les
+   bornes de Vina / AutoDock). Une pose déjà enregistrée dans le jeu de données
+   garde donc ses écarts à la référence. Renommer une colonne ne peut plus vider
+   une cellule : le tableau ET les graphiques lisent par CETTE fonction. */
+export const CAPRI_RAW_PREFIX = 'capri_';
+
+export const poseRawMetric = (pose, key) => {
+  if (!pose || !key) return undefined;
+  // Le nom de la clé elle-même (« energy_vdw ») compte comme synonyme.
+  const names = [...(CAPRI_METRIC_SYNONYMS[key] || []), normMetricColumn(key)];
+  for (const n of names) {
+    if (!n) continue;
+    const hit = Object.keys(pose).find((k) => k.startsWith(CAPRI_RAW_PREFIX)
+      && normMetricColumn(k.slice(CAPRI_RAW_PREFIX.length)) === n);
+    if (hit === undefined) continue;
+    const v = pose[hit];
+    if (v !== '' && v !== undefined && v !== null) return v;
+  }
+  return undefined;
+};
+
+/** Ancienne clé d'une métrique renommée, quand elle portait la MÊME grandeur. */
+export const LEGACY_POSE_KEYS = {
+  lrmsd: ['rmsd_lb'],
+  ilrmsd: ['rmsd_ub']
+};
+
+export const poseMetricValue = (pose, key, program) => {
+  if (!pose || !key) return undefined;
+  const own = pose[key];
+  if (own !== '' && own !== undefined && own !== null) return own;
+  const raw = poseRawMetric(pose, key);
+  if (raw !== undefined) return raw;
+  if (program === 'haddock' || pose.program === 'haddock') {
+    for (const legacy of LEGACY_POSE_KEYS[key] || []) {
+      const v = pose[legacy];
+      if (v !== '' && v !== undefined && v !== null) return v;
+    }
+  }
+  return own;
+};
+
+/** La métrique que reçoit une colonne d'un fichier importé : « score » →
+ *  `affinity`, « lrmsd » → `lrmsd`, « E_vdw » → `energy_vdw`, une colonne nommée
+ *  comme une clé → sa clé. `null` quand aucune métrique ne la reconnaît : elle
+ *  s'affiche alors brute, jamais masquée. */
+export const capriColumnMetricKey = (column) => {
+  const c = normMetricColumn(column);
+  if (!c) return null;
+  const known = DOCKING_METRICS.find((m) => (CAPRI_METRIC_SYNONYMS[m.key] || []).includes(c));
+  if (known) return known.key;
+  const direct = DOCKING_METRICS.find((m) => normMetricColumn(m.key) === c);
+  return direct ? direct.key : null;
+};
+
+/* ── LA GRANDEUR QUE TRACE LE GRAPHIQUE D'ÉNERGIE ───────────────────────────
+   Le graphique trace ce que LE TABLEAU porte réellement : l'énergie de liaison
+   totale (kcal/mol) quand la table a un terme « total », sinon le score du
+   programme — « HADDOCK score (a.u.) » pour HADDOCK, l'affinité (kcal/mol) pour
+   Vina / AutoDock. L'unité affichée est celle de la métrique tracée (un score
+   HADDOCK n'est jamais présenté comme une énergie en kcal/mol), mais un
+   graphique n'est plus vide quand la table a une valeur : un capri_ss.tsv n'a
+   pas de colonne « total », il a un « score ». */
+export const chartEnergyMetricKey = (rows) =>
+  (Array.isArray(rows) ? rows : []).some((p) => parseDockingValue(poseMetricValue(p, 'energy_total')) !== null)
+    ? 'energy_total' : 'affinity';
+
+export const poseChartValue = (p, metricKey, program) => {
+  const v = parseDockingValue(poseMetricValue(p, metricKey || 'affinity', program));
+  if (v !== null) return v;
+  // Repli sur l'affinité seulement quand l'unité est la même (kcal/mol).
+  if (metricKey === 'energy_total' && program !== 'haddock') {
+    return parseDockingValue(poseMetricValue(p, 'affinity', program));
+  }
+  return null;
+};
 
 // Lightweight TOML reader for raw_input.toml (sections + key = value pairs).
 // Handles comments, quoted values, duplicate sections (merged), both
@@ -1082,6 +1165,14 @@ export default {
   dockingMetricUnit,
   poseBindingEnergy,
   poseDeviation,
+  poseMetricValue,
+  poseRawMetric,
+  capriColumnMetricKey,
+  LEGACY_POSE_KEYS,
+  CAPRI_RAW_PREFIX,
+  chartEnergyMetricKey,
+  poseChartValue,
+
   HADDOCK_SCORE_TERM_KEYS,
   haddockScoreTerms,
   DEFAULT_DOCKING_CHART_STYLE,
