@@ -56,7 +56,7 @@ const archiveDockingData = async ({
 );
 
 import NMRMoleculeViewer from './NMRMoleculeViewer';
-import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, posesFromCapri, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, dockDom, DOCK_CHART_MARGIN, dockingMetricOf, poseMetricValue, capriColumnMetricKey, chartEnergyMetricKey, poseChartValue, poseDeviation, poseRawColumnValue, deviationColumnOf, energyColumnOf, HADDOCK_SCORE_TERM_KEYS, haddockScoreTerms} from './DockingData';
+import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, posesFromCapri, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, dockDom, DOCK_CHART_MARGIN, dockingMetricOf, poseMetricValue, capriColumnMetricKey, chartEnergyMetricKey, poseChartValue, poseDeviation, poseRawColumnValue, deviationColumnOf, energyColumnOf, plotSourceOptions, plotSourceLabel, plotSourceValue, PLOT_SOURCE_PREFIX, PLOT_SOURCE_ALL, DEVIATION_PLOT_KEYS, dockingMetricLabel, HADDOCK_SCORE_TERM_KEYS, haddockScoreTerms} from './DockingData';
 
 
 /* ============================================================================
@@ -1346,8 +1346,32 @@ export const DockingAnalysisSection = ({ ctx }) => {
   const metricDeviation = (p) => poseDeviation(p);
   const energyFromColumn = rows.some((p) => metricEnergy(p) !== null) ? null : energyColumnOf(capriColumns);
   const deviationFromColumn = rows.some((p) => metricDeviation(p) !== null) ? null : deviationColumnOf(capriColumns);
-  const rowEnergy = (p) => metricEnergy(p) ?? parseDockingValue(poseRawColumnValue(p, energyFromColumn));
-  const rowDeviation = (p) => metricDeviation(p) ?? parseDockingValue(poseRawColumnValue(p, deviationFromColumn));
+  /* ── OU L'UTILISATEUR DIT LUI-MÊME CE QUE TRACE CHAQUE AXE ─────────────────
+     Une colonne que le fichier nomme hors des synonymes connus (« ΔG »,
+     « E_score », « Ligand_dev ») ne peut pas être devinée : le panneau liste
+     toutes les grandeurs lisibles par le tableau (les métriques de l'axe, puis
+     les colonnes importées) et le choix explicite prime sur toute devinette —
+     deux colonnes numériques du tableau donnent TOUJOURS un nuage. « Auto »
+     garde le comportement automatique ci-dessus. */
+  const xOptions = plotSourceOptions(capriColumns, rows, 'deviation', d.dockingProgram);
+  const yOptions = plotSourceOptions(capriColumns, rows, 'energy', d.dockingProgram);
+  const xChoice = plotSourceLabel(xOptions, cfg.xColumn) ? cfg.xColumn : '';
+  const yChoice = plotSourceLabel(yOptions, cfg.yColumn) ? cfg.yColumn : '';
+  /* « Toutes les colonnes d'écart » : un nuage par écart du tableau (i-RMSD,
+     l-RMSD, i-l-RMSD, RMSD, bornes de Vina…), choisi dans le même sélecteur.
+     Aucun nom de colonne à deviner : chaque écart du tableau a son nuage. */
+  const xMetrics = xOptions.filter((o) => o.value.startsWith(PLOT_SOURCE_PREFIX.metric));
+  const allDeviations = cfg.xColumn === PLOT_SOURCE_ALL && xMetrics.length > 1;
+  const chosenColumnOf = (choice) => choice.slice(PLOT_SOURCE_PREFIX.column.length);
+  const chosenMetricOf = (choice) => (choice.startsWith(PLOT_SOURCE_PREFIX.metric)
+    ? dockingMetricOf(DOCKING_METRICS.find((m) => m.key === choice.slice(PLOT_SOURCE_PREFIX.metric.length)), d.dockingProgram)
+    : null);
+  const rowEnergy = (p) => (yChoice
+    ? plotSourceValue(p, yChoice, 'energy', d.dockingProgram)
+    : metricEnergy(p) ?? parseDockingValue(poseRawColumnValue(p, energyFromColumn)));
+  const rowDeviation = (p) => (xChoice
+    ? plotSourceValue(p, xChoice, 'deviation', d.dockingProgram)
+    : metricDeviation(p) ?? parseDockingValue(poseRawColumnValue(p, deviationFromColumn)));
 
   /* ── CE QUE TRACENT LES GRAPHIQUES ──────────────────────────────────────────
      Le graphique trace ce que LE TABLEAU porte : l'énergie de liaison totale
@@ -1358,25 +1382,47 @@ export const DockingAnalysisSection = ({ ctx }) => {
      graphique n'est jamais vide alors que le tableau porte une valeur. Une
      valeur absente ne devient pas un 0 : elle sort du graphique (et la légende
      dit quoi importer / saisir). */
-  const affinityUnit = energyMetric.unit || unit;
-  /* Le nom de la grandeur tracée (titres et légendes) : la colonne du fichier
-     quand c'est elle qui la porte — son unité n'est alors pas connue, on
-     n'invente donc pas de kcal/mol. */
-  const energyName = energyFromColumn || `${energyMetric.label} (${affinityUnit})`;
+  const plottedEnergy = chosenMetricOf(yChoice) || energyMetric;
+  const affinityUnit = plottedEnergy.unit || unit;
+  /* Le nom de la grandeur tracée (titres et légendes) : la source CHOISIE dans
+     le panneau, sinon la colonne du fichier quand c'est elle qui la porte — son
+     unité n'est alors pas connue, on n'invente donc pas de kcal/mol. */
+  const autoEnergyName = energyFromColumn || `${energyMetric.label} (${energyMetric.unit || unit})`;
+  const energyName = yChoice ? plotSourceLabel(yOptions, yChoice) : autoEnergyName;
+  /* L'écart que « Auto » trace : la première grandeur de DEVIATION_PLOT_KEYS que
+     le tableau porte (voir poseDeviation) — le sélecteur et le titre du nuage la
+     NOMMENT, pour que le graphique dise toujours quelle colonne il trace. */
+  const autoDeviationKey = DEVIATION_PLOT_KEYS.find((k) => rows.some((p) => parseDockingValue(poseMetricValue(p, k, d.dockingProgram)) !== null));
+  const autoDeviationName = autoDeviationKey
+    ? dockingMetricLabel(DOCKING_METRICS.find((m) => m.key === autoDeviationKey), d.dockingProgram)
+    : null;
+  const autoRmsdName = deviationFromColumn || autoDeviationName || 'RMSD';
   /* L'étiquette d'un axe suit la même règle : elle nomme la colonne lue. */
-  const energyAxisTitle = cfg.yAxisLabel || energyFromColumn || affinityUnit;
+  const energyAxisTitle = cfg.yAxisLabel
+    || (yChoice
+      ? (chosenMetricOf(yChoice) ? affinityUnit : chosenColumnOf(yChoice))
+      : energyFromColumn || affinityUnit);
   const rmsdAxisTitle = cfg.xAxisLabel
-    || (deviationFromColumn ? `${deviationFromColumn} (Å)` : 'RMSD from the reference (Å)');
+    || (xChoice
+      ? (chosenMetricOf(xChoice) ? plotSourceLabel(xOptions, xChoice)
+        : `${chosenColumnOf(xChoice)} (Å)`)
+      : (deviationFromColumn
+        ? `${deviationFromColumn} (Å)`
+        : (autoDeviationName ? `${autoDeviationName} (Å)` : 'RMSD from the reference (Å)')));
+  const rmsdTitleShort = xChoice
+    ? (chosenMetricOf(xChoice) ? plotSourceLabel(xOptions, xChoice) : chosenColumnOf(xChoice))
+    : autoRmsdName;
   const affinityData = rows.map((p, i) => ({
     mode: p.mode ?? i + 1,
     affinity: rowEnergy(p)
   })).filter((r) => r.affinity !== null);
   const missingEnergy = rows.length > 0 && affinityData.length === 0;
 
-  // Nuage « RMSD vs énergie » : l'abscisse est l'écart à la référence (l-RMSD de
-  // CAPRI, sinon les bornes de Vina / AutoDock, l'i-RMSD / l'i-l-RMSD / le RMSD,
-  // et à défaut la colonne du fichier qui porte un écart — voir
-  // deviationFromColumn), l'ordonnée l'énergie de liaison. Une pose à qui il
+  // Nuage « RMSD vs énergie » : l'abscisse est l'écart à la référence, choisi
+  // dans le panneau, sinon la première grandeur que le tableau porte — l'i-RMSD
+  // d'abord, puis le l-RMSD de CAPRI, les bornes de Vina / AutoDock, l'i-l-RMSD,
+  // le RMSD, et à défaut la colonne du fichier qui porte un écart (voir
+  // deviationFromColumn). L'ordonnée est l'énergie de liaison. Une pose à qui il
   // manque l'un des deux ne peut pas être un point.
   const rmsdData = rows
     .map((p, i) => ({
@@ -1385,6 +1431,39 @@ export const DockingAnalysisSection = ({ ctx }) => {
       rmsd: rowDeviation(p)
     }))
     .filter((r) => r.affinity !== null && r.rmsd !== null);
+
+  /* Le choix « toutes les colonnes d'écart » : UN NUAGE PAR ÉCART du tableau
+     (i-RMSD, l-RMSD, i-l-RMSD, RMSD, bornes de Vina…), tous contre la même
+     énergie — chaque nuage est nommé par l'écart qu'il trace, donc rien n'est
+     deviné et aucun écart du fichier n'est perdu de vue. */
+  const rmsdSeriesData = allDeviations
+    ? xMetrics.map((o) => {
+      const m = chosenMetricOf(o.value);
+      return {
+        value: o.value,
+        short: m && m.label ? m.label : o.label,
+        axisTitle: m && m.label ? (m.unit ? `${m.label} (${m.unit})` : m.label) : o.label,
+        points: rows
+          .map((p, i) => ({
+            mode: p.mode ?? i + 1,
+            affinity: rowEnergy(p),
+            rmsd: plotSourceValue(p, o.value, 'deviation', d.dockingProgram)
+          }))
+          .filter((r) => r.affinity !== null && r.rmsd !== null)
+      };
+    })
+    : [];
+
+  /* Ce que le panneau trace vraiment : la série unique (Auto / colonne choisie),
+     ou toutes les séries d'écart — et le mot affiché quand il n'y a aucun point
+     (ni énergie, ni écart dans le tableau). */
+  const plottedSeries = allDeviations && xMetrics.length > 0 ? rmsdSeriesData : null;
+  const plottedPoints = plottedSeries
+    ? plottedSeries.reduce((n, s) => n + s.points.length, 0)
+    : rmsdData.length;
+  const noRmsdNote = missingEnergy
+    ? `No score in the results table: the Y axis is ${energyAxisTitle} — see the note under “${energyName} per Pose”.`
+    : `No RMSD in the results table${capriColumns.length ? ` (columns read: ${capriColumns.join(', ')})` : ''}: import the CAPRI file (i-RMSD / l-RMSD / i-l-RMSD / RMSD), type a value in a RMSD column above, or pick the X axis column in the bar above.`;
 
   const energyBreakdownData = rows.slice(0, 10).map((p, i) => ({
     mode: p.mode ?? i + 1,
@@ -1418,10 +1497,60 @@ export const DockingAnalysisSection = ({ ctx }) => {
   // interrupted axis (✂ in the panel) keeps all the poses readable.
   const brkAff = brokenAxisProps(cfg, 'y', affinityData.map((p) => p.affinity), { min: cfg.yMin, max: cfg.yMax });
 
+  /* Le nuage « énergie vs écart à la référence » : rendu UNE FOIS par écart
+     tracé (un seul, ou tous ceux du tableau quand c'est demandé), avec le même
+     habillage que les autres graphiques. */
+  const scatterCard = ({ key, short, axisTitle, points, containerRef = null }) => (
+    <CollapsibleSection key={key} title={`${energyName} vs. ${short}`} icon="🎯"
+      defaultOpen={allDeviations}>
+      <ChartInspector containerRef={containerRef} cfg={cfg} setCfg={setCfg} series={dockSeries} unit={affinityUnit} style={dockChartBoxStyle(cfg)} className="select-none relative">
+        <ResponsiveContainer width="100%" height="100%">
+          <ScatterChart margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+            <XAxis type="number" dataKey="rmsd" name={short} tick={tickTextProps(cfg)}
+              domain={[(dockDom(cfg.xMin) ?? 'auto'), (dockDom(cfg.xMax) ?? 'auto')]}
+              tickFormatter={cfgTickFormatter(cfg, 'x') || undefined} scale={cfgLogScale(cfg, 'x')}
+              label={cfgAxisLabel(cfg, 'x', axisTitle, 10)} />
+            <YAxis type="number" dataKey="affinity" name="Energy" tick={tickTextProps(cfg)}
+              domain={[(dockDom(cfg.yMin) ?? 'auto'), (dockDom(cfg.yMax) ?? 'auto')]}
+              tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} scale={cfgLogScale(cfg, 'y')}
+              label={cfgAxisLabel(cfg, 'y', energyAxisTitle, 0)} />
+            <Tooltip cursor={{ strokeDasharray: '3 3' }} />
+            <Scatter data={points} fill={seriesColorFor(cfg, 'scatter', 0, 1)} />
+          </ScatterChart>
+        </ResponsiveContainer>
+      </ChartInspector>
+    </CollapsibleSection>
+  );
+
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center gap-3">
         <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)} className="flex gap-2" />
+        {/* Les deux axes du nuage, choisis dans le tableau : une colonne que le
+            fichier nomme autrement ne peut pas être devinée. « Toutes les
+            colonnes d'écart » trace un nuage par écart du tableau. */}
+        <label className="text-xs font-bold text-slate-500 flex items-center gap-1.5">
+          X axis
+          <select value={cfg.xColumn || ''} onChange={(e) => setCfg({ xColumn: e.target.value })}
+            className="border border-slate-300 rounded px-2 py-1 text-xs bg-white font-semibold text-slate-700 max-w-[16rem]">
+            <option value="">Auto — {autoRmsdName}</option>
+            {xMetrics.length > 1 && (
+              <option value={PLOT_SOURCE_ALL}>
+                {`All deviations (${xMetrics.map((o) => (chosenMetricOf(o.value) || {}).label || o.label).join(', ')})`}
+              </option>
+            )}
+            {xOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </label>
+        <label className="text-xs font-bold text-slate-500 flex items-center gap-1.5">
+          Y axis
+          <select value={cfg.yColumn || ''} onChange={(e) => setCfg({ yColumn: e.target.value })}
+            className="border border-slate-300 rounded px-2 py-1 text-xs bg-white font-semibold text-slate-700 max-w-[16rem]">
+            <option value="">Auto — {autoEnergyName}</option>
+            {yOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </label>
         <span className="text-xs text-slate-500 font-bold">
           {isHADDOCK ? 'HADDOCK scoring terms' : 'Binding energy / RMSD'} · {rows.length} poses
         </span>
@@ -1454,38 +1583,33 @@ export const DockingAnalysisSection = ({ ctx }) => {
           {missingEnergy && (
             <p className="text-xs text-slate-400 italic text-center mt-2">
               No score in the results table: this graph plots the <b>{energyName}</b> — import the CAPRI file
-              (score / HADDOCK score) or type the values in the <b>{energyName}</b> column above.
+              (score / HADDOCK score), type the values in the <b>{energyName}</b> column above, or pick the
+              <b> Y axis</b> column in the bar above.
             </p>
           )}
         </CollapsibleSection>
 
-        {/* La grandeur du tableau en fonction de l'écart à la référence */}
-        <CollapsibleSection title={`${energyName} vs. ${deviationFromColumn || 'RMSD'}`} icon="🎯" defaultOpen={false}>
-          <ChartInspector containerRef={scatterRef} cfg={cfg} setCfg={setCfg} series={dockSeries} unit={affinityUnit} style={dockChartBoxStyle(cfg)} className="select-none relative">
-            <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis type="number" dataKey="rmsd" name="RMSD" tick={tickTextProps(cfg)}
-                  domain={[(dockDom(cfg.xMin) ?? 'auto'), (dockDom(cfg.xMax) ?? 'auto')]}
-                  tickFormatter={cfgTickFormatter(cfg, 'x') || undefined} scale={cfgLogScale(cfg, 'x')}
-                  label={cfgAxisLabel(cfg, 'x', rmsdAxisTitle, 10)} />
-                <YAxis type="number" dataKey="affinity" name="Energy" tick={tickTextProps(cfg)}
-                  domain={[(dockDom(cfg.yMin) ?? 'auto'), (dockDom(cfg.yMax) ?? 'auto')]}
-                  tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} scale={cfgLogScale(cfg, 'y')}
-                  label={cfgAxisLabel(cfg, 'y', energyAxisTitle, 0)} />
-                <Tooltip cursor={{ strokeDasharray: '3 3' }} />
-                <Scatter data={rmsdData} fill={seriesColorFor(cfg, 'scatter', 0, 1)} />
-              </ScatterChart>
-            </ResponsiveContainer>
-          </ChartInspector>
-          {rmsdData.length === 0 && (
-            <p className="text-xs text-slate-400 italic text-center mt-2">
-              {missingEnergy
-                ? `No score in the results table: the Y axis is ${energyAxisTitle} — see the note under “${energyName} per Pose”.`
-                : 'No RMSD in the results table: import the CAPRI file (l-RMSD / i-RMSD / i-l-RMSD / RMSD) or type a value in a RMSD column above.'}
-            </p>
-          )}
-        </CollapsibleSection>
+        {/* La grandeur du tableau en fonction de l'écart à la référence : un seul
+            nuage (la colonne choisie, sinon l'écart que « Auto » trace), ou UN
+            NUAGE PAR ÉCART du tableau quand « All deviations » est demandé. */}
+        {plottedSeries
+          ? plottedSeries.map((s, i) => scatterCard({
+            key: s.value,
+            short: s.short,
+            axisTitle: s.axisTitle,
+            points: s.points,
+            containerRef: i === 0 ? scatterRef : null
+          }))
+          : scatterCard({
+            key: 'auto',
+            short: rmsdTitleShort,
+            axisTitle: rmsdAxisTitle,
+            points: rmsdData,
+            containerRef: scatterRef
+          })}
+        {plottedPoints === 0 && (
+          <p className="text-xs text-slate-400 italic text-center mt-2">{noRmsdNote}</p>
+        )}
 
         {/* Energy breakdown stacked bar */}
         <CollapsibleSection title="Energy Component Breakdown" icon="🔋" defaultOpen={false}>

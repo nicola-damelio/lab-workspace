@@ -39,6 +39,10 @@
        étiquettes et le titre lisent cette colonne au lieu de laisser le
        graphique vide ; les deux bornes de RMSD de Vina / AutoDock comptent
        comme un écart à la référence.
+     • page Docking : l'abscisse du nuage est NOMMABLE — l'i-RMSD d'abord par
+       défaut (DEVIATION_PLOT_KEYS), n'importe quelle colonne du fichier à la
+       main (« col:Ligand_dev » comprise), ou TOUTES les colonnes d'écart du
+       tableau à la fois (un nuage par écart).
 
    Les fonctions pures de DockingData.jsx sont RÉELLEMENT exécutées (extraction
    + new Function, comme _docking_sanity.cjs) ; le reste est vérifié sur la
@@ -80,25 +84,33 @@ const { parseCapriTsv, posesFromCapri, parseDockingValue, normMetricColumn,
   poseBindingEnergy, poseDeviation, haddockScoreTerms, CAPRI_RAW_PREFIX,
   poseRawMetric, LEGACY_POSE_KEYS, poseMetricValue, capriColumnMetricKey,
   chartEnergyMetricKey, poseChartValue, poseRawColumnValue,
-  unclaimedColumnMatching, deviationColumnOf, energyColumnOf } = new Function(
+  unclaimedColumnMatching, deviationColumnOf, energyColumnOf,
+  DEVIATION_PLOT_KEYS, ENERGY_PLOT_KEYS, PLOT_SOURCE_PREFIX, PLOT_SOURCE_ALL,
+  plotSourceOptions, plotSourceLabel, plotSourceValue } = new Function(
   [grab('parseCapriTsv', '\n};'), grab('CAPRI_METRIC_SYNONYMS', '\n};'),
    grab('normMetricColumn', ';'), grab('posesFromCapri', '\n};'),
    grab('parseDockingValue', '\n};'), grab('DOCKING_METRICS', '\n];'),
    grab('dockingMetricOf', '\n};'), grab('dockingMetricLabel', ';'),
    grab('dockingMetricUnit', ';'), grab('poseBindingEnergy', '\n};'),
+   grab('DEVIATION_PLOT_KEYS', ';'), grab('ENERGY_PLOT_KEYS', ';'),
    grab('poseDeviation', '\n};'), grab('haddockScoreTerms', '\n};'),
    grab('CAPRI_RAW_PREFIX', ';'), grab('poseRawMetric', '\n};'),
    grab('LEGACY_POSE_KEYS', '\n};'), grab('poseMetricValue', '\n};'),
    grab('capriColumnMetricKey', '\n};'), grab('chartEnergyMetricKey', ';'),
    grab('poseChartValue', '\n};'), grab('poseRawColumnValue', ';'),
    grab('unclaimedColumnMatching', '\n};'), grab('deviationColumnOf', ';'),
-   grab('energyColumnOf', ';')].join('\n')
+   grab('energyColumnOf', ';'), grab('PLOT_SOURCE_PREFIX', ';'),
+   grab('PLOT_SOURCE_ALL', ';'),
+   grab('plotSourceOptions', '\n};'), grab('plotSourceLabel', '\n};'),
+   grab('plotSourceValue', '\n};')].join('\n')
   + '\nreturn { parseCapriTsv, posesFromCapri, parseDockingValue, normMetricColumn,'
   + ' DOCKING_METRICS, dockingMetricOf, dockingMetricLabel, dockingMetricUnit,'
   + ' poseBindingEnergy, poseDeviation, haddockScoreTerms, CAPRI_RAW_PREFIX,'
   + ' poseRawMetric, LEGACY_POSE_KEYS, poseMetricValue, capriColumnMetricKey,'
   + ' chartEnergyMetricKey, poseChartValue, poseRawColumnValue,'
-  + ' unclaimedColumnMatching, deviationColumnOf, energyColumnOf };'
+  + ' unclaimedColumnMatching, deviationColumnOf, energyColumnOf,'
+  + ' DEVIATION_PLOT_KEYS, ENERGY_PLOT_KEYS, PLOT_SOURCE_PREFIX, PLOT_SOURCE_ALL,'
+  + ' plotSourceOptions, plotSourceLabel, plotSourceValue };'
 )();
 
 eq(normMetricColumn('RMSD l.b.'), 'rmsdlb', 'les noms de colonnes sont comparés sous forme canonique');
@@ -120,7 +132,7 @@ eq(poses[0].mode, 1, 'le rang CAPRI devient le mode');
 eq(poses[0].label, 'cluster_1_1.pdb', 'le nom de modèle (dernier segment du chemin) devient le label');
 eq(poses[0].program, 'haddock', 'le programme est HADDOCK');
 eq(poses[0].affinity, -52.31, 'la colonne « score » alimente le score du programme (graphique de liaison)');
-eq(poses[0].lrmsd, 0, 'la colonne « lrmsd » alimente l-RMSD (Å) — l’abscisse du nuage Énergie vs RMSD');
+eq(poses[0].lrmsd, 0, 'la colonne « lrmsd » alimente l-RMSD (Å) — un écart que le nuage sait tracer');
 eq(poses[0].ilrmsd, 0, 'la colonne « ilrmsd » alimente l’i-l-RMSD (Å)');
 eq(poses[0].energy_air, -15.2, 'la colonne « air » alimente AIR (termes HADDOCK)');
 eq(poses[0].bsa, 1240.5, 'la colonne « bsa » alimente BSA (termes HADDOCK)');
@@ -255,12 +267,19 @@ eq(poseDeviation({ rmsd_lb: 1.5, rmsd_ub: 2.5 }), 1.5,
 
 /* Le nuage, tel que la section le construit : le nombre de points est ce que
    l’utilisateur voit. Énergie ET RMSD à l’écran, aucun point : le cas rapporté. */
-const pointsOf = (columns, poses) => {
+const pointsOf = (columns, poses, x = '', y = '') => {
   const dev = poses.some((p) => poseDeviation(p) !== null) ? null : deviationColumnOf(columns);
   const ene = poses.some((p) => poseChartValue(p, 'affinity', 'haddock') !== null) ? null : energyColumnOf(columns);
-  return poses.filter((p) => (poseChartValue(p, 'affinity', 'haddock')
-    ?? parseDockingValue(poseRawColumnValue(p, ene))) !== null
-    && (poseDeviation(p) ?? parseDockingValue(poseRawColumnValue(p, dev))) !== null).length;
+  const point = (p) => {
+    const energy = y
+      ? plotSourceValue(p, y, 'energy', 'haddock')
+      : (poseChartValue(p, 'affinity', 'haddock') ?? parseDockingValue(poseRawColumnValue(p, ene)));
+    const deviation = x
+      ? plotSourceValue(p, x, 'deviation', 'haddock')
+      : (poseDeviation(p) ?? parseDockingValue(poseRawColumnValue(p, dev)));
+    return energy !== null && deviation !== null;
+  };
+  return poses.filter(point).length;
 };
 const RAW_DEV = posesFromCapri(parseCapriTsv([
   'Model\tHADDOCK score\trmsd_lig',
@@ -275,6 +294,58 @@ eq(pointsOf(['Model', 'HADDOCK score', 'rmsd_lig'], RAW_DEV), 2,
 const UPPER_ONLY = posesFromCapri(parseCapriTsv('Model\tHADDOCK score\tRMSD u.b.\ncluster_1_1.pdb\t-52.31\t2.5'));
 eq(pointsOf(['Model', 'HADDOCK score', 'RMSD u.b.'], UPPER_ONLY), 1,
   'une table qui ne porte que la borne supérieure place quand même son point');
+/* ══ 1e. L'ABSCISSE : L'ÉCART CHOISI, OU TOUS LES ÉCARTS ═══════════════════
+   L'abscisse « Auto » suit DEVIATION_PLOT_KEYS : l'i-RMSD d'abord (l'écart de
+   qualité de l'interface), puis le l-RMSD, les bornes de Vina / AutoDock,
+   l'i-l-RMSD, le RMSD. Un fichier dont la colonne d'écart porte un nom qu'aucun
+   synonyme ne couvre (« Ligand_dev ») se choisit à la main, et « All
+   deviations » trace UN NUAGE PAR ÉCART du tableau : aucun nom de colonne ne
+   peut plus laisser le nuage vide. */
+eq(DEVIATION_PLOT_KEYS[0], 'irmsd', 'l’i-RMSD est le PREMIER écart tracé par défaut');
+eq(DEVIATION_PLOT_KEYS.slice(1, 3), ['lrmsd', 'rmsd_lb'],
+  '…puis le l-RMSD, puis les bornes de Vina / AutoDock');
+eq(PLOT_SOURCE_ALL, 'all', '« toutes les colonnes d’écart » a sa valeur, distincte des sources');
+eq(poseDeviation({ irmsd: 0.5, lrmsd: 1.2, rmsd: 3 }), 0.5,
+  'une table qui porte l’i-RMSD et le l-RMSD trace l’i-RMSD');
+eq(poseDeviation({ lrmsd: 1.2, rmsd: 3 }), 1.2, 'sans i-RMSD, c’est le l-RMSD qui mène');
+
+const FULL_CAPRI = posesFromCapri(parseCapriTsv([
+  'structure\tscore\tirmsd\tlrmsd\tilrmsd\trmsd',
+  'run1/cluster_1_1.pdb\t-52.31\t0.512\t0.912\t1.404\t1.879',
+  'run1/cluster_1_2.pdb\t-48.90\t0.734\t1.234\t2.015\t2.512'
+].join('\n')));
+const FULL_COLUMNS = ['structure', 'score', 'irmsd', 'lrmsd', 'ilrmsd', 'rmsd'];
+eq(pointsOf(FULL_COLUMNS, FULL_CAPRI), 2, 'un capri_ss.tsv complet place ses points tout seul');
+eq(poseDeviation(FULL_CAPRI[0]), 0.512, '…avec l’i-RMSD en abscisse par défaut');
+eq(pointsOf(FULL_COLUMNS, FULL_CAPRI, 'metric:rmsd'), 2, 'un autre écart se choisit dans le sélecteur');
+eq(pointsOf(FULL_COLUMNS, FULL_CAPRI, 'metric:rmsd', 'metric:energy_vdw'), 0,
+  '…et une métrique sans valeur ne fabrique aucun point (le score HADDOCK n’est pas une énergie vdW)');
+const X_METRICS = plotSourceOptions(FULL_COLUMNS, FULL_CAPRI, 'deviation', 'haddock')
+  .filter((o) => o.value.startsWith(PLOT_SOURCE_PREFIX.metric));
+eq(X_METRICS.length, 4, '« All deviations » propose les quatre écarts que le tableau porte');
+eq(X_METRICS.map((o) => o.label), ['i-RMSD (Å)', 'l-RMSD (Å)', 'i-l-RMSD (Å)', 'RMSD (Å)'],
+  '…nommés : chaque nuage dit quel écart il trace');
+eq(X_METRICS.map((o) => FULL_CAPRI.filter((p) => plotSourceValue(p, o.value, 'deviation', 'haddock') !== null).length),
+  [2, 2, 2, 2], '…et chacun a ses points (un nuage par écart, aucun vide)');
+
+/* Le cas rapporté : une colonne d'écart qu'aucune devinette ne peut reconnaître.
+   Le tableau l'affiche, le sélecteur la propose (« col: ») et le nuage se
+   remplit dès qu'elle est choisie. */
+const UNKNOWN_DEV = posesFromCapri(parseCapriTsv([
+  'Model\tHADDOCK score\tLigand_dev',
+  'cluster_1_1.pdb\t-52.31\t1.42',
+  'cluster_1_2.pdb\t-48.90\t2.05'
+].join('\n')));
+eq(poseDeviation(UNKNOWN_DEV[0]), null, '« Ligand_dev » n’est devinable par personne');
+eq(pointsOf(['Model', 'HADDOCK score', 'Ligand_dev'], UNKNOWN_DEV), 0, 'sans choix, ce nuage est vide');
+eq(plotSourceLabel(plotSourceOptions(['Model', 'HADDOCK score', 'Ligand_dev'], UNKNOWN_DEV, 'deviation', 'haddock'), 'col:Ligand_dev'),
+  'Ligand_dev — column of the imported file', '…mais le sélecteur propose la colonne');
+eq(pointsOf(['Model', 'HADDOCK score', 'Ligand_dev'], UNKNOWN_DEV, 'col:Ligand_dev'), 2,
+  '…et la colonne choisie remplit le nuage');
+eq(plotSourceLabel([{ value: 'col:Ligand_dev', label: 'x' }], 'metric:irmsd'), '',
+  'un choix qui n’existe plus revient à Auto (jamais une source inventée)');
+
+
 
 /* ══ 2. LES DEUX IMPORTS REMPLISSENT LE MÊME TABLEAU ══════════════════════ */
 has(DATA, 'poses: posesFromCapri(capri),', '[capri_ss.tsv] un fichier importé seul remplit AUSSI le tableau');
@@ -290,19 +361,41 @@ has(SEC, 'const v = poseMetricValue(p, m.key, d.dockingProgram);',
   '…avec la lecture partagée des valeurs (colonne CAPRI brute + ancienne clé de la métrique)');
 has(SEC, 'const energyKey = chartEnergyMetricKey(rows);',
   'la grandeur tracée est celle du tableau (score, sinon énergie totale)');
-has(SEC, 'const rowEnergy = (p) => metricEnergy(p) ?? parseDockingValue(poseRawColumnValue(p, energyFromColumn));',
-  '…traduite en nombre par poseChartValue (jamais a.u. sur un axe kcal/mol), la colonne brute en dernier recours');
-has(SEC, 'const rowDeviation = (p) => metricDeviation(p) ?? parseDockingValue(poseRawColumnValue(p, deviationFromColumn));',
-  'l’abscisse du nuage retombe sur la colonne du fichier quand la métrique est vide');
+has(SEC, 'const rowEnergy = (p) => (yChoice', 'l’ordonnée du nuage part de la source CHOISIE dans le panneau, sinon du tableau');
+has(SEC, 'const rowDeviation = (p) => (xChoice', '…idem pour l’abscisse');
+has(SEC, 'const xOptions = plotSourceOptions(capriColumns, rows, \'deviation\', d.dockingProgram);',
+  'les sources de l’axe X sont celles du TABLEAU, pour le programme du fichier');
+has(SEC, 'const yOptions = plotSourceOptions(capriColumns, rows, \'energy\', d.dockingProgram);',
+  '…et celles de l’axe Y');
+has(SEC, 'const xChoice = plotSourceLabel(xOptions, cfg.xColumn) ? cfg.xColumn : \'\';',
+  'un choix d’axe qui n’existe plus retombe sur Auto');
+has(SEC, 'const allDeviations = cfg.xColumn === PLOT_SOURCE_ALL && xMetrics.length > 1;',
+  '« All deviations » demande un nuage par écart — et n’a de sens que s’il y en a plusieurs');
+has(SEC, '<option value="">Auto — {autoRmsdName}</option>',
+  'le sélecteur X NOMME l’écart que « Auto » trace (i-RMSD d’abord)');
+has(SEC, '<option value={PLOT_SOURCE_ALL}>', '…et offre de les tracer tous');
+has(SEC, 'const autoRmsdName = deviationFromColumn || autoDeviationName || \'RMSD\';',
+  'l’écart « Auto » : la colonne du fichier, sinon la première grandeur du tableau');
+has(SEC, 'const autoDeviationKey = DEVIATION_PLOT_KEYS.find(',
+  '…choisie dans DEVIATION_PLOT_KEYS (l’i-RMSD en tête)');
+has(SEC, 'const rmsdSeriesData = allDeviations', 'un nuage par écart quand c’est demandé');
+has(SEC, 'rmsd: plotSourceValue(p, o.value, \'deviation\', d.dockingProgram)',
+  '…chaque nuage relit SON écart avec la lecture du tableau');
+has(SEC, 'const scatterCard = ({ key, short, axisTitle, points, containerRef = null }) => (',
+  'le nuage est rendu une fois par écart (même code, même habillage)');
+has(SEC, 'containerRef: i === 0 ? scatterRef : null', 'le premier nuage garde la référence du panneau');
+has(SEC, 'title={`${energyName} vs. ${short}`}',
+  'le titre du nuage nomme la grandeur et la colonne lues');
+has(SEC, 'label={cfgAxisLabel(cfg, \'x\', axisTitle, 10)}',
+  'l’axe des abscisses est étiqueté de la colonne lue');
 has(SEC, 'const energyFromColumn = rows.some((p) => metricEnergy(p) !== null) ? null : energyColumnOf(capriColumns);',
   'le repli ne sert que si AUCUNE ligne n’a d’énergie par la métrique');
 has(SEC, 'const deviationFromColumn = rows.some((p) => metricDeviation(p) !== null) ? null : deviationColumnOf(capriColumns);',
   '…idem pour l’écart à la référence');
-has(SEC, "title={`${energyName} vs. ${deviationFromColumn || 'RMSD'}`}",
-  'le titre du nuage nomme la grandeur et la colonne lues');
-has(SEC, "label={cfgAxisLabel(cfg, 'x', rmsdAxisTitle, 10)}",
-  'l’axe des abscisses est étiqueté de la colonne lue');
-has(SEC, 'const affinityUnit = energyMetric.unit || unit;', 'l’unité de l’axe suit la métrique tracée');
+has(SEC, '    : autoRmsdName;', 'le titre du nuage suit l’écart que « Auto » trace');
+has(SEC, '? `${deviationFromColumn} (Å)`',
+  'l’axe nomme la colonne du fichier quand c’est elle qui porte l’écart');
+has(SEC, 'const affinityUnit = plottedEnergy.unit || unit;', 'l’unité de l’axe suit la métrique tracée');
 has(SEC, 'poseMetricValue(pose, m.key, program)', '[tableau] une cellule relit la colonne brute / l’ancienne clé');
 has(SEC, 'const capriFedKeys = new Set(capriColumns.map(capriColumnMetricKey).filter(Boolean));',
   'une colonne importée force la métrique qui la porte dans le tableau');

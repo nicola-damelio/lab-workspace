@@ -220,10 +220,13 @@ export const dockingMetricUnit = (metric, program) => dockingMetricOf(metric, pr
    terme HADDOCK (`total`) quand elle existe, l'affinité pour Vina / AutoDock
    (c'est la même chose : leur affinité EST l'énergie de liaison). Pour HADDOCK un
    score en a.u. n'est PAS une énergie : il n'est jamais tracé sur cet axe.
-   `poseDeviation` : l'écart à la référence en Å — le l-RMSD (CAPRI) d'abord,
-   puis les DEUX bornes de Vina / AutoDock (« RMSD l.b. » ET « RMSD u.b. » : les
-   deux s'affichent dans le tableau, donc les deux sont un écart traçable),
-   l'i-RMSD, l'i-l-RMSD et le RMSD. */
+   `poseDeviation` : l'écart à la référence en Å — l'i-RMSD d'abord (c'est la
+   mesure de qualité de l'interface que le nuage « énergie vs RMSD » doit
+   montrer quand le fichier la porte), puis le l-RMSD (CAPRI), les DEUX bornes de
+   Vina / AutoDock (« RMSD l.b. » ET « RMSD u.b. » : les deux s'affichent dans le
+   tableau, donc les deux sont un écart traçable), l'i-l-RMSD et le RMSD global.
+   Les autres restent traçables : le panneau laisse choisir n'importe lequel
+   (voir plotSourceOptions) ou les tracer TOUS (voir PLOT_SOURCE_ALL). */
 export const poseBindingEnergy = (p, program) => {
   if (!p) return null;
   const total = parseDockingValue(p.energy_total);
@@ -232,11 +235,31 @@ export const poseBindingEnergy = (p, program) => {
   return parseDockingValue(p.affinity);
 };
 
+/* Les grandeurs qu'un axe PEUT tracer, dans l'ordre de préférence : les écarts à
+   la référence (Å) pour l'abscisse du nuage, l'énergie totale puis l'affinité
+   (kcal/mol) pour l'ordonnée. C'est aussi la liste — et l'ORDRE — que propose le
+   choix MANUEL de l'axe (voir plotSourceOptions) : un fichier qui nomme ses
+   colonnes autrement que les synonymes connus s'y voit autant que les autres.
+   L'i-RMSD vient en tête : c'est l'écart à la référence que trace le nuage par
+   défaut (« Auto ») quand le tableau le porte ; un autre écart se choisit dans
+   le sélecteur, et « toutes les colonnes d'écart » se tracent d'un coup
+   (PLOT_SOURCE_ALL). */
+export const DEVIATION_PLOT_KEYS = ['irmsd', 'lrmsd', 'rmsd_lb', 'ilrmsd', 'rmsd', 'rmsd_ub'];
+export const ENERGY_PLOT_KEYS = ['energy_total', 'affinity'];
+
+/** La valeur du choix d'axe qui demande de tracer TOUS les écarts à la
+ *  référence du tableau : un nuage par écart (i-RMSD, l-RMSD, i-l-RMSD, RMSD…),
+ *  tous contre la même énergie. « Auto », lui, garde la première grandeur de
+ *  DEVIATION_PLOT_KEYS que le tableau porte. */
+export const PLOT_SOURCE_ALL = 'all';
+
 export const poseDeviation = (p) => {
   if (!p) return null;
-  return parseDockingValue(p.lrmsd) ?? parseDockingValue(p.rmsd_lb)
-    ?? parseDockingValue(p.irmsd) ?? parseDockingValue(p.ilrmsd)
-    ?? parseDockingValue(p.rmsd) ?? parseDockingValue(p.rmsd_ub);
+  for (const key of DEVIATION_PLOT_KEYS) {
+    const v = parseDockingValue(p[key]);
+    if (v !== null) return v;
+  }
+  return null;
 };
 
 /** Les termes du score HADDOCK PRÉSENTS dans une ligne (kcal/mol), dans l'ordre
@@ -395,15 +418,24 @@ export const CAPRI_METRIC_SYNONYMS = {
   // ── Le score du programme (a.u. pour HADDOCK, kcal/mol pour Vina/AutoDock) ──
   affinity: ['haddockscore', 'scorehaddock', 'score', 'dockingscore', 'scoring'],
   // ── Écarts à la structure de référence (Å) ─────────────────────────────────
-  irmsd: ['irmsd', 'interfacer_rmsd', 'interfacermsd'],
-  lrmsd: ['lrmsd', 'ligandrmsd', 'rmsdligand'],
-  ilrmsd: ['ilrmsd', 'interfaceligandrmsd'],
-  rmsd: ['rmsd', 'rmsdall', 'rmsdfrombest', 'rmsdref'],
+  // Les formes courtes (« rms », « lrms », « irms ») sont celles des scripts de
+  // docking (Rosetta, ProDy…) : la comparaison est EXACTE sur la forme
+  // canonique, elles ne peuvent donc pas capturer une autre colonne.
+  irmsd: ['irmsd', 'interfacer_rmsd', 'interfacermsd', 'irms'],
+  lrmsd: ['lrmsd', 'ligandrmsd', 'rmsdligand', 'lrms', 'ligandrms'],
+  ilrmsd: ['ilrmsd', 'interfaceligandrmsd', 'ilrms'],
+  rmsd: ['rmsd', 'rmsdall', 'rmsdfrombest', 'rmsdref', 'rms'],
   // ── Bornes de RMSD de Vina / AutoDock (Å) ──────────────────────────────────
   rmsd_lb: ['rmsdlb', 'rmsdlower', 'rmsdlowerbound'],
   rmsd_ub: ['rmsdub', 'rmsdupper', 'rmsdupperbound'],
   // ── Termes énergétiques et restreintes (kcal/mol) ──────────────────────────
-  energy_total: ['total', 'etotal', 'energytotal', 'totalenergy'],
+  // « dG » (« deltag » sous forme canonique), « binding energy », « free
+  // energy » : les noms usuels de l'énergie libre de liaison. Une colonne qui
+  // ne s'écrirait que « ΔG » se choisit à la main dans le panneau (voir
+  // plotSourceOptions) : sa forme canonique est « g », une lettre seule, trop
+  // ambiguë pour être réclamée automatiquement.
+  energy_total: ['total', 'etotal', 'energytotal', 'totalenergy', 'dg', 'deltag',
+    'bindingenergy', 'freeenergy'],
   energy_vdw: ['vdw', 'evdw', 'vdwenergy', 'vanderwaals'],
   energy_elec: ['elec', 'eelec', 'elecenergy', 'electrostatics', 'electrostatic'],
   energy_desolv: ['desolv', 'edesolv', 'desolvation', 'desolvenergy'],
@@ -739,6 +771,67 @@ export const deviationColumnOf = (columns) =>
 /** La colonne « énergie » d'un fichier importé (kcal/mol ou a.u.). */
 export const energyColumnOf = (columns) =>
   unclaimedColumnMatching(columns, ['total', 'energy', 'score', 'affinity']);
+
+/* ── CHOISIR À LA MAIN LA GRANDEUR DE CHAQUE AXE ────────────────────────────
+   Le repli ci-dessus lit la colonne qui porte MANIFESTEMENT la grandeur (son
+   nom contient « rmsd », « total »…). Un fichier qui la nomme autrement
+   (« ΔG », « E_score », « rmsd_lig ») ne peut pas être deviné : le panneau
+   propose donc LA LISTE des grandeurs que le tableau sait lire — les métriques
+   de l'axe qui ont une valeur, puis CHAQUE colonne importée qui porte un
+   nombre — et le choix de l'utilisateur prime sur toute devinette.
+   `plotSourceValue` relit la source choisie avec LA MÊME lecture que le
+   tableau : la métrique du tableau (`poseMetricValue` / `poseChartValue`), ou
+   la colonne brute de l'import (`poseRawColumnValue`). */
+export const PLOT_SOURCE_PREFIX = { metric: 'metric:', column: 'col:' };
+
+/** Les sources traçables d'un axe, prêtes pour un <select> : les métriques de
+ *  l'axe (`kind` = 'deviation' | 'energy') qui ont une valeur dans le tableau,
+ *  puis chaque colonne du fichier importé qui porte un nombre. */
+export const plotSourceOptions = (columns, rows, kind = 'deviation', program) => {
+  const list = Array.isArray(rows) ? rows : [];
+  const out = [];
+  (kind === 'energy' ? ENERGY_PLOT_KEYS : DEVIATION_PLOT_KEYS).forEach((key) => {
+    const metric = DOCKING_METRICS.find((m) => m.key === key);
+    if (!metric) return;
+    if (!list.some((p) => parseDockingValue(poseMetricValue(p, key, program)) !== null)) return;
+    const m = dockingMetricOf(metric, program);
+    out.push({
+      value: `${PLOT_SOURCE_PREFIX.metric}${key}`,
+      label: m.unit ? `${m.label} (${m.unit})` : m.label
+    });
+  });
+  (Array.isArray(columns) ? columns : []).forEach((c) => {
+    if (!c) return;
+    if (!list.some((p) => parseDockingValue(poseRawColumnValue(p, c)) !== null)) return;
+    out.push({
+      value: `${PLOT_SOURCE_PREFIX.column}${c}`,
+      label: `${c} — column of the imported file`
+    });
+  });
+  return out;
+};
+
+/** Le libellé de la source choisie ('' quand elle n'existe plus dans la liste :
+ *  le fichier a changé, on revient alors au comportement automatique). */
+export const plotSourceLabel = (options, value) => {
+  const hit = (Array.isArray(options) ? options : []).find((o) => o.value === value);
+  return hit ? hit.label : '';
+};
+
+/** La valeur d'une source pour une pose — la lecture du tableau, à la lettre. */
+export const plotSourceValue = (pose, source, kind, program) => {
+  const s = String(source || '');
+  if (s.startsWith(PLOT_SOURCE_PREFIX.column)) {
+    return parseDockingValue(poseRawColumnValue(pose, s.slice(PLOT_SOURCE_PREFIX.column.length)));
+  }
+  if (s.startsWith(PLOT_SOURCE_PREFIX.metric)) {
+    const key = s.slice(PLOT_SOURCE_PREFIX.metric.length);
+    return kind === 'energy'
+      ? poseChartValue(pose, key, program)
+      : parseDockingValue(poseMetricValue(pose, key, program));
+  }
+  return null;
+};
 
 /* ── LA GRANDEUR QUE TRACE LE GRAPHIQUE D'ÉNERGIE ───────────────────────────
    Le graphique trace ce que LE TABLEAU porte réellement : l'énergie de liaison
@@ -1134,7 +1227,11 @@ export const DEFAULT_DOCKING_CHART_STYLE = {
   yMin: '',
   yMax: '',
   xAxisLabel: '',
-  yAxisLabel: ''
+  yAxisLabel: '',
+  // La grandeur de chaque axe du nuage, choisie dans le panneau ('' = Auto :
+  // la métrique du tableau, puis la colonne du fichier qui la porte).
+  xColumn: '',
+  yColumn: ''
 };
 
 // ================= GENERIC CHART HELPERS =================
@@ -1211,6 +1308,13 @@ export default {
   unclaimedColumnMatching,
   deviationColumnOf,
   energyColumnOf,
+  DEVIATION_PLOT_KEYS,
+  ENERGY_PLOT_KEYS,
+  PLOT_SOURCE_PREFIX,
+  PLOT_SOURCE_ALL,
+  plotSourceOptions,
+  plotSourceLabel,
+  plotSourceValue,
   chartEnergyMetricKey,
   poseChartValue,
 

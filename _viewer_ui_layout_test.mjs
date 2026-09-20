@@ -185,14 +185,18 @@ has('<option value="cartoon">Cartoon</option>', '[A] Backbone : Cartoon');
 has('<option value="trace">Trace (C-α)</option>', '[A] Backbone : Trace (C-α)');
 has('<option value="tube">Tube</option>', '[A] Backbone : Tube');
 has('<option value="hide">Hide</option>', '[A] Backbone : Hide');
-has('<option value="licorice">Sticks</option>', '[A] Side chains : Sticks');
+has('<option value="licorice">Licorice (sticks)</option>', '[A] Side chains : Licorice (= les sticks)');
 has('<option value="line">Lines (saves resources)</option>', '[A] Side chains : Lines (économique)');
 has('<option value="spacefill">Spacefill</option>', '[A] Side chains : Spacefill');
 has('<option value="solid">Solid</option>', '[A/B/D/E] Surface : Solid');
 has('<option value="transparent">Transparent</option>', '[A/B/D/E] Surface : Transparent');
 has('<option value="mesh">Mesh (wireframe)</option>', '[A/B/D/E] Surface : Mesh');
 has('<option value="esp">Electrostatic Potential (ESP)</option>', '[A/B/D] Surface colour : ESP');
-has('🎨 {showColoursPanel ? \'Hide colours\' : \'Colours…\'}', '[A/B] outil Couleurs intégré');
+// Les deux menus ouvrent désormais DEUX panneaux différents : A le panneau
+// « 2° structure / surlignages » (protéines), B le panneau propre aux acides
+// nucléiques (phosphate · pentose · bases). Le bouton est rendu par le même
+// helper pour les deux menus.
+has("🎨 {open ? 'Hide colours' : 'Colours…'}", '[A/B] outil Couleurs intégré (un panneau par menu)');
 has('🔢 {showRenumberPanel ? \'Hide renumber\' : \'Renumber…\'}', '[A/B] outil Renumber intégré');
 // B · Nucleic
 has('<option value="trace">Phosphate Trace (P)</option>', '[B] Phosphate Trace');
@@ -225,9 +229,13 @@ has("onChange={(e) => setCatStyle('lipid', 'glycerol', e.target.value)}", '[lipi
 has("const SUGAR_RES_SEL = '[GLC] or [NAG] or [MAN] or [BMA] or [SIA] or [GAL] or [FUC]';", '[sucres] liste explicite de resnames');
 has('const SUGAR_SEL = `saccharide or ${SUGAR_RES_SEL}`;', '[sucres] mot-clé RÉEL de NGL 2.4 (pas `carbohydrate`) + liste');
 has("not (${sugarSele})", '[ligands] le menu des ligands exclut les sucres');
-has("addSurface(sugarSele, cs.sugar.surface, 'default', cs.sugar.surfaceOpacity);", '[sucres] surface propre au menu des sucres');
+/* ── 6. Les surfaces : couleur choisie PAR LE MENU (défaut / custom / ESP) ───
+   addSurface reçoit désormais la CATÉGORIE : elle lit elle-même le mode de
+   surface, la couleur et l'opacité de ce menu, donc les six menus (lipides
+   compris) peuvent colorer leur surface — et plus seulement trois d'entre eux. */
+has("addSurface(sugarSele, 'sugar', cs.sugar.surfaceOpacity);", '[sucres] surface propre au menu des sucres');
 // 3. Surface d'eau + opacité.
-has("addSurface('water', cs.other.surface, 'default', cs.other.surfaceOpacity);", '[eau] la surface s’applique à la sélection `water`, toute seule');
+has("addSurface('water', 'other', cs.other.surfaceOpacity);", '[eau] la surface s’applique à la sélection `water`, toute seule');
 has("nglSeleCountCached(comp.structure, 'water') !== 0", '[eau] …même quand les atomes d’eau ne sont dans aucune autre sélection');
 has("transparent: true, opacity: op", '[opacité] NGL reçoit transparent: true + opacity');
 has("const renderSurfaceOpacity = (cat, label = 'Opacity') => (", '[opacité] un curseur par menu');
@@ -325,16 +333,22 @@ has("setPymolScript(typeof entry === 'string' ? entry : (entry.script || ''))",
   '[conservé] chargement d’un script PyMOL de la Library');
 
 /* ── 8. ESP branché dans les menus + un seul jeu de limites ─────────────── */
-has("setSurfaceColor('protein', e.target.value)", '[ESP] menu A → Surface colour');
-has("setSurfaceColor('nucleic', e.target.value)", '[ESP] menu B → Surface colour');
-has("setSurfaceColor('organic', e.target.value)", '[ESP] menu D → Surface colour');
-has("if (value === 'esp' && (!next.surface || next.surface === 'hide')) next.surface = 'transparent';",
-  '[ESP] choisir ESP allume la surface : le choix ne reste jamais sans effet');
+// La couleur de surface est rendue par UN helper partagé, appelé par les six
+// menus (setSurfaceColor reçoit donc la catégorie, plus un menu précis).
+has("const renderSurfaceColour = (cat, label) => {", '[ESP] un SEUL sélecteur de couleur de surface pour les six menus');
+has("{renderSurfaceColour('protein', 'protein')}", '[ESP] menu A → Surface colour');
+has("{renderSurfaceColour('nucleic', 'nucleic')}", '[ESP] menu B → Surface colour');
+has("{renderSurfaceColour('organic', 'ligand')}", '[ESP] menu E → Surface colour');
+has("onChange={(e) => setSurfaceColor(cat, e.target.value)}", '[ESP] …branché sur setSurfaceColor(cat, …)');
+has("if ((value === 'esp' || value === 'custom') && (!next.surface || next.surface === 'hide')) next.surface = 'transparent';",
+  '[ESP/couleur] choisir ESP ou une couleur unie allume la surface : le choix ne reste jamais sans effet');
 has("const espColorParams = () => {", '[ESP] un SEUL générateur de couleurs ESP');
 has("return { colorScheme: 'electrostatic', colorScale: 'rwb', colorDomain: [-neg, pos] };",
   '[ESP] même schéma NGL que le bouton ⚡ (electrostatic + rwb + domaine ±kcal/mol)');
-has('const colorParams = colorMode === \'esp\' ? espColorParams() : { colorScheme: \'element\' };',
-  '[ESP] les surfaces de catégorie réutilisent ce générateur');
+has('const colorParams = m.surfaceColor === \'esp\'',
+  '[ESP] les surfaces de catégorie réutilisent ce générateur (défaut / custom / ESP)');
+has('const customHex = m.surfaceColor === \'custom\' ? flatHex(m.surfaceColorHex) : null;',
+  '[couleur] « Custom… » = une couleur unie pour toute la surface du menu');
 has('catEspRepsRef.current.set(comp, []);', '[ESP] les surfaces ESP sont réenregistrées à chaque reconstruction');
 has('catEspRepsRef.current.forEach((list) => {', '[ESP] ⚡ Range recolore aussi les surfaces de catégorie');
 has('{(espOnSelected || catEspActive) && (', '[ESP] le panneau Range s’affiche pour les deux entrées ESP');
@@ -375,9 +389,9 @@ has('const applyCurrentStyleTo = useCallback((comp, baseReps) => {', '[rendu] le
 has('return buildCategoryReps(comp);', '[rendu] …sans règle différente du rendu principal');
 has('const catSelectionsFor = (structure) => {', '[rendu] sélections protein / nucleic / lipid / organic / others');
 has("const sels = catSelectionsFor(comp.structure) || fallbackSels;", '[rendu] …réutilisées par le constructeur');
-has("else if (bb === 'trace') add('trace', { sele: sels.protein, color: 'residueindex', quality: 'high' });",
-  '[rendu] Trace (C-α) = représentation NGL « trace » réelle');
-has("if (bases === 'slab') add('base', { sele: sels.nucleic, colorScheme: 'resname' });",
+has("else if (bb === 'trace') add('trace', { sele: sels.protein, ...col, quality: 'high' });",
+  '[rendu] Trace (C-α) = représentation NGL « trace » réelle (couleur du menu A)');
+has("if (bases === 'slab') add('base', { sele: sels.nucleic, ...baseSlabCol, ...stickGeom('nucleic', BASE_BOND_RADIUS) });",
   '[rendu] Filled rings = représentation NGL « base » réelle');
 has(": add('surface', { sele, ...colorParams, opacity: 1 });", '[rendu] surface solide');
 has("? add('surface', { sele, ...colorParams, wireframe: true, opacity: 1 })", '[rendu] surface « Mesh » = wireframe réel');
