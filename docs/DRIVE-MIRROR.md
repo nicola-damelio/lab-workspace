@@ -472,6 +472,14 @@ téléchargement, jamais à justifier une absence.
    (`lab:drive-connected`), plus un bouton « ⬇️ Restore from Drive » comme repli
    explicite.
 
+La copie de référence a deux formes, selon la **nature** de la donnée : une
+archive **JSON gzip** quand c'est une *valeur* (spectre, colonnes de spectres,
+textes PDB) — `archiveRestoreJson()` / `restoreJsonFor()` — et le **fichier
+lui-même** quand c'est un *média* (vidéos et clips de microscopie) —
+`restoreRawFileFor()`, qui cherche un fichier brut par pointeur, registre local
+puis nom. Dans les deux cas c'est le Drive qui fait foi ; la cache ne fait
+qu'éviter un téléchargement.
+
 L'écriture est **asynchrone** : un pointeur qui arrive après un changement
 d'onglet / de condition est mis en attente et posé sur **sa** page quand elle
 revient (`placeRestorePointer` / `takePendingRestorePointer`, dans le noyau) —
@@ -494,6 +502,13 @@ place d'un spectre 1D. Un fichier tombé dans la **corbeille** Drive est d'abord
 remis en place (ses octets sont intacts). Un fichier dont le `kind` ne
 correspond pas est **refusé**. La lecture ne résout (donc ne crée) aucun
 dossier : une page ouverte ne sème pas d'arborescence fantôme.
+
+Pour un **média** (vidéo de microscope, clip), la clé n'est pas un nom d'archive
+mais le nom du fichier déposé : `matchesRawName()` compare le **radical**
+(slugifié comme les noms Drive) et l'**extension** quand les deux en ont une —
+un média consommé depuis un autre poste n'est donc jamais remplacé par le `.wmv`
+d'origine quand c'est le `.mp4` converti qu'on cherche, ni par le clip d'une
+autre expérience.
 
 ### Modules branchés
 
@@ -526,9 +541,20 @@ dossier : une page ouverte ne sème pas d'arborescence fantôme.
   il reste le modèle, rien n'a régressé.
 * **MD** — `MDSections.jsx` rapatrie déjà structure et trajectoire du Drive
   quand la cache locale est vide (`downloadArchivedMDFile`).
-* Reste à brancher sur le même mécanisme : **microscopie** (vidéos).
-  La mécanique ne change pas : archiver une copie JSON au moment de l'import,
-  poser le pointeur sur le test, appeler `useDriveAutoRestore` dans la page.
+* **Microscopie (vidéos de microscope et clips)** — `MicroscopySections.jsx` suit
+  le même mécanisme avec une différence de **nature** : un média n'est pas une
+  série de nombres, c'est un **fichier**. Rien à archiver en JSON (un clip de
+  plusieurs centaines de Mo en base64 serait absurde) : la copie de référence est
+  **le fichier envoyé au Drive à l'import**, et chaque entrée de `msVideos` /
+  `msMovies` ne garde qu'un pointeur minuscule (`drive = { id, name, url }`) plus
+  le nom déclaré à l'envoi (`driveName`, retenu même quand l'envoi part en file de
+  reprise). Le noyau sait donc aussi lire un fichier **brut**
+  (`restoreRawFileFor`), en comparant les noms par **radical + extension** — le
+  `.mp4` converti n'est pas pris pour le `.wmv` d'origine. À l'ouverture de la
+  page Data (vidéos) et de Data Analysis (clips), un média absent de la base du
+  navigateur est re-téléchargé tout seul et remis dans `blobStore` ; les vignettes
+  relisent alors leur blob (`cacheEpoch`). Les deux pages gardent un bouton
+  « ⬇️ Restore from Drive » comme repli explicite.
 
 ### Vérifier soi-même
 
@@ -536,5 +562,5 @@ dossier : une page ouverte ne sème pas d'arborescence fantôme.
   pointeurs en attente, refus des types croisés) et le cycle archivage →
   restauration sur un faux Drive, y compris un pointeur périmé, un fichier mis à
   la corbeille et un autre poste sans registre local ; puis le câblage des
-  modules branchés : NMR 1D, ssNMR, CD et docking.
+  modules branchés : NMR 1D, ssNMR, CD, docking et microscopie.
 

@@ -387,3 +387,124 @@ export const restoreJsonFor = async ({
   }
   return null;
 };
+
+/* ── 7. LIRE UN FICHIER BRUT (un média) ────────────────────────────────────
+   Certaines données lourdes ne sont pas des séries de nombres mais des
+   FICHIERS : les vidéos de microscopie, dont le document du dataset ne porte
+   que la liste des noms (`msVideos`, `msMovies`). En archiver « une copie
+   JSON » n'aurait aucun sens — un clip de plusieurs centaines de Mo en base64
+   serait absurde — : la copie de RÉFÉRENCE est le fichier lui-même, déjà
+   envoyé au Drive à l'import. On cherche donc le même trio pointeur →
+   registre → nom, mais le nom n'est pas `<stem>_<tag>_restore.json.gz` : c'est
+   le nom du média tel qu'il a été déposé (`<titre>_<scientifique>.mp4`), et
+   c'est son RADICAL qui fait foi. */
+
+/** Radical comparable d'un nom de média : « clip final.mp4 » → « clip_final ».
+ *  Le slugage est celui des noms déposés sur le Drive (sanitizeSlug), donc le
+ *  radical du nom d'origine et celui du fichier Drive coïncident — c'est ce qui
+ *  rend la recherche par nom fiable depuis un poste vierge. */
+export const rawStemOf = (name = '') =>
+  sanitizeSlug(String(name || '').replace(/\.[A-Za-z0-9]{1,6}$/, '')).toLowerCase();
+
+/** Extension comparable ('' quand il n'y en a pas). */
+export const rawExtOf = (name = '') => {
+  const m = String(name || '').match(/\.([A-Za-z0-9]{1,6})$/);
+  return m ? m[1].toLowerCase() : '';
+};
+
+/** Vrai quand `candidate` est le média décrit par un des `names` : même
+ *  radical, et même extension quand les deux en ont une (le .mp4 converti
+ *  n'est donc pas pris pour le .wmv d'origine). */
+export const matchesRawName = (candidate = '', names = []) => {
+  const stem = rawStemOf(candidate);
+  if (!stem) return false;
+  const ext = rawExtOf(candidate);
+  return (Array.isArray(names) ? names : [names]).some((name) => {
+    if (rawStemOf(name) !== stem) return false;
+    const want = rawExtOf(name);
+    return !want || !ext || want === ext;
+  });
+};
+
+/** Candidats d'un média : pointeur → registre local → nom sur le cloud. */
+export const findRawCandidates = async ({
+  pointer = null, ctx = {}, names = [], searchCloud = true
+} = {}) => {
+  const wanted = (Array.isArray(names) ? names : [names]).filter(Boolean);
+  const out = [];
+  const seen = new Set();
+  const add = (id, name, source, extra = {}) => {
+    const key = String(id || '');
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push({ id: key, name: String(name || ''), source, ...extra });
+  };
+
+  // a) Le pointeur du média : l'id exact (Nextcloud : l'URL), donc insensible
+  //    au renommage du fichier sur le Drive.
+  if (pointer && (pointer.id || pointer.url || pointer.driveUrl)) {
+    const url = String(pointer.url || pointer.driveUrl || '');
+    const name = pointer.name || wanted[0] || '';
+    if (pointer.id) add(pointer.id, name, 'pointer', { url });
+    else if (url) add(url, name, 'pointer', { url });
+  }
+
+  // b) Le registre local des envois (vide sur un autre poste).
+  try {
+    const reg = getDriveFileRegistry();
+    Object.entries(reg).forEach(([id, entry]) => {
+      if (!entry || entry.deleted) return;
+      if (ctx.test && String(entry.ctx?.test || '') !== String(ctx.test)) return;
+      if (ctx.subsection && String(entry.ctx?.subsection || '') !== String(ctx.subsection)) return;
+      if (!matchesRawName(entry.name, wanted)) return;
+      add(id, entry.name, 'registry', { trashed: !!entry.trashed });
+    });
+  } catch { /* registre illisible : la recherche par nom prend le relais */ }
+
+  // c) Recherche par NOM sur le cloud — ce qui fait marcher un autre poste.
+  if (searchCloud && hasCloudAccess() && wanted.length) {
+    const stems = [];
+    wanted.forEach((name) => {
+      const stem = rawStemOf(name);
+      if (stem && stem.length >= 3 && !stems.includes(stem)) stems.push(stem);
+    });
+    for (const stem of stems) {
+      try {
+        // `stem` sort de sanitizeSlug : ni guillemet ni antislash à échapper.
+        const q = encodeURIComponent(`name contains '${stem}'`);
+        const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name,trashed)&pageSize=50`);
+        if (!res || !res.ok) continue;
+        const json = await res.json();
+        (json.files || []).forEach((file) => {
+          if (!file || !file.id) return;
+          if (!matchesRawName(file.name, wanted)) return;
+          add(file.id, file.name, 'search', { trashed: !!file.trashed });
+        });
+      } catch { /* un terme qui échoue ne doit pas annuler les autres */ }
+    }
+  }
+
+  return out;
+};
+
+/** Toute la lecture d'un média en un appel : `{ file, id, name, source }`.
+ *  `null` = aucun fichier utilisable — l'appelant le DIT à l'utilisateur au
+ *  lieu de laisser une vignette vide. */
+export const restoreRawFileFor = async ({
+  pointer = null, ctx = {}, names = [], mimeType = '', searchCloud = true
+} = {}) => {
+  const wanted = (Array.isArray(names) ? names : [names]).filter(Boolean);
+  const candidates = await findRawCandidates({ pointer, ctx, names: wanted, searchCloud });
+  for (const candidate of candidates) {
+    const name = candidate.name || wanted[0] || 'media';
+    const file = await downloadCloudFile(candidate, { name });
+    if (!file || !file.size) continue;
+    return {
+      file: mimeType ? new File([file], name, { type: mimeType }) : file,
+      id: candidate.id,
+      name,
+      source: candidate.source
+    };
+  }
+  return null;
+};

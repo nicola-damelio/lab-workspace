@@ -35,9 +35,10 @@ OK   _deleted_projects_test.mjs  →  ✅ 46 tests passés (projets supprimés :
 OK   _diag_keys_summary.cjs  →  • "Fig1" drive=true pxObjects=6 images=7 thumbnailsOnly=true addedAt=2026-09-13T01:06:14.160Z updatedAt=2026-09-16T18:54:29.040Z
 OK   _diag_library_move.mjs  →  (aucune)
 OK   _doc_responsive_test.mjs  →  ✅ 46 tests passés (document exporté et page « document » adaptés à la largeur de l’écran)
+OK   _docdump.cjs  →  (no output)
 OK   _docking_sanity.cjs  →  (no output)
 OK   _drive_mirror_test.mjs  →  ✅ 78 tests passés (le Drive est le miroir du programme : rien ne ressuscite)
-OK   _drive_restore_test.mjs  →  142 passed
+OK   _drive_restore_test.mjs  →  183 passed
 OK   _editor_layout_test.cjs  →  _editor_layout_test.cjs — 9 assertions passed
 OK   _esm_test_hook.mjs  →  (no output)
 OK   _experiment_drive_root_test.mjs  →  _experiment_drive_root_test: 41 passed
@@ -84,4 +85,4 @@ OK   _ui_scale_test.cjs  →  ✅ 44/44 checks passed
 OK   _view_scroll_memory_test.cjs  →  ✅ 41/41 checks passed
 OK   _workspace_drive_test.mjs  →  ✅ 55 tests passés (l’espace de travail entier vit sur le Drive)
 OK   _workspace_keys_test.mjs  →  ✅ 37 tests passés (les clés du navigateur vivent aussi sur le Drive)
-total 86, failed 0
+total 87, failed 0

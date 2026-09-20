@@ -17,7 +17,9 @@
    Vérifié ici : la logique pure, le cycle archivage → restauration sur un FAUX
    Drive (y compris un fichier mis à la corbeille et un pointeur périmé), et le
    câblage des modules branchés : NMR 1D (le cas réel signalé), ssNMR (colonnes
-   de spectres solides) et CD (Jasco).
+   de spectres solides), CD (Jasco), docking (textes PDB) et microscopie — ce
+   dernier avec une différence de nature : la copie de référence d'un média est
+   le FICHIER déposé, pas une archive JSON.
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -48,6 +50,17 @@ const MOCKS = {
   driveFetch: async (path) => {
     // Recherche par nom : un fichier de l'AUTRE condition, mis à la corbeille.
     if (String(path).startsWith('/drive/v3/files?')) {
+      const q = decodeURIComponent(String(path)).toLowerCase();
+      // Un MÉDIA (vidéo de microscopie) : retrouvé par son nom, sans registre.
+      if (q.includes('microscopy_p53_annexin')) {
+        return {
+          ok: true,
+          json: async () => ({ files: [
+            { id: 'VID1', name: 'microscopy_p53_Annexin_1c0j8o0.mp4', trashed: false },
+            { id: 'VID_AUTRE', name: 'microscopy_autre_chose.mp4', trashed: false }
+          ] })
+        };
+      }
       return {
         ok: true,
         json: async () => ({ files: [
@@ -63,6 +76,10 @@ const MOCKS = {
   // Par défaut : seule la copie de « Sample_1 » est téléchargeable (le pointeur
   // mort RID_DEAD et le fichier d'une autre condition répondent 404).
   mediaBlob: async (path) => {
+    // Le fichier d'une vidéo de microscopie : des OCTETS, pas un JSON.
+    if (path.includes('/files/VID1?alt=media')) {
+      return new Blob([strToU8('fake-mp4-bytes')], { type: 'video/mp4' });
+    }
     if (!path.includes('/files/SEARCH1?alt=media')) return null;
     const body = JSON.stringify({ kind: 'nmr1d', version: 1, spectrum: { xs: [1, 2], ys: [3, 4], title: 'Imported 1r' } });
     return new Blob([gzipSync(strToU8(body))], { type: 'application/gzip' });
@@ -382,6 +399,103 @@ ok(FLOWSRC.includes('const handleRestoreFromDrive = async () => {'),
   'le flow cytometry garde sa restauration automatique (modèle de départ)');
 ok(FLOWSRC.includes('autoDriveRestoreDone') && FLOWSRC.includes("'lab:drive-connected'"),
   '…avec le même portillon par session et le même événement de connexion');
+
+/* ══ 3 quinquies. LE CINQUIÈME MODULE BRANCHÉ (microscopie — médias binaires) ══
+   Une vidéo de microscope n'est pas une série de nombres : c'est un FICHIER.
+   Le document du dataset n'en porte que le NOM (`msVideos`, `msMovies`) ; les
+   octets vivent dans la base du navigateur (blobStore → IndexedDB), donc sur le
+   poste qui a importé. La copie de référence est le fichier ENVOYÉ au Drive —
+   archiver un JSON de plusieurs centaines de Mo n'aurait aucun sens — et c'est
+   son NOM (radical + extension) qui le retrouve depuis un poste vierge. */
+
+const MSRC = readFileSync('src/components/MicroscopySections.jsx', 'utf8');
+
+/* Le nom d'un média : même radical, et même extension quand les deux en ont
+   une — un .mp4 converti ne doit pas être pris pour le .wmv d'origine. */
+eq(RESTORE.rawStemOf('Immunostaining_p53_H10uM.jpg'), 'immunostaining_p53_h10um',
+  'le radical d’un média ignore l’extension et la casse');
+eq(RESTORE.rawStemOf('clip final.mp4'), 'clip_final', '…et slugue comme les fichiers déposés sur le Drive');
+eq(RESTORE.rawExtOf('clip.MP4'), 'mp4', 'l’extension est comparable telle quelle');
+eq(RESTORE.rawExtOf('clip'), '', 'sans extension, aucune contrainte d’extension');
+ok(RESTORE.matchesRawName('Immunostaining_p53_NS.mp4', ['Immunostaining_p53_NS.mp4']),
+  'le nom déposé identifie le média');
+ok(RESTORE.matchesRawName('immunostaining_p53_ns.MP4', ['Immunostaining_p53_NS.mp4']),
+  '…quelle que soit la casse');
+ok(!RESTORE.matchesRawName('Immunostaining_p53_NS.mp4', ['Immunostaining_p53_NS.wmv']),
+  'une conversion .mp4 n’est PAS le .wmv d’origine');
+ok(!RESTORE.matchesRawName('Immunostaining_p53_NS.wmv', ['Immunostaining_p53.wmv']),
+  'le nom déposé (avec le scientifique) et le nom d’origine sont bien deux noms distincts');
+ok(RESTORE.matchesRawName('clip.mp4', ['clip']), 'un nom de référence sans extension reste tolérant');
+ok(!RESTORE.matchesRawName('clip.mp4', []), 'sans nom de référence, rien ne correspond');
+
+/* Le cycle réel : un poste VIERGE (ni pointeur, ni registre local, Drive
+   connecté) retrouve la vidéo par son nom et récupère ses OCTETS. */
+globalThis.__fakeRegistry = {};
+const raw = await RESTORE.restoreRawFileFor({
+  ctx: { test: 'T' },
+  names: ['microscopy_p53_Annexin_1c0j8o0.mp4']
+});
+ok(!!raw, 'sur un poste vierge, le média est retrouvé par son nom');
+eq(raw && raw.name, 'microscopy_p53_Annexin_1c0j8o0.mp4', '…le nom exact du fichier déposé');
+eq(raw && raw.source, 'search', '…par la recherche par nom sur le Drive');
+eq(raw && await raw.file.text(), 'fake-mp4-bytes', '…et ce sont les OCTETS du fichier, pas un JSON');
+eq(raw && raw.file.type, 'video/mp4', '…avec son type de média');
+
+const renamedRaw = await RESTORE.restoreRawFileFor({
+  pointer: { id: 'VID1', name: 'ancien_nom.mp4' },
+  ctx: { test: 'T' },
+  names: ['microscopy_p53_Annexin_1c0j8o0.mp4']
+});
+eq(renamedRaw && renamedRaw.source, 'pointer',
+  'le pointeur (id exact) passe avant la recherche par nom — un fichier renommé reste retrouvé');
+
+const absentRaw = await RESTORE.restoreRawFileFor({ ctx: { test: 'T' }, names: ['clip_introuvable.mp4'] });
+eq(absentRaw, null, 'aucun média ne répond : la restitution le DIT (null) au lieu d’inventer');
+
+/* Le câblage du module : pointeur sur chaque média, restauration automatique
+   dans les DEUX pages, remise dans la base du navigateur. */
+ok(MSRC.includes("import { restoreRawFileFor } from '../utils/driveRestore';"),
+  'la microscopie passe par le noyau partagé (aucune restauration maison)');
+ok(MSRC.includes("import { useDriveAutoRestore } from './useDriveAutoRestore';"),
+  '…et par le déclencheur automatique partagé');
+ok(MSRC.includes("const MS_VIDEO_KIND = 'msvideo';"), 'le type de donnée « vidéo » est déclaré une fois');
+ok(MSRC.includes("const MS_MOVIE_KIND = 'msmovie';"), '…et le type « clip » aussi');
+ok(MSRC.includes("const msDriveCtx = (test = {}, section = 'Data') => ({"),
+  'le dossier de la copie de référence est celui de l’expérience');
+ok(/subsection: 'Microscopy'/.test(MSRC), '…la même sous-section que les fichiers envoyés à l’import');
+ok(!MSRC.includes('archiveRestoreJson'),
+  'aucune archive JSON d’un média : le FICHIER envoyé au Drive est la copie de référence');
+ok(MSRC.includes('const found = await restoreRawFileFor({'), 'la restauration lit un média par le noyau');
+ok(MSRC.includes('added.push({ ...entry, driveName, ...(drive ? { drive } : {}) });'),
+  'chaque vidéo importée retient son pointeur Drive DANS le dataset (il voyage)');
+ok(MSRC.includes('drive = msMediaPointer(res, driveName);'), '…pointeur posé d’après l’envoi réel');
+ok(MSRC.includes('const driveName = withExtension(suggestDriveFileName({ ...driveCtx, title: base }), name);'),
+  '…et le nom déclaré à l’envoi, retenu même si l’envoi échoue (recherche par nom)');
+ok(MSRC.includes('filename: driveName'), 'un clip garde le nom sous lequel il a été archivé');
+ok(MSRC.includes('if (drive) movieMeta.drive = drive;'), '…et son pointeur');
+ok(MSRC.includes('const msVideoRestore = useDriveAutoRestore({'),
+  'la page Data attache le déclencheur automatique (vidéos)');
+ok(MSRC.includes('const msMovieRestore = useDriveAutoRestore({'),
+  'la page Data Analysis l’attache aussi (clips)');
+ok(MSRC.includes("entries: list, keyOf: (v) => msVideoKey(v.id), namesOf: msMediaNames, ctx: msDriveCtx(t, 'Data')"),
+  'les vidéos sont cherchées dans le dossier de l’expérience');
+ok(MSRC.includes('const msMediaNames = (entry = {}) => [entry.drive?.name, entry.driveName, entry.filename].filter(Boolean);'),
+  'la recherche essaie le pointeur, le nom déposé, puis le nom d’origine');
+ok(MSRC.includes('await blobStore.save(keyOf(entry), found.file);'),
+  'le média restauré est REMIS dans la base du navigateur (c’est elle que la vignette relit)');
+ok(MSRC.includes('if (restored) setCacheEpoch((n) => n + 1);'),
+  '…et les vignettes relisent alors leur blob (cacheEpoch)');
+ok(MSRC.includes('}, [video.id, reloadKey]);'), 'la vignette relit son blob après une restauration');
+ok(MSRC.includes("await blobStore.load(msMovieKey(m.id))"), 'un clip restauré est relu par sa clé unique');
+
+/* Le noyau : la lecture d'un média vit à côté de celle d'une archive JSON. */
+const DRIVESRC2 = readFileSync('src/utils/driveRestore.js', 'utf8');
+ok(DRIVESRC2.includes('export const restoreRawFileFor = async ({'),
+  'le noyau sait aussi lire un FICHIER BRUT (média)');
+ok(DRIVESRC2.includes("export const matchesRawName = (candidate = '', names = []) => {"),
+  '…en comparant les noms par radical + extension');
+ok(!DRIVESRC2.includes('resolveDrivePathFromNames'),
+  'la lecture d’un média ne crée pas non plus de dossier (même règle)');
 
 console.log(`${passed} passed`);
 

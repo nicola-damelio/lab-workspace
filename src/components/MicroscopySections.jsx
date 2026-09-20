@@ -5,6 +5,8 @@ import { PLATES_DEF } from '../data/constants';
 import { uploadLocalFile, withExtension, getDriveToken } from '../utils/driveUpload';
 import { blobStore } from '../utils/blobStore';
 import { suggestDriveFileName } from '../utils/driveNaming';
+import { restoreRawFileFor } from '../utils/driveRestore';
+import { useDriveAutoRestore } from './useDriveAutoRestore';
 import { ExperimentalSetup as FCExperimentalSetup } from './FlowCytometrySections';
 
 // The microscopy Experimental Setup reuses the Flow Cytometry plate design
@@ -25,6 +27,90 @@ const inferMicroscopyType = (name) => {
 };
 
 const msVideoKey = (id) => `msv_${id}`;
+const msMovieKey = (id) => `msm_${id}`;
+
+/* ── RESTAURATION AUTOMATIQUE DES MÉDIAS DE MICROSCOPIE DEPUIS LE DRIVE ─────
+   (mécanisme général : src/utils/driveRestore.js + useDriveAutoRestore.js)
+   Une vidéo de microscope n'entre PAS dans le document du dataset : seul son
+   nom y vit (`msVideos`, `msMovies`), les octets sont dans la base du
+   navigateur (blobStore → IndexedDB) — donc sur le poste qui a importé, et
+   nulle part ailleurs. Le Drive est la copie de RÉFÉRENCE : chaque média
+   archivé à l'import laisse un POINTEUR minuscule (`drive = { id, name, url }`)
+   dans la liste, qui voyage avec le dataset ; à l'ouverture de la page, un
+   média absent de la base du navigateur est re-téléchargé TOUT SEUL (id exact,
+   sinon recherche par NOM sur le Drive) et remis dans la base. Rien à demander
+   à l'utilisateur : c'est le fonctionnement normal depuis un autre poste.
+
+   Un média n'est pas un spectre : il n'y a rien à archiver en JSON — c'est le
+   FICHIER envoyé au Drive qui fait référence (voir restoreRawFileFor). */
+const MS_VIDEO_KIND = 'msvideo';
+const MS_MOVIE_KIND = 'msmovie';
+
+/** Dossier de la copie de référence : le dossier canonique de l'expérience,
+ *  dans la même sous-section que les fichiers envoyés à l'import. */
+const msDriveCtx = (test = {}, section = 'Data') => ({
+  project: (test.projectNames && test.projectNames[0]) || '',
+  test: test.name || '',
+  instance: test.instanceName || '',
+  scientist: test.operator || '',
+  section,
+  subsection: 'Microscopy'
+});
+
+/** Pointeur minuscule (il voyage dans le dataset) vers la copie Drive d'un
+ *  média — null quand l'envoi n'a pas abouti (hors ligne : la recherche par nom
+ *  le retrouvera dès que la file de reprise l'aura déposé). */
+const msMediaPointer = (res, fallbackName = '') => (
+  res && (res.id || res.url || res.driveUrl)
+    ? {
+      id: String(res.id || ''),
+      name: String(res.name || fallbackName || ''),
+      url: String(res.url || res.driveUrl || '')
+    }
+    : null
+);
+
+/** Noms sous lesquels chercher un média : le pointeur, le nom déclaré à l'envoi,
+ *  puis le nom d'origine du fichier importé. */
+const msMediaNames = (entry = {}) => [entry.drive?.name, entry.driveName, entry.filename].filter(Boolean);
+
+/** Nom d'un clip créé dans « Data Analysis » : les anciens n'ont que leurs
+ *  métadonnées, le nom se recalcule — c'est celui utilisé à l'envoi. */
+const msMovieNames = (movie = {}) => {
+  const direct = msMediaNames(movie);
+  if (direct.length) return direct;
+  const srcBase = String(movie.source || 'clip').replace(/\.[^/.]+$/, '');
+  return [`movie_${srcBase}_${movie.start}s-${movie.end}s.webm`];
+};
+
+/** Vrai dès qu'un média de la liste n'est pas dans la base du navigateur :
+ *  c'est le signal de départ de la restauration. */
+const msMediaMissing = async (entries = [], keyOf) => {
+  for (const entry of entries) {
+    if (!entry || !entry.id) continue;
+    if (!(await blobStore.load(keyOf(entry)))) return true;
+  }
+  return false;
+};
+
+/** Re-télécharge du Drive les médias absents de la base du navigateur et les y
+ *  remet : `{ restored, missing }` — `missing` = ce qui n'existe plus sur le
+ *  Drive non plus (on le DIT, au lieu de laisser une vignette vide). */
+const msRestoreMedia = async ({ entries = [], keyOf, namesOf, ctx }) => {
+  let restored = 0;
+  let missing = 0;
+  for (const entry of entries) {
+    if (!entry || !entry.id) continue;
+    if (await blobStore.load(keyOf(entry))) continue;
+    const found = await restoreRawFileFor({
+      pointer: entry.drive || null, ctx, names: namesOf(entry)
+    });
+    if (!found) { missing += 1; continue; }
+    await blobStore.save(keyOf(entry), found.file);
+    restored += 1;
+  }
+  return { restored, missing };
+};
 
 // ---------------------------------------------------------------------------
 // INSTRUMENTAL SETUP — microscope-specific fields (type from a dropdown,
@@ -95,6 +181,9 @@ export const Data = ({ ctx }) => {
   const t = activeTest;
   const [msg, setMsg] = useState('');
   const [videos, setVideos] = useState([]);
+  // Incrémenté quand un média restauré du Drive vient d'être remis dans la base
+  // du navigateur : les vignettes relisent alors leur blob (voir VideoCard).
+  const [cacheEpoch, setCacheEpoch] = useState(0);
 
   useEffect(() => {
     setVideos(Array.isArray(t.msVideos) ? t.msVideos : []);
@@ -111,28 +200,29 @@ export const Data = ({ ctx }) => {
       const file = files[i];
       const id = 'msv' + Date.now() + i + Math.random().toString(36).slice(2, 6);
       const name = file.name || 'video.mp4';
-      added.push({ id, filename: name, type: file.type || 'application/octet-stream', size: file.size, uploadedAt: Date.now() });
+      const entry = { id, filename: name, type: file.type || 'application/octet-stream', size: file.size, uploadedAt: Date.now() };
       await blobStore.save(msVideoKey(id), file);
+      // Le nom déclaré à l'envoi est retenu MÊME quand l'envoi échoue : c'est
+      // lui que la restauration cherchera sur le Drive (recherche par nom).
+      const driveCtx = msDriveCtx(t, 'Data');
+      const base = String(name).replace(/\.[^/.]+$/, '');
+      const driveName = withExtension(suggestDriveFileName({ ...driveCtx, title: base }), name);
+      let drive = null;
       if (getDriveToken()) {
         try {
-          const driveCtx = {
-            project: (t.projectNames && t.projectNames[0]) || '',
-            test: t.name || '',
-            instance: t.instanceName || '',
-            scientist: t.operator || '',
-            section: 'Data',
-            subsection: 'Microscopy'
-          };
-          const base = String(name).replace(/\.[^/.]+$/, '');
-          await uploadLocalFile({
-            name: withExtension(suggestDriveFileName({ ...driveCtx, title: base }), name),
+          const res = await uploadLocalFile({
+            name: driveName,
             mimeType: file.type || 'application/octet-stream',
             file,
             ctx: driveCtx
           });
+          drive = msMediaPointer(res, driveName);
           driveSaved++;
         } catch { /* keep going */ }
       }
+      // Le pointeur (minuscule) part avec le dataset : c'est lui qui ramène la
+      // vidéo sur un autre poste (voir la restauration automatique plus bas).
+      added.push({ ...entry, driveName, ...(drive ? { drive } : {}) });
       const inferred = inferMicroscopyType(name);
       if (inferred) update({ microscopyType: t.microscopyType || inferred });
     }
@@ -180,25 +270,21 @@ export const Data = ({ ctx }) => {
       const name = String(vid.filename || 'video').replace(/\.[^/.]+$/, '') + '_converted.mp4';
       const entry = { id, filename: name, type: 'video/mp4', size: mp4.size, uploadedAt: Date.now(), convertedFrom: vid.filename };
       await blobStore.save(msVideoKey(id), mp4);
+      const driveCtx = msDriveCtx(t, 'Data');
+      const base = String(name).replace(/\.[^/.]+$/, '');
+      const driveName = withExtension(suggestDriveFileName({ ...driveCtx, title: base }), name);
+      let drive = null;
       if (getDriveToken()) {
         try {
-          const driveCtx = {
-            project: (t.projectNames && t.projectNames[0]) || '',
-            test: t.name || '',
-            instance: t.instanceName || '',
-            scientist: t.operator || '',
-            section: 'Data',
-            subsection: 'Microscopy'
-          };
-          const base = String(name).replace(/\.[^/.]+$/, '');
-          await uploadLocalFile({
-            name: withExtension(suggestDriveFileName({ ...driveCtx, title: base }), name),
+          const res = await uploadLocalFile({
+            name: driveName,
             mimeType: 'video/mp4', file: mp4,
             ctx: driveCtx
           });
+          drive = msMediaPointer(res, driveName);
         } catch { /* keep going */ }
       }
-      const next = [...(Array.isArray(t.msVideos) ? t.msVideos : []), entry];
+      const next = [...(Array.isArray(t.msVideos) ? t.msVideos : []), { ...entry, driveName, ...(drive ? { drive } : {}) }];
       update({ msVideos: next });
       setVideos(next);
       onStatus(`✅ Converted to MP4 — "${name}" is now playable and available in the movie maker.`);
@@ -208,6 +294,43 @@ export const Data = ({ ctx }) => {
     }
   };
 
+  // ── RESTAURATION AUTOMATIQUE DES VIDÉOS DEPUIS LE DRIVE ──────────────────
+  // (mécanisme général : src/utils/driveRestore.js + useDriveAutoRestore.js)
+  // La liste `msVideos` voyage avec le dataset — pas les octets. Sur un autre
+  // poste (ou après un nettoyage), chaque vidéo absente de la base du
+  // navigateur est donc re-téléchargée du Drive TOUTE SEULE et remise dans la
+  // base : la vignette redevient jouable sans qu'on demande rien.
+  const videosMissing = () => msMediaMissing(
+    Array.isArray(t.msVideos) ? t.msVideos : [], (v) => msVideoKey(v.id)
+  );
+
+  const restoreVideosFromDrive = async () => {
+    const list = Array.isArray(t.msVideos) ? t.msVideos : [];
+    const { restored, missing } = await msRestoreMedia({
+      entries: list, keyOf: (v) => msVideoKey(v.id), namesOf: msMediaNames, ctx: msDriveCtx(t, 'Data')
+    });
+    if (restored) setCacheEpoch((n) => n + 1);
+    if (!restored) {
+      return {
+        ok: false,
+        message: '⚠️ These videos are not on this machine and no copy was found on Google Drive. Connect Google Drive, then re-upload the files: each one is archived on import.'
+      };
+    }
+    return {
+      ok: missing === 0,
+      message: missing
+        ? `✅ ${restored} video file(s) restored from Google Drive — ${missing} not found there (re-upload ${missing > 1 ? 'them' : 'it'}).`
+        : `✅ ${restored} video file(s) restored from Google Drive.`
+    };
+  };
+
+  const msVideoRestore = useDriveAutoRestore({
+    kind: MS_VIDEO_KIND,
+    testId: t.id || 'global',
+    missing: videosMissing,
+    restore: restoreVideosFromDrive
+  });
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -216,6 +339,28 @@ export const Data = ({ ctx }) => {
           <input type="file" accept=".wmv,.mp4,.webm,.mov,.avi,video/*" multiple onChange={handleFiles} className="hidden" />
         </label>
         {msg && <span className="text-xs font-bold text-indigo-900">{msg}</span>}
+        {/* Restauration automatique depuis le Drive (voir MS_VIDEO_KIND en tête
+            de ce fichier) : les octets d'une vidéo vivent dans la base du
+            navigateur, pas dans le document — depuis un autre poste elles
+            reviennent TOUTES SEULES. Ce bouton n'est qu'un secours manuel. */}
+        <button
+          type="button"
+          onClick={() => msVideoRestore.attempt('manual')}
+          disabled={msVideoRestore.status === 'restoring'}
+          title="Download the archived copy of these videos from Google Drive (each file is archived there on import) — it also happens by itself when the page opens"
+          className="ml-auto text-[10px] font-bold bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 px-2 py-1.5 rounded-lg shadow-sm disabled:opacity-50"
+        >
+          {msVideoRestore.status === 'restoring' ? '⬇️ Downloading…' : '⬇️ Restore from Drive'}
+        </button>
+        {(msVideoRestore.status === 'restoring' || msVideoRestore.message) && (
+          <span className={`text-[10px] font-semibold rounded-lg px-3 py-1.5 border ${msVideoRestore.status === 'restored'
+            ? 'bg-green-50 border-green-200 text-green-800'
+            : msVideoRestore.status === 'failed'
+              ? 'bg-amber-50 border-amber-200 text-amber-800'
+              : 'bg-sky-50 border-sky-200 text-sky-800'}`}>
+            {msVideoRestore.message || 'Checking Google Drive…'}
+          </span>
+        )}
       </div>
       {videos.length === 0 ? (
         <div className="bg-slate-50 border border-dashed border-slate-300 rounded-xl p-8 text-center text-sm text-slate-400">
@@ -224,7 +369,7 @@ export const Data = ({ ctx }) => {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {videos.map((v) => (
-            <VideoCard key={v.id} video={v} onRemove={() => removeVideo(v)} onConvert={(status) => handleConvertVideo(v, status)} />
+            <VideoCard key={v.id} video={v} reloadKey={cacheEpoch} onRemove={() => removeVideo(v)} onConvert={(status) => handleConvertVideo(v, status)} />
           ))}
         </div>
       )}
@@ -234,7 +379,9 @@ export const Data = ({ ctx }) => {
 // Small card showing a video file with a playable preview (object URL from the
 // IndexedDB blob). WMV is usually not decodable by the browser — the card
 // explains that and the movie maker stays disabled for it.
-const VideoCard = ({ video, onRemove, onConvert }) => {
+// `reloadKey` change (une restauration depuis le Drive) force la relecture du
+// blob : le même fichier revient, mais cette fois depuis la base du navigateur.
+const VideoCard = ({ video, onRemove, onConvert, reloadKey = 0 }) => {
   const [url, setUrl] = useState(null);
   const [playable, setPlayable] = useState(null);
   const [convStatus, setConvStatus] = useState('');
@@ -255,7 +402,7 @@ const VideoCard = ({ video, onRemove, onConvert }) => {
     })();
     return () => { cancelled = true; if (u) URL.revokeObjectURL(u); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [video.id]);
+  }, [video.id, reloadKey]);
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm flex flex-col gap-2">
@@ -310,6 +457,9 @@ export const DataAnalysis = ({ ctx }) => {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [playable, setPlayable] = useState(null);
+  // Incrémenté quand un clip restauré du Drive vient d'être remis dans la base
+  // du navigateur (voir la restauration automatique plus bas).
+  const [cacheEpoch, setCacheEpoch] = useState(0);
   const canvasRef = useRef(null);
   const videoRef = useRef(null);
 
@@ -338,7 +488,7 @@ export const DataAnalysis = ({ ctx }) => {
     })();
     return () => { cancelled = true; if (u) URL.revokeObjectURL(u); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selId]);
+  }, [selId, cacheEpoch]);
 
   const createMovie = async () => {
     const vid = videoRef.current;
@@ -369,25 +519,22 @@ export const DataAnalysis = ({ ctx }) => {
       rec.stop();
       const blob = await new Promise((res) => { rec.onstop = () => res(new Blob(chunks, { type: 'video/webm' })); });
       const id = 'msm' + Date.now();
-      const movieMeta = { id, sourceId: selVideo.id, source: selVideo.filename, start: s, end: e, fps: FPS, createdAt: Date.now() };
-      await blobStore.save('msm_' + id, blob);
+      const srcBase = String((selVideo && selVideo.filename) || 'clip').replace(/\.[^/.]+$/, '');
+      const driveCtx = msDriveCtx(t, 'Data Analysis');
+      const driveName = withExtension(suggestDriveFileName({ ...driveCtx, title: `movie_${srcBase}_${s}s-${e}s` }), 'movie.webm');
+      const movieMeta = { id, sourceId: selVideo.id, source: selVideo.filename, start: s, end: e, fps: FPS, createdAt: Date.now(), filename: driveName };
+      await blobStore.save(msMovieKey(id), blob);
       if (getDriveToken()) {
         try {
-          const driveCtx = {
-            project: (t.projectNames && t.projectNames[0]) || '',
-            test: t.name || '',
-            instance: t.instanceName || '',
-            scientist: t.operator || '',
-            section: 'Data Analysis',
-            subsection: 'Microscopy'
-          };
-          const srcBase = String((selVideo && selVideo.filename) || 'clip').replace(/\.[^/.]+$/, '');
-          const title = `movie_${srcBase}_${s}s-${e}s`;
-          await uploadLocalFile({
-            name: withExtension(suggestDriveFileName({ ...driveCtx, title }), 'movie.webm'),
+          const res = await uploadLocalFile({
+            name: driveName,
             mimeType: 'video/webm', file: blob,
             ctx: driveCtx
           });
+          // Pointeur minuscule : il part avec le dataset et ramène le clip sur
+          // un autre poste (voir MS_MOVIE_KIND en tête de ce fichier).
+          const drive = msMediaPointer(res, driveName);
+          if (drive) movieMeta.drive = drive;
         } catch { /* keep going */ }
       }
       update({ msMovies: [...movies, movieMeta] });
@@ -398,6 +545,42 @@ export const DataAnalysis = ({ ctx }) => {
       setBusy(false);
     }
   };
+
+  // ── RESTAURATION AUTOMATIQUE DES CLIPS DEPUIS LE DRIVE ───────────────────
+  // (mécanisme général : src/utils/driveRestore.js + useDriveAutoRestore.js)
+  // Un clip fabriqué ici est archivé sur le Drive au moment même où il est
+  // créé (titre déterministe `movie_<source>_<début>s-<fin>s`) ET reçoit son
+  // pointeur : sur un autre poste, un clip absent de la base du navigateur est
+  // donc re-téléchargé TOUT SEUL. Les vidéos source relèvent de la section
+  // Data (kind différent) : elles y sont restaurées de la même façon.
+  const moviesMissing = () => msMediaMissing(movies, (m) => msMovieKey(m.id));
+
+  const restoreMoviesFromDrive = async () => {
+    const { restored, missing } = await msRestoreMedia({
+      entries: movies, keyOf: (m) => msMovieKey(m.id), namesOf: msMovieNames, ctx: msDriveCtx(t, 'Data Analysis')
+    });
+    if (restored) setCacheEpoch((n) => n + 1);
+    if (!restored) {
+      return {
+        ok: false,
+        message: '⚠️ These clips are not on this machine and no copy was found on Google Drive. Open the Data section (it restores the source videos), then create the clip again.'
+      };
+    }
+    return {
+      ok: missing === 0,
+      message: missing
+        ? `✅ ${restored} clip(s) restored from Google Drive — ${missing} not found there.`
+        : `✅ ${restored} clip(s) restored from Google Drive.`
+    };
+  };
+
+  const msMovieRestore = useDriveAutoRestore({
+    kind: MS_MOVIE_KIND,
+    testId: t.id || 'global',
+    missing: moviesMissing,
+    restore: restoreMoviesFromDrive
+  });
+
   return (
     <div className="flex flex-col gap-4">
       <p className="text-[11px] text-slate-500">
@@ -427,6 +610,27 @@ export const DataAnalysis = ({ ctx }) => {
           </span>
         )}
         {msg && <span className="text-xs font-bold text-indigo-900">{msg}</span>}
+        {/* Restauration automatique des clips depuis le Drive (voir
+            MS_MOVIE_KIND en tête de ce fichier) : un clip vit dans la base du
+            navigateur, pas dans le document. Ce bouton n'est qu'un secours. */}
+        <button
+          type="button"
+          onClick={() => msMovieRestore.attempt('manual')}
+          disabled={msMovieRestore.status === 'restoring'}
+          title="Download the archived copy of these clips from Google Drive (each one is archived there when it is created) — it also happens by itself when the page opens"
+          className="text-[10px] font-bold bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 px-2 py-1.5 rounded-lg shadow-sm disabled:opacity-50"
+        >
+          {msMovieRestore.status === 'restoring' ? '⬇️ Downloading…' : '⬇️ Restore from Drive'}
+        </button>
+        {(msMovieRestore.status === 'restoring' || msMovieRestore.message) && (
+          <span className={`text-[10px] font-semibold rounded-lg px-3 py-1.5 border ${msMovieRestore.status === 'restored'
+            ? 'bg-green-50 border-green-200 text-green-800'
+            : msMovieRestore.status === 'failed'
+              ? 'bg-amber-50 border-amber-200 text-amber-800'
+              : 'bg-sky-50 border-sky-200 text-sky-800'}`}>
+            {msMovieRestore.message || 'Checking Google Drive…'}
+          </span>
+        )}
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
         <div className="bg-slate-900 rounded-xl p-2">
@@ -452,7 +656,7 @@ export const DataAnalysis = ({ ctx }) => {
                 <button
                   type="button"
                   onClick={async () => {
-                    const blob = await blobStore.load('msm_' + m.id);
+                    const blob = await blobStore.load(msMovieKey(m.id));
                     if (!blob) return;
                     const a = document.createElement('a');
                     a.href = URL.createObjectURL(blob);
