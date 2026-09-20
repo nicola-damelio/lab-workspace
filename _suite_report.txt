@@ -30,7 +30,7 @@ OK   _capture_fix_test.mjs  →  passed 73/73
 OK   _chain_test.cjs  →  RESULT: PASS (two chains separated, contacts do not merge them)
 OK   _chart_dblclick_test.cjs  →  ✅ 101/101 checks passed
 OK   _common_library_folder_test.mjs  →  _common_library_folder_test : 47 vérifications passées
-OK   _condition_page_test.mjs  →  72 passed
+OK   _condition_page_test.mjs  →  90 passed
 OK   _cov_check.cjs  →  UNWIRED: none - every editable new Chart( site is wrapped in ChartJsInspector.
 OK   _curve_style_test.mjs  →  │ (index) │ name                                                                        │ ok   │ error │ | ✅ 50/50 checks passed
 OK   _dataset_copy_mirror_test.mjs  →  ✅ 44 tests passés (la copie Drive du dataset ne perd plus la dernière minute)

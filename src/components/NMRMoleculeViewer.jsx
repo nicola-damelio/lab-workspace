@@ -926,6 +926,7 @@ structureFile,
 structureFormat = 'auto',
 trajectorySrc,
 trajectoryFile,
+trajectoryName = '',   // nom DÉCLARÉ sur l'expérience (même si le fichier n'est pas encore là)
 trajectoryFallbacks = [],
 trajectoryFormat = 'xtc',
 onStructureFile,
@@ -1522,6 +1523,19 @@ const effStride = numFrames > 0 && maxFrames > 0
   : stride;
 const keptFrames = numFrames > 0 ? Math.max(1, Math.ceil(numFrames / effStride)) : 0;
 const toActualFrame = (keptIdx) => Math.min(numFrames - 1, keptIdx * effStride);
+
+/* LA BARRE DE LECTURE APPARTIENT À LA CONDITION, PAS SEULEMENT AU FICHIER EN
+   MAIN. Une trajectoire DÉCLARÉE (`trajectoryName`, le nom resté sur la
+   condition ou le nom de la copie de référence) mais pas encore rapatriée dans
+   ce navigateur laissait l'utilisateur devant un viewer sans la moindre barre :
+   rien ne disait qu'une trajectoire existait, ni que la page était en train de
+   la reprendre du Drive. La barre est donc affichée dès qu'une trajectoire est
+   déclarée, avec l'état honnête (« pas encore là »), et ▶ ne s'active que quand
+   les images sont réellement chargées. */
+const declaredTrajName = String(trajectoryName || '').trim();
+const hasTrajSource = !!(trajFile || trajectoryFile || trajectorySrc || declaredTrajName);
+const waitingTrajFile = hasTrajSource && !trajFile && !trajectoryFile && !trajectorySrc
+  && !!declaredTrajName && trajStatus !== 'loading' && trajStatus !== 'ready' && trajStatus !== 'error';
 
 const parsedSeqRef = useRef(parsedSeq);
 const moleculeTypeRef = useRef(moleculeType);
@@ -4802,7 +4816,7 @@ className="w-3.5 h-3.5 accent-sky-600"
 )}
 
 {/* Trajectory Playback Controls */}
-{(trajFile || trajectoryFile || trajectorySrc) && (
+{(trajFile || trajectoryFile || trajectorySrc || declaredTrajName) && (
 <div className="flex flex-wrap items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg p-3">
 <button
 type="button"
@@ -4856,6 +4870,13 @@ className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outlin
   </span>
 )}
 {trajStatus === 'error' && <span className="text-xs font-bold text-red-600">⚠️ {trajError}</span>}
+{waitingTrajFile && (
+  <span className="text-xs font-bold text-amber-700">
+    ⏳ “{declaredTrajName}” is declared on this experiment but is not loaded in this browser yet — press
+    “⬇️ Bring it back from Google Drive” on the page (the reference copy), or pick the file here with 📂 Trajectory.
+    ▶ turns on as soon as the frames are read.
+  </span>
+)}
 </div>
 </div>
 )}

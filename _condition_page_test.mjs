@@ -34,6 +34,7 @@ import { readFileSync } from 'node:fs';
 
 const MD = readFileSync('src/components/MDSections.jsx', 'utf8');
 const NMR = readFileSync('src/components/NMRSections.jsx', 'utf8');
+const VIEW = readFileSync('src/components/NMRMoleculeViewer.jsx', 'utf8');
 const APP = readFileSync('src/App.jsx', 'utf8');
 const DOC = readFileSync('docs/DRIVE-MIRROR.md', 'utf8');
 
@@ -172,10 +173,39 @@ has(MD, '}, [activeTest.id, activeTest.trajectoryFileName, activeTest.trajectory
   '[MD] la reprise de la trajectoire suit la condition, son nom, son pointeur et le jeton');
 has(MD, '}, [activeTest.id, activeTest.structureFileName, activeTest.structureDriveName, structPointerId, fileEpoch, driveConnectedAt]);',
   '[MD] …la topologie aussi');
-has(MD, 'if (trajectoryFile || !activeTest.trajectoryFileName) return;',
-  '[MD] le portillon « déjà en main » reste en place (rien n’est rechargé pour rien)');
-has(MD, 'if (structureFile || !activeTest.structureFileName) return;',
-  '[MD] …et la topologie garde le sien');
+/* LE NOM DÉCLARÉ N'EST PLUS LE SEUL DÉCLENCHEUR. Un dataset dont la sauvegarde
+   en différé a perdu le nom (ou une reprise réussie sur une autre machine) garde
+   les octets dans la base du navigateur — sous la clé DE LA CONDITION — ou le
+   POINTEUR de la copie de référence. Exiger le nom faisait sortir l'effet tout de
+   suite : le fichier était là, la page n'allait jamais le chercher, et le viewer
+   3D n'avait donc JAMAIS sa barre de lecture (défaut signalé). */
+has(MD, '      if (trajectoryFile) return;                       // déjà en main',
+  '[MD] la reprise de la trajectoire ne sort plus de l’effet faute de nom déclaré');
+has(MD, '      if (structureFile) return;                        // déjà en main',
+  '[MD] …la topologie non plus');
+assert.equal(countOf(MD, 'if (!declared && !driveName && !pointer) return;'), 2,
+  '[MD] la base du navigateur est interrogée même sans nom déclaré (ni nom, ni nom déposé, ni pointeur = seule raison de ne rien chercher)');
+passed += 1;
+has(MD, 'const blob = await blobStore.load(trajBlobKey(testId));',
+  '[MD] la clé lue est celle de la CONDITION mesurée (jamais celle de la page affichée)');
+has(MD, 'const blob = await blobStore.load(structBlobKey(testId));',
+  '[MD] …idem pour la topologie');
+has(MD, 'if (!declared) updateActiveTest({ trajectoryFileName: restored.name }, testId);',
+  '[MD] un nom déclaré PERDU est réécrit sur SA condition (le fichier voyage à nouveau)');
+has(MD, 'if (!declared) updateActiveTest({ structureFileName: restored.name }, testId);',
+  '[MD] …et pour la topologie');
+has(MD, 'if (!declared && !driveName && !pointer) return { ok: false, message: \'\' };',
+  '[MD] le bouton « Bring it back » sait reprendre avec un POINTEUR seul (dataset d’avant le nom)');
+has(MD, 'const label = declared || driveName || \'the archived trajectory\';',
+  '[MD] …et nomme la recherche d’après ce qui existe vraiment (nom déclaré, nom déposé)');
+/* « Retirer ce fichier » = l’oublier VRAIMENT : le nom ET le pointeur, sinon la
+   reprise ramenait la trajectoire qu’on venait de retirer. */
+has(MD, 'trajectoryDrive: null, trajectoryDriveName: null',
+  '[MD] retirer la trajectoire efface aussi le pointeur (rien ne « revient tout seul »)');
+has(MD, 'structureDrive: null, structureDriveName: null',
+  '[MD] …et retirer la topologie aussi');
+has(MD, 'const trajDeclared = !!(activeTest.trajectoryFileName || activeTest.trajectoryDriveName || trajPointerId);',
+  '[MD] la page sait qu’un fichier est DÉCLARÉ dès qu’un nom OU un pointeur en parle');
 
 /* ══ 5. LE FICHIER VIENT DU DRIVE — ET LA PAGE LE DIT ══════════════════════ */
 
@@ -202,7 +232,7 @@ has(MD, 'const applyReloadedFile = async ({ kind, testId, wantedName, file, pain
   '[MD] le fichier ramené est rangé sous la clé de SA condition');
 has(MD, "await blobStore.save(kind === 'trajectory' ? trajBlobKey(testId) : structBlobKey(testId), restored);",
   '…jamais sous celle de la condition affichée');
-assert.equal(countOf(MD, 'sameRawFileFor(blob.name, wantedName)'), 2,
+assert.equal(countOf(MD, 'sameRawFileFor(blob.name, declared)'), 2,
   '[MD] la copie de la base du navigateur est reconnue par ses radicaux (nom déposé sur le Drive)');
 passed += 1;
 has(MD, "import { placeRestorePointer, restoreRawFileFor, sameRawFileFor, takePendingRestorePointer } from '../utils/driveRestore';",
@@ -216,7 +246,32 @@ has(NMR, 'if (blob && sameRawFileFor(blob.name, activeTest.structureFileName)) {
 has(NMR, "nmrStructRestore.attempt('data-arrived');",
   '[NMR] un nom de structure arrivé après l’affichage relance la recherche');
 
+/* ══ 6. LA BARRE DE LECTURE DE LA TRAJECTOIRE APPARTIENT À LA CONDITION ═════
+   Signalé le 20/09/2026 : « le viewer 3D est affiché mais il n'a ni bouton ▶
+   Play ni curseur Frame ». La barre n'était rendue que pour un fichier EN MAIN
+   (`trajFile || trajectoryFile || trajectorySrc`), donc jamais tant que la
+   reprise n'avait pas abouti — et rien à l'écran ne disait qu'une trajectoire
+   était déclarée. La page passe maintenant le NOM DÉCLARÉ au viewer : la barre
+   apparaît dès qu'une trajectoire existe pour la condition, avec l'état honnête
+   (« pas encore là »), et ▶ ne s'active que sur des images réellement lues. */
+has(MD, "trajectoryName={activeTest.trajectoryFileName || activeTest.trajectoryDriveName || ''}",
+  '[MD] la page annonce au viewer la trajectoire DÉCLARÉE (même pas encore rapatriée)');
+has(VIEW, "trajectoryName = '',",
+  'le viewer accepte le nom déclaré (même si le fichier n’est pas encore là)');
+has(VIEW, "const declaredTrajName = String(trajectoryName || '').trim();",
+  '…et le normalise');
+has(VIEW, 'const hasTrajSource = !!(trajFile || trajectoryFile || trajectorySrc || declaredTrajName);',
+  '…la barre de lecture existe dès qu’une source OU un nom déclaré existe');
+has(VIEW, '(trajFile || trajectoryFile || trajectorySrc || declaredTrajName) && (',
+  'la barre de lecture (▶ Play + curseur Frame + vitesse) est rendue pour une trajectoire déclarée');
+has(VIEW, 'const waitingTrajFile = hasTrajSource && !trajFile && !trajectoryFile && !trajectorySrc',
+  '…et l’état « déclarée mais pas encore dans ce navigateur » est calculé');
+has(VIEW, '{waitingTrajFile && (',
+  '…et DIT à l’écran (aucune barre muette, aucune promesse)');
+
 has(DOC, '## « Le fichier revient de la base du navigateur » — la page dit enfin où elle cherche',
   'la cause et la correction du message trompeur sont documentées');
+has(DOC, '## La barre de lecture appartient à la CONDITION, pas seulement au fichier en main',
+  '…et la barre de lecture qui n’apparaissait que pour un fichier en main');
 
 console.log(`${passed} passed`);

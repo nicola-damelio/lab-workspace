@@ -890,3 +890,75 @@ condition qu'on a mesurée, on ne peint que sur la page affichée.
 * `node _drive_restore_test.mjs` — `sameRawFileFor` (copie du navigateur vs nom
   déposé sur le Drive) et le câblage des modules.
 
+## La barre de lecture appartient à la CONDITION, pas seulement au fichier en main
+
+Signalé le 20/09/2026, juste après la remise à niveau ci-dessus : « le viewer 3D
+est bien affiché, mais il n'a ni bouton ▶ Play ni curseur Frame ».
+
+Deux défauts se cumulaient — et tous les deux faisaient disparaître la barre
+alors que la trajectoire EXISTAIT.
+
+1. **La reprise exigeait un NOM DÉCLARÉ.** L'effet sortait tout de suite quand
+   `activeTest.trajectoryFileName` était vide :
+
+   ```js
+   if (trajectoryFile || !activeTest.trajectoryFileName) return;
+   ```
+
+   Or un dataset dont la sauvegarde en différé a perdu le nom (voir « la dernière
+   modification ne dépend plus d'un minuteur… ») garde pourtant soit ses octets
+   dans la base du navigateur — rangés sous la clé **de la condition**
+   (`traj_<id>`, `ms_struct_<id>`) — soit le **pointeur** de la copie de
+   référence (`trajectoryDrive`, `structureDrive`). La page ne cherchait donc
+   nulle part alors que le fichier était à portée : le viewer 3D restait sans
+   trajectoire, donc sans barre de lecture. Le bouton « ⬇️ Bring it back from
+   Google Drive » avait exactement le même portillon (`if (!wantedName) return`).
+
+   Maintenant : la **base du navigateur est toujours interrogée** (la clé déjà
+   rangée par condition dit que la copie est la bonne), puis le Drive est
+   interrogé dès qu'un **nom**, un **nom déposé** ou un **pointeur** existe. Le
+   seul cas où rien n'est tenté est « ni l'un, ni l'autre, ni l'autre » — la
+   ligne invite alors à re-sélectionner le fichier. Quand le fichier revient
+   alors que le nom déclaré manquait, ce nom est **réécrit sur SA condition**
+   (`updateActiveTest({ trajectoryFileName: restored.name }, testId)`), donc il
+   voyage à nouveau vers les autres postes.
+
+2. **La barre n'était rendue que pour un fichier EN MAIN** —
+   `{(trajFile || trajectoryFile || trajectorySrc) && (…)}` : tant que la copie
+   de référence n'avait pas fini de descendre (un `.xtc` peut peser des
+   centaines de Mo), l'écran ne montrait ni barre, ni état, rien. Le viewer 3D
+   reçoit désormais le **nom déclaré**
+   (`trajectoryName={activeTest.trajectoryFileName || activeTest.trajectoryDriveName || ''}`) :
+   la barre apparaît dès qu'une trajectoire existe pour la condition, avec l'état
+   honnête
+
+   > ⏳ “<nom>” is declared on this experiment but is not loaded in this browser
+   > yet — press “⬇️ Bring it back from Google Drive” on the page (the reference
+   > copy), or pick the file here with 📂 Trajectory. ▶ turns on as soon as the
+   > frames are read.
+
+   et ▶ ne s'active que lorsque les images sont réellement lues
+   (`trajStatus === 'ready'`) : aucune barre qui promet une lecture inexistante.
+
+Dans les deux cas, la ligne « System files » — juste au-dessus du viewer — dit
+désormais l'état des **deux** fichiers (topologie *et* trajectoire), avec le
+même bouton de reprise, et elle les tient pour **déclarés** dès qu'un nom OU un
+pointeur en parle (`trajDeclared`, `structDeclared`) : un dataset dont la
+sauvegarde a perdu le nom ne ressemble plus à un dataset qui n'a jamais eu de
+fichier.
+
+Enfin, **retirer un fichier le retire pour de vrai** : « ✕ »/« Remove this
+trajectory » efface le nom **et** le pointeur (`trajectoryDrive`,
+`trajectoryDriveName` — idem topologie), sinon la reprise ramenait aussitôt, par
+le pointeur ou par la base du navigateur, le fichier que l'utilisateur venait de
+retirer.
+
+### Vérifier soi-même
+
+* `node _condition_page_test.mjs` — les portillons « nom, nom déposé OU
+  pointeur », la réécriture du nom déclaré quand il a été perdu, l'effacement du
+  pointeur au retrait, le nom déclaré passé au viewer et la ligne « déclarée mais
+  pas encore là ».
+* `node _drive_restore_test.mjs` — `sameRawFileFor` et le câblage des modules
+  (le pointeur de la condition est toujours ce que la page envoie au noyau).
+

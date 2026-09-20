@@ -839,8 +839,16 @@ export const MDExperimentSetupSection = ({ ctx }) => {
 
   const handleStructureFile = (file) => {
     if (!file) {
-      updateActiveTest({ structureFileData: null, structureFileName: null });
+      // « Retirer ce fichier » = l'oublier VRAIMENT : le nom déclaré ET le
+      // pointeur de la copie de référence. Sinon la page le reprenait pour elle
+      // (pointeur → Drive, octets → base du navigateur) et le fichier semblait
+      // « revenir tout seul » après avoir été retiré.
+      updateActiveTest({
+        structureFileData: null, structureFileName: null,
+        structureDrive: null, structureDriveName: null
+      });
       setStructureFile(null);
+      setStructRestoreMsg('');
       blobStore.remove(structBlobKey(activeTest.id));
       return;
     }
@@ -881,8 +889,15 @@ export const MDExperimentSetupSection = ({ ctx }) => {
 
   const handleTrajectoryFile = (file) => {
     if (!file) {
-      updateActiveTest({ trajectoryFileName: null });
+      // Même règle que pour la topologie : le nom déclaré ET le pointeur
+      // partent ensemble, sans quoi la reprise (base du navigateur puis Drive)
+      // ramenait la trajectoire qu'on venait de retirer.
+      updateActiveTest({
+        trajectoryFileName: null,
+        trajectoryDrive: null, trajectoryDriveName: null
+      });
       setTrajectoryFile(null);
+      setTrajDriveMsg('');
       blobStore.remove(trajBlobKey(activeTest.id));
       return;
     }
@@ -932,6 +947,18 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   const restoreTargetStillShown = (testId) => mdActiveIdRef.current === testId;
   const extOf = (name) => (String(name || '').match(/\.[A-Za-z0-9]{1,6}$/) || [''])[0].toLowerCase();
 
+  /* UN FICHIER EST « DÉCLARÉ » dès qu'un NOM ou un POINTEUR en parle — pas
+     seulement son nom local. Un dataset dont la sauvegarde a perdu le nom garde
+     souvent le pointeur de la copie de référence : la ligne doit alors dire la
+     vérité (elle est en train de le reprendre) et offrir le geste qui la force,
+     au lieu d'afficher « aucun fichier » comme si le dataset n'en avait jamais
+     eu. C'est aussi ce libellé qui est montré à l'utilisateur quand il n'y a pas
+     de nom local à afficher. */
+  const trajDeclared = !!(activeTest.trajectoryFileName || activeTest.trajectoryDriveName || trajPointerId);
+  const structDeclared = !!(activeTest.structureFileName || activeTest.structureDriveName || structPointerId);
+  const trajLabel = activeTest.trajectoryFileName || activeTest.trajectoryDriveName || 'the archived trajectory';
+  const structLabel = activeTest.structureFileName || activeTest.structureDriveName || 'the archived topology';
+
   const applyReloadedFile = async ({ kind, testId, wantedName, file, paint }) => {
     // Le fichier ramené du Drive porte le nom du Drive (`<radical>_<scientifique>.<ext>`) :
     // quand c'est bien le même fichier, on lui rend le nom DÉCLARÉ sur la
@@ -954,62 +981,82 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   };
 
   const restoreTrajectoryFromDrive = async () => {
-    const wantedName = activeTest.trajectoryFileName;
-    if (!wantedName) return { ok: false, message: '' };
+    const declared = activeTest.trajectoryFileName || '';
+    const driveName = activeTest.trajectoryDriveName || '';
+    const pointer = activeTest.trajectoryDrive || null;
+    // Le POINTEUR seul suffit (id exact du fichier chez le cloud) : un dataset
+    // dont la sauvegarde en différé a perdu le nom garde souvent son pointeur, et
+    // c'est le fichier qui compte — sans cette porte, la trajectoire restait
+    // introuvable et le viewer n'avait jamais sa barre de lecture.
+    if (!declared && !driveName && !pointer) return { ok: false, message: '' };
+    const label = declared || driveName || 'the archived trajectory';
     if (!getDriveToken()) {
-      const message = `ℹ️ ${wantedName} is not in this browser, and Google Drive is not connected in this browser either — connect it (sidebar) and press again: the download starts by itself.`;
+      const message = `ℹ️ ${label} is not in this browser, and Google Drive is not connected in this browser either — connect it (sidebar) and press again: the download starts by itself.`;
       setTrajPhase('nocloud');
       setTrajDriveMsg(message);
       return { ok: false, message };
     }
     const testId = activeTest.id;
     setTrajPhase('drive');
-    setTrajDriveMsg(`🔎 ${wantedName} not in this browser — checking Google Drive…`);
+    setTrajDriveMsg(`🔎 ${label} not in this browser — checking Google Drive…`);
     const found = await restoreMDFile({
       suffix: 'trajectory',
-      nameStem: wantedName,
+      nameStem: declared,
       pointer: activeTest.trajectoryDrive || null,
-      driveName: activeTest.trajectoryDriveName || '',
+      driveName,
       ctx: { test: activeTest.name || '', instance: activeTest.instanceName || '' },
     }).catch(() => null);
     const paint = restoreTargetStillShown(testId);
     if (!found) {
-      const message = `⚠️ ${wantedName} is not in this browser nor on Google Drive under this name (renamed? never archived?). Re-select it with “Choose XTC / TRR” — the upload archives it again.`;
+      const message = `⚠️ ${label} is not in this browser nor on Google Drive under this name (renamed? never archived?). Re-select it with “Choose XTC / TRR” — the upload archives it again.`;
       if (paint) { setTrajPhase('notfound'); setTrajDriveMsg(message); }
       return { ok: false, message };
     }
-    const restored = await applyReloadedFile({ kind: 'trajectory', testId, wantedName, file: found, paint });
+    const restored = await applyReloadedFile({ kind: 'trajectory', testId, wantedName: declared || driveName || found.name, file: found, paint });
+    // Le nom déclaré redevient vrai sur SA condition : c'est lui qui ramène le
+    // fichier sur les autres postes au prochain affichage.
+    if (!declared) updateActiveTest({ trajectoryFileName: restored.name }, testId);
     const message = `✅ ${restored.name} restored from Google Drive.`;
     if (paint) { setTrajPhase('done'); setTrajDriveMsg(message); }
     return { ok: true, message };
   };
 
   const restoreStructureFromDrive = async () => {
-    const wantedName = activeTest.structureFileName;
-    if (!wantedName) return { ok: false, message: '' };
+    const declared = activeTest.structureFileName || '';
+    const driveName = activeTest.structureDriveName || '';
+    const pointer = activeTest.structureDrive || null;
+    // Un POINTEUR (ou le nom déposé sur le Drive) suffit : c'est l'id exact du
+    // fichier qui fait foi, pas le nom resté dans le dataset — un dataset dont
+    // la sauvegarde en différé a perdu le nom garde souvent son pointeur.
+    if (!declared && !driveName && !pointer) return { ok: false, message: '' };
+    const label = declared || driveName || 'the archived topology';
     if (!getDriveToken()) {
-      const message = `ℹ️ ${wantedName} is not in this browser, and Google Drive is not connected in this browser either — connect it (sidebar) and press again: the download starts by itself.`;
+      const message = `ℹ️ ${label} is not in this browser, and Google Drive is not connected in this browser either — connect it (sidebar) and press again: the download starts by itself.`;
       setStructPhase('nocloud');
       setStructRestoreMsg(message);
       return { ok: false, message };
     }
     const testId = activeTest.id;
     setStructPhase('drive');
-    setStructRestoreMsg(`🔎 ${wantedName} not in this browser — checking Google Drive…`);
+    setStructRestoreMsg(`🔎 ${label} not in this browser — checking Google Drive…`);
     const found = await restoreMDFile({
       suffix: 'structure',
-      nameStem: wantedName,
+      nameStem: declared,
       pointer: activeTest.structureDrive || null,
-      driveName: activeTest.structureDriveName || '',
+      driveName,
       ctx: { test: activeTest.name || '', instance: activeTest.instanceName || '' },
     }).catch(() => null);
     const paint = restoreTargetStillShown(testId);
     if (!found) {
-      const message = `⚠️ ${wantedName} is not in this browser nor on Google Drive under this name — re-select it with “Choose PDB/CIF” (the upload archives it again).`;
+      const message = `⚠️ ${label} is not in this browser nor on Google Drive under this name — re-select it with “Choose PDB/CIF” (the upload archives it again).`;
       if (paint) { setStructPhase('notfound'); setStructRestoreMsg(message); }
       return { ok: false, message };
     }
-    const restored = await applyReloadedFile({ kind: 'structure', testId, wantedName, file: found, paint });
+    const restored = await applyReloadedFile({ kind: 'structure', testId, wantedName: declared || driveName || found.name, file: found, paint });
+    // Un nom DÉCLARÉ perdu est réécrit sur SA condition : c'est ce nom qui fait
+    // voyager le fichier vers les autres postes (et la ligne cesse de dire
+    // « restoring » pour dire la vérité).
+    if (!declared) updateActiveTest({ structureFileName: restored.name }, testId);
     const message = `✅ ${restored.name} restored from Google Drive — the 3D view is back.`;
     if (paint) { setStructPhase('done'); setStructRestoreMsg(message); }
     return { ok: true, message };
@@ -1019,38 +1066,54 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   // have to re-upload the .xtc/.trr/.dcd after refreshing the page. Source
   // order: 1) this browser's IndexedDB cache (fast, offline) → 2) Google Drive
   // (the file was archived on upload: c'est la SEULE copie de référence, donc la
-  // seule qui le ramène sur un poste où il n'a jamais été chargé). Les
-  // dépendances incluent le NOM et le POINTEUR déclarés : un dataset qui arrive
-  // du cloud APRÈS l'affichage de la page (fenêtre neuve) fait donc repartir la
-  // recherche — sans quoi la page restait sur « Restoring… » sans jamais
-  // interroger le Drive, ce qui était le défaut signalé.
+  // seule qui le ramène sur un poste où il n'a jamais été chargé).
+  //
+  // CE QUI DÉCLENCHE LA RECHERCHE n'est PAS le seul « nom déclaré » : un dataset
+  // dont la sauvegarde en différé a perdu le nom (ou une reprise qui a réussi sur
+  // une autre machine) garde souvent soit ses octets dans la base du navigateur —
+  // rangés sous la clé DE LA CONDITION (`traj_<id>`) — soit le POINTEUR de la
+  // copie de référence. Exiger le nom faisait donc sortir l'effet tout de suite :
+  // le fichier était là, mais la page n'allait jamais le chercher et le viewer 3D
+  // n'avait JAMAIS sa barre de lecture (défaut signalé). Les dépendances incluent
+  // le nom ET le pointeur : un dataset qui arrive du cloud APRÈS l'affichage de la
+  // page (fenêtre neuve) fait donc repartir la recherche.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (trajectoryFile || !activeTest.trajectoryFileName) return;
-      const wantedName = activeTest.trajectoryFileName;
+      if (trajectoryFile) return;                       // déjà en main
+      const testId = activeTest.id;
+      const declared = activeTest.trajectoryFileName || '';
+      const driveName = activeTest.trajectoryDriveName || '';
+      const pointer = activeTest.trajectoryDrive || null;
       // 1) Base du navigateur — accélérateur, jamais la référence. La clé est
-      //    celle de la condition (`traj_<id>`), mais le nom gardé peut être
-      //    celui du Drive (`<radical>_<scientifique>.<ext>`) : on compare les
-      //    radicaux, sinon une copie parfaitement valable était rejetée (et la
-      //    trajectoire entière re-téléchargée à chaque rechargement).
+      //    celle de la condition (`traj_<id>`) : la copie trouvée EST la bonne,
+      //    même quand le nom déclaré a disparu. Le nom gardé peut être celui du
+      //    Drive (`<radical>_<scientifique>.<ext>`) : on compare les radicaux,
+      //    sinon une copie parfaitement valable était rejetée (et la trajectoire
+      //    entière re-téléchargée à chaque rechargement).
       setTrajPhase('browser');
-      const blob = await blobStore.load(trajBlobKey(activeTest.id));
+      const blob = await blobStore.load(trajBlobKey(testId));
       if (cancelled) return;
-      if (blob && sameRawFileFor(blob.name, wantedName)) {
-        const restored = new File([blob], blob.name || wantedName || 'trajectory.xtc', { type: blob.type || 'application/octet-stream' });
+      if (blob && blob.size && sameRawFileFor(blob.name, declared)) {
+        const restored = new File([blob], blob.name || declared || 'trajectory.xtc', { type: blob.type || 'application/octet-stream' });
         setTrajectoryFile(restored);
-        const cache = localFileCache.get(activeTest.id) || {};
-        localFileCache.set(activeTest.id, { ...cache, trajectory: restored });
+        const cache = localFileCache.get(testId) || {};
+        localFileCache.set(testId, { ...cache, trajectory: restored });
         setTrajPhase('done');
         setTrajDriveMsg(`✅ ${restored.name} brought back from this browser.`);
+        // Le nom déclaré redevient vrai sur SA condition : c'est lui qui ramène
+        // le fichier sur les autres postes.
+        if (!declared) updateActiveTest({ trajectoryFileName: restored.name }, testId);
         return;
       }
-      // 2) Google Drive. Sans connexion sur CE poste, il n'y a rien à tenter :
+      // 2) Ni nom, ni nom déposé, ni pointeur : il n'y a rien à chercher nulle
+      //    part — la ligne invite à re-sélectionner le fichier.
+      if (!declared && !driveName && !pointer) return;
+      // 3) Google Drive. Sans connexion sur CE poste, il n'y a rien à tenter :
       //    on le dit, au lieu d'annoncer une reprise locale qui n'a pas lieu.
       if (!getDriveToken()) {
         setTrajPhase('nocloud');
-        setTrajDriveMsg(`ℹ️ ${wantedName} is not in this browser, and Google Drive is not connected in this browser either — connect it (sidebar): the download then starts by itself.`);
+        setTrajDriveMsg(`ℹ️ ${declared || driveName || 'the archived trajectory'} is not in this browser, and Google Drive is not connected in this browser either — connect it (sidebar): the download then starts by itself.`);
         return;
       }
       await restoreTrajectoryFromDrive();
@@ -1071,26 +1134,34 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (structureFile || !activeTest.structureFileName) return;
-      const wantedName = activeTest.structureFileName;
-      // 1) Base du navigateur (voir la trajectoire : mêmes radicaux comparés).
+      if (structureFile) return;                        // déjà en main
+      const testId = activeTest.id;
+      const declared = activeTest.structureFileName || '';
+      const driveName = activeTest.structureDriveName || '';
+      const pointer = activeTest.structureDrive || null;
+      // 1) Base du navigateur (voir la trajectoire : mêmes radicaux comparés, et
+      //    la clé `ms_struct_<id>` est déjà celle de la condition — la copie est
+      //    donc la bonne même sans nom déclaré).
       setStructPhase('browser');
-      const blob = await blobStore.load(structBlobKey(activeTest.id));
+      const blob = await blobStore.load(structBlobKey(testId));
       if (cancelled) return;
-      if (blob && sameRawFileFor(blob.name, wantedName)) {
-        const restored = new File([blob], blob.name || wantedName || 'structure.pdb', { type: blob.type || 'application/octet-stream' });
+      if (blob && blob.size && sameRawFileFor(blob.name, declared)) {
+        const restored = new File([blob], blob.name || declared || 'structure.pdb', { type: blob.type || 'application/octet-stream' });
         setStructureFile(restored);
-        const cache = localFileCache.get(activeTest.id) || {};
-        localFileCache.set(activeTest.id, { ...cache, structure: restored });
+        const cache = localFileCache.get(testId) || {};
+        localFileCache.set(testId, { ...cache, structure: restored });
         setStructPhase('done');
         setStructRestoreMsg(`✅ ${restored.name} brought back from this browser.`);
+        if (!declared) updateActiveTest({ structureFileName: restored.name }, testId);
         return;
       }
-      // 2) Google Drive — la copie de référence (ou rien, si Drive n'est pas
+      // 2) Ni nom, ni nom déposé, ni pointeur : rien à chercher nulle part.
+      if (!declared && !driveName && !pointer) return;
+      // 3) Google Drive — la copie de référence (ou rien, si Drive n'est pas
       //    connecté sur ce poste : on le dit au lieu de faire semblant).
       if (!getDriveToken()) {
         setStructPhase('nocloud');
-        setStructRestoreMsg(`ℹ️ ${wantedName} is not in this browser, and Google Drive is not connected in this browser either — connect it (sidebar): the download then starts by itself.`);
+        setStructRestoreMsg(`ℹ️ ${declared || driveName || 'the archived topology'} is not in this browser, and Google Drive is not connected in this browser either — connect it (sidebar): the download then starts by itself.`);
         return;
       }
       await restoreStructureFromDrive();
@@ -1330,11 +1401,11 @@ export const MDExperimentSetupSection = ({ ctx }) => {
                   🧬 System files — loaded with the 3D viewer buttons below
                 </span>
                 <div className="flex items-center gap-3 flex-wrap text-[10px] font-bold">
-                  {activeTest.structureFileName ? (
+                  {structDeclared ? (
                     structureFile ? (
-                      <span className="text-emerald-700">✓ Topology: {activeTest.structureFileName}</span>
+                      <span className="text-emerald-700">✓ Topology: {structLabel}</span>
                     ) : (
-                      <span className="text-amber-600">♻️ Topology: restoring {activeTest.structureFileName}…</span>
+                      <span className="text-amber-600">♻️ Topology: restoring {structLabel}…</span>
                     )
                   ) : activeTest.structureSrc ? (
                     <span className="text-emerald-700">✓ Topology (web): {activeTest.structureSrc}</span>
@@ -1343,22 +1414,36 @@ export const MDExperimentSetupSection = ({ ctx }) => {
                   )}
                   {trajectoryFile ? (
                     <span className="text-emerald-700">✓ Trajectory: {trajectoryFile.name}</span>
-                  ) : activeTest.trajectoryFileName ? (
-                    <span className="text-amber-600">♻️ Trajectory: restoring {activeTest.trajectoryFileName}…</span>
+                  ) : trajDeclared ? (
+                    <span className="text-amber-600">♻️ Trajectory: restoring {trajLabel}…</span>
                   ) : (
                     <span className="text-slate-400">No trajectory yet — use "Choose XTC / TRR"</span>
                   )}
                   {/* Un nom déclaré ne veut PAS dire « en main » : sur un poste
                       neuf la ligne annonçait une topologie « ✓ » alors que le
                       viewer n'avait rien. On dit où en est la reprise, et on
-                      donne le geste qui la force (copie de référence = Drive). */}
-                  {activeTest.structureFileName && !structureFile && (
+                      donne le geste qui la force (copie de référence = Drive).
+                      Les deux fichiers (topologie ET trajectoire) sont traités
+                      ici : c'est juste au-dessus du viewer 3D que l'utilisateur
+                      attend sa barre de lecture. */}
+                  {structDeclared && !structureFile && (
                     <span className="w-full text-amber-600 flex flex-col">
                       <span className="font-normal text-slate-500">{structSourceHint}</span>
                       <span className="flex items-center gap-2 mt-1 flex-wrap">
                         <button type="button" onClick={() => { restoreStructureFromDrive(); }} disabled={structPhase === 'drive'}
                           className="px-2 py-1 rounded-lg text-[10px] font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 disabled:opacity-60">
                           {structPhase === 'drive' ? '⬇️ Downloading…' : '⬇️ Bring it back from Google Drive'}
+                        </button>
+                      </span>
+                    </span>
+                  )}
+                  {trajDeclared && !trajectoryFile && (
+                    <span className="w-full text-amber-600 flex flex-col">
+                      <span className="font-normal text-slate-500">{trajSourceHint}</span>
+                      <span className="flex items-center gap-2 mt-1 flex-wrap">
+                        <button type="button" onClick={() => { restoreTrajectoryFromDrive(); }} disabled={trajPhase === 'drive'}
+                          className="px-2 py-1 rounded-lg text-[10px] font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 disabled:opacity-60">
+                          {trajPhase === 'drive' ? '⬇️ Downloading…' : '⬇️ Bring the trajectory back from Google Drive'}
                         </button>
                       </span>
                     </span>
@@ -1434,16 +1519,16 @@ export const MDExperimentSetupSection = ({ ctx }) => {
                       ✓ {trajectoryFile.name} (Ready)
                       <button type="button" onClick={() => handleTrajectoryFile(null)} className="ml-2 text-red-500 hover:text-red-700 font-black">✕</button>
                     </span>
-                  ) : activeTest.trajectoryFileName ? (
+                  ) : trajDeclared ? (
                     <span className="text-[10px] font-bold text-amber-600 mt-0.5 flex flex-col">
-                      <span>♻️ Restoring {activeTest.trajectoryFileName}…</span>
+                      <span>♻️ Restoring {trajLabel}…</span>
                       <span className="font-normal text-slate-500">{trajSourceHint}</span>
                       <span className="flex items-center gap-2 mt-1 flex-wrap">
                         <button type="button" onClick={() => { restoreTrajectoryFromDrive(); }} disabled={trajPhase === 'drive'}
                           className="px-2 py-1 rounded-lg text-[10px] font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 disabled:opacity-60">
                           {trajPhase === 'drive' ? '⬇️ Downloading…' : '⬇️ Bring it back from Google Drive'}
                         </button>
-                        <button type="button" onClick={() => updateActiveTest({ trajectoryFileName: null })} className="text-red-500 hover:text-red-700 font-bold underline">Clear saved name</button>
+                        <button type="button" onClick={() => handleTrajectoryFile(null)} className="text-red-500 hover:text-red-700 font-bold underline">Remove this trajectory</button>
                       </span>
                     </span>
                   ) : (
@@ -1501,6 +1586,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   externalError={typeof organicFetch !== 'undefined' ? organicFetch.error : null}
   trajectorySrc={trajNorm.url}
   trajectoryFile={trajectoryFile}
+  trajectoryName={activeTest.trajectoryFileName || activeTest.trajectoryDriveName || ''}
   trajectoryFallbacks={trajNorm.fallbacks}
   trajectoryFormat={d.trajectoryFormat}
   moleculeType={d.moleculeType}
