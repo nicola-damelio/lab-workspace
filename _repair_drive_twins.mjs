@@ -32,6 +32,14 @@
      node _repair_drive_twins.mjs --dataset=1fiiNoFCfioYFP1rt_1IwV1PZ3d0jlwil --apply
      node _repair_drive_twins.mjs --all --apply          (tous les datasets)
      node _repair_drive_twins.mjs --dirs=projects,protocols
+     node _repair_drive_twins.mjs --deep                 (aussi SOUS projects/ :
+        les jumeaux d'INSTANCE — deux « Exp_19 » frères, une « Structure » en
+        double — constatés sur le Drive réel le 20/09/2026 ; ajouter --apply
+        pour exécuter)
+     node _repair_drive_twins.mjs --deep --trash-identical --apply
+        (en plus : un jumeau dont TOUS les noms existent déjà dans le dossier
+        retenu — ex. les deux « Structure » d'une instance — part à la corbeille
+        au lieu de rester en double ; jamais de suppression définitive)
    ========================================================================= */
 import { register } from 'node:module';
 import { writeFileSync } from 'node:fs';
@@ -49,6 +57,17 @@ const args = new Map(process.argv.slice(2).map((a) => {
 }));
 const APPLY = args.get('apply') === 'true';
 const ALL = args.get('all') === 'true';
+/* `--deep` descend SOUS les conteneurs : les jumeaux d'instance / de section
+   (deux « Exp_19 » frères, une « Structure » en double) ne sont pas à la racine
+   du dataset, la passe ci-dessus ne les voit donc pas. */
+const DEEP = args.get('deep') === 'true';
+/* `--trash-identical` : quand une fusion ne peut RIEN déplacer parce que le
+   jumeau ne porte QUE des noms déjà présents dans le dossier retenu (les deux
+   « Structure » d'une instance, les deux « NMR » d'un projet), mettre le jumeau
+   en trop à la corbeille — ses copies y restent récupérables, et le dossier
+   retenu garde les fichiers du même nom. Désactivé par défaut : une corbeille
+   est un geste explicite. */
+const TRASH_IDENTICAL = args.get('trash-identical') === 'true';
 const DATASET = args.get('dataset') || 'GEC-UPJV-projects';
 const DIRS = (args.get('dirs') || CANONICAL_DATASET_DIRS.join(','))
   .split(',').map((s) => s.trim()).filter(Boolean);
@@ -181,6 +200,110 @@ let moves = 0;
 let skips = 0;
 let twinGroups = 0;
 
+/* ── Le mode --deep : les jumeaux PLUS BAS (instance, section, sous-section) ─
+   Le MÊME défaut (deux chaînes d'envoi simultanées, voir src/utils/folderRace.js)
+   fabriquait aussi des jumeaux SOUS projects/ : deux dossiers d'INSTANCE pour la
+   même condition, et jusqu'aux sections (« Structure » en double). Ici on
+   descend dans projects/ et on fusionne TOUT couple de dossiers FRÈRES portant
+   le même nom : le contenu est DÉPLACÉ par identifiant de fichier dans le
+   dossier retenu (celui qui porte du contenu, à contenu égal le plus ancien),
+   puis un jumeau devenu VIDE part à la corbeille. Rien n'est écrasé ni
+   supprimé. `quiet` n'affiche rien (vérification finale). */
+const deepWalk = async (datasetId, apply, { quiet = false } = {}) => {
+  const report = { groups: 0, moves: 0, skips: 0, trashed: 0, kept: 0, redundant: 0 };
+  const sayIf = (s) => { if (!quiet) say(s); };
+  /* Les enfants d'un dossier portent-ils EXACTEMENT les mêmes noms (et les
+     mêmes natures) que ceux de l'autre ? Sert à reconnaître un jumeau dont
+     toutes les copies existent déjà dans le dossier retenu. */
+  const sameChildNames = async (aId, bId) => {
+    const [a, b] = await Promise.all([listAll(aId).catch(() => null), listAll(bId).catch(() => null)]);
+    if (!a || !b) return false;
+    const key = (n) => `${isFolder(n) ? 'd' : 'f'}:${n.name}`;
+    const ka = a.map(key).sort();
+    const kb = b.map(key).sort();
+    return ka.length === kb.length && ka.every((x, i) => x === kb[i]);
+  };
+  const datasetKids = (await listAll(datasetId).catch(() => null));
+  if (!datasetKids) return report;
+  const projectsId = (datasetKids.find((n) => isFolder(n) && n.name === 'projects') || {}).id;
+  if (!projectsId) return report;
+
+  const visit = async (parentId, path, depth) => {
+    if (depth > 10) return;
+    const kids = (await listAll(parentId).catch(() => [])).filter(isFolder);
+    const byName = new Map();
+    for (const kid of kids) {
+      if (!byName.has(kid.name)) byName.set(kid.name, []);
+      byName.get(kid.name).push(kid);
+    }
+    const merged = [];
+    for (const [name, group] of byName) {
+      if (group.length < 2) continue;
+      report.groups += 1;
+      const scored = [];
+      for (const twin of group) {
+        const sub = await listAll(twin.id).catch(() => null);
+        scored.push({ id: twin.id, createdTime: twin.createdTime || '', items: sub ? sub.length : null });
+      }
+      const keep = pickCanonicalFolder(scored);
+      sayIf(`  • ${path}/${name} : ${group.length} dossiers du même nom → RETENU [${keep.id}] `
+        + `(${scored.find((s) => s.id === keep.id).items} élément(s))`);
+      for (const extra of group.filter((t) => t.id !== keep.id)) {
+        const ops = [];
+        await planMerge(extra.id, keep.id, `${path}/${name}`, ops);
+        const extraMoves = ops.filter((o) => o.kind === 'move');
+        const extraSkips = ops.filter((o) => o.kind === 'skip');
+        sayIf(`      ${apply ? 'FUSION' : 'à fusionner'} : [${extra.id}] créé ${extra.createdTime || '?'}`
+          + ` → ${extraMoves.length} déplacement(s), ${extraSkips.length} homonyme(s) laissé(s) en place`);
+        report.moves += extraMoves.length;
+        report.skips += extraSkips.length;
+        /* TOUT est homonyme et les deux jumeaux portent les MÊMES noms : le
+           jumeau en trop ne contient aucune donnée que le dossier retenu n'ait
+           déjà (voir --trash-identical) — il part à la corbeille, donc
+           récupérable, plutôt que de rester en double sur le Drive. */
+        const redundant = TRASH_IDENTICAL && extraMoves.length === 0 && extraSkips.length > 0
+          && await sameChildNames(extra.id, keep.id);
+        if (redundant) {
+          sayIf(`      ${apply ? 'REDONDANT' : 'à mettre à la corbeille'} : [${extra.id}] porte les MÊMES noms`
+            + ` que [${keep.id}] (copies récupérables dans la corbeille du Drive)`);
+          report.redundant += 1;
+          if (apply) {
+            try { await trashFile(extra.id); report.trashed += 1; sayIf(`      🗑 jumeau redondant [${extra.id}] mis à la corbeille`); }
+            catch (err) { say(`      ✗ corbeille ${extra.id} : ${err.message}`); }
+          }
+          continue;
+        }
+        if (!apply) continue;
+        for (const op of extraMoves) {
+          try { await moveFile(op.id, op.to); }
+          catch (err) { say(`      ✗ ${op.name} : ${err.message}`); }
+        }
+        const pruned = await pruneEmptyFolders(extra.id).catch(() => 0);
+        if (pruned) sayIf(`      🧹 ${pruned} dossier(s) vide(s) rangé(s) à la corbeille`);
+        const left = await listAll(extra.id).catch(() => null);
+        if (left && left.length === 0) {
+          try { await trashFile(extra.id); report.trashed += 1; sayIf(`      🗑 jumeau vide [${extra.id}] mis à la corbeille`); }
+          catch (err) { say(`      ✗ corbeille ${extra.id} : ${err.message}`); }
+        } else {
+          report.kept += 1;
+          sayIf(`      ⚠ jumeau CONSERVÉ : ${left ? left.length : '?'} élément(s) restant(s) — rien n’est supprimé`);
+        }
+      }
+      merged.push({ id: keep.id, path: `${path}/${name}` });
+    }
+    for (const kid of kids) {
+      if ((byName.get(kid.name) || []).length > 1) continue;   // jumeaux traités ci-dessus
+      await visit(kid.id, `${path}/${kid.name}`, depth + 1);
+    }
+    /* On redescend dans les dossiers RETENUS : ce sont eux qui portent désormais
+       les enfants déplacés (deux niveaux de jumeaux peuvent se suivre). */
+    for (const m of merged) await visit(m.id, m.path, depth + 1);
+  };
+
+  await visit(projectsId, 'projects', 0);
+  return report;
+};
+
 for (const dataset of targets) {
   say(`═══ Dataset « ${dataset.name} » [${dataset.id}]`);
   for (const dir of DIRS) {
@@ -214,15 +337,34 @@ for (const dataset of targets) {
   }
 }
 
-if (!twinGroups) {
+/* ── Le plan du mode --deep (sous projects/) ─────────────────────────────── */
+let deepGroups = 0;
+let deepMoves = 0;
+let deepSkips = 0;
+if (DEEP) {
   say('');
-  say('Aucun conteneur jumeau : rien à réparer.');
+  say('── Jumeaux SOUS projects/ (mode --deep) ──');
+  for (const dataset of targets) {
+    const r = await deepWalk(dataset.id, false);
+    deepGroups += r.groups;
+    deepMoves += r.moves;
+    deepSkips += r.skips;
+    if (!r.groups) say(`  ${dataset.name} : aucun dossier frère en double ✓`);
+  }
+  say('  (une fusion peut RÉUNIR deux jumeaux de même nom dans le dossier retenu —');
+  say('   l’exécution repasse alors et les traite à la passe suivante.)');
+}
+
+if (!twinGroups && !deepGroups) {
+  say('');
+  say('Aucun dossier jumeau : rien à réparer.');
   finish();
   process.exit(0);
 }
 
 say('');
-say(`TOTAL : ${moves} déplacement(s), ${skips} homonyme(s) conservé(s).`);
+say(`TOTAL : ${moves} déplacement(s), ${skips} homonyme(s) conservé(s)`);
+if (DEEP) say(`        + sous projects/ : ${deepMoves} déplacement(s), ${deepSkips} homonyme(s) (${deepGroups} groupe(s) de jumeaux)`);
 say('Les dossiers vidés par la fusion seront rangés à la corbeille, puis le jumeau s’il ne reste rien.');
 if (!APPLY) {
   say('Aucune modification (relancer avec --apply pour exécuter).');
@@ -271,6 +413,40 @@ for (const target of targets) {
 }
 say(`Déplacés : ${done} · échecs : ${failed} · jumeaux vides à la corbeille : ${trashed} · jumeaux conservés : ${kept}`);
 
+/* ── Exécution du mode --deep (sous projects/) ───────────────────────────── */
+let deepTrashed = 0;
+let deepKept = 0;
+if (DEEP) {
+  say('');
+  say('── Exécution SOUS projects/ (mode --deep) ──');
+  let deepDoneMoves = 0;
+  let deepRedundant = 0;
+  for (const dataset of targets) {
+    /* PLUSIEURS PASSES : déplacer le contenu d'un jumeau peut poser DEUX dossiers
+       de même nom dans le dossier retenu (deux « Structure » d'instance). La
+       passe suivante les voit et les traite — on s'arrête dès qu'une passe ne
+       trouve plus rien (ou après 4 passes : un homonyme irréductible est signalé,
+       jamais forcé). */
+    let pass = 0;
+    let changed = 1;
+    do {
+      pass += 1;
+      const r = await deepWalk(dataset.id, true);
+      /* Une passe qui ne peut RIEN déplacer (homonymes irréductibles) est la
+         dernière : on ne tourne pas quatre fois pour rien. */
+      changed = r.moves + r.trashed;
+      deepDoneMoves += r.moves;
+      deepTrashed += r.trashed;
+      deepKept += r.kept;
+      deepRedundant += r.redundant;
+      say(`   ${dataset.name} · passe ${pass} : ${r.groups} groupe(s) traité(s), `
+        + `${r.moves} déplacement(s), ${r.trashed} jumeau(x) vide(s) à la corbeille`);
+    } while (changed > 0 && pass < 4);
+  }
+  say(`Sous projects/ : ${deepDoneMoves} déplacement(s) · jumeaux vides à la corbeille : ${deepTrashed} · jumeaux conservés : ${deepKept}`
+    + (TRASH_IDENTICAL ? ` · jumeaux redondants reconnus : ${deepRedundant}` : ''));
+}
+
 /* ── Vérification : plus qu'un conteneur par nom ─────────────────────────── */
 
 say('');
@@ -281,6 +457,9 @@ for (const dataset of targets) {
     const n = (await twinsNamed(dataset.id, dir)).length;
     if (n > 1) leftovers.push(`${dir} ×${n}`);
   }
-  say(`  ${dataset.name} : ${leftovers.length ? `ENCORE DES JUMEAUX → ${leftovers.join(', ')}` : 'un seul conteneur par nom ✓'}`);
+  let deepLeft = 0;
+  if (DEEP) deepLeft = (await deepWalk(dataset.id, false, { quiet: true })).groups;
+  const deepNote = DEEP ? (deepLeft ? ` · SOUS projects/ : ${deepLeft} groupe(s) de jumeaux` : ' · sous projects/ : rien en double ✓') : '';
+  say(`  ${dataset.name} : ${leftovers.length ? `ENCORE DES JUMEAUX → ${leftovers.join(', ')}` : 'un seul conteneur par nom ✓'}${deepNote}`);
 }
 finish();

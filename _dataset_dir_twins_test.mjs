@@ -153,10 +153,10 @@ has(UPLOAD, 'export const listFoldersByName = async (name, parentId) =>',
   'driveUpload sait lister TOUS les dossiers d’un même nom (les jumeaux)');
 has(UPLOAD, 'fields=files(id,name,createdTime)&pageSize=100',
   '…avec la date de création (départage à contenu égal)');
-has(UPLOAD, 'export const findOrCreateFolder = async (name, parentId) => {\n  const all = await listFoldersByName(name, parentId);',
+has(UPLOAD, 'export const findOrCreateFolder = async (name, parentId) => oncePerFolder(',
   'findOrCreateFolder cherche STRICTEMENT : un échec remonte, donc rien n’est créé');
-has(UPLOAD, 'if (all.length) return String(all[0].id);',
-  '…et il rend le dossier existant au lieu d’en fabriquer un second');
+has(UPLOAD, 'const all = await listFoldersByName(name, parentId);\n    if (all.length) return String((await canonicalTwinOf(all)).id);',
+  '…et il rend le dossier existant (le canonique s’il y a des jumeaux) au lieu d’en fabriquer un second');
 ok(!UPLOAD.includes('const existing = await findFolderByName(name, parentId);'),
   'l’ancienne recherche « qui rendait toujours quelque chose » a disparu de findOrCreateFolder');
 

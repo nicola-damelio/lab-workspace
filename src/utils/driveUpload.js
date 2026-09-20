@@ -37,6 +37,12 @@ const TOKEN_EXPIRY_KEY = 'labDriveAccessTokenExpiresAt';
 const FOLDER_ID_KEY = 'labDriveFolderId';
 const FOLDER_DATASET_KEY = 'labDriveFolderDatasetId';
 
+/* Les créations de dossier EN VOL, par (parent, nom) — voir folderRace.js : deux
+   envois simultanés vers le MÊME dossier partagent désormais une seule création
+   au lieu d'en fabriquer deux (les jumeaux d'instance constatés sur le Drive
+   réel le 20/09/2026, expérience NMR du projet p53H : `Exp_7` ×2, `Exp_19` ×2…). */
+const folderCreations = new Map();
+
 /**
  * Google's OAuth access tokens expire after ~1 hour. We store the expiry time
  * (from the token response) and treat an expired token as "not connected", so
@@ -93,6 +99,7 @@ import {
   isDatasetMirrorDeleted, isDrivePathMirrorDeleted
 } from './driveMirrorStore';
 import { pickCanonicalFolder, emptyTwinIds, isCanonicalDatasetDir } from './datasetDirTwins';
+import { oncePerFolder, folderCreateKey } from './folderRace';
 import { getCloudProvider, nextcloudConfigured, ncUploadFile } from './nextcloud';
 import {
   enqueuePendingUpload, removePendingUpload, listPendingUploads,
@@ -348,22 +355,27 @@ export const ensureLabWorkspaceFolder = async () => {
     return findOrCreateFolder('Lab Workspace', containerId);
   }
 
-  // Otherwise find (or create) "Lab Workspace" at the Drive root.
-  const q = encodeURIComponent(
-    "name='Lab Workspace' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-  );
-  const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=10`);
-  const j = await res.json();
-  const existing = (j.files || []).find((f) => f.name === 'Lab Workspace');
-  if (existing) return existing.id;
+  // Otherwise find (or create) "Lab Workspace" at the Drive root. UNE SEULE
+  // création à la fois ici aussi (folderRace.js) : sur une installation neuve,
+  // deux envois simultanés fabriquaient DEUX « Lab Workspace » à la racine du
+  // Drive — même défaut que les jumeaux d'instance du NMR.
+  return oncePerFolder(folderCreations, folderCreateKey('Lab Workspace', 'root'), async () => {
+    const q = encodeURIComponent(
+      "name='Lab Workspace' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    );
+    const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=10`);
+    const j = await res.json();
+    const existing = (j.files || []).find((f) => f.name === 'Lab Workspace');
+    if (existing) return existing.id;
 
-  const c = await driveFetch('/drive/v3/files?fields=id,name', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: 'Lab Workspace', mimeType: 'application/vnd.google-apps.folder' })
+    const c = await driveFetch('/drive/v3/files?fields=id,name', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Lab Workspace', mimeType: 'application/vnd.google-apps.folder' })
+    });
+    const created = await c.json();
+    return created.id;
   });
-  const created = await c.json();
-  return created.id;
 };
 
 /** List immediate children (files AND folders) of a Drive folder. */
@@ -639,11 +651,31 @@ export const listFoldersByName = async (name, parentId) => {
   return (Array.isArray(j.files) ? j.files : []).filter((f) => f && f.name === name);
 };
 
+/** Le dossier CANONIQUE parmi des JUMEAUX : celui qui PORTE du contenu (à
+ *  contenu égal le plus ancien — l'arborescence d'origine, même règle que
+ *  datasetDirTwins.js). La question ne se pose que si le Drive porte plusieurs
+ *  dossiers du même nom (voir folderRace.js) : leurs contenus sont alors lus
+ *  STRICTEMENT. Sans ce départage, « le premier du nom » était rendu dans un
+ *  ordre que Drive ne garantit pas — les fichiers d'une expérience se rangeaient
+ *  donc tantôt dans un jumeau, tantôt dans l'autre. */
+const canonicalTwinOf = async (folders) => {
+  const list = Array.isArray(folders) ? folders : [];
+  if (list.length <= 1) return list[0] || null;
+  const scored = [];
+  for (const f of list) {
+    let items = null;
+    try { items = await strictChildCount(f.id); } catch { items = null; }
+    scored.push({ id: f.id, name: f.name, createdTime: f.createdTime || '', items });
+  }
+  return pickCanonicalFolder(scored) || list[0];
+};
+
 /** Find an existing app-created folder by exact name inside `parentId` ('' if missing). */
 export const findFolderByName = async (name, parentId) => {
   try {
     const all = await listFoldersByName(name, parentId);
-    return all.length ? String(all[0].id) : '';
+    const keep = await canonicalTwinOf(all);
+    return keep ? String(keep.id) : '';
   } catch { return ''; }
 };
 
@@ -699,23 +731,36 @@ export const untrashDriveFile = async (fileId) => {
  *  La RECHERCHE est STRICTE : si le Drive ne répond pas (quota 403, 5xx, délai),
  *  l'échec remonte au lieu de passer pour « le dossier n'existe pas ». Sans
  *  cela, un `projects/` déjà présent était recréé à côté du premier — les
- *  jumeaux `projects`/`protocols` constatés sur le Drive réel le 19/09/2026. */
-export const findOrCreateFolder = async (name, parentId) => {
-  const all = await listFoldersByName(name, parentId);
-  if (all.length) return String(all[0].id);
-  const c = await driveFetch('/drive/v3/files?fields=id,name', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name,
-      mimeType: 'application/vnd.google-apps.folder',
-      parents: [parentId]
-    })
-  });
-  const created = await c.json();
-  if (!created || !created.id) throwCode('DRIVE_ERROR', 'Drive returned no folder.');
-  return String(created.id);
-};
+ *  jumeaux `projects`/`protocols` constatés sur le Drive réel le 19/09/2026.
+ *
+ *  UNE SEULE création à la fois par (parent, nom) — RECHERCHE COMPRISE (voir
+ *  folderRace.js) : l'import Bruker archive les fichiers bruts pendant que la
+ *  copie de référence du spectre du NMR 1D part vers le MÊME dossier (les deux
+ *  « cherchaient puis créaient »), ce qui posait DEUX dossiers du même nom sous
+ *  le même parent — les jumeaux d'instance constatés le 20/09/2026
+ *  (`projects/p53H/NMR_p53H/Exp_7/` et `/Exp_7/`, `Exp_19` ×2, `Structure` ×2).
+ *  Entre plusieurs jumeaux DÉJÀ présents, c'est le canonique qui est rendu
+ *  (celui qui porte du contenu), donc les fichiers cessent de s'éparpiller. */
+export const findOrCreateFolder = async (name, parentId) => oncePerFolder(
+  folderCreations,
+  folderCreateKey(name, parentId),
+  async () => {
+    const all = await listFoldersByName(name, parentId);
+    if (all.length) return String((await canonicalTwinOf(all)).id);
+    const c = await driveFetch('/drive/v3/files?fields=id,name', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        mimeType: 'application/vnd.google-apps.folder',
+        parents: [parentId]
+      })
+    });
+    const created = await c.json();
+    if (!created || !created.id) throwCode('DRIVE_ERROR', 'Drive returned no folder.');
+    return String(created.id);
+  }
+);
 
 /** Nombre d'éléments d'un dossier, lu STRICTEMENT : `null` quand le Drive ne
  *  répond pas. Un contenu inconnu n'est jamais « vide » — donc jamais rangé à la

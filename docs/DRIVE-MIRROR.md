@@ -515,6 +515,62 @@ n'a qu'à être **glissé dans `projects/`** (même nom). La résolution suivant
 retrouve par son nom et enregistre son identifiant (`projects/<projet>`, voir
 `resolveDrivePathFromNames`) : aucun fichier à re-téléverser.
 
+## Les jumeaux d'INSTANCE (deux fois le même dossier d'expérience)
+
+Constaté sur le Drive réel le 20/09/2026 (expérience NMR du projet p53H) :
+
+```
+<dataset>/projects/p53H/NMR_p53H/
+    Exp_7/     Exp_7/     ← le même dossier, deux fois
+    Exp_19/    Exp_19/
+    .../Exp_19/data/Structure/  +  .../Exp_19/data/Structure/
+```
+
+Les **dates de création** le disent : 73 ms, 221 ms et 245 ms d'écart. Deux
+chaînes de dossiers avançaient EN MÊME TEMPS sur le même chemin. `findOrCreateFolder`
+faisait « chercher puis créer » : les deux ont donc CHERCHÉ avant que l'un ait
+créé, et le Drive a reçu deux dossiers du même nom sous le même parent.
+
+Qui courait : l'**import Bruker** archive les fichiers bruts
+(`projects/<projet>/<expérience>/<instance>/data/Bruker_1r/…`) pendant que la
+**copie de référence du spectre** part vers le MÊME dossier — `NMRSections.jsx`
+lance ce second envoi sans l'attendre (`void (async () => archiveNmr1dSpectrum…)`),
+et `nmr1dDriveCtx` vise la même sous-section `Bruker 1r`. Les deux dossiers du
+NMR réel portaient d'ailleurs chacun un `data/` vide : personne n'avait encore
+rien écrit dedans.
+
+Ce qui a été corrigé :
+
+* `src/utils/folderRace.js` — **pur** : `oncePerFolder(store, key, work)` fait
+  qu'une seule opération est en vol par `(parent, nom)`, les appelants concurrents
+  **partageant la même promesse** (donc le même identifiant). Le point capital :
+  c'est la RECHERCHE **ET** la création qui sont uniques, pas la seule création —
+  sinon la fenêtre « chercher avant que l'autre ait créé » resterait ouverte. Un
+  échec n'est jamais mémorisé (l'appelant suivant réessaie pour de vrai) ;
+* `driveUpload.findOrCreateFolder` passe par là, et la racine « Lab Workspace »
+  aussi (deux envois simultanés sur une installation neuve en fabriquaient deux) ;
+* **départage des jumeaux DÉJÀ présents** (`canonicalTwinOf`) : entre plusieurs
+  dossiers du même nom, c'est celui qui **porte du contenu** qui est rendu (à
+  contenu égal le plus ancien — même règle que `datasetDirTwins.pickCanonicalFolder`).
+  Sans cela, « le premier du nom » était rendu dans un ordre que le Drive ne
+  garantit pas : les fichiers d'une expérience se rangeaient tantôt dans un
+  jumeau, tantôt dans l'autre. `findFolderByName` (lecture) vise le même dossier.
+
+Réparer un Drive déjà touché : `node _repair_drive_twins.mjs --deep` (SANS
+`--apply` : lecture seule, le plan est affiché) descend dans `projects/` et
+fusionne tout couple de dossiers **frères** de même nom — contenu DÉPLACÉ par
+identifiant de fichier dans le dossier retenu, puis jumeau devenu vide à la
+corbeille. Aucun fichier n'est écrasé ni supprimé ; un homonyme est signalé et
+laissé en place. Une fusion peut réunir deux jumeaux de même nom dans le dossier
+retenu (deux `Structure` d'instance) : l'exécution repasse alors jusqu'à ce
+qu'il n'y ait plus rien (4 passes au plus).
+
+Vérifié hors navigateur par `_folder_race_test.mjs` (46 assertions) : logique
+pure, deux `findOrCreateFolder` simultanés → **une seule** création sur un faux
+Drive, la chaîne `projects/<projet>/<expérience>/<instance>/data/Bruker_1r`
+résolue deux fois en parallèle → aucun dossier en double, et le jumeau qui porte
+du contenu qui gagne.
+
 ## Ce qui reste propre à un appareil (volontairement)
 
 * les jetons d'accès et la session de connexion ;
