@@ -426,6 +426,41 @@ export const matchesRawName = (candidate = '', names = []) => {
   });
 };
 
+/** Le fichier gardé par le navigateur est-il bien celui que la page attend ?
+ *  Le nom déposé sur le cloud vaut `<radical local>_<scientifique>.<ext>`
+ *  (driveNaming.suggestDriveFileName) : un fichier rapatrié du Drive porte donc
+ *  un nom PLUS LONG que le nom resté dans le dataset. Exiger l'égalité stricte
+ *  des noms faisait rejeter une copie parfaitement valable — d'où un
+ *  re-téléchargement complet à chaque rechargement et, sur un poste dont le
+ *  Drive n'est pas connecté, un fichier qui ne revenait JAMAIS alors qu'il était
+ *  dans la base du navigateur. Règle : même extension quand les deux en
+ *  déclarent une, et radicaux identiques ou l'un préfixe de l'autre
+ *  (`<radical>_…`). Les octets sont de toute façon rangés sous une clé par
+ *  expérience (`traj_<id>`, `ms_struct_<id>`) : la copie d'une AUTRE condition
+ *  ne peut pas se trouver là, la comparaison ne sert qu'à démasquer une
+ *  re-sélection dans un autre format. */
+export const sameRawFileFor = (cachedName = '', wantedName = '') => {
+  const cached = String(cachedName || '').trim();
+  const wanted = String(wantedName || '').trim();
+  // Rien de déclaré, ou un blob que l'import n'a pas nommé : la clé IndexedDB
+  // est déjà celle de l'expérience, la copie est la bonne.
+  if (!wanted || !cached) return true;
+  if (cached.toLowerCase() === wanted.toLowerCase()) return true;
+  const stemA = rawStemOf(cached);
+  const stemB = rawStemOf(wanted);
+  if (!stemA || !stemB) return false;
+  const extA = rawExtOf(cached);
+  const extB = rawExtOf(wanted);
+  if (extA && extB && extA !== extB) return false;
+  // sanitizeSlug tronque à 60 caractères : comparer aussi les 40 premiers
+  // rattrape un radical tronqué côté Drive sans laisser passer deux fichiers
+  // différents (les radicaux courts ne se rencontrent pas par hasard).
+  const head = (s) => s.slice(0, 40);
+  return stemA === stemB
+    || stemA.startsWith(`${stemB}_`) || stemB.startsWith(`${stemA}_`)
+    || head(stemA) === head(stemB);
+};
+
 /** Candidats d'un média : pointeur → registre local → nom sur le cloud. */
 export const findRawCandidates = async ({
   pointer = null, ctx = {}, names = [], searchCloud = true
@@ -468,6 +503,13 @@ export const findRawCandidates = async ({
       const stem = rawStemOf(name);
       if (stem && stem.length >= 3 && !stems.includes(stem)) stems.push(stem);
     });
+    /* Les correspondances EXACTES d'abord ; un fichier qui ne diffère que par le
+       nom DÉPOSÉ sur le Drive (slugué, suffixé du scientifique — l'archivage
+       slugue le nom local, voir sameRawFileFor) est gardé à part et n'entre
+       qu'APRÈS : un dataset ancien (sans pointeur, avec un nom local à espaces ou
+       accentués) était sinon déclaré « introuvable » alors que le fichier était
+       bien sur le Drive. */
+    const related = [];
     for (const stem of stems) {
       try {
         // `stem` sort de sanitizeSlug : ni guillemet ni antislash à échapper.
@@ -477,11 +519,17 @@ export const findRawCandidates = async ({
         const json = await res.json();
         (json.files || []).forEach((file) => {
           if (!file || !file.id) return;
-          if (!matchesRawName(file.name, wanted)) return;
-          add(file.id, file.name, 'search', { trashed: !!file.trashed });
+          if (matchesRawName(file.name, wanted)) {
+            add(file.id, file.name, 'search', { trashed: !!file.trashed });
+            return;
+          }
+          if (wanted.some((name) => sameRawFileFor(file.name, name))) {
+            related.push({ id: file.id, name: file.name, trashed: !!file.trashed });
+          }
         });
       } catch { /* un terme qui échoue ne doit pas annuler les autres */ }
     }
+    related.forEach((file) => add(file.id, file.name, 'search', { trashed: !!file.trashed }));
   }
 
   return out;

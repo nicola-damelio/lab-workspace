@@ -15,7 +15,7 @@ import { suggestDriveFileName, canonicalExperimentPath, sanitizeSlug } from '../
 import { uploadLocalFile, getDriveToken, archiveFileToDriveWithPointer } from '../utils/driveUpload';
 import { storeJson, loadJson } from '../utils/pdbStore';
 import { blobStore } from '../utils/blobStore';
-import { archiveRestoreJson, isMissingValue, placeRestorePointer, restoreJsonFor, restoreRawFileFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';
+import { archiveRestoreJson, isMissingValue, placeRestorePointer, restoreJsonFor, restoreRawFileFor, restoreStems, sameRawFileFor, takePendingRestorePointer } from '../utils/driveRestore';
 import { useDriveAutoRestore } from './useDriveAutoRestore';
 import {
   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, CARBON_RANGE_DB,
@@ -4504,7 +4504,11 @@ export const MolecularStructureSection = ({ ctx }) => {
       if (structureFile || !activeTest.structureFileName) return;
       const blob = await blobStore.load(nmrStructBlobKey(activeTest.id));
       if (cancelled) return;
-      if (blob && (!activeTest.structureFileName || !blob.name || blob.name === activeTest.structureFileName)) {
+      // La clé IndexedDB est celle de l'EXPÉRIENCE ; le nom gardé peut être
+      // celui du Drive (`<radical>_<scientifique>.<ext>`, plus long) : exiger
+      // l'égalité des noms rejetait une copie valable, qui était alors
+      // re-téléchargée du Drive à chaque rechargement (voir sameRawFileFor).
+      if (blob && sameRawFileFor(blob.name, activeTest.structureFileName)) {
         const restored = new File([blob], blob.name || activeTest.structureFileName || 'structure.pdb', { type: blob.type || 'application/octet-stream' });
         setStructureFile(restored);
         const cache = nmrLocalFileCache.get(activeTest.id) || {};
@@ -4576,6 +4580,23 @@ export const MolecularStructureSection = ({ ctx }) => {
     missing: nmrStructDriveMissing,
     restore: restoreNmrStructureFromDrive
   });
+
+  /* ── UN NOM DE STRUCTURE QUI ARRIVE APRÈS L'AFFICHAGE RELANCE LA RECHERCHE ──
+     Sur une fenêtre neuve, la page peut s'afficher avant que le dataset ne soit
+     relu du cloud : le premier essai automatique part alors SANS nom de fichier
+     (donc « rien à faire », sans rien réserver) et, sans ce rappel, la page
+     restait vide — ni fichier, ni message. Une seule tentative par nom vu (le
+     portillon du Drive interdit la boucle). Même défaut côté page MD, où les
+     effets de restauration dépendent désormais du nom déclaré. */
+  const nmrStructNameSeenRef = useRef(activeTest.structureFileName || '');
+  useEffect(() => {
+    const name = activeTest.structureFileName || '';
+    if (name === nmrStructNameSeenRef.current) return;
+    nmrStructNameSeenRef.current = name;
+    if (!name || structureFile) return;
+    nmrStructRestore.attempt('data-arrived');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTest.id, activeTest.structureFileName]);
 
   // Locally-generated structures (no network round trip): idealized protein backbone from
   // sequence + secondary structure (or fully-extended fallback), and a simplified extended

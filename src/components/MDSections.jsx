@@ -42,7 +42,7 @@ import {
   clearLocalAnalysis,
   mdTrajectoryFingerprint
 } from '../utils/mdAnalysisCache';
-import { placeRestorePointer, restoreRawFileFor, takePendingRestorePointer } from '../utils/driveRestore';
+import { placeRestorePointer, restoreRawFileFor, sameRawFileFor, takePendingRestorePointer } from '../utils/driveRestore';
 
 // Cache to retain local File objects when switching tabs within the same session
 const localFileCache = new Map();
@@ -777,6 +777,13 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   const [structureFile, setStructureFile] = useState(() => localFileCache.get(activeTest.id)?.structure || null);
   const [trajDriveMsg, setTrajDriveMsg] = useState('');
   const [structRestoreMsg, setStructRestoreMsg] = useState('');
+  // OÙ LA RECHERCHE EN EST VRAIMENT. La page annonçait en dur « le fichier
+  // revient de la base du navigateur » — même dans une fenêtre de navigation
+  // privée où il n'y a RIEN : l'utilisateur lisait donc une reprise locale qui
+  // n'avait pas lieu, pendant que la copie de référence dormait sur le Drive.
+  // Ces deux états pilotent le texte affiché ET l'état du bouton de reprise.
+  const [trajPhase, setTrajPhase] = useState('browser');
+  const [structPhase, setStructPhase] = useState('browser');
   // Re-run the restore effects when Google Drive connects (their Drive fallback
   // may have found nothing while Drive was still disconnected).
   const [driveConnectedAt, setDriveConnectedAt] = useState(() => Date.now());
@@ -811,6 +818,8 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     setStructureFile(localFileCache.get(activeTest.id)?.structure || null);
     setTrajDriveMsg('');
     setStructRestoreMsg('');
+    setTrajPhase('browser');
+    setStructPhase('browser');
     setFileEpoch((n) => n + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTest.id]);
@@ -908,101 +917,187 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     blobStore.save(trajBlobKey(activeTest.id), file);
   };
 
+  /* ── REPRENDRE LA TRAJECTOIRE / LA TOPOLOGIE : UN SEUL CHEMIN ─────────────
+     Ordre voulu par l'application : 1) la base du navigateur (instantané, hors
+     ligne) → 2) Google Drive, la SEULE copie de référence — c'est elle qui rend
+     le fichier sur un poste où il n'a jamais été chargé (navigation privée,
+     autre PC). La tentative automatique et le bouton de reprise passent par la
+     MÊME fonction : la page ne peut donc pas annoncer une chose et en faire une
+     autre. Une restauration qui se termine APRÈS un changement de condition
+     n'écrit pas dans l'état de la page devenue affichée (les onglets ne
+     remontent pas les sections) : elle range le fichier sous la clé de la
+     condition qu'elle a lue et laisse l'écran à celle qui est à l'écran. */
+  const trajPointerId = (activeTest.trajectoryDrive && activeTest.trajectoryDrive.id) || '';
+  const structPointerId = (activeTest.structureDrive && activeTest.structureDrive.id) || '';
+  const restoreTargetStillShown = (testId) => mdActiveIdRef.current === testId;
+  const extOf = (name) => (String(name || '').match(/\.[A-Za-z0-9]{1,6}$/) || [''])[0].toLowerCase();
+
+  const applyReloadedFile = async ({ kind, testId, wantedName, file, paint }) => {
+    // Le fichier ramené du Drive porte le nom du Drive (`<radical>_<scientifique>.<ext>`) :
+    // quand c'est bien le même fichier, on lui rend le nom DÉCLARÉ sur la
+    // condition, pour que deux postes affichent — et mémorisent — la même chose
+    // (et pour que la base du navigateur le reconnaisse au rechargement suivant).
+    const want = extOf(wantedName);
+    const restored = (want && want === extOf(file.name) && sameRawFileFor(file.name, wantedName))
+      ? new File([file], wantedName, { type: file.type || 'application/octet-stream' })
+      : file;
+    try {
+      await blobStore.save(kind === 'trajectory' ? trajBlobKey(testId) : structBlobKey(testId), restored);
+    } catch { /* base indisponible : le fichier reste en mémoire pour cette session */ }
+    const cache = localFileCache.get(testId) || {};
+    localFileCache.set(testId, { ...cache, [kind]: restored });
+    if (paint) {
+      if (kind === 'trajectory') setTrajectoryFile(restored);
+      else setStructureFile(restored);
+    }
+    return restored;
+  };
+
+  const restoreTrajectoryFromDrive = async () => {
+    const wantedName = activeTest.trajectoryFileName;
+    if (!wantedName) return { ok: false, message: '' };
+    if (!getDriveToken()) {
+      const message = `ℹ️ ${wantedName} is not in this browser, and Google Drive is not connected in this browser either — connect it (sidebar) and press again: the download starts by itself.`;
+      setTrajPhase('nocloud');
+      setTrajDriveMsg(message);
+      return { ok: false, message };
+    }
+    const testId = activeTest.id;
+    setTrajPhase('drive');
+    setTrajDriveMsg(`🔎 ${wantedName} not in this browser — checking Google Drive…`);
+    const found = await restoreMDFile({
+      suffix: 'trajectory',
+      nameStem: wantedName,
+      pointer: activeTest.trajectoryDrive || null,
+      driveName: activeTest.trajectoryDriveName || '',
+      ctx: { test: activeTest.name || '', instance: activeTest.instanceName || '' },
+    }).catch(() => null);
+    const paint = restoreTargetStillShown(testId);
+    if (!found) {
+      const message = `⚠️ ${wantedName} is not in this browser nor on Google Drive under this name (renamed? never archived?). Re-select it with “Choose XTC / TRR” — the upload archives it again.`;
+      if (paint) { setTrajPhase('notfound'); setTrajDriveMsg(message); }
+      return { ok: false, message };
+    }
+    const restored = await applyReloadedFile({ kind: 'trajectory', testId, wantedName, file: found, paint });
+    const message = `✅ ${restored.name} restored from Google Drive.`;
+    if (paint) { setTrajPhase('done'); setTrajDriveMsg(message); }
+    return { ok: true, message };
+  };
+
+  const restoreStructureFromDrive = async () => {
+    const wantedName = activeTest.structureFileName;
+    if (!wantedName) return { ok: false, message: '' };
+    if (!getDriveToken()) {
+      const message = `ℹ️ ${wantedName} is not in this browser, and Google Drive is not connected in this browser either — connect it (sidebar) and press again: the download starts by itself.`;
+      setStructPhase('nocloud');
+      setStructRestoreMsg(message);
+      return { ok: false, message };
+    }
+    const testId = activeTest.id;
+    setStructPhase('drive');
+    setStructRestoreMsg(`🔎 ${wantedName} not in this browser — checking Google Drive…`);
+    const found = await restoreMDFile({
+      suffix: 'structure',
+      nameStem: wantedName,
+      pointer: activeTest.structureDrive || null,
+      driveName: activeTest.structureDriveName || '',
+      ctx: { test: activeTest.name || '', instance: activeTest.instanceName || '' },
+    }).catch(() => null);
+    const paint = restoreTargetStillShown(testId);
+    if (!found) {
+      const message = `⚠️ ${wantedName} is not in this browser nor on Google Drive under this name — re-select it with “Choose PDB/CIF” (the upload archives it again).`;
+      if (paint) { setStructPhase('notfound'); setStructRestoreMsg(message); }
+      return { ok: false, message };
+    }
+    const restored = await applyReloadedFile({ kind: 'structure', testId, wantedName, file: found, paint });
+    const message = `✅ ${restored.name} restored from Google Drive — the 3D view is back.`;
+    if (paint) { setStructPhase('done'); setStructRestoreMsg(message); }
+    return { ok: true, message };
+  };
+
   // Restore a previously-uploaded trajectory on (re)load, so the user does not
   // have to re-upload the .xtc/.trr/.dcd after refreshing the page. Source
   // order: 1) this browser's IndexedDB cache (fast, offline) → 2) Google Drive
-  // (the file was archived on upload; pulled back when the local cache is empty,
-  // e.g. on another browser/PC). This is why the page "remembers" the .xtc.
+  // (the file was archived on upload: c'est la SEULE copie de référence, donc la
+  // seule qui le ramène sur un poste où il n'a jamais été chargé). Les
+  // dépendances incluent le NOM et le POINTEUR déclarés : un dataset qui arrive
+  // du cloud APRÈS l'affichage de la page (fenêtre neuve) fait donc repartir la
+  // recherche — sans quoi la page restait sur « Restoring… » sans jamais
+  // interroger le Drive, ce qui était le défaut signalé.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       if (trajectoryFile || !activeTest.trajectoryFileName) return;
-      // 1) Browser cache.
+      const wantedName = activeTest.trajectoryFileName;
+      // 1) Base du navigateur — accélérateur, jamais la référence. La clé est
+      //    celle de la condition (`traj_<id>`), mais le nom gardé peut être
+      //    celui du Drive (`<radical>_<scientifique>.<ext>`) : on compare les
+      //    radicaux, sinon une copie parfaitement valable était rejetée (et la
+      //    trajectoire entière re-téléchargée à chaque rechargement).
+      setTrajPhase('browser');
       const blob = await blobStore.load(trajBlobKey(activeTest.id));
       if (cancelled) return;
-      if (blob && (!activeTest.trajectoryFileName || !blob.name || blob.name === activeTest.trajectoryFileName)) {
-        const restored = new File([blob], blob.name || activeTest.trajectoryFileName || 'trajectory.xtc', { type: blob.type || 'application/octet-stream' });
+      if (blob && sameRawFileFor(blob.name, wantedName)) {
+        const restored = new File([blob], blob.name || wantedName || 'trajectory.xtc', { type: blob.type || 'application/octet-stream' });
         setTrajectoryFile(restored);
         const cache = localFileCache.get(activeTest.id) || {};
         localFileCache.set(activeTest.id, { ...cache, trajectory: restored });
+        setTrajPhase('done');
+        setTrajDriveMsg(`✅ ${restored.name} brought back from this browser.`);
         return;
       }
-      // 2) Drive fallback.
-      if (getDriveToken()) {
-        setTrajDriveMsg(`🔎 ${activeTest.trajectoryFileName} not in this browser — checking Google Drive…`);
-        const driveFile = await restoreMDFile({
-          suffix: 'trajectory',
-          nameStem: activeTest.trajectoryFileName,
-          pointer: activeTest.trajectoryDrive || null,
-          driveName: activeTest.trajectoryDriveName || '',
-          ctx: { test: activeTest.name || '', instance: activeTest.instanceName || '' },
-        });
-        if (cancelled) return;
-        if (driveFile) {
-          setTrajectoryFile(driveFile);
-          blobStore.save(trajBlobKey(activeTest.id), driveFile);
-          const cache = localFileCache.get(activeTest.id) || {};
-          localFileCache.set(activeTest.id, { ...cache, trajectory: driveFile });
-          setTrajDriveMsg(`✅ ${driveFile.name} restored from Google Drive.`);
-        } else {
-          setTrajDriveMsg(`⚠️ ${activeTest.trajectoryFileName} not found on this browser or on Google Drive. It may never have been archived (old uploads aborted before the timeout fix) — re-select it with “Choose XTC / TRR”, then “Archive trajectory to Drive” to retry.`);
-        }
-      } else {
-        setTrajDriveMsg(`ℹ️ ${activeTest.trajectoryFileName} not in this browser. Connect Google Drive to restore it, or re-select it with “Choose XTC / TRR”.`);
+      // 2) Google Drive. Sans connexion sur CE poste, il n'y a rien à tenter :
+      //    on le dit, au lieu d'annoncer une reprise locale qui n'a pas lieu.
+      if (!getDriveToken()) {
+        setTrajPhase('nocloud');
+        setTrajDriveMsg(`ℹ️ ${wantedName} is not in this browser, and Google Drive is not connected in this browser either — connect it (sidebar): the download then starts by itself.`);
+        return;
       }
+      await restoreTrajectoryFromDrive();
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTest.id, fileEpoch, driveConnectedAt]);
+  }, [activeTest.id, activeTest.trajectoryFileName, activeTest.trajectoryDriveName, trajPointerId, fileEpoch, driveConnectedAt]);
 
   // Restore a previously-uploaded structure file (.gro/.pdb/.cif) on (re)load,
   // mirroring the trajectory restore. Large topology files are not part of the
   // Firestore payload (see structBlobKey), so without this the 3D viewer would
   // only show "Failed to decode structure file data." after a reload. Source
   // order: 1) this browser's IndexedDB cache → 2) Google Drive (the file was
-  // archived on upload), so a structure that IS on Drive can still come back
-  // on a machine/browser where it was never uploaded.
+  // archived on upload: la copie de référence), donc une topologie qui EST sur
+  // le Drive revient sur un poste où elle n'a jamais été chargée. Comme pour la
+  // trajectoire, le NOM et le POINTEUR déclarés font partie des dépendances : un
+  // dataset lu du cloud après l'affichage relance la recherche.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       if (structureFile || !activeTest.structureFileName) return;
-      // 1) Browser cache.
+      const wantedName = activeTest.structureFileName;
+      // 1) Base du navigateur (voir la trajectoire : mêmes radicaux comparés).
+      setStructPhase('browser');
       const blob = await blobStore.load(structBlobKey(activeTest.id));
       if (cancelled) return;
-      if (blob && (!activeTest.structureFileName || !blob.name || blob.name === activeTest.structureFileName)) {
-        const restored = new File([blob], blob.name || activeTest.structureFileName || 'structure.pdb', { type: blob.type || 'application/octet-stream' });
+      if (blob && sameRawFileFor(blob.name, wantedName)) {
+        const restored = new File([blob], blob.name || wantedName || 'structure.pdb', { type: blob.type || 'application/octet-stream' });
         setStructureFile(restored);
         const cache = localFileCache.get(activeTest.id) || {};
         localFileCache.set(activeTest.id, { ...cache, structure: restored });
+        setStructPhase('done');
+        setStructRestoreMsg(`✅ ${restored.name} brought back from this browser.`);
         return;
       }
-      // 2) Drive fallback.
-      if (getDriveToken()) {
-        setStructRestoreMsg(`🔎 ${activeTest.structureFileName} not in this browser — checking Google Drive…`);
-        const driveFile = await restoreMDFile({
-          suffix: 'structure',
-          nameStem: activeTest.structureFileName,
-          pointer: activeTest.structureDrive || null,
-          driveName: activeTest.structureDriveName || '',
-          ctx: { test: activeTest.name || '', instance: activeTest.instanceName || '' },
-        });
-        if (cancelled) return;
-        if (driveFile) {
-          setStructureFile(driveFile);
-          blobStore.save(structBlobKey(activeTest.id), driveFile);
-          const cache = localFileCache.get(activeTest.id) || {};
-          localFileCache.set(activeTest.id, { ...cache, structure: driveFile });
-          setStructRestoreMsg(`✅ ${driveFile.name} restored from Google Drive.`);
-        } else {
-          setStructRestoreMsg(`⚠️ ${activeTest.structureFileName} not found on this browser or on Google Drive — re-select it with “Choose PDB/CIF” (it will be archived again).`);
-        }
-      } else {
-        setStructRestoreMsg(`ℹ️ ${activeTest.structureFileName} not in this browser. Connect Google Drive to restore it, or re-select it with “Choose PDB/CIF”.`);
+      // 2) Google Drive — la copie de référence (ou rien, si Drive n'est pas
+      //    connecté sur ce poste : on le dit au lieu de faire semblant).
+      if (!getDriveToken()) {
+        setStructPhase('nocloud');
+        setStructRestoreMsg(`ℹ️ ${wantedName} is not in this browser, and Google Drive is not connected in this browser either — connect it (sidebar): the download then starts by itself.`);
+        return;
       }
+      await restoreStructureFromDrive();
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTest.id, fileEpoch, driveConnectedAt]);
+  }, [activeTest.id, activeTest.structureFileName, activeTest.structureDriveName, structPointerId, fileEpoch, driveConnectedAt]);
   
   useEffect(() => { if (structureMode === '3d') setHasOpened3D(true); }, [structureMode]);
 
@@ -1076,6 +1171,26 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     
     return () => { cancelled = true; };
   }, [needsOrganicFetch, activeSmiles]);
+
+  /* CE QUI EST VRAI DE LA RECHERCHE EN COURS : par où on cherche, et ce qu'il
+     reste à faire. La phrase historique (« le fichier revient de la base du
+     navigateur ») était écrite en dur : sur un poste neuf elle annonçait une
+     reprise locale qui n'avait pas lieu. */
+  const trajSourceHint = trajPhase === 'drive'
+    ? 'Not in this browser — downloading the archived copy from Google Drive (the reference copy that brings it back on any PC)…'
+    : trajPhase === 'nocloud'
+      ? 'Not in this browser, and Google Drive is NOT connected in this browser: nothing can be fetched here yet. Connect Google Drive (sidebar) — the download then starts by itself — or press the button above once it is connected.'
+      : trajPhase === 'notfound'
+        ? 'Not in this browser, and no archived copy was found on Google Drive under this name (renamed? never archived?). Re-select it with “Choose XTC / TRR”: the upload archives it again.'
+        : 'Looking in this browser’s storage first, then on Google Drive — the reference copy that brings the file back on any PC.';
+
+  const structSourceHint = structPhase === 'drive'
+    ? 'Not in this browser — downloading the archived topology from Google Drive (the reference copy that brings it back on any PC)…'
+    : structPhase === 'nocloud'
+      ? 'Not in this browser, and Google Drive is NOT connected in this browser: nothing can be fetched here yet. Connect Google Drive (sidebar) — the download then starts by itself — or press the button above once it is connected.'
+      : structPhase === 'notfound'
+        ? 'Not in this browser, and no archived copy was found on Google Drive under this name. Re-select it with “Choose PDB/CIF”: the upload archives it again.'
+        : 'Looking in this browser’s storage first, then on Google Drive — the reference copy that brings the topology back on any PC.';
 
   return (
     <div className="flex flex-col gap-6">
@@ -1216,7 +1331,11 @@ export const MDExperimentSetupSection = ({ ctx }) => {
                 </span>
                 <div className="flex items-center gap-3 flex-wrap text-[10px] font-bold">
                   {activeTest.structureFileName ? (
-                    <span className="text-emerald-700">✓ Topology: {activeTest.structureFileName}</span>
+                    structureFile ? (
+                      <span className="text-emerald-700">✓ Topology: {activeTest.structureFileName}</span>
+                    ) : (
+                      <span className="text-amber-600">♻️ Topology: restoring {activeTest.structureFileName}…</span>
+                    )
                   ) : activeTest.structureSrc ? (
                     <span className="text-emerald-700">✓ Topology (web): {activeTest.structureSrc}</span>
                   ) : (
@@ -1224,8 +1343,25 @@ export const MDExperimentSetupSection = ({ ctx }) => {
                   )}
                   {trajectoryFile ? (
                     <span className="text-emerald-700">✓ Trajectory: {trajectoryFile.name}</span>
+                  ) : activeTest.trajectoryFileName ? (
+                    <span className="text-amber-600">♻️ Trajectory: restoring {activeTest.trajectoryFileName}…</span>
                   ) : (
                     <span className="text-slate-400">No trajectory yet — use "Choose XTC / TRR"</span>
+                  )}
+                  {/* Un nom déclaré ne veut PAS dire « en main » : sur un poste
+                      neuf la ligne annonçait une topologie « ✓ » alors que le
+                      viewer n'avait rien. On dit où en est la reprise, et on
+                      donne le geste qui la force (copie de référence = Drive). */}
+                  {activeTest.structureFileName && !structureFile && (
+                    <span className="w-full text-amber-600 flex flex-col">
+                      <span className="font-normal text-slate-500">{structSourceHint}</span>
+                      <span className="flex items-center gap-2 mt-1 flex-wrap">
+                        <button type="button" onClick={() => { restoreStructureFromDrive(); }} disabled={structPhase === 'drive'}
+                          className="px-2 py-1 rounded-lg text-[10px] font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 disabled:opacity-60">
+                          {structPhase === 'drive' ? '⬇️ Downloading…' : '⬇️ Bring it back from Google Drive'}
+                        </button>
+                      </span>
+                    </span>
                   )}
                   {structRestoreMsg && (
                     <span className={`w-full text-[10px] font-bold ${structRestoreMsg.startsWith('✅') ? 'text-emerald-700' : structRestoreMsg.startsWith('⚠️') ? 'text-amber-700' : 'text-blue-600'}`}>{structRestoreMsg}</span>
@@ -1301,8 +1437,14 @@ export const MDExperimentSetupSection = ({ ctx }) => {
                   ) : activeTest.trajectoryFileName ? (
                     <span className="text-[10px] font-bold text-amber-600 mt-0.5 flex flex-col">
                       <span>♻️ Restoring {activeTest.trajectoryFileName}…</span>
-                      <span className="font-normal text-slate-500">The file is being brought back from this browser's local storage. If it does not reappear (e.g. you're on a different browser/PC), re-select it with the "Choose XTC / TRR" button in the 3D viewer.</span>
-                      <button type="button" onClick={() => updateActiveTest({ trajectoryFileName: null })} className="self-start mt-1 text-red-500 hover:text-red-700 font-bold underline">Clear saved name</button>
+                      <span className="font-normal text-slate-500">{trajSourceHint}</span>
+                      <span className="flex items-center gap-2 mt-1 flex-wrap">
+                        <button type="button" onClick={() => { restoreTrajectoryFromDrive(); }} disabled={trajPhase === 'drive'}
+                          className="px-2 py-1 rounded-lg text-[10px] font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 disabled:opacity-60">
+                          {trajPhase === 'drive' ? '⬇️ Downloading…' : '⬇️ Bring it back from Google Drive'}
+                        </button>
+                        <button type="button" onClick={() => updateActiveTest({ trajectoryFileName: null })} className="text-red-500 hover:text-red-700 font-bold underline">Clear saved name</button>
+                      </span>
                     </span>
                   ) : (
                     <span className="text-[10px] text-slate-400 mt-0.5">Use the "Choose XTC / TRR" button in the 3D viewer below.</span>

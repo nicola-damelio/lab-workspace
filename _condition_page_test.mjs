@@ -160,17 +160,63 @@ has(DOC, '## La copie locale ne prend pas le pas sur ce qui voyage (page MD)',
   '…et la copie locale qui ne masque plus la fiche du test');
 has(DOC, 'node _condition_page_test.mjs', '…avec la commande de vérification');
 
-console.log(`${passed} passed`);
-
 has(MD, "setStructRestoreMsg('');", '[MD] …idem pour la topologie');
 has(MD, 'setFileEpoch((n) => n + 1);',
   '[MD] un jeton relance les restaurations pour la condition affichée');
 
-/* Les DEUX restaurations (trajectoire, topologie) repartent sur ce jeton. */
-assert.equal(countOf(MD, '}, [activeTest.id, fileEpoch, driveConnectedAt]);'), 2,
-  'les deux effets de restauration MD dépendent du jeton de condition');
-passed += 1;
+/* Les DEUX restaurations (trajectoire, topologie) repartent sur ce jeton — ET sur
+   le NOM et le POINTEUR déclarés : un dataset relu du cloud APRÈS l'affichage de
+   la page (fenêtre neuve) doit relancer la recherche, sinon la page restait sur
+   « ♻️ Restoring… » sans jamais interroger le Drive (défaut signalé). */
+has(MD, '}, [activeTest.id, activeTest.trajectoryFileName, activeTest.trajectoryDriveName, trajPointerId, fileEpoch, driveConnectedAt]);',
+  '[MD] la reprise de la trajectoire suit la condition, son nom, son pointeur et le jeton');
+has(MD, '}, [activeTest.id, activeTest.structureFileName, activeTest.structureDriveName, structPointerId, fileEpoch, driveConnectedAt]);',
+  '[MD] …la topologie aussi');
 has(MD, 'if (trajectoryFile || !activeTest.trajectoryFileName) return;',
   '[MD] le portillon « déjà en main » reste en place (rien n’est rechargé pour rien)');
 has(MD, 'if (structureFile || !activeTest.structureFileName) return;',
   '[MD] …et la topologie garde le sien');
+
+/* ══ 5. LE FICHIER VIENT DU DRIVE — ET LA PAGE LE DIT ══════════════════════ */
+
+/* Plus de phrase écrite en dur : le texte affiché suit la recherche réellement
+   menée (base du navigateur → Drive, ou « le Drive n'est pas connecté ICI »). */
+ok(!MD.includes('The file is being brought back from this browser'),
+  '[MD] la phrase « le fichier revient de la base du navigateur » a disparu');
+has(MD, "const [trajPhase, setTrajPhase] = useState('browser');",
+  '[MD] la reprise de la trajectoire a un état lisible');
+has(MD, "const [structPhase, setStructPhase] = useState('browser');",
+  '[MD] …la topologie aussi');
+has(MD, "const trajSourceHint = trajPhase === 'drive'", '[MD] le texte affiché suit cet état');
+has(MD, "setTrajPhase('nocloud');",
+  '[MD] sans Drive connecté dans CE navigateur, la page le dit au lieu de promettre');
+has(MD, "setTrajDriveMsg(`✅ ${restored.name} brought back from this browser.`);",
+  '[MD] …et dit de quelle source le fichier est revenu');
+has(MD, 'onClick={() => { restoreTrajectoryFromDrive(); }}',
+  '[MD] un geste à la demande pour reprendre la trajectoire depuis le Drive');
+has(MD, 'onClick={() => { restoreStructureFromDrive(); }}',
+  '[MD] …et pour la topologie');
+has(MD, 'const restoreTrajectoryFromDrive = async () => {',
+  '[MD] la tentative automatique et le bouton passent par la MÊME fonction');
+has(MD, 'const applyReloadedFile = async ({ kind, testId, wantedName, file, paint }) => {',
+  '[MD] le fichier ramené est rangé sous la clé de SA condition');
+has(MD, "await blobStore.save(kind === 'trajectory' ? trajBlobKey(testId) : structBlobKey(testId), restored);",
+  '…jamais sous celle de la condition affichée');
+assert.equal(countOf(MD, 'sameRawFileFor(blob.name, wantedName)'), 2,
+  '[MD] la copie de la base du navigateur est reconnue par ses radicaux (nom déposé sur le Drive)');
+passed += 1;
+has(MD, "import { placeRestorePointer, restoreRawFileFor, sameRawFileFor, takePendingRestorePointer } from '../utils/driveRestore';",
+  '[MD] la comparaison des noms vit dans le noyau partagé');
+has(MD, 'const restoreTargetStillShown = (testId) => mdActiveIdRef.current === testId;',
+  '[MD] une reprise qui finit après un changement de condition ne peint pas la nouvelle page');
+has(MD, 'const paint = restoreTargetStillShown(testId);',
+  '…elle vise la condition qu’elle a lue');
+has(NMR, 'if (blob && sameRawFileFor(blob.name, activeTest.structureFileName)) {',
+  '[NMR] le viewer 3D reconnaît aussi la copie gardée sous son nom Drive');
+has(NMR, "nmrStructRestore.attempt('data-arrived');",
+  '[NMR] un nom de structure arrivé après l’affichage relance la recherche');
+
+has(DOC, '## « Le fichier revient de la base du navigateur » — la page dit enfin où elle cherche',
+  'la cause et la correction du message trompeur sont documentées');
+
+console.log(`${passed} passed`);

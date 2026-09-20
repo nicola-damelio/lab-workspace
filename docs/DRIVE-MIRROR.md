@@ -815,3 +815,78 @@ locale s'affiche seule (l'affichage hors ligne reste possible).
 
 * `node _md_analysis_cache_test.mjs` — la règle des deux copies (dont le cas
   « recalcul fait ailleurs ») et le câblage de la page MD.
+
+
+
+
+## « Le fichier revient de la base du navigateur » — la page dit enfin où elle cherche
+
+Signalé le 20/09/2026 : *« dans la page en navigation privée le message dit que le
+fichier est ramené de la base locale du navigateur, donc il ne le reprend pas du
+Drive ; les deux fenêtres ont des données différentes pour la même expérience »*.
+
+La phrase était **écrite en dur** sous le nom du fichier :
+
+> ♻️ Restoring protein.xtc… — The file is being brought back from this browser's
+> local storage. If it does not reappear (e.g. you're on a different browser/PC),
+> re-select it…
+
+Elle s'affichait dès qu'un nom de fichier était déclaré sur la condition, **avant
+même** de savoir s'il y avait quelque chose à reprendre : dans une fenêtre de
+navigation privée (base du navigateur vide) elle annonçait donc une restauration
+locale qui n'avait pas lieu, pendant que la copie de référence dormait sur le
+Drive. Quatre corrections, toutes dans `MDSections.jsx` (+ `driveRestore.js`) :
+
+1. **Où en est la recherche, pour de vrai.** Deux états (`trajPhase`,
+   `structPhase`) portent le texte affiché : `browser` (on interroge la base du
+   navigateur), `drive` (pas là → requête sur Google Drive), `nocloud` (le Drive
+   n'est **pas connecté dans ce navigateur** : il n'y a rien à tenter, on le dit
+   et on dit quoi faire), `notfound` (ni ici ni sur le Drive), `done` (ramené, en
+   précisant d'où : `brought back from this browser` vs `restored from Google
+   Drive`). Plus aucune phrase ne promet un téléchargement qui n'a pas lieu.
+2. **Un geste, pas une promesse.** Un bouton **⬇️ Bring it back from Google
+   Drive** (trajectoire *et* topologie) relance la recherche à la demande, par
+   exactement la même fonction que la tentative automatique
+   (`restoreTrajectoryFromDrive` / `restoreStructureFromDrive`) : la page ne peut
+   pas annoncer une chose et en faire une autre. Sans lui, un utilisateur dont la
+   tentative automatique n'a rien trouvé (pointeur d'un ancien dataset, fichier
+   renommé sur le Drive, connexion arrivée après coup) n'avait **aucun** moyen de
+   forcer la reprise depuis le Drive.
+3. **La copie de la base du navigateur est reconnue sous son nom Drive.** Les
+   octets sont rangés sous une clé **par condition** (`traj_<id>`,
+   `ms_struct_<id>`) mais sous le nom **déposé** sur le Drive
+   (`<radical>_<scientifique>.<ext>`), plus long que le nom resté dans le
+   dataset. Le test d'égalité stricte (`blob.name === activeTest.trajectoryFileName`)
+   rejetait donc une copie parfaitement valable : la trajectoire entière était
+   re-téléchargée à chaque rechargement, et sur un poste dont le Drive n'est pas
+   connecté le fichier **ne revenait jamais** alors qu'il était dans la base.
+   `sameRawFileFor(cachedName, wantedName)` (noyau partagé, testé pur) compare les
+   **radicaux** — identiques, ou l'un préfixe de l'autre (`<radical>_…`) — et
+   exige la même extension quand les deux en déclarent une (un `.trr` re-sélectionné
+   à la place d'un `.xtc` est bien re-téléchargé). Le fichier ramené du Drive est
+   renommé au nom **déclaré** sur la condition, pour que deux postes affichent et
+   mémorisent la même chose.
+4. **Un dataset qui arrive après l'affichage relance la recherche.** Les deux
+   effets de restauration ne dépendaient que de `[activeTest.id, fileEpoch,
+   driveConnectedAt]` : sur une fenêtre neuve, si la page s'affichait **avant** que
+   le dataset ne soit relu du cloud, le premier passage sortait sans nom — et ne
+   repassait plus jamais. La page restait alors sur « ♻️ Restoring… » **sans
+   jamais interroger le Drive** : c'est le défaut tel qu'il a été vu. Les noms et
+   pointeurs déclarés (`trajectoryFileName`, `trajectoryDriveName`, id du
+   pointeur, idem topologie) font désormais partie des dépendances. Côté NMR 3D,
+   le portillon du Drive ne se referme que sur une donnée déclarée : un nom de
+   structure qui arrive après coup déclenche une tentative (`attempt('data-arrived')`).
+
+Une restauration qui se termine **après** un changement de condition continue de
+viser la condition qu'elle a lue : le fichier est rangé sous la clé de *cette*
+condition et l'écran n'est repeint que si c'est encore elle qui est affichée
+(`restoreTargetStillShown`). Comme pour les calculs longs : on écrit pour la
+condition qu'on a mesurée, on ne peint que sur la page affichée.
+
+### Vérifier soi-même
+
+* `node _condition_page_test.mjs` — les textes d'état, le bouton de reprise, les
+  dépendances « nom + pointeur » et la reprise NMR déclenchée par le nom.
+* `node _drive_restore_test.mjs` — `sameRawFileFor` (copie du navigateur vs nom
+  déposé sur le Drive) et le câblage des modules.
+

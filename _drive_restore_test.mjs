@@ -61,6 +61,16 @@ const MOCKS = {
           ] })
         };
       }
+      // Un nom local SLUGUÉ sur le Drive (dataset ancien, sans pointeur) : la
+      // requête ne ramène QUE le fichier déposé — aucune correspondance exacte.
+      if (q.includes('sample_1_extra_run2')) {
+        return {
+          ok: true,
+          json: async () => ({ files: [
+            { id: 'RELATED', name: 'Sample_1_extra.fid', trashed: false }
+          ] })
+        };
+      }
       return {
         ok: true,
         json: async () => ({ files: [
@@ -79,6 +89,10 @@ const MOCKS = {
     // Le fichier d'une vidéo de microscopie : des OCTETS, pas un JSON.
     if (path.includes('/files/VID1?alt=media')) {
       return new Blob([strToU8('fake-mp4-bytes')], { type: 'video/mp4' });
+    }
+    // Le fichier déposé sous un nom slugué (`Sample_1_extra.fid`) : des octets.
+    if (path.includes('/files/RELATED?alt=media')) {
+      return new Blob([strToU8('fake-fid-bytes')], { type: 'application/octet-stream' });
     }
     if (!path.includes('/files/SEARCH1?alt=media')) return null;
     const body = JSON.stringify({ kind: 'nmr1d', version: 1, spectrum: { xs: [1, 2], ys: [3, 4], title: 'Imported 1r' } });
@@ -240,7 +254,7 @@ MOCKS.mediaBlob = realMedia;
 
 /* ══ 3. LE CÂBLAGE DU PREMIER MODULE (NMR 1D — le cas réel signalé) ════════ */
 
-ok(NMRSRC.includes("import { archiveRestoreJson, isMissingValue, placeRestorePointer, restoreJsonFor, restoreRawFileFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';"),
+ok(NMRSRC.includes("import { archiveRestoreJson, isMissingValue, placeRestorePointer, restoreJsonFor, restoreRawFileFor, restoreStems, sameRawFileFor, takePendingRestorePointer } from '../utils/driveRestore';"),
   'NMRSections passe par le mécanisme GÉNÉRAL (aucune restauration maison)');
 ok(NMRSRC.includes("import { useDriveAutoRestore } from './useDriveAutoRestore';"),
   '…et par le déclencheur automatique partagé');
@@ -488,6 +502,30 @@ ok(!RESTORE.matchesRawName('Immunostaining_p53_NS.wmv', ['Immunostaining_p53.wmv
 ok(RESTORE.matchesRawName('clip.mp4', ['clip']), 'un nom de référence sans extension reste tolérant');
 ok(!RESTORE.matchesRawName('clip.mp4', []), 'sans nom de référence, rien ne correspond');
 
+/* La BASE DU NAVIGATEUR garde la copie sous une clé PAR EXPÉRIENCE, mais sous le
+   nom DÉPOSÉ sur le Drive (`<radical>_<scientifique>.<ext>`) — plus long que le
+   nom resté dans le dataset. Exiger l'égalité des noms rejetait une copie
+   parfaitement valable : la trajectoire (ou le PDB) étaient alors re-téléchargés
+   en entier à chaque rechargement et, sur un poste dont le Drive n'est pas
+   connecté, le fichier ne revenait JAMAIS alors qu'il était dans la base.
+   Défaut signalé le 20/09/2026 : « en navigation privée la page dit que le
+   fichier revient de la base du navigateur et ne le ramène pas du Drive ». */
+ok(RESTORE.sameRawFileFor('protein_JSmith.xtc', 'protein.xtc'),
+  'une copie déposée sur le Drive appartient bien à la condition qui attend ce fichier');
+ok(RESTORE.sameRawFileFor('Protein_jsmith.XTC', 'protein.xtc'), '…quelle que soit la casse');
+ok(RESTORE.sameRawFileFor('sim_run_1_2016_annealed.pdb', 'sim run 1 2016 annealed.pdb'),
+  '…même quand le nom déposé est slugué et le nom d’origine non');
+ok(RESTORE.sameRawFileFor('protein.xtc', 'protein.xtc'), 'un nom identique passe, évidemment');
+ok(RESTORE.sameRawFileFor('protein', 'protein'), '…y compris sans extension');
+ok(!RESTORE.sameRawFileFor('protein.trr', 'protein.xtc'),
+  'un autre FORMAT reste refusé (une re-sélection doit être re-téléchargée)');
+ok(!RESTORE.sameRawFileFor('autrure_chose.xtc', 'protein.xtc'),
+  'un fichier étranger ne passe pas pour celui de la condition');
+ok(!RESTORE.sameRawFileFor('sim1.xtc', 'sim12.xtc'),
+  'deux radicaux seulement voisins ne sont pas confondus');
+ok(RESTORE.sameRawFileFor('', 'protein.xtc'), 'un blob sans nom (l’import ne l’a pas porté) est accepté');
+ok(RESTORE.sameRawFileFor('protein.xtc', ''), 'sans nom déclaré, la clé de l’expérience suffit');
+
 /* Le cycle réel : un poste VIERGE (ni pointeur, ni registre local, Drive
    connecté) retrouve la vidéo par son nom et récupère ses OCTETS. */
 globalThis.__fakeRegistry = {};
@@ -511,6 +549,15 @@ eq(renamedRaw && renamedRaw.source, 'pointer',
 
 const absentRaw = await RESTORE.restoreRawFileFor({ ctx: { test: 'T' }, names: ['clip_introuvable.mp4'] });
 eq(absentRaw, null, 'aucun média ne répond : la restitution le DIT (null) au lieu d’inventer');
+
+/* Un dataset ANCIEN : aucun pointeur, et le nom local contient les espaces que
+   l'archivage a remplacés par des `_` sur le Drive. La correspondance EXACTE
+   n'existe donc pas — mais le fichier est bien sur le Drive et il ne doit pas
+   être déclaré introuvable (dernier recours : même radical, nom déposé). */
+const relatedRaw = await RESTORE.restoreRawFileFor({ ctx: { test: 'T' }, names: ['Sample 1 extra run2.fid'] });
+ok(!!relatedRaw, 'un fichier déposé sous un nom SLUGUÉ est retrouvé (sans correspondance exacte)');
+eq(relatedRaw && relatedRaw.name, 'Sample_1_extra.fid', '…sous son nom déposé sur le Drive');
+eq(relatedRaw && await relatedRaw.file.text(), 'fake-fid-bytes', '…avec ses OCTETS');
 
 /* Le câblage du module : pointeur sur chaque média, restauration automatique
    dans les DEUX pages, remise dans la base du navigateur. */
