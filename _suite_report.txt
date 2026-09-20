@@ -82,6 +82,7 @@ OK   _recover_canvas_files.mjs  →  9 fichier(s) : 6 avec composition, 3 sans.
 OK   _reference_complete_test.mjs  →  _reference_complete_test: 68 passed
 OK   _reference_import_test.mjs  →  ✅ 226 tests passés (import de références)
 OK   _reference_links_test.mjs  →  ✅ 114 tests passés (liens de citation [n] ↔ références, import bibliographique numéroté, document exporté réparé)
+OK   _refresh_shared_read_test.mjs  →  ✅ _refresh_shared_read_test : 40 vérifications passées (🔄 Refresh relit la source partagée avant de reconstruire la page)
 OK   _repair_drive_twins.mjs  →  Aucun conteneur jumeau : rien à réparer.
 OK   _save_html_test.mjs  →  _save_html_test.mjs — 45 assertions OK
 OK   _spectra_split_test.mjs  →  passed 238/238
@@ -98,4 +99,4 @@ OK   _view_scroll_memory_test.cjs  →  ✅ 41/41 checks passed
 OK   _viewer_ui_layout_test.mjs  →  _viewer_ui_layout_test.mjs — 234 assertions OK
 OK   _workspace_drive_test.mjs  →  ✅ 57 tests passés (l’espace de travail entier vit sur le Drive)
 OK   _workspace_keys_test.mjs  →  ✅ 37 tests passés (les clés du navigateur vivent aussi sur le Drive)
-total 100, failed 0
+total 101, failed 0

@@ -1233,17 +1233,10 @@ if (customType === 'dosy') {
   // Where the user came from before opening a test page (used by the active
   // test's "◀ Back" button), e.g. { module: 'project-detail', projectId }.
   const [returnTarget, setReturnTarget] = useState(null);
-  /* « 🔄 Refresh » d'une page d'expérience (voir TestHeader dans
-     activeTestModule) : le CONTENU de la page est re-monté (clé React) au lieu
-     de recharger l'onglet — la base ouverte, la session Drive et le chemin de
-     navigation restent en place, donc l'utilisateur n'a jamais à refaire le
-     trajet pour retrouver sa page. */
-  const [testPageNonce, setTestPageNonce] = useState(0);
-  const [testPageRefreshedAt, setTestPageRefreshedAt] = useState(0);
-  const refreshTestPage = useCallback(() => {
-    setTestPageRefreshedAt(Date.now());
-    setTestPageNonce((n) => n + 1);
-  }, []);
+  /* « 🔄 Refresh » d'une page d'expérience (bouton de TestHeader, dans
+     activeTestModule). Le geste — RELIRE la source partagée, l'ADOPTER, puis
+     re-monter le contenu — vit PLUS BAS, juste après `openDataset` : il adopte
+     le dataset exactement comme une ouverture (voir keepPlace là-bas). */
   // Dernière expérience ouverte de cette base (voir readLastExperiment
   // ci-dessus) : alimente le bouton « ↩ Retour à l'expérience » de la barre
   // latérale, disponible depuis n'importe quelle autre page.
@@ -3429,7 +3422,19 @@ useEffect(() => {
   };
 }, []);
 
-const openDataset = (dset) => {
+/* ── OUVRIR UN DATASET (et le RELIRE) ────────────────────────────────────────
+   Le contenu (`dset.payload`, compressé) devient l'état de travail : tests,
+   storages, bibliothèques, projets… C'est LE chemin d'adoption du contenu.
+
+   `keepPlace` sert au bouton « 🔄 Refresh » d'une page d'expérience : le
+   contenu du dataset est adopté — exactement comme à l'ouverture, donc sans
+   divergence entre les deux chemins — mais on ne DÉPLACE pas l'utilisateur
+   (module courant, page d'administration, historique de navigation, expérience
+   ouverte) : c'est la promesse du bouton (« You STAY on this page »).
+
+   Renvoie `true` quand le contenu a été adopté, `false` sinon (accès refusé,
+   charge illisible) — 🔄 Refresh s'en sert pour DIRE ce qu'il a obtenu. */
+const openDataset = (dset, { keepPlace = false } = {}) => {
   // Chaque dataset n’est visible que par les utilisateurs définis dedans :
   // garde de sécurité, y compris pour l’ouverture directe par URL.
   const ctx = accessContextRef.current || { currentUser: null, noAccounts: false };
@@ -3439,13 +3444,13 @@ const openDataset = (dset) => {
       title: '🔒 Accès restreint',
       message: `Le dataset « ${(dset && dset.title) || 'sans titre'} » n’est visible que par les utilisateurs définis comme membres. Connectez-vous avec votre compte membre, ou demandez au superutilisateur de vous ajouter.`
     });
-    return;
+    return false;
   }
   /* Dataset connu du Drive (index partagé) mais jamais reçu sur CE poste : son
      contenu n'est pas encore ici. On le relit du Drive, puis on ouvre. */
   if (!dset.payload) {
     openDatasetFromDrive(dset);
-    return;
+    return false;
   }
   const kind = dset && dset.kind === 'administration' ? 'administration' : 'scientific';
   let s = null;
@@ -3468,7 +3473,7 @@ const openDataset = (dset) => {
       title: 'Error',
       message: 'Error reading dataset structure. The payload may be corrupted or too large.'
     });
-    return;
+    return false;
   }
 
   // ── Base d’administration : tout le contenu vit dans s.administration ──
@@ -3484,13 +3489,17 @@ const openDataset = (dset) => {
     setDatasetSubtitle(dset.subtitle || '');
     setCurrentDatasetId(dset.id);
     setAppView('dataset');
-    setCurrentModule('administration');
-    setCurrentAdminPage('overview');
-    setAdminFocus(null);
-    resetAdminNavHistory();
-    window.history.pushState({}, '', datasetHref(dset.id));
+    /* Relecture depuis la page ouverte (🔄 Refresh) : on reste sur la page et
+       sur l'onglet où l'on est — le contenu est adopté, la navigation non. */
+    if (!keepPlace) {
+      setCurrentModule('administration');
+      setCurrentAdminPage('overview');
+      setAdminFocus(null);
+      resetAdminNavHistory();
+      window.history.pushState({}, '', datasetHref(dset.id));
+    }
     if (window.innerWidth < 768) setIsSidebarOpen(false);
-    return;
+    return true;
   }
 
   setAdminContent(null);
@@ -3507,7 +3516,13 @@ const openDataset = (dset) => {
         setReactTests(loadedTests);
         historyRef.current = [loadedTests];
         setHistoryIndex(0);
-        setActiveTestId(loadedTests[0].id);
+        /* Une RELECTURE de la page ouverte (🔄 Refresh) garde l'expérience qu'on
+           regarde : sinon, rafraîchir la 3ᵉ condition d'un essai ramènerait sur
+           la première — l'inverse de la promesse du bouton. On ne retombe sur
+           la première que si elle n'existe plus dans la copie relue. */
+        setActiveTestId((prev) =>
+          keepPlace && loadedTests.some((t) => t && t.id === prev) ? prev : loadedTests[0].id
+        );
       } else {
         const fresh = [createEmptyTest('t1', 1)];
         setReactTests(fresh);
@@ -3580,17 +3595,31 @@ const openDataset = (dset) => {
 
       setCurrentDatasetId(dset.id);
       setAppView('dataset');
-      setCurrentModule('dashboard');
-
-      window.history.pushState({}, '', datasetHref(dset.id));
+      /* Relecture depuis la page ouverte (🔄 Refresh) : on reste sur la page,
+         sur le module et sur l'onglet du navigateur où l'on est — le contenu est
+         adopté, la navigation non. */
+      if (!keepPlace) {
+        setCurrentModule('dashboard');
+        window.history.pushState({}, '', datasetHref(dset.id));
+      }
+      return true;
     } catch {
       setDialog({
         type: 'alert',
         title: 'Error',
         message: 'Error reading dataset structure.'
       });
+      return false;
     }
   };
+
+  /* `openDataset` est recréé à chaque rendu (il referme tout l'état de l'app) :
+     la RELECTURE de la source partagée (🔄 Refresh, plus bas) l'appelle donc par
+     cette ref, comme `testsRef` / `latestDataRef` plus haut — mémoriser un
+     `useCallback` sur une fonction qui change à chaque rendu ne mémoriserait
+     rien. */
+  const openDatasetRef = useRef(null);
+  openDatasetRef.current = openDataset;
 
   /* ── Ouvrir un dataset dont le contenu n'est pas encore sur ce poste ───────
      L'index du Drive (state.json) liste les datasets de l'espace de travail ;
@@ -3612,6 +3641,91 @@ const openDataset = (dset) => {
     }
     openDataset({ ...dset, ...copy, id, payload: copy.payload, isCompressed: !!copy.isCompressed });
   };
+
+  /* ══ « 🔄 REFRESH » D'UNE PAGE D'EXPÉRIENCE ═════════════════════════════════
+     Le bouton de TestHeader (activeTestModule) ne recharge PAS l'onglet : la
+     base ouverte, la session Drive et le chemin de navigation restent en place,
+     donc on n'a jamais à refaire le trajet jusqu'à sa page.
+
+     Ce qu'il fait, DANS CET ORDRE :
+
+       1. il RELIT la source partagée et l'adopte. Re-monter les sections ne
+          suffisait pas : elles repartaient des données EN MÉMOIRE, donc un
+          chiffre saisi dans une AUTRE fenêtre — et une fenêtre de navigation
+          privée ne partage ni localStorage ni la mémoire du programme — n'y
+          apparaissait qu'après un rechargement complet (F5). C'est exactement
+          ce qui faisait dire « Refresh ne fait pas son travail » : le bouton
+          reconstruisait la page, mais sur les données d'AVANT. On relit donc ce
+          qu'un rechargement relit : le document du dataset dans le cloud
+          (Firestore), sinon sa copie sur le Drive
+          (`_workspace/datasets/ds_<id>.json`, la même que openDatasetFromDrive) ;
+       2. PUIS il re-monte le contenu (clé React), pour que chaque section,
+          graphe, tableau et viewer 3D reparte des données qui viennent d'être
+          adoptées.
+
+     L'adoption passe par `openDataset(…, { keepPlace: true })` : un SEUL chemin
+     d'adoption du contenu (aucune divergence avec une ouverture), qui ne
+     déplace simplement pas l'utilisateur.
+
+     Le résultat est DIT dans la barre fine (« ⟳ re-reading the shared data… »,
+     puis « shared data re-read », « re-read from the Drive copy » ou la raison
+     de l'échec en orange) : un rafraîchissement muet est précisément le défaut
+     que ce bouton vient de corriger. */
+  const [testPageNonce, setTestPageNonce] = useState(0);
+  const [testPageRefreshedAt, setTestPageRefreshedAt] = useState(0);
+  /* { busy: true } pendant la relecture, puis { ok, text } — remis à null tout
+     seul : cette note décrit un geste, pas un état. */
+  const [testPageRefresh, setTestPageRefresh] = useState(null);
+
+  /* Relire le contenu du dataset là où le programme l'écrit (cloud, sinon
+     Drive). Renvoie l'entrée prête pour `openDataset` — la même forme que celle
+     utilisée à l'ouverture — ou la raison de l'échec. */
+  const readSharedDatasetRecord = useCallback(async () => {
+    const id = currentDatasetId;
+    if (!id) return { record: null, reason: 'no-dataset' };
+    if (db) {
+      try {
+        const snap = await db.collection(`artifacts/${appId}/public/data/datasets`).doc(id).get();
+        const data = snap && snap.exists ? snap.data() : null;
+        if (data && data.payload) return { record: { ...data, id }, source: 'cloud' };
+      } catch (err) {
+        // Firestore peut refuser (règles) ou être hors ligne : la copie du
+        // Drive est alors la source, comme à l'ouverture d'un dataset.
+        console.warn('Refresh: reading the dataset from the cloud failed — trying the Drive copy:', err && err.message);
+      }
+    }
+    const copy = await readDatasetCopy(id).catch(() => null);
+    if (copy && copy.payload) return { record: { ...copy, id }, source: 'drive' };
+    return { record: null, reason: 'shared-copy-unreachable' };
+  }, [currentDatasetId]);
+
+  const reloadOpenDatasetFromSharedSource = useCallback(async () => {
+    const { record, source } = await readSharedDatasetRecord();
+    if (!record) {
+      return { ok: false, text: 'shared data not re-read (cloud / Drive unreachable) — rebuilt from this browser' };
+    }
+    if (!openDatasetRef.current(record, { keepPlace: true })) {
+      return { ok: false, text: 'shared data unreadable — rebuilt from this browser' };
+    }
+    return { ok: true, text: source === 'drive' ? 're-read from the Drive copy' : 'shared data re-read' };
+  }, [readSharedDatasetRecord]);
+
+  const refreshTestPage = useCallback(() => {
+    setTestPageRefresh({ busy: true });
+    /* Le contenu D'ABORD, le re-montage ENSUITE : l'ordre inverse ferait
+       repartir les sections sur les données d'avant la relecture. */
+    reloadOpenDatasetFromSharedSource().then((note) => {
+      setTestPageRefresh(note);
+      setTestPageRefreshedAt(Date.now());
+      setTestPageNonce((n) => n + 1);
+    });
+  }, [reloadOpenDatasetFromSharedSource]);
+
+  useEffect(() => {
+    if (!testPageRefresh) return undefined;
+    const id = setTimeout(() => setTestPageRefresh(null), 8000);
+    return () => clearTimeout(id);
+  }, [testPageRefresh]);
 
   const saveDatasetAccess = async (dsetId, access) => {
     const cleanAccess = {
@@ -5085,6 +5199,7 @@ const openDataset = (dset) => {
               key={`test-page-${testPageNonce}`}
               onRefreshPage={refreshTestPage}
               refreshedAt={testPageRefreshedAt}
+              refreshState={testPageRefresh}
               activeTestId={activeTestId} additives={additives} allCellLines={allCellLines} allCmpds={allCmpds}
               appClipboard={appClipboard} buffers={buffers} cmpColors={cmpColors} compoundMeta={compoundMeta}
               createEmptyTest={createEmptyTest} currentUser={currentUser} customCmpds={customCmpds} customConc={customConc} customFields={customFields}

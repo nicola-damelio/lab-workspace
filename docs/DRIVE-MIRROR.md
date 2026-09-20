@@ -1076,3 +1076,58 @@ ont disparu, l'état de frappe et le handler aussi, et le viewer reste le seul �
 écrire `structureSrc` ; `node _viewer_ui_layout_test.mjs` — le champ **PDB ID or
 URL** du viewer répond toujours présent (c'est désormais la seule porte).
 
+## « 🔄 Refresh » relit la source partagée avant de reconstruire la page (20/09/2026)
+
+Rapporté tel quel : « ho su due schermi lo stesso esperimento ma uno è in una
+finestra normale del browser e l'altra su una finestra in incognito. se su una
+tabella dell'esperimento normale scrivo un numero e clicco refresh su quella in
+incognito non succede niente; se invece ricarico il programma il numero appare ».
+
+Le bouton ne se contentait de **re-monter** le contenu de la page (clé React) :
+les sections repartaient des données **en mémoire**. Or une fenêtre de navigation
+privée ne partage **ni** `localStorage` **ni** la mémoire du programme : tout ce
+qu'une *autre* fenêtre venait d'enregistrer n'existait pour elle qu'après un
+**rechargement complet** (F5) — qui, lui, relit la source partagée. Le bouton
+faisait donc bien quelque chose, mais sur les données d'**avant** : d'où le
+symptôme exact « Refresh ne fait rien, F5 oui ».
+
+`App.jsx` fait maintenant deux choses, **dans cet ordre** :
+
+1. **Il relit la source partagée et l'adopte** — `readSharedDatasetRecord()` lit
+   le **document du dataset dans le cloud** (Firestore,
+   `artifacts/<appId>/public/data/datasets/<id>`), et si le cloud ne répond pas
+   (règles, hors ligne) sa **copie sur le Drive**
+   (`_workspace/datasets/ds_<id>.json`, la même que `openDatasetFromDrive`) : le
+   cloud d'abord parce qu'il est écrit ~1,5 s après le calme, la copie Drive
+   ~8 s. Rien n'est lu dans `localStorage`, qui n'est justement pas partagé entre
+   deux fenêtres ;
+2. **puis il re-monte le contenu** (clé React), pour que chaque section, graphe,
+   tableau et viewer 3D reparte des données qui viennent d'être adoptées.
+
+L'adoption passe par **un seul chemin**, celui d'une ouverture :
+`openDataset(record, { keepPlace: true })` (`App.jsx`). `keepPlace` empêche
+seulement de **déplacer l'utilisateur** — `keepPlace` garde le module courant,
+la page d'administration ouverte, l'historique de navigation et **l'expérience
+regardée** (rafraîchir la 3ᵉ condition d'un essai ne ramène plus sur la
+première ; on n'y retombe que si elle a disparu de la copie relue). Tout le
+reste est le chemin d'ouverture déjà éprouvé, donc aucune divergence entre
+« ouvrir » et « rafraîchir ».
+
+Le résultat est **dit** dans la barre fine, à côté de « ✓ page refreshed » :
+« ⟳ re-reading the shared data… » pendant la relecture, puis « shared data
+re-read » / « re-read from the Drive copy », ou, en **orange**, la raison de
+l'échec (« shared data not re-read (cloud / Drive unreachable) — rebuilt from
+this browser ») : un rafraîchissement muet est précisément le défaut corrigé ici.
+
+Ce qui n'a **pas** changé : le bouton est toujours **un** entonnoir
+(`refreshTestPage`, seule la clé `test-page-${testPageNonce}` re-monte la page),
+l'utilisateur ne quitte jamais sa page, et une sauvegarde en attente n'est ni
+vidée ni interrompue par la relecture (adopter le contenu repris re-pose la
+sauvegarde sur ce contenu).
+
+*Vérifier :* `node _refresh_shared_read_test.mjs` — la relecture (cloud puis
+copie Drive, rien du `localStorage`), l'ordre « relire **avant** de re-monter »,
+`openDataset(…, { keepPlace: true })`, les deux navigations gardées, l'expérience
+conservée et la note (busy / succès / échec orange) ; `node _ui_scale_test.cjs` —
+le bouton, son entonnoir et la confirmation « ✓ page refreshed ».
+

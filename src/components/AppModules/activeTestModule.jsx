@@ -48,10 +48,15 @@ export const ActiveTestModule = ({
   solvents, storages, testCategories, tests, unlockedTestIds,
   MDTestRenderer,
   // « 🔄 Refresh » de CETTE page (fourni par App) et l'horodatage du dernier
-  // rafraîchissement : App re-monte le contenu de la page, la barre fine
+  // rafraîchissement : App RELIT d'abord la source partagée (cloud, sinon la
+  // copie du Drive), puis re-monte le contenu de la page — la barre fine
   // confirme l'opération, et l'utilisateur ne quitte jamais sa page.
+  // `refreshState` porte ce que la relecture a donné : { busy: true } pendant,
+  // puis { ok, text }. Un rafraîchissement muet ferait croire que le bouton ne
+  // fait rien — c'est exactement le défaut corrigé ici.
   onRefreshPage = () => {},
-  refreshedAt = 0
+  refreshedAt = 0,
+  refreshState = null
 }) => {
                 const dragInstanceId = React.useRef(null); // dragged instance tab (for reordering)
                 const testNameBeforeEditRef = useRef(null); // Drive-file rename tracking
@@ -417,7 +422,7 @@ const TestHeader = (
                       <button
                         type="button"
                         onClick={onRefreshPage}
-                        title="Refresh this page: every section, plot, table and 3D viewer is rebuilt from the experiment's data. You STAY on this page — no path to walk back (a reload from the browser bar loses the experiment you were on)."
+                        title="Refresh this page: the experiment is FIRST re-read from the shared copy (the cloud document, or its Drive copy) — so a number typed in another window shows up here, exactly like a full reload — and every section, plot, table and 3D viewer is then rebuilt. You STAY on this page — no path to walk back (a reload from the browser bar loses the experiment you were on)."
                         className="shrink-0 font-bold py-1 px-2 rounded-lg text-xs border border-slate-300 bg-white text-slate-600 shadow-sm hover:bg-slate-50 transition-colors whitespace-nowrap"
                       >
                         🔄 Refresh
@@ -425,6 +430,22 @@ const TestHeader = (
                       {showRefreshDone && (
                         <span className="shrink-0 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-0.5 whitespace-nowrap">
                           ✓ page refreshed
+                        </span>
+                      )}
+                      {/* Ce que la RELECTURE de la source partagée a donné : sans
+                          ce témoin, un cloud injoignable ressemblerait à un
+                          bouton qui ne fait rien (l'ancien défaut). */}
+                      {refreshState && refreshState.busy && (
+                        <span className="shrink-0 text-[10px] font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-2 py-0.5 whitespace-nowrap animate-pulse">
+                          ⟳ re-reading the shared data…
+                        </span>
+                      )}
+                      {refreshState && !refreshState.busy && (
+                        <span
+                          className={`shrink-0 max-w-[320px] truncate text-[10px] font-bold rounded-lg px-2 py-0.5 whitespace-nowrap border ${refreshState.ok ? 'text-slate-600 bg-slate-50 border-slate-200' : 'text-amber-700 bg-amber-50 border-amber-300'}`}
+                          title={refreshState.text}
+                        >
+                          {refreshState.ok ? '↻ ' : '⚠ '}{refreshState.text}
                         </span>
                       )}
                       {!isBox && (
