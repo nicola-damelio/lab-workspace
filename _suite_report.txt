@@ -43,7 +43,7 @@ OK   _doc_responsive_test.mjs  →  ✅ 46 tests passés (document exporté et p
 OK   _dock_style_test.mjs  →  _dock_style_test.mjs — 29 assertions OK
 OK   _docking_sanity.cjs  →  (no output)
 OK   _drive_mirror_test.mjs  →  ✅ 78 tests passés (le Drive est le miroir du programme : rien ne ressuscite)
-OK   _drive_restore_test.mjs  →  219 passed
+OK   _drive_restore_test.mjs  →  250 passed
 OK   _editor_layout_test.cjs  →  _editor_layout_test.cjs — 9 assertions passed
 OK   _esm_test_hook.mjs  →  (no output)
 OK   _experiment_drive_root_test.mjs  →  _experiment_drive_root_test: 41 passed

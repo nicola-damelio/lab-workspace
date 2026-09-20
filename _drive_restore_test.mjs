@@ -254,7 +254,7 @@ MOCKS.mediaBlob = realMedia;
 
 /* ══ 3. LE CÂBLAGE DU PREMIER MODULE (NMR 1D — le cas réel signalé) ════════ */
 
-ok(NMRSRC.includes("import { archiveRestoreJson, isMissingValue, placeRestorePointer, restoreJsonFor, restoreRawFileFor, restoreStems, sameRawFileFor, takePendingRestorePointer } from '../utils/driveRestore';"),
+ok(NMRSRC.includes("import { archiveRestoreJson, isMissingValue, placeRestorePointer, pointerStillWanted, restoreJsonFor, restoreRawFileFor, restoreStems, sameRawFileFor, takePendingRestorePointer, wantedRawNames } from '../utils/driveRestore';"),
   'NMRSections passe par le mécanisme GÉNÉRAL (aucune restauration maison)');
 ok(NMRSRC.includes("import { useDriveAutoRestore } from './useDriveAutoRestore';"),
   '…et par le déclencheur automatique partagé');
@@ -474,6 +474,99 @@ ok(UPLOADSRC.includes("export const driveFilePointer = (res, fallbackName = '') 
 ok(UPLOADSRC.includes('const name = archiveFileDriveName({ file, ctx, title, suffix });'),
   'archiveFileToDrive et la variante à pointeur portent le MÊME nom (rien ne change sur le Drive)');
 
+/* ══ 3 bis. LE FICHIER DÉCLARÉ FAIT FOI (pointeur périmé) ══════════════════
+   Défaut signalé : un PDB et une XTC tout juste chargés dans une fenêtre, et une
+   AUTRE fenêtre (navigation privée) « reprenait » l'ancien `step7.gro` du
+   dataset. La condition portait bien le NOUVEAU nom… mais gardait le POINTEUR de
+   l'ancien fichier (rien ne l'effaçait tant que l'envoi du nouveau n'avait pas
+   abouti) et l'id exact était essayé AVANT tout le reste : la page installait
+   donc l'ancien fichier sous le nom du bon. */
+
+ok(RESTORE.sameRawStemFor('6pep3_VSPA109.pdb', '6pep3_VSPA109_Nicola_DAMELIO.pdb'),
+  'même radical malgré le nom déposé sur le Drive (scientifique, slugage)');
+ok(RESTORE.sameRawStemFor('clip.wmv', 'clip.mp4'),
+  '…et malgré une reconversion (ici l’extension est ignorée)');
+ok(!RESTORE.sameRawStemFor('step7_Nicola_DAMELIO.gro', '6pep3_VSPA109.pdb'),
+  'deux fichiers DIFFÉRENTS ne partagent pas de radical');
+
+eq(RESTORE.pointerStillWanted({ pointer: { name: 'step7_Nicola_DAMELIO.gro' }, names: ['6pep3_VSPA109.pdb'] }), false,
+  'un pointeur qui ne décrit pas le fichier déclaré est PÉRIMÉ');
+eq(RESTORE.pointerStillWanted({ pointer: { name: '6pep3_VSPA109_Nicola.pdb' }, names: ['6pep3_VSPA109.pdb'] }), true,
+  'le nom déposé sur le Drive décrit bien le même fichier');
+eq(RESTORE.pointerStillWanted({ pointer: { name: 'step7_Nicola_DAMELIO.gro' }, names: [] }), true,
+  'sans nom déclaré le pointeur est la SEULE piste : il est gardé');
+eq(RESTORE.pointerStillWanted({ pointer: { id: 'X1', name: '' }, names: ['a.pdb'] }), true,
+  'un pointeur sans nom n’est pas jugé (l’id exact reste la piste)');
+
+eq(RESTORE.wantedRawNames({ declared: '6pep3.pdb', hints: ['6pep3_Nicola.pdb', 'step7_Nicola_DAMELIO.gro'] }),
+  ['6pep3.pdb', '6pep3_Nicola.pdb'],
+  'les noms cherchés sont ceux du fichier DÉCLARÉ (l’ancien .gro est écarté)');
+eq(RESTORE.wantedRawNames({ declared: '', hints: ['a.gro', 'b.xtc'] }), ['a.gro', 'b.xtc'],
+  'sans nom déclaré, tous les indices restent bons');
+
+/* Comportement : le fichier DÉCLARÉ passe avant le pointeur périmé, qui n'est
+   gardé qu'en dernier recours (fichier renommé sur le Drive). */
+const staleCandidates = await RESTORE.findRawCandidates({
+  pointer: { id: 'OLD_GRO', name: 'step7_Nicola_DAMELIO.gro' },
+  ctx: {},
+  names: ['Sample_1.fid'],
+  searchCloud: true
+});
+ok(staleCandidates.length >= 2, 'le noyau propose plusieurs pistes (le pointeur périmé en fait partie)');
+eq(staleCandidates[0].source, 'search', 'le fichier DÉCLARÉ est essayé avant le pointeur périmé');
+eq(staleCandidates[staleCandidates.length - 1].source, 'pointer',
+  '…qui n’est plus gardé qu’EN DERNIER recours (un fichier renommé reste retrouvé)');
+const keptCandidates = await RESTORE.findRawCandidates({
+  pointer: { id: 'OLD_GRO', name: 'step7_Nicola_DAMELIO.gro' }, ctx: {}, names: [], searchCloud: false
+});
+eq(keptCandidates.map((c) => c.source), ['pointer'],
+  '…et sans AUCUN nom déclaré il redevient la seule piste (nom perdu par une sauvegarde)');
+
+/* Fichiers lourds (trajectoire MD, structure NMR) : le pointeur périmé n'est même
+   pas téléchargé — on ne rapatrie pas des Go pour les refuser ensuite. */
+const strictCandidates = await RESTORE.findRawCandidates({
+  pointer: { id: 'OLD_GRO', name: 'step7_Nicola_DAMELIO.gro' },
+  ctx: {},
+  names: ['Sample_1.fid'],
+  searchCloud: true,
+  strictNames: true
+});
+eq(strictCandidates.filter((c) => c.source === 'pointer'), [],
+  'en mode strict, le pointeur périmé n’est pas proposé du tout');
+
+/* La page MD : un fichier choisi remplace l'ancienne copie de référence, et une
+   copie trouvée qui n'est pas CE fichier n'est jamais installée en silence. */
+ok(MDSRC.includes('updateActiveTest({ structureDrive: null, structureDriveName: null });'),
+  '[MD] choisir une topologie efface le pointeur de l’ancienne (elle ne peut plus être « reprise »)');
+ok(MDSRC.includes('updateActiveTest({ trajectoryDrive: null, trajectoryDriveName: null });'),
+  '[MD] …et choisir une trajectoire aussi');
+ok(MDSRC.includes('const names = wantedRawNames({ declared: nameStem, hints: [pointer && pointer.name, driveName] });'),
+  '[MD] la recherche ne vise que les noms du fichier déclaré');
+ok(MDSRC.includes('const byStem = pool.filter(([, e]) => sameRawFileFor(e.name, full));'),
+  '[MD] le registre des envois ne retient que ce qui décrit ce fichier (plus de « le plus récent »)');
+ok(MDSRC.includes('const f = (j.files || []).find((x) => sameRawFileFor(x.name, full));'),
+  '[MD] …la recherche par nom sur le Drive non plus');
+ok(MDSRC.includes('names, strictNames: true }).catch(() => null);'),
+  '[MD] un pointeur périmé n’est même pas téléchargé (fichiers de plusieurs Go)');
+ok(MDSRC.includes('if (declared && !sameRawFileFor(found.name, declared)) {'),
+  '[MD] une copie trouvée qui n’est pas le fichier déclaré est REFUSÉE et DITE');
+ok(MDSRC.includes('if (pointerStillWanted({ pointer: { name: pendingName }, names: [declaredNow] })) updateActiveTest(pending);'),
+  '[MD] un pointeur d’envoi arrivé APRÈS le choix d’un autre fichier ne reprend pas la main');
+
+ok(NMRSRC.includes('...wantedRawNames({'),
+  '[NMR] la recherche de structure ne vise que les noms du fichier déclaré');
+ok(NMRSRC.includes('updateActiveTest({ structureDrive: null, structureDriveName: null });'),
+  '[NMR] choisir un PDB efface le pointeur de l’ancien');
+ok(NMRSRC.includes("if (declaredName && !sameRawFileFor(found.name || found.file.name || '', declaredName)) {"),
+  '[NMR] une copie qui n’est pas le PDB déclaré est REFUSÉE et DITE');
+ok(NMRSRC.includes('names: nmrStructNames(activeTest),'),
+  '[NMR] la recherche passe par les noms du fichier déclaré');
+ok(NMRSRC.includes('strictNames: true'),
+  '[NMR] …et n’essaie même pas un pointeur périmé (le téléchargement est évité)');
+ok(NMRSRC.includes('if (pointerStillWanted({ pointer: { name: pendingName }, names: [activeTest.structureFileName || \'\'] })) {'),
+  '[NMR] …et un pointeur d’envoi périmé ne reprend pas la main non plus');
+
+
 /* ══ 3 quinquies. LE CINQUIÈME MODULE BRANCHÉ (microscopie — médias binaires) ══
    Une vidéo de microscope n'est pas une série de nombres : c'est un FICHIER.
    Le document du dataset n'en porte que le NOM (`msVideos`, `msMovies`) ; les
@@ -539,13 +632,31 @@ eq(raw && raw.source, 'search', '…par la recherche par nom sur le Drive');
 eq(raw && await raw.file.text(), 'fake-mp4-bytes', '…et ce sont les OCTETS du fichier, pas un JSON');
 eq(raw && raw.file.type, 'video/mp4', '…avec son type de média');
 
-const renamedRaw = await RESTORE.restoreRawFileFor({
+/* Le nom DÉCLARÉ passe AVANT un pointeur qui ne décrit pas ce fichier : c'est lui
+   qui fait foi (le pointeur n'est qu'un moyen de le retrouver). Défaut signalé :
+   un PDB + une XTC tout juste chargés ici, et une AUTRE fenêtre (navigation
+   privée) « reprenait » l'ancien `step7.gro` du dataset — parce que l'id exact
+   était essayé avant tout le reste. */
+const namedRaw = await RESTORE.restoreRawFileFor({
   pointer: { id: 'VID1', name: 'ancien_nom.mp4' },
   ctx: { test: 'T' },
   names: ['microscopy_p53_Annexin_1c0j8o0.mp4']
 });
+eq(namedRaw && namedRaw.source, 'search',
+  'le fichier DÉCLARÉ est préféré au pointeur qui ne le décrit pas');
+eq(namedRaw && namedRaw.name, 'microscopy_p53_Annexin_1c0j8o0.mp4',
+  '…et c’est bien le fichier déclaré qui est rapporté (jamais « un autre »)');
+
+/* Un fichier RENOMMÉ sur le Drive — plus AUCUN nom ne correspond — reste retrouvé
+   par son pointeur : il n'est pas écarté, seulement essayé EN DERNIER. */
+const renamedRaw = await RESTORE.restoreRawFileFor({
+  pointer: { id: 'VID1', name: 'ancien_nom.mp4' },
+  ctx: { test: 'T' },
+  names: ['clip_renomme.mp4']
+});
 eq(renamedRaw && renamedRaw.source, 'pointer',
-  'le pointeur (id exact) passe avant la recherche par nom — un fichier renommé reste retrouvé');
+  'un fichier renommé sur le Drive est encore ramené par son id exact');
+eq(renamedRaw && await renamedRaw.file.text(), 'fake-mp4-bytes', '…avec ses OCTETS');
 
 const absentRaw = await RESTORE.restoreRawFileFor({ ctx: { test: 'T' }, names: ['clip_introuvable.mp4'] });
 eq(absentRaw, null, 'aucun média ne répond : la restitution le DIT (null) au lieu d’inventer');

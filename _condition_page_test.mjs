@@ -235,7 +235,7 @@ has(MD, "await blobStore.save(kind === 'trajectory' ? trajBlobKey(testId) : stru
 assert.equal(countOf(MD, 'sameRawFileFor(blob.name, declared)'), 2,
   '[MD] la copie de la base du navigateur est reconnue par ses radicaux (nom déposé sur le Drive)');
 passed += 1;
-has(MD, "import { placeRestorePointer, restoreRawFileFor, sameRawFileFor, takePendingRestorePointer } from '../utils/driveRestore';",
+has(MD, "import { placeRestorePointer, pointerStillWanted, restoreRawFileFor, sameRawFileFor, takePendingRestorePointer, wantedRawNames } from '../utils/driveRestore';",
   '[MD] la comparaison des noms vit dans le noyau partagé');
 has(MD, 'const restoreTargetStillShown = (testId) => mdActiveIdRef.current === testId;',
   '[MD] une reprise qui finit après un changement de condition ne peint pas la nouvelle page');

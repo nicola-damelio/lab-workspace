@@ -461,9 +461,59 @@ export const sameRawFileFor = (cachedName = '', wantedName = '') => {
     || head(stemA) === head(stemB);
 };
 
-/** Candidats d'un média : pointeur → registre local → nom sur le cloud. */
+/** Même RADICAL comparable, en IGNORANT l'extension : c'est le test qui dit si
+ *  deux noms désignent le même fichier quand l'un a été reconverti (un clip
+ *  `.wmv` ré-encodé en `.mp4` reste le même clip). */
+export const sameRawStemFor = (a = '', b = '') => {
+  const x = rawStemOf(a);
+  const y = rawStemOf(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const head = (s) => s.slice(0, 40);
+  return x.startsWith(`${y}_`) || y.startsWith(`${x}_`) || head(x) === head(y);
+};
+
+/** Le POINTEUR d'une copie de référence décrit-il ENCORE ce que la page
+ *  déclare ? L'id exact passe AVANT tout le reste (il survit au renommage du
+ *  fichier sur le Drive) — mais un pointeur dont le fichier ne partage AUCUN
+ *  radical avec les noms déclarés est le reste d'un choix PRÉCÉDENT : la
+ *  condition a un nouveau fichier (son nom a été remplacé) tout en gardant
+ *  l'identifiant de l'ancien, et la page afficherait alors un AUTRE fichier sous
+ *  le nom du bon (défaut signalé : une fenêtre neuve « reprenait » l'ancien
+ *  `step7.gro` d'un dataset où un PDB venait d'être chargé).
+ *  Sans nom déclaré, le pointeur est la SEULE piste (une sauvegarde différée
+ *  peut avoir perdu le nom) : il est donc gardé. */
+export const pointerStillWanted = ({ pointer = null, names = [] } = {}) => {
+  const wanted = (Array.isArray(names) ? names : [names])
+    .map((name) => String(name || '').trim())
+    .filter(Boolean);
+  if (!wanted.length) return true;
+  const pointed = String((pointer && pointer.name) || '').trim();
+  if (!pointed) return true; // pointeur sans nom : l'id exact reste la piste
+  return wanted.some((name) => sameRawStemFor(pointed, name));
+};
+
+/** Les noms sous lesquels chercher un média : le nom DÉCLARÉ fait foi, et les
+ *  autres indices (nom déposé sur le Drive, nom porté par le pointeur) ne sont
+ *  gardés QUE s'ils décrivent le même fichier — chercher aussi les noms d'un
+ *  ancien choix ramènerait l'ancien fichier par la recherche par nom.
+ *  Sans nom déclaré, tous les indices restent bons (cas « le nom a été perdu »). */
+export const wantedRawNames = ({ declared = '', hints = [] } = {}) => {
+  const want = String(declared || '').trim();
+  const list = (Array.isArray(hints) ? hints : [hints])
+    .map((name) => String(name || '').trim())
+    .filter(Boolean);
+  if (!want) return Array.from(new Set(list));
+  return Array.from(new Set([want, ...list.filter((name) => sameRawStemFor(name, want))]));
+};
+
+/** Candidats d'un média : pointeur → registre local → nom sur le cloud.
+ *  `strictNames` : ne JAMAIS proposer un pointeur qui ne décrit pas le fichier
+ *  voulu (voir pointerStillWanted) — les pages qui manipulent des fichiers de
+ *  plusieurs Go (trajectoires MD) le demandent : télécharger « l'ancien » pour le
+ *  refuser ensuite serait absurde. */
 export const findRawCandidates = async ({
-  pointer = null, ctx = {}, names = [], searchCloud = true
+  pointer = null, ctx = {}, names = [], searchCloud = true, strictNames = false
 } = {}) => {
   const wanted = (Array.isArray(names) ? names : [names]).filter(Boolean);
   const out = [];
@@ -475,13 +525,21 @@ export const findRawCandidates = async ({
     out.push({ id: key, name: String(name || ''), source, ...extra });
   };
 
-  // a) Le pointeur du média : l'id exact (Nextcloud : l'URL), donc insensible
-  //    au renommage du fichier sur le Drive.
+  // a) Le pointeur du média : l'id exact (Nextcloud : l'URL), donc insensible au
+  //    renommage du fichier sur le Drive. Il n'est placé EN TÊTE que s'il décrit
+  //    encore le fichier voulu (pointerStillWanted) : un id resté d'un choix
+  //    PRÉCÉDENT ne doit pas passer avant le fichier déclaré — sinon la page
+  //    installe l'ancien fichier sous le nom du bon (défaut signalé : une fenêtre
+  //    neuve « reprenait » l'ancien `step7.gro` d'un dataset où un PDB venait
+  //    d'être chargé). Il reste essayé EN DERNIER : c'est ainsi qu'un fichier
+  //    renommé sur le Drive, dont plus aucun nom ne correspond, est retrouvé.
+  let stalePointer = null;
   if (pointer && (pointer.id || pointer.url || pointer.driveUrl)) {
     const url = String(pointer.url || pointer.driveUrl || '');
     const name = pointer.name || wanted[0] || '';
-    if (pointer.id) add(pointer.id, name, 'pointer', { url });
-    else if (url) add(url, name, 'pointer', { url });
+    const id = pointer.id ? String(pointer.id) : url;
+    if (pointerStillWanted({ pointer, names: wanted })) add(id, name, 'pointer', { url });
+    else stalePointer = { id, name, url };
   }
 
   // b) Le registre local des envois (vide sur un autre poste).
@@ -532,17 +590,24 @@ export const findRawCandidates = async ({
     related.forEach((file) => add(file.id, file.name, 'search', { trashed: !!file.trashed }));
   }
 
+  // Le pointeur qui ne décrit PLUS le fichier déclaré, et seulement EN DERNIER :
+  // il ne prend jamais la place du fichier voulu, mais un fichier renommé sur le
+  // Drive (dont plus aucun nom ne correspond) reste ainsi retrouvé. En mode strict
+  // (fichiers lourds) il n'est même pas proposé.
+  if (stalePointer && stalePointer.id && !strictNames) add(stalePointer.id, stalePointer.name, 'pointer', { url: stalePointer.url });
+
   return out;
 };
 
 /** Toute la lecture d'un média en un appel : `{ file, id, name, source }`.
  *  `null` = aucun fichier utilisable — l'appelant le DIT à l'utilisateur au
- *  lieu de laisser une vignette vide. */
+ *  lieu de laisser une vignette vide. `strictNames` (voir findRawCandidates) :
+ *  le pointeur périmé n'est même pas essayé — pour les fichiers lourds. */
 export const restoreRawFileFor = async ({
-  pointer = null, ctx = {}, names = [], mimeType = '', searchCloud = true
+  pointer = null, ctx = {}, names = [], mimeType = '', searchCloud = true, strictNames = false
 } = {}) => {
   const wanted = (Array.isArray(names) ? names : [names]).filter(Boolean);
-  const candidates = await findRawCandidates({ pointer, ctx, names: wanted, searchCloud });
+  const candidates = await findRawCandidates({ pointer, ctx, names: wanted, searchCloud, strictNames });
   for (const candidate of candidates) {
     const name = candidate.name || wanted[0] || 'media';
     const file = await downloadCloudFile(candidate, { name });

@@ -15,7 +15,7 @@ import { suggestDriveFileName, canonicalExperimentPath, sanitizeSlug } from '../
 import { uploadLocalFile, getDriveToken, archiveFileToDriveWithPointer } from '../utils/driveUpload';
 import { storeJson, loadJson } from '../utils/pdbStore';
 import { blobStore } from '../utils/blobStore';
-import { archiveRestoreJson, isMissingValue, placeRestorePointer, restoreJsonFor, restoreRawFileFor, restoreStems, sameRawFileFor, takePendingRestorePointer } from '../utils/driveRestore';
+import { archiveRestoreJson, isMissingValue, placeRestorePointer, pointerStillWanted, restoreJsonFor, restoreRawFileFor, restoreStems, sameRawFileFor, takePendingRestorePointer, wantedRawNames } from '../utils/driveRestore';
 import { useDriveAutoRestore } from './useDriveAutoRestore';
 import {
   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, CARBON_RANGE_DB,
@@ -54,13 +54,17 @@ const nmrStructDriveCtx = (test = {}) => ({
   subsection: 'Structure'
 });
 
-/** Noms sous lesquels chercher le fichier : pointeur, nom déposé à l'envoi,
- *  puis nom d'origine du fichier importé. Le nom déposé est le nom COMPLET sur
- *  le Drive (`<radical>_<scientifique>.pdb`) : c'est lui dont le radical coïncide
- *  avec le fichier trouvé (voir driveRestore.matchesRawName). */
+/** Noms sous lesquels chercher le fichier : le nom DÉCLARÉ d'abord, puis les
+ *  indices qui décrivent bien le même fichier — nom porté par le pointeur et nom
+ *  déposé à l'envoi (`<radical>_<scientifique>.pdb`, voir driveRestore). Chercher
+ *  aussi les noms d'un choix PRÉCÉDENT ramènerait l'ancien PDB par la recherche
+ *  par nom (et le pointeur périmé par son id : voir pointerStillWanted). */
 const nmrStructNames = (test = {}) => [
-  test.structureDrive?.name, test.structureDriveName, test.structureFileName
-].filter(Boolean);
+  ...wantedRawNames({
+    declared: test.structureFileName,
+    hints: [test.structureDrive?.name, test.structureDriveName]
+  })
+];
 
 const HAS_EB = typeof ErrorBar !== 'undefined';
 
@@ -4460,6 +4464,12 @@ export const MolecularStructureSection = ({ ctx }) => {
       blobStore.remove(nmrStructBlobKey(activeTest.id));
       return;
     }
+    // LE FICHIER CHOISI REMPLACE L'ANCIENNE COPIE DE RÉFÉRENCE TOUT DE SUITE : le
+    // pointeur de l'ancien PDB part avec le nouveau nom, sinon la condition
+    // continuait d'annoncer l'ancien fichier (jusqu'à la fin de l'envoi, et pour
+    // toujours s'il échouait) et une autre fenêtre le téléchargeait en croyant
+    // reprendre celui-ci. L'envoi ci-dessous posera le nouveau pointeur.
+    updateActiveTest({ structureDrive: null, structureDriveName: null });
     // Le fichier DÉPOSÉ est la copie de référence : on l'envoie au Drive et on
     // garde son POINTEUR sur la condition (id exact + nom déposé), pour qu'un
     // autre poste le retrouve par id — et par nom si l'envoi est parti en file
@@ -4522,9 +4532,16 @@ export const MolecularStructureSection = ({ ctx }) => {
   // Un pointeur resté en attente (l'envoi s'est terminé après un changement de
   // condition) est posé sur SA condition dès qu'elle revient à l'écran : c'est
   // le mécanisme du noyau, pas une carte de pointeurs locale au module.
+  // …et seulement s'il décrive encore le PDB déclaré (un envoi terminé après le
+  // choix d'un autre fichier ne doit pas ré-annoncer l'ancien comme la copie de
+  // référence — une autre fenêtre le téléchargerait).
   useEffect(() => {
     const pending = takePendingRestorePointer({ field: 'structureDrive', key: activeTest.id });
-    if (pending) updateActiveTest(pending);
+    if (!pending) return;
+    const pendingName = pending.structureDriveName || pending.structureDrive?.name || '';
+    if (pointerStillWanted({ pointer: { name: pendingName }, names: [activeTest.structureFileName || ''] })) {
+      updateActiveTest(pending);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTest.id]);
 
@@ -4551,12 +4568,23 @@ export const MolecularStructureSection = ({ ctx }) => {
     const found = await restoreRawFileFor({
       pointer: activeTest.structureDrive || null,
       ctx: nmrStructDriveCtx(activeTest),
-      names: nmrStructNames(activeTest)
+      names: nmrStructNames(activeTest),
+      strictNames: true
     });
     if (!found) {
       return {
         ok: false,
         message: `⚠️ ${activeTest.structureFileName} is not in this browser and no copy was found on Google Drive. Connect Google Drive (sidebar) or re-pick the file with “📂 PDB file(s)” — it is archived again on upload.`
+      };
+    }
+    // MÊME RÈGLE QUE POUR LA PAGE MD : une copie qui n'est pas CE fichier (un
+    // pointeur périmé d'un ancien dataset) n'est pas installée en silence — elle
+    // est DITE, et l'utilisateur re-sélectionne (l'envoi archive la bonne copie).
+    const declaredName = activeTest.structureFileName || '';
+    if (declaredName && !sameRawFileFor(found.name || found.file.name || '', declaredName)) {
+      return {
+        ok: false,
+        message: `⚠️ ${declaredName} is not on Google Drive under that name — the archived copy found is “${found.name}”, a different file. Re-pick it with “📂 PDB file(s)” (the upload archives the right one).`
       };
     }
     const restored = new File(

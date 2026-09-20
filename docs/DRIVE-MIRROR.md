@@ -791,6 +791,58 @@ donc plus perdu quand la page s'en va.
 
 
 
+## Le fichier DÉCLARÉ fait foi (un pointeur périmé ne reprend pas la main)
+
+**Défaut signalé.** « J'ai chargé un PDB et une XTC dans un navigateur ; dans une
+fenêtre de navigation privée, la même expérience essaie de charger `step7.gro` —
+qui n'est pas ce que j'avais chargé. »
+
+La condition ne porte que des **pointeurs** minuscules (`structureDrive`,
+`trajectoryDrive` = `{ id, name, url }`) et les noms déclarés ; les octets vivent
+sur le Drive. Trois règles se liguaient contre le fichier qu'on venait de choisir :
+
+1. **L'id exact passait AVANT tout le reste.** Un pointeur resté de l'ancien
+   fichier (l'ancien `.gro` d'une condition réutilisée) était téléchargé — et la
+   page l'installait comme si c'était celui qu'on venait de charger.
+2. **Un nouveau fichier n'effaçait pas l'ancien pointeur.** `handleStructureFile`
+   / `handleTrajectoryFile` n'écrivaient le nouveau pointeur qu'à la fin de
+   l'envoi : jusque-là — et pour toujours si l'envoi échouait (Drive non
+   connecté) — la condition continuait d'annoncer le fichier PRÉCÉDENT comme sa
+   copie de référence, donc l'autre fenêtre le ramenait.
+3. Même famille : la recherche « historique » de `downloadArchivedMDFile`
+   retombait sur « l'entrée la plus récente de cette expérience » dès qu'aucun nom
+   ne correspondait — encore un fichier sans rapport, installé sans le dire.
+
+Règles appliquées (noyau partagé, puis pages MD et NMR) :
+
+* `driveRestore.pointerStillWanted` — un pointeur n'est placé **en tête** que
+  s'il décrit encore le fichier voulu (même radical, `sameRawStemFor`). Sinon il
+  est **essayé en dernier** : un fichier renommé sur le Drive reste retrouvé, mais
+  il ne prend jamais la place du fichier déclaré. Les pages qui manipulent des
+  fichiers lourds (trajectoire MD, structure NMR) passent `strictNames: true` :
+  là, le pointeur périmé n'est **même pas téléchargé** — on ne rapatrie pas des Go
+  pour les refuser ensuite.
+* `driveRestore.wantedRawNames` — les noms cherchés sont ceux du **fichier
+  déclaré** ; le nom déposé et le nom porté par le pointeur ne sont gardés que
+  s'ils décrivent le même fichier (chercher les noms d'un ancien choix ramenait
+  l'ancien fichier par la recherche par nom, `downloadArchivedMDFile` compris :
+  ses deux étapes comparent maintenant par `sameRawFileFor`).
+* Les pages **effacent le pointeur de l'ancien fichier dès qu'on en choisit un
+  autre** (MD et NMR) : l'envoi pose le nouveau pointeur quand il aboutit, sans
+  laisser de fenêtre pendant laquelle la condition annonce l'ancien.
+* Une copie téléchargée qui **n'est pas** le fichier déclaré n'est plus installée
+  en silence : la page le dit (`⚠️ … is not on Google Drive under that name — the
+  archived copy found is “…”`) et laisse l'utilisateur re-sélectionner — mieux
+  vaut « introuvable » qu'un autre système affiché sous le bon nom.
+* Un pointeur d'envoi qui arrive **après** le choix d'un autre fichier (l'échange
+  asynchrone avec le Drive) est ignoré de la même façon.
+
+### Vérifier soi-même
+
+* `node _drive_restore_test.mjs` — l'ordre des pistes (nom déclaré avant pointeur
+  périmé, pointeur renommé encore retrouvé en dernier recours), les noms cherchés,
+  et le câblage des deux pages.
+
 ## La copie locale ne prend pas le pas sur ce qui voyage (page MD)
 
 Les courbes calculées sur une trajectoire (RMSD / RMSF / Rg / SASA) sont

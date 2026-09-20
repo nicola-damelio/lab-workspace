@@ -42,7 +42,7 @@ import {
   clearLocalAnalysis,
   mdTrajectoryFingerprint
 } from '../utils/mdAnalysisCache';
-import { placeRestorePointer, restoreRawFileFor, sameRawFileFor, takePendingRestorePointer } from '../utils/driveRestore';
+import { placeRestorePointer, pointerStillWanted, restoreRawFileFor, sameRawFileFor, takePendingRestorePointer, wantedRawNames } from '../utils/driveRestore';
 
 // Cache to retain local File objects when switching tabs within the same session
 const localFileCache = new Map();
@@ -65,12 +65,17 @@ const structBlobKey = (testId) => `ms_struct_${testId}`;
 // machine). Returns a File, or null when nothing matches / Drive is not
 // connected. This is what lets a structure/trajectory that IS on Drive come
 // back even when the local browser cache is empty.
+//
+// LE NOM DÉCLARÉ FAIT FOI : chaque candidat doit décrire CE fichier-là
+// (sameRawFileFor : même radical, même extension). L'ancienne règle — « à défaut
+// de correspondance, prendre l'entrée la plus récente de cette expérience » —
+// rapportait un fichier SANS RAPPORT (l'ancien .gro d'une condition réutilisée)
+// que la page installait ensuite comme si c'était celui qu'on venait de charger.
 const downloadArchivedMDFile = async ({ suffix, nameStem, ctx }) => {
   if (!getDriveToken()) return null;
   const full = String(nameStem || '');
   const stem = full.replace(/\.[^.]+$/, '');
   if (!stem) return null;
-  const ext = (full.match(/\.[^.]+$/) || [''])[0].toLowerCase();
   let match = null;
 
   // 1) Drive file registry (recorded when the file was archived on upload).
@@ -85,9 +90,11 @@ const downloadArchivedMDFile = async ({ suffix, nameStem, ctx }) => {
     } else if (ctx && ctx.instance) {
       pool = entries.filter(([, e]) => String(e.ctx?.instance || '') === String(ctx.instance));
     }
-    // Prefer the entry whose Drive name contains the declared file stem, newest first.
-    const byStem = pool.filter(([, e]) => stem && String(e.name || '').toLowerCase().includes(stem.toLowerCase()));
-    const chosen = (byStem.length > 0 ? byStem : pool).sort((a, b) => (b[1].at || 0) - (a[1].at || 0))[0];
+    // Le fichier ENVOYÉ porte le radical du nom déclaré (`<radical>_<scientifique>.<ext>`) :
+    // seules les entrées qui décrivent CE fichier sont candidates, la plus récente
+    // d'abord. Un envoi qui ne correspond pas n'est PAS « le bon, en plus ancien ».
+    const byStem = pool.filter(([, e]) => sameRawFileFor(e.name, full));
+    const chosen = byStem.sort((a, b) => (b[1].at || 0) - (a[1].at || 0))[0] || null;
     if (chosen) match = { id: chosen[0], name: chosen[1].name };
   } catch { /* registry read failed — fall through to a name search */ }
 
@@ -97,10 +104,9 @@ const downloadArchivedMDFile = async ({ suffix, nameStem, ctx }) => {
       const q = encodeURIComponent(`name contains '${stem.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}' and trashed=false`);
       const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=25`);
       const j = res && res.ok ? await res.json() : { files: [] };
-      const f = (j.files || []).find((x) => {
-        const n = String(x.name || '').toLowerCase();
-        return n.includes(stem.toLowerCase()) && (ext ? n.endsWith(ext) : true);
-      });
+      // Même règle que le registre : une correspondance de RADICAL + extension,
+      // jamais « le premier fichier dont le nom contient le terme ».
+      const f = (j.files || []).find((x) => sameRawFileFor(x.name, full));
       if (f) match = { id: f.id, name: f.name };
     } catch { /* search failed */ }
   }
@@ -120,12 +126,22 @@ const downloadArchivedMDFile = async ({ suffix, nameStem, ctx }) => {
 
 /* Le noyau partagé d'abord (pointeur de la condition → registre local → nom sur
    le Drive : voir utils/driveRestore.restoreRawFileFor), puis la recherche
-   historique de cette page (« le nom Drive CONTIENT le radical déclaré ») pour
-   les datasets plus anciens, enregistrés avant que le pointeur ne voyage.
-   Aucune donnée n'est perdue : le repli d'hier reste en place. */
+   historique de cette page (datasets plus anciens, enregistrés avant que le
+   pointeur ne voyage). Aucune donnée n'est perdue : le repli d'hier reste en
+   place — mais il ne rapporte plus que CE fichier-là.
+
+   LES NOMS CHERCHÉS SONT CEUX DE CE FICHIER : le nom DÉCLARÉ fait foi, et le nom
+   déposé / le nom porté par le pointeur ne sont gardés que s'ils décrivent le
+   même fichier (wantedRawNames). Chercher aussi les noms d'un choix précédent
+   ramenait l'ancien fichier par la recherche par nom — et un pointeur périmé le
+   ramenait par son id (pointerStillWanted, dans le noyau). */
 const restoreMDFile = async ({ pointer = null, driveName = '', nameStem = '', suffix = '', ctx = {} }) => {
-  const names = [pointer && pointer.name, driveName, nameStem].filter(Boolean);
-  const viaCore = await restoreRawFileFor({ pointer, ctx: { ...ctx, suffix }, names }).catch(() => null);
+  const names = wantedRawNames({ declared: nameStem, hints: [pointer && pointer.name, driveName] });
+  // `strictNames` : ces fichiers pèsent des centaines de Mo (une trajectoire, des
+  // Go) — on ne les télécharge JAMAIS pour les refuser ensuite. Un pointeur qui ne
+  // décrit pas le fichier déclaré est donc écarté d'emblée (et le repli de cette
+  // page, plus bas, exige lui aussi une correspondance de nom).
+  const viaCore = await restoreRawFileFor({ pointer, ctx: { ...ctx, suffix }, names, strictNames: true }).catch(() => null);
   if (viaCore && viaCore.file) return viaCore.file;
   return downloadArchivedMDFile({ suffix, nameStem, ctx });
 };
@@ -829,11 +845,20 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   // driveRestore.placeRestorePointer) au lieu d'être posé sur la nouvelle.
   const mdActiveIdRef = useRef(activeTest.id);
   mdActiveIdRef.current = activeTest.id;
-  // Puis le pointeur en attente est posé sur SA condition dès qu'elle revient.
+  // Puis le pointeur en attente est posé sur SA condition dès qu'elle revient —
+  // À CONDITION qu'il décrive encore le fichier déclaré : un envoi terminé APRÈS
+  // le choix d'un autre fichier ne doit pas ré-annoncer l'ancien comme la copie
+  // de référence de cette condition (une autre fenêtre le téléchargerait).
   useEffect(() => {
     const pending = takePendingRestorePointer({ field: 'structureDrive', key: activeTest.id })
       || takePendingRestorePointer({ field: 'trajectoryDrive', key: activeTest.id });
-    if (pending) updateActiveTest(pending);
+    if (!pending) return;
+    const isStructure = !!(pending.structureDrive || pending.structureDriveName);
+    const pendingName = isStructure
+      ? (pending.structureDriveName || pending.structureDrive?.name || '')
+      : (pending.trajectoryDriveName || pending.trajectoryDrive?.name || '');
+    const declaredNow = (isStructure ? activeTest.structureFileName : activeTest.trajectoryFileName) || '';
+    if (pointerStillWanted({ pointer: { name: pendingName }, names: [declaredNow] })) updateActiveTest(pending);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTest.id]);
 
@@ -852,6 +877,14 @@ export const MDExperimentSetupSection = ({ ctx }) => {
       blobStore.remove(structBlobKey(activeTest.id));
       return;
     }
+    // LE FICHIER CHOISI REMPLACE L'ANCIENNE COPIE DE RÉFÉRENCE TOUT DE SUITE : le
+    // pointeur de l'ancien fichier part avec le nouveau nom. Sinon la condition
+    // continuait d'annoncer le fichier PRÉCÉDENT jusqu'à la fin de l'envoi (et
+    // pour toujours s'il échouait) : une autre fenêtre — ou un autre poste —
+    // téléchargeait cet ancien fichier en croyant reprendre celui-ci (défaut
+    // signalé : un PDB tout juste chargé ici, et l'autre fenêtre reprenait
+    // l'ancien `step7.gro` du dataset).
+    updateActiveTest({ structureDrive: null, structureDriveName: null });
     // Le fichier DÉPOSÉ est la copie de référence : on garde son POINTEUR sur la
     // condition (id exact + nom déposé) pour qu'un autre poste le retrouve, au
     // lieu de dépendre de la base du navigateur de CE poste.
@@ -901,6 +934,11 @@ export const MDExperimentSetupSection = ({ ctx }) => {
       blobStore.remove(trajBlobKey(activeTest.id));
       return;
     }
+    // MÊME RÈGLE QUE POUR LA TOPOLOGIE : le pointeur de l'ancienne trajectoire est
+    // effacé dès que l'on en choisit une autre — la condition ne doit plus
+    // annoncer l'ancien fichier comme sa copie de référence (l'envoi ci-dessous
+    // posera le nouveau dès qu'il aboutit).
+    updateActiveTest({ trajectoryDrive: null, trajectoryDriveName: null });
     // Archive the raw trajectory to Google Drive automatically (best-effort).
     // Trajectory files are large, so this can take a while — the upload is
     // given a long timeout and its result is shown to the user. Le POINTEUR du
@@ -1012,6 +1050,15 @@ export const MDExperimentSetupSection = ({ ctx }) => {
       if (paint) { setTrajPhase('notfound'); setTrajDriveMsg(message); }
       return { ok: false, message };
     }
+    // LA COPIE TROUVÉE EST-ELLE CELLE QUE LA CONDITION DÉCLARE ? Un pointeur
+    // périmé peut rapporter un autre fichier : l'adopter en silence ferait
+    // afficher un autre système sous le nom du bon. On le DIT, et on laisse
+    // l'utilisateur re-sélectionner (l'envoi archive la bonne copie).
+    if (declared && !sameRawFileFor(found.name, declared)) {
+      const message = `⚠️ ${declared} is not on Google Drive under that name — the archived copy found is “${found.name}”, a different file. Re-select it with “Choose XTC / TRR” (the upload archives the right one).`;
+      if (paint) { setTrajPhase('notfound'); setTrajDriveMsg(message); }
+      return { ok: false, message };
+    }
     const restored = await applyReloadedFile({ kind: 'trajectory', testId, wantedName: declared || driveName || found.name, file: found, paint });
     // Le nom déclaré redevient vrai sur SA condition : c'est lui qui ramène le
     // fichier sur les autres postes au prochain affichage.
@@ -1049,6 +1096,13 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     const paint = restoreTargetStillShown(testId);
     if (!found) {
       const message = `⚠️ ${label} is not in this browser nor on Google Drive under this name — re-select it with “Choose PDB/CIF” (the upload archives it again).`;
+      if (paint) { setStructPhase('notfound'); setStructRestoreMsg(message); }
+      return { ok: false, message };
+    }
+    // Même vérification que pour la trajectoire : une copie qui n'est pas CE
+    // fichier n'est pas installée en silence (pointeur périmé d'un ancien choix).
+    if (declared && !sameRawFileFor(found.name, declared)) {
+      const message = `⚠️ ${declared} is not on Google Drive under that name — the archived copy found is “${found.name}”, a different file. Re-select it with “Choose PDB/CIF” (the upload archives the right one).`;
       if (paint) { setStructPhase('notfound'); setStructRestoreMsg(message); }
       return { ok: false, message };
     }
