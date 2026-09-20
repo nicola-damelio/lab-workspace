@@ -1,122 +1,85 @@
 /* =========================================================================
-   _dock_style_test.mjs — le STYLE DU BOUTON « 🧬 Docking » du viewer 3D.
+   _dock_style_test.mjs — le STYLE du bouton « 🧬 Docking » du viewer 3D.
 
    Ce qui est vérifié ici est ce qui doit rester vrai :
 
-     • le look d'amarrage (partie PROTÉINE + partie LIGAND) est un RÉGLAGE
-       enregistré, pas une capture silencieuse : une fois défini, passer le mode
-       à ON applique CE look au lieu de réécrire le style avec ce qui traîne à
-       l'écran ;
-     • un réglage jamais défini (`defined:false`) laisse le premier passage à ON
-       copier la vue — le geste historique — puis plus jamais ;
-     • un jeton de style inconnu retombe sur le défaut du rôle (ribbon /
-       ball+stick) au lieu de casser le rendu ;
-     • src/components/NMRMoleculeViewer.jsx utilise bien ce réglage : la
-       définition est lue, les deux menus la modifient, et le toggle ne capture
-       QUE si rien n'a été défini.
+     • le docking n'a PLUS de menus de style à lui : les deux listes
+       déroulantes « Prot: » / « Lig: » — et les boutons 📸 / ↺ qui les
+       définissaient, avec le module src/utils/dockStyles.js — ont disparu ;
+     • le look d'amarrage EST celui de la section « 2 · Molecular Styling » :
+       tant que « 🧬 Docking » est ON, le résultat actif ET tous les autres
+       (clusters / poses, présents et futurs) sont redessinés par le MÊME
+       constructeur par catégorie que le reste du viewer (buildCategoryReps),
+       même quand une molécule porte un style choisi dans la barre Molecules ;
+     • quand le mode est OFF, chaque molécule retrouve son propre style ;
+     • le bouton existe aux DEUX endroits (toolbar §2 et barre Molecules) et
+       ré-applique le look à chaque bascule.
 
-   Le VRAI module est importé : src/utils/dockStyles.js (aucun faux Drive : cet
-   utilitaire ne connaît ni React ni NGL).
+   Le viewer est un .jsx : il ne s'importe pas sous Node. Les règles sont donc
+   vérifiées SUR LA SOURCE — comme les autres garde-fous du dépôt.
    ========================================================================= */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { register } from 'node:module';
-
-register('./_esm_test_hook.mjs', import.meta.url);
+import { readFileSync, existsSync } from 'node:fs';
 
 let passed = 0;
-const eq = (actual, expected, what) => {
-  assert.deepEqual(actual, expected, `${what}\n  attendu : ${JSON.stringify(expected)}\n  obtenu  : ${JSON.stringify(actual)}`);
-  passed += 1;
-};
 const ok = (cond, what) => {
   assert.ok(cond, what);
   passed += 1;
 };
 
-const DOCK = await import('./src/utils/dockStyles.js');
+// CRLF → LF so the multi-line needles below can be written naturally.
+const VIEWER = readFileSync(new URL('./src/components/NMRMoleculeViewer.jsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+const has = (needle, what) => ok(VIEWER.includes(needle), `${what}\n  introuvable : ${needle}`);
+const gone = (needle, what) => ok(!VIEWER.includes(needle), `${what}\n  encore présent : ${needle}`);
+const count = (re) => (VIEWER.match(re) || []).length;
 
-/* ── 1. Le défaut ─────────────────────────────────────────────────────────── */
-eq(DOCK.DOCK_STYLE_DEFAULT, { protein: 'ribbon', ligand: 'ball+stick' }, 'le look d’amarrage par défaut');
-eq(DOCK.DOCK_STYLE_TOKENS.includes('lines'), true, 'les lignes font partie des styles proposés');
-eq(DOCK.DOCK_STYLE_TOKENS.includes('spheres'), true, 'les sphères font partie des styles proposés');
-eq(DOCK.DOCK_STYLE_LABELS['ball+stick'], 'Ball & Stick', 'le libellé d’un style');
+/* ── 1. Plus AUCUN menu de style propre au docking ───────────────────────── */
+gone('renderDockRoleSelects', 'plus de listes Prot: / Lig: du docking');
+gone('Prot: ', 'plus d’option « Prot: … »');
+gone('Lig: ', 'plus d’option « Lig: … »');
+gone('setDockRoleStyle', 'plus de définition d’un style de rôle');
+gone('captureDockStylesFromViewer', 'plus de bouton 📸 « copier la vue »');
+gone('resetDockStyles', 'plus de bouton ↺ « défaut » du docking');
+gone('captureDockRoleStyles', 'plus de capture silencieuse de la vue');
+gone('applyDockRoleStyle', 'plus de rendu « protéine + ligand » propre au docking');
+gone('dockRoleStylesRef', 'plus de réglage de rôles en mémoire');
+gone('DOCK_STYLE_', 'plus de jetons de style du docking');
+gone('utils/dockStyles', 'le viewer n’importe plus de module de style du docking');
+gone('labViewerDockStyle', 'plus aucune clé localStorage de style du docking');
+ok(!existsSync(new URL('./src/utils/dockStyles.js', import.meta.url)),
+  'le module src/utils/dockStyles.js a été supprimé (plus aucun utilisateur)');
 
-/* ── 2. Normalisation d'un réglage ────────────────────────────────────────── */
-eq(DOCK.normalizeDockRoleStyles(null), { protein: 'ribbon', ligand: 'ball+stick', defined: false },
-  'aucun réglage → défaut et « jamais défini » (le premier ON copiera la vue)');
-eq(DOCK.normalizeDockRoleStyles({}), { protein: 'ribbon', ligand: 'ball+stick', defined: false },
-  'un objet vide ne définit rien');
-eq(DOCK.normalizeDockRoleStyles({ protein: 'lines', ligand: 'spheres' }), { protein: 'lines', ligand: 'spheres', defined: true },
-  'les deux rôles choisis sont conservés');
+/* ── 2. Le look n'est défini QU'UNE fois : la section §2 ────────────────── */
+has('const toggleDockStyle = () => setDockStyleMode((v) => !v);',
+  'le toggle ne fait que basculer le mode — il n’a plus de look à définir');
+ok(count(/onClick=\{toggleDockStyle\}/g) === 2,
+  'le bouton « 🧬 Docking » existe en §2 ET dans la barre Molecules');
+has('title="Standardize DOCKING results: every cluster/pose — current and future — is drawn with the styles of the menus A–F below',
+  'l’infobulle du §2 dit que le look vient des menus A–F');
+has('is drawn with the styles of section « 2 · Molecular Styling » of the toolbar',
+  '…et celle de la barre Molecules renvoie à la même section');
+// Le bloc Docking lui-même n'a plus de menu déroulant : c'est TOUT ce qui est
+// vérifié ici (les menus A–F vivent plus bas dans la même section).
+const iDock = VIEWER.indexOf('{/* 🧬 Docking — STANDARDIZE');
+const dockBlock = iDock >= 0 ? VIEWER.slice(iDock, VIEWER.indexOf('\n)}', iDock)) : '';
+ok(dockBlock.length > 0 && !dockBlock.includes('<select'),
+  'le bloc Docking ne contient plus aucun menu déroulant de style');
 
-/* ── 3. Lecture / écriture du réglage (localStorage simulé) ───────────────── */
-const fakeStorage = () => {
-  const map = new Map();
-  return {
-    getItem: (k) => (map.has(k) ? map.get(k) : null),
-    setItem: (k, v) => { map.set(k, String(v)); },
-    removeItem: (k) => { map.delete(k); },
-    _map: map
-  };
-};
+/* ── 3. Le rendu d'amarrage passe par le constructeur du §2 ─────────────── */
+has('const buildCategoryReps = (comp) => {', 'le constructeur par catégorie du §2 est toujours là');
+has("if (dockStyleRef.current || !st.style || st.style === 'auto') {",
+  'en mode Docking, la structure principale suit le §2 (même si un style par molécule existe)');
+has("if (dockStyleRef.current || !style || style === 'auto') {",
+  '…et chaque molécule chargée aussi (restyleExtraMol)');
+ok(count(/const baseReps = applyCurrentStyleTo\(comp, \[\]\);/g) === 3,
+  'les trois chargements (chaîne, molécule supplémentaire, URL) passent par le rendu du §2');
 
-const st1 = fakeStorage();
-eq(DOCK.loadDockRoleStyles(st1), { protein: 'ribbon', ligand: 'ball+stick', defined: false },
-  'sans clé enregistrée : défaut + « pas encore défini »');
+/* ── 4. Basculer le mode redessine tout ─────────────────────────────────── */
+has('const [dockStyleMode, setDockStyleMode] = useState(false);', 'le mode est un simple booléen');
+has('const prevDockStyleRef = useRef(dockStyleMode);', 'le changement de mode est suivi');
+has('const applyDockStylesNow = () => {', 'une seule fonction ré-applique le look');
+has('}, [dockStyleMode]);', '…appelée quand le mode bascule');
+gone('}, [dockStyles]);', 'plus aucun état de style du docking à surveiller');
 
-DOCK.saveDockRoleStyles({ protein: 'lines', ligand: 'spheres' }, st1);
-eq(st1._map.get(DOCK.DOCK_STYLE_KEY), JSON.stringify({ protein: 'lines', ligand: 'spheres' }),
-  'le réglage est écrit sous la clé labViewerDockStyle');
-eq(DOCK.loadDockRoleStyles(st1), { protein: 'lines', ligand: 'spheres', defined: true },
-  'aller-retour : le look choisi est retrouvé et marqué comme défini');
-
-DOCK.saveDockRoleStyles({ protein: 'nonsense', ligand: 'nonsense' }, st1);
-eq(DOCK.loadDockRoleStyles(st1).defined, false,
-  'un réglage illisible n’est jamais pris pour une définition');
-eq(st1._map.has(DOCK.DOCK_STYLE_KEY), false,
-  'un réglage illisible retire la clé au lieu d’y écrire des jetons inventés');
-
-const st2 = fakeStorage();
-st2.setItem(DOCK.DOCK_STYLE_KEY, '{ceci n’est pas du JSON');
-eq(DOCK.loadDockRoleStyles(st2), { protein: 'ribbon', ligand: 'ball+stick', defined: false },
-  'un JSON cassé ne fait pas planter le viewer');
-eq(DOCK.loadDockRoleStyles(null), { protein: 'ribbon', ligand: 'ball+stick', defined: false },
-  'sans storage (rendu serveur / test) : défaut, jamais une exception');
-
-/* ── 4. 📸 Capturer la vue = définir ──────────────────────────────────────── */
-eq(DOCK.dockRoleStylesFromCapture({ protein: 'cartoon', ligand: 'sticks' }), { protein: 'cartoon', ligand: 'sticks', defined: true },
-  '📸 copie la vue et la retient comme définition');
-eq(DOCK.dockRoleStylesFromCapture(null), { protein: 'ribbon', ligand: 'ball+stick', defined: true },
-  '📸 sur une vue illisible reste une définition (le défaut), donc plus de capture automatique');
-eq(DOCK.saveDockRoleStyles(DOCK.dockRoleStylesFromCapture({ protein: 'sticks', ligand: 'lines' }), st1),
-  { protein: 'sticks', ligand: 'lines', defined: true },
-  'save renvoie le réglage normalisé (l’appelant peut le garder en mémoire)');
-
-/* ── 5. Le viewer utilise bien la DÉFINITION ─────────────────────────────── */
-const VIEWER = readFileSync(new URL('./src/components/NMRMoleculeViewer.jsx', import.meta.url), 'utf8');
-ok(/from '\.\.\/utils\/dockStyles'/.test(VIEWER), 'le viewer importe src/utils/dockStyles');
-ok(/useState\(\(\) => loadDockRoleStyles\(\)\)/.test(VIEWER), 'la définition est chargée à l’ouverture du viewer');
-ok(/saveDockRoleStyles\(dockStyles\)/.test(VIEWER), 'la définition est enregistrée à chaque changement');
-ok(/if \(!dockStyles\.defined\)/.test(VIEWER), 'le toggle ne capture la vue que si RIEN n’a été défini');
-ok(/setDockRoleStyle\('protein'/.test(VIEWER) && /setDockRoleStyle\('ligand'/.test(VIEWER),
-  'les deux menus (protéine / ligand) définissent le look');
-ok(/const captureDockStylesFromViewer = /.test(VIEWER), '📸 « copier la vue » existe comme bouton explicite');
-ok(/const resetDockStyles = /.test(VIEWER), '↺ « défaut » existe');
-ok(/DOCK_STYLE_TOKENS\.map/.test(VIEWER), 'les menus proposent exactement les styles connus');
-ok(/applyDockStylesNow\(\)/.test(VIEWER), 'changer la définition ré-applique le look au viewer');
-ok(/const st = dockRoleStylesRef\.current \|\| \{\};/.test(VIEWER), 'applyDockRoleStyle lit les styles définis');
-ok(/dockRoleStylesRef\.current = \{ protein: dockStyles\.protein, ligand: dockStyles\.ligand \};/.test(VIEWER),
-  'le réglage est synchronisé dans la réf utilisée par le rendu');
-ok((VIEWER.match(/captureDockRoleStyles\(/g) || []).length <= 3,
-  'la capture de la vue n’a pas lieu ailleurs qu’au premier passage à ON (toggle + 📸 + helper)');
-
-/* ── Bilan ────────────────────────────────────────────────────────────────── */
+/* ── Bilan ───────────────────────────────────────────────────────────────── */
 console.log(`_dock_style_test.mjs — ${passed} assertions OK`);
-
-eq(DOCK.normalizeDockRoleStyles({ protein: 'lines' }), { protein: 'lines', ligand: 'ball+stick', defined: true },
-  'un seul rôle choisi suffit à définir le look ; l’autre garde son défaut');
-eq(DOCK.normalizeDockRoleStyles({ protein: 'blob', ligand: 'blob' }), { protein: 'ribbon', ligand: 'ball+stick', defined: false },
-  'des jetons inconnus ne définissent RIEN (on retombe sur le comportement historique)');
-eq(DOCK.normalizeDockRoleStyles({ protein: 'sphere', ligand: 'ball+stick' }).protein, 'ribbon',
-  'seuls les jetons canoniques sont acceptés (pas d’alias NGL)');

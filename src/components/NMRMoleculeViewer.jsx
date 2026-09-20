@@ -7,17 +7,6 @@ import { abortControl } from '../utils/abortControl';
 import { archiveFileToDrive } from '../utils/driveUpload';
 import { getPymolScripts } from '../utils/pymolScripts';
 import { getActiveProjectId, publishLibraryFigure } from '../utils/figuresLibrary';
-// « 🧬 Docking » : le look (protéine + ligand) est un RÉGLAGE du viewer, défini
-// par l'utilisateur et conservé d'une page à l'autre — pas une capture
-// silencieuse de ce qui traîne à l'écran (voir le bloc "docking" plus bas).
-import {
-  DOCK_STYLE_TOKENS,
-  DOCK_STYLE_LABELS,
-  DOCK_STYLE_DEFAULT,
-  loadDockRoleStyles,
-  saveDockRoleStyles,
-  dockRoleStylesFromCapture
-} from '../utils/dockStyles';
 
 /* ---- Shared "Assigned atoms" highlight flag ---------------------------------
    The green "assigned atoms" highlight is shown both on the 3D molecule viewer
@@ -150,13 +139,6 @@ const loadCatStyles = () => {
 };
 const saveCatStyles = (v) => {
   try { localStorage.setItem(CAT_STYLE_KEY, JSON.stringify(v)); } catch { /* ignore */ }
-};
-// Last NGL style token chosen in the Proteins / Organic menus — used as the
-// fallback of the docking-style capture (captureDockRoleStyles), exactly like
-// the old global Backbone / Molecule selectors were used there.
-const catStyleFallback = (v, kind) => {
-  if (kind === 'protein') return (v && v.protein && v.protein.backbone) || 'cartoon';
-  return (v && v.organic && v.organic.style) || 'ball+stick';
 };
 // One string that changes whenever ANY category style changes — used as the
 // dependency / comparison signature that rebuilds the base representations.
@@ -1623,26 +1605,16 @@ const [mainMol, setMainMol] = useState({ style: 'auto', color: '', colorMode: 'e
 const mainMolRef = useRef(mainMol);
 mainMolRef.current = mainMol;
 const [mainPos, setMainPos] = useState([0, 0, 0]); // main structure translation (Å), settable via Move X/Y/Z or ✋ Drag
-// "Standardize docking" mode: every docking result (cluster/pose) is rendered
-// with the SAME ROLE-BASED style (one style for the PROTEIN part, one for the
-// LIGAND part), so all solutions look consistent regardless of which is active.
+// "Standardize docking" mode: every docking result (the active cluster / pose
+// AND all the others, current and future) is drawn with the styles of section
+// « 2 · Molecular Styling » — the ONE place where the look is defined (Proteins
+// backbone / side chains, Ligands, surfaces …). That is what makes all the
+// solutions look consistent while the mode is ON, whatever each molecule's own
+// Style setting says; switching OFF gives every molecule its own style back.
+// There is deliberately NO docking-specific style menu: the look IS the §2 look.
 const [dockStyleMode, setDockStyleMode] = useState(false);
 const dockStyleRef = useRef(dockStyleMode);
 dockStyleRef.current = dockStyleMode;
-// The two role styles are a SETTING the user DEFINES — two dropdowns in the
-// toolbar / Molecules bar, plus 📸 "copy the current view" and ↺ "default" — and
-// that is saved across pages. They used to be re-captured from whatever was on
-// screen each time the button was pressed, which overwrote the style instead of
-// letting the user choose it. `defined: false` = never chosen yet: only then
-// does switching ON copy the current view (the historical WYSIWYG gesture).
-const [dockStyles, setDockStyles] = useState(() => loadDockRoleStyles());
-// Effective styles used by applyDockRoleStyle / buildMainReps (set from the
-// definition above, kept in sync by the effect right below).
-const dockRoleStylesRef = useRef({ protein: dockStyles.protein, ligand: dockStyles.ligand });
-useEffect(() => {
-  dockRoleStylesRef.current = { protein: dockStyles.protein, ligand: dockStyles.ligand };
-  saveDockRoleStyles(dockStyles);
-}, [dockStyles]);
 const [residueTicks, setResidueTicks] = useState([]); // [{ resno, resname, code, chainid }] — sequence strip above the 3D view
 const extraCompsRef = useRef([]);                  // [{ id, name, comp, baseReps, style, color }]
 // "⚡ ESP" electrostatic-potential overlay — an optional extra NGL `surface`
@@ -2176,10 +2148,6 @@ const renameModeRef = useRef(renameMode);
 renameModeRef.current = renameMode;
 const displayNameRef = useRef(displayAtomName);
 displayNameRef.current = displayAtomName;
-const backboneStyleRef = useRef(catStyleFallback(catStyles, 'protein'));
-backboneStyleRef.current = catStyleFallback(catStyles, 'protein');
-const moleculeStyleRef = useRef(catStyleFallback(catStyles, 'organic'));
-moleculeStyleRef.current = catStyleFallback(catStyles, 'organic');
 // Signature of the last base-representation rebuild: a change in ANY category
 // style (Proteins / Nucleic / Lipids / Organic / Others) rebuilds them.
 const prevCatSigRef = useRef(catStylesSig(catStyles));
@@ -2803,23 +2771,6 @@ const applyCurrentStyleTo = useCallback((comp, baseReps) => {
   return buildCategoryReps(comp);
 }, []);
 
-// ---- "🧬 Docking" role-style capture & application ---------------------------
-// Normalize a style name to the app's canonical per-molecule style tokens.
-const normStyle = (t) => {
-  const s = String(t || '').toLowerCase();
-  if (s.includes('ball')) return 'ball+stick';
-  if (s === 'stick' || s === 'sticks' || s === 'licorice') return 'sticks';
-  if (s === 'line' || s === 'lines') return 'lines';
-  if (s === 'sphere' || s === 'spheres' || s === 'spacefill') return 'spheres';
-  if (s === 'cartoon') return 'cartoon';
-  if (s === 'ribbon') return 'ribbon';
-  if (s === 'tube') return 'tube';
-  if (s === 'surface') return 'surface';
-  return '';
-};
-// App style token → NGL representation type.
-const toNglType = (t) => (t === 'spheres' ? 'spacefill' : t === 'sticks' ? 'stick' : t === 'lines' ? 'line' : t);
-
 // Build a proper NGL.Selection object. In NGL 2.4 `Structure#getAtomSet` IGNORES
 // raw strings (it returns the full atom set) — it needs a Selection instance.
 const nglSelection = (sele) => {
@@ -2831,116 +2782,6 @@ const nglSelection = (sele) => {
 // NGL 2.4 `StructureSet` exposes the atom count as getSize() (a popcount), not
 // `.count` / `.size` / `.length`.
 const atomSetSize = (set) => (set && typeof set.getSize === 'function' ? set.getSize() : 0);
-
-// Classify a selection expression as covering the protein / the ligand parts.
-const classifySele = (comp, sele) => {
-  if (!comp || !comp.structure) return { protein: false, ligand: false };
-  const s = String(sele || '').trim().toLowerCase();
-  if (!s || s === 'all') return { protein: true, ligand: true };
-  // 'not protein …' FIRST — otherwise it matches the /protein/ test below.
-  if (/^not protein/.test(s) || /not protein/.test(s)) return { protein: false, ligand: true };
-  if (/protein/.test(s)) return { protein: true, ligand: false };
-  if (/hetero|ligand/.test(s)) return { protein: false, ligand: true };
-  // Custom expression (chain / residue / resn …) — classify by the actual atoms.
-  try {
-    const selObj = nglSelection(sele);
-    if (!selObj || !comp.structure.getAtomSet) return { protein: false, ligand: false };
-    const set = comp.structure.getAtomSet(selObj);
-    if (!set || typeof set.intersects !== 'function') return { protein: false, ligand: false };
-    const protSet = comp.structure.getAtomSet(nglSelection('protein'));
-    const ligSet = comp.structure.getAtomSet(nglSelection('not protein and not water'));
-    return {
-      protein: atomSetSize(protSet) > 0 && set.intersects(protSet),
-      ligand: atomSetSize(ligSet) > 0 && set.intersects(ligSet)
-    };
-  } catch { return { protein: false, ligand: false }; }
-};
-
-// Capture the style currently VISIBLE in the viewer for the PROTEIN part and the
-// LIGAND (non-protein) part of the active molecule — i.e. "what you see is what
-// gets copied". Used by the 📸 button (which DEFINES the docking look from the
-// view) and by the very FIRST switch-ON of "🧬 Docking" (when no look was ever
-// defined yet), never on every toggle.
-//   1. Inspect the ACTUAL NGL representations on the component (base reps +
-//      PyMOL/Selections overlay reps; transient highlights are excluded) and
-//      take the last-drawn (topmost) style per role.
-//   2. Fall back to the app's own rendering configuration (per-molecule override
-//      or the global Backbone / Molecule style selectors) for roles the
-//      inspection could not identify.
-const captureDockRoleStyles = (comp) => {
-  const fallback = { protein: 'ribbon', ligand: 'ball+stick' };
-  if (!comp || !comp.structure) return fallback;
-  let proteinStyle = null, ligandStyle = null;
-
-  // (1) Actual NGL representations — the most faithful picture.
-  try {
-    const excluded = new Set();
-    [highlightCompRef.current, stripHighlightCompRef.current, manualHighlightCompRef.current, labelCompRef.current, sidechainCompRef.current]
-      .forEach((r) => { if (r) excluded.add(r); });
-    if (typeof comp.eachRepresentation === 'function') {
-      comp.eachRepresentation((rep) => {
-        if (!rep || excluded.has(rep)) return;
-        let type = '';
-        try {
-          // `rep` is an NGL RepresentationElement: `.type` is the constant
-          // 'representation', so the real style comes from getType() (which
-          // returns the underlying Representation's type, e.g. 'cartoon',
-          // 'ball+stick', 'ribbon', 'licorice', 'spacefill', 'surface').
-          type = (typeof rep.getType === 'function' ? rep.getType() : '')
-            || (rep.repr && rep.repr.type) || '';
-        } catch { type = ''; }
-        type = normStyle(type);
-        if (!type) return;
-        let sele = '';
-        try { sele = (rep.getParameters ? rep.getParameters().sele : '') || rep.sele || ''; } catch { sele = ''; }
-        const cls = classifySele(comp, sele);
-        if (cls.protein) proteinStyle = type;
-        if (cls.ligand) ligandStyle = type;
-      });
-    }
-  } catch { /* fall through to the config-based capture */ }
-
-  // (2) App-config fallback for roles the inspection did not identify.
-  if (!proteinStyle || !ligandStyle) {
-    let p = null, l = null;
-    if (comp === componentRef.current) {
-      const st = mainMolRef.current || {};
-      if (st.style && st.style !== 'auto') { p = st.style; l = st.style; }
-      else { p = backboneStyleRef.current || 'cartoon'; l = moleculeStyleRef.current || 'ball+stick'; }
-    } else {
-      const entry = extraCompsRef.current.find((x) => x.comp === comp);
-      if (entry && entry.style && entry.style !== 'auto') { p = entry.style; l = entry.style; }
-      else { p = backboneStyleRef.current || 'cartoon'; l = moleculeStyleRef.current || 'ball+stick'; }
-    }
-    if (!proteinStyle) proteinStyle = p;
-    if (!ligandStyle) ligandStyle = l;
-  }
-
-  return {
-    protein: normStyle(proteinStyle) || fallback.protein,
-    ligand: normStyle(ligandStyle) || fallback.ligand
-  };
-};
-
-// Apply the DEFINED role styles to a docking molecule: the protein part uses
-// the protein style of the docking look, the ligand (non-protein, non-water)
-// part the ligand style. Callers remove the previous representations first.
-const applyDockRoleStyle = (comp) => {
-  if (!comp || !comp.structure) return [];
-  const st = dockRoleStylesRef.current || {};
-  const proteinType = normStyle(st.protein) || 'ribbon';
-  const ligandType = normStyle(st.ligand) || 'ball+stick';
-  const paramsFor = (t) => (t === 'ball+stick' ? { multipleBond: true, aspectRatio: 1.3 }
-    : t === 'sticks' ? { multipleBond: true }
-    : t === 'spheres' ? { scale: 0.6 }
-    : {});
-  const reps = [];
-  try { reps.push(comp.addRepresentation(toNglType(proteinType), { sele: 'protein', ...paramsFor(proteinType) })); } catch {}
-  // `not protein and not water` — not just HETATM — so a ligand stored as a
-  // regular residue (common in some docking suites) is still rendered.
-  try { reps.push(comp.addRepresentation(toNglType(ligandType), { sele: 'not protein and not water', ...paramsFor(ligandType) })); } catch {}
-  return reps;
-};
 
 // Build the MAIN structure's base representations, honouring the per-molecule
 // override (Molecules bar → Main controls). "auto" = the per-CATEGORY styling of
@@ -2957,15 +2798,12 @@ const buildMainReps = () => {
   // The previous ESP-coloured category surfaces of the main component are gone
   // (they were part of baseCompsRef) — re-create them from scratch.
   catEspRepsRef.current.delete(comp);
-  // "🧬 Docking" standard mode: the main docking result gets the same
-  // role-based look as every other cluster/pose (the DEFINED protein / ligand
-  // styles).
-  if (dockStyleRef.current) {
-    baseCompsRef.current = applyDockRoleStyle(comp);
-    return;
-  }
+  // "🧬 Docking" standard mode: the main docking result gets the §2 « Molecular
+  // Styling » look — the very same per-category renderer as every other
+  // cluster/pose (addDefaultReps → buildCategoryReps), even when a per-molecule
+  // Style was picked in the Molecules bar. That is what standardizes a series.
   const st = mainMolRef.current || {};
-  if (!st.style || st.style === 'auto') {
+  if (dockStyleRef.current || !st.style || st.style === 'auto') {
     addDefaultReps(comp);
     return;
   }
@@ -3124,7 +2962,7 @@ const loadChainMolecule = useCallback(async (blob, name, ci) => {
   if (!stage) return;
   try {
     const comp = await stage.loadFile(blob, { ext: 'pdb' });
-    const baseReps = dockStyleRef.current ? applyDockRoleStyle(comp) : applyCurrentStyleTo(comp, []);
+    const baseReps = applyCurrentStyleTo(comp, []);
     shadowRepsHook(comp);
     if (shadowOnRef.current) setMeshShadows(comp);
     extraCompsRef.current.push({ id: `chain_${Date.now()}_${ci}`, name, comp, baseReps, style: 'auto', color: '', colorMode: 'element', transparency: 0, position: [0, 0, 0] });
@@ -3930,21 +3768,17 @@ useEffect(() => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [status, selections, selStyles, pymolActive, hideAll, catStyles, sstrucColors]);
 
-// Re-apply the current style selectors to EVERY extra molecule / chain when the
-// user changes Backbone or Molecule Style — so the styles work for all loaded
+// Re-apply the current §2 « Molecular Styling » menus to EVERY extra molecule /
+// chain when one of them changes — so the styles work for all loaded
 // structures, not just the main one.
 useEffect(() => {
   if (status !== 'ready') return;
   extraCompsRef.current.forEach((entry) => {
     if (!entry || !entry.comp) return;
     if (entry.style && entry.style !== 'auto') {
-      // Custom-styled molecules keep their per-molecule style / colour / position.
+      // Custom-styled molecules keep their per-molecule style / colour / position
+      // — unless « 🧬 Docking » is ON, where restyleExtraMol applies the §2 look.
       restyleExtraMol(entry.id);
-    } else if (dockStyleRef.current) {
-      // "🧬 Docking" standard mode is ON — keep the role-based look (protein +
-      // ligand) instead of switching back to the global selectors.
-      (entry.baseReps || []).forEach((r) => { try { entry.comp.removeRepresentation(r); } catch {} });
-      entry.baseReps = applyDockRoleStyle(entry.comp);
     } else {
       entry.baseReps = applyCurrentStyleTo(entry.comp, entry.baseReps || []);
     }
@@ -3963,13 +3797,12 @@ useEffect(() => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [mainMol, status, hideAll, pymolActive, sstrucColors]);
 
-// Re-style the MAIN structure and every loaded cluster/pose with the docking
-// role styles currently DEFINED (protein dropdown + ligand dropdown). Called by
-// the mode toggle AND whenever the definition changes, so choosing a style while
-// "🧬 Docking" is ON is visible at once.
+// Re-style the MAIN structure and every loaded cluster/pose with the §2
+// « Molecular Styling » look. Called by the mode toggle, so switching
+// « 🧬 Docking » ON is visible at once on the active result and all the others.
 const applyDockStylesNow = () => {
   if (status !== 'ready' || !componentRef.current) return;
-  // Choosing a role style IS a styling choice: a large system leaves its fast
+  // Applying the §2 look IS a styling choice: a large system leaves its fast
   // starting layout so the docking look is really visible on the main result.
   leaveLightMode();
   // The MAIN is only rebuilt outside PyMOL-script mode — there the script's own
@@ -3982,71 +3815,16 @@ const applyDockStylesNow = () => {
   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
 };
 
-// The molecule the docking look is read from / previewed on: the entry selected
-// in the Molecules bar, falling back to the main structure.
-const dockSourceComp = () => (selectedMolKey === 'main'
-  ? componentRef.current
-  : (extraCompsRef.current.find((x) => x.id === selectedMolKey) || {}).comp) || componentRef.current;
-
-// Switch "🧬 Docking" ON/OFF. The look applied is the DEFINED one (dropdowns,
-// 📸 capture or ↺ default — saved across pages). Only the very first use (nothing
-// ever defined) seeds the definition by copying the style currently visible in
-// the viewer, so the historical "what you see is what gets copied" gesture is
-// preserved for users who never touch the dropdowns — and it happens ONCE.
-const toggleDockStyle = () => {
-  if (!dockStyleMode) {
-    if (!dockStyles.defined) {
-      const seeded = dockRoleStylesFromCapture(captureDockRoleStyles(dockSourceComp()));
-      dockRoleStylesRef.current = { protein: seeded.protein, ligand: seeded.ligand };
-      setDockStyles(seeded);
-    } else {
-      dockRoleStylesRef.current = { protein: dockStyles.protein, ligand: dockStyles.ligand };
-    }
-  }
-  setDockStyleMode((v) => !v);
-};
-
-// Define ONE role of the docking look (the two dropdowns). The choice is saved
-// and, while the mode is ON, applied immediately to every docking result.
-const setDockRoleStyle = (role, value) => {
-  setDockStyles((s) => ({ ...s, [role]: value, defined: true }));
-};
-
-// 📸 Define the docking look by COPYING what is visible right now — the PROTEIN
-// part and the LIGAND part of the active molecule.
-const captureDockStylesFromViewer = () => {
-  setDockStyles(dockRoleStylesFromCapture(captureDockRoleStyles(dockSourceComp())));
-};
-
-// ↺ Back to the default docking look (protein Ribbon + ligand Ball & Stick).
-const resetDockStyles = () => setDockStyles({ ...DOCK_STYLE_DEFAULT, defined: true });
-
-// The two role dropdowns, shared by the toolbar block and the Molecules bar so
-// the SAME definition reads the same in both places (`pad` only changes size).
-const renderDockRoleSelects = (pad) => (
-  <>
-    <select
-      value={dockStyles.protein}
-      onChange={(e) => setDockRoleStyle('protein', e.target.value)}
-      title="Style of the PROTEIN part of every docking result while « 🧬 Docking » is ON"
-      className={pad}
-    >
-      {DOCK_STYLE_TOKENS.map((t) => <option key={t} value={t}>Prot: {DOCK_STYLE_LABELS[t]}</option>)}
-    </select>
-    <select
-      value={dockStyles.ligand}
-      onChange={(e) => setDockRoleStyle('ligand', e.target.value)}
-      title="Style of the LIGAND (non-protein) part of every docking result while « 🧬 Docking » is ON"
-      className={pad}
-    >
-      {DOCK_STYLE_TOKENS.map((t) => <option key={t} value={t}>Lig: {DOCK_STYLE_LABELS[t]}</option>)}
-    </select>
-  </>
-);
+// Switch « 🧬 Docking » ON/OFF. The look applied to every docking result — the
+// active one and all the others, current and future — is the one of section
+// « 2 · Molecular Styling »: the six category menus are the ONLY style menus of
+// the docking look, so there is nothing to define here. Switching OFF gives
+// every molecule its own style back.
+const toggleDockStyle = () => setDockStyleMode((v) => !v);
 
 // Toggle the "🧬 Docking" standard mode: when it changes, re-render the main AND
-// every loaded cluster/pose with the same role-based look. Toggling off restores
-// each molecule's own style.
+// every loaded cluster/pose with the §2 « Molecular Styling » look. Toggling off
+// restores each molecule's own style.
 const prevDockStyleRef = useRef(dockStyleMode);
 useEffect(() => {
   if (prevDockStyleRef.current === dockStyleMode) return;
@@ -4054,14 +3832,6 @@ useEffect(() => {
   applyDockStylesNow();
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [dockStyleMode]);
-
-// The definition IS the docking look: changing it while the mode is ON (or the
-// 📸 / ↺ buttons being pressed) must show up at once on every docking result.
-useEffect(() => {
-  if (!dockStyleMode) return;
-  applyDockStylesNow();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [dockStyles]);
 
 // Background colour + quality ("ray shadows" approximation)
 useEffect(() => {
@@ -4520,10 +4290,10 @@ try {
   const stage = stageRef.current;
   if (!stage) return;
   const comp = await stage.loadFile(file);
-  // Style it with the CURRENT selectors (Backbone / Molecule Style) so extra
-  // molecules follow the user's choices and never look like a gray blob. When
-  // "🧬 Docking" is on, use the standard role-based docking look instead.
-  const baseReps = dockStyleRef.current ? applyDockRoleStyle(comp) : applyCurrentStyleTo(comp, []);
+  // Style it with the §2 « Molecular Styling » menus (the same renderer as the
+  // main structure) so extra molecules follow the user's choices and never look
+  // like a gray blob.
+  const baseReps = applyCurrentStyleTo(comp, []);
   shadowRepsHook(comp);
   if (shadowOnRef.current) setMeshShadows(comp);
   const name = file.name || `Molecule ${n}`;
@@ -4543,8 +4313,8 @@ try {
 const extraMolsSnapshot = () => extraCompsRef.current.map(({ id, name, style, color, colorMode, transparency, position }) => ({ id, name, style, color, colorMode, transparency, position }));
 
 // Per-extra-structure style/color overrides. Each entry in the Molecules bar can
-// be rendered independently: "auto" follows the global Backbone / Molecule Style
-// selectors; anything else rebuilds that component with ONE chosen style, colour
+// be rendered independently: "auto" follows the §2 « Molecular Styling » menus;
+// anything else rebuilds that component with ONE chosen style, colour
 // metaphor (atom type / chain / residue / 2° structure / hydrophobicity / solid),
 // solid colour and transparency.
 const restyleExtraMol = (id) => {
@@ -4559,12 +4329,10 @@ const restyleExtraMol = (id) => {
   let reps = [];
   const st = entry || {};
   const style = st.style;
-  if (dockStyleRef.current) {
-    // "🧬 Docking" standard mode: the DEFINED docking look (protein style +
-    // ligand style), exactly like every other cluster/pose — regardless of this
-    // molecule's own style.
-    reps = applyDockRoleStyle(comp);
-  } else if (!style || style === 'auto') {
+  if (dockStyleRef.current || !style || style === 'auto') {
+    // "auto" = the §2 « Molecular Styling » look. « 🧬 Docking » ON forces that
+    // very same look on every docking result — like every other cluster/pose,
+    // regardless of this molecule's own style.
     reps = applyCurrentStyleTo(comp, []);
   } else {
     // Colouring metaphor — a NGL colorScheme, or a plain solid colour when
@@ -4920,7 +4688,9 @@ const loadExtraStructureUrl = useCallback(async (rawSrc, n = 0) => {
       }
     }
     if (!comp || !comp.structure) return;
-    const baseReps = dockStyleRef.current ? applyDockRoleStyle(comp) : applyCurrentStyleTo(comp, []);
+    // The same §2 « Molecular Styling » look as the main structure (and, while
+    // « 🧬 Docking » is ON, as every other docking result).
+    const baseReps = applyCurrentStyleTo(comp, []);
     shadowRepsHook(comp);
     if (shadowOnRef.current) setMeshShadows(comp);
     const s = String(rawSrc || '').trim();
@@ -5533,28 +5303,20 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
 {stylingOpen && (
 <div className="flex flex-wrap items-center gap-1">
 
-{/* 🧬 Docking — the look APPLIED to every docking result (cluster / pose)
-    while « 🧬 Docking » is ON: one style for the PROTEIN part, one for the
-    LIGAND part. The definition is remembered across pages; 📸 copies the look
-    visible right now, ↺ restores the default. This block is FULLY usable
-    outside a docking run — it is a styling preset, which is why it lives in
-    §2 — and its logic is unchanged. */}
+{/* 🧬 Docking — STANDARDIZE every docking result (cluster / pose, current and
+    future) on the look defined in THIS section: the six per-category menus
+    below (A · Proteins … F · Others) are the only style menus of « 🧬 Docking »,
+    so switching it ON re-draws the active structure AND every loaded result
+    with them — whatever each molecule's own Style says — and switching OFF
+    gives each molecule its style back. This block is FULLY usable outside a
+    docking run (it is a styling gesture, which is why it lives in §2). */}
 {(moleculeType === 'protein' || extraMols.length > 0 || dockStyleMode) && (
 <div className={`flex items-center gap-1 rounded-md border px-1.5 h-7 whitespace-nowrap ${dockStyleMode ? 'bg-teal-50 border-teal-400' : 'bg-white border-teal-300'}`}>
   <button type="button" onClick={toggleDockStyle}
     className={`text-xs font-bold px-1 py-0.5 rounded ${dockStyleMode ? 'text-teal-900' : 'text-teal-700 hover:bg-teal-50'}`}
-    title="Standardize DOCKING results: every cluster/pose — current and future — gets the SAME protein + ligand styles defined next to this button. Switch off to restore each molecule's own style.">
+    title="Standardize DOCKING results: every cluster/pose — current and future — is drawn with the styles of the menus A–F below (Proteins, Ligands, surfaces…), the ONLY style menus of the docking look. Switch off to restore each molecule's own style.">
     🧬 Docking: {dockStyleMode ? 'On' : 'Off'}
   </button>
-  {renderDockRoleSelects('border border-teal-300 rounded px-1 py-0.5 text-[10px] bg-white text-teal-900 outline-none focus:border-teal-500')}
-  <button type="button" onClick={captureDockStylesFromViewer}
-    className="text-[10px] font-bold px-1 py-0.5 rounded border border-teal-300 text-teal-700 bg-white hover:bg-teal-50"
-    title="Define the docking look by COPYING the styles visible right now: protein part + ligand part of the ACTIVE molecule">
-    📸 View</button>
-  <button type="button" onClick={resetDockStyles}
-    className="text-[10px] font-bold px-1 py-0.5 rounded border border-teal-300 text-teal-700 bg-white hover:bg-teal-50"
-    title="Back to the default docking look (protein Ribbon + ligand Ball & Stick)">
-    ↺</button>
 </div>
 )}
 
@@ -6546,25 +6308,9 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           🎨 Copy</button>
         <button type="button" onClick={toggleDockStyle}
           className={`px-1.5 py-0.5 text-[9px] font-bold rounded border transition-colors ${dockStyleMode ? 'bg-teal-600 text-white border-teal-600' : 'bg-white border-teal-300 text-teal-700 hover:bg-teal-50'}`}
-          title="Standardize DOCKING results: every cluster/pose (current and future) gets the SAME protein + ligand styles DEFINED in the row below (or in the toolbar). No style defined yet? The first ON copies the look currently visible. Switch off to restore each molecule's own style.">
+          title="Standardize DOCKING results: every cluster/pose (current and future) is drawn with the styles of section « 2 · Molecular Styling » of the toolbar — the only style menus of the docking look. Switch off to restore each molecule's own style.">
           🧬 Docking: {dockStyleMode ? 'On' : 'Off'}</button>
       </span>
-    </div>
-    {/* The docking look itself — the two dropdowns that DEFINE what « 🧬 Docking »
-        applies (protein part / ligand part), saved across pages; 📸 copies the
-        style visible now, ↺ restores the default. Same definition as the toolbar. */}
-    <div className="flex items-center gap-1 shrink-0 text-[9px] font-bold text-teal-800"
-      title={dockStyles.defined
-        ? 'Docking style: applied to every docking result while « 🧬 Docking » is ON'
-        : 'No docking style defined yet: the first time « 🧬 Docking » is switched ON it copies the style currently visible. Pick the two styles here (or press 📸) to define it once and for all.'}>
-      <span className="whitespace-nowrap">Style</span>
-      {renderDockRoleSelects('border border-teal-200 rounded px-0.5 py-0.5 text-[9px] bg-white text-teal-900 outline-none focus:border-teal-500 max-w-[6.5rem]')}
-      <button type="button" onClick={captureDockStylesFromViewer}
-        className="px-1 py-0.5 rounded border border-teal-300 text-teal-700 bg-white hover:bg-teal-50"
-        title="Define the docking look by COPYING the styles visible right now (protein part + ligand part of the ACTIVE molecule)">📸</button>
-      <button type="button" onClick={resetDockStyles}
-        className="px-1 py-0.5 rounded border border-teal-300 text-teal-700 bg-white hover:bg-teal-50"
-        title="Back to the default docking look (protein Ribbon + ligand Ball & Stick)">↺</button>
     </div>
     <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1 min-h-0">
       <div onClick={() => autoViewMol('main')}

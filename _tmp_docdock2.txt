@@ -1,0 +1,7 @@
+﻿DRIVE-MIRROR.md:613: événements FCS, trajectoire MD, structures de docking, vidéo…) n'était **pas
+DRIVE-MIRROR.md:722: * **Docking (HADDOCK / AutoDock)** — `DockingSections.jsx` archive les textes
+DRIVE-MIRROR.md:723: PDB du docking — structures `8_seletopclusts` **et** molécules de
+DRIVE-MIRROR.md:724: `raw_input.toml` (`<instance>_docking_restore.json.gz`, pointeur
+DRIVE-MIRROR.md:725: `dockingDrive`, dossier `Data/pdb files`) au moment où un répertoire de calcul
+DRIVE-MIRROR.md:755: des pages sans handler (Docking) et les molécules supplémentaires.
+DRIVE-MIRROR.md:777: modules branchés : NMR 1D, ssNMR, CD, docking, microscopie — et, pour les

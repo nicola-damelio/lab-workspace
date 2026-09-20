@@ -1,0 +1,2 @@
+﻿3803: const applyDockStylesNow = () => {
+3832: applyDockStylesNow();

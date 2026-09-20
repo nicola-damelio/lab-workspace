@@ -143,11 +143,15 @@ has('onMouseDown={(e) => { resizeRef.current = { startY: e.clientY, startH: view
 // place ; le bouton « ↺ No cut (0 · 100000 · 0 Å) » et son infobulle suffisent).
 gone('Clipping Off = camera bounds at the extremes', '[§3] la phrase sur le clipping est supprimée');
 
-/* ── 4. §2 : docking, hide everything, cinq menus ───────────────────────── */
+/* ── 4. §2 : docking, hide everything, six menus ────────────────────────── */
 has('{(moleculeType === \'protein\' || extraMols.length > 0 || dockStyleMode) && (', '[§2] contrôle Docking conservé');
 has('🧬 Docking: {dockStyleMode ? \'On\' : \'Off\'}', '[§2] toggle Docking On/Off');
-has('{renderDockRoleSelects(', '[§2] menus Prot: / Lig: du docking');
-has('onClick={captureDockStylesFromViewer}', '[§2] 📸 View du docking');
+// Le docking n'a PLUS de menus de style à lui : il applique ceux de la section
+// (§2) — les deux listes « Prot: » / « Lig: » et le bouton 📸 « copier la vue »
+// ont disparu avec le module src/utils/dockStyles.js.
+gone('renderDockRoleSelects', '[§2] plus de menus Prot: / Lig: propres au docking');
+gone('captureDockStylesFromViewer', '[§2] plus de 📸 « copier la vue » du docking');
+has('is drawn with the styles of the menus A–F below', '[§2] le look du docking EST celui des menus de la section');
 has('{hideAll ? \'👁️ Show default\' : \'🙈 Hide everything\'}', '[§2] Hide everything');
 
 has('label="A · Proteins"', '[§2] menu A · Proteins');

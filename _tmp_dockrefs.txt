@@ -1,0 +1,37 @@
+﻿1630: const dockStyleRef = useRef(dockStyleMode);
+1631: dockStyleRef.current = dockStyleMode;
+2808: const normStyle = (t) => {
+2821: const toNglType = (t) => (t === 'spheres' ? 'spacefill' : t === 'sticks' ? 'stick' : t === 'lines' ? 'line' : t);
+2825: const nglSelection = (sele) => {
+2833: const atomSetSize = (set) => (set && typeof set.getSize === 'function' ? set.getSize() : 0);
+2836: const classifySele = (comp, sele) => {
+2846: const selObj = nglSelection(sele);
+2850: const protSet = comp.structure.getAtomSet(nglSelection('protein'));
+2851: const ligSet = comp.structure.getAtomSet(nglSelection('not protein and not water'));
+2853: protein: atomSetSize(protSet) > 0 && set.intersects(protSet),
+2854: ligand: atomSetSize(ligSet) > 0 && set.intersects(ligSet)
+2892: type = normStyle(type);
+2896: const cls = classifySele(comp, sele);
+2920: protein: normStyle(proteinStyle) || fallback.protein,
+2921: ligand: normStyle(ligandStyle) || fallback.ligand
+2931: const proteinType = normStyle(st.protein) || 'ribbon';
+2932: const ligandType = normStyle(st.ligand) || 'ball+stick';
+2938: try { reps.push(comp.addRepresentation(toNglType(proteinType), { sele: 'protein', ...paramsFor(proteinType) })); } catch {}
+2941: try { reps.push(comp.addRepresentation(toNglType(ligandType), { sele: 'not protein and not water', ...paramsFor(ligandType) })); } catch {}
+2963: if (dockStyleRef.current) {
+3127: const baseReps = dockStyleRef.current ? applyDockRoleStyle(comp) : applyCurrentStyleTo(comp, []);
+3268: const h = component.structure.getAtomSet(nglSelection('hetero and not water'));
+3269: const w = component.structure.getAtomSet(nglSelection('water'));
+3270: nonProtein = atomSetSize(h) > 0 || atomSetSize(w) > 0;
+3943: } else if (dockStyleRef.current) {
+3996: const toggleDockStyle = () => {
+4050: const prevDockStyleRef = useRef(dockStyleMode);
+4052: if (prevDockStyleRef.current === dockStyleMode) return;
+4053: prevDockStyleRef.current = dockStyleMode;
+4526: const baseReps = dockStyleRef.current ? applyDockRoleStyle(comp) : applyCurrentStyleTo(comp, []);
+4562: if (dockStyleRef.current) {
+4923: const baseReps = dockStyleRef.current ? applyDockRoleStyle(comp) : applyCurrentStyleTo(comp, []);
+5544: <button type="button" onClick={toggleDockStyle}
+6547: <button type="button" onClick={toggleDockStyle}
+_viewer_ui_layout_test.mjs:369: has('const buildCategoryReps = (comp) => {', '[rendu] UN constructeur de représentations par catégorie');
+_viewer_ui_layout_test.mjs:371: has('return buildCategoryReps(comp);', '[rendu] …sans règle différente du rendu principal');
