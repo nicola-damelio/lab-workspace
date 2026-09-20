@@ -1141,9 +1141,56 @@ export const SharedChartStylePanel = ({ cfg = {}, setCfg, series = [], unit = 'a
 // "🎨 Graphical Parameters" panel.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   A FIGURE THE PAGE DRAWS ITSELF (no recharts) declares its own parts.
+   The DSSP timeline map, for instance, is a plain <svg> of coloured cells: it
+   has no recharts class names to hit-test and no `.recharts-wrapper` for the
+   geometric fallback below — so the double-click used to die on it (the gesture
+   worked everywhere else in the MD page). Such a <svg> now says what it is made
+   of:
+
+     <svg data-chart-part="plot">                 the figure      → whole panel
+       <g data-chart-part="xAxis">…</g>           the tick numbers → the x block
+       <text data-chart-part="yLabel">…</text>    an axis TITLE    → the label block
+       <rect data-chart-part="series"
+             data-chart-series="β-sheet" />       a curve/bar/cell → its series
+
+   The NEAREST marker wins (closest() walks up), so marking the <svg> itself as
+   the plot covers every part left unmarked — margins, background, cells — with
+   the full style panel, exactly like a double-click on a recharts plot.
+   ───────────────────────────────────────────────────────────────────────────*/
+const CHART_PART_TARGETS = {
+    plot: { kind: 'plot', section: 'all', axis: null },
+    series: { kind: 'series', section: 'series', axis: null },
+    legend: { kind: 'legend', section: 'series', axis: null },
+    xAxis: { kind: 'xAxis', section: 'x', axis: 'x' },
+    yAxis: { kind: 'yAxis', section: 'y', axis: 'y' },
+    xLabel: { kind: 'xLabel', section: 'label', axis: 'x' },
+    yLabel: { kind: 'yLabel', section: 'label', axis: 'y' }
+};
+
+/** The style-panel block of an element marked `data-chart-part` (else null). */
+export const chartPartTarget = (el) => {
+    if (!el || typeof el.closest !== 'function') return null;
+    const marked = el.closest('[data-chart-part]');
+    if (!marked || typeof marked.getAttribute !== 'function') return null;
+    const base = CHART_PART_TARGETS[String(marked.getAttribute('data-chart-part') || '').trim()];
+    if (!base) return null;
+    // A series / legend marker may name the curve it belongs to (like the
+    // recharts legend branch): the dialog then highlights that entry.
+    const label = base.section === 'series'
+        ? String(marked.getAttribute('data-chart-series') || '').trim()
+        : '';
+    return { ...base, label };
+};
+
 /** Which style-panel section matches a double-clicked chart element. */
 export const classifyChartElement = (el) => {
     if (!el || typeof el.closest !== 'function') return null;
+    // 0) the explicit marker of a hand-rolled figure wins over everything: it is
+    //    the only thing that knows what that <svg> is made of.
+    const marked = chartPartTarget(el);
+    if (marked) return marked;
     const legend = el.closest('.recharts-legend-wrapper, .recharts-legend-item');
     if (legend) {
         return { kind: 'legend', section: 'series', axis: null, label: String(legend.textContent || '').trim() };

@@ -3997,9 +3997,13 @@ const SS_LETTER_META = [
 ];
 
 // Interactive DSSP timeline map as a real SVG chart (same zoom behaviour as the
-// other plots): X axis = time/frame, Y axis = residue. Drag horizontally to zoom
-// the X range, hover for details, double-click or button to reset.
-const DSSPHeatmap = ({ heat, height = 520, width = 0, fontSize = 9 }) => {
+// other plots): X axis = time/frame, Y axis = residue. Drag horizontally to
+// zoom the X range, hover for details, double-click the figure to edit it (the
+// shared editor of ChartInspector — see data-chart-part below), ↩ to reset the
+// zoom. The page DRAWS this figure itself (no recharts), so it declares its own
+// parts with `data-chart-part="…"`: the double-click editing gesture finds them
+// through classifyChartElement (SharedAnalysisTools.jsx).
+const DSSPHeatmap = ({ heat, height = 520, width = 0, fontSize = 9, xLabel = '', yLabel = '' }) => {
   const wrapRef = useRef(null);
   const svgRef = useRef(null);
   const [zoom, setZoom] = useState(null);   // { x0, x1 } sample (frame) indices
@@ -4092,6 +4096,12 @@ const DSSPHeatmap = ({ heat, height = 520, width = 0, fontSize = 9 }) => {
     return resIds[r] != null ? resIds[r] : r + 1;
   };
 
+  // The axis titles come from the 🎨 panel (which a double-click on the map
+  // opens): a title typed there wins over the wording of the page, exactly like
+  // the content / occupancy charts of this section.
+  const xTitle = xLabel || (dtPs > 0 ? 'Time (ns)' : 'Frame');
+  const yTitle = yLabel || 'Residue';
+
   const evtToCell = (e) => {
     const svg = svgRef.current;
     if (!svg || plotW <= 0 || plotH <= 0) return null;
@@ -4149,13 +4159,17 @@ const DSSPHeatmap = ({ heat, height = 520, width = 0, fontSize = 9 }) => {
     <div className="flex flex-col gap-1">
       {zoom && (
         <div className="flex justify-end">
-          <button type="button" onClick={() => setZoom(null)} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">↩ Reset Zoom (double-click also resets)</button>
+          <button type="button" onClick={() => setZoom(null)} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">↩ Reset Zoom</button>
         </div>
       )}
       <div ref={wrapRef} style={{ position: 'relative', maxWidth: '100%' }}>
+        {/* The <svg> is the FIGURE: marking it "plot" gives every part that is
+            not marked itself (background, margins, cells) the full style panel,
+            while the markers below refine the tick groups and the two titles.
+            Double-click is left to the editor — the zoom is reset with ↩. */}
         <svg ref={svgRef} width={svgW} height={svgH} style={{ display: 'block', maxWidth: '100%', cursor: 'crosshair', background: '#fff', borderRadius: 8 }}
              onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseLeave}
-             onDoubleClick={() => setZoom(null)}>
+             data-chart-part="plot">
           <rect x={margin.left} y={margin.top} width={plotW} height={plotH} fill="#f8fafc" stroke="#94a3b8" strokeWidth={1} />
           {cells.map((c, i) => (
             <rect key={i} x={c.x} y={c.y} width={c.w} height={c.h} fill={SS_COLORS[c.letter]} />
@@ -4163,7 +4177,7 @@ const DSSPHeatmap = ({ heat, height = 520, width = 0, fontSize = 9 }) => {
           {xTicks.map((tx) => {
             const x = margin.left + ((tx + 0.5) / visW) * plotW;
             return (
-              <g key={`xt${tx}`}>
+              <g key={`xt${tx}`} data-chart-part="xAxis">
                 <line x1={x} y1={margin.top + plotH} x2={x} y2={margin.top + plotH + 4} stroke="#64748b" />
                 <text x={x} y={margin.top + plotH + 14} textAnchor="middle" fontSize={Math.max(9, fontSize)} fill="#475569">{fmtX(toX(tx))}</text>
               </g>
@@ -4172,17 +4186,19 @@ const DSSPHeatmap = ({ heat, height = 520, width = 0, fontSize = 9 }) => {
           {yTicks.map((ty) => {
             const y = margin.top + ((ty + 0.5) / nRes) * plotH;
             return (
-              <g key={`yt${ty}`}>
+              <g key={`yt${ty}`} data-chart-part="yAxis">
                 <line x1={margin.left - 4} y1={y} x2={margin.left} y2={y} stroke="#64748b" />
                 <text x={margin.left - 6} y={y + 3} textAnchor="end" fontSize={Math.max(9, fontSize)} fill="#475569">{resAt(ty)}</text>
               </g>
             );
           })}
-          <text x={margin.left + plotW / 2} y={svgH - 8} textAnchor="middle" fontSize={Math.max(10, fontSize + 1)} fontWeight="bold" fill="#334155">
-            {dtPs > 0 ? 'Time (ns)' : 'Frame'}
+          <text x={margin.left + plotW / 2} y={svgH - 8} textAnchor="middle" fontSize={Math.max(10, fontSize + 1)} fontWeight="bold" fill="#334155"
+                data-chart-part="xLabel">
+            {xTitle}
           </text>
-          <text transform={`translate(14, ${margin.top + plotH / 2}) rotate(-90)`} textAnchor="middle" fontSize={Math.max(10, fontSize + 1)} fontWeight="bold" fill="#334155">
-            Residue
+          <text transform={`translate(14, ${margin.top + plotH / 2}) rotate(-90)`} textAnchor="middle" fontSize={Math.max(10, fontSize + 1)} fontWeight="bold" fill="#334155"
+                data-chart-part="yLabel">
+            {yTitle}
           </text>
           {sel && sel.w > 2 && (
             <rect x={sel.x} y={margin.top} width={sel.w} height={plotH} fill="rgba(100,116,139,0.25)" stroke="#334155" strokeDasharray="4 3" />
@@ -4196,7 +4212,7 @@ const DSSPHeatmap = ({ heat, height = 520, width = 0, fontSize = 9 }) => {
           </div>
         )}
       </div>
-      <div className="text-[10px] text-slate-400">💡 Drag horizontally to zoom the time/frame axis · hover for details · double-click to reset</div>
+      <div className="text-[10px] text-slate-400">💡 Drag horizontally to zoom the time/frame axis · hover for details · double-click the map to edit it · ↩ resets the zoom</div>
     </div>
   );
 };
@@ -4577,7 +4593,8 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
                           </div>
                         )}>
               <div id="md-dssp-heat">
-                <DSSPHeatmap heat={heat} height={heatHeight} width={heatWidth} fontSize={dsspCfg.fontSize || 9} />
+                <DSSPHeatmap heat={heat} height={heatHeight} width={heatWidth} fontSize={dsspCfg.fontSize || 9}
+                             xLabel={dsspCfg.xAxisLabel} yLabel={dsspCfg.yAxisLabel} />
               </div>
             </ChartPanel>
           )}

@@ -11,6 +11,13 @@
 //        the X axis title             → 'label'
 //        a curve / bar / point / area → 'series' (line ↔ histogram, thickness…)
 //        a legend entry               → 'series' (its colour is highlighted)
+//     A figure the page DRAWS ITSELF — the DSSP timeline map is a plain <svg>
+//     of coloured cells — has neither recharts class names nor a
+//     `.recharts-wrapper` for that geometric fallback, so it declares its own
+//     parts (`data-chart-part="plot" | "xAxis" | "yAxis" | "xLabel" | "yLabel" |
+//     "series"`, see MDSections.jsx) and `chartPartTarget` reads them. The
+//     NEAREST marker wins, so marking the <svg> as the plot makes every part
+//     left unmarked (background, margins, cells) editable again.
 //     Chart.js canvases have no DOM elements, so `chartJsTargetAt` finds the
 //     element from the chart geometry (outside the plot = the axis of that
 //     side, inside = the nearest dataset).
@@ -58,7 +65,11 @@ const makeEl = (classes, parent = null, extra = {}) => {
     let cur = node;
     while (cur) {
       const cls = ` ${String(cur.className || '')} `;
-      if (list.some((s) => s.startsWith('.') && cls.includes(` ${s.slice(1)} `))) return cur;
+      const attrs = cur.attrs || {};
+      if (list.some((s) => (s.startsWith('.')
+        ? cls.includes(` ${s.slice(1)} `)
+        // an ATTRIBUTE marker: data-chart-part of a hand-rolled figure
+        : s.startsWith('[') ? attrs[s.slice(1, -1)] !== undefined : false))) return cur;
       cur = cur.parent;
     }
     return null;
@@ -67,8 +78,33 @@ const makeEl = (classes, parent = null, extra = {}) => {
 };
 
 // ── mirror: SharedAnalysisTools.jsx ─────────────────────────────────────────
+// The parts a figure the page DRAWS ITSELF declares (see data-chart-part in
+// MDSections.jsx): the nearest marker wins, so an <svg> marked "plot" is the
+// fallback for everything inside it that carries no marker of its own.
+const CHART_PART_TARGETS = {
+  plot: { kind: 'plot', section: 'all', axis: null },
+  series: { kind: 'series', section: 'series', axis: null },
+  legend: { kind: 'legend', section: 'series', axis: null },
+  xAxis: { kind: 'xAxis', section: 'x', axis: 'x' },
+  yAxis: { kind: 'yAxis', section: 'y', axis: 'y' },
+  xLabel: { kind: 'xLabel', section: 'label', axis: 'x' },
+  yLabel: { kind: 'yLabel', section: 'label', axis: 'y' }
+};
+const chartPartTarget = (el) => {
+  if (!el || typeof el.closest !== 'function') return null;
+  const marked = el.closest('[data-chart-part]');
+  if (!marked || typeof marked.getAttribute !== 'function') return null;
+  const base = CHART_PART_TARGETS[String(marked.getAttribute('data-chart-part') || '').trim()];
+  if (!base) return null;
+  const label = base.section === 'series'
+    ? String(marked.getAttribute('data-chart-series') || '').trim()
+    : '';
+  return { ...base, label };
+};
 const classifyChartElement = (el) => {
   if (!el || typeof el.closest !== 'function') return null;
+  const marked = chartPartTarget(el);
+  if (marked) return marked;
   const legend = el.closest('.recharts-legend-wrapper, .recharts-legend-item');
   if (legend) {
     return { kind: 'legend', section: 'series', axis: null, label: String(legend.textContent || '').trim() };
@@ -380,7 +416,35 @@ frag('[SAT] the geometric fallback exists', SAT, 'export const chartElementAtPoi
 frag('[SAT] …and every wrapper uses it when no element matched', SAT, 'classifyChartElement(e.target) || chartElementAtPoint(e.currentTarget, e)');
 frag('[SAT] the plot target has its own title', SAT, "plot: 'Chart — every setting (axes, ticks, log, interrupt, curves)'");
 
-/* ══ 6. the axis commands a double-click must reach ═══════════════════════ */
+/* ══ 6. a figure the page DRAWS ITSELF: it declares its own parts ═════════ */
+/* The DSSP timeline map (MDSections.jsx) is a plain <svg> of coloured cells: no
+   recharts class name to hit-test, no `.recharts-wrapper` for the geometric
+   fallback — a double-click on it used to do NOTHING while the same gesture
+   worked on every other MD chart. It marks its parts now, and the NEAREST
+   marker wins (the <svg> marked "plot" is the fallback of its own contents). */
+const figure = makeEl('', null, { attrs: { 'data-chart-part': 'plot' } });
+const plainPart = makeEl('', figure);                       // background, a cell…
+const xTicks = makeEl('', figure, { attrs: { 'data-chart-part': 'xAxis' } });
+const yTicks = makeEl('', figure, { attrs: { 'data-chart-part': 'yAxis' } });
+const xTitle = makeEl('', figure, { attrs: { 'data-chart-part': 'xLabel' }, text: 'Time (ns)' });
+const yTitle = makeEl('', figure, { attrs: { 'data-chart-part': 'yLabel' }, text: 'Residue' });
+const markedCell = makeEl('', figure, { attrs: { 'data-chart-part': 'series', 'data-chart-series': 'β-sheet' } });
+const rechartsEl = makeEl('recharts-line', null, { attrs: { name: 'RMSD' } });
+
+check('an unmarked part of a marked figure → the whole panel', classifyChartElement(plainPart), { kind: 'plot', section: 'all', axis: null, label: '' });
+check('the tick numbers of the map → the axis block', [classifyChartElement(xTicks).section, classifyChartElement(yTicks).section], ['x', 'y']);
+check('the X title of the map → the label block', classifyChartElement(xTitle), { kind: 'xLabel', section: 'label', axis: 'x', label: '' });
+check('the Y title of the map → the label block', classifyChartElement(yTitle).axis, 'y');
+check('a marked cell → its series (which the dialog highlights)', classifyChartElement(markedCell), { kind: 'series', section: 'series', axis: null, label: 'β-sheet' });
+check('a recharts element is still classified the old way', classifyChartElement(rechartsEl), { kind: 'series', section: 'series', axis: null, label: 'RMSD' });
+check('an unknown marker → nothing (never the wrong block)', chartPartTarget(makeEl('', null, { attrs: { 'data-chart-part': 'nope' } })), null);
+check('an unmarked node has no part', chartPartTarget(makeEl('recharts-line')), null);
+frag('[SAT] the marker reader exists', SAT, 'export const chartPartTarget = (el) => {');
+frag('[SAT] …it reads data-chart-part', SAT, "el.closest('[data-chart-part]')");
+frag('[SAT] …BEFORE the recharts classes', SAT, 'const marked = chartPartTarget(el);');
+frag('[SAT] the axis-title marker points at the label block', SAT, "xLabel: { kind: 'xLabel', section: 'label', axis: 'x' }");
+
+/* ══ 7. the axis commands a double-click must reach ═══════════════════════ */
 frag('[SAT] an axis TITLE also shows the ticks / decimals / log scale', SAT, "{section === 'label' && chartStyleTickBlock(cfg, set, 'label')}");
 frag('[SAT] the ✂ interrupted axis is a panel command', SAT, 'Interrupt Y axis — huge bar vs small bars');
 frag('[SAT] …and it is drawn on the axis', SAT, 'export const AxisBreakMarks = ({ cfg = {}, axis = \'y\', values = [], brk = null }) => {');
@@ -389,7 +453,7 @@ frag('[STYLE] the interrupted scale of recharts', STYLE, 'export const brokenSca
 frag('[STYLE] …and of the Chart.js canvases', STYLE, "export const chartJsBrokenAxisOptions = (cfg = {}, axis = 'y', values = []) => {");
 frag('[STYLE] …which takes the automatic break from those values', STYLE, 'const brk = axisBreakFor(cfg, axis, values);');
 
-/* ══ 7. the charts that forgot to wire the inspector ═════════════════════ */
+/* ══ 8. the charts that forgot to wire the inspector ═════════════════════ */
 const FCS = read('src/components/FlowCytometrySections.jsx');
 const DOCK = read('src/components/DockingSections.jsx');
 const MD = read('src/components/MDSections.jsx');
@@ -397,6 +461,19 @@ frag('[SAT] a 🎨 panel makes its ChartPanel body editable on its own', SAT, 'c
 for (const [name, src] of [['[FCS] the histograms are editable', FCS], ['[Dock] the docking charts are editable', DOCK], ['[MD] the trajectory charts are editable', MD], ['[NMR] the per-atom chart is editable', NMR], ['[ssNMR] the small spectra are editable', SSNMR], ['[CD] the small spectra are editable', CD]]) {
   frag(`${name} (ChartInspector)`, src, '<ChartInspector');
 }
+/* The DSSP timeline map is NOT recharts: it declares its parts itself (see
+   chartPartTarget above), which is what makes the double-click reach it. */
+frag('[MD] the DSSP timeline map marks its figure', MD, 'data-chart-part="plot"');
+frag('[MD] …its X tick numbers', MD, 'data-chart-part="xAxis"');
+frag('[MD] …its Y tick numbers', MD, 'data-chart-part="yAxis"');
+frag('[MD] …its X title', MD, 'data-chart-part="xLabel"');
+frag('[MD] …its Y title', MD, 'data-chart-part="yLabel"');
+frag('[MD] …and the marker is on the <svg> the user double-clicks', MD.replace(/\r\n/g, '\n'), "onMouseLeave={onMouseLeave}\n             data-chart-part=\"plot\">");
+frag('[MD] the map reads the axis titles the editor writes', MD, 'xLabel={dsspCfg.xAxisLabel} yLabel={dsspCfg.yAxisLabel}');
+frag('[MD] …with the wording of the page as default', MD, "const xTitle = xLabel || (dtPs > 0 ? 'Time (ns)' : 'Frame');");
+check('[MD] the double-click no longer resets the zoom instead of editing', MD.includes('onDoubleClick={() => setZoom(null)}'), false);
+check('[MD] …the zoom is reset by the ↩ button only', MD.includes('>↩ Reset Zoom</button>'), true);
+frag('[MD] the hint describes the two gestures', MD, '💡 Drag horizontally to zoom the time/frame axis · hover for details · double-click the map to edit it · ↩ resets the zoom');
 frag('[Plate] a small canvas is no longer pointer-events-none', PLATE, 'onClick={!isFs ? clickCard : undefined}');
 frag('[Plate] …so the double-click reaches it', SAT, 'export const useDeferredClick = (onClick, delay = 260) => {');
 
