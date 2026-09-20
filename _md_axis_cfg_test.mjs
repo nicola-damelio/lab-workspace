@@ -12,7 +12,11 @@
        yDecimals / ySci → format des nombres, et AUCUNE commande → 'auto'
        (l'aspect historique des graphes est conservé) ;
      • les axes X des graphes MD passent par `cfgNumericAxis` (le zoom reste la
-       borne par défaut, X Min/Max tapés gagnent) ;
+       borne par défaut, X Min/Max tapés gagnent) — y compris celui de la CARTE
+       DSSP, une figure dessinée à la main : `mdHeatXAxis` lui donne la fenêtre,
+       les graduations (xTickStep), le format des nombres (xDecimals / xSci),
+       l'échelle log, la rotation des nombres et la place du titre, donc les
+       commandes de son axe X (et l'éditeur du double-clic) agissent vraiment ;
      • les titres tapés (ou écrits en double-cliquant sur le titre) gagnent sur
        le libellé par défaut de la page ;
      • CHAQUE courbe suit SA série (couleur, épaisseur, pointillés, masquage) et
@@ -85,7 +89,9 @@ const sandbox = [
   sliceFn(SAT, 'cfgTickFormatter', 'SharedAnalysisTools.jsx'),
   sliceFn(SAT, 'cfgNumericAxis', 'SharedAnalysisTools.jsx'),
   sliceFn(MD, 'mdYAxisProps', 'MDSections.jsx'),
-  'return { mdDom, mdYAxisProps, cfgNumericAxis };'
+  sliceFn(MD, 'mdHeatLogTicks', 'MDSections.jsx'),
+  sliceFn(MD, 'mdHeatXAxis', 'MDSections.jsx'),
+  'return { mdDom, mdYAxisProps, mdHeatLogTicks, mdHeatXAxis, cfgNumericAxis };'
 ].join('\n');
 const H = new Function(sandbox)();
 
@@ -139,7 +145,50 @@ ok(!('ticks' in xPanel), 'sans xTickStep les ticks X restent automatiques');
 eq(xPanel.tickFormatter(3.4), '3', 'xDecimals formate les nombres de l’axe X');
 eq(H.cfgNumericAxis({ xLog: true }, 'x', [0, 10]).scale, 'log', 'xLog met l’axe X en log');
 
-/* ══ 8. LE CÂBLAGE DES GRAPHES MD (source) ════════════════════════════════ */
+/* ══ 8. LA CARTE DSSP : SON AXE X SUIT LE MÊME PANNEAU 🎨 ═════════════════ */
+/* La carte (residue × frame) est une figure dessinée à la main : sa fenêtre,
+   ses graduations et son échelle venaient d'elle seule, donc AUCUNE commande de
+   l'axe X du panneau 🎨 (ni de l'éditeur qui s'ouvre en double-cliquant sur les
+   nombres) ne la déplaçait — seuls les TITRES suivaient. `mdHeatXAxis` fait
+   désormais la géométrie ; la voici, réellement exécutée. */
+const heatOpts = { nSamples: 101, unit: 1, left: 50, plotW: 400 }; // 0…100 frames
+const heatAuto = H.mdHeatXAxis({}, heatOpts);
+eq([heatAuto.i0, heatAuto.i1], [0, 100], 'sans commande la carte montre toute la trajectoire');
+eq(heatAuto.scale, 'auto', "sans xLog l'échelle X de la carte reste 'auto'");
+eq(heatAuto.ticks, null, 'sans xTickStep la carte garde ses graduations par colonne');
+eq(heatAuto.formatter, null, 'sans xDecimals/xSci les nombres gardent leur format');
+eq(heatAuto.px(0), 50 + (0.5 / 101) * 400, 'la première colonne est posée exactement comme avant');
+eq(heatAuto.px(50), 50 + (50.5 / 101) * 400, 'la colonne du milieu aussi');
+eq(Math.round(heatAuto.sampleAt(0.5)), 50, 'le survol / le zoom retombent sur la colonne du milieu');
+// le bord gauche tombe à −0,5 colonne (la boîte s'arrête au bord du 1er carré) :
+// c'est le composant qui ramène l'indice dans les données (Math.max(0, …)).
+eq(Math.max(0, Math.round(heatAuto.sampleAt(0))), 0, 'et sur la première au bord gauche');
+
+const heatZoom = H.mdHeatXAxis({}, { ...heatOpts, zoom: { x0: 20, x1: 60 } });
+eq([heatZoom.i0, heatZoom.i1], [20, 60], 'le zoom à la souris reste la fenêtre par défaut');
+const heatWin = H.mdHeatXAxis({ xMin: '30', xMax: '50' }, { ...heatOpts, zoom: { x0: 20, x1: 60 } });
+eq([heatWin.i0, heatWin.i1], [30, 50], 'X Min/Max tapés gagnent sur le zoom');
+const heatNs = H.mdHeatXAxis({ xMin: '10', xMax: '20' }, { nSamples: 201, unit: 0.5, left: 0, plotW: 100 });
+eq([heatNs.i0, heatNs.i1], [20, 40], 'les bornes sont lues dans l’unité de l’axe (ici des ns)');
+const heatBroken = H.mdHeatXAxis({ xMin: '90', xMax: '10' }, heatOpts);
+eq([heatBroken.i0, heatBroken.i1], [0, 100], 'une saisie incohérente ne vide jamais la carte');
+
+eq(H.mdHeatXAxis({ xTickStep: '25' }, heatOpts).ticks, [0, 25, 50, 75, 100],
+  'xTickStep devient les graduations de la carte (en unités de l’axe)');
+eq(H.mdHeatXAxis({ xDecimals: '2' }, heatOpts).formatter(12.3), '12.30',
+  'xDecimals formate les nombres de l’axe de la carte');
+eq(H.mdHeatXAxis({ xSci: true }, heatOpts).formatter(1234), '1.23e+3',
+  'xSci met les nombres de la carte en exponentiel');
+
+const heatLog = H.mdHeatXAxis({ xLog: true }, heatOpts);
+eq(heatLog.scale, 'log', 'xLog met vraiment l’axe X de la carte en log');
+eq(heatLog.i0, 1, 'log(0) n’existe pas : la carte démarre à la première colonne > 0');
+ok(heatLog.px(11) - heatLog.px(10) > heatLog.px(51) - heatLog.px(50),
+  'en log les colonnes s’espacent au début de l’axe et se resserrent vers la droite');
+eq(heatLog.ticks, [0.5, 1, 2, 5, 10, 20, 50, 100],
+  'les graduations d’un axe log restent des valeurs rondes (1 / 2 / 5 × 10ⁿ)');
+
+/* ══ 9. LE CÂBLAGE DES GRAPHES MD (source) ════════════════════════════════ */
 has(MD, "const xAxisProps = cfgNumericAxis(cfg, 'x', zoom.domain);",
   'les graphes MD passent le domaine X par cfgNumericAxis');
 has(MD, 'const yAxisProps = brk.on ? brk.axisProps : mdYAxisProps(cfg, ys);',
@@ -184,6 +233,21 @@ has(MD, "{cfg.legend !== 'none' && (\n                <Legend verticalAlign={cfg
   'la légende des graphes multi-séries suit cfg.legend (none / top / bottom)');
 ok((MD.split("cfg.legend !== 'none'").length - 1) >= 3,
   'chaque graphe multi-séries de la page MD gère la légende');
+
+/* la carte DSSP : une figure dessinée à la main, dont l'axe X obéit au panneau */
+has(MD, 'const xAxis = mdHeatXAxis(cfg, { nSamples, unit: xUnit, zoom, left: margin.left, plotW });',
+  'la carte DSSP construit son axe X avec le cfg du panneau (mdHeatXAxis)');
+has(MD, 'const xUnit = dtPs > 0 ? (frameStride * dtPs) / 1000 : frameStride;',
+  'les valeurs de l’axe de la carte sont en ns (ou en frames sans pas de temps)');
+has(MD, 'const xTicks = xTickVals && xTickVals.length',
+  'les graduations de la carte sont celles du panneau (xTickStep)');
+has(MD, 'const colX = xAxis.px((s0 - 0.5) * xUnit);',
+  'les colonnes de la carte sont posées par l’axe (échelle log comprise)');
+has(MD, 'transform={tickAngle ? `rotate(${tickAngle} ${t.at} ${tickY})` : undefined}',
+  'la rotation des nombres (tickAngle) s’applique à la carte');
+has(MD, 'Number(cfg.xAxisLabelMove) || 0', 'le titre X de la carte prend son glissement');
+has(MD, 'cfg={dsspCfg} xLabel={dsspCfg.xAxisLabel} yLabel={dsspCfg.yAxisLabel}',
+  'la carte DSSP reçoit le cfg du panneau 🎨 (ses nombres, son échelle, sa fenêtre)');
 
 console.log(`✅ _md_axis_cfg_test.mjs — ${passed} vérifications passées`);
 

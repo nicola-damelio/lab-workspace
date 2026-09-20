@@ -4003,7 +4003,113 @@ const SS_LETTER_META = [
 // zoom. The page DRAWS this figure itself (no recharts), so it declares its own
 // parts with `data-chart-part="…"`: the double-click editing gesture finds them
 // through classifyChartElement (SharedAnalysisTools.jsx).
-const DSSPHeatmap = ({ heat, height = 520, width = 0, fontSize = 9, xLabel = '', yLabel = '' }) => {
+/* ── L'AXE X DE LA CARTE SUIT LE PANNEAU 🎨 ──────────────────────────────────
+   La carte est dessinée à la main, mais son axe X est un axe comme les autres :
+   les commandes du panneau 🎨 — et celles de l'éditeur qui s'ouvre en
+   double-cliquant sur les nombres de l'axe — doivent VRAIMENT la déplacer.
+
+     xMin / xMax         la fenêtre montrée (X Min/Max tapés gagnent sur le zoom) ;
+     xTickStep           l'intervalle des graduations (en ns, ou en frames) ;
+     xDecimals / xSci    le format des nombres de l'axe ;
+     xLog                une échelle log (les colonnes se resserrent à gauche) ;
+     xAxisLabelGap       l'écart entre les nombres et le titre de l'axe ;
+     xAxisLabelMove      le glissement du titre le long de son axe ;
+     xAxisLabelBold/Italic  le style du titre ;
+     tickAngle           la rotation des nombres.
+
+   Sans commande (`xTickStep` vide) la carte garde ses graduations par colonne,
+   c'est-à-dire son aspect historique. Les valeurs de l'axe sont en ns quand le
+   pas de temps de la trajectoire est connu, en frames sinon — exactement ce que
+   les nombres affichent. Les fonctions ci-dessous sont pures (elles sont
+   réellement exécutées par _md_axis_cfg_test.mjs) ; le composant ne fait que
+   peindre leur résultat.
+   ───────────────────────────────────────────────────────────────────────────*/
+
+/** Graduations « rondes » (1 / 2 / 5 × 10ⁿ) d'un axe X logarithmique. */
+const mdHeatLogTicks = (lo, hi) => {
+  const a = Number(lo);
+  const b = Number(hi);
+  if (!(a > 0) || !(b > a)) return [];
+  const out = [];
+  for (let d = Math.floor(Math.log10(a)); d <= Math.ceil(Math.log10(b)); d += 1) {
+    [1, 2, 5].forEach((m) => {
+      const v = m * Math.pow(10, d);
+      if (v >= a * (1 - 1e-9) && v <= b * (1 + 1e-9)) out.push(Number(v.toPrecision(12)));
+    });
+  }
+  // Une très longue trajectoire donnerait une graduation par décade : une sur deux.
+  const step = Math.ceil(out.length / 8);
+  return step > 1 ? out.filter((_, i) => i % step === 0) : out;
+};
+
+/**
+ * Géométrie de l'axe X de la carte DSSP d'après le panneau 🎨 (voir ci-dessus).
+ *
+ * opts = { nSamples, unit, zoom, left, plotW }
+ *   nSamples  nombre de colonnes (frames échantillonnées de la trajectoire)
+ *   unit      valeur d'axe d'une colonne (ns, ou frames sans pas de temps)
+ *   zoom      fenêtre choisie à la souris (`{ x0, x1 }`), ou null
+ *   left      bord gauche du tracé en px, plotW sa largeur
+ *
+ * Renvoie la fenêtre visible en indices de colonnes (i0 / i1), ses bornes en
+ * unités de l'axe (edges), l'échelle, le formateur des nombres (null = celui de
+ * la page), les graduations explicites (null = une par colonne, l'aspect
+ * historique) et deux fonctions : px(valeur) → pixel et sampleAt(fraction de la
+ * boîte) → indice de colonne, l'inverse exact (survol et zoom à la souris).
+ */
+const mdHeatXAxis = (cfg = {}, opts = {}) => {
+  const nSamples = Math.max(1, Math.round(Number(opts.nSamples) || 1));
+  const last = nSamples - 1;
+  const unit = Number(opts.unit) > 0 ? Number(opts.unit) : 1;
+  const zoom = opts.zoom || null;
+  const za = zoom ? Math.max(0, Math.min(last, Number(zoom.x0) || 0)) : 0;
+  const zb = zoom ? Math.max(0, Math.min(last, Number(zoom.x1) || 0)) : last;
+  const z0 = Math.min(za, zb);
+  const z1 = Math.max(za, zb);
+  // Le zoom de la souris est le domaine par défaut ; X Min/Max tapés gagnent.
+  const axis = cfgNumericAxis(cfg, 'x', [z0 * unit, z1 * unit]);
+  const log = axis.scale === 'log';
+  const clamp = (i) => Math.max(0, Math.min(last, i));
+  let i0 = clamp(Math.ceil(Number(axis.domain[0]) / unit - 1e-9));
+  let i1 = clamp(Math.floor(Number(axis.domain[1]) / unit + 1e-9));
+  // Une saisie incohérente (Min ≥ Max, ou hors des données) ne vide pas la carte.
+  if (!(i1 > i0)) { i0 = z0; i1 = z1 > z0 ? z1 : Math.min(last, z0 + 1); }
+  // log(0) n'existe pas : sur une échelle log la carte démarre à la colonne > 0.
+  if (log && i0 === 0 && i1 > 0) i0 = 1;
+  const edges = [(i0 - 0.5) * unit, (i1 + 0.5) * unit];
+  const left = Number(opts.left) || 0;
+  const plotW = Math.max(0, Number(opts.plotW) || 0);
+  const lo = log ? Math.max(Number(edges[0]) || 0, 1e-9) : Number(edges[0]) || 0;
+  const hi = Number(edges[1]) || 0;
+  const logOK = log && lo > 0 && hi > lo;
+  // Une valeur placée hors de la fenêtre (≤ 0 en log) est ramenée sur le bord.
+  const safe = (v) => {
+    const x = Number(v) || 0;
+    return logOK ? Math.min(Math.max(x, lo), hi) : x;
+  };
+  const frac = (v) => {
+    const x = safe(v);
+    if (logOK) return (Math.log10(x) - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo));
+    return hi > lo ? (x - lo) / (hi - lo) : 0;
+  };
+  const valueAt = (f) => {
+    const t = Math.min(1, Math.max(0, Number(f) || 0));
+    if (logOK) return Math.pow(10, Math.log10(lo) + t * (Math.log10(hi) - Math.log10(lo)));
+    return lo + t * (hi - lo);
+  };
+  return {
+    i0, i1, edges, scale: axis.scale,
+    formatter: axis.tickFormatter || null,
+    // xTickStep (en unités de l'axe), les valeurs rondes d'une échelle log,
+    // sinon null : la carte dessine alors une graduation par colonne.
+    ticks: (axis.ticks && axis.ticks.length ? axis.ticks : null) || (logOK ? mdHeatLogTicks(lo, hi) : null),
+    frac,
+    px: (v) => left + frac(v) * plotW,
+    sampleAt: (f) => valueAt(f) / unit
+  };
+};
+
+const DSSPHeatmap = ({ heat, height = 520, width = 0, fontSize = 9, xLabel = '', yLabel = '', cfg = {} }) => {
   const wrapRef = useRef(null);
   const svgRef = useRef(null);
   const [zoom, setZoom] = useState(null);   // { x0, x1 } sample (frame) indices
@@ -4028,15 +4134,34 @@ const DSSPHeatmap = ({ heat, height = 520, width = 0, fontSize = 9, xLabel = '',
   const resIds = Array.isArray(heat?.resIds) ? heat.resIds : [];
   const frameStride = Math.max(1, heat?.frameStride || 1);
   const dtPs = Number(heat?.dtPs) || 0;
+  /* L'unité de l'axe X : des ns quand le pas de temps est connu (c'est ce que
+     les nombres affichent), des frames sinon. */
+  const xUnit = dtPs > 0 ? (frameStride * dtPs) / 1000 : frameStride;
 
-  const margin = { top: 12, right: 14, bottom: 42, left: 52 };
+  /* The room the numbers take under the plot: their own size, the rotation the
+     panel asks for (tickAngle) and the gap before the axis title. */
+  const tickAngle = Number(cfg.tickAngle) || 0;
+  const tickFs = Math.max(9, fontSize);
+  const angleRoom = Math.abs(tickAngle) > 0
+    ? Math.round(Math.abs(Math.sin((tickAngle * Math.PI) / 180)) * tickFs * 6) + 10
+    : 0;
+  const titleGap = Math.max(-24, Number(cfg.xAxisLabelGap) || 0);
+  const margin = {
+    top: 12,
+    right: 14,
+    bottom: Math.max(42, 42 + angleRoom + titleGap),
+    left: 52
+  };
   const svgW = Math.max(240, width > 0 ? width : w || 800);
   const svgH = Math.max(160, height || 520);
   const plotW = svgW - margin.left - margin.right;
   const plotH = svgH - margin.top - margin.bottom;
 
-  const vis0 = zoom ? zoom.x0 : 0;
-  const vis1 = zoom ? zoom.x1 : Math.max(0, nSamples - 1);
+  /* L'axe X décidé par le panneau 🎨 : la carte ne fait que peindre ce que
+     mdHeatXAxis renvoie (fenêtre, graduations, échelle, nombres). */
+  const xAxis = mdHeatXAxis(cfg, { nSamples, unit: xUnit, zoom, left: margin.left, plotW });
+  const vis0 = xAxis.i0;
+  const vis1 = xAxis.i1;
   const visW = Math.max(1, vis1 - vis0 + 1);
 
   // Downsample to a bounded grid so the SVG stays fast like a real chart
@@ -4047,12 +4172,15 @@ const DSSPHeatmap = ({ heat, height = 520, width = 0, fontSize = 9, xLabel = '',
     const binY = Math.max(1, Math.ceil(nRes / MAX_ROWS));
     const nCols = Math.ceil(visW / binX);
     const nRows = Math.ceil(nRes / binY);
-    const cw = plotW / nCols;
     const ch = plotH / nRows;
     const out = [];
     for (let cx = 0; cx < nCols; cx++) {
       const s0 = vis0 + cx * binX;
       const s1 = Math.min(nSamples - 1, s0 + binX - 1);
+      // La colonne va d'un bord d'échantillon à l'autre : sur une échelle log
+      // elle se resserre vers la gauche, ce que fait exactement xAxis.px.
+      const colX = xAxis.px((s0 - 0.5) * xUnit);
+      const colW = Math.max(0.5, xAxis.px((s1 + 0.5) * xUnit) - colX);
       for (let cy = 0; cy < nRows; cy++) {
         const r0 = cy * binY;
         const r1 = Math.min(nRes - 1, r0 + binY - 1);
@@ -4068,11 +4196,11 @@ const DSSPHeatmap = ({ heat, height = 520, width = 0, fontSize = 9, xLabel = '',
             if (counts[letter] > bestN) { bestN = counts[letter]; best = letter; }
           }
         }
-        out.push({ x: margin.left + cx * cw, y: margin.top + cy * ch, w: cw + 0.5, h: ch + 0.5, letter: best });
+        out.push({ x: colX, y: margin.top + cy * ch, w: colW + 0.5, h: ch + 0.5, letter: best });
       }
     }
     return out;
-  }, [samples, nSamples, nRes, vis0, visW, plotW, plotH, margin]);
+  }, [samples, nSamples, nRes, vis0, visW, xUnit, plotH, margin.top, xAxis]);
 
   const niceTicks = (count, maxTicks) => {
     const step = Math.max(1, Math.ceil(count / Math.max(1, maxTicks)));
@@ -4083,14 +4211,30 @@ const DSSPHeatmap = ({ heat, height = 520, width = 0, fontSize = 9, xLabel = '',
     return arr;
   };
   const yTicks = niceTicks(nRes, Math.max(3, Math.floor(plotH / 15)));
-  const xTicks = niceTicks(visW, Math.max(3, Math.floor(plotW / 36)));
 
   const toX = (colIdx) => {
     const s = Math.min(nSamples - 1, vis0 + colIdx);
-    const u = s * frameStride;
-    return dtPs > 0 ? (u * dtPs) / 1000 : u;
+    return s * xUnit;
   };
-  const fmtX = (v) => (dtPs > 0 ? (v >= 100 ? v.toFixed(0) : v.toFixed(1)) : String(v));
+  /* Les nombres de l'axe X : ceux du panneau (xDecimals / xSci) quand il en
+     demande, sinon ceux de la page (0 ou 1 décimale, des frames entiers). */
+  const fmtX = (v) => {
+    const n = Number(v);
+    if (xAxis.formatter && Number.isFinite(n)) return xAxis.formatter(n);
+    return dtPs > 0 ? (n >= 100 ? n.toFixed(0) : n.toFixed(1)) : String(n);
+  };
+  /* Graduations X : celles du panneau (xTickStep — ou les valeurs rondes d'une
+     échelle log) quand il en demande, sinon une par colonne comme avant. Celles
+     qui tombent hors de la fenêtre montrée ne sont pas peintes. */
+  const xTickVals = xAxis.ticks
+    ? xAxis.ticks.filter((v) => v >= xAxis.edges[0] && v <= xAxis.edges[1])
+    : null;
+  const xTicks = xTickVals && xTickVals.length
+    ? xTickVals.map((v) => ({ key: `v${v}`, at: xAxis.px(v), value: v }))
+    : niceTicks(visW, Math.max(3, Math.floor(plotW / 36)))
+      .map((col) => ({ key: `c${col}`, at: xAxis.px(toX(col)), value: toX(col) }));
+  const tickY = tickAngle ? margin.top + plotH + 6 : margin.top + plotH + tickFs + 5;
+  const tickAnchor = tickAngle < 0 ? 'end' : tickAngle > 0 ? 'start' : 'middle';
   const resAt = (rowIdx) => {
     const r = Math.min(nRes - 1, rowIdx);
     return resIds[r] != null ? resIds[r] : r + 1;
@@ -4101,6 +4245,11 @@ const DSSPHeatmap = ({ heat, height = 520, width = 0, fontSize = 9, xLabel = '',
   // the content / occupancy charts of this section.
   const xTitle = xLabel || (dtPs > 0 ? 'Time (ns)' : 'Frame');
   const yTitle = yLabel || 'Residue';
+  // Its "move" slides it along the axis, its "gap" pushes the plot away from it
+  // (the room is reserved in the bottom margin above).
+  const xTitleX = margin.left + plotW / 2 + (Number(cfg.xAxisLabelMove) || 0);
+  const xTitleWeight = cfg.xAxisLabelBold === false ? 'normal' : 'bold';
+  const xTitleStyle = cfg.xAxisLabelItalic ? 'italic' : 'normal';
 
   const evtToCell = (e) => {
     const svg = svgRef.current;
@@ -4109,7 +4258,9 @@ const DSSPHeatmap = ({ heat, height = 520, width = 0, fontSize = 9, xLabel = '',
     const fx = (e.clientX - rect.left - margin.left) / plotW;
     const fy = (e.clientY - rect.top - margin.top) / plotH;
     if (fx < -0.02 || fx > 1.02 || fy < -0.02 || fy > 1.02) return null;
-    const sx = Math.max(0, Math.min(nSamples - 1, Math.round(vis0 + fx * (visW - 1))));
+    // The pointer follows the scale of the axis, log included: xAxis.sampleAt
+    // is the exact inverse of the value → pixel mapping used to draw the cells.
+    const sx = Math.max(0, Math.min(nSamples - 1, Math.round(xAxis.sampleAt(fx))));
     const sy = Math.max(0, Math.min(nRes - 1, Math.round(fy * (nRes - 1))));
     return { fx, sx, sy, px: e.clientX - rect.left, py: e.clientY - rect.top };
   };
@@ -4143,8 +4294,8 @@ const DSSPHeatmap = ({ heat, height = 520, width = 0, fontSize = 9, xLabel = '',
     dragRef.current = null;
     setSel(null);
     if (!d) return;
-    const a = Math.max(0, Math.round(vis0 + Math.min(d.fx0, d.lastFx) * (visW - 1)));
-    const b = Math.min(nSamples - 1, Math.round(vis0 + Math.max(d.fx0, d.lastFx) * (visW - 1)));
+    const a = Math.max(0, Math.min(nSamples - 1, Math.round(xAxis.sampleAt(Math.min(d.fx0, d.lastFx)))));
+    const b = Math.max(0, Math.min(nSamples - 1, Math.round(xAxis.sampleAt(Math.max(d.fx0, d.lastFx)))));
     if (b - a >= 2) setZoom({ x0: a, x1: b });
   };
 
@@ -4174,15 +4325,13 @@ const DSSPHeatmap = ({ heat, height = 520, width = 0, fontSize = 9, xLabel = '',
           {cells.map((c, i) => (
             <rect key={i} x={c.x} y={c.y} width={c.w} height={c.h} fill={SS_COLORS[c.letter]} />
           ))}
-          {xTicks.map((tx) => {
-            const x = margin.left + ((tx + 0.5) / visW) * plotW;
-            return (
-              <g key={`xt${tx}`} data-chart-part="xAxis">
-                <line x1={x} y1={margin.top + plotH} x2={x} y2={margin.top + plotH + 4} stroke="#64748b" />
-                <text x={x} y={margin.top + plotH + 14} textAnchor="middle" fontSize={Math.max(9, fontSize)} fill="#475569">{fmtX(toX(tx))}</text>
-              </g>
-            );
-          })}
+          {xTicks.map((t) => (
+            <g key={t.key} data-chart-part="xAxis">
+              <line x1={t.at} y1={margin.top + plotH} x2={t.at} y2={margin.top + plotH + 4} stroke="#64748b" />
+              <text x={t.at} y={tickY} textAnchor={tickAnchor} fontSize={tickFs} fill="#475569"
+                    transform={tickAngle ? `rotate(${tickAngle} ${t.at} ${tickY})` : undefined}>{fmtX(t.value)}</text>
+            </g>
+          ))}
           {yTicks.map((ty) => {
             const y = margin.top + ((ty + 0.5) / nRes) * plotH;
             return (
@@ -4192,7 +4341,7 @@ const DSSPHeatmap = ({ heat, height = 520, width = 0, fontSize = 9, xLabel = '',
               </g>
             );
           })}
-          <text x={margin.left + plotW / 2} y={svgH - 8} textAnchor="middle" fontSize={Math.max(10, fontSize + 1)} fontWeight="bold" fill="#334155"
+          <text x={xTitleX} y={svgH - 8} textAnchor="middle" fontSize={Math.max(10, fontSize + 1)} fontWeight={xTitleWeight} fontStyle={xTitleStyle} fill="#334155"
                 data-chart-part="xLabel">
             {xTitle}
           </text>
@@ -4594,7 +4743,7 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
                         )}>
               <div id="md-dssp-heat">
                 <DSSPHeatmap heat={heat} height={heatHeight} width={heatWidth} fontSize={dsspCfg.fontSize || 9}
-                             xLabel={dsspCfg.xAxisLabel} yLabel={dsspCfg.yAxisLabel} />
+                             cfg={dsspCfg} xLabel={dsspCfg.xAxisLabel} yLabel={dsspCfg.yAxisLabel} />
               </div>
             </ChartPanel>
           )}

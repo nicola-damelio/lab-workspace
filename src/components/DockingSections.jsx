@@ -56,7 +56,7 @@ const archiveDockingData = async ({
 );
 
 import NMRMoleculeViewer from './NMRMoleculeViewer';
-import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, posesFromCapri, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, dockDom, DOCK_CHART_MARGIN, dockingMetricOf, poseMetricValue, capriColumnMetricKey, chartEnergyMetricKey, poseChartValue, poseDeviation, HADDOCK_SCORE_TERM_KEYS, haddockScoreTerms} from './DockingData';
+import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, posesFromCapri, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, dockDom, DOCK_CHART_MARGIN, dockingMetricOf, poseMetricValue, capriColumnMetricKey, chartEnergyMetricKey, poseChartValue, poseDeviation, poseRawColumnValue, deviationColumnOf, energyColumnOf, HADDOCK_SCORE_TERM_KEYS, haddockScoreTerms} from './DockingData';
 
 
 /* ============================================================================
@@ -1332,7 +1332,22 @@ export const DockingAnalysisSection = ({ ctx }) => {
      façon de ne pas laisser le graphique vide sur un capri_ss.tsv. */
   const energyKey = chartEnergyMetricKey(rows);
   const energyMetric = dockingMetricOf(DOCKING_METRICS.find((m) => m.key === energyKey), d.dockingProgram);
-  const rowEnergy = (p) => poseChartValue(p, energyKey, d.dockingProgram);
+
+  /* ── LA SOURCE DE CHAQUE AXE, ET SON DERNIER REPLI ─────────────────────────
+     La valeur vient d'abord de la métrique du tableau (cellule éditée → clé
+     canonique → colonne reconnue → ancienne clé). Si AUCUNE ligne n'en porte,
+     c'est que le fichier range la grandeur dans une colonne qu'aucune métrique
+     ne réclame : le tableau l'affiche telle quelle, le graphique la trace donc
+     aussi (voir deviationColumnOf / energyColumnOf) — et l'axe en donne le nom.
+     Ce repli ne sert QUE quand l'axe serait vide : une courbe juste garde sa
+     grandeur, une valeur affichée n'est jamais absente du graphique. */
+  const capriColumns = (activeTest.dockingCapri && activeTest.dockingCapri.columns) || [];
+  const metricEnergy = (p) => poseChartValue(p, energyKey, d.dockingProgram);
+  const metricDeviation = (p) => poseDeviation(p);
+  const energyFromColumn = rows.some((p) => metricEnergy(p) !== null) ? null : energyColumnOf(capriColumns);
+  const deviationFromColumn = rows.some((p) => metricDeviation(p) !== null) ? null : deviationColumnOf(capriColumns);
+  const rowEnergy = (p) => metricEnergy(p) ?? parseDockingValue(poseRawColumnValue(p, energyFromColumn));
+  const rowDeviation = (p) => metricDeviation(p) ?? parseDockingValue(poseRawColumnValue(p, deviationFromColumn));
 
   /* ── CE QUE TRACENT LES GRAPHIQUES ──────────────────────────────────────────
      Le graphique trace ce que LE TABLEAU porte : l'énergie de liaison totale
@@ -1344,6 +1359,14 @@ export const DockingAnalysisSection = ({ ctx }) => {
      valeur absente ne devient pas un 0 : elle sort du graphique (et la légende
      dit quoi importer / saisir). */
   const affinityUnit = energyMetric.unit || unit;
+  /* Le nom de la grandeur tracée (titres et légendes) : la colonne du fichier
+     quand c'est elle qui la porte — son unité n'est alors pas connue, on
+     n'invente donc pas de kcal/mol. */
+  const energyName = energyFromColumn || `${energyMetric.label} (${affinityUnit})`;
+  /* L'étiquette d'un axe suit la même règle : elle nomme la colonne lue. */
+  const energyAxisTitle = cfg.yAxisLabel || energyFromColumn || affinityUnit;
+  const rmsdAxisTitle = cfg.xAxisLabel
+    || (deviationFromColumn ? `${deviationFromColumn} (Å)` : 'RMSD from the reference (Å)');
   const affinityData = rows.map((p, i) => ({
     mode: p.mode ?? i + 1,
     affinity: rowEnergy(p)
@@ -1351,14 +1374,15 @@ export const DockingAnalysisSection = ({ ctx }) => {
   const missingEnergy = rows.length > 0 && affinityData.length === 0;
 
   // Nuage « RMSD vs énergie » : l'abscisse est l'écart à la référence (l-RMSD de
-  // CAPRI, sinon les bornes de Vina / AutoDock, l'i-RMSD / l'i-l-RMSD / le RMSD),
-  // l'ordonnée l'énergie de liaison. Une pose à qui il manque l'un des deux ne
-  // peut pas être un point.
+  // CAPRI, sinon les bornes de Vina / AutoDock, l'i-RMSD / l'i-l-RMSD / le RMSD,
+  // et à défaut la colonne du fichier qui porte un écart — voir
+  // deviationFromColumn), l'ordonnée l'énergie de liaison. Une pose à qui il
+  // manque l'un des deux ne peut pas être un point.
   const rmsdData = rows
     .map((p, i) => ({
       mode: p.mode ?? i + 1,
       affinity: rowEnergy(p),
-      rmsd: poseDeviation(p)
+      rmsd: rowDeviation(p)
     }))
     .filter((r) => r.affinity !== null && r.rmsd !== null);
 
@@ -1384,7 +1408,7 @@ export const DockingAnalysisSection = ({ ctx }) => {
   }));
 
   const dockSeries = [
-    { key: 'affinity', label: `${energyMetric.label} (${affinityUnit})` },
+    { key: 'affinity', label: energyName },
     { key: 'vdW', label: 'vdW / Hbond / desolv' },
     { key: 'elec', label: 'Electrostatic' },
     { key: 'torsional', label: 'Torsional' },
@@ -1407,7 +1431,7 @@ export const DockingAnalysisSection = ({ ctx }) => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Bar chart — la grandeur du tableau : énergie totale (kcal/mol) ou score */}
-        <CollapsibleSection title={`${energyMetric.label} per Pose (${affinityUnit})`} icon="📊" defaultOpen={false}>
+        <CollapsibleSection title={`${energyName} per Pose`} icon="📊" defaultOpen={false}>
           <ChartInspector cfg={cfg} setCfg={setCfg} series={dockSeries} unit={affinityUnit} style={dockChartBoxStyle(cfg)}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={affinityData} margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
@@ -1416,10 +1440,10 @@ export const DockingAnalysisSection = ({ ctx }) => {
                 <YAxis {...(brkAff.on ? brkAff.axisProps : {})} tick={tickTextProps(cfg)}
                   domain={brkAff.on ? undefined : [(dockDom(cfg.yMin) ?? 'auto'), (dockDom(cfg.yMax) ?? 'auto')]}
                   tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} scale={cfgLogScale(cfg, 'y')}
-                  label={cfgAxisLabel(cfg, 'y', cfg.yAxisLabel || affinityUnit, 0)} />
+                  label={cfgAxisLabel(cfg, 'y', energyAxisTitle, 0)} />
                 <Tooltip />
                 {brkAff.marks}
-                <Bar dataKey="affinity" name={`${energyMetric.label} (${affinityUnit})`} radius={cfg.barRadius ? [cfg.barRadius, cfg.barRadius, 0, 0] : 0}>
+                <Bar dataKey="affinity" name={energyName} radius={cfg.barRadius ? [cfg.barRadius, cfg.barRadius, 0, 0] : 0}>
                   {affinityData.map((entry, i) => (
                     <Cell key={i} fill={seriesColorFor(cfg, `pose-${entry.mode}`, i, affinityData.length)} />
                   ))}
@@ -1429,15 +1453,14 @@ export const DockingAnalysisSection = ({ ctx }) => {
           </ChartInspector>
           {missingEnergy && (
             <p className="text-xs text-slate-400 italic text-center mt-2">
-              No score in the results table: this graph plots the <b>{energyMetric.label}</b>
-              {affinityUnit ? ` (${affinityUnit})` : ''} — import the CAPRI file
-              (score / HADDOCK score) or type the values in the <b>{energyMetric.label}</b> column above.
+              No score in the results table: this graph plots the <b>{energyName}</b> — import the CAPRI file
+              (score / HADDOCK score) or type the values in the <b>{energyName}</b> column above.
             </p>
           )}
         </CollapsibleSection>
 
         {/* La grandeur du tableau en fonction de l'écart à la référence */}
-        <CollapsibleSection title={`${energyMetric.label} vs. RMSD`} icon="🎯" defaultOpen={false}>
+        <CollapsibleSection title={`${energyName} vs. ${deviationFromColumn || 'RMSD'}`} icon="🎯" defaultOpen={false}>
           <ChartInspector containerRef={scatterRef} cfg={cfg} setCfg={setCfg} series={dockSeries} unit={affinityUnit} style={dockChartBoxStyle(cfg)} className="select-none relative">
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
@@ -1445,11 +1468,11 @@ export const DockingAnalysisSection = ({ ctx }) => {
                 <XAxis type="number" dataKey="rmsd" name="RMSD" tick={tickTextProps(cfg)}
                   domain={[(dockDom(cfg.xMin) ?? 'auto'), (dockDom(cfg.xMax) ?? 'auto')]}
                   tickFormatter={cfgTickFormatter(cfg, 'x') || undefined} scale={cfgLogScale(cfg, 'x')}
-                  label={cfgAxisLabel(cfg, 'x', cfg.xAxisLabel || 'RMSD from the reference (Å)', 10)} />
+                  label={cfgAxisLabel(cfg, 'x', rmsdAxisTitle, 10)} />
                 <YAxis type="number" dataKey="affinity" name="Energy" tick={tickTextProps(cfg)}
                   domain={[(dockDom(cfg.yMin) ?? 'auto'), (dockDom(cfg.yMax) ?? 'auto')]}
                   tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} scale={cfgLogScale(cfg, 'y')}
-                  label={cfgAxisLabel(cfg, 'y', cfg.yAxisLabel || affinityUnit, 0)} />
+                  label={cfgAxisLabel(cfg, 'y', energyAxisTitle, 0)} />
                 <Tooltip cursor={{ strokeDasharray: '3 3' }} />
                 <Scatter data={rmsdData} fill={seriesColorFor(cfg, 'scatter', 0, 1)} />
               </ScatterChart>
@@ -1458,7 +1481,7 @@ export const DockingAnalysisSection = ({ ctx }) => {
           {rmsdData.length === 0 && (
             <p className="text-xs text-slate-400 italic text-center mt-2">
               {missingEnergy
-                ? `No score in the results table: the Y axis is ${energyMetric.label}${affinityUnit ? ` (${affinityUnit})` : ''} — see the note under “${energyMetric.label} per Pose”.`
+                ? `No score in the results table: the Y axis is ${energyAxisTitle} — see the note under “${energyName} per Pose”.`
                 : 'No RMSD in the results table: import the CAPRI file (l-RMSD / i-RMSD / i-l-RMSD / RMSD) or type a value in a RMSD column above.'}
             </p>
           )}

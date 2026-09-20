@@ -33,6 +33,12 @@
        métrique qui la porte soit rendue, et le graphique trace la grandeur que
        le tableau porte (score en a.u. pour HADDOCK, énergie en kcal/mol) au
        lieu de rester vide.
+     • page Docking : une valeur AFFICHÉE dans le tableau est TRACÉE — quand le
+       fichier range une grandeur (énergie, écart à la référence) dans une
+       colonne qu'aucune métrique ne réclame, les deux axes du nuage, leurs
+       étiquettes et le titre lisent cette colonne au lieu de laisser le
+       graphique vide ; les deux bornes de RMSD de Vina / AutoDock comptent
+       comme un écart à la référence.
 
    Les fonctions pures de DockingData.jsx sont RÉELLEMENT exécutées (extraction
    + new Function, comme _docking_sanity.cjs) ; le reste est vérifié sur la
@@ -73,7 +79,8 @@ const { parseCapriTsv, posesFromCapri, parseDockingValue, normMetricColumn,
   DOCKING_METRICS, dockingMetricOf, dockingMetricLabel, dockingMetricUnit,
   poseBindingEnergy, poseDeviation, haddockScoreTerms, CAPRI_RAW_PREFIX,
   poseRawMetric, LEGACY_POSE_KEYS, poseMetricValue, capriColumnMetricKey,
-  chartEnergyMetricKey, poseChartValue } = new Function(
+  chartEnergyMetricKey, poseChartValue, poseRawColumnValue,
+  unclaimedColumnMatching, deviationColumnOf, energyColumnOf } = new Function(
   [grab('parseCapriTsv', '\n};'), grab('CAPRI_METRIC_SYNONYMS', '\n};'),
    grab('normMetricColumn', ';'), grab('posesFromCapri', '\n};'),
    grab('parseDockingValue', '\n};'), grab('DOCKING_METRICS', '\n];'),
@@ -83,12 +90,15 @@ const { parseCapriTsv, posesFromCapri, parseDockingValue, normMetricColumn,
    grab('CAPRI_RAW_PREFIX', ';'), grab('poseRawMetric', '\n};'),
    grab('LEGACY_POSE_KEYS', '\n};'), grab('poseMetricValue', '\n};'),
    grab('capriColumnMetricKey', '\n};'), grab('chartEnergyMetricKey', ';'),
-   grab('poseChartValue', '\n};')].join('\n')
+   grab('poseChartValue', '\n};'), grab('poseRawColumnValue', ';'),
+   grab('unclaimedColumnMatching', '\n};'), grab('deviationColumnOf', ';'),
+   grab('energyColumnOf', ';')].join('\n')
   + '\nreturn { parseCapriTsv, posesFromCapri, parseDockingValue, normMetricColumn,'
   + ' DOCKING_METRICS, dockingMetricOf, dockingMetricLabel, dockingMetricUnit,'
   + ' poseBindingEnergy, poseDeviation, haddockScoreTerms, CAPRI_RAW_PREFIX,'
   + ' poseRawMetric, LEGACY_POSE_KEYS, poseMetricValue, capriColumnMetricKey,'
-  + ' chartEnergyMetricKey, poseChartValue };'
+  + ' chartEnergyMetricKey, poseChartValue, poseRawColumnValue,'
+  + ' unclaimedColumnMatching, deviationColumnOf, energyColumnOf };'
 )();
 
 eq(normMetricColumn('RMSD l.b.'), 'rmsdlb', 'les noms de colonnes sont comparés sous forme canonique');
@@ -215,6 +225,57 @@ eq(poseChartValue({ affinity: -52.31 }, 'energy_total', 'haddock'), null,
 eq(dockingMetricOf(DOCKING_METRICS.find((m) => m.key === 'affinity'), 'haddock').unit, 'a.u.',
   'l’axe porte l’unité de la grandeur tracée : a.u. pour le score HADDOCK');
 
+/* ══ 1d. LA VALEUR DU TABLEAU EST TRACÉE, MÊME DEPUIS UNE COLONNE BRUTE ══
+   Le tableau affiche TOUTE colonne importée : celles qu’une métrique reconnaît
+   (sous son nom et son unité) et les autres TELLES QUELLES. Sans repli, une
+   valeur rangée dans l’une de ces dernières s’affichait dans le tableau et le
+   nuage restait vide — le cas rapporté : énergie et RMSD tous deux à l’écran,
+   aucun point sur « énergie vs. RMSD ». */
+eq(poseRawColumnValue({ capri_rmsd_lig: '1.42' }, 'rmsd_lig'), '1.42',
+  'une colonne brute se relit par le nom de sa colonne');
+eq(poseRawColumnValue({ capri_rmsd_lig: '1.42' }, null), undefined,
+  'sans colonne choisie, il n’y a rien à relire');
+eq(deviationColumnOf(['structure', 'rmsd_lig', 'md5']), 'rmsd_lig',
+  'une colonne « …rmsd… » qu’aucune métrique ne réclame devient l’abscisse du nuage');
+eq(deviationColumnOf(['structure', 'L-RMSD (Å)', 'md5']), null,
+  'une colonne déjà ramenée sur l-RMSD n’est pas un repli (elle se lit normalement)');
+eq(deviationColumnOf(['structure', 'md5']), null, 'sans colonne d’écart, aucun repli n’est inventé');
+eq(energyColumnOf(['structure', 'Energy total (kcal/mol)', 'md5']), 'Energy total (kcal/mol)',
+  'la colonne d’énergie non reconnue devient l’ordonnée du graphique');
+eq(energyColumnOf(['structure', 'total_energy']), null,
+  'une colonne déjà ramenée sur l’énergie totale n’est pas un repli');
+eq(energyColumnOf(['structure', 'score', 'lrmsd']), null,
+  '« score » est déjà l’affinité du tableau : pas de repli');
+eq(energyColumnOf(['structure', 'protonation']), null,
+  'un mot qui n’est pas une énergie ne devient pas l’ordonnée');
+eq(poseDeviation({ rmsd_ub: 2.5 }), 2.5,
+  'la borne SUPÉRIEURE de RMSD compte aussi : les deux bornes s’affichent dans le tableau');
+eq(poseDeviation({ rmsd_lb: 1.5, rmsd_ub: 2.5 }), 1.5,
+  'la borne inférieure reste l’abscisse quand les deux existent');
+
+/* Le nuage, tel que la section le construit : le nombre de points est ce que
+   l’utilisateur voit. Énergie ET RMSD à l’écran, aucun point : le cas rapporté. */
+const pointsOf = (columns, poses) => {
+  const dev = poses.some((p) => poseDeviation(p) !== null) ? null : deviationColumnOf(columns);
+  const ene = poses.some((p) => poseChartValue(p, 'affinity', 'haddock') !== null) ? null : energyColumnOf(columns);
+  return poses.filter((p) => (poseChartValue(p, 'affinity', 'haddock')
+    ?? parseDockingValue(poseRawColumnValue(p, ene))) !== null
+    && (poseDeviation(p) ?? parseDockingValue(poseRawColumnValue(p, dev))) !== null).length;
+};
+const RAW_DEV = posesFromCapri(parseCapriTsv([
+  'Model\tHADDOCK score\trmsd_lig',
+  'cluster_1_1.pdb\t-52.31\t1.42',
+  'cluster_1_2.pdb\t-48.90\t2.05'
+].join('\n')));
+eq(RAW_DEV[0].capri_rmsd_lig, '1.42', 'une colonne non reconnue reste brute dans la ligne importée');
+eq(RAW_DEV[0].lrmsd, '', '…et ne remplit pas la métrique l-RMSD du tableau');
+eq(poseDeviation(RAW_DEV[0]), null, 'le chemin normal ne trouve alors aucun écart : sans repli, le nuage est vide');
+eq(pointsOf(['Model', 'HADDOCK score', 'rmsd_lig'], RAW_DEV), 2,
+  'la colonne d’écart non reconnue donne quand même ses points au nuage');
+const UPPER_ONLY = posesFromCapri(parseCapriTsv('Model\tHADDOCK score\tRMSD u.b.\ncluster_1_1.pdb\t-52.31\t2.5'));
+eq(pointsOf(['Model', 'HADDOCK score', 'RMSD u.b.'], UPPER_ONLY), 1,
+  'une table qui ne porte que la borne supérieure place quand même son point');
+
 /* ══ 2. LES DEUX IMPORTS REMPLISSENT LE MÊME TABLEAU ══════════════════════ */
 has(DATA, 'poses: posesFromCapri(capri),', '[capri_ss.tsv] un fichier importé seul remplit AUSSI le tableau');
 ok(!DATA.includes('poses: [], capri,'), '[capri_ss.tsv] le tableau n’est plus laissé vide');
@@ -229,8 +290,18 @@ has(SEC, 'const v = poseMetricValue(p, m.key, d.dockingProgram);',
   '…avec la lecture partagée des valeurs (colonne CAPRI brute + ancienne clé de la métrique)');
 has(SEC, 'const energyKey = chartEnergyMetricKey(rows);',
   'la grandeur tracée est celle du tableau (score, sinon énergie totale)');
-has(SEC, 'const rowEnergy = (p) => poseChartValue(p, energyKey, d.dockingProgram);',
-  '…traduite en nombre par poseChartValue (jamais a.u. sur un axe kcal/mol)');
+has(SEC, 'const rowEnergy = (p) => metricEnergy(p) ?? parseDockingValue(poseRawColumnValue(p, energyFromColumn));',
+  '…traduite en nombre par poseChartValue (jamais a.u. sur un axe kcal/mol), la colonne brute en dernier recours');
+has(SEC, 'const rowDeviation = (p) => metricDeviation(p) ?? parseDockingValue(poseRawColumnValue(p, deviationFromColumn));',
+  'l’abscisse du nuage retombe sur la colonne du fichier quand la métrique est vide');
+has(SEC, 'const energyFromColumn = rows.some((p) => metricEnergy(p) !== null) ? null : energyColumnOf(capriColumns);',
+  'le repli ne sert que si AUCUNE ligne n’a d’énergie par la métrique');
+has(SEC, 'const deviationFromColumn = rows.some((p) => metricDeviation(p) !== null) ? null : deviationColumnOf(capriColumns);',
+  '…idem pour l’écart à la référence');
+has(SEC, "title={`${energyName} vs. ${deviationFromColumn || 'RMSD'}`}",
+  'le titre du nuage nomme la grandeur et la colonne lues');
+has(SEC, "label={cfgAxisLabel(cfg, 'x', rmsdAxisTitle, 10)}",
+  'l’axe des abscisses est étiqueté de la colonne lue');
 has(SEC, 'const affinityUnit = energyMetric.unit || unit;', 'l’unité de l’axe suit la métrique tracée');
 has(SEC, 'poseMetricValue(pose, m.key, program)', '[tableau] une cellule relit la colonne brute / l’ancienne clé');
 has(SEC, 'const capriFedKeys = new Set(capriColumns.map(capriColumnMetricKey).filter(Boolean));',
@@ -247,7 +318,7 @@ has(SEC, 'data={termRows}', '…et le graphique des termes les trace UNE barre p
 has(SEC, '{rows.length} poses', 'le compteur de poses suit le tableau');
 ok(!SEC.includes('const affinityData = d.poses'), 'plus aucun graphique branché sur la liste brute des poses');
 ok(!SEC.includes('data={d.poses.slice(0, 15)'), '…ni les termes HADDOCK');
-has(SEC, 'rmsd: poseDeviation(p)', 'l’écart à la référence passe par la lecture CAPRI partagée (l-RMSD, puis i-RMSD…)');
+has(SEC, 'rmsd: rowDeviation(p)', 'l’écart à la référence passe par la lecture CAPRI partagée (l-RMSD, puis i-RMSD…), colonne brute comprise');
 has(SEC, '.filter((r) => r.affinity !== null && r.rmsd !== null);', 'un RMSD vide ne se transforme pas en point à 0');
 
 /* ══ 4. « DATA ANALYSIS » SANS SOUS-SECTION « PER ATOM PLOT » ═════════════ */

@@ -221,7 +221,9 @@ export const dockingMetricUnit = (metric, program) => dockingMetricOf(metric, pr
    (c'est la même chose : leur affinité EST l'énergie de liaison). Pour HADDOCK un
    score en a.u. n'est PAS une énergie : il n'est jamais tracé sur cet axe.
    `poseDeviation` : l'écart à la référence en Å — le l-RMSD (CAPRI) d'abord,
-   puis les bornes de Vina / AutoDock, l'i-RMSD, l'i-l-RMSD et le RMSD. */
+   puis les DEUX bornes de Vina / AutoDock (« RMSD l.b. » ET « RMSD u.b. » : les
+   deux s'affichent dans le tableau, donc les deux sont un écart traçable),
+   l'i-RMSD, l'i-l-RMSD et le RMSD. */
 export const poseBindingEnergy = (p, program) => {
   if (!p) return null;
   const total = parseDockingValue(p.energy_total);
@@ -234,7 +236,7 @@ export const poseDeviation = (p) => {
   if (!p) return null;
   return parseDockingValue(p.lrmsd) ?? parseDockingValue(p.rmsd_lb)
     ?? parseDockingValue(p.irmsd) ?? parseDockingValue(p.ilrmsd)
-    ?? parseDockingValue(p.rmsd);
+    ?? parseDockingValue(p.rmsd) ?? parseDockingValue(p.rmsd_ub);
 };
 
 /** Les termes du score HADDOCK PRÉSENTS dans une ligne (kcal/mol), dans l'ordre
@@ -703,6 +705,41 @@ export const capriColumnMetricKey = (column) => {
   return direct ? direct.key : null;
 };
 
+/* ── LA COLONNE DU FICHIER QUE LES GRAPHIQUES PEUVENT ENCORE TRACER ─────────
+   Le tableau montre TOUTE colonne importée : celles qu'une métrique reconnaît
+   (« score » → Affinity, « lrmsd » → l-RMSD — avec leur unité), et les autres
+   TELLES QUELLES (les colonnes violettes : model, md5, fnonnat…). Une colonne
+   qu'AUCUNE métrique ne réclame n'alimentait aucun graphique : sa valeur
+   s'affichait dans le tableau, et l'axe restait vide. Quand aucune ligne n'a
+   d'écart (ou d'énergie) par le chemin normal — métrique, colonne reconnue,
+   ancienne clé — les graphiques lisent donc la colonne du fichier qui porte
+   manifestement cette grandeur, ET l'axe est étiqueté de son nom : la valeur
+   affichée est tracée, et l'on voit d'où elle vient. Ce repli ne sert QUE
+   lorsque l'axe serait vide : un graphique juste ne change jamais de grandeur. */
+export const poseRawColumnValue = (pose, column) =>
+  (pose && column ? pose[`${CAPRI_RAW_PREFIX}${column}`] : undefined);
+
+/** Première colonne importée qu'AUCUNE métrique ne réclame et dont le nom
+ *  contient l'un des mots-clés donnés, dans l'ordre des mots-clés — `null`
+ *  s'il n'y en a aucune (`columns` = les colonnes du fichier importé). */
+export const unclaimedColumnMatching = (columns, hints) => {
+  const list = Array.isArray(columns) ? columns : [];
+  for (const hint of hints) {
+    const hit = list.find((c) => c && !capriColumnMetricKey(c)
+      && normMetricColumn(c).includes(hint));
+    if (hit) return hit;
+  }
+  return null;
+};
+
+/** La colonne « écart à la référence » d'un fichier importé (Å). */
+export const deviationColumnOf = (columns) =>
+  unclaimedColumnMatching(columns, ['rmsd', 'deviation']);
+
+/** La colonne « énergie » d'un fichier importé (kcal/mol ou a.u.). */
+export const energyColumnOf = (columns) =>
+  unclaimedColumnMatching(columns, ['total', 'energy', 'score', 'affinity']);
+
 /* ── LA GRANDEUR QUE TRACE LE GRAPHIQUE D'ÉNERGIE ───────────────────────────
    Le graphique trace ce que LE TABLEAU porte réellement : l'énergie de liaison
    totale (kcal/mol) quand la table a un terme « total », sinon le score du
@@ -1170,6 +1207,10 @@ export default {
   capriColumnMetricKey,
   LEGACY_POSE_KEYS,
   CAPRI_RAW_PREFIX,
+  poseRawColumnValue,
+  unclaimedColumnMatching,
+  deviationColumnOf,
+  energyColumnOf,
   chartEnergyMetricKey,
   poseChartValue,
 
