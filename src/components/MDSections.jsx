@@ -26,6 +26,21 @@ import { AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, FORM_META, R
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
 import { archiveFileToDrive, archiveFileToDriveWithPointer, getDriveToken, getDriveFileRegistry, driveFetch } from '../utils/driveUpload';
+// Cache des graphes calculés (domanda 2) : copie bornée enregistrée avec le test
+// (suit le jeu de données sur le Drive / Firestore) + copie locale pour réafficher
+// les courbes instantanément, avec empreinte de la trajectoire et boutons
+// 🔁 Recalculate / 🗑 Clear.
+import {
+  buildAnalysisCachePayload,
+  mergeEnergyIntoAnalysis,
+  analysisCacheState,
+  describeAnalysisCache,
+  hasTrajectoryCurves,
+  readLocalAnalysis,
+  writeLocalAnalysis,
+  clearLocalAnalysis,
+  mdTrajectoryFingerprint
+} from '../utils/mdAnalysisCache';
 import { placeRestorePointer, restoreRawFileFor, takePendingRestorePointer } from '../utils/driveRestore';
 
 // Cache to retain local File objects when switching tabs within the same session
@@ -2141,14 +2156,16 @@ export const MDAnalysisSection = ({ ctx }) => {
   const [isFs, setIsFs] = useState(false);
   
   // State for data CALCULATED from the loaded trajectory (real data only —
-  // simulated fallbacks have been removed). Restored from the persisted
-  // mdAnalysisResult so the graphs survive leaving the page / closing the section.
-  const [calcData, setCalcData] = useState(() => (activeTest && activeTest.mdAnalysisResult) || null);
+  // simulated fallbacks have been removed). Restored in this order: the LOCAL
+  // cache (instant redisplay, works offline) → the persisted mdAnalysisResult
+  // saved with the test (so the graphs follow the dataset to another machine).
+  // They are NEVER recomputed in the background: 🔁 Recalculate does that.
+  const [calcData, setCalcData] = useState(() => readLocalAnalysis(activeTest && activeTest.id) || (activeTest && activeTest.mdAnalysisResult) || null);
   const [calc, setCalc] = useState({ state: 'idle', msg: '', done: 0, total: 0, error: '' });
   const [calcOpts, setCalcOpts] = useState({ sasa: true });
   const calcAbortRef = useRef(false); // set by the global ⏹ Stop button
-  const [energyData, setEnergyData] = useState(() => (activeTest && activeTest.mdAnalysisResult && activeTest.mdAnalysisResult.energy) || null);
-  const [energyFileName, setEnergyFileName] = useState(() => (activeTest && activeTest.mdAnalysisResult && activeTest.mdAnalysisResult.energyFileName) || '');
+  const [energyData, setEnergyData] = useState(() => (calcData && calcData.energy) || null);
+  const [energyFileName, setEnergyFileName] = useState(() => (calcData && calcData.energyFileName) || '');
 
   // If the section stays mounted while the user switches to a different MD test,
   // reload the persisted result for the new test (state is otherwise stable for
@@ -2157,12 +2174,33 @@ export const MDAnalysisSection = ({ ctx }) => {
   useEffect(() => {
     if ((activeTest && activeTest.id) === mdTestIdRef.current) return;
     mdTestIdRef.current = activeTest && activeTest.id;
-    const res = (activeTest && activeTest.mdAnalysisResult) || null;
+    // Same order as the initial state: local cache first, then the copy saved
+    // with the test.
+    const res = readLocalAnalysis(activeTest && activeTest.id) || (activeTest && activeTest.mdAnalysisResult) || null;
     setCalcData(res);
     setEnergyData((res && res.energy) || null);
     setEnergyFileName((res && res.energyFileName) || '');
     setCalc({ state: 'idle', msg: '', done: 0, total: 0, error: '' });
   }, [activeTest]);
+
+  // Empreinte de la trajectoire ACTUELLEMENT chargée (nom + taille + date) : elle
+  // dit si les graphes conservés correspondent encore à ce fichier. Le cache est
+  // signalé PÉRIMÉ quand les deux empreintes sont connues et différentes — dans
+  // ce cas la bannière invite à recalculer, rien n'est refait en silence.
+  const trajFileNow = (localFileCache.get(activeTest && activeTest.id) || {}).trajectory || null;
+  const trajFingerprint = mdTrajectoryFingerprint(trajFileNow);
+  const cacheState = analysisCacheState(calcData, trajFingerprint);
+
+  // 🗑 Forget the saved graphs — the copy stored with the test AND the local one.
+  // The section then shows "no analysis yet" until the trajectory is computed.
+  const handleClearAnalysisCache = () => {
+    clearLocalAnalysis(activeTest && activeTest.id);
+    setCalcData(null);
+    setEnergyData(null);
+    setEnergyFileName('');
+    setCalc({ state: 'idle', msg: '', done: 0, total: 0, error: '' });
+    updateActiveTest({ mdAnalysisResult: null });
+  };
 
   const handleCalculateFromTrajectory = async () => {
     calcAbortRef.current = false;
@@ -2188,23 +2226,23 @@ export const MDAnalysisSection = ({ ctx }) => {
         (p) => { setCalc((s) => ({ ...s, done: p.done, total: p.total, msg: p.msg })); mdAnalysisRunAll.setStatus('general', `MD general parameters — ${p.msg}`); }
       );
       if (calcAbortRef.current) { unregister(); setCalc({ state: 'idle', msg: 'Calculation cancelled.', done: 0, total: 0, error: '' }); return; }
-      setCalcData(res);
-      // Persist a bounded copy of the result so the charts survive leaving the
-      // page (and so the Lab Notebook can render them as vector SVG). Stored in
-      // activeTest — small, and compresses well in the Firestore payload.
-      const prevRes = (activeTest && activeTest.mdAnalysisResult) || {};
-      updateActiveTest({
-        mdAnalysisResult: {
-          rmsd: downsampleSeries(res.rmsd || []),
-          rmsf: res.rmsf || [],
-          rg: downsampleSeries(res.rg || []),
-          sasa: downsampleSeries(res.sasa || []),
-          energy: prevRes.energy || [],
-          energyFileName: prevRes.energyFileName || '',
-          nFrames: res.nFrames,
-          source: src.source,
-        }
+      // Keep the calculated graphs: a BOUNDED copy is saved with the test (so it
+      // follows the dataset on the Drive / Firestore and the Lab Notebook can
+      // render it as vector SVG) AND mirrored in the browser, so reopening the
+      // page shows the curves at once instead of recomputing them. The energy
+      // series (loaded from a separate .xvg) is carried over untouched, and the
+      // fingerprint of the trajectory is stored so a stale cache can be spotted.
+      const payload = buildAnalysisCachePayload(res, {
+        prev: (activeTest && activeTest.mdAnalysisResult) || {},
+        fingerprint: mdTrajectoryFingerprint((localFileCache.get(activeTest && activeTest.id) || {}).trajectory || null),
+        stride: runCfg.stride || 0,
+        maxFrames: runCfg.maxFrames || 0,
+        savedAt: new Date().toISOString(),
+        downsample: downsampleSeries
       });
+      setCalcData(payload);
+      writeLocalAnalysis(activeTest && activeTest.id, payload);
+      updateActiveTest({ mdAnalysisResult: payload });
       // Populate the per-atom table so Per-Atom and Condition plots can use the
       // calculated parameters (RMSF per residue + system-level Rg/SASA/RMSD).
       const layerCells = buildGeneralParamsLayerCells(res);
@@ -2233,15 +2271,17 @@ export const MDAnalysisSection = ({ ctx }) => {
         const parsed = parseEnergyFile(ev.target.result);
         setEnergyData(parsed);
         setEnergyFileName(file.name);
-        // Persist the (bounded) energy series so it survives page navigation too.
-        const prevRes = (activeTest && activeTest.mdAnalysisResult) || {};
-        updateActiveTest({
-          mdAnalysisResult: {
-            ...prevRes,
-            energy: downsampleSeries(parsed || []),
-            energyFileName: file.name,
-          }
+        // Keep the (bounded) energy series too — WITHOUT touching the curves
+        // already calculated from the trajectory. Saved with the test and mirrored
+        // locally, exactly like the general parameters.
+        const next = mergeEnergyIntoAnalysis((activeTest && activeTest.mdAnalysisResult) || null, parsed || [], {
+          fileName: file.name,
+          savedAt: new Date().toISOString(),
+          downsample: downsampleSeries
         });
+        setCalcData((cur) => (cur ? { ...cur, energy: next.energy, energyFileName: next.energyFileName, savedAt: next.savedAt } : cur));
+        writeLocalAnalysis(activeTest && activeTest.id, next);
+        updateActiveTest({ mdAnalysisResult: next });
       } catch (err) {
         setCalc((s) => ({ ...s, state: 'error', error: 'Energy file: ' + err.message }));
       }
@@ -2288,6 +2328,29 @@ export const MDAnalysisSection = ({ ctx }) => {
           <span className="text-[10px] text-indigo-600 font-bold">
             Uses the shared stride / max frames from the “⚡ Calculate all analyses” toolbar above.
           </span>
+          {/* 🔁 / 🗑 n'apparaissent QUE s'il y a déjà des graphes conservés : le
+              premier calcul se fait avec le bouton principal ci-dessus. */}
+          {cacheState.present && (
+            <button
+              type="button"
+              onClick={handleCalculateFromTrajectory}
+              disabled={calc.state === 'running'}
+              className="bg-white hover:bg-indigo-50 disabled:opacity-40 border border-indigo-300 text-indigo-700 font-bold py-1.5 px-3 rounded-lg text-xs shadow-sm transition-colors"
+              title="Run the calculation again on the loaded trajectory and REPLACE the saved graphs — needed after changing the trajectory or the stride / max frames"
+            >
+              🔁 Recalculate
+            </button>
+          )}
+          {cacheState.present && (
+            <button
+              type="button"
+              onClick={handleClearAnalysisCache}
+              className="bg-white hover:bg-rose-50 border border-rose-300 text-rose-700 font-bold py-1.5 px-3 rounded-lg text-xs shadow-sm transition-colors"
+              title="Forget the saved analysis (copy stored with the test + browser cache). The graphs are hidden until you calculate again; the stored curves are not deleted from any file."
+            >
+              🗑 Clear saved analysis
+            </button>
+          )}
           {calcData && (
             <button
               type="button"
@@ -2355,8 +2418,18 @@ export const MDAnalysisSection = ({ ctx }) => {
       </div>
 
       {calcData ? (
-         <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold p-2 rounded-lg flex items-center gap-2">
-           ✅ Plotting data calculated from the trajectory (RMSD/RMSF/Rg/SASA).
+         <div className={`text-xs font-bold p-2 rounded-lg flex flex-wrap items-center gap-2 border ${cacheState.stale ? 'bg-amber-50 border-amber-300 text-amber-800' : 'bg-emerald-50 border-emerald-200 text-emerald-800'}`}>
+           <span>
+             {cacheState.stale ? '⚠️' : '✅'}{' '}
+             {hasTrajectoryCurves(calcData)
+               ? (cacheState.present ? describeAnalysisCache(cacheState) : 'Plotting data calculated from the trajectory (RMSD/RMSF/Rg/SASA).')
+               : 'Energy series loaded — the general parameters are not calculated yet.'}
+           </span>
+           <button type="button" onClick={handleCalculateFromTrajectory} disabled={calc.state === 'running'}
+             className="underline decoration-dotted hover:opacity-70 disabled:opacity-40"
+             title="Run the calculation again on the loaded trajectory">
+             Recalculate
+           </button>
          </div>
       ) : (
          <span className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 w-fit">

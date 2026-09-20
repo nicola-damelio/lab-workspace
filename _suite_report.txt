@@ -33,11 +33,13 @@ OK   _common_library_folder_test.mjs  →  _common_library_folder_test : 47 vér
 OK   _cov_check.cjs  →  UNWIRED: none - every editable new Chart( site is wrapped in ChartJsInspector.
 OK   _curve_style_test.mjs  →  │ (index) │ name                                                                        │ ok   │ error │ | ✅ 50/50 checks passed
 OK   _dataset_copy_mirror_test.mjs  →  ✅ 44 tests passés (la copie Drive du dataset ne perd plus la dernière minute)
+OK   _dataset_creation_guard_test.mjs  →  _dataset_creation_guard_test.mjs — 21 assertions OK
 OK   _dataset_dir_twins_test.mjs  →  ✅ 53 tests passés (un seul projects/ et un seul protocols/ par dataset, jamais de jumeau)
 OK   _deleted_projects_test.mjs  →  ✅ 46 tests passés (projets supprimés : rien ne ressuscite)
 OK   _diag_keys_summary.cjs  →  • "Fig1" drive=true pxObjects=6 images=7 thumbnailsOnly=true addedAt=2026-09-13T01:06:14.160Z updatedAt=2026-09-16T18:54:29.040Z
 OK   _diag_library_move.mjs  →  (aucune)
 OK   _doc_responsive_test.mjs  →  ✅ 46 tests passés (document exporté et page « document » adaptés à la largeur de l’écran)
+OK   _dock_style_test.mjs  →  _dock_style_test.mjs — 29 assertions OK
 OK   _docking_sanity.cjs  →  (no output)
 OK   _drive_mirror_test.mjs  →  ✅ 78 tests passés (le Drive est le miroir du programme : rien ne ressuscite)
 OK   _drive_restore_test.mjs  →  206 passed
@@ -51,12 +53,15 @@ OK   _figure_recapture_test.mjs  →  │ (index) │ name                      
 OK   _figure_style_test.mjs  →  │ (index) │ name                                                                                  │ ok   │ error │ | ✅ 71/71 checks passed
 OK   _figure_svg_drive_test.mjs  →  passed 162/162
 OK   _figures_folder_mismatch_test.mjs  →  ✓ 64 vérifications passées — le dossier d’images d’un projet est CHERCHÉ, jamais fabriqué.
+OK   _grep.cjs  →  _grep.cjs — usage: node _grep.cjs <fichier> "<regex>" [maxHits] [contextLines]
+OK   _large_system_style_test.mjs  →  _large_system_style_test.mjs — 22 assertions OK
 OK   _library_move_test.mjs  →  ✅ 45 tests passés (un déplacement de bibliothèque survit au miroir des clés, et le fichier suit son entrée)
 OK   _library_reorder_test.mjs  →  _library_reorder_test.mjs — 41 assertions OK
 OK   _library_restore_test.mjs  →  ✅ 175 tests passés (bibliothèque d’images ↔ sauvegarde)
 OK   _library_transfer_test.cjs  →  │ (index) │ name                                                                                                                   │ ok   │ error │ | 
 OK   _mail_recipients_test.mjs  →  _mail_recipients_test: 47 passed
 OK   _manuscript_import_test.mjs  →  ✅ 469 tests passés (manuscrit — blocs / parties / en-tête / sections / liens / figures)
+OK   _md_analysis_cache_test.mjs  →  _md_analysis_cache_test.mjs — 70 assertions OK
 OK   _new_image_test.cjs  →  ✅ 29/29 checks passed
 OK   _pdb_conect_sanity.cjs  →  (no output)
 OK   _persist_store_test.mjs  →  ✅ 92 tests passés (écriture vérifiée, quota plein, allègement des figures, écriture sauvée sans place libre, garde-fous du code)
@@ -75,6 +80,7 @@ OK   _reference_complete_test.mjs  →  _reference_complete_test: 68 passed
 OK   _reference_import_test.mjs  →  ✅ 226 tests passés (import de références)
 OK   _reference_links_test.mjs  →  ✅ 114 tests passés (liens de citation [n] ↔ références, import bibliographique numéroté, document exporté réparé)
 OK   _repair_drive_twins.mjs  →  Aucun conteneur jumeau : rien à réparer.
+OK   _save_html_test.mjs  →  _save_html_test.mjs — 45 assertions OK
 OK   _spectra_split_test.mjs  →  passed 238/238
 OK   _split_test.cjs  →  (no output)
 OK   _src_split_test.cjs  →  (no output)
@@ -88,4 +94,4 @@ OK   _ui_scale_test.cjs  →  ✅ 44/44 checks passed
 OK   _view_scroll_memory_test.cjs  →  ✅ 41/41 checks passed
 OK   _workspace_drive_test.mjs  →  ✅ 57 tests passés (l’espace de travail entier vit sur le Drive)
 OK   _workspace_keys_test.mjs  →  ✅ 37 tests passés (les clés du navigateur vivent aussi sur le Drive)
-total 90, failed 0
+total 96, failed 0

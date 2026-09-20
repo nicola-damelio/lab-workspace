@@ -1398,6 +1398,10 @@ if (customType === 'dosy') {
   // cloud par une liste vide, ce qui supprimait l'écran de connexion pour
   // TOUTE l'équipe (et ouvrait l'accès à tout le monde). Le cloud fait foi.
   const [cloudAppConfigRead, setCloudAppConfigRead] = useState(false);
+  // La liste des comptes a-t-elle été LUE (cloud ou copie locale) ? Tant que non,
+  // `operators` peut être vide SANS que l'équipe soit vide : c'est cette
+  // différence qui manquait aux garde-fous « superutilisateur » (domanda 3).
+  const [teamLoaded, setTeamLoaded] = useState(false);
   const cloudHasAccountsRef = useRef(false);
   useEffect(() => {
     // NO Google/Firebase sign-in required: the whole team shares ONE workspace,
@@ -1585,6 +1589,10 @@ if (customType === 'dosy') {
           // deviennent autorisées — voir la protection anti-effacement de
           // l'effet de sauvegarde plus haut.
           setCloudAppConfigRead(true);
+          // La liste des comptes a été LUE (même si elle est vide, même si le
+          // document n'existe pas) : c'est ce qui autorise le « bootstrap » de
+          // l'équipe — et rien d'autre (voir canManageDatasets).
+          setTeamLoaded(true);
           if (!doc.exists) {
             cloudHasAccountsRef.current = false;
             return;
@@ -3117,6 +3125,18 @@ if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([.
   };
 
 const createNewDataset = async (kind = 'scientific') => {
+    // Garde-fou de dernier recours (domanda 3) : même si un bouton caché, un
+    // appel programmé ou une page restée ouverte tentait de créer un dataset,
+    // seuls le superutilisateur (ou un poste qui a la PREUVE que l'équipe est
+    // vide, ou le mode récupération) peuvent aller plus loin.
+    if (!canManageDatasets) {
+      setDialog({
+        type: 'alert',
+        title: 'Création refusée',
+        message: 'Seul un superutilisateur peut créer un dataset. Si l’équipe n’a pas encore de superutilisateur, ouvrez Paramètres pour en définir un.'
+      });
+      return;
+    }
     const newId = 'ds_' + Date.now();
     const isAdmin = isAdministrationKind(kind);
     // Projects are scoped per dataset: a new dataset starts with an empty
@@ -3195,6 +3215,12 @@ const createNewDataset = async (kind = 'scientific') => {
       title: isAdmin ? 'Base d’administration' : 'New Dataset',
       subtitle: '',
       date: new Date().toISOString().split('T')[0],
+      // TRAÇABILITÉ (domanda 3) : qui a créé ce dataset, avec quel rôle et quand.
+      // Un dataset apparu dans la liste sans que le superutilisateur l'ait créé
+      // peut ainsi être identifié (et supprimé) au lieu d'être anonyme.
+      createdBy: currentUser && currentUser.name ? String(currentUser.name).trim() : '',
+      createdByRole: currentUser && currentUser.role ? String(currentUser.role) : '',
+      createdFromDevice: typeof navigator !== 'undefined' ? String(navigator.platform || '') : '',
       createdAt: window.firebase
         ? window.firebase.firestore.FieldValue.serverTimestamp()
         : Date.now(),
@@ -4122,6 +4148,20 @@ const openDataset = (dset) => {
   // définir le premier superutilisateur).
   const teamNoSuperuser = !hasDefinedSuperuser(operators);
 
+  // ── Qui peut CRÉER / gérer un dataset ? (domanda 3) ──────────────────────
+  // Le « bootstrap » (équipe vide) reste permis, mais SEULEMENT quand la liste
+  // des comptes a réellement été lue. Un poste dont la synchronisation n'est pas
+  // terminée a `operators` vide SANS que l'équipe soit vide : c'est par cette
+  // porte qu'un utilisateur ordinaire pouvait créer un dataset — dataset que le
+  // superutilisateur voyait ensuite apparaître comme « un dataset que je n'ai
+  // pas créé » (les datasets sont partagés par l'espace de travail Drive /
+  // Firestore). `teamLoaded` (et `cloudAppConfigRead`, renseigné par la même
+  // lecture) ferme cette porte.
+  const teamLoadedHere = teamLoaded || cloudAppConfigRead;
+  const canManageDatasets = currentUser?.role === 'superuser'
+    || recoveryBypass
+    || (teamLoadedHere && (operatorNames.length === 0 || teamNoSuperuser));
+
   // Authentification SERVEUR prête (jetons signés + équipe publiée) : la session
   // Firebase devient OBLIGATOIRE (les règles Firestore n'acceptent qu'un jeton
   // signé), et le contournement de secours historique est neutralisé.
@@ -4595,7 +4635,7 @@ const openDataset = (dset) => {
                 environment.
               </p>
 
-          {(currentUser?.role === 'superuser' || operatorNames.length === 0 || recoveryBypass || teamNoSuperuser) ? (
+          {canManageDatasets ? (
             <div className="flex flex-col items-center gap-3 w-full">
               <button
                 onClick={() => createNewDataset('scientific')}
@@ -4697,7 +4737,7 @@ const openDataset = (dset) => {
                   Your Recent Datasets
                 </h2>
                {/* Delete Empty — superuser / bootstrap / recovery */}
-               {(currentUser?.role === 'superuser' || operatorNames.length === 0 || recoveryBypass) && (
+               {canManageDatasets && (
                  <button
                    onClick={(e) => redirectDeleteToSettings(e, 'Delete Empty Datasets')}
                    className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex-1 md:flex-none items-center justify-center gap-2 cursor-pointer text-sm"
@@ -4706,7 +4746,7 @@ const openDataset = (dset) => {
                  </button>
                )}
                {/* Rendre TOUS les datasets visibles par l’équipe — superuser / bootstrap / recovery */}
-               {(currentUser?.role === 'superuser' || operatorNames.length === 0 || recoveryBypass) && (
+               {canManageDatasets && (
                  <button
                    onClick={makeAllDatasetsTeamVisible}
                    disabled={allVisibleBusy}
@@ -4718,7 +4758,7 @@ const openDataset = (dset) => {
                )}
 
                {/* Load HTML — superuser / bootstrap / recovery */}
-               {(currentUser?.role === 'superuser' || operatorNames.length === 0 || recoveryBypass) && (
+               {canManageDatasets && (
                  <label className="bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex-1 md:flex-none flex items-center justify-center gap-2 cursor-pointer text-sm">
                    📂 Load HTML File
                    <input type="file" accept=".html" onChange={loadHTML} className="hidden" />
