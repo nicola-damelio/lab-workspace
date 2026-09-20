@@ -63,11 +63,18 @@ const grab = (name, end) => {
   assert.ok(m, `DockingData.jsx : ${name} introuvable`);
   return m[0].replace(/^export\s+/, '');
 };
-const { parseCapriTsv, posesFromCapri, parseDockingValue, normMetricColumn } = new Function(
+const { parseCapriTsv, posesFromCapri, parseDockingValue, normMetricColumn,
+  DOCKING_METRICS, dockingMetricOf, dockingMetricLabel, dockingMetricUnit,
+  poseBindingEnergy, poseDeviation, haddockScoreTerms } = new Function(
   [grab('parseCapriTsv', '\n};'), grab('CAPRI_METRIC_SYNONYMS', '\n};'),
    grab('normMetricColumn', ';'), grab('posesFromCapri', '\n};'),
-   grab('parseDockingValue', '\n};')].join('\n')
-  + '\nreturn { parseCapriTsv, posesFromCapri, parseDockingValue, normMetricColumn };'
+   grab('parseDockingValue', '\n};'), grab('DOCKING_METRICS', '\n];'),
+   grab('dockingMetricOf', '\n};'), grab('dockingMetricLabel', ';'),
+   grab('dockingMetricUnit', ';'), grab('poseBindingEnergy', '\n};'),
+   grab('poseDeviation', '\n};'), grab('haddockScoreTerms', '\n};')].join('\n')
+  + '\nreturn { parseCapriTsv, posesFromCapri, parseDockingValue, normMetricColumn,'
+  + ' DOCKING_METRICS, dockingMetricOf, dockingMetricLabel, dockingMetricUnit,'
+  + ' poseBindingEnergy, poseDeviation, haddockScoreTerms };'
 )();
 
 eq(normMetricColumn('RMSD l.b.'), 'rmsdlb', 'les noms de colonnes sont comparés sous forme canonique');
@@ -88,9 +95,9 @@ eq(poses.length, 2, 'deux poses sortent du TSV — le tableau de résultats est 
 eq(poses[0].mode, 1, 'le rang CAPRI devient le mode');
 eq(poses[0].label, 'cluster_1_1.pdb', 'le nom de modèle (dernier segment du chemin) devient le label');
 eq(poses[0].program, 'haddock', 'le programme est HADDOCK');
-eq(poses[0].affinity, -52.31, 'la colonne « score » alimente Affinity (graphique de liaison)');
-eq(poses[0].rmsd_lb, 0, 'la colonne « lrmsd » alimente RMSD l.b. (nuage Affinity vs RMSD)');
-eq(poses[0].rmsd_ub, 0, 'la colonne « ilrmsd » alimente RMSD u.b.');
+eq(poses[0].affinity, -52.31, 'la colonne « score » alimente le score du programme (graphique de liaison)');
+eq(poses[0].lrmsd, 0, 'la colonne « lrmsd » alimente l-RMSD (Å) — l’abscisse du nuage Énergie vs RMSD');
+eq(poses[0].ilrmsd, 0, 'la colonne « ilrmsd » alimente l’i-l-RMSD (Å)');
 eq(poses[0].energy_air, -15.2, 'la colonne « air » alimente AIR (termes HADDOCK)');
 eq(poses[0].bsa, 1240.5, 'la colonne « bsa » alimente BSA (termes HADDOCK)');
 eq(poses[0].energy_vdw, -42.6, 'la colonne « vdw » alimente vdW');
@@ -138,11 +145,13 @@ has(SEC, 'const fallback = capriFallback(p, m.key);', '…avec les colonnes CAPR
 has(SEC, 'const affinityData = rows.map((p, i) => ({', 'le graphique d’affinité lit les lignes du tableau');
 has(SEC, 'const rmsdData = rows', 'le nuage Affinity vs RMSD lit les lignes du tableau');
 has(SEC, 'const energyBreakdownData = rows.slice(0, 10).map(', 'la décomposition d’énergie aussi');
-has(SEC, 'data={rows.slice(0, 15).map(', 'les termes HADDOCK aussi');
+has(SEC, 'const termRows = rows.slice(0, 15).map(', 'les termes HADDOCK aussi');
+has(SEC, 'data={termRows}', '…et le graphique des termes les trace UNE barre par terme présent');
 has(SEC, '{rows.length} poses', 'le compteur de poses suit le tableau');
 ok(!SEC.includes('const affinityData = d.poses'), 'plus aucun graphique branché sur la liste brute des poses');
 ok(!SEC.includes('data={d.poses.slice(0, 15)'), '…ni les termes HADDOCK');
-has(SEC, 'parseDockingValue(p.rmsd_lb) ?? parseDockingValue(p.rmsd) ?? 0', 'un RMSD vide ne se transforme pas en point à 0');
+has(SEC, 'rmsd: poseDeviation(p)', 'l’écart à la référence passe par la lecture CAPRI partagée (l-RMSD, puis i-RMSD…)');
+has(SEC, '.filter((r) => r.affinity !== null && r.rmsd !== null);', 'un RMSD vide ne se transforme pas en point à 0');
 
 /* ══ 4. « DATA ANALYSIS » SANS SOUS-SECTION « PER ATOM PLOT » ═════════════ */
 has(RENDER, 'analysisPlain: true,', '[docking] le contenu de Data Analysis est rendu directement');

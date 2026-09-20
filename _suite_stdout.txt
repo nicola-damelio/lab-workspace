@@ -1,0 +1,107 @@
+OK  _W_outline.mjs → (no output)
+OK  _axis_aspect_test.cjs → ✅ 123/123 checks passed
+OK  _axis_fit_test.cjs → ✅ 476/476 checks passed
+OK  _break_test.mjs → 33/33 checks passed
+OK  _builder_arrows_test.mjs → │ (index) │ name                                                                    │ ok   │ error │ | ✅ 116/116 checks passed
+OK  _builder_copy_paste_test.mjs → _builder_copy_paste_test.mjs — 98 assertions OK
+OK  _builder_crop_test.cjs → ✅ 67/67 checks passed
+OK  _builder_eraser_test.mjs → _builder_eraser_test.mjs — 62 assertions OK
+OK  _builder_figshadow_test.mjs → _builder_figshadow_test.mjs — 75 assertions OK
+OK  _builder_figtools_test.mjs → _builder_figtools_test.mjs — 117 assertions OK
+OK  _builder_figureorder_test.mjs → _builder_figureorder_test.mjs — 70 assertions OK
+OK  _builder_letters_test.cjs → ✅ 97/97 checks passed
+OK  _builder_link_test.cjs → │ 40      │ '[App] openImageBuilder is passed to the project page: operatorNames={operatorNames} openImageBuild…'                                    │
+OK  _builder_montage_test.mjs → _builder_montage_test.mjs — 50 assertions OK
+OK  _builder_multiselect_test.mjs → _builder_multiselect_test.mjs — 193 assertions OK
+OK  _builder_paneldock_test.mjs → _builder_paneldock_test.mjs — 53 assertions OK
+OK  _builder_pixels_test.cjs → ✅ 41/41 checks passed
+OK  _builder_place_test.cjs → ✅ 53/53 checks passed
+OK  _builder_recall_test.mjs → _builder_recall_test : 25 vérifications passées
+OK  _builder_shapes_test.mjs → _builder_shapes_test : 201 vérifications passées
+OK  _builder_uibar_test.mjs → _builder_uibar_test.mjs — 124 assertions OK
+OK  _builder_upscale_test.mjs → _builder_upscale_test.mjs — 78 assertions OK
+OK  _builder_zoom_test.cjs → ✅ 31/31 checks passed
+OK  _calculation_entries_test.mjs → ✅ 49 tests passés (les calculs d’un dataset se voient sur les deux postes)
+OK  _canvas_autosave_test.mjs → ✅ _canvas_autosave_test : 142 vérifications passées
+OK  _canvas_composition_safety_test.mjs → ✅ _canvas_composition_safety_test : 32 vérifications passées
+OK  _canvas_file_restore_test.mjs → ✅ _canvas_file_restore_test : 108 vérifications passées
+OK  _canvas_identity_test.mjs → ✅ _canvas_identity_test : 78 vérifications passées
+OK  _capture_fix_test.mjs → passed 73/73
+OK  _chain_test.cjs → RESULT: PASS (two chains separated, contacts do not merge them)
+OK  _chart_dblclick_test.cjs → ✅ 101/101 checks passed
+OK  _common_library_folder_test.mjs → _common_library_folder_test : 96 vérifications passées (bibliothèque commune à la racine + migration)
+OK  _compact_sections_test.mjs → _compact_sections_test.mjs — 113 assertions passées ✔
+OK  _condition_page_test.mjs → 104 passed
+OK  _cov_check.cjs → UNWIRED: none - every editable new Chart( site is wrapped in ChartJsInspector.
+OK  _curve_style_test.mjs → │ (index) │ name                                                                        │ ok   │ error │ | ✅ 50/50 checks passed
+OK  _cys_oxidized_ranges_test.mjs → _cys_oxidized_ranges_test.mjs : 48 assertions passées
+OK  _dataset_copy_mirror_test.mjs → ✅ 44 tests passés (la copie Drive du dataset ne perd plus la dernière minute)
+OK  _dataset_creation_guard_test.mjs → _dataset_creation_guard_test.mjs — 21 assertions OK
+OK  _dataset_dir_twins_test.mjs → ✅ 53 tests passés (un seul projects/ et un seul protocols/ par dataset, jamais de jumeau)
+OK  _deleted_projects_test.mjs → ✅ 46 tests passés (projets supprimés : rien ne ressuscite)
+OK  _diag_instance_twins.mjs → (_diag_instance_twins_out.txt)
+OK  _diag_keys_summary.cjs → • "Fig1" drive=true pxObjects=6 images=7 thumbnailsOnly=true addedAt=2026-09-13T01:06:14.160Z updatedAt=2026-09-16T18:54:29.040Z
+OK  _diag_library_move.mjs → (aucune)
+OK  _doc_responsive_test.mjs → ✅ 46 tests passés (document exporté et page « document » adaptés à la largeur de l’écran)
+OK  _dock_style_test.mjs → _dock_style_test.mjs — 27 assertions OK
+OK  _docking_sanity.cjs → (no output)
+OK  _dosy_points_test.mjs → │ (index) │ name                                                                     │ ok   │ error │ | ✅ 17/17 checks passed
+OK  _drive_mirror_test.mjs → ✅ 78 tests passés (le Drive est le miroir du programme : rien ne ressuscite)
+OK  _drive_restore_test.mjs → 250 passed
+OK  _editor_layout_test.cjs → _editor_layout_test.cjs — 9 assertions passed
+OK  _esm_test_hook.mjs → (no output)
+OK  _experiment_drive_root_test.mjs → _experiment_drive_root_test: 41 passed
+OK  _fcs_restore_match_test.cjs → ✅ 7/7 checks passed
+OK  _figure_origin_test.cjs → ✅ 64/64 checks passed
+OK  _figure_placement_test.mjs → _figure_placement_test.mjs — 35 assertions passed
+OK  _figure_recapture_test.mjs → │ (index) │ name                                                                          │ ok   │ error │ | ✅ 32/32 checks passed
+OK  _figure_style_test.mjs → │ (index) │ name                                                                                  │ ok   │ error │ | ✅ 71/71 checks passed
+OK  _figure_svg_drive_test.mjs → passed 162/162
+OK  _figures_folder_mismatch_test.mjs → ✓ 64 vérifications passées — le dossier d’images d’un projet est CHERCHÉ, jamais fabriqué.
+OK  _folder_race_test.mjs → _folder_race_test: 47 passed
+OK  _grep.cjs → _grep.cjs — usage: node _grep.cjs <fichier> "<regex>" [maxHits] [contextLines]
+OK  _large_system_style_test.mjs → _large_system_style_test.mjs — 34 assertions OK
+OK  _library_move_test.mjs → ✅ 46 tests passés (un déplacement de bibliothèque survit au miroir des clés, et le fichier suit son entrée)
+OK  _library_reorder_test.mjs → _library_reorder_test.mjs — 41 assertions OK
+OK  _library_restore_test.mjs → ✅ 175 tests passés (bibliothèque d’images ↔ sauvegarde)
+OK  _library_transfer_test.cjs → │ (index) │ name                                                                                                                   │ ok   │ error │ | 
+OK  _mail_recipients_test.mjs → _mail_recipients_test: 47 passed
+OK  _manuscript_import_test.mjs → ✅ 469 tests passés (manuscrit — blocs / parties / en-tête / sections / liens / figures)
+OK  _md_analysis_cache_test.mjs → _md_analysis_cache_test.mjs — 78 assertions OK
+OK  _new_image_test.cjs → ✅ 29/29 checks passed
+OK  _nmr1d_processing_test.mjs → _nmr1d_processing_test.mjs — 35 assertions OK (le réglage du spectre 1D suit le dataset)
+OK  _pdb_conect_sanity.cjs → (no output)
+OK  _persist_store_test.mjs → ✅ 92 tests passés (écriture vérifiée, quota plein, allègement des figures, écriture sauvée sans place libre, garde-fous du code)
+OK  _probe_cites.mjs → already linked           | NO  (rien à lier → message d'erreur)
+OK  _probe_hdr.mjs → aucune référence : c’est le comportement voulu
+OK  _probe_ngl.cjs → WROTE _ngl_src/molecularsurface-representation.ts len 10528
+OK  _probe_sections.mjs → -> « Mario Rossi¹†, Anna Bianchi¹‡ » | affil. 2 ligne(s)
+OK  _project_drive_doc_test.mjs → ✅ 61 tests passés (références « W.-J. » · import automatique · document du projet sur le Drive)
+OK  _project_figures_access_test.cjs → │ (index) │ name                                                                                                                       │ ok   │ error 
+OK  _project_page_order_test.mjs → _project_page_order_test.mjs — 31 assertions passed
+OK  _project_section_editing_test.mjs → _project_section_editing_test.mjs — 60 assertions passed
+OK  _pub_author_style_test.mjs → _pub_author_style_test: 212 passed
+OK  _readonly_notice_test.mjs → _readonly_notice_test.mjs — 57 assertions OK (un refus d’écriture est toujours affiché)
+OK  _rebuild_h_test.mjs → PASS
+OK  _recover_canvas_files.mjs → 9 fichier(s) : 6 avec composition, 3 sans.
+OK  _reference_complete_test.mjs → _reference_complete_test: 68 passed
+OK  _reference_import_test.mjs → ✅ 226 tests passés (import de références)
+OK  _reference_links_test.mjs → ✅ 114 tests passés (liens de citation [n] ↔ références, import bibliographique numéroté, document exporté réparé)
+OK  _refresh_shared_read_test.mjs → ✅ _refresh_shared_read_test : 40 vérifications passées (🔄 Refresh relit la source partagée avant de reconstruire la page)
+OK  _repair_drive_twins.mjs → Aucun dossier jumeau : rien à réparer.
+OK  _save_html_test.mjs → _save_html_test.mjs — 45 assertions OK
+OK  _spectra_split_test.mjs → passed 238/238
+OK  _split_test.cjs → (no output)
+OK  _src_split_test.cjs → (no output)
+OK  _star_group_test.cjs → ✅ 34/34 checks passed
+OK  _storage_boxes_test.mjs → _storage_boxes_test.mjs : 119/119 passed
+OK  _storage_drive_layout_test.mjs → _storage_drive_layout_test: 149 passed
+OK  _sum_canvases.mjs → meta keys: kind, v, label, src, canvasData, imageName, savedAt
+OK  _sum_one_meta.mjs → usage: node _sum_one_meta.mjs "<fichier .meta.json>"
+OK  _sum_panels.mjs → arrows=0 shapes=0 letterStyle={"fontSize":30,"color":"#000000","bold":true}
+OK  _ui_scale_test.cjs → ✅ 61/61 checks passed
+OK  _view_scroll_memory_test.cjs → ✅ 41/41 checks passed
+OK  _viewer_ui_layout_test.mjs → _viewer_ui_layout_test.mjs — 235 assertions OK
+OK  _workspace_drive_test.mjs → ✅ 57 tests passés (l’espace de travail entier vit sur le Drive)
+OK  _workspace_keys_test.mjs → ✅ 37 tests passés (les clés du navigateur vivent aussi sur le Drive)
+total 106, failed 0

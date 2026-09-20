@@ -425,7 +425,25 @@ export const installWorkspaceAutosave = (getState, { delay = 2000 } = {}) => {
     timer = setTimeout(() => { timer = null; flush(); }, Math.max(200, Number(delay) || 2000));
   };
   const onMirror = () => schedule();
-  try { window.addEventListener(DRIVE_MIRROR_EVENT, onMirror); } catch { /* hors navigateur */ }
+  /* Fermeture d'onglet / passage en arrière-plan : on n'attend PAS le délai.
+     Un dataset créé une seconde avant que l'onglet se ferme n'atteignait jamais
+     l'index partagé (`state.json`) : il manquait à la liste des AUTRES postes
+     alors même qu'il était bien là sur celui-ci. La copie du CONTENU avait déjà
+     ce vidage (voir App.jsx : « pagehide » → datasetCopyMirror.flush()) ;
+     l'INDEX, lui, ne l'avait pas. */
+  const flushNow = () => {
+    if (stopped) return;
+    if (timer) { clearTimeout(timer); timer = null; }
+    flush();
+  };
+  const onVisibilityChange = () => {
+    try { if (document.visibilityState === 'hidden') flushNow(); } catch { /* hors navigateur */ }
+  };
+  try {
+    window.addEventListener(DRIVE_MIRROR_EVENT, onMirror);
+    window.addEventListener('pagehide', flushNow);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+  } catch { /* hors navigateur */ }
   // Un premier envoi est programmé dès l'installation : l'état de ce poste
   // part sur le Drive même si rien ne bouge ensuite (la liste vient d'arriver
   // de Firestore / du cache, et le Drive doit la connaître).
@@ -434,7 +452,11 @@ export const installWorkspaceAutosave = (getState, { delay = 2000 } = {}) => {
     stopped = true;
     if (timer) clearTimeout(timer);
     timer = null;
-    try { window.removeEventListener(DRIVE_MIRROR_EVENT, onMirror); } catch { /* ignore */ }
+    try {
+      window.removeEventListener(DRIVE_MIRROR_EVENT, onMirror);
+      window.removeEventListener('pagehide', flushNow);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    } catch { /* ignore */ }
   };
 };
 

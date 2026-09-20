@@ -229,7 +229,9 @@ ok(S.isDatasetMirrorDeleted(S.readDriveMirror(), { id: 'ds3' }),
 has(APP, 'const state = await readWorkspaceState();', 'App.jsx relit l’état du Drive au démarrage');
 has(APP, 'const adopted = adoptWorkspaceState(state);', '…adopte ses suppressions avant tout le reste');
 has(APP, 'adoptDeletedProjects(state.deletedProjects)', '…et les projets supprimés ailleurs');
-has(APP, 'applyWorkspaceIndex({ datasets: prev, state, mirror: adopted.mirror })',
+has(APP, 'const adoptedList = readDatasetListCache();',
+  '…et la liste que `keys.json` rapporte d’un AUTRE poste est relue (sinon elle n’atteint jamais l’écran)');
+has(APP, 'datasets: [...(Array.isArray(prev) ? prev : []), ...adoptedList],',
   '…puis complète la liste des datasets avec celle du Drive');
 has(APP, "window.addEventListener('lab:drive-connected'", '…et recommence dès que Drive se reconnecte');
 has(APP, 'installWorkspaceAutosave(() => ({', 'chaque changement est renvoyé vers le Drive (en différé)');

@@ -30,7 +30,7 @@ OK   _capture_fix_test.mjs  →  passed 73/73
 OK   _chain_test.cjs  →  RESULT: PASS (two chains separated, contacts do not merge them)
 OK   _chart_dblclick_test.cjs  →  ✅ 101/101 checks passed
 OK   _common_library_folder_test.mjs  →  _common_library_folder_test : 96 vérifications passées (bibliothèque commune à la racine + migration)
-OK   _compact_sections_test.mjs  →  _compact_sections_test.mjs — 111 assertions passées ✔
+OK   _compact_sections_test.mjs  →  _compact_sections_test.mjs — 113 assertions passées ✔
 OK   _condition_page_test.mjs  →  104 passed
 OK   _cov_check.cjs  →  UNWIRED: none - every editable new Chart( site is wrapped in ChartJsInspector.
 OK   _curve_style_test.mjs  →  │ (index) │ name                                                                        │ ok   │ error │ | ✅ 50/50 checks passed
@@ -38,6 +38,7 @@ OK   _cys_oxidized_ranges_test.mjs  →  _cys_oxidized_ranges_test.mjs : 48 asse
 OK   _dataset_copy_mirror_test.mjs  →  ✅ 44 tests passés (la copie Drive du dataset ne perd plus la dernière minute)
 OK   _dataset_creation_guard_test.mjs  →  _dataset_creation_guard_test.mjs — 21 assertions OK
 OK   _dataset_dir_twins_test.mjs  →  ✅ 53 tests passés (un seul projects/ et un seul protocols/ par dataset, jamais de jumeau)
+OK   _dataset_index_test.mjs  →  ✅ 49 tests passés (la liste des datasets a sa propre copie et voyage)
 OK   _deleted_projects_test.mjs  →  ✅ 46 tests passés (projets supprimés : rien ne ressuscite)
 OK   _diag_instance_twins.mjs  →  (_diag_instance_twins_out.txt)
 OK   _diag_keys_summary.cjs  →  • "Fig1" drive=true pxObjects=6 images=7 thumbnailsOnly=true addedAt=2026-09-13T01:06:14.160Z updatedAt=2026-09-16T18:54:29.040Z
@@ -45,6 +46,7 @@ OK   _diag_library_move.mjs  →  (aucune)
 OK   _doc_responsive_test.mjs  →  ✅ 46 tests passés (document exporté et page « document » adaptés à la largeur de l’écran)
 OK   _dock_style_test.mjs  →  _dock_style_test.mjs — 27 assertions OK
 OK   _docking_sanity.cjs  →  (no output)
+OK   _dosy_points_test.mjs  →  │ (index) │ name                                                                     │ ok   │ error │ | ✅ 17/17 checks passed
 OK   _drive_mirror_test.mjs  →  ✅ 78 tests passés (le Drive est le miroir du programme : rien ne ressuscite)
 OK   _drive_restore_test.mjs  →  250 passed
 OK   _editor_layout_test.cjs  →  _editor_layout_test.cjs — 9 assertions passed
@@ -101,6 +103,6 @@ OK   _sum_panels.mjs  →  arrows=0 shapes=0 letterStyle={"fontSize":30,"color":
 OK   _ui_scale_test.cjs  →  ✅ 61/61 checks passed
 OK   _view_scroll_memory_test.cjs  →  ✅ 41/41 checks passed
 OK   _viewer_ui_layout_test.mjs  →  _viewer_ui_layout_test.mjs — 235 assertions OK
-OK   _workspace_drive_test.mjs  →  ✅ 57 tests passés (l’espace de travail entier vit sur le Drive)
+OK   _workspace_drive_test.mjs  →  ✅ 58 tests passés (l’espace de travail entier vit sur le Drive)
 OK   _workspace_keys_test.mjs  →  ✅ 37 tests passés (les clés du navigateur vivent aussi sur le Drive)
-total 105, failed 0
+total 107, failed 0

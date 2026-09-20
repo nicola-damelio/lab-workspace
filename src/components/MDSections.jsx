@@ -3,7 +3,7 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, ReferenceArea
 } from 'recharts';
 import { Icon } from './Icons';
-import { ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps, useXZoom, ChartPanel, CHART_FS_CLASSES, useChartFsHeight, AngledTick, cfgAxisLabel, cfgChartMargin } from './SharedAnalysisTools';
+import { ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps, useXZoom, ChartPanel, CHART_FS_CLASSES, useChartFsHeight, AngledTick, cfgAxisLabel, cfgChartMargin, cfgNumericAxis, cfgTickFormatter } from './SharedAnalysisTools';
 import { parseSimulationParameters } from './MDData';
 import {
   CONTACT_DEFAULTS, parseTopology, computeContactRDF, demoFrames, resolveFrameSource, AWK_PALETTE, contactSeriesStyle
@@ -14,7 +14,7 @@ import { abortControl, isAbortError } from '../utils/abortControl';
 import { mdAnalysisRunAll } from '../utils/mdAnalysisRunAll';
 import { blobStore } from '../utils/blobStore';
 import html2canvas from 'html2canvas';
-import { chartAspect, PER_ATOM_COLORS, seriesColorFor, rainbowColors, tickTextProps, legendTextStyle, tickSize, fontFamilyOf, tickColorOf
+import { chartAspect, PER_ATOM_COLORS, seriesColorFor, rainbowColors, tickTextProps, legendTextStyle, tickSize, fontFamilyOf, tickColorOf, seriesColorOf, seriesLineThickness, seriesDash, seriesVisible, seriesLabelOf, seriesPointStyle, seriesPtSize
 } from '../utils/chartStyle';
 export { parseSimulationParameters };   
 import NMRMoleculeViewer from './NMRMoleculeViewer';
@@ -22,7 +22,7 @@ import {
   computeSecondaryStructure, SS_CODE_ORDER, SS_COLORS, SS_GROUP_COLORS
 } from './MDSecondaryStructure';
 
-import { AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, FORM_META, RESIDUE_COLORS, buildKeys, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, SequencePaintStrip, getSelectedKeys, selectionLabel, getManualKeys, FORCE_FIELDS, WATER_MODELS, MD_ENSEMBLES, MD_INTEGRATORS, MD_THERMOSTATS, MD_BAROSTATS, parseMDValue, getForceFieldInfo, getFFVersions, getWaterModelInfo, getFFBackboneAtoms, normalizeTrajectoryUrl, detectTrajectoryFormat, getTrajectoryFormatInfo, getMDInstances, getMDActiveInstance, getMDLayers, getMDActiveLayerKey, getMDLayerValues, writeMDCellValue, MD_ANALYSIS_LAYERS, DEFAULT_MD_CHART_STYLE, mdLineDash, mdDom} from './MDData';
+import { AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, FORM_META, RESIDUE_COLORS, buildKeys, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, SequencePaintStrip, getSelectedKeys, selectionLabel, getManualKeys, FORCE_FIELDS, WATER_MODELS, MD_ENSEMBLES, MD_INTEGRATORS, MD_THERMOSTATS, MD_BAROSTATS, parseMDValue, getForceFieldInfo, getFFVersions, getWaterModelInfo, getFFBackboneAtoms, normalizeTrajectoryUrl, detectTrajectoryFormat, getTrajectoryFormatInfo, getMDInstances, getMDActiveInstance, getMDLayers, getMDActiveLayerKey, getMDLayerValues, writeMDCellValue, MD_ANALYSIS_LAYERS, DEFAULT_MD_CHART_STYLE, mdDom} from './MDData';
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
 import { archiveFileToDrive, archiveFileToDriveWithPointer, getDriveToken, getDriveFileRegistry, driveFetch } from '../utils/driveUpload';
@@ -1929,15 +1929,43 @@ export const MDDataSection = ({ ctx }) => {
 // ================= 3) ANALYSIS (RMSD / RMSF / Rg / SASA / Energy) =================
 const MD_CHART_M_ZOOM = { top: 10, right: 15, bottom: 45, left: 55 };
 
+/* ── LES AXES DES GRAPHES MD SUIVENT LE PANNEAU 🎨 ───────────────────────────
+   Le panneau (et l'éditeur qui s'ouvre en double-cliquant sur un axe) écrit
+   xMin/xMax, yMin/yMax, xTickStep/yTickStep, xDecimals/yDecimals, xSci/ySci,
+   xLog/yLog : `mdYAxisProps` fabrique les props recharts correspondantes, pour
+   que ces commandes agissent vraiment sur les axes des graphes MD (voir
+   cfgNumericAxis dans SharedAnalysisTools).
+
+   Le domaine Y n'est rendu CONCRET que lorsque la commande en a besoin :
+   Min/Max tapés, pas de graduation (tickStep) ou axe logarithmique (une échelle
+   log exige des bornes strictement positives). Sinon on garde le 'auto' de
+   recharts, c'est-à-dire l'aspect historique du graphe. */
+const mdYAxisProps = (cfg = {}, values = []) => {
+  const ys = (Array.isArray(values) ? values : []).map(Number).filter(Number.isFinite);
+  const extent = ys.length ? [Math.min(...ys), Math.max(...ys)] : [0, 1];
+  const lo = mdDom(cfg.yMin);
+  const hi = mdDom(cfg.yMax);
+  const concrete = !!cfg.yLog || lo != null || hi != null
+    || String(cfg.yTickStep ?? cfg.tickStep ?? '') !== '';
+  return cfgNumericAxis(cfg, 'y', concrete ? [lo ?? extent[0], hi ?? extent[1]] : undefined);
+};
+
 const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color, cfg, yLabel, xLabel, chartType = 'line', id, setCfg = null }) => {
   const fSize = tickSize(cfg, 12);
   const aspect = chartAspect(cfg, 1.8);
-  const lineColor = color || '#3b82f6';
+  const lineColor = seriesColorOf(cfg, dataKey, 0, 1, color || '#3b82f6');
+  const lineWidth = seriesLineThickness(cfg, dataKey, cfg.lineThickness || 2);
+  const lineDash = seriesDash(cfg, dataKey);
+  // The axis TITLES typed in the panel (or through a double-click on the title)
+  // win over the default label of the page — cfgAxisLabel draws what it is given.
+  const xLab = cfg.xAxisLabel || xLabel;
+  const yLab = cfg.yAxisLabel || yLabel;
   const chartRef = useRef(null);
 
-  // derive x data domain for zoom
+  // derive the x data domain (drag-to-zoom range) + the Y values of the curve
   const xs = data.map(d => typeof d[xKey] === 'number' ? d[xKey] : 0);
   const dataDomain = xs.length > 1 ? [Math.min(...xs), Math.max(...xs)] : [0, 1];
+  const ys = data.map((d) => Number(d[dataKey])).filter((v) => Number.isFinite(v));
   // Panel-controlled margin: grows with the font size so bigger axis titles and
   // the configurable label gap always have room. The same object is used for the
   // drag-to-zoom pixel → value mapping so zooming stays accurate.
@@ -1945,6 +1973,23 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
   const zoom = useXZoom(chartRef, dataDomain, effMargin);
   // Interrupted Y axis (✂ in the panel): one residue / frame can dwarf the rest.
   const brk = brokenAxisProps(cfg, 'y', data.map((d) => d[dataKey]), { log: !!cfg.yLog, min: cfg.yMin, max: cfg.yMax });
+
+  /* ── THE AXIS COMMANDS REALLY REACH THE AXES ──────────────────────────────
+     X: the X Min/Max typed in the panel wins over the drag-to-zoom range, and
+     the tick interval / the number format (decimals, exponential notation) / the
+     log scale come from the same cfg — see cfgNumericAxis in SharedAnalysisTools.
+     Y: the ✂ interrupted axis keeps its own concrete domain; otherwise the
+     panel's Y Min/Max (or a tick step / a log scale, which need concrete bounds)
+     are used, and 'auto' — the historical rendering — when it asks for nothing. */
+  const xAxisProps = cfgNumericAxis(cfg, 'x', zoom.domain);
+  const yAxisProps = brk.on ? brk.axisProps : mdYAxisProps(cfg, ys);
+
+  // The RMSF bars are a BAND axis (numeric residue numbers, or residue names):
+  // the number format only applies to the numeric ones.
+  const bandTickFormatter = (v) => {
+    const f = cfgTickFormatter(cfg, 'x');
+    return f && Number.isFinite(Number(v)) ? f(Number(v)) : String(v);
+  };
 
   return (
     <div id={id} className="bg-white rounded-lg border border-slate-200 p-2 flex flex-col relative">
@@ -1956,14 +2001,17 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
       </div>
       <ChartInspector containerRef={chartRef} containerProps={{ onMouseDown: chartType !== 'bar' ? zoom.onMouseDown : undefined }}
         cfg={cfg} setCfg={setCfg}
-        series={[{ key: dataKey, label: yLabel || title, color: lineColor }]} unit={yLabel}
+        series={[{ key: dataKey, label: yLab || title, color: lineColor }]} unit={yLab}
         className="flex-1 w-full select-none" style={{ aspectRatio: String(aspect), minHeight: 200 }}>
         <ResponsiveContainer width="100%" height="100%">
           {chartType === 'bar' ? (
             <BarChart data={data} margin={effMargin}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey={xKey} interval={0} tick={<AngledTick angle={cfg.tickAngle} fontSize={fSize} fontFamily={fontFamilyOf(cfg)} color={tickColorOf(cfg)} edgeAnchor={false} />} tickMargin={10} label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'x', xLabel)} />
-              <YAxis {...brk.axisProps} width={70} tick={tickTextProps(cfg, { fontSize: fSize })} label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'y', yLabel)} />
+              <XAxis dataKey={xKey} interval={0} tickFormatter={bandTickFormatter}
+                tick={<AngledTick angle={cfg.tickAngle} fontSize={fSize} fontFamily={fontFamilyOf(cfg)} color={tickColorOf(cfg)} edgeAnchor={false} />}
+                tickMargin={10} label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'x', xLab)} />
+              <YAxis {...yAxisProps} width={70} tick={tickTextProps(cfg, { fontSize: fSize })}
+                label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'y', yLab)} />
               <Tooltip />
               {brk.marks}
               <Bar dataKey={dataKey} isAnimationActive={false}>
@@ -1973,12 +2021,15 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
           ) : (
             <LineChart data={data} margin={effMargin}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey={xKey} type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow tick={<AngledTick angle={cfg.tickAngle} fontSize={fSize} fontFamily={fontFamilyOf(cfg)} color={tickColorOf(cfg)} />} tickMargin={10}
-                label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'x', xLabel)} />
-              <YAxis type="number" width={70} {...brk.axisProps} domain={brk.on ? brk.axisProps.domain : [mdDom(cfg.yMin) ?? 'auto', mdDom(cfg.yMax) ?? 'auto']} tick={tickTextProps(cfg, { fontSize: fSize })}
-                label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'y', yLabel)} />
+              <XAxis dataKey={xKey} {...xAxisProps}
+                tick={<AngledTick angle={cfg.tickAngle} fontSize={fSize} fontFamily={fontFamilyOf(cfg)} color={tickColorOf(cfg)} formatter={cfgTickFormatter(cfg, 'x') || undefined} />}
+                tickMargin={10} label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'x', xLab)} />
+              <YAxis width={70} {...yAxisProps} tick={tickTextProps(cfg, { fontSize: fSize })}
+                label={cfgAxisLabel({ ...cfg, fontSize: fSize }, 'y', yLab)} />
               <Tooltip />
-              <Line type="monotone" dataKey={dataKey} stroke={lineColor} strokeWidth={cfg.lineThickness || 2} strokeDasharray={mdLineDash(cfg.lineStyle)} dot={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey={dataKey} name={yLab || title} stroke={lineColor}
+                strokeWidth={lineWidth} strokeDasharray={lineDash} dot={false}
+                hide={!seriesVisible(cfg, dataKey)} isAnimationActive={false} />
               {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
               {brk.marks}
             </LineChart>
@@ -2011,7 +2062,7 @@ const MDPerAtomChartPanel = ({ d, chart, updateChart, removeChart }) => {
   const atomMeta = atoms.map((k, i) => ({
     key: k,
     label: d.atomOptions.find(o => o.key === k)?.label.split(' ').slice(1).join(' ') || k.split('-').slice(1).join('-'),
-    color: MD_PAP_COLORS[i % MD_PAP_COLORS.length],
+    color: seriesColorOf(cfg, k, i, atoms.length, MD_PAP_COLORS[i % MD_PAP_COLORS.length]),
   }));
 
   const residueMap = {};
@@ -2080,12 +2131,19 @@ const MDPerAtomChartPanel = ({ d, chart, updateChart, removeChart }) => {
           <ResponsiveContainer width="100%" aspect={chartAspect(cfg, 2.5)}>
             <BarChart data={chartData} margin={cfgChartMargin(cfg, { top: 8, right: 8, bottom: 16, left: 8 })}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="label" tick={tickTextProps(cfg)} />
-              <YAxis {...brkAtom.axisProps} tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'y', layer?.unit || '', 4)} />
+              <XAxis dataKey="label" tick={tickTextProps(cfg)}
+                label={cfgAxisLabel(cfg, 'x', cfg.xAxisLabel || 'Residue', 8)} />
+              <YAxis {...(brkAtom.on ? brkAtom.axisProps : mdYAxisProps(cfg, chartData.flatMap(r => atomMeta.map(m => r[m.key]))))}
+                tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'y', cfg.yAxisLabel || layer?.unit || '', 4)} />
               <Tooltip />
               {brkAtom.marks}
-              <Legend wrapperStyle={legendTextStyle(cfg)} />
-              {atomMeta.map(m => <Bar key={m.key} dataKey={m.key} name={m.label} fill={m.color} isAnimationActive={false} />)}
+              {cfg.legend !== 'none' && (
+                <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={legendTextStyle(cfg)} />
+              )}
+              {atomMeta.map(m => (
+                <Bar key={m.key} dataKey={m.key} name={seriesLabelOf(cfg, m.key, m.label)} fill={m.color}
+                  hide={!seriesVisible(cfg, m.key)} radius={cfg.barRadius ? [cfg.barRadius, cfg.barRadius, 0, 0] : 0} isAnimationActive={false} />
+              ))}
             </BarChart>
           </ResponsiveContainer>
         </ChartInspector>
@@ -2168,7 +2226,7 @@ const MDConditionPlotPanel = ({ d, chart, updateChart, removeChart, activeTest }
     return {
       key: ak,
       label: d.atomOptions.find(o => o.key === ak)?.label.split(' ').slice(1).join(' ') || ak,
-      color: MD_PAP_COLORS[i % MD_PAP_COLORS.length],
+      color: seriesColorOf(cfg, ak, i, atoms.length, MD_PAP_COLORS[i % MD_PAP_COLORS.length]),
       pts,
     };
   }).filter(s => s.pts.length > 0);
@@ -2224,14 +2282,24 @@ const MDConditionPlotPanel = ({ d, chart, updateChart, removeChart, activeTest }
           <ResponsiveContainer width="100%" aspect={chartAspect(cfg, 2.5)}>
             <LineChart margin={cfgChartMargin(cfg, { top: 8, right: 16, bottom: 24, left: 16 })}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="x" type="number" allowDuplicatedCategory={false} tick={tickTextProps(cfg)}
-                label={cfgAxisLabel(cfg, 'x', MD_COND_FIELDS.find(f => f.key === xField)?.label || xField, 10)} />
-              <YAxis {...brkCond.axisProps} tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'y', layer?.unit || '', 4)} />
+              <XAxis dataKey="x" allowDuplicatedCategory={false}
+                {...cfgNumericAxis(cfg, 'x', series.flatMap(s => s.pts.map(p => p.x)).length
+                  ? [Math.min(...series.flatMap(s => s.pts.map(p => p.x))), Math.max(...series.flatMap(s => s.pts.map(p => p.x)))] : [0, 1])}
+                tick={tickTextProps(cfg)}
+                label={cfgAxisLabel(cfg, 'x', cfg.xAxisLabel || MD_COND_FIELDS.find(f => f.key === xField)?.label || xField, 10)} />
+              <YAxis {...(brkCond.on ? brkCond.axisProps : mdYAxisProps(cfg, series.flatMap(s => s.pts.map(p => p.y))))}
+                tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'y', cfg.yAxisLabel || layer?.unit || '', 4)} />
               <Tooltip />
               {brkCond.marks}
-              <Legend wrapperStyle={legendTextStyle(cfg)} />
+              {cfg.legend !== 'none' && (
+                <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={legendTextStyle(cfg)} />
+              )}
               {series.map(s => (
-                <Line key={s.key} data={s.pts} dataKey="y" name={s.label} stroke={s.color} strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} />
+                <Line key={s.key} data={s.pts} dataKey="y" name={seriesLabelOf(cfg, s.key, s.label)}
+                  stroke={seriesColorOf(cfg, s.key, 0, series.length, s.color)}
+                  strokeWidth={seriesLineThickness(cfg, s.key, 2)} strokeDasharray={seriesDash(cfg, s.key)}
+                  dot={seriesPointStyle(cfg, s.key) === 'none' ? false : { r: seriesPtSize(cfg, s.key, 4) }}
+                  hide={!seriesVisible(cfg, s.key)} isAnimationActive={false} />
               ))}
             </LineChart>
           </ResponsiveContainer>
@@ -2463,6 +2531,13 @@ export const MDAnalysisSection = ({ ctx }) => {
   const energy = useMemo(() => downsampleSeries(energyData || []), [energyData]);
   // ✂ interrupted Y axis for the energy curves (potential vs kinetic differ a lot).
   const brkEnergy = brokenAxisProps(cfg, 'y', energy.flatMap((e) => [e.potential, e.kinetic, e.total]).map(Number), { min: cfg.yMin, max: cfg.yMax });
+  // Axis commands of the panel for the energy plot — same wiring as the four
+  // trajectory curves (decimals, tick step, Min/Max, log scale, sized numbers).
+  const energyFs = tickSize(cfg, 10);
+  const energyTimes = energy.map((e) => Number(e.time)).filter(Number.isFinite);
+  const energyXAxisProps = cfgNumericAxis(cfg, 'x', energyTimes.length
+    ? [Math.min(...energyTimes), Math.max(...energyTimes)] : [0, 1]);
+  const energyYAxisProps = mdYAxisProps(cfg, energy.flatMap((e) => [e.potential, e.kinetic, e.total]));
 
   return (
     <div className={`flex flex-col gap-4 ${isFs ? CHART_FS_CLASSES : ''}`}>
@@ -2618,19 +2693,36 @@ export const MDAnalysisSection = ({ ctx }) => {
             </div>
           )}
           <ChartInspector cfg={cfg} setCfg={setCfg}
-            series={[{ key: 'potential', label: 'Potential' }, { key: 'kinetic', label: 'Kinetic' }, { key: 'total', label: 'Total' }]}
+            series={[{ key: 'potential', label: 'Potential', color: '#ef4444' },
+              { key: 'kinetic', label: 'Kinetic', color: '#3b82f6' },
+              { key: 'total', label: 'Total', color: '#22c55e' }]}
             unit="kJ/mol" className="w-full" style={{ height: 250 }}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={energy} margin={cfgChartMargin({ ...cfg, fontSize: cfg.fontSize || 12 }, { top: 5, right: 10, bottom: 25, left: 10 })}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="time" tick={<AngledTick angle={cfg.tickAngle} fontSize={10} color={tickColorOf(cfg)} />} tickMargin={10} />
-                <YAxis {...brkEnergy.axisProps} tick={{ fontSize: 10 }} />
+                <XAxis dataKey="time" {...energyXAxisProps}
+                  tick={<AngledTick angle={cfg.tickAngle} fontSize={energyFs} fontFamily={fontFamilyOf(cfg)} color={tickColorOf(cfg)} formatter={cfgTickFormatter(cfg, 'x') || undefined} />}
+                  tickMargin={10} label={cfgAxisLabel({ ...cfg, fontSize: energyFs }, 'x', cfg.xAxisLabel || 'Time (ns)')} />
+                <YAxis {...(brkEnergy.on ? brkEnergy.axisProps : energyYAxisProps)}
+                  tick={tickTextProps(cfg, { fontSize: energyFs })}
+                  label={cfgAxisLabel({ ...cfg, fontSize: energyFs }, 'y', cfg.yAxisLabel || 'Energy (kJ/mol)')} />
                 <Tooltip />
                 {brkEnergy.marks}
-                <Legend verticalAlign="top" wrapperStyle={{ fontSize: 10 }} />
-                <Line type="monotone" dataKey="potential" stroke="#ef4444" strokeWidth={1.5} dot={false} isAnimationActive={false} />
-                <Line type="monotone" dataKey="kinetic" stroke="#3b82f6" strokeWidth={1.5} dot={false} isAnimationActive={false} />
-                <Line type="monotone" dataKey="total" stroke="#22c55e" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                {cfg.legend !== 'none' && (
+                  <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={legendTextStyle(cfg)} />
+                )}
+                <Line type="monotone" dataKey="potential" name={seriesLabelOf(cfg, 'potential', 'Potential')}
+                  stroke={seriesColorOf(cfg, 'potential', 0, 3, '#ef4444')}
+                  strokeWidth={seriesLineThickness(cfg, 'potential', 1.5)} strokeDasharray={seriesDash(cfg, 'potential')}
+                  hide={!seriesVisible(cfg, 'potential')} dot={false} isAnimationActive={false} />
+                <Line type="monotone" dataKey="kinetic" name={seriesLabelOf(cfg, 'kinetic', 'Kinetic')}
+                  stroke={seriesColorOf(cfg, 'kinetic', 1, 3, '#3b82f6')}
+                  strokeWidth={seriesLineThickness(cfg, 'kinetic', 1.5)} strokeDasharray={seriesDash(cfg, 'kinetic')}
+                  hide={!seriesVisible(cfg, 'kinetic')} dot={false} isAnimationActive={false} />
+                <Line type="monotone" dataKey="total" name={seriesLabelOf(cfg, 'total', 'Total')}
+                  stroke={seriesColorOf(cfg, 'total', 2, 3, '#22c55e')}
+                  strokeWidth={seriesLineThickness(cfg, 'total', 1.5)} strokeDasharray={seriesDash(cfg, 'total')}
+                  hide={!seriesVisible(cfg, 'total')} dot={false} isAnimationActive={false} />
               </LineChart>
             </ResponsiveContainer>
           </ChartInspector>
@@ -3005,15 +3097,17 @@ const MDContactChart = ({ rows, series, yLabel, cfg }) => {
                      interval={0} height={100} tick={{ fontSize, angle: -90, textAnchor: 'end' }}
                      label={cfgAxisLabel({ ...cfg, fontSize: fontSize + 1 }, 'x', cfg.xAxisLabel || 'Atom group', 70)} />
               <YAxis tick={tickTextProps(cfg, { fontSize: fontSize + 1 })} width={70}
-                     domain={[mdDom(cfg.yMin) ?? 0, mdDom(cfg.yMax) ?? (yMax || 1)]} allowDataOverflow
+                     {...cfgNumericAxis(cfg, 'y', [mdDom(cfg.yMin) ?? 0, mdDom(cfg.yMax) ?? (yMax || 1)])}
                      label={cfgAxisLabel({ ...cfg, fontSize: fontSize + 2 }, 'y', cfg.yAxisLabel || yLabel, 4)} />
               <Tooltip />
               {series.map((s, i) => {
                 const color = colorOf(s, i);
                 return (
                   <Line key={s.key} dataKey={s.key} stroke={color}
-                        strokeWidth={cfg.lineThickness || 2} strokeDasharray={mdLineDash(cfg.lineStyle)}
-                        dot={cfg.pointStyle === 'none' ? false : contactDot(s.symbol || cfg.pointStyle || 'circle', color)}
+                        strokeWidth={seriesLineThickness(cfg, s.key, cfg.lineThickness || 2)}
+                        strokeDasharray={seriesDash(cfg, s.key)}
+                        dot={seriesPointStyle(cfg, s.key) === 'none' ? false : contactDot(s.symbol || cfg.pointStyle || 'circle', color)}
+                        hide={!seriesVisible(cfg, s.key)}
                         isAnimationActive={false} />
                 );
               })}
@@ -3449,7 +3543,7 @@ const MDProfileChart = ({ rows, series, xKey, yLabel, xLabel, height = 380, rota
             <LineChart data={chartData} margin={effMargin}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               {numericX ? (
-                <XAxis dataKey={xKey} type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow tick={tickTextProps(cfg, { fontSize: fSize })}
+                <XAxis dataKey={xKey} {...cfgNumericAxis(cfg, 'x', zoom.domain)} tick={tickTextProps(cfg, { fontSize: fSize })}
                        label={cfgAxisLabel({ ...cfg, fontSize: fSize + 1 }, 'x', cfg.xAxisLabel || xLabel, 12)} />
               ) : (
                 <XAxis dataKey="__xi" type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow
@@ -3458,13 +3552,15 @@ const MDProfileChart = ({ rows, series, xKey, yLabel, xLabel, height = 380, rota
                        tick={{ fontSize: rotateX ? fSize - 1 : fSize, angle: rotateX ? -90 : 0, textAnchor: rotateX ? 'end' : 'middle' }} />
               )}
               <YAxis tick={tickTextProps(cfg, { fontSize: fSize + 1 })} width={70}
-                     domain={[mdDom(cfg.yMin) ?? 'auto', mdDom(cfg.yMax) ?? 'auto']}
+                     {...mdYAxisProps(cfg, series.flatMap((s) => rows.map((r) => r[s.key])))}
                      label={cfgAxisLabel({ ...cfg, fontSize: fSize + 2 }, 'y', cfg.yAxisLabel || yLabel, 4)} />
               <Tooltip />
               {series.map((s, i) => (
                 <Line key={s.key} dataKey={s.key} stroke={colorOf(s, i)}
-                      strokeWidth={cfg.lineThickness || 2} strokeDasharray={mdLineDash(cfg.lineStyle)}
-                      dot={rotateX ? { r: cfg.ptSize || 2.5, strokeWidth: 0 } : false} connectNulls isAnimationActive={false} />
+                      strokeWidth={seriesLineThickness(cfg, s.key, cfg.lineThickness || 2)}
+                      strokeDasharray={seriesDash(cfg, s.key)}
+                      dot={rotateX ? { r: seriesPtSize(cfg, s.key, cfg.ptSize || 2.5), strokeWidth: 0 } : false}
+                      hide={!seriesVisible(cfg, s.key)} connectNulls isAnimationActive={false} />
               ))}
               {zoom.refLo !== null && zoom.refHi !== null && (
                 <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />
@@ -4418,17 +4514,21 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
                 <ResponsiveContainer width="100%" height={contentH}>
                   <LineChart data={contentData.rows} margin={contentMargin}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="x" type="number" domain={[contentZoom.domain[0], contentZoom.domain[1]]} allowDataOverflow tick={{ fontSize: dsspCfg.fontSize || 10 }}
+                  <XAxis dataKey="x" {...cfgNumericAxis(dsspCfg, 'x', contentZoom.domain)} tick={tickTextProps(dsspCfg, { fontSize: dsspCfg.fontSize || 10 })}
                          label={cfgAxisLabel({ ...dsspCfg, fontSize: (dsspCfg.fontSize || 10) + 1 }, 'x', dsspCfg.xAxisLabel || (outputs[0].result.xUnit === 'ns' ? 'Time (ns)' : 'Frame'), 12)} />
-                  <YAxis tick={{ fontSize: (dsspCfg.fontSize || 10) + 1 }} width={70} unit="%"
-                         domain={[mdDom(dsspCfg.yMin) ?? 'auto', mdDom(dsspCfg.yMax) ?? 'auto']}
+                  <YAxis tick={tickTextProps(dsspCfg, { fontSize: (dsspCfg.fontSize || 10) + 1 })} width={70} unit="%"
+                         {...mdYAxisProps(dsspCfg, contentData.series.flatMap((s) => contentData.rows.map((r) => r[s.key])))}
                          label={cfgAxisLabel({ ...dsspCfg, fontSize: (dsspCfg.fontSize || 10) + 2 }, 'y', dsspCfg.yAxisLabel || 'Residues (%)', 4)} />
                   <Tooltip />
-                  {dsspCfg.legend !== 'none' && <Legend verticalAlign={dsspCfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: (dsspCfg.fontSize || 10) }} />}
+                  {dsspCfg.legend !== 'none' && (
+                    <Legend verticalAlign={dsspCfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={legendTextStyle(dsspCfg)} />
+                  )}
                   {contentData.series.map((s, i) => (
-                    <Line key={s.key} dataKey={s.key}
-                          stroke={(dsspCfg.colors && dsspCfg.colors[s.key]) || contentColor(s.key, i)}
-                          strokeWidth={dsspCfg.lineThickness || 2} strokeDasharray={mdLineDash(dsspCfg.lineStyle)}
+                    <Line key={s.key} dataKey={s.key} name={seriesLabelOf(dsspCfg, s.key, s.label)}
+                          stroke={seriesColorOf(dsspCfg, s.key, i, contentData.series.length, contentColor(s.key, i))}
+                          strokeWidth={seriesLineThickness(dsspCfg, s.key, dsspCfg.lineThickness || 2)}
+                          strokeDasharray={seriesDash(dsspCfg, s.key)}
+                          hide={!seriesVisible(dsspCfg, s.key)}
                           dot={false} connectNulls isAnimationActive={false} />
                   ))}
                   {contentZoom.refLo !== null && contentZoom.refHi !== null && (
@@ -4515,12 +4615,15 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
                     <XAxis dataKey="__xi" type="number" domain={[occZoom.domain[0], occZoom.domain[1]]} allowDataOverflow
                            ticks={occTicks} tickFormatter={(v) => { const r = occRowsWithXi[Math.round(v)]; return r ? r.label : ''; }}
                            interval={0} height={80} tick={{ fontSize: dsspCfg.fontSize || 8, angle: -90, textAnchor: 'end' }} />
-                    <YAxis tick={{ fontSize: (dsspCfg.fontSize || 10) + 1 }} width={70} unit="%" domain={[0, 100]} />
+                    <YAxis tick={tickTextProps(dsspCfg, { fontSize: (dsspCfg.fontSize || 10) + 1 })} width={70} unit="%"
+                           {...cfgNumericAxis(dsspCfg, 'y', [mdDom(dsspCfg.yMin) ?? 0, mdDom(dsspCfg.yMax) ?? 100])} />
                     <Tooltip />
-                    {dsspCfg.legend !== 'none' && <Legend verticalAlign={dsspCfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: (dsspCfg.fontSize || 10) }} />}
-                    <Bar dataKey="alpha" stackId="ss" fill={(dsspCfg.colors && dsspCfg.colors.alpha) || SS_GROUP_COLORS.alpha} name="α-helix" isAnimationActive={false} />
-                    <Bar dataKey="beta" stackId="ss" fill={(dsspCfg.colors && dsspCfg.colors.beta) || SS_GROUP_COLORS.beta} name="β-sheet" isAnimationActive={false} />
-                    <Bar dataKey="other" stackId="ss" fill={(dsspCfg.colors && dsspCfg.colors.other) || '#e5e7eb'} name="coil/other" isAnimationActive={false} />
+                    {dsspCfg.legend !== 'none' && (
+                      <Legend verticalAlign={dsspCfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={legendTextStyle(dsspCfg)} />
+                    )}
+                    <Bar dataKey="alpha" stackId="ss" fill={seriesColorOf(dsspCfg, 'alpha', 0, 3, SS_GROUP_COLORS.alpha)} name="α-helix" isAnimationActive={false} />
+                    <Bar dataKey="beta" stackId="ss" fill={seriesColorOf(dsspCfg, 'beta', 1, 3, SS_GROUP_COLORS.beta)} name="β-sheet" isAnimationActive={false} />
+                    <Bar dataKey="other" stackId="ss" fill={seriesColorOf(dsspCfg, 'other', 2, 3, '#e5e7eb')} name="coil/other" isAnimationActive={false} />
                     {occZoom.refLo !== null && occZoom.refHi !== null && (
                       <ReferenceArea x1={occZoom.refLo} x2={occZoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />
                     )}

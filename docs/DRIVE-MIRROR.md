@@ -1290,3 +1290,49 @@ copie Drive, rien du `localStorage`), l'ordre « relire **avant** de re-monter �
 conservée et la note (busy / succès / échec orange) ; `node _ui_scale_test.cjs` —
 le bouton, son entonnoir et la confirmation « ✓ page refreshed ».
 
+## Un dataset créé sur un poste manquait à la liste des AUTRES (20/09/2026)
+
+Signalé le 20/09/2026 : *« une expérience DOSY créée sur un PC est absente dans la
+fenêtre de navigation privée ; l'expérience **et ses données** doivent être
+visibles indépendamment du poste. »* À l'examen, ce n'est pas seulement
+l'expérience qui manquait : **le dataset entier** était absent de la liste.
+
+Trois trous, tous sur la LISTE (le CONTENU, lui, avait déjà ses deux copies) :
+
+* `lab_datasets_local_v2` n'était écrit QUE par le mode « sans Firestore », alors
+  qu'`App.jsx` le **relit** toujours (au démarrage, et quand Firestore ne répond
+  pas) : une fenêtre neuve n'avait donc rien à lire ;
+* une écriture Firestore peut être acquittée **localement** (le SDK « compat »
+  garde ses écritures en attente jusqu'à la synchronisation) ou refusée (session
+  expirée) : le dataset créé n'existait alors que pour ce poste, et `newDataset`
+  ne le disait pas — la barre latérale annonçait « Cloud Sync » ;
+* `_workspace/state.json` n'était écrit qu'après 2,5 s de calme et **n'était pas
+  vidé** à la fermeture de l'onglet (la copie du contenu, elle, l'était) : un
+  dataset créé juste avant de fermer n'entrait jamais dans l'index partagé.
+
+Désormais (`src/utils/datasetListIndex.js`, `App.jsx`, `workspaceDrive.js`) :
+
+* la liste a **sa propre copie** dans le navigateur, écrite à CHAQUE changement,
+  en mode Firestore aussi. C'est un **index** (jamais `payload` : sinon
+  `keys.json` dépasse son plafond de 8 Mo et son écriture est refusée EN BLOC,
+  donc plus rien ne voyage). Seule exception : le mode sans Firestore, où cette
+  liste **est** le contenu (`{ keepContent: !db }`) ;
+* elle voyage par `_workspace/keys.json` et y est fusionnée **par contenu**
+  (union par identifiant, la fiche la plus récente gagne) : le « [] » d'un
+  navigateur neuf ne peut plus effacer la liste des autres postes — même règle
+  que les bibliothèques de figures ;
+* après `adoptKeysFromDrive`, la liste adoptée est **relue** et complétée dans la
+  liste affichée (comme `refreshLibraryFromStorage()` pour les images) ;
+* la création d'un dataset inscrit sa fiche **tout de suite** (liste + copie du
+  navigateur) et **vérifie** que le serveur l'a reçue (`waitForPendingWrites`) :
+  sans confirmation, la barre latérale le DIT au lieu de laisser croire que tout
+  est dans le cloud ;
+* l'index du Drive est vidé sur `pagehide` et au passage en arrière-plan.
+
+*Vérifier :* `node _dataset_index_test.mjs` — l'index sans contenu, l'union qui
+n'oublie jamais un dataset (ni n'efface la liste partagée), le fusionneur
+enregistré pour `lab_datasets_local_v2`, la copie écrite à chaque changement, le
+vidage de `state.json` à la fermeture, et le câblage réel dans `App.jsx` ;
+`node _workspace_drive_test.mjs` — l'index du Drive complète toujours la liste du
+poste.
+

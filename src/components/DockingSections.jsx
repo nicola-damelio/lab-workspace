@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, ScatterChart, Scatter} from 'recharts';
-import {ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps, cfgAxisLabel, cfgChartMargin} from './SharedAnalysisTools';
+import {ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps, cfgAxisLabel, cfgChartMargin, cfgTickFormatter, cfgLogScale} from './SharedAnalysisTools';
 import { Icon } from './Icons';
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
@@ -11,7 +11,7 @@ import { useDriveAutoRestore } from './useDriveAutoRestore';
 import { gunzipSync } from 'fflate';
 // One character size per element + the font family of the shared figure style
 // (the axis numbers keep riding on cfg.fontSize, see utils/chartStyle.js).
-import { tickTextProps } from '../utils/chartStyle';
+import { tickTextProps, legendTextStyle, seriesColorFor } from '../utils/chartStyle';
 
 /* ── RESTAURATION AUTOMATIQUE DES STRUCTURES DOCKING DEPUIS LE DRIVE ────────
    (mécanisme général : src/utils/driveRestore.js + useDriveAutoRestore.js)
@@ -56,7 +56,7 @@ const archiveDockingData = async ({
 );
 
 import NMRMoleculeViewer from './NMRMoleculeViewer';
-import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, posesFromCapri, CAPRI_METRIC_SYNONYMS, normMetricColumn, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, DOCK_CHART_MARGIN} from './DockingData';
+import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, posesFromCapri, CAPRI_METRIC_SYNONYMS, normMetricColumn, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, dockDom, DOCK_CHART_MARGIN, dockingMetricOf, poseBindingEnergy, poseDeviation, HADDOCK_SCORE_TERM_KEYS, haddockScoreTerms} from './DockingData';
 
 
 /* ============================================================================
@@ -1111,15 +1111,31 @@ export const DockingDataSection = ({ ctx }) => {
 
   const bestPose = d.poses.length ? d.poses.reduce((a, b) => (a.affinity < b.affinity ? a : b)) : null;
 
+  const program = activeTest.dockingProgram || 'vina';
+  // Le libellé / l'unité du score DEPENDENT du programme : « Affinity (kcal/mol) »
+  // pour Vina / AutoDock, « HADDOCK score (a.u.) » pour HADDOCK.
+  const scoreMetric = dockingMetricOf(DOCKING_METRICS.find((m) => m.key === 'affinity'), program);
+  /* Les colonnes du tableau : ce que les poses portent DÉJÀ, plus — pour le
+     programme actif — les grandeurs qu'il produit, même absentes de l'import
+     (la colonne, son UNITÉ et la cellule éditable sont alors visibles : c'est
+     ainsi qu'on saisit les valeurs d'un terme que le fichier n'avait pas). */
   const metricCols = DOCKING_METRICS.filter((m) =>
-    d.poses.some((p) => p[m.key] !== undefined && p[m.key] !== null)
-  );
+    (Array.isArray(m.programs) && m.programs.includes(program))
+    || d.poses.some((p) => p[m.key] !== undefined && p[m.key] !== null)
+  ).map((m) => dockingMetricOf(m, program));
 
   // CAPRI columns that are NOT shown as a mapped metric still appear in the
   // results table (e.g. irmsd, fnat, dockq, cluster_id, energy components…).
-  const capriMetricMapKeys = new Set(['score', 'lrmsd', 'ilrmsd', 'total', 'air', 'desolv', 'elec', 'vdw', 'bsa']);
+  // La liste des colonnes DÉJÀ ramenées sur une métrique est déduite des
+  // synonymes : une colonne reconnue ne s'affiche pas deux fois (une fois
+  // éditable, une fois brute).
+  const capriMetricMapKeys = new Set([
+    ...Object.keys(CAPRI_METRIC_SYNONYMS),
+    ...Object.values(CAPRI_METRIC_SYNONYMS).flat(),
+    ...DOCKING_METRICS.map((m) => m.key)
+  ]);
   const capriExtraCols = (activeTest.dockingCapri && activeTest.dockingCapri.columns || []).filter(
-    (c) => !capriMetricMapKeys.has(c) && !DOCKING_METRICS.some((m) => m.key === c)
+    (c) => !capriMetricMapKeys.has(normMetricColumn(c))
   );
 
   return (
@@ -1135,7 +1151,7 @@ export const DockingDataSection = ({ ctx }) => {
         </span>
         {bestPose && (
           <span className="text-[10px] font-bold bg-green-100 border border-green-300 text-green-800 px-2 py-0.5 rounded-full">
-            Best: {bestPose.affinity} {d.programInfo.energyUnit}
+            Best {scoreMetric.label}: {bestPose.affinity}{scoreMetric.unit ? ` ${scoreMetric.unit}` : ''}
           </span>
         )}
         <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -1314,18 +1330,33 @@ export const DockingAnalysisSection = ({ ctx }) => {
     return merged;
   });
 
+  const rowEnergy = (p) => poseBindingEnergy(p, d.dockingProgram);
+
+  /* ── CE QUE TRACENT LES GRAPHIQUES ──────────────────────────────────────────
+     Le graphique d'affinité trace l'ÉNERGIE DE LIAISON en kcal/mol : le terme
+     « total » du score HADDOCK quand il existe, l'affinité pour Vina / AutoDock.
+     Le SCORE HADDOCK (a.u.) — la colonne « HADDOCK score » du tableau — n'est
+     JAMAIS tracé sur un axe en kcal/mol : deux grandeurs qui ne se comparent
+     pas. Une valeur absente ne devient pas un 0 : elle sort du graphique (et la
+     légende dit quoi importer / saisir). */
+  const affinityUnit = isHADDOCK ? 'kcal/mol' : unit;
   const affinityData = rows.map((p, i) => ({
     mode: p.mode ?? i + 1,
-    affinity: parseDockingValue(p.affinity) ?? 0
-  }));
+    affinity: rowEnergy(p)
+  })).filter((r) => r.affinity !== null);
+  const missingEnergy = rows.length > 0 && affinityData.length === 0;
 
+  // Nuage « RMSD vs énergie » : l'abscisse est l'écart à la référence (l-RMSD de
+  // CAPRI, sinon les bornes de Vina / AutoDock, l'i-RMSD / l'i-l-RMSD / le RMSD),
+  // l'ordonnée l'énergie de liaison. Une pose à qui il manque l'un des deux ne
+  // peut pas être un point.
   const rmsdData = rows
-    .filter((p) => parseDockingValue(p.rmsd_lb) !== null || parseDockingValue(p.rmsd) !== null)
     .map((p, i) => ({
       mode: p.mode ?? i + 1,
-      affinity: parseDockingValue(p.affinity) ?? 0,
-      rmsd: parseDockingValue(p.rmsd_lb) ?? parseDockingValue(p.rmsd) ?? 0
-    }));
+      affinity: rowEnergy(p),
+      rmsd: poseDeviation(p)
+    }))
+    .filter((r) => r.affinity !== null && r.rmsd !== null);
 
   const energyBreakdownData = rows.slice(0, 10).map((p, i) => ({
     mode: p.mode ?? i + 1,
@@ -1334,9 +1365,22 @@ export const DockingAnalysisSection = ({ ctx }) => {
     torsional: parseDockingValue(p.energy_torsional) ?? 0,
     desolv: parseDockingValue(p.energy_desolv) ?? 0
   }));
+  const hasBreakdown = rows.some((p) => ['energy_vdw', 'energy_elec', 'energy_torsional', 'energy_desolv']
+    .some((k) => parseDockingValue(p[k]) !== null));
+
+  // « HADDOCK score terms » : UNE SÉRIE PAR TERME PRÉSENT dans le tableau
+  // (kcal/mol), jamais une barre à 0 pour une colonne que l'import n'avait pas.
+  const termDefs = HADDOCK_SCORE_TERM_KEYS.concat(['energy_total'])
+    .filter((k) => rows.some((p) => parseDockingValue(p[k]) !== null))
+    .map((k) => dockingMetricOf(DOCKING_METRICS.find((m) => m.key === k), d.dockingProgram))
+    .filter((m) => m && m.key);
+  const termRows = rows.slice(0, 15).map((p, i) => ({
+    mode: p.mode ?? i + 1,
+    ...haddockScoreTerms(p)
+  }));
 
   const dockSeries = [
-    { key: 'affinity', label: `Affinity (${unit})` },
+    { key: 'affinity', label: `Affinity (${affinityUnit})` },
     { key: 'vdW', label: 'vdW / Hbond / desolv' },
     { key: 'elec', label: 'Electrostatic' },
     { key: 'torsional', label: 'Torsional' },
@@ -1358,41 +1402,61 @@ export const DockingAnalysisSection = ({ ctx }) => {
       {showCfg && <SharedChartStylePanel cfg={cfg} setCfg={setCfg} series={[]} />}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* Affinity bar chart */}
-        <CollapsibleSection title={`Binding Affinity per Pose (${unit})`} icon="📊" defaultOpen={false}>
-          <ChartInspector cfg={cfg} setCfg={setCfg} series={dockSeries} unit={unit} style={dockChartBoxStyle(cfg)}>
+        {/* Affinity bar chart — l'ÉNERGIE DE LIAISON (kcal/mol) */}
+        <CollapsibleSection title={`Binding Energy per Pose (${affinityUnit})`} icon="📊" defaultOpen={false}>
+          <ChartInspector cfg={cfg} setCfg={setCfg} series={dockSeries} unit={affinityUnit} style={dockChartBoxStyle(cfg)}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={affinityData} margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="mode" tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'x', 'Mode / Pose', 10)} />
-                <YAxis {...brkAff.axisProps} tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'y', unit, 0)} />
+                <XAxis dataKey="mode" tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'x', cfg.xAxisLabel || 'Mode / Pose', 10)} />
+                <YAxis {...(brkAff.on ? brkAff.axisProps : {})} tick={tickTextProps(cfg)}
+                  domain={brkAff.on ? undefined : [(dockDom(cfg.yMin) ?? 'auto'), (dockDom(cfg.yMax) ?? 'auto')]}
+                  tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} scale={cfgLogScale(cfg, 'y')}
+                  label={cfgAxisLabel(cfg, 'y', cfg.yAxisLabel || affinityUnit, 0)} />
                 <Tooltip />
                 {brkAff.marks}
-                <Bar dataKey="affinity" name={`Affinity (${unit})`} radius={[3, 3, 0, 0]}>
+                <Bar dataKey="affinity" name={`Binding energy (${affinityUnit})`} radius={cfg.barRadius ? [cfg.barRadius, cfg.barRadius, 0, 0] : 0}>
                   {affinityData.map((entry, i) => (
-                    <Cell key={i} fill={i === 0 ? '#16a34a' : '#3b82f6'} />
+                    <Cell key={i} fill={seriesColorFor(cfg, `pose-${entry.mode}`, i, affinityData.length)} />
                   ))}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
           </ChartInspector>
+          {missingEnergy && (
+            <p className="text-xs text-slate-400 italic text-center mt-2">
+              No total energy in the results table: for HADDOCK this graph plots the <b>total</b> energy
+              (kcal/mol), not the score (a.u.). Import the HADDOCK score file — it carries
+              vdW / elec / desolv / air / total — or type the values in the <b>Total energy</b> column above.
+            </p>
+          )}
         </CollapsibleSection>
 
-        {/* Affinity vs RMSD scatter */}
-        <CollapsibleSection title="Affinity vs. RMSD" icon="🎯" defaultOpen={false}>
-          <ChartInspector containerRef={scatterRef} cfg={cfg} setCfg={setCfg} series={dockSeries} unit={unit} style={dockChartBoxStyle(cfg)} className="select-none relative">
+        {/* Binding energy vs RMSD scatter */}
+        <CollapsibleSection title="Energy vs. RMSD" icon="🎯" defaultOpen={false}>
+          <ChartInspector containerRef={scatterRef} cfg={cfg} setCfg={setCfg} series={dockSeries} unit={affinityUnit} style={dockChartBoxStyle(cfg)} className="select-none relative">
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis type="number" dataKey="rmsd" name="RMSD" tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'x', 'RMSD from best (Å)', 10)} />
-                <YAxis type="number" dataKey="affinity" name="Affinity" tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'y', unit, 0)} />
+                <XAxis type="number" dataKey="rmsd" name="RMSD" tick={tickTextProps(cfg)}
+                  domain={[(dockDom(cfg.xMin) ?? 'auto'), (dockDom(cfg.xMax) ?? 'auto')]}
+                  tickFormatter={cfgTickFormatter(cfg, 'x') || undefined} scale={cfgLogScale(cfg, 'x')}
+                  label={cfgAxisLabel(cfg, 'x', cfg.xAxisLabel || 'RMSD from the reference (Å)', 10)} />
+                <YAxis type="number" dataKey="affinity" name="Energy" tick={tickTextProps(cfg)}
+                  domain={[(dockDom(cfg.yMin) ?? 'auto'), (dockDom(cfg.yMax) ?? 'auto')]}
+                  tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} scale={cfgLogScale(cfg, 'y')}
+                  label={cfgAxisLabel(cfg, 'y', cfg.yAxisLabel || affinityUnit, 0)} />
                 <Tooltip cursor={{ strokeDasharray: '3 3' }} />
-                <Scatter data={rmsdData} fill="#8b5cf6" />
+                <Scatter data={rmsdData} fill={seriesColorFor(cfg, 'scatter', 0, 1)} />
               </ScatterChart>
             </ResponsiveContainer>
           </ChartInspector>
           {rmsdData.length === 0 && (
-            <p className="text-xs text-slate-400 italic text-center mt-2">No RMSD data available for these poses.</p>
+            <p className="text-xs text-slate-400 italic text-center mt-2">
+              {missingEnergy
+                ? 'No total energy in the results table: the Y axis is the binding energy (kcal/mol) — see the note under “Binding Energy per Pose”.'
+                : 'No RMSD in the results table: import the CAPRI file (l-RMSD / i-RMSD / i-l-RMSD / RMSD) or type a value in a RMSD column above.'}
+            </p>
           )}
         </CollapsibleSection>
 
@@ -1402,43 +1466,61 @@ export const DockingAnalysisSection = ({ ctx }) => {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={energyBreakdownData} margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="mode" tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'x', 'Mode / Pose', 10)} />
-                <YAxis tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'y', unit, 0)} />
+                <XAxis dataKey="mode" tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'x', cfg.xAxisLabel || 'Mode / Pose', 10)} />
+                <YAxis tick={tickTextProps(cfg)}
+                  domain={[(dockDom(cfg.yMin) ?? 'auto'), (dockDom(cfg.yMax) ?? 'auto')]}
+                  tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} scale={cfgLogScale(cfg, 'y')}
+                  label={cfgAxisLabel(cfg, 'y', cfg.yAxisLabel || 'kcal/mol', 0)} />
                 <Tooltip />
-                <Legend />
-                <Bar dataKey="vdW" stackId="e" fill="#3b82f6" name="vdW / Hbond / desolv" />
-                <Bar dataKey="elec" stackId="e" fill="#ef4444" name="Electrostatic" />
-                <Bar dataKey="torsional" stackId="e" fill="#f59e0b" name="Torsional" />
-                <Bar dataKey="desolv" stackId="e" fill="#14b8a6" name="Desolvation" />
+                {cfg.legend !== 'none' && (
+                  <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={legendTextStyle(cfg)} />
+                )}
+                <Bar dataKey="vdW" stackId="e" fill={seriesColorFor(cfg, 'vdW', 0, 4)} name="vdW / Hbond / desolv" isAnimationActive={false} />
+                <Bar dataKey="elec" stackId="e" fill={seriesColorFor(cfg, 'elec', 1, 4)} name="Electrostatic" isAnimationActive={false} />
+                <Bar dataKey="torsional" stackId="e" fill={seriesColorFor(cfg, 'torsional', 2, 4)} name="Torsional" isAnimationActive={false} />
+                <Bar dataKey="desolv" stackId="e" fill={seriesColorFor(cfg, 'desolv', 3, 4)} name="Desolvation" isAnimationActive={false} />
               </BarChart>
             </ResponsiveContainer>
           </ChartInspector>
+          {!hasBreakdown && (
+            <p className="text-xs text-slate-400 italic text-center mt-2">
+              No energy component in the results table yet (vdW / elec / desolv / torsional, all in kcal/mol).
+            </p>
+          )}
         </CollapsibleSection>
 
-        {/* HADDOCK-specific score terms */}
+        {/* HADDOCK-specific score terms — UNE barre par terme PRÉSENT */}
         {isHADDOCK && (
           <CollapsibleSection title="HADDOCK Score Terms" icon="🧮" defaultOpen={false}>
-            <ChartInspector cfg={cfg} setCfg={setCfg} series={dockSeries} unit={unit} style={dockChartBoxStyle(cfg)}>
+            <ChartInspector cfg={cfg} setCfg={setCfg}
+              series={termDefs.map((m) => ({ key: m.key, label: m.label }))}
+              unit="kcal/mol" style={dockChartBoxStyle(cfg)}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={rows.slice(0, 15).map((p, i) => ({
-                  mode: p.mode ?? i + 1,
-                  AIR: parseDockingValue(p.energy_air) ?? 0,
-                  BSA: (parseDockingValue(p.bsa) ?? 0) / 100,
-                  vdW: parseDockingValue(p.energy_vdw) ?? 0,
-                  Elec: parseDockingValue(p.energy_elec) ?? 0
-                }))} margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
+                <BarChart data={termRows} margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="mode" tick={tickTextProps(cfg)} />
-                  <YAxis tick={tickTextProps(cfg)} />
+                  <XAxis dataKey="mode" tick={tickTextProps(cfg)} label={cfgAxisLabel(cfg, 'x', cfg.xAxisLabel || 'Mode / Pose', 10)} />
+                  <YAxis tick={tickTextProps(cfg)}
+                    domain={[(dockDom(cfg.yMin) ?? 'auto'), (dockDom(cfg.yMax) ?? 'auto')]}
+                    tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} scale={cfgLogScale(cfg, 'y')}
+                    label={cfgAxisLabel(cfg, 'y', cfg.yAxisLabel || 'kcal/mol', 0)} />
                   <Tooltip />
-                  <Legend />
-                  <Bar dataKey="AIR" fill="#8b5cf6" />
-                  <Bar dataKey="vdW" fill="#3b82f6" />
-                  <Bar dataKey="Elec" fill="#ef4444" />
-                  <Bar dataKey="BSA" fill="#22c55e" />
+                  {cfg.legend !== 'none' && (
+                    <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={legendTextStyle(cfg)} />
+                  )}
+                  {termDefs.map((m, i) => (
+                    <Bar key={m.key} dataKey={m.key} name={m.label}
+                      fill={seriesColorFor(cfg, m.key, i, termDefs.length)} isAnimationActive={false} />
+                  ))}
                 </BarChart>
               </ResponsiveContainer>
             </ChartInspector>
+            {termDefs.length === 0 && (
+              <p className="text-xs text-slate-400 italic text-center mt-2">
+                No HADDOCK score term in the results table: import the HADDOCK score file — it carries
+                vdW / elec / desolv / air / total (and the restraint terms) in kcal/mol — or type them in
+                the matching columns of the table above.
+              </p>
+            )}
           </CollapsibleSection>
         )}
       </div>
@@ -1538,13 +1620,22 @@ export const NotebookExtra = ({ ctx, checkId }) => {
     return `${elementsToSVG(d.structure, 300)}`;
   }
   if (checkId === 'table' && d.poses.length) {
+    // Le tableau du Lab Notebook suit le programme : le score HADDOCK est en
+    // unités arbitraires, et sa déviation de référence est le l-RMSD (Å) — pas la
+    // « borne inférieure » d'un amarrage Vina.
+    const nbProgram = activeTest.dockingProgram || 'vina';
+    const nbScore = dockingMetricOf(DOCKING_METRICS.find((m) => m.key === 'affinity'), nbProgram);
+    const nbDev = nbProgram === 'haddock'
+      ? dockingMetricOf(DOCKING_METRICS.find((m) => m.key === 'lrmsd'), nbProgram)
+      : dockingMetricOf(DOCKING_METRICS.find((m) => m.key === 'rmsd_lb'), nbProgram);
+    const th = (t) => `<th style="padding:6px;border:1px solid #cbd5e1;">${t}</th>`;
     let html = `<table style="width:100%;border-collapse:collapse;margin-top:10px;font-size:11px;text-align:left;background:white;">
-      <tr style="background-color:#f1f5f9;"><th style="padding:6px;border:1px solid #cbd5e1;">Mode</th><th style="padding:6px;border:1px solid #cbd5e1;">Affinity</th><th style="padding:6px;border:1px solid #cbd5e1;">RMSD l.b.</th></tr>`;
+      <tr style="background-color:#f1f5f9;">${th('Mode')}${th(`${nbScore.label}${nbScore.unit ? ` (${nbScore.unit})` : ''}`)}${th(`${nbDev.label}${nbDev.unit ? ` (${nbDev.unit})` : ''}`)}</tr>`;
     d.poses.forEach((p) => {
       html += `<tr>
         <td style="padding:6px;border:1px solid #e2e8f0;"><b>${p.mode}</b></td>
         <td style="padding:6px;border:1px solid #e2e8f0;">${p.affinity ?? ''}</td>
-        <td style="padding:6px;border:1px solid #e2e8f0;">${p.rmsd_lb ?? ''}</td>
+        <td style="padding:6px;border:1px solid #e2e8f0;">${p[nbDev.key] ?? p.rmsd_lb ?? ''}</td>
       </tr>`;
     });
     html += '</table>';

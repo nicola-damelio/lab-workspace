@@ -174,13 +174,17 @@ export const SharedGraphConfig = ({
 // ─────────────────────────────────────────────────────────────────────────────
 // SHARED ERROR TREATMENT
 // ─────────────────────────────────────────────────────────────────────────────
-export const SharedErrorTreatment = ({ activeTest, updateActiveTest, showFitToggle = true, customActions }) => {
+/* `showFixedSD` — pages that carry their own error-bar mode selector (DOSY:
+   None / Fixed / Std. deviation / Touch curve) hide the generic "Fixed SD +"
+   block so the same option is never offered twice, once of them doing nothing. */
+export const SharedErrorTreatment = ({ activeTest, updateActiveTest, showFitToggle = true, showFixedSD = true, customActions }) => {
     const { useFixedSD, fixedSDStr, outlierThreshStr, fitIC50, showExcl } = activeTest;
 
     return (
         <div className="border border-slate-200 bg-slate-50 rounded-lg p-4 flex flex-col gap-3 flex-[2] min-w-[350px]">
             <div className="text-[10px] uppercase font-bold text-slate-500">Errors, Outliers &amp; Fitting</div>
             <div className="flex flex-wrap items-center gap-4 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+                {showFixedSD && (
                 <div className="flex items-center gap-2">
                     <label className="text-xs font-bold text-slate-700 flex items-center gap-2 cursor-pointer hover:text-blue-600">
                         <input type="checkbox" checked={useFixedSD || false}
@@ -195,7 +199,8 @@ export const SharedErrorTreatment = ({ activeTest, updateActiveTest, showFitTogg
                         className={`border border-slate-300 rounded-md p-1.5 w-16 text-xs outline-none focus:border-blue-500 ${!useFixedSD ? 'bg-slate-100 text-slate-400' : 'bg-white font-bold text-blue-700'}`}
                     />
                 </div>
-                {customActions && (<><div className="w-px h-8 bg-slate-200 hidden sm:block"></div>{customActions}</>)}
+                )}
+                {customActions && (<>{showFixedSD && <div className="w-px h-8 bg-slate-200 hidden sm:block"></div>}{customActions}</>)}
                 <div className="w-px h-8 bg-slate-200 hidden md:block"></div>
                 <div className="flex items-center gap-2">
                     <label className="text-xs font-bold text-slate-600">Outlier Threshold (xErr):</label>
@@ -2167,6 +2172,52 @@ export const cfgAxisDomain = (cfg = {}, axis = 'x', fallback = [0, 1]) => {
   if (log && !(Number.isFinite(hi) && hi > 0)) hi = 1;
   if (log && !(Number.isFinite(lo) && lo > 0)) lo = Math.max(1e-9, hi * 1e-3);
   return [lo, hi];
+};
+
+/**
+ * Recharts props of a NUMERIC axis, wired to the 🎨 Graphical Parameters panel
+ * (and to its double-click editor): the X / Y Min-Max typed by the user, the
+ * tick interval, the number format (number of decimals, exponential notation)
+ * and the log scale.
+ *
+ *   <XAxis {...cfgNumericAxis(cfg, 'x', zoom.domain)} tick={…} label={…} />
+ *   <YAxis {...cfgNumericAxis(cfg, 'y', [yMin, yMax])} tick={…} label={…} />
+ *
+ * It is the numeric-axis twin of cfgAxisDomain / cfgAxisTicks / cfgTickFormatter
+ * / cfgLogScale — the four helpers every chart body calls one by one. A chart
+ * that forgets one of them (the MD trajectory charts used to forget all four)
+ * silently ignored the matching command: the number of decimals or the Min/Max
+ * typed in the panel changed nothing, which is exactly what a user reports as
+ * "some commands do not respond".
+ *
+ * `fallback` is the domain the chart computed itself (its drag-to-zoom range,
+ * the data extent): it is used whenever the panel asks for nothing. Pass a
+ * non-array (or nothing) to leave the domain to recharts — the helper then only
+ * carries the scale, the number format and the tick step.
+ *
+ * opts.ticks             the tick values the chart computed itself (band axis of
+ *                        a zoomed chart…): `undefined` = compute them here
+ * opts.formatter         the formatter the chart already owns ('' = none)
+ * opts.allowDataOverflow (default true) — keep the drag-to-zoom clipping
+ * opts.scale             a scale the chart imposes (a broken / custom axis)
+ */
+export const cfgNumericAxis = (cfg = {}, axis = 'x', fallback, opts = {}) => {
+    const formatter = opts.formatter !== undefined ? opts.formatter : cfgTickFormatter(cfg, axis);
+    const base = {
+        type: 'number',
+        allowDataOverflow: opts.allowDataOverflow !== false,
+        scale: opts.scale || cfgLogScale(cfg, axis),
+        ...(formatter ? { tickFormatter: formatter } : {})
+    };
+    // No concrete fallback → the chart keeps the domain it used to have ('auto').
+    if (!Array.isArray(fallback)) return base;
+    const domain = cfgAxisDomain(cfg, axis, fallback);
+    const ticks = opts.ticks !== undefined ? opts.ticks : cfgAxisTicks(cfg, axis, domain);
+    return {
+        ...base,
+        domain,
+        ...(ticks && ticks.length ? { ticks } : {})
+    };
 };
 
 /**

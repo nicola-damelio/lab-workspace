@@ -1,0 +1,8 @@
+﻿
+BAD _compact_sections_test.mjs ΓåÆ 
+AssertionError [ERR_ASSERTION]: la colonne 
+┬½ lrmsd ┬╗ alimente RMSD l.b. (nuage 
+Affinity vs RMSD)
+total 105, failed 1
+
+

@@ -22,7 +22,7 @@ import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
 import { makeTable, stokesEinsteinD, radiusFromMW, GAMMA_H } from './NMRFittingsTestRenderer';
 import { enableCellClipboard, cellAttrs } from '../utils/cellClipboard';
 import { ChartPanel, SharedErrorTreatment, SharedChartStylePanel, ChartJsInspector, cfgTickFormatter } from './SharedAnalysisTools';
-import { shadesFromColor, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, tickSize, chartJsFont, chartJsTitleFont, axisTitleSize, chartAspect, chartAspectImposed, DEFAULT_CHART_ASPECT_WIDE, tickColorProps, axisTitleColorProps
+import { shadesFromColor, chartJsPadding, chartJsHeightFit, chartJsTitlePad, chartJsSeriesStyle, seriesVisible, tickSize, chartJsFont, chartJsTitleFont, axisTitleSize, chartAspect, chartAspectImposed, DEFAULT_CHART_ASPECT_WIDE, tickColorProps, axisTitleColorProps
 } from '../utils/chartStyle';
 import { brokenAxisScaleOptions, chartJsYValues } from '../utils/chartJsBrokenAxis';
 import { StarToggle } from './StarToggle';
@@ -183,10 +183,30 @@ const DEFAULT_CFG = {
   colors: {}
 };
 
-// Parse pasted text into DOSY rows: first column = gradient % (0–100),
-// following columns = intensities. Accepts tab, space, semicolon or comma
-// separators, skips empty lines and a non-numeric header line.
-const parseDosyText = (text) => {
+/* ── Imported text layouts ────────────────────────────────────────────────
+   The Data table is drawn TRANSPOSED (one row per intensity set, one column
+   per gradient %), so a block copied straight out of it has the gradient % in
+   its FIRST ROW. Spreadsheets written the historical way carry the gradient %
+   in the FIRST COLUMN instead. `parseDosyText` accepts both: the layout is
+   detected — a run of non-decreasing 0–100 values that is the long axis of the
+   block — and the modal lets the user impose it.
+
+   Returns `{ matrix, orientation, error }`, `matrix[r][c]` being a number or ''
+   for an unparseable cell. */
+const DOSY_TEXT_ORIENTATIONS = [
+  { value: 'column', label: 'Gradient % in the first COLUMN' },
+  { value: 'row', label: 'Gradient % in the first ROW (table layout)' },
+];
+
+const dosyLooksLikeGradients = (vals) => {
+  const nums = vals.filter((v) => typeof v === 'number' && Number.isFinite(v));
+  if (nums.length < 2) return false;
+  if (nums.some((v) => v < 0 || v > 100)) return false;
+  for (let i = 1; i < nums.length; i++) if (nums[i] < nums[i - 1]) return false;
+  return nums[nums.length - 1] > nums[0];
+};
+
+const parseDosyText = (text, orientation = 'auto') => {
   const lines = String(text || '').split(/\r?\n/);
   // Detect the separator from the first data-like line.
   let sep = null;
@@ -198,7 +218,7 @@ const parseDosyText = (text) => {
     else if (l.includes(',')) sep = ',';
     break;
   }
-  const rows = [];
+  const matrix = [];
   for (const line of lines) {
     const l = line.trim();
     if (!l || l.startsWith('#') || l.startsWith('//')) continue;
@@ -208,35 +228,77 @@ const parseDosyText = (text) => {
     const parsed = tokens.map((tok) => {
       const norm = sep !== ',' ? tok.replace(/,/g, '.') : tok; // European decimals
       const v = parseFloat(norm);
-      return Number.isFinite(v) ? v : NaN;
+      return Number.isFinite(v) ? v : '';
     });
-    if (parsed.every((v) => Number.isNaN(v))) continue; // header line
+    if (parsed.every((v) => v === '')) continue; // header line
     if (parsed.length < 2) continue; // need at least gradient % + 1 intensity
-    rows.push(parsed.map((v) => (Number.isNaN(v) ? '' : v)));
+    matrix.push(parsed);
   }
-  if (!rows.length) {
-    return { rows: [], error: 'No numeric data found — paste rows with a gradient % and at least one intensity value.' };
+  if (!matrix.length) {
+    return {
+      matrix: [],
+      orientation: 'column',
+      error: 'No numeric data found — paste the gradient % line/column followed by at least one intensity set.'
+    };
   }
-  return { rows, error: null };
+  const width = Math.max(...matrix.map((r) => r.length));
+  let detected = 'column';
+  if (matrix.length >= 2 && width >= 2) {
+    const rowOk = dosyLooksLikeGradients(matrix[0]);
+    const colOk = dosyLooksLikeGradients(matrix.map((r) => r[0]));
+    if (rowOk && !colOk) detected = 'row';
+    else if (colOk && !rowOk) detected = 'column';
+    // Both axes look like gradient steps: the gradient axis is the long one.
+    else if (rowOk && colOk) detected = width > matrix.length ? 'row' : 'column';
+  }
+  const mode = orientation === 'row' || orientation === 'column' ? orientation : detected;
+  return { matrix, orientation: mode, error: null };
+};
+
+/* Canonical layout of a parsed matrix, whatever the pasted orientation:
+   `delays[i]` = gradient % of the i-th gradient, `series[s][i]` = intensity of
+   the s-th intensity set at that gradient — the internal model of the table.
+   In the “first row” layout the leading label cells of the block (the
+   “Intensity set \ Gradient %” corner of the Data table, copied with the
+   values) are skipped for every row, so the intensities stay aligned with
+   their gradient. */
+const dosyLayoutFromMatrix = (matrix, orientation) => {
+  const rows = Array.isArray(matrix) ? matrix : [];
+  const cell = (v) => (v === undefined || v === null ? '' : v);
+  if (orientation === 'row') {
+    const head = rows[0] || [];
+    let start = 0;
+    while (start < head.length && head[start] === '') start += 1;
+    const gradients = head.slice(start);
+    const series = rows.slice(1).map((r) => gradients.map((_, i) => cell(r[start + i])));
+    return { delays: gradients.map(cell), series, nGradients: gradients.length, nSeries: series.length };
+  }
+  const gradients = rows.map((r) => r[0]);
+  const width = rows.length ? Math.max(0, ...rows.map((r) => r.length - 1)) : 0;
+  const series = Array.from({ length: width }, (_, c) => rows.map((r) => cell(r[c + 1])));
+  return { delays: gradients.map(cell), series, nGradients: gradients.length, nSeries: series.length };
 };
 
 // Modal for the DOSY Data section: paste text, preview it, then import it into
-// a new gradient set or overwrite an existing one.
+// a new gradient set or overwrite an existing one. Both layouts are accepted —
+// gradient % in the first column (spreadsheet style) or in the first row (the
+// transposed layout of the Data table) — the detection can be overridden.
 const DOSYImportModal = ({ open, onClose, onImport, tables }) => {
   const [text, setText] = useState('');
   const [target, setTarget] = useState('new');
+  const [orientation, setOrientation] = useState('auto');
   if (!open) return null;
-  const preview = parseDosyText(text);
-  const nIntensity = preview.rows.length
-    ? Math.max(1, Math.max(...preview.rows.map((r) => r.length - 1)))
-    : 0;
+  const preview = parseDosyText(text, orientation);
+  const layout = preview.error ? { delays: [], series: [] } : dosyLayoutFromMatrix(preview.matrix, preview.orientation);
+  const ready = !preview.error && layout.nGradients > 0 && layout.nSeries > 0;
   return (
     <div className="fixed inset-0 z-[80] bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-xl shadow-xl p-5 w-full max-w-lg max-h-[85vh] overflow-y-auto custom-scrollbar"
            onClick={(e) => e.stopPropagation()}>
         <h3 className="text-sm font-black text-slate-800 mb-1">📋 Import DOSY data from text</h3>
         <p className="text-[10px] text-slate-500 mb-3">
-          First column = <b>gradient %</b> (0–100), second (and following) columns = <b>intensities</b>.
+          The <b>gradient %</b> (0–100) is read either from the first column (spreadsheet export) or from the first row
+          (copy of the transposed Data table); the other direction holds the <b>intensity sets</b>.
           Tab / space / semicolon / comma separated — paste straight from Excel.
         </p>
         <textarea
@@ -244,9 +306,22 @@ const DOSYImportModal = ({ open, onClose, onImport, tables }) => {
           onChange={(e) => setText(e.target.value)}
           rows={9}
           spellCheck={false}
-          placeholder={'0\t100\n5\t98.5\n10\t95\n20\t88\n40\t72\n60\t55\n80\t40\n100\t30'}
+          placeholder={'Gradient %\t100\t98.5\t95\t88\t72\t55\t40\t30\nIntensity 1\t0\t5\t10\t20\t40\t60\t80\t100'}
           className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-blue-500 resize-y"
         />
+        <div className="flex flex-wrap items-center gap-2 mt-3">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Layout:</label>
+          <select value={orientation} onChange={(e) => setOrientation(e.target.value)}
+                  className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-semibold text-slate-700">
+            <option value="auto">Detected automatically</option>
+            {DOSY_TEXT_ORIENTATIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+          {orientation === 'auto' && !preview.error && (
+            <span className="text-[10px] font-bold text-slate-500">
+              → gradient % in the first {preview.orientation === 'row' ? 'row' : 'column'}
+            </span>
+          )}
+        </div>
         <div className="flex flex-wrap items-center gap-2 mt-3">
           <label className="text-[10px] font-bold text-slate-500 uppercase">Import into:</label>
           <select value={target} onChange={(e) => setTarget(e.target.value)}
@@ -260,9 +335,9 @@ const DOSYImportModal = ({ open, onClose, onImport, tables }) => {
         <div className="text-[10px] mt-2">
           {preview.error ? (
             <span className="text-red-500 font-bold">{preview.error}</span>
-          ) : preview.rows.length ? (
+          ) : ready ? (
             <span className="text-emerald-600 font-bold">
-              ✓ {preview.rows.length} row{preview.rows.length === 1 ? '' : 's'} · {nIntensity} intensity column{nIntensity === 1 ? '' : 's'} ready to import
+              ✓ {layout.nGradients} gradient{layout.nGradients === 1 ? '' : 's'} · {layout.nSeries} intensity set{layout.nSeries === 1 ? '' : 's'} ready to import
             </span>
           ) : (
             <span className="text-slate-400">Paste the data above to see a preview.</span>
@@ -271,8 +346,8 @@ const DOSYImportModal = ({ open, onClose, onImport, tables }) => {
         <div className="flex justify-end gap-2 mt-4">
           <button onClick={onClose} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300">Cancel</button>
           <button
-            disabled={!!preview.error || !preview.rows.length}
-            onClick={() => onImport(preview.rows, target)}
+            disabled={!ready}
+            onClick={() => onImport(layout, target)}
             className="px-3 py-1.5 text-xs font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40">
             Import
           </button>
@@ -307,7 +382,7 @@ const DOSYDataSection = ({ ctx }) => {
           {dosySections.openImport && (
             <button onClick={dosySections.openImport}
                     className="self-start text-sm bg-teal-600 hover:bg-teal-700 text-white font-bold px-4 py-2 rounded-md shadow-sm"
-                    title="Paste text with gradient % in the first column and intensities in the following columns">
+                    title="Paste text — gradient % in the first row (as in this table) or in the first column">
               📋 Import from text
             </button>
           )}
@@ -318,11 +393,45 @@ const DOSYDataSection = ({ ctx }) => {
 };
 
 
+/* Per-point ±SD of the “Points & ±SD” table. The value is committed on blur /
+   Enter rather than at every keystroke: the imposed SD reaches the error bars
+   of the plot at once and the field never holds a half-typed number (“0.”,
+   “1e” → NaN). An orange frame marks a manual override, × hands the point back
+   to the error-bar mode. */
+const DosySdInput = ({ value, isOverridden, onSave, onReset }) => {
+  const shown = (value === undefined || value === null || value === '' || (typeof value === 'number' && Number.isNaN(value)))
+    ? '' : String(value);
+  const [temp, setTemp] = useState(shown);
+  useEffect(() => { setTemp(shown); }, [shown]);
+  const commit = () => {
+    const txt = String(temp).trim();
+    if (txt === '') { if (isOverridden) onReset(); return; }
+    const n = Number(txt);
+    if (!Number.isFinite(n)) { setTemp(shown); return; }
+    if (!isOverridden && shown !== '' && n === Number(shown)) return; // untouched mode value: keep it automatic
+    onSave(n);
+  };
+  return (
+    <label className={`flex items-center gap-0.5 rounded border px-1 py-[1px] bg-white ${isOverridden ? 'border-orange-400' : 'border-slate-200'}`}
+      title="± SD used for the error bar of this point — empty = the Error bars mode decides">
+      <span className="text-[9px] font-bold text-slate-400">±</span>
+      <input type="number" step="any" min="0" value={temp} placeholder="SD"
+        onChange={(e) => setTemp(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); e.currentTarget.blur(); } }}
+        className="w-12 text-[10px] text-center outline-none bg-transparent font-mono" />
+      {isOverridden && (
+        <button type="button" onClick={onReset} className="text-red-500 hover:text-red-700 font-bold text-[11px] leading-none" title="Back to the error-bar mode">×</button>
+      )}
+    </label>
+  );
+};
+
 // Stejskal-Tanner decay plot built DIRECTLY from the data table (gradient % vs
 // intensity) and the read-only gradient parameters of Instrumental Setup.
 // Applied style comes from the Graphical Parameters panel (dosyChartCfg) and
 // excluded/outlier points (Error Management) are drawn hollow.
-const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh = '2.0', showFit = true, mode = 'b', gamma = GAMMA_H, useAll = true, errMode = 'none', fixedSD = '', manualSD = {}, excluded = {}, update = null, setCfg = null, series = [], unit = null }) => {
+const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = false, outlierThresh = '2.0', showFit = true, mode = 'b', gamma = GAMMA_H, useAll = true, errMode = 'none', fixedSD = '', manualSD = {}, excluded = {}, update = null, setCfg = null, series = [], unit = null }) => {
   const ref = useRef(null);
   const chartRef = useRef(null);
   const { maxG, deltaMs, bigDeltaMs } = params || {};
@@ -416,19 +525,24 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
           errBars.push({ plus: sd, minus: sd });
         });
 
+        // The points are split the way the plate tests do it: the INCLUDED ones
+        // make the coloured curve, the EXCLUDED ones are drawn — only when
+        // “Show Excl. Points” (Error Management) is ticked — as grey rotated
+        // crosses, so they stay visible / invisible exactly like on a plate.
+        const incIdx = rows.map((p, i) => (p.ex ? -1 : i)).filter((i) => i >= 0);
+        const excIdx = rows.map((p, i) => (p.ex ? i : -1)).filter((i) => i >= 0);
+        const at = (idx, f) => idx.map((i) => f(rows[i], errBars[i]));
+
         datasets.push({
           label,
-          data: rows.map((p) => ({ x: xOf(p), y: yOf(p) })),
-          errorBars: errBars,
+          data: at(incIdx, (p) => ({ x: xOf(p), y: yOf(p) })),
+          errorBars: at(incIdx, (_p, eb) => eb),
           showLine: false,
           pointStyle: cfg.pointStyle || cfg.ptStyle || 'circle',
           pointRadius: Number(cfg.ptSize) || 4,
           backgroundColor: color,
           borderColor: color,
-          pointBackgroundColor: rows.map((p) => (showExcl && p.ex ? '#ffffff' : color)),
-          pointBorderColor: rows.map((p) => (showExcl && p.ex ? '#ef4444' : color)),
-          pointBorderWidth: rows.map((p) => (showExcl && p.ex ? 2 : 1)),
-          _pointKeys: rows.map((p) => p.key),
+          _pointKeys: at(incIdx, (p) => p.key),
           _tableId: tableId,
           // Per-curve overrides of the style panel (symbol, size, colour,
           // line style / width, show-hide) for THIS column.
@@ -436,15 +550,28 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
             color,
             pointStyle: cfg.pointStyle || cfg.ptStyle || 'circle',
             pointRadius: Number(cfg.ptSize) || 4
-          }),
-          onClick: (event, elements) => {
-            if (!elements || !elements.length || !update) return;
-            const el = elements[0];
-            const ds = el.dataset;
-            const k = ds && ds._pointKeys && ds._pointKeys[el.index];
-            if (k && ds._tableId) update({ dosyExcluded: togglePointExcluded(excluded, ds._tableId, k) });
-          }
+          })
         });
+
+        if (showExcl && excIdx.length) {
+          datasets.push({
+            label: `${label} [excl]`,
+            data: at(excIdx, (p) => ({ x: xOf(p), y: yOf(p) })),
+            errorBars: at(excIdx, (_p, eb) => eb),
+            showLine: false,
+            // A curve switched off in the per-curve block takes its excluded
+            // crosses with it.
+            hidden: !seriesVisible(cfg, key),
+            borderColor: '#cbd5e1',
+            backgroundColor: '#cbd5e1',
+            pointStyle: 'crossRot',
+            pointRadius: (Number(cfg.ptSize) || 4) + 2,
+            pointBorderWidth: 2,
+            _pointKeys: at(excIdx, (p) => p.key),
+            _tableId: tableId,
+            _excludedDataset: true
+          });
+        }
 
         if (fit && showFit) {
           const xs = fitRows.map((p) => xOf(p));
@@ -494,6 +621,31 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
       plugins: [errBarPlugin],
       options: {
         responsive: true, maintainAspectRatio: false,
+        // Chart.js only ever calls `options.onClick`; an `onClick` hung on a
+        // dataset — what this chart used to do — is never fired, which is why
+        // clicking a point did nothing. “nearest” + no intersection is the
+        // forgiving target of the plate charts, and the 26 px guard keeps a
+        // click in the middle of the plot from excluding a far-away point.
+        interaction: { mode: 'nearest', intersect: false },
+        onClick: (evt, elements, chart) => {
+          if (!update || !elements || !elements.length) return;
+          const el = elements[0];
+          const ds = chart.data.datasets[el.datasetIndex];
+          const key = ds && ds._pointKeys && ds._pointKeys[el.index];
+          if (!key || !ds._tableId) return;
+          const pt = chart.getDatasetMeta(el.datasetIndex).data[el.index];
+          // `Chart.helpers` is NOT exported by 'chart.js/auto' (v4) — calling it
+          // threw on every click. The position is converted by hand instead:
+          // CSS pixels inside the canvas, the very unit of `element.x / y`.
+          const native = (evt && evt.native) || evt;
+          const rect = chart.canvas.getBoundingClientRect();
+          const pos = {
+            x: (native.clientX - rect.left) * (rect.width ? chart.width / rect.width : 1),
+            y: (native.clientY - rect.top) * (rect.height ? chart.height / rect.height : 1)
+          };
+          if (!pt || Math.max(Math.abs(pt.x - pos.x), Math.abs(pt.y - pos.y)) > 26) return;
+          update({ dosyExcluded: togglePointExcluded(excluded, ds._tableId, key) });
+        },
         // Canvas padding derived from the character size: the axis titles stay
         // inside the canvas however large the labels are made.
         layout: { padding: chartJsPadding(cfg) },
@@ -523,7 +675,8 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
         },
         plugins: {
           title: cfg.title ? { display: true, text: cfg.title, font: { size: fs + 2 } } : undefined,
-          legend: { display: datasets.length > 0, labels: { font: chartJsFont(cfg, { size: (Number(tickSize(cfg, fs)) || fs) - 1 }) } }
+          legend: { display: datasets.length > 0, labels: { font: chartJsFont(cfg, { size: (Number(tickSize(cfg, fs)) || fs) - 1 }) } },
+          tooltip: { callbacks: { footer: () => '🖱️ click the point to exclude / re-include it' } }
         }
       }
     });
@@ -698,6 +851,11 @@ const DOSYFittingSection = ({ ctx }) => {
             activeTest={ctx.activeTest || {}}
             updateActiveTest={update}
             showFitToggle
+            // The DOSY error-bar mode below (None / Fixed / Std. deviation /
+            // Touch curve) is THE single control: the generic “Fixed SD +”
+            // block of the shared panel is hidden here, so “Fixed” is not
+            // offered twice with one of the two doing nothing.
+            showFixedSD={false}
             customActions={
               <>
                 <label className="flex items-center gap-2 bg-teal-50 border border-teal-200 hover:bg-teal-100 rounded-md px-3 py-1.5 cursor-pointer transition-colors shadow-sm" title="Use every valid row of the Data table (no automatic outlier exclusion)">
@@ -787,7 +945,10 @@ const DOSYFittingSection = ({ ctx }) => {
             tables={tables}
             params={{ maxG, deltaMs, bigDeltaMs }}
             cfg={chartCfg}
-            showExcl={ctx.activeTest?.showExcl !== false}
+            // “Show Excl. Points” (Error Management) — same default (off) and
+            // same meaning as on the plate tests: unticked, an excluded point
+            // disappears from the plot; ticked, it is drawn as a grey cross.
+            showExcl={!!ctx.activeTest?.showExcl}
             outlierThresh={ctx.activeTest?.outlierThreshStr || '2.0'}
             showFit={ctx.activeTest?.fitIC50 !== false}
             mode={xMode}
@@ -807,8 +968,9 @@ const DOSYFittingSection = ({ ctx }) => {
       <p className="text-[10px] text-slate-400 -mt-2">
         The plot reads the gradient % / intensity values directly from the Data tab and the gradient parameters of
         Instrumental Setup. Switch the x axis between “Gradient %” (intensity curve), “b-value” (linearized ln(I) fit)
-        and “G (G/cm)” (gradient strength). Use “Error Management” to drop outliers from the fit and “Graphical Parameters”
-        to style the chart.
+        and “G (G/cm)” (gradient strength). Click a point on the plot to exclude / re-include it (tick “Show Excl. Points”
+        to keep the excluded ones visible as grey crosses), use “Error Management” to drop outliers from the fit and
+        “Graphical Parameters” to style the chart.
       </p>
     </div>
   );
@@ -1025,26 +1187,32 @@ export const DOSYTestRenderer = ({ activeTest = {}, updateActiveTest, TestHeader
   const addTable = () => commit([...tablesRef.current, makeDefaultTable()]);
   const removeTable = (id) => { if (tablesRef.current.length <= 1) { alert('Keep at least one gradient set.'); return; } commit(tablesRef.current.filter((t) => t.id !== id)); };
 
-  // Import pasted text into a gradient set: first column = gradient % (0–100),
-  // following columns = intensities. Creates a new set or overwrites one.
-  const handleDosyImport = (rows, targetTableId) => {
-    if (!Array.isArray(rows) || !rows.length) return;
-    const nInt = Math.max(1, Math.max(...rows.map((r) => r.length - 1)));
+  // Import a parsed text block into a gradient set. The block is already
+  // resolved to `{ delays, series }` by `dosyLayoutFromMatrix`, whatever the
+  // pasted orientation (gradient % in the first row — the layout of the Data
+  // table — or in the first column). Creates a new set or overwrites one.
+  const handleDosyImport = (layout, targetTableId) => {
+    const delaysIn = Array.isArray(layout && layout.delays) ? layout.delays : [];
+    const seriesIn = Array.isArray(layout && layout.series) ? layout.series : [];
+    if (!delaysIn.length || !seriesIn.length) return;
     const clampG = (v) => (typeof v === 'number' ? Math.min(100, Math.max(0, v)) : v);
-    const delays = rows.map((r) => clampG(r[0]));
+    const cell = (v) => (v === undefined || v === null ? '' : v);
+    const nInt = Math.max(1, seriesIn.length);
+    const nGrad = Math.max(1, delaysIn.length);
+    const delays = delaysIn.map(clampG);
     const colResidues = Array.from({ length: nInt }, (_, c) => (c === 0 ? 'Intensity 1' : `Intensity ${c + 1}`));
-    const grid = rows.map((r) =>
-      Array.from({ length: nInt }, (_, c) => (r[c + 1] === undefined || r[c + 1] === null ? '' : r[c + 1]))
+    const grid = Array.from({ length: nGrad }, (_, r) =>
+      Array.from({ length: nInt }, (_, c) => cell(seriesIn[c] ? seriesIn[c][r] : ''))
     );
     if (targetTableId === 'new') {
       commit([...tablesRef.current, {
         id: 'd' + Date.now() + Math.floor(Math.random() * 1e4),
-        nRows: rows.length, nCols: nInt, delayUnit: '%',
+        nRows: nGrad, nCols: nInt, delayUnit: '%',
         delays, colResidues, grid
       }]);
     } else {
       commit(tablesRef.current.map((t) => (t.id === targetTableId
-        ? { ...t, nRows: rows.length, nCols: nInt, delayUnit: t.delayUnit || '%', delays, colResidues, grid }
+        ? { ...t, nRows: nGrad, nCols: nInt, delayUnit: t.delayUnit || '%', delays, colResidues, grid }
         : t)));
     }
     setDosyImportOpen(false);
@@ -1117,6 +1285,10 @@ export const DOSYTestRenderer = ({ activeTest = {}, updateActiveTest, TestHeader
   const setSim = (patch) => update({ dosySim: { ...sim, ...patch } });
 
   // A gradient set table rendered DIRECTLY (no collapsible around it).
+  // TRANSPOSED — one ROW per intensity set and one COLUMN per gradient %,
+  // exactly like the plate / NMR point tables: the table stays a couple of
+  // lines tall however many gradients the experiment has. A manually excluded
+  // point is struck through and greyed out, as in the plate grid.
   const renderTableData = (t, tIndex) => (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-2">
@@ -1132,13 +1304,15 @@ export const DOSYTestRenderer = ({ activeTest = {}, updateActiveTest, TestHeader
               kind: 'table',
               label: `Gradient set ${tIndex + 1} — Gradient % vs Intensity`,
               caption: `Raw gradient % / intensity data of gradient set ${tIndex + 1}.`,
+              // Exported with the same orientation as the screen (gradients
+              // across the top, one row per intensity set).
               columns: [
-                'Gradient % (0–100)',
-                ...Array.from({ length: t.nCols || 0 }, (_, c) => t.colResidues?.[c] || `Col ${c + 1}`)
+                'Intensity set',
+                ...Array.from({ length: t.nRows || 0 }, (_, r) => `${t.delays?.[r] ?? '-'} %`)
               ],
-              rows: Array.from({ length: t.nRows || 0 }, (_, r) => [
-                t.delays?.[r] ?? '-',
-                ...Array.from({ length: t.nCols || 0 }, (_, c) => t.grid?.[r]?.[c] ?? '-')
+              rows: Array.from({ length: t.nCols || 0 }, (_, c) => [
+                t.colResidues?.[c] || `Intensity ${c + 1}`,
+                ...Array.from({ length: t.nRows || 0 }, (_, r) => t.grid?.[r]?.[c] ?? '-')
               ])
             })
           })}
@@ -1148,38 +1322,45 @@ export const DOSYTestRenderer = ({ activeTest = {}, updateActiveTest, TestHeader
         <table className="border-collapse text-xs w-full">
           <thead>
             <tr>
-              <th className="bg-slate-200 border border-slate-300 p-1 sticky top-0 left-0 z-20 text-slate-600">Gradient % (0–100)</th>
-              {Array.from({ length: t.nCols }, (_, c) => (
-                <th key={c} className="bg-slate-100 border border-slate-300 p-1 min-w-[110px] sticky top-0 z-10 group relative">
+              <th className="bg-slate-200 border border-slate-300 p-1 sticky top-0 left-0 z-20 text-slate-600 whitespace-nowrap">Intensity set \ Gradient %</th>
+              {Array.from({ length: t.nRows || 0 }, (_, r) => (
+                <th key={r} className="bg-slate-100 border border-slate-300 p-1 min-w-[84px] sticky top-0 z-10 group relative">
                   <div className="flex flex-col gap-1 w-full relative">
-                    <input value={t.colResidues[c] || ''} onChange={(e) => setColResidue(t, c, e.target.value)} placeholder="intensity" className="w-full text-center border border-slate-300 rounded p-1 text-[11px] font-bold text-blue-800" />
-                    <button onClick={() => removeCol(t, c)} className="absolute -top-1 -right-1 bg-red-100 text-red-500 hover:bg-red-500 hover:text-white rounded-full w-5 h-5 flex items-center justify-center font-bold opacity-0 group-hover:opacity-100 transition-opacity shadow-sm" title="Delete Column">✕</button>
+                    <input type="number" step="1" min="0" max="100" value={t.delays?.[r] ?? ''} {...cellAttrs(r, -1)} onChange={(e) => setDelay(t, r, e.target.value === '' ? '' : Number(e.target.value))} title="Gradient % (0–100) of the maximum G" className="w-full text-center border border-slate-300 rounded p-1 text-[11px] font-mono" />
+                    <button onClick={() => removeRow(t, r)} className="absolute -top-1 -right-1 bg-red-100 text-red-500 hover:bg-red-500 hover:text-white rounded-full w-5 h-5 flex items-center justify-center font-bold opacity-0 group-hover:opacity-100 transition-opacity shadow-sm" title="Delete this gradient">✕</button>
                   </div>
                 </th>
               ))}
-              <th className="bg-slate-50 border border-slate-200 p-1 sticky top-0 z-10"><button onClick={() => addCol(t)} className="text-blue-600 hover:text-blue-800 font-bold text-[11px] bg-blue-50 px-2 py-1 rounded w-full h-full transition-colors">+ Add Col</button></th>
+              <th className="bg-slate-50 border border-slate-200 p-1 sticky top-0 z-10"><button onClick={() => addRow(t)} className="text-blue-600 hover:text-blue-800 font-bold text-[11px] bg-blue-50 px-2 py-1 rounded w-full h-full transition-colors whitespace-nowrap">+ Add gradient</button></th>
             </tr>
           </thead>
           <tbody>
-            {Array.from({ length: t.nRows }, (_, r) => (
-              <tr key={r}>
-                <td className="bg-slate-100 border border-slate-300 p-0.5 sticky left-0 z-10">
-                  <div className="flex items-center justify-between px-1">
-                    <input type="number" step="1" min="0" max="100" value={t.delays[r]} {...cellAttrs(r, -1)} onChange={(e) => setDelay(t, r, e.target.value === '' ? '' : Number(e.target.value))} className="w-16 text-center border border-slate-300 rounded p-1 text-[11px] font-mono" />
-                    <button onClick={() => removeRow(t, r)} className="text-red-400 hover:text-red-600 text-[11px] font-bold ml-1 px-1" title="Delete Row">✕</button>
+            {Array.from({ length: t.nCols || 0 }, (_, c) => (
+              <tr key={c}>
+                <th scope="row" className="bg-slate-100 border border-slate-300 p-0.5 sticky left-0 z-10">
+                  <div className="flex items-center gap-1 px-1">
+                    <input value={t.colResidues?.[c] || ''} onChange={(e) => setColResidue(t, c, e.target.value)} placeholder={`Intensity ${c + 1}`} className="w-28 text-center border border-slate-300 rounded p-1 text-[11px] font-bold text-blue-800" />
+                    <button onClick={() => removeCol(t, c)} className="text-red-400 hover:text-red-600 text-[11px] font-bold px-1" title="Delete this intensity set">✕</button>
                   </div>
-                </td>
-                {Array.from({ length: t.nCols }, (_, c) => (
-                  <td key={c} className="border border-slate-200 p-0"><input value={t.grid[r]?.[c] ?? ''} {...cellAttrs(r, c)} onChange={(e) => setCell(t, r, c, e.target.value)} className="w-full h-8 text-center outline-none focus:bg-blue-50 focus:ring-1 focus:ring-blue-400 font-mono text-[11px]" /></td>
-                ))}
+                </th>
+                {Array.from({ length: t.nRows || 0 }, (_, r) => {
+                  const ex = isPointExcluded(activeTest.dosyExcluded || {}, t.id, `${c}:${r}`);
+                  return (
+                    <td key={r} className={`border p-0 ${ex ? 'bg-slate-100 border-slate-300' : 'border-slate-200'}`}>
+                      <input value={t.grid?.[r]?.[c] ?? ''} {...cellAttrs(r, c)} onChange={(e) => setCell(t, r, c, e.target.value)}
+                        title={ex ? 'Point excluded — click it on the plot to put it back' : ''}
+                        className={`w-full h-8 text-center outline-none focus:bg-blue-50 focus:ring-1 focus:ring-blue-400 font-mono text-[11px] ${ex ? 'line-through text-slate-400' : ''}`} />
+                    </td>
+                  );
+                })}
                 <td className="border border-slate-100 p-0.5 text-center text-slate-300 bg-slate-50">·</td>
               </tr>
             ))}
-            <tr><td colSpan={t.nCols + 2} className="bg-slate-50 border border-slate-200 p-2"><button onClick={() => addRow(t)} className="text-blue-600 hover:text-blue-800 font-bold text-[11px] w-full text-left pl-2">+ Add Gradient Row</button></td></tr>
+            <tr><td colSpan={(t.nRows || 0) + 2} className="bg-slate-50 border border-slate-200 p-2"><button onClick={() => addCol(t)} className="text-blue-600 hover:text-blue-800 font-bold text-[11px] w-full text-left pl-2">+ Add Intensity Set</button></td></tr>
           </tbody>
         </table>
       </div>
-      <p className="text-[10px] text-slate-400 italic -mt-2">🖱️ Drag or Shift+click to select multiple cells · Ctrl/Cmd+C copy · Ctrl/Cmd+V paste (Excel-compatible, tab-separated) · gradient values are % of the maximum G from Instrumental Setup</p>
+      <p className="text-[10px] text-slate-400 italic -mt-2">🖱️ Drag or Shift+click to select multiple cells · Ctrl/Cmd+C copy · Ctrl/Cmd+V paste (Excel-compatible, tab-separated) · gradient values are % of the maximum G from Instrumental Setup · an excluded point is struck through and greyed out (tick “Show Excl. Points” to keep it on the plot)</p>
       <div className="flex justify-between items-center border-t border-slate-100 pt-2">
         <button onClick={() => runFitForTable()} className="text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-md shadow-sm transition-colors">▶️ Fit Stejskal-Tanner (D)</button>
         <button onClick={() => removeTable(t.id)} className="text-xs bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold px-4 py-2 rounded-md shadow-sm flex items-center gap-2 transition-colors">🗑️ Delete</button>
@@ -1251,61 +1432,109 @@ export const DOSYTestRenderer = ({ activeTest = {}, updateActiveTest, TestHeader
   };
 
   // Per-gradient-set "points" editor — exclude / re-include points and set a
-  // manual per-point SD, exactly like the plate / CD / ssNMR point tables.
+  // manual per-point SD. TRANSPOSED like the Data table (one ROW per intensity
+  // set, one COLUMN per gradient %) so the value, its ±SD and the exclusion
+  // switch sit on a single line, gaining the room the old stack of gradient
+  // rows was eating. An excluded point is struck through and greyed out, as in
+  // the plate grid.
   const renderPointsTable = (t, tIndex) => {
     const tableId = t.id;
     const excludedMap = activeTest.dosyExcluded || {};
     const manualSDMap = activeTest.dosyManualSD || {};
     const nCols = t.nCols || 0;
+    const nRows = t.nRows || 0;
+    const errMode = activeTest.dosyErrMode || 'none';
+    const manualOf = (c, r) => manualSDMap[tableId]?.[`${c}:${r}`];
+    const isOverridden = (c, r) => {
+      const m = manualOf(c, r);
+      return m !== undefined && m !== null && m !== '';
+    };
+    // The ± SD the plot really draws for this point: a manual value always
+    // wins, otherwise the error-bar mode decides ("Std. deviation" = spread of
+    // the replicate intensities at this gradient, "Fixed" = the value typed in
+    // Error Management; "Touch curve" is only known on the plot → left blank).
+    const sdOf = (c, r) => {
+      if (isOverridden(c, r)) return Number(manualOf(c, r)) || 0;
+      if (errMode !== 'sd' && errMode !== 'fixed') return '';
+      const vals = [];
+      for (let cc = 0; cc < nCols; cc++) {
+        const v = parseFloat(t.grid?.[r]?.[cc]);
+        if (Number.isFinite(v) && v > 0) vals.push(v);
+      }
+      return computePointSD({
+        mode: errMode,
+        fixedSD: activeTest.dosyFixedSDStr || '',
+        rowValues: vals,
+        manualSD: undefined,
+        y: 0,
+        predicted: 0
+      });
+    };
+    const setManualSD = (c, r, v) => {
+      const key = `${c}:${r}`;
+      const series = { ...(manualSDMap[tableId] || {}) };
+      if (v === '' || v === null || v === undefined) delete series[key];
+      else series[key] = Number(v);
+      update({ dosyManualSD: { ...manualSDMap, [tableId]: series } });
+    };
+    const resetManualSD = () => {
+      const next = { ...manualSDMap };
+      delete next[tableId];
+      update({ dosyManualSD: next });
+    };
     return (
       <div key={`pts-${t.id}`} className="flex flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <h4 className="text-xs font-black uppercase tracking-wide text-slate-500">Points — gradient set {tIndex + 1}</h4>
-          <button type="button"
-            onClick={() => update({ dosyExcluded: clearExcludedForTable(excludedMap, tableId) })}
-            className="text-[10px] font-bold text-orange-600 hover:text-orange-800 border border-orange-200 rounded px-2 py-0.5 hover:bg-orange-50 transition-colors">
-            ↩️ Restore
-          </button>
+        <div className="flex items-center justify-between gap-2">
+          <h4 className="text-xs font-black uppercase tracking-wide text-slate-500">Points &amp; ±SD — gradient set {tIndex + 1}</h4>
+          <div className="flex items-center gap-2">
+            <button type="button"
+              onClick={resetManualSD}
+              className="text-[10px] font-bold text-orange-600 hover:text-orange-800 border border-orange-200 rounded px-2 py-0.5 hover:bg-orange-50 transition-colors"
+              title="Drop every manual ±SD of this gradient set">
+              🔄 Reset ±SD
+            </button>
+            <button type="button"
+              onClick={() => update({ dosyExcluded: clearExcludedForTable(excludedMap, tableId) })}
+              className="text-[10px] font-bold text-orange-600 hover:text-orange-800 border border-orange-200 rounded px-2 py-0.5 hover:bg-orange-50 transition-colors">
+              ↩️ Restore
+            </button>
+          </div>
         </div>
         <div className="overflow-auto border border-slate-200 rounded-lg" data-star-key={`dosy-points-${t.id}`}>
           <table className="border-collapse text-xs w-full">
             <thead>
               <tr className="bg-slate-50">
-                <th className="px-2 py-1 border border-slate-200 text-left">Gradient %</th>
-                {Array.from({ length: nCols }, (_, c) => (
-                  <th key={c} className="px-2 py-1 border border-slate-200">{t.colResidues?.[c] || `Col ${c + 1}`}</th>
+                <th className="px-2 py-1 border border-slate-200 text-left whitespace-nowrap sticky left-0 bg-slate-50 z-10">Intensity set \ Gradient %</th>
+                {Array.from({ length: nRows }, (_, r) => (
+                  <th key={r} className="px-2 py-1 border border-slate-200 font-mono font-bold text-slate-700">{t.delays?.[r] ?? '-'}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {Array.from({ length: t.nRows || 0 }, (_, r) => (
-                <tr key={r}>
-                  <td className="px-2 py-1 border border-slate-200 font-mono font-bold text-slate-700">{t.delays?.[r] ?? '-'}</td>
-                  {Array.from({ length: nCols }, (_, c) => {
+              {Array.from({ length: nCols }, (_, c) => (
+                <tr key={c}>
+                  <th scope="row" className="px-2 py-1 border border-slate-200 text-left font-bold text-blue-800 whitespace-nowrap sticky left-0 bg-white z-10">{t.colResidues?.[c] || `Col ${c + 1}`}</th>
+                  {Array.from({ length: nRows }, (_, r) => {
                     const key = `${c}:${r}`;
                     const isExcl = isPointExcluded(excludedMap, tableId, key);
                     return (
-                      <td key={c} className={`px-2 py-1 border border-slate-200 ${isExcl ? 'bg-red-50 opacity-50' : ''}`}>
-                        <div className="flex flex-col gap-1 min-w-[120px]">
-                          <span className="font-mono">{t.grid?.[r]?.[c] ?? '-'}</span>
-                          <div className="flex items-center gap-1">
-                            <input type="number" step="any" min="0" placeholder="±SD"
-                              value={manualSDMap[tableId]?.[key] ?? ''}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                const series = { ...(manualSDMap[tableId] || {}) };
-                                if (val === '') delete series[key];
-                                else series[key] = Number(val);
-                                update({ dosyManualSD: { ...manualSDMap, [tableId]: series } });
-                              }}
-                              className="w-14 border border-slate-300 rounded px-1 py-0.5 text-center text-[10px] outline-none font-mono" />
-                            <button type="button"
-                              onClick={() => update({ dosyExcluded: togglePointExcluded(excludedMap, tableId, key) })}
-                              className={`text-[10px] font-black px-1.5 py-0.5 rounded border transition-colors ${isExcl ? 'bg-red-100 text-red-600 border-red-300' : 'text-slate-400 border-slate-200 hover:text-red-500 hover:border-red-200'}`}
-                              title="Exclude / re-include this point">
-                              {isExcl ? 'EXCL' : '×'}
-                            </button>
-                          </div>
+                      <td key={r} className={`px-1 py-0.5 border border-slate-200 ${isExcl ? 'bg-slate-100' : ''}`}>
+                        <div className="flex items-center justify-center gap-1 whitespace-nowrap">
+                          <span className={`font-mono text-[11px] ${isExcl ? 'line-through text-slate-400' : 'text-slate-700'}`}
+                            title={isExcl ? 'Excluded point — left out of the fit' : ''}>
+                            {t.grid?.[r]?.[c] ?? '-'}
+                          </span>
+                          <DosySdInput
+                            value={sdOf(c, r)}
+                            isOverridden={isOverridden(c, r)}
+                            onSave={(v) => setManualSD(c, r, v)}
+                            onReset={() => setManualSD(c, r, '')} />
+                          <button type="button"
+                            onClick={() => update({ dosyExcluded: togglePointExcluded(excludedMap, tableId, key) })}
+                            className={`text-[10px] font-black px-1.5 py-0.5 rounded border transition-colors ${isExcl ? 'bg-slate-200 text-slate-500 border-slate-300' : 'text-slate-400 border-slate-200 hover:text-red-500 hover:border-red-200'}`}
+                            title="Exclude / re-include this point">
+                            {isExcl ? 'EXCL' : '×'}
+                          </button>
                         </div>
                       </td>
                     );
@@ -1316,7 +1545,8 @@ export const DOSYTestRenderer = ({ activeTest = {}, updateActiveTest, TestHeader
           </table>
         </div>
         <p className="text-[10px] text-slate-400 italic">
-          Excluded rows are drawn hollow and left out of the fit. Manual ±SD overrides the error-bar mode for that row.
+          An excluded point is struck through, greyed out and left out of the fit — tick “Show Excl. Points” (Error Management) to keep it on the plot as a grey cross, exactly as in the plate tests.
+          A manual ±SD wins over the error-bar mode (orange frame) and is drawn as the error bar of that point.
           Tip: click any point directly on the plot to exclude / re-include it.
         </p>
       </div>

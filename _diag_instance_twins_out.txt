@@ -15,10 +15,8 @@ Racine du dataset : general_library_images, NATURAL_ARSENAL_Antibiotics, publica
       images/  (0 dossier(s), 4 fichier(s))
     bianca/  (1 dossier(s), 1 fichier(s))  [images]
       images/  (0 dossier(s), 3 fichier(s))
-    tests/  (2 dossier(s), 0 fichier(s))  [Test_68, MD]
+    tests/  (1 dossier(s), 0 fichier(s))  [Test_68]
       Test_68/  (1 dossier(s), 0 fichier(s))  [instance1]
-        instance1/  (1 dossier(s), 0 fichier(s))  [experiment_setup]
-      MD/  (1 dossier(s), 0 fichier(s))  [instance1]
         instance1/  (1 dossier(s), 0 fichier(s))  [experiment_setup]
     p53H/  (7 dossier(s), 0 fichier(s))  [NMR_p53H, Time_Laps_p53HMycH-Alexa488, Test_76, images, flow_cyt_p53H_p53R, useful_files, CD]
       NMR_p53H/  (4 dossier(s), 0 fichier(s))  [Exp_7, New_Instance_2, Exp_19, Exp_2]

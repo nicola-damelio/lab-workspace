@@ -51,6 +51,10 @@ import {
   readWorkspaceState, writeDatasetCopy, readDatasetCopy,
   applyWorkspaceIndex, adoptWorkspaceState, installWorkspaceAutosave, workspaceDatasetPath
 } from './utils/workspaceDrive';
+/* La LISTE des datasets a sa propre copie dans le navigateur, et elle voyage par
+   `_workspace/keys.json` en étant fusionnée par contenu (union par identifiant) :
+   une fenêtre neuve ne peut plus partir d'une liste vide — voir le module. */
+import { writeDatasetListCache, readDatasetListCache } from './utils/datasetListIndex';
 /* L'écriture différée du contenu d'un dataset sur le Drive (+ le vidage forcé
    à la fermeture de l'onglet) : la mécanique vit dans un module pur, testé hors
    navigateur par _dataset_copy_mirror_test.mjs. */
@@ -1974,8 +1978,19 @@ if (customType === 'dosy') {
        l'ouverture d'un dataset) les applique. */
     const adopted = adoptWorkspaceState(state);
     try { adoptDeletedProjects(state.deletedProjects); } catch { /* projet hors scope */ }
+    /* + LA LISTE ADOPTÉE, elle aussi : `adoptKeysFromDrive` (juste au-dessus) vient
+       d'écrire dans CE navigateur les datasets que `keys.json` rapporte d'un AUTRE
+       poste — y compris ceux qu'une écriture Firestore encore en attente n'a pas
+       publiés. La liste affichée, elle, a déjà été calculée : sans cette relecture
+       elle restait sur ce que ce poste avait — en navigation privée, rien — et le
+       dataset créé ailleurs (avec ses expériences) n'apparaissait pas. */
+    const adoptedList = readDatasetListCache();
     setDatasetsList((prev) => withoutDeletedDatasets(
-      applyWorkspaceIndex({ datasets: prev, state, mirror: adopted.mirror }).filter((d) => d && d.id)
+      applyWorkspaceIndex({
+        datasets: [...(Array.isArray(prev) ? prev : []), ...adoptedList],
+        state,
+        mirror: adopted.mirror
+      }).filter((d) => d && d.id)
     ));
     return true;
   }, []);
@@ -2007,6 +2022,27 @@ if (customType === 'dosy') {
     }), { delay: 2500 });
     return () => uninstall();
   }, [isCloudReady, datasetsList]);
+
+  /* ── LA LISTE VIT AUSSI DANS CE NAVIGATEUR (mode Firestore compris) ────────
+     Firestore reste la référence partagée, mais une écriture Firestore peut être
+     acquittée LOCALEMENT (le SDK « compat » garde ses écritures en attente) ou
+     refusée (session expirée) : un dataset créé ici n'existait alors que pour ce
+     poste — absent de la liste dans une fenêtre neuve (navigation privée), qui
+     n'a ni la mémoire du programme ni ce magasin. Or le code RELIT toujours
+     `lab_datasets_local_v2` (au démarrage, et quand Firestore ne répond pas) :
+     sans cette écriture, ce chemin de secours n'avait jamais rien à lire.
+     Ce qui est gardé est un INDEX (jamais le contenu des datasets, qui a son
+     document Firestore et son fichier `_workspace/datasets/…`) — sauf en mode
+     « sans Firestore », où cette liste EST le contenu (`keepContent: !db`).
+     `lab_datasets_local_v2` est une clé de l'application : l'observateur des
+     clés la dépose sur `_workspace/keys.json`, et là-bas elle est fusionnée par
+     contenu (union par identifiant — voir utils/datasetListIndex.js), donc la
+     liste d'un navigateur neuf ne peut pas effacer celle des autres postes. */
+  useEffect(() => {
+    // Une liste vide (écran de connexion, aucun dataset encore lu) n'efface rien.
+    if (!Array.isArray(datasetsList) || datasetsList.length === 0) return;
+    writeDatasetListCache(datasetsList, { keepContent: !db });
+  }, [datasetsList]);
 
   /* Les AUTRES clés du navigateur (publications, figures, étoiles, presets…)
      suivent le même chemin, en différé elles aussi : un changement dans une
@@ -3301,11 +3337,58 @@ const createNewDataset = async (kind = 'scientific') => {
       isCompressed: isAdmin
     };
 
+    /* LA FICHE DU DATASET EXISTE TOUT DE SUITE DANS CE NAVIGATEUR — sans attendre
+       l'aller-retour Firestore, et même si cette écriture n'atteint pas le serveur
+       (SDK « compat » : écritures en attente, ou refus si la session a expiré).
+       C'est ce qui fait qu'un dataset créé ici rejoint tout de suite la liste
+       (donc `_workspace/keys.json` par l'observateur des clés, donc les autres
+       postes) au lieu de n'exister pour personne d'autre. */
+    const localEntry = {
+      id: newId,
+      title: updatedPayload.title,
+      subtitle: updatedPayload.subtitle,
+      kind,
+      date: updatedPayload.date,
+      testCount: Array.isArray(freshTests) ? freshTests.length : 0,
+      updatedAt: Date.now(),
+      access: updatedPayload.access,
+      createdBy: updatedPayload.createdBy,
+      createdByRole: updatedPayload.createdByRole
+    };
+    writeDatasetListCache([localEntry], { keepContent: !db });
+    setDatasetsList((prev) => withoutDeletedDatasets(applyWorkspaceIndex({
+      datasets: [...(Array.isArray(prev) ? prev : []), localEntry]
+    })));
+
     if (db) {
-      await db
-        .collection(`artifacts/${appId}/public/data/datasets`)
-        .doc(newId)
-        .set(updatedPayload);
+      try {
+        await db
+          .collection(`artifacts/${appId}/public/data/datasets`)
+          .doc(newId)
+          .set(updatedPayload);
+        /* « Publié » veut dire ARRIVÉ SUR LE SERVEUR, pas « accepté par ce
+           navigateur » : `waitForPendingWrites` ne répond qu'une fois les
+           écritures en attente acquittées. Tant que ce n'est pas confirmé, le
+           dataset ne s'affiche que par l'index du Drive et par `keys.json` — et
+           la barre latérale doit le DIRE au lieu de laisser croire que tout est
+           dans le cloud (c'est exactement ce qui a fait croire à une perte). */
+        const published = typeof db.waitForPendingWrites === 'function'
+          ? await Promise.race([
+              db.waitForPendingWrites().then(() => true).catch(() => false),
+              new Promise((resolve) => setTimeout(() => resolve(false), 8000))
+            ])
+          : true;
+        setSaveTarget('cloud');
+        setSaveStatus(published ? 'saved' : 'error');
+        setSaveErrorMsg(published
+          ? ''
+          : 'The dataset was created, but the shared workspace has not confirmed it yet: it travels through the Drive index and the browser-key mirror, and it will be published as soon as the connection/session allows.');
+      } catch (err) {
+        setSaveStatus('error');
+        setSaveTarget('local');
+        setSaveErrorMsg(`The dataset was created on THIS device, but the shared workspace refused the write (${err && err.message}). It is kept locally and in the Drive index; check the connection or sign in again, then save the dataset again.`);
+        console.error('New dataset: Firestore write error:', err);
+      }
     } else {
       let stored = [];
 

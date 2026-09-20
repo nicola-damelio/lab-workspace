@@ -469,7 +469,15 @@ export function RegionCharts({ regionName, regionData, config }) {
                                   changed = true;
                               }
                           } else {
-                              const pos = Chart.helpers.getRelativePosition(evt, chart);
+                              // `Chart.helpers` is not exported by 'chart.js/auto' (v4):
+                              // the click position is converted by hand — CSS pixels
+                              // inside the canvas, the unit of `element.x / y`.
+                              const native = (evt && evt.native) || evt;
+                              const rect = chart.canvas.getBoundingClientRect();
+                              const pos = {
+                                  x: (native.clientX - rect.left) * (rect.width ? chart.width / rect.width : 1),
+                                  y: (native.clientY - rect.top) * (rect.height ? chart.height / rect.height : 1)
+                              };
                               const dx = chart.scales.x.getValueForPixel(pos.x);
                               let md = Infinity;
                               let tx = null;

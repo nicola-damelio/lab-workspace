@@ -1,0 +1,5 @@
+﻿803: export const fontFamilyOf = (cfg) => String((cfg && (cfg.fontFamily || cfg.font)) || '').trim();
+822: export const tickColorOf = (cfg, fallback = '#64748b') =>
+847: export const tickSize = (cfg, fallback) => {
+888: export const tickTextProps = (cfg, extra) => {
+907: export const legendTextStyle = (cfg, extra) => {

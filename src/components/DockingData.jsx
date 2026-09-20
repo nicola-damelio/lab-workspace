@@ -139,25 +139,123 @@ export const DOCKING_PROGRAMS = {
 };
 
 // ================= DOCKING METRICS =================
+/* Les grandeurs d'un résultat d'amarrage, avec LEUR unité.
+   `programs` = « cette colonne est attendue pour ce programme » : elle est alors
+   affichée dans le tableau de résultats même quand l'import ne l'a pas fournie
+   (l'utilisateur voit la colonne, son unité, et peut saisir la valeur à la
+   main). Une grandeur absente d'un programme n'encombre pas les autres.
+   `haddock` remplace le libellé / l'unité pour HADDOCK : son score est une somme
+   PONDÉRÉE de termes énergétiques, exprimée en unités arbitraires (a.u.) — pas
+   une énergie en kcal/mol. */
 export const DOCKING_METRICS = [
-  { key: 'affinity', label: 'Affinity', unit: 'kcal/mol', description: 'Binding affinity / docking score' },
-  { key: 'rmsd_lb', label: 'RMSD l.b.', unit: 'Å', description: 'RMSD lower bound from best mode' },
-  { key: 'rmsd_ub', label: 'RMSD u.b.', unit: 'Å', description: 'RMSD upper bound from best mode' },
+  // ── Le score du programme ──────────────────────────────────────────────────
+  { key: 'affinity', label: 'Affinity', unit: 'kcal/mol',
+    haddock: { label: 'HADDOCK score', unit: 'a.u.' },
+    programs: ['vina', 'autodock4', 'autodock_gpu', 'haddock'],
+    description: 'Docking score — « HADDOCK score », en unités arbitraires, pour HADDOCK' },
+  { key: 'energy_total', label: 'Total energy', unit: 'kcal/mol',
+    programs: ['haddock'], description: 'Énergie de liaison totale (le graphique d’affinité trace CE terme)' },
+  // ── Écarts à la structure de référence (Å) ─────────────────────────────────
+  { key: 'irmsd', label: 'i-RMSD', unit: 'Å', programs: ['haddock'], description: 'Interface RMSD (CAPRI)' },
+  { key: 'lrmsd', label: 'l-RMSD', unit: 'Å', programs: ['haddock'], description: 'Ligand RMSD (CAPRI)' },
+  { key: 'ilrmsd', label: 'i-l-RMSD', unit: 'Å', programs: ['haddock'], description: 'Interface ligand RMSD (CAPRI)' },
+  { key: 'rmsd', label: 'RMSD', unit: 'Å', programs: ['haddock'], description: 'RMSD from the reference structure' },
+  { key: 'rmsd_lb', label: 'RMSD l.b.', unit: 'Å', programs: ['vina', 'autodock4', 'autodock_gpu'], description: 'RMSD lower bound from the best mode' },
+  { key: 'rmsd_ub', label: 'RMSD u.b.', unit: 'Å', programs: ['vina', 'autodock4', 'autodock_gpu'], description: 'RMSD upper bound from the best mode' },
+  // ── Surface enfouie (Å²) ───────────────────────────────────────────────────
+  { key: 'bsa', label: 'BSA', unit: 'Å²', programs: ['haddock'], description: 'Buried surface area' },
+  // ── Termes énergétiques et restreintes (kcal/mol) ──────────────────────────
+  { key: 'energy_vdw', label: 'E vdW', unit: 'kcal/mol', programs: ['haddock'], description: 'van der Waals energy' },
+  { key: 'energy_elec', label: 'E elec', unit: 'kcal/mol', programs: ['haddock'], description: 'Electrostatic energy' },
+  { key: 'energy_desolv', label: 'E desolv', unit: 'kcal/mol', programs: ['haddock'], description: 'Desolvation energy' },
+  { key: 'energy_air', label: 'E air', unit: 'kcal/mol', programs: ['haddock'], description: 'Ambiguous Interaction Restraints energy' },
+  { key: 'energy_angles', label: 'E angles', unit: 'kcal/mol', programs: ['haddock'], description: 'Bond-angle restraint energy' },
+  { key: 'energy_bonds', label: 'E bonds', unit: 'kcal/mol', programs: ['haddock'], description: 'Bond-length restraint energy' },
+  { key: 'energy_dihe', label: 'E dihe', unit: 'kcal/mol', programs: ['haddock'], description: 'Dihedral restraint energy' },
+  { key: 'energy_improper', label: 'E improper', unit: 'kcal/mol', programs: ['haddock'], description: 'Improper-dihedral restraint energy' },
+  { key: 'energy_cdih', label: 'E cdih', unit: 'kcal/mol', programs: ['haddock'], description: 'J-coupling (dihedral) restraint energy' },
+  { key: 'energy_coup', label: 'E coup', unit: 'kcal/mol', programs: ['haddock'], description: 'Coupling restraint energy' },
+  { key: 'energy_dani', label: 'E dani', unit: 'kcal/mol', programs: ['haddock'], description: 'DANI (RDC) restraint energy' },
+  { key: 'energy_rdcs', label: 'E rdcs', unit: 'kcal/mol', programs: ['haddock'], description: 'RDC restraint energy' },
+  { key: 'energy_rg', label: 'E rg', unit: 'kcal/mol', programs: ['haddock'], description: 'Radius-of-gyration restraint energy' },
+  { key: 'energy_sym', label: 'E sym', unit: 'kcal/mol', programs: ['haddock'], description: 'Symmetry restraint energy' },
+  { key: 'energy_vean', label: 'E vean', unit: 'kcal/mol', programs: ['haddock'], description: 'VEAN (pseudo-contact shift) restraint energy' },
+  { key: 'energy_xpcs', label: 'E xpcs', unit: 'kcal/mol', programs: ['haddock'], description: 'XPCS (residual dipolar coupling) restraint energy' },
+  // ── Qualité CAPRI (adimensionnel, 0 → 1) ───────────────────────────────────
+  { key: 'fnat', label: 'fnat', unit: '0–1', programs: ['haddock'], description: 'Fraction of native contacts (0 → 1)' },
+  { key: 'fcc', label: 'FCC', unit: '0–1', description: 'Fraction of common contacts (0 → 1)' },
+  { key: 'dockq', label: 'DockQ', unit: '0–1', programs: ['haddock'], description: 'CAPRI quality score (0 → 1)' },
+  // ── Classements et clusters (adimensionnel, entiers) ───────────────────────
+  { key: 'caprieval_rank', label: 'CAPRI rank', unit: '', programs: ['haddock'], description: 'caprieval_rank — rang de la pose (entier)' },
+  { key: 'cluster_id', label: 'Cluster id', unit: '', programs: ['haddock'], description: 'cluster_id (entier)' },
+  { key: 'cluster_ranking', label: 'Cluster ranking', unit: '', programs: ['haddock'], description: 'cluster_ranking (entier)' },
+  { key: 'model_cluster_ranking', label: 'Model/cluster ranking', unit: '', programs: ['haddock'], description: 'model-cluster_ranking (entier)' },
+  { key: 'cluster_size', label: 'Cluster size', unit: '', programs: ['haddock'], description: 'Nombre de modèles du cluster (entier)' },
+  // ── Spécifiques Vina / AutoDock ────────────────────────────────────────────
   { key: 'population', label: 'Population', unit: '%', description: 'Cluster population' },
-  { key: 'energy_total', label: 'Total Energy', unit: 'kcal/mol', description: 'Total binding energy' },
   { key: 'energy_inter', label: 'Intermolecular', unit: 'kcal/mol', description: 'Intermolecular energy' },
   { key: 'energy_intra', label: 'Intramolecular', unit: 'kcal/mol', description: 'Intramolecular / internal energy' },
   { key: 'energy_torsional', label: 'Torsional', unit: 'kcal/mol', description: 'Torsional free energy' },
-  { key: 'energy_elec', label: 'Electrostatic', unit: 'kcal/mol', description: 'Electrostatic energy' },
-  { key: 'energy_vdw', label: 'vdW + Hbond + desolv', unit: 'kcal/mol', description: 'van der Waals + H-bond + desolvation' },
-  { key: 'energy_desolv', label: 'Desolvation', unit: 'kcal/mol', description: 'Desolvation energy' },
-  { key: 'energy_air', label: 'AIR', unit: 'a.u.', description: 'Ambiguous Interaction Restraints (HADDOCK)' },
-  { key: 'bsa', label: 'BSA', unit: 'Å²', description: 'Buried surface area' },
-  { key: 'fcc', label: 'FCC', unit: '', description: 'Fraction of common contacts (HADDOCK)' },
-  { key: 'h_bonds', label: 'H-Bonds', unit: 'count', description: 'Hydrogen bonds at interface' },
-  { key: 'contacts', label: 'Contacts', unit: 'count', description: 'Interface contacts' },
-  { key: 'ki', label: 'Ki', unit: 'nM', description: 'Estimated inhibition constant' }
+  { key: 'h_bonds', label: 'H-Bonds', unit: 'count', programs: ['vina', 'autodock4', 'autodock_gpu'], description: 'Hydrogen bonds at interface' },
+  { key: 'contacts', label: 'Contacts', unit: 'count', programs: ['vina', 'autodock4', 'autodock_gpu'], description: 'Interface contacts' },
+  { key: 'ki', label: 'Ki', unit: 'nM', programs: ['vina', 'autodock4', 'autodock_gpu'], description: 'Estimated inhibition constant' }
 ];
+
+/** Libellé / unité d'une métrique POUR UN PROGRAMME : lire les deux évite que le
+ *  score HADDOCK s'affiche « (kcal/mol) » dans le tableau de résultats. */
+export const dockingMetricOf = (metric, program) => {
+  if (!metric) return { label: '', unit: '' };
+  const hk = program === 'haddock' ? metric.haddock : null;
+  return {
+    ...metric,
+    label: (hk && hk.label) || metric.label,
+    unit: hk && hk.unit !== undefined ? hk.unit : metric.unit
+  };
+};
+export const dockingMetricLabel = (metric, program) => dockingMetricOf(metric, program).label;
+export const dockingMetricUnit = (metric, program) => dockingMetricOf(metric, program).unit;
+
+/* ── CE QUE TRACE CHAQUE GRAPHIQUE ───────────────────────────────────────────
+   `poseBindingEnergy` : l'ÉNERGIE DE LIAISON en kcal/mol — l'énergie TOTALE du
+   terme HADDOCK (`total`) quand elle existe, l'affinité pour Vina / AutoDock
+   (c'est la même chose : leur affinité EST l'énergie de liaison). Pour HADDOCK un
+   score en a.u. n'est PAS une énergie : il n'est jamais tracé sur cet axe.
+   `poseDeviation` : l'écart à la référence en Å — le l-RMSD (CAPRI) d'abord,
+   puis les bornes de Vina / AutoDock, l'i-RMSD, l'i-l-RMSD et le RMSD. */
+export const poseBindingEnergy = (p, program) => {
+  if (!p) return null;
+  const total = parseDockingValue(p.energy_total);
+  if (total !== null) return total;
+  if (program === 'haddock') return null;
+  return parseDockingValue(p.affinity);
+};
+
+export const poseDeviation = (p) => {
+  if (!p) return null;
+  return parseDockingValue(p.lrmsd) ?? parseDockingValue(p.rmsd_lb)
+    ?? parseDockingValue(p.irmsd) ?? parseDockingValue(p.ilrmsd)
+    ?? parseDockingValue(p.rmsd);
+};
+
+/** Les termes du score HADDOCK PRÉSENTS dans une ligne (kcal/mol), dans l'ordre
+ *  de DOCKING_METRICS : le graphique « HADDOCK score terms » ne trace QUE ce que
+ *  le tableau contient — plus de barres à 0 pour une colonne absente. */
+export const HADDOCK_SCORE_TERM_KEYS = [
+  'energy_vdw', 'energy_elec', 'energy_desolv', 'energy_air',
+  'energy_angles', 'energy_bonds', 'energy_dihe', 'energy_improper',
+  'energy_cdih', 'energy_coup', 'energy_dani', 'energy_rdcs',
+  'energy_rg', 'energy_sym', 'energy_vean', 'energy_xpcs'
+];
+
+export const haddockScoreTerms = (p) => {
+  if (!p) return {};
+  const out = {};
+  [...HADDOCK_SCORE_TERM_KEYS, 'energy_total'].forEach((k) => {
+    const v = parseDockingValue(p[k]);
+    if (v !== null) out[k] = v;
+  });
+  return out;
+};
 
 // ================= DOCKING FILE FORMATS =================
 export const DOCKING_FILE_FORMATS = [
@@ -273,26 +371,81 @@ export const parseAutoDockDlg = (text) => {
   return poses;
 };
 
+/* ============================================================================
+   NOMS DE COLONNES — UNE SEULE TABLE DE SYNONYMES
+   ----------------------------------------------------------------------------
+   La même grandeur porte plusieurs noms selon la source : « score » /
+   « HADDOCK score » / « total » (le score), « vdW » / « E_vdw » (l'énergie de
+   van der Waals), « RMSD l.b. » / « lrmsd » (l'écart à la référence)… Le TSV
+   CAPRI (9_caprieval/capri_ss.tsv) et le CSV de scores HADDOCK sont donc lus
+   avec CETTE table : renommer une colonne se corrige à un seul endroit.
+
+   La comparaison se fait sur une forme CANONIQUE (lettres et chiffres seuls) :
+   « RMSD l.b. », « RMSD_lb » et « rmsd-lb » sont la même colonne.
+
+   Les unités de chaque grandeur vivent dans DOCKING_METRICS (kcal/mol pour les
+   termes énergétiques et les restreintes, Å pour les écarts, Å² pour la surface
+   enfouie, adimensionnel pour fnat / dockq, les rangs et les clusters).
+   ========================================================================= */
+export const normMetricColumn = (c) => String(c || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+export const CAPRI_METRIC_SYNONYMS = {
+  // ── Le score du programme (a.u. pour HADDOCK, kcal/mol pour Vina/AutoDock) ──
+  affinity: ['haddockscore', 'scorehaddock', 'score', 'dockingscore', 'scoring'],
+  // ── Écarts à la structure de référence (Å) ─────────────────────────────────
+  irmsd: ['irmsd', 'interfacer_rmsd', 'interfacermsd'],
+  lrmsd: ['lrmsd', 'ligandrmsd', 'rmsdligand'],
+  ilrmsd: ['ilrmsd', 'interfaceligandrmsd'],
+  rmsd: ['rmsd', 'rmsdall', 'rmsdfrombest', 'rmsdref'],
+  // ── Bornes de RMSD de Vina / AutoDock (Å) ──────────────────────────────────
+  rmsd_lb: ['rmsdlb', 'rmsdlower', 'rmsdlowerbound'],
+  rmsd_ub: ['rmsdub', 'rmsdupper', 'rmsdupperbound'],
+  // ── Termes énergétiques et restreintes (kcal/mol) ──────────────────────────
+  energy_total: ['total', 'etotal', 'energytotal', 'totalenergy'],
+  energy_vdw: ['vdw', 'evdw', 'vdwenergy', 'vanderwaals'],
+  energy_elec: ['elec', 'eelec', 'elecenergy', 'electrostatics', 'electrostatic'],
+  energy_desolv: ['desolv', 'edesolv', 'desolvation', 'desolvenergy'],
+  energy_air: ['air', 'eair', 'airenergy', 'ambig', 'desolvair'],
+  energy_angles: ['angles', 'angle', 'eangles', 'bondangles'],
+  energy_bonds: ['bonds', 'bond', 'ebonds'],
+  energy_dihe: ['dihe', 'edihe', 'dihedral', 'dihedrals'],
+  energy_improper: ['improper', 'eimproper', 'impropers'],
+  energy_cdih: ['cdih', 'ecdih'],
+  energy_coup: ['coup', 'ecoup', 'coupling'],
+  energy_dani: ['dani', 'edani'],
+  energy_rdcs: ['rdcs', 'erdcs'],
+  energy_rg: ['rg', 'ergy', 'radiusofgyration'],
+  energy_sym: ['sym', 'esym', 'symmetry'],
+  energy_vean: ['vean', 'evean'],
+  energy_xpcs: ['xpcs', 'expcs'],
+  // ── Surface enfouie (Å²) ───────────────────────────────────────────────────
+  bsa: ['bsa', 'buriedsurfacearea', 'buriedsurface', 'bsurface'],
+  // ── Qualité CAPRI (adimensionnel, 0 → 1) et fractions de contacts ──────────
+  fnat: ['fnat', 'fnative', 'fractionofnativecontacts', 'fractionnativecontacts'],
+  fcc: ['fcc', 'fractionofcommoncontacts'],
+  dockq: ['dockq', 'dockqscore'],
+  // ── Classements et clusters (adimensionnel, entiers) ───────────────────────
+  caprieval_rank: ['caprievalrank', 'rank', 'modelrank'],
+  cluster_id: ['clusterid', 'cluster'],
+  cluster_ranking: ['clusterranking', 'clusterrank'],
+  model_cluster_ranking: ['modelclusterranking', 'modelclusterrank'],
+  cluster_size: ['clustersize', 'nmembers', 'nmemberscluster']
+};
+
 // ================= HADDOCK CSV SCORE PARSER =================
+// Le CSV de scores porte les MÊMES grandeurs que le TSV CAPRI, plus le nom du
+// modèle et l'itération : les synonymes ci-dessus suffisent, on n'ajoute que
+// les deux colonnes qui ne sont pas des métriques.
 const HADDOCK_FIELD_ALIASES = {
-  label: ['filename', 'structure', 'name', 'model', 'structure_name'],
+  label: ['structure', 'filename', 'name', 'structurename', 'model'],
   itw: ['itw', 'run', 'iteration'],
-  fcc: ['fcc', 'fraction_common_contacts'],
-  rmsd: ['rmsd', 'rmsd_all', 'rmsd_from_best'],
-  affinity: ['total', 'haddock-score', 'haddock_score', 'score', 'total_score'],
-  energy_air: ['air', 'air_energy', 'desolvair', 'ambig'],
-  energy_desolv: ['desolv', 'desolvation', 'desolv_energy'],
-  bsa: ['bsa', 'buried_surface_area', 'bsurface'],
-  energy_vdw: ['vdw', 'vdw_energy', 'van_der_waals', 'evdw'],
-  energy_elec: ['elec', 'electrostatics', 'elec_energy', 'eelec'],
-  cluster_rank: ['cluster_rank', 'rank', 'cluster'],
-  cluster_size: ['cluster_size', 'clustersize', 'n_members']
+  ...CAPRI_METRIC_SYNONYMS
 };
 
 const matchHADDOCKField = (header, field) => {
   const aliases = HADDOCK_FIELD_ALIASES[field] || [field];
   for (const a of aliases) {
-    const idx = header.findIndex((h) => h.toLowerCase().replace(/[\s-]/g, '_') === a);
+    const idx = header.findIndex((h) => normMetricColumn(h) === a);
     if (idx >= 0) return idx;
   }
   return -1;
@@ -317,7 +470,7 @@ export const parseHADDOCKScores = (text) => {
         pose[field] = n !== null ? n : vals[idx];
       }
     });
-    if (pose.affinity === undefined) pose.affinity = pose.energy_air || 0;
+    if (pose.affinity === undefined) pose.affinity = pose.energy_total ?? pose.energy_air ?? 0;
     poses.push(pose);
   }
   return poses;
@@ -457,29 +610,9 @@ export const parseCapriTsv = (text) => {
 };
 
 /* ── CAPRI / caprieval → lignes du tableau de résultats ─────────────────────
-   Le même nombre porte plusieurs noms selon la version de HADDOCK (« score »,
-   « HADDOCK score », « total », « RMSD l.b. », « E_vdw »…) : chaque synonyme
-   accepté est ramené sur la clé de métrique que le tableau ET les graphiques
-   utilisent. Une recherche par nom exact laissait les poses vides dès que
-   l'en-tête différait d'une lettre. La comparaison se fait sur une forme
-   CANONIQUE (lettres et chiffres seuls) : « RMSD l.b. », « RMSD_lb » et
-   « rmsd-lb » sont la même colonne. */
-export const CAPRI_METRIC_SYNONYMS = {
-  affinity: ['score', 'haddockscore', 'scorehaddock', 'total'],
-  rmsd_lb: ['lrmsd', 'rmsdlb', 'rmsdlower', 'rmsdlowerbound'],
-  rmsd_ub: ['ilrmsd', 'rmsdub', 'rmsdupper', 'rmsdupperbound'],
-  energy_total: ['total', 'energytotal'],
-  energy_air: ['air', 'energyair', 'eair'],
-  energy_elec: ['elec', 'electrostatic', 'energyelec', 'eelec'],
-  energy_vdw: ['vdw', 'vanderwaals', 'energyvdw', 'evdw'],
-  energy_desolv: ['desolv', 'desolvation', 'energydesolv', 'edesolv'],
-  bsa: ['bsa', 'buriedsurfacearea', 'buriedsurface'],
-  fcc: ['fcc', 'fractionofcommoncontacts']
-};
-
-/** Forme canonique d'un nom de colonne (« RMSD l.b. » → « rmsdlb »). */
-export const normMetricColumn = (c) => String(c || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-
+   Chaque colonne reconnue (voir CAPRI_METRIC_SYNONYMS, en tête de fichier) est
+   ramenée sur la clé de métrique que le tableau ET les graphiques utilisent —
+   l'unité de chaque clé est celle de DOCKING_METRICS. */
 /** Construit les lignes du tableau de résultats à partir d'un TSV CAPRI. Utilisé
  *  par l'import d'un répertoire de calcul ET par l'import d'un fichier seul, pour
  *  que les deux remplissent le MÊME tableau avec les mêmes valeurs. */
@@ -834,17 +967,27 @@ export const generateDockingPoses = (n = 9, baseAffinity = -8.5) => {
 export const generateHADDOCKPoses = (n = 20) => {
   const poses = [];
   for (let i = 0; i < n; i++) {
-    const total = -45 + i * 1.2 + (Math.random() - 0.5) * 3;
+    const total = -45 + i * 1.2 + (Math.random() - 0.5) * 3;   // le SCORE HADDOCK (a.u.)
+    const vdw = +(-(20 + Math.random() * 8)).toFixed(2);
+    const elec = +(-(12 + Math.random() * 8)).toFixed(2);
+    const desolv = +(Math.random() * 8).toFixed(2);
+    const air = +(-(12 + Math.random() * 5)).toFixed(2);
     poses.push({
       mode: i + 1,
       label: `structure_${i + 1}w.pdb`,
       affinity: +total.toFixed(2),
-      energy_air: +(-(12 + Math.random() * 5)).toFixed(2),
-      energy_desolv: +(Math.random() * 8).toFixed(2),
+      // L'énergie TOTALE (kcal/mol) : la somme pondérée des termes — c'est elle
+      // que trace le graphique d'affinité, le score ci-dessus restant en a.u.
+      energy_total: +(vdw + elec + desolv + air).toFixed(2),
+      energy_air: air,
+      energy_desolv: desolv,
       bsa: 1100 + Math.floor(Math.random() * 500),
-      energy_vdw: +(-(20 + Math.random() * 8)).toFixed(2),
-      energy_elec: +(-(12 + Math.random() * 8)).toFixed(2),
+      energy_vdw: vdw,
+      energy_elec: elec,
+      lrmsd: +(Math.random() * 3 + 0.2).toFixed(3),
       rmsd: +(1 + Math.random() * 3).toFixed(2),
+      fnat: +(0.4 + Math.random() * 0.5).toFixed(3),
+      dockq: +(0.3 + Math.random() * 0.6).toFixed(3),
       fcc: +(Math.random() * 0.6).toFixed(3),
       program: 'haddock'
     });
@@ -934,6 +1077,13 @@ export default {
   writeDockingCellValue,
   generateDockingPoses,
   generateHADDOCKPoses,
+  dockingMetricOf,
+  dockingMetricLabel,
+  dockingMetricUnit,
+  poseBindingEnergy,
+  poseDeviation,
+  HADDOCK_SCORE_TERM_KEYS,
+  haddockScoreTerms,
   DEFAULT_DOCKING_CHART_STYLE,
   dockLineDash,
   dockSeriesColor,
