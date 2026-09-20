@@ -1644,7 +1644,6 @@ export const Data = ({ ctx }) => {
     restore: restoreCdFromDrive
   });
 
-  const [jascoText, setJascoText] = useState('');
   const [jascoMsg, setJascoMsg] = useState('');
   const jascoFileRef = useRef(null);
   
@@ -1870,20 +1869,6 @@ export const Data = ({ ctx }) => {
     if (jascoFileRef.current) jascoFileRef.current.value = '';
   };
 
-  const handlePasteImport = () => {
-    if (!jascoText.trim()) {
-      setJascoMsg('⚠️ Please paste some text first.');
-      return;
-    }
-    try {
-      const parsed = parseJascoCDText(jascoText);
-      applyJasco(parsed, null);
-      setJascoText('');
-    } catch (err) {
-      setJascoMsg(`⚠️ Error parsing text: ${err.message}`);
-      console.error('Jasco paste parse error:', err);
-    }
-  };
 
   const mwSource = (() => {
     const manual = parseManual(activeTest.manualMW);
@@ -2136,59 +2121,23 @@ export const Data = ({ ctx }) => {
           <span className="text-[9px] text-purple-400 ml-auto">Switch condition using the tabs at the top of the page.</span>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <h4 className="text-sm font-bold text-slate-700">Spectra — condition "{activeInstance ? activeInstance.name : '—'}"</h4>
-            <div className="flex gap-2">
-              <button type="button" onClick={addSpectrumColumn} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm">+ Add Spectrum</button>
-              <button type="button" onClick={exportCSV} className="bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm hover:bg-emerald-100">📊 Export CSV (all conditions)</button>
-            </div>
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className={LABEL_CLS}>Wavelengths (nm) — comma, space or newline separated</label>
-            <textarea
-              value={activeTest.wavelengthData || ''} onChange={(e) => updateWavelengthData(e.target.value)} placeholder={'190, 191, 192, ...'}
-              className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-blue-500 h-20 custom-scrollbar"
-            />
-            <span className="text-[10px] text-slate-400">{activeParsed.parsedWavelengths.length} valid wavelengths parsed.</span>
-          </div>
-          {spectraColumns.map((col, idx) => (
-            <div key={col.id} className="border border-slate-200 rounded-lg p-3 bg-slate-50 flex flex-col gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <input type="color" value={col.color || SPECTRA_PALETTE[idx % SPECTRA_PALETTE.length]} onChange={(e) => patchColumn(col.id, { color: e.target.value })} className="w-7 h-7 rounded cursor-pointer border border-slate-300" title="Series color" />
-                <input type="text" value={col.title || ''} onChange={(e) => patchColumn(col.id, { title: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs font-bold flex-1 min-w-[140px] outline-none focus:border-blue-500" />
-                <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 cursor-pointer">
-                  <input type="checkbox" checked={col.visible !== false} onChange={(e) => patchColumn(col.id, { visible: e.target.checked })} className="w-3.5 h-3.5 accent-blue-600" /> Visible
-                </label>
-                <button type="button" onClick={() => removeSpectrumColumn(col.id)} className="text-red-500 hover:text-red-700 font-black text-sm px-1" title="Remove spectrum">×</button>
-              </div>
-              <textarea
-                value={col.data || ''} onChange={(e) => patchColumn(col.id, { data: e.target.value })} placeholder="CD values (comma or newline separated), same order as wavelengths"
-                className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-blue-500 h-16 custom-scrollbar bg-white"
-              />
-            </div>
-          ))}
-          {spectraColumns.length === 0 && <div className="text-xs text-slate-400 italic bg-slate-50 border border-dashed border-slate-300 rounded-lg p-4 text-center">No spectra yet. Add a spectrum manually or import a Jasco file below.</div>}
-        </div>
 
         <div className="bg-sky-50 border border-sky-200 rounded-xl p-4 flex flex-col gap-3">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <h4 className="text-sm font-bold text-sky-900">📥 Jasco Import (.txt / .csv / .jws)</h4>
-            <span className="text-[9px] bg-sky-200 text-sky-900 px-2 py-0.5 rounded font-bold">imports into the ACTIVE condition</span>
-          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h4 className="text-sm font-bold text-sky-900 shrink-0">📥 Jasco Import (.txt / .csv / .jws)</h4>
+            <span className="text-[9px] bg-sky-200 text-sky-900 px-2 py-0.5 rounded font-bold shrink-0">imports into the ACTIVE condition</span>
 
           {/* Restauration automatique des colonnes depuis le Drive (voir
               CD_RESTORE_KIND en tête de ce fichier) : l'archive est déposée
               TOUTE SEULE à l'import, donc ce bouton n'est qu'un secours manuel —
               la restauration part d'elle-même à l'ouverture de la page. */}
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => cdRestore.attempt('manual')}
-              disabled={cdRestore.status === 'restoring'}
-              title="Download the archived copy of these spectra from Google Drive (it is saved automatically at import) — it also happens by itself when the page opens"
-              className="text-[10px] font-bold bg-white border border-sky-300 text-sky-700 hover:bg-sky-100 px-2 py-1 rounded-md shadow-sm disabled:opacity-50"
-            >
+          <button
+            type="button"
+            onClick={() => cdRestore.attempt('manual')}
+            disabled={cdRestore.status === 'restoring'}
+            title="Download the archived copy of these spectra from Google Drive (it is saved automatically at import) — it also happens by itself when the page opens"
+            className="text-[10px] font-bold bg-white border border-sky-300 text-sky-700 hover:bg-sky-100 px-2 py-1 rounded-md shadow-sm disabled:opacity-50"
+          >
               {cdRestore.status === 'restoring' ? '⬇️ Downloading…' : '⬇️ Restore from Drive'}
             </button>
             {activeTest.cdDrive && !cdRestore.message && (
@@ -2209,8 +2158,6 @@ export const Data = ({ ctx }) => {
                 )}
               </span>
             )}
-          </div>
-          <div className="flex flex-wrap items-end gap-3">
             <label className="bg-white border border-sky-300 hover:bg-sky-100 text-sky-800 font-bold px-3 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors">
               📄 Choose Jasco file(s)…
               <input ref={jascoFileRef} type="file" accept=".txt,.csv,.jws" multiple onChange={handleJascoFile} className="hidden" />
@@ -2237,18 +2184,53 @@ export const Data = ({ ctx }) => {
               label="⬆ Archive spectra to Drive"
               className="bg-sky-50 text-sky-800 border border-sky-200 hover:bg-sky-100"
             />
-            <span className="text-[10px] text-sky-700">…or paste the file content below and press Import. Metadata (temperature, cell length, scan settings…) is auto-filled into the Experimental Conditions and Instrumental Setup sections.</span>
+          {jascoMsg && <span className="text-xs font-bold text-sky-900">{jascoMsg}</span>}
           </div>
-          <textarea
-            value={jascoText} onChange={(e) => setJascoText(e.target.value)} placeholder={'Paste Jasco export here (metadata block + XYDATA)…'}
-            className="w-full border border-sky-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-sky-500 h-24 custom-scrollbar bg-white"
-          />
-       <div className="flex items-center gap-3">
-         <button type="button" onClick={handlePasteImport} disabled={!jascoText.trim()} className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm">Import pasted data</button>
-         {jascoMsg && <span className="text-xs font-bold text-sky-900">{jascoMsg}</span>}
-       </div>
+
+          <div className="flex flex-col gap-2 bg-white border border-sky-200 rounded-lg p-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-bold text-slate-700">Spectra — condition "{activeInstance ? activeInstance.name : '—'}"</span>
+              <div className="flex gap-2">
+                <button type="button" onClick={addSpectrumColumn} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm">+ Add Spectrum</button>
+                <button type="button" onClick={exportCSV} className="bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm hover:bg-emerald-100">📊 Export CSV (all conditions)</button>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-stretch gap-2">
+              <div className="flex-1 min-w-[150px] flex flex-col gap-1">
+                <label className={LABEL_CLS}>Wavelengths (nm) — comma, space or newline separated</label>
+                <textarea
+                  value={activeTest.wavelengthData || ''}
+                  onChange={(e) => updateWavelengthData(e.target.value)}
+                  placeholder={'190, 191, 192, ...'}
+                  className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-blue-500 h-24 custom-scrollbar"
+                />
+                <span className="text-[10px] text-slate-400">{activeParsed.parsedWavelengths.length} valid wavelengths parsed.</span>
+              </div>
+              {spectraColumns.map((col, idx) => (
+                <div key={col.id} className="flex-1 min-w-[170px] border border-slate-200 rounded-lg p-2 bg-slate-50 flex flex-col gap-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <input type="color" value={col.color || SPECTRA_PALETTE[idx % SPECTRA_PALETTE.length]} onChange={(e) => patchColumn(col.id, { color: e.target.value })} className="w-6 h-6 rounded cursor-pointer border border-slate-300" title="Series color" />
+                    <input type="text" value={col.title || ''} onChange={(e) => patchColumn(col.id, { title: e.target.value })} className="border border-slate-300 rounded-lg px-1.5 py-1 text-xs font-bold flex-1 min-w-[90px] outline-none focus:border-blue-500" />
+                    <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600 cursor-pointer">
+                      <input type="checkbox" checked={col.visible !== false} onChange={(e) => patchColumn(col.id, { visible: e.target.checked })} className="w-3.5 h-3.5 accent-blue-600" /> Visible
+                    </label>
+                    <button type="button" onClick={() => removeSpectrumColumn(col.id)} className="text-red-500 hover:text-red-700 font-black text-sm px-1" title="Remove spectrum">×</button>
+                  </div>
+                  <textarea
+                    value={col.data || ''} onChange={(e) => patchColumn(col.id, { data: e.target.value })} placeholder="CD values (comma or newline separated), same order as the wavelengths"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-blue-500 h-24 custom-scrollbar bg-white"
+                  />
+                </div>
+              ))}
+              {spectraColumns.length === 0 && <div className="text-xs text-slate-400 italic bg-slate-50 border border-dashed border-slate-300 rounded-lg p-3 text-center flex-1">No spectra yet. Add a spectrum manually or import a Jasco file above.</div>}
+            </div>
+          </div>
         </div>
 
+        {/* Ellipticity conversion · Blank Subtraction · Math Operations :
+            trois réglages COURTS qui se suivaient verticalement — côte à côte
+            sur un écran large, empilés quand la fenêtre est étroite. */}
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-3 items-start">
         <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
           <h4 className="text-sm font-bold text-slate-700">🧮 Ellipticity conversion — [θ] / Δε</h4>
           <div className="flex flex-wrap items-center gap-2">
@@ -2402,6 +2384,8 @@ export const Data = ({ ctx }) => {
               <button type="button" onClick={revertMathOperation} className="bg-white border border-blue-300 text-blue-600 hover:bg-blue-50 font-bold px-4 py-2 rounded-lg text-xs shadow-sm">↩️ Revert last operation</button>
             )}
           </div>
+        </div>
+
         </div>
 
         <SpectraVisualization ctx={ctx} />

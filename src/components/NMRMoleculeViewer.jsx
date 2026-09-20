@@ -1332,11 +1332,21 @@ const VSection = ({ title, hint, right = null, children }) => (
   </section>
 );
 
-// One accordion menu of §2 (A–F). The header stacks the SHORT menu name over
-// the CURRENT summary, so the six menus line up horizontally in the §2 grid
-// (their names have very different lengths): the name wraps on two lines
-// instead of being cut, and the summary is clamped to two lines — that is what
-// keeps every closed header the same, small height.
+/* One menu of §2 (A–F). The SIX menus have to hold on ONE LINE, so a closed
+   button carries NOTHING but the menu name: the summary line that used to sit
+   under it is gone from the interface (its live text stays in the button's
+   tooltip, and the §2 header keeps summarising all six menus at once).
+   The component returns a FRAGMENT, so inside the §2 grid its two children are
+   grid items themselves:
+     • the button, pinned to row 1 — the six of them ARE that line;
+     • the parameters, which are no longer squeezed into the button's cell: they
+       take the FULL WIDTH of row 2 (`col-span-full row-start-2`), right under
+       the line of menus, and unfold HORIZONTALLY (flex-wrap: one « label +
+       control » pair after the other). An open menu therefore costs two or
+       three compact lines instead of a tall column that pushed the five other
+       menus onto other rows.
+   The placement is explicit (row 1 / row 2), so it does not depend on the
+   auto-flow of whichever menu happens to be open. */
 const VMenu = ({ open, onToggle, id, label, summary, accent = 'blue', children }) => {
   const tone = {
     blue: { on: 'border-blue-400 bg-blue-50/60', off: 'border-slate-200 bg-white', text: 'text-blue-800' },
@@ -1347,17 +1357,19 @@ const VMenu = ({ open, onToggle, id, label, summary, accent = 'blue', children }
     rose: { on: 'border-rose-400 bg-rose-50/60', off: 'border-slate-200 bg-white', text: 'text-rose-800' },
   }[accent] || {};
   return (
-    <div className={`w-full flex flex-col rounded-lg border ${open ? tone.on : tone.off}`}>
-      <button type="button" id={id} onClick={onToggle} title={summary}
-        className={`w-full flex items-start gap-1 px-1.5 py-0.5 text-left ${tone.text}`}>
-        <span className="flex-1 min-w-0 flex flex-col">
-          <span className="text-[11px] font-black leading-tight break-words">{label}</span>
-          <span className="text-[10px] font-bold text-slate-500 leading-tight break-words line-clamp-2">{summary}</span>
-        </span>
+    <>
+      <button type="button" id={id} onClick={onToggle} title={summary} aria-expanded={open}
+        className={`row-start-1 w-full min-w-0 flex items-center justify-between gap-1 rounded-lg border px-1.5 py-1 text-left transition-colors ${open ? tone.on : tone.off} ${tone.text}`}>
+        <span className="text-[11px] font-black leading-tight break-words">{label}</span>
         <span className="text-[10px] font-black shrink-0 leading-tight">{open ? '▲' : '▼'}</span>
       </button>
-      {open && <div className="flex flex-col gap-1 px-1.5 pb-1.5">{children}</div>}
-    </div>
+      {open && (
+        <div className={`col-span-full row-start-2 w-full rounded-lg border px-2 py-1.5 flex flex-wrap items-start gap-x-4 gap-y-1.5 ${tone.on}`}>
+          <span className={`text-[11px] font-black leading-tight whitespace-nowrap ${tone.text}`}>{label}</span>
+          {children}
+        </div>
+      )}
+    </>
   );
 };
 
@@ -1563,20 +1575,29 @@ const [sidechainStyle, setSidechainStyle] = useState('licorice');
 const [catStyles, setCatStyles] = useState(() => loadCatStyles());
 const catStylesRef = useRef(catStyles);
 catStylesRef.current = catStyles;
-// Update ONE field of ONE category (every menu goes through this).
-const setCatStyle = (cat, key, value) => setCatStyles((prev) => ({
-  ...prev,
-  [cat]: { ...(prev[cat] || {}), [key]: value },
-}));
+// Update ONE field of ONE category (every menu goes through this). A change made
+// here IS a styling choice, so it also leaves the fast starting layout of a large
+// system (leaveLightMode): the menu the user just moved is really applied.
+const setCatStyle = (cat, key, value) => {
+  leaveLightMode();
+  setCatStyles((prev) => ({
+    ...prev,
+    [cat]: { ...(prev[cat] || {}), [key]: value },
+  }));
+};
 // Pick a surface COLOUR. An ESP colouring needs a surface to sit on, so when
 // ESP is chosen while the surface is hidden the surface is switched on
-// (transparent) — otherwise the choice would silently do nothing.
-const setSurfaceColor = (cat, value) => setCatStyles((prev) => {
-  const cur = prev[cat] || {};
-  const next = { ...cur, surfaceColor: value };
-  if (value === 'esp' && (!next.surface || next.surface === 'hide')) next.surface = 'transparent';
-  return { ...prev, [cat]: next };
-});
+// (transparent) — otherwise the choice would silently do nothing. A colour is a
+// styling choice too, so it leaves the lightweight layout as well.
+const setSurfaceColor = (cat, value) => {
+  leaveLightMode();
+  setCatStyles((prev) => {
+    const cur = prev[cat] || {};
+    const next = { ...cur, surfaceColor: value };
+    if (value === 'esp' && (!next.surface || next.surface === 'hide')) next.surface = 'transparent';
+    return { ...prev, [cat]: next };
+  });
+};
 // Open/closed state of the five styling menus (accordion: one at a time) and of
 // the residue-sequence strip above the viewport (collapsible: it used to eat
 // too much room on long sequences).
@@ -1713,15 +1734,28 @@ useEffect(() => {
 
 // ---- Lightweight-rendering mode (large structures) -------------------------
 // Large systems (protein in membrane + explicit solvent) are rendered in FULL
-// but with lightweight instanced representations so the browser stays
-// responsive. This flag simply switches the DEFAULT representation set, and
-// there is no « ✨ Full detail » escape hatch any more: rebuilding the category
-// representations of a ~130 000-atom system froze the page, so such a system
-// stays in this mode (see the §2 → F · Others « Large system » row).
-const [lightRender, setLightRender] = useState(false);  // true → lightweight reps for big systems
-const [lightInfo, setLightInfo] = useState(null);       // { nAtoms, size } → small info line
+// but START with lightweight instanced representations, so the structure is
+// visible at once instead of waiting for 100 000 atoms to be styled. This flag
+// therefore describes the STARTING layout only: the first styling gesture in
+// §2 « Molecular Styling » (a category menu, the side-chain selector, a colour
+// swatch, the docking role styles) calls leaveLightMode() and the system is
+// re-drawn with the per-category representations the user asked for. There is
+// no « ✨ Full detail » button any more — the gesture itself is the switch.
+const [lightRender, setLightRender] = useState(false);  // true → lightweight starting reps for big systems
+const [lightInfo, setLightInfo] = useState(null);       // { nAtoms, size } → said in the « Large system » row
 const lightRenderRef = useRef(false);                   // synchronous mirror for addDefaultReps / sidechain effect
 lightRenderRef.current = lightRender;
+
+// Leave the fast starting layout for good. Every styling control calls this
+// BEFORE applying the chosen value, so the rebuild it triggers (the lightRender
+// effect below, or the catStyles effect) already draws the category
+// representations: the menu the user just touched is really applied to a large
+// system — no button, and nothing to unlock by hand.
+const leaveLightMode = () => {
+  if (!lightRenderRef.current) return;   // already drawn with the real styles
+  lightRenderRef.current = false;        // read synchronously by addDefaultReps
+  setLightRender(false);                 // → the effect below rebuilds the main structure
+};
 // Water is NOT drawn in lightweight mode by default (it dominates the atom
 // count of membrane systems); a checkbox re-enables it as tiny spheres.
 const [showLargeWater, setShowLargeWater] = useState(false);
@@ -1748,8 +1782,9 @@ const [largeStyle, setLargeStyle] = useState('lines');
 const largeStyleRef = useRef('lines');
 largeStyleRef.current = largeStyle;
 
-// Rebuild the base representations when the lightweight mode toggles
-// ("Full detail" / loading a big system) or the large-style selector changes.
+// Rebuild the base representations when the lightweight mode is LEFT (a styling
+// gesture on a large system — see leaveLightMode) or when the large-style
+// selector / the 💧 Water checkbox of the §2 → F · Others row changes.
 useEffect(() => {
   const component = componentRef.current;
   if (!component || status !== 'ready') return;
@@ -1759,11 +1794,12 @@ useEffect(() => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [lightRender, largeStyle, showLargeWater, status]);
 
-// (The former « ✨ Full detail » helper lived here: it switched a large system
-// back to the category representations. On a 100 000-atom MD system that
-// rebuild froze the page, so the button AND its logic were removed — a large
-// structure simply stays in the lightweight mode described by the §2 →
-// F · Others « Large system » row.)
+// (The former « ✨ Full detail » helper lived here. The button is gone, and its
+// single useful effect now happens by itself: leaveLightMode(), called by the
+// styling controls, rebuilds the main structure with the category
+// representations. A large system keeps its fast starting look until it is
+// actually asked to look like something else, so the §2 → F · Others
+// « Large system » row is no longer a lock — it only describes that start.)
 const [renameMode, setRenameMode] = useState(false);
 const [renameTarget, setRenameTarget] = useState(null); // atom index being renamed
 const [renameDraft, setRenameDraft] = useState('');
@@ -2730,12 +2766,15 @@ const addDefaultReps = (component) => {
   if (!component || !component.structure) return;
   baseCompsRef.current = [];
   const trackBase = (r) => { if (r) baseCompsRef.current.push(r); };
-  // Large systems: keep the whole structure visible, but draw EVERYTHING with
-  // the same lightweight style chosen in "Large:" — lines (bonds, the default),
-  // spheres (instanced spacefill) or dots (one point per atom, the lightest).
-  // WATER IS NOT DRAWN by default: solvated / membrane systems are dominated by
-  // water, which hides the protein and is the main cause of the sluggish view.
-  // The "💧 Water" checkbox brings it back with the same lightweight style.
+  // Large systems START here: keep the whole structure visible, but draw
+  // EVERYTHING with the same lightweight style chosen in "Large:" — lines
+  // (bonds, the default), spheres (instanced spacefill) or dots (one point per
+  // atom, the lightest). WATER IS NOT DRAWN by default: solvated / membrane
+  // systems are dominated by water, which hides the protein and is the main
+  // cause of the sluggish view; the "💧 Water" checkbox brings it back with the
+  // same lightweight style. This block is only the STARTING layout: the first
+  // styling choice made in §2 leaves it (leaveLightMode) for the per-category
+  // representations below — that is what keeps the menus from being ignored.
   if (lightRenderRef.current) {
     const ls = largeStyleRef.current || 'lines';
     const sele = showLargeWaterRef.current ? 'all' : 'not water';
@@ -3930,6 +3969,9 @@ useEffect(() => {
 // "🧬 Docking" is ON is visible at once.
 const applyDockStylesNow = () => {
   if (status !== 'ready' || !componentRef.current) return;
+  // Choosing a role style IS a styling choice: a large system leaves its fast
+  // starting layout so the docking look is really visible on the main result.
+  leaveLightMode();
   // The MAIN is only rebuilt outside PyMOL-script mode — there the script's own
   // representations keep defining the look. "Hide everything" also skips the
   // main (it is hidden anyway) but still re-styles the loaded docking results.
@@ -5468,8 +5510,10 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
     One row: the toggle + a live summary of every menu. Opening it reveals the
     Docking controls, « Hide everything » and the SIX per-category menus
     (A Proteins · B Nucleic acids · C Lipids · D Sugars · E Organic molecules ·
-    F Others). Every menu is independent (no global Side / Backbone / Mol
-    dropdowns) and carries its own 3D-label switches, and the shared tools —
+    F Others), all SIX on one line: an open menu unfolds its parameters on a
+    full-width horizontal row right below it. Every menu is independent (no
+    global Side / Backbone / Mol dropdowns) and carries its own 3D-label
+    switches, and the shared tools —
     ⚡ electrostatic-potential surface colour, 🎨 Colours, 🔢 Renumber — live at
     the end of the panel, right below the menus that open them. */}
 <section className="flex flex-col gap-1 bg-slate-50/80 border border-slate-200 rounded-lg px-1.5 py-1">
@@ -5523,11 +5567,12 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
 </button>
 
 {/* ── The SIX menus, aligned HORIZONTALLY ───────────────────────────────
-    A responsive grid instead of one full-width banner per row: the headers
-    line up in columns (as many as fit a 17 rem column) and each one stacks
-    its short name over its summary, so nothing has to be cut. On a narrow
-    window the grid degrades to a single column, exactly as before. */}
-<div className="w-full grid gap-1 items-start grid-cols-[repeat(auto-fit,minmax(17rem,1fr))]">
+    Six equal columns put A–F side by side on ONE row that never grows: a closed
+    button is one line tall now (see VMenu — no description under the name).
+    The OPEN menu is not squeezed into its cell either: its parameters take a
+    full-width row of this same grid, right under the row of six, and unfold
+    HORIZONTALLY (two or three compact lines instead of a tall column). */}
+<div className="w-full grid gap-1 items-stretch grid-cols-6">
 
 {/* ── A · Proteins ─────────────────────────────────────────────────────── */}
 <VMenu open={openMenu === 'protein'} onToggle={() => setOpenMenu(openMenu === 'protein' ? null : 'protein')}
@@ -5549,7 +5594,7 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
     </VSel>
   </VRow>
   <VRow label="Side chains" title="Representation of the protein side chains (+ C-α, so the fold stays readable). « Lines » is the cheapest — use it on big systems.">
-    <VSel value={sidechainStyle} onChange={(e) => setSidechainStyle(e.target.value)} title="Protein side-chain representation" width="w-44">
+    <VSel value={sidechainStyle} onChange={(e) => { leaveLightMode(); setSidechainStyle(e.target.value); }} title="Protein side-chain representation" width="w-44">
       <option value="licorice">Sticks</option>
       <option value="line">Lines (saves resources)</option>
       <option value="ball+stick">Ball &amp; Stick</option>
@@ -5783,13 +5828,15 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
     </VSel>
   </VRow>
   {renderSurfaceOpacity('other', 'Water opacity')}
-  {/* Large systems keep their ★ lightweight mode (everything in ONE cheap
-      style, water off unless ticked): THIS row is the way to change how such a
-      system is drawn — there is no « ✨ Full detail » switch any more. */}
+  {/* A large system STARTS in the lightweight layout (everything in ONE cheap
+      style, water off unless ticked): this row describes that fast view and lets
+      it be changed. It is NOT a lock — as soon as a style is chosen in any menu
+      of §2, the system is redrawn with those per-category representations
+      (leaveLightMode) and this row disappears together with the mode. */}
   {lightRender && (
-    <VRow label="Large system" title="Large systems (>25 000 atoms or a >1.5 MB structure) are drawn with ONE lightweight style for every atom; water is left out unless 💧 Water is ticked. This row is the only way to change how such a system is drawn (the old « ✨ Full detail » button was removed: rebuilding the category representations of a system this big froze the page).">
+    <VRow label="Large system" title={`Large systems (>25 000 atoms or a >1.5 MB structure) start in this fast layout: EVERY atom drawn in one cheap representation${lightInfo && lightInfo.nAtoms ? ` (${lightInfo.nAtoms.toLocaleString()} atoms)` : ''}, water left out until 💧 Water is ticked. It is only the STARTING view — choose a style in any menu of §2 (or the one below) and the system is drawn with the per-category representations at once.`}>
       <select
-        title="Large structure style (lightweight mode): the style of EVERY atom — water is not drawn unless you tick 💧 Water"
+        title="Large structure style (lightweight start): the style of EVERY atom — water is not drawn unless you tick 💧 Water"
         value={largeStyle}
         onChange={(e) => setLargeStyle(e.target.value)}
         className="border border-sky-300 rounded-md px-1.5 py-1 text-[11px] bg-sky-50 text-sky-800 outline-none focus:border-sky-500 h-7 w-44"
@@ -5931,6 +5978,7 @@ title="New residue number (blank = keep the original)"
     <div className="flex flex-wrap items-center justify-between gap-2">
       <span className="text-[10px] font-black text-rose-700 uppercase tracking-wide">Custom colours</span>
       <button type="button" onClick={() => {
+        leaveLightMode();   // the swatches are a styling choice too
         setSstrucColors({ helix: 0xb44a90, sheet: 0xf8d878, loop: 0xe6e6e6 });
         setSelectedResidueColor(SELECT_COLOR_HEX);
         setAssignedAtomColor(MANUAL_COLOR_HEX);
@@ -5947,19 +5995,19 @@ title="New residue number (blank = keep the original)"
         <span className="text-[10px] font-black text-slate-600 uppercase">Secondary structure</span>
         <label className="flex items-center gap-2 text-xs font-bold text-slate-700" title="Colour of α-helices (incl. 3₁₀ and π helices) when coloured by 2° structure">
           <input type="color" value={numToHex(sstrucColors.helix)}
-            onChange={(e) => setSstrucColors((c) => ({ ...c, helix: parseInt(e.target.value.slice(1), 16) }))}
+            onChange={(e) => { leaveLightMode(); setSstrucColors((c) => ({ ...c, helix: parseInt(e.target.value.slice(1), 16) })); }}
             className="w-8 h-7 rounded border cursor-pointer" />
           Helices
         </label>
         <label className="flex items-center gap-2 text-xs font-bold text-slate-700" title="Colour of β-sheets / β-strands when coloured by 2° structure">
           <input type="color" value={numToHex(sstrucColors.sheet)}
-            onChange={(e) => setSstrucColors((c) => ({ ...c, sheet: parseInt(e.target.value.slice(1), 16) }))}
+            onChange={(e) => { leaveLightMode(); setSstrucColors((c) => ({ ...c, sheet: parseInt(e.target.value.slice(1), 16) })); }}
             className="w-8 h-7 rounded border cursor-pointer" />
           Sheets
         </label>
         <label className="flex items-center gap-2 text-xs font-bold text-slate-700" title="Colour of loops / coils (everything that is not a helix or a sheet) when coloured by 2° structure">
           <input type="color" value={numToHex(sstrucColors.loop)}
-            onChange={(e) => setSstrucColors((c) => ({ ...c, loop: parseInt(e.target.value.slice(1), 16) }))}
+            onChange={(e) => { leaveLightMode(); setSstrucColors((c) => ({ ...c, loop: parseInt(e.target.value.slice(1), 16) })); }}
             className="w-8 h-7 rounded border cursor-pointer" />
           Loops / coils
         </label>
@@ -6409,19 +6457,14 @@ className="border border-indigo-300 rounded-md px-1.5 py-0.5 text-[11px] bg-whit
   );
 })()}
 
-{/* Large-structure info line (non-blocking): the whole system is rendered,
-    just with lightweight representations so the browser stays responsive.
-    Kept at the TOP of the viewer window so the "water hidden" note is visible
-    without scrolling to the bottom. There is no « ✨ Full detail » button any
-    more: switching a very large system back to the category representations
-    froze the page, so a big structure now simply stays in this mode. */}
-{lightInfo && (
-<div className="flex flex-wrap items-center gap-2 bg-sky-50 border border-sky-200 text-sky-900 rounded-lg px-3 py-2 text-xs font-bold shadow-sm">
-<span>
-ℹ️ Large structure{lightInfo.nAtoms ? ` (${lightInfo.nAtoms.toLocaleString()} atoms)` : ''}: every atom is drawn in {largeStyle === 'dots' ? 'dots (one point per atom)' : largeStyle === 'spheres' ? 'spheres' : 'lines'} — water is not drawn, tick 💧 Water to show it (§2 → F · Others).
-</span>
-</div>
-)}
+{/* (The information banner that used to sit here is GONE. It announced the
+    lightweight starting layout of a large system and told the user to tick
+    💧 Water; those facts now live in the tooltip of the §2 → F · Others
+    « Large system » row, next to the controls that change that layout. And
+    there is nothing left to announce anyway: §2 « Molecular Styling » works on
+    a large system simply by being used — the first styling gesture leaves the
+    lightweight starting layout (see leaveLightMode), so no menu is ignored and
+    there is nothing to unlock by hand. */}
 
 {viewerCollapsed && (
 <div className="flex items-center justify-between border border-dashed border-slate-300 rounded-xl bg-slate-50 px-3 py-2.5">

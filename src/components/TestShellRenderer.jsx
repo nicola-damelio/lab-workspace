@@ -1451,7 +1451,12 @@ const details = [
           </button>
 
           {showGeneral && (
-            <div className="flex flex-col gap-0">
+            /* « Classification » et « Compounds & Biological Models » sont deux
+               sous-sections COURTES qui se suivaient verticalement : sur un
+               écran de bureau elles tiennent côte à côte (une colonne chacune,
+               empilées seulement quand la fenêtre est étroite), ce qui rend la
+               moitié de la hauteur à la page. */
+            <div className={`grid grid-cols-1 items-start gap-0 ${(showCompoundsSection || CompoundsSection) ? 'xl:grid-cols-2 xl:gap-x-4' : ''}`}>
               <CollapsibleSection title="Classification" icon="🏷️" defaultOpen={false}>
             <div className="max-w-xl flex flex-col gap-5">
               <div>

@@ -20,7 +20,7 @@ import { useDriveAutoRestore } from './useDriveAutoRestore';
 import {
   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, CARBON_RANGE_DB,
   SS_CORRECTIONS, SS_META, DNA_FORM_OFFSETS, SUGAR_ANOMER_OFFSETS,
-  RESIDUE_COLORS, RANDOM_COIL_DB, CYS_OXIDIZED_RC, TICKS_1H, TICKS_13C, TICKS_15N
+  RESIDUE_COLORS, RANDOM_COIL_DB, CYS_OXIDIZED_RC, CYS_OXIDIZED_CARBON_RANGE, TICKS_1H, TICKS_13C, TICKS_15N
 } from './NMRData';
 export { VIS_PALETTES };
 
@@ -1376,6 +1376,9 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
         <div className="absolute bg-white p-2 border border-slate-200 shadow-md rounded text-xs z-50 pointer-events-none whitespace-nowrap" style={{ left: hover.x + 12, top: Math.max(0, hover.y - 44) }}>
           <p className="font-bold text-slate-800">{ranges[hover.idx].res} - {ranges[hover.idx].atom}</p>
           <p className="text-slate-500">Theoretical Range: {ranges[hover.idx].min.toFixed(2)} - {ranges[hover.idx].max.toFixed(2)} ppm</p>
+          {ranges[hover.idx].note && (
+            <p className="text-[10px] font-semibold text-amber-700">{ranges[hover.idx].note}</p>
+          )}
         </div>
       )}
     </div>
@@ -2581,10 +2584,16 @@ const getPascalRow = (n) => {
   }
   return row;
 };
-const getCarbonRangeFor = (molType, char, cName) => {
+const getCarbonRangeFor = (molType, char, cName, oxidizedCys = false) => {
   if (!cName) return { min: 40, max: 50 };
   if (molType === 'protein') {
     if (cName === "C'") return { min: 171, max: 178 };
+    // Cysteine engaged in a disulphide bond: ¹³Cα / ¹³Cβ take the oxidised
+    // values (CYS_OXIDIZED_CARBON_RANGE) instead of the free −SH ones.
+    if (char === 'C' && oxidizedCys) {
+      const ox = CYS_OXIDIZED_CARBON_RANGE[cName];
+      if (ox) return { min: ox[0], max: ox[1] };
+    }
     const r = CARBON_RANGE_DB[char]?.[cName];
     if (r) return { min: r[0], max: r[1] };
     return { min: 40, max: 60 };
@@ -3358,6 +3367,22 @@ const cysIsOxidized = (cysOxidized, cysStates, cysDisulfides, pos) => {
   return !!cysOxidized;
 };
 
+// Theoretical ¹³C range of ONE cysteine atom with the redox state of the thiol
+// side chain taken into account: a disulphide-bonded Cys has ¹³Cβ ≈ 40 ppm and
+// ¹³Cα ≈ 53.5 ppm, against ¹³Cβ 26–32 and ¹³Cα 54.5–60 ppm for the free −SH
+// form (see CYS_OXIDIZED_RC / CYS_OXIDIZED_CARBON_RANGE). The state is resolved
+// position by position — exactly like the simulated shifts — so a sequence that
+// mixes free thiols and disulphides gets the UNION of both ranges, and `note`
+// names the states that produced the bar (e.g. ¹³C′ never changes).
+const cysCarbonRange = (cName, { oxidized, reduced }) => {
+  const red = getCarbonRangeFor('protein', 'C', cName);
+  const ox = getCarbonRangeFor('protein', 'C', cName, true);
+  if (ox.min === red.min && ox.max === red.max) return red;
+  if (oxidized && reduced) return { min: Math.min(red.min, ox.min), max: Math.max(red.max, ox.max), note: 'reduced + oxidised Cys (S–S)' };
+  if (oxidized) return { min: ox.min, max: ox.max, note: 'oxidised Cys (S–S)' };
+  return red;
+};
+
 // ================= SHARED DERIVED DATA HOOK =================
 const useNmrDerived = (activeTest, ctx = {}) => {
   const moleculeType = activeTest.moleculeType || 'protein';
@@ -3764,6 +3789,19 @@ if (moleculeType === 'protein' && res.simN !== null && res.simN !== undefined &&
   const uniqueTypes = useMemo(() => [...new Set(parsedSeq.map((r) => r.char))], [parsedSeq]);
   const ranges = useMemo(() => {
     const r1 = []; const r13 = [];
+    // Cysteine: the theoretical ¹³C range depends on the redox state of the
+    // thiol side chain (¹³Cβ ≈ 40 ppm oxidised against 26–32 ppm for the free
+    // −SH form). The state is resolved per residue position, exactly like the
+    // simulated shifts; when a sequence mixes free thiols and disulphides the
+    // bar spans BOTH ranges so no cysteine falls outside its own theoretical
+    // range. ¹H ranges are unaffected by the disulphide (Hβ 2.8–3.3 ppm).
+    const cysPositions = moleculeType === 'protein' ? parsedSeq.map((res, i) => (res.char === 'C' ? i + 1 : 0)).filter(Boolean) : [];
+    const cysRedox = cysPositions.length
+      ? {
+          oxidized: cysPositions.some((p) => cysIsOxidized(activeTest.cysOxidized, activeTest.cysStates, activeTest.cysDisulfides, p)),
+          reduced: cysPositions.some((p) => !cysIsOxidized(activeTest.cysOxidized, activeTest.cysStates, activeTest.cysDisulfides, p))
+        }
+      : null;
     uniqueTypes.forEach((char, index) => {
       const db = DB[char];
       if (!db) return;
@@ -3780,12 +3818,12 @@ if (moleculeType === 'protein' && res.simN !== null && res.simN !== undefined &&
       if (moleculeType === 'protein') cNames.add("C'");
       let cIdx = 0;
       cNames.forEach((cn) => {
-        const rg = getCarbonRangeFor(moleculeType, char, cn);
-        r13.push({ x: (rg.min + rg.max) / 2, res: label, atom: cn, min: rg.min, max: rg.max, y, color, level: cIdx++ });
+        const rg = char === 'C' && cysRedox ? cysCarbonRange(cn, cysRedox) : getCarbonRangeFor(moleculeType, char, cn);
+        r13.push({ x: (rg.min + rg.max) / 2, res: label, atom: cn, min: rg.min, max: rg.max, y, color, level: cIdx++, note: rg.note });
       });
     });
     return { ranges1H: r1, ranges13C: r13 };
-  }, [uniqueTypes, moleculeType]);
+  }, [uniqueTypes, moleculeType, parsedSeq, activeTest.cysOxidized, activeTest.cysStates, activeTest.cysDisulfides]);
   
   const atomOptions = useMemo(() => {
     const opts = [];
@@ -4374,18 +4412,14 @@ export const MolecularStructureSection = ({ ctx }) => {
   const atomNameMap = useMemo(() => { try { return activeTest.atomNameMap ? JSON.parse(activeTest.atomNameMap) : {}; } catch { return {}; } }, [activeTest.atomNameMap]);
   const [hasOpened3D, setHasOpened3D] = useState(structureMode === '3d');
   
-  // Decoupled input state to prevent WebGL crash on keystroke
-  const [localPdbInput, setLocalPdbInput] = useState(activeTest.structureSrc || '');
-
-  useEffect(() => {
-    setLocalPdbInput(activeTest.structureSrc || '');
-  }, [activeTest.structureSrc]);
-
-  const applyPdbInput = () => {
-    if (localPdbInput !== activeTest.structureSrc) {
-      updateActiveTest({ structureSrc: localPdbInput });
-    }
-  };
+  // (The « PDB ID / URL / local file » box that used to sit above the 3D viewer
+  // is GONE — with its decoupled keystroke state and its Load handler. It was a
+  // SECOND writer of activeTest.structureSrc next to the viewer's own §1
+  // controls (📂 PDB file(s) / « PDB ID or URL »), and two fields showing the
+  // same value can only end up disagreeing: the viewer one is the one that is
+  // actually loaded. The source — a PDB code, an URL, a file dropped on the
+  // viewer — is now entered in ONE place only, the viewer, which writes it back
+  // with onStructureSrc.)
 
   useEffect(() => { if (structureMode === '3d') setHasOpened3D(true); }, [structureMode]);
   useEffect(() => {
@@ -5006,13 +5040,16 @@ const generatedStructure = useMemo(() => {
           )}
         </div>
         
-        {structureMode === '3d' && (
-          <div className="mb-2 flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
-            <label className="text-[10px] font-bold text-slate-500 uppercase whitespace-nowrap">PDB ID / URL / local file</label>
-            <input type="text" value={localPdbInput} onChange={(e) => setLocalPdbInput(e.target.value)} onBlur={applyPdbInput} onKeyDown={(e) => { if (e.key === 'Enter') applyPdbInput(); }} placeholder="e.g. 1UBQ or /structures/POPC.pdb" className="flex-1 min-w-0 border border-slate-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-blue-500" />
-            <button onClick={applyPdbInput} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1 rounded-md text-xs transition-colors">Load</button>
-          </div>
-        )}
+        {/* (The « PDB ID / URL / local file » row that used to sit here has been
+            REMOVED: the structure source is entered in ONE place only — the
+            viewer's own §1 General controls below (📂 PDB file(s) / « PDB ID or
+            URL ») — which write activeTest.structureSrc back through
+            onStructureSrc exactly like this box did. Nothing is lost: a code, an
+            URL or a local file dropped on the viewer all still reach
+            structureSrc, and there is no longer a second field that can show a
+            value the loaded structure does not have.)
+            The 2D ⇄ 3D switch and the 🔍 Focus selector above, the viewer and the
+            📥 Download 3D PDB File button below are unchanged. */}
         
         <p className="text-xs text-slate-400 mb-2">💡 Click an atom in the {structureMode === '2d' ? 'formula' : '3D viewer'} to highlight its cell.</p>
         
@@ -5151,14 +5188,6 @@ const _nmrDownsample = (xs, ys, max=6000, ys2=null) => {
     if (ys2) out.ys2.push(ys2[a],ys2[z]);
   }
   return out;
-};
-const _nmrResolveDrive = (url) => {
-  const u = String(url||'').trim(); if (!u) return '';
-  let m = u.match(/drive\.google\.com\/file\/d\/([\w-]+)/);
-  if (m) return `https://drive.google.com/uc?export=download&id=${m[1]}`;
-  m = u.match(/[?&]id=([\w-]+)/);
-  if (m && /drive\.google\.com/.test(u)) return `https://drive.google.com/uc?export=download&id=${m[1]}`;
-  return u;
 };
 // Main import — returns { xs:ppmArray, ys:intensityArray, ysImag:imagArray|null, meta, nPoints, error? }
 const importBruker1rPpm = ({dataBuffer, imagBuffer=null, acqusText='', manualSWppm=null, manualO1ppm=0, title='', forceLE=null}) => {
@@ -6005,11 +6034,10 @@ export const DataSection = ({ ctx }) => {
   const [rcRefShown, setRcRefShown] = useState(false);
 
   // ---- Bruker 1r import (ppm axis) ----
-  const [nmrBrukerDataUrl, setNmrBrukerDataUrl] = useState('');
-  const [nmrBrukerAcqusUrl, setNmrBrukerAcqusUrl] = useState('');
-  const [nmrBrukerImagUrl, setNmrBrukerImagUrl] = useState(''); // optional 1i link (needed for phase correction)
-  const [nmrBrukerSwPpm, setNmrBrukerSwPpm] = useState('');
-  const [nmrBrukerO1Ppm, setNmrBrukerO1Ppm] = useState('');
+  // L'import par lien Google Drive (et les champs manuels « Manual SW » /
+  // « Centre O1 ») a été retiré : le dossier importé amène l'acqus, donc
+  // SW_h / SFO1 / O1 sont lus automatiquement, et la copie archivée du spectre
+  // se re-télécharge TOUTE SEULE depuis le Drive.
   const [nmrBrukerMsg, setNmrBrukerMsg] = useState('');
   const [nmrBrukerBusy, setNmrBrukerBusy] = useState(false);
   const [showPeakLabels, setShowPeakLabels] = useState(true);
@@ -6599,8 +6627,6 @@ export const DataSection = ({ ctx }) => {
           dataBuffer, 
           imagBuffer,
           acqusText, 
-          manualSWppm: parseManual(nmrBrukerSwPpm), 
-          manualO1ppm: parseManual(nmrBrukerO1Ppm) || 0, 
           title: fileTitle || title 
         });
         
@@ -6772,24 +6798,6 @@ export const DataSection = ({ ctx }) => {
       : `⚠️ Imported ${selected.length} spectrum/spectra — Google Drive was not connected at that moment (the access token may have expired), so the raw 1r file(s) were only kept in this browser's cache. Reconnect Google Drive from the sidebar and re-import to save them on Drive too.`);
   };
 
-  const importFromUrl = async () => {
-    if (!nmrBrukerDataUrl.trim()) { setNmrBrukerMsg('\u26a0\ufe0f Paste the Google Drive link.'); return; }
-    setNmrBrukerBusy(true);
-    try {
-      const res = await fetch(_nmrResolveDrive(nmrBrukerDataUrl));
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      let acqusText = '';
-      if (nmrBrukerAcqusUrl.trim()) {
-        try { acqusText = await (await fetch(_nmrResolveDrive(nmrBrukerAcqusUrl))).text(); } catch { acqusText = ''; }
-      }
-      let imagBuffer = null;
-      if (nmrBrukerImagUrl.trim()) {
-        try { imagBuffer = await (await fetch(_nmrResolveDrive(nmrBrukerImagUrl))).arrayBuffer(); } catch { imagBuffer = null; }
-      }
-      applyNmrBruker(importBruker1rPpm({ dataBuffer: await res.arrayBuffer(), imagBuffer, acqusText, manualSWppm: parseManual(nmrBrukerSwPpm), manualO1ppm: parseManual(nmrBrukerO1Ppm)||0 }), null);
-    } catch (e) { setNmrBrukerMsg('\u26a0\ufe0f Fetch failed: ' + e.message); }
-    setNmrBrukerBusy(false);
-  };
 
   const renderSpectrum = () => {
     const spec = activeTest.nmr1dSpectrum;
@@ -7367,9 +7375,11 @@ let dom = brukerZoomDom || xFull;
 
    {renderSpectrum()}
    <NMRSpectraVisualization ctx={ctx} />
-   <div className="bg-sky-50 border border-sky-200 rounded-xl p-4 flex flex-col gap-3">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <h4 className="text-sm font-bold text-sky-900">{String.fromCodePoint(0x1F4E5)} Bruker Import — 1r processed spectrum (ppm axis)</h4>
+   {/* « Bruker Import » tient sur UNE ligne : le bouton d'upload, l'accès à
+       l'archive Drive et l'état du spectre sont sur la ligne du titre. */}
+   <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <h4 className="text-sm font-bold text-sky-900 shrink-0">{String.fromCodePoint(0x1F4E5)} Bruker Import — 1r processed spectrum (ppm axis)</h4>
           {activeTest.nmr1dSpectrum && Array.isArray(activeTest.nmr1dSpectrum.xs) && activeTest.nmr1dSpectrum.xs.length > 0 && <span className="text-[9px] bg-green-100 text-green-800 px-2 py-0.5 rounded font-bold">Spectrum loaded</span>}
           {!(activeTest.nmr1dSpectrum && Array.isArray(activeTest.nmr1dSpectrum.xs) && activeTest.nmr1dSpectrum.xs.length > 0) && (
             <button type="button" onClick={() => nmr1dRestore.attempt('manual')} disabled={nmr1dRestore.status === 'restoring'}
@@ -7378,7 +7388,6 @@ let dom = brukerZoomDom || xFull;
               {nmr1dRestore.status === 'restoring' ? '⬇️ Downloading…' : '⬇️ Restore from Drive'}
             </button>
           )}
-        </div>
 
         {(nmr1dRestore.status === 'restoring' || nmr1dRestore.message) && (
           <div className={`text-[11px] font-semibold rounded-lg px-3 py-1.5 border ${nmr1dRestore.status === 'restored'
@@ -7396,63 +7405,25 @@ let dom = brukerZoomDom || xFull;
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div className="bg-white border border-sky-200 rounded-lg p-3 flex flex-col gap-2">
-            <span className="text-xs font-bold text-sky-800">{String.fromCodePoint(0x1F4BB)} From this PC</span>
-            
-            <label className="bg-white border border-sky-300 hover:bg-sky-100 text-sky-800 font-bold px-3 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors text-left flex items-center gap-2">
-              <span className="text-xl">📁</span>
-              <div>
-                <div>Choose Bruker Folder...</div>
-                <div className="text-[9px] font-normal opacity-70">Select the experiment folder (or a parent folder)</div>
-              </div>
-              <input 
-                ref={nmrBrukerFileRef} 
-                type="file" 
-                webkitdirectory="true" 
-                directory="true" 
-                multiple 
-                onChange={importFolder} 
-                className="hidden" 
-              />
-            </label>
-            
-            <span className="text-[9px] text-sky-700 mt-1 max-w-sm">
-              This will automatically locate the 1r file(s) and their corresponding acqus parameter files, instantly importing the correct ppm axis. After scanning you can choose exactly which experiments to load — they will be imported into separate condition tabs.
-            </span>
+        <label className="bg-white border border-sky-300 hover:bg-sky-100 text-sky-800 font-bold px-3 py-1.5 rounded-lg text-xs cursor-pointer shadow-sm transition-colors text-left flex items-center gap-2">
+          <span className="text-base">📁</span>
+          <div>
+            <div>{nmrBrukerBusy ? '⏳ Reading folder…' : 'Choose Bruker Folder...'}</div>
+            <div className="text-[9px] font-normal opacity-70">Select the experiment folder (or a parent folder)</div>
           </div>
-
-          <div className="bg-white border border-sky-200 rounded-lg p-3 flex flex-col gap-2">
-            <span className="text-xs font-bold text-sky-800">{String.fromCodePoint(0x1F517)} From Google Drive link</span>
-            <input type="text" value={nmrBrukerDataUrl} onChange={e => setNmrBrukerDataUrl(e.target.value)}
-              placeholder="Link to 1r (…/file/d/…/view)" className="border border-sky-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-sky-500 bg-white" />
-            <input type="text" value={nmrBrukerAcqusUrl} onChange={e => setNmrBrukerAcqusUrl(e.target.value)}
-              placeholder="Link to acqus (optional)" className="border border-sky-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-sky-500 bg-white" />
-            <input type="text" value={nmrBrukerImagUrl} onChange={e => setNmrBrukerImagUrl(e.target.value)}
-              placeholder="Link to 1i (optional — enables phase correction)" className="border border-sky-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-sky-500 bg-white" />
-            <button type="button" onClick={importFromUrl} disabled={nmrBrukerBusy}
-              className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm">
-              {nmrBrukerBusy ? 'Importing\u2026' : 'Import from links'}
-            </button>
-            <span className="text-[9px] text-sky-600">Both files must be shared as "Anyone with the link".</span>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-end gap-3 bg-white border border-sky-200 rounded-lg p-3">
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-sky-800">Manual SW (ppm) — only if no acqus</label>
-            <input type="number" step="0.1" value={nmrBrukerSwPpm} onChange={e => setNmrBrukerSwPpm(e.target.value)}
-              onWheel={e => e.target.blur()} className="border border-sky-300 rounded-lg p-1.5 text-xs outline-none focus:border-sky-500 w-28" />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-sky-800">Centre O1 (ppm)</label>
-            <input type="number" step="0.01" value={nmrBrukerO1Ppm} onChange={e => setNmrBrukerO1Ppm(e.target.value)}
-              onWheel={e => e.target.blur()} className="border border-sky-300 rounded-lg p-1.5 text-xs outline-none focus:border-sky-500 w-28" />
-          </div>
-          <span className="text-[9px] text-sky-600 max-w-xs">If an acqus file is provided, SFO1 + SW_h + O1 are read automatically and the manual fields are ignored.</span>
-        </div>
+          <input
+            ref={nmrBrukerFileRef}
+            type="file"
+            webkitdirectory="true"
+            directory="true"
+            multiple
+            onChange={importFolder}
+            className="hidden"
+          />
+        </label>
 
         {nmrBrukerMsg && <span className="text-xs font-bold text-sky-900">{nmrBrukerMsg}</span>}
+        </div>
       </div>
 
       {/* Experiment selection dialog for folder import */}

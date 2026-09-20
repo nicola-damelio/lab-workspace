@@ -10,7 +10,15 @@
      • ce style n'est plus appliqué qu'aux hétéro-atomes : la protéine n'est plus
        forcée en cartoon, sinon « tout en lines » ne veut rien dire ;
      • l'eau revient uniquement par la case 💧 Water (même style léger) ;
-     • les seuils de bascule sont ceux annoncés par la bannière d'information.
+     • ce rendu léger n'est qu'un POINT DE DÉPART : le premier geste de style
+       dans « 2 · Molecular Styling » (menu de catégorie, chaînes latérales,
+       pastille de couleur, styles de rôle du docking) appelle leaveLightMode()
+       et le système est redessiné avec les représentations par catégorie. Les
+       menus ne sont donc JAMAIS ignorés — sans bouton « ✨ Full detail » ;
+     • la bannière « ℹ️ Large structure (… atoms): every atom is drawn in … » a
+       DISPARU de l'écran : l'information ne vit plus que dans l'infobulle de la
+       ligne §2 → F · Others « Large system », qui décrit le départ, pas un
+       verrou.
 
    Le viewer est un .jsx : il ne s'importe pas sous Node. Les règles sont donc
    vérifiées SUR LA SOURCE — comme les autres garde-fous du dépôt.
@@ -62,12 +70,53 @@ ok(/<option value="dots">Large: Dots \(lightest\)<\/option>/.test(VIEWER), 'le m
 ok(/\[lightRender, largeStyle, showLargeWater, status\]/.test(VIEWER),
   'changer de style léger (ou cocher l’eau) reconstruit les représentations');
 
-/* ── 4. La bannière dit la vérité ────────────────────────────────────────── */
-const banner = lines.find((l) => l.includes('Large structure{lightInfo.nAtoms'));
-ok(!!banner, 'la bannière « Large structure » existe');
-ok(/every atom is drawn in/.test(banner), 'elle annonce le style de TOUS les atomes');
-ok(/water is not drawn, tick 💧 Water to show it/.test(banner), 'elle annonce que l’eau n’est pas dessinée');
-ok(!/protein cartoon/.test(banner), 'elle ne promet plus une protéine en cartoon');
+/* ── 4. Plus de bannière : un grand système ne se bloque plus ─────────────── */
+// L'utilisateur ne veut plus voir « ℹ️ Large structure (40 504 atoms): every
+// atom is drawn in lines — water is not drawn, tick 💧 Water… » : la bannière
+// est supprimée, et elle n'a plus de raison d'être puisqu'il n'y a plus rien à
+// débloquer à la main (voir §5).
+const gone = (needle, what) => ok(!VIEWER.includes(needle), `${what}\n  encore présent : ${needle}`);
+gone('Large structure{lightInfo.nAtoms', 'la bannière « Large structure » n’est plus rendue');
+gone('ℹ️ Large structure', '…ni son texte d’information en haut de la fenêtre');
+gone('tick 💧 Water to show it', '…ni la consigne « tick 💧 Water to show it »');
+// L'information n'est pas perdue : elle passe dans l'infobulle de la ligne §2.
+ok(VIEWER.includes('lightInfo && lightInfo.nAtoms'), 'le nombre d’atomes reste dit (infobulle de la ligne « Large system »)');
+
+/* ── 5. Le premier geste de style quitte le rendu léger ───────────────────── */
+// C'EST LE CŒUR DU CORRECTIF : sans bouton « ✨ Full detail », les menus de §2
+// n'avaient plus aucun effet sur un grand système (addDefaultReps sortait sur le
+// bloc léger). Chaque commande de style appelle donc leaveLightMode().
+const styleHook = (anchor, span) => {
+  const i = lines.findIndex((l) => l.includes(anchor));
+  return i < 0 ? '' : lines.slice(i, i + span).join('\n');
+};
+const leaveBlock = styleHook('const leaveLightMode = () => {', 5);
+ok(!!leaveBlock, 'leaveLightMode existe (le geste de style fait la bascule)');
+ok(/if \(!lightRenderRef\.current\) return;/.test(leaveBlock),
+  'la bascule ne coûte rien quand le système est déjà dessiné normalement');
+ok(/lightRenderRef\.current = false;/.test(leaveBlock),
+  'la référence synchrone passe à false AVANT le rebuild (addDefaultReps la lit)');
+ok(/setLightRender\(false\);/.test(leaveBlock),
+  '…et l’état suit, ce qui déclenche le rebuild du rendu principal');
+// Aucune commande de style ne doit oublier la bascule.
+ok(styleHook('const setCatStyle = (cat, key, value) => {', 3).includes('leaveLightMode();'),
+  'les SIX menus de catégorie (setCatStyle) sortent du rendu léger');
+ok(styleHook('const setSurfaceColor = (cat, value) => {', 3).includes('leaveLightMode();'),
+  'la couleur de surface (ESP) aussi');
+ok(VIEWER.includes('{ leaveLightMode(); setSidechainStyle(e.target.value); }'),
+  'le sélecteur de chaînes latérales aussi');
+eq((VIEWER.match(/\{ leaveLightMode\(\); setSstrucColors/g) || []).length, 3,
+  'les trois pastilles de couleur 2° structure aussi');
+const iReset = lines.findIndex((l) => l.includes('setSstrucColors({ helix: 0xb44a90, sheet: 0xf8d878, loop: 0xe6e6e6 });'));
+ok(iReset > 0 && lines[iReset - 1].includes('leaveLightMode();'), 'le bouton ↺ Reset defaults aussi');
+ok(styleHook('const applyDockStylesNow = () => {', 5).includes('leaveLightMode();'),
+  'les styles de rôle du docking aussi');
+// Le rendu léger reste le POINT DE DÉPART (et le bloc d’addDefaultReps est intact).
+ok(styleHook('if (lightRenderRef.current) {', 12).includes("addRepresentation('line'"),
+  'addDefaultReps garde son bloc léger : rien ne change au chargement d’un grand système');
+// La ligne §2 dit qu’elle décrit le départ, pas un verrou.
+ok(VIEWER.includes('It is only the STARTING view'),
+  'la ligne §2 → F · Others annonce que le rendu léger n’est qu’un départ');
 
 /* ── Bilan ────────────────────────────────────────────────────────────────── */
 console.log(`_large_system_style_test.mjs — ${passed} assertions OK`);

@@ -56,7 +56,7 @@ const archiveDockingData = async ({
 );
 
 import NMRMoleculeViewer from './NMRMoleculeViewer';
-import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, DOCK_CHART_MARGIN} from './DockingData';
+import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, posesFromCapri, CAPRI_METRIC_SYNONYMS, normMetricColumn, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, DOCK_CHART_MARGIN} from './DockingData';
 
 
 /* ============================================================================
@@ -634,15 +634,16 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
 
   const handleText = (text, filename) => {
     const parsed = parseDockingFile(text, filename || 'pasted.txt');
-    if (parsed.poses.length) {
-      onPoses(parsed.poses, parsed.program);
-      setReport({ ok: parsed.poses.length, type: parsed.type });
-    } else if (Object.keys(parsed.updates || {}).length) {
-      updateActiveTest(parsed.updates);
-      setReport({ ok: Object.keys(parsed.updates).length, type: parsed.type, params: true });
-    } else {
-      setReport({ ok: 0, type: 'unknown' });
-    }
+    const poses = Array.isArray(parsed.poses) ? parsed.poses : [];
+    const updateCount = Object.keys(parsed.updates || {}).length;
+    /* Un capri_ss.tsv porte les DEUX : les poses (tableau de résultats) et ses
+       colonnes brutes / paramètres. N'en poser qu'un laissait le tableau ou les
+       paramètres vides. */
+    if (poses.length) onPoses(poses, parsed.program);
+    if (updateCount) updateActiveTest(parsed.updates);
+    if (poses.length) setReport({ ok: poses.length, type: parsed.type });
+    else if (updateCount) setReport({ ok: updateCount, type: parsed.type, params: true });
+    else setReport({ ok: 0, type: 'unknown' });
   };
 
   const handleFile = (file) => {
@@ -714,18 +715,10 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
       const parsed = parseCapriTsv(text);
       if (parsed) {
         const driveUrl = await archive('capri_ss.tsv', 'text/tab-separated-values', new Blob([text], { type: 'text/tab-separated-values' }), ['Data'], 'Data');
-        // Map the CAPRI columns onto the docking metric keys used by the table.
-        const metricMap = { score: 'affinity', lrmsd: 'rmsd_lb', ilrmsd: 'rmsd_ub', total: 'energy_total', air: 'energy_air', desolv: 'energy_desolv', elec: 'energy_elec', vdw: 'energy_vdw', bsa: 'bsa' };
-        const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : ''; };
-        const poses = parsed.rows.map((row, i) => {
-          const get = (name) => { const ix = parsed.columns.indexOf(name); return ix >= 0 ? row[ix] : ''; };
-          const label = String(get('model') || '').split('/').pop() || `Pose ${i + 1}`;
-          const pose = { mode: num(get('caprieval_rank')) || i + 1, label, program: 'haddock' };
-          Object.entries(metricMap).forEach(([capriName, key]) => { pose[key] = num(get(capriName)); });
-          // Keep every raw CAPRI value so the full table can be shown too.
-          parsed.columns.forEach((c, ci) => { pose[`capri_${c}`] = row[ci] !== undefined ? row[ci] : ''; });
-          return pose;
-        });
+        /* Mêmes colonnes, mêmes synonymes que pour un TSV importé seul (voir
+           posesFromCapri dans DockingData.jsx) : un seul chemin de conversion
+           pour les deux imports. */
+        const poses = posesFromCapri(parsed);
         onPoses(poses, 'haddock');
         updateActiveTest({ dockingCapri: { ...parsed, sourceName: capriFile.name || 'capri_ss.tsv', driveUrl } });
         done.push(`capri_ss.tsv → results table (${poses.length} poses)`);
@@ -1292,20 +1285,49 @@ export const DockingAnalysisSection = ({ ctx }) => {
   const isHADDOCK = d.dockingProgram === 'haddock';
   const unit = d.programInfo.energyUnit;
 
-  const affinityData = d.poses.map((p, i) => ({
+  /* Les graphiques tracent LE TABLEAU DE RÉSULTATS, pas la liste brute des
+     poses : chaque cellule du tableau est éditable et sa valeur vit dans la
+     couche active (`activeValues`, clé "<index>-<métrique>"). En lisant
+     `d.poses` seul, un graphique ignorait ce que l'utilisateur voyait — ou
+     restait vide quand la valeur n'existait que dans le tableau. À défaut de
+     valeur mappée, la colonne CAPRI brute correspondante (affichée elle aussi
+     dans le tableau) sert de repli. */
+  const capriFallback = (p, key) => {
+    const names = CAPRI_METRIC_SYNONYMS[key] || [];
+    for (const n of names) {
+      const hit = Object.keys(p).find((k) => k.startsWith('capri_')
+        && normMetricColumn(k.slice(6)) === n);
+      if (hit && p[hit] !== '' && p[hit] !== undefined && p[hit] !== null) return p[hit];
+    }
+    return undefined;
+  };
+  const rows = d.poses.map((p, i) => {
+    const merged = { ...p };
+    DOCKING_METRICS.forEach((m) => {
+      const raw = d.activeValues[`${i}-${m.key}`];
+      if (raw !== undefined && raw !== '') { merged[m.key] = raw; return; }
+      if (merged[m.key] === undefined || merged[m.key] === '' || merged[m.key] === null) {
+        const fallback = capriFallback(p, m.key);
+        if (fallback !== undefined) merged[m.key] = fallback;
+      }
+    });
+    return merged;
+  });
+
+  const affinityData = rows.map((p, i) => ({
     mode: p.mode ?? i + 1,
     affinity: parseDockingValue(p.affinity) ?? 0
   }));
 
-  const rmsdData = d.poses
-    .filter((p) => p.rmsd_lb !== undefined || p.rmsd !== undefined)
+  const rmsdData = rows
+    .filter((p) => parseDockingValue(p.rmsd_lb) !== null || parseDockingValue(p.rmsd) !== null)
     .map((p, i) => ({
       mode: p.mode ?? i + 1,
       affinity: parseDockingValue(p.affinity) ?? 0,
-      rmsd: parseDockingValue(p.rmsd_lb ?? p.rmsd) ?? 0
+      rmsd: parseDockingValue(p.rmsd_lb) ?? parseDockingValue(p.rmsd) ?? 0
     }));
 
-  const energyBreakdownData = d.poses.slice(0, 10).map((p, i) => ({
+  const energyBreakdownData = rows.slice(0, 10).map((p, i) => ({
     mode: p.mode ?? i + 1,
     vdW: parseDockingValue(p.energy_vdw) ?? 0,
     elec: parseDockingValue(p.energy_elec) ?? 0,
@@ -1329,7 +1351,7 @@ export const DockingAnalysisSection = ({ ctx }) => {
       <div className="flex flex-wrap items-center gap-3">
         <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)} className="flex gap-2" />
         <span className="text-xs text-slate-500 font-bold">
-          {isHADDOCK ? 'HADDOCK scoring terms' : 'Binding energy / RMSD'} · {d.poses.length} poses
+          {isHADDOCK ? 'HADDOCK scoring terms' : 'Binding energy / RMSD'} · {rows.length} poses
         </span>
       </div>
 
@@ -1398,7 +1420,7 @@ export const DockingAnalysisSection = ({ ctx }) => {
           <CollapsibleSection title="HADDOCK Score Terms" icon="🧮" defaultOpen={false}>
             <ChartInspector cfg={cfg} setCfg={setCfg} series={dockSeries} unit={unit} style={dockChartBoxStyle(cfg)}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={d.poses.slice(0, 15).map((p, i) => ({
+                <BarChart data={rows.slice(0, 15).map((p, i) => ({
                   mode: p.mode ?? i + 1,
                   AIR: parseDockingValue(p.energy_air) ?? 0,
                   BSA: (parseDockingValue(p.bsa) ?? 0) / 100,

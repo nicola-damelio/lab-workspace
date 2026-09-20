@@ -105,6 +105,10 @@ const DockingTestRenderer = ({
       InstrumentalSetup: DockingInstrumentalSetup,
       ExperimentalConditions: DockingExperimentalConditions,
       Simulations: DockingParametersSection,
+      // Le contenu de « Data Analysis » est rendu DIRECTEMENT (plus de
+      // sous-section « Per Atom Plot » héritée du modèle NMR/MD sur une page de
+      // docking, où les graphiques sont l'analyse elle-même).
+      analysisPlain: true,
       Data: DockingDataSection,
       Analysis: DockingAnalysisSection,
       buildNotebookHtml:

@@ -456,6 +456,59 @@ export const parseCapriTsv = (text) => {
   return { columns, rows };
 };
 
+/* ── CAPRI / caprieval → lignes du tableau de résultats ─────────────────────
+   Le même nombre porte plusieurs noms selon la version de HADDOCK (« score »,
+   « HADDOCK score », « total », « RMSD l.b. », « E_vdw »…) : chaque synonyme
+   accepté est ramené sur la clé de métrique que le tableau ET les graphiques
+   utilisent. Une recherche par nom exact laissait les poses vides dès que
+   l'en-tête différait d'une lettre. La comparaison se fait sur une forme
+   CANONIQUE (lettres et chiffres seuls) : « RMSD l.b. », « RMSD_lb » et
+   « rmsd-lb » sont la même colonne. */
+export const CAPRI_METRIC_SYNONYMS = {
+  affinity: ['score', 'haddockscore', 'scorehaddock', 'total'],
+  rmsd_lb: ['lrmsd', 'rmsdlb', 'rmsdlower', 'rmsdlowerbound'],
+  rmsd_ub: ['ilrmsd', 'rmsdub', 'rmsdupper', 'rmsdupperbound'],
+  energy_total: ['total', 'energytotal'],
+  energy_air: ['air', 'energyair', 'eair'],
+  energy_elec: ['elec', 'electrostatic', 'energyelec', 'eelec'],
+  energy_vdw: ['vdw', 'vanderwaals', 'energyvdw', 'evdw'],
+  energy_desolv: ['desolv', 'desolvation', 'energydesolv', 'edesolv'],
+  bsa: ['bsa', 'buriedsurfacearea', 'buriedsurface'],
+  fcc: ['fcc', 'fractionofcommoncontacts']
+};
+
+/** Forme canonique d'un nom de colonne (« RMSD l.b. » → « rmsdlb »). */
+export const normMetricColumn = (c) => String(c || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+/** Construit les lignes du tableau de résultats à partir d'un TSV CAPRI. Utilisé
+ *  par l'import d'un répertoire de calcul ET par l'import d'un fichier seul, pour
+ *  que les deux remplissent le MÊME tableau avec les mêmes valeurs. */
+export const posesFromCapri = (parsed) => {
+  const columns = (parsed && Array.isArray(parsed.columns)) ? parsed.columns : [];
+  const rows = (parsed && Array.isArray(parsed.rows)) ? parsed.rows : [];
+  if (!columns.length || !rows.length) return [];
+  const colOf = (names) => {
+    for (const n of names) {
+      const ix = columns.findIndex((c) => normMetricColumn(c) === n);
+      if (ix >= 0) return ix;
+    }
+    return -1;
+  };
+  const num = (v) => {
+    const n = parseFloat(String(v === undefined || v === null ? '' : v).replace(',', '.'));
+    return Number.isFinite(n) ? n : '';
+  };
+  return rows.map((row, i) => {
+    const get = (names) => { const ix = colOf(names); return ix >= 0 ? row[ix] : ''; };
+    const label = String(get(['model', 'structure']) || '').split('/').pop() || `Pose ${i + 1}`;
+    const pose = { mode: num(get(['caprieval_rank', 'rank'])) || i + 1, label, program: 'haddock' };
+    Object.entries(CAPRI_METRIC_SYNONYMS).forEach(([key, names]) => { pose[key] = num(get(names)); });
+    // Every raw CAPRI value is kept so the full table can be shown too.
+    columns.forEach((c, ci) => { pose[`capri_${c}`] = row[ci] !== undefined ? row[ci] : ''; });
+    return pose;
+  });
+};
+
 // Lightweight TOML reader for raw_input.toml (sections + key = value pairs).
 // Handles comments, quoted values, duplicate sections (merged), both
 // single-line and multi-line arrays (e.g. the `molecules` list) AND HADDOCK's
@@ -587,7 +640,17 @@ export const parseDockingFile = (text, filename) => {
 
   if (lower.endsWith('.tsv')) {
     const capri = parseCapriTsv(text);
-    if (capri) return { type: 'capri_tsv', program: 'haddock', poses: [], capri, updates: { dockingCapri: { ...capri, sourceName: filename || 'capri_ss.tsv' } } };
+    if (capri) {
+      /* Le TSV alimente AUSSI le tableau de résultats (poses) : auparavant il ne
+         posait que les colonnes CAPRI brutes, donc un capri_ss.tsv importé par
+         « Choose file… » laissait le tableau ET les graphiques vides. */
+      return {
+        type: 'capri_tsv', program: 'haddock',
+        poses: posesFromCapri(capri),
+        capri,
+        updates: { dockingCapri: { ...capri, sourceName: filename || 'capri_ss.tsv' } }
+      };
+    }
   }
   if (lower.endsWith('.toml')) {
     const toml = parseTomlSimple(text);

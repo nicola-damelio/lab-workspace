@@ -1046,3 +1046,33 @@ Ce qui n'a **pas** changé :
 (`🧬 System files`), le format reste auto-détecté, et les deux reprises
 automatiques sont toujours appelées.
 
+## Le champ « PDB ID / URL / local file » a été RETIRÉ (page NMR, volet 3D)
+
+Demandé tel quel : « nel molecular viewer elimina la sezione *PDB ID / URL /
+local file* ». Ce champ vivait dans la page NMR (`MolecularStructureSection`),
+juste au-dessus du viewer 3D, sous le sélecteur **2D Formula / 3D Viewer** et le
+🔍 **Focus** ; il recopiait dans `activeTest.structureSrc` ce que les commandes
+du viewer écrivent déjà (📂 PDB file(s) / « PDB ID or URL » → `onStructureSrc`).
+Deux champs pour une même adresse finissent par diverger, et c'est celui du
+viewer qui est RÉELLEMENT chargé. Partis avec lui : son état de frappe
+« découplé » (`localPdbInput`, celui qui évitait de re-rendre le WebGL à chaque
+touche) et son bouton **Load**.
+
+Ce qui n'a **pas** changé :
+
+* **La source reste multiple, et se donne au même endroit.** Un code PDB (1UBQ…),
+  une URL, un fichier déposé sur le viewer ou un PDB fourni par la page : tout
+  passe par le viewer, seul auteur de `activeTest.structureSrc`.
+* **La structure affichée ne bouge pas.** Le champ ne faisait qu'écrire
+  `structureSrc`, qui est toujours recalculé dans la section à partir de
+  `activeTest.structureSrc || activeTest.pdbId` : les conditions déjà remplies
+  montrent exactement la même structure.
+* Le sélecteur **2D Formula / 3D Viewer**, le 🔍 **Focus**, la sélection d'atome
+  dans la séquence, le viewer (et son §1 General) et le bouton **📥 Download 3D
+  PDB File** sont inchangés.
+
+*Vérifier :* `node _compact_sections_test.mjs` — l'étiquette JSX et son invite
+ont disparu, l'état de frappe et le handler aussi, et le viewer reste le seul à
+écrire `structureSrc` ; `node _viewer_ui_layout_test.mjs` — le champ **PDB ID or
+URL** du viewer répond toujours présent (c'est désormais la seule porte).
+

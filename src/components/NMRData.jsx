@@ -532,6 +532,13 @@ export const RANDOM_COIL_DB = {
 // which strongly affects the simulated ¹³C shifts (Wishart RefDB values).
 export const CYS_OXIDIZED_RC = { HA: 4.55, CA: 53.3, CB: 39.6, CO: 175.0 };
 
+// …and the THEORETICAL ¹³C RANGE of that same oxidised cysteine, used by the
+// range charts through getCarbonRangeFor(…, oxidizedCys = true). CARBON_RANGE_DB.C
+// holds the reduced −SH values (¹³Cβ 26–32 ppm); closing the disulphide moves
+// ¹³Cβ up to ~40 ppm and pulls ¹³Cα back by ~5 ppm, so the two redox states
+// cannot share a single bar.
+export const CYS_OXIDIZED_CARBON_RANGE = { Cα: [50.5, 56.5], Cβ: [36.5, 43] };
+
 export const RESIDUE_COLORS = ['#3b82f6', '#8b5cf6', '#d946ef', '#ec4899', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#6366f1'];
 export const TICKS_1H = Array.from({ length: 111 }, (_, i) => parseFloat((i / 10).toFixed(1)));
 export const TICKS_13C = Array.from({ length: 421 }, (_, i) => parseFloat((10 + i * 0.5).toFixed(1)));
@@ -647,10 +654,16 @@ export const getPascalRow = (n) => {
   return row;
 };
 
-export const getCarbonRangeFor = (molType, char, cName) => {
+export const getCarbonRangeFor = (molType, char, cName, oxidizedCys = false) => {
   if (!cName) return { min: 40, max: 50 };
   if (molType === 'protein') {
     if (cName === "C'") return { min: 171, max: 178 };
+    // Cysteine engaged in a disulphide bond: ¹³Cα / ¹³Cβ take the oxidised
+    // values (CYS_OXIDIZED_CARBON_RANGE) instead of the free −SH ones.
+    if (char === 'C' && oxidizedCys) {
+      const ox = CYS_OXIDIZED_CARBON_RANGE[cName];
+      if (ox) return { min: ox[0], max: ox[1] };
+    }
     const r = CARBON_RANGE_DB[char]?.[cName];
     if (r) return { min: r[0], max: r[1] };
     return { min: 40, max: 60 };

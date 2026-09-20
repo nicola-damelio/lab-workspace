@@ -11,6 +11,11 @@
          everything » + SIX menus : A Proteins · B Nucleic acids · C Lipids ·
          D Sugars · E Organic molecules · F Others) ·
        3 Toolbar = Scene | Modify | Analysis | PyMOL sur UNE seule rangée ;
+     • les SIX menus A–F tiennent sur UNE seule ligne (plus de description sous
+       le nom d'un menu : elle reste dans son infobulle) et un menu OUVERT
+       n'étire plus sa cellule — ses paramètres s'affichent EN HORIZONTAL sur
+       une rangée PLEINE LARGEUR (row 2) juste sous les six boutons, donc deux
+       ou trois lignes au lieu d'une colonne haute ;
      • l'ancienne section globale « 4 · Labels » a disparu : Residues /
        Residue type / Atom names vivent DANS chaque menu, donc cocher
        « Residues » dans le menu Protéines n'étiquette QUE les protéines ;
@@ -151,14 +156,24 @@ has('label="C · Lipids"', '[§2] menu C · Lipids');
 has('label="D · Sugars"', '[§2] menu D · Sugars (nom raccourci)');
 has('label="E · Ligands"', '[§2] menu E · Ligands (nom raccourci)');
 has('label="F · Others · water"', '[§2] menu F · Others (nom raccourci)');
-// Les six menus sont alignés HORIZONTALEMENT : une GRILLE responsive (elle
-// retombe sur une colonne quand ça ne rentre pas) et un en-tête sur DEUX
-// lignes (nom court au-dessus, résumé limité à deux lignes) au lieu d'un
-// bandeau pleine largeur par menu.
-has('grid-cols-[repeat(auto-fit,minmax(17rem,1fr))]', '[§2] les menus A–F sont alignés dans une grille');
-has('className="w-full grid gap-1 items-start grid-cols-[repeat(auto-fit,minmax(17rem,1fr))]"', '[§2] …une cellule par menu (items-start = les menus fermés restent compacts)');
-has('className={`w-full flex flex-col rounded-lg border ${open ? tone.on : tone.off}`}', '[§2] chaque menu occupe sa cellule');
-has('break-words line-clamp-2', '[§2] le résumé d’un menu tient sur deux lignes au maximum');
+// Les six menus tiennent sur UNE SEULE ligne : une grille de SIX colonnes dont
+// chaque bouton ne porte que le NOM du menu — la description qui était rendue
+// sous lui n'existe plus (elle reste dans son infobulle et dans l'en-tête replié
+// du §2, qui résume déjà les six menus à la fois).
+has('grid-cols-6', '[§2] les six boutons A–F tiennent sur UNE ligne');
+has('className="w-full grid gap-1 items-stretch grid-cols-6"', '[§2] …six colonnes de même largeur (une seule rangée de menus)');
+gone('grid-cols-[repeat(auto-fit,minmax(17rem,1fr))]', '[§2] plus de grille responsive qui répartissait les menus sur plusieurs rangées');
+has('row-start-1 w-full min-w-0 flex items-center justify-between gap-1 rounded-lg border px-1.5 py-1 text-left', '[§2] un bouton ne porte que le nom du menu (une seule ligne)');
+// Un menu OUVERT n'étire plus sa cellule : le composant rend un FRAGMENT, donc
+// ses deux enfants sont des cases de la grille — le bouton reste sur la rangée 1
+// et les paramètres prennent la rangée 2 en PLEINE LARGEUR (`col-span-full
+// row-start-2`), disposés EN HORIZONTAL (flex-wrap) immédiatement sous les six
+// boutons. C'est la place explicite (row 1 / row 2) qui garantit les deux
+// rangées, quel que soit le menu ouvert.
+has('col-span-full row-start-2 w-full rounded-lg border px-2 py-1.5 flex flex-wrap items-start gap-x-4 gap-y-1.5', '[§2] le menu ouvert : rangée 2 pleine largeur sous les six boutons, paramètres en horizontal');
+has('aria-expanded={open}', '[§2] chaque bouton annonce son état');
+has('title={summary}', '[§2] …le résumé d’un menu reste accessible en infobulle');
+gone('break-words line-clamp-2', '[§2] …et plus aucune description n’est rendue sous le nom du menu');
 
 /* ── 5. Les listes d'options demandées, menu par menu ───────────────────── */
 // A · Proteins
@@ -286,12 +301,16 @@ has('helix: parseInt(e.target.value.slice(1), 16)', '[conservé] couleurs 2° st
 has('onChange={(e) => setAssignedAtomColor(parseInt(e.target.value.slice(1), 16))}', '[conservé] couleur des atomes assigned');
 has('onClick={() => setViewerCollapsed((v) => !v)}', '[conservé] repli de la fenêtre 3D');
 // Le bouton « ✨ Full detail » (et son helper) est SUPPRIMÉ : cliquer dessus
-// figeait la visualisation d’un gros système. Le mode léger reste le seul
-// rendu possible d’un tel système — c’est ce qui permet de l’afficher du tout.
+// figeait la visualisation d'un gros système. Son effet est maintenant
+// AUTOMATIQUE — le premier geste de style dans §2 appelle leaveLightMode() et
+// redessine le système avec les représentations par catégorie — et la bannière
+// « Large structure » qui bloquait les menus a disparu de l'écran (détail dans
+// _large_system_style_test.mjs).
 gone('onClick={useFullDetail}', '[supprimé] le bouton ✨ Full detail n’est plus rendu');
 gone('const useFullDetail', '[supprimé] …ni son helper de bascule');
-has('there is no « ✨ Full detail » escape hatch any more', '[supprimé] …et le code explique pourquoi');
-has('There is no « ✨ Full detail » button any', '[supprimé] le bandeau « large structure » ne le propose plus');
+has('const leaveLightMode = () => {', '[rendu] le geste de style remplace le bouton (sortie du rendu léger)');
+has('const setCatStyle = (cat, key, value) => {', '[rendu] …appelé par les six menus de §2');
+gone('ℹ️ Large structure', '[supprimé] la bannière « Large structure » ne s’affiche plus au-dessus du 3D');
 has('onClick={togglePlay}', '[conservé] ▶ Play de la trajectoire');
 has('onChange={(e) => setExtraMolStyle(m.id, e.target.value)}', '[conservé] style par molécule (barre Molecules)');
 has('onClick={applyActiveStyleToAll}', '[conservé] 🎨 Copy de la barre Molecules');

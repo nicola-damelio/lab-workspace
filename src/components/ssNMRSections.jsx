@@ -377,17 +377,6 @@ const downsampleXY = (xs, ys, maxPoints = 8000) => {
   return { xs: outX, ys: outY };
 };
 
-// Google Drive share link → direct download URL (file must be "anyone with link")
-const resolveDriveUrl = (url) => {
-  const u = String(url || '').trim();
-  if (!u) return '';
-  let m = u.match(/drive\.google\.com\/file\/d\/([\w-]+)/);
-  if (m) return `https://drive.google.com/uc?export=download&id=${m[1]}`;
-  m = u.match(/[?&]id=([\w-]+)/);
-  if (m && /drive\.google\.com/.test(u)) return `https://drive.google.com/uc?export=download&id=${m[1]}`;
-  return u;
-};
-
 // Main entry — returns the same { xs, ys, meta } shape parseJascossNMRText did,
 // so the rest of the Data section works unchanged.
 const importBruker1r = ({ dataBuffer, acqusText = '', manualSWkHz = null, manualOffsetKHz = 0, title = '', forceLE = null }) => {
@@ -1145,10 +1134,7 @@ export const Data = ({ ctx }) => {
     restore: restoreSsnMRFromDrive
   });
 
-  const [brukerDataUrl, setBrukerDataUrl] = useState('');
-  const [brukerAcqusUrl, setBrukerAcqusUrl] = useState('');
-  const [brukerSw, setBrukerSw] = useState('');
-  const [brukerOffset, setBrukerOffset] = useState('0');
+  // Recadrage / ré-échantillonnage à l'import (ssNMR uniquement).
   const [brukerStartKHz, setBrukerStartKHz] = useState('');
   const [brukerEndKHz, setBrukerEndKHz] = useState('');
   const [brukerNumPoints, setBrukerNumPoints] = useState('');
@@ -1338,8 +1324,6 @@ export const Data = ({ ctx }) => {
         const parsed = importBruker1r({ 
           dataBuffer, 
           acqusText, 
-          manualSWkHz: parseManual(brukerSw), 
-          manualOffsetKHz: parseManual(brukerOffset) || 0, 
           title: fileTitle || title 
         });
         
@@ -1515,27 +1499,6 @@ export const Data = ({ ctx }) => {
       : `⚠️ Successfully imported ${selected.length} spectrum/spectra — Google Drive was not connected at that moment (the access token may have expired), so the raw 1r file(s) were only kept in this browser's cache. Reconnect Google Drive from the sidebar, then use “Archive spectra to Drive” or re-import to save them on Drive too.`);
   };
 
-  const importBrukerFromUrl = async () => {
-    if (!brukerDataUrl.trim()) { setBrukerMsg('⚠️ Paste the Google Drive link to the 1r file.'); return; }
-    setBrukerBusy(true);
-    try {
-      const res = await fetch(resolveDriveUrl(brukerDataUrl));
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const dataBuffer = await res.arrayBuffer();
-      let acqusText = '';
-      if (brukerAcqusUrl.trim()) {
-        try { acqusText = await (await fetch(resolveDriveUrl(brukerAcqusUrl))).text(); } catch { acqusText = ''; }
-      }
-      applyBruker(importBruker1r({
-        dataBuffer, acqusText,
-        manualSWkHz: parseManual(brukerSw),
-        manualOffsetKHz: parseManual(brukerOffset) || 0
-      }), null);
-    } catch (e) {
-      setBrukerMsg(`⚠️ Fetch failed: ${e.message} — the file must be shared as "Anyone with the link".`);
-    }
-    setBrukerBusy(false);
-  };
 
   const normalizeActiveSpectrum = () => {
     // Normalising an already normalised spectrum compounded the scaling and
@@ -1740,65 +1703,22 @@ export const Data = ({ ctx }) => {
           <span className="text-[9px] text-purple-400 ml-auto">Switch condition using the tabs at the top of the page.</span>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <h4 className="text-sm font-bold text-slate-700">Spectra — condition "{activeInstance ? activeInstance.name : '—'}"</h4>
-            <div className="flex gap-2">
-              <button type="button" onClick={addSpectrumColumn} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm">+ Add Spectrum</button>
-              <button type="button" onClick={exportCSV} className="bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm hover:bg-emerald-100">📊 Export CSV (all conditions)</button>
-            </div>
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className={LABEL_CLS}>
-              Frequencies (kHz) — comma, space or newline separated
-            </label>
-            <textarea
-              value={instTest.wavelengthData || ''}
-              onChange={(e) => updateWavelengthData(e.target.value)}
-              placeholder={'-100, -99.5, -99, ...'}
-              className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-blue-500 h-20 custom-scrollbar"
-            />
-            <span className="text-[10px] text-slate-400">
-              {activeParsed.parsedWavelengths.length} valid frequency points parsed.
-            </span>
-          </div>
-          {spectraColumns.map((col, idx) => (
-            <div key={col.id} className="border border-slate-200 rounded-lg p-3 bg-slate-50 flex flex-col gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <input type="color" value={col.color || SPECTRA_PALETTE[idx % SPECTRA_PALETTE.length]} onChange={(e) => patchColumn(col.id, { color: e.target.value })} className="w-7 h-7 rounded cursor-pointer border border-slate-300" title="Series color" />
-                <input type="text" value={col.title || ''} onChange={(e) => patchColumn(col.id, { title: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs font-bold flex-1 min-w-[140px] outline-none focus:border-blue-500" />
-                <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 cursor-pointer">
-                  <input type="checkbox" checked={col.visible !== false} onChange={(e) => patchColumn(col.id, { visible: e.target.checked })} className="w-3.5 h-3.5 accent-blue-600" /> Visible
-                </label>
-                <button type="button" onClick={() => removeSpectrumColumn(col.id)} className="text-red-500 hover:text-red-700 font-black text-sm px-1" title="Remove spectrum">×</button>
-              </div>
-              <textarea
-                value={col.data || ''} onChange={(e) => patchColumn(col.id, { data: e.target.value })} placeholder="ssNMR values (comma or newline separated), same order as wavelengths"
-                className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-blue-500 h-16 custom-scrollbar bg-white"
-              />
-            </div>
-          ))}
-          {spectraColumns.length === 0 && <div className="text-xs text-slate-400 italic bg-slate-50 border border-dashed border-slate-300 rounded-lg p-4 text-center">No spectra yet. Add a spectrum manually or import a Bruker 1r folder below.</div>}
-        </div>
-
         <div className="bg-sky-50 border border-sky-200 rounded-xl p-4 flex flex-col gap-3">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <h4 className="text-sm font-bold text-sky-900">📥 Bruker Import — 1r processed spectrum</h4>
-            <span className="text-[9px] bg-sky-200 text-sky-900 px-2 py-0.5 rounded font-bold">imports into the ACTIVE condition</span>
-          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h4 className="text-sm font-bold text-sky-900 shrink-0">📥 Bruker Import — 1r processed spectrum</h4>
+            <span className="text-[9px] bg-sky-200 text-sky-900 px-2 py-0.5 rounded font-bold shrink-0">imports into the ACTIVE condition</span>
 
           {/* Restauration automatique des colonnes depuis le Drive (voir
               SSNMR_RESTORE_KIND en tête de ce fichier) : l'archive est déposée
               TOUTE SEULE à l'import, donc ce bouton n'est qu'un secours manuel —
               la restauration part d'elle-même à l'ouverture de la page. */}
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => ssnmrRestore.attempt('manual')}
-              disabled={ssnmrRestore.status === 'restoring'}
-              title="Download the archived copy of these spectra from Google Drive (it is saved automatically at import) — it also happens by itself when the page opens"
-              className="text-[10px] font-bold bg-white border border-sky-300 text-sky-700 hover:bg-sky-100 px-2 py-1 rounded-md shadow-sm disabled:opacity-50"
-            >
+          <button
+            type="button"
+            onClick={() => ssnmrRestore.attempt('manual')}
+            disabled={ssnmrRestore.status === 'restoring'}
+            title="Download the archived copy of these spectra from Google Drive (it is saved automatically at import) — it also happens by itself when the page opens"
+            className="text-[10px] font-bold bg-white border border-sky-300 text-sky-700 hover:bg-sky-100 px-2 py-1 rounded-md shadow-sm disabled:opacity-50"
+          >
               {ssnmrRestore.status === 'restoring' ? '⬇️ Downloading…' : '⬇️ Restore from Drive'}
             </button>
             {instTest.ssnmrDrive && !ssnmrRestore.message && (
@@ -1819,82 +1739,48 @@ export const Data = ({ ctx }) => {
                 )}
               </span>
             )}
-          </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="bg-white border border-sky-200 rounded-lg p-3 flex flex-col gap-2">
-              <span className="text-xs font-bold text-sky-800">💻 From this PC</span>
-
-              <label className="bg-white border border-sky-300 hover:bg-sky-100 text-sky-800 font-bold px-3 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors text-left flex items-center gap-2">
-                <span className="text-xl">📁</span>
-                <div>
-                  <div>Choose Bruker Folder...</div>
-                  <div className="text-[9px] font-normal opacity-70">Select the experiment folder (or a parent folder)</div>
-                </div>
-                <input 
-                  ref={brukerFileRef} 
-                  type="file" 
-                  webkitdirectory="true" 
-                  directory="true" 
-                  multiple 
-                  onChange={importFolder} 
-                  className="hidden" 
-                />
-              </label>
-              <div className="mt-1">
-                <DriveUploadButton
-                  suggestedName={suggestDriveFileName({
-                    project: (activeTest.projectNames || [])[0] || '',
-                    test: activeTest.name || '',
-                    instance: activeTest.instanceName || '',
-                    section: 'Data',
-                    subsection: 'Bruker 1r',
-                    suffix: 'bruker1r'
-                  })}
-                  naming={{
-                    project: (activeTest.projectNames || [])[0] || '',
-                    test: activeTest.name || '',
-                    instance: activeTest.instanceName || '',
-                    scientist: activeTest.operator || '',
-                    section: 'Data',
-                    subsection: 'Bruker 1r',
-                    suffix: 'bruker1r'
-                  }}
-                  accept=".1r,.fid,.ser,.acqus"
-                  label="⬆ Archive spectra to Drive"
-                  className="bg-sky-50 text-sky-800 border border-sky-200 hover:bg-sky-100"
-                />
+            <label className="bg-white border border-sky-300 hover:bg-sky-100 text-sky-800 font-bold px-3 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors text-left flex items-center gap-2">
+              <span className="text-xl">📁</span>
+              <div>
+                <div>{brukerBusy ? '⏳ Reading folder…' : 'Choose Bruker Folder...'}</div>
+                <div className="text-[9px] font-normal opacity-70">Select the experiment folder (or a parent folder)</div>
               </div>
-              <span className="text-[9px] text-sky-700 mt-1 max-w-sm">
-                This will automatically locate the 1r file(s) and their corresponding acqus parameter files, instantly importing the correct ppm axis. After scanning you can choose exactly which experiments to load — they will be imported into separate condition tabs.
-              </span>
-            </div>
+              <input
+                ref={brukerFileRef}
+                type="file"
+                webkitdirectory="true"
+                directory="true"
+                multiple
+                onChange={importFolder}
+                className="hidden"
+              />
+            </label>
+            <DriveUploadButton
+              suggestedName={suggestDriveFileName({
+                project: (activeTest.projectNames || [])[0] || '',
+                test: activeTest.name || '',
+                instance: activeTest.instanceName || '',
+                section: 'Data',
+                subsection: 'Bruker 1r',
+                suffix: 'bruker1r'
+              })}
+              naming={{
+                project: (activeTest.projectNames || [])[0] || '',
+                test: activeTest.name || '',
+                instance: activeTest.instanceName || '',
+                scientist: activeTest.operator || '',
+                section: 'Data',
+                subsection: 'Bruker 1r',
+                suffix: 'bruker1r'
+              }}
+              accept=".1r,.fid,.ser,.acqus"
+              label="⬆ Archive spectra to Drive"
+              className="bg-sky-50 text-sky-800 border border-sky-200 hover:bg-sky-100"
+            />
 
-            <div className="bg-white border border-sky-200 rounded-lg p-3 flex flex-col gap-2">
-              <span className="text-xs font-bold text-sky-800">🔗 From Google Drive link</span>
-              <input type="text" value={brukerDataUrl} onChange={(e) => setBrukerDataUrl(e.target.value)} placeholder="Link to 1r (…/file/d/…/view)" className="border border-sky-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-sky-500 bg-white" />
-              <input type="text" value={brukerAcqusUrl} onChange={(e) => setBrukerAcqusUrl(e.target.value)} placeholder="Link to acqus (optional)" className="border border-sky-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-sky-500 bg-white" />
-              <button type="button" onClick={importBrukerFromUrl} disabled={brukerBusy} className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm">
-                {brukerBusy ? 'Importing…' : 'Import from links'}
-              </button>
-              <span className="text-[9px] text-sky-600">Both files must be shared as "Anyone with the link". Paste plain share links — they are converted automatically.</span>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-end gap-3 bg-white border border-sky-200 rounded-lg p-3">
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-bold text-sky-800">Manual SW (kHz) — only if no acqus</label>
-              <input type="number" step="0.1" value={brukerSw} onChange={(e) => setBrukerSw(e.target.value)} onWheel={(e) => e.target.blur()} className="border border-sky-300 rounded-lg p-1.5 text-xs outline-none focus:border-sky-500 w-32" />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-bold text-sky-800">Carrier offset (kHz)</label>
-              <input type="number" step="0.1" value={brukerOffset} onChange={(e) => setBrukerOffset(e.target.value)} onWheel={(e) => e.target.blur()} className="border border-sky-300 rounded-lg p-1.5 text-xs outline-none focus:border-sky-500 w-32" />
-            </div>
-            <span className="text-[9px] text-sky-600 max-w-md">If an acqus file is provided, SW_h / O1 / TE are read from it automatically and the manual fields are ignored.</span>
-          </div>
-          
-          <div className="flex flex-wrap items-end gap-3 bg-violet-50 border border-violet-200 rounded-lg p-3">
-            <span className="text-[10px] font-bold text-violet-800 w-full">✂️ Crop & Resample upon import (optional)</span>
+          <div className="flex flex-wrap items-end gap-2 bg-violet-50 border border-violet-200 rounded-lg p-2">
+            <span className="text-[10px] font-bold text-violet-800 shrink-0" title="Recadre et ré-échantillonne le spectre importé (ssNMR uniquement)">✂️ Crop & resample upon import (optional)</span>
             <div className="flex flex-col gap-1">
               <label className="text-[10px] font-bold text-violet-800">From (kHz)</label>
               <input type="number" step="0.1" value={brukerStartKHz} onChange={(e) => setBrukerStartKHz(e.target.value)} onWheel={(e) => e.target.blur()} placeholder="auto" className="border border-violet-300 rounded-lg p-1.5 text-xs outline-none focus:border-violet-500 w-24 bg-white" />
@@ -1909,7 +1795,48 @@ export const Data = ({ ctx }) => {
             </div>
             <span className="text-[9px] text-violet-600 max-w-xs">Leave blank to import the full spectrum exactly as acquired. Interpolates to the specified grid.</span>
           </div>
+
+          <div className="flex flex-col gap-2 bg-white border border-sky-200 rounded-lg p-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-bold text-slate-700">Spectra — condition "{activeInstance ? activeInstance.name : '—'}"</span>
+              <div className="flex gap-2">
+                <button type="button" onClick={addSpectrumColumn} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm">+ Add Spectrum</button>
+                <button type="button" onClick={exportCSV} className="bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm hover:bg-emerald-100">📊 Export CSV (all conditions)</button>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-stretch gap-2">
+              <div className="flex-1 min-w-[150px] flex flex-col gap-1">
+                <label className={LABEL_CLS}>Frequencies (kHz) — comma, space or newline separated</label>
+                <textarea
+                  value={instTest.wavelengthData || ''}
+                  onChange={(e) => updateWavelengthData(e.target.value)}
+                  placeholder={'-100, -99.5, -99, ...'}
+                  className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-blue-500 h-24 custom-scrollbar"
+                />
+                <span className="text-[10px] text-slate-400">{activeParsed.parsedWavelengths.length} valid frequency points parsed.</span>
+              </div>
+              {spectraColumns.map((col, idx) => (
+                <div key={col.id} className="flex-1 min-w-[170px] border border-slate-200 rounded-lg p-2 bg-slate-50 flex flex-col gap-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <input type="color" value={col.color || SPECTRA_PALETTE[idx % SPECTRA_PALETTE.length]} onChange={(e) => patchColumn(col.id, { color: e.target.value })} className="w-6 h-6 rounded cursor-pointer border border-slate-300" title="Series color" />
+                    <input type="text" value={col.title || ''} onChange={(e) => patchColumn(col.id, { title: e.target.value })} className="border border-slate-300 rounded-lg px-1.5 py-1 text-xs font-bold flex-1 min-w-[90px] outline-none focus:border-blue-500" />
+                    <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600 cursor-pointer">
+                      <input type="checkbox" checked={col.visible !== false} onChange={(e) => patchColumn(col.id, { visible: e.target.checked })} className="w-3.5 h-3.5 accent-blue-600" /> Visible
+                    </label>
+                    <button type="button" onClick={() => removeSpectrumColumn(col.id)} className="text-red-500 hover:text-red-700 font-black text-sm px-1" title="Remove spectrum">×</button>
+                  </div>
+                  <textarea
+                    value={col.data || ''} onChange={(e) => patchColumn(col.id, { data: e.target.value })} placeholder="ssNMR values (comma or newline separated), same order as the frequencies"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-blue-500 h-24 custom-scrollbar bg-white"
+                  />
+                </div>
+              ))}
+              {spectraColumns.length === 0 && <div className="text-xs text-slate-400 italic bg-slate-50 border border-dashed border-slate-300 rounded-lg p-3 text-center flex-1">No spectra yet. Add a spectrum manually or import a Bruker 1r folder above.</div>}
+            </div>
+          </div>
+
           {brukerMsg && <span className="text-xs font-bold text-sky-900">{brukerMsg}</span>}
+          </div>
         </div>
 
         {/* Experiment selection dialog for folder import */}
