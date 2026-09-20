@@ -1,4 +1,0 @@
-﻿7: import { PRIMARY_CATEGORIES, CLASSIFICATION_MAP, experimentTypeFilterOptions, matchesExperimentTypeFilter } from '../../data/testTypes';
-83: const experimentTypeOptions = experimentTypeFilterOptions(tests);
-171: const testLabel = typeLabels[t.type] || t.type;
-176: if (filterType !== 'ALL' && testLabel !== filterType) return false;

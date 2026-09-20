@@ -1,7 +1,0 @@
-﻿
-PASS  OPTIONS preflight ΓåÆ header X-Admin-Token autoris├⌐ 
-(sinon ┬½ Failed to fetch ┬╗)  ΓÇö  Content-Type, 
-X-Admin-Token, Authorization
-30/30 checks passed
-
-

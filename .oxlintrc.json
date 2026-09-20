@@ -2,7 +2,10 @@
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["react", "oxc"],
   "env": { "browser": true, "node": true },
-  "ignorePatterns": ["scripts/**"],
+  "globals": {
+    "__APP_COMMIT__": "readonly"
+  },
+  "ignorePatterns": ["scripts/**", "public/vendor/**", "_ngl_src/**"],
   "rules": {
     "react/rules-of-hooks": "error",
     "eslint/no-undef": "error"

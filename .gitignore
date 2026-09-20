@@ -31,5 +31,9 @@ workspace-shared-token.json.*
 
 # Scratch dumps of a local investigation run (grep output, build logs, one-off
 # command output). They are read once and thrown away — never part of the app.
-_tmp_*
+/_tmp_*
+/_*.txt
+/_*.json
+/_replica_*.pdb
+**/_ls_*.txt
 

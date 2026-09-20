@@ -1,2 +1,0 @@
-passed 73/73
-all checks passed

@@ -1,4 +1,0 @@
-﻿OK   _viewer_ui_layout_test.mjs  â†’  _viewer_ui_layout_test.mjs â€” 235 assertions OK
-OK   _workspace_drive_test.mjs  â†’  âœ… 57 tests passÃ©s (lâ€™espace de travail entier vit sur le Drive)
-OK   _workspace_keys_test.mjs  â†’  âœ… 37 tests passÃ©s (les clÃ©s du navigateur vivent aussi sur le Drive)
-total 106, failed 0

@@ -1,3 +1,0 @@
-﻿App.jsx:3116: const createNewDataset = async (kind = 'scientific') => {
-App.jsx:4596: onClick={() => createNewDataset('scientific')}
-App.jsx:4609: onClick={() => createNewDataset('administration')}

@@ -14,7 +14,7 @@
      node _diag_library_move.mjs --fresh               (retélécharge keys.json du Drive)
      node _diag_library_move.mjs --fresh --report      (…et écrit _diag_library_move.txt)
    ========================================================================= */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 const TOKEN_URL = 'https://drive-token-server-763848765523.europe-west1.run.app';
 const API = 'https://www.googleapis.com';
@@ -113,6 +113,12 @@ if (process.argv.includes('--fresh')) {
   say(`keys.json = ${pick.id} modifié ${pick.modifiedTime}`);
   state = JSON.parse(await (await api(`/drive/v3/files/${pick.id}?alt=media`)).text());
   writeFileSync('_diag_keys_now.json', JSON.stringify(state, null, 2), 'utf8');
+} else if (!existsSync('_diag_keys.json')) {
+  /* Le dump n'est PAS versionné (5 Mo de keys.json du Drive) : il se
+     (re)télécharge avec --fresh. Sans lui ce diagnostic n'a rien à lire — ce
+     n'est pas un échec de l'application, donc on sort en 0. */
+  console.log('_diag_keys.json absent — relance avec : node _diag_library_move.mjs --fresh');
+  process.exit(0);
 } else {
   state = JSON.parse(readFileSync('_diag_keys.json', 'utf8'));
 }

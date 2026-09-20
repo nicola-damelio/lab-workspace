@@ -1,2 +1,0 @@
-passed 238/238
-all checks passed

@@ -1,7 +1,17 @@
 // _diag_keys_summary.cjs — READ-ONLY: summarize the downloaded _diag_keys.json
 // (a copy of Drive's Lab Workspace/_workspace/keys.json) so we know exactly what
 // the app persisted for the image library / canvases.
+//
+// Le dump n'est PAS versionné (5 Mo de keys.json du Drive) : il se télécharge à
+// la demande avec `pwsh -File _diag_keys.ps1`. Sans lui ce diagnostic n'a rien à
+// résumer — ce n'est pas un échec de l'application, donc on sort en 0.
 const fs = require('fs');
+
+if (!fs.existsSync('_diag_keys.json')) {
+  console.log('_diag_keys.json absent — lance d\'abord : pwsh -File _diag_keys.ps1');
+  console.log('(diagnostic non lancé : le dump du Drive n\'est pas versionné)');
+  process.exit(0);
+}
 
 const raw = fs.readFileSync('_diag_keys.json', 'utf8');
 const state = JSON.parse(raw);

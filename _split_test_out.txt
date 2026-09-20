@@ -1,5 +1,0 @@
-A) 4 identical models (unique serials + CONECT): OLD parts=1 (bug: 1) | NEW parts=4, models=4
-   NEW models per part: 1,2,3,4
-B) 4 conformers w/ cross-model close atoms (restarted serials, no CONECT): OLD parts=1 (bug: 1) | NEW parts=4, models=4
-C) single-model protein+ligand: OLD parts=2 | NEW parts=2, models=1
-RESULT: A=PASS B=PASS C=PASS
