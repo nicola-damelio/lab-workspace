@@ -1,0 +1,286 @@
+﻿=== GIT STATUS ===
+ M _status.txt
+ M src/components/AppModules/testsModule.jsx
+ M src/components/LabNotebook.jsx
+ M src/data/testTypes.js
+?? _T_a.txt
+?? _T_a2.txt
+?? _T_b.txt
+?? _T_c.txt
+?? _T_d.txt
+?? _T_d1.txt
+?? _T_d2.txt
+?? _T_d3.txt
+?? _T_diff.txt
+?? _T_e.txt
+?? _T_f.txt
+?? _T_g.txt
+?? _T_gitlog.txt
+?? _T_h.txt
+?? _T_i.txt
+?? _T_j.txt
+?? _T_k.txt
+?? _T_lint1.txt
+?? _T_path.txt
+?? _T_runners.txt
+?? _T_status.txt
+?? _T_tests.txt
+?? _lines.txt
+?? _stor.txt
+?? _typehits.txt
+?? _typeui.txt
+=== GIT LOG ===
+adbaabf Calculations: le dataset entier sur le Drive (inventaire, filtres qui ne cachent rien, flush a la fermeture)
+cecfc09 Restore lourd depuis le Drive: structure 3D du viewer (NMR) et topologie/trajectoire MD
+a0dd99c Restore lourd depuis le Drive: microscopie (videos et clips, fichiers bruts)
+7b38015 Restore lourd depuis le Drive: docking (structures PDB en IndexedDB)
+0c0c9fa Restore lourd depuis le Drive: CD (Jasco) + pointeurs en attente dans le noyau
+0748b84 Restore lourd depuis le Drive: ssNMR (colonnes de spectres)
+90925fc Storage: renommer une boite ne cree plus un dossier par lettre
+3b0a58b Restore lourd depuis le Drive: mecanisme general + NMR 1D
+210d71d storage
+8feac3f rrr
+2cf4189 gggg
+9bb5db4 gg
+8b966c5 gg
+1aacdd1 hhhh
+488cf70 hh
+a5e1553 ff
+b3382ba ffff
+fea8565 ff
+cbc9156 ff
+2ae78a9 ffff
+=== ROOT FILES ===
+.gitattributes
+.gitignore
+.oxlintrc.json
+b8.log
+error_log.txt
+ersnicollab-workspace
+firebase.json
+firestore.rules
+index.html
+out_log.txt
+package-lock.json
+package.json
+README.md
+vite-dev.log
+vite-dev.log.err
+vite.config.js
+v_admin.txt
+v_admin2.txt
+v_side.txt
+v_side2.txt
+_axis_aspect_test.cjs
+_axis_fit_test.cjs
+_break_test.mjs
+_build.txt
+_builder_arrows_test.mjs
+_builder_copy_paste_test.mjs
+_builder_crop_test.cjs
+_builder_eraser_test.mjs
+_builder_figshadow_test.mjs
+_builder_figtools_test.mjs
+_builder_figureorder_test.mjs
+_builder_letters_test.cjs
+_builder_link_test.cjs
+_builder_montage_test.mjs
+_builder_multiselect_test.mjs
+_builder_paneldock_test.mjs
+_builder_pixels_test.cjs
+_builder_place_test.cjs
+_builder_recall_test.mjs
+_builder_shapes_test.mjs
+_builder_uibar_test.mjs
+_builder_upscale_test.mjs
+_builder_zoom_test.cjs
+_build_final.txt
+_build_final_u8.txt
+_calculation_entries_test.mjs
+_canvas_autosave_test.mjs
+_canvas_composition_safety_test.mjs
+_canvas_file_restore_test.mjs
+_canvas_identity_test.mjs
+_capture_fix_out.txt
+_capture_fix_test.mjs
+_chain_test.cjs
+_chart_dblclick_test.cjs
+_check_env.txt
+_common_library_folder_test.mjs
+_cov_check.cjs
+_curve_style_test.mjs
+_dataset_copy_mirror_test.mjs
+_dataset_dir_twins_test.mjs
+_deleted_projects_test.mjs
+_dev.err.log
+_dev.out.log
+_diag_both.ps1
+_diag_containers.ps1
+_diag_containers_out.txt
+_diag_containers_out2.txt
+_diag_drive.ps1
+_diag_drive_out.txt
+_diag_figures.ps1
+_diag_find.ps1
+_diag_head.txt
+_diag_keys.json
+_diag_keys.ps1
+_diag_keys_out.txt
+_diag_keys_summary.cjs
+_diag_keys_summary_out.txt
+_diag_library_move.mjs
+_diag_now.txt
+_diag_now2.txt
+_diag_order.ps1
+_diag_restore.txt
+_diag_srv.txt
+_diag_svg_upload.js
+_diag_twins.ps1
+_diag_twins_out.txt
+_diag_verify_merge.ps1
+_diag_verify_merge_out.txt
+_diffstat.txt
+_diffstat_u8.txt
+_docking_sanity.cjs
+_docs_index.txt
+_doc_responsive_test.mjs
+_done.txt
+_drive_mirror_test.mjs
+_drive_restore_test.mjs
+_d_app_u0.txt
+_d_server.txt
+_d_src1.txt
+_d_src2.txt
+_editor_layout_test.cjs
+_esm_test_hook.mjs
+_experiment_drive_root_test.mjs
+_fcs_restore_match_test.cjs
+_figures_folder_mismatch_test.mjs
+_figure_origin_test.cjs
+_figure_placement_test.mjs
+_figure_recapture_test.mjs
+_figure_style_test.mjs
+_figure_svg_drive_out.txt
+_figure_svg_drive_test.mjs
+_final_v3.txt
+_git_status.txt
+_ib_lines.txt
+_keys_locations.txt
+_lastdiff.txt
+_library_move_test.mjs
+_library_reorder_test.mjs
+_library_restore_test.mjs
+_library_transfer_test.cjs
+_lines.txt
+_lint.txt
+_lint_errs.txt
+_lint_final.txt
+_lint_final_u8.txt
+_lint_gh.txt
+_lint_hits.txt
+_lint_now.txt
+_lint_v3.txt
+_listing.txt
+_live_both.txt
+_live_drive.txt
+_live_find.txt
+_live_order.txt
+_ls_root.txt
+_mail_recipients_test.mjs
+_manuscript_import_test.mjs
+_new_image_test.cjs
+_nglctx.txt
+_old_budgetModule.jsx
+_out_autosave.txt
+_out_suite.txt
+_pdb_conect_out.txt
+_pdb_conect_sanity.cjs
+_persist_store_test.mjs
+_probe_cites.mjs
+_probe_hdr.mjs
+_probe_ngl.cjs
+_probe_sections.mjs
+_project_drive_doc_test.mjs
+_project_figures_access_test.cjs
+_project_page_order_test.mjs
+_project_section_editing_test.mjs
+_pub_author_style_test.mjs
+_rebuild_h_test.mjs
+_recover_canvas_files.mjs
+_reference_complete_test.mjs
+_reference_import_test.mjs
+_reference_links_test.mjs
+_rename_refs.txt
+_repair_drive_twins.mjs
+_replica_20model.pdb
+_replica_identical.pdb
+_run_all.cjs
+_r_crop.txt
+_sanity_out.txt
+_selftest2.txt
+_selftest3.txt
+_selftest_out.txt
+_spectra_split_out.txt
+_spectra_split_test.mjs
+_split_test.cjs
+_split_test_out.txt
+_src_split_test.cjs
+_src_split_test_out.txt
+_star_group_test.cjs
+_status.txt
+_status_u8.txt
+_stor.txt
+_storage_drive_layout_test.mjs
+_st_final.txt
+_st_final_u8.txt
+_st_verify_u8.txt
+_suite_report.txt
+_sum_canvases.mjs
+_sum_canvases.txt
+_sum_downloads.txt
+_sum_one_meta.mjs
+_sum_panels.mjs
+_sum_panels.txt
+_test_files.txt
+_tmp_lint_common.txt
+_tok.txt
+_tree.txt
+_typehits.txt
+_typeui.txt
+_T_a.txt
+_T_a2.txt
+_T_b.txt
+_T_c.txt
+_T_d.txt
+_T_d1.txt
+_T_d2.txt
+_T_d3.txt
+_T_diff.txt
+_T_e.txt
+_T_f.txt
+_T_g.txt
+_T_gitlog.txt
+_T_h.txt
+_T_i.txt
+_T_j.txt
+_T_k.txt
+_T_lint1.txt
+_T_path.txt
+_T_runners.txt
+_T_status.txt
+_T_tests.txt
+_ui_scale_test.cjs
+_v2b_cov.txt
+_v3_asp.txt
+_v3_dbl.txt
+_v3_fit.txt
+_v3_tests.txt
+_v4_dosy.txt
+_v4_final.txt
+_view_scroll_memory_test.cjs
+_vite_live.log
+_workspace_drive_test.mjs
+_workspace_keys_test.mjs
+=== DOCS ===
+DRIVE-MIRROR.md
+SECURITY-SETUP.md

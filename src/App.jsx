@@ -1218,6 +1218,9 @@ if (customType === 'dosy') {
   const [lastOpenedTest, setLastOpenedTest] = useState(() => readLastExperiment(currentDatasetId));
   const [storageModal, setStorageModal] = useState(null);
   const [moveModal, setMoveModal] = useState(null);
+  /* Suppression d'un MEUBLE : { storageId, targetStorageId } — les boîtes qu'il
+     contient ne sont jamais supprimées (voir StorageModals / storageBoxes.js). */
+  const [deleteStorageModal, setDeleteStorageModal] = useState(null);
 
   // Keep the Figures & Slides module aware of the active project so exports
   // (e.g. the molecule viewer's "📷 Figure") land in the project library.
@@ -4573,6 +4576,8 @@ const openDataset = (dset) => {
         setMoveModal={setMoveModal}
         tests={tests}
         setTests={setTests}
+        deleteStorageModal={deleteStorageModal}
+        setDeleteStorageModal={setDeleteStorageModal}
         operators={operatorNames}
       />
 
@@ -4946,6 +4951,7 @@ const openDataset = (dset) => {
               setActiveStorageId={setActiveStorageId} setStorageModal={setStorageModal}
               handlePrint={handlePrint} activeStorageId={activeStorageId}
               jumpToTest={jumpToTest} setMoveModal={setMoveModal} createEmptyTest={createEmptyTest}
+              setDeleteStorageModal={setDeleteStorageModal}
             />
 
             {currentModule === 'tests' && (<TestsModule

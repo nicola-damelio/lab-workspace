@@ -1,0 +1,37 @@
+﻿Storage.jsx:30: // One photo slot for a box: preview + upload-from-PC (saved to Drive) + remove.
+Storage.jsx:35: const BoxPhotoSlot = ({ url, label, hint, storageName, boxName, kind, onSet, onClear }) => {
+Storage.jsx:115: const handleMoveBox = (boxId, targetStorageId, targetSlotIndex) => {
+Storage.jsx:117: if (t.id === boxId) return { ...t, storageId: targetStorageId, storageIndex: targetSlotIndex };
+Storage.jsx:193: <p className="text-xs text-slate-500 mb-3">Click a slot to move the box. You can place it in an empty slot or stack it with existing boxes.</p>
+Storage.jsx:196: const boxesInSlot = boxesInTarget.filter(b => b.storageIndex === i);
+Storage.jsx:200: ${boxesInSlot.length > 0 ? 'bg-orange-50 border-orange-300 hover:bg-orange-100' : 'bg-green-50 border-green-300 hover:bg-green-100'}`}>
+Storage.jsx:202: {boxesInSlot.length > 0 ? (
+Storage.jsx:205: <span className="text-[8px] font-bold text-orange-800 truncate w-full">{boxesInSlot[0].name}</span>
+Storage.jsx:206: {boxesInSlot.length > 1 && <span className="text-[8px] bg-orange-200 px-1 rounded">+{boxesInSlot.length - 1}</span>}
+Storage.jsx:251: const totalSlots = st.rows * st.cols;
+Storage.jsx:268: <p className="text-xs text-slate-500 mt-1 font-medium">Grid: {st.rows} rows × {st.cols} cols ({totalSlots} slots)</p>
+Storage.jsx:271: <span className={boxesInStorage.length >= totalSlots ? 'text-red-500' : 'text-emerald-600'}>{Math.round((boxesInStorage.length / totalSlots) * 100)}% Full</span>
+Storage.jsx:290: Le déplacement se fait par identifiant de fichier, donc le lien enregistré
+Storage.jsx:302: const handleAddBox = (slotIndex) => {
+Storage.jsx:306: if(slotIndex !== undefined) newBox.storageIndex = slotIndex;
+Storage.jsx:319: <p className="text-sm text-slate-500">Capacity: {st.rows * st.cols} slots. Click an empty slot to add a box.</p>
+Storage.jsx:373: title={box ? `Open Box: ${box.name}` : `Add Box to Slot ${i+1}`}>
+Storage.jsx:432: const boxPosition = activeTest.storageIndex === null || activeTest.storageIndex === undefined
+Storage.jsx:437: storage: boxStorageName, position: boxPosition, box: activeTest.name || '', rows: labelRows
+Storage.jsx:442: ne change pas (déplacement par identifiant de fichier) et un fichier déjà
+Storage.jsx:557: position: boxPosition,
+Storage.jsx:584: <BoxPhotoSlot
+Storage.jsx:594: <BoxPhotoSlot
+Storage.jsx:607: position={boxPosition}
+Storage.jsx:672: title={data.compound ? `${data.compound}${data.operator ? ` (${data.operator})` : ''}` : 'Empty Slot'}>
+Storage.jsx:687: <h4 className="text-lg font-black text-slate-800">Selected Slots ({selectedWells.length})</h4>
+Storage.jsx:696: <div className="bg-slate-50 border border-dashed border-slate-300 rounded-xl p-10 text-center text-slate-400 font-bold">No slots selected.</div>
+storageModules.jsx:32: const positionLabel = useCallback((index, cols = 12) => {
+storageModules.jsx:169: const pos = positionLabel(box?.storageIndex, storage.cols);
+storageModules.jsx:170: return pos ? `${storage.name} · Slot ${pos}` : storage.name;
+storageModules.jsx:179: [findStorage, positionLabel]
+storageModules.jsx:192: const boxSlot = storage
+storageModules.jsx:193: ? positionLabel(box?.storageIndex, storage.cols)
+storageModules.jsx:204: boxSlot ? `Slot ${boxSlot}` : '',
+storageModules.jsx:210: [findStorage, positionLabel]
+storageModules.jsx:711: if (allResources.includes(val)) return alert(`"${val}" already exists in the library! If you want to combine them, use the 'Merge & Delete Duplicate' tool below.`);

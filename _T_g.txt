@@ -1,0 +1,177 @@
+﻿activeTestModule.jsx:28: const DockingTestRenderer = lazy(() => import('../DockingTestRenderer'));
+DockingData.jsx:6: DockingSections.jsx. Mirrors the structure of MDData.jsx, but every
+DockingData.jsx:73: // ================= DOCKING-SPECIFIC CONSTANTS =================
+DockingData.jsx:84: export const DOCKING_PROGRAMS = {
+DockingData.jsx:91: description: 'AutoDock Vina — gradient-based local search docking',
+DockingData.jsx:100: description: 'AutoDock 4 — Lamarckian genetic-algorithm docking',
+DockingData.jsx:118: description: 'HADDOCK — ambiguity-driven biomolecular docking',
+DockingData.jsx:127: description: 'Schrödinger Glide docking',
+DockingData.jsx:136: description: 'CCDC GOLD genetic-algorithm docking',
+DockingData.jsx:142: export const DOCKING_METRICS = [
+DockingData.jsx:143: { key: 'affinity', label: 'Affinity', unit: 'kcal/mol', description: 'Binding affinity / docking score' },
+DockingData.jsx:163: export const DOCKING_FILE_FORMATS = [
+DockingData.jsx:175: export const DOCKING_PIPELINE_STAGES = [
+DockingData.jsx:179: { key: 'docking', label: 'Docking Run', icon: '🎯' },
+DockingData.jsx:185: export const parseDockingValue = (v) => {
+DockingData.jsx:191: export const getProgramInfo = (key) => DOCKING_PROGRAMS[key] || DOCKING_PROGRAMS.vina;
+DockingData.jsx:316: const n = parseDockingValue(vals[idx]);
+DockingData.jsx:585: export const parseDockingFile = (text, filename) => {
+DockingData.jsx:627: export const normalizeDockingUrl = (url) => {
+DockingData.jsx:659: export const detectDockingFormat = (url) => {
+DockingData.jsx:671: export const DOCKING_DEFAULT_LAYER = {
+DockingData.jsx:678: export const makeDockingInstanceId = () =>
+DockingData.jsx:681: export const getDockingInstances = (activeTest) => {
+DockingData.jsx:694: export const getDockingActiveInstance = (activeTest) => {
+DockingData.jsx:695: const insts = getDockingInstances(activeTest);
+DockingData.jsx:699: export const getDockingLayers = (activeTest) => [
+DockingData.jsx:704: export const getDockingActiveLayerKey = (activeTest) =>
+DockingData.jsx:707: export const getDockingLayerValues = (instance, layerKey) =>
+DockingData.jsx:710: export const writeDockingCellValue = (
+DockingData.jsx:718: const activeInstance = getDockingActiveInstance(activeTest);
+DockingData.jsx:719: const dockingValues = { ...(activeTest.dockingValues || {}) };
+DockingData.jsx:749: export const generateDockingPoses = (n = 9, baseAffinity = -8.5) => {
+DockingData.jsx:793: export const DEFAULT_DOCKING_CHART_STYLE = {
+DockingData.jsx:824: const step = parseDockingValue(stepStr);
+DockingSections.jsx:16: /* ── RESTAURATION AUTOMATIQUE DES STRUCTURES DOCKING DEPUIS LE DRIVE ────────
+DockingSections.jsx:26: (`<instance>_docking_restore.json.gz`) et le remet dans la base du
+DockingSections.jsx:28: const DOCKING_RESTORE_KIND = 'docking';
+DockingSections.jsx:29: const dockingDriveCtx = (test = {}, instance = '') => ({
+DockingSections.jsx:41: const archiveDockingData = async ({
+DockingSections.jsx:59: import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, DOCK_CHART_MARGIN} from './DockingData';
+DockingSections.jsx:63: DockingSections — Docking page content sections (mirrors MDSections.jsx)
+DockingSections.jsx:67: const useDockingDerived = (activeTest, ctx = {}) => {
+DockingSections.jsx:91: const dockingProgram = activeTest.dockingProgram || 'vina';
+DockingSections.jsx:92: const programInfo = getProgramInfo(dockingProgram);
+DockingSections.jsx:145: console.warn('Docking structure build error:', e);
+DockingSections.jsx:159: const instances = getDockingInstances(activeTest);
+DockingSections.jsx:160: const activeInstance = getDockingActiveInstance(activeTest);
+DockingSections.jsx:161: const layers = getDockingLayers(activeTest);
+DockingSections.jsx:162: const activeLayerKey = getDockingActiveLayerKey(activeTest);
+DockingSections.jsx:163: const activeValues = getDockingLayerValues(activeInstance, activeLayerKey);
+DockingSections.jsx:167: dockingProgram, programInfo, scoringFunction, searchAlgorithm,
+DockingSections.jsx:182: const ri = activeTest.dockingRawInput;
+DockingSections.jsx:229: export const DockingInstrumentalSetup = ({ ctx }) => {
+DockingSections.jsx:243: // ================= EXPERIMENTAL CONDITIONS (Docking) =================
+DockingSections.jsx:250: export const DockingExperimentalConditions = ({ ctx }) => {
+DockingSections.jsx:252: const molKey = `labDockingMolecules_${activeTest.id || 'global'}`;
+DockingSections.jsx:269: const meta = Array.isArray(activeTest.dockingMolecules) ? activeTest.dockingMolecules : [];
+DockingSections.jsx:333: export const DockingExperimentSetupSection = ({ ctx }) => {
+DockingSections.jsx:335: const d = useDockingDerived(activeTest, ctx);
+DockingSections.jsx:337: // Docking cluster structures (8_seletopclusts) read by the calculation-directory
+DockingSections.jsx:339: const structKey = `labDockingStructures_${activeTest.id || 'global'}`;
+DockingSections.jsx:578: driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Docking' }}
+DockingSections.jsx:625: const DockingImportPanel = ({ ctx, onPoses }) => {
+DockingSections.jsx:632: const dockingActiveIdRef = useRef((ctx.activeTest && ctx.activeTest.id) || '');
+DockingSections.jsx:636: const parsed = parseDockingFile(text, filename || 'pasted.txt');
+DockingSections.jsx:676: section: 'Docking'
+DockingSections.jsx:689: const archive = async (name, mime, blob, pathExtra = [], section = 'Docking') => {
+DockingSections.jsx:717: // Map the CAPRI columns onto the docking metric keys used by the table.
+DockingSections.jsx:831: const stored = await storeJson(`labDockingMolecules_${test.id || 'global'}`, storedMols);
+DockingSections.jsx:872: const stored = await storeJson(`labDockingStructures_${test.id || 'global'}`, structs);
+DockingSections.jsx:887: const molecules = await loadJson(`labDockingMolecules_${test.id || 'global'}`).catch(() => null);
+DockingSections.jsx:888: const pointer = await archiveDockingData({
+DockingSections.jsx:977: subsection: 'Docking',
+DockingSections.jsx:986: subsection: 'Docking',
+DockingSections.jsx:1029: export const DockingDataSection = ({ ctx }) => {
+DockingSections.jsx:1031: const d = useDockingDerived(activeTest, ctx);
+DockingSections.jsx:1048: const dockingStructKey = `labDockingStructures_${activeTest.id || 'global'}`;
+DockingSections.jsx:1049: const dockingMolKey = `labDockingMolecules_${activeTest.id || 'global'}`;
+DockingSections.jsx:1050: const dockingActiveIdRef = useRef(activeTest.id || '');
+DockingSections.jsx:1053: const pending = takePendingRestorePointer({ field: 'dockingDrive', key: activeTest.id || 'global' });
+DockingSections.jsx:1059: const dockingHasMeta = (
+DockingSections.jsx:1064: const dockingDefaultStems = () => restoreStems(activeTest.instanceName, activeTest.name);
+DockingSections.jsx:1066: const dockingDriveMissing = async () => {
+DockingSections.jsx:1068: const structs = await loadJson(dockingStructKey).catch(() => null);
+DockingSections.jsx:1069: const mols = await loadJson(dockingMolKey).catch(() => null);
+DockingSections.jsx:1075: const restoreDockingFromDrive = async () => {
+DockingSections.jsx:1076: const pointer = activeTest.dockingDrive || null;
+DockingSections.jsx:1087: message: '⚠️ The docking structures are not in this browser and no copy was found on Google Drive. Connect Google Drive, then re-import the calculation directory: it archives the structures AND the molecules.'
+DockingSections.jsx:1098: if (structs.length) await storeJson(dockingStructKey, structs);
+DockingSections.jsx:1099: if (mols.length) await storeJson(dockingMolKey, mols);
+DockingSections.jsx:1112: const dockingRestore = useDriveAutoRestore({
+DockingSections.jsx:1121: const metricCols = DOCKING_METRICS.filter((m) =>
+DockingSections.jsx:1128: const capriExtraCols = (activeTest.dockingCapri && activeTest.dockingCapri.columns || []).filter(
+DockingSections.jsx:1155: onClick={() => dockingRestore.attempt('manual')}
+DockingSections.jsx:1166: <span className={`text-[10px] font-semibold rounded-lg px-3 py-1.5 border ${dockingRestore.status === 'restored'
+DockingSections.jsx:1175: <button type="button" onClick={() => dockingRestore.attempt('manual')}
+DockingSections.jsx:1181: onClick={() => { setShowImport(true); setTimeout(() => document.getElementById('docking-import-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80); }}
+DockingSections.jsx:1197: {showImport && <DockingImportPanel ctx={ctx} d={d} onPoses={handlePoses} />}
+DockingSections.jsx:1205: 📄 {activeTest.dockingRawInput.fileName || 'raw_input.toml'} · open on Drive ↗
+DockingSections.jsx:1208: <span className="font-bold text-slate-500">📄 {activeTest.dockingRawInput.fileName || 'raw_input.toml'} (read locally)</span>
+DockingSections.jsx:1218: <a href={activeTest.dockingCapri.driveUrl} target="_blank" rel="noreferrer" className="font-bold text-sky-700 hover:underline">☁️ Open capri_ss.tsv on Drive</a>
+DockingSections.jsx:1258: onChange={(e) => writeDockingCellValue(activeTest, updateActiveTest, d.activeLayerKey, cellKey, e.target.value)}
+DockingSections.jsx:1284: export const DockingAnalysisSection = ({ ctx }) => {
+DockingSections.jsx:1286: const d = useDockingDerived(activeTest, ctx);
+DockingSections.jsx:1287: const cfg = { ...DEFAULT_DOCKING_CHART_STYLE, ...(activeTest.dockingAnalysisCfg || {}) };
+DockingSections.jsx:1288: const setCfg = (patch) => updateActiveTest({ dockingAnalysisCfg: { ...cfg, ...patch } });
+DockingSections.jsx:1292: const isHADDOCK = d.dockingProgram === 'haddock';
+DockingSections.jsx:1312: torsional: parseDockingValue(p.energy_torsional) ?? 0,
+DockingSections.jsx:1323: // Docking energies often mix a few huge values with many small ones: the
+DockingSections.jsx:1428: export const DockingParametersSection = ({ ctx }) => {
+DockingSections.jsx:1430: const d = useDockingDerived(activeTest, ctx);
+DockingSections.jsx:1431: const isVina = d.dockingProgram === 'vina';
+DockingSections.jsx:1432: const isAD4 = ['autodock4', 'autodock_gpu'].includes(d.dockingProgram);
+DockingSections.jsx:1433: const isHADDOCK = d.dockingProgram === 'haddock';
+DockingSections.jsx:1455: onClick={() => updateActiveTest({ dockingStage: s.key })}
+DockingSections.jsx:1500: const d = useDockingDerived(activeTest, ctx);
+DockingSections.jsx:1503: const molNames = (activeTest.dockingMolecules || [])
+DockingSections.jsx:1507: <p style="font-size:12px;color:#475569;margin-bottom:8px;"><b>Docking Setup:</b> Program ${d.programInfo.name} | Scoring ${d.scoringFunction} | Search ${d.searchAlgorithm} | Exhaustiveness ${d.exhaustiveness} | Modes ${d.numModes} | Box (${d.boxSizeX}×${d.boxSizeY}×${d.boxSizeZ} Å) at (${d.boxCenterX}, ${d.boxCenterY}, ${d.boxCenterZ})${molNames ? `<br/><b>Molecules docked:</b> ${molNames}` : ''}</p>
+DockingSections.jsx:1546: export const Setup = DockingExperimentSetupSection;
+DockingSections.jsx:1547: export const Data = DockingDataSection;
+DockingSections.jsx:1548: export const Analysis = DockingAnalysisSection;
+DockingSections.jsx:1549: export const Parameters = DockingParametersSection;
+DockingTestRenderer.jsx:5: buildNotebookHtml as buildDockingNotebookHtmlFromSections,
+DockingTestRenderer.jsx:6: DockingExperimentSetupSection,
+DockingTestRenderer.jsx:8: DockingExperimentalConditions,
+DockingTestRenderer.jsx:9: DockingDataSection,
+DockingTestRenderer.jsx:10: DockingAnalysisSection,
+DockingTestRenderer.jsx:11: DockingParametersSection
+DockingTestRenderer.jsx:12: } from './DockingSections';
+DockingTestRenderer.jsx:15: DockingTestRenderer — self-contained docking test page renderer.
+DockingTestRenderer.jsx:19: export const DOCKING_TAB_CONFIG = {
+DockingTestRenderer.jsx:52: { id: 'cond', label: 'Docking Parameters' },
+DockingTestRenderer.jsx:60: class DockingErrorBoundary extends React.Component {
+DockingTestRenderer.jsx:69: console.error('DockingTestRenderer error:', error, info);
+DockingTestRenderer.jsx:75: <h2 className="text-red-700 font-black text-lg mb-2">❌ DockingTestRenderer crashed</h2>
+DockingTestRenderer.jsx:90: const DockingTestRenderer = ({
+DockingTestRenderer.jsx:104: MolecularStructure: DockingExperimentSetupSection,
+DockingTestRenderer.jsx:106: ExperimentalConditions: DockingExperimentalConditions,
+DockingTestRenderer.jsx:107: Simulations: DockingParametersSection,
+DockingTestRenderer.jsx:108: Data: DockingDataSection,
+DockingTestRenderer.jsx:109: Analysis: DockingAnalysisSection,
+DockingTestRenderer.jsx:111: typeof buildDockingNotebookHtmlFromSections === 'function'
+DockingTestRenderer.jsx:112: ? (checked, ctxArg) => buildDockingNotebookHtmlFromSections(ctxArg, checked)
+DockingTestRenderer.jsx:121: config={DOCKING_TAB_CONFIG}
+NMRMoleculeViewer.jsx:691: *   - overlapping conformers of a multi-MODEL PDB (NMR ensembles / docking
+NMRMoleculeViewer.jsx:1059: // (NMR ensembles / docking clusters) are split into one entry per MODEL by the
+NMRMoleculeViewer.jsx:1075: // the moment "🧬 Docking" is switched ON (protein style + ligand style), so all
+NMRMoleculeViewer.jsx:1945: // ---- "🧬 Docking" role-style capture & application ---------------------------
+NMRMoleculeViewer.jsx:2000: // gets copied" when the user switches "🧬 Docking" on.
+NMRMoleculeViewer.jsx:2077: // regular residue (common in some docking suites) is still rendered.
+NMRMoleculeViewer.jsx:2139: // ensembles / docking poses still get a meaningful map. Each molecule component
+NMRMoleculeViewer.jsx:3019: // "🧬 Docking" standard mode is ON — keep the role-based look (protein +
+NMRMoleculeViewer.jsx:3041: // Switch "🧬 Docking" ON by first CAPTURING the style currently visible in the
+NMRMoleculeViewer.jsx:3043: // exact role-based look to every docking result. Switching OFF restores each
+NMRMoleculeViewer.jsx:3055: // Toggle the "🧬 Docking" standard mode: when it changes, re-render the main AND
+NMRMoleculeViewer.jsx:3501: // "🧬 Docking" is on, use the standard role-based docking look instead.
+NMRMoleculeViewer.jsx:3535: // "🧬 Docking" standard mode: protein ribbon + ligand ball+stick, exactly
+NMRMoleculeViewer.jsx:3836: // pour les pages qui n'ont pas de handler (Docking) et, plus bas, les
+NMRMoleculeViewer.jsx:3840: // Additional structures (docking complexes / clusters / poses) are loaded as
+NMRMoleculeViewer.jsx:4895: title="Standardize DOCKING results using the EXACT style currently visible in the viewer: when switched ON, the protein part and the ligand (small molecule) part of the ACTIVE molecule are captured and applied to every cluster/pose (current and future). Switch off to restore each molecule's own style.">
+NMRMoleculeViewer.jsx:4896: 🧬 Docking: {dockStyleMode ? 'On' : 'Off'}</button>
+Publications.jsx:259: 'MD simulations', 'NMR', 'Docking', 'Antimicrobial peptides (AMPs)',
+Publications.jsx:3398: { id: 'seed_27', name: 'Computers in Biology and Medicine', impactFactor: '6.3', publisher: 'Elsevier', comments: 'Docking…', links: [{ description: 'Example 1', url: 'https://doi.org/10.1016/j.compbiomed.2021.104936' }, { description: 'Example 2', url: 'https://doi.org/10.1016/j.compbiomed.2022.105632' }] },
+TestShellRenderer.jsx:473: const hasDockRaw = !!t.dockingRawInput;
+TestShellRenderer.jsx:474: const hasDockMols = !!(t.dockingMolecules && t.dockingMolecules.length);
+TestShellRenderer.jsx:475: const hasDockStructs = !!(t.dockingStructures && t.dockingStructures.length);
+TestShellRenderer.jsx:479: // are stable: only the docking data itself has to trigger this.
+TestShellRenderer.jsx:1762: <CollapsibleSection title="Experimental Conditions" icon="🌡️" defaultOpen={false} openWhen={!!(t.dockingMolecules && t.dockingMolecules.length)}>
+TestShellRenderer.jsx:1849: {/* Page-specific extra content (e.g. Docking's "Molecules to be
+TestShellRenderer.jsx:1861: <CollapsibleSection title="Instrumental Setup" icon="🔬" defaultOpen={false} openWhen={!!t.dockingRawInput}>
+testTypeMeta.js:27: docking: { label: 'Molecular Docking', icon: 'target' }
+specialPages.js:21: import { DOCKING_TAB_CONFIG } from '../components/DockingTestRenderer';
+specialPages.js:168: { value: 'docking', label: 'Docking', subsections: DOCKING_TAB_CONFIG.notebookChecks || [] },
+testTypes.js:20: "Interactions": ["Association Constant", "Molecular Docking", "MD interactions", "Chromatography", "Microscopy"],
+driveRestore.js:100: donnée (`nmr1d`, `ssnmr1d`, `cdspectra`, `docking`, `md`, `fcsevents`, …).
+migrateTestImages.js:12: mdImages, dockingImages, …)  → title "Figure N", section Report
+rebuildProteinHydrogens.js:216: // (NMR ensembles / docking clusters) rebuild each conformer independently.

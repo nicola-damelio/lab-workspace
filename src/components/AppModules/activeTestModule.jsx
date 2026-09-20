@@ -10,6 +10,9 @@ import { markAttachmentsDeleted, renameDriveFilesFor, deleteTestDriveFolder } fr
 import { renameStorageBoxDriveFolder, tidyStorageFiles } from '../../utils/storageDrive';
 import { removeTestFcsBlobs } from '../../utils/fcsBlobStore';
 import { setSectionsCommand } from '../ui';
+// Les champs obligatoires d'une BOÎTE (nom, propriétaire, date — sur la boîte
+// et dans chaque puits rempli) : voir utils/storageBoxes.js.
+import { describeBoxIssues, requiredBoxIssues } from '../../utils/storageBoxes';
 import { testProjectAccess } from './projectsModule';
 import {
   applyDataLock, clearDataLock, dataLockLabel, guardLockedInstances, isDataLocked, lockedIdSet
@@ -274,6 +277,11 @@ export const ActiveTestModule = ({
                   setActiveTestId(id);
                 };
 
+                /* Ce qui MANQUE à une boîte (utils/storageBoxes.js) : nom de
+                   l'échantillon, propriétaire, date — sur la boîte et dans chaque
+                   puits rempli. Affiché dans la barre d'identité, jamais bloquant. */
+                const boxIssues = activeTest.type === 'plate-9x9box' ? requiredBoxIssues(activeTest) : [];
+
 const TestHeader = (
                   <div className="flex flex-col shrink-0 z-20 no-print">
                     {/* ── Bar 1 — identity + actions on ONE wrapping line ─────
@@ -505,19 +513,29 @@ const TestHeader = (
                     <div className="bg-white border-b border-slate-200 px-3 md:px-4 py-1.5 grid grid-cols-[repeat(auto-fit,minmax(210px,1fr))] gap-x-2 gap-y-1 shadow-sm">
                         <React.Fragment>
   {activeTest.type === 'plate-9x9box' ? (
+    <>
     <label className="flex items-center gap-1.5 min-w-0">
-      <span className="shrink-0 text-[10px] font-bold text-slate-400 uppercase">
+      <span className={`shrink-0 text-[10px] font-bold uppercase ${!String(activeTest.boxOwner || '').trim() ? 'text-red-500' : 'text-slate-400'}`}>
         Box Owner
       </span>
       <select
         value={activeTest.boxOwner || ''}
         onChange={(e) => updateActiveTest({ boxOwner: e.target.value })}
-        className="flex-1 min-w-0 bg-slate-50 border border-slate-200 text-xs px-1.5 py-1 rounded-lg outline-none focus:border-blue-500"
+        className={`flex-1 min-w-0 bg-slate-50 border text-xs px-1.5 py-1 rounded-lg outline-none focus:border-blue-500 ${!String(activeTest.boxOwner || '').trim() ? 'border-red-300 text-red-700' : 'border-slate-200'}`}
       >
         <option value="">Select Box Owner...</option>
         {operatorNames.map((op) => (<option key={`owner-${op}`} value={op}>{op}</option>))}
       </select>
     </label>
+    {/* Rien n'est bloqué : la boîte dit simplement ce qui lui manque pour être
+        identifiable (nom de l'échantillon, propriétaire, date). */}
+    {boxIssues.length > 0 && (
+      <span className="flex items-center gap-1 min-w-0 text-[10px] font-bold text-red-600"
+            title={`${describeBoxIssues(boxIssues)}\n\nA box must be identifiable: sample name, owner and date — on the box and in every filled well.`}>
+        ⚠ <span className="truncate">{describeBoxIssues(boxIssues)}</span>
+      </span>
+    )}
+    </>
   ) : (
     <>
     <label className="flex items-center gap-1.5 min-w-0">

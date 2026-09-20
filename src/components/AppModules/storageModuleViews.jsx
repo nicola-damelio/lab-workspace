@@ -11,7 +11,8 @@ import { StorageList, StorageDetail } from '../Storage';
 export const StorageModule = ({
   currentModule, tests, setTests, storages, setStorages, operatorNames,
   setActiveTestId, setCurrentModule, setActiveStorageId, setStorageModal,
-  handlePrint, activeStorageId, jumpToTest, setMoveModal, createEmptyTest
+  handlePrint, activeStorageId, jumpToTest, setMoveModal, createEmptyTest,
+  setDeleteStorageModal
 }) => (
   <>
     {currentModule === 'storage' && (
@@ -40,6 +41,7 @@ export const StorageModule = ({
         setCurrentModule={setCurrentModule}
         handlePrint={handlePrint}
         operators={operatorNames}
+        setDeleteStorageModal={setDeleteStorageModal}
       />
     </div>
   </div>
@@ -58,6 +60,7 @@ export const StorageModule = ({
                 createEmptyTest={createEmptyTest}
                 setActiveTestId={setActiveTestId}
                 operators={operatorNames}
+                setDeleteStorageModal={setDeleteStorageModal}
               />
     )}
   </>

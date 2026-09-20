@@ -1,0 +1,2185 @@
+﻿
+########## src/components/Storage.jsx ##########
+    13 |   const getProxiedImage = (url) => {
+    15 |   const directUrl = getDirectImageUrl(url);
+    19 |   return directUrl;
+    25 |   const originalBaseName = (file, fallback = 'file') => {
+    26 |   const raw = String((file && file.name) || '').trim();
+    27 |   return sanitizeSlug(raw.replace(/\.[^/.]+$/, '')) || fallback;
+    35 |   const BoxPhotoSlot = ({ url, label, hint, storageName, boxName, kind, onSet, onClear }) => {
+    36 |   const [zoom, setZoom] = useState(false);
+    37 |   const fallback = sanitizeSlug(`${boxName || 'box'}_${kind || 'photo'}`) || 'box_photo';
+    38 |   return (
+    89 |   export const StorageModals = ({ storageModal, setStorageModal, storages, setStorages, moveModal, setMoveModal, tests, setTests }) 
+    90 |   const saveStorage = (e) => {
+   115 |   const handleMoveBox = (boxId, targetStorageId, targetSlotIndex) => {
+   123 |   return (
+   224 |   export const StorageList = ({ storages, tests, setStorageModal, setActiveStorageId, setCurrentModule, handlePrint }) => {
+   225 |   return (
+   284 |   export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setStorages, setCurrentModule, handlePrint, jumpToTest
+   285 |   const st = storages.find(s => s.id === activeStorageId);
+   286 |   const storageName = st ? String(st.name || '') : '';
+   287 |   const storageImageUrl = st ? String(st.imageUrl || '') : '';
+   300 |   const boxesInStorage = tests.filter(t => t.type === 'plate-9x9box' && t.storageId === st.id);
+   302 |   const handleAddBox = (slotIndex) => {
+   312 |   return (
+   425 |   export const BoxDetail = ({ activeTest, updateActiveTest, storages, expandedGroups, setExpandedGroups, customCmpds, TestHeader, op
+   431 |   const boxStorageName = ((storages || []).find((s) => s.id === activeTest.storageId)?.name) || '';
+   432 |   const boxPosition = activeTest.storageIndex === null || activeTest.storageIndex === undefined
+   435 |   const labelRows = boxLabelRows(activeTest, filledWells(activeTest));
+   436 |   const labelSignature = boxLabelSignature({
+   444 |   const boxPhotoKeys = [activeTest.boxImageUrl || '', activeTest.boxContentsImageUrl || ''].filter(Boolean).join('|');
+   451 |   const boxNameRef = useRef(activeTest.name || 'box');
+   461 |   const getVal = (key, def) => expandedGroups[key] !== undefined ? expandedGroups[key] : def;
+   462 |   const setVal = (key, val) => setExpandedGroups(p => {
+   470 |   const boxSearch = getVal('boxSearch', '');
+   471 |   const boxRotation = getVal('boxRotation', 0);
+   472 |   const selectedWells = getVal('selectedWells', []);
+   473 |   const boxDragState = getVal('boxDragState', { active: false, startR: -1, startC: -1, currentR: -1, currentC: -1 });
+   475 |   const getWellData = (r, c) => {
+   476 |   const raw = activeTest?.grid?.[r]?.[c];
+   478 |   const defaults = {
+   495 |   const parsed = JSON.parse(raw);
+   497 |   return {
+   505 |   return defaults;
+   508 |   const updateWellData = (r, c, field, value) => {
+   509 |   const current = getWellData(r, c);
+   512 |   const ng = (activeTest.grid || []).map((row) => [...row]);
+   521 |   const updateWellOwner = (r, c, value) => {
+   522 |   const current = getWellData(r, c);
+   529 |   const ng = (activeTest.grid || []).map((row) => [...row]);
+   538 |   const toggleWellSelection = (r, c) => {
+   543 |   const printBoxLabel = () => {
+   545 |   const printWin = window.open('', '_blank');
+   549 |   return;
+   555 |   const html = buildBoxLabelHtml({
+   575 |   return (
+TOTAL LINES 757
+
+########## src/components/AppModules/storageModules.jsx ##########
+     1 | ┬º /* =========================================================================
+     6 | ┬º ========================================================================= */
+    11 | ┬º /* =========================================================
+    13 | ┬º ========================================================= */
+    15 |   export const StorageFinder = ({
+    22 |   const [searchMode, setSearchMode] = useState('owner');
+    23 |   const [entityFilter, setEntityFilter] = useState('all');
+    24 |   const [ownerFilter, setOwnerFilter] = useState('');
+    25 |   const [textQuery, setTextQuery] = useState('');
+    27 |   const findStorage = useCallback(
+    32 |   const positionLabel = useCallback((index, cols = 12) => {
+    35 |   const i = Number(index);
+    36 |   const c = Number(cols) > 0 ? Number(cols) : 12;
+    40 |   const row = Math.floor(i / c);
+    41 |   const col = (i % c) + 1;
+    43 |   const rowLabel =
+    46 |   return `${rowLabel}${col}`;
+    49 |   const parseWell = useCallback((value) => {
+    53 |   const trimmed = value.trim();
+    65 |   return { compound: trimmed };
+    70 |   return { compound: String(value) };
+    73 |   const hasValue = useCallback((value) => {
+    74 |   return value !== null && value !== undefined && String(value).trim() !== '';
+    77 |   const getBoxOwner = useCallback((box) => {
+    78 |   return String(box?.boxOwner || box?.operator || '').trim();
+    81 |   const getWellOwner = useCallback((well) => {
+    82 |   return String(well?.sampleOwner || well?.operator || '').trim();
+    85 |   const getWellDetails = useCallback(
+    89 |   const owner = getWellOwner(well);
+    91 |   const concentration = hasValue(well.concentration)
+    95 |   const volume = hasValue(well.volume)
+    99 |   const weight = hasValue(well.weight)
+   103 |   const details = [];
+   141 |   return details;
+   146 |   const isStoredBox = useCallback(
+   150 |   const storage = findStorage(box.storageId);
+   152 |   return Boolean(
+   164 |   const getBoxLocation = useCallback(
+   166 |   const storage = findStorage(box?.storageId);
+   173 |   const legacy = [box?.storageType, box?.storageLabel]
+   177 |   return legacy || 'No storage assigned';
+   182 |   const getWellLocation = useCallback(
+   184 |   const storage = findStorage(box?.storageId);
+   186 |   const rowLabel =
+   190 |   const cell = `${rowLabel}${c + 1}`;
+   192 |   const boxSlot = storage
+   196 |   const storageName = storage
+   201 |   return [
+   213 |   const ownerOptions = useMemo(() => {
+   214 |   const fromOperators = (Array.isArray(operators) ? operators : [])
+   222 |   const fromTests = [];
+   223 |   const fromWells = [];
+   241 |   return [
+   248 |   const results = useMemo(() => {
+   249 |   const sortResults = (arr) =>
+   255 |   const res = [];
+   313 |   return sortResults(res);
+   316 |   const q = textQuery.trim().toLowerCase();
+   343 |   return sortResults(res);
+   382 |   return sortResults(res);
+   398 |   const hasSearch =
+   401 |   return (
+   608 | ┬º /* =========================================================
+   610 | ┬º ========================================================= */
+   611 |   export const DatabaseCleanupManager = ({
+   619 |   const [oldName, setOldName] = useState('');
+   620 |   const [newName, setNewName] = useState('');
+   623 |   const [renameTarget, setRenameTarget] = useState('');
+   624 |   const [renameValue, setRenameValue] = useState('');
+   627 |   const allResources = [...new Set([...allCmpds, ...allCellLines])].sort((a, b) => a.localeCompare(b));
+   629 |   const replaceInTests = (oldVal, newVal) => {
+   631 |   let updated = { ...t };
+   683 |   return updated;
+   687 |   const handleMergeReplace = () => {
+   707 |   const handleGlobalRename = () => {
+   708 |   const val = renameValue.trim();
+   754 |   return (
+TOTAL LINES 889
+
+########## src/utils/storageDrive.js ##########
+     1 | ┬º /* =========================================================================
+    18 | ┬º ========================================================================= */
+    31 |   export const driveFileIdsIn = (value) => {
+    32 |   const text = typeof value === 'string' ? value : JSON.stringify(value == null ? '' : value);
+    33 |   const ids = new Set();
+    34 |   const re = /\/file\/d\/([A-Za-z0-9_-]{10,})|\/d\/([A-Za-z0-9_-]{10,})|[?&]id=([A-Za-z0-9_-]{10,})/g;
+    35 |   let m = re.exec(text);
+    37 |   const id = m[1] || m[2] || m[3];
+    41 |   return [...ids];
+    48 |   export const saveBoxLabelFile = async ({ storage, box, blob, name = BOX_LABEL_FILE_NAME }) => {
+    50 |   return uploadLocalFile({
+    63 |   const storageContainerId = async (root) => {
+    64 |   const canonical = await canonicalDatasetDirId(STORAGE_DIR, { rootId: root }).catch(() => '');
+    66 |   return findFolderByName(STORAGE_DIR, root).catch(() => '');
+    69 |   const datasetRoot = async () => ensureDriveFolder().catch(() => '');
+    83 |   export const tidyStorageFiles = async ({ storage, box = '', urls = [] }) => {
+    85 |   const ids = [...new Set((Array.isArray(urls) ? urls : [urls]).flatMap((u) => driveFileIdsIn(u)))];
+    87 |   const names = box ? storageBoxImagesFolderPath(storage, box) : storageImagesFolderPath(storage);
+    90 |   let target = '';
+    92 |   const found = await resolveDrivePathFromNames(names, { create: false });
+    95 |   let moved = 0;
+    98 |   const meta = await getDriveFileMeta(id);
+   100 |   const parents = Array.isArray(meta.parents) ? meta.parents.map(String) : [];
+   112 |   return moved;
+   119 |   export const renameStorageDriveFolder = async ({ oldName, newName }) => {
+   120 |   const oldSlug = sanitizeSlug(oldName);
+   121 |   const newSlug = sanitizeSlug(newName);
+   123 |   const root = await datasetRoot();
+   125 |   const container = await storageContainerId(root);
+   127 |   const folderId = await findFolderByName(oldSlug, container).catch(() => '');
+   129 |   return renameDriveFile(folderId, newSlug).catch(() => false);
+   137 |   export const renameStorageBoxDriveFolder = async ({ storage, oldName, newName }) => {
+   138 |   const oldSlug = sanitizeSlug(oldName);
+   139 |   const newSlug = sanitizeSlug(newName);
+   141 |   const root = await datasetRoot();
+   143 |   const container = await storageContainerId(root);
+   145 |   const storageFolder = await findFolderByName(sanitizeSlug(storage) || '_unassigned', container).catch(() => '');
+   147 |   const boxesFolder = await findFolderByName(STORAGE_BOXES_DIR, storageFolder).catch(() => '');
+   149 |   const boxFolder = await findFolderByName(oldSlug, boxesFolder).catch(() => '');
+   151 |   return renameDriveFile(boxFolder, newSlug).catch(() => false);
+   155 |   export const storageDrivePathLabel = (names) => (Array.isArray(names) ? names.join(' / ') : '');
+   158 |   export const boxLabelFolderPath = (storage, box) => storageBoxFolderPath(storage, box);
+TOTAL LINES 160
+
+########## src/components/MDSections.jsx ##########
+    32 |   const localFileCache = new Map();
+    36 |   const trajBlobKey = (testId) => `traj_${testId}`;
+    43 |   const structBlobKey = (testId) => `ms_struct_${testId}`;
+    52 |   const downloadArchivedMDFile = async ({ suffix, nameStem, ctx }) => {
+    54 |   const full = String(nameStem || '');
+    55 |   const stem = full.replace(/\.[^.]+$/, '');
+    57 |   const ext = (full.match(/\.[^.]+$/) || [''])[0].toLowerCase();
+    58 |   let match = null;
+    62 |   const reg = getDriveFileRegistry();
+    63 |   const entries = Object.entries(reg).filter(([, e]) => e && !e.deleted && String(e.ctx?.suffix || '') === String(suffix || ''));
+    64 |   let pool = entries;
+    66 |   const byTest = entries.filter(([, e]) => String(e.ctx?.test || '') === String(ctx.test));
+    73 |   const byStem = pool.filter(([, e]) => stem && String(e.name || '').toLowerCase().includes(stem.toLowerCase()));
+    74 |   const chosen = (byStem.length > 0 ? byStem : pool).sort((a, b) => (b[1].at || 0) - (a[1].at || 0))[0];
+    81 |   const q = encodeURIComponent(`name contains '${stem.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}' and trashed=false`);
+    82 |   const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=25`);
+    83 |   const j = res && res.ok ? await res.json() : { files: [] };
+    84 |   const f = (j.files || []).find((x) => {
+    94 |   const dl = await driveFetch(`/drive/v3/files/${match.id}?alt=media`, { timeout: 10 * 60 * 1000 });
+    96 |   const buf = await dl.arrayBuffer();
+    98 |   return new File([buf], match.name, { type: 'application/octet-stream' });
+   101 |   return null;
+   110 |   const restoreMDFile = async ({ pointer = null, driveName = '', nameStem = '', suffix = '', ctx = {} }) => {
+   111 |   const names = [pointer && pointer.name, driveName, nameStem].filter(Boolean);
+   112 |   const viaCore = await restoreRawFileFor({ pointer, ctx: { ...ctx, suffix }, names }).catch(() => null);
+   114 |   return downloadArchivedMDFile({ suffix, nameStem, ctx });
+   124 |   const captureChartToDataUrl = async (id) => {
+   125 |   const el = document.getElementById(id);
+   128 |   const canvas = await html2canvas(el, {
+   132 |   return canvas.toDataURL('image/png');
+   134 |   return null;
+   144 |   const chartCacheKey = (testId) => `lab_md_chart_snapshots_${testId}`;
+   146 |   export const readChartSnapshots = (testId) => {
+   149 |   return JSON.parse(sessionStorage.getItem(chartCacheKey(testId)) || '{}');
+   151 |   return {};
+   155 |   const storeChartSnapshots = (activeTest, entries) => {
+   156 |   const testId = activeTest && activeTest.id;
+   159 |   const urls = {};
+   180 |   const MAX_DISPLAY_POINTS = 1500;
+   181 |   const downsampleSeries = (arr, max = MAX_DISPLAY_POINTS) => {
+   183 |   const step = Math.max(1, Math.ceil(arr.length / max));
+   184 |   return arr.filter((_, i) => i % step === 0);
+   190 |   export const mdChartToSvg = ({
+   194 |   const W = width, H = height, mL = 64, mR = 16, mT = 18, mB = 44;
+   195 |   const plotW = W - mL - mR, plotH = H - mT - mB;
+   196 |   const xs = data.map((d) => Number(d[xKey]) || 0);
+   197 |   const allY = [];
+   200 |   const xMin = Math.min(...xs), xMax = Math.max(...xs);
+   201 |   let lo = Math.min(...allY, 0), hi = Math.max(...allY);
+   203 |   const xSpan = xMax === xMin ? 1 : xMax - xMin;
+   204 |   const X = (v) => mL + ((Number(v) - xMin) / xSpan) * plotW;
+   205 |   const Y = (v) => mT + (1 - (Number(v) - lo) / (hi - lo)) * plotH;
+   206 |   let out = '';
+   207 |   const yTicks = 5;
+   209 |   const yv = lo + ((hi - lo) * i) / yTicks;
+   210 |   const yy = Y(yv);
+   214 |   const xTicks = 4;
+   216 |   const xv = xMin + (xMax - xMin) * (i / (xTicks - 1));
+   220 |   const bw = Math.max(2, (plotW / data.length) * 0.7);
+   222 |   const x = X(d[xKey]) - bw / 2;
+   223 |   const y = Y(Number(d[series[0].key]));
+   224 |   const h = Math.max(0, H - mB - y);
+   225 |   return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${d.fill || series[0
+   229 |   const pts = data.map((d) => `${X(d[xKey]).toFixed(1)},${Y(Number(d[s.key])).toFixed(1)}`).join(' ');
+   230 |   return `<polyline fill="none" stroke="${s.color}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" points="${pts}
+   237 |   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" font-family="Arial, Helvetica, 
+   243 |   export const mdContactToSvg = (result, label) => {
+   245 |   const keys = (Array.isArray(result.series) ? result.series.map((s) => s.key) : []).filter((k) => k && k !== 'atom');
+   247 |   const maxR = 25, maxC = 25;
+   248 |   const rStride = Math.max(1, Math.ceil(result.rows.length / maxR));
+   249 |   const cStride = Math.max(1, Math.ceil(keys.length / maxC));
+   250 |   const rIdx = result.rows.map((_, i) => i).filter((_, i) => i % rStride === 0);
+   251 |   const cIdx = keys.map((_, i) => i).filter((_, i) => i % cStride === 0);
+   252 |   let maxV = 0;
+   255 |   const cell = 14, left = 70, top = 22;
+   256 |   const W = cIdx.length * cell + left + 8;
+   257 |   const H = rIdx.length * cell + top + 30;
+   258 |   const color = (v) => {
+   259 |   const t = Math.min(1, Math.abs(Number(v) || 0) / maxV);
+   260 |   const r = Math.round(30 + 180 * t);
+   261 |   const g = Math.round(90 + 90 * (1 - t));
+   262 |   const b = Math.round(225 - 170 * t);
+   263 |   return `rgb(${r},${g},${b})`;
+   265 |   let out = `<rect x="0" y="0" width="${W}" height="${H}" fill="#ffffff"/>`;
+   268 |   const v = Number(result.rows[ri][keys[ci]]) || 0;
+   272 |   const lbl = String(result.rows[ri].atom || ri).slice(0, 14);
+   276 |   const tx = left + x * cell + cell / 2;
+   277 |   const ty = rIdx.length * cell + top + 12;
+   280 |   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" font-family="Arial, Helvetica, 
+   284 |   export const mdProfileToSvg = (result) => {
+   286 |   const figs = [];
+   287 |   const scdGroups = result.scdGroups || [];
+   289 |   const maxCarbons = Math.max(...scdGroups.map((g) => (g.carbons || []).length));
+   290 |   const rows = [];
+   292 |   const row = { x: i + 1 };
+   296 |   const series = scdGroups.map((g, gi) => ({ key: `s${gi}`, color: rainbowColors(scdGroups.length)[gi % Math.max(1, scdGroups.length
+   299 |   const dens = result.density;
+   301 |   const dRows = dens.z.map((z, i) => ({ x: z, value: dens.rhoE[i] }));
+   302 |   const pRows = dens.z.map((z, i) => ({ x: z, value: dens.potential[i] }));
+   306 |   return figs.map(([lbl, svg]) => (svg ? `<figure style="margin:8px 0;text-align:center;break-inside:avoid;">${svg}<figcaption style
+   310 |   export const mdDsspToSvg = (result) => {
+   312 |   let html = '';
+   321 |   const oRows = result.occupancy.map((o, i) => ({ x: i + 1, value: o.alpha, residue: o.label }));
+   328 |   return html;
+   332 |   const _rdkitMDListeners = new Set();
+   333 |   let _rdkitMDStatus = window.__RDKit ? 'ready' : 'loading';
+   339 |   const s = document.createElement('script');
+   353 |   let _att = 0;
+   354 |   const _iv = setInterval(() => {
+   360 |   const useMDRdkitReady = () => {
+   361 |   const [status, setStatus] = useState(_rdkitMDStatus);
+   364 |   const fn = (s) => setStatus(s);
+   366 |   return () => _rdkitMDListeners.delete(fn);
+   368 |   return { rdkitReady: status === 'ready', rdkitFailed: status === 'failed' };
+   371 | ┬º /* ============================================================================
+   373 | ┬º ========================================================================== */
+   375 | ┬º // ================= REMOTE 3D STRUCTURE FETCH =================
+   376 |   const looksLikePdb = (text) => !!text && /^(ATOM|HETATM)/m.test(text) && !/<html/i.test(text);
+   378 |   const fetchCactusPdb = async (smiles) => {
+   379 |   const res = await fetch(`https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(smiles)}/file?format=pdb&get3d=true`);
+   381 |   const text = await res.text();
+   383 |   return text;
+   386 |   const fetchPubchemPdb = async (smiles) => {
+   387 |   const cidRes = await fetch('https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/cids/txt', {
+   391 |   const cid = (await cidRes.text()).trim().split('\n')[0].trim();
+   392 |   const sdfRes = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/record/SDF?record_type=3d`);
+   394 |   return { sdf: await sdfRes.text(), ext: 'sdf' };
+   397 |   const resolveOrganicStructureText = async (smiles) => {
+   398 |   const errors = [];
+   404 | ┬º // ================= SHARED DERIVED DATA HOOK (MD) =================
+   405 |   const useMDDerived = (activeTest, ctx = {}) => {
+   406 |   const compName = activeTest.selectedCompounds?.[0] || activeTest.compound;
+   407 |   const metaSeq = (ctx.compoundMeta && compName && ctx.compoundMeta[compName]?.sequence) ? ctx.compoundMeta[compName].sequence : '';
+   408 |   const metaType = (ctx.compoundMeta && compName && ctx.compoundMeta[compName]?.type) ? ctx.compoundMeta[compName].type : null;
+   410 |   const moleculeType = activeTest.moleculeType || metaType || 'protein';
+   411 |   const rawSeq = (activeTest.proteinSequence || metaSeq || '').toUpperCase();
+   413 |   const validChars =
+   418 |   const seq =
+   422 |   const isPolymer = moleculeType === 'protein' || moleculeType === 'dna' || moleculeType === 'rna';
+   424 |   const DB =
+   431 |   const ffKey = activeTest.forceField || 'GROMOS';
+   432 |   const ffVersion = activeTest.forceFieldVersion || (getFFVersions(ffKey)[0] || '');
+   433 |   const waterModel = activeTest.waterModel || 'TIP3P';
+   434 |   const ensemble = activeTest.ensemble || 'NPT';
+   435 |   const integrator = activeTest.integrator || 'verlet';
+   436 |   const thermostat = activeTest.thermostat || 'v_rescale';
+   437 |   const barostat = activeTest.barostat || 'parrinello_rahman';
+   438 |   const timestep = activeTest.timestep ?? '2';
+   439 |   const nSteps = activeTest.nSteps ?? '500000';
+   440 |   const temperature = activeTest.simTemperature ?? '300';
+   441 |   const pressure = activeTest.simPressure ?? '1.0';
+   444 |   const trajectoryUrl = activeTest.trajectoryUrl || '';
+   445 |   const trajectoryFormat = activeTest.trajectoryFormat || detectTrajectoryFormat(trajectoryUrl);
+   448 |   const ssRaw = activeTest.secondaryStructure || '';
+   449 |   const getSSAt = (i) => (ssRaw[i] && 'HES'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
+   451 |   const formsRaw = activeTest.nucleicForms || '';
+   452 |   const dnaFormDefault = activeTest.dnaForm || 'B';
+   453 |   const getFormAt = (i) => (formsRaw[i] && 'ABZ'.includes(formsRaw[i]) ? formsRaw[i] : dnaFormDefault);
+   455 |   const sugarConf = activeTest.sugarConf || 'chair';
+   456 |   const sugarAnomer = activeTest.sugarAnomer || 'alpha';
+   457 |   const lipidDB = activeTest.lipidDB || 'cis';
+   459 |   const typeLabel =
+   466 |   const ffInfo = getForceFieldInfo(ffKey);
+   467 |   const ffBackbone = getFFBackboneAtoms(ffKey);
+   470 |   const parsedSeq = useMemo(() => {
+   471 |   let chars = [];
+   474 |   return [{
+   486 |   return chars.map((char, index) => {
+   487 |   const entry = DB[char];
+   489 |   const ffAtoms = ffBackbone.map((a) => ({ ...a }));
+   490 |   return {
+   501 |   const estSeq = useMemo(() => parsedSeq.map((res, idx) => ({
+   508 |   const structure = useMemo(() => {
+   514 |   return null;
+   518 |   const atomOptions = useMemo(() => {
+   519 |   const opts = [];
+   536 |   return opts;
+   540 |   const instances = getMDInstances(activeTest);
+   541 |   const activeInstance = getMDActiveInstance(activeTest);
+   542 |   const layers = getMDLayers(activeTest);
+   543 |   const activeLayerKey = getMDActiveLayerKey(activeTest);
+   544 |   const activeValues = getMDLayerValues(activeInstance, activeLayerKey);
+   548 |   const analysisAtoms = useMemo(() => {
+   549 |   const seen = new Map();
+   551 |   const vals = getMDLayerValues(activeInstance, l.key);
+   557 |   return [...seen.entries()].map(([key, label]) => ({ key, label: `0 ${label}` }));
+   560 |   return {
+   572 | ┬º // ================= 1) EXPERIMENT SETUP (MD) =================
+   573 | ┬º // ================= RDKIT MOLBLOCK HELPERS (organic atom naming) =================
+   574 |   const getMolWithExplicitHs = (smiles) => {
+   576 |   const base = window.__RDKit.get_mol(smiles);
+   578 |   const molblockWithHs = base.add_hs();
+   580 |   return window.__RDKit.get_mol(molblockWithHs);
+   583 |   const deriveOrganicAtomNaming = (molblock) => {
+   584 |   const lines = molblock.split('\n');
+   585 |   const counts = lines[3] || '';
+   586 |   const numAtoms = parseInt(counts.substring(0, 3).trim(), 10) || 0;
+   587 |   const numBonds = parseInt(counts.substring(3, 6).trim(), 10) || 0;
+   589 |   const elements = [];
+   592 |   const bonds = [];
+   594 |   const bl = lines[4 + numAtoms + i] || '';
+   595 |   const a1 = parseInt(bl.substring(0, 3).trim(), 10) - 1;
+   596 |   const a2 = parseInt(bl.substring(3, 6).trim(), 10) - 1;
+   600 |   const heavyRank = new Array(numAtoms).fill(-1);
+   601 |   let hc = 0;
+   604 |   const parent = new Array(numAtoms).fill(-1);
+   610 |   const hGroups = {};
+   613 |   const key = parent[i] >= 0 ? parent[i] : 'orphan';
+   617 |   const atomNameList = new Array(numAtoms);
+   620 |   const parentRank = key === 'orphan' ? null : heavyRank[Number(key)];
+   622 |   const suffix = idxs.length > 1 ? ('abcdefgh'[j] || String(j)) : '';
+   627 |   const atomLabels = {};
+   629 |   return { atomLabels, atomNameList, elements, numAtoms };
+   632 | ┬º // ================= ORGANIC VIEWER =================
+   633 |   const OrganicViewer = ({ smiles, selectedKeys, onAtomClick }) => {
+   634 |   const [svg, setSvg] = useState('');
+   635 |   const [isZoomed, setIsZoomed] = useState(false);
+   636 |   const svgRef = useRef(null);
+   637 |   const zoomedSvgRef = useRef(null);
+   638 |   const { rdkitReady, rdkitFailed } = useMDRdkitReady(); // global singleton ΓÇö no per-instance interval
+   678 |   const attachListeners = (containerEl) => {
+   707 |   const fallbackUrl = `https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(smiles)}/image?width=1500&height=1500`;
+   709 |   return (
+   745 | ┬º // ================= 1) EXPERIMENT SETUP (MD) =================
+   746 |   export const MDExperimentSetupSection = ({ ctx }) => {
+   747 |   const { activeTest, updateActiveTest } = ctx;
+   748 |   const d = useMDDerived(activeTest, ctx);
+   750 |   const structureMode = activeTest.structureMode || '2d';
+   751 |   const atomLabelMode = activeTest.atomLabelMode || 'selected';
+   752 |   const residueOffset = activeTest.residueOffset || 0;
+   754 |   const atomNameMap = useMemo(() => {
+   758 |   const [hasOpened3D, setHasOpened3D] = useState(structureMode === '3d');
+   760 |   const [trajectoryFile, setTrajectoryFile] = useState(() => localFileCache.get(activeTest.id)?.trajectory || null);
+   761 |   const [structureFile, setStructureFile] = useState(() => localFileCache.get(activeTest.id)?.structure || null);
+   762 |   const [trajDriveMsg, setTrajDriveMsg] = useState('');
+   763 |   const [structRestoreMsg, setStructRestoreMsg] = useState('');
+   766 |   const [driveConnectedAt, setDriveConnectedAt] = useState(() => Date.now());
+   768 |   const onConnected = () => setDriveConnectedAt(Date.now());
+   770 |   return () => window.removeEventListener('lab:drive-connected', onConnected);
+   776 |   const mdActiveIdRef = useRef(activeTest.id);
+   780 |   const pending = takePendingRestorePointer({ field: 'structureDrive', key: activeTest.id })
+   786 |   const handleStructureFile = (file) => {
+   791 |   return;
+   797 |   const { name: driveName, pointer } = await archiveFileToDriveWithPointer({
+   811 |   const reader = new FileReader();
+   813 |   const dataUrl = String(e.target.result || '');
+   818 |   const smallEnough = dataUrl.length <= 18000;
+   824 |   const cache = localFileCache.get(activeTest.id) || {};
+   828 |   const handleTrajectoryFile = (file) => {
+   833 |   return;
+   841 |   const { name: driveName, pointer } = await archiveFileToDriveWithPointer({
+   860 |   const cache = localFileCache.get(activeTest.id) || {};
+   872 |   let cancelled = false;
+   876 |   const blob = await blobStore.load(trajBlobKey(activeTest.id));
+   909 |   return () => { cancelled = true; };
+   921 |   let cancelled = false;
+   925 |   const blob = await blobStore.load(structBlobKey(activeTest.id));
+   958 |   return () => { cancelled = true; };
+   965 |   const t = setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
+   966 |   return () => clearTimeout(t);
+   969 |   const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
+   970 |   const setFocusIdx = (val) => updateActiveTest({ focusIdx: val });
+   972 |   const [expandedPanel, setExpandedPanel] = useState(null);
+   973 |   const [ssBrush, setSSBrush] = useState('H');
+   974 |   const [formBrush, setFormBrush] = useState(activeTest.dnaForm || 'B');
+   976 |   const selectedKeys = getSelectedKeys(activeTest);
+   977 |   const manualKeys = useMemo(() => getManualKeys(d.activeValues), [d.activeValues]);
+   979 |   const handleAtomClick = (ri, keys) => {
+   981 |   const cur = getSelectedKeys(activeTest);
+   986 |   const paintSSAt = (i, letter) => {
+   987 |   const arr = d.seq.split('').map((_, j) => d.getSSAt(j));
+   992 |   const setAllSS = (letter) => updateActiveTest({ secondaryStructure: d.seq.split('').map(() => letter).join('') });
+   994 |   const paintFormAt = (i, letter) => {
+   995 |   const arr = d.seq.split('').map((_, j) => d.getFormAt(j));
+  1000 |   const setAllForms = (letter) => updateActiveTest({ nucleicForms: d.seq.split('').map(() => letter).join(''), dnaForm: letter });
+  1002 |   const exportFormulaToNotebook = () => {
+  1004 |   const html = `<div style="margin-top:10px;"><h5 style="color:#1e40af;font-size:12px;margin-bottom:6px;">≡ƒö¼ Chemical Formula (${d.t
+  1005 |   const currentComments = activeTest.comments || '';
+  1010 |   const trajNorm = normalizeTrajectoryUrl(d.trajectoryUrl) || { url: null, fallbacks: [] };
+  1013 |   const activeSmiles = activeTest.smiles || '';
+  1014 |   const hasExplicitOverride = !!(activeTest.structureSrc || activeTest.structureFileName || activeTest.structureFileData);
+  1015 |   const [organicFetch, setOrganicFetch] = useState({ smiles: null, text: null, ext: null, loading: false, error: null });
+  1016 |   const needsOrganicFetch = !hasExplicitOverride && !!activeSmiles && d.moleculeType === 'organic';
+  1021 |   return;
+  1025 |   let cancelled = false;
+  1032 |   return () => { cancelled = true; };
+  1035 |   return (
+  1366 | ┬º // ================= 2) DATA (MD atom table) =================
+  1367 |   const MDImportPanel = ({ ctx, d }) => {
+  1368 |   const { activeTest, updateActiveTest } = ctx;
+  1369 |   const [pasteText, setPasteText] = useState('');
+  1370 |   const [report, setReport] = useState(null);
+  1371 |   const layerKey = d.activeLayerKey;
+  1373 |   const applyValues = (vals) => {
+  1374 |   const nv = { ...(activeTest.mdValues || {}) };
+  1376 |   const insts = Array.isArray(activeTest.instances) && activeTest.instances.length ? activeTest.instances : null;
+  1378 |   const instances = insts.map((inst) =>
+  1389 |   const handleText = (text) => {
+  1390 |   const vals = {};
+  1391 |   let missed = 0;
+  1393 |   const j = JSON.parse(text);
+  1396 |   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  1407 |   return (
+  1424 |   export const MDDataSection = ({ ctx }) => {
+  1425 |   const { activeTest, updateActiveTest } = ctx;
+  1426 |   const d = useMDDerived(activeTest, ctx);
+  1428 |   const [tableMode, setTableMode] = useState(activeTest.tableMode || 'backbone');
+  1429 |   const [showImport, setShowImport] = useState(false);
+  1430 |   const [newLayerName, setNewLayerName] = useState('');
+  1431 |   const [newLayerUnit, setNewLayerUnit] = useState('');
+  1432 |   const [hiddenLayerKeys, setHiddenLayerKeys] = useState(activeTest.hiddenLayerKeys || []);
+  1434 |   const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
+  1435 |   const selectedKeys = getSelectedKeys(activeTest);
+  1437 |   const effTableMode = d.moleculeType === 'sugar' || d.moleculeType === 'lipid' || d.moleculeType === 'organic' ? 'all' : tableMode;
+  1438 |   const activeLayer = d.layers.find((l) => l.key === d.activeLayerKey) || { label: 'MD Parameters', unit: '' };
+  1442 |   const layerValuesByKey = useMemo(() => {
+  1443 |   const map = {};
+  1445 |   return map;
+  1448 |   const toggleLayerVisibility = (key) => {
+  1449 |   const next = hiddenLayerKeys.includes(key)
+  1457 |   const visibleLayers = (() => {
+  1458 |   const shown = d.layers.filter((l) => !hiddenLayerKeys.includes(l.key));
+  1459 |   return shown.length > 0 ? shown : d.layers;
+  1462 |   const handleCellChange = (resIdx, atom, val) => writeMDCellValue(activeTest, updateActiveTest, d.activeLayerKey, `${resIdx}-${atom
+  1463 |   const handleCellChangeForLayer = (resIdx, atom, layerKey, val) => writeMDCellValue(activeTest, updateActiveTest, layerKey, `${resI
+  1465 |   const handleCellClick = (e, idx, atom) => {
+  1467 |   const keys = buildKeys(idx, [atom], d.moleculeType, d.parsedSeq[idx]?.char);
+  1468 |   const cur = getSelectedKeys(activeTest);
+  1473 |   const cellIsSelected = (idx, atom) => Boolean(selectedKeys && selectedKeys.includes(`${idx}-${atom}`));
+  1475 |   const addLayer = () => {
+  1476 |   const label = newLayerName.trim();
+  1478 |   const layer = { key: `layer_${Date.now()}`, label, unit: newLayerUnit.trim() || '' };
+  1483 |   const removeLayer = (key) => {
+  1485 |   const upd = (activeTest.parameterLayers || []).filter((l) => l.key !== key);
+  1489 |   const exportCSV = () => {
+  1492 |   const rows = [[
+  1505 |   const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+  1506 |   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  1507 |   const url = URL.createObjectURL(blob);
+  1508 |   const a = document.createElement('a');
+  1515 |   const selTdCls = (isSel) => `px-3 py-1 cursor-pointer transition-colors ${isSel ? 'bg-amber-100 ring-2 ring-inset ring-amber-400' 
+  1517 |   return (
+  1781 | ┬º // ================= 3) ANALYSIS (RMSD / RMSF / Rg / SASA / Energy) =================
+  1782 |   const MD_CHART_M_ZOOM = { top: 10, right: 15, bottom: 45, left: 55 };
+  1784 |   const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color, cfg, yLabel, xLabel, chartType = 'line', id, setC
+  1785 |   const fSize = tickSize(cfg, 12);
+  1786 |   const aspect = chartAspect(cfg, 1.8);
+  1787 |   const lineColor = color || '#3b82f6';
+  1788 |   const chartRef = useRef(null);
+  1791 |   const xs = data.map(d => typeof d[xKey] === 'number' ? d[xKey] : 0);
+  1792 |   const dataDomain = xs.length > 1 ? [Math.min(...xs), Math.max(...xs)] : [0, 1];
+  1796 |   const effMargin = cfgChartMargin(cfg, MD_CHART_M_ZOOM);
+  1797 |   const zoom = useXZoom(chartRef, dataDomain, effMargin);
+  1799 |   const brk = brokenAxisProps(cfg, 'y', data.map((d) => d[dataKey]), { log: !!cfg.yLog, min: cfg.yMin, max: cfg.yMax });
+  1801 |   return (
+  1846 | ┬º // ================= MD PER ATOM PLOT SECTION =================
+  1847 |   const MD_PAP_COLORS = PER_ATOM_COLORS;
+  1849 |   const MDPerAtomChartPanel = ({ d, chart, updateChart, removeChart }) => {
+  1850 |   const [atomSearch, setAtomSearch] = useState('');
+  1851 |   const [showCfg, setShowCfg] = useState(false);
+  1852 |   const [isFs, setIsFs] = useState(false);
+  1853 |   const layerKey = chart.layerKey || 'md';
+  1854 |   const atoms = chart.atoms || [];
+  1855 |   const cfg = { aspect: 2.5, fontSize: 11, ...(chart.style || {}) };
+  1856 |   const setC = (p) => updateChart(chart.id, p);
+  1857 |   const setCfg = (p) => updateChart(chart.id, { style: { ...cfg, ...p } });
+  1859 |   const layer = d.layers.find(l => l.key === layerKey) || d.layers[0];
+  1861 |   const valMap = getMDLayerValues(d.activeInstance, layerKey);
+  1863 |   const atomMeta = atoms.map((k, i) => ({
+  1869 |   const residueMap = {};
+  1871 |   const raw = valMap[atomKey];
+  1872 |   const val = raw !== undefined && raw !== '' ? parseFloat(raw) : NaN;
+  1874 |   const resIdx = atomKey.split('-')[0];
+  1875 |   const res = d.estSeq[Number(resIdx)];
+  1880 |   const chartData = Object.values(residueMap).filter(r => Object.keys(r).length > 1);
+  1881 |   const filtered = d.atomOptions.filter(o => !atomSearch.trim() || o.label.toLowerCase().includes(atomSearch.toLowerCase()));
+  1882 |   const toggleAtom = (k) => setC({ atoms: atoms.includes(k) ? atoms.filter(a => a !== k) : [...atoms, k] });
+  1884 |   const brkAtom = brokenAxisProps(cfg, 'y', chartData.flatMap(r => atomMeta.map(m => r[m.key])), { min: cfg.yMin, max: cfg.yMax });
+  1886 |   return (
+  1953 |   const MDPerAtomPlotSection = ({ ctx }) => {
+  1954 |   const { activeTest, updateActiveTest } = ctx;
+  1955 |   const d = useMDDerived(activeTest, ctx);
+  1956 |   const charts = Array.isArray(activeTest.mdPerAtomCharts) ? activeTest.mdPerAtomCharts : [];
+  1957 |   const addChart = () => {
+  1958 |   const n = charts.length + 1;
+  1959 |   const id = `mdpap_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  1962 |   const updateChart = (id, patch) => updateActiveTest({ mdPerAtomCharts: charts.map(c => c.id === id ? { ...c, ...patch } : c) });
+  1963 |   const removeChart = (id) => updateActiveTest({ mdPerAtomCharts: charts.filter(c => c.id !== id) });
+  1967 |   return (
+  1985 | ┬º // ================= MD CONDITION PLOT SECTION =================
+  1987 |   const MD_COND_FIELDS = [
+  1994 |   const MDConditionPlotPanel = ({ d, chart, updateChart, removeChart, activeTest }) => {
+  1995 |   const [atomSearch, setAtomSearch] = useState('');
+  1996 |   const [showCfg, setShowCfg] = useState(false);
+  1997 |   const [isFs, setIsFs] = useState(false);
+  1998 |   const atoms = chart.atoms || [];
+  1999 |   const layerKey = chart.layerKey || 'md';
+  2000 |   const xField = chart.xField || 'simTemperature';
+  2001 |   const cfg = { aspect: 2.5, fontSize: 11, ...(chart.style || {}) };
+  2002 |   const setC = (p) => updateChart(chart.id, p);
+  2003 |   const setCfg = (p) => updateChart(chart.id, { style: { ...cfg, ...p } });
+  2004 |   const layer = d.layers.find(l => l.key === layerKey) || d.layers[0];
+  2005 |   const filtered = d.atomOptions.filter(o => !atomSearch.trim() || o.label.toLowerCase().includes(atomSearch.toLowerCase()));
+  2006 |   const toggleAtom = (k) => setC({ atoms: atoms.includes(k) ? atoms.filter(a => a !== k) : [...atoms, k] });
+  2009 |   const series = atoms.map((ak, i) => {
+  2010 |   const pts = d.instances
+  2020 |   return {
+  2028 |   const brkCond = brokenAxisProps(cfg, 'y', series.flatMap(s => s.pts.map(p => p.y)), { min: cfg.yMin, max: cfg.yMax });
+  2030 |   return (
+  2100 |   const MDConditionPlotSection = ({ ctx }) => {
+  2101 |   const { activeTest, updateActiveTest } = ctx;
+  2102 |   const d = useMDDerived(activeTest, ctx);
+  2103 |   const charts = Array.isArray(activeTest.mdConditionCharts) ? activeTest.mdConditionCharts : [];
+  2104 |   const addChart = () => {
+  2105 |   const n = charts.length + 1;
+  2106 |   const id = `mdcp_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  2109 |   const updateChart = (id, patch) => updateActiveTest({ mdConditionCharts: charts.map(c => c.id === id ? { ...c, ...patch } : c) });
+  2110 |   const removeChart = (id) => updateActiveTest({ mdConditionCharts: charts.filter(c => c.id !== id) });
+  2112 |   return (
+  2134 |   export const MDAnalysisSection = ({ ctx }) => {
+  2135 |   const { activeTest, updateActiveTest } = ctx;
+  2136 |   const d = useMDDerived(activeTest, ctx);
+  2138 |   const cfg = { ...DEFAULT_MD_CHART_STYLE, ...(activeTest.mdAnalysisCfg || {}) };
+  2139 |   const setCfg = (patch) => updateActiveTest({ mdAnalysisCfg: { ...cfg, ...patch } });
+  2140 |   const [showCfg, setShowCfg] = useState(false);
+  2141 |   const [isFs, setIsFs] = useState(false);
+  2146 |   const [calcData, setCalcData] = useState(() => (activeTest && activeTest.mdAnalysisResult) || null);
+  2147 |   const [calc, setCalc] = useState({ state: 'idle', msg: '', done: 0, total: 0, error: '' });
+  2148 |   const [calcOpts, setCalcOpts] = useState({ sasa: true });
+  2149 |   const calcAbortRef = useRef(false); // set by the global ΓÅ╣ Stop button
+  2150 |   const [energyData, setEnergyData] = useState(() => (activeTest && activeTest.mdAnalysisResult && activeTest.mdAnalysisResult.energ
+  2151 |   const [energyFileName, setEnergyFileName] = useState(() => (activeTest && activeTest.mdAnalysisResult && activeTest.mdAnalysisResu
+  2156 |   const mdTestIdRef = useRef(activeTest && activeTest.id);
+  2160 |   const res = (activeTest && activeTest.mdAnalysisResult) || null;
+  2167 |   const handleCalculateFromTrajectory = async () => {
+  2169 |   const unregister = abortControl.register('MD analysis', () => { calcAbortRef.current = true; });
+  2173 |   const tl = await resolveMDTopology(activeTest);
+  2175 |   const { topo } = tl;
+  2176 |   const jobs = await buildMDTrajectoryJobs(activeTest, []);
+  2178 |   const runCfg = mdAnalysisRunAll.getCfg(); // shared stride / max frames from the Data Analysis toolbar
+  2179 |   const src = await resolveFrameSource(jobs[0].file, {
+  2185 |   const res = await computeMDTrajectoryAnalysis(
+  2195 |   const prevRes = (activeTest && activeTest.mdAnalysisResult) || {};
+  2210 |   const layerCells = buildGeneralParamsLayerCells(res);
+  2226 |   const handleEnergyFile = (e) => {
+  2227 |   const file = e.target.files && e.target.files[0];
+  2230 |   const reader = new FileReader();
+  2255 |   const runAllFnRef = useRef(() => handleCalculateFromTrajectory());
+  2260 |   const rmsd = useMemo(() => downsampleSeries(calcData?.rmsd || []), [calcData]);
+  2261 |   const rmsf = useMemo(() => (calcData?.rmsf || []).map((r) => ({ ...r, fill: r.value > 0.25 ? '#ef4444' : '#3b82f6' })), [calcData]
+  2262 |   const rg = useMemo(() => downsampleSeries(calcData?.rg || []), [calcData]);
+  2263 |   const sasa = useMemo(() => downsampleSeries(calcData?.sasa || []), [calcData]);
+  2264 |   const energy = useMemo(() => downsampleSeries(energyData || []), [energyData]);
+  2266 |   const brkEnergy = brokenAxisProps(cfg, 'y', energy.flatMap((e) => [e.potential, e.kinetic, e.total]).map(Number), { min: cfg.yMin,
+  2268 |   return (
+  2411 | ┬º // ================= 4) SIMULATION PARAMETERS =================
+  2412 |   export const MDSimulationParamsSection = ({ ctx }) => {
+  2413 |   const { activeTest, updateActiveTest } = ctx;
+  2414 |   const d = useMDDerived(activeTest, ctx);
+  2416 |   const ffVersions = getFFVersions(d.ffKey);
+  2418 |   return (
+  2553 | ┬º // ================= 5) MEMBRANE CONTACTS (port of from_gro_to_rdf awk) =================
+  2558 |   const getTopologyCandidates = (raw) => {
+  2559 |   const u = String(raw || '').trim();
+  2562 |   const id = u.toUpperCase();
+  2563 |   return [
+  2569 |   const norm = normalizeTrajectoryUrl(u) || {};
+  2570 |   return [norm.url, ...(norm.fallbacks || [])].filter(Boolean);
+  2572 |   return [];
+  2579 |   const resolveMDTopology = async (activeTest) => {
+  2580 |   let text = null;
+  2581 |   let source = 'local';
+  2584 |   const b64 = String(activeTest.structureFileData).split(',')[1] || '';
+  2592 |   const blob = await blobStore.load(structBlobKey(activeTest.id));
+  2609 |   const topo = parseTopology(text);
+  2611 |   return { topo, source };
+  2616 |   const buildMDTrajectoryJobs = async (activeTest, extraRuns) => {
+  2617 |   const jobs = [];
+  2618 |   const runs = Array.isArray(extraRuns) ? extraRuns : [];
+  2619 |   const mainFile = localFileCache.get(activeTest.id)?.trajectory || null;
+  2623 |   const norm = normalizeTrajectoryUrl(activeTest.trajectoryUrl) || {};
+  2624 |   const cands = [norm.url, ...(norm.fallbacks || [])].filter(Boolean);
+  2639 |   return jobs;
+  2645 |   const storeAnalysisToAtomTable = (activeTest, updateActiveTest, layerCells) => {
+  2647 |   const activeInst = getMDActiveInstance(activeTest);
+  2649 |   const layers = {};
+  2655 |   const mdValues = { ...(activeTest.mdValues || {}) };
+  2658 |   const insts = Array.isArray(activeTest.instances) && activeTest.instances.length ? activeTest.instances : null;
+  2660 |   const instances = insts.map((inst) => {
+  2662 |   const vals = { ...(inst.values || {}) };
+  2664 |   return { ...inst, values: vals };
+  2677 |   const buildGeneralParamsLayerCells = (res) => {
+  2678 |   const layerCells = {};
+  2680 |   const cells = {};
+  2688 |   const avgOf = (arr) => {
+  2690 |   let s = 0, n = 0;
+  2692 |   return n ? s / n : null;
+  2694 |   const rgAvg = avgOf(res && res.rg);
+  2695 |   const sasaAvg = avgOf(res && res.sasa);
+  2696 |   const rmsdLast = res && res.rmsd && res.rmsd.length ? parseFloat(res.rmsd[res.rmsd.length - 1].value) : null;
+  2700 |   return layerCells;
+  2704 |   const contactDot = (symbol, color) => (props) => {
+  2705 |   const { cx, cy } = props;
+  2707 |   const fill = color || '#3b82f6';
+  2708 |   const s = 4;
+  2709 |   const shapes = {
+  2738 |   return <g>{shapes[symbol] || shapes.circle}</g>;
+  2741 |   const MDContactChart = ({ rows, series, yLabel, cfg }) => {
+  2742 |   const effHeight = useChartFsHeight(cfg.height || 480);
+  2743 |   const ref = useRef(null);
+  2744 |   const fontSize = tickSize(cfg, 9);
+  2745 |   let yMax = 0;
+  2747 |   const chartData = useMemo(() => rows.map((r, i) => ({ ...r, __xi: i })), [rows]);
+  2749 |   const effMargin = cfgChartMargin(cfg, { top: 8, right: 8, bottom: 96, left: 8 });
+  2750 |   const zoom = useXZoom(ref, [0, Math.max(1, rows.length - 1)], effMargin);
+  2751 |   const ticks = [];
+  2753 |   const colorOf = (s, i) => s.color || seriesColorFor(cfg, s.key, i, series.length);
+  2754 |   return (
+  2805 |   export const MDMembraneContactSection = ({ ctx }) => {
+  2806 |   const { activeTest, updateActiveTest } = ctx;
+  2807 |   const [cfg, setCfg] = useState({ ...CONTACT_DEFAULTS, mode: 'all' });
+  2808 |   const [extraRuns, setExtraRuns] = useState([]);
+  2809 |   const [status, setStatus] = useState({ state: 'idle', msg: '', done: 0 });
+  2810 |   const [outputs, setOutputs] = useState(() => {
+  2813 |   const p = activeTest.mdContactResult;
+  2815 |   const out = { polar: {}, vdW: {} };
+  2817 |   const mode = k.split('_')[0];
+  2818 |   const xa = k.split('_').slice(1).join('_'); // 'peptide' | 'membrane'
+  2821 |   return out;
+  2823 |   const [chartCfg, setChartCfg] = useState({ ...DEFAULT_MD_CHART_STYLE, height: 480, fontSize: 9 });
+  2826 |   const setChartCfgMerged = (patch) => setChartCfg((c) => ({ ...(c || {}), ...patch }));
+  2828 |   const setOpt = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
+  2831 |   const contactRunAllRef = useRef(() => runAll(false));
+  2835 |   const metricOf = (p) => (cfg.metric === 'contactFreq' ? p.contactFreq : p.peakRDF);
+  2837 |   const aggregatePairs = (pairs, keySel = (p) => p.mem) => {
+  2838 |   const map = new Map();
+  2840 |   const v = metricOf(p);
+  2841 |   const k = keySel(p);
+  2842 |   const e = map.get(k) || { sum: 0, max: -Infinity, n: 0 };
+  2846 |   const out = new Map();
+  2850 |   return out;
+  2853 |   const buildOutputFor = (mode, res, xAxis = cfg.xAxis) => {
+  2854 |   const byKey = new Map(res.pairs.map((p) => [`${p.mem}|${p.mol}`, p]));
+  2855 |   const xIsPeptide = xAxis === 'peptide';
+  2857 |   const rowsLabels = xIsPeptide ? res.molLabels : res.memLabels;
+  2858 |   const seriesLabels = xIsPeptide ? res.memLabels : res.molLabels;
+  2859 |   const rows = rowsLabels.map((m) => {
+  2860 |   const row = { atom: m };
+  2865 |   return row;
+  2867 |   return {
+  2877 |   const buildRunsOutputFor = (mode, labels, seriesVals, xAxis = cfg.xAxis) => {
+  2878 |   const names = Object.keys(seriesVals);
+  2879 |   const rows = labels.map((m) => {
+  2880 |   const row = { atom: m };
+  2882 |   return row;
+  2884 |   return {
+  2893 |   const runMode = async (mode, useDemo, xAxis = cfg.xAxis) => {
+  2894 |   const tl = await resolveMDTopology(activeTest);
+  2896 |   const { topo } = tl;
+  2899 |   const shared = mdAnalysisRunAll.getCfg(); // stride / max frames from the Data Analysis toolbar
+  2900 |   const runCfg = { ...cfg, mode, xAxis, stride: shared.stride, maxFrames: shared.maxFrames };
+  2901 |   const openTrajectory = async (file) => {
+  2902 |   const src = await resolveFrameSource(file, {
+  2907 |   return src; // { frames, numframes, source }
+  2910 |   const jobs = useDemo ? [] : await buildMDTrajectoryJobs(activeTest, extraRuns);
+  2913 |   const res = await computeContactRDF(topo, demoFrames(topo, 40), runCfg,
+  2915 |   return buildOutputFor(mode, res, xAxis);
+  2919 |   const { frames, numframes, source } = await openTrajectory(jobs[0].file);
+  2920 |   const total = numframes ? ` / ${numframes}` : '';
+  2921 |   const res = await computeContactRDF(topo, frames, runCfg,
+  2923 |   return buildOutputFor(mode, res, xAxis);
+  2926 |   const seriesVals = {};
+  2927 |   let xLabels = null;
+  2928 |   const keySel = xAxis === 'peptide' ? (p) => p.mol : (p) => p.mem;
+  2930 |   const { frames, numframes, source } = await openTrajectory(job.file);
+  2931 |   const total = numframes ? ` / ${numframes}` : '';
+  2932 |   const res = await computeContactRDF(topo, frames, runCfg,
+  2937 |   return buildRunsOutputFor(mode, xLabels, seriesVals, xAxis);
+  2940 |   const runAll = async (useDemo = false) => {
+  2944 |   const modes = cfg.mode === 'polar' ? ['polar'] : cfg.mode === 'vdW' ? ['vdW'] : ['polar', 'vdW'];
+  2947 |   const xAxes = ['peptide', 'membrane'];
+  2948 |   const out = { polar: {}, vdW: {} };
+  2963 |   const persist = {};
+  2987 |   const t = setTimeout(() => {
+  2993 |   return () => clearTimeout(t);
+  2996 |   const exportCSV = () => {
+  3013 |   const yLabelFor = (mode) => (cfg.metric === 'contactFreq'
+  3017 |   const inp = 'border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500';
+  3019 |   return (
+  3172 | ┬º // ================= 6) ORDER PARAMETERS & MEMBRANE PROFILES =================
+  3174 |   const MDProfileChart = ({ rows, series, xKey, yLabel, xLabel, height = 380, rotateX = false, numericX = false, fontSize = 10, cfg 
+  3175 |   const effHeight = useChartFsHeight(height || cfg.height || 380);
+  3176 |   const ref = useRef(null);
+  3177 |   const fSize = tickSize(cfg, fontSize || 10);
+  3178 |   const colorOf = (s, i) => s.color || seriesColorFor(cfg, s.key, i, series.length);
+  3179 |   const xVals = rows.map((r) => (typeof r[xKey] === 'number' ? r[xKey] : NaN)).filter(Number.isFinite);
+  3180 |   const xDomain = xVals.length > 1 ? [Math.min(...xVals), Math.max(...xVals)] : [0, 1];
+  3183 |   const chartData = useMemo(() => (numericX ? rows : rows.map((r, i) => ({ ...r, __xi: i }))), [rows, numericX]);
+  3185 |   const effMargin = cfgChartMargin(cfg, { top: 8, right: 8, bottom: rotateX ? 90 : 36, left: 8 });
+  3186 |   const zoom = useXZoom(ref, numericX ? xDomain : [0, Math.max(1, rows.length - 1)], effMargin);
+  3187 |   const onMouseDown = zoom.onMouseDown;
+  3188 |   const isZoomed = zoom.isZoomed;
+  3189 |   const reset = zoom.reset;
+  3190 |   const catTicks = [];
+  3194 |   return (
+  3246 |   export const MDMembraneProfilesSection = ({ ctx }) => {
+  3247 |   const { activeTest, updateActiveTest } = ctx;
+  3248 |   const [cfg, setCfg] = useState({ bin: 0.02, centerMode: 'auto', signedSCD: false, scdResidues: '', stride: 1, startFrame: 0, maxFr
+  3249 |   const [extraRuns, setExtraRuns] = useState([]);
+  3250 |   const [chargeInfo, setChargeInfo] = useState({ map: null, count: 0, files: [] });
+  3251 |   const [status, setStatus] = useState({ state: 'idle', msg: '', done: 0 });
+  3252 |   const [outputs, setOutputs] = useState(() => {
+  3254 |   const p = activeTest.mdProfileResult;
+  3255 |   return Array.isArray(p) && p.length ? p.map((o) => ({ name: o.name, result: o })) : [];
+  3257 |   const [chartStyle, setChartStyle] = useState({ scdH: 420, densH: 360, potH: 360, fontSize: 10 });
+  3258 |   const [profCfg, setProfCfg] = useState({ ...DEFAULT_MD_CHART_STYLE, fontSize: 10 });
+  3260 |   const setProfCfgMerged = (patch) => setProfCfg((c) => ({ ...(c || {}), ...patch }));
+  3265 |   const t = setTimeout(() => {
+  3272 |   return () => clearTimeout(t);
+  3275 |   const setOpt = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
+  3278 |   const profileRunAllRef = useRef(() => runAll(false));
+  3282 |   const handleChargeFiles = async (fileList) => {
+  3283 |   const files = Array.from(fileList || []);
+  3286 |   const texts = [];
+  3288 |   const map = parseChargeMap(texts);
+  3292 |   const runAll = async (useDemo = false) => {
+  3297 |   const tl = await resolveMDTopology(activeTest);
+  3299 |   const { topo } = tl;
+  3302 |   const jobs = useDemo ? [] : await buildMDTrajectoryJobs(activeTest, extraRuns);
+  3304 |   const shared = mdAnalysisRunAll.getCfg(); // stride / max frames from the Data Analysis toolbar
+  3305 |   const runCfg = { ...cfg, stride: shared.stride, maxFrames: shared.maxFrames };
+  3307 |   const outs = [];
+  3338 |   const scdCells = {};
+  3356 |   const scdData = useMemo(() => {
+  3358 |   const rowMap = new Map();
+  3359 |   const series = [];
+  3371 |   const rows = [...rowMap.values()]
+  3377 |   return { rows, series };
+  3380 |   const densityRows = useMemo(() => {
+  3382 |   const base = outputs[0].result.density;
+  3383 |   return base.z.map((zz, i) => {
+  3384 |   const row = { z: zz };
+  3386 |   return row;
+  3390 |   const potentialRows = useMemo(() => {
+  3391 |   const withPot = outputs.filter((o) => o.result.density.potential);
+  3393 |   const base = withPot[0].result.density;
+  3394 |   return base.z.map((zz, i) => {
+  3395 |   const row = { z: zz };
+  3397 |   return row;
+  3401 |   const exportCSV = () => {
+  3403 |   const lines = ['# Order parameters |SCD|'];
+  3416 |   const url = URL.createObjectURL(new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' }));
+  3417 |   const a = document.createElement('a');
+  3423 |   const inp = 'border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500';
+  3424 |   const anyMissing = outputs.length > 0 && outputs.some((o) => o.result.density.missingChargeResidues.length > 0);
+  3426 |   return (
+  3641 | ┬º // ================= 7) SECONDARY STRUCTURE (DSSP along the trajectory) =================
+  3643 |   const SS_LETTER_META = [
+  3653 |   const DSSPHeatmap = ({ heat, height = 520, width = 0, fontSize = 9 }) => {
+  3654 |   const wrapRef = useRef(null);
+  3655 |   const svgRef = useRef(null);
+  3656 |   const [zoom, setZoom] = useState(null); // { x0, x1 } sample (frame) indices
+  3657 |   const [hover, setHover] = useState(null); // { px, py, sx, sy, letter }
+  3658 |   const [sel, setSel] = useState(null); // { x, w } display px selection
+  3659 |   const [w, setW] = useState(0); // measured container width
+  3660 |   const dragRef = useRef(null); // { fx0, lastFx }
+  3664 |   const el = wrapRef.current;
+  3666 |   const ro = new ResizeObserver(() => setW(el.clientWidth));
+  3669 |   return () => ro.disconnect();
+  3672 |   const samples = heat?.samples || [];
+  3673 |   const nSamples = samples.length;
+  3674 |   const nRes = Math.max(1, heat?.nRes || 0);
+  3675 |   const resIds = Array.isArray(heat?.resIds) ? heat.resIds : [];
+  3676 |   const frameStride = Math.max(1, heat?.frameStride || 1);
+  3677 |   const dtPs = Number(heat?.dtPs) || 0;
+  3679 |   const margin = { top: 12, right: 14, bottom: 42, left: 52 };
+  3680 |   const svgW = Math.max(240, width > 0 ? width : w || 800);
+  3681 |   const svgH = Math.max(160, height || 520);
+  3682 |   const plotW = svgW - margin.left - margin.right;
+  3683 |   const plotH = svgH - margin.top - margin.bottom;
+  3685 |   const vis0 = zoom ? zoom.x0 : 0;
+  3686 |   const vis1 = zoom ? zoom.x1 : Math.max(0, nSamples - 1);
+  3687 |   const visW = Math.max(1, vis1 - vis0 + 1);
+  3690 |   const cells = useMemo(() => {
+  3691 |   const MAX_COLS = 260;
+  3692 |   const MAX_ROWS = 140;
+  3693 |   const binX = Math.max(1, Math.ceil(visW / MAX_COLS));
+  3694 |   const binY = Math.max(1, Math.ceil(nRes / MAX_ROWS));
+  3695 |   const nCols = Math.ceil(visW / binX);
+  3696 |   const nRows = Math.ceil(nRes / binY);
+  3697 |   const cw = plotW / nCols;
+  3698 |   const ch = plotH / nRows;
+  3699 |   const out = [];
+  3701 |   const s0 = vis0 + cx * binX;
+  3702 |   const s1 = Math.min(nSamples - 1, s0 + binX - 1);
+  3721 |   return out;
+  3724 |   const niceTicks = (count, maxTicks) => {
+  3725 |   const step = Math.max(1, Math.ceil(count / Math.max(1, maxTicks)));
+  3726 |   const arr = [];
+  3730 |   return arr;
+  3732 |   const yTicks = niceTicks(nRes, Math.max(3, Math.floor(plotH / 15)));
+  3733 |   const xTicks = niceTicks(visW, Math.max(3, Math.floor(plotW / 36)));
+  3735 |   const toX = (colIdx) => {
+  3736 |   const s = Math.min(nSamples - 1, vis0 + colIdx);
+  3737 |   const u = s * frameStride;
+  3738 |   return dtPs > 0 ? (u * dtPs) / 1000 : u;
+  3740 |   const fmtX = (v) => (dtPs > 0 ? (v >= 100 ? v.toFixed(0) : v.toFixed(1)) : String(v));
+  3741 |   const resAt = (rowIdx) => {
+  3742 |   const r = Math.min(nRes - 1, rowIdx);
+  3743 |   return resIds[r] != null ? resIds[r] : r + 1;
+  3746 |   const evtToCell = (e) => {
+  3747 |   const svg = svgRef.current;
+  3749 |   const rect = svg.getBoundingClientRect();
+  3750 |   const fx = (e.clientX - rect.left - margin.left) / plotW;
+  3751 |   const fy = (e.clientY - rect.top - margin.top) / plotH;
+  3753 |   const sx = Math.max(0, Math.min(nSamples - 1, Math.round(vis0 + fx * (visW - 1))));
+  3754 |   const sy = Math.max(0, Math.min(nRes - 1, Math.round(fy * (nRes - 1))));
+  3755 |   return { fx, sx, sy, px: e.clientX - rect.left, py: e.clientY - rect.top };
+  3758 |   const onMouseDown = (e) => {
+  3759 |   const c = evtToCell(e);
+  3766 |   const onMouseMove = (e) => {
+  3767 |   const c = evtToCell(e);
+  3770 |   const codes = samples[c.sx];
+  3771 |   const letter = codes ? SS_CODE_ORDER[codes[c.sy]] : null;
+  3774 |   return;
+  3776 |   const d = dragRef.current;
+  3778 |   const x = margin.left + Math.min(d.fx0, c.fx) * plotW;
+  3782 |   const onMouseUp = () => {
+  3783 |   const d = dragRef.current;
+  3787 |   const a = Math.max(0, Math.round(vis0 + Math.min(d.fx0, d.lastFx) * (visW - 1)));
+  3788 |   const b = Math.min(nSamples - 1, Math.round(vis0 + Math.max(d.fx0, d.lastFx) * (visW - 1)));
+  3792 |   const onMouseLeave = () => { setHover(null); setSel(null); dragRef.current = null; };
+  3794 |   const hoverRes = hover && resIds[hover.sy] != null ? resIds[hover.sy] : (hover ? hover.sy + 1 : null);
+  3795 |   const hoverU = hover ? hover.sx * frameStride : 0;
+  3796 |   const hoverTime = dtPs > 0 ? `${(hoverU * dtPs / 1000).toFixed(2)} ns` : `frame ${hoverU}`;
+  3797 |   const hoverMeta = hover ? SS_LETTER_META.find((m) => m.k === hover.letter) : null;
+  3799 |   return (
+  3855 |   export const MDSecondaryStructureSection = ({ ctx }) => {
+  3856 |   const { activeTest, updateActiveTest } = ctx;
+  3857 |   const [cfg, setCfg] = useState({ stride: 1, startFrame: 0, maxFrames: 0, dtPs: 0, chartMode: 'grouped' });
+  3858 |   const [extraRuns, setExtraRuns] = useState([]);
+  3859 |   const [status, setStatus] = useState({ state: 'idle', msg: '', done: 0 });
+  3860 |   const [outputs, setOutputs] = useState(() => {
+  3863 |   const p = activeTest.mdDsspResult;
+  3864 |   return Array.isArray(p) && p.length ? p.map((o) => ({ name: o.name, result: o })) : [];
+  3866 |   const dsspAbortRef = useRef(false); // set by the global ΓÅ╣ Stop button
+  3869 |   const dsspRunAllRef = useRef(() => runAll(false));
+  3876 |   const t = setTimeout(() => {
+  3883 |   return () => clearTimeout(t);
+  3885 |   const [heatHeight, setHeatHeight] = useState(520);
+  3886 |   const [heatWidth, setHeatWidth] = useState(0); // 0 = auto (fill panel width)
+  3887 |   const [dsspChartCfg, setDsspChartCfg] = useState({ contentH: 380, occH: 320, fontSize: 10 });
+  3888 |   const [dsspCfg, setDsspCfg] = useState({ ...DEFAULT_MD_CHART_STYLE, fontSize: 10 });
+  3890 |   const setDsspCfgMerged = (patch) => setDsspCfg((c) => ({ ...(c || {}), ...patch }));
+  3892 |   const setOpt = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
+  3894 |   const runAll = async (useDemo = false) => {
+  3896 |   const unregister = abortControl.register('secondary structure', () => { dsspAbortRef.current = true; });
+  3897 |   const shared = mdAnalysisRunAll.getCfg(); // stride / max frames from the Data Analysis toolbar
+  3902 |   const tl = await resolveMDTopology(activeTest);
+  3904 |   const { topo } = tl;
+  3907 |   const jobs = useDemo ? [] : await buildMDTrajectoryJobs(activeTest, extraRuns);
+  3909 |   const outs = [];
+  3969 |   const contentData = useMemo(() => {
+  3971 |   const keys = cfg.chartMode === 'letters'
+  3974 |   const keyLabel = (k) => (k === 'alpha' ? '╬▒-helix' : k === 'beta' ? '╬▓-sheet' : k === 'coil' ? 'coil/other' : k);
+  3975 |   const series = [];
+  3979 |   const rows = outputs[0].result.series.map((s, si) => {
+  3980 |   const row = { x: s.x };
+  3988 |   return row;
+  3990 |   return { rows, series };
+  3993 |   const contentColor = (sKey, i) => {
+  3998 |   const letter = sKey.charAt(0);
+  3999 |   return SS_COLORS[letter] || '#64748b';
+  4003 |   const contentRef = useRef(null);
+  4004 |   const occRef = useRef(null);
+  4005 |   const contentXs = (contentData?.rows || []).map((r) => r.x).filter((x) => typeof x === 'number');
+  4006 |   const contentDomain = contentXs.length > 1 ? [Math.min(...contentXs), Math.max(...contentXs)] : [0, 1];
+  4007 |   const contentMargin = cfgChartMargin(dsspCfg, { top: 8, right: 8, bottom: 30, left: 8 });
+  4008 |   const contentZoom = useXZoom(contentRef, contentDomain, contentMargin);
+  4009 |   const occRows = useMemo(() => outputs[0]?.result.occupancy || [], [outputs]);
+  4011 |   const occRowsWithXi = useMemo(() => occRows.map((r, i) => ({ ...r, __xi: i })), [occRows]);
+  4012 |   const occMargin = cfgChartMargin({ ...dsspCfg, fontSize: dsspCfg.fontSize || 10 }, { top: 8, right: 8, bottom: 70, left: 8 });
+  4013 |   const occZoom = useXZoom(occRef, [0, Math.max(1, occRows.length - 1)], occMargin);
+  4014 |   const contentH = useChartFsHeight(dsspChartCfg.contentH || 380);
+  4015 |   const occH = useChartFsHeight(dsspChartCfg.occH || 320);
+  4018 |   const heat = outputs[0]?.result.heat || null;
+  4020 |   const exportCSV = () => {
+  4022 |   const head = [`time (${outputs[0].result.xUnit})`, ...contentData.series.map((s) => `${s.key} (%)`)];
+  4023 |   const body = contentData.rows.map((r) => [r.x, ...contentData.series.map((s) => r[s.key] ?? '')]);
+  4024 |   const csv = [head, ...body].map((row) => row.join(',')).join('\n');
+  4025 |   const url = URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }));
+  4026 |   const a = document.createElement('a');
+  4032 |   const inp = 'border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500';
+  4033 |   const occTickStep = Math.max(1, Math.floor(occRows.length / 40));
+  4034 |   const occTicks = [];
+  4036 |   const occTicksLast = Math.min(occRows.length - 1, Math.floor(occZoom.domain[1]));
+  4039 |   return (
+  4277 | ┬º // ================= ALL =================
+  4279 | ┬º // ================= ALL =================
+  4281 |   export const Setup = MDExperimentSetupSection;
+  4282 |   export const Data = MDDataSection;
+  4283 |   export const Simulations = MDSimulationParamsSection;
+  4284 |   export const Analysis = MDAnalysisSection;
+  4285 |   export const Contacts = MDMembraneContactSection;
+  4286 |   export const SecondaryStructure = MDSecondaryStructureSection;
+  4287 |   export const Profiles = MDMembraneProfilesSection;
+  4289 | ┬º // ================= EXTRA ANALYSIS SECTIONS =================
+  4292 |   export const MD_ANALYSIS_SECTIONS = [
+  4300 | ┬º // ================= NOTEBOOK EXTRA =================
+  4301 |   export const NotebookExtra = ({ ctx, checkId }) => {
+  4302 |   const { activeTest } = ctx;
+  4303 |   const d = useMDDerived(activeTest, ctx);
+  4306 |   return `<p style="font-size:12px;color:#475569;margin-bottom:8px;"><b>MD Setup:</b> Force field ${d.ffInfo.name} ${d.ffVersion} | 
+  4310 |   return `<p style="font-size:12px;color:#475569;margin-bottom:12px;"><b>${d.typeLabel}:</b> <span style="font-family:monospace;back
+  4314 |   return `<div style="margin-bottom:12px;">${elementsToSVG(d.structure, 300)}</div>`;
+  4318 |   let html = `<table style="width:100%;border-collapse:collapse;margin-top:10px;font-size:11px;text-align:left;background:white;"><t
+  4325 |   return html;
+  4329 |   return `<p style="font-size:12px;color:#475569;"><b>Trajectory:</b> <a href="${d.trajectoryUrl}" style="color:#2563eb;">${d.trajec
+  4332 |   return '';
+  4334 | ┬º // ================= NOTEBOOK HTML BUILDER =================
+  4335 |   export const buildNotebookHtml = (ctx, checked) => {
+  4336 |   let html = '';
+  4342 |   return html;
+TOTAL LINES 4344
+
+########## src/components/DockingSections.jsx ##########
+    28 |   const DOCKING_RESTORE_KIND = 'docking';
+    29 |   const dockingDriveCtx = (test = {}, instance = '') => ({
+    41 |   const archiveDockingData = async ({
+    62 | ┬º /* ============================================================================
+    64 | ┬º ============================================================================ */
+    66 | ┬º // ================= SHARED DERIVED DATA HOOK =================
+    67 |   const useDockingDerived = (activeTest, ctx = {}) => {
+    68 |   const compName = activeTest.selectedCompounds?.[0] || activeTest.compound;
+    69 |   const metaSeq = (ctx.compoundMeta && compName && ctx.compoundMeta[compName]?.sequence)
+    71 |   const metaType = (ctx.compoundMeta && compName && ctx.compoundMeta[compName]?.type)
+    75 |   const moleculeType = activeTest.moleculeType || metaType || 'protein';
+    76 |   const rawSeq = (activeTest.proteinSequence || metaSeq || '').toUpperCase();
+    77 |   const validChars =
+    81 |   const seq = ['protein', 'dna', 'rna'].includes(moleculeType)
+    83 |   const isPolymer = ['protein', 'dna', 'rna'].includes(moleculeType);
+    84 |   const DB =
+    91 |   const dockingProgram = activeTest.dockingProgram || 'vina';
+    92 |   const programInfo = getProgramInfo(dockingProgram);
+    93 |   const scoringFunction = activeTest.scoringFunction || programInfo.scoringFunctions[0];
+    94 |   const searchAlgorithm = activeTest.searchAlgorithm || programInfo.searchAlgorithms[0];
+    95 |   const exhaustiveness = activeTest.exhaustiveness ?? '8';
+    96 |   const numModes = activeTest.numModes ?? '9';
+    97 |   const energyRange = activeTest.energyRange ?? '3';
+    98 |   const boxCenterX = activeTest.boxCenterX ?? '0';
+    99 |   const boxCenterY = activeTest.boxCenterY ?? '0';
+   100 |   const boxCenterZ = activeTest.boxCenterZ ?? '0';
+   101 |   const boxSizeX = activeTest.boxSizeX ?? '20';
+   102 |   const boxSizeY = activeTest.boxSizeY ?? '20';
+   103 |   const boxSizeZ = activeTest.boxSizeZ ?? '20';
+   106 |   const ligandSmiles = activeTest.ligandSmiles || '';
+   107 |   const ligandPdbId = activeTest.ligandPdbId || '';
+   109 |   const typeLabel =
+   115 |   const ssRaw = activeTest.secondaryStructure || '';
+   116 |   const getSSAt = (i) => (ssRaw[i] && 'HES'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
+   118 |   const parsedSeq = useMemo(() => {
+   119 |   let chars = [];
+   125 |   return chars.map((char, index) => {
+   126 |   const entry = DB[char];
+   128 |   return {
+   137 |   const structure = useMemo(() => {
+   147 |   return null;
+   151 |   const poses = useMemo(() => {
+   153 |   return activeTest.dockingPoses;
+   155 |   return dockingProgram === 'haddock' ? generateHADDOCKPoses(12) : generateDockingPoses(9);
+   159 |   const instances = getDockingInstances(activeTest);
+   160 |   const activeInstance = getDockingActiveInstance(activeTest);
+   161 |   const layers = getDockingLayers(activeTest);
+   162 |   const activeLayerKey = getDockingActiveLayerKey(activeTest);
+   163 |   const activeValues = getDockingLayerValues(activeInstance, activeLayerKey);
+   165 |   return {
+   176 | ┬º // ================= SHARED: raw_input.toml BLOCK =================
+   179 |   const RawInputTomlBlock = ({ activeTest }) => {
+   180 |   const [showRawInput, setShowRawInput] = useState(false);
+   182 |   const ri = activeTest.dockingRawInput;
+   183 |   return (
+   225 | ┬º // ================= INSTRUMENTAL SETUP (Docking) =================
+   229 |   export const DockingInstrumentalSetup = ({ ctx }) => {
+   230 |   const { activeTest } = ctx;
+   231 |   return (
+   243 | ┬º // ================= EXPERIMENTAL CONDITIONS (Docking) =================
+   250 |   export const DockingExperimentalConditions = ({ ctx }) => {
+   251 |   const { activeTest } = ctx;
+   252 |   const molKey = `labDockingMolecules_${activeTest.id || 'global'}`;
+   253 |   const [molecules, setMolecules] = useState(() => {
+   255 |   const v = JSON.parse(localStorage.getItem(molKey) || 'null');
+   256 |   return Array.isArray(v) ? v : null;
+   259 |   const [openIdx, setOpenIdx] = useState(null);
+   262 |   let cancelled = false;
+   266 |   return () => { cancelled = true; };
+   269 |   const meta = Array.isArray(activeTest.dockingMolecules) ? activeTest.dockingMolecules : [];
+   270 |   const shown = Array.isArray(molecules) && molecules.length ? molecules : meta;
+   273 |   return (
+   283 |   return (
+   332 | ┬º // ================= 1) EXPERIMENT SETUP (Docking) =================
+   333 |   export const DockingExperimentSetupSection = ({ ctx }) => {
+   334 |   const { activeTest, updateActiveTest } = ctx;
+   335 |   const d = useDockingDerived(activeTest, ctx);
+   339 |   const structKey = `labDockingStructures_${activeTest.id || 'global'}`;
+   340 |   const [structList, setStructList] = useState(() => {
+   343 |   const [structIdx, setStructIdx] = useState(0);
+   344 |   const hasDockStructs = Array.isArray(structList) && structList.length > 0;
+   345 |   const selectedStruct = hasDockStructs ? (structList[structIdx] || structList[0] || null) : null;
+   349 |   const structureMode = activeTest.structureMode || (hasDockStructs ? '3d' : '2d');
+   350 |   const [hasOpened3D, setHasOpened3D] = useState(structureMode === '3d');
+   351 |   const [expandedPanel, setExpandedPanel] = useState(null);
+   352 |   const [ssBrush, setSSBrush] = useState('H');
+   356 |   const t = setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
+   357 |   return () => clearTimeout(t);
+   361 |   const firstSelectedCmp = activeTest.selectedCompounds?.[0];
+   364 |   const meta = ctx.compoundMeta[firstSelectedCmp];
+   366 |   const updates = {};
+   367 |   let needsUpdate = false;
+   381 |   const selectedKeys = getSelectedKeys(activeTest);
+   382 |   const manualKeys = useMemo(() => getManualKeys(d.activeValues), [d.activeValues]);
+   384 |   const handleAtomClick = (ri, keys) => {
+   386 |   const cur = getSelectedKeys(activeTest);
+   391 |   const paintSSAt = (i, letter) => {
+   392 |   const arr = d.seq.split('').map((_, j) => d.getSSAt(j));
+   397 |   const structureSrc = useMemo(() => {
+   398 |   const raw = (activeTest.structureSrc || '').trim();
+   403 |   const hasDefinedSystem = !!(activeTest.proteinSequence || activeTest.smiles ||
+   409 |   return '';
+   413 |   return raw;
+   421 |   let cancelled = false;
+   425 |   return () => { cancelled = true; };
+   428 |   return (
+   624 | ┬º // ================= 2) DATA (Docking results table + import) =================
+   625 |   const DockingImportPanel = ({ ctx, onPoses }) => {
+   626 |   const { updateActiveTest } = ctx;
+   627 |   const [pasteText, setPasteText] = useState('');
+   628 |   const [report, setReport] = useState(null);
+   629 |   const [calcDirBusy, setCalcDirBusy] = useState(false);
+   632 |   const dockingActiveIdRef = useRef((ctx.activeTest && ctx.activeTest.id) || '');
+   635 |   const handleText = (text, filename) => {
+   636 |   const parsed = parseDockingFile(text, filename || 'pasted.txt');
+   648 |   const handleFile = (file) => {
+   650 |   const reader = new FileReader();
+   661 |   const readText = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej
+   662 |   const readArrayBuffer = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerro
+   664 |   const handleCalcDir = async (files) => {
+   665 |   const list = Array.from(files || []);
+   669 |   const lower = (s) => String(s || '').toLowerCase();
+   670 |   const test = ctx.activeTest || {};
+   671 |   const driveCtx = {
+   682 |   const drivePathOf = (extra) => {
+   683 |   const base = [];
+   687 |   return base.concat(extra || []).filter(Boolean);
+   689 |   const archive = async (name, mime, blob, pathExtra = [], section = 'Docking') => {
+   699 |   const done = [];
+   700 |   const notes = [];
+   701 |   const warnings = [];
+   711 |   const capriFile = list.find((f) => /capri_ss\.tsv$/i.test(lower(f.webkitRelativePath || f.name)));
+   713 |   const text = await readText(capriFile);
+   714 |   const parsed = parseCapriTsv(text);
+   737 |   let toml = null;
+   738 |   const tomlFile = list.find((f) => /(^|\/)raw_input\.(toml|toml\.gz|toml\.bak)$/i.test(lower(f.webkitRelativePath || f.name)));
+   740 |   const text = await readText(tomlFile);
+   742 |   const driveUrl = await archive('raw_input.toml', 'text/toml', new Blob([text], { type: 'text/toml' }), ['Instrumental Setup'], 'In
+   748 |   const topLevel = [...new Set(list.map((f) => {
+   765 |   let molecules = extractDockedMolecules(toml);
+   766 |   let moleculeSource = 'raw_input.toml';
+   842 |   let pdbFiles = list.filter((f) => /(^|\/)(8_)?seletopclusts?\/[^/]+\.(pdb|pdb\.gz)$/i.test(lower(f.webkitRelativePath || f.name)))
+   844 |   const structs = [];
+   846 |   const rel = f.webkitRelativePath || f.name;
+   847 |   const isGz = lower(rel).endsWith('.gz');
+   848 |   let pdbText = '';
+   857 |   const base = String(f.name || rel.split('/').pop() || 'structure').replace(/\.gz$/i, '');
+   860 |   const driveUrl = await archive(
+   872 |   const stored = await storeJson(`labDockingStructures_${test.id || 'global'}`, structs);
+   887 |   const molecules = await loadJson(`labDockingMolecules_${test.id || 'global'}`).catch(() => null);
+   888 |   const pointer = await archiveDockingData({
+   905 |   return (
+  1029 |   export const DockingDataSection = ({ ctx }) => {
+  1030 |   const { activeTest, updateActiveTest } = ctx;
+  1031 |   const d = useDockingDerived(activeTest, ctx);
+  1032 |   const [showImport, setShowImport] = useState(false);
+  1034 |   const handlePoses = (poses, program) => {
+  1048 |   const dockingStructKey = `labDockingStructures_${activeTest.id || 'global'}`;
+  1049 |   const dockingMolKey = `labDockingMolecules_${activeTest.id || 'global'}`;
+  1050 |   const dockingActiveIdRef = useRef(activeTest.id || '');
+  1053 |   const pending = takePendingRestorePointer({ field: 'dockingDrive', key: activeTest.id || 'global' });
+  1059 |   const dockingHasMeta = (
+  1064 |   const dockingDefaultStems = () => restoreStems(activeTest.instanceName, activeTest.name);
+  1066 |   const dockingDriveMissing = async () => {
+  1068 |   const structs = await loadJson(dockingStructKey).catch(() => null);
+  1069 |   const mols = await loadJson(dockingMolKey).catch(() => null);
+  1070 |   const hasStructs = Array.isArray(structs) && structs.length > 0;
+  1071 |   const hasMols = Array.isArray(mols) && mols.length > 0;
+  1072 |   return !hasStructs && !hasMols;
+  1075 |   const restoreDockingFromDrive = async () => {
+  1076 |   const pointer = activeTest.dockingDrive || null;
+  1077 |   const stems = (pointer && Array.isArray(pointer.stems) && pointer.stems.length
+  1080 |   const found = await restoreJsonFor({
+  1085 |   return {
+  1090 |   const data = (found.data && typeof found.data === 'object') ? found.data : {};
+  1091 |   const structs = Array.isArray(data.structures) ? data.structures : [];
+  1092 |   const mols = Array.isArray(data.molecules) ? data.molecules : [];
+  1094 |   return { ok: false, message: `ΓÜá∩╕Å The copy found on Google Drive (${found.name}) holds no structures ΓÇö re-import the calculation di
+  1109 |   return { ok: true, message: `Γ£à Docking structures restored from Google Drive (${found.name}).` };
+  1112 |   const dockingRestore = useDriveAutoRestore({
+  1119 |   const bestPose = d.poses.length ? d.poses.reduce((a, b) => (a.affinity < b.affinity ? a : b)) : null;
+  1121 |   const metricCols = DOCKING_METRICS.filter((m) =>
+  1127 |   const capriMetricMapKeys = new Set(['score', 'lrmsd', 'ilrmsd', 'total', 'air', 'desolv', 'elec', 'vdw', 'bsa']);
+  1128 |   const capriExtraCols = (activeTest.dockingCapri && activeTest.dockingCapri.columns || []).filter(
+  1132 |   return (
+  1283 | ┬º // ================= 3) ANALYSIS (Docking charts) =================
+  1284 |   export const DockingAnalysisSection = ({ ctx }) => {
+  1285 |   const { activeTest, updateActiveTest } = ctx;
+  1286 |   const d = useDockingDerived(activeTest, ctx);
+  1287 |   const cfg = { ...DEFAULT_DOCKING_CHART_STYLE, ...(activeTest.dockingAnalysisCfg || {}) };
+  1288 |   const setCfg = (patch) => updateActiveTest({ dockingAnalysisCfg: { ...cfg, ...patch } });
+  1289 |   const [showCfg, setShowCfg] = useState(false);
+  1290 |   const scatterRef = useRef(null);
+  1292 |   const isHADDOCK = d.dockingProgram === 'haddock';
+  1293 |   const unit = d.programInfo.energyUnit;
+  1295 |   const affinityData = d.poses.map((p, i) => ({
+  1300 |   const rmsdData = d.poses
+  1308 |   const energyBreakdownData = d.poses.slice(0, 10).map((p, i) => ({
+  1316 |   const dockSeries = [
+  1325 |   const brkAff = brokenAxisProps(cfg, 'y', affinityData.map((p) => p.affinity), { min: cfg.yMin, max: cfg.yMax });
+  1327 |   return (
+  1427 | ┬º // ================= 4) DOCKING PARAMETERS =================
+  1428 |   export const DockingParametersSection = ({ ctx }) => {
+  1429 |   const { activeTest, updateActiveTest } = ctx;
+  1430 |   const d = useDockingDerived(activeTest, ctx);
+  1431 |   const isVina = d.dockingProgram === 'vina';
+  1432 |   const isAD4 = ['autodock4', 'autodock_gpu'].includes(d.dockingProgram);
+  1433 |   const isHADDOCK = d.dockingProgram === 'haddock';
+  1435 |   const Num = ({ label, value, onChange, unit }) => (
+  1449 |   return (
+  1497 | ┬º // ================= NOTEBOOK EXTRA =================
+  1498 |   export const NotebookExtra = ({ ctx, checkId }) => {
+  1499 |   const { activeTest } = ctx;
+  1500 |   const d = useDockingDerived(activeTest, ctx);
+  1503 |   const molNames = (activeTest.dockingMolecules || [])
+  1506 |   return `
+  1511 |   return `
+  1516 |   return `${elementsToSVG(d.structure, 300)}`;
+  1519 |   let html = `<table style="width:100%;border-collapse:collapse;margin-top:10px;font-size:11px;text-align:left;background:white;">
+  1529 |   return html;
+  1531 |   return '';
+  1534 | ┬º // ================= NOTEBOOK HTML BUILDER =================
+  1535 |   export const buildNotebookHtml = (ctx, checked) => {
+  1536 |   let html = '';
+  1542 |   return html;
+  1545 | ┬º // ================= ALL (section aliases) =================
+  1546 |   export const Setup = DockingExperimentSetupSection;
+  1547 |   export const Data = DockingDataSection;
+  1548 |   export const Analysis = DockingAnalysisSection;
+  1549 |   export const Parameters = DockingParametersSection;
+TOTAL LINES 1550
+
+########## src/components/NMRMoleculeViewer.jsx ##########
+    16 |   let showAssignedFlag = true;
+    17 |   const assignedListeners = new Set();
+    19 |   export const getShowAssignedFlag = () => showAssignedFlag;
+    21 |   export const setShowAssignedFlag = (v) => {
+    26 |   export const useShowAssignedFlag = () => {
+    27 |   const [v, setV] = useState(getShowAssignedFlag());
+    30 |   return () => { assignedListeners.delete(setV); };
+    32 |   return v;
+    39 |   const TARGET_TRAJ_FRAMES = 30; // default representative frame count
+    40 |   const TARGET_TRAJ_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB effective-load cap
+    42 |   const fmtBytesMB = (b) => `${(b / (1024 * 1024)).toFixed(1)} MB`;
+    43 |   const fmtBytesGB = (b) => `${(b / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+    46 |   const estimateTrajectoryFrames = (file, atomCount) => {
+    47 |   const name = (file.name || '').toLowerCase();
+    48 |   const n = atomCount > 0 ? atomCount : 300; // fallback atom count
+    49 |   let bytesPerFrame;
+    53 |   return {
+    65 |   const LARGE_STRUCT_BYTES = 1.5 * 1024 * 1024; // ~1.5 MB of structure text
+    66 |   const LARGE_ATOM_COUNT = 25000; // lighter rendering above this
+    68 |   const AA3_TO_1 = {
+    79 |   const extractStructureSequence = (component) => {
+    83 |   const arr = component.structure.getSequence();
+    93 |   let seq = '';
+    96 |   const name = String((r && (r.resname || r.restype)) || '').toUpperCase();
+    97 |   const code = AA3_TO_1[name] || (name.length === 1 && /[ACGTU]/.test(name) ? name : '');
+   101 |   return seq;
+   110 |   const collectResidueTicks = (component) => {
+   112 |   const out = [];
+   113 |   const atomsByRes = new Map(); // `${chainid}|${resno}` -> Set(PDB atom names)
+   116 |   const key = `${String(a.chainid || a.chain || '')}|${a.resno}`;
+   118 |   const nm = String(a.atomname || '').trim();
+   122 |   const name = String((r && (r.resname || r.restype)) || '').toUpperCase();
+   123 |   const code = AA3_TO_1[name] || (name.length === 1 && /[ACGTU]/.test(name) ? name : '');
+   124 |   const chainid = r && (r.chainid || r.chain) ? String(r.chainid || r.chain) : '';
+   138 |   return out;
+   160 |   const LABEL_WATER_NAMES = new Set([
+   164 |   const LABEL_ION_ELEMENTS = new Set([
+   168 |   const LABEL_NUCLEIC_NAMES = new Set(['DA', 'DC', 'DG', 'DT', 'DU', 'A', 'C', 'G', 'T', 'U']);
+   170 |   const properElementSymbol = (el) => {
+   171 |   const e = String(el || '').trim();
+   173 |   return e.length === 1 ? e.toUpperCase() : `${e[0].toUpperCase()}${e.slice(1).toLowerCase()}`;
+   178 |   const classifyLabelResidue = (resname, atoms) => {
+   179 |   const name = String(resname || '').toUpperCase();
+   183 |   const nonH = atoms.filter((a) => a.el !== 'H');
+   185 |   return 'ligand';
+   188 |   const residueLabelCode = (resname) => {
+   189 |   const name = String(resname || '').toUpperCase();
+   191 |   return name.length === 1 ? name : (AA3_TO_1[name] || name.slice(0, 1));
+   193 |   return AA3_TO_1[name] || '';
+   202 |   const build3dLabelMap = (component, { showResidueNumber, showAtomLabel, showResidueNumberType = false, atomNameOf = null }) => {
+   203 |   const labelText = {};
+   204 |   const structure = component && component.structure;
+   206 |   const residueMap = new Map(); // `${chain}|${resno}|${resname}` ΓåÆ { atoms, byName, ΓÇª }
+   210 |   const chain = String(a.chainid || a.chain || '');
+   211 |   const resname = String(a.resname || a.restype || '').toUpperCase();
+   212 |   const resno = a.resno != null ? a.resno : 0;
+   213 |   const key = `${chain}|${resno}|${resname}`;
+   214 |   let entry = residueMap.get(key);
+   219 |   const atomName = String(a.atomname || a.name || '').trim();
+   220 |   const el = String(a.element || '').toUpperCase();
+   221 |   let disp = atomName;
+   225 |   const atom = {
+   241 |   const put = (atom, text) => {
+   242 |   const t = String(text || '').trim();
+   248 |   const cat = classifyLabelResidue(entry.resname, entry.atoms);
+   249 |   const code = residueLabelCode(entry.resname);
+   250 |   const resTag = `${entry.resname}${entry.resno}`;
+   251 |   const resnoStr = String(entry.resno);
+   255 |   const anchorNames = cat === 'protein'
+   274 |   const heavy = entry.atoms.filter((a) => a.heavy);
+   275 |   const labelAtoms = entry.atoms.length ? entry.atoms : heavy;
+   299 |   const heavy = entry.atoms.filter((a) => a.heavy);
+   300 |   const anchor = heavy[0] || entry.atoms[0];
+   311 |   const indices = Object.keys(labelText).map(Number).sort((a, b) => a - b);
+   312 |   return { labelText, indices };
+   318 |   const SELECT_COLOR_HEX = 0xf59e0b;
+   319 |   const MANUAL_COLOR_HEX = 0x16a34a;
+   326 |   const sstrucColorStore = { helix: 0xb44a90, sheet: 0xf8d878, loop: 0xe6e6e6 };
+   327 |   let sstrucSchemeKey = null; // NGL scheme name returned by ColormakerRegistry.addScheme
+   328 |   const registerSstrucScheme = (NGL) => {
+   341 |   const numToHex = (v) => `#${(Number(v) || 0).toString(16).padStart(6, '0')}`;
+   344 |   const PDB_TO_NMR = {
+   395 |   const GREEK_MAP = {
+   405 |   const REVERSE_GREEK = {
+   415 | ┬º // ============================================================================
+   417 | ┬º // ============================================================================
+   418 |   const PYMOL_COLORS = {
+   428 |   const parseColorInt = (c) => {
+   429 |   const s = String(c || '').trim();
+   432 |   const m = s.match(/\[([^\]]+)\]/);
+   434 |   const parts = m[1].split(/[\s,]+/).map(Number).filter((n) => !isNaN(n));
+   437 |   return null;
+   440 |   const base = String(s).split('_')[0].toLowerCase();
+   441 |   return PYMOL_COLORS[base] ? parseInt(PYMOL_COLORS[base].slice(1), 16) : null;
+   445 |   const translateSelection = (expr) => {
+   446 |   const s = String(expr || '')
+   454 |   return s || 'all';
+   457 |   const normalizeStructureSource = (raw) => {
+   458 |   const value = (raw || '').trim();
+   464 |   const path = value.split(/[?#]/)[0];
+   465 |   const ext = path.includes('.') ? path.split('.').pop().toLowerCase() : '';
+   472 |   const guessed = /bcif/i.test(value) ? 'bcif' : /cif/i.test(value) ? 'cif' : 'pdb';
+   473 |   return { url: value, params: { ext: guessed } };
+   477 |   const id = value.toUpperCase();
+   478 |   return { url: `https://files.rcsb.org/download/${id}.cif`, params: { ext: 'cif' } };
+   480 |   return { url: value };
+   483 |   const getCarbonName = (molType, char, atom) => {
+   489 |   return null;
+   492 |   return atom.replace('H', 'C').replace(/[a-z]+$/, '');
+   498 |   const cName = atom.replace('H', 'C').replace(/\d+$/, '');
+   502 |   return atom.replace('H', 'C');
+   504 |   return cName;
+   506 |   return atom.replace('H', 'C');
+   509 |   const buildKeys = (ri, tokens, molType, char) => {
+   510 |   const set = new Set();
+   512 |   const variants = new Set([tok]);
+   515 |   const stripped = tok.replace(/\d+$/, '');
+   521 |   const c = getCarbonName(molType, char, v);
+   526 |   return [...set];
+   529 |   const NUCLEIC_NMR_ALIASES = { "HO2'": "OH2'", H71: 'H7(CH3)', H72: 'H7(CH3)', H73: 'H7(CH3)' };
+   531 |   const mapPdbAtomToNmrKeys = (atomname, resno, parsedSeq, moleculeType, namingConvention = 'nmr') => {
+   532 |   const ri = resno - 1;
+   534 |   const res = parsedSeq[ri];
+   536 |   const upper = (atomname || '').trim().toUpperCase();
+   537 |   let nmrAtom;
+   552 |   const match = upper.match(/^([CNO])([ABGDEZH])(\d*)$/);
+   557 |   const tokens = [nmrAtom];
+   559 |   const keys = buildKeys(ri, tokens, moleculeType, res.char);
+   560 |   return { ri, keys, label: `${res.id || res.char}${resno} ${nmrAtom}`, nmrAtom };
+   563 |   const mapAtomToNmrKeys = (atom, parsedSeq, moleculeType, namingConvention) => {
+   565 |   const nmrAtom = getOrganicAtomName(atom);
+   566 |   const keys = buildKeys(0, [nmrAtom], 'organic', 'O');
+   567 |   return { ri: 0, keys, label: `Org ${nmrAtom}`, nmrAtom };
+   569 |   return mapPdbAtomToNmrKeys(atom.atomname, atom.resno, parsedSeq, moleculeType, namingConvention);
+   572 | ┬º // ================= RDKit Helper Functions =================
+   573 |   const computeMorganRanks = (elements, bonds) => {
+   574 |   const n = elements.length;
+   575 |   const isHeavy = elements.map((e) => e !== 'H');
+   576 |   const heavyIdx = [];
+   578 |   const m = heavyIdx.length;
+   579 |   const posOf = {};
+   581 |   const adj = Array.from({ length: m }, () => []);
+   582 |   const hCount = new Array(m).fill(0);
+   584 |   const ah = isHeavy[a], bh = isHeavy[b];
+   589 |   let sig = heavyIdx.map((gi, k) => `${elements[gi]}_${hCount[k]}`);
+   591 |   const next = sig.map((s, i) => {
+   592 |   const neighbors = adj[i].map((j) => sig[j]).sort().join(',');
+   593 |   const str = s + '|' + neighbors;
+   594 |   let hash = 0;
+   599 |   return Math.abs(hash).toString(36) + '_' + elements[heavyIdx[i]];
+   601 |   const converged = next.join(';') === sig.join(';');
+   605 |   const order = Array.from({ length: m }, (_, k) => k).sort((x, y) =>
+   608 |   const ranks = new Array(n).fill(-1);
+   610 |   return ranks;
+   614 |   const _organicNamingCache = new WeakMap();
+   615 |   const getOrganicNaming = (structure) => {
+   617 |   const elements = [];
+   618 |   const bondPairs = [];
+   623 |   const n = elements.length;
+   624 |   const ranks = computeMorganRanks(elements, bondPairs);
+   625 |   const parent = new Array(n).fill(-1);
+   631 |   const names = new Array(n);
+   636 |   const pr = parent[i] >= 0 ? ranks[parent[i]] : null;
+   643 |   return names;
+   646 |   const getOrganicAtomName = (atom) => {
+   647 |   const names = getOrganicNaming(atom.structure);
+   648 |   return names[atom.index] || `X${atom.index}`;
+   653 | ┬º // ================= TRAJECTORY HELPERS =================
+   654 |   const getTrajectoryObject = (component) => {
+   657 |   const tComp = component.trajList[component.trajList.length - 1];
+   658 |   return tComp.trajectory || tComp;
+   661 |   return component.trajectories[component.trajectories.length - 1];
+   663 |   return null;
+   666 |   const getNumFrames = (traj) => {
+   668 |   return (
+   676 |   const setFrameSafe = (traj, frame) => {
+   698 |   const splitPdbFileIntoMolecules = async (file) => {
+   700 |   let text = '';
+   702 |   const lines = String(text || '').split(/\r?\n/);
+   704 |   const atoms = []; // { line, chain, resname, model, x, y, z }
+   705 |   const conectBonds = []; // [i, j] pairs into `atoms`
+   706 |   const conectIndex = new Map(); // serial -> first atom index (bonds are
+   709 |   let model = 0; // 0-based index of the MODEL block owning the current atoms
+   710 |   let blocksSeen = 0; // number of MODEL records seen so far
+   712 |   const rec = line.slice(0, 6).trim();
+   719 |   const serial = parseInt(line.slice(6, 11), 10);
+   720 |   const idx = atoms.length;
+   721 |   const x = parseFloat(line.slice(30, 38));
+   722 |   const y = parseFloat(line.slice(38, 46));
+   723 |   const z = parseFloat(line.slice(46, 54));
+   734 |   const serial = parseInt(line.slice(6, 11), 10);
+   735 |   const a = conectIndex.get(serial);
+   746 |   const modelCount = blocksSeen > 0 ? blocksSeen : 1; // 1 = no MODEL records (single model)
+   748 |   const parent = atoms.map((_, i) => i);
+   749 |   const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+   750 |   const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
+   757 |   const BOND_DIST = 2.0;
+   758 |   const grid = new Map();
+   759 |   const cellKey = (cx, cy, cz) => `${cx}|${cy}|${cz}`;
+   761 |   const key = cellKey(Math.floor(a.x / BOND_DIST), Math.floor(a.y / BOND_DIST), Math.floor(a.z / BOND_DIST));
+   766 |   const a = atoms[i];
+   767 |   const cx = Math.floor(a.x / BOND_DIST), cy = Math.floor(a.y / BOND_DIST), cz = Math.floor(a.z / BOND_DIST);
+   786 |   const groups = new Map();
+   788 |   const r = find(i);
+   796 |   const parts = [];
+   799 |   const byChain = new Map();
+   801 |   const c = atoms[i].chain || '_';
+   807 |   const pureWater = cidxs.every((i) => atoms[i].resname === 'HOH' || atoms[i].resname === 'WAT');
+   817 |   return parts;
+   823 |   const NMR_TO_PDB_NAMES = (() => {
+   824 |   const m = new Map();
+   829 |   return m;
+   836 |   const buildNglSele = (keys, structure, moleculeType, namingConvention) => {
+   838 |   const parts = [];
+   839 |   let organicNameToIndex = null;
+   840 |   const getOrganicNameToIndexMap = () => {
+   844 |   return organicNameToIndex;
+   848 |   const dashIdx = String(k).indexOf('-');
+   850 |   const ri = parseInt(String(k).substring(0, dashIdx), 10);
+   852 |   const atomName = String(k).substring(dashIdx + 1).trim();
+   853 |   const resno = ri + 1;
+   856 |   const map = getOrganicNameToIndexMap();
+   858 |   return;
+   863 |   const seleParts = [`${resno} and .${atomName}`];
+   869 |   return;
+   873 |   const names = [atomName];
+   877 |   return;
+   880 |   const pdbNames = (NMR_TO_PDB_NAMES.get(atomName) || []).slice();
+   887 |   const match = atomName.match(/^([CNO])([╬▒╬▓╬│╬┤╬╡╬╢╬╖])(\d*)$/);
+   891 |   const base = `H${REVERSE_GREEK[atomName[1]]}`;
+   898 |   return parts.length > 0 ? parts.join(' or ') : null;
+   901 | ┬º // ============================================================================
+   903 | ┬º // ============================================================================
+   904 |   const NMRMoleculeViewer = ({
+   938 |   const [viewH, setViewH] = useState(() => {
+   939 |   const m = /^(\d+)/.exec(String(height || '520px'));
+   940 |   return m ? Math.max(240, parseInt(m[1], 10)) : 520;
+   942 |   const resizeRef = useRef(null); // { startY, startH } while dragging
+   948 |   const [viewerCollapsed, setViewerCollapsed] = useState(false);
+   949 |   const [captureMsg, setCaptureMsg] = useState('');
+   951 |   const move = (ev) => {
+   953 |   const dh = ev.clientY - resizeRef.current.startY;
+   956 |   const up = () => { resizeRef.current = null; };
+   959 |   return () => {
+   983 |   const containerRef = useRef(null);
+   984 |   const stageRef = useRef(null);
+   985 |   const stageReadyRef = useRef(null);
+   986 |   const componentRef = useRef(null);
+   987 |   const highlightCompRef = useRef(null);
+   988 |   const manualHighlightCompRef = useRef(null);
+   989 |   const stripHighlightCompRef = useRef(null); // whole-residue amber highlight from a tick click
+   990 |   const stripResidueRiRef = useRef(null); // residue index (ri) selected via the strip
+   991 |   const manualSigRef = useRef(''); // signature of the last green "assigned atoms" highlight
+   992 |   const manualSigCompRef = useRef(null); // the component that signature was built for (structure reload)
+   993 |   const labelCompRef = useRef(null);
+   994 |   const sidechainCompRef = useRef(null);
+   995 |   const abortRef = useRef(null); // { token, label, cancel } of the active long-running operation (structure / trajectory load)
+   997 |   const [file, setFile] = useState(null);
+   998 |   const [pdbId, setPdbId] = useState('');
+   999 |   const [pendingFileBatch, setPendingFileBatch] = useState(null); // File[] waiting for the "replace or keep both?" choice
+  1000 |   const [pendingSrc, setPendingSrc] = useState(null); // a PDB code / URL waiting for the "replace or keep both?" choice
+  1001 |   const lastAskedSrcRef = useRef(null); // last PDB code/URL we asked about, so the same value is never asked twice
+  1002 |   const [dragMove, setDragMove] = useState(false); // move the selected structure with the mouse instead of typing X/Y/Z
+  1003 |   const dragMoveRef = useRef(null); // { comp, pos, last } ΓÇö active mouse drag-to-move session
+  1004 |   const [loadRequest, setLoadRequest] = useState(null);
+  1005 |   const [status, setStatus] = useState('idle');
+  1006 |   const statusRef = useRef(status); // mirror for event handlers (file-change dialog)
+  1008 |   const [errorMsg, setErrorMsg] = useState('');
+  1009 |   const showManualHighlight = useShowAssignedFlag(); // green "assigned" atoms toggle (shared with the simulated spectra)
+  1010 |   const [hoverInfo, setHoverInfo] = useState(null);
+  1013 |   const [showResidueNumber, setShowResidueNumber] = useState(false);
+  1014 |   const [showAtomLabel, setShowAtomLabel] = useState(false);
+  1018 |   const [showResidueNumberType, setShowResidueNumberType] = useState(false);
+  1027 |   const [measureMode, setMeasureMode] = useState(false);
+  1028 |   const [measurePending, setMeasurePending] = useState(null); // label of the 1st picked atom, awaiting the 2nd
+  1029 |   const [measureInfo, setMeasureInfo] = useState(''); // instruction / last-action status line
+  1030 |   const measureModeRef = useRef(false);
+  1032 |   const measurePendingRef = useRef(null); // { comp, atomIndex, label } of the 1st picked atom
+  1033 |   const measureRepsRef = useRef([]); // [{ comp, elem }] NGL 'distance' representations that were drawn
+  1034 |   const [rebuildMsg, setRebuildMsg] = useState('');
+  1035 |   const rebuildMsgTimerRef = useRef(null);
+  1036 |   const flashRebuildMsg = (m) => {
+  1047 |   const [smilesNameMap, setSmilesNameMap] = useState(null);
+  1048 |   const smilesNameMapRef = useRef(null);
+  1050 |   const [sidechainStyle, setSidechainStyle] = useState('licorice');
+  1051 |   const [backboneStyle, setBackboneStyle] = useState('cartoon');
+  1054 |   const [moleculeStyle, setMoleculeStyle] = useState('ball+stick');
+  1063 |   const [extraMols, setExtraMols] = useState([]); // [{ id, name, style, color }]
+  1064 |   const [visibleMolKeys, setVisibleMolKeys] = useState(() => new Set(['main'])); // multi-select: which structures are shown
+  1065 |   const [selectedMolKey, setSelectedMolKey] = useState('main'); // active entry in the Molecules bar (click ΓåÆ select + centre)
+  1069 |   const [mainMol, setMainMol] = useState({ style: 'auto', color: '', colorMode: 'element', transparency: 0 });
+  1070 |   const mainMolRef = useRef(mainMol);
+  1072 |   const [mainPos, setMainPos] = useState([0, 0, 0]); // main structure translation (├à), settable via Move X/Y/Z or Γ£ï Drag
+  1077 |   const [dockStyleMode, setDockStyleMode] = useState(false);
+  1078 |   const dockStyleRef = useRef(dockStyleMode);
+  1080 |   const dockRoleStylesRef = useRef({ protein: 'ribbon', ligand: 'ball+stick' }); // captured at toggle-ON
+  1081 |   const [residueTicks, setResidueTicks] = useState([]); // [{ resno, resname, code, chainid }] ΓÇö sequence strip above the 3D view
+  1082 |   const extraCompsRef = useRef([]); // [{ id, name, comp, baseReps, style, color }]
+  1088 |   const espRepsRef = useRef({}); // molKey ΓåÆ the live ESP surface representation
+  1089 |   const [espMolKeys, setEspMolKeys] = useState(() => new Set()); // molecules currently showing an ESP overlay
+  1095 |   const [espLimits, setEspLimits] = useState(() => {
+  1097 |   const raw = JSON.parse(localStorage.getItem('labViewerEspLimits') || 'null');
+  1099 |   return [Math.min(500, Math.max(0.5, raw[0])), Math.min(500, Math.max(0.5, raw[1]))];
+  1102 |   return [15, 15];
+  1104 |   const espLimitsRef = useRef(espLimits);
+  1113 |   const pendingExtraFilesRef = useRef([]); // [{ file, n }]
+  1118 |   const clearExtraMolecules = useCallback(() => {
+  1130 |   const [renames, setRenames] = useState(() => (atomRenames && typeof atomRenames === 'object' ? { ...atomRenames } : {}));
+  1131 |   const renamesRef = useRef(renames);
+  1137 |   const [renumberMap, setRenumberMap] = useState(() => (resRenumber && typeof resRenumber === 'object' ? { ...resRenumber } : {}));
+  1138 |   const [showRenumberPanel, setShowRenumberPanel] = useState(false);
+  1139 |   const [residueInfo, setResidueInfo] = useState([]); // [{ resno, resname, count }]
+  1140 |   const [renumberFrom, setRenumberFrom] = useState(1); // starting number for "Renumber from"
+  1141 |   const displayResno = (resno) => {
+  1142 |   const v = renumberMap[String(resno)];
+  1143 |   return v != null ? v : resno;
+  1145 |   const commitRenumber = (next) => {
+  1152 |   const applyRenumberFrom = () => {
+  1153 |   const start = parseInt(renumberFrom, 10);
+  1155 |   const next = {};
+  1164 |   const next = { ...resRenumber };
+  1165 |   return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
+  1174 |   const [lightRender, setLightRender] = useState(false); // true ΓåÆ lightweight reps for big systems
+  1175 |   const [lightInfo, setLightInfo] = useState(null); // { nAtoms, size } ΓåÆ small info line
+  1176 |   const lightRenderRef = useRef(false); // synchronous mirror for addDefaultReps / sidechain effect
+  1180 |   const [showLargeWater, setShowLargeWater] = useState(false);
+  1181 |   const showLargeWaterRef = useRef(false);
+  1185 |   const [hasNonProtein, setHasNonProtein] = useState(false);
+  1189 |   const [largeStyle, setLargeStyle] = useState('spheres');
+  1190 |   const largeStyleRef = useRef('spheres');
+  1196 |   const component = componentRef.current;
+  1204 |   const useFullDetail = () => {
+  1209 |   const [renameMode, setRenameMode] = useState(false);
+  1210 |   const [renameTarget, setRenameTarget] = useState(null); // atom index being renamed
+  1211 |   const [renameDraft, setRenameDraft] = useState('');
+  1212 |   const [atomList, setAtomList] = useState([]); // [{ idx, element, name, resno, resname }]
+  1213 |   const [atomSearch, setAtomSearch] = useState('');
+  1214 |   const [showAtomPanel, setShowAtomPanel] = useState(false);
+  1219 |   const [showColoursPanel, setShowColoursPanel] = useState(false);
+  1220 |   const [sstrucColors, setSstrucColors] = useState(() => {
+  1222 |   const raw = JSON.parse(localStorage.getItem('labViewerSstrucColors') || 'null');
+  1224 |   return {
+  1231 |   return { helix: 0xb44a90, sheet: 0xf8d878, loop: 0xe6e6e6 };
+  1233 |   const [selectedResidueColor, setSelectedResidueColor] = useState(() => {
+  1235 |   return SELECT_COLOR_HEX;
+  1237 |   const [assignedAtomColor, setAssignedAtomColor] = useState(() => {
+  1239 |   return MANUAL_COLOR_HEX;
+  1241 |   const selectedResidueColorRef = useRef(selectedResidueColor);
+  1243 |   const assignedAtomColorRef = useRef(assignedAtomColor);
+  1247 |   const [selections, setSelections] = useState([]); // [{ name, expr }]
+  1248 |   const [selStyles, setSelStyles] = useState({}); // key -> { cartoon, ribbon, tube, stick, sphere, surface, color, colorMode, trans
+  1249 |   const [pymolActive, setPymolActive] = useState(false);
+  1250 |   const [pymolScript, setPymolScript] = useState('');
+  1251 |   const [pymolLog, setPymolLog] = useState('');
+  1252 |   const [showPymolPanel, setShowPymolPanel] = useState(false);
+  1253 |   const [autoShowSel, setAutoShowSel] = useState(true); // auto-visibility of parsed selections
+  1254 |   const [hideAll, setHideAll] = useState(false); // remove every representation
+  1255 |   const [bgColor, setBgColor] = useState('#f8fafc');
+  1256 |   const [qualityHigh, setQualityHigh] = useState(false);
+  1263 |   const [fogEnabled, setFogEnabled] = useState(() => {
+  1266 |   const fogEnabledRef = useRef(fogEnabled);
+  1280 |   const applyFog = useCallback(() => {
+  1281 |   const stage = stageRef.current;
+  1302 |   const [shadowOn, setShadowOn] = useState(() => {
+  1305 |   const [shadowDarkness, setShadowDarkness] = useState(() => {
+  1307 |   const v = localStorage.getItem('labViewerShadows') || '';
+  1308 |   const m = /on:(\d+)/.exec(v);
+  1309 |   return m ? Math.min(1, Math.max(0, parseInt(m[1], 10) / 100)) : 0.5;
+  1316 |   const [shadowAz, setShadowAz] = useState(() => {
+  1318 |   const v = parseFloat(localStorage.getItem('labViewerShadowAz') || '25');
+  1319 |   return Number.isFinite(v) ? Math.min(360, Math.max(0, Math.round(v))) : 25;
+  1322 |   const [shadowEl, setShadowEl] = useState(() => {
+  1324 |   const v = parseFloat(localStorage.getItem('labViewerShadowEl') || '28');
+  1325 |   return Number.isFinite(v) ? Math.min(90, Math.max(-90, Math.round(v))) : 28;
+  1328 |   const shadowOnRef = useRef(shadowOn);
+  1329 |   const shadowDarknessRef = useRef(shadowDarkness);
+  1330 |   const shadowDirRef = useRef({ az: shadowAz, el: shadowEl });
+  1344 |   const installShadowLightRig = useCallback(() => {
+  1345 |   const stage = stageRef.current;
+  1346 |   const viewer = stage && stage.viewer;
+  1349 |   const origUpdateLights = viewer.__updateLights ? viewer.__updateLights.bind(viewer) : null;
+  1354 |   const light = this.directionalLight;
+  1361 |   const d0 = shadowDirRef.current || {};
+  1362 |   const azRad = (((Number(d0.az) || 0) * Math.PI) / 180);
+  1363 |   const elRad = (((Number(d0.el) || 0) * Math.PI) / 180);
+  1364 |   const ce = Math.cos(elRad);
+  1365 |   const ux = ce * Math.sin(azRad);
+  1366 |   const uy = Math.sin(elRad);
+  1367 |   const uz = -ce * Math.cos(azRad);
+  1368 |   const inv = 1 / Math.sqrt(ux * ux + uy * uy + uz * uz + 1e-12);
+  1371 |   const d = Math.max(1, this.boundingBoxLength || 1) * 100;
+  1377 |   const setMeshShadows = () => { /* no-op ΓÇö the light rig in installShadowLightRig replaces real shadow maps */ };
+  1378 |   const shadowRepsHook = () => { /* no-op ΓÇö the light rig in installShadowLightRig replaces real shadow maps */ };
+  1380 |   const applyShadowSettings = useCallback(() => {
+  1381 |   const stage = stageRef.current;
+  1384 |   const on = shadowOnRef.current;
+  1385 |   const dark = Math.min(1, Math.max(0, shadowDarknessRef.current));
+  1431 |   const v = stageRef.current && stageRef.current.viewer;
+  1446 |   const persistRenames = (next) => {
+  1450 |   const displayAtomName = (atom) => {
+  1452 |   const idx = typeof atom.index === 'number' ? atom.index : -1;
+  1453 |   const over = renamesRef.current[idx];
+  1460 |   const synced = smilesNameMapRef.current && smilesNameMapRef.current[idx];
+  1468 |   return atom.atomname || atom.name || '';
+  1472 |   const [trajFile, setTrajFile] = useState(null);
+  1473 |   const [trajAborted, setTrajAborted] = useState(false); // true while the user aborted the trajectory (blocks auto-reload from prop
+  1474 |   const [trajStatus, setTrajStatus] = useState('none');
+  1475 |   const [trajError, setTrajError] = useState('');
+  1476 |   const [numFrames, setNumFrames] = useState(0);
+  1477 |   const [trajTotal, setTrajTotal] = useState(0); // total frames of the trajectory being loaded (for the live counter)
+  1478 |   const [currentFrame, setCurrentFrame] = useState(0);
+  1479 |   const [playing, setPlaying] = useState(false);
+  1480 |   const [speed, setSpeed] = useState(10);
+  1481 |   const [stride, setStride] = useState(1); // play every Nth frame (keeps total time)
+  1482 |   const [maxFrames, setMaxFrames] = useState(0); // 0 = keep all frames
+  1483 |   const [pendingTraj, setPendingTraj] = useState(null); // { file, estFrames, suggested, over2G } awaiting user confirmation
+  1484 |   const [trajFrameCount, setTrajFrameCount] = useState(TARGET_TRAJ_FRAMES);
+  1485 |   const trajRef = useRef(null);
+  1486 |   const lastChosenTrajRef = useRef(null); // guards the async XTC exact-count scan
+  1487 |   const blobUrlsRef = useRef([]);
+  1493 |   const effStride = numFrames > 0 && maxFrames > 0
+  1496 |   const keptFrames = numFrames > 0 ? Math.max(1, Math.ceil(numFrames / effStride)) : 0;
+  1497 |   const toActualFrame = (keptIdx) => Math.min(numFrames - 1, keptIdx * effStride);
+  1499 |   const parsedSeqRef = useRef(parsedSeq);
+  1500 |   const moleculeTypeRef = useRef(moleculeType);
+  1501 |   const onAtomClickRef = useRef(onAtomClick);
+  1502 |   const selectedKeysRef = useRef(selectedKeys);
+  1503 |   const residueOffsetRef = useRef(residueOffset);
+  1504 |   const namingConventionRef = useRef(namingConvention);
+  1505 |   const anchorTickRef = useRef(null); // last strip tick clicked ΓÇö Shift+click selects the range [anchor ΓåÆ click]
+  1506 |   const [multiSelectActive, setMultiSelectActive] = useState(false);
+  1507 |   const renameModeRef = useRef(renameMode);
+  1509 |   const displayNameRef = useRef(displayAtomName);
+  1511 |   const backboneStyleRef = useRef(backboneStyle);
+  1513 |   const moleculeStyleRef = useRef(moleculeStyle);
+  1515 |   const prevBackboneRef = useRef(backboneStyle);
+  1516 |   const prevMoleculeRef = useRef(moleculeStyle);
+  1530 |   const atomPickName = (atom) => {
+  1533 |   const mapped = mapAtomToNmrKeys(atom, parsedSeqRef.current, moleculeTypeRef.current, namingConventionRef.current);
+  1536 |   return `${atom.resname || ''} ${atom.resno || ''} ${displayNameRef.current(atom)}`.trim();
+  1539 |   const addDistanceMeasurement = (comp, aIndex, bIndex, aLabel, bLabel) => {
+  1542 |   const elem = comp.addRepresentation('distance', {
+  1557 |   return true;
+  1560 |   return false;
+  1563 |   const clearMeasurements = () => {
+  1566 |   const reps = measureRepsRef.current;
+  1576 |   const toggleMeasureMode = () => {
+  1577 |   const next = !measureModeRef.current;
+  1590 |   let cancelled = false;
+  1592 |   const NGL = await Promise.race([
+  1598 |   const stage = new NGL.Stage(containerRef.current, { backgroundColor: '#f8fafc' });
+  1605 |   const atom = pickingProxy.atom;
+  1608 |   const comp = pickingProxy.component;
+  1610 |   const label = atomPickName(atom);
+  1611 |   const pending = measurePendingRef.current;
+  1616 |   return;
+  1620 |   return;
+  1626 |   return;
+  1631 |   return; // measuring replaces atom-click selection
+  1636 |   return;
+  1638 |   const mapped = mapAtomToNmrKeys(atom, parsedSeqRef.current, moleculeTypeRef.current, namingConventionRef.current);
+  1643 |   let lastHover = null;
+  1647 |   return;
+  1649 |   const atom = pickingProxy.atom;
+  1650 |   const mapped = mapAtomToNmrKeys(atom, parsedSeqRef.current, moleculeTypeRef.current, namingConventionRef.current);
+  1651 |   const label = mapped ? mapped.label : `${atom.resname || ''} ${atom.resno || ''} ${displayNameRef.current(atom)}`.trim();
+  1655 |   return stage;
+  1661 |   return null;
+  1664 |   return () => {
+  1676 |   const [manualOverride, setManualOverride] = useState(false);
+  1677 |   const lastLoadedTextRef = useRef(null);
+  1678 |   const loadedPdbTextRef = useRef(null); // raw PDB text of the currently loaded structure (rebuild-H source)
+  1679 |   const lastSeenSrcRef = useRef(undefined);
+  1680 |   const lastSeenTextRef = useRef(undefined);
+  1690 |   const lastSeenFileDataRef = useRef(undefined);
+  1709 |   const activeFile = loadRequest && loadRequest.file;
+  1716 |   const [meta, b64] = String(structureFileData).split(',');
+  1717 |   const mime = /data:([^;,]+)/.exec(meta)?.[1] || 'application/octet-stream';
+  1718 |   const bin = atob(b64);
+  1719 |   const bytes = new Uint8Array(bin.length);
+  1721 |   const blob = new Blob([bytes], { type: mime });
+  1722 |   const fakeFile = new File([blob], structureFileName || 'structure.pdb', { type: mime });
+  1734 |   const lastSeenStructFileRef = useRef(undefined);
+  1737 |   const token = `${structureFile.name || ''}|${structureFile.size || 0}|${structureFile.lastModified || 0}`;
+  1741 |   const activeFile = loadRequest && loadRequest.file;
+  1766 |   const hadText = !!lastLoadedTextRef.current;
+  1786 |   return;
+  1798 |   const s = String(src || '').trim();
+  1802 |   const isReal = /^(https?:|blob:|data:)/i.test(s) || /^rcsb:/i.test(s) || /^[0-9a-z]{4}$/i.test(s);
+  1811 |   return;
+  1827 |   const addDefaultReps = (component) => {
+  1830 |   const trackBase = (r) => { if (r) baseCompsRef.current.push(r); };
+  1840 |   const ls = largeStyleRef.current || 'spheres';
+  1841 |   const waterSele = showLargeWaterRef.current ? 'water' : null;
+  1852 |   return;
+  1854 |   const organicLike = ['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current);
+  1856 |   const ms = moleculeStyleRef.current || 'ball+stick';
+  1864 |   return;
+  1866 |   const isNucleic = moleculeTypeRef.current === 'dna' || moleculeTypeRef.current === 'rna';
+  1868 |   const ms = moleculeStyleRef.current || 'ball+stick';
+  1876 |   return;
+  1878 |   const bb = backboneStyleRef.current || 'cartoon';
+  1889 |   const ms = moleculeStyleRef.current || 'ball+stick';
+  1904 |   const applyCurrentStyleTo = useCallback((comp, baseReps) => {
+  1907 |   const next = [];
+  1908 |   let isProteinish = false;
+  1913 |   const bb = backboneStyleRef.current || 'cartoon';
+  1924 |   const ms = moleculeStyleRef.current || 'ball+stick';
+  1933 |   const ms = moleculeStyleRef.current || 'ball+stick';
+  1942 |   return next;
+  1947 |   const normStyle = (t) => {
+  1948 |   const s = String(t || '').toLowerCase();
+  1957 |   return '';
+  1960 |   const toNglType = (t) => (t === 'spheres' ? 'spacefill' : t === 'sticks' ? 'stick' : t === 'lines' ? 'line' : t);
+  1964 |   const nglSelection = (sele) => {
+  1968 |   return null;
+  1972 |   const atomSetSize = (set) => (set && typeof set.getSize === 'function' ? set.getSize() : 0);
+  1975 |   const classifySele = (comp, sele) => {
+  1977 |   const s = String(sele || '').trim().toLowerCase();
+  1985 |   const selObj = nglSelection(sele);
+  1987 |   const set = comp.structure.getAtomSet(selObj);
+  1989 |   const protSet = comp.structure.getAtomSet(nglSelection('protein'));
+  1990 |   const ligSet = comp.structure.getAtomSet(nglSelection('not protein and not water'));
+  1991 |   return {
+  2007 |   const captureDockRoleStyles = (comp) => {
+  2008 |   const fallback = { protein: 'ribbon', ligand: 'ball+stick' };
+  2010 |   let proteinStyle = null, ligandStyle = null;
+  2014 |   const excluded = new Set();
+  2042 |   let p = null, l = null;
+  2044 |   const st = mainMolRef.current || {};
+  2048 |   const entry = extraCompsRef.current.find((x) => x.comp === comp);
+  2056 |   return {
+  2065 |   const applyDockRoleStyle = (comp) => {
+  2067 |   const st = dockRoleStylesRef.current || {};
+  2068 |   const proteinType = normStyle(st.protein) || 'ribbon';
+  2069 |   const ligandType = normStyle(st.ligand) || 'ball+stick';
+  2070 |   const paramsFor = (t) => (t === 'ball+stick' ? { multipleBond: true, aspectRatio: 1.3 }
+  2074 |   const reps = [];
+  2079 |   return reps;
+  2089 |   const buildMainReps = () => {
+  2090 |   const comp = componentRef.current;
+  2098 |   return;
+  2100 |   const st = mainMolRef.current || {};
+  2103 |   return;
+  2105 |   const colorScheme = st.colorMode && st.colorMode !== 'solid'
+  2108 |   const color = colorScheme ? undefined : (st.color != null ? st.color : undefined);
+  2109 |   const opacity = st.transparency != null ? Math.max(0, Math.min(1, 1 - st.transparency)) : undefined;
+  2110 |   const add = (type, params = {}) => {
+  2112 |   const r = comp.addRepresentation(type, { sele: 'all', colorScheme, color, opacity, ...params });
+  2143 |   const espAddSurfaceRep = (comp) => {
+  2146 |   const prev = espLimitsRef.current || [15, 15];
+  2147 |   const neg = Math.min(500, Math.max(0.5, Number(prev[0]) || 15));
+  2148 |   const pos = Math.min(500, Math.max(0.5, Number(prev[1]) || 15));
+  2151 |   return comp.addRepresentation('surface', {
+  2166 |   const espApplyLimits = (nl, pl) => {
+  2167 |   const prev = espLimitsRef.current || [15, 15];
+  2168 |   const nv = Number.isFinite(nl) ? nl : Number(prev[0]);
+  2169 |   const pv = Number.isFinite(pl) ? pl : Number(prev[1]);
+  2170 |   const neg = Math.min(500, Math.max(0.5, Number.isFinite(nv) && nv > 0 ? nv : 15));
+  2171 |   const pos = Math.min(500, Math.max(0.5, Number.isFinite(pv) && pv > 0 ? pv : 15));
+  2174 |   const keys = Object.keys(espRepsRef.current);
+  2176 |   const rep = espRepsRef.current[key];
+  2186 |   const espApplyLimitsOnEnter = (e) => {
+  2193 |   const resolveMolComp = (key) => {
+  2195 |   const entry = extraCompsRef.current.find((e) => e.id === key);
+  2196 |   return entry ? entry.comp : null;
+  2199 |   const espEnable = (key) => {
+  2200 |   const comp = resolveMolComp(key);
+  2202 |   const rep = espAddSurfaceRep(comp);
+  2215 |   const espDisable = (key) => {
+  2216 |   const rep = espRepsRef.current[key];
+  2218 |   const comp = resolveMolComp(key);
+  2226 |   const espForget = (key) => {
+  2234 |   const espResetAll = () => {
+  2238 |   const espToggle = (key) => {
+  2246 |   const loadChainMolecule = useCallback(async (blob, name, ci) => {
+  2247 |   const stage = stageRef.current;
+  2250 |   const comp = await stage.loadFile(blob, { ext: 'pdb' });
+  2251 |   const baseReps = dockStyleRef.current ? applyDockRoleStyle(comp) : applyCurrentStyleTo(comp, []);
+  2262 |   let cancelled = false;
+  2263 |   const abortToken = {};
+  2283 |   const unregisterAbort = abortControl.register('structure loading', () => {
+  2285 |   const a = abortRef.current;
+  2297 |   const finishStructLoad = () => {
+  2307 |   const run = async () => {
+  2309 |   const stage = await stageReadyRef.current;
+  2320 |   let component;
+  2323 |   const fname = String((loadRequest.file && loadRequest.file.name) || '').toLowerCase();
+  2330 |   const blob = new Blob([loadRequest.text], { type: 'text/plain' });
+  2333 |   const target = normalizeStructureSource(loadRequest.url);
+  2339 |   let loaded = false;
+  2351 |   const raw = (loadRequest.url || '').trim();
+  2352 |   const idMatch = raw.match(/([0-9][A-Za-z0-9]{3})(?:\.[A-Za-z0-9]+)?\/?$/);
+  2354 |   const id = idMatch[1].toUpperCase();
+  2377 |   const nAtoms = component.structure ? component.structure.atomCount : 0;
+  2378 |   const bigSource = (loadRequest && loadRequest.size) >= LARGE_STRUCT_BYTES;
+  2379 |   const isLarge = nAtoms > LARGE_ATOM_COUNT || bigSource;
+  2389 |   let nonProtein = false;
+  2391 |   const h = component.structure.getAtomSet(nglSelection('hetero and not water'));
+  2392 |   const w = component.structure.getAtomSet(nglSelection('water'));
+  2405 |   let nglModelCount = 0;
+  2417 |   const srcFile = loadRequest && loadRequest.file;
+  2418 |   const textIsPdb = !!(loadRequest && loadRequest.text && ['pdb', 'ent'].includes(String(loadRequest.ext || '').toLowerCase()));
+  2420 |   const isPdb = srcFile
+  2424 |   const srcForSplit = srcFile || new Blob([loadRequest.text], { type: 'text/plain' });
+  2425 |   const moleculeParts = await splitPdbFileIntoMolecules(srcForSplit);
+  2447 |   const seq = extractStructureSequence(component);
+  2469 |   const raw = (err && err.message ? String(err.message) : '').trim();
+  2479 |   return () => {
+  2490 |   const component = componentRef.current;
+  2492 |   const targetSrc = trajFile || trajectoryFile || trajectorySrc;
+  2494 |   let cancelled = false;
+  2495 |   const abortToken = {};
+  2513 |   const unregisterAbort = abortControl.register('trajectory loading', () => {
+  2515 |   const a = abortRef.current;
+  2530 |   const finishTrajLoad = () => {
+  2535 |   const initTraj = async () => {
+  2537 |   const NGL = await ensureNGL();
+  2539 |   let targetCand = targetSrc;
+  2540 |   let ext = trajectoryFormat || 'xtc';
+  2541 |   let srcFile = null;
+  2544 |   const fileParts = targetSrc.name.split('.');
+  2559 |   const ab = await srcFile.arrayBuffer();
+  2561 |   const { totalFrames } = countXtcFrames(ab);
+  2563 |   const coords = [];
+  2564 |   const boxes = [];
+  2565 |   const times = [];
+  2566 |   let done = 0;
+  2589 |   const frames = new NGL.Frames(srcFile.name, srcFile.name);
+  2596 |   const trajComp = component.addTrajectory(frames);
+  2597 |   const traj = (trajComp && trajComp.trajectory) || getTrajectoryObject(component);
+  2604 |   return;
+  2607 |   const candidates = [
+  2611 |   let frames = null;
+  2612 |   let lastTrajErr = null;
+  2623 |   const trajComp = component.addTrajectory(frames);
+  2624 |   const traj = (trajComp && trajComp.trajectory) || getTrajectoryObject(component);
+  2627 |   const initialFrames = getNumFrames(traj);
+  2634 |   const checkInterval = setInterval(() => {
+  2635 |   const nf = getNumFrames(traj);
+  2665 |   return () => {
+  2675 |   const interval = Math.max(16, 1000 / speed);
+  2676 |   const id = setInterval(() => {
+  2678 |   const next = (prev + 1) % keptFrames;
+  2680 |   return next;
+  2683 |   return () => clearInterval(id);
+  2690 |   const unregister = abortControl.register('trajectory playback', () => setPlaying(false));
+  2691 |   return unregister;
+  2695 |   const togglePlay = () => {
+  2700 |   const handleFrameChange = (e) => {
+  2701 |   const idx = parseInt(e.target.value, 10);
+  2708 |   const handleTrajFileChosen = (f) => {
+  2711 |   const structure = componentRef.current && componentRef.current.structure;
+  2712 |   const atomCount = structure ? structure.atomCount : 0;
+  2713 |   const name = (f.name || '').toLowerCase();
+  2714 |   const isTraj = name.endsWith('.xtc') || name.endsWith('.trr') || name.endsWith('.dcd') || name.endsWith('.nc');
+  2718 |   return;
+  2722 |   const { estFrames, bytesPerFrame } = estimateTrajectoryFrames(f, atomCount);
+  2723 |   const finalizePendingTraj = (est, bpf) => {
+  2724 |   const over2G = f.size > TARGET_TRAJ_BYTES;
+  2725 |   let suggested = 1;
+  2731 |   const keepFrames = Math.max(1, Math.floor(TARGET_TRAJ_BYTES / Math.max(1, bpf)));
+  2744 |   const est = totalFrames > 0 ? totalFrames : estFrames;
+  2745 |   const bpf = totalFrames > 0 ? Math.max(1, f.size / totalFrames) : bytesPerFrame;
+  2754 |   const acceptTrajReduction = () => {
+  2757 |   const target = Math.min(Math.max(1, parseInt(trajFrameCount, 10) || TARGET_TRAJ_FRAMES), Math.max(1, pendingTraj.estFrames));
+  2758 |   const strideNeeded = Math.max(1, Math.ceil(pendingTraj.estFrames / Math.max(1, target)));
+  2766 |   const loadTrajWithoutReduction = () => {
+  2778 |   const requestStructureLoad = (payload) => {
+  2779 |   const file = payload.file;
+  2780 |   const size = file ? file.size : (payload.text ? payload.text.length : 0);
+  2788 |   const next = { ...prev, ...atomRenames };
+  2789 |   return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
+  2796 |   const component = componentRef.current;
+  2798 |   const list = [];
+  2799 |   const resMap = new Map();
+  2802 |   const rawResno = a.resno != null ? Number(a.resno) : 0;
+  2814 |   const selCompsRef = useRef({}); // key -> [representations]
+  2815 |   const baseCompsRef = useRef([]); // default representations added at load
+  2816 |   const selStylesRef = useRef(selStyles);
+  2821 |   const selKeyExpr = (key) => {
+  2822 |   const named = selections.find((s) => s.name === key);
+  2823 |   let raw = named ? named.expr : key;
+  2825 |   let changed = false;
+  2827 |   const re = new RegExp(`\\b${s.name}\\b`, 'g');
+  2835 |   return translateSelection(raw);
+  2839 |   const selectionAtomCount = (key) => {
+  2840 |   const component = componentRef.current;
+  2843 |   const sel = component.structure.getSelection(selKeyExpr(key));
+  2844 |   return sel.count != null ? sel.count : (sel.length != null ? sel.length : null);
+  2846 |   return null;
+  2854 |   const RESIDUE_ANCHOR_ATOMS = {
+  2863 |   const computeResidueKeys = (tick) => {
+  2864 |   const ri = tick.resno - 1;
+  2865 |   const seq = Array.isArray(parsedSeqRef.current) ? parsedSeqRef.current : [];
+  2866 |   const anchors = RESIDUE_ANCHOR_ATOMS[moleculeTypeRef.current] || ['N', 'CA', 'C', 'O'];
+  2867 |   const keys = [];
+  2869 |   const upper = String(an || '').trim().toUpperCase();
+  2872 |   const mapped = mapPdbAtomToNmrKeys(an, tick.resno, seq, moleculeTypeRef.current, namingConventionRef.current);
+  2881 |   const anchor = moleculeTypeRef.current === 'dna' || moleculeTypeRef.current === 'rna' ? 'P' : 'CA';
+  2884 |   return keys;
+  2889 |   const mergeKeys = (baseKeys, addKeys, toggle) => {
+  2890 |   const set = new Set(Array.isArray(baseKeys) ? baseKeys : []);
+  2895 |   return Array.from(set);
+  2906 |   const handleResidueTickClick = (tick, e = {}) => {
+  2907 |   const ri = tick.resno - 1;
+  2911 |   const additive = multiSelectActive || e.ctrlKey || e.metaKey || e.shiftKey;
+  2915 |   const polyTicks = (Array.isArray(residueTicks) ? residueTicks : []).filter((r) => r.polymer);
+  2916 |   const ti = polyTicks.findIndex((t) => t.chainid === tick.chainid && t.resno === tick.resno);
+  2917 |   const ai = polyTicks.findIndex((t) => t.chainid === tick.chainid && t.resno === anchorTickRef.current.resno);
+  2919 |   const [lo, hi] = ai <= ti ? [ai, ti] : [ti, ai];
+  2920 |   const addKeys = [];
+  2926 |   return;
+  2930 |   const keys = computeResidueKeys(tick);
+  2937 |   const clearResidueSelection = () => {
+  2945 |   const component = componentRef.current;
+  2958 |   const backboneChanged = prevBackboneRef.current !== backboneStyle;
+  2959 |   const moleculeChanged = prevMoleculeRef.current !== moleculeStyle;
+  2971 |   const styles = selStylesRef.current || {};
+  2973 |   const st = styles[key] || {};
+  2974 |   const expr = selKeyExpr(key);
+  2981 |   const colorScheme = st.colorMode && st.colorMode !== 'solid'
+  2984 |   const color = colorScheme ? undefined : (st.color != null ? st.color : undefined);
+  2985 |   const opacity = st.transparency != null ? Math.max(0, Math.min(1, 1 - st.transparency)) : undefined;
+  2986 |   const reps = [];
+  2987 |   const add = (type, params) => {
+  2999 |   return () => {
+  3045 |   const toggleDockStyle = () => {
+  3047 |   const comp = selectedMolKey === 'main'
+  3058 |   const prevDockStyleRef = useRef(dockStyleMode);
+  3077 |   const stage = stageRef.current;
+  3092 |   const parsePyMOL = (text) => {
+  3093 |   const sels = [];
+  3094 |   const acts = [];
+  3095 |   const colorDefs = {};
+  3097 |   const line = (raw.split('#')[0] || '').trim();
+  3101 |   const commaIdx = line.indexOf(',');
+  3102 |   const head = (commaIdx >= 0 ? line.slice(0, commaIdx) : line).trim();
+  3103 |   const rest = commaIdx >= 0 ? line.slice(commaIdx + 1).split(',').map((p) => p.trim()) : [];
+  3104 |   const cmdMatch = head.match(/^([A-Za-z_.]+)\s*(.*)$/);
+  3105 |   const cmd = (cmdMatch ? cmdMatch[1] : head).toLowerCase();
+  3106 |   const arg1 = (cmdMatch ? cmdMatch[2] : '').trim();
+  3110 |   const name = arg1 || rest[0] || '';
+  3111 |   const expr = arg1 ? rest.join(',') : rest.slice(1).join(',');
+  3114 |   const m = line.match(/set_color\s+(\S+)\s*,\s*\[([^\]]+)\]/i);
+  3120 |   const style = (arg1 || rest[0] || 'all').toLowerCase();
+  3121 |   const sel = (arg1 ? rest[0] : rest[1]) || 'all';
+  3124 |   const color = arg1 || rest[0];
+  3125 |   const sel = (arg1 ? rest[0] : rest[1]) || 'all';
+  3130 |   const mode = (arg1 || 'automatic').toLowerCase();
+  3131 |   const sel = (arg1 ? rest[0] : rest[1]) || 'all';
+  3136 |   const prop = (arg1 || '').toLowerCase();
+  3137 |   const val = rest[0];
+  3138 |   const sel = rest[1] || 'all';
+  3149 |   return { sels, acts, colorDefs };
+  3152 |   const applyPyMOLScript = (text) => {
+  3153 |   const log = [];
+  3155 |   const { sels, acts, colorDefs } = parsePyMOL(text);
+  3156 |   const names = new Set(sels.map((s) => s.name));
+  3157 |   const nextSels = [
+  3162 |   const styleOf = (st) => (st === 'sphere' || st === 'spheres' ? 'sphere' : st === 'stick' || st === 'sticks' ? 'stick' : st === 'ba
+  3163 |   const next = { ...selStylesRef.current };
+  3166 |   const cur = next[s.name] || {};
+  3170 |   const key = names.has(a.sel) ? a.sel : (a.sel === 'all' ? 'all' : a.sel);
+  3171 |   const cur = next[key] || {};
+  3209 |   const PAL = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#06b6d4', '#a3e635', '#f472b
+  3210 |   let ci = 0;
+  3211 |   const shown = {};
+  3216 |   const patch = {};
+  3235 |   const clearPyMOL = () => {
+  3244 |   const applyRename = () => {
+  3246 |   const val = renameDraft.trim();
+  3247 |   const next = { ...renames };
+  3253 |   const autoNameFrom2D = () => {
+  3254 |   const component = componentRef.current;
+  3256 |   const next = {};
+  3264 |   const clearRenames = () => persistRenames({});
+  3271 |   const organicLike = ['organic', 'lipid', 'sugar'].includes(moleculeType);
+  3272 |   const component = componentRef.current;
+  3275 |   return;
+  3277 |   let cancelled = false;
+  3281 |   const next = map && Object.keys(map).length ? map : null;
+  3283 |   const a = prev ? JSON.stringify(prev) : '';
+  3284 |   const b = next ? JSON.stringify(next) : '';
+  3285 |   return a === b ? prev : next;
+  3289 |   return () => { cancelled = true; };
+  3308 |   const component = componentRef.current;
+  3310 |   const clearLabels = () => {
+  3319 |   const { labelText, indices } = build3dLabelMap(component, {
+  3355 |   return clearLabels;
+  3360 |   const component = componentRef.current;
+  3363 |   const clearSidechain = () => {
+  3379 |   return clearSidechain;
+  3395 |   const component = componentRef.current;
+  3407 |   const sel = Array.isArray(selectedKeys) ? selectedKeys : [];
+  3411 |   const stripRi = stripResidueRiRef.current;
+  3412 |   const isStripMode = stripRi !== null && Array.isArray(residueTicks) && sel.every((k) => {
+  3413 |   const riK = parseInt(String(k).split('-')[0], 10);
+  3414 |   return Number.isFinite(riK) && !!residueTicks[riK];
+  3418 |   const resSet = new Map(); // `${chainid}|${resno}|${resname}` ΓåÆ whole-residue NGL clause
+  3419 |   let approxAtoms = 0;
+  3421 |   const riK = parseInt(String(k).split('-')[0], 10);
+  3423 |   const t = residueTicks[riK];
+  3426 |   const chainClause = t.chainid ? `:${t.chainid}` : '';
+  3433 |   const selParts = Array.from(resSet.values());
+  3437 |   const useSphere = lightRenderRef.current || approxAtoms > 1500;
+  3444 |   const selSele = buildNglSele(sel, component.structure, moleculeTypeRef.current, namingConventionRef.current);
+  3447 |   const useSphere = lightRenderRef.current;
+  3463 |   const component = componentRef.current;
+  3466 |   const sig = showManualHighlight
+  3478 |   const man = Array.isArray(manualKeys) ? manualKeys : [];
+  3481 |   const manSele = buildNglSele(man, component.structure, moleculeTypeRef.current, namingConventionRef.current);
+  3484 |   const useSphere = lightRenderRef.current || man.length > 1500;
+  3494 |   const loadExtraMolecule = useCallback(async (file, n) => {
+  3496 |   const stage = stageRef.current;
+  3498 |   const comp = await stage.loadFile(file);
+  3502 |   const baseReps = dockStyleRef.current ? applyDockRoleStyle(comp) : applyCurrentStyleTo(comp, []);
+  3505 |   const name = file.name || `Molecule ${n}`;
+  3506 |   const id = `mol_${Date.now()}_${n}`;
+  3519 |   const extraMolsSnapshot = () => extraCompsRef.current.map(({ id, name, style, color, colorMode, transparency, position }) => ({ id
+  3526 |   const restyleExtraMol = (id) => {
+  3527 |   const entry = extraCompsRef.current.find((e) => e.id === id);
+  3528 |   const comp = entry && entry.comp;
+  3531 |   let reps = [];
+  3532 |   const st = entry || {};
+  3533 |   const style = st.style;
+  3544 |   const colorScheme = st.colorMode && st.colorMode !== 'solid'
+  3547 |   const color = colorScheme ? undefined : (st.color != null ? st.color : undefined);
+  3548 |   const opacity = st.transparency != null ? Math.max(0, Math.min(1, 1 - st.transparency)) : undefined;
+  3549 |   const opts = { colorScheme, color, opacity };
+  3565 |   const espRep = espAddSurfaceRep(comp);
+  3573 |   const setExtraMolStyle = (id, style) => {
+  3579 |   const setExtraMolColor = (id, color) => {
+  3585 |   const setExtraMolColorMode = (id, mode) => {
+  3591 |   const setExtraMolTransparency = (id, t) => {
+  3599 |   const setExtraMolPosition = (id, axis, value) => {
+  3600 |   const entry = extraCompsRef.current.find((e) => e.id === id);
+  3602 |   const pos = (entry.position || [0, 0, 0]).slice();
+  3607 |   const comp = entry.comp;
+  3616 |   const resetExtraMolPosition = (id) => {
+  3617 |   const entry = extraCompsRef.current.find((e) => e.id === id);
+  3622 |   const comp = entry.comp;
+  3633 |   const setMainPosition = (axis, value) => {
+  3634 |   const next = [mainPos[0] || 0, mainPos[1] || 0, mainPos[2] || 0];
+  3638 |   const comp = componentRef.current;
+  3646 |   const resetMainPosition = () => {
+  3649 |   const comp = componentRef.current;
+  3662 |   const applyActiveStyleToAll = () => {
+  3663 |   let src = null;
+  3672 |   const entry = extraCompsRef.current.find((e) => e.id === selectedMolKey);
+  3701 |   const worldDeltaForScreen = (dxPx, dyPx) => {
+  3702 |   const stage = stageRef.current;
+  3703 |   const viewer = stage && stage.viewer;
+  3706 |   const canvas = stage.container && stage.container.querySelector('canvas');
+  3707 |   const h = canvas ? canvas.clientHeight : 300;
+  3708 |   const cam = viewer.camera;
+  3709 |   const v3 = cam.position.constructor;
+  3710 |   const dir = cam.getWorldDirection(new v3());
+  3711 |   const right = new v3().crossVectors(dir, cam.up).normalize();
+  3712 |   const up = new v3().crossVectors(right, dir).normalize();
+  3713 |   const fov = (cam.fov || 40) * Math.PI / 180;
+  3714 |   const dist = cam.position.length() || 100;
+  3715 |   const wpp = (2 * Math.tan(fov / 2) * dist) / Math.max(1, h);
+  3716 |   const dxW = dxPx * wpp, dyW = -dyPx * wpp;
+  3717 |   return [right.x * dxW + up.x * dyW, right.y * dxW + up.y * dyW, right.z * dxW + up.z * dyW];
+  3721 |   const dragMoveComp = () => (selectedMolKey === 'main'
+  3725 |   const dragMoveOnDown = (e) => {
+  3727 |   const comp = dragMoveComp();
+  3729 |   const p = comp.position || { x: 0, y: 0, z: 0 };
+  3735 |   const dragMoveOnMove = (e) => {
+  3736 |   const d = dragMoveRef.current;
+  3738 |   const dx = e.clientX - d.last.x;
+  3739 |   const dy = e.clientY - d.last.y;
+  3742 |   const [wx, wy, wz] = worldDeltaForScreen(dx, dy);
+  3751 |   const dragMoveOnUp = () => {
+  3754 |   const d = dragMoveRef.current;
+  3759 |   const entry = extraCompsRef.current.find((x) => x.comp === d.comp);
+  3765 |   const deleteExtraMol = (id) => {
+  3766 |   const idx = extraCompsRef.current.findIndex((e) => e.id === id);
+  3768 |   const [entry] = extraCompsRef.current.splice(idx, 1);
+  3778 |   const autoViewMol = (key) => {
+  3780 |   const comp = key === 'main' ? componentRef.current : (extraCompsRef.current.find((e) => e.id === key) || {}).comp;
+  3790 |   const pending = pendingExtraFilesRef.current;
+  3801 |   const loadExtraStructureFile = useCallback(async (file) => {
+  3802 |   const baseName = String(file && file.name || 'Structure').replace(/\.[^.]+$/, '');
+  3804 |   const stage = stageRef.current;
+  3807 |   const parts = await splitPdbFileIntoMolecules(file);
+  3823 |   const doReplaceLoad = useCallback((files) => {
+  3827 |   const [first, ...rest] = files;
+  3853 |   const doKeepBoth = useCallback(async (files) => {
+  3863 |   const n = new Set(prev);
+  3865 |   return n;
+  3873 |   const loadExtraStructureUrl = useCallback(async (rawSrc, n = 0) => {
+  3875 |   const stage = stageRef.current;
+  3877 |   const target = normalizeStructureSource(rawSrc);
+  3879 |   let comp;
+  3883 |   const idMatch = String(rawSrc || '').trim().match(/([0-9][A-Za-z0-9]{3})(?:\.[A-Za-z0-9]+)?\/?$/);
+  3893 |   const baseReps = dockStyleRef.current ? applyDockRoleStyle(comp) : applyCurrentStyleTo(comp, []);
+  3896 |   const s = String(rawSrc || '').trim();
+  3897 |   const label = /^[0-9a-z]{4}$/i.test(s)
+  3900 |   const id = `mol_${Date.now()}_${n}`;
+  3912 |   const doReplaceSrc = useCallback((rawSrc) => {
+  3924 |   const doKeepBothSrc = useCallback(async (rawSrc) => {
+  3929 |   const entry = extraCompsRef.current[extraCompsRef.current.length - 1];
+  3934 |   const handleFileChange = useCallback((e) => {
+  3935 |   const files = Array.from(e.target.files || []);
+  3940 |   const alreadyLoaded = !!componentRef.current && statusRef.current === 'ready';
+  3947 |   const toggleMol = (key) => {
+  3949 |   const next = new Set(prev);
+  3951 |   return next;
+  3956 |   const show = (k) => visibleMolKeys.has(k);
+  3964 |   const handlePdbIdLoad = useCallback(() => {
+  3965 |   const value = pdbId.trim();
+  3972 |   return;
+  3987 |   const handleClearViewer = () => {
+  4034 |   const handleAbort = () => {
+  4039 |   const a = abortRef.current;
+  4051 |   const rebuildHydrogensNow = async () => {
+  4054 |   return;
+  4056 |   const raw = loadedPdbTextRef.current;
+  4059 |   return;
+  4061 |   const result = rebuildProteinHydrogenCoords(raw);
+  4064 |   return;
+  4070 |   const suffix = result.moved > 0
+  4079 |   const captureScene = async () => {
+  4080 |   const stage = stageRef.current;
+  4082 |   let url = '';
+  4085 |   const canvas = stage.makeImage();
+  4091 |   const cv = stage.viewer && stage.viewer.container ? stage.viewer.container.querySelector('canvas') : null;
+  4096 |   const label = `Structure${file ? ` ┬╖ ${file.name}` : pdbId ? ` ┬╖ ${pdbId}` : ''}`;
+  4097 |   const pid = getActiveProjectId();
+  4111 |   const espTargetComp = status === 'ready' ? resolveMolComp(selectedMolKey) : null;
+  4112 |   const espOnSelected = espMolKeys.has(selectedMolKey);
+  4113 |   const espTargetName = selectedMolKey === 'main'
+  4116 |   const espBtnTitle = !espTargetComp
+  4122 |   return (
+  4219 |   const f = e.target.files && e.target.files[0];
+  4384 |   const nv = parseInt(e.target.value, 10);
+  4754 |   const polyTicks = residueTicks.filter((r) => r.polymer);
+  4756 |   const thinStep = polyTicks.length > 900 ? 5 : polyTicks.length > 450 ? 3 : polyTicks.length > 200 ? 2 : 1;
+  4757 |   return (
+TOTAL LINES 5254

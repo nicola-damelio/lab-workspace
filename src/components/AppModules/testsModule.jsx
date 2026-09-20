@@ -4,7 +4,7 @@
    ========================================================================= */
 
 import React, { useState } from 'react';
-import { PRIMARY_CATEGORIES, CLASSIFICATION_MAP, EXPERIMENT_TYPES } from '../../data/testTypes';
+import { PRIMARY_CATEGORIES, CLASSIFICATION_MAP, experimentTypeFilterOptions, matchesExperimentTypeFilter } from '../../data/testTypes';
 import { SearchableSelect } from '../SearchableSelect';
 import { Icon } from '../Icons';
 import { markAttachmentsDeleted, deleteTestDriveFolder } from '../../utils/driveUpload';
@@ -78,13 +78,9 @@ export const TestsModule = ({
                 const allProbes = (nmrProbes || []).map((p) => p.name || p).filter(Boolean).sort();
                 const allPulseSeqs = (nmrExperiments || []).map((e) => e.name || e).filter(Boolean).sort();
 
-                const typeLabels = {
-                  'plate-96': 'Multiwell plate essay', 'plate-48': 'Multiwell plate essay', 'plate-24': 'Multiwell plate essay',
-                  'plate-12': 'Multiwell plate essay', 'plate-6': 'Multiwell plate essay', 'plate-1': 'Multiwell plate essay', 'plate-384': 'Multiwell plate essay',
-                  'plate-9x9box': 'Storage Box', nmr: 'NMR', cd: 'Circular Dichroism', 'nmr-fittings': 'NMR Fitting',
-                  dosy: 'DOSY', cloning: 'Cloning', protein_expression: 'Protein expression & Purification',
-                  md_simulation: 'MD Simulation', docking: 'Molecular Docking', flow_cytometry: 'Flow Cytometry', ssnmr: 'Solid State NMR'
-                };
+                /* Experiment-type label + matching come from
+                   src/data/testTypes.js (ONE table for the whole app). */
+                const experimentTypeOptions = experimentTypeFilterOptions(tests);
 
                 const filterActive = filterPrimary !== 'ALL' || filterSecondary !== 'ALL' || filterScientist !== 'ALL' ||
                   filterType !== 'ALL' || filterCompound !== 'ALL' || filterPlasmid !== 'ALL' || filterCellLine !== 'ALL' ||
@@ -172,12 +168,14 @@ export const TestsModule = ({
                     ...(t.compound ? String(t.compound).split(',') : [])
                   ])].map((s) => String(s).trim());
                   const flatPlasmids = [...new Set([...(t.plasmids || []), ...(t.plasmid ? [t.plasmid] : [])])];
-                  const testLabel = typeLabels[t.type] || t.type;
 
                   if (filterPrimary !== 'ALL' && t.testCategory !== filterPrimary) return false;
                   if (filterSecondary !== 'ALL' && t.secondaryCategory !== filterSecondary) return false;
                   if (isSuperuserSession && filterScientist !== 'ALL' && !getTestScientists(t).includes(filterScientist)) return false;
-                  if (filterType !== 'ALL' && testLabel !== filterType) return false;
+                  // Le label vit dans src/data/testTypes.js (UNE table pour toute
+                  // l’app) : comparer le dropdown à une seconde table locale avait
+                  // rendu « Microscopy » infiltrable (aucune entrée `microscopy`).
+                  if (!matchesExperimentTypeFilter(t, filterType)) return false;
                   if (filterCompound !== 'ALL' && !flatCompounds.includes(filterCompound)) return false;
                   if (filterPlasmid !== 'ALL' && !flatPlasmids.includes(filterPlasmid)) return false;
                   if (filterCellLine !== 'ALL' && (!t.cellLines || !t.cellLines.includes(filterCellLine))) return false;
@@ -507,7 +505,7 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 
                           <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Experiment type</label>
                           <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
                             <option value="ALL">All</option>
-                            {EXPERIMENT_TYPES.map((label) => <option key={label} value={label}>{label}</option>)}
+                            {experimentTypeOptions.map((label) => <option key={label} value={label}>{label}</option>)}
                           </select>
                         </div>
                         <div>

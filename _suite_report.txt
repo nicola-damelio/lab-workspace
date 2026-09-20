@@ -1,3 +1,4 @@
+OK   _W_outline.mjs  →  (no output)
 OK   _axis_aspect_test.cjs  →  ✅ 123/123 checks passed
 OK   _axis_fit_test.cjs  →  ✅ 476/476 checks passed
 OK   _break_test.mjs  →  33/33 checks passed
@@ -20,6 +21,7 @@ OK   _builder_shapes_test.mjs  →  _builder_shapes_test : 201 vérifications pa
 OK   _builder_uibar_test.mjs  →  _builder_uibar_test.mjs — 124 assertions OK
 OK   _builder_upscale_test.mjs  →  _builder_upscale_test.mjs — 78 assertions OK
 OK   _builder_zoom_test.cjs  →  ✅ 31/31 checks passed
+OK   _calculation_entries_test.mjs  →  ✅ 49 tests passés (les calculs d’un dataset se voient sur les deux postes)
 OK   _canvas_autosave_test.mjs  →  ✅ _canvas_autosave_test : 142 vérifications passées
 OK   _canvas_composition_safety_test.mjs  →  ✅ _canvas_composition_safety_test : 32 vérifications passées
 OK   _canvas_file_restore_test.mjs  →  ✅ _canvas_file_restore_test : 108 vérifications passées
@@ -30,6 +32,7 @@ OK   _chart_dblclick_test.cjs  →  ✅ 101/101 checks passed
 OK   _common_library_folder_test.mjs  →  _common_library_folder_test : 47 vérifications passées
 OK   _cov_check.cjs  →  UNWIRED: none - every editable new Chart( site is wrapped in ChartJsInspector.
 OK   _curve_style_test.mjs  →  │ (index) │ name                                                                        │ ok   │ error │ | ✅ 50/50 checks passed
+OK   _dataset_copy_mirror_test.mjs  →  ✅ 44 tests passés (la copie Drive du dataset ne perd plus la dernière minute)
 OK   _dataset_dir_twins_test.mjs  →  ✅ 53 tests passés (un seul projects/ et un seul protocols/ par dataset, jamais de jumeau)
 OK   _deleted_projects_test.mjs  →  ✅ 46 tests passés (projets supprimés : rien ne ressuscite)
 OK   _diag_keys_summary.cjs  →  • "Fig1" drive=true pxObjects=6 images=7 thumbnailsOnly=true addedAt=2026-09-13T01:06:14.160Z updatedAt=2026-09-16T18:54:29.040Z
@@ -76,12 +79,13 @@ OK   _spectra_split_test.mjs  →  passed 238/238
 OK   _split_test.cjs  →  (no output)
 OK   _src_split_test.cjs  →  (no output)
 OK   _star_group_test.cjs  →  ✅ 34/34 checks passed
+OK   _storage_boxes_test.mjs  →  _storage_boxes_test.mjs : 62/62 passed
 OK   _storage_drive_layout_test.mjs  →  _storage_drive_layout_test: 103 passed
 OK   _sum_canvases.mjs  →  meta keys: kind, v, label, src, canvasData, imageName, savedAt
 OK   _sum_one_meta.mjs  →  usage: node _sum_one_meta.mjs "<fichier .meta.json>"
 OK   _sum_panels.mjs  →  arrows=0 shapes=0 letterStyle={"fontSize":30,"color":"#000000","bold":true}
 OK   _ui_scale_test.cjs  →  ✅ 44/44 checks passed
 OK   _view_scroll_memory_test.cjs  →  ✅ 41/41 checks passed
-OK   _workspace_drive_test.mjs  →  ✅ 55 tests passés (l’espace de travail entier vit sur le Drive)
+OK   _workspace_drive_test.mjs  →  ✅ 57 tests passés (l’espace de travail entier vit sur le Drive)
 OK   _workspace_keys_test.mjs  →  ✅ 37 tests passés (les clés du navigateur vivent aussi sur le Drive)
-total 86, failed 0
+total 90, failed 0

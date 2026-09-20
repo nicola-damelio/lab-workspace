@@ -5,7 +5,16 @@ import { Icon } from './Icons';
 import { markAttachmentsDeleted } from '../utils/driveUpload';
 import { DriveUploadButton } from './DriveUpload';
 import { sanitizeSlug, storageBoxImagesFolderPath, storageFileCtx, storageImagesFolderPath } from '../utils/driveNaming';
-import { boxLabelRows, boxLabelSignature, buildBoxLabelHtml, filledWells, labelWellsFor } from '../utils/boxLabel';
+import { boxLabelRows, boxLabelSignature, buildBoxLabelHtml, filledWells, labelWellsFor, wellIsFilled, wellPositionLabel } from '../utils/boxLabel';
+/* Les règles des BOÎTES (plusieurs boîtes par emplacement, boîte 1 × 1 =
+   échantillon en vrac, champs obligatoires, suppression d'un meuble) vivent
+   dans src/utils/storageBoxes.js — testables sans écran. */
+import {
+    BOX_SIZE_PRESETS, assignBoxesToStorage, boxSizeLabel, boxesInSlot, boxesOfStorage,
+    describeBoxIssues, moveBoxToSlot, nextSlotIndex, presetById, presetIdOfBox,
+    removeStorage, requiredBoxIssues, slotIndexOf, slotStackLabel, storageCompleteness,
+    storageOccupancy, storageSlotCount, unassignBoxesOfStorage, wellMissingRequired
+} from '../utils/storageBoxes';
 import { renameStorageDriveFolder, tidyStorageFiles } from '../utils/storageDrive';
 import { BoxLabelFile } from './BoxLabelFile';
 
@@ -86,7 +95,7 @@ const BoxPhotoSlot = ({ url, label, hint, storageName, boxName, kind, onSet, onC
 };
 
 // --- MODALS FOR STORAGE & BOX MOVEMENT ---
-export const StorageModals = ({ storageModal, setStorageModal, storages, setStorages, moveModal, setMoveModal, tests, setTests }) => {
+export const StorageModals = ({ storageModal, setStorageModal, storages, setStorages, moveModal, setMoveModal, tests, setTests, deleteStorageModal, setDeleteStorageModal }) => {
     const saveStorage = (e) => {
         e.preventDefault(); 
         const formData = new FormData(e.target);
@@ -112,12 +121,32 @@ export const StorageModals = ({ storageModal, setStorageModal, storages, setStor
         setStorageModal(null);
     };
 
+    /* Un emplacement DÉJÀ occupé est accepté : c'est l'empilement (la boîte
+       suivante se range derrière la première — utils/storageBoxes.js). */
     const handleMoveBox = (boxId, targetStorageId, targetSlotIndex) => {
-        setTests(prev => prev.map(t => {
-            if (t.id === boxId) return { ...t, storageId: targetStorageId, storageIndex: targetSlotIndex };
-            return t;
-        }));
+        setTests(prev => moveBoxToSlot(prev, boxId, targetStorageId, targetSlotIndex));
         setMoveModal(null);
+    };
+
+    /* ── Supprimer un EMPLACEMENT ─────────────────────────────────────────────
+       Un meuble n'emporte JAMAIS ses boîtes : on demande d'abord où elles vont
+       (un autre meuble, ou « sans emplacement »). Le dossier Drive du meuble
+       (photos des boîtes, étiquettes) n'est pas touché — seule sa fiche
+       disparaît, et les boîtes restent des boîtes. */
+    const performDeleteStorage = (mode) => {
+        if (!deleteStorageModal) return;
+        const st = storages.find(s => s.id === deleteStorageModal.storageId);
+        if (!st) { setDeleteStorageModal(null); return; }
+        const inside = boxesOfStorage(tests, st.id);
+        const target = storages.find(s => s.id === deleteStorageModal.targetStorageId);
+        if (inside.length > 0 && mode === 'move') {
+            if (!target || target.id === st.id) return;
+            setTests(prev => assignBoxesToStorage(prev, st.id, target.id, storageSlotCount(target)));
+        } else if (inside.length > 0) {
+            setTests(prev => unassignBoxesOfStorage(prev, st.id));
+        }
+        setStorages(prev => removeStorage(prev, st.id));
+        setDeleteStorageModal(null);
     };
 
     return (
@@ -167,7 +196,7 @@ export const StorageModals = ({ storageModal, setStorageModal, storages, setStor
                 if (!box) return null;
                 const targetSt = storages.find(s => s.id === (moveModal.targetStorageId || moveModal.currentStorageId));
                 if (!targetSt) return null;
-                const boxesInTarget = tests.filter(t => t.type === 'plate-9x9box' && t.storageId === targetSt.id && t.id !== box.id);
+                const boxesInTarget = boxesOfStorage(tests, targetSt.id).filter(t => t.id !== box.id);
                 return (
                     <div className="fixed inset-0 bg-slate-900/50 z-[999999] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setMoveModal(null)}>
                         <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col border border-slate-200" onClick={e => e.stopPropagation()}>
@@ -193,17 +222,17 @@ export const StorageModals = ({ storageModal, setStorageModal, storages, setStor
                                     <p className="text-xs text-slate-500 mb-3">Click a slot to move the box. You can place it in an empty slot or stack it with existing boxes.</p>
                                     <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${targetSt.cols}, minmax(60px, 1fr))` }}>
                                         {Array.from({ length: targetSt.rows * targetSt.cols }).map((_, i) => {
-                                            const boxesInSlot = boxesInTarget.filter(b => b.storageIndex === i);
+                                            const slotBoxes = boxesInTarget.filter(b => slotIndexOf(b) === i);
                                             return (
                                                 <div key={i} onClick={() => handleMoveBox(box.id, targetSt.id, i)}
                                                     className={`relative aspect-square border-2 rounded-lg flex flex-col items-center justify-center cursor-pointer transition-all p-1 text-center
-                                                    ${boxesInSlot.length > 0 ? 'bg-orange-50 border-orange-300 hover:bg-orange-100' : 'bg-green-50 border-green-300 hover:bg-green-100'}`}>
+                                                    ${slotBoxes.length > 0 ? 'bg-orange-50 border-orange-300 hover:bg-orange-100' : 'bg-green-50 border-green-300 hover:bg-green-100'}`}>
                                                     <span className="absolute top-0.5 left-1 text-[8px] font-bold text-slate-400">{i + 1}</span>
-                                                    {boxesInSlot.length > 0 ? (
+                                                    {slotBoxes.length > 0 ? (
                                                         <>
                                                             <span className="text-indigo-500"><Icon name="box" size={20} /></span>
-                                                            <span className="text-[8px] font-bold text-orange-800 truncate w-full">{boxesInSlot[0].name}</span>
-                                                            {boxesInSlot.length > 1 && <span className="text-[8px] bg-orange-200 px-1 rounded">+{boxesInSlot.length - 1}</span>}
+                                                            <span className="text-[8px] font-bold text-orange-800 truncate w-full">{slotBoxes[0].name || 'unnamed'}</span>
+                                                            {slotBoxes.length > 1 && <span className="text-[8px] bg-orange-200 px-1 rounded" title={`${slotBoxes.length} boxes already in this slot — the moved box is stacked behind them`}>+{slotBoxes.length - 1}</span>}
                                                         </>
                                                     ) : <span className="text-lg text-green-600">+</span>}
                                                 </div>
@@ -216,12 +245,80 @@ export const StorageModals = ({ storageModal, setStorageModal, storages, setStor
                     </div>
                 );
             })()}
+            {deleteStorageModal && (() => {
+                const st = storages.find(s => s.id === deleteStorageModal.storageId);
+                if (!st) return null;
+                const inside = boxesOfStorage(tests, st.id);
+                const others = storages.filter(s => s.id !== st.id);
+                const target = others.find(s => s.id === deleteStorageModal.targetStorageId) || null;
+                const loose = inside.filter(b => presetIdOfBox(b) === 'bulk1').length;
+                const label = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+                return (
+                    <div className="fixed inset-0 bg-slate-900/50 z-[999999] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setDeleteStorageModal(null)}>
+                        <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col border border-slate-200" onClick={e => e.stopPropagation()}>
+                            <div className="p-5 border-b border-slate-200 flex justify-between items-start shrink-0">
+                                <div>
+                                    <h3 className="text-lg font-bold text-slate-800">Delete storage</h3>
+                                    <p className="text-sm text-slate-500">{st.name} ({st.type}) · {st.rows} × {st.cols} slots</p>
+                                </div>
+                                <button onClick={() => setDeleteStorageModal(null)} className="text-slate-400 hover:text-slate-600 text-2xl">&times;</button>
+                            </div>
+                            <div className="p-5 flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-4 min-h-0">
+                                {inside.length === 0 ? (
+                                    <p className="text-sm text-slate-600">This storage holds <strong>no box</strong>. Deleting it only removes the empty furniture.</p>
+                                ) : (
+                                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-900">
+                                        <p className="font-bold">⚠ {label(inside.length, 'box lives', 'boxes live')} inside this storage{loose > 0 ? ` — ${label(loose, 'is a 1 × 1 bulk sample', 'are 1 × 1 bulk samples')}` : ''}.</p>
+                                        <p className="mt-1">Deleting a storage <strong>never deletes a box</strong>. Choose first where {inside.length === 1 ? 'it goes' : 'they go'}: another storage, or no location at all.</p>
+                                        <ul className="mt-2 text-xs list-disc list-inside">
+                                            {inside.slice(0, 5).map(b => (
+                                                <li key={b.id}>{b.name || 'Unnamed box'}{b.boxOwner ? ` · ${b.boxOwner}` : ''} · {slotIndexOf(b) === null ? 'no slot' : `slot ${slotIndexOf(b) + 1}`} · {boxSizeLabel(b)}</li>
+                                            ))}
+                                            {inside.length > 5 && <li>…and {inside.length - 5} more</li>}
+                                        </ul>
+                                    </div>
+                                )}
+                                {inside.length > 0 && (
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 uppercase mb-2 block">Move the boxes to</label>
+                                        <select
+                                            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none bg-white"
+                                            value={deleteStorageModal.targetStorageId || ''}
+                                            onChange={(e) => setDeleteStorageModal(prev => ({ ...prev, targetStorageId: e.target.value }))}>
+                                            <option value="">— keep them without a location —</option>
+                                            {others.map(s => (
+                                                <option key={s.id} value={s.id}>{s.name} ({storageOccupancy(s, tests).free} free of {storageSlotCount(s)} slots)</option>
+                                            ))}
+                                        </select>
+                                        {others.length === 0 && (
+                                            <p className="text-xs text-slate-500 mt-2">This is the only storage: the boxes can only be kept without a location (create another storage first if you prefer to move them).</p>
+                                        )}
+                                        {target && (
+                                            <p className="text-xs text-slate-500 mt-2">They are placed one per free slot of “{target.name}”; any box beyond that is <strong>stacked</strong> in a slot — nothing is lost.</p>
+                                        )}
+                                    </div>
+                                )}
+                                <p className="text-xs text-slate-500">The Drive folder <code>storage/&lt;storage name&gt;/</code> (box photos, labels) is <strong>not</strong> deleted: those files stay on the Drive.</p>
+                            </div>
+                            <div className="p-4 border-t border-slate-100 flex flex-wrap justify-end gap-2 shrink-0">
+                                <button type="button" onClick={() => setDeleteStorageModal(null)} className="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded">Cancel</button>
+                                {inside.length > 0 && target && (
+                                    <button type="button" onClick={() => performDeleteStorage('move')} className="px-4 py-2 text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded shadow-sm">↔ Move first, then delete</button>
+                                )}
+                                <button type="button" onClick={() => performDeleteStorage('plain')} className="px-4 py-2 text-sm font-bold bg-red-600 hover:bg-red-700 text-white rounded shadow-sm">
+                                    {inside.length === 0 ? '🗑 Delete storage' : `🗑 Delete (keep ${label(inside.length, 'box', 'boxes')} without a location)`}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
         </>
     );
 };
 
 // --- STORAGE OVERVIEW LIST ---
-export const StorageList = ({ storages, tests, setStorageModal, setActiveStorageId, setCurrentModule, handlePrint }) => {
+export const StorageList = ({ storages, tests, setStorageModal, setActiveStorageId, setCurrentModule, handlePrint, setDeleteStorageModal }) => {
     return (
         <div className="p-6 h-full overflow-y-auto custom-scrollbar flex flex-col">
             <div className="mb-6 flex justify-between items-end border-b border-slate-200 pb-4">
@@ -247,8 +344,8 @@ export const StorageList = ({ storages, tests, setStorageModal, setActiveStorage
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                     {storages.map(st => {
-                        const boxesInStorage = tests.filter(t => t.type === 'plate-9x9box' && t.storageId === st.id);
-                        const totalSlots = st.rows * st.cols;
+                        const occupancy = storageOccupancy(st, tests);
+                        const incomplete = storageCompleteness(tests, st.id).incomplete;
                         const icon = st.type === 'Refrigerator' ? '❄️' : st.type === 'Freezer' ? '🧊' : '🚪';
                         return (
                             <div key={st.id} onClick={() => { setActiveStorageId(st.id); setCurrentModule('storage-detail'); }} className="bg-white border border-slate-200 rounded-xl shadow-sm hover:shadow-lg hover:border-indigo-400 cursor-pointer transition-all overflow-hidden flex flex-col group">
@@ -262,14 +359,28 @@ export const StorageList = ({ storages, tests, setStorageModal, setActiveStorage
                                     <div className="h-24 w-full bg-slate-50 border-b border-slate-100 flex items-center justify-center text-4xl">{icon}</div>
                                 )}
                                 <div className="p-5 flex flex-col relative">
-                                    <button onClick={(e) => { e.stopPropagation(); setStorageModal(st); }} className="absolute top-4 right-4 text-slate-400 hover:text-indigo-600 transition-colors z-10 no-print">✏️</button>
+                                    <button onClick={(e) => { e.stopPropagation(); setStorageModal(st); }} className="absolute top-4 right-4 text-slate-400 hover:text-indigo-600 transition-colors z-10 no-print" title="Edit storage">✏️</button>
+                                    {setDeleteStorageModal && (
+                                        <button onClick={(e) => {
+                                            e.stopPropagation();
+                                            const others = storages.filter(s => s.id !== st.id);
+                                            setDeleteStorageModal({ storageId: st.id, targetStorageId: (others[0] && others[0].id) || '' });
+                                        }} className="absolute top-4 right-11 text-slate-400 hover:text-red-600 transition-colors z-10 no-print" title="Delete storage — the boxes inside are never deleted (you choose whether to move them first)">🗑️</button>
+                                    )}
                                     <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded self-start mb-2">{st.type}</span>
-                                    <h3 className="font-bold text-slate-800 text-lg truncate pr-6">{st.name}</h3>
-                                    <p className="text-xs text-slate-500 mt-1 font-medium">Grid: {st.rows} rows × {st.cols} cols ({totalSlots} slots)</p>
+                                    <h3 className="font-bold text-slate-800 text-lg truncate pr-12">{st.name}</h3>
+                                    <p className="text-xs text-slate-500 mt-1 font-medium">Grid: {st.rows} rows × {st.cols} cols ({occupancy.slots} slots)</p>
                                     <div className="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center text-xs font-bold">
-                                        <span className="text-slate-500 flex items-center gap-1"><Icon name="box" size={13} /> {boxesInStorage.length} Boxes Stored</span>
-                                        <span className={boxesInStorage.length >= totalSlots ? 'text-red-500' : 'text-emerald-600'}>{Math.round((boxesInStorage.length / totalSlots) * 100)}% Full</span>
+                                        <span className="text-slate-500 flex items-center gap-1"><Icon name="box" size={13} /> {occupancy.boxes} Box{occupancy.boxes === 1 ? '' : 'es'}</span>
+                                        <span className={occupancy.free === 0 ? 'text-amber-600' : 'text-emerald-600'}>{occupancy.free === 0 ? 'every slot used (boxes stacked)' : `${occupancy.free} slot${occupancy.free === 1 ? '' : 's'} free`}</span>
                                     </div>
+                                    <p className="text-[10px] text-slate-400 font-medium mt-0.5">{occupancy.used} / {occupancy.slots} slots occupied</p>
+                                    {incomplete.length > 0 && (
+                                        <p className="mt-2 text-[10px] font-bold text-red-600 bg-red-50 border border-red-100 rounded px-2 py-1"
+                                           title={describeBoxIssues(incomplete[0].issues)}>
+                                            ⚠ {incomplete.length} box{incomplete.length === 1 ? '' : 'es'} missing required data ({incomplete.slice(0, 3).map(r => r.box.name || 'unnamed').join(', ')}{incomplete.length > 3 ? '…' : ''})
+                                        </p>
+                                    )}
                                 </div>
                             </div>
                         )
@@ -281,9 +392,15 @@ export const StorageList = ({ storages, tests, setStorageModal, setActiveStorage
 };
 
 // --- STORAGE DETAIL VIEW ---
-export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setStorages, setCurrentModule, handlePrint, jumpToTest, setMoveModal, createEmptyTest, setActiveTestId }) => {
+export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setStorages, setCurrentModule, handlePrint, jumpToTest, setMoveModal, createEmptyTest, setActiveTestId, setDeleteStorageModal }) => {
     const st = storages.find(s => s.id === activeStorageId);
     const storageName = st ? String(st.name || '') : '';
+    /* La taille de la PROCHAINE boîte (9 × 9, ou 1 × 1 pour un échantillon en
+       vrac) et l'emplacement dont on DÉPLIE la pile : plusieurs boîtes peuvent
+       partager un emplacement, la grille n'en montre qu'une — ce panneau les
+       ouvre toutes (et permet d'en ajouter une de plus). */
+    const [newBoxSize, setNewBoxSize] = useState('box9');
+    const [slotPicker, setSlotPicker] = useState(null);
     const storageImageUrl = st ? String(st.imageUrl || '') : '';
     /* L'image de référence a pu être envoyée AVANT cette structure
        (storage/<storage>/image/…) : on la ramène sous storage/<storage>/images/.
@@ -297,16 +414,36 @@ export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setS
     }, [storageImageUrl, storageName]);
     if (!st) return <div className="p-6">Storage not found.</div>;
     
-    const boxesInStorage = tests.filter(t => t.type === 'plate-9x9box' && t.storageId === st.id);
+    const boxesInStorage = boxesOfStorage(tests, st.id);
+    const storageFullness = storageOccupancy(st, tests);
     
-    const handleAddBox = (slotIndex) => {
+    /* Ajoute une boîte dans un emplacement : celui qu'on a cliqué, ou le premier
+       emplacement le moins rempli. Un emplacement DÉJÀ occupé accepte la
+       nouvelle boîte (elle vient derrière la première = empilement), et la
+       taille 1 × 1 fait de la boîte un échantillon en vrac. */
+    const handleAddBox = (slotIndex, sizeId) => {
         const id = 't' + Date.now();
+        const size = presetById(sizeId || newBoxSize);
         const newBox = createEmptyTest(id, tests.length + 1, 'plate-9x9box');
         newBox.storageId = st.id;
-        if(slotIndex !== undefined) newBox.storageIndex = slotIndex;
+        newBox.boxRows = size.rows;
+        newBox.boxCols = size.cols;
+        /* Le propriétaire est un champ OBLIGATOIRE d'une boîte : une boîte neuve
+           part donc de celui qui la crée (modifiable sur la page de la boîte),
+           au lieu de naître incomplète. La date, elle, est déjà celle du jour. */
+        newBox.boxOwner = newBox.operator || '';
+        newBox.storageIndex = (slotIndex === undefined || slotIndex === null)
+            ? nextSlotIndex(tests, st.id, storageSlotCount(st))
+            : slotIndex;
         setTests(prev => [...prev, newBox]);
         setActiveTestId(id); 
         setCurrentModule('active-test');
+    };
+
+    const openDeleteStorage = () => {
+        if (!st || !setDeleteStorageModal) return;
+        const others = storages.filter(s => s.id !== st.id);
+        setDeleteStorageModal({ storageId: st.id, targetStorageId: (others[0] && others[0].id) || '' });
     };
 
     return (
@@ -316,14 +453,28 @@ export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setS
                     <button onClick={() => setCurrentModule('storage')} className="text-slate-400 hover:text-indigo-600 transition-colors bg-white p-2 rounded-lg shadow-sm border border-slate-200 no-print">◀ Back</button>
                     <div>
                         <h2 className="text-2xl font-black text-slate-800 flex items-center gap-2"><Icon name="box" size={26} className="text-indigo-500" /> {st.name}</h2>
-                        <p className="text-sm text-slate-500">Capacity: {st.rows * st.cols} slots. Click an empty slot to add a box.</p>
+                        <p className="text-sm text-slate-500">
+                            Capacity: {storageFullness.slots} slots · {storageFullness.boxes} box{storageFullness.boxes === 1 ? '' : 'es'} in {storageFullness.used} slot{storageFullness.used === 1 ? '' : 's'}.
+                            Click an empty slot to add a box; a slot can hold several boxes (they are stacked, open the slot to see them all).
+                        </p>
                     </div>
                 </div>
-                <div className="flex gap-2 no-print">
+                <div className="flex flex-wrap gap-2 no-print">
                     <button onClick={handlePrint} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center gap-2 shadow-sm">
                         <Icon name="printer" size={14} /> Print / Save PDF
                     </button>
-                    <button onClick={() => handleAddBox()} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-lg shadow-sm text-sm transition-colors flex items-center gap-2"><Icon name="box" size={14} /> Add Box Here</button>
+                    <select
+                        value={newBoxSize}
+                        onChange={(e) => setNewBoxSize(e.target.value)}
+                        title="Size of the next box: 9 × 9 for a rack, 1 × 1 for a single bulk sample"
+                        className="border border-slate-300 rounded-lg px-2 py-2 text-sm bg-white outline-none focus:border-blue-500 font-bold text-slate-700 shadow-sm">
+                        {BOX_SIZE_PRESETS.map(p => (<option key={p.id} value={p.id}>{p.label}</option>))}
+                    </select>
+                    <button onClick={() => handleAddBox()} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-lg shadow-sm text-sm transition-colors flex items-center gap-2"><Icon name="box" size={14} /> Add {presetById(newBoxSize).short} box here</button>
+                    <button onClick={openDeleteStorage} title="Delete this storage — the boxes inside are never deleted (you choose whether to move them first)"
+                        className="bg-white border border-red-200 text-red-600 hover:bg-red-50 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center gap-2 shadow-sm">
+                        🗑 Delete Storage
+                    </button>
                 </div>
             </div>
             <div className="flex-1 flex flex-col xl:flex-row gap-6 min-h-0">
@@ -360,18 +511,26 @@ export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setS
                 <div className="flex-1 bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col">
                     <h3 className="text-xs font-bold text-slate-500 uppercase mb-4 border-b border-slate-100 pb-2 flex justify-between">
                         <span>Interactive Grid</span>
-                        <span className="text-indigo-600">{boxesInStorage.length} / {st.rows * st.cols} Used</span>
+                        <span className="text-indigo-600">{boxesInStorage.length} box{boxesInStorage.length === 1 ? '' : 'es'} in {storageFullness.used} / {storageFullness.slots} slots</span>
                     </h3>
                     <div className="flex-1 overflow-auto custom-scrollbar bg-slate-50 rounded-xl p-6 border border-slate-100 shadow-inner flex items-center justify-center">
                         <div className="grid gap-3 max-w-full" style={{ gridTemplateColumns: `repeat(${st.cols}, minmax(80px, 120px))` }}>
                             {Array.from({length: st.rows * st.cols}).map((_, i) => {
-                                const box = boxesInStorage.find(b => b.storageIndex === i);
+                                const stack = boxesInSlot(tests, st.id, i);
+                                const box = stack[0] || null;
+                                const boxIssues = box ? requiredBoxIssues(box) : [];
                                 return (
-                                    <div key={i} onClick={() => { if (box) jumpToTest(box.id); else handleAddBox(i); }}
+                                    <div key={i} onClick={() => { if (stack.length) setSlotPicker({ slotIndex: i }); else handleAddBox(i); }}
                                         className={`relative aspect-square border-2 rounded-xl flex flex-col items-center justify-center cursor-pointer transition-all shadow-sm overflow-hidden p-2 text-center group
                                         ${box ? 'bg-white border-indigo-300 hover:border-indigo-500 hover:shadow-md' : 'bg-slate-100 border-dashed border-slate-300 text-slate-400 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-600'}`} 
-                                        title={box ? `Open Box: ${box.name}` : `Add Box to Slot ${i+1}`}>
+                                        title={box
+                                            ? `Slot ${i+1}${stack.length > 1 ? ` — ${stack.length} boxes stacked` : ''}: ${stack.map(b => b.name || 'unnamed box').join(', ')} (click to open)`
+                                            : `Add Box to Slot ${i+1}`}>
                                         <span className="absolute top-1 left-1.5 text-[9px] font-black text-slate-300 select-none">{i+1}</span>
+                                        {stack.length > 1 && (
+                                            <span className="absolute top-1 left-4 text-[8px] font-black text-white bg-indigo-600 rounded px-1 select-none"
+                                                  title={`${stack.length} boxes in this slot (stacked — nothing is lost)`}>{stack.length}×</span>
+                                        )}
                                         {box ? (
                                             <React.Fragment>
                                                 {box.boxImageUrl ? (
@@ -383,14 +542,24 @@ export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setS
                                                     <span className="absolute bottom-1 right-1 w-4 h-4 bg-white border border-slate-300 rounded-full flex items-center justify-center text-[8px] shadow-sm"
                                                           title="Inside photo available">📷</span>
                                                 )}
-                                                <span className="text-[10px] font-bold text-indigo-900 leading-tight w-full truncate">{box.name}</span>
+                                                <span className={`text-[10px] font-bold leading-tight w-full truncate cursor-pointer hover:underline ${boxIssues.length ? 'text-red-600' : 'text-indigo-900'}`}
+                                                      onClick={(e) => { e.stopPropagation(); jumpToTest(box.id); }}
+                                                      title={`Open ${box.name || 'this box'} — click the slot itself to see all ${stack.length > 1 ? `${stack.length} boxes` : 'box'}${boxIssues.length ? `\n⚠ ${describeBoxIssues(boxIssues)}` : ''}`}>
+                                                    {boxIssues.length > 0 ? '⚠ ' : ''}{box.name || 'Unnamed box'}
+                                                </span>
                                                 <span className="text-[9px] text-slate-500 truncate w-full">{box.instanceName || box.date}</span>
+                                                <span className="text-[8px] text-slate-400 truncate w-full">{boxSizeLabel(box)}{box.boxOwner ? ` · ${box.boxOwner}` : ''}</span>
                                                 <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20 no-print">
                                                     <button 
                                                         onClick={(e) => { e.stopPropagation(); setMoveModal({ boxId: box.id, currentStorageId: st.id, targetStorageId: st.id }); }} 
                                                         className="bg-blue-500 hover:bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs shadow-sm" 
                                                         title="Move Box"
                                                     >↕️</button>
+                                                    <button 
+                                                        onClick={(e) => { e.stopPropagation(); handleAddBox(i); }}
+                                                        className="bg-indigo-500 hover:bg-indigo-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs shadow-sm"
+                                                        title={`Add another ${presetById(newBoxSize).short} box to slot ${i+1} (stacked on the one already there)`}
+                                                    >+</button>
                                                     <button 
                                                         onClick={(e) => { 
                                                             e.stopPropagation(); 
@@ -417,6 +586,61 @@ export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setS
                     </div>
                 </div>
             </div>
+            {/* Un emplacement peut porter PLUSIEURS boîtes : la grille n'en
+                montre qu'une (la première), ce panneau les ouvre toutes. */}
+            {slotPicker && (() => {
+                const stack = boxesInSlot(tests, st.id, slotPicker.slotIndex);
+                return (
+                    <div className="fixed inset-0 bg-slate-900/50 z-[999999] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setSlotPicker(null)}>
+                        <div className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[85vh] flex flex-col border border-slate-200" onClick={e => e.stopPropagation()}>
+                            <div className="p-4 border-b border-slate-200 flex justify-between items-start shrink-0">
+                                <div>
+                                    <h3 className="text-base font-bold text-slate-800">Slot {slotPicker.slotIndex + 1}</h3>
+                                    <p className="text-xs text-slate-500">{stack.length} box{stack.length === 1 ? '' : 'es'} in this slot{stack.length > 1 ? ' — stacked, not lost' : ''}</p>
+                                </div>
+                                <button onClick={() => setSlotPicker(null)} className="text-slate-400 hover:text-slate-600 text-2xl">&times;</button>
+                            </div>
+                            <div className="p-4 flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-2 min-h-0">
+                                {stack.length === 0 && <p className="text-sm text-slate-500">This slot is empty.</p>}
+                                {stack.map((b) => {
+                                    const issues = requiredBoxIssues(b);
+                                    return (
+                                        <div key={b.id} className={`border rounded-lg p-3 flex items-center gap-3 ${issues.length ? 'border-red-200 bg-red-50' : 'border-slate-200 bg-slate-50'}`}>
+                                            <span className="text-[10px] font-black text-white bg-slate-400 rounded px-1.5 py-0.5 shrink-0" title="Position in the stack">{slotStackLabel(tests, b) || '1/1'}</span>
+                                            <div className="flex-1 min-w-0">
+                                                <p className={`text-sm font-bold truncate ${issues.length ? 'text-red-700' : 'text-slate-800'}`}>{b.name || 'Unnamed box'}</p>
+                                                <p className="text-[11px] text-slate-500 truncate">{boxSizeLabel(b)}{b.boxOwner ? ` · ${b.boxOwner}` : ''}{b.date ? ` · ${b.date}` : ''}</p>
+                                                {issues.length > 0 && <p className="text-[10px] text-red-600 font-bold">{describeBoxIssues(issues)}</p>}
+                                            </div>
+                                            <div className="flex gap-1 shrink-0">
+                                                <button onClick={() => { setSlotPicker(null); jumpToTest(b.id); }}
+                                                    className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-2 py-1 text-[11px] font-bold" title="Open this box">Open</button>
+                                                <button onClick={() => { setSlotPicker(null); setMoveModal({ boxId: b.id, currentStorageId: st.id, targetStorageId: st.id }); }}
+                                                    className="bg-blue-500 hover:bg-blue-600 text-white rounded-lg px-2 py-1 text-[11px] font-bold" title="Move this box to another slot or storage">↕️</button>
+                                                <button onClick={() => { setTests(prev => prev.map(t => t.id === b.id ? { ...t, storageId: '', storageIndex: null } : t)); }}
+                                                    className="bg-white border border-slate-300 hover:bg-slate-100 text-slate-600 rounded-lg px-2 py-1 text-[11px] font-bold"
+                                                    title="Take this box out of the storage (the box is kept, it simply has no location)">Take out</button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <div className="p-3 border-t border-slate-100 flex justify-between items-center gap-2 shrink-0">
+                                <div className="flex items-center gap-2">
+                                    <select value={newBoxSize} onChange={(e) => setNewBoxSize(e.target.value)}
+                                        className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none font-bold text-slate-700">
+                                        {BOX_SIZE_PRESETS.map(p => (<option key={p.id} value={p.id}>{p.label}</option>))}
+                                    </select>
+                                    <button onClick={() => { const i = slotPicker.slotIndex; setSlotPicker(null); handleAddBox(i); }}
+                                        className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-3 py-1.5 text-xs font-bold"
+                                        title="Add another box to this slot (it is stacked behind the others)">+ Add box to this slot</button>
+                                </div>
+                                <button onClick={() => setSlotPicker(null)} className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg">Close</button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
         </div>
     );
 };
@@ -505,6 +729,21 @@ const getWellData = (r, c) => {
   return defaults;
 };
 
+    /* ── Champs OBLIGATOIRES d'une boîte ───────────────────────────────────
+       Nom de l'échantillon, propriétaire et date — sur la boîte (une boîte
+       1 × 1 EST un échantillon en vrac) ET sur chaque puits rempli. Les règles
+       vivent dans utils/storageBoxes.js : ici on les MONTRE, on ne les
+       réinvente pas. */
+    const boxRequiredIssues = requiredBoxIssues(activeTest);
+    const missingWellPositions = new Set(
+        boxRequiredIssues.filter(i => i.scope === 'well').map(i => i.pos)
+    );
+    const wellIsIncomplete = (r, c) => {
+        if (!wellIsFilled(getWellData(r, c))) return false;
+        return missingWellPositions.has(wellPositionLabel(r, c))
+            || wellMissingRequired(getWellData(r, c)).length > 0;
+    };
+
   const updateWellData = (r, c, field, value) => {
   const current = getWellData(r, c);
   current[field] = value;
@@ -575,6 +814,30 @@ const printBoxLabel = () => {
     return (
         <div className="flex flex-col h-full overflow-y-auto md:overflow-hidden custom-scrollbar">
             {TestHeader}
+            {/* Les champs obligatoires d'une boîte (utils/storageBoxes.js) : la
+                boîte doit être IDENTIFIABLE — nom de l'échantillon, propriétaire
+                et date sur la boîte, et dans chaque puits rempli. Rien n'est
+                bloqué : on dit simplement ce qui manque. */}
+            {boxRequiredIssues.length > 0 ? (
+                <div className="mx-6 mt-4 p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 no-print">
+                    <p className="text-xs font-black uppercase flex items-center gap-2">
+                        ⚠ {boxRequiredIssues.length} required field{boxRequiredIssues.length > 1 ? 's' : ''} missing
+                    </p>
+                    <ul className="mt-1.5 text-[11px] list-disc list-inside grid gap-0.5">
+                        {boxRequiredIssues.slice(0, 6).map((it, i) => (
+                            <li key={`${it.scope}-${it.field}-${it.pos || ''}-${i}`}>{it.message}</li>
+                        ))}
+                    </ul>
+                    {boxRequiredIssues.length > 6 && (
+                        <p className="mt-1 text-[11px] font-bold">…and {boxRequiredIssues.length - 6} more</p>
+                    )}
+                    <p className="mt-1.5 text-[10px] text-red-500">Required on the box and in every filled well: sample name, owner, date.</p>
+                </div>
+            ) : (
+                <div className="mx-6 mt-4 p-2.5 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 text-xs font-bold no-print">
+                    ✓ All required information is filled ({filledWells(activeTest).length} filled well{filledWells(activeTest).length === 1 ? '' : 's'}).
+                </div>
+            )}
             <div className="p-6 md:flex-1 md:overflow-y-auto md:min-h-0 custom-scrollbar" onMouseUp={() => { if(boxDragState.active) setVal('boxDragState', { active: false, startR: -1, startC: -1 }); }}>
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col mb-6">
                     <label className="text-xs font-bold text-slate-600 mb-2 flex items-center gap-1"><Icon name="document" size={13} /> General Box Notes</label>
@@ -615,14 +878,14 @@ const printBoxLabel = () => {
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap gap-4 items-center mb-6 no-print">
                     <div className="flex items-center gap-2">
                         <label className="text-xs font-bold text-slate-500 uppercase">Rows:</label>
-                        <input type="number" min="2" max="26" value={activeTest.boxRows || 9}
-                            onChange={e => updateActiveTest({ boxRows: Math.max(2, Math.min(26, parseInt(e.target.value) || 9)) })}
+                        <input type="number" min="1" max="26" value={activeTest.boxRows || 9}
+                            onChange={e => updateActiveTest({ boxRows: Math.max(1, Math.min(26, parseInt(e.target.value) || 9)) })}
                             className="w-16 border border-slate-300 rounded px-2 py-1 text-sm text-center outline-none focus:border-blue-500" />
                     </div>
                     <div className="flex items-center gap-2">
                         <label className="text-xs font-bold text-slate-500 uppercase">Cols:</label>
-                        <input type="number" min="2" max="26" value={activeTest.boxCols || 9}
-                            onChange={e => updateActiveTest({ boxCols: Math.max(2, Math.min(26, parseInt(e.target.value) || 9)) })}
+                        <input type="number" min="1" max="26" value={activeTest.boxCols || 9}
+                            onChange={e => updateActiveTest({ boxCols: Math.max(1, Math.min(26, parseInt(e.target.value) || 9)) })}
                             className="w-16 border border-slate-300 rounded px-2 py-1 text-sm text-center outline-none focus:border-blue-500" />
                     </div>
                     <div className="flex items-center gap-2">
@@ -653,6 +916,7 @@ const printBoxLabel = () => {
                                         const hasContent = data.compound.trim().length > 0;
                                         const isSelected = selectedWells.some(w => w.r === r && w.c === c) || (boxDragState.active && r >= Math.min(boxDragState.startR, boxDragState.currentR) && r <= Math.max(boxDragState.startR, boxDragState.currentR) && c >= Math.min(boxDragState.startC, boxDragState.currentC) && c <= Math.max(boxDragState.startC, boxDragState.currentC));
                                         const isMatch = boxSearch && (String(data.compound || '').toLowerCase().includes(boxSearch.toLowerCase()) || String(data.sampleOwner || data.operator || '').toLowerCase().includes(boxSearch.toLowerCase()) || String(data.description || '').toLowerCase().includes(boxSearch.toLowerCase()) || String(data.solvent || '').toLowerCase().includes(boxSearch.toLowerCase()) || String(data.concentration || '').toLowerCase().includes(boxSearch.toLowerCase()));
+                                        const incompleteWell = wellIsIncomplete(r, c);
                                         return (
                                             <div key={c} 
                                                 onMouseDown={(e) => {
@@ -668,8 +932,8 @@ const printBoxLabel = () => {
                                                         setVal('selectedWells', newSel);
                                                     }
                                                 }}
-                                                className={`aspect-square w-12 h-12 min-w-[48px] min-h-[48px] shrink-0 rounded-full border-[3px] cursor-pointer flex flex-col items-center justify-center text-xs overflow-hidden shadow-sm transition-all hover:scale-110 ${isSelected ? 'ring-4 ring-blue-500 border-blue-600 bg-blue-50' : isMatch ? 'bg-yellow-100 border-yellow-400 shadow-yellow-400/50 shadow-lg' : hasContent ? 'bg-indigo-50 border-indigo-300 text-indigo-900' : 'bg-white border-slate-200 text-slate-300 hover:border-slate-300'}`}
-                                                title={data.compound ? `${data.compound}${data.operator ? ` (${data.operator})` : ''}` : 'Empty Slot'}>
+                                                className={`aspect-square w-12 h-12 min-w-[48px] min-h-[48px] shrink-0 rounded-full border-[3px] cursor-pointer flex flex-col items-center justify-center text-xs overflow-hidden shadow-sm transition-all hover:scale-110 ${isSelected ? 'ring-4 ring-blue-500 border-blue-600 bg-blue-50' : isMatch ? 'bg-yellow-100 border-yellow-400 shadow-yellow-400/50 shadow-lg' : hasContent ? 'bg-indigo-50 border-indigo-300 text-indigo-900' : 'bg-white border-slate-200 text-slate-300 hover:border-slate-300'} ${!isSelected && incompleteWell ? 'ring-4 ring-red-400 border-red-500' : ''}`}
+                                                title={`${data.compound ? `${data.compound}${data.operator ? ` (${data.operator})` : ''}` : 'Empty Slot'}${incompleteWell ? ` — required missing: ${wellMissingRequired(data).join(', ')}` : ''}`}>
                                                 <div style={{transform: `rotate(-${boxRotation}deg)`}} className="w-full flex items-center justify-center h-full pointer-events-none">
                                                     {hasContent ? ( <span className="font-bold text-[9px] leading-tight px-1 text-center line-clamp-2 truncate w-full" title={data.compound}>{data.compound}</span> ) : ( <span className="opacity-0 hover:opacity-100 text-[10px] font-bold text-slate-400">+</span> )}
                                                 </div>

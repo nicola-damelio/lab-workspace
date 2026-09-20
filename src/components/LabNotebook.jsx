@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { getDirectImageUrl, repairContentImages } from '../data/constants';
 import { FCSDataVisualizations } from './FlowCytometrySections';
-import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES } from '../data/testTypes';
+import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES, experimentTypeFilterOptions, matchesExperimentTypeFilter } from '../data/testTypes';
 import { SearchableSelect } from './SearchableSelect';
 import { getNmr1dDisplay } from './NMRSections';
 import { getTestTypeMeta, getNotebookTypeKey } from './testTypeMeta';
@@ -856,27 +856,11 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
 
-  const typeLabels = {
-    'plate-96': 'Multiwell plate essay', 'plate-48': 'Multiwell plate essay', 'plate-24': 'Multiwell plate essay', 'plate-12': 'Multiwell plate essay', 'plate-6': 'Multiwell plate essay', 'plate-1': 'Multiwell plate essay',
-    'plate-9x9box': 'Storage Box',
-    'nmr': 'NMR', 'cd': 'Circular Dichroism', 'nmr-fittings': 'NMR Fitting', 'dosy': 'DOSY',
-    'cloning': 'Cloning', 'protein_expression': 'Protein expression & Purification', 'md_simulation': 'MD Simulation',
-    'ssnmr': 'Solid State NMR', 'docking': 'Molecular Docking', 'flow_cytometry': 'Flow Cytometry'
-  };
-
-  const EXPERIMENT_TYPES = [
-    "Cloning",
-    "Protein expression & Purification",
-    "Multiwell plate essay",
-    "Flow Cytometry",
-    "Circular Dichroism",
-    "NMR",
-    "NMR Fitting",
-    "DOSY",
-    "Solid State NMR",
-    "MD Simulation",
-    "Molecular Docking"
-  ];
+  /* Experiment-type label + matching live in src/data/testTypes.js (ONE table
+     for the whole app). The old local `typeLabels` map here had no entry for
+     `microscopy`, so the “Experiment type → Microscopy” filter silently
+     matched nothing. */
+  const experimentTypeOptions = useMemo(() => experimentTypeFilterOptions(tests), [tests]);
 
   const filteredTests = useMemo(() => {
     // Helper: get all scientists assigned to a test (primary + co-scientists)
@@ -900,8 +884,6 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
       const flatCompounds = [...new Set([...(t.selectedCompounds || []), ...(t.compoundsSelected || []), ...(t.compound ? t.compound.split(',') : [])])].map(s => s.trim());
       const flatPlasmids = [...new Set([...(t.plasmids || []), ...(t.plasmid ? [t.plasmid] : [])])];
 
-      const testLabel = typeLabels[t.type] || t.type;
-
       if (filterPrimary !== 'ALL' && t.testCategory !== filterPrimary) return false;
       if (filterSecondary !== 'ALL' && t.secondaryCategory !== filterSecondary) return false;
       // Scientist filter: only active for superusers (normal users already pre-filtered above)
@@ -909,7 +891,7 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
         const scientists = getTestScientists(t);
         if (!scientists.includes(filterScientist)) return false;
       }
-      if (filterType !== 'ALL' && testLabel !== filterType) return false;
+      if (!matchesExperimentTypeFilter(t, filterType)) return false;
       if (filterCompound !== 'ALL' && !flatCompounds.includes(filterCompound)) return false;
       if (filterPlasmid !== 'ALL' && !flatPlasmids.includes(filterPlasmid)) return false;
       if (filterCellLine !== 'ALL' && (!t.cellLines || !t.cellLines.includes(filterCellLine))) return false;
@@ -1011,7 +993,7 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
             <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Experiment type</label>
             <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
               <option value="ALL">All</option>
-              {EXPERIMENT_TYPES.map(label => <option key={label} value={label}>{label}</option>)}
+              {experimentTypeOptions.map(label => <option key={label} value={label}>{label}</option>)}
             </select>
           </div>
           <div>

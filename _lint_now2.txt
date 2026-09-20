@@ -1,0 +1,22 @@
+﻿
+  x eslint(no-undef): 'EXPERIMENT_TYPES' is not defined.
+     ,-[src/components/AppModules/testsModule.jsx:508:30]
+ 507 |                             <option value="ALL">All</option>
+ 508 |                             {EXPERIMENT_TYPES.map((label) => <option key={label} value={label}>{label}</option>)}
+     :                              ^^^^^^^^^^^^^^^^
+ 509 |                           </select>
+     `----
+  help: Either define 'EXPERIMENT_TYPES' or remove the reference to it. If 'EXPERIMENT_TYPES' is a global variable, add it to the 'globals' configuration.
+
+  ! eslint(no-unused-vars): Variable 'experimentTypeOptions' is declared but never used. Unused variables should start with a '_'.
+    ,-[src/components/AppModules/testsModule.jsx:83:23]
+ 82 |                    src/data/testTypes.js (ONE table for the whole app). */
+ 83 |                 const experimentTypeOptions = experimentTypeFilterOptions(tests);
+    :                       ^^^^^^^^^^|^^^^^^^^^^
+    :                                 `-- 'experimentTypeOptions' is declared here
+ 84 | 
+    `----
+  help: Consider removing this declaration.
+
+Found 1 warning and 1 error.
+Finished in 70ms on 3 files with 92 rules using 8 threads.
