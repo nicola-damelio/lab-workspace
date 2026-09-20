@@ -17,7 +17,7 @@ export { VIS_PALETTES };
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName, canonicalExperimentPath, sanitizeSlug } from '../utils/driveNaming';
 import { uploadLocalFile, getDriveToken } from '../utils/driveUpload';
-import { archiveRestoreJson, isMissingColumns, isMissingValue, restoreJsonFor, restoreStems } from '../utils/driveRestore';
+import { archiveRestoreJson, isMissingColumns, isMissingValue, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';
 import { useDriveAutoRestore } from './useDriveAutoRestore';
 
 /* ── RESTAURATION AUTOMATIQUE DU SPECTRE ssNMR DEPUIS LE DRIVE ──────────────
@@ -42,13 +42,6 @@ const ssnmrDriveCtx = (test = {}, instance = '') => ({
   instance: instance || test.instanceName || ''
 });
 
-/* Pointeurs de restauration en attente d'écriture : l'archivage se termine
-   parfois APRÈS un changement de condition, et `patchActive` écrit sur la
-   condition ACTIVE (il poserait donc le pointeur au mauvais endroit). Le
-   pointeur est donc mis de côté, puis posé dès que sa condition redevient
-   active — au pire, la recherche par nom retrouve le fichier. */
-const ssnmrPendingRefs = new Map();
-
 /** Archive la copie de référence des colonnes d'un spectre ssNMR et rend son
  *  pointeur (`{ id, name, url, driveUrl, at }`), ou null quand le Drive n'est
  *  pas joignable — un import ne doit JAMAIS échouer pour cette raison. */
@@ -72,15 +65,6 @@ const archiveSsnMRColumns = async ({
     ctx: ssnmrDriveCtx(test, instance)
   })
 );
-
-/** Pose le pointeur d'une archive sur la condition qui vient d'être importée :
- *  tout de suite si c'est encore elle qui est affichée, sinon en attente (voir
- *  ssnmrPendingRefs). `key` est l'id de l'instance réellement active. */
-const placeSsnMRPointer = ({ pointer, key, activeKey, patch }) => {
-  if (!pointer || !key) return;
-  if (activeKey === key) patch({ ssnmrDrive: pointer });
-  else ssnmrPendingRefs.set(key, { ssnmrDrive: pointer });
-};
 
 const HAS_EB = typeof ErrorBar !== 'undefined';
 
@@ -1074,9 +1058,8 @@ export const Data = ({ ctx }) => {
   const ssnmrActiveKeyRef = useRef(ssnmrActiveKey);
   ssnmrActiveKeyRef.current = ssnmrActiveKey;
   useEffect(() => {
-    const pending = ssnmrPendingRefs.get(ssnmrActiveKey);
+    const pending = takePendingRestorePointer({ field: 'ssnmrDrive', key: ssnmrActiveKey });
     if (!pending) return;
-    ssnmrPendingRefs.delete(ssnmrActiveKey);
     patchActive(pending);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ssnmrActiveKey]);
@@ -1285,8 +1268,9 @@ export const Data = ({ ctx }) => {
         brukerMeta: updates.brukerMeta,
         source: { file: filename || '', expno: parsed.expNum || '' }
       });
-      placeSsnMRPointer({
-        pointer, key: archiveKey, activeKey: ssnmrActiveKeyRef.current, patch: patchActive
+      placeRestorePointer({
+        field: 'ssnmrDrive', pointer, key: archiveKey,
+        activeKey: ssnmrActiveKeyRef.current, patch: patchActive
       });
     })();
   };
@@ -1469,8 +1453,9 @@ export const Data = ({ ctx }) => {
                 brukerMeta: cloned.brukerMeta,
                 source: { file: cloned.instanceName || '', expno: parsed.expNum || '' }
             });
-            placeSsnMRPointer({
-                pointer, key: cloned.id, activeKey: ssnmrActiveKeyRef.current, patch: patchActive
+            placeRestorePointer({
+                field: 'ssnmrDrive', pointer, key: cloned.id,
+                activeKey: ssnmrActiveKeyRef.current, patch: patchActive
             });
         })();
     });

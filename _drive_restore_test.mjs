@@ -16,7 +16,8 @@
 
    Vérifié ici : la logique pure, le cycle archivage → restauration sur un FAUX
    Drive (y compris un fichier mis à la corbeille et un pointeur périmé), et le
-   câblage du premier module branché (NMR 1D, qui était le cas réel signalé).
+   câblage des modules branchés : NMR 1D (le cas réel signalé), ssNMR (colonnes
+   de spectres solides) et CD (Jasco).
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -127,6 +128,30 @@ eq(RESTORE.claimRestore('nmr1d', 't1'), true, 'après libération, elle peut ré
 RESTORE.forgetRestores();
 eq(RESTORE.claimRestore('nmr1d', 't1'), true, 'l’oubli général rouvre toutes les tentatives');
 
+/* Le pointeur d'une archive arrivée APRÈS un changement de page ATTEND sa page :
+   l'écrire tout de suite le poserait sur la donnée devenue active (voir
+   placeRestorePointer / takePendingRestorePointer dans driveRestore.js). */
+const pointerPatches = [];
+const patchPointer = (updates) => { pointerPatches.push(updates); };
+eq(RESTORE.placeRestorePointer({ field: 'ssnmrDrive', pointer: { id: 'P1' }, key: 't1', activeKey: 't1', patch: patchPointer }), true,
+  'page encore affichée ⇒ le pointeur est posé tout de suite');
+eq(pointerPatches, [{ ssnmrDrive: { id: 'P1' } }], '…sur la bonne donnée');
+eq(RESTORE.takePendingRestorePointer({ field: 'ssnmrDrive', key: 't1' }), null, '…et rien ne reste en attente');
+eq(RESTORE.placeRestorePointer({ field: 'ssnmrDrive', pointer: { id: 'P2' }, key: 't2', activeKey: 't1', patch: patchPointer }), false,
+  'page changée ⇒ le pointeur ATTEND');
+eq(pointerPatches.length, 1, '…rien n’est écrit sur la page devenue active');
+eq(RESTORE.takePendingRestorePointer({ field: 'ssnmrDrive', key: 't1' }), null,
+  '…et il n’est jamais posé sur la page qui l’a remplacée');
+eq(RESTORE.takePendingRestorePointer({ field: 'ssnmrDrive', key: 't2' }), { ssnmrDrive: { id: 'P2' } },
+  'sa page revenue récupère SON pointeur');
+eq(RESTORE.takePendingRestorePointer({ field: 'ssnmrDrive', key: 't2' }), null, '…une seule fois');
+eq(RESTORE.placeRestorePointer({ field: 'cdDrive', pointer: null, key: 't1', activeKey: 't1', patch: patchPointer }), false,
+  'sans pointeur (Drive injoignable) il n’y a rien à poser');
+eq(pointerPatches.length, 1, '…et rien n’est écrit pour rien');
+RESTORE.forgetRestorePointers();
+eq(RESTORE.takePendingRestorePointer({ field: 'ssnmrDrive', key: 't2' }), null,
+  'l’oubli général des pointeurs ne laisse rien derrière');
+
 /* ══ 2. ARCHIVER, PUIS RESTAURER (faux Drive) ══════════════════════════════ */
 
 const FULL_SPECTRUM = { xs: [1, 2, 3], ys: [10, 20, 30], ysImag: null, meta: { swPpm: 12 }, title: 'Imported 1r' };
@@ -198,7 +223,7 @@ MOCKS.mediaBlob = realMedia;
 
 /* ══ 3. LE CÂBLAGE DU PREMIER MODULE (NMR 1D — le cas réel signalé) ════════ */
 
-ok(NMRSRC.includes("import { archiveRestoreJson, isMissingValue, restoreJsonFor, restoreStems } from '../utils/driveRestore';"),
+ok(NMRSRC.includes("import { archiveRestoreJson, isMissingValue, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';"),
   'NMRSections passe par le mécanisme GÉNÉRAL (aucune restauration maison)');
 ok(NMRSRC.includes("import { useDriveAutoRestore } from './useDriveAutoRestore';"),
   '…et par le déclencheur automatique partagé');
@@ -221,8 +246,10 @@ ok(NMRSRC.includes("await storeJson(NMR_SPECTRUM_KEY(activeTest.id), full);"),
   'la copie restaurée réapprovisionne la cache plein format du navigateur');
 ok(NMRSRC.includes('setFullNmrSpec(full);'), '…et l’écran tout de suite (sans attendre un re-rendu)');
 ok(NMRSRC.includes("'⬇️ Restore from Drive'"), 'la page garde un bouton manuel (repli explicite)');
-ok(NMRSRC.includes('nmr1dPendingRefs.get(activeTest.id)'),
+ok(NMRSRC.includes("takePendingRestorePointer({ field: 'nmr1dDrive', key: activeTest.id })"),
   'un pointeur arrivé après un changement d’onglet est posé sur la bonne instance');
+ok(!NMRSRC.includes('nmr1dPendingRefs'),
+  '…par le mécanisme du NOYAU partagé (plus de carte de pointeurs locale au module)');
 ok(!/nmr1dDrive[^\n]*localStorage/.test(NMRSRC), 'aucun pointeur rangé dans le navigateur (il doit voyager)');
 
 /* ══ 3 bis. LE DEUXIÈME MODULE BRANCHÉ (ssNMR — mêmes gestes, même mécanisme) ══
@@ -232,7 +259,7 @@ ok(!/nmr1dDrive[^\n]*localStorage/.test(NMRSRC), 'aucun pointeur rangé dans le 
 
 const SSNMRSRC = readFileSync('src/components/ssNMRSections.jsx', 'utf8');
 
-ok(SSNMRSRC.includes("import { archiveRestoreJson, isMissingColumns, isMissingValue, restoreJsonFor, restoreStems } from '../utils/driveRestore';"),
+ok(SSNMRSRC.includes("import { archiveRestoreJson, isMissingColumns, isMissingValue, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';"),
   'ssNMRSections passe par le mécanisme GÉNÉRAL (aucune restauration maison)');
 ok(SSNMRSRC.includes("import { useDriveAutoRestore } from './useDriveAutoRestore';"),
   '…et par le déclencheur automatique partagé');
@@ -255,11 +282,46 @@ ok(SSNMRSRC.includes('restore: restoreSsnMRFromDrive'), '…avec sa restauration
 ok(SSNMRSRC.includes('ssnmrDrive: {'), 'le pointeur de restauration voyage sur la condition importée');
 ok(SSNMRSRC.includes('spectraColumns: columns,'), 'les colonnes restaurées sont réinjectées dans la condition');
 ok(SSNMRSRC.includes("'⬇️ Restore from Drive'"), 'la page garde un bouton manuel (repli explicite)');
-ok(SSNMRSRC.includes('ssnmrPendingRefs.get(ssnmrActiveKey)'),
+ok(SSNMRSRC.includes("takePendingRestorePointer({ field: 'ssnmrDrive', key: ssnmrActiveKey })"),
   'un pointeur arrivé après un changement de condition est posé sur la bonne condition');
 ok(SSNMRSRC.includes('const ssnmrActiveKey = (activeInstance && activeInstance.id) || activeTest.id;'),
   'la clé du portillon est la CONDITION affichée (les colonnes vivent sur elle)');
 ok(!/ssnmrDrive[^\n]*localStorage/.test(SSNMRSRC), 'aucun pointeur rangé dans le navigateur (il doit voyager)');
+
+/* ══ 3 ter. LE TROISIÈME MODULE BRANCHÉ (CD / Jasco — mêmes gestes) ══════════
+   Les spectres CD sont eux aussi des COLONNES (`spectraColumns` + l'axe des
+   longueurs d'onde). L'archive va dans le dossier des fichiers .jws importés
+   (`Data/Spectra`) et le pointeur (`cdDrive`) vit sur la condition. */
+
+const CDSRC = readFileSync('src/components/CDSections.jsx', 'utf8');
+
+ok(CDSRC.includes("import { archiveRestoreJson, isMissingColumns, isMissingValue, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';"),
+  'CDSections passe par le mécanisme GÉNÉRAL (aucune restauration maison)');
+ok(CDSRC.includes("import { useDriveAutoRestore } from './useDriveAutoRestore';"),
+  '…et par le déclencheur automatique partagé');
+ok(CDSRC.includes("const CD_RESTORE_KIND = 'cdspectra';"), 'le type de donnée CD est déclaré une fois');
+ok(CDSRC.includes("const cdDriveCtx = (test = {}, instance = '') => ({"),
+  'le dossier d’archive est le dossier canonique de l’instance');
+ok(/subsection: 'Spectra'/.test(CDSRC), '…la même sous-section que les fichiers .jws de l’import Jasco');
+ok(CDSRC.includes('stem: instance,'), 'le nom archivé est le nom DÉCLARÉ de l’instance');
+ok(CDSRC.includes('columns: Array.isArray(columns) ? columns : [],'),
+  'l’archive porte les COLONNES (la donnée qui ne tient pas dans le document)');
+eq((CDSRC.match(/archiveCdColumns\(\{/g) || []).length, 2,
+  'les DEUX chemins d’import archivent : le premier fichier (applyJasco) et les conditions clonées');
+ok(CDSRC.includes('const clones = [];') && CDSRC.includes('ctx.setTests(prevTests => [...prevTests, ...clones]);'),
+  'les conditions clonées sont construites HORS de l’updater d’état (elles sont archivées juste après)');
+ok(CDSRC.includes('if (isMissingColumns(activeTest.spectraColumns)) return true;'),
+  'des colonnes vidées (ou remplacées par un marqueur) déclenchent la restauration');
+ok(CDSRC.includes('const cdRestore = useDriveAutoRestore({'), 'la page attache le déclencheur automatique');
+ok(CDSRC.includes('restore: restoreCdFromDrive'), '…avec sa restauration métier');
+ok(CDSRC.includes('cdDrive: {'), 'le pointeur de restauration voyage sur la condition');
+ok(CDSRC.includes('spectraColumns: columns,'), 'les colonnes restaurées sont réinjectées dans la condition');
+ok(CDSRC.includes('rawSpectraColumns: data.rawColumns'),
+  '…et la sauvegarde mdeg de la conversion [θ] quand l’archive en porte une');
+ok(CDSRC.includes("'⬇️ Restore from Drive'"), 'la page garde un bouton manuel (repli explicite)');
+ok(CDSRC.includes("takePendingRestorePointer({ field: 'cdDrive', key: activeTest.id })"),
+  'un pointeur arrivé après un changement de condition attend son tour');
+ok(!/cdDrive[^\n]*localStorage/.test(CDSRC), 'aucun pointeur rangé dans le navigateur (il doit voyager)');
 
 /* La mécanique partagée : un déclencheur, un portillon, un événement. */
 ok(HOOKSRC.includes('const forced = reason !== \'open\' && reason !== \'cloud-connected\';'),

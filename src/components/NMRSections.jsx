@@ -15,7 +15,7 @@ import { suggestDriveFileName, canonicalExperimentPath, sanitizeSlug } from '../
 import { uploadLocalFile, getDriveToken, archiveFileToDrive } from '../utils/driveUpload';
 import { storeJson, loadJson } from '../utils/pdbStore';
 import { blobStore } from '../utils/blobStore';
-import { archiveRestoreJson, isMissingValue, restoreJsonFor, restoreStems } from '../utils/driveRestore';
+import { archiveRestoreJson, isMissingValue, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';
 import { useDriveAutoRestore } from './useDriveAutoRestore';
 import {
   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, CARBON_RANGE_DB,
@@ -73,9 +73,8 @@ const nmr1dDriveCtx = (test = {}, instance = '') => ({
 /* Pointeurs de restauration en attente d'écriture : l'archivage se termine
    parfois APRÈS un changement d'onglet, et le NMR n'a pas d'écriture ciblée
    (`updateInstance`). Le pointeur est donc mis de côté puis posé sur
-   l'instance dès qu'elle redevient active — au pire, la recherche par nom
-   retrouve le fichier. */
-const nmr1dPendingRefs = new Map();
+   l'instance dès qu'elle redevient active (voir driveRestore.placeRestorePointer)
+   — au pire, la recherche par nom retrouve le fichier. */
 
 /** Archive la copie de référence du spectre 1D et rend son pointeur
  *  (`{ id, name, url, driveUrl, at }`), ou null quand le Drive n'est pas
@@ -5918,9 +5917,8 @@ export const DataSection = ({ ctx }) => {
   // l'instance dès qu'elle redevient active. (Le pointeur n'est qu'un raccourci
   // de recherche : la restauration marche aussi sans lui, par le nom du fichier.)
   useEffect(() => {
-    const pending = nmr1dPendingRefs.get(activeTest.id);
+    const pending = takePendingRestorePointer({ field: 'nmr1dDrive', key: activeTest.id });
     if (!pending) return;
-    nmr1dPendingRefs.delete(activeTest.id);
     updateActiveTest(pending);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTest.id]);
@@ -6285,7 +6283,7 @@ export const DataSection = ({ ctx }) => {
     // retrouver ce spectre depuis un autre poste, et c'est pourquoi l'import
     // n'est pas terminé tant qu'elle n'est pas lancée. Le pointeur minuscule
     // qui l'accompagne voyage avec le dataset ; s'il arrive après un changement
-    // d'onglet, il attend son instance (nmr1dPendingRefs).
+    // d'onglet, il attend son instance (placeRestorePointer).
     const archiveStem = updates.instanceName || activeTest.instanceName
       || parsed.datasetName || parsed.filename || NMR1D_RESTORE_KIND;
     const archiveTargetId = activeTest.id;
@@ -6301,14 +6299,14 @@ export const DataSection = ({ ctx }) => {
         }
       });
       if (!pointer || !pointer.id) return;
-      const patch = {
-        nmr1dDrive: {
+      placeRestorePointer({
+        field: 'nmr1dDrive',
+        pointer: {
           ...pointer,
           stems: restoreStems(archiveStem, activeTest.instanceName, parsed.datasetName)
-        }
-      };
-      if (nmrActiveIdRef.current === archiveTargetId) updateActiveTest(patch);
-      else nmr1dPendingRefs.set(archiveTargetId, patch);
+        },
+        key: archiveTargetId, activeKey: nmrActiveIdRef.current, patch: updateActiveTest
+      });
     })();
   };
 
@@ -6443,8 +6441,8 @@ export const DataSection = ({ ctx }) => {
 
              // Copie de RÉFÉRENCE du spectre sur le Drive + pointeur (il sera
              // posé sur cette condition dès qu'elle sera ouverte : voir
-             // nmr1dPendingRefs et l'effet du même nom). Sans elle, un autre
-             // poste ne retrouverait que les fichiers bruts.
+             // placeRestorePointer et takePendingRestorePointer). Sans elle, un
+             // autre poste ne retrouverait que les fichiers bruts.
              const cloneId = cloned.id;
              const cloneStem = cloned.instanceName || p.datasetName || NMR1D_RESTORE_KIND;
              void (async () => {
@@ -6459,11 +6457,11 @@ export const DataSection = ({ ctx }) => {
                  }
                });
                if (!pointer || !pointer.id) return;
-               const patch = {
-                 nmr1dDrive: { ...pointer, stems: restoreStems(cloneStem, p.datasetName) }
-               };
-               if (nmrActiveIdRef.current === cloneId) updateActiveTest(patch);
-               else nmr1dPendingRefs.set(cloneId, patch);
+               placeRestorePointer({
+                 field: 'nmr1dDrive',
+                 pointer: { ...pointer, stems: restoreStems(cloneStem, p.datasetName) },
+                 key: cloneId, activeKey: nmrActiveIdRef.current, patch: updateActiveTest
+               });
              })();
            }
            // Same auto-fill as the first import: Experimental Conditions title +

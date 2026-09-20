@@ -173,6 +173,49 @@ export const releaseRestore = (kind, testId) => {
 /** Oublie toutes les réservations (tests, « essayer encore » global). */
 export const forgetRestores = () => { restoresClaimed.clear(); };
 
+/* ── 3 bis. LES POINTEURS EN ATTENTE DE LEUR PAGE ─────────────────────────
+   L'archivage est asynchrone : il se termine parfois APRÈS que l'utilisateur a
+   changé d'onglet / de condition. Écrire le pointeur tout de suite le poserait
+   sur la page devenue active — il décrirait alors la mauvaise donnée. Il attend
+   donc que SA page revienne. Au pire, la recherche par nom retrouve le fichier :
+   un pointeur en attente n'est jamais une donnée perdue. */
+const pendingRestorePointers = new Map();
+
+/** Pose le pointeur d'une archive sur la donnée qu'il décrit : tout de suite si
+ *  c'est encore elle qui est affichée (`activeKey === key`), sinon en attente
+ *  (voir takePendingRestorePointer). `field` est le champ du test qui porte le
+ *  pointeur (`nmr1dDrive`, `ssnmrDrive`, `cdDrive`…), `key` identifie la page
+ *  (expérience, instance, condition).
+ *  @param {{ field:string, pointer:object, key:string, activeKey:string, patch:Function }} opts
+ *  @returns {boolean} true quand le pointeur a été posé tout de suite */
+export const placeRestorePointer = ({
+  field = '', pointer = null, key = '', activeKey = '', patch = null
+} = {}) => {
+  if (!field || !pointer || !key || typeof patch !== 'function') return false;
+  const updates = { [field]: pointer };
+  if (activeKey === key) {
+    patch(updates);
+    return true;
+  }
+  pendingRestorePointers.set(restoreGateKey(field, key), updates);
+  return false;
+};
+
+/** Le pointeur qui attendait cette page — et le consomme (null s'il n'y en a
+ *  pas). À appeler quand la page redevient active : le patch rendu est écrit tel
+ *  quel (`{ ssnmrDrive: … }`). */
+export const takePendingRestorePointer = ({ field = '', key = '' } = {}) => {
+  if (!field || !key) return null;
+  const mapKey = restoreGateKey(field, key);
+  const updates = pendingRestorePointers.get(mapKey);
+  if (!updates) return null;
+  pendingRestorePointers.delete(mapKey);
+  return updates;
+};
+
+/** Oublie les pointeurs en attente (tests, changement de dataset). */
+export const forgetRestorePointers = () => { pendingRestorePointers.clear(); };
+
 /* ── 4. LE CLOUD EST-IL ACCESSIBLE ? ───────────────────────────────────────
    Deux fournisseurs existent (nextcloud.js) : Google Drive (jeton OAuth) et
    Nextcloud (URL + utilisateur + mot de passe d'application). Un module ne

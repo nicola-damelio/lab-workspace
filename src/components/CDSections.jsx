@@ -17,8 +17,57 @@ import { parseJascoJwsBinary, isJascoJwsBinary } from '../utils/jascoJws';
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
 import { uploadLocalFile, withExtension, getDriveToken } from '../utils/driveUpload';
+import { archiveRestoreJson, isMissingColumns, isMissingValue, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';
+import { useDriveAutoRestore } from './useDriveAutoRestore';
 export { CollapsibleSection };
 export { VIS_PALETTES };
+
+/* ── RESTAURATION AUTOMATIQUE DES SPECTRES CD DEPUIS LE DRIVE ───────────────
+   (mécanisme général : src/utils/driveRestore.js + useDriveAutoRestore.js)
+   Les colonnes d'un spectre CD vivent dans le document du dataset, qui ne peut
+   PAS les porter en entier : compressDatasetForSave finit par remplacer chaque
+   colonne par un marqueur (« [data omitted — kept in browser cache / Drive or
+   re-uploadable] »). La version plein format est donc archivée sur le Drive en
+   JSON gzip, dans le dossier canonique de l'instance (le MÊME que les fichiers
+   .jws de l'import Jasco), et la condition n'en garde qu'un pointeur de ~80
+   octets (`cdDrive`) qui voyage avec le dataset — donc d'un poste à l'autre.
+   Sur un poste vierge, la restauration retrouve le fichier par son NOM
+   (`<instance>_cdspectra_restore.json.gz`) : ni la cache IndexedDB ni le
+   registre local du navigateur ne sont nécessaires. */
+const CD_RESTORE_KIND = 'cdspectra';
+const cdDriveCtx = (test = {}, instance = '') => ({
+  project: (test.projectNames || [])[0] || '',
+  test: test.name || '',
+  scientist: test.operator || '',
+  section: 'Data',
+  subsection: 'Spectra',
+  instance: instance || test.instanceName || ''
+});
+
+/** Archive la copie de référence des colonnes d'un spectre CD (mdeg, l'axe des
+ *  longueurs d'onde, et les sauvegardes de la conversion [θ]) et rend son
+ *  pointeur (`{ id, name, url, driveUrl, at }`), ou null quand le Drive n'est
+ *  pas joignable — un import ne doit JAMAIS échouer pour cette raison. */
+const archiveCdColumns = async ({
+  test, instance, columns, rawColumns = null, thetaColumns = null,
+  wavelengthData = '', yUnit = 'mdeg', source = {}
+}) => (
+  archiveRestoreJson({
+    kind: CD_RESTORE_KIND,
+    suffix: CD_RESTORE_KIND,
+    stem: instance,
+    data: {
+      columns: Array.isArray(columns) ? columns : [],
+      rawColumns: Array.isArray(rawColumns) && rawColumns.length ? rawColumns : null,
+      thetaColumns: Array.isArray(thetaColumns) && thetaColumns.length ? thetaColumns : null,
+      wavelengthData: wavelengthData || '',
+      yUnit: yUnit || 'mdeg',
+      instanceName: instance || '',
+      source
+    },
+    ctx: cdDriveCtx(test, instance)
+  })
+);
 
 const HAS_EB = typeof ErrorBar !== 'undefined';
 
@@ -1523,6 +1572,78 @@ export const Data = ({ ctx }) => {
   const removeSpectrumColumn = (id) =>
     updateActiveTest({ spectraColumns: spectraColumns.filter((c) => c.id !== id) });
 
+  // ── RESTAURATION AUTOMATIQUE DES COLONNES DEPUIS LE DRIVE ────────────────
+  // (mécanisme général : src/utils/driveRestore.js + useDriveAutoRestore.js)
+  // Le document du dataset ne peut pas porter un spectre entier : quand il faut
+  // faire de la place, compressDatasetForSave remplace chaque colonne par un
+  // marqueur. Le Drive est donc la copie de RÉFÉRENCE — à l'ouverture de la
+  // page, des colonnes manquantes sont re-téléchargées TOUT SEUL (autre poste,
+  // cache vidée, données retirées par la limite Firestore) puis réinjectées ici,
+  // et l'utilisateur n'a rien à faire.
+  const cdActiveIdRef = useRef(activeTest.id);
+  cdActiveIdRef.current = activeTest.id;
+  useEffect(() => {
+    const pending = takePendingRestorePointer({ field: 'cdDrive', key: activeTest.id });
+    if (!pending) return;
+    updateActiveTest(pending);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTest.id]);
+
+  const cdDefaultStems = () => restoreStems(
+    activeTest.instanceName,
+    Array.isArray(activeTest.instrumentalDatasets) && activeTest.instrumentalDatasets[0]
+      ? activeTest.instrumentalDatasets[0].name : ''
+  );
+
+  const cdDriveMissing = () => {
+    if (isMissingColumns(activeTest.spectraColumns)) return true; // vidées, ou marqueur « omitted »
+    /* Colonnes présentes : l'axe des longueurs d'onde a-t-il été retiré par la
+       limite Firestore ? Un spectre sans axe (colonnes collées à la main) n'est
+       PAS un manque : rien n'a été archivé pour lui. */
+    return isMissingValue(activeTest.wavelengthData) && !!activeTest.cdDrive;
+  };
+
+  const restoreCdFromDrive = async () => {
+    const pointer = activeTest.cdDrive || null;
+    const stems = (pointer && Array.isArray(pointer.stems) && pointer.stems.length
+      ? pointer.stems
+      : cdDefaultStems());
+    const found = await restoreJsonFor({
+      kind: CD_RESTORE_KIND, suffix: CD_RESTORE_KIND, stems,
+      ctx: cdDriveCtx(activeTest, activeTest.instanceName), pointer
+    });
+    if (!found) {
+      return {
+        ok: false,
+        message: '⚠️ These spectra are not in this browser and no copy was found on Google Drive. Connect Google Drive, then re-import the Jasco file(s): the raw files AND the spectra are archived at import.'
+      };
+    }
+    const data = (found.data && typeof found.data === 'object') ? found.data : {};
+    const columns = Array.isArray(data.columns) ? data.columns : [];
+    if (!columns.length || isMissingColumns(columns)) {
+      return { ok: false, message: `⚠️ The copy found on Google Drive (${found.name}) is unreadable — re-import the Jasco file(s).` };
+    }
+    updateActiveTest({
+      spectraColumns: columns,
+      wavelengthData: data.wavelengthData || activeTest.wavelengthData || '',
+      yUnit: data.yUnit || activeTest.yUnit || 'mdeg',
+      ...(Array.isArray(data.rawColumns) && data.rawColumns.length ? { rawSpectraColumns: data.rawColumns } : {}),
+      ...(Array.isArray(data.thetaColumns) && data.thetaColumns.length ? { thetaSpectraColumns: data.thetaColumns } : {}),
+      cdDrive: {
+        ...(activeTest.cdDrive || {}),
+        id: found.id, name: found.name, at: Date.now(), stems, restoredAt: Date.now()
+      }
+    });
+    return { ok: true, message: `✅ Spectra restored from Google Drive (${found.name}).` };
+  };
+
+  const cdRestore = useDriveAutoRestore({
+    kind: CD_RESTORE_KIND,
+    testId: activeTest.id,
+    missing: cdDriveMissing,
+    restore: restoreCdFromDrive
+  });
+
   const [jascoText, setJascoText] = useState('');
   const [jascoMsg, setJascoMsg] = useState('');
   const jascoFileRef = useRef(null);
@@ -1595,6 +1716,29 @@ export const Data = ({ ctx }) => {
     if (!Number.isNaN(sens)) setIfEmpty('sensitivity', sens);
 
     updateActiveTest(updates);
+
+    /* La copie de RÉFÉRENCE part sur le Drive TOUT DE SUITE (best-effort) : le
+       document du dataset ne peut pas porter un spectre entier, donc sans cette
+       archive les colonnes n'existeraient que dans le navigateur qui a importé.
+       Un Drive injoignable ne casse rien : « ⬇️ Restore from Drive » réessaie, et
+       une ré-importation réécrit le même fichier. */
+    const cdInstance = String(updates.instanceName || activeTest.instanceName || '').trim();
+    const cdArchiveId = activeTest.id;
+    void (async () => {
+      const pointer = await archiveCdColumns({
+        test: activeTest,
+        instance: cdInstance,
+        columns: updates.spectraColumns,
+        wavelengthData: updates.wavelengthData,
+        yUnit: updates.yUnit,
+        source: { file: filename || '', title: parsed.title || '' }
+      });
+      placeRestorePointer({
+        field: 'cdDrive', pointer, key: cdArchiveId,
+        activeKey: cdActiveIdRef.current, patch: updateActiveTest
+      });
+    })();
+
     const expFilled = ['concentration', 'pathLength', 'temperature', 'experimentDate'].filter((k) => updates[k]).length;
     const instFilled = ['instrumentModel', 'scanMode', 'scanSpeed', 'dataPitch', 'bandwidth', 'responseTime', 'accumulations', 'photometricMode', 'sensitivity'].filter((k) => updates[k]).length;
     setJascoMsg(`✅ Imported ${parsed.xs.length} points${parsed.title ? ` — "${parsed.title}"` : ''}. Filled ${expFilled} experimental + ${instFilled} instrumental field(s).`);
@@ -1645,9 +1789,11 @@ export const Data = ({ ctx }) => {
 
     if (failed.length) setJascoMsg(`⚠️ Skipped ${failed.length} file(s) with no readable XY data (${failed.join(', ')}). ${results.length} imported.`);
 
-    if (results.length > 1 && ctx.setTests) {
-      ctx.setTests(prevTests => {
-        const newTests = [];
+    /* Les conditions clonées sont construites ICI (hors de l'updater d'état) :
+       la copie de RÉFÉRENCE de CHACUNE part sur le Drive juste après, donc les
+       clones doivent déjà exister — React peut exécuter l'updater plus tard. */
+    const clones = [];
+    {
         for (let i = 1; i < results.length; i++) {
           const parsed = results[i];
           const newId = 't' + Date.now() + i + Math.random().toString(36).substring(2,5);
@@ -1662,11 +1808,30 @@ export const Data = ({ ctx }) => {
           const pNum = parseManual(parsed.pathLength); if (pNum !== null) { cloned.pathLength = String(pNum); if (parsed.pathLengthUnit) cloned.pathLengthUnit = parsed.pathLengthUnit; }
           if (parsed.temperature) { cloned.temperature = String(parsed.temperature); if (parsed.temperatureUnit) cloned.temperatureUnit = parsed.temperatureUnit; }
           if (parsed.experimentDate) cloned.experimentDate = parsed.experimentDate;
-          newTests.push(cloned);
+          clones.push(cloned);
         }
-        return [...prevTests, ...newTests];
-      });
     }
+    if (clones.length && ctx.setTests) ctx.setTests(prevTests => [...prevTests, ...clones]);
+
+    /* Copie de référence de CHAQUE condition clonée (best-effort, comme la
+       première) : le pointeur est posé sur sa propre condition si c'est encore
+       elle qui est affichée, sinon il attend son tour (placeRestorePointer). */
+    clones.forEach((cloned) => {
+      void (async () => {
+        const pointer = await archiveCdColumns({
+          test: cloned,
+          instance: String(cloned.instanceName || '').trim(),
+          columns: cloned.spectraColumns,
+          wavelengthData: cloned.wavelengthData,
+          yUnit: cloned.yUnit,
+          source: { file: cloned.instanceName || '' }
+        });
+        placeRestorePointer({
+          field: 'cdDrive', pointer, key: cloned.id,
+          activeKey: cdActiveIdRef.current, patch: updateActiveTest
+        });
+      })();
+    });
     // Archive the RAW Jasco file(s) to Google Drive automatically (best-effort).
     const driveConnected = getDriveToken();
     let driveSaved = 0;
@@ -2010,6 +2175,40 @@ export const Data = ({ ctx }) => {
           <div className="flex items-center justify-between flex-wrap gap-2">
             <h4 className="text-sm font-bold text-sky-900">📥 Jasco Import (.txt / .csv / .jws)</h4>
             <span className="text-[9px] bg-sky-200 text-sky-900 px-2 py-0.5 rounded font-bold">imports into the ACTIVE condition</span>
+          </div>
+
+          {/* Restauration automatique des colonnes depuis le Drive (voir
+              CD_RESTORE_KIND en tête de ce fichier) : l'archive est déposée
+              TOUTE SEULE à l'import, donc ce bouton n'est qu'un secours manuel —
+              la restauration part d'elle-même à l'ouverture de la page. */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => cdRestore.attempt('manual')}
+              disabled={cdRestore.status === 'restoring'}
+              title="Download the archived copy of these spectra from Google Drive (it is saved automatically at import) — it also happens by itself when the page opens"
+              className="text-[10px] font-bold bg-white border border-sky-300 text-sky-700 hover:bg-sky-100 px-2 py-1 rounded-md shadow-sm disabled:opacity-50"
+            >
+              {cdRestore.status === 'restoring' ? '⬇️ Downloading…' : '⬇️ Restore from Drive'}
+            </button>
+            {activeTest.cdDrive && !cdRestore.message && (
+              <span className="text-[9px] font-bold text-emerald-700">☁ Archived copy of these spectra is on Google Drive</span>
+            )}
+            {(cdRestore.status === 'restoring' || cdRestore.message) && (
+              <span className={`text-[11px] font-semibold rounded-lg px-3 py-1.5 border ${cdRestore.status === 'restored'
+                ? 'bg-green-50 border-green-200 text-green-800'
+                : cdRestore.status === 'failed'
+                  ? 'bg-amber-50 border-amber-200 text-amber-800'
+                  : 'bg-sky-50 border-sky-200 text-sky-800'}`}>
+                {cdRestore.status === 'restoring'
+                  ? '⬇️ These spectra are not in this browser — restoring the archived copy from Google Drive…'
+                  : cdRestore.message}
+                {cdRestore.status === 'failed' && (
+                  <button type="button" onClick={() => cdRestore.attempt('manual')}
+                    className="ml-2 underline font-bold">Try again</button>
+                )}
+              </span>
+            )}
           </div>
           <div className="flex flex-wrap items-end gap-3">
             <label className="bg-white border border-sky-300 hover:bg-sky-100 text-sky-800 font-bold px-3 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors">
