@@ -4430,6 +4430,29 @@ export const MolecularStructureSection = ({ ctx }) => {
   // driveRestore.placeRestorePointer) au lieu d'être posé sur la nouvelle.
   const structActiveIdRef = useRef(activeTest.id);
   structActiveIdRef.current = activeTest.id;
+
+  /* ── LA PAGE EST CELLE D'UNE CONDITION : SON FICHIER LA SUIT ───────────────
+     La page d'expérience n'est pas remontée quand on passe d'une condition à
+     l'autre (les onglets « Date / Conditions » changent seulement `activeTest`) :
+     l'état `structureFile` restait donc celui de la condition PRÉCÉDENTE. Le
+     viewer 3D montrait le PDB de l'autre condition, et la restauration de la
+     nouvelle ne partait jamais — son effet sort tôt dès qu'un fichier est déjà
+     « en main », et `nmrStructDriveMissing` répondait « rien à faire ». Un PDB
+     présent sur le Drive n'était donc pas re-téléchargé pour cette condition
+     (même défaut que sur la page MD, où l'utilisateur l'a signalé).
+     `structFileEpoch` relance la restauration depuis la base du navigateur ;
+     `nmrConditionChanged` dit au portillon du Drive que le fichier « en main »
+     n'est PAS celui de la condition affichée. */
+  const nmrStructPageIdRef = useRef(activeTest.id);
+  const nmrConditionChanged = nmrStructPageIdRef.current !== activeTest.id;
+  const [structFileEpoch, setStructFileEpoch] = useState(0);
+  useEffect(() => {
+    if (activeTest.id === nmrStructPageIdRef.current) return;
+    nmrStructPageIdRef.current = activeTest.id;
+    setStructureFile(nmrLocalFileCache.get(activeTest.id)?.structure || null);
+    setStructFileEpoch((n) => n + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTest.id]);
   const handleStructureFile = (file) => {
     if (!file) {
       updateActiveTest({ structureFileData: null, structureFileName: null });
@@ -4490,7 +4513,7 @@ export const MolecularStructureSection = ({ ctx }) => {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTest.id, activeTest.structureFileName]);
+  }, [activeTest.id, activeTest.structureFileName, structFileEpoch]);
 
   // Un pointeur resté en attente (l'envoi s'est terminé après un changement de
   // condition) est posé sur SA condition dès qu'elle revient à l'écran : c'est
@@ -4510,7 +4533,11 @@ export const MolecularStructureSection = ({ ctx }) => {
   // (auto-remplie par le viewer) et donc les tables de déplacements.
   const nmrStructDriveMissing = async () => {
     if (!activeTest.structureFileName) return false;      // aucune structure déclarée
-    if (structureFile) return false;                      // déjà en main
+    // « Déjà en main » ne vaut que pour la condition AFFICHÉE : le fichier laissé
+    // par la condition précédente ne compte pas (la page n'est pas remontée au
+    // changement de condition — voir la remise à niveau ci-dessus), sinon la
+    // restauration de la nouvelle condition ne partait jamais.
+    if (structureFile && !nmrConditionChanged) return false;
     if (typeof activeTest.structureFileData === 'string' && !isMissingValue(activeTest.structureFileData)) return false;
     const blob = await blobStore.load(nmrStructBlobKey(activeTest.id)).catch(() => null);
     return !blob;

@@ -167,6 +167,25 @@ ok(/mdTrajectoryFingerprint\(/.test(MD), 'l’empreinte de la trajectoire charg�
 ok(/🔁 Recalculate/.test(MD), 'un bouton 🔁 Recalculate est disponible');
 ok(/🗑 Clear saved analysis/.test(MD), 'un bouton 🗑 Clear saved analysis est disponible');
 ok(/mergeEnergyIntoAnalysis\(/.test(MD), 'l’énergie recharge un fichier sans effacer les courbes calculées');
+/* ── 10. La copie locale ne prend pas le pas sur la fiche du test ──────────
+   Défaut signalé : deux fenêtres montraient des graphes DIFFÉRENTS pour la même
+   condition — celle qui avait la copie locale (localStorage) affichait la sienne,
+   une fenêtre neuve (navigation privée, autre poste) lisait la fiche du test. */
+const older = { rmsd: [{ time: 0, value: 1 }], savedAt: '2026-09-20T10:00:00.000Z' };
+const newer = { rmsd: [{ time: 0, value: 2 }], savedAt: '2026-09-20T11:00:00.000Z' };
+eq(CACHE.preferAnalysisCopy(older, newer), newer,
+  'une fiche du test PLUS RÉCENTE fait foi (un recalcul d’un autre poste se voit ici aussi)');
+eq(CACHE.preferAnalysisCopy(newer, older), newer,
+  'une copie locale plus récente est gardée (avance d’affichage de cet onglet)');
+eq(CACHE.preferAnalysisCopy(older, null), older, 'sans fiche, la copie locale s’affiche');
+eq(CACHE.preferAnalysisCopy(null, newer), newer, 'sans copie locale, la fiche s’affiche');
+eq(CACHE.preferAnalysisCopy(null, null), null, 'aucune des deux : rien à afficher');
+eq(CACHE.preferAnalysisCopy({ rmsd: [] }, newer), newer, 'une copie locale vide ne masque pas la fiche');
+eq(CACHE.preferAnalysisCopy(older, { rmsd: [] }), older, 'une fiche vide ne masque pas la copie locale');
+ok(/preferAnalysisCopy\(\s*readLocalAnalysis\(activeTest && activeTest\.id\),/.test(MD),
+  'la page MD compare les deux copies avant d’afficher les graphes');
+
+
 
 /* ── Bilan ────────────────────────────────────────────────────────────────── */
 console.log(`_md_analysis_cache_test.mjs — ${passed} assertions OK`);

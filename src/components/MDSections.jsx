@@ -37,6 +37,7 @@ import {
   describeAnalysisCache,
   hasTrajectoryCurves,
   readLocalAnalysis,
+  preferAnalysisCopy,
   writeLocalAnalysis,
   clearLocalAnalysis,
   mdTrajectoryFingerprint
@@ -785,6 +786,35 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     return () => window.removeEventListener('lab:drive-connected', onConnected);
   }, []);
 
+  /* ── LA PAGE EST CELLE D'UNE CONDITION : SON ÉTAT DE FICHIERS LA SUIT ──────
+     La page d'expérience n'est PAS remontée quand on change de condition (les
+     onglets « Date / Conditions » changent seulement `activeTest`) : l'état
+     `trajectoryFile` / `structureFile` restait donc celui de la condition
+     PRÉCÉDENTE. Deux conséquences, exactement ce qui a été signalé :
+       • le viewer 3D et la ligne « System files » annonçaient la topologie et la
+         trajectoire de l'autre condition (« la page MD ne s'actualise pas ») ;
+       • la restauration de la NOUVELLE condition ne partait JAMAIS, ses effets
+         sortant tôt dès qu'un fichier est déjà « en main » : un PDB ou un .xtc
+         présent sur le Drive n'était donc pas re-téléchargé.
+     Une fenêtre neuve (navigation privée, autre poste) part, elle, de zéro et
+     relit bien ses fichiers — d'où des « données différentes » d'une fenêtre à
+     l'autre pour la même condition.
+     `fileEpoch` relance les deux restaurations (base du navigateur puis Drive)
+     pour la condition affichée ; une condition déjà visitée dans cette session
+     est reprise du cache de session, donc sans requête. */
+  const mdSetupIdRef = useRef(activeTest.id);
+  const [fileEpoch, setFileEpoch] = useState(0);
+  useEffect(() => {
+    if (activeTest.id === mdSetupIdRef.current) return;
+    mdSetupIdRef.current = activeTest.id;
+    setTrajectoryFile(localFileCache.get(activeTest.id)?.trajectory || null);
+    setStructureFile(localFileCache.get(activeTest.id)?.structure || null);
+    setTrajDriveMsg('');
+    setStructRestoreMsg('');
+    setFileEpoch((n) => n + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTest.id]);
+
   // Condition affichée, lue par l'archivage asynchrone : un pointeur qui arrive
   // après un changement de condition attend SA page (voir
   // driveRestore.placeRestorePointer) au lieu d'être posé sur la nouvelle.
@@ -923,7 +953,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTest.id, driveConnectedAt]);
+  }, [activeTest.id, fileEpoch, driveConnectedAt]);
 
   // Restore a previously-uploaded structure file (.gro/.pdb/.cif) on (re)load,
   // mirroring the trajectory restore. Large topology files are not part of the
@@ -972,7 +1002,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTest.id, driveConnectedAt]);
+  }, [activeTest.id, fileEpoch, driveConnectedAt]);
   
   useEffect(() => { if (structureMode === '3d') setHasOpened3D(true); }, [structureMode]);
 
@@ -2156,16 +2186,32 @@ export const MDAnalysisSection = ({ ctx }) => {
   const [isFs, setIsFs] = useState(false);
   
   // State for data CALCULATED from the loaded trajectory (real data only —
-  // simulated fallbacks have been removed). Restored in this order: the LOCAL
-  // cache (instant redisplay, works offline) → the persisted mdAnalysisResult
-  // saved with the test (so the graphs follow the dataset to another machine).
-  // They are NEVER recomputed in the background: 🔁 Recalculate does that.
-  const [calcData, setCalcData] = useState(() => readLocalAnalysis(activeTest && activeTest.id) || (activeTest && activeTest.mdAnalysisResult) || null);
+  // simulated fallbacks have been removed). Restored in this order: a LOCAL copy
+  // is only a display head-start, so the copy SAVED WITH THE TEST wins as soon as
+  // it is more recent (a recalculation made on another machine must show here
+  // too — see preferAnalysisCopy). They are NEVER recomputed in the background:
+  // 🔁 Recalculate does that.
+  const [calcData, setCalcData] = useState(() => preferAnalysisCopy(
+    readLocalAnalysis(activeTest && activeTest.id),
+    (activeTest && activeTest.mdAnalysisResult) || null
+  ));
   const [calc, setCalc] = useState({ state: 'idle', msg: '', done: 0, total: 0, error: '' });
   const [calcOpts, setCalcOpts] = useState({ sasa: true });
   const calcAbortRef = useRef(false); // set by the global ⏹ Stop button
   const [energyData, setEnergyData] = useState(() => (calcData && calcData.energy) || null);
   const [energyFileName, setEnergyFileName] = useState(() => (calcData && calcData.energyFileName) || '');
+
+  /* ── UN CALCUL N'ÉCRIT NI NE PEINT SUR UNE AUTRE CONDITION ────────────────
+     Une analyse MD dure des minutes : elle est lancée sur la condition affichée,
+     et l'utilisateur peut passer à une autre — ou en supprimer une — avant la
+     fin. Le résultat est alors ENREGISTRÉ sur la condition MESURÉE (voir
+     updateActiveTest, 2ᵉ argument) et ne doit pas être PEINT ici : la page
+     affichée montrerait les courbes d'une autre simulation (et des « données
+     différentes » d'une fenêtre à l'autre). Il réapparaît en revenant sur sa
+     condition (cache local + fiche du test). */
+  const shownTestIdRef = useRef(activeTest && activeTest.id);
+  shownTestIdRef.current = activeTest && activeTest.id;
+  const onMeasuredPage = (runTestId) => shownTestIdRef.current === runTestId;
 
   // If the section stays mounted while the user switches to a different MD test,
   // reload the persisted result for the new test (state is otherwise stable for
@@ -2174,9 +2220,12 @@ export const MDAnalysisSection = ({ ctx }) => {
   useEffect(() => {
     if ((activeTest && activeTest.id) === mdTestIdRef.current) return;
     mdTestIdRef.current = activeTest && activeTest.id;
-    // Same order as the initial state: local cache first, then the copy saved
-    // with the test.
-    const res = readLocalAnalysis(activeTest && activeTest.id) || (activeTest && activeTest.mdAnalysisResult) || null;
+    // Same rule as the initial state: the copy saved with the test wins when it
+    // is more recent, the local copy only covers the seconds in between.
+    const res = preferAnalysisCopy(
+      readLocalAnalysis(activeTest && activeTest.id),
+      (activeTest && activeTest.mdAnalysisResult) || null
+    );
     setCalcData(res);
     setEnergyData((res && res.energy) || null);
     setEnergyFileName((res && res.energyFileName) || '');
@@ -2205,6 +2254,9 @@ export const MDAnalysisSection = ({ ctx }) => {
   const handleCalculateFromTrajectory = async () => {
     calcAbortRef.current = false;
     const unregister = abortControl.register('MD analysis', () => { calcAbortRef.current = true; });
+    // Condition MESURÉE par ce calcul : ses résultats lui reviennent même si
+    // l'utilisateur a changé de page avant la fin (voir onMeasuredPage).
+    const runTestId = (activeTest && activeTest.id) || '';
     try {
       setCalc({ state: 'running', msg: 'Resolving topology…', done: 0, total: 0, error: '' });
       mdAnalysisRunAll.setStatus('general', 'MD general parameters — resolving topology…');
@@ -2225,7 +2277,7 @@ export const MDAnalysisSection = ({ ctx }) => {
         { stride: runCfg.stride, maxFrames: runCfg.maxFrames, doSasa: calcOpts.sasa, doRg: true, renumber: activeTest.resRenumber || {}, isAborted: () => calcAbortRef.current },
         (p) => { setCalc((s) => ({ ...s, done: p.done, total: p.total, msg: p.msg })); mdAnalysisRunAll.setStatus('general', `MD general parameters — ${p.msg}`); }
       );
-      if (calcAbortRef.current) { unregister(); setCalc({ state: 'idle', msg: 'Calculation cancelled.', done: 0, total: 0, error: '' }); return; }
+      if (calcAbortRef.current) { unregister(); if (onMeasuredPage(runTestId)) setCalc({ state: 'idle', msg: 'Calculation cancelled.', done: 0, total: 0, error: '' }); return; }
       // Keep the calculated graphs: a BOUNDED copy is saved with the test (so it
       // follows the dataset on the Drive / Firestore and the Lab Notebook can
       // render it as vector SVG) AND mirrored in the browser, so reopening the
@@ -2240,19 +2292,23 @@ export const MDAnalysisSection = ({ ctx }) => {
         savedAt: new Date().toISOString(),
         downsample: downsampleSeries
       });
-      setCalcData(payload);
-      writeLocalAnalysis(activeTest && activeTest.id, payload);
-      updateActiveTest({ mdAnalysisResult: payload });
+      if (onMeasuredPage(runTestId)) setCalcData(payload);
+      // Le résultat appartient à la condition MESURÉE (l'analyse dure des
+      // minutes) : il est écrit sur SON id, jamais sur la condition devenue
+      // active si l'utilisateur a changé de page entre-temps. La copie locale
+      // (avance d'affichage) suit la même condition.
+      writeLocalAnalysis(runTestId, payload);
+      updateActiveTest({ mdAnalysisResult: payload }, runTestId);
       // Populate the per-atom table so Per-Atom and Condition plots can use the
       // calculated parameters (RMSF per residue + system-level Rg/SASA/RMSD).
       const layerCells = buildGeneralParamsLayerCells(res);
       storeAnalysisToAtomTable(activeTest, updateActiveTest, layerCells);
-      setCalc({ state: 'done', msg: `Calculated from ${res.nFrames} frames (${src.source}) — values added to the per-atom table.`, done: 0, total: 0, error: '' });
+      if (onMeasuredPage(runTestId)) setCalc({ state: 'done', msg: `Calculated from ${res.nFrames} frames (${src.source}) — values added to the per-atom table.`, done: 0, total: 0, error: '' });
     } catch (err) {
       if (isAbortError(err)) {
-        setCalc((s) => ({ ...s, state: 'idle', msg: 'Calculation cancelled.', done: 0, total: 0, error: '' }));
+        if (onMeasuredPage(runTestId)) setCalc((s) => ({ ...s, state: 'idle', msg: 'Calculation cancelled.', done: 0, total: 0, error: '' }));
       } else {
-        setCalc((s) => ({ ...s, state: 'error', error: err?.message || String(err) }));
+        if (onMeasuredPage(runTestId)) setCalc((s) => ({ ...s, state: 'error', error: err?.message || String(err) }));
       }
     } finally {
       unregister();
@@ -2281,7 +2337,7 @@ export const MDAnalysisSection = ({ ctx }) => {
         });
         setCalcData((cur) => (cur ? { ...cur, energy: next.energy, energyFileName: next.energyFileName, savedAt: next.savedAt } : cur));
         writeLocalAnalysis(activeTest && activeTest.id, next);
-        updateActiveTest({ mdAnalysisResult: next });
+        updateActiveTest({ mdAnalysisResult: next }, (activeTest && activeTest.id) || '');
       } catch (err) {
         setCalc((s) => ({ ...s, state: 'error', error: 'Energy file: ' + err.message }));
       }
@@ -2719,6 +2775,11 @@ const storeAnalysisToAtomTable = (activeTest, updateActiveTest, layerCells) => {
   if (!updateActiveTest || !layerCells) return;
   const activeInst = getMDActiveInstance(activeTest);
   if (!activeInst) return;
+  // Les valeurs calculées appartiennent à la condition MESURÉE : elles sont
+  // écrites sur `activeTest.id` (voir updateActiveTest, 2ᵉ argument) et non sur
+  // la condition devenue active si l'utilisateur a changé de page pendant le
+  // calcul. `activeTest` est celui capturé par le lancement du calcul.
+  const targetTestId = (activeTest && activeTest.id) || '';
   const layers = {};
   Object.entries(layerCells).forEach(([lk, cells]) => {
     if (cells && Object.keys(cells).length) layers[lk] = cells;
@@ -2736,9 +2797,9 @@ const storeAnalysisToAtomTable = (activeTest, updateActiveTest, layerCells) => {
       Object.keys(layers).forEach((lk) => { vals[lk] = { ...(vals[lk] || {}), ...layers[lk] }; });
       return { ...inst, values: vals };
     });
-    updateActiveTest({ instances, mdValues });
+    updateActiveTest({ instances, mdValues }, targetTestId);
   } else {
-    updateActiveTest({ mdValues });
+    updateActiveTest({ mdValues }, targetTestId);
   }
 };
 
@@ -3010,7 +3071,15 @@ export const MDMembraneContactSection = ({ ctx }) => {
     return buildRunsOutputFor(mode, xLabels, seriesVals, xAxis);
   };
 
+  /* La condition peut changer pendant le calcul : le résultat ne se PEINT que
+     sur SA page (il est enregistré sur la condition MESURÉE — voir
+     updateActiveTest, 2ᵉ argument, et la note de MDAnalysisSection). */
+  const shownTestIdRef = useRef(activeTest && activeTest.id);
+  shownTestIdRef.current = activeTest && activeTest.id;
+  const onMeasuredPage = (runTestId) => shownTestIdRef.current === runTestId;
+
   const runAll = async (useDemo = false) => {
+    const runTestId = (activeTest && activeTest.id) || '';
     setStatus({ state: 'busy', msg: 'Reading topology…', done: 0 });
     setOutputs(null);
     try {
@@ -3026,8 +3095,8 @@ export const MDMembraneContactSection = ({ ctx }) => {
           out[mode][xa] = await runMode(mode, useDemo, xa);
         }
       }
-      setOutputs(out);
-      setStatus({ state: 'done', msg: '', done: 0 });
+      if (onMeasuredPage(runTestId)) setOutputs(out);
+      if (onMeasuredPage(runTestId)) setStatus({ state: 'done', msg: '', done: 0 });
       mdAnalysisRunAll.clearStatus('contacts');
       // Persist compact copies so the Lab Notebook can render the contact maps
       // as SVG after a reload too (sessionStorage raster images do not survive
@@ -3047,9 +3116,9 @@ export const MDMembraneContactSection = ({ ctx }) => {
           };
         });
       });
-      updateActiveTest({ mdContactResult: persist });
+      updateActiveTest({ mdContactResult: persist }, runTestId);
     } catch (e) {
-      setStatus({ state: 'error', msg: e.message, done: 0 });
+      if (onMeasuredPage(runTestId)) setStatus({ state: 'error', msg: e.message, done: 0 });
       mdAnalysisRunAll.clearStatus('contacts');
     }
   };
@@ -3362,7 +3431,15 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
     setChargeInfo({ map, count: map.size, files: files.map((f) => f.name) });
   };
 
+  /* La condition peut changer pendant le calcul : le résultat ne se PEINT que
+     sur SA page (il est enregistré sur la condition MESURÉE — voir
+     updateActiveTest, 2ᵉ argument, et la note de MDAnalysisSection). */
+  const shownTestIdRef = useRef(activeTest && activeTest.id);
+  shownTestIdRef.current = activeTest && activeTest.id;
+  const onMeasuredPage = (runTestId) => shownTestIdRef.current === runTestId;
+
   const runAll = async (useDemo = false) => {
+    const runTestId = (activeTest && activeTest.id) || '';
     setStatus({ state: 'busy', msg: 'Reading topology…', done: 0 });
     mdAnalysisRunAll.setStatus('profiles', 'Membrane profiles — reading topology…');
     setOutputs([]);
@@ -3395,7 +3472,7 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
           outs.push({ name: job.name, result });
         }
       }
-      setOutputs(outs);
+      if (onMeasuredPage(runTestId)) setOutputs(outs);
       // Persist compact profile data so the notebook renders vector SVG figures
       // even after a reload.
       updateActiveTest({
@@ -3405,7 +3482,7 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
           scdGroups: o.result && o.result.scdGroups,
           density: o.result && o.result.density,
         }))
-      });
+      }, runTestId);
       // Populate the per-atom table with the computed order parameters |SCD|
       // (one pseudo-atom per lipid group + carbon, e.g. "0-POPC sn-1 C14").
       const scdCells = {};
@@ -3417,10 +3494,10 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
         });
       });
       storeAnalysisToAtomTable(activeTest, updateActiveTest, { analysis_scd: scdCells });
-      setStatus({ state: 'done', msg: '', done: 0 });
+      if (onMeasuredPage(runTestId)) setStatus({ state: 'done', msg: '', done: 0 });
       mdAnalysisRunAll.clearStatus('profiles');
     } catch (e) {
-      setStatus({ state: 'error', msg: e.message, done: 0 });
+      if (onMeasuredPage(runTestId)) setStatus({ state: 'error', msg: e.message, done: 0 });
       mdAnalysisRunAll.clearStatus('profiles');
     }
   };
@@ -3964,9 +4041,17 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
 
   const setOpt = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
 
+  /* La condition peut changer pendant le calcul : le résultat ne se PEINT que
+     sur SA page (il est enregistré sur la condition MESURÉE — voir
+     updateActiveTest, 2ᵉ argument, et la note de MDAnalysisSection). */
+  const shownTestIdRef = useRef(activeTest && activeTest.id);
+  shownTestIdRef.current = activeTest && activeTest.id;
+  const onMeasuredPage = (runTestId) => shownTestIdRef.current === runTestId;
+
   const runAll = async (useDemo = false) => {
     dsspAbortRef.current = false;
     const unregister = abortControl.register('secondary structure', () => { dsspAbortRef.current = true; });
+    const runTestId = (activeTest && activeTest.id) || '';
     const shared = mdAnalysisRunAll.getCfg(); // stride / max frames from the Data Analysis toolbar
     setStatus({ state: 'busy', msg: 'Reading topology…', done: 0 });
     mdAnalysisRunAll.setStatus('dssp', 'Secondary structure (DSSP) — reading topology…');
@@ -3997,8 +4082,8 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
           outs.push({ name: job.name, result });
         }
       }
-      if (dsspAbortRef.current) { setStatus({ state: 'idle', msg: 'Calculation cancelled.', done: 0 }); mdAnalysisRunAll.clearStatus('dssp'); return; }
-      setOutputs(outs);
+      if (dsspAbortRef.current) { if (onMeasuredPage(runTestId)) setStatus({ state: 'idle', msg: 'Calculation cancelled.', done: 0 }); mdAnalysisRunAll.clearStatus('dssp'); return; }
+      if (onMeasuredPage(runTestId)) setOutputs(outs);
       // Persist compact DSSP data (content + occupancy + a capped heatmap) so the
       // notebook renders vector SVG figures even after a reload.
       updateActiveTest({
@@ -4022,14 +4107,14 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
             heat: heat ? { nRes: heat.nRes, samples: heatSamples, frameStride: heat.frameStride, totalFrames: heat.totalFrames, dtPs: heat.dtPs, resIds: heat.resIds } : null,
           };
         })
-      });
-      setStatus({ state: 'done', msg: '', done: 0 });
+      }, runTestId);
+      if (onMeasuredPage(runTestId)) setStatus({ state: 'done', msg: '', done: 0 });
       mdAnalysisRunAll.clearStatus('dssp');
     } catch (e) {
       if (isAbortError(e)) {
-        setStatus({ state: 'idle', msg: 'Calculation cancelled.', done: 0 });
+        if (onMeasuredPage(runTestId)) setStatus({ state: 'idle', msg: 'Calculation cancelled.', done: 0 });
       } else {
-        setStatus({ state: 'error', msg: e.message, done: 0 });
+        if (onMeasuredPage(runTestId)) setStatus({ state: 'error', msg: e.message, done: 0 });
       }
       mdAnalysisRunAll.clearStatus('dssp');
     } finally {

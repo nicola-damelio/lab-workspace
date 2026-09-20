@@ -131,11 +131,21 @@ export const ActiveTestModule = ({
                   setTests((prev) => applyDataLock(prev, ids, lock, currentUser?.name || 'unknown', Date.now()));
                 };
 
-                const updateActiveTest = (updates) => {
+                /* `targetTestId` : un calcul LANCÉ sur une condition doit écrire
+                   ses résultats sur CETTE condition. Les analyses MD durent
+                   plusieurs minutes, et l'utilisateur peut passer à une autre
+                   condition (ou en supprimer une) entre-temps : sans cible, les
+                   résultats d'une simulation atterrissaient sur la condition
+                   devenue active — des valeurs calculées ailleurs apparaissaient
+                   donc sur la mauvaise page (et « les données différaient »
+                   d'une fenêtre à l'autre). Sans cible, rien ne change : c'est
+                   la condition affichée qui est écrite. */
+                const updateActiveTest = (updates, targetTestId = '') => {
                   if (projectViewOnly) return; // view-only project member — read-only
                   if (dataReadOnly) return;    // data frozen by a superuser — read-only
+                  const targetId = targetTestId || activeTestId;
                   setTests((prev) =>
-                    prev.map((t) => (t.id === activeTestId ? { ...t, ...updates } : t))
+                    prev.map((t) => (t.id === targetId ? { ...t, ...updates } : t))
                   );
                 };
 

@@ -54,6 +54,25 @@ export const hasAnalysisData = (res) => !!res && typeof res === 'object' && ['rm
 export const hasTrajectoryCurves = (res) => !!res && typeof res === 'object' && ['rmsd', 'rmsf', 'rg', 'sasa']
   .some((k) => Array.isArray(res[k]) && res[k].length > 0);
 
+/* ── QUELLE COPIE AFFICHER : LA LOCALE OU CELLE ENREGISTRÉE AVEC LE TEST ? ──
+   Les deux copies d'un même calcul portent `savedAt` (ISO). La copie locale
+   n'est qu'une AVANCE d'affichage (localStorage, propre à chaque navigateur) :
+   dès que la FICHE DU TEST en porte une plus récente, c'est elle qui fait foi.
+   Sans cette comparaison, un calcul refait — ou effacé — sur un autre poste
+   laissait l'écran sur les courbes de la copie locale, alors qu'une fenêtre
+   neuve (navigation privée, autre poste), qui n'en a aucune, lisait la fiche :
+   les deux fenêtres montraient des « données différentes » pour la même
+   condition. À date égale, la fiche gagne (c'est elle qui voyage). */
+export const preferAnalysisCopy = (local, stored) => {
+  if (!hasAnalysisData(stored)) return hasAnalysisData(local) ? local : null;
+  if (!hasAnalysisData(local)) return stored;
+  const when = (v) => {
+    const t = new Date(String((v && v.savedAt) || '')).getTime();
+    return Number.isFinite(t) ? t : 0;
+  };
+  return when(stored) >= when(local) ? stored : local;
+};
+
 /* ── Copie locale (cache rapide) ──────────────────────────────────────────── */
 
 export const readLocalAnalysis = (testId, storage) => {

@@ -708,3 +708,110 @@ autre expérience.
   qui voyage avec le dataset, le nom déposé qui sauve un poste vierge et la
   remise du fichier dans la base du navigateur (aucun doublon d'envoi).
 
+## Une page d'expérience est celle d'UNE condition (et suit la condition affichée)
+
+Signalé le 20/09/2026 : « la page MD ne s'actualise pas — j'ai chargé un PDB et
+une trajectoire, supprimé une instance, et dans une fenêtre de navigation privée
+les données étaient différentes ».
+
+Cause : changer de condition (onglets **Date / Conditions**) ne **remonte** pas
+la page d'expérience — seul `activeTest` change. Les états *propres à une
+condition* gardaient donc la valeur de la condition précédente :
+
+* la page MD annonçait `✓ Trajectory: <fichier de l'autre condition>` et le
+  viewer 3D rendait l'autre système (`structureFile` / `trajectoryFile`) ;
+* surtout, la **restauration** de la nouvelle condition ne partait JAMAIS : les
+  deux effets de `MDSections.jsx` sortent tôt dès qu'un fichier est déjà « en
+  main » (`if (trajectoryFile || …) return;`) — un PDB ou un `.xtc` présent sur le
+  Drive n'était donc pas re-téléchargé pour cette condition ;
+* une fenêtre neuve (navigation privée, autre poste) part de zéro, relit ses
+  fichiers et montrait donc **autre chose pour la même condition** — d'où
+  l'impression que « c'est sauvegardé dans la cache et jamais relu du Drive ».
+
+Ce qui existe maintenant :
+
+* `MDSections.jsx` retient l'identifiant de la condition affichée
+  (`mdSetupIdRef`) : quand il change, l'état des fichiers est **remis à celui de
+  la condition** (cache de session de CETTE condition, ou rien) et un jeton
+  (`fileEpoch`) **relance** les deux restaurations (base du navigateur puis
+  Drive). Une condition déjà visitée revient donc sans requête ; une condition
+  jamais ouverte est restaurée du Drive comme sur un poste neuf.
+* Même remise à niveau pour le **viewer 3D NMR** (`nmrStructPageIdRef` +
+  `structFileEpoch`), et le portillon du Drive (`nmrStructDriveMissing`) ne
+  considère plus le fichier de la condition précédente comme « déjà en main »
+  (`nmrConditionChanged`) : la structure déclarée était, elle aussi, jamais
+  re-téléchargée après un changement de condition.
+
+### Un calcul long écrit sur la condition qu'il a MESURÉE
+
+Une analyse MD (RMSD / RMSF / Rg / SASA, cartes de contacts, profils de membrane,
+DSSP) dure plusieurs minutes : elle est lancée sur la condition affichée, et
+l'utilisateur peut passer à une autre condition — ou en supprimer une — avant la
+fin. L'écriture passait par `updateActiveTest(… )`, qui vise la condition
+**affichée** : les valeurs d'une simulation atterrissaient donc sur la page
+devenue active (des résultats calculés sur un autre système apparaissaient là, et
+« les données différaient » d'une fenêtre à l'autre). Le funnel d'écriture accepte
+maintenant une **cible** — `updateActiveTest(updates, targetTestId)`
+(`activeTestModule.jsx`) — et la page MD la renseigne avec l'identifiant de la
+condition qu'elle a mesurée : le tableau per-atome (`storeAnalysisToAtomTable`),
+les courbes générales, les cartes de contacts et les profils de membrane
+reviennent à **leur** condition. Sans cible, le comportement ne change pas : c'est
+la condition affichée qui est écrite.
+
+Côté **affichage**, la même règle s'applique (`shownTestIdRef` /
+`onMeasuredPage`) : les courbes, les cartes de contacts, les profils et le DSSP
+**ne se peignent que sur leur page**. Une analyse terminée alors que l'utilisateur
+regarde une autre condition n'affiche donc rien ici (ni un échec qui ne la
+concerne pas) ; ses résultats réapparaissent en revenant sur leur condition — la
+copie locale et la fiche du test les portent.
+
+
+## La dernière modification ne dépend plus d'un minuteur qui ne se déclenchera jamais
+
+La sauvegarde Firestore d'un dataset est **en différé** (~1,5 s de calme) ; seul
+le **contenu** déposé sur le Drive (`_workspace/datasets/ds_<id>.json`) était
+vidé à la fermeture de l'onglet. Une modification suivie d'une fermeture — ou
+d'un simple passage en arrière-plan — dans cet intervalle n'atteignait donc
+jamais le cloud : l'autre fenêtre, ou l'autre poste, voyait encore l'état
+d'AVANT. Cela se manifeste exactement comme « une condition supprimée qui
+revient » ou « le fichier ajouté n'est pas là ».
+
+`App.jsx` tient maintenant dans `pendingDatasetSaveRef` la sauvegarde qui attend
+son délai, et `flushPendingSave()` — branché sur `pagehide` **et**
+`visibilitychange` (arrière-plan) — l'envoie **tout de suite**, puis pousse la
+copie Drive (`datasetCopyMirrorRef.flush()`) dans la foulée : la charge
+(re)programmée ne reste pas dans son propre délai de 8 s. Ce qui attend n'est
+donc plus perdu quand la page s'en va.
+
+### Vérifier soi-même
+
+* `node _condition_page_test.mjs` — la remise à niveau par condition (MD et NMR),
+  le relancement des restaurations et l'envoi immédiat de la dernière sauvegarde.
+
+
+
+
+## La copie locale ne prend pas le pas sur ce qui voyage (page MD)
+
+Les courbes calculées sur une trajectoire (RMSD / RMSF / Rg / SASA) sont
+conservées **deux fois** : dans la fiche de la condition (`mdAnalysisResult`, qui
+part sur Firestore et dans la copie Drive) et dans une copie locale du navigateur
+(`localStorage`), qui ne sert qu'à réafficher les graphes instantanément, sans
+attendre la synchronisation. La page lisait la copie locale **en premier** :
+
+* un calcul refait sur un autre poste laissait donc l'écran de celui-ci sur les
+  anciennes courbes ;
+* une fenêtre neuve (navigation privée, autre poste), qui n'a aucune copie
+  locale, affichait celles de la fiche — **deux fenêtres, deux résultats pour la
+  même condition**, exactement le « les données étaient différentes » signalé.
+
+`preferAnalysisCopy(local, stored)` (dans `src/utils/mdAnalysisCache.js`, testé
+pur) tranche par `savedAt` : la **fiche du test gagne** dès qu'elle est aussi
+récente ou plus récente, la copie locale ne couvrant que les secondes qui
+séparent un calcul de son enregistrement. Quand la fiche ne porte rien, la copie
+locale s'affiche seule (l'affichage hors ligne reste possible).
+
+### Vérifier soi-même
+
+* `node _md_analysis_cache_test.mjs` — la règle des deux copies (dont le cas
+  « recalcul fait ailleurs ») et le câblage de la page MD.

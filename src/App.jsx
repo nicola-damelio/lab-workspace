@@ -2253,6 +2253,13 @@ if (customType === 'dosy') {
   }, [operators, currentUser]);
 
 const saveTimeoutRef = useRef(null);
+/* La sauvegarde est EN DIFFÉRÉ (~1,5 s de calme) : il faut donc savoir QUOI
+   envoyer si la page s'en va avant la fin du délai (voir `flushPendingSave`
+   plus bas). Sans cette référence, un changement suivi d'une fermeture
+   d'onglet — ou d'un passage en arrière-plan — n'atteignait jamais le cloud :
+   l'autre fenêtre (ou l'autre poste) voyait encore l'état d'AVANT (une
+   condition supprimée qui « revient », un fichier ajouté qui manque). */
+const pendingDatasetSaveRef = useRef(null);
 // Firestore rejects a single document/field above ~1 MiB ("the value of
 // property payload is longer than 1048487 bytes"). LZString's UTF-16 output is
 // up to 3 bytes per char in UTF-8, so we stay well under the limit: if the
@@ -2472,7 +2479,8 @@ useEffect(() => {
   if (isAdministrationKind(activeDatasetKind)) return;
   setSaveStatus('saving');
   if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-  saveTimeoutRef.current = setTimeout(async () => {
+  const runSave = async () => {
+    pendingDatasetSaveRef.current = null;
     try {
       const rawData = { ...latestDataRef.current, ...cloudProjectsPayload() };
       // Compress payload to prevent Firestore 1MB limit and write stream exhaustion
@@ -2533,8 +2541,34 @@ useEffect(() => {
       setSaveErrorMsg(e.message);
       console.error('Save error:', e);
     }
-  }, 1500);
+  };
+  pendingDatasetSaveRef.current = runSave;
+  saveTimeoutRef.current = setTimeout(runSave, 1500);
+  /* Fermeture d'onglet / passage en arrière-plan : on n'attend PAS le délai.
+     La dernière minute d'un dataset ne doit pas dépendre d'un minuteur qui ne se
+     déclenchera jamais. `runSave` dépose aussi la copie du dataset sur le Drive
+     (différée elle aussi) : `flush()` la pousse dans la foulée, sinon la charge
+     (re)programmée resterait dans son propre délai de 8 s. */
+  const flushPendingSave = () => {
+    if (!pendingDatasetSaveRef.current) return;
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    pendingDatasetSaveRef.current();
+    try { datasetCopyMirrorRef.current.flush(); } catch { /* best-effort */ }
+  };
+  const onVisibilityChange = () => {
+    if (document.visibilityState === 'hidden') flushPendingSave();
+  };
+  window.addEventListener('pagehide', flushPendingSave);
+  document.addEventListener('visibilitychange', onVisibilityChange);
   return () => {
+    window.removeEventListener('pagehide', flushPendingSave);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+    // Ce qui attendait ne doit plus se croire en attente : l'effet qui repart
+    // pose un minuteur neuf avec le contenu du moment.
+    if (pendingDatasetSaveRef.current === runSave) pendingDatasetSaveRef.current = null;
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }

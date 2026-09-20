@@ -1,0 +1,176 @@
+/* =========================================================================
+   _condition_page_test.mjs — LA PAGE SUIT LA CONDITION AFFICHÉE
+   (et la dernière modification part même si on ferme pendant le différé).
+
+   Défaut signalé le 20/09/2026 : « la page MD ne s'actualise pas — j'ai chargé
+   un PDB et une trajectoire, supprimé une instance, puis dans une fenêtre de
+   navigation privée les données étaient DIFFÉRENTES ».
+
+   Cause : changer de condition (onglets « Date / Conditions ») ne REMONTE pas la
+   page d'expérience — seul `activeTest` change. Les états propres à une
+   condition gardaient donc la valeur de la précédente :
+     • la page MD annonçait la trajectoire / la topologie de l'AUTRE condition
+       (`✓ Trajectory: <fichier précédent>`) et le viewer 3D rendait l'autre
+       système ;
+     • la restauration de la nouvelle condition ne partait JAMAIS (les effets
+       sortent tôt dès qu'un fichier est déjà « en main ») : un PDB ou un .xtc
+       présent sur le Drive n'était pas re-téléchargé ;
+     • une fenêtre neuve (privée, autre poste) part de zéro, relit ses fichiers,
+       et montrait donc autre chose pour la MÊME condition.
+
+   Deuxième trou, même symptôme : la sauvegarde Firestore est différée (~1,5 s) et
+   seul le contenu du Drive était vidé à la fermeture de l'onglet. Un changement
+   suivi d'une fermeture (ou d'un passage en arrière-plan) dans cet intervalle
+   n'atteignait jamais le cloud — l'autre fenêtre voyait l'état d'AVANT (« une
+   condition supprimée qui revient », « le fichier ajouté n'est pas là »).
+
+   Vérifié ici (assertions de source, comme _drive_restore_test.mjs : la
+   mécanique vit dans des hooks React, impossibles à monter hors navigateur) :
+   la remise à niveau par condition, le relancement des restaurations, le
+   portillon NMR et l'envoi immédiat de la sauvegarde qui attend.
+   ========================================================================= */
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+
+const MD = readFileSync('src/components/MDSections.jsx', 'utf8');
+const NMR = readFileSync('src/components/NMRSections.jsx', 'utf8');
+const APP = readFileSync('src/App.jsx', 'utf8');
+const DOC = readFileSync('docs/DRIVE-MIRROR.md', 'utf8');
+
+let passed = 0;
+const ok = (cond, what) => { assert.ok(cond, what); passed += 1; };
+const has = (src, needle, what) => {
+  assert.ok(src.includes(needle), `${what}\n  cherche : ${needle}`);
+  passed += 1;
+};
+const countOf = (src, needle) => src.split(needle).length - 1;
+
+/* ══ 1. LA PAGE MD EST CELLE DE LA CONDITION AFFICHÉE ══════════════════════ */
+
+has(MD, 'const mdSetupIdRef = useRef(activeTest.id);',
+  '[MD] la page retient la condition qu’elle affiche');
+has(MD, 'if (activeTest.id === mdSetupIdRef.current) return;',
+  '[MD] …et ne fait rien tant que la condition n’a pas changé');
+has(MD, 'mdSetupIdRef.current = activeTest.id;',
+  '[MD] le changement de condition est constaté une seule fois');
+
+/* L'état des fichiers est REMIS À CELUI DE LA CONDITION (jamais l'ancien). */
+has(MD, 'setTrajectoryFile(localFileCache.get(activeTest.id)?.trajectory || null);',
+  '[MD] la trajectoire suit la condition affichée (celle de CETTE condition, ou rien)');
+has(MD, 'setStructureFile(localFileCache.get(activeTest.id)?.structure || null);',
+  '[MD] la topologie aussi (le viewer 3D ne rend plus l’autre système)');
+has(MD, "setTrajDriveMsg('');", '[MD] le message de l’autre condition est effacé');
+
+/* ══ 2. LE VIEWER 3D NMR : MÊME DÉFAUT, MÊME REMISE À NIVEAU ═══════════════ */
+
+has(NMR, 'const nmrStructPageIdRef = useRef(activeTest.id);',
+  '[NMR] la page retient la condition qu’elle affiche');
+has(NMR, 'const nmrConditionChanged = nmrStructPageIdRef.current !== activeTest.id;',
+  '[NMR] le changement de condition est calculé AVANT le portillon du Drive');
+has(NMR, 'setStructureFile(nmrLocalFileCache.get(activeTest.id)?.structure || null);',
+  '[NMR] le PDB affiché suit la condition (celui de CETTE condition, ou rien)');
+has(NMR, 'setStructFileEpoch((n) => n + 1);',
+  '[NMR] un jeton relance la restauration depuis la base du navigateur');
+has(NMR, '}, [activeTest.id, activeTest.structureFileName, structFileEpoch]);',
+  '[NMR] l’effet de restauration dépend du jeton');
+has(NMR, 'if (structureFile && !nmrConditionChanged) return false;',
+  '[NMR] « déjà en main » ne vaut que pour la condition affichée');
+ok(!NMR.includes('    if (structureFile) return false;'),
+  '[NMR] le fichier laissé par la condition précédente ne bloque plus le Drive');
+
+
+/* ══ 3 bis. UN CALCUL LONG ÉCRIT — ET NE PEINT — QUE SUR LA CONDITION
+   QU'IL A MESURÉE ════════════════════════════════════════════════════════════ */
+
+const ATM = readFileSync('src/components/AppModules/activeTestModule.jsx', 'utf8');
+has(ATM, "const updateActiveTest = (updates, targetTestId = '') => {",
+  'le funnel d’écriture accepte une condition CIBLE');
+has(ATM, 'const targetId = targetTestId || activeTestId;',
+  '…sans cible, c’est la condition affichée qui est écrite (rien ne change)');
+has(ATM, 'prev.map((t) => (t.id === targetId ? { ...t, ...updates } : t))',
+  '…et c’est bien la cible qui reçoit les valeurs');
+has(MD, "const targetTestId = (activeTest && activeTest.id) || '';",
+  '[MD] les valeurs d’analyse savent à quelle condition elles appartiennent');
+has(MD, 'updateActiveTest({ instances, mdValues }, targetTestId);',
+  '[MD] le tableau per-atome écrit sur la condition MESURÉE');
+has(MD, 'updateActiveTest({ mdValues }, targetTestId);',
+  '…et la couche « md » seule aussi');
+has(MD, 'updateActiveTest({ mdAnalysisResult: payload }, runTestId);',
+  '[MD] les courbes générales aussi (une analyse dure des minutes)');
+has(MD, 'updateActiveTest({ mdContactResult: persist }, runTestId);',
+  '[MD] les cartes de contacts aussi');
+has(MD, 'mdProfileResult: (outs || []).map', '[MD] les profils de membrane aussi');
+has(MD, 'mdDsspResult: (outs || []).map', '[MD] la structure secondaire (DSSP) aussi');
+assert.equal(countOf(MD, '}, runTestId);'), 4,
+  'les quatre résultats d’analyse partent sur la condition mesurée');
+passed += 1;
+
+/* La PEINTURE (état d'écran) reste, elle, sur la page qui a mesuré : sinon une
+   analyse terminée après un changement de condition peindrait ses courbes sur
+   une autre simulation. */
+has(MD, 'const shownTestIdRef = useRef(activeTest && activeTest.id);',
+  'chaque section MD sait quelle condition elle affiche');
+has(MD, 'shownTestIdRef.current = activeTest && activeTest.id;',
+  '…mise à jour à chaque rendu');
+has(MD, 'const onMeasuredPage = (runTestId) => shownTestIdRef.current === runTestId;',
+  '…et sait si le calcul en cours appartient à la page affichée');
+has(MD, "const runTestId = (activeTest && activeTest.id) || '';",
+  'chaque calcul retient la condition qu’il mesure');
+has(MD, 'if (onMeasuredPage(runTestId)) setCalcData(payload);',
+  '[MD] les courbes générales ne se peignent que sur leur condition');
+has(MD, 'if (onMeasuredPage(runTestId)) setOutputs(out);',
+  '[MD] les cartes de contacts non plus');
+has(MD, 'if (onMeasuredPage(runTestId)) setOutputs(outs);',
+  '[MD] les profils et le DSSP non plus');
+has(DOC, "### Un calcul long écrit sur la condition qu'il a MESURÉE",
+  '…et la règle est documentée');
+
+
+/* ══ 3. LA SAUVEGARDE QUI ATTEND PART QUAND LA PAGE S’EN VA ════════════════ */
+has(APP, 'const pendingDatasetSaveRef = useRef(null);',
+  'App.jsx sait QUELLE sauvegarde attend son délai');
+has(APP, 'pendingDatasetSaveRef.current = runSave;', '…la sauvegarde scientifique s’y inscrit');
+has(APP, 'saveTimeoutRef.current = setTimeout(runSave, 1500);',
+  '…et reste différée de 1,5 s quand tout va bien');
+has(APP, 'pendingDatasetSaveRef.current = null;',
+  '[APP] une sauvegarde qui part efface l’attente (jamais deux envois)');
+has(APP, 'const flushPendingSave = () => {', '[APP] un vidage explicite de ce qui attend');
+has(APP, 'if (!pendingDatasetSaveRef.current) return;',
+  '[APP] …qui ne fait rien s’il n’y a rien à envoyer');
+has(APP, "window.addEventListener('pagehide', flushPendingSave);",
+  '[APP] fermeture de l’onglet : on n’attend pas le délai');
+has(APP, "document.addEventListener('visibilitychange', onVisibilityChange);",
+  '[APP] passage en arrière-plan aussi');
+has(APP, "if (document.visibilityState === 'hidden') flushPendingSave();",
+  '[APP] …au moment de partir seulement');
+has(APP, 'try { datasetCopyMirrorRef.current.flush(); } catch { /* best-effort */ }',
+  '[APP] la copie Drive (re)programmée est poussée dans la foulée');
+has(APP, 'if (pendingDatasetSaveRef.current === runSave) pendingDatasetSaveRef.current = null;',
+  '[APP] l’effet qui repart ne laisse pas une attente fantôme');
+ok(!APP.includes('  if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);\n  saveTimeoutRef.current = setTimeout(async () => {'),
+  'la sauvegarde scientifique n’est plus un minuteur anonyme (donc vidable)');
+
+/* ══ 4. LE DOCUMENT DIT LA MÊME CHOSE ══════════════════════════════════════ */
+
+has(DOC, "## Une page d'expérience est celle d'UNE condition (et suit la condition affichée)",
+  'le défaut et sa correction sont documentés');
+has(DOC, "## La dernière modification ne dépend plus d'un minuteur qui ne se déclenchera jamais",
+  '…le vidage de la sauvegarde aussi');
+has(DOC, '## La copie locale ne prend pas le pas sur ce qui voyage (page MD)',
+  '…et la copie locale qui ne masque plus la fiche du test');
+has(DOC, 'node _condition_page_test.mjs', '…avec la commande de vérification');
+
+console.log(`${passed} passed`);
+
+has(MD, "setStructRestoreMsg('');", '[MD] …idem pour la topologie');
+has(MD, 'setFileEpoch((n) => n + 1);',
+  '[MD] un jeton relance les restaurations pour la condition affichée');
+
+/* Les DEUX restaurations (trajectoire, topologie) repartent sur ce jeton. */
+assert.equal(countOf(MD, '}, [activeTest.id, fileEpoch, driveConnectedAt]);'), 2,
+  'les deux effets de restauration MD dépendent du jeton de condition');
+passed += 1;
+has(MD, 'if (trajectoryFile || !activeTest.trajectoryFileName) return;',
+  '[MD] le portillon « déjà en main » reste en place (rien n’est rechargé pour rien)');
+has(MD, 'if (structureFile || !activeTest.structureFileName) return;',
+  '[MD] …et la topologie garde le sien');
