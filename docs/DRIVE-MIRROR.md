@@ -355,6 +355,45 @@ Ce que cela change, geste par geste (`Storage.jsx`, `utils/storageDrive.js`,
 Le diagnostic correspondant est `_storage_drive_layout_test.mjs` (chemins,
 contenu de l'étiquette, renommages et rangement, sur un faux Drive).
 
+## Une boîte de stockage ne reste jamais invisible (ni sans meuble)
+
+La grille d'un storage ne dessine que ses `rows × cols` cases. Une boîte dont
+l'emplacement est **absent** (`storageIndex: null`), **hors** de la grille
+(meuble réduit après coup, boîte arrivée d'un autre poste) ou dont le **meuble
+n'existe plus** (fichier importé, synchronisation) n'était plus dessinée nulle
+part — alors que sa fiche continuait d'être comptée, d'où le message
+« ⚠ 2 boxes missing required data (test31, test31) » parlant de boîtes que
+personne ne voit. Ce qui le rend impossible (`src/utils/storageBoxes.js`,
+vérifié par `_storage_boxes_test.mjs`) :
+
+* **`storageRows` / `storageCols` ne valent jamais 0** et la grille dessine
+  `storageSlotCount` cases — exactement la valeur que comptent les règles : un
+  meuble sans dimensions montre une case au lieu d'aucune ;
+* **`repairBoxPlacements`** (appelé au **chargement d'un dataset** —
+  `migrateLoadedDataset` dans `src/App.jsx` — et à l'**enregistrement d'un
+  meuble** dont la grille a été réduite) rend une place RÉELLE à chaque boîte :
+  la sienne si elle est valide, la première place libre sinon, et l'empilement
+  quand le meuble est plein. Une boîte qu'aucun meuble ne porte reçoit le
+  premier meuble du dataset : **une boîte ne reste jamais sans meuble** tant
+  qu'un meuble existe ;
+* l'écran **liste ce qu'il ne peut pas dessiner** : « boxes without a visible
+  slot » dans la fiche d'un meuble (bouton « ⇊ Place »), « boxes without a
+  storage » sur la page Storage, et le message de complétude nomme chaque boîte
+  avec son emplacement (« test31 · slot 3 »), de sorte que deux boîtes du même
+  nom restent distinguables ;
+* **supprimer un meuble déplace d'abord ses boîtes** vers un autre meuble (une
+  par emplacement libre, puis empilées) : la suppression est refusée quand il ne
+  reste aucun meuble d'accueil, et l'ancienne action « Take out » — qui laissait
+  une boîte sans meuble — n'existe plus ;
+* le champ **« Instance » n'est plus proposé sur une boîte** (une boîte n'a pas
+  de niveau instance : son dossier porte son nom). La page d'une boîte dit
+  seulement OÙ elle vit — meuble et emplacement, cliquables.
+
+Dans la page d'une boîte, **« Apply to all »** écrit les trois champs partagés
+d'une sélection — propriétaire de l'échantillon, solvant, date — sur **tous les
+puits sélectionnés** en une seule écriture ; un champ laissé vide ne touche à
+rien (on peut donc appliquer le solvant sans changer les propriétaires).
+
 ## Pourquoi une expérience ne sème plus de dossier à la racine du dataset
 
 L'import Bruker d'un spectre 1D (NMR) ou d'un spectre solide (ssNMR) archive

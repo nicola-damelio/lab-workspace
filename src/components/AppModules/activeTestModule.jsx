@@ -527,6 +527,29 @@ const TestHeader = (
         {operatorNames.map((op) => (<option key={`owner-${op}`} value={op}>{op}</option>))}
       </select>
     </label>
+    {/* OÙ VIT LA BOÎTE : son meuble et son emplacement, cliquables. Une boîte
+        est toujours rattachée à un meuble (voir utils/storageBoxes.js) : si ce
+        n'est pas le cas, on le dit ici en rouge au lieu de la laisser
+        introuvable. */}
+    {(() => {
+      const st = (storages || []).find((s) => s.id === activeTest.storageId) || null;
+      const slot = activeTest.storageIndex === null || activeTest.storageIndex === undefined || activeTest.storageIndex === ''
+        ? null
+        : Number(activeTest.storageIndex);
+      const where = st ? `${st.name}${Number.isFinite(slot) ? ` · slot ${slot + 1}` : ' · no slot'}` : 'No storage';
+      return (
+        <button type="button"
+          onClick={() => { if (st) { setActiveStorageId(st.id); setCurrentModule('storage-detail'); } }}
+          disabled={!st}
+          className={`flex items-center gap-1.5 min-w-0 text-xs px-1.5 py-1 rounded-lg border ${st ? 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100' : 'bg-red-50 border-red-200 text-red-600'}`}
+          title={st
+            ? `This box lives in ${st.name}${Number.isFinite(slot) ? ` · slot ${slot + 1}` : ' · no visible slot'}. Click to open the storage.`
+            : 'This box has no storage. Open the Storage module to give it one.'}>
+          <Icon name="box" size={12} />
+          <span className="truncate">{where}</span>
+        </button>
+      );
+    })()}
     {/* Rien n'est bloqué : la boîte dit simplement ce qui lui manque pour être
         identifiable (nom de l'échantillon, propriétaire, date). */}
     {boxIssues.length > 0 && (
@@ -656,6 +679,10 @@ const TestHeader = (
                     </>
                     )}
 
+                        {/* Une BOÎTE de stockage n'a PAS de niveau « instance »
+                            (son dossier Drive porte le nom de la boîte) : le
+                            champ est réservé aux expériences. */}
+                        {!isBox && (
                         <label className="flex items-center gap-1.5 min-w-0">
                           <span className="shrink-0 text-[10px] font-bold text-slate-400 uppercase">
                             Instance
@@ -685,6 +712,7 @@ const TestHeader = (
                             placeholder="e.g. 24h / Rep 1"
                           />
                         </label>
+                        )}
 
                         <label className="flex items-center gap-1.5 min-w-0">
                           <span className="shrink-0 text-[10px] font-bold text-slate-400 uppercase">

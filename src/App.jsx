@@ -31,6 +31,11 @@ import { applyPapersRecovery, readPublications, readExcludedPubs, readRelevantSu
 import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud, setProjectDatasetScope, removeProjectsOfDataset, loadDeletedProjects, adoptDeletedProjects } from './components/AppModules/projectsModule';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
+/* Les règles des boîtes de stockage (emplacement valide, champs obligatoires,
+   suppression d'un meuble) : App les applique au CHARGEMENT d'un dataset pour
+   qu'une boîte ne reste jamais sans emplacement visible (voir plus bas,
+   migrateLoadedDataset). */
+import { repairBoxPlacements } from './utils/storageBoxes';
 import { setActiveProjectId, readLibrary, readAllProjectLibraries, mergeLibraryFromSnapshot, refreshLibraryFromStorage } from './utils/figuresLibrary';
 import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, getLastDriveConnectError, driveBootstrapRequestedAtLoad, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders, cloudBackendAvailable } from './utils/driveUpload';
 /* ── LE DRIVE EST LE MIROIR DU PROGRAMME (et le même sur chaque poste) ──────
@@ -478,9 +483,25 @@ const migrateLoadedDataset = (s) => {
     });
   });
 
+  const allStorages = newStorages.length > 0
+    ? [...existingStorages, ...newStorages]
+    : existingStorages;
+
+  /* ── AUCUNE BOÎTE SANS EMPLACEMENT VISIBLE ─────────────────────────────────
+     La grille d'un meuble ne dessine que `rows × cols` cases : une boîte dont
+     l'emplacement est absent (null) ou tombe HORS de la grille — meuble réduit
+     après coup, boîte arrivée d'un autre poste, fichier importé — n'était plus
+     affichée nulle part alors que sa fiche continuait d'être comptée
+     (« ⚠ 2 boxes missing required data (test31, test31) »). Une boîte ne reste
+     donc JAMAIS sans meuble : au chargement, chaque boîte d'un meuble connu
+     reprend une place réelle, et une boîte qu'aucun meuble ne porte (import,
+     synchronisation d'un poste où le meuble n'existe plus) reçoit le premier
+     meuble du dataset. Les règles vivent dans utils/storageBoxes.js. */
+  const placement = repairBoxPlacements(tests, allStorages);
+
   return {
-    tests,
-    storages: newStorages.length > 0 ? [...existingStorages, ...newStorages] : existingStorages
+    tests: placement.tests,
+    storages: allStorages
   };
 };
 

@@ -36,11 +36,13 @@ export const StorageModule = ({
       <StorageList
         storages={storages}
         tests={tests}
+        setTests={setTests}
         setStorageModal={setStorageModal}
         setActiveStorageId={setActiveStorageId}
         setCurrentModule={setCurrentModule}
         handlePrint={handlePrint}
         operators={operatorNames}
+        jumpToTest={jumpToTest}
         setDeleteStorageModal={setDeleteStorageModal}
       />
     </div>
