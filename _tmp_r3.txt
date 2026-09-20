@@ -1,5 +1,0 @@
-﻿Biblioth├¿que commune rang├⌐e : general_library_images   
-Biblioth├¿que commune rang├⌐e : general_library_images   
-_common_library_folder_test : 96 v├⌐rifications pass├⌐es (biblioth├¿que commune ├á la racine + migration)
-(node:21580) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
-(Use `node --trace-deprecation ...` to show where the warning was created)

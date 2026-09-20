@@ -78,6 +78,7 @@ OK   _project_figures_access_test.cjs  →  │ (index) │ name                
 OK   _project_page_order_test.mjs  →  _project_page_order_test.mjs — 31 assertions passed
 OK   _project_section_editing_test.mjs  →  _project_section_editing_test.mjs — 60 assertions passed
 OK   _pub_author_style_test.mjs  →  _pub_author_style_test: 212 passed
+OK   _readonly_notice_test.mjs  →  _readonly_notice_test.mjs — 57 assertions OK (un refus d’écriture est toujours affiché)
 OK   _rebuild_h_test.mjs  →  PASS
 OK   _recover_canvas_files.mjs  →  9 fichier(s) : 6 avec composition, 3 sans.
 OK   _reference_complete_test.mjs  →  _reference_complete_test: 68 passed
@@ -100,4 +101,4 @@ OK   _view_scroll_memory_test.cjs  →  ✅ 41/41 checks passed
 OK   _viewer_ui_layout_test.mjs  →  _viewer_ui_layout_test.mjs — 235 assertions OK
 OK   _workspace_drive_test.mjs  →  ✅ 57 tests passés (l’espace de travail entier vit sur le Drive)
 OK   _workspace_keys_test.mjs  →  ✅ 37 tests passés (les clés du navigateur vivent aussi sur le Drive)
-total 102, failed 0
+total 103, failed 0

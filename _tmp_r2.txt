@@ -1,3 +1,0 @@
-﻿Γ£à 53 tests pass├⌐s (un seul projects/ et un seul protocols/ par dataset, jamais de jumeau)
-(node:22764) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
-(Use `node --trace-deprecation ...` to show where the warning was created)

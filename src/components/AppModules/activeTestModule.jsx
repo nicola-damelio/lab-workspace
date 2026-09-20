@@ -13,10 +13,13 @@ import { setSectionsCommand } from '../ui';
 // Les champs obligatoires d'une BOÎTE (nom, propriétaire, date — sur la boîte
 // et dans chaque puits rempli) : voir utils/storageBoxes.js.
 import { describeBoxIssues, requiredBoxIssues } from '../../utils/storageBoxes';
-import { testProjectAccess } from './projectsModule';
+import { testProjectAccess, getProjectAccessForUser } from './projectsModule';
 import {
   applyDataLock, clearDataLock, dataLockLabel, guardLockedInstances, isDataLocked, lockedIdSet
 } from '../../utils/dataLock';
+// Pourquoi CETTE page refuse d'écrire (droits « view » du projet / donnée
+// gelée) — et la règle qui oblige à le DIRE à l'écran : voir utils/readOnly.js.
+import { decidingProjectAccess, experimentReadOnly, readOnlyLabel } from '../../utils/readOnly';
 import { blankConditionName, withExperimentContext } from '../../utils/conditionInstance';
 import { Icon } from '../Icons';
 // Lazy renderers (kept as dynamic imports so each stays its own chunk).
@@ -130,15 +133,21 @@ export const ActiveTestModule = ({
                   return null;
                 }
                 // Project permission on the ACTIVE instance (instances of a group
-                // are normally linked to the same projects).
-                const projectPerm = currentUser ? testProjectAccess(activeTest, currentUser.name) : null;
+                // are normally linked to the same projects). The project that
+                // DECIDES is kept as well: the read-only notice below names it,
+                // so the user knows which project to ask rights on (same
+                // first-match rule as testProjectAccess — see utils/readOnly).
+                const projectAccessMap = currentUser ? getProjectAccessForUser(currentUser.name) : {};
+                const decidingProject = decidingProjectAccess(activeTest.projectNames, projectAccessMap);
+                const projectPerm = decidingProject.permission;
                 // Read-only enforcement: a user who only has 'view' on the linked
                 // project (and is not one of the assigned scientists / a superuser /
                 // the test is unlocked or unassigned) can open the experiment but
-                // every update is ignored.
+                // every update is ignored. The rule itself, and the reason it has
+                // to be DISPLAYED, live in src/utils/readOnly.js; the state is
+                // computed below (with the data lock, which is the other reason).
                 const isAssignedScientist = !!(currentUser &&
                   (currentUser.name === activeTest.operator || (activeTest.coScientists || []).includes(currentUser.name)));
-                const projectViewOnly = projectPerm === 'view' && !(isSuperuserSession || isAssignedScientist || unlockedTestIds.has(activeTest.id) || !activeTest.operator);
                 // ─────────────────────────────────────────────────
 
                 // ── Data lock (🔒 in the header, see src/utils/dataLock.js) ────
@@ -153,8 +162,24 @@ export const ActiveTestModule = ({
                 // guards below also cover a write aimed at another experiment.
                 const lockedIds = lockedIdSet(tests);
                 const activeInstanceLocked = isDataLocked(activeTest);
-                // Read-only for THIS user on THIS page.
-                const dataReadOnly = !isSuperuserSession && activeInstanceLocked;
+                // Read-only for THIS user on THIS page — and the page SAYS it.
+                // Two independent reasons refuse every write (src/utils/readOnly.js):
+                //   • 'project'   — view-only rights on the project that decides;
+                //   • 'data-lock' — a superuser froze this condition.
+                // A refusal nobody can see is the real trap: a value just typed
+                // stays on screen (nothing re-renders the stored value back) and is
+                // gone at the next load. Both cases therefore render a notice.
+                const access = experimentReadOnly({
+                  isSuperuser: isSuperuserSession,
+                  isAssignedScientist,
+                  projectPerm,
+                  isUnlocked: unlockedTestIds.has(activeTest.id),
+                  hasOperator: !!activeTest.operator,
+                  isDataLocked: activeInstanceLocked
+                });
+                const projectViewOnly = access.projectViewOnly;
+                const dataReadOnly = access.dataReadOnly;
+                const readOnlyReason = access.reason; // '' | 'project' | 'data-lock'
                 // Is `instId` frozen for this user? (per-instance write guard)
                 const isFrozenForMe = (instId) => !isSuperuserSession && lockedIds.has(instId);
                 const allGroupLocked = groupTests.length > 0 && groupTests.every((t) => isDataLocked(t));
@@ -178,8 +203,8 @@ export const ActiveTestModule = ({
                    d'une fenêtre à l'autre). Sans cible, rien ne change : c'est
                    la condition affichée qui est écrite. */
                 const updateActiveTest = (updates, targetTestId = '') => {
-                  if (projectViewOnly) return; // view-only project member — read-only
-                  if (dataReadOnly) return;    // data frozen by a superuser — read-only
+                  if (projectViewOnly) return; // view-only project member — read-only (see the notice)
+                  if (dataReadOnly) return;    // data frozen by a superuser — read-only (see the notice)
                   const targetId = targetTestId || activeTestId;
                   setTests((prev) =>
                     prev.map((t) => (t.id === targetId ? { ...t, ...updates } : t))
@@ -237,6 +262,7 @@ export const ActiveTestModule = ({
 
                 // Reorder the sibling conditions by dragging a tab onto another one.
                 const reorderInstances = (dragId, targetId) => {
+                  if (projectViewOnly) return; // read-only: dragging a chip is a write (disabled below)
                   if (!dragId || dragId === targetId) return;
                   setTests((prev) => {
                     const drag = prev.find((x) => x.id === dragId);
@@ -269,6 +295,10 @@ export const ActiveTestModule = ({
                 };
 
                 const handleDuplicateInstance = () => {
+                  // A view-only project member cannot write, and a copy would land
+                  // in the SAME projects → it would be read-only for them too. The
+                  // button is disabled with the reason in its tooltip.
+                  if (projectViewOnly) return;
                   const id = 't' + Date.now();
                   // A copy NEVER inherits the data lock: copying the data into an
                   // editable instance is precisely the way out offered to a
@@ -314,6 +344,7 @@ export const ActiveTestModule = ({
                 // data-lock banner (handleDuplicateInstance above).
                 // The rule itself lives in src/utils/conditionInstance.js.
                 const handleAddBlankInstance = () => {
+                  if (projectViewOnly) return; // read-only: creating a condition is a write (disabled below)
                   const id = 't' + Date.now() + Math.floor(Math.random() * 1e4);
                   const created = withExperimentContext(
                     createEmptyTest(id, siblingTests.length + 1, activeTest.type),
@@ -417,6 +448,20 @@ const TestHeader = (
                           title={`${describeBoxIssues(boxIssues)}\n\nA box must be identifiable: sample name, owner and date — on the box and in every filled well.`}
                         >
                           ⚠ {describeBoxIssues(boxIssues)}
+                        </span>
+                      )}
+                      {/* Read-only must survive the folded chrome exactly like the
+                          box warning above: the notice rendered under the
+                          « Date / Conditions » strip is hidden while the chrome is
+                          folded, and a write refused in SILENCE is precisely what
+                          makes a typed value look saved (see utils/readOnly.js). */}
+                      {readOnlyReason && (
+                        <span
+                          className={`shrink-0 max-w-[340px] truncate text-[10px] font-bold rounded-lg px-2 py-0.5 border ${readOnlyReason === 'project' ? 'text-slate-700 bg-slate-100 border-slate-300' : 'text-amber-800 bg-amber-50 border-amber-300'}`}
+                          title={`${readOnlyLabel(readOnlyReason, decidingProject.project)} — this page stays fully readable, but nothing you change on it is saved.`}
+                        >
+                          <Icon name={readOnlyReason === 'project' ? 'key' : 'lock'} size={11} className="inline mr-1 -mt-0.5" />
+                          {readOnlyReason === 'project' ? 'View-only' : 'Data locked'} — read-only
                         </span>
                       )}
                       <button
@@ -602,10 +647,12 @@ const TestHeader = (
                             of the page, so it stays reachable while the chrome is
                             folded — see TestHeader.) */}
                         <button
-                          disabled={dataReadOnly}
-                          title={dataReadOnly
-                            ? 'Data locked — only a superuser can delete this experiment.'
-                            : 'Permanently delete this experiment (all its conditions)'}
+                          disabled={dataReadOnly || projectViewOnly}
+                          title={projectViewOnly
+                            ? `${readOnlyLabel('project', decidingProject.project)} — you cannot delete this experiment.`
+                            : dataReadOnly
+                              ? 'Data locked — only a superuser can delete this experiment.'
+                              : 'Permanently delete this experiment (all its conditions)'}
                           onClick={() => {
                             // Deleting an experiment removes ALL its instances
                             // (they share the name); a box is a single item.
@@ -894,7 +941,7 @@ const TestHeader = (
                         {siblingTests.map((t, idx) => (
                           <button
                             key={t.id}
-                            draggable={siblingTests.length > 1}
+                            draggable={siblingTests.length > 1 && !projectViewOnly}
                             onDragStart={(e) => {
                               dragInstanceId.current = t.id;
                               e.dataTransfer.effectAllowed = 'move';
@@ -927,7 +974,7 @@ const TestHeader = (
                               </span>
                             )}
 
-                            {!isFrozenForMe(t.id) && (
+                            {!isFrozenForMe(t.id) && !projectViewOnly && (
                               <span
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -966,8 +1013,11 @@ const TestHeader = (
 
                         <button
                           onClick={handleAddBlankInstance}
-                          title="Add a new date/condition to this experiment — it starts on a blank page"
-                          className="shrink-0 px-3 py-1.5 md:py-1 text-xs font-bold text-blue-600 border border-dashed border-blue-400 rounded-full hover:bg-blue-100 transition-colors bg-white shadow-sm ml-2"
+                          disabled={projectViewOnly}
+                          title={projectViewOnly
+                            ? `${readOnlyLabel('project', decidingProject.project)} — you can read this experiment but not add a condition to it.`
+                            : 'Add a new date/condition to this experiment — it starts on a blank page'}
+                          className={`shrink-0 px-3 py-1.5 md:py-1 text-xs font-bold text-blue-600 border border-dashed border-blue-400 rounded-full transition-colors bg-white shadow-sm ml-2 ${projectViewOnly ? 'opacity-40 cursor-not-allowed' : 'hover:bg-blue-100'}`}
                         >
                           + Add Date/Condition
                         </button>
@@ -988,14 +1038,39 @@ const TestHeader = (
                             ? 'You are a superuser — you can still edit this experiment. Use “Unlock data” above to reopen it for the scientists.'
                             : 'Read-only for you: the results stay visible, but nothing you change here is saved (the stored values are restored). To run a different analysis, copy the data into a new instance — the copy is yours to edit.'}
                         </span>
-                        <button
-                          type="button"
-                          onClick={handleDuplicateInstance}
-                          title="Create an editable copy of this condition (same experiment) and run your own analysis on it"
-                          className="ml-auto shrink-0 px-3 py-1 rounded-full text-[11px] font-bold bg-white border border-blue-300 text-blue-700 hover:bg-blue-50 shadow-sm transition-colors"
-                        >
-                          ⧉ Copy the data to a new instance
-                        </button>
+                        {/* The way out of a lock is to COPY the data — but a copy
+                            let a view-only member write on an experiment of a
+                            project they cannot edit (the copy lands in the SAME
+                            projects), so the button is not offered to them: the
+                            view-only notice below says what to ask for instead. */}
+                        {!projectViewOnly && (
+                          <button
+                            type="button"
+                            onClick={handleDuplicateInstance}
+                            title="Create an editable copy of this condition (same experiment) and run your own analysis on it"
+                            className="ml-auto shrink-0 px-3 py-1 rounded-full text-[11px] font-bold bg-white border border-blue-300 text-blue-700 hover:bg-blue-50 shadow-sm transition-colors"
+                          >
+                            ⧉ Copy the data to a new instance
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* ── 🔑 Read-only notice when the user only has 'view' on the
+                        project that decides ──────────────────────────────────
+                        Same promise as the lock banner: the page stays fully
+                        readable, and it SAYS that nothing typed on it is saved.
+                        Without this, a refused write is invisible: React never
+                        renders the stored value back over the text just typed, so
+                        the value looks saved and is gone at the next load. */}
+                    {projectViewOnly && (
+                      <div className="border-b px-4 md:px-6 py-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] bg-slate-100 border-slate-300 text-slate-700">
+                        <span className="font-black uppercase tracking-wide flex items-center gap-1.5">
+                          <Icon name="key" size={12} /> View-only project
+                        </span>
+                        <span className="font-medium max-w-3xl">
+                          {`You have view-only rights on ${decidingProject.project ? `project “${decidingProject.project}”` : 'the linked project'}: you can read this experiment (results, plots, tables), but NOTHING YOU CHANGE HERE IS SAVED — the stored values are restored at the next load. Ask the project owner for “modify” rights to edit it.`}
+                        </span>
                       </div>
                     )}
                       </>

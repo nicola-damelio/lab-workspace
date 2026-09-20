@@ -1,2 +1,0 @@
-﻿38: import { repairBoxPlacements } from './utils/storageBoxes';
-500: const placement = repairBoxPlacements(tests, allStorages);

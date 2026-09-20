@@ -1,2 +1,0 @@
-﻿BAD _library_restore_test.mjs ΓåÆ Figure ΓåÆ Drive upload failed: Cannot reach Google Drive (network error). | AssertionError [ERR_ASSERTION]: les images du dossier sont vues
-total 101, failed 2
