@@ -225,6 +225,42 @@ ok(NMRSRC.includes('nmr1dPendingRefs.get(activeTest.id)'),
   'un pointeur arrivé après un changement d’onglet est posé sur la bonne instance');
 ok(!/nmr1dDrive[^\n]*localStorage/.test(NMRSRC), 'aucun pointeur rangé dans le navigateur (il doit voyager)');
 
+/* ══ 3 bis. LE DEUXIÈME MODULE BRANCHÉ (ssNMR — mêmes gestes, même mécanisme) ══
+   Un spectre ssNMR est une SECTION DE COLONNES (`spectraColumns`) : c'est ce qui
+   ne tient pas dans le document du dataset, donc c'est ce qui doit être archivé
+   et restauré — sans code de restauration propre au module. */
+
+const SSNMRSRC = readFileSync('src/components/ssNMRSections.jsx', 'utf8');
+
+ok(SSNMRSRC.includes("import { archiveRestoreJson, isMissingColumns, isMissingValue, restoreJsonFor, restoreStems } from '../utils/driveRestore';"),
+  'ssNMRSections passe par le mécanisme GÉNÉRAL (aucune restauration maison)');
+ok(SSNMRSRC.includes("import { useDriveAutoRestore } from './useDriveAutoRestore';"),
+  '…et par le déclencheur automatique partagé');
+ok(SSNMRSRC.includes("const SSNMR_RESTORE_KIND = 'ssnmr1d';"), 'le type de donnée ssNMR est déclaré une fois');
+ok(SSNMRSRC.includes("const ssnmrDriveCtx = (test = {}, instance = '') => ({"),
+  'le dossier d’archive est le dossier canonique de l’instance');
+ok(/subsection: 'Bruker 1r'/.test(SSNMRSRC), '…la même sous-section que les fichiers bruts de l’import');
+ok(SSNMRSRC.includes('stem: instance,'), 'le nom archivé est le nom DÉCLARÉ de l’instance');
+ok(SSNMRSRC.includes('columns: Array.isArray(columns) ? columns : [],'),
+  'l’archive porte les COLONNES (la donnée qui ne tient pas dans le document)');
+ok(SSNMRSRC.includes("wavelengthData: wavelengthData || '',"), '…et l’axe des déplacements');
+eq((SSNMRSRC.match(/archiveSsnMRColumns\(\{/g) || []).length, 2,
+  'les DEUX chemins d’import archivent : la condition affichée (applyBruker) et les conditions clonées');
+ok(SSNMRSRC.includes('const clones = [];') && SSNMRSRC.includes('ctx.setTests(prevTests => [...prevTests, ...clones]);'),
+  'les conditions clonées sont construites HORS de l’updater d’état (elles sont archivées juste après)');
+ok(SSNMRSRC.includes('if (isMissingColumns(instTest.spectraColumns)) return true;'),
+  'des colonnes vidées (ou remplacées par un marqueur) déclenchent la restauration');
+ok(SSNMRSRC.includes('const ssnmrRestore = useDriveAutoRestore({'), 'la page attache le déclencheur automatique');
+ok(SSNMRSRC.includes('restore: restoreSsnMRFromDrive'), '…avec sa restauration métier');
+ok(SSNMRSRC.includes('ssnmrDrive: {'), 'le pointeur de restauration voyage sur la condition importée');
+ok(SSNMRSRC.includes('spectraColumns: columns,'), 'les colonnes restaurées sont réinjectées dans la condition');
+ok(SSNMRSRC.includes("'⬇️ Restore from Drive'"), 'la page garde un bouton manuel (repli explicite)');
+ok(SSNMRSRC.includes('ssnmrPendingRefs.get(ssnmrActiveKey)'),
+  'un pointeur arrivé après un changement de condition est posé sur la bonne condition');
+ok(SSNMRSRC.includes('const ssnmrActiveKey = (activeInstance && activeInstance.id) || activeTest.id;'),
+  'la clé du portillon est la CONDITION affichée (les colonnes vivent sur elle)');
+ok(!/ssnmrDrive[^\n]*localStorage/.test(SSNMRSRC), 'aucun pointeur rangé dans le navigateur (il doit voyager)');
+
 /* La mécanique partagée : un déclencheur, un portillon, un événement. */
 ok(HOOKSRC.includes('const forced = reason !== \'open\' && reason !== \'cloud-connected\';'),
   'un essai MANUEL libère la réservation (sinon « Try again » ne ferait rien)');

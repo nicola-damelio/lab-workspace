@@ -494,11 +494,20 @@ dossier : une page ouverte ne sème pas d'arborescence fantôme.
   copie de référence du spectre complet ; la page la restaure seule. Le pointeur
   d'un import arrivé pendant un changement d'onglet est posé sur la bonne
   instance dès qu'elle est ouverte (`nmr1dPendingRefs`).
+* **ssNMR** — `ssNMRSections.jsx` archive la **section de colonnes**
+  (`spectraColumns` + l'axe des déplacements) sous l'instance, au nom de la
+  condition importée (`<instance>_ssnmr1d_restore.json.gz`), dans le même
+  dossier `Data/Bruker 1r` que les fichiers bruts. L'import compose désormais
+  ses conditions clonées hors de l'updater d'état : chacune part sur le Drive.
+  Les colonnes vivant sur la **condition** (pas sur l'expérience), la clé du
+  portillon et le pointeur (`ssnmrDrive`) suivent la condition affichée, et un
+  pointeur arrivé après un changement de condition attend son tour
+  (`ssnmrPendingRefs`).
 * **Flow Cytometry** — avait déjà ce comportement (`handleRestoreFromDrive`) :
   il reste le modèle, rien n'a régressé.
 * **MD** — `MDSections.jsx` rapatrie déjà structure et trajectoire du Drive
   quand la cache locale est vide (`downloadArchivedMDFile`).
-* Restent à brancher sur le même mécanisme : **ssNMR**, **CD (Jasco)**,
+* Restent à brancher sur le même mécanisme : **CD (Jasco)**,
   **docking** (structures / molécules / CAPRI) et **microscopie** (vidéos).
   La mécanique ne change pas : archiver une copie JSON au moment de l'import,
   poser le pointeur sur le test, appeler `useDriveAutoRestore` dans la page.
@@ -508,5 +517,5 @@ dossier : une page ouverte ne sème pas d'arborescence fantôme.
 * `node _drive_restore_test.mjs` — la logique pure (marqueurs, noms, portillon,
   refus des types croisés) et le cycle archivage → restauration sur un faux
   Drive, y compris un pointeur périmé, un fichier mis à la corbeille et un autre
-  poste sans registre local ; puis le câblage du NMR 1D.
+  poste sans registre local ; puis le câblage du NMR 1D **et du ssNMR**.
 

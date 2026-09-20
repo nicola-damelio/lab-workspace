@@ -17,6 +17,70 @@ export { VIS_PALETTES };
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName, canonicalExperimentPath, sanitizeSlug } from '../utils/driveNaming';
 import { uploadLocalFile, getDriveToken } from '../utils/driveUpload';
+import { archiveRestoreJson, isMissingColumns, isMissingValue, restoreJsonFor, restoreStems } from '../utils/driveRestore';
+import { useDriveAutoRestore } from './useDriveAutoRestore';
+
+/* ── RESTAURATION AUTOMATIQUE DU SPECTRE ssNMR DEPUIS LE DRIVE ──────────────
+   (mécanisme général : src/utils/driveRestore.js + useDriveAutoRestore.js)
+   Les colonnes d'un spectre vivent dans le document du dataset, qui ne peut PAS
+   les porter en entier : compressDatasetForSave finit par remplacer chaque
+   colonne par un marqueur (« [data omitted — kept in browser cache / Drive or
+   re-uploadable] »). La version plein format est donc archivée sur le Drive en
+   JSON gzip, dans le dossier canonique de l'instance (le MÊME que les fichiers
+   bruts de l'import Bruker), et l'instance n'en garde qu'un pointeur de ~80
+   octets (`ssnmrDrive`) qui voyage avec le dataset — donc d'un poste à l'autre.
+   Sur un poste vierge, la restauration retrouve le fichier par son NOM
+   (`<instance>_ssnmr1d_restore.json.gz`) : ni la cache IndexedDB ni le registre
+   local du navigateur ne sont nécessaires. */
+const SSNMR_RESTORE_KIND = 'ssnmr1d';
+const ssnmrDriveCtx = (test = {}, instance = '') => ({
+  project: (test.projectNames || [])[0] || '',
+  test: test.name || '',
+  scientist: test.operator || '',
+  section: 'Data',
+  subsection: 'Bruker 1r',
+  instance: instance || test.instanceName || ''
+});
+
+/* Pointeurs de restauration en attente d'écriture : l'archivage se termine
+   parfois APRÈS un changement de condition, et `patchActive` écrit sur la
+   condition ACTIVE (il poserait donc le pointeur au mauvais endroit). Le
+   pointeur est donc mis de côté, puis posé dès que sa condition redevient
+   active — au pire, la recherche par nom retrouve le fichier. */
+const ssnmrPendingRefs = new Map();
+
+/** Archive la copie de référence des colonnes d'un spectre ssNMR et rend son
+ *  pointeur (`{ id, name, url, driveUrl, at }`), ou null quand le Drive n'est
+ *  pas joignable — un import ne doit JAMAIS échouer pour cette raison. */
+const archiveSsnMRColumns = async ({
+  test, instance, columns, rawColumns = null, wavelengthData = '',
+  yUnit = 'raw', brukerMeta = null, source = {}
+}) => (
+  archiveRestoreJson({
+    kind: SSNMR_RESTORE_KIND,
+    suffix: SSNMR_RESTORE_KIND,
+    stem: instance,
+    data: {
+      columns: Array.isArray(columns) ? columns : [],
+      rawColumns: Array.isArray(rawColumns) && rawColumns.length ? rawColumns : null,
+      wavelengthData: wavelengthData || '',
+      yUnit: yUnit || 'raw',
+      brukerMeta: brukerMeta || null,
+      instanceName: instance || '',
+      source
+    },
+    ctx: ssnmrDriveCtx(test, instance)
+  })
+);
+
+/** Pose le pointeur d'une archive sur la condition qui vient d'être importée :
+ *  tout de suite si c'est encore elle qui est affichée, sinon en attente (voir
+ *  ssnmrPendingRefs). `key` est l'id de l'instance réellement active. */
+const placeSsnMRPointer = ({ pointer, key, activeKey, patch }) => {
+  if (!pointer || !key) return;
+  if (activeKey === key) patch({ ssnmrDrive: pointer });
+  else ssnmrPendingRefs.set(key, { ssnmrDrive: pointer });
+};
 
 const HAS_EB = typeof ErrorBar !== 'undefined';
 
@@ -1003,6 +1067,20 @@ export const Data = ({ ctx }) => {
     }
   };
 
+  /* Condition réellement affichée : `patchActive` écrit sur ELLE, donc c'est son
+     id qui dit si le pointeur d'une archive (asynchrone) peut être posé tout de
+     suite ou s'il doit attendre qu'on revienne sur cette condition. */
+  const ssnmrActiveKey = (activeInstance && activeInstance.id) || activeTest.id;
+  const ssnmrActiveKeyRef = useRef(ssnmrActiveKey);
+  ssnmrActiveKeyRef.current = ssnmrActiveKey;
+  useEffect(() => {
+    const pending = ssnmrPendingRefs.get(ssnmrActiveKey);
+    if (!pending) return;
+    ssnmrPendingRefs.delete(ssnmrActiveKey);
+    patchActive(pending);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ssnmrActiveKey]);
+
   const updateWavelengthData = (val) => patchActive({ wavelengthData: val });
   const addSpectrumColumn = () => {
     const cols = [...spectraColumns];
@@ -1019,6 +1097,70 @@ export const Data = ({ ctx }) => {
     patchActive({ spectraColumns: spectraColumns.map((c) => (c.id === id ? { ...c, ...patch } : c)) });
   const removeSpectrumColumn = (id) =>
     patchActive({ spectraColumns: spectraColumns.filter((c) => c.id !== id) });
+
+  // ── RESTAURATION AUTOMATIQUE DES COLONNES DEPUIS LE DRIVE ────────────────
+  // (mécanisme général : src/utils/driveRestore.js + useDriveAutoRestore.js)
+  // Le document du dataset ne peut pas porter un spectre entier : quand il faut
+  // faire de la place, compressDatasetForSave remplace chaque colonne par un
+  // marqueur. Le Drive est donc la copie de RÉFÉRENCE — à l'ouverture de la
+  // page, des colonnes manquantes sont re-téléchargées TOUT SEUL (autre poste,
+  // cache vidée, données retirées par la limite Firestore) puis réinjectées ici,
+  // et l'utilisateur n'a rien à faire.
+  const ssnmrDefaultStems = () => restoreStems(
+    instTest.instanceName,
+    instTest.brukerMeta && instTest.brukerMeta.title,
+    Array.isArray(instTest.instrumentalDatasets) && instTest.instrumentalDatasets[0]
+      ? instTest.instrumentalDatasets[0].name : ''
+  );
+
+  const ssnmrDriveMissing = () => {
+    if (isMissingColumns(instTest.spectraColumns)) return true; // vidées, ou marqueur « omitted »
+    /* Colonnes présentes : l'axe des déplacements (wavelengthData) a-t-il été
+       retiré par la limite Firestore ? Un spectre sans axe (colonnes saisies à
+       la main) n'est PAS un manque : rien n'a été archivé pour lui. */
+    return isMissingValue(instTest.wavelengthData) && !!instTest.ssnmrDrive;
+  };
+
+  const restoreSsnMRFromDrive = async () => {
+    const pointer = instTest.ssnmrDrive || null;
+    const stems = (pointer && Array.isArray(pointer.stems) && pointer.stems.length
+      ? pointer.stems
+      : ssnmrDefaultStems());
+    const found = await restoreJsonFor({
+      kind: SSNMR_RESTORE_KIND, suffix: SSNMR_RESTORE_KIND, stems,
+      ctx: ssnmrDriveCtx(activeTest, instTest.instanceName), pointer
+    });
+    if (!found) {
+      return {
+        ok: false,
+        message: '⚠️ These spectra are not in this browser and no copy was found on Google Drive. Connect Google Drive, then re-import the Bruker folder: the raw files AND the spectra are archived at import.'
+      };
+    }
+    const data = (found.data && typeof found.data === 'object') ? found.data : {};
+    const columns = Array.isArray(data.columns) ? data.columns : [];
+    if (!columns.length || isMissingColumns(columns)) {
+      return { ok: false, message: `⚠️ The copy found on Google Drive (${found.name}) is unreadable — re-import the Bruker folder.` };
+    }
+    patchActive({
+      spectraColumns: columns,
+      wavelengthData: data.wavelengthData || instTest.wavelengthData || '',
+      yUnit: data.yUnit || instTest.yUnit || 'raw',
+      ...(Array.isArray(data.rawColumns) && data.rawColumns.length ? { rawSpectraColumns: data.rawColumns } : {}),
+      ...(data.brukerMeta ? { brukerMeta: data.brukerMeta } : {}),
+      ssnmrDrive: {
+        ...(instTest.ssnmrDrive || {}),
+        id: found.id, name: found.name, at: Date.now(), stems, restoredAt: Date.now()
+      }
+    });
+    return { ok: true, message: `✅ Spectra restored from Google Drive (${found.name}).` };
+  };
+
+  const ssnmrRestore = useDriveAutoRestore({
+    kind: SSNMR_RESTORE_KIND,
+    testId: ssnmrActiveKey,
+    missing: ssnmrDriveMissing,
+    restore: restoreSsnMRFromDrive
+  });
 
   const [brukerDataUrl, setBrukerDataUrl] = useState('');
   const [brukerAcqusUrl, setBrukerAcqusUrl] = useState('');
@@ -1125,6 +1267,28 @@ export const Data = ({ ctx }) => {
     }
     
     patchActive(updates);
+
+    /* La copie de RÉFÉRENCE part sur le Drive TOUT DE SUITE (best-effort) : le
+       document du dataset ne peut pas porter un spectre entier, donc sans cette
+       archive les colonnes n'existeraient que dans le navigateur qui a importé.
+       Un Drive injoignable ne casse rien : « ⬇️ Restore from Drive » réessaie, et
+       une ré-importation réécrit le même fichier. */
+    const instance = String(updates.instanceName || activeTest.instanceName || '').trim();
+    const archiveKey = ssnmrActiveKey;
+    void (async () => {
+      const pointer = await archiveSsnMRColumns({
+        test: activeTest,
+        instance,
+        columns: updates.spectraColumns,
+        wavelengthData: updates.wavelengthData,
+        yUnit: updates.yUnit,
+        brukerMeta: updates.brukerMeta,
+        source: { file: filename || '', expno: parsed.expNum || '' }
+      });
+      placeSsnMRPointer({
+        pointer, key: archiveKey, activeKey: ssnmrActiveKeyRef.current, patch: patchActive
+      });
+    })();
   };
 
   // Folder Import logic
@@ -1234,10 +1398,12 @@ export const Data = ({ ctx }) => {
 
     applyBruker(selected[0].parsed, selected[0].filename);
 
-    if (selected.length > 1 && ctx.setTests) {
-        ctx.setTests(prevTests => {
-            const newTests = [];
-            for (let i = 1; i < selected.length; i++) {
+    /* Les conditions clonées sont construites ICI (hors de l'updater d'état) :
+       la copie de RÉFÉRENCE de CHACUNE part sur le Drive juste après, donc les
+       clones doivent déjà exister — React peut exécuter l'updater plus tard. */
+    const clones = [];
+    {
+        for (let i = 1; i < selected.length; i++) {
                 const parsed = selected[i].parsed;
                 const newId = 't' + Date.now() + i + Math.random().toString(36).substring(2,5);
                 const cloned = JSON.parse(JSON.stringify(activeTest));
@@ -1283,11 +1449,31 @@ export const Data = ({ ctx }) => {
                 cloned.spectraColumns = [{ id: makeId('spec'), title: parsed.meta.title || 'Bruker 1r spectrum', data: Array.from(finalYs).map(String).join('\n'), color: SPECTRA_PALETTE[i % SPECTRA_PALETTE.length], visible: true }];
                 cloned.yUnit = 'raw';
                 cloned.brukerMeta = parsed.meta;
-                newTests.push(cloned);
+                clones.push(cloned);
             }
-            return [...prevTests, ...newTests];
-        });
     }
+    if (clones.length && ctx.setTests) ctx.setTests(prevTests => [...prevTests, ...clones]);
+
+    /* Copie de référence de CHAQUE condition clonée (best-effort, comme la
+       première) : le pointeur est posé sur sa propre condition si c'est encore
+       elle qui est affichée, sinon il attend son tour (ssnmrPendingRefs). */
+    clones.forEach((cloned, idx) => {
+        const parsed = selected[idx + 1].parsed;
+        void (async () => {
+            const pointer = await archiveSsnMRColumns({
+                test: cloned,
+                instance: String(cloned.instanceName || '').trim(),
+                columns: cloned.spectraColumns,
+                wavelengthData: cloned.wavelengthData,
+                yUnit: cloned.yUnit,
+                brukerMeta: cloned.brukerMeta,
+                source: { file: cloned.instanceName || '', expno: parsed.expNum || '' }
+            });
+            placeSsnMRPointer({
+                pointer, key: cloned.id, activeKey: ssnmrActiveKeyRef.current, patch: patchActive
+            });
+        })();
+    });
     setPendingSpectra([]);
     setSelectedSpectraIds([]);
 
@@ -1614,6 +1800,40 @@ export const Data = ({ ctx }) => {
           <div className="flex items-center justify-between flex-wrap gap-2">
             <h4 className="text-sm font-bold text-sky-900">📥 Bruker Import — 1r processed spectrum</h4>
             <span className="text-[9px] bg-sky-200 text-sky-900 px-2 py-0.5 rounded font-bold">imports into the ACTIVE condition</span>
+          </div>
+
+          {/* Restauration automatique des colonnes depuis le Drive (voir
+              SSNMR_RESTORE_KIND en tête de ce fichier) : l'archive est déposée
+              TOUTE SEULE à l'import, donc ce bouton n'est qu'un secours manuel —
+              la restauration part d'elle-même à l'ouverture de la page. */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => ssnmrRestore.attempt('manual')}
+              disabled={ssnmrRestore.status === 'restoring'}
+              title="Download the archived copy of these spectra from Google Drive (it is saved automatically at import) — it also happens by itself when the page opens"
+              className="text-[10px] font-bold bg-white border border-sky-300 text-sky-700 hover:bg-sky-100 px-2 py-1 rounded-md shadow-sm disabled:opacity-50"
+            >
+              {ssnmrRestore.status === 'restoring' ? '⬇️ Downloading…' : '⬇️ Restore from Drive'}
+            </button>
+            {instTest.ssnmrDrive && !ssnmrRestore.message && (
+              <span className="text-[9px] font-bold text-emerald-700">☁ Archived copy of these spectra is on Google Drive</span>
+            )}
+            {(ssnmrRestore.status === 'restoring' || ssnmrRestore.message) && (
+              <span className={`text-[11px] font-semibold rounded-lg px-3 py-1.5 border ${ssnmrRestore.status === 'restored'
+                ? 'bg-green-50 border-green-200 text-green-800'
+                : ssnmrRestore.status === 'failed'
+                  ? 'bg-amber-50 border-amber-200 text-amber-800'
+                  : 'bg-sky-50 border-sky-200 text-sky-800'}`}>
+                {ssnmrRestore.status === 'restoring'
+                  ? '⬇️ These spectra are not in this browser — restoring the archived copy from Google Drive…'
+                  : ssnmrRestore.message}
+                {ssnmrRestore.status === 'failed' && (
+                  <button type="button" onClick={() => ssnmrRestore.attempt('manual')}
+                    className="ml-2 underline font-bold">Try again</button>
+                )}
+              </span>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
