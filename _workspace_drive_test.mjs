@@ -233,8 +233,12 @@ has(APP, 'applyWorkspaceIndex({ datasets: prev, state, mirror: adopted.mirror })
   '…puis complète la liste des datasets avec celle du Drive');
 has(APP, "window.addEventListener('lab:drive-connected'", '…et recommence dès que Drive se reconnecte');
 has(APP, 'installWorkspaceAutosave(() => ({', 'chaque changement est renvoyé vers le Drive (en différé)');
-has(APP, 'writeDatasetCopy({ ...payload, id, updatedAt: Date.now() })',
+has(APP, 'mirrorDatasetContent = (id, payload) => datasetCopyMirrorRef.current.schedule(id, payload)',
   'le CONTENU du dataset est déposé sur le Drive à chaque sauvegarde');
+has(APP, 'writeDatasetCopy(body)',
+  '…par la fabrique testable (utils/datasetCopyMirror.js), pas par une minuterie anonyme');
+has(APP, "window.addEventListener('pagehide', flushDatasetCopy)",
+  '…et ce qui attend part TOUT DE SUITE à la fermeture de l’onglet');
 has(APP, 'const copy = await readDatasetCopy(id)', 'ouvrir un dataset absent du poste le relit du Drive');
 has(APP, 'workspaceIndexRef.current = state;', '…et garde l’index pour que chaque rafraîchissement le ré-applique');
 has(APP, 'setDatasetsList((prev) => withoutDeletedDatasets(', '…et la liste affichée écarte tout dataset supprimé');

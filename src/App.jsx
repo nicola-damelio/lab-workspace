@@ -43,8 +43,12 @@ import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDr
 import { mirrorDeleteDataset, mirrorRenameDataset } from './utils/driveMirror';
 import {
   readWorkspaceState, writeDatasetCopy, readDatasetCopy,
-  applyWorkspaceIndex, adoptWorkspaceState, installWorkspaceAutosave
+  applyWorkspaceIndex, adoptWorkspaceState, installWorkspaceAutosave, workspaceDatasetPath
 } from './utils/workspaceDrive';
+/* L'écriture différée du contenu d'un dataset sur le Drive (+ le vidage forcé
+   à la fermeture de l'onglet) : la mécanique vit dans un module pur, testé hors
+   navigateur par _dataset_copy_mirror_test.mjs. */
+import { createDatasetCopyMirror } from './utils/datasetCopyMirror';
 import { readDriveMirror, isDatasetMirrorDeleted } from './utils/driveMirrorStore';
 /* TOUT CE QUI VIVAIT DANS LE NAVIGATEUR part aussi sur le Drive : publications
    des scientifiques, bibliothèque de figures, éléments étoilés, presets…
@@ -3295,32 +3299,40 @@ const handleBackToExplorer = async () => {
 
 /* ── Le CONTENU d'un dataset sur le Drive (le même sur chaque poste) ─────────
    En plus de Firestore et de l'instantané HTML, le contenu (charge compressée
-   comprise) est déposé dans Lab Workspace/_workspace/datasets/<id>.json. Un
-   poste neuf — ou un poste où Firestore ne répond pas — peut donc rouvrir le
-   dataset directement depuis le Drive (voir openDatasetFromDrive).
+   comprise, donc les calculs de solution, les définitions, les bibliothèques…)
+   est déposé dans Lab Workspace/_workspace/datasets/<id>.json. Un poste neuf —
+   ou un poste où Firestore ne répond pas — peut donc rouvrir le dataset
+   directement depuis le Drive (voir openDatasetFromDrive).
 
-   Deux précautions, parce que la charge peut peser plusieurs mégaoctets :
-     • l'écriture est DIFFÉRÉE (elle attend ~8 s de calme : la sauvegarde
-       Firestore, elle, part après 1,5 s) ;
-     • une charge IDENTIQUE n'est jamais renvoyée (empreinte de la chaîne). */
-const DATASET_COPY_DELAY_MS = 8000;
-let datasetCopyTimer = null;
-let datasetCopyFingerprint = '';
-const mirrorDatasetContent = (id, payload) => {
-  try {
-    if (!id || !payload) return;
-    const body = JSON.stringify({ ...payload, id });
-    if (body === datasetCopyFingerprint) return;   // rien de neuf : aucun envoi
-    if (datasetCopyTimer) clearTimeout(datasetCopyTimer);
-    datasetCopyTimer = setTimeout(() => {
-      datasetCopyTimer = null;
-      const current = JSON.stringify({ ...payload, id });
-      if (current === datasetCopyFingerprint) return;
-      datasetCopyFingerprint = current;
-      writeDatasetCopy({ ...payload, id, updatedAt: Date.now() }).catch(() => null);
-    }, DATASET_COPY_DELAY_MS);
-  } catch { /* best-effort : Firestore et l'instantané HTML restent la référence */ }
-};
+   La mécanique (regroupement ~8 s, empreinte « une charge identique n'est
+   jamais renvoyée », VIDAGE FORCÉ à la fermeture de l'onglet) vit dans
+   utils/datasetCopyMirror.js — ici on ne fait que la brancher. */
+const datasetCopyMirrorRef = useRef(null);
+if (!datasetCopyMirrorRef.current) {
+  datasetCopyMirrorRef.current = createDatasetCopyMirror({
+    write: (body) => writeDatasetCopy(body).catch(() => null)
+  });
+}
+const mirrorDatasetContent = (id, payload) => datasetCopyMirrorRef.current.schedule(id, payload);
+
+/* La copie Drive ne doit pas rester à la traîne : à la fermeture de l'onglet
+   (ou quand il passe en arrière-plan), ce qui attend part TOUT DE SUITE — un
+   calcul enregistré puis un onglet fermé dans les 8 s n'atteignait jamais le
+   Drive, et la page semblait vide sur l'autre poste. */
+useEffect(() => {
+  const flushDatasetCopy = () => {
+    try { datasetCopyMirrorRef.current.flush(); } catch { /* best-effort */ }
+  };
+  const onVisibilityChange = () => {
+    if (document.visibilityState === 'hidden') flushDatasetCopy();
+  };
+  window.addEventListener('pagehide', flushDatasetCopy);
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  return () => {
+    window.removeEventListener('pagehide', flushDatasetCopy);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+  };
+}, []);
 
 const openDataset = (dset) => {
   // Chaque dataset n’est visible que par les utilisateurs définis dedans :
@@ -4988,6 +5000,10 @@ const openDataset = (dset) => {
               solvents={solvents} buffers={buffers} additives={additives}
               allCmpds={allCmpds} calculationEntries={calculationEntries}
               setCalculationEntries={setCalculationEntries} currentUser={currentUser}
+              /* Où vit ce que la page enregistre : le contenu du dataset part
+                 sur le Drive dans `_workspace/datasets/ds_<id>.json` (voir
+                 mirrorDatasetContent), et la page affiche ce chemin. */
+              datasetDrivePath={currentDatasetId ? workspaceDatasetPath(currentDatasetId) : ''}
             />)}
 
             {currentModule === 'publications' && (<PublicationsModule

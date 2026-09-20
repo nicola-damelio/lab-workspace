@@ -3,9 +3,25 @@
    Molecular weight / concentration calculator UI (extracted from App.jsx).
    ========================================================================= */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { SearchableSelect } from '../SearchableSelect';
 import { CALC_INPUT_CLS, CALC_LABEL_CLS } from '../../utils/styles';
+/* Le tri, le filtrage et l'inventaire des calculs vivent dans un module pur :
+   une identité inconnue ne cache jamais une donnée, et ce qui est masqué est
+   TOUJOURS compté pour être annoncé (voir utils/calculationEntries.js). */
+import {
+  CALC_FILTER_ALL,
+  CALC_FILTER_MINE,
+  CALC_FILTER_UNKNOWN,
+  calcEntryOperator,
+  calcInventory,
+  countCalcEntries,
+  defaultCalcFilter,
+  describeHiddenCalc,
+  isCalcUnattributed,
+  lastCalcCompound,
+  selectCalcEntries
+} from '../../utils/calculationEntries';
 
 /* =========================================================
    CALCULATION UI COMPONENTS
@@ -407,17 +423,49 @@ export const Calculations = ({
   compoundMeta = {},
   calculationEntries = {},
   setCalculationEntries,
-  currentUser
+  currentUser,
+  /* Fichier du dataset sur le Drive — affiché pour que « est-ce bien
+     enregistré ? » se vérifie de l'œil (voir App.jsx → workspaceDatasetPath). */
+  datasetDrivePath = ''
 }) => {
   const isSuperuserCalc = currentUser?.role === 'superuser';
   const myName = currentUser?.name || null;
-  // Superuser-only filter: show calculations saved by a specific scientist.
-  const [calcScientistFilter, setCalcScientistFilter] = useState('ALL');
+  /* Qui voit quoi : un superutilisateur ouvre sur « tous les scientifiques »,
+     un scientifique connecté sur ses calculs, et un poste SANS compte connecté
+     sur TOUT — sans nom on ne peut attribuer personne, donc on ne cache rien
+     (sinon les calculs sembleraient perdus sur un second poste). */
+  const [calcScientistFilter, setCalcScientistFilter] = useState(() =>
+    defaultCalcFilter({ isSuperuser: isSuperuserCalc, myName })
+  );
   const options = useMemo(() => {
     return [...new Set(compoundOptions.filter(Boolean))];
   }, [compoundOptions]);
 
   const [selectedCompound, setSelectedCompound] = useState(options[0] || '');
+
+  /* L'INVENTAIRE du dataset (déjà relu du Drive / de Firestore avec lui). */
+  const inventory = useMemo(() => calcInventory(calculationEntries), [calculationEntries]);
+  const datasetCalcCount = useMemo(() => countCalcEntries(calculationEntries), [calculationEntries]);
+
+  /* Ouvrir le composé du calcul le PLUS RÉCENT : sur un poste neuf, la page ne
+     dit plus « aucun calcul » simplement parce qu'elle regardait le premier
+     composé de la liste alphabétique. Un choix de l'utilisateur reste maître
+     ensuite (le saut n'a lieu qu'une fois par ouverture de page). */
+  const jumpedToRecentRef = useRef(false);
+  useEffect(() => {
+    if (jumpedToRecentRef.current) return;
+    const recent = lastCalcCompound(calculationEntries);
+    if (!recent) return;
+    jumpedToRecentRef.current = true;
+    setSelectedCompound(recent);
+  }, [calculationEntries]);
+
+  /* Le compte connecté change (connexion / déconnexion) : le filtre suit, pour
+     qu'un scientifique voie toujours SES calculs et qu'un poste anonyme ne
+     cache rien. */
+  useEffect(() => {
+    setCalcScientistFilter(defaultCalcFilter({ isSuperuser: isSuperuserCalc, myName }));
+  }, [isSuperuserCalc, myName]);
   const [manualMw, setManualMw] = useState('');
   const [tab, setTab] = useState('mg');
   const [saveLabel, setSaveLabel] = useState('');
@@ -561,15 +609,14 @@ export const Calculations = ({
     }
   };
 
-  // All entries for the selected compound
+  // Les calculs du composé choisi — filtrage ET comptage viennent du module
+  // partagé : une identité inconnue ne cache jamais une donnée, et ce qui est
+  // masqué est compté (`selection.hiddenCount`) pour être annoncé à l'écran.
   const allEntries = selectedCompound ? calculationEntries[selectedCompound] || [] : [];
-  const calcScientists = [...new Set(allEntries.map((e) => e.operator).filter(Boolean))].sort();
-  // Normal users see only their own entries; superusers see all (or filter by scientist)
-  const entries = isSuperuserCalc
-    ? (calcScientistFilter === 'ALL'
-        ? allEntries
-        : allEntries.filter((e) => !e.operator || e.operator === calcScientistFilter))
-    : allEntries.filter((e) => !e.operator || e.operator === myName);
+  const selection = selectCalcEntries(allEntries, { filter: calcScientistFilter, myName });
+  const entries = selection.visible;
+  const calcScientists = selection.scientists;
+  const hiddenCalc = describeHiddenCalc(selection.hiddenCount);
 
   const formatEntryData = (data) => {
     return Object.entries(data || {})
@@ -663,6 +710,56 @@ export const Calculations = ({
       </div>
 
       <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+        {/* L'INVENTAIRE DU DATASET — toujours affiché, pour tout le monde.
+            Les calculs voyagent avec le dataset (Firestore + copie Drive) :
+            c'est ce cadre qui les MONTRE, et qui évite qu'un poste neuf
+            conclue « aucun calcul » en regardant le mauvais composé
+            (voir utils/calculationEntries.js). */}
+        <div className="mb-4 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2.5">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wide">
+              Saved in this dataset
+            </span>
+            <span className="text-[10px] text-slate-400">
+              {datasetCalcCount} calculation{datasetCalcCount === 1 ? '' : 's'} ·{' '}
+              {inventory.length} compound{inventory.length === 1 ? '' : 's'}
+            </span>
+          </div>
+
+          {inventory.length === 0 ? (
+            <p className="text-xs text-slate-400 mt-1.5">
+              Nothing saved yet. The first calculation you add is kept with this dataset —
+              and therefore on the Drive, for your other PC.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {inventory.map((row) => (
+                <button
+                  key={row.compound}
+                  type="button"
+                  onClick={() => setSelectedCompound(row.compound)}
+                  title={`${row.total} calculation${row.total === 1 ? '' : 's'}${row.scientists.length ? ` — ${row.scientists.join(', ')}` : ''}${row.unattributed ? ` (+${row.unattributed} without a name)` : ''}`}
+                  className={`px-2 py-0.5 rounded-full border text-[11px] font-bold transition-colors ${
+                    String(row.compound) === String(selectedCompound)
+                      ? 'bg-blue-600 border-blue-600 text-white'
+                      : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  {row.compound} · {row.total}
+                  {row.unattributed > 0 ? ' ⚠' : ''}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {datasetDrivePath ? (
+            <p className="text-[10px] text-slate-400 mt-2">
+              Kept in <span className="font-mono">{datasetDrivePath}</span> on the Drive — written a few
+              seconds after each change, and immediately when you leave the page.
+            </p>
+          ) : null}
+        </div>
+
         <div className="flex flex-col md:flex-row md:items-end gap-3 mb-4">
           <div className="flex-1">
             <label className={CALC_LABEL_CLS}>Saved calculation label</label>
@@ -695,7 +792,11 @@ export const Calculations = ({
           </button>
         </div>
 
-        {isSuperuserCalc && calcScientists.length > 0 && (
+        {/* Le filtre est disponible pour TOUT LE MONDE (il était réservé aux
+            superutilisateurs : un scientifique ne pouvait donc même pas savoir
+            qu'un calcul existait mais était masqué). Et ce qui est masqué est
+            ANNONCÉ, avec un bouton pour tout revoir. */}
+        {(allEntries.length > 0 || inventory.length > 0) && (
           <div className="flex items-center gap-2 mb-3 flex-wrap">
             <label className={CALC_LABEL_CLS}>Filter by scientist:</label>
             <select
@@ -703,12 +804,25 @@ export const Calculations = ({
               onChange={(e) => setCalcScientistFilter(e.target.value)}
               className={CALC_INPUT_CLS}
             >
-              <option value="ALL">All scientists</option>
+              <option value={CALC_FILTER_ALL}>All scientists</option>
+              {myName ? <option value={CALC_FILTER_MINE}>My calculations ({myName})</option> : null}
               {calcScientists.map((s) => (<option key={s} value={s}>{s}</option>))}
+              {allEntries.some(isCalcUnattributed) ? (
+                <option value={CALC_FILTER_UNKNOWN}>Saved without a name</option>
+              ) : null}
             </select>
             <span className="text-[10px] text-slate-400">
-              {entries.length} of {allEntries.length} saved calculation(s)
+              {entries.length} of {selection.total} saved calculation(s)
             </span>
+            {selection.hiddenCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setCalcScientistFilter(CALC_FILTER_ALL)}
+                className="text-[11px] font-bold text-blue-700 underline"
+              >
+                {hiddenCalc} — show all
+              </button>
+            )}
           </div>
         )}
 
@@ -719,7 +833,12 @@ export const Calculations = ({
             </div>
           ) : entries.length === 0 ? (
             <div className="text-sm text-slate-400 italic bg-slate-50 border border-dashed border-slate-300 rounded-lg p-4">
-              No saved calculation data for {selectedCompound}.
+              {selection.hiddenCount > 0
+                ? `${hiddenCalc} for ${selectedCompound}.`
+                : `No saved calculation data for ${selectedCompound}.`}
+              {inventory.length > 0
+                ? ` This dataset holds: ${inventory.map((row) => `${row.compound} (${row.total})`).join(', ')}.`
+                : ''}
             </div>
           ) : (
             entries.map((entry) => (
@@ -735,6 +854,11 @@ export const Calculations = ({
                   <div className="text-xs text-slate-500 mt-1">
                     {getTabLabel(entry.tab)} · MW:{' '}
                     {entry.mw ? `${Number(entry.mw).toLocaleString()} Da` : 'Not set'}
+                    {' · '}
+                    {calcEntryOperator(entry) || 'no name'}
+                    {entry.createdAt
+                      ? ` · ${new Date(Number(entry.createdAt)).toLocaleString()}`
+                      : ''}
                   </div>
 
                   <div className="text-xs text-slate-600 mt-1 font-mono break-words">

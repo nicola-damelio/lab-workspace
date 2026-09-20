@@ -44,7 +44,7 @@ export const NotebookModule = ({
 
 export const CalculationsModule = ({
   compoundMeta, plasmidMeta, solvents, buffers, additives,
-  allCmpds, calculationEntries, setCalculationEntries, currentUser
+  allCmpds, calculationEntries, setCalculationEntries, currentUser, datasetDrivePath
 }) => {
                 const combinedMeta = { ...compoundMeta };
                 Object.keys(plasmidMeta || {}).forEach(k => { if(!combinedMeta[k]) combinedMeta[k] = plasmidMeta[k]; });
@@ -68,6 +68,7 @@ export const CalculationsModule = ({
                       calculationEntries={calculationEntries}
                       setCalculationEntries={setCalculationEntries}
                       currentUser={currentUser}
+                      datasetDrivePath={datasetDrivePath}
                     />
                   </div>
                 );

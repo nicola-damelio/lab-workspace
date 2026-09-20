@@ -38,7 +38,7 @@ jamais mélangés à cette mémoire.
 | Supprimer une expérience / un protocole | le dossier de l'expérience / du protocole part à la corbeille |
 | Renommer un storage / une boîte | son dossier Drive (`storage/<storage>`, `storage/<storage>/boxes/<boîte>`) est **renommé** — une boîte ne garde jamais le « Test 74 » de sa création |
 | Modifier le contenu d'une boîte | `storage/<storage>/boxes/<boîte>/label.pdf` est réécrit (différé, ~2 s après la dernière modification) |
-| Créer ou modifier un dataset | son contenu est déposé dans `_workspace/datasets/ds_<id>.json` (différé, ~8 s après la dernière frappe) |
+| Créer ou modifier un dataset | son contenu est déposé dans `_workspace/datasets/ds_<id>.json` (différé, ~8 s après la dernière frappe — et **tout de suite** quand on quitte la page) |
 | Modifier un texte, une figure, une liste | `_workspace/state.json` / `_workspace/keys.json` sont réécrits (différé) |
 
 ## Pourquoi rien ne « ressuscite »
@@ -419,8 +419,69 @@ retrouve par son nom et enregistre son identifiant (`projects/<projet>`, voir
 * les identifiants de dossiers du navigateur (`labDriveFolderId`) — désormais
   doublés par le registre partagé.
 
+## Ce qui vit dans le dataset (et donc sur tous les postes)
+
+Tout état **du dataset** — expériences, définitions, bibliothèque de composés,
+fiches (composés, lignées, plasmides, instruments RMN), stockage, protocoles,
+**calculs de solution** — fait partie de la charge du dataset : il part sur
+Firestore *et* dans `_workspace/datasets/ds_<id>.json`. Rien à faire de plus
+pour le retrouver sur un autre PC ; en revanche, deux pièges d'**affichage** ont
+déjà fait croire à des données perdues, et sont désormais verrouillés.
+
+### Les calculs de solution (page *Calculations*)
+
+Signalé le 19/09/2026 : des calculs enregistrés sur un poste étaient **absents**
+sur le second. Les données, elles, étaient bien arrivées — c'est la page qui ne
+les montrait pas :
+
+1. la page ouvrait le calcul du **premier composé de la liste alphabétique**.
+   Les calculs existaient, mais pour un autre composé : l'écran annonçait
+   « No saved calculation data for … ». Un calcul enregistré **sans compte
+   connecté** (`operator: 'unknown'`) ou par un autre scientifique était, lui,
+   **masqué sans le dire** par le filtre par scientifique — un filtre que seuls
+   les superutilisateurs pouvaient voir et changer.
+2. Conséquence : une donnée présente, invisible, et aucune explication.
+
+Ce qui existe maintenant (`src/utils/calculationEntries.js`, testé pur) :
+
+* un **inventaire du dataset** toujours affiché — « Saved in this dataset » —
+  avec un composé cliquable par ligne (`Pepper · 3`), le nombre de scientifiques
+  et la marque `⚠` quand un calcul n'a pas de nom. C'est ce cadre qui, sur un
+  poste neuf, **montre** ce que le dataset contient au lieu de laisser conclure
+  à une absence ;
+* la page ouvre d'abord le composé du calcul **le plus récent** (pas le premier
+  de l'alphabet) ;
+* le filtre par scientifique est disponible pour **tout le monde** (dont « My
+  calculations » et « Saved without a name »), et ce qu'il masque est **compté
+  et annoncé** (« 2 saved calculations hidden by this filter — show all ») ;
+* une règle de sécurité : **une identité inconnue ne cache jamais une donnée**
+  (sans nom de compte, ou quand « mes » calculs ne sont pas identifiables, la
+  page montre tout), et un calcul sans nom reste visible dans tous les filtres ;
+* la page dit **où** ce qu'elle enregistre est déposé
+  (`_workspace/datasets/ds_<id>.json`), pour que « est-ce bien enregistré ? » se
+  vérifie de l'œil.
+
+### La copie Drive ne perd plus la dernière minute
+
+Le contenu du dataset est écrit sur le Drive **en différé** (~8 s de calme : une
+requête, pas cinquante). Un calcul enregistré puis un onglet fermé dans cet
+intervalle n'atteignait jamais le Drive — l'autre poste ne voyait rien. La
+mécanique est maintenant isolée dans `src/utils/datasetCopyMirror.js` :
+
+* `schedule(id, charge)` regroupe les écritures et ignore une charge
+  **identique** (empreinte) ;
+* `flush()` envoie **immédiatement** ce qui attend, et `App.jsx` l'appelle sur
+  `pagehide` (fermeture de l'onglet) et `visibilitychange` (arrière-plan) ;
+* un dépassement de taille (`MAX_DATASET_COPY_BYTES`) ou un envoi qui échoue est
+  désormais **dit** dans la console : une copie Drive manquante n'est jamais
+  silencieuse.
+
 ## Vérifier soi-même
 
+* `node _calculation_entries_test.mjs` — l'inventaire, les filtres et le fait
+  qu'aucune donnée ne soit masquée sans être comptée, plus le câblage de la page.
+* `node _dataset_copy_mirror_test.mjs` — le dépôt différé du contenu du dataset
+  sur le Drive, l'empreinte, et le vidage forcé à la fermeture de l'onglet.
 * `node _drive_mirror_test.mjs` — suppressions / renommages / rien ne ressuscite.
 * `node _storage_drive_layout_test.mjs` — le rangement `storage/<storage>/boxes/<boîte>`
   (chemins, étiquette automatique, renommages, rapatriement de l'ancienne arborescence).

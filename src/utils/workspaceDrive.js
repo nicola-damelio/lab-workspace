@@ -342,7 +342,9 @@ export const writeWorkspaceState = async (state) => {
 
 /** Taille maximale d'un contenu de dataset déposé sur le Drive (les figures
  *  sont déjà exclues de la charge enregistrée ; au-delà, Firestore et
- *  l'instantané HTML font foi). */
+ *  l'instantané HTML font foi). Un dépassement est DIT (voir writeDatasetCopy) :
+ *  une copie Drive manquante ne doit jamais être silencieuse — c'est elle qui
+ *  rend un dataset (et ses calculs) lisible sur un autre poste. */
 export const MAX_DATASET_COPY_BYTES = 8 * 1024 * 1024;
 
 /** Écrire le CONTENU d'un dataset sur le Drive (`_workspace/datasets/…`) : la
@@ -353,7 +355,15 @@ export const writeDatasetCopy = async (record = {}) => {
     const id = text(record.id);
     if (!id || !workspaceBackendReady()) return null;
     const body = JSON.stringify({ kind: WORKSPACE_STATE_KIND, at: new Date().toISOString(), record }, null, 2);
-    if (body.length > MAX_DATASET_COPY_BYTES) return null;
+    if (body.length > MAX_DATASET_COPY_BYTES) {
+      // Best-effort, mais pas silencieux : sans ce fichier, un poste neuf n'a
+      // aucune copie de contenu à relire.
+      console.warn(
+        `Dataset copy is too large for the Drive mirror (${body.length} > ${MAX_DATASET_COPY_BYTES} bytes): ` +
+        'the Firestore document and the HTML snapshot remain the reference.'
+      );
+      return null;
+    }
     return await uploadJson({
       folder: WORKSPACE_DATASETS_DIR, name: workspaceDatasetFileName(id), body
     });
