@@ -83,8 +83,10 @@ const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
    ----------------------------------------------------------------------------
    The old single-row selectors (Side / Backbone / Mol / Large / Water) applied
    ONE style to a whole class of atoms. They are replaced by five independent
-   per-category menus — Proteins / Nucleic acids / Lipids / Organic molecules /
-   Others — so a membrane system can be styled category by category.
+   per-category menus — Proteins / Nucleic acids / Lipids / Sugars /
+   Organic molecules / Others — so a membrane system can be styled category by
+   category (lipids into headgroups / glycerol backbone / acyl chains, sugars
+   separately from generic ligands).
 
    Every token below maps 1:1 to a real NGL 2.4 representation type (verified
    against the representation registry of the installed `ngl` package):
@@ -97,34 +99,40 @@ const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
    (AtomProxy#isTrace). It is therefore the honest implementation of
    « Trace (C-alpha) » for proteins and of « Phosphate Trace » for nucleic acids.
 
-   Surfaces: solid = opacity 1, transparent = opacity 0.4, mesh = wireframe.
+   Surfaces: solid = opacity 1, surfaceOpacity (default 0.4) = transparent,
+   mesh = wireframe. Whenever a menu is set to « Transparent », an Opacity
+   slider (0 → 1) appears next to it and its value is what NGL receives as
+   `opacity` (with `transparent: true`).
    `wireframe` is a real Buffer parameter (BufferMaterials 'wireframeMaterial');
    the surface representation only refuses it together with `contour` (volume
    isosurfaces), never for the molecular surfaces built from a structure.
    ============================================================================ */
 const CAT_STYLE_KEY = 'labViewerCategoryStyles';
+// The six styling menus of §2, in the order they are rendered. ONE list drives
+// the defaults, the localStorage merge, the change signature and the menus.
+const CAT_STYLE_CATS = ['protein', 'nucleic', 'lipid', 'sugar', 'organic', 'other'];
 const DEFAULT_CAT_STYLES = {
   // A. Proteins — backbone + surface (side chains keep their own effect and
   //    their own `sidechainStyle`, so no existing logic is duplicated).
-  protein: { backbone: 'cartoon', surface: 'hide', surfaceColor: 'default' },
+  protein: { backbone: 'cartoon', surface: 'hide', surfaceColor: 'default', surfaceOpacity: 0.4 },
   // B. Nucleic acids — backbone / bases / surface.
-  nucleic: { backbone: 'cartoon', bases: 'slab', surface: 'hide', surfaceColor: 'default' },
-  // C. Lipids — headgroups / acyl chains.
-  lipid: { head: 'spheres', tail: 'lines' },
-  // D. Organic molecules (ligands / small molecules) — style / surface.
-  organic: { style: 'ball+stick', surface: 'hide', surfaceColor: 'default' },
-  // E. Others — ions / water / surface. Water stays HIDDEN by default: that is
+  nucleic: { backbone: 'cartoon', bases: 'slab', surface: 'hide', surfaceColor: 'default', surfaceOpacity: 0.4 },
+  // C. Lipids — the three sub-components are styled INDEPENDENTLY (headgroups /
+  //    glycerol backbone / acyl chains), see lipidSubSelections below.
+  lipid: { head: 'spheres', glycerol: 'ball+stick', tail: 'lines' },
+  // D. Sugars (carbohydrates) — their own menu, so a glycan is never styled as
+  //    a generic ligand.
+  sugar: { style: 'ball+stick', surface: 'hide', surfaceOpacity: 0.4 },
+  // E. Organic molecules (ligands / small molecules) — style / surface.
+  organic: { style: 'ball+stick', surface: 'hide', surfaceColor: 'default', surfaceOpacity: 0.4 },
+  // F. Others — ions / water / surface. Water stays HIDDEN by default: that is
   //    exactly what the viewer did before (a protein system drew
   //    `hetero and not water`), and it keeps a solvated box readable.
-  other: { ion: 'spheres', water: 'hidden', surface: 'hide' },
+  other: { ion: 'spheres', water: 'hidden', surface: 'hide', surfaceOpacity: 0.4 },
 };
-const cloneCatStyles = () => ({
-  protein: { ...DEFAULT_CAT_STYLES.protein },
-  nucleic: { ...DEFAULT_CAT_STYLES.nucleic },
-  lipid: { ...DEFAULT_CAT_STYLES.lipid },
-  organic: { ...DEFAULT_CAT_STYLES.organic },
-  other: { ...DEFAULT_CAT_STYLES.other },
-});
+const cloneCatStyles = () => Object.fromEntries(
+  CAT_STYLE_CATS.map((c) => [c, { ...DEFAULT_CAT_STYLES[c] }]),
+);
 // Restore the saved per-category styles (localStorage, like Fog / Shadows /
 // clipping). Unknown keys simply fall back to the default.
 const loadCatStyles = () => {
@@ -152,13 +160,42 @@ const catStyleFallback = (v, kind) => {
 };
 // One string that changes whenever ANY category style changes — used as the
 // dependency / comparison signature that rebuilds the base representations.
-const catStylesSig = (v) => JSON.stringify([
-  (v && v.protein) || DEFAULT_CAT_STYLES.protein,
-  (v && v.nucleic) || DEFAULT_CAT_STYLES.nucleic,
-  (v && v.lipid) || DEFAULT_CAT_STYLES.lipid,
-  (v && v.organic) || DEFAULT_CAT_STYLES.organic,
-  (v && v.other) || DEFAULT_CAT_STYLES.other,
-]);
+const catStylesSig = (v) => JSON.stringify(CAT_STYLE_CATS.map((c) => (v && v[c]) || DEFAULT_CAT_STYLES[c]));
+
+/* ---- Per-category 3D LABELS (the former global « 4 · Labels » section) ------
+   Residues / Residue type / Atom names are now three checkboxes INSIDE each
+   molecule menu, so « Residues » ticked in the Proteins menu labels PROTEINS
+   ONLY. The state is one object per category, persisted like the styles, and
+   the label effect builds its text per category with that category's own
+   selection (atomIndicesFor → build3dLabelMap). */
+const CAT_LABEL_KEY = 'labViewerCategoryLabels';
+const CAT_LABEL_DEFAULTS = { residues: false, residueType: false, atoms: false };
+const cloneCatLabels = () => Object.fromEntries(
+  CAT_STYLE_CATS.map((c) => [c, { ...CAT_LABEL_DEFAULTS }]),
+);
+const loadCatLabels = () => {
+  const out = cloneCatLabels();
+  try {
+    const raw = localStorage.getItem(CAT_LABEL_KEY);
+    const saved = raw ? JSON.parse(raw) : null;
+    if (saved && typeof saved === 'object') {
+      Object.keys(out).forEach((k) => {
+        if (saved[k] && typeof saved[k] === 'object') out[k] = { ...out[k], ...saved[k] };
+      });
+    }
+  } catch { /* first run / private mode → nothing labelled */ }
+  return out;
+};
+const saveCatLabels = (v) => {
+  try { localStorage.setItem(CAT_LABEL_KEY, JSON.stringify(v)); } catch { /* ignore */ }
+};
+// True as soon as ONE category asks for at least one kind of label.
+const anyCatLabel = (v) => CAT_STYLE_CATS.some((c) => {
+  const l = (v && v[c]) || CAT_LABEL_DEFAULTS;
+  return !!(l.residues || l.residueType || l.atoms);
+});
+// Signature of the label state — the dependency of the label effect.
+const catLabelsSig = (v) => JSON.stringify(CAT_STYLE_CATS.map((c) => (v && v[c]) || CAT_LABEL_DEFAULTS));
 
 /* ---- Lipid recognition ----------------------------------------------------
    NGL has NO `lipid` selection keyword (verified: the whole selection keyword
@@ -208,6 +245,57 @@ const lipidResnameSele = (resnames) => (
     : ''
 );
 
+/* ---- PART 2.1 · Lipid sub-components (headgroup / glycerol / acyl chains) ----
+   NGL cannot guess what part of a lipid is a headgroup: the Lipids menu must
+   name the atoms explicitly. The base selection is the resname list below, and
+   each sub-component is an ATOM-NAME selection applied to that group (the
+   standard CHARMM/AMBER glycerophospholipid naming: P / O1-O4 phosphate and
+   ester oxygens, N the choline·ethanolamine nitrogen, C1/C2/C3 the glycerol
+   carbons, O21/O31 the sn-1 / sn-2 ester oxygens). */
+const lipidRes = '[POPC] or [DPPC] or [DMPC] or [DOPC] or [POPE] or [DOPE] or [CHOL] or [ERG] or [DPPG] or [POPG] or [DLPC] or [MYR] or [STE] or [PAL]';
+// The residue names of the line above — a detected lipid outside this list is
+// OR-ed in as an explicit `resname …` term (supersets are harmless: NGL simply
+// finds no atom for a residue that is not there).
+const LIPID_STANDARD_RES = new Set([
+  'POPC', 'DPPC', 'DMPC', 'DOPC', 'POPE', 'DOPE', 'CHOL', 'ERG',
+  'DPPG', 'POPG', 'DLPC', 'MYR', 'STE', 'PAL',
+]);
+// Atom names of each sub-component (NGL `.NAME` / `.N*` syntax).
+const LIPID_HEAD_ATOMS = '.P or .N or .O1* or .O2* or .O3* or .O4*';
+const LIPID_GLYCEROL_ATOMS = '.C1 or .C2 or .C3 or .O21 or .O31';
+// The element-based fallback used when a file does not follow that naming
+// (GROMOS / a homemade topology): the old, chemistry-free element test.
+const LIPID_HEAD_ELEMENTS = '_N or _P or _O';
+const LIPID_GLYCEROL_ELEMENTS = '.C1* or .C2* or .C3* or _O';
+
+const lipidGroupSele = (resnames) => {
+  const extra = lipidResnameSele((resnames || []).filter((n) => !LIPID_STANDARD_RES.has(n)));
+  return extra ? `${lipidRes} or ${extra}` : lipidRes;
+};
+
+// Headgroup / glycerol backbone / acyl chains of ONE lipid group. `namedAtoms`
+// says whether the atom-name selection matched anything in the REAL structure,
+// otherwise the element fallback is used. Head and backbone never overlap (the
+// ester oxygens belong to the backbone, not to the head), so the acyl chains are
+// exactly "everything that is neither".
+const lipidSubSelections = (lipidSele, namedAtoms = true) => {
+  if (!lipidSele) return { head: '', glycerol: '', acyl: '' };
+  const headAtoms = namedAtoms ? LIPID_HEAD_ATOMS : LIPID_HEAD_ELEMENTS;
+  const glyAtoms = namedAtoms ? LIPID_GLYCEROL_ATOMS : LIPID_GLYCEROL_ELEMENTS;
+  return {
+    head: `(${lipidSele}) and (${headAtoms}) and not (${LIPID_GLYCEROL_ATOMS})`,
+    glycerol: `(${lipidSele}) and (${glyAtoms})`,
+    acyl: `(${lipidSele}) and not (${headAtoms} or ${glyAtoms})`,
+  };
+};
+
+/* ---- PART 2.2 · Sugars (carbohydrates) vs ligands ----------------------------
+   NGL 2.4 has NO `carbohydrate` keyword (verified against the keyword table of
+   the installed build: SACCHARIDE = SUGAR = 15, and nothing else), so the sugar
+   menu uses the real keyword PLUS the explicit residue list. */
+const SUGAR_RES_SEL = '[GLC] or [NAG] or [MAN] or [BMA] or [SIA] or [GAL] or [FUC]';
+const SUGAR_SEL = `saccharide or ${SUGAR_RES_SEL}`;
+
 // NGL selection + presence of every CATEGORY of one structure, computed ONCE per
 // structure (WeakMap cache) and shared by the renderer and the menus, so a style
 // change never re-scans the atoms.
@@ -231,19 +319,91 @@ const nglSeleCount = (structure, sele) => {
     return set && typeof set.getSize === 'function' ? set.getSize() : -1;
   } catch { return -1; }
 };
+// Same call, memoised per structure + selection string: the lipid menu asks for
+// three sub-component counts on every rep rebuild, and a membrane system must
+// not pay for that twice.
+const seleCountCache = new WeakMap();
+const nglSeleCountCached = (structure, sele) => {
+  if (!structure || !sele) return 0;
+  let per = seleCountCache.get(structure);
+  if (!per) { per = new Map(); seleCountCache.set(structure, per); }
+  if (per.has(sele)) return per.get(sele);
+  const n = nglSeleCount(structure, sele);
+  per.set(sele, n);
+  return n;
+};
+// The atom INDICES a selection resolves to (used by the per-category 3D labels).
+// AtomSet#get(i) is the API the NGL surface code itself uses.
+const atomIndicesForSele = (structure, sele) => {
+  const out = [];
+  try {
+    const NGL = typeof window !== 'undefined' ? window.NGL : null;
+    if (!NGL || !NGL.Selection || !structure || !structure.getAtomSet) return out;
+    const set = structure.getAtomSet(new NGL.Selection(sele));
+    const n = structure.atomCount || 0;
+    for (let i = 0; i < n; i++) if (set.get(i)) out.push(i);
+  } catch { /* unknown selection → no label */ }
+  return out;
+};
+
+/* ---- ONE routing function for the six categories -----------------------------
+   Decides what each menu OWNS in this particular structure. The renderer
+   (buildCategoryReps) and the per-category 3D labels both call it, so a menu can
+   never label or style atoms that another menu owns:
+     • a whole-molecule condition (moleculeType organic / sugar / lipid) hands
+       `all` to its own menu;
+     • a structure with NO polymer at all is a small molecule / glycan / lipid
+       system: the ligand fallback is `all and not (polymer, lipid, sugar,
+       water, ion)`, so water and ions keep their own menu — including a
+       pure-water box (whose surface must still be reachable);
+     • otherwise the hetero-based selection of catSelectionsFor is used. */
+const routeCategorySelections = (sels, moleculeType) => {
+  const s = sels || {};
+  const n = s.n || {};
+  const mt = moleculeType || 'protein';
+  const wholeProtein = mt === 'protein';
+  const wholeOrganic = mt === 'organic';
+  const wholeSugar = mt === 'sugar';
+  const wholeLipid = mt === 'lipid';
+  const noPolymer = n.protein === 0 && n.nucleic === 0;
+  const lipid = wholeLipid ? 'all' : (s.lipid || '');
+  const sugar = wholeSugar ? 'all' : (s.sugar || '');
+  const notLigand = [
+    'protein', 'nucleic',
+    lipid && `(${lipid})`,
+    sugar && `(${sugar})`,
+    'water', 'ion',
+  ].filter(Boolean);
+  const ligandAll = `all and not (${notLigand.join(' or ')})`;
+  return {
+    protein: 'protein',
+    nucleic: 'nucleic',
+    lipid,
+    sugar,
+    // Lipids and sugars have their OWN menus, so the ligand menu excludes both.
+    organic: (wholeOrganic || noPolymer) ? ligandAll : (s.organic || ''),
+    other: n.others === 0 ? '' : (s.others || 'water or ion'),
+    wholeProtein, wholeOrganic, wholeSugar, wholeLipid, noPolymer, ligandAll,
+  };
+};
+
 const catSelectionsFor = (structure) => {
   if (!structure) return null;
   const cached = catSeleCache.get(structure);
   if (cached) return cached;
   const lipids = lipidResnamesIn(structure);
-  const lipidSele = lipidResnameSele(lipids);
-  const organicSele = lipidSele
-    ? `hetero and not water and not ion and not (${lipidSele})`
-    : 'hetero and not water and not ion';
+  const lipidSele = lipids.length ? lipidGroupSele(lipids) : '';
+  const sugarSele = SUGAR_SEL;
+  const organicSele = [
+    'hetero', 'not water', 'not ion',
+    `not (${sugarSele})`,
+    lipidSele ? `not (${lipidSele})` : '',
+  ].filter(Boolean).join(' and ');
   const out = {
     protein: 'protein',
     nucleic: 'nucleic',
     lipid: lipidSele,
+    sugar: sugarSele,
     organic: organicSele,
     others: 'water or ion',
     lipids,
@@ -253,6 +413,7 @@ const catSelectionsFor = (structure) => {
       others: nglSeleCount(structure, 'water or ion'),
       organic: nglSeleCount(structure, organicSele),
       lipid: lipidSele ? nglSeleCount(structure, lipidSele) : 0,
+      sugar: nglSeleCount(structure, sugarSele),
     },
   };
   catSeleCache.set(structure, out);
@@ -287,14 +448,29 @@ const flagMeshShadows = (rep) => {
   } catch { /* best-effort: never let a styling change break the view */ }
 };
 
-// NGL's own clipping defaults (Viewer / Stage parameters): no cut at all.
-//   clipNear 0    → near plane at the front edge of the bounding sphere
-//   clipFar 100   → far plane at the back edge of the bounding sphere
-//   clipDist 10   → the near plane is never closer than 10 Å to the camera
-// That last one is what CUTS a big complex when you zoom in; the Scene →
-// « ✂ Clipping » control can switch the whole mechanism back to these values or
-// push it further out (see applyClip).
-const CLIP_DEFAULTS = { near: 0, far: 100, dist: 10 };
+// Clipping / camera bounds (Scene → « ✂ Clipping »).
+// NGL derives the camera frustum from clipNear / clipFar — PERCENTAGES of the
+// scene bounding sphere — and floors the near plane by clipDist in Å
+// (Viewer#__updateClipping, verified in the installed ngl 2.4):
+//   camera.near = cDist − bRadius · (50 − clipNear)/50
+//   camera.far  = cDist + bRadius · (clipFar − 50)/50
+//   camera.near = max(camera.near, clipDist)
+// So « Clipping : Off » does NOT use what looks like a neutral 0 / 100 / 10:
+// the 10 Å clipDist floor is exactly what CUTS a large complex as soon as you
+// zoom in, and clipFar 100 stops the far plane at the back edge of the sphere.
+// OFF therefore forces the camera bounds to the EXTREMES — near 0 (front edge),
+// far 100000 (an effectively infinite far plane) and clipDist 0 (no floor at
+// all) — so a huge assembly is never cut, at any zoom.
+const CLIP_DEFAULTS = { near: 0, far: 100000, dist: 0 };
+
+// Supersampling level used while the « ◐ Shadows » rig is ON — NGL's nearest
+// equivalent to a screen-space ambient-occlusion pass (see applyShadowSettings):
+// the cavity-shading gradients produced by the deep-ambient + strong-key-light
+// rig are sampled several times per pixel instead of once, so the AO-like
+// shading of a crevice is smooth instead of banded. Stage parameter range is
+// -1 … 5 (NGL 2.4 StageParameters#sampleLevel); 0 = NGL's own default (sample
+// only while the camera is still) and is restored as soon as Shadows is OFF.
+const AO_SAMPLE_LEVEL = 2;
 
 const AA3_TO_1 = {
   ALA: 'A', ARG: 'R', ASN: 'N', ASP: 'D', CYS: 'C', GLN: 'Q', GLU: 'E', GLY: 'G',
@@ -427,10 +603,14 @@ const residueLabelCode = (resname) => {
 /**
  * Compute the 3D label plan for the whole structure.
  * @param {object} component NGL StructureComponent
- * @param {object} opts { showResidueNumber, showAtomLabel, showResidueNumberType, atomNameOf }
+ * @param {object} opts { showResidueNumber, showAtomLabel, showResidueNumberType,
+ *                        atomNameOf, allowed }
+ *   `allowed` is an optional Set of atom indices: only those atoms may be
+ *   labelled. The per-category menus use it, so « Residues » ticked in the
+ *   Proteins menu labels proteins only.
  * @returns {{ labelText: object, indices: number[] }}
  */
-const build3dLabelMap = (component, { showResidueNumber, showAtomLabel, showResidueNumberType = false, atomNameOf = null }) => {
+const build3dLabelMap = (component, { showResidueNumber, showAtomLabel, showResidueNumberType = false, atomNameOf = null, allowed = null }) => {
   const labelText = {};
   const structure = component && component.structure;
   if (!structure) return { labelText, indices: [] };
@@ -470,6 +650,7 @@ const build3dLabelMap = (component, { showResidueNumber, showAtomLabel, showResi
   } catch { return { labelText, indices: [] }; }
 
   const put = (atom, text) => {
+    if (allowed && !allowed.has(atom.idx)) return;   // this category does not own the atom
     const t = String(text || '').trim();
     if (t) labelText[atom.idx] = t;
   };
@@ -1130,21 +1311,24 @@ const buildNglSele = (keys, structure, moleculeType, namingConvention) => {
 };
 
 /* ============================================================================
-   TOOLBAR BUILDING BLOCKS — the viewer UI is organised in numbered SECTIONS
-   (0 Window · 1 General · 2 Molecular Styling · 3 Scene · 4 Labels · 5 Modify ·
-   6 Analysis · 7 Selections & PyMOL) and, inside §2, in one ACCORDION MENU per
-   molecule category (A Proteins · B Nucleic acids · C Lipids · D Organic
-   molecules · E Others). These four tiny presentational components keep every
-   section / menu / row identical, so the layout stays readable.
+   TOOLBAR BUILDING BLOCKS — the viewer UI is organised in a few numbered
+   ROWS, so the command bar never eats the 3D canvas:
+     §0 Window (alone, top) · §1 General · §2 Molecular Styling (COLLAPSED by
+     default) · §3 Toolbar = Scene | Modify | Analysis | PyMOL in ONE row.
+   Inside §2 there is one ACCORDION MENU per molecule category (A Proteins ·
+   B Nucleic acids · C Lipids · D Sugars · E Organic molecules · F Others), and
+   every menu carries its own 3D-label switches (Residues / Residue type /
+   Atom names) because the old global « 4 · Labels » row is gone.
+   These tiny presentational components keep every row identical.
    ============================================================================ */
 const VSection = ({ title, hint, right = null, children }) => (
-  <section className="flex flex-col gap-1.5 bg-slate-50/80 border border-slate-200 rounded-lg p-2">
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="text-[10px] font-black text-slate-700 uppercase tracking-wide whitespace-nowrap">{title}</span>
-      {hint && <span className="text-[10px] text-slate-400 truncate">{hint}</span>}
+  <section className="flex flex-col gap-1 bg-slate-50/80 border border-slate-200 rounded-lg px-1.5 py-1">
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="text-[9px] font-black text-slate-700 uppercase tracking-wide whitespace-nowrap">{title}</span>
+      {hint && <span className="text-[9px] text-slate-400 truncate hidden lg:inline">{hint}</span>}
       {right}
     </div>
-    <div className="flex flex-wrap items-center gap-1.5">{children}</div>
+    <div className="flex flex-wrap items-center gap-1">{children}</div>
   </section>
 );
 
@@ -1157,16 +1341,17 @@ const VMenu = ({ open, onToggle, id, label, summary, accent = 'blue', children }
     amber: { on: 'border-amber-400 bg-amber-50/60', off: 'border-slate-200 bg-white', text: 'text-amber-800' },
     emerald: { on: 'border-emerald-400 bg-emerald-50/60', off: 'border-slate-200 bg-white', text: 'text-emerald-800' },
     sky: { on: 'border-sky-400 bg-sky-50/60', off: 'border-slate-200 bg-white', text: 'text-sky-800' },
+    rose: { on: 'border-rose-400 bg-rose-50/60', off: 'border-slate-200 bg-white', text: 'text-rose-800' },
   }[accent] || {};
   return (
     <div className={`w-full rounded-lg border ${open ? tone.on : tone.off}`}>
       <button type="button" id={id} onClick={onToggle}
-        className={`w-full flex items-center gap-2 px-2 py-1 text-left ${tone.text}`}>
+        className={`w-full flex items-center gap-2 px-1.5 py-0.5 text-left ${tone.text}`}>
         <span className="text-[11px] font-black whitespace-nowrap">{label}</span>
         <span className="text-[10px] font-bold text-slate-500 truncate flex-1 text-left">{summary}</span>
         <span className="text-[10px] font-black shrink-0">{open ? '▲' : '▼'}</span>
       </button>
-      {open && <div className="flex flex-col gap-1 px-2 pb-2">{children}</div>}
+      {open && <div className="flex flex-col gap-1 px-1.5 pb-1.5">{children}</div>}
     </div>
   );
 };
@@ -1236,6 +1421,11 @@ const resizeRef = useRef(null); // { startY, startH } while dragging
 // mounted, so the structure and trajectory are never lost); "⬆ Expand"
 // restores it and tells NGL that the canvas size changed.
 const [viewerCollapsed, setViewerCollapsed] = useState(false);
+// §2 « Molecular Styling » is an ACCORDION that starts COLLAPSED: the command
+// bar must never push the 3D canvas off-screen, and the menus are a
+// "configure once" tool (the summary line on the header keeps saying what the
+// current styles are, so a closed section is never silent).
+const [stylingOpen, setStylingOpen] = useState(false);
 const [captureMsg, setCaptureMsg] = useState('');
 useEffect(() => {
   const move = (ev) => {
@@ -1298,14 +1488,23 @@ statusRef.current = status;
 const [errorMsg, setErrorMsg] = useState('');
 const showManualHighlight = useShowAssignedFlag(); // green "assigned" atoms toggle (shared with the simulated spectra)
 const [hoverInfo, setHoverInfo] = useState(null);
-// Two INDEPENDENT 3D-label toggles: residue/molecule identifiers and atom
-// names. The label text itself is context-aware (see build3dLabelMap above).
-const [showResidueNumber, setShowResidueNumber] = useState(false);
-const [showAtomLabel, setShowAtomLabel] = useState(false);
-// Optional "residue type" mode: residue labels append the 1-letter code
-// right after the residue number (10 → 10A). Works together with either or
-// both of the toggles above (for protein / nucleic residues).
-const [showResidueNumberType, setShowResidueNumberType] = useState(false);
+// Per-CATEGORY 3D labels (the former global « 4 · Labels » section): each
+// molecule menu carries its own Residues / Residue type / Atom names switches,
+// so « Residues » ticked in the Proteins menu labels PROTEINS ONLY. The label
+// text itself stays context-aware (see build3dLabelMap): protein / nucleic
+// rules for the polymer menus, the residue tag for ligands, {resname}{resno}
+// for water and ions.
+const [catLabels, setCatLabels] = useState(() => loadCatLabels());
+const catLabelsRef = useRef(catLabels);
+catLabelsRef.current = catLabels;
+// Update ONE switch of ONE category (every menu goes through this) and persist.
+const setCatLabel = (cat, key, value) => setCatLabels((prev) => {
+  const next = { ...prev, [cat]: { ...(prev[cat] || CAT_LABEL_DEFAULTS), [key]: value } };
+  saveCatLabels(next);
+  return next;
+});
+const anyLabelOn = anyCatLabel(catLabels);
+const catLabelSig = catLabelsSig(catLabels);
 
 // ---- 📏 Atom distance measurement ----------------------------------------
 // While ON, clicking TWO atoms draws an NGL "distance" representation between
@@ -1626,13 +1825,14 @@ const applyFog = useCallback(() => {
 // 'scene' + 'relative' clip mode from clipNear / clipFar (percentages of the
 // scene bounding sphere) and floored by clipDist in Å (Viewer#__updateClipping,
 // verified in the installed ngl 2.4):
-//   camera.near = max(0.1, clipDist, cDist − bRadius·(50 − clipNear)/50)
-//   camera.far  = max(1,   cDist + bRadius·(50 − clipFar)/50)
-// The clipDist floor (10 Å by default) is exactly what CUTS a large complex when
-// you zoom in close: everything nearer than 10 Å to the camera disappears. This
-// control therefore (a) switches OFF → NGL's own defaults (0 / 100 / 10) are
-// restored, so nothing is ever cut, and (b) lets clipNear / clipFar / clipDist be
-// adjusted to keep a big assembly whole at any zoom. Persisted like Fog/Shadows.
+//   camera.near = cDist − bRadius·(50 − clipNear)/50   (then max with clipDist)
+//   camera.far  = cDist + bRadius·(clipFar − 50)/50
+// The clipDist floor is exactly what CUTS a large complex when you zoom in close
+// (everything nearer than clipDist to the camera disappears) and clipFar 100
+// stops the far plane at the back edge of the sphere. « Off » therefore forces
+// the camera bounds to the EXTREMES — CLIP_DEFAULTS = near 0 · far 100000 ·
+// dist 0 — so nothing is ever cut, and « On » lets the three values be adjusted
+// to keep a big assembly whole at any zoom. Persisted like Fog / Shadows.
 const [clipOn, setClipOn] = useState(() => {
   try { return /^on/.test(String(localStorage.getItem('labViewerClip') || '')); } catch { return false; }
 });
@@ -1772,20 +1972,34 @@ const applyShadowSettings = useCallback(() => {
       // pure white, so colours are never tinted (the old warm-golden key /
       // cool-blue fill is gone — it read as "a red light was added"). The fill
       // is floored so the shadow side never goes fully black.
+      //
+      // AMBIENT OCCLUSION: NGL 2.4 ships NO screen-space ambient-occlusion pass
+      // (verified in the installed build: `ssao` / `AmbientOcclusion` do not
+      // exist anywhere — only three.js's unused AO-map shader chunk, which needs
+      // an AO texture no structure rendering ever binds). The equivalent NGL
+      // exposes is its AMBIENT term: the ambient light is added uniformly, so
+      // lowering `ambientIntensity` while raising `lightIntensity` darkens every
+      // face the key light does not reach — crevices, cavities and the inner
+      // side of a folded chain lose their fill and read as cavity shading and
+      // depth, exactly what AO is used for. `sampleLevel` is raised at the same
+      // time so the resulting gradients are supersampled (smooth, not banded).
       stage.setParameters({
         lightColor: 0xffffff,
         ambientColor: 0xffffff,
         lightIntensity: 1.3 + dark * 0.7,                     // 1.3 → 2.0
         ambientIntensity: Math.max(0.12, 0.34 - dark * 0.22), // 0.34 → 0.12
+        sampleLevel: AO_SAMPLE_LEVEL,
       });
     } else {
       // No shadows: NGL's even, camera-linked lighting — pure white so every
-      // element / residue colour stays exactly as chosen.
+      // element / residue colour stays exactly as chosen — and the plain
+      // sampling level (AO off).
       stage.setParameters({
         lightColor: 0xffffff,
         ambientColor: 0xffffff,
         lightIntensity: 1.15,
         ambientIntensity: 0.34,
+        sampleLevel: 0,
       });
     }
     installShadowLightRig();
@@ -2236,40 +2450,42 @@ const espColorParams = () => {
 };
 
 // ── Per-CATEGORY representation builder (section « 2. Molecular Styling ») ───
-// ONE function draws the whole structure from the five category menus, so the
+// ONE function draws the whole structure from the six category menus, so the
 // main structure, every extra molecule and every split chain obey the same
 // menus. It returns the list of representations it added (base + surfaces) so
 // the caller can remove exactly those again.
 //
-// Selections come from catSelectionsFor: protein · nucleic · lipid (resname
-// list) · organic (hetero minus water / ions / lipids) · others (water or ion).
-// A component that holds NO polymer at all is a small molecule in its own right:
-// there the Organic menu applies to `all` (the behaviour of the old Molecule
-// Style selector for organic / sugar / ligand-only files), and a component that
-// IS one lipid (moleculeType 'lipid') hands `all` to the Lipids menu.
+// Selections come from catSelectionsFor, routed by routeCategorySelections:
+//   protein · nucleic · lipid (the standard resname list) · sugar (NGL
+//   `saccharide` + an explicit carbohydrate resname list) · organic (hetero
+//   minus water / ions / lipids / sugars) · others (water or ion).
+// The Lipids menu works on three INDEPENDENT sub-selections (headgroups /
+// glycerol backbone / acyl chains — see lipidSubSelections), and a component
+// that holds NO polymer hands the ligand fallback `all and not (polymer, lipid,
+// sugar, water, ion)` to the Organic menu, while water and ions keep the Others
+// menu — including its water SURFACE, which is applied on its own so a solvent
+// shell can be drawn even with the water atoms hidden.
 //
 // Surfaces are ordinary NGL `surface` representations — solid (opacity 1),
-// transparent (0.4) or mesh (wireframe) — and « Surface Color: ESP » reuses the
-// EXISTING electrostatic-potential colouring (same colour scale and ±kcal/mol
-// domain as the ⚡ ESP button), so both ESP entry points stay in sync.
+// transparent (`transparent: true` + the menu's Opacity slider) or mesh
+// (wireframe) — and « Surface Color: ESP » reuses the EXISTING
+// electrostatic-potential colouring (same colour scale and ±kcal/mol domain as
+// the ⚡ ESP button), so both ESP entry points stay in sync.
 const buildCategoryReps = (comp) => {
   const reps = [];
   if (!comp || !comp.structure) return reps;
   const cs = catStylesRef.current || DEFAULT_CAT_STYLES;
   const fallbackSels = {
-    protein: 'protein', nucleic: 'nucleic', lipid: '',
+    protein: 'protein', nucleic: 'nucleic', lipid: '', sugar: SUGAR_SEL,
     organic: 'hetero and not water and not ion', others: 'water or ion', lipids: [],
-    n: { protein: -1, nucleic: -1, others: -1, organic: -1, lipid: -1 },
+    n: { protein: -1, nucleic: -1, others: -1, organic: -1, lipid: -1, sugar: -1 },
   };
   const sels = catSelectionsFor(comp.structure) || fallbackSels;
-  const mt = moleculeTypeRef.current || 'protein';
-  const wholeOrganic = mt === 'organic' || mt === 'sugar';
-  const wholeLipid = mt === 'lipid';
-  // 0 = the selection is KNOWN to be empty; -1 = could not be determined → draw.
-  const noPolymer = sels.n.protein === 0 && sels.n.nucleic === 0;
-  const organicSele = wholeLipid ? '' : (wholeOrganic || noPolymer) ? 'all' : sels.organic;
-  const lipidSele = wholeLipid ? 'all' : sels.lipid;
-  const othersSele = organicSele === 'all' ? '' : sels.others;
+  const route = routeCategorySelections(sels, moleculeTypeRef.current || 'protein');
+  const organicSele = route.organic;
+  const lipidSele = route.lipid;
+  const sugarSele = route.sugar;
+  const othersSele = route.other;
 
   const add = (type, params) => {
     let r = null;
@@ -2280,13 +2496,16 @@ const buildCategoryReps = (comp) => {
     return r;
   };
   // Solid / transparent / mesh surfaces, in the category's own selection.
-  const addSurface = (sele, mode, colorMode) => {
+  // `opacityValue` is the menu's Opacity slider (0 → 1, default 0.4) and is only
+  // used by the Transparent mode: NGL receives `transparent: true` + `opacity`.
+  const addSurface = (sele, mode, colorMode, opacityValue) => {
     if (!sele || !mode || mode === 'hide') return;
     const colorParams = colorMode === 'esp' ? espColorParams() : { colorScheme: 'element' };
+    const op = Math.min(1, Math.max(0, Number.isFinite(opacityValue) ? opacityValue : 0.4));
     const r = mode === 'mesh'
       ? add('surface', { sele, ...colorParams, wireframe: true, opacity: 1 })
       : mode === 'transparent'
-        ? add('surface', { sele, ...colorParams, opacity: 0.4 })
+        ? add('surface', { sele, ...colorParams, transparent: true, opacity: op })
         : add('surface', { sele, ...colorParams, opacity: 1 });
     // Remember the ESP-coloured surfaces so the ⚡ Range control re-colours them
     // live, exactly like the ⚡ ESP overlay (espApplyLimits).
@@ -2313,7 +2532,7 @@ const buildCategoryReps = (comp) => {
     else if (bb === 'sticks') add('ball+stick', { sele: 'protein and not sidechain', colorScheme: 'element', multipleBond: true, aspectRatio: 1.1 });
     else if (bb === 'lines') add('line', { sele: sels.protein, colorScheme: 'element' });
     else if (bb === 'spheres') add('spacefill', { sele: sels.protein, colorScheme: 'element', scale: 0.6 });
-    addSurface(sels.protein, cs.protein.surface, cs.protein.surfaceColor);
+    addSurface(sels.protein, cs.protein.surface, cs.protein.surfaceColor, cs.protein.surfaceOpacity);
   }
 
   // ---- B. Nucleic acids ----------------------------------------------------
@@ -2333,35 +2552,56 @@ const buildCategoryReps = (comp) => {
     else if (bases === 'sticks') add('ball+stick', { sele: 'nucleic and sidechain', colorScheme: 'element', multipleBond: true, aspectRatio: 1.1 });
     else if (bases === 'lines') add('line', { sele: 'nucleic and sidechain', colorScheme: 'element' });
     else if (bases === 'spheres') add('spacefill', { sele: 'nucleic and sidechain', colorScheme: 'element', scale: 0.6 });
-    addSurface(sels.nucleic, cs.nucleic.surface, cs.nucleic.surfaceColor);
+    addSurface(sels.nucleic, cs.nucleic.surface, cs.nucleic.surfaceColor, cs.nucleic.surfaceOpacity);
   }
 
-  // ---- C. Lipids (resname-based selection — see LIPID_RESNAMES) ------------
+  // ---- C. Lipids — headgroups / glycerol backbone / acyl chains ------------
+  // THREE independent sub-selections of the same lipid group (PART 2.1). The
+  // atom-name expressions below are the standard glycerophospholipid naming; when
+  // a file does not follow it (GROMOS / a homemade topology) the element-based
+  // fallback of lipidSubSelections is used instead of drawing nothing.
   if (lipidSele) {
-    // Headgroups = the polar atoms of the lipid (N / P / O): the phosphate, the
-    // ester / glycerol oxygens and the amine of PC / PE. Acyl chains = the carbon
-    // skeleton. Both are plain element tests on the lipid residues themselves —
-    // no invented chemistry, and no atom name has to be guessed.
+    const namedAtoms = nglSeleCountCached(comp.structure, `(${lipidSele}) and (${LIPID_HEAD_ATOMS})`) !== 0;
+    const sub = lipidSubSelections(lipidSele, namedAtoms);
     const head = cs.lipid.head || 'spheres';
+    const glycerol = cs.lipid.glycerol || 'ball+stick';
     const tail = cs.lipid.tail || 'lines';
-    if (head !== 'hide') {
-      const sel = `(${lipidSele}) and (_N or _P or _O)`;
-      if (head === 'ball+stick') add('ball+stick', { sele: sel, colorScheme: 'element', multipleBond: true, aspectRatio: 1.3 });
-      else if (head === 'licorice') add('licorice', { sele: sel, colorScheme: 'element' });
-      else if (head === 'line') add('line', { sele: sel, colorScheme: 'element' });
-      else add('spacefill', { sele: sel, colorScheme: 'element', scale: 0.6 });
-    }
-    if (tail !== 'hide') {
-      const sel = `(${lipidSele}) and _C`;
-      if (tail === 'sticks') add('stick', { sele: sel, colorScheme: 'element' });
-      else if (tail === 'licorice') add('licorice', { sele: sel, colorScheme: 'element' });
-      else if (tail === 'spheres') add('spacefill', { sele: sel, colorScheme: 'element', scale: 0.4 });
-      else add('line', { sele: sel, colorScheme: 'element' });
-    }
+    // One shared writer: every sub-component accepts the same style tokens.
+    const drawSub = (sele, style, ballAspect) => {
+      if (!sele || !style || style === 'hide') return;
+      if (style === 'ball+stick') add('ball+stick', { sele, colorScheme: 'element', multipleBond: true, aspectRatio: ballAspect });
+      else if (style === 'licorice') add('licorice', { sele, colorScheme: 'element' });
+      else if (style === 'stick' || style === 'sticks') add('stick', { sele, colorScheme: 'element' });
+      else if (style === 'lines' || style === 'line') add('line', { sele, colorScheme: 'element' });
+      else if (style === 'spheres') add('spacefill', { sele, colorScheme: 'element', scale: 0.4 });
+      else add('spacefill', { sele, colorScheme: 'element', scale: 0.6 });
+    };
+    // Headgroups = phosphate / amine / the upper oxygens of the head.
+    drawSub(sub.head, head, 1.3);
+    // Glycerol backbone = the ester carbons / oxygens connecting the tails.
+    drawSub(sub.glycerol, glycerol, 1.2);
+    // Acyl chains = everything that is neither head nor backbone.
+    drawSub(sub.acyl, tail, 1.2);
   }
 
-  // ---- D. Organic molecules (ligands / small molecules) --------------------
-  if (organicSele) {
+  // ---- D. Sugars (carbohydrates) ------------------------------------------
+  // NGL has no `carbohydrate` keyword: `saccharide` (the real keyword) OR the
+  // explicit GLC / NAG / MAN / BMA / SIA / GAL / FUC list (SUGAR_SEL) — and the
+  // ligand menu excludes exactly this selection, so a glycan is never styled as
+  // a generic ligand.
+  if (sugarSele && (route.wholeSugar || sels.n.sugar !== 0)) {
+    const st = cs.sugar.style || 'ball+stick';
+    if (st === 'ball+stick') add('ball+stick', { sele: sugarSele, colorScheme: 'element', multipleBond: true, aspectRatio: 1.3 });
+    else if (st === 'sticks') add('stick', { sele: sugarSele, colorScheme: 'element', multipleBond: true });
+    else if (st === 'spacefill') add('spacefill', { sele: sugarSele, colorScheme: 'element', scale: 0.7 });
+    else if (st === 'lines') add('line', { sele: sugarSele, colorScheme: 'element' });
+    else if (st === 'spheres') add('spacefill', { sele: sugarSele, colorScheme: 'element', scale: 0.6 });
+    else if (st === 'surface') add('surface', { sele: sugarSele, colorScheme: 'element' });
+    addSurface(sugarSele, cs.sugar.surface, 'default', cs.sugar.surfaceOpacity);
+  }
+
+  // ---- E. Organic molecules (ligands / small molecules) --------------------
+  if (organicSele && (route.wholeOrganic || route.noPolymer || sels.n.organic !== 0)) {
     const st = cs.organic.style || 'ball+stick';
     if (st === 'ball+stick') add('ball+stick', { sele: organicSele, colorScheme: 'element', multipleBond: true, aspectRatio: 1.3 });
     else if (st === 'sticks') add('stick', { sele: organicSele, colorScheme: 'element', multipleBond: true });
@@ -2369,10 +2609,10 @@ const buildCategoryReps = (comp) => {
     else if (st === 'lines') add('line', { sele: organicSele, colorScheme: 'element' });
     else if (st === 'spheres') add('spacefill', { sele: organicSele, colorScheme: 'element', scale: 0.6 });
     else if (st === 'surface') add('surface', { sele: organicSele, colorScheme: 'element' });
-    addSurface(organicSele, cs.organic.surface, cs.organic.surfaceColor);
+    addSurface(organicSele, cs.organic.surface, cs.organic.surfaceColor, cs.organic.surfaceOpacity);
   }
 
-  // ---- E. Others (ions / water — and the water surface) --------------------
+  // ---- F. Others (ions / water — and, on its own, the water surface) --------
   if (othersSele) {
     const ion = cs.other.ion || 'spheres';
     if (ion === 'spheres') add('spacefill', { sele: 'ion', colorScheme: 'element', scale: 0.8 });
@@ -2385,10 +2625,14 @@ const buildCategoryReps = (comp) => {
     else if (water === 'lines') add('line', { sele: 'water', colorScheme: 'element' });
     else if (water === 'spheres') add('spacefill', { sele: 'water', colorScheme: 'element', scale: 0.25 });
     else if (water === 'ball+stick') add('ball+stick', { sele: 'water', colorScheme: 'element' });
-    // Water surface: works on its own, so the solvent shell can be shown as a
-    // transparent / mesh surface with the water atoms hidden (that is exactly
-    // what « Others → Surface » is for).
-    addSurface('water', cs.other.surface, 'default');
+  }
+  // Water SURFACE — applied on its own, never inside the block above: the solvent
+  // shell must be drawable as a solid / transparent / mesh surface even when the
+  // water ATOMS are hidden (« Surface » in the Others menu), and even in a system
+  // where the water is not part of any other selection (a pure-water box).
+  if (cs.other.surface && cs.other.surface !== 'hide'
+      && nglSeleCountCached(comp.structure, 'water') !== 0) {
+    addSurface('water', cs.other.surface, 'default', cs.other.surfaceOpacity);
   }
 
   return reps;
@@ -3867,20 +4111,18 @@ return () => { cancelled = true; };
 // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [moleculeType, smiles, status]);
 
-// 3D atom / residue labels.
-// Three toggles drive what is written next to each atom:
-//   showResidueNumber     → residue / molecule identifiers
-//   showResidueNumberType  → append the 1-letter residue code to those numbers
-//                            (10 → 10A) for protein / nucleic residues
-//   showAtomLabel          → atom names next to each labelled atom
-// The text is computed per atom in build3dLabelMap (context-aware: protein /
-// nucleic / ligand / water / ion rules) and rendered by a single NGL "label"
-// representation that selects EXACTLY the labelled atoms (via an atom-index
-// selection @a,b,c), so no empty labels are ever created. Styling keeps the
-// glyphs billboarded (NGL text sprites always face the camera), pulled slightly
-// toward the camera (zOffset) with depth testing disabled so they never clip
-// inside atom spheres or bonds. Glyphs are BLACK with a subtle WHITE stroke
-// halo and NO background plate — readable against bright, complex structures.
+// 3D atom / residue labels — PER CATEGORY.
+// Each molecule menu owns three switches (Residues · Residue type · Atom names)
+// and the atoms they may label are EXACTLY the atoms that menu styles, i.e. the
+// same selections as the renderer (routeCategorySelections). The text itself is
+// computed per atom in build3dLabelMap (context-aware: protein / nucleic /
+// ligand / water / ion rules) and rendered by ONE NGL "label" representation
+// that selects EXACTLY the labelled atoms (via an atom-index selection @a,b,c),
+// so no empty labels are ever created. Styling keeps the glyphs billboarded
+// (NGL text sprites always face the camera), pulled slightly toward the camera
+// (zOffset) with depth testing disabled so they never clip inside atom spheres
+// or bonds. Glyphs are BLACK with a subtle WHITE stroke halo and NO background
+// plate — readable against bright, complex structures.
 useEffect(() => {
 const component = componentRef.current;
 if (!component || status !== 'ready') return;
@@ -3891,14 +4133,50 @@ labelCompRef.current = null;
 }
 };
 clearLabels();
-if (showResidueNumber || showAtomLabel) {
+if (!anyCatLabel(catLabelsRef.current)) return clearLabels;
 try {
-const { labelText, indices } = build3dLabelMap(component, {
-showResidueNumber,
-showAtomLabel,
-showResidueNumberType,
-atomNameOf: (atom) => displayNameRef.current(atom),
+const labels = catLabelsRef.current || {};
+// The very same routing as the menus: a category can only label its own atoms.
+const fallbackSels = {
+  protein: 'protein', nucleic: 'nucleic', lipid: '', sugar: SUGAR_SEL,
+  organic: 'hetero and not water and not ion', others: 'water or ion', lipids: [],
+  n: { protein: -1, nucleic: -1, others: -1, organic: -1, lipid: -1, sugar: -1 },
+};
+const sels = catSelectionsFor(component.structure) || fallbackSels;
+const route = routeCategorySelections(sels, moleculeType);
+// The SAME selections the menus style: a protein menu labels `protein` atoms
+// only — never `all` (the default moleculeType of a protein condition must not
+// turn its label switches into whole-scene switches).
+const owner = {
+  protein: route.protein,
+  nucleic: route.nucleic,
+  lipid: route.lipid,
+  sugar: route.sugar,
+  organic: route.organic,
+  other: route.other,
+};
+const labelText = {};
+const indexSet = new Set();
+CAT_STYLE_CATS.forEach((cat) => {
+  const l = labels[cat] || CAT_LABEL_DEFAULTS;
+  if (!l.residues && !l.atoms) return;         // nothing asked for this category
+  const sele = owner[cat];
+  if (!sele) return;
+  const indices = atomIndicesForSele(component.structure, sele);
+  if (!indices.length) return;
+  const sub = build3dLabelMap(component, {
+    showResidueNumber: !!l.residues,
+    showAtomLabel: !!l.atoms,
+    showResidueNumberType: !!l.residueType,
+    atomNameOf: (atom) => displayNameRef.current(atom),
+    allowed: new Set(indices),
+  });
+  sub.indices.forEach((idx) => {
+    labelText[idx] = sub.labelText[idx];
+    indexSet.add(idx);
+  });
 });
+const indices = Array.from(indexSet).sort((a, b) => a - b);
 if (indices.length) {
 labelCompRef.current = component.addRepresentation('label', {
 sele: `@${indices.join(',')}`,       // only the labelled atoms
@@ -3928,9 +4206,8 @@ visible: true,
 });
 }
 } catch { /* label rendering is best-effort — never break the viewer */ }
-}
 return clearLabels;
-}, [showResidueNumber, showResidueNumberType, showAtomLabel, status, renames, smilesNameMap]);
+}, [catLabelSig, status, renames, smilesNameMap, moleculeType]);
 
 // Side-chain representation
 useEffect(() => {
@@ -4714,6 +4991,16 @@ const lipidHint = lipidMenuInactive
   : (lipidsFound.length
     ? `found: ${lipidsFound.slice(0, 6).join(', ')}${lipidsFound.length > 6 ? '…' : ''}`
     : 'the whole structure is one lipid');
+// Sugars: the menu says what it will act on (NGL keyword `saccharide` + the
+// explicit GLC / NAG / MAN / BMA / SIA / GAL / FUC list).
+const sugarCount = (catInfo && catInfo.n && Number.isFinite(catInfo.n.sugar)) ? catInfo.n.sugar : -1;
+const sugarHint = moleculeType === 'sugar'
+  ? 'this condition IS a sugar — the whole structure is styled here'
+  : sugarCount === 0
+    ? 'no carbohydrate recognised in this structure (saccharide / GLC / NAG / MAN …) — nothing to draw'
+    : sugarCount > 0
+      ? `${sugarCount} sugar atom(s) recognised`
+      : 'carbohydrates are recognised by the NGL keyword « saccharide » + an explicit residue list';
 // A per-category surface coloured by ESP shows the ⚡ Range control too, so the
 // red/blue limits are always reachable, whichever ESP entry point was used.
 const catEspActive = ['protein', 'nucleic', 'organic'].some((c) => {
@@ -4721,8 +5008,55 @@ const catEspActive = ['protein', 'nucleic', 'organic'].some((c) => {
   return s.surfaceColor === 'esp' && !!s.surface && s.surface !== 'hide';
 });
 
+/* ── Two shared render helpers of the styling menus ───────────────────────── */
+// « Transparent » alone is not enough: EVERY menu whose surface mode is
+// transparent shows an Opacity slider (0 → 1) and the value is what NGL gets
+// (with transparent: true, see addSurface).
+const renderSurfaceOpacity = (cat, label = 'Opacity') => (
+  (catStyles[cat] && catStyles[cat].surface === 'transparent') ? (
+    <VRow label={label} title="Opacity of this transparent surface — passed to NGL as opacity (with transparent: true). 0 = invisible, 1 = solid.">
+      <input type="range" min="0" max="1" step="0.05"
+        value={Number.isFinite(catStyles[cat].surfaceOpacity) ? catStyles[cat].surfaceOpacity : 0.4}
+        onChange={(e) => setCatStyle(cat, 'surfaceOpacity', Number(e.target.value))}
+        className="w-32 accent-slate-600" aria-label={`${label} — surface opacity`} />
+      <span className="text-[10px] text-slate-500 w-10">
+        {(Number.isFinite(catStyles[cat].surfaceOpacity) ? catStyles[cat].surfaceOpacity : 0.4).toFixed(2)}
+      </span>
+    </VRow>
+  ) : null
+);
+
+// The three 3D-label switches of ONE menu (the former global « 4 · Labels »
+// section). Ticking « Residues » inside the Proteins menu labels PROTEINS ONLY:
+// the label effect builds each category with that category's own selection.
+const renderCatLabels = (cat) => {
+  const l = catLabels[cat] || CAT_LABEL_DEFAULTS;
+  return (
+    <VRow label="3D labels" title="What is written in the 3D view for THIS molecule category only. « Residues » = the residue / molecule identifiers (proteins: one number on each CA; DNA/RNA: on O4' or P; ligands: the residue tag at the molecule centre; water / ions: the residue name + number). « Residue type » appends the 1-letter code (10 → 10A). « Atom names » writes the atom name next to each atom of this category.">
+      <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 cursor-pointer whitespace-nowrap" title={`Label the residue / molecule numbers of this menu's own molecules only (${cat})`}>
+        <input type="checkbox" checked={!!l.residues}
+          onChange={(e) => setCatLabel(cat, 'residues', e.target.checked)}
+          className="w-3.5 h-3.5 accent-blue-600" />
+        Residues
+      </label>
+      <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 cursor-pointer whitespace-nowrap" title={`Append the 1-letter residue code to those numbers (10 → 10A) for this menu's own molecules only (${cat})`}>
+        <input type="checkbox" checked={!!l.residueType}
+          onChange={(e) => setCatLabel(cat, 'residueType', e.target.checked)}
+          className="w-3.5 h-3.5 accent-blue-600" />
+        Residue type
+      </label>
+      <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 cursor-pointer whitespace-nowrap" title={`Show the atom name next to each atom of this menu's own molecules only (${cat}) — e.g. CA, HA, CB, O1G`}>
+        <input type="checkbox" checked={!!l.atoms}
+          onChange={(e) => setCatLabel(cat, 'atoms', e.target.checked)}
+          className="w-3.5 h-3.5 accent-blue-600" />
+        Atom names
+      </label>
+    </VRow>
+  );
+};
+
 return (
-<div className="flex flex-col gap-3">
+<div className="flex flex-col gap-2">
 
 {/* ══ 0 · WINDOW — « ⬇ Minimize » alone at the very top ═════════════════════
     The control that shrinks the viewer's footprint stands on its own row,
@@ -4744,7 +5078,7 @@ return (
 <VSection title="1 · General" hint="structure · trajectory · clear · figure">
 <label
 title="Load structure file(s) from your computer — the first is the main structure, the rest appear in the Molecules bar (right side, multi-select)"
-className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-bold px-2.5 py-1.5 rounded-md text-xs shadow-sm transition-colors inline-flex items-center gap-1"
+className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-bold px-2 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7"
 >
 📂 PDB file(s)
 <input
@@ -4765,12 +5099,12 @@ if (e.key === 'Enter') handlePdbIdLoad();
 }}
 placeholder="PDB ID or URL"
 title="Load from a PDB ID (e.g. 1TUP), rcsb: or a plain https URL"
-className="border border-slate-300 rounded-md px-2 py-1.5 text-xs w-28 bg-white outline-none focus:border-blue-500 font-mono h-8"
+className="border border-slate-300 rounded-md px-2 py-1 text-[11px] w-28 bg-white outline-none focus:border-blue-500 font-mono h-7"
 />
 <button
 type="button"
 onClick={handlePdbIdLoad}
-className="bg-slate-600 hover:bg-slate-700 text-white font-bold px-2 py-1.5 rounded-md text-xs shadow-sm transition-colors h-8"
+className="bg-slate-600 hover:bg-slate-700 text-white font-bold px-2 py-1 rounded-md text-[11px] shadow-sm transition-colors h-7"
 >
 Load
 </button>
@@ -4782,7 +5116,7 @@ Load
 )}
 <label
 title="Load a trajectory (XTC/TRR/DCD) to animate the structure"
-className="cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-2.5 py-1.5 rounded-md text-xs shadow-sm transition-colors inline-flex items-center gap-1"
+className="cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-2 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7"
 >
 📂 Trajectory
 <input
@@ -4806,7 +5140,7 @@ className="hidden"
 type="button"
 onClick={handleClearViewer}
 title="Empty the viewer completely (remove all molecules, the sequence strip and any trajectory) so you can load a fresh molecule"
-className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8 bg-white border-red-300 text-red-600 hover:bg-red-50 whitespace-nowrap"
+className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 bg-white border-red-300 text-red-600 hover:bg-red-50 whitespace-nowrap"
 >
 🗑 Clear
 </button>
@@ -4815,7 +5149,7 @@ className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8
 type="button"
 onClick={captureScene}
 title="Save the current 3D view as a figure — it goes to the Figures library (Publications → Figures & Slides)"
-className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8 whitespace-nowrap bg-white border-indigo-300 text-indigo-600 hover:bg-indigo-50"
+className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-indigo-300 text-indigo-600 hover:bg-indigo-50"
 >
 📷 Figure
 </button>
@@ -4824,14 +5158,30 @@ className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8
 )}
 </VSection>
 
-{/* ══ 2 · MOLECULAR STYLING ═════════════════════════════════════════════════
-    Docking controls + Hide everything + ONE ACCORDION MENU PER MOLECULE
-    CATEGORY: A Proteins · B Nucleic acids · C Lipids · D Organic molecules ·
-    E Others. Every menu is independent (no more global Side / Backbone / Mol
-    dropdowns), and the shared tools — ⚡ electrostatic-potential surface
-    colour, 🎨 Colours, 🔢 Renumber — live at the end of this section, right
-    below the menus that open them. */}
-<VSection title="2 · Molecular Styling" hint={hasNonProtein ? 'one independent menu per molecule category — this file also contains ligands / lipids / ions / water' : 'one independent menu per molecule category'}>
+{/* ══ 2 · MOLECULAR STYLING — ACCORDION, COLLAPSED BY DEFAULT ═══════════════
+    One row: the toggle + a live summary of every menu. Opening it reveals the
+    Docking controls, « Hide everything » and the SIX per-category menus
+    (A Proteins · B Nucleic acids · C Lipids · D Sugars · E Organic molecules ·
+    F Others). Every menu is independent (no global Side / Backbone / Mol
+    dropdowns) and carries its own 3D-label switches, and the shared tools —
+    ⚡ electrostatic-potential surface colour, 🎨 Colours, 🔢 Renumber — live at
+    the end of the panel, right below the menus that open them. */}
+<section className="flex flex-col gap-1 bg-slate-50/80 border border-slate-200 rounded-lg px-1.5 py-1">
+<button
+type="button"
+onClick={() => setStylingOpen((v) => !v)}
+aria-expanded={stylingOpen}
+title={stylingOpen ? 'Collapse the molecular-styling menus — the current styles stay applied' : 'Expand the molecular-styling menus (one per molecule category: proteins · nucleic acids · lipids · sugars · ligands · solvent)'}
+className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors ${stylingOpen ? 'text-blue-800' : 'text-slate-700 hover:text-blue-800'}`}
+>
+<span className="text-[9px] font-black uppercase tracking-wide whitespace-nowrap">{stylingOpen ? '▾' : '▸'} 2 · Molecular Styling</span>
+<span className="text-[9px] font-bold text-slate-500 truncate flex-1">
+{`Proteins ${catStyles.protein.backbone} · Nucleic ${catStyles.nucleic.backbone} · Lipids ${catStyles.lipid.head}/${catStyles.lipid.glycerol}/${catStyles.lipid.tail} · Sugars ${catStyles.sugar.style} · Ligands ${catStyles.organic.style} · Water ${catStyles.other.water}${anyLabelOn ? ' · 3D labels on' : ''}${hasNonProtein ? ' · this file also contains ligands / lipids / sugars / ions / water' : ''}`}
+</span>
+<span className="text-[9px] font-black uppercase tracking-wide text-slate-400 shrink-0">{stylingOpen ? '▲ collapse' : '▼ expand'}</span>
+</button>
+{stylingOpen && (
+<div className="flex flex-wrap items-center gap-1">
 
 {/* 🧬 Docking — the look APPLIED to every docking result (cluster / pose)
     while « 🧬 Docking » is ON: one style for the PROTEIN part, one for the
@@ -4840,7 +5190,7 @@ className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8
     outside a docking run — it is a styling preset, which is why it lives in
     §2 — and its logic is unchanged. */}
 {(moleculeType === 'protein' || extraMols.length > 0 || dockStyleMode) && (
-<div className={`flex items-center gap-1 rounded-md border px-1.5 h-8 whitespace-nowrap ${dockStyleMode ? 'bg-teal-50 border-teal-400' : 'bg-white border-teal-300'}`}>
+<div className={`flex items-center gap-1 rounded-md border px-1.5 h-7 whitespace-nowrap ${dockStyleMode ? 'bg-teal-50 border-teal-400' : 'bg-white border-teal-300'}`}>
   <button type="button" onClick={toggleDockStyle}
     className={`text-xs font-bold px-1 py-0.5 rounded ${dockStyleMode ? 'text-teal-900' : 'text-teal-700 hover:bg-teal-50'}`}
     title="Standardize DOCKING results: every cluster/pose — current and future — gets the SAME protein + ligand styles defined next to this button. Switch off to restore each molecule's own style.">
@@ -4861,7 +5211,7 @@ className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8
 {/* 🙈 Hide everything — one click removes every representation (base, side
     chains, selections, ESP); 👁️ Show default rebuilds them from the menus. */}
 <button type="button" onClick={() => setHideAll((v) => !v)}
-  className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors h-8 whitespace-nowrap ${hideAll ? 'bg-red-100 border-red-400 text-red-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${hideAll ? 'bg-red-100 border-red-400 text-red-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
   title="Hide every representation of the whole scene (all molecules, side chains, selections, ESP surfaces). Click again to restore them exactly as the styling menus describe.">
   {hideAll ? '👁️ Show default' : '🙈 Hide everything'}
 </button>
@@ -4894,7 +5244,7 @@ className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8
       <option value="none">Hide</option>
     </VSel>
   </VRow>
-  <VRow label="Surface" title="NGL molecular surface of the PROTEIN part only. Solid = opaque, Transparent = 40 % opaque (the cartoon stays visible), Mesh = wireframe. Hide removes it.">
+  <VRow label="Surface" title="NGL molecular surface of the PROTEIN part only. Solid = opaque, Transparent = the Opacity slider below decides (40 % by default, the cartoon stays visible), Mesh = wireframe. Hide removes it.">
     <VSel value={catStyles.protein.surface} onChange={(e) => setCatStyle('protein', 'surface', e.target.value)} title="Protein surface" width="w-40">
       <option value="solid">Solid</option>
       <option value="transparent">Transparent</option>
@@ -4902,6 +5252,7 @@ className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8
       <option value="hide">Hide</option>
     </VSel>
   </VRow>
+  {renderSurfaceOpacity('protein')}
   <VRow label="Surface colour" title="Colour of the protein surface. « Electrostatic Potential » reuses the EXISTING ESP colouring (NGL 'electrostatic' scheme, red → white → blue) with the ±kcal/mol limits of the ⚡ Range control, which appears in §2 as soon as ESP is used.">
     <VSel value={catStyles.protein.surfaceColor} onChange={(e) => setSurfaceColor('protein', e.target.value)} title="Protein surface colouring" width="w-56">
       <option value="default">Default (element colours)</option>
@@ -4918,6 +5269,7 @@ className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8
       🔢 {showRenumberPanel ? 'Hide renumber' : 'Renumber…'}
     </button>
   </VRow>
+  {renderCatLabels('protein')}
 </VMenu>
 
 {/* ── B · Nucleic acids ───────────────────────────────────────────────── */}
@@ -4957,6 +5309,7 @@ className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8
       <option value="hide">Hide</option>
     </VSel>
   </VRow>
+  {renderSurfaceOpacity('nucleic')}
   <VRow label="Surface colour" title="Default = element colours; Electrostatic Potential = the same ESP colouring as the ⚡ ESP button (the ±kcal/mol limits of the ⚡ Range control are shared).">
     <VSel value={catStyles.nucleic.surfaceColor} onChange={(e) => setSurfaceColor('nucleic', e.target.value)} title="Nucleic surface colouring" width="w-56">
       <option value="default">Default (element colours)</option>
@@ -4973,13 +5326,14 @@ className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8
       🔢 {showRenumberPanel ? 'Hide renumber' : 'Renumber…'}
     </button>
   </VRow>
+  {renderCatLabels('nucleic')}
 </VMenu>
 
 {/* ── C · Lipids ──────────────────────────────────────────────────────── */}
 <VMenu open={openMenu === 'lipid'} onToggle={() => setOpenMenu(openMenu === 'lipid' ? null : 'lipid')}
   id="viewer-menu-lipids" label="C · Lipids" accent="amber"
   summary={`Headgroups: ${catStyles.lipid.head} · Acyl chains: ${catStyles.lipid.tail} · ${lipidHint}`}>
-  <VRow label="Headgroups" title="The polar head of each lipid (its N / P / O atoms: phosphate, ester and glycerol oxygens, the amine of PC / PE). Spheres = spacefill, Ball & Stick and Sticks/Lines are finer options, Hide removes the headgroups.">
+  <VRow label="Headgroups" title="The polar head of each lipid, selected by ATOM NAME on the lipid residues: (.P or .N or .O1* or .O2* or .O3* or .O4*) minus the glycerol backbone — the phosphate, the choline / ethanolamine nitrogen and the upper oxygens. Spheres = spacefill, Ball & Stick and Sticks/Lines are finer options, Hide removes the headgroups. If a file uses a non-standard nomenclature the element fallback (_N or _P or _O) is used instead of drawing nothing.">
     <VSel value={catStyles.lipid.head} onChange={(e) => setCatStyle('lipid', 'head', e.target.value)}
       disabled={lipidMenuInactive} title="Lipid headgroup representation" width="w-44">
       <option value="spheres">Spheres</option>
@@ -4991,7 +5345,17 @@ className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8
       </optgroup>
     </VSel>
   </VRow>
-  <VRow label="Acyl chains" title="The hydrocarbon tails (the carbon skeleton of the lipid). Lines is the default — the lightest style that still shows the bilayer; Sticks is denser.">
+  <VRow label="Glycerol backbone" title="The ester carbons / oxygens that connect the two tails: (.C1 or .C2 or .C3 or .O21 or .O31) on the lipid residues. Styled independently from the headgroups and the chains, so the bilayer scaffolding can be followed on its own.">
+    <VSel value={catStyles.lipid.glycerol} onChange={(e) => setCatStyle('lipid', 'glycerol', e.target.value)}
+      disabled={lipidMenuInactive} title="Lipid glycerol-backbone representation" width="w-44">
+      <option value="ball+stick">Ball &amp; Stick</option>
+      <option value="sticks">Sticks</option>
+      <option value="spheres">Spheres</option>
+      <option value="lines">Lines</option>
+      <option value="hide">Hide</option>
+    </VSel>
+  </VRow>
+  <VRow label="Acyl chains" title="The hydrophobic tails: everything of the lipid that is neither a headgroup atom nor a backbone atom — (lipid) and not (.P or .N or .O1* or .O2* or .O3* or .O4* or .C1 or .C2 or .C3 or .O21 or .O31). Lines is the default — the lightest style that still shows the bilayer; Sticks is denser.">
     <VSel value={catStyles.lipid.tail} onChange={(e) => setCatStyle('lipid', 'tail', e.target.value)}
       disabled={lipidMenuInactive} title="Lipid acyl-chain representation" width="w-44">
       <option value="lines">Lines (default)</option>
@@ -5003,14 +5367,45 @@ className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8
       </optgroup>
     </VSel>
   </VRow>
-  <p className="text-[10px] text-slate-400 italic">NGL has no « lipid » selection keyword, so lipids are recognised by residue name — the same convention as PyMOL's <b>lipid</b> selection. {lipidHint}.</p>
+  <p className="text-[10px] text-slate-400 italic">NGL has no « lipid » selection keyword, so lipids are recognised by residue name — the base selection is <b>[POPC] or [DPPC] or … or [PAL]</b> plus any other lipid this file declares; headgroups / glycerol backbone / acyl chains are then separated by ATOM NAME. {lipidHint}.</p>
+  {renderCatLabels('lipid')}
 </VMenu>
 
-{/* ── D · Organic molecules (ligands / small molecules) ───────────────── */}
+{/* ── D · Sugars (carbohydrates) ──────────────────────────────────────── */}
+<VMenu open={openMenu === 'sugar'} onToggle={() => setOpenMenu(openMenu === 'sugar' ? null : 'sugar')}
+  id="viewer-menu-sugars" label="D · Sugars (carbohydrates)" accent="rose"
+  summary={`Style: ${catStyles.sugar.style} · Surface: ${catStyles.sugar.surface} · ${sugarHint}`}>
+  <VRow label="Style" title="Representation of the sugars / glycans ONLY. NGL 2.4 has no « carbohydrate » keyword — the real one is « saccharide », to which the explicit residue list [GLC] [NAG] [MAN] [BMA] [SIA] [GAL] [FUC] is added, so an N-glycan, a glycolipid head or a free monosaccharide is styled here and NEVER as a generic ligand.">
+    <VSel value={catStyles.sugar.style} onChange={(e) => setCatStyle('sugar', 'style', e.target.value)} title="Sugar representation" width="w-44">
+      <option value="ball+stick">Ball &amp; Stick</option>
+      <option value="sticks">Sticks</option>
+      <option value="spheres">Spheres</option>
+      <option value="lines">Lines</option>
+      <option value="hide">Hide</option>
+      <optgroup label="Kept from the previous Molecule menu">
+        <option value="spacefill">Spacefill (full VdW)</option>
+        <option value="surface">Surface</option>
+      </optgroup>
+    </VSel>
+  </VRow>
+  <VRow label="Surface" title="NGL molecular surface of the sugars only: Solid / Transparent (the Opacity slider appears underneath) / Mesh (wireframe) / Hide.">
+    <VSel value={catStyles.sugar.surface} onChange={(e) => setCatStyle('sugar', 'surface', e.target.value)} title="Sugar surface" width="w-40">
+      <option value="solid">Solid</option>
+      <option value="transparent">Transparent</option>
+      <option value="mesh">Mesh (wireframe)</option>
+      <option value="hide">Hide</option>
+    </VSel>
+  </VRow>
+  {renderSurfaceOpacity('sugar')}
+  <p className="text-[10px] text-slate-400 italic">Selection: <b>saccharide or [GLC] or [NAG] or [MAN] or [BMA] or [SIA] or [GAL] or [FUC]</b> — the Organic (ligands) menu excludes exactly this selection. {sugarHint}.</p>
+  {renderCatLabels('sugar')}
+</VMenu>
+
+{/* ── E · Organic molecules (ligands / small molecules) ───────────────── */}
 <VMenu open={openMenu === 'organic'} onToggle={() => setOpenMenu(openMenu === 'organic' ? null : 'organic')}
-  id="viewer-menu-organic" label="D · Organic molecules (ligands)" accent="emerald"
+  id="viewer-menu-organic" label="E · Organic molecules (ligands)" accent="emerald"
   summary={`Style: ${catStyles.organic.style} · Surface: ${catStyles.organic.surface}${catStyles.organic.surfaceColor === 'esp' ? ' (ESP)' : ''}`}>
-  <VRow label="Style" title="Representation of the ligands / small molecules (everything that is not protein, nucleic acid, lipid, water or ion — and the whole molecule when the condition itself is an organic compound or a sugar).">
+  <VRow label="Style" title="Representation of the ligands / small molecules. The selection is strictly « hetero and not water and not ion » MINUS the lipids and MINUS the sugars (both have their own menu), and it becomes everything that is not polymer / lipid / sugar / water / ion when the condition itself is a small organic compound.">
     <VSel value={catStyles.organic.style} onChange={(e) => setCatStyle('organic', 'style', e.target.value)} title="Ligand representation" width="w-44">
       <option value="ball+stick">Ball &amp; Stick</option>
       <option value="sticks">Sticks</option>
@@ -5023,7 +5418,7 @@ className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8
       </optgroup>
     </VSel>
   </VRow>
-  <VRow label="Surface" title="NGL molecular surface of the ligands / small molecules only: Solid / Transparent (40 %) / Mesh (wireframe) / Hide.">
+  <VRow label="Surface" title="NGL molecular surface of the ligands / small molecules only: Solid / Transparent (the Opacity slider appears underneath) / Mesh (wireframe) / Hide.">
     <VSel value={catStyles.organic.surface} onChange={(e) => setCatStyle('organic', 'surface', e.target.value)} title="Ligand surface" width="w-40">
       <option value="solid">Solid</option>
       <option value="transparent">Transparent</option>
@@ -5031,17 +5426,19 @@ className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8
       <option value="hide">Hide</option>
     </VSel>
   </VRow>
+  {renderSurfaceOpacity('organic')}
   <VRow label="Surface colour" title="Default = element colours; Electrostatic Potential = the ESP colouring of the ⚡ button (shared ±kcal/mol limits), which is how the partial charges of a ligand (PQR / charged MOL2 · SDF) are visualised.">
     <VSel value={catStyles.organic.surfaceColor} onChange={(e) => setSurfaceColor('organic', e.target.value)} title="Ligand surface colouring" width="w-56">
       <option value="default">Default (element colours)</option>
       <option value="esp">Electrostatic Potential (ESP)</option>
     </VSel>
   </VRow>
+  {renderCatLabels('organic')}
 </VMenu>
 
 {/* ── E · Others (ions, solvent / water) ─────────────────────────────── */}
 <VMenu open={openMenu === 'other'} onToggle={() => setOpenMenu(openMenu === 'other' ? null : 'other')}
-  id="viewer-menu-others" label="E · Others (ions · solvent / water)" accent="sky"
+  id="viewer-menu-others" label="F · Others (ions · solvent / water)" accent="sky"
   summary={`Ions: ${catStyles.other.ion} · Water: ${catStyles.other.water} · Water surface: ${catStyles.other.surface}`}>
   <VRow label="Ions" title="Metal / halide ions (Na⁺, K⁺, Cl⁻, Mg²⁺, Ca²⁺, Zn²⁺ …). Spheres = spacefill on the ion selection.">
     <VSel value={catStyles.other.ion} onChange={(e) => setCatStyle('other', 'ion', e.target.value)} title="Ion representation" width="w-44">
@@ -5064,7 +5461,7 @@ className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8
       <option value="ball+stick">Ball &amp; Stick</option>
     </VSel>
   </VRow>
-  <VRow label="Water surface" title="NEW: an NGL molecular surface over the WATER only — Solid / Transparent / Mesh. It works on its own, so the solvent shell can be shown as a transparent surface even with the water atoms hidden (set Water = Hide above).">
+  <VRow label="Water surface" title="The SURFACE of the water selection: it is applied on its own (NGL surface on the `water` selection), so the solvent shell can be shown as a solid / transparent / mesh surface even with the water atoms hidden (set Water = Hide above) and even in a system whose other selections do not cover the water. Transparent reveals the Opacity slider underneath.">
     <VSel value={catStyles.other.surface} onChange={(e) => setCatStyle('other', 'surface', e.target.value)} title="Water surface" width="w-40">
       <option value="solid">Solid</option>
       <option value="transparent">Transparent</option>
@@ -5072,6 +5469,7 @@ className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8
       <option value="hide">Hide</option>
     </VSel>
   </VRow>
+  {renderSurfaceOpacity('other', 'Water opacity')}
   {/* Large systems keep their ★ lightweight mode (everything in ONE cheap
       style, water off unless ticked): the category menus above describe the
       full-detail rendering, which ✨ Full detail restores. */}
@@ -5098,6 +5496,7 @@ className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8
       </label>
     </VRow>
   )}
+  {renderCatLabels('other')}
 </VMenu>
 
 <button
@@ -5105,7 +5504,7 @@ type="button"
 onClick={() => espToggle(selectedMolKey)}
 disabled={!espTargetComp}
 title={espBtnTitle}
-className={`text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed ${espOnSelected ? 'bg-fuchsia-100 border-fuchsia-400 text-fuchsia-800 hover:bg-fuchsia-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed ${espOnSelected ? 'bg-fuchsia-100 border-fuchsia-400 text-fuchsia-800 hover:bg-fuchsia-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
 >
 {espOnSelected ? '⚡ ESP: On' : '⚡ ESP'}
 </button>
@@ -5269,110 +5668,93 @@ title="New residue number (blank = keep the original)"
     <p className="text-[10px] text-slate-400 italic">Saved and persists across pages. “Secondary structure” colours apply everywhere the “2° structure” colour mode is used (Molecules bar / Selections panel).</p>
   </div>
 )}
-</VSection>
+</div>
+)}
+</section>
 
-{/* ══ 3 · SCENE — fog · shadows (light + darkness) · clipping plane ═════════
-    The lighting rig is untouched: Shadows only locks NGL's single light in
-    place and the Darkness / Light sliders aim it. ✂ Clipping is NEW: it can
-    restore NGL's own near/far planes (nothing is ever cut) or extend them so a
-    huge assembly stays whole while zooming. */}
-<VSection title="3 · Scene" hint="fog · shadows · clipping plane">
+{/* ══ 3 · TOOLBAR — Scene | Modify | Analysis | PyMOL, ONE horizontal row ════
+    The four groups that used to be four stacked sections (§3 / §5 / §6 / §7 —
+    and the old §4 Labels row, whose three switches now live inside each
+    molecule menu) are ONE wrapped row, each group introduced by a small chip and
+    separated by a hairline. The expanded panels (✏️ Atom names, 🧪 PyMOL, the
+    clipping sliders) are full-width children of this same section, so the bar
+    stays one row tall while nothing is open.
+    • Scene: 🌫 Fog · ◐ Shadows (+ 🌑 Darkness / 💡 Light) · ✂ Clipping
+    • Modify: ✋ Drag · ⚗️ Rebuild H · ✏️ Atom names
+    • Analysis: 📏 Measure · 🟢 Assigned
+    • PyMOL: 🧪 Selections & PyMOL
+    The lighting rig is untouched: Shadows locks NGL's single light in place and
+    the Darkness / Light sliders aim it (and now also drive the AMBIENT-OCCLUSION
+    equivalent, see applyShadowSettings). ✂ Clipping pushed OFF sets the camera
+    bounds to the EXTREMES (near 0 · far 100000 · dist 0) so a large complex is
+    never cut. */}
+<VSection title="3 · Toolbar" hint="scene · modify · analysis · PyMOL">
+<span className="text-[9px] font-black text-sky-700 uppercase tracking-wide whitespace-nowrap">🌫 Scene</span>
 <button type="button" onClick={() => setFogEnabled((v) => !v)}
-  className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors h-8 ${fogEnabled ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${fogEnabled ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
   title="NGL's default depth fog fades distant atoms toward the background (a grey haze). Toggle it off for a crisp image — the setting is saved and persists across pages.">
   🌫 Fog: {fogEnabled ? 'On' : 'Off'}
 </button>
 <button type="button" onClick={() => setShadowOn((v) => !v)}
-  className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors h-8 ${shadowOn ? 'bg-slate-800 border-slate-800 text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="Shadows: swaps NGL's flat camera-lit look for ONE fixed key light whose direction you aim (Azimuth / Elevation appear while ON), so every side of the structure that turns away from the light falls into real shade as you rotate. The Darkness slider then only raises the dark↔light contrast — the light stays pure white, so colours are never tinted. (True WebGL shadow maps aren't supported by NGL — trying them made the molecule disappear. Every mesh is still flagged cast+receive shadows, see flagMeshShadows.)">
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${shadowOn ? 'bg-slate-800 border-slate-800 text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title="Shadows: swaps NGL's flat camera-lit look for ONE fixed key light whose direction you aim (Azimuth / Elevation appear while ON), so every side of the structure that turns away from the light falls into real shade as you rotate. The Darkness slider then only raises the dark↔light contrast — the light stays pure white, so colours are never tinted. Shadows also switches on the AMBIENT-OCCLUSION equivalent: NGL 2.4 has no SSAO pass, so the cavity shading comes from the deep-ambient + strong-key-light rig with supersampled shading (sampleLevel), which is what makes crevices and the inner sides of a fold read as depth. (True WebGL shadow maps aren't supported by NGL — trying them made the molecule disappear. Every mesh is still flagged cast+receive shadows, see flagMeshShadows.)">
   ◐ Shadows: {shadowOn ? 'On' : 'Off'}
 </button>
 {shadowOn && (
-  <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700" title="Darkness — contrast only: the lit side gets brighter and the shaded side darker, with no colour change (the key light is pure white and only the light/ambient INTENSITIES move)">
+  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Darkness — contrast only: the lit side gets brighter and the shaded side darker, with no colour change (the key light is pure white and only the light/ambient INTENSITIES move). This is also what deepens the ambient-occlusion-like cavity shading.">
     🌑 Darkness
-    <input type="range" min="0" max="100" value={Math.round(shadowDarkness * 100)} onChange={(e) => setShadowDarkness(Number(e.target.value) / 100)} className="w-24 accent-slate-700" />
+    <input type="range" min="0" max="100" value={Math.round(shadowDarkness * 100)} onChange={(e) => setShadowDarkness(Number(e.target.value) / 100)} className="w-20 accent-slate-700" />
     <span className="text-[10px] text-slate-500 w-8">{Math.round(shadowDarkness * 100)}%</span>
   </label>
 )}
 {shadowOn && (
-  <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 whitespace-nowrap" title="Light direction — aim the fixed key light (and therefore where the shadows fall). Azimuth 0° = light behind the camera (flat), 90° = screen-left, 180° = facing the camera; Elevation is the height above/below the horizon. The shade follows live while you drag.">
+  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Light direction — aim the fixed key light (and therefore where the shadows fall). Azimuth 0° = light behind the camera (flat), 90° = screen-left, 180° = facing the camera; Elevation is the height above/below the horizon. The shade follows live while you drag.">
     💡 Light
-    <input type="range" min="0" max="360" value={shadowAz} onChange={(e) => setShadowAz(Number(e.target.value))} className="w-20 accent-slate-700" aria-label="Light azimuth" />
+    <input type="range" min="0" max="360" value={shadowAz} onChange={(e) => setShadowAz(Number(e.target.value))} className="w-16 accent-slate-700" aria-label="Light azimuth" />
     <span className="text-[10px] text-slate-500 w-8">{shadowAz}°</span>
     <span className="text-slate-400">/</span>
-    <input type="range" min="-90" max="90" value={shadowEl} onChange={(e) => setShadowEl(Number(e.target.value))} className="w-20 accent-slate-700" aria-label="Light elevation" />
+    <input type="range" min="-90" max="90" value={shadowEl} onChange={(e) => setShadowEl(Number(e.target.value))} className="w-16 accent-slate-700" aria-label="Light elevation" />
     <span className="text-[10px] text-slate-500 w-8">{shadowEl}°</span>
   </label>
 )}
 <button type="button" onClick={() => setClipOn((v) => !v)}
-  className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors h-8 whitespace-nowrap ${clipOn ? 'bg-emerald-50 border-emerald-400 text-emerald-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="Clipping plane (NEW). NGL clips the scene with the camera near / far planes: clipNear / clipFar are percentages of the scene bounding sphere and clipDist (10 Å by default) is the closest the near plane may come to the camera — exactly what CUTS a big complex when you zoom in. OFF = NGL's own defaults (0 / 100 / 10 Å), nothing is ever cut. ON = your own values below.">
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${clipOn ? 'bg-emerald-50 border-emerald-400 text-emerald-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title="Clipping plane. NGL clips the scene with the camera near / far planes: clipNear / clipFar are percentages of the scene bounding sphere and clipDist is the closest the near plane may come to the camera — exactly what CUTS a big complex when you zoom in. OFF = the camera bounds are pushed to the EXTREMES (near 0 · far 100000 · dist 0), so nothing is ever cut at any zoom. ON = your own values below.">
   ✂ Clipping: {clipOn ? 'On' : 'Off'}
 </button>
 {clipOn && (
   <>
-    <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 whitespace-nowrap" title="clipNear — how much is cut in FRONT of the molecule, as a percentage of the bounding sphere. 0 (default) cuts nothing; positive values bring the near plane closer to the molecule.">
+    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="clipNear — how much is cut in FRONT of the molecule, as a percentage of the bounding sphere. 0 cuts nothing (the near plane sits on the front edge of the sphere); positive values bring the near plane closer to the molecule.">
       near
-      <input type="range" min="-50" max="50" step="1" value={clipNear} onChange={(e) => setClipNear(Number(e.target.value))} className="w-24 accent-emerald-600" aria-label="Clipping near" />
+      <input type="range" min="-50" max="50" step="1" value={clipNear} onChange={(e) => setClipNear(Number(e.target.value))} className="w-20 accent-emerald-600" aria-label="Clipping near" />
       <span className="text-[10px] text-slate-500 w-10">{clipNear}%</span>
     </label>
-    <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 whitespace-nowrap" title="clipFar — how much is cut BEHIND the molecule, as a percentage of the bounding sphere. 100 (default) cuts nothing; raise it for a huge assembly that loses its far side.">
+    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="clipFar — how far BEHIND the molecule the far plane sits, as a percentage of the bounding sphere. 50 = the centre of the sphere, 100 = its back edge, 150 = one radius further; « Off » uses 100000 (effectively infinite).">
       far
-      <input type="range" min="50" max="150" step="1" value={clipFar} onChange={(e) => setClipFar(Number(e.target.value))} className="w-24 accent-emerald-600" aria-label="Clipping far" />
+      <input type="range" min="50" max="150" step="1" value={clipFar} onChange={(e) => setClipFar(Number(e.target.value))} className="w-20 accent-emerald-600" aria-label="Clipping far" />
       <span className="text-[10px] text-slate-500 w-10">{clipFar}%</span>
     </label>
-    <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 whitespace-nowrap" title="clipDist — the MINIMUM distance (Å) between the camera and the near plane. NGL floors it at 10 Å, which is why a large complex gets cut when zooming in: lower it (0.1 Å) and the cut disappears.">
+    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="clipDist — the MINIMUM distance (Å) between the camera and the near plane. NGL floors the near plane with it, which is what cuts a large complex when you zoom in: 0 removes the floor completely (that is what « Off » uses).">
       cam. near
-      <input type="range" min="0.1" max="30" step="0.1" value={clipDist} onChange={(e) => setClipDist(Math.max(0.1, Number(e.target.value)))} className="w-24 accent-emerald-600" aria-label="Clipping camera distance" />
+      <input type="range" min="0" max="30" step="0.1" value={clipDist} onChange={(e) => setClipDist(Math.max(0, Number(e.target.value)))} className="w-20 accent-emerald-600" aria-label="Clipping camera distance" />
       <span className="text-[10px] text-slate-500 w-12">{clipDist} Å</span>
     </label>
     <button type="button"
       onClick={() => { setClipNear(CLIP_DEFAULTS.near); setClipFar(CLIP_DEFAULTS.far); setClipDist(CLIP_DEFAULTS.dist); }}
       className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-      title="Back to NGL's own clipping values (near 0 · far 100 · 10 Å)">
-      ↺ NGL defaults
+      title="Back to the « no cut » extremes: clipNear 0 · clipFar 100000 · clipDist 0 Å">
+      ↺ No cut (0 · 100000 · 0 Å)
     </button>
   </>
 )}
-<span className="text-[10px] text-slate-400 italic">Off = NGL defaults (nothing cut) · the choice is saved and persists across pages.</span>
-</VSection>
+<span className="text-[9px] text-slate-400 italic">Clipping Off = camera bounds at the extremes (0 · 100000 · 0) so nothing is ever cut · saved and persistent.</span>
 
-{/* ══ 4 · LABELS — the three independent 3D label switches ═════════════════ */}
-<VSection title="4 · Labels" hint="3D labels only — the 2D formula is never touched">
-<label title="Show residue / molecule numbers in 3D (proteins: one number on each CA; DNA/RNA: on O4' or P; ligands: the residue tag at the molecule centre; water/ions: the residue name + number)" className="flex items-center gap-1 text-[11px] font-bold text-slate-700 cursor-pointer h-8 whitespace-nowrap">
-<input
-type="checkbox"
-checked={showResidueNumber}
-onChange={(e) => setShowResidueNumber(e.target.checked)}
-className="w-3.5 h-3.5 accent-blue-600"
-/>
-Residues
-</label>
-<label title="Append the 1-letter amino-acid / nucleotide code to residue labels (10 → 10A) for protein and nucleic structures" className="flex items-center gap-1 text-[11px] font-bold text-slate-700 cursor-pointer h-8 whitespace-nowrap">
-<input
-type="checkbox"
-checked={showResidueNumberType}
-onChange={(e) => setShowResidueNumberType(e.target.checked)}
-className="w-3.5 h-3.5 accent-blue-600"
-/>
-Residue type
-</label>
-<label title="Show the atom name next to each atom (e.g. CA, HA, CB, O1G)" className="flex items-center gap-1 text-[11px] font-bold text-slate-700 cursor-pointer h-8 whitespace-nowrap">
-<input
-type="checkbox"
-checked={showAtomLabel}
-onChange={(e) => setShowAtomLabel(e.target.checked)}
-className="w-3.5 h-3.5 accent-blue-600"
-/>
-Atom names
-</label>
-</VSection>
-
-{/* ══ 5 · MODIFY — move · rebuild hydrogens · rename atoms ══════════════════ */}
-<VSection title="5 · Modify" hint="move one molecule · rebuild H · rename atoms">
+{/* ── Modify ─────────────────────────────────────────────────────────────── */}
+<span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
+<span className="text-[9px] font-black text-amber-700 uppercase tracking-wide whitespace-nowrap">✏️ Modify</span>
 <button type="button" onClick={() => setDragMove((v) => !v)}
   disabled={status !== 'ready'}
-  className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors h-8 whitespace-nowrap ${dragMove ? 'bg-amber-400 border-amber-500 text-amber-950' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'}`}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${dragMove ? 'bg-amber-400 border-amber-500 text-amber-950' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'}`}
   title="Move the selected structure with the mouse instead of typing X/Y/Z. When ON, dragging in the viewer slides the SELECTED structure (rotate/zoom is suspended) — one molecule at a time.">
   ✋ Drag: {dragMove ? 'On' : 'Off'}
 </button>
@@ -5380,17 +5762,20 @@ Atom names
 type="button"
 onClick={rebuildHydrogensNow}
 title="Delete every hydrogen of the peptide and re-place them with ideal bond lengths and angles (N–H ≈ 1.01 Å, C–H ≈ 1.09 Å…). All atom names are kept and no heavy atom moves — the rebuild works on generated structures and on PDB files you load with the 📂 button."
-className="text-xs font-bold px-3 py-1.5 rounded-lg border transition-colors h-8 whitespace-nowrap bg-white border-slate-300 text-slate-700 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700"
+className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-slate-300 text-slate-700 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700"
 >
 ⚗️ Rebuild H
 </button>
 {rebuildMsg && (
-<span title={rebuildMsg} className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md px-2 py-1 h-8 inline-flex items-center max-w-[480px] truncate">
+<span title={rebuildMsg} className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
 {rebuildMsg}
 </span>
 )}
+
+{/* ✏️ Atom names (rename) — the control of the Modify group; its panel is a
+    full-width child of the toolbar so the row itself stays one line tall. */}
 <button type="button" onClick={() => setShowAtomPanel((v) => !v)}
-  className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors h-8 ${showAtomPanel ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${showAtomPanel ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
   title="Rename the atoms of the 3D structure (organic molecules included): click-to-rename in the 3D view, auto-naming from the 2D formula, or edit the name list directly. The 2D formula is never touched.">
   ✏️ Atom names{Object.keys(renames).length ? ` (${Object.keys(renames).length})` : ''}
 </button>
@@ -5451,20 +5836,20 @@ className="text-xs font-bold px-3 py-1.5 rounded-lg border transition-colors h-8
     </div>
   </div>
 )}
-</VSection>
 
-{/* ══ 6 · ANALYSIS — measure · assigned atoms ══════════════════════════════ */}
-<VSection title="6 · Analysis" hint="distances · atoms assigned by NMR">
+{/* ── Analysis ───────────────────────────────────────────────────────────── */}
+<span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
+<span className="text-[9px] font-black text-rose-700 uppercase tracking-wide whitespace-nowrap">📏 Analysis</span>
 <button
 type="button"
 onClick={toggleMeasureMode}
 title={measureMode ? '📏 Measure is ON — click any two atoms to draw the distance between them (shown in Å). Click again to stop measuring; drawn distances stay visible.' : 'Measure atom distances: click any two atoms to draw the distance between them, with a live label in Å (NGL distance representation).'}
-className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-colors h-8 whitespace-nowrap ${measureMode ? 'bg-rose-50 border-rose-400 text-rose-700 ring-1 ring-rose-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${measureMode ? 'bg-rose-50 border-rose-400 text-rose-700 ring-1 ring-rose-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
 >
 {measureMode ? '📏 Measuring…' : '📏 Measure'}
 </button>
 {measureMode && (
-<span title={measureInfo || 'Click two atoms to measure the distance between them'} className="text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-2 py-1 h-8 inline-flex items-center max-w-[340px] truncate">
+<span title={measureInfo || 'Click two atoms to measure the distance between them'} className="text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[320px] truncate">
 {measureInfo || (measurePending ? `1st atom: ${measurePending} — click the 2nd…` : 'Click two atoms…')}
 </span>
 )}
@@ -5472,7 +5857,7 @@ className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-colors h-
 <button
 type="button"
 onClick={clearMeasurements}
-className="text-xs font-bold px-2 py-1.5 rounded-lg border border-rose-300 bg-white text-rose-700 hover:bg-rose-50 h-8 whitespace-nowrap"
+className="px-2 py-1 text-[11px] font-bold rounded-md border border-rose-300 bg-white text-rose-700 hover:bg-rose-50 h-7 whitespace-nowrap"
 title={measurePending ? 'Cancel the pending first atom and remove all drawn distance measurements' : 'Remove all drawn distance measurements'}
 >
 ✕ Clear distances
@@ -5482,16 +5867,16 @@ title={measurePending ? 'Cancel the pending first atom and remove all drawn dist
 type="button"
 onClick={() => setShowAssignedFlag(!showManualHighlight)}
 title="Show / hide the green highlight on the atoms assigned by NMR"
-className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-colors h-8 whitespace-nowrap ${showManualHighlight ? 'bg-green-50 border-green-300 text-green-700' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${showManualHighlight ? 'bg-green-50 border-green-300 text-green-700' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
 >
 {showManualHighlight ? '🟢 Assigned: On' : '⚪ Assigned: Off'}
 </button>
-</VSection>
 
-{/* ══ 7 · SELECTIONS & PYMOL — reads PyMOL macros ══════════════════════════ */}
-<VSection title="7 · Selections & PyMOL" hint="paste / load a PyMOL macro — the parsed selections get their own bar on the right">
+{/* ── PyMOL ──────────────────────────────────────────────────────────────── */}
+<span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
+<span className="text-[9px] font-black text-violet-700 uppercase tracking-wide whitespace-nowrap">🧪 PyMOL</span>
 <button type="button" onClick={() => setShowPymolPanel((v) => !v)}
-  className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors h-8 ${showPymolPanel ? 'bg-violet-100 border-violet-400 text-violet-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${showPymolPanel ? 'bg-violet-100 border-violet-400 text-violet-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
   title="Paste or load a PyMOL script (select / show / hide / color / set sphere_scale·transparency / bg_color / cartoon · ribbon · tube / surface / spectrum / util.ray_shadows). Parsed selections appear in the vertical bar on the right of the 3D viewer.">
   🧪 Selections & PyMOL
 </button>
@@ -5545,39 +5930,34 @@ className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-colors h-
 )}
 </VSection>
 
-
 {/* (The global Side / Backbone / Mol / Large / Water selectors and the docking
     row that used to sit here are gone: their functionality now lives in the
-    five per-category menus of §2 — Large + 💧 Water inside « E · Others » —
-    and the docking controls at the top of §2. No capability was removed.) */}
+    SIX per-category menus of §2 — Large + 💧 Water inside « F · Others » —
+    and the docking controls at the top of the §2 panel. No capability was
+    removed.) */}
 
-{/* (The flat « View enhancement panels » button row that used to sit here is
-    gone: every control it held now lives in its own numbered section —
-    ✏️ Atom names in §5 Modify, 🧪 Selections & PyMOL in §7, 🎨 Colours and
-    🔢 Renumber in §2 (Proteins / Nucleic menus), 🙈 Hide everything in §2,
-    🌫 Fog · ◐ Shadows · ✨ sliders in §3 Scene, ✋ Drag in §5 Modify,
-    🟢 Assigned · 📏 Measure in §6 Analysis. Same handlers, same state.) */}
+{/* Read the trajectory bar as a BAR, not as text: the banner below must stay a
+    JSX comment (curly braces around the block comment). A bare block comment
+    sitting between two JSX expressions is rendered as LITERAL TEXT and replaces
+    the whole ▶ Play · frame slider · speed bar with its own description. */}
 
-
-
-
-/* ══ ▶ TRAJECTORY PLAYBACK — ▶ Play · frame slider · speed ═════════════════
+{/* ══ ▶ TRAJECTORY PLAYBACK — ▶ Play · frame slider · speed ═════════════════
    Sits directly above the 3D viewer (it drives it) and appears as soon as a
    trajectory exists for the CONDITION (a loaded file, a URL, or simply the name
    declared on the experiment): the bar is never silent, and ▶ only wakes up
-   once the frames are really in the browser. */
+   once the frames are really in the browser. */}
 {(trajFile || trajectoryFile || trajectorySrc || declaredTrajName) && (
 <VSection title="▶ Trajectory playback" hint="▶ Play · frame slider · speed — this condition's own trajectory">
-<div className="flex flex-wrap items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+<div className="flex flex-wrap items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-lg px-2 py-1 w-full">
 <button
 type="button"
 onClick={togglePlay}
 disabled={trajStatus !== 'ready' || keptFrames === 0}
-className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm transition-colors inline-flex items-center gap-1"
+className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold px-3 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
 >
 {playing ? '⏸ Pause' : '▶ Play'}
 </button>
-<div className="flex items-center gap-2 flex-1 min-w-[220px]">
+<div className="flex items-center gap-2 flex-1 min-w-[200px]">
 <span className="text-[10px] font-bold text-indigo-700 whitespace-nowrap">Frame</span>
 <input
 type="range"
@@ -5592,19 +5972,19 @@ className="flex-1 accent-indigo-600"
 {currentFrame} / {Math.max(0, keptFrames - 1)}
 </span>
 </div>
-<div className="flex items-center gap-2">
+<div className="flex items-center gap-1.5">
 <label className="text-[10px] font-bold text-indigo-700 uppercase">Speed</label>
 <select
 value={speed}
 onChange={(e) => setSpeed(Number(e.target.value) || 10)}
-className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-indigo-500"
+className="border border-indigo-300 rounded-md px-1.5 py-0.5 text-[11px] bg-white outline-none focus:border-indigo-500 h-7"
 >
 {[1, 5, 10, 20, 30, 60].map((s) => <option key={s} value={s}>{s} fps</option>)}
 </select>
 </div>
-<div className="w-full">
+<span className="flex-1 min-w-[160px] text-[10px] font-bold leading-tight">
 {trajStatus === 'loading' && (
-  <span className="text-xs font-bold text-indigo-600">
+  <span className="text-indigo-600">
     ⏳ Loading trajectory ({trajectoryFormat.toUpperCase()})…
     {numFrames > 0 && (
       <span className="text-indigo-500 font-mono font-semibold">
@@ -5616,19 +5996,19 @@ className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outlin
   </span>
 )}
 {trajStatus === 'ready' && (
-  <span className="text-xs font-bold text-emerald-600">
+  <span className="text-emerald-600">
     ✓ {trajectoryFormat.toUpperCase()}: {numFrames} frames total → playing {keptFrames} (stride {effStride})
   </span>
 )}
-{trajStatus === 'error' && <span className="text-xs font-bold text-red-600">⚠️ {trajError}</span>}
+{trajStatus === 'error' && <span className="text-red-600">⚠️ {trajError}</span>}
 {waitingTrajFile && (
-  <span className="text-xs font-bold text-amber-700">
+  <span className="text-amber-700">
     ⏳ “{declaredTrajName}” is declared on this experiment but is not loaded in this browser yet — press
     “⬇️ Bring it back from Google Drive” on the page (the reference copy), or pick the file here with 📂 Trajectory.
     ▶ turns on as soon as the frames are read.
   </span>
 )}
-</div>
+</span>
 </div>
 </VSection>
 )}

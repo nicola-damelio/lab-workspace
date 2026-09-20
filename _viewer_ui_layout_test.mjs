@@ -1,25 +1,35 @@
 /* =========================================================================
-   _viewer_ui_layout_test.mjs — la NOUVELLE ORGANISATION DE L'INTERFACE du
+   _viewer_ui_layout_test.mjs — l'organisation COMPACTE de l'interface du
    viewer 3D partagé (NMR / MD / Docking).
 
    Ce qui doit rester vrai :
 
      • le bouton « ⬇ Minimize » est SEUL tout en haut de la fenêtre (§0) ;
-     • les sept sections numérotées existent, dans l'ordre demandé :
-       1 General · 2 Molecular Styling · 3 Scene · 4 Labels · 5 Modify ·
-       6 Analysis · 7 Selections & PyMOL ;
-     • §2 porte les contrôles Docking, « Hide everything » et CINQ menus
-       indépendants par catégorie (A Proteins · B Nucleic acids · C Lipids ·
-       D Organic molecules · E Others), avec les listes d'options demandées ;
-     • les anciens menus globaux (Side / Backbone / Mol / Large / Water) ont
-       disparu de la barre d'outils — leur fonctionnalité vit dans les menus ;
+     • la barre de commande tient en TROIS lignes, dans l'ordre demandé :
+       1 General (PDB / Load / Trajectory / Clear / Figure) ·
+       2 Molecular Styling — ACCORDÉON REPLIÉ PAR DÉFAUT (docking + « Hide
+         everything » + SIX menus : A Proteins · B Nucleic acids · C Lipids ·
+         D Sugars · E Organic molecules · F Others) ·
+       3 Toolbar = Scene | Modify | Analysis | PyMOL sur UNE seule rangée ;
+     • l'ancienne section globale « 4 · Labels » a disparu : Residues /
+       Residue type / Atom names vivent DANS chaque menu, donc cocher
+       « Residues » dans le menu Protéines n'étiquette QUE les protéines ;
+     • les lipides sont séparés en headgroups / squelette glycérol / chaînes
+       acyle par des sélections NGL par NOM D'ATOME, les sucres ont leur propre
+       menu (mot-clé réel `saccharide` + liste de resnames : NGL 2.4 n'a pas de
+       mot-clé `carbohydrate`) et le menu des ligands exclut lipides ET sucres ;
+     • toute surface « Transparent » fait apparaître un curseur d'opacité
+       (0 → 1) et la valeur part dans NGL avec `transparent: true` ;
+     • « Clipping: Off » pousse les plans de la caméra aux extrêmes
+       (0 · 100000 · 0 Å) pour ne jamais couper un gros complexe, et ◐ Shadows
+       allume l'équivalent NGL de l'ambient occlusion (ambiance + sampleLevel) ;
+     • la barre ▶ Play · frame slider · speed est bien une BARRE (un commentaire
+       JSX, jamais un commentaire brut rendu comme du texte) ;
      • RIEN n'a été perdu : ESP, lumière/ombres, sélections PyMOL, mesure,
        assigned, renumérotation, couleurs, rebuild H, renommage, labels,
        drag, large systems, barre de lecture de trajectoire, repli de la
        séquence ;
-     • les nouvelles mailles sont marquées castShadow + receiveShadow ;
-     • le plan de coupe (clipping) est un NOUVEAU réglage réel (clipNear /
-       clipFar / clipDist de NGL 2.4).
+     • les nouvelles mailles sont marquées castShadow + receiveShadow.
 
    Le viewer est un .jsx : il ne s'importe pas sous Node. Les règles sont donc
    vérifiées SUR LA SOURCE — comme les autres garde-fous du dépôt.
@@ -39,29 +49,51 @@ const has = (needle, what) => ok(VIEW.includes(needle), `${what}\n  introuvable 
 const gone = (needle, what) => ok(!VIEW.includes(needle), `${what}\n  encore présent : ${needle}`);
 
 /* ── 1. §0 : « Minimize » seul tout en haut ─────────────────────────────── */
-const iReturn = VIEW.indexOf('return (\n<div className="flex flex-col gap-3">');
-ok(iReturn > 0, 'la racine du viewer est un empilement de sections');
+const iReturn = VIEW.indexOf('return (\n<div className="flex flex-col gap-2">');
+ok(iReturn > 0, 'la racine du viewer est un empilement compact de lignes');
 const iMin = VIEW.indexOf('{viewerCollapsed ? \'⬆ Expand viewer\' : \'⬇ Minimize viewer\'}');
 const iS1 = VIEW.indexOf('<VSection title="1 · General"');
-ok(iMin > iReturn && iMin < iS1, 'le bouton Minimize est rendu AVANT toute autre section');
+ok(iMin > iReturn && iMin < iS1, 'le bouton Minimize est rendu AVANT toute autre ligne');
 ok(!VIEW.slice(iReturn, iMin).includes('<VSection'), '…et aucune section ne le précède');
 ok(VIEW.indexOf('Retract (minimize) the 3D viewer window') > 0, 'son infobulle décrit le repli de la fenêtre');
 
-/* ── 2. Les sept sections, dans l'ordre ─────────────────────────────────── */
+/* ── 2. Les trois lignes de la barre de commande, dans l'ordre ──────────── */
 const order = [
   '<VSection title="1 · General"',
-  '<VSection title="2 · Molecular Styling"',
-  '<VSection title="3 · Scene"',
-  '<VSection title="4 · Labels"',
-  '<VSection title="5 · Modify"',
-  '<VSection title="6 · Analysis"',
-  '<VSection title="7 · Selections & PyMOL"',
+  "{stylingOpen ? '▾' : '▸'} 2 · Molecular Styling",
+  '<VSection title="3 · Toolbar"',
 ];
-order.forEach((marker) => has(marker, `section ${marker.replace('<VSection title=', '').replace('"', '')} présente`));
+order.forEach((marker) => has(marker, `ligne « ${marker.replace('<VSection title=', '').replace('"', '')} » présente`));
 for (let i = 1; i < order.length; i++) {
-  ok(VIEW.indexOf(order[i - 1]) < VIEW.indexOf(order[i]), `la section ${i} précède la section ${i + 1}`);
+  ok(VIEW.indexOf(order[i - 1]) < VIEW.indexOf(order[i]), `la ligne ${i} précède la ligne ${i + 1}`);
 }
 has('<VSection title="▶ Trajectory playback"', 'la barre de lecture a sa propre section, juste au-dessus du viewer');
+// Les quatre sections empilées d'avant n'existent plus : §4 Labels (ses trois
+// cases sont dans les menus) et §5/§6/§7, fondus dans la rangée d'outils §3.
+gone('<VSection title="4 · Labels"', 'l\'ancienne section « 4 · Labels » est supprimée');
+gone('<VSection title="5 · Modify"', 'l\'ancienne section « 5 · Modify » est fondue dans la rangée §3');
+gone('<VSection title="6 · Analysis"', 'l\'ancienne section « 6 · Analysis » est fondue dans la rangée §3');
+gone('<VSection title="7 · Selections & PyMOL"', 'l\'ancienne section « 7 · Selections & PyMOL » est fondue dans la rangée §3');
+// Les quatre groupes sont bien DANS la même rangée, séparés par un filet.
+has('>🌫 Scene</span>', '[§3] groupe Scene dans la rangée');
+has('>✏️ Modify</span>', '[§3] groupe Modify dans la rangée');
+has('>📏 Analysis</span>', '[§3] groupe Analysis dans la rangée');
+has('>🧪 PyMOL</span>', '[§3] groupe PyMOL dans la rangée');
+ok((VIEW.match(/aria-hidden="true" \/>/g) || []).length >= 3, '[§3] les groupes sont séparés par des filets');
+
+/* ── 2bis. §2 : accordéon REPLIÉ PAR DÉFAUT ─────────────────────────────── */
+has('const [stylingOpen, setStylingOpen] = useState(false);', '[§2] replié par défaut');
+has('onClick={() => setStylingOpen((v) => !v)}', '[§2] en-tête cliquable');
+has('aria-expanded={stylingOpen}', '[§2] l\'en-tête annonce son état');
+has('{stylingOpen && (', '[§2] les menus ne sont montés qu\'une fois ouvert');
+has('Proteins ${catStyles.protein.backbone} · Nucleic ${catStyles.nucleic.backbone}', '[§2] en-tête replié : résumé des styles courants');
+
+/* ── 2ter. La barre ▶ Play n'est pas remplacée par du texte ─────────────── */
+ok(!/\n\/\* ══ ▶ TRAJECTORY PLAYBACK/.test(VIEW),
+  'le commentaire de la barre de lecture est un commentaire JSX (sinon il s\'afficherait comme du texte)');
+has('{(trajFile || trajectoryFile || trajectorySrc || declaredTrajName) && (', '[barre] condition d\'apparition conservée');
+has('onClick={togglePlay}', '[barre] ▶ Play conservé');
+has('onChange={handleFrameChange}', '[barre] curseur de frame conservé');
 
 /* ── 3. §1 General : PDB / Load / Trajectory / Clear / Figure ───────────── */
 has('📂 PDB file(s)', '[§1] chargement de fichier(s) PDB');
@@ -84,8 +116,9 @@ has('{hideAll ? \'👁️ Show default\' : \'🙈 Hide everything\'}', '[§2] Hi
 has('label="A · Proteins"', '[§2] menu A · Proteins');
 has('label="B · Nucleic acids"', '[§2] menu B · Nucleic acids');
 has('label="C · Lipids"', '[§2] menu C · Lipids');
-has('label="D · Organic molecules (ligands)"', '[§2] menu D · Organic molecules');
-has('label="E · Others (ions · solvent / water)"', '[§2] menu E · Others');
+has('label="D · Sugars (carbohydrates)"', '[§2] menu D · Sugars');
+has('label="E · Organic molecules (ligands)"', '[§2] menu E · Organic molecules');
+has('label="F · Others (ions · solvent / water)"', '[§2] menu F · Others');
 
 /* ── 5. Les listes d'options demandées, menu par menu ───────────────────── */
 // A · Proteins
@@ -111,9 +144,40 @@ has('const LIPID_RESNAMES = new Set([', '[C] reconnaissance des lipides par resn
 has('const lipidsFound = Array.isArray((catInfo && catInfo.lipids) || null) ? catInfo.lipids : [];',
   '[C] le menu dit ce qu’il a trouvé (ou qu’il n’y a rien à styler)');
 // D · Organic + E · Others
-has('<option value="dots">Dots (lightest)</option>', '[E] eau : Dots (le plus léger)');
-has('<option value="points">Points (sized)</option>', '[E] eau : Points');
-has('label="Water surface"', '[E] surface d’eau (Solid / Transparent / Mesh)');
+has('<option value="dots">Dots (lightest)</option>', '[F] eau : Dots (le plus léger)');
+has('<option value="points">Points (sized)</option>', '[F] eau : Points');
+has('label="Water surface"', '[F] surface d’eau (Solid / Transparent / Mesh)');
+
+/* ── 5bis. PART 2 — sélections & rendu avancés ──────────────────────────── */
+// 1. Lipides : la liste de resnames demandée + les trois sous-parties par nom
+//    d'atome (headgroups / squelette glycérol / chaînes acyle).
+has("const lipidRes = '[POPC] or [DPPC] or [DMPC] or [DOPC] or [POPE] or [DOPE] or [CHOL] or [ERG] or [DPPG] or [POPG] or [DLPC] or [MYR] or [STE] or [PAL]';",
+  '[lipides] sélection de base par resname');
+has("const LIPID_HEAD_ATOMS = '.P or .N or .O1* or .O2* or .O3* or .O4*';", '[lipides] atomes de tête');
+has("const LIPID_GLYCEROL_ATOMS = '.C1 or .C2 or .C3 or .O21 or .O31';", '[lipides] squelette glycérol');
+has('const lipidSubSelections = (lipidSele, namedAtoms = true) => {', '[lipides] les trois sous-sélections');
+has("head: `(${lipidSele}) and (${headAtoms}) and not (${LIPID_GLYCEROL_ATOMS})`", '[lipides] tête sans le squelette');
+has("acyl: `(${lipidSele}) and not (${headAtoms} or ${glyAtoms})`", '[lipides] chaînes acyle = ni tête ni squelette');
+has('const namedAtoms = nglSeleCountCached(comp.structure, `(${lipidSele}) and (${LIPID_HEAD_ATOMS})`) !== 0;',
+  '[lipides] repli sur les éléments si la nomenclature ne suit pas CHARMM/AMBER');
+has('label="Glycerol backbone"', '[lipides] menu : squelette glycérol séparé');
+has("onChange={(e) => setCatStyle('lipid', 'glycerol', e.target.value)}", '[lipides] …et il est réglable');
+// 2. Sucres vs ligands.
+has("const SUGAR_RES_SEL = '[GLC] or [NAG] or [MAN] or [BMA] or [SIA] or [GAL] or [FUC]';", '[sucres] liste explicite de resnames');
+has('const SUGAR_SEL = `saccharide or ${SUGAR_RES_SEL}`;', '[sucres] mot-clé RÉEL de NGL 2.4 (pas `carbohydrate`) + liste');
+has("not (${sugarSele})", '[ligands] le menu des ligands exclut les sucres');
+has("addSurface(sugarSele, cs.sugar.surface, 'default', cs.sugar.surfaceOpacity);", '[sucres] surface propre au menu des sucres');
+// 3. Surface d'eau + opacité.
+has("addSurface('water', cs.other.surface, 'default', cs.other.surfaceOpacity);", '[eau] la surface s’applique à la sélection `water`, toute seule');
+has("nglSeleCountCached(comp.structure, 'water') !== 0", '[eau] …même quand les atomes d’eau ne sont dans aucune autre sélection');
+has("transparent: true, opacity: op", '[opacité] NGL reçoit transparent: true + opacity');
+has("const renderSurfaceOpacity = (cat, label = 'Opacity') => (", '[opacité] un curseur par menu');
+has('surface === \'transparent\'', '[opacité] il n’apparaît que pour « Transparent »');
+has("{renderSurfaceOpacity('protein')}", '[opacité] menu A');
+has("{renderSurfaceOpacity('nucleic')}", '[opacité] menu B');
+has("{renderSurfaceOpacity('sugar')}", '[opacité] menu D');
+has("{renderSurfaceOpacity('organic')}", '[opacité] menu E');
+has("{renderSurfaceOpacity('other', 'Water opacity')}", '[opacité] menu F (eau)');
 
 /* ── 6. Les anciens menus globaux ont bien disparu ──────────────────────── */
 gone('Side: Hidden', 'l’ancien menu « Side: » est retiré');
@@ -134,9 +198,22 @@ has('value={Math.round(shadowDarkness * 100)}', '[conservé] 🌑 Darkness');
 has('aria-label="Light azimuth"', '[conservé] 💡 Light (azimut)');
 has('aria-label="Light elevation"', '[conservé] 💡 Light (élévation)');
 has('installShadowLightRig();', '[conservé] la lumière-clé fixe des ombres');
-has('onChange={(e) => setShowResidueNumber(e.target.checked)}', '[conservé] étiquette Residues');
-has('onChange={(e) => setShowResidueNumberType(e.target.checked)}', '[conservé] étiquette Residue type');
-has('onChange={(e) => setShowAtomLabel(e.target.checked)}', '[conservé] étiquette Atom names');
+// Étiquettes 3D : elles vivent désormais DANS chaque menu (l'ancienne section
+// « 4 · Labels » est supprimée) — cocher « Residues » dans un menu n'étiquette
+// que les atomes de CE menu.
+has("{renderCatLabels('protein')}", '[étiquettes] menu A');
+has("{renderCatLabels('nucleic')}", '[étiquettes] menu B');
+has("{renderCatLabels('lipid')}", '[étiquettes] menu C');
+has("{renderCatLabels('sugar')}", '[étiquettes] menu D');
+has("{renderCatLabels('organic')}", '[étiquettes] menu E');
+has("{renderCatLabels('other')}", '[étiquettes] menu F');
+has("setCatLabel(cat, 'residues', e.target.checked)", '[étiquettes] case « Residues » par catégorie');
+has("setCatLabel(cat, 'residueType', e.target.checked)", '[étiquettes] case « Residue type » par catégorie');
+has("setCatLabel(cat, 'atoms', e.target.checked)", '[étiquettes] case « Atom names » par catégorie');
+has('const [catLabels, setCatLabels] = useState(() => loadCatLabels());', '[étiquettes] état par catégorie, persistant');
+has('allowed: new Set(indices)', '[étiquettes] build3dLabelMap ne reçoit que les atomes de la catégorie');
+has('const atomIndicesForSele = (structure, sele) => {', '[étiquettes] la sélection du menu devient une liste d’indices d’atomes');
+has('const routeCategorySelections = (sels, moleculeType) => {', '[rendu] UNE fonction de routage partagée par le rendu ET les étiquettes');
 has('onClick={() => setDragMove((v) => !v)}', '[conservé] ✋ Drag');
 has('onClick={rebuildHydrogensNow}', '[conservé] ⚗️ Rebuild H');
 has('onClick={() => setShowAtomPanel((v) => !v)}', '[conservé] ✏️ panneau Atom names (renommage)');
@@ -179,8 +256,9 @@ has('catEspRepsRef.current.forEach((list) => {', '[ESP] ⚡ Range recolore aussi
 has('{(espOnSelected || catEspActive) && (', '[ESP] le panneau Range s’affiche pour les deux entrées ESP');
 has('colorScheme: \'electrostatic\',\n      colorScale: \'rwb\',', '[ESP] l’overlay ⚡ garde son colorScheme/colorScale');
 
-/* ── 9. §3 Scene : fog, ombres, NOUVEAU plan de coupe ───────────────────── */
-has('const CLIP_DEFAULTS = { near: 0, far: 100, dist: 10 };', '[§3] défauts de clipping = ceux de NGL');
+/* ── 9. §3 Scene : fog, ombres, plan de coupe aux extrêmes quand Off ────── */
+has('const CLIP_DEFAULTS = { near: 0, far: 100000, dist: 0 };',
+  '[§3] « Off » = plans de la caméra aux extrêmes (0 · 100000 · 0 Å, rien n’est jamais coupé)');
 has('const [clipOn, setClipOn] = useState(() => {', '[§3] interrupteur de clipping');
 has('✂ Clipping: {clipOn ? \'On\' : \'Off\'}', '[§3] bouton Clipping On/Off');
 has('if (c.on) stage.setParameters({ clipNear: c.near, clipFar: c.far, clipDist: c.dist });',
@@ -191,12 +269,20 @@ has('localStorage.setItem(\'labViewerClip\'', '[§3] le réglage est persistant'
 has('aria-label="Clipping near"', '[§3] curseur near');
 has('aria-label="Clipping far"', '[§3] curseur far');
 has('aria-label="Clipping camera distance"', '[§3] curseur clipDist (la vraie cause de la coupe au zoom)');
-has('↺ NGL defaults', '[§3] retour aux valeurs NGL');
+has('↺ No cut (0 · 100000 · 0 Å)', '[§3] retour aux valeurs extrêmes (aucune coupe)');
+has('min="0" max="30" step="0.1" value={clipDist}', '[§3] clipDist descend jusqu’à 0 (plus aucun plancher)');
 
-/* ── 10. Ombres : les nouvelles mailles sont cast + receive ─────────────── */
+/* ── 10. Ombres : mailles cast + receive, ET l'équivalent de l'AO ───────── */
 has('const flagMeshShadows = (rep) => {', '[ombres] helper de marquage des mailles');
 has('o.castShadow = true;\n            o.receiveShadow = true;', '[ombres] cast ET receive sur chaque maille');
 has('if (r) { flagMeshShadows(r); reps.push(r); }', '[ombres] appelé pour CHAQUE représentation des menus');
+// NGL 2.4 n'a PAS de passe SSAO (vérifié : aucun symbole `ssao` /
+// `AmbientOcclusion` dans le build installé) : ◐ Shadows pilote donc
+// l'équivalent — ambiance profonde + lumière-clé forte + sur-échantillonnage.
+has('const AO_SAMPLE_LEVEL = 2;', '[AO] niveau de sur-échantillonnage de l’équivalent SSAO');
+has('sampleLevel: AO_SAMPLE_LEVEL,', '[AO] ◐ Shadows ON → l’ombrage des cavités est sur-échantillonné');
+has('        sampleLevel: 0,\n      });', '[AO] Shadows OFF → niveau d’échantillonnage NGL rétabli');
+has('ambientIntensity: Math.max(0.12, 0.34 - dark * 0.22)', '[AO] l’ambiance s’assombrit → cavités/crevasses marquées');
 
 /* ── 11. Le rendu suit les menus (et plus les anciens sélecteurs) ───────── */
 has('const catStylesRef = useRef(catStyles);', '[rendu] miroir synchrone des styles de catégorie');
