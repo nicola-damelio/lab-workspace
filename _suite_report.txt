@@ -93,6 +93,7 @@ OK   _sum_one_meta.mjs  →  usage: node _sum_one_meta.mjs "<fichier .meta.json>
 OK   _sum_panels.mjs  →  arrows=0 shapes=0 letterStyle={"fontSize":30,"color":"#000000","bold":true}
 OK   _ui_scale_test.cjs  →  ✅ 44/44 checks passed
 OK   _view_scroll_memory_test.cjs  →  ✅ 41/41 checks passed
+OK   _viewer_ui_layout_test.mjs  →  _viewer_ui_layout_test.mjs — 142 assertions OK
 OK   _workspace_drive_test.mjs  →  ✅ 57 tests passés (l’espace de travail entier vit sur le Drive)
 OK   _workspace_keys_test.mjs  →  ✅ 37 tests passés (les clés du navigateur vivent aussi sur le Drive)
-total 97, failed 0
+total 98, failed 0
