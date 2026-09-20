@@ -146,7 +146,16 @@ const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
    The Bases dropdown also gained « Stylized rings (coloured inside) »: NGL's own
    `base` rungs — the slabs that FILL the inside of the base rings — coloured with
    a per-base palette (A · C · G · T · U) plus a thin ring of sticks over the base
-   atoms, so each base reads as a coloured ring of its own.
+   atoms, so each base reads as a coloured ring of its own. With the backbone on
+   « Cartoon » (the NGL nucleic ribbon) that is the classic stylized DNA / RNA
+   ladder: a flat ribbon with the coloured base plates inside it.
+
+   Every home-made scheme goes through ONE helper, registerColorScheme: NGL's
+   ColormakerRegistry.addScheme wants the DEFINITION first and the LABEL second,
+   and an id whose scheme cannot be instantiated is never handed to a
+   representation (the caller falls back to a built-in NGL colour). A swapped
+   order — as this file once had — registers a class that `.call()`s a string, so
+   every representation using that id threw while building and drew nothing.
 
    SCENE (§3) — the background of the 3D scene is a colour of its own (« 🎨
    Background »), persisted like Fog / Shadows / Clipping, and it is part of a
@@ -925,20 +934,43 @@ const BG_DEFAULT = '#f8fafc';
 // pick their own per-element colours (helices / sheets / loops) we register ONE
 // custom scheme that reads live from the mutable store below — changing a colour
 // only requires re-rendering the affected representations (no re-registration).
-const sstrucColorStore = { helix: 0xb44a90, sheet: 0xf8d878, loop: 0xe6e6e6 };
-let sstrucSchemeKey = null; // NGL scheme name returned by ColormakerRegistry.addScheme
-const registerSstrucScheme = (NGL) => {
-  if (sstrucSchemeKey || !NGL || !NGL.ColormakerRegistry) return;
+//
+// ⚠️ ColormakerRegistry.addScheme(DEFINITION, LABEL) — the DEFINITION (the
+// function that defines `this.atomColor`) comes FIRST, the LABEL second. Given
+// them the other way round (as this viewer used to), NGL stringifies the label
+// into the scheme id and builds a class that `.call()`s a string: instantiating
+// it throws ("... .call is not a function"), so EVERY representation that asked
+// for that id died inside its own build and drew NOTHING — that is how
+// « Colour by chemical group » blanked the molecule and how « Stylized rings »
+// showed nothing at all. registerColorScheme is now the ONLY caller of
+// addScheme: besides the order it also INSTANTIATES the scheme once before
+// handing the id out, so an id that cannot produce an atom colour is never used
+// (the caller then keeps a built-in NGL colour instead of drawing nothing).
+const registerColorScheme = (NGL, label, define) => {
+  if (!NGL || !NGL.ColormakerRegistry) return null;
   try {
-    sstrucSchemeKey = NGL.ColormakerRegistry.addScheme('lab-sstruc', function () {
-      this.atomColor = function (atom) {
-        const s = atom && atom.sstruc;
-        if (s === 'h' || s === 'g' || s === 'i') return sstrucColorStore.helix;   // α / 3₁₀ / π helices
-        if (s === 'e' || s === 'b') return sstrucColorStore.sheet;                // β strands / sheets
-        return sstrucColorStore.loop;                                             // coil, turns, bends, loops…
-      };
-    });
-  } catch { /* NGL scheme registration is best-effort — falls back to built-in "sstruc" */ }
+    const key = NGL.ColormakerRegistry.addScheme(define, label);
+    const probe = NGL.ColormakerRegistry.getScheme({ scheme: key });
+    return probe && typeof probe.atomColor === 'function' ? key : null;
+  } catch { return null; }
+};
+const sstrucColorStore = { helix: 0xb44a90, sheet: 0xf8d878, loop: 0xe6e6e6 };
+let sstrucSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
+// The definition of the scheme, NAMED so a test can extract and really run it
+// (registerSstrucScheme below is the only place that registers it).
+const defineSstrucScheme = () => {
+  return function () {
+    this.atomColor = function (atom) {
+      const s = atom && atom.sstruc;
+      if (s === 'h' || s === 'g' || s === 'i') return sstrucColorStore.helix;   // α / 3₁₀ / π helices
+      if (s === 'e' || s === 'b') return sstrucColorStore.sheet;                // β strands / sheets
+      return sstrucColorStore.loop;                                             // coil, turns, bends, loops…
+    };
+  };
+};
+const registerSstrucScheme = (NGL) => {
+  if (sstrucSchemeKey) return;
+  sstrucSchemeKey = registerColorScheme(NGL, 'lab-sstruc', defineSstrucScheme());
 };
 const numToHex = (v) => `#${(Number(v) || 0).toString(16).padStart(6, '0')}`;
 
@@ -954,19 +986,21 @@ const nucleicColorStore = {
   pentose: DEFAULT_NUCLEIC_COLORS.pentose,
   base: DEFAULT_NUCLEIC_COLORS.base,
 };
-let nucleicSchemeKey = null; // scheme name returned by ColormakerRegistry.addScheme
+let nucleicSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
+// The definition of the scheme (named so a test can extract and really run it).
+const defineNucleicGroupsScheme = () => {
+  return function () {
+    this.atomColor = function (atom) {
+      const g = nucleicGroupOf(atom && atom.atomname);
+      if (g === 'phosphate') return nucleicColorStore.phosphate;
+      if (g === 'pentose') return nucleicColorStore.pentose;
+      return nucleicColorStore.base;
+    };
+  };
+};
 const registerNucleicScheme = (NGL) => {
-  if (nucleicSchemeKey || !NGL || !NGL.ColormakerRegistry) return;
-  try {
-    nucleicSchemeKey = NGL.ColormakerRegistry.addScheme('lab-nucleic-groups', function () {
-      this.atomColor = function (atom) {
-        const g = nucleicGroupOf(atom && atom.atomname);
-        if (g === 'phosphate') return nucleicColorStore.phosphate;
-        if (g === 'pentose') return nucleicColorStore.pentose;
-        return nucleicColorStore.base;
-      };
-    });
-  } catch { /* scheme registration is best-effort — the classic colouring stays */ }
+  if (nucleicSchemeKey) return;
+  nucleicSchemeKey = registerColorScheme(NGL, 'lab-nucleic-groups', defineNucleicGroupsScheme());
 };
 
 // ---- Stylized per-base colours (Bases → « Stylized rings ») -----------------
@@ -974,16 +1008,18 @@ const registerNucleicScheme = (NGL) => {
 // base (A · C · G · T · U, see BASE_IDENTITY_COLORS): that is the fill of the
 // « Stylized rings » option, which draws the inside of every base ring in the
 // colour of that base.
-let baseIdentitySchemeKey = null;
+let baseIdentitySchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
+// The definition of the scheme (named so a test can extract and really run it).
+const defineBaseIdentityScheme = () => {
+  return function () {
+    this.atomColor = function (atom) {
+      return baseIdentityColorOf(atom && atom.resname);
+    };
+  };
+};
 const registerBaseIdentityScheme = (NGL) => {
-  if (baseIdentitySchemeKey || !NGL || !NGL.ColormakerRegistry) return;
-  try {
-    baseIdentitySchemeKey = NGL.ColormakerRegistry.addScheme('lab-base-identity', function () {
-      this.atomColor = function (atom) {
-        return baseIdentityColorOf(atom && atom.resname);
-      };
-    });
-  } catch { /* falls back to NGL's own resname palette */ }
+  if (baseIdentitySchemeKey) return;
+  baseIdentitySchemeKey = registerColorScheme(NGL, 'lab-base-identity', defineBaseIdentityScheme());
 };
 
 // ---- PDB atom name → NMR Greek-letter name mapping (Hydrogens) ----
@@ -6109,7 +6145,7 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
 <VMenu open={openMenu === 'nucleic'} onToggle={() => setOpenMenu(openMenu === 'nucleic' ? null : 'nucleic')}
   id="viewer-menu-nucleic" label="B · Nucleic acids" accent="violet"
   summary={`Backbone: ${catStyles.nucleic.backbone} · Bases: ${catStyles.nucleic.bases} · Surface: ${catStyles.nucleic.surface}${catStyles.nucleic.surfaceColor === 'esp' ? ' (ESP)' : ''}`}>
-  <VRow label="Backbone" title="Cartoon = the NGL nucleic cartoon (backbone ribbon + base rungs); Phosphate Trace = NGL trace, a spline through the phosphate atoms (P) of each nucleotide; Hide draws no backbone.">
+  <VRow label="Backbone" title="Cartoon = NGL's nucleic cartoon: the flat backbone RIBBON. Together with Bases = Filled rings or Stylized rings it gives the classic stylized DNA / RNA look (a ribbon with the coloured base plates inside it). Phosphate Trace = NGL trace, a spline through the phosphate atoms (P) of each nucleotide; Hide draws no backbone.">
     <VSel value={catStyles.nucleic.backbone} onChange={(e) => setCatStyle('nucleic', 'backbone', e.target.value)} title="Nucleic backbone representation" width="w-44">
       <option value="cartoon">Cartoon</option>
       <option value="trace">Phosphate Trace (P)</option>
@@ -6122,7 +6158,7 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
       <option value="hide">Hide</option>
     </VSel>
   </VRow>
-  <VRow label="Bases" title="Filled rings (slabs / boxes) = NGL's own « base » representation — the flat slabs of the base ladder. Stylized rings = the same filled rings, but coloured INSIDE by the identity of each base (A · C · G · T · U) with a thin coloured ring of sticks over the base atoms. Licorice (sticks) draws the base atoms as sticks, Lines as bonds (cheapest). Hide removes the bases.">
+  <VRow label="Bases" title="Filled rings (slabs / boxes) = NGL's own « base » representation — the flat plates (rungs) of the base ladder, i.e. the slabs that fill the inside of the base rings. Stylized rings = the same filled plates, but coloured INSIDE by the identity of each base (A · C · G · T · U) with a thin coloured ring of sticks over the base atoms — with Backbone = Cartoon this is the stylized DNA / RNA look. Licorice (sticks) draws the base atoms as sticks, Lines as bonds (cheapest). Hide removes the bases.">
     <VSel value={catStyles.nucleic.bases} onChange={(e) => setCatStyle('nucleic', 'bases', e.target.value)} title="Nucleic bases representation" width="w-48">
       <option value="slab">Filled rings (slabs / boxes)</option>
       <option value="rings">Stylized rings (coloured inside)</option>

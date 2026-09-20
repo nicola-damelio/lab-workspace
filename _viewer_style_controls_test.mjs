@@ -17,7 +17,12 @@
      • le menu B (acides nucléiques) a son PROPRE panneau de couleurs —
        phosphate backbone · pentose rings · bases — à la place du panneau
        « 2° structure » (une notion de protéine) ; ses trois pastilles passent
-       par un schéma NGL maison (lab-nucleic-groups) qui lit un store vivant ;
+       par un schéma NGL maison (lab-nucleic-groups) qui lit un store vivant.
+       Ces schémas maison sont TOUS enregistrés par registerColorScheme, car
+       ColormakerRegistry.addScheme veut la DÉFINITION d'abord et le LIBELLÉ
+       ensuite : l'ancien ordre inversé donnait une classe cassée dont l'id
+       faisait disparaître la molécule (voir _viewer_scheme_test.mjs, qui exécute
+       vraiment les schémas avec NGL) ;
      • la liste « Bases » gagne « Stylized rings (coloured inside) » : les rungs
        remplis sont colorés par l'IDENTITÉ de la base (A · C · G · T · U) avec un
        fin anneau de sticks par-dessus ;
@@ -122,14 +127,26 @@ has("else if (st.style === 'sticks') add('licorice', { multipleBond: true, radiu
   'la barre Molecules aussi (style par molécule)');
 
 /* ══ 5. LE MENU B RECOLORE phosphate / pentose / bases ════════════════════ */
-has("NGL.ColormakerRegistry.addScheme('lab-nucleic-groups'", 'un schéma NGL maison pour les trois groupes');
+// ⚠️ ColormakerRegistry.addScheme(DÉFINITION, LIBELLÉ) : la définition D'ABORD.
+// L'ancien ordre inversé enregistrait une classe cassée (le libellé était
+// `.call()`é à l'instanciation) dont l'id faisait échouer toute représentation
+// qui s'en servait → « Colour by chemical group » vidait la molécule et
+// « Stylized rings » n'affichait rien. Un SEUL enregistreur, qui vérifie en plus
+// que le schéma s'instancie vraiment avant de donner son id.
+has('const registerColorScheme = (NGL, label, define) => {', 'un SEUL enregistreur de schémas maison');
+has('const key = NGL.ColormakerRegistry.addScheme(define, label);', 'définition d’ABORD, libellé ensuite (l’ordre NGL)');
+has('const probe = NGL.ColormakerRegistry.getScheme({ scheme: key });', 'le schéma est instancié une fois avant d’être donné');
+has('return probe && typeof probe.atomColor === \'function\' ? key : null;', 'un schéma inutilisable → id null (repli NGL)');
+has("registerColorScheme(NGL, 'lab-sstruc'", '…pour les couleurs de structure secondaire');
+has("registerColorScheme(NGL, 'lab-nucleic-groups'", 'un schéma NGL maison pour les trois groupes');
+gone("addScheme('lab-", 'plus aucun addScheme(libellé, définition) — l’ordre inversé était le bug');
 has('const nucleicColorStore = {', 'un store vivant (une pastille ne reconstruit rien)');
 has('if (g === \'phosphate\') return nucleicColorStore.phosphate;', 'phosphate → sa couleur');
 has('if (g === \'pentose\') return nucleicColorStore.pentose;', 'pentose → sa couleur');
 has('return nucleicColorStore.base;', 'tout le reste (bases) → sa couleur');
 has('registerNucleicScheme(NGL);', 'le schéma est enregistré avec la scène');
 has('registerBaseIdentityScheme(NGL);', 'le schéma des bases stylisées aussi');
-has("NGL.ColormakerRegistry.addScheme('lab-base-identity'", 'un schéma par identité de base');
+has("registerColorScheme(NGL, 'lab-base-identity'", 'un schéma par identité de base');
 has('const [showNucleicColoursPanel, setShowNucleicColoursPanel] = useState(false);', 'l’état du panneau');
 has('Colour by chemical group', 'l’interrupteur « Colour by chemical group »');
 has('value={numToHex(catStyles.nucleic.phosphateColor)}', 'la pastille du phosphate lit catStyles.nucleic');
