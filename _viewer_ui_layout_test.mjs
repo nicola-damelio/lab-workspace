@@ -255,7 +255,7 @@ has('const lipidGroupsOn = () => !!(cs.lipid && cs.lipid.groupColour && lipidSch
 has('registerLipidScheme(NGL);', '[C] le schéma des trois parts est enregistré au démarrage');
 has("registerColorScheme(NGL, 'lab-lipid-groups'", '[C] …sous son propre libellé');
 // 2. Sucres vs ligands.
-has("const SUGAR_RES_SEL = '[GLC] or [NAG] or [MAN] or [BMA] or [SIA] or [GAL] or [FUC]';", '[sucres] liste explicite de resnames');
+has("const SUGAR_RES_SEL = '[GLC] or [NAG] or [MAN] or [BMA] or [SIA] or [NAN] or [GAL] or [FUC]';", '[sucres] liste explicite de resnames (NAN = l\'autre écriture de Neu5Ac)');
 has('const SUGAR_SEL = `saccharide or ${SUGAR_RES_SEL}`;', '[sucres] mot-clé RÉEL de NGL 2.4 (pas `carbohydrate`) + liste');
 has("not (${sugarSele})", '[ligands] le menu des ligands exclut les sucres');
 /* ── 6. Les surfaces : couleur choisie PAR LE MENU (défaut / custom / ESP) ───
@@ -354,8 +354,15 @@ has('const leaveLightMode = () => {', '[rendu] le geste de style remplace le bou
 has('const setCatStyle = (cat, key, value) => {', '[rendu] …appelé par les six menus de §2');
 gone('ℹ️ Large structure', '[supprimé] la bannière « Large structure » ne s’affiche plus au-dessus du 3D');
 has('onClick={togglePlay}', '[conservé] ▶ Play de la trajectoire');
-has('onChange={(e) => setExtraMolStyle(m.id, e.target.value)}', '[conservé] style par molécule (barre Molecules)');
+has('onChange={(e) => onStyle(e.target.value)}', '[conservé] style par molécule (barre Molecules)');
+has('onStyle: (v) => setExtraMolStyle(m.id, v),', '[conservé] …branché sur setExtraMolStyle');
+has('onColorMode: (v) => setExtraMolColorMode(m.id, v),', '[conservé] …et sur setExtraMolColorMode');
+has('onTransparency: (v) => setExtraMolTransparency(m.id, v),', '[conservé] …et sur setExtraMolTransparency');
 has('onClick={applyActiveStyleToAll}', '[conservé] 🎨 Copy de la barre Molecules');
+// La barre Molecules est aussi la maison du SMILES du ligand et du ⚙ des palettes.
+has('{ligandSmilesText && (', '[barre] le SMILES de la molécule / du ligand y est affiché');
+has('onClick={copyLigandSmiles}', '[barre] …avec son bouton 📋 (copie)');
+has('onClick={() => setSettingsPanelOpen(true)}', '[barre] ⚙ ouvre la roue des réglages');
 has('onClick={() => setSelStyles({ ...selStylesRef.current,', '[conservé] styles par sélection (barre Selections)');
 has('{selections.map((s) => {', '[conservé] barre verticale des sélections');
 has('onClick={handleAbort}', '[conservé] ⏹ Abort');

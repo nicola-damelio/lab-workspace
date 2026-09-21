@@ -585,6 +585,11 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                 structureTextExt="pdb"
                 moleculeType={d.moleculeType}
                 parsedSeq={d.parsedSeq}
+                // The ligand's SMILES travels with the run: the Molecules bar shows
+                // it (folded, with 📋) so the docked ligand can be identified and
+                // pasted without leaving the page. It is read from the derived
+                // docking data (the same object the rest of this panel uses).
+                ligandSmiles={d.ligandSmiles || ''}
                 selectedKeys={selectedKeys}
                 manualKeys={manualKeys}
                 onAtomClick={handleAtomClick}

@@ -110,6 +110,10 @@ const buildHelpers = (keys = {}) => new Function([
   sliceObject(VIEW, 'BASE_IDENTITY_COLORS'),
   sliceObject(VIEW, 'DEFAULT_NUCLEIC_COLORS'),
   sliceFn(VIEW, 'nucleicGroupOf'),
+  // La lettre de la base (A · C · G · T · U) : la couleur des plaques passe par
+  // elle, donc elle est extraite AVANT (elle est aussi le lecteur du classificateur
+  // de conformation de PART 3).
+  sliceFn(VIEW, 'nucBaseOf'),
   sliceFn(VIEW, 'baseIdentityColorOf'),
   `const flatHex = ${sliceRaw('flatHex')};`,
   sliceFn(VIEW, 'hexToRgb01'),
@@ -128,6 +132,11 @@ const buildHelpers = (keys = {}) => new Function([
   sliceObject(VIEW, 'gradientColorStore'),
   `let sstrucSchemeKey = ${keys.sstruc === undefined ? 'null' : JSON.stringify(keys.sstruc)};`,
   `let gradientSchemeKey = ${keys.gradient === undefined ? 'null' : JSON.stringify(keys.gradient)};`,
+  // Les deux palettes du ⚙ (types d'atomes · types de sucres) : elles aussi
+  // peuvent manquer (l'enregistrement du schéma a échoué) et le menu doit alors
+  // garder l'aspect classique au lieu de ne rien dessiner.
+  `let elementSchemeKey = ${keys.elements === undefined ? 'null' : JSON.stringify(keys.elements)};`,
+  `let sugarSchemeKey = ${keys.sugar === undefined ? 'null' : JSON.stringify(keys.sugar)};`,
   `return { RING_MAX_SIZE, RING_TRANSPARENCY_DEFAULT, RING_TRANSPARENCY_MAX, DEFAULT_GRADIENT_COLORS,
     BASE_IDENTITY_COLORS, DEFAULT_NUCLEIC_COLORS, nucleicGroupOf, baseIdentityColorOf, flatHex,
     hexToRgb01, ringPlaneNormal, ringCyclesOf, ringPlateTriangles, ringPlateColorOf, nucleicRingPlates,
@@ -135,7 +144,7 @@ const buildHelpers = (keys = {}) => new Function([
     registerColorScheme, catColorParams, gradientColorStore };`,
 ].join('\n'))();
 const H = buildHelpers();
-const HS = buildHelpers({ sstruc: 'lab-test-sstruc', gradient: 'lab-test-gradient' });
+const HS = buildHelpers({ sstruc: 'lab-test-sstruc', gradient: 'lab-test-gradient', elements: 'lab-test-elements', sugar: 'lab-test-sugar' });
 
 
 /* ══ 1. LA DÉCOUVERTE DES CYCLES ══════════════════════════════════════════ */
@@ -394,6 +403,18 @@ eq(HS.catColorParams(null, 'atom'), { colorScheme: 'element' }, 'un menu absent 
 // Schéma indisponible (l'enregistrement a échoué) : l'aspect classique, pas du vide.
 eq(H.catColorParams({ atomColor: 'sstruc' }, 'backbone'), { color: 'residueindex' },
   'un schéma cassé ne fait pas disparaître la molécule (repli classique)');
+// Les deux PALETTES du ⚙ (types d'atomes · types de sucres) : le menu les suit
+// quand le schéma est là, et retombe sur les couleurs d'éléments sinon.
+eq(HS.catColorParams({ atomColor: 'element' }, 'atom'), { color: 'lab-test-elements' },
+  '« Atom-type palette (⚙) » passe l’id du schéma des éléments (celui que la roue édite)');
+eq(HS.catColorParams({ atomColor: 'element' }, 'backbone'), { color: 'lab-test-elements' },
+  '…et il vaut pour le ruban comme pour les atomes (un seul lecteur, mêmes règles)');
+eq(HS.catColorParams({ atomColor: 'sugar' }, 'atom'), { color: 'lab-test-sugar' },
+  '« Sugar type » passe l’id du schéma d’identité des sucres');
+eq(H.catColorParams({ atomColor: 'element' }, 'atom'), { colorScheme: 'element' },
+  'une palette non enregistrée retombe sur les couleurs d’éléments (jamais de molécule vide)');
+eq(H.catColorParams({ atomColor: 'sugar' }, 'atom'), { colorScheme: 'element' },
+  '…et il en va de même pour les sucres');
 eq(H.catColorParams({ atomColor: 'gradient' }, 'atom'), { colorScheme: 'element' }, '…idem pour le dégradé');
 // La priorité des couleurs de plaque : couleur unie > groupes > identité de la base.
 eq(H.ringPlateColorOf({ ringColour: 'custom', ringColorHex: 0xabcdef, groupColour: true, baseColor: 0x111111 }, 'DA', 'base'), 0xabcdef,

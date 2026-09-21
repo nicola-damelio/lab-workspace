@@ -84,8 +84,19 @@ has('const setExtraMolStyle = (id, style) => {\n  leaveLightMode();',
   'le style d’une molécule quitte le rendu léger');
 has('const setExtraMolColorMode = (id, mode) => {\n  leaveLightMode();',
   '…son mode de coloration aussi');
-has('onChange={(e) => { leaveLightMode(); setMainMol((m) => ({ ...m, style: e.target.value })); }}',
+// Les quatre groupes repliés de la barre (Style · Colour · Transp · Move) sont
+// rendus par UNE seule implémentation pour la principale COMME pour chaque
+// molécule chargée, et chacun passe par leaveLightMode() puis setMainMol.
+has('onStyle: (v) => { leaveLightMode(); setMainMol((m) => ({ ...m, style: v })); },',
   '…et le style de la structure principale, dans la même barre');
+has('onColorMode: (v) => { leaveLightMode(); setMainMol((m) => ({ ...m, colorMode: v })); },',
+  '…son mode de coloration');
+has('onTransparency: (v) => { leaveLightMode(); setMainMol((m) => ({ ...m, transparency: v })); },',
+  '…sa transparence');
+has('const renderMolFolds = (keyName, { name, style, color, colorMode, transparency, onStyle, onColor, onColorMode, onTransparency, moveFields }) => {',
+  'UNE implémentation des quatre groupes repliés, partagée par la principale et les molécules chargées');
+has('{renderMolFolds(\'main\', {', '[barre] la structure principale utilise ces groupes');
+has('{renderMolFolds(m.id, {', '[barre] …et chaque molécule chargée aussi');
 
 /* ── Bilan ───────────────────────────────────────────────────────────────── */
 console.log(`_dock_style_test.mjs — ${passed} assertions OK`);

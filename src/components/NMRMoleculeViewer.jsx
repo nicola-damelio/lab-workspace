@@ -192,6 +192,31 @@ const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
    order — as this file once had — registers a class that `.call()`s a string, so
    every representation using that id threw while building and drew nothing.
 
+   GLYCANS & LIPID CLASSES (PART 2.2bis / 2.1bis) — a linked glycan arrives as one
+   HETATM residue per sugar and nothing says they belong together, so the
+   GLYCOSIDIC bond is read from the topology (C1 → O4 · O6, C2 for a sialic acid;
+   from NGL's own bond graph or, when a file carries no CONECT record, from the
+   interatomic distance) and the linked monomers are merged into ONE entity
+   (« Glycan (linked sugars) », lab-glycans); the residue name alone gives the
+   lipid's headgroup CLASS (PC · PE · PG · PS · PI · PA · CL · SM · Chol · FA,
+   read from the end of the 3-letter code — POPC = DP + PC, TOCL = TO + CL, and
+   the short codes POP · DPQ · EPH · PGL · CLR of the request), which is the
+   « Lipid class » colouring (lab-lipid-class).
+
+   CONFORMATIONS & MOTIFS (PART 3) — A · B · Z DNA, A · flexible RNA, and the two
+   motifs NO file annotates (a G-quadruplex, a hairpin) are read from the
+   COORDINATES by pure functions: χ (O4'-C1'-N9-C4 / O4'-C1'-N1-C2) for the
+   syn / anti conformation — a syn purine alternating with anti pyrimidines is the
+   left-handed Z form —, δ (C5'-C4'-C3'-O3') for the sugar pucker (C3'-endo = the
+   A family, C2'-endo = B-DNA or a flexible loop of an RNA) with the C1'-N → P
+   distance as the fallback when δ is missing, the Hoogsteen N1···O6 / N2···N7
+   distances for the coplanar G-tetrads and their 3.3 – 3.4 Å stacking for the
+   quadruplex, and the Watson-Crick / wobble H-bonds plus the P → O3' backbone
+   for a hairpin (stem of three pairs, loop of 3 – 10 residues). They are ONE
+   custom scheme each — lab-nuc-form and lab-nuc-motif, which hands every
+   nucleotide outside a motif its normal 2°-structure colour — and the six form /
+   two motif colours are editable in the ⚙ settings wheel.
+
    SCENE (§3) — the background of the 3D scene is a colour of its own (« 🎨
    Background »), persisted like Fog / Shadows / Clipping, and it is part of a
    saved setup.
@@ -323,7 +348,10 @@ const cloneCatStyles = () => Object.fromEntries(
   CAT_STYLE_CATS.map((c) => [c, { ...DEFAULT_CAT_STYLES[c] }]),
 );
 // Restore the saved per-category styles (localStorage, like Fog / Shadows /
-// clipping). Unknown keys simply fall back to the default.
+// clipping). Unknown keys simply fall back to the default. A LOOK field that the
+// entry carries is marked as OVERRIDDEN (see overridesLook): it is a value the
+// user chose in that menu, so it must keep following nothing — the fields the
+// entry does not carry keep following the general look.
 const loadCatStyles = () => {
   const out = cloneCatStyles();
   try {
@@ -331,7 +359,14 @@ const loadCatStyles = () => {
     const saved = raw ? JSON.parse(raw) : null;
     if (saved && typeof saved === 'object') {
       Object.keys(out).forEach((k) => {
-        if (saved[k] && typeof saved[k] === 'object') out[k] = { ...out[k], ...saved[k] };
+        if (!saved[k] || typeof saved[k] !== 'object') return;
+        const ovr = { ...DEFAULT_LOOK_OVERRIDES, ...(saved[k].ovr || null) };
+        Object.keys(saved[k]).forEach((field) => {
+          if (field === 'ovr') return;
+          out[k][field] = saved[k][field];
+          if (isLookKey(field)) ovr[field] = true;
+        });
+        out[k].ovr = ovr;
       });
     }
   } catch { /* first run / private mode → defaults */ }
@@ -391,14 +426,520 @@ const nucleicGroupOf = (name) => {
   return 'base';
 };
 
-/* ---- Stylized per-base colour (Bases → « Stylized rings ») ------------------
+/* ---- The BASE a nucleic residue carries (Bases → « Stylized rings ») ---------
    The base identity is read from the residue name of the atom, with the standard
    nucleic residue names of every dialect: A / DA / RA / ADE → A, C / DC / RC /
-   CYT → C, G / DG / RG / GUA → G, T / DT / THY → T, U / U / RU / URA → U. */
-const baseIdentityColorOf = (resname) => {
+   CYT → C, G / DG / RG / GUA → G, T / DT / THY → T, U / RU / URA → U. ONE reader,
+   used by the stylized per-base colour below AND by the conformation classifier
+   of PART 3, which has to know a purine from a pyrimidine. */
+const nucBaseOf = (resname) => {
   const n = String(resname || '').trim().toUpperCase();
   const m = /^[DR]?([ACGTU])/.exec(n);
-  return m ? BASE_IDENTITY_COLORS[m[1]] : 0xbdbdbd;
+  return m ? m[1] : '';
+};
+const baseIdentityColorOf = (resname) => {
+  const b = nucBaseOf(resname);
+  return b ? BASE_IDENTITY_COLORS[b] : 0xbdbdbd;
+};
+
+/* ---- PART 3 · The FORM of a nucleic acid, read from the coordinates ----------
+   No viewer library classifies A · B · Z DNA, A · flexible RNA — or the two
+   motifs a file never annotates (a G-quadruplex, a hairpin): the geometry is
+   computed here, by PURE functions that take plain { name, x, y, z } records and
+   return labels, so a test can run them without NGL and the colour schemes below
+   only have to look the answer up.
+
+   Everything starts from ONE record per nucleotide — nucleicResidues builds them
+   from a structure:
+
+     { key, resname, resno, chainIndex, residueIndex, atoms, names,
+       base: 'A'…'U', purine: bool, rna: bool }
+
+   and from the two torsions that carry the information:
+
+     · χ, the GLYCOSIDIC torsion — O4'-C1'-N9-C4 for a purine, O4'-C1'-N1-C2 for
+       a pyrimidine. Every RIGHT-handed form keeps its purines ANTI
+       (χ ≈ 180° ± 90°); Z-DNA / Z-RNA flip them to SYN (|χ| < 90°) and alternate
+       them with anti pyrimidines — that alternation IS the zig-zag of a
+       left-handed helix, so ONE flipped purine is not a form (it is a lesion or
+       a loop) and the classifier asks for two of them before it paints a strand
+       Z;
+     · δ, the backbone torsion C5'-C4'-C3'-O3', which IS the sugar pucker:
+       δ < 100° = C3'-endo (the A family), δ > 120° = C2'-endo (B-DNA, and the
+       flexible / loop regions of an RNA — a B-form RNA cannot exist, the 2'-OH
+       forbids it). When the δ atoms are missing the MolProbity-style FALLBACK
+       takes over: the perpendicular distance from the glycosidic C1'-N line to
+       the phosphate, more than 2.9 Å being C3'-endo.
+
+   The PRIME is what tells C1' (the sugar) from C1 and O2' (the 2'-OH, i.e. the
+   definition of an RNA) from O2 (a base oxygen), so the normaliser only rewrites
+   the OLD spelling of it (`C1*` → `C1'`) and never drops it. */
+const nucAtomKey = (name) => String(name || '').replace(/\s+/g, '').replace(/\*/g, "'").toUpperCase();
+const NUC_PURINE_BASES = new Set(['A', 'G']);
+const NUC_CHI_PURINE = ["O4'", "C1'", 'N9', 'C4'];
+const NUC_CHI_PYRIMIDINE = ["O4'", "C1'", 'N1', 'C2'];
+const NUC_DELTA_ATOMS = ["C5'", "C4'", "C3'", "O3'"];
+const NUC_SYN_MAX_DEG = 90;        // |χ| < 90°  → syn   (the Z-form purine)
+const NUC_C3_ENDO_MAX_DEG = 100;   // δ < 100°   → C3'-endo (the A family)
+const NUC_C2_ENDO_MIN_DEG = 120;   // δ > 120°   → C2'-endo (B-DNA · loop RNA)
+const NUC_PUCKER_DIST = 2.9;       // Å — the cut-off of the fallback measure
+const NUC_FORM_LABELS = ['a-dna', 'b-dna', 'z-dna', 'a-rna', 'loop-rna', 'z-rna'];
+const NUC_FORM_NAMES = {
+  'a-dna': 'A-DNA', 'b-dna': 'B-DNA', 'z-dna': 'Z-DNA',
+  'a-rna': 'A-RNA', 'loop-rna': 'Flexible / loop RNA', 'z-rna': 'Z-RNA',
+};
+
+/* The primitives the two torsions and the two motifs are built from — plain
+   [x, y, z] arrays, so the whole classification is a pure function of numbers. */
+const vecSub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const vecCross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const vecDot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const vecLen = (a) => Math.sqrt(vecDot(a, a));
+const coordDist = (a, b) => Math.sqrt(((a[0] - b[0]) ** 2) + ((a[1] - b[1]) ** 2) + ((a[2] - b[2]) ** 2));
+// The SIGNED dihedral angle of four points (degrees, IUPAC convention: the atoms
+// p0 and p3 CIs — eclipsed — at 0°, ANTI — trans — at ±180°), which is the
+// convention the χ and δ thresholds of the classification are written in
+// (a syn purine is |χ| ≈ 0, an anti one |χ| ≈ 180; a C3'-endo sugar has
+// δ ≈ 80 – 100°, a C2'-endo one δ ≈ 140 – 160°). null as soon as one point is
+// missing — an incomplete residue must never produce a random conformation.
+const torsionDeg = (p0, p1, p2, p3) => {
+  if (!p0 || !p1 || !p2 || !p3) return null;
+  const b1 = vecSub(p1, p0);
+  const b2 = vecSub(p2, p1);
+  const b3 = vecSub(p3, p2);
+  const n1 = vecCross(b1, b2);
+  const n2 = vecCross(b2, b3);
+  const len = vecLen(b2);
+  if (!vecLen(n1) || !vecLen(n2) || !len) return null;
+  const m = vecCross(n1, [b2[0] / len, b2[1] / len, b2[2] / len]);
+  return (-Math.atan2(vecDot(m, n2), vecDot(n1, n2)) * 180) / Math.PI;
+};
+// The perpendicular distance of a point to the LINE a→b — the fallback measure of
+// the pucker (the phosphate against the glycosidic bond vector).
+const linePointDist = (p, a, b) => {
+  const ab = vecSub(b, a);
+  const len = vecLen(ab);
+  if (!len) return coordDist(p, a);
+  const t = vecDot(vecSub(p, a), ab) / (len * len);
+  return coordDist(p, [a[0] + ab[0] * t, a[1] + ab[1] * t, a[2] + ab[2] * t]);
+};
+// The distance between two NAMED atoms of two nucleotides (null when absent).
+const nucPairDist = (a, n1, b, n2) => {
+  const p = a && a.atoms && a.atoms[n1];
+  const q = b && b.atoms && b.atoms[n2];
+  return p && q ? coordDist(p, q) : null;
+};
+// The centre of a base (the mean of its ring atoms): ONE point per base, which is
+// what says whether four guanines are coplanar and whether two tetrads stack.
+const nucBaseCentreOf = (nuc) => {
+  const ring = ['N1', 'C2', 'N3', 'C4', 'C5', 'C6']
+    .map((n) => (nuc && nuc.atoms ? nuc.atoms[n] : null)).filter(Boolean);
+  const pts = ring.length ? ring : Object.values((nuc && nuc.atoms) || {});
+  if (!pts.length) return null;
+  const s = pts.reduce((acc, p) => [acc[0] + p[0], acc[1] + p[1], acc[2] + p[2]], [0, 0, 0]);
+  return [s[0] / pts.length, s[1] / pts.length, s[2] / pts.length];
+};
+// The best-fit plane of a set of points — its centroid and a unit normal, taken on
+// the first non-collinear triple (null when every point is on one line).
+const planeOfPoints = (pts) => {
+  if (!pts || pts.length < 3 || pts.some((p) => !p)) return null;
+  const c = pts.reduce((acc, p) => [acc[0] + p[0], acc[1] + p[1], acc[2] + p[2]], [0, 0, 0]);
+  const centre = [c[0] / pts.length, c[1] / pts.length, c[2] / pts.length];
+  for (let i = 0; i < pts.length; i += 1) {
+    for (let j = i + 1; j < pts.length; j += 1) {
+      for (let k = j + 1; k < pts.length; k += 1) {
+        const n = vecCross(vecSub(pts[j], pts[i]), vecSub(pts[k], pts[i]));
+        const len = vecLen(n);
+        if (len > 1e-3) return { centre, normal: [n[0] / len, n[1] / len, n[2] / len] };
+      }
+    }
+  }
+  return null;
+};
+// How far the worst point of a set lies from a plane (Infinity without a plane).
+const planeDeviation = (plane, pts) => {
+  if (!plane) return Infinity;
+  return pts.reduce((max, p) => (p ? Math.max(max, Math.abs(vecDot(vecSub(p, plane.centre), plane.normal))) : max), 0);
+};
+
+/* ---- PART 3.1 · A · B · Z DNA, A · flexible RNA -----------------------------
+   One record per nucleotide, grouped by residue out of plain atom records —
+   [{ index, name, resname, resno, chainIndex, residueIndex, x, y, z }], exactly
+   what structureAtomRecords builds from an NGL structure (and what a test can
+   type by hand). */
+const nucleicResidues = (records) => {
+  const byRes = new Map();
+  (records || []).forEach((a) => {
+    if (!a) return;
+    const key = `${a.chainIndex}|${a.residueIndex}|${a.resname}|${a.resno}`;
+    let r = byRes.get(key);
+    if (!r) {
+      r = {
+        key, resname: a.resname, resno: a.resno,
+        chainIndex: a.chainIndex || 0, residueIndex: a.residueIndex || 0,
+        atoms: {}, names: new Set(),
+      };
+      byRes.set(key, r);
+    }
+    const n = nucAtomKey(a.name);
+    if (n) { r.names.add(n); r.atoms[n] = [a.x, a.y, a.z]; }
+  });
+  const out = Array.from(byRes.values());
+  out.forEach((r) => {
+    r.base = nucBaseOf(r.resname);
+    r.purine = NUC_PURINE_BASES.has(r.base);
+    // An RNA is DEFINED by its 2'-OH: the O2' atom is the proof, and the R series
+    // of residue names (RA · RC · RG · RU …) is the other way of saying it.
+    r.rna = r.names.has("O2'") || /^R/.test(String(r.resname || '').trim().toUpperCase());
+  });
+  return out;
+};
+// The χ torsion of ONE nucleotide (degrees), null when an atom is missing.
+const nucleicChiOf = (nuc) => {
+  const n = nuc && nuc.purine ? NUC_CHI_PURINE : NUC_CHI_PYRIMIDINE;
+  const a = (nuc && nuc.atoms) || {};
+  return torsionDeg(a[n[0]], a[n[1]], a[n[2]], a[n[3]]);
+};
+// syn / anti for a PURINE — null for a pyrimidine (χ is not what tells them apart)
+// and null when χ cannot be measured.
+const nucleicSynOf = (nuc) => {
+  if (!nuc || !nuc.purine) return null;
+  const chi = nucleicChiOf(nuc);
+  return chi == null ? null : Math.abs(chi) < NUC_SYN_MAX_DEG;
+};
+// The δ torsion of ONE nucleotide — the torsion that IS the sugar pucker.
+const nucleicDeltaOf = (nuc) => {
+  const a = (nuc && nuc.atoms) || {};
+  return torsionDeg(a[NUC_DELTA_ATOMS[0]], a[NUC_DELTA_ATOMS[1]], a[NUC_DELTA_ATOMS[2]], a[NUC_DELTA_ATOMS[3]]);
+};
+// The fallback measure: the perpendicular distance from the C1'-N1/9 bond vector
+// to the phosphate. « The following phosphate » is the P of the NEXT residue of
+// the same chain — a nucleotide's own P bridges to the PREVIOUS sugar — and the
+// residue's own P is used when the chain ends there.
+const nucleicPuckerDistOf = (nuc, nextP) => {
+  const a = (nuc && nuc.atoms) || {};
+  const c1 = a["C1'"];
+  const n = nuc && nuc.purine ? a.N9 : a.N1;
+  const p = nextP || a.P;
+  return c1 && n && p ? linePointDist(p, c1, n) : null;
+};
+// The pucker: 'c3' = C3'-endo (the A family), 'c2' = C2'-endo (B-DNA · flexible
+// RNA), '' = no measurable geometry. δ decides; when its atoms are missing the
+// phosphate is measured against the glycosidic bond vector.
+const nucleicPuckerOf = (nuc, nextP) => {
+  const d = nucleicDeltaOf(nuc);
+  if (d != null) {
+    if (d < NUC_C3_ENDO_MAX_DEG) return 'c3';
+    if (d > NUC_C2_ENDO_MIN_DEG) return 'c2';
+  }
+  const dist = nucleicPuckerDistOf(nuc, nextP);
+  if (dist == null) return '';
+  return dist > NUC_PUCKER_DIST ? 'c3' : 'c2';
+};
+// The P of the residue that FOLLOWS nucleotide i in its own chain (null at the end
+// of a chain — the next chain's first phosphate is a different molecule).
+const nextPhosphateOf = (nucleotides, i) => {
+  const cur = nucleotides[i];
+  const nb = nucleotides[i + 1];
+  if (!cur || !nb || nb.chainIndex !== cur.chainIndex) return null;
+  return (nb.atoms && nb.atoms.P) || null;
+};
+// Is the residue at i+dir (same chain) a PYRIMIDINE? — the partner a syn purine
+// alternates with in Z-DNA / Z-RNA.
+const neighbourPyrimidineOf = (nucleotides, i, dir) => {
+  const cur = nucleotides[i];
+  const nb = nucleotides[i + dir];
+  return !!(cur && nb && nb.chainIndex === cur.chainIndex && nb.base && !nb.purine);
+};
+// THE classifier: one label per nucleotide ('' when the record is not one), in the
+// order of the list (i.e. the sequence order of each chain).
+const nucleicForms = (nucleotides) => {
+  const list = nucleotides || [];
+  const syn = list.map((n) => nucleicSynOf(n));
+  const zFlag = list.map(() => false);
+  const zRna = list.map(() => false);
+  let candidates = 0;
+  list.forEach((n, i) => {
+    if (!n || !n.purine || syn[i] !== true) return;
+    if (neighbourPyrimidineOf(list, i, -1) || neighbourPyrimidineOf(list, i, 1)) {
+      zFlag[i] = true;
+      zRna[i] = !!n.rna;
+      candidates += 1;
+    }
+  });
+  // Z needs an ALTERNATION, never one lone syn purine: with fewer than two
+  // candidates the flags are dropped and the strand is read as a right-handed form.
+  if (candidates < 2) zFlag.fill(false);
+  // The pyrimidines between two flipped purines belong to the same left-handed
+  // segment — they are its anti partners.
+  list.forEach((n, i) => {
+    if (!n || !n.base || n.purine || zFlag[i]) return;
+    const before = zFlag[i - 1] && list[i - 1] && list[i - 1].chainIndex === n.chainIndex;
+    const after = zFlag[i + 1] && list[i + 1] && list[i + 1].chainIndex === n.chainIndex;
+    if (before || after) { zFlag[i] = true; zRna[i] = !!n.rna; }
+  });
+  return list.map((n, i) => {
+    if (!n || !n.base) return '';
+    if (zFlag[i]) return zRna[i] ? 'z-rna' : 'z-dna';
+    const pucker = nucleicPuckerOf(n, nextPhosphateOf(list, i));
+    if (pucker === 'c3') return n.rna ? 'a-rna' : 'a-dna';
+    if (pucker === 'c2') return n.rna ? 'loop-rna' : 'b-dna';
+    // Nothing measurable — an incomplete file gets the canonical form of its
+    // family rather than a blank or a random colour.
+    return n.rna ? 'a-rna' : 'b-dna';
+  });
+};
+
+/* ---- PART 3.2 · The two motifs a PDB file never annotates --------------------
+   A G-quadruplex and a hairpin are TOPOLOGY, not sequence: both are found from
+   the coordinates alone, with the thresholds below — the Hoogsteen H-bonds and the
+   stacking distance for the first, the Watson-Crick / wobble H-bonds, the covalent
+   backbone and the loop length for the second. */
+const GQUAD_N1_O6_MIN = 2.7;    // Å — the Hoogsteen H-bond N1(G)···O6(G)
+const GQUAD_N1_O6_MAX = 3.3;
+const GQUAD_N2_N7_MIN = 2.7;    // Å — …and the second one, N2(G)···N7(G)
+const GQUAD_N2_N7_MAX = 3.3;
+const GQUAD_PLANAR_TOL = 1.5;   // Å — four guanines in a « coplanar ring »
+const GQUAD_STACK_MIN = 3.0;    // Å — the inter-plane distance of stacked tetrads
+const GQUAD_STACK_MAX = 3.7;    //     (the canonical value is 3.3 – 3.4 Å)
+const GQUAD_PARALLEL_MIN = 0.8; //     |cos| of the normals of two parallel planes
+const GQUAD_MAX_GUANINES = 80;  //     above that the tetrad search is not run
+const WB_PAIR_MAX = 3.5;        // Å — a Watson-Crick / wobble H-bond
+const HAIRPIN_STEM_MIN = 3;     // consecutive base pairs that make a stem
+const HAIRPIN_LOOP_MIN = 3;     // the unpaired residues of a loop …
+const HAIRPIN_LOOP_MAX = 10;    // … and its upper bound
+const BACKBONE_BOND_MAX = 1.8;  // Å — the covalent P → O3' bond of two neighbours
+// The donor / acceptor atoms of the pairs that count as a stem: the canonical
+// Watson-Crick pairs (A–T / A–U · G–C, 'wc') and the G–U wobble ('wobble'). T and
+// U are read by the same entries — they pair the same way.
+const BASE_PAIR_HBONDS = {
+  AU: [['N1', 'N3'], ['N6', 'O4']],
+  CG: [['O6', 'N4'], ['N1', 'N3'], ['N2', 'O2']],
+  GU: [['O6', 'N3'], ['N1', 'O2'], ['N2', 'O4']],
+};
+const basePairKeyOf = (b1, b2) => {
+  const n = (b) => (b === 'T' ? 'U' : b);
+  return [n(b1), n(b2)].filter(Boolean).sort().join('');
+};
+// 'wc' · 'wobble' · '' — two bases are PAIRED as soon as one donor / acceptor
+// distance of their pair sits below the H-bond cut-off.
+const basePairKindOf = (a, b) => {
+  if (!a || !b) return '';
+  const key = basePairKeyOf(a.base, b.base);
+  const hb = BASE_PAIR_HBONDS[key];
+  if (!hb) return '';
+  const best = hb.reduce((min, [n1, n2]) => {
+    const d = nucPairDist(a, n1, b, n2);
+    return d == null ? min : Math.min(min, d);
+  }, Infinity);
+  if (!(best <= WB_PAIR_MAX)) return '';
+  return key === 'GU' ? 'wobble' : 'wc';
+};
+// Two guanines are HOOGSTEEN partners when N1···O6 AND N2···N7 both sit in the
+// 2.7 – 3.3 Å window — in EITHER direction, since a tetrad is directional.
+const hoogsteenPairOf = (ga, gb) => {
+  if (!ga || !gb) return false;
+  const inRange = (v, lo, hi) => v != null && v >= lo && v <= hi;
+  const one = (x, y) => inRange(nucPairDist(x, 'N1', y, 'O6'), GQUAD_N1_O6_MIN, GQUAD_N1_O6_MAX)
+    && inRange(nucPairDist(x, 'N2', y, 'N7'), GQUAD_N2_N7_MIN, GQUAD_N2_N7_MAX);
+  return one(ga, gb) || one(gb, ga);
+};
+
+// The G-TETRADS of a set of guanines (indices into `list`): every CLOSED cycle of
+// four distinct guanines whose four sides are Hoogsteen pairs and whose base
+// centres are coplanar. The 4-cycles are enumerated as a-b-d-c-a on the Hoogsteen
+// graph — a very sparse graph (only real partners are edges), so the walk is
+// cheap — and each cycle is kept once.
+const gTetradsOf = (list, guanineIdx) => {
+  const g = Array.from(guanineIdx || []);
+  if (g.length < 4 || g.length > GQUAD_MAX_GUANINES) return [];
+  const adj = g.map(() => []);
+  const edges = new Set();
+  for (let i = 0; i < g.length; i += 1) {
+    for (let j = i + 1; j < g.length; j += 1) {
+      if (!hoogsteenPairOf(list[g[i]], list[g[j]])) continue;
+      adj[i].push(j);
+      adj[j].push(i);
+      edges.add(`${i}|${j}`);
+      edges.add(`${j}|${i}`);
+    }
+  }
+  const seen = new Set();
+  const out = [];
+  for (let a = 0; a < g.length; a += 1) {
+    const na = adj[a];
+    for (let x = 0; x < na.length; x += 1) {
+      for (let y = x + 1; y < na.length; y += 1) {
+        const b = na[x];
+        const c = na[y];
+        adj[b].forEach((d) => {
+          if (d === a || d === b || d === c) return;
+          if (!edges.has(`${c}|${d}`)) return;
+          const local = [a, b, c, d].sort((p, q) => p - q);
+          const key = local.join('|');
+          if (seen.has(key)) return;
+          seen.add(key);
+          const centres = local.map((k) => nucBaseCentreOf(list[g[k]]));
+          if (planeDeviation(planeOfPoints(centres), centres) > GQUAD_PLANAR_TOL) return;
+          out.push(local.map((k) => g[k]));
+        });
+      }
+    }
+  }
+  return out;
+};
+// The guanines of the STACKED tetrads: a G-quadruplex is two or more G-tetrads
+// whose planes are parallel and 3.3 – 3.4 Å apart (the stacking distance of the
+// tetrads), so a LONE tetrad is never called a quadruplex.
+const stackedTetradsOf = (list, tetrads) => {
+  const planes = (tetrads || []).map((t) => planeOfPoints(t.map((i) => nucBaseCentreOf(list[i]))));
+  const parent = planes.map((_, i) => i);
+  const find = (i) => {
+    let k = i;
+    while (parent[k] !== k) { parent[k] = parent[parent[k]]; k = parent[k]; }
+    return k;
+  };
+  const union = (i, j) => { const a = find(i); const b = find(j); if (a !== b) parent[a] = b; };
+  for (let i = 0; i < planes.length; i += 1) {
+    for (let j = i + 1; j < planes.length; j += 1) {
+      const A = planes[i];
+      const B = planes[j];
+      if (!A || !B) continue;
+      if (Math.abs(vecDot(A.normal, B.normal)) < GQUAD_PARALLEL_MIN) continue;
+      const gap = Math.abs(vecDot(vecSub(B.centre, A.centre), A.normal));
+      if (gap < GQUAD_STACK_MIN || gap > GQUAD_STACK_MAX) continue;
+      union(i, j);
+    }
+  }
+  const size = new Map();
+  planes.forEach((_, i) => { const r = find(i); size.set(r, (size.get(r) || 0) + 1); });
+  const out = new Set();
+  planes.forEach((_, i) => {
+    if ((size.get(find(i)) || 0) < 2) return;
+    (tetrads[i] || []).forEach((idx) => out.add(idx));
+  });
+  return out;
+};
+
+// Is the region from → to ONE continuous strand? Traced on the covalent backbone
+// bond P(i+1) — O3'(i), so two strands that merely pass close to each other (a
+// dimer, two chains, two molecules) are never read as a hairpin: a hairpin is
+// closed by a loop of the SAME strand.
+const backboneLinked = (chain, from, to) => {
+  for (let k = from; k < to; k += 1) {
+    const o3 = chain[k] && chain[k].atoms ? chain[k].atoms["O3'"] : null;
+    const p = chain[k + 1] && chain[k + 1].atoms ? chain[k + 1].atoms.P : null;
+    if (!o3 || !p) continue;                      // nothing to judge → never reject
+    if (coordDist(o3, p) > BACKBONE_BOND_MAX) return false;
+  }
+  return true;
+};
+// The hairpins of ONE chain (indices into `chain`): a stem of at least three
+// consecutive NESTED base pairs — (i, j), (i+1, j-1), … — whose two strands are
+// closed by a loop of 3 to 10 unpaired residues. The stem AND the loop are
+// returned, because a hairpin IS the two of them together.
+const hairpinResiduesInChain = (chain) => {
+  const out = new Set();
+  const n = (chain || []).length;
+  const paired = (i, j) => (i >= 0 && j < n && i < j ? basePairKindOf(chain[i], chain[j]) : '');
+  for (let i = 0; i < n; i += 1) {
+    for (let j = i + 2 * HAIRPIN_STEM_MIN; j < n; j += 1) {
+      if (!paired(i, j)) continue;
+      let m = 1;
+      while (i + m < j - m && paired(i + m, j - m)) m += 1;
+      if (m < HAIRPIN_STEM_MIN) continue;
+      const loopLen = j - m - (i + m) + 1;
+      if (loopLen < HAIRPIN_LOOP_MIN || loopLen > HAIRPIN_LOOP_MAX) continue;
+      if (!backboneLinked(chain, i, j)) continue;
+      for (let k = i; k < i + m; k += 1) out.add(k);
+      for (let k = j - m + 1; k <= j; k += 1) out.add(k);
+      for (let k = i + m; k <= j - m; k += 1) out.add(k);
+    }
+  }
+  return out;
+};
+// THE motif classifier: { gquad, hairpin, tetrads } — the two Sets hold indices
+// into `nucleotides`, so the colour scheme only has to look the residue up.
+const nucleicMotifs = (nucleotides) => {
+  const list = nucleotides || [];
+  const guanineIdx = new Set();
+  list.forEach((nn, i) => { if (nn && nn.base === 'G') guanineIdx.add(i); });
+  const tetrads = gTetradsOf(list, guanineIdx);
+  const gquad = stackedTetradsOf(list, tetrads);
+  const hairpin = new Set();
+  const byChain = new Map();
+  list.forEach((nn, i) => {
+    if (!nn || !nn.base) return;
+    const k = nn.chainIndex || 0;
+    if (!byChain.has(k)) byChain.set(k, []);
+    byChain.get(k).push(i);
+  });
+  byChain.forEach((idxList) => {
+    const chain = idxList.map((i) => list[i]);
+    hairpinResiduesInChain(chain).forEach((k) => hairpin.add(idxList[k]));
+  });
+  return { gquad, hairpin, tetrads };
+};
+
+/* ---- PART 3.3 · From a structure to the tables the schemes read --------------
+   ONE walk per structure (WeakMap cache): its nucleotides, the form of each one
+   and the motifs. A colour scheme is asked for a colour once PER ATOM, so nothing
+   may be recomputed there — atomColor only looks the residue index up here. */
+const structureAtomRecords = (structure, predicate) => {
+  const out = [];
+  if (!structure || typeof structure.eachAtom !== 'function') return out;
+  try {
+    structure.eachAtom((a) => {
+      if (!a || (predicate && !predicate(a))) return;
+      out.push({
+        index: a.index,
+        name: a.atomname,
+        element: a.element,
+        resname: a.resname,
+        resno: a.resno,
+        chainIndex: a.chainIndex != null ? a.chainIndex : (a.chainname || ''),
+        residueIndex: a.residueIndex,
+        x: a.x, y: a.y, z: a.z,
+      });
+    });
+  } catch { /* NGL not ready (or no structure) → an empty walk */ }
+  return out;
+};
+const nucleicClassCache = new WeakMap();
+const nucleicClassFor = (structure) => {
+  if (!structure) return null;
+  if (nucleicClassCache.has(structure)) return nucleicClassCache.get(structure);
+  let out = null;
+  try {
+    const nucleotides = nucleicResidues(structureAtomRecords(structure, (a) => !!nucBaseOf(a.resname)));
+    if (nucleotides.length) {
+      const forms = nucleicForms(nucleotides);
+      const motifs = nucleicMotifs(nucleotides);
+      const formByResidue = new Map();
+      const motifByResidue = new Map();
+      nucleotides.forEach((nuc, i) => {
+        if (forms[i]) formByResidue.set(nuc.residueIndex, forms[i]);
+        if (motifs.gquad.has(i)) motifByResidue.set(nuc.residueIndex, 'gquad');
+        else if (motifs.hairpin.has(i)) motifByResidue.set(nuc.residueIndex, 'hairpin');
+      });
+      out = { nucleotides, forms, motifs, formByResidue, motifByResidue };
+    }
+  } catch { out = null; }
+  nucleicClassCache.set(structure, out);
+  return out;
+};
+// How many nucleotides of ONE form / of ONE motif a structure holds — what the
+// Nucleic-acids menu prints under its colour selector, and the proof that the
+// classification really ran on the file that is on screen.
+const nucleicClassCounts = (structure) => {
+  const info = nucleicClassFor(structure);
+  const forms = {};
+  const motifs = {};
+  if (info) {
+    info.forms.forEach((f) => { if (f) forms[f] = (forms[f] || 0) + 1; });
+    info.motifByResidue.forEach((m) => { motifs[m] = (motifs[m] || 0) + 1; });
+  }
+  return { total: info ? info.nucleotides.length : 0, forms, motifs };
 };
 
 /* ---- Saved visualisation setups (⚙️ Setup, §1 General) ---------------------
@@ -483,8 +1024,48 @@ const LIPID_RESNAMES = new Set([
   // glycolipids / sphingolipids / glycerides / cardiolipins / bare heads
   'MGDG', 'DGDG', 'SQDG', 'SM', 'PSM', 'CER', 'DAG', 'TAG', 'MAG', 'CL', 'CDL',
   'PA', 'PC', 'PE', 'PS', 'PG', 'PI',
+  // The SHORT headgroup codes of the request — POP · DPQ name a phosphatidyl-
+  // choline, EPH a phosphatidyl-ethanolamine, PGL a phosphatidyl-glycerol and
+  // CLR a cholesterol. A file written by another lab may use those instead of
+  // POPC / DPPC / CHOL (see lipidClassOf, which reads them all as their class).
+  'POP', 'DPQ', 'EPH', 'PGL', 'CLR',
 ]);
 const isLipidResname = (name) => LIPID_RESNAMES.has(String(name || '').trim().toUpperCase());
+
+/* ---- PART 2.1bis · WHICH lipid / which headgroup CLASS -----------------------
+   NGL has no « lipid » keyword, so the residue name of a HETATM record is the
+   only place a file says WHICH lipid a residue is. The standard 3-letter codes
+   are therefore mapped to the CLASS of their headgroup — the phosphatidyl-
+   cholines (PC), -ethanolamines (PE), -glycerols (PG), -serines (PS), -inositols
+   (PI), the phosphatidic acids (PA), the cardiolipins (CL), the sphingomyelins
+   (SM), the sterols (Chol) and the bare fatty acids (FA) — which gives the
+   Lipids menu a second, chemically meaningful way to colour a bilayer (one
+   colour per headgroup class instead of one colour per part).
+
+   The class is read from the END of the code, because that is where the naming
+   rules put it: DPPC = DP + PC, POPE = PO + PE, TOCL = TO + CL, DLPS = DL + PS,
+   DMPI = DM + PI, PSM = P + SM. The short codes of the request (POP · DPQ = PC,
+   EPH = PE, PGL = PG, CLR = Chol) and every sterol / fatty-acid spelling come
+   from an explicit table FIRST, so an unusual file still lands in its class. */
+const LIPID_CLASS_ALIASES = {
+  POP: 'PC', DPQ: 'PC', EPH: 'PE', PGL: 'PG',
+  CHOL: 'Chol', CLR: 'Chol', CHO: 'Chol', ERG: 'Chol', STIG: 'Chol', SITO: 'Chol', LANO: 'Chol',
+  MYR: 'FA', STE: 'FA', PAL: 'FA', OLA: 'FA', PLM: 'FA', LAU: 'FA', ARA: 'FA', LIN: 'FA',
+  DAG: 'PA', TAG: 'PA', MAG: 'PA', CDL: 'CL',
+};
+// The two-letter class the code ends with (longest spelling first, so « PC »
+// cannot be read as « C »).
+const LIPID_CLASS_SUFFIXES = ['PC', 'PE', 'PG', 'PS', 'PI', 'PA', 'SM', 'CL'];
+const lipidClassOf = (resname) => {
+  const n = String(resname || '').trim().toUpperCase().replace(/\s+/g, '');
+  if (!n) return 'OTHER';
+  const alias = LIPID_CLASS_ALIASES[n];
+  if (alias) return alias;
+  if (n === 'PC' || n === 'PE' || n === 'PG' || n === 'PS' || n === 'PI' || n === 'PA' || n === 'SM' || n === 'CL') return n;
+  if (/^(?:CHOL|CHL|ERG|STIG|SITO|LANO|DHC)/.test(n)) return 'Chol';
+  const hit = LIPID_CLASS_SUFFIXES.find((s) => n.length > s.length && n.endsWith(s));
+  return hit || 'OTHER';
+};
 
 // Residue names of the lipids actually present in a structure ([] when none).
 // ONE pass and no residue-type API beyond `resname` (the very field the sequence
@@ -635,8 +1216,236 @@ const lipidGroupSele = (resnames) => {
    NGL 2.4 has NO `carbohydrate` keyword (verified against the keyword table of
    the installed build: SACCHARIDE = SUGAR = 15, and nothing else), so the sugar
    menu uses the real keyword PLUS the explicit residue list. */
-const SUGAR_RES_SEL = '[GLC] or [NAG] or [MAN] or [BMA] or [SIA] or [GAL] or [FUC]';
+const SUGAR_RES_SEL = '[GLC] or [NAG] or [MAN] or [BMA] or [SIA] or [NAN] or [GAL] or [FUC]';
 const SUGAR_SEL = `saccharide or ${SUGAR_RES_SEL}`;
+
+/* ---- PART 2.2bis · A glycan is ONE molecule, not N ligands -------------------
+   A linked glycan (an N-glycan on an Asn, a glycolipid head, an oligosaccharide)
+   arrives as ONE HETATM residue per sugar, and nothing in the file says they
+   belong together: NGL would hand the viewer seven little molecules and the
+   Sugars menu would colour them as seven strangers. The LINKAGE is therefore read
+   from the topology itself — the anomeric carbon of one sugar (C1, or C2 for a
+   sialic acid / ketose) covalently bonded to a hydroxyl oxygen of the next one
+   (O4 · O6 of a hexopyranose, O3 · O2 of a furanose) — and the bonded monomers
+   are merged into ONE entity.
+
+   The bond comes from TWO sources, so it works on every file:
+
+     · the BOND GRAPH NGL built (CONECT records and the residue templates) —
+       sugarLinksFromBonds walks the neighbours of the sugar atoms, which is the
+       literal reading of the LINK / CONECT records of the request;
+     · the interatomic DISTANCE (sugarLinksByDistance), which is what is left when
+       a file carries no CONECT record at all — the usual case for a crystal
+       structure whose sugars are bare HETATM groups. A glycosidic C–O bond is
+       1.42 Å, so the cut-off is 1.8 Å: C1–O4 and C1–O6 are found, a water
+       molecule 2.8 Å away is not.
+
+   The dictionary below is the PDB 3-letter code ⇄ conventional short name of the
+   sugar types (Glc = GLC, GlcNAc = NAG, Man = MAN, Gal = GAL, Fuc = FUC,
+   Neu5Ac = SIA · NAN …), and it is what the glycan labels are written with. */
+const SUGAR_NAME_CODES = {
+  Glc: ['GLC', 'BGC'],
+  GlcNAc: ['NAG', 'NDG'],
+  Man: ['MAN', 'BMA'],
+  Gal: ['GAL', 'GLA'],
+  Fuc: ['FUC'],
+  Neu5Ac: ['SIA', 'NAN'],
+  Xyl: ['XYP'],
+  Rib: ['RIB'],
+  Ara: ['ARA'],
+  GlcA: ['GCU'],
+  IdoA: ['IDR'],
+};
+// code → short name (GLC → Glc, NAG → GlcNAc, SIA · NAN → Neu5Ac …) — the reverse
+// of the dictionary above.
+const SUGAR_CODE_NAMES = (() => {
+  const out = {};
+  Object.keys(SUGAR_NAME_CODES).forEach((short) => {
+    SUGAR_NAME_CODES[short].forEach((code) => { out[code] = short; });
+  });
+  return out;
+})();
+// The KETOSES: their anomeric carbon is C2, never C1 (a sialic acid carries its
+// linkage on C2).
+const SUGAR_KETOSE_CODES = new Set(['SIA', 'NAN', 'SLB', 'KDO', 'KDN']);
+// The hydroxyl oxygens a glycosidic bond is made to — never O5, the ring oxygen.
+const SUGAR_ACCEPTOR_RE = /^O(?:[1-4]|6)$/;
+const SUGAR_LINK_CUTOFF = 1.8;   // Å — a covalent C–O bond (1.42 Å) with margin
+const sugarCodeOf = (resname) => String(resname == null ? '' : resname).trim().toUpperCase();
+const isSugarResidueCode = (resname) => {
+  const c = sugarCodeOf(resname);
+  if (!c) return false;
+  return Object.prototype.hasOwnProperty.call(SUGAR_CODE_NAMES, c) || SUGAR_IDENTITY_CODES.indexOf(c) >= 0;
+};
+const sugarShortNameOf = (resname) => SUGAR_CODE_NAMES[sugarCodeOf(resname)] || sugarCodeOf(resname) || '?';
+// The anomeric carbons of ONE sugar: C1 of an aldose, C2 (then C1) of a ketose.
+const sugarAnomericNamesOf = (resname) => (SUGAR_KETOSE_CODES.has(sugarCodeOf(resname)) ? ['C2', 'C1'] : ['C1']);
+
+// Is `x` the anomeric carbon and `y` an acceptor oxygen — i.e. these two atoms ARE
+// the two ends of a glycosidic bond? (The element is checked too, so a hydrogen
+// called H1 next to a carbon called C1 can never be mistaken for the linkage.)
+const sugarLinkEnds = (x, y) => {
+  const ex = String(x.element == null ? x.name || '' : x.element).trim().toUpperCase().charAt(0);
+  const ey = String(y.element == null ? y.name || '' : y.element).trim().toUpperCase().charAt(0);
+  const anomeric = ex === 'C' && sugarAnomericNamesOf(x.resname).indexOf(nucAtomKey(x.name)) >= 0;
+  const acceptor = ey === 'O' && SUGAR_ACCEPTOR_RE.test(nucAtomKey(y.name));
+  return anomeric && acceptor;
+};
+// Two atoms of TWO DIFFERENT sugar residues, bonded: that bond is a glycosidic
+// linkage, and the two monomers belong to the same glycan.
+const sugarLinkBondOf = (a, b) => {
+  if (!a || !b || a.key === b.key) return false;
+  if (!isSugarResidueCode(a.resname) || !isSugarResidueCode(b.resname)) return false;
+  return sugarLinkEnds(a, b) || sugarLinkEnds(b, a);
+};
+// The same question WITHOUT a bond graph: two monomers are LINKED when an anomeric
+// carbon of one lies within one covalent C–O bond of an acceptor oxygen of the
+// other. This is the rule that works on a file whose sugars are bare HETATM
+// residues (no CONECT record, no templates) — C1–O4 / C1–O6 of the linkage.
+const sugarLinksByDistance = (monomers) => {
+  const out = [];
+  const list = monomers || [];
+  const near = (x, y) => {
+    const anomeric = sugarAnomericNamesOf(x.resname);
+    return (x.atoms || []).some((p) => anomeric.indexOf(nucAtomKey(p.name)) >= 0
+      && (y.atoms || []).some((q) => SUGAR_ACCEPTOR_RE.test(nucAtomKey(q.name))
+        && coordDist([p.x, p.y, p.z], [q.x, q.y, q.z]) <= SUGAR_LINK_CUTOFF));
+  };
+  for (let i = 0; i < list.length; i += 1) {
+    for (let j = i + 1; j < list.length; j += 1) {
+      const a = list[i];
+      const b = list[j];
+      if (!a || !b) continue;
+      if (!isSugarResidueCode(a.resname) || !isSugarResidueCode(b.resname)) continue;
+      if (near(a, b) || near(b, a)) out.push([i, j]);
+    }
+  }
+  return out;
+};
+// The same links read from the structure's OWN bond graph (the CONECT records and
+// the residue templates NGL parsed): eachBondedAtom gives the neighbours of an
+// atom, so a cross-residue anomeric-C → acceptor-O bond is found with no distance
+// guess at all. The two sources are merged by the caller (a file usually has one
+// of them, a rich file may have both).
+const sugarLinksFromBonds = (structure, monomers) => {
+  const out = [];
+  if (!structure || typeof structure.eachAtom !== 'function') return out;
+  const byAtom = new Map();
+  (monomers || []).forEach((m, mi) => {
+    (m.atoms || []).forEach((p) => byAtom.set(p.index, {
+      key: `${mi}`, name: p.name, element: p.element, resname: m.resname,
+    }));
+  });
+  if (!byAtom.size) return out;
+  const seen = new Set();
+  try {
+    structure.eachAtom((a) => {
+      const own = byAtom.get(a.index);
+      if (!own) return;
+      a.eachBondedAtom((b) => {
+        const other = byAtom.get(b.index);
+        if (!other || other.key === own.key) return;
+        if (!sugarLinkBondOf(own, other)) return;
+        const pair = [own.key, other.key].sort().join('|');
+        if (seen.has(pair)) return;
+        seen.add(pair);
+        out.push([Number(own.key), Number(other.key)]);
+      });
+    });
+  } catch { /* no bond graph → the distance rule alone */ }
+  return out;
+};
+
+// « NAG2 → NAG3 → BMA4 » — the sugars of ONE glycan in sequence, named the
+// conventional way (Glc · GlcNAc · Neu5Ac …) and numbered as the file numbers them.
+const glycanLabel = (members) => (members || [])
+  .map((m) => (m ? `${sugarShortNameOf(m.resname)}${m.resno != null ? m.resno : ''}` : '?'))
+  .join(' → ');
+// The glycan ENTITIES of a set of monomers: the monomers grouped by the linkage
+// bonds (union-find over the graph the two detectors above built). A branched
+// N-glycan becomes ONE entity — the entity is what the UI colours, names and
+// counts — while a lone monosaccharide is an entity of its own.
+const glycanEntities = (monomers, links) => {
+  const list = monomers || [];
+  const parent = list.map((_, i) => i);
+  const find = (i) => {
+    let k = i;
+    while (parent[k] !== k) { parent[k] = parent[parent[k]]; k = parent[k]; }
+    return k;
+  };
+  (links || []).forEach((pair) => {
+    const i = pair && pair[0];
+    const j = pair && pair[1];
+    if (!list[i] || !list[j]) return;
+    const a = find(i);
+    const b = find(j);
+    if (a !== b) parent[a] = b;
+  });
+  const groups = new Map();
+  list.forEach((_, i) => {
+    const r = find(i);
+    if (!groups.has(r)) groups.set(r, []);
+    groups.get(r).push(i);
+  });
+  return Array.from(groups.values()).map((members) => ({
+    members,
+    linked: members.length > 1,
+    label: glycanLabel(members.map((i) => list[i])),
+  }));
+};
+// The sugar monomers of ONE structure, as the pure functions above want them: one
+// record per sugar residue with its atoms as plain { index, name, element, x, y, z }.
+const sugarMonomersOf = (structure) => {
+  const byRes = new Map();
+  structureAtomRecords(structure, (a) => isSugarResidueCode(a.resname)).forEach((a) => {
+    const key = `${a.chainIndex}|${a.residueIndex}|${a.resname}|${a.resno}`;
+    let m = byRes.get(key);
+    if (!m) {
+      m = {
+        key, resname: a.resname, resno: a.resno,
+        chainIndex: a.chainIndex, residueIndex: a.residueIndex, atoms: [],
+      };
+      byRes.set(key, m);
+    }
+    m.atoms.push({ index: a.index, name: a.name, element: a.element, x: a.x, y: a.y, z: a.z });
+  });
+  return Array.from(byRes.values());
+};
+const glycanCache = new WeakMap();
+// { monomers, entities, byAtom } for ONE structure — computed once, because the
+// colour scheme is asked for a colour once per atom and the grouping is a graph
+// walk. byAtom is what the scheme reads: atom index → entity index.
+const glycanEntityMapFor = (structure) => {
+  if (!structure) return null;
+  if (glycanCache.has(structure)) return glycanCache.get(structure);
+  let out = null;
+  try {
+    const monomers = sugarMonomersOf(structure);
+    if (monomers.length) {
+      const links = sugarLinksByDistance(monomers).concat(sugarLinksFromBonds(structure, monomers));
+      const entities = glycanEntities(monomers, links);
+      const byAtom = new Map();
+      entities.forEach((e, ei) => e.members.forEach((mi) => {
+        (monomers[mi].atoms || []).forEach((p) => byAtom.set(p.index, ei));
+      }));
+      out = { monomers, entities, byAtom };
+    }
+  } catch { out = null; }
+  glycanCache.set(structure, out);
+  return out;
+};
+// What the Sugars menu says about the glycans of the file on screen: one entry per
+// entity (its label, its size) plus the two totals — computed ONCE at load time.
+const glycanSummaryFor = (structure) => {
+  const info = glycanEntityMapFor(structure);
+  const entities = (info ? info.entities : []).map((e) => ({ label: e.label, size: e.members.length, linked: e.linked }));
+  return {
+    total: info ? info.monomers.length : 0,
+    linked: entities.filter((e) => e.linked).reduce((n, e) => n + e.size, 0),
+    entities,
+  };
+};
+
 
 // NGL selection + presence of every CATEGORY of one structure, computed ONCE per
 // structure (WeakMap cache) and shared by the renderer and the menus, so a style
@@ -1190,16 +1999,19 @@ const registerColorScheme = (NGL, label, define) => {
 };
 const sstrucColorStore = { helix: 0xb44a90, sheet: 0xf8d878, loop: 0xe6e6e6 };
 let sstrucSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
+// The 2°-structure colour of ONE atom, from NGL's own `sstruc` code — factored out
+// so the MOTIF scheme (lab-nuc-motif) can hand every nucleotide that is NOT part of
+// a G-quadruplex or a hairpin exactly the colour it would have had here.
+const sstrucAtomColorOf = (s) => {
+  if (s === 'h' || s === 'g' || s === 'i') return sstrucColorStore.helix;   // α / 3₁₀ / π helices
+  if (s === 'e' || s === 'b') return sstrucColorStore.sheet;                // β strands / sheets
+  return sstrucColorStore.loop;                                             // coil, turns, bends, loops…
+};
 // The definition of the scheme, NAMED so a test can extract and really run it
 // (registerSstrucScheme below is the only place that registers it).
 const defineSstrucScheme = () => {
   return function () {
-    this.atomColor = function (atom) {
-      const s = atom && atom.sstruc;
-      if (s === 'h' || s === 'g' || s === 'i') return sstrucColorStore.helix;   // α / 3₁₀ / π helices
-      if (s === 'e' || s === 'b') return sstrucColorStore.sheet;                // β strands / sheets
-      return sstrucColorStore.loop;                                             // coil, turns, bends, loops…
-    };
+    this.atomColor = function (atom) { return sstrucAtomColorOf(atom && atom.sstruc); };
   };
 };
 const registerSstrucScheme = (NGL) => {
@@ -1329,6 +2141,9 @@ const registerElementScheme = (NGL) => {
 const SUGAR_IDENTITY_COLORS = {
   GLC: 0x3fbf6f, NAG: 0x2f7fd0, MAN: 0x8a5fd0, BMA: 0xd0a02f,
   GAL: 0xd05f9f, FUC: 0x30b7b7, SIA: 0xd06a40,
+  // NAN is the other 3-letter spelling of the SAME sugar (Neu5Ac): the two codes
+  // share one colour, because the point of this table is « which sugar is this ».
+  NAN: 0xd06a40,
 };
 // The residue codes of the S menu, in the order they are written there — the ⚙
 // panel builds its swatch grid from THIS list, so the two can never drift.
@@ -1350,6 +2165,299 @@ const defineSugarIdentityScheme = () => {
 const registerSugarScheme = (NGL) => {
   if (sugarSchemeKey) return;
   sugarSchemeKey = registerColorScheme(NGL, 'lab-sugar-identity', defineSugarIdentityScheme());
+};
+
+/* ---- GLYCAN entity colours (the « Glycan (linked sugars) » colouring) --------
+   The glycan ENTITIES of PART 2.2bis get ONE colour each, so a branched N-glycan
+   reads as ONE molecule instead of seven unrelated residues; an isolated
+   monosaccharide keeps the per-sugar identity colour of the ⚙ palette, which is
+   the honest reading of « this one is linked to nothing ». The grouping is computed
+   once per structure (glycanEntityMapFor) and the palette is a live store, exactly
+   like lab-elements / lab-sugar-identity: moving a colour repaints, nothing is
+   re-registered. */
+const GLYCAN_ENTITY_COLORS = [
+  0x2f9fd0, 0xd0712f, 0x4cc04a, 0xa45fd0, 0xd03f6f, 0x2fb7a0, 0xc8a92f, 0x7a7fd0,
+];
+const DEFAULT_GLYCAN_ENTITY_COLOR = DEFAULT_ELEMENT_COLOR;
+const glycanColorStore = {
+  colors: [...GLYCAN_ENTITY_COLORS],
+  isolate: true,   // an isolated sugar keeps its « Sugar type » colour
+};
+// The colour of entity N, cycling through the palette (an organism with more than
+// eight glycans repeats the colours — the labels of the menu tell them apart).
+const glycanEntityColorOf = (i) => {
+  const c = glycanColorStore.colors;
+  if (!Number.isFinite(i) || !c.length) return DEFAULT_GLYCAN_ENTITY_COLOR;
+  const v = c[((i % c.length) + c.length) % c.length];
+  return Number.isFinite(v) ? v : DEFAULT_GLYCAN_ENTITY_COLOR;
+};
+let glycanSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
+// The definition of the scheme (named so a test can extract and really run it).
+const defineGlycanScheme = () => {
+  return function () {
+    this.atomColor = function (atom) {
+      const info = atom && atom.structure ? glycanEntityMapFor(atom.structure) : null;
+      const e = info && atom.index != null ? info.byAtom.get(atom.index) : undefined;
+      if (e == null) return sugarColorOf(atom && atom.resname);
+      const entity = info.entities[e];
+      if (glycanColorStore.isolate && entity && !entity.linked) return sugarColorOf(atom.resname);
+      return glycanEntityColorOf(e);
+    };
+  };
+};
+const registerGlycanScheme = (NGL) => {
+  if (glycanSchemeKey) return;
+  glycanSchemeKey = registerColorScheme(NGL, 'lab-glycans', defineGlycanScheme());
+};
+
+/* ---- Lipid CLASS colours (the « Lipid class » colouring) --------------------
+   ONE colour per headgroup class (PART 2.1bis), read from the residue name alone:
+   a bilayer can then be read CHEMICALLY — which phospholipid, which sterol, which
+   fatty acid — instead of part by part (lab-lipid-groups keeps that reading). */
+const LIPID_CLASS_COLORS = {
+  PC: 0x2f9fd0, PE: 0x3fbf6f, PG: 0xd03f6f, PS: 0xd8b02f, PI: 0x8a5fd0,
+  PA: 0x2fb7b7, CL: 0xd0712f, SM: 0x7a7fd0, Chol: 0xd8d02f, FA: 0xa8b0b8,
+  OTHER: DEFAULT_ELEMENT_COLOR,
+};
+const lipidClassColorStore = { ...LIPID_CLASS_COLORS };
+const lipidClassColorOf = (resname) => {
+  const v = lipidClassColorStore[lipidClassOf(resname)];
+  return Number.isFinite(v) ? v : DEFAULT_ELEMENT_COLOR;
+};
+let lipidClassSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
+const defineLipidClassScheme = () => {
+  return function () {
+    this.atomColor = function (atom) { return lipidClassColorOf(atom && atom.resname); };
+  };
+};
+const registerLipidClassScheme = (NGL) => {
+  if (lipidClassSchemeKey) return;
+  lipidClassSchemeKey = registerColorScheme(NGL, 'lab-lipid-class', defineLipidClassScheme());
+};
+
+/* ---- Nucleic-acid FORM colours (the « DNA/RNA conformation » colouring) -------
+   A · B · Z DNA, A · flexible RNA — the six forms of PART 3.1 get ONE distinct,
+   high-contrast colour each, so a structural transition (A → B, right-handed → Z,
+   a rigid stretch → a flexible loop) jumps out of the picture. The classification
+   is computed ONCE per structure and cached (nucleicClassFor): the scheme only
+   looks the residue index up, and it never throws on an atom that carries no
+   structure (registration probe, a test, a colouring of another molecule). */
+const DEFAULT_NUCLEIC_FORM_COLORS = {
+  'a-dna': 0x2f7fd0, 'b-dna': 0x35b85f, 'z-dna': 0xc0304f,
+  'a-rna': 0xf0a020, 'loop-rna': 0x9a5fd0, 'z-rna': 0xff5fa8,
+};
+const nucleicFormColorStore = { ...DEFAULT_NUCLEIC_FORM_COLORS };
+const nucleicFormColorOf = (form) => {
+  const v = nucleicFormColorStore[form];
+  return Number.isFinite(v) ? v : DEFAULT_ELEMENT_COLOR;
+};
+let nucleicFormSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
+// The definition of the scheme (named so a test can extract and really run it).
+const defineNucleicFormScheme = () => {
+  return function () {
+    this.atomColor = function (atom) {
+      const info = atom && atom.structure ? nucleicClassFor(atom.structure) : null;
+      const form = info && atom.residueIndex != null ? info.formByResidue.get(atom.residueIndex) : null;
+      return nucleicFormColorOf(form);
+    };
+  };
+};
+const registerNucleicFormScheme = (NGL) => {
+  if (nucleicFormSchemeKey) return;
+  nucleicFormSchemeKey = registerColorScheme(NGL, 'lab-nuc-form', defineNucleicFormScheme());
+};
+
+/* ---- Nucleic-acid MOTIF colours (G-quadruplex · hairpin) ---------------------
+   The two motifs of PART 3.2 are painted with ONE high-contrast colour each, and
+   EVERY other nucleotide keeps the 2°-structure colour it would have had
+   (sstrucAtomColorOf — the rule of lab-sstruc). That is the point: a quadruplex or
+   a hairpin must stand out against the double helices and the single strands
+   around it instead of hiding inside a flat colour. The motifs ARE the « 2°
+   structure » of a nucleic acid — the category the 🎨 panel of menu B never had,
+   because helix / sheet / loop is a protein notion. */
+const DEFAULT_NUCLEIC_MOTIF_COLORS = { gquad: 0xff3ec8, hairpin: 0x00d1b2 };
+const nucleicMotifColorStore = { ...DEFAULT_NUCLEIC_MOTIF_COLORS };
+// null = « this nucleotide is in no motif » → the caller keeps the 2° structure.
+const nucleicMotifColorOf = (motif) => {
+  const v = nucleicMotifColorStore[motif];
+  return Number.isFinite(v) ? v : null;
+};
+let nucleicMotifSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
+// The definition of the scheme (named so a test can extract and really run it).
+const defineNucleicMotifScheme = () => {
+  return function () {
+    this.atomColor = function (atom) {
+      const info = atom && atom.structure ? nucleicClassFor(atom.structure) : null;
+      const motif = info && atom.residueIndex != null ? info.motifByResidue.get(atom.residueIndex) : null;
+      const c = nucleicMotifColorOf(motif);
+      if (c != null) return c;
+      return sstrucAtomColorOf(atom && atom.sstruc);
+    };
+  };
+};
+const registerNucleicMotifScheme = (NGL) => {
+  if (nucleicMotifSchemeKey) return;
+  nucleicMotifSchemeKey = registerColorScheme(NGL, 'lab-nuc-motif', defineNucleicMotifScheme());
+};
+
+/* ---- The two palettes the ⚙ settings wheel edits, PERSISTED -----------------
+   The element / sugar tables are the working state of the wheel, so they are
+   written to localStorage like every other viewer preference (Fog / Shadows /
+   clipping / the six menus): reopening the page must not lose a palette the user
+   has tuned. A stored entry is only accepted for a KNOWN key and a finite colour,
+   so a hand-edited localStorage value can never add an element or a sugar that the
+   schemes do not read, and can never turn an atom black by accident. */
+const ELEMENT_COLORS_KEY = 'labViewerElementColors';
+const SUGAR_COLORS_KEY = 'labViewerSugarColors';
+// The two palette entries of the NUCLEIC reading of PART 3 travel the same way:
+// the six form colours (A · B · Z DNA, A · flexible · Z RNA) and the two motif
+// colours (G-quadruplex · hairpin).
+const NUCLEIC_FORM_COLORS_KEY = 'labViewerNucleicFormColors';
+const NUCLEIC_MOTIF_COLORS_KEY = 'labViewerNucleicMotifColors';
+// A stored / imported palette is merged over the defaults: only a KNOWN key with a
+// FINITE colour is accepted, so a hand-edited localStorage entry (or a setup file
+// written by another build) can neither add an element the schemes do not read nor
+// turn an atom black by accident. ONE rule, used by the persistence AND by the ⚙️
+// saved setups.
+const mergePalette = (defaults, raw) => {
+  const out = { ...defaults };
+  if (raw && typeof raw === 'object') {
+    Object.keys(defaults).forEach((k) => {
+      const v = raw[k];
+      if (Number.isFinite(v)) out[k] = v;
+    });
+  }
+  return out;
+};
+const loadPalette = (key, defaults) => {
+  try {
+    return mergePalette(defaults, JSON.parse(localStorage.getItem(key) || 'null'));
+  } catch { /* unreadable entry → the defaults */ }
+  return { ...defaults };
+};
+const savePalette = (key, v) => {
+  try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* ignore */ }
+};
+
+/* ---- Which NGL colour SCHEME a per-molecule « Colour by » choice is ---------
+   The Molecules bar offers the NGL metaphors (chain / residue / hydrophobicity)
+   plus the HOUSE ones, and they all have to survive a scheme that could not be
+   registered (registerColorScheme returns null then): 'sstruc' keeps the ☽☰Ⰶ
+   scheme of the 🎨 panel, 'element' the CUSTOMISABLE element table of the ⚙ wheel
+   (lab-elements), 'sugar' the per-sugar identity table (lab-sugar-identity), and
+   'glycan' · 'nucform' · 'motif' · 'lipidclass' the four readings PART 2 / PART 3
+   added (the linked-sugar entities, the A · B · Z · A-RNA forms, the G-quadruplex
+   and hairpin motifs, the phospholipid headgroup classes) — each falling back on
+   the closest NGL native scheme, so a molecule is never drawn with no colour at
+   all. ONE mapping, called by the main structure and by every loaded molecule. */
+const schemeForColorMode = (mode) => {
+  if (mode === 'sstruc') return sstrucSchemeKey || 'sstruc';
+  if (mode === 'element') return elementSchemeKey || 'element';
+  if (mode === 'sugar') return sugarSchemeKey || 'element';
+  if (mode === 'glycan') return glycanSchemeKey || 'element';
+  if (mode === 'lipidclass') return lipidClassSchemeKey || 'element';
+  // The two nucleic readings fall back on the 2°-structure colours, never on a
+  // flat element colour: a conformation or a motif is a STRUCTURAL notion.
+  if (mode === 'nucform') return nucleicFormSchemeKey || sstrucSchemeKey || 'sstruc';
+  if (mode === 'motif') return nucleicMotifSchemeKey || sstrucSchemeKey || 'sstruc';
+  return mode;
+};
+
+/* ---- GENERAL look ⇄ per-category look (the override hierarchy) ---------------
+   The six menus of §2 share a GENERAL look — atom colour, sphere / bond radius,
+   surface colour — and every one of them may OVERRIDE any of those fields. The
+   rule is one line per field, implemented ONCE here and used by the six menus, by
+   the ↺ of a field and by the ⚙ settings wheel:
+
+     • a field a menu Follows has no life of its own: the general value is written
+       into that menu, so the renderer keeps reading catStyles[cat] and NOTHING
+       resolves anything at render time;
+     • a field the user changed IN A MENU is overridden there: it keeps its value
+       when the general look moves, and the small ↺ next to it hands it back;
+     • ↺ Reset radii & colours of a menu = « follow the general look again » for
+       every field of that menu.
+
+   The FIRST state keeps today's look exactly: the per-category flat colour is the
+   menu's own (that is the colour the menus have always proposed for « Custom… »,
+   see DEFAULT_ATOM_COLORS) while every other field follows the general look, whose
+   defaults are the values the menus already start with. A value found in a saved
+   localStorage entry counts as an override too, so an existing user's menus never
+   move under their feet. */
+const GENERAL_LOOK_KEY = 'labViewerGeneralLook';
+const DEFAULT_LOOK_OVERRIDES = { atomColorHex: true };
+const DEFAULT_GENERAL_LOOK = {
+  atomColor: 'default',
+  atomColorHex: DEFAULT_SURFACE_COLOR,
+  surfaceColor: 'default',
+  surfaceColorHex: DEFAULT_SURFACE_COLOR,
+  sphereRadius: 1,
+  bondRadius: 1,
+  gradientFrom: DEFAULT_GRADIENT_COLORS.from,
+  gradientTo: DEFAULT_GRADIENT_COLORS.to,
+};
+// Every field the general row (and the ⚙ wheel) owns — the ones a menu can inherit.
+const LOOK_KEYS = ['atomColor', 'atomColorHex', 'surfaceColor', 'surfaceColorHex', 'sphereRadius', 'bondRadius', 'gradientFrom', 'gradientTo'];
+const isLookKey = (key) => LOOK_KEYS.includes(key);
+// Does ONE menu OVERRIDE that field, or does it follow the general look? An entry
+// without an `ovr` flag (the built-in defaults, or a file written by an older
+// build) falls back on DEFAULT_LOOK_OVERRIDES.
+const overridesLook = (catEntry, key) => {
+  const ovr = (catEntry && catEntry.ovr) || DEFAULT_LOOK_OVERRIDES;
+  return !!ovr[key];
+};
+// The general look as it is really applied: the stored values over the defaults.
+const loadGeneralLook = () => {
+  const out = { ...DEFAULT_GENERAL_LOOK };
+  try {
+    const raw = JSON.parse(localStorage.getItem(GENERAL_LOOK_KEY) || 'null');
+    if (raw && typeof raw === 'object') {
+      LOOK_KEYS.forEach((k) => {
+        const v = raw[k];
+        if (typeof v === 'string' || Number.isFinite(v)) out[k] = v;
+      });
+    }
+  } catch { /* the defaults */ }
+  return out;
+};
+
+/* ---- The three moves of the hierarchy, as PURE functions --------------------
+   They are the whole of it: the menus, the general row, the ⚙ wheel and the ↺s all
+   go through them, and a test can run them for real on a plain object. */
+
+// 1. ONE general field → every menu that Follows it (an override keeps its value).
+const applyGeneralField = (catStyles, key, value) => {
+  const out = { ...catStyles };
+  CAT_STYLE_CATS.forEach((c) => {
+    const cur = out[c] || {};
+    if (overridesLook(cur, key)) return;   // that menu keeps its own value
+    out[c] = { ...cur, [key]: value };
+  });
+  return out;
+};
+
+// 2. ONE field of ONE menu → back to the general look (the override is dropped, so
+//    the next general change reaches it again).
+const yieldLookField = (catStyles, cat, key, generalValue) => {
+  const cur = catStyles[cat] || {};
+  const ovr = { ...(cur.ovr || DEFAULT_LOOK_OVERRIDES) };
+  delete ovr[key];
+  return { ...catStyles, [cat]: { ...cur, [key]: generalValue, ovr } };
+};
+
+// 3. The WHOLE general look → ONE menu (its ↺ Reset radii & colours): every look
+//    field takes the general value and follows it from now on.
+const adoptGeneralLook = (catStyles, cat, generalLook) => {
+  const entry = { ...(catStyles[cat] || {}), ovr: {} };
+  LOOK_KEYS.forEach((k) => { entry[k] = generalLook[k]; });
+  return { ...catStyles, [cat]: entry };
+};
+
+// 4. The general look back to its DEFAULTS (the ↺ of the general row / the wheel):
+//    the fields that follow take the default again, the overrides stay untouched.
+const defaultGeneralLookIn = (catStyles) => {
+  let out = catStyles;
+  LOOK_KEYS.forEach((k) => { out = applyGeneralField(out, k, DEFAULT_GENERAL_LOOK[k]); });
+  return out;
 };
 
 // ---- A flat colour, as NGL wants it (a hex integer) -------------------------
@@ -1377,6 +2485,23 @@ const catColorParams = (m, kind) => {
   const mode = (m && m.atomColor) || 'default';
   if (mode === 'sstruc' && sstrucSchemeKey) return { color: sstrucSchemeKey };
   if (mode === 'gradient' && gradientSchemeKey) return { color: gradientSchemeKey };
+  // The palette colourings the ⚙ wheel and PART 2 / PART 3 feed. They all FALL
+  // THROUGH when their scheme could not be registered, so the menu keeps the
+  // classic element colours (a colouring that failed to register must never draw
+  // nothing); the two nucleic ones land on the 2°-structure colours instead,
+  // because a conformation / a motif is a structural notion and not an element.
+  if (mode === 'element' && elementSchemeKey) return { color: elementSchemeKey };
+  if (mode === 'sugar' && sugarSchemeKey) return { color: sugarSchemeKey };
+  if (mode === 'glycan' && glycanSchemeKey) return { color: glycanSchemeKey };
+  if (mode === 'lipidclass' && lipidClassSchemeKey) return { color: lipidClassSchemeKey };
+  if (mode === 'nucform') {
+    if (nucleicFormSchemeKey) return { color: nucleicFormSchemeKey };
+    if (sstrucSchemeKey) return { color: sstrucSchemeKey };
+  }
+  if (mode === 'motif') {
+    if (nucleicMotifSchemeKey) return { color: nucleicMotifSchemeKey };
+    if (sstrucSchemeKey) return { color: sstrucSchemeKey };
+  }
   const hex = mode === 'custom' ? flatHex(m && m.atomColorHex) : null;
   if (kind === 'backbone') return hex != null ? { color: hex } : { color: 'residueindex' };
   return hex != null ? { color: hex } : { colorScheme: 'element' };
@@ -2274,6 +3399,52 @@ const VSel = ({ value, onChange, title, width = 'w-40', disabled = false, childr
   </select>
 );
 
+/* The style / colour options of the Molecules bar — ONE list each, rendered for
+   the main structure AND for every loaded molecule, so a per-molecule control can
+   never offer a style in one row and not in another. « Sticks » is NGL's licorice
+   (NGL 2.4 has no `stick` representation: asking for one used to draw nothing). */
+const MOL_STYLE_OPTIONS = (
+  <>
+    <option value="auto">Auto</option>
+    <option value="cartoon">Cartoon</option>
+    <option value="ribbon">Ribbon</option>
+    <option value="ball+stick">Ball &amp; stick</option>
+    <option value="sticks">Sticks</option>
+    <option value="lines">Lines</option>
+    <option value="spheres">Spheres</option>
+    <option value="surface">Surface</option>
+  </>
+);
+const MOL_COLOR_OPTIONS = (
+  <>
+    <option value="solid">Solid</option>
+    <option value="element">Atom type</option>
+    <option value="sugar">Sugar type</option>
+    <option value="glycan">Glycan (linked sugars)</option>
+    <option value="nucform">DNA/RNA conformation</option>
+    <option value="motif">2° structure + motifs</option>
+    <option value="lipidclass">Lipid class</option>
+    <option value="chainid">Chain</option>
+    <option value="resname">Residue</option>
+    <option value="sstruc">2° structure</option>
+    <option value="hydrophobicity">Hydrophobicity</option>
+  </>
+);
+
+/* One FOLD of one molecule in the Molecules bar (Style · Colour · Transp · Move).
+   The bar is 20 rem wide and lists every loaded structure, so a molecule cannot
+   afford four stacked rows of controls: each group is a disclosure that carries
+   its CURRENT value in the button itself (and in its tooltip), and only the open
+   group renders its controls — one at a time per molecule, like the six menus of
+   §2. A folded molecule therefore still says exactly how it is drawn. */
+const MolFold = ({ open, onToggle, label, summary }) => (
+  <button type="button" onClick={onToggle} aria-expanded={open} title={summary}
+    className={`flex-1 min-w-0 flex items-center justify-between gap-0.5 px-1 py-0.5 rounded border text-[10px] font-bold transition-colors ${open ? 'bg-blue-100 border-blue-400 text-blue-800' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
+    <span className="truncate">{label}</span>
+    <span className="shrink-0">{open ? '▴' : '▾'}</span>
+  </button>
+);
+
 // ============================================================================
 // MAIN COMPONENT
 // ============================================================================
@@ -2308,6 +3479,10 @@ selectedKeys,
 manualKeys = [],
 moleculeType = 'protein',
 smiles = '',
+// SMILES of the DOCKED ligand (a docking run keeps the receptor in `src` and the
+// ligand's SMILES on the experiment): it is what the Molecules bar shows in its
+// SMILES fold when the page provides no `smiles` of its own.
+ligandSmiles = '',
 parsedSeq = [],
 residueOffset = 0,
 atomRenames,
@@ -2341,6 +3516,30 @@ const [viewerCollapsed, setViewerCollapsed] = useState(false);
 // "configure once" tool (the summary line on the header keeps saying what the
 // current styles are, so a closed section is never silent).
 const [stylingOpen, setStylingOpen] = useState(false);
+/* ⚙ SETTINGS WHEEL of the Molecules bar. It owns the two EDITABLE palettes the
+   per-molecule colourings read (« Atom type » → the element table, « Sugar type »
+   → the per-sugar identity table) plus the gradient pair that every menu shares.
+   The palettes are React state (so the wheel updates at once and the swatch grid
+   is never stale) and an effect copies them into the mutable stores the NGL
+   schemes read — the very stores the wheels' comments have always described. */
+const [settingsPanelOpen, setSettingsPanelOpen] = useState(false);
+const [elementColors, setElementColors] = useState(() => loadPalette(ELEMENT_COLORS_KEY, ELEMENT_COLOR_PALETTE));
+const [sugarColors, setSugarColors] = useState(() => loadPalette(SUGAR_COLORS_KEY, SUGAR_IDENTITY_COLORS));
+// The NUCLEIC reading of PART 3 has its own two palettes in the same wheel: the six
+// forms and the two motifs, each one a colour the user can tune (a form that is
+// hard to tell from another is exactly what a good palette fixes).
+const [nucleicFormColors, setNucleicFormColors] = useState(() => loadPalette(NUCLEIC_FORM_COLORS_KEY, DEFAULT_NUCLEIC_FORM_COLORS));
+const [nucleicMotifColors, setNucleicMotifColors] = useState(() => loadPalette(NUCLEIC_MOTIF_COLORS_KEY, DEFAULT_NUCLEIC_MOTIF_COLORS));
+// ONE swatch = ONE entry of the palette (the element is the key, the hex the value).
+const setElementColor = (el, hex) => setElementColors((prev) => ({ ...prev, [el]: hex }));
+const setSugarColor = (res, hex) => setSugarColors((prev) => ({ ...prev, [res]: hex }));
+const resetElementColors = () => setElementColors({ ...ELEMENT_COLOR_PALETTE });
+const resetSugarColors = () => setSugarColors({ ...SUGAR_IDENTITY_COLORS });
+// ONE swatch of the nucleic palettes (the key is the FORM · 'gquad' · 'hairpin').
+const setNucleicFormColor = (form, hex) => setNucleicFormColors((prev) => ({ ...prev, [form]: hex }));
+const setNucleicMotifColor = (motif, hex) => setNucleicMotifColors((prev) => ({ ...prev, [motif]: hex }));
+const resetNucleicFormColors = () => setNucleicFormColors({ ...DEFAULT_NUCLEIC_FORM_COLORS });
+const resetNucleicMotifColors = () => setNucleicMotifColors({ ...DEFAULT_NUCLEIC_MOTIF_COLORS });
 const [captureMsg, setCaptureMsg] = useState('');
 // Message of the §1 « ⬇ PDB » button (structure / current-frame snapshot).
 const [pdbMsg, setPdbMsg] = useState('');
@@ -2465,10 +3664,14 @@ catStylesRef.current = catStyles;
 // system (leaveLightMode): the menu the user just moved is really applied.
 const setCatStyle = (cat, key, value) => {
   leaveLightMode();
-  setCatStyles((prev) => ({
-    ...prev,
-    [cat]: { ...(prev[cat] || {}), [key]: value },
-  }));
+  setCatStyles((prev) => {
+    const cur = prev[cat] || {};
+    const next = { ...cur, [key]: value };
+    // A LOOK field changed FROM THIS MENU stops following the general look: it is
+    // that menu's own choice from now on (the ↺ beside it hands it back).
+    if (isLookKey(key)) next.ovr = { ...(cur.ovr || DEFAULT_LOOK_OVERRIDES), [key]: true };
+    return { ...prev, [cat]: next };
+  });
 };
 // Pick a surface COLOUR. A colouring needs a surface to sit on — both ESP and a
 // Custom colour switch the surface ON (transparent) when it is hidden, so the
@@ -2480,8 +3683,51 @@ const setSurfaceColor = (cat, value) => {
     const cur = prev[cat] || {};
     const next = { ...cur, surfaceColor: value };
     if ((value === 'esp' || value === 'custom') && (!next.surface || next.surface === 'hide')) next.surface = 'transparent';
+    next.ovr = { ...(cur.ovr || DEFAULT_LOOK_OVERRIDES), surfaceColor: true };
     return { ...prev, [cat]: next };
   });
+};
+/* ---- The GENERAL look of §2 (the override hierarchy) ------------------------
+   It is the ONE place a change reaches all six menus at once: a field written
+   here is stored as the general value AND pushed into every menu that Follows it
+   (overridesLook), while a menu that overrides that field keeps its own value
+   untouched. It is persisted on its own (labViewerGeneralLook) and it also feeds
+   the gradient ramp of the whole viewer — one pair of colours, one scheme. */
+const [generalLook, setGeneralLook] = useState(() => loadGeneralLook());
+const setGeneralLookField = (key, value) => {
+  leaveLightMode();   // the general look is a styling choice, not only a colour
+  setGeneralLook((prev) => ({ ...prev, [key]: value }));
+  setCatStyles((prev) => applyGeneralField(prev, key, value));
+};
+// Hand ONE field of ONE menu back to the general look: it takes the general value
+// again and the override flag is dropped, so the next general change reaches it.
+const followGeneralLook = (cat, key) => {
+  leaveLightMode();
+  setCatStyles((prev) => yieldLookField(prev, cat, key, generalLook[key]));
+};
+const followsGeneral = (cat, key) => !overridesLook(catStyles[cat], key);
+// The two ends of the gradient ramp, as the ⚙ wheel shows them (one pair shared
+// by every menu: the ramp is a single NGL scheme, see gradientColorStore).
+const gradientPair = {
+  from: Number.isFinite((catStyles.protein || {}).gradientFrom) ? catStyles.protein.gradientFrom : DEFAULT_GRADIENT_COLORS.from,
+  to: Number.isFinite((catStyles.protein || {}).gradientTo) ? catStyles.protein.gradientTo : DEFAULT_GRADIENT_COLORS.to,
+};
+// Write BOTH ends of the ramp through the general look, so the six menus follow
+// and the reference feed (catStyles.protein) sees the new pair.
+const setGradientPair = (key, hex) => setGeneralLookField(key, hex);
+// ⇄ reverses the ramp (the ramp itself always runs first residue → last; swapping
+// its two ends is what « reverse » means — same rule as the menu's ⇄ button).
+const swapGeneralGradient = () => {
+  const { from, to } = gradientPair;
+  setGradientPair('gradientFrom', to);
+  setGradientPair('gradientTo', from);
+};
+// ↺ Put the GENERAL look back to its defaults: every menu that Follows a field
+// takes the default again (a menu that overrides it keeps its own value).
+const resetGeneralLook = () => {
+  leaveLightMode();
+  setGeneralLook({ ...DEFAULT_GENERAL_LOOK });
+  setCatStyles((prev) => defaultGeneralLookIn(prev));
 };
 // Open/closed state of the five styling menus (accordion: one at a time) and of
 // the residue-sequence strip above the viewport (collapsible: it used to eat
@@ -2508,6 +3754,13 @@ const [mainMol, setMainMol] = useState({ style: 'auto', color: '', colorMode: 'e
 const mainMolRef = useRef(mainMol);
 mainMolRef.current = mainMol;
 const [mainPos, setMainPos] = useState([0, 0, 0]); // main structure translation (Å), settable via Move X/Y/Z or ✋ Drag
+// Which FOLD of which molecule is open in the Molecules bar — one group at a
+// time per molecule (Style · Colour · Transp · Move), so the bar stays compact
+// however many structures are loaded. Keyed by the molecule key ('main' or an
+// extra structure id), and forgotten when that molecule is deleted.
+const [molFold, setMolFold] = useState({});   // { [molKey]: 'style' | 'color' | 'transp' | 'move' }
+const toggleMolFold = (key, section) => setMolFold((prev) => ({ ...prev, [key]: prev[key] === section ? null : section }));
+const foldOpen = (key, section) => molFold[key] === section;
 const [residueTicks, setResidueTicks] = useState([]); // [{ resno, resname, code, chainid }] — sequence strip above the 3D view
 const extraCompsRef = useRef([]);                  // [{ id, name, comp, baseReps, style, color }]
 // "⚡ ESP" electrostatic-potential overlay — an optional extra NGL `surface`
@@ -3017,6 +4270,30 @@ useEffect(() => {
   gradientColorStore.from = Number.isFinite(g.gradientFrom) ? g.gradientFrom : DEFAULT_GRADIENT_COLORS.from;
   gradientColorStore.to = Number.isFinite(g.gradientTo) ? g.gradientTo : DEFAULT_GRADIENT_COLORS.to;
 }, [catStyles]);
+// ⚙ The TWO palettes of the settings wheel feed their schemes' stores exactly the
+// same way: the wheel's swatches are the only writer, the store is the live value
+// the registered scheme reads (lab-elements · lab-sugar-identity) and NO scheme is
+// ever re-registered — moving a swatch repaints the representations that use it
+// (the schemes are evaluated per atom at render time). They are persisted with the
+// rest of the viewer's preferences, so a tuned palette survives the page.
+useEffect(() => {
+  Object.assign(elementColorStore, elementColors);
+  savePalette(ELEMENT_COLORS_KEY, elementColors);
+}, [elementColors]);
+useEffect(() => {
+  Object.assign(sugarColorStore, sugarColors);
+  savePalette(SUGAR_COLORS_KEY, sugarColors);
+}, [sugarColors]);
+useEffect(() => {
+  Object.assign(nucleicFormColorStore, nucleicFormColors);
+  savePalette(NUCLEIC_FORM_COLORS_KEY, nucleicFormColors);
+}, [nucleicFormColors]);
+useEffect(() => {
+  Object.assign(nucleicMotifColorStore, nucleicMotifColors);
+  savePalette(NUCLEIC_MOTIF_COLORS_KEY, nucleicMotifColors);
+}, [nucleicMotifColors]);
+// The GENERAL look is persisted too — it is what the six menus follow.
+useEffect(() => { try { localStorage.setItem(GENERAL_LOOK_KEY, JSON.stringify(generalLook)); } catch { /* ignore */ } }, [generalLook]);
 useEffect(() => { try { localStorage.setItem('labViewerSelResColor', selectedResidueColor.toString(16)); } catch { /* ignore */ } }, [selectedResidueColor]);
 useEffect(() => { try { localStorage.setItem('labViewerAssignedColor', assignedAtomColor.toString(16)); } catch { /* ignore */ } }, [assignedAtomColor]);
 
@@ -3186,6 +4463,12 @@ registerNucleicScheme(NGL);      // 🔬 nucleic acids by chemical group (phosph
 registerBaseIdentityScheme(NGL); // 🧬 stylized base rings (one colour per base: A · C · G · T · U)
 registerLipidScheme(NGL);        // 🧫 lipids by chemical part (headgroup / glycerol backbone / chains)
 registerGradientScheme(NGL);     // 🌈 gradual ribbon colours (two colours, N→C / 5'→3')
+registerElementScheme(NGL);      // ⚙ atom-type palette (editable in the settings wheel)
+registerSugarScheme(NGL);        // ⚙ per-sugar identity colours (editable in the settings wheel)
+registerGlycanScheme(NGL);       // 🍬 one colour per LINKED glycan entity (PART 2.2bis)
+registerLipidClassScheme(NGL);   // 🧫 one colour per headgroup CLASS (PC · PE · PG · Chol…)
+registerNucleicFormScheme(NGL);  // 🧬 A · B · Z DNA / A · flexible RNA (PART 3.1)
+registerNucleicMotifScheme(NGL); // 🧬 G-quadruplex · hairpin over the 2° structure (PART 3.2)
 const stage = new NGL.Stage(containerRef.current, { backgroundColor: '#f8fafc' });
 stageRef.current = stage;
 applyFog(); // honour the user's fog preference (off by default) right away
@@ -3899,8 +5182,11 @@ const buildMainReps = () => {
     addDefaultReps(comp);
     return;
   }
+  // The per-molecule « Colour by » choice, resolved by the ONE mapping every
+  // molecule shares (schemeForColorMode): the house metaphors (2° structure,
+  // atom-type palette, sugar identity) and the NGL ones, with a native fallback.
   const colorScheme = st.colorMode && st.colorMode !== 'solid'
-    ? (st.colorMode === 'sstruc' ? sstrucSchemeKey || 'sstruc' : st.colorMode)
+    ? schemeForColorMode(st.colorMode)
     : undefined;
   const color = colorScheme ? undefined : (st.color != null ? st.color : undefined);
   const opacity = st.transparency != null ? Math.max(0, Math.min(1, 1 - st.transparency)) : undefined;
@@ -4207,7 +5493,17 @@ setHasNonProtein(nonProtein);
 // stays honest when the file contains no recognised lipid residue.
 try {
   const cs2 = catSelectionsFor(component.structure);
-  setCatInfo(cs2 ? { ...cs2.n, lipids: cs2.lipids, lipidNamed: cs2.lipidNamed } : null);
+  // …plus the two readings of PART 2 / PART 3, computed ONCE here — the menus print
+  // them and the schemes would otherwise have to walk the atoms again: the GLYCAN
+  // ENTITIES of the sugars (one per linked glycan) and the FORM / MOTIF counts of
+  // the nucleic acids (A · B · Z DNA, A · flexible RNA, G-quadruplex, hairpin).
+  setCatInfo(cs2 ? {
+    ...cs2.n,
+    lipids: cs2.lipids,
+    lipidNamed: cs2.lipidNamed,
+    glycans: glycanSummaryFor(component.structure),
+    nucleicClasses: nucleicClassCounts(component.structure),
+  } : null);
 } catch { setCatInfo(null); }
 buildMainReps();
 shadowRepsHook(component);
@@ -4840,11 +6136,12 @@ useEffect(() => {
     if (!expr || expr === '') return;
     // Hidden selections keep NO representations — "🙈 Hide" removes them.
     if (st.hidden) { selCompsRef.current[key] = []; return; }
-    // Colouring metaphor: a NGL colorScheme (element/chain/resname/sstruc/…) or
-    // a plain solid colour when "Solid" is selected. The "2° structure" mode
-    // uses the customisable helix/sheet/loop scheme (🎨 Colours panel).
+    // Colouring metaphor: a NGL colorScheme (element/chain/resname/…) or a plain
+    // solid colour when "Solid" is selected — through the ONE mapping the whole
+    // viewer shares (schemeForColorMode), so the palettes of the ⚙ settings wheel
+    // are honoured here too.
     const colorScheme = st.colorMode && st.colorMode !== 'solid'
-      ? (st.colorMode === 'sstruc' ? sstrucSchemeKey || 'sstruc' : st.colorMode)
+      ? schemeForColorMode(st.colorMode)
       : undefined;
     const color = colorScheme ? undefined : (st.color != null ? st.color : undefined);
     const opacity = st.transparency != null ? Math.max(0, Math.min(1, 1 - st.transparency)) : undefined;
@@ -5516,10 +6813,10 @@ const restyleExtraMol = (id) => {
     reps = applyCurrentStyleTo(comp, []);
   } else {
     // Colouring metaphor — a NGL colorScheme, or a plain solid colour when
-    // "Solid" is selected (mirrors the Selections panel). "2° structure" uses
-    // the customisable helix/sheet/loop scheme (🎨 Colours panel).
+    // "Solid" is selected (mirrors the Selections panel), resolved by the SAME
+    // mapping as the main structure and the selections.
     const colorScheme = st.colorMode && st.colorMode !== 'solid'
-      ? (st.colorMode === 'sstruc' ? sstrucSchemeKey || 'sstruc' : st.colorMode)
+      ? schemeForColorMode(st.colorMode)
       : undefined;
     const color = colorScheme ? undefined : (st.color != null ? st.color : undefined);
     const opacity = st.transparency != null ? Math.max(0, Math.min(1, 1 - st.transparency)) : undefined;
@@ -5607,6 +6904,75 @@ const resetExtraMolPosition = (id) => {
       if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender();
     }
   } catch { /* best-effort */ }
+};
+
+/* ── The four FOLDED control groups of ONE molecule in the Molecules bar ──────
+   Style · Colour · Transp · Move — ONE implementation, called for the main
+   structure and for every loaded molecule, so the main and the extras can never
+   drift apart (the bar used to repeat the same four rows twice). Each group is a
+   disclosure holding ONE line, so a molecule costs one row instead of four and
+   twenty structures still fit in the bar; only the open group renders its
+   controls (one at a time per molecule), exactly like the six menus of §2, and
+   its button carries the CURRENT value (Style « auto », Colour « element »,
+   « Transp 30% ») so a folded molecule is never silent.
+   `moveFields` is what really differs between a molecule of its own file and the
+   main structure: the same X / Y / Z numbers, but on that molecule's component. */
+const renderMolFolds = (keyName, { name, style, color, colorMode, transparency, onStyle, onColor, onColorMode, onTransparency, moveFields }) => {
+  const shownStyle = style || 'auto';
+  const shownMode = colorMode || 'element';
+  const transp = Math.round((transparency || 0) * 100);
+  const fold = (section) => ({ open: foldOpen(keyName, section), onToggle: () => toggleMolFold(keyName, section) });
+  return (
+    <>
+      <div className="flex items-center gap-1 mt-0.5 pl-5">
+        <MolFold {...fold('style')} label="Style"
+          summary={`${name}: representation style — now « ${shownStyle} ». « Auto » follows the §2 per-category menus.`} />
+        <MolFold {...fold('color')} label="Colour"
+          summary={`${name}: colouring — now « ${shownMode} ». « Atom type » and « Sugar type » use the palettes of the ⚙ settings wheel.`} />
+        <MolFold {...fold('transp')} label={`Transp ${transp}%`}
+          summary={`${name}: transparency — currently ${transp} %.`} />
+        <MolFold {...fold('move')} label="Move"
+          summary={`${name}: shift it along X · Y · Z (Å) or move it with the mouse (✋ Drag).`} />
+      </div>
+      {foldOpen(keyName, 'style') && (
+        <div className="flex items-center gap-1 mt-0.5 pl-5">
+          <select value={shownStyle} onChange={(e) => onStyle(e.target.value)}
+            className="border border-slate-200 rounded text-[10px] py-0.5 px-1 w-full"
+            title={`Representation style of ${name} (Auto follows the §2 per-category menus)`}>
+            {MOL_STYLE_OPTIONS}
+          </select>
+        </div>
+      )}
+      {foldOpen(keyName, 'color') && (
+        <div className="flex items-center gap-1 mt-0.5 pl-5">
+          <label className="text-[10px] text-slate-400 font-bold flex items-center gap-0.5" title={`Colouring of ${name} (applies to the chosen style above)`}>
+            Colour
+            <select value={shownMode} onChange={(e) => onColorMode(e.target.value)}
+              className="border border-slate-200 rounded text-[10px] py-0.5 px-1 w-24" title="Colouring metaphor">
+              {MOL_COLOR_OPTIONS}
+            </select>
+          </label>
+          <input type="color" value={color || '#dddddd'} disabled={shownMode !== 'solid'}
+            onChange={(e) => onColor(e.target.value)}
+            className={`w-5 h-5 rounded border cursor-pointer ${shownMode !== 'solid' ? 'opacity-30 cursor-not-allowed' : ''}`}
+            title="Solid colour (used when Colour = Solid)" />
+        </div>
+      )}
+      {foldOpen(keyName, 'transp') && (
+        <div className="flex items-center gap-1 mt-0.5 pl-5" title={`Transparency of ${name}`}>
+          <span className="text-[10px] text-slate-400 font-bold shrink-0">Transp</span>
+          <input type="range" min="0" max="1" step="0.05" value={transparency || 0}
+            onChange={(e) => onTransparency(parseFloat(e.target.value))}
+            className="accent-blue-600 w-full" />
+        </div>
+      )}
+      {foldOpen(keyName, 'move') && (
+        <div className="flex items-center gap-1 mt-0.5 pl-5" title={`Move ${name} independently (Å)`}>
+          {moveFields}
+        </div>
+      )}
+    </>
+  );
 };
 
 // Move / reset the MAIN structure by typing X/Y/Z (the same controls the extra
@@ -5752,6 +7118,8 @@ const deleteExtraMol = (id) => {
   setExtraMols(extraMolsSnapshot());
   setVisibleMolKeys((prev) => { const n = new Set(prev); n.delete(id); return n; });
   if (selectedMolKey === id) setSelectedMolKey('main');
+  // Its fold state goes with it (the Molecules bar keys the folds by molecule id).
+  setMolFold((prev) => { const n = { ...prev }; delete n[id]; return n; });
   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
 };
 
@@ -6243,6 +7611,34 @@ const espBtnTitle = !espTargetComp
     ? `Remove the electrostatic-potential surface from ${espTargetName}`
     : `Add a translucent surface coloured by electrostatic potential to ${espTargetName} — red = negative, white ≈ neutral, blue = positive. Once it is ON, a ⚡ Range control appears so you can set the limits (kcal/mol) and make the red / blue poles clearly visible. Partial charges come from the file when it provides them (PQR / charged MOL2 · SDF); otherwise NGL falls back to its CHARMM-derived charges for proteins. Click again to hide the surface.`;
 
+/* ── SMILES of the molecule at hand (organic conditions and docked ligands) ────
+   The viewer already RECEIVES the SMILES — the page passes the one of the
+   condition (NMR organic molecule) and a docking run passes its ligand's — and
+   uses it to name the 3D atoms from the 2D formula (see computeSmiles3DNameMap).
+   Until now it was never SHOWN: the Molecules bar displays it, one click away from
+   the clipboard, so a ligand can be identified / pasted into a drawing tool or a
+   report without leaving the page. `smiles` wins when both are given (it is the
+   molecule the page is really about). */
+const ligandSmilesText = String(smiles || ligandSmiles || '').trim();
+const [smilesMsg, setSmilesMsg] = useState('');
+const smilesMsgTimerRef = useRef(null);
+const copyLigandSmiles = async () => {
+  let okCopy = false;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(ligandSmilesText);
+      okCopy = true;
+    }
+  } catch { /* clipboard refused (insecure context / permission) → say so */ }
+  setSmilesMsg(okCopy ? '✓ copied' : 'select & copy');
+  clearTimeout(smilesMsgTimerRef.current);
+  smilesMsgTimerRef.current = setTimeout(() => setSmilesMsg(''), 3000);
+};
+// The Molecules bar hosts the per-molecule folds, the SMILES of the ligand and the
+// ⚙ settings wheel, so it is opened by EITHER of them — and the Selections bar
+// steps aside for it (see its right-[21rem] offset).
+const molBarOpen = extraMols.length > 0 || !!ligandSmilesText;
+
 // ── §2 menu helpers (derived, read-only) ───────────────────────────────────
 // Lipids are recognised by residue name (see LIPID_RESNAMES): catInfo.lipids
 // lists what was found, so the Lipids menu can say what it will act on — or
@@ -6261,6 +7657,12 @@ const lipidHint = lipidMenuInactive
 const lipidNamingHint = (lipidsFound.length > 0 && catInfo && catInfo.lipidNamed === false)
   ? ' This file does not use the standard lipid atom naming, so the parts are read by ELEMENT — the polar atoms (N · P · O · S) are the headgroup, the carbons and hydrogens the chains — and the glycerol backbone is not separated.'
   : '';
+// The headgroup CLASS of every lipid this file declares (PART 2.1bis) — what
+// « Lipid class » paints, and the shortest way of saying what mixture the bilayer
+// actually is (which phospholipid, which sterol).
+const lipidClassHint = lipidsFound.length
+  ? `classes: ${lipidsFound.slice(0, 8).map((n) => `${n} = ${lipidClassOf(n)}`).join(' · ')}`
+  : '';
 // Sugars: the menu says what it will act on (NGL keyword `saccharide` + the
 // explicit GLC / NAG / MAN / BMA / SIA / GAL / FUC list).
 const sugarCount = (catInfo && catInfo.n && Number.isFinite(catInfo.n.sugar)) ? catInfo.n.sugar : -1;
@@ -6271,6 +7673,31 @@ const sugarHint = moleculeType === 'sugar'
     : sugarCount > 0
       ? `${sugarCount} sugar atom(s) recognised`
       : 'carbohydrates are recognised by the NGL keyword « saccharide » + an explicit residue list';
+// The GLYCANS of this file (PART 2.2bis): the sugars that are covalently linked
+// into one molecule are printed as ONE entity — « NAG2 → NAG3 → BMA4 » — because
+// that IS the entity the « Glycan (linked sugars) » colouring paints, instead of
+// the seven unrelated residues the file declares.
+const glycanInfo = (catInfo && catInfo.glycans) || null;
+const glycanList = glycanInfo && Array.isArray(glycanInfo.entities) ? glycanInfo.entities : [];
+const glycanHint = glycanList.length
+  ? (glycanList.some((g) => g.linked)
+    ? `linked glycans: ${glycanList.filter((g) => g.linked).map((g) => `${g.label} (${g.size} sugars)`).join(' · ')}${glycanList.some((g) => !g.linked) ? ' — plus isolated ' + glycanList.filter((g) => !g.linked).map((g) => g.label).join(' · ') : ''}`
+    : `only isolated monosaccharides (${glycanList.map((g) => g.label).join(' · ')}) — each keeps its « Sugar type » colour`)
+  : '';
+// The CONFORMATION of the nucleic acids of this file (PART 3): the menu prints the
+// count of every form it found and of the two motifs, so the user can see that the
+// classification ran (and what it saw) before choosing the colouring.
+const nucleicInfo = (catInfo && catInfo.nucleicClasses) || null;
+const nucleicFormList = nucleicInfo && nucleicInfo.forms
+  ? NUC_FORM_LABELS.filter((f) => nucleicInfo.forms[f] > 0).map((f) => `${NUC_FORM_NAMES[f]} ×${nucleicInfo.forms[f]}`)
+  : [];
+const nucleicMotifList = nucleicInfo && nucleicInfo.motifs
+  ? [['gquad', 'G-quadruplex'], ['hairpin', 'hairpin']]
+    .filter(([k]) => nucleicInfo.motifs[k] > 0).map(([k, n]) => `${n} ×${nucleicInfo.motifs[k]}`)
+  : [];
+const nucleicClassHint = nucleicFormList.length
+  ? `from the coordinates: ${nucleicFormList.join(' · ')}${nucleicMotifList.length ? ` — motifs: ${nucleicMotifList.join(' · ')}` : ''}`
+  : '';
 // A per-category surface coloured by ESP shows the ⚡ Range control too, so the
 // red/blue limits are always reachable, whichever ESP entry point was used.
 const catEspActive = ['protein', 'nucleic', 'organic'].some((c) => {
@@ -6340,12 +7767,14 @@ const renderCatRadii = (cat) => {
           onChange={(e) => setCatStyle(cat, 'sphereRadius', Number(e.target.value))}
           className="w-28 accent-slate-600" aria-label={`${cat} — sphere radius`} />
         <span className="text-[10px] text-slate-500 w-10">{g.sphere.toFixed(2)}×</span>
+        {renderFollowGeneral(cat, 'sphereRadius', 'sphere radius')}
       </VRow>
       <VRow label="Bond radius" title="Thickness of the STICKS of THIS menu only, as a multiplier of the style's own radius (1.00 = untouched). It is NGL's radiusSize in Å: 0.15 Å for Ball & Stick, 0.25 Å for Licorice (the stick thickness this viewer has always used for the side chains) and 0.3 Å for the base rungs. The line styles use it as their line width.">
         <input type="range" min={RADIUS_MIN} max={RADIUS_MAX} step={RADIUS_STEP} value={g.bond}
           onChange={(e) => setCatStyle(cat, 'bondRadius', Number(e.target.value))}
           className="w-28 accent-slate-600" aria-label={`${cat} — bond radius`} />
         <span className="text-[10px] text-slate-500 w-10">{g.bond.toFixed(2)}×</span>
+        {renderFollowGeneral(cat, 'bondRadius', 'bond radius')}
       </VRow>
     </>
   );
@@ -6376,8 +7805,19 @@ const renderAtomColour = (cat) => {
   // the option is not offered there — and a value coming from elsewhere falls back
   // on « Default » in the selector instead of showing a choice that does not exist.
   const showGradient = cat === 'protein' || cat === 'nucleic';
+  // The per-sugar identity palette only says something where sugars are drawn:
+  // the S menu (the ligands menu EXCLUDES sugars by construction).
+  const showSugar = cat === 'sugar';
+  // The LINKED-SUGAR reading lives in the same menu; the headgroup CLASS only in
+  // the Lipids menu (a residue name is what carries it); and the two NUCLEIC
+  // readings — the A · B · Z forms and the G-quadruplex / hairpin motifs of PART 3
+  // — only in the Nucleic-acids menu, where the classification actually runs.
+  const showGlycan = cat === 'sugar';
+  const showLipidClass = cat === 'lipid';
+  const showNucleicReading = cat === 'nucleic';
+  const paletteOpen = mode === 'element' || mode === 'sugar' || mode === 'nucform' || mode === 'motif';
   return (
-    <VRow label="Atom colour" title="Colour of EVERYTHING this menu draws — its ribbon (cartoon / ribbon / tube / trace) AND its atoms / bonds (Ball & Stick · Licorice · Lines · Spheres). « Default » keeps the classic colouring — element colours, and the rainbow by residue index for the protein / nucleic backbones. « Secondary structure » paints the helices, the sheets and the loops with the three colours of the 🎨 Colours panel. « Gradient » runs a two-colour ramp ALONG the sequence, from the first residue to the last of every chain (N → C terminus for proteins, 5' → 3' end for nucleic acids). « Custom… » paints the whole menu with ONE colour (the swatch on the right).">
+    <VRow label="Atom colour" title="Colour of EVERYTHING this menu draws — its ribbon (cartoon / ribbon / tube / trace) AND its atoms / bonds (Ball & Stick · Licorice · Lines · Spheres). « Default » keeps the classic colouring — element colours, and the rainbow by residue index for the protein / nucleic backbones. « Secondary structure » paints the helices, the sheets and the loops with the three colours of the 🎨 Colours panel. « Atom-type palette » uses the EDITABLE element table of the ⚙ settings wheel; « Sugar type » the per-sugar identity colours of the same wheel (GLC · NAG · MAN · BMA · SIA · GAL · FUC — anything else keeps the readable grey). « Gradient » runs a two-colour ramp ALONG the sequence, from the first residue to the last of every chain (N → C terminus for proteins, 5' → 3' end for nucleic acids). « Custom… » paints the whole menu with ONE colour (the swatch on the right).">
       <VSel value={!showGradient && mode === 'gradient' ? 'default' : mode}
         onChange={(e) => {
           const v = e.target.value;
@@ -6386,15 +7826,30 @@ const renderAtomColour = (cat) => {
         }}
         title={`${cat} atom colouring`} width="w-44">
         <option value="default">Default (element colours)</option>
+        <option value="element">Atom-type palette (⚙)</option>
+        {showSugar && <option value="sugar">Sugar type (⚙ palette)</option>}
+        {showGlycan && <option value="glycan">Glycan (linked sugars)</option>}
+        {showLipidClass && <option value="lipidclass">Lipid class (headgroup)</option>}
+        {showNucleicReading && <option value="nucform">DNA/RNA conformation</option>}
+        {showNucleicReading && <option value="motif">2° structure + motifs (G4 · hairpin)</option>}
         {cat === 'protein' && <option value="sstruc">Secondary structure</option>}
         {showGradient && <option value="gradient">{gradientLabel}</option>}
         <option value="custom">Custom colour…</option>
       </VSel>
+      {paletteOpen && (
+        <button type="button" onClick={() => setSettingsPanelOpen(true)}
+          className="px-1.5 py-0.5 text-[10px] font-bold rounded border bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100"
+          title="Edit this palette (one colour per element · per sugar residue · per nucleotide form or motif) in the ⚙ settings wheel — the change repaints every molecule that uses it">
+          ⚙ Palette…
+        </button>
+      )}
+      {renderFollowGeneral(cat, 'atomColor', 'atom colour')}
       {custom && (
         <input type="color" value={numToHex(hex)}
           onChange={(e) => setCatStyle(cat, 'atomColorHex', parseInt(e.target.value.slice(1), 16))}
           className="w-8 h-7 rounded border border-slate-300 cursor-pointer" title="Colour of every atom drawn by this menu" />
       )}
+      {custom && renderFollowGeneral(cat, 'atomColorHex', 'flat atom colour')}
       {gradient && (
         <>
           <input type="color" value={numToHex(from)}
@@ -6438,6 +7893,7 @@ const renderSurfaceColour = (cat, label) => {
         <option value="custom">Custom colour…</option>
         <option value="esp">Electrostatic Potential (ESP)</option>
       </VSel>
+      {renderFollowGeneral(cat, 'surfaceColor', 'surface colour')}
       {custom && (
         <input type="color" value={numToHex(hex)}
           onChange={(e) => setCatStyle(cat, 'surfaceColorHex', parseInt(e.target.value.slice(1), 16))}
@@ -6447,20 +7903,33 @@ const renderSurfaceColour = (cat, label) => {
   );
 };
 
-// ↺ of ONE menu: back to the neutral radii (1.00×) and to the default colours —
-// the styles themselves are never touched.
-const resetCatLook = (cat) => setCatStyles((prev) => ({
-  ...prev,
-  [cat]: {
-    ...(prev[cat] || {}),
-    atomColor: 'default',
-    atomColorHex: DEFAULT_ATOM_COLORS[cat],
-    surfaceColor: 'default',
-    surfaceColorHex: DEFAULT_SURFACE_COLOR,
-    sphereRadius: 1,
-    bondRadius: 1,
-  },
-}));
+// ↺ of ONE menu: it follows the GENERAL look again — every look field of this
+// menu takes the general value and stops overriding it, so the radius / colour it
+// shows is the general one and it keeps following future general changes. The
+// styles themselves are never touched (only colours and radii are).
+const resetCatLook = (cat) => setCatStyles((prev) => adoptGeneralLook(prev, cat, generalLook));
+
+/* The little ↺ of ONE FIELD of ONE menu: it hands that field back to the general
+   look (and only exists while the menu really overrides it — a field that follows
+   the general row is marked « · General » instead, so the state of every field is
+   readable at a glance). ONE implementation, used by the radii, the atom colour
+   and the surface colour of all six menus. */
+const renderFollowGeneral = (cat, key, label) => (
+  followsGeneral(cat, key)
+    ? (
+      <span className="text-[10px] font-bold text-slate-400"
+        title={`This menu follows the general ${label} (the ⚙ General look row of §2)`}>
+        · General
+      </span>
+    )
+    : (
+      <button type="button" onClick={() => followGeneralLook(cat, key)}
+        className="px-1.5 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-500 hover:bg-slate-100"
+        title={`This menu overrides the general ${label} — click to follow the general look again`}>
+        ↺ General
+      </button>
+    )
+);
 
 // The 🎨 button of a menu — ONE implementation, three panels: menu A opens the
 // protein panel (2° structure + highlights), menu B its nucleic-acid one
@@ -6512,6 +7981,16 @@ const captureViewerSetup = () => ({
   background: bgColor,
   quality: qualityHigh,
   large: { style: largeStyle, water: showLargeWater },
+  // The ⚙ settings wheel belongs to « the whole visualisation setup » too: the two
+  // palettes and the general look travel with a saved setup (they are validated on
+  // the way back in, like every other field of the file).
+  generalLook,
+  palettes: {
+    elements: elementColors,
+    sugars: sugarColors,
+    nucleicForms: nucleicFormColors,
+    nucleicMotifs: nucleicMotifColors,
+  },
   savedAt: new Date().toISOString(),
 });
 
@@ -6549,6 +8028,23 @@ const applyViewerSetup = (s) => {
   const lg = s.large || {};
   if (typeof lg.style === 'string') setLargeStyle(lg.style);
   if (typeof lg.water === 'boolean') setShowLargeWater(lg.water);
+  // ⚙ The settings wheel: the two palettes (validated by mergePalette, so an
+  // unknown key or a non-colour is simply ignored) and the general look.
+  const pal = s.palettes || {};
+  if (pal.elements) setElementColors((p) => mergePalette(ELEMENT_COLOR_PALETTE, { ...p, ...pal.elements }));
+  if (pal.sugars) setSugarColors((p) => mergePalette(SUGAR_IDENTITY_COLORS, { ...p, ...pal.sugars }));
+  if (pal.nucleicForms) setNucleicFormColors((p) => mergePalette(DEFAULT_NUCLEIC_FORM_COLORS, { ...p, ...pal.nucleicForms }));
+  if (pal.nucleicMotifs) setNucleicMotifColors((p) => mergePalette(DEFAULT_NUCLEIC_MOTIF_COLORS, { ...p, ...pal.nucleicMotifs }));
+  if (s.generalLook && typeof s.generalLook === 'object') {
+    setGeneralLook((prev) => {
+      const next = { ...prev };
+      LOOK_KEYS.forEach((k) => {
+        const v = s.generalLook[k];
+        if (typeof v === 'string' || Number.isFinite(v)) next[k] = v;
+      });
+      return next;
+    });
+  }
   return true;
 };
 
@@ -7020,6 +8516,7 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
   {renderSurfaceColour('nucleic', 'nucleic')}
   {renderAtomColour('nucleic')}
   {renderCatRadii('nucleic')}
+  <p className="text-[10px] text-slate-400 italic">Structure read from the coordinates: <b>χ</b> (O4'-C1'-N9/N1) for the syn / anti conformation, <b>δ</b> (C5'-C4'-C3'-O3') for the sugar pucker, the C1'-N → P distance when δ is missing, the Hoogsteen N1···O6 / N2···N7 distances for the G-tetrads (2.7–3.3 Å, stacked 3.3–3.4 Å) and the Watson-Crick / wobble H-bonds (&lt; 3.5 Å) plus the P → O3' backbone for the hairpins. {nucleicClassHint}</p>
   <VRow label="Colours" title="Colours of the NUCLEIC ACID itself (phosphate backbone · pentose rings · bases) — the 🎨 button opens that panel at the end of this section; plus the renumbering tool and ↺ (radii and colours of THIS menu back to their defaults).">
     {renderColoursButton('nucleic')}
     <button type="button" onClick={() => setShowRenumberPanel((v) => !v)}
@@ -7068,7 +8565,7 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
       <option value="hide">Hide</option>
     </VSel>
   </VRow>
-  <p className="text-[10px] text-slate-400 italic">NGL has no « lipid » selection keyword, so lipids are recognised by residue name — the base selection is <b>[POPC] or [DPPC] or … or [PAL]</b> plus any other lipid this file declares; headgroups / glycerol backbone / acyl chains are then separated by ATOM NAME (C1 · C2 · C3 · O21 · O31 = backbone, C21… · C31… · O22 · O32 = chains, everything else = headgroup) — see the 🎨 Colours panel of this menu. {lipidHint}.{lipidNamingHint}</p>
+  <p className="text-[10px] text-slate-400 italic">NGL has no « lipid » selection keyword, so lipids are recognised by residue name — the base selection is <b>[POPC] or [DPPC] or … or [PAL]</b> plus any other lipid this file declares; headgroups / glycerol backbone / acyl chains are then separated by ATOM NAME (C1 · C2 · C3 · O21 · O31 = backbone, C21… · C31… · O22 · O32 = chains, everything else = headgroup) — see the 🎨 Colours panel of this menu. {lipidHint}.{lipidNamingHint} {lipidClassHint}</p>
   <VRow label="Surface" title="NGL molecular surface of the LIPID part only — the bilayer as one plate: Solid / Transparent (the Opacity slider appears underneath) / Mesh (wireframe) / Hide. Hidden by default: the surface of a whole bilayer is heavy.">
     <VSel value={catStyles.lipid.surface} onChange={(e) => setCatStyle('lipid', 'surface', e.target.value)}
       disabled={lipidMenuInactive} title="Lipid surface" width="w-40">
@@ -7120,8 +8617,8 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
   {renderSurfaceColour('sugar', 'sugar')}
   {renderAtomColour('sugar')}
   {renderCatRadii('sugar')}
-  <p className="text-[10px] text-slate-400 italic">Selection: <b>saccharide or [GLC] or [NAG] or [MAN] or [BMA] or [SIA] or [GAL] or [FUC]</b> — the Organic (ligands) menu excludes exactly this selection. {sugarHint}.</p>
-  <VRow label="Defaults" title="Put this menu's Sphere radius / Bond radius / atom colour / surface colour back to their defaults (1.00× and element colours) — the style stays as it is.">
+  <p className="text-[10px] text-slate-400 italic">Selection: <b>saccharide or [GLC] or [NAG] or [MAN] or [BMA] or [SIA] or [NAN] or [GAL] or [FUC]</b> — the Organic (ligands) menu excludes exactly this selection. {sugarHint}. Glycans are grouped by their GLYCOSIDIC bond (C1 → O4 · O6, C2 for a sialic acid — read from the LINK / CONECT records or, when a file carries none, from the interatomic distance ≤ 1.8 Å), so a linked chain counts as ONE molecule: {glycanHint || 'no glycan detected in this structure'}.</p>
+  <VRow label="Defaults" title="Put this menu's Sphere radius / Bond radius / atom colour / surface colour back to the GENERAL look of §2 — this menu follows the general values again (each of those fields then reads « · General »). The representation styles themselves stay as they are.">
     <button type="button" onClick={() => resetCatLook('sugar')}
       className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">
       ↺ Reset radii &amp; colours
@@ -7157,7 +8654,7 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
   {renderSurfaceColour('organic', 'ligand')}
   {renderAtomColour('organic')}
   {renderCatRadii('organic')}
-  <VRow label="Defaults" title="Put this menu's Sphere radius / Bond radius / atom colour / surface colour back to their defaults (1.00× and element colours) — the style stays as it is.">
+  <VRow label="Defaults" title="Put this menu's Sphere radius / Bond radius / atom colour / surface colour back to the GENERAL look of §2 — this menu follows the general values again (each of those fields then reads « · General »). The representation styles themselves stay as they are.">
     <button type="button" onClick={() => resetCatLook('organic')}
       className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">
       ↺ Reset radii &amp; colours
@@ -7201,7 +8698,7 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
   {renderSurfaceColour('other', 'water')}
   {renderAtomColour('other')}
   {renderCatRadii('other')}
-  <VRow label="Defaults" title="Put this menu's Sphere radius / Bond radius / atom colour / surface colour back to their defaults (1.00× and element colours) — the ion / water styles stay as they are.">
+  <VRow label="Defaults" title="Put this menu's Sphere radius / Bond radius / atom colour / surface colour back to the GENERAL look of §2 — this menu follows the general values again (each of those fields then reads « · General »). The ion / water styles themselves stay as they are.">
     <button type="button" onClick={() => resetCatLook('other')}
       className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">
       ↺ Reset radii &amp; colours
@@ -7239,6 +8736,78 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
 </VMenu>
 
 </div>
+{/* ⚙ GENERAL LOOK — the fields the SIX menus share. Changing one here writes it
+    into every menu that Follows it, while a menu that overrides that field keeps
+    its own value (each of those fields carries the « ↺ General » button that
+    hands it back, or the « · General » mark that says it follows — see
+    overridesLook / followGeneralLook). ONE row for the whole viewer: atom colour,
+    the two radii, the surface colour and the ramp the gradient colouring runs
+    (the ramp is a single NGL scheme, so its two ends are global by nature). */}
+<div className="w-full flex flex-wrap items-center gap-x-3 gap-y-1 border border-slate-300 rounded-lg px-2 py-1.5 bg-white">
+  <span className="text-[10px] font-black uppercase tracking-wide text-slate-600 whitespace-nowrap"
+    title="The look the six menus A–F share: a field a menu has never touched follows these values, and a field changed in a menu overrides them (its ↺ General hands it back). A menu's ↺ Reset radii & colours makes all its fields follow again.">
+    ⚙ General look
+  </span>
+  <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500" title="Atom colour of every menu that follows the general look — the same metaphors as in a menu (element colours · the ⚙ atom-type palette · the ⚙ sugar-identity palette · ONE flat colour).">
+    Atom colour
+    <VSel value={generalLook.atomColor} onChange={(e) => setGeneralLookField('atomColor', e.target.value)} title="General atom colouring" width="w-48">
+      <option value="default">Default (element colours)</option>
+      <option value="element">Atom-type palette (⚙)</option>
+      <option value="sugar">Sugar type (⚙ palette)</option>
+      <option value="custom">Custom colour…</option>
+    </VSel>
+  </label>
+  {generalLook.atomColor === 'custom' && (
+    <input type="color" value={numToHex(generalLook.atomColorHex)}
+      onChange={(e) => setGeneralLookField('atomColorHex', parseInt(e.target.value.slice(1), 16))}
+      className="w-7 h-6 rounded border border-slate-300 cursor-pointer" title="The flat colour of the general atom colouring" />
+  )}
+  <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500" title="Sphere radius of every menu that follows the general look (1.00× = the style's own NGL size).">
+    Sphere
+    <input type="range" min={RADIUS_MIN} max={RADIUS_MAX} step={RADIUS_STEP} value={generalLook.sphereRadius}
+      onChange={(e) => setGeneralLookField('sphereRadius', Number(e.target.value))}
+      className="w-24 accent-slate-600" aria-label="General sphere radius" />
+    <span className="w-9 text-[10px] text-slate-500">{Number(generalLook.sphereRadius).toFixed(2)}×</span>
+  </label>
+  <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500" title="Bond radius (stick thickness) of every menu that follows the general look.">
+    Bond
+    <input type="range" min={RADIUS_MIN} max={RADIUS_MAX} step={RADIUS_STEP} value={generalLook.bondRadius}
+      onChange={(e) => setGeneralLookField('bondRadius', Number(e.target.value))}
+      className="w-24 accent-slate-600" aria-label="General bond radius" />
+    <span className="w-9 text-[10px] text-slate-500">{Number(generalLook.bondRadius).toFixed(2)}×</span>
+  </label>
+  <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500" title="Surface colour of every menu that follows the general look. ESP stays a per-menu choice (it switches that menu's surface on).">
+    Surface
+    <VSel value={generalLook.surfaceColor} onChange={(e) => setGeneralLookField('surfaceColor', e.target.value)} title="General surface colouring" width="w-44">
+      <option value="default">Default (element colours)</option>
+      <option value="custom">Custom colour…</option>
+    </VSel>
+  </label>
+  {generalLook.surfaceColor === 'custom' && (
+    <input type="color" value={numToHex(generalLook.surfaceColorHex)}
+      onChange={(e) => setGeneralLookField('surfaceColorHex', parseInt(e.target.value.slice(1), 16))}
+      className="w-7 h-6 rounded border border-slate-300 cursor-pointer" title="The flat colour of the general surface colouring" />
+  )}
+  <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500" title="The two ends of the GRADIENT ramp (« Atom colour → Gradient »). The ramp always runs from the first residue to the last (N → C terminus, 5' → 3' end); swapping the two is what « reverse » means. ONE pair for the whole viewer: the ramp is a single NGL scheme.">
+    Gradient
+    <input type="color" value={numToHex(gradientPair.from)}
+      onChange={(e) => setGradientPair('gradientFrom', parseInt(e.target.value.slice(1), 16))}
+      className="w-7 h-6 rounded border border-slate-300 cursor-pointer" title="Colour of the FIRST residue of every chain" />
+    <span className="text-[10px] font-bold text-slate-400">→</span>
+    <input type="color" value={numToHex(gradientPair.to)}
+      onChange={(e) => setGradientPair('gradientTo', parseInt(e.target.value.slice(1), 16))}
+      className="w-7 h-6 rounded border border-slate-300 cursor-pointer" title="Colour of the LAST residue of every chain" />
+    <button type="button" onClick={swapGeneralGradient}
+      className="px-1.5 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+      title="Reverse the ramp (swap the two colours)">⇄</button>
+  </label>
+  <button type="button" onClick={resetGeneralLook}
+    className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+    title="Put the general look back to its defaults — every menu that follows a field takes the default again, and the menus that override keep their own values">
+    ↺ Default
+  </button>
+</div>
+
 {/* ── end of the A–F grid ───────────────────────────────────────────────── */}
 
 <button
@@ -8085,12 +9654,21 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
 </button>
 
 {/* Vertical Molecules bar (right side) — every loaded structure / chain, each with
-    its own visibility, style and colour; click a row to select & centre it. */}
-{extraMols.length > 0 && (
+    its own visibility, style and colour; click a row to select & centre it. It is
+    also the home of the ligand's SMILES and of the ⚙ settings wheel (the palettes
+    and the general look), so it opens for either of them — see molBarOpen. */}
+{molBarOpen && (
   <div className="absolute top-2 right-2 bottom-2 w-80 z-40 flex flex-col gap-2 bg-white/95 border border-blue-200 rounded-xl shadow-lg p-2 overflow-hidden">
     <div className="flex items-center justify-between gap-2 shrink-0">
       <span className="text-[10px] font-black text-blue-700 uppercase tracking-wide">Molecules</span>
       <span className="flex gap-1">
+        {/* ⚙ The settings wheel of this bar: the two editable palettes its
+            per-molecule « Atom type » / « Sugar type » colourings read, plus the
+            gradient pair and the general look the six §2 menus share. */}
+        <button type="button" onClick={() => setSettingsPanelOpen(true)}
+          className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-400 text-slate-700 hover:bg-slate-100"
+          title="⚙ Settings — edit the atom-type palette, the per-sugar colours, the nucleotide form / motif colours, the gradient pair and the general look of the six §2 menus">
+          ⚙</button>
         <button type="button"
           onClick={() => setVisibleMolKeys(new Set(extraCompsRef.current.map(({ id }) => id).concat(['main'])))}
           className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-blue-300 text-blue-600 hover:bg-blue-50"
@@ -8112,60 +9690,61 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
         <input type="checkbox" checked={visibleMolKeys.has('main')} onChange={(e) => { e.stopPropagation(); toggleMol('main'); }} className="accent-blue-600 w-3.5 h-3.5" />
         <span className="truncate text-slate-700 flex-1">Main{file ? ` (${file.name})` : ''}</span>
       </div>
-      {/* Main structure controls — same as the extra molecules: style, colour,
-          transparency, Move X/Y/Z and ✋ drag. "Auto" follows the global
-          Backbone / Molecule Style selectors. */}
-      <div className="flex items-center gap-1 mt-0.5 pl-5">
-        <select value={mainMol.style || 'auto'} onChange={(e) => { leaveLightMode(); setMainMol((m) => ({ ...m, style: e.target.value })); }}
-          className="border border-slate-200 rounded text-[10px] py-0.5 px-1 w-24" title="Representation style for the main structure (Auto follows the global Backbone / Molecule Style)">
-          <option value="auto">Auto</option>
-          <option value="cartoon">Cartoon</option>
-          <option value="ribbon">Ribbon</option>
-          <option value="ball+stick">Ball &amp; stick</option>
-          <option value="sticks">Sticks</option>
-          <option value="lines">Lines</option>
-          <option value="spheres">Spheres</option>
-          <option value="surface">Surface</option>
-        </select>
-        <label className="text-[10px] text-slate-400 font-bold flex items-center gap-0.5" title="Colouring of the main structure (applies to the chosen style above)">
-          Colour
-          <select value={mainMol.colorMode || 'element'} onChange={(e) => { leaveLightMode(); setMainMol((m) => ({ ...m, colorMode: e.target.value })); }}
-            className="border border-slate-200 rounded text-[10px] py-0.5 px-1 w-20" title="Colouring metaphor">
-            <option value="solid">Solid</option>
-            <option value="element">Atom type</option>
-            <option value="chainid">Chain</option>
-            <option value="resname">Residue</option>
-            <option value="sstruc">2° structure</option>
-            <option value="hydrophobicity">Hydrophobicity</option>
-          </select>
-        </label>
-        <input type="color" value={mainMol.color || '#dddddd'} disabled={(mainMol.colorMode || 'element') !== 'solid'}
-          onChange={(e) => { leaveLightMode(); setMainMol((m) => ({ ...m, color: e.target.value })); }}
-          className={`w-5 h-5 rounded border cursor-pointer ${(mainMol.colorMode || 'element') !== 'solid' ? 'opacity-30 cursor-not-allowed' : ''}`}
-          title="Solid colour (used when Colour = Solid)" />
-      </div>
-      <div className="flex items-center gap-1 mt-0.5 pl-5" title="Transparency of the main structure">
-        <span className="text-[10px] text-slate-400 font-bold shrink-0">Transp</span>
-        <input type="range" min="0" max="1" step="0.05" value={mainMol.transparency || 0}
-          onChange={(e) => { leaveLightMode(); setMainMol((m) => ({ ...m, transparency: parseFloat(e.target.value) })); }}
-          className="accent-blue-600 w-full" />
-      </div>
-      <div className="flex items-center gap-1 mt-0.5 pl-5" title="Move the main structure independently (Å)">
-        <span className="text-[10px] text-slate-400 font-bold shrink-0">Move</span>
-        {['X', 'Y', 'Z'].map((ax, ai) => (
-          <label key={ax} className="flex items-center gap-0.5 text-[10px] text-slate-400 font-bold" title={`Shift the main structure along ${ax}`}>
-            {ax}
-            <input type="number" step="1" value={mainPos[ai] || 0}
-              onChange={(e) => setMainPosition(ai, e.target.value)}
-              className="border border-slate-200 rounded text-[10px] py-0.5 px-1 w-12" />
-          </label>
-        ))}
-        <button type="button" onClick={resetMainPosition} className="text-[10px] font-bold text-slate-500 hover:text-slate-800 underline" title="Reset position">↺</button>
-        <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 cursor-pointer" title="Move the main structure with the mouse (toggle off to rotate/zoom)">
-          <input type="checkbox" checked={dragMove} onChange={(e) => { e.stopPropagation(); setDragMove(e.target.checked); }} className="accent-blue-600 w-3 h-3" />
-          ✋ Drag
-        </label>
-      </div>
+      {/* Main structure controls — the FOUR folds shared with every loaded
+          molecule (see renderMolFolds): Style · Colour · Transp · Move. « Auto »
+          follows the §2 per-category menus, and the ⚙ settings wheel of this bar
+          edits the palettes its « Atom type » / « Sugar type » colourings read. */}
+      {renderMolFolds('main', {
+        name: 'the main structure',
+        style: mainMol.style,
+        color: mainMol.color,
+        colorMode: mainMol.colorMode,
+        transparency: mainMol.transparency,
+        onStyle: (v) => { leaveLightMode(); setMainMol((m) => ({ ...m, style: v })); },
+        onColor: (v) => { leaveLightMode(); setMainMol((m) => ({ ...m, color: v })); },
+        onColorMode: (v) => { leaveLightMode(); setMainMol((m) => ({ ...m, colorMode: v })); },
+        onTransparency: (v) => { leaveLightMode(); setMainMol((m) => ({ ...m, transparency: v })); },
+        moveFields: (
+          <>
+            <span className="text-[10px] text-slate-400 font-bold shrink-0">Move</span>
+            {['X', 'Y', 'Z'].map((ax, ai) => (
+              <label key={ax} className="flex items-center gap-0.5 text-[10px] text-slate-400 font-bold" title={`Shift the main structure along ${ax}`}>
+                {ax}
+                <input type="number" step="1" value={mainPos[ai] || 0}
+                  onChange={(e) => setMainPosition(ai, e.target.value)}
+                  className="border border-slate-200 rounded text-[10px] py-0.5 px-1 w-12" />
+              </label>
+            ))}
+            <button type="button" onClick={resetMainPosition} className="text-[10px] font-bold text-slate-500 hover:text-slate-800 underline" title="Reset position">↺</button>
+            <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 cursor-pointer" title="Move the main structure with the mouse (toggle off to rotate/zoom)">
+              <input type="checkbox" checked={dragMove} onClick={() => setDragMove((v) => !v)} className="accent-blue-600 w-3 h-3" />
+              ✋ Drag
+            </label>
+          </>
+        ),
+      })}
+      {/* SMILES of the molecule at hand (an organic condition, or the ligand of a
+          docking run): it is the string the page / the run already carries and
+          that the viewer uses to name the 3D atoms from the 2D formula. Until now
+          it was never SHOWN — here it is, folded, with a 📋 button, so a ligand can
+          be identified or pasted into a drawing tool / a report from the page. */}
+      {ligandSmilesText && (
+        <div className="rounded border border-emerald-200 bg-emerald-50/60 px-1 py-0.5">
+          <MolFold open={foldOpen('main', 'smiles')} onToggle={() => toggleMolFold('main', 'smiles')}
+            label={`SMILES${smilesMsg ? ` ${smilesMsg}` : ''}`}
+            summary={`The SMILES of ${smiles ? 'this molecule' : 'the docked ligand'} — click to show the string, then 📋 to copy it`} />
+          {foldOpen('main', 'smiles') && (
+            <div className="flex items-start gap-1 mt-0.5">
+              <code className="flex-1 min-w-0 break-all text-[10px] font-mono text-slate-700 bg-white border border-slate-200 rounded px-1 py-0.5 max-h-28 overflow-y-auto custom-scrollbar"
+                title={ligandSmilesText}>{ligandSmilesText}</code>
+              <button type="button" onClick={copyLigandSmiles}
+                className="shrink-0 px-1.5 py-0.5 text-[10px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-100"
+                title="Copy the SMILES to the clipboard">
+                📋</button>
+            </div>
+          )}
+        </div>
+      )}
       {extraMols.map((m) => (
         <div key={m.id} className={`rounded px-1 py-0.5 border ${selectedMolKey === m.id ? 'bg-blue-100 border-blue-300' : 'border-transparent hover:bg-blue-50'}`}>
           <div className="flex items-center gap-1.5 cursor-pointer" onClick={() => autoViewMol(m.id)} title={`${m.name} — click to select & centre it`}>
@@ -8174,66 +9753,203 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
             <button type="button" onClick={(e) => { e.stopPropagation(); deleteExtraMol(m.id); }}
               className="text-red-400 hover:text-red-600 font-bold text-[10px] px-1 shrink-0" title="Delete this structure">🗑</button>
           </div>
-          <div className="flex items-center gap-1 mt-0.5 pl-5">
-            <select value={m.style || 'auto'} onChange={(e) => setExtraMolStyle(m.id, e.target.value)}
-              className="border border-slate-200 rounded text-[10px] py-0.5 px-1 w-24" title="Representation style for this structure">
-              <option value="auto">Auto</option>
-              <option value="cartoon">Cartoon</option>
-              <option value="ribbon">Ribbon</option>
-              <option value="ball+stick">Ball &amp; stick</option>
-              <option value="sticks">Sticks</option>
-              <option value="lines">Lines</option>
-              <option value="spheres">Spheres</option>
-              <option value="surface">Surface</option>
-            </select>
-            <label className="text-[10px] text-slate-400 font-bold flex items-center gap-0.5" title="Colouring of this structure (applies to the chosen style above)">
-              Colour
-              <select value={m.colorMode || 'element'} onChange={(e) => setExtraMolColorMode(m.id, e.target.value)}
-                className="border border-slate-200 rounded text-[10px] py-0.5 px-1 w-20" title="Colouring metaphor">
-                <option value="solid">Solid</option>
-                <option value="element">Atom type</option>
-                <option value="chainid">Chain</option>
-                <option value="resname">Residue</option>
-                <option value="sstruc">2° structure</option>
-                <option value="hydrophobicity">Hydrophobicity</option>
-              </select>
-            </label>
-            <input type="color" value={m.color || '#dddddd'} disabled={(m.colorMode || 'element') !== 'solid'}
-              onChange={(e) => setExtraMolColor(m.id, e.target.value)}
-              className={`w-5 h-5 rounded border cursor-pointer ${(m.colorMode || 'element') !== 'solid' ? 'opacity-30 cursor-not-allowed' : ''}`}
-              title="Solid colour (used when Colour = Solid)" />
-          </div>
-          <div className="flex items-center gap-1 mt-0.5 pl-5" title="Transparency of this structure">
-            <span className="text-[10px] text-slate-400 font-bold shrink-0">Transp</span>
-            <input type="range" min="0" max="1" step="0.05" value={m.transparency || 0}
-              onChange={(e) => setExtraMolTransparency(m.id, parseFloat(e.target.value))}
-              className="accent-blue-600 w-full" />
-          </div>
-          <div className="flex items-center gap-1 mt-0.5 pl-5" title="Move this structure independently (Å)">
-            <span className="text-[10px] text-slate-400 font-bold shrink-0">Move</span>
-            {['X', 'Y', 'Z'].map((ax, ai) => (
-              <label key={ax} className="flex items-center gap-0.5 text-[10px] text-slate-400 font-bold" title={`Shift this structure along ${ax}`}>
-                {ax}
-                <input type="number" step="1" value={(m.position && m.position[ai]) || 0}
-                  onChange={(e) => setExtraMolPosition(m.id, ai, e.target.value)}
-                  className="border border-slate-200 rounded text-[10px] py-0.5 px-1 w-12" />
-              </label>
-            ))}
-            <button type="button" onClick={() => resetExtraMolPosition(m.id)} className="text-[10px] font-bold text-slate-500 hover:text-slate-800 underline" title="Reset position">↺</button>
-            <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 cursor-pointer" title="Move this structure with the mouse (toggle off to rotate/zoom)">
-              <input type="checkbox" checked={dragMove} onChange={(e) => setDragMove(e.target.checked)} className="accent-blue-600 w-3 h-3" />
-              ✋ Drag
-            </label>
-          </div>
+          {renderMolFolds(m.id, {
+            name: m.name,
+            style: m.style,
+            color: m.color,
+            colorMode: m.colorMode,
+            transparency: m.transparency,
+            onStyle: (v) => setExtraMolStyle(m.id, v),
+            onColor: (v) => setExtraMolColor(m.id, v),
+            onColorMode: (v) => setExtraMolColorMode(m.id, v),
+            onTransparency: (v) => setExtraMolTransparency(m.id, v),
+            moveFields: (
+              <>
+                <span className="text-[10px] text-slate-400 font-bold shrink-0">Move</span>
+                {['X', 'Y', 'Z'].map((ax, ai) => (
+                  <label key={ax} className="flex items-center gap-0.5 text-[10px] text-slate-400 font-bold" title={`Shift this structure along ${ax}`}>
+                    {ax}
+                    <input type="number" step="1" value={(m.position && m.position[ai]) || 0}
+                      onChange={(e) => setExtraMolPosition(m.id, ai, e.target.value)}
+                      className="border border-slate-200 rounded text-[10px] py-0.5 px-1 w-12" />
+                  </label>
+                ))}
+                <button type="button" onClick={() => resetExtraMolPosition(m.id)} className="text-[10px] font-bold text-slate-500 hover:text-slate-800 underline" title="Reset position">↺</button>
+                <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 cursor-pointer" title="Move this structure with the mouse (toggle off to rotate/zoom)">
+                  <input type="checkbox" checked={dragMove} onClick={() => setDragMove((v) => !v)} className="accent-blue-600 w-3 h-3" />
+                  ✋ Drag
+                </label>
+              </>
+            ),
+          })}
         </div>
       ))}
     </div>
   </div>
 )}
 
+{/* ⚙ SETTINGS WHEEL — the colours the per-molecule colourings and the six §2
+    menus actually read. ONE modal, four palettes:
+      • the ATOM TYPES (one colour per element) — the table behind « Atom type »
+        in the Molecules bar (lab-elements) and « Atom-type palette (⚙) » in a
+        menu; an element missing from it keeps a readable grey;
+      • the SUGAR TYPES (one colour per sugar residue) — behind « Sugar type »
+        (lab-sugar-identity), built from the very list the Sugars menu selects on,
+        so the two can never drift apart;
+      • the NUCLEOTIDE FORMS and MOTIFS — behind « DNA/RNA conformation »
+        (lab-nuc-form) and « 2° structure + motifs » (lab-nuc-motif, PART 3): the
+        six A · B · Z DNA / A · flexible · Z RNA colours and the two high-contrast
+        motif colours a G-quadruplex and a hairpin stand out with;
+      • the GRADIENT pair and the GENERAL look the six menus share — the override
+        hierarchy: the wheel writes the general value, and only the menus that
+        override that field keep their own.
+    Every change is persisted and REPAINTS the representations (the schemes read
+    these stores live): no scheme is ever re-registered, nothing is rebuilt. */}
+{settingsPanelOpen && (
+<div className="fixed inset-0 z-[999] flex items-center justify-center p-4" style={{ background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(3px)' }}>
+  <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
+    <div className="px-4 py-3 bg-gradient-to-br from-slate-700 to-slate-900 text-white flex items-start justify-between gap-3 shrink-0">
+      <div>
+        <h3 className="text-sm font-black uppercase tracking-wide">⚙ Molecule colour settings</h3>
+        <p className="text-[11px] text-slate-200 mt-0.5">
+          The palettes the colourings read — moving a swatch repaints every molecule that uses it, at once.
+        </p>
+      </div>
+      <button type="button" onClick={() => setSettingsPanelOpen(false)}
+        className="text-white/80 hover:text-white font-black text-sm px-2 py-0.5 rounded border border-white/30 hover:bg-white/10"
+        title="Close the settings wheel">✕</button>
+    </div>
+    <div className="flex-1 overflow-y-auto custom-scrollbar p-4 flex flex-col gap-4">
+      <section className="flex flex-col gap-1">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Atom types (element colours)</span>
+          <button type="button" onClick={resetElementColors}
+            className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+            title="Put every element back to its default colour">
+            ↺ Defaults
+          </button>
+        </div>
+        <p className="text-[10px] text-slate-500">
+          What « Atom type » paints in the Molecules bar, and what « Atom-type palette (⚙) » paints in the six menus of §2. An element that is NOT in the table (a metal of an unusual file) keeps a readable grey instead of turning black. Saved like every other viewer preference.
+        </p>
+        <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] gap-1.5">
+          {Object.keys(ELEMENT_COLOR_PALETTE).map((el) => (
+            <label key={el} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50"
+              title={`Colour of every ${el} atom`}>
+              <input type="color" value={numToHex(elementColors[el])}
+                onChange={(e) => setElementColor(el, parseInt(e.target.value.slice(1), 16))}
+                className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${el} colour`} />
+              <span className="text-[10px] font-bold text-slate-600">{el}</span>
+            </label>
+          ))}
+        </div>
+      </section>
+      <section className="flex flex-col gap-1">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Sugar types (per residue)</span>
+          <button type="button" onClick={resetSugarColors}
+            className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+            title="Put every sugar back to its default colour">
+            ↺ Defaults
+          </button>
+        </div>
+        <p className="text-[10px] text-slate-500">
+          What « Sugar type » paints, in the Molecules bar and in the Sugars menu of §2. The residues are exactly the ones that menu selects on ({SUGAR_IDENTITY_CODES.join(' · ')}) — a sugar outside the list keeps the readable grey.
+        </p>
+        <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] gap-1.5">
+          {SUGAR_IDENTITY_CODES.map((res) => (
+            <label key={res} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50"
+              title={`Colour of every ${res} residue`}>
+              <input type="color" value={numToHex(sugarColors[res])}
+                onChange={(e) => setSugarColor(res, parseInt(e.target.value.slice(1), 16))}
+                className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${res} colour`} />
+              <span className="text-[10px] font-bold text-slate-600">{res}</span>
+            </label>
+          ))}
+        </div>
+      </section>
+      <section className="flex flex-col gap-1">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Nucleotide conformations &amp; motifs</span>
+          <div className="flex items-center gap-1">
+            <button type="button" onClick={resetNucleicFormColors}
+              className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+              title="Put the six conformation colours back to their defaults">
+              ↺ Forms
+            </button>
+            <button type="button" onClick={resetNucleicMotifColors}
+              className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+              title="Put the two motif colours back to their defaults">
+              ↺ Motifs
+            </button>
+          </div>
+        </div>
+        <p className="text-[10px] text-slate-500">
+          What « DNA/RNA conformation » paints: each nucleotide is classified from the COORDINATES — χ (O4'-C1'-N9/N1: a syn purine alternating with pyrimidines is the left-handed Z form), δ (C5'-C4'-C3'-O3': C3'-endo is the A family, C2'-endo B-DNA or a flexible loop of an RNA) and, when δ is missing, the distance from the C1'-N line to the phosphate. What « 2° structure + motifs » paints: a nucleotide inside a G-quadruplex or a hairpin takes the colour below, every other one keeps its 2°-structure colour.
+        </p>
+        <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-1.5">
+          {NUC_FORM_LABELS.map((form) => (
+            <label key={form} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50"
+              title={`Colour of the ${NUC_FORM_NAMES[form]} nucleotides`}>
+              <input type="color" value={numToHex(nucleicFormColors[form])}
+                onChange={(e) => setNucleicFormColor(form, parseInt(e.target.value.slice(1), 16))}
+                className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${NUC_FORM_NAMES[form]} colour`} />
+              <span className="text-[10px] font-bold text-slate-600">{NUC_FORM_NAMES[form]}</span>
+            </label>
+          ))}
+          {['gquad', 'hairpin'].map((motif) => (
+            <label key={motif} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50"
+              title={`Colour of the ${motif === 'gquad' ? 'G-quadruplex' : 'hairpin'} nucleotides (every other one keeps its 2°-structure colour)`}>
+              <input type="color" value={numToHex(nucleicMotifColors[motif])}
+                onChange={(e) => setNucleicMotifColor(motif, parseInt(e.target.value.slice(1), 16))}
+                className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${motif} colour`} />
+              <span className="text-[10px] font-bold text-slate-600">{motif === 'gquad' ? 'G4' : 'Hairpin'}</span>
+            </label>
+          ))}
+        </div>
+      </section>
+      <section className="flex flex-col gap-1">
+        <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Gradient &amp; general look</span>
+        <p className="text-[10px] text-slate-500">
+          The ramp runs from the FIRST residue of every chain to the last (N → C terminus, 5' → 3' end); ⇄ reverses it. The pair is global — one NGL scheme — and it is the general value the six menus follow.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500">
+            First →&nbsp;last
+            <input type="color" value={numToHex(gradientPair.from)}
+              onChange={(e) => setGradientPair('gradientFrom', parseInt(e.target.value.slice(1), 16))}
+              className="w-7 h-6 rounded border border-slate-300 cursor-pointer" title="Colour of the FIRST residue of every chain" />
+            <span className="text-[10px] font-bold text-slate-400">→</span>
+            <input type="color" value={numToHex(gradientPair.to)}
+              onChange={(e) => setGradientPair('gradientTo', parseInt(e.target.value.slice(1), 16))}
+              className="w-7 h-6 rounded border border-slate-300 cursor-pointer" title="Colour of the LAST residue of every chain" />
+          </label>
+          <button type="button" onClick={swapGeneralGradient}
+            className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+            title="Reverse the ramp (swap the two colours)">⇄ Reverse</button>
+          <button type="button" onClick={resetGeneralLook}
+            className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+            title="Put the general look (atom colour · radii · surface colour · gradient) back to its defaults — a menu that overrides a field keeps its own value">
+            ↺ Default general look
+          </button>
+        </div>
+        <p className="text-[10px] text-slate-500">
+          General now: <b>{generalLook.atomColor}</b> atoms · radii <b>{Number(generalLook.sphereRadius).toFixed(2)}×</b> / <b>{Number(generalLook.bondRadius).toFixed(2)}×</b> · <b>{generalLook.surfaceColor}</b> surfaces. A menu that overrides a field shows « ↺ General » beside it, and one that follows shows « · General »; the full control lives in §2 → « ⚙ General look ».
+        </p>
+      </section>
+    </div>
+    <div className="px-4 py-2 border-t border-slate-100 flex items-center justify-between gap-2 shrink-0">
+      <span className="text-[10px] text-slate-400">Saved with the viewer's preferences (element palette · sugar palette · nucleotide forms &amp; motifs · general look).</span>
+      <button type="button" onClick={() => setSettingsPanelOpen(false)}
+        className="px-3 py-1.5 rounded-lg bg-slate-800 text-white text-xs font-bold hover:bg-slate-900">Done</button>
+    </div>
+  </div>
+</div>
+)}
+
 {/* Vertical selections bar (right side of the viewer) — also hosts the Abort button */}
 {(selections.length > 0 || status === 'loading' || trajStatus === 'loading' || playing) && (
-  <div className={`absolute top-2 ${extraMols.length > 0 ? 'right-[21rem]' : 'right-2'} bottom-2 w-64 z-30 flex flex-col gap-2 bg-white/95 border border-violet-200 rounded-xl shadow-lg p-2 overflow-hidden`}>
+  <div className={`absolute top-2 ${molBarOpen ? 'right-[21rem]' : 'right-2'} bottom-2 w-64 z-30 flex flex-col gap-2 bg-white/95 border border-violet-200 rounded-xl shadow-lg p-2 overflow-hidden`}>
     {selections.length > 0 && (
     <>
     <div className="flex items-center justify-between gap-2 shrink-0">

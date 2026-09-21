@@ -62,7 +62,7 @@ const CATS = ['protein', 'nucleic', 'lipid', 'sugar', 'organic', 'other'];
 has('const renderCatRadii = (cat) => {', 'un SEUL rendu des deux curseurs de rayon');
 has('const renderAtomColour = (cat) => {', 'un SEUL rendu de la couleur des atomes');
 has('const renderSurfaceColour = (cat, label) => {', 'un SEUL rendu de la couleur de surface');
-has('const resetCatLook = (cat) => setCatStyles((prev) => ({', 'un ↺ qui remet rayons + couleurs par défaut');
+has('const resetCatLook = (cat) => setCatStyles((prev) => adoptGeneralLook(prev, cat, generalLook));', 'un ↺ qui remet rayons + couleurs en suivant le look général');
 CATS.forEach((c) => {
   has(`{renderCatRadii('${c}')}`, `[${c}] Sphere radius + Bond radius`);
   has(`{renderAtomColour('${c}')}`, `[${c}] Atom colour`);
@@ -329,6 +329,9 @@ const sandbox = [
   sliceObject(VIEW, 'DEFAULT_CAT_STYLES'),
   sliceFn(VIEW, 'catRadii'),
   sliceFn(VIEW, 'nucleicGroupOf'),
+  // La lettre de la base (A · C · G · T · U) est lue par UN SEUL lecteur, que la
+  // couleur des plaques ET le classificateur de conformation utilisent.
+  sliceFn(VIEW, 'nucBaseOf'),
   sliceFn(VIEW, 'baseIdentityColorOf'),
   sliceFn(VIEW, 'atomElement'),
   sliceFn(VIEW, 'lipidGroupOf'),

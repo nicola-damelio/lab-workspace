@@ -123,7 +123,7 @@ ok(styleHook('const setExtraMolStyle = (id, style) => {', 3).includes('leaveLigh
   'le style d’une molécule (barre Molecules) aussi');
 ok(styleHook('const setExtraMolColorMode = (id, mode) => {', 3).includes('leaveLightMode();'),
   '…son mode de coloration aussi');
-ok(VIEWER.includes('{ leaveLightMode(); setMainMol((m) => ({ ...m, style: e.target.value })); }'),
+ok(VIEWER.includes('onStyle: (v) => { leaveLightMode(); setMainMol((m) => ({ ...m, style: v })); },'),
   '…et le style de la structure principale');
 // Le rendu léger reste le POINT DE DÉPART (et le bloc d’addDefaultReps est intact).
 ok(styleHook('if (lightRenderRef.current) {', 12).includes("addRepresentation('line'"),
