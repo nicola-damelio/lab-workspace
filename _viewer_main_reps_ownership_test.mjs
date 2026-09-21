@@ -86,6 +86,10 @@ const sandbox = [
   'const showLargeWaterRef = { current: false };',
   'let VISIBLE = ["protein"];',
   'const rebuildSectionsOf = () => VISIBLE.map((type) => component.addRepresentation(type, {}));',
+  // The styling bar of a large system is fed by the section catalogue: addDefaultReps
+  // enumerates the sections BEFORE the lightweight block, so the harness provides
+  // that call (it draws nothing and returns the same sections rebuildSectionsOf uses).
+  'const ensureSections = () => VISIBLE;',
   sliceFn(VIEW, 'addDefaultReps'),
   sliceFn(VIEW, 'buildMainReps'),
   'const setVisible = (next) => { VISIBLE = next; };',

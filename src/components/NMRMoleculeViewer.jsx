@@ -1909,6 +1909,16 @@ const LABEL_ION_ELEMENTS = new Set([
   'NA', 'MG', 'K', 'CA', 'CL', 'ZN', 'FE', 'MN', 'CU', 'CO', 'NI', 'LI', 'RB',
   'CS', 'BR', 'I', 'F', 'CD', 'HG', 'PB', 'AL', 'BA', 'SR', 'CR', 'MO', 'V'
 ]);
+// …and the RESIDUE names of a single-atom ion. A .gro / a CHARMM topology names its
+// ions SOD · CLA · POT …, and NGL reads the ELEMENT out of the ATOM name — which is
+// the same word: « SOD » gives the element « S » and « CLA » the element « C », so
+// a sodium and a chloride were classified as ORGANIC LIGANDS (they even got the
+// « Hydrophobicity » colouring). The residue name is the only honest source there.
+const LABEL_ION_RESNAMES = new Set([
+  'SOD', 'NA', 'POT', 'K', 'LI', 'LIT', 'RB', 'CS', 'CES',
+  'MG', 'MG2', 'CAL', 'CA', 'SR', 'BA', 'ZN', 'ZN2', 'MN', 'FE', 'FE2',
+  'CLA', 'CL', 'BR', 'IOD', 'I', 'F',
+]);
 const LABEL_NUCLEIC_NAMES = new Set(['DA', 'DC', 'DG', 'DT', 'DU', 'A', 'C', 'G', 'T', 'U']);
 
 const properElementSymbol = (el) => {
@@ -2138,6 +2148,46 @@ const registerSstrucScheme = (NGL) => {
   sstrucSchemeKey = registerColorScheme(NGL, 'lab-sstruc', defineSstrucScheme());
 };
 const numToHex = (v) => `#${(Number(v) || 0).toString(16).padStart(6, '0')}`;
+
+/* ---- CHAIN colours (« Color by : Chain ») -----------------------------------
+   « Color by : Chain » of a protein / a nucleic acid / a lipid row used to be
+   NGL's OWN `chainid` scheme: it hands chain 1, 2, 3 … a colour of its internal
+   table, and NOTHING in the viewer could ever change it — the report « it is
+   possible to color by chain but there is no way to define the color of the
+   chain in the setting wheel ». ONE house scheme replaces it, with the same
+   contract as every other palette here: the swatches live in a mutable store the
+   scheme reads at call time, so moving one re-renders the representations and no
+   scheme is ever re-registered. A chain is named by its LETTER (A · B · C …) —
+   what a PDB / an mmCIF writes — and any other name (a number, an empty chain, a
+   force field's own spelling) takes the grey « other » swatch: a chain the table
+   does not know is never black. */
+const CHAIN_COLOR_PALETTE = {
+  A: 0x4f7fd0, B: 0xd06a2f, C: 0x3fa06a, D: 0xb04fa0,
+  E: 0xd0a02f, F: 0x2fa0b0, G: 0xb04f5f, H: 0x6a5fa0,
+  other: 0x9aa3ad,
+};
+// The order the ⚙ wheel draws them in: the eight chain letters, then the grey
+// catch-all — the very list the scheme reads, so the two can never disagree.
+const CHAIN_COLOR_ORDER = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'other'];
+const chainColorStore = { ...CHAIN_COLOR_PALETTE };
+let chainSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
+// The colour of ONE chain, from its NAME — PURE, so a test can run the very rule
+// the scheme hands to NGL.
+const chainColorOf = (chain) => {
+  const c = String(chain == null ? '' : chain).trim().toUpperCase();
+  const v = chainColorStore[c];
+  return Number.isFinite(v) ? v : CHAIN_COLOR_PALETTE.other;
+};
+// The definition of the scheme (named so a test can extract and really run it).
+const defineChainScheme = () => {
+  return function () {
+    this.atomColor = function (atom) { return chainColorOf(atom && atom.chainname); };
+  };
+};
+const registerChainScheme = (NGL) => {
+  if (chainSchemeKey) return;
+  chainSchemeKey = registerColorScheme(NGL, 'lab-chain', defineChainScheme());
+};
 
 // ---- Nucleic-acid GROUP colours (🎨 Colours panel of the B menu) ------------
 // ONE custom scheme colours a nucleic acid by CHEMICAL GROUP — the phosphate
@@ -2681,6 +2731,11 @@ const COLORS = {
   lipid: ['solid', 'element', 'chain', 'lipidtype', 'hydrophobicity', 'esp'],
   lipidParts: ['solid', 'element', 'lipidtype'],
   sugar: ['solid', 'element', 'chain', 'sugar', 'hydrophobicity', 'esp'],
+  // A LIGAND is not a sugar: offering « Sugar type » on its row was a copy of the
+  // sugar list (the report: « in the ligand menu there is color by sugar type
+  // (should not be there) ») — the per-sugar identity palette only says something
+  // where sugars are drawn, and the Sugars menu is the one that draws them.
+  ligand: ['solid', 'element', 'chain', 'hydrophobicity', 'esp'],
   water: ['solid', 'element', 'hydrophobicity', 'esp'],
   ion: ['solid', 'element', 'charge'],
 };
@@ -2711,7 +2766,7 @@ const SECTION_SUBSECTIONS = {
     { sub: 'glycerol', label: 'Glycerol', styles: STYLES.sidechains, colors: COLORS.lipidParts, def: { style: 'ball+stick', colorBy: 'lipidtype' }, sele: 'glycerol' },
   ],
   sugar: [{ sub: 'general', label: 'Sugar', styles: STYLES.small, colors: COLORS.sugar, def: { style: 'ball+stick', colorBy: 'element' }, sele: '' }],
-  ligand: [{ sub: 'general', label: 'Ligand', styles: STYLES.small, colors: COLORS.sugar, def: { style: 'ball+stick', colorBy: 'element' }, sele: '' }],
+  ligand: [{ sub: 'general', label: 'Ligand', styles: STYLES.small, colors: COLORS.ligand, def: { style: 'ball+stick', colorBy: 'element' }, sele: '' }],
   water: [{ sub: 'general', label: 'Water', styles: STYLES.small, colors: COLORS.water, def: { style: 'ball+stick', colorBy: 'element' }, sele: '' }],
   ion: [{ sub: 'general', label: 'Ion', styles: STYLES.ion, colors: COLORS.ion, def: { style: 'spacefill', colorBy: 'element' }, sele: '' }],
 };
@@ -2797,15 +2852,31 @@ const sectionLooksSig = (v) => JSON.stringify(MOL_KINDS.map((k) => [k, v && v[k]
         (`follow` = false) and never touches General;
      3. `resetSectionRow` / `resetSectionKind` — the ↺ of a row / of a section.
    A value General hands down that a row cannot draw falls back on that row's own
-   default (see effectiveSectionLook), so General can never break a sub-category. */
+   default (see effectiveSectionLook), so General can never break a sub-category.
+
+   A STYLE OR A COLOURING CHOSEN ON GENERAL IS EXCLUSIVE (the request: « in
+   phospholipids, proteins and nucleic acids when general (type or colouring) is
+   changed the other molecule parts (backbone, side chain, bases, acyl chain,
+   glycerol etc) must be on hide »): describing the WHOLE molecule with one style
+   or one colouring and drawing the parts on top of it at the same time gives two
+   drawings of the same atoms — the part would even keep the colouring
+   « General » has just replaced. Every sub-part is therefore switched to
+   « Hide », and it comes back by choosing a style on its OWN row (move 2), which
+   is exactly what « deviating from General » means. A hidden part also stops
+   FOLLOWING General (`follow: false`), because a row that follows would simply be
+   re-drawn with General's style — the hide would last one rebuild. */
 const setGeneralSectionField = (looks, kind, field, value) => {
   const out = { ...looks, [kind]: { ...(looks[kind] || {}) } };
   out[kind].general = { ...defaultLookOf(kind, 'general'), ...(out[kind].general || null), [field]: value, follow: false };
   subsectionsOf(kind).forEach((s) => {
     if (s.sub === 'general') return;
     const next = { ...defaultLookOf(kind, s.sub), ...(out[kind][s.sub] || null), follow: true };
-    if (field === 'style') next.style = s.styles.includes(value) ? value : s.def.style;
-    else if (field === 'colorBy') next.colorBy = s.colors.includes(value) ? value : s.def.colorBy;
+    // `follow: false` too: `effectiveSectionLook` hands General's style down to a row
+    // that follows — so a hidden row would be RE-DRAWN with General's style the next
+    // time it is asked what it really draws. Hiding a part means it stops following
+    // until its own row is moved again (or its ↺ resets it), which is what makes
+    // « one description of the molecule » hold.
+    if (field === 'style' || field === 'colorBy') { next.style = 'hide'; next.follow = false; }
     else if (FOLLOW_FIELDS.includes(field)) next[field] = value;
     out[kind][s.sub] = next;
   });
@@ -3009,6 +3080,8 @@ const catColorParams = (m, kind) => {
   // nothing); the two nucleic ones land on the 2°-structure colours instead,
   // because a conformation / a motif is a structural notion and not an element.
   if (mode === 'element' && elementSchemeKey) return { color: elementSchemeKey };
+  // « Chain » — the same EDITABLE palette as the styling-bar rows (lab-chain).
+  if (mode === 'chain' && chainSchemeKey) return { color: chainSchemeKey };
   // The two palettes of the request that the menus' « Atom colour » used to be
   // missing: the 20 AMINO ACIDS (lab-residue, the ⚙ palette of « Color by :
   // Amino acid (residue) ») and the five DNA/RNA BASES (lab-base-type, « Color by :
@@ -3047,6 +3120,13 @@ const gradientColorStore = {
   from: DEFAULT_GRADIENT_COLORS.from,
   to: DEFAULT_GRADIENT_COLORS.to,
   ranges: null,   // { [chainIndex]: [firstResidueIndex, lastResidueIndex], all: […] }
+  // …AND THE RANGES OF EVERY STRUCTURE. `ranges` alone is the ranges of whichever
+  // molecule was measured LAST — the store is shared by the whole viewer, so two
+  // loaded molecules overwrote each other's ramp and the first one fell flat (the
+  // report « the color by gradient does not seem to work in some cases »). The
+  // scheme resolves the ranges of the atom's OWN structure from here, and `ranges`
+  // stays what a plain test object (no `.structure`) reads.
+  byStructure: new WeakMap(),
 };
 let gradientSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
 // One colour of the ramp: t = 0 → `from`, t = 1 → `to` (t clamped). PURE, so a
@@ -3063,7 +3143,11 @@ const lerpHexColors = (from, to, t) => {
 // FIRST colour rather than a random one, and an atom outside the measured range is
 // clamped — the colour it produces is therefore always inside the ramp.
 const gradientT = (atom) => {
-  const ranges = gradientColorStore.ranges;
+  // The ranges of the atom's OWN structure when the atom carries one (a real NGL
+  // AtomProxy does: `atom.structure`) — see gradientColorStore.byStructure.
+  const byStructure = gradientColorStore.byStructure;
+  const own = byStructure && atom && atom.structure ? byStructure.get(atom.structure) : null;
+  const ranges = own || gradientColorStore.ranges;
   const range = ranges && (ranges[atom && atom.chainIndex] || ranges.all);
   const ri = Number(atom && atom.residueIndex);
   if (!range || !Number.isFinite(ri) || !(range[1] > range[0])) return 0;
@@ -3080,6 +3164,205 @@ const defineGradientScheme = () => {
 const registerGradientScheme = (NGL) => {
   if (gradientSchemeKey) return;
   gradientSchemeKey = registerColorScheme(NGL, 'lab-gradient', defineGradientScheme());
+};
+
+/* ══ PART 4.0 · THE ELECTROSTATIC POTENTIAL OF A LIGAND, TOO ══════════════════
+   NGL's own `electrostatic` colormaker hands a charge to the atoms of a PROTEIN
+   only: its `chargeForAtom` ends on `if (!a.isProtein()) return 0.0`. The surface
+   of a docking pose, of a lipid or of a glycan therefore came out uniformly white
+   — the report « the electrostatic potential is not calculated in the ligand ».
+   The viewer cannot change that rule (it is inside the bundle), so it registers
+   its OWN potential scheme, `lab-esp`, which computes exactly the same Coulomb sum
+   (same 12 Å cutoff, same ×332 kcal·Å/mol·e), reads the same red → white → blue
+   ramp and the same ± limits — but gives EVERY atom a charge:
+
+     1. the FILE's own partial charge when it carries one (PQR · charged MOL2 /
+        SDF — NGL keeps it in `atom.partialCharge`), and NGL's CHARMM-derived
+        table for a protein, read from NGL's OWN instance so the protein map of
+        the viewer does not move by a thousandth;
+     2. an ESTIMATE for everything else, read from the ELEMENT alone — a ligand
+        usually ships neither charges nor bonds (no CONECT in a PDB), so nothing
+        else can be read. The estimate is the electronegativity difference to the
+        carbon / hydrogen frame of an organic molecule, q = 0.35 × (2.50 − χ), the
+        one constant being calibrated on the CHARMM values of the common groups
+        (an alcohol oxygen −0.28, an amide hydrogen +0.26, a carbonyl oxygen
+        −0.55). The charges of ONE residue are then shifted so the residue sums to
+        zero — a ligand is not an ion;
+     3. and for a SINGLE-ATOM residue a formal charge is the honest answer (Na⁺
+        +1, Cl⁻ −1, Mg²⁺ +2 …), which is what makes the salt of a membrane system
+        show its real pole.
+
+   The estimate is APPROXIMATE — as approximate as NGL's own, which says so in its
+   own source — but it is not zero: a red pole sits on every oxygen, a blue one on
+   every sodium. A file that carries charges is never estimated. */
+const ESP_MAX_RADIUS = 12;            // Å — the cutoff NGL's own scheme uses
+const ESP_KCAL = 332;                 // e²/(Å·kcal/mol) — NGL's own conversion factor
+const ESP_NEUTRAL_REFERENCE = 2.50;   // the carbon / hydrogen frame of an organic molecule
+const ESP_CHARGE_PER_UNIT = 0.35;     // e per Pauling unit (see the calibration above)
+// Pauling electronegativities. An element outside the table counts as neutral, so
+// an exotic atom never paints a pole that is not there.
+const ESP_ELECTRONEGATIVITY = {
+  H: 2.20, C: 2.55, N: 3.04, O: 3.44, F: 3.98, P: 2.19, S: 2.58, Cl: 3.16,
+  Br: 2.96, I: 2.66, Se: 2.55, B: 2.04, Si: 1.90, As: 2.18, Na: 0.93, K: 0.82,
+  Li: 0.98, Rb: 0.82, Cs: 0.79, Mg: 1.31, Ca: 1.00, Sr: 0.95, Ba: 0.89,
+  Zn: 1.65, Fe: 1.83, Mn: 1.55, Cu: 1.90, Co: 1.88, Ni: 1.91, Cd: 1.69, Hg: 2.00,
+};
+// The formal charge of a residue that IS one ion (the 3-letter names a .gro / a
+// CHARMM topology uses, plus the bare element spellings).
+const ESP_ION_CHARGES = {
+  NA: 1, SOD: 1, K: 1, POT: 1, LI: 1, LIT: 1, RB: 1, CS: 1, CES: 1,
+  MG: 2, CAL: 2, CA: 2, SR: 2, BA: 2, ZN: 2, MN: 2, FE: 2,
+  CL: -1, CLA: -1, BR: -1, I: -1, IOD: -1, F: -1,
+};
+// The PARTIAL CHARGE of ONE hetero atom, from its element — PURE, so a test can run
+// the very rule the scheme uses (and the ONE thing the viewer can honestly say
+// about an atom whose bonds the file does not describe).
+const espHeteroChargeOf = (element) => {
+  const raw = String(element == null ? '' : element).trim();
+  if (!raw) return 0;
+  const cap = raw[0].toUpperCase() + raw.slice(1).toLowerCase();
+  const x = Number.isFinite(ESP_ELECTRONEGATIVITY[cap]) ? ESP_ELECTRONEGATIVITY[cap] : ESP_ELECTRONEGATIVITY[raw.toUpperCase()];
+  if (!Number.isFinite(x)) return 0;
+  return Math.max(-1, Math.min(1, ESP_CHARGE_PER_UNIT * (ESP_NEUTRAL_REFERENCE - x)));
+};
+// The charges of ONE structure — the file's / the protein's (NGL) + the estimate.
+// Cached per structure: the walk is O(atoms) and a rebuild must never repeat it.
+const espChargeCache = new WeakMap();
+const espChargesFor = (structure) => {
+  const hit = espChargeCache.get(structure);
+  if (hit) return hit;
+  const NG = typeof window !== 'undefined' ? window.NGL : null;
+  if (!NG || !structure || typeof structure.eachAtom !== 'function') return null;
+  // NGL's OWN instance first: its `charges` array already holds the file's partial
+  // charges AND its CHARMM values for every protein atom, so the protein map of the
+  // viewer is kept to the digit (its dummy amide hydrogens included).
+  let base = null;
+  try { base = NG.ColormakerRegistry.getScheme({ scheme: 'electrostatic', structure }); } catch { base = null; }
+  if (!base || !base.charges) return null;
+  const charges = new Float32Array(base.charges);
+  // …then the atoms NGL left at zero that no file charge describes: the hetero
+  // atoms. Two passes, because the estimate of ONE residue is shifted so that the
+  // residue sums to zero (an ion is excepted — it keeps its formal charge).
+  const own = [];          // [index, residueIndex | null (an ion), charge]
+  const sum = new Map();
+  const count = new Map();
+  structure.eachAtom((a) => {
+    const pc = a.partialCharge;
+    if (pc !== null && pc !== undefined) return;               // the file's own charge
+    if (a.isProtein && a.isProtein()) return;                  // NGL's CHARMM table
+    const name = String(a.resname || '').trim().toUpperCase();
+    const heavy = String(a.element || '').toUpperCase() !== 'H';
+    const formal = heavy ? ESP_ION_CHARGES[name] : undefined;   // Na⁺ · Cl⁻ …
+    if (Number.isFinite(formal)) { own.push([a.index, null, formal]); return; }
+    const q = espHeteroChargeOf(a.element);
+    own.push([a.index, a.residueIndex, q]);
+    sum.set(a.residueIndex, (sum.get(a.residueIndex) || 0) + q);
+    count.set(a.residueIndex, (count.get(a.residueIndex) || 0) + 1);
+  });
+  own.forEach(([index, resno, q]) => {
+    charges[index] = resno === null ? q : q - (sum.get(resno) || 0) / Math.max(1, count.get(resno) || 1);
+  });
+  const out = { charges, base, hetero: own.length };
+  espChargeCache.set(structure, out);
+  return out;
+};
+let espSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
+// The definition of the scheme, NAMED so a test can extract and really run it: it
+// is NGL's own positionColor — the same 12 Å Coulomb sum, the same scale — over the
+// charge table above.
+const defineEspScheme = () => {
+  return function (params) {
+    const NG = typeof window !== 'undefined' ? window.NGL : null;
+    const P = this.parameters || params || {};
+    // The ramp and the ± kcal/mol limits, however they arrive: a SURFACE passes them
+    // as `scale` / `domain` (Buffer#getColorParams renames colorScale / colorDomain
+    // on the way in), a direct getScheme call may pass the color* names — that one
+    // wins when it is a real pair, because the base class has already filled `domain`
+    // with its own [0, 1] default. 'uniform' — the base default scale — is NOT a
+    // scale of this ramp (it paints no colour at all), so it falls back on the red →
+    // white → blue one the ⚡ ESP button has always used.
+    const domain = Array.isArray(P.colorDomain) && P.colorDomain.every((n) => Number.isFinite(n)) ? P.colorDomain
+      : (Array.isArray(P.domain) && P.domain.every((n) => Number.isFinite(n)) ? P.domain : null);
+    P.domain = domain || [-50, 50];
+    P.scale = typeof P.scale === 'string' && P.scale && P.scale !== 'uniform' ? P.scale : 'rwb';
+    const self = this;
+    // The ramp is rebuilt whenever the limits or the scale change: NGL can re-apply a
+    // `colorDomain` on a LIVE representation, and a scale captured once at
+    // construction would keep painting the previous ramp — the ⚡ Range control must
+    // always bite.
+    let scale = null;
+    let scaleKey = '';
+    const scaleNow = () => {
+      const key = `${P.scale}|${JSON.stringify(P.domain)}`;
+      if (!scale || key !== scaleKey) {
+        scaleKey = key;
+        try { scale = typeof self.getScale === 'function' ? self.getScale() : null; } catch { scale = null; }
+      }
+      return scale;
+    };
+    // A colouring NEVER breaks a representation: a scale that cannot paint (an
+    // impossible limit, a missing chroma) falls back on the neutral white.
+    const ramp = (value) => {
+      const sc = scaleNow();
+      if (!sc) return 0xffffff;
+      try {
+        const c = sc(value);
+        return Number.isFinite(c) ? c : 0xffffff;
+      } catch { return 0xffffff; }
+    };
+    this.positionColor = () => 0xffffff;    // a structure-less / NGL-less call is white, never black
+    // …and `atomColor` too: registerColorScheme INSTANTIATES the scheme once to
+    // check that it can produce a colour, and NGL's registry refuses an id whose
+    // scheme has no `atomColor` at all (the row would then draw nothing).
+    this.atomColor = () => 0xffffff;
+    const structure = P.structure;
+    if (!NG || !structure) return;
+    const data = espChargesFor(structure);
+    if (!data) return;
+    const charges = data.charges;
+    let hash = null;
+    try {
+      const bbox = structure.getBoundingBox();
+      bbox.expandByScalar(ESP_MAX_RADIUS);
+      hash = new NG.SpatialHash(structure.atomStore, bbox);
+    } catch { hash = null; }
+    this.hash = hash;
+    this.charges = charges;
+    // The dummy N–H hydrogens NGL places on an amide nitrogen belong to the
+    // protein's own map: they come from NGL's instance, so its potential is not
+    // lost when the viewer paints the surface itself.
+    const hHash = data.base.hHash || null;
+    const hCharges = data.base.hCharges || [];
+    this.positionColor = function (v) {
+      let p = 0;
+      // `dSq > 0`: a point exactly ON an atom centre would divide by zero (a real
+      // surface vertex never is — it sits a vdW radius away — but the guard costs
+      // nothing and keeps Infinity out of the colour ramp).
+      if (hash) {
+        hash.eachWithin(v.x, v.y, v.z, ESP_MAX_RADIUS, (i, dSq) => {
+          const q = charges[i];
+          if (q && dSq > 0) p += q / dSq;
+        });
+      }
+      if (hHash) {
+        hHash.eachWithin(v.x, v.y, v.z, ESP_MAX_RADIUS, (i, dSq) => {
+          const q = hCharges[i];
+          if (q && dSq > 0) p += q / dSq;
+        });
+      }
+      return ramp(p * ESP_KCAL);
+    };
+    // …and the same charges colour the ATOMS / the ribbon of a « Surface colour :
+    // ESP » row, so a ligand reads red on its oxygens in every style.
+    this.atomColor = function (atom) {
+      const q = atom && Number.isFinite(atom.index) ? charges[atom.index] : 0;
+      return ramp((q || 0) * ESP_KCAL);
+    };
+  };
+};
+const registerEspScheme = (NGL) => {
+  if (espSchemeKey) return;
+  espSchemeKey = registerColorScheme(NGL, 'lab-esp', defineEspScheme());
 };
 // A real NGL.Selection for a selection string — the module-level twin of
 // nglSelection (which lives inside the component). NGL 2.4 `Structure#getAtomSet`
@@ -4089,6 +4372,11 @@ const [baseTypeColors, setBaseTypeColors] = useState(() => loadPalette('labViewe
 const [chargeColors, setChargeColors] = useState(() => loadPalette('labViewerChargeColors', CHARGE_COLORS));
 const [lipidTypeColors, setLipidTypeColors] = useState(() => loadPalette('labViewerLipidTypeColors', LIPID_CLASS_COLORS));
 const [sugarTypeColors, setSugarTypeColors] = useState(() => loadPalette('labViewerSugarTypeColors', SUGAR_TYPE_COLORS));
+// 🔗 The CHAIN palette (« Color by : Chain ») — React state (the ⚙ wheel repaints at
+// once), persisted like the others, and copied into the mutable store the lab-chain
+// scheme reads (see the effect below): ONE palette, so the wheel and every coloured
+// molecule can never disagree.
+const [chainColors, setChainColors] = useState(() => loadPalette('labViewerChainColors', CHAIN_COLOR_PALETTE));
 const [elementColors, setElementColors] = useState(() => loadPalette(ELEMENT_COLORS_KEY, ELEMENT_COLOR_PALETTE));
 const [sugarColors, setSugarColors] = useState(() => loadPalette(SUGAR_COLORS_KEY, SUGAR_IDENTITY_COLORS));
 // The NUCLEIC reading of PART 3 has its own two palettes in the same wheel: the six
@@ -5017,6 +5305,14 @@ useEffect(() => {
     if (Number.isFinite(sugarTypeColors[type])) sugarColorStore[code] = sugarTypeColors[type];
   });
 }, [sugarTypeColors]);
+// 🔗 Feed the CHAIN palette from the ⚙ wheel: the lab-chain scheme reads this store
+// live, so moving a swatch repaints every molecule coloured by « Chain » at once —
+// no scheme is ever re-registered (the report: « it is possible to color by chain
+// but there is no way to define the color of the chain in the setting wheel »).
+useEffect(() => {
+  try { localStorage.setItem('labViewerChainColors', JSON.stringify(chainColors)); } catch { /* ignore */ }
+  Object.keys(CHAIN_COLOR_PALETTE).forEach((k) => { if (Number.isFinite(chainColors[k])) chainColorStore[k] = chainColors[k]; });
+}, [chainColors]);
 // Feed the 🔬 NUCLEIC-ACID group-colour scheme from its menu (menu B): the three
 // swatches (phosphate backbone / pentose ring / bases) live in catStyles.nucleic,
 // so they are persisted with the menus, captured by a saved setup, and a swatch
@@ -5242,6 +5538,8 @@ registerNucleicScheme(NGL);      // 🔬 nucleic acids by chemical group (phosph
 registerBaseIdentityScheme(NGL); // 🧬 stylized base rings (one colour per base: A · C · G · T · U)
 registerLipidScheme(NGL);        // 🧫 lipids by chemical part (headgroup / glycerol backbone / chains)
 registerGradientScheme(NGL);     // 🌈 gradual ribbon colours (two colours, N→C / 5'→3')
+registerChainScheme(NGL);        // 🔗 one editable colour per CHAIN (lab-chain)
+registerEspScheme(NGL);          // ⚡ the potential of a ligand too (lab-esp)
 registerElementScheme(NGL);      // ⚙ atom-type palette (editable in the settings wheel)
 registerSugarScheme(NGL);        // ⚙ per-sugar identity colours (editable in the settings wheel)
 registerGlycanScheme(NGL);       // 🍬 one colour per LINKED glycan entity (PART 2.2bis)
@@ -5549,14 +5847,18 @@ else if (externalError) { setStatus('error'); setErrorMsg(externalError); }
 // electrostatic-potential scheme, per component, so the ⚡ Range control
 // (espApplyLimits) re-colours them live together with the ⚡ ESP overlay.
 const catEspRepsRef = useRef(new Map());
-// The exact ESP colouring used by the ⚡ ESP overlay: NGL's built-in
-// 'electrostatic' colour scheme pinned to the red → white → blue ramp (rwb) and
-// driven by the user's ±kcal/mol limits — shared, so « Surface Color: ESP » and
-// the ⚡ button can never drift apart.
+// The exact ESP colouring used by the ⚡ ESP overlay: the viewer's OWN potential
+// scheme (`lab-esp`, see PART 4.0 — it charges the hetero atoms NGL leaves at zero,
+// which is what makes a ligand show a potential at all) pinned to the red → white →
+// blue ramp (rwb) and driven by the user's ±kcal/mol limits — shared, so
+// « Surface Color: ESP » and the ⚡ button can never drift apart. NGL's own
+// 'electrostatic' scheme is the fallback, so a scheme that could not be registered
+// still paints a surface (the protein one, exactly as before).
 const espColorParams = () => {
   const prev = espLimitsRef.current || [15, 15];
   const neg = Math.min(500, Math.max(0.5, Number(prev[0]) || 15));
   const pos = Math.min(500, Math.max(0.5, Number(prev[1]) || 15));
+  if (espSchemeKey) return { color: espSchemeKey, colorScale: 'rwb', colorDomain: [-neg, pos] };
   return { colorScheme: 'electrostatic', colorScale: 'rwb', colorDomain: [-neg, pos] };
 };
 
@@ -5574,7 +5876,11 @@ const sectionColorParams = (look, kind) => {
   switch (mode) {
     case 'solid': return { color: solid };
     case 'element': return schemeParam(elementSchemeKey, 'element');
-    case 'chain': return { colorScheme: 'chainid' };
+    // « Chain » (a protein / a nucleic acid / a lipid row) — the EDITABLE chain
+    // palette of the ⚙ wheel (lab-chain), with NGL's own `chainid` as the fallback:
+    // the report was « it is possible to color by chain but there is no way to
+    // define the color of the chain in the setting wheel ».
+    case 'chain': return schemeParam(chainSchemeKey, 'chainid');
     case 'residue': return schemeParam(residueSchemeKey, 'resname');
     case 'basetype': return schemeParam(baseTypeSchemeKey, 'resname');
     case 'sstruc': return schemeParam(sstrucSchemeKey, 'sstruc');
@@ -5734,7 +6040,12 @@ const classifySectionResidue = (r) => {
   if (isLipidResname(name)) return 'lipid';
   if (isSugarResidueCode(name)) return 'sugar';
   const heavy = Array.from(r.elements).filter((e) => e && e !== 'H' && e !== 'D');
-  if (heavy.length === 1 && r.count === 1 && LABEL_ION_ELEMENTS.has(heavy[0])) return 'ion';
+  if (heavy.length === 1 && r.count === 1) {
+    if (LABEL_ION_ELEMENTS.has(heavy[0])) return 'ion';
+    // …and when the ELEMENT was only guessed out of the atom name (a .gro writes
+    // « SOD » / « CLA »), the RESIDUE name is what says « this is one ion ».
+    if (LABEL_ION_RESNAMES.has(String(name).trim().toUpperCase())) return 'ion';
+  }
   return 'ligand';
 };
 const listMoleculeSections = (structure) => {
@@ -5866,7 +6177,29 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
   // EVERY section has its OWN tree of looks (that is what makes two proteins of the
   // same file independent); a section without one falls back on the kind's look.
   const treeOf = (sec) => (trees && trees[sec.id]) || opts.fallbackTree || {};
+  /* THE TWO-COLOUR RAMP IS MEASURED BEFORE ANYTHING IS DRAWN. A representation
+     reads its colours when NGL BUILDS it, and this builder used to fill the store
+     only at the very end of the loop: the first build therefore ran with
+     `ranges` = null — every atom took the FIRST colour and the ramp appeared only
+     on the NEXT rebuild, when the ranges of the previous one were still in the
+     store. That is the report « the color by gradient does not seem to work in some
+     cases ». Walking the looks once here costs one pass over the polymer (exactly
+     what the measurement itself costs) and the sections' selections are known
+     before the loop.
+     The ranges are also remembered PER STRUCTURE (byStructure), so a second loaded
+     molecule can no longer flatten the ramp of the first. */
   const gradientRows = [];
+  sections.forEach((sec) => {
+    if (hidden && (hidden.has(sec.id) || hidden.has(sec.key))) return;
+    subsectionsOf(sec.kind).forEach((sp) => {
+      const look = effectiveSectionLook(treeOf(sec), sec.kind, sp.sub);
+      if (look.style !== 'hide' && look.colorBy === 'gradient') gradientRows.push(sec.sele);
+    });
+  });
+  gradientColorStore.ranges = gradientRows.length
+    ? gradientRangesFor(structure, gradientRows.join(' or '))
+    : null;
+  if (gradientColorStore.byStructure) gradientColorStore.byStructure.set(structure, gradientColorStore.ranges);
   const add = (type, params) => {
     let r = null;
     try {
@@ -5921,7 +6254,6 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
     subsectionsOf(sec.kind).forEach((spec) => {
       const look = subLooks[spec.sub];
       if (look.style === 'hide') return;
-      if (look.colorBy === 'gradient') gradientRows.push(sec.sele);
       const sele = sectionRowSele(structure, sec, spec.sub, { anchorSideChains });
       if (!sele) return;
       const colorParams = sectionColorParams(look, sec.kind);
@@ -5954,11 +6286,6 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
       }
     });
   });
-  // The two-colour ramp reads the per-chain ranges of what is DRAWN — one pass over
-  // the polymer, and only when a row actually asks for the gradient.
-  gradientColorStore.ranges = gradientRows.length
-    ? gradientRangesFor(structure, gradientRows.join(' or '))
-    : null;
   return reps;
 };
 
@@ -6109,6 +6436,10 @@ const buildCategoryReps = (comp) => {
   } else {
     gradientColorStore.ranges = null;
   }
+  // Per structure too, so another loaded molecule's ramps can never be read here
+  // (and this structure's can never be flattened by the next one — see
+  // gradientColorStore.byStructure).
+  if (gradientColorStore.byStructure) gradientColorStore.byStructure.set(comp.structure, gradientColorStore.ranges);
 
   // Fresh ESP-surface registry for this component: the caller removes the
   // previous representations right before calling this builder.
@@ -6307,6 +6638,16 @@ const addDefaultReps = (component, molKey = 'main') => {
   }
   baseCompsRef.current = [];
   const trackBase = (r) => { if (r) baseCompsRef.current.push(r); };
+  // THE SECTIONS ARE ENUMERATED EVEN WHEN THE SYSTEM IS DRAWN LIGHTWEIGHT. The
+  // styling bar of a molecule is built from `sectionCatalog`, and that catalogue
+  // was only ever fed below — i.e. only in the non-light path: a large system (a
+  // membrane protein with its lipids and its water, a solvated box) therefore
+  // opened with an EMPTY bar (« Load a structure: one space appears here for every
+  // molecule it holds ») and NO styling control at all, which is exactly the
+  // report « the viewer did not store phospholipids in the styling window. they
+  // were ignored ». Enumerating the sections costs one walk over the residues and
+  // changes nothing to what is drawn.
+  ensureSections(component, molKey);
   // Large systems START here: keep the whole structure visible, but draw
   // EVERYTHING with the same lightweight style chosen in "Large:" — lines
   // (bonds, the default), spheres (instanced spacefill) or dots (one point per
@@ -6411,25 +6752,23 @@ const buildMainReps = () => {
 // is so wide it leaves most of the surface near-white; the adjustable limits
 // exist precisely to zoom the ramp onto the structure and see the red and blue
 // poles. Partial charges are read from the input when the file/parser provides
-// them (PQR, charged MOL2/SDF, …); otherwise NGL falls back to its CHARMM-
-// derived table for protein backbone + key side-chain atoms, so plain PDB
-// ensembles / docking poses still get a meaningful map. Each molecule component
+// them (PQR, charged MOL2/SDF, …); a PROTEIN keeps NGL's CHARMM-derived table for
+// its backbone + key side-chain atoms, and everything else (a docking pose, a
+// lipid, a glycan, an ion) is ESTIMATED — see PART 4.0. Each molecule component
 // (the main structure or any extra / model / chain) can have one overlay — it
 // is a normal representation but tracked separately from the per-molecule base
 // reps, so a style change never removes it accidentally.
 const espAddSurfaceRep = (comp) => {
   if (!comp || !comp.structure) return null;
   try {
-    const prev = espLimitsRef.current || [15, 15];
-    const neg = Math.min(500, Math.max(0.5, Number(prev[0]) || 15));
-    const pos = Math.min(500, Math.max(0.5, Number(prev[1]) || 15));
     // 'not water' skips the noisy solvent shell of membrane / water-heavy files;
     // opacity < 1 keeps the cartoon / atoms legible underneath the map.
+    // The colouring is espColorParams(): the viewer's OWN `lab-esp` scheme, which
+    // charges the hetero atoms NGL leaves at zero (see PART 4.0) — a docking pose
+    // or a lipid really shows its red and blue poles now.
     return comp.addRepresentation('surface', {
       sele: 'not water',
-      colorScheme: 'electrostatic',
-      colorScale: 'rwb',
-      colorDomain: [-neg, pos],
+      ...espColorParams(),
       opacity: 0.85
     });
   } catch { return null; }
@@ -8124,6 +8463,17 @@ const renderSectionRow = (sec, sub) => {
               ⚙</button>
           </>
         )}
+        {/* « Color by : Chain » — the palette of the ⚙ wheel (lab-chain: the eight
+            chain letters A → H plus the grey « other »). The ROW points at it (eight
+            swatches do not fit in one row), and the wheel section is where a chain
+            colour is really defined — the report: « it is possible to color by chain
+            but there is no way to define the color of the chain in the setting wheel ». */}
+        {look.colorBy === 'chain' && (
+          <button type="button" onClick={() => setSettingsPanelOpen(true)}
+            className="px-1 py-0.5 text-[10px] font-bold rounded border bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100 shrink-0"
+            title="Open the ⚙ settings wheel — the colour of every CHAIN (A · B · C …) has a section of its own there">
+            ⚙</button>
+        )}
       </div>
       <div className="flex items-center gap-1">
         <span className="text-[9px] text-slate-400 font-bold shrink-0"
@@ -8156,6 +8506,14 @@ const renderSectionRow = (sec, sub) => {
       )}
       {look.colorBy === 'esp' && (
         <span className="text-[9px] text-slate-400 italic">NGL paints this colouring on a surface only — one is added on top of this row</span>
+      )}
+      {/* A HIDDEN PART SAYS SO. Choosing a style or a colouring on the General row
+          switches every other row of this molecule to « Hide » (see
+          setGeneralSectionField), and a row the user hid with its own selector
+          looks the same: either way the row is empty, and either way the style
+          selector above it is the way back. */}
+      {look.style === 'hide' && sub !== 'general' && (
+        <span className="text-[9px] text-slate-400 italic">hidden — choose a style here to bring this part back</span>
       )}
     </div>
   );
@@ -8931,6 +9289,21 @@ const espBtnTitle = !espTargetComp
    report without leaving the page. `smiles` wins when both are given (it is the
    molecule the page is really about). */
 const ligandSmilesText = String(smiles || ligandSmiles || '').trim();
+// The chains the LOADED molecules really carry — what the ⚙ wheel's « Chains »
+// section names, so the user knows which swatch to move. The section catalogue keys
+// a protein / a nucleic acid section `<kind>|<chain>` (see listMoleculeSections); a
+// chain with no name at all takes the palette's grey « other ».
+const loadedChainLetters = (() => {
+  const out = [];
+  Object.keys(sectionCatalog).forEach((molKey) => {
+    (sectionCatalog[molKey].sections || []).forEach((s) => {
+      if (s.kind !== 'protein' && s.kind !== 'nucleic') return;
+      const letter = String(s.key).split('|')[1] || '';
+      if (!out.includes(letter || 'other')) out.push(letter || 'other');
+    });
+  });
+  return out.sort().join(' · ');
+})();
 const [smilesMsg, setSmilesMsg] = useState('');
 const smilesMsgTimerRef = useRef(null);
 const copyLigandSmiles = async () => {
@@ -9323,6 +9696,7 @@ const captureViewerSetup = () => ({
     sugars: sugarColors,
     nucleicForms: nucleicFormColors,
     nucleicMotifs: nucleicMotifColors,
+    chains: chainColors,
   },
   savedAt: new Date().toISOString(),
 });
@@ -9366,6 +9740,7 @@ const applyViewerSetup = (s) => {
   const pal = s.palettes || {};
   if (pal.elements) setElementColors((p) => mergePalette(ELEMENT_COLOR_PALETTE, { ...p, ...pal.elements }));
   if (pal.sugars) setSugarColors((p) => mergePalette(SUGAR_IDENTITY_COLORS, { ...p, ...pal.sugars }));
+  if (pal.chains) setChainColors((p) => mergePalette(CHAIN_COLOR_PALETTE, { ...p, ...pal.chains }));
   if (pal.nucleicForms) setNucleicFormColors((p) => mergePalette(DEFAULT_NUCLEIC_FORM_COLORS, { ...p, ...pal.nucleicForms }));
   if (pal.nucleicMotifs) setNucleicMotifColors((p) => mergePalette(DEFAULT_NUCLEIC_MOTIF_COLORS, { ...p, ...pal.nucleicMotifs }));
   if (s.generalLook && typeof s.generalLook === 'object') {
@@ -10366,10 +10741,17 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
 )}
 
 {/* THE MOLECULE STYLING BAR (right side, collapsible) — PART 4. ONE SPACE PER
-    LOADED MOLECULE, each with the rows its KIND owns (protein: general / backbone /
-    side chains · nucleic acid: general / backbone / bases / ribose · lipid: general
-    / headgroups / acyl chains / glycerol · sugar, ligand, water, ion: one row), and
-    every row carries its Style, its « Color by » and its transparency regulator.
+    LOADED MOLECULE — INCLUDING A LARGE SYSTEM: the sections are enumerated at load
+    every time, so a membrane protein with its lipids and its water opens with its
+    spaces in the bar (before, the lightweight starting layout skipped that walk and
+    the bar stayed EMPTY — the report « the viewer did not store phospholipids in
+    the styling window. they were ignored »). Each space carries the rows its KIND
+    owns (protein: general / backbone / side chains · nucleic acid: general /
+    backbone / bases / ribose · lipid: general / headgroups / acyl chains / glycerol
+    · sugar, ligand, water, ion: one row), and every row carries its Style, its
+    « Color by » and its transparency regulator. A style or a colouring chosen on
+    GENERAL switches the other rows to « Hide » (the request), so one drawing of the
+    molecule is on screen at a time.
     It REPLACES the old « Molecules » window (whose Docking on/off is gone for good)
     and is also the home of the ligand's SMILES and of the ⚙ settings wheel. */}
 {molBarOpen && (
@@ -10381,11 +10763,12 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
           title="Collapse the styling bar (▶ brings it back) — the styles stay applied">▶</button>
         {/* ⚙ The settings wheel of the viewer: every palette the colourings read —
-            atom types, residues, base types, secondary structure, DNA conformation,
-            lipids, sugars, charges, the gradient pair and the glycan colours. */}
+            atom types, residues, base types, secondary structure, CHAINS, DNA
+            conformation, lipids, sugars, charges, the gradient pair and the glycan
+            colours. */}
         <button type="button" onClick={() => setSettingsPanelOpen(true)}
           className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-400 text-slate-700 hover:bg-slate-100"
-          title="⚙ Settings — edit every palette this viewer colours with: atom types · residues · base types · secondary structure · DNA/RNA conformation · lipid types · sugar types · charges · the gradient pair · the glycan colours">
+          title="⚙ Settings — edit every palette this viewer colours with: atom types · residues · base types · secondary structure · chain colours · DNA/RNA conformation · lipid types · sugar types · charges · the gradient pair · the glycan colours">
           ⚙</button>
         <button type="button"
           onClick={() => setVisibleMolKeys(new Set(extraCompsRef.current.map(({ id }) => id).concat(['main'])))}
@@ -10479,8 +10862,10 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
       • the AMINO ACIDS (one colour per residue), the DNA/RNA BASES, the SECONDARY
         STRUCTURE (helix · sheet · loop — a SECTION OF ITS OWN: it used to hide
         inside the DNA/RNA-base one, and the report could not find those three
-        colours anywhere), the CHARGE of an ion and the 16 LIPID TYPES — the
-        palettes the « Color by » rows of the styling bar read;
+        colours anywhere), the CHAINS (one colour per chain letter, plus the grey
+        « other » — « Color by : Chain » used to paint with NGL's own table, which
+        NO control of the viewer could change), the CHARGE of an ion and the 16
+        LIPID TYPES — the palettes the « Color by » rows of the styling bar read;
       • the SUGAR TYPES (one colour per sugar residue) — behind « Sugar type »
         (lab-sugar-identity), built from the very list the Sugars menu selects on,
         so the two can never drift apart;
@@ -10500,7 +10885,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
       <div>
         <h3 className="text-sm font-black uppercase tracking-wide">⚙ Molecule colour settings</h3>
         <p className="text-[11px] text-slate-200 mt-0.5">
-          The palettes the colourings read — atom types · amino acids (the 20 residues) · secondary structure (helix · sheet · loop, its own section) · DNA/RNA bases · charge · the 29 sugar types · the 16 lipid types · the DNA/RNA conformations and motifs · the gradient pair. Moving a swatch repaints every molecule that uses it, at once.
+          The palettes the colourings read — atom types · amino acids (the 20 residues) · secondary structure (helix · sheet · loop, its own section) · chains (color by chain) · DNA/RNA bases · charge · the 29 sugar types · the 16 lipid types · the DNA/RNA conformations and motifs · the gradient pair. Moving a swatch repaints every molecule that uses it, at once.
         </p>
       </div>
       <button type="button" onClick={() => setSettingsPanelOpen(false)}
@@ -10579,6 +10964,37 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
                 onChange={(e) => setSstrucColors((c) => ({ ...c, [it.key]: parseInt(e.target.value.slice(1), 16) }))}
                 className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${it.label} colour`} />
               <span className="text-[10px] font-bold text-slate-600">{it.label}</span>
+            </label>
+          ))}
+        </div>
+      </section>
+      {/* « Color by : Chain » paints with NGL's own `chainid` table, which NO control
+          of the viewer could change — the report: « it is possible to color by chain
+          but there is no way to define the color of the chain in the setting wheel ».
+          The scheme is the viewer's own (lab-chain) and reads exactly these swatches:
+          one per chain LETTER, plus the grey « other » for a chain whose name is not
+          a letter (a number, an empty chain, a force-field spelling). The colour is
+          read from the chain's NAME, so chain A keeps its colour from file to file. */}
+      <section className="flex flex-col gap-1">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Chains · color by chain</span>
+          <button type="button" onClick={() => setChainColors({ ...CHAIN_COLOR_PALETTE })}
+            className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+            title="Put the chain colours back to their defaults">
+            ↺ Defaults
+          </button>
+        </div>
+        <p className="text-[10px] text-slate-500">
+          What « Color by : Chain » paints on a protein / a nucleic acid / a lipid row: one colour per chain, read from the chain's NAME. {loadedChainLetters ? <>The loaded file(s) carry: <b>{loadedChainLetters}</b>.</> : 'No chain is loaded yet.'} A chain the table does not know (a number, an empty name) takes the grey « other ».
+        </p>
+        <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(5.5rem,1fr))] gap-1.5">
+          {CHAIN_COLOR_ORDER.map((c) => (
+            <label key={c} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50"
+              title={c === 'other' ? 'Colour of a chain whose name is not one of the letters above' : `Colour of chain ${c} of every molecule`}>
+              <input type="color" value={numToHex(chainColors[c])}
+                onChange={(e) => setChainColors((p) => ({ ...p, [c]: parseInt(e.target.value.slice(1), 16) }))}
+                className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`chain ${c} colour`} />
+              <span className="text-[10px] font-bold text-slate-600 truncate">{c === 'other' ? 'other' : `Chain ${c}`}</span>
             </label>
           ))}
         </div>
@@ -10732,7 +11148,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
       </section>
     </div>
     <div className="px-4 py-2 border-t border-slate-100 flex items-center justify-between gap-2 shrink-0">
-      <span className="text-[10px] text-slate-400">Saved with the viewer's preferences (element palette · amino-acid palette · DNA/RNA base and 2°-structure colours · sugar palette · lipid types · nucleotide forms &amp; motifs · general look).</span>
+      <span className="text-[10px] text-slate-400">Saved with the viewer's preferences (element palette · amino-acid palette · DNA/RNA base and 2°-structure colours · chain colours · sugar palette · lipid types · nucleotide forms &amp; motifs · general look).</span>
       <button type="button" onClick={() => setSettingsPanelOpen(false)}
         className="px-3 py-1.5 rounded-lg bg-slate-800 text-white text-xs font-bold hover:bg-slate-900">Done</button>
     </div>

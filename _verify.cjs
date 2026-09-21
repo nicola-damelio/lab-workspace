@@ -33,6 +33,14 @@ const tests = [
   // rapport : « colors for secondary structure definition are not present in the
   // setting wheel »).
   '_viewer_sstruc_colors_test.mjs',
+  // Les SIX défauts du rapport « styling window » : la barre de style d'un GRAND
+  // système (protéines + phospholipides + eau) s'ouvrait VIDE, la rangée d'un
+  // ligand offrait « Sugar type », la couleur des chaînes ne se définissait nulle
+  // part, le potentiel électrostatique d'un ligand n'était pas calculé, le dégradé
+  // était mesuré après le dessin (et écrasé d'une molécule à l'autre) et un
+  // changement sur la rangée GENERAL devait mettre les parties de la molécule sur
+  // « Hide ».
+  '_viewer_style_gaps_test.mjs',
   '_viewer_render_smoke_test.mjs',
 ];
 const rows = tests.map((t) => {
