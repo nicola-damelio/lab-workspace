@@ -74,8 +74,11 @@ has('<option value="custom">Custom colour…</option>', '[couleurs] « Custom…
 has('<option value="esp">Electrostatic Potential (ESP)</option>', '[couleurs] ESP conservé');
 has('const [showNucleicColoursPanel, setShowNucleicColoursPanel] = useState(false);',
   '[B] un panneau de couleurs PROPRE au menu des acides nucléiques');
-has("const open = cat === 'nucleic' ? showNucleicColoursPanel : showColoursPanel;",
-  'le bouton 🎨 ouvre le panneau du menu (A → 2° structure, B → phosphate / pentose / bases)');
+has('const [showLipidColoursPanel, setShowLipidColoursPanel] = useState(false);',
+  '[C] …et un troisième, propre au menu des lipides');
+has("const open = cat === 'nucleic' ? showNucleicColoursPanel",
+  'le bouton 🎨 ouvre le panneau du menu (A → 2° structure, B → phosphate / pentose / bases, C → les trois parts d’un lipide)');
+has(": cat === 'lipid' ? showLipidColoursPanel", '…en choisissant le panneau du menu qui le porte');
 
 /* ══ 2. LES RAYONS : multiplicateurs lus par le rendu ET par le panneau ═══ */
 const numOf = (name) => {
@@ -165,6 +168,31 @@ has("const bbCol = nucleicGroupsOn() ? stickCol : backboneCol('nucleic');",
   'squelette : schéma des groupes, ou arc-en-ciel par résidu');
 has("const baseSlabCol = nucleicGroupsOn() ? { color: nucleicSchemeKey } : { colorScheme: 'resname' };",
   'rungs : couleur des bases du panneau, ou palette resname de NGL');
+
+/* ══ 5bis. LE MENU C RECOLORE la tête / le squelette / les chaînes ════════ */
+// Le même contrat que le menu B, pour les trois PARTIES chimiques d'un lipide.
+has('const lipidColorStore = {', 'un store vivant pour les trois parts (une pastille ne reconstruit rien)');
+has("if (g === 'glycerol') return lipidColorStore.glycerol;", 'squelette → sa couleur');
+has("if (g === 'acyl') return lipidColorStore.acyl;", 'chaînes acyle → leur couleur');
+has('return lipidColorStore.head;', 'tout le reste (la tête) → sa couleur');
+has("registerColorScheme(NGL, 'lab-lipid-groups'", 'un schéma NGL maison pour les trois parts');
+has('registerLipidScheme(NGL);', 'enregistré avec la scène, comme les deux autres');
+has('lipidColorStore.named = sub.named;', 'le schéma est lu avec le MÊME classificateur que le rendu');
+has('Colour by chemical part', 'l’interrupteur « Colour by chemical part »');
+has('value={numToHex(catStyles.lipid.headColor)}', 'la pastille de la tête lit catStyles.lipid');
+has('value={numToHex(catStyles.lipid.glycerolColor)}', 'la pastille du squelette');
+has('value={numToHex(catStyles.lipid.tailColor)}', 'la pastille des chaînes');
+has('onClick={resetLipidColours}', '↺ Reset colours');
+has('const setLipidColour = (key, hex) => setCatStyles((prev) => ({', 'une pastille allume « Colour by chemical part » (jamais invisible)');
+has('headColor: DEFAULT_LIPID_COLORS.head,', 'les trois couleurs vivent dans catStyles.lipid (donc persistées + setup)');
+has('const lipidGroupsOn = () => !!(cs.lipid && cs.lipid.groupColour && lipidSchemeKey);',
+  'le rendu suit l’interrupteur');
+has('const col = lipidCol();', 'les trois sous-représentations prennent la couleur du schéma');
+// ⚠️ Le ↺ du menu B déversait le PALETTE (clés phosphate / pentose / base) au lieu
+// des clés réellement stockées (…Color) : les pastilles ne revenaient jamais.
+has('phosphateColor: DEFAULT_NUCLEIC_COLORS.phosphate,', '↺ des acides nucléiques écrit bien les clés « …Color »');
+has('pentoseColor: DEFAULT_NUCLEIC_COLORS.pentose,', '…le pentose aussi');
+has('baseColor: DEFAULT_NUCLEIC_COLORS.base,', '…et les bases');
 
 /* ══ 6. « Stylized rings » : les bases colorées DANS l’anneau ══════════════ */
 has('<option value="rings">Stylized rings (coloured inside)</option>', 'la nouvelle représentation stylisée des bases');
@@ -281,16 +309,24 @@ const sandbox = [
   `const DEFAULT_SURFACE_COLOR = ${sliceRaw('DEFAULT_SURFACE_COLOR')};`,
   sliceObject(VIEW, 'DEFAULT_ATOM_COLORS'),
   sliceObject(VIEW, 'DEFAULT_NUCLEIC_COLORS'),
+  sliceObject(VIEW, 'DEFAULT_LIPID_COLORS'),
   sliceObject(VIEW, 'BASE_IDENTITY_COLORS'),
+  `const LIPID_GLYCEROL_NAMES = ${sliceRaw('LIPID_GLYCEROL_NAMES')};`,
+  `const LIPID_ACYL_RE = ${sliceRaw('LIPID_ACYL_RE')};`,
+  `const LIPID_POLAR_ELEMENTS = ${sliceRaw('LIPID_POLAR_ELEMENTS')};`,
+  `const LIPID_NAMED_PROBE = ${sliceRaw('LIPID_NAMED_PROBE')};`,
+  `const LIPID_CHAIN_PROBE_RE = ${sliceRaw('LIPID_CHAIN_PROBE_RE')};`,
   sliceFn(VIEW, 'catLook'),
   sliceObject(VIEW, 'DEFAULT_CAT_STYLES'),
   sliceFn(VIEW, 'catRadii'),
   sliceFn(VIEW, 'nucleicGroupOf'),
   sliceFn(VIEW, 'baseIdentityColorOf'),
+  sliceFn(VIEW, 'atomElement'),
+  sliceFn(VIEW, 'lipidGroupOf'),
   "const VIEWER_SETUP_KEY = 'labViewerSetups';",
   sliceFn(VIEW, 'loadViewerSetups'),
   sliceFn(VIEW, 'saveViewerSetups'),
-  'return { catRadii, nucleicGroupOf, baseIdentityColorOf, DEFAULT_CAT_STYLES, DEFAULT_ATOM_COLORS, BASE_IDENTITY_COLORS, DEFAULT_NUCLEIC_COLORS, loadViewerSetups, saveViewerSetups };',
+  'return { catRadii, nucleicGroupOf, baseIdentityColorOf, atomElement, lipidGroupOf, DEFAULT_CAT_STYLES, DEFAULT_ATOM_COLORS, DEFAULT_LIPID_COLORS, BASE_IDENTITY_COLORS, DEFAULT_NUCLEIC_COLORS, loadViewerSetups, saveViewerSetups };',
 ].join('\n');
 const H = new Function(sandbox)();
 
@@ -324,6 +360,43 @@ ok(!Object.values(H.BASE_IDENTITY_COLORS).includes(H.baseIdentityColorOf('HOH'))
   'une molécule qui n’est pas une base garde un gris neutre');
 eq(H.baseIdentityColorOf(undefined), H.baseIdentityColorOf('HOH'), '…même sans nom de résidu');
 
+/* ── 9c2. Les trois parts d'un lipide (le classificateur du menu C) ══════
+   Ce que le menu C DESSINE et ce que son panneau COLORIE sortent du même
+   classificateur : la tête est le RESTE — ni chaîne acyle, ni squelette — donc un
+   headgroup en Ball & Stick garde tous ses atomes et toutes ses liaisons. */
+// Tête : tout ce qui n'est ni chaîne ni squelette — le phosphate et ses oxygènes,
+// les carbones de la choline et TOUS leurs hydrogènes (l'ancienne règle positive
+// « .P or .N or .O1* » les laissait tomber).
+const LIPID_HEAD_ATOMS = ['P', 'O11', 'O12', 'O13', 'O14', 'N', 'C11', 'C12', 'C13', 'C14', 'C15',
+  'H11A', 'H12A', 'H13A', 'H13B', 'H13C', 'H14A', 'H14B', 'H14C', 'H15A', 'H15B', 'H15C', 'HN'];
+LIPID_HEAD_ATOMS.forEach((n) => eq(H.lipidGroupOf(n, 'C'), 'head', `${n} = la tête (par EXCLUSION)`));
+// Squelette : les trois carbones, les deux oxygènes esters et leurs hydrogènes —
+// y compris une nomenclature d'hydrogènes « H1A / H2 / H3A », qui RETOMBE sur le
+// carbone que leur nom désigne.
+const LIPID_GLY_ATOMS = ['C1', 'C2', 'C3', 'O21', 'O31', 'HA', 'HB', 'HS', 'HX', 'HY', 'H1A', 'H1B', 'H2', 'H3A', 'H3B'];
+LIPID_GLY_ATOMS.forEach((n) => eq(H.lipidGroupOf(n, 'C'), 'glycerol', `${n} = le squelette glycérol`));
+// Chaînes : les carbones sn-1 / sn-2, les carbonyles des esters et leurs
+// hydrogènes (H21A → C21).
+const LIPID_ACYL_ATOMS = ['C21', 'C22', 'C216', 'C31', 'C316', 'O22', 'O32', 'H21A', 'H21B', 'H216A', 'H31A', 'H316C'];
+LIPID_ACYL_ATOMS.forEach((n) => eq(H.lipidGroupOf(n, 'C'), 'acyl', `${n} = une chaîne acyle`));
+eq(H.lipidGroupOf('', '', true), 'head', 'un nom vide ne fait pas planter la coloration');
+eq(H.lipidGroupOf(undefined, undefined, true), 'head', 'un atome sans nom non plus');
+eq(H.lipidGroupOf('QQ7', 'C', true), 'head', 'un nom inconnu va du côté SÛR : la tête (jamais perdu)');
+// Repli par élément : un fichier qui renomme ses atomes d'après l'élément
+// (P8 / C12 / O9 …) n'a aucune nomenclature à lire.
+eq(H.lipidGroupOf('P8', 'P', false), 'head', 'repli élément : le phosphore est la tête');
+eq(H.lipidGroupOf('O9', 'O', false), 'head', '…l’oxygène aussi');
+eq(H.lipidGroupOf('N4', 'N', false), 'head', '…l’azote aussi');
+eq(H.lipidGroupOf('S1', 'S', false), 'head', '…et le soufre');
+eq(H.lipidGroupOf('C12', 'C', false), 'acyl', '…tout carbone est une chaîne');
+eq(H.lipidGroupOf('H0', 'H', false), 'acyl', '…y compris les hydrogènes');
+eq(H.lipidGroupOf('C1', 'C', false), 'acyl', '…même un carbone nommé C1 (la nomenclature est ignorée)');
+// L'élément vient de NGL quand il est là, du nom sinon.
+eq(H.atomElement('C21', 'C'), 'C', 'l’élément de NGL est retenu');
+eq(H.atomElement('C21', ''), 'C', '…sinon la première lettre du nom');
+eq(H.atomElement('', ''), '', 'sans rien, aucun élément (jamais d’exception)');
+eq(H.atomElement('o9', undefined), 'O', '…toujours en majuscules');
+
 /* ── 9d. Les défauts des six menus ═════════════════════════════════════ */
 CATS.forEach((c) => {
   const d = H.DEFAULT_CAT_STYLES[c];
@@ -337,6 +410,10 @@ eq(H.DEFAULT_CAT_STYLES.nucleic.groupColour, false, 'la coloration par groupe es
 eq(H.DEFAULT_CAT_STYLES.nucleic.phosphateColor, H.DEFAULT_NUCLEIC_COLORS.phosphate, 'couleur phosphate par défaut');
 eq(H.DEFAULT_CAT_STYLES.nucleic.pentoseColor, H.DEFAULT_NUCLEIC_COLORS.pentose, 'couleur pentose par défaut');
 eq(H.DEFAULT_CAT_STYLES.nucleic.baseColor, H.DEFAULT_NUCLEIC_COLORS.base, 'couleur bases par défaut');
+eq(H.DEFAULT_CAT_STYLES.lipid.groupColour, false, 'la coloration par PART est OFF par défaut');
+eq(H.DEFAULT_CAT_STYLES.lipid.headColor, H.DEFAULT_LIPID_COLORS.head, 'couleur tête par défaut');
+eq(H.DEFAULT_CAT_STYLES.lipid.glycerolColor, H.DEFAULT_LIPID_COLORS.glycerol, 'couleur squelette par défaut');
+eq(H.DEFAULT_CAT_STYLES.lipid.tailColor, H.DEFAULT_LIPID_COLORS.acyl, 'couleur chaînes acyle par défaut');
 eq(H.DEFAULT_CAT_STYLES.protein.backbone, 'cartoon', 'le style par défaut du squelette protéique ne change pas');
 eq(H.DEFAULT_CAT_STYLES.nucleic.bases, 'slab', 'les bases restent des rungs remplis par défaut');
 eq(H.DEFAULT_CAT_STYLES.sugar.style, 'ball+stick', 'les sucres gardent leur style par défaut');

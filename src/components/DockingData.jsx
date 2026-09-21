@@ -1185,6 +1185,14 @@ export const generateHADDOCKPoses = (n = 20) => {
     const elec = +(-(12 + Math.random() * 8)).toFixed(2);
     const desolv = +(Math.random() * 8).toFixed(2);
     const air = +(-(12 + Math.random() * 5)).toFixed(2);
+    const lrmsd = +(Math.random() * 3 + 0.2).toFixed(3);
+    // L'écart d'INTERFACE (CAPRI) : c'est l'écart que le nuage « énergie vs. écart
+    // à la référence » trace par défaut (voir DEVIATION_PLOT_KEYS, l'i-RMSD en
+    // tête) et sa valeur est ≤ le l-RMSD, comme dans un vrai capri_ss.tsv. Sans
+    // lui, un jeu de poses HADDOCK n'avait AUCUN i-RMSD : la table en montrait la
+    // colonne vide et le nuage traçait le l-RMSD — « énergie vs. i-RMSD »
+    // n'existait donc pas sur une expérience fraîche.
+    const irmsd = +(lrmsd * (0.3 + Math.random() * 0.4)).toFixed(3);
     poses.push({
       mode: i + 1,
       label: `structure_${i + 1}w.pdb`,
@@ -1197,7 +1205,8 @@ export const generateHADDOCKPoses = (n = 20) => {
       bsa: 1100 + Math.floor(Math.random() * 500),
       energy_vdw: vdw,
       energy_elec: elec,
-      lrmsd: +(Math.random() * 3 + 0.2).toFixed(3),
+      irmsd,
+      lrmsd,
       rmsd: +(1 + Math.random() * 3).toFixed(2),
       fnat: +(0.4 + Math.random() * 0.5).toFixed(3),
       dockq: +(0.3 + Math.random() * 0.6).toFixed(3),

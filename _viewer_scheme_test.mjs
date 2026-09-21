@@ -78,22 +78,41 @@ const sliceObject = (src, name) => {
   assert.ok(end > start, `fin de ${name} introuvable`);
   return src.slice(start, end + 2);
 };
+/* ── Extraction : `const name = …;` (valeur sans `;` interne) ────────────── */
+const sliceConst = (name) => {
+  const m = new RegExp(`const ${name} = ([^;]+);`).exec(VIEW);
+  assert.ok(!!m, `constante ${name} introuvable`);
+  return `const ${name} = ${m[1]};`;
+};
+
+
 
 /* ── Les helpers du viewer, exécutés dans une sandbox avec le vrai NGL ──── */
 const sandbox = [
   sliceObject(VIEW, 'BASE_IDENTITY_COLORS'),
   sliceObject(VIEW, 'DEFAULT_NUCLEIC_COLORS'),
+  sliceObject(VIEW, 'DEFAULT_LIPID_COLORS'),
   sliceObject(VIEW, 'sstrucColorStore'),
   sliceObject(VIEW, 'nucleicColorStore'),
+  sliceObject(VIEW, 'lipidColorStore'),
   sliceFn(VIEW, 'nucleicGroupOf'),
   sliceFn(VIEW, 'baseIdentityColorOf'),
+  sliceFn(VIEW, 'atomElement'),
+  sliceFn(VIEW, 'lipidGroupOf'),
+  sliceConst('LIPID_GLYCEROL_NAMES'),
+  sliceConst('LIPID_ACYL_RE'),
+  sliceConst('LIPID_POLAR_ELEMENTS'),
+  sliceConst('LIPID_NAMED_PROBE'),
+  sliceConst('LIPID_CHAIN_PROBE_RE'),
   sliceFn(VIEW, 'registerColorScheme'),
   sliceFn(VIEW, 'defineSstrucScheme'),
   sliceFn(VIEW, 'defineNucleicGroupsScheme'),
   sliceFn(VIEW, 'defineBaseIdentityScheme'),
-  `return { BASE_IDENTITY_COLORS, DEFAULT_NUCLEIC_COLORS, sstrucColorStore, nucleicColorStore,
-    nucleicGroupOf, baseIdentityColorOf, registerColorScheme,
-    defineSstrucScheme, defineNucleicGroupsScheme, defineBaseIdentityScheme };`
+  sliceFn(VIEW, 'defineLipidGroupsScheme'),
+  `return { BASE_IDENTITY_COLORS, DEFAULT_NUCLEIC_COLORS, DEFAULT_LIPID_COLORS, sstrucColorStore, nucleicColorStore, lipidColorStore,
+    LIPID_GLYCEROL_NAMES, LIPID_ACYL_RE, LIPID_POLAR_ELEMENTS, LIPID_NAMED_PROBE, LIPID_CHAIN_PROBE_RE,
+    nucleicGroupOf, baseIdentityColorOf, atomElement, lipidGroupOf, registerColorScheme,
+    defineSstrucScheme, defineNucleicGroupsScheme, defineBaseIdentityScheme, defineLipidGroupsScheme };`
 ].join('\n');
 const H = new Function(sandbox)();
 
@@ -203,6 +222,107 @@ const ringSele = new NGL.Selection('nucleic and sidechain');
 eq(ringSele.selection.error, undefined, 'la sélection du pourtour des bases est comprise par NGL');
 has("add('licorice', { sele: 'nucleic and sidechain', ...baseIdentityCol()",
   'et c’est bien celle-là que « Stylized rings » utilise pour son pourtour');
+/* ══ 8. LE SCHÉMA DES TROIS PARTS D'UN LIPIDE (menu C) ═══════════════════ */
+// Même contrat que les deux autres schémas maison : une définition enregistrée
+// par registerColorScheme, un store vivant, et le drapeau `named` qui suit la
+// structure chargée — ce qui est DESSINÉ et ce qui est COLORIÉ sortent du même
+// classificateur (lipidGroupOf).
+const lipidKey = H.registerColorScheme(NGL, 'lab-test-lipid-groups', H.defineLipidGroupsScheme());
+ok(typeof lipidKey === 'string' && lipidKey.length > 0, 'le schéma tête / squelette / chaînes est enregistré');
+const lipidCm = NGL.ColormakerRegistry.getScheme({ scheme: lipidKey });
+eq(lipidCm.atomColor({ atomname: 'C21', element: 'C' }), H.lipidColorStore.acyl, 'une chaîne acyle → la couleur des chaînes');
+eq(lipidCm.atomColor({ atomname: 'C2', element: 'C' }), H.lipidColorStore.glycerol, 'le squelette glycérol → sa couleur');
+eq(lipidCm.atomColor({ atomname: 'P', element: 'P' }), H.lipidColorStore.head, 'le phosphate → la tête');
+eq(lipidCm.atomColor({ atomname: 'C13', element: 'C' }), H.lipidColorStore.head, 'un carbone de la choline → la tête');
+eq(lipidCm.atomColor({ atomname: 'H13A', element: 'H' }), H.lipidColorStore.head, '…et son hydrogène aussi');
+eq(lipidCm.atomColor({ atomname: 'H21A', element: 'H' }), H.lipidColorStore.acyl, 'un hydrogène de chaîne suit son carbone (H21A → C21)');
+// Une pastille est VIVANTE : le schéma lit le store, rien n'est ré-enregistré.
+H.lipidColorStore.acyl = 0x123456;
+eq(lipidCm.atomColor({ atomname: 'C31', element: 'C' }), 0x123456, 'déplacer une pastille ne redessine rien : le store est lu en direct');
+H.lipidColorStore.acyl = H.DEFAULT_LIPID_COLORS.acyl;
+eq(lipidCm.atomColor({ atomname: 'C31', element: 'C' }), H.DEFAULT_LIPID_COLORS.acyl, '↺ remet la couleur par défaut');
+// Un fichier qui renomme ses atomes d'après l'élément (P8 / C12 / O9) : le drapeau
+// `named` bascule sur la règle des éléments, et le schéma suit.
+H.lipidColorStore.named = false;
+eq(lipidCm.atomColor({ atomname: 'C12', element: 'C' }), H.DEFAULT_LIPID_COLORS.acyl, 'sans nomenclature : tout carbone est une chaîne');
+eq(lipidCm.atomColor({ atomname: 'O9', element: 'O' }), H.DEFAULT_LIPID_COLORS.head, '…et tout oxygène la tête');
+eq(lipidCm.atomColor({ atomname: 'C1', element: 'C' }), H.DEFAULT_LIPID_COLORS.acyl, '…même un carbone nommé C1 (la nomenclature est ignorée)');
+H.lipidColorStore.named = true;
+
+
+/* ══ 9. LES TROIS PARTS D'UN LIPIDE NE SE CHEVAUCHENT PAS, ET NE PERDENT RIEN ══
+   Le menu C n'envoie PLUS de règles `.NOM` à NGL : ses règles sont des
+   comparaisons EXACTES (pas de joker `*`, donc « .O1* » ne matchait aucun O11), et
+   surtout le headgroup est l'EXCLUSION des deux autres parts — un headgroup en
+   Ball & Stick doit garder tous ses atomes et toutes ses liaisons. On refait donc
+   ici la passe du viewer sur une liste d'atomes POPC, puis on demande au VRAI NGL
+   si chaque part attrape exactement ses atomes (le `@indice` est la seule
+   sélection d'indices de NGL, et c'est celle que le rendu lui passe). */
+const POPC = [
+  // [nom, élément, part attendue] — nomenclature CHARMM / AMBER
+  ['N', 'N', 'head'], ['C11', 'C', 'head'], ['H11A', 'H', 'head'], ['H11B', 'H', 'head'],
+  ['C12', 'C', 'head'], ['H12A', 'H', 'head'], ['H12B', 'H', 'head'],
+  ['C13', 'C', 'head'], ['H13A', 'H', 'head'], ['H13B', 'H', 'head'], ['H13C', 'H', 'head'],
+  ['C14', 'C', 'head'], ['H14A', 'H', 'head'], ['H14B', 'H', 'head'], ['H14C', 'H', 'head'],
+  ['C15', 'C', 'head'], ['H15A', 'H', 'head'], ['H15B', 'H', 'head'], ['H15C', 'H', 'head'],
+  ['P', 'P', 'head'], ['O11', 'O', 'head'], ['O12', 'O', 'head'], ['O13', 'O', 'head'], ['O14', 'O', 'head'],
+  ['C1', 'C', 'glycerol'], ['HA', 'H', 'glycerol'], ['HB', 'H', 'glycerol'],
+  ['C2', 'C', 'glycerol'], ['HS', 'H', 'glycerol'],
+  ['C3', 'C', 'glycerol'], ['HX', 'H', 'glycerol'], ['HY', 'H', 'glycerol'],
+  ['O21', 'O', 'glycerol'], ['O31', 'O', 'glycerol'],
+  ['C21', 'C', 'acyl'], ['H21A', 'H', 'acyl'], ['H21B', 'H', 'acyl'], ['O22', 'O', 'acyl'],
+  ['C22', 'C', 'acyl'], ['H22A', 'H', 'acyl'], ['H22B', 'H', 'acyl'],
+  ['C23', 'C', 'acyl'], ['H23A', 'H', 'acyl'], ['H23B', 'H', 'acyl'],
+  ['C24', 'C', 'acyl'], ['H24A', 'H', 'acyl'], ['H24B', 'H', 'acyl'], ['H24C', 'H', 'acyl'],
+  ['C31', 'C', 'acyl'], ['H31A', 'H', 'acyl'], ['H31B', 'H', 'acyl'], ['O32', 'O', 'acyl'],
+  ['C32', 'C', 'acyl'], ['H32A', 'H', 'acyl'], ['H32B', 'H', 'acyl'],
+  ['C33', 'C', 'acyl'], ['H33A', 'H', 'acyl'], ['H33B', 'H', 'acyl'],
+  ['C34', 'C', 'acyl'], ['H34A', 'H', 'acyl'], ['H34B', 'H', 'acyl'], ['H34C', 'H', 'acyl'],
+];
+// La passe du viewer : chaque atome tombe dans UNE part, la tête étant le reste.
+const parts = { head: [], glycerol: [], acyl: [] };
+POPC.forEach(([n, e], i) => { parts[H.lipidGroupOf(n, e, true)].push(i); });
+eq(parts.head.length + parts.glycerol.length + parts.acyl.length, POPC.length,
+  'les trois parts couvrent TOUS les atomes : aucune perte, aucun oubli');
+eq(parts.glycerol.length, 10, 'le squelette = C1 · C2 · C3 · O21 · O31 + ses cinq hydrogènes');
+ok(parts.acyl.length > parts.head.length && parts.head.length > 20,
+  'les chaînes sont la plus grosse part, et la tête garde toute sa chimie');
+// …puis la sélection `@indices` que NGL reçoit vraiment (aucun recouvrement).
+const partsSele = {
+  head: parts.head.length ? `@${parts.head.join(',')}` : '',
+  glycerol: parts.glycerol.length ? `@${parts.glycerol.join(',')}` : '',
+  acyl: parts.acyl.length ? `@${parts.acyl.join(',')}` : '',
+};
+const partsNgl = {};
+Object.entries(partsSele).forEach(([g, s]) => {
+  partsNgl[g] = new NGL.Selection(s);
+  eq(partsNgl[g].selection.error, undefined, `la part « ${g} » est une sélection que NGL comprend`);
+});
+POPC.forEach(([n, e, expected], i) => {
+  eq(H.lipidGroupOf(n, e, true), expected, `${n} : le classificateur du viewer donne la bonne part`);
+  const hits = Object.keys(partsNgl).filter((g) => partsNgl[g].test({ index: i }));
+  eq(hits, [expected], `${n} n’est dessiné QUE dans sa part (aucun recouvrement)`);
+});
+// Le bug corrigé : la tête n'est plus « P · N · O1* » mais TOUT le reste, donc les
+// carbones de la choline et leurs hydrogènes reviennent dans le headgroup.
+const headNames = POPC.filter(([n, e]) => H.lipidGroupOf(n, e, true) === 'head').map(([n]) => n);
+['N', 'P', 'O11', 'O12', 'O13', 'O14', 'C11', 'C12', 'C13', 'C14', 'C15', 'H13A', 'H15C'].forEach((n) => {
+  ok(headNames.includes(n), `${n} est dans la tête : un headgroup en Ball & Stick garde tous ses atomes`);
+});
+ok(headNames.length >= 24, 'la tête contient bien plus que le P / N / O de l’ancienne règle positive');
+ok(!headNames.includes('C21') && !headNames.includes('O22') && !headNames.includes('C1'),
+  '…et jamais une chaîne acyle ni un atome du squelette');
+// Le drapeau `named` du viewer : « P / N / C1 » disent la nomenclature standard,
+// « C12 / O9 » disent un fichier renommé d'après l'élément.
+eq([
+  H.LIPID_NAMED_PROBE.has('P'), H.LIPID_NAMED_PROBE.has('N'), H.LIPID_NAMED_PROBE.has('C1'),
+  H.LIPID_NAMED_PROBE.has('C12'), H.LIPID_NAMED_PROBE.has('O9'),
+  H.LIPID_CHAIN_PROBE_RE.test('C21'), H.LIPID_CHAIN_PROBE_RE.test('O32'),
+  H.LIPID_CHAIN_PROBE_RE.test('C12'), H.LIPID_CHAIN_PROBE_RE.test('O9'),
+], [true, true, true, false, false, true, true, false, false],
+'P / N / C1 = nomenclature standard ; un C12 / O9 n’en est pas une');
+
+
 
 /* ── Bilan ══════════════════════════════════════════════════════════════ */
 console.log(`_viewer_scheme_test.mjs — ${passed} assertions OK`);

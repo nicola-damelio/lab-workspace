@@ -212,19 +212,44 @@ has('<option value="points">Points (sized)</option>', '[F] eau : Points');
 has('label="Water surface"', '[F] surface d’eau (Solid / Transparent / Mesh)');
 
 /* ── 5bis. PART 2 — sélections & rendu avancés ──────────────────────────── */
-// 1. Lipides : la liste de resnames demandée + les trois sous-parties par nom
-//    d'atome (headgroups / squelette glycérol / chaînes acyle).
+// 1. Lipides : la liste de resnames demandée + les trois sous-parties
+//    (headgroups / squelette glycérol / chaînes acyle), classées EN JS puis
+//    passées à NGL en `@index` — les règles `.NOM` de NGL 2.4 sont des
+//    comparaisons EXACTES (pas de joker `*`), donc « .O1* » ne sélectionnait rien.
 has("const lipidRes = '[POPC] or [DPPC] or [DMPC] or [DOPC] or [POPE] or [DOPE] or [CHOL] or [ERG] or [DPPG] or [POPG] or [DLPC] or [MYR] or [STE] or [PAL]';",
   '[lipides] sélection de base par resname');
-has("const LIPID_HEAD_ATOMS = '.P or .N or .O1* or .O2* or .O3* or .O4*';", '[lipides] atomes de tête');
-has("const LIPID_GLYCEROL_ATOMS = '.C1 or .C2 or .C3 or .O21 or .O31';", '[lipides] squelette glycérol');
-has('const lipidSubSelections = (lipidSele, namedAtoms = true) => {', '[lipides] les trois sous-sélections');
-has("head: `(${lipidSele}) and (${headAtoms}) and not (${LIPID_GLYCEROL_ATOMS})`", '[lipides] tête sans le squelette');
-has("acyl: `(${lipidSele}) and not (${headAtoms} or ${glyAtoms})`", '[lipides] chaînes acyle = ni tête ni squelette');
-has('const namedAtoms = nglSeleCountCached(comp.structure, `(${lipidSele}) and (${LIPID_HEAD_ATOMS})`) !== 0;',
-  '[lipides] repli sur les éléments si la nomenclature ne suit pas CHARMM/AMBER');
+has("? resnames.map((n) => `[${n}]`).join(' or ')", '[lipides] un resname hors liste entre en `[NOM]` (NGL refuse « resname X »)');
+has("const LIPID_GLYCEROL_NAMES = new Set(['C1', 'C2', 'C3', 'O21', 'O31', 'HA', 'HB', 'HS', 'HX', 'HY']);",
+  '[lipides] squelette glycérol (nomenclature CHARMM/AMBER)');
+has('const LIPID_ACYL_RE = /^(?:C[23]\\d{1,2}|O[23]2)$/;', '[lipides] chaînes acyle = C21… / C31… et les carbonyles O22 / O32');
+has("const LIPID_POLAR_ELEMENTS = new Set(['N', 'P', 'O', 'S']);", '[lipides] repli par élément (fichier sans nomenclature)');
+has('const lipidGroupOf = (name, element, named = true) => {', '[lipides] UN classificateur, partagé par le rendu et les couleurs');
+has('const lipidSubSelections = (structure, lipidSele) => {', '[lipides] les trois sous-sélections, calculées une fois par structure');
+has("const sele = (list) => (list.length ? `@${list.join(',')}` : '');", '[lipides] …rendues en sélection `@indices` (le seul joker de noms qui existe)');
+has('else if (g === \'acyl\') acyl.push(i);', '[lipides] chaque atome prend exactement une des trois parts');
+has('else head.push(i);', '[lipides] la tête est le RESTE : ni chaîne ni squelette → tous ses atomes ET toutes ses liaisons');
+has("const LIPID_NAMED_PROBE = new Set(['P', 'N', 'C1', 'C2', 'C3']);",
+  '[lipides] ce qui prouve que le fichier suit bien la nomenclature standard');
+has('const sub = lipidSubSelections(comp.structure, lipidSele);', '[lipides] le rendu part de la classification');
+has('const blank = { head: \'\', glycerol: \'\', acyl: \'\', named: true };',
+  '[lipides] aucune visite d’atome (NGL pas prêt) → le drapeau garde sa valeur historique');
+has('lipidColorStore.named = sub.named;', '[lipides] …et le panneau de couleurs lit le MÊME drapeau');
+has('const col = lipidCol();', '[lipides] la couleur du menu C passe par « Colour by chemical part »');
 has('label="Glycerol backbone"', '[lipides] menu : squelette glycérol séparé');
 has("onChange={(e) => setCatStyle('lipid', 'glycerol', e.target.value)}", '[lipides] …et il est réglable');
+// 1bis. Le panneau de couleurs du menu C (headgroup / squelette / chaînes).
+has("const [showLipidColoursPanel, setShowLipidColoursPanel] = useState(false);", '[C] un panneau de couleurs PROPRE au menu des lipides');
+has(": cat === 'lipid' ? showLipidColoursPanel", '[C] …ouvert par le 🎨 de ce menu');
+has("{renderColoursButton('lipid')}", '[C] le 🎨 du menu C ouvre ce panneau');
+has('Colour by chemical part', '[C] l’interrupteur « Colour by chemical part »');
+has('value={numToHex(catStyles.lipid.headColor)}', '[C] la pastille de la tête lit catStyles.lipid');
+has('value={numToHex(catStyles.lipid.glycerolColor)}', '[C] la pastille du squelette');
+has('value={numToHex(catStyles.lipid.tailColor)}', '[C] la pastille des chaînes');
+has('onClick={resetLipidColours}', '[C] ↺ Reset colours');
+has('headColor: DEFAULT_LIPID_COLORS.head,', '[C] les trois couleurs vivent dans catStyles.lipid (donc persistées + setup)');
+has('const lipidGroupsOn = () => !!(cs.lipid && cs.lipid.groupColour && lipidSchemeKey);', '[C] le rendu suit l’interrupteur');
+has('registerLipidScheme(NGL);', '[C] le schéma des trois parts est enregistré au démarrage');
+has("registerColorScheme(NGL, 'lab-lipid-groups'", '[C] …sous son propre libellé');
 // 2. Sucres vs ligands.
 has("const SUGAR_RES_SEL = '[GLC] or [NAG] or [MAN] or [BMA] or [SIA] or [GAL] or [FUC]';", '[sucres] liste explicite de resnames');
 has('const SUGAR_SEL = `saccharide or ${SUGAR_RES_SEL}`;', '[sucres] mot-clé RÉEL de NGL 2.4 (pas `carbohydrate`) + liste');

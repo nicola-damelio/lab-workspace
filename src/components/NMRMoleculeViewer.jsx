@@ -150,6 +150,21 @@ const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
    « Cartoon » (the NGL nucleic ribbon) that is the classic stylized DNA / RNA
    ladder: a flat ribbon with the coloured base plates inside it.
 
+   LIPIDS (menu C) — exactly the same idea for the three PARTS of a lipid:
+   headgroup · glycerol backbone · acyl chains. The 🎨 Colours button of that menu
+   opens its own panel, « Colour by chemical part » colours every lipid
+   representation through ONE custom scheme (lab-lipid-groups, again a live store),
+   and moving a swatch switches the mode on so the choice is never invisible. The
+   HEADGROUP IS THE EXCLUSION — every lipid atom that is neither an acyl-chain atom
+   nor a backbone atom — so a headgroup drawn as Ball & Stick shows all its atoms
+   and all their bonds (naming the head positively left the choline / ethanolamine
+   carbons and every head hydrogen out, which cut the head into fragments). Which
+   part an atom belongs to is decided in JS (the standard CHARMM / AMBER atom
+   names, or an element rule for a file that renames its atoms after their
+   element), then handed to NGL as atom INDICES: NGL 2.4's `.NAME` rules are exact
+   matches and understand no wildcard, so « .O1* » only ever matched an atom
+   literally called O1. ONE classifier drives both the drawing and the colouring.
+
    Every home-made scheme goes through ONE helper, registerColorScheme: NGL's
    ColormakerRegistry.addScheme wants the DEFINITION first and the LABEL second,
    and an id whose scheme cannot be instantiated is never handed to a
@@ -163,11 +178,11 @@ const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
 
    SAVED SETUPS (⚙️ Setup, §1 General) — « Save the visualisation setup »: a NAMED
    snapshot of the whole viewer look (the six menus with their radii and colours,
-   the nucleic-acid group colours, the label switches, the 2°-structure and
-   highlight colours, Fog / Shadows / Clipping / Background / quality, the
-   lightweight style of a large system) kept in localStorage, listable, loadable,
-   deletable, and exportable / importable as a .json file — so a look can be
-   reused on another page or another computer.
+   the nucleic-acid group colours and the lipid part colours, the label switches,
+   the 2°-structure and highlight colours, Fog / Shadows / Clipping / Background /
+   quality, the lightweight style of a large system) kept in localStorage,
+   listable, loadable, deletable, and exportable / importable as a .json file — so
+   a look can be reused on another page or another computer.
    ============================================================================ */
 const CAT_STYLE_KEY = 'labViewerCategoryStyles';
 // Saved visualisation setups (⚙️ Setup, §1 General). One localStorage entry holds
@@ -204,6 +219,9 @@ const DEFAULT_SURFACE_COLOR = 0xcbd5e1;
 // Group colours of the 🔬 Nucleic-acids menu (the 🎨 Colours panel of menu B):
 // phosphate backbone · pentose ring · bases.
 const DEFAULT_NUCLEIC_COLORS = { phosphate: 0xff922b, pentose: 0x4ea1ff, base: 0xb14aff };
+// Group colours of the 🧫 Lipids menu (the 🎨 Colours panel of menu C):
+// headgroup · glycerol backbone · acyl chains.
+const DEFAULT_LIPID_COLORS = { head: 0xef4444, glycerol: 0x22c55e, acyl: 0x64748b };
 // The stylized per-base palette of the Bases option « Stylized rings » — the
 // colour that FILLS the inside of the ring of each base.
 const BASE_IDENTITY_COLORS = { A: 0x22c55e, C: 0x3b82f6, G: 0xf59e0b, T: 0xec4899, U: 0xef4444 };
@@ -237,9 +255,17 @@ const DEFAULT_CAT_STYLES = {
     baseColor: DEFAULT_NUCLEIC_COLORS.base,
   },
   // C. Lipids — the three sub-components are styled INDEPENDENTLY (headgroups /
-  //    glycerol backbone / acyl chains), see lipidSubSelections below. The menu
-  //    also carries a surface (hidden by default, like every other menu).
-  lipid: { head: 'spheres', glycerol: 'ball+stick', tail: 'lines', surface: 'hide', surfaceOpacity: 0.4, ...catLook(DEFAULT_ATOM_COLORS.lipid) },
+  //    glycerol backbone / acyl chains), see lipidSubSelections below, and the
+  //    🎨 Colours panel adds the part colours of that menu. The menu also carries
+  //    a surface (hidden by default, like every other menu).
+  lipid: {
+    head: 'spheres', glycerol: 'ball+stick', tail: 'lines', surface: 'hide', surfaceOpacity: 0.4,
+    ...catLook(DEFAULT_ATOM_COLORS.lipid),
+    groupColour: false,
+    headColor: DEFAULT_LIPID_COLORS.head,
+    glycerolColor: DEFAULT_LIPID_COLORS.glycerol,
+    tailColor: DEFAULT_LIPID_COLORS.acyl,
+  },
   // D. Sugars (carbohydrates) — their own menu, so a glycan is never styled as
   //    a generic ligand.
   sugar: { style: 'ball+stick', surface: 'hide', surfaceOpacity: 0.4, ...catLook(DEFAULT_ATOM_COLORS.sugar) },
@@ -432,55 +458,134 @@ const lipidResnamesIn = (structure) => {
   return Array.from(found).sort();
 };
 
-// `resname POPC or resname POPE or …` — '' when the structure has no lipid.
+// `[POPC] or [POPE] or …` — '' when the structure has no lipid. NGL's resname
+// term is the BRACKET list (the installed 2.4 build rejects `resname POPC` with
+// « resi must be an integer », which silently killed the whole selection).
 const lipidResnameSele = (resnames) => (
   Array.isArray(resnames) && resnames.length
-    ? resnames.map((n) => `resname ${n}`).join(' or ')
+    ? resnames.map((n) => `[${n}]`).join(' or ')
     : ''
 );
 
 /* ---- PART 2.1 · Lipid sub-components (headgroup / glycerol / acyl chains) ----
-   NGL cannot guess what part of a lipid is a headgroup: the Lipids menu must
-   name the atoms explicitly. The base selection is the resname list below, and
-   each sub-component is an ATOM-NAME selection applied to that group (the
-   standard CHARMM/AMBER glycerophospholipid naming: P / O1-O4 phosphate and
-   ester oxygens, N the choline·ethanolamine nitrogen, C1/C2/C3 the glycerol
-   carbons, O21/O31 the sn-1 / sn-2 ester oxygens). */
+   NGL cannot guess what part of a lipid is a headgroup: the Lipids menu must be
+   told. The base selection is the resname list below; the three sub-components
+   are then CLASSIFIED IN JS (lipidGroupOf, one classifier used by the drawing AND
+   by the colour panel) and handed to NGL as atom-INDEX selections:
+
+     · NGL 2.4's `.NAME` rules are EXACT (case-insensitive) comparisons — the
+       installed build knows no `*` wildcard, so the earlier « .O1* » / « .C2* »
+       rules only ever matched atoms literally called O1 / C2, and the headgroups
+       and chains of a real file were never selected as intended;
+     · the headgroup IS the EXCLUSION of the two others, so the three parts tile
+       every lipid exactly: no atom is drawn twice, none is forgotten, and a
+       headgroup drawn as Ball & Stick really contains ALL its atoms and bonds
+       (the old positive P · N · O1* list left the choline / ethanolamine carbons
+       and every head hydrogen out, which cut the head into fragments). */
+
 const lipidRes = '[POPC] or [DPPC] or [DMPC] or [DOPC] or [POPE] or [DOPE] or [CHOL] or [ERG] or [DPPG] or [POPG] or [DLPC] or [MYR] or [STE] or [PAL]';
 // The residue names of the line above — a detected lipid outside this list is
-// OR-ed in as an explicit `resname …` term (supersets are harmless: NGL simply
-// finds no atom for a residue that is not there).
+// OR-ed in as an explicit `[NAME]` term (supersets are harmless: NGL simply finds
+// no atom for a residue that is not there).
 const LIPID_STANDARD_RES = new Set([
   'POPC', 'DPPC', 'DMPC', 'DOPC', 'POPE', 'DOPE', 'CHOL', 'ERG',
   'DPPG', 'POPG', 'DLPC', 'MYR', 'STE', 'PAL',
 ]);
-// Atom names of each sub-component (NGL `.NAME` / `.N*` syntax).
-const LIPID_HEAD_ATOMS = '.P or .N or .O1* or .O2* or .O3* or .O4*';
-const LIPID_GLYCEROL_ATOMS = '.C1 or .C2 or .C3 or .O21 or .O31';
-// The element-based fallback used when a file does not follow that naming
-// (GROMOS / a homemade topology): the old, chemistry-free element test.
-const LIPID_HEAD_ELEMENTS = '_N or _P or _O';
-const LIPID_GLYCEROL_ELEMENTS = '.C1* or .C2* or .C3* or _O';
+// ── The standard (CHARMM / AMBER) glycerophospholipid naming ────────────────
+// The glycerol backbone: the three carbons C1 · C2 · C3, the two ester oxygens
+// the chains hang from (O21 · O31) and their own hydrogens (CHARMM's HA · HB ·
+// HS · HX · HY).
+const LIPID_GLYCEROL_NAMES = new Set(['C1', 'C2', 'C3', 'O21', 'O31', 'HA', 'HB', 'HS', 'HX', 'HY']);
+// An acyl-chain heavy atom of that naming: the sn-1 / sn-2 carbons C21 … C2nn /
+// C31 … C3nn and the two ester carbonyl oxygens (the bare C2 / C3 are the
+// backbone and are matched above).
+const LIPID_ACYL_RE = /^(?:C[23]\d{1,2}|O[23]2)$/;
+// The polar elements of the chemistry-free fallback rule.
+const LIPID_POLAR_ELEMENTS = new Set(['N', 'P', 'O', 'S']);
+// What proves that a file really follows the standard naming: a canonical
+// backbone name (or the phosphate / the nitrogen) AND at least one atom named
+// after the chain convention above. A file that names its chains differently —
+// or renames every atom after its element, like the P8 / C12 / O9 of the DDM and
+// DPE molecules of public/structures/example_topology_with_6PMB.pdb — fails the
+// test and is classified by ELEMENT instead (see lipidGroupOf).
+const LIPID_NAMED_PROBE = new Set(['P', 'N', 'C1', 'C2', 'C3']);
+const LIPID_CHAIN_PROBE_RE = /^(?:C[23]\d|O[23]2)$/;
 
+// The element of an atom, from NGL when it is known and from the leading letter
+// of the name otherwise.
+const atomElement = (name, element) => {
+  const e = String(element || '').replace(/[^A-Za-z]/g, '').toUpperCase();
+  if (e) return e;
+  const m = /[A-Za-z]/.exec(String(name || ''));
+  return m ? m[0].toUpperCase() : '';
+};
+
+/* Which of the three parts of a lipid an atom belongs to — 'head' · 'glycerol' ·
+   'acyl'. `named` says whether this structure follows the standard naming above
+   (see lipidSubSelections); when it does not, the chemistry-free element rule is
+   used: the polar atoms are the headgroup, every carbon / hydrogen a chain. */
+const lipidGroupOf = (name, element, named = true) => {
+  const n = String(name || '').replace(/\s+/g, '').toUpperCase();
+  const e = atomElement(n, element);
+  if (!named) return LIPID_POLAR_ELEMENTS.has(e) ? 'head' : 'acyl';
+  if (LIPID_GLYCEROL_NAMES.has(n)) return 'glycerol';
+  if (LIPID_ACYL_RE.test(n)) return 'acyl';
+  // A hydrogen follows the heavy atom its NAME points at — H21A → C21 (a chain
+  // carbon), H1A → C1 (the backbone) — which is the only rule that keeps working
+  // whatever a force field calls its hydrogens. Any other hydrogen (HN, HO2',
+  // HA of a headgroup …) stays with the headgroup, and so does every name we do
+  // not recognise: the safe side, since the headgroup is the part that must never
+  // lose an atom.
+  const h = /^H(\d+)[A-Z]*$/.exec(n);
+  if (h) return lipidGroupOf(`C${h[1]}`, '', true);
+  return 'head';
+};
+
+// The three sub-selections of the lipids of ONE structure, as NGL `@index`
+// selections, plus the `named` flag the colour scheme reads. Computed once per
+// structure + lipid selection (WeakMap cache), so a rep rebuild never re-walks
+// the atoms.
+const lipidSubCache = new WeakMap();
+const lipidSubSelections = (structure, lipidSele) => {
+  const none = { head: '', glycerol: '', acyl: '', named: false };
+  if (!structure || !lipidSele) return none;
+  let per = lipidSubCache.get(structure);
+  if (!per) { per = new Map(); lipidSubCache.set(structure, per); }
+  if (per.has(lipidSele)) return per.get(lipidSele);
+  const atoms = atomIndicesForSele(structure, lipidSele).map((i) => {
+    try {
+      const a = structure.getAtomProxy(i);
+      return [i, String((a && a.atomname) || ''), (a && a.element) || ''];
+    } catch { return [i, '', '']; }
+  });
+  // An empty walk (NGL not ready yet, selection matching nothing) says nothing
+  // about the file: keep the historical default, so the menu never claims a
+  // non-standard naming out of a walk that saw no atom at all.
+  if (!atoms.length) {
+    const blank = { head: '', glycerol: '', acyl: '', named: true };
+    per.set(lipidSele, blank);
+    return blank;
+  }
+  const named = atoms.some(([, n]) => LIPID_NAMED_PROBE.has(n.replace(/\s+/g, '').toUpperCase()))
+    && atoms.some(([, n]) => LIPID_CHAIN_PROBE_RE.test(n.replace(/\s+/g, '').toUpperCase()));
+  const head = []; const glycerol = []; const acyl = [];
+  atoms.forEach(([i, n, e]) => {
+    const g = lipidGroupOf(n, e, named);
+    if (g === 'glycerol') glycerol.push(i);
+    else if (g === 'acyl') acyl.push(i);
+    else head.push(i);
+  });
+  const sele = (list) => (list.length ? `@${list.join(',')}` : '');
+  const out = { head: sele(head), glycerol: sele(glycerol), acyl: sele(acyl), named };
+  per.set(lipidSele, out);
+  return out;
+};
+
+// The `[POPC] or …` selection of the lipids of ONE structure: the standard list
+// plus any other lipid residue this file declares.
 const lipidGroupSele = (resnames) => {
   const extra = lipidResnameSele((resnames || []).filter((n) => !LIPID_STANDARD_RES.has(n)));
   return extra ? `${lipidRes} or ${extra}` : lipidRes;
-};
-
-// Headgroup / glycerol backbone / acyl chains of ONE lipid group. `namedAtoms`
-// says whether the atom-name selection matched anything in the REAL structure,
-// otherwise the element fallback is used. Head and backbone never overlap (the
-// ester oxygens belong to the backbone, not to the head), so the acyl chains are
-// exactly "everything that is neither".
-const lipidSubSelections = (lipidSele, namedAtoms = true) => {
-  if (!lipidSele) return { head: '', glycerol: '', acyl: '' };
-  const headAtoms = namedAtoms ? LIPID_HEAD_ATOMS : LIPID_HEAD_ELEMENTS;
-  const glyAtoms = namedAtoms ? LIPID_GLYCEROL_ATOMS : LIPID_GLYCEROL_ELEMENTS;
-  return {
-    head: `(${lipidSele}) and (${headAtoms}) and not (${LIPID_GLYCEROL_ATOMS})`,
-    glycerol: `(${lipidSele}) and (${glyAtoms})`,
-    acyl: `(${lipidSele}) and not (${headAtoms} or ${glyAtoms})`,
-  };
 };
 
 /* ---- PART 2.2 · Sugars (carbohydrates) vs ligands ----------------------------
@@ -495,7 +600,8 @@ const SUGAR_SEL = `saccharide or ${SUGAR_RES_SEL}`;
 // change never re-scans the atoms.
 //   protein  → NGL keyword `protein`
 //   nucleic  → NGL keyword `nucleic`
-//   lipid    → `resname …` list of the lipids actually present ('' when none)
+//   lipid    → `[POPC] or [DPPC] or …` list of the lipids actually present
+//              ('' when none), plus lipidNamed (Part 2.1)
 //   organic  → `hetero and not water and not ion` minus those lipids
 //   others   → `water or ion`
 // Presence counts come from Structure#getAtomSet, the same API the load effect
@@ -601,6 +707,10 @@ const catSelectionsFor = (structure) => {
     organic: organicSele,
     others: 'water or ion',
     lipids,
+    // Whether the lipids follow the standard atom naming, i.e. whether the
+    // glycerol backbone can be told apart at all (PART 2.1) — the Lipids menu
+    // says so instead of offering a part that would draw nothing.
+    lipidNamed: lipidSele ? lipidSubSelections(structure, lipidSele).named : false,
     n: {
       protein: nglSeleCount(structure, 'protein'),
       nucleic: nglSeleCount(structure, 'nucleic'),
@@ -1001,6 +1111,37 @@ const defineNucleicGroupsScheme = () => {
 const registerNucleicScheme = (NGL) => {
   if (nucleicSchemeKey) return;
   nucleicSchemeKey = registerColorScheme(NGL, 'lab-nucleic-groups', defineNucleicGroupsScheme());
+};
+
+// ---- Lipid PART colours (🎨 Colours panel of the C menu) --------------------
+// Exactly the same contract, for the three chemical PARTS of a lipid: the polar
+// headgroup, the glycerol backbone and the acyl chains (see PART 2.1 for the
+// classification). The three values live in this mutable store, fed from
+// catStyles.lipid by an effect, so moving a swatch only re-renders the
+// representations — no scheme is ever re-registered. `named` is written by the
+// renderer, from the very flag the drawn sub-selections were built with, so a
+// part can never be DRAWN with one rule and COLOURED with another.
+const lipidColorStore = {
+  head: DEFAULT_LIPID_COLORS.head,
+  glycerol: DEFAULT_LIPID_COLORS.glycerol,
+  acyl: DEFAULT_LIPID_COLORS.acyl,
+  named: true,
+};
+let lipidSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
+// The definition of the scheme (named so a test can extract and really run it).
+const defineLipidGroupsScheme = () => {
+  return function () {
+    this.atomColor = function (atom) {
+      const g = lipidGroupOf(atom && atom.atomname, atom && atom.element, lipidColorStore.named);
+      if (g === 'glycerol') return lipidColorStore.glycerol;
+      if (g === 'acyl') return lipidColorStore.acyl;
+      return lipidColorStore.head;
+    };
+  };
+};
+const registerLipidScheme = (NGL) => {
+  if (lipidSchemeKey) return;
+  lipidSchemeKey = registerColorScheme(NGL, 'lab-lipid-groups', defineLipidGroupsScheme());
 };
 
 // ---- Stylized per-base colours (Bases → « Stylized rings ») -----------------
@@ -2076,6 +2217,10 @@ const [showColoursPanel, setShowColoursPanel] = useState(false);
 // meaning for a nucleic acid. This one recolours the three chemical groups —
 // phosphate backbone · pentose rings · bases (see the lab-nucleic-groups scheme).
 const [showNucleicColoursPanel, setShowNucleicColoursPanel] = useState(false);
+// …and the 🧫 Lipids menu (C) has a third one: the three chemical PARTS of a
+// lipid — headgroup · glycerol backbone · acyl chains (see the lab-lipid-groups
+// scheme). Same panel, same behaviour, amber instead of violet.
+const [showLipidColoursPanel, setShowLipidColoursPanel] = useState(false);
 // ⚙️ Setup (§1 General) — NAMED snapshots of the whole visualisation setup: the
 // saved map, the name being typed, the open/closed state of the panel and its
 // feedback line (see captureViewerSetup / applyViewerSetup below).
@@ -2386,6 +2531,16 @@ useEffect(() => {
   if (Number.isFinite(n.pentoseColor)) nucleicColorStore.pentose = n.pentoseColor;
   if (Number.isFinite(n.baseColor)) nucleicColorStore.base = n.baseColor;
 }, [catStyles]);
+// The 🧫 LIPID parts are fed exactly the same way (see lipidColorStore). Its
+// `named` flag is NOT set here: it belongs to the loaded structure and is written
+// by the renderer (buildCategoryReps), from the very flag that built the drawn
+// sub-selections.
+useEffect(() => {
+  const l = catStyles.lipid || {};
+  if (Number.isFinite(l.headColor)) lipidColorStore.head = l.headColor;
+  if (Number.isFinite(l.glycerolColor)) lipidColorStore.glycerol = l.glycerolColor;
+  if (Number.isFinite(l.tailColor)) lipidColorStore.acyl = l.tailColor;
+}, [catStyles]);
 useEffect(() => { try { localStorage.setItem('labViewerSelResColor', selectedResidueColor.toString(16)); } catch { /* ignore */ } }, [selectedResidueColor]);
 useEffect(() => { try { localStorage.setItem('labViewerAssignedColor', assignedAtomColor.toString(16)); } catch { /* ignore */ } }, [assignedAtomColor]);
 
@@ -2553,6 +2708,7 @@ if (cancelled || !containerRef.current) return null;
 registerSstrucScheme(NGL); // customisable per-element 2°-structure colours (helix/sheet/loop)
 registerNucleicScheme(NGL);      // 🔬 nucleic acids by chemical group (phosphate / pentose / bases)
 registerBaseIdentityScheme(NGL); // 🧬 stylized base rings (one colour per base: A · C · G · T · U)
+registerLipidScheme(NGL);        // 🧫 lipids by chemical part (headgroup / glycerol backbone / chains)
 const stage = new NGL.Stage(containerRef.current, { backgroundColor: '#f8fafc' });
 stageRef.current = stage;
 applyFog(); // honour the user's fog preference (off by default) right away
@@ -2929,6 +3085,11 @@ const buildCategoryReps = (comp) => {
   const nucleicCol = () => (nucleicGroupsOn() ? { color: nucleicSchemeKey } : atomCol('nucleic'));
   // The INSIDE of the base rings of « Stylized rings »: one colour per base.
   const baseIdentityCol = () => (baseIdentitySchemeKey ? { color: baseIdentitySchemeKey } : { colorScheme: 'resname' });
+  // 🧫 Menu C — « Colour by chemical part »: the headgroups, the glycerol
+  // backbones and the acyl chains each take their own colour through the
+  // lab-lipid-groups scheme (the same three groups the sub-selections draw).
+  const lipidGroupsOn = () => !!(cs.lipid && cs.lipid.groupColour && lipidSchemeKey);
+  const lipidCol = () => (lipidGroupsOn() ? { color: lipidSchemeKey } : atomCol('lipid'));
   // Bond radius (Å, from the menu's multiplier — see catRadii) ready for a style,
   // and the same multiplier applied to the width of a line style.
   const stickGeom = (cat, naturalBond) => ({ radiusSize: naturalBond * catRadii(cs[cat]).bond });
@@ -3026,16 +3187,18 @@ const buildCategoryReps = (comp) => {
 
   // ---- C. Lipids — headgroups / glycerol backbone / acyl chains ------------
   // THREE independent sub-selections of the same lipid group (PART 2.1). The
-  // atom-name expressions below are the standard glycerophospholipid naming; when
-  // a file does not follow it (GROMOS / a homemade topology) the element-based
-  // fallback of lipidSubSelections is used instead of drawing nothing.
+  // chemical part of every atom is decided in JS (lipidGroupOf) and handed to NGL
+  // as `@index` lists, because NGL's `.NAME` rules are exact matches without any
+  // wildcard. The headgroup is the EXCLUSION of the two other parts, so the three
+  // selections tile the lipids exactly — no atom drawn twice, none forgotten, and
+  // a headgroup shown as Ball & Stick keeps all its atoms and all their bonds.
   if (lipidSele) {
-    const namedAtoms = nglSeleCountCached(comp.structure, `(${lipidSele}) and (${LIPID_HEAD_ATOMS})`) !== 0;
-    const sub = lipidSubSelections(lipidSele, namedAtoms);
+    const sub = lipidSubSelections(comp.structure, lipidSele);
+    lipidColorStore.named = sub.named; // the 🎨 panel colours with the SAME rule
     const head = cs.lipid.head || 'spheres';
     const glycerol = cs.lipid.glycerol || 'ball+stick';
     const tail = cs.lipid.tail || 'lines';
-    const col = atomCol('lipid');
+    const col = lipidCol();
     const g = catRadii(cs.lipid);
     // One shared writer: every sub-component accepts the same style tokens, and
     // they all obey the menu's Atom colour / Sphere radius / Bond radius.
@@ -3050,11 +3213,12 @@ const buildCategoryReps = (comp) => {
       else if (style === 'spheres') add('spacefill', { sele, ...col, radiusScale: g.sphere, scale: 0.4 });
       else add('spacefill', { sele, ...col, radiusScale: g.sphere, scale: 0.6 });
     };
-    // Headgroups = phosphate / amine / the upper oxygens of the head.
+    // Headgroups = EVERY atom that is neither an acyl-chain atom nor a backbone
+    // atom (the phosphate, the choline / ethanolamine part and their hydrogens).
     drawSub(sub.head, head, 1.3);
-    // Glycerol backbone = the ester carbons / oxygens connecting the tails.
+    // Glycerol backbone = the three carbons, their ester oxygens and hydrogens.
     drawSub(sub.glycerol, glycerol, 1.2);
-    // Acyl chains = everything that is neither head nor backbone.
+    // Acyl chains = the two sn-1 / sn-2 chains (carbons, carbonyls, hydrogens).
     drawSub(sub.acyl, tail, 1.2);
     // The bilayer can also be shown as one surface (hidden by default), with the
     // menu's own colour — solid / transparent / mesh, exactly like the other menus.
@@ -3513,7 +3677,7 @@ setHasNonProtein(nonProtein);
 // stays honest when the file contains no recognised lipid residue.
 try {
   const cs2 = catSelectionsFor(component.structure);
-  setCatInfo(cs2 ? { ...cs2.n, lipids: cs2.lipids } : null);
+  setCatInfo(cs2 ? { ...cs2.n, lipids: cs2.lipids, lipidNamed: cs2.lipidNamed } : null);
 } catch { setCatInfo(null); }
 buildMainReps();
 shadowRepsHook(component);
@@ -5505,6 +5669,12 @@ const lipidHint = lipidMenuInactive
   : (lipidsFound.length
     ? `found: ${lipidsFound.slice(0, 6).join(', ')}${lipidsFound.length > 6 ? '…' : ''}`
     : 'the whole structure is one lipid');
+// Whether the three parts can be told apart at all: the standard atom naming
+// (PART 2.1) is what makes the glycerol / acyl-chain split possible, so the menu
+// line and the 🎨 panel both say which rule THIS file is being read with.
+const lipidNamingHint = (lipidsFound.length > 0 && catInfo && catInfo.lipidNamed === false)
+  ? ' This file does not use the standard lipid atom naming, so the parts are read by ELEMENT — the polar atoms (N · P · O · S) are the headgroup, the carbons and hydrogens the chains — and the glycerol backbone is not separated.'
+  : '';
 // Sugars: the menu says what it will act on (NGL keyword `saccharide` + the
 // explicit GLC / NAG / MAN / BMA / SIA / GAL / FUC list).
 const sugarCount = (catInfo && catInfo.n && Number.isFinite(catInfo.n.sugar)) ? catInfo.n.sugar : -1;
@@ -5661,19 +5831,26 @@ const resetCatLook = (cat) => setCatStyles((prev) => ({
   },
 }));
 
-// The 🎨 button of a menu — ONE implementation, two panels: menu A opens the
-// protein panel (2° structure + highlights), menu B its own nucleic-acid one.
+// The 🎨 button of a menu — ONE implementation, three panels: menu A opens the
+// protein panel (2° structure + highlights), menu B its nucleic-acid one
+// (phosphate / pentose / bases) and menu C the lipid one (headgroup / glycerol
+// backbone / acyl chains).
 const renderColoursButton = (cat) => {
-  const open = cat === 'nucleic' ? showNucleicColoursPanel : showColoursPanel;
-  const toggle = () => (cat === 'nucleic'
-    ? setShowNucleicColoursPanel((v) => !v)
-    : setShowColoursPanel((v) => !v));
+  const open = cat === 'nucleic' ? showNucleicColoursPanel
+    : cat === 'lipid' ? showLipidColoursPanel
+      : showColoursPanel;
+  const toggle = cat === 'nucleic' ? () => setShowNucleicColoursPanel((v) => !v)
+    : cat === 'lipid' ? () => setShowLipidColoursPanel((v) => !v)
+      : () => setShowColoursPanel((v) => !v);
+  const title = cat === 'nucleic'
+    ? 'Colours of the NUCLEIC ACID itself: phosphate backbone · pentose rings · bases. The panel opens at the end of « 2 · Molecular Styling », and its switch colours every nucleic representation by those three chemical groups.'
+    : cat === 'lipid'
+      ? 'Colours of the LIPID itself: headgroup · glycerol backbone · acyl chains. The panel opens at the end of « 2 · Molecular Styling », and its switch colours every lipid representation by those three chemical parts (the headgroup is everything that is neither a chain nor the backbone).'
+      : 'Secondary-structure colours (helix / sheet / loop) and the highlight colours — the full panel opens at the end of « 2 · Molecular Styling ».';
   return (
     <button type="button" onClick={toggle}
       className={`px-2 py-1 text-[10px] font-bold rounded border ${open ? 'bg-rose-100 border-rose-400 text-rose-900' : 'bg-white border-rose-300 text-rose-700 hover:bg-rose-50'}`}
-      title={cat === 'nucleic'
-        ? 'Colours of the NUCLEIC ACID itself: phosphate backbone · pentose rings · bases. The panel opens at the end of « 2 · Molecular Styling », and its switch colours every nucleic representation by those three chemical groups.'
-        : 'Secondary-structure colours (helix / sheet / loop) and the highlight colours — the full panel opens at the end of « 2 · Molecular Styling ».'}>
+      title={title}>
       🎨 {open ? 'Hide colours' : 'Colours…'}
     </button>
   );
@@ -5823,9 +6000,33 @@ const setNucleicColour = (key, hex) => setCatStyles((prev) => ({
   ...prev,
   nucleic: { ...(prev.nucleic || {}), [key]: hex, groupColour: true },
 }));
+// ⚠️ The three colours are stored under their « …Color » keys, so the reset must
+// write those: spreading DEFAULT_NUCLEIC_COLORS alone (its keys are the palette
+// names phosphate / pentose / base) added three useless keys and left the
+// swatches exactly where they were.
 const resetNucleicColours = () => setCatStyles((prev) => ({
   ...prev,
-  nucleic: { ...(prev.nucleic || {}), ...DEFAULT_NUCLEIC_COLORS },
+  nucleic: {
+    ...(prev.nucleic || {}),
+    phosphateColor: DEFAULT_NUCLEIC_COLORS.phosphate,
+    pentoseColor: DEFAULT_NUCLEIC_COLORS.pentose,
+    baseColor: DEFAULT_NUCLEIC_COLORS.base,
+  },
+}));
+// The same pair for the 🧫 Lipids menu (C): a swatch switches « Colour by chemical
+// part » ON — the choice is never invisible — and ↺ puts the three parts back.
+const setLipidColour = (key, hex) => setCatStyles((prev) => ({
+  ...prev,
+  lipid: { ...(prev.lipid || {}), [key]: hex, groupColour: true },
+}));
+const resetLipidColours = () => setCatStyles((prev) => ({
+  ...prev,
+  lipid: {
+    ...(prev.lipid || {}),
+    headColor: DEFAULT_LIPID_COLORS.head,
+    glycerolColor: DEFAULT_LIPID_COLORS.glycerol,
+    tailColor: DEFAULT_LIPID_COLORS.acyl,
+  },
 }));
 
 return (
@@ -6199,7 +6400,7 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
 <VMenu open={openMenu === 'lipid'} onToggle={() => setOpenMenu(openMenu === 'lipid' ? null : 'lipid')}
   id="viewer-menu-lipids" label="C · Lipids" accent="amber"
   summary={`Headgroups: ${catStyles.lipid.head} · Acyl chains: ${catStyles.lipid.tail} · ${lipidHint}`}>
-  <VRow label="Headgroups" title="The polar head of each lipid, selected by ATOM NAME on the lipid residues: (.P or .N or .O1* or .O2* or .O3* or .O4*) minus the glycerol backbone — the phosphate, the choline / ethanolamine nitrogen and the upper oxygens. Spheres = spacefill, Ball & Stick and Sticks/Lines are finer options, Hide removes the headgroups. If a file uses a non-standard nomenclature the element fallback (_N or _P or _O) is used instead of drawing nothing.">
+  <VRow label="Headgroups" title="The polar head of each lipid: EVERY atom of the lipid that is neither an acyl-chain atom nor a glycerol-backbone atom — the phosphate (P with its oxygens O11…O14), the choline / ethanolamine / serine / inositol nitrogen and carbons, and every hydrogen of them. The headgroup is defined by EXCLUSION of the two other parts, so it is complete: a headgroup drawn as Ball & Stick shows all its atoms with all their bonds (naming it positively left the choline carbons and the head hydrogens out, which cut the head into disconnected fragments). Spheres = spacefill, Ball & Stick and the stick / line styles are finer options, Hide removes the headgroups. When a file does not follow the standard atom naming the parts are read by element instead (the polar N · P · O · S atoms are the headgroup).">
     <VSel value={catStyles.lipid.head} onChange={(e) => setCatStyle('lipid', 'head', e.target.value)}
       disabled={lipidMenuInactive} title="Lipid headgroup representation" width="w-44">
       <option value="spheres">Spheres</option>
@@ -6209,7 +6410,7 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
       <option value="hide">Hide</option>
     </VSel>
   </VRow>
-  <VRow label="Glycerol backbone" title="The ester carbons / oxygens that connect the two tails: (.C1 or .C2 or .C3 or .O21 or .O31) on the lipid residues. Styled independently from the headgroups and the chains, so the bilayer scaffolding can be followed on its own.">
+  <VRow label="Glycerol backbone" title="The three-carbon backbone the two chains hang from, in the standard CHARMM / AMBER naming: the carbons C1 · C2 · C3, the ester oxygens O21 · O31 and the hydrogens of those carbons (HA · HB · HS · HX · HY). Styled independently from the headgroups and the chains, so the bilayer scaffolding can be followed on its own. A file whose atoms are named after their element cannot be read that way (the backbone is then left with the headgroups).">
     <VSel value={catStyles.lipid.glycerol} onChange={(e) => setCatStyle('lipid', 'glycerol', e.target.value)}
       disabled={lipidMenuInactive} title="Lipid glycerol-backbone representation" width="w-44">
       <option value="ball+stick">Ball &amp; Stick</option>
@@ -6219,7 +6420,7 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
       <option value="hide">Hide</option>
     </VSel>
   </VRow>
-  <VRow label="Acyl chains" title="The hydrophobic tails: everything of the lipid that is neither a headgroup atom nor a backbone atom — (lipid) and not (.P or .N or .O1* or .O2* or .O3* or .O4* or .C1 or .C2 or .C3 or .O21 or .O31). Lines is the default — the lightest style that still shows the bilayer; Sticks is denser.">
+  <VRow label="Acyl chains" title="The two hydrophobic tails: the sn-1 / sn-2 carbons (C21 … C31 …), the ester carbonyl oxygens O22 · O32 and every hydrogen of those carbons. Lines is the default — the lightest style that still shows the bilayer; Sticks is denser. The chains are never mixed with the headgroups: every atom of a lipid belongs to exactly one of the three parts.">
     <VSel value={catStyles.lipid.tail} onChange={(e) => setCatStyle('lipid', 'tail', e.target.value)}
       disabled={lipidMenuInactive} title="Lipid acyl-chain representation" width="w-44">
       <option value="lines">Lines (default)</option>
@@ -6228,7 +6429,7 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
       <option value="hide">Hide</option>
     </VSel>
   </VRow>
-  <p className="text-[10px] text-slate-400 italic">NGL has no « lipid » selection keyword, so lipids are recognised by residue name — the base selection is <b>[POPC] or [DPPC] or … or [PAL]</b> plus any other lipid this file declares; headgroups / glycerol backbone / acyl chains are then separated by ATOM NAME. {lipidHint}.</p>
+  <p className="text-[10px] text-slate-400 italic">NGL has no « lipid » selection keyword, so lipids are recognised by residue name — the base selection is <b>[POPC] or [DPPC] or … or [PAL]</b> plus any other lipid this file declares; headgroups / glycerol backbone / acyl chains are then separated by ATOM NAME (C1 · C2 · C3 · O21 · O31 = backbone, C21… · C31… · O22 · O32 = chains, everything else = headgroup) — see the 🎨 Colours panel of this menu. {lipidHint}.{lipidNamingHint}</p>
   <VRow label="Surface" title="NGL molecular surface of the LIPID part only — the bilayer as one plate: Solid / Transparent (the Opacity slider appears underneath) / Mesh (wireframe) / Hide. Hidden by default: the surface of a whole bilayer is heavy.">
     <VSel value={catStyles.lipid.surface} onChange={(e) => setCatStyle('lipid', 'surface', e.target.value)}
       disabled={lipidMenuInactive} title="Lipid surface" width="w-40">
@@ -6242,9 +6443,11 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
   {renderSurfaceColour('lipid', 'lipid')}
   {renderAtomColour('lipid')}
   {renderCatRadii('lipid')}
-  <VRow label="Defaults" title="Put this menu's Sphere radius / Bond radius / atom colour / surface colour back to their defaults (1.00× and element colours) — the headgroups / glycerol / acyl-chain styles stay as they are.">
+  <VRow label="Colours" title="Colours of the LIPID itself (headgroup · glycerol backbone · acyl chains) — the 🎨 button opens that panel at the end of this section; plus ↺, which puts THIS menu's radii and colours (not the part colours) back to their defaults.">
+    {renderColoursButton('lipid')}
     <button type="button" onClick={() => resetCatLook('lipid')}
-      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">
+      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+      title="Reset this menu's Sphere radius / Bond radius / atom colour / surface colour to their defaults (1.00× and element colours) — the headgroups / glycerol / acyl-chain styles and the part colours stay as they are.">
       ↺ Reset radii &amp; colours
     </button>
   </VRow>
@@ -6614,6 +6817,53 @@ title="New residue number (blank = keep the original)"
       </label>
     </div>
     <p className="text-[10px] text-slate-400 italic">The group of an atom is read from its ATOM NAME: <b>P · OP1 · OP2 · OP3</b> (and O1P / O2P / O3P) = phosphate, every <b>primed</b> name (C1'…C5', O2'…O5', O4', H1'…H5'' — or the older C1* spelling) = pentose ring, everything else (N1…N9, C2 · C4…C8, O2 · O4 · O6, C5M) = bases. Changing a swatch switches the group colouring on; saved and persistent across pages, and part of a ⚙️ setup.</p>
+  </div>
+)}
+{/* 🧫 The colour panel of the C (Lipids) menu — the same idea as menu B's, for
+    the three chemical PARTS of a lipid: headgroup · glycerol backbone · acyl
+    chains. « Colour by chemical part » switches every lipid representation to the
+    lab-lipid-groups scheme, the swatches feed it LIVE (the scheme reads the
+    store, so no representation is rebuilt), and the three values live in
+    catStyles.lipid — persisted with the menus and captured by a ⚙️ setup. The
+    headgroup is the EXCLUSION of the two other parts, so the parts tile every
+    lipid: nothing is drawn twice, nothing is forgotten. */}
+{showLipidColoursPanel && (
+  <div className="w-full bg-amber-50/50 border border-amber-200 rounded-lg p-3 flex flex-col gap-2">
+    <div className="flex flex-wrap items-center gap-3">
+      <span className="text-[10px] font-black text-amber-700 uppercase tracking-wide">Lipid colours</span>
+      <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 cursor-pointer" title="Colour every lipid by its three chemical PARTS — the polar headgroup, the glycerol backbone and the two acyl chains — instead of the element colours (or the flat colour of this menu). The three swatches below are applied live.">
+        <input type="checkbox" checked={!!catStyles.lipid.groupColour}
+          onChange={(e) => setCatStyle('lipid', 'groupColour', e.target.checked)}
+          className="w-3.5 h-3.5 accent-amber-600" />
+        Colour by chemical part
+      </label>
+      <button type="button" onClick={resetLipidColours}
+        className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-amber-300 text-amber-700 hover:bg-amber-100"
+        title="Put the three part colours back to their defaults (the switch is left as it is)">
+        ↺ Reset colours
+      </button>
+    </div>
+    <div className="flex flex-wrap gap-x-8 gap-y-2">
+      <label className="flex items-center gap-2 text-xs font-bold text-slate-700" title="Colour of the HEADGROUP: every atom of the lipid that is neither a glycerol-backbone atom nor an acyl-chain atom — the phosphate (P with its oxygens O11…O14), the choline / ethanolamine nitrogen and its carbons, and every hydrogen of the head. The headgroup is defined by EXCLUSION of the two other parts, so a headgroup shown as Ball & Stick keeps all its atoms and all their bonds.">
+        <input type="color" value={numToHex(catStyles.lipid.headColor)}
+          onChange={(e) => setLipidColour('headColor', parseInt(e.target.value.slice(1), 16))}
+          className="w-8 h-7 rounded border cursor-pointer" />
+        Headgroup
+      </label>
+      <label className="flex items-center gap-2 text-xs font-bold text-slate-700" title="Colour of the GLYCEROL backbone: the three carbons C1 · C2 · C3, the two ester oxygens the chains hang from (O21 · O31) and the hydrogens of those carbons (HA · HB · HS · HX · HY) in the standard CHARMM / AMBER naming.">
+        <input type="color" value={numToHex(catStyles.lipid.glycerolColor)}
+          onChange={(e) => setLipidColour('glycerolColor', parseInt(e.target.value.slice(1), 16))}
+          className="w-8 h-7 rounded border cursor-pointer" />
+        Glycerol backbone
+      </label>
+      <label className="flex items-center gap-2 text-xs font-bold text-slate-700" title="Colour of the ACYL CHAINS: the sn-1 / sn-2 carbons (C21 … C216 / C31 … C316), the two ester carbonyl oxygens O22 · O32 and every hydrogen of those carbons.">
+        <input type="color" value={numToHex(catStyles.lipid.tailColor)}
+          onChange={(e) => setLipidColour('tailColor', parseInt(e.target.value.slice(1), 16))}
+          className="w-8 h-7 rounded border cursor-pointer" />
+        Acyl chains
+      </label>
+    </div>
+    <p className="text-[10px] text-slate-400 italic">The part of an atom is read from its ATOM NAME: <b>C1 · C2 · C3 · O21 · O31</b> = the glycerol backbone, <b>C21… C216 / C31… C316 · O22 · O32</b> = the acyl chains, and EVERYTHING ELSE — the phosphate, the choline / ethanolamine nitrogen, all the head carbons and every head hydrogen — = the headgroup, which is therefore never cut into fragments: the three parts tile each lipid exactly, so a headgroup drawn as Ball &amp; Stick really contains all its atoms and all their bonds.{lipidNamingHint} Changing a swatch switches the part colouring on; saved and persistent across pages, and part of a ⚙️ setup.</p>
   </div>
 )}
 </div>

@@ -1499,10 +1499,15 @@ export const DockingAnalysisSection = ({ ctx }) => {
 
   /* Le nuage « énergie vs écart à la référence » : rendu UNE FOIS par écart
      tracé (un seul, ou tous ceux du tableau quand c'est demandé), avec le même
-     habillage que les autres graphiques. */
+     habillage que les autres graphiques.
+     Un graphe QUI A DES POINTS s'ouvre tout seul : une section repliée ne rend
+     pas ses enfants (CollapsibleSection : `{isOpen && …}`), donc le nuage
+     n'était pas dessiné du tout — « énergie vs. i-RMSD » existait dans le code
+     et restait invisible sur la page. Vide (aucun écart, aucune énergie), il
+     reste replié : la note sous la grille dit alors quoi importer / saisir. */
   const scatterCard = ({ key, short, axisTitle, points, containerRef = null }) => (
     <CollapsibleSection key={key} title={`${energyName} vs. ${short}`} icon="🎯"
-      defaultOpen={allDeviations}>
+      defaultOpen={allDeviations || points.length > 0}>
       <ChartInspector containerRef={containerRef} cfg={cfg} setCfg={setCfg} series={dockSeries} unit={affinityUnit} style={dockChartBoxStyle(cfg)} className="select-none relative">
         <ResponsiveContainer width="100%" height="100%">
           <ScatterChart margin={cfgChartMargin(cfg, DOCK_CHART_MARGIN)}>
