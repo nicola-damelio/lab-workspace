@@ -334,7 +334,8 @@ has('onChange={(e) => setQualityHigh(e.target.checked)}', '[conservé] option «
 has('value={bgColor}', '[conservé] couleur de fond PyMOL');
 has('onClick={() => setShowRenumberPanel((v) => !v)}', '[conservé] 🔢 Renumber');
 has('onClick={applyRenumberFrom}', '[conservé] « Renumber from »');
-has('helix: parseInt(e.target.value.slice(1), 16)', '[conservé] couleurs 2° structure (hélices)');
+has("setSstrucColour('helix', parseInt(e.target.value.slice(1), 16))",
+  '[conservé] couleurs 2° structure (hélices) — la pastille allume en plus le mode « Secondary structure » du menu A');
 has('onChange={(e) => setAssignedAtomColor(parseInt(e.target.value.slice(1), 16))}', '[conservé] couleur des atomes assigned');
 has('onClick={() => setViewerCollapsed((v) => !v)}', '[conservé] repli de la fenêtre 3D');
 // Le bouton « ✨ Full detail » (et son helper) est SUPPRIMÉ : cliquer dessus

@@ -135,8 +135,11 @@ export const PyMOLScriptsSection = () => {
         <p className="text-[10px] text-slate-400 leading-snug">
           Supported commands: <b>select</b>, <b>show/hide</b> (cartoon · ribbon · tube · stick · sphere · surface · line),
           <b> color</b> (name/element/chain/… or a solid colour), <b>set</b> (sphere_scale, sphere_transparency,
-          sphere_scale_amplitude, cartoon_loop, transparency, bg_color, …), <b>spectrum</b>, <b>bg_color</b>,
-          <b> util.ray_shadows</b>. One command per line, PyMOL-style.
+          sphere_scale_amplitude, cartoon_loop, cartoon_ring_mode, cartoon_ring_color,
+          cartoon_ring_transparency, cartoon_nucleic_acid_mode, transparency, bg_color, …), <b>spectrum</b>,
+          <b>bg_color</b>, <b> util.ray_shadows</b>. One command per line, PyMOL-style — the four
+          <b> cartoon_ring_*</b> / <b>cartoon_nucleic_acid_mode</b> settings give the stylized DNA / RNA look
+          (filled base and ribose ring plates, one colour per base or one colour, solid or transparent).
         </p>
       </div>
     </div>

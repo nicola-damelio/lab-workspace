@@ -17,9 +17,10 @@
        l'ordre et INSTANCIE le schéma une fois avant de rendre son id, sinon il
        rend `null` — le viewer garde alors une couleur NGL native plutôt que de
        ne rien dessiner ;
-     • les trois schémas du viewer (structure secondaire, groupes chimiques des
-       acides nucléiques, identité de base A · C · G · T · U) donnent bien les
-       couleurs attendues, y compris à travers le VRAI `atomColor(atom)` de NGL ;
+     • les schémas du viewer (structure secondaire, groupes chimiques des
+       acides nucléiques, identité de base A · C · G · T · U, dégradé N → C /
+       5' → 3') donnent bien les couleurs attendues, y compris à travers le VRAI
+       `atomColor(atom)` de NGL ;
      • les noms d'atomes des gabarits nucléotidiques que l'application embarque
        (public/structures/template_nucleotide_dna.pdb · _rna.pdb) tombent dans
        le bon groupe chimique — c'est ce que colore « Colour by chemical group ».
@@ -217,11 +218,19 @@ TEMPLATES.forEach(({ file, residue, base, pentose, ring }) => {
   eq(seen.base, ring, `${file} : les bases = le noyau de ${base}, ni sucre ni phosphate`);
 });
 
-/* ══ 7. LA SÉLECTION DU FIN ANNEAU DE « Stylized rings » EST VALIDE ══════ */
+/* ══ 7. LE POURTOUR DE « Stylized rings » EST VALIDE ══════════════════════ */
+// Les plaques pleines portent un encadrement de bâtons fins dessiné sur EXACTEMENT
+// les atomes des cycles (une sélection `@indices`, la seule que NGL comprenne pour
+// une liste d'atomes) ; la sélection historique reste le REPLI, quand aucune plaque
+// n'a pu être construite (un fichier sans liaisons, une base modifiée inconnue).
 const ringSele = new NGL.Selection('nucleic and sidechain');
-eq(ringSele.selection.error, undefined, 'la sélection du pourtour des bases est comprise par NGL');
-has("add('licorice', { sele: 'nucleic and sidechain', ...baseIdentityCol()",
-  'et c’est bien celle-là que « Stylized rings » utilise pour son pourtour');
+eq(ringSele.selection.error, undefined, 'la sélection de repli du pourtour est comprise par NGL');
+has("add('licorice', { sele: `@${ringIdx.join(',')}`",
+  '« Stylized rings » encadre exactement les atomes des anneaux');
+has("add('licorice', { sele: 'nucleic and sidechain', ...ringLineCol()",
+  '…et garde le repli sur les atomes des bases si aucune plaque n’a pu être construite');
+has("registerColorScheme(NGL, 'lab-gradient'", 'un quatrième schéma maison : le dégradé N → C / 5\' → 3\'');
+has('registerGradientScheme(NGL);', '…enregistré avec la scène, comme les trois autres');
 /* ══ 8. LE SCHÉMA DES TROIS PARTS D'UN LIPIDE (menu C) ═══════════════════ */
 // Même contrat que les deux autres schémas maison : une définition enregistrée
 // par registerColorScheme, un store vivant, et le drapeau `named` qui suit la

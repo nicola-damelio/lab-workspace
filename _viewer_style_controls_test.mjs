@@ -194,13 +194,20 @@ has('phosphateColor: DEFAULT_NUCLEIC_COLORS.phosphate,', '↺ des acides nucléi
 has('pentoseColor: DEFAULT_NUCLEIC_COLORS.pentose,', '…le pentose aussi');
 has('baseColor: DEFAULT_NUCLEIC_COLORS.base,', '…et les bases');
 
-/* ══ 6. « Stylized rings » : les bases colorées DANS l’anneau ══════════════ */
-has('<option value="rings">Stylized rings (coloured inside)</option>', 'la nouvelle représentation stylisée des bases');
+/* ══ 6. « Stylized rings » : les bases en PLAQUES PLEINES ═════════════════ */
+// NGL n'a AUCUNE représentation « plaque pleine » (sa représentation `base` est un
+// Ball & Stick sur les atomes du rung) : le viewer construit donc lui-même les
+// plaques des anneaux (base ET ribose) en MeshBuffer, façon PyMOL
+// `set cartoon_ring_mode, 1` — et n'en dessine le pourtour que sur ces anneaux.
+has('<option value="rings">Stylized rings (filled plates)</option>', 'la représentation stylisée des bases');
 has("else if (bases === 'rings') {", '…et son rendu');
-has("add('base', { sele: sels.nucleic, ...baseIdentityCol(), ...stickGeom('nucleic', BASE_BOND_RADIUS) });",
-  'l’INTÉRIEUR de l’anneau est rempli, couleur par base');
-has("add('licorice', { sele: 'nucleic and sidechain', ...baseIdentityCol(), radiusSize: LICORICE_BOND_RADIUS * 0.6 * g.bond });",
-  'un fin anneau de bâtons dessine le pourtour');
+has('const plates = addRingPlates(sels.nucleic);', 'l’INTÉRIEUR des anneaux est une VRAIE plaque pleine');
+has('const mesh = new NG.MeshBuffer({ position: data.position, normal: data.normal, color: data.color, index: data.index });',
+  '…construite avec le vrai MeshBuffer de NGL');
+has("const rep = comp.addBufferRepresentation(mesh, { opacity: ringOpacity(), side: 'double' });",
+  '…confiée au composant de structure (la matrice des poses suit)');
+has("add('licorice', { sele: `@${ringIdx.join(',')}`", 'un fin anneau de bâtons dessine le pourtour — des ANNEAUX seulement');
+has('Ribose ring plate', 'la plaque de l’anneau du ribose se règle');
 has("const baseIdentityCol = () => (baseIdentitySchemeKey ? { color: baseIdentitySchemeKey } : { colorScheme: 'resname' });",
   'repli sur la palette resname si le schéma n’a pas pu être enregistré');
 has('const BASE_IDENTITY_COLORS = { A: 0x22c55e, C: 0x3b82f6, G: 0xf59e0b, T: 0xec4899, U: 0xef4444 };',
@@ -306,8 +313,10 @@ globalThis.localStorage = {
 };
 const sandbox = [
   `const RADIUS_MIN = ${RADIUS_MIN}; const RADIUS_MAX = ${RADIUS_MAX};`,
+  `const RING_TRANSPARENCY_DEFAULT = ${sliceRaw('RING_TRANSPARENCY_DEFAULT')};`,
   `const DEFAULT_SURFACE_COLOR = ${sliceRaw('DEFAULT_SURFACE_COLOR')};`,
   sliceObject(VIEW, 'DEFAULT_ATOM_COLORS'),
+  sliceObject(VIEW, 'DEFAULT_GRADIENT_COLORS'),
   sliceObject(VIEW, 'DEFAULT_NUCLEIC_COLORS'),
   sliceObject(VIEW, 'DEFAULT_LIPID_COLORS'),
   sliceObject(VIEW, 'BASE_IDENTITY_COLORS'),

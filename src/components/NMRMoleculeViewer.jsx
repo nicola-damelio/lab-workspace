@@ -144,12 +144,31 @@ const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
    atom name (C1'…C5', O2'…O5', O4', H…, and the older `C1*` spelling) = pentose
    ring, everything else (N1…N9, C2 / C4…C8, O2 / O4 / O6, C5M…) = base.
 
-   The Bases dropdown also gained « Stylized rings (coloured inside) »: NGL's own
-   `base` rungs — the slabs that FILL the inside of the base rings — coloured with
-   a per-base palette (A · C · G · T · U) plus a thin ring of sticks over the base
-   atoms, so each base reads as a coloured ring of its own. With the backbone on
-   « Cartoon » (the NGL nucleic ribbon) that is the classic stylized DNA / RNA
-   ladder: a flat ribbon with the coloured base plates inside it.
+   The Bases dropdown also gained « Stylized rings (filled plates) »: the filled
+   rungs of NGL are NOT a plate (its `base` representation is a Ball & Stick over
+   the rung atoms), so the viewer draws the plates ITSELF — the ring system of each
+   base AND the ribose ring, discovered on the bond graph of the nucleotide, filled
+   by a MeshBuffer whose triangles are a fan in the plane of the ring (see
+   nucleicRingPlates). That is the viewer's answer to PyMOL's stylized look:
+   `set cartoon_ring_mode, 1` + `cartoon_ring_color` + `cartoon_ring_transparency`
+   are settings of the 🎨 panel of this menu (one colour per base — or ONE colour —
+   and a Ring transparency, 0 = SOLID by default), and the PyMOL panel understands
+   those four `set` commands as well. With the backbone on « Cartoon » (the NGL
+   nucleic ribbon) that is the classic stylized DNA / RNA ladder: a flat ribbon
+   with the solid coloured plates inside it.
+
+   EVERY menu colours BOTH families of representations with the SAME rule
+   (catColorParams): « Atom colour » is read once per menu and applies to the ribbon
+   (cartoon / ribbon / tube / trace) AND to the atoms / bonds (ball+stick ·
+   licorice · lines · spheres) — the classic element colours, ONE flat colour, the
+   customisable 2°-structure colours (helix / sheet / loop: moving a swatch switches
+   the Proteins menu to that mode, so a chosen colour can never be ignored by the
+   rainbow-by-residue default it used to be drawn with) or a two-colour GRADIENT
+   along the sequence: from the first to the last residue of every chain, i.e.
+   N terminus → C terminus for a protein and 5' → 3' for a nucleic acid. The ramp
+   is a home-made scheme reading a live store, whose per-chain residue ranges are
+   measured on the structure that is actually drawn (gradientRangesFor), and the ⇄
+   button of the menu swaps the two colours.
 
    LIPIDS (menu C) — exactly the same idea for the three PARTS of a lipid:
    headgroup · glycerol backbone · acyl chains. The 🎨 Colours button of that menu
@@ -226,12 +245,28 @@ const DEFAULT_LIPID_COLORS = { head: 0xef4444, glycerol: 0x22c55e, acyl: 0x64748
 // The stylized per-base palette of the Bases option « Stylized rings » — the
 // colour that FILLS the inside of the ring of each base.
 const BASE_IDENTITY_COLORS = { A: 0x22c55e, C: 0x3b82f6, G: 0xf59e0b, T: 0xec4899, U: 0xef4444 };
+// The two colours of « Atom colour → Gradient » — the gradual colouring of a
+// polymer ALONG its sequence: `from` sits on the first residue (the N terminus
+// of a protein, the 5' end of a nucleic acid), `to` on the last one (C terminus
+// / 3' end). See gradientColorStore / gradientRangesFor (PART 2.1). The ⇄ button
+// of the menu swaps the two, which is the whole « reverse » control it needs.
+const DEFAULT_GRADIENT_COLORS = { from: 0x2563eb, to: 0xdc2626 };
+// The stylized nucleic look (Bases → « Stylized rings ») fills the base rings and
+// the ribose ring with a SOLID PLATE (see nucleicRingPlates). 0 = solid, which is
+// exactly what « as if they were solid plates » asks for; 0.5 is PyMOL's example
+// (set cartoon_ring_transparency, 0.5). The plate colour of one ring is the
+// identity of its base (BASE_IDENTITY_COLORS) — or ONE flat colour, i.e. PyMOL's
+// set cartoon_ring_color.
+const RING_TRANSPARENCY_DEFAULT = 0;
+const RING_TRANSPARENCY_MAX = 0.95;   // never fully invisible (a plate that shows nothing is a bug)
 // The five fields every menu owns on top of its styles: the atom colour, the
 // surface colour and the sphere / bond radius multipliers. ONE factory keeps the
 // six entries readable and impossible to half-fill.
 const catLook = (atomColorHex) => ({
   atomColor: 'default',
   atomColorHex,
+  gradientFrom: DEFAULT_GRADIENT_COLORS.from,
+  gradientTo: DEFAULT_GRADIENT_COLORS.to,
   surfaceColor: 'default',
   surfaceColorHex: DEFAULT_SURFACE_COLOR,
   sphereRadius: 1,
@@ -246,7 +281,10 @@ const DEFAULT_CAT_STYLES = {
   //    this menu's radius / atom-colour fields).
   protein: { backbone: 'cartoon', surface: 'hide', surfaceOpacity: 0.4, ...catLook(DEFAULT_ATOM_COLORS.protein) },
   // B. Nucleic acids — backbone / bases / surface + the group colours of the
-  //    🎨 Colours panel (phosphate · pentose · bases) and its switch.
+  //    🎨 Colours panel (phosphate · pentose · bases) and its switch, PLUS the
+  //    stylized ring plates of « Stylized rings »: their colour mode, their one
+  //    flat colour (PyMOL's cartoon_ring_color), their transparency (PyMOL's
+  //    cartoon_ring_transparency) and the ribose ring plate switch.
   nucleic: {
     backbone: 'cartoon', bases: 'slab', surface: 'hide', surfaceOpacity: 0.4,
     ...catLook(DEFAULT_ATOM_COLORS.nucleic),
@@ -254,6 +292,10 @@ const DEFAULT_CAT_STYLES = {
     phosphateColor: DEFAULT_NUCLEIC_COLORS.phosphate,
     pentoseColor: DEFAULT_NUCLEIC_COLORS.pentose,
     baseColor: DEFAULT_NUCLEIC_COLORS.base,
+    ringColour: 'base',
+    ringColorHex: DEFAULT_NUCLEIC_COLORS.base,
+    ringTransparency: RING_TRANSPARENCY_DEFAULT,
+    sugarPlate: true,
   },
   // C. Lipids — the three sub-components are styled INDEPENDENTLY (headgroups /
   //    glycerol backbone / acyl chains), see lipidSubSelections below, and the
@@ -1243,6 +1285,291 @@ const defineBaseIdentityScheme = () => {
 const registerBaseIdentityScheme = (NGL) => {
   if (baseIdentitySchemeKey) return;
   baseIdentitySchemeKey = registerColorScheme(NGL, 'lab-base-identity', defineBaseIdentityScheme());
+};
+
+// ---- A flat colour, as NGL wants it (a hex integer) -------------------------
+// ONE reader of « Atom colour : Custom… » — used by every menu and by the
+// side-chain effect, so a menu can never be DRAWN with one rule and COLOURED
+// with another.
+const flatHex = (v) => (Number.isFinite(v) ? v : null);
+
+/* ---- « Atom colour » of ONE menu, for a RIBBON or for ATOMS / BONDS ---------
+   Every styling menu offers the same four colouring metaphors, and BOTH families
+   of representations obey them — a ribbon (cartoon / ribbon / tube / trace) AND
+   the atoms / bonds (ball+stick · licorice · lines · spheres):
+
+     'default'  → the classic look: element colours for the atoms, the rainbow by
+                  residue index for the ribbon of a polymer;
+     'custom'   → ONE flat colour (the swatch);
+     'sstruc'   → the customisable helix / sheet / coil colours (0edf7a, the 🎨
+                  panel of menu A), which therefore reach the RIBBON too;
+     'gradient' → the two-colour ramp N → C (protein) / 5' → 3' (nucleic acid).
+
+   A scheme that could not be registered returns nothing usable (null id) and the
+   caller falls back on the classic look instead of drawing nothing at all.
+   `kind` is 'backbone' for the ribbon family, 'atom' for everything else. */
+const catColorParams = (m, kind) => {
+  const mode = (m && m.atomColor) || 'default';
+  if (mode === 'sstruc' && sstrucSchemeKey) return { color: sstrucSchemeKey };
+  if (mode === 'gradient' && gradientSchemeKey) return { color: gradientSchemeKey };
+  const hex = mode === 'custom' ? flatHex(m && m.atomColorHex) : null;
+  if (kind === 'backbone') return hex != null ? { color: hex } : { color: 'residueindex' };
+  return hex != null ? { color: hex } : { colorScheme: 'element' };
+};
+
+/* ---- Gradual (two-colour) colouring of a polymer ---------------------------
+   « Atom colour → Gradient » paints a polymer ALONG its sequence: the first
+   colour sits on the first residue — the N terminus of a protein, the 5' end of
+   a nucleic acid — and the second on the last one (C terminus / 3' end). The ramp
+   is computed PER CHAIN, so every chain of an oligomer runs its own complete
+   gradient from its own N to its own C instead of sharing one ramp across the
+   whole assembly. The scheme reads this live store (fed by the menu, like
+   lab-sstruc / lab-nucleic-groups / lab-lipid-groups): moving a swatch only
+   re-renders the representations, no scheme is ever re-registered. The per-chain
+   residue ranges are measured on the structure that is actually drawn (see
+   gradientRangesFor) — a scheme cannot know what a selection contains. */
+const gradientColorStore = {
+  from: DEFAULT_GRADIENT_COLORS.from,
+  to: DEFAULT_GRADIENT_COLORS.to,
+  ranges: null,   // { [chainIndex]: [firstResidueIndex, lastResidueIndex], all: […] }
+};
+let gradientSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
+// One colour of the ramp: t = 0 → `from`, t = 1 → `to` (t clamped). PURE, so a
+// test can run the very ramp the scheme hands to NGL.
+const lerpHexColors = (from, to, t) => {
+  const k = Math.min(1, Math.max(0, Number.isFinite(t) ? t : 0));
+  const a = Number(from) || 0;
+  const b = Number(to) || 0;
+  const ch = (shift) => Math.round((((a >> shift) & 255) * (1 - k)) + (((b >> shift) & 255) * k));
+  return (ch(16) << 16) | (ch(8) << 8) | ch(0);
+};
+// The ramp position (0 → 1) of ONE atom inside its own chain. An atom whose chain
+// is not in the table (or a chain of one residue, which cannot ramp) takes the
+// FIRST colour rather than a random one, and an atom outside the measured range is
+// clamped — the colour it produces is therefore always inside the ramp.
+const gradientT = (atom) => {
+  const ranges = gradientColorStore.ranges;
+  const range = ranges && (ranges[atom && atom.chainIndex] || ranges.all);
+  const ri = Number(atom && atom.residueIndex);
+  if (!range || !Number.isFinite(ri) || !(range[1] > range[0])) return 0;
+  return Math.min(1, Math.max(0, (ri - range[0]) / (range[1] - range[0])));
+};
+// The definition of the scheme, NAMED so a test can extract and really run it.
+const defineGradientScheme = () => {
+  return function () {
+    this.atomColor = function (atom) {
+      return lerpHexColors(gradientColorStore.from, gradientColorStore.to, gradientT(atom));
+    };
+  };
+};
+const registerGradientScheme = (NGL) => {
+  if (gradientSchemeKey) return;
+  gradientSchemeKey = registerColorScheme(NGL, 'lab-gradient', defineGradientScheme());
+};
+// A real NGL.Selection for a selection string — the module-level twin of
+// nglSelection (which lives inside the component). NGL 2.4 `Structure#getAtomSet`
+// IGNORES a raw string (it returns the whole atom set): the callers below need a
+// Selection INSTANCE. No NGL yet (or a bad expression) → undefined, which NGL
+// reads as « every atom » and which never throws.
+const toNglSelection = (sele) => {
+  try {
+    const NG = typeof window !== 'undefined' ? window.NGL : null;
+    return NG && NG.Selection ? new NG.Selection(sele) : undefined;
+  } catch { return undefined; }
+};
+// Per-chain residue ranges of ONE selection: what the ramp needs to put the first
+// colour on the N / 5' end of EVERY chain. Returns null when nothing could be
+// measured (no structure yet, a selection NGL refuses) — the caller then leaves
+// the store empty and every atom takes the first colour, never a broken colour.
+const gradientRangesFor = (structure, sele) => {
+  if (!structure || !sele || typeof structure.eachAtom !== 'function') return null;
+  const out = {};
+  try {
+    structure.eachAtom((a) => {
+      const ri = Number(a && a.residueIndex);
+      if (!Number.isFinite(ri)) return;
+      const ci = (a && a.chainIndex) != null ? a.chainIndex : 'all';
+      const cur = out[ci];
+      if (!cur) out[ci] = [ri, ri];
+      else { if (ri < cur[0]) cur[0] = ri; if (ri > cur[1]) cur[1] = ri; }
+      const all = out.all;
+      if (!all) out.all = [ri, ri];
+      else { if (ri < all[0]) all[0] = ri; if (ri > all[1]) all[1] = ri; }
+    }, toNglSelection(sele));
+  } catch { return null; }
+  return Object.keys(out).length ? out : null;
+};
+
+/* ---- FILLED RING PLATES — the stylized nucleic look -------------------------
+   PyMOL's stylized DNA / RNA (set cartoon_ring_mode, 1 · cartoon_nucleic_acid_mode
+   0 · cartoon_ring_color / cartoon_ring_transparency) draws the BASE RINGS as
+   filled plates AND the ribose ring as a plate of its own. NGL has no such
+   representation: its `base` representation is a Ball & Stick over the rung atoms
+   (`getRungAtomData` / `getRungBondData`), i.e. sticks — which is exactly why
+   « Stylized rings » looked like a bundle of sticks and not like plates. The
+   viewer therefore builds the plates itself:
+
+     · the rings are DISCOVERED on the bond graph of each chemical group of a
+       nucleotide (the base ring system, the pentose ring) — a ring is a shortest
+       cycle, and that cycle is returned IN RING ORDER, which is what a plate needs;
+     · every ring is triangulated as a FAN from its centroid in the ring's own
+       plane (bases and pentoses are planar to within a fraction of an Å, and the
+       normal comes from Newell's method, so the plate is perfectly flat);
+     · all the plates of ONE component go into ONE NGL MeshBuffer, handed to the
+       structure component itself (addBufferRepresentation): the plates then follow
+       its matrix (docking poses, extra molecules) and are removed with its other
+       representations — nothing is ever left behind.
+   Colour and transparency come from the 🎨 panel of the nucleic menu: the viewer's
+   answer to cartoon_ring_color / cartoon_ring_transparency. */
+const RING_MAX_SIZE = 6;   // the pyrimidine / imidazole six- and five-membered rings
+// NGL buffer colours are RGB floats in 0 → 1 (the menus and the colour schemes use
+// one hex integer).
+const hexToRgb01 = (hex) => {
+  const v = Number(hex) || 0;
+  return [((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255];
+};
+// The plane normal of a (near) planar ring — Newell's method, exact for a planar
+// polygon and stable for a nearly planar one.
+const ringPlaneNormal = (pts) => {
+  let nx = 0;
+  let ny = 0;
+  let nz = 0;
+  for (let i = 0; i < pts.length; i += 1) {
+    const a = pts[i];
+    const b = pts[(i + 1) % pts.length];
+    nx += (a.y - b.y) * (a.z + b.z);
+    ny += (a.z - b.z) * (a.x + b.x);
+    nz += (a.x - b.x) * (a.y + b.y);
+  }
+  const len = Math.sqrt((nx * nx) + (ny * ny) + (nz * nz)) || 1;
+  return [nx / len, ny / len, nz / len];
+};
+// Every ring of 3 → maxSize atoms of ONE bond graph, each one IN RING ORDER.
+// `nodes` are the atoms of the ring's chemical group, `neighbours` its adjacency.
+// The walk only ever moves to an atom HIGHER than the ring's first one, so a ring
+// is met once per starting atom; the sorted key removes the two directions.
+const ringCyclesOf = (nodes, neighbours, maxSize = RING_MAX_SIZE) => {
+  const rings = new Map();
+  const walk = (start, path) => {
+    const last = path[path.length - 1];
+    (((neighbours || {})[last] || [])).forEach((next) => {
+      if (next === start) {
+        if (path.length >= 3) rings.set(path.slice().sort((a, b) => a - b).join('-'), path.slice());
+        return;
+      }
+      if (next < start || path.indexOf(next) >= 0 || path.length >= maxSize) return;
+      walk(start, path.concat([next]));
+    });
+  };
+  (nodes || []).slice().sort((a, b) => a - b).forEach((node) => walk(node, [node]));
+  return [...rings.values()];
+};
+// ONE ring → the triangles of its plate: a fan from the centroid of the ring, all
+// the vertices sharing the ring's own plane normal (so the plates of one base are
+// lit exactly like each other). Returns null for a degenerate ring.
+const ringPlateTriangles = (points) => {
+  const pts = (points || []).filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z));
+  const n = pts.length;
+  if (n < 3) return null;
+  const cx = pts.reduce((s, p) => s + p.x, 0) / n;
+  const cy = pts.reduce((s, p) => s + p.y, 0) / n;
+  const cz = pts.reduce((s, p) => s + p.z, 0) / n;
+  const nrm = ringPlaneNormal(pts);
+  const position = [];
+  const normal = [];
+  pts.forEach((p) => { position.push(p.x, p.y, p.z); normal.push(nrm[0], nrm[1], nrm[2]); });
+  position.push(cx, cy, cz);   // the centre of the fan is the LAST vertex
+  normal.push(nrm[0], nrm[1], nrm[2]);
+  const index = [];
+  for (let i = 0; i < n; i += 1) index.push(n, i, (i + 1) % n);
+  return { position, normal, index };
+};
+
+// The colour of the plates of ONE ring. `group` is its chemical group (base /
+// pentose, what nucleicGroupOf reads) and `resname` says WHICH base it is.
+// Priority: ONE flat ring colour (the menu's « one colour », i.e. PyMOL's
+// cartoon_ring_color) → « Colour by chemical group », which recolours the plates
+// like every other representation → the identity of the base, the palette that
+// makes « Stylized rings » stylized. The ribose plate therefore follows the colour
+// of ITS OWN base (they belong to the same nucleotide) unless the two other modes
+// say otherwise.
+const ringPlateColorOf = (m, resname, group) => {
+  const flat = m && m.ringColour === 'custom' ? flatHex(m.ringColorHex) : null;
+  if (flat != null) return flat;
+  if (m && m.groupColour) {
+    if (group === 'pentose' && Number.isFinite(m.pentoseColor)) return m.pentoseColor;
+    if (group === 'base' && Number.isFinite(m.baseColor)) return m.baseColor;
+  }
+  return baseIdentityColorOf(resname);
+};
+// The plate data of every ring of the nucleic atoms of ONE selection: one
+// MeshBuffer worth of vertices, plane normals, per-vertex colours and triangles,
+// plus the atom indices of the rings (the outline of the plates is drawn over
+// exactly those atoms). Returns null when the selection holds no ring at all.
+const nucleicRingPlates = (structure, sele, m) => {
+  if (!structure || !sele || typeof structure.eachAtom !== 'function') return null;
+  if (!m || m.bases !== 'rings') return null;   // the plates ARE the « Stylized rings » look
+  const wantSugar = m.sugarPlate !== false;
+  // 1. The heavy atoms of every nucleotide of the selection, sorted into the
+  //    chemical groups the plate colouring speaks about (base / pentose).
+  const residues = new Map();   // residueIndex → { resname, base: [index…], pentose: […] }
+  try {
+    structure.eachAtom((a) => {
+      if (String(a.element || '').toUpperCase() === 'H') return;   // a ring is heavy atoms
+      const group = nucleicGroupOf(a.atomname);
+      if (group === 'phosphate') return;                           // the backbone is not a ring
+      if (group === 'pentose' && !wantSugar) return;
+      const ri = a.residueIndex;
+      let res = residues.get(ri);
+      if (!res) { res = { resname: a.resname, base: [], pentose: [] }; residues.set(ri, res); }
+      res[group].push(a.index);
+    }, toNglSelection(sele));
+  } catch { return null; }
+  if (!residues.size) return null;
+  const position = [];
+  const normal = [];
+  const color = [];
+  const index = [];
+  const atomIndices = [];
+  const seen = new Set();
+  residues.forEach((res) => {
+    ['base', 'pentose'].forEach((group) => {
+      const nodes = res[group];
+      if (!nodes || nodes.length < 3) return;
+      const inGroup = new Set(nodes);
+      const neighbours = {};
+      const points = {};
+      nodes.forEach((i) => {
+        let ap = null;
+        try { ap = structure.getAtomProxy(i); } catch { ap = null; }
+        if (!ap) return;
+        points[i] = { x: ap.x, y: ap.y, z: ap.z };
+        const list = [];
+        try { ap.eachBondedAtom((b) => { if (b && inGroup.has(b.index)) list.push(b.index); }); } catch { /* no bonds → no ring */ }
+        neighbours[i] = list;
+      });
+      const rgb = hexToRgb01(ringPlateColorOf(m, res.resname, group));
+      ringCyclesOf(nodes, neighbours).forEach((ring) => {
+        const tri = ringPlateTriangles(ring.map((i) => points[i]));
+        if (!tri) return;
+        const offset = position.length / 3;
+        tri.position.forEach((v) => position.push(v));
+        tri.normal.forEach((v) => normal.push(v));
+        tri.index.forEach((v) => index.push(offset + v));
+        for (let v = 0; v < tri.position.length / 3; v += 1) color.push(rgb[0], rgb[1], rgb[2]);
+        ring.forEach((i) => { if (!seen.has(i)) { seen.add(i); atomIndices.push(i); } });
+      });
+    });
+  });
+  if (!index.length) return null;
+  return {
+    position: new Float32Array(position),
+    normal: new Float32Array(normal),
+    color: new Float32Array(color),
+    index: new Uint32Array(index),
+    atomIndices: atomIndices.sort((a, b) => a - b),
+    rings: index.length / 3,          // one fan triangle per ring vertex
+  };
 };
 
 // ---- PDB atom name → NMR Greek-letter name mapping (Hydrogens) ----
@@ -2791,6 +3118,7 @@ registerSstrucScheme(NGL); // customisable per-element 2°-structure colours (he
 registerNucleicScheme(NGL);      // 🔬 nucleic acids by chemical group (phosphate / pentose / bases)
 registerBaseIdentityScheme(NGL); // 🧬 stylized base rings (one colour per base: A · C · G · T · U)
 registerLipidScheme(NGL);        // 🧫 lipids by chemical part (headgroup / glycerol backbone / chains)
+registerGradientScheme(NGL);     // 🌈 gradual ribbon colours (two colours, N→C / 5'→3')
 const stage = new NGL.Stage(containerRef.current, { backgroundColor: '#f8fafc' });
 stageRef.current = stage;
 applyFog(); // honour the user's fog preference (off by default) right away
@@ -3145,21 +3473,13 @@ const buildCategoryReps = (comp) => {
     return r;
   };
   // ── The colour / radius fields of the six menus, read once per rebuild ─────
-  // A flat colour (« Atom colour : Custom… » / « Surface colour : Custom… ») is
-  // what NGL receives as `color` — a hex number; « default » keeps the classic
-  // element colouring, and the BACKBONE of a polymer keeps its landmark
-  // rainbow-by-residue default until a flat colour is chosen for that menu.
-  const flatHex = (v) => (Number.isFinite(v) ? v : null);
-  const atomCol = (cat) => {
-    const m = cs[cat] || {};
-    const hex = m.atomColor === 'custom' ? flatHex(m.atomColorHex) : null;
-    return hex != null ? { color: hex } : { colorScheme: 'element' };
-  };
-  const backboneCol = (cat) => {
-    const m = cs[cat] || {};
-    const hex = m.atomColor === 'custom' ? flatHex(m.atomColorHex) : null;
-    return hex != null ? { color: hex } : { color: 'residueindex' };
-  };
+  // The colour of ONE menu comes from catColorParams (module level): the same
+  // four metaphors — default (element colours / rainbow by residue), ONE flat
+  // colour, the 2°-structure colours, the sequence gradient — serve the RIBBON
+  // family (`backboneCol`) and the atoms / bonds (`atomCol`), so a menu can never
+  // be drawn with one rule and coloured with another.
+  const atomCol = (cat) => catColorParams(cs[cat], 'atom');
+  const backboneCol = (cat) => catColorParams(cs[cat], 'backbone');
   // 🔬 Menu B — « Colour by chemical group » (🎨 Colours panel of that menu): the
   // phosphate backbone, the pentose rings and the bases each take their own colour
   // through the lab-nucleic-groups scheme.
@@ -3167,6 +3487,25 @@ const buildCategoryReps = (comp) => {
   const nucleicCol = () => (nucleicGroupsOn() ? { color: nucleicSchemeKey } : atomCol('nucleic'));
   // The INSIDE of the base rings of « Stylized rings »: one colour per base.
   const baseIdentityCol = () => (baseIdentitySchemeKey ? { color: baseIdentitySchemeKey } : { colorScheme: 'resname' });
+  // The plates of « Stylized rings » are FILLED surfaces (see nucleicRingPlates):
+  // their colour follows the 🎨 panel of this menu — one colour per base, ONE flat
+  // colour (⭘ « One colour », i.e. PyMOL's cartoon_ring_color) or the group
+  // colours — and their transparency is the menu's Ring transparency, i.e. PyMOL's
+  // cartoon_ring_transparency. 1 − t: NGL wants an opacity.
+  const ringOpacity = () => {
+    const t = Number(cs.nucleic && cs.nucleic.ringTransparency);
+    const v = Number.isFinite(t) ? Math.min(RING_TRANSPARENCY_MAX, Math.max(0, t)) : RING_TRANSPARENCY_DEFAULT;
+    return 1 - v;
+  };
+  // The outline of the plates (a thin stick over the ring atoms) takes the SAME
+  // colour as the plates wherever a colour SCHEME can express it — the group
+  // colours, or the identity of each base — and the flat colour otherwise.
+  const ringLineCol = () => {
+    const m = cs.nucleic || {};
+    if (m.ringColour === 'custom') return catColorParams({ atomColor: 'custom', atomColorHex: m.ringColorHex }, 'atom');
+    if (m.groupColour && nucleicSchemeKey) return { color: nucleicSchemeKey };
+    return baseIdentityCol();
+  };
   // 🧫 Menu C — « Colour by chemical part »: the headgroups, the glycerol
   // backbones and the acyl chains each take their own colour through the
   // lab-lipid-groups scheme (the same three groups the sub-selections draw).
@@ -3203,6 +3542,38 @@ const buildCategoryReps = (comp) => {
       catEspRepsRef.current.set(comp, prev);
     }
   };
+
+  // ── The FILLED RING PLATES of « Stylized rings » ───────────────────────────
+  // One MeshBuffer for every ring of the nucleic atoms of the selection (the base
+  // ring system AND the ribose ring, see nucleicRingPlates), handed to THIS
+  // component with addBufferRepresentation: the plates follow its matrix (a docking
+  // pose, an extra molecule) and are removed with its other representations. NGL
+  // draws a MeshBuffer double-sided, so `side: 'double'` is what makes a plate look
+  // solid from both faces — and `opacity` < 1 is what makes it transparent
+  // (Buffer#transparent = opacity < 1 || forceTransparent), i.e. the Ring
+  // transparency of the menu. Returns the ring atom indices (the outline is drawn
+  // over exactly those atoms), or null when there is nothing to fill.
+  const addRingPlates = (sele) => {
+    if (!sele) return null;
+    const NG = typeof window !== 'undefined' ? window.NGL : null;
+    const data = nucleicRingPlates(comp.structure, sele, cs.nucleic);
+    if (!data || !data.rings || !NG || typeof NG.MeshBuffer !== 'function') return null;
+    try {
+      const mesh = new NG.MeshBuffer({ position: data.position, normal: data.normal, color: data.color, index: data.index });
+      const rep = comp.addBufferRepresentation(mesh, { opacity: ringOpacity(), side: 'double' });
+      if (rep) { flagMeshShadows(rep); reps.push(rep); }
+      return { data, rep };
+    } catch { return null; /* the plates are a bonus: never break the view */ }
+  };
+
+  // The two-colour ramp reads the per-chain ranges of what is DRAWN — and only
+  // when a menu actually asks for it (the walk costs one pass over the polymer).
+  if ((cs.protein && cs.protein.atomColor === 'gradient') || (cs.nucleic && cs.nucleic.atomColor === 'gradient')) {
+    const polySele = [sels.protein, sels.nucleic].filter(Boolean).join(' or ') || 'polymer';
+    gradientColorStore.ranges = gradientRangesFor(comp.structure, polySele);
+  } else {
+    gradientColorStore.ranges = null;
+  }
 
   // Fresh ESP-surface registry for this component: the caller removes the
   // previous representations right before calling this builder.
@@ -3252,12 +3623,22 @@ const buildCategoryReps = (comp) => {
     const bases = cs.nucleic.bases || 'slab';
     const baseSlabCol = nucleicGroupsOn() ? { color: nucleicSchemeKey } : { colorScheme: 'resname' };
     if (bases === 'slab') add('base', { sele: sels.nucleic, ...baseSlabCol, ...stickGeom('nucleic', BASE_BOND_RADIUS) });
-    // Stylized rings — the ONE style that colours the INSIDE of the base rings:
-    // the filled rungs coloured per BASE IDENTITY (A · C · G · T · U) PLUS a thin
-    // ring of sticks over the base atoms, so each base reads as a coloured ring.
+    // Stylized rings — the ONE style that colours the INSIDE of the rings, as
+    // PyMOL's « set cartoon_ring_mode, 1 » does: the base rings AND the ribose ring
+    // are FILLED PLATES (a MeshBuffer, see nucleicRingPlates), each base keeping its
+    // own colour, and a thin stick draws the outline of exactly those rings. The
+    // plates obey the menu's Ring colour / Ring transparency; « Sugar ring plates »
+    // of the 🎨 panel decides whether the pentose ring is filled too.
     else if (bases === 'rings') {
-      add('base', { sele: sels.nucleic, ...baseIdentityCol(), ...stickGeom('nucleic', BASE_BOND_RADIUS) });
-      add('licorice', { sele: 'nucleic and sidechain', ...baseIdentityCol(), radiusSize: LICORICE_BOND_RADIUS * 0.6 * g.bond });
+      const plates = addRingPlates(sels.nucleic);
+      const ringIdx = plates && plates.data ? plates.data.atomIndices : null;
+      if (ringIdx && ringIdx.length) {
+        add('licorice', { sele: `@${ringIdx.join(',')}`, ...ringLineCol(), radiusSize: LICORICE_BOND_RADIUS * 0.6 * g.bond });
+      } else {
+        // No plate could be built (a file without bonds, a modified base NGL does
+        // not know): the base atoms keep their outlines, so the style still shows.
+        add('licorice', { sele: 'nucleic and sidechain', ...ringLineCol(), radiusSize: LICORICE_BOND_RADIUS * 0.6 * g.bond });
+      }
     }
     // « Sticks » IS licorice: NGL 2.4 registers no `stick` representation, so the
     // old add('stick', …) threw and the sticks never appeared at all.
@@ -4412,6 +4793,43 @@ useEffect(() => {
     // « Sticks » of a selection / molecule is licorice (NGL has no `stick` rep).
     if (st.stick) add('licorice', { colorScheme, opacity, multipleBond: true, radiusSize: LICORICE_BOND_RADIUS });
     if (st.surface) add('surface', { colorScheme, opacity: opacity != null ? opacity : 0.5 });
+    // A PyMOL script that asked for « set cartoon_ring_mode, 1 » also gets the
+    // FILLED RING PLATES of its own nucleic selections: in PyMOL mode the §2 menus
+    // are off (the script owns the scene), so the stylized look has to be built
+    // here too — with the very same plate builder (nucleicRingPlates) and the same
+    // colours / transparency as the 🎨 panel of the nucleic menu. A selection with
+    // no ring at all (a protein) simply adds nothing.
+    if (pymolActive && catStylesRef.current.nucleic && catStylesRef.current.nucleic.bases === 'rings') {
+      try {
+        const m = catStylesRef.current.nucleic;
+        const NG = typeof window !== 'undefined' ? window.NGL : null;
+        const data = nucleicRingPlates(component.structure, expr, m);
+        if (NG && data && data.rings) {
+          const mesh = new NG.MeshBuffer({ position: data.position, normal: data.normal, color: data.color, index: data.index });
+          const t = Number(m.ringTransparency);
+          const op = 1 - (Number.isFinite(t) ? Math.min(RING_TRANSPARENCY_MAX, Math.max(0, t)) : 0);
+          const rep = component.addBufferRepresentation(mesh, { opacity: op, side: 'double' });
+          if (rep) { flagMeshShadows(rep); reps.push(rep); }
+          // The outline of the plates, over EXACTLY the ring atoms and in the same
+          // colour as the plates — the same rule as ringLineCol in the §2 renderer.
+          if (data.atomIndices.length) {
+            const lineCol = m.ringColour === 'custom' && Number.isFinite(m.ringColorHex)
+              ? { color: m.ringColorHex }
+              : (m.groupColour && nucleicSchemeKey ? { color: nucleicSchemeKey }
+                : (baseIdentitySchemeKey ? { color: baseIdentitySchemeKey } : { colorScheme: 'resname' }));
+            try {
+              reps.push(component.addRepresentation('licorice', {
+                sele: `@${data.atomIndices.join(',')}`,
+                opacity,
+                multipleBond: true,
+                radiusSize: LICORICE_BOND_RADIUS * 0.6,
+                ...lineCol,
+              }));
+            } catch { /* the outline is a bonus too */ }
+          }
+        }
+      } catch { /* the plates are a bonus: never break the script rendering */ }
+    }
     selCompsRef.current[key] = reps;
   });
   return () => {
@@ -4561,6 +4979,16 @@ const parsePyMOL = (text) => {
       const sel = rest[1] || 'all';
       if (prop === 'sphere_scale') acts.push({ type: 'sphere_scale', val: parseFloat(val), sel });
       else if (prop === 'transparency' || prop === 'sphere_transparency') acts.push({ type: 'transparency', val: parseFloat(val), sel });
+      // ── The FOUR PyMOL settings of the stylized nucleic look ──────────────
+      // « set cartoon_ring_mode, 1 » (filled base / sugar ring plates),
+      // « set cartoon_nucleic_acid_mode, 0 » (the flat ribbon through the
+      // backbone), « set cartoon_ring_color, red » and
+      // « set cartoon_ring_transparency, 0.5 » — the recipe this viewer now
+      // implements with its own filled MeshBuffer plates (nucleicRingPlates).
+      else if (prop === 'cartoon_ring_mode') acts.push({ type: 'ring_mode', val: parseInt(val, 10) });
+      else if (prop === 'cartoon_nucleic_acid_mode') acts.push({ type: 'nucleic_acid_mode', val: parseInt(val, 10) });
+      else if (prop === 'cartoon_ring_color') acts.push({ type: 'ring_color', color: val });
+      else if (prop === 'cartoon_ring_transparency') acts.push({ type: 'ring_transparency', val: parseFloat(val) });
     } else if (cmd === 'spectrum') {
       acts.push({ type: 'spectrum', sel: rest[2] || 'all' });
     } else if (cmd.startsWith('util.ray_shadows') || /util\.ray_shadows/.test(line)) {
@@ -4620,6 +5048,40 @@ const applyPyMOLScript = (text) => {
       } else if (a.type === 'spectrum') {
         next[key] = { ...cur, colorMode: 'residueindex' };
         log.push('• spectrum → per-residue rainbow colouring applied');
+      } else if (a.type === 'ring_mode') {
+        // PyMOL: 0 = no rings at all, 1 = FILLED ring plates (the stylized look,
+        // and the only mode the viewer can really draw as plates), 2 / 3 = ball &
+        // stick over the rings — which IS the « Licorice » bases style here. Any
+        // other mode falls back on the filled plates.
+        if (a.val === 0 || a.val === 2 || a.val === 3) {
+          setCatStyle('nucleic', 'bases', 'sticks');
+          log.push(`• set cartoon_ring_mode, ${a.val} → no filled plates (Bases: Licorice)`);
+        } else {
+          setCatStyle('nucleic', 'bases', 'rings');
+          log.push(`• set cartoon_ring_mode, ${a.val} → filled ring plates (Bases: Stylized rings)`);
+        }
+      } else if (a.type === 'nucleic_acid_mode') {
+        // NGL's nucleic cartoon has ONE ribbon geometry: mode 0 (the default and
+        // the mode of the PyMOL recipe) is the flat ribbon through the backbone.
+        // 1 asks for a thin tube and 2 for the phosphate trace, both of which the
+        // viewer really has; anything else keeps the flat ribbon.
+        const bb = a.val === 1 ? 'tube' : a.val === 2 ? 'trace' : 'cartoon';
+        setCatStyle('nucleic', 'backbone', bb);
+        log.push(`• set cartoon_nucleic_acid_mode, ${a.val} → nucleic backbone = ${bb}`);
+      } else if (a.type === 'ring_color') {
+        const c = colorDefs[a.color] ? colorDefs[a.color] : parseColorInt(a.color);
+        if (c != null) {
+          setCatStyle('nucleic', 'ringColour', 'custom');
+          setCatStyle('nucleic', 'ringColorHex', c);
+          log.push(`• set cartoon_ring_color, ${a.color} → every ring plate takes that colour`);
+        } else {
+          setCatStyle('nucleic', 'ringColour', 'base');
+          log.push('• set cartoon_ring_color → one colour per base (A · C · G · T · U)');
+        }
+      } else if (a.type === 'ring_transparency') {
+        const t = Math.max(0, Math.min(RING_TRANSPARENCY_MAX, Number.isFinite(parseFloat(a.val)) ? parseFloat(a.val) : 0));
+        setCatStyle('nucleic', 'ringTransparency', t);
+        log.push(`• set cartoon_ring_transparency, ${a.val} → ring plates at ${t.toFixed(2)}`);
       }
     });
     setSelStyles(next);
@@ -4836,9 +5298,12 @@ clearSidechain();
 if (sidechainStyle !== 'none' && !hideAll && !pymolActive && !lightRenderRef.current) {
 try {
 const pGeom = catRadii(proteinLook);
-// Same rule as the renderer: ONE flat colour when « Atom colour » is Custom…,
-// the element colours otherwise; a stick style takes the Bond radius, spacefill
-// takes the Sphere radius, and ball+stick scales its atom spheres with it.
+// SAME rule as the renderer (catColorParams): the side chains obey the WHOLE
+// « Atom colour » of this menu — element colours, ONE flat colour, the
+// 2°-structure colours of the 🎨 panel (a side chain is coloured by the
+// secondary structure of ITS residue) or the sequence gradient; a stick style
+// takes the Bond radius, spacefill takes the Sphere radius, and ball+stick
+// scales its atom spheres with it.
 const sideParams = sidechainStyle === 'ball+stick'
   ? { aspectRatio: 2.0 * pGeom.sphere, radiusSize: BALLSTICK_BOND_RADIUS * pGeom.bond }
   : sidechainStyle === 'licorice'
@@ -4850,9 +5315,7 @@ const sideParams = sidechainStyle === 'ball+stick'
         : {};
 sidechainCompRef.current = component.addRepresentation(sidechainStyle, {
 sele: '(protein and sidechain) or (protein and .CA)', multipleBond: true,
-...((proteinLook.atomColor === 'custom' && Number.isFinite(proteinLook.atomColorHex))
-  ? { color: proteinLook.atomColorHex }
-  : { color: 'element' }),
+...catColorParams(proteinLook, 'atom'),
 ...sideParams,
 });
 } catch {}
@@ -5855,16 +6318,34 @@ const renderCatRadii = (cat) => {
   );
 };
 
-// Atom colour of ONE menu: the element colours (default), or ONE flat colour —
-// NGL takes a hex number as `color`. The backbones keep their rainbow-by-residue
-// default until Custom… is chosen (see backboneCol in the renderer).
+// Atom colour of ONE menu. ONE selector carries every colouring metaphor the
+// renderer understands (catColorParams): the element colours (default), the
+// customisable 2°-structure colours of the protein menu, the two-colour GRADIENT
+// along the sequence (N → C terminus / 5' → 3' end) and ONE flat colour.
 const renderAtomColour = (cat) => {
   const m = catStyles[cat] || {};
-  const custom = m.atomColor === 'custom';
+  const mode = m.atomColor || 'default';
+  const custom = mode === 'custom';
+  const gradient = mode === 'gradient';
+  const sstruc = mode === 'sstruc';
   const hex = Number.isFinite(m.atomColorHex) ? m.atomColorHex : DEFAULT_ATOM_COLORS[cat];
+  const from = Number.isFinite(m.gradientFrom) ? m.gradientFrom : DEFAULT_GRADIENT_COLORS.from;
+  const to = Number.isFinite(m.gradientTo) ? m.gradientTo : DEFAULT_GRADIENT_COLORS.to;
+  // The ramp always runs from the FIRST residue to the last (N terminus → C
+  // terminus, 5' → 3'): the ⇄ button is what reverses it, by swapping the two.
+  const swap = () => { setCatStyle(cat, 'gradientFrom', to); setCatStyle(cat, 'gradientTo', from); };
+  const gradientLabel = cat === 'protein' ? 'Gradient (N → C terminus)'
+    : cat === 'nucleic' ? "Gradient (5' → 3' end)"
+      : 'Gradient (per chain)';
+  // A ramp follows a SEQUENCE: it is offered on the two POLYMER menus (a protein,
+  // a nucleic acid). On a menu whose molecules are single residues (a lipid, a
+  // sugar, a ligand, water) every residue would simply take the first colour, so
+  // the option is not offered there — and a value coming from elsewhere falls back
+  // on « Default » in the selector instead of showing a choice that does not exist.
+  const showGradient = cat === 'protein' || cat === 'nucleic';
   return (
-    <VRow label="Atom colour" title="Colour of the ATOMS of this menu only. « Default » keeps the classic colouring — element colours, and the rainbow by residue index for the protein / nucleic backbones. « Custom… » paints the whole menu with ONE colour (the swatch on the right).">
-      <VSel value={custom ? 'custom' : 'default'}
+    <VRow label="Atom colour" title="Colour of EVERYTHING this menu draws — its ribbon (cartoon / ribbon / tube / trace) AND its atoms / bonds (Ball & Stick · Licorice · Lines · Spheres). « Default » keeps the classic colouring — element colours, and the rainbow by residue index for the protein / nucleic backbones. « Secondary structure » paints the helices, the sheets and the loops with the three colours of the 🎨 Colours panel. « Gradient » runs a two-colour ramp ALONG the sequence, from the first residue to the last of every chain (N → C terminus for proteins, 5' → 3' end for nucleic acids). « Custom… » paints the whole menu with ONE colour (the swatch on the right).">
+      <VSel value={!showGradient && mode === 'gradient' ? 'default' : mode}
         onChange={(e) => {
           const v = e.target.value;
           setCatStyle(cat, 'atomColor', v);
@@ -5872,12 +6353,39 @@ const renderAtomColour = (cat) => {
         }}
         title={`${cat} atom colouring`} width="w-44">
         <option value="default">Default (element colours)</option>
+        {cat === 'protein' && <option value="sstruc">Secondary structure</option>}
+        {showGradient && <option value="gradient">{gradientLabel}</option>}
         <option value="custom">Custom colour…</option>
       </VSel>
       {custom && (
         <input type="color" value={numToHex(hex)}
           onChange={(e) => setCatStyle(cat, 'atomColorHex', parseInt(e.target.value.slice(1), 16))}
           className="w-8 h-7 rounded border border-slate-300 cursor-pointer" title="Colour of every atom drawn by this menu" />
+      )}
+      {gradient && (
+        <>
+          <input type="color" value={numToHex(from)}
+            onChange={(e) => setCatStyle(cat, 'gradientFrom', parseInt(e.target.value.slice(1), 16))}
+            className="w-8 h-7 rounded border border-slate-300 cursor-pointer"
+            title={cat === 'nucleic' ? "Colour of the FIRST residue of every chain (the 5' end)" : 'Colour of the FIRST residue of every chain (the N terminus)'} />
+          <span className="text-[10px] font-bold text-slate-400">→</span>
+          <input type="color" value={numToHex(to)}
+            onChange={(e) => setCatStyle(cat, 'gradientTo', parseInt(e.target.value.slice(1), 16))}
+            className="w-8 h-7 rounded border border-slate-300 cursor-pointer"
+            title={cat === 'nucleic' ? "Colour of the LAST residue of every chain (the 3' end)" : 'Colour of the LAST residue of every chain (the C terminus)'} />
+          <button type="button" onClick={swap}
+            className="px-1.5 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+            title="Swap the two colours (the ramp is always drawn from the first residue to the last)">
+            ⇄
+          </button>
+        </>
+      )}
+      {sstruc && (
+        <button type="button" onClick={() => setShowColoursPanel(true)}
+          className="px-1.5 py-0.5 text-[10px] font-bold rounded border bg-rose-50 border-rose-300 text-rose-700 hover:bg-rose-100"
+          title="The three helix / sheet / loop colours are set in the 🎨 Colours panel of this menu">
+          🎨 Helix / Sheet / Loop colours
+        </button>
       )}
     </VRow>
   );
@@ -6101,8 +6609,33 @@ const resetNucleicColours = () => setCatStyles((prev) => ({
     phosphateColor: DEFAULT_NUCLEIC_COLORS.phosphate,
     pentoseColor: DEFAULT_NUCLEIC_COLORS.pentose,
     baseColor: DEFAULT_NUCLEIC_COLORS.base,
+    // …and the RING PLATES of « Stylized rings » back to per-base colours, solid.
+    ringColour: 'base',
+    ringColorHex: DEFAULT_NUCLEIC_COLORS.base,
+    ringTransparency: RING_TRANSPARENCY_DEFAULT,
   },
 }));
+// The 🎨 panel of menu A (proteins): a swatch writes the colour AND switches the
+// menu to « Secondary structure », so the ribbon AND the atoms really take it.
+// BEFORE this, moving a swatch only changed a colour that the classic rendering
+// (rainbow by residue) never used — which is exactly why a custom helix / sheet /
+// loop colour looked IGNORED in the ribbons.
+const setSstrucColour = (key, hex) => {
+  leaveLightMode();   // it changes what is drawn, not only a colour
+  setSstrucColors((c) => ({ ...c, [key]: hex }));
+  setCatStyles((prev) => ({ ...prev, protein: { ...(prev.protein || {}), atomColor: 'sstruc' } }));
+};
+// The FILLED PLATES of « Stylized rings » — their ONE colour, their transparency
+// and the ribose ring plate. Each of them switches the Bases style to « Stylized
+// rings », because a ring setting on a menu that draws no ring would be invisible
+// (same rule as a swatch switching « Colour by chemical group » on).
+const setRingPlate = (patch) => {
+  leaveLightMode();   // the plates ARE a rendering choice
+  setCatStyles((prev) => ({
+    ...prev,
+    nucleic: { ...(prev.nucleic || {}), bases: 'rings', ...patch },
+  }));
+};
 // The same pair for the 🧫 Lipids menu (C): a swatch switches « Colour by chemical
 // part » ON — the choice is never invisible — and ↺ puts the three parts back.
 const setLipidColour = (key, hex) => setCatStyles((prev) => ({
@@ -6449,10 +6982,10 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
       <option value="hide">Hide</option>
     </VSel>
   </VRow>
-  <VRow label="Bases" title="Filled rings (slabs / boxes) = NGL's own « base » representation — the flat plates (rungs) of the base ladder, i.e. the slabs that fill the inside of the base rings. Stylized rings = the same filled plates, but coloured INSIDE by the identity of each base (A · C · G · T · U) with a thin coloured ring of sticks over the base atoms — with Backbone = Cartoon this is the stylized DNA / RNA look. Licorice (sticks) draws the base atoms as sticks, Lines as bonds (cheapest). Hide removes the bases.">
+  <VRow label="Bases" title="Filled rings (slabs / boxes) = NGL's own « base » representation — the flat rungs of the base ladder. Stylized rings = the FILLED PLATES of the ring system of each base AND of the ribose ring, coloured inside by the identity of the base (A · C · G · T · U) — the viewer's answer to PyMOL's « set cartoon_ring_mode, 1 » — with a thin outline over exactly those rings; their colour mode, their one colour and their transparency are set in the 🎨 Colours panel of this menu (« Rings (Stylized rings) »). With Backbone = Cartoon this is the stylized DNA / RNA look. Licorice (sticks) draws the base atoms as sticks, Lines as bonds (cheapest). Hide removes the bases.">
     <VSel value={catStyles.nucleic.bases} onChange={(e) => setCatStyle('nucleic', 'bases', e.target.value)} title="Nucleic bases representation" width="w-48">
       <option value="slab">Filled rings (slabs / boxes)</option>
-      <option value="rings">Stylized rings (coloured inside)</option>
+      <option value="rings">Stylized rings (filled plates)</option>
       <option value="sticks">Licorice (sticks)</option>
       <option value="lines">Lines</option>
       <option value="spheres">Spheres</option>
@@ -6819,25 +7352,29 @@ title="New residue number (blank = keep the original)"
       </button>
     </div>
     <div className="flex flex-wrap gap-x-8 gap-y-3">
-      {/* Per-element secondary-structure colours — used wherever the colour
-          mode is "2° structure" (Molecules bar / Selections panel). */}
+      {/* Per-element secondary-structure colours — they colour the RIBBONS
+          (cartoon / ribbon / tube / trace) and the atoms / bonds of the Proteins
+          menu as soon as a swatch here is moved: the swatch switches the menu to
+          « Secondary structure » (never an ignored colour). The same three are
+          used by the « 2° structure » colour mode of the Molecules bar /
+          Selections panel. */}
       <div className="flex flex-col gap-1.5">
         <span className="text-[10px] font-black text-slate-600 uppercase">Secondary structure</span>
-        <label className="flex items-center gap-2 text-xs font-bold text-slate-700" title="Colour of α-helices (incl. 3₁₀ and π helices) when coloured by 2° structure">
+        <label className="flex items-center gap-2 text-xs font-bold text-slate-700" title="Colour of α-helices (incl. 3₁₀ and π helices). Moving this swatch switches the Proteins menu to « Atom colour : Secondary structure », so the ribbon AND the atoms take it (and the « 2° structure » colour mode of the Molecules bar / Selections panel too).">
           <input type="color" value={numToHex(sstrucColors.helix)}
-            onChange={(e) => { leaveLightMode(); setSstrucColors((c) => ({ ...c, helix: parseInt(e.target.value.slice(1), 16) })); }}
+            onChange={(e) => setSstrucColour('helix', parseInt(e.target.value.slice(1), 16))}
             className="w-8 h-7 rounded border cursor-pointer" />
           Helices
         </label>
-        <label className="flex items-center gap-2 text-xs font-bold text-slate-700" title="Colour of β-sheets / β-strands when coloured by 2° structure">
+        <label className="flex items-center gap-2 text-xs font-bold text-slate-700" title="Colour of β-sheets / β-strands. Moving this swatch switches the Proteins menu to « Atom colour : Secondary structure » so the ribbon really takes it.">
           <input type="color" value={numToHex(sstrucColors.sheet)}
-            onChange={(e) => { leaveLightMode(); setSstrucColors((c) => ({ ...c, sheet: parseInt(e.target.value.slice(1), 16) })); }}
+            onChange={(e) => setSstrucColour('sheet', parseInt(e.target.value.slice(1), 16))}
             className="w-8 h-7 rounded border cursor-pointer" />
           Sheets
         </label>
-        <label className="flex items-center gap-2 text-xs font-bold text-slate-700" title="Colour of loops / coils (everything that is not a helix or a sheet) when coloured by 2° structure">
+        <label className="flex items-center gap-2 text-xs font-bold text-slate-700" title="Colour of loops / coils (everything that is not a helix or a sheet). Moving this swatch switches the Proteins menu to « Atom colour : Secondary structure » so the ribbon really takes it.">
           <input type="color" value={numToHex(sstrucColors.loop)}
-            onChange={(e) => { leaveLightMode(); setSstrucColors((c) => ({ ...c, loop: parseInt(e.target.value.slice(1), 16) })); }}
+            onChange={(e) => setSstrucColour('loop', parseInt(e.target.value.slice(1), 16))}
             className="w-8 h-7 rounded border cursor-pointer" />
           Loops / coils
         </label>
@@ -6859,7 +7396,7 @@ title="New residue number (blank = keep the original)"
         </label>
       </div>
     </div>
-    <p className="text-[10px] text-slate-400 italic">Saved and persists across pages. “Secondary structure” colours apply everywhere the “2° structure” colour mode is used (Molecules bar / Selections panel).</p>
+    <p className="text-[10px] text-slate-400 italic">Saved and persists across pages. The “Secondary structure” colours paint the RIBBON of the Proteins menu (cartoon · ribbon · tube · trace — the helix, the sheet and the loop each take their own colour) as well as its atoms / bonds, and they are what the “2° structure” colour mode of the Molecules bar / Selections panel uses. Moving a swatch switches the Proteins menu to « Atom colour : Secondary structure » so the colour can never be ignored.</p>
   </div>
 )}
 {/* 🔬 The colour panel of the B (Nucleic acids) menu. This is where the shared
@@ -6906,9 +7443,46 @@ title="New residue number (blank = keep the original)"
         Bases
       </label>
     </div>
-    <p className="text-[10px] text-slate-400 italic">The group of an atom is read from its ATOM NAME: <b>P · OP1 · OP2 · OP3</b> (and O1P / O2P / O3P) = phosphate, every <b>primed</b> name (C1'…C5', O2'…O5', O4', H1'…H5'' — or the older C1* spelling) = pentose ring, everything else (N1…N9, C2 · C4…C8, O2 · O4 · O6, C5M) = bases. Changing a swatch switches the group colouring on; saved and persistent across pages, and part of a ⚙️ setup.</p>
+    {/* The FILLED PLATES of the base rings and of the ribose ring — the stylized
+        nucleic look of « Bases → Stylized rings » (PyMOL: set cartoon_ring_mode, 1
+        together with cartoon_ring_color / cartoon_ring_transparency). Any control
+        here switches the Bases style to « Stylized rings », because a ring setting
+        on a menu that draws no ring would be invisible. */}
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 pt-1 border-t border-violet-200">
+      <span className="text-[10px] font-black text-violet-700 uppercase tracking-wide">Rings (Stylized rings)</span>
+      <label className="flex items-center gap-2 text-xs font-bold text-slate-700" title="Colour INSIDE the rings. « One colour per base » fills each plate with the colour of its own base (A · C · G · T · U) and the ribose plate with the colour of its nucleotide; « One colour… » paints every plate of the molecule with ONE colour (the swatch) — PyMOL's set cartoon_ring_color.">
+        Ring colour
+        <VSel value={catStyles.nucleic.ringColour === 'custom' ? 'custom' : 'base'}
+          onChange={(e) => setRingPlate({ ringColour: e.target.value })}
+          title="Colour of the ring plates" width="w-44">
+          <option value="base">One colour per base (A · C · G · T · U)</option>
+          <option value="custom">One colour…</option>
+        </VSel>
+      </label>
+      {catStyles.nucleic.ringColour === 'custom' && (
+        <input type="color" value={numToHex(catStyles.nucleic.ringColorHex)}
+          onChange={(e) => setRingPlate({ ringColour: 'custom', ringColorHex: parseInt(e.target.value.slice(1), 16) })}
+          className="w-8 h-7 rounded border cursor-pointer"
+          title="Colour of every ring plate (the plates only) — PyMOL's set cartoon_ring_color" />
+      )}
+      <label className="flex items-center gap-2 text-xs font-bold text-slate-700" title="Transparency of the ring plates: 0 = SOLID plates (the default — the rings are filled as if they were solid plates), 0.5 = PyMOL's example (set cartoon_ring_transparency, 0.5)... up to 0.95, so a plate can never become invisible. The outline of the rings stays opaque.">
+        Ring transparency
+        <input type="range" min={0} max={RING_TRANSPARENCY_MAX} step={0.05} value={catStyles.nucleic.ringTransparency}
+          onChange={(e) => setRingPlate({ ringTransparency: Number(e.target.value) })}
+          className="w-24 accent-violet-600" aria-label="Nucleic ring transparency" />
+        <span className="text-[10px] text-slate-500 w-8">{Number(catStyles.nucleic.ringTransparency || 0).toFixed(2)}</span>
+      </label>
+      <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 cursor-pointer" title="Fill the RIBOSE / 2'-DEOXYRIBOSE RING as a plate of its own, next to the base rings — the sugar ring is part of the stylized look (PyMOL's cartoon_ring_mode fills it too). Its colour follows the Pentose colour above when « Colour by chemical group » is on, and the colour of its own base otherwise.">
+        <input type="checkbox" checked={catStyles.nucleic.sugarPlate !== false}
+          onChange={(e) => setRingPlate({ sugarPlate: e.target.checked })}
+          className="w-3.5 h-3.5 accent-violet-600" />
+        Ribose ring plate
+      </label>
+    </div>
+    <p className="text-[10px] text-slate-400 italic">The group of an atom is read from its ATOM NAME: <b>P · OP1 · OP2 · OP3</b> (and O1P / O2P / O3P) = phosphate, every <b>primed</b> name (C1'…C5', O2'…O5', O4', H1'…H5'' — or the older C1* spelling) = pentose ring, everything else (N1…N9, C2 · C4…C8, O2 · O4 · O6, C5M) = bases. Changing a swatch switches the group colouring on; saved and persistent across pages, and part of a ⚙️ setup. The RING PLATES are the base rings and the ribose ring drawn as filled surfaces (PyMOL: set cartoon_ring_mode, 1 · cartoon_ring_color · cartoon_ring_transparency): they follow this panel — one colour per base, or ONE ring colour, and the Ring transparency — while their outline keeps the colour of the plates.</p>
   </div>
 )}
+
 {/* 🧫 The colour panel of the C (Lipids) menu — the same idea as menu B's, for
     the three chemical PARTS of a lipid: headgroup · glycerol backbone · acyl
     chains. « Colour by chemical part » switches every lipid representation to the
@@ -7229,7 +7803,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
       </select>
       <span className="text-[9px] text-slate-400">saved in <b>Library → PyMOL Scripts</b></span>
     </div>
-    <label className="text-[10px] font-bold text-slate-500 uppercase">Paste a PyMOL script (select / show / hide / color / set sphere_scale·transparency / bg_color / cartoon · ribbon · tube / surface / spectrum / util.ray_shadows)</label>
+    <label className="text-[10px] font-bold text-slate-500 uppercase">Paste a PyMOL script (select / show / hide / color / set sphere_scale·transparency·cartoon_ring_mode·cartoon_ring_color·cartoon_ring_transparency·cartoon_nucleic_acid_mode / bg_color / cartoon · ribbon · tube / surface / spectrum / util.ray_shadows)</label>
     <textarea value={pymolScript} onChange={(e) => setPymolScript(e.target.value)} rows={6}
       className="w-full border border-violet-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-violet-500 bg-white"
       placeholder={'select peptide, polymer.protein\nshow cartoon, peptide\ncolor gold, name CA and peptide\nset sphere_scale, 0.6, headgroups\nset sphere_transparency, 0.3, upper_headgroups\nbg_color white'} />

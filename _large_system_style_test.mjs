@@ -105,8 +105,15 @@ ok(styleHook('const setSurfaceColor = (cat, value) => {', 3).includes('leaveLigh
   'la couleur de surface (ESP) aussi');
 ok(VIEWER.includes('{ leaveLightMode(); setSidechainStyle(e.target.value); }'),
   'le sélecteur de chaînes latérales aussi');
-eq((VIEWER.match(/\{ leaveLightMode\(\); setSstrucColors/g) || []).length, 3,
-  'les trois pastilles de couleur 2° structure aussi');
+// Les pastilles de 2° structure passent par setSstrucColour, qui appelle
+// leaveLightMode() lui-même (il change ce qui est DESSINÉ, pas seulement une
+// couleur) : les trois pastilles du panneau + les deux boutons de ↺.
+eq((VIEWER.match(/const setSstrucColour = \(key, hex\) => \{/g) || []).length, 1,
+  'les couleurs de 2° structure s’écrivent par UN seul helper');
+eq((VIEWER.match(/leaveLightMode\(\);   \/\/ it changes what is drawn/g) || []).length, 1,
+  '…et ce helper sort du rendu léger avant d’écrire la couleur');
+eq((VIEWER.match(/setSstrucColour\('/g) || []).length, 3,
+  'les trois pastilles de couleur 2° structure l’utilisent');
 const iReset = lines.findIndex((l) => l.includes('setSstrucColors({ helix: 0xb44a90, sheet: 0xf8d878, loop: 0xe6e6e6 });'));
 ok(iReset > 0 && lines[iReset - 1].includes('leaveLightMode();'), 'le bouton ↺ Reset defaults aussi');
 ok(styleHook('const applyDockStylesNow = () => {', 5).includes('leaveLightMode();'),
