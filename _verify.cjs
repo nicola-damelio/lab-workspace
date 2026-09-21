@@ -21,6 +21,12 @@ const tests = [
   // décochée restait dessinée et une surface ne partait plus (le rapport :
   // « hide still does not hide », « there is no way to remove a surface »).
   '_viewer_main_reps_ownership_test.mjs',
+  // Les CINQ défauts du dernier rapport : le paragraphe de §2 dessiné au milieu du
+  // viewer (un commentaire de bloc écrit NU entre deux éléments JSX), le rainbow
+  // sans colorMaker NGL, les deux couleurs « first → last » que plus rien ne
+  // pouvait changer, les chaînes latérales flottantes (CB–CA jamais dessiné) et le
+  // 🔢 renumérotation qui n'ouvrait rien et ne changeait rien.
+  '_viewer_report_fixes_test.mjs',
   '_viewer_render_smoke_test.mjs',
 ];
 const rows = tests.map((t) => {

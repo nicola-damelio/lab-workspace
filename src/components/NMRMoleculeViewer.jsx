@@ -1945,9 +1945,12 @@ const residueLabelCode = (resname) => {
  *   `allowed` is an optional Set of atom indices: only those atoms may be
  *   labelled. The per-category menus use it, so « Residues » ticked in the
  *   Proteins menu labels proteins only.
+ *   `renumberOf` is the residue renumbering of the 🔢 tool (resno → number shown):
+ *   every label follows it, so a renumbering is VISIBLE in the 3D view instead of
+ *   only in the rename list (the report: « renumber does not do anything »).
  * @returns {{ labelText: object, indices: number[] }}
  */
-const build3dLabelMap = (component, { showResidueNumber, showAtomLabel, showResidueNumberType = false, atomNameOf = null, allowed = null }) => {
+const build3dLabelMap = (component, { showResidueNumber, showAtomLabel, showResidueNumberType = false, atomNameOf = null, allowed = null, renumberOf = null }) => {
   const labelText = {};
   const structure = component && component.structure;
   if (!structure) return { labelText, indices: [] };
@@ -1996,8 +1999,9 @@ const build3dLabelMap = (component, { showResidueNumber, showAtomLabel, showResi
     if (!entry.atoms.length) continue;
     const cat = classifyLabelResidue(entry.resname, entry.atoms);
     const code = residueLabelCode(entry.resname);
-    const resTag = `${entry.resname}${entry.resno}`;
-    const resnoStr = String(entry.resno);
+    const shownResno = typeof renumberOf === 'function' ? renumberOf(entry.resno) : entry.resno;
+    const resTag = `${entry.resname}${shownResno}`;
+    const resnoStr = String(shownResno);
 
     if (cat === 'protein' || cat === 'nucleic') {
       // A) proteins / B) nucleic acids — polymer rules.
@@ -2644,6 +2648,11 @@ const STYLES = {
   small: ['hide', 'ball+stick', 'licorice', 'line', 'spacefill', 'surface', 'mesh'],
   ion: ['hide', 'spacefill'],
 };
+// The styles that DRAW ONE SPHERE / STICK PER ATOM — and therefore need BOTH atoms
+// of a bond inside their own selection (see the side-chain ANCHOR of
+// buildSectionReps). A ribbon / cartoon / tube / trace walks the polymer itself and
+// has no such requirement, so it is not in this list.
+const ATOM_DRAW_STYLES = ['ball+stick', 'licorice', 'line', 'spacefill'];
 // The « Color by » sets, one per row of the request. NOTE: « Lipid type » is NOT
 // offered on water (the request corrected exactly that), and « Charge » exists for
 // ions alone — it is what tells a Na⁺ from a Cl⁻ in the same solvent.
@@ -2914,6 +2923,18 @@ const applyGeneralField = (catStyles, key, value) => {
     if (overridesLook(cur, key)) return;   // that menu keeps its own value
     out[c] = { ...cur, [key]: value };
   });
+  return out;
+};
+
+// 5. ONE end of the gradient ramp → EVERY menu, override or NOT. The ramp is a
+//    SINGLE NGL scheme shared by the whole viewer (see gradientColorStore), so the
+//    two swatches of the ⚙ wheel (and of the styling bar) must never be blocked by
+//    a per-menu override: an `ovr.gradientFrom` left behind by the old §2 menu made
+//    the swatches change nothing at all — the report « it is impossible to change
+//    the colors of first and last ».
+const setGradientPairIn = (catStyles, key, hex) => {
+  const out = { ...catStyles };
+  CAT_STYLE_CATS.forEach((c) => { out[c] = { ...(out[c] || {}), [key]: hex }; });
   return out;
 };
 
@@ -3937,6 +3958,31 @@ const MolFold = ({ open, onToggle, label, summary }) => (
 // ============================================================================
 // MAIN COMPONENT
 // ============================================================================
+/* ---- The residues the 🔢 renumbering tool lists ------------------------------
+   ONE walk of a structure → the residues the viewer shows for renumbering, in the
+   order the atoms come: [{ resno, resname, count }]. It fills the state the panel
+   reads AND is what the panel itself calls when that state is still empty (see
+   ensureResidueInfo), so the 🔢 button can never open an empty panel. PURE on a
+   structure, so a test can run it on a plain object. */
+const collectResidues = (structure) => {
+  const out = [];
+  if (!structure || typeof structure.eachAtom !== 'function') return out;
+  const seen = new Map();
+  try {
+    structure.eachAtom((a) => {
+      const rawResno = a.resno != null ? Number(a.resno) : 0;
+      let entry = seen.get(rawResno);
+      if (!entry) {
+        entry = { resno: rawResno, resname: a.resname || '', count: 0 };
+        seen.set(rawResno, entry);
+        out.push(entry);
+      }
+      entry.count += 1;
+    });
+  } catch { /* a structure that cannot be walked lists nothing */ }
+  return out;
+};
+
 const NMRMoleculeViewer = ({
 src,
 structureText,
@@ -4308,8 +4354,11 @@ const [extraMols, setExtraMols] = useState([]);    // [{ id, name, style, color 
 // ONE signature of EVERY styling choice of the bar — the persisted per-kind looks,
 // the per-molecule trees, the ✔ of the sections and the sections themselves. The
 // rebuild effects compare it, so a change to any dropdown rebuilds exactly once and
-// a change to nothing rebuilds nothing.
-const styleSignature = `${sectionLooksSig(kindLooks)}|${JSON.stringify(sectionLooks)}|${JSON.stringify(sectionVis)}|${Object.keys(sectionCatalog).map((k) => `${k}:${(sectionCatalog[k].sections || []).map((s) => s.id).join('|')}`).join(';')}`;
+// a change to nothing rebuilds nothing. The two ends of the GRADIENT ramp are part
+// of it: the ramp is an NGL scheme read at render time, so a swatch only reaches the
+// screen if the representations are rebuilt (see setGradientPair).
+const gradientRampSignature = `${Number.isFinite((catStyles.protein || {}).gradientFrom) ? catStyles.protein.gradientFrom : ''}/${Number.isFinite((catStyles.protein || {}).gradientTo) ? catStyles.protein.gradientTo : ''}`;
+const styleSignature = `${sectionLooksSig(kindLooks)}|${JSON.stringify(sectionLooks)}|${JSON.stringify(sectionVis)}|${Object.keys(sectionCatalog).map((k) => `${k}:${(sectionCatalog[k].sections || []).map((s) => s.id).join('|')}`).join(';')}|ramp:${gradientRampSignature}`;
 // The NAME every molecule shows in its space: the main structure takes its file
 // name, an extra molecule its own — kept in a ref the section enumeration reads, and
 // pushed into the catalog when it changes so the bar never shows a stale name.
@@ -4378,9 +4427,13 @@ const gradientPair = {
   from: Number.isFinite((catStyles.protein || {}).gradientFrom) ? catStyles.protein.gradientFrom : DEFAULT_GRADIENT_COLORS.from,
   to: Number.isFinite((catStyles.protein || {}).gradientTo) ? catStyles.protein.gradientTo : DEFAULT_GRADIENT_COLORS.to,
 };
-// Write BOTH ends of the ramp through the general look, so the six menus follow
-// and the reference feed (catStyles.protein) sees the new pair.
-const setGradientPair = (key, hex) => setGeneralLookField(key, hex);
+// Write BOTH ends of the ramp through the general look AND into every menu, so the
+// six menus follow, the reference feed (catStyles.protein) sees the new pair, and
+// the ⚙ swatches can never be blocked by an old per-menu override (setGradientPairIn).
+const setGradientPair = (key, hex) => {
+  setGeneralLookField(key, hex);                                // the general value + every menu that Follows
+  setCatStyles((prev) => setGradientPairIn(prev, key, hex));     // …and EVERY other menu, override or not
+};
 // ⇄ reverses the ramp (the ramp itself always runs first residue → last; swapping
 // its two ends is what « reverse » means — same rule as the menu's ⇄ button).
 const swapGeneralGradient = () => {
@@ -4491,14 +4544,31 @@ const commitRenumber = (next) => {
   setRenumberMap(next);
   if (typeof onResRenumber === 'function') onResRenumber(next);
 };
+// The 🔢 panel must NEVER open empty. The state below is filled by the effect that
+// collects the atoms of the structure, but a click on 🔢 has to work even when that
+// effect has not run (or has been swallowed): this walks the structure ON DEMAND and
+// returns the residue list, so the button always shows its specification — the report
+// was « the renumber key does not do anything nor show specifications ».
+const ensureResidueInfo = () => {
+  const structure = componentRef.current && componentRef.current.structure;
+  const list = collectResidues(structure);
+  if (list.length) setResidueInfo(list);
+  return list.length ? list : residueInfo;
+};
+const toggleRenumberPanel = () => {
+  ensureResidueInfo();
+  setShowRenumberPanel((v) => !v);
+};
 
 // Renumber every residue consecutively starting from the user-chosen number
-// (residue 1 → start, residue 2 → start+1, …).
+// (residue 1 → start, residue 2 → start+1, …). The list it walks comes from the
+// state, or straight from the structure when the state is still empty.
 const applyRenumberFrom = () => {
   const start = parseInt(renumberFrom, 10);
   if (!Number.isFinite(start)) return;
+  const list = residueInfo.length ? residueInfo : ensureResidueInfo();
   const next = {};
-  residueInfo.forEach((r, i) => { next[String(r.resno)] = start + i; });
+  list.forEach((r, i) => { next[String(r.resno)] = start + i; });
   commitRenumber(next);
 };
 
@@ -5498,7 +5568,14 @@ const sectionColorParams = (look, kind) => {
     case 'sugar': return schemeParam(sugarSchemeKey, 'element');
     case 'charge': return schemeParam(chargeSchemeKey || elementSchemeKey, 'element');
     case 'hydrophobicity': return { colorScheme: 'hydrophobicity' };
-    case 'rainbow': return { colorScheme: 'rainbow' };
+    // « Rainbow (first → last) » is the rainbow BY RESIDUE. NGL has NO `rainbow`
+    // COLORMAKER — « rainbow » is one of its color SCALES (the registry only holds
+    // `residueindex`, `sstruc`, `hydrophobicity`, …) — so asking for
+    // `colorScheme: 'rainbow'` made NGL throw inside addRepresentation and the row
+    // drew NOTHING at all: the report « rainbow does not color ». The rainbow by
+    // residue IS `residueindex`, whose own default scale is "rainbow" (red → blue);
+    // the scale is pinned here so the colouring can never drift to Spectral.
+    case 'rainbow': return { colorScheme: 'residueindex', colorScale: 'rainbow' };
     case 'gradient': return gradientSchemeKey ? { color: gradientSchemeKey } : { colorScheme: 'residueindex' };
     // « Electrostatic potential » is the ONLY colouring NGL can paint on a surface:
     // the renderer therefore ALSO adds a translucent ESP surface to that row (see
@@ -5578,10 +5655,26 @@ const nucleotideGroupSele = (structure, sec, group) => {
 // atoms that row owns. '' means « this row has nothing to draw here », and it is
 // what keeps a row that the molecule does not have (side chains of a ligand) empty
 // instead of drawing the whole molecule.
-const sectionRowSele = (structure, sec, sub) => {
+const sectionRowSele = (structure, sec, sub, opts = {}) => {
   const base = sec.sele || 'all';
   if (sub === 'general') return base;
-  if (sec.kind === 'protein') return `${base} and ${sub === 'sidechain' ? 'sidechain' : 'backbone'}`;
+  if (sec.kind === 'protein') {
+    // `opts.anchorSideChains`: the side chains are drawn as ATOMS while the backbone
+    // is too (Ball & Stick · Licorice · Lines · Spheres) — see ATOM_DRAW_STYLES.
+    // NGL draws a bond only when BOTH of its atoms are inside the selection, and its
+    // `sidechain` keyword EXCLUDES the CA that a side chain hangs from: CB, CG, …
+    // were therefore drawn with no bond to the backbone, and every side chain FLOATED
+    // beside the chain (the report: « the side chains are not attached to the
+    // backbone — bond with the backbone must be included »). The CA then belongs to
+    // the SIDE-CHAIN row and is taken out of the backbone row, so the CB–CA bond is
+    // drawn inside ONE representation, no atom is drawn twice, and the backbone stays
+    // connected by its own C–N peptide bonds. A ribbony backbone is left untouched:
+    // the ribbon itself walks through the CAs.
+    if (sub === 'sidechain') {
+      return opts.anchorSideChains ? `${base} and (sidechain or .CA)` : `${base} and sidechain`;
+    }
+    return opts.anchorSideChains ? `${base} and backbone and not .CA` : `${base} and backbone`;
+  }
   if (sec.kind === 'nucleic') {
     if (sub === 'bases') return nucleotideGroupSele(structure, sec, 'base');
     if (sub === 'ribose') return nucleotideGroupSele(structure, sec, 'pentose');
@@ -5799,11 +5892,22 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
     // `water|all` — so unticking a molecule (or leaving water / ions unticked, which
     // KIND_VISIBLE_BY_DEFAULT asks for) drew it all the same.
     if (hidden && (hidden.has(sec.id) || hidden.has(sec.key))) return;
+    // Every row's look of THIS section, computed ONCE: the side-chain ANCHOR below
+    // needs the backbone look and the side-chain look together.
+    const subLooks = {};
+    subsectionsOf(sec.kind).forEach((sp) => { subLooks[sp.sub] = effectiveSectionLook(treeOf(sec), sec.kind, sp.sub); });
+    // A protein whose BACKBONE and SIDE CHAINS are BOTH drawn as atoms hands the CA
+    // to the side-chain row (see sectionRowSele), so the two rows join at the CB–CA
+    // bond instead of showing floating side chains.
+    const anchorSideChains = sec.kind === 'protein'
+      && !!subLooks.sidechain && subLooks.sidechain.style !== 'hide'
+      && ATOM_DRAW_STYLES.includes(subLooks.sidechain.style)
+      && !!subLooks.backbone && ATOM_DRAW_STYLES.includes(subLooks.backbone.style);
     subsectionsOf(sec.kind).forEach((spec) => {
-      const look = effectiveSectionLook(treeOf(sec), sec.kind, spec.sub);
+      const look = subLooks[spec.sub];
       if (look.style === 'hide') return;
       if (look.colorBy === 'gradient') gradientRows.push(sec.sele);
-      const sele = sectionRowSele(structure, sec, spec.sub);
+      const sele = sectionRowSele(structure, sec, spec.sub, { anchorSideChains });
       if (!sele) return;
       const colorParams = sectionColorParams(look, sec.kind);
       const opacity = sectionOpacity(look);
@@ -7031,17 +7135,14 @@ useEffect(() => {
   const component = componentRef.current;
   if (!component || status !== 'ready' || !component.structure) return;
   const list = [];
-  const resMap = new Map();
   try {
     component.structure.eachAtom((a) => {
       const rawResno = a.resno != null ? Number(a.resno) : 0;
       list.push({ idx: a.index, element: a.element || '', name: a.atomname || '', resno: displayResno(rawResno), rawResno, resname: a.resname || '' });
-      if (!resMap.has(rawResno)) resMap.set(rawResno, { resno: rawResno, resname: a.resname || '', count: 0 });
-      resMap.get(rawResno).count++;
     });
   } catch {}
   setAtomList(list);
-  setResidueInfo([...resMap.values()]);
+  setResidueInfo(collectResidues(component.structure));
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [status, renumberMap]);
 
@@ -7617,6 +7718,10 @@ asked.forEach((sec) => {
     showResidueNumberType: !!l.residueType,
     atomNameOf: (atom) => displayNameRef.current(atom),
     allowed: new Set(indices),
+    // The 🔢 renumbering reaches the LABELS too: the numbers drawn on the structure
+    // are the renumbered ones (and `renumberMap` is in this effect's dependencies, so
+    // a renumbering repaints them).
+    renumberOf: displayResno,
   });
   sub.indices.forEach((idx) => {
     labelText[idx] = sub.labelText[idx];
@@ -7654,7 +7759,7 @@ visible: true,
 }
 } catch { /* label rendering is best-effort — never break the viewer */ }
 return clearLabels;
-}, [JSON.stringify(sectionLabels), status, renames, smilesNameMap, moleculeType]);
+}, [JSON.stringify(sectionLabels), status, renames, smilesNameMap, moleculeType, JSON.stringify(renumberMap)]);
 
 // The side chains are a ROW of a protein section now (« Side chains » of PART 4):
 // their style, colour, radii and transparency all come from that row, so the old
@@ -7962,6 +8067,27 @@ const renderSectionRow = (sec, sub) => {
             onChange={(e) => set('solidColor', parseInt(e.target.value.slice(1), 16))}
             className="w-5 h-5 rounded border cursor-pointer shrink-0" title="The ONE colour of « Solid »" />
         )}
+        {/* The two ends of the RAMP, right where « Gradient (first → last) » was
+            chosen: the pair is ONE NGL scheme shared by the whole viewer, so the
+            swatches write the global pair (the same ⚙ ones) and the row repaints —
+            before this, no control of the bar could change them at all (the report:
+            « it is impossible to change the colors of first and last »). */}
+        {look.colorBy === 'gradient' && (
+          <>
+            <input type="color" value={numToHex(gradientPair.from)}
+              onChange={(e) => setGradientPair('gradientFrom', parseInt(e.target.value.slice(1), 16))}
+              className="w-5 h-5 rounded border cursor-pointer shrink-0"
+              title="Colour of the FIRST residue of every chain (N terminus · 5' end)" />
+            <span className="text-[9px] font-bold text-slate-400 shrink-0">→</span>
+            <input type="color" value={numToHex(gradientPair.to)}
+              onChange={(e) => setGradientPair('gradientTo', parseInt(e.target.value.slice(1), 16))}
+              className="w-5 h-5 rounded border cursor-pointer shrink-0"
+              title="Colour of the LAST residue of every chain (C terminus · 3' end)" />
+            <button type="button" onClick={swapGeneralGradient}
+              className="text-[10px] font-bold text-slate-500 hover:text-slate-800 shrink-0"
+              title="⇄ Reverse the ramp (swap the two colours) — the ramp is always drawn from the first residue to the last">⇄</button>
+          </>
+        )}
       </div>
       <div className="flex items-center gap-1">
         <span className="text-[9px] text-slate-400 font-bold shrink-0"
@@ -7995,6 +8121,77 @@ const renderSectionRow = (sec, sub) => {
       {look.colorBy === 'esp' && (
         <span className="text-[9px] text-slate-400 italic">NGL paints this colouring on a surface only — one is added on top of this row</span>
       )}
+    </div>
+  );
+};
+
+/* ── The 🔢 RENUMBERING TOOL — ONE implementation, opened by the 🔢 of a molecule's
+   header AND by the 🔢 of §2, so the two buttons show the same specification. It
+   used to exist in §2 alone: the bar's 🔢 toggled a panel that only §2 could draw,
+   and that panel rendered NOTHING AT ALL whenever `residueInfo` was still empty —
+   « the renumber key does not do anything nor show specifications ». The list is now
+   taken from the state, or walked ON DEMAND from the structure (ensureResidueInfo),
+   and every row shows the number it will take, so the renumbering is readable. */
+const renderRenumberPanel = () => {
+  if (!showRenumberPanel) return null;
+  const list = residueInfo.length ? residueInfo : ensureResidueInfo();
+  if (!list.length) {
+    return (
+      <div className="border border-slate-200 rounded-lg bg-white shadow-sm p-2 text-[10px] text-slate-500 italic w-full">
+        no residue to renumber — load a structure first
+      </div>
+    );
+  }
+  return (
+    <div className="border border-slate-200 rounded-lg bg-white shadow-sm p-2 flex flex-col gap-1.5 max-h-56 overflow-y-auto w-full">
+      <div className="flex items-center justify-between gap-1">
+        <span className="text-[9px] font-bold text-slate-400 uppercase">Residue → new number</span>
+        <div className="flex items-center gap-1">
+          <input
+            type="number"
+            value={renumberFrom}
+            onChange={(e) => setRenumberFrom(e.target.value)}
+            className="border border-slate-300 rounded px-1 py-0.5 w-12 text-right outline-none focus:border-blue-500 text-[10px] font-mono"
+            title="Starting number"
+          />
+          <button
+            type="button"
+            onClick={applyRenumberFrom}
+            className="text-xs font-bold bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-1.5 py-0.5 rounded whitespace-nowrap"
+            title="Renumber all residues consecutively starting from this number (no manual per-residue edits needed)"
+          >
+            Renumber from
+          </button>
+          <button
+            type="button"
+            onClick={() => commitRenumber({})}
+            className="text-[9px] font-bold bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-1.5 py-0.5 rounded"
+            title="Clear renumbering (restore original numbers)"
+          >
+            Clear
+          </button>
+        </div>
+      </div>
+      {list.map((r, i) => (
+        <div key={r.resno} className="flex items-center gap-1.5 text-[10px] font-mono text-slate-600">
+          <span className="w-3 text-slate-400">{i + 1}.</span>
+          <span className="flex-1 truncate">{r.resname}{r.resno} → {displayResno(r.resno)}</span>
+          <input
+            type="number"
+            value={renumberMap[String(r.resno)] !== undefined && renumberMap[String(r.resno)] !== '' ? renumberMap[String(r.resno)] : r.resno}
+            onChange={(e) => {
+              const nv = parseInt(e.target.value, 10);
+              commitRenumber({ ...renumberMap, [String(r.resno)]: Number.isFinite(nv) ? nv : '' });
+            }}
+            className="border border-slate-300 rounded px-1 py-0.5 w-16 text-right outline-none focus:border-blue-500"
+            title="New residue number (blank = keep the original)"
+          />
+        </div>
+      ))}
+      <span className="text-[9px] text-slate-400 italic">
+        These numbers are the ones the 3D labels and the residue strip draw; « Renumber from »
+        numbers every residue above consecutively, « Clear » puts the original numbers back.
+      </span>
     </div>
   );
 };
@@ -8038,13 +8235,17 @@ const renderSection = (sec) => {
             {l}
           </label>
         ))}
-        <button type="button" onClick={() => setShowRenumberPanel((v) => !v)}
+        <button type="button" onClick={toggleRenumberPanel}
           className="text-[9px] font-bold text-slate-500 hover:text-slate-800 shrink-0 ml-auto"
-          title="🔢 Renumber the residues of this structure">🔢</button>
+          title="🔢 Renumber the residues of this structure (the panel opens right below, and the 3D labels and the residue strip follow the new numbers)">🔢</button>
         <button type="button" onClick={() => resetSectionKindLook(sec.id, kind)}
           className="text-[10px] font-bold text-slate-500 hover:text-slate-800 shrink-0"
           title="↺ Put every row of this molecule back to the defaults of its kind">↺</button>
       </div>
+      {/* The renumbering tool of THIS molecule, opened by the 🔢 above: the panel is
+          rendered where the button is, so « nothing happens » can no longer be the
+          answer (see renderRenumberPanel). */}
+      {renderRenumberPanel()}
     </div>
   );
 };
@@ -8866,11 +9067,14 @@ const renderAtomColour = (cat) => {
   const gradient = mode === 'gradient';
   const sstruc = mode === 'sstruc';
   const hex = Number.isFinite(m.atomColorHex) ? m.atomColorHex : DEFAULT_ATOM_COLORS[cat];
-  const from = Number.isFinite(m.gradientFrom) ? m.gradientFrom : DEFAULT_GRADIENT_COLORS.from;
-  const to = Number.isFinite(m.gradientTo) ? m.gradientTo : DEFAULT_GRADIENT_COLORS.to;
+  // The ramp is ONE NGL scheme for the WHOLE viewer (gradientColorStore): this menu
+  // shows and edits the GLOBAL pair. Writing it per category (which is what the
+  // swatches used to do) left every menu except the protein one doing nothing at all.
+  const from = gradientPair.from;
+  const to = gradientPair.to;
   // The ramp always runs from the FIRST residue to the last (N terminus → C
   // terminus, 5' → 3'): the ⇄ button is what reverses it, by swapping the two.
-  const swap = () => { setCatStyle(cat, 'gradientFrom', to); setCatStyle(cat, 'gradientTo', from); };
+  const swap = swapGeneralGradient;
   const gradientLabel = cat === 'protein' ? 'Gradient (N → C terminus)'
     : cat === 'nucleic' ? "Gradient (5' → 3' end)"
       : 'Gradient (per chain)';
@@ -8931,12 +9135,12 @@ const renderAtomColour = (cat) => {
       {gradient && (
         <>
           <input type="color" value={numToHex(from)}
-            onChange={(e) => setCatStyle(cat, 'gradientFrom', parseInt(e.target.value.slice(1), 16))}
+            onChange={(e) => setGradientPair('gradientFrom', parseInt(e.target.value.slice(1), 16))}
             className="w-8 h-7 rounded border border-slate-300 cursor-pointer"
             title={cat === 'nucleic' ? "Colour of the FIRST residue of every chain (the 5' end)" : 'Colour of the FIRST residue of every chain (the N terminus)'} />
           <span className="text-[10px] font-bold text-slate-400">→</span>
           <input type="color" value={numToHex(to)}
-            onChange={(e) => setCatStyle(cat, 'gradientTo', parseInt(e.target.value.slice(1), 16))}
+            onChange={(e) => setGradientPair('gradientTo', parseInt(e.target.value.slice(1), 16))}
             className="w-8 h-7 rounded border border-slate-300 cursor-pointer"
             title={cat === 'nucleic' ? "Colour of the LAST residue of every chain (the 3' end)" : 'Colour of the LAST residue of every chain (the C terminus)'} />
           <button type="button" onClick={swap}
@@ -9458,7 +9662,7 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 )}
 </VSection>
 
-/* ══ 2 · THE VIEWER TOOLS OF §2 ═════════════════════════════════════════════
+{/* ══ 2 · THE VIEWER TOOLS OF §2 ═════════════════════════════════════════════
    The styling itself is NOT here any more: it lives in the MOLECULE STYLING BAR
    on the right of the canvas (PART 4) — one space per loaded molecule, each with
    the Style / « Color by » / Transparency commands of its own kind, its two radii
@@ -9466,8 +9670,10 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
    whole: « 🙈 Hide everything », the ⚡ electrostatic-potential overlay of the
    selected molecule (with its kcal/mol range) and the 🔢 renumbering tool. The 🎨
    colour panels are GONE — every palette is edited in the ⚙ settings wheel of the
-   styling bar, which is exactly where the colourings read them from. */
-[object Object]
+   styling bar, which is exactly where the colourings read them from.
+   NOTE: this comment MUST stay inside the braces of a JSX comment. Written as a
+   bare block comment between two elements it is NOT a comment for JSX: it is TEXT,
+   and the whole paragraph was rendered in the middle of the viewer. */}
 <section className="flex flex-col gap-1 bg-slate-50/80 border border-slate-200 rounded-lg px-1.5 py-1">
 <button
 type="button"
@@ -9547,60 +9753,15 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
 <div className="flex flex-col gap-1">
 <button
 type="button"
-onClick={() => setShowRenumberPanel((v) => !v)}
-title="Renumber residues"
+onClick={toggleRenumberPanel}
+title="🔢 Renumber the residues (the panel below lists every residue and the number it will take; the 3D labels and the residue strip follow it)"
 className="text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-md px-2 py-1.5 h-8 whitespace-nowrap"
 >
 🔢 Renumber{showRenumberPanel ? ' ▲' : ' ▼'}
 </button>
-{showRenumberPanel && residueInfo.length > 0 && (
-<div className="border border-slate-200 rounded-lg bg-white shadow-sm p-2 flex flex-col gap-1.5 max-h-56 overflow-y-auto">
-<div className="flex items-center justify-between gap-1">
-<span className="text-[9px] font-bold text-slate-400 uppercase">Residue → new number</span>
-<div className="flex items-center gap-1">
-<input
-type="number"
-value={renumberFrom}
-onChange={(e) => setRenumberFrom(e.target.value)}
-className="border border-slate-300 rounded px-1 py-0.5 w-12 text-right outline-none focus:border-blue-500 text-[10px] font-mono"
-title="Starting number"
-/>
-<button
-type="button"
-onClick={applyRenumberFrom}
-className="text-xs font-bold bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-1.5 py-0.5 rounded whitespace-nowrap"
-title="Renumber all residues consecutively starting from this number (no manual per-residue edits needed)"
->
-Renumber from
-</button>
-<button
-type="button"
-onClick={() => commitRenumber({})}
-className="text-[9px] font-bold bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-1.5 py-0.5 rounded"
-title="Clear renumbering (restore original numbers)"
->
-Clear
-</button>
-</div>
-</div>
-{residueInfo.map((r, i) => (
-<div key={r.resno} className="flex items-center gap-1.5 text-[10px] font-mono text-slate-600">
-<span className="w-3 text-slate-400">{i + 1}.</span>
-<span className="flex-1 truncate">{r.resname}{r.resno}</span>
-<input
-type="number"
-value={renumberMap[String(r.resno)] !== undefined && renumberMap[String(r.resno)] !== '' ? renumberMap[String(r.resno)] : r.resno}
-onChange={(e) => {
-const nv = parseInt(e.target.value, 10);
-commitRenumber({ ...renumberMap, [String(r.resno)]: Number.isFinite(nv) ? nv : '' });
-}}
-className="border border-slate-300 rounded px-1 py-0.5 w-16 text-right outline-none focus:border-blue-500"
-title="New residue number (blank = keep the original)"
-/>
-</div>
-))}
-</div>
-)}
+{/* The ONE renumbering panel of the viewer (see renderRenumberPanel) — the same
+    specification the 🔢 of a molecule's header opens. */}
+{renderRenumberPanel()}
 </div>
 </div>
 )}
@@ -10008,9 +10169,12 @@ className="border border-indigo-300 rounded-md px-1.5 py-0.5 text-[11px] bg-whit
         return (
           <button key={`${r.chainid}-${r.resno}`} type="button"
             onClick={(e) => handleResidueTickClick(r, e)}
-            title={`${r.resname} ${r.resno}${r.chainid ? ` (chain ${r.chainid})` : ''} — click to select, Ctrl/Cmd/Shift-click to add to a multi-residue selection, Shift+click after another tick to select a range`}
+            title={`${r.resname} ${displayResno(r.resno)}${r.chainid ? ` (chain ${r.chainid})` : ''} — click to select, Ctrl/Cmd/Shift-click to add to a multi-residue selection, Shift+click after another tick to select a range`}
             className={`w-7 h-9 shrink-0 rounded-md border flex flex-col items-center justify-center gap-px leading-none transition-colors ${isSel ? 'bg-amber-400 border-amber-600' : 'bg-white border-slate-300 hover:border-amber-400 hover:bg-amber-50'}`}>
-            <span className="text-[6px] font-bold text-slate-400 leading-none">{r.resno}</span>
+            {/* The number written on the tick is the RENUMBERED one (🔢 Renumber);
+                the selection it drives keeps using the ORIGINAL resno — that is the
+                numbering NGL knows. */}
+            <span className="text-[6px] font-bold text-slate-400 leading-none">{displayResno(r.resno)}</span>
             <span className={`text-[10px] font-black leading-none ${isSel ? 'text-amber-950' : 'text-slate-700'}`}>{r.code || (r.resname ? r.resname.slice(0, 1) : '?')}</span>
           </button>
         );

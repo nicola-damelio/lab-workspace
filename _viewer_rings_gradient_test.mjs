@@ -475,7 +475,13 @@ has("const gradientLabel = cat === 'protein' ? 'Gradient (N → C terminus)'",
 has('? "Gradient (5\' → 3\' end)"', '…et le 5\' → 3\' d’un acide nucléique');
 has("const showGradient = cat === 'protein' || cat === 'nucleic';",
   'le dégradé n’est proposé que sur les deux menus de POLYMÈRES (une séquence à parcourir)');
-has("const swap = () => { setCatStyle(cat, 'gradientFrom', to);", 'le bouton ⇄ inverse le dégradé');
+// Le ⇄ ET les deux pastilles du menu écrivent la paire GLOBALE (gradientPair) : la
+// rampe est UN seul schéma NGL, donc une paire par catégorie ne pouvait pas marcher
+// — c'est le rapport « it is impossible to change the colors of first and last ».
+has('const swap = swapGeneralGradient;', 'le bouton ⇄ inverse le dégradé (la paire globale)');
+has('const from = gradientPair.from;', 'les pastilles du menu montrent la paire GLOBALE, comme celles du ⚙ et de la barre');
+has("onChange={(e) => setGradientPair('gradientFrom', parseInt(e.target.value.slice(1), 16))}",
+  '…et l’écrivent par le même setter (jamais une paire par catégorie, dont un seul menu était lu)');
 has('gradientColorStore.ranges = gradientRangesFor(comp.structure, polySele);',
   'les bornes du dégradé sont mesurées sur la structure DESSINÉE');
 has("else if (prop === 'cartoon_ring_mode')", 'le panneau PyMOL connaît set cartoon_ring_mode');
