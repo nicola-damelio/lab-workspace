@@ -17,6 +17,7 @@ import { storeJson, loadJson } from '../utils/pdbStore';
 import { blobStore } from '../utils/blobStore';
 import { archiveRestoreJson, isMissingValue, placeRestorePointer, pointerStillWanted, restoreJsonFor, restoreRawFileFor, restoreStems, sameRawFileFor, takePendingRestorePointer, wantedRawNames } from '../utils/driveRestore';
 import { useDriveAutoRestore } from './useDriveAutoRestore';
+import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequencePatch, sequenceNaturesNote } from '../utils/sequenceNatures';
 import {
   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, CARBON_RANGE_DB,
   SS_CORRECTIONS, SS_META, DNA_FORM_OFFSETS, SUGAR_ANOMER_OFFSETS,
@@ -3451,7 +3452,12 @@ const cysCarbonRange = (cName, { oxidized, reduced }) => {
 // ================= SHARED DERIVED DATA HOOK =================
 const useNmrDerived = (activeTest, ctx = {}) => {
   const moleculeType = activeTest.moleculeType || 'protein';
-  const rawSeq = (activeTest.proteinSequence || '').toUpperCase();
+  // La séquence DE CETTE NATURE : celle d'une protéine sous « Proteins », celle
+  // d'un ADN / ARN sous « DNA » / « RNA » (voir utils/sequenceNatures.js). Un
+  // complexe ouvert dans le viewer ne jette donc plus sa partie nucléique dans
+  // la case des protéines — chaque nature a son champ.
+  const rawSequence = sequenceForMoleculeType(activeTest, moleculeType);
+  const rawSeq = rawSequence.toUpperCase();
   const validChars = moleculeType === 'protein' ? 'ACDEFGHIKLMNPQRSTVWY' : moleculeType === 'dna' ? 'ACGT' : moleculeType === 'rna' ? 'ACGU' : '';
   const seq = moleculeType === 'protein' || moleculeType === 'dna' || moleculeType === 'rna' ? rawSeq.replace(new RegExp(`[^${validChars}]`, 'g'), '') : '';
   const selNuc = activeTest.selectedNuclei || ['H', 'N', 'C'];
@@ -3915,7 +3921,8 @@ if (moleculeType === 'protein' && res.simN !== null && res.simN !== undefined &&
     moleculeType, seq, validChars, isPolymer, hasPhosphorus, DB, selNuc, shifts, images,
     fields, instances, activeInstanceId, activeInstance, layers, activeLayerKey, activeValues, allLayerValues, atomOptions,
     getSSAt, getFormAt, sugarConf, sugarAnomer, lipidDB, dnaFormDefault, typeLabel, nucDefs,
-    parsedSeq, estSeq, simSeq, structure, peaks, uniqueTypes, ranges
+    parsedSeq, estSeq, simSeq, structure, peaks, uniqueTypes, ranges,
+    rawSequence, seqNaturesNote: sequenceNaturesNote(activeTest, moleculeType)
   };
 };
 
@@ -4513,8 +4520,10 @@ export const MolecularStructureSection = ({ ctx }) => {
           updates.moleculeType = 'organic';
           needsUpdate = true;
         }
-        if (meta.sequence && meta.sequence !== activeTest.proteinSequence) {
-          updates.proteinSequence = meta.sequence;
+        if (meta.sequence && meta.sequence !== sequenceForMoleculeType(activeTest, meta.type || 'protein')) {
+          // A Library compound seeds the field OF ITS NATURE: a DNA compound
+          // fills the DNA box, never the Proteins one.
+          Object.assign(updates, sequencePatchForMoleculeType(activeTest, meta.type || 'protein', meta.sequence));
           updates.moleculeType = meta.type || 'protein';
           needsUpdate = true;
         }
@@ -4523,7 +4532,7 @@ export const MolecularStructureSection = ({ ctx }) => {
         }
       }
     }
-  }, [firstSelectedCmp, ctx.compoundMeta, activeTest.smiles, activeTest.proteinSequence, updateActiveTest]);
+  }, [firstSelectedCmp, ctx.compoundMeta, activeTest.smiles, activeTest.proteinSequence, activeTest.nucleicSequences, updateActiveTest]);
   
   const activeSmiles = activeTest.smiles || (firstSelectedCmp && ctx.compoundMeta?.[firstSelectedCmp]?.smiles) || '';
   // A structure FILE chosen in the 3D viewer also counts as an explicit
@@ -4925,10 +4934,13 @@ const generatedStructure = useMemo(() => {
           ) : d.isPolymer ? (
             <>
               <label className="block text-xs font-bold text-slate-500 uppercase mb-2">{d.typeLabel} Sequence (1-letter code)</label>
-              <textarea value={activeTest.proteinSequence || ''} onChange={(e) => updateActiveTest({ proteinSequence: e.target.value })}
+              <textarea value={d.rawSequence} onChange={(e) => updateActiveTest(sequencePatchForMoleculeType(activeTest, d.moleculeType, e.target.value))}
                 className="w-full border border-slate-300 rounded-lg p-3 font-mono text-sm tracking-widest outline-none focus:border-blue-500 uppercase h-24 custom-scrollbar shadow-inner"
                 placeholder={d.moleculeType === 'protein' ? 'e.g. MKWVTFISLL...' : d.moleculeType === 'dna' ? 'e.g. ATGCGTAC...' : 'e.g. AUGCGUAC...'} />
               <p className="text-[10px] text-slate-400 mt-1 font-bold">Length: {d.seq.length} {d.moleculeType === 'protein' ? 'residues' : 'nucleotides'} (valid: {d.validChars.split('').join(' ')})</p>
+              {d.seqNaturesNote && (
+                <p className="text-[10px] font-bold text-teal-800 bg-teal-50 border border-teal-200 rounded-lg px-2 py-1 mt-1">{d.seqNaturesNote}</p>
+              )}
               {!d.seq && Object.keys(d.shifts || {}).length > 0 && (
                 <p className="text-[10px] text-amber-700 mt-1 font-bold">
                   ⚠️ {Object.keys(d.shifts).length} chemical shift value(s) are stored for this condition, but the sequence is empty — so the per-atom tables have no row to show them. Restore the structure file in the 3D viewer above (or type the sequence): the values themselves are NOT lost.
@@ -5130,7 +5142,7 @@ const generatedStructure = useMemo(() => {
         <div style={{ display: structureMode === '3d' ? 'block' : 'none' }} aria-hidden={structureMode !== '3d'}>
           {hasOpened3D && (
             <div className="flex flex-col gap-2">
-              <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq) => { if (seq && !activeTest.proteinSequence && ['protein', 'dna', 'rna'].includes(d.moleculeType)) updateActiveTest({ proteinSequence: seq }); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
+              <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq, parts) => { const _nat = structureSequencePatch(activeTest, d.moleculeType, seq, parts); if (_nat) updateActiveTest(_nat); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
               <button onClick={downloadPdbFile} className="self-center mt-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg hover:bg-indigo-100 transition-colors shadow-sm">📥 Download 3D PDB File</button>
               {activeTest.structureFileName && (!structureFile || nmrStructRestore.message) && (
                 <div className="flex flex-wrap items-center justify-center gap-2 text-[11px]">
@@ -9078,7 +9090,7 @@ export const NotebookExtra = ({ ctx, checkId }) => {
     return `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Condition:</b> ${d.activeInstance ? d.activeInstance.name : 'N/A'} | ${expStr || 'No experimental condition values set'}</p>`;
   }
   if (checkId === 'seq') {
-    return `<p style="font-size: 12px; color: #475569; margin-bottom: 12px;"><b>${d.typeLabel}:</b> <span style="font-family: monospace; background: #e2e8f0; padding: 2px 4px; border-radius: 4px;">${d.isPolymer ? activeTest.proteinSequence || 'N/A' : d.parsedSeq[0]?.name || 'N/A'}</span></p>`;
+    return `<p style="font-size: 12px; color: #475569; margin-bottom: 12px;"><b>${d.typeLabel}:</b> <span style="font-family: monospace; background: #e2e8f0; padding: 2px 4px; border-radius: 4px;">${d.isPolymer ? d.seq || 'N/A' : d.parsedSeq[0]?.name || 'N/A'}</span></p>`;
   }
   if (checkId === 'formula' && d.structure) {
     return `<div style="margin-bottom: 12px;">${elementsToSVG(d.structure, 300)}</div>`;

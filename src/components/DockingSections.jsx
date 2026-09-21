@@ -8,6 +8,7 @@ import { getDriveToken, uploadLocalFile } from '../utils/driveUpload';
 import { storeJson, loadJson } from '../utils/pdbStore';
 import { archiveRestoreJson, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';
 import { useDriveAutoRestore } from './useDriveAutoRestore';
+import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequencePatch, sequenceNaturesNote } from '../utils/sequenceNatures';
 import { gunzipSync } from 'fflate';
 // One character size per element + the font family of the shared figure style
 // (the axis numbers keep riding on cfg.fontSize, see utils/chartStyle.js).
@@ -73,7 +74,11 @@ const useDockingDerived = (activeTest, ctx = {}) => {
 
   // Receptor molecule (the "main" molecule, like MD)
   const moleculeType = activeTest.moleculeType || metaType || 'protein';
-  const rawSeq = (activeTest.proteinSequence || metaSeq || '').toUpperCase();
+  // La séquence DE CETTE NATURE (récepteur protéique sous « Proteins », ADN /
+  // ARN sous « DNA » / « RNA ») — voir utils/sequenceNatures.js ; `metaSeq` (la
+  // séquence du composé de la Librairie) n'est qu'un repli.
+  const rawSequence = sequenceForMoleculeType(activeTest, moleculeType) || metaSeq || '';
+  const rawSeq = rawSequence.toUpperCase();
   const validChars =
     moleculeType === 'protein' ? 'ACDEFGHIKLMNPQRSTVWY'
     : moleculeType === 'dna' ? 'ACGT'
@@ -168,6 +173,7 @@ const useDockingDerived = (activeTest, ctx = {}) => {
     exhaustiveness, numModes, energyRange,
     boxCenterX, boxCenterY, boxCenterZ, boxSizeX, boxSizeY, boxSizeZ,
     ligandSmiles, ligandPdbId,
+    rawSequence, seqNaturesNote: sequenceNaturesNote(activeTest, moleculeType),
     getSSAt, parsedSeq, structure,
     poses, instances, activeInstance, layers, activeLayerKey, activeValues
   };
@@ -370,13 +376,15 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
       updates.moleculeType = 'organic';
       needsUpdate = true;
     }
-    if (meta.sequence && meta.sequence !== activeTest.proteinSequence) {
-      updates.proteinSequence = meta.sequence;
+    if (meta.sequence && meta.sequence !== sequenceForMoleculeType(activeTest, meta.type || 'protein')) {
+      // A Library compound seeds the field OF ITS NATURE: a DNA receptor fills
+      // the DNA box, never the Proteins one.
+      Object.assign(updates, sequencePatchForMoleculeType(activeTest, meta.type || 'protein', meta.sequence));
       updates.moleculeType = meta.type || 'protein';
       needsUpdate = true;
     }
     if (needsUpdate) updateActiveTest(updates);
-  }, [firstSelectedCmp, ctx.compoundMeta, activeTest.smiles, activeTest.proteinSequence, updateActiveTest]);
+  }, [firstSelectedCmp, ctx.compoundMeta, activeTest.smiles, activeTest.proteinSequence, activeTest.nucleicSequences, updateActiveTest]);
 
   const selectedKeys = getSelectedKeys(activeTest);
   const manualKeys = useMemo(() => getManualKeys(d.activeValues), [d.activeValues]);
@@ -399,8 +407,10 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
     if (!raw) {
       // Only offer a demo structure once the user has actually defined a
       // receptor (sequence / SMILES / compound) — a brand-new docking
-      // experiment should NOT silently load a generic protein.
-      const hasDefinedSystem = !!(activeTest.proteinSequence || activeTest.smiles ||
+      // experiment should NOT silently load a generic protein. The sequence is
+      // read through `d.seq`, i.e. the one of the RECEPTOR'S OWN NATURE (a DNA
+      // receptor keeps its sequence in the DNA field, not in the protein one).
+      const hasDefinedSystem = !!(d.seq || activeTest.smiles ||
         activeTest.ligandPdbId || (activeTest.selectedCompounds || []).length || (activeTest.compoundsSelected || []).length);
       if (!hasDefinedSystem) return '';
       if (d.moleculeType === 'protein') return 'https://models.rcsb.org/1UBQ.mmtf';
@@ -411,7 +421,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
     if (/^(https?:|blob:|data:)/i.test(raw) || raw.startsWith('/')) return raw;
     if (/^[0-9][A-Za-z0-9]{3}$/.test(raw)) return `https://models.rcsb.org/${raw.toUpperCase()}.mmtf`;
     return raw;
-  }, [activeTest.structureSrc, d.moleculeType, activeTest.proteinSequence, activeTest.smiles, activeTest.ligandPdbId, activeTest.selectedCompounds, activeTest.compoundsSelected]);
+  }, [activeTest.structureSrc, d.moleculeType, d.seq, activeTest.smiles, activeTest.ligandPdbId, activeTest.selectedCompounds, activeTest.compoundsSelected]);
 
   // Keep the structure list in sync when the calculation-directory importer
   // stores new structures (the states are declared above the viewer). The
@@ -458,14 +468,17 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                 {d.typeLabel} Sequence (1-letter code)
               </label>
               <textarea
-                value={activeTest.proteinSequence || ''}
-                onChange={(e) => updateActiveTest({ proteinSequence: e.target.value })}
+                value={d.rawSequence}
+                onChange={(e) => updateActiveTest(sequencePatchForMoleculeType(activeTest, d.moleculeType, e.target.value))}
                 className="w-full border border-slate-300 rounded-lg p-3 font-mono text-sm tracking-widest outline-none focus:border-blue-500 uppercase h-24 shadow-inner"
                 placeholder={d.moleculeType === 'protein' ? 'e.g. MKWVTFISLL...' : 'e.g. ATGCGTAC...'}
               />
               <p className="text-[10px] text-slate-400 mt-1 font-bold">
                 Length: {d.seq.length} {d.moleculeType === 'protein' ? 'residues' : 'nucleotides'}
               </p>
+              {d.seqNaturesNote && (
+                <p className="text-[10px] font-bold text-teal-800 bg-teal-50 border border-teal-200 rounded-lg px-2 py-1 mt-1">{d.seqNaturesNote}</p>
+              )}
             </>
           ) : (
             <div>
@@ -580,10 +593,12 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                 onAtomRenames={(map) => updateActiveTest({ atomRenames: map })}
                 resRenumber={activeTest.resRenumber || {}}
                 onResRenumber={(map) => updateActiveTest({ resRenumber: map })}
-                onStructureSequence={(seq) => {
-                  if (seq && !activeTest.proteinSequence && ['protein', 'dna', 'rna'].includes(d.moleculeType)) {
-                    updateActiveTest({ proteinSequence: seq });
-                  }
+                onStructureSequence={(seq, parts) => {
+                  // Chaque NATURE dans son champ (protéine → Proteins, acide
+                  // nucléique → DNA / RNA) : voir utils/sequenceNatures.js. Le
+                  // viewer garde le fichier entier dans la même vue 3D.
+                  const patch = structureSequencePatch(activeTest, d.moleculeType, seq, parts);
+                  if (patch) updateActiveTest(patch);
                 }}
                 height="480px"
               />
@@ -1769,7 +1784,7 @@ export const NotebookExtra = ({ ctx, checkId }) => {
   }
   if (checkId === 'seq') {
     return `
-      <p style="font-size:12px;color:#475569;margin-bottom:8px;"><b>Receptor / Ligand:</b> <span style="font-family:monospace;background:#e2e8f0;padding:2px 4px;border-radius:4px;">${d.isPolymer ? (activeTest.proteinSequence || 'N/A') : (d.parsedSeq[0]?.name || 'N/A')}</span> · Ligand: <span style="font-family:monospace;background:#fef3c7;padding:2px 4px;border-radius:4px;">${d.ligandSmiles || d.ligandPdbId || 'N/A'}</span></p>
+      <p style="font-size:12px;color:#475569;margin-bottom:8px;"><b>Receptor / Ligand:</b> <span style="font-family:monospace;background:#e2e8f0;padding:2px 4px;border-radius:4px;">${d.isPolymer ? (d.seq || 'N/A') : (d.parsedSeq[0]?.name || 'N/A')}</span> · Ligand: <span style="font-family:monospace;background:#fef3c7;padding:2px 4px;border-radius:4px;">${d.ligandSmiles || d.ligandPdbId || 'N/A'}</span></p>
     `;
   }
   if (checkId === 'formula' && d.structure) {

@@ -5,6 +5,7 @@ import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES, experimentTypeFilterOptions, ma
 import { SearchableSelect } from './SearchableSelect';
 import { getNmr1dDisplay } from './NMRSections';
 import { getTestTypeMeta, getNotebookTypeKey } from './testTypeMeta';
+import { sequenceForMoleculeType, NUCLEIC_SEQUENCES_KEY } from '../utils/sequenceNatures';
 import { Icon } from './Icons';
 import { NOTEBOOK_ANALYSIS_PREVIEWS, RemovablePanel, ChunkedTable, NMRSpectraPreview, PlateGridPreview, PlateMapPreview, Formula2DPreview, CDSpectraChart, CDSimChartPreview, CloningUvSpectraChart, CloningSimChartPreview, ProteinChromatogramChart, NMR_SPECTRUM_TYPES, NMRFittingSimPreview, MDParamsPreview, MDAtomTablePreview, normalizeImagePreview } from './notebookPreviews';
 
@@ -81,7 +82,14 @@ export const NotebookTestItem = ({
 
   const getMolecularFormula = () => {
     if (localTest.smiles) return localTest.smiles;
+    // La séquence DE LA NATURE de cette condition : une condition ADN / ARN
+    // montre sa propre séquence (utils/sequenceNatures.js), pas celle des
+    // protéines — et `proteinSequence` reste le repli des données anciennes.
+    const natureSeq = sequenceForMoleculeType(localTest, localTest.moleculeType);
+    if (natureSeq) return natureSeq;
     if (localTest.proteinSequence) return localTest.proteinSequence;
+    const nucleic = localTest[NUCLEIC_SEQUENCES_KEY];
+    if (nucleic && (nucleic.dna || nucleic.rna)) return nucleic.dna || nucleic.rna;
     if (localTest.sequence) return localTest.sequence;
     if (localTest.dnaSequence) return localTest.dnaSequence;
     if (localTest.sugarChoice) return `${localTest.sugarChoice} (${localTest.sugarAnomer || ''})`;

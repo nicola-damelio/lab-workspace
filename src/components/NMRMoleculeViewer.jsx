@@ -7,6 +7,7 @@ import { abortControl } from '../utils/abortControl';
 import { archiveFileToDrive } from '../utils/driveUpload';
 import { getPymolScripts } from '../utils/pymolScripts';
 import { getActiveProjectId, publishLibraryFigure } from '../utils/figuresLibrary';
+import { SEQUENCE_NATURES } from '../utils/sequenceNatures';
 
 /* ---- Shared "Assigned atoms" highlight flag ---------------------------------
    The green "assigned atoms" highlight is shown both on the 3D molecule viewer
@@ -784,6 +785,77 @@ const AA3_TO_1 = {
   DA: 'A', DC: 'C', DG: 'G', DT: 'T', DU: 'U'
 };
 
+/* ---- NATURE of a polymer residue (protein · DNA · RNA) ---------------------
+   The 1-letter code alone cannot say WHAT a polymer is: a PDB spells DNA
+   `DA · DC · DG · DT` and RNA `A · C · G · U`. The nature is therefore read
+   from the residue NAME, and — for the bare base letters and for every
+   MODIFIED nucleotide (5MC · PSU · 2MG · OMG …) — from the residue's OWN
+   atoms: the 2'-oxygen (O2') is there in a ribose and absent in a deoxyribose,
+   which IS the RNA / DNA distinction. No list of modifications to maintain.
+
+   This is what lets the viewer hand its page one sequence PER NATURE (see
+   structureSequenceParts) instead of one mixed text, and what groups the
+   residue strip: a protein + DNA complex shows each nature under its own
+   heading while the 3D view keeps showing the whole file at once. */
+const NUCLEIC_1_BY_NAME = {
+  DA: 'A', DC: 'C', DG: 'G', DT: 'T', DU: 'U', DI: 'I',   // deoxy- prefixes
+  RA: 'A', RC: 'C', RG: 'G', RU: 'U',                     // ribo- prefixes
+  A: 'A', C: 'C', G: 'G', U: 'U', T: 'T', I: 'I',         // bare base letters
+};
+
+const atomNameSet = (names) => {
+  if (names instanceof Set) return names;
+  const out = new Set();
+  (names || []).forEach((n) => {
+    const s = String(n || '').toUpperCase().trim();
+    if (s) out.add(s);
+  });
+  return out;
+};
+
+// The sugar ring (C1' + a ring neighbour) and the phosphate link (P · O5' · C5')
+// together are what make a nucleotide — so a bare sugar of a glycan, which has
+// neither, is never mistaken for one.
+const hasSugarRing = (atoms) => atoms.has("C1'") && (atoms.has("C2'") || atoms.has("C3'") || atoms.has("O4'"));
+const hasPhosphateLink = (atoms) => atoms.has('P') || atoms.has("O5'") || atoms.has("C5'");
+
+const residueNatureOf = (resname, atomNames) => {
+  const name = String(resname || '').toUpperCase().trim();
+  if (!name) return '';
+  const atoms = atomNameSet(atomNames);
+  const base = NUCLEIC_1_BY_NAME[name];
+  const sugar = hasSugarRing(atoms);
+  const explicitNucleic = !!base && name.length > 1;            // DA · DT · RA · 5MC …
+  if (explicitNucleic || (sugar && (hasPhosphateLink(atoms) || !!base))) {
+    // O2' = ribose ⇒ RNA; its absence (the H2' / H2'' pair of a deoxyribose) ⇒ DNA.
+    return (atoms.has("O2'") || atoms.has("HO2'")) ? 'rna' : 'dna';
+  }
+  if (AA3_TO_1[name]) return 'protein';                        // the 20 + variants (MSE · SEP · PCA …)
+  if (atoms.has('CA') && atoms.has('N') && atoms.has('C')) return 'protein';
+  return '';                                                   // water · ions · lipids · ligands
+};
+
+/* ---- One 1-letter sequence PER NATURE (the handshake with the pages) -------
+   `{ protein: { seq, chains }, dna: {…}, rna: {…} }` built from the SAME tick
+   list as the residue strip, so what the page stores and what the user clicks
+   can never disagree. The page puts each sequence in the field of its own
+   nature (see src/utils/sequenceNatures.js) — this only says WHERE a letter
+   comes from, never what is drawn: the file stays ONE structure in ONE viewer. */
+const structureSequenceParts = (ticks) => {
+  const parts = {};
+  SEQUENCE_NATURES.forEach((n) => { parts[n] = { seq: '', chains: [], len: 0 }; });
+  (Array.isArray(ticks) ? ticks : []).forEach((t) => {
+    const nature = SEQUENCE_NATURES.includes(t && t.nature) ? t.nature : '';
+    const code = String((t && t.code) || '').toUpperCase();
+    if (!nature || !code) return;
+    parts[nature].seq += code;
+    parts[nature].len += 1;
+    const chain = String((t.chainname || t.chainid) || '');
+    if (chain && !parts[nature].chains.includes(chain)) parts[nature].chains.push(chain);
+  });
+  return parts;
+};
+
 // 1-letter sequence from an NGL structure. Tries NGL's getSequence() first,
 // then falls back to walking the residues (handles .gro topologies and any
 // PDB where NGL does not auto-detect the chains as polymers).
@@ -833,6 +905,11 @@ const collectResidueTicks = (component) => {
       const name = String((r && (r.resname || r.restype)) || '').toUpperCase();
       const code = AA3_TO_1[name] || (name.length === 1 && /[ACGTU]/.test(name) ? name : '');
       const chainid = r && (r.chainid || r.chain) ? String(r.chainid || r.chain) : '';
+      // NGL's `chainid` is the chain INDEX; `chainname` is the PDB chain letter
+      // (A · B · C) — the one a reader recognises, used by the nature summary.
+      const chainname = r && r.chainname != null && String(r.chainname) !== ''
+        ? String(r.chainname) : chainid;
+      const atomNames = [...(atomsByRes.get(`${chainid}|${r.resno}`) || [])];
       out.push({
         resno: r && r.resno != null ? r.resno : out.length + 1,
         resname: name || String((r && r.restype) || 'UNK'),
@@ -841,8 +918,13 @@ const collectResidueTicks = (component) => {
         // lipids and other hetero have no 1-letter code and are excluded from
         // the sequence strip (they are not part of the polymer "sequence").
         polymer: !!code,
+        // WHICH polymer this residue belongs to — 'protein' · 'dna' · 'rna' (or
+        // '' for a residue whose nature cannot be read): the strip groups by it
+        // and the page stores each nature's sequence in its own field.
+        nature: code ? residueNatureOf(name, atomNames) : '',
         chainid,
-        atomNames: [...(atomsByRes.get(`${chainid}|${r.resno}`) || [])],
+        chainname,
+        atomNames,
       });
     });
   } catch { /* keep partial list */ }
@@ -3727,15 +3809,23 @@ try {
   }
 } catch { /* molecule splitting failed — keep the whole structure as one component */ }
 
-// Expose the 1-letter sequence parsed from the structure so the pages can
-// auto-fill the sequence field when it is empty (enables the per-atom table).
+// Residue ticks (resno / resname / 1-letter code / NATURE per residue) — built
+// ONCE here, because the strip AND the sequence handshake below both need them.
+const ticks = collectResidueTicks(component);
+setResidueTicks(ticks);
+stripResidueRiRef.current = null;
+
+// Expose the sequence parsed from the structure so the pages can auto-fill the
+// sequence fields when they are empty (enables the per-atom table). The SECOND
+// argument splits that sequence BY NATURE — { protein: …, dna: …, rna: … } — so
+// a page stores a nucleic-acid sequence in the DNA / RNA field instead of the
+// Proteins one (see src/utils/sequenceNatures.js). The whole file keeps being
+// drawn in THIS viewer: the split only says where a letter comes from.
 if (typeof onStructureSequence === 'function') {
 const seq = extractStructureSequence(component);
-if (seq) onStructureSequence(seq);
+const parts = structureSequenceParts(ticks);
+if (seq || parts.protein.seq || parts.dna.seq || parts.rna.seq) onStructureSequence(seq, parts);
 }
-// Build the residue strip ticks (resno / resname / 1-letter code per residue).
-setResidueTicks(collectResidueTicks(component));
-stripResidueRiRef.current = null;
 
 component.autoView();
 requestAnimationFrame(() => {
@@ -7248,7 +7338,40 @@ className="border border-indigo-300 rounded-md px-1.5 py-0.5 text-[11px] bg-whit
 {residueTicks.length > 0 && moleculeType !== 'organic' && (() => {
   const polyTicks = residueTicks.filter((r) => r.polymer);
   if (polyTicks.length === 0) return null;
-  const thinStep = polyTicks.length > 900 ? 5 : polyTicks.length > 450 ? 3 : polyTicks.length > 200 ? 2 : 1;
+  // ONE heading per NATURE — but only when the file really holds more than one
+  // polymer kind: a protein + DNA complex reads « Proteins » / « DNA » / « RNA »
+  // above its own residues, exactly like the page stores each nature's sequence
+  // in its own field. The file itself stays ONE structure, drawn in THIS viewer.
+  const polyGroups = [
+    { key: 'protein', label: 'Proteins' },
+    { key: 'dna', label: 'DNA' },
+    { key: 'rna', label: 'RNA' },
+    { key: '', label: 'Polymer' },     // a polymer whose nature cannot be read
+  ].map((g) => ({ ...g, ticks: polyTicks.filter((r) => (r.nature || '') === g.key) }))
+   .filter((g) => g.ticks.length > 0);
+  const multiNature = polyGroups.length > 1;
+  const thinStepFor = (n) => (n > 900 ? 5 : n > 450 ? 3 : n > 200 ? 2 : 1);
+  // The tick buttons themselves — identical markup, whichever group holds them.
+  const ticksRow = (ticks) => {
+    const thinStep = thinStepFor(ticks.length);
+    return (
+    <div className="flex gap-0.5 overflow-x-auto custom-scrollbar items-stretch py-0.5">
+      {ticks.map((r, i) => {
+        if (thinStep > 1 && i % thinStep !== 0) return null;
+        const isSel = selectedKeys && selectedKeys.some((k) => parseInt(String(k).split('-')[0], 10) === r.resno - 1);
+        return (
+          <button key={`${r.chainid}-${r.resno}`} type="button"
+            onClick={(e) => handleResidueTickClick(r, e)}
+            title={`${r.resname} ${r.resno}${r.chainid ? ` (chain ${r.chainid})` : ''} — click to select, Ctrl/Cmd/Shift-click to add to a multi-residue selection, Shift+click after another tick to select a range`}
+            className={`w-7 h-9 shrink-0 rounded-md border flex flex-col items-center justify-center gap-px leading-none transition-colors ${isSel ? 'bg-amber-400 border-amber-600' : 'bg-white border-slate-300 hover:border-amber-400 hover:bg-amber-50'}`}>
+            <span className="text-[6px] font-bold text-slate-400 leading-none">{r.resno}</span>
+            <span className={`text-[10px] font-black leading-none ${isSel ? 'text-amber-950' : 'text-slate-700'}`}>{r.code || (r.resname ? r.resname.slice(0, 1) : '?')}</span>
+          </button>
+        );
+      })}
+    </div>
+    );
+  };
   return (
   <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-2 py-1.5">
     <button type="button"
@@ -7268,20 +7391,18 @@ className="border border-indigo-300 rounded-md px-1.5 py-0.5 text-[11px] bg-whit
       </span>
     ) : (
     <>
-    <div className="flex gap-0.5 overflow-x-auto custom-scrollbar items-stretch py-0.5">
-      {polyTicks.map((r, i) => {
-        if (thinStep > 1 && i % thinStep !== 0) return null;
-        const isSel = selectedKeys && selectedKeys.some((k) => parseInt(String(k).split('-')[0], 10) === r.resno - 1);
-        return (
-          <button key={`${r.chainid}-${r.resno}`} type="button"
-            onClick={(e) => handleResidueTickClick(r, e)}
-            title={`${r.resname} ${r.resno}${r.chainid ? ` (chain ${r.chainid})` : ''} — click to select, Ctrl/Cmd/Shift-click to add to a multi-residue selection, Shift+click after another tick to select a range`}
-            className={`w-7 h-9 shrink-0 rounded-md border flex flex-col items-center justify-center gap-px leading-none transition-colors ${isSel ? 'bg-amber-400 border-amber-600' : 'bg-white border-slate-300 hover:border-amber-400 hover:bg-amber-50'}`}>
-            <span className="text-[6px] font-bold text-slate-400 leading-none">{r.resno}</span>
-            <span className={`text-[10px] font-black leading-none ${isSel ? 'text-amber-950' : 'text-slate-700'}`}>{r.code || (r.resname ? r.resname.slice(0, 1) : '?')}</span>
-          </button>
-        );
-      })}
+    <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+      {polyGroups.map((g) => (
+        <div key={g.key || 'other'} className="flex items-center gap-1 min-w-0">
+          {multiNature && (
+            <span className="text-[8px] font-black text-slate-500 uppercase tracking-wide text-right shrink-0 w-12"
+              title={`${g.ticks.length} residue(s) of this file's ${g.label === 'Polymer' ? 'unclassified polymers' : g.label}`}>
+              {g.label}
+            </span>
+          )}
+          {ticksRow(g.ticks)}
+        </div>
+      ))}
     </div>
     <div className="flex items-center gap-1 shrink-0">
       <button type="button"

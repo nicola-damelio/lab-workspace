@@ -3,6 +3,7 @@ import TestShellRenderer from './TestShellRenderer';
 import { NMR_TAB_CONFIG } from './tabConfigs';
 import * as NMRSections from './NMRSections';
 import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
+import { sequenceForMoleculeType } from '../utils/sequenceNatures';
 
 const getActiveShifts = (t) => {
   const instances =
@@ -34,7 +35,7 @@ const buildNmrNotebookHtml = (checked, ctx) => {
   }
 
   if (checked.seq) {
-    html += `<p style="font-size: 12px; color: #475569; margin-bottom: 12px;"><b>Sequence:</b> <span style="font-family: monospace; background: #e2e8f0; padding: 2px 4px; border-radius: 4px;">${t.proteinSequence || 'N/A'}</span></p>`;
+    html += `<p style="font-size: 12px; color: #475569; margin-bottom: 12px;"><b>Sequence:</b> <span style="font-family: monospace; background: #e2e8f0; padding: 2px 4px; border-radius: 4px;">${sequenceForMoleculeType(t, t.moleculeType) || 'N/A'}</span></p>`;
   }
 
   if (checked.table && Object.keys(shifts).length > 0) {

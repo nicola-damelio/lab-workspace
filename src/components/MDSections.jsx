@@ -26,6 +26,7 @@ import { AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, FORM_META, R
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
 import { archiveFileToDrive, archiveFileToDriveWithPointer, getDriveToken, getDriveFileRegistry, driveFetch } from '../utils/driveUpload';
+import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequencePatch, sequenceNaturesNote } from '../utils/sequenceNatures';
 // Cache des graphes calculés (domanda 2) : copie bornée enregistrée avec le test
 // (suit le jeu de données sur le Drive / Firestore) + copie locale pour réafficher
 // les courbes instantanément, avec empreinte de la trajectoire et boutons
@@ -440,7 +441,11 @@ const useMDDerived = (activeTest, ctx = {}) => {
   const metaType = (ctx.compoundMeta && compName && ctx.compoundMeta[compName]?.type) ? ctx.compoundMeta[compName].type : null;
 
   const moleculeType = activeTest.moleculeType || metaType || 'protein';
-  const rawSeq = (activeTest.proteinSequence || metaSeq || '').toUpperCase();
+  // La séquence DE CETTE NATURE (protéine sous « Proteins », ADN / ARN sous
+  // « DNA » / « RNA ») — voir utils/sequenceNatures.js ; `metaSeq` (la séquence
+  // du composé de la Librairie) ne sert que de repli quand la case est vide.
+  const rawSequence = sequenceForMoleculeType(activeTest, moleculeType) || metaSeq || '';
+  const rawSeq = rawSequence.toUpperCase();
 
   const validChars =
     moleculeType === 'protein' ? 'ACDEFGHIKLMNPQRSTVWY'
@@ -597,6 +602,7 @@ const useMDDerived = (activeTest, ctx = {}) => {
     getSSAt, getFormAt, sugarConf, sugarAnomer, lipidDB, dnaFormDefault,
     parsedSeq, estSeq, structure, atomOptions: [...atomOptions, ...analysisAtoms],
     instances, activeInstance, layers, activeLayerKey, activeValues,
+    rawSequence, seqNaturesNote: sequenceNaturesNote(activeTest, moleculeType),
     metaSeq
   };
 };
@@ -1332,12 +1338,15 @@ export const MDExperimentSetupSection = ({ ctx }) => {
             <>
               <label className="block text-xs font-bold text-slate-500 uppercase mb-2">{d.typeLabel} Sequence (1-letter code)</label>
               <textarea 
-                value={activeTest.proteinSequence ?? (d.metaSeq || '')} 
-                onChange={(e) => updateActiveTest({ proteinSequence: e.target.value })}
+                value={d.rawSequence} 
+                onChange={(e) => updateActiveTest(sequencePatchForMoleculeType(activeTest, d.moleculeType, e.target.value))}
                 className="w-full border border-slate-300 rounded-lg p-3 font-mono text-sm tracking-widest outline-none focus:border-blue-500 uppercase h-24 custom-scrollbar shadow-inner"
                 placeholder={d.moleculeType === 'protein' ? 'e.g. MKWVTFISLL...' : d.moleculeType === 'dna' ? 'e.g. ATGCGTAC...' : 'e.g. AUGCGUAC...'} 
               />
               <p className="text-[10px] text-slate-400 mt-1 font-bold">Length: {d.seq.length} {d.moleculeType === 'protein' ? 'residues' : 'nucleotides'} (valid: {d.validChars.split('').join(' ')})</p>
+              {d.seqNaturesNote && (
+                <p className="text-[10px] font-bold text-teal-800 bg-teal-50 border border-teal-200 rounded-lg px-2 py-1 mt-1">{d.seqNaturesNote}</p>
+              )}
             </>
           ) : d.moleculeType === 'sugar' ? (
             <div>
@@ -1479,10 +1488,12 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   onAtomRenames={(map) => updateActiveTest({ atomRenames: map })}
   resRenumber={activeTest.resRenumber || {}}
   onResRenumber={(map) => updateActiveTest({ resRenumber: map })}
-  onStructureSequence={(seq) => {
-    if (seq && !activeTest.proteinSequence && ['protein', 'dna', 'rna'].includes(d.moleculeType)) {
-      updateActiveTest({ proteinSequence: seq });
-    }
+  onStructureSequence={(seq, parts) => {
+    // Chaque NATURE dans son champ (protéine → Proteins, acide nucléique →
+    // DNA / RNA) : voir utils/sequenceNatures.js. Le viewer montre toujours le
+    // fichier entier dans la même vue 3D.
+    const patch = structureSequencePatch(activeTest, d.moleculeType, seq, parts);
+    if (patch) updateActiveTest(patch);
   }}
   labelMode={atomLabelMode}
   height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'}
@@ -4837,7 +4848,7 @@ export const NotebookExtra = ({ ctx, checkId }) => {
   }
 
   if (checkId === 'seq') {
-    return `<p style="font-size:12px;color:#475569;margin-bottom:12px;"><b>${d.typeLabel}:</b> <span style="font-family:monospace;background:#e2e8f0;padding:2px 4px;border-radius:4px;">${d.isPolymer ? activeTest.proteinSequence || 'N/A' : d.parsedSeq[0]?.name || 'N/A'}</span></p>`;
+    return `<p style="font-size:12px;color:#475569;margin-bottom:12px;"><b>${d.typeLabel}:</b> <span style="font-family:monospace;background:#e2e8f0;padding:2px 4px;border-radius:4px;">${d.isPolymer ? d.seq || 'N/A' : d.parsedSeq[0]?.name || 'N/A'}</span></p>`;
   }
 
   if (checkId === 'formula' && d.structure) {

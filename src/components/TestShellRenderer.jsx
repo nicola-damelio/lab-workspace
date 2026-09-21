@@ -14,6 +14,7 @@ import { StarToggle } from './StarToggle';
 import { ChartStarLayer } from './ChartStarLayer';
 import { archiveFileToDrive } from '../utils/driveUpload';
 import { isStarred, toggleStarredItem } from '../utils/starredItems';
+import { sequenceForMoleculeType } from '../utils/sequenceNatures';
 export { CollapsibleSection };
 
 /* ============================================================================
@@ -2189,7 +2190,7 @@ const details = [
 <button
                           type="button"
                           onClick={() => {
-                            const seq = (t.proteinSequence || '').toUpperCase().replace(/[^ACDEFGHIKLMNPQRSTVWY]/g, '');
+                            const seq = sequenceForMoleculeType(t, t.moleculeType).toUpperCase().replace(/[^ACDEFGHIKLMNPQRSTVWY]/g, '');
                             const shifts = t.chemicalShifts || {};
                             const commonAtoms = ['HN', 'N', 'Cα', 'Hα', 'Cβ', 'Hβ', "C'"];
                             let rowsHtml = '';
