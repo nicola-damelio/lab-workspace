@@ -1287,6 +1287,71 @@ const registerBaseIdentityScheme = (NGL) => {
   baseIdentitySchemeKey = registerColorScheme(NGL, 'lab-base-identity', defineBaseIdentityScheme());
 };
 
+// ---- Atom-type (ELEMENT) colours -------------------------------------------
+// ONE swatch table colours the atoms of every per-molecule « Atom type »
+// colouring (the per-molecule sections of the Molecules panel): the ⚙ settings
+// wheel of that panel edits it, and the scheme below reads this mutable store
+// live — so moving a swatch only re-renders the representations, exactly like
+// lab-sstruc / lab-nucleic-groups / lab-lipid-groups / lab-base-identity. An
+// element that is NOT in the table (a metal of an unusual file) keeps a readable
+// grey instead of turning black.
+const ELEMENT_COLOR_PALETTE = {
+  H: 0xe6e6e6, C: 0x9aa3ad, N: 0x2f61d9, O: 0xe23a3a, S: 0xd8c020, P: 0xe08a20,
+  F: 0x6fd6a0, Cl: 0x36c23a, Br: 0xa5442b, I: 0x8a2fd0, B: 0xf0a0a0, Se: 0xf0a020,
+  Fe: 0xd06a1a, Zn: 0x7d80b0, Mg: 0x8aff00, Ca: 0x3dff00, Na: 0xab5cf2, K: 0x8f40d4,
+};
+const DEFAULT_ELEMENT_COLOR = 0xb9c2cc;
+const elementColorStore = { ...ELEMENT_COLOR_PALETTE };
+let elementSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
+const elementColorOf = (element) => {
+  const raw = element == null ? '' : String(element).trim();
+  if (!raw) return DEFAULT_ELEMENT_COLOR;
+  const cap = raw[0].toUpperCase() + raw.slice(1).toLowerCase();
+  const v = elementColorStore[cap];
+  return Number.isFinite(v) ? v : DEFAULT_ELEMENT_COLOR;
+};
+// The definition of the scheme (named so a test can extract and really run it).
+const defineElementScheme = () => {
+  return function () {
+    this.atomColor = function (atom) { return elementColorOf(atom && atom.element); };
+  };
+};
+const registerElementScheme = (NGL) => {
+  if (elementSchemeKey) return;
+  elementSchemeKey = registerColorScheme(NGL, 'lab-elements', defineElementScheme());
+};
+
+// ---- Sugar IDENTITY colours (the « Sugar type » colouring) ------------------
+// The sugars recognised by the S menu (SUGAR_RES_SEL) get ONE colour each, the
+// exact counterpart of BASE_IDENTITY_COLORS for the bases — so a glycan can be
+// read residue by residue (which sugar is where) instead of all one colour. The
+// ⚙ settings wheel of the Molecules panel edits the table.
+const SUGAR_IDENTITY_COLORS = {
+  GLC: 0x3fbf6f, NAG: 0x2f7fd0, MAN: 0x8a5fd0, BMA: 0xd0a02f,
+  GAL: 0xd05f9f, FUC: 0x30b7b7, SIA: 0xd06a40,
+};
+// The residue codes of the S menu, in the order they are written there — the ⚙
+// panel builds its swatch grid from THIS list, so the two can never drift.
+const SUGAR_IDENTITY_CODES = (SUGAR_RES_SEL.match(/\[([A-Za-z0-9]{2,3})\]/g) || [])
+  .map((s) => s.slice(1, -1));
+const sugarColorStore = { ...SUGAR_IDENTITY_COLORS };
+let sugarSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
+const sugarColorOf = (resname) => {
+  const r = String(resname == null ? '' : resname).trim().toUpperCase();
+  const v = sugarColorStore[r];
+  return Number.isFinite(v) ? v : DEFAULT_ELEMENT_COLOR;
+};
+// The definition of the scheme (named so a test can extract and really run it).
+const defineSugarIdentityScheme = () => {
+  return function () {
+    this.atomColor = function (atom) { return sugarColorOf(atom && atom.resname); };
+  };
+};
+const registerSugarScheme = (NGL) => {
+  if (sugarSchemeKey) return;
+  sugarSchemeKey = registerColorScheme(NGL, 'lab-sugar-identity', defineSugarIdentityScheme());
+};
+
 // ---- A flat colour, as NGL wants it (a hex integer) -------------------------
 // ONE reader of « Atom colour : Custom… » — used by every menu and by the
 // side-chain effect, so a menu can never be DRAWN with one rule and COLOURED
@@ -2443,16 +2508,6 @@ const [mainMol, setMainMol] = useState({ style: 'auto', color: '', colorMode: 'e
 const mainMolRef = useRef(mainMol);
 mainMolRef.current = mainMol;
 const [mainPos, setMainPos] = useState([0, 0, 0]); // main structure translation (Å), settable via Move X/Y/Z or ✋ Drag
-// "Standardize docking" mode: every docking result (the active cluster / pose
-// AND all the others, current and future) is drawn with the styles of section
-// « 2 · Molecular Styling » — the ONE place where the look is defined (Proteins
-// backbone / side chains, Ligands, surfaces …). That is what makes all the
-// solutions look consistent while the mode is ON, whatever each molecule's own
-// Style setting says; switching OFF gives every molecule its own style back.
-// There is deliberately NO docking-specific style menu: the look IS the §2 look.
-const [dockStyleMode, setDockStyleMode] = useState(false);
-const dockStyleRef = useRef(dockStyleMode);
-dockStyleRef.current = dockStyleMode;
 const [residueTicks, setResidueTicks] = useState([]); // [{ resno, resname, code, chainid }] — sequence strip above the 3D view
 const extraCompsRef = useRef([]);                  // [{ id, name, comp, baseReps, style, color }]
 // "⚡ ESP" electrostatic-potential overlay — an optional extra NGL `surface`
@@ -2949,6 +3004,18 @@ useEffect(() => {
   if (Number.isFinite(l.headColor)) lipidColorStore.head = l.headColor;
   if (Number.isFinite(l.glycerolColor)) lipidColorStore.glycerol = l.glycerolColor;
   if (Number.isFinite(l.tailColor)) lipidColorStore.acyl = l.tailColor;
+}, [catStyles]);
+// The two-colour RAMP is fed the same way — and it HAS to be: the « Gradient »
+// colour mode returns the lab-gradient scheme (see catColorParams), whose
+// atomColor calls lerpHexColors on gradientColorStore.from/to. Without this the
+// two swatches of the menu would paint the default pair and nothing else. The
+// protein entry is the reference: the ⚙ settings wheel of the Molecules panel
+// writes the SAME pair to every category, so one feed is enough for the whole
+// viewer (the ramp is one global scheme, see gradientRangesFor).
+useEffect(() => {
+  const g = catStyles.protein || {};
+  gradientColorStore.from = Number.isFinite(g.gradientFrom) ? g.gradientFrom : DEFAULT_GRADIENT_COLORS.from;
+  gradientColorStore.to = Number.isFinite(g.gradientTo) ? g.gradientTo : DEFAULT_GRADIENT_COLORS.to;
 }, [catStyles]);
 useEffect(() => { try { localStorage.setItem('labViewerSelResColor', selectedResidueColor.toString(16)); } catch { /* ignore */ } }, [selectedResidueColor]);
 useEffect(() => { try { localStorage.setItem('labViewerAssignedColor', assignedAtomColor.toString(16)); } catch { /* ignore */ } }, [assignedAtomColor]);
@@ -3823,12 +3890,12 @@ const buildMainReps = () => {
   // The previous ESP-coloured category surfaces of the main component are gone
   // (they were part of baseCompsRef) — re-create them from scratch.
   catEspRepsRef.current.delete(comp);
-  // "🧬 Docking" standard mode: the main docking result gets the §2 « Molecular
-  // Styling » look — the very same per-category renderer as every other
-  // cluster/pose (addDefaultReps → buildCategoryReps), even when a per-molecule
-  // Style was picked in the Molecules bar. That is what standardizes a series.
+  // "Auto" = the §2 « Molecular Styling » look: the very same per-category
+  // renderer as every other loaded structure (addDefaultReps →
+  // buildCategoryReps). Any other style rebuilds this structure alone with ONE
+  // chosen style, exactly as the Molecules bar asks.
   const st = mainMolRef.current || {};
-  if (dockStyleRef.current || !st.style || st.style === 'auto') {
+  if (!st.style || st.style === 'auto') {
     addDefaultReps(comp);
     return;
   }
@@ -4849,8 +4916,8 @@ useEffect(() => {
   extraCompsRef.current.forEach((entry) => {
     if (!entry || !entry.comp) return;
     if (entry.style && entry.style !== 'auto') {
-      // Custom-styled molecules keep their per-molecule style / colour / position
-      // — unless « 🧬 Docking » is ON, where restyleExtraMol applies the §2 look.
+      // Custom-styled molecules keep their per-molecule style / colour / position;
+      // the others are redrawn by the §2 « Molecular Styling » builder.
       restyleExtraMol(entry.id);
     } else {
       entry.baseReps = applyCurrentStyleTo(entry.comp, entry.baseReps || []);
@@ -4869,42 +4936,6 @@ useEffect(() => {
   buildMainReps();
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [mainMol, status, hideAll, pymolActive, sstrucColors]);
-
-// Re-style the MAIN structure and every loaded cluster/pose with the §2
-// « Molecular Styling » look. Called by the mode toggle, so switching
-// « 🧬 Docking » ON is visible at once on the active result and all the others.
-const applyDockStylesNow = () => {
-  if (status !== 'ready' || !componentRef.current) return;
-  // Applying the §2 look IS a styling choice: a large system leaves its fast
-  // starting layout so the docking look is really visible on the main result.
-  leaveLightMode();
-  // The MAIN is only rebuilt outside PyMOL-script mode — there the script's own
-  // representations keep defining the look. "Hide everything" also skips the
-  // main (it is hidden anyway) but still re-styles the loaded docking results.
-  if (!hideAll && !pymolActive) buildMainReps();
-  extraCompsRef.current.forEach((entry) => {
-    if (entry && entry.comp) restyleExtraMol(entry.id);
-  });
-  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
-};
-
-// Switch « 🧬 Docking » ON/OFF. The look applied to every docking result — the
-// active one and all the others, current and future — is the one of section
-// « 2 · Molecular Styling »: the six category menus are the ONLY style menus of
-// the docking look, so there is nothing to define here. Switching OFF gives
-// every molecule its own style back.
-const toggleDockStyle = () => setDockStyleMode((v) => !v);
-
-// Toggle the "🧬 Docking" standard mode: when it changes, re-render the main AND
-// every loaded cluster/pose with the §2 « Molecular Styling » look. Toggling off
-// restores each molecule's own style.
-const prevDockStyleRef = useRef(dockStyleMode);
-useEffect(() => {
-  if (prevDockStyleRef.current === dockStyleMode) return;
-  prevDockStyleRef.current = dockStyleMode;
-  applyDockStylesNow();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [dockStyleMode]);
 
 // Background colour + quality ("ray shadows" approximation)
 useEffect(() => {
@@ -5479,10 +5510,9 @@ const restyleExtraMol = (id) => {
   let reps = [];
   const st = entry || {};
   const style = st.style;
-  if (dockStyleRef.current || !style || style === 'auto') {
-    // "auto" = the §2 « Molecular Styling » look. « 🧬 Docking » ON forces that
-    // very same look on every docking result — like every other cluster/pose,
-    // regardless of this molecule's own style.
+  if (!style || style === 'auto') {
+    // "auto" = the §2 « Molecular Styling » look (buildCategoryReps), exactly
+    // like the main structure: ONE builder draws every molecule.
     reps = applyCurrentStyleTo(comp, []);
   } else {
     // Colouring metaphor — a NGL colorScheme, or a plain solid colour when
@@ -5518,24 +5548,28 @@ const restyleExtraMol = (id) => {
 };
 
 const setExtraMolStyle = (id, style) => {
+  leaveLightMode();   // the Molecules bar redraws
   extraCompsRef.current.forEach((e) => { if (e.id === id) e.style = style; });
   setExtraMols(extraMolsSnapshot());
   restyleExtraMol(id);
 };
 
 const setExtraMolColor = (id, color) => {
+  leaveLightMode();   // the Molecules bar redraws
   extraCompsRef.current.forEach((e) => { if (e.id === id) { e.color = color; e.colorMode = 'solid'; } });
   setExtraMols(extraMolsSnapshot());
   restyleExtraMol(id);
 };
 
 const setExtraMolColorMode = (id, mode) => {
+  leaveLightMode();   // the Molecules bar redraws
   extraCompsRef.current.forEach((e) => { if (e.id === id) e.colorMode = mode; });
   setExtraMols(extraMolsSnapshot());
   restyleExtraMol(id);
 };
 
 const setExtraMolTransparency = (id, t) => {
+  leaveLightMode();   // the Molecules bar redraws
   extraCompsRef.current.forEach((e) => { if (e.id === id) e.transparency = t; });
   setExtraMols(extraMolsSnapshot());
   restyleExtraMol(id);
@@ -5838,8 +5872,7 @@ const loadExtraStructureUrl = useCallback(async (rawSrc, n = 0) => {
       }
     }
     if (!comp || !comp.structure) return;
-    // The same §2 « Molecular Styling » look as the main structure (and, while
-    // « 🧬 Docking » is ON, as every other docking result).
+    // The same §2 « Molecular Styling » look as the main structure.
     const baseReps = applyCurrentStyleTo(comp, []);
     shadowRepsHook(comp);
     if (shadowOnRef.current) setMeshShadows(comp);
@@ -6877,23 +6910,6 @@ className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors
 </button>
 {stylingOpen && (
 <div className="flex flex-wrap items-center gap-1">
-
-{/* 🧬 Docking — STANDARDIZE every docking result (cluster / pose, current and
-    future) on the look defined in THIS section: the six per-category menus
-    below (A · Proteins … F · Others) are the only style menus of « 🧬 Docking »,
-    so switching it ON re-draws the active structure AND every loaded result
-    with them — whatever each molecule's own Style says — and switching OFF
-    gives each molecule its style back. This block is FULLY usable outside a
-    docking run (it is a styling gesture, which is why it lives in §2). */}
-{(moleculeType === 'protein' || extraMols.length > 0 || dockStyleMode) && (
-<div className={`flex items-center gap-1 rounded-md border px-1.5 h-7 whitespace-nowrap ${dockStyleMode ? 'bg-teal-50 border-teal-400' : 'bg-white border-teal-300'}`}>
-  <button type="button" onClick={toggleDockStyle}
-    className={`text-xs font-bold px-1 py-0.5 rounded ${dockStyleMode ? 'text-teal-900' : 'text-teal-700 hover:bg-teal-50'}`}
-    title="Standardize DOCKING results: every cluster/pose — current and future — is drawn with the styles of the menus A–F below (Proteins, Ligands, surfaces…), the ONLY style menus of the docking look. Switch off to restore each molecule's own style.">
-    🧬 Docking: {dockStyleMode ? 'On' : 'Off'}
-  </button>
-</div>
-)}
 
 {/* 🙈 Hide everything — one click removes every representation (base, side
     chains, selections, ESP); 👁️ Show default rebuilds them from the menus. */}
@@ -8087,10 +8103,6 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
           title="Apply the ACTIVE (selected) structure's style / colour / transparency to every other molecule — handy for a series of docked structures that should all look the same">
           🎨 Copy</button>
-        <button type="button" onClick={toggleDockStyle}
-          className={`px-1.5 py-0.5 text-[9px] font-bold rounded border transition-colors ${dockStyleMode ? 'bg-teal-600 text-white border-teal-600' : 'bg-white border-teal-300 text-teal-700 hover:bg-teal-50'}`}
-          title="Standardize DOCKING results: every cluster/pose (current and future) is drawn with the styles of section « 2 · Molecular Styling » of the toolbar — the only style menus of the docking look. Switch off to restore each molecule's own style.">
-          🧬 Docking: {dockStyleMode ? 'On' : 'Off'}</button>
       </span>
     </div>
     <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1 min-h-0">
@@ -8104,7 +8116,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           transparency, Move X/Y/Z and ✋ drag. "Auto" follows the global
           Backbone / Molecule Style selectors. */}
       <div className="flex items-center gap-1 mt-0.5 pl-5">
-        <select value={mainMol.style || 'auto'} onChange={(e) => setMainMol((m) => ({ ...m, style: e.target.value }))}
+        <select value={mainMol.style || 'auto'} onChange={(e) => { leaveLightMode(); setMainMol((m) => ({ ...m, style: e.target.value })); }}
           className="border border-slate-200 rounded text-[10px] py-0.5 px-1 w-24" title="Representation style for the main structure (Auto follows the global Backbone / Molecule Style)">
           <option value="auto">Auto</option>
           <option value="cartoon">Cartoon</option>
@@ -8117,7 +8129,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
         </select>
         <label className="text-[10px] text-slate-400 font-bold flex items-center gap-0.5" title="Colouring of the main structure (applies to the chosen style above)">
           Colour
-          <select value={mainMol.colorMode || 'element'} onChange={(e) => setMainMol((m) => ({ ...m, colorMode: e.target.value }))}
+          <select value={mainMol.colorMode || 'element'} onChange={(e) => { leaveLightMode(); setMainMol((m) => ({ ...m, colorMode: e.target.value })); }}
             className="border border-slate-200 rounded text-[10px] py-0.5 px-1 w-20" title="Colouring metaphor">
             <option value="solid">Solid</option>
             <option value="element">Atom type</option>
@@ -8128,14 +8140,14 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           </select>
         </label>
         <input type="color" value={mainMol.color || '#dddddd'} disabled={(mainMol.colorMode || 'element') !== 'solid'}
-          onChange={(e) => setMainMol((m) => ({ ...m, color: e.target.value }))}
+          onChange={(e) => { leaveLightMode(); setMainMol((m) => ({ ...m, color: e.target.value })); }}
           className={`w-5 h-5 rounded border cursor-pointer ${(mainMol.colorMode || 'element') !== 'solid' ? 'opacity-30 cursor-not-allowed' : ''}`}
           title="Solid colour (used when Colour = Solid)" />
       </div>
       <div className="flex items-center gap-1 mt-0.5 pl-5" title="Transparency of the main structure">
         <span className="text-[10px] text-slate-400 font-bold shrink-0">Transp</span>
         <input type="range" min="0" max="1" step="0.05" value={mainMol.transparency || 0}
-          onChange={(e) => setMainMol((m) => ({ ...m, transparency: parseFloat(e.target.value) }))}
+          onChange={(e) => { leaveLightMode(); setMainMol((m) => ({ ...m, transparency: parseFloat(e.target.value) })); }}
           className="accent-blue-600 w-full" />
       </div>
       <div className="flex items-center gap-1 mt-0.5 pl-5" title="Move the main structure independently (Å)">
