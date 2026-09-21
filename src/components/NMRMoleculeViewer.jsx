@@ -2102,6 +2102,21 @@ const registerColorScheme = (NGL, label, define) => {
   } catch { return null; }
 };
 const sstrucColorStore = { helix: 0xb44a90, sheet: 0xf8d878, loop: 0xe6e6e6 };
+// The DEFAULTS of that palette, snapshotted ONCE from the store above (the store is
+// mutated by the live effect, so it can never BE the defaults): the ↺ of the ⚙
+// settings wheel and the initial state write these — the three colours exist in ONE
+// place, so a reset can never drift from the default palette.
+const SSTRUC_COLOR_DEFAULTS = { ...sstrucColorStore };
+// The three 2°-structure colours as ONE list, with the wording of both surfaces: the
+// ⚙ settings wheel, the « Color by » row of the styling bar and the « Atom colour »
+// selector of a protein menu all draw their swatches from it — the three places can
+// therefore never offer different palettes (the report: « colors for secondary
+// structure definition are not present in the setting wheel »).
+const SSTRUC_COLOR_ITEMS = [
+  { key: 'helix', label: 'Helix', what: 'helices (α · 3₁₀ · π)' },
+  { key: 'sheet', label: 'Sheet', what: 'sheets (β strands)' },
+  { key: 'loop', label: 'Loop', what: 'loops (coil · turns · bends)' },
+];
 let sstrucSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
 // The 2°-structure colour of ONE atom, from NGL's own `sstruc` code — factored out
 // so the MOTIF scheme (lab-nuc-motif) can hand every nucleotide that is NOT part of
@@ -4683,13 +4698,13 @@ const [sstrucColors, setSstrucColors] = useState(() => {
     const raw = JSON.parse(localStorage.getItem('labViewerSstrucColors') || 'null');
     if (raw && typeof raw === 'object') {
       return {
-        helix: raw.helix || 0xb44a90,
-        sheet: raw.sheet || 0xf8d878,
-        loop: raw.loop || 0xe6e6e6,
+        helix: raw.helix || SSTRUC_COLOR_DEFAULTS.helix,
+        sheet: raw.sheet || SSTRUC_COLOR_DEFAULTS.sheet,
+        loop: raw.loop || SSTRUC_COLOR_DEFAULTS.loop,
       };
     }
   } catch { /* fall through to defaults */ }
-  return { helix: 0xb44a90, sheet: 0xf8d878, loop: 0xe6e6e6 };
+  return { ...SSTRUC_COLOR_DEFAULTS };
 });
 const [selectedResidueColor, setSelectedResidueColor] = useState(() => {
   try { const v = parseInt(localStorage.getItem('labViewerSelResColor') || '', 16); if (Number.isFinite(v) && v >= 0) return v; } catch { /* default */ }
@@ -8088,6 +8103,27 @@ const renderSectionRow = (sec, sub) => {
               title="⇄ Reverse the ramp (swap the two colours) — the ramp is always drawn from the first residue to the last">⇄</button>
           </>
         )}
+        {/* The 2°-structure palette RIGHT WHERE « Secondary structure » was chosen:
+            helix · sheet · loop. Like the ramp, the lab-sstruc scheme reads ONE live
+            store for the whole viewer, so these swatches write the very colours the
+            ⚙ wheel edits — until now the row showed no control at all for this
+            colouring, and the legacy menu sent the user to a 🎨 panel that no longer
+            exists (the report: « colors for secondary structure definition are not
+            present in the setting wheel »). */}
+        {look.colorBy === 'sstruc' && (
+          <>
+            {SSTRUC_COLOR_ITEMS.map((it) => (
+              <input key={it.key} type="color" value={numToHex(sstrucColors[it.key])}
+                onChange={(e) => setSstrucColour(it.key, parseInt(e.target.value.slice(1), 16))}
+                className="w-5 h-5 rounded border border-slate-300 cursor-pointer shrink-0"
+                title={`Colour of the ${it.what} — the 2°-structure palette (helix · sheet · loop) every molecule coloured by « Secondary structure » reads, as the ⚙ wheel does`} />
+            ))}
+            <button type="button" onClick={() => setSettingsPanelOpen(true)}
+              className="px-1 py-0.5 text-[10px] font-bold rounded border bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100 shrink-0"
+              title="Open the ⚙ settings wheel — « Secondary structure » has a section of its own there (helix · sheet · loop)">
+              ⚙</button>
+          </>
+        )}
       </div>
       <div className="flex items-center gap-1">
         <span className="text-[9px] text-slate-400 font-bold shrink-0"
@@ -9095,9 +9131,9 @@ const renderAtomColour = (cat) => {
   const showLipidClass = cat === 'lipid';
   const showNucleicReading = cat === 'nucleic';
   const paletteOpen = mode === 'element' || mode === 'residue' || mode === 'basetype'
-    || mode === 'sugar' || mode === 'nucform' || mode === 'motif';
+    || mode === 'sugar' || mode === 'nucform' || mode === 'motif' || mode === 'sstruc';
   return (
-    <VRow label="Atom colour" title="Colour of EVERYTHING this menu draws — its ribbon (cartoon / ribbon / tube / trace) AND its atoms / bonds (Ball & Stick · Licorice · Lines · Spheres). « Default » keeps the classic colouring — element colours, and the rainbow by residue index for the protein / nucleic backbones. « Secondary structure » paints the helices, the sheets and the loops with the three colours of the 🎨 Colours panel. « Atom-type palette » uses the EDITABLE element table of the ⚙ settings wheel; « Amino acid » the 20 residue colours of the same wheel; « DNA/RNA base » its five base colours (A · C · G · T · U — also the colour that fills the stylized ring plates); « Sugar type » the per-sugar identity colours of the same wheel (GLC · NAG · MAN · BMA · SIA · GAL · FUC — anything else keeps the readable grey). « Gradient » runs a two-colour ramp ALONG the sequence, from the first residue to the last of every chain (N → C terminus for proteins, 5' → 3' end for nucleic acids). « Custom… » paints the whole menu with ONE colour (the swatch on the right).">
+    <VRow label="Atom colour" title="Colour of EVERYTHING this menu draws — its ribbon (cartoon / ribbon / tube / trace) AND its atoms / bonds (Ball & Stick · Licorice · Lines · Spheres). « Default » keeps the classic colouring — element colours, and the rainbow by residue index for the protein / nucleic backbones. « Secondary structure » paints the helices, the sheets and the loops with the three colours of the ⚙ settings wheel — its swatches stand right here, in the « Color by » row of the styling bar, and in the wheel's own « Secondary structure » section. « Atom-type palette » uses the EDITABLE element table of the ⚙ settings wheel; « Amino acid » the 20 residue colours of the same wheel; « DNA/RNA base » its five base colours (A · C · G · T · U — also the colour that fills the stylized ring plates); « Sugar type » the per-sugar identity colours of the same wheel (GLC · NAG · MAN · BMA · SIA · GAL · FUC — anything else keeps the readable grey). « Gradient » runs a two-colour ramp ALONG the sequence, from the first residue to the last of every chain (N → C terminus for proteins, 5' → 3' end for nucleic acids). « Custom… » paints the whole menu with ONE colour (the swatch on the right).">
       <VSel value={!showGradient && mode === 'gradient' ? 'default' : mode}
         onChange={(e) => {
           const v = e.target.value;
@@ -9151,11 +9187,26 @@ const renderAtomColour = (cat) => {
         </>
       )}
       {sstruc && (
-        <button type="button" onClick={() => setShowColoursPanel(true)}
-          className="px-1.5 py-0.5 text-[10px] font-bold rounded border bg-rose-50 border-rose-300 text-rose-700 hover:bg-rose-100"
-          title="The three helix / sheet / loop colours are set in the 🎨 Colours panel of this menu">
-          🎨 Helix / Sheet / Loop colours
-        </button>
+        <>
+          {/* The three colours RIGHT HERE: the 🎨 panel this row used to send the user
+              to is not rendered any more, so choosing « Secondary structure » left the
+              helix / sheet / loop colours with no control at all — the report. The ⚙
+              button opens the settings wheel, where the palette has a section of its
+              own; the swatches write through setSstrucColour, the ONE writer of this
+              palette (it also switches this menu to « Secondary structure » and leaves
+              the lightweight style, so the colour is really visible). */}
+          {SSTRUC_COLOR_ITEMS.map((it) => (
+            <input key={it.key} type="color" value={numToHex(sstrucColors[it.key])}
+              onChange={(e) => setSstrucColour(it.key, parseInt(e.target.value.slice(1), 16))}
+              className="w-7 h-7 rounded border border-slate-300 cursor-pointer"
+              title={`Colour of the ${it.what} — writing it switches this menu to « Secondary structure » so the ribbon AND the atoms really take it`} />
+          ))}
+          <button type="button" onClick={() => setSettingsPanelOpen(true)}
+            className="px-1.5 py-0.5 text-[10px] font-bold rounded border bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100"
+            title="Open the ⚙ settings wheel — the three helix / sheet / loop colours have a « Secondary structure » section of their own there">
+            ⚙ Colours…
+          </button>
+        </>
       )}
     </VRow>
   );
@@ -10425,6 +10476,11 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
       • the ATOM TYPES (one colour per element) — the table behind « Atom type »
         in the Molecules bar (lab-elements) and « Atom-type palette (⚙) » in a
         menu; an element missing from it keeps a readable grey;
+      • the AMINO ACIDS (one colour per residue), the DNA/RNA BASES, the SECONDARY
+        STRUCTURE (helix · sheet · loop — a SECTION OF ITS OWN: it used to hide
+        inside the DNA/RNA-base one, and the report could not find those three
+        colours anywhere), the CHARGE of an ion and the 16 LIPID TYPES — the
+        palettes the « Color by » rows of the styling bar read;
       • the SUGAR TYPES (one colour per sugar residue) — behind « Sugar type »
         (lab-sugar-identity), built from the very list the Sugars menu selects on,
         so the two can never drift apart;
@@ -10444,7 +10500,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
       <div>
         <h3 className="text-sm font-black uppercase tracking-wide">⚙ Molecule colour settings</h3>
         <p className="text-[11px] text-slate-200 mt-0.5">
-          The palettes the colourings read — atom types · amino acids (the 20 residues) · DNA/RNA bases · secondary structure · charge · the 29 sugar types · the 16 lipid types · the DNA/RNA conformations and motifs · the gradient pair. Moving a swatch repaints every molecule that uses it, at once.
+          The palettes the colourings read — atom types · amino acids (the 20 residues) · secondary structure (helix · sheet · loop, its own section) · DNA/RNA bases · charge · the 29 sugar types · the 16 lipid types · the DNA/RNA conformations and motifs · the gradient pair. Moving a swatch repaints every molecule that uses it, at once.
         </p>
       </div>
       <button type="button" onClick={() => setSettingsPanelOpen(false)}
@@ -10499,17 +10555,45 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           ))}
         </div>
       </section>
+      {/* The 2°-structure palette gets a section of ITS OWN. It used to be squeezed
+          into the DNA/RNA-base one, under a header that began with « DNA/RNA bases »
+          — so a protein user looking for « the colours of secondary structure » could
+          not find them, and the colouring is offered in the styling bar with a
+          definition control nowhere (the report). */}
       <section className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">DNA/RNA bases · secondary structure · charge</span>
-          <button type="button" onClick={() => { setBaseTypeColors({ ...BASE_IDENTITY_COLORS }); setSstrucColors({ helix: 0xb44a90, sheet: 0xf8d878, loop: 0xe6e6e6 }); setChargeColors({ ...CHARGE_COLORS }); }}
+          <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Secondary structure · helix / sheet / loop</span>
+          <button type="button" onClick={() => setSstrucColors({ ...SSTRUC_COLOR_DEFAULTS })}
             className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
-            title="Put these three palettes back to their defaults">
+            title="Put the three 2°-structure colours back to their defaults">
             ↺ Defaults
           </button>
         </div>
         <p className="text-[10px] text-slate-500">
-          What « Color by : DNA/RNA base » of a nucleic acid — and « DNA/RNA base » in the « Atom colour » selector of its menu — paints: the five bases {BASE_TYPE_ORDER.join(' · ')} (also the colour that fills the stylized ring plates). Then what « Secondary structure » paints (helix · sheet · loop, of a protein as well as the ribbon of a nucleic acid) and what « Charge » paints on an ion: a PDB file rarely carries a formal charge, so the sign is read from the file when it has one and from the element otherwise.
+          What « Color by : Secondary structure » paints — {SSTRUC_COLOR_ITEMS.map((it) => it.label.toLowerCase()).join(' · ')}. NGL's own `sstruc` codes decide which one an atom takes (h · g · i = helix, e · b = sheet, everything else — coil · turns · bends — = loop), and the ribbon of a nucleic acid as well as the two motifs of PART 3 fall back on these same three colours. The swatches stand here, in the « Color by » row of the styling bar (they appear as soon as « Secondary structure » is chosen) and in the « Atom colour » selector of a protein menu — ONE palette, three places.
+        </p>
+        <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] gap-1.5">
+          {SSTRUC_COLOR_ITEMS.map((it) => (
+            <label key={it.key} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50" title={`Colour of the ${it.what}`}>
+              <input type="color" value={numToHex(sstrucColors[it.key])}
+                onChange={(e) => setSstrucColors((c) => ({ ...c, [it.key]: parseInt(e.target.value.slice(1), 16) }))}
+                className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${it.label} colour`} />
+              <span className="text-[10px] font-bold text-slate-600">{it.label}</span>
+            </label>
+          ))}
+        </div>
+      </section>
+      <section className="flex flex-col gap-1">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">DNA/RNA bases · charge</span>
+          <button type="button" onClick={() => { setBaseTypeColors({ ...BASE_IDENTITY_COLORS }); setChargeColors({ ...CHARGE_COLORS }); }}
+            className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+            title="Put these two palettes back to their defaults">
+            ↺ Defaults
+          </button>
+        </div>
+        <p className="text-[10px] text-slate-500">
+          What « Color by : DNA/RNA base » of a nucleic acid — and « DNA/RNA base » in the « Atom colour » selector of its menu — paints: the five bases {BASE_TYPE_ORDER.join(' · ')} (also the colour that fills the stylized ring plates). Then what « Charge » paints on an ion: a PDB file rarely carries a formal charge, so the sign is read from the file when it has one and from the element otherwise. (The helix / sheet / loop colours of « Secondary structure » have their own section just above.)
         </p>
         <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] gap-1.5">
           {BASE_TYPE_ORDER.map((b) => (
@@ -10518,14 +10602,6 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
                 onChange={(e) => setBaseTypeColors((p) => ({ ...p, [b]: parseInt(e.target.value.slice(1), 16) }))}
                 className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${b} base colour`} />
               <span className="text-[10px] font-bold text-slate-600">{b}</span>
-            </label>
-          ))}
-          {[['helix', 'Helix'], ['sheet', 'Sheet'], ['loop', 'Loop']].map(([k, l]) => (
-            <label key={k} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50" title={`Colour of the ${l.toLowerCase()}`}>
-              <input type="color" value={numToHex(sstrucColors[k])}
-                onChange={(e) => setSstrucColors((c) => ({ ...c, [k]: parseInt(e.target.value.slice(1), 16) }))}
-                className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${l} colour`} />
-              <span className="text-[10px] font-bold text-slate-600">{l}</span>
             </label>
           ))}
           {CHARGE_ORDER.map((c) => (
@@ -10656,7 +10732,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
       </section>
     </div>
     <div className="px-4 py-2 border-t border-slate-100 flex items-center justify-between gap-2 shrink-0">
-      <span className="text-[10px] text-slate-400">Saved with the viewer's preferences (element palette · sugar palette · nucleotide forms &amp; motifs · general look).</span>
+      <span className="text-[10px] text-slate-400">Saved with the viewer's preferences (element palette · amino-acid palette · DNA/RNA base and 2°-structure colours · sugar palette · lipid types · nucleotide forms &amp; motifs · general look).</span>
       <button type="button" onClick={() => setSettingsPanelOpen(false)}
         className="px-3 py-1.5 rounded-lg bg-slate-800 text-white text-xs font-bold hover:bg-slate-900">Done</button>
     </div>

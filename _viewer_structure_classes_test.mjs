@@ -626,7 +626,10 @@ has('if (pal.nucleicMotifs) setNucleicMotifColors((p) => mergePalette(DEFAULT_NU
   '…idem pour les motifs');
 has('Nucleotide conformations &amp; motifs', 'la roue ⚙ a une section pour ces deux palettes');
 has('Amino acids · the 20 residues', 'la roue ⚙ édite la palette des 20 acides aminés');
-has('DNA/RNA bases · secondary structure · charge', '…et celle des bases ADN/ARN');
+has('DNA/RNA bases · charge', '…et celle des bases ADN/ARN (la charge à ses côtés)');
+// La 2° structure a désormais une section À ELLE : le rapport ne trouvait pas ses
+// trois couleurs, enterrées sous un en-tête qui commençait par « DNA/RNA bases ».
+has('Secondary structure · helix / sheet / loop', '…et une SECTION À ELLE pour la 2° structure (hélice · feuillet · boucle)');
 // Les deux palettes sont OFFERTES dans les réglages de couleur d'une molécule (le
 // « Atom colour » de son menu) et lues par le MÊME lecteur (catColorParams).
 has("if (mode === 'residue' && residueSchemeKey) return { color: residueSchemeKey };", 'un menu de protéine colore par acide aminé (lab-residue)');

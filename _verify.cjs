@@ -27,6 +27,12 @@ const tests = [
   // pouvait changer, les chaînes latérales flottantes (CB–CA jamais dessiné) et le
   // 🔢 renumérotation qui n'ouvrait rien et ne changeait rien.
   '_viewer_report_fixes_test.mjs',
+  // Les couleurs de la 2° structure sont ÉDITABLES partout où elles se choisissent :
+  // la rangée « Color by » de la barre de style, le menu §2 (dont le bouton ouvrait
+  // un panneau 🎨 qui n'existe plus) et une section À ELLE dans la roue ⚙ (le
+  // rapport : « colors for secondary structure definition are not present in the
+  // setting wheel »).
+  '_viewer_sstruc_colors_test.mjs',
   '_viewer_render_smoke_test.mjs',
 ];
 const rows = tests.map((t) => {
