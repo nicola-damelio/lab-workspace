@@ -163,7 +163,26 @@ const sandbox = [
   sliceObject(VIEW, 'LIPID_CLASS_COLORS'),
   sliceObject(VIEW, 'lipidClassColorStore'),
   sliceFn(VIEW, 'lipidClassColorOf'),
-  sliceFn(VIEW, 'defineLipidClassScheme'),
+  sliceFn(VIEW, 'defineLipidClassScheme'),  // PART 4 — les palettes et les schémas que la barre de style lit.
+  sliceConst('BASE_TYPE_ORDER'),
+  sliceObject(VIEW, 'RESIDUE_COLOR_PALETTE'),
+  sliceObject(VIEW, 'residueColorStore'),
+  sliceFn(VIEW, 'residueColorOf'),
+  sliceFn(VIEW, 'defineResidueScheme'),
+  sliceObject(VIEW, 'baseTypeColorStore'),
+  sliceFn(VIEW, 'baseTypeColorOf'),
+  sliceFn(VIEW, 'defineBaseTypeScheme'),
+  sliceObject(VIEW, 'CHARGE_COLORS'),
+  sliceObject(VIEW, 'chargeColorStore'),
+  sliceFn(VIEW, 'ionChargeOf'),
+  sliceFn(VIEW, 'chargeColorOf'),
+  sliceFn(VIEW, 'defineChargeScheme'),
+  sliceObject(VIEW, 'SUGAR_TYPE_COLORS'),
+  sliceObject(VIEW, 'sugarTypeColorStore'),
+  sliceObject(VIEW, 'SUGAR_TYPE_OF_CODE'),
+  sliceFn(VIEW, 'sugarTypeOf'),
+  sliceFn(VIEW, 'sugarTypeColorOf'),
+
   `return { BASE_IDENTITY_COLORS, DEFAULT_NUCLEIC_COLORS, DEFAULT_LIPID_COLORS, sstrucColorStore, nucleicColorStore, lipidColorStore,
     LIPID_GLYCEROL_NAMES, LIPID_ACYL_RE, LIPID_POLAR_ELEMENTS, LIPID_NAMED_PROBE, LIPID_CHAIN_PROBE_RE,
     nucleicGroupOf, baseIdentityColorOf, atomElement, lipidGroupOf, registerColorScheme,
@@ -176,7 +195,8 @@ const sandbox = [
     SUGAR_NAME_CODES, GLYCAN_ENTITY_COLORS, DEFAULT_GLYCAN_ENTITY_COLOR, glycanColorStore,
     glycanEntityColorOf, defineGlycanScheme, glycanEntityMapFor, isSugarResidueCode,
     LIPID_CLASS_ALIASES, LIPID_CLASS_SUFFIXES, lipidClassOf, LIPID_CLASS_COLORS, lipidClassColorStore,
-    lipidClassColorOf, defineLipidClassScheme };`
+    lipidClassColorOf, defineLipidClassScheme ,
+      BASE_TYPE_ORDER, RESIDUE_COLOR_PALETTE, residueColorStore, residueColorOf, defineResidueScheme, baseTypeColorStore, baseTypeColorOf, defineBaseTypeScheme, CHARGE_COLORS, chargeColorStore, ionChargeOf, chargeColorOf, defineChargeScheme, SUGAR_TYPE_COLORS, sugarTypeColorStore, SUGAR_TYPE_OF_CODE, sugarTypeOf, sugarTypeColorOf };`
 ].join('\n');
 const H = new Function(sandbox)();
 

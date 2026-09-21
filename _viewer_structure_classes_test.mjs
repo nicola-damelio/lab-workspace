@@ -129,7 +129,27 @@ const sandbox = [
   raw('sugarAnomericNamesOf'), sliceFn(VIEW, 'sugarLinkEnds'), sliceFn(VIEW, 'sugarLinkBondOf'),
   sliceFn(VIEW, 'sugarLinksByDistance'), raw('glycanLabel'), sliceFn(VIEW, 'glycanEntities'),
   // Les classes de lipides (PART 2.1bis).
-  sliceObject(VIEW, 'LIPID_CLASS_ALIASES'), raw('LIPID_CLASS_SUFFIXES'), sliceFn(VIEW, 'lipidClassOf'),
+  sliceObject(VIEW, 'LIPID_CLASS_ALIASES'), raw('LIPID_CLASS_SUFFIXES'), sliceFn(VIEW, 'lipidClassOf'),  // PART 4 — les palettes et les schémas que la barre de style lit.
+  sliceObject(VIEW, 'BASE_IDENTITY_COLORS'),
+  sliceDecl(VIEW, 'BASE_TYPE_ORDER'),
+  sliceObject(VIEW, 'RESIDUE_COLOR_PALETTE'),
+  sliceObject(VIEW, 'residueColorStore'),
+  sliceFn(VIEW, 'residueColorOf'),
+  sliceFn(VIEW, 'defineResidueScheme'),
+  sliceObject(VIEW, 'baseTypeColorStore'),
+  sliceFn(VIEW, 'baseTypeColorOf'),
+  sliceFn(VIEW, 'defineBaseTypeScheme'),
+  sliceObject(VIEW, 'CHARGE_COLORS'),
+  sliceObject(VIEW, 'chargeColorStore'),
+  sliceFn(VIEW, 'ionChargeOf'),
+  sliceFn(VIEW, 'chargeColorOf'),
+  sliceFn(VIEW, 'defineChargeScheme'),
+  sliceObject(VIEW, 'SUGAR_TYPE_COLORS'),
+  sliceObject(VIEW, 'sugarTypeColorStore'),
+  sliceObject(VIEW, 'SUGAR_TYPE_OF_CODE'),
+  sliceFn(VIEW, 'sugarTypeOf'),
+  sliceFn(VIEW, 'sugarTypeColorOf'),
+
   `return { coordDist, torsionDeg, linePointDist, nucPairDist, nucBaseCentreOf, planeOfPoints,
     planeDeviation, NUC_SYN_MAX_DEG, NUC_C3_ENDO_MAX_DEG,
     NUC_C2_ENDO_MIN_DEG, NUC_PUCKER_DIST, NUC_FORM_LABELS, NUC_FORM_NAMES,
@@ -142,7 +162,8 @@ const sandbox = [
     SUGAR_ACCEPTOR_RE, SUGAR_LINK_CUTOFF, SUGAR_RES_SEL, SUGAR_IDENTITY_CODES, sugarCodeOf,
     isSugarResidueCode, sugarShortNameOf, sugarAnomericNamesOf, sugarLinkEnds, sugarLinkBondOf,
     sugarLinksByDistance, glycanLabel, glycanEntities, LIPID_CLASS_ALIASES, LIPID_CLASS_SUFFIXES,
-    lipidClassOf };`,
+    lipidClassOf ,
+      BASE_TYPE_ORDER, RESIDUE_COLOR_PALETTE, residueColorStore, residueColorOf, defineResidueScheme, baseTypeColorStore, baseTypeColorOf, defineBaseTypeScheme, CHARGE_COLORS, chargeColorStore, ionChargeOf, chargeColorOf, defineChargeScheme, SUGAR_TYPE_COLORS, sugarTypeColorStore, SUGAR_TYPE_OF_CODE, sugarTypeOf, sugarTypeColorOf };`,
 ].join('\n');
 const H = new Function(sandbox)();
 
@@ -553,7 +574,8 @@ eq(H.glycanLabel([]), '', 'aucun monomère → aucun libellé');
   ['DPPA', 'PA'], ['DOPA', 'PA'],
   ['TOCL', 'CL'], ['CDL', 'CL'],
   ['PSM', 'SM'], ['SM', 'SM'],
-  ['CHOL', 'Chol'], ['CLR', 'Chol'], ['ERG', 'Chol'],
+  ['CHOL', 'Chol'], ['CLR', 'Chol'], ['ERG', 'Erg'],
+  ['TAG', 'TAG'], ['TGL', 'TAG'], ['DAG', 'DAG'], ['DGA', 'DAG'], ['MAG', 'MAG'], ['MGL', 'MAG'], ['CER', 'Cer'],
   ['MYR', 'FA'], ['PAL', 'FA'],
   ['POP', 'PC'], ['DPQ', 'PC'], ['EPH', 'PE'], ['PGL', 'PG'],
   ['PC', 'PC'], ['PE', 'PE'], ['CL', 'CL'],
@@ -574,22 +596,23 @@ has("registerColorScheme(NGL, 'lab-nuc-motif'", '…un pour les motifs G-quadrup
 ['registerGlycanScheme(NGL);', 'registerLipidClassScheme(NGL);', 'registerNucleicFormScheme(NGL);', 'registerNucleicMotifScheme(NGL);']
   .forEach((call) => has(call, `…et ${call} est bien appelé au démarrage`));
 // Les catégories demandées, dans la liste « Color by » de la barre Molecules.
-has('<option value="glycan">Glycan (linked sugars)</option>', 'la barre Molecules offre « Glycan (linked sugars) »');
-has('<option value="nucform">DNA/RNA conformation</option>', '…« DNA/RNA conformation »');
-has('<option value="motif">2° structure + motifs</option>', '…« 2° structure + motifs »');
-has('<option value="lipidclass">Lipid class</option>', '…« Lipid class »');
+has("basetype: 'DNA/RNA base',", 'la liste « Color by » nomme « DNA/RNA base »');
+has("residue: 'Amino acid (residue)',", '…et « Amino acid (residue) »');
+has("sstruc: 'Secondary structure',", '…« Secondary structure »');
+has("nucform: 'DNA conformation',", '…« DNA conformation »');
+has("lipidtype: 'Lipid type',", '…« Lipid type »');
 // …et dans le sélecteur « Atom colour » de la BONNE catégorie de §2.
-has('{showNucleicReading && <option value="nucform">DNA/RNA conformation</option>}', 'menu B : la conformation');
-has('{showNucleicReading && <option value="motif">2° structure + motifs (G4 · hairpin)</option>}', 'menu B : les motifs');
-has('{showGlycan && <option value="glycan">Glycan (linked sugars)</option>}', 'menu D : les glycanes liés');
-has('{showLipidClass && <option value="lipidclass">Lipid class (headgroup)</option>}', 'menu C : la classe du lipide');
+has("charge: 'Charge',", '…« Charge » (les ions seulement)');
+has("gradient: 'Gradient (first → last)',", '…« Gradient » (premier → dernier résidu)');
+has("water: ['solid', 'element', 'hydrophobicity', 'esp'],", 'l eau n offre PAS « Lipid type » (correction du cahier des charges)');
+has("ion: ['solid', 'element', 'charge'],", 'un ion : solid · atom type · charge');
 // La correspondance « Color by » → schéma NGL des quatre nouveaux modes, avec le
 // repli qui garantit qu'une molécule ne reste JAMAIS sans couleur.
-has("if (mode === 'glycan') return glycanSchemeKey || 'element';", 'glycanes → lab-glycans (repli : éléments)');
-has("if (mode === 'lipidclass') return lipidClassSchemeKey || 'element';", 'classes de lipides → lab-lipid-class (repli : éléments)');
-has("if (mode === 'nucform') return nucleicFormSchemeKey || sstrucSchemeKey || 'sstruc';",
+has("case 'basetype': return schemeParam(baseTypeSchemeKey, 'resname');", 'base types → lab-base-type (repli : resname)');
+has("case 'lipidtype': return schemeParam(lipidClassSchemeKey || elementSchemeKey, 'element');", 'classes de lipides → lab-lipid-class (repli : éléments)');
+has("case 'nucform': return schemeParam(nucleicFormSchemeKey || sstrucSchemeKey, 'sstruc');",
   'conformations → lab-nuc-form, repli sur la 2° structure');
-has("if (mode === 'motif') return nucleicMotifSchemeKey || sstrucSchemeKey || 'sstruc';",
+has("case 'charge': return schemeParam(chargeSchemeKey || elementSchemeKey, 'element');",
   'motifs → lab-nuc-motif, repli sur la 2° structure');
 // La roue ⚙ : les deux palettes des acides nucléiques, persistées et dans les setups.
 has("const NUCLEIC_FORM_COLORS_KEY = 'labViewerNucleicFormColors';", 'les couleurs de forme sont persistées');
@@ -602,13 +625,24 @@ has('if (pal.nucleicForms) setNucleicFormColors((p) => mergePalette(DEFAULT_NUCL
 has('if (pal.nucleicMotifs) setNucleicMotifColors((p) => mergePalette(DEFAULT_NUCLEIC_MOTIF_COLORS, { ...p, ...pal.nucleicMotifs }));',
   '…idem pour les motifs');
 has('Nucleotide conformations &amp; motifs', 'la roue ⚙ a une section pour ces deux palettes');
+has('Amino acids · the 20 residues', 'la roue ⚙ édite la palette des 20 acides aminés');
+has('DNA/RNA bases · secondary structure · charge', '…et celle des bases ADN/ARN');
+// Les deux palettes sont OFFERTES dans les réglages de couleur d'une molécule (le
+// « Atom colour » de son menu) et lues par le MÊME lecteur (catColorParams).
+has("if (mode === 'residue' && residueSchemeKey) return { color: residueSchemeKey };", 'un menu de protéine colore par acide aminé (lab-residue)');
+has("if (mode === 'basetype' && baseTypeSchemeKey) return { color: baseTypeSchemeKey };", 'un menu d\'acide nucléique colore par base (lab-base-type)');
+has('<option value="residue">Amino acid (⚙ palette)</option>', '« Amino acid » est offert dans « Atom colour »');
+has('<option value="basetype">DNA/RNA base (⚙ palette)</option>', '…« DNA/RNA base » aussi');
+has("const paletteOpen = mode === 'element' || mode === 'residue' || mode === 'basetype'", '…et les deux modes ouvrent le ⚙ de la palette');
+has('{SUGAR_TYPE_ORDER.map((t) => (', '…les 29 types de sucres');
+has('{LIPID_TYPE_ORDER.map((k) => (', '…les 14 types de lipides');
 has('{NUC_FORM_LABELS.map((form) => (', '…avec une pastille par forme');
 has("{['gquad', 'hairpin'].map((motif) => (", '…et une par motif');
 // Les menus disent ce qu'ils ont trouvé : les glycans liés et les formes / motifs.
 has('glycans: glycanSummaryFor(component.structure),', 'le résumé des glycanes est calculé au chargement');
 has('nucleicClasses: nucleicClassCounts(component.structure),', 'les comptes de formes / motifs aussi');
-has("{glycanHint || 'no glycan detected in this structure'}", 'le menu des sucres dit ce qu\'il a trouvé (ou rien)');
-has('{nucleicClassHint}', 'le menu B dit les formes et les motifs trouvés');
+has("bases: ['hide', 'base', 'rings', 'ball+stick', 'licorice', 'line', 'spacefill'],", 'le row bases offre slabs · stylized rings · balls and sticks · liquorice · lines · CPK');
+has("trace: 'Phosphate trace (P)',", 'la trace phosphate est nommée comme dans la demande');
 // Les codes du menu des sucres (le dictionnaire demandé) et les seuils du cahier
 // des charges, écrits tels quels dans le viewer.
 has("const SUGAR_RES_SEL = '[GLC] or [NAG] or [MAN] or [BMA] or [SIA] or [NAN] or [GAL] or [FUC]';",

@@ -94,10 +94,10 @@ has('const [elementColors, setElementColors] = useState(() => loadPalette(ELEMEN
   '[⚙] la palette des éléments est un état (la grille n’est jamais périmée)');
 has('const [sugarColors, setSugarColors] = useState(() => loadPalette(SUGAR_COLORS_KEY, SUGAR_IDENTITY_COLORS));',
   '[⚙] idem pour les sucres');
-has('{Object.keys(ELEMENT_COLOR_PALETTE).map((el) => (', '[⚙] une pastille par élément');
-has('{SUGAR_IDENTITY_CODES.map((res) => (', '[⚙] une pastille par sucre, sur la liste du menu des sucres');
+has('{ELEMENT_ORDER.map((el) => (', '[⚙] une pastille par élément de la liste demandée');
+has('{SUGAR_TYPE_ORDER.map((t) => (', '[⚙] une pastille par TYPE de sucre (la liste chimique du cahier des charges)');
 has('onChange={(e) => setElementColor(el, parseInt(e.target.value.slice(1), 16))}', '[⚙] la pastille écrit la table');
-has('onChange={(e) => setSugarColor(res, parseInt(e.target.value.slice(1), 16))}', '[⚙] …et celle des sucres aussi');
+has('onChange={(e) => setSugarTypeColors((p) => ({ ...p, [t]: parseInt(e.target.value.slice(1), 16) }))}', '[⚙] …et celle des sucres (par TYPE) aussi');
 has('const resetElementColors = () => setElementColors({ ...ELEMENT_COLOR_PALETTE });', '[⚙] ↺ des éléments');
 has('const resetSugarColors = () => setSugarColors({ ...SUGAR_IDENTITY_COLORS });', '[⚙] ↺ des sucres');
 // Les palettes sont le CONTENU des schémas : un effet les copie dans les stores
@@ -268,13 +268,33 @@ const buildHelpers = (keys = {}, stored = {}) => {
     `let glycanSchemeKey = ${keys.glycan === undefined ? 'null' : JSON.stringify(keys.glycan)};`,
     `let lipidClassSchemeKey = ${keys.lipidclass === undefined ? 'null' : JSON.stringify(keys.lipidclass)};`,
     `let nucleicFormSchemeKey = ${keys.nucform === undefined ? 'null' : JSON.stringify(keys.nucform)};`,
-    `let nucleicMotifSchemeKey = ${keys.motif === undefined ? 'null' : JSON.stringify(keys.motif)};`,
+    `let nucleicMotifSchemeKey = ${keys.motif === undefined ? 'null' : JSON.stringify(keys.motif)};`,  // PART 4 — les palettes et les schémas que la barre de style lit.
+  `const BASE_TYPE_ORDER = ${sliceRaw('BASE_TYPE_ORDER')};`,
+  sliceObject(VIEW, 'RESIDUE_COLOR_PALETTE'),
+  sliceObject(VIEW, 'residueColorStore'),
+  sliceFn(VIEW, 'residueColorOf'),
+  sliceFn(VIEW, 'defineResidueScheme'),
+  sliceObject(VIEW, 'baseTypeColorStore'),
+  sliceFn(VIEW, 'baseTypeColorOf'),
+  sliceFn(VIEW, 'defineBaseTypeScheme'),
+  sliceObject(VIEW, 'CHARGE_COLORS'),
+  sliceObject(VIEW, 'chargeColorStore'),
+  sliceFn(VIEW, 'ionChargeOf'),
+  sliceFn(VIEW, 'chargeColorOf'),
+  sliceFn(VIEW, 'defineChargeScheme'),
+  sliceObject(VIEW, 'SUGAR_TYPE_COLORS'),
+  sliceObject(VIEW, 'sugarTypeColorStore'),
+  sliceObject(VIEW, 'SUGAR_TYPE_OF_CODE'),
+  sliceFn(VIEW, 'sugarTypeOf'),
+  sliceFn(VIEW, 'sugarTypeColorOf'),
+
     `return { CAT_STYLE_CATS, LOOK_KEYS, isLookKey, DEFAULT_LOOK_OVERRIDES, DEFAULT_GENERAL_LOOK,
       DEFAULT_GRADIENT_COLORS, ELEMENT_COLOR_PALETTE, SUGAR_IDENTITY_COLORS, SUGAR_IDENTITY_CODES,
       DEFAULT_NUCLEIC_FORM_COLORS, DEFAULT_NUCLEIC_MOTIF_COLORS,
       DEFAULT_ELEMENT_COLOR, overridesLook, applyGeneralField, yieldLookField, adoptGeneralLook,
       defaultGeneralLookIn, mergePalette, loadPalette, savePalette, elementColorOf, sugarColorOf,
-      schemeForColorMode };`,
+      schemeForColorMode ,
+      BASE_TYPE_ORDER, RESIDUE_COLOR_PALETTE, residueColorStore, residueColorOf, defineResidueScheme, baseTypeColorStore, baseTypeColorOf, defineBaseTypeScheme, CHARGE_COLORS, chargeColorStore, ionChargeOf, chargeColorOf, defineChargeScheme, SUGAR_TYPE_COLORS, sugarTypeColorStore, SUGAR_TYPE_OF_CODE, sugarTypeOf, sugarTypeColorOf };`,
   ].join('\n');
   const storage = makeStorage(stored);
   const api = new Function('localStorage', body)(storage);

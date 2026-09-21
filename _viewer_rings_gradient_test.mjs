@@ -136,12 +136,32 @@ const buildHelpers = (keys = {}) => new Function([
   // peuvent manquer (l'enregistrement du schéma a échoué) et le menu doit alors
   // garder l'aspect classique au lieu de ne rien dessiner.
   `let elementSchemeKey = ${keys.elements === undefined ? 'null' : JSON.stringify(keys.elements)};`,
-  `let sugarSchemeKey = ${keys.sugar === undefined ? 'null' : JSON.stringify(keys.sugar)};`,
+  `let sugarSchemeKey = ${keys.sugar === undefined ? 'null' : JSON.stringify(keys.sugar)};`,  // PART 4 — les palettes et les schémas que la barre de style lit.
+  `const BASE_TYPE_ORDER = ${sliceRaw('BASE_TYPE_ORDER')};`,
+  sliceObject(VIEW, 'RESIDUE_COLOR_PALETTE'),
+  sliceObject(VIEW, 'residueColorStore'),
+  sliceFn(VIEW, 'residueColorOf'),
+  sliceFn(VIEW, 'defineResidueScheme'),
+  sliceObject(VIEW, 'baseTypeColorStore'),
+  sliceFn(VIEW, 'baseTypeColorOf'),
+  sliceFn(VIEW, 'defineBaseTypeScheme'),
+  sliceObject(VIEW, 'CHARGE_COLORS'),
+  sliceObject(VIEW, 'chargeColorStore'),
+  sliceFn(VIEW, 'ionChargeOf'),
+  sliceFn(VIEW, 'chargeColorOf'),
+  sliceFn(VIEW, 'defineChargeScheme'),
+  sliceObject(VIEW, 'SUGAR_TYPE_COLORS'),
+  sliceObject(VIEW, 'sugarTypeColorStore'),
+  sliceObject(VIEW, 'SUGAR_TYPE_OF_CODE'),
+  sliceFn(VIEW, 'sugarTypeOf'),
+  sliceFn(VIEW, 'sugarTypeColorOf'),
+
   `return { RING_MAX_SIZE, RING_TRANSPARENCY_DEFAULT, RING_TRANSPARENCY_MAX, DEFAULT_GRADIENT_COLORS,
     BASE_IDENTITY_COLORS, DEFAULT_NUCLEIC_COLORS, nucleicGroupOf, baseIdentityColorOf, flatHex,
     hexToRgb01, ringPlaneNormal, ringCyclesOf, ringPlateTriangles, ringPlateColorOf, nucleicRingPlates,
     toNglSelection, lerpHexColors, gradientT, gradientRangesFor, defineGradientScheme,
-    registerColorScheme, catColorParams, gradientColorStore };`,
+    registerColorScheme, catColorParams, gradientColorStore ,
+      BASE_TYPE_ORDER, RESIDUE_COLOR_PALETTE, residueColorStore, residueColorOf, defineResidueScheme, baseTypeColorStore, baseTypeColorOf, defineBaseTypeScheme, CHARGE_COLORS, chargeColorStore, ionChargeOf, chargeColorOf, defineChargeScheme, SUGAR_TYPE_COLORS, sugarTypeColorStore, SUGAR_TYPE_OF_CODE, sugarTypeOf, sugarTypeColorOf };`,
 ].join('\n'))();
 const H = buildHelpers();
 const HS = buildHelpers({ sstruc: 'lab-test-sstruc', gradient: 'lab-test-gradient', elements: 'lab-test-elements', sugar: 'lab-test-sugar' });
@@ -444,7 +464,8 @@ has('const mesh = new NG.MeshBuffer({ position: data.position, normal: data.norm
 has("add('licorice', { sele: `@${ringIdx.join(',')}`", 'le pourtour est dessiné sur EXACTEMENT les atomes des cycles');
 has("const atomCol = (cat) => catColorParams(cs[cat], 'atom');", 'les six menus lisent catColorParams');
 has("const backboneCol = (cat) => catColorParams(cs[cat], 'backbone');", '…pour le ruban comme pour les atomes');
-has("...catColorParams(proteinLook, 'atom'),", 'les chaînes latérales suivent LE MÊME lecteur (aucune règle en double)');
+has("{ sub: 'sidechain', label: 'Side chains'", 'les chaînes latérales sont une ROW de la section (PART 4)');
+has('sectionStyleReps(look.style, sec.kind, look)', 'les rows lisent leur style par le MÊME traducteur');
 has("const setSstrucColour = (key, hex) => {", 'une SEULE écriture des couleurs de structure secondaire');
 has("atomColor: 'sstruc' } }));", 'une pastille de structure secondaire allume le mode (plus jamais ignorée)');
 has('ringTransparency: RING_TRANSPARENCY_DEFAULT,', 'les plaques sont SOLIDES par défaut (des plaques pleines)');
@@ -464,8 +485,8 @@ has("else if (prop === 'cartoon_ring_transparency')", '…set cartoon_ring_trans
 has("bases === 'rings') {", 'en mode PyMOL les plaques sont aussi construites sur les sélections du script');
 ok(!CODE.includes("addScheme('lab-"), 'aucun schéma enregistré avec les deux arguments inversés');
 ok(!CODE.includes('computeVertexNormals'), 'les normales viennent du plan du cycle, pas d’un calcul par facette');
-ok(CODE.includes("value={catStyles.nucleic.ringTransparency}"), 'la transparence des plaques est un curseur 0 → 0,95');
-ok(CODE.includes('Ribose ring plate'), 'la plaque du ribose se décoche');
+ok(CODE.includes("value={look.opacity}") && CODE.includes("onChange={(e) => set('opacity', Number(e.target.value))}"), 'la transparence d une row est un curseur (0 % = opaque), plaques comprises');
+ok(CODE.includes('{ sub: \'ribose\', label: \'DNA/RNA ribose\''), 'la plaque du ribose est la row « DNA/RNA ribose » (Ring plates)');
 
 /* ── Bilan ─────────────────────────────────────────────────────────────── */
 console.log(`_viewer_rings_gradient_test.mjs — ${passed} assertions OK`);
