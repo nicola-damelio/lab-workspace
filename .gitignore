@@ -37,3 +37,7 @@ workspace-shared-token.json.*
 /_replica_*.pdb
 **/_ls_*.txt
 
+# Build SSR du probe de rendu (_viewer_render_smoke_test.mjs) : le bundle du
+# probe et rien d'autre. Il est reconstruit à chaque exécution de la suite.
+/_render_smoke/
+

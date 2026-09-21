@@ -4289,6 +4289,19 @@ const copySectionsToAll = () => {
   setSectionLooks(looks);
   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
 };
+// ---- « Molecules » entries of the bar (extra structures / PDB MODELs) ----
+// extraMols = extra loaded structure files (each its own NGL component); the
+// "Molecules" selector shows exactly one at a time. Multi-MODEL PDB files
+// (NMR ensembles / docking clusters) are split into one entry per MODEL by the
+// main-load effect, so they appear in the same "Molecules" selector. Each entry
+// also carries its own style/color overrides ({ style, color }) so every chain /
+// molecule can be rendered independently from the global selectors.
+// It is DECLARED HERE, before the name-sync effect right below, because that
+// effect reads it in its dependency array — a read that happens DURING render:
+// declaring the state further down threw « Cannot access 'extraMols' before
+// initialization » and crashed every page opening the viewer (e.g. docking).
+const [extraMols, setExtraMols] = useState([]);    // [{ id, name, style, color }]
+
 // ONE signature of EVERY styling choice of the bar — the persisted per-kind looks,
 // the per-molecule trees, the ✔ of the sections and the sections themselves. The
 // rebuild effects compare it, so a change to any dropdown rebuilds exactly once and
@@ -4388,13 +4401,9 @@ const [stripCollapsed, setStripCollapsed] = useState(() => {
 });
 
 // ---- Multiple structures & multi-model PDB (docking clusters: HADDOCK/AutoDock) ----
-// extraMols = extra loaded structure files (each its own NGL component); the
-// "Molecules" selector shows exactly one at a time. Multi-MODEL PDB files
-// (NMR ensembles / docking clusters) are split into one entry per MODEL by the
-// main-load effect, so they appear in the same "Molecules" selector. Each entry
-// also carries its own style/color overrides ({ style, color }) so every chain /
-// molecule can be rendered independently from the global selectors.
-const [extraMols, setExtraMols] = useState([]);    // [{ id, name, style, color }]
+// `extraMols` / `setExtraMols` are declared ABOVE, just before the name-sync
+// effect that lists them (a dependency array is read during render, so the state
+// binding must exist before it).
 const [visibleMolKeys, setVisibleMolKeys] = useState(() => new Set(['main'])); // multi-select: which structures are shown
 const [selectedMolKey, setSelectedMolKey] = useState('main'); // active entry in the Molecules bar (click → select + centre)
 // Per-molecule overrides for the MAIN structure — same controls as the extra
