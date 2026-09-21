@@ -6173,6 +6173,19 @@ const buildCategoryReps = (comp) => {
 // current "Backbone" style selector. Called on load and when restoring from "Hide all".
 const addDefaultReps = (component, molKey = 'main') => {
   if (!component || !component.structure) return;
+  // `baseCompsRef.current` is the ONLY handle on the representations of the main
+  // structure: whatever leaves that list can never be removed again — the scene
+  // keeps drawing it for ever. `buildMainReps` used to call this function TWICE,
+  // so the second call erased the first batch from the list while its
+  // representations were still on screen: every styling gesture then redrew a
+  // fresh batch UNDER a stale one, and the stale one kept showing the OLD state.
+  // That is why unticking a molecule still drew it, why a surface could not be
+  // made to go away and why the menus looked dead (« hide still does not hide »,
+  // « nothing seems to work although the layout is good »). Drop what is still
+  // tracked BEFORE the list is rebuilt, so the list can never lose a live rep.
+  if (component === componentRef.current) {
+    baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch {} });
+  }
   baseCompsRef.current = [];
   const trackBase = (r) => { if (r) baseCompsRef.current.push(r); };
   // Large systems START here: keep the whole structure visible, but draw
@@ -6260,7 +6273,12 @@ const buildMainReps = () => {
   // The previous ESP-coloured category surfaces of the main component are gone
   // (they were part of baseCompsRef) — re-create them from scratch.
   catEspRepsRef.current.delete(comp);
-  addDefaultReps(comp, 'main');
+  // ONE batch, for good: this call used to be duplicated, and the second batch
+  // silently took the place of the first in `baseCompsRef` (addDefaultReps resets
+  // the list) — the first one stayed on screen for ever, drawn with the styles of
+  // the moment it was created. Every later gesture only restyled the tracked
+  // batch, so the scene kept showing the previous state (the reported « hide does
+  // not hide », « there is no way to remove a surface »).
   addDefaultReps(comp, 'main');
 };
 

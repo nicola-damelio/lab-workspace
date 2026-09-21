@@ -1,4 +1,4 @@
-// Les dix suites du VIEWER 3D seul — les plus rapides à relancer après une
+// Les onze suites du VIEWER 3D seul — les plus rapides à relancer après une
 // retouche de src/components/NMRMoleculeViewer.jsx (l'ensemble du dépôt, c'est
 // _run_all.cjs). _viewer_render_smoke_test.mjs est la SEULE qui exécute un vrai
 // rendu : elle construit son probe en SSR et monte la page docking, chaque
@@ -15,6 +15,12 @@ const tests = [
   // Le ✔ de la barre « Molecules · styling » EFFACE vraiment la molécule (le
   // bug : le rendu comparait la clé locale d'une section à un ensemble d'ids).
   '_viewer_section_visibility_test.mjs',
+  // Le REBUILD de la structure principale laisse UNE seule série de
+  // représentations, et la liste qui la suit est complète : le double appel
+  // d'addDefaultReps laissait une copie orpheline dans la scène — une molécule
+  // décochée restait dessinée et une surface ne partait plus (le rapport :
+  // « hide still does not hide », « there is no way to remove a surface »).
+  '_viewer_main_reps_ownership_test.mjs',
   '_viewer_render_smoke_test.mjs',
 ];
 const rows = tests.map((t) => {
