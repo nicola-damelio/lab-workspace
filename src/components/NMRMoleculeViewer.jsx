@@ -6258,13 +6258,13 @@ const nglSelection = (sele) => {
 // `.count` / `.size` / `.length`.
 const atomSetSize = (set) => (set && typeof set.getSize === 'function' ? set.getSize() : 0);
 
-// Build the MAIN structure's base representations, honouring the per-molecule
-// override (Molecules bar → Main controls). "auto" = the per-CATEGORY styling of
-// section « 2. Molecular Styling » (addDefaultReps, incl. the large-system
-// lightweight handling); any other style rebuilds the main with ONE chosen
-// style + colouring metaphor + transparency, exactly like the extra molecules.
-// Selections / highlights live on the same component, so only the tracked base
-// representations are replaced — never everything.
+// Build the MAIN structure's base representations. PART 4 draws EVERY molecule —
+// the main one included — from its own styling SECTIONS (rebuildSectionsOf → the
+// per-molecule spaces of the « Molecules · styling » bar), so there is no
+// per-molecule style override any more: `mainMolRef.style` and the old « auto »
+// branch of section §2 are gone with buildCategoryReps. Selections / highlights
+// live on the same component, so only the tracked base representations are
+// replaced — never everything.
 const buildMainReps = () => {
   const comp = componentRef.current;
   if (!comp || !comp.structure) return;
