@@ -12,7 +12,8 @@
      • l'eau revient uniquement par la case 💧 Water (même style léger) ;
      • ce rendu léger n'est qu'un POINT DE DÉPART : le premier geste de style
        dans « 2 · Molecular Styling » (menu de catégorie, chaînes latérales,
-       pastille de couleur, styles de rôle du docking) appelle leaveLightMode()
+       pastille de couleur, style par molécule de la barre Molecules) appelle
+       leaveLightMode()
        et le système est redessiné avec les représentations par catégorie. Les
        menus ne sont donc JAMAIS ignorés — sans bouton « ✨ Full detail » ;
      • la bannière « ℹ️ Large structure (… atoms): every atom is drawn in … » a
@@ -116,8 +117,14 @@ eq((VIEWER.match(/setSstrucColour\('/g) || []).length, 3,
   'les trois pastilles de couleur 2° structure l’utilisent');
 const iReset = lines.findIndex((l) => l.includes('setSstrucColors({ helix: 0xb44a90, sheet: 0xf8d878, loop: 0xe6e6e6 });'));
 ok(iReset > 0 && lines[iReset - 1].includes('leaveLightMode();'), 'le bouton ↺ Reset defaults aussi');
-ok(styleHook('const applyDockStylesNow = () => {', 5).includes('leaveLightMode();'),
-  'les styles de rôle du docking aussi');
+// La barre Molecules a remplacé le mode de docking : c'est elle qui porte les
+// gestes de style par molécule, et AUCUN d'eux n'oublie la bascule.
+ok(styleHook('const setExtraMolStyle = (id, style) => {', 3).includes('leaveLightMode();'),
+  'le style d’une molécule (barre Molecules) aussi');
+ok(styleHook('const setExtraMolColorMode = (id, mode) => {', 3).includes('leaveLightMode();'),
+  '…son mode de coloration aussi');
+ok(VIEWER.includes('{ leaveLightMode(); setMainMol((m) => ({ ...m, style: e.target.value })); }'),
+  '…et le style de la structure principale');
 // Le rendu léger reste le POINT DE DÉPART (et le bloc d’addDefaultReps est intact).
 ok(styleHook('if (lightRenderRef.current) {', 12).includes("addRepresentation('line'"),
   'addDefaultReps garde son bloc léger : rien ne change au chargement d’un grand système');
