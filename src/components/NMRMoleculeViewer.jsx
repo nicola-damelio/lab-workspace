@@ -4231,6 +4231,9 @@ const sectionTreesOf = (sections) => {
 };
 // The sections switched OFF (the ✔ of the bar): a molecule of water / an ion is off
 // until its ✔ is ticked (the request: a solvated box must not block the view).
+// The set holds the GLOBAL ids of the sections (`<molecule>::<key>`, see
+// ensureSections) — the very keys the bar writes with toggleSectionVisible — and
+// buildSectionReps accepts them as well as the bare local keys.
 const hiddenSectionIds = (sections) => {
   const set = new Set();
   (sections || []).forEach((s) => {
@@ -5750,7 +5753,7 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
   const reps = [];
   if (!comp || !comp.structure || !Array.isArray(sections)) return reps;
   const structure = comp.structure;
-  const hidden = opts.hidden || null;      // the section keys switched OFF (the ✔)
+  const hidden = opts.hidden || null;      // the section IDS switched OFF (the ✔ of the bar)
   const espOut = opts.espReps || null;     // where the ESP surfaces are remembered
   // EVERY section has its OWN tree of looks (that is what makes two proteins of the
   // same file independent); a section without one falls back on the kind's look.
@@ -5789,7 +5792,13 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
     } catch { return null; /* the plates are a bonus: never break the view */ }
   };
   sections.forEach((sec) => {
-    if (hidden && hidden.has(sec.key)) return;
+    // The ✔ of the bar is keyed by the GLOBAL id of a section (`<molecule>::<key>`,
+    // see ensureSections), while a caller that enumerates a structure by hand hands
+    // the bare keys over: BOTH forms switch a section OFF. Comparing the set of ids
+    // with the local key made the ✔ a NO-OP — `main::water|all` never matched the key
+    // `water|all` — so unticking a molecule (or leaving water / ions unticked, which
+    // KIND_VISIBLE_BY_DEFAULT asks for) drew it all the same.
+    if (hidden && (hidden.has(sec.id) || hidden.has(sec.key))) return;
     subsectionsOf(sec.kind).forEach((spec) => {
       const look = effectiveSectionLook(treeOf(sec), sec.kind, spec.sub);
       if (look.style === 'hide') return;
@@ -7261,11 +7270,24 @@ useEffect(() => {
   if (status !== 'ready') return;
   extraCompsRef.current.forEach((entry) => {
     if (!entry || !entry.comp) return;
+    // « 🙈 Hide everything » / a PyMOL script owns the whole scene: an EXTRA
+    // molecule drops its representations too. The button promises « all molecules »,
+    // and until this branch existed it only cleared the main structure, so every
+    // structure added with « Add structure » / a chain stayed on screen. The ⚡ ESP
+    // overlay of an extra is its own representation — dropped as well (the main
+    // structure does the same through espDisable('main')). Turning Hide-all off
+    // rebuilds the extras from their own sections, exactly as before.
+    if (hideAll || pymolActive) {
+      (entry.baseReps || []).forEach((r) => { try { entry.comp.removeRepresentation(r); } catch {} });
+      entry.baseReps = [];
+      espDisable(entry.id);
+      return;
+    }
     entry.baseReps = applyCurrentStyleTo(entry.comp, entry.baseReps || []);
   });
   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [styleSignature, status, applyCurrentStyleTo, sstrucColors]);
+}, [styleSignature, status, applyCurrentStyleTo, sstrucColors, hideAll, pymolActive]);
 
 // Background colour + quality ("ray shadows" approximation)
 useEffect(() => {
