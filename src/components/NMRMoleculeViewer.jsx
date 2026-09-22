@@ -198,10 +198,15 @@ const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
 
    GLYCANS & LIPID CLASSES (PART 2.2bis / 2.1bis) — a linked glycan arrives as one
    HETATM residue per sugar and nothing says they belong together, so the
-   GLYCOSIDIC bond is read from the topology (C1 → O4 · O6, C2 for a sialic acid;
-   from NGL's own bond graph or, when a file carries no CONECT record, from the
-   interatomic distance) and the linked monomers are merged into ONE entity
-   (« Glycan (linked sugars) », lab-glycans); the residue name alone gives the
+   GLYCOSIDIC bond is read from the topology — from NGL's own bond graph, or, when
+   a file carries no CONECT record, from the interatomic distance (the anomeric
+   carbon C1, C2 of a sialic acid, within one covalent C–O bond of an oxygen of
+   the next sugar — WHATEVER that oxygen is called: O4 · O6 of a hexopyranose, O3
+   of a furanose, O8 · O9 of an α2→8 · α2→9 sialic acid) —, the linked monomers are
+   merged into ONE entity (« Glycan (linked sugars) », lab-glycans) AND the linkage
+   is WRITTEN INTO the structure's bond graph (ensureGlycanBonds), so the drawn
+   chain has its connecting stick and every bond reader sees ONE molecule; the
+   residue name alone gives the
    lipid's headgroup CLASS (PC · PE · PG · PS · PI · PA · CL · SM · Chol · FA,
    read from the end of the 3-letter code — POPC = DP + PC, TOCL = TO + CL, and
    the short codes POP · DPQ · EPH · PGL · CLR of the request), which is the
@@ -1444,9 +1449,21 @@ const SUGAR_CODE_NAMES = (() => {
 // The KETOSES: their anomeric carbon is C2, never C1 (a sialic acid carries its
 // linkage on C2).
 const SUGAR_KETOSE_CODES = new Set(['SIA', 'NAN', 'SLB', 'KDO', 'KDN']);
-// The hydroxyl oxygens a glycosidic bond is made to — never O5, the ring oxygen.
-const SUGAR_ACCEPTOR_RE = /^O(?:[1-4]|6)$/;
+// The hydroxyl oxygens a glycosidic bond is made to — never O5, the ring oxygen of
+// a hexopyranose (no glycoside is made to a ring oxygen; an inter-residue bond to
+// one is a wrapped-coordinate artefact, not a linkage). O1–O4 · O6–O9 covers the
+// acceptors a file really names: O4 · O6 of the hexopyranoses, and the O7 · O8 ·
+// O9 of an α2→8 / α2→9 sialic acid — a polysialic acid is linked through those.
+// This is the NAME rule, and it belongs to the detector that reads an existing
+// BOND (a LINK / CONECT record names its two atoms, so the linkage can be held
+// against the chemistry: no bond to the ring oxygen, none to the nitrogen of an
+// N-acetyl). The GEOMETRIC detector below cannot use it — see sugarLinkAtomsOf.
+const SUGAR_ACCEPTOR_RE = /^O(?:[1-4]|[6-9])$/;
 const SUGAR_LINK_CUTOFF = 1.8;   // Å — a covalent C–O bond (1.42 Å) with margin
+// The element letter of one atom — a raw record or an AtomProxy alike; a file that
+// carries no element column is read from the atom name, as everywhere else here.
+const sugarElementOf = (x) => String(x && x.element != null ? x.element : (x && x.name) || '')
+  .trim().toUpperCase().charAt(0);
 const sugarCodeOf = (resname) => String(resname == null ? '' : resname).trim().toUpperCase();
 const isSugarResidueCode = (resname) => {
   const c = sugarCodeOf(resname);
@@ -1461,10 +1478,8 @@ const sugarAnomericNamesOf = (resname) => (SUGAR_KETOSE_CODES.has(sugarCodeOf(re
 // the two ends of a glycosidic bond? (The element is checked too, so a hydrogen
 // called H1 next to a carbon called C1 can never be mistaken for the linkage.)
 const sugarLinkEnds = (x, y) => {
-  const ex = String(x.element == null ? x.name || '' : x.element).trim().toUpperCase().charAt(0);
-  const ey = String(y.element == null ? y.name || '' : y.element).trim().toUpperCase().charAt(0);
-  const anomeric = ex === 'C' && sugarAnomericNamesOf(x.resname).indexOf(nucAtomKey(x.name)) >= 0;
-  const acceptor = ey === 'O' && SUGAR_ACCEPTOR_RE.test(nucAtomKey(y.name));
+  const anomeric = sugarElementOf(x) === 'C' && sugarAnomericNamesOf(x.resname).indexOf(nucAtomKey(x.name)) >= 0;
+  const acceptor = sugarElementOf(y) === 'O' && SUGAR_ACCEPTOR_RE.test(nucAtomKey(y.name));
   return anomeric && acceptor;
 };
 // Two atoms of TWO DIFFERENT sugar residues, bonded: that bond is a glycosidic
@@ -1474,35 +1489,60 @@ const sugarLinkBondOf = (a, b) => {
   if (!isSugarResidueCode(a.resname) || !isSugarResidueCode(b.resname)) return false;
   return sugarLinkEnds(a, b) || sugarLinkEnds(b, a);
 };
+// The ATOM PAIR of a glycosidic linkage read from the GEOMETRY alone: the anomeric
+// carbon of one sugar within one covalent C–O bond of an oxygen of the other. This
+// detector is deliberately NAME-AGNOSTIC on the acceptor side, because that name
+// depends on the sugar and on whoever wrote the file: O4 · O6 of a hexopyranose, O3
+// of a furanose, O8 · O9 of a sialic acid (an α2→8 / α2→9 polysialic acid — the
+// polysaccharide of bacterial capsules and of NCAM — is linked through exactly
+// those), written with primes, dashes and suffixes no table can enumerate. The
+// DISTANCE is the honest filter: at ≤ 1.8 Å a C···O contact IS a covalent bond (a
+// C–O single bond is 1.42 Å, the shortest O–H···O hydrogen bond ≈ 2.4 Å), and the
+// ring oxygen of one residue cannot sit one bond away from ANOTHER residue's
+// anomeric carbon without that bond existing. Returns [anomericCarbon, acceptorOxygen]
+// — the two atoms the linkage is made of — or null.
+const sugarLinkAtomsOf = (donor, acceptor) => {
+  const anomeric = sugarAnomericNamesOf(donor.resname);
+  let best = null;
+  (donor.atoms || []).forEach((p) => {
+    if (sugarElementOf(p) !== 'C' || anomeric.indexOf(nucAtomKey(p.name)) < 0) return;
+    (acceptor.atoms || []).forEach((q) => {
+      if (sugarElementOf(q) !== 'O') return;
+      const d = coordDist([p.x, p.y, p.z], [q.x, q.y, q.z]);
+      if (d > SUGAR_LINK_CUTOFF) return;
+      if (!best || d < best.d) best = { d, atoms: [p.index, q.index] };
+    });
+  });
+  return best ? best.atoms : null;
+};
 // The same question WITHOUT a bond graph: two monomers are LINKED when an anomeric
-// carbon of one lies within one covalent C–O bond of an acceptor oxygen of the
-// other. This is the rule that works on a file whose sugars are bare HETATM
-// residues (no CONECT record, no templates) — C1–O4 / C1–O6 of the linkage.
+// carbon of one lies within one covalent C–O bond of an oxygen of the other. This
+// is the rule that works on a file whose sugars are bare HETATM residues (no CONECT
+// record, no templates) — C1–O4 / C1–O6 of the linkage. A link names the two
+// MONOMERS it joins (i · j) AND the two ATOMS it is made of (atoms), so the same
+// record can GROUP the sugars into one glycan and WRITE the bond between them.
 const sugarLinksByDistance = (monomers) => {
   const out = [];
   const list = monomers || [];
-  const near = (x, y) => {
-    const anomeric = sugarAnomericNamesOf(x.resname);
-    return (x.atoms || []).some((p) => anomeric.indexOf(nucAtomKey(p.name)) >= 0
-      && (y.atoms || []).some((q) => SUGAR_ACCEPTOR_RE.test(nucAtomKey(q.name))
-        && coordDist([p.x, p.y, p.z], [q.x, q.y, q.z]) <= SUGAR_LINK_CUTOFF));
-  };
   for (let i = 0; i < list.length; i += 1) {
     for (let j = i + 1; j < list.length; j += 1) {
       const a = list[i];
       const b = list[j];
       if (!a || !b) continue;
       if (!isSugarResidueCode(a.resname) || !isSugarResidueCode(b.resname)) continue;
-      if (near(a, b) || near(b, a)) out.push([i, j]);
+      const atoms = sugarLinkAtomsOf(a, b) || sugarLinkAtomsOf(b, a);
+      if (atoms) out.push({ i, j, atoms });
     }
   }
   return out;
 };
 // The same links read from the structure's OWN bond graph (the CONECT records and
-// the residue templates NGL parsed): eachBondedAtom gives the neighbours of an
-// atom, so a cross-residue anomeric-C → acceptor-O bond is found with no distance
-// guess at all. The two sources are merged by the caller (a file usually has one
-// of them, a rich file may have both).
+// the residue templates NGL parsed, plus the linkages ensureGlycanBonds wrote):
+// eachBondedAtom gives the neighbours of an atom, so a cross-residue anomeric-C →
+// acceptor-O bond is found with no distance guess at all. The two sources are
+// merged by the caller (a file usually has one of them, a rich file may have both)
+// and both return the SAME record: { i, j, atoms } — the two monomers, and the two
+// atoms the bond is made of, the anomeric carbon first.
 const sugarLinksFromBonds = (structure, monomers) => {
   const out = [];
   if (!structure || typeof structure.eachAtom !== 'function') return out;
@@ -1525,7 +1565,9 @@ const sugarLinksFromBonds = (structure, monomers) => {
         const pair = [own.key, other.key].sort().join('|');
         if (seen.has(pair)) return;
         seen.add(pair);
-        out.push([Number(own.key), Number(other.key)]);
+        // The anomeric carbon first, whichever side of the bond it was seen from.
+        const atoms = sugarLinkEnds(own, other) ? [a.index, b.index] : [b.index, a.index];
+        out.push({ i: Number(own.key), j: Number(other.key), atoms });
       });
     });
   } catch { /* no bond graph → the distance rule alone */ }
@@ -1537,6 +1579,10 @@ const sugarLinksFromBonds = (structure, monomers) => {
 const glycanLabel = (members) => (members || [])
   .map((m) => (m ? `${sugarShortNameOf(m.resname)}${m.resno != null ? m.resno : ''}` : '?'))
   .join(' → ');
+// The two MONOMERS a link joins. A link is either the { i, j, atoms } record the
+// two detectors build, or a bare [i, j] pair of monomer indices — the older shape,
+// still accepted so a caller (or a test) can hand the grouping one without the atoms.
+const linkMonomerPair = (link) => (Array.isArray(link) ? [link[0], link[1]] : [link && link.i, link && link.j]);
 // The glycan ENTITIES of a set of monomers: the monomers grouped by the linkage
 // bonds (union-find over the graph the two detectors above built). A branched
 // N-glycan becomes ONE entity — the entity is what the UI colours, names and
@@ -1549,9 +1595,8 @@ const glycanEntities = (monomers, links) => {
     while (parent[k] !== k) { parent[k] = parent[parent[k]]; k = parent[k]; }
     return k;
   };
-  (links || []).forEach((pair) => {
-    const i = pair && pair[0];
-    const j = pair && pair[1];
+  (links || []).forEach((link) => {
+    const [i, j] = linkMonomerPair(link);
     if (!list[i] || !list[j]) return;
     const a = find(i);
     const b = find(j);
@@ -1588,9 +1633,12 @@ const sugarMonomersOf = (structure) => {
   return Array.from(byRes.values());
 };
 const glycanCache = new WeakMap();
-// { monomers, entities, byAtom } for ONE structure — computed once, because the
-// colour scheme is asked for a colour once per atom and the grouping is a graph
-// walk. byAtom is what the scheme reads: atom index → entity index.
+// { monomers, entities, byAtom, linkAtoms } for ONE structure — computed once,
+// because the colour scheme is asked for a colour once per atom and the grouping is
+// a graph walk. byAtom is what the scheme reads: atom index → entity index.
+// linkAtoms is the pairs of ATOMS the linkages are made of, once each (both
+// detectors see the same C1–O4 bond; a chain of N sugars has N−1 of them) — the
+// bonds ensureGlycanBonds writes into the topology.
 const glycanEntityMapFor = (structure) => {
   if (!structure) return null;
   if (glycanCache.has(structure)) return glycanCache.get(structure);
@@ -1604,11 +1652,74 @@ const glycanEntityMapFor = (structure) => {
       entities.forEach((e, ei) => e.members.forEach((mi) => {
         (monomers[mi].atoms || []).forEach((p) => byAtom.set(p.index, ei));
       }));
-      out = { monomers, entities, byAtom };
+      const linkAtoms = [];
+      const seenBonds = new Set();
+      links.forEach((link) => {
+        const pair = link && link.atoms;
+        const i1 = pair && pair[0];
+        const i2 = pair && pair[1];
+        if (!Number.isFinite(i1) || !Number.isFinite(i2) || i1 === i2) return;
+        const key = i1 < i2 ? `${i1}|${i2}` : `${i2}|${i1}`;
+        if (seenBonds.has(key)) return;
+        seenBonds.add(key);
+        linkAtoms.push(i1 < i2 ? [i1, i2] : [i2, i1]);
+      });
+      out = { monomers, entities, byAtom, linkAtoms };
     }
   } catch { out = null; }
   glycanCache.set(structure, out);
   return out;
+};
+// THE LINKAGES, WRITTEN INTO THE STRUCTURE'S OWN BOND GRAPH.
+// Grouping the sugars is not enough for a DRAWN polysaccharide: the chain needs the
+// connecting bond. NGL does infer an inter-residue bond by distance when it parses
+// a PDB/GRO/CIF — but that perception is not guaranteed: a het residue that already
+// carries SOME explicit bonds is left as it is (`inferBonds:'auto'`), a parser can
+// be told `inferBonds:'none'`, two atoms with different altlocs are never
+// connected by NGL, and NGL's covalent-radii window (0.92–1.72 Å for a C–O pair) is
+// narrower than the 1.8 Å this file reads the linkage with. Writing the bond here
+// makes the glycan ONE covalent molecule for EVERY reader at once: the 3D
+// representations (ball+stick draws the anomeric-C → acceptor-O stick instead of
+// leaving two blobs), the « bonded » selection, a distance measurement across the
+// linkage, sugarLinksFromBonds above — which then agrees with the grouping — and the
+// CONECT-based molecule split of a multi-molecule PDB. Idempotent: a bond the
+// structure already has (which is the usual case, thanks to NGL) is left alone, and
+// a file with no sugar linkage adds nothing at all. Called once per load, BEFORE the
+// representations are built — a representation reads the bonds when it is created.
+const ensureGlycanBonds = (componentOrStructure) => {
+  const structure = componentOrStructure && (componentOrStructure.structure || componentOrStructure);
+  const info = structure ? glycanEntityMapFor(structure) : null;
+  const pairs = info && Array.isArray(info.linkAtoms) ? info.linkAtoms : [];
+  const bondStore = structure ? structure.bondStore : null;
+  if (!pairs.length || !bondStore || typeof bondStore.addBond !== 'function') return 0;
+  let added = 0;
+  try {
+    const ap1 = structure.getAtomProxy();
+    const ap2 = structure.getAtomProxy();
+    const atomCount = structure.atomCount || 0;
+    pairs.forEach((pair) => {
+      const i1 = pair && pair[0];
+      const i2 = pair && pair[1];
+      if (!Number.isFinite(i1) || !Number.isFinite(i2) || i1 === i2) return;
+      if (i1 < 0 || i2 < 0 || i1 >= atomCount || i2 >= atomCount) return;
+      ap1.index = i1;
+      ap2.index = i2;
+      let known = false;
+      try { known = ap1.hasBondTo(ap2); } catch { known = false; }
+      if (known) return;
+      bondStore.addBond(ap1, ap2, 1);   // a glycosidic linkage is a single bond
+      added += 1;
+    });
+    if (added) {
+      // The bond hash and the bond set are what eachBondedAtom, the NGL selections
+      // and every BondProxy reader walk: a bond added to the store alone would stay
+      // invisible to all of them (and bondCount would keep the old total).
+      if (typeof structure.finalizeBonds === 'function') structure.finalizeBonds();
+      else structure.bondCount = bondStore.count;
+    }
+  } catch { /* a structure NGL will not let us touch keeps what its file said */ }
+  if (info) info.bondsAdded = (info.bondsAdded || 0) + added;
+  return added;
 };
 // What the Sugars menu says about the glycans of the file on screen: one entry per
 // entity (its label, its size) plus the two totals — computed ONCE at load time.
@@ -6969,6 +7080,7 @@ const loadChainMolecule = useCallback(async (blob, name, ci) => {
   if (!stage) return;
   try {
     const comp = await stage.loadFile(blob, { ext: 'pdb' });
+    try { ensureGlycanBonds(comp); } catch { /* best-effort (PART 2.2bis) */ }
     const baseReps = applyCurrentStyleTo(comp, []);
     shadowRepsHook(comp);
     if (shadowOnRef.current) setMeshShadows(comp);
@@ -7089,6 +7201,14 @@ throw firstErr;
 
 if (cancelled) return;
 componentRef.current = component;
+
+// What the FILE did not say about the sugars — the glycosidic linkages of a
+// polysaccharide — is written into the bond graph NOW, before a single
+// representation exists: NGL infers a linkage bond from the distance when it
+// parses a PDB (and this is a no-op then), but a file whose het residues carry
+// their own explicit bonds, an `inferBonds` that skipped them or an alternate
+// conformation NGL refuses to connect all leave the chain unlinked. See PART 2.2bis.
+try { ensureGlycanBonds(component); } catch { /* best-effort — the grouping stands on its own */ }
 
 // Note: NGL viewer structures from PDB/SDF already contain hydrogens when generated correctly.
 // We skip addHydrogens() to prevent "is not a function" errors in this NGL version.
@@ -8336,6 +8456,7 @@ try {
   const stage = stageRef.current;
   if (!stage) return;
   const comp = await stage.loadFile(file);
+  try { ensureGlycanBonds(comp); } catch { /* best-effort (PART 2.2bis) */ }
   // Style it with the §2 « Molecular Styling » menus (the same renderer as the
   // main structure) so extra molecules follow the user's choices and never look
   // like a gray blob.
@@ -9032,6 +9153,7 @@ const loadExtraStructureUrl = useCallback(async (rawSrc, n = 0) => {
       }
     }
     if (!comp || !comp.structure) return;
+    try { ensureGlycanBonds(comp); } catch { /* best-effort (PART 2.2bis) */ }
     // The same §2 « Molecular Styling » look as the main structure.
     const baseReps = applyCurrentStyleTo(comp, []);
     shadowRepsHook(comp);

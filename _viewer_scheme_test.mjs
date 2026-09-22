@@ -626,6 +626,19 @@ eq(glycanCm.atomColor({ structure: sugarStruct, index: 99999, resname: 'HOH' }),
   'un atome qui n\'est pas un sucre garde le gris lisible');
 eq(glycanCm.atomColor({ resname: 'GLC' }), H.SUGAR_IDENTITY_COLORS.GLC,
   'sans structure, le schéma retombe sur la palette des sucres (jamais de molécule sans couleur)');
+// « polysaccharides are correctly identified but not linked together » : l'accepteur
+// du α2→8 d'un polysialique est un O8 — ni un O4 ni un O6 — et le nom du monomère ne
+// dit rien de la chaîne. C'est la GÉOMÉTRIE qui lie (un O8 à 1.44 Å du C2 de l'autre
+// acide sialique), donc le schéma peint les deux monomères d'UNE seule couleur.
+const siaC2 = fAtom('C2', [0, 0, 0], 'SIA', 3);
+const siaO8 = fAtom('O8', [1.44, 0, 0], 'SIA', 4);
+const siaStruct = fakeStructure([siaC2, siaO8]);
+eq(glycanCm.atomColor({ ...siaC2, structure: siaStruct }), H.GLYCAN_ENTITY_COLORS[0],
+  'un polySia lié α2→8 (accepteur O8) est UNE molécule : une seule couleur');
+eq(glycanCm.atomColor({ ...siaO8, structure: siaStruct }), H.GLYCAN_ENTITY_COLORS[0],
+  '…l\'atome accepteur porte la couleur de l\'entité, pas celle de son sucre isolé');
+eq(H.glycanEntityMapFor(siaStruct).entities.map((e) => [e.members.length, e.linked]),
+  [[2, true]], '…et l\'entité est bien marquée « liée » (ce que le menu des sucres annonce)');
 
 const classKey = H.registerColorScheme(NGL, 'lab-test-lipid-class', H.defineLipidClassScheme());
 ok(typeof classKey === 'string' && classKey.length > 0, 'lab-lipid-class s\'enregistre comme les autres');

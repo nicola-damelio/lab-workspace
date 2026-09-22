@@ -19,9 +19,12 @@
        parallèles, 3.3 – 3.4 Å) font un quadruplex ; une hampe de trois paires
        Watson-Crick / wobble (< 3.5 Å) refermée par une boucle de 3 à 10 résidus
        non appariés, reliée par le squelette covalent P → O3', fait un hairpin ;
-     • les GLYCANES sont groupés par leur liaison glycosidique (C1 → O4 · O6,
-       C2 pour un acide sialique) — lue sur le graphe de liaisons OU, à défaut,
-       sur la DISTANCE (≤ 1.8 Å) — donc une chaîne liée est UNE molécule ;
+     • les GLYCANES sont groupés par leur liaison glycosidique (C1 → O4 · O6, O8 ·
+        O9 pour un acide sialique, C2 pour un ketose) — lue sur le graphe de liaisons
+       OU, à défaut, sur la DISTANCE (≤ 1.8 Å, l'accepteur étant alors reconnu par
+       sa seule géométrie, quel que soit son nom) — donc une chaîne liée est UNE
+       molécule, ET la liaison est ÉCRITE dans le graphe de liaisons de la structure
+       (ensureGlycanBonds) pour que le dessin porte la barre entre les sucres ;
      • les CLASSES de lipides (PC · PE · PG · PS · PI · PA · CL · SM · Chol · FA)
        sont lues sur les codes 3 lettres standard (POPC · DPPC · POPE · POP ·
        DPQ · EPH · PGL · CLR …).
@@ -31,6 +34,13 @@
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+
+// Le VRAI NGL de la page (2.4.0) : §5bis parse un vrai fichier avec lui, parce que
+// la question « la barre est-elle dessinée entre deux sucres ? » est une question
+// sur le GRAPHE DE LIAISONS de la structure — elle ne se répond pas sur du texte.
+const require = createRequire(import.meta.url);
+const NGL = require('ngl');
 
 let passed = 0;
 const ok = (cond, what) => {
@@ -126,8 +136,14 @@ const sandbox = [
   raw('SUGAR_KETOSE_CODES'), raw('SUGAR_ACCEPTOR_RE'), raw('SUGAR_LINK_CUTOFF'),
   raw('SUGAR_RES_SEL'), raw('SUGAR_IDENTITY_CODES'),
   raw('sugarCodeOf'), sliceFn(VIEW, 'isSugarResidueCode'), raw('sugarShortNameOf'),
-  raw('sugarAnomericNamesOf'), sliceFn(VIEW, 'sugarLinkEnds'), sliceFn(VIEW, 'sugarLinkBondOf'),
-  sliceFn(VIEW, 'sugarLinksByDistance'), raw('glycanLabel'), sliceFn(VIEW, 'glycanEntities'),
+  raw('sugarAnomericNamesOf'), raw('sugarElementOf'),
+  sliceFn(VIEW, 'sugarLinkEnds'), sliceFn(VIEW, 'sugarLinkBondOf'),
+  sliceFn(VIEW, 'sugarLinkAtomsOf'), sliceFn(VIEW, 'sugarLinksByDistance'),
+  sliceFn(VIEW, 'sugarLinksFromBonds'), raw('linkMonomerPair'),
+  raw('glycanLabel'), sliceFn(VIEW, 'glycanEntities'),
+  // Le regroupement PAR STRUCTURE, et la LIAISON écrite dans la topologie (§5bis).
+  raw('glycanCache'), raw('structureAtomRecords'), sliceFn(VIEW, 'sugarMonomersOf'),
+  sliceFn(VIEW, 'glycanEntityMapFor'), sliceFn(VIEW, 'ensureGlycanBonds'),
   // Les classes de lipides (PART 2.1bis).
   sliceObject(VIEW, 'LIPID_CLASS_ALIASES'), raw('LIPID_CLASS_SUFFIXES'), sliceFn(VIEW, 'lipidClassOf'),  // PART 4 — les palettes et les schémas que la barre de style lit.
   sliceObject(VIEW, 'BASE_IDENTITY_COLORS'),
@@ -160,8 +176,10 @@ const sandbox = [
     basePairKeyOf, basePairKindOf, hoogsteenPairOf, gTetradsOf, stackedTetradsOf, backboneLinked,
     hairpinResiduesInChain, nucleicMotifs, SUGAR_NAME_CODES, SUGAR_CODE_NAMES, SUGAR_KETOSE_CODES,
     SUGAR_ACCEPTOR_RE, SUGAR_LINK_CUTOFF, SUGAR_RES_SEL, SUGAR_IDENTITY_CODES, sugarCodeOf,
-    isSugarResidueCode, sugarShortNameOf, sugarAnomericNamesOf, sugarLinkEnds, sugarLinkBondOf,
-    sugarLinksByDistance, glycanLabel, glycanEntities, LIPID_CLASS_ALIASES, LIPID_CLASS_SUFFIXES,
+    isSugarResidueCode, sugarShortNameOf, sugarAnomericNamesOf, sugarElementOf, sugarLinkEnds,
+    sugarLinkBondOf, sugarLinkAtomsOf, sugarLinksByDistance, sugarLinksFromBonds, linkMonomerPair,
+    sugarMonomersOf, glycanEntityMapFor, ensureGlycanBonds,
+    glycanLabel, glycanEntities, LIPID_CLASS_ALIASES, LIPID_CLASS_SUFFIXES,
     lipidClassOf ,
       BASE_TYPE_ORDER, RESIDUE_COLOR_PALETTE, residueColorStore, residueColorOf, defineResidueScheme, baseTypeColorStore, baseTypeColorOf, defineBaseTypeScheme, CHARGE_COLORS, chargeColorStore, ionChargeOf, chargeColorOf, defineChargeScheme, SUGAR_TYPE_COLORS, sugarTypeColorStore, SUGAR_TYPE_OF_CODE, sugarTypeOf, sugarTypeColorOf };`,
 ].join('\n');
@@ -525,7 +543,7 @@ ok(H.SUGAR_RES_SEL.indexOf('[NAN]') > 0, 'NAN (Neu5Ac) entre dans la sélection 
 // L'anomère : C1 pour un aldose, C2 pour un cétose (un acide sialique).
 eq(H.sugarAnomericNamesOf('GLC'), ['C1'], 'l\'anomère d\'un aldose est C1');
 eq(H.sugarAnomericNamesOf('SIA'), ['C2', 'C1'], '…et celui d\'un acide sialique (un cétose) C2');
-// Les deux atomes d'une liaison glycosidique : C1 → O4 / O6 — jamais le O5 du
+// Les deux atomes d'une liaison glycosidique : C1 → O4 · O6 — jamais le O5 du
 // cycle, et jamais le C2 d'un N-acétyl (qui porte l'azote, pas la liaison).
 const edge = (name, element, resname, key) => ({ key, name, element, resname });
 ok(H.sugarLinkBondOf(edge('C1', 'C', 'GLC', 'a'), edge('O4', 'O', 'NAG', 'b')),
@@ -538,17 +556,38 @@ ok(!H.sugarLinkBondOf(edge('C2', 'C', 'NAG', 'a'), edge('O4', 'O', 'GLC', 'b')),
   'C2 d\'un N-acétyl-glucosamine n\'est pas l\'anomère');
 ok(H.sugarLinkBondOf(edge('C2', 'C', 'SIA', 'a'), edge('O4', 'O', 'GAL', 'b')),
   '…mais C2 d\'un acide sialique l\'est');
+ok(H.sugarLinkBondOf(edge('C2', 'C', 'SIA', 'a'), edge('O8', 'O', 'SIA', 'b')),
+  'α2→8 d\'un acide POLYSIALIQUE : l\'accepteur est le O8, pas un O4 · O6');
+ok(H.sugarLinkBondOf(edge('C2', 'C', 'SIA', 'a'), edge('O9', 'O', 'SIA', 'b')),
+  '…et α2→9 passe par le O9');
 ok(!H.sugarLinkBondOf(edge('C1', 'C', 'GLC', 'a'), edge('O4', 'O', 'GLC', 'a')),
   'deux atomes du MÊME résidu ne sont pas une liaison inter-monomère');
 // La règle de DISTANCE (le fichier n'a ni LINK ni CONECT) : 1.42 Å = la liaison
 // covalente C–O, 3 Å = un simple contact (une molécule d'eau, par exemple).
 const monomer = (resname, ri, atoms) => ({ key: `m${ri}`, resname, resno: ri + 1, residueIndex: ri, atoms });
-const pAtom = (name, element, x) => ({ index: 0, name, element, x, y: 0, z: 0 });
+let pIndex = 0;
+const pAtom = (name, element, x) => {
+  pIndex += 1;
+  return { index: pIndex, name, element, x, y: 0, z: 0 };
+};
+const pair = (links) => links.map((l) => [l.i, l.j]);
 const glc = monomer('GLC', 0, [pAtom('C1', 'C', 0), pAtom('O4', 'O', 2)]);
 const nagNear = monomer('NAG', 1, [pAtom('O4', 'O', 1.42), pAtom('C1', 'C', 10)]);
 const nagFar = monomer('NAG', 1, [pAtom('O4', 'O', 3), pAtom('C1', 'C', 10)]);
-eq(H.sugarLinksByDistance([glc, nagNear]), [[0, 1]], 'C1 à 1.42 Å de O4 → les deux sucres sont LIÉS');
+eq(pair(H.sugarLinksByDistance([glc, nagNear])), [[0, 1]], 'C1 à 1.42 Å de O4 → les deux sucres sont LIÉS');
+eq(H.sugarLinksByDistance([glc, nagNear])[0].atoms, [glc.atoms[0].index, nagNear.atoms[0].index],
+  '…et le lien nomme les DEUX ATOMES de la liaison : le carbone anomère, puis l\'oxygène accepteur');
 eq(H.sugarLinksByDistance([glc, nagFar]), [], '…à 3 Å (un contact, pas une liaison covalente) → aucun lien');
+// L'accepteur n'est pas cherché par son NOM quand il n'y a pas de graphe : c'est la
+// DISTANCE qui décide (≤ 1.8 Å = une liaison C–O), donc un O8 · O9 d'acide sialique
+// — le α2→8 d'un polySia — est trouvé lui aussi, comme n'importe quel O4 · O6.
+const siaDonor = monomer('SIA', 4, [pAtom('C2', 'C', 0), pAtom('O1', 'O', 2)]);
+const siaO8 = monomer('SIA', 5, [pAtom('O8', 'O', 1.44), pAtom('C2', 'C', 10)]);
+const siaHbond = monomer('SIA', 5, [pAtom('O8', 'O', 2.6), pAtom('C2', 'C', 10)]);
+eq(pair(H.sugarLinksByDistance([siaDonor, siaO8])), [[0, 1]],
+  'C2(SIA) à 1.44 Å de O8(SIA) → le α2→8 d\'un polysialique EST une liaison glycosidique');
+eq(H.sugarLinksByDistance([siaDonor, siaHbond]), [],
+  '…mais à 2.6 Å (une liaison H, pas une liaison covalente) il n\'y en a aucune');
 // Le GROUPEMENT : trois monomères liés en chaîne = UNE entité, plus un isolé.
 const monos = [
   glc,
@@ -564,6 +603,87 @@ eq(ents[0].label, 'Glc1 → GlcNAc2 → Man3', 'le libellé nomme les sucres li�
 eq(ents[1].linked, false, 'un sucre isolé est sa propre entité, non liée');
 eq(ents[1].label, 'Fuc4', '…et il garde son nom');
 eq(H.glycanLabel([]), '', 'aucun monomère → aucun libellé');
+
+/* ── 5bis · LA LIAISON ÉCRITE DANS LA TOPOLOGIE (vrai NGL) ──────────────────
+   « polysaccharides are correctly identified but not linked together. A bond
+   connecting them would be necessary. » Le pire cas est le fichier qui ne déclare
+   AUCUNE liaison : pas de CONECT, et un parseur qui n'en infère aucune
+   (`inferBonds: 'none'` — c'est ainsi qu'on force ici le cas, le vrai NGL de la
+   page est utilisé et la structure est réellement parsée). Le groupe sait alors
+   que les sucres sont liés, mais le DESSIN n'a aucune barre entre eux :
+   ensureGlycanBonds écrit la liaison dans le graphe de liaisons de la structure,
+   et TOUT lecteur de ce graphe la voit ensuite — NGL compris (chaque atome est
+   « bonded » à l'autre, donc une représentation ball+stick la dessine). */
+globalThis.FileReader = class {
+  readAsText(blob) {
+    Promise.resolve(blob.text()).then((t) => {
+      this.result = t;
+      if (typeof this.onload === 'function') this.onload({ target: this });
+    });
+  }
+};
+// Un tetrasaccharide d'essai : NAG–NAG liés β1→4 (C1 à 1.43 Å du O4), puis
+// SIA–SIA liés α2→8 (C2 à 1.44 Å du O8) — les deux écritures du sucre, l'une par
+// le nom (O4), l'autre seulement par la distance (O8, qu'aucune table ne liste).
+const pdbLine = (serial, name, resname, resno, x, y, z, element) => `HETATM${String(serial).padStart(5)} `
+  + `${String(name).padEnd(4)} ${String(resname).padEnd(3)} A${String(resno).padStart(4)}`
+  + `    ${x.toFixed(3).padStart(8)}${y.toFixed(3).padStart(8)}${z.toFixed(3).padStart(8)}`
+  + `  1.00  0.00          ${String(element).padStart(2)}`;
+const POLY_PDB = [
+  pdbLine(1, 'C1', 'NAG', 1, 0, 0, 0, 'C'), pdbLine(2, 'C2', 'NAG', 1, 1.52, 0, 0, 'C'),
+  pdbLine(3, 'O5', 'NAG', 1, -0.55, 1.23, 0, 'O'), pdbLine(4, 'C5', 'NAG', 1, -1.4, 2.1, 0, 'C'),
+  pdbLine(5, 'O4', 'NAG', 2, 1.43, 0, 0, 'O'), pdbLine(6, 'C4', 'NAG', 2, 2, -1.25, 0, 'C'),
+  pdbLine(7, 'C5', 'NAG', 2, 2.6, -2.2, 0, 'C'),
+  pdbLine(8, 'C2', 'SIA', 3, 10, 0, 0, 'C'), pdbLine(9, 'O1', 'SIA', 3, 11.4, 0, 0, 'O'),
+  pdbLine(10, 'C3', 'SIA', 3, 8.6, -1.2, 0, 'C'),
+  pdbLine(11, 'O8', 'SIA', 4, 11.44, 0, 0, 'O'), pdbLine(12, 'C8', 'SIA', 4, 12.2, 0, 0, 'C'),
+  pdbLine(13, 'C9', 'SIA', 4, 13, -0.8, 0, 'C'),
+].join('\n') + '\nEND\n';
+const poly = await NGL.autoLoad(new Blob([POLY_PDB], { type: 'text/plain' }), { ext: 'pdb', inferBonds: 'none' });
+eq(poly.atomCount, 13, 'le tetrasaccharide d\'essai est parsé par le vrai NGL');
+eq(poly.bondStore.count, 0, '…et il ne déclare AUCUNE liaison (inferBonds: « none »)');
+const polyInfo = H.glycanEntityMapFor(poly);
+eq(polyInfo && polyInfo.monomers.length, 4, 'quatre monomères de sucre reconnus');
+eq(polyInfo.entities.length, 2, 'les deux chaînes sont DEUX entités distinctes');
+eq(polyInfo.entities.map((e) => e.members.length), [2, 2], 'NAG–NAG d\'un côté, SIA–SIA de l\'autre');
+eq(polyInfo.entities.map((e) => e.linked), [true, true], '…et les deux sont marquées LIÉES');
+eq(polyInfo.entities.map((e) => e.label), ['GlcNAc1 → GlcNAc2', 'Neu5Ac3 → Neu5Ac4'],
+  'les libellés nomment les sucres liés, en séquence (β1→4 puis α2→8)');
+eq(polyInfo.linkAtoms.length, 2, 'deux liaisons glycosidiques, donc deux atomes par liaison');
+eq(H.ensureGlycanBonds(poly), 2, 'ensureGlycanBonds écrit les deux liaisons dans la topologie');
+eq(poly.bondStore.count, 2, '…le graphe de liaisons de la structure les porte');
+eq(poly.bondCount, 2, '…et bondCount suit (le hash des liaisons est reconstruit)');
+eq(H.ensureGlycanBonds(poly), 0, 'un second appel n\'ajoute RIEN (idempotent, aucun doublon)');
+const pAp1 = poly.getAtomProxy(polyInfo.linkAtoms[0][0]);
+const pAp2 = poly.getAtomProxy(polyInfo.linkAtoms[0][1]);
+eq([pAp1.element, pAp2.element], ['C', 'O'],
+  'chaque paire est [carbone ANOMÈRE, oxygène accepteur] — le C d\'abord');
+ok(pAp1.hasBondTo(pAp2), 'NGL voit les deux atomes BONDÉS : la barre est dessinée entre les sucres');
+eq([pAp1.resno, pAp2.resno], [1, 2], '…et c\'est bien la liaison ENTRE les deux résidus, pas un atome doublé');
+// Les deux lectures se rejoignent : le graphe que l'on vient d'écrire est relu par
+// le détecteur qui lit les liaisons existantes — les deux chaînes, C1–O4 comme
+// C2–O8 (l'accepteur du α2→8 est un O8, que liste SUGAR_ACCEPTOR_RE).
+eq(pair(H.sugarLinksFromBonds(poly, polyInfo.monomers)), [[0, 1], [2, 3]],
+  'le détecteur par graphe de liaisons relit les deux liaisons écrites');
+// Sans liaison écrite, le groupe sait déjà que les sucres sont liés — c'est la
+// GÉOMÉTRIE qui porte la règle — mais le graphe de la structure, lui, est vide.
+const lonely = await NGL.autoLoad(new Blob([POLY_PDB], { type: 'text/plain' }), { ext: 'pdb', inferBonds: 'none' });
+const lonelyInfo = H.glycanEntityMapFor(lonely);
+eq(lonelyInfo.entities.length, 2, 'la géométrie seule groupe déjà les quatre sucres en deux chaînes');
+eq(H.sugarLinksFromBonds(lonely, lonelyInfo.monomers).length, 0,
+  '…mais le graphe de la structure ne contient alors AUCUNE de ces liaisons');
+eq(H.ensureGlycanBonds(lonely), 2, 'ensureGlycanBonds est ce qui les y met');
+// Le cas ORDINAIRE, à l'inverse : NGL a déjà inféré la liaison en lisant le fichier
+// (c'est son comportement par défaut). Les DEUX lectures voient alors la même
+// liaison : elle n'est comptée qu'une fois, et rien n'est écrit deux fois.
+const native = await NGL.autoLoad(new Blob([POLY_PDB], { type: 'text/plain' }), { ext: 'pdb' });
+const nativeInfo = H.glycanEntityMapFor(native);
+const nativeBonds = native.bondStore.count;
+eq(nativeInfo.entities.map((e) => e.linked), [true, true], 'NGL a lié les deux chaînes en lisant le fichier');
+eq(nativeInfo.linkAtoms.length, 2,
+  '…les deux liaisons restent DEUX atomes-paires (géométrie + graphe, sans doublon)');
+eq(H.ensureGlycanBonds(native), 0, '…et ensureGlycanBonds n\'a alors rien à ajouter');
+eq(native.bondStore.count, nativeBonds, '…le graphe de liaisons de NGL reste intact');
 
 /* ══ 6. LES CLASSES DE LIPIDES, LUES SUR LE CODE 3 LETTRES ═════════════════ */
 [['POPC', 'PC'], ['DPPC', 'PC'], ['DOPC', 'PC'], ['SOPC', 'PC'], ['PLPC', 'PC'],
