@@ -653,37 +653,98 @@ hasIn(DOCK_SRC, ": moleculeType === 'organic' ? 'Organic Molecule' : 'Phospholip
    Deux rapports de plus (« the program still does not recognise lipids », « ions
    of the same type are loaded separately ») : les deux chemins sont exécutés ici
    sur une structure réellement parsée par NGL, pour que la réponse ne soit pas une
-   opinion. Un POPC (tête polaire · glycérol · deux chaînes acyle, nommage CHARMM)
-   et DEUX sodiums du même type sont mis dans un petit PDB. */
-const LIPID_PDB = [
-  'ATOM      1  P   POPC A   1       0.000   0.000   0.000  1.00  0.00           P',
-  'ATOM      2  O1  POPC A   1       1.000   0.000   0.000  1.00  0.00           O',
-  'ATOM      3  O2  POPC A   1       1.000   1.000   0.000  1.00  0.00           O',
-  'ATOM      4  O3  POPC A   1       1.000   0.000   1.000  1.00  0.00           O',
-  'ATOM      5  O4  POPC A   1       1.000   1.000   1.000  1.00  0.00           O',
-  'ATOM      6  N   POPC A   1       2.000   0.000   0.000  1.00  0.00           N',
-  'ATOM      7  C12 POPC A   1       3.000   0.000   0.000  1.00  0.00           C',
-  'ATOM      8  C13 POPC A   1       4.000   0.000   0.000  1.00  0.00           C',
-  'ATOM      9  C14 POPC A   1       5.000   0.000   0.000  1.00  0.00           C',
-  'ATOM     10  C15 POPC A   1       6.000   0.000   0.000  1.00  0.00           C',
-  'ATOM     11  C11 POPC A   1       7.000   0.000   0.000  1.00  0.00           C',
-  'ATOM     12  C1  POPC A   1       8.000   0.000   0.000  1.00  0.00           C',
-  'ATOM     13  C2  POPC A   1       9.000   0.000   0.000  1.00  0.00           C',
-  'ATOM     14  C3  POPC A   1      10.000   0.000   0.000  1.00  0.00           C',
-  'ATOM     15  O21 POPC A   1       9.000   1.000   0.000  1.00  0.00           O',
-  'ATOM     16  C21 POPC A   1       9.000   2.000   0.000  1.00  0.00           C',
-  'ATOM     17  O22 POPC A   1       9.000   2.000   1.000  1.00  0.00           O',
-  'ATOM     18  C22 POPC A   1       9.000   3.000   0.000  1.00  0.00           C',
-  'ATOM     19  C23 POPC A   1       9.000   4.000   0.000  1.00  0.00           C',
-  'ATOM     20  O31 POPC A   1      10.000   1.000   0.000  1.00  0.00           O',
-  'ATOM     21  C31 POPC A   1      10.000   2.000   0.000  1.00  0.00           C',
-  'ATOM     22  O32 POPC A   1      10.000   2.000   1.000  1.00  0.00           O',
-  'ATOM     23  C32 POPC A   1      10.000   2.000   2.000  1.00  0.00           C',
-  'ATOM     24  C33 POPC A   1      10.000   2.000   3.000  1.00  0.00           C',
-  'HETATM   30  NA  NA  B   1      20.000   0.000   0.000  1.00  0.00          NA',
-  'HETATM   31  NA  NA  B   2      30.000   0.000   0.000  1.00  0.00          NA',
-  'END',
-].join('\n');
+   opinion.
+
+   Le POPC est celui du fichier du rapport, AVEC SES VRAIS NOMS D'ATOMES : un POPC
+   CHARMM36 (AA2.gro) dont les hydrogènes de chaîne portent le NUMÉRO DE POSITION
+   dans la chaîne — C22 porte H2R · H2S, C29 H91, C210 H101, C211 H11R · H11S, C216
+   H16R · H16S, C218 H18R · H18S · H18T, C32 H2X · H2Y, C33 H3X · H3Y… — et non le
+   nom du carbone qui les porte. Les gabarits d'avant (H21A / H22A, inventés) tombaient juste par
+   chance : lire « H2R » comme « C2 » rangeait les 64 hydrogènes de chaîne du
+   fichier dans le squelette ou dans la tête, à 5 à 15 Å de leurs carbones, ce que
+   le rapport décrit — « in phospholipids many hydrogens of acyl chains are
+   attributed to the headgroups or (although they are very far) to the glycerol ».
+   Le placement se fait donc par la LIAISON (voir LIPID_COVALENT_RADII), et ce
+   gabarit le prouve.
+
+   Chaque atome lourd est posé à 3,5 Å du suivant et chaque hydrogène à 1,09 Å de
+   SON atome lourd : la géométrie du gabarit est celle d'une liaison, donc le
+   classement par la liaison y est sans ambiguïté — le test le vérifie aussi. */
+// [nom, élément, atome lourd qui le porte]
+const POPC_ATOMS = (() => {
+  const out = [];
+  const add = (name, element, parent) => out.push([name, element, parent || '']);
+  // · la choline et le phosphate
+  add('N', 'N'); add('C12', 'C'); add('H12A', 'H', 'C12'); add('H12B', 'H', 'C12');
+  ['13', '14', '15'].forEach((p) => {
+    add(`C${p}`, 'C');
+    ['A', 'B', 'C'].forEach((s) => add(`H${p}${s}`, 'H', `C${p}`));
+  });
+  add('C11', 'C'); add('H11A', 'H', 'C11'); add('H11B', 'H', 'C11');
+  add('P', 'P'); add('O13', 'O'); add('O14', 'O'); add('O12', 'O'); add('O11', 'O');
+  // · le squelette glycérol, ses cinq hydrogènes HA · HB · HS · HX · HY
+  add('C1', 'C'); add('HA', 'H', 'C1'); add('HB', 'H', 'C1');
+  add('C2', 'C'); add('HS', 'H', 'C2');
+  add('O21', 'O'); add('C3', 'C'); add('HX', 'H', 'C3'); add('HY', 'H', 'C3');
+  add('O31', 'O');
+  // · l'oléoyle (C21 … C218 : l'insaturation C29=C210 porte H91 et H101)
+  add('C21', 'C'); add('O22', 'O');
+  for (let k = 2; k <= 8; k++) {
+    add(`C2${k}`, 'C'); add(`H${k}R`, 'H', `C2${k}`); add(`H${k}S`, 'H', `C2${k}`);
+  }
+  add('C29', 'C'); add('H91', 'H', 'C29');
+  add('C210', 'C'); add('H101', 'H', 'C210');
+  for (let k = 11; k <= 17; k++) {
+    add(`C2${k}`, 'C'); add(`H${k}R`, 'H', `C2${k}`); add(`H${k}S`, 'H', `C2${k}`);
+  }
+  add('C218', 'C'); ['R', 'S', 'T'].forEach((s) => add(`H18${s}`, 'H', 'C218'));
+  // · le palmitoyle (C31 … C316)
+  add('C31', 'C'); add('O32', 'O');
+  for (let k = 2; k <= 15; k++) {
+    add(`C3${k}`, 'C'); add(`H${k}X`, 'H', `C3${k}`); add(`H${k}Y`, 'H', `C3${k}`);
+  }
+  add('C316', 'C'); ['X', 'Y', 'Z'].forEach((s) => add(`H16${s}`, 'H', 'C316'));
+  return out;
+})();
+// Une ligne PDB aux COLONNES du format (NGL lit le nom en 13-16, le résidu en
+// 18-21, la chaîne en 22, le numéro en 23-26, x en 31-38 et l'élément en 77-78).
+const pdbAtomLine = (record, serial, name, resName, chain, resSeq, x, y, z, element) => (
+  `${record.padEnd(6)}${String(serial).padStart(5)} ${name.length >= 4 ? name : ` ${name.padEnd(3)}`}`
+  + ` ${resName.padEnd(4)}${chain}${String(resSeq).padStart(4)}    `
+  + `${x.toFixed(3).padStart(8)}${y.toFixed(3).padStart(8)}${z.toFixed(3).padStart(8)}`
+  + `  1.00  0.00          ${element.padStart(2)}`
+);
+const LIPID_FIXTURE = (() => {
+  const dirs = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0]];
+  const pos = new Map();
+  const lines = [];
+  let serial = 0; let heavy = 0; let hydro = 0;
+  POPC_ATOMS.forEach(([name, element, parent]) => {
+    let x; let y; let z;
+    if (!parent) { x = 3.5 * heavy; y = 0; z = 0; heavy += 1; } else {
+      const p = pos.get(parent);
+      const d = dirs[hydro % dirs.length];
+      x = p[0] + 1.09 * d[0]; y = p[1] + 1.09 * d[1]; z = p[2] + 1.09 * d[2];
+      hydro += 1;
+    }
+    pos.set(name, [x, y, z]);
+    serial += 1;
+    lines.push(pdbAtomLine('ATOM', serial, name, 'POPC', 'A', 1, x, y, z, element));
+  });
+  // DEUX sodiums du même type (des HETATM : ils ne font pas partie du POPC).
+  lines.push(pdbAtomLine('HETATM', 200, 'NA', 'NA', 'B', 1, 40.000, 0.000, 0.000, 'NA'));
+  lines.push(pdbAtomLine('HETATM', 201, 'NA', 'NA', 'B', 2, 45.000, 0.000, 0.000, 'NA'));
+  lines.push('END');
+  return {
+    pdb: lines.join('\n'),
+    pos,
+    index: new Map(POPC_ATOMS.map(([n], i) => [n, i])),
+    atomCount: POPC_ATOMS.length,
+    heavyNames: POPC_ATOMS.filter(([, e]) => e !== 'H').map(([n]) => n),
+    hydrogenNames: POPC_ATOMS.filter(([, e]) => e === 'H').map(([n]) => n),
+  };
+})();
+const LIPID_PDB = LIPID_FIXTURE.pdb;
 const LSUBS = new Function('NGL', [
   'const window = { NGL };',
   sliceObject(VIEW, 'AA3_TO_1'),
@@ -714,7 +775,10 @@ const LSUBS = new Function('NGL', [
   sliceDecl(VIEW, 'LIPID_POLAR_ELEMENTS'),
   sliceDecl(VIEW, 'LIPID_NAMED_PROBE'),
   sliceDecl(VIEW, 'LIPID_CHAIN_PROBE_RE'),
+  sliceDecl(VIEW, 'LIPID_COVALENT_RADII'),
+  sliceFn(VIEW, 'lipidBondCutoff'),
   sliceFn(VIEW, 'lipidGroupOf'),
+  sliceDecl(VIEW, 'lipidPartIndexStore'),
   sliceDecl(VIEW, 'lipidSubCache'),
   sliceFn(VIEW, 'lipidSubSelections'),
   sliceFn(VIEW, 'lipidResnamesIn'),
@@ -722,7 +786,7 @@ const LSUBS = new Function('NGL', [
   sliceDecl(VIEW, 'lipidRes'),
   sliceDecl(VIEW, 'LIPID_STANDARD_RES'),
   sliceDecl(VIEW, 'lipidGroupSele'),
-  'return { listMoleculeSections, lipidSubSelections, lipidGroupSele, lipidResnamesIn };',
+  'return { listMoleculeSections, lipidSubSelections, lipidGroupOf, lipidGroupSele, lipidResnamesIn };',
 ].join('\n'))(NGL);
 const lipidStruct = await NGL.autoLoad(new Blob([LIPID_PDB], { type: 'text/plain' }), { ext: 'pdb' });
 const lipSections = LSUBS.listMoleculeSections(lipidStruct);
@@ -735,8 +799,57 @@ const count = (s) => String(s || '').split(',').filter(Boolean).length;
 // Tous les ATOM du gabarit sont le POPC (les ions sont des HETATM) : c'est le
 // résidu que les trois parties doivent couvrir EXACTEMENT.
 const popcAtoms = LIPID_PDB.split('\n').filter((l) => l.startsWith('ATOM')).length;
+eq(popcAtoms, 134, 'le gabarit EST le POPC du rapport : 42 C + 82 H + 1 N + 8 O + 1 P = 134 atomes');
 eq(count(subs.head) + count(subs.glycerol) + count(subs.acyl), popcAtoms,
   `les trois parties (tête · glycérol · chaînes) TUILE le résidu — ${popcAtoms} atomes, aucun perdu, aucun en double`);
+eq([subs.headAtoms.size, subs.glycerolAtoms.size, subs.acylAtoms.size], [24, 10, 100],
+  'la chimie du POPC : tête 24 (choline + phosphate) · squelette 10 (C1 · C2 · C3 · O21 · O31 + HA HB HS HX HY) · chaînes 100 (36 atomes lourds + les 64 hydrogènes de chaîne)');
+eq(subs.headAtoms.size + subs.glycerolAtoms.size + subs.acylAtoms.size, LIPID_FIXTURE.atomCount,
+  '…et les trois parts couvrent les 134 atomes, sans doublon (chaque index dans une seule part)');
+
+/* ── Le placement par la LIAISON, sur les noms d'atomes qui trompaient ───── */
+const posOf = (n) => LIPID_FIXTURE.pos.get(n);
+const gap = (a, b) => Math.hypot(...[0, 1, 2].map((k) => posOf(a)[k] - posOf(b)[k]));
+const partOfName = (n) => {
+  const i = LIPID_FIXTURE.index.get(n);
+  if (subs.acylAtoms.has(i)) return 'acyl';
+  if (subs.glycerolAtoms.has(i)) return 'glycerol';
+  if (subs.headAtoms.has(i)) return 'head';
+  return 'hors-jeu';
+};
+// Le gabarit est SANS ambiguïté : le plus proche atome lourd d'un hydrogène est
+// toujours celui de sa liaison (sinon la règle de la distance ne prouverait rien).
+const nearestHeavy = (n) => LIPID_FIXTURE.heavyNames
+  .reduce((best, h) => (gap(n, h) < gap(n, best) ? h : best), LIPID_FIXTURE.heavyNames[0]);
+const ambiguous = POPC_ATOMS.filter(([, e]) => e === 'H')
+  .filter(([n, , parent]) => nearestHeavy(n) !== parent).map(([n]) => n);
+eq(ambiguous, [], 'le gabarit n’a AUCUN hydrogène ambigu : son atome lourd le plus proche est celui de sa liaison');
+near(Math.max(...POPC_ATOMS.filter(([, , p]) => p).map(([n, , p]) => gap(n, p))), 1.09,
+  '…et chaque hydrogène du gabarit est posé à 1,09 Å de son atome lourd (la distance de liaison)');
+// LA demande du rapport, nommément : ces hydrogènes sont DANS les chaînes.
+['H2R', 'H2S', 'H3R', 'H91', 'H101', 'H11R', 'H11S', 'H16R', 'H16S', 'H17R', 'H18T'].forEach((n) => {
+  eq(partOfName(n), 'acyl', `${n} est DANS les chaînes acyle — il est à ${gap(n, nearestHeavy(n)).toFixed(2)} Å de ${nearestHeavy(n)}`);
+});
+['H2X', 'H2Y', 'H3X', 'H3Y', 'H4X', 'H15Y', 'H16X', 'H16Y', 'H16Z'].forEach((n) => {
+  eq(partOfName(n), 'acyl', `${n} (chaîne palmitoyle) est DANS les chaînes acyle, pas dans le squelette`);
+});
+// …et la tête / le squelette gardent les leurs.
+['HA', 'HB', 'HS', 'HX', 'HY'].forEach((n) => {
+  eq(partOfName(n), 'glycerol', `${n} reste sur le squelette (son carbone C1 · C2 · C3 est à 1,09 Å)`);
+});
+['H12A', 'H12B', 'H13A', 'H13B', 'H13C', 'H14A', 'H15C', 'H11A', 'H11B'].forEach((n) => {
+  eq(partOfName(n), 'head', `${n} reste sur la tête (sa choline est à 1,09 Å)`);
+});
+// La preuve que c'est la LIAISON qui décide : la règle du NOM, seule, rangeait ces
+// hydrogènes de chaîne ailleurs — dans le squelette ou dans la tête.
+eq(['H2R', 'H2S', 'H91', 'H101', 'H18T'].map((n) => LSUBS.lipidGroupOf(n, 'H', true)),
+  ['glycerol', 'glycerol', 'head', 'head', 'head'],
+  'la règle du nom SEULE envoyait H2R · H2S au squelette et H91 · H101 · H18T à la tête (le rapport : « although they are very far ») — la liaison, elle, ne se trompe pas');
+// Le compte du rapport, sur le fichier entier : 64 hydrogènes de chaîne par POPC.
+eq(LIPID_FIXTURE.hydrogenNames.filter((n) => partOfName(n) === 'acyl').length, 64,
+  'les 64 hydrogènes de chaîne d’un POPC (33 oléoyle + 31 palmitoyle) sont tous dans les chaînes');
+eq(LIPID_FIXTURE.hydrogenNames.filter((n) => partOfName(n) === 'head').length, 13,
+  '…et les 13 hydrogènes de la tête (H12A/B · H13A-C · H14A-C · H15A-C · H11A/B) sont tous dans la tête');
 ok(count(subs.glycerol) >= 3, '…dont le glycérol (C1 · C2 · C3 et leurs oxygènes / hydrogènes)');
 ok(count(subs.acyl) >= 8, '…et les deux chaînes acyle (C21… / C31…)');
 const ionSections = lipSections.filter((s) => s.kind === 'ion');

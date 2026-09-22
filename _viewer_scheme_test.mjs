@@ -112,6 +112,7 @@ const sandbox = [
   sliceFn(VIEW, 'baseIdentityColorOf'),
   sliceFn(VIEW, 'atomElement'),
   sliceFn(VIEW, 'lipidGroupOf'),
+  sliceObject(VIEW, 'lipidPartIndexStore'),
   sliceConst('LIPID_GLYCEROL_NAMES'),
   sliceConst('LIPID_ACYL_RE'),
   sliceConst('LIPID_POLAR_ELEMENTS'),
@@ -185,6 +186,7 @@ const sandbox = [
 
   `return { BASE_IDENTITY_COLORS, DEFAULT_NUCLEIC_COLORS, DEFAULT_LIPID_COLORS, sstrucColorStore, nucleicColorStore, lipidColorStore,
     LIPID_GLYCEROL_NAMES, LIPID_ACYL_RE, LIPID_POLAR_ELEMENTS, LIPID_NAMED_PROBE, LIPID_CHAIN_PROBE_RE,
+    lipidPartIndexStore,
     nucleicGroupOf, baseIdentityColorOf, atomElement, lipidGroupOf, registerColorScheme,
     defineSstrucScheme, defineNucleicGroupsScheme, defineBaseIdentityScheme, defineLipidGroupsScheme,
     ELEMENT_COLOR_PALETTE, SUGAR_IDENTITY_COLORS, SUGAR_IDENTITY_CODES, elementColorStore, sugarColorStore,
@@ -340,6 +342,38 @@ eq(lipidCm.atomColor({ atomname: 'C12', element: 'C' }), H.DEFAULT_LIPID_COLORS.
 eq(lipidCm.atomColor({ atomname: 'O9', element: 'O' }), H.DEFAULT_LIPID_COLORS.head, '…et tout oxygène la tête');
 eq(lipidCm.atomColor({ atomname: 'C1', element: 'C' }), H.DEFAULT_LIPID_COLORS.acyl, '…même un carbone nommé C1 (la nomenclature est ignorée)');
 H.lipidColorStore.named = true;
+/* …puis les SETS du marcheur (le regard de lipidSubSelections) : les pastilles
+   colorent EXACTEMENT ce que les représentations dessinent. C'est le seul chemin
+   qui donne la bonne couleur à un hydrogène de chaîne dont le nom ment — H2R est
+   sur C22 à 1,09 Å (le rapport : « in phospholipids many hydrogens of acyl chains
+   are attributed to the headgroups or (although they are very far) to the
+   glycerol ») : son nom dit « C2 », donc le squelette, mais la LIAISON dit la
+   chaîne. */
+const struct = { name: 'AA2.gro' };
+H.lipidPartIndexStore.structure = struct;
+H.lipidPartIndexStore.head = new Set([0, 1]);
+H.lipidPartIndexStore.glycerol = new Set([2, 3]);
+H.lipidPartIndexStore.acyl = new Set([4, 5]);
+const inWalk = (index, atomname) => ({ index, structure: struct, atomname, element: 'H' });
+eq(lipidCm.atomColor(inWalk(4, 'H2R')), H.DEFAULT_LIPID_COLORS.acyl,
+  'H2R (chaîne oléoyle) reçoit la couleur des CHAÎNES : la couleur vient de la liaison, pas du nom');
+eq(lipidCm.atomColor(inWalk(5, 'H16Z')), H.DEFAULT_LIPID_COLORS.acyl, '…comme le méthyle terminal H16Z');
+eq(lipidCm.atomColor(inWalk(2, 'HA')), H.DEFAULT_LIPID_COLORS.glycerol, 'HA (glycérol) garde la couleur du SQUELETTE');
+eq(lipidCm.atomColor(inWalk(3, 'H2X')), H.DEFAULT_LIPID_COLORS.glycerol,
+  'H2X est sur C32 : son NOM dit « C2 » (squelette) et la liaison aussi — donc squelette');
+eq(lipidCm.atomColor(inWalk(0, 'N')), H.DEFAULT_LIPID_COLORS.head, 'N garde la couleur de la TÊTE');
+eq(lipidCm.atomColor(inWalk(1, 'H13A')), H.DEFAULT_LIPID_COLORS.head, '…et H13A aussi');
+// Le marcheur d'une structure ne colore jamais les atomes d'une AUTRE : là, les
+// règles du nom reprennent la main (le repli d'avant).
+eq(lipidCm.atomColor({ index: 4, structure: { name: 'autre' }, atomname: 'H2R', element: 'H' }),
+  H.DEFAULT_LIPID_COLORS.glycerol,
+  'le marcheur d’une structure ne colore pas les atomes d’une autre (repli sur le nom)');
+eq(lipidCm.atomColor({ index: 99, structure: struct, atomname: 'C21', element: 'C' }),
+  H.DEFAULT_LIPID_COLORS.acyl, '…un atome hors du marcheur garde les règles du nom');
+H.lipidPartIndexStore.structure = null;
+H.lipidPartIndexStore.head = null;
+H.lipidPartIndexStore.glycerol = null;
+H.lipidPartIndexStore.acyl = null;
 
 
 /* ══ 9. LES TROIS PARTS D'UN LIPIDE NE SE CHEVAUCHENT PAS, ET NE PERDENT RIEN ══

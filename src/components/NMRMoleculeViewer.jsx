@@ -1239,6 +1239,29 @@ const LIPID_POLAR_ELEMENTS = new Set(['N', 'P', 'O', 'S']);
 const LIPID_NAMED_PROBE = new Set(['P', 'N', 'C1', 'C2', 'C3']);
 const LIPID_CHAIN_PROBE_RE = /^(?:C[23]\d|O[23]2)$/;
 
+// ── A hydrogen is placed by its BOND, never by its name ─────────────────────
+// A force field names the hydrogens of a chain after the POSITION in that chain,
+// not after the carbon they hang from. CHARMM36's POPC is the proof: C22 carries
+// H2R · H2S, C29 carries H91, C210 H101, C211 H11R · H11S, C216 H16R · H16S ·
+// H16T, and the sn-2 chain C32 H2X · H2Y, C33 H3X · H3Y… Reading « H2R » as
+// « C2 » therefore sent all 64 chain hydrogens of the file into the glycerol
+// skeleton or the headgroup — atoms they sit 5 to 15 Å away from (the report: « in
+// phospholipids many hydrogens of acyl chains are attributed to the headgroups or
+// (although they are very far) to the glycerol. Why don’t you just identify them if
+// they are at bonding distance from the carbons of the acyl chains? »). They ARE.
+//
+// The covalent radii below turn that question into arithmetic: a X–H bond is 0.96
+// (O–H) to 1.35 Å (S–H) long, so twice the radii (plus a generous 1.3) recognises
+// the bond with no topology in the file at all — which is what a .gro or a PDB
+// without CONECT leaves us.
+const LIPID_COVALENT_RADII = {
+  H: 0.31, B: 0.84, C: 0.76, N: 0.71, O: 0.66, F: 0.57,
+  P: 1.07, S: 1.05, CL: 1.02, SE: 1.16, BR: 1.20, I: 1.39,
+};
+const lipidBondCutoff = (e1, e2) => 1.3 * (
+  (LIPID_COVALENT_RADII[e1] || 0.77) + (LIPID_COVALENT_RADII[e2] || 0.77)
+);
+
 // The element of an atom, from NGL when it is known and from the leading letter
 // of the name otherwise.
 const atomElement = (name, element) => {
@@ -1273,6 +1296,16 @@ const lipidGroupOf = (name, element, named = true) => {
 // selections, plus the `named` flag the colour scheme reads. Computed once per
 // structure + lipid selection (WeakMap cache), so a rep rebuild never re-walks
 // the atoms.
+/* The part of every atom of the walk below, kept for the COLOUR scheme: the 🎨
+   swatches of menu C must colour exactly what the representations DRAW, so the
+   scheme reads these sets instead of re-deriving the part from the atom name —
+   the name being what sent a chain hydrogen into the headgroup. Filled by
+   lipidSubSelections, which the drawing path runs BEFORE it creates the
+   representations (it needs the three selections to build them). */
+const lipidPartIndexStore = {
+  structure: null, head: null, glycerol: null, acyl: null, named: true,
+};
+
 const lipidSubCache = new WeakMap();
 const lipidSubSelections = (structure, lipidSele) => {
   const none = { head: '', glycerol: '', acyl: '', named: false };
@@ -1283,8 +1316,9 @@ const lipidSubSelections = (structure, lipidSele) => {
   const atoms = atomIndicesForSele(structure, lipidSele).map((i) => {
     try {
       const a = structure.getAtomProxy(i);
-      return [i, String((a && a.atomname) || ''), (a && a.element) || ''];
-    } catch { return [i, '', '']; }
+      return [i, String((a && a.atomname) || ''), (a && a.element) || '',
+        (a && a.residueIndex) || 0, (a && a.x) || 0, (a && a.y) || 0, (a && a.z) || 0];
+    } catch { return [i, '', '', 0, 0, 0, 0]; }
   });
   // An empty walk (NGL not ready yet, selection matching nothing) says nothing
   // about the file: keep the historical default, so the menu never claims a
@@ -1296,15 +1330,53 @@ const lipidSubSelections = (structure, lipidSele) => {
   }
   const named = atoms.some(([, n]) => LIPID_NAMED_PROBE.has(n.replace(/\s+/g, '').toUpperCase()))
     && atoms.some(([, n]) => LIPID_CHAIN_PROBE_RE.test(n.replace(/\s+/g, '').toUpperCase()));
+  // PASS 1 — the heavy atoms carry the chemistry and are classified by NAME: the
+  // backbone (C1 · C2 · C3 · O21 · O31), the chains (C21… · O22 · C31… · O32) and,
+  // by exclusion, the headgroup.
+  const part = new Map();
+  const heavy = [];
+  atoms.forEach((a) => {
+    if (atomElement(a[1], a[2]) === 'H') return;
+    part.set(a[0], lipidGroupOf(a[1], a[2], named));
+    heavy.push(a);
+  });
+  // PASS 2 — every HYDROGEN goes to the part of the heavy atom it is BONDED to:
+  // the closest heavy atom of its OWN residue, if it is within bonding distance.
+  // The geometry, which no force field's naming can fool.
+  atoms.forEach((a) => {
+    if (atomElement(a[1], a[2]) !== 'H') return;
+    let best = null; let bestD2 = Infinity;
+    for (let k = 0; k < heavy.length; k++) {
+      const h = heavy[k];
+      if (h[3] !== a[3]) continue;        // a hydrogen only bonds inside its residue
+      const d2 = (h[4] - a[4]) ** 2 + (h[5] - a[5]) ** 2 + (h[6] - a[6]) ** 2;
+      if (d2 < bestD2) { bestD2 = d2; best = h; }
+    }
+    // Nothing at bonding distance (a molecule the box split, a file whose
+    // coordinates are missing) → the name rules, so an atom is never lost.
+    const cutoff = best ? lipidBondCutoff('H', atomElement(best[1], best[2])) : 0;
+    part.set(a[0], best && bestD2 <= cutoff * cutoff
+      ? part.get(best[0])
+      : lipidGroupOf(a[1], a[2], named));
+  });
   const head = []; const glycerol = []; const acyl = [];
-  atoms.forEach(([i, n, e]) => {
-    const g = lipidGroupOf(n, e, named);
+  atoms.forEach(([i]) => {
+    const g = part.get(i) || 'head';
     if (g === 'glycerol') glycerol.push(i);
     else if (g === 'acyl') acyl.push(i);
     else head.push(i);
   });
   const sele = (list) => (list.length ? `@${list.join(',')}` : '');
-  const out = { head: sele(head), glycerol: sele(glycerol), acyl: sele(acyl), named };
+  const out = {
+    head: sele(head), glycerol: sele(glycerol), acyl: sele(acyl), named,
+    headAtoms: new Set(head), glycerolAtoms: new Set(glycerol), acylAtoms: new Set(acyl),
+  };
+  // The scheme colours from these very sets (see defineLipidGroupsScheme).
+  lipidPartIndexStore.structure = structure;
+  lipidPartIndexStore.head = out.headAtoms;
+  lipidPartIndexStore.glycerol = out.glycerolAtoms;
+  lipidPartIndexStore.acyl = out.acylAtoms;
+  lipidPartIndexStore.named = named;
   per.set(lipidSele, out);
   return out;
 };
@@ -2241,6 +2313,21 @@ let lipidSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null 
 const defineLipidGroupsScheme = () => {
   return function () {
     this.atomColor = function (atom) {
+      // The walk of the lipids menu (heavy atoms by name, hydrogens by BOND, see
+      // lipidSubSelections) is the single source of truth: it is what the
+      // representations are built from, so the colours can never disagree with the
+      // picture — a chain hydrogen named H2R is drawn as a chain atom AND coloured
+      // as one.
+      const i = atom && atom.index;
+      const store = lipidPartIndexStore;
+      if (i !== undefined && store.head
+        && (!atom.structure || !store.structure || atom.structure === store.structure)) {
+        if (store.acyl.has(i)) return lipidColorStore.acyl;
+        if (store.glycerol.has(i)) return lipidColorStore.glycerol;
+        if (store.head.has(i)) return lipidColorStore.head;
+      }
+      // No walk for this atom (another structure, a file the walk never saw): the
+      // naming rules, as before.
       const g = lipidGroupOf(atom && atom.atomname, atom && atom.element, lipidColorStore.named);
       if (g === 'glycerol') return lipidColorStore.glycerol;
       if (g === 'acyl') return lipidColorStore.acyl;
