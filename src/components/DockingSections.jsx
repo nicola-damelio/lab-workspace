@@ -57,6 +57,11 @@ const archiveDockingData = async ({
 );
 
 import NMRMoleculeViewer from './NMRMoleculeViewer';
+// PDB → SMILES: a PDB names its ligand only by its HETATM code, so the organic
+// subsection asks the RCSB Chemical Component Dictionary for the SMILES (see
+// utils/ligandSmiles.js). The viewer does the same on its own structure and
+// reports the answer back through onLigandSmiles.
+import { fetchLigandSmiles, ligandCodesFromPdbText } from '../utils/ligandSmiles';
 import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, posesFromCapri, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, dockDom, DOCK_CHART_MARGIN, dockingMetricOf, poseMetricValue, capriColumnMetricKey, chartEnergyMetricKey, poseChartValue, poseDeviation, poseRawColumnValue, deviationColumnOf, energyColumnOf, plotSourceOptions, plotSourceLabel, plotSourceValue, PLOT_SOURCE_PREFIX, PLOT_SOURCE_ALL, DEVIATION_PLOT_KEYS, dockingMetricLabel, HADDOCK_SCORE_TERM_KEYS, haddockScoreTerms} from './DockingData';
 
 
@@ -115,7 +120,10 @@ const useDockingDerived = (activeTest, ctx = {}) => {
     moleculeType === 'protein' ? 'Protein Receptor'
     : moleculeType === 'dna' ? 'DNA Receptor'
     : moleculeType === 'rna' ? 'RNA Receptor'
-    : moleculeType === 'sugar' ? 'Sugar' : 'Phospholipid';
+    // The organic molecule is the LIGAND of a docking run (its SMILES lives in the
+    // subsection of that type — see DockingExperimentSetupSection).
+    : moleculeType === 'sugar' ? 'Sugar'
+    : moleculeType === 'organic' ? 'Organic Molecule' : 'Phospholipid';
 
   const ssRaw = activeTest.secondaryStructure || '';
   const getSSAt = (i) => (ssRaw[i] && 'HES'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
@@ -350,6 +358,36 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
   const hasDockStructs = Array.isArray(structList) && structList.length > 0;
   const selectedStruct = hasDockStructs ? (structList[structIdx] || structList[0] || null) : null;
 
+  /* ── LE SMILES DE LA MOLÉCULE ORGANIQUE (sous-section « Organic Molecule ») ──
+     Un PDB standard n'écrit AUCUN SMILES : il ne nomme son ligand que par le code à
+     3 lettres de ses HETATM (STI, JZ4…). Le SMILES se lit donc dans le Chemical
+     Component Dictionary du RCSB — la sous-section le dit, et laisse le champ
+     éditable pour une valeur venue du run (métadonnée du composé). Le viewer fait
+     la même résolution sur SA structure chargée et la signale ici par
+     onLigandSmiles, donc le SMILES arrive même quand la page ne savait rien. */
+  const [ligandInfo, setLigandInfo] = useState(null);   // { code, smiles, name, source, loading, error }
+  const knownLigandCode = useMemo(() => {
+    const fromRun = String(activeTest.ligandCode || '').trim().toUpperCase();
+    if (fromRun) return fromRun;
+    const codes = ligandCodesFromPdbText(selectedStruct && selectedStruct.pdb ? selectedStruct.pdb : '');
+    return codes.length ? codes[0].code : '';
+  }, [activeTest.ligandCode, selectedStruct]);
+  const shownLigandSmiles = String(
+    ligandInfo && ligandInfo.smiles ? ligandInfo.smiles : (activeTest.ligandSmiles || activeTest.smiles || '')
+  ).trim();
+  const resolveLigandSmiles = async (code) => {
+    const c = String(code || knownLigandCode || '').trim().toUpperCase();
+    if (!c) { setLigandInfo({ error: 'this structure declares no HETATM ligand code' }); return; }
+    setLigandInfo({ code: c, loading: true });
+    try {
+      const info = await fetchLigandSmiles(c);
+      setLigandInfo(info);
+      updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles });
+    } catch (e) {
+      setLigandInfo({ code: c, error: (e && e.message) || 'could not be resolved' });
+    }
+  };
+
   // When the calculation-directory importer brought cluster structures, open the
   // 3D viewer by default so they are actually visible (instead of a plain protein).
   const structureMode = activeTest.structureMode || (hasDockStructs ? '3d' : '2d');
@@ -444,7 +482,11 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
           { val: 'dna', icon: 'dna', label: 'DNA' },
           { val: 'rna', icon: 'dna', label: 'RNA' },
           { val: 'sugar', icon: 'sugar', label: 'Sugar' },
-          { val: 'lipid', icon: 'layers', label: 'Lipid' }
+          { val: 'lipid', icon: 'layers', label: 'Lipid' },
+          // « Organic Molecule » was the ONE type this selector had lost, while the
+          // NMR and MD pages both keep it: for a docking run it is exactly the
+          // ligand — and the place its SMILES belongs (the report).
+          { val: 'organic', icon: 'atom', label: 'Organic Molecule' },
         ].map(({ val, icon, label }) => (
           <button
             key={val}
@@ -480,6 +522,48 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                 <p className="text-[10px] font-bold text-teal-800 bg-teal-50 border border-teal-200 rounded-lg px-2 py-1 mt-1">{d.seqNaturesNote}</p>
               )}
             </>
+          ) : d.moleculeType === 'organic' ? (
+            /* ── SOUS-SECTION « ORGANIC MOLECULE » — LE SMILES DU LIGAND ─────────
+               Elle existait dans les expériences NMR et MD et avait disparu ici ;
+               c'est pourtant LÀ que le SMILES du ligand doit apparaître : un PDB ne
+               l'écrit pas, il ne donne que le code HETATM de son ligand, et c'est ce
+               code que l'on envoie au Chemical Component Dictionary du RCSB. */
+            <div className="flex flex-col gap-2 border border-emerald-200 bg-emerald-50/50 rounded-xl p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-black text-emerald-800 uppercase tracking-wide">🧪 Organic Molecule — ligand SMILES</span>
+                {knownLigandCode && (
+                  <span className="text-[10px] font-bold text-emerald-900 bg-white border border-emerald-300 rounded px-1.5 py-0.5">
+                    HETATM code {knownLigandCode}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => resolveLigandSmiles(knownLigandCode)}
+                  disabled={!!(ligandInfo && ligandInfo.loading)}
+                  className="ml-auto px-2 py-1 text-[10px] font-bold rounded-md border bg-white border-emerald-400 text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
+                  title="Ask the RCSB Chemical Component Dictionary (data.rcsb.org) for the SMILES of this ligand's 3-letter HETATM code"
+                >
+                  {ligandInfo && ligandInfo.loading ? '… asking the RCSB' : '⬇ from the PDB ligand code'}
+                </button>
+              </div>
+              <textarea
+                value={shownLigandSmiles}
+                onChange={(e) => updateActiveTest({ smiles: e.target.value })}
+                placeholder="e.g. CC(=O)Oc1ccccc1C(=O)O — paste or type the ligand's SMILES"
+                className="w-full border border-emerald-300 rounded-lg p-2 font-mono text-xs outline-none focus:border-emerald-500 bg-white h-16"
+              />
+              <p className="text-[10px] text-emerald-900">
+                {ligandInfo && ligandInfo.error
+                  ? <>⚠️ {ligandInfo.error}</>
+                  : (ligandInfo && ligandInfo.smiles
+                    ? <>🔎 resolved for <b>{ligandInfo.code}</b> by the {ligandInfo.source || 'RCSB dictionary'}{ligandInfo.name ? ` — ${ligandInfo.name}` : ''}{ligandInfo.formula ? ` (${ligandInfo.formula})` : ''}. The same string is shown (and copyable) in the viewer's Molecules bar.</>
+                    : (activeTest.ligandSmiles
+                      ? 'From the run / the compound metadata. The viewer shows the same string in its Molecules bar.'
+                      : (knownLigandCode
+                        ? <>A PDB carries no SMILES: press <b>⬇ from the PDB ligand code</b> to read the one of <b>{knownLigandCode}</b> in the RCSB Chemical Component Dictionary.</>
+                        : 'Load a structure with an organic ligand (its 3-letter HETATM code) or paste a SMILES.')))}
+              </p>
+            </div>
           ) : (
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Select Receptor Molecule</label>
@@ -590,6 +674,16 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                 // pasted without leaving the page. It is read from the derived
                 // docking data (the same object the rest of this panel uses).
                 ligandSmiles={d.ligandSmiles || ''}
+                // The viewer resolves the ligand SMILES of the LOADED structure on
+                // its own (HETATM code → RCSB dictionary) and reports it here: the
+                // run keeps it, so the organic subsection and the Molecules bar show
+                // the same string, whatever the structure's source was.
+                onLigandSmiles={(info) => {
+                  setLigandInfo(info);
+                  if (info && info.smiles && !activeTest.ligandSmiles) {
+                    updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles });
+                  }
+                }}
                 selectedKeys={selectedKeys}
                 manualKeys={manualKeys}
                 onAtomClick={handleAtomClick}

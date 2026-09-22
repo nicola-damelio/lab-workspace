@@ -3,7 +3,11 @@ import { ensureNGL } from '../utils/ngl';
 import { computeSmiles3DNameMap } from '../utils/atomNameSync';
 import { rebuildProteinHydrogenCoords } from '../utils/rebuildProteinHydrogens';
 import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
-import { abortControl } from '../utils/abortControl';
+import { abortControl, useAbortControl } from '../utils/abortControl';
+// HETATM code → SMILES: the Chemistry Component Dictionary of the RCSB (see
+// utils/ligandSmiles.js). A PDB only names its ligand by a 3-letter code, so this
+// is where the SMILES of a hand-loaded ligand comes from.
+import { cachedLigandSmiles, fetchLigandSmiles } from '../utils/ligandSmiles';
 import { archiveFileToDrive } from '../utils/driveUpload';
 import { getPymolScripts } from '../utils/pymolScripts';
 import { getActiveProjectId, publishLibraryFigure } from '../utils/figuresLibrary';
@@ -2474,7 +2478,7 @@ const registerLipidClassScheme = (NGL) => {
   lipidClassSchemeKey = registerColorScheme(NGL, 'lab-lipid-class', defineLipidClassScheme());
 };
 
-/* ---- Nucleic-acid FORM colours (the « DNA/RNA conformation » colouring) -------
+/* ---- Nucleic-acid FORM colours (the « RNA/DNA conformation » colouring) -------
    A · B · Z DNA, A · flexible RNA — the six forms of PART 3.1 get ONE distinct,
    high-contrast colour each, so a structural transition (A → B, right-handed → Z,
    a rigid stretch → a flexible loop) jumps out of the picture. The classification
@@ -2693,7 +2697,7 @@ const COLOR_LABELS = {
   residue: 'Amino acid (residue)',
   sstruc: 'Secondary structure',
   basetype: 'DNA/RNA base',
-  nucform: 'DNA conformation',
+  nucform: 'RNA/DNA conformation',
   lipidtype: 'Lipid type',
   sugar: 'Sugar type',
   hydrophobicity: 'Hydrophobicity',
@@ -4229,7 +4233,7 @@ const MOL_COLOR_OPTIONS = (
     <option value="element">Atom type</option>
     <option value="sugar">Sugar type</option>
     <option value="glycan">Glycan (linked sugars)</option>
-    <option value="nucform">DNA/RNA conformation</option>
+    <option value="nucform">RNA/DNA conformation</option>
     <option value="motif">2° structure + motifs</option>
     <option value="lipidclass">Lipid class</option>
     <option value="chainid">Chain</option>
@@ -4314,8 +4318,13 @@ moleculeType = 'protein',
 smiles = '',
 // SMILES of the DOCKED ligand (a docking run keeps the receptor in `src` and the
 // ligand's SMILES on the experiment): it is what the Molecules bar shows in its
-// SMILES fold when the page provides no `smiles` of its own.
+// SMILES fold when the page provides no `smiles` of its own. When NEITHER is
+// given, the viewer resolves the SMILES of the ligand the structure really
+// declares (its HETATM code, via the RCSB Chemical Component Dictionary — see
+// utils/ligandSmiles.js) and reports it back through `onLigandSmiles`, so the page
+// can keep it in its own condition.
 ligandSmiles = '',
+onLigandSmiles,
 parsedSeq = [],
 residueOffset = 0,
 atomRenames,
@@ -7334,13 +7343,16 @@ return next;
 return () => clearInterval(id);
 }, [playing, speed, keptFrames, stride, numFrames, maxFrames]);
 
-// Expose trajectory playback to the global Stop button (so the always-visible
-// ⏹ Stop can also halt playback, not just loading operations).
-useEffect(() => {
-  if (!playing) return;
-  const unregister = abortControl.register('trajectory playback', () => setPlaying(false));
-  return unregister;
-}, [playing]);
+/* PLAYBACK IS NOT AN OPERATION TO ABORT (the report: « When I play a md run I have
+   an annoying window on top saying to abort it but it makes no sense because I can
+   simply stop it. the trajectory has already been loaded. »). This effect used to
+   register « trajectory playback » with the global abort registry, so the
+   always-visible ⏹ Stop pill of the shell turned red and pulsing with
+   « Stop (trajectory playback) » on top of the page for the whole run — while the
+   playback row of the viewer already carries ▶ / ⏸ and the trajectory is loaded.
+   The registry is for the LONG operations that can freeze a page (a structure / a
+   trajectory LOAD, an MD analysis, a DSSP run): those keep registering, playback
+   does not. */
 
 
 const togglePlay = () => {
@@ -8618,6 +8630,12 @@ const renderSection = (sec) => {
         {sec.count > 1 && (
           <span className="text-[9px] text-slate-400 font-bold shrink-0" title={`${sec.count} molecules of this kind share this space`}>×{sec.count}</span>
         )}
+        {/* 🔎 ZOOM ON THIS MOLECULE ALONE (the request): NGL's autoView() takes the
+            section's own selector, so the camera frames that molecule and not the
+            whole file. */}
+        <button type="button" onClick={() => zoomSection(sec)}
+          className="text-[10px] font-bold text-slate-500 hover:text-blue-700 shrink-0"
+          title={`🔎 Zoom on « ${sec.name} » — centre the camera on THIS molecule (the file may hold several)`}>🔎</button>
       </div>
       {shown && subsectionsOf(kind).map((s) => renderSectionRow(sec, s.sub))}
       <div className="flex items-center gap-1">
@@ -8798,6 +8816,24 @@ const autoViewMol = (key) => {
   const comp = key === 'main' ? componentRef.current : (extraCompsRef.current.find((e) => e.id === key) || {}).comp;
   try { if (comp) comp.autoView(); } catch {}
   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
+};
+
+/* 🔎 ZOOM ON ONE MOLECULE OF THE STYLING BAR (the request: « For each molecule in
+   the molecules styling add a button zoom to zoom on that molecule »). NGL's
+   `autoView()` takes a SELECTION: the section's own selector is what frames THAT
+   molecule alone — a glycan, an ion type, a ligand or a whole chain — instead of
+   the whole file, which is what the 🔎 of the molecule header already does. A
+   section whose selector NGL refuses (an unusual residue name) falls back on the
+   whole molecule, so the button always does something.
+   The molecule is selected at the same time, so the ESP / the MolFold panels
+   follow the zoom (they work on the selected molecule). */
+const zoomSection = (sec) => {
+  const molKey = String((sec && sec.id) || '').split('::')[0] || 'main';
+  setSelectedMolKey(molKey);
+  const comp = resolveMolComp(molKey);
+  if (!comp) return;
+  try { comp.autoView(sec && sec.sele ? sec.sele : undefined); } catch { try { comp.autoView(); } catch { /* ignore */ } }
+  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* ignore */ }
 };
 
 // Flush the pending extra files once the MAIN structure is ready. This runs
@@ -9192,6 +9228,13 @@ const buildFromSequence = () => {
 // ---- Abort the current long-running operation (vertical-bar / global Stop) ----
 // Stops trajectory playback, closes the frame-selection modal and cancels the
 // active structure / trajectory load so the UI returns to a usable state.
+// `abortSnap` is the SHARED registry seen from React (useAbortControl): it is what
+// tells the vertical bar whether a long operation is really running — a structure /
+// a trajectory LOAD, an MD analysis, a DSSP run — and never a playback, which stops
+// with its own ▶ / ⏸ button (the report: an « Abort » panel popping up over the
+// canvas for a whole MD run « makes no sense because I can simply stop it »).
+const abortSnap = useAbortControl();
+const runningAbort = abortSnap.active ? { label: abortSnap.label } : null;
 const handleAbort = () => {
   setPlaying(false);
   setPendingTraj(null);
@@ -9289,6 +9332,53 @@ const espBtnTitle = !espTargetComp
    report without leaving the page. `smiles` wins when both are given (it is the
    molecule the page is really about). */
 const ligandSmilesText = String(smiles || ligandSmiles || '').trim();
+/* ── LE SMILES VIENT AUSSI DU FICHIER LUI-MÊME (HETATM → RCSB CCD) ───────────
+   Un PDB standard n'écrit AUCUNE chaîne SMILES : il ne nomme son ligand que par le
+   code à 3 lettres de ses enregistrements HETATM. Quand la page n'en fournit pas
+   (un PDB chargé à la main, un fichier de docking sans métadonnée), le viewer
+   demande le SMILES au Chemical Component Dictionary du RCSB pour le code du
+   ligand qu'il a RÉELLEMENT trouvé (les sections « ligand » de sa barre) — et
+   affiche d'où il vient. `onLigandSmiles` permet à la page de le ranger dans sa
+   condition (voir utils/ligandSmiles.js). */
+const [ligandFromPdb, setLigandFromPdb] = useState(null);   // { code, smiles, name, source, loading, error }
+const onLigandSmilesRef = useRef(onLigandSmiles);
+onLigandSmilesRef.current = onLigandSmiles;
+const ligandCodesOfLoaded = (() => {
+  const out = [];
+  Object.keys(sectionCatalog).forEach((molKey) => {
+    (sectionCatalog[molKey].sections || []).forEach((s) => {
+      if (s.kind !== 'ligand') return;
+      const code = String(s.name || '').trim().toUpperCase();
+      if (code && !out.includes(code)) out.push(code);
+    });
+  });
+  return out;
+})();
+const ligandCodesKey = ligandCodesOfLoaded.join(',');
+useEffect(() => {
+  if (ligandSmilesText || !ligandCodesKey) { setLigandFromPdb(null); return; }
+  const code = ligandCodesOfLoaded[0];
+  const hit = cachedLigandSmiles(code);
+  if (hit) { setLigandFromPdb(hit); onLigandSmilesRef.current?.(hit); return; }
+  let cancelled = false;
+  setLigandFromPdb({ code, loading: true });
+  fetchLigandSmiles(code)
+    .then((info) => {
+      if (cancelled) return;
+      setLigandFromPdb(info);
+      onLigandSmilesRef.current?.(info);
+    })
+    .catch((err) => { if (!cancelled) setLigandFromPdb({ code, error: (err && err.message) || 'could not be resolved' }); });
+  return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [ligandCodesKey, ligandSmilesText]);
+// The SMILES the bar shows: the page's own, or the one the dictionary resolved.
+const shownLigandSmiles = ligandSmilesText || (ligandFromPdb && ligandFromPdb.smiles) || '';
+const ligandSmilesSource = ligandSmilesText
+  ? null
+  : (ligandFromPdb && ligandFromPdb.smiles
+    ? `resolved for the HETATM code ${ligandFromPdb.code} by the ${ligandFromPdb.source || 'RCSB dictionary'}${ligandFromPdb.name ? ` (${ligandFromPdb.name})` : ''}`
+    : null);
 // The chains the LOADED molecules really carry — what the ⚙ wheel's « Chains »
 // section names, so the user knows which swatch to move. The section catalogue keys
 // a protein / a nucleic acid section `<kind>|<chain>` (see listMoleculeSections); a
@@ -9310,7 +9400,7 @@ const copyLigandSmiles = async () => {
   let okCopy = false;
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      await navigator.clipboard.writeText(ligandSmilesText);
+      await navigator.clipboard.writeText(shownLigandSmiles || ligandSmilesText);
       okCopy = true;
     }
   } catch { /* clipboard refused (insecure context / permission) → say so */ }
@@ -9521,7 +9611,7 @@ const renderAtomColour = (cat) => {
         {showSugar && <option value="sugar">Sugar type (⚙ palette)</option>}
         {showGlycan && <option value="glycan">Glycan (linked sugars)</option>}
         {showLipidClass && <option value="lipidclass">Lipid class (headgroup)</option>}
-        {showNucleicReading && <option value="nucform">DNA/RNA conformation</option>}
+        {showNucleicReading && <option value="nucform">RNA/DNA conformation</option>}
         {showNucleicReading && <option value="motif">2° structure + motifs (G4 · hairpin)</option>}
         {cat === 'protein' && <option value="sstruc">Secondary structure</option>}
         {showGradient && <option value="gradient">{gradientLabel}</option>}
@@ -10828,26 +10918,44 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           </div>
         );
       })}
-      {/* SMILES of the molecule at hand (an organic condition, or the ligand of a
-          docking run): it is the string the page / the run already carries and
-          that the viewer uses to name the 3D atoms from the 2D formula. Until now
-          it was never SHOWN — here it is, folded, with a 📋 button, so a ligand can
-          be identified or pasted into a drawing tool / a report from the page. */}
-      {ligandSmilesText && (
+      {/* SMILES of the molecule at hand (an organic condition, the ligand of a
+          docking run, OR the ligand a loaded PDB declares by its HETATM code —
+          see utils/ligandSmiles.js and the RCSB Chemical Component Dictionary).
+          It is FOLDED, with a 📋 button, so a ligand can be identified or pasted
+          into a drawing tool / a report from the page — and it says where it came
+          from when the dictionary resolved it. */}
+      {shownLigandSmiles && (
         <div className="rounded border border-emerald-200 bg-emerald-50/60 px-1 py-0.5">
           <MolFold open={foldOpen('main', 'smiles')} onToggle={() => toggleMolFold('main', 'smiles')}
             label={`SMILES${smilesMsg ? ` ${smilesMsg}` : ''}`}
-            summary={`The SMILES of ${smiles ? 'this molecule' : 'the docked ligand'} — click to show the string, then 📋 to copy it`} />
+            summary={ligandSmilesSource
+              ? `The SMILES of the organic ligand — ${ligandSmilesSource}. Click to show the string, then 📋 to copy it`
+              : `The SMILES of ${smiles ? 'this molecule' : 'the docked ligand'} — click to show the string, then 📋 to copy it`} />
           {foldOpen('main', 'smiles') && (
-            <div className="flex items-start gap-1 mt-0.5">
-              <code className="flex-1 min-w-0 break-all text-[10px] font-mono text-slate-700 bg-white border border-slate-200 rounded px-1 py-0.5 max-h-28 overflow-y-auto custom-scrollbar"
-                title={ligandSmilesText}>{ligandSmilesText}</code>
-              <button type="button" onClick={copyLigandSmiles}
-                className="shrink-0 px-1.5 py-0.5 text-[10px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-100"
-                title="Copy the SMILES to the clipboard">
-                📋</button>
+            <div className="flex flex-col gap-0.5 mt-0.5">
+              <div className="flex items-start gap-1">
+                <code className="flex-1 min-w-0 break-all text-[10px] font-mono text-slate-700 bg-white border border-slate-200 rounded px-1 py-0.5 max-h-28 overflow-y-auto custom-scrollbar"
+                  title={shownLigandSmiles}>{shownLigandSmiles}</code>
+                <button type="button" onClick={copyLigandSmiles}
+                  className="shrink-0 px-1.5 py-0.5 text-[10px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-100"
+                  title="Copy the SMILES to the clipboard">
+                  📋</button>
+              </div>
+              {ligandSmilesSource && (
+                <span className="text-[9px] text-emerald-800 italic">🔎 {ligandSmilesSource}</span>
+              )}
             </div>
           )}
+        </div>
+      )}
+      {/* A ligand the dictionary could not resolve says WHY (its code is unknown
+          there, or the network is out) instead of staying silent. */}
+      {!shownLigandSmiles && ligandFromPdb && (ligandFromPdb.loading || ligandFromPdb.error) && (
+        <div className="rounded border border-slate-200 bg-white px-1 py-0.5 text-[9px] text-slate-500"
+          title="The ligand is named by its HETATM code only: the viewer asks the RCSB Chemical Component Dictionary for its SMILES (utils/ligandSmiles.js)">
+          {ligandFromPdb.loading
+            ? <>🧪 ligand <b>{ligandFromPdb.code}</b>: asking the RCSB dictionary for its SMILES…</>
+            : <>🧪 ligand <b>{ligandFromPdb.code}</b>: {ligandFromPdb.error}</>}
         </div>
       )}
     </div>
@@ -10869,7 +10977,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
       • the SUGAR TYPES (one colour per sugar residue) — behind « Sugar type »
         (lab-sugar-identity), built from the very list the Sugars menu selects on,
         so the two can never drift apart;
-      • the NUCLEOTIDE FORMS and MOTIFS — behind « DNA/RNA conformation »
+      • the NUCLEOTIDE FORMS and MOTIFS — behind « RNA/DNA conformation »
         (lab-nuc-form) and « 2° structure + motifs » (lab-nuc-motif, PART 3): the
         six A · B · Z DNA / A · flexible · Z RNA colours and the two high-contrast
         motif colours a G-quadruplex and a hairpin stand out with;
@@ -11094,7 +11202,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           </div>
         </div>
         <p className="text-[10px] text-slate-500">
-          What « DNA/RNA conformation » paints: each nucleotide is classified from the COORDINATES — χ (O4'-C1'-N9/N1: a syn purine alternating with pyrimidines is the left-handed Z form), δ (C5'-C4'-C3'-O3': C3'-endo is the A family, C2'-endo B-DNA or a flexible loop of an RNA) and, when δ is missing, the distance from the C1'-N line to the phosphate. What « 2° structure + motifs » paints: a nucleotide inside a G-quadruplex or a hairpin takes the colour below, every other one keeps its 2°-structure colour.
+          What « RNA/DNA conformation » paints: each nucleotide is classified from the COORDINATES — χ (O4'-C1'-N9/N1: a syn purine alternating with pyrimidines is the left-handed Z form), δ (C5'-C4'-C3'-O3': C3'-endo is the A family, C2'-endo B-DNA or a flexible loop of an RNA) and, when δ is missing, the distance from the C1'-N line to the phosphate. What « 2° structure + motifs » paints: a nucleotide inside a G-quadruplex or a hairpin takes the colour below, every other one keeps its 2°-structure colour.
         </p>
         <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-1.5">
           {NUC_FORM_LABELS.map((form) => (
@@ -11156,8 +11264,14 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
 </div>
 )}
 
-{/* Vertical selections bar (right side of the viewer) — also hosts the Abort button */}
-{(selections.length > 0 || status === 'loading' || trajStatus === 'loading' || playing) && (
+{/* Vertical selections bar (right side of the viewer) — also hosts the Abort button
+    when a LONG OPERATION is really running. It used to open on `playing` alone: a
+    trajectory being PLAYED showed a red « ⏹ Abort » panel over the canvas, which
+    made no sense — the run is loaded and playback stops with its own ▶ / ⏸ button
+    (the report). The panel now appears for the selections and for a structure /
+    trajectory LOAD in progress, and its Abort button only exists while such a load
+    is abortable. */}
+{(selections.length > 0 || status === 'loading' || trajStatus === 'loading') && (
   <div className={`absolute top-2 ${molBarOpen ? 'right-[21rem]' : 'right-2'} bottom-2 w-64 z-30 flex flex-col gap-2 bg-white/95 border border-violet-200 rounded-xl shadow-lg p-2 overflow-hidden`}>
     {selections.length > 0 && (
     <>
@@ -11231,14 +11345,18 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
     </div>
     </>
     )}
-    <div className="shrink-0 border-t border-slate-100 pt-1.5 mt-1">
-      <button type="button" onClick={handleAbort}
-        className={`w-full px-2 py-1 text-xs font-bold rounded-lg border transition-colors ${abortRef.current || playing ? 'bg-red-600 text-white border-red-600 hover:bg-red-700' : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'}`}
-        disabled={!(abortRef.current || playing)}
-        title={abortRef.current ? `Abort: ${abortRef.current.label}` : playing ? 'Stop trajectory playback' : 'No operation in progress'}>
-        ⏹ Abort{abortRef.current ? ` (${abortRef.current.label})` : ''}
-      </button>
-    </div>
+    {/* The ⏹ of a REAL long operation only (a structure / trajectory load): a
+        trajectory that is merely PLAYING is stopped by its own ▶ / ⏸ button, so no
+        Abort panel is drawn for it. */}
+    {runningAbort && (
+      <div className="shrink-0 border-t border-slate-100 pt-1.5 mt-1">
+        <button type="button" onClick={handleAbort}
+          className="w-full px-2 py-1 text-xs font-bold rounded-lg border transition-colors bg-red-600 text-white border-red-600 hover:bg-red-700"
+          title={`Abort: ${runningAbort.label}`}>
+          ⏹ Abort ({runningAbort.label})
+        </button>
+      </div>
+    )}
   </div>
 )}
 

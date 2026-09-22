@@ -614,6 +614,162 @@ has('hidden — choose a style here to bring this part back',
 has('phospholipids, proteins and nucleic acids when general (type or colouring) is',
   '…et le code cite la demande mot pour mot');
 
+/* ══ 7. LE SMILES D'UN LIGAND ORGANIQUE (HETATM → RCSB) ═══════════════════
+   Un PDB ne nomme son ligand que par son code à 3 lettres : le SMILES se lit dans
+   utils/ligandSmiles.js (testé pour lui-même par _ligand_smiles_test.mjs). Ici, ce
+   sont les BRANCHEMENTS qui sont vérifiés : le viewer résout le code du ligand
+   qu'il a réellement trouvé et le DIT, et le docking a retrouvé sa sous-section
+   « Organic Molecule » — celle qui avait disparu et où le SMILES doit aller. */
+const VIEWER_SRC = VIEW;
+const DOCK_SRC = readFileSync(new URL('./src/components/DockingSections.jsx', import.meta.url), 'utf8');
+const hasIn = (src, needle, what) => ok(src.includes(needle), `${what}\n  introuvable dans ${needle}`);
+hasIn(VIEWER_SRC, "import { cachedLigandSmiles, fetchLigandSmiles } from '../utils/ligandSmiles';",
+  'le viewer demande le SMILES au dictionnaire du RCSB');
+hasIn(VIEWER_SRC, "if (s.kind !== 'ligand') return;",
+  '…pour le code du ligand qu’il a VRAIMENT trouvé (les sections « ligand » de la barre)');
+hasIn(VIEWER_SRC, 'const ligandSmilesSource = ligandSmilesText', '…et la boîte SMILES distingue les deux provenances');
+hasIn(VIEWER_SRC, 'resolved for the HETATM code', '…en DISANT que c’est le dictionnaire qui l’a rendu');
+hasIn(VIEWER_SRC, 'onLigandSmilesRef.current?.(info);', '…et le signale à la page (onLigandSmiles)');
+hasIn(VIEWER_SRC, 'asking the RCSB dictionary for its SMILES',
+  'un ligand que le dictionnaire ne connaît pas le dit, au lieu de rester muet');
+ok(VIEWER_SRC.includes('{shownLigandSmiles && ('), 'la boîte SMILES affiche le SMILES résolu comme celui de la page');
+ok(VIEWER_SRC.includes('onLigandSmiles,'), 'le viewer accepte le rappel onLigandSmiles');
+hasIn(DOCK_SRC, "{ val: 'organic', icon: 'atom', label: 'Organic Molecule' },",
+  'le DOCKING a retrouvé le type « Organic Molecule »…');
+hasIn(DOCK_SRC, "d.moleculeType === 'organic' ? (", '…et la sous-section qui va avec');
+hasIn(DOCK_SRC, '🧪 Organic Molecule — ligand SMILES', '…c’est bien LÀ que le SMILES du ligand apparaît');
+hasIn(DOCK_SRC, '⬇ from the PDB ligand code', '…avec un bouton qui interroge le Chemical Component Dictionary');
+hasIn(DOCK_SRC, 'fetchLigandSmiles(c)', '…par la fonction qui interroge le RCSB');
+hasIn(DOCK_SRC, 'onLigandSmiles={(info) => {', 'la page reçoit le SMILES que le viewer a résolu');
+hasIn(DOCK_SRC, 'updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles });',
+  '…et le range dans le run (la barre du viewer l’affiche)');
+hasIn(DOCK_SRC, 'this structure declares no HETATM ligand code', '…et un fichier sans ligand le dit');
+hasIn(DOCK_SRC, "import { fetchLigandSmiles, ligandCodesFromPdbText } from '../utils/ligandSmiles';",
+  'la page importe l’utilitaire (le code se lit des HETATM)');
+hasIn(DOCK_SRC, ": moleculeType === 'organic' ? 'Organic Molecule' : 'Phospholipid';",
+  'et le libellé du type suit (plus de « Phospholipid » pour un ligand)');
+
+/* ══ 8. CE QUI MARCHAIT DÉJÀ — ET QUE LA SUITE FIGE ════════════════════════
+   Deux rapports de plus (« the program still does not recognise lipids », « ions
+   of the same type are loaded separately ») : les deux chemins sont exécutés ici
+   sur une structure réellement parsée par NGL, pour que la réponse ne soit pas une
+   opinion. Un POPC (tête polaire · glycérol · deux chaînes acyle, nommage CHARMM)
+   et DEUX sodiums du même type sont mis dans un petit PDB. */
+const LIPID_PDB = [
+  'ATOM      1  P   POPC A   1       0.000   0.000   0.000  1.00  0.00           P',
+  'ATOM      2  O1  POPC A   1       1.000   0.000   0.000  1.00  0.00           O',
+  'ATOM      3  O2  POPC A   1       1.000   1.000   0.000  1.00  0.00           O',
+  'ATOM      4  O3  POPC A   1       1.000   0.000   1.000  1.00  0.00           O',
+  'ATOM      5  O4  POPC A   1       1.000   1.000   1.000  1.00  0.00           O',
+  'ATOM      6  N   POPC A   1       2.000   0.000   0.000  1.00  0.00           N',
+  'ATOM      7  C12 POPC A   1       3.000   0.000   0.000  1.00  0.00           C',
+  'ATOM      8  C13 POPC A   1       4.000   0.000   0.000  1.00  0.00           C',
+  'ATOM      9  C14 POPC A   1       5.000   0.000   0.000  1.00  0.00           C',
+  'ATOM     10  C15 POPC A   1       6.000   0.000   0.000  1.00  0.00           C',
+  'ATOM     11  C11 POPC A   1       7.000   0.000   0.000  1.00  0.00           C',
+  'ATOM     12  C1  POPC A   1       8.000   0.000   0.000  1.00  0.00           C',
+  'ATOM     13  C2  POPC A   1       9.000   0.000   0.000  1.00  0.00           C',
+  'ATOM     14  C3  POPC A   1      10.000   0.000   0.000  1.00  0.00           C',
+  'ATOM     15  O21 POPC A   1       9.000   1.000   0.000  1.00  0.00           O',
+  'ATOM     16  C21 POPC A   1       9.000   2.000   0.000  1.00  0.00           C',
+  'ATOM     17  O22 POPC A   1       9.000   2.000   1.000  1.00  0.00           O',
+  'ATOM     18  C22 POPC A   1       9.000   3.000   0.000  1.00  0.00           C',
+  'ATOM     19  C23 POPC A   1       9.000   4.000   0.000  1.00  0.00           C',
+  'ATOM     20  O31 POPC A   1      10.000   1.000   0.000  1.00  0.00           O',
+  'ATOM     21  C31 POPC A   1      10.000   2.000   0.000  1.00  0.00           C',
+  'ATOM     22  O32 POPC A   1      10.000   2.000   1.000  1.00  0.00           O',
+  'ATOM     23  C32 POPC A   1      10.000   2.000   2.000  1.00  0.00           C',
+  'ATOM     24  C33 POPC A   1      10.000   2.000   3.000  1.00  0.00           C',
+  'HETATM   30  NA  NA  B   1      20.000   0.000   0.000  1.00  0.00          NA',
+  'HETATM   31  NA  NA  B   2      30.000   0.000   0.000  1.00  0.00          NA',
+  'END',
+].join('\n');
+const LSUBS = new Function('NGL', [
+  'const window = { NGL };',
+  sliceObject(VIEW, 'AA3_TO_1'),
+  sliceObject(VIEW, 'NUCLEIC_1_BY_NAME'),
+  sliceFn(VIEW, 'atomNameSet'),
+  sliceDecl(VIEW, 'hasSugarRing'),
+  sliceDecl(VIEW, 'hasPhosphateLink'),
+  sliceFn(VIEW, 'residueNatureOf'),
+  sliceDecl(VIEW, 'LIPID_RESNAMES'),
+  sliceFn(VIEW, 'isLipidResname'),
+  sliceObject(VIEW, 'SUGAR_NAME_CODES'),
+  sliceDecl(VIEW, 'SUGAR_CODE_NAMES'),
+  sliceDecl(VIEW, 'sugarCodeOf'),
+  "const SUGAR_IDENTITY_CODES = ['GLC', 'NAG', 'MAN', 'BMA', 'SIA', 'NAN', 'GAL', 'FUC'];",
+  sliceFn(VIEW, 'isSugarResidueCode'),
+  sliceDecl(VIEW, 'LABEL_WATER_NAMES'),
+  sliceDecl(VIEW, 'LABEL_ION_ELEMENTS'),
+  sliceDecl(VIEW, 'LABEL_ION_RESNAMES'),
+  sliceFn(VIEW, 'resnoListOf'),
+  sliceFn(VIEW, 'classifySectionResidue'),
+  'const MOL_KINDS = ["protein", "nucleic", "lipid", "sugar", "ligand", "water", "ion"];',
+  'const glycanEntityMapFor = () => null;',
+  sliceFn(VIEW, 'listMoleculeSections'),
+  sliceFn(VIEW, 'atomElement'),
+  sliceFn(VIEW, 'atomIndicesForSele'),
+  sliceDecl(VIEW, 'LIPID_GLYCEROL_NAMES'),
+  sliceDecl(VIEW, 'LIPID_ACYL_RE'),
+  sliceDecl(VIEW, 'LIPID_POLAR_ELEMENTS'),
+  sliceDecl(VIEW, 'LIPID_NAMED_PROBE'),
+  sliceDecl(VIEW, 'LIPID_CHAIN_PROBE_RE'),
+  sliceFn(VIEW, 'lipidGroupOf'),
+  sliceDecl(VIEW, 'lipidSubCache'),
+  sliceFn(VIEW, 'lipidSubSelections'),
+  sliceFn(VIEW, 'lipidResnamesIn'),
+  sliceFn(VIEW, 'lipidResnameSele'),
+  sliceDecl(VIEW, 'lipidRes'),
+  sliceDecl(VIEW, 'LIPID_STANDARD_RES'),
+  sliceDecl(VIEW, 'lipidGroupSele'),
+  'return { listMoleculeSections, lipidSubSelections, lipidGroupSele, lipidResnamesIn };',
+].join('\n'))(NGL);
+const lipidStruct = await NGL.autoLoad(new Blob([LIPID_PDB], { type: 'text/plain' }), { ext: 'pdb' });
+const lipSections = LSUBS.listMoleculeSections(lipidStruct);
+const lipidSec = lipSections.find((s) => s.kind === 'lipid');
+ok(!!lipidSec, 'le POPC est reconnu comme un LIPIDE (une section « lipid », pas un ligand)');
+eq(lipidSec && lipidSec.sele, '[POPC]', '…et sa sélection est le code du résidu (ce que NGL sait lire)');
+const subs = LSUBS.lipidSubSelections(lipidStruct, '[POPC]');
+ok(subs.named, 'son nommage d’atomes est reconnu comme le nommage standard (CHARMM)');
+const count = (s) => String(s || '').split(',').filter(Boolean).length;
+// Tous les ATOM du gabarit sont le POPC (les ions sont des HETATM) : c'est le
+// résidu que les trois parties doivent couvrir EXACTEMENT.
+const popcAtoms = LIPID_PDB.split('\n').filter((l) => l.startsWith('ATOM')).length;
+eq(count(subs.head) + count(subs.glycerol) + count(subs.acyl), popcAtoms,
+  `les trois parties (tête · glycérol · chaînes) TUILE le résidu — ${popcAtoms} atomes, aucun perdu, aucun en double`);
+ok(count(subs.glycerol) >= 3, '…dont le glycérol (C1 · C2 · C3 et leurs oxygènes / hydrogènes)');
+ok(count(subs.acyl) >= 8, '…et les deux chaînes acyle (C21… / C31…)');
+const ionSections = lipSections.filter((s) => s.kind === 'ion');
+eq(ionSections.length, 1, 'les deux sodiums du même type ne font QU’UNE section (comme l’eau)');
+eq(ionSections[0].count, 2, '…et cette section dit combien il y en a (×2)');
+eq(ionSections[0].sele, '[NA]', '…et les sélectionne tous les deux');
+
+/* ══ 9. LE RENOMMAGE, LE 🔎 ET LE PANNEAU « ABORT » ═════════════════════════
+   Trois demandes du même rapport, vérifiées ici :
+     • « color by "DNA conformation" must be renamed as color by "RNA/DNA
+       conformation" » — l'étiquette de la rangée ET les deux sélecteurs ;
+     • « For each molecule in the molecules styling add a button zoom to zoom on
+       that molecule » — un 🔎 par molécule, qui centre sur SA sélection ;
+     • « When I play a md run I have an annoying window on top saying to abort it
+       but it makes no sense because I can simply stop it. The trajectory has
+       already been loaded. » — plus AUCUN panneau d'abandon pour une lecture. */
+hasIn(VIEWER_SRC, "nucform: 'RNA/DNA conformation',", '« Color by » : l’étiquette est RNA/DNA conformation');
+ok(!VIEWER_SRC.includes("'DNA conformation'"),
+  '…et l’ancienne étiquette (« DNA conformation ») n’existe plus, dans aucun sélecteur');
+eq(countOf(/RNA\/DNA conformation/g) >= 3, true, '…partout où la coloration se choisit (rangée + sélecteurs + textes)');
+hasIn(VIEWER_SRC, 'onClick={() => zoomSection(sec)}', 'chaque molécule de la barre porte son bouton 🔎');
+hasIn(VIEWER_SRC, 'comp.autoView(sec && sec.sele ? sec.sele : undefined)',
+  '…et il centre la caméra sur LA molécule (la sélection de sa section), pas sur le fichier');
+hasIn(VIEWER_SRC, 'const zoomSection = (sec) => {', '…par une fonction unique, partagée par toutes les molécules');
+hasIn(VIEWER_SRC, 'const abortSnap = useAbortControl();', 'le ⏹ ne lit que le registre des VRAIES opérations');
+ok(!VIEWER_SRC.includes("abortControl.register('trajectory playback'"),
+  'la lecture de trajectoire ne s’enregistre PLUS comme une opération abandonnable');
+hasIn(VIEWER_SRC, "trajStatus === 'loading') && (",
+  '…et la barre verticale ne s’ouvre plus pendant une lecture');
+ok(!VIEWER_SRC.includes('|| playing) && ('),
+  'l’ancienne condition (qui ouvrait le panneau pour une lecture) a disparu');
+hasIn(VIEWER_SRC, 'trajectory has already been loaded', '…et le code cite le rapport (la trajectoire est déjà chargée)');
+
 console.log(`_viewer_style_gaps_test.mjs — ${passed} assertions OK`);
 
 

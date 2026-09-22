@@ -4927,9 +4927,17 @@ const generatedStructure = useMemo(() => {
           {d.moleculeType === 'organic' ? (
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase mb-2">SMILES String</label>
-              <input type="text" value={activeTest.smiles || ''} onChange={(e) => updateActiveTest({ smiles: e.target.value })}
+              <input type="text" value={activeTest.smiles || activeTest.ligandSmiles || ''} onChange={(e) => updateActiveTest({ smiles: e.target.value })}
                 className="w-full border border-slate-300 rounded-lg p-3 font-mono text-sm outline-none focus:border-blue-500 shadow-inner"
                 placeholder="e.g. CC(=O)Oc1ccccc1C(=O)O" />
+              {/* Un PDB n'écrit aucun SMILES : quand le viewer l'a résolu depuis le
+                  code HETATM du ligand (Chemical Component Dictionary du RCSB), le
+                  champ ci-dessus l'affiche et cette ligne dit d'où il vient. */}
+              {!activeTest.smiles && activeTest.ligandSmiles && (
+                <p className="text-[10px] text-emerald-800 mt-1">
+                  🔎 resolved for the HETATM code <b>{activeTest.ligandCode || '?'}</b> by the RCSB Chemical Component Dictionary (the viewer's Molecules bar shows the same string).
+                </p>
+              )}
             </div>
           ) : d.isPolymer ? (
             <>
@@ -5142,7 +5150,7 @@ const generatedStructure = useMemo(() => {
         <div style={{ display: structureMode === '3d' ? 'block' : 'none' }} aria-hidden={structureMode !== '3d'}>
           {hasOpened3D && (
             <div className="flex flex-col gap-2">
-              <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq, parts) => { const _nat = structureSequencePatch(activeTest, d.moleculeType, seq, parts); if (_nat) updateActiveTest(_nat); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
+              <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} onLigandSmiles={(info) => { if (info && info.smiles && !activeTest.smiles && !activeTest.ligandSmiles) updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles }); }} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq, parts) => { const _nat = structureSequencePatch(activeTest, d.moleculeType, seq, parts); if (_nat) updateActiveTest(_nat); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
               <button onClick={downloadPdbFile} className="self-center mt-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg hover:bg-indigo-100 transition-colors shadow-sm">📥 Download 3D PDB File</button>
               {activeTest.structureFileName && (!structureFile || nmrStructRestore.message) && (
                 <div className="flex flex-wrap items-center justify-center gap-2 text-[11px]">
@@ -5169,7 +5177,7 @@ const generatedStructure = useMemo(() => {
         
      <div style={{ display: structureMode === '2d' ? 'block' : 'none' }} aria-hidden={structureMode !== '2d'}>
        {d.moleculeType === 'organic' && activeTest.smiles ? (
-          <OrganicViewer smiles={activeTest.smiles} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} />
+          <OrganicViewer smiles={activeTest.smiles || activeTest.ligandSmiles} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} />
        ) : d.structure ? (
          <StructureSVGView structure={d.structure} minWidth={d.moleculeType === 'protein' && d.parsedSeq.length > 3 ? `${d.parsedSeq.length * 120}px` : '100%'} isExpanded={expandedPanel === 'formula'} onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px` : '300px'} />
        ) : null}

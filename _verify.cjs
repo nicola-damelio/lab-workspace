@@ -41,6 +41,10 @@ const tests = [
   // changement sur la rangée GENERAL devait mettre les parties de la molécule sur
   // « Hide ».
   '_viewer_style_gaps_test.mjs',
+  // Le SMILES d'un ligand organique : le PDB ne donne que le code HETATM, donc le
+  // SMILES vient du Chemical Component Dictionary du RCSB (fetch injecté, testé sans
+  // réseau) — et la sous-section « Organic Molecule » du docking est revenue.
+  '_ligand_smiles_test.mjs',
   '_viewer_render_smoke_test.mjs',
 ];
 const rows = tests.map((t) => {

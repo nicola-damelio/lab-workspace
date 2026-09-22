@@ -182,9 +182,9 @@ has('setMolFold((prev) => { const n = { ...prev }; delete n[id]; return n; });',
 has("ligandSmiles = '',", '[SMILES] le SMILES du ligand amarré arrive par la page');
 has("const ligandSmilesText = String(smiles || ligandSmiles || '').trim();",
   '[SMILES] `smiles` (la molécule de la page) l’emporte sur celui du docking');
-has('{ligandSmilesText && (', '[SMILES] la ligne n’existe que s’il y a un SMILES');
+has('{shownLigandSmiles && (', '[SMILES] la ligne n’existe que s’il y a un SMILES');
 has('onClick={copyLigandSmiles}', '[SMILES] le bouton 📋');
-has('await navigator.clipboard.writeText(ligandSmilesText);', '[SMILES] la copie passe par le presse-papiers');
+has('await navigator.clipboard.writeText(shownLigandSmiles || ligandSmilesText);', '[SMILES] la copie passe par le presse-papiers');
 has('const molBarOpen = extraMols.length > 0 || !!ligandSmilesText;',
   '[SMILES] la barre s’ouvre aussi pour un SMILES seul');
 has("${molBarOpen ? 'right-[21rem]' : 'right-2'}", '[SMILES] …et la barre des sélections se décale');

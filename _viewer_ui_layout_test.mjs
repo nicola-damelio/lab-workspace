@@ -360,7 +360,7 @@ has('onColorMode: (v) => setExtraMolColorMode(m.id, v),', '[conservé] …et sur
 has('onTransparency: (v) => setExtraMolTransparency(m.id, v),', '[conservé] …et sur setExtraMolTransparency');
 has('onClick={applyActiveStyleToAll}', '[conservé] 🎨 Copy de la barre Molecules');
 // La barre Molecules est aussi la maison du SMILES du ligand et du ⚙ des palettes.
-has('{ligandSmilesText && (', '[barre] le SMILES de la molécule / du ligand y est affiché');
+has('{shownLigandSmiles && (', '[barre] le SMILES de la molécule / du ligand y est affiché');
 has('onClick={copyLigandSmiles}', '[barre] …avec son bouton 📋 (copie)');
 has('onClick={() => setSettingsPanelOpen(true)}', '[barre] ⚙ ouvre la roue des réglages');
 has('onClick={() => setSelStyles({ ...selStylesRef.current,', '[conservé] styles par sélection (barre Selections)');

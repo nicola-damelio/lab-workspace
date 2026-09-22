@@ -599,7 +599,7 @@ has("registerColorScheme(NGL, 'lab-nuc-motif'", '…un pour les motifs G-quadrup
 has("basetype: 'DNA/RNA base',", 'la liste « Color by » nomme « DNA/RNA base »');
 has("residue: 'Amino acid (residue)',", '…et « Amino acid (residue) »');
 has("sstruc: 'Secondary structure',", '…« Secondary structure »');
-has("nucform: 'DNA conformation',", '…« DNA conformation »');
+has("nucform: 'RNA/DNA conformation',", '…« RNA/DNA conformation » (le rapport : « must be renamed »)');
 has("lipidtype: 'Lipid type',", '…« Lipid type »');
 // …et dans le sélecteur « Atom colour » de la BONNE catégorie de §2.
 has("charge: 'Charge',", '…« Charge » (les ions seulement)');

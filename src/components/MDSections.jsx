@@ -1330,9 +1330,17 @@ export const MDExperimentSetupSection = ({ ctx }) => {
           {d.moleculeType === 'organic' ? (
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase mb-2">SMILES String</label>
-              <input type="text" value={activeTest.smiles || ''} onChange={(e) => updateActiveTest({ smiles: e.target.value })}
+              <input type="text" value={activeTest.smiles || activeTest.ligandSmiles || ''} onChange={(e) => updateActiveTest({ smiles: e.target.value })}
                 className="w-full border border-slate-300 rounded-lg p-3 font-mono text-sm outline-none focus:border-blue-500 shadow-inner"
                 placeholder="e.g. CC(=O)Oc1ccccc1C(=O)O" />
+              {/* A PDB carries no SMILES: when the viewer resolved it from the ligand's
+                  HETATM code (RCSB Chemical Component Dictionary), the field above
+                  shows it and this line says where it comes from. */}
+              {!activeTest.smiles && activeTest.ligandSmiles && (
+                <p className="text-[10px] text-emerald-800 mt-1">
+                  🔎 resolved for the HETATM code <b>{activeTest.ligandCode || '?'}</b> by the RCSB Chemical Component Dictionary (the viewer's Molecules bar shows the same string).
+                </p>
+              )}
             </div>
           ) : d.isPolymer ? (
             <>
@@ -1475,6 +1483,14 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   trajectoryFormat={d.trajectoryFormat}
   moleculeType={d.moleculeType}
   smiles={activeTest.smiles}
+  // The viewer resolves the SMILES of the ligand a loaded PDB declares (its HETATM
+  // code → RCSB Chemical Component Dictionary) and reports it here: the « Organic
+  // Molecule » subsection and the viewer's Molecules bar then show the same string.
+  onLigandSmiles={(info) => {
+    if (info && info.smiles && !activeTest.smiles && !activeTest.ligandSmiles) {
+      updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles });
+    }
+  }}
   parsedSeq={d.parsedSeq}
   selectedKeys={selectedKeys}
   manualKeys={manualKeys}
@@ -1503,7 +1519,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
 
           <div style={{ display: structureMode === '2d' ? 'block' : 'none' }} aria-hidden={structureMode !== '2d'}>
             {d.moleculeType === 'organic' && activeTest.smiles ? (
-               <OrganicViewer smiles={activeTest.smiles} selectedKeys={selectedKeys} onAtomClick={handleAtomClick} />
+               <OrganicViewer smiles={activeTest.smiles || activeTest.ligandSmiles} selectedKeys={selectedKeys} onAtomClick={handleAtomClick} />
             ) : d.structure ? (
               <StructureSVGView
                 structure={d.structure}
