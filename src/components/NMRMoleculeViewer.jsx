@@ -4273,6 +4273,20 @@ const MATERIAL_KIND_OF_REP = MATERIAL_KINDS.reduce((acc, k) => {
   k.reps.forEach((r) => { acc[r] = k.key; });
   return acc;
 }, {});
+/* Which REP TYPE each style of a Selections row draws — the very list the
+   renderer adds further down (`if (st.cartoon)` … `if (st.surface)`).
+   It is what lets the bar offer the 🎛 material of the families a row REALLY
+   draws: a row drawn as cartoon gets « Cartoon », a row drawn with spheres and
+   sticks gets both — the request: « suppose a row is the peptide: if I draw it
+   cartoon, I want to be able to choose the material of the cartoon ». */
+const SEL_STYLE_REP_TYPE = {
+  cartoon: 'cartoon', ribbon: 'ribbon', tube: 'tube',
+  sphere: 'spacefill', ball: 'ball+stick', stick: 'licorice', surface: 'surface',
+};
+const selRowFamilies = (st) => [...new Set(Object.keys(SEL_STYLE_REP_TYPE)
+  .filter((s) => !!(st && st[s]))
+  .map((s) => MATERIAL_KIND_OF_REP[SEL_STYLE_REP_TYPE[s]])
+  .filter(Boolean))];
 // The material presets a row can choose between — the keys of MATERIAL_PRESETS,
 // in the order the dropdown shows them (single source: the presets themselves).
 const MATERIAL_PRESET_KEYS = Object.keys(MATERIAL_PRESETS);
@@ -8739,7 +8753,15 @@ useEffect(() => {
     const addSele = (type, params, seleBase, style) => {
       const ex = style ? exclusionOf(style) : '';
       const sele = ex ? `(${seleBase}) and not (${ex})` : seleBase;
-      try { reps.push(component.addRepresentation(type, { sele, color, colorScheme, ...params })); } catch {}
+      try {
+        const el = component.addRepresentation(type, { sele, color, colorScheme, ...params });
+        // …and it remembers WHICH ROW and WHICH STYLE it draws. The 🎛 material
+        // of a Selections row is per family of representation, so the applier
+        // must know which row a rep belongs to (see applyMaterialsToScene): a
+        // row drawn with spheres AND sticks can carry two materials, one per
+        // family, exactly like the styling window's rows.
+        if (el) { el.__sel = { key, style }; reps.push(el); }
+      } catch { /* a style NGL refuses never breaks the scene */ }
     };
     const add = (type, params, style) => addSele(type, params, expr, style);
     // ── PyMOL's `set … , <selection>`: an ATOM property, not a look ──────────
@@ -8855,10 +8877,23 @@ const applyMaterialsToScene = () => {
     if (typeof comp.eachRepresentation !== 'function') return;
     try {
       comp.eachRepresentation((rep) => {
+        // A rep of the « Molecules · styling » window: the material of ITS row.
         const where = rep && rep.__sec;
-        if (!where) return;   // a selection / overlay rep: NGL's own material
-        const look = effectiveSectionLook(sectionTreeOf(where.id, where.kind), where.kind, where.sub);
-        applyMaterialToRep(rep, { preset: look.material, roughness: look.roughness, metalness: look.metalness });
+        if (where) {
+          const look = effectiveSectionLook(sectionTreeOf(where.id, where.kind), where.kind, where.sub);
+          applyMaterialToRep(rep, { preset: look.material, roughness: look.roughness, metalness: look.metalness });
+          return;
+        }
+        // A rep of a Selections row: the material of the FAMILY it draws IN THAT
+        // ROW — « if I draw it cartoon, I want to choose the material of the
+        // cartoon » — so a row that draws spheres AND sticks carries two of them.
+        const sel = rep && rep.__sel;
+        if (!sel) return;   // any other rep (an ESP overlay, a ring plate): NGL's own
+        const family = MATERIAL_KIND_OF_REP[repTypeOfElement(rep)];
+        if (!family) return;
+        const rowMat = (selStylesRef.current[sel.key] || {}).mat;
+        const mat = rowMat && rowMat[family];
+        if (mat) applyMaterialToRep(rep, mat);
       });
     } catch { /* ignore */ }
   });
@@ -12675,6 +12710,49 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
                 onChange={(e) => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), transparency: parseFloat(e.target.value) } })}
                 className="accent-violet-600 w-full" />
             </label>
+            {/* 🎛 THE MATERIAL OF WHAT THIS ROW DRAWS — one control PER FAMILY of
+                representation the row really draws (see selRowFamilies): the
+                peptide row drawn cartoon gets « Cartoon », and a row drawn with
+                spheres AND sticks gets both. roughness / metalness are NGL's own
+                shader uniforms (see MATERIAL_PRESETS), and they belong to a rep
+                family, so ONE row can carry two materials — what the old global
+                panel could not do either. */}
+            {selRowFamilies(st).map((fam) => {
+              const famLabel = (MATERIAL_KINDS.find((k) => k.key === fam) || {}).label || fam;
+              const mm = (st.mat && st.mat[fam]) || {};
+              const setMat = (field, value) => setSelStyles({
+                ...selStylesRef.current,
+                [s.name]: {
+                  ...(selStylesRef.current[s.name] || {}),
+                  mat: { ...((selStylesRef.current[s.name] || {}).mat || {}), [fam]: { ...mm, [field]: value } },
+                },
+              });
+              return (
+                <div key={fam} className="flex items-center gap-1">
+                  <span className="text-[9px] text-slate-400 font-bold shrink-0"
+                    title={`Material of the ${famLabel.toLowerCase()} this row draws — roughness (r) and metalness (m), NGL's own material parameters`}>🎛</span>
+                  <span className="text-[9px] font-bold text-slate-500 w-12 shrink-0 truncate"
+                    title={`The family of representation this control reaches: ${famLabel}`}>{famLabel}</span>
+                  <select value={mm.preset || 'auto'} onChange={(e) => setMat('preset', e.target.value)}
+                    className="text-[10px] border border-slate-300 rounded bg-white text-slate-600 shrink-0"
+                    title={`Material of the ${famLabel.toLowerCase()} of this row: auto = NGL's own rough surface (0.40 / 0.00), matte, gloss, metallic, glass (translucent)`}>
+                    {MATERIAL_PRESET_KEYS.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                  <input type="range" min="0" max="1" step="0.05" value={lookMatValue(mm, 'roughness')}
+                    onChange={(e) => setMat('roughness', Number(e.target.value))}
+                    className="accent-violet-600 w-12 shrink-0" aria-label={`${s.name} ${famLabel} roughness`}
+                    title="roughness — 0 = mirror smooth, 1 = fully matte (NGL's default 0.40)" />
+                  <input type="range" min="0" max="1" step="0.05" value={lookMatValue(mm, 'metalness')}
+                    onChange={(e) => setMat('metalness', Number(e.target.value))}
+                    className="accent-violet-600 w-12 shrink-0" aria-label={`${s.name} ${famLabel} metalness`}
+                    title="metalness — 0 = organic / plastic, 1 = metal (NGL's default 0.00)" />
+                  <span className="text-[8px] text-slate-400 font-mono shrink-0"
+                    title="roughness / metalness applied to this family of this row">
+                    {lookMatValue(mm, 'roughness').toFixed(2)}/{lookMatValue(mm, 'metalness').toFixed(2)}
+                  </span>
+                </div>
+              );
+            })}
               </>
             )}
           </div>

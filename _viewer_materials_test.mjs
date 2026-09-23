@@ -37,6 +37,12 @@
    avec eux) ; chaque représentation retient la ligne dont elle vient
    (`rep.__sec`, écrit par buildSectionReps) et le rendu relit SON look — donc
    chaque molécule, et chaque partie d'une molécule, porte le sien (§6bis).
+   Les LIGNES DE LA BARRE SELECTIONS ont le même contrôle (§6ter) : un matériau
+   appartient à une famille de représentations, et une ligne de cette barre peut
+   en dessiner plusieurs (sphères ET bâtons, cartoon…), donc la barre offre un 🎛
+   par famille RÉELLEMENT dessinée — « si je dessine le peptide en cartoon, je
+   veux choisir le matériau du cartoon » — chaque rep de la ligne retenant sa
+   ligne et son style (`rep.__sel`).
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -76,14 +82,16 @@ const CODE = [
   extract(VIEW, 'MATERIAL_PRESET_KEYS'),
   extract(VIEW, 'MATERIAL_KINDS'),
   extract(VIEW, 'MATERIAL_KIND_OF_REP'),
+  extract(VIEW, 'SEL_STYLE_REP_TYPE'),
+  extract(VIEW, 'selRowFamilies'),
   extract(VIEW, 'materialValueOf'),
   extract(VIEW, 'reprOfElement'),
   extract(VIEW, 'repTypeOfElement'),
   extract(VIEW, 'applyMaterialToRep'),
 ].join('\n');
 const F = new Function(`${CODE}
-  return { MATERIAL_PRESETS, MATERIAL_PRESET_KEYS, MATERIAL_KINDS, MATERIAL_KIND_OF_REP, materialValueOf,
-    reprOfElement, repTypeOfElement, applyMaterialToRep };`)();
+  return { MATERIAL_PRESETS, MATERIAL_PRESET_KEYS, MATERIAL_KINDS, MATERIAL_KIND_OF_REP, SEL_STYLE_REP_TYPE,
+    selRowFamilies, materialValueOf, reprOfElement, repTypeOfElement, applyMaterialToRep };`)();
 
 ok(!/useState|useRef|componentRef/.test(CODE),
   'le réglage du matériau ne dépend d’aucun état React : il est exécutable tel quel');
@@ -316,6 +324,36 @@ gone('const [matSettings, setMatSettings] = useState(',
 gone('🎛 Material', '…et son panneau en bas de la barre Selections avec lui');
 gone('localStorage.setItem(MATERIALS_KEY', '…ainsi que sa clé de persistance propre (le matériau est dans le look)');
 gone('matSliderValue', 'aucun reliquat du réglage global ne subsiste');
+
+/* ── 6ter. LES LIGNES DE LA BARRE SELECTIONS : le matériau DE CE QU'ELLES
+   DESSINENT. Une ligne de cette barre peut dessiner PLUSIEURS familles (sphères
+   ET bâtons, cartoon…), et un matériau appartient à une famille de
+   représentations : l'utilisateur a donné l'exemple — « supposons qu'une ligne
+   est le peptide ; si je le dessine en cartoon, je veux pouvoir choisir le
+   matériau du cartoon ». La barre offre donc un 🎛 PAR FAMILLE RÉELLEMENT
+   DESSINÉE, dérivée des styles actifs avec la MÊME table que le rendu. */
+eq(F.selRowFamilies({ cartoon: true }), ['cartoon'],
+  'une ligne dessinée en cartoon n’offre QUE le matériau du cartoon (l’exemple)');
+eq(F.selRowFamilies({ sphere: true, stick: true }), ['spheres', 'sticks'],
+  'les sphères ET les bâtons : deux matériaux, un par famille');
+eq(F.selRowFamilies({ sphere: true, cartoon: true, surface: true }), ['cartoon', 'spheres', 'surface'],
+  '…dans l’ordre du rendu (cartoon · ribbon · tube · sphères · bâtons · surface)');
+eq(F.selRowFamilies({ ball: true }), ['sticks'], 'ball+stick est une rep de liaisons (la même famille que licorice)');
+eq(F.selRowFamilies({ ribbon: true, tube: true }), ['cartoon'],
+  'ribbon et tube dessinent la MÊME famille : un seul contrôle, pas deux');
+eq(F.selRowFamilies({}), [], 'aucun style dessiné → aucun contrôle de matériau');
+eq(F.selRowFamilies(null), [], '…et une ligne sans état ne casse rien');
+eq(Object.keys(F.SEL_STYLE_REP_TYPE).sort(),
+  ['ball', 'cartoon', 'ribbon', 'sphere', 'stick', 'surface', 'tube'].sort(),
+  'la table des styles couvre EXACTEMENT les styles que le rendu de la ligne ajoute');
+has('if (el) { el.__sel = { key, style }; reps.push(el); }',
+  'chaque rep d’une ligne Selections retient sa LIGNE et son STYLE');
+has('const sel = rep && rep.__sel;', '…et le rendu du matériau la retrouve');
+has('const rowMat = (selStylesRef.current[sel.key] || {}).mat;',
+  'le matériau cherché est celui de CETTE ligne');
+has('mat: { ...((selStylesRef.current[s.name] || {}).mat || {}), [fam]: { ...mm, [field]: value } }',
+  'la barre écrit le matériau de la famille, sans toucher aux autres familles ni aux autres lignes');
+has('{selRowFamilies(st).map((fam) => {', '…un contrôle par famille réellement dessinée');
 
 /* ── Bilan ──────────────────────────────────────────────────────────────── */
 console.log(`_viewer_materials_test.mjs — ${passed} assertions OK`);
