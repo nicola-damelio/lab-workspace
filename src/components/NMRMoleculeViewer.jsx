@@ -2965,6 +2965,24 @@ const COLORS = {
   ion: ['solid', 'element', 'charge'],
 };
 
+/* ---- The « Color by » of a SELECTIONS row ------------------------------------
+   The bar of the macro speaks the SAME language as the styling window: the list
+   is DERIVED from the styling vocabularies (COLORS), and the labels are the very
+   COLOR_LABELS of its dropdowns, so a reading can never be named one way in one
+   bar and another way in the other. The three modes that need extra state of
+   their own in the styling bar are left out — `esp` (a surface has to be added),
+   `gradient` / `rainbow` (the ⚙ ramp) — because a selection row owns neither. */
+const SEL_COLOR_MODES = [...new Set(Object.values(COLORS).flat())]
+  .filter((c) => c !== 'esp' && c !== 'gradient' && c !== 'rainbow');
+// The two values the bar offered before this vocabulary existed (`chainid`,
+// `resname`: NGL's own scheme names for the same two readings): a setup saved by
+// an older version keeps working, and the dropdown shows the shared label.
+const SEL_COLOR_ALIASES = { chainid: 'chain', resname: 'residue' };
+const selColorMode = (st) => {
+  const mode = SEL_COLOR_ALIASES[st && st.colorMode] || (st && st.colorMode);
+  return SEL_COLOR_MODES.includes(mode) ? mode : 'solid';
+};
+
 /* ---- The SUB-SECTIONS of every kind ----------------------------------------
    `sele` is the NGL selector of the sub-section INSIDE one molecule ('' = the
    whole molecule); the renderer prefixes it with the molecule's own selector, so
@@ -5841,7 +5859,7 @@ assignedAtomColorRef.current = assignedAtomColor;
 
 // ---- PyMOL-style selections & effects ----
 const [selections, setSelections] = useState([]);      // [{ name, expr }]
-const [selStyles, setSelStyles] = useState({});        // key -> { cartoon, ribbon, tube, stick, sphere, surface, color, colorMode, transparency, sphereScale, hideFor, mat }
+const [selStyles, setSelStyles] = useState({});        // key -> { cartoon, ribbon, tube, ball, stick, sphere, surface, color, colorMode, transparency, sphereScale, radiusSphere, radiusBond, hideFor, mat }
 // PyMOL's `set … , <selection>` commands are NOT looks: they are properties of
 // the ATOMS they name (« set sphere_scale, 0.6, headgroups » changes the beads
 // of the headgroups wherever they are drawn, now and later). They used to be
@@ -8723,11 +8741,17 @@ useEffect(() => {
     // Colouring metaphor: a NGL colorScheme (element/chain/resname/…) or a plain
     // solid colour when "Solid" is selected — through the ONE mapping the whole
     // viewer shares (schemeForColorMode), so the palettes of the ⚙ settings wheel
-    // are honoured here too.
-    const colorScheme = st.colorMode && st.colorMode !== 'solid'
-      ? schemeForColorMode(st.colorMode)
-      : undefined;
+    // are honoured here too. The list of readings comes from the styling window's
+    // own vocabulary (SEL_COLOR_MODES ← COLORS) and selColorMode normalises a
+    // value a setup saved with an older version.
+    const colorMode = selColorMode(st);
+    const colorScheme = colorMode !== 'solid' ? schemeForColorMode(colorMode) : undefined;
     const color = colorScheme ? undefined : (st.color != null ? st.color : undefined);
+    // The two radii of the styling window (R◯ / R—): a multiplier of the style's
+    // own size. The macro's `set sphere_scale, … , <selection>` stays an ATOM
+    // property of its own (see overrideSlicesFor) and multiplies this one.
+    const rS = Number.isFinite(st.radiusSphere) ? st.radiusSphere : 1;
+    const rB = Number.isFinite(st.radiusBond) ? st.radiusBond : 1;
     const opacity = st.transparency != null ? Math.max(0, Math.min(1, 1 - st.transparency)) : undefined;
     const reps = [];
     // ── Ordered « show » / « hide » — PyMOL: the LAST command wins ────────────
@@ -8809,10 +8833,15 @@ useEffect(() => {
     if (st.cartoon) addWithOverrides('cartoon', 'cartoon', { colorScheme, opacity }, false);
     if (st.ribbon) addWithOverrides('ribbon', 'ribbon', { colorScheme, opacity }, false);
     if (st.tube) addWithOverrides('tube', 'tube', { colorScheme, opacity }, false);
-    if (st.sphere) addWithOverrides('spacefill', 'sphere', { scale: st.sphereScale || 1, colorScheme, opacity, multipleBond: true }, true);
-    if (st.ball) addWithOverrides('ball+stick', 'ball', { colorScheme, opacity, multipleBond: true, aspectRatio: 1.3 }, false);
+    if (st.sphere) addWithOverrides('spacefill', 'sphere', { scale: (st.sphereScale || 1) * rS, colorScheme, opacity, multipleBond: true }, true);
+    if (st.ball) addWithOverrides('ball+stick', 'ball', {
+      colorScheme, opacity, multipleBond: true, aspectRatio: 1.3 * rS,
+      // A radius the user really asked for (R—): when the knob has not been
+      // touched, NGL's own value of the style is kept — nothing moves by default.
+      ...(rB !== 1 ? { radiusSize: BALLSTICK_BOND_RADIUS * rB } : {}),
+    }, false);
     // « Sticks » of a selection / molecule is licorice (NGL has no `stick` rep).
-    if (st.stick) addWithOverrides('licorice', 'stick', { colorScheme, opacity, multipleBond: true, radiusSize: LICORICE_BOND_RADIUS }, false);
+    if (st.stick) addWithOverrides('licorice', 'stick', { colorScheme, opacity, multipleBond: true, radiusSize: LICORICE_BOND_RADIUS * rB }, false);
     if (st.surface) addWithOverrides('surface', 'surface', { colorScheme, opacity: opacity != null ? opacity : 0.5 }, false);
     // A PyMOL script that asked for « set cartoon_ring_mode, 1 » also gets the
     // FILLED RING PLATES of its own nucleic selections: in PyMOL mode the §2 menus
@@ -12686,30 +12715,45 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
               ))}
             </div>
             <div className="flex items-center gap-1 flex-wrap">
-              <span className="text-[10px] font-bold text-slate-500 uppercase">Colour</span>
-              <select value={st.colorMode || 'solid'}
+              <span className="text-[10px] font-bold text-slate-500 uppercase"
+                title="« Color by » — the SAME vocabulary as the rows of the styling window (their COLOR_LABELS), so the two bars can never name the same reading twice">Color by</span>
+              <select value={selColorMode(st)}
                 onChange={(e) => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), colorMode: e.target.value } })}
                 className="text-[10px] border border-slate-300 rounded bg-white text-slate-600 outline-none focus:border-violet-500 h-6"
-                title="Colouring metaphor">
-                <option value="solid">Solid</option>
-                <option value="element">Atom type</option>
-                <option value="chainid">Chain</option>
-                <option value="resname">Residue</option>
-                <option value="sstruc">2° structure</option>
-                <option value="hydrophobicity">Hydrophobicity</option>
+                title="Colouring metaphor of this row’s atoms — the colours of the ⚙ settings wheel and of the styling window are honoured here too">
+                {SEL_COLOR_MODES.map((c) => <option key={c} value={c}>{COLOR_LABELS[c] || c}</option>)}
               </select>
               <input type="color" value={st.color != null ? `#${st.color.toString(16).padStart(6, '0')}` : '#000000'}
-                disabled={(st.colorMode || 'solid') !== 'solid'}
+                disabled={selColorMode(st) !== 'solid'}
                 onChange={(e) => { const c = parseInt(e.target.value.slice(1), 16); setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), color: c } }); }}
-                className={`w-6 h-6 border border-slate-300 rounded cursor-pointer ${(st.colorMode || 'solid') !== 'solid' ? 'opacity-30 cursor-not-allowed' : ''}`}
-                title="Solid colour (used when Colour = Solid)" />
+                className={`w-6 h-6 border border-slate-300 rounded cursor-pointer ${selColorMode(st) !== 'solid' ? 'opacity-30 cursor-not-allowed' : ''}`}
+                title="Solid colour (used when Color by = Solid)" />
             </div>
             <label className="flex items-center gap-1 text-[10px] text-slate-500">
-              transp
+              <span title="Transparency regulator of THIS row: 0 % = opaque, 100 % = invisible (NGL opacity) — the same knob as the Transp of the styling rows">Transp</span>
               <input type="range" min="0" max="1" step="0.05" value={st.transparency || 0}
                 onChange={(e) => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), transparency: parseFloat(e.target.value) } })}
-                className="accent-violet-600 w-full" />
+                className="accent-violet-600 w-full" aria-label={`${s.name} transparency`} />
             </label>
+            {/* The two radii of the styling window, with its knobs and its tooltips:
+                R◯ multiplies the style's atom size, R— its stick thickness, 1.00 =
+                untouched. A `set sphere_scale, … , <selection>` of the macro stays an
+                ATOM property of its own (see overrideSlicesFor) and multiplies this,
+                so the two never fight. */}
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-slate-400 font-bold shrink-0"
+                title="Sphere radius — a multiplier of the style's own atom size (1.00 = untouched), exactly like the R◯ of the styling rows">R◯</span>
+              <input type="range" min={RADIUS_MIN} max={RADIUS_MAX} step={RADIUS_STEP}
+                value={Number.isFinite(st.radiusSphere) ? st.radiusSphere : 1}
+                onChange={(e) => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), radiusSphere: Number(e.target.value) } })}
+                className="accent-slate-600 w-16" aria-label={`${s.name} sphere radius`} />
+              <span className="text-[10px] text-slate-400 font-bold shrink-0"
+                title="Bond radius — a multiplier of the style's own stick thickness (1.00 = untouched), exactly like the R— of the styling rows">R—</span>
+              <input type="range" min={RADIUS_MIN} max={RADIUS_MAX} step={RADIUS_STEP}
+                value={Number.isFinite(st.radiusBond) ? st.radiusBond : 1}
+                onChange={(e) => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), radiusBond: Number(e.target.value) } })}
+                className="accent-slate-600 w-16" aria-label={`${s.name} bond radius`} />
+            </div>
             {/* 🎛 THE MATERIAL OF WHAT THIS ROW DRAWS — one control PER FAMILY of
                 representation the row really draws (see selRowFamilies): the
                 peptide row drawn cartoon gets « Cartoon », and a row drawn with

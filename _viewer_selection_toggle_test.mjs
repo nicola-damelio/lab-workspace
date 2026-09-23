@@ -243,6 +243,47 @@ gone("title={st.hidden ? 'Show this selection again' : 'Hide this selection (rem
 has('🙈 hidden — its atoms are removed from EVERY row that draws them',
   'la ligne masquée le dit sur son nom, d’où la disparition des atomes ailleurs');
 
+/* ══ 11. LES COMMANDES D'UNE LIGNE SONT CELLES DE LA STYLING ══════════════
+   Demande : « la selection window deve selezionare le stesse cose, quello che
+   cambia sono i comandi che devono essere come quelli della styling (incluso i
+   materiali) ». Les lignes gardent donc leurs sélections ET leurs styles (un
+   macro dessine plusieurs styles à la fois), mais leurs commandes sont celles
+   des lignes de la fenêtre « Molecules · styling » : « Color by » (vocabulaire
+   et libellés PARTAGÉS, voir COLOR_LABELS), « Transp », R◯ / R—, et le 🎛
+   matériau par famille (voir _viewer_materials_test.mjs). */
+has("const SEL_COLOR_MODES = [...new Set(Object.values(COLORS).flat())]",
+  'la liste des colorations d’une ligne est DÉRIVÉE des vocabulaires du styling (une seule source)');
+has("const SEL_COLOR_ALIASES = { chainid: 'chain', resname: 'residue' };",
+  'les deux valeurs d’hier (`chainid` / `resname`) gardent un sens : un setup enregistré continue de marcher');
+const COLORCODE = sliceFn(VIEW, 'selColorMode');
+// La liste que la dérivation produit pour les vocabulaires COLORS du viewer
+// (l’extraction la vérifie par la source juste au-dessus).
+const MODES = ['solid', 'element', 'chain', 'residue', 'sstruc', 'basetype', 'nucform', 'lipidtype', 'sugar', 'hydrophobicity', 'charge'];
+const CM = new Function('SEL_COLOR_MODES', 'SEL_COLOR_ALIASES', `${COLORCODE}
+  return { selColorMode };`)(MODES, { chainid: 'chain', resname: 'residue' });
+eq(CM.selColorMode({ colorMode: 'chainid' }), 'chain', 'un ancien setup « chainid » s’affiche « Chain »');
+eq(CM.selColorMode({ colorMode: 'resname' }), 'residue', '…et « resname » s’affiche « Residue »');
+eq(CM.selColorMode({ colorMode: 'lipidtype' }), 'lipidtype', 'une coloration du styling passe telle quelle');
+eq(CM.selColorMode({ colorMode: 'esp' }), 'solid',
+  'une coloration qu’une ligne ne peut pas porter (esp = une surface) retombe sur Solid');
+eq(CM.selColorMode({}), 'solid', 'sans choix : Solid');
+eq(CM.selColorMode(null), 'solid', '…et une ligne sans état ne casse rien');
+eq(CM.selColorMode({ colorMode: 'solid' }), 'solid', 'Solid reste Solid');
+has("{SEL_COLOR_MODES.map((c) => <option key={c} value={c}>{COLOR_LABELS[c] || c}</option>)}",
+  'le menu déroulant d’une ligne porte les LIBELLÉS du styling, pas sa propre liste');
+has('const colorScheme = colorMode !== \'solid\' ? schemeForColorMode(colorMode) : undefined;',
+  '…et le rendu passe par le MÊME mapping de coloration que tout le viewer');
+has('const rS = Number.isFinite(st.radiusSphere) ? st.radiusSphere : 1;',
+  'les deux rayons d’une ligne partent de 1.00 (taille du style)');
+has('radiusSphere: Number(e.target.value)', '…le R◯ de la ligne écrit son multiplicateur');
+has('radiusBond: Number(e.target.value)', '…et son R— le sien');
+has('{ scale: (st.sphereScale || 1) * rS, colorScheme, opacity, multipleBond: true }',
+  'R◯ multiplie la taille des sphères (un `set sphere_scale` du macro reste une propriété d’ATOMES qui multiplie celle-ci)');
+has('aspectRatio: 1.3 * rS,', 'R◯ multiplie aussi les sphères des ball+stick');
+has('radiusSize: LICORICE_BOND_RADIUS * rB }', 'R— multiplie l’épaisseur des bâtons (licorice)');
+has('...(rB !== 1 ? { radiusSize: BALLSTICK_BOND_RADIUS * rB } : {}),',
+  '…et ne touche aux ball+stick QUE si l’utilisateur a bougé le curseur (rien ne change par défaut)');
+
 /* ── Bilan ──────────────────────────────────────────────────────────────── */
 console.log(`_viewer_selection_toggle_test.mjs — ${passed} assertions OK (styles + hide)`);
 
