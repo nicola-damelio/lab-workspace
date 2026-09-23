@@ -3873,17 +3873,503 @@ const parseColorInt = (c) => {
   return PYMOL_COLORS[base] ? parseInt(PYMOL_COLORS[base].slice(1), 16) : null;
 };
 
-// Convert a common PyMOL selection expression to NGL selection syntax.
-const translateSelection = (expr) => {
-  const s = String(expr || '')
-    .replace(/\bpolymer\.protein\b/g, 'protein')
-    .replace(/\bpolymer\.nucleic\b/g, 'nucleic')
-    .replace(/\bbyres\b/g, '')
-    .replace(/\bbycalpha\b/g, '')
-    .replace(/\+/g, ' ')
-    .replace(/,(?=\s*name|\s*resn|\s*resid|\s*protein|\s*not)/g, '')
-    .trim();
-  return s || 'all';
+/* ---- PyMOL → NGL: the ONE selection bridge ---------------------------------
+   PyMOL and NGL do not share a selection grammar, and every difference is
+   SILENT — measured on the very NGL 2.4.0 this viewer loads from the CDN:
+     • `z>90`       → { resname: "Z>90" }                    → 0 atom, no error;
+     • `name CA`    → resname "NAME" or resname "CA"         → 0 atom (PyMOL: Cα);
+     • `resn STIG*` → { error: "resi must be an integer" }   → selection lost;
+     • `ECL*`/`H*`  → NGL has NO wildcards (exact string compare);
+     • `resname`, `atomname`, `chain`, `elem` are not NGL words either: NGL
+       spells them as a bare resname, `.CA`, `:A`, `_C`, `1-10`, `@i,j,k`.
+   Hence the report « everything is drawn with spheres and the hides do
+   nothing »: `hide spheres, membrane and z>90` removed NOTHING (the selection
+   was empty), and `show spheres, upper_headgroups` drew WHOLE residues instead
+   of the headgroups, because every `name …` constraint was read as a residue
+   name. This translator turns a PyMOL expression into what NGL really
+   understands and uses the STRUCTURE to resolve the two dimensions NGL cannot
+   express at all — wildcards (`*`, `?`) and coordinates (`z>90`).
+   PURE: `ctx` is a bag of structure callbacks, so a test runs it on a fake
+   structure (_pymol_selection_bridge_test.mjs). */
+// A PyMOL predicate keyword → what it becomes. `list` = value-list handling.
+const PYMOL_PREDICATES = {
+  resn: 'resname', resname: 'resname', resi: 'resno', resid: 'resno', resnum: 'resno',
+  residue: 'resno', residues: 'resno', name: 'atomname', atomname: 'atomname',
+  atom: 'atomname', chain: 'chainname', elem: 'element', element: 'element',
+  type: 'element', chem: 'element', z: 'z', x: 'x', y: 'y',
+};
+// Bare PyMOL words NGL ALSO understands (each one verified on NGL 2.4.0). A word
+// that is neither here nor a predicate above is either one of the macro's own
+// named selections (inlined) or a typo — never silently ignored.
+const PYMOL_NGL_WORDS = {
+  all: 'all', '*': 'all', none: 'none', protein: 'protein', nucleic: 'nucleic',
+  rna: 'rna', dna: 'dna', polymer: 'polymer', water: 'water', solvent: 'water',
+  ion: 'ion', ions: 'ion', hetatm: 'hetero', hetero: 'hetero', organic: 'hetero',
+  backbone: 'backbone', sidechain: 'sidechain', sidechainattached: 'sidechainattached',
+  helix: 'helix', sheet: 'sheet', turn: 'turn', loop: 'turn', ring: 'ring',
+  aromatic: 'aromatic', aromaticring: 'aromaticring', bonded: 'bonded',
+  metal: 'metal', hydrogen: 'hydrogen', hydro: 'hydrogen', saccharide: 'saccharide',
+  sugar: 'sugar', ligand: 'ligand', polar: 'polar', nonpolar: 'nonpolar',
+  apolar: 'nonpolar', hydrophobic: 'hydrophobic', charged: 'charged',
+  acidic: 'acidic', basic: 'basic', small: 'small', cyclic: 'cyclic',
+  aliphatic: 'aliphatic', nucleophilic: 'nucleophilic',
+};
+// PyMOL words with no NGL word at all: rendered as their own definition.
+const PYMOL_WORD_CLAUSES = {
+  amid: '[ASN,GLN]', amide: '[ASN,GLN]',
+  // PyMOL's dotted forms, which the macro language uses everywhere.
+  'polymer.protein': 'protein', 'polymer.nucleic': 'nucleic', 'polymer.nucleic.acid': 'nucleic',
+};
+// `byres` / `bycalpha` are not operators: they wrap the REST of the expression.
+const PYMOL_MODIFIERS = { byres: 'byres', bymolecule: 'byres', bymol: 'byres', bycalpha: 'bycalpha' };
+
+/* Tokenise a PyMOL expression: parentheses, the logic operators, the `+` union
+   and the coordinate comparisons each become their own token (`z>90` → `z` `>`
+   `90`), so the parser never has to look inside a word. */
+const tokenizePymolSele = (raw) => String(raw || '')
+  .replace(/([()])/g, ' $1 ')
+  .replace(/\+/g, ' + ')
+  .replace(/,/g, ' , ')
+  .replace(/([a-zA-Z]\w*)\s*(>=|<=|!=|>|<|=)\s*(-?\d+(?:\.\d+)?)/g, '$1 $2 $3')
+  .trim().split(/\s+/).filter((t) => t !== '');
+
+/* Parse into a small AST. PyMOL binds `+` (the union) INSIDE its predicate and
+   then NOT, AND, OR — the same strength NGL uses. The rendered output carries
+   explicit parentheses everywhere, so NGL's whitespace-OR can never re-read the
+   expression in another way (PyMOL's `A+B and C` is `(A or B) and C`). */
+const parsePymolSele = (raw) => {
+  const toks = tokenizePymolSele(raw);
+  let i = 0;
+  const peek = () => toks[i];
+  const isOp = (t) => t === 'and' || t === 'or' || t === 'not';
+  const parseValues = () => {
+    const values = [];
+    let expectValue = true;
+    while (i < toks.length) {
+      const t = toks[i];
+      if (t === '+' || t === ',') { i += 1; expectValue = true; continue; }
+      if (expectValue && !isOp(t) && t !== '(' && t !== ')') { values.push(t); i += 1; expectValue = false; continue; }
+      break;
+    }
+    return values;
+  };
+  const parseUnary = () => {
+    if (peek() === 'not') { i += 1; return { kind: 'not', child: parseUnary() }; }
+    const t = peek();
+    if (t === '(') {
+      i += 1;
+      const node = parseOr();
+      if (peek() === ')') i += 1;
+      return node;
+    }
+    if (t === undefined) return { kind: 'none' };
+    i += 1;
+    const word = String(t).toLowerCase();
+    if (PYMOL_MODIFIERS[word]) return { kind: 'mod', mod: PYMOL_MODIFIERS[word], child: parseUnary() };
+    const pred = PYMOL_PREDICATES[word];
+    if (pred) {
+      const values = parseValues();
+      // `z > 90` reaches here as two tokens: the operator, then its number.
+      if (values.length === 1 && /^(>=|<=|!=|>|<|=)$/.test(String(values[0]))) {
+        const cmpValue = parseValues();
+        return { kind: 'cmp', pred, op: values[0], value: cmpValue[0] };
+      }
+      return { kind: 'pred', pred, values };
+    }
+    if (PYMOL_WORD_CLAUSES[word]) return { kind: 'clause', ngl: PYMOL_WORD_CLAUSES[word] };
+    if (PYMOL_NGL_WORDS[word]) return { kind: 'clause', ngl: PYMOL_NGL_WORDS[word] };
+    if (/^-?\d+$/.test(word)) return { kind: 'clause', ngl: word };  // PyMOL `1` = residue 1
+    return { kind: 'word', word: String(t) };
+  };
+  const parseAnd = () => {
+    const children = [parseUnary()];
+    while (peek() === 'and') { i += 1; children.push(parseUnary()); }
+    return children.length === 1 ? children[0] : { kind: 'and', children };
+  };
+  // eslint-disable-next-line no-use-before-define
+  const parseOr = () => {
+    const children = [parseAnd()];
+    while (peek() === 'or') { i += 1; children.push(parseAnd()); }
+    return children.length === 1 ? children[0] : { kind: 'or', children };
+  };
+  return parseOr();
+};
+
+/* Render one AST node as an NGL expression. `ctx` carries the STRUCTURE:
+     named     : Map(name → PyMOL expression) — the macro's own selections
+     resnames  : the residue names present (wildcards are expanded against them)
+     atomnames : the atom names present
+     coord     : (axis, op, value) → NGL clause (an `@i,j,k` index list, which
+                 is the ONLY way NGL can express a coordinate test)
+     byres     : (nglInner, mod) → NGL clause (every atom of the residues the
+                 inner selection touches)
+     onWarn    : (message) → collected for the macro log / the row's ⚠ */
+const PYMOL_WILDCARD_CACHE = new Map();
+const pymolPatternToRegex = (pattern) => {
+  const key = String(pattern);
+  let re = PYMOL_WILDCARD_CACHE.get(key);
+  if (!re) {
+    const escaped = key.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
+    re = new RegExp(`^${escaped}$`, 'i');
+    PYMOL_WILDCARD_CACHE.set(key, re);
+  }
+  return re;
+};
+// PyMOL's `+` list against the structure: `ECL*` becomes the concrete `ECL2`
+// (NGL compares residue and atom names EXACTLY — no wildcard, ever).
+const expandPymolNames = (values, vocab) => {
+  const out = [];
+  const seen = new Set();
+  (values || []).forEach((v) => {
+    const raw = String(v || '').trim();
+    if (!raw) return;
+    if (!/[*?]/.test(raw)) { if (!seen.has(raw.toUpperCase())) { seen.add(raw.toUpperCase()); out.push(raw.toUpperCase()); } return; }
+    const re = pymolPatternToRegex(raw);
+    (vocab || []).forEach((name) => {
+      if (re.test(name) && !seen.has(name)) { seen.add(name); out.push(name); }
+    });
+  });
+  return out.slice(0, 512);
+};
+const renderPymolNode = (node, ctx, seen) => {
+  const warn = ctx.onWarn || (() => {});
+  switch (node.kind) {
+    case 'none': return 'none';
+    case 'clause': return node.ngl;
+    case 'not': return `not (${renderPymolNode(node.child, ctx, seen)})`;
+    case 'and': return `(${node.children.map((c) => renderPymolNode(c, ctx, seen)).join(' and ')})`;
+    case 'or': return `(${node.children.map((c) => renderPymolNode(c, ctx, seen)).join(' or ')})`;
+    case 'mod': {
+      const inner = renderPymolNode(node.child, ctx, seen);
+      if (typeof ctx.byres !== 'function') { warn(`${node.mod} needs a loaded structure`); return inner; }
+      return ctx.byres(inner, node.mod);
+    }
+    case 'cmp': {
+      if (typeof ctx.coord !== 'function' || node.value == null) { warn(`${node.pred}${node.op}${node.value} needs a loaded structure`); return 'none'; }
+      return ctx.coord(node.pred, node.op, node.value);
+    }
+    case 'word': {
+      const key = String(node.word).toLowerCase();
+      // A RESERVED name (the leaflets the viewer measures itself) wins over the
+      // script's own definition: `z>90` is only a way to guess the two leaflets,
+      // and the geometry knows it exactly (midplane, thickness, heads).
+      const ov = ctx.overrides
+        ? (typeof ctx.overrides.get === 'function' ? ctx.overrides.get(key) : ctx.overrides[key])
+        : null;
+      if (ov) return ov;
+      const named = ctx.named;
+      if (named && named.has(key)) {
+        if (seen.has(key)) { warn(`selon recursif « ${key} »`); return 'none'; }
+        seen.add(key);
+        const out = renderPymolNode(parsePymolSele(named.get(key)), ctx, seen);
+        seen.delete(key);
+        return out;
+      }
+      // An unknown word is what PyMOL itself would refuse: say so, and match
+      // nothing rather than matching everything.
+      warn(`« ${node.word} » not defined by the script → matches nothing`);
+      return 'none';
+    }
+    case 'pred': {
+      const values = node.values || [];
+      if (!values.length) return 'none';
+      if (node.pred === 'resname') {
+        const names = expandPymolNames(values, ctx.resnames || []);
+        if (!names.length) { warn(`no residue name matches ${values.join('+')}`); return 'none'; }
+        if (names.length === 1 && /^[A-Za-z0-9]{1,4}$/.test(names[0])) return names[0];
+        return `[${names.join(',')}]`;
+      }
+      if (node.pred === 'atomname') {
+        const names = expandPymolNames(values, ctx.atomnames || []);
+        if (!names.length) { warn(`no atom name matches ${values.join('+')}`); return 'none'; }
+        const parts = names.map((n) => `.${n.slice(0, 4)}`);
+        return parts.length === 1 ? parts[0] : `(${parts.join(' or ')})`;
+      }
+      if (node.pred === 'resno') {
+        const parts = values.map((v) => String(v).trim()).filter((v) => /^-?\d+(-\d+)?$/.test(v));
+        if (!parts.length) return 'none';
+        return parts.length === 1 ? parts[0] : `(${parts.join(' or ')})`;
+      }
+      if (node.pred === 'chainname') {
+        const parts = values.map((v) => `:${String(v).trim()}`);
+        return parts.length === 1 ? parts[0] : `(${parts.join(' or ')})`;
+      }
+      if (node.pred === 'element') {
+        const parts = values.map((v) => `_${String(v).trim().toUpperCase()}`);
+        return parts.length === 1 ? parts[0] : `(${parts.join(' or ')})`;
+      }
+      return 'none';
+    }
+    default: return 'none';
+  }
+};
+
+// The ONE entry point of the bridge. No structure at all (a script parsed
+// before a molecule is loaded) still translates every keyword — only the
+// wildcards and the coordinates then report that they need the structure.
+const pymolSeleToNgl = (raw, ctx = {}) => {
+  const text = String(raw || '').trim();
+  if (!text) return 'all';  // PyMOL: an empty selection argument stands for all
+  const ngl = renderPymolNode(parsePymolSele(text), ctx, new Set());
+  return ngl || 'none';
+};
+
+/* The structure side of the bridge. NGL cannot test a coordinate, so `z>90`
+   becomes the atom-index list NGL DOES understand (`@i,j,k` — verified) and
+   `byres` becomes the list of every atom of the residues the inner selection
+   touches. Both are memoised per structure: a membrane macro asks for the same
+   `z>90` a dozen times and the scan must happen once. */
+const pymolCtxCache = new WeakMap();
+const pymolVocabOf = (structure) => {
+  let ctx = pymolCtxCache.get(structure);
+  if (!ctx) {
+    const resnames = new Set();
+    const atomnames = new Set();
+    try {
+      structure.eachAtom((a) => {
+        if (a.resname) resnames.add(String(a.resname).toUpperCase());
+        if (a.atomname) atomnames.add(String(a.atomname).toUpperCase());
+      });
+    } catch { /* an unloaded structure simply has no vocabulary */ }
+    ctx = { resnames: [...resnames], atomnames: [...atomnames], clauseCache: new Map() };
+    pymolCtxCache.set(structure, ctx);
+  }
+  return ctx;
+};
+const pymolCoordClause = (structure, cache, axis, op, value) => {
+  const key = `coord:${axis}${op}${value}`;
+  if (cache.has(key)) return cache.get(key);
+  let out = 'none';
+  try {
+    const limit = parseFloat(value);
+    if (Number.isFinite(limit)) {
+      const idx = [];
+      structure.eachAtom((a) => {
+        const v = Number(axis === 'x' ? a.x : axis === 'y' ? a.y : a.z);
+        const hit = op === '>' ? v > limit : op === '>=' ? v >= limit : op === '<' ? v < limit
+          : op === '<=' ? v <= limit : op === '=' ? Math.abs(v - limit) < 1e-6 : v !== limit;
+        if (hit) idx.push(a.index);
+      });
+      if (idx.length) out = `@${idx.join(',')}`;
+    }
+  } catch { out = 'none'; }
+  cache.set(key, out);
+  return out;
+};
+const pymolByresClause = (structure, cache, nglInner, mod) => {
+  const key = `${mod}:${nglInner}`;
+  if (cache.has(key)) return cache.get(key);
+  let out = 'none';
+  try {
+    const NG = typeof window !== 'undefined' ? window.NGL : null;
+    if (NG && NG.Selection && structure.getAtomSet) {
+      const set = structure.getAtomSet(new NG.Selection(nglInner));
+      const residues = new Set();
+      const all = [];
+      structure.eachAtom((a) => {
+        const selected = set && typeof set.get === 'function' ? set.get(a.index) : false;
+        if (selected) residues.add(a.residueIndex);
+        all.push(a);
+      });
+      const idx = [];
+      all.forEach((a) => {
+        if (!residues.has(a.residueIndex)) return;
+        if (mod === 'bycalpha') {
+          const n = String(a.atomname || '').toUpperCase();
+          if (n !== 'CA' && n !== 'BB') return;
+        }
+        idx.push(a.index);
+      });
+      if (idx.length) out = `@${idx.join(',')}`;
+    }
+  } catch { out = 'none'; }
+  cache.set(key, out);
+  return out;
+};
+// The viewer's entry point: same translator, with the structure's vocabulary,
+// its coordinate index lists and its residue expansion.
+const pymolSeleForStructure = (structure, named, raw, onWarn, overrides) => {
+  if (!structure || typeof structure.eachAtom !== 'function') return pymolSeleToNgl(raw, { named, onWarn, overrides });
+  const base = pymolVocabOf(structure);
+  return pymolSeleToNgl(raw, {
+    named,
+    onWarn,
+    overrides,
+    resnames: base.resnames,
+    atomnames: base.atomnames,
+    coord: (axis, op, value) => pymolCoordClause(structure, base.clauseCache, axis, op, value),
+    byres: (inner, mod) => pymolByresClause(structure, base.clauseCache, inner, mod),
+  });
+};
+
+/* ---- Material of the drawn representations ---------------------------------
+   NGL 2.4 draws buffers with its OWN shader (`#define STANDARD`, three's
+   physical lighting chunks) whose uniforms are roughness, metalness, emissive
+   and opacity — they are just not part of NGL's public parameters, which is why
+   a PyMOL-like glossy or metallic look was out of reach. Reaching them is small
+   and safe: walk the geometries of a representation and set the uniform values
+   (verified on the very ngl@2.4.0 the viewer loads: `uniform float metalness;`
+   and `uniform float roughness;` are in shader/Mesh.frag and in the sphere
+   impostor shader). The default of NGL is a rough, non-metallic surface, which
+   is exactly the « flat / not shiny » the user reported against PyMOL. */
+const MATERIAL_PRESETS = {
+  auto: null,
+  matte: { roughness: 0.95, metalness: 0.0 },
+  gloss: { roughness: 0.35, metalness: 0.15 },
+  metallic: { roughness: 0.18, metalness: 0.85 },
+  glass: { roughness: 0.08, metalness: 0.0, opacity: 0.45 },
+};
+// The four materials the user asked for: spheres, bonds, cartoon, surface.
+const MATERIAL_KINDS = [
+  { key: 'spheres', label: 'Spheres', reps: ['spacefill'] },
+  { key: 'sticks', label: 'Bonds', reps: ['licorice', 'ball+stick'] },
+  { key: 'cartoon', label: 'Cartoon', reps: ['cartoon', 'ribbon', 'tube', 'trace', 'rope'] },
+  { key: 'surface', label: 'Surface', reps: ['surface'] },
+];
+const MATERIAL_KIND_OF_REP = MATERIAL_KINDS.reduce((acc, k) => {
+  k.reps.forEach((r) => { acc[r] = k.key; });
+  return acc;
+}, {});
+const MATERIALS_KEY = 'labViewerMaterials';
+// Effective value of one property: an explicit number wins over the preset.
+const materialValueOf = (mat, kind, prop) => {
+  const m = (mat && mat[kind]) || {};
+  if (m[prop] != null && Number.isFinite(Number(m[prop]))) return Number(m[prop]);
+  const preset = MATERIAL_PRESETS[m.preset] || null;
+  if (preset && preset[prop] != null) return preset[prop];
+  return null;
+};
+// One geometry (or mesh) of a representation. NGL keeps them in geometryList;
+// the older/other shapes expose a single `geometry`.
+const eachGeometryOfRep = (rep, fn) => {
+  if (!rep) return;
+  const list = rep.geometryList || rep.geoList || (rep.geometry ? [rep.geometry] : []);
+  if (!Array.isArray(list)) return;
+  list.forEach((g) => { try { fn(g); } catch { /* a geometry without a material is skipped */ } });
+};
+const applyMaterialToRep = (rep, mat) => {
+  if (!rep || !mat) return;
+  const type = String(rep.name || rep.type || (rep.parameters && rep.parameters.type) || '');
+  const kind = MATERIAL_KIND_OF_REP[type];
+  if (!kind) return;
+  const roughness = materialValueOf(mat, kind, 'roughness');
+  const metalness = materialValueOf(mat, kind, 'metalness');
+  const opacity = materialValueOf(mat, kind, 'opacity');
+  if (roughness == null && metalness == null && opacity == null) return;
+  eachGeometryOfRep(rep, (g) => {
+    const material = g && g.material;
+    const uniforms = material && material.uniforms;
+    if (!uniforms) return;
+    if (roughness != null && uniforms.roughness) uniforms.roughness.value = roughness;
+    if (metalness != null && uniforms.metalness) uniforms.metalness.value = metalness;
+    if (opacity != null && uniforms.opacity) uniforms.opacity.value = opacity;
+  });
+};
+
+/* ---- Which leaflet is which, from the GEOMETRY -----------------------------
+   `z>90` is how membrane macros split the two leaflets, and it breaks as soon as
+   the file is not centred on z=90 or is oriented along another axis — the user's
+   own remark: « z was a way to tell the upper leaflet from the lower one; if you
+   can tell them apart, z is not needed ». Geometry says it with no assumption:
+     • a bilayer is a SLAB, so the axis along which the lipid atoms are the
+       THINNEST is the membrane normal, whatever the orientation of the file;
+     • the two leaflets are the two clusters of each residue's OUTERMOST atom on
+       that normal (the head), so 1-D k-means gives the two head planes and
+       their midpoint is the MIDPLANE (returned, in Å, so the user can check it);
+     • a residue is UPPER when its head is above that plane, and its headgroup is
+       the set of its atoms the very classifier of the Lipids menu
+       (lipidGroupOf) reads as « head » — the two menus can never disagree.
+   Returns null when the structure holds no membrane. The four result clauses are
+   then published as ready-made selections (upper_leaflet, lower_leaflet,
+   upper_headgroups, lower_headgroups): a macro may use those names directly, and
+   the Selections bar lets the user draw them to see which is which.  */
+const meanOf = (arr) => (arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : 0);
+const resnoRangesClause = (numbers) => {
+  const sorted = [...new Set((numbers || []).filter((n) => Number.isFinite(n)))].sort((a, b) => a - b);
+  if (!sorted.length) return '';
+  const parts = [];
+  let start = sorted[0];
+  let prev = sorted[0];
+  for (let k = 1; k <= sorted.length; k += 1) {
+    const v = sorted[k];
+    if (v === prev + 1) { prev = v; continue; }
+    parts.push(start === prev ? `${start}` : `${start}-${prev}`);
+    start = v;
+    prev = v;
+  }
+  return parts.join(' or ');
+};
+const membraneLeafletsOf = (structure) => {
+  if (!structure || typeof structure.eachAtom !== 'function') return null;
+  const atoms = [];
+  try {
+    structure.eachAtom((a) => {
+      if (!isLipidResname(a.resname)) return;
+      atoms.push({
+        i: a.index,
+        ri: a.residueIndex,
+        resno: Number(a.resno),
+        resname: String(a.resname).toUpperCase(),
+        head: lipidGroupOf(a.atomname, a.element) === 'head',
+        x: Number(a.x) || 0,
+        y: Number(a.y) || 0,
+        z: Number(a.z) || 0,
+      });
+    });
+  } catch { return null; }
+  // A handful of lipid atoms is a ligand, not a bilayer.
+  if (atoms.length < 40) return null;
+  const varianceOf = (key) => {
+    const vals = atoms.map((a) => a[key]);
+    const m = meanOf(vals);
+    return meanOf(vals.map((v) => (v - m) * (v - m)));
+  };
+  let axis = 'x';
+  ['y', 'z'].forEach((k) => { if (varianceOf(k) < varianceOf(axis)) axis = k; });
+  const proj = (a) => (axis === 'x' ? a.x : axis === 'y' ? a.y : a.z);
+  const byResidue = new Map();
+  atoms.forEach((a) => {
+    let r = byResidue.get(a.ri);
+    if (!r) { r = { resno: a.resno, resname: a.resname, atoms: [], headAtoms: [], anchor: 0 }; byResidue.set(a.ri, r); }
+    r.atoms.push(a);
+    if (a.head) r.headAtoms.push(a);
+  });
+  const residues = [...byResidue.values()];
+  if (residues.length < 4) return null;
+  const centre = meanOf(atoms.map(proj));
+  residues.forEach((r) => {
+    // the head is the atom the furthest from the membrane centre
+    let best = r.atoms[0];
+    let bestD = -1;
+    r.atoms.forEach((a) => { const d = Math.abs(proj(a) - centre); if (d > bestD) { bestD = d; best = a; } });
+    r.anchor = proj(best);
+  });
+  let c1 = Math.min(...residues.map((r) => r.anchor));
+  let c2 = Math.max(...residues.map((r) => r.anchor));
+  if (!(c2 - c1 > 4)) return null;  // one single layer: no bilayer
+  for (let it = 0; it < 24; it += 1) {
+    const g1 = [];
+    const g2 = [];
+    residues.forEach((r) => (Math.abs(r.anchor - c1) <= Math.abs(r.anchor - c2) ? g1 : g2).push(r.anchor));
+    if (!g1.length || !g2.length) break;
+    const n1 = meanOf(g1);
+    const n2 = meanOf(g2);
+    const settled = Math.abs(n1 - c1) < 0.01 && Math.abs(n2 - c2) < 0.01;
+    c1 = n1;
+    c2 = n2;
+    if (settled) break;
+  }
+  const midplane = (c1 + c2) / 2;
+  const upper = residues.filter((r) => r.anchor >= midplane);
+  const lower = residues.filter((r) => r.anchor < midplane);
+  if (!upper.length || !lower.length) return null;
+  const sideOf = (rs) => ({
+    residues: rs.length,
+    atoms: rs.reduce((s, r) => s + r.atoms.length, 0),
+    clause: `(${resnoRangesClause(rs.map((r) => r.resno))}) and ([${[...new Set(rs.map((r) => r.resname))].join(',')}])`,
+    headIndices: rs.flatMap((r) => r.headAtoms.map((a) => a.i)),
+  });
+  return { axis, midplane, thickness: Math.abs(c2 - c1), upper: sideOf(upper), lower: sideOf(lower) };
 };
 
 const normalizeStructureSource = (raw) => {
@@ -5226,7 +5712,32 @@ assignedAtomColorRef.current = assignedAtomColor;
 
 // ---- PyMOL-style selections & effects ----
 const [selections, setSelections] = useState([]);      // [{ name, expr }]
-const [selStyles, setSelStyles] = useState({});        // key -> { cartoon, ribbon, tube, stick, sphere, surface, color, colorMode, transparency, sphereScale }
+const [selStyles, setSelStyles] = useState({});        // key -> { cartoon, ribbon, tube, stick, sphere, surface, color, colorMode, transparency, sphereScale, hideFor, mat }
+// PyMOL's `set … , <selection>` commands are NOT looks: they are properties of
+// the ATOMS they name (« set sphere_scale, 0.6, headgroups » changes the beads
+// of the headgroups wherever they are drawn, now and later). They used to be
+// stored as a look keyed on their own expression — a row with no style at all —
+// so the macro's 0.6 / 0.8 beads never reached the beads the script drew. They
+// are kept aside here and SPLIT by the renderer.
+const [selOverrides, setSelOverrides] = useState([]);  // [{ kind, value, sel }]
+// ── The leaflets the viewer MEASURES on the loaded structure ────────────────
+// Not `z>90`: the normal axis, the midplane and the two head clusters come from
+// the geometry (see membraneLeafletsOf), and the four resulting selections —
+// upper_leaflet · lower_leaflet · upper_headgroups · lower_headgroups — are
+// usable in a macro like any other name, listed in the Selections bar, and
+// drawn there to show which is which.
+const [membraneSele, setMembraneSele] = useState({});
+const [membraneInfo, setMembraneInfo] = useState(null);
+// Material of the four representation families (spheres, bonds, cartoon,
+// surface): NGL's own shader has roughness/metalness/opacity uniforms that its
+// API does not expose (see MATERIAL_PRESETS). Persisted like the rest.
+const [matSettings, setMatSettings] = useState(() => {
+  try {
+    const raw = localStorage.getItem(MATERIALS_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch { return {}; }
+});
 const [pymolActive, setPymolActive] = useState(false);
 const [pymolScript, setPymolScript] = useState('');
 const [pymolLog, setPymolLog] = useState('');
@@ -7734,35 +8245,95 @@ const selCompsRef = useRef({});       // key -> [representations]
 const baseCompsRef = useRef([]);      // default representations added at load
 const selStylesRef = useRef(selStyles);
 selStylesRef.current = selStyles;
+// The `set` commands of the running macro (atom properties) and the material
+// settings — read inside the rendering effect.
+const selOverridesRef = useRef(selOverrides);
+selOverridesRef.current = selOverrides;
+const matSettingsRef = useRef(matSettings);
+matSettingsRef.current = matSettings;
+const membraneSeleRef = useRef(membraneSele);
+membraneSeleRef.current = membraneSele;
+
+/* The membrane of the loaded structure, measured once per load: the normal
+   axis, the midplane (Å) and the four reserved selections. A macro that
+   defines `upper_leaflet` with `z>90` still gets THIS one (the measurement is
+   exact, the z guess is not) — and the macro log says so. */
+useEffect(() => {
+  if (status !== 'ready') { setMembraneSele({}); setMembraneInfo(null); return; }
+  const component = componentRef.current;
+  const structure = component && component.structure ? component.structure : null;
+  const m = membraneLeafletsOf(structure);
+  if (!m) { setMembraneSele({}); setMembraneInfo(null); return; }
+  const headClause = (side) => (side.headIndices.length ? `@${side.headIndices.join(',')}` : 'none');
+  setMembraneSele({
+    upper_leaflet: m.upper.clause,
+    lower_leaflet: m.lower.clause,
+    upper_headgroups: headClause(m.upper),
+    lower_headgroups: headClause(m.lower),
+  });
+  setMembraneInfo({
+    axis: m.axis,
+    midplane: m.midplane,
+    thickness: m.thickness,
+    upperAtoms: m.upper.atoms,
+    lowerAtoms: m.lower.atoms,
+    upperResidues: m.upper.residues,
+    lowerResidues: m.lower.residues,
+  });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [status]);
 // The styling SIGNATURE the running PyMOL script itself produced. A script may
 // write §2 values (cartoon_ring_mode …): that first change is ITS own and is
 // adopted here. Any LATER change is the user's, and then §2 takes the main
 // structure back — this is what stops a macro from freezing the six menus.
 const pymolOwnSigRef = useRef(null);
 
-// ONE expansion for every PyMOL expression: the named selections it quotes are
-// inlined first (like PyMOL sets), then the whole thing is translated for NGL.
-// A style key and the « hide » expression that must be subtracted from it go
-// through the SAME function, so they can never resolve to different atoms.
+// ONE expansion for every PyMOL expression — through the REAL bridge (see
+// pymolSeleToNgl at module scope): the macro's own selections are inlined like
+// PyMOL sets, and every predicate is translated into what NGL really reads
+// (`resn`→a bare resname, `name`→`.CA`, `resi`→`1-10`, `chain`→`:A`, `elem`→`_C`,
+// `z>90`→an atom-index list, jokers expanded against THIS structure).
+// A style key and the « hide » expression subtracted from it go through the
+// SAME function, so they can never resolve to different atoms. The warnings the
+// bridge emits (a residue name the structure has not, a coordinate without a
+// structure) are collected per expression and shown as a ⚠ on the row: an empty
+// selection may no longer happen in silence.
+const seleExprCacheRef = useRef(new Map());
+const seleCacheStructRef = useRef(null);
+const usedTranslateWarnRef = useRef(new Map());
+const namedSeleMap = () => {
+  const m = new Map();
+  selections.forEach((s) => { if (s && s.name) m.set(String(s.name).toLowerCase(), s.expr); });
+  return m;
+};
 const expandSelectionExpr = (raw) => {
-  let out = String(raw || '');
-  for (let pass = 0; pass < 4; pass++) {
-    let changed = false;
-    selections.forEach((s) => {
-      const re = new RegExp(`\\b${s.name}\\b`, 'g');
-      if (re.test(out)) {
-        out = out.replace(re, `(${translateSelection(s.expr)})`);
-        changed = true;
-      }
-    });
-    if (!changed) break;
+  const text = String(raw || '');
+  if (!text) return 'all';
+  const component = componentRef.current;
+  const structure = component && component.structure ? component.structure : null;
+  if (seleCacheStructRef.current !== structure) {
+    seleCacheStructRef.current = structure;
+    seleExprCacheRef.current.clear();
+    usedTranslateWarnRef.current.clear();
   }
-  return translateSelection(out);
+  const cache = seleExprCacheRef.current;
+  if (cache.has(text)) return cache.get(text);
+  const warns = [];
+  const ngl = pymolSeleForStructure(structure, namedSeleMap(), text, (m) => warns.push(m), membraneSeleRef.current);
+  if (warns.length) usedTranslateWarnRef.current.set(text, warns);
+  else usedTranslateWarnRef.current.delete(text);
+  if (cache.size > 400) cache.clear();
+  cache.set(text, ngl);
+  return ngl;
 };
 
 // Resolved NGL expression for a selection key (named selection or raw expr),
 // with references to other named selections expanded inline (like PyMOL sets).
 const selKeyExpr = (key) => {
+  // A MEASURED leaflet wins over anything the script (or the user) wrote for
+  // that name: it is the exact geometry, not a `z>90` guess.
+  const geo = membraneSeleRef.current[key];
+  if (geo) return geo;
   const named = selections.find((s) => s.name === key);
   return expandSelectionExpr(named ? named.expr : key);
 };
@@ -7944,19 +8515,62 @@ useEffect(() => {
       const parts = list.map((h) => `(${expandSelectionExpr(h)})`).filter((p) => p && p !== '(all)');
       return parts.length ? parts.join(' or ') : '';
     };
-    const add = (type, params, style) => {
+    const addSele = (type, params, seleBase, style) => {
       const ex = style ? exclusionOf(style) : '';
-      const sele = ex ? `(${expr}) and not (${ex})` : expr;
+      const sele = ex ? `(${seleBase}) and not (${ex})` : seleBase;
       try { reps.push(component.addRepresentation(type, { sele, color, colorScheme, ...params })); } catch {}
     };
-    if (st.cartoon) add('cartoon', { colorScheme, opacity }, 'cartoon');
-    if (st.ribbon) add('ribbon', { colorScheme, opacity }, 'ribbon');
-    if (st.tube) add('tube', { colorScheme, opacity }, 'tube');
-    if (st.sphere) add('spacefill', { scale: st.sphereScale || 1, colorScheme, opacity, multipleBond: true }, 'sphere');
-    if (st.ball) add('ball+stick', { colorScheme, opacity, multipleBond: true, aspectRatio: 1.3 }, 'ball');
+    const add = (type, params, style) => addSele(type, params, expr, style);
+    // ── PyMOL's `set … , <selection>`: an ATOM property, not a look ──────────
+    // « set sphere_scale, 0.6, upper_headgroups » + « set sphere_transparency,
+    // 0.8, upper_headgroups » must reach the beads of the upper headgroups that
+    // the script drew with ANOTHER expression (« show spheres, upper_headgroups »
+    // after « show sphere, resn POPC+… »). One NGL representation carries ONE
+    // scale and ONE opacity, so the rep is SPLIT: one slice per override
+    // selection (the last `set` per property wins, as in PyMOL) plus the rest of
+    // the atoms with the look's own values. `beads` = the sphere rep, for which
+    // `set sphere_scale` and `set sphere_transparency` also count.
+    const overrideSlicesFor = (beads) => {
+      const order = [];
+      const bySel = new Map();
+      (selOverridesRef.current || []).forEach((o) => {
+        if (!o || !o.sel) return;
+        const isSphere = o.kind === 'sphereScale' || o.kind === 'sphereOpacity';
+        if (!beads && isSphere) return;
+        const ngl = expandSelectionExpr(o.sel);
+        if (!ngl || ngl === 'none' || ngl === 'all') return;
+        if (!bySel.has(ngl)) { bySel.set(ngl, {}); order.push(ngl); }
+        const slot = bySel.get(ngl);
+        if (o.kind === 'sphereScale') slot.scale = o.value;
+        else if (o.kind === 'sphereOpacity') slot.sphereOpacity = o.value;
+        else slot.opacity = o.value;
+      });
+      return order.slice(0, 12).map((ngl) => ({ ngl, ...bySel.get(ngl) }));
+    };
+    const addWithOverrides = (type, style, baseParams, beads) => {
+      const slices = overrideSlicesFor(beads);
+      if (!slices.length) { add(type, baseParams, style); return; }
+      const used = [];
+      slices.forEach((s) => {
+        const notUsed = used.length ? ` and not (${used.join(' or ')})` : '';
+        const p = { ...baseParams };
+        if (beads && s.scale != null) p.scale = s.scale;
+        const op = beads ? (s.sphereOpacity != null ? s.sphereOpacity : s.opacity) : s.opacity;
+        if (op != null) p.opacity = op;
+        addSele(type, p, `(${expr}) and (${s.ngl})${notUsed}`, style);
+        used.push(s.ngl);
+      });
+      const rest = used.join(' or ');
+      addSele(type, baseParams, rest ? `(${expr}) and not (${rest})` : expr, style);
+    };
+    if (st.cartoon) addWithOverrides('cartoon', 'cartoon', { colorScheme, opacity }, false);
+    if (st.ribbon) addWithOverrides('ribbon', 'ribbon', { colorScheme, opacity }, false);
+    if (st.tube) addWithOverrides('tube', 'tube', { colorScheme, opacity }, false);
+    if (st.sphere) addWithOverrides('spacefill', 'sphere', { scale: st.sphereScale || 1, colorScheme, opacity, multipleBond: true }, true);
+    if (st.ball) addWithOverrides('ball+stick', 'ball', { colorScheme, opacity, multipleBond: true, aspectRatio: 1.3 }, false);
     // « Sticks » of a selection / molecule is licorice (NGL has no `stick` rep).
-    if (st.stick) add('licorice', { colorScheme, opacity, multipleBond: true, radiusSize: LICORICE_BOND_RADIUS }, 'stick');
-    if (st.surface) add('surface', { colorScheme, opacity: opacity != null ? opacity : 0.5 }, 'surface');
+    if (st.stick) addWithOverrides('licorice', 'stick', { colorScheme, opacity, multipleBond: true, radiusSize: LICORICE_BOND_RADIUS }, false);
+    if (st.surface) addWithOverrides('surface', 'surface', { colorScheme, opacity: opacity != null ? opacity : 0.5 }, false);
     // A PyMOL script that asked for « set cartoon_ring_mode, 1 » also gets the
     // FILLED RING PLATES of its own nucleic selections: in PyMOL mode the §2 menus
     // are off (the script owns the scene), so the stylized look has to be built
@@ -8004,6 +8618,42 @@ useEffect(() => {
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [status, selections, selStyles, pymolActive, hideAll, styleSignature, sstrucColors]);
+
+// ── Material: applied AFTER the representations exist ────────────────────────
+// roughness / metalness / opacity live in NGL's shader UNIFORMS, not in its
+// parameters (see MATERIAL_PRESETS), so every rebuild loses them: this effect
+// re-applies the four family settings to each representation of each component,
+// as soon as anything is redrawn or a slider moves.
+const applyMaterialsToScene = () => {
+  const mat = matSettingsRef.current || {};
+  const comps = [componentRef.current]
+    .concat((extraCompsRef.current || []).map((e) => e && e.comp))
+    .filter(Boolean);
+  comps.forEach((comp) => {
+    if (typeof comp.eachRepresentation !== 'function') return;
+    try { comp.eachRepresentation((rep) => applyMaterialToRep(rep, mat)); } catch { /* ignore */ }
+  });
+  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* ignore */ }
+};
+useEffect(() => {
+  applyMaterialsToScene();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [matSettings, status, selStyles, pymolActive, hideAll, styleSignature]);
+
+// The material of the four families survives a reload like every other look.
+useEffect(() => {
+  try { localStorage.setItem(MATERIALS_KEY, JSON.stringify(matSettings || {})); } catch { /* ignore */ }
+}, [matSettings]);
+
+const setMatPreset = (kind, preset) => setMatSettings((prev) => ({ ...prev, [kind]: { preset } }));
+const setMatValue = (kind, prop, value) => setMatSettings((prev) => ({ ...prev, [kind]: { ...(prev[kind] || {}), [prop]: value } }));
+// NGL's own material is the rough, non-metallic one: that is what « auto »
+// shows on the sliders until the user moves them.
+const matSliderValue = (kind, prop) => {
+  const v = materialValueOf(matSettings, kind, prop);
+  if (v != null) return v;
+  return prop === 'metalness' ? 0 : 1;
+};
 
 // Re-apply the styling sections to EVERY extra molecule / chain when one of them
 // changes — so a dropdown of the bar works for all loaded structures, not just the
@@ -8130,7 +8780,8 @@ const parsePyMOL = (text) => {
       const val = rest[0];
       const sel = rest[1] || 'all';
       if (prop === 'sphere_scale') acts.push({ type: 'sphere_scale', val: parseFloat(val), sel });
-      else if (prop === 'transparency' || prop === 'sphere_transparency') acts.push({ type: 'transparency', val: parseFloat(val), sel });
+      else if (prop === 'transparency') acts.push({ type: 'transparency', val: parseFloat(val), sel });
+      else if (prop === 'sphere_transparency') acts.push({ type: 'sphere_transparency', val: parseFloat(val), sel });
       // ── The FOUR PyMOL settings of the stylized nucleic look ──────────────
       // « set cartoon_ring_mode, 1 » (filled base / sugar ring plates),
       // « set cartoon_nucleic_acid_mode, 0 » (the flat ribbon through the
@@ -8181,10 +8832,18 @@ const applyPyMOLScript = (text) => {
       ...sels,
     ];
     setSelections(nextSels);
+    // The four MEASURED leaflet names win over the script's own definitions
+    // (`membrane and z>90`): the geometry of this structure is exact, z is not.
+    const overriddenLeaflets = sels.filter((s) => membraneSeleRef.current[String(s.name).toLowerCase()]);
+    if (overriddenLeaflets.length) {
+      log.push(`• ${overriddenLeaflets.map((s) => s.name).join(', ')}: the MEASURED leaflet of this structure is used (axis ${membraneInfo ? membraneInfo.axis : '?'}, midplane ${membraneInfo ? membraneInfo.midplane.toFixed(1) : '?'} Å) instead of the script's own definition.`);
+    }
     // ONE normalisation of a PyMOL style token, shared with parsePyMOL
     // (pymolStyleToken): a « hide sticks » meets the « show stick » it undoes.
     const styleOf = pymolStyleToken;
     const next = { ...selStylesRef.current };
+    // The `set` commands of THIS script (atom properties, see selOverrides).
+    const ovs = [];
     // Reset every selection the script mentions to "hidden", then apply commands
     sels.forEach((s) => {
       const cur = next[s.name] || {};
@@ -8210,9 +8869,16 @@ const applyPyMOLScript = (text) => {
         const c = colorDefs[a.color] || parseColorInt(a.color);
         if (c != null) next[key] = { ...cur, color: c };
       } else if (a.type === 'sphere_scale') {
-        next[key] = { ...cur, sphereScale: a.val || 1 };
-      } else if (a.type === 'transparency') {
-        next[key] = { ...cur, transparency: Math.max(0, Math.min(1, a.val || 0)) };
+        // An ATOM property, not a look (see selOverrides): « set sphere_scale,
+        // 0.6, upper_headgroups » must resize the beads the script drew there —
+        // even when the `show` that drew them names another expression.
+        const v = Number.isFinite(a.val) ? a.val : 1;
+        ovs.push({ kind: 'sphereScale', value: Math.max(0, Math.min(5, v)), sel: a.sel });
+        log.push(`• set sphere_scale, ${a.val}, ${a.sel} → those beads are drawn at ${v}`);
+      } else if (a.type === 'transparency' || a.type === 'sphere_transparency') {
+        const t = Math.max(0, Math.min(1, Number.isFinite(a.val) ? a.val : 0));
+        ovs.push({ kind: a.type === 'sphere_transparency' ? 'sphereOpacity' : 'opacity', value: 1 - t, sel: a.sel });
+        log.push(`• set ${a.type === 'sphere_transparency' ? 'sphere_transparency' : 'transparency'}, ${a.val}, ${a.sel} → opacity ${(1 - t).toFixed(2)}`);
       } else if (a.type === 'bg_color') {
         const c = colorDefs[a.color] || parseColorInt(a.color);
         if (c != null) setBgColor(`#${c.toString(16).padStart(6, '0')}`);
@@ -8265,6 +8931,8 @@ const applyPyMOLScript = (text) => {
       }
     });
     setSelStyles(next);
+    // The atom-level `set`s of this script replace the previous script's ones.
+    setSelOverrides(ovs);
     setPymolActive(true);
     setHideAll(false);
     // A fresh script opens a fresh « the script owns §2 » window (see the styling
@@ -8313,6 +8981,7 @@ const applyPyMOLScript = (text) => {
 const clearPyMOL = () => {
   setSelections([]);
   setSelStyles({});
+  setSelOverrides([]);
   setPymolActive(false);
   setPymolLog('');
   setPymolScript('');
@@ -11602,16 +12271,53 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
 {/* ▶ The tab that brings the SELECTIONS bar back once it is collapsed — the same
     gesture as the styling bar on the right. This bar is the LEFT one: every
     selection a PyMOL script defines, each with its own styles. */}
-{status === 'ready' && selBarCollapsed && selections.length > 0 && (
+{status === 'ready' && selBarCollapsed && (selections.length > 0 || !!membraneInfo) && (
   <button type="button" onClick={() => setSelBarCollapsed(false)}
     className="absolute top-11 left-2 z-40 px-2 h-7 rounded-md bg-white/90 border border-violet-300 text-violet-700 text-[10px] font-black hover:bg-violet-50 shadow-sm flex items-center justify-center"
-    title={`Open the selections bar — ${selections.length} selection(s), each with its own styles`}>
+    title={`Open the selections bar — ${selections.length} selection(s)${membraneInfo ? ', membrane measured' : ''}, each with its own styles`}>
     ▶ Selections
   </button>
 )}
 
-{(selections.length > 0 || status === 'loading' || trajStatus === 'loading') && !selBarCollapsed && (
-  <div className="absolute top-11 left-2 bottom-2 w-64 z-30 flex flex-col gap-2 bg-white/95 border border-violet-200 rounded-xl shadow-lg p-2 overflow-hidden">
+{(selections.length > 0 || !!membraneInfo || status === 'loading' || trajStatus === 'loading') && !selBarCollapsed && (
+  <div className="absolute top-11 left-2 bottom-2 w-64 z-30 flex flex-col gap-2 bg-white/95 border border-violet-200 rounded-xl shadow-xl p-2 overflow-hidden">
+    {/* ── The membrane the viewer MEASURED on this structure ──────────────────
+        `z>90` (the way membrane macros usually split the two leaflets) depends on
+        the file being centred and oriented on z. The geometry does not: the
+        normal axis, the midplane and the two clusters of headgroups are measured
+        at load (membraneLeafletsOf), published as four ready-made selections and
+        drawn here in one click, so the user SEES which leaflet is which — and a
+        macro may use those names directly. */}
+    {membraneInfo && (
+      <div className="shrink-0 rounded-lg border border-teal-200 bg-teal-50/70 p-1.5">
+        <div className="flex items-center justify-between gap-1">
+          <span className="text-[10px] font-black text-teal-800 uppercase tracking-wide">Membrane</span>
+          <span className="text-[9px] text-teal-700 font-mono"
+            title={`Measured normal axis, midplane and head-to-head thickness of this bilayer`}>
+            {membraneInfo.axis} · mid {membraneInfo.midplane.toFixed(1)} Å · {membraneInfo.thickness.toFixed(1)} Å
+          </span>
+        </div>
+        <div className="flex items-center gap-1 flex-wrap mt-1">
+          {['upper_leaflet', 'lower_leaflet', 'upper_headgroups', 'lower_headgroups'].map((n) => {
+            const on = !!(selStyles[n] && (selStyles[n].sphere || selStyles[n].ball || selStyles[n].stick));
+            return (
+              <button key={n} type="button"
+                onClick={() => setSelStyles({ ...selStylesRef.current, [n]: { ...(selStylesRef.current[n] || {}), sphere: !on } })}
+                className={`px-1.5 py-0.5 text-[9px] font-bold rounded border ${on ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-teal-700 border-teal-300 hover:bg-teal-100'}`}
+                title={n === 'upper_headgroups' || n === 'lower_headgroups'
+                  ? `Draw the headgroups of the ${n.startsWith('upper') ? 'upper' : 'lower'} leaflet as beads (measured, not z>90)`
+                  : `Draw the ${n.startsWith('upper') ? 'upper' : 'lower'} leaflet as beads — the two leaflets are told apart by geometry, whatever the orientation of the file`}>
+                {n.replace(/_/g, ' ')}
+              </button>
+            );
+          })}
+        </div>
+        <div className="text-[9px] text-teal-700 mt-1 leading-snug">
+          upper {membraneInfo.upperAtoms} atoms / {membraneInfo.upperResidues} lipids · lower {membraneInfo.lowerAtoms} / {membraneInfo.lowerResidues}.
+          The four names work in a PyMOL script as well ({'`'}upper_leaflet{'`'}, {'`'}lower_headgroups{'`'}…), and a script that defines them with {'`'}z&gt;90{'`'} now gets this measurement instead.
+        </div>
+      </div>
+    )}
     {selections.length > 0 && (
     <>
     <div className="flex items-center justify-between gap-2 shrink-0">
@@ -11643,12 +12349,18 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
       ].map((s) => {
         const st = selStyles[s.name] || {};
         const n = selectionAtomCount(s.name);
+        // ⚠ when the expression could NOT be resolved (a residue name this
+        // structure has not, a coordinate test without a structure): an empty
+        // selection must never be silent again — that silence is exactly what
+        // the report « everything is in spheres / the hides do nothing » was.
+        const warns = usedTranslateWarnRef.current.get(s.expr) || [];
         return (
           <div key={s.name} className="flex flex-col gap-1 border border-slate-100 rounded-lg p-1.5 bg-white">
             <div className="flex items-center justify-between gap-1">
               <span className={`text-xs font-bold truncate ${st.hidden ? 'text-slate-400 line-through' : 'text-slate-800'}`}
-                title={s.raw ? `Raw script expression: ${s.expr}` : s.expr}>
+                title={`${s.raw ? `Raw script expression: ${s.expr}` : s.expr}${warns.length ? `\n⚠ ${warns.join('\n⚠ ')}` : ''}`}>
                 {s.raw ? '⌗ ' : ''}{s.name}
+                {warns.length ? <span className="text-amber-500 ml-1" title={warns.join(' · ')}>⚠</span> : null}
               </span>
               <div className="flex items-center gap-1 shrink-0">
                 <span className="text-[10px] text-slate-400 font-mono">{n != null ? `${n} atoms` : '—'}</span>
@@ -11716,6 +12428,48 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
     </div>
     </>
     )}
+    {/* ── MATERIAL of the four representation families ────────────────────────
+        PyMOL's spheres look glossier/metallic than NGL's default flat surface.
+        NGL 2.4 has no material parameter, but its shaders ARE physical
+        (`uniform float roughness; uniform float metalness;`), so the viewer sets
+        those uniforms per representation family — spheres, bonds, cartoon and
+        surface can each take a different material, and the choice is persisted.
+        « auto » keeps NGL's own material (rough, non-metallic). */ }
+    <details className="shrink-0 border-t border-slate-100 pt-1.5">
+      <summary className="text-[10px] font-black text-slate-600 uppercase cursor-pointer select-none"
+        title="Material of the spheres, the bonds, the cartoon and the surface — roughness (l) and metalness (m), NGL's physical shader uniforms">
+        🎛 Material
+      </summary>
+      <div className="mt-1 flex flex-col gap-1">
+        {MATERIAL_KINDS.map(({ key, label }) => {
+          const preset = (matSettings[key] && matSettings[key].preset) || 'auto';
+          return (
+            <div key={key} className="flex items-center gap-1">
+              <span className="text-[9px] font-bold text-slate-500 w-10 shrink-0">{label}</span>
+              <select value={preset} onChange={(e) => setMatPreset(key, e.target.value)}
+                className="text-[9px] border border-slate-300 rounded bg-white text-slate-600 h-5"
+                title={`Material of the ${label.toLowerCase()}: auto = NGL's own rough surface, matte, gloss, metallic, glass (translucent)`}>
+                {['auto', 'matte', 'gloss', 'metallic', 'glass'].map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+              <input type="range" min="0" max="1" step="0.05" value={matSliderValue(key, 'roughness')}
+                onChange={(e) => setMatValue(key, 'roughness', parseFloat(e.target.value))}
+                className="accent-violet-600 w-12" title="roughness — 0 = mirror smooth, 1 = fully matte (NGL's default)" />
+              <input type="range" min="0" max="1" step="0.05" value={matSliderValue(key, 'metalness')}
+                onChange={(e) => setMatValue(key, 'metalness', parseFloat(e.target.value))}
+                className="accent-violet-600 w-12" title="metalness — 0 = organic/plastic, 1 = metal" />
+              <span className="text-[8px] text-slate-400 font-mono w-10 shrink-0"
+                title="roughness / metalness currently applied">
+                {(matSliderValue(key, 'roughness')).toFixed(2)}/{(matSliderValue(key, 'metalness')).toFixed(2)}
+              </span>
+            </div>
+          );
+        })}
+        <div className="text-[9px] text-slate-400 leading-snug">
+          r/m = roughness / metalness. Moving a slider overrides the preset for that family only; the per-selection
+          <span className="font-bold"> transp </span> slider (above) sets its own opacity.
+        </div>
+      </div>
+    </details>
     {/* The ⏹ of a REAL long operation only (a structure / trajectory load): a
         trajectory that is merely PLAYING is stopped by its own ▶ / ⏸ button, so no
         Abort panel is drawn for it. */}

@@ -47,20 +47,16 @@ const sliceBetween = (from, to, what) => {
   return VIEW.slice(i, j);
 };
 const DECLS = [
-  sliceBetween('const translateSelection = ', '\nconst normalizeStructureSource', 'translateSelection'),
   sliceBetween('const pymolStyleToken = ', '\nconst parsePyMOL', 'pymolStyleToken'),
   sliceBetween('const parsePyMOL = ', '\n/* ---- Ordered « show »', 'parsePyMOL'),
   sliceBetween('const styleHidesAfter = ', '\n// Does the script OWN the scene?', 'styleHidesAfter'),
   sliceBetween('const scriptHidesAll = ', '\nconst applyPyMOLScript', 'scriptHidesAll'),
-  sliceBetween('const expandSelectionExpr = ', '\n// Resolved NGL expression for a selection key', 'expandSelectionExpr'),
-  sliceBetween('const selKeyExpr = ', '\n// Number of atoms matching a selection key', 'selKeyExpr'),
 ].join('\n');
-// `expandSelectionExpr` / `selKeyExpr` lisent la liste des sélections : elle est
-// le PARAMÈTRE du scope, donc les deux passes ci-dessous partagent le même CODE.
-const scope = (selections) => new Function('selections',
-  `${DECLS}\nreturn { translateSelection, pymolStyleToken, parsePyMOL, styleHidesAfter, scriptHidesAll, expandSelectionExpr, selKeyExpr };`,
-)(selections);
-const H = scope([]);
+// Le pont PyMOL → NGL a son PROPRE fichier (_pymol_selection_bridge_test.mjs) :
+// il a besoin d'une structure (vocabulaire, coordonnées) pour être exécuté.
+const H = new Function(
+  `${DECLS}\nreturn { pymolStyleToken, parsePyMOL, styleHidesAfter, scriptHidesAll };`,
+)();
 
 /* ── 1. La macro de référence (les lignes qui posaient problème) ─────────── */
 const MACRO = `
@@ -116,17 +112,18 @@ eq(H.styleHidesAfter(parsed.acts, stk, 'stick'), ['name H* and headgroups'],
 eq(H.styleHidesAfter(parsed.acts, parsed.acts.length - 1, 'sphere'), [],
   'après la dernière commande, plus rien à soustraire');
 
-/* ── 5. Les expressions PyMOL → NGL ──────────────────────────────────────── */
-eq(H.translateSelection('resn POPC+POPE'), 'resn POPC POPE', 'le « + » de PyMOL devient un espace');
-eq(H.translateSelection('polymer.protein'), 'protein', 'polymer.protein → protein');
-eq(H.translateSelection('byres all within 20 of peptide'), 'all within 20 of peptide', 'byres est retiré');
-eq(H.translateSelection(''), 'all', 'une expression vide vaut tout');
-const H2 = scope(parsed.sels);
-const inlined = H2.expandSelectionExpr('upper_headgroups');
-ok(!/headgroups/.test(inlined), 'les noms de sélections sont INLINÉS (plus aucun nom dans l’expression)');
-ok(/z>90/.test(inlined), '…et leur expression est conservée');
-ok(inlined.includes('POPC'), '…jusqu’aux sélections qu’elles citent');
-eq(H2.selKeyExpr('resn POPC+POPE'), 'resn POPC POPE', 'une clé qui est une expression brute est traduite aussi');
+/* ── 5. L'expression NGL est confiée au PONT PyMOL → NGL ─────────────────── */
+/* Le pont a son propre garde-fou (_pymol_selection_bridge_test.mjs, 65
+   assertions) : il EXÉCUTE la traduction sur une structure simulée et vérifie
+   que le vrai NGL accepte tout ce qu'elle produit. Ici on protège le BRANCHEMENT
+   et le fait que `z>90` ne peut plus être lu comme un nom de résidu. */
+gone('translateSelection', 'l’ancienne traduction naïve a disparu (elle laissait `z>90` ne rien sélectionner)');
+has('const ngl = pymolSeleForStructure(structure, namedSeleMap(), text, (m) => warns.push(m), membraneSeleRef.current);',
+  'une expression passe par le pont, avec la structure ET les feuillets mesurés');
+has('if (geo) return geo;', 'un feuillet MESURÉ gagne sur la définition du script (`membrane and z>90`)');
+has('pymolSeleToNgl = (raw, ctx = {})', 'le pont a un point d’entrée pur (testable sans rendu)');
+has('if (!names.length) { warn(', 'une sélection qui ne trouve rien est SIGNALÉE, plus jamais silencieuse');
+has('resnoRangesClause', 'les feuillets sont écrits en plages de résidus (compact)');
 
 /* ── 6. La barre Selections : à GAUCHE, repliable, SANS ligne fantôme ────── */
 has('const [selBarCollapsed, setSelBarCollapsed] = useState(', 'la barre Selections se replie (état dédié)');
@@ -149,9 +146,13 @@ has('const scriptHidesAll = (acts)', 'la règle « le script possède la scène 
 has('const ownsScene = scriptHidesAll(acts);', '…et le parser d’une macro la consulte');
 has('auto-show skipped (the script owns the scene)', '…pour NE PAS auto-afficher 70 sélections en sphères');
 has('const exclusionOf = (style) => {', 'les « hide » ordonnés sont soustraits au rendu');
-has('const sele = ex ? `(${expr}) and not (${ex})` : expr;', '…avec `and not (…)` sur l’expression NGL');
-has("if (st.sphere) add('spacefill'", 'le style sphère passe son nom pour l’exclusion');
-has("if (st.cartoon) add('cartoon', { colorScheme, opacity }, 'cartoon');", 'comme chaque autre style');
+has('const sele = ex ? `(${seleBase}) and not (${ex})` : seleBase;', '…avec `and not (…)` sur l’expression NGL');
+has("if (st.sphere) addWithOverrides('spacefill', 'sphere',", 'le style sphère passe son nom pour l’exclusion');
+has("if (st.cartoon) addWithOverrides('cartoon', 'cartoon', { colorScheme, opacity }, false);", 'comme chaque autre style');
+has('const ovs = [];', 'les `set … , <sélection>` d’une macro sont des propriétés d’ATOMES, gardées à part');
+has('setSelOverrides(ovs);', '…et installées par le script qui vient de tourner');
+has('const overrideSlicesFor = (beads) => {', 'le rendu DÉCOUPE une représentation par override de `set`');
+has("ovs.push({ kind: 'sphereScale'", 'un `set sphere_scale, 0.6, headgroups` atteint enfin les billes dessinées ailleurs');
 has("const hideFor = a.type === 'show'", 'un « show » retient les « hide » qui le suivent');
 has('styleHidesAfter(acts, ai, st)', '…calculés par la fonction pure testée plus haut');
 

@@ -44,6 +44,20 @@ const tests = [
   // Le SMILES d'un ligand organique : le PDB ne donne que le code HETATM, donc le
   // SMILES vient du Chemical Component Dictionary du RCSB (fetch injecté, testé sans
   // réseau) — et la sous-section « Organic Molecule » du docking est revenue.
+  // Le pont PyMOL → NGL, la VRAIE cause du rapport « la scheda a sinistra non
+  // funziona, tutto rimane in spheres e gli hide non funzionano » : NGL 2.4 ne
+  // connaît ni `resn`/`name`/`resi`, ni `z>90`, ni les jokers — un mot inconnu
+  // de ≤4 caractères devient un nom de résidu et un plus long JETTE, en
+  // silence. Le pont traduit, résout `z>90` en liste d'index et développe les
+  // jokers contre la structure ; le garde-fou EXÉCUTE cette traduction et
+  // vérifie que le VRAI NGL accepte tout ce qu'elle produit. Il mesure aussi
+  // les FEUILLETS (axe normal, plan médian, têtes) : « z était un moyen de
+  // distinguer l'upper du lower leaflet », la géométrie le fait mieux.
+  '_pymol_selection_bridge_test.mjs',
+  // Ce qu'une macro doit dessiner, et ce que l'utilisateur doit pouvoir défaire
+  // à la main (l'ordre des « show / hide », la barre Selections à gauche, §2
+  // qui reprend la main, les `set … , <sélection>` devenus propriétés d'ATOMES).
+  '_pymol_selections_test.mjs',
   '_ligand_smiles_test.mjs',
   '_viewer_render_smoke_test.mjs',
 ];
