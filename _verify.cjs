@@ -58,6 +58,17 @@ const tests = [
   // à la main (l'ordre des « show / hide », la barre Selections à gauche, §2
   // qui reprend la main, les `set … , <sélection>` devenus propriétés d'ATOMES).
   '_pymol_selections_test.mjs',
+  // Le RIG DE LUMIÈRE (§3 Scene → ◐ Shadows / 🌑 Darkness / 💡 Light) est extrait
+  // dans src/utils/viewerLightRig.js : les nombres de la référence (blanc, key
+  // 1.15 / ambiante 0.34 hors ombres, 1.3 + 0.7·dark / max(0.12, 0.34 − 0.22·dark)
+  // avec les ombres, direction azimut/élévation, lampe à 100× la boîte englobante,
+  // sampleLevel 2) sont VÉRIFIÉS identiques à ceux qui étaient écrits en clair, et
+  // leur traduction vers Mol* (Molstar) — le moteur qui sait dessiner les ombres
+  // portées et l'ambient occlusion (postprocessing.occlusion = 'on') — est passée
+  // au VRAI schéma de paramètres de molstar 4.18 (PD.merge sur RendererParams /
+  // PostprocessingParams / Canvas3DParams) et à la fonction de direction de Mol*
+  // elle-même (Vec3.directionFromSpherical) : la lumière ne bouge pas d'un iota.
+  '_viewer_light_rig_test.mjs',
   '_ligand_smiles_test.mjs',
   '_viewer_render_smoke_test.mjs',
 ];

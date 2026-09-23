@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ensureNGL } from '../utils/ngl';
+// The LIGHT RIG of the scene (§3 Scene → « ◐ Shadows » · « 🌑 Darkness » ·
+// « 💡 Light »): one single source of truth for the light colour, intensity,
+// direction and sampling level — shared with the Mol* translation that draws the
+// projected shadows and the ambient occlusion (utils/viewerLightRig.js).
+import { LIGHT_RIG, nglKeyLightDirection, nglLightParams } from '../utils/viewerLightRig';
 import { computeSmiles3DNameMap } from '../utils/atomNameSync';
 import { rebuildProteinHydrogenCoords } from '../utils/rebuildProteinHydrogens';
 import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
@@ -1906,14 +1911,15 @@ const flagMeshShadows = (rep) => {
 // all) — so a huge assembly is never cut, at any zoom.
 const CLIP_DEFAULTS = { near: 0, far: 100000, dist: 0 };
 
-// Supersampling level used while the « ◐ Shadows » rig is ON — NGL's nearest
-// equivalent to a screen-space ambient-occlusion pass (see applyShadowSettings):
-// the cavity-shading gradients produced by the deep-ambient + strong-key-light
-// rig are sampled several times per pixel instead of once, so the AO-like
-// shading of a crevice is smooth instead of banded. Stage parameter range is
-// -1 … 5 (NGL 2.4 StageParameters#sampleLevel); 0 = NGL's own default (sample
-// only while the camera is still) and is restored as soon as Shadows is OFF.
-const AO_SAMPLE_LEVEL = 2;
+// Supersampling level used while the « ◐ Shadows » rig is ON — the cavity-shading
+// gradients produced by the deep-ambient + strong-key-light rig are sampled
+// several times per pixel instead of once, so the AO-like shading of a crevice is
+// smooth instead of banded. NGL's stage parameter range is -1 … 5 (NGL 2.4
+// StageParameters#sampleLevel); 0 = NGL's own default (sample only while the
+// camera is still) and is what Shadows OFF restores. The value now lives in the
+// rig itself (LIGHT_RIG.on.sampleLevel, applied by nglLightParams) together with
+// its Mol* translation, where the ambient occlusion is a REAL screen-space pass
+// (postprocessing.occlusion) instead of NGL's ambient-fill approximation.
 
 const AA3_TO_1 = {
   ALA: 'A', ARG: 'R', ASN: 'N', ASP: 'D', CYS: 'C', GLN: 'Q', GLU: 'E', GLY: 'G',
@@ -5901,22 +5907,16 @@ const installShadowLightRig = useCallback(() => {
       const light = this.directionalLight;
       if (!light) return;
       // Unit direction FROM the molecule centre TOWARD the key light in world
-      // space, derived from the Azimuth / Elevation controls. NGL's default
-      // camera sits at z=-80 looking along +z, so z<0 is the near/camera side,
-      // x>0 is screen-left and y>0 is up. az=0 keeps the light behind the
-      // camera (flat), turning it swings the shade across the model.
+      // space, derived from the Azimuth / Elevation controls — the SAME vector the
+      // Mol* translation turns into its spherical lamp coordinates (see
+      // utils/viewerLightRig.js): az=0 keeps the light behind the camera (flat),
+      // turning it swings the shade across the model, el lifts the lamp.
       const d0 = shadowDirRef.current || {};
-      const azRad = (((Number(d0.az) || 0) * Math.PI) / 180);
-      const elRad = (((Number(d0.el) || 0) * Math.PI) / 180);
-      const ce = Math.cos(elRad);
-      const ux = ce * Math.sin(azRad);
-      const uy = Math.sin(elRad);
-      const uz = -ce * Math.cos(azRad);
-      const inv = 1 / Math.sqrt(ux * ux + uy * uy + uz * uz + 1e-12);
-      // Park the light far outside the model (≈ 100× the bounding box like NGL
+      const { x, y, z } = nglKeyLightDirection(d0.az, d0.el);
+      // Park the light far outside the model (100× the bounding box, like NGL
       // does) so the rays are effectively parallel — a crisp "sun" direction.
-      const d = Math.max(1, this.boundingBoxLength || 1) * 100;
-      light.position.set(ux * inv * d, uy * inv * d, uz * inv * d);
+      const d = Math.max(1, this.boundingBoxLength || 1) * LIGHT_RIG.lampDistanceInBoundingBoxes;
+      light.position.set(x * d, y * d, z * d);
     } catch { /* best-effort */ }
   };
 }, []);
@@ -5930,43 +5930,29 @@ const applyShadowSettings = useCallback(() => {
   try {
     const on = shadowOnRef.current;
     const dark = Math.min(1, Math.max(0, shadowDarknessRef.current));
-    if (on) {
-      // Shadows ON: ONE fixed key light (aimed via the Azimuth / Elevation
-      // controls). Darkness only raises the dark-vs-light CONTRAST — the key
-      // light gets brighter while the ambient fill gets dimmer. The lights are
-      // pure white, so colours are never tinted (the old warm-golden key /
-      // cool-blue fill is gone — it read as "a red light was added"). The fill
-      // is floored so the shadow side never goes fully black.
-      //
-      // AMBIENT OCCLUSION: NGL 2.4 ships NO screen-space ambient-occlusion pass
-      // (verified in the installed build: `ssao` / `AmbientOcclusion` do not
-      // exist anywhere — only three.js's unused AO-map shader chunk, which needs
-      // an AO texture no structure rendering ever binds). The equivalent NGL
-      // exposes is its AMBIENT term: the ambient light is added uniformly, so
-      // lowering `ambientIntensity` while raising `lightIntensity` darkens every
-      // face the key light does not reach — crevices, cavities and the inner
-      // side of a folded chain lose their fill and read as cavity shading and
-      // depth, exactly what AO is used for. `sampleLevel` is raised at the same
-      // time so the resulting gradients are supersampled (smooth, not banded).
-      stage.setParameters({
-        lightColor: 0xffffff,
-        ambientColor: 0xffffff,
-        lightIntensity: 1.3 + dark * 0.7,                     // 1.3 → 2.0
-        ambientIntensity: Math.max(0.12, 0.34 - dark * 0.22), // 0.34 → 0.12
-        sampleLevel: AO_SAMPLE_LEVEL,
-      });
-    } else {
-      // No shadows: NGL's even, camera-linked lighting — pure white so every
-      // element / residue colour stays exactly as chosen — and the plain
-      // sampling level (AO off).
-      stage.setParameters({
-        lightColor: 0xffffff,
-        ambientColor: 0xffffff,
-        lightIntensity: 1.15,
-        ambientIntensity: 0.34,
-        sampleLevel: 0,
-      });
-    }
+    // Shadows ON: ONE fixed key light (aimed via the Azimuth / Elevation
+    // controls). Darkness only raises the dark-vs-light CONTRAST — the key light
+    // gets brighter while the ambient fill gets dimmer. The lights are pure
+    // white, so colours are never tinted (the old warm-golden key / cool-blue
+    // fill is gone — it read as "a red light was added"). The fill is floored so
+    // the shadow side never goes fully black.
+    //
+    // AMBIENT OCCLUSION: NGL 2.4 ships NO screen-space ambient-occlusion pass
+    // (verified in the installed build: `ssao` / `AmbientOcclusion` do not exist
+    // anywhere — only three.js's unused AO-map shader chunk, which needs an AO
+    // texture no structure rendering ever binds). The equivalent NGL exposes is
+    // its AMBIENT term: the ambient light is added uniformly, so lowering
+    // `ambientIntensity` while raising `lightIntensity` darkens every face the key
+    // light does not reach — crevices, cavities and the inner side of a folded
+    // chain lose their fill and read as cavity shading and depth, exactly what AO
+    // is used for; `sampleLevel` is raised so those gradients are supersampled.
+    // Mol* owns the REAL pass (postprocessing.occlusion, 'on' in the rig) and is
+    // what the engine swap will drive.
+    //
+    // Both branches feed on the rig (utils/viewerLightRig.js): the call below
+    // returns exactly the payload this function used to build inline, so the NGL
+    // look and its Mol* translation can never drift apart.
+    stage.setParameters(nglLightParams({ shadowOn: on, darkness: dark }));
     installShadowLightRig();
     try { if (stage.viewer.requestRender) stage.viewer.requestRender(); } catch {}
   } catch { /* best-effort */ }
