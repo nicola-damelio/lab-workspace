@@ -8488,6 +8488,33 @@ const clearResidueSelection = () => {
   if (onAtomClickRef.current) onAtomClickRef.current(0, []);
 };
 
+/* ---- A HIDDEN ROW IS PyMOL'S LAST COMMAND ABOUT ITS ATOMS ------------------
+   The rows of the selections bar are OVERLAYS, not disjoint sets: the macro of
+   the reference draws the same lipid with « show sphere, resn POPC+… » AND
+   « show spheres, upper_headgroups » AND « show sticks, headgroups ». Removing
+   ONE row's representations therefore left the identical atoms on screen — the
+   report « I cannot hide POPC: hide does nothing in the left window ».
+   Hiding a row must take its atoms away from EVERY other row, whatever style
+   those rows draw — « hide everything, POPC » in PyMOL. This returns the
+   expressions of the rows the user hid, the row doing the asking excluded;
+   the renderer subtracts them from every style it draws (`and not (…)`).
+   The key « all » is skipped: hiding everything is the job of the 🙈 Hide-all
+   button, not of a row. Pure — `exprOf` resolves a row key to its NGL
+   selection (already expanded). */
+const hiddenRowExprs = (styles, selfKey, exprOf) => {
+  const out = [];
+  const seen = new Set();
+  Object.keys(styles || {}).forEach((key) => {
+    if (key === selfKey || key === 'all') return;
+    if (!(styles[key] || {}).hidden) return;
+    const expr = exprOf(key);
+    if (!expr || expr === '' || expr === 'all' || expr === 'none' || seen.has(expr)) return;
+    seen.add(expr);
+    out.push(expr);
+  });
+  return out;
+};
+
 // Rebuild all selection representations from selStyles.
 useEffect(() => {
   const component = componentRef.current;
@@ -8555,9 +8582,18 @@ useEffect(() => {
     // removes the upper leaflet from « show sphere, resn POPC+… ». Before this,
     // the two commands were two independent keys and those spheres stayed on
     // screen for ever — the report « the spheres remain even when I remove them ».
+    // The rows the user HID in the bar (see hiddenRowExprs): their atoms leave
+    // this row too, whatever style it draws. Without this, « 🙈 Hide » on the
+    // POPC row only dropped that row's representations and the identical atoms
+    // of the other rows stayed on screen. Computed once per row.
+    const hiddenElsewhere = hiddenRowExprs(styles, key, selKeyExpr);
     const exclusionOf = (style) => {
       const list = (st.hideFor && st.hideFor[style]) || [];
       const parts = list.map((h) => `(${expandSelectionExpr(h)})`).filter((p) => p && p !== '(all)');
+      hiddenElsewhere.forEach((e) => {
+        const p = `(${e})`;
+        if (p !== '(all)' && p !== '(none)' && !parts.includes(p)) parts.push(p);
+      });
       return parts.length ? parts.join(' or ') : '';
     };
     const addSele = (type, params, seleBase, style) => {
@@ -12403,7 +12439,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           <div key={s.name} className="flex flex-col gap-1 border border-slate-100 rounded-lg p-1.5 bg-white">
             <div className="flex items-center justify-between gap-1">
               <span className={`text-xs font-bold truncate ${st.hidden ? 'text-slate-400 line-through' : 'text-slate-800'}`}
-                title={`${s.raw ? `Raw script expression: ${s.expr}` : s.expr}${warns.length ? `\n⚠ ${warns.join('\n⚠ ')}` : ''}`}>
+                title={`${s.raw ? `Raw script expression: ${s.expr}` : s.expr}${st.hidden ? `\n🙈 hidden — its atoms are removed from EVERY row that draws them (the rows are overlays here)` : ''}${warns.length ? `\n⚠ ${warns.join('\n⚠ ')}` : ''}`}>
                 {s.raw ? '⌗ ' : ''}{s.name}
                 {warns.length ? <span className="text-amber-500 ml-1" title={warns.join(' · ')}>⚠</span> : null}
               </span>
@@ -12418,7 +12454,9 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
                 <button type="button"
                   onClick={() => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), hidden: !st.hidden } })}
                   className={`px-1.5 py-0.5 text-[10px] font-bold rounded border ${st.hidden ? 'bg-red-600 text-white border-red-600' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-red-50'}`}
-                  title={st.hidden ? 'Show this selection again' : 'Hide this selection (removes its representations)'}>
+                  title={st.hidden
+                    ? 'Show this selection again — its atoms come back in every row that draws them'
+                    : 'Hide this selection: its atoms leave EVERY row that draws them, whatever style those rows use. The rows of a macro are overlays (the same lipid is drawn by several of them at once), so hiding this row alone would leave the identical atoms on screen — this is PyMOL\'s « hide everything, <selection> »'}>
                   {st.hidden ? '👁 Show' : '🙈 Hide'}
                 </button>
                 <button type="button"

@@ -26,9 +26,17 @@
    ligne qui dessine le même style, et le rendu les soustrait déjà atome par
    atome (`exclusionOf` → `and not (…)`).
 
-   Ce garde-fou EXTRAIT `toggleSelStyle` du viewer et l'EXÉCUTE sur les styles
-   que la macro de référence produit, puis vérifie l'aller-retour (le geste est
-   réversible) et l'indépendance des familles.
+   Et le geste jumeau « 🙈 Hide » : mêmes lignes-overlays, donc masquer POPC ne
+   retirait que les représentations de SA ligne — les billes de
+   upper_headgroups restaient à l'écran, et les sticks de headgroups avec elles
+   (« je n'arrive pas à cacher POPC, hide ne marche pas dans la fenêtre de
+   gauche »). Masquer une ligne vaut maintenant « hide everything, POPC » : ses
+   atomes quittent TOUTES les autres lignes, quel que soit leur style.
+
+   Ce garde-fou EXTRAIT `toggleSelStyle` et `hiddenRowExprs` du viewer et les
+   EXÉCUTE sur les styles que la macro de référence produit, puis vérifie
+   l'aller-retour (les deux gestes sont réversibles), l'indépendance des
+   familles et la non-mutation des styles.
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -169,6 +177,73 @@ has('if (!on && !st[style] && !list.length) return;',
 has("title={`${st[style] ? 'Hide' : 'Show'}", 'le bouton explique le geste et son effet sur les autres lignes');
 has('const exclusionOf = (style) => {', 'le rendu sait déjà soustraire ces exclusions (and not (…))');
 
+/* ══ 9. « 🙈 HIDE » : LES MÊMES LIGNES-OVERLAYS, LES MÊMES CONSÉQUENCES ═════
+   Cacher une ligne ne retirait que les représentations de CETTE ligne : les
+   billes de upper_headgroups et les sticks de headgroups, qui dessinent les
+   mêmes atomes de POPC, restaient à l'écran. `hiddenRowExprs` rend les
+   expressions des lignes masquées, que `exclusionOf` soustrait à TOUS les
+   styles de la ligne qui se dessine. */
+const HID = sliceFn(VIEW, 'hiddenRowExprs');
+const EXPAND = {
+  water: '@0-9',
+  headgroups: '@100-299',
+  upper_headgroups: '@100-199',
+  [RAW]: '@300-999',
+};
+const runHidden = (styles, selfKey, exprOf = (k) => (EXPAND[k] ?? k)) =>
+  new Function('cfg', `${HID}
+  return hiddenRowExprs(cfg.styles, cfg.selfKey, cfg.exprOf);`)({ styles, selfKey, exprOf });
+const hiddenRow = (key) => ({ ...macroStyles()[key], hidden: true });
+const POPC_HIDDEN = { ...macroStyles(), [RAW]: hiddenRow(RAW) };
+
+eq(runHidden(POPC_HIDDEN, 'headgroups'), ['@300-999'],
+  'POPC masquée : les sticks de headgroups perdent ses atomes (c’était le « hide ne fait rien »)');
+eq(runHidden(POPC_HIDDEN, 'upper_headgroups'), ['@300-999'],
+  '…et les billes de upper_headgroups aussi, elles qui dessinaient les mêmes têtes');
+eq(runHidden(POPC_HIDDEN, 'water'), ['@300-999'],
+  '…dans TOUTE autre ligne, même une qui ne doit rien à POPC (soustraire n’y change aucun atome)');
+eq(runHidden(POPC_HIDDEN, RAW), [],
+  'la ligne masquée ne se soustrait pas elle-même : elle ne dessine déjà plus rien');
+eq(runHidden(macroStyles(), 'headgroups'), [],
+  '« 👁 Show » supprime l’exclusion partout : le geste est réversible');
+eq(runHidden({ ...macroStyles(), water: hiddenRow('water') }, 'headgroups'), ['@0-9'],
+  'une autre ligne masquée retire bien SES atomes : la règle est générale');
+eq(runHidden({ ...macroStyles(), all: hiddenRow('all') }, 'headgroups'), [],
+  '« all » ne compte pas : tout cacher est le travail du bouton 🙈 Hide all');
+
+const TWO_ALIASES = { ...macroStyles(), water: hiddenRow('water'), phosphate: hiddenRow('phosphate') };
+eq(runHidden(TWO_ALIASES, 'headgroups', (k) => (k === 'phosphate' ? '@0-9' : (EXPAND[k] ?? k))), ['@0-9'],
+  'deux lignes masquées qui désignent les MÊMES atomes ne comptent qu’une fois (sélection NGL plus courte)');
+
+const NO_ATOMS = {
+  ...macroStyles(),
+  water: hiddenRow('water'),
+  phosphate: hiddenRow('phosphate'),
+  headgroups: hiddenRow('headgroups'),
+};
+eq(runHidden(NO_ATOMS, 'upper_headgroups',
+  (k) => (k === 'water' ? 'all' : k === 'phosphate' ? 'none' : k === 'headgroups' ? '' : (EXPAND[k] ?? k))), [],
+  'une ligne masquée sans atome (all / none / vide) n’écrit pas de clause vide dans la sélection NGL');
+
+/* ══ 10. LE RENDU CONSOMME BIEN CETTE RÈGLE ═══════════════════════════════ */
+has('const hiddenRowExprs = (styles, selfKey, exprOf) => {', 'la règle a sa propre fonction pure (donc testable)');
+has('const hiddenElsewhere = hiddenRowExprs(styles, key, selKeyExpr);',
+  'le rendu l’appelle une fois par ligne, avec l’expression NGL de la ligne');
+has('if (st.hidden) { selCompsRef.current[key] = []; return; }', 'une ligne masquée ne dessine plus rien elle-même');
+has("if (!expr || expr === '' || expr === 'all' || expr === 'none' || seen.has(expr)) return;",
+  'all / none / vide / doublon écartés AVANT d’écrire la clause');
+has("const ex = style ? exclusionOf(style) : '';", 'chaque rep d’une ligne passe par exclusionOf');
+has('const sele = ex ? `(${seleBase}) and not (${ex})` : seleBase;', '…et l’exclusion y est soustraite à l’ATOME');
+eq((VIEW.match(/addWithOverrides\(/g) || []).length, 7,
+  'les sept styles d’une ligne passent tous par le même chemin (donc tous par l’exclusion)');
+has('are overlays (the same lipid is drawn by several of them at once)',
+  'le bouton explique le geste : sans cela, « hide » semble ne rien faire');
+gone("title={st.hidden ? 'Show this selection again' : 'Hide this selection (removes its representations)'}",
+  'l’ancien libellé — qui laissait croire à une action locale — a disparu');
+has('🙈 hidden — its atoms are removed from EVERY row that draws them',
+  'la ligne masquée le dit sur son nom, d’où la disparition des atomes ailleurs');
+
 /* ── Bilan ──────────────────────────────────────────────────────────────── */
-console.log(`_viewer_selection_toggle_test.mjs — ${passed} assertions OK`);
+console.log(`_viewer_selection_toggle_test.mjs — ${passed} assertions OK (styles + hide)`);
+
 
