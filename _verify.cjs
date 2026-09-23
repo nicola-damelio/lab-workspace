@@ -68,6 +68,21 @@ const tests = [
   // atome par atome. L'aller-retour est vérifié, ainsi que l'indépendance des
   // familles et la non-mutation des styles.
   '_viewer_selection_toggle_test.mjs',
+  // « era headgroups che invece di selezionare gli headgroups selezionava tutta
+  // la membrana e finché non nascondo headgroups la membrana resta » — la cause
+  // trouvée par l'utilisateur lui-même. Dans la macro, `select headgroups,
+  // phosphate or POPC` attrape TOUS les atomes des phospholipides (`POPC` est un
+  // nom de résidu), queues comprises : la ligne dessinait donc la bicouche
+  // entière, qu'aucune autre ligne ne peut reprendre. Le viewer CONNAÎT les
+  // têtes (lipidGroupOf, le classificateur du menu Lipids, celui dont la mesure
+  // des feuillets se sert) : quand un nom PROMET les têtes et que son
+  // expression les dépasse, la mesure gagne (comme `upper_leaflet` écrit `z>90`),
+  // la ligne le DIT (⚠), et le `hide` du macro résout le même nom sur les mêmes
+  // atomes — une seule carte nom → clause pour toutes les expansions. Le
+  // garde-fou EXÉCUTE la décision sur une structure simulée (le nom corrigé, le
+  // nom déjà juste, celui qui ne parle pas des têtes, l'absence de mesure) et
+  // vérifie le câblage sur la source.
+  '_viewer_headgroups_test.mjs',
   // Le RIG DE LUMIÈRE (§3 Scene → ◐ Shadows / 🌑 Darkness / 💡 Light) est extrait
   // dans src/utils/viewerLightRig.js : les nombres de la référence (blanc, key
   // 1.15 / ambiante 0.34 hors ombres, 1.3 + 0.7·dark / max(0.12, 0.34 − 0.22·dark)

@@ -118,9 +118,10 @@ eq(H.styleHidesAfter(parsed.acts, parsed.acts.length - 1, 'sphere'), [],
    que le vrai NGL accepte tout ce qu'elle produit. Ici on protège le BRANCHEMENT
    et le fait que `z>90` ne peut plus être lu comme un nom de résidu. */
 gone('translateSelection', 'l’ancienne traduction naïve a disparu (elle laissait `z>90` ne rien sélectionner)');
-has('const ngl = pymolSeleForStructure(structure, namedSeleMap(), text, (m) => warns.push(m), membraneSeleRef.current);',
-  'une expression passe par le pont, avec la structure ET les feuillets mesurés');
-has('if (geo) return geo;', 'un feuillet MESURÉ gagne sur la définition du script (`membrane and z>90`)');
+has('const ngl = pymolSeleForStructure(structure, namedSeleMap(), text, (m) => warns.push(m), reservedOverrides().map);',
+  'une expression passe par le pont, avec la structure ET les feuillets mesurés — la MÊME carte nom → clause pour chaque expansion (lignes, styles, hideFor)');
+has('const ngl = geo || expandSelectionExpr(text);',
+  'un feuillet MESURÉ (ou un nom de têtes corrigé) gagne sur la définition du script (`membrane and z>90`)');
 has('pymolSeleToNgl = (raw, ctx = {})', 'le pont a un point d’entrée pur (testable sans rendu)');
 has('if (!names.length) { warn(', 'une sélection qui ne trouve rien est SIGNALÉE, plus jamais silencieuse');
 has('resnoRangesClause', 'les feuillets sont écrits en plages de résidus (compact)');

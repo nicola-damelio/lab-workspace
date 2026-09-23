@@ -1789,6 +1789,23 @@ const atomIndicesForSele = (structure, sele) => {
   } catch { /* unknown selection → no label */ }
   return out;
 };
+// Every atom of `sele` INSIDE `within`? Both are selection EXPRESSIONS, and only
+// NGL can say: `phosphate or POPC` and `@12,13,14` meet inside the BitArray API
+// the surface code uses (see atomIndicesForSele above) — never by comparing
+// strings. `null` = cannot tell (no structure, no NGL, an expression NGL
+// rejects): the caller then keeps what the script wrote.
+const seleIsWithin = (structure, sele, within) => {
+  try {
+    const NGL = typeof window !== 'undefined' ? window.NGL : null;
+    if (!NGL || !NGL.Selection || !structure || !structure.getAtomSet) return null;
+    const inside = structure.getAtomSet(new NGL.Selection(within));
+    const outer = structure.getAtomSet(new NGL.Selection(sele));
+    if (!inside || !outer) return null;
+    const n = structure.atomCount || 0;
+    for (let i = 0; i < n; i += 1) if (outer.get(i) && !inside.get(i)) return false;
+    return true;
+  } catch { return null; }
+};
 
 /* ---- ONE routing function for the six categories -----------------------------
    Decides what each menu OWNS in this particular structure. The renderer
@@ -4390,6 +4407,62 @@ const membraneLeafletsOf = (structure) => {
     headIndices: rs.flatMap((r) => r.headAtoms.map((a) => a.i)),
   });
   return { axis, midplane, thickness: Math.abs(c2 - c1), upper: sideOf(upper), lower: sideOf(lower) };
+};
+
+/* ---- A NAME IS A PROMISE: « headgroups » must NOT cover the tails ----------
+   The macro defines its own head selection the way membrane macros usually do:
+
+       select phosphate, name P* and resn POPC+POPE
+       select headgroups, phosphate or POPC        ← the WHOLE lipid
+
+   In PyMOL — and therefore in the bridge, which is faithful — `POPC` is a
+   RESIDUE name, so `phosphate or POPC` is EVERY atom of those lipids: the heads
+   AND the tails. The row called « headgroups » then draws the whole bilayer,
+   and no other row can win against it (the rows are overlays, the same atoms
+   are drawn several times): the user's own diagnosis — « era headgroups che
+   invece di selezionare gli headgroups selezionava tutta la membrana e finché
+   non nascondo headgroups la membrana resta ».
+   The viewer already KNOWS the heads: `lipidGroupOf`, the classifier of the
+   Lipids menu, the very one `membraneLeafletsOf` measures the leaflets with —
+   the two menus cannot disagree. So when the bilayer is measurable and a
+   selection NAMED after the heads resolves to atoms OUTSIDE those measured
+   heads, the measurement wins — exactly like `upper_leaflet` written `z>90`.
+   A script that is ALREADY right (`select headgroups, name P*`: every atom it
+   matches is a measured head) keeps its own expression, untouched: only a name
+   that promises less than it delivers is corrected — and the row says so (the
+   bridge's ⚠ carries the message, see reservedOverrides in the component).
+   `base` = the four measured clauses, which always win first. Returns the map
+   the bridge resolves names with, and the names it had to correct. */
+const MEMBRANE_HEAD_NAMES = ['headgroups', 'headgroup', 'heads'];
+// The union of the two leaflets' head atoms, as the `@i,j,k` list NGL reads —
+// the same shape as the two published `upper_headgroups` / `lower_headgroups`.
+const measuredHeadClause = (m) => {
+  if (!m) return null;
+  const idx = [...((m.upper && m.upper.headIndices) || []), ...((m.lower && m.lower.headIndices) || [])]
+    .filter((i) => Number.isFinite(i))
+    .sort((a, b) => a - b);
+  return idx.length ? `@${idx.join(',')}` : null;
+};
+const membraneOverridesFor = (structure, named, measured, base) => {
+  const map = { ...(base || {}) };
+  const fixed = new Map();
+  const clause = measuredHeadClause(measured);
+  if (!clause || !named || typeof named.forEach !== 'function') return { map, fixed };
+  named.forEach((expr, name) => {
+    const key = String(name || '').toLowerCase();
+    if (!MEMBRANE_HEAD_NAMES.includes(key)) return;
+    // The script's OWN expression, resolved by the bridge exactly as the row
+    // resolves it (a named selection is inlined like a PyMOL set) — never the
+    // corrected one: the test is about what the script really matches.
+    const scripted = pymolSeleForStructure(structure, named, expr, null, base);
+    if (seleIsWithin(structure, scripted, clause) !== false) return;  // null = cannot tell: keep the script
+    map[name] = clause;
+    map[key] = clause;
+    const whole = nglSeleCount(structure, scripted);
+    const heads = nglSeleCount(structure, clause);
+    fixed.set(key, `« ${name} » = \`${expr}\` does not select the headgroups: ${whole >= 0 ? `${whole} atoms — the whole lipid, tails included` : 'it reaches outside the measured headgroups'}. The MEASURED headgroups replace it (${heads >= 0 ? `${heads} atoms` : 'the heads of both leaflets'}), the atoms the Lipids menu itself calls heads`);
+  });
+  return { map, fixed };
 };
 
 const normalizeStructureSource = (raw) => {
@@ -8253,17 +8326,26 @@ const matSettingsRef = useRef(matSettings);
 matSettingsRef.current = matSettings;
 const membraneSeleRef = useRef(membraneSele);
 membraneSeleRef.current = membraneSele;
+// The MEASUREMENT itself (head indices included): the four published clauses are
+// only strings, while membraneOverridesFor needs to know which ATOMS the
+// geometry calls heads.
+const membraneMeasRef = useRef(null);
+// Memo of the name → clause map the bridge resolves with (see reservedOverrides).
+const reservedMapRef = useRef(null);
 
 /* The membrane of the loaded structure, measured once per load: the normal
    axis, the midplane (Å) and the four reserved selections. A macro that
    defines `upper_leaflet` with `z>90` still gets THIS one (the measurement is
-   exact, the z guess is not) — and the macro log says so. */
+   exact, the z guess is not) — and the macro log says so. The same measurement
+   corrects a selection NAMED after the heads whose expression grabs the whole
+   lipid (« select headgroups, phosphate or POPC »: see membraneOverridesFor). */
 useEffect(() => {
-  if (status !== 'ready') { setMembraneSele({}); setMembraneInfo(null); return; }
+  if (status !== 'ready') { membraneMeasRef.current = null; setMembraneSele({}); setMembraneInfo(null); return; }
   const component = componentRef.current;
   const structure = component && component.structure ? component.structure : null;
   const m = membraneLeafletsOf(structure);
-  if (!m) { setMembraneSele({}); setMembraneInfo(null); return; }
+  if (!m) { membraneMeasRef.current = null; setMembraneSele({}); setMembraneInfo(null); return; }
+  membraneMeasRef.current = m;
   const headClause = (side) => (side.headIndices.length ? `@${side.headIndices.join(',')}` : 'none');
   setMembraneSele({
     upper_leaflet: m.upper.clause,
@@ -8306,6 +8388,24 @@ const namedSeleMap = () => {
   selections.forEach((s) => { if (s && s.name) m.set(String(s.name).toLowerCase(), s.expr); });
   return m;
 };
+/* The names the bridge resolves BEFORE the script's own definition: the four
+   measured leaflets, plus any selection NAMED after the headgroups whose
+   expression reaches past the heads (membraneOverridesFor — the user's
+   « headgroups selected the whole membrane »). Built once per (structure,
+   selections, measurement): a 30 000-atom bilayer must not pay for the spill
+   test on every row of every render. */
+const reservedOverrides = () => {
+  const component = componentRef.current;
+  const structure = component && component.structure ? component.structure : null;
+  // The heads are part of the signature: before the measurement runs this is
+  // empty and the memo is rebuilt as soon as the geometry is known.
+  const sig = `${selections.map((s) => `${s.name}=${s.expr}`).join('|')}::${measuredHeadClause(membraneMeasRef.current) || ''}`;
+  const cached = reservedMapRef.current;
+  if (cached && cached.struct === structure && cached.sig === sig) return cached.out;
+  const out = membraneOverridesFor(structure, namedSeleMap(), membraneMeasRef.current, membraneSeleRef.current);
+  reservedMapRef.current = { struct: structure, sig, out };
+  return out;
+};
 const expandSelectionExpr = (raw) => {
   const text = String(raw || '');
   if (!text) return 'all';
@@ -8319,7 +8419,11 @@ const expandSelectionExpr = (raw) => {
   const cache = seleExprCacheRef.current;
   if (cache.has(text)) return cache.get(text);
   const warns = [];
-  const ngl = pymolSeleForStructure(structure, namedSeleMap(), text, (m) => warns.push(m), membraneSeleRef.current);
+  // `reservedOverrides().map` — not `membraneSeleRef.current`: the map ALSO
+  // carries the headgroup names the measurement had to correct, so a later
+  // `hide sticks, name H* and headgroups` subtracts exactly the atoms the
+  // « headgroups » row draws. One map, one answer, for every expansion.
+  const ngl = pymolSeleForStructure(structure, namedSeleMap(), text, (m) => warns.push(m), reservedOverrides().map);
   if (warns.length) usedTranslateWarnRef.current.set(text, warns);
   else usedTranslateWarnRef.current.delete(text);
   if (cache.size > 400) cache.clear();
@@ -8330,24 +8434,36 @@ const expandSelectionExpr = (raw) => {
 // Resolved NGL expression for a selection key (named selection or raw expr),
 // with references to other named selections expanded inline (like PyMOL sets).
 const selKeyExpr = (key) => {
-  // A MEASURED leaflet wins over anything the script (or the user) wrote for
-  // that name: it is the exact geometry, not a `z>90` guess.
-  const geo = membraneSeleRef.current[key];
-  if (geo) return geo;
+  // A MEASURED leaflet — or a headgroup name the macro got wrong — wins over
+  // anything the script wrote for that name: the geometry is exact, `z>90` and
+  // « or POPC » are guesses (membraneOverridesFor).
+  const reserved = reservedOverrides();
   const named = selections.find((s) => s.name === key);
-  return expandSelectionExpr(named ? named.expr : key);
+  const text = named ? named.expr : key;
+  const geo = reserved.map[key] || reserved.map[String(key).toLowerCase()];
+  const ngl = geo || expandSelectionExpr(text);
+  // A corrected name is never a SILENT substitution: the row says what the
+  // script promised and what the measurement used instead. Keyed on the
+  // expression the row shows, exactly like the bridge's own warnings.
+  const fix = reserved.fixed.get(String(key).toLowerCase());
+  if (fix) {
+    const list = usedTranslateWarnRef.current.get(text) || [];
+    if (!list.includes(fix)) usedTranslateWarnRef.current.set(text, [...list, fix]);
+  }
+  return ngl;
 };
 
-// Number of atoms matching a selection key (null when unsupported by NGL).
+// Number of atoms matching a selection key (null when NGL cannot say).
+// NB: `Structure#getSelection` takes NO argument (ngl 2.4.0, structure.ts:457 —
+// `getSelection (): undefined|Selection { return }`, a Structure has no view of
+// its own), so the previous call resolved NOTHING and every row showed « — » —
+// precisely the count that tells the user a « headgroups » row covers the whole
+// bilayer. `nglSeleCount` is the helper the rest of this file counts with.
 const selectionAtomCount = (key) => {
   const component = componentRef.current;
-  if (!component || !component.structure) return null;
-  try {
-    const sel = component.structure.getSelection(selKeyExpr(key));
-    return sel.count != null ? sel.count : (sel.length != null ? sel.length : null);
-  } catch {
-    return null;
-  }
+  const structure = component && component.structure ? component.structure : null;
+  const n = nglSeleCount(structure, selKeyExpr(key));
+  return n < 0 ? null : n;
 };
 
 /* ---- A GESTURE IN THE SELECTIONS BAR IS PyMOL'S LAST COMMAND ---------------
@@ -12396,6 +12512,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
         <div className="text-[9px] text-teal-700 mt-1 leading-snug">
           upper {membraneInfo.upperAtoms} atoms / {membraneInfo.upperResidues} lipids · lower {membraneInfo.lowerAtoms} / {membraneInfo.lowerResidues}.
           The four names work in a PyMOL script as well ({'`'}upper_leaflet{'`'}, {'`'}lower_headgroups{'`'}…), and a script that defines them with {'`'}z&gt;90{'`'} now gets this measurement instead.
+          A {'`'}select headgroups, phosphate or POPC{'`'} — which PyMOL reads as EVERY atom of those lipids — gets the measured heads instead.
         </div>
       </div>
     )}
