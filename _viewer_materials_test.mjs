@@ -24,6 +24,19 @@
      • côté buffer ils sont déclarés `{ uniform: true }` et `setParameters` les
        applique EN PLACE (setUniforms), le ShaderMaterial partageant le même
        objet uniforms : aucun rebuild, aucun needsUpdate n'est nécessaire.
+
+   LE MATÉRIAU APPARTIENT MAINTENANT À LA LIGNE DE STYLING. Il était réglé par
+   UN panneau global en bas de la barre Selections, avec quatre familles
+   (sphères · liaisons · cartoon · surface) pour TOUTE la scène : deux molécules
+   du même fichier ne pouvaient donc pas être dessinées avec deux matériaux
+   différents. Demande de l'utilisateur : « they should be in each subsection of
+   styling window because not all the molecules might be represented with the
+   same material ». Le matériau est donc un champ du LOOK de chaque ligne de la
+   fenêtre « Molecules · styling » (`material` / `roughness` / `metalness`, il
+   suit la ligne General de sa molécule comme les autres champs et se persiste
+   avec eux) ; chaque représentation retient la ligne dont elle vient
+   (`rep.__sec`, écrit par buildSectionReps) et le rendu relit SON look — donc
+   chaque molécule, et chaque partie d'une molécule, porte le sien (§6bis).
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -60,6 +73,7 @@ const extract = (src, name) => {
 
 const CODE = [
   extract(VIEW, 'MATERIAL_PRESETS'),
+  extract(VIEW, 'MATERIAL_PRESET_KEYS'),
   extract(VIEW, 'MATERIAL_KINDS'),
   extract(VIEW, 'MATERIAL_KIND_OF_REP'),
   extract(VIEW, 'materialValueOf'),
@@ -68,7 +82,7 @@ const CODE = [
   extract(VIEW, 'applyMaterialToRep'),
 ].join('\n');
 const F = new Function(`${CODE}
-  return { MATERIAL_PRESETS, MATERIAL_KINDS, MATERIAL_KIND_OF_REP, materialValueOf,
+  return { MATERIAL_PRESETS, MATERIAL_PRESET_KEYS, MATERIAL_KINDS, MATERIAL_KIND_OF_REP, materialValueOf,
     reprOfElement, repTypeOfElement, applyMaterialToRep };`)();
 
 ok(!/useState|useRef|componentRef/.test(CODE),
@@ -177,49 +191,55 @@ const bench = () => {
 };
 
 const B1 = bench();
-F.applyMaterialToRep(B1.el('spacefill'), { spheres: { preset: 'metallic' } });
+F.applyMaterialToRep(B1.el('spacefill'), { preset: 'metallic' });
 eq(B1.calls, [{ name: 'spacefill', params: { roughness: 0.18, metalness: 0.85 } }],
-  '« metallic » atteint la rep des sphères, via setParameters (et rien d’autre)');
+  '« metallic » atteint la rep de sphères de CETTE ligne, via setParameters (et rien d’autre)');
 
 const B2 = bench();
-F.applyMaterialToRep(B2.el('licorice'), { sticks: { preset: 'gloss' } });
+F.applyMaterialToRep(B2.el('licorice'), { preset: 'gloss' });
 eq(B2.calls[0].params, { roughness: 0.35, metalness: 0.15 }, '…et « gloss » une rep de liaisons');
 
 const B3 = bench();
-F.applyMaterialToRep(B3.el('surface'), { surface: { preset: 'glass' } });
+F.applyMaterialToRep(B3.el('surface'), { preset: 'glass' });
 eq(B3.calls[0].params, { roughness: 0.08, metalness: 0, opacity: 0.45 },
   '« glass » ajoute l’opacité : une surface translucide, sans toucher au reste');
 
+// LE MATÉRIAU APPARTIENT À LA LIGNE, plus à une famille de reps : la même valeur
+// atteint n’importe quelle rep de cette ligne — et c’est `rep.__sec` (voir §6) qui
+// dit de quelle ligne il s’agit, donc deux molécules peuvent en avoir deux.
 const B4 = bench();
-F.applyMaterialToRep(B4.el('ball+stick'), { spheres: { preset: 'metallic' } });
-eq(B4.calls.length, 0, 'une famille ne déborde jamais sur une autre (metallic des sphères ne touche pas les liaisons)');
+F.applyMaterialToRep(B4.el('ball+stick'), { preset: 'metallic' });
+eq(B4.calls[0].params, { roughness: 0.18, metalness: 0.85 },
+  'la même ligne règle ses liaisons exactement comme ses sphères (plus d’indexation par famille)');
 
 const B5 = bench();
-F.applyMaterialToRep(B5.el('spacefill'), { spheres: { preset: 'metallic', roughness: 0.6 } });
+F.applyMaterialToRep(B5.el('spacefill'), { preset: 'metallic', roughness: 0.6 });
 eq(B5.calls[0].params, { roughness: 0.6, metalness: 0.85 },
-  'un curseur déplacé écrase le preset de SA famille, et seulement lui');
-eq(F.materialValueOf({ spheres: { preset: 'metallic', roughness: 0.6 }, sticks: { preset: 'gloss' } }, 'sticks', 'roughness'),
-  0.35, '…les autres familles gardent leur preset');
-eq(F.materialValueOf({ spheres: {} }, 'spheres', 'metalness'), null,
-  'une famille vierge ne renvoie aucune valeur (donc aucun réglage)');
+  'un curseur déplacé écrase le preset de CETTE ligne');
+eq(F.materialValueOf({ preset: 'metallic', roughness: 0.6 }, 'roughness'), 0.6,
+  '…materialValueOf relit la valeur du curseur avant le preset');
+eq(F.materialValueOf({ preset: 'metallic' }, 'metalness'), 0.85,
+  '…et retombe sur la valeur du preset quand le curseur n’a pas bougé');
+eq(F.materialValueOf({}, 'metalness'), null,
+  'une ligne vierge ne renvoie aucune valeur (donc aucun réglage)');
 
 /* ══ 4. CE QUI NE DOIT RIEN FAIRE ═════════════════════════════════════════ */
 const N1 = bench();
-F.applyMaterialToRep(N1.el('spacefill'), { spheres: { preset: 'auto' } });
+F.applyMaterialToRep(N1.el('spacefill'), { preset: 'auto' });
 eq(N1.calls.length, 0, '« auto » n’appelle rien : le matériau de NGL (roughness 0.4) reste intact');
 const N2 = bench();
-F.applyMaterialToRep(N2.el('spacefill'), { spheres: {} });
-eq(N2.calls.length, 0, 'une famille sans preset ni valeur ne touche à rien');
+F.applyMaterialToRep(N2.el('spacefill'), {});
+eq(N2.calls.length, 0, 'une ligne sans preset ni valeur ne touche à rien');
 const N3 = bench();
 ['point', 'line', 'label', 'dot', 'slice'].forEach((t) => {
-  F.applyMaterialToRep(N3.el(t), { spheres: { preset: 'metallic' }, sticks: { preset: 'metallic' }, cartoon: { preset: 'metallic' }, surface: { preset: 'metallic' } });
+  F.applyMaterialToRep(N3.el(t), { preset: 'metallic' });
 });
 eq(N3.calls.length, 0,
   'point / line / label / dot / slice n’ont pas de matériau chez NGL : aucun curseur ne les touche');
 
 /* ══ 5. ROBUSTESSE : rien de ce qui suit ne doit casser le rendu ══════════ */
 const R1 = bench();
-F.applyMaterialToRep(R1.el('spacefill', { noRepr: true }), { spheres: { preset: 'metallic' } });
+F.applyMaterialToRep(R1.el('spacefill', { noRepr: true }), { preset: 'metallic' });
 eq(R1.calls.length, 0, 'un élément sans représentation enveloppée ne fait pas planter le viewer');
 eq(F.repTypeOfElement({ type: 'representation', getType: () => 'cartoon' }), 'cartoon',
   'si NGL cesse un jour de remplir `name`, getType() donne le même type de rep');
@@ -227,16 +247,16 @@ eq(F.repTypeOfElement({ type: 'representation' }), '',
   '…et un élément sans l’un ni l’autre ne prétend pas avoir un type de rep');
 eq(F.reprOfElement({ name: 'spacefill' }), null, 'sans `repr`, reprOfElement renvoie null (jamais undefined)');
 const viaMethod = { name: 'spacefill', getRepresentation: () => ({ setParameters: (p) => { viaMethod.seen = p; } }) };
-F.applyMaterialToRep(viaMethod, { spheres: { preset: 'matte' } });
+F.applyMaterialToRep(viaMethod, { preset: 'matte' });
 eq(viaMethod.seen, { roughness: 0.95, metalness: 0 }, 'la représentation est trouvée aussi via getRepresentation()');
 const R2 = bench();
-F.applyMaterialToRep(null, { spheres: { preset: 'metallic' } });
+F.applyMaterialToRep(null, { preset: 'metallic' });
 F.applyMaterialToRep(undefined, undefined);
 F.applyMaterialToRep(R2.el('spacefill'), null);
 F.applyMaterialToRep(R2.el('spacefill'), {});
 eq(R2.calls.length, 0, 'appeler sans élément ou sans réglage est sans effet');
 const throwing = { name: 'spacefill', repr: { setParameters: () => { throw new Error('boom'); } } };
-F.applyMaterialToRep(throwing, { spheres: { preset: 'metallic' } });
+F.applyMaterialToRep(throwing, { preset: 'metallic' });
 ok(true, 'une rep qui refuse setParameters est avalée : jamais une exception dans la boucle de rendu');
 
 /* ══ CANARI — la forme d'hier ne réglait vraiment RIEN ════════════════════
@@ -269,6 +289,33 @@ gone('NGL 2.4 has no material parameter', '…la phrase fausse (« NGL n’a pas
 has("roughness: { type: 'range'", 'le commentaire cite la VRAIE déclaration de NGL');
 has("NGL's own material parameters", 'la bulle de l’interface dit la même vérité que le code');
 has('_viewer_materials_test.mjs', 'le viewer nomme le garde-fou qui surveille ces types de reps');
+
+/* ── 6bis. LE MATÉRIAU EST CELUI D'UNE LIGNE DE STYLING ───────────────────
+   Demande : « they should be in each subsection of styling window because not
+   all the molecules might be represented with the same material ». Le réglage
+   n'est donc plus un panneau GLOBAL en bas de la barre Selections : il vit dans
+   le look de CHAQUE ligne de la fenêtre « Molecules · styling » (donc de chaque
+   molécule ET de chaque partie), il suit la ligne General comme les autres
+   champs, il est persisté avec eux, et le rendu l'applique ligne par ligne — la
+   rep sait de quelle ligne elle vient (`rep.__sec`). */
+eq(F.MATERIAL_PRESET_KEYS, ['auto', 'matte', 'gloss', 'metallic', 'glass'],
+  'le menu d’une ligne propose les cinq presets, dans l’ordre de MATERIAL_PRESETS');
+has("material: 'auto',", 'le look d’une ligne part de « auto » : le matériau de NGL reste intact');
+has("includes(entry.material)) dst.material = entry.material;",
+  'la persistance n’accepte qu’un preset CONNU (un localStorage bricolé ne peut rien changer)');
+has('material: g.material,', 'le matériau descend de General comme la transparence et les rayons');
+has('if (el) el.__sec = { id: sec.id, kind: sec.kind, sub: spec.sub };',
+  'chaque rep retient LA LIGNE qu’elle dessine (molécule + partie)');
+has('const where = rep && rep.__sec;', 'le matériau est appliqué ligne par ligne — deux molécules, deux matériaux');
+has('applyMaterialToRep(rep, { preset: look.material, roughness: look.roughness, metalness: look.metalness });',
+  '…en relisant le look COURANT de cette ligne');
+has("auto = NGL's own rough surface (0.40 / 0.00)", 'la ligne de styling porte le contrôle 🎛 et sa bulle');
+has('const lookMatValue = (look, prop) => {', 'les deux curseurs montrent la valeur RÉELLE (preset ou curseur déplacé)');
+gone('const [matSettings, setMatSettings] = useState(',
+  'le réglage GLOBAL a disparu : c’est lui qui empêchait deux molécules d’avoir deux matériaux');
+gone('🎛 Material', '…et son panneau en bas de la barre Selections avec lui');
+gone('localStorage.setItem(MATERIALS_KEY', '…ainsi que sa clé de persistance propre (le matériau est dans le look)');
+gone('matSliderValue', 'aucun reliquat du réglage global ne subsiste');
 
 /* ── Bilan ──────────────────────────────────────────────────────────────── */
 console.log(`_viewer_materials_test.mjs — ${passed} assertions OK`);

@@ -3001,10 +3001,14 @@ const subsectionSpec = (kind, sub) => subsectionsOf(kind).find((s) => s.sub === 
 /* ---- The LOOK of one row ---------------------------------------------------
    `style` and `colorBy` are the two dropdowns, `solidColor` the swatch « Solid »
    shows, `opacity` the transparency regulator (0 = opaque, 1 = invisible),
-   `sphere` / `bond` the two radius multipliers (1 = the style's own NGL size) and
-   `follow` says whether General still hands the look down (the hierarchy). */
-const SECTION_LOOK_FIELDS = ['style', 'colorBy', 'solidColor', 'opacity', 'sphere', 'bond'];
-const FOLLOW_FIELDS = ['style', 'colorBy', 'opacity', 'sphere', 'bond'];
+   `sphere` / `bond` the two radius multipliers (1 = the style's own NGL size),
+   `material` the presets of MATERIAL_PRESETS with `roughness` / `metalness` as the
+   two slider overrides, and `follow` says whether General still hands the look
+   down (the hierarchy). THE MATERIAL BELONGS TO THE ROW — two molecules, or a
+   protein and its lipids, do not have to be drawn with the same one (the
+   request); it used to be ONE global panel for the whole scene. */
+const SECTION_LOOK_FIELDS = ['style', 'colorBy', 'solidColor', 'opacity', 'sphere', 'bond', 'material', 'roughness', 'metalness'];
+const FOLLOW_FIELDS = ['style', 'colorBy', 'opacity', 'sphere', 'bond', 'material', 'roughness', 'metalness'];
 const defaultLookOf = (kind, sub) => {
   const spec = subsectionSpec(kind, sub);
   return {
@@ -3014,6 +3018,11 @@ const defaultLookOf = (kind, sub) => {
     opacity: 0,
     sphere: 1,
     bond: 1,
+    // « auto » = NGL's own rough, non-metallic material, and the two sliders then
+    // show NGL's own numbers (0.40 / 0.00) without writing anything.
+    material: 'auto',
+    roughness: null,
+    metalness: null,
     follow: sub !== 'general',
   };
 };
@@ -3050,6 +3059,9 @@ const mergeSectionLooks = (defaults, raw) => {
       if (Number.isFinite(entry.opacity)) dst.opacity = Math.min(1, Math.max(0, entry.opacity));
       if (Number.isFinite(entry.sphere)) dst.sphere = Math.min(RADIUS_MAX, Math.max(RADIUS_MIN, entry.sphere));
       if (Number.isFinite(entry.bond)) dst.bond = Math.min(RADIUS_MAX, Math.max(RADIUS_MIN, entry.bond));
+      if (MATERIAL_PRESET_KEYS.includes(entry.material)) dst.material = entry.material;
+      if (Number.isFinite(entry.roughness)) dst.roughness = Math.min(1, Math.max(0, entry.roughness));
+      if (Number.isFinite(entry.metalness)) dst.metalness = Math.min(1, Math.max(0, entry.metalness));
       if (typeof entry.follow === 'boolean') dst.follow = entry.follow;
     });
   });
@@ -3156,6 +3168,9 @@ const effectiveSectionLook = (looks, kind, sub) => {
     opacity: g.opacity,
     sphere: g.sphere,
     bond: g.bond,
+    material: g.material,
+    roughness: g.roughness,
+    metalness: g.metalness,
     follow: true,
   };
 };
@@ -4258,10 +4273,16 @@ const MATERIAL_KIND_OF_REP = MATERIAL_KINDS.reduce((acc, k) => {
   k.reps.forEach((r) => { acc[r] = k.key; });
   return acc;
 }, {});
-const MATERIALS_KEY = 'labViewerMaterials';
-// Effective value of one property: an explicit number wins over the preset.
-const materialValueOf = (mat, kind, prop) => {
-  const m = (mat && mat[kind]) || {};
+// The material presets a row can choose between — the keys of MATERIAL_PRESETS,
+// in the order the dropdown shows them (single source: the presets themselves).
+const MATERIAL_PRESET_KEYS = Object.keys(MATERIAL_PRESETS);
+/* Effective value of one property of ONE ROW'S material. An explicit number (a
+   slider the user moved) wins over the preset; `null` = NGL's own value. The
+   setting used to be global and keyed by rep family — it is now flat, because it
+   belongs to the ROW: two molecules of the same file, or a protein and its
+   lipids, do not have to share a material (the request). */
+const materialValueOf = (mat, prop) => {
+  const m = mat || {};
   if (m[prop] != null && Number.isFinite(Number(m[prop]))) return Number(m[prop]);
   const preset = MATERIAL_PRESETS[m.preset] || null;
   if (preset && preset[prop] != null) return preset[prop];
@@ -4284,15 +4305,16 @@ const reprOfElement = (el) => (el && (el.repr || (typeof el.getRepresentation ==
    element's own `type` is 'representation' — the opposite of useful here. */
 const repTypeOfElement = (el) => String((el && (el.name || (typeof el.getType === 'function' && el.getType()))) || '');
 // Through NGL's own parameters — the block above lists the source lines that prove
-// it is applied in place (no rebuild, no uniform poking).
+// it is applied in place (no rebuild, no uniform poking). `mat` is the material of
+// the ROW this representation draws for: { preset, roughness, metalness }.
 const applyMaterialToRep = (el, mat) => {
   if (!el || !mat) return;
   const kind = MATERIAL_KIND_OF_REP[repTypeOfElement(el)];
   if (!kind) return;   // a rep with no material (line, point, label, slice) is skipped
   const params = {};
-  const roughness = materialValueOf(mat, kind, 'roughness');
-  const metalness = materialValueOf(mat, kind, 'metalness');
-  const opacity = materialValueOf(mat, kind, 'opacity');
+  const roughness = materialValueOf(mat, 'roughness');
+  const metalness = materialValueOf(mat, 'metalness');
+  const opacity = materialValueOf(mat, 'opacity');
   if (roughness != null) params.roughness = roughness;
   if (metalness != null) params.metalness = metalness;
   if (opacity != null) params.opacity = opacity;
@@ -5821,16 +5843,11 @@ const [selOverrides, setSelOverrides] = useState([]);  // [{ kind, value, sel }]
 // drawn there to show which is which.
 const [membraneSele, setMembraneSele] = useState({});
 const [membraneInfo, setMembraneInfo] = useState(null);
-// Material of the four representation families (spheres, bonds, cartoon,
-// surface): NGL's own shader has roughness/metalness/opacity uniforms that its
-// API does not expose (see MATERIAL_PRESETS). Persisted like the rest.
-const [matSettings, setMatSettings] = useState(() => {
-  try {
-    const raw = localStorage.getItem(MATERIALS_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch { return {}; }
-});
+// NOTE: there is no global « material » state any more. The material of the four
+// rep families (spheres, bonds, cartoon, surface — see MATERIAL_PRESETS) is a
+// field of EVERY styling row (`material` / `roughness` / `metalness`), saved with
+// the other look fields: two molecules, or a protein and its lipids, can be drawn
+// with two different materials, which ONE panel for the whole scene could not do.
 const [pymolActive, setPymolActive] = useState(false);
 const [pymolScript, setPymolScript] = useState('');
 const [pymolLog, setPymolLog] = useState('');
@@ -7059,15 +7076,24 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
       if (!sele) return;
       const colorParams = sectionColorParams(look, sec.kind);
       const opacity = sectionOpacity(look);
+      /* EVERY REP OF THIS ROW REMEMBERS WHICH ROW IT DRAWS FOR. The material is a
+         property of the ROW (see defaultLookOf): `applyMaterialsToScene` reads it
+         back per representation, so two molecules — or a protein and its lipids —
+         can carry two different materials, which one global panel could not do. */
+      const addRow = (type, params) => {
+        const el = add(type, params);
+        if (el) el.__sec = { id: sec.id, kind: sec.kind, sub: spec.sub };
+        return el;
+      };
       if (look.style === 'rings' || look.style === 'plates') {
         const plates = addPlates(sele, look, spec.sub);
         const idx = plates && plates.data ? plates.data.atomIndices : null;
         if (idx && idx.length) {
-          add('licorice', { sele: `@${idx.join(',')}`, ...colorParams, radiusSize: LICORICE_BOND_RADIUS * 0.6 * (Number.isFinite(look.bond) ? look.bond : 1), opacity });
+          addRow('licorice', { sele: `@${idx.join(',')}`, ...colorParams, radiusSize: LICORICE_BOND_RADIUS * 0.6 * (Number.isFinite(look.bond) ? look.bond : 1), opacity });
         }
       } else {
         sectionStyleReps(look.style, sec.kind, look).forEach(({ type, params }) => {
-          add(type, {
+          addRow(type, {
             sele, ...colorParams, ...params,
             // The transparency regulator reaches EVERY style (the surface styles
             // already carry their own opacity from sectionStyleReps).
@@ -7078,7 +7104,7 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
       // « Electrostatic potential (only surfaces) »: the colouring needs a surface,
       // so a translucent one is added on top of the row's own style.
       if (look.colorBy === 'esp' && look.style !== 'surface' && look.style !== 'mesh') {
-        const r = add('surface', { sele, ...espColorParams(), transparent: true, opacity: 0.75 });
+        const r = addRow('surface', { sele, ...espColorParams(), transparent: true, opacity: 0.75 });
         if (r && espOut) {
           const prev = espOut.get(comp) || [];
           prev.push(r);
@@ -8318,12 +8344,10 @@ const selCompsRef = useRef({});       // key -> [representations]
 const baseCompsRef = useRef([]);      // default representations added at load
 const selStylesRef = useRef(selStyles);
 selStylesRef.current = selStyles;
-// The `set` commands of the running macro (atom properties) and the material
-// settings — read inside the rendering effect.
+// The `set` commands of the running macro (atom properties) — read inside the
+// rendering effect.
 const selOverridesRef = useRef(selOverrides);
 selOverridesRef.current = selOverrides;
-const matSettingsRef = useRef(matSettings);
-matSettingsRef.current = matSettings;
 const membraneSeleRef = useRef(membraneSele);
 membraneSeleRef.current = membraneSele;
 // The MEASUREMENT itself (head indices included): the four published clauses are
@@ -8817,37 +8841,38 @@ useEffect(() => {
 }, [status, selections, selStyles, pymolActive, hideAll, styleSignature, sstrucColors]);
 
 // ── Material: applied AFTER the representations exist ────────────────────────
-// roughness / metalness / opacity live in NGL's shader UNIFORMS, not in its
-// parameters (see MATERIAL_PRESETS), so every rebuild loses them: this effect
-// re-applies the four family settings to each representation of each component,
-// as soon as anything is redrawn or a slider moves.
+// roughness / metalness live in NGL's shader UNIFORMS, not in its parameters
+// (see MATERIAL_PRESETS), so every rebuild loses them: this effect re-applies the
+// material OF THE ROW each representation was built for (`rep.__sec`, written by
+// buildSectionReps) as soon as anything is redrawn or a control moves. The
+// material is therefore per MOLECULE and per ROW — two molecules of the same file
+// can carry two different ones — and it is saved with the rest of the look.
 const applyMaterialsToScene = () => {
-  const mat = matSettingsRef.current || {};
   const comps = [componentRef.current]
     .concat((extraCompsRef.current || []).map((e) => e && e.comp))
     .filter(Boolean);
   comps.forEach((comp) => {
     if (typeof comp.eachRepresentation !== 'function') return;
-    try { comp.eachRepresentation((rep) => applyMaterialToRep(rep, mat)); } catch { /* ignore */ }
+    try {
+      comp.eachRepresentation((rep) => {
+        const where = rep && rep.__sec;
+        if (!where) return;   // a selection / overlay rep: NGL's own material
+        const look = effectiveSectionLook(sectionTreeOf(where.id, where.kind), where.kind, where.sub);
+        applyMaterialToRep(rep, { preset: look.material, roughness: look.roughness, metalness: look.metalness });
+      });
+    } catch { /* ignore */ }
   });
   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* ignore */ }
 };
 useEffect(() => {
   applyMaterialsToScene();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [matSettings, status, selStyles, pymolActive, hideAll, styleSignature]);
+}, [sectionCatalog, status, selStyles, pymolActive, hideAll, styleSignature]);
 
-// The material of the four families survives a reload like every other look.
-useEffect(() => {
-  try { localStorage.setItem(MATERIALS_KEY, JSON.stringify(matSettings || {})); } catch { /* ignore */ }
-}, [matSettings]);
-
-const setMatPreset = (kind, preset) => setMatSettings((prev) => ({ ...prev, [kind]: { preset } }));
-const setMatValue = (kind, prop, value) => setMatSettings((prev) => ({ ...prev, [kind]: { ...(prev[kind] || {}), [prop]: value } }));
-// NGL's own material is the rough, non-metallic one: that is what « auto »
-// shows on the sliders until the user moves them.
-const matSliderValue = (kind, prop) => {
-  const v = materialValueOf(matSettings, kind, prop);
+// The two sliders of a row's material: NGL's own rough, non-metallic material is
+// what « auto » shows until the user moves them.
+const lookMatValue = (look, prop) => {
+  const v = materialValueOf(look, prop);
   if (v != null) return v;
   return prop === 'metalness' ? 0 : 1;
 };
@@ -9702,6 +9727,35 @@ const renderSectionRow = (sec, sub) => {
           className="text-[10px] font-bold text-slate-500 hover:text-slate-800 shrink-0 ml-auto"
           title="↺ Put THIS row back to the defaults of its kind">↺</button>
       </div>
+      {/* 🎛 THE MATERIAL OF THIS ROW — and of this row ONLY. roughness / metalness
+          are NGL's own shader uniforms (see MATERIAL_PRESETS), and they used to be
+          set once for the whole scene, per rep family: two molecules of the same
+          file, or a protein and its lipids, could not be drawn differently (the
+          request). The value follows General like the other fields (`← G`), and the
+          two sliders override the preset for this row alone. */}
+      {look.style !== 'hide' && (
+        <div className="flex items-center gap-1">
+          <span className="text-[9px] text-slate-400 font-bold shrink-0"
+            title={`Material of « ${spec.label} » only — roughness (r) and metalness (m), NGL's own material parameters. Two molecules, or two parts of one molecule, can carry two different materials`}>🎛</span>
+          <select value={look.material} onChange={(e) => set('material', e.target.value)}
+            className="border border-slate-300 rounded text-[10px] py-0.5 px-0.5 bg-white shrink-0"
+            title={`Material of « ${spec.label} »: auto = NGL's own rough surface (0.40 / 0.00), matte, gloss, metallic, glass (translucent)`}>
+            {MATERIAL_PRESET_KEYS.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+          <input type="range" min="0" max="1" step="0.05" value={lookMatValue(look, 'roughness')}
+            onChange={(e) => set('roughness', Number(e.target.value))}
+            className="accent-violet-600 w-12 shrink-0" aria-label={`${spec.label} roughness`}
+            title="roughness — 0 = mirror smooth, 1 = fully matte (NGL's default 0.40)" />
+          <input type="range" min="0" max="1" step="0.05" value={lookMatValue(look, 'metalness')}
+            onChange={(e) => set('metalness', Number(e.target.value))}
+            className="accent-violet-600 w-12 shrink-0" aria-label={`${spec.label} metalness`}
+            title="metalness — 0 = organic / plastic, 1 = metal (NGL's default 0.00)" />
+          <span className="text-[8px] text-slate-400 font-mono shrink-0"
+            title="roughness / metalness applied to this row">
+            {lookMatValue(look, 'roughness').toFixed(2)}/{lookMatValue(look, 'metalness').toFixed(2)}
+          </span>
+        </div>
+      )}
       {isSurface && (
         <span className="text-[9px] text-slate-400 italic">a surface: the transparency above IS its opacity (100 % = wireframe-visible mesh)</span>
       )}
@@ -12629,50 +12683,13 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
     </div>
     </>
     )}
-    {/* ── MATERIAL of the four representation families ────────────────────────
-        PyMOL's spheres look glossier/metallic than NGL's default flat surface.
-        NGL 2.4 does have the two properties PyMOL exposes — `roughness` and
-        `metalness`, parameters of every Representation, forwarded to the physical
-        shader as uniforms — they are only absent from NGL's own docs. The viewer
-        sets them through `repr.setParameters`, so spheres, bonds, cartoon and
-        surface each take their own material, live, without rebuilding anything,
-        and the choice is persisted. « auto » keeps NGL's own material (roughness
-        0.4, metalness 0.0). */ }
-    <details className="shrink-0 border-t border-slate-100 pt-1.5">
-      <summary className="text-[10px] font-black text-slate-600 uppercase cursor-pointer select-none"
-        title="Material of the spheres, the bonds, the cartoon and the surface — roughness (r) and metalness (m), NGL's own material parameters">
-        🎛 Material
-      </summary>
-      <div className="mt-1 flex flex-col gap-1">
-        {MATERIAL_KINDS.map(({ key, label }) => {
-          const preset = (matSettings[key] && matSettings[key].preset) || 'auto';
-          return (
-            <div key={key} className="flex items-center gap-1">
-              <span className="text-[9px] font-bold text-slate-500 w-10 shrink-0">{label}</span>
-              <select value={preset} onChange={(e) => setMatPreset(key, e.target.value)}
-                className="text-[9px] border border-slate-300 rounded bg-white text-slate-600 h-5"
-                title={`Material of the ${label.toLowerCase()}: auto = NGL's own rough surface, matte, gloss, metallic, glass (translucent)`}>
-                {['auto', 'matte', 'gloss', 'metallic', 'glass'].map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
-              <input type="range" min="0" max="1" step="0.05" value={matSliderValue(key, 'roughness')}
-                onChange={(e) => setMatValue(key, 'roughness', parseFloat(e.target.value))}
-                className="accent-violet-600 w-12" title="roughness — 0 = mirror smooth, 1 = fully matte (NGL's default)" />
-              <input type="range" min="0" max="1" step="0.05" value={matSliderValue(key, 'metalness')}
-                onChange={(e) => setMatValue(key, 'metalness', parseFloat(e.target.value))}
-                className="accent-violet-600 w-12" title="metalness — 0 = organic/plastic, 1 = metal" />
-              <span className="text-[8px] text-slate-400 font-mono w-10 shrink-0"
-                title="roughness / metalness currently applied">
-                {(matSliderValue(key, 'roughness')).toFixed(2)}/{(matSliderValue(key, 'metalness')).toFixed(2)}
-              </span>
-            </div>
-          );
-        })}
-        <div className="text-[9px] text-slate-400 leading-snug">
-          r/m = roughness / metalness. Moving a slider overrides the preset for that family only; the per-selection
-          <span className="font-bold"> transp </span> slider (above) sets its own opacity.
-        </div>
-      </div>
-    </details>
+    {/* ── MATERIAL: not here any more ─────────────────────────────────────────
+        It used to be ONE panel at the bottom of this bar, with four families
+        (spheres · bonds · cartoon · surface) for the WHOLE scene — so two
+        molecules of the same file could not be drawn with two different
+        materials. The 🎛 control now belongs to EVERY row of the « Molecules ·
+        styling » window (see renderSectionRow), i.e. to a molecule AND a part of
+        it, and it is saved with the rest of that row's look. */ }
     {/* The ⏹ of a REAL long operation only (a structure / trajectory load): a
         trajectory that is merely PLAYING is stopped by its own ▶ / ⏸ button, so no
         Abort panel is drawn for it. */}
