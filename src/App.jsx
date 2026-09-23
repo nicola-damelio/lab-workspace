@@ -30,7 +30,7 @@ import { NotebookModule, CalculationsModule, PublicationsModule, ImageBuilderMod
 import { applyPapersRecovery, readPublications, readExcludedPubs, readRelevantSubjects, loadRelevantPapers } from './components/Publications';
 import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud, setProjectDatasetScope, removeProjectsOfDataset, loadDeletedProjects, adoptDeletedProjects } from './components/AppModules/projectsModule';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
-import {normalizeOperators} from './utils/auth';
+import { normalizeOperators, memberIdentity } from './utils/auth';
 /* Les règles des boîtes de stockage (emplacement valide, champs obligatoires,
    suppression d'un meuble) : App les applique au CHARGEMENT d'un dataset pour
    qu'une boîte ne reste jamais sans emplacement visible (voir plus bas,
@@ -523,6 +523,11 @@ const FIREBASE_CONFIG = {
   appId: '1:855790481107:web:a566455d3f13a48a20ae26'
 };
 
+/* Marqueur d'onglet de la session (voir onAuthStateChanged) : « la session
+   Firebase appartient à l'onglet qui s'est connecté ». Marqueur absent → la
+   session vient d'une exécution précédente du navigateur, on la ferme. */
+const SESSION_TAB_KEY = 'labSessionTab';
+
 let auth,
   db,
   appId = 'lab-workspace-app';
@@ -534,6 +539,20 @@ try {
     }
 
     auth = window.firebase.auth();
+    /* La session Firebase ne doit PAS survivre à la fermeture du navigateur :
+       par défaut le SDK range le jeton de rafraîchissement dans IndexedDB
+       (« local »), et l'écouteur d'état reconstruisait donc l'identité à
+       chaque chargement — quiconque ouvrait l'application sur ce poste
+       entrait sans mot de passe. « session » : la session vit et meurt avec
+       l'onglet / la fenêtre. */
+    try {
+      if (typeof auth.setPersistence === 'function'
+        && window.firebase.auth.Auth && window.firebase.auth.Auth.Persistence) {
+        auth.setPersistence(window.firebase.auth.Auth.Persistence.SESSION);
+      }
+    } catch (e) {
+      console.warn('Persistance de session Firebase non modifiée:', e && e.message);
+    }
     db = window.firebase.firestore();
   }
 } catch (e) {
@@ -1201,6 +1220,37 @@ if (customType === 'dosy') {
       return stored ? JSON.parse(stored) : null;
     } catch { return null; }
   });
+  /* Lu par l'écouteur d'état Firebase (effet monté une seule fois) : la liste
+     d'opérateurs et l'identité du moment, sans réabonner l'écouteur à chaque
+     changement. `sessionJustSignedInRef` : une connexion par mot de passe est
+     en cours, donc la session Firebase qui arrive appartient bien à CET onglet. */
+  const operatorsRef = useRef(operators);
+  const identityRef = useRef(currentUser);
+  const sessionJustSignedInRef = useRef(false);
+  useEffect(() => { operatorsRef.current = operators; }, [operators]);
+  useEffect(() => { identityRef.current = currentUser; }, [currentUser]);
+
+  /* Identité canonique d'une session + mémorisation (voir memberIdentity).
+     Les DEUX écrans de connexion ET l'écouteur d'état Firebase passent par
+     ici : ils ne peuvent donc plus écrire deux identités différentes pour le
+     même utilisateur (l'écouteur remplaçait l'id de l'opérateur — et avec lui
+     le lien `personnelId` de sa fiche Personnel — par l'uid Firebase, au gré
+     de l'ordre d'arrivée des deux écritures).
+     `rememberTab` : la session Firebase qui va naître appartient à CET onglet. */
+  const adoptIdentity = useCallback((entry, { rememberTab = false } = {}) => {
+    const identity = memberIdentity(entry, {
+      operators: operatorsRef.current,
+      previous: identityRef.current,
+    });
+    identityRef.current = identity;
+    setCurrentUser(identity);
+    try { sessionStorage.setItem('labCurrentUser', JSON.stringify(identity)); } catch { /* ignore */ }
+    if (rememberTab) {
+      sessionJustSignedInRef.current = true;
+      try { sessionStorage.setItem(SESSION_TAB_KEY, '1'); } catch { /* ignore */ }
+    }
+    return identity;
+  }, []);
   const [loginModal, setLoginModal] = useState(null); // null | { targetScientistName?: string, onSuccess?: fn, isEntryGate?: bool }
   const [authSettings, setAuthSettings] = useState(() => {
     try {
@@ -1476,10 +1526,9 @@ if (customType === 'dosy') {
     // ── SESSION FIREBASE = IDENTITÉ RÉELLE ──────────────────────────────────
     // Le mot de passe est vérifié par le serveur de jetons (server/), qui signe
     // un jeton Firebase portant les revendications « lab », nom et rôle : c'est
-    // ce jeton que les règles Firestore (firestore.rules) exigent. On ne
-    // déconnecte donc plus le visiteur au chargement — on ÉCOUTE l'état
-    // d'authentification et on reconstruit l'identité depuis ces revendications
-    // signées (donc non falsifiables via localStorage / la console).
+    // ce jeton que les règles Firestore (firestore.rules) exigent. On écoute
+    // l'état d'authentification et on reconstruit l'identité depuis ces
+    // revendications signées (donc non falsifiables via localStorage).
     setIsCloudReady(true);
     setNeedsLogin(false);
 
@@ -1487,30 +1536,65 @@ if (customType === 'dosy') {
       setIsCloudReady(true);
       setNeedsLogin(false);
       if (!fbUser) { setUser(null); return; }
+      /* La session appartient-elle à CET onglet ? La persistance Firebase est
+         « session » (voir l'initialisation) et le marqueur est posé au moment
+         de la connexion. Sans marqueur, la session vient d'une exécution
+         PRÉCÉDENTE du navigateur (persistance « local » historique, jeton de
+         rafraîchissement gardé dans IndexedDB) : on la ferme — sinon fermer le
+         navigateur ne déconnectait jamais et le poste restait ouvert à
+         quiconque s'y asseyait. */
+      let sameTab = false;
+      try { sameTab = sessionStorage.getItem(SESSION_TAB_KEY) === '1'; } catch { sameTab = false; }
+      if (!sameTab && sessionJustSignedInRef.current) {
+        try { sessionStorage.setItem(SESSION_TAB_KEY, '1'); } catch { /* ignore */ }
+        sameTab = true;
+      }
+      if (!sameTab) {
+        console.warn('[auth] session Firebase d’une exécution précédente — fermeture (la session suit désormais l’onglet).');
+        setUser(null);
+        setCurrentUser(null);
+        identityRef.current = null;
+        try { sessionStorage.removeItem('labCurrentUser'); } catch { /* ignore */ }
+        try { await auth.signOut(); } catch { /* ignore */ }
+        return;
+      }
       setUser(fbUser);
+      let claims = null;
       try {
         const tokenResult = await fbUser.getIdTokenResult();
-        const claims = (tokenResult && tokenResult.claims) || {};
-        if (claims.lab === true) {
-          setCurrentUser({
-            id: fbUser.uid,
-            name: claims.name || fbUser.displayName || '',
-            role: claims.role === 'superuser' ? 'superuser' : 'user'
-          });
-        } else {
-          // Session Firebase SANS jeton du serveur (ex. compte créé par une
-          // inscription publique avec la clé API) : aucun accès aux données.
-          console.warn('Session Firebase sans revendication « lab » — déconnexion.');
-          setCurrentUser(null);
-          try { await auth.signOut(); } catch { /* ignore */ }
-        }
+        claims = (tokenResult && tokenResult.claims) || {};
       } catch (e) {
+        // Revendications illisibles (réseau) : on GARDE l'identité déjà connue
+        // — déconnecter quelqu'un qui vient de saisir son mot de passe serait
+        // pire que de laisser Firestore refuser la lecture.
         console.warn('Lecture des revendications du jeton impossible:', e && e.message);
       }
+      if (!claims) return;
+      if (claims.lab !== true) {
+        // Session Firebase SANS jeton du serveur (ex. compte créé par une
+        // inscription publique avec la clé API) : aucun accès aux données.
+        console.warn('Session Firebase sans revendication « lab » — déconnexion.');
+        setCurrentUser(null);
+        identityRef.current = null;
+        try { await auth.signOut(); } catch { /* ignore */ }
+        return;
+      }
+      /* MÊME règle que la connexion par mot de passe (memberIdentity) : l'id de
+         l'opérateur est conservé, donc le lien `personnelId` vers sa fiche
+         Personnel. Le remplacer par l'uid Firebase faisait retomber le profil
+         d'administration sur la fiche « générique » (Non permanent, page
+         Congés) selon l'ordre d'arrivée des deux écritures — d'où
+         l'utilisateur faux « une fois sur deux », corrigé par un
+         rechargement. */
+      adoptIdentity({
+        id: fbUser.uid,
+        name: claims.name || fbUser.displayName || '',
+        role: claims.role,
+      });
     });
 
     return () => { try { unsubscribe(); } catch { /* ignore */ } };
-  }, []);
+  }, [adoptIdentity]);
 
   // ── ÉTAT DE L'AUTHENTIFICATION SERVEUR + LISTE DE L'ÉQUIPE ────────────────
   // `ready` (serveur prêt ET équipe publiée) impose la session Firebase ;
@@ -1601,8 +1685,13 @@ if (customType === 'dosy') {
   // accessible après un « Sign out » (le jeton n'expire qu'au bout d'une heure).
   const handleSignOut = useCallback(async () => {
     setCurrentUser(null);
+    identityRef.current = null;
+    sessionJustSignedInRef.current = false;
     setUnlockedTestIds(new Set());
     try { sessionStorage.removeItem('labCurrentUser'); } catch { /* ignore */ }
+    /* Marqueur d'onglet : sans ce nettoyage, l'écouteur d'état prendrait la
+       session suivante pour une session de CET onglet. */
+    try { sessionStorage.removeItem(SESSION_TAB_KEY); } catch { /* ignore */ }
     await clearFirebaseSession();
   }, []);
 
@@ -2295,6 +2384,14 @@ if (customType === 'dosy') {
   useEffect(() => {
     if (!currentUser) return;
     const normalized = normalizeOperators(operators);
+    /* Une liste VIDE ne dit RIEN de l'équipe (Firestore pas encore lu, cache
+       vidé — première connexion sur un poste neuf) : en conclure « ce compte
+       n'existe plus » déconnectait la personne juste après sa connexion, et
+       comme la session Firebase, elle, restait ouverte, le portail de
+       connexion ne se réaffichait même pas — il ne restait qu'un profil
+       générique (uid inconnu de la liste) jusqu'au rechargement. On attend
+       donc une liste non vide pour juger. */
+    if (!normalized.length) return;
     const stillExists = normalized.some((op) => op.id === currentUser.id);
     if (!stillExists) {
       setCurrentUser(null);
@@ -4476,16 +4573,30 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
               // encore fermées. À régler AVANT de publier les règles.
               console.warn('[auth] connexion serveur indisponible:', res.error, res.message);
             } else {
+              // La session Firebase qui va naître appartient à CET onglet
+              // (marqueur posé avant, sinon l'écouteur d'état prendrait la
+              // connexion en cours pour une session d'une exécution antérieure).
+              sessionJustSignedInRef.current = true;
               const applied = await applyServerSession(res.token);
-              if (!applied.ok) return { error: applied.message };
-              const identity = { id: res.id || user.id, name: res.name || user.name, role: res.role || user.role };
-              setCurrentUser(identity);
-              try { sessionStorage.setItem('labCurrentUser', JSON.stringify(identity)); } catch { /* ignore */ }
+              if (!applied.ok) {
+                sessionJustSignedInRef.current = false;
+                return { error: applied.message };
+              }
+              adoptIdentity({
+                id: res.id || user.id,
+                name: res.name || user.name,
+                role: res.role || user.role,
+                personnelId: user.personnelId,
+              }, { rememberTab: true });
               return undefined;
             }
           }
-          setCurrentUser(user);
-          try { sessionStorage.setItem('labCurrentUser', JSON.stringify(user)); } catch { /* ignore */ }
+          adoptIdentity({
+            id: user.id,
+            name: user.name,
+            role: user.role,
+            personnelId: user.personnelId,
+          }, { rememberTab: true });
           return undefined;
         }}
         onRecovery={() => {
@@ -5390,20 +5501,35 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
               if (serverAuthReady) return { error: res.message || 'Connexion refusée par le serveur.' };
               console.warn('[auth] connexion serveur indisponible:', res.error, res.message);
             } else {
+              // Même règle d'identité que l'écran de connexion (memberIdentity) :
+              // l'appelant reçoit l'identité CANONIQUE (id opérateur +
+              // personnelId), pas un objet réduit à { id, name, role }.
+              sessionJustSignedInRef.current = true;
               const applied = await applyServerSession(res.token);
-              if (!applied.ok) return { error: applied.message };
-              const identity = { id: res.id || user.id, name: res.name || user.name, role: res.role || user.role };
-              setCurrentUser(identity);
-              try { sessionStorage.setItem('labCurrentUser', JSON.stringify(identity)); } catch { /* ignore */ }
+              if (!applied.ok) {
+                sessionJustSignedInRef.current = false;
+                return { error: applied.message };
+              }
+              const identity = adoptIdentity({
+                id: res.id || user.id,
+                name: res.name || user.name,
+                role: res.role || user.role,
+                personnelId: user.personnelId,
+              }, { rememberTab: true });
               if (loginModal.onSuccess) loginModal.onSuccess(identity);
               else setLoginModal(null);
               return undefined;
             }
           }
+          const identity = adoptIdentity({
+            id: user.id,
+            name: user.name,
+            role: user.role,
+            personnelId: user.personnelId,
+          }, { rememberTab: true });
           if (loginModal.onSuccess) {
-            loginModal.onSuccess(user);
+            loginModal.onSuccess(identity);
           } else {
-            setCurrentUser(user);
             setLoginModal(null);
           }
           return undefined;

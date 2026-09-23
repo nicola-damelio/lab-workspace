@@ -759,15 +759,40 @@ export const adminAccessProfile = (currentUser, operators, personnel) => {
   const personList = Array.isArray(personnel) ? personnel : [];
   let person = null;
   if (fresh) {
-    const pid = fresh.personnelId;
-    if (pid) person = personList.find((p) => p && p.id === pid) || null;
-    if (!person) {
-      const key = (s) => String(s || '')
-        .toLowerCase()
-        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-z0-9]+/g, ' ').trim();
-      const wanted = key(fresh.name);
-      const wantedTokens = wanted ? wanted.split(/\s+/).sort().join(' ') : '';
+    const key = (s) => String(s || '')
+      .toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ').trim();
+    const wanted = key(fresh.name);
+    const wantedTokens = wanted ? wanted.split(/\s+/).sort().join(' ') : '';
+    /* Liaisons possibles, de la plus fiable à la moins fiable :
+       1. `personnelId` de la fiche opérateur retrouvée par ID (le cas normal) ;
+       2. `personnelId` porté par l'identité elle-même (roster / stockage) ;
+       3. la fiche opérateur retrouvée par le NOM. Ce troisième cas est
+          indispensable : l'écouteur d'état Firebase ne connaît que l'uid, donc
+          l'id opérateur — et avec lui `personnelId` — se perdait ; le profil
+          retombait alors sur le statut minimal « Non permanent » sans
+          fonction, c'est-à-dire les pages d'un utilisateur générique, jusqu'au
+          rechargement suivant (selon l'ordre d'arrivée des deux écritures :
+          le défaut n'apparaissait donc que par intermittence). */
+    const pids = [];
+    const pushPid = (pid) => {
+      const id = String(pid == null ? '' : pid).trim();
+      if (id && pids.indexOf(id) === -1) pids.push(id);
+    };
+    pushPid(fresh.personnelId);
+    pushPid(currentUser && currentUser.personnelId);
+    if (wanted) {
+      const byName = list.find((op) => op && op.personnelId && (
+        key(op.name) === wanted
+        || (!!wantedTokens && key(op.name).split(/\s+/).sort().join(' ') === wantedTokens)
+      ));
+      if (byName) pushPid(byName.personnelId);
+    }
+    person = pids.map((id) => personList.find((p) => p && p.id === id)).find(Boolean) || null;
+    /* Dernier recours (anciens imports) : correspondance de nom avec la fiche
+       Personnel elle-même. */
+    if (!person && wantedTokens) {
       person = personList.find((p) => {
         const nk = key(p && p.nom);
         if (!nk || !wantedTokens) return false;

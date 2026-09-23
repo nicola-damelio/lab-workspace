@@ -624,6 +624,23 @@ secours reste active tant que les règles sont ouvertes.
 * La session est désormais un jeton signé (renouvelé automatiquement) ; le
   bouton **Sign out** (barre latérale et page d'accueil) ferme réellement
   l'accès — utile sur un poste partagé.
+* **La session suit l'onglet** (`setPersistence(SESSION)` + marqueur
+  `labSessionTab` dans `sessionStorage`) : fermer le navigateur **déconnecte**.
+  Avant, le jeton de rafraîchissement restait dans IndexedDB (« local ») et la
+  session se rouvrait toute seule au chargement suivant — sur un poste partagé,
+  la personne suivante entrait sans mot de passe. Une session ouverte par une
+  version ANTÉRIEURE est fermée au premier chargement (aucun marqueur d'onglet) ;
+  si le navigateur la rouvrait ensuite, un nouveau mot de passe est demandé.
+  ⚠️ Le « reprendre là où j'en étais » de Chrome/Firefox peut restaurer
+  `sessionStorage` (donc la session) : si cela gêne, une durée de vie (TTL) et
+  une déconnexion d'inactivité peuvent être ajoutées (`authSettings`).
+* **L'identité de la session est construite par UNE SEULE règle**
+  (`memberIdentity`, `src/utils/auth.js`) : l'id de la fiche opérateur — et avec
+  lui le lien `personnelId` vers la fiche Personnel du module Administration —
+  n'est plus remplacé par l'uid Firebase par l'écouteur d'état. C'était la
+  cause du profil « d'un utilisateur générique » après connexion (page Congés
+  seule, corrigé par un rechargement) : le profil ne retrouvait plus la fiche
+  et retombait sur le statut minimal.
 * Ajouter/retirer un membre : `Setup → Équipe & accès` (publication automatique
   si le jeton administrateur est enregistré). Un changement de **rôle** prend
   effet à la prochaine connexion de la personne.
@@ -714,5 +731,12 @@ secours reste active tant que les règles sont ouvertes.
    connessione via server, (6) pubblicare `firestore.rules` nella Console
    Firebase, (7) verificare che un accesso anonimo risponda **403**.
 4. Per l'équipe nulla cambia: stessi nomi, stesse password, stesso schermo.
-5. In caso di blocco: rimettere le regole permissive (sezione 4) — si torna
+5. **Sessione**: adesso **segue la scheda** — chiudendo il browser si viene
+   disconnessi (prima la sessione si riapriva da sola e, su un PC condiviso, la
+   persona successiva entrava senza password). Inoltre l'utente connesso è
+   sempre quello giusto: l'identità è costruita da **una sola** regola
+   (`memberIdentity`, `src/utils/auth.js`) e non perde più il collegamento con
+   la scheda Personnel — prima capitava di vedere le pagine di un « utente
+   generico » finché non si ricaricava la pagina.
+6. In caso di blocco: rimettere le regole permissive (sezione 4) — si torna
    subito alla situazione precedente.
