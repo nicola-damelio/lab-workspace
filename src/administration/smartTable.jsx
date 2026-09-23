@@ -165,6 +165,14 @@ export const SmartTable = ({
   /* Classe CSS ajoutée à chaque ligne (chaîne, ou fonction (row, idx) → chaîne).
      Utilisée par ex. pour le code couleur Permanent / Non permanent. */
   rowClass,
+  /* Ligne CLIQUABLE (facultatif) : `onRowClick(row)` est appelé au clic sur une
+     ligne pour laquelle `rowClickable(row, idx)` est vrai (par défaut : toutes).
+     Les clics sur un bouton, un lien, un champ ou une cellule chiffrée
+     sélectionnable (somme de cellules) sont ignorés : les actions de ligne et la
+     sélection des montants restent utilisables. Sans `onRowClick`, le tableau se
+     comporte exactement comme avant. */
+  onRowClick,
+  rowClickable,
   /* Hauteur maxi du bloc défilant : la 1re ligne (en-têtes) reste toujours
      visible (colonne de définitions épinglée) pendant le défilement vertical. */
   maxHeight = '62vh',
@@ -757,11 +765,23 @@ export const SmartTable = ({
               {visibleRows.map((row, idx) => {
                 const extraRowClass = typeof rowClass === 'function' ? rowClass(row, idx) : (rowClass || '');
                 const rk = String(rowKey(row, idx));
+                const clickable = typeof onRowClick === 'function'
+                  && (typeof rowClickable === 'function' ? !!rowClickable(row, idx) : true);
+                const activateRow = clickable
+                  ? (e) => {
+                    /* Un bouton, un lien, un champ ou une cellule chiffrée
+                       sélectionnable garde son propre rôle : le clic « ligne »
+                       ne s'applique qu'ailleurs. */
+                    if (e.target.closest('button, a, input, select, textarea, label, .cursor-cell')) return;
+                    onRowClick(row, e);
+                  }
+                  : undefined;
                 return (
                   <tr
                     key={rowKey(row, idx)}
                     data-rk={rk}
-                    className={`border-b border-slate-100 last:border-0 hover:bg-blue-50/50 align-top ${extraRowClass}`}
+                    onClick={activateRow}
+                    className={`border-b border-slate-100 last:border-0 hover:bg-blue-50/50 align-top ${clickable ? 'cursor-pointer' : ''} ${extraRowClass}`}
                   >
                     {visibleCols.map((col, ci) => {
                       const raw = rawValueOf(col, row);

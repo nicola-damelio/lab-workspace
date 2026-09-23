@@ -41,6 +41,10 @@ export async function load(url, context, next) {
         'export const sendAdminGmail = async () => ({ ok: false, reason: "bouchon de test (hors navigateur)" });',
         'export const uploadLocalFile = async (arg) => (typeof M().uploadLocalFile === "function" ? M().uploadLocalFile(arg) : { ok: false, reason: "bouchon de test (hors navigateur)" });',
         'export const cloudBackendAvailable = () => M().cloud === true;',
+        // Mode « espace partagé » du Drive (driveUpload.js) : lu par les helpers de
+        // rangement (administration/driveFiling.js) et le miroir du Drive. Sans
+        // mock il vaut false — le comportement par défaut des suites existantes.
+        'export const sharedWorkspaceMode = () => M().sharedWorkspaceMode === true;',
         // Ce qui vient d’arriver au dernier upload (« mis en file de reprise ? ») :
         // figuresLibrary s’en sert pour DIRE pourquoi la copie cloud manque.
         'export const takeLastUploadQueueInfo = () => (typeof M().takeLastUploadQueueInfo === "function" ? M().takeLastUploadQueueInfo() : null);',
@@ -85,6 +89,9 @@ export async function load(url, context, next) {
         'export const getDriveFileRegistry = () => (typeof M().getDriveFileRegistry === "function" ? M().getDriveFileRegistry() : {});',
         'export const registerDriveFile = (id, name, ctx, path) => (typeof M().registerDriveFile === "function" ? M().registerDriveFile(id, name, ctx, path) : undefined);',
         'export const trashDriveFile = async (id) => (typeof M().trashDriveFile === "function" ? M().trashDriveFile(id) : false);',
+        // migrateTestImages.js (importé par les helpers de signature des devis /
+        // BC) importe aussi la mise à la corbeille d'une chaîne de dossiers vides.
+        'export const trashEmptyFolderChain = async (id) => (typeof M().trashEmptyFolderChain === "function" ? M().trashEmptyFolderChain(id) : false);',
         // Téléchargement et recherche Drive : la restauration automatique
         // (utils/driveRestore.js) s'en sert ; un faux Drive les fournit pour que
         // le mécanisme soit vérifié de bout en bout hors navigateur.

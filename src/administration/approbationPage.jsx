@@ -65,18 +65,17 @@ import {
   isApprovalPending, approvalStatusOf,
 } from './adminSchema';
 import { findRecetteByLabel } from './recetteLink';
-import { devisCompleteOf } from './transferAchats';
-import { uploadLocalFile, cloudBackendAvailable, renameDriveFile, driveFetch } from '../utils/driveUpload';
+import { devisCompleteOf, devisAwaitingBc, devisHasBc, isDevisSigned } from './transferAchats';
+import { uploadLocalFile, cloudBackendAvailable } from '../utils/driveUpload';
+import { fileBudgetDocs, hasApprovedSuffix, withApprovedSuffix } from './driveFiling';
+/* Signature du superutilisateur sur les documents déposés (copie signée PDF),
+   nom conventionnel des fichiers et rangement Budget_labo/… : ce code vit dans
+   un module à part, partagé avec le transfert « ✓ Signature et BC » de la page
+   « Achats prévus / souhaités » (le devis est signé dès le transfert). */
 import {
-  fileBudgetDocs,
-  driveFileIdFromUrl,
-  budgetDocFileName,
-  hasApprovedSuffix,
-  withApprovedSuffix,
-} from './driveFiling';
-import { stampPdfWithSignature, makeSignedPdfFromImage } from './approvalSignature';
+  buildSignedDeposit, budgetLaboPath, depositDocDriveNameOf, renameDepositDriveFileTo,
+} from './depositSigning';
 import { scopeFonctions } from './ownScope';
-import { downloadDriveFileBytes } from '../utils/migrateTestImages';
 import {
   sendAdminMail, personEmailOf, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
   notificationTargetOf,
@@ -103,90 +102,18 @@ const todayIso = () => {
 const newGroupeAchatId = () =>
   `produit_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}`;
 
-/* ── Convention de nommage des fichiers devis / BC déposés ──────────────────
-   À chaque dépôt, le fichier est stocké dans Budget_labo/<année>/Devis|BC avec
-   le nom conventionnel du laboratoire (voir ./driveFiling.js) :
-     Devis_<N° devis>_<ligne budgétaire>_<fournisseur>_<demandeur>_<date>_<description>
-     BC_<N° BC>_<ligne budgétaire>_<fournisseur>_<demandeur>_<date>_<description>
-   Quand le devis / BC est approuvé, la marque « _approuvé » est ajoutée à la
-   fin du nom (juste avant l’extension). La convention n’est appliquée que si
-   le N° du document est connu ; sinon on garde le nom d’origine du fichier. */
-const depositDocDriveNameOf = (r) => {
-  const isBc = !!r && r.kind === 'bc';
-  const code = txt(r && (isBc ? r.numBC : r.numDevis));
-  if (!code) return '';
-  return budgetDocFileName({
-    prefix: isBc ? 'BC' : 'Devis',
-    code,
-    ligne: txt(r && r.ligneBudgetaire),
-    fournisseur: txt(r && r.fournisseur),
-    demandeur: txt(r && r.demandeur),
-    date: txt(r && (r.date || r.dateDepot)),
-    /* L’objet saisi (description) termine le nom après un « _ » : on reconnaît
-       le contenu du document sans avoir à l’ouvrir. */
-    description: txt(r && r.description),
-    fileName: txt(r && r.fichierNom),
-  });
-};
+/* ── Convention de nommage et copie signée des fichiers déposés ──────────────
+   Le nom conventionnel (Budget_labo/<année>/Devis|BC ›
+   Devis_<N°>_<ligne>_<fournisseur>_<demandeur>_<date>_<objet>, « _approuvé »
+   ajouté après approbation) et la copie signée « …_approuvé_signé.pdf » vivent
+   dans ./depositSigning.js — le transfert « ✓ Signature et BC » de la page
+   « Achats prévus / souhaités » les utilise aussi, puisqu'il signe le devis. */
 
-/** Nom final attendu pour le fichier d’un devis / BC : convention du
- *  laboratoire, plus la marque « _approuvé » quand la ligne est approuvée. */
-const depositDocDriveFinalName = (r) => {
-  const base = depositDocDriveNameOf(r);
-  if (!base) return txt(r && r.fichierNom);
-  return r && r.statut === APPROVAL_APPROVED && !hasApprovedSuffix(base)
-    ? withApprovedSuffix(base)
-    : base;
-};
-
-/* ── Copie signée créée à l'approbation d'un devis / BC ─────────────────── */
-/** Type effectif du fichier déposé : 'pdf' | 'image' | 'other'. L'extension
- *  d'origine ou le type MIME (renseigné au téléversement) sont utilisés. */
-const depositFileKindOf = (rec) => {
-  const name = txt(rec && (rec.fichierNom || rec.fichierUrl));
-  const mime = String(rec && rec.fichierMime || '').toLowerCase();
-  if (mime === 'application/pdf' || /\.pdf(?:[?#].*)?$/i.test(name)) return 'pdf';
-  if (mime.startsWith('image/') || /\.(jpe?g|png)(?:[?#].*)?$/i.test(name)) return 'image';
-  return 'other';
-};
-
-/** Type RÉEL d'un document d'après ses premiers octets : 'pdf' | 'image/png' |
- *  'image/jpeg' | '' (inconnu). Le contenu fait foi : un fichier mal étiqueté
- *  (ex. un vrai PDF nommé « …png » par le Drive) est reconnu correctement, ce
- *  qui garantit qu'une copie signée est toujours un PDF et jamais une image. */
-const sniffBudgetDocBytes = (bytes) => {
-  const a = bytes && bytes.length > 0 ? bytes[0] : -1;
-  const b = bytes && bytes.length > 1 ? bytes[1] : -1;
-  const c = bytes && bytes.length > 2 ? bytes[2] : -1;
-  const d = bytes && bytes.length > 3 ? bytes[3] : -1;
-  if (a === 0x25 && b === 0x50 && c === 0x44 && d === 0x46) return 'pdf';        // %PDF
-  if (a === 0x89 && b === 0x50 && c === 0x4e && d === 0x47) return 'image/png';  // \x89PNG
-  if (a === 0xff && b === 0xd8 && c === 0xff) return 'image/jpeg';               // JPEG
-  return '';
-};
-
-/** Nom du fichier SIGNÉ téléversé à l'approbation : convention du laboratoire
- *  (avec la marque « _approuvé » portée par depositDocDriveFinalName) + la
- *  marque « _signé », toujours en extension PDF :
- *    Devis_<N°>_<ligne>_<fournisseur>_<demandeur>_<date>_approuvé_signé.pdf */
-const signedDocDriveName = (r) => {
-  const base = depositDocDriveFinalName(r) || txt(r && r.fichierNom) || 'document';
-  return `${String(base).replace(/\.[^./\\]+$/, '')}_signé.pdf`;
-};
-
-/** Date ISO (AAAA-MM-JJ) → « JJ/MM/AAAA » (mention portée sur la signature). */
-const frShortDateOf = (iso) => {
-  const [y, m, d] = (isoOf(iso) || todayIso()).split('-');
-  return y && m && d ? `${d}/${m}/${y}` : todayIso();
-};
-
-/** Octets binaires → data:URL (utile quand le devis déposé est une image). */
-const bytesToDataUrl = (bytes, mime) => {
-  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
-  let bin = '';
-  for (let i = 0; i < arr.length; i += 1) bin += String.fromCharCode(arr[i]);
-  return `data:${mime || 'application/octet-stream'};base64,${btoa(bin)}`;
-};
+/* ── Copie signée créée à l'approbation d'un devis / BC ───────────────────
+   La copie signée (type réel du document, nom « …_approuvé_signé.pdf »,
+   téléversement) est produite par buildSignedDeposit() — voir
+   ./depositSigning.js (module partagé avec le transfert « ✓ Signature et
+   BC »). Ici on se contente d'appliquer le correctif renvoyé à la ligne. */
 
 /** Image (data:URL) réduite pour le stockage dans les réglages : la dimension
  *  la plus grande est plafonnée (la transparence PNG est conservée). */
@@ -214,23 +141,6 @@ const downscaleImageDataUrl = async (dataUrl) => {
   return { dataUrl: canvas.toDataURL('image/png'), width: cw, height: ch };
 };
 
-/** Renomme (best-effort) sur Google Drive le fichier d’un devis / BC : nom
- *  conventionnel au dépôt, « _approuvé » ajouté après approbation. Renvoie le
- *  nouveau nom, ou '' quand rien n’a pu être renommé (fichier non accessible à
- *  l’app — limite « drive.file » — ou absence de fichier / de N°). */
-const renameDepositDriveFileTo = async (r) => {
-  if (!r || !cloudBackendAvailable()) return '';
-  const fileId = driveFileIdFromUrl(txt(r.fichierUrl));
-  const target = depositDocDriveFinalName(r);
-  if (!fileId || !target) return '';
-  try {
-    const ok = await renameDriveFile(fileId, target);
-    return ok ? target : '';
-  } catch (err) {
-    console.warn('Renommage Drive du fichier devis/BC ignoré (fichier inaccessible à l’app ?)', err && err.message);
-    return '';
-  }
-};
 const norm = (s) => String(s || '')
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -267,9 +177,6 @@ const defaultLinkedDevisId = (opts) => {
   const ranked = rankedBcDevisOptions(opts);
   return ranked.length ? ranked[0].id : '';
 };
-/** Dossier Drive du fichier déposé : Budget_labo/<année>/Devis|BC. */
-const budgetLaboPath = (kind) =>
-  ['Budget_labo', String(new Date().getFullYear()), kind === 'bc' ? 'BC' : 'Devis'];
 
 const TONES = {
   slate: 'bg-slate-100 border-slate-200 text-slate-600',
@@ -407,19 +314,20 @@ export const ApprobationPage = () => {
   const [note, setNote] = useState(null); // { text, mailto? } — résultat du dernier e-mail
   const [filingBusy, setFilingBusy] = useState(false); // rangement « à la demande » des fichiers
 
-  /* Lien depuis la page Recettes / OM / Achats prévus : ouvre l’onglet du
-     devis / BC ciblé et garantit que la ligne est visible (un devis signé
-     reste affiché tant que son BC n’est pas signé ; sinon on coche
-     « Afficher les traités »). */
+  /* Lien depuis la page Recettes / OM / Achats prévus : ouvre la section du
+     devis / BC ciblé et garantit que la ligne est visible. Un devis signé vit
+     désormais dans « BC à faire et à approuver » ; une ligne déjà décidée
+     (refusée, non retenue, BC signé) n'apparaît qu'en cochant « Afficher les
+     traités ». */
   useEffect(() => {
     if (!focus || focus.pageId !== 'devisBc') return undefined;
     const rid = focus.recordId;
-    const found = (Array.isArray(rows) ? rows : []).find((x) => x && x.id === rid);
+    const all = Array.isArray(rows) ? rows : [];
+    const found = all.find((x) => x && x.id === rid);
     if (found) {
-      setTab(found.kind === 'bc' ? 'bc' : 'devis');
-      const visibleByDefault = isApprovalPending(found.statut)
-        || (found.kind === 'devis' && found.statut === APPROVAL_APPROVED);
-      if (!visibleByDefault) setShowTreated(true);
+      const awaitingBc = isDevisSigned(found) && !devisHasBc(all, found.id);
+      setTab(awaitingBc || found.kind === 'bc' ? 'bc' : 'devis');
+      if (!awaitingBc && !isApprovalPending(found.statut)) setShowTreated(true);
     }
     if (typeof clearFocus === 'function') clearFocus();
     return undefined;
@@ -691,123 +599,36 @@ export const ApprobationPage = () => {
      Cette copie devient le fichier officiel de la ligne devis/BC et de la
      dépense créée/mise à jour par l'approbation. Tout est best-effort : en cas
      d'échec, la décision reste enregistrée et un message l'explique. */
+  /* ── Signature automatique des devis / BC approuvés (PDF) ──────────────────
+     Quand le superutilisateur signe un devis ou un BC, si une image de
+     signature est enregistrée dans les réglages ET que le fichier déposé est
+     un PDF (ou une image) accessible sur Google Drive, une COPIE SIGNÉE est
+     créée (l'original reste intact) :
+       Budget_labo/<année>/Devis|BC › <nom conventionnel>_approuvé_signé.pdf
+     Elle devient le fichier officiel de la ligne devis/BC et de la dépense
+     liée. Tout est best-effort : en cas d'échec, la décision reste enregistrée
+     et un message l'explique.
+
+     Le travail (type réel du document, apposition de la signature, nom
+     conventionnel, téléversement) est fait par buildSignedDeposit() — voir
+     ./depositSigning.js — partagé avec le transfert « ✓ Signature et BC » de
+     la page « Achats prévus / souhaités » : ici on applique le correctif
+     renvoyé (fichier officiel + trace) et on relie la copie signée à la
+     dépense créée par l'approbation du BC. */
   const signDepositDocument = async (rec, depId) => {
-    const signature = settings && settings.approvalSignature;
-    const frags = [];
-    const warn = (msg) => frags.push(`✍️ Signature : ${msg}`);
-    if (!rec || !rec.id) return frags;
-    if (!signature || !txt(signature.dataUrl)) return frags; // aucune image : rien à faire
-    try {
-      if (!cloudBackendAvailable()) {
-        warn('Google Drive non connecté — le PDF signé n’a pas été créé.');
-        return frags;
-      }
-      const fileId = driveFileIdFromUrl(txt(rec.fichierUrl));
-      if (!fileId) {
-        warn('fichier non stocké sur Google Drive — le PDF signé n’a pas été créé.');
-        return frags;
-      }
-      let docKind = depositFileKindOf(rec);
-      let mime = String(rec.fichierMime || '').toLowerCase();
-      /* Le fichier collé en lien (sans type MIME local) : on interroge Drive. */
-      try {
-        const metaRes = await driveFetch(`/drive/v3/files/${fileId}?fields=name,mimeType`);
-        const meta = metaRes ? await metaRes.json() : null;
-        const metaName = String(meta && meta.name || '');
-        mime = String(meta && meta.mimeType || mime).toLowerCase();
-        if (mime === 'application/pdf' || /\.pdf$/i.test(metaName)) docKind = 'pdf';
-        else if (mime.startsWith('image/') || /\.(jpe?g|png)$/i.test(metaName)) docKind = 'image';
-      } catch { /* on garde le type deviné depuis l'enregistrement */ }
-
-      /* Octets du document : téléchargés via l'API d'abord. Quand le fichier
-         est INVISIBLE à l'API (déposé à la main dans un Drive personnel non
-         partagé — autorisation limitée « drive.file »), on retente par son
-         adresse PUBLIQUE — exactement comme le ré-import des documents
-         (./driveReimport.js). Sans ce repli, la copie signée n'était jamais
-         créée pour ces fichiers et la signature « disparaissait ». */
-      let bytes = null;
-      try {
-        const contentRes = await driveFetch(`/drive/v3/files/${fileId}?alt=media`, {
-          headers: { Accept: docKind === 'pdf' ? 'application/pdf' : (mime || 'image/png') },
-        });
-        if (contentRes && contentRes.ok) bytes = new Uint8Array(await contentRes.arrayBuffer());
-      } catch { /* → tentative par adresse publique ci-dessous */ }
-      if (!bytes || !bytes.length) {
-        try {
-          const dl = await downloadDriveFileBytes(fileId);
-          if (dl && dl.bytes && dl.bytes.byteLength) {
-            bytes = new Uint8Array(dl.bytes);
-            const dlMime = String(dl.mimeType || '').toLowerCase();
-            if (dlMime) mime = dlMime;
-            const dlName = String(dl.name || '');
-            if (/\.pdf$/i.test(dlName)) docKind = 'pdf';
-            else if (/\.(jpe?g|png)$/i.test(dlName)) docKind = 'image';
-          }
-        } catch { bytes = null; }
-        if (!bytes || !bytes.length) {
-          warn('impossible de télécharger le fichier (permissions Google Drive ?). Partagez-le avec le compte de l’app, ou téléversez-le depuis ce PC avec « ⬆ PC », puis approuvez à nouveau.');
-          return frags;
-        }
-      }
-
-      /* Le CONTENU fait foi : certains documents sont mal étiquetés (vrai PDF
-         vu comme PNG, ou l'inverse). La détection par les premiers octets évite
-         de produire une « copie signée » qui serait en réalité une image — la
-         copie signée téléversée est toujours un vrai PDF. */
-      const sniffed = sniffBudgetDocBytes(bytes);
-      if (sniffed === 'pdf') { docKind = 'pdf'; mime = 'application/pdf'; }
-      else if (sniffed === 'image/png' || sniffed === 'image/jpeg') { docKind = 'image'; mime = sniffed; }
-      if (docKind === 'other') {
-        warn('document non PDF (Word, Excel…) — la signature ne peut pas y être apposée.');
-        return frags;
-      }
-      if (!bytes || !bytes.length) {
-        warn('fichier vide — la copie signée n’a pas été créée.');
-        return frags;
-      }
-      const kindLabel = rec.kind === 'bc' ? 'BC' : 'Devis';
-      const ref = txt(rec.kind === 'bc' ? rec.numBC : rec.numDevis);
-      const captionLines = [
-        'Bon pour accord',
-        `${kindLabel}${ref ? ` N° ${ref}` : ''} — approuvé le ${frShortDateOf()} par ${currentName}`,
-      ];
-      const signedBytes = docKind === 'pdf'
-        ? await stampPdfWithSignature({ pdfBytes: bytes, signatureDataUrl: signature.dataUrl, captionLines })
-        : await makeSignedPdfFromImage({
-          imageDataUrl: bytesToDataUrl(bytes, mime || 'image/png'),
-          signatureDataUrl: signature.dataUrl,
-          captionLines,
-        });
-      const signedName = signedDocDriveName(rec);
-      const drive = await uploadLocalFile({
-        name: signedName,
-        mimeType: 'application/pdf',
-        file: new Blob([signedBytes], { type: 'application/pdf' }),
-        path: budgetLaboPath(rec.kind),
-      });
-      if (!drive || !drive.driveUrl) {
-        warn('téléversement de la copie signée impossible (Drive non connecté ?).');
-        return frags;
-      }
-      const driveName = String(drive.name || signedName);
-      upsert('devisBc', {
-        fichierNom: driveName,
-        fichierUrl: drive.driveUrl,
-        fichierMime: 'application/pdf',
-        signedAt: Date.now(),
-        signedBy: currentName,
-      }, rec.id);
+    const { frags, patch } = await buildSignedDeposit({
+      rec,
+      signature: settings && settings.approvalSignature,
+      currentName,
+    });
+    if (patch && rec && rec.id) {
+      upsert('devisBc', patch, rec.id);
       if (depId) {
         const linkField = rec.kind === 'bc' ? 'numBCUrl' : 'numDevisUrl';
-        upsert('depenses', { [linkField]: drive.driveUrl }, depId);
+        upsert('depenses', { [linkField]: patch.fichierUrl }, depId);
       }
-      frags.push(`✍️ Copie signée « ${driveName} » créée — c'est maintenant le fichier officiel.`);
-      return frags;
-    } catch (err) {
-      console.warn('Signature automatique du document ignorée :', err && err.message);
-      warn((err && err.message) || 'erreur inattendue.');
-      return frags;
     }
+    return frags;
   };
 
   /** Ajoute un fragment d'information au bandeau de note SANS écraser ce qui
@@ -885,6 +706,11 @@ export const ApprobationPage = () => {
            intact) : la copie « …_approuvé_signé.pdf » devient le fichier
            officiel du devis (aucune dépense liée à cette étape). */
         appendNoteFrag(await signDepositDocument(approvedDevis, ''));
+        /* Le devis signé a changé de section : il attend maintenant son bon de
+           commande dans « BC à faire et à approuver » (cliquer sa ligne y ouvre
+           le formulaire de dépôt du BC). */
+        setTab('bc');
+        appendNoteFrag([`📄 Le devis signé « ${txt(approvedDevis.numDevis) || txt(approvedDevis.description) || 'sans N°'} » est passé dans la section « BC à faire et à approuver » — cliquez sa ligne pour déposer son bon de commande.`]);
       } else {
         /* Approbation du BC → la dépense réelle est CRÉÉE (ou, pour un ancien
            devis déjà approuvé qui avait créé une dépense « Devis en cours »,
@@ -1084,18 +910,34 @@ export const ApprobationPage = () => {
   };
 
     const activeKind = tab;
-  /* Un devis approuvé (« Signé ») reste listé tant que le BC qui s’y rattache
-     n’est pas lui-même signé : il ne disparaît qu’à la signature du BC (le
-     suivi reprend alors dans la page Dépenses / la colonne « Achats (BC
-     signé) » de la page Recettes). « Refusé », « Non retenu » et les BC signés
-     ne s’affichent que via « Afficher les traités ». */
-  const depHasSignedBc = (d) => !!(d && (txt(d.dateSignature) || txt(d.dateSignatureBC)
-    || /bc s/i.test(txt(d.statut || d.suivi))));
-  const approvedDevisStillOpen = (r) => !!r && r.kind === 'devis'
-    && r.statut === APPROVAL_APPROVED
-    && !(txt(r.depenseId) && depHasSignedBc(depensesById.get(txt(r.depenseId))));
-  const activeRows = (tab === 'bc' ? bcList : devisRows)
-    .filter((r) => showTreated || isApprovalPending(r.statut) || approvedDevisStillOpen(r));
+  /* DEUX sections seulement, et une seule règle de migration :
+       · « Devis à approuver »        → devis PAS ENCORE SIGNÉS (« En attente »,
+         « En gestion » ; refusés / non retenus via « Afficher les traités ») ;
+       · « BC à faire et à approuver » → les devis SIGNÉS dont le bon de
+         commande reste à faire (on clique leur ligne pour le déposer) PUIS les
+         bons de commande déposés (à approuver ; traités via « Afficher les
+         traités »).
+     Un devis signé ne reparaît donc jamais dans « Devis à approuver » ; sa
+     ligne s'efface de la section BC dès qu'un BC (non refusé) le référence —
+     c'est alors le BC qui porte le suivi — et le dossier ne disparaît
+     complètement qu'à la signature du BC (suivi ensuite dans la page Dépenses /
+     la colonne « Achats (BC signé) » de la page Recettes). */
+  const bcTodoAll = useMemo(
+    () => devisAwaitingBc(rows, devisList),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, devisList]
+  );
+  const activeRows = tab === 'bc'
+    ? [...bcTodoAll, ...bcList.filter((r) => showTreated || isApprovalPending(r.statut))]
+    : devisRows.filter((r) => !isDevisSigned(r) && (showTreated || isApprovalPending(r.statut)));
+  /* Dépôt du bon de commande d'un devis signé : la ligne du devis (section
+     « BC à faire et à approuver ») ouvre le même formulaire que l'ancien bouton
+     « Déposer un BC », avec le devis déjà rattaché. */
+  const openBcDeposit = (devisRec) => {
+    const id = txt(devisRec && devisRec.id);
+    if (!id) return;
+    setModal({ mode: 'new', kind: 'bc', devisId: id });
+  };
   const columns = useMemo(
     () => buildColumns({
       kind: activeKind,
@@ -1115,6 +957,7 @@ export const ApprobationPage = () => {
       },
       onDecide: decideRow,
       onEdit: (r) => setModal({ mode: 'edit', kind: activeKind, rec: r }),
+      onMakeBc: openBcDeposit,
       onRemove: removeRow,
       onSendForSignature: sendForSignature,
       onSendBack: returnToAchats,
@@ -1273,7 +1116,9 @@ export const ApprobationPage = () => {
           Dépôt des devis & bons de commande à faire signer — fichiers classés dans
           Budget_labo/{new Date().getFullYear()}/<b>Devis</b> et <b>BC</b> · décision
           réservée au superutilisateur · l’approbation d’un PDF crée une copie
-          signée « …_approuvé_signé.pdf » (l’original reste intact).
+          signée « …_approuvé_signé.pdf » (l’original reste intact) · un devis signé
+          quitte « Devis à approuver » et gagne la section <b>BC à faire et à
+          approuver</b> : cliquez sa ligne pour déposer son bon de commande.
         </p>
         {!isSuper && (
           <p
@@ -1307,22 +1152,21 @@ export const ApprobationPage = () => {
           >
             <span className="text-base leading-none">+</span> Déposer un devis
           </button>
-          <button
-            type="button"
-            onClick={() => setModal({ mode: 'new', kind: 'bc' })}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
-          >
-            <span className="text-base leading-none">+</span> Déposer un BC
-          </button>
-          <button
-            type="button"
-            onClick={runApprovalFiling}
-            disabled={filingBusy}
-            className="bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50"
-            title="Copier dans Budget_labo/<année>/Devis|BC les fichiers liés aux devis / BC déjà déposés — l’original n’est jamais déplacé ; possible quand le fichier est accessible à l’application"
-          >
-            <span className="text-base leading-none">{filingBusy ? '⏳' : '📎'}</span>{filingBusy ? 'Rangement…' : 'Ranger les fichiers'}
-          </button>
+          {/* Plus de bouton « Déposer un BC » : un bon de commande se dépose
+              depuis le devis SIGNÉ (section « BC à faire et à approuver ») —
+              cliquez sa ligne (ou « ＋ Déposer le BC »), le devis est alors
+              déjà rattaché au formulaire. */}
+          {isSuper && (
+            <button
+              type="button"
+              onClick={runApprovalFiling}
+              disabled={filingBusy}
+              className="bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50"
+              title="Copier dans Budget_labo/<année>/Devis|BC les fichiers liés aux devis / BC déjà déposés — l’original n’est jamais déplacé ; possible quand le fichier est accessible à l’application (action du superutilisateur)"
+            >
+              <span className="text-base leading-none">{filingBusy ? '⏳' : '📎'}</span>{filingBusy ? 'Rangement…' : 'Ranger les fichiers'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -1380,26 +1224,33 @@ export const ApprobationPage = () => {
         >
           <div className="text-[10px] font-black uppercase tracking-wide text-slate-400">Devis à approuver</div>
           <div className="text-xl font-black text-slate-800">{pendingCount('devis')}<span className="text-slate-400 text-xs font-bold"> en attente</span></div>
-          <div className="text-[10px] text-slate-400 font-semibold">{devisList.length} déposé{devisList.length > 1 ? 's' : ''} · {decidedCount('devis')} traité{decidedCount('devis') > 1 ? 's' : ''}{gestionCount('devis') ? ` · ${gestionCount('devis')} en gestion` : ''}</div>
+          <div className="text-[10px] text-slate-400 font-semibold">{devisList.length} déposé{devisList.length > 1 ? 's' : ''} · {decidedCount('devis')} traité{decidedCount('devis') > 1 ? 's' : ''}{gestionCount('devis') ? ` · ${gestionCount('devis')} en gestion` : ''}{bcTodoAll.length ? ` · ${bcTodoAll.length} signé${bcTodoAll.length > 1 ? 's' : ''} à commander` : ''}</div>
         </button>
         <button
           type="button"
           onClick={() => setTab('bc')}
           className={`rounded-2xl border px-4 py-3 text-left shadow-sm transition-colors ${tab === 'bc' ? 'border-indigo-300 bg-indigo-50' : 'bg-white hover:bg-slate-50 border-slate-200'}`}
         >
-          <div className="text-[10px] font-black uppercase tracking-wide text-slate-400">Bons de commande à approuver</div>
-          <div className="text-xl font-black text-slate-800">{pendingCount('bc')}<span className="text-slate-400 text-xs font-bold"> en attente</span></div>
-          <div className="text-[10px] text-slate-400 font-semibold">{bcList.length} déposé{bcList.length > 1 ? 's' : ''} · {decidedCount('bc')} traité{decidedCount('bc') > 1 ? 's' : ''}</div>
+          <div className="text-[10px] font-black uppercase tracking-wide text-slate-400">BC à faire et à approuver</div>
+          <div className="text-xl font-black text-slate-800">{bcTodoAll.length + pendingCount('bc')}<span className="text-slate-400 text-xs font-bold"> à faire / en attente</span></div>
+          <div className="text-[10px] text-slate-400 font-semibold">{bcTodoAll.length} devis signé{bcTodoAll.length > 1 ? 's' : ''} sans BC · {bcList.length} BC déposé{bcList.length > 1 ? 's' : ''} · {decidedCount('bc')} traité{decidedCount('bc') > 1 ? 's' : ''}</div>
         </button>
       </div>
 
       <label
         className="self-start flex items-center gap-1.5 text-[10px] font-black text-slate-500 cursor-pointer select-none bg-white border border-slate-200 rounded-xl px-3 py-2 hover:border-slate-300 whitespace-nowrap"
-        title="Par défaut : devis « en attente » / « en gestion », et devis signés dont le BC n’est pas encore signé — un devis ne disparaît qu’à la signature de son BC (suivi alors dans la page Dépenses). Cochez pour réafficher aussi les refusés, non retenus et BC signés."
+        title="Par défaut : devis et BC « en attente » / « en gestion », plus les devis signés dont le bon de commande reste à faire (section « BC à faire et à approuver »). Un devis signé ne disparaît qu’à la signature de son BC (suivi alors dans la page Dépenses). Cochez pour réafficher aussi les refusés, non retenus et BC signés."
       >
         <input type="checkbox" className="accent-blue-600" checked={showTreated} onChange={(e) => setShowTreated(e.target.checked)} />
         Afficher les traités
       </label>
+
+      {activeKind === 'bc' && bcTodoAll.length ? (
+        <p className="self-start text-[11px] font-semibold text-indigo-700 bg-indigo-50/70 border border-indigo-200 rounded-xl px-3 py-2 leading-snug">
+          💡 {bcTodoAll.length} devis signé{bcTodoAll.length > 1 ? 's' : ''} attend{bcTodoAll.length > 1 ? 'ent' : ''} son bon de commande :
+          cliquez sa ligne (ou « ＋ Déposer le BC ») pour ouvrir le formulaire de dépôt du BC — le devis est déjà rattaché.
+        </p>
+      ) : null}
 
       {isSuper ? (
         <SignatureBar
@@ -1414,9 +1265,15 @@ export const ApprobationPage = () => {
         rows={activeRows}
         minWidth="1350px"
         quickFilters={['description', 'fournisseur']}
-        searchPlaceholder={`Rechercher un ${activeKind === 'bc' ? 'BC' : 'devis'}, un fournisseur, une description…`}
-        emptyLabel={activeKind === 'bc' ? 'Aucun bon de commande déposé' : 'Aucun devis déposé'}
-        noMatchLabel={`Aucun ${activeKind === 'bc' ? 'BC' : 'devis'} ne correspond aux filtres.`}
+        searchPlaceholder={`Rechercher un ${activeKind === 'bc' ? 'BC ou un devis signé' : 'devis'}, un fournisseur, une description…`}
+        emptyLabel={activeKind === 'bc' ? 'Aucun BC à faire ni à approuver' : 'Aucun devis déposé'}
+        noMatchLabel={`Aucun ${activeKind === 'bc' ? 'BC / devis signé' : 'devis'} ne correspond aux filtres.`}
+        /* Un devis signé de la section « BC à faire et à approuver » ouvre le
+           formulaire de dépôt de son BC : c'est le remplaçant du bouton
+           « Déposer un BC » (les lignes de BC, elles, ne réagissent pas au
+           clic — elles ont leurs propres boutons). */
+        rowClickable={(r) => activeKind === 'bc' && r && r.kind === 'devis'}
+        onRowClick={openBcDeposit}
       />
 
       {modal && (
@@ -1424,6 +1281,7 @@ export const ApprobationPage = () => {
           mode={modal.mode}
           kind={modal.kind}
           rec={modal.mode === 'edit' ? modal.rec : null}
+          linkedDevisId={modal.mode === 'new' ? txt(modal.devisId) : ''}
           devisOptions={devisOptions}
           productGroups={productGroups}
           fournisseurNames={fournisseurNames}
@@ -1443,8 +1301,16 @@ export const ApprobationPage = () => {
 /* ── Colonnes de la table active (devis ou BC) ──────────────────────────── */
 const buildColumns = ({
   kind, isSuper, busyId, devisById,
-  canEdit, onDecide, onEdit, onRemove, onSendForSignature, onSendBack,
+  canEdit, onDecide, onEdit, onMakeBc, onRemove, onSendForSignature, onSendBack,
 }) => {
+  /* La section « BC à faire et à approuver » mélange DEUX natures de lignes :
+     le devis SIGNÉ dont le bon de commande reste à faire, puis les bons de
+     commande déposés. Chaque colonne lit donc le type de SA ligne (`rowKind`)
+     et non seulement celui de la section (`kind`), sinon un devis signé serait
+     libellé comme un BC. */
+  const rowKind = (r) => (r && r.kind === 'devis' ? 'devis' : 'bc');
+  /** Devis signé listé dans la section BC : son BC reste à déposer. */
+  const isTodoDevis = (r) => kind === 'bc' && rowKind(r) === 'devis';
   const statutTone = (r) => {
     if (r && r.statut === APPROVAL_NOT_RETAINED) return 'violet';
     if (r && r.statut === APPROVAL_GESTION) return 'orange';
@@ -1463,11 +1329,16 @@ const buildColumns = ({
   const decisionLabel = (r) => {
     if (r && r.statut === APPROVAL_NOT_RETAINED) return APPROVAL_NOT_RETAINED;
     const s = approvalStatusOf(r && r.statut);
-    if (s === APPROVAL_APPROVED) return r && r.kind === 'bc' ? 'BC signé' : 'Signé';
+    if (s === APPROVAL_APPROVED) {
+      /* Devis signé rangé dans « BC à faire et à approuver » : la décision est
+         prise, ce qui reste à faire est le bon de commande. */
+      if (isTodoDevis(r)) return 'Devis signé · BC à faire';
+      return rowKind(r) === 'bc' ? 'BC signé' : 'Signé';
+    }
     if (s === APPROVAL_REJECTED) return 'Refusé';
     return pendingLabelOf(r);
   };
-  const numLabel = kind === 'bc' ? 'N° BC' : 'N° devis';
+  const numLabel = kind === 'bc' ? 'N° BC / devis' : 'N° devis';
   const cols = [
     {
       key: 'decision', label: 'Décision', filter: 'facet', nowrap: true,
@@ -1477,16 +1348,29 @@ const buildColumns = ({
         const busy = busyId === r.id;
         const gestion = !!(r && r.statut === APPROVAL_GESTION);
         const complete = devisCompleteOf(r);
+        const rowK = rowKind(r);
+        const todoDevis = isTodoDevis(r);
         return (
           <div className="flex items-center gap-1.5">
             <Badge tone={statutTone(r)}>{decisionLabel(r)}</Badge>
+            {todoDevis ? (
+              /* Devis signé : le bon de commande reste à déposer — c'est la
+                 ligne du devis (ou le bouton ci-dessous) qui ouvre le
+                 formulaire de dépôt du BC, déjà rattaché à ce devis. */
+              <button
+                type="button"
+                onClick={() => onMakeBc(r)}
+                title={`Déposer le bon de commande de ce devis signé (${txt(r.numDevis) || txt(r.description) || 'devis'}) — N° BC, catégorie, N° SIFAC/D.A. et fichier du BC`}
+                className="text-[11px] font-black px-2 py-1 rounded-lg border border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 whitespace-nowrap transition-colors"
+              >＋ Déposer le BC</button>
+            ) : null}
             {isSuper && pending && !gestion && (
               <>
                 <button
                   type="button"
                   disabled={busy}
                   onClick={() => onDecide(r, APPROVAL_APPROVED)}
-                  title={kind === 'devis'
+                  title={rowK === 'devis'
                     ? 'Signer le devis (la dépense ne sera créée qu’à la signature du BC lié)'
                     : 'Signer le bon de commande (crée la dépense « BC signé »)'}
                   className="w-7 h-7 rounded-lg border border-emerald-200 text-emerald-600 hover:bg-emerald-50 text-xs font-black disabled:opacity-40"
@@ -1498,7 +1382,7 @@ const buildColumns = ({
                   title="Refuser"
                   className="w-7 h-7 rounded-lg border border-red-200 text-red-500 hover:bg-red-50 text-xs font-black disabled:opacity-40"
                 >✗</button>
-                {kind === 'devis' ? (
+                {rowK === 'devis' ? (
                   <button
                     type="button"
                     disabled={busy}
@@ -1509,7 +1393,7 @@ const buildColumns = ({
                 ) : null}
               </>
             )}
-            {gestion && kind === 'devis' && (canEdit(r) || isSuper) && complete ? (
+            {gestion && rowK === 'devis' && (canEdit(r) || isSuper) && complete ? (
               <button
                 type="button"
                 disabled={busy}
@@ -1517,7 +1401,7 @@ const buildColumns = ({
                 title="Devis complété (N° devis + fichier présents) — l'envoyer pour signature : il passera « En attente de signature »"
                 className="w-8 h-7 rounded-lg border border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100 text-[11px] font-black disabled:opacity-40 whitespace-nowrap px-1"
               >✉️ Envoyer pour signature</button>
-            ) : gestion && kind === 'devis' ? (
+            ) : gestion && rowK === 'devis' ? (
               <span className="text-[10px] text-orange-500 font-bold whitespace-nowrap" title="À compléter : fournisseur, N° devis et fichier avant l'envoi pour signature">🔧 à compléter</span>
             ) : null}
           </div>
@@ -1526,10 +1410,22 @@ const buildColumns = ({
     },
     {
       key: 'num', label: numLabel, filter: 'text',
-      value: (r) => (kind === 'bc' ? txt(r.numBC) : txt(r.numDevis)),
+      value: (r) => (rowKind(r) === 'bc' ? txt(r.numBC) : txt(r.numDevis)),
       display: (r) => {
-        const v = kind === 'bc' ? txt(r.numBC) : txt(r.numDevis);
-        return v ? <span className="font-mono text-[11px] font-bold text-slate-700">{v}</span> : <span className="text-slate-300">—</span>;
+        const isBcRow = rowKind(r) === 'bc';
+        const v = isBcRow ? txt(r.numBC) : txt(r.numDevis);
+        if (!v) {
+          /* Devis signé sans N° de bon de commande : c'est normal — le N° BC
+             est saisi au dépôt du BC. */
+          return isTodoDevis(r)
+            ? <span className="text-slate-300" title="N° du bon de commande à saisir au dépôt du BC">à saisir</span>
+            : <span className="text-slate-300">—</span>;
+        }
+        return (
+          <span className="font-mono text-[11px] font-bold text-slate-700" title={isBcRow ? 'N° du bon de commande' : 'N° du devis signé'}>
+            {v}{!isBcRow ? <span className="text-slate-400 font-normal"> (devis)</span> : null}
+          </span>
+        );
       },
     },
     {
@@ -1539,7 +1435,7 @@ const buildColumns = ({
         <div className="min-w-[200px] max-w-[320px]">
           <div className="font-bold text-slate-800 leading-snug line-clamp-2" title={txt(r.description) || 'Sans description'}>{txt(r.description) || <span className="text-slate-300">—</span>}</div>
           {txt(r.notes) && <div className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[280px]" title={r.notes}>{r.notes}</div>}
-          {kind === 'devis' && r._produitCount > 1 && (
+          {rowKind(r) === 'devis' && r._produitCount > 1 && (
             <div className="text-[9px] font-bold text-violet-500 mt-0.5">
               {r._produitCount} devis pour ce produit
               {r._produitApprovedId
@@ -1789,13 +1685,18 @@ const MODAL_INPUT = 'w-full border border-slate-300 rounded-lg px-3 py-2 text-sm
 const MODAL_LABEL = 'block text-[10px] font-black uppercase text-slate-400 tracking-wide mb-1';
 
 const DepositModal = ({
-  mode, kind, rec, devisOptions, productGroups = [], fournisseurNames = [], budgetLineOptions = [],
+  mode, kind, rec, linkedDevisId = '', devisOptions, productGroups = [], fournisseurNames = [], budgetLineOptions = [],
   categorieOptions = [], recettesList = [],
   demandeurNames = [], defaultDeposant, onCancel, onSave,
 }) => {
   const editing = mode === 'edit' && !!rec;
   const isDevis = kind === 'devis';
   const year = new Date().getFullYear();
+  /* Devis imposé (ouvert en cliquant le devis SIGNÉ de la section « BC à faire
+     et à approuver ») : le formulaire du BC part de ce devis — c'est le
+     remplaçant du bouton « Déposer un BC ». */
+  const forcedDevisId = txt(linkedDevisId);
+
   /* Informations reprises du devis lié quand le BC (ou l’édition d’un dépôt
      historique) n’a pas encore ses propres valeurs : objet, fournisseur,
      montant HT, frais de port, catégorie, N° SIFAC/D.A., ligne budgétaire et
@@ -1821,13 +1722,16 @@ const DepositModal = ({
       fraisPort: dev ? moneyInputOf(dev.fraisPort) : '',
     };
   };
+  /* Devis duquel ce BC part (clic sur un devis signé) : sert à le nommer dans
+     l'en-tête du formulaire pour que le déposant sache d'où il vient. */
+  const forcedLinkedDevis = forcedDevisId ? linkedDevisOf(forcedDevisId) : null;
   const [draft, setDraft] = useState(() => {
     const linkedDefaults = rec && rec.kind === 'bc'
       ? devisDefaultsOf(rec.devisId)
       : {};
     const firstDevisDefaults = isDevis
       ? null
-      : devisDefaultsOf(defaultLinkedDevisId(devisOptions));
+      : devisDefaultsOf(forcedDevisId || defaultLinkedDevisId(devisOptions));
     if (rec) {
       return {
         kind: rec.kind || kind,
@@ -1878,7 +1782,7 @@ const DepositModal = ({
         || txt(defaultDeposant),
       numDevis: isDevis ? '' : '',
       numBC: isDevis ? '' : '',
-      devisId: isDevis ? '' : defaultLinkedDevisId(devisOptions),
+      devisId: isDevis ? '' : (forcedDevisId || defaultLinkedDevisId(devisOptions)),
       groupeAchatId: '',
       montant: isDevis ? '' : (firstDevisDefaults ? firstDevisDefaults.montant : ''),
       fraisPort: isDevis ? '' : (firstDevisDefaults ? firstDevisDefaults.fraisPort : ''),
@@ -2068,6 +1972,14 @@ const DepositModal = ({
           {!isDevis && (
             <div>
               <label className={MODAL_LABEL}>Devis lié (obligatoire — déposez d’abord le devis)</label>
+              {forcedLinkedDevis ? (
+                <p className="mb-1.5 text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5 leading-snug">
+                  ✓ Devis signé {txt(forcedLinkedDevis.numDevis) ? `N° ${txt(forcedLinkedDevis.numDevis)} — ` : ''}
+                  {txt(forcedLinkedDevis.description) || 'devis'} : il ne reste qu’à saisir le N° BC et à joindre le
+                  bon de commande (l’objet, le fournisseur, le montant, la catégorie, le N° SIFAC/D.A. et la ligne
+                  budgétaire sont repris du devis — modifiables ci-dessous).
+                </p>
+              ) : null}
               <select
                 className={MODAL_INPUT}
                 value={draft.devisId || ''}

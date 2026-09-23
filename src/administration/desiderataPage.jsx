@@ -36,7 +36,7 @@ import { SmartTable } from './smartTable';
 import { AdminImportModal } from './adminImportModal';
 import {
   ADMIN_PAGES, RECETTE_TYPES, URGENCES, DESIDERATE_STATUSES, DESIDERATE_TEST,
-  desiderataDecisionOf, isDesiderataApproved, isDesiderataTest, APPROVAL_GESTION,
+  desiderataDecisionOf, isDesiderataApproved, isDesiderataTest, APPROVAL_APPROVED, APPROVAL_GESTION,
 } from './adminSchema';
 import { parseEuroAmount, extractNumeroFromDoc } from './importUtils';
 import {
@@ -46,6 +46,10 @@ import {
 } from './emailNotify';
 import { uploadLocalFile, cloudBackendAvailable } from '../utils/driveUpload';
 import { budgetDocPath, budgetDocFileName } from './driveFiling';
+/* Signature du devis au transfert « ✓ Signature et BC » : le devis est signé
+   immédiatement (copie « …_approuvé_signé.pdf »), exactement comme avec le
+   bouton ✓ de la page « Approbation devis & BC ». */
+import { buildSignedDeposit, renameDepositDriveFileTo } from './depositSigning';
 import { scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName, scopeSeesAllRows, scopeFonctions } from './ownScope';
 import {
   TRANSFER_TARGETS, targetMetaOf, TRANSFER_MODES,
@@ -861,8 +865,10 @@ export const DesiderataPage = () => {
   const personnel = useMemo(() => (Array.isArray(data.personnel) ? data.personnel : []), [data.personnel]);
   const librerie = useMemo(() => (Array.isArray(data.librerie) ? data.librerie : []), [data.librerie]);
   /* Devis / BC déposés (page « Approbation devis & BC ») : un souhait transféré
-     y devient un devis « En attente » ; il ne disparaît de cette liste qu'une
-     fois son BC signé (date de signature BC de la dépense liée). */
+     y devient un devis — « Signé » quand il part par « ✓ Signature et BC »
+     (section « BC à faire et à approuver »), « En gestion » quand il part par
+     « ✎ Révision » ; il ne disparaît de cette liste qu'une fois son BC signé
+     (date de signature BC de la dépense liée). */
   const devisBc = useMemo(() => (Array.isArray(data.devisBc) ? data.devisBc : []), [data.devisBc]);
 
   /* Destinataires des notifications d’approbation : le superutilisateur (fiche
@@ -1147,7 +1153,7 @@ export const DesiderataPage = () => {
   /* E-mail au superutilisateur quand un achat prévu / souhaité passe
      « Approuvé ». Le(la) gestionnaire n’est volontairement PAS destinataire :
      approuver une prévision ne la lui transmet pas. Il/elle n’est prévenu(e)
-     qu’au transfert « ✓ Signature » / « ✎ Révision » et à la signature d’un
+     qu’au transfert « ✓ Signature et BC » / « ✎ Révision » et à la signature d’un
      devis / BC dans la page « Approbation devis & BC ».
      L’AUTEUR de la décision (le superutilisateur qui clique) n’est pas
      destinataire non plus — voir approvalNoticeEmails : s’il est le seul à
@@ -1215,9 +1221,12 @@ export const DesiderataPage = () => {
   /* ── Décision du directeur : « accepter et transférer » (signature / révision) ──
      Une seule action regroupe l'ACCEPTATION (statut → « Approuvé ») et le
      transfert vers la responsable d'achats :
-       · mode 'signature' — les documents sont complets (N° devis + fichier) :
-         un devis « En attente » est créé dans « Approbation devis & BC »,
-         affiché « en attente de signature » ;
+       · mode 'signature' (« ✓ Signature et BC ») — les documents sont complets
+         (N° devis + fichier) : le DEVIS EST SIGNÉ immédiatement (décision
+         « Approuvé » + copie signée du PDF, exactement comme le bouton ✓ de la
+         page « Approbation devis & BC ») et il arrive dans la section « BC à
+         faire et à approuver » de cette page : il n'y reste plus qu'à déposer
+         puis approuver le bon de commande ;
        · mode 'revision'  — des documents manquent : un devis « En gestion » est
          créé pour être complété (fournisseur, N° devis, fichier…), puis envoyé
          pour signature.
@@ -1246,11 +1255,11 @@ export const DesiderataPage = () => {
     const port = numOf(rec.fraisPort);
     const confirmText = [
       mode === TRANSFER_MODES.SIGNATURE
-        ? `Accepter et transférer l’achat « ${label} » pour signature ?`
+        ? `Signer le devis et transférer l’achat « ${label} » ?`
         : `Accepter et transférer l’achat « ${label} » pour révision ?`,
       '',
       mode === TRANSFER_MODES.SIGNATURE
-        ? 'Les documents sont complets : un devis sera créé « en attente de signature » dans « Approbation devis & BC ».'
+        ? 'Les documents sont complets : le devis est SIGNÉ immédiatement (copie « …_approuvé_signé.pdf » créée si une image de signature est enregistrée) et arrive dans la section « BC à faire et à approuver » de la page « Approbation devis & BC » — il n’y restera plus qu’à déposer puis approuver le bon de commande.'
         : 'Des documents manquent (N° devis / fichier du devis) : un devis « En gestion » sera créé dans « Approbation devis & BC » pour être complété.',
       montant !== null
         ? `(montant estimé : ${euro.format(montant)}${port !== null ? ` + frais de port ${euro.format(port)}` : ''})`
@@ -1277,9 +1286,22 @@ export const DesiderataPage = () => {
     }
     if (!window.confirm(confirmText.join('\n'))) return;
     const wasApproved = isDesiderataApproved(rec && rec.statut);
-    const patch = devisPatchFromDesiderata(rec, { cible: meta.code, by: (currentUser && currentUser.name) || '' });
-    patch.statut = mode === TRANSFER_MODES.REVISION ? APPROVAL_GESTION : patch.statut;
-    if (!patch.transfert) patch.transfert = { cible: meta.code, by: (currentUser && currentUser.name) || '', at: Date.now(), depuis: 'desiderate' };
+    const signatureWay = mode === TRANSFER_MODES.SIGNATURE;
+    const actorName = (currentUser && currentUser.name) || '';
+    const patch = devisPatchFromDesiderata(rec, { cible: meta.code, by: actorName });
+    if (signatureWay) {
+      /* « Signature et BC » : le devis est SIGNÉ tout de suite (identité du
+         signataire + date ; la copie signée du PDF suit plus bas). C'est cette
+         décision « Approuvé » qui le fait entrer dans la section « BC à faire et
+         à approuver » de la page « Approbation devis & BC » (voir isDevisSigned /
+         devisAwaitingBc dans ./transferAchats.js). */
+      patch.statut = APPROVAL_APPROVED;
+      patch.decidedBy = actorName;
+      patch.decidedAt = Date.now();
+    } else {
+      patch.statut = APPROVAL_GESTION;
+    }
+    if (!patch.transfert) patch.transfert = { cible: meta.code, by: actorName, at: Date.now(), depuis: 'desiderate' };
     patch.transfert.mode = mode;
     if (mode === TRANSFER_MODES.REVISION) {
       const missing = [];
@@ -1289,28 +1311,48 @@ export const DesiderataPage = () => {
     }
     const saved = upsert('devisBc', patch, null);
     upsert('desiderate', {
-      ...(!wasApproved ? { statut: 'Approuvé', statutChangedBy: (currentUser && currentUser.name) || '', statutChangedAt: Date.now() } : {}),
+      ...(!wasApproved ? { statut: 'Approuvé', statutChangedBy: actorName, statutChangedAt: Date.now() } : {}),
       transfert: {
         cible: meta.code,
-        by: (currentUser && currentUser.name) || '',
+        by: actorName,
         at: Date.now(),
         mode,
         devisId: saved && saved.id,
       },
     }, rec.id);
+    /* Devis signé au transfert : le fichier déposé est renommé selon la
+       convention (« _approuvé ») puis une copie signée « …_approuvé_signé.pdf »
+       est créée — exactement ce que fait le bouton ✓ de la page « Approbation
+       devis & BC ». Tout est best-effort : un échec est expliqué dans le
+       bandeau, la signature (la décision) reste enregistrée. */
+    let signFrags = [];
+    if (signatureWay && saved && saved.id) {
+      try {
+        const renamed = await renameDepositDriveFileTo(saved);
+        if (renamed) upsert('devisBc', { fichierNom: renamed }, saved.id);
+      } catch { /* le devis signé reste enregistré même si le renommage échoue */ }
+      try {
+        const signed = await buildSignedDeposit({
+          rec: saved,
+          signature: settings && settings.approvalSignature,
+          currentName: actorName,
+        });
+        if (signed.patch) upsert('devisBc', signed.patch, saved.id);
+        signFrags = signed.frags;
+      } catch { /* idem : la décision (signature) reste enregistrée */ }
+    }
     /* Pas de notification « approuvé » séparée ici : quand la demande n'était
        pas encore décidée, l'e-mail de transfert ci-dessous annonce déjà
        l'acceptation (« accepté … ») à la responsable d'achats. Un avis
        « approuvé » supplémentaire doublerait l'e-mail (deux messages partaient
        au lieu d'un) et prêtait à confusion — surtout en révision, où le devis
        repart « En gestion » et n'est PAS encore approuvé. */
-    const signatureWay = mode === TRANSFER_MODES.SIGNATURE;
     const res = await sendAdminMail({
       to: cible.emails,
-      subject: `[Lab Workspace] Achat prévu « ${label} » ${signatureWay ? 'transmis pour signature' : 'accepté — devis à compléter'}`,
+      subject: `[Lab Workspace] Achat prévu « ${label} » ${signatureWay ? 'devis signé — BC à faire' : 'accepté — devis à compléter'}`,
       text: mailBodyText([
         signatureWay
-          ? `L’achat prévu / souhaité « ${label} » a été accepté et transmis pour signature.`
+          ? `L’achat prévu / souhaité « ${label} » a été accepté : son devis est SIGNÉ. Le bon de commande reste à faire puis à approuver (section « BC à faire et à approuver » de la page « Approbation devis & BC »).`
           : `L’achat prévu / souhaité « ${label} » a été accepté, mais des documents manquent : complétez le devis « En gestion » créé dans « Approbation devis & BC » (fournisseur, N° devis, fichier), puis envoyez-le pour signature.`,
         `Demandeur : ${txt(demandeurOf(rec)) || '—'}`,
         montant !== null
@@ -1323,11 +1365,18 @@ export const DesiderataPage = () => {
     const mailSummary = summarizeMail(res, `${meta.title} notifiée`);
     setNotice({
       tone: res && res.ok ? 'ok' : 'warn',
-      text: `Achat « ${label} » ${signatureWay ? 'accepté et transmis pour signature' : 'accepté — devis « En gestion » créé'}. ${mailSummary.text}${cible.emails.length ? '' : ` ⚠ ${cible.reason} : la responsable d’achats n’a pas été prévenue automatiquement.`}`,
+      text: `Achat « ${label} » ${signatureWay ? 'accepté, devis signé — le BC reste à faire (section « BC à faire et à approuver »)' : 'accepté — devis « En gestion » créé'}. ${[mailSummary.text, ...signFrags].filter(Boolean).join(' ')}${cible.emails.length ? '' : ` ⚠ ${cible.reason} : la responsable d’achats n’a pas été prévenue automatiquement.`}`,
       mailto: mailSummary.mailto || undefined,
       consoleUrl: mailSummary.consoleUrl || undefined,
     });
-    if (typeof navigate === 'function') navigate('devisBc');
+    if (typeof navigate === 'function') {
+      /* Après un transfert « ✓ Signature et BC », on ouvre la page
+         « Approbation devis & BC » SUR LE DEVIS SIGNÉ : la page bascule alors
+         dans la section « BC à faire et à approuver » et met sa ligne en
+         évidence — il ne reste qu'à y déposer le bon de commande. */
+      if (saved && saved.id) navigate('devisBc', { kind: 'devis', recordId: saved.id });
+      else navigate('devisBc');
+    }
   };
 
 
@@ -1596,11 +1645,11 @@ export const DesiderataPage = () => {
                 {metaT ? <span className="text-[10px] font-semibold text-slate-500 whitespace-nowrap" title={`Transféré par ${txt(r.transfert.by) || '—'} le ${r.transfert.at ? new Date(r.transfert.at).toLocaleDateString('fr-FR') : '—'}`}>{metaT.icon} {metaT.title}</span> : null}
                 {gestion
                   ? badge('bg-orange-50 border border-orange-200 text-orange-700', 'En gestion')
-                  : st.state === 'devis-attente'
-                    ? badge('bg-amber-50 border border-amber-200 text-amber-700', 'En attente de signature')
-                    : st.bcSigned
-                      ? badge('bg-emerald-50 border border-emerald-200 text-emerald-700', '✓ BC signé')
-                      : badge('bg-blue-50 border border-blue-200 text-blue-700', 'Devis signé · BC à signer')}
+                  : st.bcSigned
+                    ? badge('bg-emerald-50 border border-emerald-200 text-emerald-700', '✓ BC signé')
+                    : st.devisSigned
+                      ? badge('bg-blue-50 border border-blue-200 text-blue-700', 'Devis signé · BC à faire')
+                      : badge('bg-amber-50 border border-amber-200 text-amber-700', 'En attente de signature')}
               </div>
             ) : null}
             {!transferred && inTest ? (
@@ -1620,12 +1669,12 @@ export const DesiderataPage = () => {
                   {transferButton(
                     TRANSFER_MODES.SIGNATURE,
                     'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100',
-                    approved ? '📨 Pour signature' : '✓ Signature',
+                    approved ? '📨 Signature et BC' : '✓ Signature et BC',
                     /* L’explication du bouton inactif tient dans l’infobulle :
                        la colonne reste compacte (la phrase affichée en clair
                        occupait trop de place). */
                     complete
-                      ? 'Documents complets (N° devis + fichier) : créer le devis « En attente de signature » dans « Approbation devis & BC »'
+                      ? 'Documents complets (N° devis + fichier) : le devis est SIGNÉ tout de suite (copie « …_approuvé_signé.pdf » créée si une image de signature est enregistrée) et arrive dans la section « BC à faire et à approuver » de la page « Approbation devis & BC » — son bon de commande reste à déposer puis à approuver'
                       : '🔒 Inactif tant que la demande n’a pas un N° de devis ET un fichier — utilisez « ✎ Révision » : un devis « En gestion » est créé pour être complété par la responsable d’achats',
                     !complete,
                   )}
@@ -1650,18 +1699,13 @@ export const DesiderataPage = () => {
       display: (r) => {
         const approved = isDesiderataApproved(r && r.statut);
         const linked = linkedDepenseOf(r);
-        const st = transferStatus.get(r.id);
-        const transferred = !!(r.transfert || (st && st.devis));
         return (
           <div className="flex items-center gap-1 justify-end">
-            {transferred ? (
-              <button
-                type="button"
-                title="Transféré en devis (Approbation devis & BC) — ouvrir la page pour compléter puis faire signer"
-                onClick={() => { if (typeof navigate === 'function') navigate('devisBc'); }}
-                className="text-[11px] font-black px-2 py-1 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
-              >→ Devis & BC</button>
-            ) : linked ? (
+            {/* Plus de bouton « → Devis & BC » : le suivi d'un souhait
+                transféré se lit dans la colonne « Transfert » (badge) et le
+                devis signé s'ouvre depuis la section « BC à faire et à
+                approuver » de la page « Approbation devis & BC ». */}
+            {linked ? (
               <button
                 type="button"
                 title="Déjà transféré dans Dépenses › Achats — ouvrir la ligne"
@@ -1765,8 +1809,9 @@ export const DesiderataPage = () => {
         déroulantes). La décision <b>« Test »</b> compte la demande dans les prévisions <b>« Achats prévus »</b> de la page Recettes sans
         l’accepter réellement (aucune notification, aucun transfert). Décider <b>« Approuvé »</b> n’envoie <b>aucun e-mail à la
         gestionnaire</b> : elle n’est prévenue qu’au transfert ci-dessous (ou à la signature du devis / BC dans « Approbation devis & BC »).
-        Pour toute demande en attente, la colonne <b>« Transfert »</b> propose au directeur : <b>« ✓ Signature »</b>
-        (documents complets — un devis « en attente de signature » est créé dans « Approbation devis & BC ») ou <b>« ✎ Révision »</b>
+        Pour toute demande en attente, la colonne <b>« Transfert »</b> propose au directeur : <b>« ✓ Signature et BC »</b>
+        (documents complets — le devis est <b>signé immédiatement</b> et arrive dans la section <b>« BC à faire et à approuver »</b>
+        de la page « Approbation devis &amp; BC » : il n’y reste qu’à déposer puis approuver le bon de commande) ou <b>« ✎ Révision »</b>
         (documents manquants — un devis « En gestion » est créé pour être complété par la responsable d'achats, puis envoyé pour
         signature). La demande transférée <b>disparaît de cette liste</b> (rétablie via « Afficher les transférées ») et son montant est
         suivi dans les colonnes <b>« Devis en signature / signé »</b> de la page Recettes jusqu'à la signature du BC. Le <b>fournisseur</b>,
@@ -1786,9 +1831,9 @@ export const DesiderataPage = () => {
                   pour les retrouver dans la liste.</>
               ) : (
                 <>Utilisez « ＋ Ajouter un achat prévu / souhaité » pour déclarer une demande de l’équipe. Chaque demande en attente peut
-                  être acceptée puis transférée dans « Approbation devis & BC » : <b>pour signature</b> (documents complets) ou
-                  <b>pour révision</b> (documents à compléter — devis « En gestion »). Ou « 📥 Importer » pour rejouer l’onglet
-                  « Souhaités » de la feuille Google Sheets.</>
+                  être acceptée puis transférée dans « Approbation devis & BC » : <b>« ✓ Signature et BC »</b> (documents complets — le
+                  devis est signé et son bon de commande reste à faire) ou <b>« ✎ Révision »</b> (documents à compléter — devis « En
+                  gestion »). Ou « 📥 Importer » pour rejouer l’onglet « Souhaités » de la feuille Google Sheets.</>
               )
             ) : (
               <>Chaque membre ne voit que ses propres demandes — ajoutez votre première demande d’achat (description, ligne budgétaire,

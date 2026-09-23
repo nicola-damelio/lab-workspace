@@ -41,3 +41,7 @@ workspace-shared-token.json.*
 # probe et rien d'autre. Il est reconstruit à chaque exécution de la suite.
 /_render_smoke/
 
+# Idem pour le probe de _approval_bc_flow_test.mjs (devis signé → BC à faire :
+# rendu réel des pages Approbation devis & BC et Achats prévus).
+/_approval_bc_render/
+

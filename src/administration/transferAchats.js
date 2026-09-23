@@ -26,7 +26,7 @@
    postes sont soldés (BC signés + remboursements corrigés).
    ========================================================================= */
 import {
-  REIMBURSEMENT_COST_FIELDS, DEPENSE_BC_SIGNE, APPROVAL_REJECTED, APPROVAL_NOT_RETAINED,
+  REIMBURSEMENT_COST_FIELDS, DEPENSE_BC_SIGNE, APPROVAL_APPROVED, APPROVAL_REJECTED, APPROVAL_NOT_RETAINED,
 } from './adminSchema';
 import { parseEuroAmount } from './importUtils';
 import { personnelEmailsMatching } from './emailNotify';
@@ -284,6 +284,29 @@ const DEAD_DEVIS_STATUSES = new Set([APPROVAL_REJECTED, APPROVAL_NOT_RETAINED]);
 /** Un devis / BC est encore « vivant » s'il n'a pas été définitivement écarté. */
 const isLiveDevis = (d) => !DEAD_DEVIS_STATUSES.has(txt(d && d.statut));
 
+/* ── Migration « devis signé → BC à faire » (page Approbation devis & BC) ── */
+/* Règle métier : dès qu'un devis est SIGNÉ (approuvé), il ne reste plus dans la
+   table « Devis à approuver » — il migre dans la section « BC à faire et à
+   approuver » (son bon de commande reste à faire, puis à approuver ; c'est
+   l'approbation du BC qui crée la dépense « BC signé »). La ligne du devis y
+   reste tant qu'AUCUN bon de commande n'est déposé pour lui, puis s'efface
+   devant celle du BC (elle revient si le BC est refusé ou supprimé). */
+/** Vrai si le devis a été signé (approuvé) par le superutilisateur. */
+export const isDevisSigned = (rec) => !!rec && rec.kind === 'devis'
+  && txt(rec.statut) === APPROVAL_APPROVED;
+
+/** Vrai si un BC encore VIVANT (ni refusé ni non retenu) est rattaché à ce
+ *  devis : le devis n'a alors plus « son BC à faire », la ligne du BC prend le
+ *  relais dans la section « BC à faire et à approuver ». */
+export const devisHasBc = (devisBcList, devisId) => (Array.isArray(devisBcList) ? devisBcList : [])
+  .some((d) => d && d.kind === 'bc' && txt(d.devisId) === txt(devisId) && isLiveDevis(d));
+
+/** Lignes « BC à faire » de la section « BC à faire et à approuver » : les
+ *  devis signés dont le bon de commande reste à déposer (celles-là même qu'on
+ *  clique pour ouvrir le formulaire de dépôt du BC). */
+export const devisAwaitingBc = (devisBcList, devisList) => (Array.isArray(devisList) ? devisList : [])
+  .filter((d) => isDevisSigned(d) && !devisHasBc(devisBcList, d.id));
+
 /**
  * Vrai si le transfert d'une demande (OM `kind='om'` ou achat prévu / souhaité
  * `kind='desiderate'`) est « orphelin » : la demande porte la marque `transfert`
@@ -362,13 +385,18 @@ export const desiderataTransferStatus = (rec, devisBcList, depenses) => {
     ? (Array.isArray(depenses) ? depenses : []).find((d) => d && d.id === devis.depenseId) || null
     : null;
   const bcSigned = dep ? isDepenseBcSigne(dep) : false;
+  /* Devis signé au transfert (« ✓ Signature et BC ») : le suivi est celui de la
+     section « BC à faire et à approuver » de la page « Approbation devis &
+     BC » — « Devis signé · BC à faire » tant que la dépense n'est pas créée. */
+  const devisSigned = isDevisSigned(devis);
   return {
     transferred: !!(rec && (rec.transfert || devis)),
     devis,
     dep,
+    devisSigned,
     bcSigned,
     state: devis
-      ? (dep ? (bcSigned ? 'bc-signe' : 'bc-en-cours') : 'devis-attente')
+      ? (dep ? (bcSigned ? 'bc-signe' : 'bc-en-cours') : (devisSigned ? 'bc-a-faire' : 'devis-attente'))
       : 'non-transfere',
   };
 };
@@ -376,8 +404,10 @@ export const desiderataTransferStatus = (rec, devisBcList, depenses) => {
 
 /* ── Circuit « gestion de requêtes » (transferts pour signature / révision) ── */
 /** Modes de transfert d’une demande acceptée (directeur) :
- *  · 'signature' → documents complets : les devis générés attendent la
- *    signature du superutilisateur (« En attente de signature ») ;
+ *  · 'signature' (« ✓ Signature et BC ») → documents complets : le devis est
+ *    SIGNÉ immédiatement (approbation + copie signée du PDF) et arrive dans la
+ *    section « BC à faire et à approuver » de la page « Approbation devis &
+ *    BC » — son BC reste à faire, puis à approuver ;
  *  · 'revision'  → documents manquants : les devis générés partent « En
  *    gestion » pour être complétés par la responsable d'achats. */
 export const TRANSFER_MODES = {
