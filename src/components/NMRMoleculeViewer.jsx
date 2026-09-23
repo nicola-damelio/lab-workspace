@@ -4209,15 +4209,17 @@ const pymolSeleForStructure = (structure, named, raw, onWarn, overrides) => {
 };
 
 /* ---- Material of the drawn representations ---------------------------------
-   NGL 2.4 draws buffers with its OWN shader (`#define STANDARD`, three's
-   physical lighting chunks) whose uniforms are roughness, metalness, emissive
-   and opacity — they are just not part of NGL's public parameters, which is why
-   a PyMOL-like glossy or metallic look was out of reach. Reaching them is small
-   and safe: walk the geometries of a representation and set the uniform values
-   (verified on the very ngl@2.4.0 the viewer loads: `uniform float metalness;`
-   and `uniform float roughness;` are in shader/Mesh.frag and in the sphere
-   impostor shader). The default of NGL is a rough, non-metallic surface, which
-   is exactly the « flat / not shiny » the user reported against PyMOL. */
+   NGL 2.4 HAS a material; it is simply not advertised where one looks. The two
+   properties PyMOL exposes are declared in the parameter schema of every
+   Representation — `roughness: { type: 'range', step: 0.01, max: 1, min: 0,
+   buffer: true }` and the same for `metalness` (representation.ts) — stored in
+   the buffer parameters (buffer.ts default: roughness 0.4, metalness 0.0, i.e. a
+   matte non-metallic surface) and forwarded to the physical shader as uniforms
+   (`roughness: { uniform: true }`; the ShaderMaterial is even built with THE SAME
+   uniforms object). They can therefore be set through NGL's own `setParameters`
+   and the change is applied IN PLACE — no rebuild, no `needsUpdate` — which is
+   what makes a live slider possible. 0.4 / 0.0 are exactly the « flat / not
+   shiny » the user reported against PyMOL. */
 const MATERIAL_PRESETS = {
   auto: null,
   matte: { roughness: 0.95, metalness: 0.0 },
@@ -4225,11 +4227,14 @@ const MATERIAL_PRESETS = {
   metallic: { roughness: 0.18, metalness: 0.85 },
   glass: { roughness: 0.08, metalness: 0.0, opacity: 0.45 },
 };
-// The four materials the user asked for: spheres, bonds, cartoon, surface.
+// The four material families the user asked for, and the rep TYPES that belong to
+// each. These are the strings NGL itself uses (`this.type = 'spacefill'`, …): the
+// guard _viewer_materials_test.mjs reads the list out of the installed ngl and
+// fails if one of them ever stops existing, so no family can go silently dead.
 const MATERIAL_KINDS = [
   { key: 'spheres', label: 'Spheres', reps: ['spacefill'] },
-  { key: 'sticks', label: 'Bonds', reps: ['licorice', 'ball+stick'] },
-  { key: 'cartoon', label: 'Cartoon', reps: ['cartoon', 'ribbon', 'tube', 'trace', 'rope'] },
+  { key: 'sticks', label: 'Bonds', reps: ['licorice', 'ball+stick', 'hyperball'] },
+  { key: 'cartoon', label: 'Cartoon', reps: ['cartoon', 'ribbon', 'tube', 'trace', 'rope', 'backbone', 'rocket'] },
   { key: 'surface', label: 'Surface', reps: ['surface'] },
 ];
 const MATERIAL_KIND_OF_REP = MATERIAL_KINDS.reduce((acc, k) => {
@@ -4245,31 +4250,40 @@ const materialValueOf = (mat, kind, prop) => {
   if (preset && preset[prop] != null) return preset[prop];
   return null;
 };
-// One geometry (or mesh) of a representation. NGL keeps them in geometryList;
-// the older/other shapes expose a single `geometry`.
-const eachGeometryOfRep = (rep, fn) => {
-  if (!rep) return;
-  const list = rep.geometryList || rep.geoList || (rep.geometry ? [rep.geometry] : []);
-  if (!Array.isArray(list)) return;
-  list.forEach((g) => { try { fn(g); } catch { /* a geometry without a material is skipped */ } });
-};
-const applyMaterialToRep = (rep, mat) => {
-  if (!rep || !mat) return;
-  const type = String(rep.name || rep.type || (rep.parameters && rep.parameters.type) || '');
-  const kind = MATERIAL_KIND_OF_REP[type];
-  if (!kind) return;
+/* THE ELEMENT, NOT THE REPRESENTATION — this was the whole materials bug.
+   `component.addRepresentation(type, params)` does NOT return the representation:
+   it returns a RepresentationElement that WRAPS it (ngl 2.4.0, component.ts:
+   `new RepresentationElement(this.stage, repr, p, this)`, and that is what goes
+   into reprList and what every ref of this viewer holds). An element is not a
+   representation: it carries `name = repr.type` — the rep type — while its own
+   `type` is the constant 'representation', it exposes the wrapped object as the
+   public `repr`, and it has NO `geometryList`. The previous implementation walked
+   `element.geometryList` (looking for three.js geometries to poke shader
+   uniforms): on an element that list does not exist, so it returned in silence
+   and NO material was ever applied. */
+const reprOfElement = (el) => (el && (el.repr || (typeof el.getRepresentation === 'function' ? el.getRepresentation() : null))) || null;
+/* The rep TYPE of an element: its constructor sets `name` to repr.type, and
+   getType() gives the same answer if a future NGL stops filling `name`. Note the
+   element's own `type` is 'representation' — the opposite of useful here. */
+const repTypeOfElement = (el) => String((el && (el.name || (typeof el.getType === 'function' && el.getType()))) || '');
+// Through NGL's own parameters — the block above lists the source lines that prove
+// it is applied in place (no rebuild, no uniform poking).
+const applyMaterialToRep = (el, mat) => {
+  if (!el || !mat) return;
+  const kind = MATERIAL_KIND_OF_REP[repTypeOfElement(el)];
+  if (!kind) return;   // a rep with no material (line, point, label, slice) is skipped
+  const params = {};
   const roughness = materialValueOf(mat, kind, 'roughness');
   const metalness = materialValueOf(mat, kind, 'metalness');
   const opacity = materialValueOf(mat, kind, 'opacity');
-  if (roughness == null && metalness == null && opacity == null) return;
-  eachGeometryOfRep(rep, (g) => {
-    const material = g && g.material;
-    const uniforms = material && material.uniforms;
-    if (!uniforms) return;
-    if (roughness != null && uniforms.roughness) uniforms.roughness.value = roughness;
-    if (metalness != null && uniforms.metalness) uniforms.metalness.value = metalness;
-    if (opacity != null && uniforms.opacity) uniforms.opacity.value = opacity;
-  });
+  if (roughness != null) params.roughness = roughness;
+  if (metalness != null) params.metalness = metalness;
+  if (opacity != null) params.opacity = opacity;
+  // « auto » asks for nothing: NGL's own rough, non-metallic material stays.
+  if (!Object.keys(params).length) return;
+  const repr = reprOfElement(el);
+  if (!repr || typeof repr.setParameters !== 'function') return;
+  try { repr.setParameters(params); } catch { /* never break the scene for a look */ }
 };
 
 /* ---- Which leaflet is which, from the GEOMETRY -----------------------------
@@ -12416,14 +12430,16 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
     )}
     {/* ── MATERIAL of the four representation families ────────────────────────
         PyMOL's spheres look glossier/metallic than NGL's default flat surface.
-        NGL 2.4 has no material parameter, but its shaders ARE physical
-        (`uniform float roughness; uniform float metalness;`), so the viewer sets
-        those uniforms per representation family — spheres, bonds, cartoon and
-        surface can each take a different material, and the choice is persisted.
-        « auto » keeps NGL's own material (rough, non-metallic). */ }
+        NGL 2.4 does have the two properties PyMOL exposes — `roughness` and
+        `metalness`, parameters of every Representation, forwarded to the physical
+        shader as uniforms — they are only absent from NGL's own docs. The viewer
+        sets them through `repr.setParameters`, so spheres, bonds, cartoon and
+        surface each take their own material, live, without rebuilding anything,
+        and the choice is persisted. « auto » keeps NGL's own material (roughness
+        0.4, metalness 0.0). */ }
     <details className="shrink-0 border-t border-slate-100 pt-1.5">
       <summary className="text-[10px] font-black text-slate-600 uppercase cursor-pointer select-none"
-        title="Material of the spheres, the bonds, the cartoon and the surface — roughness (l) and metalness (m), NGL's physical shader uniforms">
+        title="Material of the spheres, the bonds, the cartoon and the surface — roughness (r) and metalness (m), NGL's own material parameters">
         🎛 Material
       </summary>
       <div className="mt-1 flex flex-col gap-1">

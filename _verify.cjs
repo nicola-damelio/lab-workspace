@@ -69,6 +69,15 @@ const tests = [
   // PostprocessingParams / Canvas3DParams) et à la fonction de direction de Mol*
   // elle-même (Vec3.directionFromSpherical) : la lumière ne bouge pas d'un iota.
   '_viewer_light_rig_test.mjs',
+  // Le MATÉRIAU des quatre familles (🎛 Material) ne faisait RIEN : la cible
+  // était fausse. `addRepresentation` ne renvoie pas la représentation mais
+  // l'ÉLÉMENT qui l'enveloppe (ngl 2.4.0, component.ts), et un élément n'a ni
+  // geometryList ni uniforms : l'ancien code ressortait en silence, donc chaque
+  // curseur semblait mort. Le garde-fou EXÉCUTE le réglage sur une doublure
+  // d'élément ET relit les sources de ngl dans sa sourcemap — roughness /
+  // metalness sont des paramètres de PREMIÈRE CLASSE (`{ uniform: true }`), que
+  // setParameters applique en place, sans rebuild.
+  '_viewer_materials_test.mjs',
   '_ligand_smiles_test.mjs',
   '_viewer_render_smoke_test.mjs',
 ];
