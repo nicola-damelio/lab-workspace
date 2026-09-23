@@ -877,10 +877,12 @@ hasIn(VIEWER_SRC, 'const zoomSection = (sec) => {', '…par une fonction unique,
 hasIn(VIEWER_SRC, 'const abortSnap = useAbortControl();', 'le ⏹ ne lit que le registre des VRAIES opérations');
 ok(!VIEWER_SRC.includes("abortControl.register('trajectory playback'"),
   'la lecture de trajectoire ne s’enregistre PLUS comme une opération abandonnable');
-hasIn(VIEWER_SRC, "trajStatus === 'loading') && (",
-  '…et la barre verticale ne s’ouvre plus pendant une lecture');
+hasIn(VIEWER_SRC, "trajStatus === 'loading') && !selBarCollapsed && (",
+  '…et la barre verticale ne s’ouvre plus pendant une lecture (elle se replie désormais : ◀, et elle vit à GAUCHE)');
 ok(!VIEWER_SRC.includes('|| playing) && ('),
   'l’ancienne condition (qui ouvrait le panneau pour une lecture) a disparu');
+hasIn(VIEWER_SRC, 'className="absolute top-11 left-2 bottom-2 w-64 z-30',
+  '…la barre des sélections est passée à GAUCHE du canvas (le styling garde la droite)');
 hasIn(VIEWER_SRC, 'trajectory has already been loaded', '…et le code cite le rapport (la trajectoire est déjà chargée)');
 
 console.log(`_viewer_style_gaps_test.mjs — ${passed} assertions OK`);

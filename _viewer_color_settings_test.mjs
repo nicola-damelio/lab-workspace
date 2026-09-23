@@ -185,9 +185,10 @@ has("const ligandSmilesText = String(smiles || ligandSmiles || '').trim();",
 has('{shownLigandSmiles && (', '[SMILES] la ligne n’existe que s’il y a un SMILES');
 has('onClick={copyLigandSmiles}', '[SMILES] le bouton 📋');
 has('await navigator.clipboard.writeText(shownLigandSmiles || ligandSmilesText);', '[SMILES] la copie passe par le presse-papiers');
-has('const molBarOpen = extraMols.length > 0 || !!ligandSmilesText;',
-  '[SMILES] la barre s’ouvre aussi pour un SMILES seul');
-has("${molBarOpen ? 'right-[21rem]' : 'right-2'}", '[SMILES] …et la barre des sélections se décale');
+has('const molBarOpen = status === \'ready\' && !molBarCollapsed;',
+  '[SMILES] la barre de styling s’ouvre dès qu’une structure est prête (et se replie : ◀)');
+has('className="absolute top-11 left-2 bottom-2 w-64 z-30',
+  '[SMILES] …et la barre des sélections ne se décale plus : elle vit à GAUCHE du canvas, le styling garde la droite');
 ok(DOCK.includes('ligandSmiles={d.ligandSmiles || \'\'}'),
   '[SMILES] DockingSections passe le SMILES du ligand au viewer');
 

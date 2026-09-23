@@ -4571,6 +4571,16 @@ const [molBarCollapsed, setMolBarCollapsed] = useState(() => {
 useEffect(() => {
   try { localStorage.setItem('labViewerStylingBarCollapsed', molBarCollapsed ? 'on' : 'off'); } catch { /* ignore */ }
 }, [molBarCollapsed]);
+// The Selections bar is the OTHER half of the styling UI and lives on the LEFT of
+// the canvas (the styling bar keeps the right side): the selections a PyMOL script
+// defines, each with its own styles. Collapsed and persisted the same way, so the
+// two panels never fight for the same corner.
+const [selBarCollapsed, setSelBarCollapsed] = useState(() => {
+  try { return localStorage.getItem('labViewerSelBarCollapsed') === 'on'; } catch { return false; }
+});
+useEffect(() => {
+  try { localStorage.setItem('labViewerSelBarCollapsed', selBarCollapsed ? 'on' : 'off'); } catch { /* ignore */ }
+}, [selBarCollapsed]);
 // The NEW palettes of the request, edited by the same ⚙ wheel and read live by the
 // schemes: the 20 residues, the 5 base types, the 3 charges, the 14 lipid classes and
 // the 29 sugar types (the wheel's own state, persisted like the two originals).
@@ -7724,24 +7734,37 @@ const selCompsRef = useRef({});       // key -> [representations]
 const baseCompsRef = useRef([]);      // default representations added at load
 const selStylesRef = useRef(selStyles);
 selStylesRef.current = selStyles;
+// The styling SIGNATURE the running PyMOL script itself produced. A script may
+// write §2 values (cartoon_ring_mode …): that first change is ITS own and is
+// adopted here. Any LATER change is the user's, and then §2 takes the main
+// structure back — this is what stops a macro from freezing the six menus.
+const pymolOwnSigRef = useRef(null);
 
-// Resolved NGL expression for a selection key (named selection or raw expr),
-// with references to other named selections expanded inline (like PyMOL sets).
-const selKeyExpr = (key) => {
-  const named = selections.find((s) => s.name === key);
-  let raw = named ? named.expr : key;
+// ONE expansion for every PyMOL expression: the named selections it quotes are
+// inlined first (like PyMOL sets), then the whole thing is translated for NGL.
+// A style key and the « hide » expression that must be subtracted from it go
+// through the SAME function, so they can never resolve to different atoms.
+const expandSelectionExpr = (raw) => {
+  let out = String(raw || '');
   for (let pass = 0; pass < 4; pass++) {
     let changed = false;
     selections.forEach((s) => {
       const re = new RegExp(`\\b${s.name}\\b`, 'g');
-      if (re.test(raw)) {
-        raw = raw.replace(re, `(${translateSelection(s.expr)})`);
+      if (re.test(out)) {
+        out = out.replace(re, `(${translateSelection(s.expr)})`);
         changed = true;
       }
     });
     if (!changed) break;
   }
-  return translateSelection(raw);
+  return translateSelection(out);
+};
+
+// Resolved NGL expression for a selection key (named selection or raw expr),
+// with references to other named selections expanded inline (like PyMOL sets).
+const selKeyExpr = (key) => {
+  const named = selections.find((s) => s.name === key);
+  return expandSelectionExpr(named ? named.expr : key);
 };
 
 // Number of atoms matching a selection key (null when unsupported by NGL).
@@ -7868,6 +7891,21 @@ useEffect(() => {
   // trees, the ✔ of the sections and the sections themselves.
   const catSig = styleSignature;
   const styleChanged = prevCatSigRef.current !== catSig;
+  // A PyMOL script's scene is NOT above the styling menus: while it is active,
+  // touching ANY §2 styling control hands the main structure back to §2 (the
+  // script's own selections keep their styles). The FIRST signature seen after a
+  // script run is the script's own (it may set §2 values) — a later one is the
+  // user's. Before this, running a macro froze the six menus until « Clear »:
+  // the report « after launching the macro the molecular styling has no effect
+  // on the loaded molecule any more ».
+  if (pymolActive) {
+    if (pymolOwnSigRef.current == null) pymolOwnSigRef.current = catSig;
+    else if (pymolOwnSigRef.current !== catSig) {
+      pymolOwnSigRef.current = null;
+      setPymolActive(false);
+      setPymolLog((l) => `${l ? `${l}\n` : ''}• §2 styling changed → the Molecular Styling look takes the main structure back (the script's own selections keep their styles).`);
+    }
+  } else pymolOwnSigRef.current = null;
   if (hideAll || pymolActive) {
     baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch {} });
     baseCompsRef.current = [];
@@ -7895,17 +7933,30 @@ useEffect(() => {
     const color = colorScheme ? undefined : (st.color != null ? st.color : undefined);
     const opacity = st.transparency != null ? Math.max(0, Math.min(1, 1 - st.transparency)) : undefined;
     const reps = [];
-    const add = (type, params) => {
-      try { reps.push(component.addRepresentation(type, { sele: expr, color, colorScheme, ...params })); } catch {}
+    // ── Ordered « show » / « hide » — PyMOL: the LAST command wins ────────────
+    // A style the script showed keeps only the atoms that no LATER
+    // « hide <style>, … » took away: « hide spheres, membrane and z>90 » really
+    // removes the upper leaflet from « show sphere, resn POPC+… ». Before this,
+    // the two commands were two independent keys and those spheres stayed on
+    // screen for ever — the report « the spheres remain even when I remove them ».
+    const exclusionOf = (style) => {
+      const list = (st.hideFor && st.hideFor[style]) || [];
+      const parts = list.map((h) => `(${expandSelectionExpr(h)})`).filter((p) => p && p !== '(all)');
+      return parts.length ? parts.join(' or ') : '';
     };
-    if (st.cartoon) add('cartoon', { colorScheme, opacity });
-    if (st.ribbon) add('ribbon', { colorScheme, opacity });
-    if (st.tube) add('tube', { colorScheme, opacity });
-    if (st.sphere) add('spacefill', { scale: st.sphereScale || 1, colorScheme, opacity, multipleBond: true });
-    if (st.ball) add('ball+stick', { colorScheme, opacity, multipleBond: true, aspectRatio: 1.3 });
+    const add = (type, params, style) => {
+      const ex = style ? exclusionOf(style) : '';
+      const sele = ex ? `(${expr}) and not (${ex})` : expr;
+      try { reps.push(component.addRepresentation(type, { sele, color, colorScheme, ...params })); } catch {}
+    };
+    if (st.cartoon) add('cartoon', { colorScheme, opacity }, 'cartoon');
+    if (st.ribbon) add('ribbon', { colorScheme, opacity }, 'ribbon');
+    if (st.tube) add('tube', { colorScheme, opacity }, 'tube');
+    if (st.sphere) add('spacefill', { scale: st.sphereScale || 1, colorScheme, opacity, multipleBond: true }, 'sphere');
+    if (st.ball) add('ball+stick', { colorScheme, opacity, multipleBond: true, aspectRatio: 1.3 }, 'ball');
     // « Sticks » of a selection / molecule is licorice (NGL has no `stick` rep).
-    if (st.stick) add('licorice', { colorScheme, opacity, multipleBond: true, radiusSize: LICORICE_BOND_RADIUS });
-    if (st.surface) add('surface', { colorScheme, opacity: opacity != null ? opacity : 0.5 });
+    if (st.stick) add('licorice', { colorScheme, opacity, multipleBond: true, radiusSize: LICORICE_BOND_RADIUS }, 'stick');
+    if (st.surface) add('surface', { colorScheme, opacity: opacity != null ? opacity : 0.5 }, 'surface');
     // A PyMOL script that asked for « set cartoon_ring_mode, 1 » also gets the
     // FILLED RING PLATES of its own nucleic selections: in PyMOL mode the §2 menus
     // are off (the script owns the scene), so the stylized look has to be built
@@ -8005,6 +8056,27 @@ useEffect(() => {
   applyFog();
 }, [fogEnabled, applyFog]);
 
+/* ---- ONE name for a PyMOL style token -----------------------------------------
+   PyMOL accepts « sphere » / « spheres », « stick » / « sticks », « ball+stick » /
+   « ball_and_stick », « line » / « lines » / « dots » … for the SAME style. The
+   parser normalises it HERE, so one style is written one way, and the ordered
+   « show / hide » rule can match the two spellings (see styleHidesAfter): a
+   « hide sticks, … » really undoes the « show stick, … » it follows. Returns null
+   for a token the viewer does not draw (`all`, `everything`, `labels` …).
+   PURE — the guard test runs it on a real macro. */
+const pymolStyleToken = (st) => {
+  const s = String(st || '').toLowerCase();
+  if (s === 'sphere' || s === 'spheres') return 'sphere';
+  if (s === 'stick' || s === 'sticks') return 'stick';
+  if (s === 'ball' || s === 'ball+stick' || s === 'ball_and_stick' || s === 'ballandstick') return 'ball';
+  if (s === 'cartoon') return 'cartoon';
+  if (s === 'ribbon') return 'ribbon';
+  if (s === 'tube') return 'tube';
+  if (s === 'surface') return 'surface';
+  if (s === 'line' || s === 'lines' || s === 'dots') return 'line';
+  return null;
+};
+
 const parsePyMOL = (text) => {
   const sels = [];
   const acts = [];
@@ -8033,7 +8105,12 @@ const parsePyMOL = (text) => {
         if (rgb.length >= 3) colorDefs[m[1].trim()] = ((rgb[0] & 255) << 16) | ((rgb[1] & 255) << 8) | (rgb[2] & 255);
       }
     } else if (cmd === 'show' || cmd === 'hide') {
-      const style = (arg1 || rest[0] || 'all').toLowerCase();
+      // The style token is NORMALISED at parse time (pymolStyleToken): PyMOL's
+      // « spheres » / « sticks » / « ball+stick » become ONE token, so the
+      // ordered « show / hide » rule can match a « hide spheres, … » to the
+      // « show sphere, … » it undoes. 'all' / 'everything' keep their name.
+      const rawStyle = (arg1 || rest[0] || 'all').toLowerCase();
+      const style = pymolStyleToken(rawStyle) || rawStyle;
       const sel = (arg1 ? rest[0] : rest[1]) || 'all';
       acts.push({ type: cmd, style, sel });
     } else if (cmd === 'color') {
@@ -8075,6 +8152,25 @@ const parsePyMOL = (text) => {
   return { sels, acts, colorDefs };
 };
 
+/* ---- Ordered « show » / « hide » — the ONE rule of the PyMOL semantics --------
+   PyMOL keeps ONE state per atom and per style: the LAST command wins. The viewer
+   stores one look per selection, so a « show sphere, resn POPC+…+PSM » followed by
+   « hide spheres, membrane and z>90 » left every sphere on screen (two independent
+   keys). `styleHidesAfter` answers the only question the renderer asks: for the
+   show at `index`, which LATER hides of that same style must be subtracted? PURE —
+   _pymol_selections_test.mjs runs it on a real macro. */
+const styleHidesAfter = (acts, index, style) => (Array.isArray(acts) ? acts : [])
+  .slice(index + 1)
+  .filter((a) => a && a.type === 'hide' && a.style === style)
+  .map((a) => a.sel)
+  .filter((s) => !!s);
+
+// Does the script OWN the scene? « hide all » is the statement that says so: the
+// script then draws everything it wants itself, and the viewer must NOT add its
+// own auto-shown spheres on top (the report « everything is drawn with spheres »).
+const scriptHidesAll = (acts) => (Array.isArray(acts) ? acts : [])
+  .some((a) => a && a.type === 'hide' && (a.style === 'all' || a.style === 'everything'));
+
 const applyPyMOLScript = (text) => {
   const log = [];
   try {
@@ -8085,21 +8181,30 @@ const applyPyMOLScript = (text) => {
       ...sels,
     ];
     setSelections(nextSels);
-    const styleOf = (st) => (st === 'sphere' || st === 'spheres' ? 'sphere' : st === 'stick' || st === 'sticks' ? 'stick' : st === 'ball' || st === 'ball+stick' || st === 'ball_and_stick' || st === 'ballandstick' ? 'ball' : st === 'cartoon' ? 'cartoon' : st === 'ribbon' ? 'ribbon' : st === 'tube' ? 'tube' : st === 'surface' ? 'surface' : st === 'line' || st === 'lines' || st === 'dots' ? 'line' : null);
+    // ONE normalisation of a PyMOL style token, shared with parsePyMOL
+    // (pymolStyleToken): a « hide sticks » meets the « show stick » it undoes.
+    const styleOf = pymolStyleToken;
     const next = { ...selStylesRef.current };
     // Reset every selection the script mentions to "hidden", then apply commands
     sels.forEach((s) => {
       const cur = next[s.name] || {};
       next[s.name] = { ...cur, cartoon: false, ribbon: false, tube: false, ball: false, stick: false, sphere: false, surface: false };
     });
-    acts.forEach((a) => {
+    acts.forEach((a, ai) => {
       const key = names.has(a.sel) ? a.sel : (a.sel === 'all' ? 'all' : a.sel);
       const cur = next[key] || {};
       if (a.type === 'show' || a.type === 'hide') {
         const st = styleOf(a.style);
-        if (st) next[key] = { ...cur, [st]: a.type === 'show' };
+        if (st) {
+          // A « show » remembers the LATER hides of its own style: the renderer
+          // subtracts them atom by atom (see exclusionOf) — PyMOL's last-wins.
+          const hideFor = a.type === 'show'
+            ? { ...(cur.hideFor || {}), [st]: styleHidesAfter(acts, ai, st) }
+            : (cur.hideFor || undefined);
+          next[key] = { ...cur, [st]: a.type === 'show', ...(hideFor ? { hideFor } : {}) };
+        }
         if (a.style === 'everything' || a.style === 'all') {
-          next[key] = { ...cur, cartoon: a.type === 'show', ribbon: a.type === 'show', tube: a.type === 'show', ball: a.type === 'show', stick: a.type === 'show', sphere: a.type === 'show', surface: a.type === 'show' };
+          next[key] = { ...(next[key] || cur), cartoon: a.type === 'show', ribbon: a.type === 'show', tube: a.type === 'show', ball: a.type === 'show', stick: a.type === 'show', sphere: a.type === 'show', surface: a.type === 'show' };
         }
       } else if (a.type === 'color') {
         const c = colorDefs[a.color] || parseColorInt(a.color);
@@ -8162,26 +8267,39 @@ const applyPyMOLScript = (text) => {
     setSelStyles(next);
     setPymolActive(true);
     setHideAll(false);
+    // A fresh script opens a fresh « the script owns §2 » window (see the styling
+    // effect): its own §2 writes are adopted, the user's next change hands back.
+    pymolOwnSigRef.current = null;
     // Reproduce every selection the script defines: selections that received no
     // explicit style from the script are shown as a subtle semi-transparent
     // sphere so the user can see exactly which atoms each one captures.
+    // The script's own « hide all » says it owns the scene: the auto-show of the
+    // parsed selections is then SKIPPED, otherwise a macro with its 75 helper
+    // selections (POPC · POPS · … headgroups · membrane) drowned the real look
+    // under ~65 auto-sphere blobs — the report « everything is drawn with spheres ».
+    const ownsScene = scriptHidesAll(acts);
     if (autoShowSel && sels.length) {
-      const PAL = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#06b6d4', '#a3e635', '#f472b6', '#6366f1', '#84cc16', '#eab308', '#0ea5e9', '#f43f5e'];
-      let ci = 0;
-      const shown = {};
-      Object.keys(next).forEach((k) => {
-        const s = next[k] || {};
-        if (s.cartoon || s.ribbon || s.tube || s.ball || s.stick || s.sphere || s.surface) shown[k] = true;
-      });
-      const patch = {};
-      sels.forEach((s) => {
-        if (shown[s.name]) return;
-        patch[s.name] = { ...(next[s.name] || {}), sphere: true, transparency: 0.6, sphereScale: 0.6, color: parseInt(PAL[ci % PAL.length].slice(1), 16) };
-        ci++;
-      });
-      Object.assign(next, patch);
-      setSelStyles({ ...next });
-      log.push(`• Auto-shown ${Object.keys(patch).length} selection(s) as subtle spheres (toggle in the list below).`);
+      if (ownsScene) {
+        log.push('• « hide all » in the script → auto-show skipped (the script owns the scene).');
+        setSelStyles({ ...next });
+      } else {
+        const PAL = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#06b6d4', '#a3e635', '#f472b6', '#6366f1', '#84cc16', '#eab308', '#0ea5e9', '#f43f5e'];
+        let ci = 0;
+        const shown = {};
+        Object.keys(next).forEach((k) => {
+          const s = next[k] || {};
+          if (s.cartoon || s.ribbon || s.tube || s.ball || s.stick || s.sphere || s.surface) shown[k] = true;
+        });
+        const patch = {};
+        sels.forEach((s) => {
+          if (shown[s.name]) return;
+          patch[s.name] = { ...(next[s.name] || {}), sphere: true, transparency: 0.6, sphereScale: 0.6, color: parseInt(PAL[ci % PAL.length].slice(1), 16) };
+          ci++;
+        });
+        Object.assign(next, patch);
+        setSelStyles({ ...next });
+        log.push(`• Auto-shown ${Object.keys(patch).length} selection(s) as subtle spheres (toggle in the list below).`);
+      }
     } else {
       setSelStyles(next);
     }
@@ -10728,7 +10846,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
 <span className="text-[9px] font-black text-violet-700 uppercase tracking-wide whitespace-nowrap">🧪 PyMOL</span>
 <button type="button" onClick={() => setShowPymolPanel((v) => !v)}
   className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${showPymolPanel ? 'bg-violet-100 border-violet-400 text-violet-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="Paste or load a PyMOL script (select / show / hide / color / set sphere_scale·transparency / bg_color / cartoon · ribbon · tube / surface / spectrum / util.ray_shadows). Parsed selections appear in the vertical bar on the right of the 3D viewer.">
+  title="Paste or load a PyMOL script (select / show / hide / color / set sphere_scale·transparency / bg_color / cartoon · ribbon · tube / surface / spectrum / util.ray_shadows). Every selection the script defines — and every look it creates on a raw expression — appears in the Selections bar on the LEFT of the 3D viewer (◀ collapses it).">
   🧪 Selections & PyMOL
 </button>
 {showPymolPanel && (
@@ -10774,7 +10892,8 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
     {pymolLog && <pre className="text-xs text-slate-700 bg-white border border-violet-200 rounded-lg p-2 whitespace-pre-wrap max-h-32 overflow-y-auto">{pymolLog}</pre>}
     {selections.length > 0 && (
       <p className="text-[10px] text-violet-600 font-bold">
-        ✓ {selections.length} selection(s) parsed — toggle them in the vertical bar on the right of the 3D viewer.
+        ✓ {selections.length} selection(s) parsed — the Selections bar is on the LEFT of the 3D viewer (◀ collapses it).
+        Touching any styling control of §2 hands the main structure back to the styling sections, so a macro never freezes them.
       </p>
     )}
   </div>
@@ -11480,33 +11599,76 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
     (the report). The panel now appears for the selections and for a structure /
     trajectory LOAD in progress, and its Abort button only exists while such a load
     is abortable. */}
-{(selections.length > 0 || status === 'loading' || trajStatus === 'loading') && (
-  <div className={`absolute top-2 ${molBarOpen ? 'right-[21rem]' : 'right-2'} bottom-2 w-64 z-30 flex flex-col gap-2 bg-white/95 border border-violet-200 rounded-xl shadow-lg p-2 overflow-hidden`}>
+{/* ▶ The tab that brings the SELECTIONS bar back once it is collapsed — the same
+    gesture as the styling bar on the right. This bar is the LEFT one: every
+    selection a PyMOL script defines, each with its own styles. */}
+{status === 'ready' && selBarCollapsed && selections.length > 0 && (
+  <button type="button" onClick={() => setSelBarCollapsed(false)}
+    className="absolute top-11 left-2 z-40 px-2 h-7 rounded-md bg-white/90 border border-violet-300 text-violet-700 text-[10px] font-black hover:bg-violet-50 shadow-sm flex items-center justify-center"
+    title={`Open the selections bar — ${selections.length} selection(s), each with its own styles`}>
+    ▶ Selections
+  </button>
+)}
+
+{(selections.length > 0 || status === 'loading' || trajStatus === 'loading') && !selBarCollapsed && (
+  <div className="absolute top-11 left-2 bottom-2 w-64 z-30 flex flex-col gap-2 bg-white/95 border border-violet-200 rounded-xl shadow-lg p-2 overflow-hidden">
     {selections.length > 0 && (
     <>
     <div className="flex items-center justify-between gap-2 shrink-0">
       <span className="text-[10px] font-black text-violet-700 uppercase tracking-wide">Selections</span>
+      <span className="flex items-center gap-1">
+      <button type="button" onClick={() => setSelBarCollapsed(true)}
+        className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+        title="Collapse the selections bar (▶ brings it back) — the styles stay applied">
+        ◀</button>
       <button type="button" onClick={() => setHideAll((v) => !v)}
         className={`px-2 py-0.5 text-[9px] font-bold rounded border ${hideAll ? 'bg-red-600 text-white border-red-600' : 'bg-white border-red-300 text-red-600 hover:bg-red-50'}`}
         title={hideAll ? 'Show everything again' : 'Hide every representation'}>
         {hideAll ? 'Show all' : '🙈 Hide all'}
       </button>
+      </span>
     </div>
     <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1.5 min-h-0">
-      {selections.map((s) => {
+      {[
+        // 1. The selections the script NAMED (« select water, resn TIP3 »).
+        ...selections.map((s) => ({ ...s, raw: false })),
+        // 2. The looks the script created on a RAW EXPRESSION — « show sphere, resn
+        //    POPC+POPE+… » is one of them. They used to be INVISIBLE here, so the
+        //    spheres of a macro could not be switched off by hand at all: the
+        //    report « the spheres remain even when I remove them ». Every look now
+        //    has a row, and ✕ removes it.
+        ...Object.keys(selStyles)
+          .filter((k) => k !== 'all' && !selections.some((s) => s.name === k))
+          .map((k) => ({ name: k, expr: k, raw: true })),
+      ].map((s) => {
         const st = selStyles[s.name] || {};
         const n = selectionAtomCount(s.name);
         return (
           <div key={s.name} className="flex flex-col gap-1 border border-slate-100 rounded-lg p-1.5 bg-white">
             <div className="flex items-center justify-between gap-1">
-              <span className={`text-xs font-bold truncate ${st.hidden ? 'text-slate-400 line-through' : 'text-slate-800'}`} title={s.expr}>{s.name}</span>
+              <span className={`text-xs font-bold truncate ${st.hidden ? 'text-slate-400 line-through' : 'text-slate-800'}`}
+                title={s.raw ? `Raw script expression: ${s.expr}` : s.expr}>
+                {s.raw ? '⌗ ' : ''}{s.name}
+              </span>
               <div className="flex items-center gap-1 shrink-0">
                 <span className="text-[10px] text-slate-400 font-mono">{n != null ? `${n} atoms` : '—'}</span>
+                {st.hideFor && Object.values(st.hideFor).some((l) => Array.isArray(l) && l.length > 0) && (
+                  <span className="text-[9px] font-bold text-slate-400 cursor-help"
+                    title={`The script hides part of this selection ${Object.entries(st.hideFor).map(([k, l]) => `${k}: ${(l || []).join(' · ')}`).join(' | ')} — the ordered « show / hide » of PyMOL, subtracted atom by atom`}>
+                    −{Object.values(st.hideFor).reduce((a, l) => a + ((l || []).length), 0)}
+                  </span>
+                )}
                 <button type="button"
                   onClick={() => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), hidden: !st.hidden } })}
                   className={`px-1.5 py-0.5 text-[10px] font-bold rounded border ${st.hidden ? 'bg-red-600 text-white border-red-600' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-red-50'}`}
                   title={st.hidden ? 'Show this selection again' : 'Hide this selection (removes its representations)'}>
                   {st.hidden ? '👁 Show' : '🙈 Hide'}
+                </button>
+                <button type="button"
+                  onClick={() => { const nx = { ...selStylesRef.current }; delete nx[s.name]; setSelStyles(nx); }}
+                  className="px-1.5 py-0.5 text-[10px] font-bold rounded border bg-slate-50 text-slate-500 border-slate-200 hover:bg-red-50 hover:text-red-600"
+                  title="Remove this look for good (the selection itself stays: re-run the script to get its look back)">
+                  ✕
                 </button>
               </div>
             </div>
