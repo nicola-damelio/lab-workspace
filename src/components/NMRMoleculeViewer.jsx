@@ -8350,6 +8350,51 @@ const selectionAtomCount = (key) => {
   }
 };
 
+/* ---- A GESTURE IN THE SELECTIONS BAR IS PyMOL'S LAST COMMAND ---------------
+   PyMOL styles live on ATOMS, not on selections: `show sphere, resn POPC+…`
+   followed by `show spheres, upper_headgroups` draws the SAME headgroup atoms
+   twice, and `hide spheres, POPC` then takes them away for good. The viewer,
+   on the other hand, drew one representation per ROW, so unchecking « sphere »
+   on one row left the identical beads of every other row on screen — the user
+   sees nothing happen (« la finestra di sinistra non ha il controllo sulla
+   molecola: POPC reste en sphères »), while the row it was clicked on really
+   had lost its own spheres.
+   The fix keeps the row model (one row = one look) but gives the GESTURE the
+   weight of a last command: it writes this row's own PyMOL expression into the
+   `hideFor` of every OTHER row that draws the same STYLE — and the renderer
+   already subtracts those atom by atom (`exclusionOf` → `and not (…)`). Showing
+   the style again removes the entry, so the gesture is reversible, and the row
+   that was clicked keeps its own `hideFor` (the script's later hides are not
+   forgotten). */
+const toggleSelStyle = (key, style) => {
+  const all = selStylesRef.current || {};
+  const cur = all[key] || {};
+  const on = !cur[style];
+  // The row's own expression, as written by the script: a named selection's
+  // expression, or the raw key itself. Re-expanded by the bridge when rendered.
+  const named = selections.find((s) => s.name === key);
+  const raw = (named && named.expr) || key;
+  if (!raw || raw === 'all') { setSelStyles({ ...all, [key]: { ...cur, [style]: on } }); return; }
+  const next = { ...all, [key]: { ...cur, [style]: on } };
+  Object.keys(next).forEach((other) => {
+    if (other === key) return;
+    const st = next[other] || {};
+    const list = (st.hideFor && st.hideFor[style]) || [];
+    // Hiding: only a row that DRAWS this style could put the atoms back on
+    // screen, so only those are touched. Showing: every row is cleaned, whatever
+    // it draws — that is what makes the gesture reversible.
+    if (!on && !st[style] && !list.length) return;
+    const kept = list.filter((h) => h !== raw);
+    const updated = on ? kept : [...kept, raw];
+    const hideFor = { ...(st.hideFor || {}) };
+    if (updated.length) hideFor[style] = updated; else delete hideFor[style];
+    const clean = { ...st };
+    delete clean.hideFor;
+    next[other] = Object.keys(hideFor).length ? { ...clean, hideFor } : clean;
+  });
+  setSelStyles(next);
+};
+
 // PDB anchor atoms used to build a SMALL, page-friendly key set when a residue
 // tick is clicked. Keeping selectedAtomKeys small (≈ the size of a normal 3D
 // atom click) avoids heavy re-renders in the spectra / per-atom tables; the WHOLE
@@ -12389,7 +12434,8 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
             <div className="flex items-center gap-1 flex-wrap">
               {['cartoon', 'ribbon', 'tube', 'ball', 'stick', 'sphere', 'surface'].map((style) => (
                 <button key={style} type="button"
-                  onClick={() => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), [style]: !((selStylesRef.current[s.name] || {})[style]) } })}
+                  onClick={() => toggleSelStyle(s.name, style)}
+                  title={`${st[style] ? 'Hide' : 'Show'} « ${style === 'ball' ? 'ball+stick' : style} » on the atoms of this row — and on THOSE atoms: the other rows that draw the same style lose them too, exactly like the last command of PyMOL`}
                   className={`px-1.5 py-0.5 text-[10px] font-bold rounded border ${st[style] ? 'bg-violet-600 text-white border-violet-600' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-violet-50'}`}>
                   {style === 'ball' ? 'ball+stick' : style}
                 </button>

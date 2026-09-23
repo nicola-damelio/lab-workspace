@@ -58,6 +58,16 @@ const tests = [
   // à la main (l'ordre des « show / hide », la barre Selections à gauche, §2
   // qui reprend la main, les `set … , <sélection>` devenus propriétés d'ATOMES).
   '_pymol_selections_test.mjs',
+  // « la fenêtre de gauche n'a aucun contrôle sur la molécule : POPC reste en
+  // sphères ». Dans une macro, les MÊMES atomes sont dessinés par plusieurs
+  // lignes (« show sphere, resn POPC+… » ET « show spheres, upper_headgroups ») :
+  // décocher un style sur une ligne ne changeait donc RIEN à l'écran, puisque
+  // les billes de l'autre ligne restaient. Le geste a maintenant le poids du
+  // dernier commandement PyMOL : il soustrait ses atomes aux autres lignes qui
+  // dessinent le même style, via le `hideFor` que le rendu applique déjà
+  // atome par atome. L'aller-retour est vérifié, ainsi que l'indépendance des
+  // familles et la non-mutation des styles.
+  '_viewer_selection_toggle_test.mjs',
   // Le RIG DE LUMIÈRE (§3 Scene → ◐ Shadows / 🌑 Darkness / 💡 Light) est extrait
   // dans src/utils/viewerLightRig.js : les nombres de la référence (blanc, key
   // 1.15 / ambiante 0.34 hors ombres, 1.3 + 0.7·dark / max(0.12, 0.34 − 0.22·dark)
