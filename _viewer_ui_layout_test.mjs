@@ -7,27 +7,29 @@
      • le bouton « ⬇ Minimize » est SEUL tout en haut de la fenêtre (§0) ;
      • la barre de commande tient en TROIS lignes, dans l'ordre demandé :
        1 General (PDB / Load / Trajectory / Clear / Figure) ·
-       2 Molecular Styling — ACCORDÉON REPLIÉ PAR DÉFAUT (« Hide everything » +
-         SIX menus : A Proteins · B Nucleic acids · C Lipids ·
-         D Sugars · E Organic molecules · F Others) ·
+       2 Molecular Styling — ACCORDÉON REPLIÉ PAR DÉFAUT, dont le corps porte les
+         gestes GLOBAUX (Hide everything · ⚡ ESP · ✏️ Atom names · 🔢 Renumber) ·
        3 Toolbar = Scene | Modify | Analysis | PyMOL sur UNE seule rangée ;
-     • les SIX menus A–F tiennent sur UNE seule ligne (plus de description sous
-       le nom d'un menu : elle reste dans son infobulle) et un menu OUVERT
-       n'étire plus sa cellule — ses paramètres s'affichent EN HORIZONTAL sur
-       une rangée PLEINE LARGEUR (row 2) juste sous les six boutons, donc deux
-       ou trois lignes au lieu d'une colonne haute ;
+     • le STYLING d'une molécule vit dans la barre « Molecules · styling » (à
+       droite du canvas) : un ESPACE par molécule (la principale comprise), les
+       rangées de son type (une par partie), et son Move X · Y · Z. Les six menus
+       de catégorie A–F de l'ancien §2 ont disparu — les tests qui les couvraient
+       parlent maintenant des rangées (voir _viewer_style_controls_test.mjs) ;
      • l'ancienne section globale « 4 · Labels » a disparu : Residues /
-       Residue type / Atom names vivent DANS chaque menu, donc cocher
-       « Residues » dans le menu Protéines n'étiquette QUE les protéines ;
+       Residue type / Atom names vivent DANS l'espace de chaque molécule, donc
+       cocher « Residues » sur une protéine n'étiquette QUE cette molécule ;
      • les lipides sont séparés en headgroups / squelette glycérol / chaînes
-       acyle par des sélections NGL par NOM D'ATOME, les sucres ont leur propre
-       menu (mot-clé réel `saccharide` + liste de resnames : NGL 2.4 n'a pas de
-       mot-clé `carbohydrate`) et le menu des ligands exclut lipides ET sucres ;
-     • toute surface « Transparent » fait apparaître un curseur d'opacité
-       (0 → 1) et la valeur part dans NGL avec `transparent: true` ;
+       acyle par des sélections NGL par NOM D'ATOME (trois RANGÉES de l'espace
+       d'un lipide), les sucres ont leur espace (mot-clé réel `saccharide` + liste
+       de resnames : NGL 2.4 n'a pas de mot-clé `carbohydrate`) et celui des
+       ligands exclut lipides ET sucres ;
+     • la transparence d'une rangée EST l'opacité de sa surface (0 → 1), et la
+       valeur part dans NGL avec `transparent: true` ;
      • « Clipping: Off » pousse les plans de la caméra aux extrêmes
        (0 · 100000 · 0 Å) pour ne jamais couper un gros complexe, et ◐ Shadows
-       allume l'équivalent NGL de l'ambient occlusion (ambiance + sampleLevel) ;
+       allume l'équivalent NGL de l'ambient occlusion — ambiance profonde +
+       sur-échantillonnage — dont les nombres vivent dans
+       src/utils/viewerLightRig.js (vérifiés par _viewer_light_rig_test.mjs) ;
      • la barre ▶ Play · frame slider · speed est bien une BARRE (un commentaire
        JSX, jamais un commentaire brut rendu comme du texte) ;
      • RIEN n'a été perdu : ESP, lumière/ombres, sélections PyMOL, mesure,
@@ -63,9 +65,12 @@ ok(!VIEW.slice(iReturn, iMin).includes('<VSection'), '…et aucune section ne le
 ok(VIEW.indexOf('Retract (minimize) the 3D viewer window') > 0, 'son infobulle décrit le repli de la fenêtre');
 
 /* ── 2. Les trois lignes de la barre de commande, dans l'ordre ──────────── */
+// PART 4 a remplacé l'en-tête « ▸ 2 · Molecular Styling » par un accordéon dont
+// le bouton dit son état (« ▲ collapse » / « ▼ expand ») : c'est son
+// `aria-expanded` qui marque la ligne §2.
 const order = [
   '<VSection title="1 · General"',
-  "{stylingOpen ? '▾' : '▸'} 2 · Molecular Styling",
+  'aria-expanded={stylingOpen}',
   '<VSection title="3 · Toolbar"',
 ];
 order.forEach((marker) => has(marker, `ligne « ${marker.replace('<VSection title=', '').replace('"', '')} » présente`));
@@ -91,7 +96,9 @@ has('const [stylingOpen, setStylingOpen] = useState(false);', '[§2] replié par
 has('onClick={() => setStylingOpen((v) => !v)}', '[§2] en-tête cliquable');
 has('aria-expanded={stylingOpen}', '[§2] l\'en-tête annonce son état');
 has('{stylingOpen && (', '[§2] les menus ne sont montés qu\'une fois ouvert');
-has('Proteins ${catStyles.protein.backbone} · Nucleic ${catStyles.nucleic.backbone}', '[§2] en-tête replié : résumé des styles courants');
+has("{stylingOpen ? '▲ collapse' : '▼ expand'}", '[§2] le bouton d’accordéon dit son état');
+has('The styling of every molecule lives in the bar on the right of the canvas — one space per molecule: ${Object.keys(sectionCatalog).length} space(s)',
+  '[§2] en-tête : le styling vit dans la barre, UN espace par molécule');
 
 /* ── 2ter. La barre ▶ Play n'est pas remplacée par du texte ─────────────── */
 ok(!/\n\/\* ══ ▶ TRAJECTORY PLAYBACK/.test(VIEW),
@@ -158,62 +165,75 @@ gone('renderDockRoleSelects', '[§2] plus de menus Prot: / Lig: propres au docki
 gone('captureDockStylesFromViewer', '[§2] plus de 📸 « copier la vue » du docking');
 has('{hideAll ? \'👁️ Show default\' : \'🙈 Hide everything\'}', '[§2] Hide everything');
 
-has('label="A · Proteins"', '[§2] menu A · Proteins');
-has('label="B · Nucleic acids"', '[§2] menu B · Nucleic acids');
-has('label="C · Lipids"', '[§2] menu C · Lipids');
-has('label="D · Sugars"', '[§2] menu D · Sugars (nom raccourci)');
-has('label="E · Ligands"', '[§2] menu E · Ligands (nom raccourci)');
-has('label="F · Others · water"', '[§2] menu F · Others (nom raccourci)');
-// Les six menus tiennent sur UNE SEULE ligne : une grille de SIX colonnes dont
-// chaque bouton ne porte que le NOM du menu — la description qui était rendue
-// sous lui n'existe plus (elle reste dans son infobulle et dans l'en-tête replié
-// du §2, qui résume déjà les six menus à la fois).
-has('grid-cols-6', '[§2] les six boutons A–F tiennent sur UNE ligne');
-has('className="w-full grid gap-1 items-stretch grid-cols-6"', '[§2] …six colonnes de même largeur (une seule rangée de menus)');
-gone('grid-cols-[repeat(auto-fit,minmax(17rem,1fr))]', '[§2] plus de grille responsive qui répartissait les menus sur plusieurs rangées');
-has('row-start-1 w-full min-w-0 flex items-center justify-between gap-1 rounded-lg border px-1.5 py-1 text-left', '[§2] un bouton ne porte que le nom du menu (une seule ligne)');
-// Un menu OUVERT n'étire plus sa cellule : le composant rend un FRAGMENT, donc
-// ses deux enfants sont des cases de la grille — le bouton reste sur la rangée 1
-// et les paramètres prennent la rangée 2 en PLEINE LARGEUR (`col-span-full
-// row-start-2`), disposés EN HORIZONTAL (flex-wrap) immédiatement sous les six
-// boutons. C'est la place explicite (row 1 / row 2) qui garantit les deux
-// rangées, quel que soit le menu ouvert.
-has('col-span-full row-start-2 w-full rounded-lg border px-2 py-1.5 flex flex-wrap items-start gap-x-4 gap-y-1.5', '[§2] le menu ouvert : rangée 2 pleine largeur sous les six boutons, paramètres en horizontal');
-has('aria-expanded={open}', '[§2] chaque bouton annonce son état');
-has('title={summary}', '[§2] …le résumé d’un menu reste accessible en infobulle');
-gone('break-words line-clamp-2', '[§2] …et plus aucune description n’est rendue sous le nom du menu');
+// Les six menus A–F (et leur grille de six colonnes) ont DISPARU avec PART 4 : le
+// corps du §2 ne porte plus que les gestes GLOBAUX du viewer (Hide everything ·
+// ESP · Atom names · Renumber), et le styling de chaque molécule vit dans la barre
+// de droite, un ESPACE par molécule.
+gone('label="A · Proteins"', '[§2] plus de menu A · Proteins');
+gone('label="B · Nucleic acids"', '[§2] …ni B · Nucleic acids');
+gone('label="C · Lipids"', '[§2] …ni C · Lipids');
+gone('label="D · Sugars"', '[§2] …ni D · Sugars');
+gone('label="E · Ligands"', '[§2] …ni E · Ligands');
+gone('label="F · Others', '[§2] …ni F · Others');
+gone('grid-cols-6', '[§2] …donc plus de grille de six colonnes');
+has('className="flex flex-wrap items-center gap-1"', '[§2] son corps est une rangée d’outils, pas une grille de menus');
+has('className="flex flex-col gap-1 bg-slate-50/80 border border-slate-200 rounded-lg px-1.5 py-1"',
+  '[§2] sa section : un cadre compact, replié en une seule ligne');
+has("{espOnSelected ? '⚡ ESP: On' : '⚡ ESP'}", '[§2] le bouton ⚡ ESP');
+has("🔢 Renumber{showRenumberPanel ? ' ▲' : ' ▼'}", '[§2] le bouton 🔢 Renumber');
+has('✏️ Atom names{Object.keys(renames).length', '[§2] le bouton ✏️ Atom names');
+has('{(entry.sections || []).map((sec) => renderSection(sec))}',
+  '[barre] …et le styling d’une molécule est rendu par SON espace, à droite');
+// Plus de grille de six menus à une seule ligne : le §2 n'a plus qu'un en-tête et
+// un corps, et les rangées du styling vivent dans la barre de droite.
+// (Le bouton de menu A–F vit encore dans le composant HISTORIQUE des six menus,
+// mais plus rien ne le monte : le RENDU a une seule rangée par partie de molécule.)
+has('const renderSectionRow = (sec, sub) => {', '[§2] plus aucun bouton de menu A–F rendu : la rangée le remplace');
 
-/* ── 5. Les listes d'options demandées, menu par menu ───────────────────── */
-// A · Proteins
-has('<option value="cartoon">Cartoon</option>', '[A] Backbone : Cartoon');
-has('<option value="trace">Trace (C-α)</option>', '[A] Backbone : Trace (C-α)');
-has('<option value="tube">Tube</option>', '[A] Backbone : Tube');
-has('<option value="hide">Hide</option>', '[A] Backbone : Hide');
-has('<option value="licorice">Licorice (sticks)</option>', '[A] Side chains : Licorice (= les sticks)');
-has('<option value="line">Lines (saves resources)</option>', '[A] Side chains : Lines (économique)');
-has('<option value="spacefill">Spacefill</option>', '[A] Side chains : Spacefill');
-has('<option value="solid">Solid</option>', '[A/B/D/E] Surface : Solid');
-has('<option value="transparent">Transparent</option>', '[A/B/D/E] Surface : Transparent');
-has('<option value="mesh">Mesh (wireframe)</option>', '[A/B/D/E] Surface : Mesh');
-has('<option value="esp">Electrostatic Potential (ESP)</option>', '[A/B/D] Surface colour : ESP');
-// Les deux menus ouvrent désormais DEUX panneaux différents : A le panneau
-// « 2° structure / surlignages » (protéines), B le panneau propre aux acides
-// nucléiques (phosphate · pentose · bases). Le bouton est rendu par le même
-// helper pour les deux menus.
-has("🎨 {open ? 'Hide colours' : 'Colours…'}", '[A/B] outil Couleurs intégré (un panneau par menu)');
-has('🔢 {showRenumberPanel ? \'Hide renumber\' : \'Renumber…\'}', '[A/B] outil Renumber intégré');
-// B · Nucleic
-has('<option value="trace">Phosphate Trace (P)</option>', '[B] Phosphate Trace');
-has('<option value="slab">Filled rings (slabs / boxes)</option>', '[B] Bases : Filled rings');
-// C · Lipids
-has('<option value="lines">Lines (default)</option>', '[C] Acyl chains : Lines (défaut)');
-has('const LIPID_RESNAMES = new Set([', '[C] reconnaissance des lipides par resname (NGL n’a pas de mot-clé « lipid »)');
-has('const lipidsFound = Array.isArray((catInfo && catInfo.lipids) || null) ? catInfo.lipids : [];',
-  '[C] le menu dit ce qu’il a trouvé (ou qu’il n’y a rien à styler)');
-// D · Organic + E · Others
-has('<option value="dots">Dots (lightest)</option>', '[F] eau : Dots (le plus léger)');
-has('<option value="points">Points (sized)</option>', '[F] eau : Points');
-has('label="Water surface"', '[F] surface d’eau (Solid / Transparent / Mesh)');
+/* ── 5. Le VOCABULAIRE des styles et des colorations ───────────────────── */
+// Les listes déroulantes d'une rangée sont construites depuis SA spécification
+// (SECTION_SUBSECTIONS) : le style vient de `spec.styles` et son libellé de
+// STYLE_LABELS, la coloration de `spec.colors` et de COLOR_LABELS. Un style ne
+// peut donc pas être offert là où le rendu ne le connaît pas.
+has('{spec.styles.map((s) => <option key={s} value={s}>{styleLabelFor(kind, s)}</option>)}',
+  '[rangées] la liste des styles vient de la spécification de la rangée');
+has('{spec.colors.map((c) => <option key={c} value={c}>{COLOR_LABELS[c]}</option>)}',
+  '[rangées] …et le « Color by » aussi');
+has("const styleLabelFor = (kind, token) => (kind === 'ion' && token === 'spacefill' ? 'Sphere' : (STYLE_LABELS[token] || token));",
+  '[vocabulaire] un ion nomme « spacefill » Sphere');
+has("hide: 'Hide',", '[vocabulaire] Hide');
+has("cartoon: 'Cartoon',", '[vocabulaire] Cartoon');
+has("ribbon: 'Ribbon',", '[vocabulaire] Ribbon');
+has("tube: 'Tube',", '[vocabulaire] Tube');
+has("trace: 'Phosphate trace (P)',", '[vocabulaire] Trace (P) — le squelette d’un acide nucléique');
+has("'ball+stick': 'Balls and sticks',", '[vocabulaire] Ball & stick');
+has("licorice: 'Liquorice',", '[vocabulaire] Licorice (= les sticks)');
+has("line: 'Lines',", '[vocabulaire] Lines');
+has("spacefill: 'CPK',", '[vocabulaire] CPK (= spacefill)');
+has("surface: 'Surface',", '[vocabulaire] Surface');
+has("mesh: 'Mesh surface',", '[vocabulaire] Mesh (wireframe)');
+has("base: 'Slabs',", '[vocabulaire] Slabs (la représentation `base` de NGL)');
+has("rings: 'Stylized rings (filled plates)',", '[vocabulaire] Stylized rings (plaques pleines)');
+has("plates: 'Ring plates',", '[vocabulaire] Ring plates (l’anneau du ribose)');
+has("solid: 'Solid',", '[vocabulaire] Solid (une couleur unie)');
+has("element: 'Atom type',", '[vocabulaire] Atom type');
+has("chain: 'Chain',", '[vocabulaire] Chain');
+has("residue: 'Amino acid (residue)',", '[vocabulaire] Amino acid (residue)');
+has("sstruc: 'Secondary structure',", '[vocabulaire] Secondary structure');
+has("basetype: 'DNA/RNA base',", '[vocabulaire] DNA/RNA base');
+has("nucform: 'RNA/DNA conformation',", '[vocabulaire] RNA/DNA conformation');
+has("lipidtype: 'Lipid type',", '[vocabulaire] Lipid type');
+has("sugar: 'Sugar type',", '[vocabulaire] Sugar type');
+has("hydrophobicity: 'Hydrophobicity',", '[vocabulaire] Hydrophobicity');
+has("charge: 'Charge',", '[vocabulaire] Charge');
+has("esp: 'Electrostatic potential (only surfaces)',", '[vocabulaire] Electrostatic Potential (ESP)');
+has("gradient: 'Gradient (first → last)',", '[vocabulaire] Gradient (first → last)');
+has("rainbow: 'Rainbow (first → last)',", '[vocabulaire] Rainbow (first → last)');
+// Le ↺ d'une rangée, et la roue ⚙ pour les palettes qu'une rangée n'édite pas
+// elle-même (les chaînes, les résidus, les sucres, les lipides, les bases…).
+has('onClick={() => resetSectionRowLook(sec.id, kind, sub)}', '[rangées] ↺ d’une rangée (les défauts de son type)');
+has('title="Open the ⚙ settings wheel — the colour of every CHAIN (A · B · C …) has a section of its own there"',
+  '[rangées] « Color by : Chain » renvoie à la palette des chaînes de la roue ⚙');
 
 /* ── 5bis. PART 2 — sélections & rendu avancés ──────────────────────────── */
 // 1. Lipides : la liste de resnames demandée + les trois sous-parties
@@ -239,18 +259,25 @@ has('const blank = { head: \'\', glycerol: \'\', acyl: \'\', named: true };',
   '[lipides] aucune visite d’atome (NGL pas prêt) → le drapeau garde sa valeur historique');
 has('lipidColorStore.named = sub.named;', '[lipides] …et le panneau de couleurs lit le MÊME drapeau');
 has('const col = lipidCol();', '[lipides] la couleur du menu C passe par « Colour by chemical part »');
-has('label="Glycerol backbone"', '[lipides] menu : squelette glycérol séparé');
-has("onChange={(e) => setCatStyle('lipid', 'glycerol', e.target.value)}", '[lipides] …et il est réglable');
-// 1bis. Le panneau de couleurs du menu C (headgroup / squelette / chaînes).
-has("const [showLipidColoursPanel, setShowLipidColoursPanel] = useState(false);", '[C] un panneau de couleurs PROPRE au menu des lipides');
-has(": cat === 'lipid' ? showLipidColoursPanel", '[C] …ouvert par le 🎨 de ce menu');
-has("{renderColoursButton('lipid')}", '[C] le 🎨 du menu C ouvre ce panneau');
+// Le squelette glycérol n'est plus une option du menu C : c'est une RANGÉE à part
+// entière de l'espace d'un lipide (« Glycerol »), avec son propre style, sa propre
+// coloration et ses propres rayons.
+has("{ sub: 'glycerol', label: 'Glycerol', styles: STYLES.sidechains, colors: COLORS.lipidParts, def: { style: 'ball+stick', colorBy: 'lipidtype' }, sele: 'glycerol' },",
+  '[lipides] espace : squelette glycérol séparé');
+has("onChange={(e) => set('style', e.target.value)}", '[lipides] …et il est réglable');
+// 1bis. Les trois parts d'un lipide ne sont plus trois pastilles d'un panneau 🎨 du
+// menu C : c'est le « Color by » de chaque rangée (le type de lipide) qui les
+// colore, et la roue ⚙ qui édite la palette des types de lipides.
+has("const [showLipidColoursPanel, setShowLipidColoursPanel] = useState(false);", '[C] l’ancien panneau de couleurs des lipides');
+gone('{renderColoursButton(\'lipid\')}', '[C] …n’est plus rendu (les rangées du lipide parlent pour lui)');
 has('Colour by chemical part', '[C] l’interrupteur « Colour by chemical part »');
-has('value={numToHex(catStyles.lipid.headColor)}', '[C] la pastille de la tête lit catStyles.lipid');
-has('value={numToHex(catStyles.lipid.glycerolColor)}', '[C] la pastille du squelette');
-has('value={numToHex(catStyles.lipid.tailColor)}', '[C] la pastille des chaînes');
-has('onClick={resetLipidColours}', '[C] ↺ Reset colours');
-has('headColor: DEFAULT_LIPID_COLORS.head,', '[C] les trois couleurs vivent dans catStyles.lipid (donc persistées + setup)');
+has("case 'lipidtype': return schemeParam(lipidClassSchemeKey || elementSchemeKey, 'element');",
+  '[C] la couleur par partie passe par le schéma des types de lipides');
+gone('value={numToHex(catStyles.lipid.headColor)}', '[C] plus de pastille « tête » du vieux panneau');
+gone('value={numToHex(catStyles.lipid.glycerolColor)}', '[C] …ni de pastille « squelette »');
+gone('value={numToHex(catStyles.lipid.tailColor)}', '[C] …ni de pastille « chaînes »');
+gone('onClick={resetLipidColours}', '[C] …ni de son ↺ Reset colours');
+has('headColor: DEFAULT_LIPID_COLORS.head,', '[C] les trois couleurs des parts restent définies (schéma lab-lipid-groups)');
 has('const lipidGroupsOn = () => !!(cs.lipid && cs.lipid.groupColour && lipidSchemeKey);', '[C] le rendu suit l’interrupteur');
 has('registerLipidScheme(NGL);', '[C] le schéma des trois parts est enregistré au démarrage');
 has("registerColorScheme(NGL, 'lab-lipid-groups'", '[C] …sous son propre libellé');
@@ -267,13 +294,17 @@ has("addSurface(sugarSele, 'sugar', cs.sugar.surfaceOpacity);", '[sucres] surfac
 has("addSurface('water', 'other', cs.other.surfaceOpacity);", '[eau] la surface s’applique à la sélection `water`, toute seule');
 has("nglSeleCountCached(comp.structure, 'water') !== 0", '[eau] …même quand les atomes d’eau ne sont dans aucune autre sélection');
 has("transparent: true, opacity: op", '[opacité] NGL reçoit transparent: true + opacity');
-has("const renderSurfaceOpacity = (cat, label = 'Opacity') => (", '[opacité] un curseur par menu');
-has('surface === \'transparent\'', '[opacité] il n’apparaît que pour « Transparent »');
-has("{renderSurfaceOpacity('protein')}", '[opacité] menu A');
-has("{renderSurfaceOpacity('nucleic')}", '[opacité] menu B');
-has("{renderSurfaceOpacity('sugar')}", '[opacité] menu D');
-has("{renderSurfaceOpacity('organic')}", '[opacité] menu E');
-has("{renderSurfaceOpacity('other', 'Water opacity')}", '[opacité] menu F (eau)');
+// Plus de curseur « Opacity » par menu : la TRANSPARENCE d'une rangée EST
+// l'opacité de sa surface (sectionOpacity), et la rangée le DIT quand son style est
+// une surface. La surface d'eau, elle, est un des styles de son propre espace.
+has('const sectionOpacity = (look) => (', '[opacité] la transparence d’une rangée, en opacité NGL');
+has("case 'surface': return [{ type: 'surface', params: { surfaceType: 'av', opacity:", '[opacité] une surface prend l’opacité de sa rangée');
+has("case 'mesh': return [{ type: 'surface', params: { surfaceType: 'av', wireframe: true, opacity: 1 } }];",
+  '[opacité] « Mesh » est un vrai wireframe, opaque');
+has('a surface: the transparency above IS its opacity (100 % = wireframe-visible mesh)',
+  '[opacité] la rangée le dit quand son style est une surface');
+has("water: [{ sub: 'general', label: 'Water', styles: STYLES.small, colors: COLORS.water, def: { style: 'ball+stick', colorBy: 'element' }, sele: '' }],",
+  '[eau] l’eau a son espace, et sa surface est un style de sa rangée');
 
 /* ── 6. Les anciens menus globaux ont bien disparu ──────────────────────── */
 gone('Side: Hidden', 'l’ancien menu « Side: » est retiré');
@@ -297,17 +328,14 @@ has('installShadowLightRig();', '[conservé] la lumière-clé fixe des ombres');
 // Étiquettes 3D : elles vivent désormais DANS chaque menu (l'ancienne section
 // « 4 · Labels » est supprimée) — cocher « Residues » dans un menu n'étiquette
 // que les atomes de CE menu.
-has("{renderCatLabels('protein')}", '[étiquettes] menu A');
-has("{renderCatLabels('nucleic')}", '[étiquettes] menu B');
-has("{renderCatLabels('lipid')}", '[étiquettes] menu C');
-has("{renderCatLabels('sugar')}", '[étiquettes] menu D');
-has("{renderCatLabels('organic')}", '[étiquettes] menu E');
-has("{renderCatLabels('other')}", '[étiquettes] menu F');
-has("setCatLabel(cat, 'residues', e.target.checked)", '[étiquettes] case « Residues » par catégorie');
-has("setCatLabel(cat, 'residueType', e.target.checked)", '[étiquettes] case « Residue type » par catégorie');
-has("setCatLabel(cat, 'atoms', e.target.checked)", '[étiquettes] case « Atom names » par catégorie');
-has('const [catLabels, setCatLabels] = useState(() => loadCatLabels());', '[étiquettes] état par catégorie, persistant');
-has('allowed: new Set(indices)', '[étiquettes] build3dLabelMap ne reçoit que les atomes de la catégorie');
+// Les étiquettes 3D vivent maintenant dans l'ESPACE de chaque molécule (l'ancienne
+// section « 4 · Labels » et les six menus de catégorie ont disparu) : cocher
+// « Residues » dans un espace n'étiquette que les atomes de CETTE molécule.
+has('const SECTION_LABEL_DEFAULTS = { residues: false, residueType: false, atoms: false };',
+  '[étiquettes] les trois cases, par espace');
+has('const setSectionLabel = (id, key, value) => setSectionLabels((prev) => ({', '[étiquettes] UNE écriture par espace');
+has('onChange={(e) => setSectionLabel(sec.id, k, e.target.checked)}', '[étiquettes] les trois cases d’un espace');
+has('allowed: new Set(indices)', '[étiquettes] build3dLabelMap ne reçoit que les atomes de l’espace');
 has('const atomIndicesForSele = (structure, sele) => {', '[étiquettes] la sélection du menu devient une liste d’indices d’atomes');
 has('const routeCategorySelections = (sels, moleculeType) => {', '[rendu] UNE fonction de routage partagée par le rendu ET les étiquettes');
 has('onClick={() => setDragMove((v) => !v)}', '[conservé] ✋ Drag');
@@ -336,11 +364,15 @@ has('onClick={() => setShowPymolPanel((v) => !v)}', '[conservé] 🧪 Selections
 has('onClick={() => applyPyMOLScript(pymolScript)}', '[conservé] exécution du script PyMOL');
 has('onChange={(e) => setQualityHigh(e.target.checked)}', '[conservé] option « High quality » PyMOL');
 has('value={bgColor}', '[conservé] couleur de fond PyMOL');
-has('onClick={() => setShowRenumberPanel((v) => !v)}', '[conservé] 🔢 Renumber');
+has('onClick={toggleRenumberPanel}', '[conservé] 🔢 Renumber (le panneau unique du viewer)');
 has('onClick={applyRenumberFrom}', '[conservé] « Renumber from »');
-has("setSstrucColour('helix', parseInt(e.target.value.slice(1), 16))",
-  '[conservé] couleurs 2° structure (hélices) — la pastille allume en plus le mode « Secondary structure » du menu A');
-has('onChange={(e) => setAssignedAtomColor(parseInt(e.target.value.slice(1), 16))}', '[conservé] couleur des atomes assigned');
+has("onChange={(e) => setSstrucColour(it.key, parseInt(e.target.value.slice(1), 16))}",
+  '[conservé] couleurs 2° structure — la palette est dans la RANGÉE dès que « Secondary structure » est choisi');
+has('onClick={() => setSstrucColors({ ...SSTRUC_COLOR_DEFAULTS })}', '[conservé] …et la roue ⚙ les remet à leurs défauts');
+// Le contrôle de la couleur des atômes « assigned » a disparu avec les menus : la
+// couleur reste celle du réglage enregistré, et le rendu la lit toujours.
+gone('onChange={(e) => setAssignedAtomColor(parseInt(', '[supprimé] plus de pastille « couleur des assigned » dans les menus');
+has('color: assignedAtomColorRef.current', '[conservé] la couleur des atomes assigned atteint le rendu');
 has('onClick={() => setViewerCollapsed((v) => !v)}', '[conservé] repli de la fenêtre 3D');
 // Le bouton « ✨ Full detail » (et son helper) est SUPPRIMÉ : cliquer dessus
 // figeait la visualisation d'un gros système. Son effet est maintenant
@@ -354,17 +386,26 @@ has('const leaveLightMode = () => {', '[rendu] le geste de style remplace le bou
 has('const setCatStyle = (cat, key, value) => {', '[rendu] …appelé par les six menus de §2');
 gone('ℹ️ Large structure', '[supprimé] la bannière « Large structure » ne s’affiche plus au-dessus du 3D');
 has('onClick={togglePlay}', '[conservé] ▶ Play de la trajectoire');
-has('onChange={(e) => onStyle(e.target.value)}', '[conservé] style par molécule (barre Molecules)');
-has('onStyle: (v) => setExtraMolStyle(m.id, v),', '[conservé] …branché sur setExtraMolStyle');
-has('onColorMode: (v) => setExtraMolColorMode(m.id, v),', '[conservé] …et sur setExtraMolColorMode');
-has('onTransparency: (v) => setExtraMolTransparency(m.id, v),', '[conservé] …et sur setExtraMolTransparency');
-has('onClick={applyActiveStyleToAll}', '[conservé] 🎨 Copy de la barre Molecules');
+// La barre Molecules ne replie plus quatre groupes par molécule : chaque molécule
+// a son ESPACE, et le style par molécule est celui de SES rangées — le même geste,
+// à la bonne granularité (voir _viewer_color_settings_test.mjs).
+has('{(entry.sections || []).map((sec) => renderSection(sec))}', '[conservé] style par molécule (un espace par molécule)');
+has('const set = (field, value) => setSectionField(sec.id, kind, sub, field, value);',
+  '[conservé] …branché sur setSectionField');
+has("onChange={(e) => set('style', e.target.value)}", '[conservé] …le style de la rangée');
+has("onChange={(e) => set('colorBy', e.target.value)}", '[conservé] …sa coloration');
+has("onChange={(e) => set('opacity', Number(e.target.value))}", '[conservé] …sa transparence');
+has('onClick={copySectionsToAll}', '[conservé] 🎨 Copy de la barre Molecules (le look d’une molécule aux autres)');
 // La barre Molecules est aussi la maison du SMILES du ligand et du ⚙ des palettes.
 has('{shownLigandSmiles && (', '[barre] le SMILES de la molécule / du ligand y est affiché');
 has('onClick={copyLigandSmiles}', '[barre] …avec son bouton 📋 (copie)');
 has('onClick={() => setSettingsPanelOpen(true)}', '[barre] ⚙ ouvre la roue des réglages');
 has('onClick={() => setSelStyles({ ...selStylesRef.current,', '[conservé] styles par sélection (barre Selections)');
-has('{selections.map((s) => {', '[conservé] barre verticale des sélections');
+// La couleur de surface est une coloration de rangée comme une autre : elle
+// choisit « Electrostatic potential (only surfaces) », et c'est le MÊME générateur
+// (espColorParams) que le bouton ⚡ qui l’applique.
+has("case 'esp': return espColorParams();", '[ESP] la rangée ESP passe par le même générateur');
+has('{selections.length > 0 && (', '[conservé] barre verticale des sélections');
 has('onClick={handleAbort}', '[conservé] ⏹ Abort');
 has("setPymolScript(typeof entry === 'string' ? entry : (entry.script || ''))",
   '[conservé] chargement d’un script PyMOL de la Library');
@@ -372,10 +413,7 @@ has("setPymolScript(typeof entry === 'string' ? entry : (entry.script || ''))",
 /* ── 8. ESP branché dans les menus + un seul jeu de limites ─────────────── */
 // La couleur de surface est rendue par UN helper partagé, appelé par les six
 // menus (setSurfaceColor reçoit donc la catégorie, plus un menu précis).
-has("const renderSurfaceColour = (cat, label) => {", '[ESP] un SEUL sélecteur de couleur de surface pour les six menus');
-has("{renderSurfaceColour('protein', 'protein')}", '[ESP] menu A → Surface colour');
-has("{renderSurfaceColour('nucleic', 'nucleic')}", '[ESP] menu B → Surface colour');
-has("{renderSurfaceColour('organic', 'ligand')}", '[ESP] menu E → Surface colour');
+has("const espColorParams = () => {", '[ESP] un SEUL générateur de couleurs ESP');
 has("onChange={(e) => setSurfaceColor(cat, e.target.value)}", '[ESP] …branché sur setSurfaceColor(cat, …)');
 has("if ((value === 'esp' || value === 'custom') && (!next.surface || next.surface === 'hide')) next.surface = 'transparent';",
   '[ESP/couleur] choisir ESP ou une couleur unie allume la surface : le choix ne reste jamais sans effet');
@@ -389,7 +427,8 @@ has('const customHex = m.surfaceColor === \'custom\' ? flatHex(m.surfaceColorHex
 has('catEspRepsRef.current.set(comp, []);', '[ESP] les surfaces ESP sont réenregistrées à chaque reconstruction');
 has('catEspRepsRef.current.forEach((list) => {', '[ESP] ⚡ Range recolore aussi les surfaces de catégorie');
 has('{(espOnSelected || catEspActive) && (', '[ESP] le panneau Range s’affiche pour les deux entrées ESP');
-has('colorScheme: \'electrostatic\',\n      colorScale: \'rwb\',', '[ESP] l’overlay ⚡ garde son colorScheme/colorScale');
+has("const r = addRow('surface', { sele, ...espColorParams(), transparent: true, opacity: 0.75 });",
+  '[ESP] l’overlay ⚡ garde son colorScheme/colorScale (espColorParams)');
 
 /* ── 9. §3 Scene : fog, ombres, plan de coupe aux extrêmes quand Off ────── */
 has('const CLIP_DEFAULTS = { near: 0, far: 100000, dist: 0 };',
@@ -411,19 +450,21 @@ has('min="0" max="30" step="0.1" value={clipDist}', '[§3] clipDist descend jusq
 has('const flagMeshShadows = (rep) => {', '[ombres] helper de marquage des mailles');
 has('o.castShadow = true;\n            o.receiveShadow = true;', '[ombres] cast ET receive sur chaque maille');
 has('if (r) { flagMeshShadows(r); reps.push(r); }', '[ombres] appelé pour CHAQUE représentation des menus');
-// NGL 2.4 n'a PAS de passe SSAO (vérifié : aucun symbole `ssao` /
-// `AmbientOcclusion` dans le build installé) : ◐ Shadows pilote donc
-// l'équivalent — ambiance profonde + lumière-clé forte + sur-échantillonnage.
-has('const AO_SAMPLE_LEVEL = 2;', '[AO] niveau de sur-échantillonnage de l’équivalent SSAO');
-has('sampleLevel: AO_SAMPLE_LEVEL,', '[AO] ◐ Shadows ON → l’ombrage des cavités est sur-échantillonné');
-has('        sampleLevel: 0,\n      });', '[AO] Shadows OFF → niveau d’échantillonnage NGL rétabli');
-has('ambientIntensity: Math.max(0.12, 0.34 - dark * 0.22)', '[AO] l’ambiance s’assombrit → cavités/crevasses marquées');
+// NGL 2.4 n'a PAS de passe SSAO : ◐ Shadows pilote donc l'équivalent — ambiance
+// profonde + lumière-clé forte + sur-échantillonnage — et le réglage vit
+// maintenant dans src/utils/viewerLightRig.js (avec sa traduction Mol*, où
+// l'occlusion est une vraie passe écran) : c'est _viewer_light_rig_test.mjs qui
+// l'EXÉCUTE et vérifie chaque nombre.
+has("import { LIGHT_RIG, nglKeyLightDirection, nglLightParams } from '../utils/viewerLightRig';",
+  '[AO] la rig de lumière est un module à part, avec son propre garde-fou');
+has('const installShadowLightRig = useCallback(() => {', '[AO] ◐ Shadows installe la rig (ambiance + lumière-clé)');
+has('stage.setParameters(nglLightParams({ shadowOn: on, darkness: dark }));', '[AO] …alimentée par ◐ Shadows et 🌑 Darkness');
 
 /* ── 11. Le rendu suit les menus (et plus les anciens sélecteurs) ───────── */
 has('const catStylesRef = useRef(catStyles);', '[rendu] miroir synchrone des styles de catégorie');
-has('const buildCategoryReps = (comp) => {', '[rendu] UN constructeur de représentations par catégorie');
+has('const buildSectionReps = (comp, sections, trees, opts = {}) => {', '[rendu] UN constructeur de représentations par SECTION');
 has('const applyCurrentStyleTo = useCallback((comp, baseReps) => {', '[rendu] les molécules extra passent par le même constructeur');
-has('return buildCategoryReps(comp);', '[rendu] …sans règle différente du rendu principal');
+has('reps = applyCurrentStyleTo(comp, []);', '[rendu] …sans règle différente du rendu principal');
 has('const catSelectionsFor = (structure) => {', '[rendu] sélections protein / nucleic / lipid / organic / others');
 has("const sels = catSelectionsFor(comp.structure) || fallbackSels;", '[rendu] …réutilisées par le constructeur');
 has("else if (bb === 'trace') add('trace', { sele: sels.protein, ...col, quality: 'high' });",

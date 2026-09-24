@@ -10,12 +10,14 @@
        vivait (section « 2 · Molecular Styling » et barre Molecules) : il n'y a
        plus de mode global à basculer, donc plus d'état `dockStyleMode`, plus de
        `dockStyleRef`, plus de `toggleDockStyle` ni d'`applyDockStylesNow` ;
-     • le look venait DÉJÀ de la section « 2 · Molecular Styling » — c'est ce qui
-       reste : le résultat actif ET toutes les molécules chargées sont dessinés
-       par le MÊME constructeur par catégorie que le reste du viewer
-       (buildCategoryReps), sans aucun drapeau de docking à consulter ;
-     • chaque molécule garde son propre style (barre Molecules) et « Auto » suit
-       les SIX menus A–F du §2.
+     • le look venait DÉJÀ de la section « 2 · Molecular Styling » — ce qui reste,
+       c'est la barre « Molecules · styling » : le résultat actif ET toutes les
+       molécules chargées sont dessinés par le MÊME constructeur par SECTION que le
+       reste du viewer (buildSectionReps), sans aucun drapeau de docking à
+       consulter ;
+     • chaque molécule a son PROPRE espace dans la barre, avec les rangées de son
+       type (une par partie de la molécule) et son Move ; une molécule chargée dont
+       le style est « Auto » suit la barre.
 
    Le viewer est un .jsx : il ne s'importe pas sous Node. Les règles sont donc
    vérifiées SUR LA SOURCE — comme les autres garde-fous du dépôt.
@@ -66,37 +68,58 @@ gone('Standardize DOCKING', '…ni l’infobulle « Standardize DOCKING results 
 gone('}, [dockStyles]);', 'plus aucun état de style du docking à surveiller');
 
 /* ── 3. Le rendu passe par le constructeur du §2 — sans drapeau ─────────── */
-has('const buildCategoryReps = (comp) => {', 'le constructeur par catégorie du §2 est toujours là');
-has("if (!st.style || st.style === 'auto') {",
-  'la structure principale suit le §2 quand son style est « Auto » (aucun autre critère)');
+// PART 4 a remplacé le constructeur par catégorie par un constructeur par SECTION
+// (une section = une molécule / une chaîne : les deux protéines d'un fichier sont
+// deux espaces), et c'est lui le SEUL rendu — la principale comme les molécules
+// chargées. Il n'y a donc plus AUCUN style par molécule à consulter : ce que le
+// mode de docking forçait autrefois, c'est la barre qui le décrit, molécule par
+// molécule, rangée par rangée.
+has('const buildSectionReps = (comp, sections, trees, opts = {}) => {',
+  'le constructeur par SECTION est le seul constructeur du rendu');
+has('const rebuildSectionsOf = (comp, molKey) => {',
+  '…et le rebuild d’un composant passe par lui (les sections sont énumérées une fois)');
+has('const applyCurrentStyleTo = useCallback((comp, baseReps) => {',
+  '…par UNE porte d’entrée, pour la principale, une molécule chargée et une chaîne');
+gone("if (!st.style || st.style === 'auto') {",
+  'plus aucun style PAR MOLÉCULE à consulter : chaque molécule est dessinée par ses sections');
 has("if (!style || style === 'auto') {",
-  '…et chaque molécule chargée aussi (restyleExtraMol)');
+  '…et une molécule chargée dont le style est « Auto » suit la barre (restyleExtraMol)');
 gone('if (dockStyleRef.current || !st.style', 'plus aucun drapeau de docking dans ce choix');
 gone('if (dockStyleRef.current || !style', '…ni dans celui des molécules chargées');
 ok(count(/const baseReps = applyCurrentStyleTo\(comp, \[\]\);/g) === 3,
   'les trois chargements (chaîne, molécule supplémentaire, URL) passent par le rendu du §2');
 
-/* ── 4. Les réglages par molécule font le geste de style du docking ─────── */
+/* ── 4. Les rangées de la barre font le geste de style du docking ───────── */
 // Ce que le mode de docking faisait autrefois (faire quitter à un grand système
-// son rendu léger), ce sont les réglages par molécule de la barre Molecules qui
-// le font maintenant : chaque setter appelle leaveLightMode().
-has('const setExtraMolStyle = (id, style) => {\n  leaveLightMode();',
-  'le style d’une molécule quitte le rendu léger');
-has('const setExtraMolColorMode = (id, mode) => {\n  leaveLightMode();',
-  '…son mode de coloration aussi');
-// Les quatre groupes repliés de la barre (Style · Colour · Transp · Move) sont
-// rendus par UNE seule implémentation pour la principale COMME pour chaque
-// molécule chargée, et chacun passe par leaveLightMode() puis setMainMol.
-has('onStyle: (v) => { leaveLightMode(); setMainMol((m) => ({ ...m, style: v })); },',
-  '…et le style de la structure principale, dans la même barre');
-has('onColorMode: (v) => { leaveLightMode(); setMainMol((m) => ({ ...m, colorMode: v })); },',
-  '…son mode de coloration');
-has('onTransparency: (v) => { leaveLightMode(); setMainMol((m) => ({ ...m, transparency: v })); },',
-  '…sa transparence');
-has('const renderMolFolds = (keyName, { name, style, color, colorMode, transparency, onStyle, onColor, onColorMode, onTransparency, moveFields }) => {',
-  'UNE implémentation des quatre groupes repliés, partagée par la principale et les molécules chargées');
-has('{renderMolFolds(\'main\', {', '[barre] la structure principale utilise ces groupes');
-has('{renderMolFolds(m.id, {', '[barre] …et chaque molécule chargée aussi');
+// son rendu léger), ce sont les rangées de la barre « Molecules · styling » qui le
+// font maintenant : chaque geste de style — un menu de rangée, un ↺, le ✔ d'une
+// molécule — appelle leaveLightMode() avant d'écrire.
+const LINES = VIEWER.split('\n');
+const blockAt = (anchor, span) => {
+  const i = LINES.findIndex((l) => l.includes(anchor));
+  return i < 0 ? '' : LINES.slice(i, i + span).join('\n');
+};
+const gesture = (anchor, what) => ok(blockAt(anchor, 3).includes('leaveLightMode();'), what);
+gesture('const setSectionField = (id, kind, sub, field, value) => {',
+  'un menu de rangée (style · Color by · rayons · matériau) quitte le rendu léger');
+gesture('const resetSectionRowLook = (id, kind, sub) => {',
+  'le ↺ d’une rangée aussi');
+gesture('const resetSectionKindLook = (id, kind) => {',
+  '…et le ↺ de la molécule entière');
+gesture('const toggleSectionVisible = (id, kind) => {',
+  '…et le ✔ qui dessine ou cache une molécule');
+// La barre n'a qu'UNE implémentation des rangées : renderSection (l'espace d'une
+// molécule) appelle renderSectionRow pour CHAQUE rangée de son type — la
+// principale comme chaque molécule chargée. Le Move d'une molécule est le seul
+// geste qui ne touche pas au style (il la déplace, il ne la redessine pas).
+has('const renderSectionRow = (sec, sub) => {', 'UNE implémentation des rangées d’un espace');
+has('const renderSection = (sec) => {', '…appelée par l’espace d’une molécule');
+has('{(entry.sections || []).map((sec) => renderSection(sec))}',
+  '[barre] chaque molécule (la principale comprise) rend ses rangées');
+has('{shown && subsectionsOf(kind).map((s) => renderSectionRow(sec, s.sub))}',
+  '…les rangées du type de molécule, et elles seules');
+has('onChange={(e) => (extra ? setExtraMolPosition(extra.id, ai, e.target.value) : setMainPosition(ai, e.target.value))}',
+  '[barre] le Move X · Y · Z d’une molécule (la principale comprise)');
 
 /* ── Bilan ───────────────────────────────────────────────────────────────── */
 console.log(`_dock_style_test.mjs — ${passed} assertions OK`);

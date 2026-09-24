@@ -1,7 +1,8 @@
 /* =========================================================================
    _viewer_color_settings_test.mjs — la ROUE ⚙ du viewer 3D (barre Molecules) :
-   les deux palettes qu'elle édite, et la hiérarchie « look général ⇄ look d'un
-   menu » qui les relie aux six menus de §2.
+   les palettes qu'elle édite, le look général qu'elle partage, et les trois
+   systèmes de coloration qui les lisent (les rangées de la barre, les molécules
+   chargées et les sélections).
 
    Ce qui doit rester vrai :
 
@@ -22,10 +23,11 @@
        surcharge (il garde sa valeur quand le général bouge) et le petit ↺ de ce
        champ le rend au général ; ↺ Reset radii & colours d'un menu = tous ses
        champs suivent le général ;
-     • les quatre groupes repliés de la barre Molecules (Style · Colour · Transp ·
-       Move) sont rendus par UNE seule implémentation, pour la structure
-       principale comme pour chaque molécule chargée, et chacun dit sa valeur
-       courante (un groupe replié n'est jamais muet) ;
+     • la barre « Molecules · styling » donne UN ESPACE par molécule (la principale
+       comprise) : les rangées de son type — une par partie de la molécule — sont
+       rendues par UNE seule implémentation (renderSection → renderSectionRow), et
+       chacune dit sa valeur courante (style · Color by · transparence · rayons ·
+       matériau) ;
      • le SMILES de la molécule / du LIGAND est affiché (replié) dans cette barre,
        avec son bouton 📋 — il était reçu mais jamais montré.
 
@@ -147,8 +149,21 @@ has("if (mode === 'element') return elementSchemeKey || 'element';",
   '[schémas] « Atom type » → la palette ⚙ (repli : les couleurs d’éléments de NGL)');
 has("if (mode === 'sugar') return sugarSchemeKey || 'element';",
   '[schémas] « Sugar type » → l’identité des sucres (même repli)');
-eq((VIEW.match(/\? schemeForColorMode\(st\.colorMode\)/g) || []).length, 3,
-  'les trois chemins de coloration par molécule (principale · molécules chargées · sélections) passent par elle');
+// Les trois façons de colorer une molécule passent par la MÊME correspondance :
+//   • les SÉLECTIONS — le mode de la ligne, normalisé par selColorMode ;
+//   • une molécule CHARGÉE dont le style n'est pas « Auto » — son colorMode ;
+//   • la structure PRINCIPALE, et chaque rangée de la barre, par
+//     sectionColorParams (les schémas enregistrés, repli sur ceux de NGL).
+eq((VIEW.match(/schemeForColorMode\(/g) || []).length, 2,
+  'la correspondance « Color by » → schéma NGL a exactement DEUX lecteurs');
+has("const colorScheme = colorMode !== 'solid' ? schemeForColorMode(colorMode) : undefined;",
+  '[sélections] la ligne de sélection passe par elle');
+has('? schemeForColorMode(st.colorMode)',
+  '[molécule chargée] …et le style choisi pour une autre molécule aussi');
+has('const sectionColorParams = (look, kind) => {',
+  '[barre] …et les rangées passent par la table des schémas de la barre');
+has('const colorParams = sectionColorParams(look, sec.kind);',
+  '[barre] …appliquée à CHAQUE rangée dessinée');
 has('<option value="element">Atom-type palette (⚙)</option>', '[menus] la palette des éléments est proposée dans les menus');
 has("{showSugar && <option value=\"sugar\">Sugar type (⚙ palette)</option>}", '[menus] le type de sucre n’est proposé que là où des sucres sont dessinés');
 has("const showSugar = cat === 'sugar';", '[menus] …c’est-à-dire le menu des sucres');
@@ -160,19 +175,26 @@ has("if (mode === 'sugar' && sugarSchemeKey) return { color: sugarSchemeKey };",
 ok(VIEW.includes('Atom-type palette (⚙)') && DOCK.includes('ligandSmiles'),
   'les deux palettes vivent de bout en bout (menus · barre · page)');
 
-/* ══ 3. LA BARRE MOLECULES : QUATRE GROUPES REPLIÉS, UNE IMPLÉMENTATION ═══ */
+/* ══ 3. LA BARRE MOLECULES : UN ESPACE PAR MOLÉCULE, UNE IMPLÉMENTATION ═══ */
+// PART 4 a remplacé les quatre groupes repliés d'une molécule (Style · Colour ·
+// Transp · Move) par un ESPACE par molécule : un titre, un Move X · Y · Z et les
+// RANGÉES de son type (une par partie de la molécule), chacune avec son style, son
+// « Color by », sa transparence, ses rayons et son matériau. Le composant de repli
+// n'est plus utilisé que par le SMILES (voir §4) — il reste, c'est le même.
 has('const [molFold, setMolFold] = useState({});', '[barre] l’état de repli par molécule');
 has('const toggleMolFold = (key, section) => setMolFold((prev) => ({ ...prev, [key]: prev[key] === section ? null : section }));',
   '[barre] un seul groupe ouvert à la fois, par molécule');
 has('const MolFold = ({ open, onToggle, label, summary }) => (', '[barre] le composant de repli');
-has('const renderMolFolds = (keyName, { name, style, color, colorMode, transparency, onStyle, onColor, onColorMode, onTransparency, moveFields }) => {',
-  '[barre] UNE implémentation des quatre groupes');
-has("{renderMolFolds('main', {", '[barre] la structure principale l’utilise');
-has('{renderMolFolds(m.id, {', '[barre] …chaque molécule chargée aussi');
-has('<MolFold {...fold(\'style\')} label="Style"', '[barre] le groupe Style');
-has('<MolFold {...fold(\'color\')} label="Colour"', '[barre] le groupe Colour');
-has('label={`Transp ${transp}%`}', '[barre] …la transparence, qui dit sa valeur courante');
-has('<MolFold {...fold(\'move\')} label="Move"', '[barre] le groupe Move');
+has('{(entry.sections || []).map((sec) => renderSection(sec))}',
+  '[barre] UNE implémentation par molécule — la structure principale comprise');
+has('const renderSection = (sec) => {', '[barre] …qui rend l’espace d’une molécule');
+has('const renderSectionRow = (sec, sub) => {', '[barre] …et une rangée par partie de cette molécule');
+has('{shown && subsectionsOf(kind).map((s) => renderSectionRow(sec, s.sub))}',
+  '[barre] les rangées du type de la molécule, et elles seules');
+has('title="Transparency regulator of THIS row: 0 % = opaque, 100 % = invisible (NGL opacity)"',
+  '[barre] la transparence d’une rangée dit ce qu’elle fait');
+has('title="Shift the whole molecule along X · Y · Z (Å), or move it with the mouse (✋ Drag)"',
+  '[barre] le Move d’une molécule (X · Y · Z, ou ✋ Drag)');
 has('const MOL_STYLE_OPTIONS = (', '[barre] une seule liste de styles pour toutes les lignes');
 has('const MOL_COLOR_OPTIONS = (', '[barre] …et une seule liste de colorations');
 has('setMolFold((prev) => { const n = { ...prev }; delete n[id]; return n; });',
@@ -275,6 +297,7 @@ const buildHelpers = (keys = {}, stored = {}) => {
   sliceObject(VIEW, 'residueColorStore'),
   sliceFn(VIEW, 'residueColorOf'),
   sliceFn(VIEW, 'defineResidueScheme'),
+  sliceObject(VIEW, 'BASE_IDENTITY_COLORS'),
   sliceObject(VIEW, 'baseTypeColorStore'),
   sliceFn(VIEW, 'baseTypeColorOf'),
   sliceFn(VIEW, 'defineBaseTypeScheme'),

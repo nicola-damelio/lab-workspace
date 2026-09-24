@@ -1,31 +1,36 @@
 /* =========================================================================
    _viewer_style_controls_test.mjs — les RÉGLAGES DE STYLE du viewer 3D (NMR /
-   MD / Docking) portés par les six menus de « 2 · Molecular Styling ».
+   MD / Docking) portés par les RANGÉES de la barre « Molecules · styling ».
 
    Ce qui doit rester vrai :
 
-     • chaque menu A–F porte le RAYON DES SPHÈRES et le RAYON DES LIAISONS
-       (deux multiplicateurs, 1.00 = la taille NGL d'origine du style), la
-       COULEUR DES ATOMES (couleurs d'éléments, ou une couleur unie) et la
-       COULEUR DE SURFACE (défaut · Custom… · ESP) — les six menus, lipides
-       compris, alors que seuls trois d'entre eux avaient une couleur de surface ;
-     • les mentions « Kept from the previous … menu » ont DISPARU des listes
-       déroulantes (la fonction est conservée : plus aucun optgroup) et chaque
-       menu nomme le style LICORICE ;
+     • chaque RANGÉE d'une molécule (une par partie : General · Backbone · Side
+       chains, Bases · Ribose, têtes · glycérol · chaînes acyle…) porte le RAYON
+       DES SPHÈRES (R◯) et le RAYON DES LIAISONS (R—) — deux multiplicateurs,
+       1.00 = la taille NGL d'origine du style — sa TRANSPARENCE, sa COULEUR
+       (« Color by » : élément · chaîne · résidu · 2° structure · type de lipide ou
+       de sucre · base · ESP · dégradé · arc-en-ciel) et son MATÉRIAU (🎛) : elles
+       sont TOUTES décrites par le MÊME tableau (SECTION_SUBSECTIONS) et rendues
+       par la MÊME fonction (renderSectionRow), donc un contrôle ne peut plus
+       manquer dans l'une et exister dans l'autre ;
+     • les six menus de catégorie de l'ancien « 2 · Molecular Styling » ont DISPARU
+       au profit de ces rangées : les mentions « Kept from the previous … menu » et
+       leurs optgroups n'existent plus nulle part, et chaque rangée nomme le style
+       LICORICE ;
      • NGL 2.4 ne connaît AUCUNE représentation `stick` : les anciens
-       add('stick', …) ne dessinaient rien. « Sticks » = licorice, partout ;
-     • le menu B (acides nucléiques) a son PROPRE panneau de couleurs —
-       phosphate backbone · pentose rings · bases — à la place du panneau
-       « 2° structure » (une notion de protéine) ; ses trois pastilles passent
-       par un schéma NGL maison (lab-nucleic-groups) qui lit un store vivant.
-       Ces schémas maison sont TOUS enregistrés par registerColorScheme, car
+       add('stick', …) ne dessinaient rien. Les bâtons sont licorice partout ;
+     • les vieux panneaux 🎨 par catégorie (phosphate · pentose · bases, tête ·
+       squelette · chaînes) ont disparu avec les menus : c'est le « Color by » de
+       la rangée qui parle pour la partie qu'elle dessine — l'identité de la base
+       (lab-base-type), le type de lipide (lab-lipid-class) ou une couleur unie.
+       Les schémas maison restent TOUS enregistrés par registerColorScheme, car
        ColormakerRegistry.addScheme veut la DÉFINITION d'abord et le LIBELLÉ
        ensuite : l'ancien ordre inversé donnait une classe cassée dont l'id
        faisait disparaître la molécule (voir _viewer_scheme_test.mjs, qui exécute
        vraiment les schémas avec NGL) ;
-     • la liste « Bases » gagne « Stylized rings (coloured inside) » : les rungs
-       remplis sont colorés par l'IDENTITÉ de la base (A · C · G · T · U) avec un
-       fin anneau de sticks par-dessus ;
+     • le style « Stylized rings (filled plates) » reste : la rangée des bases
+       remplit les anneaux et les colore par l'IDENTITÉ de la base (A · C · G · T ·
+       U), avec un fin anneau de bâtons par-dessus ;
      • « ⚙️ Setup » (menu 1 · General) enregistre / recharge / exporte / importe
        TOUT le réglage de visualisation sous un nom (localStorage) ;
      • le fond de la scène se règle dans « 3 · Toolbar → 🌫 Scene »
@@ -57,19 +62,37 @@ const gone = (needle, what) => ok(!VIEW.includes(needle), `${what}\n  encore pr�
 // l'ancien add('stick', …) pour expliquer justement pourquoi il a disparu.
 const CODE = VIEW.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
-/* ══ 1. LES SIX MENUS PORTENT LES MÊMES CONTRÔLES ═════════════════════════ */
-const CATS = ['protein', 'nucleic', 'lipid', 'sugar', 'organic', 'other'];
-has('const renderCatRadii = (cat) => {', 'un SEUL rendu des deux curseurs de rayon');
-has('const renderAtomColour = (cat) => {', 'un SEUL rendu de la couleur des atomes');
-has('const renderSurfaceColour = (cat, label) => {', 'un SEUL rendu de la couleur de surface');
-has('const resetCatLook = (cat) => setCatStyles((prev) => adoptGeneralLook(prev, cat, generalLook));', 'un ↺ qui remet rayons + couleurs en suivant le look général');
-CATS.forEach((c) => {
-  has(`{renderCatRadii('${c}')}`, `[${c}] Sphere radius + Bond radius`);
-  has(`{renderAtomColour('${c}')}`, `[${c}] Atom colour`);
-  has(`{renderSurfaceColour('${c}',`, `[${c}] Surface colour`);
-  has(`onClick={() => resetCatLook('${c}')}`, `[${c}] ↺ Reset radii & colours`);
-});
-has("{renderSurfaceOpacity('lipid')}", '[C] les lipides ont enfin une surface (donc une opacité)');
+/* ══ 1. LES RANGÉES DE LA BARRE PORTENT TOUTES LES MÊMES CONTRÔLES ════════ */
+// PART 4 : les six menus de catégorie (A · Proteins … F · Others) ont été
+// remplacés par un ESPACE par molécule dans la barre « Molecules · styling ».
+// Chaque molécule y reçoit les rangées de son TYPE (une par partie : General ·
+// Backbone · Side chains, Bases · Ribose, Phospholipid headgroups · Glycerol ·
+// Acyl chains…), TOUTES décrites par le MÊME tableau et rendues par la MÊME
+// fonction : un contrôle ne peut donc pas exister dans une rangée et manquer dans
+// une autre — ce que les six menus ne tenaient que par des appels répétés.
+has('const SECTION_SUBSECTIONS = {', 'UNE description des rangées de chaque type de molécule');
+has('const subsectionsOf = (kind) => SECTION_SUBSECTIONS[kind] || SECTION_SUBSECTIONS.ligand;',
+  'les rangées d’un type de molécule');
+has('const subsectionSpec = (kind, sub) => subsectionsOf(kind).find((s) => s.sub === sub) || subsectionsOf(kind)[0];',
+  'la spécification d’une rangée (styles · colorations · défaut)');
+const KINDS = ['protein', 'nucleic', 'lipid', 'sugar', 'ligand', 'water', 'ion'];
+KINDS.forEach((k) => ok(new RegExp(`^  ${k}: \\[`, 'm').test(VIEW), `[${k}] les rangées de ce type sont décrites`));
+has('const renderSectionRow = (sec, sub) => {', '…et UNE seule fonction les rend');
+has('{shown && subsectionsOf(kind).map((s) => renderSectionRow(sec, s.sub))}',
+  '[barre] chaque rangée décrite est rendue, et elle seule');
+// Les contrôles communs de toute rangée : la transparence, les DEUX rayons (R◯ /
+// R—) et le matériau — le même JSX pour toutes, il n'y a plus rien à répéter.
+has('title="Transparency regulator of THIS row: 0 % = opaque, 100 % = invisible (NGL opacity)"',
+  'la transparence de la rangée');
+has('title="Sphere radius — a multiplier of the style\'s own atom size (1.00 = untouched)"',
+  'le rayon des sphères (R◯)');
+has('title="Bond radius — a multiplier of the style\'s own stick thickness (1.00 = untouched)"',
+  'le rayon des bâtons (R—)');
+has('title={`Material of « ${spec.label} » only', 'le matériau appartient à la rangée');
+has('{MATERIAL_PRESET_KEYS.map((p) => <option key={p} value={p}>{p}</option>)}',
+  '…et ses presets sont UNE seule liste');
+has('onClick={() => resetSectionRowLook(sec.id, kind, sub)}', 'le ↺ d’UNE rangée');
+has('title={`${sec.name} — ${MOL_KIND_LABELS[kind]}', 'un espace par molécule, avec son type écrit');
 has('<option value="custom">Custom colour…</option>', '[couleurs] « Custom… » dans les couleurs de surface ET d’atomes');
 has('<option value="esp">Electrostatic Potential (ESP)</option>', '[couleurs] ESP conservé');
 has('const [showNucleicColoursPanel, setShowNucleicColoursPanel] = useState(false);',
@@ -99,7 +122,12 @@ has("const lineGeom = (cat) => ({ linewidth: Math.max(1, Math.round(2 * catRadii
   'un style « Lines » suit le rayon des bâtons via linewidth');
 has('radiusScale: g.sphere, scale: 0.6', 'spacefill : rayon des sphères = radiusScale (× le rayon de van der Waals)');
 has('aspectRatio: 1.1 * g.sphere', 'ball+stick : rayon des sphères = aspectRatio');
-has('const sideParams = sidechainStyle === \'ball+stick\'', 'les chaînes latérales suivent le menu A');
+// Les chaînes latérales sont une RANGÉE de la protéine (licorice par défaut), et le
+// rendeur les recolle au squelette avec la même règle qu'autrefois (sectionRowSele).
+has("{ sub: 'sidechain', label: 'Side chains', styles: STYLES.sidechains, colors: COLORS.proteinSide, def: { style: 'licorice', colorBy: 'element' }, sele: 'sidechain' },",
+  'la rangée « Side chains » (licorice, couleur par élément)');
+has('return opts.anchorSideChains ? `${base} and (sidechain or .CA)` : `${base} and sidechain`;',
+  '…et ses atomes sont recollés au squelette (CB–CA) quand les deux rangées sont en atomes');
 
 /* ══ 3. LES COULEURS D'ATOMES / DE SURFACE PARTENT BIEN DANS NGL ══════════ */
 has('const flatHex = (v) => (Number.isFinite(v) ? v : null);', 'une couleur unie est un entier hexadécimal');
@@ -116,8 +144,11 @@ has("if (r && m.surfaceColor === 'esp') {", 'les surfaces ESP sont toujours enre
 /* ══ 4. LES MENTIONS « Kept from the previous … menu » ONT DISPARU ════════ */
 gone('Kept from the previous', 'plus aucune mention « Kept from the previous … menu »');
 gone('<optgroup', 'plus aucun optgroup dans les listes déroulantes du viewer');
-has('<option value="licorice">Licorice (sticks)</option>', 'le style Licorice est proposé (squelettes, chaînes latérales, têtes de lipides)');
-has('<option value="sticks">Licorice (sticks)</option>', '« Sticks » nomme licorice (sucres, ligands, chaînes acyle, bases)');
+// NGL 2.4 n'a AUCUNE représentation `stick` : le vocabulaire des styles est donc
+// celui de NGL — « licorice » — et c'est UNE table de libellés qui le nomme.
+has("licorice: 'Liquorice',", 'le style des bâtons (licorice) est proposé par toutes les rangées qui le peuvent');
+has("base: 'Slabs',", '…et le style `base` de NGL garde son nom (Slabs)');
+ok(CODE.includes("'licorice'"), 'le rendu ne demande jamais autre chose que licorice pour des bâtons');
 // Le code SEUL (sans les commentaires, qui citent l'ancien appel) ne doit plus
 // jamais demander à NGL une représentation `stick` : elle n'existe pas, l'appel
 // était avalé par le try/catch et RIEN ne se dessinait.
@@ -126,8 +157,8 @@ ok(!CODE.includes("addRepresentation('stick'"), '…y compris dans la barre Mole
 has("else if (bases === 'sticks') add('licorice', { sele: 'nucleic and sidechain',", '[B] les bases en « Sticks » sont licorice');
 has("else if (st === 'sticks') add('licorice', { sele: sugarSele,", '[D] les sucres en « Sticks » sont licorice');
 has("else if (st === 'sticks') add('licorice', { sele: organicSele,", '[E] les ligands en « Sticks » sont licorice');
-has("else if (st.style === 'sticks') add('licorice', { multipleBond: true, radiusSize: LICORICE_BOND_RADIUS });",
-  'la barre Molecules aussi (style par molécule)');
+has("else if (style === 'sticks') reps.push(comp.addRepresentation('licorice', { ...opts, multipleBond: true, radiusSize: LICORICE_BOND_RADIUS }));",
+  'la barre Molecules aussi : le « Sticks » d’une molécule chargée EST licorice');
 
 /* ══ 5. LE MENU B RECOLORE phosphate / pentose / bases ════════════════════ */
 // ⚠️ ColormakerRegistry.addScheme(DÉFINITION, LIBELLÉ) : la définition D'ABORD.
@@ -152,13 +183,22 @@ has('registerBaseIdentityScheme(NGL);', 'le schéma des bases stylisées aussi')
 has("registerColorScheme(NGL, 'lab-base-identity'", 'un schéma par identité de base');
 has('const [showNucleicColoursPanel, setShowNucleicColoursPanel] = useState(false);', 'l’état du panneau');
 has('Colour by chemical group', 'l’interrupteur « Colour by chemical group »');
-has('value={numToHex(catStyles.nucleic.phosphateColor)}', 'la pastille du phosphate lit catStyles.nucleic');
-has('value={numToHex(catStyles.nucleic.pentoseColor)}', 'la pastille du pentose lit catStyles.nucleic');
-has('value={numToHex(catStyles.nucleic.baseColor)}', 'la pastille des bases lit catStyles.nucleic');
-has('Phosphate backbone', 'la pastille du squelette phosphate');
-has('Pentose ring', 'la pastille du cycle pentose');
-has('Bases', 'la pastille des bases');
-has('onClick={resetNucleicColours}', '↺ Reset colours');
+// Les couleurs par GROUPE chimique (phosphate · pentose · bases) ne sont plus un
+// panneau du menu B : le rendu par PART est une RANGÉE (bases · ribose), et c'est
+// le « Color by » de cette rangée qui parle pour elle — l'identité de la base
+// (lab-base-type, la palette de la roue ⚙) ou une couleur unie. Les trois pastilles
+// du vieux panneau, qui écrivaient catStyles.nucleic, ont disparu avec lui.
+has("{ sub: 'bases', label: 'DNA/RNA bases', styles: STYLES.bases, colors: COLORS.nucleicParts, def: { style: 'rings', colorBy: 'basetype' }, sele: 'bases' },",
+  'la rangée des BASES (plaques pleines, couleur par identité de base)');
+has("{ sub: 'ribose', label: 'DNA/RNA ribose', styles: STYLES.ribose, colors: COLORS.nucleicParts, def: { style: 'plates', colorBy: 'basetype' }, sele: 'ribose' },",
+  '…et celle du RIBOSE (plaques, même vocabulaire)');
+has("case 'basetype': return schemeParam(baseTypeSchemeKey, 'resname');",
+  'la couleur par base passe par le schéma maison lab-base-type (repli : la palette resname de NGL)');
+gone('value={numToHex(catStyles.nucleic.phosphateColor)}', 'plus de pastille « phosphate » du vieux panneau');
+gone('value={numToHex(catStyles.nucleic.pentoseColor)}', '…ni de pastille « pentose »');
+gone('value={numToHex(catStyles.nucleic.baseColor)}', '…ni de pastille « bases »');
+gone('Phosphate backbone', 'plus de panneau phosphate · pentose · bases');
+gone('onClick={resetNucleicColours}', '…ni de son ↺ Reset colours');
 has("const setNucleicColour = (key, hex) => setCatStyles((prev) => ({", 'une pastille allume le mode groupe (jamais invisible)');
 has('phosphateColor: DEFAULT_NUCLEIC_COLORS.phosphate,', 'les trois couleurs vivent dans catStyles.nucleic (donc persistées + setup)');
 has('groupColour: false,', 'le mode groupe est OFF par défaut (l’aspect historique est conservé)');
@@ -179,10 +219,20 @@ has("registerColorScheme(NGL, 'lab-lipid-groups'", 'un schéma NGL maison pour l
 has('registerLipidScheme(NGL);', 'enregistré avec la scène, comme les deux autres');
 has('lipidColorStore.named = sub.named;', 'le schéma est lu avec le MÊME classificateur que le rendu');
 has('Colour by chemical part', 'l’interrupteur « Colour by chemical part »');
-has('value={numToHex(catStyles.lipid.headColor)}', 'la pastille de la tête lit catStyles.lipid');
-has('value={numToHex(catStyles.lipid.glycerolColor)}', 'la pastille du squelette');
-has('value={numToHex(catStyles.lipid.tailColor)}', 'la pastille des chaînes');
-has('onClick={resetLipidColours}', '↺ Reset colours');
+// Le même contrat pour les trois PARTIES chimiques d'un lipide : le panneau du
+// menu C a disparu, ses trois parts sont trois RANGÉES (têtes · glycérol · chaînes)
+// et leur couleur vient du « Color by » de la rangée (le type de lipide) ou d'une
+// couleur unie.
+has("{ sub: 'head', label: 'Phospholipid headgroups', styles: STYLES.sidechains, colors: COLORS.lipidParts, def: { style: 'ball+stick', colorBy: 'lipidtype' }, sele: 'head' },",
+  'la rangée des TÊTES de phospholipides');
+has("{ sub: 'glycerol', label: 'Glycerol', styles: STYLES.sidechains, colors: COLORS.lipidParts, def: { style: 'ball+stick', colorBy: 'lipidtype' }, sele: 'glycerol' },",
+  '…celle du GLYCÉROL');
+has("{ sub: 'tail', label: 'Acyl chains', styles: STYLES.sidechains, colors: COLORS.lipidParts, def: { style: 'ball+stick', colorBy: 'lipidtype' }, sele: 'tail' },",
+  '…et celle des CHAÎNES ACYLE');
+gone('value={numToHex(catStyles.lipid.headColor)}', 'plus de pastille « tête » du vieux panneau');
+gone('value={numToHex(catStyles.lipid.glycerolColor)}', '…ni de pastille « squelette »');
+gone('value={numToHex(catStyles.lipid.tailColor)}', '…ni de pastille « chaînes »');
+gone('onClick={resetLipidColours}', '…ni de son ↺ Reset colours');
 has('const setLipidColour = (key, hex) => setCatStyles((prev) => ({', 'une pastille allume « Colour by chemical part » (jamais invisible)');
 has('headColor: DEFAULT_LIPID_COLORS.head,', 'les trois couleurs vivent dans catStyles.lipid (donc persistées + setup)');
 has('const lipidGroupsOn = () => !!(cs.lipid && cs.lipid.groupColour && lipidSchemeKey);',
@@ -199,15 +249,19 @@ has('baseColor: DEFAULT_NUCLEIC_COLORS.base,', '…et les bases');
 // Ball & Stick sur les atomes du rung) : le viewer construit donc lui-même les
 // plaques des anneaux (base ET ribose) en MeshBuffer, façon PyMOL
 // `set cartoon_ring_mode, 1` — et n'en dessine le pourtour que sur ces anneaux.
-has('<option value="rings">Stylized rings (filled plates)</option>', 'la représentation stylisée des bases');
-has("else if (bases === 'rings') {", '…et son rendu');
-has('const plates = addRingPlates(sels.nucleic);', 'l’INTÉRIEUR des anneaux est une VRAIE plaque pleine');
+// La rangée des bases dessine les plaques : `addPlates` passe par le vrai
+// constructeur de plaques du viewer (nucleicRingPlates) et par le vrai MeshBuffer
+// de NGL, et le style « Ring plates » fait la même chose pour l'anneau du ribose.
+has("{ sub: 'bases', label: 'DNA/RNA bases', styles: STYLES.bases, colors: COLORS.nucleicParts, def: { style: 'rings', colorBy: 'basetype' }, sele: 'bases' },",
+  'les bases sont des PLAQUES PLEINES par défaut de leur rangée');
+has("if (look.style === 'rings' || look.style === 'plates') {", '…les deux styles de plaques partagent UNE branche');
+has('const plates = addPlates(sele, look, spec.sub);', 'l’INTÉRIEUR des anneaux est une VRAIE plaque pleine');
 has('const mesh = new NG.MeshBuffer({ position: data.position, normal: data.normal, color: data.color, index: data.index });',
   '…construite avec le vrai MeshBuffer de NGL');
-has("const rep = comp.addBufferRepresentation(mesh, { opacity: ringOpacity(), side: 'double' });",
-  '…confiée au composant de structure (la matrice des poses suit)');
-has("add('licorice', { sele: `@${ringIdx.join(',')}`", 'un fin anneau de bâtons dessine le pourtour — des ANNEAUX seulement');
-has('Ribose ring plate', 'la plaque de l’anneau du ribose se règle');
+has("const rep = comp.addBufferRepresentation(mesh, { opacity: sectionOpacity(look), side: 'double' });",
+  '…confiée au composant de structure, avec la transparence de SA rangée');
+has("sugarPlate: sub === 'ribose',", 'la plaque de l’anneau du RIBOSE est celle de la rangée « DNA/RNA ribose »');
+has("addRow('licorice', { sele: `@${idx.join(',')}`", 'un fin anneau de bâtons dessine le pourtour — des ANNEAUX seulement');
 has("const baseIdentityCol = () => (baseIdentitySchemeKey ? { color: baseIdentitySchemeKey } : { colorScheme: 'resname' });",
   'repli sur la palette resname si le schéma n’a pas pu être enregistré');
 has('const BASE_IDENTITY_COLORS = { A: 0x22c55e, C: 0x3b82f6, G: 0xf59e0b, T: 0xec4899, U: 0xef4444 };',
@@ -328,17 +382,33 @@ const sandbox = [
   sliceFn(VIEW, 'catLook'),
   sliceObject(VIEW, 'DEFAULT_CAT_STYLES'),
   sliceFn(VIEW, 'catRadii'),
+  // Les RANGÉES d'une molécule (PART 4) : leur description, leurs défauts, et la
+  // hiérarchie de la barre — les six menus de catégorie n'existent plus.
+  `const MOL_KINDS = ${sliceRaw('MOL_KINDS')};`,
+  `const DEFAULT_ELEMENT_COLOR = ${sliceRaw('DEFAULT_ELEMENT_COLOR')};`,
+  sliceObject(VIEW, 'KIND_CATEGORY'),
+  sliceObject(VIEW, 'KIND_VISIBLE_BY_DEFAULT'),
+  sliceObject(VIEW, 'STYLES'),
+  sliceObject(VIEW, 'COLORS'),
+  sliceObject(VIEW, 'SECTION_SUBSECTIONS'),
+  sliceFn(VIEW, 'subsectionsOf'),
+  sliceFn(VIEW, 'subsectionSpec'),
+  sliceFn(VIEW, 'defaultLookOf'),
   sliceFn(VIEW, 'nucleicGroupOf'),
   // La lettre de la base (A · C · G · T · U) est lue par UN SEUL lecteur, que la
   // couleur des plaques ET le classificateur de conformation utilisent.
   sliceFn(VIEW, 'nucBaseOf'),
+  // La couleur d'une base passe par le store que la roue ⚙ édite (lab-base-type) :
+  // le sandbox doit donc le poser avant le lecteur qui s'en sert.
+  sliceObject(VIEW, 'baseTypeColorStore'),
+  sliceFn(VIEW, 'baseTypeColorOf'),
   sliceFn(VIEW, 'baseIdentityColorOf'),
   sliceFn(VIEW, 'atomElement'),
   sliceFn(VIEW, 'lipidGroupOf'),
   "const VIEWER_SETUP_KEY = 'labViewerSetups';",
   sliceFn(VIEW, 'loadViewerSetups'),
   sliceFn(VIEW, 'saveViewerSetups'),
-  'return { catRadii, nucleicGroupOf, baseIdentityColorOf, atomElement, lipidGroupOf, DEFAULT_CAT_STYLES, DEFAULT_ATOM_COLORS, DEFAULT_LIPID_COLORS, BASE_IDENTITY_COLORS, DEFAULT_NUCLEIC_COLORS, loadViewerSetups, saveViewerSetups };',
+  'return { catRadii, nucleicGroupOf, baseIdentityColorOf, atomElement, lipidGroupOf, DEFAULT_CAT_STYLES, DEFAULT_ATOM_COLORS, DEFAULT_LIPID_COLORS, BASE_IDENTITY_COLORS, DEFAULT_NUCLEIC_COLORS, loadViewerSetups, saveViewerSetups, MOL_KINDS, subsectionsOf, subsectionSpec, defaultLookOf, SECTION_SUBSECTIONS, KIND_VISIBLE_BY_DEFAULT, STYLES, COLORS };',
 ].join('\n');
 const H = new Function(sandbox)();
 
@@ -410,26 +480,31 @@ eq(H.atomElement('', ''), '', 'sans rien, aucun élément (jamais d’exception)
 eq(H.atomElement('o9', undefined), 'O', '…toujours en majuscules');
 
 /* ── 9d. Les défauts des six menus ═════════════════════════════════════ */
-CATS.forEach((c) => {
-  const d = H.DEFAULT_CAT_STYLES[c];
-  ok(!!d, `le menu ${c} a des défauts`);
-  ok(d.sphereRadius === 1 && d.bondRadius === 1, `[${c}] les rayons démarrent au neutre (1.00)`);
-  ok(d.atomColor === 'default' && d.surfaceColor === 'default', `[${c}] les couleurs démarrent sur « défaut »`);
-  eq(d.atomColorHex, H.DEFAULT_ATOM_COLORS[c], `[${c}] la couleur unie proposée est celle de la catégorie`);
-  ok(d.surfaceOpacity > 0 && d.surfaceOpacity <= 1, `[${c}] une opacité de surface valide`);
+H.MOL_KINDS.forEach((k) => {
+  const subs = H.subsectionsOf(k);
+  ok(subs.length > 0, `[${k}] ce type de molécule a des rangées`);
+  eq(subs[0].sub, 'general', `[${k}] la première rangée est « General »`);
+  subs.forEach((s) => {
+    ok(!!s.label, `[${k}/${s.sub}] la rangée est nommée`);
+    ok(s.styles.includes(s.def.style), `[${k}/${s.sub}] son style par défaut est un style de sa liste`);
+    ok(s.colors.includes(s.def.colorBy), `[${k}/${s.sub}] …et sa coloration par défaut aussi`);
+    const d = H.defaultLookOf(k, s.sub);
+    ok(d.sphere === 1 && d.bond === 1, `[${k}/${s.sub}] les rayons démarrent au neutre (1.00)`);
+    eq(d.material, 'auto', `[${k}/${s.sub}] le matériau démarre sur celui de NGL`);
+    eq(d.opacity, 0, `[${k}/${s.sub}] la rangée démarre opaque`);
+    ok(Number.isFinite(d.solidColor), `[${k}/${s.sub}] une couleur unie est proposée`);
+    eq(d.follow, s.sub !== 'general', `[${k}/${s.sub}] seule « General » ne suit personne`);
+  });
 });
-eq(H.DEFAULT_CAT_STYLES.nucleic.groupColour, false, 'la coloration par groupe est OFF par défaut');
-eq(H.DEFAULT_CAT_STYLES.nucleic.phosphateColor, H.DEFAULT_NUCLEIC_COLORS.phosphate, 'couleur phosphate par défaut');
-eq(H.DEFAULT_CAT_STYLES.nucleic.pentoseColor, H.DEFAULT_NUCLEIC_COLORS.pentose, 'couleur pentose par défaut');
-eq(H.DEFAULT_CAT_STYLES.nucleic.baseColor, H.DEFAULT_NUCLEIC_COLORS.base, 'couleur bases par défaut');
-eq(H.DEFAULT_CAT_STYLES.lipid.groupColour, false, 'la coloration par PART est OFF par défaut');
-eq(H.DEFAULT_CAT_STYLES.lipid.headColor, H.DEFAULT_LIPID_COLORS.head, 'couleur tête par défaut');
-eq(H.DEFAULT_CAT_STYLES.lipid.glycerolColor, H.DEFAULT_LIPID_COLORS.glycerol, 'couleur squelette par défaut');
-eq(H.DEFAULT_CAT_STYLES.lipid.tailColor, H.DEFAULT_LIPID_COLORS.acyl, 'couleur chaînes acyle par défaut');
-eq(H.DEFAULT_CAT_STYLES.protein.backbone, 'cartoon', 'le style par défaut du squelette protéique ne change pas');
-eq(H.DEFAULT_CAT_STYLES.nucleic.bases, 'slab', 'les bases restent des rungs remplis par défaut');
-eq(H.DEFAULT_CAT_STYLES.sugar.style, 'ball+stick', 'les sucres gardent leur style par défaut');
-eq(H.DEFAULT_CAT_STYLES.other.water, 'hidden', 'l’eau reste cachée par défaut');
+ok(!H.KIND_VISIBLE_BY_DEFAULT.water && !H.KIND_VISIBLE_BY_DEFAULT.ion,
+  'l’eau et les ions démarrent NON dessinés (un solvant ne bloque pas la vue)');
+eq(H.SECTION_SUBSECTIONS.protein.find((s) => s.sub === 'backbone').def, { style: 'cartoon', colorBy: 'sstruc' },
+  'le style par défaut du squelette protéique ne change pas');
+eq(H.SECTION_SUBSECTIONS.nucleic.find((s) => s.sub === 'bases').def.style, 'rings', 'les bases restent des plaques pleines');
+eq(H.SECTION_SUBSECTIONS.nucleic.find((s) => s.sub === 'bases').def.colorBy, 'basetype', '…colorées par identité de base');
+eq(H.SECTION_SUBSECTIONS.lipid.find((s) => s.sub === 'head').def.colorBy, 'lipidtype', 'les lipides se colorent par TYPE de lipide');
+eq(H.SECTION_SUBSECTIONS.sugar[0].def.style, 'ball+stick', 'les sucres gardent leur style par défaut');
+eq(H.SECTION_SUBSECTIONS.ion[0].def.style, 'spacefill', 'un ion est une sphère (spacefill)');
 
 /* ── 9e. Les setups : aller-retour localStorage ════════════════════════ */
 eq(H.loadViewerSetups(), {}, 'aucun setup au départ');
