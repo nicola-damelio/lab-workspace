@@ -132,7 +132,7 @@ eq((VIEWER.match(/const setSstrucColour = \(key, hex\) => \{/g) || []).length, 1
   'les couleurs de 2° structure s’écrivent par UN seul helper');
 eq((VIEWER.match(/leaveLightMode\(\);   \/\/ it changes what is drawn/g) || []).length, 1,
   '…et ce helper sort du rendu léger avant d’écrire la couleur');
-ok(VIEWER.includes('the 2°-structure palette (helix · sheet · loop) every molecule coloured by « Secondary structure » reads'),
+ok(VIEWER.includes('Colour of the ${it.what} — the 2°-structure palette (helix · sheet · loop)'),
   'la rangée « Secondary structure » écrit ces trois couleurs par ce même helper');
 // Le ↺ de la section 2° structure du ⚙ remet la PALETTE à ses défauts : c'est une
 // palette (le schéma la lit en direct, rien n'est reconstruit), pas un choix de

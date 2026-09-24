@@ -37,7 +37,18 @@
    THE 📷 FIGURE BUTTON IS NOT TOUCHED, and this module does not publish to the
    Figure library: ✨ Ray only WRITES A FILE on the computer (the request).
    Nothing here is stateful: every function takes the stage it reads from.
+
+   THE CAST SHADOWS. The report: « the ray button only takes a snapshot of the
+   image but does not introduce casted shadows ». NGL 2.4 has no shadow-map pass
+   at all (see the long note in NMRMoleculeViewer.jsx above `flagMeshShadows`),
+   so the shadow of the still is computed from the ATOMS, on the CPU, in
+   utils/viewerRayShadows.js: the same camera NGL just rendered with, the same
+   key light of the rig, the same pixels. `shadows: false` (or no `lightDir`)
+   gives the plain supersampled still; a shadow that cannot be built for any
+   reason falls back on that same plain still, never on an error.
    ========================================================================= */
+
+import { addCastShadowsToBlob, buildRayShadowMask, rayShadowInputsOf, rayShadowNote } from './viewerRayShadows.js';
 
 /* The supersampling factors the bar offers — the honest NGL knob, expressed
    against the canvas the user is looking at (`factor × canvas pixels`). 3× is
@@ -163,16 +174,19 @@ export const rayProgressText = (done, total) => {
 
 /* ---- THE RENDER ---------------------------------------------------------- */
 /* `stage` is the NGL Stage of the viewer. Resolves to the PNG Blob plus the
-   size that was really produced and whether the background is transparent.
-   Everything NGL needs is passed EXPLICITLY (trim, factor, antialias,
-   transparent): the shipped defaults would silently give a 1× screenshot. */
+   size that was really produced, whether the background is transparent and the
+   shadow that was really cast (null when none was asked for or when it could
+   not be built). Everything NGL needs is passed EXPLICITLY (trim, factor,
+   antialias, transparent): the shipped defaults would silently give a 1×
+   screenshot. `shadows: true` + `lightDir` add the cast shadows of
+   utils/viewerRayShadows.js on top of the very same render. */
 export const captureRayImage = async (stage, options = {}) => {
   if (!stage || typeof stage.makeImage !== 'function') throw new Error('this viewer has no NGL renderer to render with');
   const { width, height } = viewerPixelsOf(stage);
   if (!width || !height) throw new Error('the 3D canvas has no size yet — load a structure first');
   const factor = clampRayFactor(stage, options.factor);
   const transparent = !!options.transparent;
-  const blob = await stage.makeImage({
+  let blob = await stage.makeImage({
     trim: false,
     factor,
     // NGL's antialias is the 4·factor² tiles average: what makes the still
@@ -182,6 +196,31 @@ export const captureRayImage = async (stage, options = {}) => {
     onProgress: typeof options.onProgress === 'function' ? options.onProgress : undefined,
   });
   if (!blob) throw new Error('NGL returned no image');
+  // ── THE CAST SHADOWS ────────────────────────────────────────────────────
+  // NGL cannot cast them (no shadow-map pass in 2.4), so they are computed from
+  // the atoms with the SAME camera and the SAME key light, and multiplied into
+  // the very pixels NGL just wrote (utils/viewerRayShadows.js). Best-effort: a
+  // shadow that cannot be built leaves the plain still, never an error.
+  let shadow = null;
+  if (options.shadows !== false && options.lightDir) {
+    try {
+      const inputs = rayShadowInputsOf(stage, {
+        lightDir: options.lightDir,
+        options: options.shadow || {},
+      });
+      shadow = {
+        ...buildRayShadowMask({
+          ...inputs,
+          width: width * factor,
+          height: height * factor,
+          options: options.shadow || {},
+        }),
+        imageWidth: width * factor,
+        imageHeight: height * factor,
+      };
+      blob = await addCastShadowsToBlob(blob, { shadow });
+    } catch { shadow = null; }
+  }
   return {
     blob,
     factor,
@@ -189,6 +228,8 @@ export const captureRayImage = async (stage, options = {}) => {
     height: height * factor,
     pixels: width * factor * height * factor,
     transparent,
+    shadow,
+    shadowNote: shadow ? rayShadowNote(shadow) : '',
   };
 };
 

@@ -195,10 +195,13 @@ has('const renderSectionRow = (sec, sub) => {', '[§2] plus aucun bouton de menu
 // (SECTION_SUBSECTIONS) : le style vient de `spec.styles` et son libellé de
 // STYLE_LABELS, la coloration de `spec.colors` et de COLOR_LABELS. Un style ne
 // peut donc pas être offert là où le rendu ne le connaît pas.
-has('{spec.styles.map((s) => <option key={s} value={s}>{styleLabelFor(kind, s)}</option>)}',
-  '[rangées] la liste des styles vient de la spécification de la rangée');
-has('{spec.colors.map((c) => <option key={c} value={c}>{COLOR_LABELS[c]}</option>)}',
+has('{styleOptions.map((s) => <option key={s} value={s}>{styleLabelOf(s)}</option>)}',
+  '[rangées] la liste des styles vient de la spécification de la rangée (rendu commun des deux barres)');
+has('styleOptions: spec.styles,', '[rangées] …alimentée par la spécification de la rangée');
+has('styleLabelOf: (token) => styleLabelFor(kind, token),', '[rangées] …et ses libellés par le vocabulaire du type');
+has('{colorOptions.map((c) => <option key={c} value={c}>{COLOR_LABELS[c] || c}</option>)}',
   '[rangées] …et le « Color by » aussi');
+has('colorOptions: spec.colors,', '[rangées] …avec la liste de colorations de CETTE rangée');
 has("const styleLabelFor = (kind, token) => (kind === 'ion' && token === 'spacefill' ? 'Sphere' : (STYLE_LABELS[token] || token));",
   '[vocabulaire] un ion nomme « spacefill » Sphere');
 has("hide: 'Hide',", '[vocabulaire] Hide');
@@ -225,9 +228,15 @@ has("case 'sphere': return [{ type: 'spacefill', params: { radiusScale: sphere, 
   '« Sphere » = le même spacefill NGL, au rayon de Van der Waals entier');
 has("const styleFamiliesOf = (style) => [...new Set((STYLE_FAMILY_REPS[style] || [])",
   'la rangée de STYLING nomme la famille de matériau qu’elle atteint, comme les rangées de sélection');
-// Les deux feuillets : deux TICKS, plus des boutons (la demande).
-has("{['upper_leaflet', 'lower_leaflet'].map((n) => {", 'un tick par feuillet mesuré');
-has('type="checkbox" checked={on}', '…un vrai tick (pas un bouton coloré)');
+// Les deux feuillets : ils ont QUITTÉ la boîte Membrane de GAUCHE et sont
+// devenus des RANGÉES de l’espace phospholipides du styling (la demande).
+gone("{['upper_leaflet', 'lower_leaflet'].map((n) => {", 'plus un seul tick de feuillet dans la boîte Membrane de gauche');
+gone('type="checkbox" checked={on}', '…donc plus rien à cocher dans cette boîte');
+has('Styles of the leaflets:', 'la boîte Membrane de gauche RENVOIE au styling (la demande)');
+has('const lipidSelectionKeys = () => {', 'la liste vient de la mesure du viewer ET des sélections du script');
+has("const renderMembraneSelections = (sec) => {", '…et elle se rend dans l’espace phospholipides');
+has("{shown && kind === 'lipid' && sec.id === firstLipidSectionOf(", '…une seule fois par molécule (le premier espace lipidique)');
+has('🧫 Membrane · leaflets', 'le groupe s’appelle « Membrane · leaflets »');
 // Le bouton « Setup » a été renommé (la demande).
 has('🎨 Predefined styles', 'le bouton « Setup » s’appelle « Predefined styles »');
 has("surface: 'Surface',", '[vocabulaire] Surface');
@@ -251,7 +260,7 @@ has("gradient: 'Gradient (first → last)',", '[vocabulaire] Gradient (first →
 has("rainbow: 'Rainbow (first → last)',", '[vocabulaire] Rainbow (first → last)');
 // Le ↺ d'une rangée, et la roue ⚙ pour les palettes qu'une rangée n'édite pas
 // elle-même (les chaînes, les résidus, les sucres, les lipides, les bases…).
-has('onClick={() => resetSectionRowLook(sec.id, kind, sub)}', '[rangées] ↺ d’une rangée (les défauts de son type)');
+has('onReset: () => resetSectionRowLook(sec.id, kind, sub),', '[rangées] ↺ d’une rangée (les défauts de son type)');
 has('title="Open the ⚙ settings wheel — the colour of every CHAIN (A · B · C …) has a section of its own there"',
   '[rangées] « Color by : Chain » renvoie à la palette des chaînes de la roue ⚙');
 

@@ -11,6 +11,11 @@ import { LIGHT_RIG, nglKeyLightDirection, nglLightParams } from '../utils/viewer
 import {
   RAY_FACTORS, RAY_DEFAULT_FACTOR, rayFactorOptions, rayProgressText, saveRayImage,
 } from '../utils/viewerRayImage';
+// The CAST SHADOWS of a ✨ Ray still: NGL 2.4 has no shadow-map pass at all, so
+// the shadow is computed from the ATOMS with the camera and the key light of the
+// scene (utils/viewerRayShadows.js) — its own toggle and strength live in the
+// Ray bar, next to the resolution and the alpha.
+import { RAY_SHADOW_DEFAULTS } from '../utils/viewerRayShadows';
 import { computeSmiles3DNameMap } from '../utils/atomNameSync';
 import { rebuildProteinHydrogenCoords } from '../utils/rebuildProteinHydrogens';
 import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
@@ -5462,6 +5467,22 @@ const [rayFactor, setRayFactor] = useState(() => {
 const [rayTransparent, setRayTransparent] = useState(() => {
   try { return localStorage.getItem('labViewerRayTransparent') === 'on'; } catch { return false; }
 });
+/* ⚠ THE CAST SHADOWS of the still. The report: « the ray button only takes a
+   snapshot of the image but does not introduce casted shadows » — true, and it
+   is NGL 2.4 that cannot cast them (no shadow-map pass; see the note above
+   `flagMeshShadows`). The shadow is therefore computed from the ATOMS with the
+   very camera of the canvas and the key light of the ◐ Shadows rig, and
+   multiplied into the pixels NGL just wrote (utils/viewerRayShadows.js). Its own
+   preference, remembered like the factor: 'off', or 'on:<strength %>'. */
+const [rayShadows, setRayShadows] = useState(() => {
+  try { return !(localStorage.getItem('labViewerRayShadows') || '').startsWith('off'); } catch { return true; }
+});
+const [rayShadowStrength, setRayShadowStrength] = useState(() => {
+  try {
+    const v = Number((localStorage.getItem('labViewerRayShadows') || '').split(':')[1]);
+    return Number.isFinite(v) && v > 0 ? Math.min(1, v / 100) : RAY_SHADOW_DEFAULTS.strength;
+  } catch { return RAY_SHADOW_DEFAULTS.strength; }
+});
 const [rayBusy, setRayBusy] = useState(false);
 const [rayMsg, setRayMsg] = useState('');
 // One token per render: a slow ray that is superseded by a second click may
@@ -5473,6 +5494,9 @@ useEffect(() => {
 useEffect(() => {
   try { localStorage.setItem('labViewerRayTransparent', rayTransparent ? 'on' : 'off'); } catch { /* ignore */ }
 }, [rayTransparent]);
+useEffect(() => {
+  try { localStorage.setItem('labViewerRayShadows', rayShadows ? `on:${Math.round(rayShadowStrength * 100)}` : 'off'); } catch { /* ignore */ }
+}, [rayShadows, rayShadowStrength]);
 /* The resolution list of the ✨ Ray selector is written in PIXELS (`3× · 4800×
    2700 px`), so it is rebuilt when the canvas really changes size — a window
    resize, a new structure — and never shows a size another screen would give.
@@ -8714,6 +8738,60 @@ const selectionAtomCount = (key) => {
   return n < 0 ? null : n;
 };
 
+/* ── WHICH LIPID SELECTIONS THE STYLING WINDOW LISTS (the request) ───────────
+   « upper leaflet and lower leaflet ticks should not be located in the section
+   membrane inside the left window. they should appear in the phospholipid space
+   of the styling window so that I can change their style, lipid by lipid. If in
+   the pymol macro a lipid is selected they should also be there. »
+
+   So the 🧫 phospholipid space of the styling window lists:
+     · the FOUR selections this viewer MEASURED on the bilayer
+       (upper_leaflet · lower_leaflet · upper_headgroups · lower_headgroups) —
+       exactly the ticks that used to live in the left Membrane box, now each one
+       with the full command set of a styling row;
+     · every selection the SCRIPT defines whose atoms lie INSIDE the lipids
+       (seleIsWithin on the bridge-resolved clause), so a macro that selects
+       lipids finds its selections here too, styleable one at a time.
+
+   Memoised on its own signature: a 30 000-atom bilayer must not pay for the
+   spill test on every render of the styling window. */
+const lipidRowsRef = useRef({ sig: '', struct: null, keys: [] });
+const lipidSelectionKeys = () => {
+  const component = componentRef.current;
+  const structure = component && component.structure ? component.structure : null;
+  const measured = Object.keys(membraneSele || {});
+  if (!structure) return measured;
+  const sig = `${measured.join(',')}::${selections.map((s) => `${s.name}=${s.expr}`).join('|')}::${Object.keys(selStyles).join(',')}`;
+  const cached = lipidRowsRef.current;
+  if (cached.struct === structure && cached.sig === sig) return cached.keys;
+  let extra = [];
+  try {
+    const cats = catSelectionsFor(structure);
+    const lipid = cats && cats.lipid;
+    if (lipid) {
+      const named = new Set(selections.map((s) => s.name));
+      const raw = Object.keys(selStyles).filter((k) => k !== 'all' && !named.has(k));
+      extra = [...selections.map((s) => s.name), ...raw].filter((k) => {
+        if (!k || measured.includes(k)) return false;
+        try { return seleIsWithin(structure, selKeyExpr(k), lipid) === true; } catch { return false; }
+      });
+    }
+  } catch { extra = []; }
+  const keys = [...measured, ...extra];
+  lipidRowsRef.current = { sig, struct: structure, keys };
+  return keys;
+};
+
+/* The first lipid section of a molecule is the one that hosts the membrane rows:
+   a bilayer of POPC + POPE + CHOL is several spaces (one per residue name), and
+   the leaflets are ONE thing — listed once, not one copy per lipid kind. */
+const firstLipidSectionOf = (molKey) => {
+  const entry = (sectionCatalogRef.current && sectionCatalogRef.current[molKey]) || null;
+  const lip = ((entry && entry.sections) || []).filter((s) => s.kind === 'lipid');
+  return lip.length ? lip[0].id : null;
+};
+
+
 /* ---- A GESTURE IN THE SELECTIONS BAR IS PyMOL'S LAST COMMAND ---------------
    PyMOL styles live on ATOMS, not on selections: `show sphere, resn POPC+…`
    followed by `show spheres, upper_headgroups` draws the SAME headgroup atoms
@@ -8779,6 +8857,52 @@ const setSelRowStyle = (key, token) => {
   });
   if (flag && !((work[key] || {})[flag])) work = toggleSelStyle(key, SEL_STYLE_TOGGLE_TOKEN[flag], work);
   if (work !== selStylesRef.current) setSelStyles(work);
+};
+
+/* ── THE ONE LANGUAGE OF THE TWO BARS ───────────────────────────────────────
+   The request: « the selection window (on the left) does not still have the same
+   appearance as the styling window while they should be identical in terms of
+   commands (dropdown menus etc.) ». The commands are literally the same code
+   (renderLookControls), and these three helpers are the ADAPTER: they read and
+   write a Selections row (`selStyles[name]`) with the field names of a styling
+   row (opacity · sphere · bond · solidColor · material …), so a change of one
+   bar can never leave the other behind. `style` is the one field that is not a
+   property but a command: it goes through setSelRowStyle (the gesture the ticks
+   use), never through a plain write. */
+const LOOK_FIELD_OF_SEL = {
+  colorBy: 'colorMode',
+  solidColor: 'color',
+  opacity: 'transparency',
+  sphere: 'radiusSphere',
+  bond: 'radiusBond',
+};
+const selLookOf = (st) => {
+  const s = st || {};
+  return {
+    style: selRowStyle(s),
+    colorBy: selColorMode(s),
+    solidColor: s.color != null ? s.color : 0x000000,
+    opacity: Number.isFinite(s.transparency) ? s.transparency : 0,
+    sphere: Number.isFinite(s.radiusSphere) ? s.radiusSphere : 1,
+    bond: Number.isFinite(s.radiusBond) ? s.radiusBond : 1,
+  };
+};
+const setSelField = (key, field, value) => {
+  if (field === 'style') { setSelRowStyle(key, value); return; }
+  const name = LOOK_FIELD_OF_SEL[field];
+  if (!name) return;
+  setSelStyles({ ...selStylesRef.current, [key]: { ...(selStylesRef.current[key] || {}), [name]: value } });
+};
+/* The 🎛 material of ONE FAMILY of a Selections row — the shape the left bar has
+   always stored (`st.mat[family] = { preset, roughness, metalness }`), written
+   with the field names of the shared controls. */
+const setSelMaterial = (key, fam, field, value) => {
+  const cur = selStylesRef.current[key] || {};
+  const mat = cur.mat || {};
+  setSelStyles({
+    ...selStylesRef.current,
+    [key]: { ...cur, mat: { ...mat, [fam]: { ...(mat[fam] || {}), [field]: value } } },
+  });
 };
 
 // PDB anchor atoms used to build a SMALL, page-friendly key set when a residue
@@ -9899,6 +10023,168 @@ const resetExtraMolPosition = (id) => {
    row and the ↺ that puts the row back to its defaults. ONE implementation for every
    kind: the styles and the colourings come from SECTION_SUBSECTIONS, so a row can
    never offer a control in one molecule and not in another. */
+/* ══ THE ROW CONTROLS — ONE implementation for BOTH bars ════════════════════
+   The request: « the selection window (on the left) does not still have the same
+   appearance as the styling window while they should be identical in terms of
+   commands (dropdown menus etc.) ». They ARE the same commands now, because they
+   are the same code: this renders the three lines of a look —
+
+     1. Style · Color by · the swatch the colouring needs (one solid colour,
+        the ramp of the gradient, the 2°-structure palette, or the ⚙ that opens
+        the chain colours);
+     2. Transp · R● · R— · the « ← G » of a row that follows General · ⟲;
+     3. 🎛 the material of every family of representation the row really draws.
+
+   — and both the « Molecules · styling » rows (renderSectionRow) and the
+   Selections rows (the ones of a PyMOL selection and the 🧫 phospholipid rows
+   of a membrane) call it with their OWN state adapter. `uid` is only for the
+   aria labels, `extra` is the slot where a bar adds what is its own (the
+   stacking ticks of a Selections row). */
+const renderLookControls = ({
+  uid, label = null, labelTitle = '', styleOptions, styleLabelOf, colorOptions, look, set,
+  families = [], materialOf = null, setMaterial = null,
+  follows = false, onReset = null, extra = null,
+}) => (
+  <>
+    <div className="flex flex-wrap items-center gap-1">
+      {label != null && (
+        <span className="text-[10px] font-bold text-slate-700 w-[74px] shrink-0 truncate" title={labelTitle}>{label}</span>
+      )}
+      <select value={look.style} onChange={(e) => set('style', e.target.value)}
+        className="border border-slate-300 rounded text-[10px] py-0.5 px-0.5 flex-1 min-w-0 bg-white"
+        title={`Style of ${uid} — every style it can draw`}>
+        {styleOptions.map((s) => <option key={s} value={s}>{styleLabelOf(s)}</option>)}
+      </select>
+      <select value={look.colorBy} onChange={(e) => set('colorBy', e.target.value)}
+        className="border border-slate-300 rounded text-[10px] py-0.5 px-0.5 flex-1 min-w-0 bg-white"
+        title={`« Color by » of ${uid} — « Electrostatic potential » paints a surface and nothing else`}>
+        {colorOptions.map((c) => <option key={c} value={c}>{COLOR_LABELS[c] || c}</option>)}
+      </select>
+      {look.colorBy === 'solid' && (
+        <input type="color" value={numToHex(look.solidColor)}
+          onChange={(e) => set('solidColor', parseInt(e.target.value.slice(1), 16))}
+          className="w-5 h-5 rounded border cursor-pointer shrink-0" title="The ONE colour of « Solid »" />
+      )}
+      {extra}
+    </div>
+    {/* The two ends of the ramp, right where « Gradient (first → last) » was
+        chosen: the pair is ONE NGL scheme shared by the whole viewer, so the
+        swatches write the global pair and the row repaints. */}
+    {look.colorBy === 'gradient' && (
+      <div className="flex items-center gap-1">
+        <input type="color" value={numToHex(gradientPair.from)}
+          onChange={(e) => setGradientPair('gradientFrom', parseInt(e.target.value.slice(1), 16))}
+          className="w-5 h-5 rounded border cursor-pointer shrink-0"
+          title="Colour of the FIRST residue of every chain (N terminus · 5' end)" />
+        <span className="text-[9px] font-bold text-slate-400 shrink-0">→</span>
+        <input type="color" value={numToHex(gradientPair.to)}
+          onChange={(e) => setGradientPair('gradientTo', parseInt(e.target.value.slice(1), 16))}
+          className="w-5 h-5 rounded border cursor-pointer shrink-0"
+          title="Colour of the LAST residue of every chain (C terminus · 3' end)" />
+        <button type="button" onClick={swapGeneralGradient}
+          className="text-[10px] font-bold text-slate-500 hover:text-slate-800 shrink-0"
+          title="⇄ Reverse the ramp (swap the two colours) — the ramp is always drawn from the first residue to the last">⇄</button>
+      </div>
+    )}
+    {/* The 2°-structure palette RIGHT WHERE « Secondary structure » was chosen:
+        helix · sheet · loop, plus the ⚙ of its own section. */}
+    {look.colorBy === 'sstruc' && (
+      <div className="flex items-center gap-1 flex-wrap">
+        {SSTRUC_COLOR_ITEMS.map((it) => (
+          <input key={it.key} type="color" value={numToHex(sstrucColors[it.key])}
+            onChange={(e) => setSstrucColour(it.key, parseInt(e.target.value.slice(1), 16))}
+            className="w-5 h-5 rounded border border-slate-300 cursor-pointer shrink-0"
+            title={`Colour of the ${it.what} — the 2°-structure palette (helix · sheet · loop)`} />
+        ))}
+        <button type="button" onClick={() => setSettingsPanelOpen(true)}
+          className="px-1 py-0.5 text-[10px] font-bold rounded border bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100 shrink-0"
+          title="Open the ⚙ settings wheel — « Secondary structure » has a section of its own there">⚙</button>
+      </div>
+    )}
+    {/* « Color by chain » needs the chain palette of the ⚙ wheel — offered right
+        here, exactly like the row of the styling window does. */}
+    {look.colorBy === 'chain' && (
+      <button type="button" onClick={() => setSettingsPanelOpen(true)}
+        className="px-1 py-0.5 text-[10px] font-bold rounded border bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100 shrink-0"
+        title="Open the ⚙ settings wheel — the colour of every CHAIN (A · B · C …) has a section of its own there">
+        ⚙</button>
+    )}
+    {/* ── LINE 2 — the SAME regulators as the styling window, with the same
+        tooltips, so a row of either bar is read the same way. The two radii
+        multiply the style's own atom size / stick thickness (1.00 = untouched);
+        a `set sphere_scale, …` of a macro stays an atom property of its own. */}
+    <div className="flex items-center gap-1 flex-wrap">
+      <span className="text-[9px] text-slate-400 font-bold shrink-0"
+        title="Transparency regulator of THIS row: 0 % = opaque, 100 % = invisible (NGL opacity)">Transp</span>
+      <input type="range" min="0" max="1" step="0.05" value={look.opacity}
+        onChange={(e) => set('opacity', Number(e.target.value))}
+        className="accent-blue-600 w-16" aria-label={`${uid} transparency`} />
+      <span className="text-[9px] text-slate-500 w-7">{Math.round(look.opacity * 100)}%</span>
+      <span className="text-[9px] text-slate-400 font-bold shrink-0"
+        title="Sphere radius — a multiplier of the style's own atom size (1.00 = untouched)">R●</span>
+      <input type="range" min={RADIUS_MIN} max={RADIUS_MAX} step={RADIUS_STEP} value={look.sphere}
+        onChange={(e) => set('sphere', Number(e.target.value))}
+        className="accent-slate-600 w-12" aria-label={`${uid} sphere radius`} />
+      <span className="text-[9px] text-slate-400 font-bold shrink-0"
+        title="Bond radius — a multiplier of the style's own stick thickness (1.00 = untouched)">R—</span>
+      <input type="range" min={RADIUS_MIN} max={RADIUS_MAX} step={RADIUS_STEP} value={look.bond}
+        onChange={(e) => set('bond', Number(e.target.value))}
+        className="accent-slate-600 w-12" aria-label={`${uid} bond radius`} />
+      {follows && (
+        <span className="text-[9px] text-blue-600 font-black shrink-0"
+          title="This row FOLLOWS the General row of this molecule: General hands its style, its colour, its transparency and its radii down. Touching any control here deviates this row alone.">← G</span>
+      )}
+      {onReset && (
+        <button type="button" onClick={onReset}
+          className="text-[10px] font-bold text-slate-500 hover:text-slate-800 shrink-0 ml-auto"
+          title="⟲ Put THIS row back to the defaults of its kind">⟲</button>
+      )}
+    </div>
+    {/* ── LINE 3 — 🎛 THE MATERIAL OF EVERY FAMILY this row really draws (see
+        styleFamiliesOf): roughness / metalness are NGL's own shader uniforms
+        (MATERIAL_PRESETS), and they belong to a family of representation, so one
+        row can carry two materials. The presets, the sliders and the numbers are
+        the ones of the styling window. */}
+    {look.style !== 'hide' && families.length > 0 && (
+      <div className="flex items-center gap-1 flex-wrap">
+        <span className="text-[9px] text-slate-400 font-bold shrink-0"
+          title={`Material of ${uid} — roughness (r) and metalness (m), NGL's own material parameters`}>🎛</span>
+        {families.map((fam) => {
+          const mm = (materialOf ? materialOf(fam) : null) || {};
+          const setM = (field, value) => { if (setMaterial) setMaterial(fam, field, value); };
+          return (
+            <span key={fam} className="flex items-center gap-1">
+              <span className="text-[9px] font-bold text-slate-500 shrink-0"
+                title={`The family of representation this control reaches: ${familyLabelOf(fam)}`}>
+                {familyLabelOf(fam)}
+              </span>
+              <select value={mm.preset || 'auto'} onChange={(e) => setM('preset', e.target.value)}
+                className="border border-slate-300 rounded text-[10px] py-0.5 px-0.5 bg-white shrink-0"
+                title={`Material of the ${familyLabelOf(fam).toLowerCase()}: auto = NGL's own rough surface (0.40 / 0.00), matte, gloss, metallic, glass (translucent)`}>
+                {MATERIAL_PRESET_KEYS.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+              <input type="range" min="0" max="1" step="0.05" value={lookMatValue(mm, 'roughness')}
+                onChange={(e) => setM('roughness', Number(e.target.value))}
+                className="accent-violet-600 w-12 shrink-0" aria-label={`${uid} ${familyLabelOf(fam)} roughness`}
+                title="roughness — 0 = mirror smooth, 1 = fully matte (NGL's default 0.40)" />
+              <input type="range" min="0" max="1" step="0.05" value={lookMatValue(mm, 'metalness')}
+                onChange={(e) => setM('metalness', Number(e.target.value))}
+                className="accent-violet-600 w-12 shrink-0" aria-label={`${uid} ${familyLabelOf(fam)} metalness`}
+                title="metalness — 0 = organic / plastic, 1 = metal (NGL's default 0.00)" />
+              <span className="text-[8px] text-slate-400 font-mono shrink-0"
+                title="roughness / metalness applied to this family of this row">
+                {lookMatValue(mm, 'roughness').toFixed(2)}/{lookMatValue(mm, 'metalness').toFixed(2)}
+              </span>
+            </span>
+          );
+        })}
+      </div>
+    )}
+
+  </>
+);
+
+
 const renderSectionRow = (sec, sub) => {
   const kind = sec.kind;
   const spec = subsectionSpec(kind, sub);
@@ -9908,140 +10194,31 @@ const renderSectionRow = (sec, sub) => {
   const set = (field, value) => setSectionField(sec.id, kind, sub, field, value);
   const isSurface = look.style === 'surface' || look.style === 'mesh';
   const isPlates = look.style === 'rings' || look.style === 'plates';
+  const uid = `« ${spec.label} » of ${sec.name}`;
   return (
     <div key={`${sec.id}|${sub}`} className="rounded border border-slate-200 bg-white/85 px-1 py-0.5 flex flex-col gap-0.5">
-      <div className="flex items-center gap-1">
-        <span className="text-[10px] font-bold text-slate-700 w-[74px] shrink-0 truncate"
-          title={`${sec.name} · ${spec.label} — ${MOL_KIND_LABELS[kind]}`}>{spec.label}</span>
-        <select value={look.style} onChange={(e) => set('style', e.target.value)}
-          className="border border-slate-300 rounded text-[10px] py-0.5 px-0.5 flex-1 min-w-0 bg-white"
-          title={`Style of « ${spec.label} » — every style this row can draw`}>
-          {spec.styles.map((s) => <option key={s} value={s}>{styleLabelFor(kind, s)}</option>)}
-        </select>
-        <select value={look.colorBy} onChange={(e) => set('colorBy', e.target.value)}
-          className="border border-slate-300 rounded text-[10px] py-0.5 px-0.5 flex-1 min-w-0 bg-white"
-          title={`« Color by » of « ${spec.label} » — « Electrostatic potential » paints a surface and nothing else`}>
-          {spec.colors.map((c) => <option key={c} value={c}>{COLOR_LABELS[c]}</option>)}
-        </select>
-        {look.colorBy === 'solid' && (
-          <input type="color" value={numToHex(look.solidColor)}
-            onChange={(e) => set('solidColor', parseInt(e.target.value.slice(1), 16))}
-            className="w-5 h-5 rounded border cursor-pointer shrink-0" title="The ONE colour of « Solid »" />
-        )}
-        {/* The two ends of the RAMP, right where « Gradient (first → last) » was
-            chosen: the pair is ONE NGL scheme shared by the whole viewer, so the
-            swatches write the global pair (the same ⚙ ones) and the row repaints —
-            before this, no control of the bar could change them at all (the report:
-            « it is impossible to change the colors of first and last »). */}
-        {look.colorBy === 'gradient' && (
-          <>
-            <input type="color" value={numToHex(gradientPair.from)}
-              onChange={(e) => setGradientPair('gradientFrom', parseInt(e.target.value.slice(1), 16))}
-              className="w-5 h-5 rounded border cursor-pointer shrink-0"
-              title="Colour of the FIRST residue of every chain (N terminus · 5' end)" />
-            <span className="text-[9px] font-bold text-slate-400 shrink-0">→</span>
-            <input type="color" value={numToHex(gradientPair.to)}
-              onChange={(e) => setGradientPair('gradientTo', parseInt(e.target.value.slice(1), 16))}
-              className="w-5 h-5 rounded border cursor-pointer shrink-0"
-              title="Colour of the LAST residue of every chain (C terminus · 3' end)" />
-            <button type="button" onClick={swapGeneralGradient}
-              className="text-[10px] font-bold text-slate-500 hover:text-slate-800 shrink-0"
-              title="⇄ Reverse the ramp (swap the two colours) — the ramp is always drawn from the first residue to the last">⇄</button>
-          </>
-        )}
-        {/* The 2°-structure palette RIGHT WHERE « Secondary structure » was chosen:
-            helix · sheet · loop. Like the ramp, the lab-sstruc scheme reads ONE live
-            store for the whole viewer, so these swatches write the very colours the
-            ⚙ wheel edits — until now the row showed no control at all for this
-            colouring, and the legacy menu sent the user to a 🎨 panel that no longer
-            exists (the report: « colors for secondary structure definition are not
-            present in the setting wheel »). */}
-        {look.colorBy === 'sstruc' && (
-          <>
-            {SSTRUC_COLOR_ITEMS.map((it) => (
-              <input key={it.key} type="color" value={numToHex(sstrucColors[it.key])}
-                onChange={(e) => setSstrucColour(it.key, parseInt(e.target.value.slice(1), 16))}
-                className="w-5 h-5 rounded border border-slate-300 cursor-pointer shrink-0"
-                title={`Colour of the ${it.what} — the 2°-structure palette (helix · sheet · loop) every molecule coloured by « Secondary structure » reads, as the ⚙ wheel does`} />
-            ))}
-            <button type="button" onClick={() => setSettingsPanelOpen(true)}
-              className="px-1 py-0.5 text-[10px] font-bold rounded border bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100 shrink-0"
-              title="Open the ⚙ settings wheel — « Secondary structure » has a section of its own there (helix · sheet · loop)">
-              ⚙</button>
-          </>
-        )}
-        {/* « Color by : Chain » — the palette of the ⚙ wheel (lab-chain: the eight
-            chain letters A → H plus the grey « other »). The ROW points at it (eight
-            swatches do not fit in one row), and the wheel section is where a chain
-            colour is really defined — the report: « it is possible to color by chain
-            but there is no way to define the color of the chain in the setting wheel ». */}
-        {look.colorBy === 'chain' && (
-          <button type="button" onClick={() => setSettingsPanelOpen(true)}
-            className="px-1 py-0.5 text-[10px] font-bold rounded border bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100 shrink-0"
-            title="Open the ⚙ settings wheel — the colour of every CHAIN (A · B · C …) has a section of its own there">
-            ⚙</button>
-        )}
-      </div>
-      <div className="flex items-center gap-1">
-        <span className="text-[9px] text-slate-400 font-bold shrink-0"
-          title="Transparency regulator of THIS row: 0 % = opaque, 100 % = invisible (NGL opacity)">Transp</span>
-        <input type="range" min="0" max="1" step="0.05" value={look.opacity}
-          onChange={(e) => set('opacity', Number(e.target.value))}
-          className="accent-blue-600 w-16" aria-label={`${spec.label} transparency`} />
-        <span className="text-[9px] text-slate-500 w-7">{Math.round(look.opacity * 100)}%</span>
-        <span className="text-[9px] text-slate-400 font-bold shrink-0" title="Sphere radius — a multiplier of the style's own atom size (1.00 = untouched)">R◯</span>
-        <input type="range" min={RADIUS_MIN} max={RADIUS_MAX} step={RADIUS_STEP} value={look.sphere}
-          onChange={(e) => set('sphere', Number(e.target.value))}
-          className="accent-slate-600 w-12" aria-label={`${spec.label} sphere radius`} />
-        <span className="text-[9px] text-slate-400 font-bold shrink-0" title="Bond radius — a multiplier of the style's own stick thickness (1.00 = untouched)">R—</span>
-        <input type="range" min={RADIUS_MIN} max={RADIUS_MAX} step={RADIUS_STEP} value={look.bond}
-          onChange={(e) => set('bond', Number(e.target.value))}
-          className="accent-slate-600 w-12" aria-label={`${spec.label} bond radius`} />
-        {follows && (
-          <span className="text-[9px] text-blue-600 font-black shrink-0"
-            title="This row FOLLOWS the General row of this molecule: General hands its style, its colour, its transparency and its radii down. Touching any control here deviates this row alone.">← G</span>
-        )}
-        <button type="button" onClick={() => resetSectionRowLook(sec.id, kind, sub)}
-          className="text-[10px] font-bold text-slate-500 hover:text-slate-800 shrink-0 ml-auto"
-          title="↺ Put THIS row back to the defaults of its kind">↺</button>
-      </div>
-      {/* 🎛 THE MATERIAL OF THIS ROW — and of this row ONLY. roughness / metalness
-          are NGL's own shader uniforms (see MATERIAL_PRESETS), and they used to be
-          set once for the whole scene, per rep family: two molecules of the same
-          file, or a protein and its lipids, could not be drawn differently (the
-          request). The value follows General like the other fields (`← G`), and the
-          two sliders override the preset for this row alone. */}
-      {look.style !== 'hide' && (
-        <div className="flex items-center gap-1">
-          <span className="text-[9px] text-slate-400 font-bold shrink-0"
-            title={`Material of « ${spec.label} » only — roughness (r) and metalness (m), NGL's own material parameters. Two molecules, or two parts of one molecule, can carry two different materials`}>🎛</span>
-          {/* The FAMILY this material reaches, printed exactly like the one of the
-              selection rows: the two bars run the same series of commands. */}
-          {styleFamiliesOf(look.style).map((fam) => (
-            <span key={fam} className="text-[9px] font-bold text-slate-500 shrink-0"
-              title={`The family of representation this material reaches: ${familyLabelOf(fam)}`}>
-              {familyLabelOf(fam)}
-            </span>
-          ))}
-          <select value={look.material} onChange={(e) => set('material', e.target.value)}
-            className="border border-slate-300 rounded text-[10px] py-0.5 px-0.5 bg-white shrink-0"
-            title={`Material of « ${spec.label} »: auto = NGL's own rough surface (0.40 / 0.00), matte, gloss, metallic, glass (translucent)`}>
-            {MATERIAL_PRESET_KEYS.map((p) => <option key={p} value={p}>{p}</option>)}
-          </select>
-          <input type="range" min="0" max="1" step="0.05" value={lookMatValue(look, 'roughness')}
-            onChange={(e) => set('roughness', Number(e.target.value))}
-            className="accent-violet-600 w-12 shrink-0" aria-label={`${spec.label} roughness`}
-            title="roughness — 0 = mirror smooth, 1 = fully matte (NGL's default 0.40)" />
-          <input type="range" min="0" max="1" step="0.05" value={lookMatValue(look, 'metalness')}
-            onChange={(e) => set('metalness', Number(e.target.value))}
-            className="accent-violet-600 w-12 shrink-0" aria-label={`${spec.label} metalness`}
-            title="metalness — 0 = organic / plastic, 1 = metal (NGL's default 0.00)" />
-          <span className="text-[8px] text-slate-400 font-mono shrink-0"
-            title="roughness / metalness applied to this row">
-            {lookMatValue(look, 'roughness').toFixed(2)}/{lookMatValue(look, 'metalness').toFixed(2)}
-          </span>
-        </div>
-      )}
+      {/* THE ROW ITSELF IS renderLookControls: the Style and Color by dropdowns,
+          the swatch the colouring needs, the Transp · R● · R— regulators and the
+          🎛 material — the ONE implementation both bars run (see its own note
+          above), so a row of the styling window and a row of the Selections bar
+          are the same commands in the same order. This row adds what is its own:
+          the ← G of a row that still follows General, the ⟲ that puts it back to
+          the defaults of its kind, and the notes below. */}
+      {renderLookControls({
+        uid,
+        label: spec.label,
+        labelTitle: `${sec.name} · ${spec.label} — ${MOL_KIND_LABELS[kind]}`,
+        styleOptions: spec.styles,
+        styleLabelOf: (token) => styleLabelFor(kind, token),
+        colorOptions: spec.colors,
+        look,
+        set,
+        families: styleFamiliesOf(look.style),
+        materialOf: () => ({ preset: look.material, roughness: look.roughness, metalness: look.metalness }),
+        setMaterial: (_fam, field, value) => set(field === 'preset' ? 'material' : field, value),
+        follows,
+        onReset: () => resetSectionRowLook(sec.id, kind, sub),
+      })}
       {isSurface && (
         <span className="text-[9px] text-slate-400 italic">a surface: the transparency above IS its opacity (100 % = wireframe-visible mesh)</span>
       )}
@@ -10059,6 +10236,74 @@ const renderSectionRow = (sec, sub) => {
       {look.style === 'hide' && sub !== 'general' && (
         <span className="text-[9px] text-slate-400 italic">hidden — choose a style here to bring this part back</span>
       )}
+    </div>
+  );
+};
+
+/* ── THE 🧫 PHOSPHOLIPID ROWS OF A MEMBRANE — the ticks, moved here ──────────
+   The request: « upper leaflet and lower leaflet ticks should not be located in
+   the section membrane inside the left window. they should appear in the
+   phospholipid space of the styling window so that I can change their style,
+   lipid by lipid. If in the pymol macro a lipid is selected they should also be
+   there. »
+
+   They ARE here now, inside the lipid space of the « Molecules · styling »
+   window, and each one is a ROW like any other: the same commands
+   (renderLookControls), written into the same `selStyles` the ticks used to
+   write — so the leaflets can be styled one selection at a time (beads, colour
+   by lipid type, material, transparency, radii), and every selection a macro
+   makes on lipids is listed beside them. The membrane measurement is reported at
+   the top of the group, where it used to be. */
+const renderMembraneSelections = (sec) => {
+  const keys = lipidSelectionKeys();
+  if (!keys.length) return null;
+  const info = membraneInfo;
+  return (
+    <div className="rounded border border-teal-300 bg-teal-50/60 px-1 py-0.5 flex flex-col gap-0.5">
+      <div className="flex items-center justify-between gap-1">
+        <span className="text-[10px] font-black text-teal-800 uppercase tracking-wide">🧫 Membrane · leaflets</span>
+        {info && (
+          <span className="text-[9px] text-teal-700 font-mono"
+            title="Measured normal axis, midplane and head-to-head thickness of this bilayer — the leaflets are told apart by the GEOMETRY, not by `z>90`">
+            {info.axis} · mid {info.midplane.toFixed(1)} Å · {info.thickness.toFixed(1)} Å
+          </span>
+        )}
+      </div>
+      <p className="text-[9px] text-teal-700 leading-snug">
+        {info ? `upper ${info.upperAtoms} atoms / ${info.upperResidues} lipids · lower ${info.lowerAtoms} atoms / ${info.lowerResidues} lipids. ` : ''}
+        The leaflets are styled HERE, one selection at a time — the same commands as every row of this
+        window — and every selection a PyMOL script makes on lipids is listed with them.
+      </p>
+      {keys.map((key) => {
+        const st = selStyles[key] || {};
+        const n = selectionAtomCount(key);
+        return (
+          <div key={key} className="rounded border border-teal-100 bg-white px-1 py-0.5 flex flex-col gap-0.5">
+            <div className="flex items-center justify-between gap-1">
+              <span className={`text-[10px] font-bold truncate ${st.hidden ? 'text-slate-400 line-through' : 'text-slate-700'}`}
+                title={`${key} — a lipid selection of this bilayer: its atoms lie inside the lipids of ${sec.name}`}>
+                {key}
+              </span>
+              <span className="text-[10px] text-slate-400 font-mono shrink-0">{n != null ? `${n} atoms` : '—'}</span>
+            </div>
+            {renderLookControls({
+              uid: `« ${key} »`,
+              styleOptions: SEL_ROW_STYLE_CHOICES,
+              styleLabelOf: (t) => STYLE_LABELS[t] || t,
+              colorOptions: SEL_COLOR_MODES,
+              look: selLookOf(st),
+              set: (field, value) => setSelField(key, field, value),
+              families: selRowFamilies(st),
+              materialOf: (fam) => (st.mat && st.mat[fam]) || {},
+              setMaterial: (fam, field, value) => setSelMaterial(key, fam, field, value),
+            })}
+          </div>
+        );
+      })}
+      <span className="text-[9px] text-teal-700 italic">
+        The four measured names work in a PyMOL script as well (`upper_leaflet`, `lower_headgroups`…), and a script that defines
+        them with `z&gt;90` gets this measurement instead.
+      </span>
     </div>
   );
 };
@@ -10170,6 +10415,15 @@ const renderSection = (sec) => {
           title={`🔎 Zoom on « ${sec.name} » — centre the camera on THIS molecule (the file may hold several)`}>🔎</button>
       </div>
       {shown && subsectionsOf(kind).map((s) => renderSectionRow(sec, s.sub))}
+      {/* 🧫 THE PHOSPHOLIPID SELECTIONS OF A MEMBRANE (the request): the two
+          leaflet ticks and the two headgroup toggles used to live in the left
+          Membrane box, where nothing could be styled; they are ROWS of this
+          window now, in the lipid space, each with the full command set — and
+          every selection a macro makes on lipids is listed with them. Rendered
+          once per molecule (the first lipid space), never one copy per lipid
+          kind. */}
+      {shown && kind === 'lipid' && sec.id === firstLipidSectionOf(String(sec.id).split('::')[0]) && renderMembraneSelections(sec)}
+
       <div className="flex items-center gap-1">
         <span className="text-[9px] font-bold text-slate-400 shrink-0" title="3D labels of THIS molecule alone">🏷</span>
         {[['residues', 'Residues'], ['residueType', 'Type'], ['atoms', 'Atoms']].map(([k, l]) => (
@@ -10870,16 +11124,23 @@ const captureRay = async () => {
   setRayBusy(true);
   setRayMsg('✨ Rendering the ray still…');
   try {
+    // The CAST SHADOWS: the very lamp of the ◐ Shadows rig (its Azimuth /
+    // Elevation, see nglKeyLightDirection) and the strength chosen in the bar.
+    // `shadows: false` is the plain supersampled still NGL drew before.
+    const lamp = nglKeyLightDirection(shadowAz, shadowEl);
     const out = await saveRayImage(stage, {
       label: file ? file.name : (pdbId || 'structure'),
       factor: rayFactor,
       transparent: rayTransparent,
       onProgress: (done, total) => { if (rayRunRef.current === run) setRayMsg(rayProgressText(done, total)); },
+      shadows: rayShadows,
+      lightDir: [lamp.x, lamp.y, lamp.z],
+      shadow: { strength: rayShadowStrength },
     });
     if (rayRunRef.current !== run) return;
     setRayMsg(out.saved
-      ? `✓ ${out.fileName} — ${out.width}×${out.height} px${out.transparent ? ' · transparent' : ''} · downloaded`
-      : `✓ rendered ${out.width}×${out.height} px — the browser blocked the download (allow downloads for this page)`);
+      ? `✓ ${out.fileName} — ${out.width}×${out.height} px${out.transparent ? ' · transparent' : ''}${out.shadowNote ? ` ${out.shadowNote}` : ''} · downloaded`
+      : `✓ rendered ${out.width}×${out.height} px${out.shadowNote ? ` ${out.shadowNote}` : ''} — the browser blocked the download (allow downloads for this page)`);
   } catch (err) {
     if (rayRunRef.current === run) {
       setRayMsg(`⚠️ Ray render failed (${(err && err.message) || 'unknown error'}) — try a smaller ×`);
@@ -11966,6 +12227,29 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
     <input type="checkbox" checked={rayTransparent} onChange={(e) => setRayTransparent(e.target.checked)} className="accent-amber-600" />
     ⬚ alpha
   </label>
+  {/* ◐ CASTED SHADOWS — the report: « the ray button only takes a snapshot of the
+      image but does not introduce casted shadows ». NGL 2.4 ships no shadow-map
+      pass (see the note above `flagMeshShadows`), so the shadow of the still is
+      computed from the ATOMS — the very camera of the canvas, the very lamp of
+      the ◐ Shadows rig — and multiplied into the pixels NGL just wrote
+      (utils/viewerRayShadows.js). The PNG therefore carries a real projected
+      shadow; untick to get the plain supersampled still back. */}
+  <label
+    title="Casted shadows in the PNG: the shadow the molecule throws, from the very lamp of the ◐ Shadows rig (its Azimuth / Elevation). NGL cannot cast them — the shadow is computed from the atoms with the camera and the light of the scene and multiplied into the still. Untick for the plain supersampled image."
+    className={`px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-1 cursor-pointer whitespace-nowrap ${rayShadows ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
+  >
+    <input type="checkbox" checked={rayShadows} onChange={(e) => setRayShadows(e.target.checked)} className="accent-amber-600" />
+    ◐ shadows
+  </label>
+  {rayShadows && (
+    <input
+      type="range" min="0.1" max="1" step="0.05" value={rayShadowStrength}
+      onChange={(e) => setRayShadowStrength(Number(e.target.value))}
+      className="accent-amber-600 w-16 shrink-0"
+      title={`Darkness of the cast shadow — ${Math.round(rayShadowStrength * 100)} % (the ◐ Shadows rig of the canvas sets its DIRECTION: Azimuth / Elevation)`}
+      aria-label="cast shadow strength"
+    />
+  )}
 </div>
 {rayMsg && (
 <span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">{rayMsg}</span>
@@ -13226,9 +13510,13 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
         `z>90` (the way membrane macros usually split the two leaflets) depends on
         the file being centred and oriented on z. The geometry does not: the
         normal axis, the midplane and the two clusters of headgroups are measured
-        at load (membraneLeafletsOf), published as four ready-made selections and
-        drawn here in one click, so the user SEES which leaflet is which — and a
-        macro may use those names directly. */}
+        at load (membraneLeafletsOf) and published as four ready-made selections,
+        so a macro may use those names directly. THIS BOX only READS them out
+        (the axis, the midplane, the thickness and the counts): the two leaflet
+        ticks that used to live here are rows of the 🧫 Membrane · leaflets group
+        of the « Molecules · styling » window now — the request — where each one
+        can be styled on its own, next to every lipid selection a script defines
+        (see renderMembraneSelections). */}
     {membraneInfo && (
       <div className="shrink-0 rounded-lg border border-teal-200 bg-teal-50/70 p-1.5">
         <div className="flex items-center justify-between gap-1">
@@ -13238,36 +13526,22 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
             {membraneInfo.axis} · mid {membraneInfo.midplane.toFixed(1)} Å · {membraneInfo.thickness.toFixed(1)} Å
           </span>
         </div>
-        <div className="flex items-center gap-1 flex-wrap mt-1">
-          {/* TWO TICKS, as the request asks: « remove the upper leaflet / lower leaflet
-              section and replace it with the two ticks ». A tick DRAWS that leaflet —
-              the beads the button drew, written into the very same `selStyles[n].sphere` —
-              and unticking takes them off the screen. The two HEADGROUP toggles stay
-              beside them (they draw the measured heads alone), and all four names keep
-              working as selections in a PyMOL script either way. */}
-          {['upper_leaflet', 'lower_leaflet'].map((n) => {
-            const on = !!(selStyles[n] && (selStyles[n].sphere || selStyles[n].ball || selStyles[n].stick));
-            return (
-              <label key={n} className="flex items-center gap-1 cursor-pointer select-none text-[10px] font-bold text-teal-800"
-                title={`Draw the ${n.startsWith('upper') ? 'upper' : 'lower'} leaflet as beads — the two leaflets are told apart by geometry, whatever the orientation of the file. Untick to take them off the screen`}>
-                <input type="checkbox" checked={on}
-                  onChange={() => setSelStyles({ ...selStylesRef.current, [n]: { ...(selStylesRef.current[n] || {}), sphere: !on } })}
-                  className="w-3.5 h-3.5 accent-teal-600 cursor-pointer" />
-                {n.replace(/_/g, ' ')}
-              </label>
-            );
-          })}
-          {['upper_headgroups', 'lower_headgroups'].map((n) => {
-            const on = !!(selStyles[n] && (selStyles[n].sphere || selStyles[n].ball || selStyles[n].stick));
-            return (
-              <button key={n} type="button"
-                onClick={() => setSelStyles({ ...selStylesRef.current, [n]: { ...(selStylesRef.current[n] || {}), sphere: !on } })}
-                className={`px-1.5 py-0.5 text-[9px] font-bold rounded border ${on ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-teal-700 border-teal-300 hover:bg-teal-100'}`}
-                title={`Draw the headgroups of the ${n.startsWith('upper') ? 'upper' : 'lower'} leaflet as beads (measured, not z>90)`}>
-                {n.replace(/_/g, ' ')}
-              </button>
-            );
-          })}
+        {/* THE TICKS HAVE MOVED OUT OF HERE (the request): « upper leaflet and
+            lower leaflet ticks should not be located in the section membrane
+            inside the left window. they should appear in the phospholipid space
+            of the styling window so that I can change their style, lipid by
+            lipid. If in the pymol macro a lipid is selected they should also be
+            there. » The two leaflets, the two headgroup selections AND every
+            lipid selection a script defines are ROWS of the 🧫 Membrane ·
+            leaflets group in the lipid space of the « Molecules · styling »
+            window (see renderMembraneSelections), each with the full command set
+            of a styling row. What stays here is the MEASUREMENT — what the viewer
+            read on this bilayer — and the way to it. */}
+        <div className="text-[10px] text-teal-800 mt-1 leading-snug">
+          Styles of the leaflets: <b>Molecules · styling</b> → the 🧫 <b>Membrane · leaflets</b> group
+          of the lipid space — <span className="font-mono">upper_leaflet</span> ·{' '}
+          <span className="font-mono">lower_leaflet</span> · <span className="font-mono">upper_headgroups</span> ·{' '}
+          <span className="font-mono">lower_headgroups</span>, and every lipid selection the script defines.
         </div>
         <div className="text-[9px] text-teal-700 mt-1 leading-snug">
           upper {membraneInfo.upperAtoms} atoms / {membraneInfo.upperResidues} lipids · lower {membraneInfo.lowerAtoms} / {membraneInfo.lowerResidues}.
@@ -13346,142 +13620,40 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
             </div>
             {!st.hidden && (
               <>
-            {/* ① THE SAME FIRST COMMAND AS A STYLING ROW: the STYLE SELECTOR, same
-                vocabulary, same labels (the « Sphere » beside every « CPK »
-                included). The ticks below stay for what PyMOL does on top of it —
-                « show cartoon, … » then « show sticks, … » are TWO commands and
-                both remain on screen. */}
-            <div className="flex items-center gap-1">
-              <select value={selRowStyle(st)} onChange={(e) => setSelRowStyle(s.name, e.target.value)}
-                className="border border-slate-300 rounded text-[10px] py-0.5 px-0.5 flex-1 min-w-0 bg-white"
-                title={`Style of « ${s.name} » — the styling window's own vocabulary and labels. Choosing one draws it alone (the styles this row no longer draws come off, on every row that drew their atoms); the ticks below add a second style on top, exactly like two « show » commands of PyMOL`}>
-                {SEL_ROW_STYLE_CHOICES.map((t) => <option key={t} value={t}>{STYLE_LABELS[t] || t}</option>)}
-              </select>
-            </div>
-            <div className="flex items-center gap-1 flex-wrap">
-              {['cartoon', 'ribbon', 'tube', 'ball', 'stick', 'sphere', 'surface'].map((style) => (
-                <button key={style} type="button"
-                  onClick={() => toggleSelStyle(s.name, style)}
-                  title={`${st[style] ? 'Hide' : 'Show'} « ${style === 'ball' ? 'ball+stick' : style} » on the atoms of this row — and on THOSE atoms: the other rows that draw the same style lose them too, exactly like the last command of PyMOL`}
-                  className={`px-1.5 py-0.5 text-[10px] font-bold rounded border ${st[style] ? 'bg-violet-600 text-white border-violet-600' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-violet-50'}`}>
-                  {style === 'ball' ? 'ball+stick' : style}
-                </button>
-              ))}
-            </div>
-            <div className="flex items-center gap-1 flex-wrap">
-              <span className="text-[10px] font-bold text-slate-500 uppercase"
-                title="« Color by » — the SAME vocabulary as the rows of the styling window (their COLOR_LABELS), so the two bars can never name the same reading twice">Color by</span>
-              <select value={selColorMode(st)}
-                onChange={(e) => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), colorMode: e.target.value } })}
-                className="text-[10px] border border-slate-300 rounded bg-white text-slate-600 outline-none focus:border-violet-500 h-6"
-                title="Colouring metaphor of this row’s atoms — the colours of the ⚙ settings wheel and of the styling window are honoured here too">
-                {SEL_COLOR_MODES.map((c) => <option key={c} value={c}>{COLOR_LABELS[c] || c}</option>)}
-              </select>
-              <input type="color" value={st.color != null ? `#${st.color.toString(16).padStart(6, '0')}` : '#000000'}
-                disabled={selColorMode(st) !== 'solid'}
-                onChange={(e) => { const c = parseInt(e.target.value.slice(1), 16); setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), color: c } }); }}
-                className={`w-6 h-6 border border-slate-300 rounded cursor-pointer ${selColorMode(st) !== 'solid' ? 'opacity-30 cursor-not-allowed' : ''}`}
-                title="Solid colour (used when Color by = Solid)" />
-            </div>
-            {/* The two ends of the ramp, exactly as the styling rows show them: the
-                pair is ONE NGL scheme shared by the whole viewer. */}
-            {selColorMode(st) === 'gradient' && (
-              <div className="flex items-center gap-1">
-                <input type="color" value={numToHex(gradientPair.from)}
-                  onChange={(e) => setGradientPair('gradientFrom', parseInt(e.target.value.slice(1), 16))}
-                  className="w-5 h-5 rounded border cursor-pointer shrink-0"
-                  title="Colour of the FIRST residue of every chain (N terminus · 5' end)" />
-                <span className="text-[9px] font-bold text-slate-400 shrink-0">→</span>
-                <input type="color" value={numToHex(gradientPair.to)}
-                  onChange={(e) => setGradientPair('gradientTo', parseInt(e.target.value.slice(1), 16))}
-                  className="w-5 h-5 rounded border cursor-pointer shrink-0"
-                  title="Colour of the LAST residue of every chain (C terminus · 3' end)" />
-                <button type="button" onClick={swapGeneralGradient}
-                  className="text-[10px] font-bold text-slate-500 hover:text-slate-800 shrink-0"
-                  title="⇄ Reverse the ramp (swap the two colours)">⇄</button>
-              </div>
-            )}
-            {/* …and the 2°-structure palette, with the ⚙ that opens its section. */}
-            {selColorMode(st) === 'sstruc' && (
-              <div className="flex items-center gap-1 flex-wrap">
-                {SSTRUC_COLOR_ITEMS.map((it) => (
-                  <input key={it.key} type="color" value={numToHex(sstrucColors[it.key])}
-                    onChange={(e) => setSstrucColour(it.key, parseInt(e.target.value.slice(1), 16))}
-                    className="w-5 h-5 rounded border border-slate-300 cursor-pointer shrink-0"
-                    title={`Colour of the ${it.what} — the 2°-structure palette (helix · sheet · loop)`} />
-                ))}
-                <button type="button" onClick={() => setSettingsPanelOpen(true)}
-                  className="px-1 py-0.5 text-[10px] font-bold rounded border bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100 shrink-0"
-                  title="Open the ⚙ settings wheel — « Secondary structure » has a section of its own there">⚙</button>
-              </div>
-            )}
-            <label className="flex items-center gap-1 text-[10px] text-slate-500">
-              <span title="Transparency regulator of THIS row: 0 % = opaque, 100 % = invisible (NGL opacity) — the same knob as the Transp of the styling rows">Transp</span>
-              <input type="range" min="0" max="1" step="0.05" value={st.transparency || 0}
-                onChange={(e) => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), transparency: parseFloat(e.target.value) } })}
-                className="accent-violet-600 w-full" aria-label={`${s.name} transparency`} />
-            </label>
-            {/* The two radii of the styling window, with its knobs and its tooltips:
-                R◯ multiplies the style's atom size, R— its stick thickness, 1.00 =
-                untouched. A `set sphere_scale, … , <selection>` of the macro stays an
-                ATOM property of its own (see overrideSlicesFor) and multiplies this,
-                so the two never fight. */}
-            <div className="flex items-center gap-1">
-              <span className="text-[10px] text-slate-400 font-bold shrink-0"
-                title="Sphere radius — a multiplier of the style's own atom size (1.00 = untouched), exactly like the R◯ of the styling rows">R◯</span>
-              <input type="range" min={RADIUS_MIN} max={RADIUS_MAX} step={RADIUS_STEP}
-                value={Number.isFinite(st.radiusSphere) ? st.radiusSphere : 1}
-                onChange={(e) => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), radiusSphere: Number(e.target.value) } })}
-                className="accent-slate-600 w-16" aria-label={`${s.name} sphere radius`} />
-              <span className="text-[10px] text-slate-400 font-bold shrink-0"
-                title="Bond radius — a multiplier of the style's own stick thickness (1.00 = untouched), exactly like the R— of the styling rows">R—</span>
-              <input type="range" min={RADIUS_MIN} max={RADIUS_MAX} step={RADIUS_STEP}
-                value={Number.isFinite(st.radiusBond) ? st.radiusBond : 1}
-                onChange={(e) => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), radiusBond: Number(e.target.value) } })}
-                className="accent-slate-600 w-16" aria-label={`${s.name} bond radius`} />
-            </div>
-            {/* 🎛 THE MATERIAL OF WHAT THIS ROW DRAWS — one control PER FAMILY of
-                representation the row really draws (see selRowFamilies): the
-                peptide row drawn cartoon gets « Cartoon », and a row drawn with
-                spheres AND sticks gets both. roughness / metalness are NGL's own
-                shader uniforms (see MATERIAL_PRESETS), and they belong to a rep
-                family, so ONE row can carry two materials — what the old global
-                panel could not do either. */}
-            {selRowFamilies(st).map((fam) => {
-              const famLabel = (MATERIAL_KINDS.find((k) => k.key === fam) || {}).label || fam;
-              const mm = (st.mat && st.mat[fam]) || {};
-              const setMat = (field, value) => setSelStyles({
-                ...selStylesRef.current,
-                [s.name]: {
-                  ...(selStylesRef.current[s.name] || {}),
-                  mat: { ...((selStylesRef.current[s.name] || {}).mat || {}), [fam]: { ...mm, [field]: value } },
-                },
-              });
-              return (
-                <div key={fam} className="flex items-center gap-1">
-                  <span className="text-[9px] text-slate-400 font-bold shrink-0"
-                    title={`Material of the ${famLabel.toLowerCase()} this row draws — roughness (r) and metalness (m), NGL's own material parameters`}>🎛</span>
-                  <span className="text-[9px] font-bold text-slate-500 w-12 shrink-0 truncate"
-                    title={`The family of representation this control reaches: ${famLabel}`}>{famLabel}</span>
-                  <select value={mm.preset || 'auto'} onChange={(e) => setMat('preset', e.target.value)}
-                    className="text-[10px] border border-slate-300 rounded bg-white text-slate-600 shrink-0"
-                    title={`Material of the ${famLabel.toLowerCase()} of this row: auto = NGL's own rough surface (0.40 / 0.00), matte, gloss, metallic, glass (translucent)`}>
-                    {MATERIAL_PRESET_KEYS.map((p) => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                  <input type="range" min="0" max="1" step="0.05" value={lookMatValue(mm, 'roughness')}
-                    onChange={(e) => setMat('roughness', Number(e.target.value))}
-                    className="accent-violet-600 w-12 shrink-0" aria-label={`${s.name} ${famLabel} roughness`}
-                    title="roughness — 0 = mirror smooth, 1 = fully matte (NGL's default 0.40)" />
-                  <input type="range" min="0" max="1" step="0.05" value={lookMatValue(mm, 'metalness')}
-                    onChange={(e) => setMat('metalness', Number(e.target.value))}
-                    className="accent-violet-600 w-12 shrink-0" aria-label={`${s.name} ${famLabel} metalness`}
-                    title="metalness — 0 = organic / plastic, 1 = metal (NGL's default 0.00)" />
-                  <span className="text-[8px] text-slate-400 font-mono shrink-0"
-                    title="roughness / metalness applied to this family of this row">
-                    {lookMatValue(mm, 'roughness').toFixed(2)}/{lookMatValue(mm, 'metalness').toFixed(2)}
-                  </span>
-                </div>
-              );
+            {/* ① THE VERY SAME COMMANDS AS A STYLING ROW — because it IS the same
+                renderer (renderLookControls): the Style dropdown with the shared
+                labels, the Color by dropdown with their COLOR_LABELS, the swatch
+                the colouring needs, Transp, R●, R— and the 🎛 material of every
+                family this row draws. The request: « the selection window (on the
+                left) does not still have the same appearance as the styling window
+                while they should be identical in terms of commands ». Under the
+                Style dropdown the TICKS stay, set apart by their own label: PyMOL
+                's « show » commands STACK (cartoon + sticks + spheres at once), so
+                a second style can be added on top of the first. */}
+            {renderLookControls({
+              uid: `« ${s.name} »`,
+              styleOptions: SEL_ROW_STYLE_CHOICES,
+              styleLabelOf: (t) => STYLE_LABELS[t] || t,
+              colorOptions: SEL_COLOR_MODES,
+              look: selLookOf(st),
+              set: (field, value) => setSelField(s.name, field, value),
+              families: selRowFamilies(st),
+              materialOf: (fam) => (st.mat && st.mat[fam]) || {},
+              setMaterial: (fam, field, value) => setSelMaterial(s.name, fam, field, value),
+              extra: (
+                <span className="flex items-center gap-0.5 flex-wrap basis-full"
+                  title="PyMOL's « show » commands STACK: what the Style dropdown draws, and every style ticked here on top of it. Unticking one takes it off on EVERY row that drew its atoms, exactly like the last command of the script">
+                  <span className="text-[9px] text-slate-400 font-bold shrink-0">+ show</span>
+                  {['cartoon', 'ribbon', 'tube', 'ball', 'stick', 'sphere', 'surface'].map((style) => (
+                    <button key={style} type="button"
+                      onClick={() => toggleSelStyle(s.name, style)}
+                      title={`${st[style] ? 'Hide' : 'Show'} « ${style === 'ball' ? 'ball+stick' : style} » on the atoms of this row — and on THOSE atoms: the other rows that draw the same style lose them too, exactly like the last command of PyMOL`}
+                      className={`px-1.5 py-0.5 text-[10px] font-bold rounded border ${st[style] ? 'bg-violet-600 text-white border-violet-600' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-violet-50'}`}>
+                      {style === 'ball' ? 'ball+stick' : style}
+                    </button>
+                  ))}
+                </span>
+              ),
             })}
               </>
             )}

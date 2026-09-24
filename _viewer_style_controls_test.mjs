@@ -88,10 +88,12 @@ has('title="Sphere radius — a multiplier of the style\'s own atom size (1.00 =
   'le rayon des sphères (R◯)');
 has('title="Bond radius — a multiplier of the style\'s own stick thickness (1.00 = untouched)"',
   'le rayon des bâtons (R—)');
-has('title={`Material of « ${spec.label} » only', 'le matériau appartient à la rangée');
+has('title={`Material of ${uid} — roughness (r) and metalness (m), NGL\'s own material parameters`}',
+  'le matériau appartient à la rangée');
+has('uid = `« ${spec.label} » of ${sec.name}`', '…et l’uid nomme LA rangée (sa partie + sa molécule)');
 has('{MATERIAL_PRESET_KEYS.map((p) => <option key={p} value={p}>{p}</option>)}',
   '…et ses presets sont UNE seule liste');
-has('onClick={() => resetSectionRowLook(sec.id, kind, sub)}', 'le ↺ d’UNE rangée');
+has('onReset: () => resetSectionRowLook(sec.id, kind, sub),', 'le ↺ d’UNE rangée');
 has('title={`${sec.name} — ${MOL_KIND_LABELS[kind]}', 'un espace par molécule, avec son type écrit');
 has('<option value="custom">Custom colour…</option>', '[couleurs] « Custom… » dans les couleurs de surface ET d’atomes');
 has('<option value="esp">Electrostatic Potential (ESP)</option>', '[couleurs] ESP conservé');

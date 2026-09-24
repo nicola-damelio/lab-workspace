@@ -173,13 +173,16 @@ has('onClick={() => toggleSelStyle(s.name, style)}', '…et les boutons de style
    coloration est choisie — comme la rangée de styling. */
 has("{['cartoon', 'ribbon', 'tube', 'ball', 'stick', 'sphere', 'surface'].map((style) => (",
   'les ticks restent : ce sont les DEUX commandes « show » empilées de PyMOL');
-has('value={selRowStyle(st)} onChange={(e) => setSelRowStyle(s.name, e.target.value)}',
-  '…et le sélecteur de style du styling ouvre la rangée');
+has('look: selLookOf(st),', '…et le sélecteur de style du styling ouvre la rangée (le rendu commun lit selLookOf)');
+has('set: (field, value) => setSelField(s.name, field, value),', '…chaque champ passe par l’adaptateur des deux barres');
+has("if (field === 'style') { setSelRowStyle(key, value); return; }",
+  '…et le style reste une COMMANDE (setSelRowStyle), jamais une écriture directe');
 has('const setSelRowStyle = (key, token) => {', 'setSelRowStyle : un seul état écrit, enchaîné toggle par toggle');
 has('work = toggleSelStyle(key, SEL_STYLE_TOGGLE_TOKEN[f], work);',
   '…en réutilisant LE geste des ticks (les autres rangées retrouvent leurs atomes)');
-has("{selColorMode(st) === 'gradient' && (", 'la rampe est réglable depuis la rangée de sélection, comme au styling');
-has("{selColorMode(st) === 'sstruc' && (", '…et la palette de 2°-structure aussi');
+has("{look.colorBy === 'gradient' && (", 'la rampe est réglable depuis la rangée de sélection, comme au styling');
+has("{look.colorBy === 'sstruc' && (", '…et la palette de 2°-structure aussi');
+has("solidColor: s.color != null ? s.color : 0x000000,", '…la pastille « Solid » lit la couleur de la rangée');
 gone('onClick={() => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), [style]: !((selStylesRef.current[s.name] || {})[style]) } })}',
   'l’ancien gestionnaire — qui ne changeait qu’UNE ligne, donc rien à l’écran — a disparu');
 has("if (!raw || raw === 'all')", '« all » n’écrit d’exclusion nulle part');
@@ -282,14 +285,17 @@ eq(CM.selColorMode({ colorMode: 'esp' }), 'solid',
 eq(CM.selColorMode({}), 'solid', 'sans choix : Solid');
 eq(CM.selColorMode(null), 'solid', '…et une ligne sans état ne casse rien');
 eq(CM.selColorMode({ colorMode: 'solid' }), 'solid', 'Solid reste Solid');
-has("{SEL_COLOR_MODES.map((c) => <option key={c} value={c}>{COLOR_LABELS[c] || c}</option>)}",
+has('{colorOptions.map((c) => <option key={c} value={c}>{COLOR_LABELS[c] || c}</option>)}',
   'le menu déroulant d’une ligne porte les LIBELLÉS du styling, pas sa propre liste');
+has('colorOptions: SEL_COLOR_MODES,', '…alimenté par le vocabulaire de coloration partagé');
 has('const colorScheme = colorMode !== \'solid\' ? schemeForColorMode(colorMode) : undefined;',
   '…et le rendu passe par le MÊME mapping de coloration que tout le viewer');
 has('const rS = Number.isFinite(st.radiusSphere) ? st.radiusSphere : 1;',
   'les deux rayons d’une ligne partent de 1.00 (taille du style)');
-has('radiusSphere: Number(e.target.value)', '…le R◯ de la ligne écrit son multiplicateur');
-has('radiusBond: Number(e.target.value)', '…et son R— le sien');
+has("set('sphere', Number(e.target.value))", '…le R◯ de la ligne écrit son multiplicateur');
+has("sphere: 'radiusSphere',", '…par le champ commun des deux barres, mappé sur radiusSphere');
+has("set('bond', Number(e.target.value))", '…et son R— le sien');
+has("bond: 'radiusBond',", '…par le même adaptateur, mappé sur radiusBond');
 has('{ scale: (st.sphereScale || 1) * rS, colorScheme, opacity, multipleBond: true }',
   'R◯ multiplie la taille des sphères (un `set sphere_scale` du macro reste une propriété d’ATOMES qui multiplie celle-ci)');
 has('aspectRatio: 1.3 * rS,', 'R◯ multiplie aussi les sphères des ball+stick');

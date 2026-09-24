@@ -351,9 +351,12 @@ has('if (el) { el.__sel = { key, style }; reps.push(el); }',
 has('const sel = rep && rep.__sel;', '…et le rendu du matériau la retrouve');
 has('const rowMat = (selStylesRef.current[sel.key] || {}).mat;',
   'le matériau cherché est celui de CETTE ligne');
-has('mat: { ...((selStylesRef.current[s.name] || {}).mat || {}), [fam]: { ...mm, [field]: value } }',
-  'la barre écrit le matériau de la famille, sans toucher aux autres familles ni aux autres lignes');
-has('{selRowFamilies(st).map((fam) => {', '…un contrôle par famille réellement dessinée');
+has('const setSelMaterial = (key, fam, field, value) => {',
+  'la barre écrit le matériau de la famille (un adaptateur dédié aux deux barres)');
+has('[key]: { ...cur, mat: { ...mat, [fam]: { ...(mat[fam] || {}), [field]: value } } },',
+  '…sans toucher aux autres familles ni aux autres lignes');
+has('{families.map((fam) => {', '…un contrôle par famille réellement dessinée');
+has('families: selRowFamilies(st),', '…les familles étant celles que la ligne dessine');
 
 /* ── Bilan ──────────────────────────────────────────────────────────────── */
 console.log(`_viewer_materials_test.mjs — ${passed} assertions OK`);
