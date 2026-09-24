@@ -21,7 +21,10 @@
      1. the atoms of every visible component AS THEY ARE DRAWN — the union of the
         atoms of its visible representations, in WORLD space (the Structure's own
         atom data, moved by the component's matrix — the very transform NGL gives
-        the GPU) — become a set of PROXY SPHERES (their vdW radius). A molecule
+        the GPU) — become a set of PROXY SPHERES, each one as THICK AS THE STROKE
+        ITS OWN REPRESENTATION DRAWS (the vdW radius for sphere / spacefill /
+        surface, the bond radius for ball+stick / licorice, a thin tube for
+        cartoon / ribbon / tube — PROXY_STROKE_BY_TYPE below). A molecule
         that has been hidden draws nothing, so it casts nothing: without this the
         shadow of an invisible bilayer appeared in the still (the report « I see a
         projected membrane, while the membrane is hidden in the program »);
@@ -31,10 +34,17 @@
         the visible surface;
      3. the same spheres are rasterised from the KEY LIGHT of the rig
         (utils/viewerLightRig.js — the Azimuth / Elevation the ◐ Shadows menu
-        drives) into an orthographic depth map covering the scene;
+        drives) into an orthographic depth map whose frustum is FITTED TO THE
+        MOLECULE'S OWN BOX — the PyMOL shadow camera: the eight corners of the
+        molecule's bounding box are transformed into the lamp's own space and
+        left / right / top / bottom / near / far are read off them (with a hair
+        of slack, `fitMargin`), so the depth map spends its whole [−1, 1] range
+        on the molecule instead of on empty space (shadowRigOf below);
      4. a pixel is IN SHADOW when its surface point is deeper, along the light,
         than the first atom the light met — the textbook shadow-map test, run on
-        the CPU, with a small bias and a blurred mask for a soft penumbra;
+        the CPU, with a CONTACT-sized bias, a PCF disc of taps whose radius grows
+        with the occluder-to-receiver gap (PCSS: the soft, PyMOL-like penumbra,
+        deep in a crevice as well as at the silhouette) and a final blur;
      5. the mask multiplies the RGB of the still (alpha untouched), so the
         transparent-background option keeps its transparent background.
 
@@ -45,6 +55,46 @@
    engine. A stage with no atoms, a canvas that refuses its pixels or a browser
    without `createImageBitmap` leaves the still exactly as NGL drew it (every
    entry point is best-effort and returns what it was given).
+
+   WHY IT LOOKED « DETACHED AND FLAT » — and what a rig does about it. Three
+   things made the shadow a smudge lying NEXT TO the molecule instead of ON it,
+   and all three are gone:
+
+     · THE PROXY WAS FATTER THAN THE DRAWING. Every atom donated a 1.7 Å vdW
+       sphere whatever the representation drew, so a thin ribbon carried a
+       shadow volume three times its own thickness: the ribbon went dark where
+       the REAL ribbon stood in the light. The proxy radius now follows the
+       REPRESENTATION'S OWN STROKE (PROXY_STROKE_BY_TYPE below — the vdW sphere
+       for sphere / spacefill / surface, the bond radius for ball+stick /
+       licorice, a thin tube for cartoon / ribbon / tube / trace / backbone, a
+       hair for line). The receiver and the caster are the SAME stroke, so what
+       is drawn is what receives and what casts;
+     · THE LAMP'S FRUSTUM WAS A CUBE AROUND THE BOUNDING SPHERE with its near
+       plane at 0.01 Å — thousands of ångströms of empty depth for every real
+       surface, and a body-sized square where a molecule is not a cube. The
+       fitted shadow camera (shadowRigOf) spends that range on the molecule;
+     · THE BIAS WAS 0.9 Å, i.e. three bond lengths of cancelled self-shadowing,
+       so a crevice — two atoms 0.5 Å apart along the light — could never go
+       dark. It is a contact bias now (0.35 Å), and the PCF disc turns what is
+       left into a penumbra instead of a stipple.
+
+   SELF-SHADOWING ON THE MOLECULE ITSELF. The mask is built from the surface
+   point of the pixel, so it darkens the MOLECULE — the receive side of a
+   shadow-map test — exactly where the molecule blocks its own light: atoms in a
+   pocket, the far side of the silhouette against the lamp, the ring that a
+   neighbour shades. The background has no surface point (the camera pass never
+   hit it), so nothing is ever painted off the molecule (see shadowMaskOf).
+
+   WHAT A SHADOW CANNOT DO IN NGL 2.4 — and it is not this module's fault. The
+   interactive canvas keeps NGL's own shading: NGL 2.4 ships no shadow-map pass
+   and no post-processing, so there is no place to inject a projected shadow or
+   an SSAO term into its materials (forcing `renderer.shadowMap` on its custom
+   shaders breaks the scene — the note above `flagMeshShadows` in
+   NMRMoleculeViewer.jsx records the attempt). The canvas therefore keeps the
+   rig's own light and the mesh's castShadow / receiveShadow flags, and the
+   still gets the shadow-map rig built here. The Mol* side of the same rig
+   (utils/viewerLightRig.js: `postprocessing.occlusion` — the SSAO pass — and
+   `postprocessing.shadow`) is how the swappable engine draws both.
 
    NOTHING HERE TOUCHES THE VIEWER: no representation, no material, no camera
    and no light of the interactive canvas is written. The module only READS.
@@ -70,13 +120,37 @@ export const RAY_SHADOW_DEFAULTS = Object.freeze({
      low-frequency signal — the atoms' own shading carries the detail. */
   maskMaxWidth: 1400,
   /* Depth bias (Å, along the light) that keeps a surface from shadowing itself
-     through the coarse polygonisation of the proxy. */
-  bias: 0.9,
-  /* Multiplier on the vdW radii of the proxy spheres: > 1 fattens the shadow of
-     a coarse structure, < 1 thins it. */
+     through the coarse polygonisation of the proxy. It is a CONTACT bias: two
+     atoms half an ångström apart along the lamp must still shade each other
+     (the crevice of a pocket), so it is well under a bond length — the coarse
+     polygonisation is handled by the penumbra, not by cancelling the contact. */
+  bias: 0.35,
+  /* Multiplier on the proxy radii: > 1 fattens the shadow of a coarse
+     structure, < 1 thins it. (The radii themselves follow the representation's
+     own stroke — see PROXY_STROKE_BY_TYPE.) */
   sphereScale: 1,
   /* Safety valve: a million-atom system is strided down to this many proxies. */
   maxAtoms: 300000,
+  /* ---- The shadow CAMERA (the fitted rig) ---------------------------------
+     The lamp's orthographic frustum is fitted to the molecule's bounding box:
+     the eight corners of the box are transformed into the lamp's space and the
+     six planes are taken from them. `fitMargin` is the slack left around that
+     fit, in the box's own units: 1 = the box touches all four sides exactly,
+     1.06 = six percent of body-sized air, which is what keeps a sphere of a
+     slightly thicker atom from being cut by the map's border. */
+  fitMargin: 1.06,
+  /* ---- The PENUMBRA (soft shadows: PCF, widened by PCSS) ------------------
+     A shadow map gives one depth per texel; a real penumbra is the lamp's own
+     width seen through a gap. `pcfTaps` is the number of samples of the disc
+     taken around the receiver (1 = the hard single tap of a plain shadow map),
+     `softness` its base radius in pixels OF THE MASK, and `penumbra` grows that
+     radius by this many pixels per ångström of occluder-to-receiver gap — a
+     contact shadow stays tight, a shadow cast from far away spreads —
+     `penumbraMax` being the cap that keeps a distant occluder from washing the
+     whole model grey. */
+  pcfTaps: 8,
+  penumbra: 1.5,
+  penumbraMax: 8,
 });
 
 /* The options a caller may pass, normalised: anything missing falls back on the
@@ -84,13 +158,18 @@ export const RAY_SHADOW_DEFAULTS = Object.freeze({
 export const rayShadowOptions = (options = {}) => {
   const d = RAY_SHADOW_DEFAULTS;
   const num = (v, fallback) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
+  const span = (v, fallback, lo, hi) => Math.min(hi, Math.max(lo, num(v, fallback)));
   return {
-    strength: Math.min(1, Math.max(0, num(options.strength, d.strength))),
+    strength: span(options.strength, d.strength, 0, 1),
     softness: Math.max(0, num(options.softness, d.softness)),
     maskMaxWidth: Math.max(64, Math.round(num(options.maskMaxWidth, d.maskMaxWidth))),
     bias: num(options.bias, d.bias),
     sphereScale: Math.max(0.1, num(options.sphereScale, d.sphereScale)),
     maxAtoms: Math.max(1, Math.round(num(options.maxAtoms, d.maxAtoms))),
+    fitMargin: span(options.fitMargin, d.fitMargin, 1, 2),
+    pcfTaps: span(Math.round(num(options.pcfTaps, d.pcfTaps)), d.pcfTaps, 1, 32),
+    penumbra: Math.max(0, num(options.penumbra, d.penumbra)),
+    penumbraMax: Math.max(0, num(options.penumbraMax, d.penumbraMax)),
   };
 };
 
@@ -287,20 +366,68 @@ export const softenMask = (mask, width, height, radius) => {
   return out;
 };
 
+/* The PCF disc: `taps` offsets spread over a unit disc, to be scaled by the
+   penumbra radius. A Fibonacci spiral is used because it fills a disc evenly for
+   ANY number of taps (1 … 32) without a table, and because the sequence of radii
+   is what makes 8 taps look like 8 samples of an area light instead of 8 points
+   of a ring. One tap is the centre — the plain, hard shadow-map test. */
+export const pcfDiscOf = (taps) => {
+  const n = Math.max(1, Math.round(Number(taps) || 1));
+  const out = new Float32Array(n * 2);
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < n; i += 1) {
+    const r = n === 1 ? 0 : Math.sqrt((i + 0.5) / n);
+    const a = i * golden;
+    out[i * 2] = Math.cos(a) * r;
+    out[i * 2 + 1] = Math.sin(a) * r;
+  }
+  return out;
+};
+
+/* A per-pixel angle, from the pixel's own coordinates: the disc is ROTATED so its
+   taps never line up with the mask's grid (unrotated taps show as rings and
+   staircases). A hash of the position, nothing more. */
+export const pcfRotationOf = (x, y) => {
+  const h = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+  return (h - Math.floor(h)) * Math.PI * 2;
+};
+
 /* The shadow test itself: every camera pixel that HIT an atom takes its world
    point, the light projects it into its own depth map, and the pixel is in
    shadow when it is deeper than what the light met there. `biasNdc` is the bias
    expressed in the light's NDC depth (buildRayShadowMask works it out from the
-   orthogonal frustum), which is what keeps a sphere from shadowing itself. */
+   orthogonal frustum), which is what keeps a sphere from shadowing itself while
+   still letting a crevice go dark.
+
+   THE PENUMBRA — soft shadows, in two steps that a shadow-map pass does in one:
+   the pixel takes `taps` samples of the disc around itself (PCF) and the disc's
+   RADIUS grows with the gap between the receiver and the occluder the lamp met
+   (PCSS): a contact shadow stays sharp, a shadow thrown from far away spreads by
+   `penumbra` pixels per ångström, up to `penumbraMax`. `softness` is the disc's
+   base radius, so `softness: 0` gives the plain hard test back — one tap, mask
+   0 or 1 (the tests pin that, and it is what a caller asking for a crisp shadow
+   gets). The disc softens BOTH sides of a shadow's edge — a receiver standing
+   just outside a silhouette is partly occluded by it — and the blur of
+   `softness` (softenMask) finishes the gradient. */
 export const shadowMaskOf = ({
   camera, light, width, height, biasNdc = 0, softness = 0,
+  taps = 1, penumbra = 0, penumbraMax = 0, depthScale = 0,
 }) => {
   const w = Math.max(1, Math.round(width));
   const h = Math.max(1, Math.round(height));
   const mask = new Float32Array(w * h);
+  const disc = taps > 1 ? pcfDiscOf(taps) : null;
+  const invTaps = disc ? 1 / (disc.length / 2) : 1;
+  const base = Math.max(0, Number(softness) || 0);
+  const grow = Math.max(0, Number(penumbra) || 0);
+  const cap = Math.max(0, Number(penumbraMax) || 0);
+  const perAngstrom = Number(depthScale) > 0 ? 1 / Number(depthScale) : 0;
+  const clipX = (x) => Math.min(w - 1, Math.max(0, x));
+  const clipY = (y) => Math.min(h - 1, Math.max(0, y));
   const clipPt = new Array(4);
   const scr = new Array(3);
   let shadowed = 0;
+  let penumbraRadius = 0;
   for (let y = 0; y < h; y += 1) {
     for (let x = 0; x < w; x += 1) {
       const idx = y * w + x;
@@ -309,17 +436,51 @@ export const shadowMaskOf = ({
         camera.world[idx * 3], camera.world[idx * 3 + 1], camera.world[idx * 3 + 2],
       ], clipPt), w, h, scr);
       if (!p) continue;
-      const lx = Math.min(w - 1, Math.max(0, Math.floor(p[0])));
-      const ly = Math.min(h - 1, Math.max(0, Math.floor(p[1])));
+      const lx = clipX(Math.floor(p[0]));
+      const ly = clipY(Math.floor(p[1]));
       const nearest = light.depth[ly * w + lx];
-      if (!(nearest < 2)) continue;                 // the light saw nothing here
-      if (p[2] > nearest + biasNdc) {
-        mask[idx] = 1;
-        shadowed += 1;
+      const met = nearest < 2;                       // the lamp met something here
+      const gap = met ? p[2] - nearest : 0;          // NDC: > 0 → behind what it met
+      // The disc's radius: the softness asked for, plus what the GAP deserves. A
+      // centre the lamp did not meet (the receiver stands at the edge of a
+      // silhouette) keeps the base radius — its shadow lives in the taps.
+      const radius = base > 0 && disc
+        ? Math.min(cap, base + (gap > 0 ? grow * gap * perAngstrom : 0))
+        : 0;
+      if (!(radius > 0)) {                           // the plain, hard shadow map
+        if (met && p[2] > nearest + biasNdc) {
+          mask[idx] = 1;
+          shadowed += 1;
+        }
+        continue;
+      }
+      if (radius > penumbraRadius) penumbraRadius = radius;
+      const rot = pcfRotationOf(x, y);
+      const cs = Math.cos(rot);
+      const sn = Math.sin(rot);
+      let occluded = 0;
+      for (let t = 0; t < disc.length; t += 2) {
+        const ox = disc[t] * radius;
+        const oy = disc[t + 1] * radius;
+        const sx = clipX(Math.round(lx + ox * cs - oy * sn));
+        const sy = clipY(Math.round(ly + ox * sn + oy * cs));
+        const d = light.depth[sy * w + sx];
+        if (d < 2 && p[2] > d + biasNdc) occluded += invTaps;
+      }
+      if (occluded > 0) {
+        mask[idx] = occluded;
+        if (occluded >= 0.5) shadowed += 1;
       }
     }
   }
-  return { mask: softenMask(mask, w, h, softness), width: w, height: h, shadowed };
+  return {
+    mask: softenMask(mask, w, h, base),
+    width: w,
+    height: h,
+    shadowed,
+    taps: disc ? disc.length / 2 : 1,
+    penumbraRadius,
+  };
 };
 
 /* One sample of the mask, bilinearly — the mask is SMALLER than the image (see
@@ -374,17 +535,162 @@ export const applyShadowToPixels = (data, width, height, mask, maskWidth, maskHe
 };
 
 /* The NDC depth the light's ORTHOGRAPHIC frustum spans per ångström: the bias
-   the user's « Å » is worth in the numbers the depth maps are written with. */
-export const lightDepthScale = ({ distance, radius }) => {
-  const near = 0.01;
-  const far = Math.max(0.02, Number(distance) * 2 + Number(radius) * 2);
-  return 2 / (far - near);
+   the user's « Å » is worth in the numbers the depth maps are written with.
+   Given the frustum's own near / far planes (what shadowRigOf returns) it is
+   exact; given only the lamp's distance and the scene's radius it falls back on
+   the cube that used to cover the whole bounding sphere. */
+export const lightDepthScale = ({ distance, radius, near, far } = {}) => {
+  const n = Number.isFinite(Number(near)) ? Number(near) : 0.01;
+  const f = Number.isFinite(Number(far))
+    ? Number(far)
+    : Math.max(0.02, Number(distance) * 2 + Number(radius) * 2);
+  return 2 / Math.max(1e-6, f - n);
 };
+
+/* The axis-aligned box of a flat xyz array — the molecule the lamp must cover. */
+export const boundsBoxOf = (positions, count) => {
+  const n = Math.max(0, Math.min(count || positions.length / 3, positions.length / 3));
+  if (!n) return { min: [-1, -1, -1], max: [1, 1, 1] };
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < n; i += 1) {
+    for (let c = 0; c < 3; c += 1) {
+      const v = positions[i * 3 + c];
+      if (!Number.isFinite(v)) continue;
+      if (v < min[c]) min[c] = v;
+      if (v > max[c]) max[c] = v;
+    }
+  }
+  for (let c = 0; c < 3; c += 1) {
+    if (!Number.isFinite(min[c]) || !Number.isFinite(max[c])) { min[c] = -1; max[c] = 1; }
+  }
+  return { min, max };
+};
+
+/* The eight corners of a box, in world space — what the shadow camera is fitted
+   to. */
+export const boxCornersOf = ({ min, max } = {}, out = []) => {
+  const lo = min || [-1, -1, -1];
+  const hi = max || [1, 1, 1];
+  for (let i = 0; i < 8; i += 1) {
+    if (!out[i]) out[i] = [0, 0, 0];
+    out[i][0] = i & 1 ? hi[0] : lo[0];
+    out[i][1] = i & 2 ? hi[1] : lo[1];
+    out[i][2] = i & 4 ? hi[2] : lo[2];
+  }
+  return out;
+};
+
+/* THE SHADOW CAMERA — the PyMOL rig's own piece. The lamp is parked at
+   `distance` from the centre of the scene and looks back at it; its frustum is
+   ORTHOGRAPHIC (the rig stands a hundred bounding boxes away, so its rays are
+   parallel « sun » rays — utils/viewerLightRig.js) and it is FITTED TO THE
+   MOLECULE: the eight corners of the molecule's box are pushed through the
+   lamp's view matrix and the six planes are read off their extent — the tightest
+   box that still holds every atom, with `margin` of slack. A fitting camera is
+   not a detail: the frustum used to be a cube around the bounding SPHERE with
+   its near plane at 0.01 Å, so a molecule occupied a small square of the map and
+   every real surface sat in one narrow slab of depth — the surest way to make a
+   shadow read as a smudge instead of a form. Without a box (a caller that only
+   knows a sphere) that sphere's own cube is fitted, which is still tight in the
+   two lateral axes.
+
+   Returns the matrices AND the numbers they came from, so a test — or the Ray
+   message — can prove the fit instead of trusting it. */
+export const shadowRigOf = ({
+  dir, bounds = null, center = [0, 0, 0], radius = 1, distance = null,
+  margin = RAY_SHADOW_DEFAULTS.fitMargin,
+} = {}) => {
+  const z = normalize3(dir || [0, 0, 1]);         // FROM the scene TO the lamp
+  const box = bounds && bounds.min && bounds.max ? bounds : null;
+  const c = box
+    ? [
+      (box.min[0] + box.max[0]) / 2,
+      (box.min[1] + box.max[1]) / 2,
+      (box.min[2] + box.max[2]) / 2,
+    ]
+    : [Number(center[0]) || 0, Number(center[1]) || 0, Number(center[2]) || 0];
+  const r = Math.max(1e-3, Number(radius) || 1);
+  const d = Math.max(1e-3, Number.isFinite(Number(distance)) ? Number(distance) : r * 100);
+  const eye = [c[0] + z[0] * d, c[1] + z[1] * d, c[2] + z[2] * d];
+  // An up vector that is never parallel to the light.
+  const up = Math.abs(z[2]) > 0.9 ? [1, 0, 0] : [0, 0, 1];
+  const view = mat4LookAt(eye, c, up);
+  const corners = box
+    ? boxCornersOf(box)
+    : boxCornersOf({ min: [c[0] - r, c[1] - r, c[2] - r], max: [c[0] + r, c[1] + r, c[2] + r] });
+  let left = Infinity;
+  let right = -Infinity;
+  let bottom = Infinity;
+  let top = -Infinity;
+  let near = Infinity;
+  let far = -Infinity;
+  const p = new Array(4);
+  for (let i = 0; i < 8; i += 1) {
+    const v = mat4TransformPoint(view, corners[i], p);
+    if (v[0] < left) left = v[0];
+    if (v[0] > right) right = v[0];
+    if (v[1] < bottom) bottom = v[1];
+    if (v[1] > top) top = v[1];
+    const depth = -v[2];                          // the lamp looks along −z
+    if (depth < near) near = depth;
+    if (depth > far) far = depth;
+  }
+  // A degenerate axis (a flat molecule seen edge-on) must not divide by zero.
+  if (!(right > left)) right = left + 1e-3;
+  if (!(top > bottom)) top = bottom + 1e-3;
+  // The slack: the same hair on the four sides and in depth, so a proxy sphere
+  // that pokes a little out of the box is still inside the map. A floor of two
+  // percent of the largest span keeps a DEGENERATE axis (a planar molecule seen
+  // along its plane, a box with no extent in one direction) from collapsing to a
+  // line: the PCF disc needs a map, not a column.
+  const m = Math.min(2, Math.max(1, Number(margin) || 1));
+  const spanMax = Math.max(right - left, top - bottom, far - near, 1e-3);
+  const padFloor = spanMax * 0.02;
+  const padX = Math.max(padFloor, ((right - left) * (m - 1)) / 2);
+  const padY = Math.max(padFloor, ((top - bottom) * (m - 1)) / 2);
+  const padZ = Math.max(padFloor, (padX + padY) / 2);
+  const nz = Math.max(1e-3, near - padZ);
+  const fz = Math.max(nz + 1e-3, far + padZ);
+  const l = left - padX;
+  const rt = right + padX;
+  const bt = bottom - padY;
+  const tp = top + padY;
+  const proj = mat4Orthographic(l, rt, bt, tp, nz, fz);
+  return {
+    view,
+    proj,
+    clip: mat4Multiply(proj, view),
+    left: l,
+    right: rt,
+    bottom: bt,
+    top: tp,
+    near: nz,
+    far: fz,
+    width: rt - l,
+    height: tp - bt,
+    depthScale: 2 / (fz - nz),
+    center: c,
+    radius: r,
+    distance: d,
+    margin: m,
+  };
+};
+
+/* The lamp's matrices — the whole rig under the name the mask pass has always
+   called it by. `clip` is the one matrix that pass multiplies by (= proj · view);
+   `view` is kept so the rasteriser can measure a sphere along the light's OWN up
+   axis. */
+export const lightMatricesOf = (setup) => shadowRigOf(setup);
 
 /* THE WHOLE SHADOW, from the proxies to the mask: one camera pass (where the
    visible surface is) and one light pass (what the lamp sees first), compared
-   pixel by pixel. Returns the blurred mask plus the numbers the Ray message
-   reports, and never throws — a shadow that cannot be built is no shadow. */
+   pixel by pixel. The light pass runs through the FITTED shadow camera of the
+   rig — `light.bounds` (the molecule's box) makes the frustum hug it — and the
+   comparison is a PCF disc whose radius follows the occluder gap (PCSS), so the
+   mask has a penumbra instead of an edge. Returns the blurred mask plus the
+   numbers the Ray message reports, and never throws — a shadow that cannot be
+   built is no shadow. */
 export const buildRayShadowMask = ({ atoms, camera, light, width, height, options = {} }) => {
   const o = rayShadowOptions(options);
   const { width: mw, height: mh } = rayShadowMaskSize(width, height, o);
@@ -400,12 +706,19 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
     clip: light.clip, width: mw, height: mh,
     radiusScale: o.sphereScale, axisUp: lightAxes.up, needWorld: false,
   });
+  // The bias in the units the depth map is written with: the fitted near / far
+  // planes when the caller passed a rig, the old bounding cube otherwise.
+  const depthScale = Number(light.depthScale) > 0 ? light.depthScale : lightDepthScale(light);
   const out = shadowMaskOf({
     camera: cameraPass,
     light: { clip: light.clip, depth: lightPass.depth },
     width: mw, height: mh,
-    biasNdc: o.bias * lightDepthScale(light),
+    biasNdc: o.bias * depthScale,
     softness: o.softness,
+    taps: o.pcfTaps,
+    penumbra: o.penumbra,
+    penumbraMax: o.penumbraMax,
+    depthScale,
   });
   return {
     mask: out.mask,
@@ -414,32 +727,18 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
     shadowed: out.shadowed,
     spheres: cameraPass.count,
     strength: o.strength,
+    // The rig itself, for the message: the surface the shadow camera really
+    // covers, in ångströms, and the disc that softens it.
+    rig: Number.isFinite(Number(light.width)) && Number.isFinite(Number(light.height))
+      ? { width: light.width, height: light.height, depth: light.far - light.near }
+      : null,
+    penumbra: { taps: out.taps, radius: o.softness, grow: o.penumbra, reached: out.penumbraRadius },
   };
 };
 
 
 
-/* The LIGHT's matrices: the lamp is parked at `distance` from the centre of the
-   scene, looking back at it, with an ORTHOGRAPHIC frustum whose half-width is
-   the bounding radius — a parallel « sun », like the rig's own
-   hundred-bounding-box lamp distance (utils/viewerLightRig.js). `clip` is the
-   one matrix the mask pass multiplies by (= proj · view); `view` is kept so the
-   rasteriser can measure a sphere along the light's OWN up axis. */
-export const lightMatricesOf = ({ dir, center, radius, distance }) => {
-  const z = normalize3(dir);                      // FROM the scene TO the lamp
-  const d = Math.max(1e-3, Number(distance) || 1);
-  const eye = [
-    center[0] + z[0] * d,
-    center[1] + z[1] * d,
-    center[2] + z[2] * d,
-  ];
-  // An up vector that is never parallel to the light.
-  const up = Math.abs(z[2]) > 0.9 ? [1, 0, 0] : [0, 0, 1];
-  const view = mat4LookAt(eye, center, up);
-  const r = Math.max(1e-3, Number(radius) || 1);
-  const proj = mat4Orthographic(-r, r, -r, r, 0.01, d * 2 + r * 2);
-  return { view, proj, clip: mat4Multiply(proj, view) };
-};
+/* (lightMatricesOf / shadowRigOf live with the maths above — see shadowRigOf.) */
 
 export const mat4Identity = () => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
@@ -490,6 +789,102 @@ const drawnAtomIndicesOf = (comp, atomCount) => {
   return [...set].sort((a, b) => a - b);
 };
 
+/* ---- WHAT A REPRESENTATION REALLY DRAWS -----------------------------------
+   The report that made this table necessary: « the shadow looks like a flat
+   smudge lying next to the molecule instead of a shadow OF the molecule ». Every
+   atom used to donate a 1.7 Å vdW sphere to the proxy whatever the
+   representation drew, so a cartoon — a ribbon a few tenths of an ångström
+   thick — carried a shadow volume several times its own thickness, and the
+   ribbon went dark where the REAL ribbon stood in the light. The proxy radius
+   therefore follows the STROKE the representation asks the GPU for: the vdW
+   sphere when the drawing IS the vdW sphere, the bond radius for the stick
+   representations, a thin tube along the backbone for the cartoon family, a hair
+   for the wireframe. That ONE radius both receives the shadow and casts it, so a
+   thin ribbon casts and receives a thin shadow.
+
+   `vdw` is the fraction of the atom's own vdW radius an atom BALL of that
+   representation uses (ball+stick draws a small ball at every atom); `min` is
+   the stroke in ångströms when the drawing is not an atom ball at all (a tube
+   has no vdW radius of its own). */
+export const PROXY_STROKE_BY_TYPE = Object.freeze({
+  sphere: { vdw: 1, min: 0 },
+  spacefill: { vdw: 1, min: 0 },
+  surface: { vdw: 1, min: 0 },
+  'ball+stick': { vdw: 0.3, min: 0.3 },
+  ballstick: { vdw: 0.3, min: 0.3 },
+  // Licorice draws STICKS ONLY (NGL gives its atom balls a scale of 0): its
+  // stroke is the bond radius, floored at 0.3 Å so a thin stick still casts.
+  licorice: { vdw: 0, min: 0.3 },
+  line: { vdw: 0, min: 0.15 },
+  wireframe: { vdw: 0, min: 0.15 },
+  backbone: { vdw: 0, min: 0.35 },
+  rope: { vdw: 0, min: 0.3 },
+  cartoon: { vdw: 0, min: 0.45 },
+  ribbon: { vdw: 0, min: 0.45 },
+  tube: { vdw: 0, min: 0.45 },
+  trace: { vdw: 0, min: 0.35 },
+});
+
+/* The proxy radius of ONE representation, in ångströms: the table above, refined
+   by the representation's OWN parameters when they are numbers (`scale` of the
+   sphere family, the `radius` of a bond or of a cartoon). `null` means « this
+   representation says nothing about its stroke » — the caller then keeps the
+   atom's vdW radius, exactly as this module did before the table existed. */
+export const proxyRadiusOf = (rep, vdwRadius = 1.7) => {
+  const params = (rep && rep.parameters) || null;
+  if (!params) return null;
+  const stroke = PROXY_STROKE_BY_TYPE[String(params.type || '').toLowerCase()];
+  if (!stroke) return null;
+  const vdw = Math.max(0.1, Number(vdwRadius) || 1.7);
+  const radius = Number(params.radius);
+  const scale = Number(params.scale);
+  let r = Math.max(stroke.min, vdw * stroke.vdw);
+  if (stroke.vdw >= 1) {
+    // The drawing IS the atom ball: `sphere_scale` — or a numeric radius —
+    // decides its size, exactly as the PyMOL `set sphere_scale` the viewer's own
+    // script panel accepts does.
+    if (Number.isFinite(scale) && scale > 0) r = vdw * scale;
+    if (Number.isFinite(radius) && radius > 0) r = radius;
+  } else if (Number.isFinite(radius) && radius > 0) {
+    // A bond radius (0.15 … 0.4) or a cartoon radius (0.4 … 0.8).
+    r = Math.max(r, radius);
+  }
+  return Math.max(0.05, r);
+};
+
+/* The proxy radius of EVERY atom the component draws, index by index: a Float32
+   array parallel to the structure's atoms, `NaN` where no visible representation
+   covers the atom. `null` (not an empty array) means « the component says
+   nothing about its representations » — an older NGL, a test stub — and the
+   caller keeps the vdW radii it always used. */
+export const drawnProxyRadiiOf = (comp, atomCount, vdw = null) => {
+  const list = comp && comp.reprList;
+  if (!Array.isArray(list)) return null;
+  const out = new Float32Array(Math.max(0, Math.round(Number(atomCount) || 0)));
+  if (!out.length) return out;
+  out.fill(NaN);
+  list.forEach((el) => {
+    try {
+      const rep = (el && (el.repr || el)) || null;
+      if (!rep || rep.visible === false) return;
+      const sv = rep.structureView;
+      if (!sv || typeof sv.getAtomIndices !== 'function') return;
+      const idx = sv.getAtomIndices();
+      if (!idx || !idx.length) return;
+      for (let i = 0; i < idx.length; i += 1) {
+        const a = idx[i];
+        if (!(a >= 0 && a < out.length)) continue;
+        const per = proxyRadiusOf(rep, vdw ? vdw[a] : 1.7);
+        if (per == null) continue;
+        // The FATTEST visible drawing of an atom is what the eye sees, so it is
+        // what the shadow must use.
+        if (!(out[a] >= per)) out[a] = per;
+      }
+    } catch { /* a representation that cannot list its atoms draws nothing */ }
+  });
+  return out;
+};
+
 /* World space: NGL stores the atoms in the structure's OWN frame and gives the
    GPU the component's matrix (`component.matrix`, kept up to date by
    `updateMatrix()` — the « Move X · Y · Z » of the styling bar writes it). The
@@ -512,7 +907,10 @@ export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms) =
       if (!n) return;
       const drawn = drawnAtomIndicesOf(comp, structure.atomCount || n);
       if (drawn && !drawn.length) return;      // nothing is drawn here: no shadow
-      parts.push({ comp, data, n, drawn });
+      // …and, for the atoms it does draw, the STROKE of each representation (null
+      // = « says nothing »: the atom then keeps its vdW radius).
+      const surface = drawn ? drawnProxyRadiiOf(comp, n, data.radius) : null;
+      parts.push({ comp, data, n, drawn, surface });
       total += drawn ? drawn.length : n;
     } catch { /* a component that cannot report its atoms casts nothing */ }
   });
@@ -521,7 +919,7 @@ export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms) =
   const out = new Float32Array(capacity * 3);
   const radii = new Float32Array(capacity);
   let k = 0;
-  parts.forEach(({ comp, data, n, drawn }) => {
+  parts.forEach(({ comp, data, n, drawn, surface }) => {
     const m = elements16Of(comp.matrix) || elements16Of(comp.group && comp.group.matrixWorld);
     const pos = data.position;
     const rad = data.radius;
@@ -542,7 +940,11 @@ export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms) =
         out[k * 3 + 1] = y;
         out[k * 3 + 2] = z;
       }
-      radii[k] = rad && Number.isFinite(rad[i]) ? rad[i] : 1.7;
+      const vdw = rad && Number.isFinite(rad[i]) ? rad[i] : 1.7;
+      const stroke = surface ? surface[i] : NaN;
+      // The drawing's own stroke when its representation gave one, the atom's own
+      // vdW radius otherwise — and never a fat sphere around a thin ribbon.
+      radii[k] = Number.isFinite(stroke) && stroke > 0 ? stroke : vdw;
       k += 1;
     }
   });
@@ -564,7 +966,9 @@ export const cameraFromViewer = (viewer) => {
 /* EVERYTHING a shadow needs, read from the stage in one call. `lightDir` is the
    unit vector FROM the molecule TOWARD the lamp — exactly what
    `nglKeyLightDirection(az, el)` of the rig returns (utils/viewerLightRig.js),
-   so the shadow of the still and the shading of the canvas come from ONE lamp. */
+   so the shadow of the still and the shading of the canvas come from ONE lamp.
+   The shadow CAMERA is the rig fitted to the molecule: `boundsBoxOf` gives the
+   box the lamp must cover and `shadowRigOf` turns it into the six planes. */
 export const rayShadowInputsOf = (stage, { lightDir = [0, 0, 1], options = {} } = {}) => {
   const o = rayShadowOptions(options);
   const viewer = stage && stage.viewer;
@@ -572,10 +976,18 @@ export const rayShadowInputsOf = (stage, { lightDir = [0, 0, 1], options = {} } 
   if (!atoms.count) throw new Error('no atoms to cast a shadow from');
   const camera = cameraFromViewer(viewer);
   const { center, radius } = boundsOf(atoms.positions, atoms.count);
+  const bounds = boundsBoxOf(atoms.positions, atoms.count);
   const dir = normalize3(lightDir);
   // The rig parks the lamp a hundred bounding boxes away: parallel « sun » rays.
   const distance = radius * 100;
-  const light = { dir, center, radius, distance, ...lightMatricesOf({ dir, center, radius, distance }) };
+  const light = {
+    dir,
+    center,
+    radius,
+    distance,
+    bounds,
+    ...shadowRigOf({ dir, bounds, center, radius, distance, margin: o.fitMargin }),
+  };
   return { atoms, camera, light, options: o };
 };
 
@@ -673,8 +1085,13 @@ export const rayShadowNote = (shadow) => {
     ? Math.round((shadow.reachedPixels / (shadow.imageWidth * shadow.imageHeight)) * 100)
     : null;
   const spheres = Number(shadow.spheres) || 0;
+  // The fitted shadow camera, in ångströms: the proof that the rig hugged the
+  // molecule instead of the whole cube around its bounding sphere.
+  const rig = shadow.rig && Number.isFinite(Number(shadow.rig.width))
+    ? ` · rig ${Math.round(shadow.rig.width)}×${Math.round(shadow.rig.height)} Å`
+    : '';
   return `· cast shadows ${pct}%${covered == null ? '' : ` (${covered}% of the pixels)`}`
-    + `${spheres ? ` · ${spheres} atom proxies` : ''}`;
+    + `${spheres ? ` · ${spheres} atom proxies` : ''}${rig}`;
 };
 
 

@@ -26,15 +26,26 @@
        n'est PAS visible dans le programme (elle a été cachée) ». L'ombre ne lit
        plus les atomes de la STRUCTURE mais ceux de ses représentations VISIBLES :
        ce qui n'est pas dessiné ne projette plus rien.
+    5. LE RIG (la demande suivante : l'ombre « plate et détachée »). La caméra
+       d'ombre est AJUSTÉE à la boîte de la molécule — les huit coins tombent
+       dans le frustum, les bords du frustum les touchent, et sa profondeur est
+       celle de la molécule au lieu des 2000 Å du cube d'autrefois.
+    6. LA PÉNOMBRE : un disque PCF d'échantillons dont le rayon grandit avec
+       l'écart receveur / occulteur (PCSS) — vérifié sur une carte d'ombre
+       fabriquée à la main, où la valeur attendue se calcule.
+    7. L'ÉPAISSEUR DU PROXY suit le TRAIT de chaque représentation (van der Waals
+       pour les sphères, tube fin pour un cartoon) : c'est ce qui recolle l'ombre
+       sur ce qui est dessiné.
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   RAY_SHADOW_DEFAULTS, rayShadowOptions, rayShadowMaskSize, mat4LookAt, mat4Multiply,
-  mat4Orthographic, mat4TransformPoint, boundsOf, clipToScreen, rasterizeSpheres,
-  shadowMaskOf, softenMask, sampleMaskBilinear, applyShadowToPixels, lightDepthScale,
-  lightMatricesOf, buildRayShadowMask, atomsFromStage, cameraFromViewer,
-  rayShadowInputsOf, shadowImageData, addCastShadowsToBlob, rayShadowNote,
+  mat4Orthographic, mat4TransformPoint, boundsOf, boundsBoxOf, boxCornersOf, clipToScreen,
+  rasterizeSpheres, shadowMaskOf, softenMask, sampleMaskBilinear, applyShadowToPixels,
+  lightDepthScale, lightMatricesOf, shadowRigOf, buildRayShadowMask, atomsFromStage,
+  cameraFromViewer, rayShadowInputsOf, shadowImageData, addCastShadowsToBlob, rayShadowNote,
+  pcfDiscOf, pcfRotationOf, PROXY_STROKE_BY_TYPE, proxyRadiusOf, drawnProxyRadiiOf,
 } from './src/utils/viewerRayShadows.js';
 
 let passed = 0;
@@ -361,6 +372,181 @@ ok(rayBody.includes('onStatus: (text) => {'),
 ok(!VIEW.includes('const captureScene = async () => {'), 'le gestionnaire du 📷 a quitté le viewer');
 ok(!VIEW.includes('📷 Figure — the high'), '…et son bouton avec lui');
 has('const captureRay = async () => {', '✨ Ray reste le SEUL export d’image de la scène');
+
+/* ── 9. LE RIG : LA CAMÉRA D’OMBRE AJUSTÉE À LA MOLÉCULE ──────────────────
+   La demande : remplacer l’ombre « plate et détachée » par un rig à la PyMOL,
+   dont la caméra d’ombre est AJUSTÉE aux bornes de la molécule. La propriété qui
+   décide de tout se vérifie : les HUIT coins de la boîte de la molécule tombent
+   DANS le frustum (aucun atome n’est oublié), les bords du frustum les TOUCHENT
+   (aucun pixel payé pour du vide) et sa profondeur est celle de la molécule —
+   plus les 2000 Å du cube autour de la sphère englobante. */
+const molBox = boundsBoxOf(new Float32Array([-1, -2, -0.5, 1, 2, 0.5]), 2);
+eq(molBox.min, [-1, -2, -0.5], 'la boîte de la molécule : ses minima');
+eq(molBox.max, [1, 2, 0.5], '…et ses maxima (c’est ELLE que la caméra d’ombre couvre)');
+const molCorners = boxCornersOf(molBox);
+eq(molCorners.length, 8, 'une boîte a huit coins');
+ok(molCorners.every((c) => c[0] >= -1 && c[0] <= 1 && c[1] >= -2 && c[1] <= 2 && c[2] >= -0.5 && c[2] <= 0.5),
+  '…et ce sont bien les coins de la molécule');
+const LAMPS = [[0, 0, 1], [1, 0, 0], [0, 1, 0], [0.5, 0.5, 0.7], [0, -0.9, 0.436], [-0.3, 0.4, -0.86]];
+LAMPS.forEach((dir) => {
+  const rig = shadowRigOf({ dir, bounds: molBox, distance: 1000 });
+  const ndc = molCorners.map((c) => mat4TransformPoint(rig.clip, c));
+  ok(ndc.every((p) => Math.abs(p[0] / p[3]) <= 1.001 && Math.abs(p[1] / p[3]) <= 1.001 && Math.abs(p[2] / p[3]) <= 1.001),
+    `le frustum ajusté CONTIENT toute la molécule (lampe ${dir.join(',')})`);
+  ok(rig.far - rig.near < 100,
+    `…et sa profondeur est celle de la molécule (${(rig.far - rig.near).toFixed(2)} Å), pas celle de l’espace`);
+});
+const tightRig = shadowRigOf({ dir: [0, 0, 1], bounds: molBox, distance: 1000 });
+const tightNdc = molCorners.map((c) => {
+  const p = mat4TransformPoint(tightRig.clip, c);
+  return [Math.abs(p[0] / p[3]), Math.abs(p[1] / p[3])];
+});
+near(Math.max(...tightNdc.map((p) => p[0])), 1 / RAY_SHADOW_DEFAULTS.fitMargin, 0.01,
+  'le frustum est SERRÉ : le bord de la boîte touche le bord du frustum à fitMargin près');
+ok(Math.max(...tightNdc.map((p) => p[1])) > 0.9, '…et l’autre axe le touche aussi (aucun gaspillage)');
+ok(Math.abs(tightRig.width * tightRig.height - 8 * RAY_SHADOW_DEFAULTS.fitMargin ** 2) < 0.9,
+  '…la surface du frustum est celle de la boîte, plus la marge — rien d’autre');
+/* Sans boîte (un appelant qui ne connaît qu’une sphère), le repli reste serré. */
+const sphereRig = lightMatricesOf({ dir: [0, 0, 1], center: [0, 0, 0], radius: 10, distance: 1000 });
+near(sphereRig.right, 10 * RAY_SHADOW_DEFAULTS.fitMargin, 1e-6,
+  'sans boîte, la sphère donne un carré de son rayon (± fitMargin)');
+ok(sphereRig.far - sphereRig.near < 30,
+  '…et une profondeur de scène, plus les 2000 Å de l’ancien cube autour de la sphère englobante');
+ok(inputs.light.bounds && inputs.light.width > 0.5,
+  'rayShadowInputsOf passe la BOÎTE de la molécule à la caméra d’ombre (le rig est branché)');
+ok(rayShadowNote({ mask: Float32Array.from([1]), strength: 0.5, rig: { width: 42.4, height: 38.1 } })
+  .includes('rig 42×38 Å'), '…et la note du message dit la taille de ce que la caméra couvre');
+
+/* ── 10. LA PÉNOMBRE : PCF PUIS PCSS ──────────────────────────────────────
+   Une shadow map donne UNE profondeur par texel : la douceur vient d’un DISQUE
+   d’échantillons autour du receveur (PCF), dont le rayon grandit avec l’écart
+   entre le receveur et l’occulteur (PCSS). La carte d’ombre est FABRIQUÉE À LA
+   MAIN ici — un mur occupe la moitié droite, le receveur est à deux pixels du
+   bord — donc les valeurs attendues se CALCULENT. La caméra est uniforme (tous
+   ses pixels portent le même point du monde) pour que le flou de pénombre ne
+   dilue pas la valeur mesurée. */
+const mapW = 32;
+const mapH = 32;
+const wallDepth = new Float32Array(mapW * mapH).fill(2);       // 2 = « la lampe n’a rien vu »
+for (let y = 0; y < mapH; y += 1) {
+  for (let x = 16; x < mapW; x += 1) wallDepth[y * mapW + x] = 0.5;
+}
+const wallClip = mat4Orthographic(-1, 1, -1, 1, 0, 2);         // monde [-1,1]² → NDC ; z = −2 → +1
+const shadowAt = (world, options) => {
+  const n = mapW * mapH;
+  const camera = { hit: new Uint8Array(n).fill(1), world: new Float32Array(n * 3) };
+  for (let i = 0; i < n; i += 1) {
+    camera.world[i * 3] = world[0];
+    camera.world[i * 3 + 1] = world[1];
+    camera.world[i * 3 + 2] = world[2];
+  }
+  return shadowMaskOf({
+    camera,
+    light: { clip: wallClip, depth: wallDepth },
+    width: mapW, height: mapH,
+    biasNdc: 0, depthScale: 1,
+    ...options,
+  });
+};
+/* Deux pixels AVANT le bord du mur, mais bien DERRIÈRE lui (z = −1,95 → la
+   profondeur NDC vaut 0,95, le mur est à 0,5). */
+const atEdge = [-0.125, 0, -1.95];
+eq(shadowAt(atEdge, { softness: 0 }).mask[0], 0,
+  'la shadow map dure : à 2 px du bord du mur, le receveur est ÉCLAIRÉ');
+const softEdge = shadowAt(atEdge, { softness: 4, taps: 8, penumbra: 0, penumbraMax: 8 });
+ok(softEdge.mask[0] > 0.05 && softEdge.mask[0] < 0.95,
+  `le disque PCF le rend PARTIELLEMENT ombré (${softEdge.mask[0].toFixed(2)}) : une pénombre, pas une marche`);
+eq(softEdge.taps, 8, '…avec les 8 échantillons demandés');
+near(softEdge.penumbraRadius, 4, 1e-9, '…et le disque garde le rayon demandé quand l’écart est nul');
+/* DANS le mur, 0,45 Å derrière lui : le rayon grandit de `penumbra` par ångström
+   d’écart (PCSS) — une ombre de contact reste nette, une ombre portée s’étale. */
+const inWall = [0.125, 0, -1.95];
+const growOff = shadowAt(inWall, { softness: 4, taps: 8, penumbra: 0, penumbraMax: 12 });
+const growOn = shadowAt(inWall, { softness: 4, taps: 8, penumbra: 3, penumbraMax: 12 });
+near(growOff.penumbraRadius, 4, 1e-9, 'sans PCSS, le disque garde le rayon demandé (softness)');
+near(growOn.penumbraRadius, 4 + 3 * (0.95 - 0.5), 1e-6,
+  '…et avec PCSS il grandit de penumbra × l’écart receveur / occulteur');
+eq(shadowAt(inWall, { softness: 0 }).mask[0], 1, 'un receveur derrière le mur est pleinement ombré (test dur)');
+ok(growOn.mask[0] < 1 && growOn.mask[0] > 0.3,
+  '…mais un disque large voit la lumière qui frôle le bord du mur : c’est la pénombre');
+/* Le disque lui-même, et sa rotation par pixel. */
+const disc8 = pcfDiscOf(8);
+eq(disc8.length, 16, 'un disque de 8 échantillons = 8 offsets (x, y)');
+let inDisc = true;
+for (let i = 0; i < 8; i += 1) if (Math.hypot(disc8[i * 2], disc8[i * 2 + 1]) > 1.0001) inDisc = false;
+ok(inDisc, '…tous dans le disque unité (c’est le rayon de pénombre qui les met à l’échelle)');
+eq(Array.from(pcfDiscOf(1)), [0, 0], 'un seul échantillon = le centre : le test dur d’une shadow map ordinaire');
+const discAngle = pcfRotationOf(3, 7);
+ok(discAngle >= 0 && discAngle < Math.PI * 2, 'la rotation du disque est un angle');
+eq(pcfRotationOf(3, 7), discAngle, '…le même pour un même pixel (deux rendus donnent la même image)');
+ok(pcfRotationOf(4, 7) !== discAngle, '…et différent du voisin : les échantillons ne font pas de rayures');
+
+/* ── 11. L’ÉPAISSEUR DU PROXY SUIT LE TRAIT DE LA REPRÉSENTATION ──────────
+   La cause n° 1 de l’ombre « plate et détachée » : chaque atome donnait une
+   sphère de van der Waals de 1,7 Å même quand le dessin était un ruban de
+   quelques dixièmes d’ångström — le volume d’ombre faisait plusieurs fois
+   l’épaisseur du ruban, et le ruban s’assombrissait là où le VRAI ruban était
+   éclairé. Le proxy (qui REÇOIT et qui PROJETTE) suit donc le trait. */
+eq(proxyRadiusOf({ parameters: { type: 'spacefill' } }, 1.7), 1.7,
+  'spacefill : la bille EST le rayon de van der Waals');
+eq(proxyRadiusOf({ parameters: { type: 'sphere', scale: 0.6 } }, 1.7), 1.7 * 0.6,
+  'sphere : « set sphere_scale, 0.6 » réduit le proxy comme il réduit le dessin');
+eq(proxyRadiusOf({ parameters: { type: 'sphere', radius: 2.4 } }, 1.7), 2.4,
+  '…et un rayon numérique l’emporte sur le rayon de van der Waals');
+eq(proxyRadiusOf({ parameters: { type: 'ball+stick' } }, 1.7), Math.max(0.3, 1.7 * 0.3),
+  'ball+stick : la petite bille d’atome, pas la grosse sphère');
+near(proxyRadiusOf({ parameters: { type: 'cartoon' } }, 1.7), 0.45, 1e-9,
+  'cartoon : un tube fin, et surtout PAS 1,7 Å');
+near(proxyRadiusOf({ parameters: { type: 'cartoon', radius: 0.8 } }, 1.7), 0.8, 1e-9,
+  '…et le rayon de cartoon demandé est suivi');
+near(proxyRadiusOf({ parameters: { type: 'licorice', radius: 0.4 } }, 1.7), 0.4, 1e-9,
+  'licorice : le rayon du bâton');
+eq(proxyRadiusOf({ parameters: { type: 'martini' } }, 1.7), null,
+  'une représentation inconnue ne dit RIEN (le rayon de van der Waals est gardé)');
+eq(proxyRadiusOf({}, 1.7), null, '…et une représentation sans paramètres non plus');
+eq(PROXY_STROKE_BY_TYPE.spacefill.vdw, 1, 'la table dit la part de van der Waals d’un dessin plein');
+eq(PROXY_STROKE_BY_TYPE.cartoon.vdw, 0, '…et zéro pour un ruban, qui n’est pas une bille');
+
+const cartoonRep = { parameters: { type: 'cartoon' }, structureView: view([0, 1]) };
+const ballRep = { parameters: { type: 'spacefill' }, structureView: view([1, 2]) };
+const perAtom = drawnProxyRadiiOf({ reprList: [{ repr: cartoonRep }, { repr: ballRep }] }, 4,
+  new Float32Array([1.7, 1.2, 1.5, 1.1]));
+near(perAtom[0], 0.45, 1e-6, 'un atome dessiné par le seul cartoon projette le trait du cartoon');
+near(perAtom[1], 1.2, 1e-6, 'un atome dessiné par les DEUX garde le dessin le PLUS ÉPAIS (la sphère)');
+near(perAtom[2], 1.5, 1e-6, '…et un atome en sphères garde son rayon de van der Waals');
+ok(Number.isNaN(perAtom[3]), 'un atome que rien ne dessine n’a aucun proxy');
+eq(drawnProxyRadiiOf({ structure: {} }, 3, new Float32Array([1.7, 1.7, 1.7])), null,
+  'une composition sans reprList ne dit RIEN (le rayon de van der Waals est gardé, comme avant)');
+ok(Number.isNaN(drawnProxyRadiiOf(
+  { reprList: [{ repr: { ...cartoonRep, visible: false } }] }, 1, new Float32Array([1.7]),
+)[0]), 'une représentation cachée ne donne aucun proxy');
+/* Et de bout en bout : le ruban pèse 0,45 Å, pas 1,7 Å. */
+const ribbonStage = {
+  compList: [{
+    structure: {
+      atomCount: 4,
+      getAtomData: () => ({
+        position: new Float32Array([0, 0, 0, 0, 1, 0, 0, 2, 0, 0, 3, 0]),
+        radius: new Float32Array([1.7, 1.7, 1.7, 1.7]),
+      }),
+    },
+    matrix: { elements: ident16 },
+    reprList: [{ repr: cartoonRep }],
+  }],
+};
+const ribbon = atomsFromStage(ribbonStage, 100);
+eq(ribbon.count, 2, 'seuls les atomes DESSINÉS sont lus (les deux autres ne sont dessinés par rien)');
+near(ribbon.radii[0], 0.45, 1e-6, '…et leur proxy a l’épaisseur du RUBAN, plus celle d’une sphère de van der Waals');
+near(ribbon.radii[1], 0.45, 1e-6, '…pour chaque atome du ruban');
+
+/* ── 12. CE QUE LE MODULE DIT DE LUI-MÊME ──────────────────────────────── */
+ok(MODULE.includes('THE SHADOW CAMERA'), 'le module décrit sa caméra d’ombre ajustée (shadowRigOf)');
+ok(MODULE.includes('PCSS'), '…la pénombre PCF élargie par l’écart receveur / occulteur (PCSS)');
+ok(MODULE.includes('PROXY_STROKE_BY_TYPE'), '…et la table des épaisseurs de trait des représentations');
+ok(MODULE.includes('SELF-SHADOWING ON THE MOLECULE ITSELF'),
+  '…et l’auto-ombrage de la molécule : le receveur est la surface elle-même');
+ok(MODULE.includes('WHAT A SHADOW CANNOT DO IN NGL 2.4'),
+  '…en disant honnêtement ce que NGL 2.4 ne peut pas faire (aucune shadow map dans la toile interactive)');
 
 /* ── Bilan ─────────────────────────────────────────────────────────────── */
 console.log(`_viewer_ray_shadows_test.mjs — ${passed} assertions OK (ombres portées)`);
