@@ -165,8 +165,21 @@ eq(shared, snapshot,
   'le geste construit un NOUVEL objet : muter l’ancien ne ferait rien re-rendre par React');
 
 /* ══ 8. LA SOURCE DU VIEWER ══════════════════════════════════════════════ */
-has('const toggleSelStyle = (key, style) => {', 'le geste a sa propre fonction (donc testable)');
+has('const toggleSelStyle = (key, style, from) => {', 'le geste a sa propre fonction (donc testable)');
 has('onClick={() => toggleSelStyle(s.name, style)}', '…et les boutons de style l’utilisent');
+/* LA MÊME SÉRIE DE COMMANDES QUE LES RANGÉES DE STYLING (la demande) : la barre
+   Sélections ouvre la rangée par le SÉLECTEUR DE STYLE du styling (mêmes mots,
+   mêmes libellés), et montre la rampe / les couleurs de 2°-structure là où la
+   coloration est choisie — comme la rangée de styling. */
+has("{['cartoon', 'ribbon', 'tube', 'ball', 'stick', 'sphere', 'surface'].map((style) => (",
+  'les ticks restent : ce sont les DEUX commandes « show » empilées de PyMOL');
+has('value={selRowStyle(st)} onChange={(e) => setSelRowStyle(s.name, e.target.value)}',
+  '…et le sélecteur de style du styling ouvre la rangée');
+has('const setSelRowStyle = (key, token) => {', 'setSelRowStyle : un seul état écrit, enchaîné toggle par toggle');
+has('work = toggleSelStyle(key, SEL_STYLE_TOGGLE_TOKEN[f], work);',
+  '…en réutilisant LE geste des ticks (les autres rangées retrouvent leurs atomes)');
+has("{selColorMode(st) === 'gradient' && (", 'la rampe est réglable depuis la rangée de sélection, comme au styling');
+has("{selColorMode(st) === 'sstruc' && (", '…et la palette de 2°-structure aussi');
 gone('onClick={() => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), [style]: !((selStylesRef.current[s.name] || {})[style]) } })}',
   'l’ancien gestionnaire — qui ne changeait qu’UNE ligne, donc rien à l’écran — a disparu');
 has("if (!raw || raw === 'all')", '« all » n’écrit d’exclusion nulle part');

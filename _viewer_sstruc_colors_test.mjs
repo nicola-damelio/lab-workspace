@@ -110,8 +110,8 @@ eq(countOf(/sheet: 0xf8d878/g), 1, 'le jaune du feuillet aussi');
 eq(countOf(/loop: 0xe6e6e6/g), 1,
   'le gris clair de la boucle aussi (le gris 0xe6e6e6 du tableau des éléments est une AUTRE palette)');
 eq(countOf(/const SSTRUC_COLOR_ITEMS/g), 1, 'la liste des pastilles n’est déclarée qu’une fois');
-eq(countOf(/SSTRUC_COLOR_ITEMS\.map\(\(it\) => \(/g), 3,
-  'la roue ⚙, la rangée de la barre de style et le menu §2 dessinent la MÊME liste');
+eq(countOf(/SSTRUC_COLOR_ITEMS\.map\(\(it\) => \(/g), 4,
+  'la roue ⚙, la rangée de la barre de style, la rangée de la barre SÉLECTIONS (même série de commandes) et le menu §2 dessinent la MÊME liste');
 
 /* ══ 2. LA ROUE ⚙ A UNE SECTION « SECONDARY STRUCTURE » À ELLE ════════════ */
 has('Secondary structure · helix / sheet / loop',
@@ -136,8 +136,8 @@ has("{look.colorBy === 'sstruc' && (",
   'la rangée affiche les pastilles DÈS QUE « Secondary structure » est choisi');
 has('onChange={(e) => setSstrucColour(it.key, parseInt(e.target.value.slice(1), 16))}',
   '…et elles écrivent par le seul écrivain de la palette');
-eq(countOf(/setSstrucColour\(it\.key,/g), 2,
-  'deux surfaces écrivent par setSstrucColour : la barre de style et le menu §2');
+eq(countOf(/setSstrucColour\(it\.key,/g), 3,
+  'trois surfaces écrivent par setSstrucColour : la barre de style, la barre SÉLECTIONS (même série de commandes) et le menu §2');
 eq(countOf(/const setSstrucColour = \(key, hex\) => \{/g), 1, '…un seul écrivain, comme avant');
 const COLORS = new Function(`${sliceObject(VIEW, 'COLORS')}\nreturn COLORS;`)();
 ['protein', 'proteinBackbone'].forEach((cat) => ok(COLORS[cat].includes('sstruc'),

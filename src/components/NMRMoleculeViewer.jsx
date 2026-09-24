@@ -4331,6 +4331,28 @@ const STYLE_FAMILY_REPS = {
   spacefill: ['spacefill'], sphere: ['spacefill'],
   surface: ['surface'], mesh: ['surface'],
 };
+/* THE ONE STYLE THE STYLE SELECTOR OF A SELECTIONS ROW SHOWS, and how choosing one
+   writes the row's own flags. A Selections row STACKS styles (PyMOL's « show »
+   commands do), so the selector shows the first style the row draws, in the order
+   of the styling window, and the ticks stay for the stacking. */
+const SEL_ROW_STYLE_CHOICES = ['hide', 'cartoon', 'ribbon', 'tube', 'ball+stick', 'licorice', 'spacefill', 'sphere', 'surface'];
+const SEL_STYLE_FLAG_OF = {
+  cartoon: 'cartoon', ribbon: 'ribbon', tube: 'tube',
+  'ball+stick': 'ball', licorice: 'stick', spacefill: 'sphere', sphere: 'sphere', surface: 'surface',
+};
+// The word the TICKS use for each flag — the two controls must send the very same
+// token to the renderer (see toggleSelStyle), or a tick and the selector would
+// disagree about which representations they draw.
+const SEL_STYLE_TOGGLE_TOKEN = {
+  cartoon: 'cartoon', ribbon: 'ribbon', tube: 'tube',
+  ball: 'ball', stick: 'stick', sphere: 'sphere', surface: 'surface',
+};
+const selRowStyle = (st) => {
+  const s = st || {};
+  // « CPK » and « Sphere » write the SAME flag: a row drawn in spheres reads back
+  // as « CPK », like its single sphere tick says.
+  return SEL_ROW_STYLE_CHOICES.find((t) => t !== 'hide' && s[SEL_STYLE_FLAG_OF[t]]) || 'hide';
+};
 const styleFamiliesOf = (style) => [...new Set((STYLE_FAMILY_REPS[style] || [])
   .map((r) => MATERIAL_KIND_OF_REP[r])
   .filter(Boolean))];
@@ -8616,15 +8638,19 @@ const selectionAtomCount = (key) => {
    the style again removes the entry, so the gesture is reversible, and the row
    that was clicked keeps its own `hideFor` (the script's later hides are not
    forgotten). */
-const toggleSelStyle = (key, style) => {
-  const all = selStylesRef.current || {};
+const toggleSelStyle = (key, style, from) => {
+  const all = from || selStylesRef.current || {};
   const cur = all[key] || {};
   const on = !cur[style];
   // The row's own expression, as written by the script: a named selection's
   // expression, or the raw key itself. Re-expanded by the bridge when rendered.
   const named = selections.find((s) => s.name === key);
   const raw = (named && named.expr) || key;
-  if (!raw || raw === 'all') { setSelStyles({ ...all, [key]: { ...cur, [style]: on } }); return; }
+  if (!raw || raw === 'all') {
+    const simple = { ...all, [key]: { ...cur, [style]: on } };
+    setSelStyles(simple);
+    return simple;
+  }
   const next = { ...all, [key]: { ...cur, [style]: on } };
   Object.keys(next).forEach((other) => {
     if (other === key) return;
@@ -8643,6 +8669,24 @@ const toggleSelStyle = (key, style) => {
     next[other] = Object.keys(hideFor).length ? { ...clean, hideFor } : clean;
   });
   setSelStyles(next);
+  return next;
+}
+
+/* CHOOSING A STYLE FROM THE SELECTOR OF A SELECTIONS ROW — the styling window's
+   first command, applied with the very gesture of the ticks: the styles this row
+   stops drawing are switched OFF through toggleSelStyle (so the other rows that
+   drew those atoms get them back, exactly like « hide <style>, <selection> »), and
+   the chosen one is switched ON the same way. One state update, threaded. */
+const setSelRowStyle = (key, token) => {
+  const flag = SEL_STYLE_FLAG_OF[token] || null;
+  let work = selStylesRef.current || {};
+  Object.keys(SEL_STYLE_TOGGLE_TOKEN).forEach((f) => {
+    if (f === flag) return;
+    if (!((work[key] || {})[f])) return;
+    work = toggleSelStyle(key, SEL_STYLE_TOGGLE_TOKEN[f], work);
+  });
+  if (flag && !((work[key] || {})[flag])) work = toggleSelStyle(key, SEL_STYLE_TOGGLE_TOKEN[flag], work);
+  if (work !== selStylesRef.current) setSelStyles(work);
 };
 
 // PDB anchor atoms used to build a SMALL, page-friendly key set when a residue
@@ -12897,6 +12941,18 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
             </div>
             {!st.hidden && (
               <>
+            {/* ① THE SAME FIRST COMMAND AS A STYLING ROW: the STYLE SELECTOR, same
+                vocabulary, same labels (the « Sphere » beside every « CPK »
+                included). The ticks below stay for what PyMOL does on top of it —
+                « show cartoon, … » then « show sticks, … » are TWO commands and
+                both remain on screen. */}
+            <div className="flex items-center gap-1">
+              <select value={selRowStyle(st)} onChange={(e) => setSelRowStyle(s.name, e.target.value)}
+                className="border border-slate-300 rounded text-[10px] py-0.5 px-0.5 flex-1 min-w-0 bg-white"
+                title={`Style of « ${s.name} » — the styling window's own vocabulary and labels. Choosing one draws it alone (the styles this row no longer draws come off, on every row that drew their atoms); the ticks below add a second style on top, exactly like two « show » commands of PyMOL`}>
+                {SEL_ROW_STYLE_CHOICES.map((t) => <option key={t} value={t}>{STYLE_LABELS[t] || t}</option>)}
+              </select>
+            </div>
             <div className="flex items-center gap-1 flex-wrap">
               {['cartoon', 'ribbon', 'tube', 'ball', 'stick', 'sphere', 'surface'].map((style) => (
                 <button key={style} type="button"
@@ -12922,6 +12978,38 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
                 className={`w-6 h-6 border border-slate-300 rounded cursor-pointer ${selColorMode(st) !== 'solid' ? 'opacity-30 cursor-not-allowed' : ''}`}
                 title="Solid colour (used when Color by = Solid)" />
             </div>
+            {/* The two ends of the ramp, exactly as the styling rows show them: the
+                pair is ONE NGL scheme shared by the whole viewer. */}
+            {selColorMode(st) === 'gradient' && (
+              <div className="flex items-center gap-1">
+                <input type="color" value={numToHex(gradientPair.from)}
+                  onChange={(e) => setGradientPair('gradientFrom', parseInt(e.target.value.slice(1), 16))}
+                  className="w-5 h-5 rounded border cursor-pointer shrink-0"
+                  title="Colour of the FIRST residue of every chain (N terminus · 5' end)" />
+                <span className="text-[9px] font-bold text-slate-400 shrink-0">→</span>
+                <input type="color" value={numToHex(gradientPair.to)}
+                  onChange={(e) => setGradientPair('gradientTo', parseInt(e.target.value.slice(1), 16))}
+                  className="w-5 h-5 rounded border cursor-pointer shrink-0"
+                  title="Colour of the LAST residue of every chain (C terminus · 3' end)" />
+                <button type="button" onClick={swapGeneralGradient}
+                  className="text-[10px] font-bold text-slate-500 hover:text-slate-800 shrink-0"
+                  title="⇄ Reverse the ramp (swap the two colours)">⇄</button>
+              </div>
+            )}
+            {/* …and the 2°-structure palette, with the ⚙ that opens its section. */}
+            {selColorMode(st) === 'sstruc' && (
+              <div className="flex items-center gap-1 flex-wrap">
+                {SSTRUC_COLOR_ITEMS.map((it) => (
+                  <input key={it.key} type="color" value={numToHex(sstrucColors[it.key])}
+                    onChange={(e) => setSstrucColour(it.key, parseInt(e.target.value.slice(1), 16))}
+                    className="w-5 h-5 rounded border border-slate-300 cursor-pointer shrink-0"
+                    title={`Colour of the ${it.what} — the 2°-structure palette (helix · sheet · loop)`} />
+                ))}
+                <button type="button" onClick={() => setSettingsPanelOpen(true)}
+                  className="px-1 py-0.5 text-[10px] font-bold rounded border bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100 shrink-0"
+                  title="Open the ⚙ settings wheel — « Secondary structure » has a section of its own there">⚙</button>
+              </div>
+            )}
             <label className="flex items-center gap-1 text-[10px] text-slate-500">
               <span title="Transparency regulator of THIS row: 0 % = opaque, 100 % = invisible (NGL opacity) — the same knob as the Transp of the styling rows">Transp</span>
               <input type="range" min="0" max="1" step="0.05" value={st.transparency || 0}
