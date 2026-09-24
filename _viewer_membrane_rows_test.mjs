@@ -151,8 +151,8 @@ eq(countOf(/Transparency regulator of THIS row/g), 1,
   'la transparence d’une rangée est écrite UNE fois, pour les deux barres');
 eq(countOf(/title="Sphere radius — a multiplier of the style's own atom size \(1\.00 = untouched\)"/g), 1,
   '…le rayon des sphères (R●) aussi');
-eq(countOf(/title="Bond radius — a multiplier of the style's own stick thickness \(1\.00 = untouched\)"/g), 1,
-  '…et le rayon des bâtons (R—)');
+eq(countOf(/title="Bond radius — a multiplier of the style's own stick thickness AND of a Tube's own tube radius \(1\.00 = untouched\)"/g), 1,
+  '…et le rayon des bâtons (R—), qui règle aussi le tube');
 
 /* ── 5. LE MENU D'UNE MEMBRANE, ET LES DEUX PAIRES DE RANGÉES ──────────── */
 /* Le rapport : « dei 4 comandi nella finestra styling (upper leaflet, lower

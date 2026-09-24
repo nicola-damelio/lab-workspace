@@ -278,6 +278,15 @@ const RADIUS_STEP = 0.05;
 const BALLSTICK_BOND_RADIUS = 0.15;
 const LICORICE_BOND_RADIUS = 0.25;
 const BASE_BOND_RADIUS = 0.3;
+// A « Tube » is NGL's TubeRepresentation — the cartoon spline with a ROUND
+// section (`aspectRatio: 1`: ngl 2.4's `class … extends CartoonRepresentation`,
+// `init` setting `aspectRatio = 1` and `getSplineParams({directional: false})`),
+// i.e. a stick with a spherical section along the backbone, NOT a ribbon.
+// Its radius is ONE ångström value, passed as `radius` — NGL's shorthand for
+// radiusType 'size' + radiusSize (see StructureRepresentation#setRadius) — and
+// 0.5 Å is PyMOL's own default `cartoon_tube_radius`. The R— knob of the menus
+// multiplies it, so the tube is regulated exactly like the sticks.
+const TUBE_RADIUS = 0.5;
 // Flat colour proposed when a menu is switched to « Atom colour : Custom… » — a
 // visible, category-flavoured default (blue proteins, violet nucleic acids, amber
 // lipids, rose sugars, emerald ligands, sky solvent), and the neutral plate
@@ -7141,7 +7150,7 @@ const sectionStyleReps = (style, kind, look) => {
     case 'hide': return [];
     case 'cartoon': return [{ type: 'cartoon', params: { quality: 'high' } }];
     case 'ribbon': return [{ type: 'ribbon', params: {} }];
-    case 'tube': return [{ type: 'cartoon', params: { radius: 0.3, quality: 'high' } }];
+    case 'tube': return [{ type: 'tube', params: { radius: TUBE_RADIUS * bond, quality: 'high' } }];
     case 'trace': return [{ type: 'trace', params: { quality: 'high' } }];
     case 'ball+stick': return [{ type: 'ball+stick', params: { multipleBond: true, aspectRatio: 1.1 * sphere, radiusSize: BALLSTICK_BOND_RADIUS * bond } }];
     case 'licorice': return [{ type: 'licorice', params: { radiusSize: LICORICE_BOND_RADIUS * bond } }];
@@ -7777,7 +7786,7 @@ const buildCategoryReps = (comp) => {
     const g = catRadii(cs.protein);
     if (bb === 'cartoon') add('cartoon', { sele: sels.protein, ...col, quality: 'high' });
     else if (bb === 'trace') add('trace', { sele: sels.protein, ...col, quality: 'high' });
-    else if (bb === 'tube') add('cartoon', { sele: sels.protein, ...col, radius: 0.3, quality: 'high' });
+    else if (bb === 'tube') add('tube', { sele: sels.protein, ...col, radius: TUBE_RADIUS * g.bond, quality: 'high' });
     else if (bb === 'ribbon') add('ribbon', { sele: sels.protein, ...col });
     // Ball & Stick / Sticks: the ATOM spheres keep the style's own aspect ratio,
     // scaled by the menu's Sphere radius, and the sticks take its Bond radius.
@@ -7802,7 +7811,7 @@ const buildCategoryReps = (comp) => {
     const bbCol = nucleicGroupsOn() ? stickCol : backboneCol('nucleic');
     if (nb === 'cartoon') add('cartoon', { sele: sels.nucleic, ...bbCol, quality: 'high' });
     else if (nb === 'trace') add('trace', { sele: sels.nucleic, ...bbCol, quality: 'high' });
-    else if (nb === 'tube') add('cartoon', { sele: sels.nucleic, ...bbCol, radius: 0.3, quality: 'high' });
+    else if (nb === 'tube') add('tube', { sele: sels.nucleic, ...bbCol, radius: TUBE_RADIUS * g.bond, quality: 'high' });
     else if (nb === 'ribbon') add('ribbon', { sele: sels.nucleic, ...bbCol });
     else if (nb === 'licorice') add('licorice', { sele: sels.nucleic, ...stickCol, ...stickGeom('nucleic', LICORICE_BOND_RADIUS) });
     else if (nb === 'ball+stick') add('ball+stick', { sele: sels.nucleic, ...stickCol, multipleBond: true, aspectRatio: 1.1 * g.sphere, ...stickGeom('nucleic', BALLSTICK_BOND_RADIUS) });
@@ -9460,7 +9469,10 @@ useEffect(() => {
     };
     if (st.cartoon) addWithOverrides('cartoon', 'cartoon', { colorScheme, opacity }, false);
     if (st.ribbon) addWithOverrides('ribbon', 'ribbon', { colorScheme, opacity }, false);
-    if (st.tube) addWithOverrides('tube', 'tube', { colorScheme, opacity }, false);
+    // A « Tube » is NGL's ROUND tube (the cartoon spline with aspectRatio 1 — not
+    // a ribbon): its `radius` is an ångström value, which makes it the one spline
+    // style the R— knob regulates like the sticks (see TUBE_RADIUS).
+    if (st.tube) addWithOverrides('tube', 'tube', { colorScheme, opacity, radius: TUBE_RADIUS * rB }, false);
     if (st.sphere) addWithOverrides('spacefill', 'sphere', { scale: (st.sphereScale || 1) * rS, colorScheme, opacity, multipleBond: true }, true);
     if (st.ball) addWithOverrides('ball+stick', 'ball', {
       colorScheme, opacity, multipleBond: true, aspectRatio: 1.3 * rS,
@@ -10416,7 +10428,7 @@ const renderLookControls = ({
         onChange={(e) => set('sphere', Number(e.target.value))}
         className="accent-slate-600 w-12" aria-label={`${uid} sphere radius`} />
       <span className="text-[9px] text-slate-400 font-bold shrink-0"
-        title="Bond radius — a multiplier of the style's own stick thickness (1.00 = untouched)">R—</span>
+        title="Bond radius — a multiplier of the style's own stick thickness AND of a Tube's own tube radius (1.00 = untouched)">R—</span>
       <input type="range" min={RADIUS_MIN} max={RADIUS_MAX} step={RADIUS_STEP} value={look.bond}
         onChange={(e) => set('bond', Number(e.target.value))}
         className="accent-slate-600 w-12" aria-label={`${uid} bond radius`} />

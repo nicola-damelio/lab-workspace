@@ -86,8 +86,8 @@ has('title="Transparency regulator of THIS row: 0 % = opaque, 100 % = invisible 
   'la transparence de la rangée');
 has('title="Sphere radius — a multiplier of the style\'s own atom size (1.00 = untouched)"',
   'le rayon des sphères (R◯)');
-has('title="Bond radius — a multiplier of the style\'s own stick thickness (1.00 = untouched)"',
-  'le rayon des bâtons (R—)');
+has('title="Bond radius — a multiplier of the style\'s own stick thickness AND of a Tube\'s own tube radius (1.00 = untouched)"',
+  'le rayon des bâtons (R—) — qui règle aussi le rayon du TUBE');
 has('title={`Material of ${uid} — roughness (r) and metalness (m), NGL\'s own material parameters`}',
   'le matériau appartient à la rangée');
 has('uid = `« ${spec.label} » of ${sec.name}`', '…et l’uid nomme LA rangée (sa partie + sa molécule)');

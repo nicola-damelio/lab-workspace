@@ -101,18 +101,31 @@ const canvasOfViewer = (viewer) => {
   } catch { return null; }
 };
 
-/* The device-pixel size of the LIVE canvas — what `factor` multiplies. Read
-   from the canvas itself (NGL's Viewer.width/height are the same numbers) and
-   never from CSS, so a HiDPI screen is accounted for exactly once. */
+/* The size NGL will really render — THE numbers `makeImage` multiplies. NGL's
+   tiled renderer (ngl 2.4, the TiledRenderer of the installed dist: `this._width
+   = this._viewer.width`, `canvas.width = this._width * this._factor`) reads
+   `viewer.width` / `viewer.height` — the CSS size NGL keeps in `Viewer.setSize`
+   (`container.getBoundingClientRect()`, called by `handleResize`, which this
+   viewer calls on every layout change) — and produces a still of
+   `width × factor`.
+   ⚠ The canvas's own `width` is the DRAWING BUFFER, not that number:
+   `Viewer.setSize` also calls `renderer.setPixelRatio(window.devicePixelRatio)`,
+   so on any HiDPI screen the buffer is `devicePixelRatio ×` the still (1.25× on a
+   scaled Windows display, 2× on a Retina one). Reading it made the shadow's mask
+   1.25× too big for the image, made the PNG the shadow pass writes the still
+   UPSCALED by that factor (soft for no reason, and bigger than the factor asked
+   for) and made the size in the message and in the file name wrong. NGL's own
+   numbers are read first; the canvas only answers when the viewer cannot (a stub
+   of a test, another engine). */
 export const viewerPixelsOf = (stage) => {
   const viewer = stage && stage.viewer;
+  const fw = Number(viewer && viewer.width);
+  const fh = Number(viewer && viewer.height);
+  if (Number.isFinite(fw) && fw > 0 && Number.isFinite(fh) && fh > 0) return { width: fw, height: fh };
   const canvas = canvasOfViewer(viewer);
   const w = canvas ? Number(canvas.width) : 0;
   const h = canvas ? Number(canvas.height) : 0;
   if (Number.isFinite(w) && w > 0 && Number.isFinite(h) && h > 0) return { width: w, height: h };
-  const fw = Number(viewer && viewer.width);
-  const fh = Number(viewer && viewer.height);
-  if (Number.isFinite(fw) && fw > 0 && Number.isFinite(fh) && fh > 0) return { width: fw, height: fh };
   return { width: 0, height: 0 };
 };
 
@@ -256,6 +269,44 @@ export const captureRayImage = async (stage, options = {}) => {
   const antialias = options.antialias === undefined ? rayAntialiasFor(factor) : !!options.antialias;
   const tiles = rayTilesOf(factor, antialias);
   const status = typeof options.onStatus === 'function' ? options.onStatus : null;
+  /* ── THE CAST SHADOWS: WHAT THEY ARE, AND *WHEN* THE RIG IS READ ──────────
+     NGL cannot cast them (no shadow-map pass in 2.4), so they are computed from
+     the atoms with the SAME camera and the SAME key light and multiplied into the
+     very pixels NGL writes (utils/viewerRayShadows.js). Best-effort: a shadow that
+     cannot be built leaves the plain still, never an error — and a still above the
+     shadow budget is left WITHOUT them, with a note in the message: the decode /
+     walk / encode of a still that big is exactly what the user described as « the
+     rendering never finishes ».
+
+     ⚠ THE RIG IS READ *BEFORE* THE STILL, AND THAT ORDER IS THE FIX OF THE
+     DETACHED BLOB. `makeImage` renders the still TILE BY TILE and drives the
+     camera into each tile's own sub-frustum
+     (`camera.setViewOffset(fullWidth, fullHeight, offsetX, offsetY, w, h)`), and
+     when it is done it clears `camera.view` WITHOUT calling
+     `updateProjectionMatrix()` (ngl 2.4, TiledRenderer#_finalize — verified in the
+     installed dist). The camera it leaves behind is therefore still the LAST TILE's
+     off-centre frustum, and a shadow read from it is the mask of a 1/n × 1/n
+     sub-window of the image — magnified n× (n = factor, doubled by the antialias
+     pass) and thrown into that tile's corner. That is the report's « flat smudge
+     lying next to the molecule », in every light direction, whatever the proxies
+     weigh. Read here, the rig sees the camera the still really has: `setViewOffset`
+     narrows the FRUSTUM of one tile, it never moves the full-frame camera the still
+     is a crop of. The MASK itself is still built after the still (it is the
+     expensive half) — from these inputs. `cameraFromViewer` refuses a camera that is
+     mid-tile, so the mistake can never come back silently. */
+  const pixels = width * factor * height * factor;
+  const shadowBudget = Number.isFinite(Number(options.shadowMaxPixels)) ? Number(options.shadowMaxPixels) : RAY_SHADOW_MAX_PIXELS;
+  const wantsShadow = options.shadows !== false && !!options.lightDir;
+  const shadowTooBig = wantsShadow && pixels > shadowBudget;
+  let inputs = null;
+  if (wantsShadow && !shadowTooBig) {
+    try {
+      inputs = rayShadowInputsOf(stage, {
+        lightDir: options.lightDir,
+        options: options.shadow || {},
+      });
+    } catch { inputs = null; }                     // no atoms / no camera: no shadow
+  }
   let blob = await stage.makeImage({
     trim: false,
     factor,
@@ -266,26 +317,10 @@ export const captureRayImage = async (stage, options = {}) => {
     onProgress: typeof options.onProgress === 'function' ? options.onProgress : undefined,
   });
   if (!blob) throw new Error('NGL returned no image');
-  // ── THE CAST SHADOWS ────────────────────────────────────────────────────
-  // NGL cannot cast them (no shadow-map pass in 2.4), so they are computed from
-  // the atoms with the SAME camera and the SAME key light, and multiplied into
-  // the very pixels NGL just wrote (utils/viewerRayShadows.js). Best-effort: a
-  // shadow that cannot be built leaves the plain still, never an error — and a
-  // still above the shadow budget is left WITHOUT them, with a note in the
-  // message: the decode / walk / encode of a still that big is exactly what the
-  // user described as « the rendering never finishes ».
-  const pixels = width * factor * height * factor;
-  const shadowBudget = Number.isFinite(Number(options.shadowMaxPixels)) ? Number(options.shadowMaxPixels) : RAY_SHADOW_MAX_PIXELS;
-  const wantsShadow = options.shadows !== false && !!options.lightDir;
-  const shadowTooBig = wantsShadow && pixels > shadowBudget;
   let shadow = null;
-  if (wantsShadow && !shadowTooBig) {
+  if (inputs) {
     if (status) status('✨ Casting the shadows of the still…');
     try {
-      const inputs = rayShadowInputsOf(stage, {
-        lightDir: options.lightDir,
-        options: options.shadow || {},
-      });
       shadow = {
         ...buildRayShadowMask({
           ...inputs,

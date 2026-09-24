@@ -56,10 +56,20 @@
    without `createImageBitmap` leaves the still exactly as NGL drew it (every
    entry point is best-effort and returns what it was given).
 
-   WHY IT LOOKED « DETACHED AND FLAT » — and what a rig does about it. Three
+   WHY IT LOOKED « DETACHED AND FLAT » — and what a rig does about it. Four
    things made the shadow a smudge lying NEXT TO the molecule instead of ON it,
-   and all three are gone:
+   and all four are gone:
 
+     · THE MASK WAS READ FROM A CAMERA THAT WAS INSIDE A TILE OF THE STILL.
+       `makeImage` renders the still tile by tile, each tile through
+       `camera.setViewOffset(…)`, and it leaves the camera's projection matrix in
+       the LAST TILE's frame (`_finalize()` clears `camera.view` but never calls
+       `updateProjectionMatrix()` — ngl 2.4, verified in the installed dist).
+       The mask was therefore computed for a 1/n × 1/n sub-window of the image —
+       magnified n× (n = factor, doubled by the antialias pass) and thrown into
+       that tile's corner: the detached blob, whatever the proxies weighed. The
+       rig is now read BEFORE the still (captureRayImage) and refuses a camera
+       that is mid-tile (cameraFromViewer);
      · THE PROXY WAS FATTER THAN THE DRAWING. Every atom donated a 1.7 Å vdW
        sphere whatever the representation drew, so a thin ribbon carried a
        shadow volume three times its own thickness: the ribbon went dark where
@@ -857,7 +867,18 @@ export const PROXY_STROKE_BY_TYPE = Object.freeze({
   wireframe: { kind: 'hair', min: 0.15 },
   cartoon: { kind: 'spline', base: 0.45, scale: 0.7, min: 0.3 },
   ribbon: { kind: 'spline', base: 0.45, scale: 4, min: 0.3 },
-  tube: { kind: 'spline', base: 0.45, scale: 2, min: 0.3 },
+  // A TUBE IS A ROUND STICK along the backbone, not a ribbon. ngl 2.4's
+  // TubeRepresentation IS the cartoon spline with `aspectRatio: 1`, and its
+  // radius is ONE ångström value: `radius` — the shorthand NGL turns into
+  // radiusType 'size' + radiusSize (StructureRepresentation#setRadius, verified
+  // in the installed build: `init(t){… this.setRadius(e.radius, e); this.radiusType
+  // = nt(e.radiusType, "vdw"); this.radiusSize = nt(e.radiusSize, 1)}`) — or an
+  // explicit radiusType 'size' + radiusSize. The viewer draws it exactly that way
+  // (`radius: TUBE_RADIUS × the R— knob`, see NMRMoleculeViewer.jsx), so the proxy
+  // of a tube IS that radius: the tube the user regulates is the tube in the
+  // shadow. `base` only serves a hand-written tube that gave no radius at all —
+  // deliberately thin, never the 1.7 Å vdW ball of the fat blob.
+  tube: { kind: 'tube', base: 0.5, min: 0.2 },
   rope: { kind: 'spline', base: 0.3, scale: 1, min: 0.2 },
   trace: { kind: 'spline', base: 0.35, scale: 1, min: 0.2 },
 });
@@ -934,6 +955,15 @@ export const proxyRadiusOf = (rep, vdwRadius = 1.7, el = null) => {
     case 'spline':   // the cartoon family: radiusScale against NGL's own default
       r = radiusScale > 0 ? stroke.base * (radiusScale / stroke.scale) : stroke.base;
       if (radiusSize > 0 && sizeType) r = Math.max(r, radiusSize);
+      break;
+    case 'tube':     // the round tube along the backbone: an ångström radius
+      // radiusType 'size' — which is what `radius: 0.5` gives — means radiusSize
+      // IS the tube the user sees, so the proxy takes it as it stands. A tube
+      // measuring its radius another way (a hand-written rep) keeps the thin
+      // baseline scaled by its own radiusScale: no vdW ball, ever.
+      r = sizeType && radiusSize > 0
+        ? radiusSize
+        : (radiusScale > 0 ? stroke.base * radiusScale : stroke.base);
       break;
     default:         // 'hair': a line counts its width in pixels, not in ångströms
       r = stroke.min;
@@ -1048,9 +1078,25 @@ export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms) =
 /* The CAMERA of the live viewer, as the two matrices the mask needs: the
    projection NGL itself uses (so the mask lands on the very pixels the still
    has — the Ray keeps `trim: false`, which is what makes the aspect identical)
-   and the view, kept for the sphere measurement. */
+   and the view, kept for the sphere measurement.
+
+   ⚠ A CAMERA THAT IS INSIDE A TILE OF A STILL MUST NEVER BE READ. `makeImage`
+   renders the still tile by tile and pushes the camera into each tile's own
+   sub-frustum (`camera.setViewOffset(fullWidth, fullHeight, offsetX, offsetY,
+   tileWidth, tileHeight)` — ngl 2.4, the TiledRenderer class of the installed
+   dist), and its `_finalize()` only clears `camera.view` WITHOUT calling
+   `updateProjectionMatrix()`: the projection matrix therefore still holds the
+   LAST TILE's off-centre frustum until the next render. A mask built from it is
+   the mask of a 1/n × 1/n sub-window of the still, MAGNIFIED n× and thrown into
+   that tile's corner — the « flat smudge lying next to the molecule » of the
+   report, which no proxy radius could ever cure. The caller reads the camera
+   BEFORE `makeImage` (see captureRayImage); this guard makes the mistake
+   impossible instead of silent. */
 export const cameraFromViewer = (viewer) => {
   const cam = (viewer && (viewer.camera || viewer.perspectiveCamera || viewer.orthographicCamera)) || null;
+  if (cam && cam.view) {
+    throw new Error('the camera is inside a tile of a ✨ Ray still (setViewOffset) — read it before the render');
+  }
   const proj = cam ? elements16Of(cam.projectionMatrix) : null;
   const view = cam ? elements16Of(cam.matrixWorldInverse) : null;
   if (!proj || !view) throw new Error('the viewer has no camera to cast a shadow from');

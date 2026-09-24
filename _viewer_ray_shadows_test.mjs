@@ -315,8 +315,14 @@ hasRay('const wantsShadow = options.shadows !== false && !!options.lightDir;',
   'sans option, la « ray » reste le supersampling pur — l’ombre est ADDITIVE');
 hasRay('const shadowTooBig = wantsShadow && pixels > shadowBudget;',
   '…et une image au-dessus du budget des ombres n’est JAMAIS décodée / parcourue / ré-encodée : la « ray » revient');
-hasRay('const inputs = rayShadowInputsOf(stage, {', '…la scène est lue sur le stage');
+hasRay('inputs = rayShadowInputsOf(stage, {', '…la scène est lue sur le stage');
 hasRay('buildRayShadowMask({', '…le masque est construit pour la taille RÉELLE de l’image (factor compris)');
+/* ⚠ L’ORDRE EST LA CORRECTION DE LA TACHE DÉTACHÉE (voir §13) : `makeImage` laisse
+   la caméra dans le sous-frustum de sa DERNIÈRE tuile, donc le rig se lit avant. */
+const readAt = RAY.indexOf('rayShadowInputsOf(stage, {');
+const renderAt = RAY.indexOf('await stage.makeImage({');
+ok(readAt > 0 && renderAt > 0 && readAt < renderAt,
+  'le rig (caméra + atomes) est lu AVANT `stage.makeImage` : la caméra ne peut pas être celle d’une tuile');
 hasRay('blob = await addCastShadowsToBlob(blob, { shadow });',
   '…et multiplié dans les pixels que NGL vient d’écrire');
 hasRay('catch { shadow = null; }', 'une ombre impossible laisse l’image de NGL, jamais une erreur');
@@ -508,6 +514,21 @@ eq(PROXY_STROKE_BY_TYPE.spacefill.kind, 'vdw',
   'la table dit la NATURE du trait : une bille pleine se mesure en rayons de van der Waals');
 eq(PROXY_STROKE_BY_TYPE.cartoon.kind, 'spline',
   '…et un ruban en unités de `radiusScale`, pas en rayons de van der Waals');
+/* LE TUBE. La demande : « je voulais changer la représentation tube, parce que ce
+   n’est pas un tube : pour moi un tube a une section SPHÉRIQUE, qu’on règle en
+   changeant le rayon ». NGL’s TubeRepresentation est exactement cela (la spline du
+   cartoon avec `aspectRatio: 1`), et son rayon est UNE valeur en ångströms —
+   `radius`, que NGL convertit en radiusType 'size' + radiusSize. Le proxy d’un
+   tube est donc ce rayon, tel quel : le tuyau que l’utilisateur règle est le
+   tuyau de l’ombre. */
+near(proxyRadiusOf({ type: 'tube', radiusType: 'size', radiusSize: 0.5, radius: 0.5 }, 1.7), 0.5, 1e-9,
+  'tube : le proxy EST le rayon du tuyau (0,5 Å = le `cartoon_tube_radius` de PyMOL), jamais 1,7 Å');
+near(proxyRadiusOf({ type: 'tube', radiusType: 'size', radiusSize: 1.5 }, 1.7), 1.5, 1e-9,
+  '…et un tube réglé plus épais projette exactement ce qu’il dessine');
+near(proxyRadiusOf({ type: 'tube', radiusType: 'sstruc', radiusScale: 1.5 }, 1.7), 0.75, 1e-9,
+  'un tube qui mesure son rayon autrement garde une ligne de base fine (base 0,5 × radiusScale), jamais une bille');
+eq(PROXY_STROKE_BY_TYPE.tube.kind, 'tube',
+  '…et la table lui donne sa propre nature : un tuyau à section ronde, en ångströms');
 
 const cartoonRep = { parameters: { type: 'cartoon' }, structureView: view([0, 1]) };
 const ballRep = { parameters: { type: 'spacefill' }, structureView: view([1, 2]) };
@@ -638,6 +659,86 @@ eq(realRibbon.count, 2, 'une représentation qui couvre TOUTE la structure dessi
 near(realRibbon.radii[0], 0.45, 1e-6,
   'de bout en bout : un vrai cartoon donne des proxies de 0,45 Å — l’ombre colle au ruban');
 near(realRibbon.radii[1], 0.45, 1e-6, '…et non des sphères de van der Waals de 1,7 Å');
+
+/* ── 13. LA CAMÉRA D’UN « RAY » EN COURS DE RENDU — LE VRAI BUG DE LA TACHE ──
+   « je ne vois aucun changement : l’ombre est toujours loin et détachée ». Les
+   proxies n’étaient pas seuls en cause : la caméra avec laquelle le masque était
+   construit n’était plus celle de la molécule. `Stage.makeImage` rend la « ray »
+   TUILE PAR TUILE et pousse la caméra dans le sous-frustum de chaque tuile
+   (`camera.setViewOffset(fullWidth, fullHeight, offsetX, offsetY, w, h)`), puis
+   `_finalize()` remet `camera.view` à null SANS appeler `updateProjectionMatrix()` :
+   la matrice de projection reste celle de la DERNIÈRE tuile jusqu’au rendu suivant.
+   Un masque lu là-dessus est le masque d’une fenêtre 1/n × 1/n de l’image — grossi
+   n× (n = le facteur, doublé par la passe antialias) et jeté dans le coin de cette
+   tuile : la tache détachée, dans TOUTES les directions de lampe et quel que soit
+   le poids des proxies. D’où les deux pièces ci-dessous : le rig se lit AVANT la
+   « ray » (voir captureRayImage) et `cameraFromViewer` REFUSE une caméra restée
+   dans une tuile. */
+const NGLJS = readFileSync(new URL('./node_modules/ngl/dist/ngl.js', import.meta.url), 'utf8');
+ok(NGLJS.includes('.camera.setViewOffset('),
+  'le NGL livré met bien la caméra dans le sous-frustum de chaque tuile (TiledRenderer._renderTile)');
+ok(NGLJS.includes('this._viewer.camera.view=null'),
+  '…et `_finalize()` la laisse dedans : il remet `view` à null SANS updateProjectionMatrix');
+ok(NGLJS.includes('this._width=this._viewer.width,this._height=this._viewer.height'),
+  '…la taille rendue étant `viewer.width × factor` (le canevas est le drawing buffer, devicePixelRatio × plus grand)');
+
+// La transformation NDC d’une tuile (i, j) d’une grille n × n : celle que
+// setViewOffset installe (linéaire en NDC, dont x' = n·x + n − 2i − 1).
+const tileNdc = (n, i, j) => [n, 0, 0, 0, 0, n, 0, 0, 0, 0, 1, 0, n - 2 * i - 1, 2 * j + 1 - n, 0, 1];
+const staleCamera = { ...camera, clip: mat4Multiply(tileNdc(2, 1, 1), camera.clip) };
+const cleanPx = clipToScreen(mat4TransformPoint(camera.clip, [0, 0, 1, 1]), 128, 128);
+const stalePx = clipToScreen(mat4TransformPoint(staleCamera.clip, [0, 0, 1, 1]), 128, 128);
+near(stalePx[0], 2 * cleanPx[0] - 128, 1e-6,
+  'la dernière tuile d’une grille 2 × 2 grossit la scène 2× et la décale d’une demi-image en x');
+near(stalePx[1], 2 * cleanPx[1] - 128, 1e-6,
+  '…et d’autant en y : la tache DÉTACHÉE, dans n’importe quelle direction de lampe');
+
+const bboxOf = (mask, w, h) => {
+  let count = 0;
+  let x0 = Infinity;
+  let x1 = -Infinity;
+  let y0 = Infinity;
+  let y1 = -Infinity;
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      if (!(mask[y * w + x] > 0.002)) continue;
+      count += 1;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+  }
+  return { count, cx: (x0 + x1) / 2 / w, cy: (y0 + y1) / 2 / h };
+};
+const cleanMask = buildRayShadowMask({ atoms, camera, light, width: 128, height: 128, options: { softness: 0 } });
+const staleMask = buildRayShadowMask({ atoms, camera: staleCamera, light, width: 128, height: 128, options: { softness: 0 } });
+const cleanBox = bboxOf(cleanMask.mask, cleanMask.maskWidth, cleanMask.maskHeight);
+const staleBox = bboxOf(staleMask.mask, staleMask.maskWidth, staleMask.maskHeight);
+ok(cleanBox.count > 0 && staleBox.count > 0,
+  'les deux masques ombrent bien quelque chose (deux ombres réelles sont comparées)');
+ok(Math.abs(staleBox.cx - cleanBox.cx) > 0.25 || Math.abs(staleBox.cy - cleanBox.cy) > 0.25,
+  `la tache de la caméra restée dans la tuile est DÉTACHÉE : centre ${staleBox.cx.toFixed(2)}/${staleBox.cy.toFixed(2)} contre ${cleanBox.cx.toFixed(2)}/${cleanBox.cy.toFixed(2)} sur la molécule`);
+ok(staleBox.count > cleanBox.count * 1.5,
+  '…et elle est plus GROSSE : le sous-frustum la magnifie (la « grosse tache » du rapport)');
+
+// Le garde-fou : une caméra en pleine tuile est refusée, jamais lue en silence.
+const throws = (fn, re, what) => {
+  let msg = null;
+  try { fn(); } catch (e) { msg = String((e && e.message) || e); }
+  assert.ok(msg !== null, `${what}\n  aucune erreur levée`);
+  assert.ok(re.test(msg), `${what}\n  message : ${msg}`);
+  passed += 1;
+};
+const bareCamera = {
+  projectionMatrix: { elements: camProj },
+  matrixWorldInverse: { elements: camView },
+  type: 'PerspectiveCamera',
+};
+eq(cameraFromViewer({ camera: bareCamera }).clip.length, 16,
+  'une caméra au repos donne ses deux matrices (le cas normal)');
+throws(() => cameraFromViewer({ camera: { ...bareCamera, view: { fullWidth: 4, fullHeight: 4 } } }),
+  /inside a tile/, 'une caméra restée dans une tuile est REFUSÉE — jamais un masque faux en silence');
 
 /* ── 12. CE QUE LE MODULE DIT DE LUI-MÊME ──────────────────────────────── */
 ok(MODULE.includes('THE SHADOW CAMERA'), 'le module décrit sa caméra d’ombre ajustée (shadowRigOf)');

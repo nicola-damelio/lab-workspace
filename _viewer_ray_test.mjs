@@ -53,6 +53,11 @@ import {
   rayTilesOf, rayAntialiasFor, rayPlanOf,
   captureRayImage, saveRayImage, rayFileName, rayStamp, downloadBlob, rayDimLimitOf,
 } from './src/utils/viewerRayImage.js';
+// La référence de l’ombre : le masque de la caméra AU REPOS, construit à la main
+// (voir §2quater — le rendu tuilé d’NGL laisse la caméra dans sa dernière tuile).
+import {
+  buildRayShadowMask, rayShadowInputsOf, mat4LookAt, mat4Multiply,
+} from './src/utils/viewerRayShadows.js';
 
 let passed = 0;
 const ok = (cond, what) => {
@@ -84,6 +89,14 @@ nglHas('h(c.canvas).toBlob((function(n){a.setClearAlpha(l),u(!0),e.requestRender
 nglHas('}),"image/png")', 'la promesse résout un Blob PNG — jamais une toile (l’ancien 📷 attendait une toile)');
 nglHas('n?t(n):i("error creating image")', '…et elle REJETTE si la toile n’a pas pu être encodée (le module attrape le message)');
 nglHas('makeImage(e={}){return Oc(this,e)}', 'Stage.makeImage délègue bien à makeImage(viewer, params) — c’est le point d’entrée utilisé');
+/* ⚠ LE PIÈGE DE LA CAMÉRA, celui qui rendait l’ombre « plate et détachée » : la
+   « ray » est rendue TUILE PAR TUILE, chaque tuile dans son propre sous-frustum, et
+   NGL laisse la caméra dans la dernière d’entre elles. */
+nglHas('.camera.setViewOffset(', 'NGL pousse la caméra dans le sous-frustum de CHAQUE tuile (TiledRenderer._renderTile)');
+nglHas('_finalize(){this._viewer.setSampling(this._viewerSampleLevel),this._viewer.camera.view=null',
+  '…et à la fin il remet `camera.view` à null SANS updateProjectionMatrix : la matrice reste celle de la dernière tuile');
+nglHas('this._width=this._viewer.width,this._height=this._viewer.height',
+  'la tuile est rendue à `viewer.width × factor` : c’est CETTE taille que le module doit multiplier, pas le drawing buffer');
 
 /* ── 2. LES FONCTIONS PURES DU MODULE ──────────────────────────────────── */
 const fakeStage = (w = 1600, h = 900) => ({ viewer: { renderer: { domElement: { width: w, height: h } } } });
@@ -111,6 +124,15 @@ eq(viewerPixelsOf({ viewer: { width: 800, height: 600 } }), { width: 800, height
 eq(viewerPixelsOf(null), { width: 0, height: 0 }, 'un stage absent ne casse rien (aucune structure chargée)');
 eq(viewerPixelsOf({ viewer: { renderer: { domElement: { width: 0, height: 0 } }, width: 640, height: 480 } }),
   { width: 640, height: 480 }, 'une toile de taille nulle retombe sur la taille du viewer');
+/* ⚠ HIDPI : `Viewer.setSize` fait `renderer.setPixelRatio(window.devicePixelRatio)` et
+   `setSize(width, height)`, donc `canvas.width` vaut `devicePixelRatio × viewer.width`
+   — le DRAWING BUFFER. `makeImage` multiplie `viewer.width` (le TiledRenderer :
+   `this._width = this._viewer.width`). Lire la toile donnait un masque 1,25× trop
+   grand pour l’image et faisait ré-écrire la « ray » AGRANDIE par le facteur d’échelle
+   de l’écran (floue, et plus grande que le facteur demandé). */
+eq(viewerPixelsOf({ viewer: { width: 1600, height: 900, renderer: { domElement: { width: 2000, height: 1125 } } } }),
+  { width: 1600, height: 900 },
+  'sur un écran HiDPI (toile 2000×1125 = 1,25×) la taille lue est celle qu’NGL rendra vraiment (1600×900)');
 
 eq(rayPixelsOf(fakeStage(1600, 900), 3), { factor: 3, width: 4800, height: 2700, pixels: 4800 * 2700 },
   '3× annonce 4800×2700 px pour une toile 1600×900 — exactement ce que NGL produira');
@@ -244,7 +266,89 @@ await assert.rejects(
   /no image/,
   'un NGL qui ne rend rien (promesse résolue à vide) est signalé, pas avalé');
 
-/* ── 2quater. L’ÉCRITURE DU FICHIER ────────────────────────────────────── */
+/* ── 2quater. L’OMBRE DE LA « RAY » EST LUE AVANT LE RENDU ───────────────
+   LE bug de « la tache détachée » : `makeImage` rend la « ray » tuile par tuile et
+   pousse la caméra dans le sous-frustum de chaque tuile ; quand c’est fini, NGL
+   remet `camera.view` à null mais NE recalcule PAS la matrice de projection. La
+   caméra lue après le rendu est donc encore celle de la DERNIÈRE tuile, et le
+   masque construit là-dessus est celui d’une fenêtre 1/n × 1/n de l’image, grossi
+   n× et jeté dans le coin : la tache, dans toutes les directions de lampe.
+   La doublure ci-dessous reproduit EXACTEMENT ce comportement (une caméra réelle,
+   un vrai sous-frustum, `view` remis à null comme le fait `_finalize`) : le masque
+   rendu par captureRayImage doit être celui de la caméra au repos. */
+const ident16 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+const projOf = (fp, n, f) => [
+  fp, 0, 0, 0,
+  0, fp, 0, 0,
+  0, 0, (f + n) / (n - f), -1,
+  0, 0, (2 * f * n) / (n - f), 0,
+];
+// La transformation NDC d’une tuile (i, j) d’une grille n × n : celle que
+// setViewOffset installe (x' = n·x + n − 2i − 1, y' = n·y + 2j + 1 − n).
+const tileNdcOf = (n, i, j) => [n, 0, 0, 0, 0, n, 0, 0, 0, 0, 1, 0, n - 2 * i - 1, 2 * j + 1 - n, 0, 1];
+const cleanProj = projOf(1 / Math.tan((25 * Math.PI) / 180), 0.1, 100);
+const lastTileProj = mat4Multiply(tileNdcOf(2, 1, 1), cleanProj);
+const rayCam = {
+  type: 'PerspectiveCamera',
+  view: null,
+  projectionMatrix: { elements: cleanProj },
+  // La caméra est de CÔTÉ (l’axe de la lampe est +z) : les deux atomes tombent sur
+  // deux pixels différents, et celui de derrière porte bien l’ombre de celui de
+  // devant — sans quoi il n’y aurait aucun masque à comparer.
+  matrixWorldInverse: { elements: mat4LookAt([14, 0, 0], [0, 0, 0], [0, 1, 0]) },
+};
+const rayAtoms = () => ({
+  position: new Float32Array([0, 0, 1, 0, 0, -1]),
+  radius: new Float32Array([1, 1]),
+});
+const tiledStage = () => ({
+  viewer: { width: 200, height: 200, camera: rayCam },
+  compList: [{
+    structure: { atomCount: 2, getAtomData: rayAtoms },
+    matrix: { elements: ident16 },
+    reprList: [{
+      name: 'spacefill',
+      getType: () => 'spacefill',
+      type: 'representation',
+      repr: {
+        type: 'spacefill', radiusType: 'vdw', radiusScale: 1, visible: true,
+        structureView: { getAtomIndices: () => Uint32Array.from([0, 1]) },
+      },
+    }],
+  }],
+  makeImage: async () => {
+    rayCam.projectionMatrix = { elements: lastTileProj };   // la dernière tuile
+    rayCam.view = { fullWidth: 400, fullHeight: 400, offsetX: 100, offsetY: 100, width: 200, height: 200 };
+    rayCam.view = null;                                     // …ce que fait _finalize()
+    return { type: 'image/png', size: 4 };
+  },
+});
+const tiledOut = await captureRayImage(tiledStage(), {
+  factor: 2, antialias: false, shadows: true, lightDir: [0, 0, 1],
+});
+ok(!!tiledOut.shadow && !!tiledOut.shadow.mask,
+  'une doublure qui laisse la caméra dans sa dernière tuile porte QUAND MÊME une ombre (le rig a été lu avant)');
+// La référence : la caméra remise au repos, le masque construit à la main.
+rayCam.projectionMatrix = { elements: cleanProj };
+rayCam.view = null;
+const refInputs = rayShadowInputsOf(tiledStage(), { lightDir: [0, 0, 1] });
+const refMask = buildRayShadowMask({ ...refInputs, width: 400, height: 400 });
+let texelDiff = 0;
+for (let i = 0; i < refMask.mask.length; i += 1) {
+  if (tiledOut.shadow.mask[i] !== refMask.mask[i]) texelDiff += 1;
+}
+eq(texelDiff, 0,
+  'le masque est EXACTEMENT celui de la caméra au repos — c’est l’ORDRE de la lecture qui le garantit');
+// …et la preuve que ce test regarde la bonne chose : la caméra restée dans sa
+// tuile, elle, donne un masque tout autre (décalé et magnifié).
+const staleCam = { ...refInputs.camera, clip: mat4Multiply(tileNdcOf(2, 1, 1), refInputs.camera.clip) };
+const staleMask = buildRayShadowMask({ ...refInputs, camera: staleCam, width: 400, height: 400 });
+ok(!staleMask.mask.every((v, i) => v === refMask.mask[i]),
+  'la MÊME lecture faite après le rendu (caméra restée dans la tuile) donne un AUTRE masque — ce que la correction évite');
+ok(staleMask.shadowed !== refMask.shadowed,
+  '…un masque différent jusque dans son nombre de pixels à l’ombre (la tache détachée du rapport)');
+
+/* ── 2quinquies. L’ÉCRITURE DU FICHIER ─────────────────────────────────── */
 eq(downloadBlob({ type: 'image/png' }, 'x.png'), false,
   'sans DOM l’écriture est simplement refusée (le module reste importable hors navigateur)');
 ok(downloadBlob(null, 'x.png') === false, 'un Blob absent n’essaie même pas de fabriquer une ancre');
