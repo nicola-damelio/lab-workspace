@@ -27,6 +27,11 @@
        (renderLookControls), avec les adaptateurs de chaque barre — et chacune
        garde la curation de ses propres listes (spec.styles / spec.colors d'un
        côté, SEL_ROW_STYLE_CHOICES / SEL_COLOR_MODES de l'autre).
+    5. LA RÈGLE DU PROPRIÉTAIRE DES TÊTES, exécutée : un feuillet soustrait les
+       atomes de ses têtes pour TOUS les styles qu'il dessine, à partir des deux
+       rangées lues AU MOMENT DU RENDU (membraneHeadOwnerExprs) — donc ni l'ordre
+       des clics ni le style choisi en premier ne peuvent plus laisser les têtes
+       dans les sphères du feuillet (« works well only lower leaflet »).
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -199,6 +204,78 @@ has('const solo = measuredRow && membraneSoloOn(key);', 'l’état du bouton est
 has('👁 solo', 'le bouton est là, sur chaque rangée mesurée');
 has('the front leaflet covers the one behind it',
   '…et le groupe dit POURQUOI le feuillet de derrière ne se voyait pas (le rapport « seul lower leaflet marche »)');
+
+/* ── 5. LA RÈGLE « LE PROPRIÉTAIRE DES TÊTES », AU MOMENT DU RENDU ─────── */
+/* Le rapport : « upper headgroup and lower headgroup works well only lower
+   leaflet ». Cause trouvée : `hideFor` est écrit PAR STYLE au moment du clic —
+   styliser les têtes pendant que le feuillet ne dessine encore RIEN n'y inscrit
+   donc rien, et le CPK choisi plus tard sur le feuillet avale les têtes (et
+   réciproquement). La règle ci-dessous repose la question à CHAQUE
+   reconstruction de la scène, à partir des deux rangées elles-mêmes. */
+const iOwn = VIEW.indexOf('const MEMBRANE_CHILD_OF = {');
+const jOwn = VIEW.indexOf('const selRowStyle = (st) => {');
+ok(iOwn >= 0 && jOwn > iOwn, 'la règle « propriétaire des têtes » est extractible du viewer');
+const CODE_OWN = VIEW.slice(iOwn, jOwn);
+// Le segment porte déjà le vrai SEL_STYLE_TOGGLE_TOKEN (les flags qu'une rangée
+// peut dessiner) : rien à simuler.
+ok(CODE_OWN.includes('const SEL_STYLE_TOGGLE_TOKEN = {'),
+  '…et il porte la liste des styles qu’une rangée peut dessiner (source unique)');
+const OWN_EXPR = (k) => (k === 'upper_headgroups' ? 'upper and resn POPC+POPE' : 'lower and resn POPC+POPE');
+const runOwn = (key, styles) => new Function('cfg', `${CODE_OWN}
+  return membraneHeadOwnerExprs(cfg.key, cfg.styles, cfg.exprOf);`)({ key, styles, exprOf: OWN_EXPR });
+
+// (a) L'ORDRE DU RAPPORT : les têtes stylisées D'ABORD (le feuillet ne dessine
+//     encore rien, donc rien n'a pu être mémorisé), le CPK choisi sur le feuillet
+//     ENSUITE. La règle doit malgré tout soustraire les têtes.
+const styledFirst = { upper_headgroups: { ball: true, stick: true }, upper_leaflet: {} };
+eq(styledFirst.upper_leaflet.hideFor, undefined,
+  '…prémisse : à ce stade rien n’est inscrit dans hideFor (le feuillet ne dessinait rien)');
+eq(runOwn('upper_leaflet', { ...styledFirst, upper_leaflet: { sphere: true } }), '(upper and resn POPC+POPE)',
+  'le CPK du feuillet soustrait les têtes, même quand le clic sur les têtes n’a rien pu mémoriser');
+// (b) L'ORDRE INVERSE : CPK d'abord, têtes ensuite. La même clause revient, donc
+//     la déduplication de `exclusionOf` évite de l'écrire deux fois.
+eq(runOwn('upper_leaflet', { upper_leaflet: { sphere: true, hideFor: { sphere: ['upper_headgroups'] } }, upper_headgroups: { stick: true } }),
+  '(upper and resn POPC+POPE)', 'l’autre ordre donne la MÊME clause : les deux chemins convergent');
+// (c) POUR TOUS LES STYLES du feuillet, pas seulement le jumeau de celui des têtes :
+//     `exclusionOf(style)` est appelé une fois par style dessiné.
+['ball', 'stick', 'sphere', 'surface', 'cartoon'].forEach((flag) => {
+  ok(runOwn('lower_leaflet', { lower_leaflet: { [flag]: true }, lower_headgroups: { sphere: true } }) !== '',
+    `…et pour le style « ${flag} » du feuillet aussi`);
+});
+// (d) « Hide » sur les têtes rend leurs atomes au feuillet : plus rien à soustraire.
+eq(runOwn('upper_leaflet', { upper_leaflet: { sphere: true }, upper_headgroups: { hidden: true, ball: true } }), '',
+  'des têtes cachées n’enlèvent plus rien à leur feuillet (le geste reste réversible)');
+// (e) Une rangée de têtes qui ne dessine RIEN ne possède rien non plus.
+eq(runOwn('upper_leaflet', { upper_leaflet: { sphere: true }, upper_headgroups: {} }), '',
+  '…et une rangée de têtes sans représentation non plus');
+// (f) Les garde-fous : « all » / « none » ne sont pas des clauses utiles, une
+//     rangée qui n’est pas un feuillet n’a pas de propriétaire, et l’absence de
+//     styles ne doit jamais lever d’exception.
+const ownOf = (expr) => new Function('expr', `${CODE_OWN}
+  return membraneHeadOwnerExprs('upper_leaflet',
+    { upper_leaflet: { sphere: true }, upper_headgroups: { ball: true } }, () => expr);`)(expr);
+eq(ownOf('all'), '', 'une sélection « all » n’est jamais recopiée comme clause d’exclusion');
+eq(ownOf('none'), '', '…ni « none » (le feuillet se dessinerait tout entier)');
+eq(ownOf(''), '', '…ni une chaîne vide');
+eq(runOwn('water', { water: { sphere: true }, upper_headgroups: { ball: true } }), '',
+  'une rangée qui n’est pas un feuillet n’a pas de propriétaire à chercher');
+eq(runOwn('upper_headgroups', { upper_headgroups: { ball: true }, upper_leaflet: { sphere: true } }), '',
+  'une rangée de têtes n’est jamais traitée comme un feuillet (pas de récursion)');
+eq(runOwn('lower_leaflet', undefined), '', 'aucun style = aucune clause (jamais de throw)');
+
+/* …et le branchement : la clause est calculée une fois par rangée et ajoutée à
+   l’exclusion de CHAQUE style, à côté de ce que hideFor dit déjà. */
+has('const membraneOwners = membraneHeadOwnerExprs(key, styles, selKeyExpr);',
+  'la clause est calculée à partir des styles VIVANTS, une fois par rangée');
+has('if (membraneOwners && !parts.includes(membraneOwners)) parts.push(membraneOwners);',
+  '…puis ajoutée pour chaque style, sans doublon avec hideFor');
+has('const exclusionOf = (style) => {', '…par la fonction d’exclusion que la rangée appelle par style');
+has("const ex = style ? exclusionOf(style) : '';", '…donc chaque représentation de la rangée en hérite');
+has('const sele = ex ? `(${seleBase}) and not (${ex})` : seleBase;',
+  '…sous la forme « and not (…) » : les têtes SORTENT de la représentation du feuillet');
+/* Une seule implémentation de la règle : pas de copie de la clause ailleurs. */
+eq(countOf(/membraneHeadOwnerExprs\s*=/g), 1, 'une seule définition de la règle (pas de copie)');
+eq(countOf(/membraneHeadOwnerExprs\(/g), 1, '…et un seul appel : c’est bien la MÊME règle partout');
 
 /* ── Bilan ─────────────────────────────────────────────────────────────── */
 console.log(`_viewer_membrane_rows_test.mjs — ${passed} assertions OK (feuillets stylables + deux barres identiques)`);

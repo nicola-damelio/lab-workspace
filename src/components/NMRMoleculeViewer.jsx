@@ -1,20 +1,22 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ensureNGL } from '../utils/ngl';
-// The LIGHT RIG of the scene (§3 Scene → « ◐ Shadows » · « 🌑 Darkness » ·
+// The LIGHT RIG of the scene (§2 Toolbar → 🌫 Scene → « ◐ Shadows » · « 🌑 Darkness » ·
 // « 💡 Light »): one single source of truth for the light colour, intensity,
 // direction and sampling level — shared with the Mol* translation that draws the
 // projected shadows and the ambient occlusion (utils/viewerLightRig.js).
 import { LIGHT_RIG, nglKeyLightDirection, nglLightParams } from '../utils/viewerLightRig';
 // ✨ Ray — the high-resolution STILL of the current scene (its own module, see
 // src/utils/viewerRayImage.js): NGL's own supersampling path, so the still is
-// the very scene on screen and never a re-drawing of it.
+// the very scene on screen and never a re-drawing of it. The module also OWNS the
+// budget of a still (RAY_MAX_PIXELS) and the antialias rule that keep a click on
+// ✨ Ray from turning into a render that never comes back.
 import {
-  RAY_FACTORS, RAY_DEFAULT_FACTOR, rayFactorOptions, rayProgressText, saveRayImage,
+  RAY_FACTORS, RAY_DEFAULT_FACTOR, rayFactorOptions, rayPlanOf, rayProgressText, saveRayImage,
 } from '../utils/viewerRayImage';
 // The CAST SHADOWS of a ✨ Ray still: NGL 2.4 has no shadow-map pass at all, so
 // the shadow is computed from the ATOMS with the camera and the key light of the
-// scene (utils/viewerRayShadows.js) — its own toggle and strength live in the
-// Ray bar, next to the resolution and the alpha.
+// scene (utils/viewerRayShadows.js) — its own toggle and strength live in the Ray
+// controls of the 🌫 Scene group, next to the resolution and the alpha.
 import { RAY_SHADOW_DEFAULTS } from '../utils/viewerRayShadows';
 import { computeSmiles3DNameMap } from '../utils/atomNameSync';
 import { rebuildProteinHydrogenCoords } from '../utils/rebuildProteinHydrogens';
@@ -26,7 +28,6 @@ import { abortControl, useAbortControl } from '../utils/abortControl';
 import { cachedLigandSmiles, fetchLigandSmiles } from '../utils/ligandSmiles';
 import { archiveFileToDrive } from '../utils/driveUpload';
 import { getPymolScripts } from '../utils/pymolScripts';
-import { getActiveProjectId, publishLibraryFigure } from '../utils/figuresLibrary';
 import { SEQUENCE_NATURES } from '../utils/sequenceNatures';
 
 /* ---- Shared "Assigned atoms" highlight flag ---------------------------------
@@ -242,7 +243,7 @@ const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
    nucleotide outside a motif its normal 2°-structure colour — and the six form /
    two motif colours are editable in the ⚙ settings wheel.
 
-   SCENE (§3) — the background of the 3D scene is a colour of its own (« 🎨
+   SCENE (§2 Toolbar) — the background of the 3D scene is a colour of its own (« 🎨
    Background »), persisted like Fog / Shadows / Clipping, and it is part of a
    saved setup.
 
@@ -2385,7 +2386,7 @@ const build3dLabelMap = (component, { showResidueNumber, showAtomLabel, showResi
 // simply starts the selection-color block below.
 const SELECT_COLOR_HEX = 0xf59e0b;
 const MANUAL_COLOR_HEX = 0x16a34a;
-// Background colour of the 3D scene (§3 Toolbar → 🌫 Scene → 🎨 Background). It is
+// Background colour of the 3D scene (§2 Toolbar → 🌫 Scene → 🎨 Background). It is
 // a setting of its own — persisted like Fog / Shadows / Clipping, applied to the
 // live stage with `stage.setParameters({ backgroundColor })`, and part of a saved
 // setup — while the 🧪 PyMOL panel writes the same state (so both entries agree).
@@ -4454,6 +4455,13 @@ const MEMBRANE_PARENT_OF = {
   upper_headgroups: 'upper_leaflet',
   lower_headgroups: 'lower_leaflet',
 };
+/* …and the pair read the OTHER way round: which head row owns the atoms of a
+   leaflet row. See membraneHeadOwnerExprs — the render-time rule that makes the
+   four rows agree whatever the order of the clicks and of the styles. */
+const MEMBRANE_CHILD_OF = {
+  upper_leaflet: 'upper_headgroups',
+  lower_leaflet: 'lower_headgroups',
+};
 // The measured rows of the OTHER leaflet — what 👁 solo hides to reveal this one.
 const membraneOppositeRows = (key) => Object.keys(MEMBRANE_SIDE_OF)
   .filter((k) => k !== key && MEMBRANE_SIDE_OF[k] !== MEMBRANE_SIDE_OF[key]);
@@ -4494,6 +4502,39 @@ const SEL_STYLE_FLAG_OF = {
 const SEL_STYLE_TOGGLE_TOKEN = {
   cartoon: 'cartoon', ribbon: 'ribbon', tube: 'tube',
   ball: 'ball', stick: 'stick', sphere: 'sphere', surface: 'surface',
+};
+/* ── THE MEMBRANE RULE, DECIDED AT RENDER TIME ───────────────────────────────
+   A head row that DRAWS a style OWNS its atoms: the leaflet that contains them
+   subtracts them from EVERY style it draws — not only from the flag that happened
+   to be set when the head row was styled.
+
+   THE REPORT: « nelle membrane upper leaflet seleziona i giusti atomi in ball and
+   stick ma non in CPK. lower leaflet e upper headgroups e lower headgroups sono
+   invisibili in ball and stick e corretti negli altri stili. » The stored `hideFor`
+   of membraneHeadRelinquish is written PER STYLE (it only touches the flags the
+   leaflet draws at the moment of the click), so:
+     · styling the heads, then switching the LEAFLET to CPK, left the heads inside
+       the leaflet's own van der Waals spheres — upper_leaflet drew atoms that are
+       not its own (« non in CPK »), and its fat bubbles buried the thin
+       ball-and-stick heads drawn by the heads row (« invisibili in ball and
+       stick »);
+     · the same thing in the other order buried the lower leaflet's sticks under
+       the neighbouring row's spheres.
+   This function answers the question from the TWO ROWS THEMSELVES, every time the
+   scene is rebuilt, so the order of the clicks and the style that was chosen first
+   cannot matter any more; the stored lists stay (they are what the bar shows), but
+   the rule below is what the renderer trusts. Returns '' when the heads belong to
+   the leaflet: a head row that is hidden, or that draws nothing at all, gives its
+   atoms back — « Hide » on the heads really puts them back in the leaflet. */
+const membraneHeadOwnerExprs = (key, styles, exprOf) => {
+  const child = MEMBRANE_CHILD_OF[key];
+  if (!child) return '';
+  const cst = (styles || {})[child] || {};
+  if (cst.hidden) return '';
+  const draws = Object.keys(SEL_STYLE_TOGGLE_TOKEN).some((t) => !!cst[t]);
+  if (!draws) return '';
+  const expr = exprOf(child);
+  return expr && expr !== 'all' && expr !== 'none' ? `(${expr})` : '';
 };
 const selRowStyle = (st) => {
   const s = st || {};
@@ -5215,12 +5256,15 @@ const buildNglSele = (keys, structure, moleculeType, namingConvention) => {
 /* ============================================================================
    TOOLBAR BUILDING BLOCKS — the viewer UI is organised in a few numbered
    ROWS, so the command bar never eats the 3D canvas:
-     §0 Window (alone, top) · §1 General · §2 Molecular Styling (COLLAPSED by
-     default) · §3 Toolbar = Scene | Modify | Analysis | PyMOL in ONE row.
-   Inside §2 there is one ACCORDION MENU per molecule category (A Proteins ·
-   B Nucleic acids · C Lipids · D Sugars · E Organic molecules · F Others), and
-   every menu carries its own 3D-label switches (Residues / Residue type /
-   Atom names) because the old global « 4 · Labels » row is gone.
+     §0 Window (alone, top) · §1 General (PDB / Load / Trajectory / Clear /
+     PDB file / Predefined styles) · §2 Toolbar = Scene | Modify | Analysis |
+     PyMOL in ONE row.
+   The tool row is now the SECTION 2: the old « 2 · Molecular Styling »
+   accordion (Hide everything / ESP / Renumber) is gone, its gestures live in
+   the group they belong to (see the comment above the row), and the styling of
+   every molecule has its own bar on the RIGHT of the canvas — one space per
+   molecule (PART 4). Every row carries its own 3D-label switches (Residues /
+   Residue type / Atom names), because the old global « 4 · Labels » row is gone.
    These tiny presentational components keep every row identical.
    ============================================================================ */
 const VSection = ({ title, hint, right = null, children }) => (
@@ -5433,11 +5477,6 @@ const resizeRef = useRef(null); // { startY, startH } while dragging
 // mounted, so the structure and trajectory are never lost); "⬆ Expand"
 // restores it and tells NGL that the canvas size changed.
 const [viewerCollapsed, setViewerCollapsed] = useState(false);
-// §2 « Molecular Styling » is an ACCORDION that starts COLLAPSED: the command
-// bar must never push the 3D canvas off-screen, and the menus are a
-// "configure once" tool (the summary line on the header keeps saying what the
-// current styles are, so a closed section is never silent).
-const [stylingOpen, setStylingOpen] = useState(false);
 /* ⚙ SETTINGS WHEEL of the Molecules bar. It owns the two EDITABLE palettes the
    per-molecule colourings read (« Atom type » → the element table, « Sugar type »
    → the per-sugar identity table) plus the gradient pair that every menu shares.
@@ -5493,7 +5532,6 @@ const setNucleicFormColor = (form, hex) => setNucleicFormColors((prev) => ({ ...
 const setNucleicMotifColor = (motif, hex) => setNucleicMotifColors((prev) => ({ ...prev, [motif]: hex }));
 const resetNucleicFormColors = () => setNucleicFormColors({ ...DEFAULT_NUCLEIC_FORM_COLORS });
 const resetNucleicMotifColors = () => setNucleicMotifColors({ ...DEFAULT_NUCLEIC_MOTIF_COLORS });
-const [captureMsg, setCaptureMsg] = useState('');
 
 // Message of the §1 « ⬇ PDB » button (structure / current-frame snapshot).
 const [pdbMsg, setPdbMsg] = useState('');
@@ -5555,13 +5593,17 @@ const [loadRequest, setLoadRequest] = useState(null);
 const [status, setStatus] = useState('idle');
 const statusRef = useRef(status); // mirror for event handlers (file-change dialog)
 statusRef.current = status;
-/* ✨ Ray — the high-resolution still of the scene (see viewerRayImage.js). Same
-   additive rule as everything else around it: its OWN state, its OWN handler,
-   and NOTHING shared with 📷 Figure — which keeps publishing to the Figure
-   library exactly as before, while ✨ Ray only writes a PNG on the computer.
-   The FACTOR (the supersampling multiple) and the ALPHA choice are remembered
-   like every other viewer preference. Declared HERE, after `status` and
-   `stageRef` — the effect below reads both. */
+/* ✨ Ray — the high-resolution still of the scene (see viewerRayImage.js). Its OWN
+   state and its own handler: the FACTOR (the supersampling multiple), the ⬚ alpha
+   (a transparent background) and the ◐ shadows of the still are remembered like
+   every other viewer preference, and the module caps the size each of them can
+   produce so a « ray » always comes back (see RAY_MAX_PIXELS). The button lives
+   in the 🌫 Scene group of « 2 · Toolbar », next to the ◐ Shadows rig that aims
+   its light; the 📷 Figure button that used to sit in §1 General is removed (the
+   request: it was redundant — the still of the scene is THIS one). */
+// After this long, the progress line of a still SAYS that this × is heavy on this
+// screen instead of leaving the user in front of « Rendering… » (see captureRay).
+const RAY_SLOW_HINT_MS = 20000;
 const [rayFactor, setRayFactor] = useState(() => {
   try {
     const v = Number(localStorage.getItem('labViewerRayFactor'));
@@ -5614,6 +5656,13 @@ useEffect(() => {
   window.addEventListener('resize', refresh);
   return () => window.removeEventListener('resize', refresh);
 }, [status]);
+/* What the SELECTED factor really costs on the canvas we have: the pixels it will
+   produce, the factor NGL is really given (the module's budget + this GPU), and
+   the TILES it will render (4·factor² while the antialias pass is on, factor²
+   without it). The ✨ Ray button shows them, so the price of a still is readable
+   BEFORE the click — the answer to « the rendering never finishes ». Pure: read on
+   every render, exactly like the selector's own list. */
+const rayPlan = rayPlanOf(stageRef.current, rayFactor);
 const [errorMsg, setErrorMsg] = useState('');
 const showManualHighlight = useShowAssignedFlag(); // green "assigned" atoms toggle (shared with the simulated spectra)
 const [hoverInfo, setHoverInfo] = useState(null);
@@ -9241,9 +9290,15 @@ useEffect(() => {
     // POPC row only dropped that row's representations and the identical atoms
     // of the other rows stayed on screen. Computed once per row.
     const hiddenElsewhere = hiddenRowExprs(styles, key, selKeyExpr);
+    /* The membrane rule of THIS row, live (see membraneHeadOwnerExprs): for a
+       leaflet it is the clause of the head row that owns its heads — the atoms
+       leave EVERY style the leaflet draws, including the ones chosen after the
+       heads were styled (the CPK of the report). */
+    const membraneOwners = membraneHeadOwnerExprs(key, styles, selKeyExpr);
     const exclusionOf = (style) => {
       const list = (st.hideFor && st.hideFor[style]) || [];
       const parts = list.map((h) => `(${expandSelectionExpr(h)})`).filter((p) => p && p !== '(all)');
+      if (membraneOwners && !parts.includes(membraneOwners)) parts.push(membraneOwners);
       hiddenElsewhere.forEach((e) => {
         const p = `(${e})`;
         if (p !== '(all)' && p !== '(none)' && !parts.includes(p)) parts.push(p);
@@ -11223,54 +11278,23 @@ const rebuildHydrogensNow = async () => {
   flashRebuildMsg(`⚗️ Hydrogens rebuilt across ${result.residues} residues (${result.rebuilt} re-placed, names kept) — ${suffix}.`);
 };
 
-// ---- Capture the current 3D scene as a figure -------------------------------
-// Uses NGL's makeImage (reliable WebGL screenshot), falls back to the raw
-// canvas, then stores the image in the Figures library (Publications page).
-const captureScene = async () => {
-  const stage = stageRef.current;
-  if (!stage) { setCaptureMsg('⚠️ No 3D scene to capture'); setTimeout(() => setCaptureMsg(''), 3500); return; }
-  let url = '';
-  try {
-    if (typeof stage.makeImage === 'function') {
-      const canvas = stage.makeImage();
-      if (canvas && typeof canvas.toDataURL === 'function') url = canvas.toDataURL('image/png');
-    }
-  } catch { /* fall through to the raw canvas */ }
-  if (!url) {
-    try {
-      const cv = stage.viewer && stage.viewer.container ? stage.viewer.container.querySelector('canvas') : null;
-      if (cv) url = cv.toDataURL('image/png');
-    } catch { /* ignore */ }
-  }
-  if (!url) { setCaptureMsg('⚠️ Could not capture the 3D scene'); setTimeout(() => setCaptureMsg(''), 3500); return; }
-  const label = `Structure${file ? ` · ${file.name}` : pdbId ? ` · ${pdbId}` : ''}`;
-  const pid = getActiveProjectId();
-  // The real capture is stored on Google Drive (projects/<project>/images, and
-  // projects/_unassigned/images when no project is open); only a small local
-  // preview stays in the browser.
-  await publishLibraryFigure({ scope: pid ? 'project' : 'common', projectId: pid, dataUrl: url, label });
-  if (pid) {
-    setCaptureMsg(`✓ 3D structure saved to the project library (Publications → Figures & Slides · ${pid}) and on Google Drive`);
-  } else {
-    setCaptureMsg('✓ 3D structure saved to the common Figures library (Publications → Figures & Slides) and on Google Drive');
-  }
-  setTimeout(() => setCaptureMsg(''), 5000);
-};
-
 /* ---- ✨ Ray — the high-resolution STILL of the current scene -----------------
-   ADJACENT TO 📷 Figure AND INDEPENDENT OF IT. 📷 stays exactly what it was
-   (it publishes to the Figure library); ✨ Ray renders the SAME scene — every
+   Its OWN button and its own handler: ✨ Ray renders the scene on screen — every
    palette, the ring plates, the ESP overlays, the clipping plane, the fog, the
-   light rig, the trajectory frame on screen — with NGL's own supersampling
-   path (utils/viewerRayImage.js: `factor` tiles re-rendered and averaged) and
-   writes ONE PNG on the computer. Nothing here touches the scene: no
-   representation is rebuilt, no state of the viewer is changed, and NGL
-   restores the canvas' sampling and clear alpha by itself when it is done.
+   light rig, the trajectory frame — with NGL's own supersampling path
+   (utils/viewerRayImage.js: `factor²` tiles re-rendered and averaged) and writes
+   ONE PNG on the computer. Nothing here touches the scene: no representation is
+   rebuilt, no state of the viewer is changed, and NGL restores the canvas'
+   sampling and clear alpha by itself when it is done.
 
-   The message tells the truth: the REAL pixel size that came out, whether the
-   background is transparent, and the progress in tiles while it renders. A GPU
-   that cannot take the requested size gets the largest it can (clampRayFactor),
-   and a canvas that is not ready says so instead of writing an empty picture. */
+   IT ALWAYS COMES BACK. The size is clamped to the module's budget (16 Mpx) and
+   to what this GPU accepts, the antialias pass is dropped when the tiles would be
+   many, the cast shadows are skipped above their own budget (a still that big is
+   never decoded twice), and every step reports what it is doing: the tiles NGL
+   really renders, then « casting the shadows », then the final size. The message
+   tells the truth — the REAL pixels that came out, whether the background is
+   transparent, and what the cast shadows cost — because the report was « il
+   rendering non finisce mai e non arrivo a vedere l'immagine ». */
 const captureRay = async () => {
   const run = rayRunRef.current + 1;
   rayRunRef.current = run;
@@ -11282,6 +11306,11 @@ const captureRay = async () => {
   }
   setRayBusy(true);
   setRayMsg('✨ Rendering the ray still…');
+  // The click's own clock: after RAY_SLOW_HINT_MS the progress line SAYS that this
+  // × is heavy on this screen. It never lies about what is happening — it is what
+  // the user asked for (« il rendering non finisce mai ») turned into a readable
+  // message instead of a silent wait.
+  const startedAt = Date.now();
   try {
     // The CAST SHADOWS: the very lamp of the ◐ Shadows rig (its Azimuth /
     // Elevation, see nglKeyLightDirection) and the strength chosen in the bar.
@@ -11291,7 +11320,14 @@ const captureRay = async () => {
       label: file ? file.name : (pdbId || 'structure'),
       factor: rayFactor,
       transparent: rayTransparent,
-      onProgress: (done, total) => { if (rayRunRef.current === run) setRayMsg(rayProgressText(done, total)); },
+      onProgress: (done, total) => {
+        if (rayRunRef.current !== run) return;
+        const slow = Date.now() - startedAt > RAY_SLOW_HINT_MS;
+        setRayMsg(rayProgressText(done, total) + (slow ? ' · heavy at this × — a smaller one is much faster' : ''));
+      },
+      // The other half of the progress: the cast shadows and the PNG are computed
+      // AFTER the tiles, and that silence is what looked like a stuck render.
+      onStatus: (text) => { if (rayRunRef.current === run) setRayMsg(text); },
       shadows: rayShadows,
       lightDir: [lamp.x, lamp.y, lamp.z],
       shadow: { strength: rayShadowStrength },
@@ -12228,8 +12264,8 @@ return (
   </button>
 </div>
 
-{/* ══ 1 · GENERAL — what gets loaded / cleared and the figure ════════════════ */}
-<VSection title="1 · General" hint="structure · trajectory · clear · figure">
+{/* ══ 1 · GENERAL — what gets loaded, cleared and saved ══════════════════════ */}
+<VSection title="1 · General" hint="structure · trajectory · clear">
 <label
 title="Load structure file(s) from your computer — the first is the main structure, the rest appear in the Molecules bar (right side, multi-select)"
 className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-bold px-2 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7"
@@ -12335,88 +12371,6 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
 )}
 {structAsideMsg && (
 <span className="text-[10px] font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-md px-2 py-1 max-w-[380px] truncate" title={structAsideMsg}>{structAsideMsg}</span>
-)}
-<button
-type="button"
-onClick={captureScene}
-title="Save the current 3D view as a figure — it goes to the Figures library (Publications → Figures & Slides)"
-className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-indigo-300 text-indigo-600 hover:bg-indigo-50"
->
-📷 Figure
-</button>
-{captureMsg && (
-<span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md px-2 py-1">{captureMsg}</span>
-)}
-{/* ✨ Ray — the HIGH-RESOLUTION STILL of what is on screen, right next to 📷
-    Figure and completely independent of it: 📷 publishes to the Figure library
-    as it always did, ✨ Ray only writes a PNG on the computer. It renders with
-    NGL's own supersampling path (see utils/viewerRayImage.js), so the picture
-    IS the scene — every palette, the ring plates, the ESP surface, the
-    clipping plane, the fog, the light rig — re-rendered at `factor` times the
-    canvas and averaged. The list says the pixels each factor produces HERE,
-    and a GPU that cannot take the size silently gets the largest it can. */ }
-<div className="flex items-center gap-1">
-  <button
-    type="button"
-    onClick={captureRay}
-    disabled={rayBusy}
-    title={status === 'ready'
-      ? `Render a high-resolution still of the scene on screen (now ~${(raySizes.find((o) => o.factor === rayFactor) || {}).width || 0}×${(raySizes.find((o) => o.factor === rayFactor) || {}).height || 0} px). It is NGL's own supersampling render — the very scene, every palette, the ring plates, the ESP surface, the fog and the light rig, re-rendered tile by tile — and the PNG is downloaded to your computer. 📷 Figure is untouched: that one still goes to the Figure library.`
-      : 'Load a structure first — ✨ Ray renders the 3D scene on screen at high resolution'}
-    className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${rayBusy ? 'bg-amber-50 border-amber-300 text-amber-700 cursor-wait' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
-  >
-    {rayBusy ? '✨ Rendering…' : '✨ Ray'}
-  </button>
-  <select
-    value={rayFactor}
-    onChange={(e) => setRayFactor(Number(e.target.value))}
-    title={'Supersampling multiple of the canvas — the bigger it is, the smoother and the larger the PNG. The pixel size written after the × is what the render will really produce on this screen; a size this GPU cannot take is reduced automatically.'}
-    className="border border-amber-300 rounded-md px-1 py-1 text-[11px] bg-white outline-none focus:border-amber-500 h-7"
-  >
-    {raySizes.map((o) => (
-      <option key={o.factor} value={o.factor}>
-        {o.label}{o.allowed ? '' : ` → ${o.best}×`}
-      </option>
-    ))}
-  </select>
-  <label
-    title="Transparent background: the PNG keeps an alpha channel, so the molecule can be dropped on any coloured page or slide (the interactive canvas is not affected)"
-    className="px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-1 cursor-pointer bg-white border-amber-300 text-amber-700 hover:bg-amber-50 whitespace-nowrap"
-  >
-    <input type="checkbox" checked={rayTransparent} onChange={(e) => setRayTransparent(e.target.checked)} className="accent-amber-600" />
-    ⬚ alpha
-  </label>
-  {/* ◐ CASTED SHADOWS — the report: « the ray button only takes a snapshot of the
-      image but does not introduce casted shadows ». NGL 2.4 ships no shadow-map
-      pass (see the note above `flagMeshShadows`), so the shadow of the still is
-      computed from the ATOMS — the very camera of the canvas, the very lamp of
-      the ◐ Shadows rig — and multiplied into the pixels NGL just wrote
-      (utils/viewerRayShadows.js). The PNG therefore carries a real projected
-      shadow; untick to get the plain supersampled still back. Only what is
-      DRAWN casts: a molecule this viewer has hidden (a section unticked, a look
-      set to « hide ») keeps its atoms in the structure but draws no
-      representation, and it no longer throws a shadow of itself into the still —
-      the report « I see a projected membrane, while the membrane is hidden in the
-      program » (see drawnAtomIndicesOf in that module). */}
-  <label
-    title="Casted shadows in the PNG: the shadow the molecule throws, from the very lamp of the ◐ Shadows rig (its Azimuth / Elevation). NGL cannot cast them — the shadow is computed from the atoms with the camera and the light of the scene and multiplied into the still. Untick for the plain supersampled image."
-    className={`px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-1 cursor-pointer whitespace-nowrap ${rayShadows ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
-  >
-    <input type="checkbox" checked={rayShadows} onChange={(e) => setRayShadows(e.target.checked)} className="accent-amber-600" />
-    ◐ shadows
-  </label>
-  {rayShadows && (
-    <input
-      type="range" min="0.1" max="1" step="0.05" value={rayShadowStrength}
-      onChange={(e) => setRayShadowStrength(Number(e.target.value))}
-      className="accent-amber-600 w-16 shrink-0"
-      title={`Darkness of the cast shadow — ${Math.round(rayShadowStrength * 100)} % (the ◐ Shadows rig of the canvas sets its DIRECTION: Azimuth / Elevation)`}
-      aria-label="cast shadow strength"
-    />
-  )}
-</div>
-{rayMsg && (
-<span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">{rayMsg}</span>
 )}
 {/* ⚙️ SETUP — save / load the WHOLE visualisation setup under a name (see
     captureViewerSetup): the six menus with their radii, colours and group
@@ -12563,135 +12517,49 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 )}
 </VSection>
 
-{/* ══ 2 · THE VIEWER TOOLS OF §2 ═════════════════════════════════════════════
-   The styling itself is NOT here any more: it lives in the MOLECULE STYLING BAR
-   on the right of the canvas (PART 4) — one space per loaded molecule, each with
-   the Style / « Color by » / Transparency commands of its own kind, its two radii
-   and its 3D labels. What remains in this row is what belongs to the SCENE as a
-   whole: « 🙈 Hide everything », the ⚡ electrostatic-potential overlay of the
-   selected molecule (with its kcal/mol range) and the 🔢 renumbering tool. The 🎨
-   colour panels are GONE — every palette is edited in the ⚙ settings wheel of the
-   styling bar, which is exactly where the colourings read them from.
-   NOTE: this comment MUST stay inside the braces of a JSX comment. Written as a
-   bare block comment between two elements it is NOT a comment for JSX: it is TEXT,
-   and the whole paragraph was rendered in the middle of the viewer. */}
-<section className="flex flex-col gap-1 bg-slate-50/80 border border-slate-200 rounded-lg px-1.5 py-1">
-<button
-type="button"
-onClick={() => setStylingOpen((v) => !v)}
-aria-expanded={stylingOpen}
-title={stylingOpen ? 'Collapse the molecular-styling menus — the current styles stay applied' : 'Expand the molecular-styling menus (one per molecule category: proteins · nucleic acids · lipids · sugars · ligands · solvent)'}
-className={`w-full flex flex-wrap items-center gap-2 text-left transition-colors ${stylingOpen ? 'text-blue-800' : 'text-slate-700 hover:text-blue-800'}`}
->
-<span className="text-[9px] font-bold text-slate-500 truncate flex-1">
-{`The styling of every molecule lives in the bar on the right of the canvas — one space per molecule: ${Object.keys(sectionCatalog).length} space(s)${anyLabelOn ? ' · 3D labels on' : ''}${hasNonProtein ? ' · this file also contains ligands / lipids / sugars / ions / water' : ''}`}
-</span>
-<span className="text-[9px] font-black uppercase tracking-wide text-slate-400 shrink-0">{stylingOpen ? '▲ collapse' : '▼ expand'}</span>
-</button>
-{stylingOpen && (
-<div className="flex flex-wrap items-center gap-1">
-
-{/* 🙈 Hide everything — one click removes every representation (base, side
-    chains, selections, ESP); 👁️ Show default rebuilds them from the menus. */}
-<button type="button" onClick={() => setHideAll((v) => !v)}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${hideAll ? 'bg-red-100 border-red-400 text-red-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="Hide every representation of the whole scene (all molecules, side chains, selections, ESP surfaces). Click again to restore them exactly as the styling menus describe.">
-  {hideAll ? '👁️ Show default' : '🙈 Hide everything'}
-</button>
-
-{/* ── end of the A–F grid ───────────────────────────────────────────────── */}
-
-<button
-type="button"
-onClick={() => espToggle(selectedMolKey)}
-disabled={!espTargetComp}
-title={espBtnTitle}
-className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed ${espOnSelected ? 'bg-fuchsia-100 border-fuchsia-400 text-fuchsia-800 hover:bg-fuchsia-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
->
-{espOnSelected ? '⚡ ESP: On' : '⚡ ESP'}
-</button>
-{(espOnSelected || catEspActive) && (
-  <div className="flex items-center gap-1.5 bg-white border border-fuchsia-200 rounded-lg px-2 py-1 text-[10px] text-slate-600 h-8 whitespace-nowrap" title="Electrostatic colour-scale limits in kcal/mol. Surface potentials at or below −N are drawn full RED (negative), 0 is white (neutral) and at or above +P full BLUE (positive). NGL's default ±50 is so wide that most surfaces look white — tighten the range to make the red and blue poles visible. Applies live (no surface rebuild) via Apply / Enter.">
-    <span className="font-black text-fuchsia-700 uppercase tracking-wide">⚡ Range</span>
-    <span className="font-bold text-red-600">−</span>
-    <input
-      type="number"
-      min="0.5"
-      max="500"
-      step="1"
-      value={Math.round(espLimits[0] * 10) / 10}
-      onChange={(e) => { const v = parseFloat(e.target.value); setEspLimits((p) => [Number.isFinite(v) && v > 0 ? Math.min(500, v) : p[0], p[1]]); }}
-      onKeyDown={espApplyLimitsOnEnter}
-      className="w-12 border border-slate-300 rounded px-1 py-0.5 text-right outline-none focus:border-fuchsia-400 text-[10px] font-mono"
-      aria-label="Negative ESP limit (red)"
-    />
-    <span className="text-slate-400 font-bold">0</span>
-    <span className="font-bold text-blue-600">+</span>
-    <input
-      type="number"
-      min="0.5"
-      max="500"
-      step="1"
-      value={Math.round(espLimits[1] * 10) / 10}
-      onChange={(e) => { const v = parseFloat(e.target.value); setEspLimits((p) => [p[0], Number.isFinite(v) && v > 0 ? Math.min(500, v) : p[1]]); }}
-      onKeyDown={espApplyLimitsOnEnter}
-      className="w-12 border border-slate-300 rounded px-1 py-0.5 text-right outline-none focus:border-fuchsia-400 text-[10px] font-mono"
-      aria-label="Positive ESP limit (blue)"
-    />
-    <span>kcal/mol</span>
-    <button type="button" onClick={() => espApplyLimits()} className="px-1.5 py-0.5 rounded border bg-fuchsia-50 border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-100 font-bold">Apply</button>
-    <button type="button" onClick={() => espApplyLimits(10, 10)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="Preset: red ≤ −10, blue ≥ +10 kcal/mol">±10</button>
-    <button type="button" onClick={() => espApplyLimits(25, 25)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="Preset: red ≤ −25, blue ≥ +25 kcal/mol">±25</button>
-    <button type="button" onClick={() => espApplyLimits(50, 50)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="NGL's original wide range ±50 — only the strongest charges reach red/blue">±50</button>
-  </div>
-)}
-
-{captureMsg && (
-<span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md px-2 py-1">{captureMsg}</span>
-)}
-
-{/* Residue renumbering */}
-<div className="flex flex-col gap-1">
-<button
-type="button"
-onClick={toggleRenumberPanel}
-title="🔢 Renumber the residues (the panel below lists every residue and the number it will take; the 3D labels and the residue strip follow it)"
-className="text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-md px-2 py-1.5 h-8 whitespace-nowrap"
->
-🔢 Renumber{showRenumberPanel ? ' ▲' : ' ▼'}
-</button>
-{/* The ONE renumbering panel of the viewer (see renderRenumberPanel) — the same
-    specification the 🔢 of a molecule's header opens. */}
-{renderRenumberPanel()}
-</div>
-</div>
-)}
-</section>
-
-{/* ══ 3 · TOOLBAR — Scene | Modify | Analysis | PyMOL, ONE horizontal row ════
-    The four groups that used to be four stacked sections (§3 / §5 / §6 / §7 —
-    and the old §4 Labels row, whose three switches now live inside each
-    molecule menu) are ONE wrapped row, each group introduced by a small chip and
-    separated by a hairline. The expanded panels (✏️ Atom names, 🧪 PyMOL, the
-    clipping sliders) are full-width children of this same section, so the bar
-    stays one row tall while nothing is open.
-    • Scene: 🌫 Fog · 🎨 Background · ◐ Shadows (+ 🌑 Darkness / 💡 Light) · ✂ Clipping
-    • Modify: ✋ Drag · ⚗️ Rebuild H · ✏️ Atom names
+{/* ══ 2 · TOOLBAR — Scene | Modify | Analysis | PyMOL, ONE horizontal row ════
+    This is §2 of the command bar now (the report: « quindi toolbar diventa la
+    sezione 2 e contiene separatamente scene, modify e analysis »). The four
+    groups are ONE wrapped row, each introduced by a small chip and separated by
+    a hairline; the expanded panels (⚡ ESP · Range, 🔢 Renumber, ✏️ Atom names,
+    🧪 PyMOL, the clipping sliders) are full-width children of this same section,
+    so the bar stays one row tall while nothing is open.
+    • Scene: 🌫 Fog · 🎨 Background · ◐ Shadows (+ 🌑 Darkness / 💡 Light) · ✂ Clipping · ✨ Ray (+ resolution · ⬚ alpha · ◐ shadows)
+    • Modify: 🧬 From sequence · ✋ Drag · ⚗️ Rebuild H · ✏️ Atom names · ⚡ ESP · 🔢 Renumber
     • Analysis: 📏 Measure · 🟢 Assigned
     • PyMOL: 🧪 Selections & PyMOL
+    THE FOUR MOVES OF THIS REVISION (each one is a line of the report):
+      · ✨ Ray and its associates (the resolution, ⬚ alpha, ◐ shadows + strength)
+        left §1 General for the 🌫 Scene group — a still of the SCENE belongs with
+        the fog / background / shadows / clipping that define it, and the ◐
+        Shadows rig that aims the light of the still is right there;
+      · 📷 Figure is REMOVED (redundant): the very still of the scene is written
+        by ✨ Ray as a PNG on the computer, and the ★ figures of Publications &
+        Slides keep their own capture / import paths (the canvas, the Image
+        builder, the imported files);
+      · 🙈 Hide everything is REMOVED here: the Selections bar on the left keeps
+        its own « 🙈 Hide all » / « Show all » button on the SAME `hideAll` state,
+        so the gesture survives and this row no longer repeats it;
+      · ⚡ ESP and 🔢 Renumber (the button AND its list) left the old §2 for the
+        ✏️ Modify group — they modify the selected molecule's surface and the
+        numbering of the residues on screen;
+      · §2 « Molecular Styling » disappears with them: the styling of every
+        molecule has lived in the bar on the RIGHT of the canvas since PART 4
+        (one space per molecule), and the accordion only held those two gestures
+        and the Hide-everything button.
     The lighting rig is untouched: Shadows locks NGL's single light in place and
     the Darkness / Light sliders aim it (and now also drive the AMBIENT-OCCLUSION
     equivalent, see applyShadowSettings). ✂ Clipping pushed OFF sets the camera
     bounds to the EXTREMES (near 0 · far 100000 · dist 0) so a large complex is
     never cut. */}
-<VSection title="3 · Toolbar" hint="scene · modify · analysis · PyMOL">
+<VSection title="2 · Toolbar" hint="scene · modify · analysis · PyMOL">
 <span className="text-[9px] font-black text-sky-700 uppercase tracking-wide whitespace-nowrap">🌫 Scene</span>
 <button type="button" onClick={() => setFogEnabled((v) => !v)}
   className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${fogEnabled ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
   title="NGL's default depth fog fades distant atoms toward the background (a grey haze). Toggle it off for a crisp image — the setting is saved and persists across pages.">
   🌫 Fog: {fogEnabled ? 'On' : 'Off'}
 </button>
-{/* 🎨 BACKGROUND — the colour of the 3D scene itself (§3 Scene). It is applied to
+{/* 🎨 BACKGROUND — the colour of the 3D scene itself (§2 Scene). It is applied to
     the live stage (stage.setParameters({ backgroundColor })), persists like the
     fog / shadows / clipping, and travels inside a ⚙️ saved setup. The 🧪 PyMOL
     panel writes this very same state, so the two entries never disagree. */}
@@ -12757,6 +12625,91 @@ className="text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 bord
     </button>
   </>
 )}
+{/* ✨ RAY — the HIGH-RESOLUTION STILL of the scene, HERE in the 🌫 Scene group
+    (the request: « i comandi ray e i suoi associati (alpha, shadow) devono
+    essere spostati nella sezione scene »). A still belongs to the SCENE as a
+    whole, exactly like the 🌫 Fog · 🎨 Background · ◐ Shadows · ✂ Clipping beside
+    it — and the ◐ Shadows rig that AIMS the light of the still is right there,
+    so the two controls that own the light of a still are neighbours. It renders
+    with NGL's own supersampling path (utils/viewerRayImage.js) and writes ONE
+    PNG on the computer; the 📷 button that published to the Figure library is
+    gone (the request: « il pulsante figure é ridondante »).
+    WHY A « RAY » COMES BACK NOW. The report: « se clicco su ray, anche per un
+    piccolo peptide il rendering non finisce mai e non arrivo a vedere
+    l'immagine ». The still is `canvasPixels × factor` and it is not only
+    RENDERED: the cast shadows walk every pixel of it (on the CPU) and the PNG is
+    decoded and encoded once more. On a HiDPI canvas the old 40 Mpx budget meant
+    a 200 MB image copied three times — minutes inside getImageData / toBlob,
+    while the button still said « Rendering… ». The size is now capped by the
+    module (RAY_MAX_PIXELS · 16 Mpx, a 4000×4000-class still), the antialias pass
+    — FOUR times the tiles — is only asked for while the tiles stay few
+    (RAY_ANTIALIAS_MAX_FACTOR: from 3× up every tile IS a supersample), and the
+    title below says, BEFORE the click, how many pixels and how many tiles this
+    factor really costs here. */ }
+<div className="flex items-center gap-1">
+  <button
+    type="button"
+    onClick={captureRay}
+    disabled={rayBusy}
+    title={status === 'ready'
+      ? `Render a high-resolution still of the scene on screen: ${rayPlan.realWidth || 0}×${rayPlan.realHeight || 0} px${rayPlan.antialias ? ' (antialias pass)' : ''}, ${rayPlan.tiles || 0} tiles. It is NGL's own supersampling render of the very scene — every palette, the ring plates, the ESP surface, the fog and the light rig — and the PNG is downloaded to your computer. A size this GPU cannot take is reduced automatically, so the render never fails.`
+      : 'Load a structure first — ✨ Ray renders the 3D scene on screen at high resolution'}
+    className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${rayBusy ? 'bg-amber-50 border-amber-300 text-amber-700 cursor-wait' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
+  >
+    {rayBusy ? '✨ Rendering…' : '✨ Ray'}
+  </button>
+  <select
+    value={rayFactor}
+    onChange={(e) => setRayFactor(Number(e.target.value))}
+    title={'Supersampling multiple of the canvas — the bigger it is, the smoother and the larger the PNG. The pixel size written after the × is what the render will really produce on this screen; a size this GPU cannot take is reduced automatically.'}
+    className="border border-amber-300 rounded-md px-1 py-1 text-[11px] bg-white outline-none focus:border-amber-500 h-7"
+  >
+    {raySizes.map((o) => (
+      <option key={o.factor} value={o.factor}>
+        {o.label}{o.allowed ? '' : ` → ${o.best}×`}
+      </option>
+    ))}
+  </select>
+  <label
+    title="Transparent background: the PNG keeps an alpha channel, so the molecule can be dropped on any coloured page or slide (the interactive canvas is not affected)"
+    className="px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-1 cursor-pointer bg-white border-amber-300 text-amber-700 hover:bg-amber-50 whitespace-nowrap"
+  >
+    <input type="checkbox" checked={rayTransparent} onChange={(e) => setRayTransparent(e.target.checked)} className="accent-amber-600" />
+    ⬚ alpha
+  </label>
+  {/* ◐ CASTED SHADOWS — the report: « the ray button only takes a snapshot of the
+      image but does not introduce casted shadows ». NGL 2.4 ships no shadow-map
+      pass (see the note above `flagMeshShadows`), so the shadow of the still is
+      computed from the ATOMS — the very camera of the canvas, the very lamp of
+      the ◐ Shadows rig — and multiplied into the pixels NGL just wrote
+      (utils/viewerRayShadows.js). The PNG therefore carries a real projected
+      shadow; untick to get the plain supersampled still back. Only what is
+      DRAWN casts: a molecule this viewer has hidden (a section unticked, a look
+      set to « hide ») keeps its atoms in the structure but draws no
+      representation, and it no longer throws a shadow of itself into the still —
+      the report « I see a projected membrane, while the membrane is hidden in the
+      program » (see drawnAtomIndicesOf in that module). */}
+  <label
+    title="Casted shadows in the PNG: the shadow the molecule throws, from the very lamp of the ◐ Shadows rig (its Azimuth / Elevation). NGL cannot cast them — the shadow is computed from the atoms with the camera and the light of the scene and multiplied into the still. Untick for the plain supersampled image."
+    className={`px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-1 cursor-pointer whitespace-nowrap ${rayShadows ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
+  >
+    <input type="checkbox" checked={rayShadows} onChange={(e) => setRayShadows(e.target.checked)} className="accent-amber-600" />
+    ◐ shadows
+  </label>
+  {rayShadows && (
+    <input
+      type="range" min="0.1" max="1" step="0.05" value={rayShadowStrength}
+      onChange={(e) => setRayShadowStrength(Number(e.target.value))}
+      className="accent-amber-600 w-16 shrink-0"
+      title={`Darkness of the cast shadow — ${Math.round(rayShadowStrength * 100)} % (the ◐ Shadows rig of the canvas sets its DIRECTION: Azimuth / Elevation)`}
+      aria-label="cast shadow strength"
+    />
+  )}
+</div>
+{rayMsg && (
+<span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">{rayMsg}</span>
+)}
+
 {/* ── Modify ─────────────────────────────────────────────────────────────── */}
 <span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
 <span className="text-[9px] font-black text-amber-700 uppercase tracking-wide whitespace-nowrap">✏️ Modify</span>
@@ -12863,6 +12816,76 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
     </div>
   </div>
 )}
+
+{/* ⚡ ESP — the electrostatic-potential surface of the molecule selected in the
+    Molecules bar. It sits in ✏️ Modify (the request: « anche il pulsante ESP
+    dovrebbe piuttosto apparire nella sezione modify »): it MODIFIES what is on
+    screen — a translucent surface coloured by the Coulomb potential of the
+    charges (red = negative, white ≈ neutral, blue = positive) — exactly like
+    ⚗️ Rebuild H or ✏️ Atom names beside it. Clicking again removes the surface,
+    and the ⚡ Range readout below appears while one is on, for the two potentials
+    that give it its colour scale (kcal/mol). */}
+<button
+type="button"
+onClick={() => espToggle(selectedMolKey)}
+disabled={!espTargetComp}
+title={espBtnTitle}
+className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed ${espOnSelected ? 'bg-fuchsia-100 border-fuchsia-400 text-fuchsia-800 hover:bg-fuchsia-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+>
+{espOnSelected ? '⚡ ESP: On' : '⚡ ESP'}
+</button>
+{(espOnSelected || catEspActive) && (
+  <div className="flex items-center gap-1.5 bg-white border border-fuchsia-200 rounded-lg px-2 py-1 text-[10px] text-slate-600 h-8 whitespace-nowrap" title="Electrostatic colour-scale limits in kcal/mol. Surface potentials at or below −N are drawn full RED (negative), 0 is white (neutral) and at or above +P full BLUE (positive). NGL's default ±50 is so wide that most surfaces look white — tighten the range to make the red and blue poles visible. Applies live (no surface rebuild) via Apply / Enter.">
+    <span className="font-black text-fuchsia-700 uppercase tracking-wide">⚡ Range</span>
+    <span className="font-bold text-red-600">−</span>
+    <input
+      type="number"
+      min="0.5"
+      max="500"
+      step="1"
+      value={Math.round(espLimits[0] * 10) / 10}
+      onChange={(e) => { const v = parseFloat(e.target.value); setEspLimits((p) => [Number.isFinite(v) && v > 0 ? Math.min(500, v) : p[0], p[1]]); }}
+      onKeyDown={espApplyLimitsOnEnter}
+      className="w-12 border border-slate-300 rounded px-1 py-0.5 text-right outline-none focus:border-fuchsia-400 text-[10px] font-mono"
+      aria-label="Negative ESP limit (red)"
+    />
+    <span className="text-slate-400 font-bold">0</span>
+    <span className="font-bold text-blue-600">+</span>
+    <input
+      type="number"
+      min="0.5"
+      max="500"
+      step="1"
+      value={Math.round(espLimits[1] * 10) / 10}
+      onChange={(e) => { const v = parseFloat(e.target.value); setEspLimits((p) => [p[0], Number.isFinite(v) && v > 0 ? Math.min(500, v) : p[1]]); }}
+      onKeyDown={espApplyLimitsOnEnter}
+      className="w-12 border border-slate-300 rounded px-1 py-0.5 text-right outline-none focus:border-fuchsia-400 text-[10px] font-mono"
+      aria-label="Positive ESP limit (blue)"
+    />
+    <span>kcal/mol</span>
+    <button type="button" onClick={() => espApplyLimits()} className="px-1.5 py-0.5 rounded border bg-fuchsia-50 border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-100 font-bold">Apply</button>
+    <button type="button" onClick={() => espApplyLimits(10, 10)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="Preset: red ≤ −10, blue ≥ +10 kcal/mol">±10</button>
+    <button type="button" onClick={() => espApplyLimits(25, 25)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="Preset: red ≤ −25, blue ≥ +25 kcal/mol">±25</button>
+    <button type="button" onClick={() => espApplyLimits(50, 50)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="NGL's original wide range ±50 — only the strongest charges reach red/blue">±50</button>
+  </div>
+)}
+{/* 🔢 Renumber — the button AND its list live in ✏️ Modify (the request: « la
+    lista per il renumbering … dovrebbe piuttosto apparire nella sezione
+    modify »): the panel lists every residue and the number it will take, and the
+    3D labels and the residue strip follow the new numbers. The tiny 🔢 of a
+    molecule's header (in the styling bar on the right) opens THE SAME panel —
+    one implementation, see renderRenumberPanel. */}
+<button
+type="button"
+onClick={toggleRenumberPanel}
+title="🔢 Renumber the residues (the panel below lists every residue and the number it will take; the 3D labels and the residue strip follow it)"
+className="text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-md px-2 py-1.5 h-8 whitespace-nowrap"
+>
+🔢 Renumber{showRenumberPanel ? ' ▲' : ' ▼'}
+</button>
+{/* The ONE renumbering panel of the viewer (see renderRenumberPanel) — the same
+    specification the 🔢 of a molecule's header opens. */}
+{renderRenumberPanel()}
 
 {/* ── Analysis ───────────────────────────────────────────────────────────── */}
 <span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />

@@ -34,9 +34,25 @@
        restores the viewer's sampling AND the clear alpha when it is done — a
        transparent background never leaks into the interactive canvas.
 
-   THE 📷 FIGURE BUTTON IS NOT TOUCHED, and this module does not publish to the
-   Figure library: ✨ Ray only WRITES A FILE on the computer (the request).
-   Nothing here is stateful: every function takes the stage it reads from.
+   WHICH FACTOR IS HONEST (the follow-up: « se clicco su ray, anche per un piccolo
+   peptide il rendering non finisce mai e non arrivo a vedere l'immagine »). The
+   still is not only RENDERED by NGL: its pixels are walked a second time for the
+   cast shadows and the PNG is decoded and encoded once more (see
+   viewerRayShadows.js) — all of it O(output pixels), and the output is
+   `canvasPixels × factor`. On a HiDPI / large canvas that used to reach a
+   hundred megapixels: minutes inside getImageData / toBlob and gigabytes of
+   canvas memory, while the button still said « Rendering… ». What the whole chain
+   can afford is therefore FIXED here (RAY_MAX_PIXELS), the antialias pass — the
+   only knob that multiplies the RENDER, 4·factor² tiles instead of factor² — is
+   asked for only while the tiles stay few (RAY_ANTIALIAS_MAX_FACTOR; from 3× up
+   every tile IS a supersample of the canvas), the shadow pass has its own budget
+   (RAY_SHADOW_MAX_PIXELS) and every step reports itself — `onProgress` for the
+   tiles, `onStatus` for the rest — so a click on ✨ Ray always ends with an image.
+
+   THIS MODULE PUBLISHES NOTHING: it WRITES A FILE on the computer (the request),
+   and the 📷 button that fed the Figure library has been removed from the viewer
+   (the follow-up: « il pulsante figure é ridondante »). Nothing here is stateful:
+   every function takes the stage it reads from.
 
    THE CAST SHADOWS. The report: « the ray button only takes a snapshot of the
    image but does not introduce casted shadows ». NGL 2.4 has no shadow-map pass
@@ -48,7 +64,7 @@
    reason falls back on that same plain still, never on an error.
    ========================================================================= */
 
-import { addCastShadowsToBlob, buildRayShadowMask, rayShadowInputsOf, rayShadowNote } from './viewerRayShadows.js';
+import { addCastShadowsToBlob, buildRayShadowMask, rayShadowInputsOf, rayShadowNote, RAY_SHADOW_MAX_PIXELS } from './viewerRayShadows.js';
 
 /* The supersampling factors the bar offers — the honest NGL knob, expressed
    against the canvas the user is looking at (`factor × canvas pixels`). 3× is
@@ -56,11 +72,21 @@ import { addCastShadowsToBlob, buildRayShadowMask, rayShadowInputsOf, rayShadowN
    still, and the 9 tiles it costs render in a couple of seconds. */
 export const RAY_FACTORS = Object.freeze([2, 3, 4, 6]);
 export const RAY_DEFAULT_FACTOR = 3;
-// The output budget. A 40 MP RGBA canvas is already ~160 MB, and NGL renders
-// factor² tiles ON TOP of it, so the factor actually offered to the user is
-// clamped to this budget and to the WebGL limits below.
-export const RAY_MAX_PIXELS = 40e6;
+/* The output budget — THE guarantee that a « ray » comes back. The PNG is decoded,
+   its pixels walked once for the cast shadows and encoded again, so the old 40 Mpx
+   (a 200 MB RGBA canvas, three times over) was minutes and gigabytes on a big —
+   HiDPI — canvas: the follow-up report « il rendering non finisce mai e non arrivo
+   a vedere l'immagine ». A still of this viewer is a publication figure at 12–16
+   Mpx, and that is what the whole chain can afford on any machine. */
+export const RAY_MAX_PIXELS = 16e6;
 export const RAY_MAX_FACTOR = 8;
+/* From this factor up the antialias pass is NOT asked for: NGL's own supersampling
+   already renders every tile as a 1/factor window at the canvas resolution, so the
+   3× still IS a 3× supersample, while the extra pass multiplies the render by four
+   (4·factor² tiles). */
+export const RAY_ANTIALIAS_MAX_FACTOR = 2;
+/* What the Ray message says when the still was too big for its shadow pass. */
+export const RAY_SHADOW_SKIP_NOTE = '· cast shadows skipped (the still is too big)';
 // Used when the WebGL limits cannot be read (no context yet, a probe): NGL
 // renders its tiles into a canvas of `canvasPixels × factor`.
 export const RAY_DIM_LIMIT_FALLBACK = 8192;
@@ -148,6 +174,43 @@ export const clampRayFactor = (stage, factor) => {
   return out;
 };
 
+/* The tiles NGL really renders for a factor: `factor²` normally, 4·factor² with the
+   antialias pass (TiledRenderer doubles its own factor). It is the honest number of
+   renders behind one still — what the progress line counts, and what the ✨ Ray
+   title shows BEFORE the click. */
+export const rayTilesOf = (factor, antialias = false) => {
+  const f = clampFactorValue(factor) * (antialias ? 2 : 1);
+  return f * f;
+};
+
+/* Is the antialias pass worth asking for at this factor? (see
+   RAY_ANTIALIAS_MAX_FACTOR). This is the DEFAULT rule of captureRayImage, exported
+   so the bar can show it; an explicit `antialias` from a caller always wins. */
+export const rayAntialiasFor = (factor) => clampFactorValue(factor) <= RAY_ANTIALIAS_MAX_FACTOR;
+
+/* EVERYTHING the ✨ Ray title needs for ONE factor on THIS canvas: the size the
+   selector announces, whether that factor is granted as it stands (budget AND GPU
+   limits), the factor that really reaches NGL, the size THAT one produces, whether
+   the antialias pass is asked for, and the tiles NGL will render. Pure — the panel
+   reads it on every render, so the cost of a factor is visible before the click
+   (« the rendering never finishes » cannot be a surprise any more). */
+export const rayPlanOf = (stage, factor) => {
+  const size = rayPixelsOf(stage, factor);
+  const best = clampRayFactor(stage, factor);
+  const real = rayPixelsOf(stage, best);
+  const antialias = rayAntialiasFor(best);
+  return {
+    ...size,
+    best,
+    allowed: !size.width || best === size.factor,
+    realWidth: real.width,
+    realHeight: real.height,
+    realPixels: real.pixels,
+    antialias,
+    tiles: rayTilesOf(best, antialias),
+  };
+};
+
 /* The list the resolution selector shows: every factor WITH the pixels it
    produces here, and whether this machine can afford it as it stands (`best`
    is the factor NGL will really be asked for — a GPU that cannot take the
@@ -186,12 +249,19 @@ export const captureRayImage = async (stage, options = {}) => {
   if (!width || !height) throw new Error('the 3D canvas has no size yet — load a structure first');
   const factor = clampRayFactor(stage, options.factor);
   const transparent = !!options.transparent;
+  // The antialias pass — 4·factor² tiles — is asked for by DEFAULT while the tiles
+  // stay few (RAY_ANTIALIAS_MAX_FACTOR): a 6× still is already a 6× supersample of
+  // the canvas, and paying four times the render for it is what made the button
+  // look stuck. An explicit `antialias` from the caller always wins.
+  const antialias = options.antialias === undefined ? rayAntialiasFor(factor) : !!options.antialias;
+  const tiles = rayTilesOf(factor, antialias);
+  const status = typeof options.onStatus === 'function' ? options.onStatus : null;
   let blob = await stage.makeImage({
     trim: false,
     factor,
     // NGL's antialias is the 4·factor² tiles average: what makes the still
     // smooth where the interactive canvas is one sample per pixel.
-    antialias: options.antialias !== false,
+    antialias,
     transparent,
     onProgress: typeof options.onProgress === 'function' ? options.onProgress : undefined,
   });
@@ -200,9 +270,17 @@ export const captureRayImage = async (stage, options = {}) => {
   // NGL cannot cast them (no shadow-map pass in 2.4), so they are computed from
   // the atoms with the SAME camera and the SAME key light, and multiplied into
   // the very pixels NGL just wrote (utils/viewerRayShadows.js). Best-effort: a
-  // shadow that cannot be built leaves the plain still, never an error.
+  // shadow that cannot be built leaves the plain still, never an error — and a
+  // still above the shadow budget is left WITHOUT them, with a note in the
+  // message: the decode / walk / encode of a still that big is exactly what the
+  // user described as « the rendering never finishes ».
+  const pixels = width * factor * height * factor;
+  const shadowBudget = Number.isFinite(Number(options.shadowMaxPixels)) ? Number(options.shadowMaxPixels) : RAY_SHADOW_MAX_PIXELS;
+  const wantsShadow = options.shadows !== false && !!options.lightDir;
+  const shadowTooBig = wantsShadow && pixels > shadowBudget;
   let shadow = null;
-  if (options.shadows !== false && options.lightDir) {
+  if (wantsShadow && !shadowTooBig) {
+    if (status) status('✨ Casting the shadows of the still…');
     try {
       const inputs = rayShadowInputsOf(stage, {
         lightDir: options.lightDir,
@@ -224,12 +302,15 @@ export const captureRayImage = async (stage, options = {}) => {
   return {
     blob,
     factor,
+    antialias,
+    tiles,
     width: width * factor,
     height: height * factor,
-    pixels: width * factor * height * factor,
+    pixels,
     transparent,
     shadow,
-    shadowNote: shadow ? rayShadowNote(shadow) : '',
+    // The note of the message: what the shadow cost, or WHY there is none.
+    shadowNote: shadow ? rayShadowNote(shadow) : (shadowTooBig ? RAY_SHADOW_SKIP_NOTE : ''),
   };
 };
 

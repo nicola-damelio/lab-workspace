@@ -51,6 +51,13 @@
    ========================================================================= */
 
 /* ---- The tunables of a shadow -------------------------------------------- */
+/* A still above this many pixels is left WITHOUT cast shadows: the pass decodes
+   the PNG, walks every one of its pixels on the CPU and encodes it again, and the
+   follow-up report is exactly that hang (« il rendering non finisce mai e non
+   arrivo a vedere l'immagine »). The budget of a still (RAY_MAX_PIXELS, 16 Mpx in
+   viewerRayImage.js) is BELOW it, so this only bites for a caller that asks for a
+   bigger one. */
+export const RAY_SHADOW_MAX_PIXELS = 20e6;
 export const RAY_SHADOW_DEFAULTS = Object.freeze({
   /* How dark the shadow gets at its core: 0 = no shadow at all, 1 = black. The
      value the Ray panel offers is a percentage of this. */

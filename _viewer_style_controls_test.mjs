@@ -33,7 +33,7 @@
        U), avec un fin anneau de bâtons par-dessus ;
      • « ⚙️ Setup » (menu 1 · General) enregistre / recharge / exporte / importe
        TOUT le réglage de visualisation sous un nom (localStorage) ;
-     • le fond de la scène se règle dans « 3 · Toolbar → 🌫 Scene »
+     • le fond de la scène se règle dans « 2 · Toolbar → 🌫 Scene »
        (« 🎨 Background »), et il est persistant.
 
    Le viewer est un .jsx : il ne s'importe pas sous Node. Les règles sont donc
@@ -301,7 +301,7 @@ const iSec1 = VIEW.indexOf('<VSection title="1 · General"');
 ok(iSec1 > 0 && VIEW.indexOf('🎨 Predefined styles', iSec1) > 0,
   'le bloc « Predefined styles » vit dans « 1 · General » (la ligne qui charge / nettoie)');
 
-/* ══ 8. FOND DE LA SCÈNE DANS §3 SCENE ════════════════════════════════════ */
+/* ══ 8. FOND DE LA SCÈNE DANS §2 SCENE ═══════════════════════════════════ */
 has("const BG_DEFAULT = '#f8fafc';", 'le fond par défaut est nommé une fois');
 has('🎨 Background', 'la ligne « 🎨 Background » du groupe Scene');
 has('aria-label="Background colour"', 'un sélecteur de couleur accessible');
@@ -311,13 +311,26 @@ has("try { localStorage.setItem('labViewerBg', bgColor); } catch { /* ignore */ 
   'le fond est persistant (comme Fog / Shadows / Clipping)');
 has('const v = localStorage.getItem(\'labViewerBg\');', '…et il est relu au chargement');
 has('try { stage.setParameters({ backgroundColor: bgColor }); } catch {}', 'il est poussé à la scène NGL vivante');
-// Les indices sont pris APRÈS le titre de §3 : la documentation d'en-tête du
-// fichier cite elle aussi « 🎨 Background », à un tout autre endroit.
-const iSec3 = VIEW.indexOf('<VSection title="3 · Toolbar"');
-const iBg = VIEW.indexOf('🎨 Background', iSec3);
-const iShadow = VIEW.indexOf('◐ Shadows', iSec3);
-ok(iBg > iSec3, 'le réglage est bien DANS la rangée §3 (groupe 🌫 Scene)');
+// Les indices sont pris APRÈS le titre de « 2 · Toolbar » : la documentation
+// d'en-tête du fichier cite elle aussi « 🎨 Background », à un tout autre endroit.
+const iSec2 = VIEW.indexOf('<VSection title="2 · Toolbar"');
+const iBg = VIEW.indexOf('🎨 Background', iSec2);
+const iShadow = VIEW.indexOf('◐ Shadows', iSec2);
+const iRayBtn = VIEW.indexOf('✨ RAY — the HIGH-RESOLUTION STILL', iSec2);
+const iModify = VIEW.indexOf('✏️ Modify</span>', iSec2);
+ok(iSec2 > 0 && iBg > iSec2, 'le réglage est bien DANS la rangée « 2 · Toolbar » (groupe 🌫 Scene)');
 ok(iBg > 0 && iShadow > 0 && iBg < iShadow, '…à côté du brouillard, en tête du groupe Scene');
+// LES COMMANDES DE LA « RAY » SONT DANS LE GROUPE SCENE (la demande : « i comandi
+// ray e i suoi associati (alpha, shadow) devono essere spostati nella sezione
+// scene ») — avec le curseur de force des ombres portées et son message.
+ok(iRayBtn > iSec2 && iRayBtn < iModify,
+  'le bloc ✨ Ray (résolution · ⬚ alpha · ◐ shadows · force · message) vit dans le groupe Scene');
+ok(VIEW.indexOf('◐ shadows', iSec2) > 0 && VIEW.indexOf('cast shadow strength', iSec2) > 0,
+  '…la case « ◐ shadows » et son curseur de force compris');
+ok(VIEW.indexOf('const rayPlan = rayPlanOf(stageRef.current, rayFactor);') > 0,
+  '…et le plan (pixels + tuiles) du facteur choisi est lu par le bouton, AVANT le clic');
+ok(VIEW.indexOf('⚡ ESP — the electrostatic-potential surface') > iModify,
+  'le bouton ⚡ ESP a rejoint le groupe ✏️ Modify (la demande)');
 
 
 /* ══ 9. LES HELPERS PURS, EXTRAITS DU FICHIER ET EXÉCUTÉS ═════════════════ */

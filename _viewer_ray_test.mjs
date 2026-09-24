@@ -1,11 +1,20 @@
 /* =========================================================================
    _viewer_ray_test.mjs — le bouton « ✨ Ray » (image statique haute résolution).
 
-   La demande : un bouton qui exporte une image statique « ray » de la scène,
-   À CÔTÉ du 📷 Figure existant, SANS RIEN CHANGER à ce qui existe (les cinq
-   suites, le rig de lumière, le 📷 lui-même). Le choix retenu pour la
-   destination : l'image est ÉCRITE SUR L'ORDINATEUR (PNG), elle n'entre pas
-   dans la bibliothèque de figures.
+   La demande d'origine : un bouton qui exporte une image statique « ray » de la
+   scène, écrite SUR L'ORDINATEUR (PNG) et jamais dans la bibliothèque de figures.
+   LES SUITES DE CETTE DEMANDE, elles aussi vérifiées ici :
+     · « i comandi ray e i suoi associati (alpha, shadow) devono essere spostati
+       nella sezione scene » → le bloc vit dans le groupe 🌫 Scene, et la barre
+       d'outils EST devenue la SECTION 2 de la barre de commande ;
+     · « se clicco su ray, anche per un piccolo peptide il rendering non finisce
+       mai e non arrivo a vedere l'immagine » → le budget de sortie (16 Mpx), la
+       règle de la passe antialias (4·factor² tuiles), le nombre de tuiles ANNONCÉ
+       dans le titre du bouton, le budget propre aux ombres portées et le second
+       message de progression (onStatus) ;
+     · « il pulsante figure é ridondante » → 📷 Figure, son handler, son message
+       et l'import de figuresLibrary ont disparu du viewer, sans laisser de code
+       mort derrière eux.
 
    CE QUI EST VÉRIFIÉ ICI :
 
@@ -24,20 +33,24 @@
           `size` du facteur, et il restaure l'échantillonnage et l'alpha de la
           toile à la fin (un fond transparent ne fuit pas dans le viewer).
    2. LES FONCTIONS PURES du module, EXÉCUTÉES ici : la taille réelle annoncée,
-      la liste du sélecteur en pixels, le plafonnement (budget + limites GPU),
-      le nom du fichier, la ligne de progression, et l'APPEL À NGL — une
+      la liste du sélecteur en pixels, le plafonnement (budget + limites GPU), le
+      NOMBRE DE TUILES et la règle de la passe antialias, le plan du facteur
+      choisi, le nom du fichier, la ligne de progression, et l'APPEL À NGL — une
       doublure de stage prouve que trim / factor / antialias / transparent et
-      onProgress sont tous passés EXPLICITEMENT.
+      onProgress sont tous passés EXPLICITEMENT, et qu'une image au-dessus du
+      budget des ombres revient quand même (sans ombre, et en le disant).
    3. LE CÂBLAGE, dans la source du viewer : le bouton et son sélecteur, l'état
-      et la persistance propres à ✨ Ray, et surtout l'ADDITIVITÉ — le 📷
-      publie toujours dans la bibliothèque, ✨ Ray n'y touche pas, et rien de
-      la scène n'est reconstruit pour rendre l'image.
+      et la persistance propres à ✨ Ray, le PLAN du facteur choisi (pixels et
+      tuiles, lisibles AVANT le clic) et l'ADDITIVITÉ — ✨ Ray n'écrit rien dans
+      la bibliothèque de figures, et rien de la scène n'est reconstruit.
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   RAY_FACTORS, RAY_DEFAULT_FACTOR, RAY_MAX_PIXELS, RAY_MAX_FACTOR,
+  RAY_ANTIALIAS_MAX_FACTOR, RAY_SHADOW_SKIP_NOTE,
   viewerPixelsOf, rayPixelsOf, clampRayFactor, rayFactorOptions, rayProgressText,
+  rayTilesOf, rayAntialiasFor, rayPlanOf,
   captureRayImage, saveRayImage, rayFileName, rayStamp, downloadBlob, rayDimLimitOf,
 } from './src/utils/viewerRayImage.js';
 
@@ -106,21 +119,45 @@ eq(rayPixelsOf(fakeStage(), 42).factor, RAY_MAX_FACTOR, 'un facteur absurde est 
 eq(rayPixelsOf(fakeStage(), 'zut').factor, RAY_DEFAULT_FACTOR, 'un facteur non numérique retombe sur le défaut');
 
 eq(clampRayFactor(fakeStageWithGl(800, 450, 16384), 6), 6, 'sur une petite toile le facteur demandé est accordé tel quel (6× = 4800×2700 px)');
-eq(clampRayFactor(fakeStageWithGl(1600, 900, 16384), 6), 5,
-  'le budget de 40 Mpx mord : 1600×900 × 6 = 52 Mpx → 5× (36 Mpx), quelle que soit la GPU');
-eq(clampRayFactor(fakeStage(1600, 900), 6), 5,
-  'sans limites GPU lisibles le repli de 8192 s’applique : 1600×6 > 8192 → 5× (jamais un rendu voué à l’échec)');
+eq(clampRayFactor(fakeStageWithGl(1600, 900, 16384), 6), 3,
+  `le budget de ${RAY_MAX_PIXELS / 1e6} Mpx mord : 1600×900 × 6 = 52 Mpx → 5 (36) → 4 (23) → 3 (13 Mpx), quelle que soit la GPU`);
+eq(clampRayFactor(fakeStage(1600, 900), 6), 3,
+  'sans limites GPU lisibles le repli de 8192 s’applique : 1600×6 > 8192, et le budget ramène à 3× (jamais un rendu voué à l’échec)');
 ok(clampRayFactor(fakeStage(1920, 1080), 6) < 6,
-  `le budget de ${RAY_MAX_PIXELS} px est respecté (1920×1080 × 6 dépasse 40 Mpx : NGL ne recevrait jamais cette taille)`);
+  `le budget de ${RAY_MAX_PIXELS} px est respecté (1920×1080 × 6 dépasse 16 Mpx : NGL ne recevrait jamais cette taille)`);
+eq(clampRayFactor(fakeStage(1920, 1080), 6), 2,
+  '…et sur une toile 1920×1080 il reste 2× (8 Mpx) : la taille qu’un « ray » peut vraiment finir');
 eq(clampRayFactor(fakeStageWithGl(1600, 900, 4096), 4), 2,
   'la limite GPU est respectée : 1600×4 > 4096 → 2× (le rendu ne peut pas échouer pour cette raison)');
 eq(clampRayFactor(fakeStageWithGl(1600, 900, 4096), 1), 1,
   '…mais jamais sous 1× : le plafonnement ne peut pas rendre l’image impossible');
 eq(clampRayFactor(null, 6), 6, 'une toile non mesurable garde le facteur demandé (le rendu échouera avec un message clair)');
 eq(clampRayFactor(fakeStage(512, 288), 99), RAY_MAX_FACTOR,
-  'le plafond dur reste RAY_MAX_FACTOR quand la toile peut le supporter (512×8 = 4096 px)');
+  'le plafond dur reste RAY_MAX_FACTOR quand la toile peut le supporter (512×8 = 4096 px, 9 Mpx)');
 eq(rayDimLimitOf(fakeStageWithGl(1600, 900, 4096)), 4096, 'la limite GPU lue est la plus petite des trois (texture · renderbuffer · viewport)');
 eq(rayDimLimitOf(fakeStage(1600, 900)), 8192, 'sans contexte WebGL lisible on retombe sur la limite de repli (jamais NaN)');
+
+/* LES TUILES ET LA PASSE ANTIALIAS — le coût RÉEL d’un facteur, celui qui décide
+   si un clic sur ✨ Ray revient (le rapport : « il rendering non finisce mai »). */
+eq(rayTilesOf(2, false), 4, '2× sans passe antialias : 4 tuiles');
+eq(rayTilesOf(2, true), 16, '2× AVEC la passe : 16 tuiles (le facteur de NGL est doublé, donc 4·factor²)');
+eq(rayTilesOf(3, false), 9, '3× sans passe : 9 tuiles');
+eq(rayTilesOf(3, true), 36, '3× avec la passe : 36 rendus — quatre fois le temps pour un lissage de plus');
+eq(rayTilesOf(99, false), RAY_MAX_FACTOR * RAY_MAX_FACTOR, 'un facteur absurde est plafonné avant le calcul des tuiles');
+eq(rayAntialiasFor(2), true, `jusqu’à ${RAY_ANTIALIAS_MAX_FACTOR}× la passe antialias est demandée (peu de tuiles)`);
+eq(rayAntialiasFor(3), false, 'dès 3× elle ne l’est plus : la tuile EST déjà un sur-échantillonnage de la toile');
+eq(rayAntialiasFor(6), false, '…et à 6× elle quadruplerait le rendu sans rien apporter');
+
+const plan = rayPlanOf(fakeStage(1600, 900), 6);
+eq(plan.best, 3, 'le plan d’un 6× sur une 1600×900 dit le facteur RÉELLEMENT accordé');
+eq([plan.realWidth, plan.realHeight], [4800, 2700], '…la taille que CE facteur produit');
+eq(plan.allowed, false, '…que la taille annoncée n’est pas accordée telle quelle');
+eq(plan.antialias, false, '…et que la passe antialias ne sera pas demandée');
+eq(plan.tiles, 9, '…avec le nombre de tuiles qui en découle : le bouton peut le DIRE avant le clic');
+const plan2 = rayPlanOf(fakeStage(1600, 900), 2);
+eq([plan2.best, plan2.allowed, plan2.antialias, plan2.tiles], [2, true, true, 16],
+  'un 2× accordé garde la passe antialias (16 tuiles annoncées)');
+eq(rayPlanOf(null, 3).realWidth, 0, 'sans toile mesurable le plan ne fabrique aucune taille');
 
 const labels = rayFactorOptions(fakeStage(1600, 900)).map((o) => o.label);
 eq(labels, ['2× · 3200×1800 px', '3× · 4800×2700 px', '4× · 6400×3600 px', '6× · 9600×5400 px'],
@@ -162,12 +199,13 @@ const out = await captureRayImage(captureStage(), { factor: 3, transparent: true
 const sent = calls[calls.length - 1];
 eq(sent.trim, false, 'trim est écrit EXPLICITEMENT (le défaut livré de NGL est déjà false, mais rien n’est laissé au hasard)');
 eq(sent.factor, 3, 'le facteur est passé à NGL — sans lui la « ray » serait une capture 1×');
-eq(sent.antialias, true, 'antialias est ACTIVÉ par défaut (c’est le moyennage 4·factor² tuiles : le lissage du « ray »)');
+eq(sent.antialias, false,
+  'à 3× la passe antialias n’est PAS demandée : la tuile est déjà un sur-échantillonnage, et ses 36 rendus sont ce qui faisait croire à un rendu qui ne finit jamais');
 eq(sent.transparent, true, 'le fond transparent demandé par l’utilisateur arrive bien à NGL');
 ok(sent.onProgress === spy, 'la progression est celle du viewer : la ligne de message suit les tuiles réellement rendues');
+eq([out.factor, out.antialias, out.tiles], [3, false, 9], 'le module rend à l’appelant le facteur, la passe et les TILES réellement rendues');
 eq(out.width, 4800, 'la taille annoncée À NGL correspond aux pixels réellement produits');
 eq(out.height, 2700, '…dans les deux dimensions');
-eq(out.factor, 3, 'le facteur effectif est rendu à l’appelant (le message peut le dire)');
 ok(!!out.blob && out.blob.type === 'image/png', 'le résultat est le Blob PNG de NGL, tel quel');
 eq(out.transparent, true, '…et le module se souvient du fond transparent pour nommer le fichier');
 
@@ -175,6 +213,23 @@ calls.length = 0;
 await captureRayImage(captureStage(800, 600), { factor: 2, antialias: false });
 eq(calls[0].antialias, false, 'antialias:false est respecté quand un appelant le demande (aucune valeur imposée)');
 eq(calls[0].factor, 2, '…et le facteur demandé passe tel quel sur une petite toile');
+calls.length = 0;
+const small = await captureRayImage(captureStage(800, 600), { factor: 2 });
+eq(calls[0].antialias, true, 'un 2× au repos garde la passe antialias : c’est la règle du module, visible dans le titre du bouton');
+eq(small.tiles, 16, '…et le message peut dire les 16 tuiles qu’elle coûte');
+
+/* LES OMBRES PORTÉES ONT LEUR PROPRE BUDGET : une image énorme n’est jamais
+   décodée / parcourue / ré-encodée — elle revient SANS ombre, avec la raison. */
+calls.length = 0;
+const skipped = await captureRayImage(captureStage(1600, 900), {
+  factor: 2, shadows: true, lightDir: [0, 0, 1], shadowMaxPixels: 100,
+});
+eq(skipped.shadowNote, RAY_SHADOW_SKIP_NOTE,
+  'au-dessus du budget des ombres la « ray » revient quand même — et le message DIT pourquoi il n’y a pas d’ombre');
+ok(!!skipped.blob, '…l’image de NGL est rendue telle quelle (aucune erreur, aucun blocage)');
+calls.length = 0;
+const additive = await captureRayImage(captureStage(800, 600), { factor: 2 });
+eq(additive.shadowNote, '', 'sans option d’ombre, aucune note : l’ombre reste ADDITIVE');
 
 await assert.rejects(() => captureRayImage(null, {}), /no NGL renderer/,
   'un viewer sans stage NGL est refusé avec un message lisible (jamais un plantage)');
@@ -238,24 +293,36 @@ const rayBody = bodyOf('captureRay');
 ok(!rayBody.includes('publishLibraryFigure'),
   '✨ Ray N’ÉCRIT PAS dans la bibliothèque de figures (choix retenu : un fichier sur l’ordinateur)');
 ok(!rayBody.includes('setCaptureMsg'),
-  '✨ Ray n’écrit pas dans le message du 📷 : les deux boutons sont totalement indépendants');
+  '✨ Ray n’écrit pas dans le message du 📷, qui n’existe plus');
 ok(!rayBody.includes('addRepresentation') && !rayBody.includes('removeRepresentation'),
   'aucune représentation n’est ajoutée / retirée pour rendre l’image : la scène n’est pas touchée');
 ok(!rayBody.includes('applyMaterialsToScene') && !rayBody.includes('requestRender'),
   'aucun matériau n’est réappliqué et aucun rendu n’est forcé dans le viewer');
 ok(rayBody.includes('rayRunRef.current'), 'les rendus concurrents sont départagés par un jeton (le dernier message gagne)');
+ok(rayBody.includes('onStatus: (text) => {'),
+  'la SECONDE moitié du travail (ombres portées + PNG) parle aussi : c’est ce silence qui ressemblait à un rendu bloqué');
+ok(rayBody.includes('RAY_SLOW_HINT_MS'),
+  '…et après 20 s la ligne de progression DIT que ce × est lourd sur cet écran (le rapport « il rendering non finisce mai »)');
 
-const shotBody = bodyOf('captureScene');
-ok(shotBody.includes('publishLibraryFigure({'),
-  'le 📷 Figure publie TOUJOURS dans la bibliothèque — son comportement n’a pas bougé');
-has('📷 Figure', '…et son bouton existe toujours, tel quel');
-has('onClick={captureScene}', '…branché sur le même gestionnaire qu’avant');
+/* LE 📷 FIGURE A ÉTÉ RETIRÉ (la demande : « il pulsante figure é redundant ») —
+   le handler, son message et l’import de la bibliothèque de figures ont disparu
+   AVEC le bouton : aucune fonction morte ne reste derrière. */
+gone('📷 Figure — the high', 'plus de bloc de bouton 📷 Figure');
+gone('const captureScene = async () => {', 'plus de gestionnaire de capture 📷');
+gone('const [captureMsg, setCaptureMsg] = useState', '…ni de message de capture');
+gone("from '../utils/figuresLibrary'", '…ni l’import de la bibliothèque de figures (plus rien ne l’utilise)');
+ok(!VIEW.includes('📷 Figure\n'), 'le libellé du bouton est bien parti de l’interface');
 
-const iMsg = VIEW.indexOf('>{captureMsg}</span>');
+/* LE BLOC ✨ RAY VIT DANS LE GROUPE 🌫 SCENE DE « 2 · TOOLBAR » (la demande :
+   « i comandi ray e i suoi associati (alpha, shadow) devono essere spostati nella
+   sezione scene »). Les indices sont pris sur la ligne de la scène, pas sur la
+   documentation d’en-tête du fichier, qui cite les mêmes mots. */
+const iScene = VIEW.indexOf('🌫 Scene</span>');
 const iRay = VIEW.indexOf('{rayMsg && (');
-const iSetup = VIEW.indexOf('⚙️ SETUP — save / load the WHOLE');
-ok(iMsg > 0 && iRay > iMsg && iSetup > iRay,
-  'le bloc ✨ Ray est INSÉRÉ entre le 📷 et le ⚙️ Setup : rien n’a été déplacé, tout est ajouté');
+const iModify = VIEW.indexOf('✏️ Modify</span>');
+ok(iScene > 0 && iRay > iScene && iModify > iRay,
+  'le bloc ✨ Ray est DANS le groupe 🌫 Scene (avant le groupe ✏️ Modify) — la sezione 2 contient bien scene · modify · analysis');
+ok(VIEW.includes('<VSection title="2 · Toolbar"'), '…et la barre d’outils est devenue la SECTION 2 de la barre de commande');
 
 const MODULE = readFileSync(new URL('./src/utils/viewerRayImage.js', import.meta.url), 'utf8');
 ok(!/useState|useRef|React/.test(MODULE), 'le module de la « ray » ne dépend d’aucun état React : il est exécutable tel quel');

@@ -117,10 +117,13 @@ const SCHEME_KEYS = 'let baseTypeSchemeKey = null, residueSchemeKey = null, char
 
 /* ══ 1. LE PARAGRAPHE AU MILIEU DU VIEWER ══════════════════════════════════ */
 gone('[object Object]', 'le `[object Object]` laissé au milieu de §2 a disparu');
-has('{/* ══ 2 · THE VIEWER TOOLS OF §2', "l'en-tête de §2 est un VRAI commentaire JSX (accolades ouvertes)");
-// Le paragraphe n'est plus du texte : sa première phrase ne peut plus être
-// dessinée QUE par le commentaire — donc elle est précédée de `{/*`.
-has('{/* ══ 2 · THE VIEWER TOOLS OF §2 ═════════════════════════════════════════════\n   The styling itself is NOT here any more',
+// Le §2 « Molecular Styling » a été dissous : ⚡ ESP et 🔢 Renumber vivent
+// maintenant dans le groupe ✏️ Modify de la barre « 2 · Toolbar ». Ce qui reste
+// vrai est la RÈGLE que le paragraphe protégeait — l'en-tête d'une section est un
+// VRAI commentaire JSX, jamais du texte dessiné au milieu du viewer.
+has('{/* ══ 2 · TOOLBAR — Scene | Modify | Analysis | PyMOL, ONE horizontal row',
+  "l'en-tête de §2 est un VRAI commentaire JSX (accolades ouvertes)");
+has('{/* ══ 2 · TOOLBAR — Scene | Modify | Analysis | PyMOL, ONE horizontal row ════\n    This is §2 of the command bar now',
   'le paragraphe de §2 est DANS les accolades du commentaire (sinon JSX le dessine)');
 
 /* ══ 2. « RAINBOW (first → last) » PEINT VRAIMENT ═════════════════════════ */
@@ -275,7 +278,8 @@ eq(RES_H.collectResidues({ eachAtom: () => { throw new Error('nope'); } }), [], 
 has('const list = residueInfo.length ? residueInfo : ensureResidueInfo();', 'le panneau se refait sa liste à la demande');
 has('const toggleRenumberPanel = () => {\n  ensureResidueInfo();', 'le bouton 🔢 remplit la liste AVANT d’ouvrir');
 has('onClick={toggleRenumberPanel}', 'les deux 🔢 (barre + §2) ouvrent le MÊME panneau');
-eq(VIEW.split('{renderRenumberPanel()}').length - 1, 2, 'le panneau est rendu dans la barre ET dans §2');
+eq(VIEW.split('{renderRenumberPanel()}').length - 1, 2,
+  'le panneau est rendu dans la barre (🔢 d’un en-tête de molécule) ET dans 2 · Toolbar → ✏️ Modify');
 gone('{showRenumberPanel && residueInfo.length > 0 && (', 'le rendu qui restait vide quand la liste l’était a disparu');
 // La renumérotation est VISIBLE : étiquettes 3D + bande des résidus.
 has('renumberOf: displayResno,', 'les étiquettes 3D suivent la renumérotation');

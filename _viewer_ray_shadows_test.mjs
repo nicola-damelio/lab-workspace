@@ -300,14 +300,19 @@ eq(rayShadowNote({}), '', '…ni pour un masque vide');
 
 /* ── 7. LE CÂBLAGE DANS viewerRayImage.js ──────────────────────────────── */
 hasRay("from './viewerRayShadows.js'", 'le module des ombres est importé par la « ray » (extension .js comprise : Node l’exécute)');
-hasRay('if (options.shadows !== false && options.lightDir) {',
+hasRay('const wantsShadow = options.shadows !== false && !!options.lightDir;',
   'sans option, la « ray » reste le supersampling pur — l’ombre est ADDITIVE');
+hasRay('const shadowTooBig = wantsShadow && pixels > shadowBudget;',
+  '…et une image au-dessus du budget des ombres n’est JAMAIS décodée / parcourue / ré-encodée : la « ray » revient');
 hasRay('const inputs = rayShadowInputsOf(stage, {', '…la scène est lue sur le stage');
 hasRay('buildRayShadowMask({', '…le masque est construit pour la taille RÉELLE de l’image (factor compris)');
 hasRay('blob = await addCastShadowsToBlob(blob, { shadow });',
   '…et multiplié dans les pixels que NGL vient d’écrire');
 hasRay('catch { shadow = null; }', 'une ombre impossible laisse l’image de NGL, jamais une erreur');
-hasRay("shadowNote: shadow ? rayShadowNote(shadow) : ''", 'le message de la « ray » dit ce que l’ombre a coûté');
+hasRay("shadowNote: shadow ? rayShadowNote(shadow) : (shadowTooBig ? RAY_SHADOW_SKIP_NOTE : '')",
+  'le message de la « ray » dit ce que l’ombre a coûté — ou POURQUOI il n’y en a pas');
+hasRay('if (status) status(\'✨ Casting the shadows of the still…\');',
+  'la seconde moitié du travail se DIT dans le message : c’est le silence qui ressemblait à un rendu bloqué');
 ok(!/addRepresentation|removeRepresentation|setParameters/.test(RAY),
   'la « ray » ne touche TOUJOURS pas la scène : aucune rep, aucun paramètre du viewer');
 
@@ -349,8 +354,13 @@ ok(rayBody.includes('nglKeyLightDirection(shadowAz, shadowEl)'),
 ok(rayBody.includes('rayShadowStrength'), '…avec la force du moment');
 ok(!rayBody.includes('addRepresentation') && !rayBody.includes('removeRepresentation'),
   'aucune représentation n’est ajoutée pour porter l’ombre : la scène n’est pas touchée');
-const shotBody = bodyOf('captureScene');
-ok(shotBody.includes('publishLibraryFigure({'), 'le 📷 Figure publie TOUJOURS dans la bibliothèque — inchangé');
+ok(rayBody.includes('onStatus: (text) => {'),
+  '…et l’attente des ombres est ANNONCÉE dans le message (plus de rendu silencieux)');
+/* LE 📷 FIGURE N’EXISTE PLUS (la demande : « il pulsante figure é ridondante ») :
+   le test qui gardait son handler est devenu le test de son DÉPART. */
+ok(!VIEW.includes('const captureScene = async () => {'), 'le gestionnaire du 📷 a quitté le viewer');
+ok(!VIEW.includes('📷 Figure — the high'), '…et son bouton avec lui');
+has('const captureRay = async () => {', '✨ Ray reste le SEUL export d’image de la scène');
 
 /* ── Bilan ─────────────────────────────────────────────────────────────── */
 console.log(`_viewer_ray_shadows_test.mjs — ${passed} assertions OK (ombres portées)`);

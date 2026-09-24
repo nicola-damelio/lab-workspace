@@ -5,11 +5,18 @@
    Ce qui doit rester vrai :
 
      • le bouton « ⬇ Minimize » est SEUL tout en haut de la fenêtre (§0) ;
-     • la barre de commande tient en TROIS lignes, dans l'ordre demandé :
-       1 General (PDB / Load / Trajectory / Clear / Figure) ·
-       2 Molecular Styling — ACCORDÉON REPLIÉ PAR DÉFAUT, dont le corps porte les
-         gestes GLOBAUX (Hide everything · ⚡ ESP · ✏️ Atom names · 🔢 Renumber) ·
-       3 Toolbar = Scene | Modify | Analysis | PyMOL sur UNE seule rangée ;
+     • la barre de commande tient en DEUX lignes, dans l'ordre demandé :
+       1 General (PDB / Load / Trajectory / Clear / PDB file / Predefined styles) ·
+       2 Toolbar = Scene | Modify | Analysis | PyMOL sur UNE seule rangée ;
+     • la ligne « 2 · Toolbar » est bien la SECTION 2 : l'ancien §2
+       « Molecular Styling » (un accordéon qui ne portait que 🙈 Hide everything ·
+       ⚡ ESP · 🔢 Renumber) a été dissous, et ses commandes ont rejoint les groupes
+       qui leur correspondent — ✨ Ray AVEC ses associés (résolution · ⬚ alpha ·
+       ◐ shadows) dans 🌫 Scene, ⚡ ESP et 🔢 Renumber (bouton ET liste) dans
+       ✏️ Modify. Le 📷 Figure et le 🙈 Hide everything de la rangée ont disparu
+       (la demande : « il pulsante figure é ridondante come anche il hide
+       everything ») — le geste de masquage vit dans la barre des sélections, sur
+       le MÊME état `hideAll` ;
      • le STYLING d'une molécule vit dans la barre « Molecules · styling » (à
        droite du canvas) : un ESPACE par molécule (la principale comprise), les
        rangées de son type (une par partie), et son Move X · Y · Z. Les six menus
@@ -64,41 +71,54 @@ ok(iMin > iReturn && iMin < iS1, 'le bouton Minimize est rendu AVANT toute autre
 ok(!VIEW.slice(iReturn, iMin).includes('<VSection'), '…et aucune section ne le précède');
 ok(VIEW.indexOf('Retract (minimize) the 3D viewer window') > 0, 'son infobulle décrit le repli de la fenêtre');
 
-/* ── 2. Les trois lignes de la barre de commande, dans l'ordre ──────────── */
-// PART 4 a remplacé l'en-tête « ▸ 2 · Molecular Styling » par un accordéon dont
-// le bouton dit son état (« ▲ collapse » / « ▼ expand ») : c'est son
-// `aria-expanded` qui marque la ligne §2.
+/* ── 2. Les DEUX lignes de la barre de commande, dans l'ordre ───────────── */
+// La révison qui a suivi PART 4 a dissous l'ancien §2 « Molecular Styling » (son
+// accordéon ne portait que 🙈 Hide everything · ⚡ ESP · 🔢 Renumber) : le tableau
+// d'outils est devenu la SECTION 2, et il porte les quatre groupes
+// (Scene | Modify | Analysis | PyMOL) sur UNE rangée.
 const order = [
   '<VSection title="1 · General"',
-  'aria-expanded={stylingOpen}',
-  '<VSection title="3 · Toolbar"',
+  '<VSection title="2 · Toolbar"',
 ];
 order.forEach((marker) => has(marker, `ligne « ${marker.replace('<VSection title=', '').replace('"', '')} » présente`));
 for (let i = 1; i < order.length; i++) {
   ok(VIEW.indexOf(order[i - 1]) < VIEW.indexOf(order[i]), `la ligne ${i} précède la ligne ${i + 1}`);
 }
 has('<VSection title="▶ Trajectory playback"', 'la barre de lecture a sa propre section, juste au-dessus du viewer');
-// Les quatre sections empilées d'avant n'existent plus : §4 Labels (ses trois
-// cases sont dans les menus) et §5/§6/§7, fondus dans la rangée d'outils §3.
+// Les sections empilées d'avant n'existent plus : §2 (dissous), §4 Labels (ses
+// trois cases sont dans les menus) et §5/§6/§7, fondus dans la rangée d'outils.
+gone('aria-expanded={stylingOpen}', 'plus d’accordéon §2 : les commandes sont dans la rangée 2 · Toolbar');
 gone('<VSection title="4 · Labels"', 'l\'ancienne section « 4 · Labels » est supprimée');
-gone('<VSection title="5 · Modify"', 'l\'ancienne section « 5 · Modify » est fondue dans la rangée §3');
-gone('<VSection title="6 · Analysis"', 'l\'ancienne section « 6 · Analysis » est fondue dans la rangée §3');
-gone('<VSection title="7 · Selections & PyMOL"', 'l\'ancienne section « 7 · Selections & PyMOL » est fondue dans la rangée §3');
+gone('<VSection title="5 · Modify"', 'l\'ancienne section « 5 · Modify » est fondue dans la rangée 2 · Toolbar');
+gone('<VSection title="6 · Analysis"', 'l\'ancienne section « 6 · Analysis » est fondue dans la rangée 2 · Toolbar');
+gone('<VSection title="7 · Selections & PyMOL"', 'l\'ancienne section « 7 · Selections & PyMOL » est fondue dans la rangée 2 · Toolbar');
 // Les quatre groupes sont bien DANS la même rangée, séparés par un filet.
-has('>🌫 Scene</span>', '[§3] groupe Scene dans la rangée');
-has('>✏️ Modify</span>', '[§3] groupe Modify dans la rangée');
-has('>📏 Analysis</span>', '[§3] groupe Analysis dans la rangée');
-has('>🧪 PyMOL</span>', '[§3] groupe PyMOL dans la rangée');
-ok((VIEW.match(/aria-hidden="true" \/>/g) || []).length >= 3, '[§3] les groupes sont séparés par des filets');
+has('>🌫 Scene</span>', '[§2] groupe Scene dans la rangée');
+has('>✏️ Modify</span>', '[§2] groupe Modify dans la rangée');
+has('>📏 Analysis</span>', '[§2] groupe Analysis dans la rangée');
+has('>🧪 PyMOL</span>', '[§2] groupe PyMOL dans la rangée');
+ok((VIEW.match(/aria-hidden="true" \/>/g) || []).length >= 3, '[§2] les groupes sont séparés par des filets');
 
-/* ── 2bis. §2 : accordéon REPLIÉ PAR DÉFAUT ─────────────────────────────── */
-has('const [stylingOpen, setStylingOpen] = useState(false);', '[§2] replié par défaut');
-has('onClick={() => setStylingOpen((v) => !v)}', '[§2] en-tête cliquable');
-has('aria-expanded={stylingOpen}', '[§2] l\'en-tête annonce son état');
-has('{stylingOpen && (', '[§2] les menus ne sont montés qu\'une fois ouvert');
-has("{stylingOpen ? '▲ collapse' : '▼ expand'}", '[§2] le bouton d’accordéon dit son état');
-has('The styling of every molecule lives in the bar on the right of the canvas — one space per molecule: ${Object.keys(sectionCatalog).length} space(s)',
-  '[§2] en-tête : le styling vit dans la barre, UN espace par molécule');
+/* ── 2bis. LES TROIS GROUPES DEMANDÉS, DANS L'ORDRE ─────────────────────── */
+// « quindi toolbar diventa la sezione 2 e contiene separatamente scene, modify e
+// analysis » : l'ordonnancement des groupes est donc une règle, pas un hasard.
+const iSceneG = VIEW.indexOf('>🌫 Scene</span>');
+const iModifyG = VIEW.indexOf('>✏️ Modify</span>');
+const iAnalysisG = VIEW.indexOf('>📏 Analysis</span>');
+ok(iSceneG > 0 && iSceneG < iModifyG && iModifyG < iAnalysisG,
+  '[§2] scene → modify → analysis, séparément et dans cet ordre');
+// Les commandes de la « ray » (et ses associés alpha / shadows) sont DANS Scene ;
+// ⚡ ESP et 🔢 Renumber sont DANS Modify ; rien n'est monté deux fois.
+const iRayBlock = VIEW.indexOf('✨ RAY — the HIGH-RESOLUTION STILL');
+ok(iRayBlock > iSceneG && iRayBlock < iModifyG, '[§2] ✨ Ray + ⬚ alpha + ◐ shadows dans le groupe Scene');
+ok(VIEW.indexOf('⚡ ESP — the electrostatic-potential surface') > iModifyG
+  && VIEW.indexOf('⚡ ESP — the electrostatic-potential surface') < iAnalysisG,
+  '[§2] ⚡ ESP dans le groupe Modify');
+ok(VIEW.indexOf('🔢 Renumber — the button AND its list live in ✏️ Modify') > iModifyG
+  && VIEW.indexOf('🔢 Renumber — the button AND its list live in ✏️ Modify') < iAnalysisG,
+  '[§2] 🔢 Renumber ET sa liste dans le groupe Modify');
+ok((VIEW.match(/rayMsg && \(/g) || []).length === 1, '[§2] un seul bloc ✨ Ray dans tout le viewer');
+ok(VIEW.indexOf('🎨 Background') < iModifyG, '[§2] 🎨 Background reste dans Scene');
 
 /* ── 2ter. La barre ▶ Play n'est pas remplacée par du texte ─────────────── */
 ok(!/\n\/\* ══ ▶ TRAJECTORY PLAYBACK/.test(VIEW),
@@ -131,9 +151,13 @@ has('if (traj) setTrajFile(traj);', '[§1] la trajectoire du PDB rangé revient 
 has('file: (!text && stashedFile) ? stashedFile : null,', '[§1] la résurrection repasse par l\'entonnoir habituel (fichier / URL / texte)');
 has("setStructOrigin('external');", '[§1] un chargement (fichier / URL / src de la page) marque une structure « chargée »');
 has("setStructOrigin('generated');", '[§1] …et le modèle déduit de la séquence a son propre marqueur');
-has("setStructAsideMsg('');", '[§1] « 🗑 Clear » efface aussi le PDB rangé et son message');
-has('onClick={captureScene}', '[§1] bouton Figure');
-has('{captureMsg && (', '[§1] message de capture');
+has('setStructAsideMsg(\'\');', '[§1] « 🗑 Clear » efface aussi le PDB rangé et son message');
+/* 📷 FIGURE N'EST PLUS LÀ (la demande : « il pulsante figure é ridondante ») :
+   le test garde désormais son DÉPART — bouton, message, handler et import. */
+gone('onClick={captureScene}', '[§1] plus de bouton 📷 Figure');
+gone('{captureMsg && (', '[§1] plus de message de capture');
+gone('const captureScene = async () => {', '[§1] …ni de gestionnaire de capture (aucun code mort)');
+gone("from '../utils/figuresLibrary'", '[§1] …ni d’import de la bibliothèque de figures');
 // ⬇ PDB — le PDB de CE QUI EST AFFICHÉ : le PdbWriter de NGL lit les atomes de
 // la structure avec les coordonnées de la frame courante de la trajectoire.
 has('onClick={downloadFramePdb}', '[§1] bouton ⬇ PDB');
@@ -150,25 +174,30 @@ has('onMouseDown={(e) => { resizeRef.current = { startY: e.clientY, startH: view
 // place ; le bouton « ↺ No cut (0 · 100000 · 0 Å) » et son infobulle suffisent).
 gone('Clipping Off = camera bounds at the extremes', '[§3] la phrase sur le clipping est supprimée');
 
-/* ── 4. §2 : hide everything, six menus ─────────────────────────────────── */
-// Le bouton « 🧬 Docking » a quitté la toolbar §2 ET la barre Molecules : il n'y
+/* ── 4. §2 : les commandes globales ont changé de section ────────────────── */
+// Le bouton « 🧬 Docking » a quitté la toolbar ET la barre Molecules : il n'y
 // a plus de mode global à basculer, donc plus d'état dockStyleMode ni de
 // fonction applyDockStylesNow. Le style se règle molécule par molécule (barre
-// Molecules) ; le look par défaut reste celui des SIX menus A–F de cette section.
+// Molecules) ; le look par défaut reste celui des rangées de chaque molécule.
 gone('🧬 Docking', '[§2] plus de bouton Docking (retiré partout)');
 gone('dockStyleMode', '[§2] …donc plus aucun mode global à basculer');
 gone('applyDockStylesNow', '[§2] …ni de fonction qui ré-appliquait le look');
 // Le docking n'a PLUS de menus de style à lui : il applique ceux de la section
-// (§2) — les deux listes « Prot: » / « Lig: » et le bouton 📸 « copier la vue »
+// — les deux listes « Prot: » / « Lig: » et le bouton 📸 « copier la vue »
 // ont disparu avec le module src/utils/dockStyles.js.
 gone('renderDockRoleSelects', '[§2] plus de menus Prot: / Lig: propres au docking');
 gone('captureDockStylesFromViewer', '[§2] plus de 📸 « copier la vue » du docking');
-has('{hideAll ? \'👁️ Show default\' : \'🙈 Hide everything\'}', '[§2] Hide everything');
+/* 🙈 HIDE EVERYTHING A QUITTÉ CETTE RANGÉE (la demande : « il pulsante figure é
+   ridondante come anche il hide everything ») : le geste vit dans la barre des
+   sélections, sur le MÊME état `hideAll`, donc rien n'est perdu — et le test le
+   vérifie des deux côtés. */
+gone("{hideAll ? '👁️ Show default' : '🙈 Hide everything'}", '[§2] le bouton Hide everything de la rangée a disparu');
+has("{hideAll ? 'Show all' : '🙈 Hide all'}", '[barre] …et la barre des sélections garde le geste (même état hideAll)');
+has('const [hideAll, setHideAll] = useState(false);', '[§2] l’état, lui, est intact : la barre continue de l’écrire');
 
 // Les six menus A–F (et leur grille de six colonnes) ont DISPARU avec PART 4 : le
-// corps du §2 ne porte plus que les gestes GLOBAUX du viewer (Hide everything ·
-// ESP · Atom names · Renumber), et le styling de chaque molécule vit dans la barre
-// de droite, un ESPACE par molécule.
+// styling de chaque molécule vit dans la barre de droite, un ESPACE par molécule,
+// et la rangée 2 · Toolbar ne porte plus que les commandes du viewer.
 gone('label="A · Proteins"', '[§2] plus de menu A · Proteins');
 gone('label="B · Nucleic acids"', '[§2] …ni B · Nucleic acids');
 gone('label="C · Lipids"', '[§2] …ni C · Lipids');
@@ -176,19 +205,17 @@ gone('label="D · Sugars"', '[§2] …ni D · Sugars');
 gone('label="E · Ligands"', '[§2] …ni E · Ligands');
 gone('label="F · Others', '[§2] …ni F · Others');
 gone('grid-cols-6', '[§2] …donc plus de grille de six colonnes');
-has('className="flex flex-wrap items-center gap-1"', '[§2] son corps est une rangée d’outils, pas une grille de menus');
-has('className="flex flex-col gap-1 bg-slate-50/80 border border-slate-200 rounded-lg px-1.5 py-1"',
-  '[§2] sa section : un cadre compact, replié en une seule ligne');
-has("{espOnSelected ? '⚡ ESP: On' : '⚡ ESP'}", '[§2] le bouton ⚡ ESP');
-has("🔢 Renumber{showRenumberPanel ? ' ▲' : ' ▼'}", '[§2] le bouton 🔢 Renumber');
-has('✏️ Atom names{Object.keys(renames).length', '[§2] le bouton ✏️ Atom names');
+has('className="flex flex-wrap items-center gap-1"', '[§2] sa rangée d’outils est bien une rangée, pas une grille de menus');
+// ⚡ ESP et 🔢 Renumber sont dans le groupe ✏️ Modify de cette rangée (la demande) ;
+// les panneaux qu’ils ouvrent (⚡ Range, la liste du renumbering) en sont des
+// enfants pleine largeur, donc la rangée reste haute d’une ligne quand rien n’est
+// ouvert.
+has("{espOnSelected ? '⚡ ESP: On' : '⚡ ESP'}", '[Modify] le bouton ⚡ ESP');
+has("🔢 Renumber{showRenumberPanel ? ' ▲' : ' ▼'}", '[Modify] le bouton 🔢 Renumber');
+has('✏️ Atom names{Object.keys(renames).length', '[Modify] le bouton ✏️ Atom names');
 has('{(entry.sections || []).map((sec) => renderSection(sec))}',
   '[barre] …et le styling d’une molécule est rendu par SON espace, à droite');
-// Plus de grille de six menus à une seule ligne : le §2 n'a plus qu'un en-tête et
-// un corps, et les rangées du styling vivent dans la barre de droite.
-// (Le bouton de menu A–F vit encore dans le composant HISTORIQUE des six menus,
-// mais plus rien ne le monte : le RENDU a une seule rangée par partie de molécule.)
-has('const renderSectionRow = (sec, sub) => {', '[§2] plus aucun bouton de menu A–F rendu : la rangée le remplace');
+has('const renderSectionRow = (sec, sub) => {', '[§2] une seule rangée par partie de molécule');
 
 /* ── 5. Le VOCABULAIRE des styles et des colorations ───────────────────── */
 // Les listes déroulantes d'une rangée sont construites depuis SA spécification
