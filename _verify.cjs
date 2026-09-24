@@ -114,6 +114,10 @@ const tests = [
   // l'ADDITIVITÉ : le 📷 publie toujours dans la bibliothèque, ✨ Ray écrit
   // seulement un PNG sur l'ordinateur, et aucune représentation n'est touchée.
   '_viewer_ray_test.mjs',
+  // Les DEUX MODES d'enregistrement de l'environnement (la demande) : le THÈME
+  // cumulatif par classe moléculaire (merge verrouillé par le fichier, prompt de
+  // conflit) et le SNAPSHOT exact de la scène, clé par section.
+  '_viewer_theme_snapshot_test.mjs',
   '_ligand_smiles_test.mjs',
   '_viewer_render_smoke_test.mjs',
 ];

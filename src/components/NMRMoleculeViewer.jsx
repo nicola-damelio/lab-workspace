@@ -1080,6 +1080,90 @@ const loadViewerSetups = () => {
 const saveViewerSetups = (map) => {
   try { localStorage.setItem(VIEWER_SETUP_KEY, JSON.stringify(map || {})); } catch { /* ignore */ }
 };
+/* ---- The TWO SAVE MODES of the visualisation environment (the request) -------
+   MODE 1 · THEME — a CUMULATIVE dictionary of styles keyed by MOLECULAR CLASS
+   (protein · nucleic acid · lipid · sugar · ligand · water · ion), independent of
+   the molecules on screen: it is a database of styles that grows with every save.
+   Saving MERGES: the classes of the scene are updated or added, every class the
+   file already knew and the scene does not have is kept untouched (the request's
+   « regola aurea »); if two molecules of ONE class are drawn differently, the bar
+   ASKS which of them becomes that class's default.
+   Loading applies the global environment, then walks the molecules of the scene:
+   a class the theme knows is applied, a class it does not know falls back on the
+   NEUTRAL base style — and the next cumulative save learns it.
+   MODE 2 · SNAPSHOT — the exact state of THIS system: the styles are keyed by
+   SECTION (the specific molecule: « protein · chain A »), and saving overwrites or
+   creates ONE isolated file. Loading restores the environment and maps the styles
+   back onto those very sections (by id, then by key), on the assumption that the
+   same coordinates / topology are loaded. */
+const VIEWER_THEME_KEY = 'labViewerThemes';
+const VIEWER_SNAPSHOT_KEY = 'labViewerSnapshots';
+const VIEWER_THEME_VERSION = 1;
+const VIEWER_SNAPSHOT_VERSION = 1;
+// ONE reader and ONE writer for both stores (the setup store above has its own, it
+// validates a field nothing else has).
+const loadNamedMap = (key) => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(key) || 'null');
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      const out = {};
+      Object.keys(raw).forEach((k) => {
+        const v = raw[k];
+        // A NAME → OBJECT entry only: a string, a number, null or an array in the
+        // file is junk and is dropped (a foreign .json must never reach the bar).
+        if (v && typeof v === 'object' && !Array.isArray(v)) out[k] = v;
+      });
+      return out;
+    }
+  } catch { /* first run / private mode → nothing saved */ }
+  return {};
+};
+const saveNamedMap = (key, map) => {
+  try { localStorage.setItem(key, JSON.stringify(map || {})); } catch { /* ignore */ }
+};
+/* WHAT BOTH MODES SAVE FIRST — « le impostazioni globali (luci, nebbia,
+   background, clipping…) »: the scene environment, the ⚙ wheel (its palettes and
+   its general look), the 2°-structure colours, the labels and the large-system
+   style. It is read back by the SAME applyViewerSetup the ⚙️ setups use, so a file
+   written by another build is merged over the defaults and can never break the
+   viewer. */
+const THEME_GLOBAL_KEYS = [
+  'fog', 'shadows', 'clip', 'background', 'quality', 'large', 'generalLook', 'palettes',
+  'catStyles', 'catLabels', 'sidechainStyle', 'sstrucColors', 'selectedResidueColor', 'assignedAtomColor',
+];
+const captureThemeGlobal = (setup) => {
+  const src = setup || {};
+  const out = {};
+  THEME_GLOBAL_KEYS.forEach((k) => { if (k in src) out[k] = src[k]; });
+  return out;
+};
+// The environment alone, applied over what is on screen (the class styles are the
+// layer the two modes add on top). ⚠ It is defined INSIDE the component, next to
+// captureViewerSetup: applyViewerSetup closes over the state setters, so a
+// module-scope copy would only throw « applyViewerSetup is not defined ».
+/* ONE CLASS'S STYLE, as a theme stores it, is the whole tree of that kind — its
+   General row AND every sub-row (style · colouring · radii · transparency ·
+   material): the very tree the styling window edits, read through treeOfSection. */
+// Signature of one class style, to tell « the two proteins are drawn the same »
+// from « they differ » (the conflict the request wants a prompt for).
+const classStyleSig = (tree) => JSON.stringify(tree || {});
+/* LA REGOLA AUREA, as a PURE function so the guard can run it: a theme file is
+   never overwritten — the classes of the scene are updated or added, and every
+   class the file already knew and the scene does not have keeps its style
+   untouched. `looksByClass` is { kind: [{ id, look }] }; `choices` (kind → section
+   id) resolves a class drawn in two ways, and the first molecule of the class is
+   the deterministic fallback when the user has not answered yet. */
+const mergeThemeClasses = (prevClasses, looksByClass, choices) => {
+  const next = { ...(prevClasses || {}) };
+  Object.keys(looksByClass || {}).forEach((kind) => {
+    const list = looksByClass[kind];
+    if (!list || !list.length) return;
+    const wanted = (choices && choices[kind]) || list[0].id;
+    const hit = list.find((e) => e.id === wanted) || list[0];
+    next[kind] = hit.look;
+  });
+  return next;
+};
 
 /* ---- Per-category 3D LABELS (the former global « 4 · Labels » section) ------
    Residues / Residue type / Atom names are now three checkboxes INSIDE each
@@ -5924,6 +6008,14 @@ const [showLipidColoursPanel, setShowLipidColoursPanel] = useState(false);
 // saved map, the name being typed, the open/closed state of the panel and its
 // feedback line (see captureViewerSetup / applyViewerSetup below).
 const [showSetupPanel, setShowSetupPanel] = useState(false);
+/* THE TWO SAVE MODES (the request): which one 💾 / 📂 / 🗑 / ⬇ / ⬆ act on, the two
+   stores, and the conflict the THEME save may have to resolve first (two molecules
+   of the same class drawn differently: the user picks the class default). */
+const [setupSaveMode, setSetupSaveMode] = useState('theme');   // 'theme' | 'snapshot'
+const [viewerThemes, setViewerThemes] = useState(() => loadNamedMap(VIEWER_THEME_KEY));
+const [viewerSnaps, setViewerSnaps] = useState(() => loadNamedMap(VIEWER_SNAPSHOT_KEY));
+const [themeConflicts, setThemeConflicts] = useState(null);    // [{ kind, options: [sec] }]
+const [themeChoices, setThemeChoices] = useState(null);        // kind → section id
 const [viewerSetups, setViewerSetups] = useState(() => loadViewerSetups());
 const [setupName, setSetupName] = useState('');
 const [setupMsg, setSetupMsg] = useState('');
@@ -11336,6 +11428,79 @@ const applyViewerSetup = (s) => {
 };
 
 // Feedback line of the ⚙️ panel (clears itself after a few seconds).
+/* ONE SET OF CONTROLS FOR BOTH MODES — the active mode supplies the store, so
+   💾 / 📂 / 🗑 / ⬇ / ⬆ need no second implementation, and switching mode never
+   touches the other store. */
+const activeEnvStore = () => (setupSaveMode === 'theme'
+  ? { key: VIEWER_THEME_KEY, map: viewerThemes, set: setViewerThemes, tag: 'theme' }
+  : { key: VIEWER_SNAPSHOT_KEY, map: viewerSnaps, set: setViewerSnaps, tag: 'snapshot' });
+const saveActiveEnv = () => {
+  const store = activeEnvStore();
+  const name = String(setupName || '').trim() || `${store.tag === 'theme' ? 'Theme' : 'Snapshot'} ${Object.keys(store.map).length + 1}`;
+  setSetupName(name);
+  setSetupMsg('');
+  if (store.tag === 'theme') saveTheme(name, themeChoices);
+  else saveSnapshot(name);
+};
+const loadActiveEnv = (name) => {
+  if (!name) return;
+  if (setupSaveMode === 'theme') loadTheme(name);
+  else loadSnapshot(name);
+};
+const deleteActiveEnv = () => {
+  const store = activeEnvStore();
+  if (!store.map[setupName]) { flashSetupMsg(`type the name of the ${store.tag} to delete`); return; }
+  const map = { ...store.map };
+  delete map[setupName];
+  store.set(map);
+  saveNamedMap(store.key, map);
+  flashSetupMsg(`“${setupName}” deleted`);
+};
+const exportActiveEnv = (name) => {
+  const store = activeEnvStore();
+  const entry = store.map[name];
+  if (!entry) { flashSetupMsg(`no such ${store.tag} — pick one in the list`); return; }
+  try {
+    const blob = new Blob([JSON.stringify({ mode: store.tag, name, entry }, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `viewer-${store.tag}-${name.replace(/[^\w.-]+/g, '_')}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    flashSetupMsg(`✓ “${name}” exported`);
+  } catch { flashSetupMsg('export failed'); }
+};
+const importActiveEnvFile = (file) => {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const raw = JSON.parse(String(reader.result || ''));
+      const entry = raw && raw.entry ? raw.entry : raw;
+      if (!entry || typeof entry !== 'object') throw new Error('not an environment file');
+      const mode = (raw && raw.mode) || setupSaveMode;
+      const store = mode === 'theme'
+        ? { key: VIEWER_THEME_KEY, map: viewerThemes, set: setViewerThemes, tag: 'theme' }
+        : { key: VIEWER_SNAPSHOT_KEY, map: viewerSnaps, set: setViewerSnaps, tag: 'snapshot' };
+      const name = String((raw && raw.name) || file.name.replace(/\.json$/i, '')).trim() || `Imported ${store.tag}`;
+      const map = { ...store.map, [name]: entry };
+      store.set(map);
+      saveNamedMap(store.key, map);
+      setSetupSaveMode(store.tag);
+      setSetupName(name);
+      if (store.tag === 'theme') loadTheme(name);
+      else loadSnapshot(name);
+    } catch (err) {
+      flashSetupMsg(`import failed: ${(err && err.message) || 'bad file'}`);
+    }
+  };
+  reader.onerror = () => flashSetupMsg('import failed: could not read the file');
+  reader.readAsText(file);
+};
+
 const flashSetupMsg = (m) => {
   setSetupMsg(m);
   clearTimeout(setupMsgTimerRef.current);
@@ -11405,6 +11570,162 @@ const importSetupFile = (file) => {
   };
   reader.onerror = () => flashSetupMsg('import failed: could not read the file');
   reader.readAsText(file);
+};
+
+/* 📂 MODE 1 · LOAD A THEME — the PARTIAL application of the request: the global
+   environment first, then every molecule whose class the theme knows. */
+const loadTheme = (name) => {
+  const th = viewerThemes[name];
+  if (!th) { flashSetupMsg('no such theme'); return; }
+  applyThemeGlobal(th.global);
+  const classes = th.classes || {};
+  // 1. La couche PERSISTÉE par classe : un système chargé (ou ajouté) PLUS TARD
+  //    arrive avec le style du thème — initialSectionTree la lit.
+  const nextKind = { ...(kindLooksRef.current || {}) };
+  Object.keys(classes).forEach((kind) => { if (MOL_KINDS.includes(kind)) nextKind[kind] = classes[kind]; });
+  setKindLooks(nextKind);
+  saveSectionLooks(nextKind);
+  kindLooksRef.current = nextKind;
+  // 2. Les molécules DÉJÀ à l'écran : chaque section repart du style de classe du
+  //    thème fusionné sur ses propres défauts — une classe que le thème ne connaît
+  //    pas garde le style de BASE NEUTRE, et le prochain enregistrement l'apprendra.
+  const looks = {};
+  let known = 0;
+  let neutral = 0;
+  const cat = sectionCatalogRef.current || {};
+  Object.keys(cat).forEach((molKey) => {
+    ((cat[molKey] || {}).sections || []).forEach((sec) => {
+      const cls = classes[sec.kind];
+      if (cls) known += 1; else neutral += 1;
+      looks[sec.id] = initialSectionTree({ [sec.kind]: cls || null }, sec.kind);
+    });
+  });
+  setSectionLooks(looks);
+  leaveLightMode();
+  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* ignore */ }
+  flashSetupMsg(`✓ theme “${name}” applied — ${known} section(s) styled, ${neutral} on the neutral base`);
+};
+
+/* 💾 MODE 2 · SAVE A SNAPSHOT — deterministic overwrite, keyed by the SECTION (the
+   exact molecules: « protein · chain A », « protein · chain B »), never by class,
+   and never merged with what the file held before (the request). */
+const saveSnapshot = (name) => {
+  const sections = {};
+  const cat = sectionCatalogRef.current || {};
+  Object.keys(cat).forEach((molKey) => {
+    ((cat[molKey] || {}).sections || []).forEach((sec) => {
+      sections[sec.id] = { key: sec.key, kind: sec.kind, name: sec.name || sec.key, tree: treeOfSection(sec) };
+    });
+  });
+  if (!Object.keys(sections).length) { flashSetupMsg('nothing on screen to snapshot'); return; }
+  const map = {
+    ...viewerSnaps,
+    [name]: {
+      v: VIEWER_SNAPSHOT_VERSION, name, savedAt: new Date().toISOString(),
+      global: captureThemeGlobal(captureViewerSetup()), sections, vis: { ...sectionVis },
+    },
+  };
+  setViewerSnaps(map);
+  saveNamedMap(VIEWER_SNAPSHOT_KEY, map);
+  flashSetupMsg(`✓ snapshot “${name}” — ${Object.keys(sections).length} section(s)`);
+};
+
+/* 📂 MODE 2 · LOAD A SNAPSHOT — the environment, then the styles back onto the very
+   same sections: by ID first, by the section KEY (protein|A) when the ids of a
+   reloaded file differ. A section the file does not know keeps its own look. */
+const loadSnapshot = (name) => {
+  const sn = viewerSnaps[name];
+  if (!sn) { flashSetupMsg('no such snapshot'); return; }
+  applyThemeGlobal(sn.global);
+  const byKey = {};
+  Object.keys(sn.sections || {}).forEach((id) => {
+    const e = (sn.sections || {})[id];
+    if (e && e.key) byKey[e.key] = id;
+  });
+  const looks = {};
+  let hit = 0;
+  let miss = 0;
+  const cat = sectionCatalogRef.current || {};
+  Object.keys(cat).forEach((molKey) => {
+    ((cat[molKey] || {}).sections || []).forEach((sec) => {
+      const entry = (sn.sections && sn.sections[sec.id]) || (byKey[sec.key] ? sn.sections[byKey[sec.key]] : null);
+      if (entry && entry.tree) { looks[sec.id] = entry.tree; hit += 1; } else { miss += 1; }
+    });
+  });
+  setSectionLooks(looks);
+  if (sn.vis && typeof sn.vis === 'object') setSectionVis({ ...sn.vis });
+  leaveLightMode();
+  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* ignore */ }
+  flashSetupMsg(`✓ snapshot “${name}” applied — ${hit} section(s)${miss ? `, ${miss} unknown (their look is kept)` : ''}`);
+};
+
+/* ══ THE TWO SAVE MODES OF THE VISUALISATION ENVIRONMENT (the request) ═══════
+   MODE 1 · THEME (cumulative) and MODE 2 · SNAPSHOT (exact scene): the two stores
+   and the shared helpers live at module scope (see VIEWER_THEME_KEY), the gestures
+   are here. */
+// The GLOBAL ENVIRONMENT alone — lights, fog, background, clipping, the ⚙ wheel —
+// applied over what is on screen; the class styles are the layer the two modes add
+// on top. It is the very reader the ⚙️ setups use, so a file from another build is
+// merged over the defaults and can never break the viewer.
+const applyThemeGlobal = (global) => applyViewerSetup({ ...(global || {}), catStyles: (global && global.catStyles) || {} });
+// Every section on screen, grouped by MOLECULAR CLASS — the unit a THEME is keyed
+// by (protein · nucleic acid · lipid · sugar · ligand · water · ion).
+const sceneSectionsByClass = () => {
+  const out = {};
+  const cat = sectionCatalogRef.current || {};
+  Object.keys(cat).forEach((molKey) => {
+    ((cat[molKey] || {}).sections || []).forEach((sec) => {
+      if (!MOL_KINDS.includes(sec.kind)) return;
+      (out[sec.kind] = out[sec.kind] || []).push(sec);
+    });
+  });
+  return out;
+};
+// The tree of ONE section as the bar holds it (its General row + every sub-row).
+const treeOfSection = (sec) => sectionTreeOf(sec.id, sec.kind);
+const classLabelOfSection = (sec) => `${MOL_KIND_LABELS[sec.kind] || sec.kind} · ${sec.name || sec.key}`;
+/* 💾 MODE 1 · SAVE A THEME. Merge first, prompt when the scene disagrees with
+   itself: two molecules of one class drawn differently have no single « default for
+   the class », so the user is asked which one wins. Called a first time it returns
+   after ASKING (nothing is written); called again with the choices it writes. */
+const saveTheme = (name, choices) => {
+  const byClass = sceneSectionsByClass();
+  const kinds = Object.keys(byClass);
+  if (!kinds.length) { flashSetupMsg('nothing on screen to learn a theme from'); return; }
+  const conflicts = kinds.filter((kind) => {
+    const sigs = [...new Set(byClass[kind].map((sec) => classStyleSig(treeOfSection(sec))))];
+    return sigs.length > 1;
+  }).map((kind) => ({ kind, options: byClass[kind] }));
+  if (conflicts.length && !choices) {
+    setThemeConflicts(conflicts);
+    // Pre-filled with the first molecule of each class, so the selects SHOW what
+    // « 💾 Save » pressed again will write.
+    setThemeChoices(Object.fromEntries(conflicts.map((c) => [c.kind, c.options[0].id])));
+    flashSetupMsg(`${conflicts.length} class(es) drawn in two ways — choose the default, then 💾 Save again`);
+    return;
+  }
+  const prev = viewerThemes[name] || { v: VIEWER_THEME_VERSION, classes: {} };
+  // LA REGOLA AUREA: the file is never overwritten — the classes of the scene are
+  // updated or added, every class the file already knew stays untouched.
+  const looksByClass = {};
+  kinds.forEach((kind) => {
+    looksByClass[kind] = byClass[kind].map((sec) => ({ id: sec.id, look: treeOfSection(sec)[kind] || {} }));
+  });
+  const nextClasses = mergeThemeClasses(prev.classes, looksByClass, choices);
+  const learned = kinds;
+  const map = {
+    ...viewerThemes,
+    [name]: {
+      v: VIEWER_THEME_VERSION, name, savedAt: new Date().toISOString(),
+      global: captureThemeGlobal(captureViewerSetup()), classes: nextClasses,
+    },
+  };
+  setViewerThemes(map);
+  saveNamedMap(VIEWER_THEME_KEY, map);
+  setThemeConflicts(null);
+  setThemeChoices(null);
+  const kept = Object.keys(nextClasses).filter((k) => !kinds.includes(k));
+  flashSetupMsg(`✓ theme “${name}” — ${learned.length} class(es) learned${kept.length ? `, ${kept.length} kept (${kept.join(' · ')})` : ''}`);
 };
 
 // A swatch of the 🔬 nucleic-acid panel: it sets the colour AND switches « Colour
@@ -11706,6 +12027,90 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
       ? `saved: ${Object.keys(viewerSetups).sort().join(' · ')} — ⬇ exports the one named on the left`
       : 'no predefined style yet — type a name and press 💾 Save'}
   </span>
+  {/* ══ THE TWO SAVE MODES OF THE VISUALISATION ENVIRONMENT (the request) ══════
+      🎨 THEME — a dictionary of styles keyed by MOLECULAR CLASS (protein · nucleic
+      acid · lipid · sugar · ligand · water · ion), independent of the molecules on
+      screen. Saving MERGES into what the file already held: the classes of THIS
+      scene are updated or added, every class the file knew and the scene has not
+      keeps its style; two molecules of one class drawn differently and the bar ASKS
+      which one becomes the class default (themeConflicts).
+      📷 SNAPSHOT — the exact state of THIS system, section by section (« protein ·
+      chain A » …), with NO merge: one isolated file, mapped back onto those very
+      sections (by id, then by section key).
+      Both save the global environment first — lights, fog, background, clipping and
+      the ⚙ wheel — which is what applyThemeGlobal replays. */}
+  <div className="w-full border-t border-teal-200 pt-2 flex flex-wrap items-center gap-2">
+    <span className="text-[10px] font-black text-teal-800 uppercase tracking-wide whitespace-nowrap">Save mode</span>
+    {[['theme', '🎨 Theme (cumulative)'], ['snapshot', '📷 Snapshot (this scene)']].map(([m, label]) => (
+      <button key={m} type="button"
+        onClick={() => { setSetupSaveMode(m); setThemeConflicts(null); setThemeChoices(null); }}
+        className={`px-2 py-1 text-[10px] font-bold rounded border h-7 transition-colors ${setupSaveMode === m ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-teal-700 border-teal-300 hover:bg-teal-100'}`}
+        title={m === 'theme'
+          ? 'Theme: learn the styles BY MOLECULAR CLASS (protein · nucleic acid · lipid · sugar · ligand · water · ion) and MERGE them into the theme file — the classes the file already knew and this scene has not are kept. Two molecules of one class drawn differently: you are asked which one becomes the class default.'
+          : 'Snapshot: the exact state of THIS system, section by section (« protein · chain A » …), with no merge — one isolated file for these very coordinates.'}>
+        {label}
+      </button>
+    ))}
+    <button type="button" onClick={saveActiveEnv}
+      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-400 text-teal-800 hover:bg-teal-100 h-7"
+      title={setupSaveMode === 'theme'
+        ? 'Save the theme under the name written on the left: the styles of the classes on screen are learned (merged), the rest of the file is left untouched'
+        : 'Save a snapshot of this scene under the name written on the left (an existing name is overwritten — no merge)'}>
+      💾 Save {setupSaveMode === 'theme' ? 'theme' : 'snapshot'}
+    </button>
+    <select value="" onChange={(e) => loadActiveEnv(e.target.value)}
+      title={setupSaveMode === 'theme'
+        ? 'Load a theme: the global environment, then the style of every class the theme knows — a class it does not know keeps the neutral base style'
+        : 'Load a snapshot: the global environment and the styles of the very sections it photographed'}
+      className="border border-teal-300 rounded-md px-1.5 py-1 text-[11px] bg-white outline-none focus:border-teal-500 h-7 w-40">
+      <option value="">📂 Load…</option>
+      {Object.keys(activeEnvStore().map).sort().map((n) => <option key={n} value={n}>{n}</option>)}
+    </select>
+    <button type="button" onClick={deleteActiveEnv}
+      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-red-300 text-red-600 hover:bg-red-50 h-7"
+      title="Delete the theme / snapshot whose name is written on the left">
+      🗑 Delete
+    </button>
+    <button type="button" onClick={() => exportActiveEnv(setupName)}
+      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-300 text-teal-700 hover:bg-teal-100 h-7"
+      title="Download it as a .json file — re-importable on another page or another computer">
+      ⬇ Export
+    </button>
+    <label className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-300 text-teal-700 hover:bg-teal-100 h-7 flex items-center gap-1 cursor-pointer"
+      title="Import a theme / snapshot .json file: its mode is read from the file and it is applied at once">
+      ⬆ Import
+      <input type="file" accept=".json,application/json" className="hidden"
+        onChange={(e) => { importActiveEnvFile(e.target.files && e.target.files[0]); e.target.value = ''; }} />
+    </label>
+    <span className="text-[10px] text-slate-500 italic">
+      {setupSaveMode === 'theme'
+        ? `themes: ${Object.keys(viewerThemes).sort().join(' · ') || 'none yet — type a name and press 💾 Save theme'}`
+        : `snapshots: ${Object.keys(viewerSnaps).sort().join(' · ') || 'none yet — type a name and press 💾 Save snapshot'}`}
+    </span>
+    {themeConflicts && (
+      <div className="w-full bg-amber-50 border border-amber-300 rounded-lg px-2 py-1.5 flex flex-col gap-1">
+        <span className="text-[10px] font-black text-amber-800 uppercase tracking-wide">
+          {themeConflicts.length} class(es) drawn in two ways — choose the class default
+        </span>
+        {themeConflicts.map((c) => (
+          <label key={c.kind} className="flex items-center gap-1 text-[10px] text-amber-900">
+            <span className="font-bold w-24 shrink-0 truncate" title="The molecular class a theme keys its styles by">
+              {MOL_KIND_LABELS[c.kind] || c.kind}
+            </span>
+            <select value={(themeChoices && themeChoices[c.kind]) || ''}
+              onChange={(e) => setThemeChoices({ ...(themeChoices || {}), [c.kind]: e.target.value })}
+              className="border border-amber-300 rounded text-[10px] bg-white flex-1 min-w-0 h-6"
+              title="The molecule whose style becomes the default of this class in the theme">
+              {c.options.map((sec) => <option key={sec.id} value={sec.id}>{classLabelOfSection(sec)}</option>)}
+            </select>
+          </label>
+        ))}
+        <span className="text-[9px] text-amber-700">
+          Press 💾 Save theme again: the chosen style is written as the class default, and the styles of the other molecules are not touched.
+        </span>
+      </div>
+    )}
+  </div>
 </div>
 )}
 </VSection>
