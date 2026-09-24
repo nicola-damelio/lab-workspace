@@ -36,6 +36,19 @@
     7. L'ÉPAISSEUR DU PROXY suit le TRAIT de chaque représentation (van der Waals
        pour les sphères, tube fin pour un cartoon) : c'est ce qui recolle l'ombre
        sur ce qui est dessiné.
+    8. LA MOLÉCULE N'EST PAS À L'ORIGINE. La caméra de NGL ne bouge jamais : elle
+       est parquée à z = −80 et regarde l'ORIGINE de la scène, et c'est la
+       molécule qui est déplacée sous elle par deux groupes du viewer
+       (`rotationGroup` du clic, `translationGroup` du recentrage). Un proxy placé
+       avec le seul `component.matrix` tombe donc À CÔTÉ dès qu'un `autoView` a
+       recentré la molécule — la « tache plate » des rapports, et, hors frustum,
+       aucune ombre du tout (§15).
+    9. LA CAMÉRA APRÈS UNE PASSE DE SUPER-ÉCHANTILLONNAGE porte un `view.enabled`
+       à false pour toujours (three ne retire jamais l'objet : `clearViewOffset()`
+       ne fait que le désactiver). Refuser la caméra sur la simple présence de
+       `view` refusait TOUTES les caméras vivantes de l'application, et l'erreur
+       était avalée en silence : la « ray » revenait sans ombre et sans un mot.
+       Le message DIT désormais pourquoi (§13 bis, §16).
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -44,7 +57,7 @@ import {
   mat4Orthographic, mat4TransformPoint, boundsOf, boundsBoxOf, boxCornersOf, clipToScreen,
   rasterizeSpheres, shadowMaskOf, softenMask, sampleMaskBilinear, applyShadowToPixels,
   lightDepthScale, lightMatricesOf, shadowRigOf, buildRayShadowMask, atomsFromStage,
-  cameraFromViewer, rayShadowInputsOf, shadowImageData, addCastShadowsToBlob, rayShadowNote,
+  cameraFromViewer, viewerMatrixOf, rayShadowInputsOf, shadowImageData, addCastShadowsToBlob, rayShadowNote,
   pcfDiscOf, pcfRotationOf, PROXY_STROKE_BY_TYPE, repTypeOf, proxyRadiusOf, drawnProxyRadiiOf,
 } from './src/utils/viewerRayShadows.js';
 
@@ -327,8 +340,9 @@ ok(readAt > 0 && renderAt > 0 && readAt < renderAt,
   'le rig (caméra + atomes) est lu AVANT `stage.makeImage` : la caméra ne peut pas être celle d’une tuile');
 hasRay('blob = await addCastShadowsToBlob(blob, { shadow });',
   '…et multiplié dans les pixels que NGL vient d’écrire');
-hasRay('catch { shadow = null; }', 'une ombre impossible laisse l’image de NGL, jamais une erreur');
-hasRay("shadowNote: shadow ? rayShadowNote(shadow) : (shadowTooBig ? RAY_SHADOW_SKIP_NOTE : '')",
+hasRay("shadowSkip = (err && err.message) || 'the mask could not be applied to the still';",
+  'une ombre impossible laisse l’image de NGL, jamais une erreur — mais elle DIT pourquoi (l’erreur est gardée, pas avalée)');
+hasRay('(shadowTooBig ? RAY_SHADOW_SKIP_NOTE : rayShadowNote(null, shadowSkip)),',
   'le message de la « ray » dit ce que l’ombre a coûté — ou POURQUOI il n’y en a pas');
 hasRay('if (status) status(\'✨ Casting the shadows of the still…\');',
   'la seconde moitié du travail se DIT dans le message : c’est le silence qui ressemblait à un rendu bloqué');
@@ -771,8 +785,35 @@ const bareCamera = {
 };
 eq(cameraFromViewer({ camera: bareCamera }).clip.length, 16,
   'une caméra au repos donne ses deux matrices (le cas normal)');
-throws(() => cameraFromViewer({ camera: { ...bareCamera, view: { fullWidth: 4, fullHeight: 4 } } }),
-  /inside a tile/, 'une caméra restée dans une tuile est REFUSÉE — jamais un masque faux en silence');
+
+/* ── 13 bis. LA CAMÉRA APRÈS UNE PASSE DE SUPER-ÉCHANTILLONNAGE — LE « view » ──
+   QUI N’EN FINIT JAMAIS
+   LE rapport le plus coûteux : « there is no cast shadow ». Le garde-fou
+   ci-dessus refusait la caméra sur la simple PRÉSENCE de `cam.view` — or three
+   ne retire JAMAIS cet objet : `clearViewOffset()` ne fait que
+   `view.enabled = false` (vérifié dans le three livré, Camera#clearViewOffset).
+   Et NGL super-échantillonne tout seul : `Viewer.__renderSuperSample` fait
+   `setViewOffset` par échantillon et `clearViewOffset()` à la fin — passe
+   demandée par le rig ◐ Shadows (`sampleLevel` 2) et rejouée au niveau 3 sur
+   chaque image immobile. Donc après la PREMIÈRE image rendue, toute caméra
+   vivante porte un `view` VRAI dont `enabled` est faux : le garde-fou levait à
+   CHAQUE clic de ✨ Ray, `rayShadowInputsOf` levait avec lui, `captureRayImage`
+   avalait l’erreur — la « ray » revenait sans ombre ET sans un mot sur l’ombre.
+   La question est celle que three se pose lui-même dans updateProjectionMatrix :
+   `view !== null && view.enabled`. Une caméra laissée dans une TUILE reste
+   refusée (c’est une sous-fenêtre) ; une caméra que le super-échantillonneur a
+   désactivée est INERTE (sa matrice de projection est celle de l’image entière)
+   et doit être lue, sinon la fonctionnalité n’existe simplement pas. */
+const THREEJS = readFileSync(new URL('./node_modules/three/build/three.module.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+ok(/clearViewOffset\(\)\s*\{\s*if \( this\.view !== null \)\s*\{\s*this\.view\.enabled = false;/.test(THREEJS),
+  'three livré : `clearViewOffset()` ne fait que `view.enabled = false` — l’objet `view` reste sur la caméra');
+ok(NGLJS.includes('__renderSuperSample') && NGLJS.includes('clearViewOffset'),
+  'NGL livré : la passe de super-échantillonnage encadre ses échantillons par setViewOffset / clearViewOffset — d’où le `view` résiduel');
+const supersampledView = { enabled: false, fullWidth: 4, fullHeight: 4, offsetX: 0, offsetY: 0, width: 2, height: 2 };
+eq(cameraFromViewer({ camera: { ...bareCamera, view: supersampledView } }).clip.length, 16,
+  'une caméra déjà super-échantillonnée (view.enabled false) EST LUE : c’est l’état NORMAL de l’application');
+throws(() => cameraFromViewer({ camera: { ...bareCamera, view: { ...supersampledView, enabled: true } } }),
+  /inside a tile/, '…mais une caméra réellement dans une TUILE (view.enabled true) reste REFUSÉE — une sous-fenêtre n’est pas l’image');
 
 /* ── 14. UN DESSIN FIN PROJETTE VRAIMENT QUELQUE CHOSE ───────────────────────
    LE rapport : « the ray doesn't do anything ». Mesuré, et c'était exact : un
@@ -860,8 +901,208 @@ ok(tubeFlat.mean > 0.05,
 ok(tubeGrazing.shadowed > tubeFlat.shadowed,
   `une lampe rasante ombre PLUS qu’une lampe de face (${tubeGrazing.shadowed} contre ${tubeFlat.shadowed}) : c’est la géométrie qui décide`);
 
+/* ── 15. LA MOLÉCULE N'EST PAS À L'ORIGINE — LE REPÈRE DE LA SCÈNE ──────────
+   LE rapport : « l'ombre est une tache plate posée À CÔTÉ de la molécule » et,
+   dans les « ray », aucune ombre portée du tout. La caméra de NGL ne bouge
+   JAMAIS : elle est parquée à `cameraZ` (−80) et regarde l'ORIGINE de la scène,
+   et c'est la MOLÉCULE qui est déplacée sous elle par deux groupes du viewer —
+   lus dans le NGL livré, `Viewer._initScene` :
+       scene → rotationGroup → translationGroup → modelGroup → component.group
+   Le recentrage (`autoView`) écrit `translationGroup.position`, le clic écrit
+   `rotationGroup.matrix`, et NGL applique exactement cette chaîne partout où il a
+   besoin d'une position à l'écran — `getPositionOnCanvas(p)` est
+   `p.add(translationGroup.position).applyMatrix4(rotationGroup.matrix)
+   .project(camera)`, et le pick des contrôles de transformation finit par
+   `…add(translationGroup.position); …applyMatrix4(rotationGroup.matrix)`.
+   `Component.updateMatrix()`, lui, ne construit que la place du composant DANS
+   SON FICHIER : ni le recentrage ni la rotation n'y sont. Un proxy bâti avec le
+   seul `component.matrix` tombe donc à côté dès qu'un autoView a recentré la
+   molécule — et si la molécule est loin de l'origine il peut sortir du frustum :
+   le masque est construit et ne touche AUCUN pixel (le « no cast shadow » du
+   rapport). Le test prend des coordonnées de fichier banales — centre
+   (12, −7, 25) Å — un recentrage, un quart de tour, et une molécule déplacée par
+   la barre de style. */
+const rotY = (deg) => {
+  const t = (deg * Math.PI) / 180;
+  const c = Math.cos(t);
+  const s = Math.sin(t);
+  // Colonnes, la disposition de three : m11 c, m13 s, m31 −s, m33 c.
+  return [c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1];
+};
+const rotXv = mat4TransformPoint(rotY(90), [1, 0, 0, 1]);
+near(rotXv[0], 0, 1e-9, '+X tourné de 90° autour de Y tombe sur…');
+near(rotXv[2], -1, 1e-9, '…−Z : la matrice de ce test est bien une rotation de three');
+const translateOf = (x, y, z) => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1];
+const FILE_CENTER = [12, -7, 25];               // des coordonnées de fichier banales
+/* La caméra de NGL telle que le viewer la construit — `cameraFov` 40° à
+   `cameraZ` −80, regardant l'origine — ET l'état RÉEL d'une caméra vivante, avec
+   le `view` désactivé que le super-échantillonneur lui a laissé (§13 bis). */
+const nglCameraOf = (aspect = 1.9) => {
+  const dist = 80;
+  const nearPlane = 0.1;
+  const far = dist * 4;
+  const viewMatrix = mat4LookAt([0, 0, -dist], [0, 0, 0], [0, 1, 0]);
+  const top = nearPlane * Math.tan((40 * Math.PI) / 360);
+  const proj = [
+    1 / (aspect * top), 0, 0, 0,
+    0, 1 / top, 0, 0,
+    0, 0, -((far + nearPlane) / (far - nearPlane)), -1,
+    0, 0, (-2 * far * nearPlane) / (far - nearPlane), 0,
+  ];
+  return {
+    projectionMatrix: { elements: proj },
+    matrixWorldInverse: { elements: viewMatrix },
+    type: 'PerspectiveCamera',
+    view: { enabled: false, fullWidth: 1, fullHeight: 1, offsetX: 0, offsetY: 0, width: 1, height: 1 },
+    clip: mat4Multiply(proj, viewMatrix),
+  };
+};
+const viewerChain = () => mat4Multiply(rotY(90),
+  translateOf(-FILE_CENTER[0], -FILE_CENTER[1], -FILE_CENTER[2]));
+const sceneAtoms = () => {
+  const n = 40;
+  const position = new Float32Array(n * 3);
+  const radius = new Float32Array(n).fill(1.7);
+  for (let i = 0; i < n; i += 1) {
+    const t = (i * 100 * Math.PI) / 180;
+    position[i * 3] = 2.3 * Math.cos(t) + FILE_CENTER[0];
+    position[i * 3 + 1] = i - n / 2 + FILE_CENTER[1];
+    position[i * 3 + 2] = 2.3 * Math.sin(t) + FILE_CENTER[2];
+  }
+  return { n, position, radius };
+};
+/* `groups` : ce que le viewer DONNE au module (les deux groupes de NGL). Sans
+   eux c'est le chemin d'autrefois — le module ne les lisait pas. */
+const sceneStage = ({ groups, compShift = [0, 0, 0] }) => {
+  const { n, position, radius } = sceneAtoms();
+  return {
+    compList: [{
+      structure: { atomCount: n, getAtomData: () => ({ position, radius }) },
+      matrix: { elements: translateOf(compShift[0], compShift[1], compShift[2]) },
+      reprList: [{
+        name: tubeRep.type, getType: () => tubeRep.type, type: 'representation',
+        parameters: { visible: true },
+        repr: { ...tubeRep, visible: true, structureView: view(Array.from({ length: n }, (_, i) => i)) },
+      }],
+    }],
+    viewer: {
+      camera: nglCameraOf(),
+      ...(groups ? {
+        rotationGroup: { matrix: { elements: rotY(90) } },
+        translationGroup: { position: { x: -FILE_CENTER[0], y: -FILE_CENTER[1], z: -FILE_CENTER[2] } },
+      } : {}),
+    },
+  };
+};
+
+/* Le masque du module, ET le dessin que la caméra a vraiment filmé — la chaîne
+   complète de NGL, écrite ici à la main (R · T · matrice du composant). On mesure
+   ce qui compte : de l'ombre, combien tombe SUR le dessin, et quelle part du
+   dessin est ombrée. */
+const sceneShadowOf = ({ groups, compShift = [0, 0, 0], az = 120, el = 15 }) => {
+  const inputs = rayShadowInputsOf(sceneStage({ groups, compShift }), {
+    lightDir: lampOf(az, el), options: { softness: 0 },
+  });
+  const mask = buildRayShadowMask({ ...inputs, width: 600, height: 316, options: { softness: 0 } });
+  /* LE DESSIN, indépendamment du module : les atomes DU FICHIER, avec le tube que
+     NGL dessine (chaque lien rempli au même pas de 0,3 Å et au même trait de
+     0,5 Å), passés par la chaîne vraie — c'est ce que la caméra a filmé. */
+  const chain = mat4Multiply(viewerChain(), translateOf(compShift[0], compShift[1], compShift[2]));
+  const { n, position } = sceneAtoms();
+  const pts = [];
+  for (let i = 0; i < n; i += 1) {
+    pts.push(position[i * 3], position[i * 3 + 1], position[i * 3 + 2]);
+    if (i + 1 >= n) continue;
+    const dx = position[(i + 1) * 3] - position[i * 3];
+    const dy = position[(i + 1) * 3 + 1] - position[i * 3 + 1];
+    const dz = position[(i + 1) * 3 + 2] - position[i * 3 + 2];
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const fills = Math.max(0, Math.ceil(d / 0.3) - 1);
+    for (let k = 1; k <= fills; k += 1) {
+      const u = k / (fills + 1);
+      pts.push(position[i * 3] + dx * u, position[i * 3 + 1] + dy * u, position[i * 3 + 2] + dz * u);
+    }
+  }
+  const drawnCount = pts.length / 3;
+  const world = new Float32Array(pts.length);
+  const radii = new Float32Array(drawnCount).fill(tubeRep.radiusSize);
+  for (let i = 0; i < drawnCount; i += 1) {
+    const p = mat4TransformPoint(chain, [pts[i * 3], pts[i * 3 + 1], pts[i * 3 + 2], 1]);
+    world[i * 3] = p[0];
+    world[i * 3 + 1] = p[1];
+    world[i * 3 + 2] = p[2];
+  }
+  const draw = rasterizeSpheres({
+    positions: world, radii, count: drawnCount,
+    clip: inputs.camera.clip, width: mask.maskWidth, height: mask.maskHeight,
+    axisUp: [0, 1, 0], needWorld: false,
+  });
+  let drawn = 0;
+  let onDrawing = 0;
+  let shadowAll = 0;
+  for (let i = 0; i < draw.hit.length; i += 1) {
+    const inked = mask.mask[i] > 0.002;
+    if (inked) {
+      shadowAll += 1;
+      if (draw.hit[i]) onDrawing += 1;
+    }
+    if (draw.hit[i]) drawn += 1;
+  }
+  return { drawn, onDrawing, shadowAll, shadowed: mask.shadowed, proxies: inputs.atoms.count };
+};
+const noFrame = sceneShadowOf({ groups: false });
+const withFrame = sceneShadowOf({ groups: true });
+ok(noFrame.onDrawing === 0,
+  `sans le repère de la scène, le masque ne touche AUCUN pixel du dessin (${noFrame.onDrawing} sur ${noFrame.drawn} dessinés ; ${noFrame.shadowAll} pixels d'ombre au total, ${noFrame.proxies} proxies) — le « no cast shadow » du rapport`);
+ok(withFrame.drawn > 0 && withFrame.shadowAll > 0,
+  `avec le repère, l'ombre existe ET le dessin est dans le cadre (${withFrame.shadowAll} pixels d'ombre pour ${withFrame.drawn} dessinés)`);
+ok(withFrame.onDrawing === withFrame.shadowAll,
+  `…et elle tombe TOUTE SUR le dessin (${withFrame.onDrawing}/${withFrame.shadowAll} pixels)`);
+ok(withFrame.shadowAll / withFrame.drawn > 0.1,
+  `…le dessin reçoit donc une vraie ombre portée : ${(100 * withFrame.shadowAll / withFrame.drawn).toFixed(1)} % de ses pixels (az 120 / el 15, tube de 0,5 Å)`);
+const movedComp = sceneShadowOf({ groups: true, compShift: [3, 1, -2] });
+ok(movedComp.shadowAll > 0 && movedComp.onDrawing === movedComp.shadowAll,
+  `une molécule DÉPLACÉE par la barre de style reste dans le repère (${movedComp.onDrawing}/${movedComp.shadowAll} pixels d'ombre sur le dessin)`);
+eq(viewerMatrixOf({}), null, 'sans viewer, viewerMatrixOf ne change rien (les anciens cas gardent leur chemin)');
+eq(viewerMatrixOf({ viewer: {} }), null, '…et un viewer au repos aussi');
+const centredPt = mat4TransformPoint(viewerChain(), [FILE_CENTER[0], FILE_CENTER[1], FILE_CENTER[2], 1]);
+near(centredPt[0], 0, 1e-6, 'R · T appliqué au centre du fichier ramène la molécule à l’ORIGINE de la scène');
+near(centredPt[1], 0, 1e-6, '…en y,');
+near(centredPt[2], 0, 1e-6, '…et en z — exactement ce que fait le recentrage d’NGL');
+
 /* ── 12. CE QUE LE MODULE DIT DE LUI-MÊME ──────────────────────────────── */
-ok(MODULE.includes('THE SHADOW CAMERA'), 'le module décrit sa caméra d’ombre ajustée (shadowRigOf)');
+/* ── 16. LE SILENCE ÉTAIT LE BUG — LE MESSAGE DIT POURQUOI ───────────────────
+   Les deux pannes des §13 bis et §15 ont coûté plusieurs allers-retours pour une
+   seule raison : elles ne disaient RIEN. `captureRayImage` avalait l'erreur
+   (`catch { inputs = null }`, `catch { shadow = null }`), la « ray » revenait
+   sans ombre et le message ne parlait pas d'ombre du tout — la fonctionnalité
+   semblait absente alors qu'elle levait. La raison voyage maintenant jusqu'au
+   message, et un `reachedPixels` de 0 est REPORTÉ comme un résultat (« 0 % des
+   pixels ») au lieu d'être pris pour une absence de donnée : c'est exactement le
+   diagnostic qui manquait pour trouver ces deux bugs. */
+eq(rayShadowNote(null), '', 'sans ombre et sans raison, la note reste vide (l’appelant décide du message)');
+eq(rayShadowNote(null, 'the camera is inside a tile'),
+  '· no cast shadows — the camera is inside a tile',
+  'quand l’ombre n’a pas pu être construite, la note DIT POURQUOI');
+const zeroReach = {
+  mask: new Float32Array(4), maskWidth: 2, maskHeight: 2,
+  strength: 0.55, spheres: 12, filled: 4, imageWidth: 100, imageHeight: 100, reachedPixels: 0,
+};
+ok(rayShadowNote(zeroReach).includes('(0% of the pixels)'),
+  'une ombre construite qui n’atteint AUCUN pixel le dit (« 0 % des pixels ») — le diagnostic du masque vide');
+eq(rayShadowNote({ ...zeroReach, failed: 'the still could not be shadowed' }),
+  '· no cast shadows — the still could not be shadowed',
+  'un masque qui n’a pas pu être appliqué à l’image le dit aussi : la dernière porte par laquelle une ombre pouvait disparaître sans un mot');
+ok(MODULE.includes("console.warn('✨ Ray: no cast shadows —', shadow.failed);"),
+  '…et cette porte-là est TRACÉE comme les autres');
+hasRay('console.warn(\'✨ Ray: no cast shadows —\', shadowSkip)',
+  'une ombre impossible est TRACÉE, plus jamais avalée en silence');
+hasRay('rayShadowNote(null, shadowSkip)',
+  '…et la raison de l’échec voyage jusqu’au message de la « ray »');
+has('{(shadowOn || rayShadows) && (',
+  'les curseurs 💡 Light (Azimuth / Elevation) sont atteignables dès que les ombres du « ray » sont allumées : c’est la lampe que l’ombre utilise');
+
+
 ok(MODULE.includes('PCSS'), '…la pénombre PCF élargie par l’écart receveur / occulteur (PCSS)');
 ok(MODULE.includes('PROXY_STROKE_BY_TYPE'), '…et la table des épaisseurs de trait des représentations');
 ok(MODULE.includes('SELF-SHADOWING ON THE MOLECULE ITSELF'),

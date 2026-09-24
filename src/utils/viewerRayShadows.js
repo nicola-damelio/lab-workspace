@@ -19,9 +19,11 @@
    the shadow is built from the atoms themselves:
 
      1. the atoms of every visible component AS THEY ARE DRAWN — the union of the
-        atoms of its visible representations, in WORLD space (the Structure's own
-        atom data, moved by the component's matrix — the very transform NGL gives
-        the GPU) — become a set of PROXY SPHERES, each one as THICK AS THE STROKE
+        atoms of its visible representations, in the SCENE frame the camera really
+        looks at (the Structure's own atom data, moved by the component's matrix
+        AND by the viewer's own groups: NGL's camera never moves, the molecule
+        does — see viewerMatrixOf) — become a set of PROXY SPHERES, each one as
+        THICK AS THE STROKE
         ITS OWN REPRESENTATION DRAWS (the vdW radius for sphere / spacefill /
         surface, the bond radius for ball+stick / licorice, a thin tube for
         cartoon / ribbon / tube — PROXY_STROKE_BY_TYPE below). A molecule
@@ -834,6 +836,57 @@ const elements16Of = (matrix) => {
   return Array.from(e);
 };
 
+/* ---- THE FRAME THE CAMERA REALLY LOOKS AT (the scene, not the file) -------
+   THE REPORT THAT WAS STILL WAITING FOR THIS: « l'ombre est une tache plate
+   posée À CÔTÉ de la molécule » — and, in the ray stills, no cast shadow at all.
+   NGL's camera NEVER MOVES: it is parked at `cameraZ` (Viewer's own parameter,
+   −80) looking at the ORIGIN of the scene, and it is the MOLECULE that is moved
+   under it by two groups of the viewer (read in the installed build,
+   `Viewer._initScene`):
+
+       scene → rotationGroup → translationGroup → modelGroup → component.group
+
+   The centring / `autoView` writes `translationGroup.position`, the mouse writes
+   `rotationGroup.matrix`, and NGL applies that very chain wherever it needs an
+   atom's place on screen — `getPositionOnCanvas(p)` is
+   `p.add(translationGroup.position).applyMatrix4(rotationGroup.matrix)
+   .project(camera)`, and the pick of the transform controls is
+   `…applyMatrix4(component.matrix); ….add(translationGroup.position);
+   ….applyMatrix4(rotationGroup.matrix)`. A `Component.matrix`
+   (`Component.updateMatrix()`) is only the component's OWN place in its file: it
+   carries neither the centring nor the rotation of the view.
+
+   The proxies must therefore be built in the SCENE frame:
+
+       world = R · T · M_comp · atom      (R = rotationGroup.matrix, T = the
+                                           translation of translationGroup.position)
+
+   ⚠ WITHOUT THIS EVERYTHING IS OFF AS SOON AS THE MOLECULE IS NOT ALREADY
+   CENTRED ON THE ORIGIN — which is exactly what `autoView` guarantees it never
+   is. Measured on this module, a molecule whose file centre is (12, −7, 25) Å:
+   the proxies covered 0 % of the pixels of the real drawing before and 100 %
+   after (the §15 case of the test file); the mask was either a smudge beside the
+   molecule or — off the frustum — nothing at all, which is the report « there is
+   no cast shadow » with the mask built and empty.
+
+   A stub viewer that has neither group (every older test, a hand-built stage) is
+   the identity and keeps the path this module always had. */
+export const viewerMatrixOf = (stage) => {
+  const viewer = stage && stage.viewer;
+  if (!viewer) return null;
+  const rot = elements16Of(viewer.rotationGroup && viewer.rotationGroup.matrix);
+  const pos = viewer.translationGroup && viewer.translationGroup.position;
+  const tx = pos ? Number(pos.x) || 0 : 0;
+  const ty = pos ? Number(pos.y) || 0 : 0;
+  const tz = pos ? Number(pos.z) || 0 : 0;
+  if (!rot && !tx && !ty && !tz) return null;      // nothing to add: the old path
+  const t = mat4Identity();
+  t[12] = tx;
+  t[13] = ty;
+  t[14] = tz;
+  return rot ? mat4Multiply(rot, t) : t;           // translate first, then rotate
+};
+
 /* WHICH ATOMS A COMPONENT REALLY DRAWS — the fix of the phantom shadow.
    The report: « in the ray images there IS a projected image, but I see it as a
    projected membrane, while the membrane is NOT visible in the program (it has
@@ -1125,7 +1178,17 @@ const linkStepOf = (ra, rb) => Math.max(LINK_STEP_MIN, 0.5 * Math.min(ra, rb));
    when the budget is tight) with their stroke and whether their drawing CONTINUES
    to the next one. */
 const layOut = (part, stride) => {
-  const m = elements16Of(part.comp.matrix) || elements16Of(part.comp.group && part.comp.group.matrixWorld);
+  const own = elements16Of(part.comp.matrix);
+  /* The component's OWN matrix first, then the viewer's groups ON TOP of it — the
+     chain NGL gives the GPU (see viewerMatrixOf: a molecule joined to its
+     centre is moved by `translationGroup.position`, the mouse rotation lives in
+     `rotationGroup.matrix`, and neither is in `comp.matrix`). A component the
+     styling bar moved / rotated keeps that too: it IS `comp.matrix`. The
+     `group.matrixWorld` fallback stays for an object that carries no `matrix`
+     of its own (a hand-built stub). */
+  const m = own
+    ? (part.viewerM ? mat4Multiply(part.viewerM, own) : own)
+    : elements16Of(part.comp.group && part.comp.group.matrixWorld);
   const pos = part.data.position;
   const rad = part.data.radius;
   const surface = part.surface;
@@ -1240,11 +1303,13 @@ const fillDrawnLinks = (parts, stride, maxAtoms) => {
 
 /* World space: NGL stores the atoms in the structure's OWN frame and gives the
    GPU the component's matrix (`component.matrix`, kept up to date by
-   `updateMatrix()` — the « Move X · Y · Z » of the styling bar writes it). The
-   shadow must live in the same world the camera does, so the same matrix is
-   applied here. Invisible components are skipped, and of a visible one only the
-   atoms its VISIBLE representations draw (see drawnAtomIndicesOf): what is not
-   on screen must not cast anything.
+   `updateMatrix()` — the « Move X · Y · Z » of the styling bar writes it) UNDER
+   the viewer's own groups (`rotationGroup`, `translationGroup` — see
+   viewerMatrixOf: the camera never moves, the molecule does). The shadow must
+   live in the frame the camera projects, so the same chain is applied here —
+   `R · T · component.matrix`. Invisible components are skipped, and of a visible
+   one only the atoms its VISIBLE representations draw (see drawnAtomIndicesOf):
+   what is not on screen must not cast anything.
 
    THE PROXY IS THE DRAWN GEOMETRY, NOT A DUST OF BALLS. Two atoms whose drawing
    CONTINUES from one to the other (a stick, a tube, a ribbon — LINKED_KINDS) are
@@ -1259,6 +1324,9 @@ const fillDrawnLinks = (parts, stride, maxAtoms) => {
    did. */
 export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms) => {
   const comps = (stage && stage.compList) || [];
+  // The viewer's own groups, read ONCE for every component (see viewerMatrixOf):
+  // NGL's camera never moves, so the centring and the mouse rotation are HERE.
+  const viewerM = viewerMatrixOf(stage);
   const parts = [];
   let total = 0;
   comps.forEach((comp) => {
@@ -1283,7 +1351,7 @@ export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms) =
       // when the component says nothing about its representations.
       const links = new Uint8Array(n);
       const surface = drawnProxyRadiiOf(comp, n, data.radius, links);
-      parts.push({ comp, data, n, drawn, surface, links });
+      parts.push({ comp, data, n, drawn, surface, links, viewerM });
       total += drawn ? drawn.length : n;
     } catch { /* a component that cannot report its atoms casts nothing */ }
   });
@@ -1310,7 +1378,25 @@ export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms) =
    impossible instead of silent. */
 export const cameraFromViewer = (viewer) => {
   const cam = (viewer && (viewer.camera || viewer.perspectiveCamera || viewer.orthographicCamera)) || null;
-  if (cam && cam.view) {
+  /* ⚠ `cam.view` IS NOT « WE ARE INSIDE A TILE ». It is a plain object three.js
+     creates on the FIRST `setViewOffset` and NEVER removes: its
+     `clearViewOffset()` only sets `view.enabled = false` (read in the installed
+     three — Camera#clearViewOffset). And NGL super-samples on its own: the
+     `__renderSuperSample` pass (asked for by the ◐ Shadows rig, `sampleLevel` 2,
+     and run again at level 3 on every idle frame) calls `setViewOffset` once per
+     sample and `clearViewOffset()` when it is done. So after the FIRST rendered
+     frame every live camera carries a truthy `cam.view` whose `enabled` is false
+     — and refusing on its PRESENCE threw on every real click of ✨ Ray:
+     `rayShadowInputsOf` threw with it, `captureRayImage` swallowed the error and
+     the still came back WITHOUT any shadow and WITHOUT a word about it. That is
+     the report « there is no cast shadow », and the note is the shape of the bug:
+     a test that fed a camera with no `view` at all could never catch it.
+     The guard therefore asks the question three's own `updateProjectionMatrix`
+     asks — `view !== null && view.enabled` — so a camera left in a TILE is still
+     refused, while a view the super-sampler disabled is inert (`projectionMatrix`
+     is the full-frame projection the still is a crop of) and is read normally. */
+  const viewOffset = cam && cam.view;
+  if (viewOffset && viewOffset.enabled === true) {
     throw new Error('the camera is inside a tile of a ✨ Ray still (setViewOffset) — read it before the render');
   }
   const proj = cam ? elements16Of(cam.projectionMatrix) : null;
@@ -1427,18 +1513,37 @@ export const addCastShadowsToBlob = async (blob, {
     if (src && typeof src.close === 'function') src.close();
     shadow.applied = true;
     return out || blob;
-  } catch {
-    return blob;                                    // a plain still, never an error
+  } catch (err) {
+    /* A plain still is a normal outcome, never an error — but the reason is kept
+       ON the shadow and traced, so the Ray message can say why: a feature that
+       vanishes without a word is exactly what « the ray doesn't do anything »
+       was (see captureRayImage and rayShadowNote). */
+    shadow.failed = (err && err.message) || 'the still could not be shadowed';
+    console.warn('✨ Ray: no cast shadows —', shadow.failed);
+    return blob;
   }
 };
 
 /* One line for the Ray message: what the shadow cost and how much of the
-   molecule it really reached. */
-export const rayShadowNote = (shadow) => {
-  if (!shadow || !shadow.mask) return '';
+   molecule it really reached. Given a `reason` and NO shadow (the still could not
+   be shadowed at all), it says so instead of saying nothing — see the module doc
+   of captureRayImage: a shadow that disappears without a word is what the users
+   kept reporting as « the ray doesn't do anything ». */
+export const rayShadowNote = (shadow, reason = '') => {
+  if (!shadow || !shadow.mask) {
+    return reason ? `· no cast shadows — ${reason}` : '';
+  }
+  // A mask that was built but never made it onto the still (see
+  // addCastShadowsToBlob): the note says the reason, not a coverage nobody had.
+  if (shadow.failed) return `· no cast shadows — ${shadow.failed}`;
   const pct = Math.round((Number(shadow.strength) || 0) * 100);
-  const covered = shadow.reachedPixels && shadow.imageWidth && shadow.imageHeight
-    ? Math.round((shadow.reachedPixels / (shadow.imageWidth * shadow.imageHeight)) * 100)
+  /* ⚠ 0 % IS A RESULT, NOT « NO DATA ». `reachedPixels === 0` means the mask WAS
+     built and touched no pixel of the still — the honest diagnostic of a proxy
+     set that misses the drawing (or of an off-frustum one). Only an unknown
+     count (a caller that never applied the mask) is left out of the line. */
+  const px = Number(shadow.reachedPixels);
+  const covered = Number.isFinite(px) && shadow.imageWidth && shadow.imageHeight
+    ? Math.round((px / (shadow.imageWidth * shadow.imageHeight)) * 100)
     : null;
   const spheres = Number(shadow.spheres) || 0;
   const filled = Number(shadow.filled) || 0;

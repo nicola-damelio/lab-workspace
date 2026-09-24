@@ -299,13 +299,25 @@ export const captureRayImage = async (stage, options = {}) => {
   const wantsShadow = options.shadows !== false && !!options.lightDir;
   const shadowTooBig = wantsShadow && pixels > shadowBudget;
   let inputs = null;
+  /* ⚠ WHY THE REASON IS KEPT. Every failure of the shadow pass is swallowed on
+     purpose (a plain still is a normal outcome, never an error) — but swallowing
+     it in SILENCE is what made « there is no cast shadow » cost several rounds:
+     the still came back with no shadow and the message did not mention shadows at
+     all, so the feature looked unimplemented while it was throwing (the camera
+     guard and the scene frame of the module were both invisible that way). The
+     reason now travels to the message (`shadowNote`) and to the console. */
+  let shadowSkip = '';
   if (wantsShadow && !shadowTooBig) {
     try {
       inputs = rayShadowInputsOf(stage, {
         lightDir: options.lightDir,
         options: options.shadow || {},
       });
-    } catch { inputs = null; }                     // no atoms / no camera: no shadow
+    } catch (err) {
+      inputs = null;                               // no atoms / no camera: no shadow
+      shadowSkip = (err && err.message) || 'the shadow inputs could not be read';
+      console.warn('✨ Ray: no cast shadows —', shadowSkip);
+    }
   }
   let blob = await stage.makeImage({
     trim: false,
@@ -332,7 +344,11 @@ export const captureRayImage = async (stage, options = {}) => {
         imageHeight: height * factor,
       };
       blob = await addCastShadowsToBlob(blob, { shadow });
-    } catch { shadow = null; }
+    } catch (err) {
+      shadow = null;
+      shadowSkip = (err && err.message) || 'the mask could not be applied to the still';
+      console.warn('✨ Ray: no cast shadows —', shadowSkip);
+    }
   }
   return {
     blob,
@@ -345,7 +361,9 @@ export const captureRayImage = async (stage, options = {}) => {
     transparent,
     shadow,
     // The note of the message: what the shadow cost, or WHY there is none.
-    shadowNote: shadow ? rayShadowNote(shadow) : (shadowTooBig ? RAY_SHADOW_SKIP_NOTE : ''),
+    shadowNote: shadow
+      ? rayShadowNote(shadow)
+      : (shadowTooBig ? RAY_SHADOW_SKIP_NOTE : rayShadowNote(null, shadowSkip)),
   };
 };
 

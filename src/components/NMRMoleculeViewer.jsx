@@ -12694,8 +12694,8 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
     <span className="text-[10px] text-slate-500 w-8">{Math.round(shadowDarkness * 100)}%</span>
   </label>
 )}
-{shadowOn && (
-  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Light direction — aim the fixed key light (and therefore where the shadows fall). Azimuth 0° = light behind the camera (flat), 90° = screen-left, 180° = facing the camera; Elevation is the height above/below the horizon. The shade follows live while you drag.">
+{(shadowOn || rayShadows) && (
+  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Light direction — aim the fixed key light (and therefore where the shadows fall). Azimuth 0° = light behind the camera (flat), 90° = screen-left, 180° = facing the camera; Elevation is the height above/below the horizon. The shade follows live while you drag. ⚠ The ✨ Ray still throws its cast shadow from THIS lamp too, so these sliders are shown whenever either the ◐ Shadows rig or the ray shadows are on — an off-axis lamp (about 90° / 45°) is what makes a cast shadow read as a shadow instead of hiding in the shade the canvas already draws.">
     💡 Light
     <input type="range" min="0" max="360" value={shadowAz} onChange={(e) => setShadowAz(Number(e.target.value))} className="w-16 accent-slate-700" aria-label="Light azimuth" />
     <span className="text-[10px] text-slate-500 w-8">{shadowAz}°</span>
@@ -12799,7 +12799,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
       the report « I see a projected membrane, while the membrane is hidden in the
       program » (see drawnAtomIndicesOf in that module). */}
   <label
-    title="Casted shadows in the PNG: the shadow the molecule throws, from the very lamp of the ◐ Shadows rig (its Azimuth / Elevation). NGL cannot cast them — the shadow is computed from the atoms with the camera and the light of the scene and multiplied into the still. Untick for the plain supersampled image."
+    title="Casted shadows in the PNG: the shadow the molecule throws, from the very lamp of the ◐ Shadows rig (its Azimuth / Elevation — the 💡 Light sliders of « 2 · Toolbar », shown whenever these ray shadows are on). NGL cannot cast them — the shadow is computed from the atoms with the camera and the light of the scene and multiplied into the still. Untick for the plain supersampled image."
     className={`px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-1 cursor-pointer whitespace-nowrap ${rayShadows ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
   >
     <input type="checkbox" checked={rayShadows} onChange={(e) => setRayShadows(e.target.checked)} className="accent-amber-600" />
@@ -12810,7 +12810,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
       type="range" min="0.1" max="1" step="0.05" value={rayShadowStrength}
       onChange={(e) => setRayShadowStrength(Number(e.target.value))}
       className="accent-amber-600 w-16 shrink-0"
-      title={`Darkness of the cast shadow — ${Math.round(rayShadowStrength * 100)} % (the ◐ Shadows rig of the canvas sets its DIRECTION: Azimuth / Elevation)`}
+      title={`Darkness of the cast shadow — ${Math.round(rayShadowStrength * 100)} % (the DIRECTION comes from the 💡 Light sliders of « 2 · Toolbar » — Azimuth / Elevation)`}
       aria-label="cast shadow strength"
     />
   )}
