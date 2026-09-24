@@ -50,6 +50,19 @@ const buildBridge = (cfg = {}) => new Function(
   `${CODE}
    const isLipidResname = (n) => /^(POPC|POPS|PSM|CHL1|ECL2)$/.test(String(n || '').toUpperCase());
    const lipidGroupOf = (name) => (/^(P|O13|O14|N|HN1|O3|HO3)$/.test(String(name || '')) ? 'head' : 'acyl');
+   /* Les trois collaborateurs que membraneLeafletsOf utilise pour placer les
+      HYDROGÈNES par leur liaison (le classement complet des lipides est ailleurs,
+      il n'a pas à être chargé ici). */
+   const LIPID_NAMED_PROBE = new Set(['P', 'N', 'C1', 'C2', 'C3']);
+   const LIPID_CHAIN_PROBE_RE = /^(?:C[23][0-9]|O[23]2)$/;
+   const atomElement = (name, element) => {
+     const e = String(element || '').replace(/[^A-Za-z]/g, '').toUpperCase();
+     if (e) return e;
+     const m = /[A-Za-z]/.exec(String(name || ''));
+     return m ? m[0].toUpperCase() : '';
+   };
+   const LIPID_RADII = { H: 0.31, C: 0.76, N: 0.71, O: 0.66, P: 1.07 };
+   const lipidBondCutoff = (e1, e2) => 1.3 * ((LIPID_RADII[e1] || 0.77) + (LIPID_RADII[e2] || 0.77));
    const warned = [];
    const atoms = cfg.atoms || [];
    const ctx = {

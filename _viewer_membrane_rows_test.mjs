@@ -61,11 +61,13 @@ gone('selStyles[n] && (selStyles[n].sphere || selStyles[n].ball || selStyles[n].
   '…donc plus de cochage écrit à la main dans cette boîte');
 gone('|| !!membraneInfo', '…et plus aucune condition d’affichage de la barre liée à une membrane mesurée');
 has('NO « MEMBRANE » BOX IN THIS BAR', 'la source dit que la boîte a été retirée (la demande)');
-/* La MESURE n’est pas perdue : elle est lue en tête du groupe 🧫, avec ses comptes. */
+/* La MESURE n’est pas perdue : elle est lue en tête du groupe 🧫. Le PARAGRAPHE
+   de comptes, lui, est parti avec tout le reste (la demande suivante : « remove
+   all that descriptive text […], leave only the buttons »). */
 has('{info.axis} · mid {info.midplane.toFixed(1)} Å · {info.thickness.toFixed(1)} Å',
   'la mesure (axe · plan médian · épaisseur) est toujours affichée, dans le groupe');
-has('upper ${info.upperAtoms} atoms / ${info.upperResidues} lipids · lower ${info.lowerAtoms} atoms / ${info.lowerResidues} lipids. ',
-  '…avec le nombre d’atomes et de lipides de chaque feuillet');
+gone('upper ${info.upperAtoms} atoms / ${info.upperResidues} lipids / lower',
+  '…sans le paragraphe de comptes de l’ancienne boîte');
 
 /* ── 2. LES RANGÉES VIVENT DANS L'ESPACE PHOSPHOLIPIDES DU STYLING ─────── */
 has("const renderMembraneSelections = (sec) => {", 'un rendu dédié aux sélections lipidiques');
@@ -76,8 +78,10 @@ has('const firstLipidSectionOf = (molKey) => {',
   '…UNE seule fois par molécule (la première cuve lipidique), jamais une copie par type de lipide');
 has('{info.axis} · mid {info.midplane.toFixed(1)} Å · {info.thickness.toFixed(1)} Å',
   'la mesure est rappelée en tête du groupe, là où elle servait');
-has('The leaflets are styled HERE, one selection at a time',
-  '…et le groupe dit ce qu’on y fait');
+has('ONLY THE ROWS LIVE HERE', 'le groupe ne porte plus que ses rangées (la demande)');
+gone('The leaflets are styled HERE, one selection at a time', '…sans le paragraphe d’explication');
+gone('A row named after the heads can therefore never cover the whole bilayer.', '…ni la note sur les têtes');
+gone('The four measured names work in a PyMOL script as well', '…ni le rappel du macro : le contrat des quatre noms est dans le code');
 
 /* La liste : les QUATRE noms mesurés, plus les sélections du script DANS les lipides. */
 has('const measured = Object.keys(membraneSele || {});',

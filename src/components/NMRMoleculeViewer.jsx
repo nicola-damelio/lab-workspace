@@ -4605,7 +4605,9 @@ const membraneLeafletsOf = (structure) => {
         ri: a.residueIndex,
         resno: Number(a.resno),
         resname: String(a.resname).toUpperCase(),
-        head: lipidGroupOf(a.atomname, a.element) === 'head',
+        atomname: String(a.atomname || ''),
+        element: a.element || '',
+        head: false,
         x: Number(a.x) || 0,
         y: Number(a.y) || 0,
         z: Number(a.z) || 0,
@@ -4614,6 +4616,49 @@ const membraneLeafletsOf = (structure) => {
   } catch { return null; }
   // A handful of lipid atoms is a ligand, not a bilayer.
   if (atoms.length < 40) return null;
+  /* WHICH ATOMS OF A RESIDUE ARE ITS HEADGROUP — the report « upper headgroups
+     includes the hydrogen atoms of the acyl chains ». It did, and the reason is
+     the naming: CHARMM calls a chain hydrogen after its POSITION in the chain
+     (C22 carries H2R · H2S, C216 H16R · H16S · H16T, C210 H101), so « H2R » reads
+     as « C2 » — the glycerol backbone — and « H91 » as nothing at all, i.e. the
+     head. The Lipids menu solved this long ago by placing every hydrogen by its
+     BOND (see lipidGroupOf / lipidSubSelections below): the closest heavy atom of
+     its OWN residue, within bonding distance. The measurement uses that very rule
+     now — one classifier, so the ⚙ men, the colours and these four selections can
+     never disagree about where a headgroup ends. */
+  const named = atoms.some((a) => LIPID_NAMED_PROBE.has(a.atomname.replace(/\s+/g, '').toUpperCase()))
+    && atoms.some((a) => LIPID_CHAIN_PROBE_RE.test(a.atomname.replace(/\s+/g, '').toUpperCase()));
+  const residueAtoms = new Map();
+  atoms.forEach((a) => {
+    let list = residueAtoms.get(a.ri);
+    if (!list) { list = []; residueAtoms.set(a.ri, list); }
+    list.push(a);
+  });
+  residueAtoms.forEach((list) => {
+    const part = new Map();
+    const heavy = [];
+    list.forEach((a) => {
+      if (atomElement(a.atomname, a.element) === 'H') return;
+      part.set(a.i, lipidGroupOf(a.atomname, a.element, named));
+      heavy.push(a);
+    });
+    list.forEach((a) => {
+      if (atomElement(a.atomname, a.element) !== 'H') return;
+      let best = null;
+      let bestD2 = Infinity;
+      heavy.forEach((h) => {
+        const d2 = (h.x - a.x) ** 2 + (h.y - a.y) ** 2 + (h.z - a.z) ** 2;
+        if (d2 < bestD2) { bestD2 = d2; best = h; }
+      });
+      const cutoff = best ? lipidBondCutoff('H', atomElement(best.atomname, best.element)) : 0;
+      part.set(a.i, best && bestD2 <= cutoff * cutoff
+        ? part.get(best.i)
+        : lipidGroupOf(a.atomname, a.element, named));
+    });
+    // The headgroup is what is neither the backbone nor a chain — and a hydrogen
+    // belongs to the heavy atom it hangs from, which is the whole point.
+    list.forEach((a) => { a.head = (part.get(a.i) || 'head') === 'head'; });
+  });
   const varianceOf = (key) => {
     const vals = atoms.map((a) => a[key]);
     const m = meanOf(vals);
@@ -10374,19 +10419,13 @@ const renderMembraneSelections = (sec) => {
           </span>
         )}
       </div>
-      <p className="text-[9px] text-teal-700 leading-snug">
-        {info ? `upper ${info.upperAtoms} atoms / ${info.upperResidues} lipids · lower ${info.lowerAtoms} atoms / ${info.lowerResidues} lipids. ` : ''}
-        The leaflets are styled HERE, one selection at a time — the same commands as every row of this
-        window — and every selection a PyMOL script makes on lipids is listed with them.
-      </p>
-      <p className="text-[9px] text-teal-700 leading-snug">
-        The two leaflets stand one behind the other and one pair of rows lies INSIDE the other
-        (<span className="font-mono">upper_headgroups</span> ⊂ <span className="font-mono">upper_leaflet</span>):
-        restyling the heads therefore takes their atoms out of their own leaflet, and the leaflet that lies
-        BEHIND the front one is only visible once the front one is out of the way — the 👁 of a row hides
-        the other leaflet's two rows at once (and a molecule hidden in the Molecules bar still draws
-        nothing: these rows are overlays).
-      </p>
+      {/* ONLY THE ROWS LIVE HERE (the request): « remove all that descriptive text
+          that takes so much space, leave only the buttons in the membrane
+          section ». The measurement stays as the one-line readout of the header
+          above (axis · midplane · thickness: a READING, not a style), and every
+          explanation the group used to carry is in the code that implements it —
+          the style list (MEMBRANE_ROW_STYLE_CHOICES), the headgroup rule
+          (membraneHeadRelinquish) and the 👁 solo (setMembraneSolo). */}
       {keys.map((key) => {
         const st = selStyles[key] || {};
         const n = selectionAtomCount(key);
@@ -10424,14 +10463,6 @@ const renderMembraneSelections = (sec) => {
           </div>
         );
       })}
-      <span className="text-[9px] text-teal-700 italic">
-        The four measured names work in a PyMOL script as well (`upper_leaflet`, `lower_headgroups`…), and a script that defines
-        them with `z&gt;90` gets this measurement instead.
-      </span>
-      <span className="text-[9px] text-teal-700 italic">
-        A {'`'}select headgroups, phosphate or POPC{'`'} — which PyMOL reads as EVERY atom of those lipids — gets the measured heads instead.
-        A row named after the heads can therefore never cover the whole bilayer.
-      </span>
     </div>
   );
 };

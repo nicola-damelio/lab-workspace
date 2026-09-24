@@ -53,7 +53,24 @@ const CODE_STORE = slice('const nglSeleCount = ', '/* ---- ONE routing function'
 // rend un AtomSet, dont le code du viewer lit `.get(i)` et `.getSize()`.
 const HARNESS = `
   const isLipidResname = (n) => /^(POPC|POPE|POPS|PSM|CHL1)$/.test(String(n || '').toUpperCase());
-  const lipidGroupOf = (name) => (/^(P|O13|O14|N|HN1|O3|HO3)$/.test(String(name || '')) ? 'head' : 'acyl');
+  /* LE NOM SEUL, COMME DANS LE VIEWER : un hydrogène est lu d’après le carbone que
+     son NOM désigne (H2R → C2, H16T → C16) — c’est ce qui envoyait les hydrogènes
+     des chaînes dans les têtes. La mesure doit les reprendre par leur LIAISON. */
+  const lipidGroupOf = (name) => {
+    const n = String(name || '').replace(/\\s+/g, '').toUpperCase();
+    if (/^H(\\d+)[A-Z]*$/.test(n)) return 'head';
+    return /^(P|O13|O14|N|HN1|O3|HO3)$/.test(n) ? 'head' : 'acyl';
+  };
+  const LIPID_NAMED_PROBE = new Set(['P', 'N', 'C1', 'C2', 'C3']);
+  const LIPID_CHAIN_PROBE_RE = /^(?:C[23]\\d|O[23]2)$/;
+  const atomElement = (name, element) => {
+    const e = String(element || '').replace(/[^A-Za-z]/g, '').toUpperCase();
+    if (e) return e;
+    const m = /[A-Za-z]/.exec(String(name || ''));
+    return m ? m[0].toUpperCase() : '';
+  };
+  const LIPID_RADII = { H: 0.31, C: 0.76, N: 0.71, O: 0.66, P: 1.07 };
+  const lipidBondCutoff = (e1, e2) => 1.3 * ((LIPID_RADII[e1] || 0.77) + (LIPID_RADII[e2] || 0.77));
   const table = cfg.sets;
   const structure = {
     atomCount: cfg.atoms.length,
@@ -70,7 +87,7 @@ const HARNESS = `
   };
   return {
     structure, table,
-    membraneOverridesFor, measuredHeadClause, membraneLeafletsOf, seleIsWithin, nglSeleCount,
+    membraneOverridesFor, measuredHeadClause, membraneLeafletsOf, seleIsWithin, nglSeleCount, lipidGroupOf,
     // EXACTEMENT le chemin de production du viewer (vocabulaire de la structure,
     // jokers développés, noms résolus) : le test mesure ce que l'écran reçoit.
     toNgl: (raw, named, overrides) => pymolSeleForStructure(structure, named, raw, () => {}, overrides),
@@ -202,7 +219,53 @@ has("const MEMBRANE_HEAD_NAMES = ['headgroups', 'headgroup', 'heads'];",
   'seuls les noms qui PROMETTENT les têtes sont corrigés — jamais « membrane »');
 has('if (seleIsWithin(structure, scripted, clause) !== false) return;',
   'la correction n’a lieu que si l’expression du macro SORT des têtes mesurées');
-has("A {'`'}select headgroups, phosphate or POPC{'`'} — which PyMOL reads as EVERY atom of those lipids — gets the measured heads instead.",
-  'la barre Membrane dit la règle à l’utilisateur');
+gone("A {'`'}select headgroups, phosphate or POPC{'`'} — which PyMOL reads as EVERY atom of those lipids — gets the measured heads instead.",
+  'la phrase a QUITTÉ l’UI (le rapport : « remove all that descriptive text, leave only the buttons »)');
+has('heads, the measurement wins — exactly like `upper_leaflet` written `z>90`.',
+  '…et la règle reste documentée là où elle s’applique (membraneOverridesFor)');
+
+/* ── 10. LES HYDROGÈNES DES CHAÎNES NE SONT PAS DES TÊTES (le rapport) ──── */
+/* « upper headgroups e lower headgroups includono gli atomi di idrogeno delle
+   acyl chains ». La mesure classait chaque atome par son NOM, et CHARMM nomme un
+   hydrogène de chaîne d’après sa POSITION dans la chaîne : H2R · H2S, H91,
+   H16T… « H2R » se lisait donc « C2 » (le squelette) et « H91 » ne désignait
+   rien — il tombait dans les têtes. La mesure place maintenant chaque hydrogène
+   par sa LIAISON (l’atome lourd le plus proche DE SON résidu, à distance de
+   liaison), exactement comme le menu Lipids : un seul classement pour tout le
+   viewer, les quatre sélections et les couleurs ne peuvent plus se contredire. */
+const CHAIN_H_NAMES = ['H2R', 'H2S', 'H91', 'H101', 'H16T', 'H3X'];
+const bilayerWithChainHydrogens = () => {
+  const out = [...bilayer()];
+  bilayer().forEach((a, k) => {
+    if (!/^C[0-9]{1,2}$/.test(a.atomname)) return;      // un carbone de chaîne
+    out.push({
+      ...a,
+      index: 1000 + k,
+      atomname: CHAIN_H_NAMES[k % CHAIN_H_NAMES.length],
+      element: 'H',
+      x: a.x + 1.1,                                     // 1.1 Å : une liaison C–H
+    });
+  });
+  return out;
+};
+const H_ATOMS = bilayerWithChainHydrogens();
+const hh = build(H_ATOMS, new Map());
+const mh = hh.membraneLeafletsOf(hh.structure);
+ok(!!mh, 'la bicouche AVEC ses hydrogènes de chaîne est mesurée');
+eq(mh.lower.headIndices, [0, 1, 12, 13], 'feuillet bas : les têtes restent P · O13 — aucun hydrogène de chaîne');
+eq(mh.upper.headIndices, [24, 25, 36, 37], '…feuillet haut : idem');
+const chainH = H_ATOMS.filter((a) => a.element === 'H').map((a) => a.index);
+const heads = [...mh.lower.headIndices, ...mh.upper.headIndices];
+eq(chainH.length, 40, 'les quarante hydrogènes de chaîne sont bien dans le banc (un par carbone)');
+ok(chainH.every((i) => !heads.includes(i)),
+  'AUCUN hydrogène de chaîne n’est une tête : le rapport est réparé par la LIAISON, pas par le nom');
+has("const cutoff = best ? lipidBondCutoff('H', atomElement(best.atomname, best.element)) : 0;",
+  '…parce que la mesure place chaque hydrogène par sa liaison');
+has("list.forEach((a) => { a.head = (part.get(a.i) || 'head') === 'head'; });",
+  '…et c’est ce classement-là qui remplit les têtes de chaque résidu');
+eq([hh.lipidGroupOf('H2R'), hh.lipidGroupOf('H91')], ['head', 'head'],
+  'la PREUVE du défaut : le nom seul mettait ces deux hydrogènes de chaîne dans les têtes');
+ok(hh.lipidGroupOf('C21') === 'acyl',
+  '…et le carbone de chaîne, lui, est bien « acyl » : l’hydrogène suit donc sa chaîne');
 
 console.log(`_viewer_headgroups_test.mjs : ${passed} assertions OK`);
