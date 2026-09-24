@@ -100,7 +100,10 @@ const sandbox = [
   sliceFn(VIEW, 'hiddenSectionIds'),
   // Le reste n'entre pas dans ce que cette suite vérifie — la sélection d'une
   // rangée (sectionRowSele lit les proxies NGL), sa couleur (sectionColorParams
-  // lit les palettes), ses sous-sections, ses ombres, ses plaques : doublures.
+  // lit les palettes), ses sous-sections, ses ombres, ses plaques : doublures. La
+  // liste des styles qui dessinent des ATOMES est, elle, une vraie constante du
+  // viewer : le rendu la lit pour savoir si une rangée doit ancrer sa liaison.
+  sliceDecl(VIEW, 'ATOM_DRAW_STYLES'),
   'const subsectionsOf = () => [{ sub: "general" }];',
   'const effectiveSectionLook = (looks, kind, sub) => ({ style: "cartoon", colorBy: "element", ...((looks && looks[kind] && looks[kind][sub]) || {}) });',
   'const sectionRowSele = (structure, sec) => sec.sele || null;',

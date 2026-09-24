@@ -790,6 +790,9 @@ const LSUBS = new Function('NGL', [
   sliceDecl(VIEW, 'LABEL_WATER_NAMES'),
   sliceDecl(VIEW, 'LABEL_ION_ELEMENTS'),
   sliceDecl(VIEW, 'LABEL_ION_RESNAMES'),
+  // `resnoListOf` écrit les numéros de résidus en PLAGES (`1-3 or 7`) : NGL n'a pas de
+  // liste séparée par des virgules (`:A and 1,2` ne lit QUE le premier résidu).
+  sliceFn(VIEW, 'resnoRangesClause'),
   sliceFn(VIEW, 'resnoListOf'),
   sliceFn(VIEW, 'classifySectionResidue'),
   'const MOL_KINDS = ["protein", "nucleic", "lipid", "sugar", "ligand", "water", "ion"];',

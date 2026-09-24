@@ -3039,9 +3039,12 @@ const STYLES = {
   ion: ['hide', 'spacefill'],   // its spacefill IS its sphere, labelled « Sphere »
 };
 // The styles that DRAW ONE SPHERE / STICK PER ATOM — and therefore need BOTH atoms
-// of a bond inside their own selection (see the side-chain ANCHOR of
-// buildSectionReps). A ribbon / cartoon / tube / trace walks the polymer itself and
-// has no such requirement, so it is not in this list.
+// of a bond inside their own selection: such a row is ANCHORED to the part it hangs
+// from (the side-chain CA of sectionRowSele, the BRIDGE of bridgeAtomIndices), so
+// the linking bond is drawn instead of the parts floating side by side. A ribbon /
+// cartoon / tube / trace walks the polymer itself and has no such requirement, so
+// it is not in this list — and neither is a filled plate / slab (`rings`, `plates`,
+// `base`), which draws a surface rather than the atoms of the part.
 const ATOM_DRAW_STYLES = ['ball+stick', 'licorice', 'line', 'spacefill', 'sphere'];
 // The « Color by » sets, one per row of the request. NOTE: « Lipid type » is NOT
 // offered on water (the request corrected exactly that), and « Charge » exists for
@@ -7185,49 +7188,132 @@ const moleculeIndicesOf = (structure, sele) => {
 };
 // An NGL `@index` list — '' when there is no atom (the row then draws nothing).
 const indexSele = (list) => (list && list.length ? `@${list.join(',')}` : '');
-// The indices of ONE group of ONE molecule (base / pentose / phosphate).
-const nucleotideGroupSele = (structure, sec, group) => {
+// The indices of ONE group of ONE molecule (base / pentose / phosphate). The group
+// lists above cover the WHOLE structure and this is what restricts them to the
+// section's molecule — the bases row of chain B must never draw the bases of chain A.
+const nucleotideGroupIndices = (structure, sec, group) => {
   const all = nucleicGroupIndicesIn(structure)[group] || [];
   const own = moleculeIndicesOf(structure, sec.sele);
-  return indexSele(all.filter((i) => own.has(i)));
+  return all.filter((i) => own.has(i));
+};
+// The same group as an NGL `@index` selection (an empty one for an empty group).
+const nucleotideGroupSele = (structure, sec, group) => indexSele(nucleotideGroupIndices(structure, sec, group));
+
+/* ── LE PONT D'UNE RANGÉE : LA LIAISON QUI RATTACHE UNE PART À SA VOISINE ───
+   NGL ne dessine un bâton que si les DEUX atomes de la liaison sont dans la
+   sélection de la MÊME représentation. Une sous-sélection de section s'arrête au
+   bord de sa part chimique — `sidechain`, les bases, le pentose, la tête, les
+   chaînes acyles, le glycérol — et l'atome qui relie cette part à sa VOISINE
+   restait dans l'AUTRE rangée : chaque part FLOTTAIT à côté de l'autre. Le
+   rapport, mot pour mot :
+     · « side chains in ball and sticks or licorice should also display the bond
+       to the backbone » — voir l'ancre `(sidechain or .CA)` de sectionRowSele ;
+     · « nucleic acid ribose or desoxyribose must show their bond to the bases and
+       to the backbone » ;
+     · « in lipids acyl chains must show the bond to the glycerol and glycerol
+       must show the bond to phosphate ».
+   Le pont se lit dans le GRAPHE DE LIAISONS de la structure — les records CONECT,
+   les gabarits de résidus que NGL a lus, et les liaisons glycosidiques que
+   ensureGlycanBonds écrit — jamais dans un tableau de noms : pour chaque atome de
+   la part, on garde les VOISINS COVALENTS qui sont HORS de la part mais DANS la
+   molécule de la section. C'est exactement le bout manquant de la liaison : le CA
+   du squelette pour une chaîne latérale, le N1 · N9 de la base ou le P du
+   phosphate pour un pentose, le O21 · O31 du glycérol pour une chaîne acyle, le
+   carbone du glycérol ou l'oxygène du phosphate pour une tête.
+   Un hydrogène est ignoré (il ne relie jamais deux parts) et chaque index n'est
+   rendu qu'une fois, trié. La lecture est celle de sugarLinksFromBonds (eachAtom ·
+   eachBondedAtom), donc un fichier sans graphe de liaisons ne donne aucun pont et
+   la rangée garde sa sélection d'origine. */
+const bridgeAtomIndices = (structure, part, within) => {
+  const out = [];
+  if (!structure || !part || !part.size || !within) return out;
+  try {
+    structure.eachAtom((a) => {
+      if (!part.has(a.index)) return;
+      a.eachBondedAtom((b) => {
+        const j = b.index;
+        if (part.has(j) || !within.has(j)) return;
+        if (String(b.element || '').toUpperCase() === 'H') return;
+        out.push(j);
+      });
+    });
+  } catch { return out; }
+  return [...new Set(out)].sort((x, y) => x - y);
+};
+/* ONE chemical part as the `@i,j,k` selection NGL reads, LE PONT COMPRIS quand la
+   rangée dessine un atome par atome (ATOM_DRAW_STYLES) : la part, plus les atomes
+   des parts VOISINES auxquels les siens sont LIÉS (voir bridgeAtomIndices).
+   L'atome du pont est alors dessiné DEUX FOIS quand la part voisine est dessinée
+   elle aussi — c'est la convention de PyMOL (sa sélection `sidechain` inclut le
+   CA) et c'est ce qui fait tenir les deux parts ensemble. Sans drapeau (ou sans
+   molécule où chercher), la sélection est EXACTEMENT celle d'avant. */
+const anchoredPartSele = (structure, part, within, anchored) => {
+  const own = [...(part || [])].filter((i) => Number.isFinite(i)).sort((a, b) => a - b);
+  if (!own.length) return '';
+  if (!anchored || !within) return indexSele(own);
+  const set = new Set([...own, ...bridgeAtomIndices(structure, new Set(own), within)]);
+  return indexSele([...set].sort((a, b) => a - b));
 };
 // The NGL selector of ONE ROW of ONE section — the molecule's own selector, then the
 // atoms that row owns. '' means « this row has nothing to draw here », and it is
 // what keeps a row that the molecule does not have (side chains of a ligand) empty
 // instead of drawing the whole molecule.
+// `opts.anchorParts` (the row draws ONE SPHERE / STICK PER ATOM — see
+// ATOM_DRAW_STYLES) adds the BRIDGE: the atoms of the neighbouring part the row's
+// own atoms are bonded to, so the linking bond is drawn too (bridgeAtomIndices).
 const sectionRowSele = (structure, sec, sub, opts = {}) => {
   const base = sec.sele || 'all';
   if (sub === 'general') return base;
+  const anchored = !!opts.anchorParts;
   if (sec.kind === 'protein') {
-    // `opts.anchorSideChains`: the side chains are drawn as ATOMS while the backbone
-    // is too (Ball & Stick · Licorice · Lines · Spheres) — see ATOM_DRAW_STYLES.
-    // NGL draws a bond only when BOTH of its atoms are inside the selection, and its
-    // `sidechain` keyword EXCLUDES the CA that a side chain hangs from: CB, CG, …
-    // were therefore drawn with no bond to the backbone, and every side chain FLOATED
-    // beside the chain (the report: « the side chains are not attached to the
-    // backbone — bond with the backbone must be included »). The CA then belongs to
-    // the SIDE-CHAIN row and is taken out of the backbone row, so the CB–CA bond is
-    // drawn inside ONE representation, no atom is drawn twice, and the backbone stays
-    // connected by its own C–N peptide bonds. A ribbony backbone is left untouched:
-    // the ribbon itself walks through the CAs.
+    // « side chains in ball and sticks or licorice should also display the bond to
+    // the backbone ». NGL draws a bond only when BOTH of its atoms are inside the
+    // selection, and its `sidechain` keyword EXCLUDES the CA that a side chain hangs
+    // from: CB, CG, … were therefore drawn with no bond to the backbone, and every
+    // side chain FLOATED beside the chain (the report: « the side chains are not
+    // attached to the backbone — bond with the backbone must be included »). The CA
+    // belongs to the SIDE-CHAIN row — exactly as in PyMOL, whose `sidechain`
+    // selection includes it — so `opts.anchorSideChains`, which the renderer asks for
+    // whenever the side-chain row draws ATOMS, adds it.
     if (sub === 'sidechain') {
       return opts.anchorSideChains ? `${base} and (sidechain or .CA)` : `${base} and sidechain`;
     }
-    return opts.anchorSideChains ? `${base} and backbone and not .CA` : `${base} and backbone`;
+    // The BACKBONE row gives the CA away only when it draws atoms ITSELF
+    // (`opts.backboneLosesCa`): the two atom rows then join at the CB–CA bond, no
+    // atom is drawn twice, and the backbone stays connected by its own C–N peptide
+    // bonds. A RIBBONY backbone keeps its CAs — a ribbon / cartoon / tube walks
+    // THROUGH them, and taking them out of its selection would break its spline.
+    return opts.backboneLosesCa ? `${base} and backbone and not .CA` : `${base} and backbone`;
   }
   if (sec.kind === 'nucleic') {
-    if (sub === 'bases') return nucleotideGroupSele(structure, sec, 'base');
-    if (sub === 'ribose') return nucleotideGroupSele(structure, sec, 'pentose');
+    // « nucleic acid ribose or desoxyribose must show their bond to the bases and to
+    // the backbone »: the PENTOSE row takes the glycosidic nitrogen of its base
+    // (N1 · N9) and the phosphates it hangs from (its own O5' one, and the O3' one of
+    // the NEXT residue), the BASES row takes the C1' of its pentose. Both are read
+    // from the structure's bond graph by bridgeAtomIndices.
+    if (sub === 'bases' || sub === 'ribose') {
+      const group = sub === 'bases' ? 'base' : 'pentose';
+      if (!anchored) return nucleotideGroupSele(structure, sec, group);
+      // The molecule of the section, walked here (and cached per selector): a bridge
+      // never leaves the molecule the row draws for.
+      return anchoredPartSele(structure, nucleotideGroupIndices(structure, sec, group),
+        moleculeIndicesOf(structure, base), true);
+    }
     return `${base} and backbone`;
   }
   if (sec.kind === 'lipid') {
     // The three parts of a lipid, as the `@index` lists lipidSubSelections reads from
     // the standard atom naming (PART 2.1); an unknown naming still tiles the lipid by
     // element, so the headgroup can never lose an atom.
+    // « in lipids acyl chains must show the bond to the glycerol and glycerol must
+    // show the bond to phosphate »: the ACYL row takes the ester oxygens it hangs
+    // from (O21 · O31, of the glycerol), the GLYCEROL row the acyl carbonyls and the
+    // oxygen that carries the phosphate, the HEADGROUP row the C3 of the glycerol.
     const parts = lipidSubSelections(structure, base);
-    if (sub === 'head') return parts.head || '';
-    if (sub === 'tail') return parts.acyl || '';
-    if (sub === 'glycerol') return parts.glycerol || '';
+    const within = anchored ? moleculeIndicesOf(structure, base) : null;
+    if (sub === 'head') return anchoredPartSele(structure, parts.headAtoms, within, anchored);
+    if (sub === 'tail') return anchoredPartSele(structure, parts.acylAtoms, within, anchored);
+    if (sub === 'glycerol') return anchoredPartSele(structure, parts.glycerolAtoms, within, anchored);
   }
   return base;
 };
@@ -7244,12 +7330,14 @@ const sectionRowSele = (structure, sec, sub, opts = {}) => {
    The section's `sele` is the NGL selector of that molecule INSIDE its component,
    which is why the same renderer serves the main file, an extra file and a chain. */
 const chainSeleOf = (chain) => (chain ? `:${chain}` : '');
-// A comma-separated residue-number list — always valid NGL, whatever the file's
-// numbering (the viewer never assumes the 1 → N convention).
-const resnoListOf = (resnos) => {
-  const list = Array.from(new Set((resnos || []).filter((n) => Number.isFinite(n)))).sort((a, b) => a - b);
-  return list.join(',');
-};
+// The residue NUMBERS of one molecule, as a selector NGL really reads. NGL has no
+// comma-separated LIST of residue numbers: `:A and 601,602` matches the FIRST residue
+// only (measured on the very build the page bundles, ngl 2.4.0), so a linked glycan
+// (`:A and 601,602,603` — one section per glycan, see listMoleculeSections) drew ONE
+// sugar out of three, and a mixed DNA/RNA chain only its first nucleotide. The numbers
+// are written as RANGES — '601-603 or 700', the very form the membrane clauses already
+// use (resnoRangesClause) — and the numbering of the file is never assumed to be 1 → N.
+const resnoListOf = (resnos) => resnoRangesClause(resnos);
 const classifySectionResidue = (r) => {
   const name = r.resname;
   if (LABEL_WATER_NAMES.has(name)) return 'water';
@@ -7459,21 +7547,30 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
     // `water|all` — so unticking a molecule (or leaving water / ions unticked, which
     // KIND_VISIBLE_BY_DEFAULT asks for) drew it all the same.
     if (hidden && (hidden.has(sec.id) || hidden.has(sec.key))) return;
-    // Every row's look of THIS section, computed ONCE: the side-chain ANCHOR below
-    // needs the backbone look and the side-chain look together.
+    // Every row's look of THIS section, computed ONCE: the side-chain ANCHOR and the
+    // backbone's CA below need the side-chain look and the backbone look together.
     const subLooks = {};
     subsectionsOf(sec.kind).forEach((sp) => { subLooks[sp.sub] = effectiveSectionLook(treeOf(sec), sec.kind, sp.sub); });
-    // A protein whose BACKBONE and SIDE CHAINS are BOTH drawn as atoms hands the CA
-    // to the side-chain row (see sectionRowSele), so the two rows join at the CB–CA
-    // bond instead of showing floating side chains.
+    // A protein whose SIDE CHAINS are drawn as atoms takes the CA they hang from (see
+    // sectionRowSele), so every side chain shows its CB–CA bond instead of floating.
+    // A RIBBONY backbone keeps its CAs (taking them out of the ribbon's selection
+    // would break its spline): only a backbone drawn as atoms ITSELF gives them away,
+    // and the two atom rows then join at the CB–CA bond with no atom drawn twice.
     const anchorSideChains = sec.kind === 'protein'
       && !!subLooks.sidechain && subLooks.sidechain.style !== 'hide'
-      && ATOM_DRAW_STYLES.includes(subLooks.sidechain.style)
+      && ATOM_DRAW_STYLES.includes(subLooks.sidechain.style);
+    const backboneLosesCa = anchorSideChains
       && !!subLooks.backbone && ATOM_DRAW_STYLES.includes(subLooks.backbone.style);
     subsectionsOf(sec.kind).forEach((spec) => {
       const look = subLooks[spec.sub];
       if (look.style === 'hide') return;
-      const sele = sectionRowSele(structure, sec, spec.sub, { anchorSideChains });
+      // A row drawn ONE SPHERE / STICK PER ATOM also takes the atoms of the
+      // NEIGHBOURING part its own atoms are BONDED to (the bridge of sectionRowSele):
+      // the side chains their CA, the bases and the pentose the C1' · N1-N9 · P that
+      // link them, the acyl chains their glycerol, the glycerol its phosphate — so no
+      // part is left floating beside the one it is attached to.
+      const anchorParts = ATOM_DRAW_STYLES.includes(look.style);
+      const sele = sectionRowSele(structure, sec, spec.sub, { anchorSideChains, backboneLosesCa, anchorParts });
       if (!sele) return;
       const colorParams = sectionColorParams(look, sec.kind);
       const opacity = sectionOpacity(look);

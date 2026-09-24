@@ -191,11 +191,15 @@ eq(ROW_H.sectionRowSele(null, PROTEIN, 'sidechain'), ':A and protein and sidecha
   'sans ancre, la rangée des chaînes latérales garde sa sélection d’origine');
 eq(ROW_H.sectionRowSele(null, PROTEIN, 'backbone'), ':A and protein and backbone',
   '…et celle du squelette aussi');
-// Avec ancre : le CA rejoint les chaînes latérales et QUITTE le squelette.
+// Avec ancre : le CA rejoint les chaînes latérales ; il QUITTE le squelette quand le
+// squelette est dessiné en ATOMES lui aussi (aucun atome n'est alors dessiné deux fois).
 eq(ROW_H.sectionRowSele(null, PROTEIN, 'sidechain', { anchorSideChains: true }), ':A and protein and (sidechain or .CA)',
   'le CA est DANS la sélection des chaînes latérales : la liaison CB–CA est donc dessinée');
-eq(ROW_H.sectionRowSele(null, PROTEIN, 'backbone', { anchorSideChains: true }), ':A and protein and backbone and not .CA',
-  '…et il quitte celle du squelette : aucun atome n’est dessiné deux fois');
+eq(ROW_H.sectionRowSele(null, PROTEIN, 'backbone', { anchorSideChains: true, backboneLosesCa: true }),
+  ':A and protein and backbone and not .CA',
+  '…et il quitte celle du squelette QUAND celui-ci est dessiné en atomes : aucun atome deux fois');
+eq(ROW_H.sectionRowSele(null, PROTEIN, 'backbone', { anchorSideChains: true }), ':A and protein and backbone',
+  'sous un RUBAN (pas de `backboneLosesCa`) le squelette garde ses CA : NGL construit sa spline avec');
 const ATOM_STYLES = new Function([sliceDecl(VIEW, 'ATOM_DRAW_STYLES'), 'return { ATOM_DRAW_STYLES };'].join('\n'))().ATOM_DRAW_STYLES;
 eq([...ATOM_STYLES].sort(), ['ball+stick', 'licorice', 'line', 'spacefill', 'sphere'].sort(),
   'l’ancre vaut pour les quatre styles qui dessinent des ATOMES');
@@ -257,10 +261,18 @@ ok(!atomSels.includes(':A and protein and sidechain'), 'la sélection FLOTTANTE 
 eq(atomSels.filter((s) => String(s).includes('.CA') && !String(s).includes('not .CA')).length, 1,
   'le CA est DESSINÉ par une seule rangée (« not .CA » l’exclut, ce n’est pas un second dessin)');
 const ribbonSels = renderWith('cartoon', 'licorice').map((r) => r.params.sele);
-ok(ribbonSels.includes(':A and protein and backbone'), 'un squelette en ruban garde sa sélection complète');
-ok(ribbonSels.includes(':A and protein and sidechain'), '…et ses chaînes latérales gardent la leur');
-ok(!ribbonSels.some((s) => String(s).includes('.CA')), 'aucun CA n’est ajouté sous un ruban');
-has("const anchorSideChains = sec.kind === 'protein'", 'le rendu décide l’ancre d’après les DEUX looks de la section');
+// LE RAPPORT : « side chains in ball and sticks or licorice should also display the
+// bond to the backbone ». Sous un RUBAN, le CA entre donc AUSSI dans la rangée des
+// chaînes latérales (sinon elles flottent à côté) — mais le ruban garde les siens :
+// c'est avec eux que NGL construit sa spline, on ne l'ampute jamais.
+ok(ribbonSels.includes(':A and protein and (sidechain or .CA)'),
+  'sous un ruban, les chaînes latérales prennent le CA dont elles pendent');
+ok(ribbonSels.includes(':A and protein and backbone'), '…et le ruban garde sa sélection complète');
+ok(!ribbonSels.includes(':A and protein and backbone and not .CA'),
+  'on ne retire JAMAIS le CA de la sélection d’un ruban (la spline de NGL passe par eux)');
+has("const anchorSideChains = sec.kind === 'protein'", 'le rendu décide l’ancre d’après le look de SA rangée');
+has('const backboneLosesCa = anchorSideChains',
+  '…et ne cède les CA du squelette qu’à un squelette dessiné en ATOMES lui aussi');
 
 /* ══ 5. LE 🔢 RENUMÉROTATION : LE PANNEAU S'OUVRE, ET IL SERT À QUELQUE CHOSE ═ */
 const RES_H = new Function([sliceFn(VIEW, 'collectResidues'), 'return { collectResidues };'].join('\n'))();
