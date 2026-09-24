@@ -5,6 +5,12 @@ import { ensureNGL } from '../utils/ngl';
 // direction and sampling level — shared with the Mol* translation that draws the
 // projected shadows and the ambient occlusion (utils/viewerLightRig.js).
 import { LIGHT_RIG, nglKeyLightDirection, nglLightParams } from '../utils/viewerLightRig';
+// ✨ Ray — the high-resolution STILL of the current scene (its own module, see
+// src/utils/viewerRayImage.js): NGL's own supersampling path, so the still is
+// the very scene on screen and never a re-drawing of it.
+import {
+  RAY_FACTORS, RAY_DEFAULT_FACTOR, rayFactorOptions, rayProgressText, saveRayImage,
+} from '../utils/viewerRayImage';
 import { computeSmiles3DNameMap } from '../utils/atomNameSync';
 import { rebuildProteinHydrogenCoords } from '../utils/rebuildProteinHydrogens';
 import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
@@ -5245,6 +5251,7 @@ const setNucleicMotifColor = (motif, hex) => setNucleicMotifColors((prev) => ({ 
 const resetNucleicFormColors = () => setNucleicFormColors({ ...DEFAULT_NUCLEIC_FORM_COLORS });
 const resetNucleicMotifColors = () => setNucleicMotifColors({ ...DEFAULT_NUCLEIC_MOTIF_COLORS });
 const [captureMsg, setCaptureMsg] = useState('');
+
 // Message of the §1 « ⬇ PDB » button (structure / current-frame snapshot).
 const [pdbMsg, setPdbMsg] = useState('');
 useEffect(() => {
@@ -5305,6 +5312,46 @@ const [loadRequest, setLoadRequest] = useState(null);
 const [status, setStatus] = useState('idle');
 const statusRef = useRef(status); // mirror for event handlers (file-change dialog)
 statusRef.current = status;
+/* ✨ Ray — the high-resolution still of the scene (see viewerRayImage.js). Same
+   additive rule as everything else around it: its OWN state, its OWN handler,
+   and NOTHING shared with 📷 Figure — which keeps publishing to the Figure
+   library exactly as before, while ✨ Ray only writes a PNG on the computer.
+   The FACTOR (the supersampling multiple) and the ALPHA choice are remembered
+   like every other viewer preference. Declared HERE, after `status` and
+   `stageRef` — the effect below reads both. */
+const [rayFactor, setRayFactor] = useState(() => {
+  try {
+    const v = Number(localStorage.getItem('labViewerRayFactor'));
+    return RAY_FACTORS.includes(v) ? v : RAY_DEFAULT_FACTOR;
+  } catch { return RAY_DEFAULT_FACTOR; }
+});
+const [rayTransparent, setRayTransparent] = useState(() => {
+  try { return localStorage.getItem('labViewerRayTransparent') === 'on'; } catch { return false; }
+});
+const [rayBusy, setRayBusy] = useState(false);
+const [rayMsg, setRayMsg] = useState('');
+// One token per render: a slow ray that is superseded by a second click may
+// never write its message (or clear the newer one) afterwards.
+const rayRunRef = useRef(0);
+useEffect(() => {
+  try { localStorage.setItem('labViewerRayFactor', String(rayFactor)); } catch { /* ignore */ }
+}, [rayFactor]);
+useEffect(() => {
+  try { localStorage.setItem('labViewerRayTransparent', rayTransparent ? 'on' : 'off'); } catch { /* ignore */ }
+}, [rayTransparent]);
+/* The resolution list of the ✨ Ray selector is written in PIXELS (`3× · 4800×
+   2700 px`), so it is rebuilt when the canvas really changes size — a window
+   resize, a new structure — and never shows a size another screen would give.
+   The list also carries the factor this GPU can really take (`best`): the
+   render is clamped to it instead of failing. Purely additive: one state and
+   one listener of its own. */
+const [raySizes, setRaySizes] = useState(() => rayFactorOptions(null));
+useEffect(() => {
+  const refresh = () => setRaySizes(rayFactorOptions(stageRef.current));
+  refresh();
+  window.addEventListener('resize', refresh);
+  return () => window.removeEventListener('resize', refresh);
+}, [status]);
 const [errorMsg, setErrorMsg] = useState('');
 const showManualHighlight = useShowAssignedFlag(); // green "assigned" atoms toggle (shared with the simulated spectra)
 const [hoverInfo, setHoverInfo] = useState(null);
@@ -10622,6 +10669,54 @@ const captureScene = async () => {
   setTimeout(() => setCaptureMsg(''), 5000);
 };
 
+/* ---- ✨ Ray — the high-resolution STILL of the current scene -----------------
+   ADJACENT TO 📷 Figure AND INDEPENDENT OF IT. 📷 stays exactly what it was
+   (it publishes to the Figure library); ✨ Ray renders the SAME scene — every
+   palette, the ring plates, the ESP overlays, the clipping plane, the fog, the
+   light rig, the trajectory frame on screen — with NGL's own supersampling
+   path (utils/viewerRayImage.js: `factor` tiles re-rendered and averaged) and
+   writes ONE PNG on the computer. Nothing here touches the scene: no
+   representation is rebuilt, no state of the viewer is changed, and NGL
+   restores the canvas' sampling and clear alpha by itself when it is done.
+
+   The message tells the truth: the REAL pixel size that came out, whether the
+   background is transparent, and the progress in tiles while it renders. A GPU
+   that cannot take the requested size gets the largest it can (clampRayFactor),
+   and a canvas that is not ready says so instead of writing an empty picture. */
+const captureRay = async () => {
+  const run = rayRunRef.current + 1;
+  rayRunRef.current = run;
+  const stage = stageRef.current;
+  if (!stage || status !== 'ready') {
+    setRayMsg('⚠️ Load a structure first — ✨ Ray renders the scene on screen');
+    setTimeout(() => { if (rayRunRef.current === run) setRayMsg(''); }, 3500);
+    return;
+  }
+  setRayBusy(true);
+  setRayMsg('✨ Rendering the ray still…');
+  try {
+    const out = await saveRayImage(stage, {
+      label: file ? file.name : (pdbId || 'structure'),
+      factor: rayFactor,
+      transparent: rayTransparent,
+      onProgress: (done, total) => { if (rayRunRef.current === run) setRayMsg(rayProgressText(done, total)); },
+    });
+    if (rayRunRef.current !== run) return;
+    setRayMsg(out.saved
+      ? `✓ ${out.fileName} — ${out.width}×${out.height} px${out.transparent ? ' · transparent' : ''} · downloaded`
+      : `✓ rendered ${out.width}×${out.height} px — the browser blocked the download (allow downloads for this page)`);
+  } catch (err) {
+    if (rayRunRef.current === run) {
+      setRayMsg(`⚠️ Ray render failed (${(err && err.message) || 'unknown error'}) — try a smaller ×`);
+    }
+  } finally {
+    if (rayRunRef.current === run) {
+      setRayBusy(false);
+      setTimeout(() => { if (rayRunRef.current === run) setRayMsg(''); }, 8000);
+    }
+  }
+};
+
 // ⚡ ESP targets the molecule currently selected in the Molecules bar.
 const espTargetComp = status === 'ready' ? resolveMolComp(selectedMolKey) : null;
 const espOnSelected = espMolKeys.has(selectedMolKey);
@@ -11427,6 +11522,49 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 </button>
 {captureMsg && (
 <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md px-2 py-1">{captureMsg}</span>
+)}
+{/* ✨ Ray — the HIGH-RESOLUTION STILL of what is on screen, right next to 📷
+    Figure and completely independent of it: 📷 publishes to the Figure library
+    as it always did, ✨ Ray only writes a PNG on the computer. It renders with
+    NGL's own supersampling path (see utils/viewerRayImage.js), so the picture
+    IS the scene — every palette, the ring plates, the ESP surface, the
+    clipping plane, the fog, the light rig — re-rendered at `factor` times the
+    canvas and averaged. The list says the pixels each factor produces HERE,
+    and a GPU that cannot take the size silently gets the largest it can. */ }
+<div className="flex items-center gap-1">
+  <button
+    type="button"
+    onClick={captureRay}
+    disabled={rayBusy}
+    title={status === 'ready'
+      ? `Render a high-resolution still of the scene on screen (now ~${(raySizes.find((o) => o.factor === rayFactor) || {}).width || 0}×${(raySizes.find((o) => o.factor === rayFactor) || {}).height || 0} px). It is NGL's own supersampling render — the very scene, every palette, the ring plates, the ESP surface, the fog and the light rig, re-rendered tile by tile — and the PNG is downloaded to your computer. 📷 Figure is untouched: that one still goes to the Figure library.`
+      : 'Load a structure first — ✨ Ray renders the 3D scene on screen at high resolution'}
+    className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${rayBusy ? 'bg-amber-50 border-amber-300 text-amber-700 cursor-wait' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
+  >
+    {rayBusy ? '✨ Rendering…' : '✨ Ray'}
+  </button>
+  <select
+    value={rayFactor}
+    onChange={(e) => setRayFactor(Number(e.target.value))}
+    title={'Supersampling multiple of the canvas — the bigger it is, the smoother and the larger the PNG. The pixel size written after the × is what the render will really produce on this screen; a size this GPU cannot take is reduced automatically.'}
+    className="border border-amber-300 rounded-md px-1 py-1 text-[11px] bg-white outline-none focus:border-amber-500 h-7"
+  >
+    {raySizes.map((o) => (
+      <option key={o.factor} value={o.factor}>
+        {o.label}{o.allowed ? '' : ` → ${o.best}×`}
+      </option>
+    ))}
+  </select>
+  <label
+    title="Transparent background: the PNG keeps an alpha channel, so the molecule can be dropped on any coloured page or slide (the interactive canvas is not affected)"
+    className="px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-1 cursor-pointer bg-white border-amber-300 text-amber-700 hover:bg-amber-50 whitespace-nowrap"
+  >
+    <input type="checkbox" checked={rayTransparent} onChange={(e) => setRayTransparent(e.target.checked)} className="accent-amber-600" />
+    ⬚ alpha
+  </label>
+</div>
+{rayMsg && (
+<span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">{rayMsg}</span>
 )}
 {/* ⚙️ SETUP — save / load the WHOLE visualisation setup under a name (see
     captureViewerSetup): the six menus with their radii, colours and group

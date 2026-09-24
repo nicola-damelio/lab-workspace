@@ -103,6 +103,17 @@ const tests = [
   // metalness sont des paramètres de PREMIÈRE CLASSE (`{ uniform: true }`), que
   // setParameters applique en place, sans rebuild.
   '_viewer_materials_test.mjs',
+  // Le bouton « ✨ Ray » — l'image statique haute résolution de la scène, À
+  // CÔTÉ du 📷 Figure et sans rien y changer. Le « ray » est le SUPERSAMPLING
+  // DE NGL (`makeImage({ factor, antialias, transparent })`) : le garde-fou
+  // relit le code livré de ngl 2.4.0 pour prouver le contrat sur lequel il
+  // repose (défauts trim:false / factor:1 · toile = canvas × factor · promesse
+  // de Blob PNG · restauration de l'alpha et de l'échantillonnage), EXÉCUTE les
+  // fonctions pures du module (taille annoncée, plafonnement budget + GPU, nom
+  // du fichier, progression) sur une doublure de stage, et vérifie
+  // l'ADDITIVITÉ : le 📷 publie toujours dans la bibliothèque, ✨ Ray écrit
+  // seulement un PNG sur l'ordinateur, et aucune représentation n'est touchée.
+  '_viewer_ray_test.mjs',
   '_ligand_smiles_test.mjs',
   '_viewer_render_smoke_test.mjs',
 ];
