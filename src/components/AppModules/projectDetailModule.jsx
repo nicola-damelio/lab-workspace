@@ -3,7 +3,7 @@ import { RichTextEditor } from '../RichTextEditor';
 import { SmartImage } from '../TestShellRenderer';
 import {
   loadPubFormat, loadRelevantPapers, matchCoauthors, pubCitationData, pubCitationHtml,
-  pubLayoutCss
+  pubLayoutCss, journalSectionOrder, reorderDocHtml
 } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
 import { loadProjects, saveProjects, saveProjectsChecked, lightenProjectForStorage, recordProjectDeletion, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor, saveProjectsRescued } from './projectsModule';
@@ -3297,6 +3297,13 @@ export const ProjectDetailModule = ({
       })));
       bodyHtml = linkCitations(repaired.html);
     }
+    /* L'ORDRE DES SECTIONS DU JOURNAL (la demande) : quand un journal est choisi
+       (« Submit to » dans le Publication format), le document EXPORTÉ / IMPRIMÉ se
+       lit dans SON ordre — Introduction → … → References — sans qu'un mot du texte
+       soit réécrit. Les titres que le journal ne nomme pas ne bougent pas, et deux
+       sections du même genre gardent l'ordre de l'auteur (voir reorderDocHtml, qui
+       déplace des blocs entiers). */
+    bodyHtml = reorderDocHtml(bodyHtml, journalSectionOrder(pubFormat));
     const title = `${project.name} — project document`;
     /* LA MISE EN FORME DU DOCUMENT (« Publication format ») PART AVEC L'EXPORT :
        sa feuille vit dans la page de l'application (`#project-doc-container`),

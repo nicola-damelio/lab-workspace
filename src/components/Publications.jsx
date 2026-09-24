@@ -34,6 +34,13 @@ import {
   normalizePubLayout, pubCitationData, pubCitationHtml, pubLayoutCss, pubTextStyleIsSet,
   scientistStyleOf
 } from './pubCitation';
+/* LES FORMATS DE JOURNAL (« cambiare giornale di submission velocemente ») : chaque
+   journal réunit la forme de la citation, le CARACTÈRE de chaque partie du document
+   et l'ORDRE de ses sections — voir journalFormats.js. */
+import {
+  JOURNAL_FORMATS, JOURNAL_IDS, applyJournalFormat, clearJournalFormat,
+  journalLabelOf, journalOf, journalSectionOrder, reorderDocHtml
+} from './journalFormats';
 
 const JOURNALS_STORAGE_KEY = 'labWorkspace_journals';
 
@@ -80,6 +87,16 @@ export {
   authorMatchesCandidate, matchCoauthors, isLabAuthor, labMemberOf,
   scientistStyleOf, authorStyleOf, sanitizeScientistStyles
 } from './pubCitation';
+
+/* LES FORMATS DE JOURNAL, ré-exportés POUR LA PAGE DU PROJET : elle imprime le
+   document et n'importe que ce module-ci (`from '../Publications'`). Le bloc
+   ci-dessus ré-exporte pubCitation : ces noms-là viennent de journalFormats.js,
+   d'où cette seconde instruction — un nom ne peut pas être ré-exporté depuis un
+   module qui ne le déclare pas. */
+export {
+  JOURNAL_FORMATS, JOURNAL_IDS, applyJournalFormat, clearJournalFormat,
+  journalLabelOf, journalOf, journalSectionOrder, reorderDocHtml
+} from './journalFormats';
 
 const ifNum = (v) => {
   const n = parseFloat(String(v ?? '').replace(',', '.'));
@@ -2467,6 +2484,23 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
   const pubSetPreset = (presetId) =>
     setActiveFormat({ ...buildPubFormat(presetId), layout: normalizePubLayout(activeFormat.layout) });
 
+  /* APPLIQUER UN JOURNAL — les TROIS choses du changement de journal d'un coup (la
+     demande : « l'ordine delle sezioni, il formato della bibliografia, il carattere
+     delle varie sezioni »). La citation est reconstruite comme le fait « Journal
+     preset », donc les champs de la bibliographie changent vraiment; le caractère
+     de chaque partie vient du journal; l'ordre des sections est écrit dans le
+     format (order) pour l'export du document. Le reste — styles des noms des
+     membres, forme des renvois dans le texte, largeurs déjà réglées — est CONSERVÉ :
+     applyJournalFormat copie le format de l'utilisateur. « As in the app » retire
+     ces réglages et rend le document tel qu'il était avant le changement. */
+  const pubSetJournal = (id) => {
+    if (!id) { setActiveFormat(clearJournalFormat(activeFormat, buildPubLayout())); return; }
+    const def = JOURNAL_FORMATS[id];
+    if (!def) { setActiveFormat(activeFormat); return; }
+    const withPreset = applyJournalFormat({ ...activeFormat, ...buildPubFormat(def.preset) }, id);
+    setActiveFormat({ ...withPreset, layout: normalizePubLayout(withPreset.layout) });
+  };
+
   const pubMoveField = (fieldId, dir) => {
     const fields = [...activeFormat.fields].sort((a, b) => a.order - b.order);
     const idx = fields.findIndex((f) => f.id === fieldId);
@@ -2553,6 +2587,21 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
             ))}
             <option value="custom">Custom</option>
           </select>
+          <label className="text-[10px] font-black uppercase tracking-wide text-slate-400">Submit to:</label>
+          <select value={journalOf(activeFormat)} onChange={(e) => pubSetJournal(e.target.value)}
+                  className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-semibold text-slate-700"
+                  title="Send the SAME work to another journal in one click: the citation and the bibliography style, the character (font, size, alignment, bold, italic) of every part of a project document and the ORDER of its sections change together. Everything stays editable below, and « As in the app » puts the document back the way it was.">
+            <option value="">↺ As in the app (no journal)</option>
+            {JOURNAL_IDS.map((id) => (
+              <option key={id} value={id}>{JOURNAL_FORMATS[id].label}</option>
+            ))}
+          </select>
+          {journalOf(activeFormat) && (
+            <span className="text-[10px] italic text-slate-500 max-w-[22rem] truncate"
+                  title={`${JOURNAL_FORMATS[journalOf(activeFormat)].notes} — sections of the exported document, in this journal's order: ${journalSectionOrder(activeFormat).join(' → ')}. A title this journal does not name does not move, and every setting stays editable in the panel below.`}>
+              📰 {journalLabelOf(journalOf(activeFormat))} · {journalSectionOrder(activeFormat).join(' → ')}
+            </span>
+          )}
         </div>
       </div>
       <div className="p-4">
