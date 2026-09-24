@@ -508,14 +508,14 @@ eq(H.sectionRowSele(SUGAR_STRUCT, sugarSec, 'general', { anchorParts: true }), s
    buildSectionReps — et c'est la seule chose que ces cinq assertions regardent. */
 has('const anchorParts = ATOM_DRAW_STYLES.includes(look.style);',
   'le rendu ne demande le pont que pour une rangée dessinée en ATOMES');
-has('const sele = sectionRowSele(structure, sec, spec.sub, { anchorSideChains, backboneLosesCa, anchorParts });',
+has(': sectionRowSele(structure, sec, spec.sub, { anchorSideChains, backboneLosesCa, anchorParts });',
   '…et les trois drapeaux de la rangée lui sont passés ensemble');
 has('const anchored = !!opts.anchorParts;', 'la sélection de rangée lit le drapeau du pont une seule fois');
 has('const backboneLosesCa = anchorSideChains',
   'le squelette ne cède ses CA que s’il est dessiné en ATOMES lui aussi');
-has('return opts.backboneLosesCa ? `${base} and backbone and not .CA` : `${base} and backbone`;',
+has('(opts.backboneLosesCa ? `${base} and backbone and not .CA` : `${base} and backbone`)',
   '…donc un squelette en RUBAN garde les siens : la spline de NGL passe par les CA');
-has('return opts.anchorSideChains ? `${base} and (sidechain or .CA)` : `${base} and sidechain`;',
+has('(opts.anchorSideChains ? `${base} and (sidechain or .CA)` : `${base} and sidechain`)',
   'les chaînes latérales, elles, prennent le CA dès qu’elles sont dessinées en ATOMES');
 
 console.log(`_viewer_row_bridges_test.mjs — ${passed} assertions OK`);

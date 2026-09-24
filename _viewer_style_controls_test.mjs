@@ -128,8 +128,12 @@ has('aspectRatio: 1.1 * g.sphere', 'ball+stick : rayon des sphères = aspectRati
 // rendeur les recolle au squelette avec la même règle qu'autrefois (sectionRowSele).
 has("{ sub: 'sidechain', label: 'Side chains', styles: STYLES.sidechains, colors: COLORS.proteinSide, def: { style: 'licorice', colorBy: 'element' }, sele: 'sidechain' },",
   'la rangée « Side chains » (licorice, couleur par élément)');
-has('return opts.anchorSideChains ? `${base} and (sidechain or .CA)` : `${base} and sidechain`;',
+has('? (opts.anchorSideChains ? `${base} and (sidechain or .CA)` : `${base} and sidechain`)',
   '…et ses atomes sont recollés au squelette (CB–CA) quand les deux rangées sont en atomes');
+// …et les DEUX extrémités de la section reçoivent le pont qui les rattache à la chaîne
+// dont elle est extraite (voir _viewer_row_bridges_test.mjs, § 6).
+has('const bridge = bridgeAtomIndices(structure, own, whole);',
+  'les extrémités N et C d’une section de protéine reçoivent les atomes auxquels elles sont liées');
 
 /* ══ 3. LES COULEURS D'ATOMES / DE SURFACE PARTENT BIEN DANS NGL ══════════ */
 has('const flatHex = (v) => (Number.isFinite(v) ? v : null);', 'une couleur unie est un entier hexadécimal');

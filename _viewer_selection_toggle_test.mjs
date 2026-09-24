@@ -166,13 +166,19 @@ eq(shared, snapshot,
 
 /* ══ 8. LA SOURCE DU VIEWER ══════════════════════════════════════════════ */
 has('const toggleSelStyle = (key, style, from) => {', 'le geste a sa propre fonction (donc testable)');
-has('onClick={() => toggleSelStyle(s.name, style)}', '…et les boutons de style l’utilisent');
+/* …mais plus AUCUN bouton ne l'appelle : les ticks « + show » de la barre de gauche
+   ont disparu (le suivi : « the buttons of style are now obsolete because replaced
+   by the dropdown windows ») — le menu « Style » de la rangée écrit la même chose.
+   L'empilement de PyMOL reste celui du SCRIPT : setSelRowStyle est l'autre
+   appelant, et il enchaîne le geste tick par tick (voir plus bas). */
+gone('onClick={() => toggleSelStyle(s.name, style)}',
+  'plus aucun bouton de style dans la barre de gauche (le menu « Style » les remplace)');
 /* LA MÊME SÉRIE DE COMMANDES QUE LES RANGÉES DE STYLING (la demande) : la barre
    Sélections ouvre la rangée par le SÉLECTEUR DE STYLE du styling (mêmes mots,
    mêmes libellés), et montre la rampe / les couleurs de 2°-structure là où la
    coloration est choisie — comme la rangée de styling. */
-has("{['cartoon', 'ribbon', 'tube', 'ball', 'stick', 'sphere', 'surface'].map((style) => (",
-  'les ticks restent : ce sont les DEUX commandes « show » empilées de PyMOL');
+gone("{['cartoon', 'ribbon', 'tube', 'ball', 'stick', 'sphere', 'surface'].map((style) => (",
+  '…ni la rangée de ticks qui les portait (le suivi des boutons obsolètes)');
 has('look: selLookOf(st),', '…et le sélecteur de style du styling ouvre la rangée (le rendu commun lit selLookOf)');
 has('set: (field, value) => setSelField(s.name, field, value),', '…chaque champ passe par l’adaptateur des deux barres');
 has('const work = setSelRowStyle(key, value);',
@@ -190,7 +196,8 @@ has('const named = selections.find((s) => s.name === key);',
   'la clause rangée est l’expression PyMOL de la ligne (celle que le pont ré-étend)');
 has('if (!on && !st[style] && !list.length) return;',
   'seules les lignes qui DESSINENT le style sont touchées quand on le cache');
-has("title={`${st[style] ? 'Hide' : 'Show'}", 'le bouton explique le geste et son effet sur les autres lignes');
+has("title={st.hidden\n                    ? 'Show this selection again", 'le bouton 🙈/👁 dit le geste ET son effet sur toutes les lignes qui dessinent ces atomes');
+has("{st.hidden ? '👁 Show' : '🙈 Hide'}", '…et son libellé suit l’état de la sélection');
 has('const exclusionOf = (style) => {', 'le rendu sait déjà soustraire ces exclusions (and not (…))');
 
 /* ══ 9. « 🙈 HIDE » : LES MÊMES LIGNES-OVERLAYS, LES MÊMES CONSÉQUENCES ═════

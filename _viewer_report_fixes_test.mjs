@@ -224,6 +224,15 @@ const RENDER_H = new Function([
   sliceFn(VIEW, 'effectiveSectionLook'),
   sliceDecl(VIEW, 'ATOM_DRAW_STYLES'),
   sliceFn(VIEW, 'sectionRowSele'),
+  // Le PONT d'une rangée : les atomes de la part VOISINE auxquels les siens sont liés
+  // — et les DEUX EXTRÉMITÉS d'une section de protéine, qui pendent hors de la plage
+  // de résidus (ou de la sélection écrite par un script) dont elle est faite. Le rendu
+  // le demande dès qu'une rangée dessine atome par atome, donc ces helpers sont là.
+  sliceFn(VIEW, 'atomIndicesForSele'),
+  sliceDecl(VIEW, 'moleculeIndexCache'),
+  sliceFn(VIEW, 'moleculeIndicesOf'),
+  sliceDecl(VIEW, 'indexSele'),
+  sliceFn(VIEW, 'bridgeAtomIndices'),
   sliceDecl(VIEW, 'schemeParam'),
   sliceFn(VIEW, 'sectionColorParams'),
   sliceFn(VIEW, 'sectionStyleReps'),

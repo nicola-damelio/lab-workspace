@@ -447,6 +447,14 @@ const GRAD = new Function([
   sliceFn(VIEW, 'effectiveSectionLook'),
   sliceDecl(VIEW, 'ATOM_DRAW_STYLES'),
   sliceFn(VIEW, 'sectionRowSele'),
+  // Le PONT d'une rangée (le CA des chaînes latérales, le N1·N9 des bases, et les deux
+  // extrémités d'une section de protéine) : buildSectionReps le demande dès qu'une
+  // rangée dessine atome par atome.
+  sliceFn(VIEW, 'atomIndicesForSele'),
+  sliceDecl(VIEW, 'moleculeIndexCache'),
+  sliceFn(VIEW, 'moleculeIndicesOf'),
+  sliceDecl(VIEW, 'indexSele'),
+  sliceFn(VIEW, 'bridgeAtomIndices'),
   sliceDecl(VIEW, 'schemeParam'),
   sliceFn(VIEW, 'sectionColorParams'),
   sliceFn(VIEW, 'sectionStyleReps'),

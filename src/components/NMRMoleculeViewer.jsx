@@ -3244,7 +3244,23 @@ const setGeneralSectionField = (looks, kind, field, value) => {
     // time it is asked what it really draws. Hiding a part means it stops following
     // until its own row is moved again (or its ↺ resets it), which is what makes
     // « one description of the molecule » hold.
-    if (field === 'style' || field === 'colorBy') { next.style = 'hide'; next.follow = false; }
+    if (field === 'style' || field === 'colorBy') {
+      /* « HIDE » ON GENERAL MEANS « NO GENERAL DESCRIPTION », NOT « EMPTY MOLECULE ».
+         The exclusive rule below is right for a style / a colouring (the parts must
+         not be drawn twice on the same atoms), but it took `hide` with it: choosing
+         « Hide » on the General row hid every part as well, so the molecule vanished
+         and the only way back was restyling Backbone · Side chains by hand — the
+         report « there is a bug in the general style of proteins in the styling
+         window. It is not working anymore ». Hiding General now gives each part its
+         OWN default style back: the row above stops describing the molecule, and
+         the rows below (Backbone · Side chains · bases · ribose · head · tail ·
+         glycerol) draw it again, which is exactly what « no general style » means.
+         Measured (the §-cases of _viewer_general_row_test.mjs): General cartoon →
+         hide left the protein EMPTY before, and draws cartoon backbone + licorice
+         side chains now. */
+      if (value === 'hide') { next.style = defaultLookOf(kind, s.sub).style; next.follow = false; }
+      else { next.style = 'hide'; next.follow = false; }
+    }
     // A row that had DEVIATED (its own style chosen on its own row, a part put away,
     // or its own material) is left ALONE by the other fields: no 'follow' is handed
     // back and no value is written into it — that is what keeps « the material only
@@ -7284,15 +7300,36 @@ const sectionRowSele = (structure, sec, sub, opts = {}) => {
     // belongs to the SIDE-CHAIN row — exactly as in PyMOL, whose `sidechain`
     // selection includes it — so `opts.anchorSideChains`, which the renderer asks for
     // whenever the side-chain row draws ATOMS, adds it.
-    if (sub === 'sidechain') {
-      return opts.anchorSideChains ? `${base} and (sidechain or .CA)` : `${base} and sidechain`;
-    }
-    // The BACKBONE row gives the CA away only when it draws atoms ITSELF
-    // (`opts.backboneLosesCa`): the two atom rows then join at the CB–CA bond, no
-    // atom is drawn twice, and the backbone stays connected by its own C–N peptide
-    // bonds. A RIBBONY backbone keeps its CAs — a ribbon / cartoon / tube walks
-    // THROUGH them, and taking them out of its selection would break its spline.
-    return opts.backboneLosesCa ? `${base} and backbone and not .CA` : `${base} and backbone`;
+    const inner = sub === 'sidechain'
+      ? (opts.anchorSideChains ? `${base} and (sidechain or .CA)` : `${base} and sidechain`)
+      // The BACKBONE row gives the CA away only when it draws atoms ITSELF
+      // (`opts.backboneLosesCa`): the two atom rows then join at the CB–CA bond, no
+      // atom is drawn twice, and the backbone stays connected by its own C–N peptide
+      // bonds. A RIBBONY backbone keeps its CAs — a ribbon / cartoon / tube walks
+      // THROUGH them, and taking them out of its selection would break its spline.
+      : (opts.backboneLosesCa ? `${base} and backbone and not .CA` : `${base} and backbone`);
+    /* ⚠ THE N AND C TERMINI HANG ONTO WHAT THEY ARE BONDED TO.
+       The report: « in some representation the N terminus and the C terminus residues
+       remain detached from the rest. In that case add a bond. » A protein section is
+       a chain, but a section can be a PART of one (a residue range, a selection a
+       PyMOL macro made, a chain cut out of a file): its first and last residue were
+       then drawn with no bond to the chain they were taken from, because NGL draws a
+       bond only when BOTH atoms are in the selection — the C of the residue before
+       and the N of the residue after stay outside it. The atoms the section's own
+       atoms are BONDED to OUTSIDE the section — the two peptide bonds of its two ends
+       — are therefore added to a row that draws ATOM BY ATOM (`opts.anchorParts`),
+       read from the structure's own bond graph by bridgeAtomIndices, exactly as the
+       side chains take their CA and the lipids their glycerol.
+       A WHOLE-CHAIN section has nothing outside it: the bridge is empty and the
+       selector is EXACTLY the one above — the default look of a molecule does not
+       move by a character (see _viewer_row_bridges_test.mjs, which measures both). */
+    if (!opts.anchorParts || !structure) return inner;
+    const own = moleculeIndicesOf(structure, base);
+    if (!own || !own.size) return inner;
+    const whole = moleculeIndicesOf(structure, 'all');
+    const bridge = bridgeAtomIndices(structure, own, whole);
+    if (!bridge.length) return inner;
+    return `${inner} or @${bridge.join(',')}`;
   }
   if (sec.kind === 'nucleic') {
     // « nucleic acid ribose or desoxyribose must show their bond to the bases and to
@@ -7521,7 +7558,16 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
     try {
       r = comp.addRepresentation(type, params);
       if (r) { flagMeshShadows(r); reps.push(r); }
-    } catch { r = null; /* a style that cannot be drawn never breaks the view */ }
+    } catch (err) {
+      r = null;
+      /* A style NGL REFUSES MUST NOT VANISH IN SILENCE. `rainbow` was exactly that:
+         `colorScheme: 'rainbow'` made addRepresentation throw and the row drew
+         NOTHING while the menu said « Rainbow » — the report « rainbow does not
+         color », found only by reading NGL's registry. A refused representation now
+         names itself, its row and its parameters in the console, so the next one of
+         these costs a glance instead of a session. */
+      console.warn('viewer: NGL refused a representation —', type, params, (err && err.message) || err);
+    }
     return r;
   };
   // The filled plates of one row: a MeshBuffer (NGL has no plate representation).
@@ -7570,6 +7616,32 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
       && ATOM_DRAW_STYLES.includes(subLooks.sidechain.style);
     const backboneLosesCa = anchorSideChains
       && !!subLooks.backbone && ATOM_DRAW_STYLES.includes(subLooks.backbone.style);
+    /* ⚠ THE GENERAL ROW GIVES ITS ATOMS AWAY TO A PART THAT HAS ITS OWN STYLE.
+       Measured on this very code (_viewer_general_row_test.mjs): after « General →
+       Tube », choosing « Backbone → Cartoon » drew `:A and backbone` while the
+       General row went on drawing `:A` — the whole protein as a 0.5 Å tube — so the
+       cartoon and the licorice sticks were drawn INSIDE an opaque tube that covered
+       them, and the report was « the general style of proteins … is not working
+       anymore ». It is the very rule the membrane headgroups already follow
+       (membraneHeadRelinquish: a headgroup row takes its atoms out of the leaflet
+       row that draws them) and PyMOL's own `sidechain` selection: the atoms a row
+       has been given its OWN style are handed over to it. Only a row the user
+       DEVIATED (`follow: false` — a part that still follows General has no style of
+       its own, so General is its style) and that is really drawn takes them, so the
+       default look of a molecule (General cartoon + Backbone follows + Side chains
+       licorice) is untouched: the cartoon still walks the whole chain. A spline
+       style loses nothing by it (NGL walks the CAs, which stay in the selection),
+       and an atom-drawn General stops painting over the parts that have their own. */
+    const rowOpts = (style) => ({ anchorSideChains, backboneLosesCa, anchorParts: ATOM_DRAW_STYLES.includes(style) });
+    const relinquished = subsectionsOf(sec.kind)
+      .filter((sp) => sp.sub !== 'general')
+      .map((sp) => ({ sp, look: subLooks[sp.sub] }))
+      .filter(({ look }) => !!look && look.style !== 'hide' && look.follow === false)
+      .map(({ sp, look }) => sectionRowSele(structure, sec, sp.sub, rowOpts(look.style)))
+      .filter(Boolean);
+    const generalOnly = relinquished.length
+      ? `${sec.sele || 'all'} and not (${relinquished.join(') and not (')})`
+      : '';
     subsectionsOf(sec.kind).forEach((spec) => {
       const look = subLooks[spec.sub];
       if (look.style === 'hide') return;
@@ -7579,7 +7651,9 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
       // link them, the acyl chains their glycerol, the glycerol its phosphate — so no
       // part is left floating beside the one it is attached to.
       const anchorParts = ATOM_DRAW_STYLES.includes(look.style);
-      const sele = sectionRowSele(structure, sec, spec.sub, { anchorSideChains, backboneLosesCa, anchorParts });
+      const sele = spec.sub === 'general' && generalOnly
+        ? generalOnly
+        : sectionRowSele(structure, sec, spec.sub, { anchorSideChains, backboneLosesCa, anchorParts });
       if (!sele) return;
       const colorParams = sectionColorParams(look, sec.kind);
       const opacity = sectionOpacity(look);
@@ -13891,10 +13965,20 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
                 the colouring needs, Transp, R●, R— and the 🎛 material of every
                 family this row draws. The request: « the selection window (on the
                 left) does not still have the same appearance as the styling window
-                while they should be identical in terms of commands ». Under the
-                Style dropdown the TICKS stay, set apart by their own label: PyMOL
-                's « show » commands STACK (cartoon + sticks + spheres at once), so
-                a second style can be added on top of the first. */}
+                while they should be identical in terms of commands ».
+                ⚠ THE « + show » TICKS ARE GONE (the follow-up: « in the selection
+                window generated by pymol commands the buttons of style are now
+                obsolete because replaced by the dropdown windows »). They toggled
+                ONE FLAG per button (cartoon · ribbon · tube · ball+stick · stick ·
+                sphere · surface) while the Style dropdown above draws the same
+                styles from the same vocabulary — two commands for one job, and the
+                ticks could only ever show `selRowStyle`'s FIRST flag, so the
+                dropdown lied about what was stacked. The STACKING itself is not
+                lost: it is what a script's « show » commands write and what
+                setSelRowStyle still chains tick by tick (a row that draws several
+                styles keeps drawing them — the dropdown shows the first one, and
+                choosing there replaces the stack, exactly like the last command of
+                the macro). */}
             {renderLookControls({
               uid: `« ${s.name} »`,
               styleOptions: SEL_ROW_STYLE_CHOICES,
@@ -13905,20 +13989,6 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
               families: selRowFamilies(st),
               materialOf: (fam) => (st.mat && st.mat[fam]) || {},
               setMaterial: (fam, field, value) => setSelMaterial(s.name, fam, field, value),
-              extra: (
-                <span className="flex items-center gap-0.5 flex-wrap basis-full"
-                  title="PyMOL's « show » commands STACK: what the Style dropdown draws, and every style ticked here on top of it. Unticking one takes it off on EVERY row that drew its atoms, exactly like the last command of the script">
-                  <span className="text-[9px] text-slate-400 font-bold shrink-0">+ show</span>
-                  {['cartoon', 'ribbon', 'tube', 'ball', 'stick', 'sphere', 'surface'].map((style) => (
-                    <button key={style} type="button"
-                      onClick={() => toggleSelStyle(s.name, style)}
-                      title={`${st[style] ? 'Hide' : 'Show'} « ${style === 'ball' ? 'ball+stick' : style} » on the atoms of this row — and on THOSE atoms: the other rows that draw the same style lose them too, exactly like the last command of PyMOL`}
-                      className={`px-1.5 py-0.5 text-[10px] font-bold rounded border ${st[style] ? 'bg-violet-600 text-white border-violet-600' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-violet-50'}`}>
-                      {style === 'ball' ? 'ball+stick' : style}
-                    </button>
-                  ))}
-                </span>
-              ),
             })}
               </>
             )}

@@ -140,8 +140,17 @@ has('const work = setSelRowStyle(key, value);',
 has("const chained = membraneHeadRelinquish(key, value !== 'hide', work);",
   '…enchaînée sur la règle des têtes de groupe (leurs atomes quittent le feuillet parent)');
 has('const selLookOf = (st) => {', '…et la lecture d’une rangée de sélection passe par selLookOf');
-/* Les ticks « + show » restent : PyMOL EMPILE ses commandes « show ». */
-has('+ show', 'les ticks d’empilement sont toujours là (deux « show » de PyMOL)');
+/* Les ticks « + show » ont DISPARU (le suivi : « in the selection window generated
+   by pymol commands the buttons of style are now obsolete because replaced by the
+   dropdown windows ») : le menu « Style » de la rangée dessine les mêmes styles,
+   du même vocabulaire. L'EMPILEMENT de PyMOL n'est pas perdu pour autant — c'est
+   celui qu'un script écrit, et `setSelRowStyle` l'enchaîne toujours tick par tick
+   (voir _viewer_selection_toggle_test.mjs, qui exécute le geste sur un vrai NGL). */
+/* Le CODE seul, sans les commentaires — car ce sont justement les commentaires qui
+   RACONTENT la disparition, en citant le nom des ticks retirés. */
+const CODE_ONLY = VIEW.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+const goneCode = (needle, what) => ok(!CODE_ONLY.includes(needle), `${what}\n  encore là   : ${needle}`);
+goneCode('+ show', 'plus aucun tick « + show » dans la barre de gauche : le menu « Style » les remplace');
 has('{families.map((fam) => {', 'le matériau est écrit par le rendu commun, famille par famille');
 has('families: selRowFamilies(st),', '…avec les familles que la rangée dessine vraiment');
 /* Plus AUCUN contrôle dupliqué dans la barre de gauche. */
