@@ -241,7 +241,7 @@ const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
    Background »), persisted like Fog / Shadows / Clipping, and it is part of a
    saved setup.
 
-   SAVED SETUPS (⚙️ Setup, §1 General) — « Save the visualisation setup »: a NAMED
+   SAVED SETUPS (🎨 Predefined styles, §1 General) — « Save the visualisation setup »: a NAMED
    snapshot of the whole viewer look (the six menus with their radii and colours,
    the nucleic-acid group colours and the lipid part colours, the label switches,
    the 2°-structure and highlight colours, Fog / Shadows / Clipping / Background /
@@ -250,7 +250,7 @@ const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
    a look can be reused on another page or another computer.
    ============================================================================ */
 const CAT_STYLE_KEY = 'labViewerCategoryStyles';
-// Saved visualisation setups (⚙️ Setup, §1 General). One localStorage entry holds
+// Saved visualisation setups (🎨 Predefined styles, §1 General). One localStorage entry holds
 // a { name → setup } map; a setup is the plain object built by captureViewerSetup
 // and read back by applyViewerSetup, with a version so an older file can never
 // break the viewer (unknown / missing keys simply keep their default).
@@ -1057,7 +1057,7 @@ const nucleicClassCounts = (structure) => {
   return { total: info ? info.nucleotides.length : 0, forms, motifs };
 };
 
-/* ---- Saved visualisation setups (⚙️ Setup, §1 General) ---------------------
+/* ---- Saved visualisation setups (🎨 Predefined styles, §1 General) ---------------------
    One localStorage entry holds a { name → setup } map. A setup is the plain
    object built by captureViewerSetup and read back by applyViewerSetup; the
    version lets a file written by another build be accepted safely — every field is
@@ -2908,6 +2908,7 @@ const STYLE_LABELS = {
   licorice: 'Liquorice',
   line: 'Lines',
   spacefill: 'CPK',
+  sphere: 'Sphere',
   surface: 'Surface',
   mesh: 'Mesh surface',
   base: 'Slabs',
@@ -2916,6 +2917,9 @@ const STYLE_LABELS = {
 };
 // An ion's spacefill IS its sphere (the request lists « hide, sphere » there).
 const styleLabelFor = (kind, token) => (kind === 'ion' && token === 'spacefill' ? 'Sphere' : (STYLE_LABELS[token] || token));
+// « CPK » and « Sphere » are the same NGL representation, so an ION keeps ONE entry
+// (its spacefill IS its sphere, labelled « Sphere »); every other row offers both
+// words, because a PyMOL user looks for « sphere » where a CPK table is shown.
 // ---- The « Color by » vocabulary (the request's wording) ---------------------
 const COLOR_LABELS = {
   solid: 'Solid',
@@ -2935,20 +2939,20 @@ const COLOR_LABELS = {
 };
 // The style sets of the request, named after the rows that are allowed to use them.
 const STYLES = {
-  polymer: ['hide', 'cartoon', 'ribbon', 'tube', 'ball+stick', 'licorice', 'line', 'spacefill'],
-  protein: ['hide', 'cartoon', 'ribbon', 'tube', 'ball+stick', 'licorice', 'line', 'spacefill', 'surface', 'mesh'],
-  nucleic: ['hide', 'cartoon', 'ribbon', 'tube', 'trace', 'ball+stick', 'licorice', 'line', 'spacefill', 'surface', 'mesh'],
-  bases: ['hide', 'base', 'rings', 'ball+stick', 'licorice', 'line', 'spacefill'],
-  ribose: ['hide', 'base', 'plates', 'ball+stick', 'licorice', 'line', 'spacefill'],
-  sidechains: ['hide', 'ball+stick', 'licorice', 'line', 'spacefill'],
-  small: ['hide', 'ball+stick', 'licorice', 'line', 'spacefill', 'surface', 'mesh'],
-  ion: ['hide', 'spacefill'],
+  polymer: ['hide', 'cartoon', 'ribbon', 'tube', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere'],
+  protein: ['hide', 'cartoon', 'ribbon', 'tube', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere', 'surface', 'mesh'],
+  nucleic: ['hide', 'cartoon', 'ribbon', 'tube', 'trace', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere', 'surface', 'mesh'],
+  bases: ['hide', 'base', 'rings', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere'],
+  ribose: ['hide', 'base', 'plates', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere'],
+  sidechains: ['hide', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere'],
+  small: ['hide', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere', 'surface', 'mesh'],
+  ion: ['hide', 'spacefill'],   // its spacefill IS its sphere, labelled « Sphere »
 };
 // The styles that DRAW ONE SPHERE / STICK PER ATOM — and therefore need BOTH atoms
 // of a bond inside their own selection (see the side-chain ANCHOR of
 // buildSectionReps). A ribbon / cartoon / tube / trace walks the polymer itself and
 // has no such requirement, so it is not in this list.
-const ATOM_DRAW_STYLES = ['ball+stick', 'licorice', 'line', 'spacefill'];
+const ATOM_DRAW_STYLES = ['ball+stick', 'licorice', 'line', 'spacefill', 'sphere'];
 // The « Color by » sets, one per row of the request. NOTE: « Lipid type » is NOT
 // offered on water (the request corrected exactly that), and « Charge » exists for
 // ions alone — it is what tells a Na⁺ from a Cl⁻ in the same solvent.
@@ -3131,14 +3135,23 @@ const setGeneralSectionField = (looks, kind, field, value) => {
   out[kind].general = { ...defaultLookOf(kind, 'general'), ...(out[kind].general || null), [field]: value, follow: false };
   subsectionsOf(kind).forEach((s) => {
     if (s.sub === 'general') return;
-    const next = { ...defaultLookOf(kind, s.sub), ...(out[kind][s.sub] || null), follow: true };
+    const own = (out[kind] && out[kind][s.sub]) || null;
+    const next = { ...defaultLookOf(kind, s.sub), ...(own || null) };
     // `follow: false` too: `effectiveSectionLook` hands General's style down to a row
     // that follows — so a hidden row would be RE-DRAWN with General's style the next
     // time it is asked what it really draws. Hiding a part means it stops following
     // until its own row is moved again (or its ↺ resets it), which is what makes
     // « one description of the molecule » hold.
     if (field === 'style' || field === 'colorBy') { next.style = 'hide'; next.follow = false; }
-    else if (FOLLOW_FIELDS.includes(field)) next[field] = value;
+    // A row that had DEVIATED (its own style chosen on its own row, a part put away,
+    // or its own material) is left ALONE by the other fields: no 'follow' is handed
+    // back and no value is written into it — that is what keeps « the material only
+    // changes the material of the style that is selected ».
+    else if (own && own.follow === false) { next.follow = false; }
+    else {
+      next.follow = true;
+      if (FOLLOW_FIELDS.includes(field)) next[field] = value;
+    }
     out[kind][s.sub] = next;
   });
   return out;
@@ -4307,6 +4320,21 @@ const SEL_STYLE_REP_TYPE = {
   cartoon: 'cartoon', ribbon: 'ribbon', tube: 'tube',
   sphere: 'spacefill', ball: 'ball+stick', stick: 'licorice', surface: 'surface',
 };
+/* WHICH FAMILIES OF REPRESENTATION A STYLING ROW'S STYLE DRAWS — the twin of
+   selRowFamilies for the « Molecules · styling » window, so the two bars name the
+   material of a row the same way. « CPK » and « Sphere » are the same spacefill
+   (one family: Spheres), a ball & stick draws spheres AND sticks, a cartoon the
+   cartoon alone. */
+const STYLE_FAMILY_REPS = {
+  cartoon: ['cartoon'], ribbon: ['ribbon'], tube: ['tube'], trace: ['trace'],
+  'ball+stick': ['ball+stick'], licorice: ['licorice'],
+  spacefill: ['spacefill'], sphere: ['spacefill'],
+  surface: ['surface'], mesh: ['surface'],
+};
+const styleFamiliesOf = (style) => [...new Set((STYLE_FAMILY_REPS[style] || [])
+  .map((r) => MATERIAL_KIND_OF_REP[r])
+  .filter(Boolean))];
+const familyLabelOf = (fam) => (MATERIAL_KINDS.find((k) => k.key === fam) || {}).label || fam;
 const selRowFamilies = (st) => [...new Set(Object.keys(SEL_STYLE_REP_TYPE)
   .filter((s) => !!(st && st[s]))
   .map((s) => MATERIAL_KIND_OF_REP[SEL_STYLE_REP_TYPE[s]])
@@ -5870,7 +5898,7 @@ const [showNucleicColoursPanel, setShowNucleicColoursPanel] = useState(false);
 // lipid — headgroup · glycerol backbone · acyl chains (see the lab-lipid-groups
 // scheme). Same panel, same behaviour, amber instead of violet.
 const [showLipidColoursPanel, setShowLipidColoursPanel] = useState(false);
-// ⚙️ Setup (§1 General) — NAMED snapshots of the whole visualisation setup: the
+// 🎨 Predefined styles (§1 General) — NAMED snapshots of the whole visualisation setup: the
 // saved map, the name being typed, the open/closed state of the panel and its
 // feedback line (see captureViewerSetup / applyViewerSetup below).
 const [showSetupPanel, setShowSetupPanel] = useState(false);
@@ -6827,6 +6855,9 @@ const sectionStyleReps = (style, kind, look) => {
     // « CPK » IS spacefill, and an ION's « sphere » is the same representation
     // drawn at its full Van der Waals radius (an ion has no bonds to speak of).
     case 'spacefill': return [{ type: 'spacefill', params: { radiusScale: sphere, scale: kind === 'ion' ? 1 : 0.6 } }];
+    // « Sphere » = PyMOL's « show spheres »: the SAME NGL spacefill, drawn at the
+    // FULL Van der Waals radius — the row's R◯ multiplies it like any other style.
+    case 'sphere': return [{ type: 'spacefill', params: { radiusScale: sphere, scale: 1 } }];
     case 'base': return [{ type: 'base', params: { radiusSize: BASE_BOND_RADIUS * bond } }];
     case 'surface': return [{ type: 'surface', params: { surfaceType: 'av', opacity: Number((1 - Math.min(1, Math.max(0, (look && look.opacity) || 0))).toFixed(3)) } }];
     case 'mesh': return [{ type: 'surface', params: { surfaceType: 'av', wireframe: true, opacity: 1 } }];
@@ -9848,6 +9879,14 @@ const renderSectionRow = (sec, sub) => {
         <div className="flex items-center gap-1">
           <span className="text-[9px] text-slate-400 font-bold shrink-0"
             title={`Material of « ${spec.label} » only — roughness (r) and metalness (m), NGL's own material parameters. Two molecules, or two parts of one molecule, can carry two different materials`}>🎛</span>
+          {/* The FAMILY this material reaches, printed exactly like the one of the
+              selection rows: the two bars run the same series of commands. */}
+          {styleFamiliesOf(look.style).map((fam) => (
+            <span key={fam} className="text-[9px] font-bold text-slate-500 shrink-0"
+              title={`The family of representation this material reaches: ${familyLabelOf(fam)}`}>
+              {familyLabelOf(fam)}
+            </span>
+          ))}
           <select value={look.material} onChange={(e) => set('material', e.target.value)}
             className="border border-slate-300 rounded text-[10px] py-0.5 px-0.5 bg-white shrink-0"
             title={`Material of « ${spec.label} »: auto = NGL's own rough surface (0.40 / 0.00), matte, gloss, metallic, glass (translucent)`}>
@@ -11576,18 +11615,18 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 <button type="button" onClick={() => setShowSetupPanel((v) => !v)}
   className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${showSetupPanel ? 'bg-teal-100 border-teal-400 text-teal-900' : 'bg-white border-teal-300 text-teal-700 hover:bg-teal-50'}`}
   title={Object.keys(viewerSetups).length
-    ? `Save / load the visualisation setup — ${Object.keys(viewerSetups).length} setup(s) saved: ${Object.keys(viewerSetups).join(' · ')}`
-    : 'Save the whole visualisation setup (styles of the six menus, their sphere / bond radius and colours, the nucleic-acid group colours, the labels, Fog / Shadows / Clipping / Background, the ligand / water styles…) under a name, and load it back later — or export it as a .json file'}>
-  ⚙️ Setup{Object.keys(viewerSetups).length ? ` (${Object.keys(viewerSetups).length})` : ''}
+    ? `Save / load a predefined style — ${Object.keys(viewerSetups).length} saved: ${Object.keys(viewerSetups).join(' · ')}`
+    : 'Save the whole visualisation look (the styles of every molecule section, their sphere / bond radius and colours, the nucleic-acid group colours, the labels, Fog / Shadows / Clipping / Background, the ligand / water styles…) as a PREDEFINED STYLE, and load it back later — or export it as a .json file'}>
+  🎨 Predefined styles{Object.keys(viewerSetups).length ? ` (${Object.keys(viewerSetups).length})` : ''}
 </button>
 {setupMsg && (
 <span className="text-[10px] font-bold text-teal-700 bg-teal-50 border border-teal-200 rounded-md px-2 py-1">{setupMsg}</span>
 )}
 {showSetupPanel && (
 <div className="w-full bg-teal-50/50 border border-teal-200 rounded-lg px-2 py-2 flex flex-wrap items-center gap-2">
-  <span className="text-[10px] font-black text-teal-800 uppercase tracking-wide whitespace-nowrap">Visualisation setup</span>
-  <input value={setupName} onChange={(e) => setSetupName(e.target.value)} placeholder="Setup name"
-    title="Name of the setup — 💾 saves the CURRENT look under this name (an existing name is overwritten)"
+  <span className="text-[10px] font-black text-teal-800 uppercase tracking-wide whitespace-nowrap">Predefined styles</span>
+  <input value={setupName} onChange={(e) => setSetupName(e.target.value)} placeholder="Style name"
+    title="Name of the predefined style — 💾 saves the CURRENT look under this name (an existing name is overwritten)"
     className="border border-teal-300 rounded-md px-1.5 py-1 text-[11px] bg-white outline-none focus:border-teal-500 h-7 w-40" />
   <button type="button" onClick={saveCurrentSetup}
     className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-400 text-teal-800 hover:bg-teal-100 h-7"
@@ -11595,25 +11634,25 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
     💾 Save
   </button>
   <select value="" onChange={(e) => { if (e.target.value) loadSetup(e.target.value); }}
-    title="Load a saved setup — it replaces the current styles, colours, radii and scene settings"
+    title="Load a predefined style — it replaces the current styles, colours, radii and scene settings"
     className="border border-teal-300 rounded-md px-1.5 py-1 text-[11px] bg-white outline-none focus:border-teal-500 h-7 w-40">
     <option value="">📂 Load…</option>
     {Object.keys(viewerSetups).sort().map((n) => <option key={n} value={n}>{n}</option>)}
   </select>
   <button type="button"
-    onClick={() => (viewerSetups[setupName] ? deleteSetup(setupName) : flashSetupMsg('type the name of the setup to delete'))}
+    onClick={() => (viewerSetups[setupName] ? deleteSetup(setupName) : flashSetupMsg('type the name of the predefined style to delete'))}
     className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-red-300 text-red-600 hover:bg-red-50 h-7"
-    title="Delete the setup whose name is written on the left">
+    title="Delete the predefined style whose name is written on the left">
     🗑 Delete
   </button>
   <button type="button"
     onClick={() => (viewerSetups[setupName] ? exportSetup(setupName) : flashSetupMsg('type the name of the setup to export'))}
     className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-300 text-teal-700 hover:bg-teal-100 h-7"
-    title="Download this setup as a .json file — it can be imported on another page or another computer">
+    title="Download this predefined style as a .json file — it can be imported on another page or another computer">
     ⬇ Export
   </button>
   <label className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-300 text-teal-700 hover:bg-teal-100 h-7 flex items-center gap-1 cursor-pointer"
-    title="Import a setup .json file — it is saved under the name it carries and applied at once">
+    title="Import a predefined-style .json file — it is saved under the name it carries and applied at once">
     ⬆ Import
     <input type="file" accept=".json,application/json" className="hidden"
       onChange={(e) => { importSetupFile(e.target.files && e.target.files[0]); e.target.value = ''; }} />
@@ -11621,7 +11660,7 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
   <span className="text-[10px] text-slate-500 italic">
     {Object.keys(viewerSetups).length
       ? `saved: ${Object.keys(viewerSetups).sort().join(' · ')} — ⬇ exports the one named on the left`
-      : 'no setup saved yet — type a name and press 💾 Save'}
+      : 'no predefined style yet — type a name and press 💾 Save'}
   </span>
 </div>
 )}
@@ -12751,15 +12790,31 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           </span>
         </div>
         <div className="flex items-center gap-1 flex-wrap mt-1">
-          {['upper_leaflet', 'lower_leaflet', 'upper_headgroups', 'lower_headgroups'].map((n) => {
+          {/* TWO TICKS, as the request asks: « remove the upper leaflet / lower leaflet
+              section and replace it with the two ticks ». A tick DRAWS that leaflet —
+              the beads the button drew, written into the very same `selStyles[n].sphere` —
+              and unticking takes them off the screen. The two HEADGROUP toggles stay
+              beside them (they draw the measured heads alone), and all four names keep
+              working as selections in a PyMOL script either way. */}
+          {['upper_leaflet', 'lower_leaflet'].map((n) => {
+            const on = !!(selStyles[n] && (selStyles[n].sphere || selStyles[n].ball || selStyles[n].stick));
+            return (
+              <label key={n} className="flex items-center gap-1 cursor-pointer select-none text-[10px] font-bold text-teal-800"
+                title={`Draw the ${n.startsWith('upper') ? 'upper' : 'lower'} leaflet as beads — the two leaflets are told apart by geometry, whatever the orientation of the file. Untick to take them off the screen`}>
+                <input type="checkbox" checked={on}
+                  onChange={() => setSelStyles({ ...selStylesRef.current, [n]: { ...(selStylesRef.current[n] || {}), sphere: !on } })}
+                  className="w-3.5 h-3.5 accent-teal-600 cursor-pointer" />
+                {n.replace(/_/g, ' ')}
+              </label>
+            );
+          })}
+          {['upper_headgroups', 'lower_headgroups'].map((n) => {
             const on = !!(selStyles[n] && (selStyles[n].sphere || selStyles[n].ball || selStyles[n].stick));
             return (
               <button key={n} type="button"
                 onClick={() => setSelStyles({ ...selStylesRef.current, [n]: { ...(selStylesRef.current[n] || {}), sphere: !on } })}
                 className={`px-1.5 py-0.5 text-[9px] font-bold rounded border ${on ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-teal-700 border-teal-300 hover:bg-teal-100'}`}
-                title={n === 'upper_headgroups' || n === 'lower_headgroups'
-                  ? `Draw the headgroups of the ${n.startsWith('upper') ? 'upper' : 'lower'} leaflet as beads (measured, not z>90)`
-                  : `Draw the ${n.startsWith('upper') ? 'upper' : 'lower'} leaflet as beads — the two leaflets are told apart by geometry, whatever the orientation of the file`}>
+                title={`Draw the headgroups of the ${n.startsWith('upper') ? 'upper' : 'lower'} leaflet as beads (measured, not z>90)`}>
                 {n.replace(/_/g, ' ')}
               </button>
             );

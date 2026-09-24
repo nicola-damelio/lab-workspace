@@ -595,6 +595,33 @@ eq(gen(byOpacity, 'protein', 'sidechain').style,
   HIER.defaultLookOf('protein', 'sidechain').style,
   'changer la TRANSPARENCE ne cache pas les parties');
 eq(lookOf(byOpacity, 'protein', 'sidechain').opacity, 0.5, '…elle descend bien de General');
+/* 6i. LE MATÉRIAU NE RALLUME NI NE CHANGE AUCUN STYLE — c’est le rapport du
+   propriétaire : « quando seleziono il materiale compaiono stili che non avevo
+   selezionato o che erano nascosti ; il materiale deve solo cambiare il materiale
+   allo stile che è selezionato ». `material` est un FOLLOW_FIELD : il réattachait
+   chaque sous-rangée à General (`follow: true`), et une rangée qui suit est
+   REDESSINÉE avec le style de General — une partie mise de côté revenait donc avec
+   un style jamais choisi. */
+const byMat = HIER.setGeneralSectionField(byStyle, 'protein', 'material', 'gloss');
+['backbone', 'sidechain'].forEach((sub) => {
+  eq(gen(byMat, 'protein', sub).style, 'hide', `un matériau sur General laisse « ${sub} » caché`);
+  eq(gen(byMat, 'protein', sub).follow, false, `…et toujours détaché de General`);
+  eq(lookOf(byMat, 'protein', sub).style, 'hide', `…donc RIEN de neuf n’apparaît à l’écran (${sub})`);
+  ok(lookOf(byMat, 'protein', sub).material !== 'gloss',
+    `…et la rangée garde son propre matériau (${sub})`);
+});
+// Une rangée qui a choisi SON style n’est pas réécrite non plus par un matériau…
+const deviated = HIER.setRowSectionField(byStyle, 'protein', 'sidechain', 'style', 'licorice');
+const deviatedMat = HIER.setGeneralSectionField(deviated, 'protein', 'material', 'metallic');
+eq(gen(deviatedMat, 'protein', 'sidechain').follow, false, 'une rangée qui a dévié ne se raccroche pas');
+eq(lookOf(deviatedMat, 'protein', 'sidechain').style, 'licorice',
+  '…et son style reste le sien');
+// …alors que les rangées qui SUIVENT General reçoivent bien le matériau (6e tient).
+const freshMat = HIER.setGeneralSectionField({}, 'protein', 'material', 'gloss');
+eq(lookOf(freshMat, 'protein', 'backbone').material, 'gloss',
+  'les rangées qui suivent General reçoivent bien le matériau — le reste ne bouge pas');
+eq(gen(freshMat, 'protein', 'backbone').style, HIER.defaultLookOf('protein', 'backbone').style,
+  '…et leur style est intact');
 // 6f. LE CHEMIN DU RETOUR : choisir un style sur SA rangée (c’est « dévier »).
 const back = HIER.setRowSectionField(byStyle, 'protein', 'sidechain', 'style', 'licorice');
 eq(gen(back, 'protein', 'sidechain').style, 'licorice', 'la rangée reprend son propre style');

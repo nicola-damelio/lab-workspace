@@ -294,10 +294,10 @@ has('if (!s || typeof s !== \'object\' || !s.catStyles) throw new Error(\'not a 
   'un fichier étranger est refusé proprement');
 has('📂 Load…', 'la liste déroulante des setups enregistrés');
 has('⬆ Import', 'le bouton d’import');
-has('⚙️ Setup', 'le bouton ⚙️ Setup');
+has('🎨 Predefined styles', 'le bouton « 🎨 Predefined styles » (l’ex « ⚙️ Setup » de la demande)');
 const iSec1 = VIEW.indexOf('<VSection title="1 · General"');
-ok(iSec1 > 0 && VIEW.indexOf('⚙️ Setup', iSec1) > 0,
-  'le bloc Setup vit dans « 1 · General » (la ligne qui charge / nettoie)');
+ok(iSec1 > 0 && VIEW.indexOf('🎨 Predefined styles', iSec1) > 0,
+  'le bloc « Predefined styles » vit dans « 1 · General » (la ligne qui charge / nettoie)');
 
 /* ══ 8. FOND DE LA SCÈNE DANS §3 SCENE ════════════════════════════════════ */
 has("const BG_DEFAULT = '#f8fafc';", 'le fond par défaut est nommé une fois');

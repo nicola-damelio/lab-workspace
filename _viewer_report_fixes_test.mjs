@@ -194,7 +194,7 @@ eq(ROW_H.sectionRowSele(null, PROTEIN, 'sidechain', { anchorSideChains: true }),
 eq(ROW_H.sectionRowSele(null, PROTEIN, 'backbone', { anchorSideChains: true }), ':A and protein and backbone and not .CA',
   '…et il quitte celle du squelette : aucun atome n’est dessiné deux fois');
 const ATOM_STYLES = new Function([sliceDecl(VIEW, 'ATOM_DRAW_STYLES'), 'return { ATOM_DRAW_STYLES };'].join('\n'))().ATOM_DRAW_STYLES;
-eq([...ATOM_STYLES].sort(), ['ball+stick', 'licorice', 'line', 'spacefill'].sort(),
+eq([...ATOM_STYLES].sort(), ['ball+stick', 'licorice', 'line', 'spacefill', 'sphere'].sort(),
   'l’ancre vaut pour les quatre styles qui dessinent des ATOMES');
 ok(!ATOM_STYLES.includes('cartoon') && !ATOM_STYLES.includes('ribbon') && !ATOM_STYLES.includes('tube'),
   'un squelette en ruban n’est jamais amputé de ses CA');

@@ -210,6 +210,26 @@ has("'ball+stick': 'Balls and sticks',", '[vocabulaire] Ball & stick');
 has("licorice: 'Liquorice',", '[vocabulaire] Licorice (= les sticks)');
 has("line: 'Lines',", '[vocabulaire] Lines');
 has("spacefill: 'CPK',", '[vocabulaire] CPK (= spacefill)');
+/* La demande : « dovunque trovi uno stile CPK aggiungi lo stile sphere ». NGL n’a
+   ni CPK ni sphere — les deux sont `spacefill` : le mot de PyMOL est donc offert
+   PARTOUT où le CPK l’est, et les deux se distinguent par la TAILLE (CPK le
+   spacefill compact de la barre, « Sphere » le rayon de Van der Waals entier). */
+has("sphere: 'Sphere',", '[vocabulaire] « Sphere » à côté de CPK (le mot de PyMOL)');
+has("polymer: ['hide', 'cartoon', 'ribbon', 'tube', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere'],",
+  'chaque rangée qui offrait CPK offre désormais « Sphere »');
+has("small: ['hide', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere', 'surface', 'mesh'],",
+  '…y compris les petites molécules (ligand · sucre)');
+has("const ATOM_DRAW_STYLES = ['ball+stick', 'licorice', 'line', 'spacefill', 'sphere'];",
+  '« sphere » dessine des atomes : il compte pour les ancres de chaîne latérale');
+has("case 'sphere': return [{ type: 'spacefill', params: { radiusScale: sphere, scale: 1 } }];",
+  '« Sphere » = le même spacefill NGL, au rayon de Van der Waals entier');
+has("const styleFamiliesOf = (style) => [...new Set((STYLE_FAMILY_REPS[style] || [])",
+  'la rangée de STYLING nomme la famille de matériau qu’elle atteint, comme les rangées de sélection');
+// Les deux feuillets : deux TICKS, plus des boutons (la demande).
+has("{['upper_leaflet', 'lower_leaflet'].map((n) => {", 'un tick par feuillet mesuré');
+has('type="checkbox" checked={on}', '…un vrai tick (pas un bouton coloré)');
+// Le bouton « Setup » a été renommé (la demande).
+has('🎨 Predefined styles', 'le bouton « Setup » s’appelle « Predefined styles »');
 has("surface: 'Surface',", '[vocabulaire] Surface');
 has("mesh: 'Mesh surface',", '[vocabulaire] Mesh (wireframe)');
 has("base: 'Slabs',", '[vocabulaire] Slabs (la représentation `base` de NGL)');

@@ -764,7 +764,7 @@ has("{['gquad', 'hairpin'].map((motif) => (", '…et une par motif');
 // Les menus disent ce qu'ils ont trouvé : les glycans liés et les formes / motifs.
 has('glycans: glycanSummaryFor(component.structure),', 'le résumé des glycanes est calculé au chargement');
 has('nucleicClasses: nucleicClassCounts(component.structure),', 'les comptes de formes / motifs aussi');
-has("bases: ['hide', 'base', 'rings', 'ball+stick', 'licorice', 'line', 'spacefill'],", 'le row bases offre slabs · stylized rings · balls and sticks · liquorice · lines · CPK');
+has("bases: ['hide', 'base', 'rings', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere'],", 'le row bases offre slabs · stylized rings · balls and sticks · liquorice · lines · CPK');
 has("trace: 'Phosphate trace (P)',", 'la trace phosphate est nommée comme dans la demande');
 // Les codes du menu des sucres (le dictionnaire demandé) et les seuils du cahier
 // des charges, écrits tels quels dans le viewer.
