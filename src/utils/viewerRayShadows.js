@@ -48,10 +48,12 @@
      5. the mask multiplies the RGB of the still (alpha untouched), so the
         transparent-background option keeps its transparent background.
 
-   WHAT IT IS, HONESTLY. The proxy is drawn from ATOM SPHERES: a cartoon casts
-   the shadow of the atoms it is built from (a body-like shadow, not a
-   ribbon-exact outline). It is the shadow of the MOLECULE, it follows the
-   light, and it is deterministic — no GPU feature, no extension, no second
+   WHAT IT IS, HONESTLY. The proxy is drawn from the atoms AND from what their
+   representation draws BETWEEN them: a stick, a tube, a ribbon is a CONTINUOUS
+   line, so the proxies that fill it are part of the geometry (LINKED_KINDS —
+   without them a thin drawing shadows NOTHING, which is measured in the tests),
+   while a ball stays the atom it is. It is the shadow of the MOLECULE, it follows
+   the light, and it is deterministic — no GPU feature, no extension, no second
    engine. A stage with no atoms, a canvas that refuses its pixels or a browser
    without `createImageBitmap` leaves the still exactly as NGL drew it (every
    entry point is best-effort and returns what it was given).
@@ -88,12 +90,13 @@
        dark. It is a contact bias now (0.35 Å), and the PCF disc turns what is
        left into a penumbra instead of a stipple.
 
-   SELF-SHADOWING ON THE MOLECULE ITSELF. The mask is built from the surface
-   point of the pixel, so it darkens the MOLECULE — the receive side of a
-   shadow-map test — exactly where the molecule blocks its own light: atoms in a
-   pocket, the far side of the silhouette against the lamp, the ring that a
-   neighbour shades. The background has no surface point (the camera pass never
-   hit it), so nothing is ever painted off the molecule (see shadowMaskOf).
+   SELF-SHADOWING ON THE MOLECULE ITSELF. The mask is built from the surface the
+   pixel SHOWS — the visible proxy's centre AND its width in pixels (`reach`), so
+   the test asks what a shadow map really asks: « is there an occluder anywhere
+   within my own surface, along the lamp? ». A point-like test (the centre ray
+   alone) is what made a thin drawing cast nothing at all. The background has no
+   surface (the camera pass never hit it), so nothing is ever painted off the
+   molecule (see shadowMaskOf).
 
    WHAT A SHADOW CANNOT DO IN NGL 2.4 — and it is not this module's fault. The
    interactive canvas keeps NGL's own shading: NGL 2.4 ships no shadow-map pass
@@ -157,7 +160,11 @@ export const RAY_SHADOW_DEFAULTS = Object.freeze({
      radius by this many pixels per ångström of occluder-to-receiver gap — a
      contact shadow stays tight, a shadow cast from far away spreads —
      `penumbraMax` being the cap that keeps a distant occluder from washing the
-     whole model grey. */
+     whole model grey.
+     ⚠ The disc is ALWAYS at least as wide as the receiver's own footprint (the
+     pixels its surface covers, `camera.reach`): a shadow is cast by a surface, not
+     by a point, and a footprint wider than `pcfTaps` samples gets more of them
+     automatically (SHADOW_TAPS_PER_PIXEL, capped at SHADOW_MAX_TAPS). */
   pcfTaps: 8,
   penumbra: 1.5,
   penumbraMax: 8,
@@ -264,12 +271,14 @@ export const viewAxesOf = (view) => ({
 /* The proxy spheres → a depth map through ONE clip matrix.
    `depth` holds the NDC depth (smaller = nearer) of the nearest sphere per
    pixel and is filled with 2 = « nothing here »; `world` the world point of that
-   hit (3 floats per pixel) and `hit` the flag array. Each sphere covers the
-   square around its projected centre, so a few hundred thousand overlapping
-   spheres write the silhouette a shadow map stores. */
+   hit (3 floats per pixel), `hit` the flag array and — when `needReach` is asked
+   for — `reach` the PIXEL RADIUS of the sphere that won that pixel (the width of
+   the surface the pixel shows: the shadow test needs it, see shadowMaskOf).
+   Each sphere covers the square around its projected centre, so a few hundred
+   thousand overlapping spheres write the silhouette a shadow map stores. */
 export const rasterizeSpheres = ({
   positions, radii, count = 0, clip, width, height,
-  radiusScale = 1, axisUp = [0, 1, 0], needWorld = true,
+  radiusScale = 1, axisUp = [0, 1, 0], needWorld = true, needReach = false,
 }, out = {}) => {
   const w = Math.max(1, Math.round(width));
   const h = Math.max(1, Math.round(height));
@@ -280,6 +289,9 @@ export const rasterizeSpheres = ({
   hit.fill(0);
   const world = needWorld
     ? (out.world && out.world.length === w * h * 3 ? out.world : new Float32Array(w * h * 3))
+    : null;
+  const reach = needReach
+    ? (out.reach && out.reach.length === w * h ? out.reach : new Float32Array(w * h))
     : null;
   const clipPt = new Array(4);
   const scr = new Array(3);
@@ -324,6 +336,7 @@ export const rasterizeSpheres = ({
         if (cz >= depth[idx]) continue;
         depth[idx] = cz;
         hit[idx] = 1;
+        if (reach) reach[idx] = rad;
         if (world) {
           world[idx * 3] = x;
           world[idx * 3 + 1] = y;
@@ -376,6 +389,18 @@ export const softenMask = (mask, width, height, radius) => {
   return out;
 };
 
+/* ---- The taps of the shadow test ---------------------------------------- */
+/* A proxy sphere covers a handful of mask pixels, and the lamp's rays through
+   those pixels span that width: the disc that tests a receiver must be at least
+   its own footprint, or an occluder would have to sit on one exact line to cast
+   anything (see shadowMaskOf). The disc is built with the caller's `pcfTaps` at
+   least, and with enough samples that its own cells stay under ~1/2 px — these
+   two numbers are that rule. 64 taps is the ceiling: past it the cost per
+   receiver pixel is what the still pays for nothing (the disc is already
+   sampled finer than the footprints it looks for). */
+export const SHADOW_TAPS_PER_PIXEL = 2.5;
+export const SHADOW_MAX_TAPS = 64;
+
 /* The PCF disc: `taps` offsets spread over a unit disc, to be scaled by the
    penumbra radius. A Fibonacci spiral is used because it fills a disc evenly for
    ANY number of taps (1 … 32) without a table, and because the sequence of radii
@@ -426,18 +451,41 @@ export const shadowMaskOf = ({
   const w = Math.max(1, Math.round(width));
   const h = Math.max(1, Math.round(height));
   const mask = new Float32Array(w * h);
-  const disc = taps > 1 ? pcfDiscOf(taps) : null;
-  const invTaps = disc ? 1 / (disc.length / 2) : 1;
   const base = Math.max(0, Number(softness) || 0);
   const grow = Math.max(0, Number(penumbra) || 0);
   const cap = Math.max(0, Number(penumbraMax) || 0);
   const perAngstrom = Number(depthScale) > 0 ? 1 / Number(depthScale) : 0;
+  /* ⚠ THE RECEIVER'S OWN FOOTPRINT IS SAMPLED TOO, AND THAT IS NOT A SOFTNESS.
+     `camera.reach` is the PIXEL RADIUS of the surface the pixel shows (what
+     rasterizeSpheres writes when `needReach` is asked for). A proxy sphere is
+     only a few mask pixels wide, so the lamp's rays through the pixels it covers
+     span that width: testing the CENTRE ray alone (radius 0) asks an occluder to
+     sit within a fraction of an ångström of one line — and a thin drawing then
+     casts NOTHING AT ALL. That is the report « the ray doesn't do anything »,
+     measured: 30 CA atoms of a 0.5 Å tube, the lamp of the rig (az 25 / el 28),
+     a grazing lamp, hard or soft — ZERO shadowed pixels, where the same scene
+     with 1.7 Å balls gave thousands (the old detached blob). Sampling the
+     footprint turns the test into what a shadow map really asks: « is there an
+     occluder anywhere within my own surface, along the lamp? ». The disc the
+     caller asks for (`softness`, grown by the gap — PCSS) is added ON TOP of
+     that footprint. A caller that hands a `camera` with no `reach` (a
+     hand-written coverage map, the older tests) keeps the exact old behaviour:
+     the centre ray, 0 or 1. */
+  const reach = camera.reach || null;
+  const discCache = new Map();
+  const discOf = (n) => {
+    let d = discCache.get(n);
+    if (!d) { d = pcfDiscOf(n); discCache.set(n, d); }
+    return d;
+  };
+  const discTaps = Math.max(1, Math.round(Number(taps) || 1));
   const clipX = (x) => Math.min(w - 1, Math.max(0, x));
   const clipY = (y) => Math.min(h - 1, Math.max(0, y));
   const clipPt = new Array(4);
   const scr = new Array(3);
   let shadowed = 0;
   let penumbraRadius = 0;
+  let maxTaps = 0;
   for (let y = 0; y < h; y += 1) {
     for (let x = 0; x < w; x += 1) {
       const idx = y * w + x;
@@ -451,12 +499,16 @@ export const shadowMaskOf = ({
       const nearest = light.depth[ly * w + lx];
       const met = nearest < 2;                       // the lamp met something here
       const gap = met ? p[2] - nearest : 0;          // NDC: > 0 → behind what it met
-      // The disc's radius: the softness asked for, plus what the GAP deserves. A
-      // centre the lamp did not meet (the receiver stands at the edge of a
-      // silhouette) keeps the base radius — its shadow lives in the taps.
-      const radius = base > 0 && disc
+      const footprint = reach ? Math.max(0, Number(reach[idx]) || 0) : 0;
+      // The disc's radius: the receiver's OWN footprint (the surface the pixel
+      // shows — never a softness), plus the softness the caller asked for, plus
+      // what the GAP deserves. A centre the lamp did not meet (the receiver
+      // stands at the edge of a silhouette) keeps the footprint alone — its
+      // shadow lives in the taps.
+      const grown = base > 0
         ? Math.min(cap, base + (gap > 0 ? grow * gap * perAngstrom : 0))
         : 0;
+      const radius = footprint + grown;
       if (!(radius > 0)) {                           // the plain, hard shadow map
         if (met && p[2] > nearest + biasNdc) {
           mask[idx] = 1;
@@ -465,6 +517,14 @@ export const shadowMaskOf = ({
         continue;
       }
       if (radius > penumbraRadius) penumbraRadius = radius;
+      // The taps: the caller's count at least, and enough of them that the
+      // disc's own cells stay under ~2 px — 8 Fibonacci taps over a 12 px
+      // footprint would leave holes one footprint wide and the shadow would come
+      // back as a stipple of dots.
+      const need = Math.min(SHADOW_MAX_TAPS, Math.max(discTaps, Math.ceil(radius * SHADOW_TAPS_PER_PIXEL)));
+      const disc = discOf(need);
+      const invTaps = 1 / need;
+      if (need > maxTaps) maxTaps = need;
       const rot = pcfRotationOf(x, y);
       const cs = Math.cos(rot);
       const sn = Math.sin(rot);
@@ -488,7 +548,11 @@ export const shadowMaskOf = ({
     width: w,
     height: h,
     shadowed,
-    taps: disc ? disc.length / 2 : 1,
+    // `taps` is the count the caller asked for; `tapsMax` is the widest disc that
+    // was really used (a footprint, or a grown penumbra, can need more of them —
+    // see SHADOW_TAPS_PER_PIXEL).
+    taps: discTaps,
+    tapsMax: maxTaps,
     penumbraRadius,
   };
 };
@@ -710,6 +774,9 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
     positions: atoms.positions, radii: atoms.radii, count: atoms.count,
     clip: camera.clip, width: mw, height: mh,
     radiusScale: o.sphereScale, axisUp: cameraAxes.up, needWorld: true,
+    // The PIXEL RADIUS of the sphere each pixel shows: the shadow test needs it
+    // (the lamp's rays through those pixels span that width — see shadowMaskOf).
+    needReach: true,
   });
   const lightPass = rasterizeSpheres({
     positions: atoms.positions, radii: atoms.radii, count: atoms.count,
@@ -736,6 +803,9 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
     maskHeight: mh,
     shadowed: out.shadowed,
     spheres: cameraPass.count,
+    // How many of those proxies exist to FILL a drawn stroke (a stick, a tube):
+    // without them a thin drawing casts nothing (see LINKED_KINDS).
+    filled: Number(atoms && atoms.filled) || 0,
     strength: o.strength,
     // The rig itself, for the message: the surface the shadow camera really
     // covers, in ångströms, and the disc that softens it.
@@ -896,6 +966,33 @@ export const repTypeOf = (rep, el = null) => {
   return String(raw).toLowerCase();
 };
 
+/* The KIND of a representation's stroke — what the table above says it draws
+   (`vdw` · `ball` · `bond` · `spline` · `tube` · `hair`), '' when it says
+   nothing. atomsFromStage uses it to know which drawings are a CONTINUOUS line
+   between two atoms (see LINKED_KINDS). */
+export const repKindOf = (rep, el = null) => {
+  const stroke = PROXY_STROKE_BY_TYPE[repTypeOf(rep, el)];
+  return stroke ? stroke.kind : '';
+};
+
+/* WHICH DRAWINGS ARE A LINE BETWEEN TWO ATOMS, and must therefore be cast as
+   ONE CONTINUOUS PROXY instead of a dust of separate balls:
+
+     spline / tube / bond / ball — a cartoon / tube / ribbon walks the chain as a
+                            tube, the sticks are cylinders between bonded atoms, and
+                            a ball+stick draws both: the drawing between two atoms
+                            is a solid line. The proxy has to FILL it (see the
+                            link walk in atomsFromStage), or the shadow of a thin
+                            drawing is measured at ZERO — verified on the rig's
+                            own scene: 30 CA atoms of a 0,5 Å tube lit at
+                            az 25 / el 28 shadowed 0 pixels out of 3655, and the
+                            same atoms with the gaps filled shadowed 3160 out of
+                            12247 (13 % of the light lost);
+     vdw / hair          — a ball IS one atom and a line is hair-thin, so there is
+                            nothing to fill: the atoms' own spheres are the
+                            drawing. */
+export const LINKED_KINDS = Object.freeze({ spline: 1, tube: 1, bond: 1, ball: 1 });
+
 /* ONE number of a representation: the INSTANCE value first (that is where ngl 2.4
    keeps it: `rep.radiusScale`, `rep.radiusSize`, `rep.aspectRatio` …), then the
    same key on the element's own parameters (what `el.setParameters()` writes),
@@ -975,8 +1072,12 @@ export const proxyRadiusOf = (rep, vdwRadius = 1.7, el = null) => {
    array parallel to the structure's atoms, `NaN` where no visible representation
    covers the atom. `null` (not an empty array) means « the component says
    nothing about its representations » — an older NGL, a test stub — and the
-   caller keeps the vdW radii it always used. */
-export const drawnProxyRadiiOf = (comp, atomCount, vdw = null) => {
+   caller keeps the vdW radii it always used.
+   `links` (optional, a Uint8Array of the same length) is filled with 1 for the
+   atoms whose drawing CONTINUES to its neighbour — a stick, a tube, a ribbon —
+   and 0 for an atom that is a ball on its own: atomsFromStage fills the gaps of
+   the first kind so the proxy is the drawn line, not a dust of balls. */
+export const drawnProxyRadiiOf = (comp, atomCount, vdw = null, links = null) => {
   const list = comp && comp.reprList;
   if (!Array.isArray(list)) return null;
   const out = new Float32Array(Math.max(0, Math.round(Number(atomCount) || 0)));
@@ -990,18 +1091,151 @@ export const drawnProxyRadiiOf = (comp, atomCount, vdw = null) => {
       if (!sv || typeof sv.getAtomIndices !== 'function') return;
       const idx = sv.getAtomIndices();
       if (!idx || !idx.length) return;
+      const kind = repKindOf(rep, el);
+      const linked = LINKED_KINDS[kind] === 1;
       for (let i = 0; i < idx.length; i += 1) {
         const a = idx[i];
         if (!(a >= 0 && a < out.length)) continue;
         const per = proxyRadiusOf(rep, vdw ? vdw[a] : 1.7, el);
         if (per == null) continue;
         // The FATTEST visible drawing of an atom is what the eye sees, so it is
-        // what the shadow must use.
+        // what the shadow must use. A bond is a bond whatever else is drawn on
+        // top of it, so the link is an OR.
         if (!(out[a] >= per)) out[a] = per;
+        if (linked && links) links[a] = 1;
       }
     } catch { /* a representation that cannot list its atoms draws nothing */ }
   });
   return out;
+};
+
+/* ---- THE PROXIES: the atoms, AND THE LINE THAT JOINS THEM ----------------- */
+/* A drawn link is a stroke between two atoms (a stick, a tube, a ribbon): it is
+   cast by the proxies that FILL it, one every `step` ångströms so consecutive
+   spheres overlap and the line has no hole, at the stroke's own radius, lerped
+   between the two atoms (the stroke of a lipstick changes along a chain). `step`
+   is half the thinnest of the two strokes, floored at LINK_STEP_MIN; a link
+   longer than LINK_MAX is not a drawing between neighbours (a chain break, a jump
+   between two molecules) and stays open. */
+const LINK_STEP_MIN = 0.3;
+const LINK_MAX = 4.2;
+const linkStepOf = (ra, rb) => Math.max(LINK_STEP_MIN, 0.5 * Math.min(ra, rb));
+
+/* One part, laid out in world space: the atoms it emits (the drawn ones, strided
+   when the budget is tight) with their stroke and whether their drawing CONTINUES
+   to the next one. */
+const layOut = (part, stride) => {
+  const m = elements16Of(part.comp.matrix) || elements16Of(part.comp.group && part.comp.group.matrixWorld);
+  const pos = part.data.position;
+  const rad = part.data.radius;
+  const surface = part.surface;
+  const links = part.links;
+  const count = part.drawn ? part.drawn.length : part.n;
+  const len = Math.max(0, Math.ceil(count / stride));
+  const wpos = new Float32Array(Math.max(1, len) * 3);
+  const wrad = new Float32Array(Math.max(1, len));
+  const wlink = new Uint8Array(Math.max(1, len));
+  let e = 0;
+  for (let c = 0; c < count && e < len; c += stride) {
+    const i = part.drawn ? part.drawn[c] : c;
+    if (!(i >= 0 && i < part.n)) continue;
+    const x = pos[i * 3];
+    const y = pos[i * 3 + 1];
+    const z = pos[i * 3 + 2];
+    if (m) {
+      wpos[e * 3] = m[0] * x + m[4] * y + m[8] * z + m[12];
+      wpos[e * 3 + 1] = m[1] * x + m[5] * y + m[9] * z + m[13];
+      wpos[e * 3 + 2] = m[2] * x + m[6] * y + m[10] * z + m[14];
+    } else {
+      wpos[e * 3] = x;
+      wpos[e * 3 + 1] = y;
+      wpos[e * 3 + 2] = z;
+    }
+    const vdw = rad && Number.isFinite(rad[i]) ? rad[i] : 1.7;
+    const stroke = surface ? surface[i] : NaN;
+    const drawn = Number.isFinite(stroke) && stroke > 0;
+    // The drawing's own stroke when its representation gave one, the atom's own
+    // vdW radius otherwise — and never a fat sphere around a thin ribbon.
+    wrad[e] = drawn ? stroke : vdw;
+    wlink[e] = drawn && links && links[i] === 1 ? 1 : 0;
+    e += 1;
+  }
+  return { wpos, wrad, wlink, len: e, fills: new Int32Array(Math.max(1, e)) };
+};
+
+/* How many proxies fill the link after each atom, at `scale` times the nominal
+   step (scale 1 = the drawn geometry; a bigger one = a tighter budget; Infinity =
+   no filling at all). Writes the counts into `lay.fills` and returns their sum. */
+const countFills = (lay, scale) => {
+  let cost = 0;
+  for (let e = 0; e < lay.len; e += 1) {
+    let n = 0;
+    if (e + 1 < lay.len && lay.wlink[e] && lay.wlink[e + 1]) {
+      const dx = lay.wpos[(e + 1) * 3] - lay.wpos[e * 3];
+      const dy = lay.wpos[(e + 1) * 3 + 1] - lay.wpos[e * 3 + 1];
+      const dz = lay.wpos[(e + 1) * 3 + 2] - lay.wpos[e * 3 + 2];
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (Number.isFinite(d) && d > 0 && d <= LINK_MAX) {
+        const step = linkStepOf(lay.wrad[e], lay.wrad[e + 1]) * scale;
+        n = Math.max(0, Math.ceil(d / step) - 1);
+        if (!Number.isFinite(n)) n = 0;
+      }
+    }
+    lay.fills[e] = n;
+    cost += n;
+  }
+  return cost;
+};
+
+/* The flat arrays the mask pass reads: every emitted atom, each followed by the
+   proxies that fill its link. */
+const fillDrawnLinks = (parts, stride, maxAtoms) => {
+  const layouts = parts.map((part) => layOut(part, stride));
+  const slots = layouts.reduce((a, lay) => a + lay.len, 0);
+  let scale = 1;
+  let cost = layouts.reduce((a, lay) => a + countFills(lay, scale), 0);
+  if (cost > 0 && slots + cost > maxAtoms) {
+    // One shot at the scale that would just fit, then « no filling at all » if
+    // even that is too much (the atoms alone are what this module always used).
+    scale = Math.max(1, (slots + cost) / Math.max(1, maxAtoms));
+    cost = layouts.reduce((a, lay) => a + countFills(lay, scale), 0);
+    if (slots + cost > maxAtoms) {
+      cost = layouts.reduce((a, lay) => a + countFills(lay, Infinity), 0);
+    }
+  }
+  const capacity = Math.max(1, slots + cost);
+  const out = new Float32Array(capacity * 3);
+  const radii = new Float32Array(capacity);
+  let k = 0;
+  layouts.forEach((lay) => {
+    for (let e = 0; e < lay.len; e += 1) {
+      if (k >= capacity) return;
+      out[k * 3] = lay.wpos[e * 3];
+      out[k * 3 + 1] = lay.wpos[e * 3 + 1];
+      out[k * 3 + 2] = lay.wpos[e * 3 + 2];
+      radii[k] = lay.wrad[e];
+      k += 1;
+      const fills = lay.fills[e];
+      if (!fills) continue;
+      const ax = lay.wpos[e * 3];
+      const ay = lay.wpos[e * 3 + 1];
+      const az = lay.wpos[e * 3 + 2];
+      const bx = lay.wpos[(e + 1) * 3];
+      const by = lay.wpos[(e + 1) * 3 + 1];
+      const bz = lay.wpos[(e + 1) * 3 + 2];
+      const ra = lay.wrad[e];
+      const rb = lay.wrad[e + 1];
+      for (let f = 1; f <= fills && k < capacity; f += 1) {
+        const u = f / (fills + 1);
+        out[k * 3] = ax + (bx - ax) * u;
+        out[k * 3 + 1] = ay + (by - ay) * u;
+        out[k * 3 + 2] = az + (bz - az) * u;
+        radii[k] = ra + (rb - ra) * u;
+        k += 1;
+      }
+    }
+  });
+  return { positions: out, radii, count: k, filled: cost };
 };
 
 /* World space: NGL stores the atoms in the structure's OWN frame and gives the
@@ -1010,7 +1244,19 @@ export const drawnProxyRadiiOf = (comp, atomCount, vdw = null) => {
    shadow must live in the same world the camera does, so the same matrix is
    applied here. Invisible components are skipped, and of a visible one only the
    atoms its VISIBLE representations draw (see drawnAtomIndicesOf): what is not
-   on screen must not cast anything. */
+   on screen must not cast anything.
+
+   THE PROXY IS THE DRAWN GEOMETRY, NOT A DUST OF BALLS. Two atoms whose drawing
+   CONTINUES from one to the other (a stick, a tube, a ribbon — LINKED_KINDS) are
+   joined by proxies that fill the gap every `step` ångströms at the stroke's own
+   radius. The tube a cartoon draws is continuous, and a proxy made of its atoms
+   alone leaves holes ångströms wide that no ray can hit: measured on the rig's
+   own scene, that filling is the whole shadow — 30 CA atoms of a 0,5 Å tube lit
+   at az 25 / el 28 shadowed 0 pixels of 3655 without it, 3160 of 12247 (13 % of
+   the light lost) with it. The filling is BUDGETED by `maxAtoms` (the proxies
+   really produced): a huge system widens the step, and when there is no room at
+   all the proxy falls back on the atoms alone — exactly what this module always
+   did. */
 export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms) => {
   const comps = (stage && stage.compList) || [];
   const parts = [];
@@ -1027,52 +1273,22 @@ export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms) =
       const drawn = drawnAtomIndicesOf(comp, structure.atomCount || n);
       if (drawn && !drawn.length) return;      // nothing is drawn here: no shadow
       // …and, for the atoms it does draw, the STROKE of each representation (null
-      // = « says nothing »: the atom then keeps its vdW radius).
-      // ⚠ This must run even when `drawn` is null (« every atom: no filtering to
-      // do »): a single cartoon covering the whole chain is the COMMON case, and
-      // gating the stroke table on `drawn` is what kept 1,7 Å spheres around every
-      // ribbon there. drawnProxyRadiiOf itself returns null when the component
-      // says nothing about its representations.
-      const surface = drawnProxyRadiiOf(comp, n, data.radius);
-      parts.push({ comp, data, n, drawn, surface });
+      // = « says nothing »: the atom then keeps its vdW radius), plus which of
+      // those atoms the drawing CONTINUES from (a stick / a tube, see
+      // LINKED_KINDS — the links the proxy has to fill).
+      // ⚠ The stroke table must run even when `drawn` is null (« every atom: no
+      // filtering to do »): a single cartoon covering the whole chain is the
+      // COMMON case, and gating the stroke table on `drawn` is what kept 1,7 Å
+      // spheres around every ribbon there. drawnProxyRadiiOf itself returns null
+      // when the component says nothing about its representations.
+      const links = new Uint8Array(n);
+      const surface = drawnProxyRadiiOf(comp, n, data.radius, links);
+      parts.push({ comp, data, n, drawn, surface, links });
       total += drawn ? drawn.length : n;
     } catch { /* a component that cannot report its atoms casts nothing */ }
   });
   const stride = total > maxAtoms ? Math.ceil(total / maxAtoms) : 1;
-  const capacity = Math.ceil(total / stride);
-  const out = new Float32Array(capacity * 3);
-  const radii = new Float32Array(capacity);
-  let k = 0;
-  parts.forEach(({ comp, data, n, drawn, surface }) => {
-    const m = elements16Of(comp.matrix) || elements16Of(comp.group && comp.group.matrixWorld);
-    const pos = data.position;
-    const rad = data.radius;
-    const count = drawn ? drawn.length : n;
-    for (let c = 0; c < count; c += stride) {
-      const i = drawn ? drawn[c] : c;
-      if (!(i >= 0 && i < n)) continue;
-      if (k * 3 + 2 >= out.length) break;
-      const x = pos[i * 3];
-      const y = pos[i * 3 + 1];
-      const z = pos[i * 3 + 2];
-      if (m) {
-        out[k * 3] = m[0] * x + m[4] * y + m[8] * z + m[12];
-        out[k * 3 + 1] = m[1] * x + m[5] * y + m[9] * z + m[13];
-        out[k * 3 + 2] = m[2] * x + m[6] * y + m[10] * z + m[14];
-      } else {
-        out[k * 3] = x;
-        out[k * 3 + 1] = y;
-        out[k * 3 + 2] = z;
-      }
-      const vdw = rad && Number.isFinite(rad[i]) ? rad[i] : 1.7;
-      const stroke = surface ? surface[i] : NaN;
-      // The drawing's own stroke when its representation gave one, the atom's own
-      // vdW radius otherwise — and never a fat sphere around a thin ribbon.
-      radii[k] = Number.isFinite(stroke) && stroke > 0 ? stroke : vdw;
-      k += 1;
-    }
-  });
-  return { positions: out, radii, count: k, stride, total };
+  return { ...fillDrawnLinks(parts, stride, maxAtoms), stride, total };
 };
 
 /* The CAMERA of the live viewer, as the two matrices the mask needs: the
@@ -1225,13 +1441,14 @@ export const rayShadowNote = (shadow) => {
     ? Math.round((shadow.reachedPixels / (shadow.imageWidth * shadow.imageHeight)) * 100)
     : null;
   const spheres = Number(shadow.spheres) || 0;
+  const filled = Number(shadow.filled) || 0;
   // The fitted shadow camera, in ångströms: the proof that the rig hugged the
   // molecule instead of the whole cube around its bounding sphere.
   const rig = shadow.rig && Number.isFinite(Number(shadow.rig.width))
     ? ` · rig ${Math.round(shadow.rig.width)}×${Math.round(shadow.rig.height)} Å`
     : '';
   return `· cast shadows ${pct}%${covered == null ? '' : ` (${covered}% of the pixels)`}`
-    + `${spheres ? ` · ${spheres} atom proxies` : ''}${rig}`;
+    + `${spheres ? ` · ${spheres} proxies${filled ? ` (${filled} filling the drawn strokes)` : ''}` : ''}${rig}`;
 };
 
 

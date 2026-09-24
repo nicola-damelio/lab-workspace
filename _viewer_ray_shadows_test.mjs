@@ -72,8 +72,10 @@ ok(MODULE.includes('decode = null, encode = null'),
   'les deux moitiés du rendu (décoder / encoder) sont INJECTABLES — donc testables hors navigateur');
 ok(MODULE.includes("typeof document === 'undefined'"),
   'sans DOM, l’écriture de l’image est gardée au lieu d’exploser');
-ok(MODULE.includes('The proxy is drawn from ATOM SPHERES'),
-  'le module avoue que le proxy est fait de sphères d’atomes (une ombre de corps, pas un ruban exact)');
+ok(MODULE.includes('The proxy is drawn from the atoms AND from what their'),
+  'le module dit ce que le proxy est vraiment : les atomes ET le trait qui les relie (un tuyau continu, pas une poussière de billes)');
+ok(MODULE.includes('LINKED_KINDS') && MODULE.includes('camera.reach'),
+  '…et il nomme les deux moitiés de l’ombre d’un dessin fin : le proxy qui bouche ses liens, et la surface du receveur qui est échantillonnée');
 
 /* ── 2. LES OPTIONS ET LA TAILLE DU MASQUE ─────────────────────────────── */
 eq(rayShadowOptions({}), { ...RAY_SHADOW_DEFAULTS }, 'sans option, ce sont les valeurs par défaut');
@@ -558,9 +560,39 @@ const ribbonStage = {
   }],
 };
 const ribbon = atomsFromStage(ribbonStage, 100);
-eq(ribbon.count, 2, 'seuls les atomes DESSINÉS sont lus (les deux autres ne sont dessinés par rien)');
+/* ⚠ LE PROXY EST LA GÉOMÉTRIE DESSINÉE, pas une poussière de billes : les deux
+   atomes dessinés sont reliés par les proxies qui REMPLISSENT le lien (un cartoon
+   marche la chaîne comme un TUYAU continu). Sans ce remplissage, un dessin fin ne
+   projette RIEN DU TOUT — mesuré : 0 pixel ombré sur 3655, contre 3160 sur 12247
+   avec les trous bouchés. 2 atomes à 1 Å, un trait de 0,45 Å → un pas de 0,3 Å →
+   3 proxies entre eux, donc 5. */
+eq(ribbon.count, 5, 'seuls les atomes DESSINÉS sont lus, ET les proxies qui bouchent leur lien');
+eq(ribbon.filled, 3, '…soit 3 proxies de remplissage pour le lien d’1 Å du ruban');
 near(ribbon.radii[0], 0.45, 1e-6, '…et leur proxy a l’épaisseur du RUBAN, plus celle d’une sphère de van der Waals');
 near(ribbon.radii[1], 0.45, 1e-6, '…pour chaque atome du ruban');
+near(ribbon.radii[2], 0.45, 1e-6, '…comme pour les proxies de remplissage (même trait)');
+ok(ribbon.positions[4] > ribbon.positions[1] && ribbon.positions[4] < ribbon.positions[13],
+  '…et ils tombent ENTRE les deux atomes (le tuyau est continu, pas troué)');
+/* Une BILLE n’est pas une ligne : un spacefill ne remplit rien. */
+const ballStage = {
+  compList: [{
+    structure: {
+      atomCount: 2,
+      getAtomData: () => ({ position: new Float32Array([0, 0, 0, 0, 1, 0]), radius: new Float32Array([1.7, 1.7]) }),
+    },
+    matrix: { elements: ident16 },
+    reprList: [{ repr: { parameters: { type: 'spacefill' }, structureView: view([0, 1]) } }],
+  }],
+};
+eq(atomsFromStage(ballStage, 100).count, 2,
+  'un spacefill reste une poussière de billes : aucune bille n’est reliée à sa voisine');
+/* …et le budget des proxies est respecté : un plafond plus serré élargit le pas,
+   et un plafond impossible rend les trous (les atomes seuls). */
+const capped = atomsFromStage(ribbonStage, 3);
+ok(capped.count <= 3, `un plafond de 3 proxies n’est jamais dépassé (count ${capped.count})`);
+const jammed = atomsFromStage(ribbonStage, 2);
+ok(jammed.count <= 2 && jammed.filled === 0,
+  `sans place du tout, le module retombe sur les atomes seuls (count ${jammed.count}, remplissage ${jammed.filled})`);
 
 /* ── 11bis. LA VRAIE FORME D’UNE REPRÉSENTATION NGL — LE BUG QUI RENDAIT LE ──
    CORRECTIF INVISIBLE DANS L’APPLICATION
@@ -655,7 +687,9 @@ const realStage = {
   }],
 };
 const realRibbon = atomsFromStage(realStage, 100);
-eq(realRibbon.count, 2, 'une représentation qui couvre TOUTE la structure dessine bien tous ses atomes');
+eq(realRibbon.count, 6,
+  'une représentation qui couvre TOUTE la structure dessine tous ses atomes, ET le tube qui les relie');
+eq(realRibbon.filled, 4, '…4 proxies de 0,45 Å pour le lien d’1,5 Å du tube (un pas de 0,3 Å)');
 near(realRibbon.radii[0], 0.45, 1e-6,
   'de bout en bout : un vrai cartoon donne des proxies de 0,45 Å — l’ombre colle au ruban');
 near(realRibbon.radii[1], 0.45, 1e-6, '…et non des sphères de van der Waals de 1,7 Å');
@@ -739,6 +773,92 @@ eq(cameraFromViewer({ camera: bareCamera }).clip.length, 16,
   'une caméra au repos donne ses deux matrices (le cas normal)');
 throws(() => cameraFromViewer({ camera: { ...bareCamera, view: { fullWidth: 4, fullHeight: 4 } } }),
   /inside a tile/, 'une caméra restée dans une tuile est REFUSÉE — jamais un masque faux en silence');
+
+/* ── 14. UN DESSIN FIN PROJETTE VRAIMENT QUELQUE CHOSE ───────────────────────
+   LE rapport : « the ray doesn't do anything ». Mesuré, et c'était exact : un
+   peptide en hélice dessiné en tube de 0,5 Å, éclairé par la lampe du rig, donnait
+   ZÉRO pixel ombré — parce que (a) les proxies n'étaient que les ATOMES (des billes
+   de 1 Å à 3,8 Å les unes des autres, un dessin troué que le rayon de la lampe
+   traverse) et (b) le test ne lisait que le RAYON CENTRAL de chaque pixel, comme si
+   le receveur était un point. Une ombre est une affaire de SURFACES : le proxy suit
+   donc la géométrie dessinée (les liens sont bouchés, voir LINKED_KINDS) et le test
+   échantillonne la surface du receveur (sa largeur en pixels, `camera.reach`).
+   Les deux moitiés sont figées ici, sur le scénario et la lampe de l'application. */
+const lampOf = (az, el) => {
+  const a = (az * Math.PI) / 180;
+  const e = (el * Math.PI) / 180;
+  const ce = Math.cos(e);
+  return [ce * Math.sin(a), Math.sin(e), -ce * Math.cos(a)];
+};
+const helixStage = (rep) => {
+  const n = 40;
+  const position = new Float32Array(n * 3);
+  const radius = new Float32Array(n).fill(1.7);
+  for (let i = 0; i < n; i += 1) {
+    const t = (i * 100 * Math.PI) / 180;
+    position[i * 3] = 2.3 * Math.cos(t);
+    position[i * 3 + 1] = i * 1.5 - n * 0.75;
+    position[i * 3 + 2] = 2.3 * Math.sin(t);
+  }
+  return {
+    compList: [{
+      structure: { atomCount: n, getAtomData: () => ({ position, radius }) },
+      matrix: { elements: ident16 },
+      reprList: [{
+        name: rep.type, getType: () => rep.type, type: 'representation',
+        parameters: { visible: true },
+        repr: { ...rep, visible: true, structureView: view(Array.from({ length: n }, (_, i) => i)) },
+      }],
+    }],
+  };
+};
+const helixShadow = (rep, az, el) => {
+  const atoms = atomsFromStage(helixStage(rep), 100000);
+  const bounds = boundsBoxOf(atoms.positions, atoms.count);
+  const scene = boundsOf(atoms.positions, atoms.count);
+  const W = 600;
+  const aspect = 1.9;
+  const H = Math.round(W / aspect);
+  const dist = (scene.radius * 1.35) / Math.tan((40 * Math.PI) / 360);
+  const view = mat4LookAt([0, 0, -dist], [0, 0, 0], [0, 1, 0]);
+  const top = 0.1 * Math.tan((40 * Math.PI) / 360);
+  const proj = [
+    1 / (aspect * top), 0, 0, 0,
+    0, 1 / top, 0, 0,
+    0, 0, -((dist * 4) + 0.1) / ((dist * 4) - 0.1), -1,
+    0, 0, (-2 * (dist * 4) * 0.1) / ((dist * 4) - 0.1), 0,
+  ];
+  const cam = { view, projection: proj, clip: mat4Multiply(proj, view), type: 'PerspectiveCamera' };
+  const dir = lampOf(az, el);
+  const light = {
+    dir, center: scene.center, radius: scene.radius, distance: scene.radius * 100, bounds,
+    ...shadowRigOf({ dir, bounds, center: scene.center, radius: scene.radius, distance: scene.radius * 100 }),
+  };
+  const mask = buildRayShadowMask({ atoms, camera: cam, light, width: W, height: H, options: {} });
+  const cover = rasterizeSpheres({
+    positions: atoms.positions, radii: atoms.radii, count: atoms.count,
+    clip: cam.clip, width: mask.maskWidth, height: mask.maskHeight, axisUp: [0, 1, 0], needWorld: false,
+  });
+  let drawn = 0;
+  let occ = 0;
+  for (let i = 0; i < cover.hit.length; i += 1) {
+    if (!cover.hit[i]) continue;
+    drawn += 1;
+    occ += mask.mask[i];
+  }
+  return { atoms, shadowed: mask.shadowed, drawn, mean: drawn ? occ / drawn : 0 };
+};
+const tubeRep = { type: 'tube', radiusType: 'size', radiusSize: 0.5 };
+const tubeFlat = helixShadow(tubeRep, 25, 28);        // la lampe par défaut du rig
+const tubeGrazing = helixShadow(tubeRep, 120, 15);    // une lampe rasante
+ok(tubeFlat.atoms.filled > 0,
+  'le tube est un proxy CONTINU : les liens entre ses atomes sont bouchés');
+ok(tubeFlat.drawn > 0 && tubeFlat.shadowed > 0,
+  `un tube de 0,5 Å projette une ombre RÉELLE (${tubeFlat.shadowed} pixels à l’ombre sur ${tubeFlat.drawn} dessinés)`);
+ok(tubeFlat.mean > 0.05,
+  `…et elle assombrit vraiment le dessin (occlusion moyenne ${tubeFlat.mean.toFixed(3)} → ${(100 * 0.55 * tubeFlat.mean).toFixed(1)} % de lumière perdue)`);
+ok(tubeGrazing.shadowed > tubeFlat.shadowed,
+  `une lampe rasante ombre PLUS qu’une lampe de face (${tubeGrazing.shadowed} contre ${tubeFlat.shadowed}) : c’est la géométrie qui décide`);
 
 /* ── 12. CE QUE LE MODULE DIT DE LUI-MÊME ──────────────────────────────── */
 ok(MODULE.includes('THE SHADOW CAMERA'), 'le module décrit sa caméra d’ombre ajustée (shadowRigOf)');
