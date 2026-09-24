@@ -794,62 +794,151 @@ const drawnAtomIndicesOf = (comp, atomCount) => {
    smudge lying next to the molecule instead of a shadow OF the molecule ». Every
    atom used to donate a 1.7 Å vdW sphere to the proxy whatever the
    representation drew, so a cartoon — a ribbon a few tenths of an ångström
-   thick — carried a shadow volume several times its own thickness, and the
-   ribbon went dark where the REAL ribbon stood in the light. The proxy radius
-   therefore follows the STROKE the representation asks the GPU for: the vdW
-   sphere when the drawing IS the vdW sphere, the bond radius for the stick
-   representations, a thin tube along the backbone for the cartoon family, a hair
-   for the wireframe. That ONE radius both receives the shadow and casts it, so a
+   thick — carried a shadow volume several times its own thickness: the mask went
+   dark NEXT TO the ribbon, and the ribbon stayed lit where it should have been in
+   the shade. The proxy radius therefore follows the STROKE the representation
+   asks the GPU for. That ONE radius both receives the shadow and casts it, so a
    thin ribbon casts and receives a thin shadow.
 
-   `vdw` is the fraction of the atom's own vdW radius an atom BALL of that
-   representation uses (ball+stick draws a small ball at every atom); `min` is
-   the stroke in ångströms when the drawing is not an atom ball at all (a tube
-   has no vdW radius of its own). */
+   ⚠ THE FIRST VERSION OF THIS TABLE NEVER FIRED. It took the type from
+   `rep.parameters.type` and the stroke from `rep.parameters.radius`. Read in the
+   INSTALLED ngl 2.4 build (dist/ngl.esm.js), a Representation keeps the VALUES on
+   the INSTANCE — `this.type = "cartoon"`, `this.radiusScale = .7`,
+   `this.radiusSize`, `this.aspectRatio`, `this.bondScale` — while
+   `this.parameters` holds only the DESCRIPTORS of those values
+   (`radiusScale: { type: "number", … }`) and carries no `type` key at all.
+   `Number({ type: "number" })` is NaN, so EVERY real representation read as
+   « unknown » and every atom kept its vdW radius: the fix was invisible in the
+   app while the tests passed — they fed a `parameters.type` no NGL ever produces
+   (the REAL SHAPE cases of the test file now pin the honest shape).
+
+   The type is read where the viewer itself reads it: `addRepresentation()`
+   returns a RepresentationElement and `reprList` holds THOSE (ngl 2.4
+   component.ts), the element's `name` is `repr.type`
+   (`super(stage, Object.assign({ name: repr.type }, params))`), its own `type` is
+   the constant 'representation', and `getType()` returns `this.repr.type`. So
+   `repTypeOf` tries `rep.type`, the element's `name`, the element's
+   `getType()`, and only then the legacy `parameters.type` of a hand-built object.
+
+   The stroke itself, in the units the viewer's sliders use (the RADIUS block of
+   NMRMoleculeViewer.jsx documents the same mapping):
+
+     kind 'vdw'    the drawing IS the atom ball (spacefill / sphere / surface):
+                   NGL draws it at `radiusScale` × the atom's vdW radius, or at
+                   `radiusSize` Å when `radiusType` is 'size' (`setRadius(2.4)`).
+     kind 'ball'   the ball+stick family: NGL's `getAtomRadius` is
+                   `aspectRatio × core`, the core being `radiusSize` (0.15 Å by
+                   default) — NOT the atom's vdW radius.
+     kind 'bond'   the sticks (licorice / base / backbone): the stroke IS
+                   `radiusSize` — 0.25 Å for the licorice of this app, 0.3 Å for a
+                   base, NGL's own 0.15 Å for the bonds of a ball+stick.
+     kind 'spline' the cartoon family: `radiusScale` against NGL's own default for
+                   that rep (cartoon 0.7, tube 2, ribbon 4), so a ribbon drawn
+                   thicker casts a thicker shadow while a menu nobody touched
+                   keeps its baseline.
+     kind 'hair'   a wireframe / line: `linewidth` counts PIXELS, so the proxy is
+                   the hair-thin floor.
+
+   `min` is the floor of a stroke, in ångströms: a proxy too thin to cover a
+   pixel would stop casting altogether. */
 export const PROXY_STROKE_BY_TYPE = Object.freeze({
-  sphere: { vdw: 1, min: 0 },
-  spacefill: { vdw: 1, min: 0 },
-  surface: { vdw: 1, min: 0 },
-  'ball+stick': { vdw: 0.3, min: 0.3 },
-  ballstick: { vdw: 0.3, min: 0.3 },
-  // Licorice draws STICKS ONLY (NGL gives its atom balls a scale of 0): its
-  // stroke is the bond radius, floored at 0.3 Å so a thin stick still casts.
-  licorice: { vdw: 0, min: 0.3 },
-  line: { vdw: 0, min: 0.15 },
-  wireframe: { vdw: 0, min: 0.15 },
-  backbone: { vdw: 0, min: 0.35 },
-  rope: { vdw: 0, min: 0.3 },
-  cartoon: { vdw: 0, min: 0.45 },
-  ribbon: { vdw: 0, min: 0.45 },
-  tube: { vdw: 0, min: 0.45 },
-  trace: { vdw: 0, min: 0.35 },
+  sphere: { kind: 'vdw', min: 0.12 },
+  spacefill: { kind: 'vdw', min: 0.12 },
+  surface: { kind: 'vdw', min: 0.12 },
+  'ball+stick': { kind: 'ball', core: 0.15, aspect: 2, min: 0.2 },
+  ballstick: { kind: 'ball', core: 0.15, aspect: 2, min: 0.2 },
+  hyperball: { kind: 'ball', core: 0.15, aspect: 2, min: 0.2 },
+  // Licorice draws STICKS ONLY (NGL pins its aspectRatio at 1): its stroke is
+  // the bond radius, `radiusSize` — 0.25 Å in this app.
+  licorice: { kind: 'bond', core: 0.25, min: 0.2 },
+  base: { kind: 'bond', core: 0.3, min: 0.2 },
+  backbone: { kind: 'bond', core: 0.15, min: 0.2 },
+  line: { kind: 'hair', min: 0.15 },
+  wireframe: { kind: 'hair', min: 0.15 },
+  cartoon: { kind: 'spline', base: 0.45, scale: 0.7, min: 0.3 },
+  ribbon: { kind: 'spline', base: 0.45, scale: 4, min: 0.3 },
+  tube: { kind: 'spline', base: 0.45, scale: 2, min: 0.3 },
+  rope: { kind: 'spline', base: 0.3, scale: 1, min: 0.2 },
+  trace: { kind: 'spline', base: 0.35, scale: 1, min: 0.2 },
 });
 
-/* The proxy radius of ONE representation, in ångströms: the table above, refined
-   by the representation's OWN parameters when they are numbers (`scale` of the
-   sphere family, the `radius` of a bond or of a cartoon). `null` means « this
-   representation says nothing about its stroke » — the caller then keeps the
-   atom's vdW radius, exactly as this module did before the table existed. */
-export const proxyRadiusOf = (rep, vdwRadius = 1.7) => {
-  const params = (rep && rep.parameters) || null;
-  if (!params) return null;
-  const stroke = PROXY_STROKE_BY_TYPE[String(params.type || '').toLowerCase()];
+/* The TYPE of a representation, from the objects NGL really hands out: the rep's
+   own `type`, the element's `name` (= `repr.type`), the element's `getType()`
+   (= `this.repr.type`), and only then the legacy `parameters.type` of a
+   hand-built object (a stub of a test — see the long table note above). */
+export const repTypeOf = (rep, el = null) => {
+  let fromEl = '';
+  if (el) {
+    fromEl = el.name || (typeof el.getType === 'function' ? el.getType() : '');
+  }
+  const raw = (rep && rep.type) || fromEl || (rep && rep.parameters && rep.parameters.type) || '';
+  return String(raw).toLowerCase();
+};
+
+/* ONE number of a representation: the INSTANCE value first (that is where ngl 2.4
+   keeps it: `rep.radiusScale`, `rep.radiusSize`, `rep.aspectRatio` …), then the
+   same key on the element's own parameters (what `el.setParameters()` writes),
+   then the legacy keys a hand-built object may carry. Only a positive, finite
+   number counts — the DESCRIPTORS of `rep.parameters` (`{ type: 'number' }`) are
+   objects, so they are skipped here, exactly as they must be. */
+const repNumber = (rep, el, ...keys) => {
+  const sources = [rep, el && el.parameters, rep && rep.parameters];
+  for (let s = 0; s < sources.length; s += 1) {
+    const source = sources[s];
+    if (!source) continue;
+    for (let k = 0; k < keys.length; k += 1) {
+      const v = Number(source[keys[k]]);
+      if (Number.isFinite(v) && v > 0) return v;
+    }
+  }
+  return 0;
+};
+
+/* The proxy radius of ONE representation, in ångströms: the table above, filled
+   with the rep's OWN numbers. `null` means « this representation says nothing
+   about its stroke » — the caller then keeps the atom's vdW radius, exactly as
+   this module did before the table existed. `el` is the RepresentationElement
+   that wraps the rep (see drawnProxyRadiiOf); it is optional, because the tests
+   and the older callers hand the rep alone. */
+export const proxyRadiusOf = (rep, vdwRadius = 1.7, el = null) => {
+  const stroke = PROXY_STROKE_BY_TYPE[repTypeOf(rep, el)];
   if (!stroke) return null;
   const vdw = Math.max(0.1, Number(vdwRadius) || 1.7);
-  const radius = Number(params.radius);
-  const scale = Number(params.scale);
-  let r = Math.max(stroke.min, vdw * stroke.vdw);
-  if (stroke.vdw >= 1) {
-    // The drawing IS the atom ball: `sphere_scale` — or a numeric radius —
-    // decides its size, exactly as the PyMOL `set sphere_scale` the viewer's own
-    // script panel accepts does.
-    if (Number.isFinite(scale) && scale > 0) r = vdw * scale;
-    if (Number.isFinite(radius) && radius > 0) r = radius;
-  } else if (Number.isFinite(radius) && radius > 0) {
-    // A bond radius (0.15 … 0.4) or a cartoon radius (0.4 … 0.8).
-    r = Math.max(r, radius);
+  // `scale` / `sphereScale` are the legacy names of the sphere slider (the PyMOL
+  // script panel and the styling menus of this viewer pass `radiusScale`, and
+  // `scale` as well for the spacefill styles).
+  const radiusScale = repNumber(rep, el, 'radiusScale', 'sphereScale', 'scale');
+  const radiusSize = repNumber(rep, el, 'radiusSize', 'radius');
+  const aspect = repNumber(rep, el, 'aspectRatio');
+  const radiusType = String((rep && rep.radiusType) || '').toLowerCase();
+  const sizeType = radiusType === '' || radiusType === 'size';
+  // The atom-sized core NGL would use for this rep: its own `radiusSize` when the
+  // rep measures radii in ångströms ('size' is what a numeric radius switches to),
+  // the scaled vdW radius when it measures them in vdW radii.
+  const core = (fallback) => {
+    if (radiusSize > 0 && (sizeType || radiusScale <= 0)) return radiusSize;
+    if (radiusScale > 0) return vdw * radiusScale;
+    return fallback;
+  };
+  let r;
+  switch (stroke.kind) {
+    case 'vdw':      // the drawing IS the atom ball
+      r = core(vdw);
+      break;
+    case 'ball':     // ball+stick: NGL draws the atom ball at aspectRatio × core
+      r = core(stroke.core) * (aspect || stroke.aspect);
+      break;
+    case 'bond':     // the sticks: the stroke itself
+      r = core(stroke.core);
+      break;
+    case 'spline':   // the cartoon family: radiusScale against NGL's own default
+      r = radiusScale > 0 ? stroke.base * (radiusScale / stroke.scale) : stroke.base;
+      if (radiusSize > 0 && sizeType) r = Math.max(r, radiusSize);
+      break;
+    default:         // 'hair': a line counts its width in pixels, not in ångströms
+      r = stroke.min;
   }
-  return Math.max(0.05, r);
+  return Math.max(0.05, Math.max(stroke.min, r));
 };
 
 /* The proxy radius of EVERY atom the component draws, index by index: a Float32
@@ -874,7 +963,7 @@ export const drawnProxyRadiiOf = (comp, atomCount, vdw = null) => {
       for (let i = 0; i < idx.length; i += 1) {
         const a = idx[i];
         if (!(a >= 0 && a < out.length)) continue;
-        const per = proxyRadiusOf(rep, vdw ? vdw[a] : 1.7);
+        const per = proxyRadiusOf(rep, vdw ? vdw[a] : 1.7, el);
         if (per == null) continue;
         // The FATTEST visible drawing of an atom is what the eye sees, so it is
         // what the shadow must use.
@@ -909,7 +998,12 @@ export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms) =
       if (drawn && !drawn.length) return;      // nothing is drawn here: no shadow
       // …and, for the atoms it does draw, the STROKE of each representation (null
       // = « says nothing »: the atom then keeps its vdW radius).
-      const surface = drawn ? drawnProxyRadiiOf(comp, n, data.radius) : null;
+      // ⚠ This must run even when `drawn` is null (« every atom: no filtering to
+      // do »): a single cartoon covering the whole chain is the COMMON case, and
+      // gating the stroke table on `drawn` is what kept 1,7 Å spheres around every
+      // ribbon there. drawnProxyRadiiOf itself returns null when the component
+      // says nothing about its representations.
+      const surface = drawnProxyRadiiOf(comp, n, data.radius);
       parts.push({ comp, data, n, drawn, surface });
       total += drawn ? drawn.length : n;
     } catch { /* a component that cannot report its atoms casts nothing */ }

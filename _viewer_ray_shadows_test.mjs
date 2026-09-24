@@ -45,7 +45,7 @@ import {
   rasterizeSpheres, shadowMaskOf, softenMask, sampleMaskBilinear, applyShadowToPixels,
   lightDepthScale, lightMatricesOf, shadowRigOf, buildRayShadowMask, atomsFromStage,
   cameraFromViewer, rayShadowInputsOf, shadowImageData, addCastShadowsToBlob, rayShadowNote,
-  pcfDiscOf, pcfRotationOf, PROXY_STROKE_BY_TYPE, proxyRadiusOf, drawnProxyRadiiOf,
+  pcfDiscOf, pcfRotationOf, PROXY_STROKE_BY_TYPE, repTypeOf, proxyRadiusOf, drawnProxyRadiiOf,
 } from './src/utils/viewerRayShadows.js';
 
 let passed = 0;
@@ -493,8 +493,8 @@ eq(proxyRadiusOf({ parameters: { type: 'sphere', scale: 0.6 } }, 1.7), 1.7 * 0.6
   'sphere : « set sphere_scale, 0.6 » réduit le proxy comme il réduit le dessin');
 eq(proxyRadiusOf({ parameters: { type: 'sphere', radius: 2.4 } }, 1.7), 2.4,
   '…et un rayon numérique l’emporte sur le rayon de van der Waals');
-eq(proxyRadiusOf({ parameters: { type: 'ball+stick' } }, 1.7), Math.max(0.3, 1.7 * 0.3),
-  'ball+stick : la petite bille d’atome, pas la grosse sphère');
+eq(proxyRadiusOf({ parameters: { type: 'ball+stick' } }, 1.7), 0.3,
+  'ball+stick : la petite bille d’atome d’NGL (aspectRatio 2 × radiusSize 0,15 Å), pas la grosse sphère');
 near(proxyRadiusOf({ parameters: { type: 'cartoon' } }, 1.7), 0.45, 1e-9,
   'cartoon : un tube fin, et surtout PAS 1,7 Å');
 near(proxyRadiusOf({ parameters: { type: 'cartoon', radius: 0.8 } }, 1.7), 0.8, 1e-9,
@@ -504,8 +504,10 @@ near(proxyRadiusOf({ parameters: { type: 'licorice', radius: 0.4 } }, 1.7), 0.4,
 eq(proxyRadiusOf({ parameters: { type: 'martini' } }, 1.7), null,
   'une représentation inconnue ne dit RIEN (le rayon de van der Waals est gardé)');
 eq(proxyRadiusOf({}, 1.7), null, '…et une représentation sans paramètres non plus');
-eq(PROXY_STROKE_BY_TYPE.spacefill.vdw, 1, 'la table dit la part de van der Waals d’un dessin plein');
-eq(PROXY_STROKE_BY_TYPE.cartoon.vdw, 0, '…et zéro pour un ruban, qui n’est pas une bille');
+eq(PROXY_STROKE_BY_TYPE.spacefill.kind, 'vdw',
+  'la table dit la NATURE du trait : une bille pleine se mesure en rayons de van der Waals');
+eq(PROXY_STROKE_BY_TYPE.cartoon.kind, 'spline',
+  '…et un ruban en unités de `radiusScale`, pas en rayons de van der Waals');
 
 const cartoonRep = { parameters: { type: 'cartoon' }, structureView: view([0, 1]) };
 const ballRep = { parameters: { type: 'spacefill' }, structureView: view([1, 2]) };
@@ -538,6 +540,104 @@ const ribbon = atomsFromStage(ribbonStage, 100);
 eq(ribbon.count, 2, 'seuls les atomes DESSINÉS sont lus (les deux autres ne sont dessinés par rien)');
 near(ribbon.radii[0], 0.45, 1e-6, '…et leur proxy a l’épaisseur du RUBAN, plus celle d’une sphère de van der Waals');
 near(ribbon.radii[1], 0.45, 1e-6, '…pour chaque atome du ruban');
+
+/* ── 11bis. LA VRAIE FORME D’UNE REPRÉSENTATION NGL — LE BUG QUI RENDAIT LE ──
+   CORRECTIF INVISIBLE DANS L’APPLICATION
+   Le rapport : « je ne vois aucun changement : l’ombre est toujours loin et
+   détachée de la molécule ». La table de traits ne se déclenchait JAMAIS en vrai :
+   elle lisait `rep.parameters.type` et `rep.parameters.radius`, alors qu’une
+   Representation de ngl 2.4 garde ses VALEURS sur l’INSTANCE (`this.type`,
+   `this.radiusScale`, `this.radiusSize`, `this.aspectRatio`) et ne met dans
+   `parameters` que les DESCRIPTEURS de ces valeurs
+   (`radiusScale: { type: 'number', … }`) — aucun `type` là-dedans.
+   `Number({ type: 'number' })` vaut NaN : toute représentation réelle était
+   « inconnue », chaque atome gardait sa sphère de van der Waals de 1,7 Å et
+   l’ombre restait la grosse tache détachée d’avant. Les cas ci-dessous prennent la
+   forme EXACTE que ngl 2.4 produit (component.ts : `addRepresentation` renvoie un
+   RepresentationElement et `reprList` contient CES éléments ;
+   representation-element.ts : `name = repr.type`, `getType() = this.repr.type`,
+   et son propre `type` est la constante 'representation'). */
+const realElement = (type, repr, params = {}) => ({
+  name: type,                        // RepresentationElement#name = repr.type
+  getType: () => type,               // …et son getType() dit la même chose
+  type: 'representation',            // la constante d’un ÉLÉMENT, pas un type de trait
+  parameters: { visible: true, ...params },
+  repr,
+});
+// Une Representation telle que ngl 2.4 la construit : les valeurs sur l’instance,
+// les descripteurs dans `parameters` (aucun `type`).
+const realRep = (type, values = {}, descriptors = {}) => ({
+  type,
+  parameters: {
+    radiusScale: { type: 'number', precision: 3, max: 10, min: 0.001 },
+    radiusSize: { type: 'number', precision: 3, max: 10, min: 0.001 },
+    ...descriptors,
+  },
+  ...values,
+});
+eq(repTypeOf(realRep('cartoon'), realElement('cartoon', realRep('cartoon'))), 'cartoon',
+  'le type se lit sur la représentation (`rep.type`)');
+eq(repTypeOf({}, { name: 'licorice' }), 'licorice',
+  '…ou sur le `name` de l’élément (ce que NGL y met : `repr.type`)');
+eq(repTypeOf({}, { getType: () => 'tube' }), 'tube', '…ou sur son getType()');
+eq(repTypeOf({ parameters: { type: 'spacefill' } }), 'spacefill',
+  '…et l’ancien `parameters.type` d’un objet fabriqué à la main reste accepté en dernier');
+
+// Le ruban : `radiusScale` 0,7 EST la valeur par défaut d’NGL pour un cartoon, donc
+// la ligne de base de la table — et surtout PAS le rayon de van der Waals.
+near(proxyRadiusOf(realRep('cartoon', { radiusScale: 0.7, radiusType: 'sstruc' }), 1.7,
+  realElement('cartoon', realRep('cartoon'))), 0.45, 1e-9,
+  'une VRAIE représentation cartoon donne le trait du ruban (0,45 Å), plus une sphère de 1,7 Å');
+ok(proxyRadiusOf(realRep('cartoon', { radiusScale: 0.7 }), 1.7) < 1.7 / 2,
+  '…et le proxy reste très en dessous du rayon de van der Waals de l’atome');
+near(proxyRadiusOf(realRep('cartoon', { radiusScale: 1.4 }), 1.7), 0.9, 1e-9,
+  'un ruban dessiné deux fois plus épais projette une ombre deux fois plus épaisse');
+near(proxyRadiusOf(realRep('spacefill', { radiusType: 'vdw', radiusScale: 0.6 }), 1.7), 1.7 * 0.6, 1e-9,
+  'spacefill : `radiusScale` d’NGL (le curseur « Sphere radius » des menus) suit le dessin');
+near(proxyRadiusOf(realRep('spacefill', { radiusType: 'size', radiusSize: 0.6 }), 1.7), 0.6, 1e-9,
+  '…et `radiusType: size` donne un rayon en ångströms, comme `setRadius(0,6)`');
+near(proxyRadiusOf(realRep('licorice', { radiusType: 'size', radiusSize: 0.25 }), 1.7), 0.25, 1e-9,
+  'licorice : le proxy EST le `radiusSize` du bâton (0,25 Å dans ce viewer)');
+near(proxyRadiusOf(realRep('ball+stick', { radiusType: 'size', radiusSize: 0.15, aspectRatio: 1.1 }),
+  1.7), 0.2, 1e-9,
+  'ball+stick : la bille vaut aspectRatio × radiusSize (0,165 Å), planchée à 0,2 Å');
+eq(PROXY_STROKE_BY_TYPE[repTypeOf(realRep('licorice'), realElement('licorice', realRep('licorice')))].kind,
+  'bond', '…et c’est bien la table des traits qui répond à une représentation réelle');
+
+/* La régression de bout en bout : un élément RÉEL dans `reprList` — descripteurs
+   dans `parameters`, aucune trace de `type` — doit donner le trait du ruban, et
+   pas 1,7 Å. C’est exactement le cas qui échouait dans l’application, y compris
+   quand une SEULE représentation dessine TOUS les atomes (le cas courant : un
+   cartoon sur toute la chaîne). */
+const realCartoonRep = {
+  ...realRep('cartoon', { radiusScale: 0.7, radiusType: 'sstruc' }),
+  visible: true,
+  structureView: view([0, 1]),
+};
+const realCartoonEl = realElement('cartoon', realCartoonRep);
+const realPerAtom = drawnProxyRadiiOf({ reprList: [realCartoonEl] }, 2, new Float32Array([1.7, 1.7]));
+near(realPerAtom[0], 0.45, 1e-6,
+  'un élément NGL réel (name = cartoon, parameters = DESCRIPTEURS) projette le trait du ruban');
+near(realPerAtom[1], 0.45, 1e-6, '…pour chacun des atomes que sa StructureView dessine');
+
+const realStage = {
+  compList: [{
+    structure: {
+      atomCount: 2,
+      getAtomData: () => ({
+        position: new Float32Array([0, 0, 0, 0, 1.5, 0]),
+        radius: new Float32Array([1.7, 1.7]),
+      }),
+    },
+    matrix: { elements: ident16 },
+    reprList: [realCartoonEl],
+  }],
+};
+const realRibbon = atomsFromStage(realStage, 100);
+eq(realRibbon.count, 2, 'une représentation qui couvre TOUTE la structure dessine bien tous ses atomes');
+near(realRibbon.radii[0], 0.45, 1e-6,
+  'de bout en bout : un vrai cartoon donne des proxies de 0,45 Å — l’ombre colle au ruban');
+near(realRibbon.radii[1], 0.45, 1e-6, '…et non des sphères de van der Waals de 1,7 Å');
 
 /* ── 12. CE QUE LE MODULE DIT DE LUI-MÊME ──────────────────────────────── */
 ok(MODULE.includes('THE SHADOW CAMERA'), 'le module décrit sa caméra d’ombre ajustée (shadowRigOf)');
