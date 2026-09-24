@@ -175,7 +175,7 @@ has("{['cartoon', 'ribbon', 'tube', 'ball', 'stick', 'sphere', 'surface'].map((s
   'les ticks restent : ce sont les DEUX commandes « show » empilées de PyMOL');
 has('look: selLookOf(st),', '…et le sélecteur de style du styling ouvre la rangée (le rendu commun lit selLookOf)');
 has('set: (field, value) => setSelField(s.name, field, value),', '…chaque champ passe par l’adaptateur des deux barres');
-has("if (field === 'style') { setSelRowStyle(key, value); return; }",
+has('const work = setSelRowStyle(key, value);',
   '…et le style reste une COMMANDE (setSelRowStyle), jamais une écriture directe');
 has('const setSelRowStyle = (key, token) => {', 'setSelRowStyle : un seul état écrit, enchaîné toggle par toggle');
 has('work = toggleSelStyle(key, SEL_STYLE_TOGGLE_TOKEN[f], work);',

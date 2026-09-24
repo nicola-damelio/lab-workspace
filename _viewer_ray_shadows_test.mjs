@@ -21,6 +21,11 @@
     3. LE CÂBLAGE : le module branché dans viewerRayImage.js (options `shadows`
        + `lightDir`, note dans le message) et dans le viewer (case ◐ shadows,
        force, persistance, la lampe étant celle du rig ◐ Shadows).
+    4. LE FANTÔME SIGNALÉ ENSUITE : « dans les images de ray il y a une image
+       projetée, mais je vois comme une membrane projetée alors que la membrane
+       n'est PAS visible dans le programme (elle a été cachée) ». L'ombre ne lit
+       plus les atomes de la STRUCTURE mais ceux de ses représentations VISIBLES :
+       ce qui n'est pas dessiné ne projette plus rien.
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -219,6 +224,51 @@ eq(gathered.stride, 1, 'sans contrainte, aucun échantillonnage : tous les atome
 const strided = atomsFromStage(fakeStage, 1);
 ok(strided.count <= 2 && strided.stride > 1, 'avec un plafond, les atomes sont échantillonnés (jamais des millions de sphères)');
 eq(atomsFromStage({ compList: [] }, 10).count, 0, 'un stage vide ne donne aucun atome');
+
+/* ── 6bis. UNE MOLÉCULE CACHÉE NE PROJETTE PLUS RIEN (le rapport) ──────── */
+/* « dans les images de ray il y a une image projetée, mais je vois comme une
+   membrane projetée alors que la membrane n'est PAS visible dans le programme
+   (elle a été cachée) » : les atomes d'une molécule cachée sont toujours dans sa
+   Structure, et ce viewer cache une molécule en ne construisant PAS ses
+   représentations — le composant, lui, reste `visible`. L'ombre ne lit donc plus
+   la structure : elle lit ce qui est DESSINÉ, les `structureView` des
+   représentations vivantes. */
+const view = (indices) => ({ getAtomIndices: () => Uint32Array.from(indices) });
+const repEl = (indices, visible = true) => ({ repr: { visible, structureView: view(indices) } });
+const deepStruct = {
+  atomCount: 4,
+  getAtomData: () => ({
+    position: new Float32Array([1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4]),
+    radius: new Float32Array([1.7, 1.7, 1.7, 1.7]),
+  }),
+};
+const hiddenMolecule = { structure: deepStruct, matrix: { elements: ident16 }, reprList: [] };
+eq(atomsFromStage({ compList: [hiddenMolecule] }, 100).count, 0,
+  'une molécule cachée (aucune représentation construite) ne projette plus d’ombre — le fantôme du rapport');
+
+const halfHidden = { ...hiddenMolecule, reprList: [repEl([0, 1]), repEl([2, 3], false)] };
+const half = atomsFromStage({ compList: [halfHidden] }, 100);
+eq(half.count, 2, 'seuls les atomes d’une représentation VISIBLE projettent une ombre');
+eq(Array.from(half.positions.slice(0, 3)), [1, 1, 1], '…et ce sont bien les leurs (le StructureView donne les indices)');
+eq(half.total, 2, 'le total compte ces atomes-là, donc l’échantillonnage aussi');
+
+const meshOnly = { ...hiddenMolecule, reprList: [{ repr: { visible: true } }] };
+eq(atomsFromStage({ compList: [meshOnly] }, 100).count, 0,
+  'une représentation sans `structureView` (les plaques de cycles de ce viewer) ne projette rien');
+
+const fullCover = { ...hiddenMolecule, reprList: [repEl([0, 1, 2, 3])] };
+eq(atomsFromStage({ compList: [fullCover] }, 100).count, 4,
+  'une représentation qui couvre TOUTE la structure rend tous ses atomes (aucun filtre inutile)');
+
+const noRepInfo = { structure: deepStruct, matrix: { elements: ident16 } };
+eq(atomsFromStage({ compList: [noRepInfo] }, 100).count, 4,
+  'un composant qui ne dit RIEN de ses représentations garde son ancien comportement (jamais de trou)');
+ok(MODULE.includes('const drawnAtomIndicesOf = (comp, atomCount) => {'),
+  'la lecture « ce qui est dessiné » est une fonction à part, donc lisible et testable');
+ok(MODULE.includes('const drawn = drawnAtomIndicesOf(comp, structure.atomCount || n);'),
+  '…et c’est ELLE que la collecte des atomes appelle (la cause du fantôme est traitée à la source)');
+ok(MODULE.includes('that has been hidden draws nothing, so it casts nothing'),
+  'le module documente le rapport : une molécule cachée ne projette plus rien');
 
 const fakeViewer = {
   camera: {

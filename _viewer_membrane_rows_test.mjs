@@ -46,18 +46,25 @@ const has = (needle, what) => ok(VIEW.includes(needle), `${what}\n  introuvable 
 const gone = (needle, what) => ok(!VIEW.includes(needle), `${what}\n  encore là   : ${needle}`);
 const countOf = (re) => (VIEW.match(re) || []).length;
 
-/* ── 1. LES TICKS SONT PARTIS DE LA BOÎTE « MEMBRANE » DE GAUCHE ───────── */
+/* ── 1. LA BOÎTE « MEMBRANE » DE GAUCHE N'EXISTE PLUS ──────────────────── */
+/* La demande : « la finestra membrane a sinistra che clippa anche senza script
+   de pymol deve essere eliminata ». Elle apparaissait sur TOUT fichier contenant
+   une bicouche, script ou pas, elle rognait le haut d'une barre à largeur fixe
+   (le nom des fichiers du fichier de mesure en sortait), et elle répétait — en
+   plus petit et non stylable — ce que le groupe 🧫 du styling dit déjà. */
+gone('Styles of the leaflets:', 'plus d’encart « Styles of the leaflets » dans la barre de gauche');
+gone('rounded-lg border border-teal-200 bg-teal-50/70', '…ni la boîte qui le portait');
+gone('upper {membraneInfo.upperAtoms} atoms', '…ni la lecture de la mesure qui s’y trouvait');
 gone("{['upper_leaflet', 'lower_leaflet'].map((n) => {", 'plus un seul tick de feuillet dans la boîte Membrane de gauche');
 gone("{['upper_headgroups', 'lower_headgroups'].map((n) => {", '…ni les deux boutons de têtes de groupe');
 gone('selStyles[n] && (selStyles[n].sphere || selStyles[n].ball || selStyles[n].stick)',
   '…donc plus de cochage écrit à la main dans cette boîte');
-has('Styles of the leaflets:', 'la boîte de gauche RENVOIE au styling (la demande)');
-has('🧫 <b>Membrane · leaflets</b> group', '…en nommant le groupe où elles se stylent');
-has('and every lipid selection the script defines.', '…et en annonçant les sélections du script');
-/* La MESURE reste là où elle était : c’est une lecture, pas un style. */
-has('{membraneInfo.axis} · mid {membraneInfo.midplane.toFixed(1)} Å · {membraneInfo.thickness.toFixed(1)} Å',
-  'la mesure (axe · plan médian · épaisseur) est toujours affichée');
-has('upper {membraneInfo.upperAtoms} atoms / {membraneInfo.upperResidues} lipids',
+gone('|| !!membraneInfo', '…et plus aucune condition d’affichage de la barre liée à une membrane mesurée');
+has('NO « MEMBRANE » BOX IN THIS BAR', 'la source dit que la boîte a été retirée (la demande)');
+/* La MESURE n’est pas perdue : elle est lue en tête du groupe 🧫, avec ses comptes. */
+has('{info.axis} · mid {info.midplane.toFixed(1)} Å · {info.thickness.toFixed(1)} Å',
+  'la mesure (axe · plan médian · épaisseur) est toujours affichée, dans le groupe');
+has('upper ${info.upperAtoms} atoms / ${info.upperResidues} lipids · lower ${info.lowerAtoms} atoms / ${info.lowerResidues} lipids. ',
   '…avec le nombre d’atomes et de lipides de chaque feuillet');
 
 /* ── 2. LES RANGÉES VIVENT DANS L'ESPACE PHOSPHOLIPIDES DU STYLING ─────── */
@@ -119,8 +126,10 @@ has("solidColor: 'color',", '…« solidColor » devient « color »');
 has("opacity: 'transparency',", '…« opacity » devient « transparency »');
 has("sphere: 'radiusSphere',", '…« sphere » devient « radiusSphere »');
 has("bond: 'radiusBond',", '…et « bond » devient « radiusBond »');
-has("if (field === 'style') { setSelRowStyle(key, value); return; }",
-  'le STYLE reste une COMMANDE (setSelRowStyle, le geste des ticks), jamais une simple écriture');
+has('const work = setSelRowStyle(key, value);',
+  'le STYLE reste une COMMANDE (setSelRowStyle, le geste des ticks) — jamais une écriture directe');
+has("const chained = membraneHeadRelinquish(key, value !== 'hide', work);",
+  '…enchaînée sur la règle des têtes de groupe (leurs atomes quittent le feuillet parent)');
 has('const selLookOf = (st) => {', '…et la lecture d’une rangée de sélection passe par selLookOf');
 /* Les ticks « + show » restent : PyMOL EMPILE ses commandes « show ». */
 has('+ show', 'les ticks d’empilement sont toujours là (deux « show » de PyMOL)');
@@ -135,6 +144,57 @@ eq(countOf(/title="Sphere radius — a multiplier of the style's own atom size \
   '…le rayon des sphères (R●) aussi');
 eq(countOf(/title="Bond radius — a multiplier of the style's own stick thickness \(1\.00 = untouched\)"/g), 1,
   '…et le rayon des bâtons (R—)');
+
+/* ── 5. LE MENU D'UNE MEMBRANE, ET LES DEUX PAIRES DE RANGÉES ──────────── */
+/* Le rapport : « dei 4 comandi nella finestra styling (upper leaflet, lower
+   leaflet, upper headgroups and lower headgroup) funziona bene solo lower
+   leaflet » — et « i drop down menu per le membrane non devono contenere ribbon,
+   cartoon, tube ed inoltre CPK è uguale a sphere ». */
+const MEMBRANE_LIST = (VIEW.match(/const MEMBRANE_ROW_STYLE_CHOICES = \[([^\]]*)\];/) || [, ''])[1]
+  .split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
+eq(MEMBRANE_LIST, ['hide', 'ball+stick', 'licorice', 'spacefill', 'surface'],
+  'la liste dédiée aux membranes : cacher · billes-bâtons · bâtons · CPK · surface');
+ok(!MEMBRANE_LIST.some((s) => ['cartoon', 'ribbon', 'tube', 'trace'].includes(s)),
+  'aucun style de POLYMÈRE : NGL ne dessine RIEN d’un lipide en cartoon / ribbon / tube — le sélecteur semblait mort');
+ok(!MEMBRANE_LIST.includes('sphere'),
+  '« Sphere » n’y est pas : c’est le MÊME `spacefill` que CPK (deux noms pour une commande)');
+has('styleOptions: MEMBRANE_ROW_STYLE_CHOICES,', 'c’est cette liste que la rangée de membrane offre');
+eq(countOf(/styleOptions: MEMBRANE_ROW_STYLE_CHOICES,/g), 1, '…une seule fois (le groupe des lipides)');
+
+/* Le feuillet parent et la règle « une rangée de têtes possède ses atomes »,
+   EXÉCUTÉE sur des styles réels : c’est ce qui fait qu’un style choisi sur les
+   têtes se VOIT, même quand le feuillet qui les contient dessine des sphères. */
+const iRel = VIEW.indexOf('const MEMBRANE_SIDE_OF = {');
+const jRel = VIEW.indexOf('const SEL_STYLE_FLAG_OF = {');
+ok(iRel >= 0 && jRel > iRel, 'les helpers des feuillets sont extractibles du viewer');
+const CODE_REL = VIEW.slice(iRel, jRel);
+const runRel = (key, on, styles) => new Function('cfg', `${CODE_REL}
+  const SEL_STYLE_TOGGLE_TOKEN = { cartoon: 'cartoon', ribbon: 'ribbon', tube: 'tube', ball: 'ball', stick: 'stick', sphere: 'sphere', surface: 'surface' };
+  return membraneHeadRelinquish(cfg.key, cfg.on, cfg.styles);`)({ key, on, styles });
+const withParent = { upper_leaflet: { sphere: true, colorMode: 'resname' }, upper_headgroups: {} };
+const rel1 = runRel('upper_headgroups', true, withParent);
+eq(rel1.upper_leaflet.hideFor.sphere, ['upper_headgroups'],
+  'les têtes du haut quittent les sphères de leur feuillet : leur propre style se voit enfin');
+eq(rel1.upper_leaflet.colorMode, 'resname', '…sans rien perdre du reste de la rangée du feuillet');
+ok(rel1.upper_headgroups === withParent.upper_headgroups, '…et la rangée de têtes elle-même n’est pas touchée');
+eq(runRel('upper_headgroups', false, rel1).upper_leaflet.hideFor, undefined,
+  'choisir « Hide » sur les têtes rend leurs atomes au feuillet (le geste est réversible)');
+const onlySticks = { lower_leaflet: { stick: true } };
+eq(runRel('lower_headgroups', true, onlySticks).lower_leaflet.hideFor.stick, ['lower_headgroups'],
+  'idem pour les têtes du bas, sur un feuillet dessiné en bâtons');
+const emptyParent = { lower_leaflet: {} };
+ok(runRel('lower_headgroups', true, emptyParent) === emptyParent,
+  'un feuillet qui ne dessine RIEN ne reçoit aucune exclusion inutile');
+ok(runRel('water', true, withParent) === withParent, 'une rangée qui n’est pas des têtes ne change rien du tout');
+
+/* 👁 solo : le feuillet de DERRIÈRE ne peut pas se voir à travers celui de devant. */
+has('const membraneOppositeRows = (key) => Object.keys(MEMBRANE_SIDE_OF)', 'les rangées de l’autre feuillet sont calculées');
+has('const setMembraneSolo = (key, on) => {', '…et le bouton 👁 solo les cache d’un seul clic');
+has('cur.hidden = true;', '…avec le MÊME drapeau `hidden` que le 🙈 de la barre de gauche');
+has('const solo = measuredRow && membraneSoloOn(key);', 'l’état du bouton est LU dans les styles, jamais doublé');
+has('👁 solo', 'le bouton est là, sur chaque rangée mesurée');
+has('the front leaflet covers the one behind it',
+  '…et le groupe dit POURQUOI le feuillet de derrière ne se voyait pas (le rapport « seul lower leaflet marche »)');
 
 /* ── Bilan ─────────────────────────────────────────────────────────────── */
 console.log(`_viewer_membrane_rows_test.mjs — ${passed} assertions OK (feuillets stylables + deux barres identiques)`);

@@ -4425,6 +4425,65 @@ const STYLE_FAMILY_REPS = {
    commands do), so the selector shows the first style the row draws, in the order
    of the styling window, and the ticks stay for the stacking. */
 const SEL_ROW_STYLE_CHOICES = ['hide', 'cartoon', 'ribbon', 'tube', 'ball+stick', 'licorice', 'spacefill', 'sphere', 'surface'];
+/* THE STYLES A 🧫 MEMBRANE ROW OFFERS — the request, word for word: « the drop
+   down menus of the membranes must not contain ribbon, cartoon and tube, and CPK
+   is the same as sphere ». NGL's `cartoon`, `ribbon` and `tube` are built on a
+   POLYMER backbone: asked for a lipid they draw NOTHING AT ALL, so a bilayer's
+   selector was offering three commands that could not change the picture — the
+   reason a leaflet row looked dead whichever one was picked. And « Sphere »
+   writes the very same `spacefill` flag as « CPK » (one representation, two
+   names), so choosing it made the selector jump to its twin on the next repaint.
+   What is left is what a lipid can really be drawn with. */
+const MEMBRANE_ROW_STYLE_CHOICES = ['hide', 'ball+stick', 'licorice', 'spacefill', 'surface'];
+/* ── THE FOUR MEASURED NAMES ARE TWO PAIRS, AND ONE PAIR LIES INSIDE THE OTHER ─
+   « only lower leaflet works well »: the four rows of a bilayer are not disjoint
+   — `upper_headgroups` ⊂ `upper_leaflet`, `lower_headgroups` ⊂ `lower_leaflet` —
+   so a leaflet row drawing spheres covered the very atoms its headgroup row had
+   just been restyled with, and the heads looked as if the selector did nothing.
+   A HEADGROUP ROW OWNS ITS ATOMS: choosing a style for it writes its own PyMOL
+   expression into the `hideFor` of its parent LEAFLET — for EVERY style that
+   leaflet draws, not only the twin one — so the heads are drawn by their own row
+   and the leaflet carries the rest. Choosing « Hide » on the heads gives them
+   back to the leaflet (the gesture stays reversible). Only a measured leaflet is
+   ever a parent, so nothing of the script rows is touched by this. */
+const MEMBRANE_SIDE_OF = {
+  upper_leaflet: 'upper', lower_leaflet: 'lower',
+  upper_headgroups: 'upper', lower_headgroups: 'lower',
+};
+const MEMBRANE_PARENT_OF = {
+  upper_headgroups: 'upper_leaflet',
+  lower_headgroups: 'lower_leaflet',
+};
+// The measured rows of the OTHER leaflet — what 👁 solo hides to reveal this one.
+const membraneOppositeRows = (key) => Object.keys(MEMBRANE_SIDE_OF)
+  .filter((k) => k !== key && MEMBRANE_SIDE_OF[k] !== MEMBRANE_SIDE_OF[key]);
+/* Pure: the styles of the whole bar with the parent leaflet told to give `key`'s
+   atoms up (on) or to take them back (off). Returns the SAME object when nothing
+   had to change, so the caller can skip a state write. */
+const membraneHeadRelinquish = (key, on, styles) => {
+  const parent = MEMBRANE_PARENT_OF[key];
+  const all = styles || {};
+  const pst = parent ? all[parent] : null;
+  if (!pst) return styles;
+  const hideFor = { ...(pst.hideFor || {}) };
+  let touched = false;
+  Object.keys(SEL_STYLE_TOGGLE_TOKEN).forEach((f) => {
+    const list = hideFor[f] || [];
+    const has = list.includes(key);
+    // Only a style the PARENT really draws can cover the heads; a list nobody
+    // reads would be noise in the saved state.
+    if (!pst[f] && !list.length) return;
+    if (on && !has) { hideFor[f] = [...list, key]; touched = true; } else if (!on && has) {
+      const kept = list.filter((h) => h !== key);
+      if (kept.length) hideFor[f] = kept; else delete hideFor[f];
+      touched = true;
+    }
+  });
+  if (!touched) return styles;
+  const clean = { ...pst };
+  delete clean.hideFor;
+  return { ...all, [parent]: Object.keys(hideFor).length ? { ...clean, hideFor } : clean };
+};
 const SEL_STYLE_FLAG_OF = {
   cartoon: 'cartoon', ribbon: 'ribbon', tube: 'tube',
   'ball+stick': 'ball', licorice: 'stick', spacefill: 'sphere', sphere: 'sphere', surface: 'surface',
@@ -8857,6 +8916,7 @@ const setSelRowStyle = (key, token) => {
   });
   if (flag && !((work[key] || {})[flag])) work = toggleSelStyle(key, SEL_STYLE_TOGGLE_TOKEN[flag], work);
   if (work !== selStylesRef.current) setSelStyles(work);
+  return work;
 };
 
 /* ── THE ONE LANGUAGE OF THE TWO BARS ───────────────────────────────────────
@@ -8888,10 +8948,43 @@ const selLookOf = (st) => {
   };
 };
 const setSelField = (key, field, value) => {
-  if (field === 'style') { setSelRowStyle(key, value); return; }
+  if (field === 'style') {
+    // The style is a COMMAND (see above), never a plain write — and a 🧫
+    // HEADGROUP row takes its own atoms out of the leaflet row that draws them
+    // (membraneHeadRelinquish), so the heads can really be restyled on their own
+    // even when the leaflet draws spheres over them. « Hide » gives them back.
+    const work = setSelRowStyle(key, value);
+    const chained = membraneHeadRelinquish(key, value !== 'hide', work);
+    if (chained !== work) setSelStyles(chained);
+    return;
+  }
   const name = LOOK_FIELD_OF_SEL[field];
   if (!name) return;
   setSelStyles({ ...selStylesRef.current, [key]: { ...(selStylesRef.current[key] || {}), [name]: value } });
+};
+/* 👁 SOLO OF ONE MEASURED ROW — the honest answer to « only lower leaflet works
+   well ». The two leaflets of a bilayer stand one BEHIND the other: the front one
+   is drawn over the one behind it (and over its headgroups), so restyling the
+   back leaflet of an opaque bilayer changes nothing the eye can see — the row was
+   working, its atoms were simply covered. This button hides the OTHER leaflet's
+   two measured rows (the leaflet and its heads) in ONE click — the same `hidden`
+   flag the 🙈 of the selections bar writes, so those atoms also leave every other
+   row — and brings them back on the second click. `soloOn` is read from that very
+   state, so the button can never disagree with what is on screen. */
+const membraneSoloOn = (key) => {
+  const others = membraneOppositeRows(key);
+  return others.length > 0 && others.every((k) => !!(selStyles[k] || {}).hidden);
+};
+const setMembraneSolo = (key, on) => {
+  const others = membraneOppositeRows(key);
+  if (!others.length) return;
+  const next = { ...selStylesRef.current };
+  others.forEach((k) => {
+    const cur = { ...(next[k] || {}) };
+    if (on) cur.hidden = true; else delete cur.hidden;
+    if (Object.keys(cur).length) next[k] = cur; else delete next[k];
+  });
+  setSelStyles(next);
 };
 /* The 🎛 material of ONE FAMILY of a Selections row — the shape the left bar has
    always stored (`st.mat[family] = { preset, roughness, metalness }`), written
@@ -10253,7 +10346,19 @@ const renderSectionRow = (sec, sub) => {
    write — so the leaflets can be styled one selection at a time (beads, colour
    by lipid type, material, transparency, radii), and every selection a macro
    makes on lipids is listed beside them. The membrane measurement is reported at
-   the top of the group, where it used to be. */
+   the top of the group, where it used to be.
+
+   THE FOLLOW-UP REPORT: « the membrane window on the left, which clips even
+   without a pymol script, must be eliminated » (done — the left bar holds the
+   selections and nothing else now, see the note there), « of the 4 commands only
+   lower leaflet works well », « the drop down menus of the membranes must not
+   contain ribbon, cartoon and tube, and CPK is the same as sphere ». A membrane
+   row therefore offers MEMBRANE_ROW_STYLE_CHOICES (no polymer style, one name
+   for spacefill), a headgroup row TAKES ITS ATOMS out of the leaflet that draws
+   them (membraneHeadRelinquish — its style must be visible under a fat leaflet),
+   and each measured row carries the 👁 solo that hides the other leaflet's two
+   rows: the two leaflets stand one BEHIND the other, and the one at the back
+   cannot be seen, let alone styled, through the one in front. */
 const renderMembraneSelections = (sec) => {
   const keys = lipidSelectionKeys();
   if (!keys.length) return null;
@@ -10274,9 +10379,19 @@ const renderMembraneSelections = (sec) => {
         The leaflets are styled HERE, one selection at a time — the same commands as every row of this
         window — and every selection a PyMOL script makes on lipids is listed with them.
       </p>
+      <p className="text-[9px] text-teal-700 leading-snug">
+        The two leaflets stand one behind the other and one pair of rows lies INSIDE the other
+        (<span className="font-mono">upper_headgroups</span> ⊂ <span className="font-mono">upper_leaflet</span>):
+        restyling the heads therefore takes their atoms out of their own leaflet, and the leaflet that lies
+        BEHIND the front one is only visible once the front one is out of the way — the 👁 of a row hides
+        the other leaflet's two rows at once (and a molecule hidden in the Molecules bar still draws
+        nothing: these rows are overlays).
+      </p>
       {keys.map((key) => {
         const st = selStyles[key] || {};
         const n = selectionAtomCount(key);
+        const measuredRow = !!MEMBRANE_SIDE_OF[key];
+        const solo = measuredRow && membraneSoloOn(key);
         return (
           <div key={key} className="rounded border border-teal-100 bg-white px-1 py-0.5 flex flex-col gap-0.5">
             <div className="flex items-center justify-between gap-1">
@@ -10284,11 +10399,20 @@ const renderMembraneSelections = (sec) => {
                 title={`${key} — a lipid selection of this bilayer: its atoms lie inside the lipids of ${sec.name}`}>
                 {key}
               </span>
+              {measuredRow && (
+                <button type="button" onClick={() => setMembraneSolo(key, !solo)}
+                  className={`text-[9px] font-bold rounded border px-1 shrink-0 ${solo ? 'bg-teal-100 border-teal-400 text-teal-900' : 'bg-white border-teal-200 text-teal-700 hover:bg-teal-50'}`}
+                  title={solo
+                    ? `Bring the ${MEMBRANE_SIDE_OF[key]} leaflet's other rows back (they are hidden)`
+                    : `See ONLY the ${MEMBRANE_SIDE_OF[key]} leaflet: hide the ${MEMBRANE_SIDE_OF[key] === 'upper' ? 'lower' : 'upper'} leaflet's two rows (the leaflet and its headgroups) — the front leaflet covers the one behind it, so this is how the other one can be styled and really seen`}>
+                  👁 solo
+                </button>
+              )}
               <span className="text-[10px] text-slate-400 font-mono shrink-0">{n != null ? `${n} atoms` : '—'}</span>
             </div>
             {renderLookControls({
               uid: `« ${key} »`,
-              styleOptions: SEL_ROW_STYLE_CHOICES,
+              styleOptions: MEMBRANE_ROW_STYLE_CHOICES,
               styleLabelOf: (t) => STYLE_LABELS[t] || t,
               colorOptions: SEL_COLOR_MODES,
               look: selLookOf(st),
@@ -10303,6 +10427,10 @@ const renderMembraneSelections = (sec) => {
       <span className="text-[9px] text-teal-700 italic">
         The four measured names work in a PyMOL script as well (`upper_leaflet`, `lower_headgroups`…), and a script that defines
         them with `z&gt;90` gets this measurement instead.
+      </span>
+      <span className="text-[9px] text-teal-700 italic">
+        A {'`'}select headgroups, phosphate or POPC{'`'} — which PyMOL reads as EVERY atom of those lipids — gets the measured heads instead.
+        A row named after the heads can therefore never cover the whole bilayer.
       </span>
     </div>
   );
@@ -12233,7 +12361,12 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
       computed from the ATOMS — the very camera of the canvas, the very lamp of
       the ◐ Shadows rig — and multiplied into the pixels NGL just wrote
       (utils/viewerRayShadows.js). The PNG therefore carries a real projected
-      shadow; untick to get the plain supersampled still back. */}
+      shadow; untick to get the plain supersampled still back. Only what is
+      DRAWN casts: a molecule this viewer has hidden (a section unticked, a look
+      set to « hide ») keeps its atoms in the structure but draws no
+      representation, and it no longer throws a shadow of itself into the still —
+      the report « I see a projected membrane, while the membrane is hidden in the
+      program » (see drawnAtomIndicesOf in that module). */}
   <label
     title="Casted shadows in the PNG: the shadow the molecule throws, from the very lamp of the ◐ Shadows rig (its Azimuth / Elevation). NGL cannot cast them — the shadow is computed from the atoms with the camera and the light of the scene and multiplied into the still. Untick for the plain supersampled image."
     className={`px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-1 cursor-pointer whitespace-nowrap ${rayShadows ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
@@ -13496,60 +13629,29 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
 {/* ▶ The tab that brings the SELECTIONS bar back once it is collapsed — the same
     gesture as the styling bar on the right. This bar is the LEFT one: every
     selection a PyMOL script defines, each with its own styles. */}
-{status === 'ready' && selBarCollapsed && (selections.length > 0 || !!membraneInfo) && (
+{status === 'ready' && selBarCollapsed && selections.length > 0 && (
   <button type="button" onClick={() => setSelBarCollapsed(false)}
     className="absolute top-11 left-2 z-40 px-2 h-7 rounded-md bg-white/90 border border-violet-300 text-violet-700 text-[10px] font-black hover:bg-violet-50 shadow-sm flex items-center justify-center"
-    title={`Open the selections bar — ${selections.length} selection(s)${membraneInfo ? ', membrane measured' : ''}, each with its own styles`}>
+    title={`Open the selections bar — ${selections.length} selection(s), each with its own styles`}>
     ▶ Selections
   </button>
 )}
 
-{(selections.length > 0 || !!membraneInfo || status === 'loading' || trajStatus === 'loading') && !selBarCollapsed && (
+{(selections.length > 0 || status === 'loading' || trajStatus === 'loading') && !selBarCollapsed && (
   <div className="absolute top-11 left-2 bottom-2 w-64 z-30 flex flex-col gap-2 bg-white/95 border border-violet-200 rounded-xl shadow-xl p-2 overflow-hidden">
-    {/* ── The membrane the viewer MEASURED on this structure ──────────────────
-        `z>90` (the way membrane macros usually split the two leaflets) depends on
-        the file being centred and oriented on z. The geometry does not: the
-        normal axis, the midplane and the two clusters of headgroups are measured
-        at load (membraneLeafletsOf) and published as four ready-made selections,
-        so a macro may use those names directly. THIS BOX only READS them out
-        (the axis, the midplane, the thickness and the counts): the two leaflet
-        ticks that used to live here are rows of the 🧫 Membrane · leaflets group
-        of the « Molecules · styling » window now — the request — where each one
-        can be styled on its own, next to every lipid selection a script defines
-        (see renderMembraneSelections). */}
-    {membraneInfo && (
-      <div className="shrink-0 rounded-lg border border-teal-200 bg-teal-50/70 p-1.5">
-        <div className="flex items-center justify-between gap-1">
-          <span className="text-[10px] font-black text-teal-800 uppercase tracking-wide">Membrane</span>
-          <span className="text-[9px] text-teal-700 font-mono"
-            title={`Measured normal axis, midplane and head-to-head thickness of this bilayer`}>
-            {membraneInfo.axis} · mid {membraneInfo.midplane.toFixed(1)} Å · {membraneInfo.thickness.toFixed(1)} Å
-          </span>
-        </div>
-        {/* THE TICKS HAVE MOVED OUT OF HERE (the request): « upper leaflet and
-            lower leaflet ticks should not be located in the section membrane
-            inside the left window. they should appear in the phospholipid space
-            of the styling window so that I can change their style, lipid by
-            lipid. If in the pymol macro a lipid is selected they should also be
-            there. » The two leaflets, the two headgroup selections AND every
-            lipid selection a script defines are ROWS of the 🧫 Membrane ·
-            leaflets group in the lipid space of the « Molecules · styling »
-            window (see renderMembraneSelections), each with the full command set
-            of a styling row. What stays here is the MEASUREMENT — what the viewer
-            read on this bilayer — and the way to it. */}
-        <div className="text-[10px] text-teal-800 mt-1 leading-snug">
-          Styles of the leaflets: <b>Molecules · styling</b> → the 🧫 <b>Membrane · leaflets</b> group
-          of the lipid space — <span className="font-mono">upper_leaflet</span> ·{' '}
-          <span className="font-mono">lower_leaflet</span> · <span className="font-mono">upper_headgroups</span> ·{' '}
-          <span className="font-mono">lower_headgroups</span>, and every lipid selection the script defines.
-        </div>
-        <div className="text-[9px] text-teal-700 mt-1 leading-snug">
-          upper {membraneInfo.upperAtoms} atoms / {membraneInfo.upperResidues} lipids · lower {membraneInfo.lowerAtoms} / {membraneInfo.lowerResidues}.
-          The four names work in a PyMOL script as well ({'`'}upper_leaflet{'`'}, {'`'}lower_headgroups{'`'}…), and a script that defines them with {'`'}z&gt;90{'`'} now gets this measurement instead.
-          A {'`'}select headgroups, phosphate or POPC{'`'} — which PyMOL reads as EVERY atom of those lipids — gets the measured heads instead.
-        </div>
-      </div>
-    )}
+    {/* ── NO « MEMBRANE » BOX IN THIS BAR (the request) ───────────────────────
+        « the membrane window on the left, which clips even without a pymol
+        script, must be eliminated ». It appeared on every file that holds a
+        bilayer, whether or not a macro was ever run, it took the top of a bar
+        whose width is fixed (the file names of the measurement clipped out of it)
+        and it repeated — smaller, and unstyleable — what the 🧫 Membrane ·
+        leaflets group of the « Molecules · styling » window already says. THIS
+        BAR NOW HOLDS THE SELECTIONS AND NOTHING ELSE: what a PyMOL script
+        defines, each with its own commands. The measurement itself (axis ·
+        midplane · thickness · the atom and lipid counts) is still made and still
+        published as the four ready-made names — it is read out at the top of
+        that 🧫 group, right above the rows it belongs to (see
+        renderMembraneSelections). */}
     {selections.length > 0 && (
     <>
     <div className="flex items-center justify-between gap-2 shrink-0">

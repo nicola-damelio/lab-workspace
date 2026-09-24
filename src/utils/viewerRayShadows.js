@@ -18,9 +18,13 @@
    computed outside NGL is the one thing a shadow map needs: the GEOMETRY. So
    the shadow is built from the atoms themselves:
 
-     1. the atoms of every visible component, in WORLD space (the Structure's own
-        atom data, moved by the component's matrix — the very transform NGL
-        gives the GPU), become a set of PROXY SPHERES (their vdW radius);
+     1. the atoms of every visible component AS THEY ARE DRAWN — the union of the
+        atoms of its visible representations, in WORLD space (the Structure's own
+        atom data, moved by the component's matrix — the very transform NGL gives
+        the GPU) — become a set of PROXY SPHERES (their vdW radius). A molecule
+        that has been hidden draws nothing, so it casts nothing: without this the
+        shadow of an invisible bilayer appeared in the still (the report « I see a
+        projected membrane, while the membrane is hidden in the program »);
      2. those spheres are rasterised once through the CAMERA's own clip matrix
         (the projection matrix read from the live NGL camera, so the mask is
         pixel-aligned with the still) — that gives, per pixel, the world point of
@@ -444,12 +448,48 @@ const elements16Of = (matrix) => {
   return Array.from(e);
 };
 
+/* WHICH ATOMS A COMPONENT REALLY DRAWS — the fix of the phantom shadow.
+   The report: « in the ray images there IS a projected image, but I see it as a
+   projected membrane, while the membrane is NOT visible in the program (it has
+   been hidden) ». The atoms of a hidden molecule are still in its Structure, and
+   a whole molecule is hidden in this viewer by NOT building its representations
+   (a section unticked / a look set to « hide ») — the component itself stays
+   `visible`, so reading the structure's atoms made the hidden bilayer cast a
+   full, very visible shadow of something nobody can see on screen.
+   The only honest source of a shadow is therefore what is DRAWN: the union of
+   the atoms of the component's VISIBLE representations, each taken from its own
+   `StructureView` (so a representation restricted to a selection casts only
+   those atoms, and one that was removed or switched off casts nothing).
+   Returns `null` when the component says nothing about its representations (an
+   older NGL, a test stub): the caller then keeps the whole structure, exactly
+   as before. An EMPTY result means « this component draws no atom at all » —
+   not « unknown » — and such a component casts nothing. */
+const drawnAtomIndicesOf = (comp, atomCount) => {
+  const list = comp && comp.reprList;
+  if (!Array.isArray(list)) return null;
+  const set = new Set();
+  list.forEach((el) => {
+    try {
+      const rep = (el && (el.repr || el)) || null;
+      if (!rep || rep.visible === false) return;
+      const sv = rep.structureView;
+      if (!sv || typeof sv.getAtomIndices !== 'function') return;
+      const idx = sv.getAtomIndices();
+      if (!idx || !idx.length) return;
+      for (let i = 0; i < idx.length; i += 1) set.add(idx[i]);
+    } catch { /* a representation that cannot list its atoms draws no shadow */ }
+  });
+  if (set.size && atomCount && set.size >= atomCount) return null; // everything: no filtering to do
+  return [...set].sort((a, b) => a - b);
+};
+
 /* World space: NGL stores the atoms in the structure's OWN frame and gives the
    GPU the component's matrix (`component.matrix`, kept up to date by
    `updateMatrix()` — the « Move X · Y · Z » of the styling bar writes it). The
    shadow must live in the same world the camera does, so the same matrix is
-   applied here. Invisible components are skipped: they are not drawn, so they
-   must not cast anything. */
+   applied here. Invisible components are skipped, and of a visible one only the
+   atoms its VISIBLE representations draw (see drawnAtomIndicesOf): what is not
+   on screen must not cast anything. */
 export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms) => {
   const comps = (stage && stage.compList) || [];
   const parts = [];
@@ -463,8 +503,10 @@ export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms) =
       if (!data || !data.position || !data.position.length) return;
       const n = Math.floor(data.position.length / 3);
       if (!n) return;
-      parts.push({ comp, data, n });
-      total += n;
+      const drawn = drawnAtomIndicesOf(comp, structure.atomCount || n);
+      if (drawn && !drawn.length) return;      // nothing is drawn here: no shadow
+      parts.push({ comp, data, n, drawn });
+      total += drawn ? drawn.length : n;
     } catch { /* a component that cannot report its atoms casts nothing */ }
   });
   const stride = total > maxAtoms ? Math.ceil(total / maxAtoms) : 1;
@@ -472,11 +514,14 @@ export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms) =
   const out = new Float32Array(capacity * 3);
   const radii = new Float32Array(capacity);
   let k = 0;
-  parts.forEach(({ comp, data, n }) => {
+  parts.forEach(({ comp, data, n, drawn }) => {
     const m = elements16Of(comp.matrix) || elements16Of(comp.group && comp.group.matrixWorld);
     const pos = data.position;
     const rad = data.radius;
-    for (let i = 0; i < n; i += stride) {
+    const count = drawn ? drawn.length : n;
+    for (let c = 0; c < count; c += stride) {
+      const i = drawn ? drawn[c] : c;
+      if (!(i >= 0 && i < n)) continue;
       if (k * 3 + 2 >= out.length) break;
       const x = pos[i * 3];
       const y = pos[i * 3 + 1];

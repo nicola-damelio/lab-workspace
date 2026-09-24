@@ -228,11 +228,14 @@ has("case 'sphere': return [{ type: 'spacefill', params: { radiusScale: sphere, 
   '« Sphere » = le même spacefill NGL, au rayon de Van der Waals entier');
 has("const styleFamiliesOf = (style) => [...new Set((STYLE_FAMILY_REPS[style] || [])",
   'la rangée de STYLING nomme la famille de matériau qu’elle atteint, comme les rangées de sélection');
-// Les deux feuillets : ils ont QUITTÉ la boîte Membrane de GAUCHE et sont
-// devenus des RANGÉES de l’espace phospholipides du styling (la demande).
+// Les deux feuillets : ils ont QUITTÉ la boîte Membrane de GAUCHE, puis la boîte
+// entière a été SUPPRIMÉE (la demande) — ils sont des RANGÉES de l’espace
+// phospholipides du styling, avec leurs commandes.
 gone("{['upper_leaflet', 'lower_leaflet'].map((n) => {", 'plus un seul tick de feuillet dans la boîte Membrane de gauche');
 gone('type="checkbox" checked={on}', '…donc plus rien à cocher dans cette boîte');
-has('Styles of the leaflets:', 'la boîte Membrane de gauche RENVOIE au styling (la demande)');
+gone('Styles of the leaflets:', 'la boîte Membrane de gauche a été SUPPRIMÉE (la demande), pas seulement vidée');
+gone('rounded-lg border border-teal-200 bg-teal-50/70', '…aucun encart de mesure ne reste dans la barre de gauche');
+has('NO « MEMBRANE » BOX IN THIS BAR', 'la barre de gauche ne contient plus que les sélections');
 has('const lipidSelectionKeys = () => {', 'la liste vient de la mesure du viewer ET des sélections du script');
 has("const renderMembraneSelections = (sec) => {", '…et elle se rend dans l’espace phospholipides');
 has("{shown && kind === 'lipid' && sec.id === firstLipidSectionOf(", '…une seule fois par molécule (le premier espace lipidique)');
