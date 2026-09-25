@@ -205,13 +205,39 @@ const renameMapOf = (titles) => {
   return out;
 };
 
+/** La CLASSE con cui un blocco di testa si fa riconoscere (« pf-authors » …) e che
+ *  resta tale e quale nello spostamento: è la classe che pubLayoutCss mette in forma
+ *  (vedi PUB_LAYOUT_PARTS). Un attributo assente — o scritto a mano con apici
+ *  diversi — dà una stringa vuota: il blocco non è riconoscibile, come prima. */
+const classOf = (attrs) => {
+  const m = /\bclass\s*=\s*("([^"]*)"|'([^']*)')/i.exec(String(attrs || ''));
+  return m ? String(m[2] || m[3] || '') : '';
+};
+
 /** L'ORDINE DELLE SEZIONI SU UN DOCUMENTO GIÀ SCRITTO.
  *
  *  Il documento vive in `#project-doc-container` e si esporta copiandone l'HTML:
- *  questa funzione prende quell'HTML e riporta gli intitoli `<h2>` riconosciuti
- *  nell'ordine del giornale. Le regole, per non rovinare mai il testo dell'autore:
- *    • si spostano INTERI blocchi (un `<h2>` e tutto ciò che segue fino al
- *      prossimo `<h2>`), quindi nessun paragrafo viene tagliato;
+ *  questa funzione prende quell'HTML e riporta i blocchi riconosciuti nell'ordine
+ *  del giornale (o in quello scelto al panneau, vedere pubDocOrderKeywords). Le
+ *  regole, per non rovinare mai il testo dell'autore:
+ *    • si spostano INTERI blocchi (un inizio di blocco e tutto ciò che segue fino
+ *      al prossimo), quindi nessun paragrafo viene tagliato;
+ *    • un blocco che il giornale non nomina NON si muove e fa da ancora: i blocchi
+ *      riconosciuti si riordinano FRA LE LORO posizioni;
+ *    • due sezioni dello stesso rango (o due « References ») tengono l'ordine in
+ *      cui l'autore le ha scritte.
+ *  DUE SPECIE DI BLOCCHI si riconoscono: un `<h2>` per il suo INTITOLATO (una
+ *  sezione, come sempre) e un elemento per la sua CLASSE quando questa è nel
+ *  vocabolario (« pf-title », « pf-authors », « pf-affiliations », « pf-meta »,
+ *  vedere DOC_CLASS_KEYWORDS in pubCitation.js): senza la classe, il titolo, gli
+ *  autori, le affiliazioni e la linea d'informazione — quattro delle otto righe del
+ *  pannello — non si spostavano MAI in un documento già registrato (« changing the
+ *  order of sections … does not affect the structure of the final document »), né
+ *  in quello stampato, che è copiato da lui. Un documento che non porta quelle
+ *  classi (scritto a mano, o registrato prima che il programma le scrivesse) non ha
+ *  che dei `<h2>`: per lui tutto è come prima, al carattere preciso.
+ *  Senza ordine, con meno di due inizi di blocco, o senza alcun blocco riconosciuto,
+ *  l'HTML esce identico a com'è entrato.
  *    • un blocco che il giornale non nomina NON si muove e fa da ancora: i blocchi
  *      riconosciuti si riordinano FRA LE LORO posizioni;
  *    • due sezioni dello stesso rango (o due « References ») tengono l'ordine in
@@ -237,22 +263,61 @@ export const reorderDocHtml = (html, order, titles) => {
   const renames = renameMapOf(titles);
   const renameWords = Object.keys(renames);
   if (!keys.length && !renameWords.length) return src;
-  const marks = [...src.matchAll(/<h2\b[^>]*>([\s\S]*?)<\/h2>/gi)];
-  if (!marks.length) return src;
-  // RIORDINARE vuole un ORDINE ma vuole anche DUE intitoli; RINOMINARE no: un titolo
-  // scelto senza giornale si scrive lo stesso (rinominare non è riordinare).
-  const canReorder = keys.length > 0 && marks.length >= 2;
-  if (!canReorder && !renameWords.length) return src;
+  /* La fermeture d'un `<h2>` — la casse n'y change rien, comme avant — cherchée
+     DANS la source : aucun indice ne vient d'une copie du document. */
+  const CLOSE_H2 = /<\/h2>/gi;
+  const closeOf = (at) => {
+    CLOSE_H2.lastIndex = at;
+    const hit = CLOSE_H2.exec(src);
+    return hit ? hit.index : -1;
+  };
   /* IL VOCABOLARIO DELLA RICERCA: l'ordine del giornale quando c'è, e in mancanza i
      moti dell'intitolo scelto — così « Materials and Methods » → « Experimental
      section » si applica a un documento già scritto anche quando NESSUN giornale è
      stato scelto. */
   const vocab = keys.length ? keys : renameWords;
+  /* GLI INIZI DI BLOCCO. Un `<h2>` come sempre (un intitolo) E OGNI ELEMENTO CHE
+     PORTA UNA CLASSE del vocabolario: il titolo, gli autori, le affiliazioni e la
+     linea d'informazione si spostano di lì (vedi DOC_CLASS_KEYWORDS,
+     pubCitation.js) — non sono degli `<h2>` e non hanno un intitolo da leggere. */
+  const classWords = vocab.filter((k) => k.startsWith('pf-'));
+  const marks = [...src.matchAll(/<(h1|h2|h3|h4|h5|h6|p)\b([^>]*)>/gi)]
+    .map((m) => {
+      const tag = m[1].toLowerCase();
+      const cls = classOf(m[2]).toLowerCase();
+      return { at: m.index, tag, cls, tokens: cls.split(/\s+/).filter(Boolean) };
+    })
+    .filter((m) => (m.tag === 'h2'
+      // Un `<h2>` senza chiusura non era un intitolo prima: non lo è adesso.
+      ? closeOf(m.at) >= 0
+      : m.tokens.some((w) => classWords.includes(w))));
+  if (!marks.length) return src;
+  // RIORDINARE vuole un ORDINE ma vuole anche DUE intitoli; RINOMINARE no: un titolo
+  // scelto senza giornale si scrive lo stesso (rinominare non è riordinare).
+  const canReorder = keys.length > 0 && marks.length >= 2;
+  if (!canReorder && !renameWords.length) return src;
   const textOf = (s) => String(s).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  /* IL TESTO DI UN INTITOLO: quel che sta fra `<h2>` e `</h2>`. Un blocco di testa
+     non ne ha — si riconosce con la sua classe, e la sua classe non può farlo
+     passare per una sezione qualunque (i due vocabolari non si mescolano). */
+  const headingOf = (m) => {
+    if (m.tag !== 'h2') return '';
+    const end = closeOf(m.at);
+    return end < 0 ? '' : textOf(src.slice(m.at, end));
+  };
+  const rankOf = (m) => {
+    const heading = headingOf(m);
+    for (let i = 0; i < vocab.length; i += 1) {
+      const w = vocab[i];
+      if (w.startsWith('pf-')) { if (m.tokens.includes(w)) return i; }
+      else if (heading.includes(w)) return i;
+    }
+    return -1;
+  };
   const blocks = marks.map((m, i) => {
-    const at = m.index;
-    const end = i + 1 < marks.length ? marks[i + 1].index : src.length;
-    const rank = vocab.findIndex((k) => textOf(m[1]).includes(k));
+    const at = m.at;
+    const end = i + 1 < marks.length ? marks[i + 1].at : src.length;
+    const rank = rankOf(m);
     const blockHtml = src.slice(at, end);
     // L'INTITOLO SCELTO PRIMA DI OGNI SPOSTAMENTO: il blocco parte con lui.
     const wanted = rank >= 0 ? renames[vocab[rank]] : '';

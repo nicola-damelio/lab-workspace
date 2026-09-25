@@ -270,27 +270,42 @@ export const pubDocTitleKeywords = (fmt) => {
   return out;
 };
 
+/* Les quatre blocs de TÊTE — le titre, les auteurs, les affiliations, la ligne
+   d'information — n'ont pas d'INTITULÉ : le document les écrit avec une CLASSE que le
+   programme pose lui-même (`pf-title`, `pf-authors`, `pf-affiliations`, `pf-meta` —
+   les mêmes classes que met en forme pubLayoutCss, voir PUB_LAYOUT_PARTS). C'est donc
+   la CLASSE, et non un mot du texte, qui les fait reconnaître par `reorderDocHtml`,
+   qui les déplace comme les autres blocs. Sans cela, quatre des huit rangées du
+   panneau — dont « mettre l'auteur avant le titre », l'exemple de la demande
+   d'origine, mot pour mot : « I want to be able for example to put the author before
+   the title » — ne changeaient RIEN à un document déjà enregistré, ni à ce qui
+   s'imprime à partir de lui. */
+const DOC_CLASS_KEYWORDS = [
+  ['title', 'pf-title'],
+  ['authors', 'pf-authors'],
+  ['affiliations', 'pf-affiliations'],
+  ['meta', 'pf-meta']
+];
+
 /** L'ORDRE CHOISI, TRADUIT DANS LES MOTS QUE LE DOCUMENT ÉCRIT — le vocabulaire
  *  qu'attend `reorderDocHtml(html, order, titles)`.
  *
  *  L'ordre du panneau parle en BLOCS (`docOrder` : « methods », « experiments »,
  *  « sections », « references »…), le document se lit en INTITULÉS de `<h2>`
- *  (« Materials and Methods », « Experiments », « Results and Discussion »…) :
- *  cette fonction passe de l'un à l'autre, DANS L'ORDRE CHOISI, et c'est ce
- *  vocabulaire qui fait suivre au document la place que l'utilisateur a donnée à
- *  chaque bloc — sur la page du projet comme dans un document déjà enregistré
- *  et à l'impression. La demande, mot pour mot : « In the publication format even
- *  if I change the order of the sections they do not affect the document in the
- *  project. »
+ *  (« Materials and Methods », « Experiments », « Results and Discussion »…) et, pour
+ *  les blocs de tête, en CLASSES (`pf-title`…) : cette fonction passe de l'un à
+ *  l'autre, DANS L'ORDRE CHOISI, et c'est ce vocabulaire qui fait suivre au document
+ *  la place que l'utilisateur a donnée à chaque bloc — sur la page du projet comme
+ *  dans un document déjà enregistré et à l'impression. La demande, mot pour mot :
+ *  « In the publication format even if I change the order of the sections they do not
+ *  affect the document in the project. »
  *
  *  `sections` (facultatif) = LES INTITULÉS DES SECTIONS DE TEXTE du projet
  *  (« Scientific background », « Results and Discussion »…), que la page du projet
  *  connaît : le bloc « sections » se déplace donc avec eux, et deux sections du
- *  même genre gardent l'ordre de l'auteur. Un bloc qui n'a pas d'intitulé à lui
- *  (le titre, les auteurs, les affiliations, la ligne d'information) ne pèse pas
- *  sur ce vocabulaire : `reorderDocHtml` ne déplace que des `<h2>`, donc ces blocs
- *  restent en tête — c'est la page du projet (l'ordre par identifiant du document
- *  VIVANT) qui les déplace, et le document enregistré les garde tels quels.
+ *  même genre gardent l'ordre de l'auteur. Un bloc de tête ne pèse sur ce vocabulaire
+ *  que par sa CLASSE : deux sections du même genre gardent leur ordre, et un titre,
+ *  des auteurs ou une ligne d'information ne peuvent pas être pris pour une section.
  */
 export const pubDocOrderKeywords = (order, sections) => {
   const out = [];
@@ -303,6 +318,8 @@ export const pubDocOrderKeywords = (order, sections) => {
     if (id === 'sections') { sectionWords.forEach(push); return; }
     const hit = DOC_TITLE_KEYWORDS.find(([bid]) => bid === id);
     if (hit) hit[1].forEach(push);
+    const cls = DOC_CLASS_KEYWORDS.find(([bid]) => bid === id);
+    if (cls) push(cls[1]);
   });
   return out;
 };
