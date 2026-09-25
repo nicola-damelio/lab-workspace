@@ -154,12 +154,17 @@ ok(PUB.includes('journalOf(activeFormat) && (') && PUB.includes("journalSectionO
   '…en rappelant l’ordre des sections du journal choisi (dans l’infobulle)');
 ok(PUB.includes('📰 {journalLabelOf(journalOf(activeFormat))}'),
   '…et sans phrase explicative : la demande « remove all this explanatory text » a retiré les paragraphes du panneau');
-ok(DOC.includes('bodyHtml = reorderDocHtml(bodyHtml, docOrderWords(pubFormat), pubDocTitleKeywords(pubFormat));'),
+ok(DOC.includes('return reorderDocHtml(bodyHtml, docOrderWords(pubFormat), pubDocTitleKeywords(pubFormat));'),
   'le document EXPORTÉ / IMPRIMÉ suit l’ORDRE CHOISI au panneau (celui du journal vient après, voir docOrderWords) et les intitulés choisis');
-ok(DOC.indexOf('bodyHtml = reorderDocHtml(') > DOC.indexOf('const printProjectDoc = () => {'),
-  '…dans la fonction d’export (et non ailleurs)');
-ok(DOC.indexOf('bodyHtml = reorderDocHtml(') < DOC.indexOf('const title = `${project.name} — project document`;'),
+/* L'ordre et les intitulés vivent maintenant dans LE CORPS DU DOCUMENT FINAL
+   (`docExportBodyHtml`), dont descendent « 🖨️ Print » ET « ⬇️ Word (.docx) » :
+   la ligne est donc DANS cette fonction, et l'impression la consomme. */
+ok(DOC.indexOf('return reorderDocHtml(') > DOC.indexOf('const docExportBodyHtml = () => {'),
+  '…dans la fonction qui construit le corps du document final (et non ailleurs)');
+ok(DOC.indexOf('return reorderDocHtml(') < DOC.indexOf('const printProjectDoc = () => {'),
   '…après la réparation des références et avant l’écriture de la page');
+ok(DOC.includes('const bodyHtml = docExportBodyHtml();'),
+  '…et l’impression / le PDF en descend (la page écrite est celle-là)');
 ok(DOC.includes('journalSectionOrder, reorderDocHtml'), '…grâce au ré-export de Publications');
 ok(PUB.includes('JOURNAL_FORMATS, JOURNAL_IDS, applyJournalFormat, clearJournalFormat,'),
   'les formats de journal sont ré-exportés par le bloc du paquet');

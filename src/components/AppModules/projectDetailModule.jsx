@@ -55,6 +55,11 @@ import {
   lastLibraryListWrite
 } from '../../utils/figuresLibrary';
 import { SlidePreview, renderSlideToDataUrl } from '../FiguresSlides';
+/* LE DOCUMENT FINAL EN .docx : « ⬇️ Word (.docx) » écrit un VRAI fichier Word
+   (OOXML, ZIP de parties XML — aucune dépendance nouvelle, fflate est déjà là
+   pour lire les .docx importés). Le texte, l'ordre des sections, les citations
+   et les figures viennent du MÊME corps HTML que l'impression. */
+import { exportProjectDocx } from '../../utils/docxExport';
 
 /* ── L'APERÇU D'UNE CARTE DE CANVAS ──────────────────────────────────────────
    Signalé tel quel : « the preview of the images in the project does not work ».
@@ -445,6 +450,11 @@ export const ProjectDetailModule = ({
   const [tableCols, setTableCols] = useState(4);
   const [mmFeedback, setMmFeedback] = useState(''); // "✓ Updated HH:MM" flash after manual M&M refresh
   const [docMode, setDocMode] = useState('view');   // export doc: 'view' | 'edit' | 'suggest'
+  /* ⬇️ « Word (.docx) » : le fichier se construit en rassemblant les figures
+     (une par une) — le bouton le dit (« ⏳ … ») et ne peut pas être cliqué deux
+     fois, et le bandeau garde le compte rendu de ce qui est parti. */
+  const [docxBusy, setDocxBusy] = useState(false);
+  const [docxFeedback, setDocxFeedback] = useState('');
   /* ⛶ « Full screen » de la PAGE DOCUMENT : le document occupait déjà l'écran,
      mais sa colonne de lecture restait bornée à 4xl — sur un grand écran, la
      moitié de la largeur était perdue, et « ✏️ Edit text » se faisait dans une
@@ -3320,18 +3330,38 @@ export const ProjectDetailModule = ({
   };
 
   // ---- Export the project as a printable text document ----
-  const printProjectDoc = () => {
+  /* LE CORPS DU DOCUMENT FINAL : le document AFFICHÉ, RÉPARÉ, puis remis dans
+     l'ordre et les intitulés du « Publication format ». Il vit en UN SEUL
+     endroit parce que « 🖨️ Print / Save as PDF » ET « ⬇️ Word (.docx) » en
+     descendent tous les deux : le fichier Word envoyé à un co-auteur ne peut
+     donc pas être un autre document que le PDF que l'on vient de relire.
+
+     CE QUI PART : le document affiché, RÉPARÉ.
+     Un document enregistré (« ✏️ Edit text » → « 💾 Save changes ») est un
+     INSTANTANÉ : les références importées DEPUIS n'y figurent pas et ses
+     « [12] » n'y sont pas liés — l'export (et son PDF) sortait donc sans les
+     références Paperpile, même une fois la numérotation en place. On ajoute
+     ici les entrées manquantes (ancre `#ref-<n>`) et on relie les citations.
+     Le texte de l'auteur, lui, n'est jamais réécrit.
+
+     L'ORDRE DES SECTIONS DU JOURNAL (la demande) : quand un journal est choisi
+     (« Submit to » dans le Publication format), le document EXPORTÉ / IMPRIMÉ se
+     lit dans SON ordre — Introduction → … → References — sans qu'un mot du texte
+     soit réécrit. Les titres que le journal ne nomme pas ne bougent pas, et deux
+     sections du même genre gardent l'ordre de l'auteur (voir reorderDocHtml, qui
+     déplace des blocs entiers).
+     LES INTITULÉS CHOISIS PARTENT AVEC : `pubDocTitleKeywords` rend les mots du
+     document dont l'utilisateur a changé le titre (« materials and methods » →
+     « Experimental section »), donc un texte DÉJÀ ENREGISTRÉ — figé avant le
+     changement de nom — suit le nouveau titre au moment de l'export.
+
+     L'ORDRE DU PANNEAU D'ABORD, CELUI DU JOURNAL ENSUITE (voir docOrderWords) :
+     le document imprimé se lit dans l'ordre que l'utilisateur a réglé, et les
+     sections qu'aucun des deux ne nomme ne bougent pas. Les titres choisis
+     partent avec (`pubDocTitleKeywords`), pour un texte déjà figé aussi. */
+  const docExportBodyHtml = () => {
     const docEl = document.getElementById('project-doc-container');
-    if (!docEl) return;
-    const win = window.open('', '_blank', 'width=960,height=720');
-    if (!win) { window.print(); return; }
-    /* CE QUI PART À L'IMPRESSION : le document affiché, RÉPARÉ.
-       Un document enregistré (« ✏️ Edit text » → « 💾 Save changes ») est un
-       INSTANTANÉ : les références importées DEPUIS n'y figurent pas et ses
-       « [12] » n'y sont pas liés — l'export (et son PDF) sortait donc sans les
-       références Paperpile, même une fois la numérotation en place. On ajoute
-       ici les entrées manquantes (ancre `#ref-<n>`) et on relie les citations.
-       Le texte de l'auteur, lui, n'est jamais réécrit. */
+    if (!docEl) return '';
     let bodyHtml = docEl.innerHTML;
     if (refs.length) {
       const repaired = ensureReferenceEntries(bodyHtml, refs.map((r) => ({
@@ -3340,21 +3370,14 @@ export const ProjectDetailModule = ({
       })));
       bodyHtml = linkCitations(repaired.html);
     }
-    /* L'ORDRE DES SECTIONS DU JOURNAL (la demande) : quand un journal est choisi
-       (« Submit to » dans le Publication format), le document EXPORTÉ / IMPRIMÉ se
-       lit dans SON ordre — Introduction → … → References — sans qu'un mot du texte
-       soit réécrit. Les titres que le journal ne nomme pas ne bougent pas, et deux
-       sections du même genre gardent l'ordre de l'auteur (voir reorderDocHtml, qui
-       déplace des blocs entiers).
-       LES INTITULÉS CHOISIS PARTENT AVEC : `pubDocTitleKeywords` rend les mots du
-       document dont l'utilisateur a changé le titre (« materials and methods » →
-       « Experimental section »), donc un texte DÉJÀ ENREGISTRÉ — figé avant le
-       changement de nom — suit le nouveau titre au moment de l'export. */
-    /* L'ORDRE DU PANNEAU D'ABORD, CELUI DU JOURNAL ENSUITE (voir docOrderWords) :
-       le document imprimé se lit dans l'ordre que l'utilisateur a réglé, et les
-       sections qu'aucun des deux ne nomme ne bougent pas. Les titres choisis
-       partent avec (`pubDocTitleKeywords`), pour un texte déjà figé aussi. */
-    bodyHtml = reorderDocHtml(bodyHtml, docOrderWords(pubFormat), pubDocTitleKeywords(pubFormat));
+    return reorderDocHtml(bodyHtml, docOrderWords(pubFormat), pubDocTitleKeywords(pubFormat));
+  };
+
+  const printProjectDoc = () => {
+    const bodyHtml = docExportBodyHtml();
+    if (!bodyHtml) return;
+    const win = window.open('', '_blank', 'width=960,height=720');
+    if (!win) { window.print(); return; }
     const title = `${project.name} — project document`;
     /* LA MISE EN FORME DU DOCUMENT (« Publication format ») PART AVEC L'EXPORT :
        sa feuille vit dans la page de l'application (`#project-doc-container`),
@@ -3433,6 +3456,37 @@ export const ProjectDetailModule = ({
     win.document.close();
     win.focus();
     setTimeout(() => { try { win.print(); } catch { /* ignore */ } }, 350);
+  };
+
+  /* ---- LE DOCUMENT FINAL EN .docx (Word) ---- */
+  /* La demande, mot pour mot : « add a export to docx button to the final
+     document ». Le fichier part du MÊME corps que l'impression
+     (docExportBodyHtml) : même ordre de sections, mêmes intitulés, mêmes
+     citations, mêmes figures. Les PIXELS des figures sont récupérés un par un
+     (data:URL locales ou adresses Drive — voir utils/docxExport.js), et ce qui
+     n'a pas pu être lu est DIT dans le bandeau : jamais une figure disparue en
+     silence, jamais un bouton qui ne répond pas. */
+  const exportDocx = async () => {
+    if (docxBusy) return;
+    const html = docExportBodyHtml();
+    if (!html) { setDocxFeedback('⚠️ Word: the document is not open — nothing to export'); return; }
+    setDocxBusy(true);
+    setDocxFeedback('⏳ Collecting the figures and writing the Word file…');
+    try {
+      /* L'auteur du fichier : le premier nom de l'en-tête de l'article, sinon le
+         compte connecté — c'est ce que Word affiche dans les propriétés. */
+      const res = await exportProjectDocx({
+        html,
+        title: project.paperTitle || project.name,
+        creator: String(project.paperAuthors || '').split(/[,;]/)[0].trim() || myName,
+        dateIso: new Date().toISOString()
+      });
+      setDocxFeedback(res.report || '');
+    } catch (e) {
+      setDocxFeedback(`⚠️ Word: ${e && e.message ? e.message : 'the .docx could not be written'}`);
+    } finally {
+      setDocxBusy(false);
+    }
   };
 
   const renderTableDraft = () => {
@@ -3631,6 +3685,17 @@ export const ProjectDetailModule = ({
               )}
               <button onClick={printProjectDoc}
                       className="px-3 py-1.5 text-xs font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-700">🖨️ Print / Save as PDF</button>
+              {/* ⬇️ LE DOCUMENT FINAL EN WORD. La demande : « add a export to docx
+                  button to the final document ». Il part du même corps que
+                  « 🖨️ Print » (voir docExportBodyHtml), donc le texte, l'ordre
+                  des sections et les figures sont ceux que l'on vient de relire ;
+                  le fichier est un vrai .docx (Word, LibreOffice, Google Docs),
+                  pas du HTML renommé. */}
+              <button onClick={exportDocx} disabled={docxBusy}
+                      className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40"
+                      title="Download this document as a Word file (.docx): the same text, section order, citations and figures as “🖨️ Print / Save as PDF”, in a file a co-author can edit in Word, LibreOffice or Google Docs">
+                {docxBusy ? '⏳ Building the Word file…' : '⬇️ Word (.docx)'}
+              </button>
               <button onClick={() => setDocFull((v) => !v)}
                       className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"
                       title={docFull
@@ -3645,6 +3710,14 @@ export const ProjectDetailModule = ({
           {docMode === 'edit' && (
             <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mb-3 no-print">
               ✏️ Edit mode: click any text to modify it. “💾 Save changes” keeps your edits in the document, “🖨️ Print” prints it as-is.
+            </p>
+          )}
+          {/* CE QUE LE FICHIER WORD A EMPORTÉ : le compte des figures et, s'il y
+              en a, celles qui n'ont pas pu être lues (leur légende reste dans le
+              document). Un bandeau muet laisserait croire que tout est parti. */}
+          {docxFeedback && (
+            <p className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-1.5 mb-3 no-print">
+              {docxFeedback}
             </p>
           )}
           {docMode === 'suggest' && (

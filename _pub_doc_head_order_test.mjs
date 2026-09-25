@@ -164,16 +164,21 @@ eq(reorderDocHtml(DOC, [], { 'materials and methods': 'Experimental section' }).
   'un intitulé choisi s’écrit même sans ordre (renommer n’est pas réordonner)');
 
 /* ══ 4. L'IMPRESSION COPIE CE DOCUMENT : LES MÊMES MOTS D'ORDRE ════════════════
-   `printProjectDoc` prend `docEl.innerHTML` — le document DÉJÀ réordonné par l'écran
-   — et le réordonne avec `docOrderWords(pubFormat)` : appliquer l'ordre deux fois ne
-   doit rien déplacer une seconde fois, et l'ordre du papier est celui de l'écran. */
+   Le corps du document final est construit en UN SEUL endroit
+   (`docExportBodyHtml`, qui prend `docEl.innerHTML` — le document DÉJÀ réordonné
+   par l'écran — et le réordonne avec `docOrderWords(pubFormat)`) : appliquer
+   l'ordre deux fois ne doit rien déplacer une seconde fois, et l'ordre du papier
+   est celui de l'écran. « 🖨️ Print » et « ⬇️ Word (.docx) » en descendent tous
+   les deux (le .docx ne peut donc pas être un autre document). */
 const once = reorderDocHtml(DOC, pubDocOrderKeywords(authorsFirst, SECTIONS));
 eq(reorderDocHtml(once, pubDocOrderKeywords(authorsFirst, SECTIONS)), once,
   'réordonner deux fois ne rebouge rien (l’écran et le papier montrent le même document)');
 eq(reorderDocHtml(reorderDocHtml(DOC, programWords), pubDocOrderKeywords(authorsFirst, SECTIONS)), once,
   '…et l’ordre demandé s’applique aussi à un HTML déjà passé une fois par le programme');
-has(PROJ, 'bodyHtml = reorderDocHtml(bodyHtml, docOrderWords(pubFormat), pubDocTitleKeywords(pubFormat));',
+has(PROJ, 'return reorderDocHtml(bodyHtml, docOrderWords(pubFormat), pubDocTitleKeywords(pubFormat));',
   'l’impression / le PDF réordonne avec les mêmes mots d’ordre que l’écran');
+has(PROJ, 'const bodyHtml = docExportBodyHtml();',
+  '…et la page imprimée est CE corps-là (le même que celui du fichier Word)');
 has(PROJ, 'const docOrderWords = (fmt) => {',
   '…par la même liste de mots (docOrderWords, écrite une seule fois dans la page)');
 has(PROJ, 'fmt && fmt.docOrder,', '…lue dans `docOrder` du format, comme le document vivant');
