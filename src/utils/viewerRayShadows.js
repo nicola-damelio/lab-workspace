@@ -826,10 +826,40 @@ export const lightMatricesOf = (setup) => shadowRigOf(setup);
    20 px/Å mask, and never the ~1 Å that used to swallow the whole drawing. */
 export const SHADOW_BLUR_REF = 20;
 export const SHADOW_BLUR_MIN = 0.25;
-export const shadowBlurScale = (pxPerAngstrom) => {
+/* THE REFERENCE ABOVE IS A GUESS INDEPENDENT OF WHAT IS ON SCREEN: "half a bond"
+   (~0.5 Å) is half of a TUBE's own diameter (2 x 0.5 Å, TUBE_RADIUS) but a FULL
+   diameter of a LICORICE stick (2 x 0.25 Å) — soft on one stroke, a blob on the
+   other, at any px/Å a normally-framed view actually reaches (measured: 0.48 Å
+   of combined blur at 5-20 px/Å, still 0.32 Å at 30 — a licorice-only still does
+   not clear ~40 px/Å at an ordinary framing). `SHADOW_BLUR_STROKE_FRACTION` is
+   the second, scene-aware ceiling: the combined penumbra (`softness` +
+   `penumbraMax`, at its widest) never exceeds this fraction of the THINNEST
+   stroke actually drawn (`buildRayShadowMask` reads it from `atoms.radii` and
+   passes it in) — so a licorice-only still shrinks the blur along with the
+   stroke instead of inheriting a target sized for the tube. */
+export const SHADOW_BLUR_STROKE_FRACTION = 0.6;
+export const shadowBlurScale = (pxPerAngstrom, minStrokeRadius) => {
   const px = Number(pxPerAngstrom);
-  if (!Number.isFinite(px) || px <= 0) return 1;      // unknown scale: as before
-  return Math.min(1, Math.max(SHADOW_BLUR_MIN, px / SHADOW_BLUR_REF));
+  const base = (!Number.isFinite(px) || px <= 0) ? 1 : Math.min(1, Math.max(SHADOW_BLUR_MIN, px / SHADOW_BLUR_REF));
+  const r = Number(minStrokeRadius);
+  if (!(r > 0) || !(px > 0)) return base;    // no stroke to read: the old behaviour
+  const refPx = (RAY_SHADOW_DEFAULTS.softness + RAY_SHADOW_DEFAULTS.penumbraMax) * base;
+  if (!(refPx > 0)) return base;
+  const capPx = r * SHADOW_BLUR_STROKE_FRACTION * px;
+  return base * Math.min(1, capPx / refPx);
+};
+
+/* The smallest stroke actually drawn, in Å (zero/invalid radii ignored) — what
+   `shadowBlurScale` reads its scene-aware ceiling from. */
+const minStrokeRadiusOf = (atoms) => {
+  const radii = atoms && atoms.radii;
+  const n = Math.max(0, Math.min(Number(atoms && atoms.count) || 0, radii ? radii.length : 0));
+  let min = Infinity;
+  for (let i = 0; i < n; i += 1) {
+    const v = radii[i];
+    if (v > 0 && v < min) min = v;
+  }
+  return Number.isFinite(min) ? min : 0;
 };
 
 /* The mask's OWN px per ångström OVER THE MOLECULE — the number the blur scale
@@ -926,7 +956,7 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
   const pxPerAngstrom = maskScalePerAngstrom({
     clip: camera.clip, view: camera.view, bounds: light.bounds, width: mw, height: mh,
   });
-  const blurScale = shadowBlurScale(pxPerAngstrom);
+  const blurScale = shadowBlurScale(pxPerAngstrom, minStrokeRadiusOf(atoms));
   const blurOf = (name, value) => (options && options[name] !== undefined ? value : value * blurScale);
   const blur = {
     scale: blurScale,
