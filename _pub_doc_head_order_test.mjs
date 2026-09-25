@@ -91,7 +91,7 @@ eq(reorderDocHtml(DOC, programWords, pubDocTitleKeywords({})), DOC,
 
 /* 2a. L'EXEMPLE DE LA DEMANDE : « mettre l'auteur avant le titre ». */
 const authorsFirst = pubDocOrderMoved(PROGRAM, 'authors', -1);
-eq(authorsFirst, ['authors', 'title', 'affiliations', 'meta', 'sections', 'methods', 'experiments', 'references'],
+eq(authorsFirst, ['authors', 'title', 'affiliations', 'meta', 'sections', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
   'la rangée « Authors » remonte d’un cran dans le panneau');
 const swapped = reorderDocHtml(DOC, pubDocOrderKeywords(authorsFirst, SECTIONS));
 eq(swapped, [AUTHORS, TITLE, AFFIL, META, BG, DISC, CONCL, MM, EXP, REFS].join(''),
@@ -115,13 +115,13 @@ eq(reorderDocHtml(DOC, pubDocOrderKeywords(methodsLast, SECTIONS)),
   '« Materials and Methods » après « Experiments » (le panneau, pas seulement le journal)');
 const sectionsLast = (() => { let o = PROGRAM; for (let i = 0; i < 3; i += 1) o = pubDocOrderMoved(o, 'sections', 1); return o; })();
 eq(reorderDocHtml(DOC, pubDocOrderKeywords(sectionsLast, SECTIONS)),
-  [TITLE, AUTHORS, AFFIL, META, MM, EXP, REFS, BG, DISC, CONCL].join(''),
-  'la rangée « Text sections » emmène les sections de texte après les expériences');
+  [TITLE, AUTHORS, AFFIL, META, CONCL, BG, DISC, MM, EXP, REFS].join(''),
+  'la rangée « Text sections » descend le contexte et les résultats SANS emporter les trois sections qui ont leur rengée à elles (c’est le sens de la demande : chacune se règle)');
 const sectionsFirst = (() => { let o = PROGRAM; for (let i = 0; i < 4; i += 1) o = pubDocOrderMoved(o, 'sections', -1); return o; })();
 eq(sectionsFirst.slice(0, 4), ['sections', 'title', 'authors', 'affiliations'], 'quatre ▲ amènent les sections avant le titre');
 eq(reorderDocHtml(DOC, pubDocOrderKeywords(sectionsFirst, SECTIONS)),
-  [BG, DISC, CONCL, TITLE, AUTHORS, AFFIL, META, MM, EXP, REFS].join(''),
-  '…et la tête suit les sections, entière et dans son ordre');
+  [BG, DISC, TITLE, AUTHORS, AFFIL, META, CONCL, MM, EXP, REFS].join(''),
+  '…et la tête suit les sections, entière et dans son ordre (les conclusions suivent la tête : elles ont leur propre rangée)');
 
 /* 2d. UN INTITULÉ CHOISI PART AVEC SON BLOC, quel que soit le côté de la tête. */
 const renamed = reorderDocHtml(DOC, pubDocOrderKeywords(authorsFirst, SECTIONS),
@@ -182,7 +182,8 @@ has(PROJ, 'const bodyHtml = docExportBodyHtml();',
 has(PROJ, 'const docOrderWords = (fmt) => {',
   '…par la même liste de mots (docOrderWords, écrite une seule fois dans la page)');
 has(PROJ, 'fmt && fmt.docOrder,', '…lue dans `docOrder` du format, comme le document vivant');
-has(PROJ, '__html: reorderDocHtml(', 'le document ENREGISTRÉ affiché est réordonné lui aussi');
+has(PROJ, '__html: docHeadSpacedHtml(reorderDocHtml(',
+  'le document ENREGISTRÉ affiché est réordonné lui aussi — et reçoit ses lignes vides de tête (voir _pub_doc_head_lines_test.mjs)');
 
 /* ══ 5. LE CÂBLAGE : LES CLASSES DU VOCABULAIRE SONT CELLES QUE LA PAGE ÉCRIT ══
    C'est le maillon faible : une classe renommée dans la page ferait retomber les

@@ -925,6 +925,33 @@ export const resolveImageToDataUrl = async (src, { fresh = false } = {}) => {
   return s;
 };
 
+// Une image VECTORIELLE (SVG) ne se pose pas telle quelle dans un .docx : Word y
+// attend des pixels (il sait lire un SVG, mais seulement accompagné d'une image de
+// repli qu'il n'appartient pas à ce programme de fabriquer). On la dessine donc
+// dans un canvas — elle vient d'un `data:` URL, la toile n'est donc jamais
+// « teintée » — et le PNG qui en sort la remplace. Tout ce qui n'est pas un SVG
+// est rendu tel quel ; un échec rend une chaîne vide (l'image ne partira pas).
+export const rasterizeSvgImage = (src) => new Promise((resolve) => {
+  const s = String(src || '');
+  if (!s.startsWith('data:image/svg+xml')) { resolve(s); return; }
+  try {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const w = Math.max(1, img.naturalWidth || img.width || 1200);
+        const h = Math.max(1, img.naturalHeight || img.height || 800);
+        const c = document.createElement('canvas');
+        c.width = w;
+        c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(c.toDataURL('image/png'));
+      } catch { resolve(''); }
+    };
+    img.onerror = () => resolve('');
+    img.src = s;
+  } catch { resolve(''); }
+});
+
 // Downscale an image dataURL (maxSide in px, type/quality for the target copy).
 // SVG dataURLs are pure vectors: downscaling them into a raster canvas would
 // destroy sharpness, so they are returned untouched. When `forceReencode` is

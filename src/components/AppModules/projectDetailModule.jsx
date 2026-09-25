@@ -4,7 +4,9 @@ import { SmartImage } from '../TestShellRenderer';
 import {
   loadPubFormat, loadRelevantPapers, matchCoauthors, pubCitationData, pubCitationHtml,
   pubLayoutCss, journalSectionOrder, reorderDocHtml,
-  normalizePubDocOrder, normalizePubDocTitles, pubDocTitleKeywords, pubDocOrderKeywords, pubDocTitleOf
+  docHeadRows, docHeadSpacedHtml, DOC_EMPTY_LINE_ID, DOC_EMPTY_LINE_CLASS,
+  normalizePubDocOrder, normalizePubDocTitles, pubDocTitleKeywords, pubDocOrderKeywords, pubDocTitleOf,
+  pubDocBlockOfSection
 } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
 import { loadProjects, saveProjects, saveProjectsChecked, lightenProjectForStorage, recordProjectDeletion, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor, saveProjectsRescued } from './projectsModule';
@@ -13,6 +15,10 @@ import { suggestDriveFileName, openDrive, projectSectionFolderPath, projectSecti
 import { DriveUploadButton } from '../DriveUpload';
 import { UsefulFilesSection } from '../UsefulFilesSection';
 import { normalizeProjectFiles } from '../../utils/projectFiles';
+/* L'EXPORT EN .DOCX (« In the document of the project there must be a export to
+   docx button ») : le document affiché y devient un vrai fichier Word — même
+   corps que l'impression, voir projectDocBodyHtml. */
+import { downloadDocx, resolveDocxImages } from '../../utils/docxExport';
 import {
   REFERENCE_FILE_ACCEPT, entryKeys, mergeReferenceEntries, parseReferences,
   projectBibEntry, readReferenceDocument
@@ -52,7 +58,7 @@ import {
   readDeck, readProjectLibrary, removeProjectLibraryItem, renameProjectLibraryItem, pushLibraryToDrive, pullLibraryFromDrive,
   addProjectLibraryItem, makeUploadImage, uploadFigureToDrive, renameFigureOnDrive,
   countCanvasDuplicates, removeCanvasDuplicates, restoreCanvasFromFigureMeta, canvasPreviewFromComposition,
-  lastLibraryListWrite
+  resolveImageToDataUrl, rasterizeSvgImage, lastLibraryListWrite
 } from '../../utils/figuresLibrary';
 import { SlidePreview, renderSlideToDataUrl } from '../FiguresSlides';
 /* LE DOCUMENT FINAL EN .docx : « ⬇️ Word (.docx) » écrit un VRAI fichier Word
@@ -104,7 +110,11 @@ const OPTIONAL_TEXT_SECTION_IDS = ['funding', 'supporting'];
 const docOrderWords = (fmt) => {
   const words = pubDocOrderKeywords(
     fmt && fmt.docOrder,
-    PROJECT_TEXT_SECTIONS.map((s) => s.label)
+    /* LES SECTIONS DE TEXTE AVEC LEUR ID : c'est ce qui permet à chaque section d'être
+       nommée à SA rangée du panneau — le contexte et les résultats par le bloc « Text
+       sections », les conclusions, le financement et les informations supplémentaires par
+       la leur (voir PUB_DOC_BLOCKS · pubDocBlockOfSection). */
+    PROJECT_TEXT_SECTIONS
   );
   journalSectionOrder(fmt).forEach((w) => {
     const k = String(w == null ? '' : w).toLowerCase().replace(/\s+/g, ' ').trim();
@@ -3330,38 +3340,20 @@ export const ProjectDetailModule = ({
   };
 
   // ---- Export the project as a printable text document ----
-  /* LE CORPS DU DOCUMENT FINAL : le document AFFICHÉ, RÉPARÉ, puis remis dans
-     l'ordre et les intitulés du « Publication format ». Il vit en UN SEUL
-     endroit parce que « 🖨️ Print / Save as PDF » ET « ⬇️ Word (.docx) » en
-     descendent tous les deux : le fichier Word envoyé à un co-auteur ne peut
-     donc pas être un autre document que le PDF que l'on vient de relire.
-
-     CE QUI PART : le document affiché, RÉPARÉ.
-     Un document enregistré (« ✏️ Edit text » → « 💾 Save changes ») est un
-     INSTANTANÉ : les références importées DEPUIS n'y figurent pas et ses
-     « [12] » n'y sont pas liés — l'export (et son PDF) sortait donc sans les
-     références Paperpile, même une fois la numérotation en place. On ajoute
-     ici les entrées manquantes (ancre `#ref-<n>`) et on relie les citations.
-     Le texte de l'auteur, lui, n'est jamais réécrit.
-
-     L'ORDRE DES SECTIONS DU JOURNAL (la demande) : quand un journal est choisi
-     (« Submit to » dans le Publication format), le document EXPORTÉ / IMPRIMÉ se
-     lit dans SON ordre — Introduction → … → References — sans qu'un mot du texte
-     soit réécrit. Les titres que le journal ne nomme pas ne bougent pas, et deux
-     sections du même genre gardent l'ordre de l'auteur (voir reorderDocHtml, qui
-     déplace des blocs entiers).
-     LES INTITULÉS CHOISIS PARTENT AVEC : `pubDocTitleKeywords` rend les mots du
-     document dont l'utilisateur a changé le titre (« materials and methods » →
-     « Experimental section »), donc un texte DÉJÀ ENREGISTRÉ — figé avant le
-     changement de nom — suit le nouveau titre au moment de l'export.
-
-     L'ORDRE DU PANNEAU D'ABORD, CELUI DU JOURNAL ENSUITE (voir docOrderWords) :
-     le document imprimé se lit dans l'ordre que l'utilisateur a réglé, et les
-     sections qu'aucun des deux ne nomme ne bougent pas. Les titres choisis
-     partent avec (`pubDocTitleKeywords`), pour un texte déjà figé aussi. */
-  const docExportBodyHtml = () => {
-    const docEl = document.getElementById('project-doc-container');
+  /* LE CORPS DU DOCUMENT POUR L'EXPORT — l'impression / le PDF ET le fichier Word
+     (voir exportProjectDocx) le partagent : le document affiché, RÉPARÉ, puis
+     rangé dans l'ordre du « Publication format ». Une seule fabrication, donc
+     l'écran, le papier et le .docx ne peuvent pas diverger. */
+  const projectDocBodyHtml = () => {
+    const docEl = document.getElementById(DOC_CONTAINER_ID);
     if (!docEl) return '';
+    /* CE QUI PART À L'IMPRESSION : le document affiché, RÉPARÉ.
+       Un document enregistré (« ✏️ Edit text » → « 💾 Save changes ») est un
+       INSTANTANÉ : les références importées DEPUIS n'y figurent pas et ses
+       « [12] » n'y sont pas liés — l'export (et son PDF) sortait donc sans les
+       références Paperpile, même une fois la numérotation en place. On ajoute
+       ici les entrées manquantes (ancre `#ref-<n>`) et on relie les citations.
+       Le texte de l'auteur, lui, n'est jamais réécrit. */
     let bodyHtml = docEl.innerHTML;
     if (refs.length) {
       const repaired = ensureReferenceEntries(bodyHtml, refs.map((r) => ({
@@ -3370,14 +3362,37 @@ export const ProjectDetailModule = ({
       })));
       bodyHtml = linkCitations(repaired.html);
     }
-    return reorderDocHtml(bodyHtml, docOrderWords(pubFormat), pubDocTitleKeywords(pubFormat));
+    /* L'ORDRE DES SECTIONS DU JOURNAL (la demande) : quand un journal est choisi
+       (« Journal », dans le Publication format), le document EXPORTÉ / IMPRIMÉ se
+       lit dans SON ordre — Introduction → … → References — sans qu'un mot du texte
+       soit réécrit. Les titres que le journal ne nomme pas ne bougent pas, et deux
+       sections du même genre gardent l'ordre de l'auteur (voir reorderDocHtml, qui
+       déplace des blocs entiers).
+       LES INTITULÉS CHOISIS PARTENT AVEC : `pubDocTitleKeywords` rend les mots du
+       document dont l'utilisateur a changé le titre (« materials and methods » →
+       « Experimental section »), donc un texte DÉJÀ ENREGISTRÉ — figé avant le
+       changement de nom — suit le nouveau titre au moment de l'export. */
+    /* L'ORDRE DU PANNEAU D'ABORD, CELUI DU JOURNAL ENSUITE (voir docOrderWords) :
+       le document imprimé se lit dans l'ordre que l'utilisateur a réglé, et les
+       sections qu'aucun des deux ne nomme ne bougent pas. Les titres choisis
+       partent avec (`pubDocTitleKeywords`), pour un texte déjà figé aussi. */
+    bodyHtml = reorderDocHtml(bodyHtml, docOrderWords(pubFormat), pubDocTitleKeywords(pubFormat));
+    /* LA TÊTE SE LIT SUR DES LIGNES SÉPARÉES — « in the final document the list of
+       authors must be separated by the title with one empty line. an empty line must
+       also separate the authors from the affiliations. » Le titre, les auteurs et les
+       affiliations sont donc séparés par une LIGNE VIDE (voir docHeadSpacedHtml, qui
+       la pose entre deux blocs de tête VOISINS et la remet à sa place après tout
+       déplacement : un document figé, écrit avant cette règle, la reçoit ici aussi —
+       l'impression, le PDF et le .docx passent tous par cette fabrication). */
+    bodyHtml = docHeadSpacedHtml(bodyHtml);
+    return bodyHtml;
   };
 
   const printProjectDoc = () => {
-    const bodyHtml = docExportBodyHtml();
-    if (!bodyHtml) return;
+    if (!document.getElementById(DOC_CONTAINER_ID)) return;
     const win = window.open('', '_blank', 'width=960,height=720');
     if (!win) { window.print(); return; }
+    const bodyHtml = projectDocBodyHtml();
     const title = `${project.name} — project document`;
     /* LA MISE EN FORME DU DOCUMENT (« Publication format ») PART AVEC L'EXPORT :
        sa feuille vit dans la page de l'application (`#project-doc-container`),
@@ -3458,35 +3473,41 @@ export const ProjectDetailModule = ({
     setTimeout(() => { try { win.print(); } catch { /* ignore */ } }, 350);
   };
 
-  /* ---- LE DOCUMENT FINAL EN .docx (Word) ---- */
-  /* La demande, mot pour mot : « add a export to docx button to the final
-     document ». Le fichier part du MÊME corps que l'impression
-     (docExportBodyHtml) : même ordre de sections, mêmes intitulés, mêmes
-     citations, mêmes figures. Les PIXELS des figures sont récupérés un par un
-     (data:URL locales ou adresses Drive — voir utils/docxExport.js), et ce qui
-     n'a pas pu être lu est DIT dans le bandeau : jamais une figure disparue en
-     silence, jamais un bouton qui ne répond pas. */
-  const exportDocx = async () => {
-    if (docxBusy) return;
-    const html = docExportBodyHtml();
-    if (!html) { setDocxFeedback('⚠️ Word: the document is not open — nothing to export'); return; }
-    setDocxBusy(true);
-    setDocxFeedback('⏳ Collecting the figures and writing the Word file…');
-    try {
-      /* L'auteur du fichier : le premier nom de l'en-tête de l'article, sinon le
-         compte connecté — c'est ce que Word affiche dans les propriétés. */
-      const res = await exportProjectDocx({
-        html,
-        title: project.paperTitle || project.name,
-        creator: String(project.paperAuthors || '').split(/[,;]/)[0].trim() || myName,
-        dateIso: new Date().toISOString()
-      });
-      setDocxFeedback(res.report || '');
-    } catch (e) {
-      setDocxFeedback(`⚠️ Word: ${e && e.message ? e.message : 'the .docx could not be written'}`);
-    } finally {
-      setDocxBusy(false);
+  /* « 📄 Export to Word » — le MÊME corps que l'impression (voir
+     projectDocBodyHtml) écrit dans un vrai .docx : le fichier est fabriqué puis
+     téléchargé dans le navigateur, rien ne part ailleurs (utils/docxExport.js).
+     DEUX CHOSES PARTENT AVEC LUI, parce qu'un .docx ne sait ni lire la feuille de
+     l'application ni ouvrir une URL :
+       • LA MISE EN FORME DU DOCUMENT (« the export to docx does not reflect the
+         style of the document… police, alignement, font, color ») : c'est le
+         « Publication format » du projet, le même que l'impression applique
+         (voir docxStyleOf) ;
+       • LES PIXELS DES FIGURES (« furthermore images are missing ») : chaque
+         image est rapatriée ici (les `data:` URL sont déjà dans le document, une
+         figure du Drive est téléchargée) et devient une partie du fichier ZIP
+         (`word/media/…`). Une image illisible est laissée de côté : sa légende,
+         elle, reste dans le document. */
+  /* LES PIXELS D'UNE IMAGE DU DOCUMENT : on va les chercher (Drive, Nextcloud,
+     ou l'URL telle quelle — voir resolveImageToDataUrl) et une image VECTORIELLE
+     est d'abord dessinée en PNG, la seule forme qu'un .docx accepte toujours
+     (voir rasterizeSvgImage). Une image qu'on n'obtient pas ne part pas. */
+  const docxImageResolver = async (src) => rasterizeSvgImage(await resolveImageToDataUrl(src));
+  const exportProjectDocx = async () => {
+    const bodyHtml = projectDocBodyHtml();
+    if (!bodyHtml) {
+      setMmFeedback('⚠️ The document is not on screen — open the document first');
+      setTimeout(() => setMmFeedback(''), 3500);
+      return;
     }
+    setMmFeedback('📄 Building the Word document…');
+    try {
+      const images = await resolveDocxImages(bodyHtml, docxImageResolver);
+      downloadDocx(bodyHtml, project.name, { format: pubFormat, images });
+      setMmFeedback('📄 Word document downloaded');
+    } catch {
+      setMmFeedback('⚠️ Could not build the .docx file');
+    }
+    setTimeout(() => setMmFeedback(''), 3500);
   };
 
   const renderTableDraft = () => {
@@ -3539,7 +3560,7 @@ export const ProjectDetailModule = ({
        le « [12] » du texte mène à la référence 12 imprimée en fin de document, et
        l'infobulle rappelle titre et auteurs. Un numéro inconnu reste intact.
        Funding et Supporting information ne s'impriment que s'ils sont remplis. */
-    const sectionBlocks = PROJECT_TEXT_SECTIONS
+    const sectionBlocksOf = PROJECT_TEXT_SECTIONS
       .map((s) => ({
         id: s.id,
         title: s.label,
@@ -3557,6 +3578,23 @@ export const ProjectDetailModule = ({
         const split = splitAnchoredFigures(linkCitations(repairContentImages(s.html || '')), figures);
         return { ...s, html: split.html, restFigures: split.rest };
       });
+    /* LES TROIS SECTIONS QUI ONT LEUR PROPRE RANGÉE AU PANNEAU (« Conclusions »,
+       « Funding », « Supporting information » — voir PUB_DOC_BLOCKS) s'impriment à SA
+       place, avec l'intitulé choisi pour elles ; le bloc « Text sections » garde les
+       autres (le contexte et les résultats), dans l'ordre de l'auteur. Le document
+       imprimé ne change donc pas tant que l'ordre du panneau n'est pas touché. */
+    const ownRowBlocks = sectionBlocksOf.filter((s) => !!pubDocBlockOfSection(s.id));
+    const sectionBlocks = sectionBlocksOf.filter((s) => !pubDocBlockOfSection(s.id));
+    /** UNE SECTION DU DOCUMENT — son intitulé, son texte, ses figures, ses documents. */
+    const renderSectionBlock = (s, heading) => (
+      <div key={s.id} className="mb-6">
+        <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{heading}</h2>
+        {s.html ? <div className="pf-body text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: repairContentImages(s.html) }} />
+                : <p className="text-xs italic text-slate-400">—</p>}
+        {renderFigures(s.restFigures || [])}
+        {renderDocs(sectionDocs(s.id))}
+      </div>
+    );
     const renderFigures = (list) => list.filter((f) => (f.url || '').trim() !== '').length > 0 && (
       <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
         {list.filter((f) => (f.url || '').trim() !== '').map((f) => (
@@ -3685,17 +3723,9 @@ export const ProjectDetailModule = ({
               )}
               <button onClick={printProjectDoc}
                       className="px-3 py-1.5 text-xs font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-700">🖨️ Print / Save as PDF</button>
-              {/* ⬇️ LE DOCUMENT FINAL EN WORD. La demande : « add a export to docx
-                  button to the final document ». Il part du même corps que
-                  « 🖨️ Print » (voir docExportBodyHtml), donc le texte, l'ordre
-                  des sections et les figures sont ceux que l'on vient de relire ;
-                  le fichier est un vrai .docx (Word, LibreOffice, Google Docs),
-                  pas du HTML renommé. */}
-              <button onClick={exportDocx} disabled={docxBusy}
-                      className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40"
-                      title="Download this document as a Word file (.docx): the same text, section order, citations and figures as “🖨️ Print / Save as PDF”, in a file a co-author can edit in Word, LibreOffice or Google Docs">
-                {docxBusy ? '⏳ Building the Word file…' : '⬇️ Word (.docx)'}
-              </button>
+              <button onClick={exportProjectDocx}
+                      className="px-3 py-1.5 text-xs font-bold rounded-lg bg-sky-600 text-white hover:bg-sky-700"
+                      title="Download this document as a Word file (.docx): the text, the headings, the lists, the tables, the captions and the links keep their structure and their formatting. The pixels of the figures live in the Drive, not in the page, so they are not embedded — \"🖨️ Print / Save as PDF\" keeps them.">📄 Export to Word</button>
               <button onClick={() => setDocFull((v) => !v)}
                       className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"
                       title={docFull
@@ -3752,7 +3782,7 @@ export const ProjectDetailModule = ({
                      : 'border border-slate-200'}`}>
             {project.docSuggestion && docMode === 'view' ? (
               <div dangerouslySetInnerHTML={{
-                __html: repairContentImages(withoutBibliographySection(project.docSuggestion.markedHtml))
+                __html: docHeadSpacedHtml(repairContentImages(withoutBibliographySection(project.docSuggestion.markedHtml)))
               }} />
             ) : project.exportDocHtml ? (
               /* La bibliographie FIGÉE du document enregistré est retirée : la
@@ -3770,13 +3800,17 @@ export const ProjectDetailModule = ({
                  peuvent être renommés (voir pubDocTitleKeywords). L'ordre par
                  identifiant du document VIVANT, lui, reste plus fin (il déplace
                  aussi le titre, les auteurs, les affiliations) : il est rendu plus
-                 bas, quand aucun texte n'a encore été figé. */
+                 bas, quand aucun texte n'a encore été figé.
+                 LA TÊTE DU DOCUMENT FIGÉ REÇOIT LES MÊMES LIGNES VIDES que le document
+                 vivant (voir docHeadSpacedHtml) : le titre, les auteurs et les
+                 affiliations gardent, sur la page comme à l'impression, une ligne vide
+                 entre eux — même dans un document enregistré avant cette règle. */
               <div dangerouslySetInnerHTML={{
-                __html: reorderDocHtml(
+                __html: docHeadSpacedHtml(reorderDocHtml(
                   linkCitations(repairContentImages(withoutBibliographySection(project.exportDocHtml))),
                   docOrderWords(pubFormat),
                   pubDocTitleKeywords(pubFormat),
-                )
+                ))
               }} />
             ) : (() => {
               /* ── LES BLOCS DU DOCUMENT, DANS L'ORDRE CHOISI ─────────────────────
@@ -3816,15 +3850,18 @@ export const ProjectDetailModule = ({
                 </p>
               );
 
-              blocks.sections = sectionBlocks.map((s) => (
-                <div key={s.id} className="mb-6">
-                  <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{s.title}</h2>
-                  {s.html ? <div className="pf-body text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: repairContentImages(s.html) }} />
-                          : <p className="text-xs italic text-slate-400">—</p>}
-                  {renderFigures(s.restFigures || [])}
-                  {renderDocs(sectionDocs(s.id))}
-                </div>
-              ));
+              blocks.sections = sectionBlocks.map((s) => renderSectionBlock(s, s.title));
+              /* …ET LES TROIS QUI ONT LEUR RANGÉE : chacune s'imprime à la place que le
+                 format lui donne (`docOrder`), sous l'intitulé choisi dans le panneau —
+                 « Conclusions » est le titre du programme tant que personne n'en écrit
+                 un autre (voir docHeading). Les conclusions s'impriment toujours (elles
+                 font partie du socle d'un article, comme avant) ; le financement et les
+                 informations supplémentaires, eux, gardent la règle de la page : ils ne
+                 s'impriment que remplis (voir OPTIONAL_TEXT_SECTION_IDS). */
+              ownRowBlocks.forEach((s) => {
+                const block = pubDocBlockOfSection(s.id);
+                blocks[block.id] = renderSectionBlock(s, docHeading(block.id));
+              });
 
 
               /* LA SECTION S'ÉCRIT SI ELLE A QUELQUE CHOSE À DIRE : les tests cochés
@@ -3939,7 +3976,19 @@ export const ProjectDetailModule = ({
                  pas rendu, les autres gardent exactement le balisage qu'ils avaient.
                  La liste des références, elle, est imprimée à la fin du document (voir
                  sa note ci-dessous) : elle ne se déplace pas, son intitulé se règle. */
-              return docOrder.map((id) => blocks[id] || null);
+              return docHeadRows(docOrder, (id) => !!blocks[id]).map((id, i) => (
+                /* LA LIGNE VIDE DE LA TÊTE — « in the final document the list of
+                   authors must be separated by the title with one empty line. an empty
+                   line must also separate the authors from the affiliations. » Elle est
+                   rendue ici, ENTRE deux blocs de tête voisins, dans l'ordre que
+                   l'utilisateur a réglé (voir docHeadRows) : c'est un vrai paragraphe
+                   vide, donc l'impression, le PDF et le .docx l'emportent (voir
+                   docHeadSpacedHtml, qui la récrit sur le HTML exporté). */
+                id === DOC_EMPTY_LINE_ID
+                  ? <div key={`${DOC_EMPTY_LINE_ID}-${i}`} className={DOC_EMPTY_LINE_CLASS}
+                         aria-hidden="true">&nbsp;</div>
+                  : (blocks[id] || null)
+              ));
             })()}
 
             {/* ── LA LISTE DES RÉFÉRENCES EST TOUJOURS VIVANTE ────────────────

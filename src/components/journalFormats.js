@@ -7,7 +7,7 @@
    il carattere (font e police, stampatello, corsivo etc) delle varie sezioni
    cambierà. Vorrei poter fare questo cambio in automatico. »
 
-   UN GIORNALE È UN PACCHETTO di tre cose, non un solo réglage:
+   UN GIORNALE È UN PACCHETTO di quattro cose, non un solo réglage:
      1. `preset` → la forma della citazione / della bibliografia: è il
         PUB_FORMAT_PRESETS che il pannello già usa (acs, springer, nature…).
      2. `layout` → IL CARATTERE di ogni parte del documento (font, taille,
@@ -15,16 +15,22 @@
         — titolo · autori · affiliazioni · intitoli · testo · figure · bibliografia.
      3. `order`  → L'ORDINE DELLE SEZIONI, come parole chiave degli intitoli
         (« Introduction », « Materials and Methods », « Results and Discussion »,
-        « Conclusion », « References »…): `reorderDocHtml` le riporta nell'ordine
-        del giornale sul documento esportato / stampato — e, con il suo terzo
-        argomento, scrive sull'intitolo riconosciuto IL TITOLO CHE L'UTENTE VUOLE
-        LEGGERE (« Materials and Methods » → « Experimental section »).
+        « Conclusion », « Funding », « Supporting information », « References »…).
+        L'ordine viene SCRITTO nel formato (`docOrder`, `docTitles`: vedere
+        pubDocOrderForWords / pubDocTitlesForWords, pubCitation.js), quindi il
+        pannello lo MOSTRA (si può ritoccare a mano dopo il cambio) e il documento
+        — schermo, stampa, PDF, .docx — lo segue; `reorderDocHtml` lo applica anche
+        a un documento già registrato.
+     4. `bibLabel` → il titolo della bibliografia (« References », « Bibliography »).
+
+   La richiesta: « when I select the journal preset, all the elements of the
+   publication format must adapt to it, including the order of the sections. »
 
    Onestà: questi bundle riproducono lo STILE tipico di ciascuna rivista, non sono
    la sua guida per gli autori — che cambia nel tempo e va riletta prima di
    inviare. Tutto resta modificabile a mano dopo il cambio.
    ========================================================================= */
-import { PUB_FORMAT_PRESETS, PUB_FONTS, PUB_LAYOUT_PART_IDS } from './pubCitation.js';
+import { PUB_FORMAT_PRESETS, PUB_FONTS, PUB_LAYOUT_PART_IDS, buildPubDocOrder, buildPubDocTitles, pubDocOrderForWords, pubDocTitlesForWords } from './pubCitation.js';
 
 // Le famiglie di caratteri del pannello (senza « As in the app »: un giornale un
 // carattere ce l'ha).
@@ -56,58 +62,64 @@ const LAY = (font, n) => ({
   bibliography: st(font, n.f, 'left'),
 });
 
+/* LES JOURNAL_FORMATS — le `order` de chacun est l'ordre des sections qu'il demande,
+   dans SON vocabulaire. Chaque liste se termine par « funding » et
+   « supporting information » (les deux sections de fin d'article, avant la
+   bibliographie) : ce sont des sections du document au même titre que les autres
+   (voir PUB_DOC_BLOCKS), donc un journal les nomme aussi — sans quoi elles resteraient
+   plantées au milieu des autres blocs pendant que les blocs nommés se réordonnent. */
 export const JOURNAL_FORMATS = {
   jacs: {
     label: 'JACS (ACS)', preset: 'acs', bibLabel: 'References',
-    order: ['abstract', 'introduction', 'materials and methods', 'results and discussion', 'conclusion', 'references'],
+    order: ['abstract', 'introduction', 'materials and methods', 'results and discussion', 'conclusion', 'funding', 'supporting information', 'references'],
     layout: LAY(SERIF, { t: 16, a: 11, af: 9, h: 12, b: 10, f: 9, w: 45 }),
     notes: 'ACS numbered references. The experimental details stay inside Materials and Methods, before the Results.',
   },
   orglett: {
     label: 'Organic Letters (ACS)', preset: 'acs', bibLabel: 'References',
-    order: ['abstract', 'introduction', 'results and discussion', 'materials and methods', 'conclusion', 'references'],
+    order: ['abstract', 'introduction', 'results and discussion', 'materials and methods', 'conclusion', 'funding', 'supporting information', 'references'],
     layout: LAY(SERIF, { t: 15, a: 11, af: 9, h: 11, b: 10, f: 9, w: 45 }),
     notes: 'Short communication: Results and Discussion right after the introduction, the experimental details at the end.',
   },
   angewandte: {
     label: 'Angewandte Chemie (Wiley)', preset: 'springer', bibLabel: 'References',
-    order: ['abstract', 'introduction', 'results and discussion', 'conclusion', 'experimental section', 'materials and methods', 'references'],
+    order: ['abstract', 'introduction', 'results and discussion', 'conclusion', 'experimental section', 'materials and methods', 'funding', 'supporting information', 'references'],
     layout: LAY(GARAMOND, { t: 16, a: 11, af: 9, h: 12, b: 10, f: 9, w: 50 }),
     notes: 'The Experimental Section goes AFTER the Conclusion — the Angewandte convention.',
   },
   chemEurJ: {
     label: 'Chemistry – A European Journal (Wiley)', preset: 'springer', bibLabel: 'References',
-    order: ['abstract', 'introduction', 'results and discussion', 'conclusion', 'experimental section', 'materials and methods', 'references'],
+    order: ['abstract', 'introduction', 'results and discussion', 'conclusion', 'experimental section', 'materials and methods', 'funding', 'supporting information', 'references'],
     layout: LAY(GARAMOND, { t: 15, a: 11, af: 9, h: 12, b: 10, f: 9, w: 50 }),
     notes: 'Full paper: Results and Discussion, then Conclusion, then the Experimental Section.',
   },
   chemSci: {
     label: 'Chemical Science (RSC)', preset: 'acs', bibLabel: 'References',
-    order: ['abstract', 'introduction', 'results and discussion', 'conclusion', 'experimental', 'materials and methods', 'references'],
+    order: ['abstract', 'introduction', 'results and discussion', 'conclusion', 'experimental', 'materials and methods', 'funding', 'supporting information', 'references'],
     layout: LAY(GARAMOND, { t: 15, a: 11, af: 9, h: 11, b: 10, f: 9, w: 50 }),
     notes: 'RSC: Results and Discussion before the Conclusion, then the Experimental part.',
   },
   nature: {
     label: 'Nature', preset: 'nature', bibLabel: 'References',
-    order: ['abstract', 'introduction', 'results', 'discussion', 'methods', 'materials and methods', 'references'],
+    order: ['abstract', 'introduction', 'results', 'discussion', 'methods', 'materials and methods', 'funding', 'supporting information', 'references'],
     layout: LAY(SANS, { t: 18, a: 11, af: 9, h: 12, b: 10, f: 9, w: 100 }),
     notes: 'The Methods go at the END, after the discussion (Nature prints them there, in smaller type).',
   },
   science: {
     label: 'Science', preset: 'science', bibLabel: 'References',
-    order: ['abstract', 'introduction', 'results', 'discussion', 'materials and methods', 'references'],
+    order: ['abstract', 'introduction', 'results', 'discussion', 'materials and methods', 'funding', 'supporting information', 'references'],
     layout: LAY(SERIF, { t: 17, a: 11, af: 9, h: 12, b: 10, f: 9, w: 100 }),
     notes: 'Numbered references, Materials and Methods before the bibliography.',
   },
   cell: {
     label: 'Cell', preset: 'cell', bibLabel: 'References',
-    order: ['abstract', 'introduction', 'results', 'discussion', 'materials and methods', 'conclusion', 'references'],
+    order: ['abstract', 'introduction', 'results', 'discussion', 'materials and methods', 'conclusion', 'funding', 'supporting information', 'references'],
     layout: LAY(SANS, { t: 16, a: 11, af: 9, h: 12, b: 10, f: 9, w: 100 }),
     notes: 'Author–year style, the experimental procedures after the discussion.',
   },
   pnas: {
     label: 'PNAS', preset: 'pnas', bibLabel: 'References',
-    order: ['abstract', 'introduction', 'results', 'discussion', 'materials and methods', 'conclusion', 'references'],
+    order: ['abstract', 'introduction', 'results', 'discussion', 'materials and methods', 'conclusion', 'funding', 'supporting information', 'references'],
     layout: LAY(SERIF, { t: 15, a: 11, af: 9, h: 11, b: 10, f: 9, w: 100 }),
     notes: 'Numbered references, Results and Discussion may be printed as one section.',
   },
@@ -137,14 +149,22 @@ export const journalLayoutPatches = (id) => {
 
 /** APPLICARE UN GIORNALE A UN FORMATO — la funzione che chiama il pannello.
  *  Il formato dell'utente è COPIATO, mai inventato: sopra vengono scritte solo le
- *  tre cose che il giornale porta — la forma della citazione (`preset`), il
- *  carattere delle parti (`layout`) e l'ordine delle sezioni (`order`) — più il
- *  suo id (`journal`). Il testo delle citazioni, gli stili dei nomi dei membri del
+ *  cose che il giornale porta — la forma della citazione (`preset`), il carattere
+ *  delle parti (`layout`), l'ordine delle sezioni (`order`), il titolo della
+ *  bibliografia (`bibLabel`) — più il suo id (`journal`) e L'ORDINE E GLI INTITOLI
+ *  DEI BLOCCHI DEL DOCUMENTO CHE NE DISCENDONO (`docOrder` · `docTitles`, vedere
+ *  PUB_DOC_BLOCKS). Il testo delle citazioni, gli stili dei nomi dei membri del
  *  laboratorio e la forma dei renvoi nel testo restano quelli dell'utente. Un id
- *  sconosciuto restituisce il formato INTATTO. L'ORDINE E GLI INTITOLI DEI BLOCCHI
- *  DEL DOCUMENTO (`docOrder` · `docTitles`, vedere PUB_DOC_BLOCKS) NON appartengono
- *  al giornale: sono decisioni dell'utente sul SUO documento — passano intatti da
- *  qui, e « ↺ As in the app » li tocca tanto poco quanto il resto del formato. */
+ *  sconosciuto restituisce il formato INTATTO.
+ *
+ *  ⚠ PERCHÉ IL GIORNALE SCRIVE ANCHE `docOrder`: la richiesta — « when I select the
+ *  journal preset, all the elements of the publication format must adapt to it,
+ *  including the order of the sections ». L'ordine delle sezioni non è più solo un
+ *  vocabolario per l'esportazione: diventa quello del documento, quindi il PANNELLO lo
+ *  mostra (si ritocca a mano dopo, e « ↺ As in the app » lo riporta a quello del
+ *  programma). Le due regole che lo rendono sicuro sono in pubDocOrderForWords: solo i
+ *  blocchi che il giornale NOMINA si spostano, e solo fra le posizioni che l'utente ha
+ *  dato loro. */
 export const applyJournalFormat = (fmt, id) => {
   const def = JOURNAL_FORMATS[id];
   const base = fmt && typeof fmt === 'object' ? fmt : {};
@@ -159,13 +179,25 @@ export const applyJournalFormat = (fmt, id) => {
     layout,
     order: def.order.slice(),
     bibLabel: def.bibLabel || base.bibLabel || 'References',
+    /* L'ORDRE DES SECTIONS DU JOURNAL DEVIENT CELUI DU DOCUMENT (la demande) : les
+       blocs qu'il nomme prennent SA séquence, dans les places que l'ordre courant leur
+       donne ; la tête du document et les blocs qu'il ne nomme pas ne bougent pas. */
+    docOrder: pubDocOrderForWords(def.order, base.docOrder),
+    /* …ET LES INTITULÉS QU'IL NOMME AUTREMENT : Angewandte écrit « experimental section »
+       là où le programme écrit « Materials and Methods ». Un intitulé que l'utilisateur a
+       choisi lui-même est respecté (voir pubDocTitlesForWords). */
+    docTitles: pubDocTitlesForWords(def.order, base.docTitles),
+    /* Un style enregistré (« My styles ») ne décrit plus ce format : on vient d'en
+       choisir un autre. */
+    style: '',
   };
 };
 
 /** « ↺ As in the app »: il giornale si stacca e i suoi réglages se ne vanno con
- *  lui — il carattere delle parti torna vuoto (`emptyLayout`), quindi il documento
- *  si stampa come prima del cambio. Le citazioni restano quelle scelte a mano:
- *  sono un'altra decisione. */
+ *  lui — il carattere delle parti torna vuoto (`emptyLayout`), l'ordine e gli intitoli
+ *  dei blocchi del documento tornano quelli del PROGRAMMA (il giornale li aveva
+ *  scritti, vedi applyJournalFormat), quindi il documento si stampa come prima del
+ *  cambio. Le citazioni restano quelle scelte a mano: sono un'altra decisione. */
 export const clearJournalFormat = (fmt, emptyLayout) => {
   const base = fmt && typeof fmt === 'object' ? fmt : {};
   const out = { ...base };
@@ -173,6 +205,9 @@ export const clearJournalFormat = (fmt, emptyLayout) => {
   delete out.order;
   delete out.bibLabel;
   if (emptyLayout && typeof emptyLayout === 'object') out.layout = { ...emptyLayout };
+  out.docOrder = buildPubDocOrder();
+  out.docTitles = buildPubDocTitles();
+  out.style = '';
   return out;
 };
 
@@ -332,4 +367,130 @@ export const reorderDocHtml = (html, order, titles) => {
   let next = 0;
   const slots = blocks.map((b) => (b.rank >= 0 ? sorted[next++] : b));
   return src.slice(0, blocks[0].at) + slots.map((b) => b.html).join('');
+};
+
+/* ── LA LIGNE VIDE ENTRE LE TITRE, LES AUTEURS ET LES AFFILIATIONS ─────────────
+
+   La demande, mot pour mot : « In the final document the list of authors must be
+   separated by the title with one empty line. an empty line must also separate
+   the authors from the affiliations. »
+
+   Le document écrit donc la tête comme une revue la présente : le titre, une LIGNE
+   VIDE, les auteurs, une LIGNE VIDE, les affiliations (la ligne d'information du
+   projet vient après, sans ligne vide : elle n'en fait pas partie). La ligne vide
+   est un PARAGRAPHE À PART (`pf-empty-line`), pas une marge : elle se voit à
+   l'écran, sur la feuille imprimée, dans le PDF ET dans le .docx (Word y lit un
+   vrai paragraphe vide, voir htmlToDocxBody), et elle ne se perd pas quand la mise
+   en forme du panneau change la taille des textes.
+
+   TROIS ENDROITS, UNE SEULE RÈGLE : la page du projet (les rangées, voir
+   `docHeadRows`), le document FIGÉ et ce qui part à l'impression / au .docx (le
+   HTML, voir `docHeadSpacedHtml`). */
+
+/** Les blocs de TÊTE du panneau (voir PUB_DOC_BLOCKS, pubCitation.js) : le titre,
+ *  les auteurs et les affiliations — ceux qui se lisent sur des lignes séparées. */
+export const DOC_HEAD_IDS = ['title', 'authors', 'affiliations'];
+/** …et les classes avec lesquelles le document les écrit (les mêmes que met en
+ *  forme le « Publication format », voir PUB_LAYOUT_PARTS). */
+export const DOC_HEAD_CLASSES = ['pf-title', 'pf-authors', 'pf-affiliations'];
+
+/** La rangée « LIGNE VIDE » (voir docHeadRows) : `empty-line` est l'identifiant que
+ *  la page du projet rend, `pf-empty-line` la classe que le document écrit — et
+ *  `DOC_EMPTY_LINE_HTML` le balisage exact que `docHeadSpacedHtml` insère. */
+export const DOC_EMPTY_LINE_ID = 'empty-line';
+export const DOC_EMPTY_LINE_CLASS = 'pf-empty-line';
+export const DOC_EMPTY_LINE_HTML = `<div class="${DOC_EMPTY_LINE_CLASS}" aria-hidden="true">&nbsp;</div>`;
+
+/**
+ * LES RANGÉES DU DOCUMENT : les blocs que le projet a vraiment, dans l'ordre choisi
+ * au panneau (`docOrder`), avec UNE LIGNE VIDE (`DOC_EMPTY_LINE_ID`) entre deux blocs
+ * de tête qui se suivent.
+ *
+ *  L'ordre reste celui de l'utilisateur : la ligne vide ne sépare jamais que deux
+ *  blocs de tête VOISINS — un autre bloc entre eux (la ligne d'information du projet,
+ *  une section, les références) sépare déjà —, et elle se place toujours ENTRE les
+ *  deux. « Mettre l'auteur avant le titre » (l'exemple de la demande d'origine) se
+ *  lit donc avec la même ligne vide, sans réglage à refaire.
+ *
+ * @param {string[]} order                     l'ordre des blocs (`docOrder`)
+ * @param {(id: string) => boolean} [present]  ce que le projet a (voir `blocks`,
+ *                                             page du projet) — un bloc absent ne
+ *                                             compte pas
+ * @returns {string[]} les rangées : des identifiants de bloc et `empty-line`
+ */
+export const docHeadRows = (order, present) => {
+  const has = typeof present === 'function' ? present : () => true;
+  const ids = (Array.isArray(order) ? order : []).filter((id) => has(id));
+  const rows = [];
+  ids.forEach((id, i) => {
+    rows.push(id);
+    const next = ids[i + 1];
+    if (DOC_HEAD_IDS.includes(id) && DOC_HEAD_IDS.includes(next)) rows.push(DOC_EMPTY_LINE_ID);
+  });
+  return rows;
+};
+
+/* Le balisage d'une ligne vide DÉJÀ ÉCRITE (la page, un document enregistré) : la
+   classe peut y être accompagnée d'autres classes, entre apostrophes ou guillemets,
+   et l'élément peut être celui qu'on veut (`div` pour celui que le programme écrit). */
+const EMPTY_LINE_RE = /<(\w+)\b[^>]*\bclass\s*=\s*(?:"[^"]*\bpf-empty-line\b[^"]*"|'[^']*\bpf-empty-line\b[^']*')[^>]*>[\s\S]*?<\/\1>/gi;
+
+/** La fin d'un élément ouvert en `openEnd` (« </p> », « </h1> »…), ou `null`. */
+const closeTagOf = (src, openEnd, tag) => {
+  const re = new RegExp(`</${tag}\\s*>`, 'gi');
+  re.lastIndex = openEnd;
+  return re.exec(src);
+};
+
+/**
+ * LA MÊME RÈGLE, ÉCRITE SUR LE HTML DU DOCUMENT (voir `docHeadRows`) : une ligne
+ * vide entre deux blocs de tête qui se suivent.
+ *
+ *  C'est la fonction que la page du projet, le document FIGÉ (`project.exportDocHtml`,
+ *  écrit avant que le programme connaisse cette règle), l'impression, le PDF et
+ *  l'export .docx traversent tous (`projectDocBodyHtml`) : un seul endroit à corriger,
+ *  et le papier ne peut pas diverger de l'écran.
+ *
+ *  Les lignes vides DÉJÀ écrites sont retirées puis réécrites à la bonne place :
+ *  `reorderDocHtml` déplace des blocs entiers et une ligne vide voyage avec celui qui
+ *  la précède — une tête réordonnée à la main (« put the author before the title »)
+ *  garde donc ses lignes vides entre les bons blocs, sans doublon ni ligne orpheline.
+ *  Deux blocs de tête qui ne se SUIVENT pas (quelque chose entre eux) n'en reçoivent
+ *  aucune : il y a déjà de la place.
+ *
+ *  Un document sans les classes de la tête (écrit à la main, ou enregistré avant que
+ *  le programme les écrive) sort IDENTIQUE, au caractère près.
+ */
+export const docHeadSpacedHtml = (html) => {
+  const src = String(html == null ? '' : html);
+  if (!DOC_HEAD_CLASSES.some((c) => src.includes(c))) return src;
+  const bare = src.replace(EMPTY_LINE_RE, '');
+  /* LES DÉBUTS DES BLOCS DE TÊTE, dans l'ordre où le document les écrit (même
+     vocabulaire que reorderDocHtml : c'est la classe qui les fait reconnaître). */
+  const marks = [];
+  const RE = /<(h[1-6]|p|div)\b([^>]*)>/gi;
+  let m = RE.exec(bare);
+  while (m) {
+    const tokens = classOf(m[2]).toLowerCase().split(/\s+/).filter(Boolean);
+    if (DOC_HEAD_CLASSES.some((c) => tokens.includes(c))) {
+      marks.push({ at: m.index, openEnd: m.index + m[0].length, tag: m[1].toLowerCase() });
+    }
+    m = RE.exec(bare);
+  }
+  if (marks.length < 2) return bare;
+  let out = '';
+  let cut = 0;
+  for (let i = 0; i + 1 < marks.length; i += 1) {
+    const a = marks[i];
+    const b = marks[i + 1];
+    const close = closeTagOf(bare, a.openEnd, a.tag);
+    if (!close) continue;                                 // un bloc mal fermé : on n'y touche pas
+    /* Rien entre les deux (un commentaire, un blanc, un saut de ligne) : la ligne
+       vide se pose là. Autre chose (la ligne d'information, une section) : rien. */
+    const between = bare.slice(close.index + close[0].length, b.at).replace(/<!--[\s\S]*?-->/g, '');
+    if (between.trim()) continue;
+    out += bare.slice(cut, b.at) + DOC_EMPTY_LINE_HTML;
+    cut = b.at;
+  }
+  return out + bare.slice(cut);
 };

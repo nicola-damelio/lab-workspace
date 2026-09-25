@@ -41,7 +41,12 @@
         liaisons donne la même paire deux fois (mesuré : 17 liaisons pour 15
         réelles) — elle n'est remplie qu'une fois ;
      5. LE BANC DU MODULE RESTE VRAI : une trace CA seule porte elle aussi ses
-        liaisons (l'ancien banc des ombres est « 30 CA d'un tube de 0,5 Å »).
+        liaisons (l'ancien banc des ombres est « 30 CA d'un tube de 0,5 Å ») ;
+     6. LE COMPTE DE LA TOPOLOGIE, LU LÀ OÙ NGL L'ÉCRIT : `bondStore.count` (le
+        magasin des liaisons) et `bondCount` (la copie que `finalizeBonds` en prend
+        en fin de parsing). Une structure qui n'a QUE le premier — un objet
+        reconstruit, un montage à la main — est remplie par son graphe, jamais par
+        la liste des atomes : c'est ce que le module lit désormais.
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -121,6 +126,19 @@ eq(typeof peptide.eachBond, 'function', 'une structure NGL expose `eachBond` : l
 eq(peptide.atomCount, PEPTIDE_ATOMS.length, 'NGL a bien lu les 16 atomes du peptide');
 eq(peptide.bondCount, 15, '…et il en a inféré 15 liaisons (aucun CONECT dans le fichier)');
 
+/* NGL écrit ce compte à DEUX endroits, et c'est PAR LUI que le module décide s'il y
+   a une topologie : le magasin des liaisons (`bondStore`, dont `count` est le
+   compte vivant — mesuré aussi dans _viewer_structure_classes_test.mjs) et
+   `bondCount`, la copie que `Structure.finalizeBonds` prend du magasin en fin de
+   parsing (`this.bondCount = this.bondStore.count`). Une structure qui n'a pas
+   encore pris cette copie — un objet reconstruit, un montage à la main — a donc un
+   magasin PLEIN et pas de `bondCount` : lire le seul `bondCount` la déclarerait
+   sans topologie, et le remplissage retomberait sur la liste des atomes, c'est-à-
+   dire sur les blobs du rapport. Le repli doit donc lire le magasin aussi. */
+eq(peptide.bondStore.count, 15, 'la structure porte son magasin de liaisons (`bondStore.count`)');
+eq(peptide.bondStore.count, peptide.bondCount,
+  '…et les deux comptes s’accordent : `bondCount` est la copie que `finalizeBonds` prend du magasin');
+
 const nameOf = (structure, i) => {
   const a = structure.getAtomProxy(i);
   return `${String(a.atomname).trim()}${a.resno}`;
@@ -152,16 +170,27 @@ const POSITION = new Float32Array(POS.flat());
 const RADIUS = new Float32Array(POS.length).fill(1.7);
 const everyAtom = { getAtomIndices: () => Uint32Array.from(POS.map((_, i) => i)) };
 const tubeRep = { type: 'tube', radiusType: 'size', radiusSize: 0.5, visible: true, structureView: everyAtom };
+/* LA TOPOLOGIE QUE PORTE LE FAUX COMPOSANT — les deux endroits où NGL écrit le
+   compte, tels quels : `true` est une structure complète (`bondCount` ET le
+   magasin), 'store' en est une dont la copie de `finalizeBonds` n'a PAS été prise
+   (seul le magasin la déclare), 'store-empty' un magasin déclaré mais vide, et
+   `false` une structure sans aucune topologie. */
+const topologyOf = (bonds, declare) => {
+  if (!declare) return {};
+  const eachBond = (cb) => bonds.forEach(([a, b]) => cb({ atomIndex1: a, atomIndex2: b }));
+  return declare === 'store'
+    ? { bondStore: { count: bonds.length }, eachBond }
+    : declare === 'store-empty'
+      ? { bondStore: { count: 0 }, eachBond }
+      : { bondCount: bonds.length, eachBond };
+};
 const stageOf = ({ bonds, declare }) => ({
   compList: [{
     structure: {
       atomCount: POS.length,
       getAtomData: () => ({ position: POSITION, radius: RADIUS }),
-      // La topologie : `bondCount` ET `eachBond`, exactement comme une structure
-      // NGL réelle. Sans elle, le module retombe sur la règle des voisins.
-      ...(declare
-        ? { bondCount: bonds.length, eachBond: (cb) => bonds.forEach(([a, b]) => cb({ atomIndex1: a, atomIndex2: b })) }
-        : {}),
+      // La topologie : sans elle, le module retombe sur la règle des voisins.
+      ...topologyOf(bonds, declare),
     },
     matrix: { elements: IDENT16 },
     reprList: [{ repr: tubeRep }],
@@ -219,6 +248,21 @@ ok(fillsOf(real, 'C1-N2') > 0 && fillsOf(real, 'C2-N3') > 0,
 ok(fillsOf(real, 'CB2-CG12') > 0 && fillsOf(real, 'CB2-CG22') > 0,
   '…et les BRANCHES latérales aussi (le bâton d’une chaîne latérale projette sa ligne, pas juste sa bille)');
 
+/* ── 2 bis. LA SECONDE SOURCE DU COMPTE : LE MAGASIN ────────────────────────
+   LE MÊME peptide, LE MÊME graphe, la MÊME représentation — et une seule
+   différence : la structure ne porte QUE `bondStore.count`, pas la copie
+   `bondCount` que `finalizeBonds` en prend. Sans la lecture du magasin, le module
+   conclurait « aucune topologie » et retomberait sur la liste des atomes : les
+   blobs du rapport reviendraient. Mesuré : le proxy est EXACTEMENT celui de la
+   structure complète (mêmes remplissages, aucun fantôme, aucune liaison ouverte). */
+const stored = audit({ bonds: REAL_BONDS, declare: 'store' });
+eq([stored.filled, stored.count], [real.filled, real.count],
+  'un graphe déclaré par le seul `bondStore.count` remplit exactement comme la structure complète');
+eq([stored.phantom, stored.missing], [0, []],
+  '…sans un seul fantôme et sans laisser une liaison ouverte : le repli ne se déclenche PAS');
+ok(fillsOf(stored, 'C1-N2') > 0 && fillsOf(stored, 'C2-N3') > 0,
+  '…liaisons peptidiques comprises (ce qui recolle un résidu au suivant)');
+
 /* ── 3. L'ANCIEN DÉFAUT, REPRODUIT (LE REPLI) ────────────────────────────────
    Le MÊME peptide, la MÊME représentation, et une seule différence : la structure
    ne déclare AUCUNE topologie (c'est le cas `inferBonds: 'none'`, une structure
@@ -227,6 +271,7 @@ ok(fillsOf(real, 'CB2-CG12') > 0 && fillsOf(real, 'CB2-CG22') > 0,
    preuve que la règle historique était bien la cause, et la démonstration que le
    repli ne concerne QUE les structures sans graphe (une structure qui déclare son
    graphe n'y retombe jamais, même si ses atomes dessinés ne sont pas liés). */
+
 const legacy = audit({ bonds: REAL_BONDS, declare: false });
 ok(legacy.phantom >= 10,
   `sans graphe, « l’atome suivant de la liste » remplit des liens qui NE SONT PAS des liaisons (${legacy.phantom} fantômes ici)`);
@@ -235,6 +280,14 @@ ok(legacy.missing.includes('C1-N2') && legacy.missing.includes('C2-N3'),
 ok(legacy.missing.length > real.missing.length,
   `…soit ${legacy.missing.length} liaisons non remplies contre ${real.missing.length} avec le graphe`);
 eq(legacy.fills, legacy.filled, '…et le compte annoncé reste celui qui est émis (le budget suit les remplissages)');
+
+/* LE MAGASIN VIDE N'EST PAS UNE TOPOLOGIE : `count` à 0 déclare « rien de lié
+   ici », donc le même repli qu'une structure qui n'en dit pas plus — c'est
+   l'autre moitié de la règle (un compte absent ou nul ne fait pas retomber sur la
+   liste des atomes par accident, il y retombe pour la même raison que `false`). */
+const storedEmpty = audit({ bonds: REAL_BONDS, declare: 'store-empty' });
+eq([storedEmpty.phantom, storedEmpty.missing], [legacy.phantom, legacy.missing],
+  'un magasin de liaisons VIDE ne déclare rien : même repli exactement que sans topologie du tout');
 
 /* ── 4. LES DOUBLONS DU GRAPHE ───────────────────────────────────────────────
    Un fichier qui PORTE ses CONECT et se fait inférer ses liaisons donne la même
@@ -310,6 +363,10 @@ ok(MODULE.includes("typeof structure.eachBond !== 'function'"),
   'le repli est décidé par la TOPOLOGIE déclarée…');
 ok(MODULE.includes('Number.isFinite(declared) && declared > 0'),
   '…(`bondCount` : un graphe déclaré mais vide ne fait PAS retomber sur la liste des atomes)');
+ok(MODULE.includes('structure.bondStore && structure.bondStore.count'),
+  '…et le compte se lit sur le MAGASIN quand la copie figée manque (une structure qui n’a que lui)');
+ok(MODULE.includes('structure.bondCount !== undefined ? structure.bondCount'),
+  '…en gardant `bondCount` d’abord : c’est la copie que NGL écrit en fin de parsing');
 ok(MODULE.includes('if (links[a] !== 1 || links[b] !== 1) return;'),
   '…et une liaison n’est un lien que si les DEUX atomes sont dessinés par un trait');
 ok(!MODULE.includes('if (e + 1 < lay.len && lay.wlink[e] && lay.wlink[e + 1])'),

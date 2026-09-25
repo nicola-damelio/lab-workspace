@@ -105,7 +105,13 @@
        for sphere / spacefill / surface, the bond radius for ball+stick /
        licorice, a thin tube for cartoon / ribbon / tube / trace / backbone, a
        hair for line). The receiver and the caster are the SAME stroke, so what
-       is drawn is what receives and what casts;
+       is drawn is what receives and what casts. …AND EVERY STROKE ANSWERS FOR
+       THE ATOMS IT DRAWS: the tube and the licorice of a protein share ONE
+       selection (see BACKBONE_ONLY_KINDS), so the side chains the tube merely
+       LISTS keep the stick's stroke instead of borrowing the tube's — without
+       that, each of them cast a sphere twice the radius NGL draws it with, and
+       a ring or a branch merged into one round blob (the report « in the ray
+       button of the molecular viewer I have spheric shadows for bonds »);
      · THE LAMP'S FRUSTUM WAS A CUBE AROUND THE BOUNDING SPHERE with its near
        plane at 0.01 Å — thousands of ångströms of empty depth for every real
        surface, and a body-sized square where a molecule is not a cube. The
@@ -113,7 +119,17 @@
      · THE BIAS WAS 0.9 Å, i.e. three bond lengths of cancelled self-shadowing,
        so a crevice — two atoms 0.5 Å apart along the light — could never go
        dark. It is a contact bias now (0.35 Å), and the PCF disc turns what is
-       left into a penumbra instead of a stipple.
+       left into a penumbra instead of a stipple;
+     · THE BLUR WAS COUNTED IN MASK PIXELS, NOT IN ÅNGSTRÖMS. The mask is capped
+       at `maskMaxWidth` whatever the still is, so on a wide canvas the molecule
+       gets a handful of mask pixels per ångström — and 1.6 + 8 px of blur is
+       then ~1-2 Å wide, i.e. as wide as the sticks it must shade: every bond,
+       ring and branch collapsed into the same round blob, and the fix that gave
+       the side chains their 0.25 Å stroke instead of the tube's 0.5 Å could not
+       be seen at all. That is the report « it didn't work? shadows are still
+       spherical » (see SHADOW_BLUR_REF below — the defaults are scaled by the
+       mask's own resolution now, so what the shadow receives is a width in
+       ångströms).
 
    SELF-SHADOWING ON THE MOLECULE ITSELF. The mask is built from the surface the
    pixel SHOWS — the visible proxy's centre AND its width in pixels (`reach`), so
@@ -782,6 +798,115 @@ export const shadowRigOf = ({
    axis. */
 export const lightMatricesOf = (setup) => shadowRigOf(setup);
 
+/* ⚠ THE BLUR IS A PHYSICAL WIDTH, NOT A COUNT OF MASK PIXELS.
+   `softness` / `penumbra` / `penumbraMax` are, and stay, px OF THE MASK — that
+   is the unit `shadowMaskOf` works in, and the unit its tests pin. But the MASK
+   IS CAPPED AT `maskMaxWidth` (1400 px) WHATEVER THE STILL IS: on a wide canvas
+   the mask covers the WHOLE canvas at a fraction of its resolution, so the
+   molecule ends up with a handful of mask pixels per ångström — and 1.6 px of
+   `softness` plus up to 8 px of PCSS then blur the shadow by ~1 Å, i.e. by as
+   much as the stick it should shade. The shadow of every bond, ring and branch
+   collapses into the same ROUND BLOB whatever the proxy weighs: the report « in
+   the ray button of the molecular viewer I have spheric shadows for bonds »,
+   which no proxy radius can cure. MEASURED, on a three-residue peptide whose
+   tube (0.5 Å) and licorice (0.25 Å) share the `protein` selection, mask 1400 px
+   wide over a 4800 px still: 1269 shadowed pixels and a mean occlusion of 0.1137
+   BOTH before and after the fix that took the side chains from 0.5 Å to 0.25 Å —
+   to four decimals, the same mask. The blur, not the radius, decides the shape,
+   and « it didn't work? shadows are still spherical » is exactly what that
+   means.
+   The knobs are therefore scaled by the MASK'S OWN resolution: `SHADOW_BLUR_REF`
+   is the px per ångström at which the px defaults — 1.6 px of `softness` plus up
+   to 8 px of PCSS — weigh the HALF ÅNGSTRÖM a PyMOL-like penumbra should, i.e.
+   half a bond (20 px/Å), `SHADOW_BLUR_MIN` the floor that keeps a shadow soft on
+   a tiny mask, and the scale NEVER exceeds 1, so a mask that is already fine
+   keeps exactly the look it has always had. What the shadow receives is then a
+   WIDTH in ångströms: ~0.5 Å on the coarse still of the report, ~0.5 Å on a
+   20 px/Å mask, and never the ~1 Å that used to swallow the whole drawing. */
+export const SHADOW_BLUR_REF = 20;
+export const SHADOW_BLUR_MIN = 0.25;
+export const shadowBlurScale = (pxPerAngstrom) => {
+  const px = Number(pxPerAngstrom);
+  if (!Number.isFinite(px) || px <= 0) return 1;      // unknown scale: as before
+  return Math.min(1, Math.max(SHADOW_BLUR_MIN, px / SHADOW_BLUR_REF));
+};
+
+/* The mask's OWN px per ångström OVER THE MOLECULE — the number the blur scale
+   above is read from. The eight corners of the molecule's box are projected
+   twice: through the camera's clip matrix (pixels, `clipToScreen`) and into its
+   view plane (ångströms, the view matrix), and the two spreads give the scale
+   of each axis — the smaller of them is what a stroke's width is worth in the
+   mask, so a stick cannot be credited with more resolution than it has.
+   Returns 0 when there is nothing to measure (no camera, a box the frustum
+   misses): the caller then keeps the px defaults. */
+export const maskScalePerAngstrom = ({ clip, view, bounds, width, height } = {}) => {
+  if (!clip || !view) return 0;
+  const w = Math.max(1, Math.round(Number(width) || 0));
+  const h = Math.max(1, Math.round(Number(height) || 0));
+  const corners = boxCornersOf(bounds);
+  let pxMinX = Infinity;
+  let pxMaxX = -Infinity;
+  let pxMinY = Infinity;
+  let pxMaxY = -Infinity;
+  let vMinX = Infinity;
+  let vMaxX = -Infinity;
+  let vMinY = Infinity;
+  let vMaxY = -Infinity;
+  let seen = 0;
+  for (let i = 0; i < 8; i += 1) {
+    const c = corners[i];
+    const world = [c[0], c[1], c[2], 1];
+    const v = mat4TransformPoint(view, world);
+    if (v[0] < vMinX) vMinX = v[0];
+    if (v[0] > vMaxX) vMaxX = v[0];
+    if (v[1] < vMinY) vMinY = v[1];
+    if (v[1] > vMaxY) vMaxY = v[1];
+    const s = clipToScreen(mat4TransformPoint(clip, world), w, h);
+    if (!s) continue;
+    if (s[0] < pxMinX) pxMinX = s[0];
+    if (s[0] > pxMaxX) pxMaxX = s[0];
+    if (s[1] < pxMinY) pxMinY = s[1];
+    if (s[1] > pxMaxY) pxMaxY = s[1];
+    seen += 1;
+  }
+  if (seen < 2) return 0;
+  const sx = vMaxX - vMinX > 1e-6 ? (pxMaxX - pxMinX) / (vMaxX - vMinX) : Infinity;
+  const sy = vMaxY - vMinY > 1e-6 ? (pxMaxY - pxMinY) / (vMaxY - vMinY) : Infinity;
+  const scale = Math.min(sx, sy);
+  return Number.isFinite(scale) && scale > 0 ? scale : 0;
+};
+
+/* THE STROKE OF EVERY PROXY, counted: what the shadow is really MADE OF. The
+   table `PROXY_STROKE_BY_TYPE` reads a representation's own stroke, and an atom
+   whose drawing the table cannot name keeps its vdW radius (see `wrad` in
+   layOut) — a 1.7 Å ball, i.e. the fattest stroke there is, and the exact shape
+   of the « spheric shadows » report. The Ray message therefore SAYS the radii
+   it used: a still whose side chains come out at 1.70 Å is a still whose
+   licorice the module never saw, and « the note tells you which » is the only
+   honest answer to a shadow that looks round for no reason. */
+export const proxyStrokeSummary = (radii, count, max = 4) => {
+  const n = Math.max(0, Math.min(
+    Math.round(Number(count) || 0),
+    radii ? radii.length : 0,
+  ));
+  const bins = new Map();
+  for (let i = 0; i < n; i += 1) {
+    const r = Number(radii[i]);
+    if (!(r > 0)) continue;
+    const key = Math.round(r * 100) / 100;      // a tenth of an ångström is noise
+    bins.set(key, (bins.get(key) || 0) + 1);
+  }
+  const all = [...bins.entries()]
+    .map(([radius, hits]) => ({ radius, hits }))
+    .sort((a, b) => (b.hits - a.hits) || (a.radius - b.radius));
+  const cap = Math.max(1, Math.round(Number(max) || 1));
+  return {
+    list: all.slice(0, cap),
+    rest: all.slice(cap).reduce((s, e) => s + e.hits, 0),
+    count: n,
+  };
+};
+
 /* THE WHOLE SHADOW, from the proxies to the mask: one camera pass (where the
    visible surface is) and one light pass (what the lamp sees first), compared
    pixel by pixel. The light pass runs through the FITTED shadow camera of the
@@ -793,6 +918,22 @@ export const lightMatricesOf = (setup) => shadowRigOf(setup);
 export const buildRayShadowMask = ({ atoms, camera, light, width, height, options = {} }) => {
   const o = rayShadowOptions(options);
   const { width: mw, height: mh } = rayShadowMaskSize(width, height, o);
+  /* The blur of THIS mask: the px DEFAULTS, scaled by the mask's own resolution
+     over the molecule (see SHADOW_BLUR_REF above — a coarse mask would otherwise
+     smear every stick into a ball). An option the CALLER pinned stays a px of
+     the mask, verbatim: only « what the module chooses » has to be physical. */
+  const pxPerAngstrom = maskScalePerAngstrom({
+    clip: camera.clip, view: camera.view, bounds: light.bounds, width: mw, height: mh,
+  });
+  const blurScale = shadowBlurScale(pxPerAngstrom);
+  const blurOf = (name, value) => (options && options[name] !== undefined ? value : value * blurScale);
+  const blur = {
+    scale: blurScale,
+    pxPerAngstrom,
+    softness: blurOf('softness', o.softness),
+    penumbra: blurOf('penumbra', o.penumbra),
+    penumbraMax: blurOf('penumbraMax', o.penumbraMax),
+  };
   const cameraAxes = viewAxesOf(camera.view || mat4Identity());
   const lightAxes = viewAxesOf(light.view || mat4Identity());
   const cameraPass = rasterizeSpheres({
@@ -816,10 +957,10 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
     light: { clip: light.clip, depth: lightPass.depth },
     width: mw, height: mh,
     biasNdc: o.bias * depthScale,
-    softness: o.softness,
+    softness: blur.softness,
     taps: o.pcfTaps,
-    penumbra: o.penumbra,
-    penumbraMax: o.penumbraMax,
+    penumbra: blur.penumbra,
+    penumbraMax: blur.penumbraMax,
     depthScale,
   });
   return {
@@ -832,12 +973,19 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
     // without them a thin drawing casts nothing (see LINKED_KINDS).
     filled: Number(atoms && atoms.filled) || 0,
     strength: o.strength,
+    // WHAT THE PROXY IS MADE OF (see proxyStrokeSummary): the strokes the Ray
+    // message shows, so a still whose sticks came out as vdW balls SAYS so
+    // instead of looking round for no reason.
+    strokes: proxyStrokeSummary(atoms && atoms.radii, atoms && atoms.count),
+    // The blur this mask really received (see SHADOW_BLUR_REF): px of the mask,
+    // and the resolution they were scaled to.
+    blur,
     // The rig itself, for the message: the surface the shadow camera really
     // covers, in ångströms, and the disc that softens it.
     rig: Number.isFinite(Number(light.width)) && Number.isFinite(Number(light.height))
       ? { width: light.width, height: light.height, depth: light.far - light.near }
       : null,
-    penumbra: { taps: out.taps, radius: o.softness, grow: o.penumbra, reached: out.penumbraRadius },
+    penumbra: { taps: out.taps, radius: blur.softness, grow: blur.penumbra, reached: out.penumbraRadius },
   };
 };
 
@@ -1069,6 +1217,33 @@ export const repKindOf = (rep, el = null) => {
                             drawing. */
 export const LINKED_KINDS = Object.freeze({ spline: 1, tube: 1, bond: 1, ball: 1 });
 
+/* WHICH STROKES ARE THE CHAIN ITSELF — and therefore draw ONLY its backbone.
+
+   A cartoon, a ribbon, a tube, a rope, a trace is a line ALONG THE POLYMER: NGL
+   builds that line from the residue types' own backbone atoms and walks from one
+   residue to the next, so a side-chain atom the representation's StructureView
+   happens to list is NOT drawn by it. And NGL's StructureView LISTS THE WHOLE
+   SELECTION: `getAtomIndices()` is `structure.getAtomIndices(selection)` (ngl
+   2.4, verified in the installed dist), so the viewer's Tube — `sele: sels.protein`
+   — hands us every side-chain atom of the protein as well, and « the fattest
+   visible drawing wins » below then gave each of them the TUBE's stroke instead
+   of the 0.25 Å stick the Licorice actually draws them with. Measured on the
+   shared list: CB / CG1 / CG2 projected as 0.5 Å spheres, twice their real
+   radius — enough for a ring or a branch, whose atoms sit one bond apart, to
+   merge into one round blob instead of resolving into the sticks NGL draws.
+   That is the report « in the ray button of the molecular viewer I have spheric
+   shadows for bonds ».
+
+   The question asked here is NGL's own: `AtomProxy#isBackbone()` reads
+   `residueType.backboneIndexList` — the list the cartoon / tube geometry is
+   built from (verified on the installed build: N · CA · C · O answer true, CB ·
+   CG1 · CG2 false). See the gate in drawnProxyRadiiOf: the filter applies to a
+   representation only when its OWN atom list really holds backbone atoms. A tube
+   a PyMOL script puts on a ligand-only selection has none, and NGL does draw
+   those atoms — filtering there would put its stroke back to nothing, i.e. the
+   « a thin drawing casts no shadow » regression the link walk exists to fix. */
+export const BACKBONE_ONLY_KINDS = Object.freeze({ spline: 1, tube: 1 });
+
 /* ONE number of a representation: the INSTANCE value first (that is where ngl 2.4
    keeps it: `rep.radiusScale`, `rep.radiusSize`, `rep.aspectRatio` …), then the
    same key on the element's own parameters (what `el.setParameters()` writes),
@@ -1144,6 +1319,38 @@ export const proxyRadiusOf = (rep, vdwRadius = 1.7, el = null) => {
   return Math.max(0.05, Math.max(stroke.min, r));
 };
 
+/* THE STRUCTURE'S OWN AtomProxy, or `null` when the object at hand cannot answer
+   (an older NGL, a hand-built stage, a test stub): the question below is then
+   simply NOT asked and the representation keeps every atom it lists — never the
+   other way round, because a drawing that stops casting is a disappearing shadow,
+   not a thin one. ONE proxy serves a whole walk: `ap.index = a` re-reads the
+   residue the atom belongs to (NGL's index setter refreshes residueIndex /
+   residueAtomOffset, and `isBackbone()` reads `residueType.backboneIndexList`
+   through them — verified on the installed 2.4 build, round-trips included). */
+const atomProxyOf = (structure) => {
+  try {
+    if (!structure || typeof structure.getAtomProxy !== 'function') return null;
+    const ap = structure.getAtomProxy();
+    return ap && typeof ap.isBackbone === 'function' ? ap : null;
+  } catch { return null; }
+};
+
+/* DOES THIS REPRESENTATION WALK A CHAIN? True as soon as its own atom list holds
+   one backbone atom — the gate of BACKBONE_ONLY_KINDS (see drawnProxyRadiiOf). An
+   exception from the proxy, or no proxy at all, answers NO: no filtering. */
+const drawsBackboneOf = (ap, idx) => {
+  if (!ap) return false;
+  try {
+    for (let i = 0; i < idx.length; i += 1) {
+      const a = idx[i];
+      if (!(a >= 0)) continue;
+      ap.index = a;
+      if (ap.isBackbone()) return true;
+    }
+  } catch { return false; }
+  return false;
+};
+
 /* The proxy radius of EVERY atom the component draws, index by index: a Float32
    array parallel to the structure's atoms, `NaN` where no visible representation
    covers the atom. `null` (not an empty array) means « the component says
@@ -1152,13 +1359,19 @@ export const proxyRadiusOf = (rep, vdwRadius = 1.7, el = null) => {
    `links` (optional, a Uint8Array of the same length) is filled with 1 for the
    atoms whose drawing CONTINUES to its neighbour — a stick, a tube, a ribbon —
    and 0 for an atom that is a ball on its own: atomsFromStage fills the gaps of
-   the first kind so the proxy is the drawn line, not a dust of balls. */
+   the first kind so the proxy is the drawn line, not a dust of balls.
+   A representation of a CHAIN kind answers for its backbone atoms ONLY
+   (BACKBONE_ONLY_KINDS, gated by the AtomProxy above) — the other atoms of the
+   list it shares with the sticks are drawn by the sticks, at THEIR stroke. */
 export const drawnProxyRadiiOf = (comp, atomCount, vdw = null, links = null) => {
   const list = comp && comp.reprList;
   if (!Array.isArray(list)) return null;
   const out = new Float32Array(Math.max(0, Math.round(Number(atomCount) || 0)));
   if (!out.length) return out;
   out.fill(NaN);
+  // The structure's own AtomProxy, read ONCE (see atomProxyOf): the chain kinds
+  // ask it, atom by atom, whether the representation draws here at all.
+  const ap = atomProxyOf(comp && comp.structure);
   list.forEach((el) => {
     try {
       const rep = (el && (el.repr || el)) || null;
@@ -1169,9 +1382,18 @@ export const drawnProxyRadiiOf = (comp, atomCount, vdw = null, links = null) => 
       if (!idx || !idx.length) return;
       const kind = repKindOf(rep, el);
       const linked = LINKED_KINDS[kind] === 1;
+      // ⚠ The chain filter applies to THIS representation only when it really
+      // walks a chain (see BACKBONE_ONLY_KINDS): a tube / a trace on a
+      // ligand-only selection has no backbone atom to keep, and NGL does draw
+      // what it lists there — its stroke then stays, exactly as before.
+      const chainOnly = BACKBONE_ONLY_KINDS[kind] === 1 && drawsBackboneOf(ap, idx);
       for (let i = 0; i < idx.length; i += 1) {
         const a = idx[i];
         if (!(a >= 0 && a < out.length)) continue;
+        if (chainOnly) {
+          ap.index = a;
+          if (!ap.isBackbone()) continue;    // the spline does not draw here
+        }
         const per = proxyRadiusOf(rep, vdw ? vdw[a] : 1.7, el);
         if (per == null) continue;
         // The FATTEST visible drawing of an atom is what the eye sees, so it is
@@ -1227,7 +1449,7 @@ const linkStepOf = (ra, rb) => Math.max(LINK_STEP_MIN, 0.5 * Math.min(ra, rb));
    is drawn — therefore means « fill nothing », not « use the list order ». */
 const drawnBondsOf = (structure, links, n) => {
   if (!structure || typeof structure.eachBond !== 'function') return null;
-  const declared = Number(structure.bondCount);
+  const declared = Number(structure.bondCount !== undefined ? structure.bondCount : (structure.bondStore && structure.bondStore.count));
   if (!(Number.isFinite(declared) && declared > 0)) return null;
   let linked = false;
   for (let i = 0; i < n && !linked; i += 1) linked = links[i] === 1;
@@ -1681,13 +1903,21 @@ export const rayShadowNote = (shadow, reason = '') => {
     : null;
   const spheres = Number(shadow.spheres) || 0;
   const filled = Number(shadow.filled) || 0;
+  /* THE STROKES THE PROXY IS MADE OF (see proxyStrokeSummary). A drawing the
+     table cannot name keeps the atom's vdW radius, so a shadow of round balls
+     has to SAY which radii it used — « 1.70 Å » answers « why is my shadow
+     spherical? » in a way no prose can. */
+  const st = shadow.strokes;
+  const strokes = st && st.list && st.list.length
+    ? ` · strokes ${st.list.map((e) => `${e.radius.toFixed(2)} Å×${e.hits}`).join(' · ')}${st.rest ? ` · +${st.rest}` : ''}`
+    : '';
   // The fitted shadow camera, in ångströms: the proof that the rig hugged the
   // molecule instead of the whole cube around its bounding sphere.
   const rig = shadow.rig && Number.isFinite(Number(shadow.rig.width))
     ? ` · rig ${Math.round(shadow.rig.width)}×${Math.round(shadow.rig.height)} Å`
     : '';
   return `· cast shadows ${pct}%${covered == null ? '' : ` (${covered}% of the pixels)`}`
-    + `${spheres ? ` · ${spheres} proxies${filled ? ` (${filled} filling the drawn strokes)` : ''}` : ''}${rig}`;
+    + `${spheres ? ` · ${spheres} proxies${filled ? ` (${filled} filling the drawn strokes)` : ''}` : ''}${strokes}${rig}`;
 };
 
 

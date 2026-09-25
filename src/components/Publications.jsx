@@ -32,8 +32,12 @@ import {
   PUB_DOC_BLOCKS, PUB_FONTS, PUB_LAYOUT_PARTS, PUB_TEXT_ALIGNMENTS,
   authorMatchesCandidate, buildPubFormat, buildPubDocOrder, buildPubDocTitles, buildPubLayout,
   loadPubFormat, matchCoauthors, normalizePubDocOrder, normalizePubDocTitles, normalizePubLayout,
-  pubCitationData, pubCitationHtml, pubDocOrderMoved,
+  pubCitationData, pubCitationHtml, pubDocOrderDropped,
   pubLayoutCss, pubTextStyleIsSet,
+  /* LES STYLES QUE L'UTILISATEUR SAUVEGARDE (« Custom ») : le panneau les liste, les
+     rappelle, les sauve et les oublie (voir pubCitation.js — la clé `labWorkspace_pubStyles`
+     reste dans ce module-là : le panneau ne parle qu'aux fonctions). */
+  loadPubStyles, savePubStyle, removePubStyle,
   scientistStyleOf
 } from './pubCitation';
 /* LES FORMATS DE JOURNAL (« cambiare giornale di submission velocemente ») : chaque
@@ -41,7 +45,8 @@ import {
    et l'ORDRE de ses sections — voir journalFormats.js. */
 import {
   JOURNAL_FORMATS, JOURNAL_IDS, applyJournalFormat, clearJournalFormat,
-  journalLabelOf, journalOf, journalSectionOrder, reorderDocHtml
+  journalLabelOf, journalOf, journalSectionOrder, reorderDocHtml,
+  DOC_EMPTY_LINE_CLASS
 } from './journalFormats';
 
 const JOURNALS_STORAGE_KEY = 'labWorkspace_journals';
@@ -85,7 +90,10 @@ export {
   buildPubFormat, buildPubDocOrder, buildPubDocTitles, buildPubLayout, loadPubFormat,
   normalizePubDocOrder, normalizePubDocTitles, normalizePubFormat, normalizePubLayout,
   pubLayoutCss, pubTextStyleIsSet, emptyPubTextStyle, PUB_DOC_BLOCKS, PUB_DOC_BLOCK_IDS,
-  pubDocOrderMoved, pubDocTitleKeywords, pubDocOrderKeywords, pubDocTitleOf,
+  pubDocOrderMoved, pubDocOrderDropped, pubDocTitleKeywords, pubDocOrderKeywords, pubDocTitleOf,
+  /* LES SECTION DE TEXTE QUI ONT LEUR RANGÉE (conclusions · funding · supporting : voir
+     PUB_DOC_BLOCKS) : la page du projet les imprime chacune à sa place. */
+  PUB_DOC_SECTION_BLOCKS, PUB_DOC_SECTION_IDS, pubDocBlockOfSection,
   pubCitationHtml, pubCitationText, pubFieldValue, pubDoiUrl,
   pubCitationData, pubOriginOf,
   authorMatchesCandidate, matchCoauthors, isLabAuthor, labMemberOf,
@@ -96,10 +104,15 @@ export {
    document et n'importe que ce module-ci (`from '../Publications'`). Le bloc
    ci-dessus ré-exporte pubCitation : ces noms-là viennent de journalFormats.js,
    d'où cette seconde instruction — un nom ne peut pas être ré-exporté depuis un
-   module qui ne le déclare pas. */
+   module qui ne le déclare pas. Les LIGNES VIDES de la tête du document (le titre,
+   les auteurs et les affiliations se lisent sur des lignes séparées — voir
+   docHeadRows · docHeadSpacedHtml) partent avec elles : la page du projet, le
+   document figé, l'impression, le PDF et le .docx obéissent à la même règle. */
 export {
   JOURNAL_FORMATS, JOURNAL_IDS, applyJournalFormat, clearJournalFormat,
-  journalLabelOf, journalOf, journalSectionOrder, reorderDocHtml
+  journalLabelOf, journalOf, journalSectionOrder, reorderDocHtml,
+  DOC_HEAD_IDS, DOC_HEAD_CLASSES, DOC_EMPTY_LINE_ID, DOC_EMPTY_LINE_CLASS, DOC_EMPTY_LINE_HTML,
+  docHeadRows, docHeadSpacedHtml
 } from './journalFormats';
 
 const ifNum = (v) => {
@@ -711,9 +724,19 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
   const [pubFormat, setPubFormat] = useState(loadPubFormat);
   const [pubFormatScope, setPubFormatScope] = useState('default'); // 'default' | project name
   const [pubAddField, setPubAddField] = useState('doi'); // field id to add via the "+ Add field" control
+  /* L'ORDRE DES BLOCS DU DOCUMENT SE RÈGLE PAR GLISSER-DÉPOSER (voir
+     pubDropDocBlock) : la ligne qu'on a prise, et celle survolée. */
+  const [pubDocDragId, setPubDocDragId] = useState('');
+  const [pubDocOverId, setPubDocOverId] = useState('');
   useEffect(() => {
     try { localStorage.setItem(PUB_FORMAT_KEY, JSON.stringify(pubFormat)); } catch { /* ignore */ }
   }, [pubFormat]);
+  /* LES STYLES SAUVEGARDÉS (« Custom » à rappeler) : lus une fois, réécrits à chaque
+     sauvegarde ou oubli (voir savePubStyle / removePubStyle, pubCitation.js). La clé
+     porte le préfixe « lab » : le miroir du Drive les emporte avec le reste, donc ils se
+     retrouvent d'un poste à l'autre. */
+  const [pubStyles, setPubStyles] = useState(() => loadPubStyles());
+  const [pubStyleMsg, setPubStyleMsg] = useState('');
   const [pubExpanded, setPubExpanded] = useState(null);
   const [showExcludedPubs, setShowExcludedPubs] = useState(false);
   const [pubShowSearch, setPubShowSearch] = useState(false);
@@ -2419,7 +2442,8 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
       setPbProjects((prev) => prev.map((p) => (p.name === pubFormatScope ? { ...p, pubFormat: fmt } : p)));
     }
   };
-  /* CE QUI N'APPARTIENT PAS À LA CITATION — le journal choisi (« Submit to »), l'ordre
+  /* CE QUI N'APPARTIENT PAS À LA CITATION — le journal choisi (« Journal preset »,
+     groupe « Journal »), l'ordre
      de ses sections et l'intitulé de sa bibliographie, puis L'ORDRE ET LES INTITULÉS DES
      BLOCS DU DOCUMENT (voir PUB_DOC_BLOCKS). Un réglage de CITATION (un champ, la police
      du corps, les noms des membres du laboratoire…) ne doit jamais les perdre : le
@@ -2435,6 +2459,10 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
   const pubCustomFormat = (fields) => ({
     ...pubDocSettings(activeFormat),
     preset: 'custom',
+    /* LE NOM DU STYLE ENREGISTRÉ QUE CE FORMAT VIENT DE RAPPELER (« My styles ») : il
+       reste affiché pendant qu'on retouche le format, pour que 💾 sache sous quel nom
+       réécrire. Choisir un journal ou un preset l'efface (c'est un autre choix). */
+    style: activeFormat.style || '',
     etAlLimit: activeFormat.etAlLimit || 0,
     alwaysShowScientists: !!activeFormat.alwaysShowScientists,
     underlineScientists: !!activeFormat.underlineScientists,   // legacy default style
@@ -2501,30 +2529,44 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
      nor change the titles of the subsections. I want to be able for example to put the
      author before the title or change the name of “materials and methods” into
      “experimental section” or whatever. »
-     ▲▼ déplace un bloc, le champ écrit l'intitulé d'un bloc que le PROGRAMME nomme
-     (« Materials and Methods », « Experiments », « References »), ↺ remet l'ordre et
-     les intitulés du programme. Rien de tout cela ne touche au texte de l'auteur : seuls
-     l'ORDRE des blocs et les intitulés que le programme écrit lui-même changent. */
+     ON GLISSE UNE RANGÉE SUR UNE AUTRE (« movable by drag and drop rather than
+     arrows ») : elle prend sa place (pubDocOrderDropped), le champ écrit l'intitulé
+     d'un bloc que le PROGRAMME nomme (« Materials and Methods », « Experiments »,
+     « References »), ↺ remet l'ordre et les intitulés du programme. Rien de tout cela
+     ne touche au texte de l'auteur : seuls l'ORDRE des blocs et les intitulés que le
+     programme écrit lui-même changent. */
   const docOrder = normalizePubDocOrder(activeFormat.docOrder);
   const docTitles = normalizePubDocTitles(activeFormat.docTitles);
-  const pubMoveDocBlock = (id, dir) => pubPatchFormat({ docOrder: pubDocOrderMoved(docOrder, id, dir) });
+  const pubDropDocBlock = (targetId) => {
+    const moved = pubDocOrderDropped(docOrder, pubDocDragId, targetId);
+    if (moved.join('|') !== docOrder.join('|')) pubPatchFormat({ docOrder: moved });
+    setPubDocDragId('');
+    setPubDocOverId('');
+  };
   const pubSetDocTitle = (id, value) => pubPatchFormat({
     /* Le texte est gardé TEL QUEL pendant la frappe (un espace en fin de mot ne doit pas
        disparaître sous les doigts) : c'est pubDocTitleOf qui le nettoie à l'affichage. */
     docTitles: { ...docTitles, [id]: String(value == null ? '' : value).replace(/[<>]/g, '').slice(0, 120) }
   });
   const pubResetDocSections = () => pubPatchFormat({ docOrder: buildPubDocOrder(), docTitles: buildPubDocTitles() });
-  /* Le choix du preset d'un journal refait la CITATION : la mise en forme du
-     document, elle, a été réglée partie par partie et n'a aucune raison de
-     disparaître avec le preset. */
-  const pubSetPreset = (presetId) =>
+  /* Le choix du « Journal preset » refait la CITATION. Ce contrôle liste DEUX
+     natures d'options (voir pubJournalChoice) : un STYLE de bibliographie
+     (`preset:…`) ou un JOURNAL entier (`journal:…`). Choisir un style DÉTACHE le
+     journal — son ordre de sections et son intitulé de bibliographie partent avec
+     lui — mais la mise en forme réglée partie par partie reste : elle a été réglée
+     à la main. Choisir un journal passe par pubSetJournal, qui refait les trois
+     choses ensemble (citation, caractère, ordre des sections). */
+  const pubSetPreset = (presetId) => {
+    const detached = { ...activeFormat };
+    delete detached.journal;
+    delete detached.order;
+    delete detached.bibLabel;
     setActiveFormat({
       ...buildPubFormat(presetId),
-      /* Le DOCUMENT ne bouge pas avec la CITATION : son ordre, ses intitulés et le
-         journal d'où ils viennent restent ceux de l'utilisateur. */
-      ...pubDocSettings(activeFormat),
+      ...pubDocSettings(detached),
       layout: normalizePubLayout(activeFormat.layout)
     });
+  };
 
   /* APPLIQUER UN JOURNAL — les TROIS choses du changement de journal d'un coup (la
      demande : « l'ordine delle sezioni, il formato della bibliografia, il carattere
@@ -2550,6 +2592,79 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
       docTitles: normalizePubDocTitles(activeFormat.docTitles)
     }, id);
     setActiveFormat({ ...withPreset, layout: normalizePubLayout(withPreset.layout) });
+  };
+
+  /* « Journal preset: » EST LE CONTROLE DU JOURNAL — un seul, pour que sa fonction
+     soit claire : une seule liste, avec ses groupes visibles, dit ce que chaque
+     choix change, et l'aperçu comme le document suivent. Il porte donc
+     TROIS natures d'options, en trois groupes visibles :
+       • `preset:<id>`   — un STYLE de bibliographie (Nature, ACS, APA…), la seule
+                           forme de la citation (pubSetPreset) ;
+       • `journal:<id>`  — un JOURNAL entier, qui refait d'un coup la citation, le
+                           caractère de chaque partie du document ET l'ordre de ses
+                           sections (pubSetJournal) ; `journal:` = « As in the app ».
+       • `style:<nom>`   — UN STYLE QUE L'UTILISATEUR A SAUVEGARDÉ (« My styles ») :
+                           tout le format d'un coup, tel qu'il l'a mis de côté
+                           (pubRecallStyle). C'est la réponse à « when I click on
+                           custom I will be able to define other styles that I must be
+                           able to save and recall. »
+     La valeur affichée suit ces trois-là (un style rappelé reste affiché, même si les
+     champs se règlent ensuite à la main). */
+  const pubJournalChoice = (fmt) => {
+    const style = fmt && fmt.style && pubStyles[fmt.style] ? fmt.style : '';
+    if (style) return `style:${style}`;
+    return fmt && fmt.journal
+      ? `journal:${fmt.journal}`
+      : `preset:${PUB_FORMAT_PRESETS[fmt && fmt.preset] ? fmt.preset : 'custom'}`;
+  };
+  const pubSetJournalChoice = (value) => {
+    const v = String(value || '');
+    if (v.startsWith('style:')) pubRecallStyle(v.slice('style:'.length));
+    else if (v.startsWith('journal:')) pubSetJournal(v.slice('journal:'.length));
+    else pubSetPreset(v.slice('preset:'.length));
+  };
+  /* ── LES STYLES SAUVEGARDÉS (« Custom ») ──────────────────────────────────────
+     💾 SAUVEGARDER le format affiché sous un nom (celui du style rappelé est proposé,
+     sinon celui du journal) ; 🗑 OUBLIER le style affiché ; la liste du contrôle les
+     propose dans son groupe « My styles ». Sauver sous un nom déjà pris le REMPLACE —
+     c'est ce que l'utilisateur demande en le tapant à nouveau. */
+  const pubStyleName = () => activeFormat.style
+    || (journalOf(activeFormat) ? journalLabelOf(journalOf(activeFormat)) : '');
+  const pubSaveStyle = () => {
+    let name = '';
+    try {
+      name = window.prompt('Save this publication format as a style — its name appears in “My styles”:', pubStyleName()) || '';
+    } catch { name = ''; }
+    if (!String(name).trim()) return;
+    const styles = savePubStyle(name, activeFormat);
+    setPubStyles(styles);
+    const key = Object.keys(styles).find((k) => k.toLowerCase() === String(name).trim().toLowerCase())
+      || String(name).trim();
+    /* LE FORMAT AFFICHÉ DEVIENT CE STYLE (il en porte le nom) : la liste le montre, et
+       💾 le réécrira sous ce nom-là. */
+    setActiveFormat({ ...activeFormat, style: key });
+    setPubStyleMsg(`💾 saved “${key}” — it is in “My styles”, and it follows you on the Drive`);
+  };
+  const pubForgetStyle = () => {
+    const key = activeFormat.style;
+    if (!key) return;
+    let go = true;
+    try {
+      go = window.confirm(`Forget the style “${key}”? The format you are using stays as it is — only the saved copy goes.`);
+    } catch { go = false; }
+    if (!go) return;
+    setPubStyles(removePubStyle(key));
+    setActiveFormat({ ...activeFormat, style: '' });
+    setPubStyleMsg(`🗑 “${key}” forgotten (the format in use is untouched)`);
+  };
+  /** RAPPELER UN STYLE : le format enregistré devient celui qui s'applique — citation,
+     caractère des parties, ordre ET intitulés des sections, renvois du texte. Un nom
+     qui n'existe plus (oublié sur un autre poste) ne rappelle rien. */
+  const pubRecallStyle = (name) => {
+    const stored = pubStyles[String(name || '')];
+    if (!stored) { setActiveFormat(activeFormat); return; }
+    setActiveFormat({ ...stored, style: stored.style || String(name) });
+    setPubStyleMsg(`↺ “${stored.style || name}” is back: citation, typography, section order and titles`);
   };
 
   const pubMoveField = (fieldId, dir) => {
@@ -2630,23 +2745,53 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
               <option key={prj.id} value={prj.name}>📁 {prj.name}{prj.pubFormat ? ' ✎' : ''}</option>
             ))}
           </select>
-          <label className="text-[10px] font-black uppercase tracking-wide text-slate-400">Journal preset:</label>
-          <select value={activeFormat.preset} onChange={(e) => pubSetPreset(e.target.value)}
-                  className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-semibold text-slate-700">
-            {Object.entries(PUB_FORMAT_PRESETS).map(([id, p]) => (
-              <option key={id} value={id}>{p.label}</option>
-            ))}
-            <option value="custom">Custom</option>
-          </select>
-          <label className="text-[10px] font-black uppercase tracking-wide text-slate-400">Submit to:</label>
-          <select value={journalOf(activeFormat)} onChange={(e) => pubSetJournal(e.target.value)}
+          <label className="text-[10px] font-black uppercase tracking-wide text-slate-400"
+                 title="The citation / bibliography style and the journal the paper is meant for. One control, two groups: a bibliography STYLE changes the references only; a JOURNAL changes the references AND the character and the order of the sections of the project document, in one click.">
+            Journal preset:
+          </label>
+          <select value={pubJournalChoice(activeFormat)} onChange={(e) => pubSetJournalChoice(e.target.value)}
                   className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-semibold text-slate-700"
-                  title="Send the SAME work to another journal in one click: the citation and the bibliography style, the character (font, size, alignment, bold, italic) of every part of a project document and the ORDER of its sections change together. Everything stays editable below, and « As in the app » puts the document back the way it was.">
-            <option value="">↺ As in the app (no journal)</option>
-            {JOURNAL_IDS.map((id) => (
-              <option key={id} value={id}>{JOURNAL_FORMATS[id].label}</option>
-            ))}
+                  title="Send the SAME work to another journal in one click: the citation and the bibliography style, the character (font, size, alignment, bold, italic) of every part of a project document and the ORDER of its sections change together. A bibliography style on its own changes the references only. Everything stays editable below, and « As in the app » puts the document back the way it was.">
+            <optgroup label="Bibliography style — the references only">
+              {Object.entries(PUB_FORMAT_PRESETS).map(([id, p]) => (
+                <option key={id} value={`preset:${id}`}>{p.label}</option>
+              ))}
+              <option value="preset:custom">Custom</option>
+            </optgroup>
+            <optgroup label="Journal — references, typography and section order">
+              <option value="journal:">↺ As in the app (no journal)</option>
+              {JOURNAL_IDS.map((id) => (
+                <option key={id} value={`journal:${id}`}>{JOURNAL_FORMATS[id].label}</option>
+              ))}
+            </optgroup>
+            {/* LES STYLES QUE L'UTILISATEUR A SAUVEGARDÉS (« Custom » à rappeler) :
+                le nom rappelle TOUT le format d'un coup, et 💾/🗑 juste à côté les
+                sauvent ou les oublient. */}
+            <optgroup label="My styles — saved by you (Custom)">
+              {Object.keys(pubStyles).length === 0 ? (
+                <option value="style:" disabled>· none saved yet — 💾 saves the format shown ·</option>
+              ) : (
+                Object.keys(pubStyles).map((name) => (
+                  <option key={name} value={`style:${name}`}>{name}</option>
+                ))
+              )}
+            </optgroup>
           </select>
+          <button type="button" onClick={pubSaveStyle}
+                  className="px-2 py-1 rounded-lg text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100"
+                  title="Save the publication format shown (citation, typography, section order and titles, in-text style) under a name: it appears in “My styles”, here and on every computer (it follows you on the Drive). Saving under a name that already exists replaces it.">
+            💾 Save style…
+          </button>
+          {activeFormat.style && (
+            <button type="button" onClick={pubForgetStyle}
+                    className="px-2 py-1 rounded-lg text-[10px] font-bold bg-white text-slate-600 border border-slate-300 hover:bg-slate-100"
+                    title="Forget the saved style shown. The format you are using stays exactly as it is — only the saved copy goes.">
+              🗑 Forget “{activeFormat.style}”
+            </button>
+          )}
+          {pubStyleMsg && (
+            <span className="text-[10px] italic text-slate-500 max-w-[20rem] truncate" title={pubStyleMsg}>{pubStyleMsg}</span>
+          )}
           {journalOf(activeFormat) && (
             <span className="text-[10px] italic text-slate-500 max-w-[22rem] truncate"
                   title={`${JOURNAL_FORMATS[journalOf(activeFormat)].notes} — sections of the exported document, in this journal's order: ${journalSectionOrder(activeFormat).join(' → ')}. A title this journal does not name does not move, and every setting stays editable in the panel below.`}>
@@ -2656,138 +2801,88 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
         </div>
       </div>
       <div className="p-4">
+        {/* L'APERÇU VIVANT — LE DOCUMENT DU PROJET (il REMPLACE l'ancien aperçu de
+            la seule citation, « Live preview — default », qui ne montrait ni la mise
+            en forme ni l'ordre des sections — la demande : « the following "Live
+            preview — default" subsection is obsolete and it should be substituted by
+            the "Live preview — project document" section »). C'est le MÊME moteur que
+            la page du projet : la feuille de style en cours de réglage (pubLayoutCss)
+            sur une tête de document, ses sections, sa figure et sa bibliographie. */}
         <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-4">
-          <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-1">
-            Live preview {pubFormatScope !== 'default' ? `— project “${pubFormatScope}”` : '— default'}
+          <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-1"
+               title="What the project document will look like: the live sheet of the settings below, on a document that has the same parts as a project's.">
+            Live preview — project document{pubFormatScope !== 'default' ? ` (project “${pubFormatScope}”)` : ' (default format)'}
           </div>
-          <div className="text-sm text-slate-800" dangerouslySetInnerHTML={{ __html: pubCitationHtml(samplePub, activeFormat, citationScientists) || '—' }} />
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-lg p-3 mb-4 flex flex-wrap items-center gap-x-6 gap-y-2">
-          <div className="flex items-center gap-2">
-            <label className="text-[11px] font-bold text-slate-600 whitespace-nowrap"
-                   title="Author position after which the citation is cut short with “et al.” (0 = never truncate)">
-              et al. after
-            </label>
-            <input type="number" min="0" max="99" value={activeFormat.etAlLimit || 0}
-                   onChange={(e) => pubPatchFormat({ etAlLimit: Math.max(0, parseInt(e.target.value, 10) || 0) })}
-                   className="w-16 border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none" />
-            <span className="text-[10px] text-slate-400 whitespace-nowrap">authors (0 = never)</span>
-          </div>
-          <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 cursor-pointer"
-                 title="The scientists of the user list always keep their name in the citation, even when they come after the “et al.” cutoff">
-            <input type="checkbox" checked={!!activeFormat.alwaysShowScientists}
-                   onChange={(e) => pubPatchFormat({ alwaysShowScientists: e.target.checked })}
-                   className="w-3.5 h-3.5 accent-indigo-600" />
-            Always show lab scientists even after “et al.”
-          </label>
-        </div>
-
-        {/* LA FORME DES RENVOIS DANS LE TEXTE (« come appaiono i riferimenti
-            bibliografici nel testo ») : exposant, crochets, parenthèses, ou le
-            nom des auteurs suivi de l'année. C'est une propriété du FORMAT, donc
-            elle vaut pour le document du projet, sa version imprimée et son
-            export — document figé compris, où les renvois sont reformés à
-            l'affichage (voir applyInTextStyle dans utils/referenceLinks.js). */}
-        <div className="bg-white border border-slate-200 rounded-lg p-3 mb-4">
-          <div className="flex flex-wrap items-center gap-2 mb-2">
-            <span className="text-[10px] font-black uppercase tracking-wide text-slate-400"
-                  title="How every numbered citation of the project document is printed in the text">
-              In-text citations (project document)
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {IN_TEXT_STYLES.map((s) => {
-              const current = normalizeInTextStyle(activeFormat.inTextStyle) === s.id;
-              return (
-                <button type="button" key={s.id} onClick={() => pubPatchFormat({ inTextStyle: s.id })}
-                        title={s.title}
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
-                          current ? 'bg-indigo-600 text-white border-indigo-600'
-                            : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'}`}>
-                  {s.label}
-                </button>
-              );
-            })}
-          </div>
-          <p className="text-[11px] text-slate-500 mt-2">
-            Example:{' '}
-            <span className="text-slate-800"
-                  dangerouslySetInnerHTML={{ __html: inTextSample(activeFormat.inTextStyle) }} />
-          </p>
-        </div>
-
-        {/* Every author of the paper is listed (the “et al.” rule above is
-            untouched): here you choose how the lab members' names are dressed
-            up in the citation — each member independently. */}
-        <div className="bg-white border border-slate-200 rounded-lg p-3 mb-4">
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-            <span className="text-[10px] font-black uppercase tracking-wide text-slate-400">
-              Lab members in the citation ({citationScientists.length})
-            </span>
-            <div className="flex flex-wrap items-center gap-1">
-              <span className="text-[10px] font-bold text-slate-400">Set all to</span>
-              {AUTHOR_STYLES.map((s) => (
-                <button type="button" key={s.id} onClick={() => pubSetAllScientistStyles(s.id)}
-                        title={`${s.title} — for every lab member`}
-                        className="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-[11px] font-bold text-slate-700">
-                  {s.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          {citationScientists.length === 0 ? (
-            <p className="text-xs italic text-slate-400">
-              No lab member yet — the scientists of the user list (plus the names added with ➕ in
-              the publications table) can be styled here.
+          <div id="pub-layout-preview" className="bg-white border border-slate-200 rounded-lg p-3">
+            <style>{pubLayoutCss(activeFormat, '#pub-layout-preview')}</style>
+            {/* LA TÊTE COMME LE DOCUMENT FINAL LA LIT : le titre, une LIGNE VIDE, les
+                auteurs, une LIGNE VIDE, les affiliations — « in the final document the
+                list of authors must be separated by the title with one empty line. an
+                empty line must also separate the authors from the affiliations. » La
+                ligne vide est le même paragraphe que la page du projet écrit (voir
+                DOC_EMPTY_LINE_CLASS, journalFormats.js) : l'aperçu ne peut pas
+                promettre autre chose que le document. */}
+            <h1 className="pf-title text-lg font-black text-slate-800 mb-1">Antimicrobial peptides in lipid bilayers</h1>
+            <div className={DOC_EMPTY_LINE_CLASS} aria-hidden="true">&nbsp;</div>
+            <p className="pf-authors text-xs font-semibold text-slate-700">
+              Rossi M<sup>1,2</sup>, Bianchi A<sup>3</sup>, Smith J<sup>1</sup>
             </p>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
-              {citationScientists.map((name) => {
-                const current = scientistStyleOf(name, activeFormat);
-                return (
-                  <div key={name} className="flex items-center justify-between gap-2 border border-slate-200 rounded-lg px-2 py-1">
-                    <span className="text-xs font-semibold text-slate-700 truncate" title={name}>{name}</span>
-                    <div className="flex items-center gap-0.5 shrink-0">
-                      {AUTHOR_STYLES.map((s) => (
-                        <button type="button" key={s.id} onClick={() => pubSetScientistStyle(name, s.id)}
-                                title={s.title}
-                                className={`px-1.5 py-0.5 rounded text-[11px] font-bold transition ${current === s.id ? 'bg-indigo-600 text-white shadow' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-                          {s.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {!!activeFormat.underlineScientists && (
-            <p className="text-[10px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-2">
-              ⚠ The old “Underline their names” setting of this format is still on: every lab member
-              without a style of its own is underlined. Pick a style (or “Set all to”) to replace it.
+            <div className={DOC_EMPTY_LINE_CLASS} aria-hidden="true">&nbsp;</div>
+            <p className="pf-affiliations text-[10px] text-slate-500 italic whitespace-pre-line mb-2">
+              1 Dipartimento di Agraria, Portici, Italy{'\n'}3 INRAE, Villenave d’Ornon, France
             </p>
-          )}
+            <h2 className="pf-heading text-sm font-black text-slate-800 border-b border-slate-200 pb-1 mb-1">Results and Discussion</h2>
+            <p className="pf-body text-xs text-slate-800 mb-2">
+              The peptides were tested against <i>M. persicae</i>; the activity was confirmed previously
+              <sup><a className="cite-ref" href="#ref-1" data-ref="1">1</a></sup>.
+            </p>
+            <figure className="pf-figure m-0">
+              <div className="border border-slate-200 rounded bg-white h-10 flex items-center justify-center text-[10px] text-slate-400">
+                🖼 figure
+              </div>
+              <figcaption className="pf-caption text-[10px] text-slate-500 mt-1">
+                Figure 1. Aphid transmission of the virus.
+              </figcaption>
+            </figure>
+            <ol className="pf-bib list-decimal pl-4 text-[10px] text-slate-800 mt-2 space-y-0.5">
+              <li>Rossi M, Bianchi A. <i>J. Biol. Chem.</i> 2024, 300, 105678.</li>
+            </ol>
+          </div>
         </div>
 
-        {/* LA MISE EN FORME DU DOCUMENT — « il formato del testo per le varie
-            sezioni » : police, taille, position (gauche / centré / droite /
-            justifié), style (gras, italique, souligné) et couleur de chaque
-            partie du document, et la même chose pour les FIGURES. Comme la
-            forme des renvois, le choix vit dans le format et s'applique à la
-            page du projet, à son document imprimé et à son PDF (voir
+        {/* LES RÉGLAGES DES RÉFÉRENCES SONT PLUS BAS (« the settings of references
+            must follow » la mise en forme et les sections du document). */}
+
+        {/* LES MEMBRES DU LABORATOIRE DANS LA CITATION SONT PLUS BAS : la demande
+            « followed by the “Lab members in the citation” » les met APRÈS les
+            réglages des références. */}
+
+        {/* ══ LA MISE EN FORME *ET* LES SECTIONS DU DOCUMENT, DANS UNE CARTE ═══════
+            La demande : « The “document layout” section must be fused with the
+            “document sections” ». Ce sont les deux faces de la même chose : le
+            CARACTÈRE de chaque partie du document (ci-dessous) et l'ORDRE de ces
+            parties dans le document (la rubrique qui suit, dans cette même carte,
+            avec ses intitulés). « il formato del testo per le varie sezioni » :
+            police, taille, position (gauche / centré / droite / justifié), style
+            (gras, italique, souligné) et couleur — figures comprises. Comme la forme
+            des renvois, le choix vit dans le format et s'applique à la page du
+            projet, à son document imprimé, à son PDF et à son export (voir
             pubLayoutCss : une seule feuille de style, écrite ici). */}
         <div className="bg-white border border-slate-200 rounded-lg p-3 mb-4">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
             <span className="text-[10px] font-black uppercase tracking-wide text-slate-400"
-                  title="Formatting of the project document: font, size, position (left / centre / right / justified), style (bold, italic, underlined) and colour of every part of the document — figures included. Nothing is imposed until you choose it.">
-              Document layout (project document)
+                  title="Formatting of the project document — font, size, position (left / centre / right / justified), style (bold, italic, underlined) and colour of every part, figures included — AND the order and titles of its sections (just below). Nothing is imposed until you choose it.">
+              Document layout & sections (project document)
             </span>
             <button type="button" onClick={pubResetAllLayout}
                     className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-300 hover:bg-slate-200"
                     title="Remove every formatting choice: the project document goes back to the look of the app">
               ↺ Reset all
             </button>
+          </div>
+          <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-1.5"
+               title="One row per part of the document: font family, size in points, position (left / centre / right / justified), bold / italic / underlined (three states: imposed, removed, as in the app) and colour.">
+            Formatting of every part
           </div>
           <div className="flex flex-col gap-1.5">
             {PUB_LAYOUT_PARTS.map((part) => {
@@ -2863,70 +2958,69 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
               );
             })}
           </div>
-          {/* L'APERÇU VIVANT : le même texte qu'un document de projet, rendu par
-              la feuille de style en cours de réglage — c'est la MÊME fonction
-              que la page du projet (voir pubLayoutCss) : ce qui se voit ici est
-              ce que le document montrera. */}
-          <div className="mt-3">
-            <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-1">
-              Live preview — project document
-            </div>
-            <div id="pub-layout-preview" className="bg-slate-50 border border-slate-200 rounded-lg p-3">
-              <style>{pubLayoutCss(activeFormat, '#pub-layout-preview')}</style>
-              <h1 className="pf-title text-lg font-black text-slate-800 mb-1">Antimicrobial peptides in lipid bilayers</h1>
-              <p className="pf-authors text-xs font-semibold text-slate-700">
-                Rossi M<sup>1,2</sup>, Bianchi A<sup>3</sup>, Smith J<sup>1</sup>
-              </p>
-              <p className="pf-affiliations text-[10px] text-slate-500 italic whitespace-pre-line mb-2">
-                1 Dipartimento di Agraria, Portici, Italy{'\n'}3 INRAE, Villenave d’Ornon, France
-              </p>
-              <h2 className="pf-heading text-sm font-black text-slate-800 border-b border-slate-200 pb-1 mb-1">Results and Discussion</h2>
-              <p className="pf-body text-xs text-slate-800 mb-2">
-                The peptides were tested against <i>M. persicae</i>; the activity was confirmed previously
-                <sup><a className="cite-ref" href="#ref-1" data-ref="1">1</a></sup>.
-              </p>
-              <figure className="pf-figure m-0">
-                <div className="border border-slate-200 rounded bg-white h-10 flex items-center justify-center text-[10px] text-slate-400">
-                  🖼 figure
-                </div>
-                <figcaption className="pf-caption text-[10px] text-slate-500 mt-1">
-                  Figure 1. Aphid transmission of the virus.
-                </figcaption>
-              </figure>
-              <ol className="pf-bib list-decimal pl-4 text-[10px] text-slate-800 mt-2 space-y-0.5">
-                <li>Rossi M, Bianchi A. <i>J. Biol. Chem.</i> 2024, 300, 105678.</li>
-              </ol>
-            </div>
-          </div>
-        </div>
+          {/* L'aperçu vivant du document est REMONTÉ EN TÊTE du panneau (voir « Live
+              preview — project document ») : il n'a pas à être répété ici, et cette
+              carte porte désormais AUSSI l'ordre et les intitulés des sections. */}
 
-        {/* ── LES SECTIONS DU DOCUMENT : ORDRE ET INTITULÉS ─────────────────────
+        {/* ── LES SECTIONS DU DOCUMENT : ORDRE ET INTITULÉS (dans la MÊME carte que
+            la mise en forme — « the “document layout” section must be fused with the
+            “document sections” ») ───────────────────────────────────────────────
             La demande : « In the publication format I cannot change the order of the
             sections nor change the titles of the subsections. I want to be able for
             example to put the author before the title or change the name of “materials
             and methods” into “experimental section” or whatever. »
-            Chaque bloc du document a ses ▲▼ (voir PUB_DOC_BLOCKS) ; ceux dont le
-            PROGRAMME écrit l'intitulé ont en plus un champ — c'est le seul texte du
-            document qu'il écrit lui-même — et un ↺ rend l'intitulé du programme. Le
-            texte de l'auteur, lui, n'est jamais touché. */}
-        <div className="bg-white border border-slate-200 rounded-lg p-3 mb-4">
+            ON GLISSE UNE RANGÉE SUR UNE AUTRE (« movable by drag and drop rather than
+            arrows ») : la rangée prise prend la place de la rangée visée (voir
+            pubDocOrderDropped). Ceux dont le PROGRAMME écrit l'intitulé ont en plus un
+            champ — c'est le seul texte du document qu'il écrit lui-même — et un ↺ rend
+            l'intitulé du programme. Le texte de l'auteur, lui, n'est jamais touché. */}
+        <div className="mt-4 border-t border-slate-200 pt-3">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
             <span className="text-[10px] font-black uppercase tracking-wide text-slate-400"
-                  title="The blocks of the project document, in the order they are printed (page, printed document, PDF, export). Move one with ▲▼; rename a heading the program writes with its field.">
+                  title="The blocks of the project document, in the order they are printed (page, printed document, PDF, export). Drag a row onto another one to move it; rename a heading the program writes with its field.">
               Document sections (order & titles)
             </span>
-            <button type="button" onClick={pubResetDocSections}
-                    className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-300 hover:bg-slate-200"
-                    title="Put the blocks of the document back in the app's order, with the app's own section titles">
-              ↺ Default order & titles
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] italic text-slate-400" aria-hidden="true">⠿ drag a row onto another one</span>
+              <button type="button" onClick={pubResetDocSections}
+                      className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-300 hover:bg-slate-200"
+                      title="Put the blocks of the document back in the app's order, with the app's own section titles">
+                ↺ Default order & titles
+              </button>
+            </div>
           </div>
           <div className="flex flex-col gap-1">
             {docOrder.map((id) => {
               const block = PUB_DOC_BLOCKS.find((b) => b.id === id);
               if (!block) return null;
               return (
-                <div key={id} className="flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
+                <div key={id}
+                     draggable={!block.fixed}
+                     onDragStart={(e) => {
+                       if (block.fixed) return;
+                       setPubDocDragId(id);
+                       e.dataTransfer.effectAllowed = 'move';
+                       try { e.dataTransfer.setData('text/plain', id); } catch { /* navigateur sans dataTransfer */ }
+                     }}
+                     onDragOver={(e) => {
+                       /* Un bloc FIXE (la liste vivante des références) n'est pas une
+                          cible : la rangée prise ne peut pas passer derrière lui. */
+                       if (block.fixed) return;
+                       e.preventDefault();
+                       e.dataTransfer.dropEffect = 'move';
+                       setPubDocOverId(id);
+                     }}
+                     onDragLeave={() => setPubDocOverId((v) => (v === id ? '' : v))}
+                     onDrop={(e) => { e.preventDefault(); e.stopPropagation(); pubDropDocBlock(id); }}
+                     onDragEnd={() => { setPubDocDragId(''); setPubDocOverId(''); }}
+                     title={block.fixed
+                       ? 'The live list of the references of the project is always printed last'
+                       : 'Drag this row onto another one: the block takes its place'}
+                     className={`flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 transition ${
+                       block.fixed ? '' : 'cursor-grab active:cursor-grabbing'} ${
+                       pubDocDragId === id ? 'opacity-50' : ''} ${
+                       pubDocOverId === id && pubDocDragId && pubDocDragId !== id ? 'ring-2 ring-indigo-400 border-indigo-300' : ''}`}>
+                  <span className="text-xs text-slate-400 select-none" aria-hidden="true">{block.fixed ? '🔒' : '⠿'}</span>
                   <span className="w-32 text-[11px] font-bold text-slate-700">{block.label}</span>
                   {block.titled ? (
                     <input type="text" value={docTitles[id] || ''} placeholder={block.title}
@@ -2941,22 +3035,90 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                             className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-white border border-slate-300 text-slate-600 hover:bg-slate-100"
                             title={`Back to “${block.title}”`}>↺</button>
                   )}
-                  <div className="ml-auto flex items-center gap-0.5">
-                    <button type="button" onClick={() => pubMoveDocBlock(id, -1)} disabled={block.fixed}
-                            title={block.fixed ? 'The live list of the references of the project is always printed last' : 'Move up'}
-                            className="w-6 h-6 flex items-center justify-center rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold disabled:opacity-40">▲</button>
-                    <button type="button" onClick={() => pubMoveDocBlock(id, 1)} disabled={block.fixed}
-                            title={block.fixed ? 'The live list of the references of the project is always printed last' : 'Move down'}
-                            className="w-6 h-6 flex items-center justify-center rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold disabled:opacity-40">▼</button>
-                  </div>
+                  {block.fixed && (
+                    <span className="ml-auto text-[9px] italic text-slate-400 whitespace-nowrap">always printed last</span>
+                  )}
                 </div>
               );
             })}
           </div>
         </div>
+        {/* Ici se ferme la carte « Document layout & sections » : la mise en forme ET
+            l'ordre des sections sont une seule rubrique (« fused »). */}
+        </div>
 
-        <div className="flex flex-col gap-1.5">
-          {[...activeFormat.fields].sort((a, b) => a.order - b.order).map((f) => (
+        {/* ══ LES RÉGLAGES DES RÉFÉRENCES (« the settings of references must follow ») ══
+            Ce que le format écrit pour une référence et pour un renvoi du texte : la
+            règle « et al. », la forme des renvois dans le texte, et les champs de la
+            citation (auteurs, année, titre, revue, volume, pages, DOI) avec leur style,
+            leur préfixe et leur suffixe. Les noms des membres du laboratoire se règlent
+            juste après (« Lab members in the citation »). */}
+        <div className="bg-white border border-slate-200 rounded-lg p-3 mb-4">
+          <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-2"
+               title="How a reference is written and how the numbered citations of the text are printed.">
+            References (citation &amp; bibliography)
+          </div>
+
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 mb-3">
+            <div className="flex items-center gap-2">
+              <label className="text-[11px] font-bold text-slate-600 whitespace-nowrap"
+                     title="Author position after which the citation is cut short with “et al.” (0 = never truncate)">
+                et al. after
+              </label>
+              <input type="number" min="0" max="99" value={activeFormat.etAlLimit || 0}
+                     onChange={(e) => pubPatchFormat({ etAlLimit: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+                     className="w-16 border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none" />
+              <span className="text-[10px] text-slate-400 whitespace-nowrap">authors (0 = never)</span>
+            </div>
+            <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 cursor-pointer"
+                   title="The scientists of the user list always keep their name in the citation, even when they come after the “et al.” cutoff">
+              <input type="checkbox" checked={!!activeFormat.alwaysShowScientists}
+                     onChange={(e) => pubPatchFormat({ alwaysShowScientists: e.target.checked })}
+                     className="w-3.5 h-3.5 accent-indigo-600" />
+              Always show lab scientists even after “et al.”
+            </label>
+          </div>
+
+          {/* LA FORME DES RENVOIS DANS LE TEXTE (« come appaiono i riferimenti
+              bibliografici nel testo ») : exposant, crochets, parenthèses, ou le nom
+              des auteurs suivi de l'année. C'est une propriété du FORMAT, donc elle
+              vaut pour le document du projet, sa version imprimée et son export —
+              document figé compris, où les renvois sont reformés à l'affichage (voir
+              applyInTextStyle dans utils/referenceLinks.js). */}
+          <div className="mb-3">
+            <div className="flex flex-wrap items-center gap-2 mb-1.5">
+              <span className="text-[10px] font-black uppercase tracking-wide text-slate-400"
+                    title="How every numbered citation of the project document is printed in the text">
+                In-text citations (project document)
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {IN_TEXT_STYLES.map((s) => {
+                const current = normalizeInTextStyle(activeFormat.inTextStyle) === s.id;
+                return (
+                  <button type="button" key={s.id} onClick={() => pubPatchFormat({ inTextStyle: s.id })}
+                          title={s.title}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
+                            current ? 'bg-indigo-600 text-white border-indigo-600'
+                              : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'}`}>
+                    {s.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[11px] text-slate-500 mt-2">
+              Example:{' '}
+              <span className="text-slate-800"
+                    dangerouslySetInnerHTML={{ __html: inTextSample(activeFormat.inTextStyle) }} />
+            </p>
+          </div>
+
+          <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-1.5"
+               title="One row per field of a reference: shown or hidden, its style, and the text written before and after it.">
+            Fields of a reference
+          </div>
+          <div className="flex flex-col gap-1.5">
+            {[...activeFormat.fields].sort((a, b) => a.order - b.order).map((f) => (
             <div key={f.id} className={`flex flex-wrap items-center gap-2 bg-white border rounded-lg px-2.5 py-1.5 ${f.enabled ? 'border-slate-200' : 'border-slate-100 opacity-50'}`}>
               <input type="checkbox" checked={f.enabled}
                      onChange={(e) => pubPatchField(f.id, { enabled: e.target.checked })}
@@ -3010,6 +3172,71 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
             </button>
           </div>
         )}
+        </div>
+
+        {/* ══ LES MEMBRES DU LABORATOIRE DANS LA CITATION (« followed by the “Lab
+            members in the citation” » : c'est la dernière rubrique du panneau) ═════
+            Every author of the paper is listed (la règle « et al. » ci-dessus, elle, est
+            intacte) : ici on choisit comment le nom de chaque membre du laboratoire
+            s'écrit dans la citation — chacun pour soi. L'aperçu de la citation montre
+            les noms ainsi habillés. */}
+        <div className="bg-white border border-slate-200 rounded-lg p-3 mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+            <span className="text-[10px] font-black uppercase tracking-wide text-slate-400">
+              Lab members in the citation ({citationScientists.length})
+            </span>
+            <div className="flex flex-wrap items-center gap-1">
+              <span className="text-[10px] font-bold text-slate-400">Set all to</span>
+              {AUTHOR_STYLES.map((s) => (
+                <button type="button" key={s.id} onClick={() => pubSetAllScientistStyles(s.id)}
+                        title={`${s.title} — for every lab member`}
+                        className="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-[11px] font-bold text-slate-700">
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {citationScientists.length === 0 ? (
+            <p className="text-xs italic text-slate-400">
+              No lab member yet — the scientists of the user list (plus the names added with ➕ in
+              the publications table) can be styled here.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
+              {citationScientists.map((name) => {
+                const current = scientistStyleOf(name, activeFormat);
+                return (
+                  <div key={name} className="flex items-center justify-between gap-2 border border-slate-200 rounded-lg px-2 py-1">
+                    <span className="text-xs font-semibold text-slate-700 truncate" title={name}>{name}</span>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      {AUTHOR_STYLES.map((s) => (
+                        <button type="button" key={s.id} onClick={() => pubSetScientistStyle(name, s.id)}
+                                title={s.title}
+                                className={`px-1.5 py-0.5 rounded text-[11px] font-bold transition ${current === s.id ? 'bg-indigo-600 text-white shadow' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                          {s.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {!!activeFormat.underlineScientists && (
+            <p className="text-[10px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-2">
+              ⚠ The old “Underline their names” setting of this format is still on: every lab member
+              without a style of its own is underlined. Pick a style (or “Set all to”) to replace it.
+            </p>
+          )}
+          {/* L'APERÇU DE LA CITATION : la liste des références du format COURANT, avec
+              les noms des membres habillés — c'est ici que le réglage se voit. */}
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5 mt-3">
+            <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-1">
+              Live preview — citation{pubFormatScope !== 'default' ? ` (project “${pubFormatScope}”)` : ''}
+            </div>
+            <div className="text-sm text-slate-800" dangerouslySetInnerHTML={{ __html: pubCitationHtml(samplePub, activeFormat, citationScientists) || '—' }} />
+          </div>
+        </div>
       </div>
     </section>
   );
