@@ -173,28 +173,40 @@ eq(gen(byStyle, 'protein', 'sidechain').follow, false, '…et elles cessent de s
 eq(eff(byStyle, 'protein', 'sidechain').style, 'hide', '…donc la rangée « Side chains » ne dessine rien');
 ok(!HIER.rowFollowsGeneral(byStyle, 'protein', 'sidechain'), '…et son badge « ← General » disparaît');
 
-/* 1c. « HIDE » SUR GENERAL = « PLUS DE DESCRIPTION GÉNÉRALE », PAS « MOLÉCULE VIDE ».
-   Le rapport : « there is a bug in the general style of proteins … It is not working
-   anymore ». La règle exclusive de 1b emmenait `hide` avec elle : choisir « Hide » sur
-   General cachait AUSSI toutes les parties, la molécule disparaissait, et le seul
-   retour était de restyler Backbone · Side chains à la main. */
+/* 1c. « HIDE » SUR GENERAL DESCEND SUR LES PARTIES — LE RAPPORT DE CETTE SESSION :
+   « adesso quando general é su hide, si attivano backbone e sidechain che invece
+   dovrebbero essere entrambi su hide ». Chaque rangée connaît « Hide » (toutes les
+   listes de styles l'ont), donc la cascade de 1b cache AUSSI les parties : la rangée
+   du haut cesse de décrire la molécule ET celles du bas cessent de la dessiner —
+   c'est ce que « the whole molecule is hidden » veut dire. Le rapport PRÉCÉDENT
+   (« there is a bug in the general style of proteins … It is not working anymore »)
+   avait fait de « Hide » l'exception (chaque partie reprenait son propre style par
+   défaut), et une protéine « cachée » restait donc à l'écran en cartoon + licorice :
+   c'est exactement ce que ce rapport-ci décrit. La molécule n'est jamais perdue pour
+   autant — le ✔ de son en-tête la redessine, un style choisi sur N'IMPORTE quelle
+   rangée ramène sa partie, et le ↺ d'une rangée / de la section remet les défauts. */
 const hidden = HIER.setGeneralSectionField({}, 'protein', 'style', 'hide');
 eq(gen(hidden, 'protein', 'general').style, 'hide', 'General cesse de décrire la molécule (« Hide »)');
 ['backbone', 'sidechain'].forEach((sub) => {
-  eq(gen(hidden, 'protein', sub).style, HIER.defaultLookOf('protein', sub).style,
-    `« ${sub} » reprend SON style par défaut au lieu d’être caché avec General`);
-  eq(gen(hidden, 'protein', sub).follow, false,
-    '…et ne suit plus General (qui ne dessine plus rien du tout)');
-  ok(eff(hidden, 'protein', sub).style !== 'hide',
-    `…donc la rangée « ${sub} » DESSINE encore la molécule`);
+  eq(gen(hidden, 'protein', sub).style, 'hide',
+    `« ${sub} » est caché AVEC General (le rapport : « dovrebbero essere entrambi su hide »)`);
+  eq(gen(hidden, 'protein', sub).follow, true,
+    '…et il continue de le suivre : le badge dit que c’est GENERAL qui l’a caché');
+  eq(eff(hidden, 'protein', sub).style, 'hide',
+    `…donc la rangée « ${sub} » ne dessine RIEN`);
 });
-eq(eff(hidden, 'protein', 'backbone').style, 'cartoon', 'le squelette revient en cartoon');
-eq(eff(hidden, 'protein', 'sidechain').style, 'licorice', 'les chaînes latérales reviennent en licorice');
+// …et la molécule revient : General qui redessine, ou UNE rangée ramenée à la main.
+const backFromHide = HIER.setGeneralSectionField(hidden, 'protein', 'style', 'cartoon');
+eq(gen(backFromHide, 'protein', 'backbone').style, 'cartoon',
+  'un nouveau style sur General rallume le squelette (la cascade vaut à chaque fois)');
+const oneBack = HIER.setRowSectionField(hidden, 'protein', 'sidechain', 'style', 'licorice');
+eq(eff(oneBack, 'protein', 'sidechain').style, 'licorice',
+  '…et le style choisi sur une rangée cachée la ramène (le chemin de retour existe toujours)');
 
-// 1d. La règle est écrite UNE fois, pour les deux listes déroulantes (style · color by).
-const hiddenColor = HIER.setGeneralSectionField({}, 'protein', 'colorBy', 'hide');
-eq(gen(hiddenColor, 'protein', 'backbone').style, HIER.defaultLookOf('protein', 'backbone').style,
-  'la même règle vaut pour « Color by » : une seule description retirée, pas une molécule vide');
+// 1d. « Color by » sur General, lui, reste EXCLUSIF : une seule description à la fois.
+const hiddenColor = HIER.setGeneralSectionField({}, 'protein', 'colorBy', 'element');
+['backbone', 'sidechain'].forEach((sub) => eq(gen(hiddenColor, 'protein', sub).style, 'hide',
+  `« ${sub} » passe sur Hide quand General prend une coloration (une seule description)`));
 
 // 1e. Une case qui n’est PAS une description (opacité · rayons · matériau) descend.
 const soft = HIER.setGeneralSectionField({}, 'protein', 'opacity', 0.4);

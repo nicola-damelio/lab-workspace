@@ -33,6 +33,12 @@
    ========================================================================= */
 
 import { unzipSync, strFromU8 } from 'fflate';
+/* Le découpage nom / prénom et la convention d'écriture des auteurs
+   (« Smith, John A. » → « Smith JA ») vivent dans un seul module, partagé avec
+   les citations (components/pubCitation.js) et les sources web
+   (utils/referenceEnrich.js, Publications.jsx) : une seule règle, donc un seul
+   résultat, quelle que soit la revue d'origine de la liste. */
+import { canonicalName } from './authorNames.js';
 
 /** Extensions acceptées par les champs de fichier de l'interface. */
 export const REFERENCE_FILE_ACCEPT = '.docx,.txt,.ris,.bib,.nbib,.xml,.html,.htm,.md';
@@ -148,18 +154,6 @@ export const extractYear = (value) => {
 export const doiUrl = (doi) => (doi ? `https://doi.org/${doi}` : '');
 export const pmidUrl = (pmid) => (pmid ? `https://pubmed.ncbi.nlm.nih.gov/${pmid}/` : '');
 
-const initialsOf = (given) => String(given || '')
-  /* « W.-J. » : le trait d'union RELIE deux initiales (« Lu, W.-J. » → « Lu W-J »).
-     Tant qu'il était traité comme un simple séparateur, la liste d'auteurs
-     s'arrêtait après « W. » : le « -J. » resté en tête de la référence devenait
-     le TITRE du papier et les auteurs étaient tronqués — c'est la référence
-     « Lu, W.-J. et al. Mortalin-p53 interaction… » signalée. */
-  .trim()
-  .split(/\s*-\s*/)
-  .map((part) => part.split(/[\s.,;]+/).filter(Boolean).map((w) => w[0].toUpperCase()).join(''))
-  .filter(Boolean)
-  .join('-');
-
 /* Initiales d'un auteur : « J. », « JA », « M.A. », « W.-J. » — mais jamais la
    1re lettre du mot suivant (« Costa, L. Antimicrobial » : le « A » appartient
    au titre). Le TIRET relie deux initiales d'un même auteur (« W.-J. »), il ne
@@ -214,23 +208,11 @@ const ET_AL_HEAD_ONLY_RE = /^(?:et\.?\s*al\.?|and\s+others|&\s*others)\b/i;
 
 
 
-/** « Smith, John A. » / « John A. Smith » → « Smith JA » (la convention AUTEUR
- *  utilisée partout ailleurs dans l'application : nom, puis initiales). */
-export const formatAuthor = (value) => {
-  const s = String(value || '').trim().replace(/\.+$/, '');
-  if (!s) return '';
-  if (s.includes(',')) {
-    const idx = s.indexOf(',');
-    const family = s.slice(0, idx).trim();
-    const ini = initialsOf(s.slice(idx + 1));
-    return ini ? `${family} ${ini}` : family;
-  }
-  const words = s.split(/\s+/).filter(Boolean);
-  if (words.length < 2) return s;
-  const family = words.pop();
-  const ini = initialsOf(words.join(' '));
-  return ini ? `${family} ${ini}` : family;
-};
+/** « Smith, John A. » / « John A. Smith » / « J. A. Smith » → « Smith JA » (la
+ *  convention AUTEUR utilisée partout ailleurs dans l'application : nom, puis
+ *  initiales). Le découpage nom / prénom lui-même vit dans utils/authorNames.js
+ *  (une seule règle pour l'import, la citation et les renvois du texte). */
+export const formatAuthor = (value) => canonicalName(value);
 
 export const formatAuthors = (list) => (Array.isArray(list) ? list : [])
   .map(formatAuthor).filter(Boolean).join(', ');

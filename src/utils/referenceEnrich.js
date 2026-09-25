@@ -47,6 +47,9 @@
 
 import { fillMissingFields } from './referenceImport.js';
 import { pubCitationData, pubOriginOf } from '../components/pubCitation.js';
+/* La convention d'écriture des auteurs (voir utils/authorNames.js) : les
+   sources web rendent « Smith JA », jamais « John A. Smith ». */
+import { authorsFromParts } from './authorNames.js';
 
 /** Les champs qui rendent une citation utilisable, dans l'ordre d'importance. */
 export const REFERENCE_COMPLETION_FIELDS = [
@@ -209,16 +212,17 @@ export const completeFromPool = (entry, pool = []) => {
 /* ── 2. Crossref (en ligne) ───────────────────────────────────────────────── */
 
 /** Un « work » Crossref → la forme des références du programme (la même que
- *  searchCrossref de Publications.jsx : « Prénom Nom », liste complète). */
+ *  searchCrossref de Publications.jsx : « Prénom Nom », liste complète).
+ *  LES DEUX MORCEAUX SÉPARÉS DE CROSSREF SONT GARDÉS TELS QUELS (« given »,
+ *  « family ») : la liste sort dans la convention du laboratoire — « Smith JA »,
+ *  pas « John A. Smith » —, donc une citation ne garde plus l'écriture de la
+ *  revue d'origine (voir utils/authorNames.js). */
 export const crossrefReference = (item) => {
   const it = item || {};
   const year = it.issued?.['date-parts']?.[0]?.[0];
   return {
     title: (it.title && it.title[0]) || '',
-    authors: (it.author || [])
-      .map((a) => `${a.given || ''} ${a.family || ''}`.trim())
-      .filter(Boolean)
-      .join(', '),
+    authors: authorsFromParts(it.author),
     journal: (it['container-title'] && it['container-title'][0]) || '',
     year: year ? String(year) : '',
     volume: it.volume || '',

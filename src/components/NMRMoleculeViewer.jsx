@@ -3237,6 +3237,17 @@ const sectionLooksSig = (v) => JSON.stringify(MOL_KINDS.map((k) => [k, v && v[k]
    bases · ribose of a nucleic acid and for the headgroups · acyl chains · glycerol
    of a phospholipid without a single per-kind table.
 
+   « HIDE » ON GENERAL HIDES EVERY PART TOO (the report of this session: « adesso
+   quando general é su hide, si attivano backbone e sidechain che invece dovrebbero
+   essere entrambi su hide »): « Hide » is a style of EVERY row's vocabulary, so the
+   same cascade puts the parts on « Hide » — the row above stops describing the
+   molecule AND the rows below stop drawing it. It used to give every part its own
+   default style back (cartoon · licorice), so the protein stayed on screen while
+   its General row said « Hide » and the report is exactly that. Nothing is lost:
+   the ✔ of the molecule's header draws it again, a style chosen on ANY row brings
+   that part back (a hidden row says so), and the ↺ of a row / of the section puts
+   the defaults back.
+
    A COLOURING, ON THE OTHER HAND, IS EXCLUSIVE (the request: « in
    phospholipids, proteins and nucleic acids when general (type or colouring) is
    changed the other molecule parts (backbone, side chain, bases, acyl chain,
@@ -3245,9 +3256,12 @@ const sectionLooksSig = (v) => JSON.stringify(MOL_KINDS.map((k) => [k, v && v[k]
    drawings of the same atoms — the part would even keep the colouring
    « General » has just replaced. Every sub-part is therefore switched to
    « Hide », and it comes back by choosing a style on its OWN row (move 2), which
-   is exactly what « deviating from General » means. A hidden part also stops
-   FOLLOWING General (`follow: false`), because a row that follows would simply be
-   re-drawn with General's style — the hide would last one rebuild.
+   is exactly what « deviating from General » means. A part that had to fall back
+   on « Hide » — it cannot draw the value General hands down — also stops
+   FOLLOWING General (`follow: false`), because such a row would simply be
+   re-drawn with General's style at the next rebuild: the hide would last one
+   rebuild. A part hidden because GENERAL says « Hide » keeps following it
+   instead, so its badge names the row that decided it.
 
    THE TWO NUMBERS, THEMSELVES, REACH EVERY PART (the report: « Se modifico il
    raggio di una sfera in "General", il nuovo valore deve aggiornare
@@ -3294,20 +3308,6 @@ const setGeneralSectionField = (looks, kind, field, value) => {
     // until its own row is moved again (or its ↺ resets it), which is what makes
     // « one description of the molecule » hold.
     if (field === 'style' || field === 'colorBy') {
-      /* « HIDE » ON GENERAL MEANS « NO GENERAL DESCRIPTION », NOT « EMPTY MOLECULE ».
-         The exclusive rule below is right for a style / a colouring (the parts must
-         not be drawn twice on the same atoms), but it took `hide` with it: choosing
-         « Hide » on the General row hid every part as well, so the molecule vanished
-         and the only way back was restyling Backbone · Side chains by hand — the
-         report « there is a bug in the general style of proteins in the styling
-         window. It is not working anymore ». Hiding General now gives each part its
-         OWN default style back: the row above stops describing the molecule, and
-         the rows below (Backbone · Side chains · bases · ribose · head · tail ·
-         glycerol) draw it again, which is exactly what « no general style » means.
-         Measured (the §-cases of _viewer_general_row_test.mjs): General cartoon →
-         hide left the protein EMPTY before, and draws cartoon backbone + licorice
-         side chains now. */
-      if (value === 'hide') { next.style = defaultLookOf(kind, s.sub).style; next.follow = false; }
       /* THE PART THAT CAN DRAW WHAT GENERAL JUST CHOSE TAKES IT — and follows
          General again, so the « ← General » badge of its row says where the style
          comes from and the NEXT change of General reaches it. The part that cannot
@@ -3316,10 +3316,31 @@ const setGeneralSectionField = (looks, kind, field, value) => {
          vocabulary). Measured on the request: « General → Cartoon » gives Cartoon
          to Backbone and Hide to Side chains · bases · ribose · headgroups · acyl
          chains · glycerol; « General → Balls and sticks » gives Balls and sticks to
-         every one of them. */
-      else if (field === 'style') {
+         every one of them.
+
+         « HIDE » CASCADES LIKE ANY OTHER STYLE (the report of this session: « quando
+         general é su hide, si attivano backbone e sidechain che invece dovrebbero
+         essere entrambi su hide »): every row's vocabulary holds « Hide », so
+         choosing it on General hides every part as well — one drawing of the
+         molecule, and none while General says « Hide ». This used to be the one
+         exception (each part took its own default style back, so a « hidden »
+         protein stayed on screen as cartoon + licorice — the very report). The
+         parts keep FOLLOWING General here (see `follow` below), so they come back
+         with it, and the molecule is never lost: its header's ✔ draws it again and
+         any row's own ↺ puts the defaults back. */
+      if (field === 'style') {
         next.style = partStyleUnderGeneral(kind, s.sub, value);
-        next.follow = next.style !== 'hide';
+        /* A PART HIDDEN BECAUSE *GENERAL* SAYS « HIDE » KEEPS FOLLOWING GENERAL:
+           `effectiveSectionLook` hands General's 'hide' down to it, 'hide' is a
+           valid style of every row, so the row stays hidden — and its badge names
+           the row that decided it, so the next General change reaches it. A part
+           that had to fall back on « Hide » because it CANNOT draw General's style
+           (`surface` on side chains …) must stop following instead: for it,
+           General's style is not a valid style, so a follower would be handed its
+           own default back and drawn ON TOP of General's own drawing (the report
+           « sono come se non fossero eseguiti » — the row was re-drawn under the
+           style General had just chosen). */
+        next.follow = next.style !== 'hide' || value === 'hide';
       }
       else { next.style = 'hide'; next.follow = false; }
     }

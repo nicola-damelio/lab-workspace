@@ -67,10 +67,12 @@ const ITEM = {
   volume: '293', page: '105678-105689'
 };
 eq(crossrefReference(ITEM), {
-  title: 'Voltage-dependent gating of a membrane channel', authors: 'Marco Rossi, Anna Bianchi',
+  title: 'Voltage-dependent gating of a membrane channel', authors: 'Rossi M, Bianchi A',
   journal: 'Journal of Biological Chemistry', year: '2018', volume: '293', pages: '105678-105689',
   doi: '10.1016/j.jbc.2018.01.001'
-}, 'un « work » Crossref devient une référence du programme (mêmes conventions que Publications)');
+}, 'un « work » Crossref devient une référence du programme — et ses auteurs suivent la convention du '
+  + 'laboratoire (« Rossi M », pas « Marco Rossi ») : « il programma non distingue tra nome e cognome degli '
+  + 'autori… se cito una pubblicazione a volte c’è nome e cognome e a volte solo cognome ed iniziali »');
 eq(crossrefRequestFor({ doi: '10.1016/j.jbc.2018.01.001' }).url,
   'https://api.crossref.org/works/10.1016%2Fj.jbc.2018.01.001', 'un DOI connu ⇒ la requête exacte (pas de recherche)');
 ok(crossrefRequestFor({ title: '' }) === null, 'sans DOI ni titre, aucune requête (rien à chercher)');
@@ -101,7 +103,9 @@ const fetchJson = (payload) => {
 const webEntry = { id: 'r3', title: 'Voltage-dependent gating of a membrane channel', authors: '', doi: '10.1016/j.jbc.2018.01.001' };
 const byDoi = await completeFromCrossref(webEntry, { fetchImpl: fetchJson({ message: ITEM }) });
 eq(byDoi.filled, ['authors', 'journal', 'year', 'volume', 'pages'], 'Crossref remplit ce qui manquait (le DOI était déjà là)');
-eq(byDoi.entry.authors, 'Marco Rossi, Anna Bianchi', '…auteurs compris');
+eq(byDoi.entry.authors, 'Rossi M, Bianchi A',
+  '…auteurs compris — et écrits à la convention du laboratoire, jamais « Marco Rossi » '
+  + '(« la parte di autori rimane nel formato del giornale dove è stato pubblicato »)');
 eq(byDoi.failed, false, '…et la requête est un succès');
 
 const byTitle = await completeFromCrossref(
@@ -166,7 +170,7 @@ const FUMANO = {
 const trunc = { id: 'r9', title: 'Aphid transmission of a potyvirus', authors: 'Fumano, et al.' };
 const truncFetch = fetchJson({ message: { items: [FUMANO] } });
 const fixed = await enrichReference(trunc, { fetchImpl: truncFetch });
-eq(fixed.entry.authors, 'Marco Fumano, Anna Rossi, Luca Bianchi',
+eq(fixed.entry.authors, 'Fumano M, Rossi A, Bianchi L',
   'la liste RÉDUITE est remplacée par la liste COMPLÈTE du même papier');
 eq(fixed.entry.doi, '10.1099/jgv.0.001234', '…et le DOI manquant est trouvé');
 eq(fixed.entry.volume, '100', '…ainsi que le volume');

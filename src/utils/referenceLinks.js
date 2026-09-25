@@ -47,6 +47,10 @@ import {
   digitsToSuperscript, isAuthorMarkLine
 } from './manuscriptImport';
 import { entryKeys } from './referenceImport';
+/* Le découpage nom / prénom et le nom de famille, dans n'importe quelle
+   écriture d'auteur (« Rossi M », « John A. Smith », « Smith, John A. ») : le
+   même module que la citation, donc le même libellé (voir utils/authorNames.js). */
+import { familyNameOf, splitAuthorNames } from './authorNames.js';
 
 /** Classe CSS des liens de citation (stylée dans le document exporté). */
 export const CITE_LINK_CLASS = 'cite-ref';
@@ -250,23 +254,18 @@ export const linkCitationsInSections = (sections, refs, opts = {}) => {
    format change tout de suite le document affiché, le document imprimé et son
    PDF — comme la liste des références (voir pubCitationHtml). */
 
-/** Le nom de famille d'un auteur (« Rossi M » → « Rossi », « W.-J. Lu » → « Lu »). */
-const authorSurnameOf = (name) => {
-  const words = String(name || '').split(/\s+/).filter(Boolean)
-    /* Une INITIALE (« M. », « W.-J. », « A ») n'est pas un nom de famille. */
-    .filter((w) => !/^(?:\p{Lu}\.?-?){1,4}$/u.test(w));
-  return words.length ? words[words.length - 1] : '';
-};
+/** Le nom de famille d'un auteur — dans N'IMPORTE QUELLE écriture : « Rossi M »
+ *  → « Rossi », « John A. Smith » → « Smith », « Smith, John A. » → « Smith ».
+ *  C'est le seul morceau qu'un renvoi auteur-année imprime, et il vient du même
+ *  découpage nom / prénom que la citation (utils/authorNames.js) : une liste
+ *  venue de Crossref et une venue de PubMed donnent donc le MÊME libellé. */
+const authorSurnameOf = (name) => familyNameOf(name);
 
 /** Le libellé auteur-année d'une référence : « Rossi & Bianchi, 2018 »,
  *  « Rossi et al., 2018 » au-delà de deux auteurs. '' quand on ne peut pas le
  *  construire (le numéro reste alors affiché à sa place). */
 export const citeAuthorYearLabel = (ref) => {
-  const surnames = String((ref && ref.authors) || '')
-    .split(/\s*[,;]+\s*|\s+and\s+/i)
-    .map((s) => s.trim()).filter(Boolean)
-    .filter((s) => !/^et\s*al\.?$/i.test(s))
-    .map(authorSurnameOf).filter(Boolean);
+  const surnames = splitAuthorNames(ref && ref.authors).map(authorSurnameOf).filter(Boolean);
   const who = surnames.length === 0 ? ''
     : surnames.length === 1 ? surnames[0]
       : surnames.length === 2 ? `${surnames[0]} & ${surnames[1]}`

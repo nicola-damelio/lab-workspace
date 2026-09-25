@@ -22,12 +22,13 @@ import { register } from 'node:module';
 register('./_esm_test_hook.mjs', import.meta.url);
 const {
   JOURNAL_FORMATS, JOURNAL_IDS, applyJournalFormat, clearJournalFormat, journalLabelOf,
-  journalLayoutPatches, journalOf, journalSectionOrder, reorderDocHtml
+  journalLayoutPatches, journalOf, journalPubFields, journalSectionOrder, reorderDocHtml
 } = await import('./src/components/journalFormats.js');
 const {
   PUB_FORMAT_PRESETS, PUB_LAYOUT_PARTS, PUB_LAYOUT_PART_IDS,
-  buildPubFormat, buildPubLayout, normalizePubLayout, pubDocTitleKeywords, pubTextStyleIsSet
+  buildPubFormat, buildPubLayout, normalizePubLayout, pubCitationText, pubDocTitleKeywords, pubTextStyleIsSet
 } = await import('./src/components/pubCitation.js');
+const { NAME_STYLE_IDS, normalizeNameStyle } = await import('./src/utils/authorNames.js');
 
 let passed = 0;
 const ok = (cond, what) => { assert.ok(cond, what); passed += 1; };
@@ -202,5 +203,79 @@ ok(DOC.includes('const bodyHtml = projectDocBodyHtml();'),
 ok(DOC.includes('journalSectionOrder, reorderDocHtml'), '…grâce au ré-export de Publications');
 ok(PUB.includes('JOURNAL_FORMATS, JOURNAL_IDS, applyJournalFormat, clearJournalFormat,'),
   'les formats de journal sont ré-exportés par le bloc du paquet');
+
+/* ══ 5. LA ZONE « REFERENCES » SUIT LE JOURNAL ═══════════════════════════════
+   Signalé : « se imposto uno stile di giornale nel publication format, questo non
+   ha effetto sulla zona delle references. Per esempio in Science il title non
+   viene messo, ma se imposto su Science il tick sul title rimane e quindi nel
+   documento finale ho i titoli che non dovrebbero esserci. » Deux choses suivent
+   donc le journal : LES CHAMPS d'une référence (les ticks du panneau) et
+   L'ÉCRITURE DES NOMS d'auteurs. */
+{
+  const scie = journalPubFields(JOURNAL_FORMATS.science);
+  const titleRow = scie.find((f) => f.id === 'title');
+  ok(titleRow && titleRow.enabled === false,
+    'Science : le champ « Title » est ÉTEINT — le tick de la rubrique « References (citation & bibliography) » s\'éteint');
+  ok(scie.some((f) => f.id === 'title'),
+    '…mais la LIGNE du titre reste dans le panneau : elle est décochée, pas retirée (on peut la rallumer)');
+  eq(scie.filter((f) => f.enabled).map((f) => f.id), ['authors', 'journal', 'volume', 'pages', 'year'],
+    '…et les autres champs de la référence sont intacts');
+  JOURNAL_IDS.filter((id) => id !== 'science').forEach((id) => {
+    ok(journalPubFields(JOURNAL_FORMATS[id]).every((f) => f.enabled),
+      `${id} : aucun champ de référence n'est éteint (Science est la seule à ne pas imprimer le titre)`);
+  });
+  const applied = applyJournalFormat(buildPubFormat('nature'), 'science');
+  eq(applied.fields.map((f) => `${f.id}${f.enabled ? '' : '(off)'}`),
+    ['authors', 'title(off)', 'journal', 'volume', 'pages', 'year'],
+    'un journal arrivé au format écrit ses champs : ceux qu\'il porte, et ceux qu\'il éteint');
+  const pub = {
+    authors: 'Rossi M, Bianchi A', year: '2024', title: 'Un titre qui ne doit pas sortir',
+    journal: 'Science', volume: '1', pages: '2'
+  };
+  const cited = pubCitationText(pub, applied, []);
+  ok(!cited.includes('Un titre'),
+    '…et la citation n\'imprime plus le titre : « nel documento finale ho i titoli che non dovrebbero esserci »');
+  ok(cited.includes('Rossi'), '…les auteurs, eux, sont bien là');
+  const jacs = applyJournalFormat(buildPubFormat('nature'), 'jacs');
+  ok(pubCitationText(pub, jacs, []).includes('Un titre'),
+    'JACS, lui, garde le titre (et prend le DOI de son preset : la citation change vraiment)');
+  ok(journalPubFields(JOURNAL_FORMATS.jacs).some((f) => f.id === 'doi'),
+    '…le champ DOI existe dans sa liste de champs');
+}
+
+/* ══ 6. L'ÉCRITURE DES NOMS D'AUTEURS EST CELLE DU JOURNAL ═══════════════════
+   « se cito una pubblicazione a volte c'è nome e cognome e a volte solo cognome
+   ed iniziali. Quindi la parte di autori rimane nel formato del giornale dove è
+   stato pubblicato. » Une liste importée de Crossref (« John A. Smith ») et une
+   liste importée de PubMed (« Smith JA ») s'écrivent désormais comme LE JOURNAL
+   CHOISI le demande. */
+{
+  JOURNAL_IDS.forEach((id) => {
+    const fmt = applyJournalFormat(buildPubFormat('nature'), id);
+    ok(NAME_STYLE_IDS.includes(fmt.nameStyle), `${id} : le journal porte une écriture de noms connue (${fmt.nameStyle})`);
+  });
+  const pub = {
+    authors: 'John A. Smith, Maria Rossi', year: '2024', title: 'T',
+    journal: 'J', volume: '1', pages: '2'
+  };
+  const textOf = (id) => pubCitationText(pub, applyJournalFormat(buildPubFormat('nature'), id), []);
+  ok(textOf('science').startsWith('J. A. Smith, M. Rossi'), 'Science écrit « J. A. Smith » (initiales d\'abord)');
+  ok(textOf('jacs').startsWith('Smith, J. A., Rossi, M.'), 'JACS écrit « Smith, J. A. » (nom, virgule, initiales)');
+  ok(textOf('pnas').startsWith('Smith JA, Rossi M'), 'PNAS écrit « Smith JA » (nom puis initiales)');
+  eq(normalizeNameStyle(buildPubFormat('nature').nameStyle), 'asis',
+    'un format qui n\'a choisi AUCUN journal ne réécrit rien (« as written » : les citations d\'avant sont intactes)');
+  eq(applyJournalFormat(buildPubFormat('nature'), 'science').nameStyle,
+    JOURNAL_FORMATS.science.names, '…et le choix du journal revient à son entrée `names`');
+}
+
+/* LE PANNEAU PORTE CES DEUX RÉGLAGES (la rubrique « References ») */
+ok(PUB.includes('Author names'),
+  'le panneau a sa ligne « Author names » dans la rubrique « References (citation & bibliography) »');
+ok(PUB.includes('{NAME_STYLES.map((s) => {') && PUB.includes('pubPatchFormat({ nameStyle: s.id })'),
+  '…avec un bouton par écriture (« as written », « Smith JA », « Smith J. A. », « J. A. Smith », « Smith, J. A. »)');
+ok(PUB.includes('nameStyle: normalizeNameStyle(activeFormat.nameStyle)'),
+  '…et le choix survit au réglage d\'un champ de la citation (pubCustomFormat)');
+ok(PUB.includes('NAME_STYLES, normalizeNameStyle'),
+  '…le panneau importe les écritures du paquet (comme le reste du format)');
 
 console.log(`_journal_formats_test.mjs — ${passed} assertions passed`);

@@ -160,8 +160,8 @@ ok(/const citationScientists = useMemo\(/.test(src), 'les membres cités = scien
 ok(/\(extraScientists \|\| \[\]\)\.forEach/.test(src), 'les scientifiques ajoutés manuellement sont inclus');
 eq((src.match(/pubCitationHtml\(p, pubFormat, citationScientists\)/g) || []).length, 1,
   'le tableau des publications rend la citation avec ces membres');
-eq((src.match(/pubCitationHtml\(samplePub, activeFormat, citationScientists\)/g) || []).length, 1,
-  'l’aperçu du format utilise ces mêmes membres');
+eq((src.match(/pubCitationHtml\(samplePub, activeFormat, citationScientists\)/g) || []).length, 2,
+  'l’aperçu du format utilise ces mêmes membres — pour la citation du papier ET pour la référence de la bibliographie');
 ok(/AUTHOR_STYLES\.map/.test(src), 'le panneau itère sur les styles (boutons Aa / U / B)');
 ok(/pubSetScientistStyle\(name, s\.id\)/.test(src) && /pubSetAllScientistStyles\(s\.id\)/.test(src),
   'choix par membre et « Set all to » branchés');
@@ -570,5 +570,81 @@ ok(/paperAuthorsMsg && <div className="px-4 pt-3 text-xs font-semibold text-emer
 ok(/Every relevant paper already lists all its authors\./.test(src) &&
    /Every project paper already lists all its authors\./.test(src),
   '…et ne font rien quand toutes les listes sont déjà là');
+
+/* ── 16. NOMMER LES AUTEURS : NOM ET PRÉNOM SÉPARÉS, PUIS L'ÉCRITURE DU FORMAT ─
+   Signalé : « quando importo un articolo il programma non distingue tra nome e
+   cognome degli autori ma li prende in blocco, con il risultato che se cito una
+   pubblicazione a volte c'è nome e cognome e a volte solo cognome ed iniziali.
+   Quindi la parte di autori rimane nel formato del giornale dove è stato
+   pubblicato. » Le découpage et les quatre écritures vivent dans
+   utils/authorNames.js, et l'import comme la citation les partagent. ────────── */
+{
+  const N = await import('./src/utils/authorNames.js');
+
+  /* Le nom et le prénom, séparés — dans les écritures des quatre éditeurs. */
+  eq(N.nameParts('Smith, John A.'), { family: 'Smith', initials: 'JA' }, '« Smith, John A. » → nom + initiales');
+  eq(N.nameParts('John A. Smith'), { family: 'Smith', initials: 'JA' }, '…comme « John A. Smith » (Crossref)');
+  eq(N.nameParts('J. A. Smith'), { family: 'Smith', initials: 'JA' }, '…comme « J. A. Smith » (Elsevier)');
+  eq(N.nameParts('Smith JA'), { family: 'Smith', initials: 'JA' }, '…comme « Smith JA » (PubMed)');
+  eq(N.nameParts('van der Berg, Jan'), { family: 'van der Berg', initials: 'J' },
+    'les particules restent dans le nom de famille');
+  eq(N.nameParts('EPPO'), { family: 'EPPO', initials: '' }, 'un auteur collectif n\'a pas d\'initiales inventées');
+
+  /* Une LISTE ne se coupe pas au milieu d'un nom. */
+  eq(N.splitAuthorNames('Rossi M, Bianchi A'), ['Rossi M', 'Bianchi A'],
+    'deux auteurs de la convention du laboratoire restent deux');
+  eq(N.splitAuthorNames('Smith, John A., Rossi, Maria'), ['Smith, John A.', 'Rossi, Maria'],
+    'une liste « Nom, Prénom » ne se coupe pas en quatre');
+  eq(N.splitAuthorNames('John A. Smith, Maria Rossi'), ['John A. Smith', 'Maria Rossi'],
+    '…et une liste de noms complets reste deux auteurs');
+  eq(N.normalizeAuthors('John A. Smith, Maria Rossi'), 'Smith JA, Rossi M',
+    'toute liste ramenée à la convention du laboratoire');
+  eq(N.normalizeAuthors('Smith, John A.; Rossi, Maria'), 'Smith JA, Rossi M', '…dans les quatre écritures');
+  eq(N.normalizeAuthors('Smith JA, Rossi M'), 'Smith JA, Rossi M', '…et une liste déjà écrite ainsi ne bouge pas');
+  eq(N.authorsFromParts([{ given: 'John A.', family: 'Smith' }]), 'Smith JA',
+    'une liste STRUCTURÉE (Crossref, ORCID) est convertie sans rien re-deviner');
+
+  /* Les quatre écritures, et la forme collective. */
+  eq(N.formatAuthorName('Smith JA', 'family-initials'), 'Smith JA', 'écriture « Smith JA »');
+  eq(N.formatAuthorName('Smith JA', 'family-dot-initials'), 'Smith J. A.', 'écriture « Smith J. A. »');
+  eq(N.formatAuthorName('Smith JA', 'initials-family'), 'J. A. Smith', 'écriture « J. A. Smith »');
+  eq(N.formatAuthorName('Smith JA', 'family-comma-initials'), 'Smith, J. A.', 'écriture « Smith, J. A. »');
+  eq(N.formatAuthorName('John A. Smith', 'family-comma-initials'), 'Smith, J. A.',
+    '…quelle que soit l\'écriture d\'origine');
+  eq(N.formatAuthorName('EPPO', 'family-comma-initials'), 'EPPO', 'un collectif reste tel quel');
+
+  /* LE FORMAT DÉCIDE : deux listes venues de deux revues, la MÊME citation. */
+  const two = (authors) => ({ authors, year: '2024', title: 'T', journal: 'J' });
+  const written = (pub, style) => pubCitationText(pub, { ...buildPubFormat('nature'), nameStyle: style }, []);
+  eq(written(two('John A. Smith, Maria Rossi'), 'asis'), written(two('John A. Smith, Maria Rossi'), undefined),
+    '« as written » laisse la liste de Crossref exactement telle qu\'importée');
+  ok(written(two('John A. Smith, Maria Rossi'), 'asis').startsWith('John A. Smith, Maria Rossi'),
+    '…c\'est-à-dire « John A. Smith, Maria Rossi », pas « Smith JA »');
+  eq(written(two('Smith, John A.; Rossi, Maria'), 'family-initials'), written(two('Smith JA, Rossi M'), 'family-initials'),
+    'une fois l\'écriture choisie, Crossref, Elsevier et PubMed s\'écrivent PAREIL');
+  ok(written(two('John A. Smith'), 'initials-family').startsWith('J. A. Smith'),
+    '…et l\'écriture choisie s\'applique (initiales d\'abord)');
+  ok(renderAuthorNames(
+    { authors: 'John A. Smith' },
+    { ...buildPubFormat('nature'), nameStyle: 'family-initials', scientistStyles: { 'Smith J': 'underline' } },
+    ['Smith J']
+  ).html.includes('<u>Smith JA</u>'),
+  'souligner / mettre en gras un membre du laboratoire survit à la réécriture du nom');
+  eq(normalizePubFormat({ etAlLimit: 3 }).nameStyle, 'asis',
+    'un format enregistré avant ce choix garde « as written » (rien ne change tout seul)');
+  eq(N.NAME_STYLE_IDS.length, 5, 'cinq écritures proposées au panneau (dont « as written »)');
+
+  /* L'IMPORT ENTRE DANS LA CONVENTION : c'est là que le défaut commençait. */
+  const ENRICH = readFileSync(new URL('./src/utils/referenceEnrich.js', import.meta.url), 'utf8');
+  const IMPORT = readFileSync(new URL('./src/utils/referenceImport.js', import.meta.url), 'utf8');
+  ok(/authors: authorsFromParts\(it\.author\)/.test(ENRICH),
+    'le moteur de complétion (Crossref) écrit « Smith JA », plus « John A. Smith »');
+  ok(src.match(/authorsFromParts\(it\.author\)/g) && src.match(/authorsFromParts\(it\.author\)/g).length === 2,
+    'les deux recherches Crossref du panneau aussi');
+  ok(/canonicalName\(String\(a\?\.author\?\.display_name/.test(src), '…et OpenAlex (nom complet)');
+  ok(/canonicalName\(a && a\.name\)/.test(src), '…et PubMed (au cas où il donne « Nom, Prénom »)');
+  ok(/formatAuthor = \(value\) => canonicalName\(value\)/.test(IMPORT),
+    'formatAuthor (RIS, BibTeX, bibliographies « texte ») passe par la même règle : une seule, partout');
+}
 
 console.log(`_pub_author_style_test: ${passed} passed`);

@@ -134,6 +134,16 @@ export const nameParts = (value) => {
   return { family: tokens.slice(cut).join(' '), initials: initialsOf(tokens.slice(0, cut).join(' ')) };
 };
 
+/** « Smith, John A. » / « John A. Smith » / « J. A. Smith » → « Smith JA » : la
+ *  convention d'auteur de l'APPLICATION (voir utils/referenceImport.js, qui
+ *  l'appliquait déjà aux bibliographies « texte » et aux fichiers RIS/BibTeX ;
+ *  l'import web et le rendu des citations passent maintenant par ici). */
+export const canonicalName = (value) => {
+  const { family, initials } = nameParts(value);
+  if (!family) return '';
+  return initials ? `${family} ${initials}` : family;
+};
+
 /** Un bloc « prénom » : « John », « John A. », « J. ». Un mot entier seul, ou
  *  des initiales POINTÉES, ou un mélange des deux — jamais deux mots entiers
  *  (« Maria Rossi » est un nom, pas un prénom). */
@@ -158,52 +168,57 @@ const hasDottedInitial = (token) => String(token || '').split(' ')
 
 const ET_AL = /^(?:et\s*al\.?|and\s+others|&\s*others)$/i;
 
-/** « a, b and c » → ['a', 'b', 'c'] : « and », « & » et « et » séparent des
- *  auteurs, jamais « et al. » (qui est un marqueur, pas un nom). */
-const splitConnectors = (text) => String(text || '')
-  .split(/\s*(?:;|&)\s*|\s+and\s+|\s+et\s+/i)
-  .map((part) => trimEdges(part))
-  .filter(Boolean);
+/* LES SÉPARATEURS D'UNE LISTE D'AUTEURS : « ; », « and », « et », « & ».
+   « & » ne sépare PAS quand il appartient à un nom collectif (« Rossi & Cie »,
+   « Smith & Sons ») et « et » / « and » ne séparent pas le marqueur de
+   troncature (« et al. », « and others ») : le mot qui suit décide — d'où
+   l'espace OBLIGATOIRE autour du « & » (`\s&\s`, sans `\s*` : un `\s*` pourrait
+   reculer et faire oublier le regard en avant). */
+const CONNECTORS = /\s*;\s*|\s+and\s+(?!others\b)|\s+et\s+(?!al\b)|\s&\s(?!al\b|others\b|Cie\b|Co\b|Comp\b|Company\b|Sons?\b|Ltd\b|Inc\b|Assoc\b|Associates\b)/i;
 
 /**
- * UNE LISTE D'AUTEURS → les noms, un par entrée. Le seul point délicat est la
- * VIRGULE : elle sépare deux auteurs (« Rossi M, Bianchi A ») ou le nom du
- * prénom (« Smith, John A. »). La règle, dans l'ordre :
- *   1. un point-virgule (« Smith, John A.; Rossi, Maria ») tranche — chaque
- *      morceau est UN auteur, la virgule interne n'est jamais un séparateur ;
- *   2. sinon on essaie d'APPAIRER les morceaux « Cognome, Prénom » : le premier
- *      couple doit porter une initiale POINTÉE (« Smith, J. A. ») — sans cela
- *      « Rossi M, Bianchi A » (la convention du laboratoire) serait lu comme un
- *      seul auteur ;
- *   3. quand le premier couple est reconnu, toute la liste est réunie deux par
- *      deux (« Smith, J. A., Rossi, M. »), sinon chaque morceau est un auteur.
+ * UNE LISTE D'AUTEURS → les noms, un par entrée. Deux décisions, dans cet ordre :
+ *
+ *  1. LES SÉPARATEURS FRANCS (« ; », « & », « and », « et ») tranchent — et le
+ *     morceau qu'ils délimitent peut encore contenir une virgule de NOM
+ *     (« Smith, J. & Rossi, M. » = DEUX auteurs, pas quatre) ;
+ *  2. LA VIRGULE, elle, est ambiguë : elle sépare deux auteurs (« Rossi M,
+ *     Bianchi A ») ou le nom du prénom (« Smith, Johnny A. »). On essaie donc
+ *     d'APPAIRER les morceaux « Cognome, Prénom » — le premier couple doit
+ *     porter une initiale POINTÉE (« Smith, J. A. »), sans quoi « Rossi M,
+ *     Bianchi A » (la convention du laboratoire) serait lu comme un seul auteur,
+ *     et « John A. Smith, Maria Rossi » comme deux moitiés de nom. Un morceau
+ *     DÉTACHÉ par un séparateur franc, lui, est un nom : « Smith, J. ; Rossi,
+ *     Maria » ne laisse aucune place au doute (voir `sûr`, ci-dessous).
+ *
  * « et al. » / « and others » disparaissent : c'est le format qui décide de la
- * troncature (voir `etAlLimit`, pubCitation.js).
+ * troncature (voir `etAlLimit`).
  */
 export const splitAuthorNames = (raw) => {
   const text = trimEdges(raw);
   if (!text) return [];
   const out = [];
-  if (text.includes(';')) {
-    text.split(';').forEach((piece) => splitConnectors(piece).forEach((name) => out.push(name)));
-    return out.filter((name) => !ET_AL.test(name));
-  }
-  const tokens = text.split(',').map((piece) => trimEdges(piece));
-  const firstPair = tokens.length >= 2 && isFamilyBlock(tokens[0]) && isGivenBlock(tokens[1])
-    && hasDottedInitial(tokens[1]);
-  if (firstPair) {
+  const parts = text.split(CONNECTORS).map(trimEdges).filter(Boolean);
+  /* Un « ; », un « & » ou un « and » a DÉJÀ dit où finit un auteur : la virgule
+     interne ne peut plus être un séparateur, l'appariement n'a donc plus besoin
+     de la preuve de l'initiale pointée. */
+  const sure = parts.length > 1;
+  parts.forEach((piece) => {
+    const tokens = piece.split(',').map(trimEdges).filter(Boolean);
+    if (tokens.length < 2) { out.push(piece); return; }
+    const canPair = isFamilyBlock(tokens[0]) && isGivenBlock(tokens[1])
+      && (sure || hasDottedInitial(tokens[1]));
+    if (!canPair) { tokens.forEach((token) => out.push(token)); return; }
     for (let i = 0; i < tokens.length; i += 1) {
       const next = tokens[i + 1];
       if (next !== undefined && isFamilyBlock(tokens[i]) && isGivenBlock(next)) {
         out.push(`${tokens[i]}, ${next}`);
         i += 1;
       } else {
-        splitConnectors(tokens[i]).forEach((name) => out.push(name));
+        out.push(tokens[i]);
       }
     }
-  } else {
-    tokens.forEach((token) => splitConnectors(token).forEach((name) => out.push(name)));
-  }
+  });
   return out.filter((name) => !ET_AL.test(name));
 };
 
@@ -275,12 +290,3 @@ export const formatAuthorName = (value, style) => {
  *  c'est lui qui s'écrit dans un renvoi auteur-année (voir utils/referenceLinks.js). */
 export const familyNameOf = (value) => nameParts(value).family || clean(value);
 
-
-/** « Smith, John A. » / « John A. Smith » / « J. A. Smith » → « Smith JA » : la
- *  convention d'auteur de l'APPLICATION (voir utils/referenceImport.js, qui
- *  l'appliquait déjà aux bibliographies « texte » et aux fichiers RIS/BibTeX). */
-export const canonicalName = (value) => {
-  const { family, initials } = nameParts(value);
-  if (!family) return '';
-  return initials ? `${family} ${initials}` : family;
-};

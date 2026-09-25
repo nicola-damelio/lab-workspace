@@ -7,13 +7,29 @@
    il carattere (font e police, stampatello, corsivo etc) delle varie sezioni
    cambierà. Vorrei poter fare questo cambio in automatico. »
 
-   UN GIORNALE È UN PACCHETTO di quattro cose, non un solo réglage:
+   UN GIORNALE È UN PACCHETTO di sei cose, non un solo réglage:
      1. `preset` → la forma della citazione / della bibliografia: è il
         PUB_FORMAT_PRESETS che il pannello già usa (acs, springer, nature…).
-     2. `layout` → IL CARATTERE di ogni parte del documento (font, taille,
+        Da lui vengono L'ORDINE DEI CAMPI, il loro carattere, il loro prefisso e
+        il loro suffisso (vedi applyJournalFormat).
+     2. `bibFieldsOff` → I CAMPI CHE LA RIVISTA NON STAMPA. La richiesta: « se
+        imposto uno stile di giornale… questo non ha effetto sulla zona delle
+        references. Per esempio in Science il title non viene messo, ma se imposto
+        su Science il tick sul title rimane e quindi nel documento finale ho i
+        titoli che non dovrebbero esserci. » Un giornale che non stampa un campo lo
+        dice qui, e il tick corrispondente della rubrica « References (citation &
+        bibliography) » si spegne — la riga resta, e la si può riaccendere a mano.
+     3. `names` → LA FORMA DEI NOMI DEGLI AUTORI (« Smith JA », « Smith, J. A. »,
+        « J. A. Smith » — vedi utils/authorNames.js). La richiesta: « quando importo
+        un articolo il programma non distingue tra nome e cognome degli autori… se
+        cito una pubblicazione a volte c'è nome e cognome e a volte solo cognome ed
+        iniziali. Quindi la parte di autori rimane nel formato del giornale dove è
+        stato pubblicato. » Scegliendo un giornale, TUTTE le citazioni — anche
+        quelle importate con l'occhio di un'altra rivista — si scrivono così.
+     4. `layout` → IL CARATTERE di ogni parte del documento (font, taille,
         giustificazione, grassetto, corsivo): le sette parti di PUB_LAYOUT_PARTS
         — titolo · autori · affiliazioni · intitoli · testo · figure · bibliografia.
-     3. `order`  → L'ORDINE DELLE SEZIONI, come parole chiave degli intitoli
+     5. `order`  → L'ORDINE DELLE SEZIONI, come parole chiave degli intitoli
         (« Introduction », « Materials and Methods », « Results and Discussion »,
         « Conclusion », « Funding », « Supporting information », « References »…).
         L'ordine viene SCRITTO nel formato (`docOrder`, `docTitles`: vedere
@@ -21,7 +37,7 @@
         pannello lo MOSTRA (si può ritoccare a mano dopo il cambio) e il documento
         — schermo, stampa, PDF, .docx — lo segue; `reorderDocHtml` lo applica anche
         a un documento già registrato.
-     4. `bibLabel` → il titolo della bibliografia (« References », « Bibliography »). Una
+     6. `bibLabel` → il titolo della bibliografia (« References », « Bibliography »). Una
         stringa VUOTA è una risposta, non un'assenza: quel giornale NON scrive nessun
         intitolo sopra la sua lista (Science), e il pannello ne deduce `docNoTitle` —
         « if in the style of science references have no title then the title tick must be
@@ -34,7 +50,8 @@
    la sua guida per gli autori — che cambia nel tempo e va riletta prima di
    inviare. Tutto resta modificabile a mano dopo il cambio.
    ========================================================================= */
-import { PUB_FORMAT_PRESETS, PUB_FONTS, PUB_LAYOUT_PART_IDS, buildPubDocOrder, buildPubDocTitles, buildPubDocNoTitle, normalizePubDocNoTitle, pubDocOrderForWords, pubDocTitlesForWords } from './pubCitation.js';
+import { PUB_FORMAT_PRESETS, PUB_FONTS, PUB_LAYOUT_PART_IDS, buildPubDocOrder, buildPubDocTitles, buildPubDocNoTitle, buildPubFormat, normalizePubDocNoTitle, pubDocOrderForWords, pubDocTitlesForWords } from './pubCitation.js';
+
 
 // Le famiglie di caratteri del pannello (senza « As in the app »: un giornale un
 // carattere ce l'ha).
@@ -67,44 +84,47 @@ const LAY = (font, n) => ({
 });
 
 /* LES JOURNAL_FORMATS — le `order` de chacun est l'ordre des sections qu'il demande,
-   dans SON vocabulaire. Chaque liste se termine par « funding » et
+   dans SON vocabulaire, et ses deux autres réglages de bibliographie sont `names`
+   (l'écriture des noms d'auteurs) et, pour les revues qui ne les impriment pas,
+   `bibFieldsOff` (les champs d'une référence qu'il faut ÉTEINDRE — Science et son
+   titre, voir son entrée). Chaque liste se termine par « funding » et
    « supporting information » (les deux sections de fin d'article, avant la
    bibliographie) : ce sont des sections du document au même titre que les autres
    (voir PUB_DOC_BLOCKS), donc un journal les nomme aussi — sans quoi elles resteraient
    plantées au milieu des autres blocs pendant que les blocs nommés se réordonnent. */
 export const JOURNAL_FORMATS = {
   jacs: {
-    label: 'JACS (ACS)', preset: 'acs', bibLabel: 'References',
+    label: 'JACS (ACS)', preset: 'acs', bibLabel: 'References', names: 'family-comma-initials',
     order: ['abstract', 'introduction', 'materials and methods', 'results and discussion', 'conclusion', 'funding', 'supporting information', 'references'],
     layout: LAY(SERIF, { t: 16, a: 11, af: 9, h: 12, b: 10, f: 9, w: 45 }),
     notes: 'ACS numbered references. The experimental details stay inside Materials and Methods, before the Results.',
   },
   orglett: {
-    label: 'Organic Letters (ACS)', preset: 'acs', bibLabel: 'References',
+    label: 'Organic Letters (ACS)', preset: 'acs', bibLabel: 'References', names: 'family-comma-initials',
     order: ['abstract', 'introduction', 'results and discussion', 'materials and methods', 'conclusion', 'funding', 'supporting information', 'references'],
     layout: LAY(SERIF, { t: 15, a: 11, af: 9, h: 11, b: 10, f: 9, w: 45 }),
     notes: 'Short communication: Results and Discussion right after the introduction, the experimental details at the end.',
   },
   angewandte: {
-    label: 'Angewandte Chemie (Wiley)', preset: 'springer', bibLabel: 'References',
+    label: 'Angewandte Chemie (Wiley)', preset: 'springer', bibLabel: 'References', names: 'initials-family',
     order: ['abstract', 'introduction', 'results and discussion', 'conclusion', 'experimental section', 'materials and methods', 'funding', 'supporting information', 'references'],
     layout: LAY(GARAMOND, { t: 16, a: 11, af: 9, h: 12, b: 10, f: 9, w: 50 }),
     notes: 'The Experimental Section goes AFTER the Conclusion — the Angewandte convention.',
   },
   chemEurJ: {
-    label: 'Chemistry – A European Journal (Wiley)', preset: 'springer', bibLabel: 'References',
+    label: 'Chemistry – A European Journal (Wiley)', preset: 'springer', bibLabel: 'References', names: 'initials-family',
     order: ['abstract', 'introduction', 'results and discussion', 'conclusion', 'experimental section', 'materials and methods', 'funding', 'supporting information', 'references'],
     layout: LAY(GARAMOND, { t: 15, a: 11, af: 9, h: 12, b: 10, f: 9, w: 50 }),
     notes: 'Full paper: Results and Discussion, then Conclusion, then the Experimental Section.',
   },
   chemSci: {
-    label: 'Chemical Science (RSC)', preset: 'acs', bibLabel: 'References',
+    label: 'Chemical Science (RSC)', preset: 'acs', bibLabel: 'References', names: 'initials-family',
     order: ['abstract', 'introduction', 'results and discussion', 'conclusion', 'experimental', 'materials and methods', 'funding', 'supporting information', 'references'],
     layout: LAY(GARAMOND, { t: 15, a: 11, af: 9, h: 11, b: 10, f: 9, w: 50 }),
     notes: 'RSC: Results and Discussion before the Conclusion, then the Experimental part.',
   },
   nature: {
-    label: 'Nature', preset: 'nature', bibLabel: 'References',
+    label: 'Nature', preset: 'nature', bibLabel: 'References', names: 'family-comma-initials',
     order: ['abstract', 'introduction', 'results', 'discussion', 'methods', 'materials and methods', 'funding', 'supporting information', 'references'],
     layout: LAY(SANS, { t: 18, a: 11, af: 9, h: 12, b: 10, f: 9, w: 100 }),
     notes: 'The Methods go at the END, after the discussion (Nature prints them there, in smaller type).',
@@ -115,19 +135,26 @@ export const JOURNAL_FORMATS = {
        applyJournalFormat), quindi la casella « stampare l'intitolo » della rubrica
        « References (citation & bibliography) » è DECOCCATA, e il documento scrive la
        bibliografia senza il suo `<h2>`. */
-    label: 'Science', preset: 'science', bibLabel: '',
+    label: 'Science', preset: 'science', bibLabel: '', names: 'initials-family',
+    /* I CAMPI CHE SCIENCE NON STAMPA: il titolo dell'articolo. La richiesta: « in
+       Science il title non viene messo, ma se imposto su Science il tick sul title
+       rimane e quindi nel documento finale ho i titoli che non dovrebbero esserci »
+       — vedi applyJournalFormat (il tick « Title » della rubrica « References
+       (citation & bibliography) » si spegne). Un altro giornale non ne spegne
+       nessuno: se gli serve, si riaccende a mano. */
+    bibFieldsOff: ['title'],
     order: ['abstract', 'introduction', 'results', 'discussion', 'materials and methods', 'funding', 'supporting information', 'references'],
     layout: LAY(SERIF, { t: 17, a: 11, af: 9, h: 12, b: 10, f: 9, w: 100 }),
     notes: 'Numbered references, Materials and Methods before the bibliography — and no heading of its own over the reference list.',
   },
   cell: {
-    label: 'Cell', preset: 'cell', bibLabel: 'References',
+    label: 'Cell', preset: 'cell', bibLabel: 'References', names: 'family-comma-initials',
     order: ['abstract', 'introduction', 'results', 'discussion', 'materials and methods', 'conclusion', 'funding', 'supporting information', 'references'],
     layout: LAY(SANS, { t: 16, a: 11, af: 9, h: 12, b: 10, f: 9, w: 100 }),
     notes: 'Author–year style, the experimental procedures after the discussion.',
   },
   pnas: {
-    label: 'PNAS', preset: 'pnas', bibLabel: 'References',
+    label: 'PNAS', preset: 'pnas', bibLabel: 'References', names: 'family-initials',
     order: ['abstract', 'introduction', 'results', 'discussion', 'materials and methods', 'conclusion', 'funding', 'supporting information', 'references'],
     layout: LAY(SERIF, { t: 15, a: 11, af: 9, h: 11, b: 10, f: 9, w: 100 }),
     notes: 'Numbered references, Results and Discussion may be printed as one section.',
@@ -174,6 +201,16 @@ export const journalLayoutPatches = (id) => {
  *  programma). Le due regole che lo rendono sicuro sono in pubDocOrderForWords: solo i
  *  blocchi che il giornale NOMINA si spostano, e solo fra le posizioni che l'utente ha
  *  dato loro. */
+/** I CAMPI DI UNA REFERENZA COME LI VUOLE IL GIORNALE: la lista del suo preset
+ *  (ordine, carattere, prefisso, suffisso — vedere buildPubFormat), MENO quelli
+ *  che non stampa affatto (`bibFieldsOff`). Un campo spento RESTA nella lista,
+ *  col tick spento: il pannello lo mostra e lo si può riaccendere a mano. */
+export const journalPubFields = (def) => {
+  const preset = (def && PUB_FORMAT_PRESETS[def.preset]) ? def.preset : 'nature';
+  const off = (def && Array.isArray(def.bibFieldsOff)) ? def.bibFieldsOff : [];
+  return buildPubFormat(preset).fields.map((f) => (off.includes(f.id) ? { ...f, enabled: false } : f));
+};
+
 export const applyJournalFormat = (fmt, id) => {
   const def = JOURNAL_FORMATS[id];
   const base = fmt && typeof fmt === 'object' ? fmt : {};
@@ -185,6 +222,19 @@ export const applyJournalFormat = (fmt, id) => {
     ...base,
     journal: id,
     preset: PUB_FORMAT_PRESETS[def.preset] ? def.preset : (base.preset || 'nature'),
+    /* LA CITAZIONE CHE PORTA IL GIORNALE, CHAMPS COMPRIS : l'ordre, le caractère,
+       le préfixe et le suffixe de chaque champ viennent de son preset, et les
+       champs qu'il ne STAMPA PAS sont éteints (voir journalPubFields). Les réglages
+       de citation de l'utilisateur cèdent donc devant ceux du journal — c'est le
+       sens de « when I select the journal preset, all the elements of the
+       publication format must adapt to it » —, mais chaque ligne reste réglable
+       ensuite, dans le panneau. */
+    fields: journalPubFields(def),
+    /* LA FORME DES NOMS D'AUTEURS DU JOURNAL (« Smith JA », « J. A. Smith »… :
+       voir utils/authorNames.js) : elle s'applique à TOUTES les listes, y compris
+       celles importées avec l'écriture d'une autre revue. Un journal qui n'en
+       décide pas laisse celle de l'utilisateur. */
+    nameStyle: def.names || base.nameStyle || 'asis',
     layout,
     order: def.order.slice(),
     /* L'INTITOLO DELLA SUA BIBLIOGRAFIA: una stringa VUOTA è una risposta — quel
@@ -215,7 +265,9 @@ export const applyJournalFormat = (fmt, id) => {
  *  lui — il carattere delle parti torna vuoto (`emptyLayout`), l'ordine e gli intitoli
  *  dei blocchi del documento tornano quelli del PROGRAMMA (il giornale li aveva
  *  scritti, vedi applyJournalFormat), quindi il documento si stampa come prima del
- *  cambio. Le citazioni restano quelle scelte a mano: sono un'altra decisione. */
+ *  cambio. Le citazioni restano quelle scelte a mano: sono un'altra decisione —
+ *  campi della referenza (tick compresi) e forma dei nomi compresi, che il giornale
+ *  aveva portato ma che l'utente ha davanti a sé e può rimettere come vuole. */
 export const clearJournalFormat = (fmt, emptyLayout) => {
   const base = fmt && typeof fmt === 'object' ? fmt : {};
   const out = { ...base };

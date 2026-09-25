@@ -22,6 +22,12 @@ import {
    completePbAuthorLists) : il sait aussi remplacer une liste coupée par un
    « et al. » par la liste complète du même article. */
 import { authorsIncomplete, enrichReferences } from '../utils/referenceEnrich';
+/* LA FORME DES NOMS D'AUTEURS : chaque source web est ramenée à la convention
+   du laboratoire (« Smith JA ») DÈS L'IMPORT — PubMed écrivait déjà ainsi,
+   Crossref / OpenAlex / ORCID donnaient « John A. Smith », et la citation
+   gardait donc l'écriture de la revue d'origine. Une seule règle, un seul
+   résultat (voir utils/authorNames.js — le même module que les citations). */
+import { authorsFromParts, canonicalName } from '../utils/authorNames';
 /* LA FORME DES RENVOIS DANS LE TEXTE : rendue par le VRAI moteur — l'aperçu du
    panneau « Publication format » ne peut donc pas mentir sur ce que le document
    imprimera (voir applyInTextStyle). */
@@ -35,6 +41,9 @@ import {
   normalizePubDocNoTitle,
   pubCitationData, pubCitationHtml, pubDocOrderDropped,
   pubLayoutCss, pubTextStyleIsSet,
+  /* LA FORME DES NOMS D'AUTEURS dans la citation (voir utils/authorNames.js) :
+     le panneau itère sur ces formes (boutons « as written », « Smith JA »…). */
+  NAME_STYLES, normalizeNameStyle,
   /* LES STYLES QUE L'UTILISATEUR SAUVEGARDE (« Custom ») : le panneau les liste, les
      rappelle, les sauve et les oublie (voir pubCitation.js — la clé `labWorkspace_pubStyles`
      reste dans ce module-là : le panneau ne parle qu'aux fonctions). */
@@ -379,7 +388,7 @@ const searchPubMed = async (query) => {
     const doi = (r.articleids || []).find((a) => a.idtype === 'doi')?.value || '';
     out.push({
       title: r.title || '',
-      authors: (r.authors || []).map((a) => a.name).join(', '),
+      authors: (r.authors || []).map((a) => canonicalName(a && a.name)).filter(Boolean).join(', '),
       journal: r.fulljournalname || r.source || '',
       year: r.pubdate ? String(r.pubdate).slice(0, 4) : '',
       doi,
@@ -403,7 +412,8 @@ const searchCrossref = async (query) => {
       const doi = it.DOI || '';
       return {
         title,
-        authors: (it.author || []).map((a) => `${a.given || ''} ${a.family || ''}`.trim()).filter(Boolean).join(', '),
+        /* « John A. Smith » (Crossref) → « Smith JA » : voir utils/authorNames.js. */
+        authors: authorsFromParts(it.author),
         journal: (it['container-title'] && it['container-title'][0]) || '',
         year: it.issued?.['date-parts']?.[0]?.[0] ? String(it.issued['date-parts'][0][0]) : '',
         doi,
@@ -424,7 +434,7 @@ const searchCrossrefAuthor = async (name) => {
       const doi = it.DOI || '';
       return {
         title,
-        authors: (it.author || []).map((a) => `${a.given || ''} ${a.family || ''}`.trim()).filter(Boolean).join(', '),
+        authors: authorsFromParts(it.author),
         journal: (it['container-title'] && it['container-title'][0]) || '',
         year: it.issued?.['date-parts']?.[0]?.[0] ? String(it.issued['date-parts'][0][0]) : '',
         doi,
@@ -466,8 +476,9 @@ const searchOrcidByOrcidId = async (orcidId, authorName = '') => {
       title,
       /* L'API ORCID ne donne QUE le titulaire du profil (aucun contributeur dans
          son `work-summary`) : les co-auteurs sont récupérés juste après par
-         authorListLookup(), ce nom n'est qu'un repli hors ligne. */
-      authors: authorName || '',
+         authorListLookup(), ce nom n'est qu'un repli hors ligne. Lui aussi passe
+         par la convention du laboratoire (« Smith JA »). */
+      authors: canonicalName(authorName),
       journal: ws0?.['journal-title']?.value || '',
       year,
       doi,
@@ -525,8 +536,10 @@ const pubDoiOf = (item) => String((item && item.doi) || '').trim()
   .replace(/^https?:\/\/(dx\.)?doi\.org\//i, '').toLowerCase();
 const pubPmidOf = (item) => String((item && item.pmid) || '').trim();
 
+/* OpenAlex rend le nom COMPLET (« John A. Smith ») : ramené ici à la convention
+   du laboratoire, comme toutes les autres sources (voir utils/authorNames.js). */
 const openAlexAuthorList = (authorships) => (Array.isArray(authorships) ? authorships : [])
-  .map((a) => String(a?.author?.display_name || '').trim())
+  .map((a) => canonicalName(String(a?.author?.display_name || '')))
   .filter(Boolean)
   .join(', ');
 
@@ -562,7 +575,10 @@ const fetchAuthorsByPmid = async (pmids) => {
       if (!res.ok) continue;
       const j = await res.json();
       chunk.forEach((id) => {
-        const authors = (j?.result?.[id]?.authors || []).map((a) => a.name).filter(Boolean).join(', ');
+        /* PubMed écrit DÉJÀ « Smith JA » : la conversion ne fait que garantir la
+           même écriture pour tout le monde (un « Smith, John A. » y passerait). */
+        const authors = (j?.result?.[id]?.authors || [])
+          .map((a) => canonicalName(a && a.name)).filter(Boolean).join(', ');
         if (authors) out.set(String(id), authors);
       });
     } catch { /* réseau indisponible */ }
@@ -2474,6 +2490,9 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     underlineScientists: !!activeFormat.underlineScientists,   // legacy default style
     scientistStyles: { ...(activeFormat.scientistStyles || {}) },
     inTextStyle: normalizeInTextStyle(activeFormat.inTextStyle),
+    /* LA FORME DES NOMS D'AUTEURS voyage avec le format : sans cette ligne, régler
+       un champ de la citation la remettrait à « as written ». */
+    nameStyle: normalizeNameStyle(activeFormat.nameStyle),
     layout: normalizePubLayout(activeFormat.layout),
     fields
   });
@@ -2855,8 +2874,16 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
             {!docNoTitle.includes('references') && (
               <h2 className="pf-heading text-sm font-black text-slate-800 border-b border-slate-200 pb-1 mb-1 mt-2">{docTitles.references || 'References'}</h2>
             )}
+            {/* LA RÉFÉRENCE DE L'APERÇU EST UNE VRAIE CITATION — rendue par le MÊME
+                moteur que la page du projet (pubCitationHtml) : les champs cochés
+                (le titre, que Science décoche), leur ordre, leur caractère,
+                l'écriture des noms et le style des membres du laboratoire s'y
+                voient tout de suite. La demande : « se imposto uno stile di
+                giornale… questo non ha effetto sulla zona delle references » —
+                l'aperçu ne peut pas montrer autre chose que ce que le document
+                imprimera. */}
             <ol className="pf-bib list-decimal pl-4 text-[10px] text-slate-800 mt-2 space-y-0.5">
-              <li>Rossi M, Bianchi A. <i>J. Biol. Chem.</i> 2024, 300, 105678.</li>
+              <li dangerouslySetInnerHTML={{ __html: pubCitationHtml(samplePub, activeFormat, citationScientists) }} />
             </ol>
           </div>
         </div>
@@ -3142,6 +3169,37 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
               <span className="text-slate-800"
                     dangerouslySetInnerHTML={{ __html: inTextSample(activeFormat.inTextStyle) }} />
             </p>
+          </div>
+
+          {/* LA FORME DES NOMS D'AUTEURS — la demande : « il programma non
+              distingue tra nome e cognome degli autori… la parte di autori rimane
+              nel formato del giornale dove è stato pubblicato. » C'est ici que le
+              format DÉCIDE : les mêmes auteurs s'écrivent « Smith JA »,
+              « Smith J. A. », « J. A. Smith » ou « Smith, J. A. » — quelle que
+              soit la revue d'où vient la liste (Crossref, PubMed, OpenAlex…).
+              Choisir un journal en pose une (voir journalFormats.js) ;
+              « as written » laisse chaque liste exactement comme importée. */}
+          <div className="mb-3">
+            <div className="flex flex-wrap items-center gap-2 mb-1.5">
+              <span className="text-[10px] font-black uppercase tracking-wide text-slate-400"
+                    title="How the name of every author of a reference is written — the same rule for all the lists, whatever journal they came from.">
+                Author names
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {NAME_STYLES.map((s) => {
+                const current = normalizeNameStyle(activeFormat.nameStyle) === s.id;
+                return (
+                  <button type="button" key={s.id} onClick={() => pubPatchFormat({ nameStyle: s.id })}
+                          title={`${s.title}${s.id === 'asis' ? '' : ' — « Smith, John A. » imported from an editor is written this way too'}`}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
+                            current ? 'bg-indigo-600 text-white border-indigo-600'
+                              : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'}`}>
+                    {s.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-1.5"
