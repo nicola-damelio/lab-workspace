@@ -243,6 +243,14 @@ const RENDER_H = new Function([
   'const DEFAULT_NUCLEIC_COLORS = { base: 0xffffff, sugar: 0xffffff, phosphate: 0xffffff };',
   'const gradientRangesFor = () => null;',
   'const gradientColorStore = { ranges: null };',
+  // Les atomes que le style de « General » PARCOURT — un ribbon / cartoon / tube marche
+  // le long du CA — ne sont jamais cédés à une partie (voir _viewer_general_row_test.mjs).
+  sliceDecl(VIEW, 'SPLINE_STYLES'),
+  sliceFn(VIEW, 'nucleicGroupOf'),
+  sliceDecl(VIEW, 'nucleicGroupCache'),
+  sliceFn(VIEW, 'nucleicGroupIndicesIn'),
+  sliceFn(VIEW, 'nucleotideGroupIndices'),
+  sliceFn(VIEW, 'generalWalkingSele'),
   sliceFn(VIEW, 'buildSectionReps'),
   'return { buildSectionReps };',
 ].join('\n'))();

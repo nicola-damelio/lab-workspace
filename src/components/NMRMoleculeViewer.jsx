@@ -3055,6 +3055,14 @@ const STYLES = {
 // it is not in this list — and neither is a filled plate / slab (`rings`, `plates`,
 // `base`), which draws a surface rather than the atoms of the part.
 const ATOM_DRAW_STYLES = ['ball+stick', 'licorice', 'line', 'spacefill', 'sphere'];
+// The styles that WALK THE POLYMER instead of drawing its atoms: NGL builds them along
+// the TRACE ATOM of CONSECUTIVE residues — read in the very build the page bundles
+// (ngl 2.4.0, `ResidueType`): a protein walks its CA, with the C giving the ribbon its
+// direction and the O its width; a nucleotide its C4', with the C1' · C2' and the
+// C3' · O4'. A row drawn with one of these therefore cannot hand the atoms of its own
+// path over to another row (see generalWalkingSele, and the relinquish rule of
+// buildSectionReps): it draws a PATH, and a path without its atoms is nothing at all.
+const SPLINE_STYLES = ['cartoon', 'ribbon', 'tube', 'trace'];
 // The « Color by » sets, one per row of the request. NOTE: « Lipid type » is NOT
 // offered on water (the request corrected exactly that), and « Charge » exists for
 // ions alone — it is what tells a Na⁺ from a Cl⁻ in the same solvent.
@@ -7364,6 +7372,40 @@ const sectionRowSele = (structure, sec, sub, opts = {}) => {
   return base;
 };
 
+/* ── THE ATOMS A « GENERAL » ROW'S OWN STYLE WALKS ────────────────────────────
+   A ribbon / cartoon / tube / trace draws NO ATOM: NGL runs it along the TRACE ATOM
+   of CONSECUTIVE residues — the CA of a protein (the C giving the direction, the O
+   the width), the C4' of a nucleotide (the C1' · C2' and the C3' · O4' giving it) —
+   so a row drawn with one of them cannot hand those atoms over to a part that took
+   its own style: stripped of its path it drew NOTHING AT ALL. The report, word for
+   word:
+
+     « the hierarchy of the styles is wrong. It was better before. If in general
+       (which represents the full molecule) i put cartoon, then the subgroups must be
+       on hide and only cartoon must be visualised. if after that i change the style
+       in the subgroup the style must change until i change again the general. »
+
+   — measured: « General → cartoon » then « Side chains → licorice » (that row takes
+   `(sidechain or .CA)`) left the General row with no CA to walk, and the cartoon of
+   the WHOLE molecule disappeared at the first sub-row edit (see
+   _viewer_general_row_test.mjs).
+
+   The protein backbone (N · CA · C · O) has a word in NGL, so it is a SELECTOR. A
+   nucleic acid has none for « the sugar and the phosphate »: the atoms of the path
+   are counted on THIS structure — the phosphate and pentose groups the rows already
+   use — and the protection becomes an `@index` list, which depends on no naming
+   convention (C1' · C1* · …) and still leaves the nucleobase to the part that
+   takes it. */
+const generalWalkingSele = (structure, sec, style) => {
+  if (!SPLINE_STYLES.includes(style)) return '';
+  if (sec.kind === 'protein') return 'backbone';
+  if (sec.kind === 'nucleic') {
+    return indexSele(nucleotideGroupIndices(structure, sec, 'phosphate')
+      .concat(nucleotideGroupIndices(structure, sec, 'pentose')));
+  }
+  return '';
+};
+
 /* ONE pass over the residues of a component → its SECTIONS, in the order of
    MOL_KINDS. A molecule IS (the request's layout):
      • a CHAIN for a protein and for a nucleic acid — « keep one by one »: a file
@@ -7616,7 +7658,8 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
       && ATOM_DRAW_STYLES.includes(subLooks.sidechain.style);
     const backboneLosesCa = anchorSideChains
       && !!subLooks.backbone && ATOM_DRAW_STYLES.includes(subLooks.backbone.style);
-    /* ⚠ THE GENERAL ROW GIVES ITS ATOMS AWAY TO A PART THAT HAS ITS OWN STYLE.
+    /* ⚠ THE GENERAL ROW GIVES ITS ATOMS AWAY TO A PART THAT HAS ITS OWN STYLE — BUT
+       NEVER THE ONES ITS OWN DRAWING WALKS.
        Measured on this very code (_viewer_general_row_test.mjs): after « General →
        Tube », choosing « Backbone → Cartoon » drew `:A and backbone` while the
        General row went on drawing `:A` — the whole protein as a 0.5 Å tube — so the
@@ -7625,19 +7668,40 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
        anymore ». It is the very rule the membrane headgroups already follow
        (membraneHeadRelinquish: a headgroup row takes its atoms out of the leaflet
        row that draws them) and PyMOL's own `sidechain` selection: the atoms a row
-       has been given its OWN style are handed over to it. Only a row the user
-       DEVIATED (`follow: false` — a part that still follows General has no style of
-       its own, so General is its style) and that is really drawn takes them, so the
-       default look of a molecule (General cartoon + Backbone follows + Side chains
-       licorice) is untouched: the cartoon still walks the whole chain. A spline
-       style loses nothing by it (NGL walks the CAs, which stay in the selection),
-       and an atom-drawn General stops painting over the parts that have their own. */
+       has been given its OWN style are handed over to it.
+       ⚠ AND THE OTHER HALF — the hierarchy, which is what the report above asks for
+       (« the hierarchy of the styles is wrong. It was better before. If in general
+       (which represents the full molecule) i put cartoon, then the subgroups must be
+       on hide and only cartoon must be visualised. if after that i change the style
+       in the subgroup the style must change until i change again the general. »):
+       handing EVERY atom over took the atoms of General's OWN path with them — a
+       ribbon / cartoon / tube is walked along the Cα (see generalWalkingSele) — so
+       the row that describes the WHOLE molecule lost its path and its style VANISHED
+       from the molecule at the first sub-row edit: « General → cartoon » then
+       « Side chains → licorice » (that row takes `(sidechain or .CA)`) left the
+       protein with NO cartoon at all and only the sticks. The atoms a row's own
+       style walks are therefore KEPT by the General row, and a part takes only the
+       rest — the cartoon keeps walking the whole chain WHILE the side chains are
+       drawn by their own row.
+       Only a row the user DEVIATED (`follow: false` — a part that still follows
+       General has no style of its own, so General is its style) and that is really
+       drawn takes anything, so the default look of a molecule (General cartoon +
+       Backbone follows + Side chains licorice) is untouched: the two following rows
+       take nothing at all, and an atom-drawn General still stops painting over the
+       parts that have their own. */
     const rowOpts = (style) => ({ anchorSideChains, backboneLosesCa, anchorParts: ATOM_DRAW_STYLES.includes(style) });
+    const generalKeeps = generalWalkingSele(structure, sec, (subLooks.general || {}).style);
+    /* « ce que la partie a pris, MOINS les atomes que le style de General parcourt » :
+       une partie qui n'a pris que ceux-là — le squelette d'un General en cartoon — ne
+       lui retire donc RIEN, et le dessin de General reste entier. Le sélecteur produit
+       reste une clause NGL valable dans tous les cas (un « and not » de trop ne casse
+       jamais un style : il ne lui enlève que des atomes). */
+    const giveAway = (sele) => (sele && generalKeeps ? `(${sele}) and not ${generalKeeps}` : sele);
     const relinquished = subsectionsOf(sec.kind)
       .filter((sp) => sp.sub !== 'general')
       .map((sp) => ({ sp, look: subLooks[sp.sub] }))
       .filter(({ look }) => !!look && look.style !== 'hide' && look.follow === false)
-      .map(({ sp, look }) => sectionRowSele(structure, sec, sp.sub, rowOpts(look.style)))
+      .map(({ sp, look }) => giveAway(sectionRowSele(structure, sec, sp.sub, rowOpts(look.style))))
       .filter(Boolean);
     const generalOnly = relinquished.length
       ? `${sec.sele || 'all'} and not (${relinquished.join(') and not (')})`
