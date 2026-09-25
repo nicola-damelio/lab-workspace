@@ -14,7 +14,23 @@
    the STYLE of the lab members' names: each scientist of the user list can be
    underlined, bold or left as typed, wherever their name appears in the author
    list (see AUTHOR_STYLES / scientistStyles).
+
+   ET, DEPUIS LE SIGNALEMENT « il programma non distingue tra nome e cognome
+   degli autori… la parte di autori rimane nel formato del giornale dove è stato
+   pubblicato », LA FORME DE L'ÉCRITURE DES NOMS EST UNE DÉCISION DU FORMAT
+   (`nameStyle`) — plus jamais celle de la revue d'origine. Le découpage
+   nom / prénom, le nettoyage des listes et les quatre écritures vivent dans
+   utils/authorNames.js, partagé avec l'import (utils/referenceImport.js,
+   utils/referenceEnrich.js) : une seule règle, donc un seul résultat, que la
+   liste vienne de PubMed (« Smith JA »), de Crossref (« John A. Smith ») ou
+   d'un « AU - » d'un fichier RIS (« Smith, John A. »).
    ========================================================================= */
+import { formatAuthorName, normalizeNameStyle, splitAuthorNames } from '../utils/authorNames.js';
+
+/* La forme des noms d'auteurs est ré-exportée ici : le panneau « Publication
+   format » n'importe que ce module (voir Publications.jsx). */
+export { NAME_STYLES, NAME_STYLE_IDS, normalizeNameStyle } from '../utils/authorNames.js';
+
 export const PUB_FORMAT_KEY = 'labWorkspace_pubFormat';
 
 export const PUB_FORMAT_PRESETS = {
@@ -738,6 +754,11 @@ export const buildPubFormat = (presetId) => {
     underlineScientists: false,     // legacy: underline EVERY lab scientist (see scientistStyles)
     scientistStyles: {},            // per lab member: 'none' | 'underline' | 'bold'
     inTextStyle: 'keep',            // in-text citation form (see IN_TEXT_STYLES)
+    /* LA FORME DES NOMS D'AUTEURS (voir utils/authorNames.js) : « asis » = le
+       nom tel qu'il a été importé — le comportement d'avant ce choix, donc un
+       format qui n'a jamais rien décidé ne change pas. Un format de JOURNAL, lui,
+       en porte une (voir components/journalFormats.js), et le panneau la montre. */
+    nameStyle: 'asis',
     layout: buildPubLayout(),       // font / size / align / style / colour of each part (see pubLayoutCss)
     docOrder: buildPubDocOrder(),   // the blocks of the project document, in the order they print (see PUB_DOC_BLOCKS)
     docTitles: buildPubDocTitles(), // the headings the PROGRAM writes for them (« Materials and Methods » → the user's name)
@@ -763,6 +784,9 @@ export const normalizePubFormat = (parsed) => {
     underlineScientists: !!(parsed && parsed.underlineScientists),
     scientistStyles: sanitizeScientistStyles(parsed && parsed.scientistStyles),
     inTextStyle: normalizeInTextStyle(parsed && parsed.inTextStyle),
+    /* Un format enregistré avant que ce choix existe n'a pas de `nameStyle` :
+       « asis » — ses citations sortent donc exactement comme avant. */
+    nameStyle: normalizeNameStyle(parsed && parsed.nameStyle),
     layout: normalizePubLayout(parsed && parsed.layout),
     docOrder: normalizePubDocOrder(parsed && parsed.docOrder),
     docTitles: normalizePubDocTitles(parsed && parsed.docTitles),
@@ -1025,13 +1049,11 @@ export const matchCoauthors = (authorStr, candidates, excludeName) => {
   return out;
 };
 
-// Split a raw authors string ("Rossi M, Bianchi A and Smith J, et al.") into a
-// clean list of author names, dropping any existing "et al." marker.
-const parseAuthorList = (raw) => String(raw || '')
-  .split(/\s*[,;]+\s*|\s+and\s+/i)
-  .map((s) => s.trim())
-  .filter(Boolean)
-  .filter((s) => !/^et\s*al\.?$/i.test(s));
+// Split a raw authors string (“Rossi M, Bianchi A and Smith J, et al.”) into a
+// clean list of author names, dropping any existing “et al.” marker, WITHOUT
+// cutting a name in two: “Smith, John A.” is ONE author (see
+// utils/authorNames.js, splitAuthorNames — la seule règle de l'application).
+const parseAuthorList = (raw) => splitAuthorNames(raw);
 
 // Which lab member (name of the user list) is this author, if any? The matched
 // name is returned so it can be looked up in the format's `scientistStyles`.
@@ -1069,9 +1091,12 @@ const wrapAuthor = (escaped, style) => {
 };
 
 // Build the author-name section of a citation, honouring the format's
-// "et al." cutoff, the "always show the lab scientists" option and the
-// per-scientist styles (underline / bold). Returns { html, text }. Every author
-// of the paper is listed — only the cutoff can shorten the list.
+// “et al.” cutoff, the “always show the lab scientists” option, the
+// per-scientist styles (underline / bold) AND the WRITING of the names
+// (`nameStyle`, voir utils/authorNames.js) : la forme de l'écriture est une
+// décision du format, donc deux listes venues de deux revues différentes
+// s'écrivent ici de la même façon. Returns { html, text }. Every author of the
+// paper is listed — only the cutoff can shorten the list.
 export const renderAuthorNames = (pub, fmt, scientists) => {
   const authors = parseAuthorList(pub.authors);
   if (authors.length === 0) return null;
@@ -1086,10 +1111,14 @@ export const renderAuthorNames = (pub, fmt, scientists) => {
     shown = [...authors.slice(0, limit), ...forced];
     etAl = true;
   }
+  /* Le style du nom (underline / bold) est cherché sur le nom TEL QU'IL A ÉTÉ
+     ENREGISTRÉ — c'est lui qui reconnaît le membre du laboratoire —, la FORME
+     écrite, elle, suit le format. */
+  const nameStyle = normalizeNameStyle(fmt && fmt.nameStyle);
   const html = shown
-    .map((a) => wrapAuthor(escapeHtml(a), authorStyleOf(a, fmt, scientists)))
+    .map((a) => wrapAuthor(escapeHtml(formatAuthorName(a, nameStyle)), authorStyleOf(a, fmt, scientists)))
     .join(', ') + (etAl ? ', et al.' : '');
-  const text = shown.join(', ') + (etAl ? ', et al.' : '');
+  const text = shown.map((a) => formatAuthorName(a, nameStyle)).join(', ') + (etAl ? ', et al.' : '');
   return { html, text };
 };
 
