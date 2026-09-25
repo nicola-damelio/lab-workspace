@@ -85,7 +85,7 @@ export {
   buildPubFormat, buildPubDocOrder, buildPubDocTitles, buildPubLayout, loadPubFormat,
   normalizePubDocOrder, normalizePubDocTitles, normalizePubFormat, normalizePubLayout,
   pubLayoutCss, pubTextStyleIsSet, emptyPubTextStyle, PUB_DOC_BLOCKS, PUB_DOC_BLOCK_IDS,
-  pubDocOrderMoved, pubDocTitleKeywords, pubDocTitleOf,
+  pubDocOrderMoved, pubDocTitleKeywords, pubDocOrderKeywords, pubDocTitleOf,
   pubCitationHtml, pubCitationText, pubFieldValue, pubDoiUrl,
   pubCitationData, pubOriginOf,
   authorMatchesCandidate, matchCoauthors, isLabAuthor, labMemberOf,
@@ -2650,39 +2650,12 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
           {journalOf(activeFormat) && (
             <span className="text-[10px] italic text-slate-500 max-w-[22rem] truncate"
                   title={`${JOURNAL_FORMATS[journalOf(activeFormat)].notes} — sections of the exported document, in this journal's order: ${journalSectionOrder(activeFormat).join(' → ')}. A title this journal does not name does not move, and every setting stays editable in the panel below.`}>
-              📰 {journalLabelOf(journalOf(activeFormat))} · {journalSectionOrder(activeFormat).join(' → ')}
+              📰 {journalLabelOf(journalOf(activeFormat))}
             </span>
           )}
         </div>
       </div>
       <div className="p-4">
-        <p className="text-sm text-slate-500 mb-3">
-          Choose how every citation is built: the order of the fields, the style of each field
-          (bold / italic / underline / prefix / suffix) and which fields are shown at all.
-          Every author of the paper is listed; you can cut long author lists with “et al.” after
-          a given number of authors, always keep the lab members (user list) in the citation
-          even past that cutoff, and choose how each of their names is styled — underlined or
-          bold — wherever it appears among the authors. The same format decides the <b>layout of a
-          project document</b> below (font, size, position, bold / italic / underlined, colour —
-          figures included). The formatted citations are used in the publications table and in the
-          project documents that reference these publications.
-        </p>
-        <p className="text-[11px] text-slate-500 mb-3">
-          <b>🌍 Default</b> applies to every publication and is copied into the projects that had
-          their own format, so changing it here changes what the projects show (choose a project
-          in “Format for:” to give ONE project a format of its own).
-          {' '}
-          <b>The reference list follows this format immediately</b>: the numbered references of a project page and
-          the <b>References</b> list printed at the end of its document are rebuilt from the project data on every
-          display, so a change here shows up at once — even for a document whose text was frozen with
-          <b>📄 Export document → ✏️ Edit text → 💾 Save changes</b>.
-          {' '}
-          A document whose TEXT was frozen keeps its own wording. Its in-text citations are re-formed here like the
-          reference list — choose above how they print (superscript, brackets, parentheses, author + year). Use
-          <b> “↩️ Rebuild from data”</b> in the document’s toolbar (always visible) to rebuild that text from the
-          project data and re-link the citations.
-        </p>
-
         <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-4">
           <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-1">
             Live preview {pubFormatScope !== 'default' ? `— project “${pubFormatScope}”` : '— default'}
@@ -2742,10 +2715,6 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
             <span className="text-slate-800"
                   dangerouslySetInnerHTML={{ __html: inTextSample(activeFormat.inTextStyle) }} />
           </p>
-          <p className="text-[10px] text-slate-400 mt-1">
-            The numbers keep their link to the reference (and its tooltip) whatever the form; a number the project
-            does not know stays untouched.
-          </p>
         </div>
 
         {/* Every author of the paper is listed (the “et al.” rule above is
@@ -2767,13 +2736,6 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
               ))}
             </div>
           </div>
-          <p className="text-[11px] text-slate-500 mb-2">
-            This does not remove anybody: it only styles the lab members' names wherever they appear
-            among the authors of a paper.
-            <b className="text-slate-700"> Aa</b> = normal,
-            <b className="text-slate-700"> U</b> = underline,
-            <b className="text-slate-700"> B</b> = bold.
-          </p>
           {citationScientists.length === 0 ? (
             <p className="text-xs italic text-slate-400">
               No lab member yet — the scientists of the user list (plus the names added with ➕ in
@@ -2936,11 +2898,6 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
               </ol>
             </div>
           </div>
-          <p className="text-[10px] text-slate-400 mt-2">
-            The layout applies to the PROJECT document — the page, the printed document and its PDF, frozen
-            text included (use “↩️ Rebuild from data” to give an old frozen text the new layout). Leave a
-            setting empty (“As in the app”) and nothing is written: the document keeps the look of the app.
-          </p>
         </div>
 
         {/* ── LES SECTIONS DU DOCUMENT : ORDRE ET INTITULÉS ─────────────────────
@@ -2996,11 +2953,6 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
               );
             })}
           </div>
-          <p className="text-[10px] text-slate-400 mt-2">
-            The order and the headings apply to the PROJECT document — the page, the printed document and its PDF, and
-            a text already saved follows them for the headings it lets the program write. The author's own text is never
-            rewritten.
-          </p>
         </div>
 
         <div className="flex flex-col gap-1.5">

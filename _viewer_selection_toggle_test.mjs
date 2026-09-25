@@ -257,8 +257,8 @@ has("if (!expr || expr === '' || expr === 'all' || expr === 'none' || seen.has(e
   'all / none / vide / doublon écartés AVANT d’écrire la clause');
 has("const ex = style ? exclusionOf(style) : '';", 'chaque rep d’une ligne passe par exclusionOf');
 has('const sele = ex ? `(${seleBase}) and not (${ex})` : seleBase;', '…et l’exclusion y est soustraite à l’ATOME');
-eq((VIEW.match(/addWithOverrides\(/g) || []).length, 7,
-  'les sept styles d’une ligne passent tous par le même chemin (donc tous par l’exclusion)');
+eq((VIEW.match(/addWithOverrides\(/g) || []).length, 8,
+  'les huit styles d’une ligne (cartoon · ribbon · tube · sphères · billes-bâtons · bâtons · LIGNES · surface) passent tous par le même chemin (donc tous par l’exclusion)');
 has('are overlays (the same lipid is drawn by several of them at once)',
   'le bouton explique le geste : sans cela, « hide » semble ne rien faire');
 gone("title={st.hidden ? 'Show this selection again' : 'Hide this selection (removes its representations)'}",

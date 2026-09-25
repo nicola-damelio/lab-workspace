@@ -270,6 +270,43 @@ export const pubDocTitleKeywords = (fmt) => {
   return out;
 };
 
+/** L'ORDRE CHOISI, TRADUIT DANS LES MOTS QUE LE DOCUMENT ÉCRIT — le vocabulaire
+ *  qu'attend `reorderDocHtml(html, order, titles)`.
+ *
+ *  L'ordre du panneau parle en BLOCS (`docOrder` : « methods », « experiments »,
+ *  « sections », « references »…), le document se lit en INTITULÉS de `<h2>`
+ *  (« Materials and Methods », « Experiments », « Results and Discussion »…) :
+ *  cette fonction passe de l'un à l'autre, DANS L'ORDRE CHOISI, et c'est ce
+ *  vocabulaire qui fait suivre au document la place que l'utilisateur a donnée à
+ *  chaque bloc — sur la page du projet comme dans un document déjà enregistré
+ *  et à l'impression. La demande, mot pour mot : « In the publication format even
+ *  if I change the order of the sections they do not affect the document in the
+ *  project. »
+ *
+ *  `sections` (facultatif) = LES INTITULÉS DES SECTIONS DE TEXTE du projet
+ *  (« Scientific background », « Results and Discussion »…), que la page du projet
+ *  connaît : le bloc « sections » se déplace donc avec eux, et deux sections du
+ *  même genre gardent l'ordre de l'auteur. Un bloc qui n'a pas d'intitulé à lui
+ *  (le titre, les auteurs, les affiliations, la ligne d'information) ne pèse pas
+ *  sur ce vocabulaire : `reorderDocHtml` ne déplace que des `<h2>`, donc ces blocs
+ *  restent en tête — c'est la page du projet (l'ordre par identifiant du document
+ *  VIVANT) qui les déplace, et le document enregistré les garde tels quels.
+ */
+export const pubDocOrderKeywords = (order, sections) => {
+  const out = [];
+  const push = (word) => {
+    const k = String(word == null ? '' : word).toLowerCase().replace(/\s+/g, ' ').trim();
+    if (k && !out.includes(k)) out.push(k);
+  };
+  const sectionWords = Array.isArray(sections) ? sections : [];
+  normalizePubDocOrder(order).forEach((id) => {
+    if (id === 'sections') { sectionWords.forEach(push); return; }
+    const hit = DOC_TITLE_KEYWORDS.find(([bid]) => bid === id);
+    if (hit) hit[1].forEach(push);
+  });
+  return out;
+};
+
 /** Un réglage vierge : aucun style imposé, le document s'affiche comme avant.
  *  `bold` / `italic` / `underline` sont à TROIS états — `null` = laissé tel
  *  quel, `true` = imposé, `false` = explicitement retiré (utile pour un titre,

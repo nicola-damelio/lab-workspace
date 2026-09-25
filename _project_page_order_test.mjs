@@ -1,19 +1,27 @@
 /* =========================================================================
-   _project_page_order_test.mjs — « 📎 Useful files » est la DERNIÈRE carte de
-   la page d'un projet.
+   _project_page_order_test.mjs — « 📎 Useful files » est la DERNIÈRE carte de la
+   page d'un projet, et les cartes d'EXPÉRIENCES passent AVANT la fiche du titre.
 
    Ce que l'utilisateur demande :
-     « in the project move the useful files section at the end »
+     « in the project move the useful files section at the end » ;
 
-   Pourquoi : les fichiers utiles d'un projet (protocoles, PDF, tableurs,
-   spectres…) sont des PIÈCES JOINTES. Ils coupaient la lecture de l'article —
-   ils se trouvaient entre « 📋 Materials and Methods » et « 💬 Results and
-   Discussion » — alors qu'ils se rangent après le texte, ses sections et sa
-   revue.
+   puis, la demande qui a déplacé les deux cartes d'expériences :
+     « in the project page the experiment planner and the experiment in this
+       project must be moved before the section of the title. »
+   — le plan d'expériences et les expériences du projet se lisent donc AVANT
+   « 🧾 Title, authors & affiliations » (la section du titre), qui garde tout ce
+   qu'elle portait.
+
+   Pourquoi « 📎 Useful files » est à la fin : les fichiers utiles d'un projet
+   (protocoles, PDF, tableurs, spectres…) sont des PIÈCES JOINTES. Ils coupaient
+   la lecture de l'article — ils se trouvaient entre « 📋 Materials and Methods » et
+   « 💬 Results and Discussion » — alors qu'ils se rangent après le texte, ses
+   sections et sa revue.
 
    Vérifié ici sur la page RÉELLE (projectDetailModule.jsx) : l'ordre des
-   cartes, et le fait que la section n'a pas été vidée en déménageant (mêmes
-   branchements : index des fichiers, dossier Drive, droits d'écriture).
+   cartes, et le fait que les sections déplacées n'ont pas été vidées en
+   déménageant (mêmes branchements : index des fichiers, dossier Drive, droits
+   d'écriture, types de tests, expériences liées).
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -37,11 +45,11 @@ const render = PAGE.slice(start);
 
 /* ── 1. L'ordre attendu des cartes ───────────────────────────────────────── */
 const CARDS = [
+  ['🧪 Experiment planner', 'le plan d’expériences — AVANT la section du titre (la demande)'],
+  ['🧪 Experiments in this project', 'les expériences du projet'],
   ['🧾 Title, authors & affiliations', 'la fiche de l’article'],
   ['🖼 Saved canvases', 'les toiles enregistrées'],
   ['🔬 Scientific background', 'le contexte scientifique'],
-  ['🧪 Experiment planner', 'le plan d’expériences'],
-  ['🧪 Experiments in this project', 'les expériences du projet'],
   ['📋 Materials and Methods', 'le Matériel et méthodes'],
   ['💬 Results and Discussion', 'les résultats'],
   ['✅ Conclusions', 'les conclusions'],
@@ -65,7 +73,28 @@ const positions = CARDS.map(([label, what]) => ({ label, what, at: positionOf(la
 positions.forEach(({ label, at }) => ok(at !== -1, `la carte « ${label} » est présente`));
 const shown = positions.map((p) => p.label);
 eq(shown.slice().sort((a, b) => positionOf(a) - positionOf(b)), shown,
-  'les cartes se lisent dans l’ordre de la page : article → contexte → expériences → méthodes → texte → annexes → revue → fichiers utiles');
+  'les cartes se lisent dans l’ordre de la page : expériences → article → contexte → méthodes → texte → annexes → revue → fichiers utiles');
+
+/* ── 1bis. LES DEUX CARTES D'EXPÉRIENCES PRÉCÈDENT LA SECTION DU TITRE ─────
+   La demande : « in the project page the experiment planner and the experiment in
+   this project must be moved before the section of the title. » */
+const planner = positionOf('🧪 Experiment planner');
+const expWindow = positionOf('🧪 Experiments in this project');
+const titleCard = positionOf('🧾 Title, authors & affiliations');
+ok(planner < titleCard, 'le plan d’expériences passe AVANT la fiche du titre');
+ok(expWindow < titleCard, '…et les expériences du projet aussi');
+ok(expWindow > planner, '…dans leur ordre : le plan d’abord, la fenêtre des tests ensuite');
+/* Le déménagement n'a rien débranché : la carte du titre garde son contenu, et
+   les deux cartes d'expériences gardent les leurs (types de tests, expériences
+   liées, « Include » dans le document). */
+const titleCardHtml = render.slice(render.lastIndexOf('<SectionCard', titleCard), render.indexOf('</SectionCard>', titleCard));
+ok(titleCardHtml.includes('title="🧾 Title, authors & affiliations"'), 'la fiche du titre garde son intitulé');
+ok(titleCardHtml.includes('project.paperTitle'), '…et son champ de titre');
+const expCards = render.slice(render.lastIndexOf('<SectionCard', planner), render.indexOf('</SectionCard>', expWindow) + '</SectionCard>'.length);
+ok(expCards.includes("title=\"🧪 Experiment planner\""), 'le plan d’expériences garde son intitulé');
+ok(expCards.includes("title=\"🧪 Experiments in this project\""), '…et la fenêtre des expériences le sien');
+ok(expCards.includes('toggleSection(\'experiments\')'), '…son pliage');
+ok(expCards.includes('experimentsGrouped(project.experiments, tests)'), '…et la liste des tests liés du projet');
 
 /* ── 2. « 📎 Useful files » est la DERNIÈRE carte de la page ─────────────── */
 const useful = positionOf('📎 Useful files');

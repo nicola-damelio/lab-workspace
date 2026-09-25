@@ -364,10 +364,10 @@ ok(/withoutBibliographySection\(project\.docSuggestion\.markedHtml\)/.test(pdm),
 }
 ok(/<li key=\{r\.id\}/.test(pdm) && /pubCitationHtml\(citeData\(r\), pubFormat, operatorNames\)/.test(pdm),
   '…et chaque entrée imprimée passe par le publication format');
-ok(/The reference list follows this format immediately/.test(src),
-  'le panneau « Publication format » le dit à l’utilisateur');
-ok(/Rebuild from data/.test(src) && /Rebuild from data/.test(pdm),
-  'le panneau ET la barre d’outils du document nomment le bouton « Rebuild from data »');
+ok(/Live preview/.test(src) && /pubCitationHtml\(samplePub, activeFormat, citationScientists\)/.test(src),
+  'le panneau montre la liste des références du format COURANT (aperçu vivant) — la phrase explicative, elle, a été retirée (« remove all this explanatory text »)');
+ok(/Rebuild from data/.test(pdm),
+  'la barre d’outils du document nomme le bouton « Rebuild from data » — la phrase du panneau qui le rappelait a été retirée avec les autres (« remove all this explanatory text »)');
 ok(/\{canModify && \(\s*<button onClick=\{rebuildDoc\}/.test(pdm),
   '…et ce bouton est TOUJOURS là (il n’était visible que sur un document déjà figé)');
 

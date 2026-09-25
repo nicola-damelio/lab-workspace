@@ -4,7 +4,7 @@ import { SmartImage } from '../TestShellRenderer';
 import {
   loadPubFormat, loadRelevantPapers, matchCoauthors, pubCitationData, pubCitationHtml,
   pubLayoutCss, journalSectionOrder, reorderDocHtml,
-  normalizePubDocOrder, normalizePubDocTitles, pubDocTitleKeywords, pubDocTitleOf
+  normalizePubDocOrder, normalizePubDocTitles, pubDocTitleKeywords, pubDocOrderKeywords, pubDocTitleOf
 } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
 import { loadProjects, saveProjects, saveProjectsChecked, lightenProjectForStorage, recordProjectDeletion, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor, saveProjectsRescued } from './projectsModule';
@@ -78,6 +78,35 @@ const canvasPreviewOf = (c) => getRenderableDriveUrl(
    et le PDF obéissent au même format. */
 const DOC_CONTAINER_ID = 'project-doc-container';
 const DOC_CONTAINER_SELECTOR = `#${DOC_CONTAINER_ID}`;
+
+/* LES SECTIONS DE TEXTE D'UN PROJET, dans l'ordre où la page les écrit — la liste
+   de l'application (utils/manuscriptImport.js, importée plus haut) : une seule
+   source pour la page, l'import d'un manuscrit ET le document. Leur INTITULÉ
+   (`label`) est aussi le mot avec lequel le DOCUMENT les nomme : le panneau
+   « Publication format » sait donc les déplacer (voir pubDocOrderKeywords ·
+   reorderDocHtml), et le même intitulé sert à l'écran ET à l'impression.
+   `OPTIONAL_TEXT_SECTION_IDS` : une section de ces deux-là ne s'imprime que si
+   elle est remplie (le socle d'un article — contexte, résultats, conclusions —
+   s'imprime toujours, même vide, pour que la structure du document se voie). */
+const OPTIONAL_TEXT_SECTION_IDS = ['funding', 'supporting'];
+/* LE VOCABULAIRE D'ORDRE DU DOCUMENT D'UN PROJET : l'ordre CHOISI au panneau
+   (`docOrder`), traduit dans les mots que le document écrit, PUIS l'ordre du
+   journal pour ce que l'utilisateur n'a pas nommé (un journal place « abstract »,
+   « introduction »… : les blocs que le format ne connaît pas gardent donc l'ordre
+   du journal). L'ordre du panneau passe EN PREMIER : c'est ce que la demande
+   demande — « In the publication format even if I change the order of the
+   sections they do not affect the document in the project. » */
+const docOrderWords = (fmt) => {
+  const words = pubDocOrderKeywords(
+    fmt && fmt.docOrder,
+    PROJECT_TEXT_SECTIONS.map((s) => s.label)
+  );
+  journalSectionOrder(fmt).forEach((w) => {
+    const k = String(w == null ? '' : w).toLowerCase().replace(/\s+/g, ' ').trim();
+    if (k && !words.includes(k)) words.push(k);
+  });
+  return words;
+};
 
 /* Deux comptes de champs remplis (voir utils/referenceEnrich.js : `filled`) mis
    en un seul : le compte rendu du bouton « ✨ Complete missing fields » travaille
@@ -3308,7 +3337,11 @@ export const ProjectDetailModule = ({
        document dont l'utilisateur a changé le titre (« materials and methods » →
        « Experimental section »), donc un texte DÉJÀ ENREGISTRÉ — figé avant le
        changement de nom — suit le nouveau titre au moment de l'export. */
-    bodyHtml = reorderDocHtml(bodyHtml, journalSectionOrder(pubFormat), pubDocTitleKeywords(pubFormat));
+    /* L'ORDRE DU PANNEAU D'ABORD, CELUI DU JOURNAL ENSUITE (voir docOrderWords) :
+       le document imprimé se lit dans l'ordre que l'utilisateur a réglé, et les
+       sections qu'aucun des deux ne nomme ne bougent pas. Les titres choisis
+       partent avec (`pubDocTitleKeywords`), pour un texte déjà figé aussi. */
+    bodyHtml = reorderDocHtml(bodyHtml, docOrderWords(pubFormat), pubDocTitleKeywords(pubFormat));
     const title = `${project.name} — project document`;
     /* LA MISE EN FORME DU DOCUMENT (« Publication format ») PART AVEC L'EXPORT :
        sa feuille vit dans la page de l'application (`#project-doc-container`),
@@ -3439,13 +3472,13 @@ export const ProjectDetailModule = ({
        le « [12] » du texte mène à la référence 12 imprimée en fin de document, et
        l'infobulle rappelle titre et auteurs. Un numéro inconnu reste intact.
        Funding et Supporting information ne s'impriment que s'ils sont remplis. */
-    const sectionBlocks = [
-      { id: 'background', title: 'Scientific background', html: project.background || '' },
-      { id: 'discussion', title: 'Results and Discussion', html: project.discussion || '' },
-      { id: 'conclusions', title: 'Conclusions', html: project.conclusions || '' },
-      { id: 'funding', title: 'Funding', html: project.funding || '', optional: true },
-      { id: 'supporting', title: 'Supporting information', html: project.supporting || '', optional: true }
-    ]
+    const sectionBlocks = PROJECT_TEXT_SECTIONS
+      .map((s) => ({
+        id: s.id,
+        title: s.label,
+        html: project[s.id] || '',
+        optional: OPTIONAL_TEXT_SECTION_IDS.includes(s.id),
+      }))
       .filter((s) => !s.optional || String(s.html || '').trim())
       /* C'est ICI que les figures importées d'un manuscrit reprennent leur
          place : chacune est posée après le paragraphe qu'elle suivait dans le
@@ -3638,9 +3671,26 @@ export const ProjectDetailModule = ({
             ) : project.exportDocHtml ? (
               /* La bibliographie FIGÉE du document enregistré est retirée : la
                  liste vivante imprimée en bas de ce document est rendue avec le
-                 « Publication format » courant (voir withoutBibliographySection). */
+                 « Publication format » courant (voir withoutBibliographySection).
+                 ⚠ ET L'ORDRE / LES INTITULÉS DU PANNEAU S'APPLIQUENT ICI AUSSI —
+                 c'est précisément ce qui manquait : un document ENREGISTRÉ
+                 (« 💾 Save changes ») affichait son instantané tel quel, donc les
+                 ▲▼ du « Publication format » ne changeaient RIEN à la page du
+                 projet. La demande, mot pour mot : « In the publication format even
+                 if I change the order of the sections they do not affect the
+                 document in the project. » `reorderDocHtml` déplace des blocs
+                 ENTIERS (un <h2> et ce qui suit) : le texte de l'auteur n'est
+                 jamais réécrit, et seuls les intitulés que le PROGRAMME a écrits
+                 peuvent être renommés (voir pubDocTitleKeywords). L'ordre par
+                 identifiant du document VIVANT, lui, reste plus fin (il déplace
+                 aussi le titre, les auteurs, les affiliations) : il est rendu plus
+                 bas, quand aucun texte n'a encore été figé. */
               <div dangerouslySetInnerHTML={{
-                __html: linkCitations(repairContentImages(withoutBibliographySection(project.exportDocHtml)))
+                __html: reorderDocHtml(
+                  linkCitations(repairContentImages(withoutBibliographySection(project.exportDocHtml))),
+                  docOrderWords(pubFormat),
+                  pubDocTitleKeywords(pubFormat),
+                )
               }} />
             ) : (() => {
               /* ── LES BLOCS DU DOCUMENT, DANS L'ORDRE CHOISI ─────────────────────
@@ -4185,6 +4235,106 @@ export const ProjectDetailModule = ({
         )}
 
         {/* ---------- Title, authors & affiliations of the paper ---------- */}
+        {/* ---------- Experiment planner ---------- */}
+        <SectionCard title="🧪 Experiment planner" open={openSections.experiments} onToggle={() => toggleSection('experiments')}
+                     badge={<span className="text-[10px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">{(project.experiments || []).length}</span>}>
+          <p className="text-xs text-slate-500 mb-3">
+            Plan as many tests as needed (NMR, ssNMR, DOSY, CD, plate assays, cloning, expression…). Clicking a test
+            type creates the classic test page and makes its button appear inside the collapsible window below —
+            each button is the link to that test page.
+          </p>
+          {canModify && (
+          <div className="flex flex-wrap gap-1.5">
+            {TEST_TYPE_OPTIONS.map((opt) => (
+              <button key={opt.type} type="button" onClick={() => addExperiment(opt.type)}
+                      className={`px-3 py-1.5 text-xs font-bold text-white rounded-lg transition-colors ${opt.color}`}>
+                + {opt.label}
+              </button>
+            ))}
+          </div>
+          )}
+          {canModify && linkableTestNames.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <label className="text-[10px] font-black uppercase tracking-wide text-slate-400">Link existing test:</label>
+              <select value={linkTestId} onChange={(e) => setLinkTestId(e.target.value)}
+                      className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-semibold text-slate-700 max-w-xs">
+                <option value="">Choose a test…</option>
+                {linkableTestNames.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+              <button onClick={linkExistingTest} disabled={!linkTestId}
+                      className="px-3 py-1 text-xs font-bold rounded-lg bg-slate-600 text-white hover:bg-slate-700 disabled:opacity-40">
+                + Link
+              </button>
+            </div>
+          )}
+        </SectionCard>
+
+
+        {/* ---------- Experiments: collapsible window with the added tests ---------- */}
+        <SectionCard title="🧪 Experiments in this project" open={openSections.expWindow} onToggle={() => toggleSection('expWindow')}
+                     badge={<span className="text-[10px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">{experimentsGrouped(project.experiments, tests).length}</span>}>
+          {(project.experiments || []).length === 0 ? (
+            <div className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-6 text-center">
+              No experiments yet — click a test type above to add the first one. Its button will appear here as a link
+              to the classic test page.
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              {experimentsGrouped(project.experiments, tests).map((group) => {
+                const exp = group.entries[0];
+                const test = exp.testId ? tests.find((t) => t.id === exp.testId) : null;
+                const allIncluded = group.entries.every((e) => e.includeInDocument);
+                const starCount = group.entries.reduce((s, e) => {
+                  const t = e.testId ? tests.find((x) => x.id === e.testId) : null;
+                  return s + (t ? getStarredItems(t).length : 0);
+                }, 0);
+                const condCount = group.entries.length;
+                return (
+                  <div key={group.entries.map((e) => e.id).join('|')}
+                       className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg p-2 hover:border-blue-300 hover:shadow-sm transition-shadow">
+                    <button onClick={() => openTest(exp.testId)}
+                            className="flex items-center gap-2 min-w-0 text-left">
+                      <span className="shrink-0 text-[10px] font-black uppercase tracking-wide text-white bg-blue-600 rounded px-2 py-1">
+                        {exp.label}
+                      </span>
+                      <span className="text-xs font-bold text-slate-700 truncate">
+                        {test?.name || group.name || 'Test'}
+                      </span>
+                      {condCount > 1 && (
+                        <span className="text-[10px] font-semibold text-slate-400 whitespace-nowrap"
+                              title={`${condCount} condition instance(s) of this experiment`}>
+                          ({condCount} conditions)
+                        </span>
+                      )}
+                      <span className="text-[10px] text-slate-400 hidden md:inline">📅 {test?.date || '—'}</span>
+                    </button>
+                    {canModify && (
+                      <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 cursor-pointer"
+                             title="Include this test in the exported project document (its ⭐-starred figures, plots and tables)">
+                        <input type="checkbox" checked={allIncluded} onChange={() => toggleIncludeGroup(group)}
+                               className="w-3.5 h-3.5 accent-blue-600" />
+                        Include
+                      </label>
+                    )}
+                    <span className="text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 whitespace-nowrap"
+                          title="Items ⭐-starred on the test pages that will be imported into the document">
+                      ⭐ {starCount}
+                    </span>
+                    {canModify && (
+                      <button onClick={() => removeExperiment(exp.id)}
+                              className="shrink-0 text-red-400 hover:text-red-600 text-xs px-1.5" title="Remove from project">
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </SectionCard>
+
         <SectionCard title="🧾 Title, authors & affiliations"
                      open={openSections.article} onToggle={() => toggleSection('article')}
                      badge={(project.paperTitle || project.paperAuthors) ? (
@@ -4365,106 +4515,6 @@ export const ProjectDetailModule = ({
           'Rationale, state of the art, hypotheses and aims of the project.',
           project.background || '', (val) => updateProject({ background: val }))}
 
-
-        {/* ---------- Experiment planner ---------- */}
-        <SectionCard title="🧪 Experiment planner" open={openSections.experiments} onToggle={() => toggleSection('experiments')}
-                     badge={<span className="text-[10px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">{(project.experiments || []).length}</span>}>
-          <p className="text-xs text-slate-500 mb-3">
-            Plan as many tests as needed (NMR, ssNMR, DOSY, CD, plate assays, cloning, expression…). Clicking a test
-            type creates the classic test page and makes its button appear inside the collapsible window below —
-            each button is the link to that test page.
-          </p>
-          {canModify && (
-          <div className="flex flex-wrap gap-1.5">
-            {TEST_TYPE_OPTIONS.map((opt) => (
-              <button key={opt.type} type="button" onClick={() => addExperiment(opt.type)}
-                      className={`px-3 py-1.5 text-xs font-bold text-white rounded-lg transition-colors ${opt.color}`}>
-                + {opt.label}
-              </button>
-            ))}
-          </div>
-          )}
-          {canModify && linkableTestNames.length > 0 && (
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <label className="text-[10px] font-black uppercase tracking-wide text-slate-400">Link existing test:</label>
-              <select value={linkTestId} onChange={(e) => setLinkTestId(e.target.value)}
-                      className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-semibold text-slate-700 max-w-xs">
-                <option value="">Choose a test…</option>
-                {linkableTestNames.map((name) => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </select>
-              <button onClick={linkExistingTest} disabled={!linkTestId}
-                      className="px-3 py-1 text-xs font-bold rounded-lg bg-slate-600 text-white hover:bg-slate-700 disabled:opacity-40">
-                + Link
-              </button>
-            </div>
-          )}
-        </SectionCard>
-
-
-        {/* ---------- Experiments: collapsible window with the added tests ---------- */}
-        <SectionCard title="🧪 Experiments in this project" open={openSections.expWindow} onToggle={() => toggleSection('expWindow')}
-                     badge={<span className="text-[10px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">{experimentsGrouped(project.experiments, tests).length}</span>}>
-          {(project.experiments || []).length === 0 ? (
-            <div className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-6 text-center">
-              No experiments yet — click a test type above to add the first one. Its button will appear here as a link
-              to the classic test page.
-            </div>
-          ) : (
-            <div className="flex flex-col gap-1.5">
-              {experimentsGrouped(project.experiments, tests).map((group) => {
-                const exp = group.entries[0];
-                const test = exp.testId ? tests.find((t) => t.id === exp.testId) : null;
-                const allIncluded = group.entries.every((e) => e.includeInDocument);
-                const starCount = group.entries.reduce((s, e) => {
-                  const t = e.testId ? tests.find((x) => x.id === e.testId) : null;
-                  return s + (t ? getStarredItems(t).length : 0);
-                }, 0);
-                const condCount = group.entries.length;
-                return (
-                  <div key={group.entries.map((e) => e.id).join('|')}
-                       className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg p-2 hover:border-blue-300 hover:shadow-sm transition-shadow">
-                    <button onClick={() => openTest(exp.testId)}
-                            className="flex items-center gap-2 min-w-0 text-left">
-                      <span className="shrink-0 text-[10px] font-black uppercase tracking-wide text-white bg-blue-600 rounded px-2 py-1">
-                        {exp.label}
-                      </span>
-                      <span className="text-xs font-bold text-slate-700 truncate">
-                        {test?.name || group.name || 'Test'}
-                      </span>
-                      {condCount > 1 && (
-                        <span className="text-[10px] font-semibold text-slate-400 whitespace-nowrap"
-                              title={`${condCount} condition instance(s) of this experiment`}>
-                          ({condCount} conditions)
-                        </span>
-                      )}
-                      <span className="text-[10px] text-slate-400 hidden md:inline">📅 {test?.date || '—'}</span>
-                    </button>
-                    {canModify && (
-                      <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 cursor-pointer"
-                             title="Include this test in the exported project document (its ⭐-starred figures, plots and tables)">
-                        <input type="checkbox" checked={allIncluded} onChange={() => toggleIncludeGroup(group)}
-                               className="w-3.5 h-3.5 accent-blue-600" />
-                        Include
-                      </label>
-                    )}
-                    <span className="text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 whitespace-nowrap"
-                          title="Items ⭐-starred on the test pages that will be imported into the document">
-                      ⭐ {starCount}
-                    </span>
-                    {canModify && (
-                      <button onClick={() => removeExperiment(exp.id)}
-                              className="shrink-0 text-red-400 hover:text-red-600 text-xs px-1.5" title="Remove from project">
-                        ✕
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </SectionCard>
 
         {/* ---------- Materials and Methods ---------- */}
         <SectionCard title="📋 Materials and Methods" open={openSections.materials} onToggle={() => toggleSection('materials')}

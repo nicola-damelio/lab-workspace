@@ -24,7 +24,7 @@ const {
   PUB_DOC_BLOCKS, PUB_DOC_BLOCK_IDS, PUB_DOC_TITLED_IDS, PUB_DOC_FIXED_IDS,
   buildPubDocOrder, buildPubDocTitles, buildPubFormat, normalizePubDocOrder,
   normalizePubDocTitles, normalizePubFormat, pubDocOrderMoved, pubDocTitleKeywords,
-  pubDocTitleOf
+  pubDocOrderKeywords, pubDocTitleOf
 } = await import('./src/components/pubCitation.js');
 const {
   JOURNAL_FORMATS, applyJournalFormat, clearJournalFormat, reorderDocHtml
@@ -175,7 +175,54 @@ has(PROJ, 'if (includedExps.length > 0) blocks.methods = (', '…« Materials an
 has(PROJ, "{docHeading('methods')}</h2>", '…avec l’intitulé choisi (« Experimental section »)');
 has(PROJ, "{docHeading('experiments')} ({includedExps.length})</h2>", '…« Experiments (n) » garde son compte sous le titre choisi');
 has(PROJ, "{docHeading('references')} ({refs.length})</h2>", '…et « References (n) » son intitulé réglable');
-has(PROJ, 'reorderDocHtml(bodyHtml, journalSectionOrder(pubFormat), pubDocTitleKeywords(pubFormat))',
+has(PROJ, 'reorderDocHtml(bodyHtml, docOrderWords(pubFormat), pubDocTitleKeywords(pubFormat))',
   'l’export écrit aussi les titres choisis sur un texte DÉJÀ enregistré');
+has(PROJ, 'const docOrderWords = (fmt) => {',
+  '…et l’ordre du PANNEAU passe avant celui du journal (voir docOrderWords, une seule fois)');
+has(PROJ, 'fmt && fmt.docOrder,',
+  '…en lisant `docOrder` du format, comme le document vivant');
+has(PROJ, '__html: reorderDocHtml(',
+  'un document ENREGISTRÉ est réordonné lui aussi (la page du projet, pas seulement l’export)');
+has(PROJ, 'const OPTIONAL_TEXT_SECTION_IDS = [\'funding\', \'supporting\'];',
+  'les sections de texte du projet viennent de la liste PARTAGÉE (utils/manuscriptImport.js) : un seul vocabulaire pour la page, l’import d’un manuscrit et le document');
+
+/* ══ 4. L'ORDRE DU PANNEAU SUR UN DOCUMENT DÉJÀ ENREGISTRÉ ═══════════════════
+   Le rapport, mot pour mot : « In the publication format even if I change the
+   order of the sections they do not affect the document in the project. » Un
+   document ENREGISTRÉ (« 💾 Save changes ») est un instantané : la page
+   l'affichait tel quel, donc les ▲▼ du panneau ne changeaient RIEN. Les mots de
+   l'ordre choisi se traduisent maintenant en intitulés de `<h2>`
+   (pubDocOrderKeywords) et `reorderDocHtml` s'applique à l'instantané AUSSI.
+   Exécuté ici sur un vrai document figé. */
+const PROJECT_SECTIONS = ['Scientific background', 'Results and Discussion', 'Conclusions', 'Funding', 'Supporting information'];
+const frozen = [
+  '<h1 class="pf-title">Titre</h1>', '<p class="pf-authors">Rossi M</p>',
+  H2('Scientific background'), '<p>bg</p>',
+  H2('Conclusions'), '<p>c</p>',
+  H2('Materials and Methods'), '<p>methods</p>',
+  H2('Experiments (2)'), '<p>exps</p>'
+].join('');
+eq(pubDocOrderKeywords(buildPubDocOrder(), PROJECT_SECTIONS),
+  ['scientific background', 'results and discussion', 'conclusions', 'funding', 'supporting information',
+    'materials and methods', 'methods', 'experimental part', 'experimental procedures', 'experiments',
+    'references', 'bibliography'],
+  'l’ordre du programme se traduit dans les mots que le document écrit');
+eq(pubDocOrderKeywords(buildPubDocOrder(), PROJECT_SECTIONS), pubDocOrderKeywords(PUB_DOC_BLOCK_IDS, PROJECT_SECTIONS),
+  '…et un ordre absent (format ancien) donne le même vocabulaire');
+eq(reorderDocHtml(frozen, pubDocOrderKeywords(buildPubDocOrder(), PROJECT_SECTIONS)), frozen,
+  'un document figé déjà dans cet ordre ne bouge pas d’un caractère');
+const swappedOrder = ['title', 'authors', 'affiliations', 'meta', 'sections', 'experiments', 'methods', 'references'];
+const frozenSwapped = reorderDocHtml(frozen, pubDocOrderKeywords(swappedOrder, PROJECT_SECTIONS));
+ok(frozenSwapped.indexOf('Experiments (2)') < frozenSwapped.indexOf('Materials and Methods'),
+  'les ▲▼ du panneau déplacent vraiment le bloc « Experiments » d’un document ENREGISTRÉ');
+eq(frozenSwapped.length, frozen.length, '…sans rien couper ni dupliquer');
+ok(frozenSwapped.startsWith('<h1 class="pf-title">Titre</h1><p class="pf-authors">Rossi M</p>'),
+  '…et sans toucher la tête du document (titre, auteurs : ce ne sont pas des <h2>)');
+const frozenRenamed = reorderDocHtml(frozen, pubDocOrderKeywords(swappedOrder, PROJECT_SECTIONS),
+  pubDocTitleKeywords({ docTitles: { methods: 'Experimental section', experiments: 'Biological assays' } }));
+ok(frozenRenamed.includes('Experimental section') && frozenRenamed.includes('Biological assays'),
+  '…et les intitulés choisis s’écrivent sur le texte figé');
+ok(!reorderDocHtml(frozen, pubDocOrderKeywords(swappedOrder, ['Mes propres titres'])).includes('<script'),
+  'un vocabulaire sans section connue ne casse rien');
 
 console.log(`_pub_doc_sections_test.mjs — ${passed} assertions OK (ordre & intitulés des sections du document)`);

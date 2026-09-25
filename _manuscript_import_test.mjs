@@ -815,10 +815,12 @@ has(PROJ, "textSection('supporting', '📎 Supporting information'", '…et une 
 has(PROJ, 'updateProject({ funding: val })', '…enregistrée dans le projet (project.funding)');
 has(PROJ, 'updateProject({ supporting: val })', '…et project.supporting');
 has(PROJ, 'funding: true, supporting: true', 'les deux sections sont ouvertes d’emblée');
-has(PROJ, "{ id: 'funding', title: 'Funding', html: project.funding || '', optional: true }",
-  'le document exporté imprime le financement');
-has(PROJ, "{ id: 'supporting', title: 'Supporting information', html: project.supporting || '', optional: true }",
-  '…et le matériel supplémentaire');
+has(PROJ, 'const OPTIONAL_TEXT_SECTION_IDS = [\'funding\', \'supporting\'];',
+  'le document exporté imprime le financement (et omet une section de ces deux-là si elle est vide)');
+has(PROJ, 'PROJECT_TEXT_SECTIONS',
+  '…en lisant la liste PARTAGÉE des sections de texte (utils/manuscriptImport.js, l’import d’un manuscrit la connaît déjà)');
+has(PROJ, 'optional: OPTIONAL_TEXT_SECTION_IDS.includes(s.id),',
+  '…et le matériel supplémentaire : les deux sections ne s’impriment que remplies');
 has(PROJ, "funding: 'Funding',", 'les figures de ces sections reçoivent un nom lisible');
 ok(IMGB.includes('<option value="funding">Funding</option>')
   && IMGB.includes('<option value="supporting">Supporting information</option>'),

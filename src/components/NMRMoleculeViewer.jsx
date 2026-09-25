@@ -4461,7 +4461,7 @@ const STYLE_FAMILY_REPS = {
    writes the row's own flags. A Selections row STACKS styles (PyMOL's « show »
    commands do), so the selector shows the first style the row draws, in the order
    of the styling window, and the ticks stay for the stacking. */
-const SEL_ROW_STYLE_CHOICES = ['hide', 'cartoon', 'ribbon', 'tube', 'ball+stick', 'licorice', 'spacefill', 'sphere', 'surface'];
+const SEL_ROW_STYLE_CHOICES = ['hide', 'cartoon', 'ribbon', 'tube', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere', 'surface'];
 /* THE STYLES A 🧫 MEMBRANE ROW OFFERS — the request, word for word: « the drop
    down menus of the membranes must not contain ribbon, cartoon and tube, and CPK
    is the same as sphere ». NGL's `cartoon`, `ribbon` and `tube` are built on a
@@ -4470,8 +4470,15 @@ const SEL_ROW_STYLE_CHOICES = ['hide', 'cartoon', 'ribbon', 'tube', 'ball+stick'
    reason a leaflet row looked dead whichever one was picked. And « Sphere »
    writes the very same `spacefill` flag as « CPK » (one representation, two
    names), so choosing it made the selector jump to its twin on the next repaint.
-   What is left is what a lipid can really be drawn with. */
-const MEMBRANE_ROW_STYLE_CHOICES = ['hide', 'ball+stick', 'licorice', 'spacefill', 'surface'];
+   What is left is what a lipid can really be drawn with — and LINES is one of
+   them: it is the one « skeleton » style NGL draws for ANY atom (not only a
+   polymer), and the report « why the membrane section does not have the line
+   representation style? It should. » asks exactly for it — a bilayer drawn in
+   lines is the lightest picture of it, the very style the lightweight starting
+   layout of a large system uses. It is offered to EVERY Selections row too
+   (SEL_ROW_STYLE_CHOICES), so a row of a PyMOL script reads back as « Lines »
+   when the script drew `show lines`. */
+const MEMBRANE_ROW_STYLE_CHOICES = ['hide', 'ball+stick', 'licorice', 'line', 'spacefill', 'surface'];
 /* ── THE FOUR MEASURED NAMES ARE TWO PAIRS, AND ONE PAIR LIES INSIDE THE OTHER ─
    « only lower leaflet works well »: the four rows of a bilayer are not disjoint
    — `upper_headgroups` ⊂ `upper_leaflet`, `lower_headgroups` ⊂ `lower_leaflet` —
@@ -4530,14 +4537,15 @@ const membraneHeadRelinquish = (key, on, styles) => {
 };
 const SEL_STYLE_FLAG_OF = {
   cartoon: 'cartoon', ribbon: 'ribbon', tube: 'tube',
-  'ball+stick': 'ball', licorice: 'stick', spacefill: 'sphere', sphere: 'sphere', surface: 'surface',
+  'ball+stick': 'ball', licorice: 'stick', line: 'line',
+  spacefill: 'sphere', sphere: 'sphere', surface: 'surface',
 };
 // The word the TICKS use for each flag — the two controls must send the very same
 // token to the renderer (see toggleSelStyle), or a tick and the selector would
 // disagree about which representations they draw.
 const SEL_STYLE_TOGGLE_TOKEN = {
   cartoon: 'cartoon', ribbon: 'ribbon', tube: 'tube',
-  ball: 'ball', stick: 'stick', sphere: 'sphere', surface: 'surface',
+  ball: 'ball', stick: 'stick', line: 'line', sphere: 'sphere', surface: 'surface',
 };
 /* ── THE MEMBRANE RULE, DECIDED AT RENDER TIME ───────────────────────────────
    A head row that DRAWS a style OWNS its atoms: the leaflet that contains them
@@ -9620,6 +9628,13 @@ useEffect(() => {
     }, false);
     // « Sticks » of a selection / molecule is licorice (NGL has no `stick` rep).
     if (st.stick) addWithOverrides('licorice', 'stick', { colorScheme, opacity, multipleBond: true, radiusSize: LICORICE_BOND_RADIUS * rB }, false);
+    /* « Lines » — the skeleton style. NGL's `line` is the ONE style that draws ANY
+       atom, polymer or lipid: it is what the lightweight starting layout of a large
+       system uses, and the report « why the membrane section does not have the line
+       representation style? It should. » asks for it on the 🧫 membrane rows. The
+       width follows the R— knob exactly as the styling window's own « Lines » does
+       (2 px at 1.00×), so the two bars draw the same thing. */
+    if (st.line) addWithOverrides('line', 'line', { colorScheme, opacity, linewidth: Math.max(1, Math.round(2 * rB)) }, false);
     if (st.surface) addWithOverrides('surface', 'surface', { colorScheme, opacity: opacity != null ? opacity : 0.5 }, false);
     // A PyMOL script that asked for « set cartoon_ring_mode, 1 » also gets the
     // FILLED RING PLATES of its own nucleic selections: in PyMOL mode the §2 menus

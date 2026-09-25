@@ -150,10 +150,12 @@ ok(PUB.includes('Submit to:'), '…avec la ligne « Submit to » dans le panneau
 ok(PUB.includes('{JOURNAL_IDS.map((id) => ('), '…qui liste les journaux');
 ok(PUB.includes('setActiveFormat({ ...withPreset, layout: normalizePubLayout(withPreset.layout) })'),
   '…et applique le tout au format ACTIF (défaut ou projet)');
-ok(PUB.includes('journalOf(activeFormat) && (') && PUB.includes('journalSectionOrder(activeFormat).join('),
-  '…en montrant l’ordre des sections du journal choisi');
-ok(DOC.includes('bodyHtml = reorderDocHtml(bodyHtml, journalSectionOrder(pubFormat), pubDocTitleKeywords(pubFormat));'),
-  'le document EXPORTÉ / IMPRIMÉ passe par l’ordre du journal — et par les intitulés choisis (voir _pub_doc_sections_test.mjs)');
+ok(PUB.includes('journalOf(activeFormat) && (') && PUB.includes("journalSectionOrder(activeFormat).join(' → ')"),
+  '…en rappelant l’ordre des sections du journal choisi (dans l’infobulle)');
+ok(PUB.includes('📰 {journalLabelOf(journalOf(activeFormat))}'),
+  '…et sans phrase explicative : la demande « remove all this explanatory text » a retiré les paragraphes du panneau');
+ok(DOC.includes('bodyHtml = reorderDocHtml(bodyHtml, docOrderWords(pubFormat), pubDocTitleKeywords(pubFormat));'),
+  'le document EXPORTÉ / IMPRIMÉ suit l’ORDRE CHOISI au panneau (celui du journal vient après, voir docOrderWords) et les intitulés choisis');
 ok(DOC.indexOf('bodyHtml = reorderDocHtml(') > DOC.indexOf('const printProjectDoc = () => {'),
   '…dans la fonction d’export (et non ailleurs)');
 ok(DOC.indexOf('bodyHtml = reorderDocHtml(') < DOC.indexOf('const title = `${project.name} — project document`;'),

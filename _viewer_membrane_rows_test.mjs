@@ -170,12 +170,25 @@ eq(countOf(/title="Bond radius — a multiplier of the style's own stick thickne
    cartoon, tube ed inoltre CPK è uguale a sphere ». */
 const MEMBRANE_LIST = (VIEW.match(/const MEMBRANE_ROW_STYLE_CHOICES = \[([^\]]*)\];/) || [, ''])[1]
   .split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
-eq(MEMBRANE_LIST, ['hide', 'ball+stick', 'licorice', 'spacefill', 'surface'],
-  'la liste dédiée aux membranes : cacher · billes-bâtons · bâtons · CPK · surface');
+eq(MEMBRANE_LIST, ['hide', 'ball+stick', 'licorice', 'line', 'spacefill', 'surface'],
+  'la liste dédiée aux membranes : cacher · billes-bâtons · bâtons · LIGNES · CPK · surface');
 ok(!MEMBRANE_LIST.some((s) => ['cartoon', 'ribbon', 'tube', 'trace'].includes(s)),
   'aucun style de POLYMÈRE : NGL ne dessine RIEN d’un lipide en cartoon / ribbon / tube — le sélecteur semblait mort');
 ok(!MEMBRANE_LIST.includes('sphere'),
   '« Sphere » n’y est pas : c’est le MÊME `spacefill` que CPK (deux noms pour une commande)');
+/* Le rapport : « why the membrane section does not have the line representation
+   style? It should. » Les LIGNES sont le seul style « squelette » que NGL dessine
+   pour N’IMPORTE QUEL atome (le style même du démarrage léger d’un grand système),
+   et la rangée d’une membrane doit donc l’offrir comme les autres. */
+ok(MEMBRANE_LIST.includes('line'), 'les LIGNES sont offertes à une rangée de membrane (la demande)');
+has("'ball+stick': 'ball', licorice: 'stick', line: 'line',",
+  '…le drapeau « line » existe (SEL_STYLE_FLAG_OF) : le menu écrit vraiment la commande');
+has("ball: 'ball', stick: 'stick', line: 'line', sphere: 'sphere', surface: 'surface',",
+  '…le jeton des ticks aussi (SEL_STYLE_TOGGLE_TOKEN), donc les deux contrôles envoient le même mot');
+has("if (st.line) addWithOverrides('line', 'line',",
+  '…et le rendu la dessine (NGL `line`, la largeur suivant le R— comme au styling)');
+has("const SEL_ROW_STYLE_CHOICES = ['hide', 'cartoon', 'ribbon', 'tube', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere', 'surface'];",
+  'une rangée de la barre de gauche lit aussi « Lines » quand un script a dessiné `show lines`');
 has('styleOptions: MEMBRANE_ROW_STYLE_CHOICES,', 'c’est cette liste que la rangée de membrane offre');
 eq(countOf(/styleOptions: MEMBRANE_ROW_STYLE_CHOICES,/g), 1, '…une seule fois (le groupe des lipides)');
 
