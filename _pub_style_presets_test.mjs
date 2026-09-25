@@ -24,7 +24,7 @@
         après ; « ↺ As in the app » remet l'ordre du programme ;
      §5 LES STYLES « CUSTOM » : sauver, rappeler, oublier, et le nettoyage de ce qui
         arrive du stockage ;
-     §6 LE CÂBLAGE : le panneau (Publications.jsx) offre le groupe « My styles » et ses
+     §6 LE CÂBLAGE : le panneau (Publications.jsx) offre le groupe « User defined » et ses
         deux gestes, et la page du projet (projectDetailModule.jsx) rend les trois
         nouvelles rangées.
    ========================================================================= */
@@ -73,22 +73,23 @@ const PANEL = read('./src/components/Publications.jsx');
 const PROJ = read('./src/components/AppModules/projectDetailModule.jsx');
 
 /* ══ 1. LES TROIS SECTIONS DE FIN SONT DES BLOCS DU DOCUMENT ═════════════════ */
-eq(PUB_DOC_BLOCK_IDS, ['title', 'authors', 'affiliations', 'meta', 'sections',
-  'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
-'les conclusions, le financement et les informations supplémentaires ont leur rangée, entre les sections de texte et « Materials and Methods »');
-eq(PUB_DOC_BLOCKS.length, 11, '…onze blocs nommés (huit avant)');
-eq(PUB_DOC_TITLED_IDS, ['conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
-'…et le programme écrit leur intitulé, comme celui de « Materials and Methods »');
-eq(PUB_DOC_SECTION_IDS, ['conclusions', 'funding', 'supporting'],
+eq(PUB_DOC_BLOCK_IDS, ['title', 'authors', 'affiliations', 'meta',
+  'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
+'les cinq sections de texte du projet ont leur rangée, dans l’ordre où la page les imprime (le bloc générique « Text sections » a disparu)');
+eq(PUB_DOC_BLOCKS.length, 12, '…douze blocs nommés (onze avant, huit au départ)');
+eq(PUB_DOC_TITLED_IDS, ['background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
+'…et le programme écrit leur intitulé, comme celui de « Materials and Methods » — le contexte et les résultats compris (« as “Material and method” I must be able to edit their names »)');
+eq(PUB_DOC_SECTION_IDS, ['background', 'discussion', 'conclusions', 'funding', 'supporting'],
 'chaque rangée dit QUELLE section de texte du projet elle imprime');
 eq(pubDocBlockOfSection('conclusions').id, 'conclusions', 'la section « conclusions » a sa rangée');
 eq(pubDocBlockOfSection('supporting').label, 'Supporting information', '…comme les informations supplémentaires');
-eq(pubDocBlockOfSection('background'), null, 'le contexte n’en a pas : il s’imprime dans « Text sections »');
-eq(pubDocBlockOfSection('discussion'), null, '…et les résultats non plus');
+eq(pubDocBlockOfSection('background').id, 'background', 'le contexte a la sienne (« scientific background »)');
+eq(pubDocBlockOfSection('discussion').id, 'discussion', '…et les résultats aussi (« Results and discussion »)');
 eq(PUB_DOC_HEAD_IDS, ['title', 'authors', 'affiliations', 'meta'], 'les quatre blocs de tête sont nommés à part (un ordre de journal ne les touche pas)');
 eq(PUB_DOC_FIXED_IDS, ['references'], 'la liste vivante des références reste le seul bloc fixe');
 eq(!!pubDocBlockOf('funding').fixed, false, '…et le financement se déplace, lui');
 eq(buildPubDocTitles(), {
+  background: 'Scientific background', discussion: 'Results and Discussion',
   conclusions: 'Conclusions', funding: 'Funding', supporting: 'Supporting information',
   methods: 'Materials and Methods', experiments: 'Experiments', references: 'References',
 }, 'un format neuf porte l’intitulé de chaque rangée');
@@ -99,14 +100,17 @@ eq(buildPubDocOrder(), PUB_DOC_BLOCK_IDS, 'l’ordre du programme suit celui du 
 const TEXT_ORDER = ['scientific background', 'results and discussion', 'conclusions', 'funding', 'supporting information'];
 eq(pubDocOrderKeywords(buildPubDocOrder(), PROJECT_TEXT_SECTIONS).filter((w) => TEXT_ORDER.includes(w)),
   TEXT_ORDER,
-  'l’ordre du programme imprime les cinq sections de texte dans le même ordre qu’avant (contexte et résultats par « Text sections », les trois autres par leur rangée)');
+  'l’ordre du programme imprime les cinq sections de texte dans le même ordre qu’avant (le contexte, les résultats, puis les trois sections de fin)');
 ok(PUB_DOC_BLOCK_WORDS.conclusions.includes('conclusion')
   && PUB_DOC_BLOCK_WORDS.funding.includes('acknowledgements')
   && PUB_DOC_BLOCK_WORDS.supporting.includes('supplementary information'),
 'les mots des trois nouvelles rangées connaissent leurs synonymes (Conclusion, Acknowledgements, Supplementary information)');
 eq(docBlockOfWord('experimental section'), 'methods', '« experimental section » désigne la rangée « Materials and Methods »');
 eq(docBlockOfWord('acknowledgements'), 'funding', '…« acknowledgements » le financement');
-eq(docBlockOfWord('abstract'), 'sections', '…et « abstract » / « introduction » désignent le bloc des sections de texte (un manuscrit importé nomme ainsi le contexte)');
+eq(docBlockOfWord('introduction'), 'background',
+  '« introduction » désigne la rangée du contexte (un manuscrit importé le nomme ainsi, et Science aussi : voir _journal_formats_test.mjs)');
+eq(docBlockOfWord('abstract'), '',
+  '…et « abstract » ne désigne AUCUN bloc : le programme n’imprime pas de résumé, donc rien ne bouge et rien ne se renomme');
 ok(PUB_DOC_TITLED_IDS.every((id) => !!pubDocBlockOf(id).title), 'chaque rangée à intitulé en porte un (le champ du panneau a son repli)');
 
 const has = (hay, needle, what) => ok(String(hay).includes(needle), `${what}\n  introuvable : ${needle}`);
@@ -120,7 +124,7 @@ const byLabels = pubDocOrderKeywords(buildPubDocOrder(), PROJECT_TEXT_SECTIONS.m
 eq(byObjects, byLabels,
   'le vocabulaire est le même que l’appelant donne les sections du projet avec leur id (la page) ou leurs seuls intitulés (le panneau, un test)');
 TEXT_ORDER.forEach((word) => {
-  eq(byObjects.filter((w) => w === word).length, 1, `« ${word} » n’est nommée qu’UNE fois (le bloc « Text sections » ne reprend pas les rangées dédiées)`);
+  eq(byObjects.filter((w) => w === word).length, 1, `« ${word} » n’est nommée qu’UNE fois (chaque section a SA rangée : rien ne peut plus la nommer deux fois)`);
 });
 ok(byObjects.indexOf('conclusions') < byObjects.indexOf('funding')
   && byObjects.indexOf('funding') < byObjects.indexOf('supporting information'),
@@ -128,11 +132,11 @@ ok(byObjects.indexOf('conclusions') < byObjects.indexOf('funding')
 /* DÉPLACER UNE RANGÉE DÉPLACE SON MOT (c'est ce que le panneau montre). */
 const supportFirst = (() => {
   let o = buildPubDocOrder();
-  for (let i = 0; i < 3; i += 1) o = pubDocOrderMoved(o, 'supporting', -1);
+  for (let i = 0; i < 4; i += 1) o = pubDocOrderMoved(o, 'supporting', -1);
   return o;
 })();
-eq(supportFirst.indexOf('supporting'), 4, 'la rangée « Supporting information » remonte de trois crans (elle passe devant les sections de texte)');
-eq(supportFirst.slice(4, 7), ['supporting', 'sections', 'conclusions'], '…et se pose juste après la ligne d’information du projet');
+eq(supportFirst.indexOf('supporting'), 4, 'la rangée « Supporting information » remonte de quatre crans (elle passe devant les sections de texte)');
+eq(supportFirst.slice(4, 7), ['supporting', 'background', 'discussion'], '…et se pose juste après la ligne d’information du projet');
 const supportWords = pubDocOrderKeywords(supportFirst, PROJECT_TEXT_SECTIONS);
 ok(supportWords.indexOf('supporting information') < supportWords.indexOf('scientific background'),
   '…et le mot des informations supplémentaires passe devant celui du contexte : le document suivra');
@@ -177,14 +181,14 @@ ok(!pubDocTitleKeywords({ docTitles: { funding: 'Funding' } }).funding, '…idem
    adapt to it, including the order of the sections. » */
 const fresh = { ...buildPubFormat('nature'), docOrder: buildPubDocOrder(), docTitles: buildPubDocTitles() };
 const jacs = applyJournalFormat(fresh, 'jacs');
-eq(jacs.docOrder, ['title', 'authors', 'affiliations', 'meta', 'sections',
-  'methods', 'conclusions', 'funding', 'supporting', 'experiments', 'references'],
+eq(jacs.docOrder, ['title', 'authors', 'affiliations', 'meta',
+  'background', 'methods', 'discussion', 'conclusions', 'funding', 'supporting', 'experiments', 'references'],
 'JACS : « Materials and Methods » remonte DEVANT la conclusion (la convention ACS), sans déranger la tête ni les blocs que le journal ne nomme pas');
 eq(jacs.docTitles.methods, 'Materials and Methods', '…et son mot est déjà celui du programme : rien à renommer');
 eq(jacs.order, JOURNAL_FORMATS.jacs.order, '…l’ordre du journal voyage avec le format, comme avant');
 const ang = applyJournalFormat(fresh, 'angewandte');
-eq(ang.docOrder, ['title', 'authors', 'affiliations', 'meta', 'sections',
-  'conclusions', 'methods', 'funding', 'supporting', 'experiments', 'references'],
+eq(ang.docOrder, ['title', 'authors', 'affiliations', 'meta',
+  'background', 'discussion', 'conclusions', 'methods', 'funding', 'supporting', 'experiments', 'references'],
 'Angewandte : la conclusion AVANT l’Experimental Section (c’est écrit dans ses notes)');
 eq(ang.docTitles.methods, 'Experimental Section',
 '…et l’intitulé que le journal emploie (« experimental section ») devient celui du bloc');
@@ -271,7 +275,7 @@ eq(loadPubStyles()['Bon style'].layout.body.size, 0, '…et la mise en forme vie
 /* ══ 6. LE CÂBLAGE : LE PANNEAU ET LA PAGE DU PROJET ═════════════════════════ */
 /* Le panneau (Publications.jsx) : le troisième groupe du contrôle, ses deux gestes,
    et la valeur affichée qui suit le style rappelé. */
-has(PANEL, 'My styles — saved by you (Custom)', 'le contrôle « Journal preset » a un groupe pour les styles sauvés');
+has(PANEL, 'User defined', 'le contrôle « Journal preset » a un groupe pour les styles sauvés (« I must be able to save new settings with a different name and this name must appear in the drop-down menu under a subsection: user defined »)');
 has(PANEL, 'value={`style:${name}`}', '…dont chaque entrée rappelle SON format');
 has(PANEL, 'const pubRecallStyle = (name) => {', '…par un geste qui remet le format enregistré');
 has(PANEL, '💾 Save style…', '…un bouton pour sauver le format affiché');
@@ -280,19 +284,20 @@ has(PANEL, 'const styles = savePubStyle(name, activeFormat);', '…qui écrit vr
 has(PANEL, 'setPubStyles(removePubStyle(key));', '…et l’oubli aussi');
 has(PANEL, 'const [pubStyles, setPubStyles] = useState(() => loadPubStyles());', 'la liste est lue une fois, comme le format');
 has(PANEL, "style: activeFormat.style || '',", 'un format retouché garde le nom du style dont il vient (le 💾 sait quoi réécrire)');
-has(PANEL, 'v.startsWith(\'style:\')', 'la valeur choisie route les trois familles d’options (style sauvé, journal, preset)');
-/* La page du projet (projectDetailModule.jsx) : les trois sections s’impriment à leur
-   rangée, sous l’intitulé choisi, et les sections de texte gardent le reste. */
+has(PANEL, 'v.startsWith(\'style:\')', 'la valeur choisie route les deux familles d’options (style sauvé, journal)');
+/* La page du projet (projectDetailModule.jsx) : les cinq sections de texte s’impriment
+   à leur rangée, sous l’intitulé choisi — le bloc générique « Text sections » n’existe
+   plus, donc plus rien à filtrer. */
 has(PROJ, 'const ownRowBlocks = sectionBlocksOf.filter((s) => !!pubDocBlockOfSection(s.id));',
-  'la page du projet sépare les sections qui ont leur rangée des autres');
-has(PROJ, 'const sectionBlocks = sectionBlocksOf.filter((s) => !pubDocBlockOfSection(s.id));',
-  '…« Text sections » garde le contexte et les résultats');
+  'la page du projet prend les sections qui ont leur rangée');
+ok(!PROJ.includes('blocks.sections ='),
+  '…et n’imprime plus de bloc générique : chaque section de texte a SA rangée');
 has(PROJ, 'blocks[block.id] = renderSectionBlock(s, docHeading(block.id));',
   '…et chaque section dédiée s’imprime à SA place, sous l’intitulé choisi');
 has(PROJ, 'PROJECT_TEXT_SECTIONS\n  );', '…les mots de l’ordre sont calculés avec les sections ET leur id (pas seulement leurs intitulés)');
 has(PANEL, 'PUB_DOC_SECTION_BLOCKS, PUB_DOC_SECTION_IDS, pubDocBlockOfSection,', '…que la page reçoit par le ré-export de Publications');
-ok(PUB_DOC_SECTION_BLOCKS.length === 3 && PUB_DOC_SECTION_IDS.includes('supporting'),
-  '…et le catalogue des blocs-sections est bien celui des trois sections de fin');
+ok(PUB_DOC_SECTION_BLOCKS.length === 5 && PUB_DOC_SECTION_IDS.includes('supporting'),
+  '…et le catalogue des blocs-sections est bien celui des cinq sections de texte du projet');
 
 /* ── Bilan ─────────────────────────────────────────────────────────────────── */
 console.log(`_pub_style_presets_test.mjs — ${passed} assertions OK (le journal réordonne, les sections de fin ont leur rangée, les styles se sauvent et se rappellent)`);

@@ -6,7 +6,7 @@ import {
   pubLayoutCss, journalSectionOrder, reorderDocHtml,
   docHeadRows, docHeadSpacedHtml, DOC_EMPTY_LINE_ID, DOC_EMPTY_LINE_CLASS,
   normalizePubDocOrder, normalizePubDocTitles, pubDocTitleKeywords, pubDocOrderKeywords, pubDocTitleOf,
-  pubDocBlockOfSection
+  pubDocTitleHidden, pubDocBlockOfSection
 } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
 import { loadProjects, saveProjects, saveProjectsChecked, lightenProjectForStorage, recordProjectDeletion, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor, saveProjectsRescued } from './projectsModule';
@@ -3581,17 +3581,21 @@ export const ProjectDetailModule = ({
         const split = splitAnchoredFigures(linkCitations(repairContentImages(s.html || '')), figures);
         return { ...s, html: split.html, restFigures: split.rest };
       });
-    /* LES TROIS SECTIONS QUI ONT LEUR PROPRE RANGÉE AU PANNEAU (« Conclusions »,
-       « Funding », « Supporting information » — voir PUB_DOC_BLOCKS) s'impriment à SA
-       place, avec l'intitulé choisi pour elles ; le bloc « Text sections » garde les
-       autres (le contexte et les résultats), dans l'ordre de l'auteur. Le document
-       imprimé ne change donc pas tant que l'ordre du panneau n'est pas touché. */
+    /* TOUTES LES SECTIONS DE TEXTE DU PROJET ONT LEUR RANGÉE AU PANNEAU — « Scientific
+       background » et « Results and discussion » (la demande : « the “Document sections
+       (order & titles)” section should contain “scientific background” and “Results and
+       discussion” »), puis « Conclusions », « Funding » et « Supporting information »
+       (voir PUB_DOC_BLOCKS) : chacune s'imprime à SA place, sous l'intitulé qu'elle a
+       reçu. Le bloc générique « Text sections » a donc disparu — il n'avait plus rien à
+       porter — et le document imprimé ne change pas tant que rien n'est réglé. */
     const ownRowBlocks = sectionBlocksOf.filter((s) => !!pubDocBlockOfSection(s.id));
-    const sectionBlocks = sectionBlocksOf.filter((s) => !pubDocBlockOfSection(s.id));
-    /** UNE SECTION DU DOCUMENT — son intitulé, son texte, ses figures, ses documents. */
+    /** UNE SECTION DU DOCUMENT — son intitulé, son texte, ses figures, ses documents.
+     *  Un intitulé VIDE (une case décochée au panneau, un style qui n'en écrit pas — voir
+     *  pubDocTitleHidden) n'écrit AUCUN `<h2>` : la section garde son texte, ses figures
+     *  et sa place dans le document. */
     const renderSectionBlock = (s, heading) => (
       <div key={s.id} className="mb-6">
-        <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{heading}</h2>
+        {heading ? <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{heading}</h2> : null}
         {s.html ? <div className="pf-body text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: repairContentImages(s.html) }} />
                 : <p className="text-xs italic text-slate-400">—</p>}
         {renderFigures(s.restFigures || [])}
@@ -3624,7 +3628,12 @@ export const ProjectDetailModule = ({
        document ne bouge pas d'un caractère tant que rien n'est réglé. */
     const docOrder = normalizePubDocOrder(pubFormat && pubFormat.docOrder);
     const docTitles = normalizePubDocTitles(pubFormat && pubFormat.docTitles);
-    const docHeading = (id) => pubDocTitleOf(docTitles, id);
+    /* UN INTITULÉ CACHÉ NE S'ÉCRIT PAS — le format le dit (`docNoTitle` : le style choisi,
+       ou la case décochée au panneau), et le bloc sort alors sans son `<h2>`. La demande :
+       « if in the style of science references have no title then the title tick must be
+       unchecked in the “References (citation & bibliography)” section » : la bibliographie
+       de Science suit donc le texte, sans intitulé au-dessus d'elle. */
+    const docHeading = (id) => (pubDocTitleHidden(pubFormat, id) ? '' : pubDocTitleOf(docTitles, id));
     return (
       /* LA PAGE S'ADAPTE À LA LARGEUR DE L'ÉCRAN : le conteneur ne défile qu'en
          vertical (rien n'est coupé sur le côté), les marges se réduisent sur un
@@ -3853,8 +3862,7 @@ export const ProjectDetailModule = ({
                 </p>
               );
 
-              blocks.sections = sectionBlocks.map((s) => renderSectionBlock(s, s.title));
-              /* …ET LES TROIS QUI ONT LEUR RANGÉE : chacune s'imprime à la place que le
+              /* …ET CELLES QUI ONT LEUR RANGÉE : chacune s'imprime à la place que le
                  format lui donne (`docOrder`), sous l'intitulé choisi dans le panneau —
                  « Conclusions » est le titre du programme tant que personne n'en écrit
                  un autre (voir docHeading). Les conclusions s'impriment toujours (elles
@@ -3880,7 +3888,9 @@ export const ProjectDetailModule = ({
               if (includedExps.length > 0 || mmTextSaved) blocks.methods = (
                 <div key="methods" className="mb-6">
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-1 mb-2">
-                    <h2 className="pf-heading text-base font-black text-slate-800">{docHeading('methods')}</h2>
+                    {docHeading('methods') ? (
+                      <h2 className="pf-heading text-base font-black text-slate-800">{docHeading('methods')}</h2>
+                    ) : null}
                   <div className="flex items-center gap-2 no-print">
                     {project.materialsAndMethods?.edited && (
                       <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
@@ -3927,7 +3937,9 @@ export const ProjectDetailModule = ({
 
               if (includedExps.length > 0) blocks.experiments = (
                 <div key="experiments" className="mb-6">
-                  <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{docHeading('experiments')} ({includedExps.length})</h2>
+                  {docHeading('experiments') ? (
+                    <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{docHeading('experiments')} ({includedExps.length})</h2>
+                  ) : null}
                 <p className="text-[10px] text-slate-400 mb-3">
                   Only the figures, plots and tables you ⭐-starred on the test pages are imported here.
                   Click the ✏️ next to a caption to edit it before export.
@@ -4006,7 +4018,9 @@ export const ProjectDetailModule = ({
                 références du projet, rendue avec le format COURANT à chaque
                 affichage, est imprimée à sa place. */}
             <div className="mb-4">
-              <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{docHeading('references')} ({refs.length})</h2>
+              {docHeading('references') ? (
+                <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{docHeading('references')} ({refs.length})</h2>
+              ) : null}
               {/* LE TEXTE EST AUSSI DANS LE DOSSIER DU PROJET SUR LE DRIVE (voir
                   utils/projectDocumentDrive.js) : la page le dit et sait le
                   relire — le navigateur n'est qu'un cache, et un autre poste

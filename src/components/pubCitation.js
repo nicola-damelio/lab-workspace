@@ -170,7 +170,22 @@ export const PUB_DOC_BLOCKS = [
   { id: 'authors', label: 'Authors', hint: 'the author line' },
   { id: 'affiliations', label: 'Affiliations', hint: 'the affiliations line' },
   { id: 'meta', label: 'Project line', hint: 'project · scientist · date' },
-  { id: 'sections', label: 'Text sections', hint: 'the text sections that have no row of their own (Scientific background, Results and Discussion), in the order you wrote them' },
+  /* ── LES DEUX SECTIONS DE TEXTE QUI N'AVAIENT PAS DE RANGÉE ──────────────────
+     La demande : « the “Document sections (order & titles)” section should contain
+     “scientific background” and “Results and discussion”. As “Material and method” I
+     must be able to edit their names. »
+     Le contexte et les résultats vivaient dans UN SEUL bloc générique (« Text
+     sections »), sous l'intitulé que l'auteur avait écrit : on ne pouvait donc ni les
+     déplacer l'un par rapport à l'autre, ni écrire leur intitulé, ni les appeler comme
+     le fait le journal choisi (« Introduction » chez Science). Chacune a maintenant SA
+     rangée et SON champ, exactement comme « Materials and Methods » — et le bloc
+     générique disparaît, parce que PLUS AUCUNE section de texte du projet (voir
+     PROJECT_TEXT_SECTIONS, utils/manuscriptImport.js) n'a besoin de lui.
+     `title` = l'intitulé que la page du projet écrit aujourd'hui (le libellé de la
+     section) : le champ du panneau le remplace, ↺ le rend, donc un document imprimé
+     avant cette version ne change pas d'un caractère tant que rien n'est réglé. */
+  { id: 'background', label: 'Scientific background', titled: true, title: 'Scientific background', section: 'background' },
+  { id: 'discussion', label: 'Results and discussion', titled: true, title: 'Results and Discussion', section: 'discussion' },
   /* ── LES TROIS SECTIONS DE FIN D'ARTICLE ─────────────────────────────────────
      « Conclusions », « Funding » et « Supporting information » s'imprimaient DANS le
      bloc « Text sections » : elles n'avaient donc AUCUNE rangée au panneau — on ne
@@ -179,10 +194,9 @@ export const PUB_DOC_BLOCKS = [
      are at present not included in the sections of the publication format and they
      should. » Chacune a donc sa rangée, comme « Materials and Methods ».
      `section` = L'ID DE LA SECTION DE TEXTE DU PROJET qu'elle imprime (voir
-     PROJECT_TEXT_SECTIONS, utils/manuscriptImport.js) : c'est ce qui permet au bloc
-     « Text sections » de ne plus porter que celles qui n'ont pas de rangée à elles, et
-     à l'intitulé choisi ici d'être écrit à la place du titre de la section (voir
-     pubDocTitleKeywords). */
+     PROJECT_TEXT_SECTIONS, utils/manuscriptImport.js) : c'est ce qui permet à l'intitulé
+     choisi ici d'être écrit à la place du titre de la section (voir pubDocTitleKeywords).
+     Les cinq sections de texte du projet ont maintenant leur rangée à elles. */
   { id: 'conclusions', label: 'Conclusions', titled: true, title: 'Conclusions', section: 'conclusions' },
   { id: 'funding', label: 'Funding', titled: true, title: 'Funding', section: 'funding' },
   { id: 'supporting', label: 'Supporting information', titled: true, title: 'Supporting information', section: 'supporting' },
@@ -203,9 +217,9 @@ export const PUB_DOC_SECTION_IDS = PUB_DOC_SECTION_BLOCKS.map((b) => b.section);
    restent la tête du document (voir pubDocOrderForWords). */
 export const PUB_DOC_HEAD_IDS = ['title', 'authors', 'affiliations', 'meta'];
 export const pubDocBlockOf = (id) => PUB_DOC_BLOCKS.find((b) => b.id === id) || null;
-/** LA RANGÉE D'UNE SECTION DE TEXTE du projet, ou null : « conclusions » →
- *  le bloc « Conclusions », « background » → aucun (il s'imprime dans « Text
- *  sections », avec les résultats). */
+/** LA RANGÉE D'UNE SECTION DE TEXTE du projet, ou null : « conclusions » → le bloc
+ *  « Conclusions », « background » → « Scientific background », « discussion » →
+ *  « Results and discussion ». Les cinq sections de PROJECT_TEXT_SECTIONS en ont une. */
 export const pubDocBlockOfSection = (sectionId) => {
   const key = String(sectionId || '');
   return PUB_DOC_SECTION_BLOCKS.find((b) => b.section === key) || null;
@@ -214,17 +228,30 @@ export const pubDocBlockOfSection = (sectionId) => {
 /** L'ordre du programme : celui que la page du projet a toujours suivi. */
 export const buildPubDocOrder = () => PUB_DOC_BLOCK_IDS.slice();
 
+/* LES BLOCS QU'UNE VERSION A RETIRÉS, ET CE QUI LES REMPLACE. « sections » (le bloc
+   générique « Text sections ») portait le contexte et les résultats : depuis que ces
+   deux sections ont leur rangée (background · discussion), il n'a plus rien à porter.
+   Un ordre ENREGISTRÉ AVANT ce changement le nomme encore : ses deux remplaçantes
+   prennent donc sa place, au lieu d'être renvoyées à la fin du document — le contexte
+   et les résultats restent là où l'utilisateur les avait mis. */
+const RETIRED_DOC_BLOCKS = { sections: ['background', 'discussion'] };
+
 /** Un ordre relu d'un enregistrement (localStorage, document d'un autre poste, copie
- *  d'un projet) : seuls les blocs CONNUS et sans doublon passent, et tout bloc que
- *  l'ordre oublie est REMIS À SA PLACE du programme — un format écrit avant cette
- *  version (ou à la main) ne peut donc pas faire disparaître une section. */
+ *  d'un projet) : seuls les blocs CONNUS et sans doublon passent, un bloc RETIRÉ est
+ *  remplacé par ce qui en descend (voir RETIRED_DOC_BLOCKS), et tout bloc que l'ordre
+ *  oublie est REMIS À SA PLACE du programme — un format écrit avant cette version (ou à
+ *  la main) ne peut donc ni faire disparaître une section, ni l'envoyer au bout du
+ *  document. */
 export const normalizePubDocOrder = (raw) => {
   const out = [];
+  const push = (id) => { if (PUB_DOC_BLOCK_IDS.includes(id) && !out.includes(id)) out.push(id); };
   (Array.isArray(raw) ? raw : []).forEach((id) => {
     const key = String(id || '');
-    if (PUB_DOC_BLOCK_IDS.includes(key) && !out.includes(key)) out.push(key);
+    const replaced = RETIRED_DOC_BLOCKS[key];
+    if (replaced) { replaced.forEach(push); return; }
+    push(key);
   });
-  PUB_DOC_BLOCK_IDS.forEach((id) => { if (!out.includes(id)) out.push(id); });
+  PUB_DOC_BLOCK_IDS.forEach(push);
   return out;
 };
 
@@ -247,6 +274,40 @@ export const normalizePubDocTitles = (raw) => {
   });
   return out;
 };
+
+/* ══ LES INTITULÉS QUE LE DOCUMENT NE DOIT PAS ÉCRIRE ═════════════════════════════
+   La demande : « If in the style of science references have no title then the title
+   tick must be unchecked in the “References (citation & bibliography)” section. »
+
+   Un style peut donc dire qu'une de ses sections N'A PAS d'intitulé : Science imprime
+   sa bibliographie sans son titre, la liste suit le texte. La case du panneau se lit
+   sur cette liste (`docNoTitle`), et le document écrit alors le bloc SANS son `<h2>` :
+   il garde son texte, ses figures et sa place (voir pubDocTitleKeywords, qui envoie un
+   titre VIDE à reorderDocHtml, et le titre vide de reorderDocHtml, qui retire le
+   `<h2>` sans toucher au reste).
+
+   Seuls les blocs dont le PROGRAMME écrit l'intitulé (PUB_DOC_TITLED_IDS) peuvent entrer
+   ici : le titre de l'article EST le titre, les auteurs, les affiliations et la ligne
+   d'information sont du texte — ils n'ont pas d'intitulé qui se décoche. Une liste vide
+   (le cas de tous les formats neufs) = « le programme écrit ses intitulés ». */
+export const buildPubDocNoTitle = () => [];
+
+/** La liste relue d'un enregistrement (localStorage, document d'un autre poste, copie
+ *  d'un projet) : seuls les blocs CONNUS passent, sans doublon. Un format écrit avant
+ *  cette version n'en porte pas — la liste vide veut dire « aucun intitulé caché », donc
+ *  le document s'imprime comme avant. */
+export const normalizePubDocNoTitle = (raw) => {
+  const out = [];
+  (Array.isArray(raw) ? raw : []).forEach((id) => {
+    const key = String(id || '');
+    if (PUB_DOC_TITLED_IDS.includes(key) && !out.includes(key)) out.push(key);
+  });
+  return out;
+};
+
+/** CET INTITULÉ EST-IL CACHÉ pour ce format ? (une case décochée au panneau, ou un style
+ *  qui n'écrit pas ce titre — voir normalizePubDocNoTitle). */
+export const pubDocTitleHidden = (fmt, id) => normalizePubDocNoTitle(fmt && fmt.docNoTitle).includes(String(id || ''));
 
 /** L'intitulé que le document écrit pour un bloc : celui choisi par l'utilisateur, ou
  *  celui du programme quand il est vide (ou quand le bloc n'en porte pas). */
@@ -308,20 +369,29 @@ export const PUB_DOC_BLOCK_WORDS = {
   methods: ['materials and methods', 'methods', 'experimental section', 'experimental part', 'experimental procedures'],
   experiments: ['experiments'],
   references: ['references', 'bibliography'],
-  /* LE BLOC GÉNÉRIQUE « Text sections » — le contexte et les résultats du projet. Ses
-     mots ne servent PAS à écrire un intitulé (le bloc n'en porte pas : ce sont ceux de
-     l'auteur), mais à RECONNAÎTRE ces sections dans un document venu d'ailleurs
-     (« Introduction », « Abstract », « Results and discussion » : un manuscrit importé
-     les écrit ainsi) et à SAVOIR OÙ UN JOURNAL LES MET — c'est ce qui empêche
-     « materials and methods » de passer devant l'introduction, qu'aucune revue ne fait. */
-  sections: ['introduction', 'abstract', 'background', 'context', 'summary', 'results and discussion', 'results', 'discussion']
+  /* LE CONTEXTE ET LES RÉSULTATS du projet — les deux sections qui viennent d'avoir
+     leur rangée (voir PUB_DOC_BLOCKS). Leurs mots servent aux TROIS usages du
+     vocabulaire : RECONNAÎTRE la section dans un document venu d'ailleurs
+     (« Introduction », « Background » : un manuscrit importé l'écrit ainsi), ÉCRIRE
+     l'intitulé choisi sur elle, et SAVOIR OÙ UN JOURNAL LA MET — c'est ce qui empêche
+     « materials and methods » de passer devant l'introduction, qu'aucune revue ne fait.
+     Le mot d'un journal devient l'intitulé : « introduction » → la rangée « Scientific
+     background » s'appelle alors « Introduction » (voir pubDocTitlesForWords). C'est la
+     demande, mot pour mot : « if in the journal science the scientific background is
+     called introduction, this must change in the “Document sections (order & titles)”
+     section. »
+     « abstract » n'appartient à AUCUN bloc : un résumé n'est pas une section du document
+     (le programme n'en imprime pas), donc un journal qui le nomme ne déplace rien et ne
+     renomme rien — l'ordre des autres n'en dépend pas moins (voir pubDocOrderForWords). */
+  background: ['scientific background', 'introduction', 'background'],
+  discussion: ['results and discussion', 'results', 'discussion']
 };
 const DOC_TITLE_KEYWORDS = Object.keys(PUB_DOC_BLOCK_WORDS).map((id) => [id, PUB_DOC_BLOCK_WORDS[id]]);
 
 /** LE BLOC qu'un mot de journal désigne, ou '' : le premier bloc dont la liste de mots
  *  contient exactement ce mot (voir PUB_DOC_BLOCK_WORDS). « experimental section » →
- *  « methods », « conclusion » → « conclusions », « abstract » → '' (aucun bloc : le
- *  contexte s'imprime dans « Text sections »). */
+ *  « methods », « conclusion » → « conclusions », « introduction » → « background »,
+ *  « abstract » → '' (aucun bloc : un résumé n'est pas une section du document). */
 export const docBlockOfWord = (word) => {
   const w = String(word == null ? '' : word).toLowerCase().replace(/\s+/g, ' ').trim();
   if (!w) return '';
@@ -334,10 +404,15 @@ export const docBlockOfWord = (word) => {
  *  écrit — un document figé avant le changement de nom suit donc le nouveau titre. */
 export const pubDocTitleKeywords = (fmt) => {
   const titles = normalizePubDocTitles(fmt && fmt.docTitles);
+  const hidden = normalizePubDocNoTitle(fmt && fmt.docNoTitle);
   const out = {};
   DOC_TITLE_KEYWORDS.forEach(([id, words]) => {
     const block = pubDocBlockOf(id);
     if (!block || !block.titled) return;
+    /* UN INTITULÉ QUE LE FORMAT NE VEUT PAS : le bloc sort SANS son `<h2>` (le titre
+       vide est le signal — voir reorderDocHtml). C'est ainsi qu'une bibliographie sans
+       intitulé se lit : « in the style of science references have no title ». */
+    if (hidden.includes(id)) { words.forEach((w) => { out[w] = ''; }); return; }
     const text = pubDocTitleOf(titles, id);
     if (!text || text.toLowerCase() === String(block.title).toLowerCase()) return;
     words.forEach((w) => { out[w] = text; });
@@ -666,6 +741,7 @@ export const buildPubFormat = (presetId) => {
     layout: buildPubLayout(),       // font / size / align / style / colour of each part (see pubLayoutCss)
     docOrder: buildPubDocOrder(),   // the blocks of the project document, in the order they print (see PUB_DOC_BLOCKS)
     docTitles: buildPubDocTitles(), // the headings the PROGRAM writes for them (« Materials and Methods » → the user's name)
+    docNoTitle: buildPubDocNoTitle(), // the headings the format does NOT want (« Science » prints no title over its reference list)
     fields: preset.defs.map((def, i) => ({
       id: def[0], enabled: true, order: i, style: def[1], prefix: def[2], suffix: def[3]
     }))
@@ -678,9 +754,9 @@ export const normalizePubFormat = (parsed) => {
   const n = parseInt(parsed && parsed.etAlLimit, 10);
   return {
     preset: (parsed && parsed.preset) || 'custom',
-    /* LE NOM DU STYLE ENREGISTRÉ dont ce format vient (« My styles », voir
-       loadPubStyles) : il voyage avec le format pour que la liste sache lequel est
-       actif, et il disparaît dès qu'un autre choix est fait (journal, preset). */
+    /* LE NOM DU STYLE ENREGISTRÉ dont ce format vient (le groupe « User defined » de la
+       liste, voir loadPubStyles) : il voyage avec le format pour que la liste sache
+       lequel est actif, et il disparaît dès qu'un autre choix est fait (un journal). */
     style: normalizePubStyleName(parsed && parsed.style),
     etAlLimit: Number.isFinite(n) && n >= 0 ? n : 0,
     alwaysShowScientists: !!(parsed && parsed.alwaysShowScientists),
@@ -690,6 +766,7 @@ export const normalizePubFormat = (parsed) => {
     layout: normalizePubLayout(parsed && parsed.layout),
     docOrder: normalizePubDocOrder(parsed && parsed.docOrder),
     docTitles: normalizePubDocTitles(parsed && parsed.docTitles),
+    docNoTitle: normalizePubDocNoTitle(parsed && parsed.docNoTitle),
     fields: (parsed && parsed.fields) || buildPubFormat('nature').fields
   };
 };
@@ -712,8 +789,11 @@ export const loadPubFormat = () => {
    Un STYLE est un FORMAT ENTIER mis de côté sous un nom : citation et bibliographie,
    caractère de chaque partie du document, ordre ET intitulés des sections, forme des
    renvois dans le texte, styles des noms du laboratoire. Son nom apparaît dans la liste
-   « Journal preset » (groupe « My styles ») ; le choisir REMET tout le format d'un coup,
-   et 💾 réécrit. Ils vivent dans `labWorkspace_pubStyles` : le préfixe « lab » les fait
+   « Journal preset », sous le groupe « User defined » ; le choisir REMET tout le format
+   d'un coup, et 💾 le réécrit — sauver sous un AUTRE nom ajoute une entrée de plus, à
+   côté des autres (la demande : « I must be able to save new settings with a different
+   name and this name must appear in the drop-down menu under a subsection: user
+   defined »). Ils vivent dans `labWorkspace_pubStyles` : le préfixe « lab » les fait
    partir sur le Drive avec le reste (utils/workspaceKeyStore.js) — ils suivent donc
    d'un poste à l'autre et survivent à un navigateur vidé, comme le format lui-même. */
 export const PUB_STYLES_KEY = 'labWorkspace_pubStyles';
@@ -755,7 +835,8 @@ export const writePubStyles = (styles) => {
 
 /** SAUVEGARDER un format sous un nom — le format est nettoyé et marqué du nom, pour que
  *  la liste sache lequel est actif. Un nom déjà pris est REMPLACÉ (c'est ce que
- *  l'utilisateur demande en le tapant à nouveau). Rend la liste complète. */
+ *  l'utilisateur demande en le tapant à nouveau) ; un nom NOUVEAU ajoute une entrée de
+ *  plus dans le groupe « User defined ». Rend la liste complète. */
 export const savePubStyle = (name, format) => {
   const key = normalizePubStyleName(name);
   if (!key) return loadPubStyles();

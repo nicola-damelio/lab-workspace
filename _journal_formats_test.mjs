@@ -26,7 +26,7 @@ const {
 } = await import('./src/components/journalFormats.js');
 const {
   PUB_FORMAT_PRESETS, PUB_LAYOUT_PARTS, PUB_LAYOUT_PART_IDS,
-  buildPubFormat, buildPubLayout, normalizePubLayout, pubTextStyleIsSet
+  buildPubFormat, buildPubLayout, normalizePubLayout, pubDocTitleKeywords, pubTextStyleIsSet
 } = await import('./src/components/pubCitation.js');
 
 let passed = 0;
@@ -141,6 +141,30 @@ eq(reorderDocHtml(foreign, JOURNAL_FORMATS.jacs.order), foreign,
   'des titres que le journal ne connaît pas : le document sort IDENTIQUE');
 eq(reorderDocHtml('', JOURNAL_FORMATS.jacs.order), '', 'une chaîne vide ne casse rien');
 
+/* LE JOURNAL CHANGE AUSSI LES INTITULÉS DES SECTIONS — la demande : « if in the journal
+   science the scientific background is called introduction, this must change in the
+   “Document sections (order & titles)” section » — ET PEUT LAISSER UNE SECTION SANS
+   INTITULÉ : « if in the style of science references have no title then the title tick
+   must be unchecked in the “References (citation & bibliography)” section ». */
+{
+  const scie = applyJournalFormat(buildPubFormat('nature'), 'science');
+  eq(scie.docTitles.background, 'Introduction',
+    'Science appelle le contexte « Introduction » : la rangée « Scientific background » du panneau suit (« scientific background is called introduction »)');
+  eq(scie.docNoTitle, ['references'],
+    '…et sa bibliographie n’écrit pas d’intitulé : la case du panneau est décochée');
+  eq(scie.bibLabel, '', '…ce que le format dit aussi par `bibLabel` vide (il voyage avec lui)');
+  JOURNAL_IDS.filter((id) => id !== 'science').forEach((id) => {
+    const fmt = applyJournalFormat(buildPubFormat('nature'), id);
+    eq(fmt.docNoTitle, [], `${id} : sa bibliographie a un intitulé (la case reste cochée)`);
+    eq(pubDocTitleKeywords(fmt).references === '', false,
+      `${id} : …donc le document écrit bien un « <h2> » au-dessus de sa liste`);
+  });
+  eq(pubDocTitleKeywords(scie).references, '',
+    'un style sans intitulé retire le `<h2>` de la bibliographie sur un document déjà écrit (voir reorderDocHtml)');
+  eq(clearJournalFormat(scie, buildPubLayout()).docNoTitle, [],
+    '« ↺ As in the app » rallume l’intitulé de la bibliographie');
+}
+
 /* ══ 4. LE BRANCHEMENT DANS L'APPLICATION ═════════════════════════════════ */
 const PUB = readFileSync('./src/components/Publications.jsx', 'utf8');
 const DOC = readFileSync('./src/components/AppModules/projectDetailModule.jsx', 'utf8');
@@ -148,31 +172,32 @@ ok(PUB.includes("from './journalFormats'"), 'le panneau importe les formats de j
 ok(PUB.includes('const pubSetJournal = (id) => {'), '…et le changement de journal a son geste');
 ok(PUB.includes('Journal preset:'), '…avec la ligne « Journal preset » dans le panneau Publication format');
 ok(PUB.includes('{JOURNAL_IDS.map((id) => ('), '…qui liste les journaux');
-ok(PUB.includes('Journal — references, typography and section order'),
-  '…dans un groupe à part : choisir un journal refait la citation, le caractère ET l’ordre des sections (« it does not seem to act on the styles and order of the sections »)');
-ok(PUB.includes('Bibliography style — the references only'),
-  '…et un STYLE de bibliographie, dans son propre groupe, ne touche que les références');
+ok(PUB.includes('Journal — references, typography, section order and titles'),
+  '…dans un groupe à part : choisir un journal refait la citation, le caractère, l’ordre des sections ET leurs intitulés (« it does not seem to act on the styles and order of the sections »)');
+ok(!PUB.includes('<optgroup label="Bibliography style — the references only">'),
+  '…et le groupe « Bibliography style — the references only » a disparu (« you can remove … because now it has become obsolete »)');
 ok(PUB.includes('onChange={(e) => pubSetJournalChoice(e.target.value)}'),
   '…les deux passent par UN SEUL contrôle');
 ok(!PUB.includes('Submit to:'), '…l’ancienne ligne « Submit to », dont la fonction était unclear, est retirée');
 ok(PUB.includes('const style = fmt && fmt.style && pubStyles[fmt.style] ? fmt.style : \'\';'),
   '…dont la valeur affichée suit le STYLE rappelé, puis le journal choisi, et sinon le style de bibliographie');
-ok(PUB.includes('My styles — saved by you (Custom)') && PUB.includes('💾 Save style…')
+ok(PUB.includes('My styles — saved by you (Custom)') === false && PUB.includes('User defined')
+  && PUB.includes('💾 Save style…')
   && PUB.includes('const pubRecallStyle = (name) => {'),
-'…et un TROISIÈME groupe pour les styles que l’utilisateur sauvegarde (sauver, rappeler, oublier)');
+'…et un groupe « User defined » pour les styles que l’utilisateur sauvegarde (sauver, rappeler, oublier)');
 ok(PUB.includes('setActiveFormat({ ...withPreset, layout: normalizePubLayout(withPreset.layout) })'),
   '…et applique le tout au format ACTIF (défaut ou projet)');
 ok(PUB.includes('journalOf(activeFormat) && (') && PUB.includes("journalSectionOrder(activeFormat).join(' → ')"),
   '…en rappelant l’ordre des sections du journal choisi (dans l’infobulle)');
 ok(PUB.includes('📰 {journalLabelOf(journalOf(activeFormat))}'),
   '…et sans phrase explicative : la demande « remove all this explanatory text » a retiré les paragraphes du panneau');
-ok(DOC.includes('return reorderDocHtml(bodyHtml, docOrderWords(pubFormat), pubDocTitleKeywords(pubFormat));'),
+ok(DOC.includes('bodyHtml = reorderDocHtml(bodyHtml, docOrderWords(pubFormat), pubDocTitleKeywords(pubFormat));'),
   'le document EXPORTÉ / IMPRIMÉ suit l’ORDRE CHOISI au panneau (celui du journal vient après, voir docOrderWords) et les intitulés choisis');
 ok(DOC.indexOf('bodyHtml = reorderDocHtml(') > DOC.indexOf('const projectDocBodyHtml = () => {'),
   '…dans la fabrication du corps exporté (impression, PDF et .docx — voir _pub_docx_export_test.mjs)');
 ok(DOC.indexOf('bodyHtml = reorderDocHtml(') < DOC.indexOf('const title = `${project.name} — project document`;'),
   '…après la réparation des références et avant l’écriture de la page');
-ok(DOC.includes('const bodyHtml = docExportBodyHtml();'),
+ok(DOC.includes('const bodyHtml = projectDocBodyHtml();'),
   '…et l’impression / le PDF en descend (la page écrite est celle-là)');
 ok(DOC.includes('journalSectionOrder, reorderDocHtml'), '…grâce au ré-export de Publications');
 ok(PUB.includes('JOURNAL_FORMATS, JOURNAL_IDS, applyJournalFormat, clearJournalFormat,'),

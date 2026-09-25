@@ -32,6 +32,7 @@ import {
   PUB_DOC_BLOCKS, PUB_FONTS, PUB_LAYOUT_PARTS, PUB_TEXT_ALIGNMENTS,
   authorMatchesCandidate, buildPubFormat, buildPubDocOrder, buildPubDocTitles, buildPubLayout,
   loadPubFormat, matchCoauthors, normalizePubDocOrder, normalizePubDocTitles, normalizePubLayout,
+  normalizePubDocNoTitle,
   pubCitationData, pubCitationHtml, pubDocOrderDropped,
   pubLayoutCss, pubTextStyleIsSet,
   /* LES STYLES QUE L'UTILISATEUR SAUVEGARDE (« Custom ») : le panneau les liste, les
@@ -87,12 +88,13 @@ export {
   AUTHOR_STYLES, AUTHOR_STYLE_IDS, IN_TEXT_STYLES, IN_TEXT_STYLE_IDS, PUB_FORMAT_PRESETS,
   normalizeInTextStyle,
   PUB_FONTS, PUB_LAYOUT_PARTS, PUB_TEXT_ALIGNMENTS,
-  buildPubFormat, buildPubDocOrder, buildPubDocTitles, buildPubLayout, loadPubFormat,
-  normalizePubDocOrder, normalizePubDocTitles, normalizePubFormat, normalizePubLayout,
+  buildPubFormat, buildPubDocOrder, buildPubDocTitles, buildPubDocNoTitle, buildPubLayout, loadPubFormat,
+  normalizePubDocOrder, normalizePubDocTitles, normalizePubDocNoTitle, normalizePubFormat, normalizePubLayout,
   pubLayoutCss, pubTextStyleIsSet, emptyPubTextStyle, PUB_DOC_BLOCKS, PUB_DOC_BLOCK_IDS,
-  pubDocOrderMoved, pubDocOrderDropped, pubDocTitleKeywords, pubDocOrderKeywords, pubDocTitleOf,
-  /* LES SECTION DE TEXTE QUI ONT LEUR RANGÉE (conclusions · funding · supporting : voir
-     PUB_DOC_BLOCKS) : la page du projet les imprime chacune à sa place. */
+  pubDocOrderMoved, pubDocOrderDropped, pubDocTitleKeywords, pubDocOrderKeywords, pubDocTitleOf, pubDocTitleHidden,
+  /* LES SECTIONS DE TEXTE QUI ONT LEUR RANGÉE (Scientific background · Results and
+     discussion · conclusions · funding · supporting : voir PUB_DOC_BLOCKS) : la page du
+     projet les imprime chacune à sa place, sous l'intitulé qu'elle a reçu. */
   PUB_DOC_SECTION_BLOCKS, PUB_DOC_SECTION_IDS, pubDocBlockOfSection,
   pubCitationHtml, pubCitationText, pubFieldValue, pubDoiUrl,
   pubCitationData, pubOriginOf,
@@ -2454,7 +2456,11 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     ...(fmt && Array.isArray(fmt.order) ? { order: fmt.order.slice() } : {}),
     ...(fmt && typeof fmt.bibLabel === 'string' ? { bibLabel: fmt.bibLabel } : {}),
     docOrder: normalizePubDocOrder(fmt && fmt.docOrder),
-    docTitles: normalizePubDocTitles(fmt && fmt.docTitles)
+    docTitles: normalizePubDocTitles(fmt && fmt.docTitles),
+    /* …ET LES INTITULÉS QUE LE FORMAT NE VEUT PAS (une case décochée au panneau, un
+       style qui n'écrit pas ce titre — voir normalizePubDocNoTitle) : régler un champ
+       de la citation ne doit pas les rallumer. */
+    docNoTitle: normalizePubDocNoTitle(fmt && fmt.docNoTitle)
   });
   const pubCustomFormat = (fields) => ({
     ...pubDocSettings(activeFormat),
@@ -2537,6 +2543,11 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
      programme écrit lui-même changent. */
   const docOrder = normalizePubDocOrder(activeFormat.docOrder);
   const docTitles = normalizePubDocTitles(activeFormat.docTitles);
+  /* LES INTITULÉS QUE LE FORMAT NE VEUT PAS (voir normalizePubDocNoTitle) : la case de
+     la rubrique « References (citation & bibliography) » les décoche, et un style peut
+     les décocher pour nous (Science) ; le document n'écrit alors aucun `<h2>` pour ces
+     blocs — leur texte, leurs figures et leur place restent. */
+  const docNoTitle = normalizePubDocNoTitle(activeFormat.docNoTitle);
   const pubDropDocBlock = (targetId) => {
     const moved = pubDocOrderDropped(docOrder, pubDocDragId, targetId);
     if (moved.join('|') !== docOrder.join('|')) pubPatchFormat({ docOrder: moved });
@@ -2549,24 +2560,12 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     docTitles: { ...docTitles, [id]: String(value == null ? '' : value).replace(/[<>]/g, '').slice(0, 120) }
   });
   const pubResetDocSections = () => pubPatchFormat({ docOrder: buildPubDocOrder(), docTitles: buildPubDocTitles() });
-  /* Le choix du « Journal preset » refait la CITATION. Ce contrôle liste DEUX
-     natures d'options (voir pubJournalChoice) : un STYLE de bibliographie
-     (`preset:…`) ou un JOURNAL entier (`journal:…`). Choisir un style DÉTACHE le
-     journal — son ordre de sections et son intitulé de bibliographie partent avec
-     lui — mais la mise en forme réglée partie par partie reste : elle a été réglée
-     à la main. Choisir un journal passe par pubSetJournal, qui refait les trois
-     choses ensemble (citation, caractère, ordre des sections). */
-  const pubSetPreset = (presetId) => {
-    const detached = { ...activeFormat };
-    delete detached.journal;
-    delete detached.order;
-    delete detached.bibLabel;
-    setActiveFormat({
-      ...buildPubFormat(presetId),
-      ...pubDocSettings(detached),
-      layout: normalizePubLayout(activeFormat.layout)
-    });
-  };
+  /* LE CHOIX « Bibliography style — the references only » N'EST PLUS. La demande :
+     « You can remove the “bibliography style - reference only” subsection of the
+     drop-down menu because now it has become obsolete. » Chaque journal porte en effet
+     SA forme de citation (son `preset`, appliqué par pubSetJournal) : choisir la
+     citation toute seule ne disait donc plus rien de plus, et la forme d'une référence
+     reste réglable champ par champ, dans la rubrique des références ci-dessous. */
 
   /* APPLIQUER UN JOURNAL — les TROIS choses du changement de journal d'un coup (la
      demande : « l'ordine delle sezioni, il formato della bibliografia, il carattere
@@ -2597,43 +2596,47 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
   /* « Journal preset: » EST LE CONTROLE DU JOURNAL — un seul, pour que sa fonction
      soit claire : une seule liste, avec ses groupes visibles, dit ce que chaque
      choix change, et l'aperçu comme le document suivent. Il porte donc
-     TROIS natures d'options, en trois groupes visibles :
-       • `preset:<id>`   — un STYLE de bibliographie (Nature, ACS, APA…), la seule
-                           forme de la citation (pubSetPreset) ;
+     DEUX natures d'options, en deux groupes visibles (le groupe « Bibliography style —
+     the references only » a DISPARU : la demande « You can remove the “bibliography
+     style - reference only” subsection of the drop-down menu because now it has become
+     obsolete », puisque chaque journal porte sa forme de citation et que les champs d'une
+     référence se règlent plus bas) :
        • `journal:<id>`  — un JOURNAL entier, qui refait d'un coup la citation, le
-                           caractère de chaque partie du document ET l'ordre de ses
-                           sections (pubSetJournal) ; `journal:` = « As in the app ».
-       • `style:<nom>`   — UN STYLE QUE L'UTILISATEUR A SAUVEGARDÉ (« My styles ») :
+                           caractère de chaque partie du document, L'ORDRE de ses sections
+                           et LES INTITULÉS qu'il leur donne (pubSetJournal ; c'est lui
+                           qui écrit « Introduction » là où la revue l'écrit ainsi) ;
+                           `journal:` = « As in the app » (aucun journal).
+       • `style:<nom>`   — UN STYLE QUE L'UTILISATEUR A SAUVEGARDÉ, sous le groupe
+                           « User defined » :
                            tout le format d'un coup, tel qu'il l'a mis de côté
                            (pubRecallStyle). C'est la réponse à « when I click on
                            custom I will be able to define other styles that I must be
                            able to save and recall. »
-     La valeur affichée suit ces trois-là (un style rappelé reste affiché, même si les
+     La valeur affichée suit ces deux-là (un style rappelé reste affiché, même si les
      champs se règlent ensuite à la main). */
   const pubJournalChoice = (fmt) => {
     const style = fmt && fmt.style && pubStyles[fmt.style] ? fmt.style : '';
     if (style) return `style:${style}`;
-    return fmt && fmt.journal
-      ? `journal:${fmt.journal}`
-      : `preset:${PUB_FORMAT_PRESETS[fmt && fmt.preset] ? fmt.preset : 'custom'}`;
+    return fmt && fmt.journal ? `journal:${fmt.journal}` : 'journal:';
   };
   const pubSetJournalChoice = (value) => {
     const v = String(value || '');
     if (v.startsWith('style:')) pubRecallStyle(v.slice('style:'.length));
-    else if (v.startsWith('journal:')) pubSetJournal(v.slice('journal:'.length));
-    else pubSetPreset(v.slice('preset:'.length));
+    else pubSetJournal(v.slice('journal:'.length));
   };
-  /* ── LES STYLES SAUVEGARDÉS (« Custom ») ──────────────────────────────────────
+  /* ── LES STYLES SAUVEGARDÉS (le groupe « User defined ») ─────────────────────
      💾 SAUVEGARDER le format affiché sous un nom (celui du style rappelé est proposé,
      sinon celui du journal) ; 🗑 OUBLIER le style affiché ; la liste du contrôle les
-     propose dans son groupe « My styles ». Sauver sous un nom déjà pris le REMPLACE —
-     c'est ce que l'utilisateur demande en le tapant à nouveau. */
+     propose dans son groupe « User defined » (la demande : « I must be able to save new
+     settings with a different name and this name must appear in the drop-down menu under
+     a subsection: user defined. »). Sauver sous un nom déjà pris le REMPLACE, un nom
+     NOUVEAU s'ajoute à côté des autres — c'est ce que l'utilisateur demande en le tapant. */
   const pubStyleName = () => activeFormat.style
     || (journalOf(activeFormat) ? journalLabelOf(journalOf(activeFormat)) : '');
   const pubSaveStyle = () => {
     let name = '';
     try {
-      name = window.prompt('Save this publication format as a style — its name appears in “My styles”:', pubStyleName()) || '';
+      name = window.prompt('Save this publication format — its name appears in the “User defined” group (type a NEW name to keep this one beside the others):', pubStyleName()) || '';
     } catch { name = ''; }
     if (!String(name).trim()) return;
     const styles = savePubStyle(name, activeFormat);
@@ -2643,7 +2646,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     /* LE FORMAT AFFICHÉ DEVIENT CE STYLE (il en porte le nom) : la liste le montre, et
        💾 le réécrira sous ce nom-là. */
     setActiveFormat({ ...activeFormat, style: key });
-    setPubStyleMsg(`💾 saved “${key}” — it is in “My styles”, and it follows you on the Drive`);
+    setPubStyleMsg(`💾 saved “${key}” — it is in “User defined”, and it follows you on the Drive`);
   };
   const pubForgetStyle = () => {
     const key = activeFormat.style;
@@ -2746,19 +2749,13 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
             ))}
           </select>
           <label className="text-[10px] font-black uppercase tracking-wide text-slate-400"
-                 title="The citation / bibliography style and the journal the paper is meant for. One control, two groups: a bibliography STYLE changes the references only; a JOURNAL changes the references AND the character and the order of the sections of the project document, in one click.">
+                 title="The journal the paper is meant for. One control, two groups: a JOURNAL changes the citation style, the character (font, size, alignment, bold, italic), the ORDER of the sections and the TITLES it gives them, all in one click; the styles you saved (User defined) put a whole format of your own back.">
             Journal preset:
           </label>
           <select value={pubJournalChoice(activeFormat)} onChange={(e) => pubSetJournalChoice(e.target.value)}
                   className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-semibold text-slate-700"
-                  title="Send the SAME work to another journal in one click: the citation and the bibliography style, the character (font, size, alignment, bold, italic) of every part of a project document and the ORDER of its sections change together. A bibliography style on its own changes the references only. Everything stays editable below, and « As in the app » puts the document back the way it was.">
-            <optgroup label="Bibliography style — the references only">
-              {Object.entries(PUB_FORMAT_PRESETS).map(([id, p]) => (
-                <option key={id} value={`preset:${id}`}>{p.label}</option>
-              ))}
-              <option value="preset:custom">Custom</option>
-            </optgroup>
-            <optgroup label="Journal — references, typography and section order">
+                  title="Send the SAME work to another journal in one click: the citation and the bibliography style, the character (font, size, alignment, bold, italic) of every part of a project document, the ORDER of its sections and the NAMES it gives them (« Scientific background » becomes « Introduction ») change together — and a journal whose reference list carries no heading leaves that heading unticked below. Everything stays editable below, and « As in the app » puts the document back the way it was.">
+            <optgroup label="Journal — references, typography, section order and titles">
               <option value="journal:">↺ As in the app (no journal)</option>
               {JOURNAL_IDS.map((id) => (
                 <option key={id} value={`journal:${id}`}>{JOURNAL_FORMATS[id].label}</option>
@@ -2767,7 +2764,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
             {/* LES STYLES QUE L'UTILISATEUR A SAUVEGARDÉS (« Custom » à rappeler) :
                 le nom rappelle TOUT le format d'un coup, et 💾/🗑 juste à côté les
                 sauvent ou les oublient. */}
-            <optgroup label="My styles — saved by you (Custom)">
+            <optgroup label="User defined">
               {Object.keys(pubStyles).length === 0 ? (
                 <option value="style:" disabled>· none saved yet — 💾 saves the format shown ·</option>
               ) : (
@@ -2779,7 +2776,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
           </select>
           <button type="button" onClick={pubSaveStyle}
                   className="px-2 py-1 rounded-lg text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100"
-                  title="Save the publication format shown (citation, typography, section order and titles, in-text style) under a name: it appears in “My styles”, here and on every computer (it follows you on the Drive). Saving under a name that already exists replaces it.">
+                  title="Save the publication format shown (citation, typography, section order and titles, headings you unticked, in-text style) under a name: it appears in “User defined”, here and on every computer (it follows you on the Drive). Type a NEW name and this format is kept beside the others; saving under a name that already exists replaces it.">
             💾 Save style…
           </button>
           {activeFormat.style && (
@@ -2816,12 +2813,14 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
           <div id="pub-layout-preview" className="bg-white border border-slate-200 rounded-lg p-3">
             <style>{pubLayoutCss(activeFormat, '#pub-layout-preview')}</style>
             {/* LA TÊTE COMME LE DOCUMENT FINAL LA LIT : le titre, une LIGNE VIDE, les
-                auteurs, une LIGNE VIDE, les affiliations — « in the final document the
-                list of authors must be separated by the title with one empty line. an
-                empty line must also separate the authors from the affiliations. » La
-                ligne vide est le même paragraphe que la page du projet écrit (voir
-                DOC_EMPTY_LINE_CLASS, journalFormats.js) : l'aperçu ne peut pas
-                promettre autre chose que le document. */}
+                auteurs, une LIGNE VIDE, les affiliations, une LIGNE VIDE, la ligne
+                d'information — « in the final document the list of authors must be
+                separated by the title with one empty line. an empty line must also
+                separate the authors from the affiliations. » puis « in the formatted
+                paper there must be an empty line after the affiliations. » La ligne vide
+                est le même paragraphe que la page du projet écrit (voir
+                DOC_EMPTY_LINE_CLASS, journalFormats.js) : l'aperçu ne peut pas promettre
+                autre chose que le document. */}
             <h1 className="pf-title text-lg font-black text-slate-800 mb-1">Antimicrobial peptides in lipid bilayers</h1>
             <div className={DOC_EMPTY_LINE_CLASS} aria-hidden="true">&nbsp;</div>
             <p className="pf-authors text-xs font-semibold text-slate-700">
@@ -2831,7 +2830,12 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
             <p className="pf-affiliations text-[10px] text-slate-500 italic whitespace-pre-line mb-2">
               1 Dipartimento di Agraria, Portici, Italy{'\n'}3 INRAE, Villenave d’Ornon, France
             </p>
-            <h2 className="pf-heading text-sm font-black text-slate-800 border-b border-slate-200 pb-1 mb-1">Results and Discussion</h2>
+            <div className={DOC_EMPTY_LINE_CLASS} aria-hidden="true">&nbsp;</div>
+            <p className="pf-meta text-[10px] text-slate-500 mb-2">Project: Aphid · Scientist: Rossi M</p>
+            {/* L'INTITULÉ DE LA SECTION SUIT LE PANNEAU : renommer « Results and
+                discussion » (ou choisir un journal qui l'appelle autrement) se voit ici,
+                comme dans le document. */}
+            <h2 className="pf-heading text-sm font-black text-slate-800 border-b border-slate-200 pb-1 mb-1">{docTitles.discussion || 'Results and Discussion'}</h2>
             <p className="pf-body text-xs text-slate-800 mb-2">
               The peptides were tested against <i>M. persicae</i>; the activity was confirmed previously
               <sup><a className="cite-ref" href="#ref-1" data-ref="1">1</a></sup>.
@@ -2844,6 +2848,13 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                 Figure 1. Aphid transmission of the virus.
               </figcaption>
             </figure>
+            {/* L'INTITULÉ DE LA BIBLIOGRAPHIE SE VOIT ICI AUSSI : la case de la rubrique
+                « References (citation & bibliography) » (et un style qui n'en écrit pas,
+                Science) le retire — l'aperçu ne peut pas promettre autre chose que le
+                document. */}
+            {!docNoTitle.includes('references') && (
+              <h2 className="pf-heading text-sm font-black text-slate-800 border-b border-slate-200 pb-1 mb-1 mt-2">{docTitles.references || 'References'}</h2>
+            )}
             <ol className="pf-bib list-decimal pl-4 text-[10px] text-slate-800 mt-2 space-y-0.5">
               <li>Rossi M, Bianchi A. <i>J. Biol. Chem.</i> 2024, 300, 105678.</li>
             </ol>
@@ -3058,6 +3069,26 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                title="How a reference is written and how the numbered citations of the text are printed.">
             References (citation &amp; bibliography)
           </div>
+
+          {/* LE TITRE DE LA BIBLIOGRAPHIE SE COCHE ICI — la demande : « If in the style
+              of science references have no title then the title tick must be unchecked in
+              the “References (citation & bibliography)” section. » La case lit
+              `docNoTitle` du format : choisir Science la décoche (sa liste suit le texte,
+              sans intitulé), la décocher soi-même retire le `<h2>` du document sur la
+              page, à l'impression, dans le PDF et dans le .docx — la liste des références,
+              elle, reste entière. Le champ de l'intitulé, lui, est dans « Document
+              sections (order & titles) », à la rangée « References ». */}
+          <label className="flex w-fit items-center gap-1.5 mb-3 text-[11px] font-bold text-slate-600 cursor-pointer"
+                 title="Print the heading over the reference list of the project document (page, print, PDF, .docx). Unticked — the habit of some journals, Science among them — the list follows the text with no heading of its own.">
+            <input type="checkbox" checked={!docNoTitle.includes('references')}
+                   onChange={(e) => pubPatchFormat({
+                     docNoTitle: e.target.checked
+                       ? docNoTitle.filter((id) => id !== 'references')
+                       : [...docNoTitle, 'references']
+                   })}
+                   className="w-3.5 h-3.5 accent-indigo-600" />
+            Print the “{docTitles.references || 'References'}” heading
+          </label>
 
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 mb-3">
             <div className="flex items-center gap-2">

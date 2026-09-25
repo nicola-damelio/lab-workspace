@@ -91,7 +91,7 @@ eq(reorderDocHtml(DOC, programWords, pubDocTitleKeywords({})), DOC,
 
 /* 2a. L'EXEMPLE DE LA DEMANDE : « mettre l'auteur avant le titre ». */
 const authorsFirst = pubDocOrderMoved(PROGRAM, 'authors', -1);
-eq(authorsFirst, ['authors', 'title', 'affiliations', 'meta', 'sections', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
+eq(authorsFirst, ['authors', 'title', 'affiliations', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
   'la rangée « Authors » remonte d’un cran dans le panneau');
 const swapped = reorderDocHtml(DOC, pubDocOrderKeywords(authorsFirst, SECTIONS));
 eq(swapped, [AUTHORS, TITLE, AFFIL, META, BG, DISC, CONCL, MM, EXP, REFS].join(''),
@@ -113,15 +113,15 @@ const methodsLast = pubDocOrderMoved(pubDocOrderMoved(PROGRAM, 'methods', 1), 'm
 eq(reorderDocHtml(DOC, pubDocOrderKeywords(methodsLast, SECTIONS)),
   [TITLE, AUTHORS, AFFIL, META, BG, DISC, CONCL, EXP, REFS, MM].join(''),
   '« Materials and Methods » après « Experiments » (le panneau, pas seulement le journal)');
-const sectionsLast = (() => { let o = PROGRAM; for (let i = 0; i < 3; i += 1) o = pubDocOrderMoved(o, 'sections', 1); return o; })();
-eq(reorderDocHtml(DOC, pubDocOrderKeywords(sectionsLast, SECTIONS)),
-  [TITLE, AUTHORS, AFFIL, META, CONCL, BG, DISC, MM, EXP, REFS].join(''),
-  'la rangée « Text sections » descend le contexte et les résultats SANS emporter les trois sections qui ont leur rengée à elles (c’est le sens de la demande : chacune se règle)');
-const sectionsFirst = (() => { let o = PROGRAM; for (let i = 0; i < 4; i += 1) o = pubDocOrderMoved(o, 'sections', -1); return o; })();
-eq(sectionsFirst.slice(0, 4), ['sections', 'title', 'authors', 'affiliations'], 'quatre ▲ amènent les sections avant le titre');
-eq(reorderDocHtml(DOC, pubDocOrderKeywords(sectionsFirst, SECTIONS)),
-  [BG, DISC, TITLE, AUTHORS, AFFIL, META, CONCL, MM, EXP, REFS].join(''),
-  '…et la tête suit les sections, entière et dans son ordre (les conclusions suivent la tête : elles ont leur propre rangée)');
+const bgLast = (() => { let o = PROGRAM; for (let i = 0; i < 3; i += 1) o = pubDocOrderMoved(o, 'background', 1); return o; })();
+eq(reorderDocHtml(DOC, pubDocOrderKeywords(bgLast, SECTIONS)),
+  [TITLE, AUTHORS, AFFIL, META, DISC, CONCL, BG, MM, EXP, REFS].join(''),
+  'la rangée « Scientific background » descend le contexte APRÈS les résultats et les conclusions, sans emporter les autres sections : chacune se règle à sa rangée (le bloc générique « Text sections » n’existe plus)');
+const bgFirst = (() => { let o = PROGRAM; for (let i = 0; i < 4; i += 1) o = pubDocOrderMoved(o, 'background', -1); return o; })();
+eq(bgFirst.slice(0, 4), ['background', 'title', 'authors', 'affiliations'], 'quatre ▲ amènent le contexte avant le titre');
+eq(reorderDocHtml(DOC, pubDocOrderKeywords(bgFirst, SECTIONS)),
+  [BG, TITLE, AUTHORS, AFFIL, META, DISC, CONCL, MM, EXP, REFS].join(''),
+  '…et la tête suit les sections, entière et dans son ordre (les résultats suivent la tête : eux aussi ont leur rangée)');
 
 /* 2d. UN INTITULÉ CHOISI PART AVEC SON BLOC, quel que soit le côté de la tête. */
 const renamed = reorderDocHtml(DOC, pubDocOrderKeywords(authorsFirst, SECTIONS),
@@ -165,7 +165,7 @@ eq(reorderDocHtml(DOC, [], { 'materials and methods': 'Experimental section' }).
 
 /* ══ 4. L'IMPRESSION COPIE CE DOCUMENT : LES MÊMES MOTS D'ORDRE ════════════════
    Le corps du document final est construit en UN SEUL endroit
-   (`docExportBodyHtml`, qui prend `docEl.innerHTML` — le document DÉJÀ réordonné
+   (`projectDocBodyHtml`, qui prend `docEl.innerHTML` — le document DÉJÀ réordonné
    par l'écran — et le réordonne avec `docOrderWords(pubFormat)`) : appliquer
    l'ordre deux fois ne doit rien déplacer une seconde fois, et l'ordre du papier
    est celui de l'écran. « 🖨️ Print » et « ⬇️ Word (.docx) » en descendent tous
@@ -175,9 +175,9 @@ eq(reorderDocHtml(once, pubDocOrderKeywords(authorsFirst, SECTIONS)), once,
   'réordonner deux fois ne rebouge rien (l’écran et le papier montrent le même document)');
 eq(reorderDocHtml(reorderDocHtml(DOC, programWords), pubDocOrderKeywords(authorsFirst, SECTIONS)), once,
   '…et l’ordre demandé s’applique aussi à un HTML déjà passé une fois par le programme');
-has(PROJ, 'return reorderDocHtml(bodyHtml, docOrderWords(pubFormat), pubDocTitleKeywords(pubFormat));',
+has(PROJ, 'bodyHtml = reorderDocHtml(bodyHtml, docOrderWords(pubFormat), pubDocTitleKeywords(pubFormat));',
   'l’impression / le PDF réordonne avec les mêmes mots d’ordre que l’écran');
-has(PROJ, 'const bodyHtml = docExportBodyHtml();',
+has(PROJ, 'const bodyHtml = projectDocBodyHtml();',
   '…et la page imprimée est CE corps-là (le même que celui du fichier Word)');
 has(PROJ, 'const docOrderWords = (fmt) => {',
   '…par la même liste de mots (docOrderWords, écrite une seule fois dans la page)');

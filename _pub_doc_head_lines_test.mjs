@@ -58,9 +58,9 @@ const SECTION = '<h2 class="pf-heading text-base font-black">Results and Discuss
 const BLANK = DOC_EMPTY_LINE_HTML;
 
 /* ══ 1. LES RANGÉES DE LA PAGE DU PROJET, EXÉCUTÉES ═══════════════════════════ */
-eq(DOC_HEAD_IDS, ['title', 'authors', 'affiliations'],
-  'les trois blocs de tête sont ceux du panneau (voir PUB_DOC_BLOCKS)');
-eq(DOC_HEAD_CLASSES, ['pf-title', 'pf-authors', 'pf-affiliations'],
+eq(DOC_HEAD_IDS, ['title', 'authors', 'affiliations', 'meta'],
+  'les quatre blocs de tête sont ceux du panneau (voir PUB_DOC_BLOCKS) — la ligne d’information en fait partie depuis « there must be an empty line after the affiliations »');
+eq(DOC_HEAD_CLASSES, ['pf-title', 'pf-authors', 'pf-affiliations', 'pf-meta'],
   '…et ce sont les classes que le document leur écrit (voir reorderDocHtml)');
 eq(DOC_EMPTY_LINE_HTML, `<div class="${DOC_EMPTY_LINE_CLASS}" aria-hidden="true">&nbsp;</div>`,
   'la ligne vide a UN seul balisage, celui que la page écrit et que le HTML exporté reçoit');
@@ -69,17 +69,18 @@ ok(DOC_EMPTY_LINE_HTML.includes('&nbsp;') && !DOC_EMPTY_LINE_HTML.includes('no-p
 
 const PROGRAM = buildPubDocOrder();
 eq(docHeadRows(PROGRAM),
-  ['title', DOC_EMPTY_LINE_ID, 'authors', DOC_EMPTY_LINE_ID, 'affiliations',
-    'meta', 'sections', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
-  'la tête du document se lit : titre · ligne vide · auteurs · ligne vide · affiliations (la ligne d’information suit, sans ligne vide)');
+  ['title', DOC_EMPTY_LINE_ID, 'authors', DOC_EMPTY_LINE_ID, 'affiliations', DOC_EMPTY_LINE_ID,
+    'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
+  'la tête du document se lit : titre · ligne vide · auteurs · ligne vide · affiliations · ligne vide · ligne d’information (« in the formatted paper there must be an empty line after the affiliations »)');
 eq(docHeadRows(['authors', 'title', 'affiliations', 'meta']),
-  ['authors', DOC_EMPTY_LINE_ID, 'title', DOC_EMPTY_LINE_ID, 'affiliations', 'meta'],
-  '…et « mettre l’auteur avant le titre » (l’exemple de la demande d’origine) garde la ligne vide ENTRE les deux');
-eq(docHeadRows(['title', 'meta', 'authors', 'affiliations']),
-  ['title', 'meta', 'authors', DOC_EMPTY_LINE_ID, 'affiliations'],
-  'deux blocs de tête séparés par un AUTRE bloc (la ligne d’information) n’en reçoivent pas : il y a déjà de la place');
+  ['authors', DOC_EMPTY_LINE_ID, 'title', DOC_EMPTY_LINE_ID, 'affiliations', DOC_EMPTY_LINE_ID, 'meta'],
+  '…et « mettre l’auteur avant le titre » (l’exemple de la demande d’origine) garde les lignes vides ENTRE les blocs');
+eq(docHeadRows(['title', 'conclusions', 'affiliations', 'meta']),
+  ['title', 'conclusions', 'affiliations', DOC_EMPTY_LINE_ID, 'meta'],
+  'deux blocs de tête séparés par un AUTRE bloc (une section) n’en reçoivent pas : il y a déjà de la place');
 eq(docHeadRows(PROGRAM, (id) => id !== 'authors'),
-  ['title', DOC_EMPTY_LINE_ID, 'affiliations', 'meta', 'sections', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
+  ['title', DOC_EMPTY_LINE_ID, 'affiliations', DOC_EMPTY_LINE_ID, 'meta', 'background', 'discussion',
+    'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
   'un projet SANS auteurs garde la ligne vide entre le titre et les affiliations (le bloc absent ne compte pas)');
 eq(docHeadRows(['title']), ['title'], 'une tête d’un seul bloc ne reçoit aucune ligne vide');
 eq(docHeadRows(undefined), [], 'un ordre absent ne rend rien (jamais une erreur)');
@@ -87,25 +88,25 @@ eq(docHeadRows(undefined), [], 'un ordre absent ne rend rien (jamais une erreur)
 /* ══ 2. LA MÊME RÈGLE SUR LE HTML (document figé · impression · .docx) ═══════ */
 const doc = [TITLE, AUTHORS, AFFIL, META, SECTION].join('');
 eq(docHeadSpacedHtml(doc),
-  [TITLE, BLANK, AUTHORS, BLANK, AFFIL, META, SECTION].join(''),
-  'le document écrit une ligne vide entre le titre et les auteurs, et entre les auteurs et les affiliations — et RIEN d’autre (ni avant la ligne d’information, ni avant la section)');
-eq(count(docHeadSpacedHtml(doc), DOC_EMPTY_LINE_CLASS), 2, '…deux lignes vides : une seule par paire de blocs de tête');
+  [TITLE, BLANK, AUTHORS, BLANK, AFFIL, BLANK, META, SECTION].join(''),
+  'le document écrit une ligne vide entre le titre et les auteurs, entre les auteurs et les affiliations, ET après les affiliations — et RIEN d’autre (ni avant la section)');
+eq(count(docHeadSpacedHtml(doc), DOC_EMPTY_LINE_CLASS), 3, '…trois lignes vides : une seule par paire de blocs de tête');
 
 const spaced = docHeadSpacedHtml(doc);
 eq(docHeadSpacedHtml(spaced), spaced, 'la règle est IDEMPOTENTE : repasser dessus ne double aucune ligne');
-eq(count(docHeadSpacedHtml(docHeadSpacedHtml(doc)), DOC_EMPTY_LINE_CLASS), 2,
+eq(count(docHeadSpacedHtml(docHeadSpacedHtml(doc)), DOC_EMPTY_LINE_CLASS), 3,
   '…même après le passage de la page, du figé et de l’export l’un après l’autre');
 
 /* LA TÊTE DÉPLACÉE À LA MAIN : `reorderDocHtml` déplace des blocs ENTIERS et la ligne
    vide voyage avec celui qui la précède — la même règle la remet donc entre les bons
    blocs, sans doublon ni ligne orpheline. */
-const authorsFirst = ['authors', 'title', 'affiliations', 'meta', 'sections', 'methods', 'experiments', 'references'];
+const authorsFirst = ['authors', 'title', 'affiliations', 'meta', 'methods', 'experiments', 'references'];
 const words = pubDocOrderKeywords(authorsFirst, PROJECT_TEXT_SECTIONS.map((s) => s.label));
 const moved = docHeadSpacedHtml(reorderDocHtml(spaced, words));
 eq(moved, docHeadSpacedHtml([AUTHORS, TITLE, AFFIL, META, SECTION].join('')),
   'un document ENREGISTRÉ relu « auteurs avant le titre » se relit avec ses lignes vides aux bonnes places');
-eq(count(moved, DOC_EMPTY_LINE_CLASS), 2,
-  '…toujours deux lignes vides, aucune laissée derrière la tête');
+eq(count(moved, DOC_EMPTY_LINE_CLASS), 3,
+  '…toujours trois lignes vides, aucune laissée derrière la tête');
 ok(moved.indexOf(AUTHORS) < moved.indexOf(BLANK) && moved.indexOf(BLANK) < moved.indexOf(TITLE),
   '…la première des deux est bien ENTRE les auteurs et le titre');
 
@@ -135,11 +136,16 @@ ok(PUB_LAYOUT_PARTS.every((p) => (p.selectors || []).every((s) => !/^div\b/.test
 const GAP_PARA = '<w:p><w:r><w:t xml:space="preserve"> </w:t></w:r></w:p>';
 {
   const { xml } = htmlToDocxBody(docHeadSpacedHtml(doc));
-  eq(count(xml, GAP_PARA), 2, 'le .docx reçoit deux paragraphes vides (un par paire de blocs de tête)');
-  ok(xml.indexOf(GAP_PARA) > xml.indexOf('Heading1') && xml.indexOf(GAP_PARA) < xml.indexOf('Rossi M'),
+  const gaps = [];
+  let at = xml.indexOf(GAP_PARA);
+  while (at >= 0) { gaps.push(at); at = xml.indexOf(GAP_PARA, at + 1); }
+  eq(gaps.length, 3, 'le .docx reçoit trois paragraphes vides (un entre chaque paire de blocs de tête)');
+  ok(gaps[0] > xml.indexOf('Heading1') && gaps[0] < xml.indexOf('Rossi M'),
     '…le premier tombe ENTRE le titre (Heading1) et la liste des auteurs');
-  ok(xml.indexOf('Bianchi A') < xml.lastIndexOf(GAP_PARA) && xml.lastIndexOf(GAP_PARA) < xml.indexOf('1 Dipartimento'),
+  ok(xml.indexOf('Bianchi A') < gaps[1] && gaps[1] < xml.indexOf('1 Dipartimento'),
     '…le second entre les auteurs et les affiliations');
+  ok(xml.indexOf('1 Dipartimento') < gaps[2] && gaps[2] < xml.indexOf('Project:'),
+    '…et le troisième APRÈS les affiliations (« there must be an empty line after the affiliations »)');
   ok(!htmlToDocxBody(plain).xml.includes(GAP_PARA),
     'un document sans les classes de la tête n’invente aucune ligne vide dans Word');
 }
@@ -173,9 +179,9 @@ has(PANEL, '  docHeadRows, docHeadSpacedHtml',
   '…et les deux fonctions');
 {
   const preview = PANEL.indexOf('id="pub-layout-preview"');
-  const after = PANEL.slice(preview, preview + 1600);
-  eq(count(after, 'className={DOC_EMPTY_LINE_CLASS}'), 2,
-    'l’aperçu « Live preview — project document » montre la tête du document FINAL : titre · ligne vide · auteurs · ligne vide · affiliations');
+  const after = PANEL.slice(preview, preview + 2600);
+  eq(count(after, 'className={DOC_EMPTY_LINE_CLASS}'), 3,
+    'l’aperçu « Live preview — project document » montre la tête du document FINAL : titre · ligne vide · auteurs · ligne vide · affiliations · ligne vide · ligne d’information');
 }
 
 console.log(`_pub_doc_head_lines_test.mjs : ${passed} passed`);

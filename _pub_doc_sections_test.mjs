@@ -21,7 +21,7 @@ import { register } from 'node:module';
 // crochet que _journal_formats_test.mjs.
 register('./_esm_test_hook.mjs', import.meta.url);
 const {
-  PUB_DOC_BLOCKS, PUB_DOC_BLOCK_IDS, PUB_DOC_TITLED_IDS, PUB_DOC_FIXED_IDS,
+  PUB_DOC_BLOCKS, PUB_DOC_BLOCK_IDS, PUB_DOC_TITLED_IDS, PUB_DOC_FIXED_IDS, PUB_DOC_SECTION_BLOCKS,
   buildPubDocOrder, buildPubDocTitles, buildPubFormat, normalizePubDocOrder,
   normalizePubDocTitles, normalizePubFormat, pubDocOrderDropped, pubDocOrderMoved, pubDocTitleKeywords,
   pubDocOrderKeywords, pubDocTitleOf
@@ -45,16 +45,17 @@ const PROJ = read('./src/components/AppModules/projectDetailModule.jsx');
 const has = (hay, needle, what) => ok(String(hay).includes(needle), `${what}\n  introuvable : ${needle}`);
 
 /* ══ 1. LES BLOCS DU DOCUMENT, EXÉCUTÉS ═══════════════════════════════════════ */
-eq(PUB_DOC_BLOCKS.length, 11, 'le document a onze blocs nommés');
-eq(PUB_DOC_BLOCK_IDS, ['title', 'authors', 'affiliations', 'meta', 'sections',
-  'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
-'les blocs du document, dans l’ordre où la page du projet les imprime (les conclusions, le financement et les informations supplémentaires ont leur rangée depuis cette version)');
-eq(PUB_DOC_TITLED_IDS, ['conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
-'six blocs portent un intitulé que le PROGRAMME écrit');
+eq(PUB_DOC_BLOCKS.length, 12, 'le document a douze blocs nommés');
+eq(PUB_DOC_BLOCK_IDS, ['title', 'authors', 'affiliations', 'meta',
+  'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
+'les blocs du document, dans l’ordre où la page du projet les imprime (le contexte et les résultats ont leur rangée comme « Materials and Methods » — le bloc générique « Text sections » a disparu)');
+eq(PUB_DOC_TITLED_IDS, ['background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
+'huit blocs portent un intitulé que le PROGRAMME écrit, donc huit champs dans le panneau');
 eq(PUB_DOC_FIXED_IDS, ['references'],
 'la liste VIVANTE des références est imprimée en dernier (son intitulé, lui, se règle)');
 eq(buildPubDocOrder(), PUB_DOC_BLOCK_IDS, 'l’ordre du programme est celui de la page du projet');
 eq(buildPubDocTitles(), {
+  background: 'Scientific background', discussion: 'Results and Discussion',
   conclusions: 'Conclusions', funding: 'Funding', supporting: 'Supporting information',
   methods: 'Materials and Methods', experiments: 'Experiments', references: 'References'
 },
@@ -63,35 +64,38 @@ eq(buildPubDocTitles(), {
 // 1a. Un ordre relu : rien ne disparaît, rien d’inconnu ne passe.
 eq(normalizePubDocOrder(undefined), PUB_DOC_BLOCK_IDS, 'un format sans ordre prend celui du programme');
 eq(normalizePubDocOrder(['authors', 'title']),
-  ['authors', 'title', 'affiliations', 'meta', 'sections', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
+  ['authors', 'title', 'affiliations', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
   'un ordre PARTIEL est complété par les blocs oubliés (aucune section ne peut disparaître)');
+eq(normalizePubDocOrder(['title', 'authors', 'affiliations', 'meta', 'sections', 'experiments', 'methods', 'references']),
+  ['title', 'authors', 'affiliations', 'meta', 'background', 'discussion', 'experiments', 'methods', 'references', 'conclusions', 'funding', 'supporting'],
+  'un ordre enregistré AVANT cette version nomme encore le bloc générique « sections » : ses deux sections prennent SA place (elles ne partent pas à la fin du document)');
 eq(normalizePubDocOrder(['title', 'title', 'nulle-part']), PUB_DOC_BLOCK_IDS,
   'les doublons et les blocs inconnus sont écartés');
 eq(normalizePubDocOrder('title'), PUB_DOC_BLOCK_IDS, 'un ordre qui n’est pas une liste est ignoré');
 
 // 1b. ▲▼ — le premier exemple de la demande : les AUTEURS avant le TITRE.
 const swapped = pubDocOrderMoved(PUB_DOC_BLOCK_IDS, 'authors', -1);
-eq(swapped, ['authors', 'title', 'affiliations', 'meta', 'sections', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
+eq(swapped, ['authors', 'title', 'affiliations', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
   '▲▼ met les auteurs AVANT le titre (« put the author before the title »)');
 eq(pubDocOrderMoved(swapped, 'references', -1), swapped, '…la liste des références, elle, ne se déplace pas');
 eq(pubDocOrderMoved(PUB_DOC_BLOCK_IDS, 'title', -1), PUB_DOC_BLOCK_IDS, 'un cran hors de la liste ne fait rien');
 eq(pubDocOrderMoved(PUB_DOC_BLOCK_IDS, 'references', -1), PUB_DOC_BLOCK_IDS, '…comme un ▲ sur le premier bloc');
-eq(pubDocOrderMoved(PUB_DOC_BLOCK_IDS, 'funding', -1)[5], 'funding',
+eq(pubDocOrderMoved(PUB_DOC_BLOCK_IDS, 'funding', -1).indexOf('funding'), PUB_DOC_BLOCK_IDS.indexOf('funding') - 1,
   '…et une section de FIN se déplace comme les autres (le financement passe devant les conclusions)');
 
 /* 1b-bis. LE GLISSER-DÉPOSER — la demande : « these elements must be movable by
    drag and drop rather than arrows ». Le bloc pris PREND LA PLACE du bloc visé. */
 eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'authors', 'title'),
-  ['authors', 'title', 'affiliations', 'meta', 'sections', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
+  ['authors', 'title', 'affiliations', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
   'lâcher « Authors » sur « Title » le met à sa place (« put the author before the title »)');
 eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'methods', 'title'),
-  ['methods', 'title', 'authors', 'affiliations', 'meta', 'sections', 'conclusions', 'funding', 'supporting', 'experiments', 'references'],
+  ['methods', 'title', 'authors', 'affiliations', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'experiments', 'references'],
   'lâcher un bloc VERS LE HAUT le fait remonter (les autres descendent)');
 eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'title', 'methods'),
-  ['authors', 'affiliations', 'meta', 'sections', 'conclusions', 'funding', 'supporting', 'methods', 'title', 'experiments', 'references'],
+  ['authors', 'affiliations', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'title', 'experiments', 'references'],
   'lâcher un bloc VERS LE BAS l’envoie à la place visée (les autres remontent)');
-eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'conclusions', 'sections'),
-  ['title', 'authors', 'affiliations', 'meta', 'conclusions', 'sections', 'funding', 'supporting', 'methods', 'experiments', 'references'],
+eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'conclusions', 'discussion'),
+  ['title', 'authors', 'affiliations', 'meta', 'background', 'conclusions', 'discussion', 'funding', 'supporting', 'methods', 'experiments', 'references'],
   '…et une section de FIN se prend et se vise comme les autres');
 eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'title', 'title'), PUB_DOC_BLOCK_IDS,
   'un geste sur soi-même ne change rien');
@@ -102,7 +106,7 @@ eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'title', 'references'), PUB_DOC_BLOCK_I
 eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'nulle-part', 'title'), PUB_DOC_BLOCK_IDS,
   'un bloc inconnu ne casse rien');
 eq(pubDocOrderDropped(swapped, 'title', 'authors'),
-  ['title', 'authors', 'affiliations', 'meta', 'sections', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
+  ['title', 'authors', 'affiliations', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
   'le même geste remet le titre en tête sur un ordre déjà déplacé');
 
 
@@ -148,7 +152,7 @@ const applied = applyJournalFormat(mine, 'jacs');
 eq(applied.journal, 'jacs', 'appliquer un journal change bien le journal');
 eq(applied.docOrder.slice(0, 4), mine.docOrder.slice(0, 4),
 '…la tête du document reste celle que l’utilisateur avait réglée (un ordre de journal ne concerne pas le titre et les auteurs)');
-eq(applied.docOrder.includes('sections') && applied.docOrder[applied.docOrder.length - 1] === 'references',
+eq(applied.docOrder.length === PUB_DOC_BLOCK_IDS.length && applied.docOrder[applied.docOrder.length - 1] === 'references',
   true, '…et toutes les sections sont là, la bibliographie en dernier');
 eq(applied.docTitles.methods, 'Experimental section', '…et l’intitulé choisi par l’utilisateur est RESPECTÉ');
 eq(clearJournalFormat(mine, {}).docOrder, PUB_DOC_BLOCK_IDS,
@@ -177,6 +181,42 @@ eq(renamedDoc.length, doc.length - ('Materials and Methods'.length - 'Experiment
   '…seul l’intitulé change, et rien d’autre');
 ok(!reorderDocHtml(doc, [], { 'materials and methods': '<img src=x onerror=alert(1)>' }).includes('<img'),
   'un intitulé ne peut pas apporter une balise au document');
+
+/* ── LES DEUX RANGÉES DEMANDÉES — ET LEURS NOMS, ÉDITABLES ────────────────────
+   « the “Document sections (order & titles)” section should contain “scientific
+   background” and “Results and discussion”. As “Material and method” I must be able to
+   edit their names. » */
+eq(PUB_DOC_SECTION_BLOCKS.map((b) => b.id), ['background', 'discussion', 'conclusions', 'funding', 'supporting'],
+  'les cinq sections de texte du projet ont leur rangée — le contexte et les résultats compris');
+eq(pubDocTitleOf({}, 'background'), 'Scientific background',
+  'la rangée du contexte écrit d’abord l’intitulé de la section (rien ne change tant qu’on n’y touche pas)');
+eq(pubDocTitleOf({}, 'discussion'), 'Results and Discussion', '…et celle des résultats, le sien');
+{
+  const renamedSections = reorderDocHtml(
+    [H2('Scientific background'), '<p>bg</p>', H2('Results and Discussion'), '<p>results</p>'].join(''),
+    [],
+    pubDocTitleKeywords({ docTitles: { background: 'Introduction', discussion: 'Findings' } }));
+  ok(renamedSections.includes(`${H2('Introduction')}<p>bg</p>`)
+    && renamedSections.includes(`${H2('Findings')}<p>results</p>`),
+  'chacune se renomme comme « Materials and Methods » (« I must be able to edit their names »), son texte intact');
+}
+/* ── UN INTITULÉ QUE LE FORMAT NE VEUT PAS ────────────────────────────────────
+   « if in the style of science references have no title then the title tick must be
+   unchecked in the “References (citation & bibliography)” section. » La demande est
+   portée par `docNoTitle`, et le document écrit alors le bloc SANS son `<h2>`. */
+{
+  const noHeading = reorderDocHtml(
+    `${H2('References (2)')}<ol class="pf-bib"><li>ref 1</li><li>ref 2</li></ol>`,
+    [],
+    pubDocTitleKeywords({ docNoTitle: ['references'] }));
+  ok(!noHeading.includes('<h2'), 'un bloc dont le format cache l’intitulé sort SANS son `<h2>` (Science ne titre pas sa bibliographie)');
+  ok(noHeading.includes('<ol class="pf-bib"><li>ref 1</li><li>ref 2</li></ol>'),
+    '…et sa liste reste entière, à la même place');
+  eq(pubDocTitleKeywords({ docNoTitle: ['references'] }).references, '',
+    '…parce que le mot « references » du vocabulaire porte le titre VIDE');
+  eq(pubDocTitleKeywords({ docTitles: { references: 'Bibliography' } }).references, 'Bibliography',
+    '…alors qu’un titre choisi, lui, s’écrit (« Bibliography »)');
+}
 
 const angew = reorderDocHtml(doc, JOURNAL_FORMATS.angewandte.order, { 'materials and methods': 'Experimental section' });
 ok(angew.includes('Experimental section'), 'le titre choisi part avec le bloc que le journal déplace');
@@ -215,18 +255,20 @@ has(PANEL, 'const pubResetDocSections = () => pubPatchFormat({ docOrder: buildPu
 
 has(PROJ, 'const docOrder = normalizePubDocOrder(pubFormat && pubFormat.docOrder);', 'le document du projet lit l’ordre du format');
 has(PROJ, 'const docTitles = normalizePubDocTitles(pubFormat && pubFormat.docTitles);', '…et ses intitulés');
-has(PROJ, 'const docHeading = (id) => pubDocTitleOf(docTitles, id);', '…et sait écrire l’intitulé d’un bloc');
+has(PROJ, "const docHeading = (id) => (pubDocTitleHidden(pubFormat, id) ? '' : pubDocTitleOf(docTitles, id));",
+  '…et sait écrire l’intitulé d’un bloc — ou n’en écrire AUCUN quand le format le cache (voir _journal_formats_test.mjs)');
 has(PROJ, 'return docHeadRows(docOrder, (id) => !!blocks[id]).map((id, i) => (',
   '…en rendant les blocs DANS CET ORDRE — avec la LIGNE VIDE entre le titre, les auteurs et les affiliations (voir _pub_doc_head_lines_test.mjs)');
 has(PROJ, 'blocks.title = (', 'le titre est un bloc déplaçable');
 has(PROJ, 'if (project.paperAuthors) blocks.authors = (', '…les auteurs un autre (« put the author before the title »)');
 has(PROJ, 'if (project.paperAffiliations) blocks.affiliations = (', '…les affiliations aussi');
 has(PROJ, 'blocks.meta = (', '…la ligne du projet aussi');
-has(PROJ, 'blocks.sections = sectionBlocks.map((s) => renderSectionBlock(s, s.title));', '…les sections de texte de l’auteur aussi');
+ok(!PROJ.includes('blocks.sections = sectionBlocks'),
+  '…le bloc générique « Text sections » n’existe plus : chaque section de texte du projet a SA rangée');
 has(PROJ, 'blocks[block.id] = renderSectionBlock(s, docHeading(block.id));',
   '…et les conclusions, le financement et les informations supplémentaires à LEUR rangée, sous l’intitulé choisi');
 has(PROJ, 'const ownRowBlocks = sectionBlocksOf.filter((s) => !!pubDocBlockOfSection(s.id));',
-  '…en séparant les sections qui ont leur rangée de celles qui s’impriment dans « Text sections »');
+  '…en prenant toutes les sections de texte du projet (elles ont maintenant toutes leur rangée)');
 has(PROJ, 'if (includedExps.length > 0 || mmTextSaved) blocks.methods = (', '…« Materials and Methods » aussi');
 has(PROJ, "{docHeading('methods')}</h2>", '…avec l’intitulé choisi (« Experimental section »)');
 has(PROJ, "{docHeading('experiments')} ({includedExps.length})</h2>", '…« Experiments (n) » garde son compte sous le titre choisi');
@@ -262,13 +304,14 @@ const frozen = [
 ].join('');
 eq(pubDocOrderKeywords(buildPubDocOrder(), PROJECT_SECTIONS),
   ['pf-title', 'pf-authors', 'pf-affiliations', 'pf-meta',
-    'scientific background', 'results and discussion',
+    'scientific background', 'introduction', 'background',
+    'results and discussion', 'results', 'discussion',
     'conclusions', 'conclusion', 'concluding remarks', 'perspectives',
     'funding', 'funding statement', 'acknowledgements', 'acknowledgments', 'financial support',
     'supporting information', 'supplementary information', 'supporting material', 'supplementary material', 'supplementary data',
     'materials and methods', 'methods', 'experimental section', 'experimental part', 'experimental procedures', 'experiments',
     'references', 'bibliography'],
-  'l’ordre du programme se traduit dans les mots que le document écrit — les quatre blocs de tête par leur CLASSE, chaque section de texte par les mots de SA rangée (et leurs synonymes)');
+  'l’ordre du programme se traduit dans les mots que le document écrit — les quatre blocs de tête par leur CLASSE, chaque section de texte par les mots de SA rangée (et leurs synonymes : « introduction » est le contexte, comme un journal l’écrit)');
 eq(pubDocOrderKeywords(buildPubDocOrder(), PROJECT_SECTIONS), pubDocOrderKeywords(PUB_DOC_BLOCK_IDS, PROJECT_SECTIONS),
   '…et un ordre absent (format ancien) donne le même vocabulaire');
 eq(reorderDocHtml(frozen, pubDocOrderKeywords(buildPubDocOrder(), PROJECT_SECTIONS)), frozen,

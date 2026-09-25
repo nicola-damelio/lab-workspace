@@ -21,7 +21,11 @@
         pannello lo MOSTRA (si può ritoccare a mano dopo il cambio) e il documento
         — schermo, stampa, PDF, .docx — lo segue; `reorderDocHtml` lo applica anche
         a un documento già registrato.
-     4. `bibLabel` → il titolo della bibliografia (« References », « Bibliography »).
+     4. `bibLabel` → il titolo della bibliografia (« References », « Bibliography »). Una
+        stringa VUOTA è una risposta, non un'assenza: quel giornale NON scrive nessun
+        intitolo sopra la sua lista (Science), e il pannello ne deduce `docNoTitle` —
+        « if in the style of science references have no title then the title tick must be
+        unchecked in the “References (citation & bibliography)” section ».
 
    La richiesta: « when I select the journal preset, all the elements of the
    publication format must adapt to it, including the order of the sections. »
@@ -30,7 +34,7 @@
    la sua guida per gli autori — che cambia nel tempo e va riletta prima di
    inviare. Tutto resta modificabile a mano dopo il cambio.
    ========================================================================= */
-import { PUB_FORMAT_PRESETS, PUB_FONTS, PUB_LAYOUT_PART_IDS, buildPubDocOrder, buildPubDocTitles, pubDocOrderForWords, pubDocTitlesForWords } from './pubCitation.js';
+import { PUB_FORMAT_PRESETS, PUB_FONTS, PUB_LAYOUT_PART_IDS, buildPubDocOrder, buildPubDocTitles, buildPubDocNoTitle, normalizePubDocNoTitle, pubDocOrderForWords, pubDocTitlesForWords } from './pubCitation.js';
 
 // Le famiglie di caratteri del pannello (senza « As in the app »: un giornale un
 // carattere ce l'ha).
@@ -106,10 +110,15 @@ export const JOURNAL_FORMATS = {
     notes: 'The Methods go at the END, after the discussion (Nature prints them there, in smaller type).',
   },
   science: {
-    label: 'Science', preset: 'science', bibLabel: 'References',
+    /* `bibLabel: ''` — SCIENCE NON SCRIVE NESSUN INTITOLO SOPRA LA SUA BIBLIOGRAFIA: la
+       lista segue il testo. Il pannello ne deduce `docNoTitle: ['references']` (vedi
+       applyJournalFormat), quindi la casella « stampare l'intitolo » della rubrica
+       « References (citation & bibliography) » è DECOCCATA, e il documento scrive la
+       bibliografia senza il suo `<h2>`. */
+    label: 'Science', preset: 'science', bibLabel: '',
     order: ['abstract', 'introduction', 'results', 'discussion', 'materials and methods', 'funding', 'supporting information', 'references'],
     layout: LAY(SERIF, { t: 17, a: 11, af: 9, h: 12, b: 10, f: 9, w: 100 }),
-    notes: 'Numbered references, Materials and Methods before the bibliography.',
+    notes: 'Numbered references, Materials and Methods before the bibliography — and no heading of its own over the reference list.',
   },
   cell: {
     label: 'Cell', preset: 'cell', bibLabel: 'References',
@@ -178,7 +187,10 @@ export const applyJournalFormat = (fmt, id) => {
     preset: PUB_FORMAT_PRESETS[def.preset] ? def.preset : (base.preset || 'nature'),
     layout,
     order: def.order.slice(),
-    bibLabel: def.bibLabel || base.bibLabel || 'References',
+    /* L'INTITOLO DELLA SUA BIBLIOGRAFIA: una stringa VUOTA è una risposta — quel
+       giornale non ne scrive nessuno (Science) — e scende in `docNoTitle` (sotto). Un
+       giornale che non ne parla lascia quello dell'utente. */
+    bibLabel: typeof def.bibLabel === 'string' ? def.bibLabel : (base.bibLabel || 'References'),
     /* L'ORDRE DES SECTIONS DU JOURNAL DEVIENT CELUI DU DOCUMENT (la demande) : les
        blocs qu'il nomme prennent SA séquence, dans les places que l'ordre courant leur
        donne ; la tête du document et les blocs qu'il ne nomme pas ne bougent pas. */
@@ -187,6 +199,12 @@ export const applyJournalFormat = (fmt, id) => {
        là où le programme écrit « Materials and Methods ». Un intitulé que l'utilisateur a
        choisi lui-même est respecté (voir pubDocTitlesForWords). */
     docTitles: pubDocTitlesForWords(def.order, base.docTitles),
+    /* …ET GLI INTITOLI CHE NON SCRIVE AFFATTO: un giornale la cui bibliografia non porta
+       intitolo lascia il blocco « References » SENZA `<h2>` (la casella della rubrica
+       « References (citation & bibliography) » è decoccata, il documento non scrive il
+       titolo). Gli altri riprendono in mano quel réglage: un giornale che nomina le sue
+       sezioni le nomina tutte. */
+    docNoTitle: normalizePubDocNoTitle(def.bibLabel === '' ? ['references'] : []),
     /* Un style enregistré (« My styles ») ne décrit plus ce format : on vient d'en
        choisir un autre. */
     style: '',
@@ -207,6 +225,9 @@ export const clearJournalFormat = (fmt, emptyLayout) => {
   if (emptyLayout && typeof emptyLayout === 'object') out.layout = { ...emptyLayout };
   out.docOrder = buildPubDocOrder();
   out.docTitles = buildPubDocTitles();
+  /* « As in the app » rende anche gli intitoli: il giornale che non ne scriveva uno
+     se ne va con lui, il documento torna a scriverli tutti. */
+  out.docNoTitle = buildPubDocNoTitle();
   out.style = '';
   return out;
 };
@@ -217,25 +238,29 @@ export const clearJournalFormat = (fmt, emptyLayout) => {
 const escapeHeading = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 /** L'intitolo di un blocco sostituito con quello scelto: gli attributi del `<h2>`
  *  restano (`class="pf-heading"`, e con essa la messa in forma del documento), e il
- *  resto del blocco non si tocca — solo il testo fra `<h2>` e `</h2>`. */
+ *  resto del blocco non si tocca — solo il testo fra `<h2>` e `</h2>`. Un titolo VUOTO
+ *  è la scelta « questo blocco non porta intitolo » (vedi renameMapOf): il `<h2>` se ne
+ *  va, il blocco resta — testo, figure e lista compresi. */
 const renameHeading = (blockHtml, text) => {
   const tag = /^<h2\b[^>]*>[\s\S]*?<\/h2>/i.exec(String(blockHtml));
   if (!tag) return blockHtml;
+  if (!String(text || '').trim()) return String(blockHtml).slice(tag[0].length);
   const open = /^<h2\b[^>]*>/i.exec(tag[0])[0];
   return `${open}${escapeHeading(text)}</h2>${String(blockHtml).slice(tag[0].length)}`;
 };
 /** La mappa dei titoli scelti, pronta per la ricerca: chiave = IL MOTORE DELL'ORDINE
  *  (« materials and methods », vedi JOURNAL_FORMATS[id].order), valore = il titolo da
- *  leggere nel documento. Un titolo vuoto non c'è: il documento tiene il suo. */
+ *  leggere nel documento. Un titolo VUOTO è un ordine anche lui — « nessun intitolo »
+ *  (vedi pubDocTitleKeywords, che lo manda per un blocco senza titolo): la chiave c'è,
+ *  e renameHeading toglie il `<h2>`. Un valore che non è una stringa, invece, non dice
+ *  niente: il documento tiene il suo titolo. */
 const renameMapOf = (titles) => {
   const out = {};
   if (!titles || typeof titles !== 'object') return out;
   Object.keys(titles).forEach((k) => {
     const key = String(k || '').toLowerCase().trim();
     const v = titles[k];
-    if (key && typeof v === 'string' && v.replace(/[<>]/g, '').trim()) {
-      out[key] = v.replace(/[<>]/g, '').trim();
-    }
+    if (key && typeof v === 'string') out[key] = v.replace(/[<>]/g, '').trim();
   });
   return out;
 };
@@ -354,9 +379,12 @@ export const reorderDocHtml = (html, order, titles) => {
     const end = i + 1 < marks.length ? marks[i + 1].at : src.length;
     const rank = rankOf(m);
     const blockHtml = src.slice(at, end);
-    // L'INTITOLO SCELTO PRIMA DI OGNI SPOSTAMENTO: il blocco parte con lui.
-    const wanted = rank >= 0 ? renames[vocab[rank]] : '';
-    return { at, end, i, rank, html: wanted ? renameHeading(blockHtml, wanted) : blockHtml };
+    /* L'INTITOLO SCELTO PRIMA DI OGNI SPOSTAMENTO: il blocco parte con lui. Un titolo
+       VUOTO è una scelta anche lui (« nessun intitolo », vedi renameMapOf): il `<h2>`
+       se ne va, il blocco resta al suo posto — è così che una bibliografia senza
+       intitolo si legge. */
+    const wantsTitle = rank >= 0 && Object.prototype.hasOwnProperty.call(renames, vocab[rank]);
+    return { at, end, i, rank, html: wantsTitle ? renameHeading(blockHtml, renames[vocab[rank]]) : blockHtml };
   });
   const known = blocks.filter((b) => b.rank >= 0);
   if (!known.length) return src;                     // nulla di riconosciuto: intatto
@@ -373,11 +401,13 @@ export const reorderDocHtml = (html, order, titles) => {
 
    La demande, mot pour mot : « In the final document the list of authors must be
    separated by the title with one empty line. an empty line must also separate
-   the authors from the affiliations. »
+   the authors from the affiliations. » — puis, cette fois, la précision : « In the
+   formatted paper there must be an empty line after the affiliations. »
 
    Le document écrit donc la tête comme une revue la présente : le titre, une LIGNE
-   VIDE, les auteurs, une LIGNE VIDE, les affiliations (la ligne d'information du
-   projet vient après, sans ligne vide : elle n'en fait pas partie). La ligne vide
+   VIDE, les auteurs, une LIGNE VIDE, les affiliations, une LIGNE VIDE, la ligne
+   d'information du projet (elle ferme la tête : c'est elle qui suit les affiliations,
+   donc c'est entre les deux que la troisième ligne vide se pose). La ligne vide
    est un PARAGRAPHE À PART (`pf-empty-line`), pas une marge : elle se voit à
    l'écran, sur la feuille imprimée, dans le PDF ET dans le .docx (Word y lit un
    vrai paragraphe vide, voir htmlToDocxBody), et elle ne se perd pas quand la mise
@@ -388,11 +418,15 @@ export const reorderDocHtml = (html, order, titles) => {
    HTML, voir `docHeadSpacedHtml`). */
 
 /** Les blocs de TÊTE du panneau (voir PUB_DOC_BLOCKS, pubCitation.js) : le titre,
- *  les auteurs et les affiliations — ceux qui se lisent sur des lignes séparées. */
-export const DOC_HEAD_IDS = ['title', 'authors', 'affiliations'];
+ *  les auteurs, les affiliations ET la ligne d'information — ceux qui se lisent sur
+ *  des lignes séparées. La ligne d'information en fait partie depuis la demande
+ *  « in the formatted paper there must be an empty line after the affiliations » :
+ *  elle SUIT les affiliations, donc c'est entre les deux que la ligne vide se pose
+ *  (voir docHeadRows / docHeadSpacedHtml). */
+export const DOC_HEAD_IDS = ['title', 'authors', 'affiliations', 'meta'];
 /** …et les classes avec lesquelles le document les écrit (les mêmes que met en
  *  forme le « Publication format », voir PUB_LAYOUT_PARTS). */
-export const DOC_HEAD_CLASSES = ['pf-title', 'pf-authors', 'pf-affiliations'];
+export const DOC_HEAD_CLASSES = ['pf-title', 'pf-authors', 'pf-affiliations', 'pf-meta'];
 
 /** La rangée « LIGNE VIDE » (voir docHeadRows) : `empty-line` est l'identifiant que
  *  la page du projet rend, `pf-empty-line` la classe que le document écrit — et

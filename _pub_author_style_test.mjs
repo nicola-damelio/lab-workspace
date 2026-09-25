@@ -510,8 +510,8 @@ ok(/pubLayoutCss\(activeFormat, '#pub-layout-preview'\)/.test(src),
   'l’aperçu du panneau est rendu par la feuille RÉELLE du document (il ne peut pas mentir)');
 eq((src.match(/layout: normalizePubLayout\(activeFormat\.layout\)/g) || []).length >= 1, true,
   'la mise en forme survit aux autres modifications du format (champs, et al., styles des noms)');
-ok(/const pubSetPreset = \(presetId\) =>/.test(src) && /pubSetPreset\(v\.slice\('preset:'\.length\)\)/.test(src),
-  'changer de STYLE de bibliographie refait la citation mais GARDE la mise en forme du document');
+ok(/const pubSetJournal = \(id\) => \{/.test(src) && /layout: normalizePubLayout\(withPreset\.layout\)/.test(src),
+  'changer de JOURNAL refait la citation mais GARDE la mise en forme réglée (le style de bibliographie seul n’a plus de geste : voir _pub_format_panel_test.mjs)');
 
 /* LA PAGE PROJET : la feuille part du format du projet (`project.pubFormat`,
    sinon le défaut) et vaut pour l'affichage — document figé compris — et pour

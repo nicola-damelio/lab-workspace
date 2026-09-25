@@ -41,11 +41,13 @@ ok(!PANEL.includes('Submit to'), '…mais la ligne « Submit to » (fonction unc
 const yFormat = at('Format for:');
 const yPreset = at('Journal preset:');
 ok(yFormat < yPreset, '« Format for » vient avant « Journal preset »');
-ok(at('Bibliography style — the references only') > yPreset,
-  'le contrôle liste les STYLES de bibliographie (les références seulement)');
-ok(at('Journal — references, typography and section order') > at('Bibliography style — the references only'),
-  '…puis les JOURNAUX, qui refont aussi le caractère et l’ordre des sections');
-ok(PANEL.includes('value={`preset:${id}`}'), '…chaque style a sa valeur');
+ok(!PANEL.includes('<optgroup label="Bibliography style — the references only">'),
+  'le groupe « Bibliography style — the references only » est RETIRÉ (« you can remove … because now it has become obsolete »)');
+ok(!PANEL.includes('value={`preset:${id}`}'), '…et ses options « style de bibliographie seul », avec lui');
+ok(at('Journal — references, typography, section order and titles') > yPreset,
+  'le contrôle garde un groupe pour les JOURNAUX, qui refont aussi le caractère, l’ordre ET les intitulés des sections');
+ok(PANEL.includes('User defined'), '…puis le groupe « User defined », les styles que l’utilisateur sauvegarde');
+ok(PANEL.includes('value={`style:${name}`}'), '…dont chaque nom rappelle son format');
 ok(PANEL.includes('value={`journal:${id}`}'), '…chaque journal aussi');
 ok(PANEL.includes('onChange={(e) => pubSetJournalChoice(e.target.value)}'), '…un seul gestionnaire pour les deux');
 
@@ -84,7 +86,15 @@ ok(PANEL.includes('+ Add field:'), '…et les champs de la citation, ajout compr
 ok(PANEL.includes('Set all to'), 'les membres du laboratoire ont leur réglage en bloc');
 
 /* ══ 5. CE QUI N'A PAS BOUGÉ ══════════════════════════════════════════════ */
-ok(PANEL.includes('const pubSetPreset = (presetId) =>'), 'le style de bibliographie a toujours son geste');
+ok(PANEL.includes("else pubSetJournal(v.slice('journal:'.length));"), 'la valeur choisie route les deux familles d’options (un journal, un style sauvé)');
+/* LA CASE DU TITRE DE LA BIBLIOGRAPHIE (la demande : « if in the style of science
+   references have no title then the title tick must be unchecked in the “References
+   (citation & bibliography)” section ») : la rubrique des références la porte, et elle
+   lit `docNoTitle` du format. */
+ok(PANEL.includes("checked={!docNoTitle.includes('references')}"),
+  'la rubrique « References (citation & bibliography) » a la case « imprimer l’intitulé », décochée quand le style n’en écrit pas');
+ok(PANEL.includes('docNoTitle: e.target.checked') && PANEL.includes('? docNoTitle.filter((id) => id !== \'references\')'),
+  '…et la décocher écrit « pas d’intitulé » dans le format (le document suivra)');
 ok(PANEL.includes('const pubSetJournal = (id) => {'), 'le journal entier aussi');
 ok(PANEL.includes('const pubResetDocSections = () => pubPatchFormat({ docOrder: buildPubDocOrder(), docTitles: buildPubDocTitles() });'),
   'le ↺ de l’ordre et des intitulés est toujours là');
