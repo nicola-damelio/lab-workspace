@@ -105,7 +105,13 @@
        for sphere / spacefill / surface, the bond radius for ball+stick /
        licorice, a thin tube for cartoon / ribbon / tube / trace / backbone, a
        hair for line). The receiver and the caster are the SAME stroke, so what
-       is drawn is what receives and what casts;
+       is drawn is what receives and what casts. …AND EVERY STROKE ANSWERS FOR
+       THE ATOMS IT DRAWS: the tube and the licorice of a protein share ONE
+       selection (see BACKBONE_ONLY_KINDS), so the side chains the tube merely
+       LISTS keep the stick's stroke instead of borrowing the tube's — without
+       that, each of them cast a sphere twice the radius NGL draws it with, and
+       a ring or a branch merged into one round blob (the report « in the ray
+       button of the molecular viewer I have spheric shadows for bonds »);
      · THE LAMP'S FRUSTUM WAS A CUBE AROUND THE BOUNDING SPHERE with its near
        plane at 0.01 Å — thousands of ångströms of empty depth for every real
        surface, and a body-sized square where a molecule is not a cube. The
@@ -1069,6 +1075,33 @@ export const repKindOf = (rep, el = null) => {
                             drawing. */
 export const LINKED_KINDS = Object.freeze({ spline: 1, tube: 1, bond: 1, ball: 1 });
 
+/* WHICH STROKES ARE THE CHAIN ITSELF — and therefore draw ONLY its backbone.
+
+   A cartoon, a ribbon, a tube, a rope, a trace is a line ALONG THE POLYMER: NGL
+   builds that line from the residue types' own backbone atoms and walks from one
+   residue to the next, so a side-chain atom the representation's StructureView
+   happens to list is NOT drawn by it. And NGL's StructureView LISTS THE WHOLE
+   SELECTION: `getAtomIndices()` is `structure.getAtomIndices(selection)` (ngl
+   2.4, verified in the installed dist), so the viewer's Tube — `sele: sels.protein`
+   — hands us every side-chain atom of the protein as well, and « the fattest
+   visible drawing wins » below then gave each of them the TUBE's stroke instead
+   of the 0.25 Å stick the Licorice actually draws them with. Measured on the
+   shared list: CB / CG1 / CG2 projected as 0.5 Å spheres, twice their real
+   radius — enough for a ring or a branch, whose atoms sit one bond apart, to
+   merge into one round blob instead of resolving into the sticks NGL draws.
+   That is the report « in the ray button of the molecular viewer I have spheric
+   shadows for bonds ».
+
+   The question asked here is NGL's own: `AtomProxy#isBackbone()` reads
+   `residueType.backboneIndexList` — the list the cartoon / tube geometry is
+   built from (verified on the installed build: N · CA · C · O answer true, CB ·
+   CG1 · CG2 false). See the gate in drawnProxyRadiiOf: the filter applies to a
+   representation only when its OWN atom list really holds backbone atoms. A tube
+   a PyMOL script puts on a ligand-only selection has none, and NGL does draw
+   those atoms — filtering there would put its stroke back to nothing, i.e. the
+   « a thin drawing casts no shadow » regression the link walk exists to fix. */
+export const BACKBONE_ONLY_KINDS = Object.freeze({ spline: 1, tube: 1 });
+
 /* ONE number of a representation: the INSTANCE value first (that is where ngl 2.4
    keeps it: `rep.radiusScale`, `rep.radiusSize`, `rep.aspectRatio` …), then the
    same key on the element's own parameters (what `el.setParameters()` writes),
@@ -1144,6 +1177,38 @@ export const proxyRadiusOf = (rep, vdwRadius = 1.7, el = null) => {
   return Math.max(0.05, Math.max(stroke.min, r));
 };
 
+/* THE STRUCTURE'S OWN AtomProxy, or `null` when the object at hand cannot answer
+   (an older NGL, a hand-built stage, a test stub): the question below is then
+   simply NOT asked and the representation keeps every atom it lists — never the
+   other way round, because a drawing that stops casting is a disappearing shadow,
+   not a thin one. ONE proxy serves a whole walk: `ap.index = a` re-reads the
+   residue the atom belongs to (NGL's index setter refreshes residueIndex /
+   residueAtomOffset, and `isBackbone()` reads `residueType.backboneIndexList`
+   through them — verified on the installed 2.4 build, round-trips included). */
+const atomProxyOf = (structure) => {
+  try {
+    if (!structure || typeof structure.getAtomProxy !== 'function') return null;
+    const ap = structure.getAtomProxy();
+    return ap && typeof ap.isBackbone === 'function' ? ap : null;
+  } catch { return null; }
+};
+
+/* DOES THIS REPRESENTATION WALK A CHAIN? True as soon as its own atom list holds
+   one backbone atom — the gate of BACKBONE_ONLY_KINDS (see drawnProxyRadiiOf). An
+   exception from the proxy, or no proxy at all, answers NO: no filtering. */
+const drawsBackboneOf = (ap, idx) => {
+  if (!ap) return false;
+  try {
+    for (let i = 0; i < idx.length; i += 1) {
+      const a = idx[i];
+      if (!(a >= 0)) continue;
+      ap.index = a;
+      if (ap.isBackbone()) return true;
+    }
+  } catch { return false; }
+  return false;
+};
+
 /* The proxy radius of EVERY atom the component draws, index by index: a Float32
    array parallel to the structure's atoms, `NaN` where no visible representation
    covers the atom. `null` (not an empty array) means « the component says
@@ -1152,13 +1217,19 @@ export const proxyRadiusOf = (rep, vdwRadius = 1.7, el = null) => {
    `links` (optional, a Uint8Array of the same length) is filled with 1 for the
    atoms whose drawing CONTINUES to its neighbour — a stick, a tube, a ribbon —
    and 0 for an atom that is a ball on its own: atomsFromStage fills the gaps of
-   the first kind so the proxy is the drawn line, not a dust of balls. */
+   the first kind so the proxy is the drawn line, not a dust of balls.
+   A representation of a CHAIN kind answers for its backbone atoms ONLY
+   (BACKBONE_ONLY_KINDS, gated by the AtomProxy above) — the other atoms of the
+   list it shares with the sticks are drawn by the sticks, at THEIR stroke. */
 export const drawnProxyRadiiOf = (comp, atomCount, vdw = null, links = null) => {
   const list = comp && comp.reprList;
   if (!Array.isArray(list)) return null;
   const out = new Float32Array(Math.max(0, Math.round(Number(atomCount) || 0)));
   if (!out.length) return out;
   out.fill(NaN);
+  // The structure's own AtomProxy, read ONCE (see atomProxyOf): the chain kinds
+  // ask it, atom by atom, whether the representation draws here at all.
+  const ap = atomProxyOf(comp && comp.structure);
   list.forEach((el) => {
     try {
       const rep = (el && (el.repr || el)) || null;
@@ -1169,9 +1240,18 @@ export const drawnProxyRadiiOf = (comp, atomCount, vdw = null, links = null) => 
       if (!idx || !idx.length) return;
       const kind = repKindOf(rep, el);
       const linked = LINKED_KINDS[kind] === 1;
+      // ⚠ The chain filter applies to THIS representation only when it really
+      // walks a chain (see BACKBONE_ONLY_KINDS): a tube / a trace on a
+      // ligand-only selection has no backbone atom to keep, and NGL does draw
+      // what it lists there — its stroke then stays, exactly as before.
+      const chainOnly = BACKBONE_ONLY_KINDS[kind] === 1 && drawsBackboneOf(ap, idx);
       for (let i = 0; i < idx.length; i += 1) {
         const a = idx[i];
         if (!(a >= 0 && a < out.length)) continue;
+        if (chainOnly) {
+          ap.index = a;
+          if (!ap.isBackbone()) continue;    // the spline does not draw here
+        }
         const per = proxyRadiusOf(rep, vdw ? vdw[a] : 1.7, el);
         if (per == null) continue;
         // The FATTEST visible drawing of an atom is what the eye sees, so it is
