@@ -157,6 +157,12 @@ export const RecettesPage = () => {
      vers la position exacte du devis dans cette page (onglet Devis), pas vers
      la demande d’origine. */
   const canOpenApprobation = !!access.canViewPage({ id: 'devisBc' });
+  /* SUPERUTILISATEUR : seul profil autorisé à VOIR et à UTILISER les trois
+     boutons de fin de ligne de cette table (🔗 lier dépenses / OM / achats
+     prévus · ✎ modifier la ligne · 🗑 supprimer la ligne) — et, par
+     conséquent, à supprimer à la source les dépenses / remboursements / OM /
+     achats prévus agrégés dans cette page. */
+  const isSuper = !!access.isSuperuser;
   const openTarget = (target) => {
     if (!target || !target.recordId) return;
     if (typeof navigate === 'function') navigate(target.pageId, { kind: target.kind, recordId: target.recordId });
@@ -430,7 +436,12 @@ export const RecettesPage = () => {
     setModal(null);
   };
 
+  /* Suppression d’une ligne budgétaire — réservée au SUPERUTILISATEUR : les
+     trois boutons de fin de ligne ne sont pas rendus pour les autres profils,
+     et ce garde-fou constitue la seconde barrière (le bouton « 🗑 » ne pouvant
+     pas être atteint autrement). */
   const onRemoveLine = (rec) => {
+    if (!isSuper) return;
     if (window.confirm(`Supprimer la ligne budgétaire « ${rec.ligne || rec.id} » ?`)) removeRecord('recettes', rec);
   };
 
@@ -438,8 +449,8 @@ export const RecettesPage = () => {
      qui vivent ailleurs (dépenses, remboursements, OM, achats prévus) et les
      supprime À LA SOURCE depuis un simple survol — c’est donc plus sensible que
      la page qui les héberge : réservé au SUPERUTILISATEUR, comme les décisions
-     et transferts des pages OM Prévus / Achats prévus. */
-  const isSuper = !!access.isSuperuser;
+     et transferts des pages OM Prévus / Achats prévus (voir `isSuper`, défini
+     plus haut). */
 
   /* ── Suppression directe depuis la page Recettes ──────────────────────────
      Les cases « au survol » listent les lignes agrégées : chacune peut être
@@ -872,16 +883,25 @@ export const RecettesPage = () => {
     {
       key: 'actions', label: '', sortable: false, filterable: false, align: 'right', nowrap: true,
       value: () => '',
-      display: (r) => (
-        <div className="flex items-center gap-1 justify-end">
-          <button onClick={() => setModal({ mode: 'link', rec: r })} title="Lier dépenses / OM / desiderata"
-            className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-blue-50 hover:text-blue-600 text-xs">🔗</button>
-          <button onClick={() => setModal({ mode: 'edit', rec: r })} title="Modifier"
-            className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-blue-50 hover:text-blue-600 text-xs">✎</button>
-          <button onClick={() => onRemoveLine(r)} title="Supprimer"
-            className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-red-50 hover:text-red-600 text-xs">🗑</button>
-        </div>
-      ),
+      display: (r) => {
+        /* Les TROIS boutons de fin de ligne — 🔗 lier (dépenses / OM / achats
+           prévus), ✎ modifier la ligne budgétaire, 🗑 supprimer la ligne — sont
+           réservés au SUPERUTILISATEUR : les autres profils ne les voient pas
+           (colonne réduite au tiret « — ») et ne peuvent donc pas les
+           utiliser. Même convention que les pages Congés et Approbation devis
+           & BC, où la colonne d’actions reste vide pour les non-superusers. */
+        if (!isSuper) return <span className="text-slate-300 text-xs">—</span>;
+        return (
+          <div className="flex items-center gap-1 justify-end">
+            <button onClick={() => setModal({ mode: 'link', rec: r })} title="Lier dépenses / OM / desiderata (superutilisateur)"
+              className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-blue-50 hover:text-blue-600 text-xs">🔗</button>
+            <button onClick={() => setModal({ mode: 'edit', rec: r })} title="Modifier (superutilisateur)"
+              className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-blue-50 hover:text-blue-600 text-xs">✎</button>
+            <button onClick={() => onRemoveLine(r)} title="Supprimer (superutilisateur)"
+              className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-red-50 hover:text-red-600 text-xs">🗑</button>
+          </div>
+        );
+      },
     },
     /* Critère de filtre / recherche supplémentaire (sans colonne dédiée). */
     { key: 'notesF', label: 'Notes', hidden: true, filter: 'text', value: (r) => r.notes || '' },
