@@ -1449,7 +1449,7 @@ const linkStepOf = (ra, rb) => Math.max(LINK_STEP_MIN, 0.5 * Math.min(ra, rb));
    is drawn — therefore means « fill nothing », not « use the list order ». */
 const drawnBondsOf = (structure, links, n) => {
   if (!structure || typeof structure.eachBond !== 'function') return null;
-  const declared = Number(structure.bondCount);
+  const declared = Number(structure.bondCount !== undefined ? structure.bondCount : (structure.bondStore && structure.bondStore.count));
   if (!(Number.isFinite(declared) && declared > 0)) return null;
   let linked = false;
   for (let i = 0; i < n && !linked; i += 1) linked = links[i] === 1;

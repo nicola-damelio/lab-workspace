@@ -34,6 +34,10 @@ import {
   loadPubFormat, matchCoauthors, normalizePubDocOrder, normalizePubDocTitles, normalizePubLayout,
   pubCitationData, pubCitationHtml, pubDocOrderDropped,
   pubLayoutCss, pubTextStyleIsSet,
+  /* LES STYLES QUE L'UTILISATEUR SAUVEGARDE (« Custom ») : le panneau les liste, les
+     rappelle, les sauve et les oublie (voir pubCitation.js — la clé `labWorkspace_pubStyles`
+     reste dans ce module-là : le panneau ne parle qu'aux fonctions). */
+  loadPubStyles, savePubStyle, removePubStyle,
   scientistStyleOf
 } from './pubCitation';
 /* LES FORMATS DE JOURNAL (« cambiare giornale di submission velocemente ») : chaque
@@ -87,6 +91,9 @@ export {
   normalizePubDocOrder, normalizePubDocTitles, normalizePubFormat, normalizePubLayout,
   pubLayoutCss, pubTextStyleIsSet, emptyPubTextStyle, PUB_DOC_BLOCKS, PUB_DOC_BLOCK_IDS,
   pubDocOrderMoved, pubDocOrderDropped, pubDocTitleKeywords, pubDocOrderKeywords, pubDocTitleOf,
+  /* LES SECTION DE TEXTE QUI ONT LEUR RANGÉE (conclusions · funding · supporting : voir
+     PUB_DOC_BLOCKS) : la page du projet les imprime chacune à sa place. */
+  PUB_DOC_SECTION_BLOCKS, PUB_DOC_SECTION_IDS, pubDocBlockOfSection,
   pubCitationHtml, pubCitationText, pubFieldValue, pubDoiUrl,
   pubCitationData, pubOriginOf,
   authorMatchesCandidate, matchCoauthors, isLabAuthor, labMemberOf,
@@ -724,6 +731,12 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
   useEffect(() => {
     try { localStorage.setItem(PUB_FORMAT_KEY, JSON.stringify(pubFormat)); } catch { /* ignore */ }
   }, [pubFormat]);
+  /* LES STYLES SAUVEGARDÉS (« Custom » à rappeler) : lus une fois, réécrits à chaque
+     sauvegarde ou oubli (voir savePubStyle / removePubStyle, pubCitation.js). La clé
+     porte le préfixe « lab » : le miroir du Drive les emporte avec le reste, donc ils se
+     retrouvent d'un poste à l'autre. */
+  const [pubStyles, setPubStyles] = useState(() => loadPubStyles());
+  const [pubStyleMsg, setPubStyleMsg] = useState('');
   const [pubExpanded, setPubExpanded] = useState(null);
   const [showExcludedPubs, setShowExcludedPubs] = useState(false);
   const [pubShowSearch, setPubShowSearch] = useState(false);
@@ -2446,6 +2459,10 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
   const pubCustomFormat = (fields) => ({
     ...pubDocSettings(activeFormat),
     preset: 'custom',
+    /* LE NOM DU STYLE ENREGISTRÉ QUE CE FORMAT VIENT DE RAPPELER (« My styles ») : il
+       reste affiché pendant qu'on retouche le format, pour que 💾 sache sous quel nom
+       réécrire. Choisir un journal ou un preset l'efface (c'est un autre choix). */
+    style: activeFormat.style || '',
     etAlLimit: activeFormat.etAlLimit || 0,
     alwaysShowScientists: !!activeFormat.alwaysShowScientists,
     underlineScientists: !!activeFormat.underlineScientists,   // legacy default style
@@ -2578,23 +2595,76 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
   };
 
   /* « Journal preset: » EST LE CONTROLE DU JOURNAL — un seul, pour que sa fonction
-     soit claire : une seule liste, avec ses deux groupes visibles, dit ce que chaque
+     soit claire : une seule liste, avec ses groupes visibles, dit ce que chaque
      choix change, et l'aperçu comme le document suivent. Il porte donc
-     DEUX natures d'options, en deux groupes visibles :
+     TROIS natures d'options, en trois groupes visibles :
        • `preset:<id>`   — un STYLE de bibliographie (Nature, ACS, APA…), la seule
                            forme de la citation (pubSetPreset) ;
        • `journal:<id>`  — un JOURNAL entier, qui refait d'un coup la citation, le
                            caractère de chaque partie du document ET l'ordre de ses
                            sections (pubSetJournal) ; `journal:` = « As in the app ».
-     La valeur affichée suit ces deux-là (un journal choisi reste affiché, même si
-     les champs se règlent ensuite à la main). */
-  const pubJournalChoice = (fmt) => (fmt && fmt.journal
-    ? `journal:${fmt.journal}`
-    : `preset:${PUB_FORMAT_PRESETS[fmt && fmt.preset] ? fmt.preset : 'custom'}`);
+       • `style:<nom>`   — UN STYLE QUE L'UTILISATEUR A SAUVEGARDÉ (« My styles ») :
+                           tout le format d'un coup, tel qu'il l'a mis de côté
+                           (pubRecallStyle). C'est la réponse à « when I click on
+                           custom I will be able to define other styles that I must be
+                           able to save and recall. »
+     La valeur affichée suit ces trois-là (un style rappelé reste affiché, même si les
+     champs se règlent ensuite à la main). */
+  const pubJournalChoice = (fmt) => {
+    const style = fmt && fmt.style && pubStyles[fmt.style] ? fmt.style : '';
+    if (style) return `style:${style}`;
+    return fmt && fmt.journal
+      ? `journal:${fmt.journal}`
+      : `preset:${PUB_FORMAT_PRESETS[fmt && fmt.preset] ? fmt.preset : 'custom'}`;
+  };
   const pubSetJournalChoice = (value) => {
     const v = String(value || '');
-    if (v.startsWith('journal:')) pubSetJournal(v.slice('journal:'.length));
+    if (v.startsWith('style:')) pubRecallStyle(v.slice('style:'.length));
+    else if (v.startsWith('journal:')) pubSetJournal(v.slice('journal:'.length));
     else pubSetPreset(v.slice('preset:'.length));
+  };
+  /* ── LES STYLES SAUVEGARDÉS (« Custom ») ──────────────────────────────────────
+     💾 SAUVEGARDER le format affiché sous un nom (celui du style rappelé est proposé,
+     sinon celui du journal) ; 🗑 OUBLIER le style affiché ; la liste du contrôle les
+     propose dans son groupe « My styles ». Sauver sous un nom déjà pris le REMPLACE —
+     c'est ce que l'utilisateur demande en le tapant à nouveau. */
+  const pubStyleName = () => activeFormat.style
+    || (journalOf(activeFormat) ? journalLabelOf(journalOf(activeFormat)) : '');
+  const pubSaveStyle = () => {
+    let name = '';
+    try {
+      name = window.prompt('Save this publication format as a style — its name appears in “My styles”:', pubStyleName()) || '';
+    } catch { name = ''; }
+    if (!String(name).trim()) return;
+    const styles = savePubStyle(name, activeFormat);
+    setPubStyles(styles);
+    const key = Object.keys(styles).find((k) => k.toLowerCase() === String(name).trim().toLowerCase())
+      || String(name).trim();
+    /* LE FORMAT AFFICHÉ DEVIENT CE STYLE (il en porte le nom) : la liste le montre, et
+       💾 le réécrira sous ce nom-là. */
+    setActiveFormat({ ...activeFormat, style: key });
+    setPubStyleMsg(`💾 saved “${key}” — it is in “My styles”, and it follows you on the Drive`);
+  };
+  const pubForgetStyle = () => {
+    const key = activeFormat.style;
+    if (!key) return;
+    let go = true;
+    try {
+      go = window.confirm(`Forget the style “${key}”? The format you are using stays as it is — only the saved copy goes.`);
+    } catch { go = false; }
+    if (!go) return;
+    setPubStyles(removePubStyle(key));
+    setActiveFormat({ ...activeFormat, style: '' });
+    setPubStyleMsg(`🗑 “${key}” forgotten (the format in use is untouched)`);
+  };
+  /** RAPPELER UN STYLE : le format enregistré devient celui qui s'applique — citation,
+     caractère des parties, ordre ET intitulés des sections, renvois du texte. Un nom
+     qui n'existe plus (oublié sur un autre poste) ne rappelle rien. */
+  const pubRecallStyle = (name) => {
+    const stored = pubStyles[String(name || '')];
+    if (!stored) { setActiveFormat(activeFormat); return; }
+    setActiveFormat({ ...stored, style: stored.style || String(name) });
+    setPubStyleMsg(`↺ “${stored.style || name}” is back: citation, typography, section order and titles`);
   };
 
   const pubMoveField = (fieldId, dir) => {
@@ -2694,7 +2764,34 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                 <option key={id} value={`journal:${id}`}>{JOURNAL_FORMATS[id].label}</option>
               ))}
             </optgroup>
+            {/* LES STYLES QUE L'UTILISATEUR A SAUVEGARDÉS (« Custom » à rappeler) :
+                le nom rappelle TOUT le format d'un coup, et 💾/🗑 juste à côté les
+                sauvent ou les oublient. */}
+            <optgroup label="My styles — saved by you (Custom)">
+              {Object.keys(pubStyles).length === 0 ? (
+                <option value="style:" disabled>· none saved yet — 💾 saves the format shown ·</option>
+              ) : (
+                Object.keys(pubStyles).map((name) => (
+                  <option key={name} value={`style:${name}`}>{name}</option>
+                ))
+              )}
+            </optgroup>
           </select>
+          <button type="button" onClick={pubSaveStyle}
+                  className="px-2 py-1 rounded-lg text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100"
+                  title="Save the publication format shown (citation, typography, section order and titles, in-text style) under a name: it appears in “My styles”, here and on every computer (it follows you on the Drive). Saving under a name that already exists replaces it.">
+            💾 Save style…
+          </button>
+          {activeFormat.style && (
+            <button type="button" onClick={pubForgetStyle}
+                    className="px-2 py-1 rounded-lg text-[10px] font-bold bg-white text-slate-600 border border-slate-300 hover:bg-slate-100"
+                    title="Forget the saved style shown. The format you are using stays exactly as it is — only the saved copy goes.">
+              🗑 Forget “{activeFormat.style}”
+            </button>
+          )}
+          {pubStyleMsg && (
+            <span className="text-[10px] italic text-slate-500 max-w-[20rem] truncate" title={pubStyleMsg}>{pubStyleMsg}</span>
+          )}
           {journalOf(activeFormat) && (
             <span className="text-[10px] italic text-slate-500 max-w-[22rem] truncate"
                   title={`${JOURNAL_FORMATS[journalOf(activeFormat)].notes} — sections of the exported document, in this journal's order: ${journalSectionOrder(activeFormat).join(' → ')}. A title this journal does not name does not move, and every setting stays editable in the panel below.`}>

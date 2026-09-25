@@ -70,7 +70,7 @@ ok(DOC_EMPTY_LINE_HTML.includes('&nbsp;') && !DOC_EMPTY_LINE_HTML.includes('no-p
 const PROGRAM = buildPubDocOrder();
 eq(docHeadRows(PROGRAM),
   ['title', DOC_EMPTY_LINE_ID, 'authors', DOC_EMPTY_LINE_ID, 'affiliations',
-    'meta', 'sections', 'methods', 'experiments', 'references'],
+    'meta', 'sections', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
   'la tête du document se lit : titre · ligne vide · auteurs · ligne vide · affiliations (la ligne d’information suit, sans ligne vide)');
 eq(docHeadRows(['authors', 'title', 'affiliations', 'meta']),
   ['authors', DOC_EMPTY_LINE_ID, 'title', DOC_EMPTY_LINE_ID, 'affiliations', 'meta'],
@@ -79,7 +79,7 @@ eq(docHeadRows(['title', 'meta', 'authors', 'affiliations']),
   ['title', 'meta', 'authors', DOC_EMPTY_LINE_ID, 'affiliations'],
   'deux blocs de tête séparés par un AUTRE bloc (la ligne d’information) n’en reçoivent pas : il y a déjà de la place');
 eq(docHeadRows(PROGRAM, (id) => id !== 'authors'),
-  ['title', DOC_EMPTY_LINE_ID, 'affiliations', 'meta', 'sections', 'methods', 'experiments', 'references'],
+  ['title', DOC_EMPTY_LINE_ID, 'affiliations', 'meta', 'sections', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
   'un projet SANS auteurs garde la ligne vide entre le titre et les affiliations (le bloc absent ne compte pas)');
 eq(docHeadRows(['title']), ['title'], 'une tête d’un seul bloc ne reçoit aucune ligne vide');
 eq(docHeadRows(undefined), [], 'un ordre absent ne rend rien (jamais une erreur)');

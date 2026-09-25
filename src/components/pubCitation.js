@@ -170,7 +170,22 @@ export const PUB_DOC_BLOCKS = [
   { id: 'authors', label: 'Authors', hint: 'the author line' },
   { id: 'affiliations', label: 'Affiliations', hint: 'the affiliations line' },
   { id: 'meta', label: 'Project line', hint: 'project · scientist · date' },
-  { id: 'sections', label: 'Text sections', hint: 'your text sections, in the order you wrote them' },
+  { id: 'sections', label: 'Text sections', hint: 'the text sections that have no row of their own (Scientific background, Results and Discussion), in the order you wrote them' },
+  /* ── LES TROIS SECTIONS DE FIN D'ARTICLE ─────────────────────────────────────
+     « Conclusions », « Funding » et « Supporting information » s'imprimaient DANS le
+     bloc « Text sections » : elles n'avaient donc AUCUNE rangée au panneau — on ne
+     pouvait ni les déplacer, ni régler leur intitulé, ni les mettre dans l'ordre d'un
+     journal. La demande : « Note that conclusions, funding and supporting informations
+     are at present not included in the sections of the publication format and they
+     should. » Chacune a donc sa rangée, comme « Materials and Methods ».
+     `section` = L'ID DE LA SECTION DE TEXTE DU PROJET qu'elle imprime (voir
+     PROJECT_TEXT_SECTIONS, utils/manuscriptImport.js) : c'est ce qui permet au bloc
+     « Text sections » de ne plus porter que celles qui n'ont pas de rangée à elles, et
+     à l'intitulé choisi ici d'être écrit à la place du titre de la section (voir
+     pubDocTitleKeywords). */
+  { id: 'conclusions', label: 'Conclusions', titled: true, title: 'Conclusions', section: 'conclusions' },
+  { id: 'funding', label: 'Funding', titled: true, title: 'Funding', section: 'funding' },
+  { id: 'supporting', label: 'Supporting information', titled: true, title: 'Supporting information', section: 'supporting' },
   { id: 'methods', label: 'Materials and Methods', titled: true, title: 'Materials and Methods' },
   { id: 'experiments', label: 'Experiments', titled: true, title: 'Experiments' },
   { id: 'references', label: 'References', titled: true, title: 'References', fixed: true }
@@ -179,7 +194,22 @@ export const PUB_DOC_BLOCK_IDS = PUB_DOC_BLOCKS.map((b) => b.id);
 // Les blocs dont le programme écrit l'intitulé, et les blocs qui ne se déplacent pas.
 export const PUB_DOC_TITLED_IDS = PUB_DOC_BLOCKS.filter((b) => b.titled).map((b) => b.id);
 export const PUB_DOC_FIXED_IDS = PUB_DOC_BLOCKS.filter((b) => b.fixed).map((b) => b.id);
+/* Les blocs qui IMPRIMENT une section de texte du projet (`section` = son id). */
+export const PUB_DOC_SECTION_BLOCKS = PUB_DOC_BLOCKS.filter((b) => b.section);
+export const PUB_DOC_SECTION_IDS = PUB_DOC_SECTION_BLOCKS.map((b) => b.section);
+/* LES QUATRE BLOCS DE TÊTE — ceux qui se lisent sur des lignes séparées et que le
+   document écrit avec une CLASSE (`pf-title`, `pf-authors`, `pf-affiliations`,
+   `pf-meta`), jamais avec un intitulé. Un ordre de journal ne les concerne pas : ils
+   restent la tête du document (voir pubDocOrderForWords). */
+export const PUB_DOC_HEAD_IDS = ['title', 'authors', 'affiliations', 'meta'];
 export const pubDocBlockOf = (id) => PUB_DOC_BLOCKS.find((b) => b.id === id) || null;
+/** LA RANGÉE D'UNE SECTION DE TEXTE du projet, ou null : « conclusions » →
+ *  le bloc « Conclusions », « background » → aucun (il s'imprime dans « Text
+ *  sections », avec les résultats). */
+export const pubDocBlockOfSection = (sectionId) => {
+  const key = String(sectionId || '');
+  return PUB_DOC_SECTION_BLOCKS.find((b) => b.section === key) || null;
+};
 
 /** L'ordre du programme : celui que la page du projet a toujours suivi. */
 export const buildPubDocOrder = () => PUB_DOC_BLOCK_IDS.slice();
@@ -264,11 +294,39 @@ export const pubDocOrderDropped = (order, id, targetId) => {
    manuscrit importé peut l'avoir écrit « Experimental part » · « Experimental
    procedures ». Ce sont ces mots que reorderDocHtml reconnaît (voir son troisième
    argument), donc ceux qui doivent porter le titre choisi par l'utilisateur. */
-const DOC_TITLE_KEYWORDS = [
-  ['methods', ['materials and methods', 'methods', 'experimental part', 'experimental procedures']],
-  ['experiments', ['experiments']],
-  ['references', ['references', 'bibliography']]
-];
+/* LES MOTS DONT UN DOCUMENT NOMME CHAQUE BLOC — un seul vocabulaire pour trois
+   usages : RECONNAÎTRE un bloc dans un document déjà écrit (`reorderDocHtml`, par le
+   texte de son `<h2>`), ÉCRIRE l'intitulé choisi sur ce bloc (pubDocTitleKeywords), et
+   TRADUIRE l'ordre d'un journal (pubDocOrderForWords — les revues parlent en mots,
+   « materials and methods », « experimental section », « conclusion »…).
+   Chaque liste commence par le mot que le programme écrit lui-même ; les suivants sont
+   les synonymes qu'un manuscrit importé ou une revue emploient. */
+export const PUB_DOC_BLOCK_WORDS = {
+  conclusions: ['conclusions', 'conclusion', 'concluding remarks', 'perspectives'],
+  funding: ['funding', 'funding statement', 'acknowledgements', 'acknowledgments', 'financial support'],
+  supporting: ['supporting information', 'supplementary information', 'supporting material', 'supplementary material', 'supplementary data'],
+  methods: ['materials and methods', 'methods', 'experimental section', 'experimental part', 'experimental procedures'],
+  experiments: ['experiments'],
+  references: ['references', 'bibliography'],
+  /* LE BLOC GÉNÉRIQUE « Text sections » — le contexte et les résultats du projet. Ses
+     mots ne servent PAS à écrire un intitulé (le bloc n'en porte pas : ce sont ceux de
+     l'auteur), mais à RECONNAÎTRE ces sections dans un document venu d'ailleurs
+     (« Introduction », « Abstract », « Results and discussion » : un manuscrit importé
+     les écrit ainsi) et à SAVOIR OÙ UN JOURNAL LES MET — c'est ce qui empêche
+     « materials and methods » de passer devant l'introduction, qu'aucune revue ne fait. */
+  sections: ['introduction', 'abstract', 'background', 'context', 'summary', 'results and discussion', 'results', 'discussion']
+};
+const DOC_TITLE_KEYWORDS = Object.keys(PUB_DOC_BLOCK_WORDS).map((id) => [id, PUB_DOC_BLOCK_WORDS[id]]);
+
+/** LE BLOC qu'un mot de journal désigne, ou '' : le premier bloc dont la liste de mots
+ *  contient exactement ce mot (voir PUB_DOC_BLOCK_WORDS). « experimental section » →
+ *  « methods », « conclusion » → « conclusions », « abstract » → '' (aucun bloc : le
+ *  contexte s'imprime dans « Text sections »). */
+export const docBlockOfWord = (word) => {
+  const w = String(word == null ? '' : word).toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!w) return '';
+  return Object.keys(PUB_DOC_BLOCK_WORDS).find((id) => PUB_DOC_BLOCK_WORDS[id].includes(w)) || '';
+};
 
 /** LES TITRES CHOISIS, PRÊTS POUR `reorderDocHtml(html, order, titles)` : mot du
  *  document → titre à lire. Un intitulé laissé au programme n'y est PAS (le document
@@ -304,6 +362,22 @@ const DOC_CLASS_KEYWORDS = [
   ['meta', 'pf-meta']
 ];
 
+/* Les SECTIONS DE TEXTE du projet (voir PROJECT_TEXT_SECTIONS) telles que l'appelant
+   les donne : leur id et leur intitulé quand il les connaît (la page du projet), ou
+   leur seul intitulé (un appelant qui n'a que les libellés — le panneau, un test). */
+const sectionEntriesOf = (sections) => (Array.isArray(sections) ? sections : []).map((s) => (
+  s && typeof s === 'object'
+    ? { id: String(s.id || ''), label: String(s.label || '') }
+    : { id: '', label: String(s == null ? '' : s) }
+));
+
+/** Cette section a-t-elle SA RANGÉE au panneau ? Par son id quand l'appelant le
+ *  connaît, sinon par son intitulé — les rangées des trois sections dédiées portent
+ *  exactement l'intitulé de la section qu'elles impriment (voir PUB_DOC_SECTION_BLOCKS). */
+const sectionHasOwnBlock = (entry) => (entry.id
+  ? !!pubDocBlockOfSection(entry.id)
+  : !!PUB_DOC_SECTION_BLOCKS.find((b) => String(b.title).toLowerCase() === entry.label.toLowerCase()));
+
 /** L'ORDRE CHOISI, TRADUIT DANS LES MOTS QUE LE DOCUMENT ÉCRIT — le vocabulaire
  *  qu'attend `reorderDocHtml(html, order, titles)`.
  *
@@ -330,15 +404,94 @@ export const pubDocOrderKeywords = (order, sections) => {
     const k = String(word == null ? '' : word).toLowerCase().replace(/\s+/g, ' ').trim();
     if (k && !out.includes(k)) out.push(k);
   };
-  const sectionWords = Array.isArray(sections) ? sections : [];
+  const sectionEntries = sectionEntriesOf(sections);
   normalizePubDocOrder(order).forEach((id) => {
-    if (id === 'sections') { sectionWords.forEach(push); return; }
+    if (id === 'sections') {
+      /* LE BLOC GÉNÉRIQUE NE PORTE QUE LES SECTIONS SANS RANGÉE À ELLES : le contexte
+         et les résultats (les trois autres — conclusions, financement, informations
+         supplémentaires — sont des blocs à part entière depuis qu'elles ont leur
+         rangée ; les pousser ici les placerait DEUX fois dans le vocabulaire). */
+      sectionEntries.filter((s) => !sectionHasOwnBlock(s)).forEach((s) => push(s.label));
+      return;
+    }
+    const block = pubDocBlockOf(id);
+    if (block && block.section) {
+      /* LA SECTION QUE CE BLOC IMPRIME, par son intitulé : c'est le mot que la page du
+         projet écrit dans le `<h2>`, donc celui qu'un document enregistré porte. Ses
+         synonymes suivent, plus bas (`DOC_TITLE_KEYWORDS`) : un manuscrit importé peut
+         l'avoir titrée « Conclusion » ou « Acknowledgements ». */
+      const own = sectionEntries.find((s) => (s.id
+        ? s.id === block.section
+        : s.label.toLowerCase() === String(block.title).toLowerCase()));
+      if (own) push(own.label);
+    }
     const hit = DOC_TITLE_KEYWORDS.find(([bid]) => bid === id);
     if (hit) hit[1].forEach(push);
     const cls = DOC_CLASS_KEYWORDS.find(([bid]) => bid === id);
     if (cls) push(cls[1]);
   });
   return out;
+};
+
+/* ── L'ORDRE DES SECTIONS QU'UN JOURNAL DEMANDE ──────────────────────────────
+   La demande : « when I select the journal preset, all the elements of the publication
+   format must adapt to it, including the order of the sections. »
+
+   Les revues parlent en MOTS (`JOURNAL_FORMATS[id].order` : « abstract »,
+   « introduction », « materials and methods », « experimental section »,
+   « conclusion », « references »…) et le document en BLOCS. `docBlockOfWord` traduit
+   les mots (voir PUB_DOC_BLOCK_WORDS), et l'ordre obtenu s'écrit dans le format
+   (`docOrder`) : le panneau le MONTRE donc, et l'utilisateur peut le régler ensuite.
+
+   LA RÈGLE, choisie pour ne jamais détruire un document :
+     • les blocs que le journal NOMME prennent la séquence qu'il donne ;
+     • ils le font DANS LES PLACES que l'ordre courant leur donne — un bloc que le
+       journal ne nomme pas ne bouge pas d'une rangée (c'est exactement ce que
+       `reorderDocHtml` fait à un document : « un bloc que le journal ne nomme pas ne
+       bouge pas et fait d'ancre »). Concrètement : les rangées des blocs nommés sont
+       réordonnées ENTRE ELLES, les autres restent où elles sont ;
+     • la TÊTE (titre, auteurs, affiliations, ligne d'information) n'appartient jamais à
+       un ordre de sections : elle reste la tête du document (voir PUB_DOC_HEAD_IDS) ;
+     • moins de deux blocs nommés : l'ordre courant est rendu INTACT. */
+export const pubDocOrderForWords = (words, currentOrder) => {
+  const order = normalizePubDocOrder(currentOrder);
+  const rank = new Map();
+  (Array.isArray(words) ? words : []).forEach((word) => {
+    const id = docBlockOfWord(word);
+    if (!id || rank.has(id) || PUB_DOC_HEAD_IDS.includes(id)) return;
+    rank.set(id, rank.size);
+  });
+  if (rank.size < 2) return order;
+  const slots = [];
+  order.forEach((id, i) => { if (rank.has(id)) slots.push(i); });
+  if (slots.length < 2) return order;
+  const sorted = slots.map((i) => order[i]).sort((a, b) => rank.get(a) - rank.get(b));
+  const out = order.slice();
+  slots.forEach((slot, k) => { out[slot] = sorted[k]; });
+  return out;
+};
+
+/** LES INTITULÉS QU'UN JOURNAL IMPOSE — ceux des mots par lesquels il nomme un bloc :
+ *  Angewandte écrit « experimental section » là où le programme écrit « Materials and
+ *  Methods », RSC « experimental », Cell « conclusion ». Le mot du journal devient
+ *  l'intitulé du bloc (première lettre de chaque mot en majuscule, la façon dont les
+ *  revues les impriment), et un mot qui est DÉJÀ l'intitulé du programme ne change rien
+ *  (« materials and methods » → « Materials and Methods », intact). */
+const titleCase = (s) => String(s || '').split(/\s+/).filter(Boolean)
+  .map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+
+export const pubDocTitlesForWords = (words, currentTitles) => {
+  const titles = normalizePubDocTitles(currentTitles);
+  (Array.isArray(words) ? words : []).forEach((word) => {
+    const id = docBlockOfWord(word);
+    const block = pubDocBlockOf(id);
+    if (!block || !block.titled) return;
+    const wanted = titleCase(word);
+    if (wanted.toLowerCase() === String(block.title).toLowerCase()) return;   // le mot du programme
+    if (titles[id] && titles[id].toLowerCase() !== String(block.title).toLowerCase()) return; // un choix de l'utilisateur
+    titles[id] = wanted;
+  });
+  return titles;
 };
 
 /** Un réglage vierge : aucun style imposé, le document s'affiche comme avant.
@@ -525,6 +678,10 @@ export const normalizePubFormat = (parsed) => {
   const n = parseInt(parsed && parsed.etAlLimit, 10);
   return {
     preset: (parsed && parsed.preset) || 'custom',
+    /* LE NOM DU STYLE ENREGISTRÉ dont ce format vient (« My styles », voir
+       loadPubStyles) : il voyage avec le format pour que la liste sache lequel est
+       actif, et il disparaît dès qu'un autre choix est fait (journal, preset). */
+    style: normalizePubStyleName(parsed && parsed.style),
     etAlLimit: Number.isFinite(n) && n >= 0 ? n : 0,
     alwaysShowScientists: !!(parsed && parsed.alwaysShowScientists),
     underlineScientists: !!(parsed && parsed.underlineScientists),
@@ -546,6 +703,73 @@ export const loadPubFormat = () => {
     }
   } catch { /* ignore malformed */ }
   return buildPubFormat('nature');
+};
+
+/* ── LES STYLES QUE L'UTILISATEUR SAUVEGARDE (« Custom », à rappeler) ─────────
+   La demande : « when I click on custom I will be able to define other styles that I
+   must be able to save and recall. »
+
+   Un STYLE est un FORMAT ENTIER mis de côté sous un nom : citation et bibliographie,
+   caractère de chaque partie du document, ordre ET intitulés des sections, forme des
+   renvois dans le texte, styles des noms du laboratoire. Son nom apparaît dans la liste
+   « Journal preset » (groupe « My styles ») ; le choisir REMET tout le format d'un coup,
+   et 💾 réécrit. Ils vivent dans `labWorkspace_pubStyles` : le préfixe « lab » les fait
+   partir sur le Drive avec le reste (utils/workspaceKeyStore.js) — ils suivent donc
+   d'un poste à l'autre et survivent à un navigateur vidé, comme le format lui-même. */
+export const PUB_STYLES_KEY = 'labWorkspace_pubStyles';
+export const PUB_STYLE_NAME_MAX = 40;
+
+/** Un nom de style NETTOYÉ : du texte, jamais du HTML, jamais un nom vide. */
+export const normalizePubStyleName = (name) => String(name == null ? '' : name)
+  .replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, PUB_STYLE_NAME_MAX);
+
+/** Les styles relus d'un enregistrement : `{ nom: format }`, chaque format nettoyé
+ *  (`normalizePubFormat`) et marqué de son nom (`style`), les entrées abîmées ou sans
+ *  liste de champs IGNORÉES — un style qui ne rappellerait rien n'a pas à être proposé. */
+export const normalizePubStyles = (raw) => {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const out = {};
+  Object.keys(src).forEach((key) => {
+    const name = normalizePubStyleName(key);
+    const fmt = src[key];
+    if (!name || !fmt || typeof fmt !== 'object' || Array.isArray(fmt)) return;
+    if (!Array.isArray(fmt.fields)) return;
+    out[name] = { ...normalizePubFormat(fmt), style: name };
+  });
+  return out;
+};
+
+export const loadPubStyles = () => {
+  try {
+    const raw = localStorage.getItem(PUB_STYLES_KEY);
+    return raw ? normalizePubStyles(JSON.parse(raw)) : {};
+  } catch { return {}; }
+};
+
+/** Écrire la liste (best-effort, comme le format : un quota plein ne casse rien). */
+export const writePubStyles = (styles) => {
+  const clean = normalizePubStyles(styles);
+  try { localStorage.setItem(PUB_STYLES_KEY, JSON.stringify(clean)); } catch { /* quota */ }
+  return clean;
+};
+
+/** SAUVEGARDER un format sous un nom — le format est nettoyé et marqué du nom, pour que
+ *  la liste sache lequel est actif. Un nom déjà pris est REMPLACÉ (c'est ce que
+ *  l'utilisateur demande en le tapant à nouveau). Rend la liste complète. */
+export const savePubStyle = (name, format) => {
+  const key = normalizePubStyleName(name);
+  if (!key) return loadPubStyles();
+  const styles = loadPubStyles();
+  styles[key] = { ...normalizePubFormat(format), style: key };
+  return writePubStyles(styles);
+};
+
+/** OUBLIER un style (le nom ne doit plus rien rappeler). Rend la liste restante. */
+export const removePubStyle = (name) => {
+  const key = normalizePubStyleName(name);
+  const styles = loadPubStyles();
+  if (key && styles[key]) delete styles[key];
+  return writePubStyles(styles);
 };
 
 export const pubFieldValue = (pub, id) => {

@@ -155,8 +155,11 @@ ok(PUB.includes('Bibliography style — the references only'),
 ok(PUB.includes('onChange={(e) => pubSetJournalChoice(e.target.value)}'),
   '…les deux passent par UN SEUL contrôle');
 ok(!PUB.includes('Submit to:'), '…l’ancienne ligne « Submit to », dont la fonction était unclear, est retirée');
-ok(PUB.includes('const pubJournalChoice = (fmt) => (fmt && fmt.journal'),
-  '…dont la valeur affichée suit le journal choisi, et sinon le style');
+ok(PUB.includes('const style = fmt && fmt.style && pubStyles[fmt.style] ? fmt.style : \'\';'),
+  '…dont la valeur affichée suit le STYLE rappelé, puis le journal choisi, et sinon le style de bibliographie');
+ok(PUB.includes('My styles — saved by you (Custom)') && PUB.includes('💾 Save style…')
+  && PUB.includes('const pubRecallStyle = (name) => {'),
+'…et un TROISIÈME groupe pour les styles que l’utilisateur sauvegarde (sauver, rappeler, oublier)');
 ok(PUB.includes('setActiveFormat({ ...withPreset, layout: normalizePubLayout(withPreset.layout) })'),
   '…et applique le tout au format ACTIF (défaut ou projet)');
 ok(PUB.includes('journalOf(activeFormat) && (') && PUB.includes("journalSectionOrder(activeFormat).join(' → ')"),

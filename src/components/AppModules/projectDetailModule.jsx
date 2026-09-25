@@ -5,7 +5,8 @@ import {
   loadPubFormat, loadRelevantPapers, matchCoauthors, pubCitationData, pubCitationHtml,
   pubLayoutCss, journalSectionOrder, reorderDocHtml,
   docHeadRows, docHeadSpacedHtml, DOC_EMPTY_LINE_ID, DOC_EMPTY_LINE_CLASS,
-  normalizePubDocOrder, normalizePubDocTitles, pubDocTitleKeywords, pubDocOrderKeywords, pubDocTitleOf
+  normalizePubDocOrder, normalizePubDocTitles, pubDocTitleKeywords, pubDocOrderKeywords, pubDocTitleOf,
+  pubDocBlockOfSection
 } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
 import { loadProjects, saveProjects, saveProjectsChecked, lightenProjectForStorage, recordProjectDeletion, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor, saveProjectsRescued } from './projectsModule';
@@ -17,7 +18,7 @@ import { normalizeProjectFiles } from '../../utils/projectFiles';
 /* L'EXPORT EN .DOCX (« In the document of the project there must be a export to
    docx button ») : le document affiché y devient un vrai fichier Word — même
    corps que l'impression, voir projectDocBodyHtml. */
-import { downloadDocx } from '../../utils/docxExport';
+import { downloadDocx, resolveDocxImages } from '../../utils/docxExport';
 import {
   REFERENCE_FILE_ACCEPT, entryKeys, mergeReferenceEntries, parseReferences,
   projectBibEntry, readReferenceDocument
@@ -57,7 +58,7 @@ import {
   readDeck, readProjectLibrary, removeProjectLibraryItem, renameProjectLibraryItem, pushLibraryToDrive, pullLibraryFromDrive,
   addProjectLibraryItem, makeUploadImage, uploadFigureToDrive, renameFigureOnDrive,
   countCanvasDuplicates, removeCanvasDuplicates, restoreCanvasFromFigureMeta, canvasPreviewFromComposition,
-  lastLibraryListWrite
+  resolveImageToDataUrl, rasterizeSvgImage, lastLibraryListWrite
 } from '../../utils/figuresLibrary';
 import { SlidePreview, renderSlideToDataUrl } from '../FiguresSlides';
 
@@ -104,7 +105,11 @@ const OPTIONAL_TEXT_SECTION_IDS = ['funding', 'supporting'];
 const docOrderWords = (fmt) => {
   const words = pubDocOrderKeywords(
     fmt && fmt.docOrder,
-    PROJECT_TEXT_SECTIONS.map((s) => s.label)
+    /* LES SECTIONS DE TEXTE AVEC LEUR ID : c'est ce qui permet à chaque section d'être
+       nommée à SA rangée du panneau — le contexte et les résultats par le bloc « Text
+       sections », les conclusions, le financement et les informations supplémentaires par
+       la leur (voir PUB_DOC_BLOCKS · pubDocBlockOfSection). */
+    PROJECT_TEXT_SECTIONS
   );
   journalSectionOrder(fmt).forEach((w) => {
     const k = String(w == null ? '' : w).toLowerCase().replace(/\s+/g, ' ').trim();
@@ -3460,16 +3465,34 @@ export const ProjectDetailModule = ({
 
   /* « 📄 Export to Word » — le MÊME corps que l'impression (voir
      projectDocBodyHtml) écrit dans un vrai .docx : le fichier est fabriqué puis
-     téléchargé dans le navigateur, rien ne part ailleurs (utils/docxExport.js). */
-  const exportProjectDocx = () => {
+     téléchargé dans le navigateur, rien ne part ailleurs (utils/docxExport.js).
+     DEUX CHOSES PARTENT AVEC LUI, parce qu'un .docx ne sait ni lire la feuille de
+     l'application ni ouvrir une URL :
+       • LA MISE EN FORME DU DOCUMENT (« the export to docx does not reflect the
+         style of the document… police, alignement, font, color ») : c'est le
+         « Publication format » du projet, le même que l'impression applique
+         (voir docxStyleOf) ;
+       • LES PIXELS DES FIGURES (« furthermore images are missing ») : chaque
+         image est rapatriée ici (les `data:` URL sont déjà dans le document, une
+         figure du Drive est téléchargée) et devient une partie du fichier ZIP
+         (`word/media/…`). Une image illisible est laissée de côté : sa légende,
+         elle, reste dans le document. */
+  /* LES PIXELS D'UNE IMAGE DU DOCUMENT : on va les chercher (Drive, Nextcloud,
+     ou l'URL telle quelle — voir resolveImageToDataUrl) et une image VECTORIELLE
+     est d'abord dessinée en PNG, la seule forme qu'un .docx accepte toujours
+     (voir rasterizeSvgImage). Une image qu'on n'obtient pas ne part pas. */
+  const docxImageResolver = async (src) => rasterizeSvgImage(await resolveImageToDataUrl(src));
+  const exportProjectDocx = async () => {
     const bodyHtml = projectDocBodyHtml();
     if (!bodyHtml) {
       setMmFeedback('⚠️ The document is not on screen — open the document first');
       setTimeout(() => setMmFeedback(''), 3500);
       return;
     }
+    setMmFeedback('📄 Building the Word document…');
     try {
-      downloadDocx(bodyHtml, project.name);
+      const images = await resolveDocxImages(bodyHtml, docxImageResolver);
+      downloadDocx(bodyHtml, project.name, { format: pubFormat, images });
       setMmFeedback('📄 Word document downloaded');
     } catch {
       setMmFeedback('⚠️ Could not build the .docx file');
@@ -3527,7 +3550,7 @@ export const ProjectDetailModule = ({
        le « [12] » du texte mène à la référence 12 imprimée en fin de document, et
        l'infobulle rappelle titre et auteurs. Un numéro inconnu reste intact.
        Funding et Supporting information ne s'impriment que s'ils sont remplis. */
-    const sectionBlocks = PROJECT_TEXT_SECTIONS
+    const sectionBlocksOf = PROJECT_TEXT_SECTIONS
       .map((s) => ({
         id: s.id,
         title: s.label,
@@ -3545,6 +3568,23 @@ export const ProjectDetailModule = ({
         const split = splitAnchoredFigures(linkCitations(repairContentImages(s.html || '')), figures);
         return { ...s, html: split.html, restFigures: split.rest };
       });
+    /* LES TROIS SECTIONS QUI ONT LEUR PROPRE RANGÉE AU PANNEAU (« Conclusions »,
+       « Funding », « Supporting information » — voir PUB_DOC_BLOCKS) s'impriment à SA
+       place, avec l'intitulé choisi pour elles ; le bloc « Text sections » garde les
+       autres (le contexte et les résultats), dans l'ordre de l'auteur. Le document
+       imprimé ne change donc pas tant que l'ordre du panneau n'est pas touché. */
+    const ownRowBlocks = sectionBlocksOf.filter((s) => !!pubDocBlockOfSection(s.id));
+    const sectionBlocks = sectionBlocksOf.filter((s) => !pubDocBlockOfSection(s.id));
+    /** UNE SECTION DU DOCUMENT — son intitulé, son texte, ses figures, ses documents. */
+    const renderSectionBlock = (s, heading) => (
+      <div key={s.id} className="mb-6">
+        <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{heading}</h2>
+        {s.html ? <div className="pf-body text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: repairContentImages(s.html) }} />
+                : <p className="text-xs italic text-slate-400">—</p>}
+        {renderFigures(s.restFigures || [])}
+        {renderDocs(sectionDocs(s.id))}
+      </div>
+    );
     const renderFigures = (list) => list.filter((f) => (f.url || '').trim() !== '').length > 0 && (
       <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
         {list.filter((f) => (f.url || '').trim() !== '').map((f) => (
@@ -3792,15 +3832,18 @@ export const ProjectDetailModule = ({
                 </p>
               );
 
-              blocks.sections = sectionBlocks.map((s) => (
-                <div key={s.id} className="mb-6">
-                  <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{s.title}</h2>
-                  {s.html ? <div className="pf-body text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: repairContentImages(s.html) }} />
-                          : <p className="text-xs italic text-slate-400">—</p>}
-                  {renderFigures(s.restFigures || [])}
-                  {renderDocs(sectionDocs(s.id))}
-                </div>
-              ));
+              blocks.sections = sectionBlocks.map((s) => renderSectionBlock(s, s.title));
+              /* …ET LES TROIS QUI ONT LEUR RANGÉE : chacune s'imprime à la place que le
+                 format lui donne (`docOrder`), sous l'intitulé choisi dans le panneau —
+                 « Conclusions » est le titre du programme tant que personne n'en écrit
+                 un autre (voir docHeading). Les conclusions s'impriment toujours (elles
+                 font partie du socle d'un article, comme avant) ; le financement et les
+                 informations supplémentaires, eux, gardent la règle de la page : ils ne
+                 s'impriment que remplis (voir OPTIONAL_TEXT_SECTION_IDS). */
+              ownRowBlocks.forEach((s) => {
+                const block = pubDocBlockOfSection(s.id);
+                blocks[block.id] = renderSectionBlock(s, docHeading(block.id));
+              });
 
 
               /* LA SECTION S'ÉCRIT SI ELLE A QUELQUE CHOSE À DIRE : les tests cochés
