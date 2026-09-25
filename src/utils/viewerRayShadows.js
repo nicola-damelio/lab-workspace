@@ -54,7 +54,30 @@
    representation draws BETWEEN them: a stick, a tube, a ribbon is a CONTINUOUS
    line, so the proxies that fill it are part of the geometry (LINKED_KINDS —
    without them a thin drawing shadows NOTHING, which is measured in the tests),
-   while a ball stays the atom it is. It is the shadow of the MOLECULE, it follows
+   while a ball stays the atom it is.
+
+   …AND THAT LINE IS FILLED ALONG THE STRUCTURE'S OWN BONDS, not from one atom of
+   the list to the next. The report « the shadow is a string of separate round
+   blobs, about one per residue, with a solid black disc where one of them lies
+   along the light » is what « link the atom AFTER this one » gives on a molecule
+   whose side chains are drawn too: the list holds every atom the tube and the
+   licorice strips draw (they share one selection), so the atom after a backbone
+   oxygen is a side-chain carbon — the peptide bond C(i)–N(i+1) that makes the
+   ribbon continuous falls between two atoms that are never neighbours there. Each
+   residue filled a tidy cluster of its own and nothing bridged to the next:
+   blobs. Measured on the 3-residue peptide with its side chains (tests): the
+   neighbour rule filled 5 links that are not bonds, left BOTH peptide bonds and
+   every side-chain bond open, and drew a phantom link from a side chain to the
+   next residue's backbone (that one, seen end-on, saturates the mask: the black
+   disc). The structure's own graph fills all 15 real bonds and leaves nothing
+   phantom, and NGL exposes it (`structure.eachBond` → atomIndex1 / atomIndex2,
+   built from the residue templates AND from the distance-checked peptide bond —
+   see drawnBondsOf below), so that is what the fill walks. A structure that
+   declares no topology at all (`inferBonds: 'none'`, a hand-built stage) keeps
+   the neighbour pairs this module always used, so nothing that used to be filled
+   goes dark.
+
+   It is the shadow of the MOLECULE, it follows
    the light, and it is deterministic — no GPU feature, no extension, no second
    engine. A stage with no atoms, a canvas that refuses its pixels or a browser
    without `createImageBitmap` leaves the still exactly as NGL drew it (every
@@ -1162,22 +1185,78 @@ export const drawnProxyRadiiOf = (comp, atomCount, vdw = null, links = null) => 
   return out;
 };
 
-/* ---- THE PROXIES: the atoms, AND THE LINE THAT JOINS THEM ----------------- */
-/* A drawn link is a stroke between two atoms (a stick, a tube, a ribbon): it is
-   cast by the proxies that FILL it, one every `step` ångströms so consecutive
-   spheres overlap and the line has no hole, at the stroke's own radius, lerped
-   between the two atoms (the stroke of a lipstick changes along a chain). `step`
-   is half the thinnest of the two strokes, floored at LINK_STEP_MIN; a link
-   longer than LINK_MAX is not a drawing between neighbours (a chain break, a jump
-   between two molecules) and stays open. */
+/* ---- THE PROXIES: the atoms, AND THE LINES THAT JOIN THEM ----------------- */
+/* A drawn line is a stroke BETWEEN TWO BONDED ATOMS (a stick along a bond, a tube
+   or a ribbon walking the bonds of the backbone): it is cast by the proxies that
+   FILL it, one every `step` ångströms so consecutive spheres overlap and the line
+   has no hole, at the stroke's own radius, lerped between its two ends (the stroke
+   of a lipstick changes along a chain). `step` is half the thinnest of the two
+   strokes, floored at LINK_STEP_MIN; a link longer than LINK_MAX is not a drawing
+   between bonded neighbours (a chain break, a jump between two molecules) and
+   stays open. WHICH pairs are links is the STRUCTURE'S OWN BOND GRAPH, never the
+   order of the atom list — see drawnBondsOf. */
 const LINK_STEP_MIN = 0.3;
 const LINK_MAX = 4.2;
 const linkStepOf = (ra, rb) => Math.max(LINK_STEP_MIN, 0.5 * Math.min(ra, rb));
 
+/* THE REAL BONDS of the structure between two atoms a drawing runs through — what
+   the link walk fills. NGL keeps the topology it built (the residue templates,
+   plus the peptide bond between two consecutive residues, distance-checked, plus
+   the parser's own CONECT records — PdbParser) on the structure, and `eachBond`
+   hands every BondProxy its `atomIndex1` / `atomIndex2`. THAT is the graph of the
+   drawn lines: a stick lies along a bond and a tube walks the bonds of the
+   backbone, so the fill must walk them too. The atoms of the drawn LIST are not
+   that graph — that is the « separate round blobs, one per residue » report: the
+   peptide bond C(i)–N(i+1) has a side-chain atom between its two ends in the list,
+   so it was never filled, while a link was filled from a side chain straight to
+   the next residue's backbone (the phantom line that reads as a solid black disc
+   when it happens to run along the light).
+
+   `links[i] === 1` (see drawnProxyRadiiOf) means the drawing CONTINUES from atom
+   i, so a bond is a link only when BOTH of its atoms are drawn that way: a bond
+   that reaches an atom nothing draws is not on screen. Duplicates are dropped —
+   a file that carries CONECT records AND has its bonds inferred reports the same
+   pair twice (measured on the probe peptide: 17 bonds for 15 real ones), and the
+   same link filled twice would only spend the budget twice.
+
+   `null` — « this structure declares NO topology » — is a DIFFERENT answer from
+   « its topology says these two atoms are not bonded »: the caller falls back on
+   the neighbour pairs for the first (a raw ensemble, a hand-built stage: better a
+   filled line than none) and never for the second, because that fallback IS the
+   phantom links of the report. `[]` — nothing here is a line, or nothing bonded
+   is drawn — therefore means « fill nothing », not « use the list order ». */
+const drawnBondsOf = (structure, links, n) => {
+  if (!structure || typeof structure.eachBond !== 'function') return null;
+  const declared = Number(structure.bondCount);
+  if (!(Number.isFinite(declared) && declared > 0)) return null;
+  let linked = false;
+  for (let i = 0; i < n && !linked; i += 1) linked = links[i] === 1;
+  if (!linked) return [];
+  const out = [];
+  const seen = new Set();
+  try {
+    structure.eachBond((bond) => {
+      const a = bond.atomIndex1;
+      const b = bond.atomIndex2;
+      if (!(a >= 0 && a < n && b >= 0 && b < n) || a === b) return;
+      if (links[a] !== 1 || links[b] !== 1) return;
+      const key = a < b ? a * n + b : b * n + a;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(a, b);
+    });
+  } catch { /* what was read is real: keep those bonds rather than guess */ }
+  return out;
+};
+
 /* One part, laid out in world space: the atoms it emits (the drawn ones, strided
-   when the budget is tight) with their stroke and whether their drawing CONTINUES
-   to the next one. */
+   when the budget is tight) with their stroke, whether their drawing CONTINUES
+   from them, and the LINES to fill — the real bonds between those atoms, or the
+   neighbour pairs this module always used when the structure declares no topology
+   at all. Links are kept as SLOT pairs, because a slot is what the fills
+   interpolate. */
 const layOut = (part, stride) => {
+  const slotOf = new Map();
   const own = elements16Of(part.comp.matrix);
   /* The component's OWN matrix first, then the viewer's groups ON TOP of it — the
      chain NGL gives the GPU (see viewerMatrixOf: a molecule joined to its
@@ -1221,37 +1300,76 @@ const layOut = (part, stride) => {
     // vdW radius otherwise — and never a fat sphere around a thin ribbon.
     wrad[e] = drawn ? stroke : vdw;
     wlink[e] = drawn && links && links[i] === 1 ? 1 : 0;
+    slotOf.set(i, e);
     e += 1;
   }
-  return { wpos, wrad, wlink, len: e, fills: new Int32Array(Math.max(1, e)) };
+  /* THE LINKS, as slot pairs. `part.bonds` is the structure's bond graph between
+     the atoms a drawing continues from (drawnBondsOf): a bond whose atom the
+     budget's stride dropped has no slot and cannot be filled — the proxy is
+     coarser then, which is what a stride means. `null` is « no topology »: the
+     neighbour pairs, which is what this module did before the graph existed, and
+     they are as useless now as they were then when nothing here is a line. */
+  const maxPairs = part.bonds ? part.bonds.length / 2 : Math.max(0, e - 1);
+  const edges = new Int32Array(Math.max(0, maxPairs) * 2);
+  let p = 0;
+  if (part.bonds) {
+    for (let b = 0; b + 1 < part.bonds.length; b += 2) {
+      const sa = slotOf.get(part.bonds[b]);
+      const sb = slotOf.get(part.bonds[b + 1]);
+      if (sa === undefined || sb === undefined) continue;
+      edges[p] = sa;
+      edges[p + 1] = sb;
+      p += 2;
+    }
+  } else {
+    for (let s = 0; s + 1 < e; s += 1) {
+      if (!wlink[s] || !wlink[s + 1]) continue;
+      edges[p] = s;
+      edges[p + 1] = s + 1;
+      p += 2;
+    }
+  }
+  return {
+    wpos,
+    wrad,
+    wlink,
+    len: e,
+    edges: p === edges.length ? edges : edges.subarray(0, p),
+    fills: new Int32Array(Math.max(1, p / 2)),
+  };
 };
 
-/* How many proxies fill the link after each atom, at `scale` times the nominal
-   step (scale 1 = the drawn geometry; a bigger one = a tighter budget; Infinity =
-   no filling at all). Writes the counts into `lay.fills` and returns their sum. */
+/* How many proxies fill each LINK, at `scale` times the nominal step (scale 1 =
+   the drawn geometry; a bigger one = a tighter budget; Infinity = no filling at
+   all). Writes the counts into `lay.fills` — one per link, in the order of
+   `lay.edges` — and returns their sum. */
 const countFills = (lay, scale) => {
+  const edges = lay.edges;
   let cost = 0;
-  for (let e = 0; e < lay.len; e += 1) {
+  for (let k = 0; k + 1 < edges.length; k += 2) {
+    const a = edges[k];
+    const b = edges[k + 1];
     let n = 0;
-    if (e + 1 < lay.len && lay.wlink[e] && lay.wlink[e + 1]) {
-      const dx = lay.wpos[(e + 1) * 3] - lay.wpos[e * 3];
-      const dy = lay.wpos[(e + 1) * 3 + 1] - lay.wpos[e * 3 + 1];
-      const dz = lay.wpos[(e + 1) * 3 + 2] - lay.wpos[e * 3 + 2];
+    if (lay.wlink[a] && lay.wlink[b]) {
+      const dx = lay.wpos[b * 3] - lay.wpos[a * 3];
+      const dy = lay.wpos[b * 3 + 1] - lay.wpos[a * 3 + 1];
+      const dz = lay.wpos[b * 3 + 2] - lay.wpos[a * 3 + 2];
       const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
       if (Number.isFinite(d) && d > 0 && d <= LINK_MAX) {
-        const step = linkStepOf(lay.wrad[e], lay.wrad[e + 1]) * scale;
+        const step = linkStepOf(lay.wrad[a], lay.wrad[b]) * scale;
         n = Math.max(0, Math.ceil(d / step) - 1);
         if (!Number.isFinite(n)) n = 0;
       }
     }
-    lay.fills[e] = n;
+    lay.fills[k / 2] = n;
     cost += n;
   }
   return cost;
 };
 
-/* The flat arrays the mask pass reads: every emitted atom, each followed by the
-   proxies that fill its link. */
+/* The flat arrays the mask pass reads: every emitted atom of every part, then the
+   proxies that fill EVERY link between them — each one lerped between its own two
+   atoms, so a branch (two bonds leaving one atom) is filled as well as a chain. */
 const fillDrawnLinks = (parts, stride, maxAtoms) => {
   const layouts = parts.map((part) => layOut(part, stride));
   const slots = layouts.reduce((a, lay) => a + lay.len, 0);
@@ -1271,23 +1389,30 @@ const fillDrawnLinks = (parts, stride, maxAtoms) => {
   const radii = new Float32Array(capacity);
   let k = 0;
   layouts.forEach((lay) => {
-    for (let e = 0; e < lay.len; e += 1) {
-      if (k >= capacity) return;
+    // The atoms of THIS part first (they ARE the drawing), then its links: the
+    // capacity is slots + the fills of every link, so nothing is ever crowded out.
+    for (let e = 0; e < lay.len && k < capacity; e += 1) {
       out[k * 3] = lay.wpos[e * 3];
       out[k * 3 + 1] = lay.wpos[e * 3 + 1];
       out[k * 3 + 2] = lay.wpos[e * 3 + 2];
       radii[k] = lay.wrad[e];
       k += 1;
-      const fills = lay.fills[e];
+    }
+    // …then the proxies that fill each link, between its two own atoms.
+    const edges = lay.edges;
+    for (let p = 0; p + 1 < edges.length && k < capacity; p += 2) {
+      const fills = lay.fills[p / 2];
       if (!fills) continue;
-      const ax = lay.wpos[e * 3];
-      const ay = lay.wpos[e * 3 + 1];
-      const az = lay.wpos[e * 3 + 2];
-      const bx = lay.wpos[(e + 1) * 3];
-      const by = lay.wpos[(e + 1) * 3 + 1];
-      const bz = lay.wpos[(e + 1) * 3 + 2];
-      const ra = lay.wrad[e];
-      const rb = lay.wrad[e + 1];
+      const a = edges[p];
+      const b = edges[p + 1];
+      const ax = lay.wpos[a * 3];
+      const ay = lay.wpos[a * 3 + 1];
+      const az = lay.wpos[a * 3 + 2];
+      const bx = lay.wpos[b * 3];
+      const by = lay.wpos[b * 3 + 1];
+      const bz = lay.wpos[b * 3 + 2];
+      const ra = lay.wrad[a];
+      const rb = lay.wrad[b];
       for (let f = 1; f <= fills && k < capacity; f += 1) {
         const u = f / (fills + 1);
         out[k * 3] = ax + (bx - ax) * u;
@@ -1311,10 +1436,15 @@ const fillDrawnLinks = (parts, stride, maxAtoms) => {
    one only the atoms its VISIBLE representations draw (see drawnAtomIndicesOf):
    what is not on screen must not cast anything.
 
-   THE PROXY IS THE DRAWN GEOMETRY, NOT A DUST OF BALLS. Two atoms whose drawing
-   CONTINUES from one to the other (a stick, a tube, a ribbon — LINKED_KINDS) are
-   joined by proxies that fill the gap every `step` ångströms at the stroke's own
-   radius. The tube a cartoon draws is continuous, and a proxy made of its atoms
+   THE PROXY IS THE DRAWN GEOMETRY, NOT A DUST OF BALLS. Two atoms a drawing
+   CONTINUES from (a stick, a tube, a ribbon — LINKED_KINDS) are joined by proxies
+   that fill the gap every `step` ångströms at the stroke's own radius — and they
+   are joined ALONG THE STRUCTURE'S OWN BONDS (drawnBondsOf), because the atom
+   after a backbone oxygen in the drawn list is a side-chain carbon as soon as the
+   side chains are drawn too: filling by list order gave every residue its own tidy
+   cluster and left BOTH peptide bonds — the links that make the ribbon continuous
+   — open, which is the « string of separate round blobs » of the report. The tube
+   a cartoon draws is continuous, and a proxy made of its atoms
    alone leaves holes ångströms wide that no ray can hit: measured on the rig's
    own scene, that filling is the whole shadow — 30 CA atoms of a 0,5 Å tube lit
    at az 25 / el 28 shadowed 0 pixels of 3655 without it, 3160 of 12247 (13 % of
@@ -1351,7 +1481,11 @@ export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms) =
       // when the component says nothing about its representations.
       const links = new Uint8Array(n);
       const surface = drawnProxyRadiiOf(comp, n, data.radius, links);
-      parts.push({ comp, data, n, drawn, surface, links, viewerM });
+      // …and THE TOPOLOGY of those atoms: the real bonds the fill runs along
+      // (drawnBondsOf). `null` = « this structure declares no graph »: the link
+      // walk then keeps the neighbour pairs of the list, as it always did.
+      const bonds = drawnBondsOf(structure, links, n);
+      parts.push({ comp, data, n, drawn, surface, links, viewerM, bonds });
       total += drawn ? drawn.length : n;
     } catch { /* a component that cannot report its atoms casts nothing */ }
   });

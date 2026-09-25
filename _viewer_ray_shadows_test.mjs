@@ -585,8 +585,13 @@ eq(ribbon.filled, 3, '…soit 3 proxies de remplissage pour le lien d’1 Å du 
 near(ribbon.radii[0], 0.45, 1e-6, '…et leur proxy a l’épaisseur du RUBAN, plus celle d’une sphère de van der Waals');
 near(ribbon.radii[1], 0.45, 1e-6, '…pour chaque atome du ruban');
 near(ribbon.radii[2], 0.45, 1e-6, '…comme pour les proxies de remplissage (même trait)');
-ok(ribbon.positions[4] > ribbon.positions[1] && ribbon.positions[4] < ribbon.positions[13],
-  '…et ils tombent ENTRE les deux atomes (le tuyau est continu, pas troué)');
+/* LES ATOMES D’ABORD, puis les proxies qui remplissent chaque lien : l’ordre n’a
+   aucune importance pour la carte d’ombre (elle garde, par pixel, la sphère la
+   plus proche de chaque rayon), mais il rend la liste lisible — chaque atome est
+   émis avant ce qui le relie. Les 3 remplissages du lien tombent ENTRE les deux. */
+const ribbonFills = [...Array(ribbon.count - 2)].map((_, i) => ribbon.positions[(i + 2) * 3 + 1]);
+eq(ribbonFills.map((y) => Number(y.toFixed(3))), [0.25, 0.5, 0.75],
+  '…et ils tombent ENTRE les deux atomes, dans l’ordre (le tuyau est continu, pas troué)');
 /* Une BILLE n’est pas une ligne : un spacefill ne remplit rien. */
 const ballStage = {
   compList: [{
